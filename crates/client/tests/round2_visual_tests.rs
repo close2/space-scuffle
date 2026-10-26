@@ -53,6 +53,9 @@ fn test_shader_wgsl_syntax_and_uniform_alignment() {
         shader_source.contains("n_dot_v"),
         "bubble_dome.wgsl must compute n_dot_v for perspective-correct horizon"
     );
+    assert!(shader_source.contains("screen_right"));
+    assert!(shader_source.contains("world_from_view"));
+    assert!(shader_source.contains("p_screen_at_zc"));
 
     // Verify memory layout exactly equals 96 bytes and 16-byte alignment
     assert_eq!(size_of::<BubbleUniformGpu>(), 96);

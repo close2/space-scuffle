@@ -83,7 +83,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let w = fbm(flow_p + 2.4 * vec2<f32>(warp_x, warp_y));
     let billow = 1.0 - abs(w * 2.0 - 1.0);
-    let wisp_structure = smoothstep(0.30, 0.82, w * 0.60 + billow * 0.40);
+    let wisp_structure = smoothstep(0.24, 0.80, w * 0.60 + billow * 0.40);
 
     // 3. Elongated Slipstream Wake Falloff & Noise-Perturbed Radial Window
     let noisy_r2 = r2 + (w - 0.5) * 0.55;
@@ -111,6 +111,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // Subtle cyan-white highlight on the sharpest turbulent ridges
     let ridge = billow * gaussian_core;
     spectral_color += col_core * (pow(ridge, 4.0) * 0.25);
+    spectral_color *= 1.35;
 
     // Boosted thruster overdrive shifts toward fiery golden-amber
     if (mist.speed_boosted == 1u) {
@@ -120,7 +121,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // 5. Additive Alpha (BlendFactor::One, BlendFactor::One in Bevy 0.15)
     // Hardware adds dst.rgb + src.rgb, so fragment shader premultiplies by alpha!
     let life_fade = pow(clamp(1.0 - mist.age, 0.0, 1.0), 1.3) * smoothstep(0.0, 0.10, mist.age);
-    let alpha = clamp(vapor_density * life_fade * 0.28, 0.0, 0.30);
+    let alpha = clamp(vapor_density * life_fade * 0.44, 0.0, 0.46);
 
     if (alpha < 0.002) {
         discard;

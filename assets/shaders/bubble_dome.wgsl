@@ -1,9 +1,9 @@
 // assets/shaders/bubble_dome.wgsl
 // Unified shader for Mobile Unit Spheres and Building Hemisphere Domes in Space Scuffle.
-// Implements Plan 19 Perfectly Round 3D Crystal Sphere Optics:
-// - Camera-to-sphere-center orthonormal basis invariant across all fragments of the sphere
-// - Perspective-correct silhouette horizon: r = sqrt(1.0 - n_dot_v^2) reaches 1.0 at 360-degree boundary
-// - Studio crescent rim specular highlights (upper-left key & lower-right bounce) leaving center 100% crystal clear
+// Implements Plan 20:
+// - Camera view-plane basis from view.world_from_view matrix (screen_right, screen_up, screen_forward)
+// - Screen-space 1:1 circular disc projection discarding perspective-stretched elliptical ears
+// - Zero-tilt character orientation and studio rim specular highlights
 // - Directional indicator re-engineered as a sleek rim arc confined strictly to outer Fresnel annulus [0.86, 0.98]
 // - Dynamic video texture array sampling with spherical lens magnification
 // - Voronoi spiderweb glass fractures & CRT scanlines
@@ -77,25 +77,57 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let view_dir = normalize(view.world_position - in.world_position.xyz);
     let normal = normalize(in.world_normal);
 
-    // Exact sphere center in world space (invariant across all fragments of the sphere!)
-    let sphere_center = in.world_position.xyz - normal * bubble.radius;
-    let cam_forward = normalize(sphere_center - view.world_position);
-    let cam_right = normalize(cross(vec3<f32>(0.0, 1.0, 0.0), cam_forward));
-    let cam_up = cross(cam_forward, cam_right);
+    // 1. Camera View-Plane Basis (Constant across viewport from view.world_from_view matrix)
+    let screen_right = normalize(view.world_from_view[0].xyz);
+    let screen_up = normalize(view.world_from_view[1].xyz);
+    let screen_forward = -normalize(view.world_from_view[2].xyz);
 
-    let disk = vec2<f32>(dot(normal, cam_right), -dot(normal, cam_up));
-    let n_dot_v = max(dot(normal, view_dir), 0.0);
-    let r2 = clamp(1.0 - n_dot_v * n_dot_v, 0.0, 1.0);
-    let r = sqrt(r2);
+    // Exact sphere center in world space
+    let sphere_center = in.world_position.xyz - normal * bubble.radius;
+    let p_rel = in.world_position.xyz - view.world_position;
+    let c_rel = sphere_center - view.world_position;
+
+    // Optical depth along camera optical axis
+    let z_p = max(dot(p_rel, screen_forward), 0.001);
+    let z_c = max(dot(c_rel, screen_forward), 0.001);
+
+    // Project fragment onto camera plane at depth z_c (plane through sphere center perpendicular to screen_forward)
+    let p_screen_at_zc = p_rel * (z_c / z_p) - c_rel;
+    let screen_disk = vec2<f32>(
+        dot(p_screen_at_zc, screen_right),
+        -dot(p_screen_at_zc, screen_up)
+    ) / max(bubble.radius, 0.001);
+
+    var disk: vec2<f32>;
+    var r2: f32;
+    var r: f32;
+
+    if (bubble.shape_kind == 0u) {
+        // Mobile Units: Discard perspective-stretched elliptical ears outside true 1:1 screen-space circle!
+        let screen_r2 = dot(screen_disk, screen_disk);
+        if (screen_r2 > 1.0) {
+            discard;
+        }
+        disk = screen_disk;
+        r2 = screen_r2;
+        r = sqrt(r2);
+    } else {
+        // Building Domes: Grounded 3D hemisphere projection
+        disk = vec2<f32>(dot(normal, screen_right), -dot(normal, screen_up));
+        let n_dot_v = max(dot(normal, view_dir), 0.0);
+        r2 = clamp(1.0 - n_dot_v * n_dot_v, 0.0, 1.0);
+        r = sqrt(r2);
+    }
+
     let disk_dir = select(vec2<f32>(1.0, 0.0), disk / max(length(disk), 0.0001), length(disk) > 0.0001);
 
     // Optical glass lens refraction and magnification
     let z_lens = sqrt(max(1.0 - r2, 0.0));
     var lens_uv = vec2<f32>(0.5, 0.5) + disk * mix(0.48, 0.35, z_lens);
 
-    // Facing-aware horizontal mirroring
+    // Facing-aware horizontal mirroring (aligned with screen_right)
     let heading_dir = vec3<f32>(cos(bubble.heading_angle_rad), 0.0, sin(bubble.heading_angle_rad));
-    if (dot(heading_dir, cam_right) < 0.0) {
+    if (dot(heading_dir, screen_right) < 0.0) {
         lens_uv.x = 1.0 - lens_uv.x;
     }
 
@@ -149,14 +181,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var specular = 0.0;
     if ((bubble.feature_flags & FLAG_GLARE) != 0u) {
         // Upper-left key light crescent
-        let l1 = normalize(cam_up * 0.70 - cam_right * 0.55 + cam_forward * 0.45);
+        let l1 = normalize(screen_up * 0.70 - screen_right * 0.55 + screen_forward * 0.45);
         let H1 = normalize(view_dir + l1);
         let spec1 = pow(max(dot(normal, H1), 0.0), 36.0);
         let rim_mask1 = smoothstep(0.68, 0.88, r) * (1.0 - smoothstep(0.95, 1.0, r));
         let glare1 = spec1 * rim_mask1 * 2.4;
 
         // Lower-right ambient bounce crescent
-        let l2 = normalize(-cam_up * 0.60 + cam_right * 0.50 + cam_forward * 0.35);
+        let l2 = normalize(-screen_up * 0.60 + screen_right * 0.50 + screen_forward * 0.35);
         let H2 = normalize(view_dir + l2);
         let spec2 = pow(max(dot(normal, H2), 0.0), 20.0);
         let rim_mask2 = smoothstep(0.78, 0.92, r) * (1.0 - smoothstep(0.97, 1.0, r));
@@ -169,7 +201,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // NEVER draw lines across the interior (r < 0.85) of the sphere!
     var direction_stripe = vec3<f32>(0.0);
     if (bubble.shape_kind == 0u && (bubble.feature_flags & FLAG_FACING_STRIPE) != 0u) {
-        let heading_2d = normalize(vec2<f32>(dot(heading_dir, cam_right), -dot(heading_dir, cam_up)));
+        let heading_2d = normalize(vec2<f32>(dot(heading_dir, screen_right), -dot(heading_dir, screen_up)));
         let align = dot(disk_dir, heading_2d);
 
         let rim_annulus = smoothstep(0.86, 0.93, r) * (1.0 - smoothstep(0.96, 0.995, r));
