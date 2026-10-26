@@ -1,0 +1,31 @@
+[package]
+name = "client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Bevy 3D renderer, custom WGSL shaders, and Visual Lab for Space Scuffle"
+
+[[bin]]
+name = "client"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bevy.workspace = true
+bevy_egui.workspace = true
+sim_types.workspace = true
+sim_map.workspace = true
+sim_core.workspace = true
+asset_baker.workspace = true
+clap = { version = "4.5", features = ["derive"] }
+ron.workspace = true
+serde.workspace = true
+image.workspace = true
+bytemuck = { version = "1.25", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3.17"

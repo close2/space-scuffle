@@ -1,0 +1,23 @@
+[package]
+name = "sim_types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Deterministic fixed-point math, IDs, enums, player commands, and render snapshots for Space Scuffle"
+
+[lints]
+workspace = true
+
+[dependencies]
+fixed.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+bitflags.workspace = true
+
+[dev-dependencies]
+ron.workspace = true
+xxhash-rust.workspace = true
+rand.workspace = true
+rand_chacha.workspace = true

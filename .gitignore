@@ -1,0 +1,10 @@
+/target
+.env
+.env.*
+*.log
+/tmp
+/tmp/
+tmp/
+*api-key*
+*.pem
+*.key

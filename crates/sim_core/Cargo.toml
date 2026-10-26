@@ -1,0 +1,21 @@
+[package]
+name = "sim_core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Deterministic lockstep simulation core, combat, and steering for Space Scuffle"
+
+[lints]
+workspace = true
+
+[dependencies]
+sim_types.workspace = true
+sim_map.workspace = true
+thiserror.workspace = true
+xxhash-rust = { workspace = true, features = ["xxh64"] }
+rand.workspace = true
+rand_chacha.workspace = true
+serde.workspace = true
+ron.workspace = true

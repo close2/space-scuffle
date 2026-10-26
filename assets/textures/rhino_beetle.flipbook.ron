@@ -1,0 +1,46 @@
+(
+    name: "rhino_beetle",
+    frame_width: 512,
+    frame_height: 512,
+    fps: 15,
+    total_frames: 30,
+    layout: VerticalStrip,
+    actions: {
+        Constructing: (
+            start_frame: 0,
+            frame_count: 10,
+            looping: false,
+            hold_last_frame: true,
+        ),
+        Idle: (
+            start_frame: 0,
+            frame_count: 10,
+            looping: true,
+            hold_last_frame: false,
+        ),
+        Walk: (
+            start_frame: 10,
+            frame_count: 10,
+            looping: true,
+            hold_last_frame: false,
+        ),
+        Attack: (
+            start_frame: 20,
+            frame_count: 10,
+            looping: false,
+            hold_last_frame: false,
+        ),
+        Cast: (
+            start_frame: 20,
+            frame_count: 10,
+            looping: false,
+            hold_last_frame: false,
+        ),
+        Die: (
+            start_frame: 20,
+            frame_count: 10,
+            looping: false,
+            hold_last_frame: true,
+        ),
+    },
+)
