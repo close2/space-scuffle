@@ -15,6 +15,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderRef, ShaderType};
 use sim_types::ids::TeamId;
 use sim_types::snapshot::CombatEventVisual;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// GPU uniform buffer struct matching `struct MistWakeUniform` in `mist_wake.wgsl`.
 // PERFORMANCE RATIONALE:
@@ -69,7 +70,17 @@ impl Material for MistWakeMaterial {
     }
 
     fn depth_bias(&self) -> f32 {
-        -15.0
+        -4.0
+    }
+
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialPipeline<Self>,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &bevy::render::mesh::MeshVertexBufferLayoutRef,
+        _key: bevy::pbr::MaterialPipelineKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        descriptor.primitive.cull_mode = None;
+        Ok(())
     }
 }
 
@@ -371,7 +382,10 @@ pub fn spawn_death_shatter(
     }
 }
 
-/// Spawns surface perspiration mist (when stationary) or aerodynamic air-suction wake particles (when moving).
+/// Monotonically advancing emission counter for high-entropy golden ratio angle dispersal.
+static MIST_EMISSION_COUNTER: AtomicU32 = AtomicU32::new(1);
+
+/// Spawns aerodynamic air-suction wake particles when moving (leaving stationary bubbles crystal-clear).
 pub fn emit_mist_wake(
     commands: &mut Commands<'_, '_>,
     assets: &VfxSharedAssets,
@@ -384,55 +398,12 @@ pub fn emit_mist_wake(
 ) {
     let speed = velocity.length();
 
+    // When stationary, do not spawn external puffs to keep the glass sphere razor-sharp and perfectly round
     if speed <= 0.0005 {
-        // Surface Perspiration ("Sweating") on stationary bubble
-        let seed_val = ((bubble_pos.x * 13.7 + bubble_pos.z * 37.1) * 10.0)
-            .fract()
-            .abs();
-        for i in 0..2 {
-            let phi = (seed_val * std::f32::consts::TAU + (i as f32) * std::f32::consts::PI).cos()
-                * std::f32::consts::PI;
-            let theta = (seed_val * 3.7 + (i as f32) * 2.1).sin() * std::f32::consts::PI;
-            let radial_dir = Vec3::new(
-                theta.sin() * phi.cos(),
-                phi.sin().abs() * 0.75 + 0.25,
-                theta.sin() * phi.sin(),
-            )
-            .normalize_or_zero();
-
-            let spawn_pos =
-                bubble_pos + radial_dir * (radius * 0.72) + Vec3::new(0.0, radius * 0.10, 0.0);
-            let thermal_rise = Vec3::new(0.0, 0.14, 0.0);
-            let initial_scale = radius * 1.45;
-            let target_scale = radius * 1.15;
-
-            let mat = mist_materials.add(MistWakeMaterial {
-                uniform: MistWakeUniformGpu {
-                    base_color: Vec4::new(0.20, 0.88, 1.0, 0.0),
-                    age: 0.0,
-                    speed_boosted: u32::from(speed_boosted),
-                    seed: (seed_val + i as f32 * 0.41).fract(),
-                    aspect: 1.0,
-                },
-            });
-
-            commands.spawn((
-                Mesh3d(assets.mist_mesh.clone()),
-                MeshMaterial3d(mat),
-                Transform::from_translation(spawn_pos).with_scale(Vec3::splat(initial_scale)),
-                MistWakeParticle {
-                    kind: MistParticleKind::VaporPuff,
-                    velocity: thermal_rise,
-                    lifetime: Timer::from_seconds(1.1, TimerMode::Once),
-                    initial_scale,
-                    target_scale,
-                },
-            ));
-        }
         return;
     }
 
-    // Moving bubble: Aerodynamic Air Suction Wake
+    // Moving bubble: Aerodynamic Air Suction Slipstream
     let world_speed = if speed < 0.5 { speed * 25.0 } else { speed };
     let forward_dir = Vec3::new(velocity.x, 0.0, velocity.y).normalize();
     let trail_dir = -forward_dir;
@@ -444,123 +415,50 @@ pub fn emit_mist_wake(
     let flow_angle = -trail_screen.y.atan2(trail_screen.x);
 
     let lab_conveyor = if is_lab_preview {
-        trail_dir * (world_speed * 0.65)
+        trail_dir * (world_speed * 1.25)
     } else {
         Vec3::ZERO
     };
 
-    // 4 spherical surface zones: Core, Port, Starboard, Crest
-    let zones = [
-        (Vec3::ZERO, trail_dir * (radius * 0.25)),
-        (right_dir * (radius * 0.45), trail_dir * (radius * 0.15)),
-        (-right_dir * (radius * 0.45), trail_dir * (radius * 0.15)),
-        (up_dir * (radius * 0.40), trail_dir * (radius * 0.10)),
-    ];
+    let counter = MIST_EMISSION_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let seed_salt = ((counter as f32) * 0.618_034).fract();
 
-    for (i, &(lateral_vec, trail_offset)) in zones.iter().enumerate() {
-        let spawn_pos = bubble_pos + lateral_vec + trail_offset;
-        let suction_inward = -lateral_vec / 0.32;
-        let forward_suction = forward_dir * (world_speed * 0.22);
-        let velocity_vec = lab_conveyor + suction_inward + forward_suction;
+    // 2 sweated mist wisps per emission on the rear surface, pulled inward by air suction
+    let side_sign = if counter % 2 == 0 { 1.0 } else { -1.0 };
+    let lateral_vec = right_dir * (side_sign * radius * 0.22)
+        + up_dir * (((seed_salt * std::f32::consts::TAU).sin()) * radius * 0.15);
+    let spawn_pos = bubble_pos + trail_dir * (radius * 0.78) + lateral_vec;
 
-        let initial_scale = radius * 1.90;
-        let target_scale = radius * 0.85;
+    // Air suction: pulls lateral mist inward toward the wake centerline + slight forward slipstream drag
+    let suction_inward = -lateral_vec * 2.2;
+    let forward_suction = forward_dir * (world_speed * 0.18);
+    let velocity_vec = lab_conveyor + suction_inward + forward_suction;
 
-        let seed = ((spawn_pos.x * 12.9898 + spawn_pos.z * 78.233 + i as f32 * 31.7) * 10.0)
-            .fract()
-            .abs();
+    let initial_scale = radius * 2.2;
+    let target_scale = radius * 1.45;
 
-        let mat = mist_materials.add(MistWakeMaterial {
-            uniform: MistWakeUniformGpu {
-                base_color: Vec4::new(0.18, 0.90, 1.0, flow_angle),
-                age: 0.0,
-                speed_boosted: u32::from(speed_boosted),
-                seed,
-                aspect: 1.0,
-            },
-        });
-
-        commands.spawn((
-            Mesh3d(assets.mist_mesh.clone()),
-            MeshMaterial3d(mat),
-            Transform::from_translation(spawn_pos).with_scale(Vec3::splat(initial_scale)),
-            MistWakeParticle {
-                kind: MistParticleKind::VaporPuff,
-                velocity: velocity_vec,
-                lifetime: Timer::from_seconds(0.75, TimerMode::Once),
-                initial_scale,
-                target_scale,
-            },
-        ));
-    }
-
-    // Micro-Bubble cluster trailing in the suction pocket
-    let bubble_seed = (bubble_pos.x * 23.1 + bubble_pos.z * 67.3).fract().abs();
-    let micro_bubble_pos = bubble_pos
-        + trail_dir * (radius * 0.95)
-        + right_dir * ((bubble_seed * std::f32::consts::TAU).cos() * (radius * 0.25))
-        + up_dir * ((bubble_seed * std::f32::consts::TAU).sin() * (radius * 0.20));
-
-    let bubble_mat = mist_materials.add(MistWakeMaterial {
+    let mat = mist_materials.add(MistWakeMaterial {
         uniform: MistWakeUniformGpu {
-            base_color: Vec4::new(0.9, 0.7, 1.0, flow_angle),
+            base_color: Vec4::new(0.15, 0.88, 1.0, flow_angle),
             age: 0.0,
-            speed_boosted: 2,
-            seed: bubble_seed,
-            aspect: 1.0,
+            speed_boosted: u32::from(speed_boosted),
+            seed: seed_salt,
+            aspect: 1.25,
         },
     });
 
     commands.spawn((
         Mesh3d(assets.mist_mesh.clone()),
-        MeshMaterial3d(bubble_mat),
-        Transform::from_translation(micro_bubble_pos).with_scale(Vec3::splat(radius * 1.3)),
+        MeshMaterial3d(mat),
+        Transform::from_translation(spawn_pos).with_scale(Vec3::splat(initial_scale)),
         MistWakeParticle {
-            kind: MistParticleKind::MicroBubble,
-            velocity: lab_conveyor + forward_dir * (world_speed * 0.10) + Vec3::new(0.0, 0.15, 0.0),
-            lifetime: Timer::from_seconds(0.85, TimerMode::Once),
-            initial_scale: radius * 1.3,
-            target_scale: radius * 2.0,
+            kind: MistParticleKind::VaporPuff,
+            velocity: velocity_vec,
+            lifetime: Timer::from_seconds(0.95, TimerMode::Once),
+            initial_scale,
+            target_scale,
         },
     ));
-
-    // Overclock sparks plume
-    if speed_boosted || world_speed > 3.0 {
-        for i in 0..2 {
-            let spark_offset = trail_dir * (radius * 0.6)
-                + right_dir * ((i as f32 * 2.8).sin() * (radius * 0.20))
-                + up_dir * ((i as f32 * 2.8).cos() * (radius * 0.20));
-            let seed_s = ((bubble_pos.x + spark_offset.x) * 51.4
-                + (bubble_pos.z + spark_offset.z) * 89.2)
-                .fract()
-                .abs();
-            let mat_s = mist_materials.add(MistWakeMaterial {
-                uniform: MistWakeUniformGpu {
-                    base_color: Vec4::new(1.0, 0.60, 0.16, flow_angle),
-                    age: 0.0,
-                    speed_boosted: 1,
-                    seed: seed_s,
-                    aspect: 1.0,
-                },
-            });
-
-            commands.spawn((
-                Mesh3d(assets.mist_mesh.clone()),
-                MeshMaterial3d(mat_s),
-                Transform::from_translation(bubble_pos + spark_offset)
-                    .with_scale(Vec3::splat(radius * 1.1)),
-                MistWakeParticle {
-                    kind: MistParticleKind::OverclockSpark,
-                    velocity: lab_conveyor
-                        + forward_dir * (world_speed * 0.15)
-                        + Vec3::new(0.0, 0.2, 0.0),
-                    lifetime: Timer::from_seconds(0.5, TimerMode::Once),
-                    initial_scale: radius * 1.1,
-                    target_scale: radius * 1.8,
-                },
-            ));
-        }
-    }
 }
 
 /// Updates and advances mist wake particles with billboard camera alignment, lifetime aging, and exponential aerodynamic drag.
@@ -591,7 +489,7 @@ pub fn update_mist_wake_system(
             commands.entity(entity).despawn();
         } else {
             // Exponential aerodynamic air damping bringing mist quickly to a rest in ambient air
-            let drag = (-3.8 * dt).exp();
+            let drag = (-2.2 * dt).exp();
             particle.velocity *= drag;
 
             if particle.kind == MistParticleKind::MicroBubble {

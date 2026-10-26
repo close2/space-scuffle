@@ -281,7 +281,7 @@ pub fn run_app(mode: ClientMode, max_frames: Option<u64>) {
 
     let is_virtual_or_test =
         max_frames.is_some() || std::env::var("SPACE_SCUFFLE_VIRTUAL_GPU").is_ok();
-    let is_visible = !is_virtual_or_test;
+    let is_visible = !is_virtual_or_test || std::env::var("SPACE_SCUFFLE_SHOW_WINDOW").is_ok();
 
     App::new()
         .add_plugins(

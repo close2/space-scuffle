@@ -1,11 +1,11 @@
 // assets/shaders/bubble_dome.wgsl
 // Unified shader for Mobile Unit Spheres and Building Hemisphere Domes in Space Scuffle.
-// Implements Sub-System V2+ High-Precision Glass Optics:
-// - High-tessellation view-aligned spherical lens projection with glass magnification
-// - Direct-on-sphere holographic meridian racing stripe with animated energy pulses
-// - Target-lock weapon aperture ring on the glass shell
-// - Whole-bubble luminous shield energy surge and hull plasma flare
-// - Crisp dual-light studio specular glare & thin-film iridescent Fresnel rim
+// Implements Plan 19 Perfectly Round 3D Crystal Sphere Optics:
+// - Camera-to-sphere-center orthonormal basis invariant across all fragments of the sphere
+// - Perspective-correct silhouette horizon: r = sqrt(1.0 - n_dot_v^2) reaches 1.0 at 360-degree boundary
+// - Studio crescent rim specular highlights (upper-left key & lower-right bounce) leaving center 100% crystal clear
+// - Directional indicator re-engineered as a sleek rim arc confined strictly to outer Fresnel annulus [0.86, 0.98]
+// - Dynamic video texture array sampling with spherical lens magnification
 // - Voronoi spiderweb glass fractures & CRT scanlines
 
 #import bevy_pbr::mesh_view_bindings::{view, globals}
@@ -40,13 +40,13 @@ struct BubbleUniform {
 // Modular Feature Bitflags
 const FLAG_CLOAKED: u32 = 1u;         // 1 << 0
 const FLAG_SELECTED: u32 = 2u;        // 1 << 1
-const FLAG_GLARE: u32 = 4u;           // 1 << 2: Dual studio specular reflections
+const FLAG_GLARE: u32 = 4u;           // 1 << 2: Studio crescent rim specular reflections
 const FLAG_FRESNEL: u32 = 8u;         // 1 << 3: Iridescent thin-film Fresnel rim
 const FLAG_INNER_WARP: u32 = 16u;     // 1 << 4: View-aligned spherical lens warp
 const FLAG_CRACKS: u32 = 32u;         // 1 << 5: Voronoi glass cracks & electrical arcing
 const FLAG_CRT_GLITCH: u32 = 64u;     // 1 << 6: CRT scanlines & chromatic aberration
 const FLAG_SPEED_BOOSTED: u32 = 128u; // 1 << 7: Hyper wake glow
-const FLAG_FACING_STRIPE: u32 = 256u; // 1 << 8: Direct-on-sphere facing stripe
+const FLAG_FACING_STRIPE: u32 = 256u; // 1 << 8: Rim-confined facing indicator
 const FLAG_ATTACK_APERTURE: u32 = 512u;// 1 << 9: Target-lock weapon aperture
 
 // Procedural 2D hash for Voronoi glass cracks
@@ -77,19 +77,21 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let view_dir = normalize(view.world_position - in.world_position.xyz);
     let normal = normalize(in.world_normal);
 
-    // 1. View-Aligned Camera Projection Basis
-    let cam_forward = normalize(in.world_position.xyz - view.world_position);
+    // Exact sphere center in world space (invariant across all fragments of the sphere!)
+    let sphere_center = in.world_position.xyz - normal * bubble.radius;
+    let cam_forward = normalize(sphere_center - view.world_position);
     let cam_right = normalize(cross(vec3<f32>(0.0, 1.0, 0.0), cam_forward));
     let cam_up = cross(cam_forward, cam_right);
 
-    // Orthographic/Spherical Disk Projection of Normal
     let disk = vec2<f32>(dot(normal, cam_right), -dot(normal, cam_up));
-    let r2 = dot(disk, disk);
-    let r = sqrt(min(r2, 1.0));
+    let n_dot_v = max(dot(normal, view_dir), 0.0);
+    let r2 = clamp(1.0 - n_dot_v * n_dot_v, 0.0, 1.0);
+    let r = sqrt(r2);
+    let disk_dir = select(vec2<f32>(1.0, 0.0), disk / max(length(disk), 0.0001), length(disk) > 0.0001);
 
     // Optical glass lens refraction and magnification
     let z_lens = sqrt(max(1.0 - r2, 0.0));
-    var lens_uv = vec2<f32>(0.5, 0.5) + disk * mix(0.48, 0.34, z_lens);
+    var lens_uv = vec2<f32>(0.5, 0.5) + disk * mix(0.48, 0.35, z_lens);
 
     // Facing-aware horizontal mirroring
     let heading_dir = vec3<f32>(cos(bubble.heading_angle_rad), 0.0, sin(bubble.heading_angle_rad));
@@ -97,9 +99,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         lens_uv.x = 1.0 - lens_uv.x;
     }
 
-    // Lens aperture vignette & edge depth darkening
-    let lens_mask = 1.0 - smoothstep(0.85, 0.98, r);
-    let glass_depth_tint = 1.0 - smoothstep(0.78, 0.99, r) * 0.45;
+    // Lens aperture vignette & edge depth darkening (kicks in only near glass rim r > 0.85)
+    let lens_mask = 1.0 - smoothstep(0.88, 0.99, r);
+    let glass_depth_tint = 1.0 - smoothstep(0.80, 0.99, r) * 0.40;
 
     // CRT Scanlines & Glitch Aberration
     var scanline_mult = 1.0;
@@ -132,7 +134,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // 2. Crystal-Clear Center with Steep Iridescent Fresnel Rim
-    let F = pow(r, 3.5);
+    let F = pow(r, 3.8);
     var rim_color = vec3<f32>(0.0);
     if ((bubble.feature_flags & FLAG_FRESNEL) != 0u) {
         let iridescence = vec3<f32>(
@@ -140,41 +142,42 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             0.5 + 0.5 * cos(6.28318 * (F + 0.333)),
             0.5 + 0.5 * cos(6.28318 * (F + 0.667))
         );
-        rim_color = mix(bubble.team_color.rgb, iridescence, 0.35) * F * 2.8;
+        rim_color = mix(bubble.team_color.rgb, iridescence, 0.40) * F * 3.2;
     }
 
-    // 3. Crisp Dual-Light Studio Glare & Specular Reflection
+    // 3. Studio Crescent Rim Specular Highlights (Center r < 0.65 is 100% CLEAR!)
     var specular = 0.0;
     if ((bubble.feature_flags & FLAG_GLARE) != 0u) {
-        let l1 = normalize(vec3<f32>(-0.6, 0.8, 0.4));
-        let L1 = normalize(view_dir + l1);
-        let glare1 = pow(max(dot(normal, L1), 0.0), 48.0) * 1.35;
+        // Upper-left key light crescent
+        let l1 = normalize(cam_up * 0.70 - cam_right * 0.55 + cam_forward * 0.45);
+        let H1 = normalize(view_dir + l1);
+        let spec1 = pow(max(dot(normal, H1), 0.0), 36.0);
+        let rim_mask1 = smoothstep(0.68, 0.88, r) * (1.0 - smoothstep(0.95, 1.0, r));
+        let glare1 = spec1 * rim_mask1 * 2.4;
 
-        let l2 = normalize(vec3<f32>(0.5, -0.6, -0.3));
-        let L2 = normalize(view_dir + l2);
-        let glare2 = pow(max(dot(normal, L2), 0.0), 24.0) * 0.40;
+        // Lower-right ambient bounce crescent
+        let l2 = normalize(-cam_up * 0.60 + cam_right * 0.50 + cam_forward * 0.35);
+        let H2 = normalize(view_dir + l2);
+        let spec2 = pow(max(dot(normal, H2), 0.0), 20.0);
+        let rim_mask2 = smoothstep(0.78, 0.92, r) * (1.0 - smoothstep(0.97, 1.0, r));
+        let glare2 = spec2 * rim_mask2 * 0.85;
 
         specular = glare1 + glare2;
     }
 
-    // 4. Direct-on-Sphere Meridian Racing Stripe & Chevron Band
+    // 4. Directional Indicator: Sleek Rim Arc Confined Strictly to Outer Fresnel Annulus [0.86, 0.98]
+    // NEVER draw lines across the interior (r < 0.85) of the sphere!
     var direction_stripe = vec3<f32>(0.0);
-    if (bubble.shape_kind == 0u && (bubble.feature_flags & FLAG_FACING_STRIPE) != 0u) { // Mobile units
-        let horiz_normal = normalize(vec3<f32>(normal.x, 0.0001, normal.z));
-        let forward_align = dot(horiz_normal, heading_dir);
-        let heading_right = vec3<f32>(-heading_dir.z, 0.0, heading_dir.x);
-        let lateral_dist = abs(dot(normal, heading_right));
+    if (bubble.shape_kind == 0u && (bubble.feature_flags & FLAG_FACING_STRIPE) != 0u) {
+        let heading_2d = normalize(vec2<f32>(dot(heading_dir, cam_right), -dot(heading_dir, cam_up)));
+        let align = dot(disk_dir, heading_2d);
 
-        // Forward meridian spine stripe
-        let meridian_stripe = smoothstep(0.08, 0.02, lateral_dist) * smoothstep(0.15, 0.95, forward_align);
-        // Slanted equatorial guide band
-        let eq_band = smoothstep(0.045, 0.010, abs(normal.y + 0.18)) * smoothstep(0.10, 0.85, forward_align);
-        // Animated forward pulse
-        let pulse_phase = fract(globals.time * 2.5 - forward_align * 3.5);
-        let pulse_glow = smoothstep(0.25, 0.0, abs(pulse_phase - 0.5));
+        let rim_annulus = smoothstep(0.86, 0.93, r) * (1.0 - smoothstep(0.96, 0.995, r));
+        let angular_arc = smoothstep(0.65, 0.96, align);
+        let pulse = sin(globals.time * 5.0 - (1.0 - align) * 4.0) * 0.25 + 0.75;
+        let nose_accent = angular_arc * rim_annulus * (1.4 + 0.6 * pulse);
 
-        let stripe_total = meridian_stripe * (1.2 + 0.7 * pulse_glow) + eq_band * 0.75;
-        direction_stripe = mix(bubble.team_color.rgb, vec3<f32>(1.0, 1.0, 1.0), 0.35) * stripe_total * 2.8;
+        direction_stripe = mix(bubble.team_color.rgb, vec3<f32>(1.0, 1.0, 1.0), 0.40) * nose_accent * 2.8;
     }
 
     // 5. Target-Lock Weapon Aperture on Glass Surface

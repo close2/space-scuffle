@@ -49,6 +49,10 @@ fn test_shader_wgsl_syntax_and_uniform_alignment() {
     assert!(shader_source.contains("FLAG_INNER_WARP"));
     assert!(shader_source.contains("FLAG_FACING_STRIPE"));
     assert!(shader_source.contains("FLAG_ATTACK_APERTURE"));
+    assert!(
+        shader_source.contains("n_dot_v"),
+        "bubble_dome.wgsl must compute n_dot_v for perspective-correct horizon"
+    );
 
     // Verify memory layout exactly equals 96 bytes and 16-byte alignment
     assert_eq!(size_of::<BubbleUniformGpu>(), 96);
@@ -101,12 +105,19 @@ fn test_mist_wake_uniform_and_shader_invariants() {
     assert!(shader_source.contains("@group(2) @binding(0)"));
     assert!(shader_source.contains("@fragment"));
     assert!(
-        shader_source.contains("alpha < 0.008") || shader_source.contains("alpha < 0.015"),
+        shader_source.contains("alpha < 0.002")
+            || shader_source.contains("alpha < 0.008")
+            || shader_source.contains("alpha < 0.012")
+            || shader_source.contains("alpha < 0.015"),
         "mist_wake.wgsl must discard fragments with sub-threshold alpha"
     );
     assert!(
         shader_source.contains("discard;"),
         "mist_wake.wgsl must invoke discard; to prevent black discs"
+    );
+    assert!(
+        shader_source.contains("OCTAVE_ROT"),
+        "mist_wake.wgsl must use OCTAVE_ROT matrix to eliminate grid stripes"
     );
 
     // Verify memory layout exactly equals 32 bytes and 16-byte alignment
@@ -120,7 +131,7 @@ fn test_mist_wake_material_alpha_and_depth_bias() {
         uniform: MistWakeUniformGpu::default(),
     };
     assert_eq!(mat.alpha_mode(), AlphaMode::Add);
-    assert_eq!(mat.depth_bias(), -15.0);
+    assert_eq!(mat.depth_bias(), -4.0);
 }
 
 #[test]

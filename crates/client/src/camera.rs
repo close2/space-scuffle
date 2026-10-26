@@ -43,7 +43,7 @@ pub struct RtsCamera {
 impl Default for RtsCamera {
     fn default() -> Self {
         Self {
-            target: Vec2::new(16.0, 16.0),
+            target: Vec2::new(16.0, 32.0),
             distance: 22.0,
             pitch: DEFAULT_CAMERA_PITCH_RAD,
             pan_speed: 25.0,

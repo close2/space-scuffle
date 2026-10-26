@@ -422,13 +422,9 @@ pub fn sync_lab_preview_system(
 
         let lab_frame = (time.elapsed_secs() * 30.0) as u64;
         let is_moving = lab_state.speed > 0.05;
-        let throttled = if is_moving {
-            lab_frame % 2 == 0
-        } else {
-            lab_frame % 10 == 0
-        };
+        let throttled = is_moving && lab_frame % 2 == 0;
 
-        if is_selected && lab_state.opt_mist_wake && throttled {
+        if !is_dome && lab_state.opt_mist_wake && throttled {
             emit_mist_wake(
                 &mut commands,
                 &vfx_assets,
@@ -577,13 +573,8 @@ pub fn sync_live_battle_system(
             }
 
             let moving = instance.velocity[0].abs() + instance.velocity[1].abs() > 0.0005;
-            let throttled = if moving {
-                (snapshot.tick.0 + instance.entity_id.0) % 2 == 0
-            } else {
-                (snapshot.tick.0 + instance.entity_id.0) % 10 == 0
-            };
 
-            if throttled && !is_dome {
+            if moving && !is_dome {
                 emit_mist_wake(
                     &mut commands,
                     &vfx_assets,

@@ -61,12 +61,11 @@ project number: 000000000000
 
 #[test]
 fn test_resolve_credentials_from_workspace() {
-    let creds = match resolve_credentials() {
-        Ok(c) => c,
-        Err(_) => {
-            std::env::set_var("GEMINI_API_KEY", "AIzaSyCiFallbackTestKey12345");
-            resolve_credentials().expect("Should resolve credentials from env fallback in CI")
-        }
+    let creds = if let Ok(c) = resolve_credentials() {
+        c
+    } else {
+        std::env::set_var("GEMINI_API_KEY", "AIzaSyCiFallbackTestKey12345");
+        resolve_credentials().expect("Should resolve credentials from env fallback in CI")
     };
     assert_ne!(creds.api_key, "");
     assert_ne!(creds.project_id, "");
