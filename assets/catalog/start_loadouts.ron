@@ -1,0 +1,25 @@
+(
+    loadouts: [
+        (
+            slug: "battle_automaton",
+            display_name: "Automaton Directorate — field skirmish",
+            town_hall: "foundry_core_dome",
+            units: [
+                (slug: "welder_drone", count: 2),
+                (slug: "pulse_bot", count: 8),
+                (slug: "rhino_beetle", count: 2),
+            ],
+        ),
+        (
+            slug: "standard_automaton",
+            display_name: "Automaton Directorate — standard start",
+            town_hall: "foundry_core_dome",
+            units: [
+                (
+                    slug: "welder_drone",
+                    count: 6,
+                ),
+            ],
+        ),
+    ],
+)

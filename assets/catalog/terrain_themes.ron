@@ -1,0 +1,64 @@
+// Space Scuffle Terrain Visual Theme Catalog
+// Declarative definitions of terrain themes, texture generation prompts,
+// material ranges (metallic, roughness), tiling rates, and lighting parameters.
+(
+    themes: [
+        (
+            slug: "orbital_foundry",
+            display_name: "Orbital Foundry",
+            texture_size: 1024,
+            layers: (
+                grass: (
+                    name: "lumen_moss",
+                    source: "source_art/terrain/orbital_foundry/lumen_moss.png",
+                    metallic: 0.0,
+                    roughness_range: (0.70, 0.95),
+                    normal_strength: 2.0,
+                    prompt: "Seamless tileable top-down texture of a flat carpet of short dense alien moss with tiny faintly glowing teal spores, fine-grained and low-contrast so units remain readable on it, no large plants, no stones, no structures, stylized hand-painted sci-fi RTS ground, even diffuse lighting, no shadows, no perspective, no text, square",
+                ),
+                metal_plate: (
+                    name: "deck_plating",
+                    source: "source_art/terrain/orbital_foundry/deck_plating.png",
+                    tiling: SourceSeamless(max_seam_score: 2.0),
+                    metallic: 0.65,
+                    roughness_range: (0.30, 0.60),
+                    normal_strength: 3.0,
+                    prompt: "Seamless tileable top-down texture of worn sci-fi metal deck plating, large rectangular panels, rivets, subtle scratches, brushed gunmetal with faint cyan accent lines, stylized hand-painted RTS ground, even diffuse lighting, no perspective, no text, square",
+                ),
+                dirt: (
+                    name: "regolith",
+                    source: "source_art/terrain/orbital_foundry/regolith.png",
+                    metallic: 0.0,
+                    roughness_range: (0.80, 1.00),
+                    normal_strength: 2.5,
+                    prompt: "Seamless tileable top-down texture of grey-brown alien regolith dust with small pebbles and fine cracks, stylized hand-painted RTS ground, even diffuse lighting, no perspective, no text, square",
+                ),
+                cliff: (
+                    name: "basalt_wall",
+                    source: "source_art/terrain/orbital_foundry/basalt_wall.png",
+                    metallic: 0.05,
+                    roughness_range: (0.55, 0.90),
+                    normal_strength: 4.0,
+                    prompt: "Seamless tileable texture of a vertical dark basalt cliff face with layered strata and fractures, subtle bluish mineral veins, stylized hand-painted sci-fi RTS cliff, front view, even diffuse lighting, no sky, no text, square",
+                ),
+            ),
+            backdrop: (
+                source: "source_art/terrain/orbital_foundry/void_nebula.png",
+                prompt: "Deep space backdrop, very dark navy void with faint purple and teal nebula wisps and sparse tiny stars, seamless, no planets, no text, square",
+            ),
+            baked_dir: "textures/terrain/orbital_foundry",
+            ground_tiles_per_unit: 0.25,
+            cliff_tiles_per_unit: 0.20,
+            lighting: (
+                sun_illuminance_lux: 14000.0,
+                sun_elevation_deg: 48.0,
+                sun_azimuth_deg: 225.0,
+                ambient_color_srgb: (0.65, 0.78, 1.0),
+                ambient_brightness: 350.0,
+                void_color_srgb: (0.01, 0.012, 0.03),
+                guardrail_emissive_srgb: (0.15, 0.85, 1.0),
+                guardrail_emissive_intensity: 4.0,
+            ),
+        ),
+    ],
+)
