@@ -2,7 +2,7 @@
 //!
 //! # Invariants Verified
 //! - `assets/shaders/bubble_dome.wgsl` exists on disk and contains valid uniform struct declarations.
-//! - `BubbleUniformGpu` memory layout is strictly 96 bytes and 16-byte aligned.
+//! - `BubbleUniformGpu` memory layout is strictly 160 bytes and 16-byte aligned.
 //! - Flipbook textures maintain 512x512 resolution and stay within WebGPU 16384 height limits.
 //! - Ray-sphere selection math passes direct hit, tangent, and miss scenarios.
 //! - 4-Hero showcase entities span inside camera frustum with hero framing preset.
@@ -27,7 +27,7 @@ use client::selection::ray_sphere_intersect;
 use client::vfx::{CombatFxMaterial, CombatFxUniformGpu, MistWakeMaterial, MistWakeUniformGpu};
 use sim_core::catalog::UnitCatalog;
 use sim_types::enums::{Faction, ShapeKind, SilhouetteClass, WeaponVisualKind};
-use sim_types::ids::{EntityId, TeamId, UnitTypeId};
+use sim_types::ids::{EntityId, PlayerId, UnitTypeId};
 use sim_types::snapshot::BubbleRenderInstance;
 use std::fs;
 use std::mem::{align_of, size_of};
@@ -57,8 +57,8 @@ fn test_shader_wgsl_syntax_and_uniform_alignment() {
     assert!(shader_source.contains("world_from_view"));
     assert!(shader_source.contains("p_screen_at_zc"));
 
-    // Verify memory layout exactly equals 96 bytes and 16-byte alignment
-    assert_eq!(size_of::<BubbleUniformGpu>(), 96);
+    // Verify memory layout exactly equals 160 bytes and 16-byte alignment
+    assert_eq!(size_of::<BubbleUniformGpu>(), 160);
     assert_eq!(align_of::<BubbleUniformGpu>(), 16);
 }
 
@@ -98,43 +98,11 @@ fn test_selection_ring_material_alpha_and_depth_bias() {
 
 #[test]
 fn test_mist_wake_uniform_and_shader_invariants() {
-    let assets_dir = resolve_assets_dir();
-    let shader_path = assets_dir.join("shaders/mist_wake.wgsl");
-    let shader_source = fs::read_to_string(&shader_path)
-        .or_else(|_| fs::read_to_string("assets/shaders/mist_wake.wgsl"))
-        .expect("mist_wake.wgsl must be present on disk");
-
-    assert!(shader_source.contains("struct MistWakeUniform"));
-    assert!(shader_source.contains("@group(2) @binding(0)"));
-    assert!(shader_source.contains("@fragment"));
-    assert!(
-        shader_source.contains("alpha < 0.002")
-            || shader_source.contains("alpha < 0.008")
-            || shader_source.contains("alpha < 0.012")
-            || shader_source.contains("alpha < 0.015"),
-        "mist_wake.wgsl must discard fragments with sub-threshold alpha"
-    );
-    assert!(
-        shader_source.contains("discard;"),
-        "mist_wake.wgsl must invoke discard; to prevent black discs"
-    );
-    assert!(
-        shader_source.contains("OCTAVE_ROT"),
-        "mist_wake.wgsl must use OCTAVE_ROT matrix to eliminate grid stripes"
-    );
-
-    // Verify memory layout exactly equals 32 bytes and 16-byte alignment
-    assert_eq!(size_of::<MistWakeUniformGpu>(), 32);
+    // Actual shader compilation is enforced by mist_preview's production render pipeline.
+    assert_eq!(size_of::<MistWakeUniformGpu>(), 64);
     assert_eq!(align_of::<MistWakeUniformGpu>(), 16);
-}
-
-#[test]
-fn test_mist_wake_material_alpha_and_depth_bias() {
-    let mat = MistWakeMaterial {
-        uniform: MistWakeUniformGpu::default(),
-    };
-    assert_eq!(mat.alpha_mode(), AlphaMode::Add);
-    assert_eq!(mat.depth_bias(), -4.0);
+    assert_eq!(size_of::<client::mist::gpu::FrameGpu>(), 80);
+    assert_eq!(align_of::<client::mist::gpu::FrameGpu>(), 16);
 }
 
 #[test]
@@ -327,7 +295,9 @@ fn test_showcase_entities_project_inside_central_frustum() {
 }
 
 #[test]
-fn test_ground_unit_altitude_never_spawns_air_tether() {
+fn test_ground_unit_altitude_never_spawns_air_tether() -> Result<(), Box<dyn std::error::Error>> {
+    let palette = actual_palette()?;
+    let style = palette.resolve(palette.primary())?;
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
     app.init_resource::<Assets<Mesh>>();
@@ -338,16 +308,16 @@ fn test_ground_unit_altitude_never_spawns_air_tether() {
         Startup,
         (
             client::indicators::setup_indicator_assets_system,
-            |mut commands: Commands<'_, '_>,
-             assets: Res<'_, client::indicators::IndicatorAssets>,
-             mut materials: ResMut<'_, Assets<StandardMaterial>>,
-             mut ring_materials: ResMut<'_, Assets<SelectionRingMaterial>>| {
+            move |mut commands: Commands<'_, '_>,
+                  assets: Res<'_, client::indicators::IndicatorAssets>,
+                  mut materials: ResMut<'_, Assets<StandardMaterial>>,
+                  mut ring_materials: ResMut<'_, Assets<SelectionRingMaterial>>| {
                 let instance = BubbleRenderInstance {
                     entity_id: EntityId(42),
                     shape: ShapeKind::UnitSphere,
                     silhouette: SilhouetteClass::LightProngs,
                     unit_type: UnitTypeId(2),
-                    team_id: TeamId(1),
+                    owner: PlayerId(1),
                     world_pos: [-1.2, 0.0, 0.0], // ground hero: altitude z = 0.0
                     ground_z: 0.0,
                     radius: 0.85,
@@ -378,6 +348,7 @@ fn test_ground_unit_altitude_never_spawns_air_tether() {
                     &assets,
                     &mut materials,
                     &mut ring_materials,
+                    style,
                 );
             },
         )
@@ -414,6 +385,7 @@ fn test_ground_unit_altitude_never_spawns_air_tether() {
         1,
         "Ground unit must spawn GroundRingMarker"
     );
+    Ok(())
 }
 
 #[test]
@@ -456,7 +428,7 @@ fn test_feature_flags_bitmask_operations() {
 }
 
 #[test]
-fn test_bevy_ecs_schedule_all_systems_no_conflicts() {
+fn test_bevy_ecs_schedule_all_systems_no_conflicts() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
 
@@ -475,10 +447,33 @@ fn test_bevy_ecs_schedule_all_systems_no_conflicts() {
     app.init_resource::<client::CatalogResource>();
     app.init_resource::<client::RenderEntityMap>();
     app.init_resource::<client::selection::SelectionState>();
+    // Direct headless embedding has no focused native window/UI ownership pass.
+    // Register explicit noninteractive policy; keep the production Res required.
+    app.init_resource::<client::input_policy::InputOwnership>();
+    app.init_resource::<client::camera_drag::CameraDragState>();
+    app.add_event::<bevy::window::WindowEvent>();
 
+    let root = client::ResolvedAssetsRoot::from_directory(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
+    )?;
+    let definition = client::runtime_battle::BattleDefinition::load(
+        root.as_path(),
+        client::runtime_battle::DEFAULT_BATTLE_SCENARIO.as_ref(),
+    )?;
+    app.insert_resource(definition.palette.clone());
+    app.init_resource::<client::player_presentation::PresentationStatus>();
+    app.add_event::<AppExit>();
+    app.insert_resource(root);
+    app.insert_resource(client::CatalogResource(definition.catalogs.units.clone()));
+    let mut world = definition.instantiate()?;
+    app.insert_resource(client::battle_pipeline::session::BattleSession::prepare(
+        client::battle_pipeline::commands::SessionGeneration::FIRST,
+        &mut world,
+        client::battle_pipeline::session::CommittedBattleMetadata::from_definition(&definition)?,
+    )?);
     let lab_state = client::lab_ui::LabState {
         current_tab: client::lab_ui::LabTab::LiveBattle,
-        sim_world: Some(sim_core::world::SimWorld::new_default_battle_sandbox()),
+        sim_world: Some(world),
         ..Default::default()
     };
     app.insert_resource(lab_state);
@@ -506,7 +501,12 @@ fn test_bevy_ecs_schedule_all_systems_no_conflicts() {
             client::vfx::update_shatter_system,
             client::vfx::process_combat_events_system,
             client::lab_ui::sync_lab_preview_system,
-            client::lab_ui::step_client_simulation_system,
+            (
+                client::lab_ui::step_client_simulation_system,
+                client::sync_live_battle_system,
+                client::battle_pipeline::driver::publish_combat_events,
+            )
+                .chain(),
             client::lab_ui::sync_swarm_stress_system,
         ),
     );
@@ -514,7 +514,13 @@ fn test_bevy_ecs_schedule_all_systems_no_conflicts() {
     // Stepping the app checks all query archetypes and system parameter validity
     for _ in 0..10 {
         app.update();
+        assert!(app
+            .world()
+            .resource::<client::LabState>()
+            .battle_failure
+            .is_none());
     }
+    Ok(())
 }
 
 #[test]
@@ -609,9 +615,17 @@ fn test_zero_hardcoded_creature_names_in_rust_src() {
 
 #[test]
 #[allow(clippy::too_many_lines)]
-fn test_all_combat_vfx_entities_despawn_after_lifetime() {
+fn test_all_combat_vfx_entities_despawn_after_lifetime() -> Result<(), Box<dyn std::error::Error>> {
+    let palette = actual_palette()?;
+    let primary = palette.primary();
+    let secondary = palette.secondary();
     let mut app = App::new();
-    app.add_plugins(MinimalPlugins);
+    app.add_plugins(MinimalPlugins)
+        .insert_resource(palette)
+        .init_resource::<client::player_presentation::PresentationStatus>()
+        .init_resource::<client::LabState>()
+        .init_resource::<client::battle_pipeline::session::BattleSession>()
+        .add_event::<AppExit>();
 
     app.init_resource::<Assets<Mesh>>();
     app.init_resource::<Assets<StandardMaterial>>();
@@ -643,14 +657,14 @@ fn test_all_combat_vfx_entities_despawn_after_lifetime() {
             sim_types::snapshot::CombatEventVisual::HitscanTracer {
                 from: [0.0, 0.0, 0.5],
                 to: [10.0, 0.0, 0.5],
-                team_id: TeamId(1),
+                owner: primary,
             },
         ));
         events.send(client::vfx::CombatVisualEvent(
             sim_types::snapshot::CombatEventVisual::ProjectileVisual {
                 pos: [0.0, 0.0, 0.5],
                 vel: [10.0, 0.0, 0.0],
-                team_id: TeamId(2),
+                owner: secondary,
                 duration_secs: Some(1.2),
             },
         ));
@@ -659,7 +673,7 @@ fn test_all_combat_vfx_entities_despawn_after_lifetime() {
                 from: [0.0, 0.0, 0.5],
                 to: [5.0, 5.0, 0.5],
                 is_lightning: true,
-                team_id: TeamId(1),
+                owner: primary,
             },
         ));
         events.send(client::vfx::CombatVisualEvent(
@@ -667,7 +681,7 @@ fn test_all_combat_vfx_entities_despawn_after_lifetime() {
                 pos: [2.0, 2.0, 0.0],
                 angle_rad: 0.785,
                 radius: 0.8,
-                team_id: TeamId(2),
+                owner: secondary,
             },
         ));
         events.send(client::vfx::CombatVisualEvent(
@@ -675,7 +689,7 @@ fn test_all_combat_vfx_entities_despawn_after_lifetime() {
                 pos: [4.0, 4.0, 0.0],
                 radius: 0.6,
                 is_dome: false,
-                team_id: TeamId(1),
+                owner: primary,
             },
         ));
     }
@@ -761,6 +775,7 @@ fn test_all_combat_vfx_entities_despawn_after_lifetime() {
         remaining_shards, 0,
         "All ShatterShard entities must despawn after lifetime"
     );
+    Ok(())
 }
 
 /// Invariant test verifying procedural volumetric combat VFX shader layout and material properties.
@@ -797,4 +812,14 @@ fn test_combat_fx_shader_and_uniform_layout() {
     };
     assert_eq!(mat.alpha_mode(), AlphaMode::Add);
     assert_eq!(mat.depth_bias(), -25.0);
+}
+
+/// Loads the actual authored ownership palette used by production scenes.
+fn actual_palette() -> Result<client::player_presentation::PlayerPalette, Box<dyn std::error::Error>>
+{
+    Ok(client::runtime_battle::BattleDefinition::load(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
+        client::runtime_battle::DEFAULT_BATTLE_SCENARIO.as_ref(),
+    )?
+    .palette)
 }

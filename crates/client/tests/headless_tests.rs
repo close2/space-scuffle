@@ -1,7 +1,7 @@
 //! Automated headless integration tests for the Space Scuffle client crate.
 //!
 //! # Invariants Verified
-//! - Uniform memory packing is strictly 96 bytes and 16-byte aligned.
+//! - Uniform memory packing is strictly 160 bytes and 16-byte aligned.
 //! - RTS Camera perspective pitch is 58°, distance clamps to [3.0, 48.0], and bookmarks round-trip.
 //! - Visual Lab state transitions properly reflect health thresholds (cracks < 75%, glitch < 35%).
 //! - Headless 60-frame simulation synchronization steps deterministically without panics.
@@ -18,7 +18,7 @@ use client::run_headless_check;
 use sim_core::world::SimWorld;
 use sim_types::commands::TickBundle;
 use sim_types::enums::{AnimState, ShapeKind, SilhouetteClass, WeaponVisualKind};
-use sim_types::ids::{EntityId, TeamId, Tick, UnitTypeId};
+use sim_types::ids::{EntityId, PlayerId, Tick, UnitTypeId};
 use sim_types::snapshot::BubbleRenderInstance;
 
 use core::mem::{align_of, size_of};
@@ -60,9 +60,9 @@ fn test_camera_invariants() {
 }
 
 #[test]
-fn test_bubble_uniform_packing() {
+fn test_bubble_uniform_packing() -> Result<(), Box<dyn std::error::Error>> {
     // Assert struct size matches WGSL BubbleUniform layout exactly
-    assert_eq!(size_of::<BubbleUniformGpu>(), 96);
+    assert_eq!(size_of::<BubbleUniformGpu>(), 160);
     assert_eq!(align_of::<BubbleUniformGpu>(), 16);
 
     let instance = BubbleRenderInstance {
@@ -70,7 +70,7 @@ fn test_bubble_uniform_packing() {
         shape: ShapeKind::UnitSphere,
         silhouette: SilhouetteClass::LightProngs,
         unit_type: UnitTypeId(2),
-        team_id: TeamId(1),
+        owner: PlayerId(1),
         world_pos: [10.0, 20.0, 1.5],
         ground_z: 0.0,
         radius: 0.75,
@@ -93,7 +93,15 @@ fn test_bubble_uniform_packing() {
         speed_boosted: true,
     };
 
-    let gpu_uniform = BubbleUniformGpu::from_instance(&instance, None);
+    let definition = client::runtime_battle::BattleDefinition::load(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
+        client::runtime_battle::DEFAULT_BATTLE_SCENARIO.as_ref(),
+    )?;
+    let gpu_uniform = BubbleUniformGpu::from_instance(
+        &instance,
+        None,
+        definition.palette.resolve(instance.owner)?,
+    );
 
     assert_eq!(gpu_uniform.shape_kind, 0); // UnitSphere
     assert_eq!(gpu_uniform.is_attacking, 1);
@@ -107,6 +115,7 @@ fn test_bubble_uniform_packing() {
     assert_eq!(gpu_uniform.radius, 0.75);
     assert_eq!(gpu_uniform.world_pos, Vec3::new(10.0, 1.5, 20.0));
     assert_eq!(gpu_uniform.hp_ratio, 0.65);
+    Ok(())
 }
 
 #[test]

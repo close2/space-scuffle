@@ -12,7 +12,6 @@
 
 use crate::bubble_shader::{BubbleDomeMaterial, BubbleInstance, FLAG_SELECTED};
 use bevy::prelude::*;
-use bevy_egui::EguiContexts;
 use sim_types::ids::EntityId;
 
 // PERFORMANCE RATIONALE:
@@ -105,9 +104,9 @@ pub struct HeroLineupIndex(pub usize);
 #[allow(clippy::type_complexity)]
 pub fn selection_system(
     mouse_buttons: Res<'_, ButtonInput<MouseButton>>,
-    windows: Query<'_, '_, &Window>,
+    windows: Query<'_, '_, &Window, With<bevy::window::PrimaryWindow>>,
     camera_query: Query<'_, '_, (&Camera, &GlobalTransform)>,
-    mut contexts: EguiContexts<'_, '_>,
+    ownership: Res<'_, crate::input_policy::InputOwnership>,
     mut selection_state: ResMut<'_, SelectionState>,
     mut bubble_query: Query<
         '_,
@@ -122,12 +121,7 @@ pub fn selection_system(
     >,
     mut bubble_materials: ResMut<'_, Assets<BubbleDomeMaterial>>,
 ) {
-    if !mouse_buttons.just_pressed(MouseButton::Left) {
-        return;
-    }
-
-    // Skip picking if mouse pointer is over egui UI window or panel
-    if contexts.ctx_mut().wants_pointer_input() {
+    if !ownership.pointer || !mouse_buttons.just_pressed(MouseButton::Left) {
         return;
     }
 
@@ -142,7 +136,12 @@ pub fn selection_system(
         return;
     };
 
-    let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_pos) else {
+    let Some(viewport_cursor) = crate::input_policy::ViewportCoordinates::from_camera(camera)
+        .and_then(|coordinates| coordinates.viewport_from_window(cursor_pos))
+    else {
+        return;
+    };
+    let Ok(ray) = camera.viewport_to_world(camera_transform, viewport_cursor) else {
         return;
     };
 

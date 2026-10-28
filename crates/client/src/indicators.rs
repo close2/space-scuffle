@@ -94,7 +94,7 @@ pub struct SelectionRingUniformGpu {
 impl Default for SelectionRingUniformGpu {
     fn default() -> Self {
         Self {
-            team_color: Vec4::new(0.2, 0.85, 1.0, 1.0),
+            team_color: Vec4::ZERO,
             radius: 1.0,
             is_selected: 0,
             pulse_speed: 5.0,
@@ -226,18 +226,10 @@ pub fn attach_bubble_indicators(
     assets: &IndicatorAssets,
     materials: &mut Assets<StandardMaterial>,
     ring_materials: &mut Assets<SelectionRingMaterial>,
+    style: crate::player_presentation::PlayerStyle,
 ) {
-    let team_color = match instance.team_id.0 {
-        1 => Color::srgb(0.2, 0.6, 1.0),
-        2 => Color::srgb(1.0, 0.25, 0.2),
-        _ => Color::srgb(0.8, 0.8, 0.8),
-    };
-
-    let team_vec4 = match instance.team_id.0 {
-        1 => Vec4::new(0.2, 0.6, 1.0, 1.0),
-        2 => Vec4::new(1.0, 0.25, 0.2, 1.0),
-        _ => Vec4::new(0.8, 0.8, 0.8, 1.0),
-    };
+    let team_color = style.color();
+    let team_vec4 = style.linear;
 
     let team_mat = materials.add(StandardMaterial {
         base_color: team_color,
@@ -341,6 +333,15 @@ pub fn attach_bubble_indicators(
 /// Updates visibility, uniform parameters, and scales of selection reticle and overhead bars.
 #[allow(clippy::type_complexity)]
 pub fn update_indicators_system(
+    mut owners: crate::player_presentation::PresentationContext<'_>,
+    mut exit: EventWriter<'_, AppExit>,
+    mut materials: ResMut<'_, Assets<StandardMaterial>>,
+    tether_query: Query<
+        '_,
+        '_,
+        &MeshMaterial3d<StandardMaterial>,
+        (With<AirTetherMarker>, Without<OverheadHpBarMarker>),
+    >,
     lab_state: Option<Res<'_, LabState>>,
     assets: Res<'_, IndicatorAssets>,
     instance_query: Query<'_, '_, (&BubbleInstance, &Children)>,
@@ -386,6 +387,13 @@ pub fn update_indicators_system(
 
     for (instance_wrapper, children) in instance_query.iter() {
         let instance = &instance_wrapper.0;
+        let style = match owners.palette.resolve(instance.owner) {
+            Ok(style) => style,
+            Err(error) => {
+                owners.reject(error, &mut exit);
+                return;
+            }
+        };
         let is_selected = instance.selected && opt_brackets;
         let selection_vis = if is_selected {
             Visibility::Inherited
@@ -394,11 +402,18 @@ pub fn update_indicators_system(
         };
 
         for &child in children {
+            if let Ok(handle) = tether_query.get(child) {
+                if let Some(material) = materials.get_mut(&handle.0) {
+                    material.base_color = style.color();
+                    material.emissive = LinearRgba::from(style.color()) * 1.5;
+                }
+            }
             // 1. Update Holographic Ground Reticle Uniform & Visibility
             if let Ok((ring_mat_handle, mut ring_vis)) = ring_query.get_mut(child) {
                 *ring_vis = selection_vis;
                 if let Some(mat) = ring_materials.get_mut(&ring_mat_handle.0) {
                     mat.uniform.is_selected = u32::from(is_selected);
+                    mat.uniform.team_color = style.linear;
                 }
             }
 

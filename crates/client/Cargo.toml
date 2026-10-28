@@ -11,6 +11,10 @@ description = "Bevy 3D renderer, custom WGSL shaders, and Visual Lab for Space S
 name = "client"
 path = "src/main.rs"
 
+[[bin]]
+name = "terrain_preview"
+path = "src/bin/terrain_preview.rs"
+
 [lints]
 workspace = true
 
@@ -26,6 +30,9 @@ ron.workspace = true
 serde.workspace = true
 image.workspace = true
 bytemuck = { version = "1.25", features = ["derive"] }
+thiserror.workspace = true
+blake3 = "1.8.7"
 
 [dev-dependencies]
+naga = { version = "23.1.0", features = ["wgsl-in"] }
 tempfile = "3.17"

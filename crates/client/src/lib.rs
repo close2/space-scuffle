@@ -24,11 +24,16 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 #![allow(
+    dead_code,
     clippy::doc_markdown,
     clippy::too_many_lines,
     clippy::module_name_repetitions,
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_lossless,
+    clippy::many_single_char_names,
+    clippy::redundant_closure_for_method_calls,
     clippy::cast_sign_loss,
     clippy::needless_pass_by_value,
     clippy::too_many_arguments,
@@ -36,15 +41,32 @@
 )]
 
 pub mod arena_render;
+pub mod assets;
+pub mod battle_pipeline;
+pub mod battle_presentation;
+pub mod bubble_optics;
 pub mod bubble_shader;
 pub mod camera;
+pub mod camera_drag;
 pub mod indicators;
+pub mod input_policy;
 pub mod lab_ui;
+pub mod media;
+pub mod mist;
+pub mod native_input_probe;
+pub mod player_presentation;
+pub mod presentation;
+pub mod render_compatibility;
+pub mod runtime_battle;
+pub mod runtime_capture;
 pub mod scene_controller;
 pub mod selection;
+pub mod shell_order_audit;
+pub mod terrain;
 pub mod vfx;
 
 pub use arena_render::{setup_arena_system, spawn_arena_environment, ArenaMapMarker};
+pub use assets::{try_resolve_assets_dir, AssetsDirError, ResolvedAssetsRoot};
 pub use bubble_shader::{
     setup_bubble_assets_system, sync_bubbles_system, BubbleDomeMaterial, BubbleInstance,
     BubbleSharedMeshes, BubbleUniformGpu, FlipbookRegistry,
@@ -67,7 +89,7 @@ pub use selection::{
     SelectionState,
 };
 pub use vfx::{
-    emit_mist_wake, process_combat_events_system, setup_vfx_assets_system, spawn_death_shatter,
+    process_combat_events_system, setup_vfx_assets_system, spawn_death_shatter,
     update_beams_system, update_melee_slashes_system, update_mist_wake_system,
     update_projectiles_system, update_shatter_system, update_vfx_system, CombatFxMaterial,
     CombatFxUniformGpu, CombatVisualEvent, MistWakeMaterial, MistWakeUniformGpu, VfxSharedAssets,
@@ -77,6 +99,10 @@ use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use std::path::PathBuf;
 
 /// Resolves the absolute path to the workspace `assets/` directory.
+///
+/// This legacy API is retained for editor and embedding compatibility. Normal game
+/// startup uses [`try_resolve_assets_dir`] and shares a [`ResolvedAssetsRoot`] resource.
+/// The legacy result is not guaranteed to be validated or absolute.
 ///
 /// # Search Precedence
 /// 1. Environment variable `SPACE_SCUFFLE_ASSETS`.
@@ -162,11 +188,35 @@ pub struct FrameLimit {
 pub fn frame_limit_system(
     mut frame_limit: ResMut<'_, FrameLimit>,
     mut exit_events: EventWriter<'_, AppExit>,
+    render_status: Option<Res<'_, runtime_battle::BattleRenderStatus>>,
+    lab: Option<Res<'_, LabState>>,
+    map_presentation: Option<Res<'_, runtime_battle::MapPresentation>>,
+    images: Option<Res<'_, Assets<Image>>>,
 ) {
     if let Some(max) = frame_limit.max_frames {
         frame_limit.current_frame += 1;
         if frame_limit.current_frame >= max {
-            exit_events.send(AppExit::Success);
+            let battle_failed = lab.is_some_and(|lab| {
+                lab.current_tab == LabTab::LiveBattle
+                    && (lab.sim_world.is_none()
+                        || lab.battle_failure.is_some()
+                        || !map_presentation.as_ref().is_some_and(|presentation| {
+                            images.as_ref().is_some_and(|images| {
+                                presentation
+                                    .sprite_images
+                                    .iter()
+                                    .all(|handle| images.contains(handle))
+                            })
+                        }))
+            });
+            if battle_failed
+                || render_status.is_some_and(|status| status.failed() || !status.is_ready())
+            {
+                error!("Render verification reached its frame limit before valid GPU pipelines and battle assets were ready");
+                exit_events.send(AppExit::error());
+            } else {
+                exit_events.send(AppExit::Success);
+            }
         }
     }
 }
@@ -192,61 +242,127 @@ impl Plugin for ClientAppPlugin {
             ..default()
         };
 
-        if self.mode == ClientMode::LiveBattle {
-            lab_state.sim_world = Some(SimWorld::new_default_battle_sandbox());
-        }
-
         if self.mode == ClientMode::SwarmStressTest {
             lab_state.swarm_active = true;
         }
 
-        app.init_resource::<CatalogResource>()
-            .init_resource::<RenderEntityMap>()
-            .insert_resource(lab_state)
-            .init_resource::<SelectionState>()
-            .insert_resource(FrameLimit {
-                max_frames: self.max_frames,
-                current_frame: 0,
-            })
-            .add_event::<CombatVisualEvent>()
-            .add_plugins(MaterialPlugin::<BubbleDomeMaterial>::default())
-            .add_plugins(MaterialPlugin::<SelectionRingMaterial>::default())
-            .add_plugins(MaterialPlugin::<MistWakeMaterial>::default())
-            .add_plugins(MaterialPlugin::<CombatFxMaterial>::default())
-            .add_systems(
-                Startup,
-                (
-                    setup_bubble_assets_system,
-                    setup_indicator_assets_system,
-                    setup_vfx_assets_system,
-                    spawn_arena_environment,
-                    spawn_camera_system,
-                ),
+        app.add_plugins((
+            terrain::TerrainPlugin,
+            runtime_battle::SceneEnvironmentPlugin,
+            render_compatibility::RenderCompatibilityPlugin,
+            runtime_battle::BattleRenderVerificationPlugin,
+        ))
+        .init_resource::<CatalogResource>()
+        .insert_resource(media::MediaFailurePolicy::new(self.max_frames.is_some()))
+        .init_resource::<RenderEntityMap>()
+        .insert_resource(lab_state)
+        .init_resource::<SelectionState>()
+        .init_resource::<player_presentation::PresentationStatus>()
+        .init_resource::<battle_presentation::BattlePresentation>()
+        .init_resource::<battle_pipeline::session::BattleSession>()
+        .init_resource::<input_policy::UiGeometry>()
+        .insert_resource(input_policy::InputOwnership::interactive())
+        .init_resource::<camera_drag::CameraDragState>()
+        .insert_resource(FrameLimit {
+            max_frames: self.max_frames,
+            current_frame: 0,
+        })
+        .add_event::<CombatVisualEvent>()
+        .add_plugins(MaterialPlugin::<BubbleDomeMaterial>::default())
+        .add_plugins(MaterialPlugin::<SelectionRingMaterial>::default())
+        .add_plugins(mist::MistWakePlugin)
+        .add_plugins(bubble_optics::BubbleOpticsPlugin)
+        .add_plugins(MaterialPlugin::<CombatFxMaterial>::default())
+        .configure_sets(
+            Update,
+            (
+                battle_pipeline::BattleSet::ExternalControl,
+                battle_pipeline::BattleSet::CollectIntent,
+                battle_pipeline::BattleSet::CommitSession,
+                battle_pipeline::BattleSet::AdvanceTicks,
+                battle_pipeline::BattleSet::PreparePresentation,
+                battle_pipeline::BattleSet::Present,
             )
-            .add_systems(
-                Update,
-                (
-                    camera_control_system,
-                    selection_system,
-                    update_indicators_system,
-                    update_mist_wake_system,
-                    update_projectiles_system,
-                    update_beams_system,
-                    update_melee_slashes_system,
-                    update_shatter_system,
-                    frame_limit_system,
-                ),
+                .chain(),
+        )
+        .add_systems(
+            Update,
+            (
+                runtime_battle::sync_scene_camera,
+                runtime_battle::manage_battle_scene,
+                apply_deferred,
             )
-            .add_systems(
-                Update,
+                .chain()
+                .in_set(battle_pipeline::BattleSet::CommitSession),
+        )
+        .add_systems(
+            Update,
+            battle_pipeline::driver::advance_battle_ticks
+                .in_set(battle_pipeline::BattleSet::AdvanceTicks),
+        )
+        .add_systems(
+            Update,
+            (
+                battle_presentation::refresh_battle_presentation,
+                sync_live_battle_system,
+                apply_deferred,
+            )
+                .chain()
+                .in_set(battle_pipeline::BattleSet::PreparePresentation),
+        )
+        .add_systems(PostUpdate, runtime_battle::update_map_presentation)
+        .add_systems(
+            Update,
+            (
+                lab_ui::sync_selected_actor_identity.before(lab_ui_system),
+                input_policy::sample_input_ownership.after(lab_ui_system),
+                input_policy::apply_world_viewport.after(lab_ui_system),
+            )
+                .in_set(battle_pipeline::BattleSet::CollectIntent),
+        )
+        .add_systems(
+            PostUpdate,
+            selection_system
+                .after(TransformSystem::TransformPropagate)
+                .after(bevy::render::camera::CameraUpdateSystem),
+        )
+        .add_systems(
+            Startup,
+            (
+                setup_bubble_assets_system,
+                setup_indicator_assets_system,
+                setup_vfx_assets_system,
+                spawn_arena_environment,
+                spawn_camera_system,
+            ),
+        )
+        .add_systems(
+            Update,
+            (
+                camera_control_system,
+                update_indicators_system,
+                update_projectiles_system.after(process_combat_events_system),
+                update_beams_system.after(process_combat_events_system),
+                update_melee_slashes_system.after(process_combat_events_system),
+                update_shatter_system.after(process_combat_events_system),
+                frame_limit_system,
+            )
+                .in_set(battle_pipeline::BattleSet::Present),
+        )
+        .add_systems(
+            Update,
+            (
                 (
+                    battle_pipeline::driver::publish_combat_events,
                     process_combat_events_system,
-                    sync_lab_preview_system,
-                    sync_live_battle_system,
-                    sync_swarm_stress_system,
-                    lab_ui_system,
-                ),
-            );
+                )
+                    .chain()
+                    .in_set(battle_pipeline::BattleSet::Present),
+                sync_lab_preview_system.in_set(battle_pipeline::BattleSet::PreparePresentation),
+                sync_swarm_stress_system.in_set(battle_pipeline::BattleSet::PreparePresentation),
+                lab_ui_system.in_set(battle_pipeline::BattleSet::CollectIntent),
+            ),
+        );
     }
 }
 
@@ -263,31 +379,95 @@ pub fn spawn_camera_system(mut commands: Commands<'_, '_>, lab_state: Res<'_, La
 }
 
 /// Runs the Space Scuffle client application with the specified launch mode.
-pub fn run_app(mode: ClientMode, max_frames: Option<u64>) {
+#[must_use]
+pub fn run_app(mode: ClientMode, max_frames: Option<u64>) -> AppExit {
+    run_app_with_scenario(
+        mode,
+        max_frames,
+        std::path::Path::new(runtime_battle::DEFAULT_BATTLE_SCENARIO),
+    )
+}
+
+/// Runs the game with an explicit declarative scenario path relative to the assets root.
+#[must_use]
+pub fn run_app_with_scenario(
+    mode: ClientMode,
+    max_frames: Option<u64>,
+    scenario_path: &std::path::Path,
+) -> AppExit {
     if mode == ClientMode::HeadlessCheck {
-        match run_headless_check() {
+        return match run_headless_check() {
             Ok(()) => {
                 println!("==> Headless CI Check: PASSED (60 frames stepped deterministically).");
-                std::process::exit(0);
+                AppExit::Success
             }
             Err(err) => {
                 eprintln!("==> Headless CI Check FAILED: {err}");
-                std::process::exit(1);
+                AppExit::error()
             }
-        }
+        };
     }
 
-    let assets_dir = resolve_assets_dir();
+    match build_graphical_app(mode, max_frames, scenario_path) {
+        Ok(mut app) => {
+            let media_policy = app.world().resource::<media::MediaFailurePolicy>().clone();
+            media_policy.final_exit(render_compatibility::run_render_app(&mut app))
+        }
+        Err(error) => {
+            eprintln!("Client startup failed: {error}");
+            AppExit::error()
+        }
+    }
+}
+
+/// Typed failure while preparing the actual graphical client and external scenario.
+#[derive(Debug, thiserror::Error)]
+pub enum ClientStartupError {
+    /// Selected assets root could not be validated.
+    #[error(transparent)]
+    Assets(#[from] AssetsDirError),
+    /// Selected external battle definition could not be loaded.
+    #[error(transparent)]
+    Battle(#[from] runtime_battle::BattleLoadError),
+    /// Headless math verification does not create a graphical application.
+    #[error("headless-check mode is not a graphical application")]
+    HeadlessMode,
+}
+
+/// Builds the same production graphical application used by normal client startup.
+///
+/// Preserves native window/plugin/asset defaults. Tooling may attach explicit
+/// control plugins before running; it must not substitute another scene or renderer.
+///
+/// # Errors
+/// Returns typed asset/scenario errors, or rejects the separate headless-check mode.
+pub fn build_graphical_app(
+    mode: ClientMode,
+    max_frames: Option<u64>,
+    scenario_path: &std::path::Path,
+) -> Result<App, ClientStartupError> {
+    if mode == ClientMode::HeadlessCheck {
+        return Err(ClientStartupError::HeadlessMode);
+    }
+    let assets_root = ResolvedAssetsRoot::resolve()?;
+    let asset_file_path = assets_root.bevy_file_path()?.to_owned();
+    let battle_definition =
+        runtime_battle::BattleDefinition::load(assets_root.as_path(), scenario_path)?;
+    let catalog = CatalogResource(battle_definition.catalogs.units.clone());
 
     let is_virtual_or_test =
         max_frames.is_some() || std::env::var("SPACE_SCUFFLE_VIRTUAL_GPU").is_ok();
     let is_visible = !is_virtual_or_test || std::env::var("SPACE_SCUFFLE_SHOW_WINDOW").is_ok();
 
-    App::new()
+    let mut app = App::new();
+    app.insert_resource(catalog)
+        .insert_resource(battle_definition.palette.clone())
+        .insert_resource(battle_definition)
+        .insert_resource(assets_root)
         .add_plugins(
-            DefaultPlugins
+            presentation::GamePresentationPlugins
                 .set(AssetPlugin {
-                    file_path: assets_dir.to_string_lossy().to_string(),
+                    file_path: asset_file_path,
                     ..default()
                 })
                 .set(WindowPlugin {
@@ -302,8 +482,8 @@ pub fn run_app(mode: ClientMode, max_frames: Option<u64>) {
         )
         .add_plugins(FrameTimeDiagnosticsPlugin)
         .add_plugins(EguiPlugin)
-        .add_plugins(ClientAppPlugin { mode, max_frames })
-        .run();
+        .add_plugins(ClientAppPlugin { mode, max_frames });
+    Ok(app)
 }
 
 // PERFORMANCE RATIONALE:
@@ -318,6 +498,16 @@ pub fn run_app(mode: ClientMode, max_frames: Option<u64>) {
 pub fn run_headless_check() -> Result<(), String> {
     // 1. Initialize Headless Simulation World
     let mut world = SimWorld::new_default_battle_sandbox();
+    let palette_root = ResolvedAssetsRoot::resolve().map_err(|error| error.to_string())?;
+    let palette = player_presentation::PlayerPalette::load(
+        palette_root.as_path(),
+        world
+            .catalog
+            .archetypes()
+            .filter(|a| a.showcase_hero)
+            .count(),
+    )
+    .map_err(|error| error.to_string())?;
     let initial_entities_count = world.entities.len();
     if initial_entities_count == 0 {
         return Err("Battle sandbox initialized with 0 entities".to_string());
@@ -342,10 +532,13 @@ pub fn run_headless_check() -> Result<(), String> {
 
         // Verify uniform packing and invariants on all bubbles
         for bubble in &snapshot.bubbles {
-            let uniform = BubbleUniformGpu::from_instance(bubble, None);
-            if size_of::<BubbleUniformGpu>() != 96 {
+            let style = palette
+                .resolve(bubble.owner)
+                .map_err(|error| error.to_string())?;
+            let uniform = BubbleUniformGpu::from_instance(bubble, None, style);
+            if size_of::<BubbleUniformGpu>() != 160 {
                 return Err(format!(
-                    "BubbleUniformGpu size mismatch: expected 96, got {}",
+                    "BubbleUniformGpu size mismatch: expected 160, got {}",
                     size_of::<BubbleUniformGpu>()
                 ));
             }
@@ -387,10 +580,34 @@ pub fn run_headless_check() -> Result<(), String> {
     app.init_resource::<CatalogResource>();
     app.init_resource::<RenderEntityMap>();
     app.init_resource::<SelectionState>();
+    app.init_resource::<input_policy::InputOwnership>();
+    app.init_resource::<camera_drag::CameraDragState>();
+    app.add_event::<bevy::window::WindowEvent>();
 
+    let root = ResolvedAssetsRoot::resolve().map_err(|error| error.to_string())?;
+    let definition = runtime_battle::BattleDefinition::load(
+        root.as_path(),
+        std::path::Path::new(runtime_battle::DEFAULT_BATTLE_SCENARIO),
+    )
+    .map_err(|error| error.to_string())?;
+    app.insert_resource(root);
+    app.insert_resource(definition.palette.clone());
+    app.init_resource::<player_presentation::PresentationStatus>();
+    app.insert_resource(CatalogResource(definition.catalogs.units.clone()));
+    let mut world = definition
+        .instantiate()
+        .map_err(|error| error.to_string())?;
+    let session = battle_pipeline::session::BattleSession::prepare(
+        battle_pipeline::commands::SessionGeneration::FIRST,
+        &mut world,
+        battle_pipeline::session::CommittedBattleMetadata::from_definition(&definition)
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    app.insert_resource(session);
     let lab_state = LabState {
         current_tab: LabTab::LiveBattle,
-        sim_world: Some(SimWorld::new_default_battle_sandbox()),
+        sim_world: Some(world),
         ..default()
     };
     app.insert_resource(lab_state);
@@ -420,13 +637,21 @@ pub fn run_headless_check() -> Result<(), String> {
             update_shatter_system,
             process_combat_events_system,
             sync_lab_preview_system,
-            sync_live_battle_system,
+            (
+                battle_pipeline::driver::advance_battle_ticks,
+                sync_live_battle_system,
+                battle_pipeline::driver::publish_combat_events,
+            )
+                .chain(),
             sync_swarm_stress_system,
         ),
     );
 
     for _ in 0..60 {
         app.update();
+        if let Some(error) = &app.world().resource::<LabState>().battle_failure {
+            return Err(error.clone());
+        }
     }
 
     Ok(())

@@ -9,7 +9,7 @@
 #![warn(missing_docs)]
 
 use clap::Parser;
-use client::{run_app, ClientMode};
+use client::{run_app_with_scenario, ClientMode};
 
 /// Command-line arguments configuring the client launch mode.
 #[derive(Parser, Debug)]
@@ -37,9 +37,13 @@ pub struct CliArgs {
     /// Exit cleanly after executing the specified number of rendered frames (for GPU CI and automated verification).
     #[arg(long)]
     pub max_frames: Option<u64>,
+
+    /// Declarative battle scenario, relative to the selected assets root.
+    #[arg(long, default_value = client::runtime_battle::DEFAULT_BATTLE_SCENARIO)]
+    pub scenario: std::path::PathBuf,
 }
 
-fn main() {
+fn main() -> bevy::app::AppExit {
     let args = CliArgs::parse();
 
     let mode = if args.headless_check {
@@ -52,5 +56,5 @@ fn main() {
         ClientMode::VisualLab
     };
 
-    run_app(mode, args.max_frames);
+    run_app_with_scenario(mode, args.max_frames, &args.scenario)
 }

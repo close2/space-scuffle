@@ -6,19 +6,15 @@
 //! into high-performance `Texture2DArray` assets and samples active frames with zero heap allocations.
 //!
 //! # Invariants
-//! - `BubbleUniformGpu` memory layout is strictly 96 bytes and 16-byte aligned matching `bubble_dome.wgsl`.
+//! - `BubbleUniformGpu` memory layout is strictly 160 bytes and 16-byte aligned matching `bubble_dome.wgsl`.
 //! - Mobile units render as full UV spheres; building structures render as grounded hemisphere domes.
-//! - When texture assets are unavailable (e.g. headless CI), a fallback 1-layer texture array is used.
+//! - Missing or malformed media is retained as typed unavailable status; no texture is substituted.
 
 #![allow(dead_code)]
 
 use asset_baker::manifest::FlipbookAtlasMeta;
 use bevy::prelude::*;
-use bevy::render::render_asset::RenderAssetUsages;
-use bevy::render::render_resource::{
-    AsBindGroup, Extent3d, ShaderRef, ShaderType, TextureDimension, TextureFormat,
-    TextureViewDescriptor, TextureViewDimension,
-};
+use bevy::render::render_resource::{AsBindGroup, ShaderRef, ShaderType};
 use sim_types::enums::{AnimState, ShapeKind};
 use sim_types::ids::UnitTypeId;
 use sim_types::snapshot::BubbleRenderInstance;
@@ -64,8 +60,8 @@ pub const DEFAULT_FEATURE_FLAGS: u32 = FLAG_GLARE
 /// GPU uniform buffer struct matching `struct BubbleUniform` in `bubble_dome.wgsl`.
 // PERFORMANCE RATIONALE:
 // Why: WebGPU uniform buffers require strict 16-byte alignment and explicit std140 padding.
-// What: Fields are strictly ordered: vec4 (16B), vec3+f32 (16B), 4x u32/f32 (16B) chunks, totaling exactly 96 bytes.
-// Modular optical feature toggles are packed into `feature_flags: u32` bitmask preserving the exact 96-byte memory footprint.
+// What: Fields are strictly ordered: vec4 (16B), vec3+f32 (16B), 4x u32/f32 (16B) chunks, totaling exactly 160 bytes.
+// Modular optical feature toggles are packed into `feature_flags: u32` bitmask with four additional optical vec4 lanes after the original 96 bytes.
 // Trade-off: Manual struct layout in exchange for zero runtime padding overhead and zero shader misalignment faults.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable, ShaderType)]
@@ -109,12 +105,20 @@ pub struct BubbleUniformGpu {
     pub feature_flags: u32,
     /// Exact active frame index in the Texture2DArray.
     pub frame_index: u32,
+    /// Media exposure stops, dielectric reflectance, Fresnel power, reflection strength.
+    pub optics_media: Vec4,
+    /// Glare roughness/strength, hit strength, hull hit angular width in radians.
+    pub optics_glare: Vec4,
+    /// Selection strength, shell alpha, facing strength, attack strength.
+    pub optics_signals: Vec4,
+    /// Direction toward the main light in world space; W is normalized illuminance.
+    pub optics_light: Vec4,
 }
 
 impl Default for BubbleUniformGpu {
     fn default() -> Self {
         Self {
-            team_color: Vec4::new(0.2, 0.6, 1.0, 1.0),
+            team_color: Vec4::ZERO,
             world_pos: Vec3::ZERO,
             radius: 0.5,
             shape_kind: 0,
@@ -133,22 +137,23 @@ impl Default for BubbleUniformGpu {
             cloaked: 0,
             feature_flags: DEFAULT_FEATURE_FLAGS,
             frame_index: 0,
+            optics_media: crate::bubble_optics::BubbleOptics::default().uniform_lanes()[0],
+            optics_glare: crate::bubble_optics::BubbleOptics::default().uniform_lanes()[1],
+            optics_signals: crate::bubble_optics::BubbleOptics::default().uniform_lanes()[2],
+            optics_light: Vec4::new(0.0, 1.0, 0.0, 0.0),
         }
     }
 }
 
 impl BubbleUniformGpu {
-    /// Translates a simulation [`BubbleRenderInstance`] and optional metadata into a GPU uniform.
+    /// Packs a snapshot and optional metadata using an already resolved linear ownership style.
     #[must_use]
     pub fn from_instance(
         instance: &BubbleRenderInstance,
         meta: Option<&FlipbookAtlasMeta>,
+        style: crate::player_presentation::PlayerStyle,
     ) -> Self {
-        let team_color = match instance.team_id.0 {
-            1 => Vec4::new(0.18, 0.55, 1.0, 1.0), // Blue Team
-            2 => Vec4::new(1.0, 0.22, 0.18, 1.0), // Red Team
-            _ => Vec4::new(0.7, 0.7, 0.7, 1.0),
-        };
+        let team_color = style.linear;
 
         let shape_kind = match instance.shape {
             ShapeKind::UnitSphere => 0,
@@ -217,6 +222,7 @@ impl BubbleUniformGpu {
                 flags
             },
             frame_index,
+            ..Self::default()
         }
     }
 }
@@ -254,8 +260,6 @@ pub struct FlipbookRegistry {
     pub textures_by_id: BTreeMap<UnitTypeId, Handle<Image>>,
     /// 2D strip images for UI portraits in egui keyed by UnitTypeId.
     pub portrait_images_by_id: BTreeMap<UnitTypeId, Handle<Image>>,
-    /// Fallback 1-layer texture array for missing assets.
-    pub fallback_texture: Option<Handle<Image>>,
     /// Atlas metadata keyed by archetype name (e.g. for demo assets like "concept_video").
     pub manifests: BTreeMap<String, FlipbookAtlasMeta>,
     /// GPU texture array handles keyed by archetype name.
@@ -271,13 +275,10 @@ impl FlipbookRegistry {
         self.manifests_by_id.get(&unit_type)
     }
 
-    /// Looks up the texture handle for the given unit type ID, or falls back.
+    /// Looks up only the exact admitted texture for the given unit type ID.
     #[must_use]
     pub fn get_texture(&self, unit_type: UnitTypeId) -> Option<Handle<Image>> {
-        self.textures_by_id
-            .get(&unit_type)
-            .cloned()
-            .or_else(|| self.fallback_texture.clone())
+        self.textures_by_id.get(&unit_type).cloned()
     }
 
     /// Looks up portrait image handle for the given unit type ID.
@@ -295,10 +296,7 @@ impl FlipbookRegistry {
     /// Looks up texture by string name/slug (e.g. "concept_video").
     #[must_use]
     pub fn get_texture_by_name(&self, name: &str) -> Option<Handle<Image>> {
-        self.textures
-            .get(name)
-            .cloned()
-            .or_else(|| self.fallback_texture.clone())
+        self.textures.get(name).cloned()
     }
 
     /// Looks up portrait image by string name/slug (e.g. "concept_video").
@@ -323,6 +321,9 @@ pub fn setup_bubble_assets_system(
     mut meshes: ResMut<'_, Assets<Mesh>>,
     mut images: ResMut<'_, Assets<Image>>,
     catalog: Res<'_, crate::CatalogResource>,
+    assets_root: Option<Res<'_, crate::ResolvedAssetsRoot>>,
+    render_device: Option<Res<'_, bevy::render::renderer::RenderDevice>>,
+    failure_policy: Option<Res<'_, crate::media::MediaFailurePolicy>>,
 ) {
     // 1. Mobile Unit Sphere Mesh (radius 1.0, high-tessellation UV sphere for smooth silhouette)
     let sphere = meshes.add(Sphere::new(1.0).mesh().uv(80, 52));
@@ -335,203 +336,24 @@ pub fn setup_bubble_assets_system(
         dome_mesh: dome,
     });
 
-    // 3. Create Fallback 1x1 1-layer Texture2DArray (pure neutral blue-gray)
-    let fallback_data = vec![25, 30, 42, 255];
-    let mut fallback_img = Image::new(
-        Extent3d {
-            width: 1,
-            height: 1,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        fallback_data,
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::default(),
-    );
-    fallback_img.texture_view_descriptor = Some(TextureViewDescriptor {
-        dimension: Some(TextureViewDimension::D2Array),
-        ..default()
+    let textures_dir = crate::assets::texture_assets_dir(assets_root.as_deref());
+    let limits = render_device.as_ref().map(|device| {
+        let limits = device.limits();
+        asset_baker::media::TextureLimits {
+            max_dimension_2d: limits.max_texture_dimension_2d,
+            max_array_layers: limits.max_texture_array_layers,
+        }
     });
-    let fallback_handle = images.add(fallback_img);
-
-    let mut registry = FlipbookRegistry {
-        manifests_by_id: BTreeMap::new(),
-        textures_by_id: BTreeMap::new(),
-        portrait_images_by_id: BTreeMap::new(),
-        manifests: BTreeMap::new(),
-        textures: BTreeMap::new(),
-        portrait_images: BTreeMap::new(),
-        fallback_texture: Some(fallback_handle),
-    };
-
-    // 4. Load all available flipbooks dynamically from workspace assets/textures/
-    let textures_dir = crate::resolve_assets_dir().join("textures");
-
-    for arch in catalog.0.archetypes() {
-        let name = &arch.slug;
-        let unit_type = arch.unit_type_id;
-        let ron_path = textures_dir.join(format!("{name}.flipbook.ron"));
-        let png_path = textures_dir.join(format!("{name}.png"));
-
-        if ron_path.exists() && png_path.exists() {
-            if let Ok(meta) = FlipbookAtlasMeta::load_from_ron(&ron_path) {
-                if let Ok(img) = image::open(&png_path) {
-                    let rgba = img.to_rgba8();
-                    let raw_bytes = rgba.into_raw();
-                    let expected_bytes =
-                        (meta.frame_width * meta.frame_height * 4 * meta.total_frames) as usize;
-
-                    if raw_bytes.len() == expected_bytes {
-                        let mut array_img = Image::new(
-                            Extent3d {
-                                width: meta.frame_width,
-                                height: meta.frame_height,
-                                depth_or_array_layers: meta.total_frames,
-                            },
-                            TextureDimension::D2,
-                            raw_bytes.clone(),
-                            TextureFormat::Rgba8UnormSrgb,
-                            RenderAssetUsages::default(),
-                        );
-                        array_img.texture_view_descriptor = Some(TextureViewDescriptor {
-                            dimension: Some(TextureViewDimension::D2Array),
-                            ..default()
-                        });
-                        let handle = images.add(array_img);
-                        registry.textures_by_id.insert(unit_type, handle.clone());
-                        registry.textures.insert(name.clone(), handle);
-
-                        let portrait_img = Image::new(
-                            Extent3d {
-                                width: meta.frame_width,
-                                height: meta.frame_height * meta.total_frames,
-                                depth_or_array_layers: 1,
-                            },
-                            TextureDimension::D2,
-                            raw_bytes,
-                            TextureFormat::Rgba8UnormSrgb,
-                            RenderAssetUsages::default(),
-                        );
-                        let portrait_handle = images.add(portrait_img);
-                        registry
-                            .portrait_images_by_id
-                            .insert(unit_type, portrait_handle.clone());
-                        registry
-                            .portrait_images
-                            .insert(name.clone(), portrait_handle);
-                    }
-                }
-                registry.manifests_by_id.insert(unit_type, meta.clone());
-                registry.manifests.insert(name.clone(), meta);
-            }
-        }
-    }
-
-    // Also load "concept_video" if present for Visual Lab demo
-    let concept_name = "concept_video";
-    let concept_ron = textures_dir.join(format!("{concept_name}.flipbook.ron"));
-    let concept_png = textures_dir.join(format!("{concept_name}.png"));
-    if concept_ron.exists() && concept_png.exists() {
-        if let Ok(meta) = FlipbookAtlasMeta::load_from_ron(&concept_ron) {
-            if let Ok(img) = image::open(&concept_png) {
-                let rgba = img.to_rgba8();
-                let raw_bytes = rgba.into_raw();
-                let expected_bytes =
-                    (meta.frame_width * meta.frame_height * 4 * meta.total_frames) as usize;
-                if raw_bytes.len() == expected_bytes {
-                    let mut array_img = Image::new(
-                        Extent3d {
-                            width: meta.frame_width,
-                            height: meta.frame_height,
-                            depth_or_array_layers: meta.total_frames,
-                        },
-                        TextureDimension::D2,
-                        raw_bytes.clone(),
-                        TextureFormat::Rgba8UnormSrgb,
-                        RenderAssetUsages::default(),
-                    );
-                    array_img.texture_view_descriptor = Some(TextureViewDescriptor {
-                        dimension: Some(TextureViewDimension::D2Array),
-                        ..default()
-                    });
-                    let handle = images.add(array_img);
-                    registry.textures.insert(concept_name.to_string(), handle);
-
-                    let portrait_img = Image::new(
-                        Extent3d {
-                            width: meta.frame_width,
-                            height: meta.frame_height * meta.total_frames,
-                            depth_or_array_layers: 1,
-                        },
-                        TextureDimension::D2,
-                        raw_bytes,
-                        TextureFormat::Rgba8UnormSrgb,
-                        RenderAssetUsages::default(),
-                    );
-                    let portrait_handle = images.add(portrait_img);
-                    registry
-                        .portrait_images
-                        .insert(concept_name.to_string(), portrait_handle);
-                }
-            }
-            registry.manifests.insert(concept_name.to_string(), meta);
-        }
-    }
-
-    // 5. Dynamic placeholder binding for archetypes lacking on-disk textures:
-    // Discover fallback handles by matching loaded archetypes by faction and shape kind.
-    // Zero hardcoded creature / building slugs in Rust (Charter 3.3).
-    for arch in catalog.0.archetypes() {
-        if registry.textures_by_id.contains_key(&arch.unit_type_id) {
-            continue;
-        }
-
-        let is_dome = matches!(arch.shape, ShapeKind::BuildingDome { .. });
-
-        let candidate_id = catalog
-            .0
-            .archetypes()
-            .find(|cand| {
-                registry.textures_by_id.contains_key(&cand.unit_type_id)
-                    && matches!(cand.shape, ShapeKind::BuildingDome { .. }) == is_dome
-                    && cand.faction == arch.faction
-            })
-            .or_else(|| {
-                catalog.0.archetypes().find(|cand| {
-                    registry.textures_by_id.contains_key(&cand.unit_type_id)
-                        && matches!(cand.shape, ShapeKind::BuildingDome { .. }) == is_dome
-                })
-            })
-            .or_else(|| {
-                catalog
-                    .0
-                    .archetypes()
-                    .find(|cand| registry.textures_by_id.contains_key(&cand.unit_type_id))
-            })
-            .map(|cand| cand.unit_type_id);
-
-        if let Some(src_id) = candidate_id {
-            if let Some(tex) = registry.textures_by_id.get(&src_id).cloned() {
-                registry
-                    .textures_by_id
-                    .insert(arch.unit_type_id, tex.clone());
-                registry.textures.insert(arch.slug.clone(), tex);
-            }
-            if let Some(meta) = registry.manifests_by_id.get(&src_id).cloned() {
-                registry
-                    .manifests_by_id
-                    .insert(arch.unit_type_id, meta.clone());
-                registry.manifests.insert(arch.slug.clone(), meta);
-            }
-            if let Some(portrait) = registry.portrait_images_by_id.get(&src_id).cloned() {
-                registry
-                    .portrait_images_by_id
-                    .insert(arch.unit_type_id, portrait.clone());
-                registry.portrait_images.insert(arch.slug.clone(), portrait);
-            }
-        }
-    }
-
+    let (registry, status) = crate::media::load_registry(
+        &textures_dir,
+        &catalog.0,
+        &mut images,
+        limits,
+        failure_policy.map_or_else(crate::media::MediaFailurePolicy::default, |policy| {
+            policy.clone()
+        }),
+    );
+    commands.insert_resource(status);
     commands.insert_resource(registry);
 }
 

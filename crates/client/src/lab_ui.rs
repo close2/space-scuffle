@@ -17,10 +17,10 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use sim_core::catalog::UnitCatalog;
 use sim_core::world::SimWorld;
-use sim_types::commands::{PlayerCommand, TickBundle, UnitOrder};
+use sim_types::commands::UnitOrder;
 use sim_types::enums::{AnimState, AttributeFlags, Faction, SilhouetteClass};
-use sim_types::ids::{EntityId, PlayerId, TeamId, Tick};
-use sim_types::math::{SimScalar, SimVec2};
+use sim_types::ids::PlayerId;
+use sim_types::math::SimVec2;
 use sim_types::snapshot::CombatEventVisual;
 
 /// Active dashboard tab in the Visual Lab.
@@ -96,21 +96,23 @@ pub struct LabState {
     // --- Tab 2: Live Combat Sandbox State ---
     /// Authoritative deterministic simulation world.
     pub sim_world: Option<SimWorld>,
+    /// Explicit request to recreate the selected declarative battle session.
+    pub battle_reset_requested: bool,
+    /// Visible diagnostic from a failed battle replacement; the old session is retained.
+    pub battle_failure: Option<String>,
+    /// Legal base approaches resolved from the currently loaded map's player starts.
+    pub battle_start_positions: std::collections::BTreeMap<PlayerId, SimVec2>,
     /// Simulation paused flag.
     pub battle_paused: bool,
     /// Simulation tick execution speed multiplier (0 = pause, 1 = 1x, 2 = 2x, etc.).
     pub simulation_speed: u32,
     /// Last received checksum formatted as hex string.
     pub last_checksum_hex: String,
-    /// Accumulator for fixed 25 Hz simulation ticks in the Live Battle sandbox.
-    pub battle_tick_accumulator_secs: f32,
     // --- Tab 3: Swarm Stress Test State ---
     /// Whether the 200-bubble swarm is spawned.
     pub swarm_active: bool,
     /// Swarm entities list.
     pub swarm_bubble_count: usize,
-    /// Team colorblind mode (Blue/Red vs Cyan/Orange).
-    pub colorblind_mode: bool,
 }
 
 impl Default for LabState {
@@ -143,13 +145,14 @@ impl Default for LabState {
             opt_selection_brackets: true,
             selected_hero_index: 0,
             sim_world: None,
+            battle_reset_requested: false,
+            battle_failure: None,
+            battle_start_positions: std::collections::BTreeMap::new(),
             battle_paused: false,
             simulation_speed: 1,
             last_checksum_hex: "0x0000000000000000".to_string(),
-            battle_tick_accumulator_secs: 0.0,
             swarm_active: false,
             swarm_bubble_count: 0,
-            colorblind_mode: false,
         }
     }
 }
@@ -160,6 +163,8 @@ impl Default for LabState {
 // Trade-off: Minimal UI state allocations yielding zero frame latency spikes.
 /// Primary bevy_egui inspector system rendering the tabbed visual lab.
 pub fn lab_ui_system(
+    palette: Res<'_, crate::player_presentation::PlayerPalette>,
+    owner_status: Res<'_, crate::player_presentation::PresentationStatus>,
     mut contexts: EguiContexts<'_, '_>,
     mut lab_state: ResMut<'_, LabState>,
     mut selection_state: ResMut<'_, SelectionState>,
@@ -167,8 +172,22 @@ pub fn lab_ui_system(
     catalog: Res<'_, CatalogResource>,
     mut combat_events: EventWriter<'_, CombatVisualEvent>,
     diagnostics: Res<'_, DiagnosticsStore>,
+    windows: Query<'_, '_, &Window, With<bevy::window::PrimaryWindow>>,
+    mut exit: EventWriter<'_, AppExit>,
+    mut geometry: ResMut<'_, crate::input_policy::UiGeometry>,
+    mut presentation: ResMut<'_, crate::battle_presentation::BattlePresentation>,
+    media: Option<Res<'_, crate::media::ClientMediaStatus>>,
+    mut session: ResMut<'_, crate::battle_pipeline::session::BattleSession>,
 ) {
-    let ctx = contexts.ctx_mut().clone();
+    let Some(ctx) = contexts.try_ctx_mut().cloned() else {
+        // Closing the primary window removes its egui context before the final
+        // Update. A live window without its required context is still an error.
+        if !windows.is_empty() {
+            error!("Primary game window exists without an initialized egui context");
+            exit.send(AppExit::error());
+        }
+        return;
+    };
 
     // Render SC2-Style Bottom-Center Selected Unit Video Portrait & Status HUD
     if lab_state.current_tab == LabTab::VisualLab {
@@ -182,38 +201,126 @@ pub fn lab_ui_system(
         );
     }
 
-    egui::Window::new("Space Scuffle — Bubble & Dome Visual Lab")
-        .default_width(380.0)
-        .default_pos([16.0, 16.0])
+    geometry.targets.fill(None);
+    geometry.pixels_per_point = ctx.pixels_per_point();
+    let available = ctx.available_rect();
+    let panel_width = 360.0_f32.min(available.width() * 0.45);
+    let panel = egui::SidePanel::left("game_inspector")
+        .exact_width(panel_width)
+        .resizable(false)
         .show(&ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.selectable_value(
-                    &mut lab_state.current_tab,
-                    LabTab::VisualLab,
-                    "1. Visual Lab",
-                );
-                ui.selectable_value(
-                    &mut lab_state.current_tab,
-                    LabTab::LiveBattle,
-                    "2. Live Battle",
-                );
-                ui.selectable_value(
-                    &mut lab_state.current_tab,
-                    LabTab::SwarmStressTest,
-                    "3. Swarm Stress",
-                );
-            });
-
-            ui.separator();
-
-            match lab_state.current_tab {
-                LabTab::VisualLab => {
-                    render_visual_lab_tab(ui, &mut lab_state, &mut combat_events, &catalog);
+            ui.heading("Space Scuffle");
+            ui.horizontal_wrapped(|ui| {
+                for (tab, label, target) in [
+                    (
+                        LabTab::VisualLab,
+                        "Visual Lab",
+                        crate::input_policy::UiTarget::Lab,
+                    ),
+                    (
+                        LabTab::LiveBattle,
+                        "Live Battle",
+                        crate::input_policy::UiTarget::Battle,
+                    ),
+                    (
+                        LabTab::SwarmStressTest,
+                        "Swarm",
+                        crate::input_policy::UiTarget::Swarm,
+                    ),
+                ] {
+                    let response = ui.selectable_value(&mut lab_state.current_tab, tab, label);
+                    geometry.record(target, &response, ui.clip_rect());
                 }
-                LabTab::LiveBattle => render_live_battle_tab(ui, &mut lab_state),
-                LabTab::SwarmStressTest => render_swarm_tab(ui, &mut lab_state, &diagnostics),
+            });
+            ui.separator();
+            if let Some(message) = media
+                .as_ref()
+                .and_then(|status| status.failure_text())
+                .or(owner_status.failure_text())
+                .or(lab_state.battle_failure.as_deref())
+            {
+                egui::ScrollArea::vertical()
+                    .id_salt("presentation_failure")
+                    .max_height(96.0)
+                    .show(ui, |ui| {
+                        ui.colored_label(egui::Color32::LIGHT_RED, message);
+                    });
+                ui.separator();
             }
+            let media_failed = media.as_ref().and_then(|status| status.failure()).is_some()
+                || owner_status.failure_text().is_some();
+            let simulation_failed = lab_state.battle_failure.is_some();
+            // A new world can recover a simulation failure. A missing or invalid
+            // media bundle cannot be repaired by resetting simulation state.
+            if simulation_failed && !media_failed {
+                let reset = ui.button("Reset failed battle");
+                geometry.record(crate::input_policy::UiTarget::Reset, &reset, ui.clip_rect());
+                if reset.clicked() {
+                    lab_state.battle_reset_requested = true;
+                }
+            }
+            egui::ScrollArea::vertical()
+                .id_salt("inspector_controls")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.add_enabled_ui(!media_failed && !simulation_failed, |ui| {
+                        match lab_state.current_tab {
+                            LabTab::VisualLab => render_visual_lab_tab(
+                                ui,
+                                &mut lab_state,
+                                &mut combat_events,
+                                &catalog,
+                                &mut geometry,
+                                palette.effect(),
+                            ),
+                            LabTab::LiveBattle => render_live_battle_tab(
+                                ui,
+                                &mut lab_state,
+                                &mut presentation,
+                                &mut geometry,
+                                &mut session,
+                            ),
+                            LabTab::SwarmStressTest => {
+                                render_swarm_tab(ui, &mut lab_state, &diagnostics);
+                            }
+                        }
+                    });
+                    if let Some(media) = &media {
+                        ui.separator();
+                        ui.collapsing("Media audit", |ui| {
+                            ui.small(media.summary_text());
+                        });
+                    }
+                });
         });
+    geometry.inspector = Some(panel.response.rect);
+    geometry.world = Some(ctx.available_rect());
+}
+
+/// Binds the inspector identity to the actual selected showcase entity.
+pub fn sync_selected_actor_identity(
+    actors: Query<'_, '_, (Entity, &crate::BubbleInstance, &crate::HeroLineupIndex)>,
+    mut selection: ResMut<'_, SelectionState>,
+    catalog: Res<'_, CatalogResource>,
+    mut lab: ResMut<'_, LabState>,
+) {
+    if lab.current_tab != LabTab::VisualLab {
+        return;
+    }
+    let selected = selection
+        .selected_hero_index
+        .unwrap_or(lab.selected_hero_index);
+    for (entity, instance, index) in &actors {
+        if index.0 == selected {
+            selection.select(entity, Some(instance.0.entity_id), Some(index.0));
+            if let Ok(archetype) = catalog.get(instance.0.unit_type) {
+                if lab.archetype_name != archetype.slug {
+                    lab.archetype_name.clone_from(&archetype.slug);
+                }
+            }
+            break;
+        }
+    }
 }
 
 fn render_visual_lab_tab(
@@ -221,23 +328,15 @@ fn render_visual_lab_tab(
     state: &mut LabState,
     events: &mut EventWriter<'_, CombatVisualEvent>,
     catalog: &UnitCatalog,
+    geometry: &mut crate::input_policy::UiGeometry,
+    effect_owner: PlayerId,
 ) {
-    ui.heading("Archetype & Geometry");
-    let archetypes: Vec<&str> = catalog.archetypes().map(|a| a.slug.as_str()).collect();
-
-    if state.archetype_name.is_empty() {
-        if let Some(first) = archetypes.first() {
-            state.archetype_name = (*first).to_string();
-        }
+    ui.heading("Selected actor");
+    if let Some(actor) = catalog.get_by_slug(&state.archetype_name) {
+        ui.strong(&actor.display_name);
+    } else {
+        ui.label("Select a visible showcase actor.");
     }
-
-    egui::ComboBox::from_label("Unit / Structure")
-        .selected_text(&state.archetype_name)
-        .show_ui(ui, |ui| {
-            for &arch in &archetypes {
-                ui.selectable_value(&mut state.archetype_name, arch.to_string(), arch);
-            }
-        });
 
     ui.checkbox(
         &mut state.use_concept_video,
@@ -246,7 +345,24 @@ fn render_visual_lab_tab(
 
     ui.separator();
     ui.heading("Diegetic Damage & Status");
-    ui.add(egui::Slider::new(&mut state.hp_ratio, 0.0..=1.0).text("HP Ratio"));
+    ui.horizontal_wrapped(|ui| {
+        ui.add(
+            egui::Slider::new(&mut state.hp_ratio, 0.0..=1.0)
+                .show_value(false)
+                .text("HP Ratio"),
+        );
+        let health = ui.add(
+            egui::DragValue::new(&mut state.hp_ratio)
+                .range(0.0..=1.0)
+                .speed(0.01)
+                .fixed_decimals(2),
+        );
+        geometry.record(
+            crate::input_policy::UiTarget::Health,
+            &health,
+            ui.clip_rect(),
+        );
+    });
     if state.hp_ratio < 0.35 {
         ui.colored_label(
             egui::Color32::RED,
@@ -277,7 +393,7 @@ fn render_visual_lab_tab(
 
     ui.separator();
     ui.heading("Action State");
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.selectable_value(&mut state.anim_state, AnimState::Idle, "Idle");
         ui.selectable_value(&mut state.anim_state, AnimState::Walk, "Walk");
         ui.selectable_value(&mut state.anim_state, AnimState::Attack, "Attack");
@@ -317,7 +433,7 @@ fn render_visual_lab_tab(
             );
         });
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.checkbox(&mut state.cloaked, "Cloaked (Refraction)");
         ui.checkbox(&mut state.speed_boosted, "Stimpack (Hyper Mist)");
     });
@@ -345,7 +461,7 @@ fn render_visual_lab_tab(
 
     ui.separator();
     ui.heading("Combat VFX Triggers");
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui.button("Shield Ripple Surge").clicked() {
             state.shield_hit_flash = 1.0;
         }
@@ -357,24 +473,24 @@ fn render_visual_lab_tab(
                 pos: [16.0, 16.0, 1.0],
                 radius: 0.6,
                 is_dome: false,
-                team_id: TeamId(1),
+                owner: effect_owner,
             }));
         }
     });
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui.button("Hitscan Fire").clicked() {
             events.send(CombatVisualEvent(CombatEventVisual::HitscanTracer {
                 from: [16.0, 16.0, 1.0],
                 to: [20.0, 20.0, 1.0],
-                team_id: TeamId(1),
+                owner: effect_owner,
             }));
         }
         if ui.button("Plasma Bolt").clicked() {
             events.send(CombatVisualEvent(CombatEventVisual::ProjectileVisual {
                 pos: [16.0, 16.0, 1.0],
                 vel: [6.0, 6.0, 0.0],
-                team_id: TeamId(1),
+                owner: effect_owner,
                 duration_secs: Some(1.2),
             }));
         }
@@ -383,7 +499,7 @@ fn render_visual_lab_tab(
                 from: [16.0, 16.0, 1.0],
                 to: [22.0, 22.0, 1.0],
                 is_lightning: false,
-                team_id: TeamId(1),
+                owner: effect_owner,
             }));
         }
         if ui.button("Lightning Arc").clicked() {
@@ -391,7 +507,7 @@ fn render_visual_lab_tab(
                 from: [16.0, 16.0, 1.0],
                 to: [22.0, 22.0, 1.0],
                 is_lightning: true,
-                team_id: TeamId(1),
+                owner: effect_owner,
             }));
         }
         if ui.button("Melee Slash").clicked() {
@@ -399,105 +515,193 @@ fn render_visual_lab_tab(
                 pos: [16.0, 16.0, 1.0],
                 angle_rad: state.heading_angle_deg.to_radians(),
                 radius: 1.0,
-                team_id: TeamId(1),
+                owner: effect_owner,
             }));
         }
     });
 }
 
-fn render_live_battle_tab(ui: &mut egui::Ui, state: &mut LabState) {
-    ui.heading("2-Army Deterministic Sandbox");
-    ui.label("Squad A (Blue): Forward Vanguard Assault");
-    ui.label("Squad B (Red): Heavy Siege Armor Division");
-
-    ui.separator();
-    if let Some(ref world) = state.sim_world {
-        ui.label(format!("Simulation Tick: {}", world.current_tick));
-        ui.label(format!("Active Entities: {}", world.entities.len()));
+fn render_live_battle_tab(
+    ui: &mut egui::Ui,
+    state: &mut LabState,
+    presentation: &mut crate::battle_presentation::BattlePresentation,
+    geometry: &mut crate::input_policy::UiGeometry,
+    session: &mut crate::battle_pipeline::session::BattleSession,
+) {
+    if !session.is_ready() {
+        ui.disable();
+    }
+    ui.heading(&presentation.map_title);
+    for player in &presentation.players {
+        ui.colored_label(player.color, &player.label);
+        for entry in &player.roster {
+            if entry.count > 0 {
+                ui.label(&entry.label);
+            }
+        }
+        ui.add_space(4.0);
+    }
+    if let Some(world) = &state.sim_world {
         ui.label(format!(
-            "Deterministic Checksum: {}",
-            state.last_checksum_hex
+            "Tick {} · {} active entities",
+            world.current_tick,
+            world.entities.len()
         ));
     } else {
-        ui.label("Simulation uninitialized. Click 'Initialize Sandbox' below.");
+        ui.label("Preparing the selected battle…");
     }
-
     ui.separator();
-    ui.horizontal(|ui| {
-        if ui
-            .button(if state.battle_paused {
-                "Resume"
-            } else {
-                "Pause"
-            })
-            .clicked()
-        {
+    ui.horizontal_wrapped(|ui| {
+        let pause = ui.button(if state.battle_paused {
+            "Resume"
+        } else {
+            "Pause"
+        });
+        geometry.record(crate::input_policy::UiTarget::Pause, &pause, ui.clip_rect());
+        if pause.clicked() {
             state.battle_paused = !state.battle_paused;
         }
-        ui.add(egui::Slider::new(&mut state.simulation_speed, 1..=4).text("Speed Multiplier"));
+        ui.add(egui::Slider::new(&mut state.simulation_speed, 1..=4).text("Speed"));
     });
-
     ui.separator();
-    ui.heading("Player 0 (Blue) Micro Commands");
-    ui.horizontal(|ui| {
-        if ui.button("Attack-Move (High Ground)").clicked() {
-            issue_sandbox_command(
-                state,
-                PlayerId(0),
-                UnitOrder::AttackMove {
-                    target: SimVec2::new(SimScalar::from_num(45), SimScalar::from_num(32)),
-                },
-            );
-        }
-        if ui.button("Kite Retreat (Base)").clicked() {
-            issue_sandbox_command(
-                state,
-                PlayerId(0),
-                UnitOrder::Move {
-                    target: SimVec2::new(SimScalar::from_num(10), SimScalar::from_num(32)),
-                },
-            );
-        }
-    });
-
-    ui.horizontal(|ui| {
-        if ui.button("Hold Position").clicked() {
-            issue_sandbox_command(state, PlayerId(0), UnitOrder::HoldPosition);
-        }
-        if ui.button("Stimpack (+Speed)").clicked() {
-            issue_sandbox_command(state, PlayerId(0), UnitOrder::UseStim);
-        }
-    });
-
-    ui.separator();
-    if ui.button("Reset / Initialize Sandbox").clicked() {
-        state.sim_world = Some(SimWorld::new_default_battle_sandbox());
+    ui.heading("Orders");
+    let selected_name = presentation
+        .players
+        .iter()
+        .find(|player| Some(player.owner) == presentation.controlled)
+        .map_or("No participant", |player| player.label.as_str());
+    ui.label("Control");
+    egui::ComboBox::from_id_salt("controlled_participant")
+        .width(ui.available_width())
+        .truncate()
+        .selected_text(selected_name)
+        .show_ui(ui, |ui| {
+            for player in &presentation.players {
+                ui.selectable_value(
+                    &mut presentation.controlled,
+                    Some(player.owner),
+                    &player.label,
+                );
+            }
+        });
+    if presentation.target == presentation.controlled {
+        presentation.target = presentation
+            .players
+            .iter()
+            .find(|player| Some(player.owner) != presentation.controlled)
+            .map(|player| player.owner);
     }
+    let target_name = presentation
+        .players
+        .iter()
+        .find(|player| Some(player.owner) == presentation.target)
+        .map_or("No other participant", |player| player.label.as_str());
+    ui.label("Destination");
+    egui::ComboBox::from_id_salt("destination_participant")
+        .width(ui.available_width())
+        .truncate()
+        .selected_text(target_name)
+        .show_ui(ui, |ui| {
+            for player in &presentation.players {
+                if Some(player.owner) != presentation.controlled {
+                    ui.selectable_value(
+                        &mut presentation.target,
+                        Some(player.owner),
+                        &player.label,
+                    );
+                }
+            }
+        });
+    if let Some(player) = presentation
+        .players
+        .iter()
+        .find(|player| Some(player.owner) == presentation.controlled)
+    {
+        ui.vertical(|ui| {
+            if ui
+                .add_enabled(
+                    player.armed > 0 && presentation.target.is_some(),
+                    egui::Button::new("Attack destination"),
+                )
+                .clicked()
+            {
+                if let Some(target) = presentation
+                    .target
+                    .and_then(|owner| state.battle_start_positions.get(&owner).copied())
+                {
+                    issue_sandbox_command(
+                        state,
+                        &mut session.commands,
+                        player.owner,
+                        UnitOrder::AttackMove { target },
+                    );
+                }
+            }
+            if ui
+                .add_enabled(player.mobile > 0, egui::Button::new("Return to base"))
+                .clicked()
+            {
+                if let Some(target) = state.battle_start_positions.get(&player.owner).copied() {
+                    issue_sandbox_command(
+                        state,
+                        &mut session.commands,
+                        player.owner,
+                        UnitOrder::Move { target },
+                    );
+                }
+            }
+            if ui
+                .add_enabled(player.mobile > 0, egui::Button::new("Hold position"))
+                .clicked()
+            {
+                issue_sandbox_command(
+                    state,
+                    &mut session.commands,
+                    player.owner,
+                    UnitOrder::HoldPosition,
+                );
+            }
+            if player.overclock > 0 && ui.button("Overclock").clicked() {
+                issue_sandbox_command(
+                    state,
+                    &mut session.commands,
+                    player.owner,
+                    UnitOrder::UseStim,
+                );
+            }
+        });
+    }
+    ui.separator();
+    let reset = ui.button("Reset battle");
+    geometry.record(crate::input_policy::UiTarget::Reset, &reset, ui.clip_rect());
+    if reset.clicked() {
+        state.battle_reset_requested = true;
+    }
+    ui.label(session.commands.status());
+    ui.label(&session.outcome_status);
+    ui.collapsing("Diagnostics", |ui| {
+        ui.label(&state.last_checksum_hex);
+        let clock = session.clock.diagnostics();
+        ui.label(format!(
+            "Scheduling time discarded: {:.3}s total",
+            clock.discarded_total.as_secs_f64()
+        ));
+    });
 }
 
-fn issue_sandbox_command(state: &mut LabState, player_id: PlayerId, order: UnitOrder) {
-    if let Some(ref mut world) = state.sim_world {
-        let entities: Vec<EntityId> = world
-            .entities
-            .values()
-            .filter(|e| e.owner == player_id && !e.is_immobile)
-            .map(|e| e.id)
-            .collect();
-
-        let cmd = PlayerCommand {
-            player_id,
-            entities,
-            order,
-            queue: false,
-        };
-
-        let bundle = TickBundle {
-            tick: Tick(world.current_tick),
-            commands: vec![cmd],
-            state_checksum: None,
-        };
-
-        let _ = world.step(&bundle);
+fn issue_sandbox_command(
+    state: &LabState,
+    queue: &mut crate::battle_pipeline::commands::BattleCommandQueue,
+    player_id: PlayerId,
+    order: UnitOrder,
+) {
+    let result = state
+        .sim_world
+        .as_ref()
+        .ok_or(crate::battle_pipeline::commands::SubmissionError::NotReady)
+        .and_then(|world| queue.submit_roster_order(world, player_id, order, false));
+    if let Err(error) = result {
+        queue.reject(&error);
     }
 }
 
@@ -517,10 +721,7 @@ fn render_swarm_tab(ui: &mut egui::Ui, state: &mut LabState, diagnostics: &Diagn
         "Active Swarm Bubbles: {}",
         state.swarm_bubble_count
     ));
-    ui.checkbox(
-        &mut state.colorblind_mode,
-        "Colorblind Palette (Cyan vs Orange)",
-    );
+    ui.label("Alternate ownership palettes are not available.");
 
     ui.separator();
     ui.horizontal(|ui| {
@@ -572,8 +773,6 @@ fn render_selected_unit_hud(
                     (None, None)
                 };
 
-                let active_name = arch.map_or("TACTICAL UNIT", |a| a.display_name.as_str());
-
                 ui.allocate_ui_with_layout(
                     egui::vec2(200.0, 200.0),
                     egui::Layout::top_down(egui::Align::Center),
@@ -598,25 +797,9 @@ fn render_selected_unit_hud(
                                 )),
                             );
                         } else {
-                            // Holographic tactical radar fallback box
-                            let (rect, _response) = ui.allocate_exact_size(
-                                egui::vec2(200.0, 200.0),
-                                egui::Sense::hover(),
-                            );
-                            let painter = ui.painter_at(rect);
-                            painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(12, 16, 28));
-                            painter.rect_stroke(
-                                rect,
-                                4.0,
-                                egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(0, 200, 255)),
-                                egui::StrokeKind::Inside,
-                            );
-                            painter.text(
-                                rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                format!("HOLO VIDEO FEED\n{active_name}"),
-                                egui::FontId::monospace(14.0),
-                                egui::Color32::from_rgb(0, 240, 255),
+                            ui.colored_label(
+                                egui::Color32::LIGHT_RED,
+                                "Portrait unavailable. See the media diagnostic.",
                             );
                         }
                     },
@@ -640,7 +823,7 @@ fn render_selected_unit_hud(
                             }
                         };
 
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             ui.colored_label(faction_color, format!("[ {faction_name} ]"));
                             ui.strong(format!("{} — {}", arch.display_name, arch.name));
 
@@ -672,7 +855,7 @@ fn render_selected_unit_hud(
                         });
 
                         // Role and classification badges
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             let role_str = if arch.lore_description.is_empty() {
                                 "Tactical Combatant"
                             } else {
@@ -701,7 +884,7 @@ fn render_selected_unit_hud(
 
                         // Weapon specs and combat vitals
                         if let Some(ref weapon) = arch.weapon {
-                            ui.horizontal(|ui| {
+                            ui.horizontal_wrapped(|ui| {
                                 ui.label(format!("Weapon: {}", weapon.name));
                                 ui.label(format!("Damage: {:.1}", weapon.base_damage.to_f32()));
                                 ui.label(format!("Range: {:.1} u", weapon.max_range.to_f32()));
@@ -721,7 +904,7 @@ fn render_selected_unit_hud(
                             ui.label(label);
                         }
 
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             ui.label(format!("Mover: {:?}", arch.mover_type));
                             ui.label(format!("Life Armor: {:.0}", arch.life_armor.to_f32()));
                             ui.label(format!("Shield Armor: {:.0}", arch.shield_armor.to_f32()));
@@ -732,7 +915,7 @@ fn render_selected_unit_hud(
                         ui.separator();
 
                         // Quick-Select Hero Showcase Lineup Buttons
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             ui.strong("Hero Showcase Lineup:");
                             for (idx, hero_arch) in heroes.iter().enumerate() {
                                 let label = format!("{}. {}", idx + 1, hero_arch.display_name);

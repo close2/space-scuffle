@@ -5,13 +5,13 @@
 //! from `egui` UI presentation:
 //! - **4-Hero Visual Lab Preview:** Dynamically queries `CatalogResource` for hero showcase archetypes,
 //!   animating and rendering them with zero hardcoded unit IDs or creature names.
-//! - **Live Combat Sandbox Synchronizer:** Steps authoritative `sim_core::SimWorld` and synchronizes
-//!   3D Bevy entities with zero per-frame heap allocations using persistent [`RenderEntityMap`].
+//! - **Live Combat Sandbox Synchronizer:** Applies immutable displayed snapshots and synchronizes
+//!   3D Bevy entities using retained snapshots and persistent [`RenderEntityMap`] storage.
 //! - **200-Bubble Swarm Stress Test:** High-density collision and rendering stress test.
 //!
 //! # Invariants
 //! - Conversion from deterministic fixed-point to GPU floats happens strictly at snapshot boundaries.
-//! - Per-frame sync systems perform zero heap allocations in steady state.
+//! - Live steady-state synchronization reuses storage; spawn/despawn and preview work have separate costs.
 //! - Components (`Transform`, `BubbleInstance`) are mutated in place without issuing `commands.insert`.
 
 use crate::bubble_shader::{
@@ -22,13 +22,11 @@ use crate::bubble_shader::{
 use crate::indicators::{attach_bubble_indicators, IndicatorAssets, SelectionRingMaterial};
 use crate::lab_ui::{LabState, LabTab};
 use crate::selection::{HeroLineupIndex, SelectionState};
-use crate::vfx::{emit_mist_wake, CombatVisualEvent, MistWakeMaterial, VfxSharedAssets};
 use crate::CatalogResource;
+use bevy::app::AppExit;
 use bevy::prelude::*;
-use sim_core::world::SimWorld;
-use sim_types::commands::TickBundle;
 use sim_types::enums::{AnimState, ShapeKind, WeaponVisualKind};
-use sim_types::ids::{EntityId, TeamId, Tick};
+use sim_types::ids::EntityId;
 use sim_types::snapshot::BubbleRenderInstance;
 use std::collections::BTreeMap;
 
@@ -63,19 +61,20 @@ pub struct RenderEntityMap(pub BTreeMap<EntityId, Entity>);
 /// sorted by `showcase_order`. Contains zero hardcoded creature names or unit type IDs.
 #[allow(clippy::type_complexity)]
 pub fn sync_lab_preview_system(
+    mut owners: crate::player_presentation::PresentationContext<'_>,
     mut commands: Commands<'_, '_>,
+    mut exit_events: EventWriter<'_, AppExit>,
     time: Res<'_, Time>,
     mut lab_state: ResMut<'_, LabState>,
     mut selection_state: ResMut<'_, SelectionState>,
     catalog: Res<'_, CatalogResource>,
     registry: Res<'_, FlipbookRegistry>,
+    mut media_status: ResMut<'_, crate::media::ClientMediaStatus>,
     shared_meshes: Res<'_, BubbleSharedMeshes>,
     indicator_assets: Res<'_, IndicatorAssets>,
-    vfx_assets: Res<'_, VfxSharedAssets>,
     mut materials: ResMut<'_, Assets<StandardMaterial>>,
     mut bubble_materials: ResMut<'_, Assets<BubbleDomeMaterial>>,
     mut ring_materials: ResMut<'_, Assets<SelectionRingMaterial>>,
-    mut mist_materials: ResMut<'_, Assets<MistWakeMaterial>>,
     mut query: Query<
         '_,
         '_,
@@ -110,6 +109,36 @@ pub fn sync_lab_preview_system(
     let hero_count = query.iter().count();
     let expected_heroes = heroes.len().min(4);
 
+    if media_status.retain_failure(&mut lab_state) {
+        return;
+    }
+    let selected = selection_state
+        .selected_hero_index
+        .unwrap_or(lab_state.selected_hero_index)
+        .min(expected_heroes.saturating_sub(1));
+    // Admit the entire requested lineup before creating any material. Successful
+    // lookups use cached startup evidence and never touch files or allocate.
+    for (index, arch) in heroes.iter().take(expected_heroes).enumerate() {
+        let action = if index == selected {
+            lab_state.anim_state
+        } else {
+            AnimState::Idle
+        };
+        let admission = media_status
+            .require(&registry, arch.unit_type_id, action)
+            .and_then(|()| {
+                if index == selected && lab_state.use_concept_video {
+                    media_status.require_concept(&registry, action)
+                } else {
+                    Ok(())
+                }
+            });
+        if let Err(error) = admission {
+            crate::media::reject(error, &mut media_status, &mut lab_state, &mut exit_events);
+            return;
+        }
+    }
+
     if hero_count < expected_heroes {
         for (entity, _, _, _, _) in &query {
             commands.entity(entity).despawn_recursive();
@@ -128,7 +157,7 @@ pub fn sync_lab_preview_system(
             let radius = if is_dome { 1.35 } else { 0.85 };
             let y = if is_dome { 0.0 } else { radius };
             let pos = Vec3::new(x, y, 0.0);
-            let team_id = if idx == 2 { TeamId(2) } else { TeamId(1) };
+            let owner = owners.palette.showcase(idx);
 
             let texture = registry.get_texture(arch.unit_type_id);
             let meta = registry.get_meta(arch.unit_type_id);
@@ -138,7 +167,7 @@ pub fn sync_lab_preview_system(
                 shape: arch.shape,
                 silhouette: arch.silhouette,
                 unit_type: arch.unit_type_id,
-                team_id,
+                owner,
                 world_pos: [pos.x, pos.z, 0.0],
                 ground_z: 0.0,
                 radius,
@@ -197,7 +226,14 @@ pub fn sync_lab_preview_system(
                 speed_boosted: is_selected && lab_state.speed_boosted,
             };
 
-            let mut uniform = BubbleUniformGpu::from_instance(&instance, meta);
+            let style = match owners.palette.preview_style(instance.owner) {
+                Ok(style) => style,
+                Err(error) => {
+                    owners.reject(error, &mut exit_events);
+                    return;
+                }
+            };
+            let mut uniform = BubbleUniformGpu::from_instance(&instance, meta, style);
             let mut feature_flags = 0u32;
             if lab_state.opt_glare {
                 feature_flags |= FLAG_GLARE;
@@ -265,12 +301,13 @@ pub fn sync_lab_preview_system(
                 &indicator_assets,
                 &mut materials,
                 &mut ring_materials,
+                style,
             );
         }
         return;
     }
 
-    // If already spawned, update each hero in place with zero heap allocations
+    // If already spawned, update each hero in place.
     let active_hero_idx = selection_state
         .selected_hero_index
         .unwrap_or(lab_state.selected_hero_index)
@@ -293,11 +330,7 @@ pub fn sync_lab_preview_system(
         let radius = if is_dome { 1.35 } else { 0.85 };
         let y = if is_dome { 0.0 } else { radius };
         let pos = Vec3::new(x, y, 0.0);
-        let team_id = if hero_idx.0 == 2 {
-            TeamId(2)
-        } else {
-            TeamId(1)
-        };
+        let owner = owners.palette.showcase(hero_idx.0);
 
         let (texture, meta) = if is_selected && lab_state.use_concept_video {
             (
@@ -316,7 +349,7 @@ pub fn sync_lab_preview_system(
             shape: arch.shape,
             silhouette: arch.silhouette,
             unit_type: arch.unit_type_id,
-            team_id,
+            owner,
             world_pos: [pos.x, pos.z, 0.0],
             ground_z: 0.0,
             radius,
@@ -375,7 +408,14 @@ pub fn sync_lab_preview_system(
             speed_boosted: is_selected && lab_state.speed_boosted,
         };
 
-        let mut uniform = BubbleUniformGpu::from_instance(&instance, meta);
+        let style = match owners.palette.preview_style(instance.owner) {
+            Ok(style) => style,
+            Err(error) => {
+                owners.reject(error, &mut exit_events);
+                return;
+            }
+        };
+        let mut uniform = BubbleUniformGpu::from_instance(&instance, meta, style);
         let mut feature_flags = 0u32;
         if lab_state.opt_glare {
             feature_flags |= FLAG_GLARE;
@@ -419,133 +459,66 @@ pub fn sync_lab_preview_system(
 
         // Mutate component in place without issuing commands.entity(e).insert(...)
         bubble_instance.0 = instance;
-
-        let lab_frame = (time.elapsed_secs() * 30.0) as u64;
-        let is_moving = lab_state.speed > 0.05;
-        let throttled = is_moving && lab_frame % 2 == 0;
-
-        if !is_dome && lab_state.opt_mist_wake && throttled {
-            emit_mist_wake(
-                &mut commands,
-                &vfx_assets,
-                &mut mist_materials,
-                pos,
-                if is_moving {
-                    Vec2::new(lab_state.speed, 0.0)
-                } else {
-                    Vec2::ZERO
-                },
-                radius,
-                lab_state.speed_boosted,
-                true,
-            );
-        }
     }
 }
 
-/// Steps and synchronizes the live 2-army deterministic `sim_core` battle.
-///
-/// Maintains entity mappings in [`RenderEntityMap`] to achieve zero per-frame heap allocations.
+type LiveBattleQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static mut Transform,
+        &'static mut BubbleInstance,
+        &'static mut Mesh3d,
+        &'static MeshMaterial3d<BubbleDomeMaterial>,
+    ),
+    With<LiveBattleBubble>,
+>;
+
+/// Applies the retained displayed snapshot; never executes simulation or consumes output.
+/// Spatial transforms and material instances use exactly the same published pose.
 pub fn sync_live_battle_system(
+    mut owners: crate::player_presentation::PresentationContext<'_>,
     mut commands: Commands<'_, '_>,
-    mut lab_state: ResMut<'_, LabState>,
-    time: Res<'_, Time>,
-    mut combat_events: EventWriter<'_, CombatVisualEvent>,
+    mut exit_events: EventWriter<'_, AppExit>,
+    lab_state: Res<'_, LabState>,
+    session: Res<'_, crate::battle_pipeline::session::BattleSession>,
     mut render_entities: ResMut<'_, RenderEntityMap>,
     registry: Res<'_, FlipbookRegistry>,
     shared_meshes: Res<'_, BubbleSharedMeshes>,
     indicator_assets: Res<'_, IndicatorAssets>,
-    vfx_assets: Res<'_, VfxSharedAssets>,
     mut materials: ResMut<'_, Assets<StandardMaterial>>,
     mut bubble_materials: ResMut<'_, Assets<BubbleDomeMaterial>>,
     mut ring_materials: ResMut<'_, Assets<SelectionRingMaterial>>,
-    mut mist_materials: ResMut<'_, Assets<MistWakeMaterial>>,
-    mut query: Query<
-        '_,
-        '_,
-        (
-            Entity,
-            &mut Transform,
-            &mut BubbleInstance,
-            &MeshMaterial3d<BubbleDomeMaterial>,
-        ),
-        With<LiveBattleBubble>,
-    >,
+    mut query: LiveBattleQuery<'_, '_>,
 ) {
-    // PERFORMANCE RATIONALE:
-    // Why: Running world.step() directly inside Bevy's per-frame Update loop ties
-    // simulation speed to monitor refresh rate (60 Hz to 240+ Hz).
-    // What: We accumulate delta_secs * speed and step the 25 Hz simulation in fixed
-    // 0.04s increments, capping at 5 steps per render frame to prevent spiral of death.
-    // Trade-off: Perfectly deterministic 25 Hz simulation regardless of display FPS.
-    const SIM_TICK_SECS: f32 = 0.04;
-    const MAX_STEPS_PER_FRAME: usize = 5;
-
     if lab_state.current_tab != LabTab::LiveBattle {
-        // Despawn battle bubbles when not on the battle tab
-        for (entity, _, _, _) in &query {
+        for (entity, _, _, _, _) in &query {
             commands.entity(entity).despawn_recursive();
         }
         render_entities.0.clear();
         return;
     }
-
-    if lab_state.sim_world.is_none() {
-        lab_state.sim_world = Some(SimWorld::new_default_battle_sandbox());
-    }
-
-    let lab = &mut *lab_state;
-    let paused = lab.battle_paused;
-    let speed = lab.simulation_speed;
-
-    let Some(ref mut world) = lab.sim_world else {
+    if !session.is_ready() {
         return;
-    };
-
-    let mut latest_snapshot = None;
-    let mut accumulated_combat_events = Vec::new();
-
-    if paused || speed == 0 {
-        latest_snapshot = Some(world.build_render_snapshot());
-    } else {
-        lab.battle_tick_accumulator_secs += time.delta_secs() * (speed as f32);
-
-        // Clamp accumulator to avoid spiral of death after system lag spikes or window drags
-        if lab.battle_tick_accumulator_secs > 0.25 {
-            lab.battle_tick_accumulator_secs = 0.25;
-        }
-
-        let mut steps = 0;
-        while lab.battle_tick_accumulator_secs >= SIM_TICK_SECS && steps < MAX_STEPS_PER_FRAME {
-            lab.battle_tick_accumulator_secs -= SIM_TICK_SECS;
-            let bundle = TickBundle {
-                tick: Tick(world.current_tick),
-                commands: Vec::new(),
-                state_checksum: None,
-            };
-            let mut snap = world.step(&bundle);
-            accumulated_combat_events.append(&mut snap.combat_events);
-            latest_snapshot = Some(snap);
-            steps += 1;
-        }
     }
+    let snapshot = session.frames.presented();
 
-    let Some(snapshot) = latest_snapshot else {
-        return;
-    };
-
-    lab.last_checksum_hex = format!("0x{:016X}", snapshot.checksum);
-
-    // Forward all accumulated combat events to VFX pipeline
-    for event in accumulated_combat_events {
-        combat_events.send(CombatVisualEvent(event));
-    }
-
-    // Synchronize 3D Bevy entities with snapshot bubbles without per-frame allocations
+    // Reuse existing materials and instances; spawn/despawn are separate lifecycle work.
     for instance in &snapshot.bubbles {
         let meta = registry.get_meta(instance.unit_type);
         let texture = registry.get_texture(instance.unit_type);
-        let uniform = BubbleUniformGpu::from_instance(instance, meta);
+        let style = match owners
+            .palette
+            .battle_style(instance.owner, &session.metadata)
+        {
+            Ok(style) => style,
+            Err(error) => {
+                owners.reject(error, &mut exit_events);
+                return;
+            }
+        };
+        let uniform = BubbleUniformGpu::from_instance(instance, meta, style);
         let is_dome = matches!(instance.shape, ShapeKind::BuildingDome { .. });
         let altitude_offset = if is_dome { 0.0 } else { instance.radius };
         let pos = Vec3::new(
@@ -556,35 +529,19 @@ pub fn sync_live_battle_system(
 
         let target_pos = pos;
         if let Some(&e) = render_entities.0.get(&instance.entity_id) {
-            if let Ok((_, mut transform, mut bubble, mat_handle)) = query.get_mut(e) {
+            if let Ok((_, mut transform, mut bubble, mut mesh, mat_handle)) = query.get_mut(e) {
                 if let Some(mat) = bubble_materials.get_mut(&mat_handle.0) {
                     mat.uniform = uniform;
+                    mat.video_texture = texture;
                 }
-                let lerp_factor = (time.delta_secs() * 22.0).min(1.0);
-                if transform.translation.distance_squared(target_pos) > 4.0
-                    || transform.translation.distance_squared(target_pos) < 0.0001
-                {
-                    transform.translation = target_pos;
+                transform.translation = target_pos;
+                mesh.0 = if is_dome {
+                    shared_meshes.dome_mesh.clone()
                 } else {
-                    transform.translation = transform.translation.lerp(target_pos, lerp_factor);
-                }
+                    shared_meshes.sphere_mesh.clone()
+                };
                 transform.scale = Vec3::splat(instance.radius);
                 bubble.0 = instance.clone();
-            }
-
-            let moving = instance.velocity[0].abs() + instance.velocity[1].abs() > 0.0005;
-
-            if moving && !is_dome {
-                emit_mist_wake(
-                    &mut commands,
-                    &vfx_assets,
-                    &mut mist_materials,
-                    target_pos,
-                    Vec2::new(instance.velocity[0], instance.velocity[1]),
-                    instance.radius,
-                    instance.speed_boosted,
-                    false,
-                );
             }
         } else {
             let mat = bubble_materials.add(BubbleDomeMaterial {
@@ -620,13 +577,21 @@ pub fn sync_live_battle_system(
                 &indicator_assets,
                 &mut materials,
                 &mut ring_materials,
+                style,
             );
         }
     }
 
-    // Despawn dead entities
+    // PERFORMANCE RATIONALE:
+    // Why: Scanning the entire snapshot for each renderer is quadratic.
+    // What: Merge the sorted entity map and sorted snapshot membership once.
+    // Trade-off: Requires the authoritative snapshot's stable ID ordering.
+    let mut live = snapshot.bubbles.iter().peekable();
     render_entities.0.retain(|&id, &mut entity| {
-        let is_alive = snapshot.bubbles.iter().any(|b| b.entity_id == id);
+        while live.peek().is_some_and(|record| record.entity_id < id) {
+            live.next();
+        }
+        let is_alive = live.peek().is_some_and(|record| record.entity_id == id);
         if !is_alive {
             commands.entity(entity).despawn_recursive();
         }
@@ -634,57 +599,77 @@ pub fn sync_live_battle_system(
     });
 }
 
-/// Canonical alias for stepping the client simulation and battle synchronization.
-pub use sync_live_battle_system as step_client_simulation_system;
+/// Canonical alias for the sole queued client tick driver.
+pub use crate::battle_pipeline::driver::advance_battle_ticks as step_client_simulation_system;
 
 /// Spawns and animates 200 colliding bubbles for the swarm stress test.
 pub fn sync_swarm_stress_system(
+    mut owners: crate::player_presentation::PresentationContext<'_>,
     mut commands: Commands<'_, '_>,
+    mut exit_events: EventWriter<'_, AppExit>,
     time: Res<'_, Time>,
     mut lab_state: ResMut<'_, LabState>,
     catalog: Res<'_, CatalogResource>,
     registry: Res<'_, FlipbookRegistry>,
+    mut media_status: ResMut<'_, crate::media::ClientMediaStatus>,
     shared_meshes: Res<'_, BubbleSharedMeshes>,
     mut bubble_materials: ResMut<'_, Assets<BubbleDomeMaterial>>,
     mut query: Query<
         '_,
         '_,
-        (Entity, &mut Transform, &MeshMaterial3d<BubbleDomeMaterial>),
+        (
+            Entity,
+            &BubbleInstance,
+            &mut Transform,
+            &MeshMaterial3d<BubbleDomeMaterial>,
+        ),
         With<SwarmBubble>,
     >,
 ) {
     if lab_state.current_tab != LabTab::SwarmStressTest || !lab_state.swarm_active {
         // Despawn swarm when inactive
-        for (entity, _, _) in &query {
+        for (entity, _, _, _) in &query {
             commands.entity(entity).despawn_recursive();
         }
         lab_state.swarm_bubble_count = 0;
         return;
     }
 
+    if media_status.retain_failure(&mut lab_state) {
+        return;
+    }
+    let Some(mobile_arch) = catalog
+        .0
+        .archetypes()
+        .find(|a| !matches!(a.shape, ShapeKind::BuildingDome { .. }))
+    else {
+        return;
+    };
+    if let Err(error) = media_status.require(&registry, mobile_arch.unit_type_id, AnimState::Walk) {
+        crate::media::reject(error, &mut media_status, &mut lab_state, &mut exit_events);
+        return;
+    }
     let count = query.iter().count();
     lab_state.swarm_bubble_count = count;
 
     if count == 0 {
-        let Some(mobile_arch) = catalog
-            .0
-            .archetypes()
-            .find(|a| !matches!(a.shape, ShapeKind::BuildingDome { .. }))
-        else {
-            return;
-        };
         let swarm_unit_type = mobile_arch.unit_type_id;
         let swarm_silhouette = mobile_arch.silhouette;
 
         let meta = registry.get_meta(swarm_unit_type);
         let texture = registry.get_texture(swarm_unit_type);
 
-        // Spawn 200 bubbles (100 Team 1 vs 100 Team 2)
+        // Spawn two equal groups using explicit authored preview ownership roles.
         for i in 0..200u32 {
-            let team_id = if i < 100 { 1 } else { 2 };
+            let primary_group = i < 100;
+            let owner = if primary_group {
+                owners.palette.primary()
+            } else {
+                owners.palette.secondary()
+            };
             let row = (i % 10) as f32;
             let col = ((i % 100) / 10) as f32;
-            let x = if team_id == 1 {
+            let x = if primary_group {
                 8.0 + col * 1.2
             } else {
                 24.0 - col * 1.2
@@ -696,12 +681,12 @@ pub fn sync_swarm_stress_system(
                 shape: ShapeKind::UnitSphere,
                 silhouette: swarm_silhouette,
                 unit_type: swarm_unit_type,
-                team_id: TeamId(team_id),
+                owner,
                 world_pos: [x, z, 0.5],
                 ground_z: 0.0,
                 radius: 0.45,
-                velocity: [if team_id == 1 { 1.5 } else { -1.5 }, 0.0],
-                heading_angle_rad: if team_id == 1 {
+                velocity: [if primary_group { 1.5 } else { -1.5 }, 0.0],
+                heading_angle_rad: if primary_group {
                     0.0
                 } else {
                     std::f32::consts::PI
@@ -723,7 +708,14 @@ pub fn sync_swarm_stress_system(
                 speed_boosted: false,
             };
 
-            let uniform = BubbleUniformGpu::from_instance(&instance, meta);
+            let style = match owners.palette.preview_style(instance.owner) {
+                Ok(style) => style,
+                Err(error) => {
+                    owners.reject(error, &mut exit_events);
+                    return;
+                }
+            };
+            let uniform = BubbleUniformGpu::from_instance(&instance, meta, style);
 
             let mat = bubble_materials.add(BubbleDomeMaterial {
                 uniform,
@@ -743,9 +735,17 @@ pub fn sync_swarm_stress_system(
     } else {
         // Animate swarm translation with boundary bouncing
         let dt = time.delta_secs();
-        for (_, mut tf, mat_handle) in &mut query {
+        for (_, instance, mut tf, mat_handle) in &mut query {
+            let style = match owners.palette.preview_style(instance.0.owner) {
+                Ok(style) => style,
+                Err(error) => {
+                    owners.reject(error, &mut exit_events);
+                    return;
+                }
+            };
             tf.translation.x += (tf.translation.z.sin() * 0.5) * dt;
             if let Some(mat) = bubble_materials.get_mut(&mat_handle.0) {
+                mat.uniform.team_color = style.linear;
                 mat.uniform.anim_progress = (time.elapsed_secs() * 2.0).fract();
             }
         }

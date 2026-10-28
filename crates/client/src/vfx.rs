@@ -11,78 +11,14 @@
 
 #![allow(dead_code)]
 
+use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderRef, ShaderType};
-use sim_types::ids::TeamId;
 use sim_types::snapshot::CombatEventVisual;
-use std::sync::atomic::{AtomicU32, Ordering};
 
-/// GPU uniform buffer struct matching `struct MistWakeUniform` in `mist_wake.wgsl`.
-// PERFORMANCE RATIONALE:
-// Why: WebGPU uniform buffers require strict 16-byte alignment and explicit std140 padding.
-// What: Fields total exactly 32 bytes (16B Vec4 + 4x 4B fields).
-// Trade-off: Explicit manual padding for zero runtime alignment faults.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable, ShaderType)]
-pub struct MistWakeUniformGpu {
-    /// Base tint color (RGB) + flow_angle_rad in W.
-    pub base_color: Vec4,
-    /// Normalized particle lifetime progress [0.0, 1.0].
-    pub age: f32,
-    /// Particulate kind / mode:
-    /// 0 = colorful iridescent nebula wake + slipstream
-    /// 1 = golden-magenta thruster overdrive
-    /// 2 = iridescent micro-bubble cluster + star-sparks
-    pub speed_boosted: u32,
-    /// Random noise and rotation seed.
-    pub seed: f32,
-    /// Aspect ratio of billboard or flow speed factor.
-    pub aspect: f32,
-}
-
-impl Default for MistWakeUniformGpu {
-    fn default() -> Self {
-        Self {
-            base_color: Vec4::new(0.18, 0.90, 1.0, 0.0),
-            age: 0.0,
-            speed_boosted: 0,
-            seed: 0.0,
-            aspect: 1.0,
-        }
-    }
-}
-
-/// Custom Bevy 3D material implementing the volumetric additive mist wake shader.
-#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
-pub struct MistWakeMaterial {
-    /// GPU uniform buffer for mist wake particle.
-    #[uniform(0)]
-    pub uniform: MistWakeUniformGpu,
-}
-
-impl Material for MistWakeMaterial {
-    fn fragment_shader() -> ShaderRef {
-        "shaders/mist_wake.wgsl".into()
-    }
-
-    fn alpha_mode(&self) -> AlphaMode {
-        AlphaMode::Add
-    }
-
-    fn depth_bias(&self) -> f32 {
-        -4.0
-    }
-
-    fn specialize(
-        _pipeline: &bevy::pbr::MaterialPipeline<Self>,
-        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
-        _layout: &bevy::render::mesh::MeshVertexBufferLayoutRef,
-        _key: bevy::pbr::MaterialPipelineKey<Self>,
-    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
-        descriptor.primitive.cull_mode = None;
-        Ok(())
-    }
-}
+/// Compatibility alias; pooled mist updates are owned by the production mist plugin.
+pub use crate::mist::update_mist_wake_system as update_vfx_system;
+pub use crate::mist::{update_mist_wake_system, MistWakeMaterial, MistWakeUniformGpu};
 
 /// GPU uniform representation for procedural volumetric combat visual effects.
 // PERFORMANCE RATIONALE:
@@ -158,31 +94,18 @@ impl Material for CombatFxMaterial {
 #[derive(Event, Clone, Debug)]
 pub struct CombatVisualEvent(pub CombatEventVisual);
 
-/// Classification of trailing particulate wake emissions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MistParticleKind {
-    /// Soft expanding radial vapor puff.
-    VaporPuff,
-    /// Tiny upward drifting micro-bubble.
-    MicroBubble,
-    /// High-velocity glowing overclock spark streak.
-    OverclockSpark,
-}
-
-/// Component for trailing particulate wake elements.
+/// Additive combat light geometry that must never cast an opaque mesh shadow.
+///
+/// Includes the current shader-card shatter fragments. Real opaque debris must use
+/// its own material and component instead of this light-effect classification.
 #[derive(Component, Debug)]
-pub struct MistWakeParticle {
-    /// Particulate classification kind.
-    pub kind: MistParticleKind,
-    /// Linear movement velocity.
-    pub velocity: Vec3,
-    /// Remaining particle lifetime timer.
-    pub lifetime: Timer,
-    /// Initial particle scale.
-    pub initial_scale: f32,
-    /// Target particle scale at end of lifetime.
-    pub target_scale: f32,
-}
+#[require(NotShadowCaster)]
+pub struct CombatLightEffect;
+
+/// Exact source ownership copied from the admitted visual event. This survives
+/// source death and remains independent of palette hues and material handles.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CombatEffectOwner(pub sim_types::PlayerId);
 
 /// Component for in-flight physical projectiles.
 #[derive(Component, Debug)]
@@ -249,10 +172,6 @@ pub struct VfxSharedAssets {
     pub melee_slash_mesh: Handle<Mesh>,
     /// Death shatter wedge prism mesh.
     pub shard_mesh: Handle<Mesh>,
-    /// Blue team emissive weapon material.
-    pub blue_beam_mat: Handle<StandardMaterial>,
-    /// Red team emissive weapon material.
-    pub red_beam_mat: Handle<StandardMaterial>,
     /// Mist wake material.
     pub mist_mat: Handle<StandardMaterial>,
     /// Hyper-boosted spark material.
@@ -273,18 +192,6 @@ pub fn setup_vfx_assets_system(
         beam_mesh: quad.clone(),
         melee_slash_mesh: quad.clone(),
         shard_mesh: quad,
-        blue_beam_mat: materials.add(StandardMaterial {
-            base_color: Color::srgb(0.2, 0.7, 1.0),
-            emissive: LinearRgba::rgb(0.5, 2.0, 4.0),
-            unlit: true,
-            ..default()
-        }),
-        red_beam_mat: materials.add(StandardMaterial {
-            base_color: Color::srgb(1.0, 0.25, 0.15),
-            emissive: LinearRgba::rgb(4.0, 0.6, 0.3),
-            unlit: true,
-            ..default()
-        }),
         mist_mat: materials.add(StandardMaterial {
             base_color: Color::srgba(0.8, 0.9, 1.0, 0.35),
             alpha_mode: AlphaMode::Blend,
@@ -314,13 +221,10 @@ pub fn spawn_death_shatter(
     combat_fx_materials: &mut Assets<CombatFxMaterial>,
     origin: Vec3,
     radius: f32,
-    team_id: TeamId,
+    style: crate::player_presentation::PlayerStyle,
+    owner: sim_types::PlayerId,
 ) {
-    let team_hdr = match team_id.0 {
-        1 => Vec4::new(0.2, 0.75, 1.0, 0.0),
-        2 => Vec4::new(1.0, 0.35, 0.15, 0.0),
-        _ => Vec4::new(0.9, 0.9, 0.9, 0.0),
-    };
+    let team_hdr = style.linear.truncate().extend(0.0);
 
     // 1. Central Detonation Starburst + Refractive Shockwave Ring (Mode 5)
     let starburst_mat = combat_fx_materials.add(CombatFxMaterial {
@@ -334,6 +238,8 @@ pub fn spawn_death_shatter(
     });
 
     commands.spawn((
+        CombatLightEffect,
+        CombatEffectOwner(owner),
         Mesh3d(assets.shard_mesh.clone()),
         MeshMaterial3d(starburst_mat.clone()),
         Transform::from_translation(origin).with_scale(Vec3::splat(radius * 3.2)),
@@ -368,6 +274,8 @@ pub fn spawn_death_shatter(
         });
 
         commands.spawn((
+            CombatLightEffect,
+            CombatEffectOwner(owner),
             Mesh3d(assets.shard_mesh.clone()),
             MeshMaterial3d(shard_mat.clone()),
             Transform::from_translation(origin + dir * (radius * 0.4))
@@ -381,137 +289,6 @@ pub fn spawn_death_shatter(
         ));
     }
 }
-
-/// Monotonically advancing emission counter for high-entropy golden ratio angle dispersal.
-static MIST_EMISSION_COUNTER: AtomicU32 = AtomicU32::new(1);
-
-/// Spawns aerodynamic air-suction wake particles when moving (leaving stationary bubbles crystal-clear).
-pub fn emit_mist_wake(
-    commands: &mut Commands<'_, '_>,
-    assets: &VfxSharedAssets,
-    mist_materials: &mut Assets<MistWakeMaterial>,
-    bubble_pos: Vec3,
-    velocity: Vec2,
-    radius: f32,
-    speed_boosted: bool,
-    is_lab_preview: bool,
-) {
-    let speed = velocity.length();
-
-    // When stationary, do not spawn external puffs to keep the glass sphere razor-sharp and perfectly round
-    if speed <= 0.0005 {
-        return;
-    }
-
-    // Moving bubble: Aerodynamic Air Suction Slipstream
-    let world_speed = if speed < 0.5 { speed * 25.0 } else { speed };
-    let forward_dir = Vec3::new(velocity.x, 0.0, velocity.y).normalize();
-    let trail_dir = -forward_dir;
-    let right_dir = Vec3::new(-trail_dir.z, 0.0, trail_dir.x);
-    let up_dir = Vec3::Y;
-
-    let forward_screen = Vec2::new(velocity.x, -velocity.y).normalize_or_zero();
-    let trail_screen = -forward_screen;
-    let flow_angle = -trail_screen.y.atan2(trail_screen.x);
-
-    let lab_conveyor = if is_lab_preview {
-        trail_dir * (world_speed * 1.25)
-    } else {
-        Vec3::ZERO
-    };
-
-    let counter = MIST_EMISSION_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let seed_salt = ((counter as f32) * 0.618_034).fract();
-
-    // 2 sweated mist wisps per emission on the rear surface, pulled inward by air suction
-    let side_sign = if counter % 2 == 0 { 1.0 } else { -1.0 };
-    let lateral_vec = right_dir * (side_sign * radius * 0.22)
-        + up_dir * (((seed_salt * std::f32::consts::TAU).sin()) * radius * 0.15);
-    let spawn_pos = bubble_pos + trail_dir * (radius * 0.78) + lateral_vec;
-
-    // Air suction: pulls lateral mist inward toward the wake centerline + slight forward slipstream drag
-    let suction_inward = -lateral_vec * 2.2;
-    let forward_suction = forward_dir * (world_speed * 0.18);
-    let velocity_vec = lab_conveyor + suction_inward + forward_suction;
-
-    let initial_scale = radius * 2.2;
-    let target_scale = radius * 1.45;
-
-    let mat = mist_materials.add(MistWakeMaterial {
-        uniform: MistWakeUniformGpu {
-            base_color: Vec4::new(0.15, 0.88, 1.0, flow_angle),
-            age: 0.0,
-            speed_boosted: u32::from(speed_boosted),
-            seed: seed_salt,
-            aspect: 1.25,
-        },
-    });
-
-    commands.spawn((
-        Mesh3d(assets.mist_mesh.clone()),
-        MeshMaterial3d(mat),
-        Transform::from_translation(spawn_pos).with_scale(Vec3::splat(initial_scale)),
-        MistWakeParticle {
-            kind: MistParticleKind::VaporPuff,
-            velocity: velocity_vec,
-            lifetime: Timer::from_seconds(0.95, TimerMode::Once),
-            initial_scale,
-            target_scale,
-        },
-    ));
-}
-
-/// Updates and advances mist wake particles with billboard camera alignment, lifetime aging, and exponential aerodynamic drag.
-pub fn update_mist_wake_system(
-    mut commands: Commands<'_, '_>,
-    time: Res<'_, Time>,
-    camera_query: Query<'_, '_, &Transform, (With<Camera3d>, Without<MistWakeParticle>)>,
-    mut mist_materials: ResMut<'_, Assets<MistWakeMaterial>>,
-    mut query: Query<
-        '_,
-        '_,
-        (
-            Entity,
-            &mut Transform,
-            &mut MistWakeParticle,
-            &MeshMaterial3d<MistWakeMaterial>,
-        ),
-    >,
-) {
-    let dt = time.delta_secs();
-    let cam_rotation = camera_query
-        .get_single()
-        .map_or(Quat::IDENTITY, |t| t.rotation);
-
-    for (entity, mut transform, mut particle, mat_handle) in &mut query {
-        particle.lifetime.tick(time.delta());
-        if particle.lifetime.finished() {
-            commands.entity(entity).despawn();
-        } else {
-            // Exponential aerodynamic air damping bringing mist quickly to a rest in ambient air
-            let drag = (-2.2 * dt).exp();
-            particle.velocity *= drag;
-
-            if particle.kind == MistParticleKind::MicroBubble {
-                particle.velocity.y += 0.25 * dt;
-            }
-
-            transform.translation += particle.velocity * dt;
-            let progress = particle.lifetime.fraction();
-            let scale = particle.initial_scale
-                + (particle.target_scale - particle.initial_scale) * progress;
-            transform.scale = Vec3::splat(scale);
-            transform.rotation = cam_rotation;
-
-            if let Some(mat) = mist_materials.get_mut(&mat_handle.0) {
-                mat.uniform.age = progress;
-            }
-        }
-    }
-}
-
-/// Canonical alias for the visual effects update system.
-pub use update_mist_wake_system as update_vfx_system;
 
 /// Updates in-flight projectiles with lifetime aging, material uniform updates, and velocity alignment.
 pub fn update_projectiles_system(
@@ -645,6 +422,10 @@ pub fn update_shatter_system(
 
 /// Consumes and visualizes all combat events received from the authoritative simulation snapshot via procedural volumetric shader instances.
 pub fn process_combat_events_system(
+    mut owners: crate::player_presentation::PresentationContext<'_>,
+    lab: Res<'_, crate::LabState>,
+    session: Res<'_, crate::battle_pipeline::session::BattleSession>,
+    mut exit: EventWriter<'_, AppExit>,
     mut commands: Commands<'_, '_>,
     mut event_reader: EventReader<'_, '_, CombatVisualEvent>,
     vfx_assets: Res<'_, VfxSharedAssets>,
@@ -656,8 +437,21 @@ pub fn process_combat_events_system(
         .map_or(Vec3::Y * 20.0, |t| t.translation);
 
     for event_wrapper in event_reader.read() {
+        let owner = event_wrapper.0.owner();
+        let resolved = if lab.current_tab == crate::LabTab::LiveBattle {
+            owners.palette.battle_style(owner, &session.metadata)
+        } else {
+            owners.palette.preview_style(owner)
+        };
+        let style = match resolved {
+            Ok(style) => style,
+            Err(error) => {
+                owners.reject(error, &mut exit);
+                return;
+            }
+        };
         match &event_wrapper.0 {
-            CombatEventVisual::HitscanTracer { from, to, team_id } => {
+            CombatEventVisual::HitscanTracer { from, to, .. } => {
                 let p1 = Vec3::new(from[0], from[2], from[1]);
                 let p2 = Vec3::new(to[0], to[2], to[1]);
                 let delta = p2 - p1;
@@ -670,11 +464,7 @@ pub fn process_combat_events_system(
                     let normal = right.cross(dir).normalize_or_zero();
                     let rot = Quat::from_mat3(&Mat3::from_cols(right, dir, normal));
 
-                    let team_hdr = match team_id.0 {
-                        1 => Vec4::new(0.2, 0.75, 1.0, 0.0),
-                        2 => Vec4::new(1.0, 0.35, 0.15, 0.0),
-                        _ => Vec4::new(0.9, 0.9, 0.9, 0.0),
-                    };
+                    let team_hdr = style.linear.truncate().extend(0.0);
 
                     let mat = fx_materials.add(CombatFxMaterial {
                         uniform: CombatFxUniformGpu {
@@ -687,6 +477,8 @@ pub fn process_combat_events_system(
                     });
 
                     commands.spawn((
+                        CombatLightEffect,
+                        CombatEffectOwner(owner),
                         Mesh3d(vfx_assets.tracer_mesh.clone()),
                         MeshMaterial3d(mat.clone()),
                         Transform::from_translation(center)
@@ -705,16 +497,12 @@ pub fn process_combat_events_system(
             CombatEventVisual::ProjectileVisual {
                 pos,
                 vel,
-                team_id,
+                owner: _,
                 duration_secs,
             } => {
                 let p = Vec3::new(pos[0], pos[2], pos[1]);
                 let v = Vec3::new(vel[0], vel[2], vel[1]);
-                let team_hdr = match team_id.0 {
-                    1 => Vec4::new(0.2, 0.75, 1.0, 0.0),
-                    2 => Vec4::new(1.0, 0.35, 0.15, 0.0),
-                    _ => Vec4::new(0.9, 0.9, 0.9, 0.0),
-                };
+                let team_hdr = style.linear.truncate().extend(0.0);
                 let lifetime = duration_secs.unwrap_or(0.35);
 
                 let mat = fx_materials.add(CombatFxMaterial {
@@ -734,6 +522,8 @@ pub fn process_combat_events_system(
                 };
 
                 commands.spawn((
+                    CombatLightEffect,
+                    CombatEffectOwner(owner),
                     Mesh3d(vfx_assets.projectile_mesh.clone()),
                     MeshMaterial3d(mat.clone()),
                     Transform::from_translation(p)
@@ -750,7 +540,7 @@ pub fn process_combat_events_system(
                 from,
                 to,
                 is_lightning,
-                team_id,
+                owner: _,
             } => {
                 let p1 = Vec3::new(from[0], from[2], from[1]);
                 let p2 = Vec3::new(to[0], to[2], to[1]);
@@ -764,11 +554,7 @@ pub fn process_combat_events_system(
                     let normal = right.cross(dir).normalize_or_zero();
                     let rot = Quat::from_mat3(&Mat3::from_cols(right, dir, normal));
 
-                    let team_hdr = match team_id.0 {
-                        1 => Vec4::new(0.2, 0.75, 1.0, 0.0),
-                        2 => Vec4::new(1.0, 0.35, 0.15, 0.0),
-                        _ => Vec4::new(0.9, 0.9, 0.9, 0.0),
-                    };
+                    let team_hdr = style.linear.truncate().extend(0.0);
 
                     let fx_kind = if *is_lightning { 2 } else { 0 };
                     let width = if *is_lightning { 0.95 } else { 0.65 };
@@ -785,6 +571,8 @@ pub fn process_combat_events_system(
                     });
 
                     commands.spawn((
+                        CombatLightEffect,
+                        CombatEffectOwner(owner),
                         Mesh3d(vfx_assets.beam_mesh.clone()),
                         MeshMaterial3d(mat.clone()),
                         Transform::from_translation(center)
@@ -804,14 +592,10 @@ pub fn process_combat_events_system(
                 pos,
                 angle_rad,
                 radius,
-                team_id,
+                owner: _,
             } => {
                 let p = Vec3::new(pos[0], pos[2] + 0.35, pos[1]);
-                let mut team_hdr = match team_id.0 {
-                    1 => Vec4::new(0.2, 0.75, 1.0, 0.0),
-                    2 => Vec4::new(1.0, 0.35, 0.15, 0.0),
-                    _ => Vec4::new(0.9, 0.9, 0.9, 0.0),
-                };
+                let mut team_hdr = style.linear.truncate().extend(0.0);
                 team_hdr.w = *angle_rad;
 
                 let mat = fx_materials.add(CombatFxMaterial {
@@ -827,6 +611,8 @@ pub fn process_combat_events_system(
                 let rot = Quat::from_rotation_x(-0.6108) * Quat::from_rotation_y(-angle_rad);
 
                 commands.spawn((
+                    CombatLightEffect,
+                    CombatEffectOwner(owner),
                     Mesh3d(vfx_assets.melee_slash_mesh.clone()),
                     MeshMaterial3d(mat.clone()),
                     Transform::from_translation(p)
@@ -843,7 +629,7 @@ pub fn process_combat_events_system(
                 pos,
                 radius,
                 is_dome: _,
-                team_id,
+                owner: _,
             } => {
                 let p = Vec3::new(pos[0], pos[2], pos[1]);
                 spawn_death_shatter(
@@ -852,7 +638,8 @@ pub fn process_combat_events_system(
                     &mut fx_materials,
                     p,
                     *radius,
-                    *team_id,
+                    style,
+                    owner,
                 );
             }
         }

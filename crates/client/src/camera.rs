@@ -10,7 +10,7 @@
 //! - Zoom distance is clamped to `[3.0, 48.0]` world units.
 //! - Camera look target sits squarely on the ground plane (y = 0 or terrain surface).
 
-use bevy::input::mouse::{MouseMotion, MouseWheel};
+use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use std::collections::HashMap;
 
@@ -22,6 +22,42 @@ pub const MAX_CAMERA_DISTANCE: f32 = 48.0;
 
 /// Default StarCraft II perspective pitch in radians (58.0 degrees).
 pub const DEFAULT_CAMERA_PITCH_RAD: f32 = 58.0 * (std::f32::consts::PI / 180.0);
+
+/// Logical scroll pixels corresponding to one wheel line at the default sensitivity.
+pub const SCROLL_PIXELS_PER_LINE: f32 = 40.0;
+
+/// Converts a wheel event's declared units into the camera's line sensitivity.
+#[must_use]
+pub fn wheel_lines(delta: f32, unit: MouseScrollUnit) -> f32 {
+    match unit {
+        MouseScrollUnit::Line => delta,
+        MouseScrollUnit::Pixel => delta / SCROLL_PIXELS_PER_LINE,
+    }
+}
+
+/// Camera translation keeping a grab anchored to a shared horizontal focus plane.
+///
+/// Rays and plane elevation use world units. Parallel, behind-camera or nonfinite
+/// intersections are rejected; this does not approximate uneven terrain surfaces.
+#[must_use]
+pub fn focus_plane_drag(previous: Ray3d, current: Ray3d, elevation: f32) -> Option<Vec2> {
+    let intersect = |ray: Ray3d| {
+        if !ray.origin.is_finite()
+            || !elevation.is_finite()
+            || ray.direction.y.abs() <= f32::EPSILON
+        {
+            return None;
+        }
+        let distance = (elevation - ray.origin.y) / ray.direction.y;
+        if !distance.is_finite() || distance < 0.0 {
+            return None;
+        }
+        let point = ray.get_point(distance);
+        point.is_finite().then_some(point)
+    };
+    let translation = intersect(previous)? - intersect(current)?;
+    Some(Vec2::new(translation.x, translation.z))
+}
 
 /// Component configuring an RTS perspective camera.
 #[derive(Component, Debug, Clone)]
@@ -105,7 +141,7 @@ impl RtsCamera {
     pub fn compute_transform(&self) -> Transform {
         let rotation = Quat::from_rotation_x(-self.pitch);
         let offset = rotation * Vec3::new(0.0, 0.0, self.distance);
-        let ground_center = Vec3::new(self.target.x, 0.0, self.target.y);
+        let ground_center = Vec3::new(self.target.x, self.look_at_y, self.target.y);
         let eye_pos = ground_center + offset;
         let look_at_pos = Vec3::new(self.target.x, self.look_at_y, self.target.y);
         Transform::from_translation(eye_pos).looking_at(look_at_pos, Vec3::Y)
@@ -116,12 +152,19 @@ impl RtsCamera {
 pub fn camera_control_system(
     time: Res<'_, Time>,
     keyboard: Res<'_, ButtonInput<KeyCode>>,
-    mouse_buttons: Res<'_, ButtonInput<MouseButton>>,
+    mut drag: crate::camera_drag::CameraDragInput<'_, '_>,
     mut mouse_motion_events: EventReader<'_, '_, MouseMotion>,
     mut scroll_events: EventReader<'_, '_, MouseWheel>,
-    mut query: Query<'_, '_, (&mut RtsCamera, &mut Transform)>,
+    mut query: Query<'_, '_, (Entity, &mut RtsCamera, &mut Transform, &Camera)>,
+    ownership: Res<'_, crate::input_policy::InputOwnership>,
+    windows: Query<'_, '_, (Entity, &Window), With<bevy::window::PrimaryWindow>>,
+    lab: Option<Res<'_, crate::LabState>>,
+    terrain: Option<Res<'_, crate::terrain::TerrainState>>,
 ) {
-    let Ok((mut cam, mut transform)) = query.get_single_mut() else {
+    let Ok((camera_entity, mut cam, mut transform, lens)) = query.get_single_mut() else {
+        drag.cancel_missing();
+        mouse_motion_events.clear();
+        scroll_events.clear();
         return;
     };
     let dt = time.delta_secs();
@@ -129,10 +172,10 @@ pub fn camera_control_system(
     // 1. Keyboard Panning (WASD / Arrow Keys)
     let mut pan_dir = Vec2::ZERO;
     if keyboard.pressed(KeyCode::KeyW) || keyboard.pressed(KeyCode::ArrowUp) {
-        pan_dir.y += 1.0;
+        pan_dir.y -= 1.0;
     }
     if keyboard.pressed(KeyCode::KeyS) || keyboard.pressed(KeyCode::ArrowDown) {
-        pan_dir.y -= 1.0;
+        pan_dir.y += 1.0;
     }
     if keyboard.pressed(KeyCode::KeyA) || keyboard.pressed(KeyCode::ArrowLeft) {
         pan_dir.x -= 1.0;
@@ -141,33 +184,53 @@ pub fn camera_control_system(
         pan_dir.x += 1.0;
     }
 
-    cam.pan(pan_dir, dt);
-
-    // 2. Middle-Mouse Drag Pan
-    if mouse_buttons.pressed(MouseButton::Middle) {
-        for ev in mouse_motion_events.read() {
-            let factor = cam.distance * 0.0018;
-            cam.target.x -= ev.delta.x * factor;
-            cam.target.y += ev.delta.y * factor;
-        }
-    } else {
-        mouse_motion_events.clear();
+    let ctrl = keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ControlRight);
+    if ownership.keyboard && !ctrl {
+        cam.pan(pan_dir, dt);
     }
+
+    // 2. Ordered native gesture ownership; held button state cannot restart it.
+    mouse_motion_events.clear();
+    drag.update(
+        camera_entity,
+        &mut cam,
+        lens,
+        windows.get_single().ok(),
+        &ownership,
+    );
 
     // 3. Scroll Wheel Zoom
     for ev in scroll_events.read() {
-        cam.zoom(ev.y);
+        if ownership.pointer && ownership.window == Some(ev.window) {
+            cam.zoom(wheel_lines(ev.y, ev.unit));
+        }
     }
 
     // 4. Camera Bookmarks (Ctrl+F1..F4 save, F1..F4 recall)
-    let ctrl = keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ControlRight);
     for key in [KeyCode::F1, KeyCode::F2, KeyCode::F3, KeyCode::F4] {
-        if keyboard.just_pressed(key) {
+        if ownership.keyboard && keyboard.just_pressed(key) {
             if ctrl {
                 cam.save_bookmark(key);
             } else {
                 cam.recall_bookmark(&key);
             }
+        }
+    }
+
+    if lab.is_some_and(|state| state.current_tab == crate::LabTab::LiveBattle) {
+        if let Some(terrain) = terrain {
+            cam.target = cam.target.clamp(
+                Vec2::splat(0.5),
+                Vec2::new(
+                    terrain.map.width() as f32 - 0.5,
+                    terrain.map.height() as f32 - 0.5,
+                ),
+            );
+            let focus = sim_types::SimVec2::new(
+                sim_types::SimScalar::from_num(cam.target.x),
+                sim_types::SimScalar::from_num(cam.target.y),
+            );
+            cam.look_at_y = terrain.map.terrain_altitude_scalar(focus).to_f32() + 1.2;
         }
     }
 

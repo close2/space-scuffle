@@ -192,6 +192,8 @@ pub fn spawn_arena_environment(
             ..default()
         },
         Transform::from_xyz(20.0, 32.0, 20.0).looking_at(Vec3::new(16.0, 0.0, 16.0), Vec3::Y),
+        ArenaMapMarker,
+        Visibility::Visible,
     ));
 
     commands.insert_resource(AmbientLight {
