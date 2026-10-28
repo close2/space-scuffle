@@ -1,0 +1,18 @@
+(
+    format_version: 1,
+    resolution: (1920, 900),
+    overview_focus: (11.0, 12.0),
+    ramp_player: 0,
+    gameplay_region: (0.40, 0.05, 0.58, 0.82),
+    timeout_seconds: 120,
+    max_frames: 12000,
+    checkpoints: [
+        (name: "01-overview", goal: Overview, distance: 32.0, max_ticks: 0),
+        (name: "02-ramp-entry", goal: RampEntry, distance: 22.0, max_ticks: 1800),
+        (name: "03-ramp-exit", goal: RampExit, distance: 22.0, max_ticks: 800),
+        (name: "04-combat", goal: Combat, distance: 22.0, max_ticks: 2400),
+        (name: "05-visual-lab", goal: Lab, distance: 9.5, max_ticks: 0),
+        (name: "06-battle-return", goal: Return, distance: 22.0, max_ticks: 0),
+        (name: "07-reset", goal: Reset, distance: 32.0, max_ticks: 0),
+    ],
+)
