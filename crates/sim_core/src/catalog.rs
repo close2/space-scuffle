@@ -23,8 +23,14 @@ use sim_types::{
     WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, WeaponSpec};
-use std::collections::BTreeMap;
+mod runtime;
+mod validation;
+
+pub use runtime::{CatalogLoadError, RuntimeCatalogs};
+
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::OnceLock;
 
 /// Static archetype specification defining baseline vitals, movement, capabilities, and abilities.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -232,6 +238,7 @@ impl UnitArchetype {
 #[derive(Debug, Clone)]
 pub struct UnitCatalog {
     archetypes: Vec<Option<UnitArchetype>>,
+    slug_index: OnceLock<Vec<(String, usize)>>,
 }
 
 impl Default for UnitCatalog {
@@ -244,41 +251,54 @@ impl UnitCatalog {
     /// Deserializes a catalog from a raw RON string.
     ///
     /// # Errors
-    /// Returns [`SimCoreError::RonDeserializationError`] if the RON content is malformed.
+    /// Returns [`SimCoreError`] for malformed RON, duplicate identities, blank slugs,
+    /// or numeric values that cannot be safely converted to simulation types.
     pub fn from_ron_str(ron_data: &str) -> SimResult<Self> {
         let catalog_file: CatalogFile = ron::from_str(ron_data)
             .map_err(|e| SimCoreError::RonDeserializationError(e.to_string()))?;
 
         let mut catalog = Self {
             archetypes: vec![None; 128],
+            slug_index: OnceLock::new(),
         };
-        for def in catalog_file.units {
-            catalog.register(def.into_archetype());
-        }
+        catalog.register_authored_batch(catalog_file.units.into_iter().map(|def| {
+            def.validate()?;
+            Ok(def.into_archetype())
+        }))?;
+        catalog.slug_index();
         Ok(catalog)
     }
 
     /// Loads additional structures from a raw RON string and registers them into the catalog.
     ///
     /// # Errors
-    /// Returns [`SimCoreError::RonDeserializationError`] if parsing fails.
+    /// Returns [`SimCoreError`] for malformed or invalid definitions. The catalog
+    /// remains unchanged if any addition fails validation or conflicts with an identity.
     pub fn load_structures_from_ron_str(&mut self, structures_ron: &str) -> SimResult<()> {
         let catalog_file: StructureCatalogFile = ron::from_str(structures_ron)
             .map_err(|e| SimCoreError::RonDeserializationError(e.to_string()))?;
 
-        for def in catalog_file.structures {
-            self.register(def.into_archetype());
-        }
+        // Stage the complete addition so a later malformed definition cannot leave
+        // callers with an unexpectedly partially modified catalog.
+        let mut staged = self.clone();
+        staged.register_authored_batch(catalog_file.structures.into_iter().map(|def| {
+            def.validate()?;
+            Ok(def.into_archetype())
+        }))?;
+        staged.slug_index();
+        *self = staged;
         Ok(())
     }
 
     /// Deserializes and consolidates both units and structures RON strings into a unified catalog.
     ///
     /// # Errors
-    /// Returns [`SimCoreError::RonDeserializationError`] if either RON string is malformed.
+    /// Returns [`SimCoreError`] if either file is malformed, contains unsafe values,
+    /// or reuses an ID or ASCII-insensitive slug within the combined catalog.
     pub fn from_ron_str_bundle(units_ron: &str, structures_ron: &str) -> SimResult<Self> {
         let mut catalog = Self::from_ron_str(units_ron)?;
         catalog.load_structures_from_ron_str(structures_ron)?;
+        catalog.validate_production_references()?;
         Ok(catalog)
     }
 
@@ -322,13 +342,50 @@ impl UnitCatalog {
         Self::new_starter_roster()
     }
 
-    /// Registers an archetype into the catalog.
+    /// Registers or replaces an archetype at its numeric ID for programmatic editing.
+    ///
+    /// Unlike authored file loading, this compatibility API permits duplicate slugs;
+    /// slug lookup then chooses the lowest storage ID, matching historical behavior.
     pub fn register(&mut self, archetype: UnitArchetype) {
+        self.slug_index.take();
         let idx = archetype.unit_type_id.0 as usize;
         if idx >= self.archetypes.len() {
             self.archetypes.resize(idx + 1, None);
         }
         self.archetypes[idx] = Some(archetype);
+    }
+
+    fn register_authored_batch(
+        &mut self,
+        definitions: impl IntoIterator<Item = SimResult<UnitArchetype>>,
+    ) -> SimResult<()> {
+        let mut ids: BTreeSet<_> = self
+            .archetypes
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, entry)| entry.as_ref().map(|_| slot))
+            .collect();
+        let mut slugs: BTreeSet<_> = self
+            .archetypes()
+            .map(|entry| entry.slug.to_ascii_lowercase())
+            .collect();
+        for definition in definitions {
+            let archetype = definition?;
+            if !ids.insert(usize::from(archetype.unit_type_id.0)) {
+                return Err(SimCoreError::CatalogDuplicateId {
+                    kind: "unit or structure",
+                    id: u32::from(archetype.unit_type_id.0),
+                });
+            }
+            if !slugs.insert(archetype.slug.to_ascii_lowercase()) {
+                return Err(SimCoreError::CatalogDuplicateSlug {
+                    kind: "unit or structure",
+                    slug: archetype.slug,
+                });
+            }
+            self.register(archetype);
+        }
+        Ok(())
     }
 
     /// Looks up an archetype by [`UnitTypeId`].
@@ -345,9 +402,13 @@ impl UnitCatalog {
 
     /// Looks up a mutable reference to an archetype by [`UnitTypeId`].
     ///
+    /// Invalidates the derived slug index before returning, so edits to identity
+    /// fields cannot leave a stale lookup. The next slug query rebuilds the index.
+    ///
     /// # Errors
     /// Returns [`SimCoreError::ArchetypeNotFound`] if the archetype is not registered.
     pub fn get_mut(&mut self, id: UnitTypeId) -> SimResult<&mut UnitArchetype> {
+        self.slug_index.take();
         let idx = id.0 as usize;
         self.archetypes
             .get_mut(idx)
@@ -355,13 +416,40 @@ impl UnitCatalog {
             .ok_or(SimCoreError::ArchetypeNotFound(id.0))
     }
 
-    /// Looks up an archetype by its canonical slug (e.g. "starter_infantry").
+    /// Looks up an archetype by ASCII-insensitive slug with an allocation-free query.
+    ///
+    /// The first query following a programmatic edit rebuilds the derived index;
+    /// loaded catalogs have the index prepared before being returned to the caller.
     #[must_use]
     pub fn get_by_slug(&self, slug: &str) -> Option<&UnitArchetype> {
-        self.archetypes
-            .iter()
-            .flatten()
-            .find(|arch| arch.slug.eq_ignore_ascii_case(slug))
+        let index = self.slug_index();
+        let offset = index.partition_point(|(candidate, _)| compare_slugs(candidate, slug).is_lt());
+        let (candidate, slot) = index.get(offset)?;
+        if !candidate.eq_ignore_ascii_case(slug) {
+            return None;
+        }
+        self.archetypes.get(*slot).and_then(Option::as_ref)
+    }
+
+    fn slug_index(&self) -> &[(String, usize)] {
+        // PERFORMANCE RATIONALE:
+        // Why: Slug resolution occurs in combat upgrade and scenario queries.
+        // What: Rebuild a sorted index once after edits, then binary-search folded
+        // ASCII bytes without allocating a normalized query string.
+        // Trade-off: O(N log N) rebuild and owned slug copies in exchange for O(log N)
+        // steady-state lookup. OnceLock keeps this per-catalog cache Send + Sync.
+        self.slug_index.get_or_init(|| {
+            let mut index: Vec<_> = self
+                .archetypes
+                .iter()
+                .enumerate()
+                .filter_map(|(slot, archetype)| archetype.as_ref().map(|a| (a.slug.clone(), slot)))
+                .collect();
+            index.sort_by(|(left, left_slot), (right, right_slot)| {
+                compare_slugs(left, right).then_with(|| left_slot.cmp(right_slot))
+            });
+            index
+        })
     }
 
     /// Resolves a [`UnitTypeId`] by canonical slug.
@@ -380,10 +468,54 @@ impl UnitCatalog {
         })
     }
 
+    /// Validates production/prerequisite references after all unit and structure files are loaded.
+    /// Partial legacy parsers deliberately do not impose this complete-bundle boundary.
+    ///
+    /// # Errors
+    /// Returns a typed authored field error for blank, duplicate, dangling or nonstructure prerequisites.
+    pub fn validate_production_references(&self) -> SimResult<()> {
+        for archetype in self.archetypes() {
+            for (field, references) in [
+                ("trains_units", &archetype.trains_units),
+                ("requires_structures", &archetype.requires_structures),
+            ] {
+                let mut seen = BTreeSet::new();
+                for reference in references {
+                    let fail = |reason| SimCoreError::CatalogInvalidValue {
+                        definition: archetype.slug.clone(),
+                        field: field.to_owned(),
+                        reason,
+                    };
+                    if reference.trim().is_empty() {
+                        return Err(fail("reference must not be blank"));
+                    }
+                    let target = self.get_by_slug(reference).ok_or_else(|| {
+                        fail("reference does not resolve in the complete catalog")
+                    })?;
+                    if !seen.insert(target.unit_type_id) {
+                        return Err(fail("duplicate reference under catalog lookup semantics"));
+                    }
+                    if field == "requires_structures"
+                        && !matches!(target.shape, ShapeKind::BuildingDome { .. })
+                    {
+                        return Err(fail("prerequisite must reference a structure"));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Iterates over all registered archetypes in the catalog.
     pub fn archetypes(&self) -> impl Iterator<Item = &UnitArchetype> {
         self.archetypes.iter().flatten()
     }
+}
+
+fn compare_slugs(left: &str, right: &str) -> std::cmp::Ordering {
+    left.bytes()
+        .map(|byte| byte.to_ascii_lowercase())
+        .cmp(right.bytes().map(|byte| byte.to_ascii_lowercase()))
 }
 
 // -----------------------------------------------------------------------------
@@ -524,6 +656,8 @@ struct WeaponSpecDef {
     target_loss_behavior: ProjectileTargetLossBehavior,
     #[serde(default = "default_projectile_lifetime_ticks")]
     max_projectile_lifetime_ticks: u16,
+    #[serde(default)]
+    pub suicide_on_attack: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -629,6 +763,7 @@ impl UnitArchetypeDef {
             bonus_upgrade_per_level: SimScalar::from_f32_lossy(w.bonus_upgrade_per_level),
             target_loss_behavior: w.target_loss_behavior,
             max_projectile_lifetime_ticks: w.max_projectile_lifetime_ticks,
+            suicide_on_attack: w.suicide_on_attack,
         }
     }
 
