@@ -1,0 +1,59 @@
+# Stage 2 mist view-light audit against locked Bevy
+
+This is a read-only architecture verification round. No Stage 2 product code, tests, build or native run accompanies it. References below are to the resolved local registry sources under `/home/cl/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/`, primarily Bevy 0.15.3. Stage 1's output transformation has separate actual-device evidence.
+
+## Units and exposure
+
+`bevy_pbr-0.15.3/src/light/directional_light.rs:68` documents illuminance in lux. `render/light.rs:437` converts `DirectionalLight.color` into `LinearRgba` during extraction and retains illuminance unchanged. At lines 967–976, preparation packs `linear_color * illuminance` into the GPU light. There is no `4π` conversion, distance attenuation, camera exposure or color grading in that packing. The nearby `4π` conversion belongs to point/spot luminous intensity and must not be copied into the directional formula.
+
+`render/pbr_lighting.wgsl:571` reads the already packed color and world-space direction; line 610 multiplies the BRDF response by that RGB. `render/pbr_functions.wgsl:717` subsequently multiplies accumulated direct/indirect/transmitted light by `view.exposure`. `bevy_render-0.15.3/src/view/mod.rs:791` fills this scalar from the extracted camera's physical exposure. It is distinct from `view.color_grading.exposure`, which is the later grading exposure used by the tone mapper.
+
+The approved mist formula `sum(linear_RGB * lux / reference_lux * max(N·L, 0))` is a dimensionless artistic light response. The initial 10,000-lux reference preserves the prior normalization scale, while removing its white-only strongest-light selection and upper clamp. This is not a physical PBR radiance model. Stage 2 must not add `view.exposure` to that normalized response implicitly: doing so changes the established appearance policy and would require a separately specified calibration. Stage 1 still applies view color grading/display transformation. The constant 0.38 base remains an existing artistic term, not sampled ambient irradiance.
+
+## Direction and normal coordinates
+
+`render/light.rs:975` stores `light.transform.back()`, the normalized world-space positive-Z direction of the propagated `GlobalTransform`. `bevy_transform-0.15.3/src/components/global_transform.rs:56–68,200` implements this as normalized transformed local Z; forward is its negative. It is already the vector toward the source and must not be negated again. Bevy PBR uses it directly for `N·L` in `render/pbr_lighting.wgsl:573`.
+
+The current mist expansion constructs world-space ribbon positions and normals, and its fragment computes the perturbed world-space normal before lighting. No additional local/view transform belongs in this dot product. The parented fixture deliberately starts with direction toward light `(1,2,3)/√14`, then applies a positive 90-degree world-Y rotation to obtain `(3,2,-1)/√14`. A world-X oracle normal changes its expected dot product from `1/√14` to `3/√14`, avoiding the ineffective parallel-to-Y test.
+
+## Counts, visibility, layers and truncation
+
+Extraction excludes a directional light when its `ViewVisibility` is false (`render/light.rs:393`). This visibility represents visibility to at least one view; it is not the visibility of that light to every camera. Preparation sorts extracted directional lights by volumetric/shadow priority and stable entity key (`render/light.rs:836–849`), and retains at most `MAX_DIRECTIONAL_LIGHTS` (`941–948`). Native constants are ten directional lights and four cascades, with a smaller WebGL configuration (`130–150`). Exceeding the engine's limit is an engine warning/truncation; the oracle must not pretend all authored lights are represented or impose a different selection order.
+
+Crucially, `GpuLights.n_directional_lights` is the global extracted count after that cap, not a per-view eligible count (`render/light.rs:1123`). Each view starts from the same packed array. Layers are checked per view and disjoint lights receive `skip = 1` (`1330–1349`). `render/pbr_functions.wgsl:499–506` loops over the total count and excludes skipped entries.
+
+Thus the two-view fixture with two visible, disjoint-layer lights expects `n_directional_lights == 2` in both buffers, one eligible entry per view, and opposite skip patterns. The oracle must record **total count**, **eligible count** and each slot's skip/color/direction separately. A no-eligible-lights view may have a nonzero total count when another view sees those lights. The all-hidden fixture instead expects extraction to remove the lights, yielding total and eligible counts of zero. A supplementary real two-view oracle case should distinguish these situations: one camera sees only shared geometry layer 0, while the other sees the two light layers.
+
+`LightViewEntities` is automatically added by an observer on extracted light insertion (`render/light.rs:483–491`), before per-view skip preparation. An oracle that bypasses the real extraction/observer lifecycle could accidentally omit this component and invalidate the skip behavior. The proposed test uses the real pipeline and must not manually fabricate extracted light entities.
+
+The fixture inventory must hide every pre-existing Close/environment directional rig before admitting measurements. A common layer-0 sun would otherwise contribute to both views even when the test lights are disjoint. The production scene-return test retains actual rigs and verifies controller ownership rather than replacing them.
+
+## Dynamic buffer and binding contract
+
+`LightMeta.view_gpu_lights` and `ViewLightsUniformOffset.offset` are public (`render/light.rs:598–605`). Preparation obtains a dynamic writer for the actual views, orders views through `SortedCameras`, and writes each view's data, attaching the returned byte offset (`707–714,1095–1100,1467–1468`). Camera entity order is not an offset formula, and offsets can change when views are added or reordered.
+
+`bevy_render-0.15.3/src/render_resource/uniform_buffer.rs:217–224` exposes the correct binding: actual buffer, base offset zero, and binding size `GpuLights::min_size()`. `get_writer` at lines 283–319 aligns each element to the device's `min_uniform_buffer_offset_alignment` (with Bevy's explicit iOS-simulator exception), rounds the shader minimum size up for storage stride, and may replace the buffer when capacity grows. The oracle must fetch the actual buffer and each view offset for the current prepared epoch; it must not cache a stale buffer ID, bind the entire multi-view buffer as one struct, use `size_of::<GpuLights>()`, or assume a 256-byte alignment/4096-byte stride on every device.
+
+The compute layout uses uniform buffer binding 1, dynamic offsets enabled, compute visibility, and `min_binding_size = Some(GpuLights::min_size())`. The binding resource comes from `LightMeta.view_gpu_lights.binding()` itself. At `set_bind_group`, supply the real view's dynamic byte offset once. Check that it satisfies the actual adapter alignment and that `offset + min_size` is within the actual buffer. The production mesh layout's binding 1 is fragment-visible (`render/mesh_view_bindings.rs:201–209`); its visibility mask cannot simply be reused for compute.
+
+On the current native 10-light/four-cascade configuration, the shader layout is expected to occupy 3,904 bytes (384 bytes per directional light plus the final view fields/padding). This is an audit calculation, not a hardcoded implementation constant or measured adapter stride. The test must obtain `ShaderType::min_size()` and validate the actual composed WGSL layout. The WGSL `Lights` trailing environment fields occupy Rust layout tail padding; Stage 2 must neither read nor assign meanings to those unused fields. Use the engine's loaded `mesh_view_types` module and its registered maximum-light/cascade definitions (`render/mesh.rs:103–115`), avoiding a handwritten struct replica.
+
+## Preparation and GPU ordering
+
+Main-world light visibility/frusta run after transform propagation; the light visibility systems also run after core visibility (`bevy_pbr-0.15.3/src/lib.rs:378–417`). Extraction runs in `ExtractSchedule`. `prepare_lights` is registered in `RenderSet::ManageViews` after GPU image preparation (`lib.rs:444–453`). It writes the light buffer and inserts per-view offsets through deferred commands.
+
+The base render schedule orders ExtractCommands → ManageViews → Queue → PhaseSort → Prepare → Render, with PrepareResources → PrepareResourcesFlush → PrepareBindGroups inside Prepare (`bevy_render-0.15.3/src/lib.rs:173–197`). Put oracle bind-group setup in PrepareBindGroups with an explicit dependency after `prepare_lights`; require actual offset components after deferred command application. Missing preparation is a readiness state within the bounded deadline, not grounds for a fabricated zero-light buffer.
+
+The dynamic writer uses the real queue's `write_buffer_with`; dropping its writer at the end of preparation queues the upload. The oracle dispatch/readback belongs in the same actual render graph/submission after preparation, so those queued writes precede the compute read. A GPU readback result must carry its actual view identity, dynamic offset, buffer ID and extracted fixture epoch; a CPU declaration that lights changed is insufficient. Native material captures remain separate evidence for the normal fragment binding and viewport selection.
+
+## Remaining numerical admission limit
+
+Finite, positive reference illuminance and a finite reciprocal guarantee that the reference itself is representable. They do **not** alone guarantee finite output for arbitrary engine light components: an extremely large finite RGB×lux divided by an extremely small valid reference can overflow. The existing engine does not sanitize that combination in the packing above. Stage 2 must not claim an all-finite guarantee from reference validation alone. Before implementation, settle explicit admission of finite nonnegative light input and a mathematically bounded normalized response, or explicitly narrow the supported authored illumination domain with a justified validated policy. This concern does not invalidate the current 10,000/20,000-lux fixtures, but it remains a production-admission design item rather than a reason to clamp silently in WGSL.
+
+## Admission resolution after orchestrator review
+
+The orchestrator approved the per-light numerical bound and immutable-reference scope. A source-wide caller audit found no runtime mutation of private `MistPool.style`: it is loaded in `setup_mist`, constructed in `allocate_pool`, and subsequently read. Capture warmup resets only the pool clock; owner replacement retains the pool/style. Consequently no reference hotreload or multi-reference envelope is added. All packets in a pool share one startup-validated reference. The final plan now specifies exact `f32` conversion/product/division checks, light-change invalidation, construction-only reference ownership, and mist-only extraction/upload/queue suppression on sticky typed failure. It explicitly permits already submitted valid frames and does not disable other cameras.
+
+The ordinary arena and authored terrain directional rigs both use default white at 14,000 lux; at the planned reference their normalized per-channel value is 1.4. These values satisfy the bound by source inspection. No new runtime check or benchmark was performed in this architecture round.
+
+The final admission threshold was conservatively clarified to `f32::MAX / (4 * MAX_DIRECTIONAL_LIGHTS)`, with exact intermediate `f32` checks and a finite-bounded-accumulation claim rather than an exact fractional-headroom claim. Implementation slices and the typed error-to-extraction/queue/capture paths are now explicit in plan 44. Product code remains frozen for the combined gate.
