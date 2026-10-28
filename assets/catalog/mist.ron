@@ -1,0 +1,18 @@
+// Generic movement-wake art direction; distances scale with the rendered bubble radius.
+(
+    max_emitters: 512,
+    samples_per_emitter: 48,
+    gpu_staging_buffers: 3,
+    gpu_stall_timeout_seconds: 2.0,
+    reference_illuminance_lux: 10000.0,
+    lifetime_seconds: 1.35,
+    spacing_radii: 0.13,
+    max_sample_seconds: 0.08,
+    continuity_radii: 8.0,
+    width_radii: 0.62,
+    opacity: 0.60,
+    cool_color: (0.24, 0.56, 0.72),
+    warm_color: (0.82, 0.64, 0.90),
+    boost_color: (1.0, 0.69, 0.32),
+    soft_intersection_units: 0.40,
+)
