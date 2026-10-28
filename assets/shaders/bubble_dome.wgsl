@@ -10,6 +10,9 @@
 
 #import bevy_pbr::mesh_view_bindings::{view, globals}
 #import bevy_pbr::forward_io::VertexOutput
+#ifdef TONEMAP_IN_SHADER
+#import bevy_core_pipeline::tonemapping::tone_mapping
+#endif
 
 struct BubbleUniform {
     team_color: vec4<f32>,
@@ -31,6 +34,10 @@ struct BubbleUniform {
     cloaked: u32,
     feature_flags: u32,          // Bitmask controlling modular optics (offset 88)
     frame_index: u32,            // Exact active frame in texture array (offset 92)
+    optics_media: vec4<f32>,     // exposure stops, F0, Fresnel power, reflection strength
+    optics_glare: vec4<f32>,     // roughness, glare strength, hit strength, angular width
+    optics_signals: vec4<f32>,   // selection strength, alpha, facing strength, attack strength
+    optics_light: vec4<f32>,     // world direction toward light, normalized illuminance
 };
 
 @group(2) @binding(0) var<uniform> bubble: BubbleUniform;
@@ -69,7 +76,7 @@ fn voronoi_cracks(uv: vec2<f32>) -> f32 {
             min_dist = min(min_dist, length(diff));
         }
     }
-    return smoothstep(0.04, 0.01, min_dist);
+    return 1.0 - smoothstep(0.01, 0.04, min_dist);
 }
 
 @fragment
@@ -153,48 +160,49 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let sample_r = textureSample(video_texture, video_sampler, lens_uv + uv_offset, layer_index).r;
     let sample_g = textureSample(video_texture, video_sampler, lens_uv, layer_index).g;
     let sample_b = textureSample(video_texture, video_sampler, lens_uv - uv_offset, layer_index).b;
-    var video_color = pow(vec3<f32>(sample_r, sample_g, sample_b), vec3<f32>(0.9)) * 1.45 * scanline_mult * lens_mask * glass_depth_tint;
+    var video_color = vec3<f32>(sample_r, sample_g, sample_b) * exp2(bubble.optics_media.x) * scanline_mult * lens_mask * glass_depth_tint;
 
     // Progressive Construction Scanline Fill
     if (bubble.anim_state == 0u) { // Constructing
         if (in.uv.y > bubble.build_progress) {
             let grid_line = step(0.92, fract(in.uv.y * 20.0)) + step(0.92, fract(in.uv.x * 20.0));
-            video_color = vec3<f32>(0.1, 0.6, 1.0) * grid_line * 2.0;
+            video_color = vec3<f32>(0.1, 0.6, 1.0) * min(grid_line, 1.0);
         } else if (abs(in.uv.y - bubble.build_progress) < 0.02) {
-            video_color += vec3<f32>(1.0, 0.9, 0.4) * 3.0;
+            video_color += vec3<f32>(1.0, 0.9, 0.4) * 0.8;
         }
     }
 
-    // 2. Crystal-Clear Center with Steep Iridescent Fresnel Rim
-    let F = pow(r, 3.8);
+    // Linear-light reflection/transmission budget. Hardware sRGB texture sampling
+    // already decoded the video; no second gamma lift is applied to the media.
+    let view_cosine = sqrt(max(1.0 - r2, 0.0));
+    let fresnel = bubble.optics_media.y + (1.0 - bubble.optics_media.y)
+        * pow(1.0 - view_cosine, bubble.optics_media.z);
+    var F = 0.0;
     var rim_color = vec3<f32>(0.0);
     if ((bubble.feature_flags & FLAG_FRESNEL) != 0u) {
-        let iridescence = vec3<f32>(
-            0.5 + 0.5 * cos(6.28318 * (F + 0.0)),
-            0.5 + 0.5 * cos(6.28318 * (F + 0.333)),
-            0.5 + 0.5 * cos(6.28318 * (F + 0.667))
-        );
-        rim_color = mix(bubble.team_color.rgb, iridescence, 0.40) * F * 3.2;
+        // Spectral reflection is confined to the grazing contour. Interior media
+        // retains its authored color instead of being washed by a whole-shell dye.
+        F = fresnel * smoothstep(0.93, 0.985, r);
+        // Optical thickness varies around the shell, so neighboring grazing angles
+        // reflect different wavelengths instead of producing a uniform colored border.
+        let film_phase = (1.0 - view_cosine) * 5.4
+            + dot(normal, bubble.optics_light.xyz) * 2.8
+            + dot(normal, screen_up) * 1.4;
+        let iridescence = 0.5 + 0.5 * cos(vec3<f32>(0.0, 2.0944, 4.1888) + film_phase);
+        let film_color = mix(vec3<f32>(0.78, 0.86, 0.94), mix(bubble.team_color.rgb, iridescence, 0.55), 0.38);
+        rim_color = mix(film_color, vec3<f32>(0.85, 0.93, 1.0),
+            pow(max(dot(normal, bubble.optics_light.xyz), 0.0), 6.0) * 0.35)
+            * bubble.optics_media.w;
     }
 
-    // 3. Studio Crescent Rim Specular Highlights (Center r < 0.65 is 100% CLEAR!)
+    // Compact glossy reflection responds to the actual scene light. The lobe is
+    // distinct from the thin Fresnel edge instead of a second broad luminous annulus.
     var specular = 0.0;
     if ((bubble.feature_flags & FLAG_GLARE) != 0u) {
-        // Upper-left key light crescent
-        let l1 = normalize(screen_up * 0.70 - screen_right * 0.55 + screen_forward * 0.45);
-        let H1 = normalize(view_dir + l1);
-        let spec1 = pow(max(dot(normal, H1), 0.0), 36.0);
-        let rim_mask1 = smoothstep(0.68, 0.88, r) * (1.0 - smoothstep(0.95, 1.0, r));
-        let glare1 = spec1 * rim_mask1 * 2.4;
-
-        // Lower-right ambient bounce crescent
-        let l2 = normalize(-screen_up * 0.60 + screen_right * 0.50 + screen_forward * 0.35);
-        let H2 = normalize(view_dir + l2);
-        let spec2 = pow(max(dot(normal, H2), 0.0), 20.0);
-        let rim_mask2 = smoothstep(0.78, 0.92, r) * (1.0 - smoothstep(0.97, 1.0, r));
-        let glare2 = spec2 * rim_mask2 * 0.85;
-
-        specular = glare1 + glare2;
+        let halfway = normalize(view_dir + bubble.optics_light.xyz);
+        let exponent = max(2.0 / (bubble.optics_glare.x * bubble.optics_glare.x) - 2.0, 1.0);
+        specular = pow(max(dot(normal, halfway), 0.0), exponent)
+            * bubble.optics_glare.y * bubble.optics_light.w;
     }
 
     // 4. Directional Indicator: Sleek Rim Arc Confined Strictly to Outer Fresnel Annulus [0.86, 0.98]
@@ -204,12 +212,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let heading_2d = normalize(vec2<f32>(dot(heading_dir, screen_right), -dot(heading_dir, screen_up)));
         let align = dot(disk_dir, heading_2d);
 
-        let rim_annulus = smoothstep(0.86, 0.93, r) * (1.0 - smoothstep(0.96, 0.995, r));
+        let rim_annulus = smoothstep(0.92, 0.96, r) * (1.0 - smoothstep(0.98, 0.998, r));
         let angular_arc = smoothstep(0.65, 0.96, align);
         let pulse = sin(globals.time * 5.0 - (1.0 - align) * 4.0) * 0.25 + 0.75;
-        let nose_accent = angular_arc * rim_annulus * (1.4 + 0.6 * pulse);
+        let nose_accent = angular_arc * rim_annulus * (0.7 + 0.3 * pulse);
 
-        direction_stripe = mix(bubble.team_color.rgb, vec3<f32>(1.0, 1.0, 1.0), 0.40) * nose_accent * 2.8;
+        direction_stripe = mix(bubble.team_color.rgb, vec3<f32>(1.0, 1.0, 1.0), 0.40) * nose_accent * bubble.optics_signals.z;
     }
 
     // 5. Target-Lock Weapon Aperture on Glass Surface
@@ -217,9 +225,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if (bubble.is_attacking == 1u && (bubble.feature_flags & FLAG_ATTACK_APERTURE) != 0u) {
         let aim_dir = vec3<f32>(cos(bubble.aim_angle_rad), 0.0, sin(bubble.aim_angle_rad));
         let aim_dot = dot(normal, aim_dir);
-        let ring_aperture = smoothstep(0.035, 0.008, abs(aim_dot - 0.72));
+        let ring_aperture = (1.0 - smoothstep(0.008, 0.035, abs(aim_dot - 0.72)));
         let core_aperture = smoothstep(0.94, 0.99, aim_dot);
-        aim_glow = vec3<f32>(1.0, 0.35, 0.15) * (ring_aperture * 3.2 + core_aperture * 1.8);
+        aim_glow = vec3<f32>(1.0, 0.35, 0.15) * (ring_aperture + core_aperture * 0.45) * bubble.optics_signals.w;
     }
 
     // 6. Progressive Damage Cracks & Electrical Arcing
@@ -228,23 +236,27 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         let crack_mask = voronoi_cracks(in.uv * 3.0);
         if (bubble.hp_ratio < 0.35) {
             let flicker = sin(globals.time * 60.0) * 0.5 + 0.5;
-            crack_glow = vec3<f32>(1.0, 0.25, 0.05) * crack_mask * (1.5 + flicker * 2.0);
+            crack_glow = vec3<f32>(1.0, 0.25, 0.05) * crack_mask * (0.35 + flicker * 0.45);
         } else {
             video_color *= (1.0 - crack_mask * 0.7);
         }
     }
 
-    // 7. Whole-Bubble Luminous Hit Surges
+    // Damage signals consume a localized highlight budget, retaining media detail.
+    // Shield snapshots have no impact angle, so their response is a narrow moving ring.
     var shield_surge = vec3<f32>(0.0);
     if (bubble.shield_hit_flash > 0.0) {
-        let shield_pulse = sin(globals.time * 50.0) * 0.15 + 0.85;
-        shield_surge = vec3<f32>(0.2, 0.85, 1.0) * bubble.shield_hit_flash * shield_pulse * (2.8 + pow(r, 2.5) * 4.0);
+        let wave = 0.45 + (1.0 - bubble.shield_hit_flash) * 0.50;
+        let ring = 1.0 - smoothstep(0.018, 0.060, abs(r - wave));
+        shield_surge = vec3<f32>(0.2, 0.85, 1.0) * ring
+            * bubble.shield_hit_flash * bubble.optics_glare.z;
     }
-
     var hull_surge = vec3<f32>(0.0);
     if (bubble.hull_hit_flash > 0.0) {
-        let hull_pulse = sin(globals.time * 60.0) * 0.20 + 0.80;
-        hull_surge = vec3<f32>(1.0, 0.32, 0.08) * bubble.hull_hit_flash * hull_pulse * (3.6 + pow(r, 2.0) * 3.2);
+        let impact = vec3<f32>(cos(bubble.hull_hit_angle_rad), 0.0, sin(bubble.hull_hit_angle_rad));
+        let lobe = pow(smoothstep(cos(bubble.optics_glare.w), 1.0, dot(normal, impact)), 3.0);
+        hull_surge = vec3<f32>(1.0, 0.32, 0.08) * lobe
+            * bubble.hull_hit_flash * bubble.optics_glare.z;
     }
 
     // 8. Tactical Selection Outer Rim Aura
@@ -252,12 +264,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let is_selected = ((bubble.feature_flags & FLAG_SELECTED) != 0u) || (bubble.selected == 1u);
     if (is_selected) {
         let pulse = 0.85 + 0.15 * sin(6.0 * globals.time);
-        selection_glow = vec3<f32>(0.25, 0.85, 1.0) * pulse * pow(r, 4.0) * 3.5;
+        selection_glow = vec3<f32>(0.25, 0.85, 1.0) * pulse * smoothstep(0.94, 0.985, r) * bubble.optics_signals.x;
     }
 
     // 9. Final Composite & Cloak Interference
-    var final_rgb = video_color + rim_color + vec3<f32>(specular) + direction_stripe + aim_glow + crack_glow + shield_surge + hull_surge + selection_glow;
-    var final_alpha = 0.90 + F * 0.10;
+    let signals = direction_stripe + aim_glow + crack_glow + shield_surge + hull_surge + selection_glow;
+    let signal_peak = max(signals.r, max(signals.g, signals.b));
+    let bounded_signals = signals / (1.0 + signal_peak);
+    var final_rgb = video_color * (1.0 - F) + rim_color * F
+        + vec3<f32>(specular) + bounded_signals;
+    var final_alpha = mix(bubble.optics_signals.y, 1.0, F);
 
     let is_cloaked = ((bubble.feature_flags & FLAG_CLOAKED) != 0u) || (bubble.cloaked == 1u);
     if (is_cloaked) {
@@ -265,5 +281,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         final_rgb += vec3<f32>(0.1, 0.3, 0.5) * sin(globals.time * 10.0 + in.world_position.y * 5.0) * 0.5;
     }
 
-    return vec4<f32>(final_rgb, final_alpha);
+    var output = vec4<f32>(max(final_rgb, vec3<f32>(0.0)), final_alpha);
+#ifdef TONEMAP_IN_SHADER
+    // Non-HDR targets need the same grading/tonemapping contract as Bevy PBR.
+    // HDR cameras tone-map later. The sRGB target performs the output encoding.
+    output = tone_mapping(output, view.color_grading);
+#endif
+    return output;
 }

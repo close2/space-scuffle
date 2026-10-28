@@ -1,0 +1,14 @@
+(
+    media_exposure_stops: 0.35,
+    reflectance: 0.04,
+    fresnel_power: 2.7,
+    reflection_strength: 1.15,
+    glare_roughness: 0.10,
+    glare_strength: 1.7,
+    hit_strength: 0.8,
+    hit_spread_radians: 0.55,
+    selection_strength: 0.7,
+    shell_alpha: 0.94,
+    facing_strength: 0.55,
+    attack_strength: 0.7,
+)
