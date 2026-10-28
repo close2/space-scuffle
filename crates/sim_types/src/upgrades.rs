@@ -11,6 +11,36 @@
 use crate::math::SimScalar;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use thiserror::Error;
+
+/// Stat whose cumulative upgrade adjustment exceeded its representation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpgradeStat {
+    /// Maximum hull hit points.
+    MaxHp,
+    /// Movement speed per tick.
+    MoveSpeed,
+    /// Sight radius in world units.
+    Sight,
+    /// Weapon range in world units.
+    WeaponRange,
+    /// Armor points.
+    Armor,
+    /// Signed attack interval adjustment in ticks.
+    AttackCooldown,
+    /// Bonus damage per strike.
+    BonusDamage,
+}
+
+/// An upgrade transaction could not represent one of its accumulated adjustments.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("upgrade adjustment overflow for '{target_slug}', stat {stat:?}")]
+pub struct UpgradeApplicationError {
+    /// Catalog slug receiving the overflowing adjustment.
+    pub target_slug: String,
+    /// Stat whose checked addition failed.
+    pub stat: UpgradeStat,
+}
 
 /// High-level weapon classification determining which scaling upgrade applies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -150,9 +180,20 @@ impl PlayerUpgradeState {
         Self::default()
     }
 
-    /// Applies an upgrade definition's effects to the player's active state.
-    pub fn apply_upgrade(&mut self, upgrade_slug: &str, effects: &[UpgradeEffect]) {
-        self.completed_upgrade_slugs
+    /// Atomically applies effects and completed research identity.
+    ///
+    /// # Errors
+    /// On any cumulative stat overflow returns typed evidence without changing state.
+    pub fn apply_upgrade(
+        &mut self,
+        upgrade_slug: &str,
+        effects: &[UpgradeEffect],
+    ) -> Result<(), UpgradeApplicationError> {
+        // Research is infrequent; staging the complete player state keeps all
+        // effects, unlocks and completion identity atomic on checked failure.
+        let mut staged = self.clone();
+        staged
+            .completed_upgrade_slugs
             .insert(upgrade_slug.to_string());
         for effect in effects {
             match effect {
@@ -160,13 +201,13 @@ impl PlayerUpgradeState {
                     weapon_class,
                     level,
                 } => {
-                    self.weapon_levels.insert(*weapon_class, *level);
+                    staged.weapon_levels.insert(*weapon_class, *level);
                 }
                 UpgradeEffect::ArmorLevel { armor_class, level } => {
-                    self.armor_levels.insert(*armor_class, *level);
+                    staged.armor_levels.insert(*armor_class, *level);
                 }
                 UpgradeEffect::ShieldLevel { level } => {
-                    self.shield_level = *level;
+                    staged.shield_level = *level;
                 }
                 UpgradeEffect::ModifyUnitStat {
                     target_slug,
@@ -178,28 +219,56 @@ impl PlayerUpgradeState {
                     attack_cooldown_delta,
                     bonus_damage_delta,
                 } => {
-                    let entry = self
+                    let entry = staged
                         .unit_stat_modifiers
                         .entry(target_slug.clone())
                         .or_default();
-                    entry.max_hp_delta += *max_hp_delta;
-                    entry.move_speed_delta += *move_speed_delta;
-                    entry.sight_delta += *sight_delta;
-                    entry.weapon_range_delta += *weapon_range_delta;
-                    entry.armor_delta += *armor_delta;
-                    entry.attack_cooldown_delta += *attack_cooldown_delta;
-                    entry.bonus_damage_delta += *bonus_damage_delta;
+                    let overflow = |stat| UpgradeApplicationError {
+                        target_slug: target_slug.clone(),
+                        stat,
+                    };
+                    entry.max_hp_delta = entry
+                        .max_hp_delta
+                        .checked_add(*max_hp_delta)
+                        .ok_or_else(|| overflow(UpgradeStat::MaxHp))?;
+                    entry.move_speed_delta = entry
+                        .move_speed_delta
+                        .checked_add(*move_speed_delta)
+                        .ok_or_else(|| overflow(UpgradeStat::MoveSpeed))?;
+                    entry.sight_delta = entry
+                        .sight_delta
+                        .checked_add(*sight_delta)
+                        .ok_or_else(|| overflow(UpgradeStat::Sight))?;
+                    entry.weapon_range_delta = entry
+                        .weapon_range_delta
+                        .checked_add(*weapon_range_delta)
+                        .ok_or_else(|| overflow(UpgradeStat::WeaponRange))?;
+                    entry.armor_delta = entry
+                        .armor_delta
+                        .checked_add(*armor_delta)
+                        .ok_or_else(|| overflow(UpgradeStat::Armor))?;
+                    entry.attack_cooldown_delta = entry
+                        .attack_cooldown_delta
+                        .checked_add(*attack_cooldown_delta)
+                        .ok_or_else(|| overflow(UpgradeStat::AttackCooldown))?;
+                    entry.bonus_damage_delta = entry
+                        .bonus_damage_delta
+                        .checked_add(*bonus_damage_delta)
+                        .ok_or_else(|| overflow(UpgradeStat::BonusDamage))?;
                 }
                 UpgradeEffect::UnlockAbility {
                     target_slug,
                     ability_slug,
                 } => {
-                    self.unlocked_abilities
+                    staged
+                        .unlocked_abilities
                         .entry(target_slug.clone())
                         .or_default()
                         .insert(ability_slug.clone());
                 }
             }
         }
+        *self = staged;
+        Ok(())
     }
 }

@@ -40,7 +40,10 @@ pub use errors::MathError;
 pub use ids::{EntityId, PlayerId, TeamId, Tick, UnitTypeId};
 pub use math::{SimAngle, SimScalar, SimVec2};
 pub use snapshot::{BubbleRenderInstance, CombatEventVisual, RenderSnapshot};
-pub use upgrades::{ArmorClass, PlayerUpgradeState, UnitStatDeltas, UpgradeEffect, WeaponClass};
+pub use upgrades::{
+    ArmorClass, PlayerUpgradeState, UnitStatDeltas, UpgradeApplicationError, UpgradeEffect,
+    UpgradeStat, WeaponClass,
+};
 pub use weapon::{
     default_projectile_lifetime_ticks, ProjectileTargetLossBehavior, SplashSpec, WeaponSpec,
     DEFAULT_PROJECTILE_LIFETIME_TICKS,

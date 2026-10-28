@@ -9,8 +9,8 @@
 )]
 
 use sim_types::{
-    AnimState, BubbleRenderInstance, CombatEventVisual, EntityId, RenderSnapshot, ShapeKind,
-    SilhouetteClass, TeamId, Tick, UnitTypeId, WeaponVisualKind,
+    AnimState, BubbleRenderInstance, CombatEventVisual, EntityId, PlayerId, RenderSnapshot,
+    ShapeKind, SilhouetteClass, Tick, UnitTypeId, WeaponVisualKind,
 };
 
 #[test]
@@ -46,7 +46,7 @@ fn test_render_snapshot_full_serialization() {
             shape: ShapeKind::UnitSphere,
             silhouette,
             unit_type: UnitTypeId((i % 3 + 1) as u16),
-            team_id: TeamId((i % 2 + 1) as u8),
+            owner: PlayerId((i % 2 + 1) as u8),
             world_pos: [10.0 + (i as f32) * 2.5, 15.0 - (i as f32) * 1.5, 0.0],
             ground_z: 0.0,
             radius: 0.65,
@@ -83,7 +83,7 @@ fn test_render_snapshot_full_serialization() {
         },
         silhouette: SilhouetteClass::StructureBase,
         unit_type: UnitTypeId(50),
-        team_id: TeamId(1),
+        owner: PlayerId(1),
         world_pos: [5.0, 5.0, 0.0],
         ground_z: 0.0,
         radius: 2.1,
@@ -114,7 +114,7 @@ fn test_render_snapshot_full_serialization() {
         },
         silhouette: SilhouetteClass::StructureBase,
         unit_type: UnitTypeId(51),
-        team_id: TeamId(2),
+        owner: PlayerId(2),
         world_pos: [40.0, 40.0, 0.0],
         ground_z: 0.0,
         radius: 1.5,
@@ -142,31 +142,31 @@ fn test_render_snapshot_full_serialization() {
         CombatEventVisual::HitscanTracer {
             from: [10.0, 15.0, 0.5],
             to: [25.0, 30.0, 0.5],
-            team_id: TeamId(1),
+            owner: PlayerId(1),
         },
         CombatEventVisual::ProjectileVisual {
             pos: [18.0, 22.0, 0.6],
             vel: [5.0, 5.0, 0.0],
-            team_id: TeamId(2),
+            owner: PlayerId(2),
             duration_secs: Some(0.25),
         },
         CombatEventVisual::BeamVisual {
             from: [12.5, 13.5, 0.7],
             to: [25.0, 30.0, 0.5],
             is_lightning: false,
-            team_id: TeamId(1),
+            owner: PlayerId(1),
         },
         CombatEventVisual::MeleeSlashVisual {
             pos: [24.0, 29.0, 0.3],
             angle_rad: 2.14,
             radius: 1.2,
-            team_id: TeamId(1),
+            owner: PlayerId(1),
         },
         CombatEventVisual::BubbleShatter {
             pos: [25.0, 30.0, 0.0],
             radius: 0.65,
             is_dome: false,
-            team_id: TeamId(2),
+            owner: PlayerId(2),
         },
     ];
 
@@ -176,6 +176,22 @@ fn test_render_snapshot_full_serialization() {
         bubbles,
         combat_events,
     };
+
+    for owner in [PlayerId(0), PlayerId(2), PlayerId(7), PlayerId::NEUTRAL] {
+        let mut bubble = original.bubbles[0].clone();
+        bubble.owner = owner;
+        let text = ron::to_string(&bubble).expect("invariant: valid bubble serialization");
+        let decoded: BubbleRenderInstance =
+            ron::from_str(&text).expect("invariant: freshly serialized bubble is valid");
+        assert_eq!(decoded.owner, owner);
+        assert!(
+            ron::from_str::<BubbleRenderInstance>(&text.replace("owner:", "team_id:")).is_err()
+        );
+        assert!(
+            ron::from_str::<BubbleRenderInstance>(&text.replace("owner:", "team_id:0,owner:"))
+                .is_err()
+        );
+    }
 
     // Serialize to RON string
     let ron_serialized = ron::to_string(&original).expect("invariant: valid serialization to RON");
@@ -189,4 +205,53 @@ fn test_render_snapshot_full_serialization() {
         original, deserialized,
         "Snapshot did not survive RON serialization roundtrip"
     );
+}
+
+#[test]
+fn every_event_preserves_sparse_and_neutral_owner_and_rejects_legacy_team_keys(
+) -> Result<(), Box<dyn std::error::Error>> {
+    for owner in [PlayerId(0), PlayerId(2), PlayerId(7), PlayerId::NEUTRAL] {
+        let events = [
+            CombatEventVisual::HitscanTracer {
+                from: [0.0; 3],
+                to: [1.0; 3],
+                owner,
+            },
+            CombatEventVisual::ProjectileVisual {
+                pos: [0.0; 3],
+                vel: [1.0; 3],
+                owner,
+                duration_secs: Some(0.5),
+            },
+            CombatEventVisual::BeamVisual {
+                from: [0.0; 3],
+                to: [1.0; 3],
+                is_lightning: false,
+                owner,
+            },
+            CombatEventVisual::MeleeSlashVisual {
+                pos: [0.0; 3],
+                angle_rad: 0.0,
+                radius: 1.0,
+                owner,
+            },
+            CombatEventVisual::BubbleShatter {
+                pos: [0.0; 3],
+                radius: 1.0,
+                is_dome: false,
+                owner,
+            },
+        ];
+        for event in events {
+            let text = ron::to_string(&event)?;
+            let decoded: CombatEventVisual = ron::from_str(&text)?;
+            assert_eq!(decoded.owner(), owner);
+            assert_eq!(decoded, event);
+            let legacy = text.replace("owner:", "team_id:");
+            assert!(ron::from_str::<CombatEventVisual>(&legacy).is_err());
+            let ambiguous = text.replace("owner:", "team_id:0,owner:");
+            assert!(ron::from_str::<CombatEventVisual>(&ambiguous).is_err());
+        }
+    }
+    Ok(())
 }

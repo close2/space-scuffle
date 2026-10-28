@@ -103,4 +103,7 @@ pub struct WeaponSpec {
     /// Maximum in-flight lifetime in ticks before missile or seeking mine fuels out and expires (default: 125 = 5.0s at 25 Hz).
     #[serde(default = "default_projectile_lifetime_ticks")]
     pub max_projectile_lifetime_ticks: u16,
+    /// If true, firing this weapon causes the attacking unit to detonate and destroy itself (e.g. Baneling).
+    #[serde(default)]
+    pub suicide_on_attack: bool,
 }

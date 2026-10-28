@@ -16,6 +16,11 @@ use std::fmt;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 /// Deterministic 64-bit fixed-point scalar with 32 integer and 32 fractional bits (Q32.32).
+///
+/// Human-readable Serde output stores exact raw bits as `"q32.32:v1:<signed i64>"`.
+/// Legacy numeric input remains accepted in simulation units, with checked conversion.
+/// Binary formats store a raw `i64`; enclosing persistence protocols must version this
+/// encoding independently from any historical floating-point representation.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(transparent)]
 pub struct SimScalar(pub I32F32);
@@ -25,7 +30,11 @@ impl Serialize for SimScalar {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_f64(self.0.to_num::<f64>())
+        if serializer.is_human_readable() {
+            serializer.serialize_str(&format!("q32.32:v1:{}", self.raw()))
+        } else {
+            serializer.serialize_i64(self.raw())
+        }
     }
 }
 
@@ -40,46 +49,68 @@ impl<'de> Deserialize<'de> for SimScalar {
             type Value = SimScalar;
 
             fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str("a float, integer, or fixed-point scalar")
+                formatter.write_str("a finite Q32.32 number or a q32.32:v1:<raw i64> string")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<SimScalar, E>
+            where
+                E: serde::de::Error,
+            {
+                let raw = value.strip_prefix("q32.32:v1:").ok_or_else(|| {
+                    E::custom("unsupported fixed-point encoding; expected q32.32:v1:<raw i64>")
+                })?;
+                raw.parse::<i64>()
+                    .map(SimScalar::from_raw)
+                    .map_err(|error| {
+                        E::custom(format!("invalid Q32.32 raw signed integer: {error}"))
+                    })
             }
 
             fn visit_f64<E>(self, v: f64) -> Result<SimScalar, E>
             where
                 E: serde::de::Error,
             {
-                Ok(SimScalar::from_num(v))
+                I32F32::checked_from_num(v).map(SimScalar).ok_or_else(|| {
+                    E::custom("numeric scalar must be finite and within the Q32.32 range")
+                })
             }
 
             fn visit_f32<E>(self, v: f32) -> Result<SimScalar, E>
             where
                 E: serde::de::Error,
             {
-                Ok(SimScalar::from_num(v))
+                self.visit_f64(f64::from(v))
             }
 
             fn visit_i64<E>(self, v: i64) -> Result<SimScalar, E>
             where
                 E: serde::de::Error,
             {
-                Ok(SimScalar::from_num(v))
+                I32F32::checked_from_num(v).map(SimScalar).ok_or_else(|| {
+                    E::custom("integer scalar is outside the Q32.32 whole-unit range")
+                })
             }
 
             fn visit_u64<E>(self, v: u64) -> Result<SimScalar, E>
             where
                 E: serde::de::Error,
             {
-                Ok(SimScalar::from_num(v))
+                I32F32::checked_from_num(v).map(SimScalar).ok_or_else(|| {
+                    E::custom("integer scalar is outside the Q32.32 whole-unit range")
+                })
             }
 
             fn visit_seq<A>(self, mut seq: A) -> Result<SimScalar, A::Error>
             where
                 A: serde::de::SeqAccess<'de>,
             {
-                if let Some(val) = seq.next_element::<f64>()? {
-                    Ok(SimScalar::from_num(val))
-                } else {
-                    Err(serde::de::Error::invalid_length(0, &self))
+                let value = seq
+                    .next_element::<SimScalar>()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                if seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(2, &self));
                 }
+                Ok(value)
             }
 
             fn visit_newtype_struct<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
@@ -90,7 +121,11 @@ impl<'de> Deserialize<'de> for SimScalar {
             }
         }
 
-        deserializer.deserialize_any(SimScalarVisitor)
+        if deserializer.is_human_readable() {
+            deserializer.deserialize_any(SimScalarVisitor)
+        } else {
+            i64::deserialize(deserializer).map(Self::from_raw)
+        }
     }
 }
 
@@ -873,7 +908,7 @@ impl SimAngle {
                 Self::DEG_270
             };
         }
-        if raw_x.abs() == raw_y.abs() {
+        if raw_x.unsigned_abs() == raw_y.unsigned_abs() {
             let quad: u16 = 8192;
             return if raw_x > 0 && raw_y > 0 {
                 Self(quad)
@@ -992,6 +1027,36 @@ impl Neg for SimAngle {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scalar_numeric_visitor_checks_float_range() -> Result<(), serde::de::value::Error> {
+        use serde::de::value::{F32Deserializer, F64Deserializer};
+
+        let half = SimScalar::deserialize(F32Deserializer::new(0.5))?;
+        assert_eq!(half, SimScalar::HALF);
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 2_147_483_648.0] {
+            assert!(
+                SimScalar::deserialize(F64Deserializer::<serde::de::value::Error>::new(value))
+                    .is_err()
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn scalar_numeric_visitor_checks_unsigned_range() -> Result<(), serde::de::value::Error> {
+        use serde::de::value::U64Deserializer;
+
+        assert_eq!(
+            SimScalar::deserialize(U64Deserializer::new(1))?,
+            SimScalar::ONE
+        );
+        assert!(
+            SimScalar::deserialize(U64Deserializer::<serde::de::value::Error>::new(u64::MAX))
+                .is_err()
+        );
+        Ok(())
+    }
 
     #[test]
     fn test_fixed_point_basic_arithmetic() {
