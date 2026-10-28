@@ -22,7 +22,11 @@
 pub mod error;
 pub mod ffmpeg_importer;
 pub mod manifest;
+pub mod media;
+pub mod media_audit;
 pub mod procedural_generator;
+pub mod terrain_texture;
+pub mod terrain_theme;
 pub mod veo_client;
 
 pub use error::BakerError;
@@ -34,6 +38,20 @@ pub use manifest::{ActionSlice, FlipbookAtlasMeta, FlipbookLayout};
 pub use procedural_generator::{
     generate_procedural_atlas, generate_procedural_dome_atlas, generate_procedural_unit_atlas,
     ProceduralAtlasOutput,
+};
+pub use terrain_texture::{
+    bake_theme, derive_height, derive_normal, derive_orm, find_horizontal_min_cut,
+    find_vertical_min_cut, linear_to_srgb, linear_to_srgb_image, load_and_resize, make_tileable,
+    seam_score, smoothstep, srgb_to_linear, tiled_preview, BakeReport, GrayF32Image,
+    LayerBakeReport, MinCutBuffers, Rgba32FImage, Rgba8Image, AO_MAX_CLAMP, AO_MIN_CLAMP, AO_SCALE,
+    LUMA_REC709_B, LUMA_REC709_G, LUMA_REC709_R, MAX_ASPECT_RATIO_DEVIATION, PYRAMID_LEVELS,
+    SEAM_CORE_WIDTH_DIVISOR, SEAM_HALF_WIDTH_DIVISOR, SEAM_SCORE_DISCONTINUITY_SENTINEL,
+    STDDEV_5X5_RADIUS,
+};
+pub use terrain_theme::{
+    BakedLayerPaths, TerrainTheme, TerrainThemeCatalog, TerrainThemeError, ThemeBackdrop,
+    ThemeLayer, ThemeLayers, ThemeLighting, TilingMode, LAYER_INDEX_CLIFF, LAYER_INDEX_DIRT,
+    LAYER_INDEX_GRASS, LAYER_INDEX_METAL_PLATE, MAX_THEME_TEXTURE_SIZE, MIN_THEME_TEXTURE_SIZE,
 };
 pub use veo_client::{
     build_action_prompt, resolve_credentials, VeoClient, VeoCredentials, VeoGenerateRequest,
@@ -152,36 +170,21 @@ pub fn generate_all_procedural_atlases(
     Ok(generated_metas)
 }
 
-/// Bakes starter unit flipbook atlases using real video frames from the concept video.
+/// Rejects the retired operation that copied one concept video across an entire roster.
 ///
-/// In accordance with AGENTS.md Section 1.2 (Zero Fake Assets), this ensures that all starter
-/// entities are backed by genuine video frames extracted via FFmpeg rather than fake procedural
-/// pixel drawings or static wobbles.
-///
-/// # Arguments
-/// - `video_path`: Path to the real MP4 video (e.g. `tmp/gemini_generated_video_de659ff9.mp4`).
-/// - `output_dir`: Destination directory for baked PNGs and `.flipbook.ron` manifests.
-/// - `size`: Frame width and height in pixels (e.g. 512).
-/// - `fps`: Playback framerate.
+/// The signature remains available for embedding compatibility, but no input is read and
+/// no output is written. Each unit requires an explicitly selected, unit-specific source.
 ///
 /// # Errors
-/// Returns [`BakerError`] on FFmpeg execution or image processing failure.
+/// Always returns [`BakerError::ExplicitSourcesRequired`].
+#[deprecated(note = "one concept movie cannot establish media for an entire roster")]
 pub fn bake_starter_units_from_real_video(
-    video_path: &Path,
-    output_dir: &Path,
-    size: u32,
-    fps: u32,
+    _video_path: &Path,
+    _output_dir: &Path,
+    _size: u32,
+    _fps: u32,
 ) -> Result<Vec<FlipbookAtlasMeta>, BakerError> {
-    let catalog = sim_core::UnitCatalog::default();
-    let mut metas = Vec::new();
-    for arch in catalog.archetypes() {
-        let meta = bake_custom_video(video_path, output_dir, &arch.slug, size, fps)?;
-        metas.push(meta);
-    }
-    if let Ok(meta) = bake_custom_video(video_path, output_dir, "concept_video", size, fps) {
-        metas.push(meta);
-    }
-    Ok(metas)
+    Err(BakerError::ExplicitSourcesRequired)
 }
 
 /// Bakes the standard Space Scuffle concept video into a Texture2DArray vertical strip and RON manifest.

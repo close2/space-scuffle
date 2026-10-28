@@ -34,6 +34,7 @@ pub enum FlipbookLayout {
 
 /// Sliced range of frames corresponding to a specific unit or structure animation state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ActionSlice {
     /// Zero-indexed starting frame index in the packed atlas.
     pub start_frame: u32,
@@ -50,6 +51,7 @@ pub struct ActionSlice {
 /// Contains all geometric and timing parameters necessary for the client rendering
 /// layer to sample individual animation frames from GPU textures or Texture2DArrays.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FlipbookAtlasMeta {
     /// Identifier name of the atlas (e.g. `"marine"`, `"concept_video"`).
     pub name: String,
@@ -64,7 +66,45 @@ pub struct FlipbookAtlasMeta {
     /// Geometric packing layout of frames.
     pub layout: FlipbookLayout,
     /// Deterministic mapping of animation states to frame slices.
+    #[serde(deserialize_with = "deserialize_unique_actions")]
     pub actions: BTreeMap<AnimState, ActionSlice>,
+}
+
+fn deserialize_unique_actions<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<AnimState, ActionSlice>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct UniqueActions;
+    impl<'de> serde::de::Visitor<'de> for UniqueActions {
+        type Value = BTreeMap<AnimState, ActionSlice>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("an animation map with each action declared exactly once")
+        }
+
+        fn visit_map<M: serde::de::MapAccess<'de>>(
+            self,
+            mut map: M,
+        ) -> Result<Self::Value, M::Error> {
+            let mut actions = BTreeMap::new();
+            while let Some((action, slice)) = map.next_entry::<AnimState, ActionSlice>()? {
+                match actions.entry(action) {
+                    std::collections::btree_map::Entry::Vacant(entry) => {
+                        entry.insert(slice);
+                    }
+                    std::collections::btree_map::Entry::Occupied(_) => {
+                        return Err(serde::de::Error::custom(format!(
+                            "duplicate animation action {action:?}"
+                        )));
+                    }
+                }
+            }
+            Ok(actions)
+        }
+    }
+    deserializer.deserialize_map(UniqueActions)
 }
 
 impl FlipbookAtlasMeta {

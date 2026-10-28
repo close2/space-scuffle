@@ -29,7 +29,22 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Generates high-quality flipbook atlases using real video frames from the concept video.
+    /// Audits exact installed media without baking or changing assets.
+    AuditMedia {
+        /// External catalog directory loaded at command invocation.
+        #[arg(long, default_value = "assets/catalog")]
+        catalog_dir: PathBuf,
+        /// Root of the installed asset bundle.
+        #[arg(long, default_value = "assets")]
+        assets: PathBuf,
+        /// Machine-readable JSON report destination (existing files are refused).
+        #[arg(long)]
+        report: PathBuf,
+        /// Exit nonzero when provenance or required assets remain unapproved.
+        #[arg(long)]
+        strict: bool,
+    },
+    /// Retired unsafe roster-copy command; fails without reading or writing assets.
     GenerateDefaults {
         /// Target output directory for baked PNG strips and .flipbook.ron manifests.
         #[arg(short, long, default_value = "assets/textures")]
@@ -165,46 +180,50 @@ enum Commands {
         #[arg(short, long)]
         fps: Option<u32>,
     },
+
+    /// Bakes a terrain visual theme into tileable albedo, normal, and ORM textures.
+    #[command(name = "bake-terrain-theme")]
+    BakeTerrainTheme {
+        /// Unique theme slug to bake (e.g. "orbital_foundry").
+        #[arg(short, long)]
+        theme: String,
+
+        /// Path to the terrain theme catalog RON file.
+        #[arg(short, long, default_value = "assets/catalog/terrain_themes.ron")]
+        catalog: PathBuf,
+
+        /// Root assets directory.
+        #[arg(short, long, default_value = "assets")]
+        assets: PathBuf,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::GenerateDefaults {
-            output_dir,
-            concept_video,
-            size,
-            fps,
+        Commands::AuditMedia {
+            catalog_dir,
+            assets,
+            report,
+            strict,
         } => {
-            if concept_video.exists() {
-                println!(
-                    "==> Baking starter unit video flipbooks from {:?} at {}x{} @ {} fps...",
-                    concept_video, size, size, fps
-                );
-                let video_metas = asset_baker::bake_starter_units_from_real_video(
-                    &concept_video,
-                    &output_dir,
-                    size,
-                    fps,
-                )?;
-                println!(
-                    "    Baked {} starter unit atlases successfully from real video.",
-                    video_metas.len()
-                );
-            } else {
-                eprintln!(
-                    "--> Concept video {:?} not found, falling back to procedural atlases.",
-                    concept_video
-                );
-                let procedural_metas = asset_baker::generate_all_procedural_atlases(&output_dir)?;
-                println!(
-                    "    Generated {} procedural flipbook atlases.",
-                    procedural_metas.len()
-                );
+            let catalogs = sim_core::catalog::RuntimeCatalogs::load_from_directory(catalog_dir)?;
+            let audit = asset_baker::media_audit::audit_media(&assets, &catalogs.units);
+            audit.write_json(&report)?;
+            for entry in &audit.entries {
+                println!("{}: {:?}", entry.slug, entry.status);
             }
-
-            println!("==> Default asset baking complete.");
+            println!(
+                "Report: {}. Structural media availability is not artistic approval.",
+                report.display()
+            );
+            if strict {
+                audit.require_verified()?;
+            }
+        }
+        Commands::GenerateDefaults { .. } => {
+            return Err(asset_baker::BakerError::ExplicitSourcesRequired.into());
         }
 
         Commands::GenerateVeo {
@@ -387,6 +406,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 output.meta.frame_height,
                 output.meta.fps
             );
+        }
+
+        Commands::BakeTerrainTheme {
+            theme,
+            catalog,
+            assets,
+        } => {
+            println!(
+                "==> Baking terrain theme '{theme}' from catalog {:?} (assets: {:?})...",
+                catalog, assets
+            );
+            match asset_baker::bake_theme(&catalog, &theme, &assets) {
+                Ok(report) => {
+                    println!("{report}");
+                    println!("==> Terrain theme '{theme}' baked successfully.");
+                }
+                Err(err) => {
+                    eprintln!("Error baking terrain theme '{theme}': {err}");
+                    return Err(Box::new(err));
+                }
+            }
         }
     }
 

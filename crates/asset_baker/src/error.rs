@@ -10,6 +10,9 @@ use thiserror::Error;
 /// Exhaustive error enumeration for the asset baking pipeline.
 #[derive(Debug, Error)]
 pub enum BakerError {
+    /// The retired batch command cannot truthfully identify unit-specific source media.
+    #[error("explicit unit-specific sources are required; generate-defaults no longer copies one concept movie or substitutes procedural art. Use bake-unit-videos with authentic clips for one explicitly named unit, and audit-media to inspect the installed bundle")]
+    ExplicitSourcesRequired,
     /// An I/O error occurred while interacting with the filesystem.
     #[error("I/O error while accessing '{path}': {source}")]
     Io {
