@@ -34,7 +34,7 @@ impl TechTreeValidator {
         let existing_completed_structures: BTreeSet<&str> = world
             .entities
             .values()
-            .filter(|e| e.owner == player_id && e.is_completed)
+            .filter(|e| e.owner == player_id && e.is_completed && !e.is_loaded_in_transport())
             .filter_map(|e| {
                 world
                     .catalog
@@ -81,7 +81,7 @@ impl TechTreeValidator {
         let existing_completed_structures: BTreeSet<&str> = world
             .entities
             .values()
-            .filter(|e| e.owner == player_id && e.is_completed)
+            .filter(|e| e.owner == player_id && e.is_completed && !e.is_loaded_in_transport())
             .filter_map(|e| {
                 world
                     .catalog

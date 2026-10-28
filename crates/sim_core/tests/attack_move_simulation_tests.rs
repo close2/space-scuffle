@@ -76,12 +76,17 @@ fn test_attack_move_wave_engages_and_resumes_destination() {
 
     // Order blue units to AttackMove to (26.0, 16.0)
     for &id in &[b1, b2] {
-        world.entities.get_mut(&id).unwrap().issue_order(
-            UnitOrder::AttackMove {
-                target: march_destination,
-            },
-            false,
-        );
+        world
+            .entities
+            .get_mut(&id)
+            .unwrap()
+            .issue_order(
+                UnitOrder::AttackMove {
+                    target: march_destination,
+                },
+                false,
+            )
+            .expect("valid authored fixture order or buff");
     }
 
     // Step simulation
@@ -158,12 +163,17 @@ fn test_threat_priority_combatants_before_passive_structures() {
         .expect("spawn red combatant");
 
     // Issue AttackMove order to Blue
-    world.entities.get_mut(&blue_id).unwrap().issue_order(
-        UnitOrder::AttackMove {
-            target: SimVec2::new(SimScalar::from_num(25), SimScalar::from_num(16)),
-        },
-        false,
-    );
+    world
+        .entities
+        .get_mut(&blue_id)
+        .unwrap()
+        .issue_order(
+            UnitOrder::AttackMove {
+                target: SimVec2::new(SimScalar::from_num(25), SimScalar::from_num(16)),
+            },
+            false,
+        )
+        .expect("valid authored fixture order or buff");
 
     // Step 1 tick for target acquisition
     world.step(&empty_bundle(1));
@@ -206,6 +216,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         bonus_upgrade_per_level: SimScalar::ZERO,
         target_loss_behavior: sim_types::ProjectileTargetLossBehavior::Fizzle,
         max_projectile_lifetime_ticks: sim_types::DEFAULT_PROJECTILE_LIFETIME_TICKS,
+        suicide_on_attack: false,
     };
 
     let air_weapon_high_dps = WeaponSpec {
@@ -231,6 +242,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         bonus_upgrade_per_level: SimScalar::ZERO,
         target_loss_behavior: sim_types::ProjectileTargetLossBehavior::Fizzle,
         max_projectile_lifetime_ticks: sim_types::DEFAULT_PROJECTILE_LIFETIME_TICKS,
+        suicide_on_attack: false,
     };
 
     let arch = UnitArchetype {
@@ -439,12 +451,14 @@ fn test_default_battle_sandbox_red_zealots_charge_and_retaliate_against_blue() {
     let march_target = SimVec2::new(SimScalar::from_num(50), SimScalar::from_num(32));
     for entity in world.entities.values_mut() {
         if entity.owner == PlayerId(0) && !entity.is_immobile {
-            entity.issue_order(
-                UnitOrder::AttackMove {
-                    target: march_target,
-                },
-                false,
-            );
+            entity
+                .issue_order(
+                    UnitOrder::AttackMove {
+                        target: march_target,
+                    },
+                    false,
+                )
+                .expect("valid authored fixture order or buff");
         }
     }
 
@@ -568,7 +582,8 @@ fn test_projectile_speed_and_cargo_pickup_disjoint() {
         .entities
         .get_mut(&shooter_id)
         .unwrap()
-        .issue_order(UnitOrder::AttackTarget { target: target_id }, false);
+        .issue_order(UnitOrder::AttackTarget { target: target_id }, false)
+        .expect("valid authored fixture order or buff");
 
     // Step until projectile is launched
     let mut proj_launched = false;
@@ -589,19 +604,24 @@ fn test_projectile_speed_and_cargo_pickup_disjoint() {
         "Exactly one projectile in flight"
     );
 
-    // Mid-flight, pick up the target unit into a transport (EntityId(999))
-    let transport_id = EntityId(999);
-    let loaded = world.load_unit_into_transport(target_id, transport_id);
-    assert!(
-        loaded,
-        "Target unit must be successfully loaded into transport"
-    );
+    // Mid-flight pickup uses a real same-owner carrier outside this battle's acquisition range.
+    let passenger = &world.entities[&target_id];
+    let transport_id = world
+        .spawn_unit(
+            passenger.unit_type_id,
+            passenger.owner,
+            SimVec2::new(SimScalar::from_num(30), SimScalar::from_num(30)),
+        )
+        .expect("valid isolated carrier placement");
+    world
+        .try_load_unit_into_transport(target_id, transport_id)
+        .expect("real carrier must accept passenger");
     assert!(
         world
             .entities
             .get(&target_id)
             .unwrap()
-            .is_loaded_in_transport,
+            .is_loaded_in_transport(),
         "Target unit must have is_loaded_in_transport = true"
     );
 
@@ -679,7 +699,8 @@ fn test_move_command_units_fan_out_and_surround_target_point() {
             .entities
             .get_mut(&id)
             .unwrap()
-            .issue_order(UnitOrder::Move { target: target_pos }, false);
+            .issue_order(UnitOrder::Move { target: target_pos }, false)
+            .expect("valid authored fixture order or buff");
         squad.push(id);
     }
 

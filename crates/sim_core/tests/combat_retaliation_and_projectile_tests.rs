@@ -41,6 +41,23 @@ fn create_test_world(seed: u64) -> SimWorld {
     SimWorld::new(map, seed)
 }
 
+/// Real same-owner carrier kept beyond acquisition/splash range of these fixtures.
+fn carry(world: &mut SimWorld, passenger: EntityId) {
+    let actor = &world.entities[&passenger];
+    let kind = actor.unit_type_id;
+    let owner = actor.owner;
+    let carrier = world
+        .spawn_unit(
+            kind,
+            owner,
+            SimVec2::new(SimScalar::from_num(30), SimScalar::from_num(30)),
+        )
+        .expect("valid isolated carrier placement");
+    world
+        .try_load_unit_into_transport(passenger, carrier)
+        .expect("valid real carrier admission");
+}
+
 /// Helper that creates a custom weapon specification with configurable target loss behavior and lifetime.
 fn custom_projectile_weapon(
     speed: SimScalar,
@@ -71,6 +88,7 @@ fn custom_projectile_weapon(
         bonus_upgrade_per_level: SimScalar::ZERO,
         target_loss_behavior,
         max_projectile_lifetime_ticks: max_lifetime,
+        suicide_on_attack: false,
     }
 }
 
@@ -95,7 +113,7 @@ fn register_dummy_target(world: &mut SimWorld) -> UnitTypeId {
 
 /// Test 1: Projectiles with `Fizzle` behavior disjoint and deal 0 damage when the target becomes
 /// unavailable mid-flight due to:
-/// (a) Cargo pickup (`is_loaded_in_transport = true`),
+/// (a) Cargo pickup (an actual carrier relation),
 /// (b) Cloaking without active detector vision (`is_cloaked = true`),
 /// (c) Invulnerability (`is_invulnerable = true`).
 #[test]
@@ -139,7 +157,8 @@ fn test_projectile_target_loss_fizzle_on_cargo_cloak_and_invulnerability() {
             .entities
             .get_mut(&shooter)
             .unwrap()
-            .issue_order(UnitOrder::AttackTarget { target }, false);
+            .issue_order(UnitOrder::AttackTarget { target }, false)
+            .expect("valid authored fixture order or buff");
 
         // Step until projectile launches
         let mut launched = false;
@@ -155,7 +174,7 @@ fn test_projectile_target_loss_fizzle_on_cargo_cloak_and_invulnerability() {
         assert!(launched, "Subcase (a): Projectile must be in flight");
 
         // Target loaded into transport mid-flight
-        world.load_unit_into_transport(target, EntityId(999));
+        carry(&mut world, target);
 
         // Step past arrival time
         for t in (launch_tick + 1)..=(launch_tick + 20) {
@@ -209,7 +228,8 @@ fn test_projectile_target_loss_fizzle_on_cargo_cloak_and_invulnerability() {
             .entities
             .get_mut(&shooter)
             .unwrap()
-            .issue_order(UnitOrder::AttackTarget { target }, false);
+            .issue_order(UnitOrder::AttackTarget { target }, false)
+            .expect("valid authored fixture order or buff");
 
         let mut launch_tick = 1;
         for t in 1..=10 {
@@ -274,7 +294,8 @@ fn test_projectile_target_loss_fizzle_on_cargo_cloak_and_invulnerability() {
             .entities
             .get_mut(&shooter)
             .unwrap()
-            .issue_order(UnitOrder::AttackTarget { target }, false);
+            .issue_order(UnitOrder::AttackTarget { target }, false)
+            .expect("valid authored fixture order or buff");
 
         let mut launch_tick = 1;
         for t in 1..=10 {
@@ -361,7 +382,8 @@ fn test_seeking_projectile_retargets_nearest_available_enemy() {
         .entities
         .get_mut(&shooter)
         .unwrap()
-        .issue_order(UnitOrder::AttackTarget { target: target1 }, false);
+        .issue_order(UnitOrder::AttackTarget { target: target1 }, false)
+        .expect("valid authored fixture order or buff");
 
     // Step until projectile is in flight
     let mut launch_tick = 1;
@@ -380,7 +402,7 @@ fn test_seeking_projectile_retargets_nearest_available_enemy() {
     assert_eq!(world.projectiles[0].target_id, Some(target1));
 
     // Mid-flight, pick up T1 into transport (becomes unavailable!)
-    world.load_unit_into_transport(target1, EntityId(999));
+    carry(&mut world, target1);
 
     // Step next tick: projectile should detect loss and dynamically retarget T2
     world.step(&empty_bundle(launch_tick + 1));
@@ -462,7 +484,8 @@ fn test_missile_lifetime_timeout_expiration() {
         .entities
         .get_mut(&shooter)
         .unwrap()
-        .issue_order(UnitOrder::AttackTarget { target }, false);
+        .issue_order(UnitOrder::AttackTarget { target }, false)
+        .expect("valid authored fixture order or buff");
 
     // Step until missile launches
     let mut launch_tick = 1;
@@ -551,7 +574,8 @@ fn test_ballistic_impact_last_known_position_splash() {
         .entities
         .get_mut(&shooter)
         .unwrap()
-        .issue_order(UnitOrder::AttackTarget { target: target1 }, false);
+        .issue_order(UnitOrder::AttackTarget { target: target1 }, false)
+        .expect("valid authored fixture order or buff");
 
     let mut launch_tick = 1;
     for t in 1..=10 {
@@ -564,7 +588,7 @@ fn test_ballistic_impact_last_known_position_splash() {
     assert_eq!(world.projectiles.len(), 1, "Artillery projectile in flight");
 
     // Mid-flight, pick up primary target into transport
-    world.load_unit_into_transport(target1, EntityId(999));
+    carry(&mut world, target1);
 
     // Step until projectile reaches destination
     for t in (launch_tick + 1)..=(launch_tick + 25) {

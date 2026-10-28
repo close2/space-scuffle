@@ -10,29 +10,32 @@
 //! 4. Zero engine / GPU dependencies; compiles cleanly in headless CI.
 
 use crate::catalog::{UnitArchetype, UnitCatalog, WeaponSpec};
-use crate::checksum::compute_world_checksum;
+use crate::checksum::compute_simulation_checksum;
 use crate::combat::{
     calculate_hit_damage_upgraded, calculate_splash_damage_upgraded, compute_threat_priority,
     step_entity_weapon, TargetPriorityKey,
 };
 use crate::entity::{ActiveProjectile, Entity, WeaponPhase};
 use crate::error::{SimCoreError, SimResult};
+use crate::movement::{
+    DisplacementAdmissionError, MotionPolicy, MovementInvariant, MovementLayer, MovementMathError,
+    MovementOutcome,
+};
 use crate::steering::{
-    check_cluster_arrival, compute_push_displacement, compute_unified_local_steering,
-    PushEntityParams, SpatialHashGrid, SteeringObstacle, SPATIAL_CELL_SIZE,
+    compute_push_displacement_with_mobility, CollisionMobility, PushEntityParams, SpatialHashGrid,
+    SPATIAL_CELL_SIZE,
 };
 use crate::upgrades::UpgradeCatalog;
+use crate::weapon_timing::{resolve_attack_period, AttackRate, SimulationDiagnostic};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use sim_map::{
-    CellFlags, CliffLevel, GameMap, MapCell, PathRequestWithVision, Pathfinder, PlayerVisionMap,
-    SimMap, VisionSource,
+    CellFlags, CliffLevel, GameMap, MapCell, Pathfinder, PlayerVisionMap, SimMap, VisionSource,
 };
 use sim_types::{
-    AbilityEffectSpec, AnimState, AttributeFlags, BubbleRenderInstance, CombatEventVisual,
-    EntityId, PlayerId, PlayerUpgradeState, ProjectileTargetLossBehavior, RenderSnapshot,
-    ShapeKind, SimAngle, SimScalar, SimVec2, TeamId, Tick, TickBundle, UnitOrder, UnitTypeId,
-    VisibilityState, WeaponVisualKind,
+    AbilityEffectSpec, AttributeFlags, BubbleRenderInstance, CombatEventVisual, EntityId, PlayerId,
+    PlayerUpgradeState, ProjectileTargetLossBehavior, RenderSnapshot, ShapeKind, SimAngle,
+    SimScalar, SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId, VisibilityState, WeaponVisualKind,
 };
 use std::collections::BTreeMap;
 
@@ -50,10 +53,12 @@ pub struct PlayerResources {
     pub minerals: u32,
     /// Vespene gas resource reserve.
     pub gas: u32,
-    /// Currently consumed army/worker supply.
+    /// Registered entity supply plus all queued reservations; death releases on reap.
     pub supply_used: u32,
-    /// Maximum supply cap provided by Command and Supply Domes (capped at 200).
+    /// Effective supply capacity from completed providers, capped at 200.
     pub supply_max: u32,
+    /// Uncapped completed-provider total; effective capacity is capped at 200.
+    pub supply_provided_total: u32,
 }
 
 impl Default for PlayerResources {
@@ -62,7 +67,8 @@ impl Default for PlayerResources {
             minerals: 1000,
             gas: 500,
             supply_used: 0,
-            supply_max: 200,
+            supply_max: 0,
+            supply_provided_total: 0,
         }
     }
 }
@@ -128,6 +134,14 @@ pub struct SimWorld {
     pub last_checksum: u64,
     /// Transient visual events generated during the current tick for renderer consumption.
     pub pending_events: Vec<CombatEventVisual>,
+    /// Derived diagnostic output from the latest tick; excluded from state checksums.
+    /// Consumers must surface these failures instead of treating the tick as healthy.
+    pub(crate) tick_diagnostics: Vec<SimulationDiagnostic>,
+    pub(crate) movement: crate::movement::MovementWorkspace,
+    pub(crate) transport: crate::transport::TransportWorkspace,
+    #[cfg(test)]
+    pub(crate) transport_validation_count: std::cell::Cell<usize>,
+    pub(crate) production: crate::production::ProductionWorkspace,
     /// Active continuous hazard/AoE zones (e.g. Psionic Storm) ticking in the world.
     pub active_hazards: Vec<ActiveHazardZone>,
     /// Monotonically increasing hazard ID generator.
@@ -140,13 +154,33 @@ pub struct SimWorld {
     // Reusable per-tick scratch buffers to eliminate allocations
     scratch_neighbors: Vec<EntityId>,
     scratch_targets: Vec<(TargetPriorityKey, EntityId)>,
-    scratch_dead_entities: Vec<EntityId>,
 }
 
 impl SimWorld {
-    /// Constructs a new simulation world on `map` with the given deterministic RNG seed.
+    /// Constructs a world using the embedded compatibility catalogs and deterministic seed.
+    ///
+    /// Normal external-asset startup uses [`Self::with_catalogs`] instead.
     #[must_use]
     pub fn new(map: SimMap, seed: u64) -> Self {
+        Self::with_catalogs(
+            map,
+            seed,
+            UnitCatalog::new_starter_roster(),
+            UpgradeCatalog::default_catalog(),
+        )
+    }
+
+    /// Constructs a world on `map` using the supplied rule catalogs and RNG seed.
+    ///
+    /// Takes ownership of already loaded catalogs without reading files or replacing
+    /// them with embedded defaults. Coordinates remain fixed-point world units.
+    #[must_use]
+    pub fn with_catalogs(
+        map: SimMap,
+        seed: u64,
+        catalog: UnitCatalog,
+        upgrade_catalog: UpgradeCatalog,
+    ) -> Self {
         let width = map.width();
         let height = map.height();
         let pathfinder = Pathfinder::new(&map);
@@ -178,7 +212,6 @@ impl SimWorld {
             vec![false; total_cells],
         ];
 
-        let catalog = UnitCatalog::new_starter_roster();
         let mut world = Self {
             current_tick: 0,
             rng: ChaCha8Rng::seed_from_u64(seed),
@@ -191,19 +224,24 @@ impl SimWorld {
             pathfinder,
             vision_maps,
             catalog,
-            upgrade_catalog: UpgradeCatalog::default_catalog(),
+            upgrade_catalog,
             player_upgrades: Default::default(),
             spatial_hash,
             player_resources: [PlayerResources::default(); 8],
             last_checksum: 0,
             pending_events: Vec::new(),
+            tick_diagnostics: Vec::new(),
+            movement: crate::movement::MovementWorkspace::default(),
+            transport: crate::transport::TransportWorkspace::default(),
+            #[cfg(test)]
+            transport_validation_count: std::cell::Cell::new(0),
+            production: crate::production::ProductionWorkspace::new(width, height),
             active_hazards: Vec::new(),
             next_hazard_id: 1,
             vision_aware_pathfinding: true,
             known_blocked_cells,
             scratch_neighbors: Vec::with_capacity(32),
             scratch_targets: Vec::with_capacity(64),
-            scratch_dead_entities: Vec::with_capacity(16),
         };
 
         world.last_checksum = world.compute_checksum();
@@ -361,29 +399,31 @@ impl SimWorld {
     /// Spawns a mobile unit entity at `pos`.
     ///
     /// # Errors
-    /// Returns [`SimCoreError::ArchetypeNotFound`] if `unit_type` is not in the catalog.
+    /// Returns typed catalog, owner, vitals, allocation or captured-supply failures.
+    /// Setup may begin over capacity; player training admission may not.
     pub fn spawn_unit(
         &mut self,
         unit_type: UnitTypeId,
         owner: PlayerId,
         pos: SimVec2,
     ) -> SimResult<EntityId> {
-        let archetype = self.catalog.get(unit_type)?;
-        let id = EntityId(self.next_entity_id);
-        self.next_entity_id = self.next_entity_id.wrapping_add(1);
-
-        let mut entity = Entity::from_archetype(id, owner, pos, archetype);
-        entity.max_hp = self.effective_max_hp(archetype, owner);
-        entity.hp = entity.max_hp;
-        self.entities.insert(id, entity);
-        Ok(id)
+        self.validate_supply_ledger()?;
+        let prepared = self.prepare_spawn(unit_type, owner, pos, 0)?;
+        if matches!(prepared.entity_shape, ShapeKind::BuildingDome { .. }) {
+            return Err(crate::production::ProductionInvariant::InvalidDefinition {
+                unit_type,
+                field: "mobile spawn requires a mobile shape",
+            }
+            .into());
+        }
+        Ok(self.commit_spawn(prepared))
     }
 
-    /// Spawns a building foundation dome at cell `(cell_x, cell_y)`.
+    /// Atomically spawns a completed setup structure at minimum grid cell `(cell_x, cell_y)`.
+    /// Setup does not charge resources, but captures supply and never consumes an ID on failure.
     ///
     /// # Errors
-    /// Returns [`SimCoreError::ArchetypeNotFound`] if `structure_type` is not in catalog.
-    /// Returns [`SimCoreError::InvalidBuildingPlacement`] if the footprint is obstructed.
+    /// Returns typed identity, owner, vitals, allocator, supply or placement failures.
     pub fn spawn_structure(
         &mut self,
         structure_type: UnitTypeId,
@@ -391,41 +431,42 @@ impl SimWorld {
         cell_x: u32,
         cell_y: u32,
     ) -> SimResult<EntityId> {
+        self.validate_supply_ledger()?;
         let archetype = self.catalog.get(structure_type)?;
         let ShapeKind::BuildingDome {
             footprint_w,
             footprint_h,
         } = archetype.shape
         else {
-            return Err(SimCoreError::InvalidCommand(
-                EntityId(0),
-                "Spawn structure called with non-dome shape".to_string(),
-            ));
+            return Err(crate::production::ProductionInvariant::InvalidDefinition {
+                unit_type: structure_type,
+                field: "structure spawn requires a dome shape",
+            }
+            .into());
         };
-
-        let id = EntityId(self.next_entity_id);
-        self.next_entity_id = self.next_entity_id.wrapping_add(1);
-
+        if footprint_w == 0
+            || footprint_h == 0
+            || u64::from(cell_x) + u64::from(footprint_w) > u64::from(self.map.width())
+            || u64::from(cell_y) + u64::from(footprint_h) > u64::from(self.map.height())
+        {
+            return Err(SimCoreError::InvalidBuildingPlacement {
+                x: cell_x,
+                y: cell_y,
+            });
+        }
+        let pos = SimVec2::new(
+            SimScalar::from_num(cell_x) + SimScalar::from_num(footprint_w) * SimScalar::HALF,
+            SimScalar::from_num(cell_y) + SimScalar::from_num(footprint_h) * SimScalar::HALF,
+        );
+        let prepared = self.prepare_spawn(structure_type, owner, pos, 0)?;
         self.map
-            .place_structure(id, cell_x, cell_y, footprint_w, footprint_h)
+            .place_structure(prepared.entity.id, cell_x, cell_y, footprint_w, footprint_h)
             .map_err(|_| SimCoreError::InvalidBuildingPlacement {
                 x: cell_x,
                 y: cell_y,
             })?;
-
+        let id = self.commit_spawn(prepared);
         self.pathfinder.recompute_clearance(&self.map);
-
-        let center_x =
-            SimScalar::from_num(cell_x) + SimScalar::from_num(footprint_w) * SimScalar::HALF;
-        let center_y =
-            SimScalar::from_num(cell_y) + SimScalar::from_num(footprint_h) * SimScalar::HALF;
-        let pos = SimVec2::new(center_x, center_y);
-
-        let mut entity = Entity::from_archetype(id, owner, pos, archetype);
-        entity.max_hp = self.effective_max_hp(archetype, owner);
-        entity.hp = entity.max_hp;
-        entity.is_completed = true;
-        self.entities.insert(id, entity);
         Ok(id)
     }
 
@@ -445,7 +486,8 @@ impl SimWorld {
     /// Applies a researched upgrade to a player's upgrade state, updating any affected live entities.
     ///
     /// # Errors
-    /// Returns [`SimCoreError::UnknownUpgrade`] if the upgrade slug is unknown.
+    /// Returns typed errors for unknown research or unrepresentable cumulative/live stats.
+    /// On failure all player state, resources and entity vitals remain unchanged.
     pub fn research_upgrade(&mut self, player_id: PlayerId, upgrade_slug: &str) -> SimResult<()> {
         let upgrade = self
             .upgrade_catalog
@@ -453,30 +495,53 @@ impl SimWorld {
             .ok_or_else(|| SimCoreError::UnknownUpgrade(upgrade_slug.to_string()))?
             .clone();
 
-        self.player_upgrade_state_mut(player_id)
-            .apply_upgrade(upgrade_slug, &upgrade.effects);
+        let player_index = usize::from(player_id.0);
+        let mut staged_player = self
+            .player_upgrades
+            .get(player_index)
+            .ok_or(MovementMathError::InvalidOwner(player_id))?
+            .clone();
+        staged_player.apply_upgrade(upgrade_slug, &upgrade.effects)?;
+        for archetype in self.catalog.archetypes() {
+            Self::effective_speed_with_state(archetype, &staged_player)?;
+        }
 
-        // Apply any retroactive entity stat updates (e.g. Combat Shield max HP)
-        for effect in &upgrade.effects {
-            if let sim_types::UpgradeEffect::ModifyUnitStat {
-                target_slug,
-                max_hp_delta,
-                ..
-            } = effect
-            {
-                if *max_hp_delta > SimScalar::ZERO {
-                    for ent in self.entities.values_mut() {
-                        if ent.owner == player_id {
-                            if let Ok(arch) = self.catalog.get(ent.unit_type_id) {
-                                if arch.slug == *target_slug {
-                                    ent.max_hp += *max_hp_delta;
-                                    ent.hp += *max_hp_delta;
-                                }
-                            }
-                        }
+        // Stage live vitals as well as research state: a late overflow must not
+        // leave earlier entities, completed slugs or other effects committed.
+        let mut staged_vitals = Vec::new();
+        for (&id, entity) in &mut self.entities {
+            if entity.owner != player_id {
+                continue;
+            }
+            let archetype = self.catalog.get(entity.unit_type_id)?;
+            Self::effective_speed_with_state(archetype, &staged_player)?
+                .checked_mul(entity.speed_multiplier()?)
+                .ok_or(MovementMathError::Unrepresentable)?;
+            let mut hp = entity.hp;
+            let mut max_hp = entity.max_hp;
+            for effect in &upgrade.effects {
+                if let sim_types::UpgradeEffect::ModifyUnitStat {
+                    target_slug,
+                    max_hp_delta,
+                    ..
+                } = effect
+                {
+                    if archetype.slug == *target_slug && *max_hp_delta > SimScalar::ZERO {
+                        let overflow = || SimCoreError::UpgradeEntityVitalsOverflow { entity: id };
+                        hp = hp.checked_add(*max_hp_delta).ok_or_else(overflow)?;
+                        max_hp = max_hp.checked_add(*max_hp_delta).ok_or_else(overflow)?;
                     }
                 }
             }
+            if hp != entity.hp || max_hp != entity.max_hp {
+                staged_vitals.push((entity, hp, max_hp));
+            }
+        }
+
+        self.player_upgrades[player_index] = staged_player;
+        for (entity, hp, max_hp) in staged_vitals {
+            entity.hp = hp;
+            entity.max_hp = max_hp;
         }
         Ok(())
     }
@@ -506,17 +571,36 @@ impl SimWorld {
         crate::tech_tree::TechTreeValidator::can_research_upgrade(self, player_id, upgrade_slug)
     }
 
-    fn effective_speed_from_upgrades(
+    pub(crate) fn effective_speed_from_upgrades(
         upgrades: &[PlayerUpgradeState; 8],
         archetype: &UnitArchetype,
         owner: PlayerId,
-    ) -> SimScalar {
-        let p_idx = (owner.0 as usize).min(7);
-        let speed_delta = upgrades[p_idx]
+    ) -> Result<SimScalar, MovementMathError> {
+        let state = upgrades
+            .get(usize::from(owner.0))
+            .ok_or(MovementMathError::InvalidOwner(owner))?;
+        Self::effective_speed_with_state(archetype, state)
+    }
+
+    fn effective_speed_with_state(
+        archetype: &UnitArchetype,
+        state: &PlayerUpgradeState,
+    ) -> Result<SimScalar, MovementMathError> {
+        if archetype.max_speed < SimScalar::ZERO {
+            return Err(MovementMathError::NegativeSpeed);
+        }
+        let delta = state
             .unit_stat_modifiers
             .get(&archetype.slug)
             .map_or(SimScalar::ZERO, |m| m.move_speed_delta);
-        archetype.max_speed + speed_delta
+        let speed = archetype
+            .max_speed
+            .checked_add(delta)
+            .ok_or(MovementMathError::Unrepresentable)?;
+        if speed < SimScalar::ZERO {
+            return Err(MovementMathError::NegativeSpeed);
+        }
+        Ok(speed)
     }
 
     fn effective_range_from_upgrades(
@@ -544,13 +628,18 @@ impl SimWorld {
             .unit_stat_modifiers
             .get(unit_slug)
             .map_or(0, |m| m.attack_cooldown_delta);
-        let period = (weapon.period_ticks as i32 + cd_delta).max(1);
-        period as u16
+        resolve_attack_period(weapon.period_ticks, cd_delta, AttackRate::ONE)
     }
 
-    /// Computes the effective movement speed for an archetype and owner taking into account active upgrades.
-    #[must_use]
-    pub fn effective_max_speed(&self, archetype: &UnitArchetype, owner: PlayerId) -> SimScalar {
+    /// Computes nonnegative movement speed in world units per25Hz tick, including upgrades.
+    ///
+    /// # Errors
+    /// Rejects an invalid owner, negative authored/effective speed or numeric overflow.
+    pub fn effective_max_speed(
+        &self,
+        archetype: &UnitArchetype,
+        owner: PlayerId,
+    ) -> Result<SimScalar, MovementMathError> {
         Self::effective_speed_from_upgrades(&self.player_upgrades, archetype, owner)
     }
 
@@ -565,7 +654,8 @@ impl SimWorld {
         Self::effective_range_from_upgrades(&self.player_upgrades, weapon, unit_slug, owner)
     }
 
-    /// Computes the effective attack period (cooldown ticks) taking into account active upgrades.
+    /// Computes the upgraded interval in 25 Hz ticks, clamped to `1..=u16::MAX`.
+    /// Temporary rate buffs are excluded from this upgrade-only query.
     #[must_use]
     pub fn effective_attack_period(
         &self,
@@ -588,10 +678,34 @@ impl SimWorld {
     }
 
     /// Advances the deterministic simulation by exactly one 25 Hz (40 ms) tick.
+    /// Consumers must inspect [`Self::diagnostics`] afterward and report any failures
+    /// before continuing the match. Invalid weapon rates suppress the affected attack
+    /// and produce typed evidence; they are never silently replaced by a default rate.
     pub fn step(&mut self, input: &TickBundle) -> RenderSnapshot {
+        let mut output = RenderSnapshot::default();
+        self.step_into(input, &mut output);
+        output
+    }
+
+    /// Advances one authoritative tick into reusable client-owned output storage.
+    ///
+    /// `input.tick` retains the existing pre-step boundary convention; the output
+    /// identifies the incremented, fully executed tick. Inspect diagnostics and
+    /// drain command outcomes after each call, before the next tick clears them.
+    /// Previous output contents are replaced, and pending visual events drain once.
+    pub fn step_into(&mut self, input: &TickBundle, output: &mut RenderSnapshot) {
+        self.tick_diagnostics.clear();
+        self.production.outcomes.clear();
+        self.movement.outcomes.clear();
         self.current_tick = self.current_tick.wrapping_add(1);
 
-        self.process_commands(input);
+        if let Err(source) = self.validate_transport_links() {
+            self.report_transport_invariant(source);
+            self.last_checksum = self.compute_checksum();
+            self.write_render_snapshot(output);
+            return;
+        }
+        self.process_commands_prevalidated(input);
         self.update_production_and_buffs();
         self.update_vision();
         self.acquire_targets();
@@ -600,7 +714,20 @@ impl SimWorld {
         self.step_weapons_and_projectiles();
         self.reap_dead_and_emit_shatter();
         self.last_checksum = self.compute_checksum();
-        self.build_render_snapshot()
+        self.write_render_snapshot(output);
+    }
+
+    /// Returns explicit failures observed in the latest tick without consuming them.
+    /// Direct phase calls append diagnostics until drained or the next full tick begins.
+    #[must_use]
+    pub fn diagnostics(&self) -> &[SimulationDiagnostic] {
+        &self.tick_diagnostics
+    }
+
+    /// Consumes diagnostic evidence while retaining the output buffer allocation.
+    /// Normal clients must report any returned error before continuing the match.
+    pub fn drain_diagnostics(&mut self) -> std::vec::Drain<'_, SimulationDiagnostic> {
+        self.tick_diagnostics.drain(..)
     }
 
     /// Returns the most recently computed 64-bit state checksum.
@@ -610,10 +737,8 @@ impl SimWorld {
         self.last_checksum
     }
 
-    /// Executes an active ability or spell for an entity.
-    ///
-    /// Validates energy cost, cooldowns, range, terrain pathability, and channeling.
-    /// Returns `true` if cast successfully; `false` otherwise.
+    /// Executes an ability, surfacing malformed numeric state through tick diagnostics.
+    /// Ordinary eligibility/placement rejection returns false without payment.
     pub fn execute_ability(
         &mut self,
         entity_id: EntityId,
@@ -621,82 +746,212 @@ impl SimWorld {
         target_pos: Option<SimVec2>,
         target_entity: Option<EntityId>,
     ) -> bool {
-        let _ = target_entity;
-        let entity = match self.entities.get_mut(&entity_id) {
-            Some(e) if e.is_alive() => e,
-            _ => return false,
-        };
-
-        if entity.channeling_remaining_ticks > 0 {
+        if let Err(source) = self.validate_transport_links() {
+            self.report_transport_invariant(source);
             return false;
         }
+        self.execute_ability_prevalidated(entity_id, ability_index, target_pos, target_entity)
+    }
 
-        let arch = match self.catalog.get(entity.unit_type_id) {
-            Ok(a) => a,
-            Err(_) => return false,
+    // Tick/standalone wrapper proved relations; effect admission cannot alter links.
+    fn execute_ability_prevalidated(
+        &mut self,
+        entity_id: EntityId,
+        ability_index: u8,
+        target_pos: Option<SimVec2>,
+        target_entity: Option<EntityId>,
+    ) -> bool {
+        match self.try_execute_ability_prevalidated(
+            entity_id,
+            ability_index,
+            target_pos,
+            target_entity,
+        ) {
+            Ok(applied) => applied,
+            Err(source) => {
+                self.report_movement_invariant(source);
+                false
+            }
+        }
+    }
+
+    fn apply_world_overclock(
+        &mut self,
+        id: EntityId,
+        spec: sim_types::OverclockSpec,
+    ) -> Result<bool, MovementInvariant> {
+        let actor = self
+            .entities
+            .get(&id)
+            .ok_or(MovementInvariant::InvalidState {
+                entity: id,
+                reason: "Overclock actor disappeared",
+            })?;
+        if actor.is_loaded_in_transport() {
+            return Ok(false);
+        }
+        let prepared = actor
+            .prepare_overclock(spec)
+            .map_err(|source| MovementInvariant::Admission { entity: id, source })?;
+        let Some(prepared) = prepared else {
+            return Ok(false);
         };
+        let arch = self
+            .catalog
+            .get(actor.unit_type_id)
+            .map_err(|_| MovementInvariant::MissingArchetype(id))?;
+        self.effective_max_speed(arch, actor.owner)
+            .and_then(|speed| {
+                speed
+                    .checked_mul(prepared.multiplier)
+                    .ok_or(MovementMathError::Unrepresentable)
+            })
+            .map_err(|source| MovementInvariant::Arithmetic {
+                entity: id,
+                operation: "Overclock effective speed",
+                source,
+            })?;
+        if let Some(actor) = self.entities.get_mut(&id) {
+            actor.commit_overclock(prepared);
+        }
+        Ok(true)
+    }
+
+    /// Executes an active ability or spell for an entity.
+    ///
+    /// Validates energy cost, cooldowns, range, terrain pathability, and channeling.
+    /// Returns `true` if cast successfully; `false` otherwise.
+    pub(crate) fn try_execute_ability_prevalidated(
+        &mut self,
+        entity_id: EntityId,
+        ability_index: u8,
+        target_pos: Option<SimVec2>,
+        target_entity: Option<EntityId>,
+    ) -> Result<bool, MovementInvariant> {
+        let _ = target_entity;
+        let entity = match self.entities.get(&entity_id) {
+            Some(e) if e.is_alive() => e,
+            _ => return Ok(false),
+        };
+
+        if entity.is_loaded_in_transport() || entity.channeling_remaining_ticks > 0 {
+            return Ok(false);
+        }
+
+        let arch = self
+            .catalog
+            .get(entity.unit_type_id)
+            .map_err(|_| MovementInvariant::MissingArchetype(entity_id))?;
 
         let ability = match arch.abilities.get(ability_index as usize) {
             Some(a) => a,
-            None => return false,
+            None => return Ok(false),
         };
 
         if let Some(&cd) = entity.ability_cooldowns.get(ability_index as usize) {
             if cd > 0 {
-                return false;
+                return Ok(false);
             }
         }
 
+        let admission = |source| MovementInvariant::Admission {
+            entity: entity_id,
+            source,
+        };
+        if ability.energy_cost < SimScalar::ZERO {
+            return Err(admission(crate::entity::EntityAdmissionError::NegativeCost));
+        }
+        if ability.cast_range < SimScalar::ZERO {
+            return Err(MovementInvariant::Arithmetic {
+                entity: entity_id,
+                operation: "ability range",
+                source: MovementMathError::InvalidDistance,
+            });
+        }
         if entity.energy < ability.energy_cost {
-            return false;
+            return Ok(false);
         }
 
         if ability.cast_range > SimScalar::ZERO {
             if let Some(pos) = target_pos {
-                if entity.position.distance(pos) > ability.cast_range {
-                    return false;
+                if !crate::movement::math::within_distance(
+                    entity.position,
+                    pos,
+                    i128::from(ability.cast_range.raw()),
+                ) {
+                    return Ok(false);
                 }
             }
         }
 
-        // Validate ability preconditions
+        let prepared_energy = entity
+            .energy
+            .checked_sub(ability.energy_cost)
+            .ok_or_else(|| admission(crate::entity::EntityAdmissionError::PaymentOverflow))?;
+        let mut prepared_overclock = None;
+        // Validate every fallible payment/rate/placement before any commit.
         match &ability.effect {
-            AbilityEffectSpec::Overclock(_) => {
-                if entity.hp <= SimScalar::ONE {
-                    return false;
-                }
+            AbilityEffectSpec::Overclock(spec) => {
+                let Some(prepared) = entity.prepare_overclock(*spec).map_err(admission)? else {
+                    return Ok(false);
+                };
+                self.effective_max_speed(arch, entity.owner)
+                    .and_then(|base| {
+                        base.checked_mul(prepared.multiplier)
+                            .ok_or(MovementMathError::Unrepresentable)
+                    })
+                    .map_err(|source| MovementInvariant::Arithmetic {
+                        entity: entity_id,
+                        operation: "Overclock effective speed",
+                        source,
+                    })?;
+                prepared_overclock = Some(prepared);
             }
             AbilityEffectSpec::SiegeModeToggle { .. }
             | AbilityEffectSpec::CloakToggle { .. }
             | AbilityEffectSpec::SwitchMode { .. } => {}
             AbilityEffectSpec::BlinkTeleport { max_range, .. } => {
                 let Some(dest) = target_pos else {
-                    return false;
+                    return Ok(false);
                 };
-                if entity.position.distance(dest) > *max_range {
-                    return false;
+                if *max_range < SimScalar::ZERO {
+                    return Err(MovementInvariant::Arithmetic {
+                        entity: entity_id,
+                        operation: "Blink range",
+                        source: MovementMathError::InvalidDistance,
+                    });
                 }
-                let Ok((cx, cy)) = self.map.world_to_cell(dest) else {
-                    return false;
-                };
-                let Ok(cell) = self.map.cell(cx, cy) else {
-                    return false;
-                };
-                if !cell.flags.contains(CellFlags::GROUND_PATHABLE)
-                    || cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE)
-                    || cell.flags.contains(CellFlags::UNPASSABLE_CLIFF)
+                if !crate::movement::math::within_distance(
+                    entity.position,
+                    dest,
+                    i128::from(max_range.raw()),
+                ) {
+                    return Ok(false);
+                }
+                if let Err(error) =
+                    self.validate_displacement_destination_prevalidated(entity_id, dest)
                 {
-                    return false;
+                    if let DisplacementAdmissionError::Invariant(source) = error {
+                        return Err(source);
+                    }
+                    return Ok(false);
                 }
             }
             AbilityEffectSpec::PsionicStormAoE { .. } => {
                 if target_pos.is_none() {
-                    return false;
+                    return Ok(false);
                 }
             }
         }
 
-        entity.energy -= ability.energy_cost;
+        // All placement/ability preparation precedes even cooldown bookkeeping.
+        let Some(entity) = self.entities.get_mut(&entity_id) else {
+            return Ok(false);
+        };
+        if let Some(prepared) = prepared_overclock {
+            entity.commit_overclock(prepared);
+        }
+        entity.energy = prepared_energy;
         if (ability_index as usize) < entity.ability_cooldowns.len() {
             entity.ability_cooldowns[ability_index as usize] = ability.cooldown_ticks;
         }
@@ -704,8 +959,8 @@ impl SimWorld {
         let effect = ability.effect.clone();
         let entity_owner = entity.owner;
         match effect {
-            AbilityEffectSpec::Overclock(spec) => {
-                entity.apply_overclock(spec);
+            AbilityEffectSpec::Overclock(_) => {
+                // The prepared buff committed atomically with resources above.
             }
             AbilityEffectSpec::SiegeModeToggle {
                 cast_ticks,
@@ -820,7 +1075,7 @@ impl SimWorld {
             }
         }
 
-        true
+        Ok(true)
     }
 
     // =========================================================================
@@ -829,32 +1084,53 @@ impl SimWorld {
 
     /// Phase 1: Process scheduled player input commands.
     pub fn process_commands(&mut self, input: &TickBundle) {
-        for cmd in &input.commands {
+        if let Err(source) = self.validate_transport_links() {
+            self.report_transport_invariant(source);
+            return;
+        }
+        self.process_commands_prevalidated(input);
+    }
+
+    // Normal step or public dispatcher validated once. No command writes carrier links.
+    fn process_commands_prevalidated(&mut self, input: &TickBundle) {
+        for (command_index, cmd) in input.commands.iter().enumerate() {
+            if matches!(
+                cmd.order,
+                UnitOrder::Move { .. } | UnitOrder::AttackMove { .. }
+            ) {
+                let result = self.issue_movement_prevalidated(
+                    cmd.player_id,
+                    &cmd.entities,
+                    &cmd.order,
+                    cmd.queue,
+                );
+                self.movement.outcomes.push(MovementOutcome {
+                    tick: Tick(self.current_tick),
+                    command_index,
+                    player: cmd.player_id,
+                    result,
+                });
+                continue;
+            }
+            if let UnitOrder::Produce { unit_type } = cmd.order {
+                let result =
+                    self.queue_production_prevalidated(cmd.player_id, &cmd.entities, unit_type);
+                self.production
+                    .outcomes
+                    .push(crate::production::ProductionOutcome {
+                        tick: Tick(self.current_tick),
+                        command_index,
+                        player: cmd.player_id,
+                        result,
+                    });
+                continue;
+            }
             let player_idx = cmd.player_id.0 as usize;
             if player_idx >= self.player_resources.len() {
                 continue;
             }
 
             match &cmd.order {
-                UnitOrder::Produce { unit_type } => {
-                    if let Ok(arch) = self.catalog.get(*unit_type) {
-                        let res = &mut self.player_resources[player_idx];
-                        if res.minerals >= arch.mineral_cost && res.gas >= arch.gas_cost {
-                            res.minerals -= arch.mineral_cost;
-                            res.gas -= arch.gas_cost;
-
-                            for &ent_id in &cmd.entities {
-                                if let Some(ent) = self.entities.get_mut(&ent_id) {
-                                    if ent.owner == cmd.player_id {
-                                        ent.production_queue
-                                            .push_back((*unit_type, arch.build_time_ticks as u16));
-                                        break; // Queue into first matching structure
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
                 UnitOrder::Build {
                     structure_type,
                     cell_x,
@@ -864,13 +1140,24 @@ impl SimWorld {
                 }
                 UnitOrder::UseStim => {
                     for &ent_id in &cmd.entities {
-                        if let Some(ent) = self.entities.get_mut(&ent_id) {
-                            if ent.owner == cmd.player_id {
-                                if let Ok(arch) = self.catalog.get(ent.unit_type_id) {
-                                    if let Some(spec) = arch.overclock {
-                                        let _ = ent.apply_overclock(spec);
-                                    }
-                                }
+                        let Some(actor) = self
+                            .entities
+                            .get(&ent_id)
+                            .filter(|e| e.owner == cmd.player_id)
+                        else {
+                            continue;
+                        };
+                        let spec = if let Ok(arch) = self.catalog.get(actor.unit_type_id) {
+                            arch.overclock
+                        } else {
+                            self.report_movement_invariant(MovementInvariant::MissingArchetype(
+                                ent_id,
+                            ));
+                            continue;
+                        };
+                        if let Some(spec) = spec {
+                            if let Err(source) = self.apply_world_overclock(ent_id, spec) {
+                                self.report_movement_invariant(source);
                             }
                         }
                     }
@@ -884,9 +1171,19 @@ impl SimWorld {
                         if let Some(ent) = self.entities.get_mut(&ent_id) {
                             if ent.owner == cmd.player_id {
                                 if cmd.queue && !ent.order_queue.is_empty() {
-                                    ent.issue_order(cmd.order.clone(), true);
+                                    if let Err(source) = ent.issue_order(cmd.order.clone(), true) {
+                                        self.tick_diagnostics.push(
+                                            SimulationDiagnostic::MovementInvariant {
+                                                tick: Tick(self.current_tick),
+                                                source: MovementInvariant::Admission {
+                                                    entity: ent_id,
+                                                    source,
+                                                },
+                                            },
+                                        );
+                                    }
                                 } else {
-                                    self.execute_ability(
+                                    self.execute_ability_prevalidated(
                                         ent_id,
                                         *ability_index,
                                         *target_pos,
@@ -901,7 +1198,17 @@ impl SimWorld {
                     for &ent_id in &cmd.entities {
                         if let Some(ent) = self.entities.get_mut(&ent_id) {
                             if ent.owner == cmd.player_id {
-                                ent.issue_order(cmd.order.clone(), cmd.queue);
+                                if let Err(source) = ent.issue_order(cmd.order.clone(), cmd.queue) {
+                                    self.tick_diagnostics.push(
+                                        SimulationDiagnostic::MovementInvariant {
+                                            tick: Tick(self.current_tick),
+                                            source: MovementInvariant::Admission {
+                                                entity: ent_id,
+                                                source,
+                                            },
+                                        },
+                                    );
+                                }
                             }
                         }
                     }
@@ -911,11 +1218,22 @@ impl SimWorld {
     }
 
     /// Phase 2: Update production timers, buffs, passive regeneration, and shield delays.
+    ///
+    /// One front production job advances per entity, including jobs enqueued in
+    /// phase 1 of this tick. A zero-duration job completes on its first update;
+    /// the next queued job starts advancing on the following update.
+    /// Direct phase callers must establish `validate_transport_links` beforehand;
+    /// normal `step_into` establishes this precondition once for its phase sequence.
     pub fn update_production_and_buffs(&mut self) {
-        let mut completed_spawns = Vec::new();
+        self.advance_production();
         let catalog = &self.catalog;
 
         for entity in self.entities.values_mut() {
+            // Dead entities retain their ledger until reap; passive regeneration
+            // must never resurrect them or resume their production.
+            if !entity.is_alive() {
+                continue;
+            }
             // Channeling timers
             if entity.channeling_remaining_ticks > 0 {
                 entity.channeling_remaining_ticks =
@@ -995,16 +1313,6 @@ impl SimWorld {
                 *cd = cd.saturating_sub(1);
             }
 
-            // Production timers
-            if let Some(front) = entity.production_queue.front_mut() {
-                front.1 = front.1.saturating_sub(1);
-                if front.1 == 0 {
-                    let unit_type = front.0;
-                    completed_spawns.push((unit_type, entity.owner, entity.position));
-                    entity.production_queue.pop_front();
-                }
-            }
-
             // Buff timers
             for buff in &mut entity.active_buffs {
                 buff.remaining_ticks = buff.remaining_ticks.saturating_sub(1);
@@ -1013,7 +1321,7 @@ impl SimWorld {
 
             // Passive Vitals & Shield delay
             if let Ok(arch) = catalog.get(entity.unit_type_id) {
-                entity.hp = (entity.hp + arch.hp_regen_per_tick).min(arch.max_hp);
+                entity.hp = (entity.hp + arch.hp_regen_per_tick).min(entity.max_hp);
                 entity.energy = (entity.energy + arch.energy_regen_per_tick).min(arch.max_energy);
 
                 // Continuous energy drain for active stance/mode
@@ -1053,6 +1361,7 @@ impl SimWorld {
         // Step active hazard zones (e.g. Psionic Storm)
         let cur_tick = self.current_tick;
         let mut expired_hazards = Vec::new();
+        let mut hazard_flee_candidates = Vec::new();
         for (h_idx, hazard) in self.active_hazards.iter_mut().enumerate() {
             if hazard.remaining_ticks == 0 {
                 expired_hazards.push(h_idx);
@@ -1068,8 +1377,8 @@ impl SimWorld {
             if hazard.ticks_until_next_interval == 0 {
                 hazard.ticks_until_next_interval = hazard.interval_ticks;
 
-                for entity in self.entities.values_mut() {
-                    if !entity.is_alive() {
+                for (&entity_id, entity) in &mut self.entities {
+                    if !entity.is_alive() || entity.is_loaded_in_transport() {
                         continue;
                     }
                     if !hazard.targets_friendly && entity.owner == hazard.owner {
@@ -1089,6 +1398,20 @@ impl SimWorld {
                         };
                         entity.apply_damage(shield_dmg, life_dmg, SimAngle::ZERO);
                         entity.last_storm_damage_tick = Some(Tick(cur_tick));
+
+                        // Idle mobile units evacuate the persistent hazard zone
+                        if matches!(entity.order_queue.front(), None | Some(UnitOrder::Idle))
+                            && !entity.is_holding_position
+                            && !entity.is_immobile
+                            && !entity.is_loaded_in_transport()
+                        {
+                            hazard_flee_candidates.push((
+                                entity_id,
+                                entity.position,
+                                hazard.center,
+                                hazard.radius,
+                            ));
+                        }
                     }
                 }
             }
@@ -1097,20 +1420,42 @@ impl SimWorld {
             self.active_hazards.remove(h_idx);
         }
 
-        // Spawn completed production units
-        for (unit_type, owner, pos) in completed_spawns {
-            let spawn_pos = pos + SimVec2::new(SimScalar::from_num(2), SimScalar::ZERO);
-            let _ = self.spawn_unit(unit_type, owner, spawn_pos);
+        // Direct hazard evacuation moves outside the affected radius
+        for (id, _pos, center, radius) in hazard_flee_candidates {
+            let flee_dist = radius + SimScalar::from_num(2);
+            let flee = self.compute_entity_flee_destination_prevalidated(id, center, flee_dist);
+            if let Err(source) = flee {
+                self.report_movement_invariant(source);
+                continue;
+            }
+            if let Ok(Some(flee_target)) = flee {
+                if let Some(unit) = self.entities.get_mut(&id) {
+                    unit.order_queue.clear();
+                    unit.order_queue.push_back(UnitOrder::Move {
+                        target: flee_target,
+                    });
+                    unit.current_funnel_waypoints.clear();
+                    unit.current_target = None;
+                }
+            }
         }
+
+        // Hazards may have killed a ready producer; completion rechecks its life.
+        self.complete_production();
     }
 
     /// Phase 3: Update per-player Fog of War visibility maps and remembered obstacle perception.
+    /// Direct phase callers must establish `validate_transport_links` beforehand;
+    /// normal `step_into` establishes this precondition once for its phase sequence.
     pub fn update_vision(&mut self) {
         for p in 0..8 {
             self.vision_maps[p].begin_tick_update();
         }
 
         for entity in self.entities.values() {
+            if entity.is_loaded_in_transport() {
+                continue;
+            }
             if let Ok(arch) = self.catalog.get(entity.unit_type_id) {
                 let p = entity.owner.0 as usize;
                 if p < 8 {
@@ -1165,31 +1510,17 @@ impl SimWorld {
         }
     }
 
-    /// Loads a unit into a transport craft, hiding it and disjointing incoming homing projectiles.
-    pub fn load_unit_into_transport(&mut self, unit_id: EntityId, _transport_id: EntityId) -> bool {
-        if let Some(unit) = self.entities.get_mut(&unit_id) {
-            unit.is_loaded_in_transport = true;
-            unit.order_queue.clear();
-            unit.velocity = SimVec2::ZERO;
-            unit.current_target = None;
-            unit.current_funnel_waypoints.clear();
-            true
-        } else {
-            false
-        }
+    /// Compatibility adapter for typed loading. Ordinary rejection returns false;
+    /// corruption emits diagnostic evidence. Prefer `try_load_unit_into_transport`.
+    pub fn load_unit_into_transport(&mut self, unit_id: EntityId, transport_id: EntityId) -> bool {
+        self.try_load_unit_into_transport(unit_id, transport_id)
+            .is_ok()
     }
 
     /// Unloads a unit from a transport craft at the specified landing position.
     pub fn unload_unit_from_transport(&mut self, unit_id: EntityId, unload_pos: SimVec2) -> bool {
-        if let Some(unit) = self.entities.get_mut(&unit_id) {
-            unit.is_loaded_in_transport = false;
-            unit.position = unload_pos;
-            unit.velocity = SimVec2::ZERO;
-            unit.order_queue.clear();
-            true
-        } else {
-            false
-        }
+        self.try_unload_unit_from_transport(unit_id, unload_pos)
+            .is_ok()
     }
 
     /// Checks whether an entity is available to be tracked, acquired, or hit in combat
@@ -1207,7 +1538,7 @@ impl SimWorld {
             return false;
         };
 
-        if !target.is_alive() || target.is_loaded_in_transport || target.is_invulnerable {
+        if !target.is_alive() || target.is_loaded_in_transport() || target.is_invulnerable {
             return false;
         }
 
@@ -1256,18 +1587,195 @@ impl SimWorld {
         )
     }
 
+    /// Finds a legacy ground/radius-one autonomous flee goal in world coordinates.
+    ///
+    /// # Errors
+    /// Returns invalid distance/domain or unrepresentable arithmetic without mutation.
+    pub fn compute_flee_destination(
+        &self,
+        victim_pos: SimVec2,
+        threat_pos: SimVec2,
+        desired_dist: SimScalar,
+    ) -> Result<Option<SimVec2>, MovementMathError> {
+        Self::flee_destination(
+            &self.map,
+            MotionPolicy {
+                layer: MovementLayer::Ground,
+                radius: SimScalar::ONE,
+            },
+            victim_pos,
+            threat_pos,
+            desired_dist,
+        )
+    }
+
+    /// Finds an autonomous flee goal using the actor's current authored policy.
+    ///
+    /// # Errors
+    /// Rejects malformed actor/speed/foundation state or unrepresentable geometry.
+    pub fn compute_entity_flee_destination(
+        &self,
+        id: EntityId,
+        threat: SimVec2,
+        distance: SimScalar,
+    ) -> Result<Option<SimVec2>, MovementInvariant> {
+        self.validate_transport_links()
+            .map_err(MovementInvariant::Transport)?;
+        self.compute_entity_flee_destination_prevalidated(id, threat, distance)
+    }
+
+    // Caller validated graph. Loaded actors have no world-space flee goal.
+    fn compute_entity_flee_destination_prevalidated(
+        &self,
+        id: EntityId,
+        threat: SimVec2,
+        distance: SimScalar,
+    ) -> Result<Option<SimVec2>, MovementInvariant> {
+        if self
+            .entities
+            .get(&id)
+            .is_some_and(Entity::is_loaded_in_transport)
+        {
+            return Ok(None);
+        }
+        let entry = self.motion_entry(id)?;
+        let actor = self
+            .entities
+            .get(&id)
+            .ok_or(MovementInvariant::InvalidState {
+                entity: id,
+                reason: "flee actor disappeared",
+            })?;
+        Self::flee_destination(&self.map, entry.policy, actor.position, threat, distance).map_err(
+            |source| MovementInvariant::Arithmetic {
+                entity: id,
+                operation: "flee destination",
+                source,
+            },
+        )
+    }
+
+    fn flee_destination(
+        map: &SimMap,
+        policy: MotionPolicy,
+        victim_pos: SimVec2,
+        threat_pos: SimVec2,
+        desired_dist: SimScalar,
+    ) -> Result<Option<SimVec2>, MovementMathError> {
+        use crate::movement::math::{
+            checked_vec_add, checked_vec_scale, direction, squared_distance,
+        };
+        if desired_dist < SimScalar::ZERO || !policy.contains(map, victim_pos) {
+            return Err(MovementMathError::InvalidDistance);
+        }
+        let threshold = (SimScalar::from_f32_lossy(0.0001).raw() as u128) << 32;
+        let away = if squared_distance(victim_pos, threat_pos) > (0, threshold) {
+            direction(victim_pos, threat_pos)?
+        } else {
+            -SimVec2::X_AXIS
+        };
+        let min = i128::from(policy.radius.raw());
+        let max_x = (i128::from(map.width()) << 32) - min;
+        let max_y = (i128::from(map.height()) << 32) - min;
+        if min > max_x || min > max_y {
+            return Err(MovementMathError::InvalidDistance);
+        }
+        let angles = [0, 45, -45, 90, -90, 135, -135];
+        for dist in [
+            desired_dist,
+            SimScalar::from_num(4),
+            SimScalar::from_num(3),
+            SimScalar::from_num(2),
+        ] {
+            if dist > desired_dist {
+                continue;
+            }
+            for degrees in angles {
+                let dir = if degrees == 0 {
+                    away
+                } else {
+                    let angle = SimAngle::from_degrees(degrees);
+                    checked_vec_add(
+                        checked_vec_scale(away, angle.cos())?,
+                        checked_vec_scale(SimVec2::new(-away.y, away.x), angle.sin())?,
+                    )?
+                };
+                let delta = checked_vec_scale(dir, dist)?;
+                // Existing autonomous boundary adjustment is evaluated wide before
+                // narrowing, so a legal clamped goal does not overflow on overshoot.
+                let x =
+                    (i128::from(victim_pos.x.raw()) + i128::from(delta.x.raw())).clamp(min, max_x);
+                let y =
+                    (i128::from(victim_pos.y.raw()) + i128::from(delta.y.raw())).clamp(min, max_y);
+                let narrow = |raw| {
+                    i64::try_from(raw)
+                        .map(SimScalar::from_raw)
+                        .map_err(|_| MovementMathError::Unrepresentable)
+                };
+                let candidate = SimVec2::new(narrow(x)?, narrow(y)?);
+                if policy.permits_segment(map, victim_pos, candidate) {
+                    return Ok(Some(candidate));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     /// Triggers combat retaliation aggro and allied call-for-help when a unit sustains damage.
+    ///
+    /// If the victim is idle, mobile, and cannot retaliate against the attacker (e.g. ground vs air,
+    /// unarmed, or attacker is untargetable/undetected), the victim automatically flees directly
+    /// away from the threat origin.
     pub fn apply_combat_retaliation(&mut self, victim_id: EntityId, attacker_id: EntityId) {
-        let victim_data = self.entities.get(&victim_id).map(|v| (v.position, v.owner));
-        let Some((victim_pos, victim_owner)) = victim_data else {
+        if let Err(source) = self.validate_transport_links() {
+            self.report_transport_invariant(source);
+            return;
+        }
+        self.apply_combat_retaliation_prevalidated(victim_id, attacker_id);
+    }
+
+    // Called from valid combat/hazard phases; no relation fields are mutated.
+    fn apply_combat_retaliation_prevalidated(
+        &mut self,
+        victim_id: EntityId,
+        attacker_id: EntityId,
+    ) {
+        let victim_data = self
+            .entities
+            .get(&victim_id)
+            .filter(|v| !v.is_loaded_in_transport())
+            .map(|v| {
+                (
+                    v.position,
+                    v.owner,
+                    v.is_holding_position,
+                    v.is_immobile,
+                    v.unit_type_id,
+                    matches!(v.order_queue.front(), None | Some(UnitOrder::Idle)),
+                )
+            });
+        let Some((
+            victim_pos,
+            victim_owner,
+            victim_holding,
+            victim_immobile,
+            victim_type,
+            victim_is_idle,
+        )) = victim_data
+        else {
             return;
         };
 
-        let attacker_data = self
-            .entities
-            .get(&attacker_id)
-            .map(|a| (a.is_alive(), a.unit_type_id, a.is_cloaked, a.position));
-        let Some((att_alive, att_type_id, att_cloaked, att_pos)) = attacker_data else {
+        let attacker_data = self.entities.get(&attacker_id).map(|a| {
+            (
+                a.is_alive(),
+                a.unit_type_id,
+                a.is_cloaked,
+                a.position,
+                a.is_loaded_in_transport(),
+            )
+        });
+        let Some((att_alive, att_type_id, att_cloaked, att_pos, att_loaded)) = attacker_data else {
             return;
         };
         if !att_alive {
@@ -1279,22 +1787,69 @@ impl SimWorld {
         };
 
         let p_idx = victim_owner.0 as usize;
+        let mut attacker_targetable = !att_loaded;
+
         // Check visibility of attacker to victim's owner
         if p_idx < 8 {
             if let Ok((cx, cy)) = self.map.world_to_cell(att_pos) {
                 let is_vis =
                     self.vision_maps[p_idx].visibility_at(cx, cy) == VisibilityState::Visible;
-                if !is_vis {
-                    return;
-                }
-                if att_cloaked && !self.vision_maps[p_idx].is_detected(cx, cy) {
-                    return;
+                if !is_vis || (att_cloaked && !self.vision_maps[p_idx].is_detected(cx, cy)) {
+                    attacker_targetable = false;
                 }
             } else {
-                return;
+                attacker_targetable = false;
             }
         }
 
+        let Ok(victim_arch) = self.catalog.get(victim_type) else {
+            return;
+        };
+
+        let victim_can_hit = if attacker_targetable {
+            let active_w = victim_arch.weapon_against(att_arch.mover_type, None);
+            active_w.is_some_and(|w| w.target_flags.intersects(att_arch.attributes))
+        } else {
+            false
+        };
+
+        // Case B: Helpless victim auto-flee response
+        if !victim_can_hit
+            && victim_is_idle
+            && !victim_holding
+            && !victim_immobile
+            && victim_arch.max_speed > SimScalar::ZERO
+        {
+            let flee = self.compute_entity_flee_destination_prevalidated(
+                victim_id,
+                att_pos,
+                SimScalar::from_num(5),
+            );
+            if let Err(source) = &flee {
+                self.tick_diagnostics
+                    .push(SimulationDiagnostic::MovementInvariant {
+                        tick: Tick(self.current_tick),
+                        source: source.clone(),
+                    });
+            }
+            if let Ok(Some(flee_target)) = flee {
+                if let Some(victim) = self.entities.get_mut(&victim_id) {
+                    victim.order_queue.clear();
+                    victim.order_queue.push_back(UnitOrder::Move {
+                        target: flee_target,
+                    });
+                    victim.current_funnel_waypoints.clear();
+                    victim.current_target = None;
+                }
+            }
+        }
+
+        // If attacker is not targetable, nearby allies cannot target it either
+        if !attacker_targetable {
+            return;
+        }
+
+        // Case A: Retaliation & Call-for-Help for units capable of fighting back
         let mut alerted_units = Vec::new();
         let call_radius_sq = SimScalar::from_num(25); // 5.0 world units squared
 
@@ -1303,7 +1858,7 @@ impl SimWorld {
                 || !entity.is_alive()
                 || entity.is_holding_position
                 || entity.is_immobile
-                || entity.is_loaded_in_transport
+                || entity.is_loaded_in_transport()
             {
                 continue;
             }
@@ -1348,11 +1903,13 @@ impl SimWorld {
     }
 
     /// Phase 4: Deterministic target acquisition.
+    /// Direct phase callers must establish `validate_transport_links` beforehand;
+    /// normal `step_into` establishes this precondition once for its phase sequence.
     pub fn acquire_targets(&mut self) {
         // Populate spatial hash grid with current entity positions
         self.spatial_hash.clear();
         for (id, entity) in &self.entities {
-            if !entity.is_loaded_in_transport {
+            if !entity.is_loaded_in_transport() {
                 self.spatial_hash.insert(*id, entity.position);
             }
         }
@@ -1360,7 +1917,7 @@ impl SimWorld {
         let mut auto_orders = Vec::new();
 
         for (id, entity) in &self.entities {
-            if entity.channeling_remaining_ticks > 0 || entity.is_loaded_in_transport {
+            if entity.channeling_remaining_ticks > 0 || entity.is_loaded_in_transport() {
                 continue;
             }
             let Ok(arch) = self.catalog.get(entity.unit_type_id) else {
@@ -1374,7 +1931,7 @@ impl SimWorld {
                     if entity.order_queue.len() >= 2 {
                         true
                     } else if let Some(current_t) = self.entities.get(target) {
-                        if !current_t.is_alive() || current_t.is_loaded_in_transport {
+                        if !current_t.is_alive() || current_t.is_loaded_in_transport() {
                             true
                         } else if let Ok(t_arch) = self.catalog.get(current_t.unit_type_id) {
                             let active_w = arch.weapon_against(
@@ -1427,7 +1984,7 @@ impl SimWorld {
                 // Hostile check
                 if neighbor.owner == entity.owner
                     || !neighbor.is_alive()
-                    || neighbor.is_loaded_in_transport
+                    || neighbor.is_loaded_in_transport()
                 {
                     continue;
                 }
@@ -1538,395 +2095,12 @@ impl SimWorld {
         }
     }
 
-    /// Phase 5: Advance movement along NavMesh funnel paths and steer units.
+    /// Phase5: Prepare and atomically commit each actor's checked movement operation.
+    /// Malformed state emits diagnostics without partial pose, route or order edits.
+    /// Direct phase callers must establish `validate_transport_links` beforehand;
+    /// normal `step_into` establishes this precondition once for its phase sequence.
     pub fn step_movement_and_steering(&mut self) {
-        let mut cast_abilities = Vec::new();
-        let mut target_updates = Vec::new();
-
-        let mut obstacles = Vec::with_capacity(self.entities.len());
-        for (&id, entity) in &self.entities {
-            if entity.is_alive() && !entity.is_loaded_in_transport {
-                let radius = self
-                    .catalog
-                    .get(entity.unit_type_id)
-                    .map_or(SimScalar::HALF, |a| a.collision_radius);
-                obstacles.push(SteeringObstacle {
-                    id,
-                    pos: entity.position,
-                    radius,
-                    velocity: entity.velocity,
-                });
-            }
-        }
-
-        for entity in self.entities.values_mut() {
-            entity.pos_at_tick_start = entity.position;
-        }
-
-        for (id, entity) in &mut self.entities {
-            if !entity.is_alive()
-                || entity.is_holding_position
-                || entity.is_immobile
-                || entity.is_loaded_in_transport
-                || entity.channeling_remaining_ticks > 0
-            {
-                entity.velocity = SimVec2::ZERO;
-                continue;
-            }
-
-            let Ok(arch) = self.catalog.get(entity.unit_type_id) else {
-                continue;
-            };
-
-            let has_turret = entity
-                .siege_weapon
-                .as_ref()
-                .or(arch.ground_weapon.as_ref())
-                .or(arch.weapon.as_ref())
-                .is_some_and(|w| w.has_turret);
-
-            if matches!(entity.weapon_phase, WeaponPhase::Windup { .. }) && !has_turret {
-                entity.velocity = SimVec2::ZERO;
-                continue;
-            }
-
-            let speed =
-                Self::effective_speed_from_upgrades(&self.player_upgrades, arch, entity.owner)
-                    * entity.speed_multiplier();
-
-            match entity.order_queue.front() {
-                Some(UnitOrder::CastAbility {
-                    ability_index,
-                    target_pos,
-                    target_entity,
-                }) => {
-                    cast_abilities.push((*id, *ability_index, *target_pos, *target_entity));
-                }
-                Some(UnitOrder::Move { target } | UnitOrder::AttackMove { target }) => {
-                    let target_pos = *target;
-                    let p_idx = entity.owner.0 as usize;
-
-                    // Dynamic repath check if planned route intersects newly scouted obstacles
-                    if self.vision_aware_pathfinding
-                        && p_idx < 8
-                        && !entity.current_funnel_waypoints.is_empty()
-                    {
-                        let width = self.map.width() as usize;
-                        let known_blocked = &self.known_blocked_cells[p_idx];
-                        let mut obstructed = false;
-                        let mut prev = entity.position;
-                        for &wp in &entity.current_funnel_waypoints {
-                            let dist = prev.distance(wp);
-                            let steps = (dist.0.to_num::<i32>() + 1).max(1);
-                            for s in 0..=steps {
-                                let t = SimScalar::from_num(s) / SimScalar::from_num(steps);
-                                let pt = prev + (wp - prev) * t;
-                                if let Ok((cx, cy)) = self.map.world_to_cell(pt) {
-                                    let idx = (cy as usize) * width + (cx as usize);
-                                    if idx < known_blocked.len() && known_blocked[idx] {
-                                        obstructed = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if obstructed {
-                                break;
-                            }
-                            prev = wp;
-                        }
-                        if obstructed {
-                            entity.current_funnel_waypoints.clear();
-                        }
-                    }
-
-                    if entity.current_funnel_waypoints.is_empty() {
-                        let dist_to_target = entity.position.distance(target_pos);
-                        if dist_to_target <= speed {
-                            entity.position = target_pos;
-                            entity.velocity = SimVec2::ZERO;
-                            entity.order_queue.pop_front();
-                            entity.current_anim = AnimState::Idle;
-                            continue;
-                        }
-
-                        // Check cluster arrival: if in final approach and touching an already settled unit
-                        if check_cluster_arrival(
-                            entity.position,
-                            arch.collision_radius,
-                            target_pos,
-                            &obstacles,
-                        ) {
-                            entity.velocity = SimVec2::ZERO;
-                            entity.order_queue.pop_front();
-                            entity.current_funnel_waypoints.clear();
-                            entity.current_anim = AnimState::Idle;
-                            continue;
-                        }
-
-                        let clearance = if arch.collision_radius <= SimScalar::from_num(0.4) {
-                            sim_map::UnitClearance::Small
-                        } else if arch.collision_radius <= SimScalar::from_num(0.8) {
-                            sim_map::UnitClearance::Medium
-                        } else {
-                            sim_map::UnitClearance::Large
-                        };
-
-                        let req = PathRequestWithVision {
-                            start: entity.position,
-                            goal: target_pos,
-                            clearance,
-                            vision: if self.vision_aware_pathfinding && p_idx < 8 {
-                                Some(&self.vision_maps[p_idx])
-                            } else {
-                                None
-                            },
-                            block_unexplored_ramps: false,
-                            known_structures: if self.vision_aware_pathfinding && p_idx < 8 {
-                                Some(&self.known_blocked_cells[p_idx])
-                            } else {
-                                None
-                            },
-                        };
-
-                        if let Ok(path_res) = self.pathfinder.find_path_with_vision(&self.map, &req)
-                        {
-                            let mut wps = path_res.waypoints;
-                            if let Some(first) = wps.first() {
-                                if first.distance(entity.position) <= SimScalar::from_num(0.2) {
-                                    wps.remove(0);
-                                }
-                            }
-                            entity.current_funnel_waypoints = wps;
-                        }
-                    }
-
-                    let next_target = entity
-                        .current_funnel_waypoints
-                        .first()
-                        .copied()
-                        .unwrap_or(target_pos);
-                    let delta = next_target - entity.position;
-                    let dist = delta.length();
-
-                    if dist <= speed {
-                        entity.position = next_target;
-                        if !entity.current_funnel_waypoints.is_empty() {
-                            entity.current_funnel_waypoints.remove(0);
-                        }
-                        if entity.current_funnel_waypoints.is_empty()
-                            && entity.position.distance(target_pos) <= speed
-                        {
-                            entity.position = target_pos;
-                            entity.velocity = SimVec2::ZERO;
-                            entity.order_queue.pop_front();
-                            entity.current_anim = AnimState::Idle;
-                        } else {
-                            entity.current_anim = AnimState::Walk;
-                        }
-                    } else {
-                        let steer_dir = compute_unified_local_steering(
-                            *id,
-                            entity.position,
-                            arch.collision_radius,
-                            next_target,
-                            None,
-                            &obstacles,
-                        );
-                        let vel = steer_dir * speed;
-                        let next_pos = entity.position + vel;
-
-                        if Self::is_position_pathable(&self.map, entity.position, next_pos) {
-                            entity.velocity = vel;
-                            entity.position = next_pos;
-                            entity.heading = SimAngle::atan2(entity.velocity.y, entity.velocity.x);
-                            entity.current_anim = AnimState::Walk;
-                        } else {
-                            let slide_x = SimVec2::new(next_pos.x, entity.position.y);
-                            if Self::is_position_pathable(&self.map, entity.position, slide_x) {
-                                entity.velocity = SimVec2::new(vel.x, SimScalar::ZERO);
-                                entity.position = slide_x;
-                                entity.heading =
-                                    SimAngle::atan2(entity.velocity.y, entity.velocity.x);
-                                entity.current_anim = AnimState::Walk;
-                            } else {
-                                let slide_y = SimVec2::new(entity.position.x, next_pos.y);
-                                if Self::is_position_pathable(&self.map, entity.position, slide_y) {
-                                    entity.velocity = SimVec2::new(SimScalar::ZERO, vel.y);
-                                    entity.position = slide_y;
-                                    entity.heading =
-                                        SimAngle::atan2(entity.velocity.y, entity.velocity.x);
-                                    entity.current_anim = AnimState::Walk;
-                                } else {
-                                    entity.velocity = SimVec2::ZERO;
-                                }
-                            }
-                        }
-                    }
-                }
-                Some(UnitOrder::AttackTarget { target }) => {
-                    let target_id = *target;
-                    target_updates.push((*id, target_id));
-                }
-                _ => {
-                    entity.velocity = SimVec2::ZERO;
-                    if entity.current_anim == AnimState::Walk {
-                        entity.current_anim = AnimState::Idle;
-                    }
-                }
-            }
-        }
-
-        for (ent_id, ab_idx, t_pos, t_ent) in cast_abilities {
-            if let Some(ent) = self.entities.get_mut(&ent_id) {
-                ent.order_queue.pop_front();
-            }
-            self.execute_ability(ent_id, ab_idx, t_pos, t_ent);
-        }
-
-        // Resolve AttackTarget pursuits
-        for (attacker_id, target_id) in target_updates {
-            let target_data = self.entities.get(&target_id).map(|t| {
-                (
-                    t.position,
-                    t.is_alive(),
-                    t.unit_type_id,
-                    t.is_cloaked,
-                    t.is_loaded_in_transport,
-                    t.owner,
-                )
-            });
-
-            let Some((target_pos, _, target_type, _, _, _)) = target_data else {
-                if let Some(att) = self.entities.get_mut(&attacker_id) {
-                    att.order_queue.pop_front();
-                    att.velocity = SimVec2::ZERO;
-                    att.current_funnel_waypoints.clear();
-                }
-                continue;
-            };
-
-            let att_owner = self.entities.get(&attacker_id).map(|a| a.owner);
-            let Some(att_owner) = att_owner else {
-                continue;
-            };
-
-            if !self.is_entity_available_for_combat(att_owner, target_id) {
-                if let Some(att) = self.entities.get_mut(&attacker_id) {
-                    att.order_queue.pop_front();
-                    att.velocity = SimVec2::ZERO;
-                    att.current_funnel_waypoints.clear();
-                }
-                continue;
-            }
-
-            let target_arch = match self.catalog.get(target_type) {
-                Ok(a) => a,
-                Err(_) => continue,
-            };
-
-            let att = match self.entities.get(&attacker_id) {
-                Some(a) => a,
-                None => continue,
-            };
-            let Ok(att_arch) = self.catalog.get(att.unit_type_id) else {
-                continue;
-            };
-
-            let active_weapon = att_arch.weapon_against(
-                target_arch.mover_type,
-                att.is_sieged.then_some(att.siege_weapon.as_ref()).flatten(),
-            );
-            let Some(weapon) = active_weapon else {
-                if let Some(att_mut) = self.entities.get_mut(&attacker_id) {
-                    att_mut.order_queue.pop_front();
-                    att_mut.velocity = SimVec2::ZERO;
-                    att_mut.current_funnel_waypoints.clear();
-                }
-                continue;
-            };
-
-            let speed = self.effective_max_speed(att_arch, att.owner) * att.speed_multiplier();
-            let collision_radius = att_arch.collision_radius;
-            let target_radius = target_arch.collision_radius;
-            let has_turret = weapon.has_turret;
-            let weapon_min = weapon.min_range;
-            let weapon_max = self.effective_weapon_range(weapon, &att_arch.slug, att.owner);
-
-            let dist = att.position.distance(target_pos);
-            let effective_max = weapon_max + collision_radius + target_radius;
-            let effective_min = if weapon_min > SimScalar::ZERO {
-                weapon_min + collision_radius + target_radius
-            } else {
-                SimScalar::ZERO
-            };
-
-            let in_range = dist <= effective_max && dist >= effective_min;
-
-            let att = match self.entities.get_mut(&attacker_id) {
-                Some(a) => a,
-                None => continue,
-            };
-
-            if in_range {
-                att.velocity = SimVec2::ZERO;
-                let delta = target_pos - att.position;
-                let target_angle = SimAngle::atan2(delta.y, delta.x);
-
-                if has_turret {
-                    att.turret_angle = target_angle;
-                } else {
-                    att.heading = target_angle;
-                }
-
-                if matches!(
-                    att.weapon_phase,
-                    WeaponPhase::Windup { .. } | WeaponPhase::Backswing { .. }
-                ) {
-                    att.current_anim = AnimState::Attack;
-                } else {
-                    att.current_anim = AnimState::Idle;
-                }
-            } else if att.is_immobile {
-                att.velocity = SimVec2::ZERO;
-                att.current_anim = AnimState::Idle;
-            } else {
-                let steer_dir = compute_unified_local_steering(
-                    attacker_id,
-                    att.position,
-                    collision_radius,
-                    target_pos,
-                    Some(target_id),
-                    &obstacles,
-                );
-                let vel = steer_dir * speed;
-                let next_pos = att.position + vel;
-
-                if Self::is_position_pathable(&self.map, att.position, next_pos) {
-                    att.velocity = vel;
-                    att.position = next_pos;
-                    att.heading = SimAngle::atan2(att.velocity.y, att.velocity.x);
-                    att.current_anim = AnimState::Walk;
-                } else {
-                    let slide_x = SimVec2::new(next_pos.x, att.position.y);
-                    if Self::is_position_pathable(&self.map, att.position, slide_x) {
-                        att.velocity = SimVec2::new(vel.x, SimScalar::ZERO);
-                        att.position = slide_x;
-                        att.heading = SimAngle::atan2(att.velocity.y, att.velocity.x);
-                        att.current_anim = AnimState::Walk;
-                    } else {
-                        let slide_y = SimVec2::new(att.position.x, next_pos.y);
-                        if Self::is_position_pathable(&self.map, att.position, slide_y) {
-                            att.velocity = SimVec2::new(SimScalar::ZERO, vel.y);
-                            att.position = slide_y;
-                            att.heading = SimAngle::atan2(att.velocity.y, att.velocity.x);
-                            att.current_anim = AnimState::Walk;
-                        } else {
-                            att.velocity = SimVec2::ZERO;
-                        }
-                    }
-                }
-            }
-        }
+        self.advance_checked_movement();
     }
 
     /// Checks whether `target_pos` is valid and passable for a ground unit currently at `current_pos`.
@@ -1936,68 +2110,66 @@ impl SimWorld {
         Self::is_position_pathable(&self.map, current_pos, target_pos)
     }
 
-    /// Checks whether `target_pos` is valid and passable for a ground unit currently at `current_pos` on the given map.
+    /// Checks the complete ground-motion segment in fixed-point world units.
+    ///
+    /// Every crossed terrain edge must be connected and every entered cell must be
+    /// free of structures. This also applies to long flee candidates and collision pushes.
     #[must_use]
     pub fn is_position_pathable(map: &SimMap, current_pos: SimVec2, target_pos: SimVec2) -> bool {
-        let (Ok((c_x, c_y)), Ok((t_x, t_y))) = (
-            map.world_to_cell(current_pos),
-            map.world_to_cell(target_pos),
-        ) else {
-            return false;
-        };
+        map.ground_segment_is_connected(current_pos, target_pos, |_, next| {
+            map.cell(next.0, next.1).is_ok_and(|cell| {
+                cell.flags.contains(CellFlags::GROUND_PATHABLE)
+                    && !cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE)
+            })
+        })
+    }
 
-        let Ok(target_cell) = map.cell(t_x, t_y) else {
-            return false;
-        };
-
-        // Cannot enter structures or unpassable cliffs
-        if target_cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE)
-            || target_cell.flags.contains(CellFlags::UNPASSABLE_CLIFF)
-            || !target_cell.flags.contains(CellFlags::GROUND_PATHABLE)
-        {
-            return false;
-        }
-
-        // Cliff level transition check: must have ramp if cliff levels differ
-        if c_x != t_x || c_y != t_y {
-            if let Ok(cur_cell) = map.cell(c_x, c_y) {
-                if cur_cell.cliff_level != target_cell.cliff_level
-                    && cur_cell.ramp.is_none()
-                    && target_cell.ramp.is_none()
-                {
-                    return false;
+    /// Phase 6: Resolve circle-circle collisions, engagement anchoring, and push priority.
+    /// Direct phase callers must establish `validate_transport_links` beforehand;
+    /// normal `step_into` establishes this precondition once for its phase sequence.
+    pub fn resolve_collisions_and_push(&mut self) {
+        let mut entries = std::mem::take(&mut self.movement.collision_entries);
+        entries.clear();
+        self.spatial_hash.clear();
+        let mut max_radii = [SimScalar::ZERO; 2];
+        for (id, entity) in &self.entities {
+            if entity.is_alive() && !entity.is_loaded_in_transport() {
+                match self.motion_entry(*id) {
+                    Ok(entry) => {
+                        let policy = entry.policy;
+                        entries.push(entry);
+                        max_radii[policy.layer.index()] =
+                            max_radii[policy.layer.index()].max(policy.radius);
+                        self.spatial_hash.insert(*id, entity.position);
+                    }
+                    Err(source) => {
+                        self.tick_diagnostics
+                            .push(SimulationDiagnostic::MovementInvariant {
+                                tick: Tick(self.current_tick),
+                                source,
+                            });
+                    }
                 }
             }
         }
 
-        true
-    }
-
-    /// Phase 6: Resolve circle-circle collisions, engagement anchoring, and push priority.
-    pub fn resolve_collisions_and_push(&mut self) {
-        self.spatial_hash.clear();
-        for (id, entity) in &self.entities {
-            if !entity.is_loaded_in_transport {
-                self.spatial_hash.insert(*id, entity.position);
-            }
-        }
-
-        let entity_ids: Vec<EntityId> = self.entities.keys().copied().collect();
         let mut friendly_pushes: BTreeMap<EntityId, SimVec2> = BTreeMap::new();
         let mut hard_pushes: BTreeMap<EntityId, SimVec2> = BTreeMap::new();
 
-        for &id_a in &entity_ids {
+        for entry_a in &entries {
+            let id_a = entry_a.id;
             let Some(entity_a) = self.entities.get(&id_a) else {
                 continue;
             };
-            if entity_a.is_mineral_walking || entity_a.is_loaded_in_transport {
+            if !entity_a.is_alive()
+                || entity_a.is_mineral_walking
+                || entity_a.is_loaded_in_transport()
+            {
                 continue;
             }
 
-            let radius_a = self
-                .catalog
-                .get(entity_a.unit_type_id)
-                .map_or(SimScalar::HALF, |a| a.collision_radius);
+            let policy_a = entry_a.policy;
+            let radius_a = policy_a.radius;
 
             let pos_a = entity_a.position;
             let vel_a = entity_a.velocity;
@@ -2024,7 +2196,11 @@ impl SimWorld {
 
             self.spatial_hash.query_radius(
                 pos_a,
-                radius_a * SimScalar::from_num(2),
+                crate::movement::conservative_query_radius(
+                    &self.map,
+                    radius_a,
+                    max_radii[policy_a.layer.index()],
+                ),
                 &mut self.scratch_neighbors,
             );
 
@@ -2036,19 +2212,39 @@ impl SimWorld {
                 let Some(entity_b) = self.entities.get(&id_b) else {
                     continue;
                 };
-                if entity_b.is_mineral_walking || entity_b.is_loaded_in_transport {
+                if !entity_b.is_alive()
+                    || entity_b.is_mineral_walking
+                    || entity_b.is_loaded_in_transport()
+                {
                     continue;
                 }
 
-                let radius_b = self
-                    .catalog
-                    .get(entity_b.unit_type_id)
-                    .map_or(SimScalar::HALF, |a| a.collision_radius);
+                let Ok(index_b) = entries.binary_search_by_key(&id_b, |entry| entry.id) else {
+                    continue;
+                };
+                let policy_b = entries[index_b].policy;
+                if policy_a.layer != policy_b.layer {
+                    continue;
+                }
+                let radius_b = policy_b.radius;
+                if crate::movement::circles_overlap(pos_a, radius_a, entity_b.position, radius_b) {
+                    let arithmetic = radius_a.checked_add(radius_b).and_then(|combined| {
+                        crate::movement::checked_distance(pos_a, entity_b.position)
+                            .map(|dist| (combined, dist))
+                    });
+                    let Some((combined, dist)) = arithmetic else {
+                        self.tick_diagnostics
+                            .push(SimulationDiagnostic::MovementInvariant {
+                            tick: Tick(self.current_tick),
+                            source: MovementInvariant::InvalidState {
+                                entity: id_a,
+                                reason:
+                                    "collision geometry exceeds fixed-point local push arithmetic",
+                            },
+                        });
+                        continue;
+                    };
 
-                let combined = radius_a + radius_b;
-                let dist = pos_a.distance(entity_b.position);
-
-                if dist < combined {
                     let priority_b = self
                         .catalog
                         .get(entity_b.unit_type_id)
@@ -2091,94 +2287,128 @@ impl SimWorld {
                         push_priority: priority_b,
                         cannot_be_pushed: eff_cannot_be_pushed_b,
                     };
-                    let (delta_a, delta_b) =
-                        compute_push_displacement(a_params, b_params, dist, combined);
-
-                    let is_hard_collision = owner_a != entity_b.owner;
-
-                    if is_hard_collision {
-                        if delta_a != SimVec2::ZERO {
-                            *hard_pushes.entry(id_a).or_insert(SimVec2::ZERO) += delta_a;
+                    let mobility = |actor: &Entity| {
+                        if actor.is_immobile
+                            || actor.unpushable
+                            || self.map.structures().contains_key(&actor.id)
+                        {
+                            CollisionMobility::Fixed
+                        } else {
+                            CollisionMobility::Dynamic
                         }
-                        if delta_b != SimVec2::ZERO {
-                            *hard_pushes.entry(id_b).or_insert(SimVec2::ZERO) += delta_b;
+                    };
+                    let (delta_a, delta_b) = match compute_push_displacement_with_mobility(
+                        a_params,
+                        b_params,
+                        dist,
+                        combined,
+                        mobility(entity_a),
+                        mobility(entity_b),
+                    ) {
+                        Ok(displacement) => displacement,
+                        Err(source) => {
+                            self.tick_diagnostics
+                                .push(SimulationDiagnostic::MovementInvariant {
+                                    tick: Tick(self.current_tick),
+                                    source: MovementInvariant::PushGeometry {
+                                        entity: id_a,
+                                        source,
+                                    },
+                                });
+                            continue;
                         }
+                    };
+
+                    let pushes = if owner_a == entity_b.owner {
+                        &mut friendly_pushes
                     } else {
-                        if delta_a != SimVec2::ZERO {
-                            *friendly_pushes.entry(id_a).or_insert(SimVec2::ZERO) += delta_a;
-                        }
-                        if delta_b != SimVec2::ZERO {
-                            *friendly_pushes.entry(id_b).or_insert(SimVec2::ZERO) += delta_b;
-                        }
+                        &mut hard_pushes
+                    };
+                    if let Err(source) = crate::movement::collision::accumulate_pair(
+                        pushes, id_a, id_b, delta_a, delta_b,
+                    ) {
+                        self.tick_diagnostics
+                            .push(SimulationDiagnostic::MovementInvariant {
+                                tick: Tick(self.current_tick),
+                                source: MovementInvariant::Arithmetic {
+                                    entity: id_a,
+                                    operation: "collision pair accumulation",
+                                    source,
+                                },
+                            });
                     }
                 }
             }
         }
 
-        // Apply soft friendly crowd pushes with Baumgarte relaxation and strict speed caps
-        for (id, raw_push) in friendly_pushes {
-            if let Some(ent) = self.entities.get_mut(&id) {
-                let max_speed = self
-                    .catalog
-                    .get(ent.unit_type_id)
-                    .map_or(SimScalar::ZERO, |a| a.max_speed);
-                if max_speed <= SimScalar::ZERO {
+        // Preserve the established friendly base-speed cap; upgrades/buffs were
+        // validated at entry but this round does not rebalance crowd correction.
+        for (hard, pushes) in [(false, friendly_pushes), (true, hard_pushes)] {
+            for (id, push) in pushes {
+                let Ok(index) = entries.binary_search_by_key(&id, |entry| entry.id) else {
+                    continue;
+                };
+                let policy = entries[index].policy;
+                let Some(actor) = self.entities.get_mut(&id) else {
+                    continue;
+                };
+                if actor.is_immobile || actor.unpushable || self.map.structures().contains_key(&id)
+                {
                     continue;
                 }
-
-                let max_push_mag = (max_speed * SimScalar::from_f32_lossy(0.65))
-                    .max(SimScalar::from_f32_lossy(0.015));
-                let clamped_push = if raw_push.length_sq() > max_push_mag * max_push_mag {
-                    raw_push.normalize_or_zero() * max_push_mag
+                let proposed = if hard {
+                    crate::movement::math::checked_vec_add(actor.position, push)
                 } else {
-                    raw_push
+                    let speed = match self.catalog.get(actor.unit_type_id) {
+                        Ok(arch) => arch.max_speed,
+                        Err(_) => continue,
+                    };
+                    crate::movement::collision::soft_position(
+                        actor.position,
+                        actor.pos_at_tick_start,
+                        push,
+                        speed,
+                    )
                 };
-
-                let mut proposed_pos = ent.position + clamped_push;
-                let total_tick_delta = proposed_pos - ent.pos_at_tick_start;
-                if total_tick_delta.length_sq() > max_speed * max_speed {
-                    proposed_pos =
-                        ent.pos_at_tick_start + total_tick_delta.normalize_or_zero() * max_speed;
-                }
-
-                if Self::is_position_pathable(&self.map, ent.position, proposed_pos) {
-                    ent.position = proposed_pos;
-                } else {
-                    let slide_x = SimVec2::new(proposed_pos.x, ent.position.y);
-                    if Self::is_position_pathable(&self.map, ent.position, slide_x) {
-                        ent.position = slide_x;
-                    } else {
-                        let slide_y = SimVec2::new(ent.position.x, proposed_pos.y);
-                        if Self::is_position_pathable(&self.map, ent.position, slide_y) {
-                            ent.position = slide_y;
-                        }
+                let proposed = match proposed {
+                    Ok(position) => position,
+                    Err(source) => {
+                        self.tick_diagnostics
+                            .push(SimulationDiagnostic::MovementInvariant {
+                                tick: Tick(self.current_tick),
+                                source: MovementInvariant::Arithmetic {
+                                    entity: id,
+                                    operation: "collision application",
+                                    source,
+                                },
+                            });
+                        continue;
                     }
+                };
+                let accepted = if policy.permits_segment(&self.map, actor.position, proposed) {
+                    Some(proposed)
+                } else {
+                    let x = SimVec2::new(proposed.x, actor.position.y);
+                    let y = SimVec2::new(actor.position.x, proposed.y);
+                    if policy.permits_segment(&self.map, actor.position, x) {
+                        Some(x)
+                    } else if policy.permits_segment(&self.map, actor.position, y) {
+                        Some(y)
+                    } else {
+                        None
+                    }
+                };
+                if let Some(position) = accepted {
+                    actor.position = position;
                 }
             }
         }
-
-        // Apply hard obstacle collisions (enemy repulsion and immovable obstacles)
-        for (id, hard_push) in hard_pushes {
-            if let Some(ent) = self.entities.get_mut(&id) {
-                let proposed_pos = ent.position + hard_push;
-                if Self::is_position_pathable(&self.map, ent.position, proposed_pos) {
-                    ent.position = proposed_pos;
-                } else {
-                    let slide_x = SimVec2::new(proposed_pos.x, ent.position.y);
-                    if Self::is_position_pathable(&self.map, ent.position, slide_x) {
-                        ent.position = slide_x;
-                    } else {
-                        let slide_y = SimVec2::new(ent.position.x, proposed_pos.y);
-                        if Self::is_position_pathable(&self.map, ent.position, slide_y) {
-                            ent.position = slide_y;
-                        }
-                    }
-                }
-            }
-        }
+        self.movement.collision_entries = entries;
     }
 
     /// Phase 7: Advance weapon state machines, fire attacks, and step projectiles.
+    /// Direct phase callers must establish `validate_transport_links` beforehand;
+    /// normal `step_into` establishes this precondition once for its phase sequence.
     pub fn step_weapons_and_projectiles(&mut self) {
         // Collect target snapshots first to decouple reads from mutations
         let mut target_snapshots = BTreeMap::new();
@@ -2189,15 +2419,38 @@ impl SimWorld {
                 .map_or((SimScalar::HALF, sim_types::MoverType::Ground), |a| {
                     (a.collision_radius, a.mover_type)
                 });
-            target_snapshots.insert(id, (entity.position, radius, mover_type, entity.is_alive()));
+            // Retain authored weapon-selection metadata, but never expose cargo
+            // coordinates to aim/damage. Air-only windup timing must not silently
+            // switch to the missing-target Ground fallback when a target boards.
+            target_snapshots.insert(
+                id,
+                (
+                    entity.position,
+                    radius,
+                    mover_type,
+                    entity.is_alive() && !entity.is_loaded_in_transport(),
+                ),
+            );
         }
 
         let mut attacks_to_apply = Vec::new();
 
         for (id, entity) in &mut self.entities {
+            let attack_mult = match entity.attack_rate_multiplier() {
+                Ok(rate) => rate,
+                Err(source) => {
+                    self.tick_diagnostics
+                        .push(SimulationDiagnostic::InvalidBuffAttackRate {
+                            tick: Tick(self.current_tick),
+                            entity: *id,
+                            source,
+                        });
+                    continue;
+                }
+            };
             if !entity.is_alive()
                 || entity.channeling_remaining_ticks > 0
-                || entity.is_loaded_in_transport
+                || entity.is_loaded_in_transport()
             {
                 continue;
             }
@@ -2257,32 +2510,37 @@ impl SimWorld {
                 &arch.slug,
                 entity.owner,
             );
-            weapon.period_ticks = Self::effective_period_from_upgrades(
-                &self.player_upgrades,
-                &weapon,
-                &arch.slug,
-                entity.owner,
-            );
+            let player_idx = (entity.owner.0 as usize).min(7);
+            let delta = self.player_upgrades[player_idx]
+                .unit_stat_modifiers
+                .get(&arch.slug)
+                .map_or(0, |modifiers| modifiers.attack_cooldown_delta);
+            weapon.period_ticks = resolve_attack_period(weapon.period_ticks, delta, attack_mult);
 
             let fired = step_entity_weapon(entity, &weapon, target_info);
             if fired {
-                if let Some(target) = target_opt_id {
-                    attacks_to_apply.push((*id, target, weapon, arch.slug.clone()));
+                if let Some(target) = target_opt_id
+                    .filter(|id| target_snapshots.get(id).is_some_and(|snapshot| snapshot.3))
+                {
+                    attacks_to_apply.push((
+                        *id,
+                        target,
+                        weapon,
+                        arch.slug.clone(),
+                        entity.position,
+                        entity.owner,
+                    ));
                 }
             }
         }
 
         // Apply attacks
-        for (attacker_id, target_id, weapon, attacker_slug) in attacks_to_apply {
-            let attacker_pos = self
-                .entities
-                .get(&attacker_id)
-                .map_or(SimVec2::ZERO, |a| a.position);
-            let attacker_owner = self
-                .entities
-                .get(&attacker_id)
-                .map_or(PlayerId(0), |a| a.owner);
-
+        for (attacker_id, target_id, weapon, attacker_slug, attacker_pos, attacker_owner) in
+            attacks_to_apply
+        {
+            // The prepared shot retains actual source provenance. Earlier attacks may
+            // damage this shooter or change its orders, but cannot move/change owner
+            // or reap it before this dispatch phase finishes.
             if let Some(proj_speed) = weapon.projectile_speed {
                 let target_pos = self
                     .entities
@@ -2346,7 +2604,7 @@ impl SimWorld {
                             z_spawn + 0.5,
                         ],
                         vel: [vx, vy, vz],
-                        team_id: TeamId(attacker_owner.0),
+                        owner: attacker_owner,
                         duration_secs: Some(flight_duration_secs),
                     });
             } else {
@@ -2393,7 +2651,7 @@ impl SimWorld {
                         }
 
                         // Apply combat retaliation aggro
-                        self.apply_combat_retaliation(target_id, attacker_id);
+                        self.apply_combat_retaliation_prevalidated(target_id, attacker_id);
 
                         // Apply circular splash if defined for hitscan/instant attack
                         if let Some(splash) = &weapon.splash {
@@ -2402,6 +2660,7 @@ impl SimWorld {
                                 if other_id == target_id
                                     || other_id == attacker_id
                                     || !other.is_alive()
+                                    || other.is_loaded_in_transport()
                                 {
                                     continue;
                                 }
@@ -2438,6 +2697,7 @@ impl SimWorld {
                                         spl_angle,
                                     );
                                 }
+                                self.apply_combat_retaliation_prevalidated(spl_id, attacker_id);
                             }
                         }
 
@@ -2453,7 +2713,7 @@ impl SimWorld {
                                         z + 0.5,
                                     ],
                                     to: [target_pos.x.to_f32(), target_pos.y.to_f32(), tz + 0.5],
-                                    team_id: TeamId(attacker_owner.0),
+                                    owner: attacker_owner,
                                 });
                             }
                             WeaponVisualKind::LaserBeam => {
@@ -2465,7 +2725,7 @@ impl SimWorld {
                                     ],
                                     to: [target_pos.x.to_f32(), target_pos.y.to_f32(), tz + 0.5],
                                     is_lightning: false,
-                                    team_id: TeamId(attacker_owner.0),
+                                    owner: attacker_owner,
                                 });
                             }
                             WeaponVisualKind::LightningArc => {
@@ -2477,7 +2737,7 @@ impl SimWorld {
                                     ],
                                     to: [target_pos.x.to_f32(), target_pos.y.to_f32(), tz + 0.5],
                                     is_lightning: true,
-                                    team_id: TeamId(attacker_owner.0),
+                                    owner: attacker_owner,
                                 });
                             }
                             WeaponVisualKind::MeleeSlash => {
@@ -2490,7 +2750,7 @@ impl SimWorld {
                                         ],
                                         angle_rad: hit_angle.to_radians_f32(),
                                         radius: 0.5,
-                                        team_id: TeamId(attacker_owner.0),
+                                        owner: attacker_owner,
                                     });
                             }
                             _ => {}
@@ -2498,6 +2758,14 @@ impl SimWorld {
 
                         let _ = target_owner;
                     }
+                }
+            }
+
+            // Self-destruct if weapon is suicidal
+            if weapon.suicide_on_attack {
+                if let Some(attacker) = self.entities.get_mut(&attacker_id) {
+                    attacker.hp = SimScalar::ZERO;
+                    attacker.shields = SimScalar::ZERO;
                 }
             }
         }
@@ -2668,14 +2936,17 @@ impl SimWorld {
                         }
 
                         if let Some(attacker_id) = proj.attacker_id {
-                            self.apply_combat_retaliation(target_id, attacker_id);
+                            self.apply_combat_retaliation_prevalidated(target_id, attacker_id);
                         }
 
                         // Apply circular splash if defined
                         if let Some(splash) = &proj.weapon_spec.splash {
                             let mut splash_hits = Vec::new();
                             for (&other_id, other) in &self.entities {
-                                if other_id == target_id || !other.is_alive() {
+                                if other_id == target_id
+                                    || !other.is_alive()
+                                    || other.is_loaded_in_transport()
+                                {
                                     continue;
                                 }
                                 if !splash.friendly_fire && other.owner == proj.owner {
@@ -2711,6 +2982,9 @@ impl SimWorld {
                                         spl_angle,
                                     );
                                 }
+                                if let Some(attacker_id) = proj.attacker_id {
+                                    self.apply_combat_retaliation_prevalidated(spl_id, attacker_id);
+                                }
                             }
                         }
                     }
@@ -2727,7 +3001,7 @@ impl SimWorld {
 
                 let mut splash_hits = Vec::new();
                 for (&other_id, other) in &self.entities {
-                    if !other.is_alive() {
+                    if !other.is_alive() || other.is_loaded_in_transport() {
                         continue;
                     }
                     if !splash.friendly_fire && other.owner == proj.owner {
@@ -2758,6 +3032,9 @@ impl SimWorld {
                     if let Some(spl_ent) = self.entities.get_mut(&spl_id) {
                         spl_ent.apply_damage(spl_res.shield_damage, spl_res.life_damage, spl_angle);
                     }
+                    if let Some(attacker_id) = proj.attacker_id {
+                        self.apply_combat_retaliation_prevalidated(spl_id, attacker_id);
+                    }
                 }
             }
         }
@@ -2765,58 +3042,46 @@ impl SimWorld {
 
     /// Phase 8: Reap destroyed entities and emit death shatter visuals.
     pub fn reap_dead_and_emit_shatter(&mut self) {
-        self.scratch_dead_entities.clear();
-
-        for (&id, entity) in &self.entities {
-            if !entity.is_alive() {
-                self.scratch_dead_entities.push(id);
-            }
-        }
-
-        for id in &self.scratch_dead_entities {
-            if let Some(dead) = self.entities.remove(id) {
-                // If building, remove footprint from map
-                let _ = self.map.remove_structure(*id);
-                self.pathfinder.recompute_clearance(&self.map);
-
-                // Emit shatter visual
-                let z = self.map.terrain_altitude_at(dead.position);
-                let (radius, is_dome) =
-                    self.catalog
-                        .get(dead.unit_type_id)
-                        .map_or((0.5, false), |a| {
-                            (
-                                a.collision_radius.to_f32(),
-                                matches!(a.shape, ShapeKind::BuildingDome { .. }),
-                            )
-                        });
-
-                self.pending_events.push(CombatEventVisual::BubbleShatter {
-                    pos: [dead.position.x.to_f32(), dead.position.y.to_f32(), z],
-                    radius,
-                    is_dome,
-                    team_id: TeamId(dead.owner.0),
-                });
-            }
-        }
+        self.reap_transport_groups();
     }
 
-    /// Phase 9: Compute authoritative 64-bit state checksum.
+    /// Phase 9: Compute the versioned 64-bit dynamic-state checksum.
+    ///
+    /// Includes persistent gameplay state and live RNG position. Catalog equality
+    /// must be established separately; see [`compute_simulation_checksum`].
     #[must_use]
     pub fn compute_checksum(&self) -> u64 {
-        compute_world_checksum(
-            u64::from(self.current_tick),
-            self.rng_seed,
-            &self.entities,
-            &self.projectiles,
-        )
+        compute_simulation_checksum(self)
     }
 
     /// Phase 10: Build immutable render snapshot for client visualization.
     pub fn build_render_snapshot(&mut self) -> RenderSnapshot {
-        let mut bubbles = Vec::with_capacity(self.entities.len());
+        let mut output = RenderSnapshot::default();
+        self.write_render_snapshot(&mut output);
+        output
+    }
+
+    /// Writes the current immutable visual state into caller-owned reusable buffers.
+    ///
+    /// Entity records are ordered by entity ID. This consumes pending visual events
+    /// exactly once, preserving both buffers' capacity; it is not a per-frame getter.
+    /// No simulation phase executes and authoritative state/checksum are unchanged.
+    pub fn write_render_snapshot(&mut self, output: &mut RenderSnapshot) {
+        // PERFORMANCE RATIONALE:
+        // Why: Paired client snapshots should reuse storage across ordinary ticks.
+        // What: Clear and refill entity records, then move event elements without
+        // replacing either Vec allocation. Reserve only for actual entity growth.
+        // Trade-off: Callers must consume output events before reusing the buffer.
+        output.bubbles.clear();
+        output.bubbles.reserve(self.entities.len());
+        output.combat_events.clear();
+        output.tick = Tick(self.current_tick);
+        output.checksum = self.last_checksum;
 
         for entity in self.entities.values() {
+            if entity.is_loaded_in_transport() {
+                continue;
+            }
             let Ok(arch) = self.catalog.get(entity.unit_type_id) else {
                 continue;
             };
@@ -2833,8 +3098,8 @@ impl SimWorld {
                 WeaponPhase::Windup { .. } | WeaponPhase::Backswing { .. }
             );
 
-            let hp_ratio = if arch.max_hp > SimScalar::ZERO {
-                (entity.hp / arch.max_hp).to_f32().clamp(0.0, 1.0)
+            let hp_ratio = if entity.max_hp > SimScalar::ZERO {
+                (entity.hp / entity.max_hp).to_f32().clamp(0.0, 1.0)
             } else {
                 0.0
             };
@@ -2850,12 +3115,12 @@ impl SimWorld {
 
             let speed_boosted = entity.active_buffs.iter().any(|b| b.buff_id == 1);
 
-            bubbles.push(BubbleRenderInstance {
+            output.bubbles.push(BubbleRenderInstance {
                 entity_id: entity.id,
                 shape: arch.shape,
                 silhouette: arch.silhouette,
                 unit_type: entity.unit_type_id,
-                team_id: TeamId(entity.owner.0),
+                owner: entity.owner,
                 world_pos: [
                     entity.position.x.to_f32(),
                     entity.position.y.to_f32(),
@@ -2889,13 +3154,6 @@ impl SimWorld {
             });
         }
 
-        let combat_events = std::mem::take(&mut self.pending_events);
-
-        RenderSnapshot {
-            tick: Tick(self.current_tick),
-            checksum: self.last_checksum,
-            bubbles,
-            combat_events,
-        }
+        output.combat_events.append(&mut self.pending_events);
     }
 }

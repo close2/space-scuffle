@@ -332,8 +332,8 @@ fn test_1_zealot_vs_1_marauder_un_kited_duel() {
     let zealot_type = world.catalog.id_by_slug("psi_grey").expect("psi_grey");
     let marauder_type = world
         .catalog
-        .id_by_slug("rhino_beetle")
-        .expect("rhino_beetle");
+        .id_by_slug("shock_golem")
+        .expect("shock_golem");
 
     let zealot_id = world
         .spawn_unit(
@@ -414,8 +414,8 @@ fn test_1_marauder_vs_1_stalker_armored_duel() {
     let mut world = create_test_world();
     let marauder_type = world
         .catalog
-        .id_by_slug("rhino_beetle")
-        .expect("rhino_beetle");
+        .id_by_slug("shock_golem")
+        .expect("shock_golem");
     let stalker_type = world
         .catalog
         .id_by_slug("warp_strider")
@@ -528,13 +528,15 @@ fn test_zergling_swarm_scaling_vs_1_zealot() {
                 .entities
                 .get_mut(&zealot_id)
                 .unwrap()
-                .issue_order(UnitOrder::AttackTarget { target: z }, false);
+                .issue_order(UnitOrder::AttackTarget { target: z }, false)
+                .expect("valid authored fixture order or buff");
 
             world
                 .entities
                 .get_mut(&z)
                 .unwrap()
-                .issue_order(UnitOrder::AttackTarget { target: zealot_id }, false);
+                .issue_order(UnitOrder::AttackTarget { target: zealot_id }, false)
+                .expect("valid authored fixture order or buff");
 
             // Step until this zergling is defeated
             for _ in 0..100 {

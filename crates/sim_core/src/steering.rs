@@ -9,9 +9,15 @@
 //! ## Invariants Maintained
 //! 1. All calculations use deterministic fixed-point math (`SimScalar`, `SimVec2`).
 //! 2. Neighborhood queries return strictly sorted candidates for deterministic iteration.
-//! 3. Zero heap allocations during hot per-tick movement passes.
+//! 3. Reused grid/output capacity avoids repeated allocation after workload warmup;
+//!    bucket growth and existing world route/collision scratch allocations remain measurable.
 
 use crate::entity::Entity;
+use crate::movement::math::{
+    checked_dot, checked_normalize, checked_vec_add, checked_vec_div, checked_vec_neg,
+    checked_vec_scale, checked_vec_sub, difference_product, direction, squared_distance,
+    within_distance,
+};
 use sim_types::{EntityId, SimScalar, SimVec2};
 
 // PERFORMANCE RATIONALE:
@@ -112,24 +118,25 @@ impl SpatialHashGrid {
     }
 }
 
-/// Computes tangential steering force to wrap around allied firing lines and form a concave firing arc.
-#[must_use]
+/// Computes a normalized tangent around a blocked firing line in planar world units.
+///
+/// # Errors
+/// Returns a typed arithmetic error if required geometry cannot be represented.
 pub fn compute_concave_arc_steering(
     unit_pos: SimVec2,
     target_pos: SimVec2,
     blocked_by_allies: bool,
     steer_left: bool,
-) -> SimVec2 {
+) -> Result<SimVec2, PushGeometryError> {
     if !blocked_by_allies {
-        return SimVec2::ZERO;
+        return Ok(SimVec2::ZERO);
     }
-    let to_target = target_pos - unit_pos;
-    let perp = if steer_left {
-        SimVec2::new(-to_target.y, to_target.x)
+    let toward = direction(target_pos, unit_pos)?;
+    Ok(if steer_left {
+        SimVec2::new(-toward.y, toward.x)
     } else {
-        SimVec2::new(to_target.y, -to_target.x)
-    };
-    perp.normalize_or_zero()
+        SimVec2::new(toward.y, -toward.x)
+    })
 }
 
 /// Parameters of a candidate obstacle entity for local avoidance and fan-out steering.
@@ -145,10 +152,12 @@ pub struct SteeringObstacle {
     pub velocity: SimVec2,
 }
 
-/// Computes unified local steering towards `goal_pos`, fanning out and wrapping around blocking entities.
+/// Computes normalized local travel direction with deterministic nearest-blocker steering.
+/// Positions and positive radii are planar world units. Input obstacle order resolves
+/// equal-distance ties; world callers supply stable EntityId order.
 ///
-/// Returns the normalized travel direction vector.
-#[must_use]
+/// # Errors
+/// Rejects nonpositive radii or unrepresentable geometry without mutation.
 pub fn compute_unified_local_steering(
     unit_id: EntityId,
     unit_pos: SimVec2,
@@ -156,89 +165,145 @@ pub fn compute_unified_local_steering(
     goal_pos: SimVec2,
     ignored_entity: Option<EntityId>,
     obstacles: &[SteeringObstacle],
-) -> SimVec2 {
-    let to_goal = goal_pos - unit_pos;
-    let goal_dist = to_goal.length();
-    if goal_dist == SimScalar::ZERO {
-        return SimVec2::ZERO;
+) -> Result<SimVec2, PushGeometryError> {
+    if unit_radius <= SimScalar::ZERO {
+        return Err(PushGeometryError::InvalidDistance);
     }
-    let goal_dir = to_goal / goal_dist;
-
-    let mut closest_blocker: Option<(SimScalar, SimVec2, EntityId)> = None;
-    let forward_lookahead = SimScalar::from_f32_lossy(0.35);
-
+    let goal_dir = direction(goal_pos, unit_pos)?;
+    let mut closest_blocker: Option<((u128, u128), SimVec2, EntityId)> = None;
+    let lookahead = SimScalar::from_f32_lossy(0.35);
     for obs in obstacles {
         if obs.id == unit_id || Some(obs.id) == ignored_entity {
             continue;
         }
-
-        let to_obs = obs.pos - unit_pos;
-        let obs_dist = to_obs.length();
-        let max_block_dist = unit_radius + obs.radius + forward_lookahead;
-
-        if obs_dist > max_block_dist || obs_dist == SimScalar::ZERO {
+        if obs.radius <= SimScalar::ZERO {
+            return Err(PushGeometryError::InvalidDistance);
+        }
+        let threshold = i128::from(unit_radius.raw())
+            + i128::from(obs.radius.raw())
+            + i128::from(lookahead.raw());
+        if obs.pos == unit_pos || !within_distance(unit_pos, obs.pos, threshold) {
             continue;
         }
-
-        // Must be in forward hemisphere relative to goal direction
-        if to_obs.dot(goal_dir) <= SimScalar::ZERO {
+        if difference_product(goal_dir, obs.pos, unit_pos, false)? <= 0 {
             continue;
         }
-
-        if let Some((best_dist, _, _)) = closest_blocker {
-            if obs_dist < best_dist {
-                closest_blocker = Some((obs_dist, obs.pos, obs.id));
-            }
-        } else {
-            closest_blocker = Some((obs_dist, obs.pos, obs.id));
+        let square = squared_distance(unit_pos, obs.pos);
+        if closest_blocker.is_none()
+            || closest_blocker
+                .as_ref()
+                .is_some_and(|(best, _, _)| square < *best)
+        {
+            closest_blocker = Some((square, obs.pos, obs.id));
         }
     }
-
-    if let Some((_, blocker_pos, blocker_id)) = closest_blocker {
-        let to_blocker = blocker_pos - unit_pos;
-        // 2D cross product: goal_dir.x * to_blocker.y - goal_dir.y * to_blocker.x
-        let cross = goal_dir.x * to_blocker.y - goal_dir.y * to_blocker.x;
-        let deadzone = SimScalar::from_f32_lossy(0.05);
-        let steer_left = if cross.abs() > deadzone {
-            cross < SimScalar::ZERO // blocker is on right -> steer left
+    if goal_dir == SimVec2::ZERO {
+        return Ok(SimVec2::ZERO);
+    }
+    if let Some((_, pos, id)) = closest_blocker {
+        let cross = difference_product(goal_dir, pos, unit_pos, true)?;
+        let deadzone = (SimScalar::from_f32_lossy(0.05).raw() as u128) << 32;
+        let left = if cross.unsigned_abs() > deadzone {
+            cross < 0
         } else {
-            unit_id.0 < blocker_id.0 // deterministic tie-breaker based on persistent entity IDs
+            unit_id.0 < id.0
         };
-
-        let tangent = if steer_left {
+        let tangent = if left {
             SimVec2::new(-goal_dir.y, goal_dir.x)
         } else {
             SimVec2::new(goal_dir.y, -goal_dir.x)
         };
-
-        (goal_dir + tangent * SimScalar::from_f32_lossy(0.85)).normalize_or_zero()
+        checked_normalize(checked_vec_add(
+            goal_dir,
+            checked_vec_scale(tangent, SimScalar::from_f32_lossy(0.85))?,
+        )?)
     } else {
-        goal_dir
+        Ok(goal_dir)
     }
 }
 
-/// Checks if a moving unit has settled into an arrival cluster adjacent to units already at the destination.
-#[must_use]
+/// Checks geometric settled-neighbor arrival in world units, without self-exclusion.
+/// This query alone does not establish world terrain connectivity.
+///
+/// # Errors
+/// Rejects nonpositive radii; widened threshold comparisons never narrow squares.
 pub fn check_cluster_arrival(
     unit_pos: SimVec2,
     unit_radius: SimScalar,
     target_pos: SimVec2,
     obstacles: &[SteeringObstacle],
-) -> bool {
-    let arrival_cluster_radius = SimScalar::from_f32_lossy(1.5);
-    let touch_margin = SimScalar::from_f32_lossy(0.15);
+) -> Result<bool, PushGeometryError> {
+    check_cluster_arrival_except(None, unit_pos, unit_radius, target_pos, obstacles)
+}
 
-    for obs in obstacles {
-        if obs.velocity == SimVec2::ZERO {
-            let combined_radius = unit_radius + obs.radius;
-            if obs.pos.distance(target_pos) <= combined_radius + arrival_cluster_radius
-                && unit_pos.distance(obs.pos) <= combined_radius + touch_margin
-            {
-                return true;
-            }
-        }
+/// Checks geometric arrival while excluding the querying actor's identity.
+/// This query alone does not establish world terrain connectivity.
+///
+/// # Errors
+/// Rejects nonpositive radii before reporting a settled-neighbor result.
+pub fn check_cluster_arrival_except(
+    excluded: Option<EntityId>,
+    unit_pos: SimVec2,
+    unit_radius: SimScalar,
+    target_pos: SimVec2,
+    obstacles: &[SteeringObstacle],
+) -> Result<bool, PushGeometryError> {
+    check_cluster_arrival_with(
+        excluded,
+        unit_pos,
+        unit_radius,
+        target_pos,
+        obstacles,
+        |_| true,
+    )
+}
+
+/// Checks geometric arrival with an additional immutable world-policy witness.
+/// Positions/radii are world units. `witness_allowed` is called only for settled,
+/// geometrically eligible, nonexcluded neighbors until the first accepted witness.
+/// Every nonexcluded radius is validated even after success; invalid radii return
+/// the same error as the geometry-only public queries. World callers supply pure
+/// read-only predicates, so skipping later callbacks cannot hide side effects.
+pub(crate) fn check_cluster_arrival_with(
+    excluded: Option<EntityId>,
+    unit_pos: SimVec2,
+    unit_radius: SimScalar,
+    target_pos: SimVec2,
+    obstacles: &[SteeringObstacle],
+    mut witness_allowed: impl FnMut(&SteeringObstacle) -> bool,
+) -> Result<bool, PushGeometryError> {
+    if unit_radius <= SimScalar::ZERO {
+        return Err(PushGeometryError::InvalidDistance);
     }
-    false
+    let mut arrived = false;
+    for obs in obstacles {
+        if Some(obs.id) == excluded {
+            continue;
+        }
+        if obs.radius <= SimScalar::ZERO {
+            return Err(PushGeometryError::InvalidDistance);
+        }
+        // PERFORMANCE RATIONALE:
+        // Why: Ground witnesses may traverse many map cells; later witnesses
+        // cannot change an already established arrival result.
+        // What: Skip geometry/policy after success, but retain every radius check.
+        // Trade-off: Still scan the obstacle slice so malformed state is reported;
+        // no additional map queries or scratch allocation after the first witness.
+        if arrived || obs.velocity != SimVec2::ZERO {
+            continue;
+        }
+        let combined = i128::from(unit_radius.raw()) + i128::from(obs.radius.raw());
+        arrived = within_distance(
+            obs.pos,
+            target_pos,
+            combined + i128::from(SimScalar::from_f32_lossy(1.5).raw()),
+        ) && within_distance(
+            unit_pos,
+            obs.pos,
+            combined + i128::from(SimScalar::from_f32_lossy(0.15).raw()),
+        ) && witness_allowed(obs);
+    }
+    Ok(arrived)
 }
 
 // PERFORMANCE RATIONALE:
@@ -291,178 +356,195 @@ impl PushEntityParams {
     }
 }
 
-/// Computes position displacement deltas for two colliding entities.
-#[must_use]
+/// Computes dynamic-body displacement with checked fixed-point arithmetic.
+/// Inputs are planar world positions/velocities and radii in world units.
+/// `distance` must equal [`crate::movement::checked_distance`] for these positions.
+/// Priority/hold branches retain their meaning; widened normalization can change
+/// final raw bits compared with the former squared-Q32 normalization.
+///
+/// # Errors
+/// Returns invalid-distance or unrepresentable-arithmetic evidence without mutation.
 pub fn compute_push_displacement(
     a: PushEntityParams,
     b: PushEntityParams,
     distance: SimScalar,
     combined_radius: SimScalar,
-) -> (SimVec2, SimVec2) {
-    let raw_overlap = combined_radius - distance;
+) -> Result<(SimVec2, SimVec2), PushGeometryError> {
+    validate_push_distance(a, b, distance, combined_radius)?;
+    checked_dynamic_push(a, b, distance, combined_radius)
+}
+
+fn checked_dynamic_push(
+    a: PushEntityParams,
+    b: PushEntityParams,
+    distance: SimScalar,
+    combined_radius: SimScalar,
+) -> Result<(SimVec2, SimVec2), PushGeometryError> {
+    let raw_overlap = combined_radius
+        .checked_sub(distance)
+        .ok_or(PushGeometryError::Unrepresentable)?;
     if raw_overlap <= SimScalar::ZERO {
-        return (SimVec2::ZERO, SimVec2::ZERO);
+        return Ok((SimVec2::ZERO, SimVec2::ZERO));
     }
-    // Rule 1: Enemies never yield (hard reciprocal repulsion)
-    if a.owner != b.owner {
-        let sep_dir = if distance > SimScalar::EPSILON {
-            (a.pos - b.pos).normalize_or_zero()
-        } else {
-            SimVec2::X_AXIS
-        };
-        let half_overlap = raw_overlap * SimScalar::HALF;
-        return (sep_dir * half_overlap, -sep_dir * half_overlap);
-    }
-
-    let a_immobile = a.cannot_be_pushed || a.is_holding;
-    let b_immobile = b.cannot_be_pushed || b.is_holding;
-
-    // Rule 2: Friendly units on Hold Position / immobile act as immovable walls
-    if b_immobile && !a_immobile {
-        let push_back = if distance > SimScalar::EPSILON {
-            (a.pos - b.pos).normalize_or_zero()
-        } else {
-            SimVec2::X_AXIS
-        };
-        let disp_a = if a.vel.length_sq() > SimScalar::EPSILON {
-            let move_dir = a.vel.normalize_or_zero();
-            let mut perp = SimVec2::new(-move_dir.y, move_dir.x);
-            let delta = a.pos - b.pos;
-            if delta.dot(perp) < SimScalar::ZERO {
-                perp = -perp;
-            }
-            (push_back * SimScalar::from_f32_lossy(0.5) + perp * SimScalar::from_f32_lossy(0.85))
-                .normalize_or_zero()
-                * raw_overlap
-        } else {
-            push_back * raw_overlap
-        };
-        return (disp_a, SimVec2::ZERO);
-    }
-
-    if a_immobile && !b_immobile {
-        let push_back = if distance > SimScalar::EPSILON {
-            (b.pos - a.pos).normalize_or_zero()
-        } else {
-            -SimVec2::X_AXIS
-        };
-        let disp_b = if b.vel.length_sq() > SimScalar::EPSILON {
-            let move_dir = b.vel.normalize_or_zero();
-            let mut perp = SimVec2::new(-move_dir.y, move_dir.x);
-            let delta = b.pos - a.pos;
-            if delta.dot(perp) < SimScalar::ZERO {
-                perp = -perp;
-            }
-            (push_back * SimScalar::from_f32_lossy(0.5) + perp * SimScalar::from_f32_lossy(0.85))
-                .normalize_or_zero()
-                * raw_overlap
-        } else {
-            push_back * raw_overlap
-        };
-        return (SimVec2::ZERO, disp_b);
-    }
-
-    if a_immobile && b_immobile {
-        let sep_dir = if distance > SimScalar::EPSILON {
-            (a.pos - b.pos).normalize_or_zero()
-        } else {
-            SimVec2::X_AXIS
-        };
-        let half_overlap = raw_overlap * SimScalar::HALF;
-        return (sep_dir * half_overlap, -sep_dir * half_overlap);
-    }
-
-    let overlap = raw_overlap * PUSH_RELAXATION;
-
-    // Rule 3: Idle friendly units yield sideways perpendicular to moving unit's velocity
-    if b.vel.length_sq() == SimScalar::ZERO
-        && a.vel.length_sq() > SimScalar::ZERO
-        && a.push_priority >= b.push_priority
-    {
-        let move_dir = a.vel.normalize_or_zero();
-        let mut perp = if move_dir.length_sq() > SimScalar::EPSILON {
-            SimVec2::new(-move_dir.y, move_dir.x)
-        } else {
-            SimVec2::Y_AXIS
-        };
-        let delta = b.pos - a.pos;
-        let perp_dot = delta.dot(perp);
-        if perp_dot.abs() < SimScalar::from_f32_lossy(0.05) {
-            if a.id.0 < b.id.0 {
-                perp = -perp;
-            }
-        } else if perp_dot < SimScalar::ZERO {
-            perp = -perp;
-        }
-        return (SimVec2::ZERO, perp * overlap);
-    }
-
-    if a.vel.length_sq() == SimScalar::ZERO
-        && b.vel.length_sq() > SimScalar::ZERO
-        && b.push_priority >= a.push_priority
-    {
-        let move_dir = b.vel.normalize_or_zero();
-        let mut perp = if move_dir.length_sq() > SimScalar::EPSILON {
-            SimVec2::new(-move_dir.y, move_dir.x)
-        } else {
-            SimVec2::Y_AXIS
-        };
-        let delta = a.pos - b.pos;
-        let perp_dot = delta.dot(perp);
-        if perp_dot.abs() < SimScalar::from_f32_lossy(0.05) {
-            if a.id.0 < b.id.0 {
-                perp = -perp;
-            }
-        } else if perp_dot < SimScalar::ZERO {
-            perp = -perp;
-        }
-        return (perp * overlap, SimVec2::ZERO);
-    }
-
-    // Rule 4: Both units moving; reciprocal repulsion with cone-wedge lateral deflection
-    let sep_dir = if distance > SimScalar::EPSILON {
-        (a.pos - b.pos).normalize_or_zero()
+    let delta = checked_vec_sub(a.pos, b.pos)?;
+    let separation = if distance > SimScalar::EPSILON {
+        checked_vec_div(delta, distance)?
     } else {
         SimVec2::X_AXIS
     };
-    let half_overlap = overlap * SimScalar::HALF;
-
-    let move_dir = if a.vel.length_sq() > SimScalar::EPSILON {
-        a.vel.normalize_or_zero()
-    } else if b.vel.length_sq() > SimScalar::EPSILON {
-        b.vel.normalize_or_zero()
+    if a.owner != b.owner {
+        let correction = checked_vec_scale(separation, raw_overlap * SimScalar::HALF)?;
+        return Ok((correction, checked_vec_neg(correction)?));
+    }
+    let a_immobile = a.cannot_be_pushed || a.is_holding;
+    let b_immobile = b.cannot_be_pushed || b.is_holding;
+    let (a_nonzero, a_moving) = motion_flags(a.vel);
+    let (b_nonzero, b_moving) = motion_flags(b.vel);
+    if b_immobile && !a_immobile {
+        let normal = if distance > SimScalar::EPSILON {
+            separation
+        } else {
+            SimVec2::X_AXIS
+        };
+        let direction = if a_moving {
+            let move_dir = checked_normalize(a.vel)?;
+            let mut perp = SimVec2::new(-move_dir.y, move_dir.x);
+            if checked_dot(delta, perp)? < SimScalar::ZERO {
+                perp = checked_vec_neg(perp)?;
+            }
+            checked_normalize(checked_vec_add(
+                checked_vec_scale(normal, SimScalar::HALF)?,
+                checked_vec_scale(perp, SimScalar::from_f32_lossy(0.85))?,
+            )?)?
+        } else {
+            normal
+        };
+        return Ok((checked_vec_scale(direction, raw_overlap)?, SimVec2::ZERO));
+    }
+    if a_immobile && !b_immobile {
+        let normal = checked_vec_neg(separation)?;
+        let direction = if b_moving {
+            let move_dir = checked_normalize(b.vel)?;
+            let mut perp = SimVec2::new(-move_dir.y, move_dir.x);
+            if checked_dot(checked_vec_neg(delta)?, perp)? < SimScalar::ZERO {
+                perp = checked_vec_neg(perp)?;
+            }
+            checked_normalize(checked_vec_add(
+                checked_vec_scale(normal, SimScalar::HALF)?,
+                checked_vec_scale(perp, SimScalar::from_f32_lossy(0.85))?,
+            )?)?
+        } else {
+            normal
+        };
+        return Ok((SimVec2::ZERO, checked_vec_scale(direction, raw_overlap)?));
+    }
+    if a_immobile && b_immobile {
+        let correction = checked_vec_scale(separation, raw_overlap * SimScalar::HALF)?;
+        return Ok((correction, checked_vec_neg(correction)?));
+    }
+    let overlap = raw_overlap
+        .checked_mul(PUSH_RELAXATION)
+        .ok_or(PushGeometryError::Unrepresentable)?;
+    if !b_nonzero && a_nonzero && a.push_priority >= b.push_priority {
+        let move_dir = checked_normalize(a.vel)?;
+        let mut perp = if checked_dot(move_dir, move_dir)? > SimScalar::EPSILON {
+            SimVec2::new(-move_dir.y, move_dir.x)
+        } else {
+            SimVec2::Y_AXIS
+        };
+        let dot = checked_dot(checked_vec_neg(delta)?, perp)?;
+        if dot.raw().unsigned_abs() < SimScalar::from_f32_lossy(0.05).raw() as u64 {
+            if a.id.0 < b.id.0 {
+                perp = checked_vec_neg(perp)?;
+            }
+        } else if dot < SimScalar::ZERO {
+            perp = checked_vec_neg(perp)?;
+        }
+        return Ok((SimVec2::ZERO, checked_vec_scale(perp, overlap)?));
+    }
+    if !a_nonzero && b_nonzero && b.push_priority >= a.push_priority {
+        let move_dir = checked_normalize(b.vel)?;
+        let mut perp = if checked_dot(move_dir, move_dir)? > SimScalar::EPSILON {
+            SimVec2::new(-move_dir.y, move_dir.x)
+        } else {
+            SimVec2::Y_AXIS
+        };
+        let dot = checked_dot(delta, perp)?;
+        if dot.raw().unsigned_abs() < SimScalar::from_f32_lossy(0.05).raw() as u64 {
+            if a.id.0 < b.id.0 {
+                perp = checked_vec_neg(perp)?;
+            }
+        } else if dot < SimScalar::ZERO {
+            perp = checked_vec_neg(perp)?;
+        }
+        return Ok((checked_vec_scale(perp, overlap)?, SimVec2::ZERO));
+    }
+    let half = overlap * SimScalar::HALF;
+    let move_dir = if a_moving {
+        checked_normalize(a.vel)?
+    } else if b_moving {
+        checked_normalize(b.vel)?
     } else {
         SimVec2::ZERO
     };
-
-    if move_dir.length_sq() > SimScalar::EPSILON
-        && sep_dir.dot(move_dir).abs() > SimScalar::from_f32_lossy(0.5)
+    if checked_dot(move_dir, move_dir)? > SimScalar::EPSILON
+        && checked_dot(separation, move_dir)?.raw().unsigned_abs() > SimScalar::HALF.raw() as u64
     {
         let mut perp = SimVec2::new(-move_dir.y, move_dir.x);
-        let delta = a.pos - b.pos;
-        let perp_dot = delta.dot(perp);
-        if perp_dot.abs() < SimScalar::from_f32_lossy(0.05) {
+        let dot = checked_dot(delta, perp)?;
+        if dot.raw().unsigned_abs() < SimScalar::from_f32_lossy(0.05).raw() as u64 {
             if a.id.0 < b.id.0 {
-                perp = -perp;
+                perp = checked_vec_neg(perp)?;
             }
-        } else if perp_dot < SimScalar::ZERO {
-            perp = -perp;
+        } else if dot < SimScalar::ZERO {
+            perp = checked_vec_neg(perp)?;
         }
-        let wedge_dir_a = (sep_dir + perp * SimScalar::from_f32_lossy(0.25)).normalize_or_zero();
-        let wedge_dir_b = (-sep_dir - perp * SimScalar::from_f32_lossy(0.25)).normalize_or_zero();
-        (wedge_dir_a * half_overlap, wedge_dir_b * half_overlap)
+        let wedge = checked_vec_scale(perp, SimScalar::from_f32_lossy(0.25))?;
+        let direction_a = checked_normalize(checked_vec_add(separation, wedge)?)?;
+        let direction_b = checked_normalize(checked_vec_neg(checked_vec_add(separation, wedge)?)?)?;
+        Ok((
+            checked_vec_scale(direction_a, half)?,
+            checked_vec_scale(direction_b, half)?,
+        ))
     } else {
-        (sep_dir * half_overlap, -sep_dir * half_overlap)
+        let correction = checked_vec_scale(separation, half)?;
+        Ok((correction, checked_vec_neg(correction)?))
     }
 }
 
-/// Resolves push priority and circle-circle collision displacement between two entities.
+// Only classify squared magnitude against zero/epsilon; no physical squared
+// value needs narrowing. An overflowing u128 sum is necessarily above both
+// thresholds, so that branch is an exact predicate rather than numeric saturation.
+fn motion_flags(v: SimVec2) -> (bool, bool) {
+    let x = i128::from(v.x.raw()).unsigned_abs();
+    let y = i128::from(v.y.raw()).unsigned_abs();
+    let Some(square) = (x * x).checked_add(y * y) else {
+        return (true, true);
+    };
+    (
+        square >= 1_u128 << 32,
+        square >= (SimScalar::EPSILON.raw() as u128 + 1) << 32,
+    )
+}
+
+/// Atomically applies checked pair correction, honoring actual immobile/unpushable flags.
+/// Callers must establish compatible layers and valid resulting terrain/domain
+/// placement; this entity-only API cannot consult registered map foundations.
+/// If either actor is carried, returns Ok(()) with both actors unchanged, without
+/// evaluating geometry: there is no world-space pair to resolve.
+///
+/// # Errors
+/// Returns typed geometry errors before changing either actor's position.
 pub fn resolve_push_interaction(
     moving_unit: &mut Entity,
     other_unit: &mut Entity,
     distance: SimScalar,
     combined_radius: SimScalar,
-) {
+) -> Result<(), PushGeometryError> {
+    // A valid passenger is absent from collision space; no geometry is evaluated.
+    if moving_unit.is_loaded_in_transport() || other_unit.is_loaded_in_transport() {
+        return Ok(());
+    }
     let a = PushEntityParams {
         id: moving_unit.id,
         pos: moving_unit.position,
@@ -481,7 +563,431 @@ pub fn resolve_push_interaction(
         cannot_be_pushed: other_unit.cannot_be_pushed(),
         is_holding: other_unit.cannot_be_pushed(),
     };
-    let (d_a, d_b) = compute_push_displacement(a, b, distance, combined_radius);
-    moving_unit.position += d_a;
-    other_unit.position += d_b;
+    let mobility = |e: &Entity| {
+        if e.is_immobile || e.unpushable {
+            CollisionMobility::Fixed
+        } else {
+            CollisionMobility::Dynamic
+        }
+    };
+    let (d_a, d_b) = compute_push_displacement_with_mobility(
+        a,
+        b,
+        distance,
+        combined_radius,
+        mobility(moving_unit),
+        mobility(other_unit),
+    )?;
+    let next_a = checked_vec_add(moving_unit.position, d_a)?;
+    let next_b = checked_vec_add(other_unit.position, d_b)?;
+    moving_unit.position = next_a;
+    other_unit.position = next_b;
+    Ok(())
+}
+
+/// Positional correction weight for an actual body, separate from friendly priorities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CollisionMobility {
+    /// Unit correction weight; existing priority rules apply between dynamic bodies.
+    Dynamic,
+    /// Zero correction weight, including registered foundations and immobile bodies.
+    Fixed,
+}
+
+/// Compatibility name for the shared checked movement arithmetic error.
+pub use crate::movement::MovementMathError as PushGeometryError;
+
+/// Computes weighted same-layer circle correction in fixed-point world units.
+/// Fixed bodies always receive zero correction, before enemy and priority rules.
+/// `distance` must equal the integer-root Euclidean distance between the two positions;
+/// `combined_radius` must be nonnegative and actor IDs distinct. Different layers
+/// must be filtered by callers. At coincident fixed/dynamic centers, lower ID uses
+/// +X normal and higher ID -X, preserving physical direction on argument reversal.
+/// The dynamic/dynamic compatibility branch retains its original +X tie convention.
+///
+/// # Errors
+/// Rejects inconsistent/negative inputs and unrepresentable distance, correction or
+/// dynamic velocity arithmetic. No entity or world state is mutated by this query.
+pub fn compute_push_displacement_with_mobility(
+    a: PushEntityParams,
+    b: PushEntityParams,
+    distance: SimScalar,
+    combined_radius: SimScalar,
+    mobility_a: CollisionMobility,
+    mobility_b: CollisionMobility,
+) -> Result<(SimVec2, SimVec2), PushGeometryError> {
+    validate_push_distance(a, b, distance, combined_radius)?;
+    if distance >= combined_radius
+        || (mobility_a == CollisionMobility::Fixed && mobility_b == CollisionMobility::Fixed)
+    {
+        return Ok((SimVec2::ZERO, SimVec2::ZERO));
+    }
+    if mobility_a == CollisionMobility::Dynamic && mobility_b == CollisionMobility::Dynamic {
+        return checked_dynamic_push(a, b, distance, combined_radius);
+    }
+    let normal = if distance > SimScalar::EPSILON {
+        SimVec2::new(
+            a.pos
+                .x
+                .checked_sub(b.pos.x)
+                .and_then(|v| v.checked_div(distance))
+                .ok_or(PushGeometryError::Unrepresentable)?,
+            a.pos
+                .y
+                .checked_sub(b.pos.y)
+                .and_then(|v| v.checked_div(distance))
+                .ok_or(PushGeometryError::Unrepresentable)?,
+        )
+    } else if a.id < b.id {
+        SimVec2::X_AXIS
+    } else {
+        -SimVec2::X_AXIS
+    };
+    let overlap = combined_radius
+        .checked_sub(distance)
+        .ok_or(PushGeometryError::Unrepresentable)?;
+    let correction = SimVec2::new(
+        normal
+            .x
+            .checked_mul(overlap)
+            .ok_or(PushGeometryError::Unrepresentable)?,
+        normal
+            .y
+            .checked_mul(overlap)
+            .ok_or(PushGeometryError::Unrepresentable)?,
+    );
+    Ok(if mobility_a == CollisionMobility::Fixed {
+        (SimVec2::ZERO, -correction)
+    } else {
+        (correction, SimVec2::ZERO)
+    })
+}
+
+fn validate_push_distance(
+    a: PushEntityParams,
+    b: PushEntityParams,
+    distance: SimScalar,
+    combined_radius: SimScalar,
+) -> Result<(), PushGeometryError> {
+    if a.id == b.id {
+        return Err(PushGeometryError::DuplicateEntity);
+    }
+    if distance < SimScalar::ZERO || combined_radius < SimScalar::ZERO {
+        return Err(PushGeometryError::InvalidDistance);
+    }
+    let actual = crate::movement::checked_distance(a.pos, b.pos)
+        .ok_or(PushGeometryError::Unrepresentable)?;
+    if distance != actual {
+        return Err(PushGeometryError::InvalidDistance);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod weighted_tests {
+    use super::*;
+    fn body(id: u32, x: i32, y: i32) -> PushEntityParams {
+        PushEntityParams {
+            id: EntityId(id),
+            pos: SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y)),
+            vel: SimVec2::ZERO,
+            owner: sim_types::PlayerId(0),
+            push_priority: 0,
+            cannot_be_pushed: false,
+            is_holding: false,
+        }
+    }
+    #[test]
+    fn fixed_normal_uses_wide_geometry_and_full_dynamic_weight() -> Result<(), PushGeometryError> {
+        let a = body(1, 30_000, 40_000);
+        let b = body(2, 0, 0);
+        let d = SimScalar::from_num(50_000);
+        let radius = SimScalar::from_num(50_010);
+        let (da, db) = compute_push_displacement_with_mobility(
+            a,
+            b,
+            d,
+            radius,
+            CollisionMobility::Fixed,
+            CollisionMobility::Dynamic,
+        )?;
+        assert_eq!(da, SimVec2::ZERO);
+        assert!((db.x - SimScalar::from_num(-6)).abs() < SimScalar::from_raw(16));
+        assert!((db.y - SimScalar::from_num(-8)).abs() < SimScalar::from_raw(16));
+        let reversed = compute_push_displacement_with_mobility(
+            b,
+            a,
+            d,
+            radius,
+            CollisionMobility::Dynamic,
+            CollisionMobility::Fixed,
+        )?;
+        assert_eq!(reversed, (db, da));
+        assert_eq!(
+            compute_push_displacement_with_mobility(
+                a,
+                b,
+                d,
+                radius,
+                CollisionMobility::Fixed,
+                CollisionMobility::Fixed
+            )?,
+            (SimVec2::ZERO, SimVec2::ZERO)
+        );
+        assert_eq!(
+            compute_push_displacement_with_mobility(
+                a,
+                b,
+                d,
+                d,
+                CollisionMobility::Fixed,
+                CollisionMobility::Dynamic
+            )?,
+            (SimVec2::ZERO, SimVec2::ZERO)
+        );
+        Ok(())
+    }
+    #[test]
+    fn invalid_supplied_distance_is_explicit_and_coincident_fixed_body_stays_fixed(
+    ) -> Result<(), PushGeometryError> {
+        let a = body(1, 0, 0);
+        let b = body(2, 0, 0);
+        assert_eq!(
+            compute_push_displacement_with_mobility(
+                a,
+                b,
+                SimScalar::ONE,
+                SimScalar::ONE,
+                CollisionMobility::Fixed,
+                CollisionMobility::Dynamic
+            ),
+            Err(PushGeometryError::InvalidDistance)
+        );
+        assert_eq!(
+            compute_push_displacement_with_mobility(
+                a,
+                b,
+                -SimScalar::ONE,
+                SimScalar::ONE,
+                CollisionMobility::Fixed,
+                CollisionMobility::Dynamic
+            ),
+            Err(PushGeometryError::InvalidDistance)
+        );
+        assert_eq!(
+            compute_push_displacement_with_mobility(
+                a,
+                b,
+                SimScalar::ZERO,
+                SimScalar::ONE,
+                CollisionMobility::Fixed,
+                CollisionMobility::Dynamic
+            )?,
+            (SimVec2::ZERO, -SimVec2::X_AXIS)
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod cluster_arrival_tests {
+    use super::*;
+    use sim_map::{CellFlags, CliffLevel, GameMap, MapCell, RampDir};
+
+    fn witness(id: u32, pos: SimVec2) -> SteeringObstacle {
+        SteeringObstacle {
+            id: EntityId(id),
+            pos,
+            radius: SimScalar::HALF,
+            velocity: SimVec2::ZERO,
+        }
+    }
+
+    #[test]
+    fn arrival_policy_only_visits_eligible_witnesses_until_success() -> Result<(), PushGeometryError>
+    {
+        let origin = SimVec2::from_i32(4, 4);
+        let goal = origin + SimVec2::X_AXIS;
+        let mut excluded = witness(1, origin);
+        excluded.radius = SimScalar::ZERO;
+        let mut moving = witness(2, goal);
+        moving.velocity = SimVec2::X_AXIS;
+        let far = witness(3, SimVec2::from_i32(30, 30));
+        let candidates = [
+            excluded,
+            moving,
+            far,
+            witness(4, goal),
+            witness(5, goal),
+            witness(6, goal),
+        ];
+        let mut visited = Vec::new();
+        assert!(check_cluster_arrival_with(
+            Some(EntityId(1)),
+            origin,
+            SimScalar::HALF,
+            goal,
+            &candidates,
+            |obs| {
+                visited.push(obs.id);
+                obs.id == EntityId(5)
+            },
+        )?);
+        assert_eq!(visited, [EntityId(4), EntityId(5)]);
+        assert!(!check_cluster_arrival_with(
+            Some(EntityId(1)),
+            origin,
+            SimScalar::HALF,
+            goal,
+            &candidates,
+            |_| false,
+        )?);
+        // The public compatibility query deliberately remains geometry-only.
+        assert!(check_cluster_arrival_except(
+            Some(EntityId(1)),
+            origin,
+            SimScalar::HALF,
+            goal,
+            &candidates,
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn later_malformed_radius_survives_success_and_moving_neighbor_short_circuit() {
+        let origin = SimVec2::from_i32(4, 4);
+        let goal = origin + SimVec2::X_AXIS;
+        let mut invalid = witness(3, goal);
+        invalid.radius = SimScalar::ZERO;
+        invalid.velocity = SimVec2::X_AXIS;
+        let mut count = 0;
+        assert_eq!(
+            check_cluster_arrival_with(
+                Some(EntityId(1)),
+                origin,
+                SimScalar::HALF,
+                goal,
+                &[witness(2, goal), invalid],
+                |_| {
+                    count += 1;
+                    true
+                },
+            ),
+            Err(PushGeometryError::InvalidDistance)
+        );
+        assert_eq!(count, 1);
+        assert_eq!(
+            check_cluster_arrival_with(None, origin, SimScalar::ZERO, goal, &[], |_| {
+                count += 1;
+                true
+            },),
+            Err(PushGeometryError::InvalidDistance)
+        );
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn reversed_candidates_preserve_errors_and_valid_ramp_witnesses(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut map = GameMap::new(16, 16, MapCell::default_ground(CliffLevel(0)))?;
+        let center =
+            |x, y| SimVec2::from_i32(x, y) + SimVec2::new(SimScalar::HALF, SimScalar::HALF);
+        for y in 5..8 {
+            let cell = map.cell_mut(7, y)?;
+            cell.flags = CellFlags::GROUND_PATHABLE | CellFlags::RAMP;
+            cell.ramp = Some(RampDir::North);
+        }
+        map.cell_mut(7, 8)?.cliff_level = CliffLevel(1);
+        let origin = center(7, 4);
+        let goal = center(7, 6);
+        let valid = witness(2, center(7, 5));
+        let side = witness(3, center(8, 5));
+        let allowed = |w: &SteeringObstacle| {
+            map.ground_segment_is_connected(origin, w.pos, |_, _| true)
+                && map.ground_segment_is_connected(w.pos, goal, |_, _| true)
+        };
+        assert!(allowed(&valid));
+        assert!(!allowed(&side));
+        // Radius1 admits both differently distant candidates geometrically.
+        for candidates in [[side, valid], [valid, side]] {
+            assert!(check_cluster_arrival_with(
+                None,
+                origin,
+                SimScalar::ONE,
+                goal,
+                &candidates,
+                allowed
+            )?);
+        }
+        let mut invalid = side;
+        invalid.radius = SimScalar::ZERO;
+        for candidates in [[invalid, valid], [valid, invalid]] {
+            assert_eq!(
+                check_cluster_arrival_with(
+                    None,
+                    origin,
+                    SimScalar::ONE,
+                    goal,
+                    &candidates,
+                    allowed
+                ),
+                Err(PushGeometryError::InvalidDistance)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn terrain_witness_rejects_diagonal_cliffs_and_malformed_ramps(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut map = GameMap::new(16, 16, MapCell::default_ground(CliffLevel(0)))?;
+        let center =
+            |x, y| SimVec2::from_i32(x, y) + SimVec2::new(SimScalar::HALF, SimScalar::HALF);
+        let origin = center(4, 4);
+        let goal = center(5, 5);
+        // Larger generic radius admits the diagonal geometrically; the two
+        // independent cardinal routes must still agree on terrain connectivity.
+        let mut obs = witness(2, goal);
+        obs.radius = SimScalar::ONE;
+        map.cell_mut(5, 4)?.cliff_level = CliffLevel(1);
+        assert!(check_cluster_arrival(origin, SimScalar::ONE, goal, &[obs])?);
+        assert!(!check_cluster_arrival_with(
+            None,
+            origin,
+            SimScalar::ONE,
+            goal,
+            &[obs],
+            |w| {
+                map.ground_segment_is_connected(origin, w.pos, |_, _| true)
+                    && map.ground_segment_is_connected(w.pos, goal, |_, _| true)
+            }
+        )?);
+        map.cell_mut(5, 4)?.cliff_level = CliffLevel(0);
+        assert!(check_cluster_arrival_with(
+            None,
+            origin,
+            SimScalar::ONE,
+            goal,
+            &[obs],
+            |w| {
+                map.ground_segment_is_connected(origin, w.pos, |_, _| true)
+                    && map.ground_segment_is_connected(w.pos, goal, |_, _| true)
+            }
+        )?);
+        let cell = map.cell_mut(5, 5)?;
+        cell.flags = CellFlags::GROUND_PATHABLE | CellFlags::RAMP;
+        cell.ramp = Some(RampDir::NorthEast);
+        assert!(!check_cluster_arrival_with(
+            None,
+            origin,
+            SimScalar::ONE,
+            goal,
+            &[obs],
+            |w| {
+                map.ground_segment_is_connected(origin, w.pos, |_, _| true)
+                    && map.ground_segment_is_connected(w.pos, goal, |_, _| true)
+            }
+        )?);
+        Ok(())
+    }
 }

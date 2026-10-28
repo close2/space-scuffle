@@ -14,8 +14,12 @@
 )]
 
 use sim_core::SimWorld;
-use sim_map::{CellFlags, CliffLevel, GameMap, MapCell, PathRequestWithVision, UnitClearance};
-use sim_types::{PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder, VisibilityState};
+use sim_map::{
+    CellFlags, CliffLevel, GameMap, MapCell, PathRequestWithVision, RampDir, UnitClearance,
+};
+use sim_types::{
+    EntityId, MoverType, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder, VisibilityState,
+};
 
 /// Empty tick input helper.
 fn empty_bundle(tick: u32) -> TickBundle {
@@ -47,11 +51,13 @@ fn test_unexplored_ramp_blocks_path_until_scouted() {
             cells[idx] = MapCell::default_ground(CliffLevel(1));
         }
     }
-    // Set up ramp cell
-    let ramp_low = (15 * width + 15) as usize;
-    let ramp_high = (15 * width + 16) as usize;
-    cells[ramp_low].flags.insert(CellFlags::RAMP);
-    cells[ramp_high].flags.insert(CellFlags::RAMP);
+    // Three-wide directed ramp: its surface rises from level 0 at x=15 to
+    // the level-1 landing at x=16. A RAMP flag alone has no geometry.
+    for y in 14..=16 {
+        let cell = &mut cells[(y * width + 15) as usize];
+        cell.ramp = Some(RampDir::East);
+        cell.flags = CellFlags::GROUND_PATHABLE | CellFlags::RAMP;
+    }
 
     let map = GameMap::from_cells(width, height, cells, Vec::new(), Vec::new())
         .expect("invariant: valid map");
@@ -113,21 +119,14 @@ fn test_fogged_ramp_wall_off_causes_dynamic_repath_on_vision() {
         }
     }
 
-    // Primary ramp at y = 10
-    cells[(10 * width + 15) as usize]
-        .flags
-        .insert(CellFlags::RAMP);
-    cells[(10 * width + 16) as usize]
-        .flags
-        .insert(CellFlags::RAMP);
-
-    // Secondary ramp at y = 24
-    cells[(24 * width + 15) as usize]
-        .flags
-        .insert(CellFlags::RAMP);
-    cells[(24 * width + 16) as usize]
-        .flags
-        .insert(CellFlags::RAMP);
+    // Valid three-wide east-facing ramps with ordinary high-ground landings.
+    for center_y in [10, 24] {
+        for y in center_y - 1..=center_y + 1 {
+            let cell = &mut cells[(y * width + 15) as usize];
+            cell.ramp = Some(RampDir::East);
+            cell.flags = CellFlags::GROUND_PATHABLE | CellFlags::RAMP;
+        }
+    }
 
     let map = GameMap::from_cells(width, height, cells, Vec::new(), Vec::new())
         .expect("invariant: valid map");
@@ -154,7 +153,8 @@ fn test_fogged_ramp_wall_off_causes_dynamic_repath_on_vision() {
         .entities
         .get_mut(&ent_id)
         .unwrap()
-        .issue_order(UnitOrder::Move { target: high_goal }, false);
+        .issue_order(UnitOrder::Move { target: high_goal }, false)
+        .expect("valid authored fixture order or buff");
 
     // Step 1: unit computes path. Since ramp at y=10 is fogged and no structures are known,
     // the path routes through primary ramp (y=10).
@@ -174,48 +174,34 @@ fn test_fogged_ramp_wall_off_causes_dynamic_repath_on_vision() {
         "Initial route must plan to use primary ramp at y=10"
     );
 
-    // Red player constructs a building wall-off blocking primary ramp (cells (15, 10) and (16, 10))
-    // Note: Blue unit does not see it yet because it is at x=4 and sight_radius is 9!
+    // Build a real wall on the primary ramp's lower landing. Buildings cannot
+    // occupy ramps; all three entry lanes must be blocked, and the lower landing
+    // can be discovered by a ground observer before climbing onto high ground.
+    // At x=4 the landing x=14 remains outside this unit's sight radius of 9.
     world
         .map
-        .cell_mut(15, 10)
-        .unwrap()
-        .flags
-        .insert(CellFlags::OCCUPIED_BY_STRUCTURE);
-    world
-        .map
-        .cell_mut(15, 10)
-        .unwrap()
-        .flags
-        .remove(CellFlags::GROUND_PATHABLE);
-    world
-        .map
-        .cell_mut(16, 10)
-        .unwrap()
-        .flags
-        .insert(CellFlags::OCCUPIED_BY_STRUCTURE);
-    world
-        .map
-        .cell_mut(16, 10)
-        .unwrap()
-        .flags
-        .remove(CellFlags::GROUND_PATHABLE);
+        .place_structure(EntityId(10_000), 14, 9, 1, 3)
+        .expect("wall fits ordinary buildable lower landing");
     world.pathfinder.recompute_clearance(&world.map);
 
     // Advance world simulation several ticks until unit approaches primary ramp
     let mut discovered_blocker = false;
-    for tick in 2..=50 {
+    let mut rerouted = false;
+    for tick in 2..=80 {
         world.step(&empty_bundle(tick));
         let Some(ent) = world.entities.get(&ent_id) else {
             break;
         };
 
         // Check if blue discovered the blocked cell
-        let blocked_idx = (10 * width + 15) as usize;
+        let blocked_idx = (10 * width + 14) as usize;
         if world.known_blocked_cells[0][blocked_idx] {
             discovered_blocker = true;
-            // Confirm unit repathed toward secondary ramp at y=24
-            if !ent.current_funnel_waypoints.is_empty() {
+            // Partial revelation can legitimately leave a different primary lane
+            // apparently open. Require the alternate route once all lanes are known.
+            let whole_wall_known =
+                (9..=11).all(|y| world.known_blocked_cells[0][(y * width + 14) as usize]);
+            if whole_wall_known && !ent.current_funnel_waypoints.is_empty() {
                 let has_rerouted = ent
                     .current_funnel_waypoints
                     .iter()
@@ -224,6 +210,7 @@ fn test_fogged_ramp_wall_off_causes_dynamic_repath_on_vision() {
                     has_rerouted,
                     "Unit must dynamically repath toward secondary ramp upon seeing the wall-off"
                 );
+                rerouted = true;
                 break;
             }
         }
@@ -232,6 +219,10 @@ fn test_fogged_ramp_wall_off_causes_dynamic_repath_on_vision() {
     assert!(
         discovered_blocker,
         "Unit must advance into line of sight and discover the ramp wall-off"
+    );
+    assert!(
+        rerouted,
+        "fully revealed wall must force the alternate ramp route"
     );
 }
 
@@ -249,13 +240,12 @@ fn test_high_ground_vision_occlusion_and_ramp_elevation() {
             cells[idx] = MapCell::default_ground(CliffLevel(1));
         }
     }
-    // Ramp at (15..=16, 15)
-    cells[(15 * width + 15) as usize]
-        .flags
-        .insert(CellFlags::RAMP);
-    cells[(15 * width + 16) as usize]
-        .flags
-        .insert(CellFlags::RAMP);
+    // The same directed geometry used by runtime maps, with a three-cell aperture.
+    for y in 14..=16 {
+        let cell = &mut cells[(y * width + 15) as usize];
+        cell.ramp = Some(RampDir::East);
+        cell.flags = CellFlags::GROUND_PATHABLE | CellFlags::RAMP;
+    }
 
     let map = GameMap::from_cells(width, height, cells, Vec::new(), Vec::new())
         .expect("invariant: valid map");
@@ -264,13 +254,31 @@ fn test_high_ground_vision_occlusion_and_ramp_elevation() {
     let player_blue = PlayerId(0);
     let player_red = PlayerId(1);
 
-    let unit_id = world.catalog.id_by_slug("pulse_bot").expect("pulse_bot");
+    // Keep the target in place and outside melee range so this visibility test
+    // measures actual ramp traversal rather than the observer dying to gunfire.
+    let unit_id = world
+        .catalog
+        .archetypes()
+        .find(|a| {
+            a.mover_type == MoverType::Ground
+                && !a.is_immobile_by_default()
+                && a.weapon_against(MoverType::Ground, None)
+                    .is_some_and(|weapon| weapon.max_range < SimScalar::ONE)
+        })
+        .expect("catalog supplies a mobile ground melee archetype")
+        .unit_type_id;
 
     // Spawn red enemy on high ground at (18.0, 5.0) (away from the ramp at y=15)
     let red_pos = SimVec2::new(SimScalar::from_num(18), SimScalar::from_num(5));
-    let _red_id = world
+    let red_id = world
         .spawn_unit(unit_id, player_red, red_pos)
         .expect("spawn red");
+    world
+        .entities
+        .get_mut(&red_id)
+        .unwrap()
+        .issue_order(UnitOrder::HoldPosition, false)
+        .expect("valid authored fixture order or buff");
 
     // Spawn blue unit on low ground at (14.0, 5.0) - only 4 world units away from enemy!
     // But separated by cliff ledge without a ramp at y=5!
@@ -300,10 +308,13 @@ fn test_high_ground_vision_occlusion_and_ramp_elevation() {
         .entities
         .get_mut(&blue_id)
         .unwrap()
-        .issue_order(UnitOrder::Move { target: ramp_top }, false);
+        .issue_order(UnitOrder::Move { target: ramp_top }, false)
+        .expect("valid authored fixture order or buff");
 
-    // Step until blue unit reaches the ramp top
-    for tick in 2..=80 {
+    // Reaching the landing is mandatory: the old test passed vacuously if the
+    // invalid flags-only ramp prevented any ascent. Allow the actual path length.
+    let mut reached_high_ground = false;
+    for tick in 2..=256 {
         world.step(&empty_bundle(tick));
         let pos = world.entities.get(&blue_id).unwrap().position;
         if pos.x >= SimScalar::from_num(16) {
@@ -317,7 +328,12 @@ fn test_high_ground_vision_occlusion_and_ramp_elevation() {
                 CliffLevel(1),
                 "Blue unit must now be on high ground cliff level"
             );
+            reached_high_ground = true;
             break;
         }
     }
+    assert!(
+        reached_high_ground,
+        "blue unit must actually ascend the ramp"
+    );
 }

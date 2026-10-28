@@ -9,6 +9,8 @@
 //! 3. Weapon phases and order transitions strictly obey StarCraft II micro mechanics.
 
 use crate::catalog::{UnitArchetype, WeaponSpec};
+use crate::movement::MovementMathError;
+use crate::weapon_timing::{combined_attack_rate, AttackRate, InvalidBuffAttackRate};
 use sim_types::{
     AnimState, EntityId, OverclockSpec, PlayerId, ShapeKind, SimAngle, SimScalar, SimVec2, Tick,
     UnitOrder, UnitTypeId,
@@ -22,6 +24,30 @@ use std::collections::VecDeque;
 // traversal by EntityId.
 // Trade-off: BTreeMap has slightly higher pointer-chase overhead compared to contiguous Vecs,
 // but guarantees strict, deterministic, allocation-free in-order iteration for checksums and systems.
+
+/// A malformed numeric buff/cost input, distinct from ordinary cast eligibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum EntityAdmissionError {
+    /// Checked movement rate/fold preparation failed.
+    #[error(transparent)]
+    Movement(#[from] MovementMathError),
+    /// Authored or mutable fire rate is nonpositive.
+    #[error(transparent)]
+    AttackRate(#[from] crate::weapon_timing::InvalidAttackRate),
+    /// HP/energy costs must not grant resources through a negative payment.
+    #[error("ability cost must be nonnegative")]
+    NegativeCost,
+    /// Prepared resource subtraction cannot be represented.
+    #[error("ability resource payment cannot be represented")]
+    PaymentOverflow,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct PreparedOverclock {
+    pub spec: OverclockSpec,
+    pub hp: SimScalar,
+    pub multiplier: SimScalar,
+}
 
 /// Represents the active phase of an entity's weapon cycle.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,9 +85,10 @@ pub struct ActiveBuff {
     pub buff_id: u8,
     /// Remaining duration in ticks.
     pub remaining_ticks: u16,
-    /// Multiplier applied to movement speed.
+    /// Nonnegative ordered movement multiplier; direct mutation is validated before motion.
     pub speed_multiplier: SimScalar,
-    /// Multiplier applied to weapon fire rate / period.
+    /// Strictly positive multiplier applied to weapon fire rate / period.
+    /// Direct mutation must preserve positivity; invalid rates produce tick diagnostics.
     pub attack_rate_multiplier: SimScalar,
 }
 
@@ -130,8 +157,13 @@ pub struct Entity {
     pub weapon_cooldown_remaining: u16,
     /// Active temporary stat buffs and debuffs.
     pub active_buffs: Vec<ActiveBuff>,
-    /// Building production queue of (UnitTypeId, remaining_build_ticks).
-    pub production_queue: VecDeque<(UnitTypeId, u16)>,
+    /// FIFO production jobs: archetype, remaining 25 Hz updates and reserved supply.
+    /// Only the front job advances per update, preserving the authored `u32` duration.
+    pub production_queue: VecDeque<crate::production::ProductionJob>,
+    /// Supply consumption captured at spawn; released only when this entity is reaped.
+    pub captured_supply_used: u32,
+    /// Completed supply provision captured at spawn, independent of later catalog edits.
+    pub captured_supply_provided: u32,
     /// Mineral walking flag allowing pass-through of unit collisions.
     pub is_mineral_walking: bool,
     /// Flag indicating whether the unit is anchored in Hold Position.
@@ -172,8 +204,9 @@ pub struct Entity {
     pub max_hp: SimScalar,
     /// Whether this building or unit has completed construction.
     pub is_completed: bool,
-    /// Whether the unit is currently loaded inside a cargo transport (untargetable, disjoints projectiles).
-    pub is_loaded_in_transport: bool,
+    /// Sole carrier identity while absent from world-space participation.
+    /// Only validated world transactions and controlled reap may change this link.
+    pub(crate) transport_carrier: Option<EntityId>,
     /// Invulnerability flag (e.g. Stasis field, Phase Shift, Recall, Divine Shield).
     pub is_invulnerable: bool,
 }
@@ -216,6 +249,8 @@ impl Entity {
             weapon_cooldown_remaining: 0,
             active_buffs: Vec::new(),
             production_queue: VecDeque::new(),
+            captured_supply_used: archetype.supply_cost,
+            captured_supply_provided: archetype.supply_provided,
             is_mineral_walking: false,
             is_holding_position: false,
             current_anim: AnimState::Idle,
@@ -236,13 +271,26 @@ impl Entity {
             is_cloaked: false,
             max_hp: archetype.max_hp,
             is_completed: true,
-            is_loaded_in_transport: false,
+            transport_carrier: None,
             is_invulnerable: false,
         }
     }
 
+    /// Returns the carrier identity while this actor is absent from world-space participation.
+    /// The owning world validates membership, owner and lifecycle consistency.
+    #[must_use]
+    pub const fn transport_carrier(&self) -> Option<EntityId> {
+        self.transport_carrier
+    }
+
+    /// Whether this actor is carried; derived solely from its authoritative carrier link.
+    #[must_use]
+    pub const fn is_loaded_in_transport(&self) -> bool {
+        self.transport_carrier.is_some()
+    }
+
     /// Handles player move/stop input during combat, executing SC2 backswing cancellation.
-    pub fn handle_interrupting_move(&mut self, move_pos: SimVec2) {
+    fn handle_interrupting_move(&mut self, move_pos: SimVec2) {
         match self.weapon_phase {
             WeaponPhase::Windup { .. } => {
                 // ABORT: Shot was winding up; moving cancels the shot with zero damage.
@@ -274,8 +322,39 @@ impl Entity {
         }
     }
 
-    /// Issues an order to this entity, optionally appending to the order queue.
-    pub fn issue_order(&mut self, order: UnitOrder, queue: bool) {
+    /// Issues an order, or schedules it when `queue` is true.
+    /// Returns false for a loaded actor or ordinary immediate legacy-stim HP ineligibility.
+    ///
+    /// # Errors
+    /// Returns typed malformed buff/cost evidence before changing any field.
+    pub fn issue_order(
+        &mut self,
+        order: UnitOrder,
+        queue: bool,
+    ) -> Result<bool, EntityAdmissionError> {
+        if self.is_loaded_in_transport() {
+            return Ok(false);
+        }
+        if !queue && matches!(order, UnitOrder::UseStim) {
+            return self.apply_stimpack();
+        }
+        self.commit_order(order, queue);
+        Ok(true)
+    }
+
+    /// Infallible concrete movement commit after world selection preflight.
+    pub(crate) fn commit_movement_order(&mut self, target: SimVec2, attack: bool, queue: bool) {
+        let order = if attack {
+            UnitOrder::AttackMove { target }
+        } else {
+            UnitOrder::Move { target }
+        };
+        self.commit_order(order, queue);
+    }
+
+    // Immediate UseStim is admitted by the public wrapper; the concrete movement
+    // helper only constructs Move/AttackMove. No fallible work follows admission.
+    fn commit_order(&mut self, order: UnitOrder, queue: bool) {
         if queue {
             self.order_queue.push_back(order);
             return;
@@ -303,9 +382,6 @@ impl Entity {
                 self.current_funnel_waypoints.clear();
                 self.is_holding_position = false;
             }
-            UnitOrder::UseStim => {
-                let _ = self.apply_stimpack();
-            }
             UnitOrder::AttackTarget { target } => {
                 if matches!(self.weapon_phase, WeaponPhase::Windup { .. }) {
                     self.weapon_phase = WeaponPhase::Ready;
@@ -329,13 +405,46 @@ impl Entity {
         }
     }
 
-    /// Applies temporary overclock combat buff according to data-driven archetype specification.
-    pub fn apply_overclock(&mut self, spec: OverclockSpec) -> bool {
-        if self.hp <= SimScalar::ONE {
-            return false;
+    /// Applies authored Overclock after preparing HP and the complete ordered speed fold.
+    /// Returns false for ordinary low-HP eligibility; errors leave all fields unchanged.
+    ///
+    /// # Errors
+    /// Rejects malformed rates/costs or unrepresentable payments/folds.
+    pub fn apply_overclock(&mut self, spec: OverclockSpec) -> Result<bool, EntityAdmissionError> {
+        let Some(prepared) = self.prepare_overclock(spec)? else {
+            return Ok(false);
+        };
+        self.commit_overclock(prepared);
+        Ok(true)
+    }
+
+    pub(crate) fn prepare_overclock(
+        &self,
+        spec: OverclockSpec,
+    ) -> Result<Option<PreparedOverclock>, EntityAdmissionError> {
+        AttackRate::new(spec.attack_rate_multiplier)?;
+        if spec.hp_cost < SimScalar::ZERO {
+            return Err(EntityAdmissionError::NegativeCost);
         }
-        self.hp = (self.hp - spec.hp_cost).max(SimScalar::ONE);
-        // Refresh or add Overclock buff (id 1)
+        let multiplier = self.prospective_speed_multiplier(1, spec.speed_multiplier)?;
+        if self.hp <= SimScalar::ONE {
+            return Ok(None);
+        }
+        let hp = self
+            .hp
+            .checked_sub(spec.hp_cost)
+            .ok_or(EntityAdmissionError::PaymentOverflow)?
+            .max(SimScalar::ONE);
+        Ok(Some(PreparedOverclock {
+            spec,
+            hp,
+            multiplier,
+        }))
+    }
+
+    pub(crate) fn commit_overclock(&mut self, prepared: PreparedOverclock) {
+        let spec = prepared.spec;
+        self.hp = prepared.hp;
         if let Some(buff) = self.active_buffs.iter_mut().find(|b| b.buff_id == 1) {
             buff.remaining_ticks = spec.duration_ticks;
             buff.speed_multiplier = spec.speed_multiplier;
@@ -348,11 +457,13 @@ impl Entity {
                 attack_rate_multiplier: spec.attack_rate_multiplier,
             });
         }
-        true
     }
 
-    /// Legacy stimpack helper calling [`Self::apply_overclock`] with default 10 HP / 250 ticks parameters.
-    pub fn apply_stimpack(&mut self) -> bool {
+    /// Legacy default Overclock admission; parameters retain existing gameplay values.
+    ///
+    /// # Errors
+    /// Propagates malformed buff state/payment evidence without mutation.
+    pub fn apply_stimpack(&mut self) -> Result<bool, EntityAdmissionError> {
         self.apply_overclock(OverclockSpec {
             hp_cost: SimScalar::from_i32(10),
             duration_ticks: 250,
@@ -361,18 +472,47 @@ impl Entity {
         })
     }
 
-    /// Applies Concussive Shells slow debuff: -50% speed for 75 ticks.
-    pub fn apply_concussive_slow(&mut self) {
+    /// Applies the existing half-speed75-tick debuff after checked fold preparation.
+    ///
+    /// # Errors
+    /// Rejects malformed or unrepresentable buff state without changing duration.
+    pub fn apply_concussive_slow(&mut self) -> Result<(), EntityAdmissionError> {
+        self.speed_multiplier()?;
         if let Some(buff) = self.active_buffs.iter_mut().find(|b| b.buff_id == 2) {
             buff.remaining_ticks = 75;
         } else {
+            self.prospective_speed_multiplier(2, SimScalar::HALF)?;
             self.active_buffs.push(ActiveBuff {
                 buff_id: 2,
                 remaining_ticks: 75,
-                speed_multiplier: SimScalar::from_num(0.5),
+                speed_multiplier: SimScalar::HALF,
                 attack_rate_multiplier: SimScalar::ONE,
             });
         }
+        Ok(())
+    }
+
+    fn prospective_speed_multiplier(
+        &self,
+        id: u8,
+        replacement: SimScalar,
+    ) -> Result<SimScalar, MovementMathError> {
+        self.speed_multiplier()?;
+        let mut replaced = false;
+        let mut product = SimScalar::ONE;
+        for (index, buff) in self.active_buffs.iter().enumerate() {
+            let value = if !replaced && buff.buff_id == id {
+                replaced = true;
+                replacement
+            } else {
+                buff.speed_multiplier
+            };
+            product = fold_speed(product, value, index)?;
+        }
+        if !replaced {
+            product = fold_speed(product, replacement, self.active_buffs.len())?;
+        }
+        Ok(product)
     }
 
     /// Applies calculated damage from an incoming attack.
@@ -401,23 +541,38 @@ impl Entity {
         self.hp > SimScalar::ZERO
     }
 
-    /// Returns the combined speed multiplier from active buffs.
-    #[must_use]
-    pub fn speed_multiplier(&self) -> SimScalar {
-        let mut mult = SimScalar::ONE;
-        for buff in &self.active_buffs {
-            mult *= buff.speed_multiplier;
-        }
-        mult
+    /// Returns the ordered nonnegative Q32.32 movement multiplier without saturation.
+    /// Quantization may underflow to zero, which is a valid stationary rate.
+    ///
+    /// # Errors
+    /// Identifies a negative multiplier or an unrepresentable ordered product.
+    pub fn speed_multiplier(&self) -> Result<SimScalar, MovementMathError> {
+        self.active_buffs
+            .iter()
+            .enumerate()
+            .try_fold(SimScalar::ONE, |product, (index, buff)| {
+                fold_speed(product, buff.speed_multiplier, index)
+            })
     }
 
-    /// Returns the combined attack rate multiplier from active buffs.
-    #[must_use]
-    pub fn attack_rate_multiplier(&self) -> SimScalar {
-        let mut mult = SimScalar::ONE;
-        for buff in &self.active_buffs {
-            mult *= buff.attack_rate_multiplier;
-        }
-        mult
+    /// Returns the ordered, representationally saturated positive buff-rate product.
+    ///
+    /// # Errors
+    /// Returns exact buff evidence if direct mutation introduced a nonpositive rate.
+    pub fn attack_rate_multiplier(&self) -> Result<AttackRate, InvalidBuffAttackRate> {
+        combined_attack_rate(&self.active_buffs)
     }
+}
+
+fn fold_speed(
+    product: SimScalar,
+    value: SimScalar,
+    index: usize,
+) -> Result<SimScalar, MovementMathError> {
+    if value < SimScalar::ZERO {
+        return Err(MovementMathError::NegativeMultiplier { index });
+    }
+    product
+        .checked_mul(value)
+        .ok_or(MovementMathError::Unrepresentable)
 }

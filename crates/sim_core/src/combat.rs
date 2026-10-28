@@ -323,11 +323,16 @@ pub fn is_within_firing_arc(
 }
 
 /// Advances the weapon state machine for an entity for a single tick.
+/// A carried actor returns false without changing any field, including cooldown.
 pub fn step_entity_weapon(
     entity: &mut Entity,
     weapon: &WeaponSpec,
     target_opt: Option<(SimVec2, SimScalar)>,
 ) -> bool {
+    // Valid cargo has no weapon participation; even cooldown/phase remain frozen.
+    if entity.is_loaded_in_transport() {
+        return false;
+    }
     // Decrement weapon cooldown if running
     entity.weapon_cooldown_remaining = entity.weapon_cooldown_remaining.saturating_sub(1);
 

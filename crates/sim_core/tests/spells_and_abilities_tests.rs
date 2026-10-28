@@ -76,7 +76,12 @@ fn test_overclock_stim_hp_cost_and_stat_multipliers() {
         SimScalar::from_num(45)
     );
     assert_eq!(
-        world.entities.get(&unit_id).unwrap().speed_multiplier(),
+        world
+            .entities
+            .get(&unit_id)
+            .unwrap()
+            .speed_multiplier()
+            .expect("valid fixture movement buff fold"),
         SimScalar::ONE
     );
 
@@ -88,7 +93,8 @@ fn test_overclock_stim_hp_cost_and_stat_multipliers() {
     let ent = world.entities.get(&unit_id).unwrap();
     assert_eq!(ent.hp, SimScalar::from_num(35), "HP must be deducted by 10");
     assert_eq!(
-        ent.speed_multiplier(),
+        ent.speed_multiplier()
+            .expect("valid fixture movement buff fold"),
         SimScalar::from_num(1.5),
         "Speed must be boosted by 1.5x"
     );
@@ -101,7 +107,9 @@ fn test_overclock_stim_hp_cost_and_stat_multipliers() {
     // Buff must have expired cleanly
     let ent_after = world.entities.get(&unit_id).unwrap();
     assert_eq!(
-        ent_after.speed_multiplier(),
+        ent_after
+            .speed_multiplier()
+            .expect("valid fixture movement buff fold"),
         SimScalar::ONE,
         "Overclock buff must expire after 250 ticks"
     );
@@ -176,6 +184,7 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
         bonus_upgrade_per_level: SimScalar::ZERO,
         target_loss_behavior: sim_types::ProjectileTargetLossBehavior::Fizzle,
         max_projectile_lifetime_ticks: sim_types::DEFAULT_PROJECTILE_LIFETIME_TICKS,
+        suicide_on_attack: false,
     };
 
     let ability = AbilitySpec {
@@ -233,12 +242,17 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
     );
 
     // Order sieged tank to attack primary enemy
-    world.entities.get_mut(&tank_id).unwrap().issue_order(
-        UnitOrder::AttackTarget {
-            target: enemy_primary,
-        },
-        false,
-    );
+    world
+        .entities
+        .get_mut(&tank_id)
+        .unwrap()
+        .issue_order(
+            UnitOrder::AttackTarget {
+                target: enemy_primary,
+            },
+            false,
+        )
+        .expect("valid authored fixture order or buff");
 
     let enemy_primary_hp_before = world.entities.get(&enemy_primary).unwrap().hp;
     let enemy_secondary_hp_before = world.entities.get(&enemy_secondary).unwrap().hp;

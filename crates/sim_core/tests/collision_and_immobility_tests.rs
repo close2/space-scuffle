@@ -31,7 +31,7 @@ fn empty_bundle(tick: u32) -> TickBundle {
 /// Test 7: Moving friendly unit pushes idle friendly unit laterally (perpendicular to velocity),
 /// preventing lane blockage while preserving forward advance.
 #[test]
-fn test_moving_friendly_pushes_idle_friendly_laterally() {
+fn test_moving_friendly_pushes_idle_friendly_laterally() -> Result<(), Box<dyn std::error::Error>> {
     let mover_params = PushEntityParams {
         id: EntityId(1),
         pos: SimVec2::new(SimScalar::from_num(5), SimScalar::from_num(10)),
@@ -52,11 +52,12 @@ fn test_moving_friendly_pushes_idle_friendly_laterally() {
         cannot_be_pushed: false,
     };
 
-    let distance = mover_params.pos.distance(idle_params.pos);
+    let distance = sim_core::movement::checked_distance(mover_params.pos, idle_params.pos)
+        .ok_or("distance")?;
     let combined_radius = SimScalar::ONE;
 
     let (delta_mover, delta_idle) =
-        compute_push_displacement(mover_params, idle_params, distance, combined_radius);
+        compute_push_displacement(mover_params, idle_params, distance, combined_radius)?;
 
     // Mover should suffer 0 displacement along forward vector
     assert_eq!(
@@ -70,12 +71,13 @@ fn test_moving_friendly_pushes_idle_friendly_laterally() {
         delta_idle.y.abs() > SimScalar::ZERO,
         "Idle friendly must be pushed laterally perpendicular to mover's velocity vector"
     );
+    Ok(())
 }
 
 /// Test 8: Friendly unit on HoldPosition acts as an immovable wall:
 /// Moving friendly cannot displace it (`delta == 0`); mover is displaced outward.
 #[test]
-fn test_hold_position_friendly_acts_as_immovable_wall() {
+fn test_hold_position_friendly_acts_as_immovable_wall() -> Result<(), Box<dyn std::error::Error>> {
     let mover_params = PushEntityParams {
         id: EntityId(1),
         pos: SimVec2::new(SimScalar::from_num(5), SimScalar::from_num(10)),
@@ -96,11 +98,12 @@ fn test_hold_position_friendly_acts_as_immovable_wall() {
         cannot_be_pushed: true,
     };
 
-    let distance = mover_params.pos.distance(hold_params.pos);
+    let distance = sim_core::movement::checked_distance(mover_params.pos, hold_params.pos)
+        .ok_or("distance")?;
     let combined_radius = SimScalar::ONE;
 
     let (delta_mover, delta_hold) =
-        compute_push_displacement(mover_params, hold_params, distance, combined_radius);
+        compute_push_displacement(mover_params, hold_params, distance, combined_radius)?;
 
     // Hold unit must not move an inch
     assert_eq!(
@@ -114,6 +117,7 @@ fn test_hold_position_friendly_acts_as_immovable_wall() {
         delta_mover.x < SimScalar::ZERO,
         "Mover must be displaced backward/away from the HoldPosition immovable wall"
     );
+    Ok(())
 }
 
 /// Test 9: Unit in Siege Mode (`is_immobile = true`, `unpushable = true`) cannot be displaced
@@ -172,12 +176,17 @@ fn test_immobile_unit_unpushable_during_siege_and_spell() {
         .expect("spawn mover");
 
     // Order mover to charge into the sieged unit
-    world.entities.get_mut(&mover_id).unwrap().issue_order(
-        UnitOrder::Move {
-            target: SimVec2::new(SimScalar::from_num(9), SimScalar::from_num(10)),
-        },
-        false,
-    );
+    world
+        .entities
+        .get_mut(&mover_id)
+        .unwrap()
+        .issue_order(
+            UnitOrder::Move {
+                target: SimVec2::new(SimScalar::from_num(9), SimScalar::from_num(10)),
+            },
+            false,
+        )
+        .expect("valid authored fixture order or buff");
 
     // Run collision resolution ticks
     for tick in 1..=10 {
@@ -252,7 +261,8 @@ fn test_converging_units_respect_speed_cap_and_do_not_vibrate() {
     // Order all 8 units to AttackTarget
     for &id in &converging_ids {
         if let Some(unit) = world.entities.get_mut(&id) {
-            unit.issue_order(UnitOrder::AttackTarget { target: target_id }, false);
+            unit.issue_order(UnitOrder::AttackTarget { target: target_id }, false)
+                .expect("valid authored fixture order or buff");
         }
     }
 

@@ -1,25 +1,45 @@
-//! # Authoritative State xxHash64 Checksum
+//! Canonical dynamic-state digests for lockstep verification.
 //!
-//! Computes a platform-independent 64-bit digest over all authoritative simulation state.
-//! Used for lockstep desync verification and replay synchronization.
+//! Covers persistent entities, projectiles, economy, upgrades, hazards, live RNG,
+//! terrain, fog memory and exposed navigation clearance. Catalogs must match
+//! separately; this is not a content compatibility handshake. A noncryptographic
+//! 64-bit digest can collide. Integers use fixed-width little-endian encodings;
+//! collections are framed and enums have explicit tags.
 //!
-//! ## Invariants Maintained
-//! 1. All raw fixed-point bits are serialized in little-endian byte order (`to_le_bytes`).
-//! 2. Entities are iterated in strictly sorted [`sim_types::EntityId`] order.
-//! 3. Zero floating-point data enters the hash calculation.
+//! Scratch search buffers and spatial buckets are excluded: the normal tick
+//! rebuilds the spatial index in target acquisition before querying it, and
+//! search/vision generation markers isolate stale workspace contents. The
+//! pathfinder must have been initialized for the world's map dimensions.
+//! Movement layer obstacle/recipient scratch is rebuilt or cleared before use and
+//! does not add authoritative policy state. Production occupancy is rebuilt before completion queries. Command outcomes and
+//! blocked-exit observations are derived outputs and never consulted for decisions.
+//! Renderer events, tick diagnostics and the previous digest are derived outputs,
+//! not authoritative inputs. The invalid source state behind a diagnostic is hashed.
 
-use crate::entity::{ActiveProjectile, Entity, WeaponPhase};
+mod encoding;
+
+use self::encoding::{Canonical, Encoder};
+use crate::entity::{ActiveProjectile, Entity};
+use crate::world::SimWorld;
 use sim_types::EntityId;
 use std::collections::BTreeMap;
-use xxhash_rust::xxh64::Xxh64;
+
+/// Canonical dynamic-state encoding version; changing it invalidates older digests.
+/// Schema 4 replaces the loaded boolean with an optional exact carrier identity.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 4;
 
 // PERFORMANCE RATIONALE:
-// Why: Hashing dynamic simulation state must execute in under 0.1 ms per tick.
-// What: xxHash64 processes >5 GB/s of memory. We stream primitive integer byte representations
-// in strictly sorted EntityId order directly into a persistent hasher.
-// Trade-off: Hashing all vital fields ensures 100% desync detection without allocating temporary strings.
+// Why: Serializing a complete world into a temporary byte vector allocates per checksum.
+// What: Stream canonical fields directly into xxHash64 without cloning world state.
+// Trade-off: Full coverage scans map cells for each player as well as dynamic objects;
+// this costs more than hashing only kinematics, but detects hidden divergence.
 
-/// Computes the authoritative 64-bit state checksum for the current simulation frame.
+/// Computes a partial entity/projectile digest using ticks and an initial RNG seed.
+///
+/// Preserves the historical call signature, but the canonical schema changes digest
+/// values. This cannot observe live RNG position or other world state. Use
+/// [`SimWorld::compute_checksum`] for lockstep world verification. Its domain is
+/// deliberately distinct from the world digest.
 #[must_use]
 pub fn compute_world_checksum(
     tick: u64,
@@ -27,46 +47,76 @@ pub fn compute_world_checksum(
     entities: &BTreeMap<EntityId, Entity>,
     projectiles: &[ActiveProjectile],
 ) -> u64 {
-    let mut hasher = Xxh64::new(0);
+    let mut encoder = Encoder::new("space-scuffle/entity-projectile");
+    tick.encode(&mut encoder);
+    rng_seed.encode(&mut encoder);
+    entities.encode(&mut encoder);
+    projectiles.encode(&mut encoder);
+    encoder.finish()
+}
 
-    hasher.update(&tick.to_le_bytes());
-    hasher.update(&rng_seed.to_le_bytes());
+/// Computes a canonical digest of persistent dynamic state without mutating `world`.
+///
+/// Requires identical unit/upgrade catalogs and a pathfinder initialized for the
+/// world's map. Catalog definitions, transient visual events, previous checksum,
+/// allocation capacities and algorithm workspaces are excluded. Persistent gameplay
+/// state and retained entity presentation state are included. This schema has no
+/// compatibility with the historical unversioned checksum.
+#[must_use]
+pub fn compute_simulation_checksum(world: &SimWorld) -> u64 {
+    let mut encoder = Encoder::new("space-scuffle/dynamic-world");
+    "clock-and-rng".encode(&mut encoder);
+    world.current_tick.encode(&mut encoder);
+    world.rng_seed.encode(&mut encoder);
+    world.rng.get_seed().as_slice().encode(&mut encoder);
+    world.rng.get_stream().encode(&mut encoder);
+    world.rng.get_word_pos().encode(&mut encoder);
+    world.next_entity_id.encode(&mut encoder);
+    world.next_projectile_id.encode(&mut encoder);
+    world.next_hazard_id.encode(&mut encoder);
+    world.vision_aware_pathfinding.encode(&mut encoder);
 
-    for (id, entity) in entities {
-        hasher.update(&id.0.to_le_bytes());
-        hasher.update(&entity.unit_type_id.0.to_le_bytes());
-        hasher.update(&entity.owner.0.to_le_bytes());
+    "entities".encode(&mut encoder);
+    world.entities.encode(&mut encoder);
+    "projectiles".encode(&mut encoder);
+    world.projectiles.encode(&mut encoder);
+    "players".encode(&mut encoder);
+    world.player_resources.as_slice().encode(&mut encoder);
+    world.player_upgrades.as_slice().encode(&mut encoder);
+    "hazards".encode(&mut encoder);
+    world.active_hazards.encode(&mut encoder);
 
-        // Deterministic fixed-point Q32.32 bits
-        hasher.update(&entity.position.x.raw().to_le_bytes());
-        hasher.update(&entity.position.y.raw().to_le_bytes());
-        hasher.update(&entity.velocity.x.raw().to_le_bytes());
-        hasher.update(&entity.velocity.y.raw().to_le_bytes());
-        hasher.update(&entity.heading.raw().to_le_bytes());
-        hasher.update(&entity.turret_angle.raw().to_le_bytes());
+    "map".encode(&mut encoder);
+    world.map.width().encode(&mut encoder);
+    world.map.height().encode(&mut encoder);
+    world.map.cells().encode(&mut encoder);
+    world.map.structures().encode(&mut encoder);
+    world.map.resources().encode(&mut encoder);
+    world.map.watchtowers().encode(&mut encoder);
 
-        hasher.update(&entity.hp.raw().to_le_bytes());
-        hasher.update(&entity.shields.raw().to_le_bytes());
-        hasher.update(&entity.energy.raw().to_le_bytes());
-        hasher.update(&entity.ticks_since_last_damage.to_le_bytes());
-        hasher.update(&entity.weapon_cooldown_remaining.to_le_bytes());
-
-        let phase_tag: u8 = match entity.weapon_phase {
-            WeaponPhase::Ready => 0,
-            WeaponPhase::RotatingToTarget { .. } => 1,
-            WeaponPhase::Windup { .. } => 2,
-            WeaponPhase::Backswing { .. } => 3,
-            WeaponPhase::Cooldown => 4,
-        };
-        hasher.update(&[phase_tag]);
+    "vision".encode(&mut encoder);
+    encoder.length(world.vision_maps.len());
+    for vision in &world.vision_maps {
+        vision.width().encode(&mut encoder);
+        vision.height().encode(&mut encoder);
+        vision.states().encode(&mut encoder);
+        vision.visible_counter().encode(&mut encoder);
+        vision.detector_counter().encode(&mut encoder);
     }
+    world.known_blocked_cells.as_slice().encode(&mut encoder);
 
-    for proj in projectiles {
-        hasher.update(&proj.id.to_le_bytes());
-        hasher.update(&proj.owner.0.to_le_bytes());
-        hasher.update(&proj.current_pos.x.raw().to_le_bytes());
-        hasher.update(&proj.current_pos.y.raw().to_le_bytes());
+    "navigation".encode(&mut encoder);
+    world.pathfinder.nav_version().encode(&mut encoder);
+    world.map.width().encode(&mut encoder);
+    world.map.height().encode(&mut encoder);
+    for y in 0..world.map.height() {
+        for x in 0..world.map.width() {
+            world.pathfinder.clearance_at(x, y).encode(&mut encoder);
+            world
+                .pathfinder
+                .static_clearance_at(x, y)
+                .encode(&mut encoder);
+        }
     }
-
-    hasher.digest()
+    encoder.finish()
 }

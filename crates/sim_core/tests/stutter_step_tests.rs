@@ -115,12 +115,18 @@ fn test_stutter_step_backswing_cancellation() {
         );
     }
 
-    // Tick 4: Player issues Move(0.0, 10.0), cancelling backswing immediately!
+    // Tick 4: Move west to the exact legal full-radius map boundary.
+    // An x=0 target would correctly reject rather than interrupt the weapon.
+    let legal_boundary = world
+        .catalog
+        .get(pulse_bot_id)
+        .expect("selected archetype exists")
+        .collision_radius;
     let move_cmd = PlayerCommand {
         player_id: player_blue,
         entities: vec![marine_id],
         order: UnitOrder::Move {
-            target: SimVec2::new(SimScalar::ZERO, SimScalar::from_num(10)),
+            target: SimVec2::new(legal_boundary, SimScalar::from_num(10)),
         },
         queue: false,
     };
@@ -131,6 +137,12 @@ fn test_stutter_step_backswing_cancellation() {
     };
 
     world.step(&bundle_move);
+    assert_eq!(world.movement_outcomes().len(), 1);
+    assert!(
+        world.movement_outcomes()[0].result.is_ok(),
+        "{:?}",
+        world.movement_outcomes()
+    );
     {
         let marine = world.entities.get(&marine_id).expect("marine exists");
         let speed = world

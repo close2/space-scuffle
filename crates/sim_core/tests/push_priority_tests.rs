@@ -100,7 +100,9 @@ fn test_hold_position_friendly_hard_blocks() {
     // Anchor Marine B on Hold Position
     {
         let ent_b = world.entities.get_mut(&marine_b).expect("marine b exists");
-        ent_b.issue_order(UnitOrder::HoldPosition, false);
+        ent_b
+            .issue_order(UnitOrder::HoldPosition, false)
+            .expect("valid authored fixture order or buff");
     }
 
     let initial_pos_b = world.entities.get(&marine_b).expect("b exists").position;
@@ -195,7 +197,7 @@ fn test_enemy_unit_hard_collision_reciprocal() {
 }
 
 #[test]
-fn test_pure_displacement_math() {
+fn test_pure_displacement_math() -> Result<(), Box<dyn std::error::Error>> {
     let pos_a = SimVec2::new(SimScalar::from_num(10), SimScalar::from_num(10));
     let vel_a = SimVec2::new(SimScalar::from_num(1), SimScalar::ZERO);
     let pos_b = SimVec2::new(SimScalar::from_num(10.5), SimScalar::from_num(10));
@@ -222,7 +224,7 @@ fn test_pure_displacement_math() {
 
     // Moving friendly collides with Idle friendly:
     let (d_a, d_b) =
-        compute_push_displacement(a, b, SimScalar::from_num(0.5), SimScalar::from_num(0.8));
+        compute_push_displacement(a, b, SimScalar::from_num(0.5), SimScalar::from_num(0.8))?;
 
     assert_eq!(
         d_a,
@@ -234,4 +236,5 @@ fn test_pure_displacement_math() {
         SimScalar::ZERO,
         "Idle ally must be displaced sideways"
     );
+    Ok(())
 }

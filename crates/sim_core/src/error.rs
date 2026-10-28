@@ -9,6 +9,25 @@ use thiserror::Error;
 /// Errors that can occur within the deterministic simulation core.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum SimCoreError {
+    /// An entity order or buff has malformed authored/current numeric input.
+    #[error(transparent)]
+    EntityAdmission(#[from] crate::entity::EntityAdmissionError),
+    /// Checked movement speed or geometry preparation failed.
+    #[error(transparent)]
+    MovementMath(#[from] crate::movement::MovementMathError),
+    /// An atomic spawn or supply operation encountered invalid authoritative state.
+    #[error(transparent)]
+    ProductionInvariant(#[from] crate::production::ProductionInvariant),
+    /// A researched effect could not be accumulated without losing numeric information.
+    #[error(transparent)]
+    UpgradeApplication(#[from] sim_types::UpgradeApplicationError),
+
+    /// Applying an upgrade would overflow a live entity's hull hit points.
+    #[error("upgrade would overflow live hit points for entity {entity:?}")]
+    UpgradeEntityVitalsOverflow {
+        /// Entity whose current or maximum hit points cannot represent the effect.
+        entity: EntityId,
+    },
     /// An entity with the given ID was not found in active simulation state.
     #[error("Entity with ID {0:?} does not exist")]
     EntityNotFound(EntityId),
@@ -59,6 +78,35 @@ pub enum SimCoreError {
     /// Catalog file could not be read from disk.
     #[error("I/O error: {0}")]
     IoError(String),
+
+    /// Authored definitions reuse a numeric identifier within one registry.
+    #[error("duplicate {kind} catalog ID {id}")]
+    CatalogDuplicateId {
+        /// Registry in which the identifier must be unique.
+        kind: &'static str,
+        /// Conflicting identifier from the authored data.
+        id: u32,
+    },
+
+    /// Authored definitions reuse a slug under the registry's lookup semantics.
+    #[error("duplicate {kind} catalog slug '{slug}'")]
+    CatalogDuplicateSlug {
+        /// Registry in which the slug must be unique.
+        kind: &'static str,
+        /// Conflicting authored slug.
+        slug: String,
+    },
+
+    /// An authored value cannot be safely represented by the simulation schema.
+    #[error("invalid catalog field '{field}' in '{definition}': {reason}")]
+    CatalogInvalidValue {
+        /// Definition slug or other author-facing identity.
+        definition: String,
+        /// Field path within the definition.
+        field: String,
+        /// Stable explanation of the violated input invariant.
+        reason: &'static str,
+    },
 
     /// Missing prerequisite structure required for building construction or research.
     #[error("Missing prerequisite structure '{required}' to produce/research '{target}'")]

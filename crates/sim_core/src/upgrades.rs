@@ -1,6 +1,6 @@
 //! # Authoritative Upgrade Catalog & In-Memory Upgrade Registry
 //!
-//! Provides fast O(1) indexed lookup for all weapon/armor scaling upgrades and unit-specific tech upgrades.
+//! Provides deterministic indexed lookup for weapon/armor scaling upgrades and unit-specific tech upgrades.
 //!
 //! ## Invariants Maintained
 //! 1. All upgrades are strictly data-driven loaded from `assets/catalog/upgrades.ron`.
@@ -56,7 +56,7 @@ pub struct UpgradeDef {
 /// Read-only indexed catalog of all registered game upgrades.
 #[derive(Debug, Clone, Default)]
 pub struct UpgradeCatalog {
-    upgrades_by_id: Vec<Option<UpgradeDef>>,
+    upgrades_by_id: BTreeMap<UpgradeId, UpgradeDef>,
     upgrades_by_slug: BTreeMap<String, UpgradeId>,
 }
 
@@ -64,23 +64,38 @@ impl UpgradeCatalog {
     /// Deserializes an upgrade catalog from raw RON text.
     ///
     /// # Errors
-    /// Returns [`SimCoreError::RonDeserializationError`] if parsing fails.
+    /// Returns [`SimCoreError`] for malformed RON, duplicate IDs/slugs or blank slugs.
     pub fn from_ron_str(ron_data: &str) -> SimResult<Self> {
         let catalog_file: UpgradeCatalogFile = ron::from_str(ron_data)
             .map_err(|e| SimCoreError::RonDeserializationError(e.to_string()))?;
 
-        let mut catalog = Self {
-            upgrades_by_id: vec![None; 128],
-            upgrades_by_slug: BTreeMap::new(),
-        };
+        let mut catalog = Self::default();
 
         for def in catalog_file.upgrades {
             let id = def.upgrade_id;
-            catalog.upgrades_by_slug.insert(def.slug.clone(), id);
-            if id as usize >= catalog.upgrades_by_id.len() {
-                catalog.upgrades_by_id.resize(id as usize + 32, None);
+            if def.slug.trim().is_empty() {
+                return Err(SimCoreError::CatalogInvalidValue {
+                    definition: def.name,
+                    field: "slug".to_owned(),
+                    reason: "must not be blank",
+                });
             }
-            catalog.upgrades_by_id[id as usize] = Some(def);
+            if catalog.upgrades_by_id.contains_key(&id) {
+                return Err(SimCoreError::CatalogDuplicateId {
+                    kind: "upgrade",
+                    id,
+                });
+            }
+            if catalog.upgrades_by_slug.contains_key(&def.slug) {
+                return Err(SimCoreError::CatalogDuplicateSlug {
+                    kind: "upgrade",
+                    slug: def.slug,
+                });
+            }
+            catalog.upgrades_by_slug.insert(def.slug.clone(), id);
+            // Sparse authored u32 IDs must not trigger allocation proportional to
+            // their numeric value. Ordered storage also preserves ID-order iteration.
+            catalog.upgrades_by_id.insert(id, def);
         }
 
         Ok(catalog)
@@ -111,9 +126,7 @@ impl UpgradeCatalog {
     /// Looks up an upgrade by its integer [`UpgradeId`].
     #[must_use]
     pub fn get_by_id(&self, id: UpgradeId) -> Option<&UpgradeDef> {
-        self.upgrades_by_id
-            .get(id as usize)
-            .and_then(Option::as_ref)
+        self.upgrades_by_id.get(&id)
     }
 
     /// Looks up an upgrade by its canonical slug string.
@@ -126,6 +139,6 @@ impl UpgradeCatalog {
 
     /// Iterates over all registered upgrade definitions.
     pub fn upgrades(&self) -> impl Iterator<Item = &UpgradeDef> {
-        self.upgrades_by_id.iter().flatten()
+        self.upgrades_by_id.values()
     }
 }

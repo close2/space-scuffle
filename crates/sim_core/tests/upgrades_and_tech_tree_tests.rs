@@ -218,14 +218,21 @@ fn test_metabolic_boost_speed() {
 
     // Base speed is 0.1652
     let base_speed = mantis_arch.max_speed;
-    assert_eq!(world.effective_max_speed(mantis_arch, p3), base_speed);
+    assert_eq!(
+        world
+            .effective_max_speed(mantis_arch, p3)
+            .expect("valid fixture effective speed"),
+        base_speed
+    );
 
     // Research metabolic_boost (+0.0826 speed delta, exactly +50%)
     world
         .research_upgrade(p3, "metabolic_boost")
         .expect("research metabolic_boost");
 
-    let effective_speed = world.effective_max_speed(mantis_arch, p3);
+    let effective_speed = world
+        .effective_max_speed(mantis_arch, p3)
+        .expect("valid fixture effective speed");
     let expected_speed = base_speed + SimScalar::from_num(0.0826);
     assert_eq!(effective_speed, expected_speed);
 

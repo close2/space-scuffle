@@ -33,9 +33,14 @@ pub mod checksum;
 pub mod combat;
 pub mod entity;
 pub mod error;
+pub mod movement;
+pub mod production;
+pub mod scenario;
 pub mod steering;
 pub mod tech_tree;
+pub mod transport;
 pub mod upgrades;
+pub mod weapon_timing;
 pub mod world;
 
 pub use catalog::{SplashSpec, UnitArchetype, UnitCatalog, WeaponSpec};
@@ -55,4 +60,7 @@ pub use steering::{
 };
 pub use tech_tree::TechTreeValidator;
 pub use upgrades::{UpgradeCatalog, UpgradeDef, UpgradeId};
-pub use world::{PlayerResources, SimWorld};
+pub use weapon_timing::{
+    AttackRate, InvalidAttackRate, InvalidBuffAttackRate, SimulationDiagnostic,
+};
+pub use world::{ActiveHazardZone, PlayerResources, SimWorld};

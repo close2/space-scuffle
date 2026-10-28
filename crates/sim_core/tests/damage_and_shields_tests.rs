@@ -112,6 +112,7 @@ fn dummy_weapon_spec(
         bonus_upgrade_per_level: SimScalar::ZERO,
         target_loss_behavior: sim_types::ProjectileTargetLossBehavior::Fizzle,
         max_projectile_lifetime_ticks: sim_types::DEFAULT_PROJECTILE_LIFETIME_TICKS,
+        suicide_on_attack: false,
     }
 }
 
@@ -402,6 +403,7 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
         bonus_upgrade_per_level: SimScalar::ZERO,
         target_loss_behavior: sim_types::ProjectileTargetLossBehavior::Fizzle,
         max_projectile_lifetime_ticks: sim_types::DEFAULT_PROJECTILE_LIFETIME_TICKS,
+        suicide_on_attack: false,
     };
 
     // Case B: Weapon with friendly_fire: false
@@ -462,7 +464,8 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
             .entities
             .get_mut(&attacker)
             .unwrap()
-            .issue_order(UnitOrder::AttackTarget { target: target_red }, false);
+            .issue_order(UnitOrder::AttackTarget { target: target_red }, false)
+            .expect("valid authored fixture order or buff");
 
         let red_hp_before = world.entities.get(&target_red).unwrap().hp;
         let ally_hp_before = world.entities.get(&ally_blue).unwrap().hp;
@@ -486,8 +489,13 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
             "Blue ally must sustain splash damage when weapon friendly_fire == true"
         );
 
-        // Despawn units
-        world.entities.clear();
+        // Retire this fixture through the actual lifecycle so captured supply
+        // is released before the next independent splash comparison.
+        for entity in world.entities.values_mut() {
+            entity.hp = SimScalar::ZERO;
+        }
+        world.reap_dead_and_emit_shatter();
+        assert!(world.entities.is_empty());
     }
 
     // 2. Test friendly_fire: false
@@ -524,7 +532,8 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
             .entities
             .get_mut(&attacker)
             .unwrap()
-            .issue_order(UnitOrder::AttackTarget { target: target_red }, false);
+            .issue_order(UnitOrder::AttackTarget { target: target_red }, false)
+            .expect("valid authored fixture order or buff");
 
         let red_hp_before = world.entities.get(&target_red).unwrap().hp;
         let ally_hp_before = world.entities.get(&ally_blue).unwrap().hp;
