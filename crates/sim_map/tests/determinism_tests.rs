@@ -105,8 +105,9 @@ fn test_cross_platform_determinism_checksum() {
     let final_checksum = hasher.digest();
     eprintln!("sim_map reference checksum: 0x{:016x}", final_checksum);
 
-    // Baseline reference digest computed with fixed seed
-    const EXPECTED_CHECKSUM: u64 = 0xc62a_9a2f_f0f2_e14f;
+    // Fixed-seed reference after ramp-connected terrain edges and validated funnel
+    // segments replaced the unrestricted ramp cliff-transition exemption.
+    const EXPECTED_CHECKSUM: u64 = 0xadc6_cb16_b772_f1a2;
     assert_eq!(
         final_checksum, EXPECTED_CHECKSUM,
         "Checksum diverged from reference"

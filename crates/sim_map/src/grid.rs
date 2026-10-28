@@ -28,7 +28,7 @@ impl CliffLevel {
     #[must_use]
     #[inline]
     pub fn height_scalar(self) -> SimScalar {
-        SimScalar::from_num(self.0) * SimScalar::from_num(3)
+        SimScalar::from_num(self.0) * SimScalar::from_num(CLIFF_LEVEL_HEIGHT)
     }
 
     /// Computes visual floating-point altitude for rendering interpolation.
@@ -38,6 +38,15 @@ impl CliffLevel {
         self.height_scalar().to_f32()
     }
 }
+
+/// World-unit height of one cliff level step.
+pub const CLIFF_LEVEL_HEIGHT: i32 = 3;
+
+/// Maximum allowed contiguous ramp run in cells along its ascending direction.
+///
+/// Maps containing contiguous ramp runs strictly exceeding this length are rejected by
+/// [`crate::validation::validate_map`] with [`crate::validation::MapValidationError::RampRunTooLong`].
+pub const MAX_RAMP_RUN_CELLS: u8 = 8;
 
 /// Compass direction that a ramp ascends towards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -58,6 +67,58 @@ pub enum RampDir {
     SouthEast,
     /// Ascends towards negative X and negative Y (-X, -Y).
     SouthWest,
+}
+
+/// Position of a ramp cell inside its contiguous ramp run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RampProfile {
+    /// Compass direction that this ramp ascends towards.
+    pub dir: RampDir,
+    /// Base cliff level at the lower landing of this ramp run.
+    pub low_level: CliffLevel,
+    /// Zero-based cell index of this cell along the ascending direction within its run.
+    pub index: u8,
+    /// Total number of contiguous ramp cells in this run (invariant: strictly >= 1).
+    pub run_len: u8,
+}
+
+impl RampProfile {
+    /// Ramp progress t ∈ [0, 1] at cell-local coordinates `(fx, fy)` ∈ [0, 1]².
+    #[must_use]
+    pub fn progress(&self, fx: SimScalar, fy: SimScalar) -> SimScalar {
+        let zero = SimScalar::ZERO;
+        let one = SimScalar::ONE;
+        let fx = fx.clamp(zero, one);
+        let fy = fy.clamp(zero, one);
+
+        let along = match self.dir {
+            RampDir::North => fy,
+            RampDir::South => one - fy,
+            RampDir::East => fx,
+            RampDir::West => one - fx,
+            // Legacy diagonal progress formulas (not producible by map format v1)
+            RampDir::NorthEast => (fx + fy) / SimScalar::from_num(2),
+            RampDir::NorthWest => ((one - fx) + fy) / SimScalar::from_num(2),
+            RampDir::SouthEast => (fx + (one - fy)) / SimScalar::from_num(2),
+            RampDir::SouthWest => ((one - fx) + (one - fy)) / SimScalar::from_num(2),
+        };
+
+        if matches!(
+            self.dir,
+            RampDir::NorthEast | RampDir::NorthWest | RampDir::SouthEast | RampDir::SouthWest
+        ) {
+            along
+        } else {
+            (SimScalar::from_num(self.index) + along) / SimScalar::from_num(self.run_len)
+        }
+    }
+
+    /// Surface altitude at cell-local coordinates `(fx, fy)` in world units.
+    #[must_use]
+    pub fn height_at(&self, fx: SimScalar, fy: SimScalar) -> SimScalar {
+        self.low_level.height_scalar()
+            + self.progress(fx, fy) * SimScalar::from_num(CLIFF_LEVEL_HEIGHT)
+    }
 }
 
 /// Visual and acoustic terrain type.
@@ -380,10 +441,81 @@ impl GameMap {
         ))
     }
 
+    /// Returns the ramp profile of cell `(x, y)`, or `None` if it is not a ramp.
+    #[must_use]
+    pub fn ramp_profile(&self, x: u32, y: u32) -> Option<RampProfile> {
+        let cell = self.cell(x, y).ok()?;
+        let dir = cell.ramp?;
+
+        let (dx, dy) = match dir {
+            RampDir::North => (0i32, 1i32),
+            RampDir::South => (0i32, -1i32),
+            RampDir::East => (1i32, 0i32),
+            RampDir::West => (-1i32, 0i32),
+            RampDir::NorthEast | RampDir::NorthWest | RampDir::SouthEast | RampDir::SouthWest => {
+                // Legacy behaviour for diagonal ramps (index = 0, run_len = 1)
+                return Some(RampProfile {
+                    dir,
+                    low_level: cell.cliff_level,
+                    index: 0,
+                    run_len: 1,
+                });
+            }
+        };
+
+        // Walk in -s (descending direction)
+        let mut index = 0u8;
+        let mut cx = x as i32;
+        let mut cy = y as i32;
+        while index < MAX_RAMP_RUN_CELLS - 1 {
+            cx -= dx;
+            cy -= dy;
+            if cx < 0 || cy < 0 {
+                break;
+            }
+            match self.cell(cx as u32, cy as u32) {
+                Ok(neighbor)
+                    if neighbor.ramp == Some(dir) && neighbor.cliff_level == cell.cliff_level =>
+                {
+                    index += 1;
+                }
+                _ => break,
+            }
+        }
+
+        // Walk in +s (ascending direction)
+        let mut after = 0u8;
+        cx = x as i32;
+        cy = y as i32;
+        while after < MAX_RAMP_RUN_CELLS - 1 {
+            cx += dx;
+            cy += dy;
+            if cx < 0 || cy < 0 {
+                break;
+            }
+            match self.cell(cx as u32, cy as u32) {
+                Ok(neighbor)
+                    if neighbor.ramp == Some(dir) && neighbor.cliff_level == cell.cliff_level =>
+                {
+                    after += 1;
+                }
+                _ => break,
+            }
+        }
+
+        let run_len = index + 1 + after;
+        Some(RampProfile {
+            dir,
+            low_level: cell.cliff_level,
+            index,
+            run_len,
+        })
+    }
+
     /// Computes deterministic fixed-point terrain altitude at continuous world position `pos`.
     ///
     /// If `pos` falls on a flat plateau, returns `cliff_level.height_scalar()`.
-    /// If on a ramp cell, performs deterministic linear interpolation along the ramp axis.
+    /// If on a ramp cell, performs deterministic linear interpolation along the ramp axis using `RampProfile`.
     #[must_use]
     pub fn terrain_altitude_scalar(&self, pos: SimVec2) -> SimScalar {
         let (cx, cy) = match self.world_to_cell(pos) {
@@ -394,30 +526,13 @@ impl GameMap {
             Ok(c) => c,
             Err(_) => return SimScalar::ZERO,
         };
-        let base_height = cell.cliff_level.height_scalar();
-        let Some(ramp_dir) = cell.ramp else {
-            return base_height;
+        let Some(profile) = self.ramp_profile(cx, cy) else {
+            return cell.cliff_level.height_scalar();
         };
 
         let fx = pos.x - SimScalar::from_num(cx);
         let fy = pos.y - SimScalar::from_num(cy);
-        let zero = SimScalar::ZERO;
-        let one = SimScalar::ONE;
-        let fx = fx.clamp(zero, one);
-        let fy = fy.clamp(zero, one);
-
-        let t = match ramp_dir {
-            RampDir::North => fy,
-            RampDir::South => one - fy,
-            RampDir::East => fx,
-            RampDir::West => one - fx,
-            RampDir::NorthEast => (fx + fy) / SimScalar::from_num(2),
-            RampDir::NorthWest => ((one - fx) + fy) / SimScalar::from_num(2),
-            RampDir::SouthEast => (fx + (one - fy)) / SimScalar::from_num(2),
-            RampDir::SouthWest => ((one - fx) + (one - fy)) / SimScalar::from_num(2),
-        };
-        let step_height = SimScalar::from_num(3);
-        base_height + t * step_height
+        profile.height_at(fx, fy)
     }
 
     /// Computes smooth visual floating-point altitude for client rendering interpolation.

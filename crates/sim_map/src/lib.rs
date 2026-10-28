@@ -29,20 +29,33 @@
 pub mod error;
 pub mod grid;
 pub mod loader;
+pub mod map_format;
 pub mod pathfinding;
+pub mod traversal;
+pub mod validation;
 pub mod vision;
 
 pub use error::{MapError, PlacementFailureReason, Result};
 pub use grid::{
-    CellFlags, CliffLevel, GameMap, MapCell, PlacedStructure, RampDir, ResourceKind, ResourceNode,
-    TerrainKind, Watchtower,
+    CellFlags, CliffLevel, GameMap, MapCell, PlacedStructure, RampDir, RampProfile, ResourceKind,
+    ResourceNode, TerrainKind, Watchtower, CLIFF_LEVEL_HEIGHT, MAX_RAMP_RUN_CELLS,
 };
 pub use loader::ScMapData;
+pub use map_format::{
+    MapCellSpec, MapDocument, MapEntityId, MapFile, MapFormatError, MapLayer, MapMetadata,
+    MapResource, MapStartLocation, MapWatchtower, CURRENT_MAP_FORMAT_VERSION, MAX_MAP_DIMENSION,
+    MIN_MAP_DIMENSION, WATCHTOWER_ENTITY_ID_BASE,
+};
 pub use pathfinding::{
     PathRequest, PathRequestWithVision, PathResult, Pathfinder, PathfinderBuffers, PortalEdge,
     UnitClearance, CORNER_SAFETY_MARGIN, NO_HEAP_POS,
 };
 pub use sim_types::VisibilityState;
+pub use validation::{
+    validate_map, CellRect, MapValidationError, MapValidationReport, MapValidationWarning,
+    MAX_PLAYER_SLOTS, MIN_RECOMMENDED_RAMP_WIDTH, MIN_START_LOCATIONS, MIN_START_SEPARATION_CELLS,
+    RESOURCE_ASSOCIATION_RADIUS_CELLS, VALIDATION_PATH_CLEARANCE,
+};
 pub use vision::{PlayerVisionMap, VisionSource};
 
 /// Canonical type alias for [`GameMap`] matching simulation core naming conventions.

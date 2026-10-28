@@ -6,7 +6,7 @@
 //! produce smooth, arbitrary-angle Euclidean waypoints.
 
 use crate::error::{MapError, Result};
-use crate::grid::{CellFlags, CliffLevel, GameMap, MapCell};
+use crate::grid::{CellFlags, GameMap};
 use crate::vision::PlayerVisionMap;
 use serde::{Deserialize, Serialize};
 use sim_types::{SimScalar, SimVec2, VisibilityState};
@@ -332,29 +332,19 @@ impl Pathfinder {
                     Err(_) => continue,
                 };
 
-                let static_passable = cell.flags.contains(CellFlags::GROUND_PATHABLE)
-                    && !cell.flags.contains(CellFlags::UNPASSABLE_CLIFF);
+                let static_passable =
+                    map.terrain_step_is_connected((x as u32, y as u32), (x as u32, y as u32));
                 let dynamic_passable =
                     static_passable && !cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE);
 
-                let cell_right = map.cell((x + 1) as u32, y as u32).ok();
-                let cell_down = map.cell(x as u32, (y + 1) as u32).ok();
-                let cell_diag = map.cell((x + 1) as u32, (y + 1) as u32).ok();
-
-                let cliff_compatible = |other: Option<&MapCell>| -> bool {
-                    match other {
-                        Some(o) => {
-                            o.cliff_level == cell.cliff_level
-                                || cell.flags.contains(CellFlags::RAMP)
-                                || o.flags.contains(CellFlags::RAMP)
-                        }
-                        None => false,
-                    }
-                };
-
-                let cliff_match = cliff_compatible(cell_right)
-                    && cliff_compatible(cell_down)
-                    && cliff_compatible(cell_diag);
+                let origin = (x as u32, y as u32);
+                let right = ((x + 1) as u32, y as u32);
+                let down = (x as u32, (y + 1) as u32);
+                let diagonal = ((x + 1) as u32, (y + 1) as u32);
+                let cliff_match = map.terrain_step_is_connected(origin, right)
+                    && map.terrain_step_is_connected(origin, down)
+                    && map.terrain_step_is_connected(right, diagonal)
+                    && map.terrain_step_is_connected(down, diagonal);
 
                 if static_passable {
                     if x == w - 1 || y == h - 1 {
@@ -455,14 +445,13 @@ impl Pathfinder {
         let start_idx = (start_cy as usize) * (self.width as usize) + (start_cx as usize);
         let goal_idx = (goal_cy as usize) * (self.width as usize) + (goal_cx as usize);
 
-        let start_terrain_ok = start_cell.flags.contains(CellFlags::GROUND_PATHABLE)
-            && !start_cell.flags.contains(CellFlags::UNPASSABLE_CLIFF);
+        let start_terrain_ok =
+            map.terrain_step_is_connected((start_cx, start_cy), (start_cx, start_cy));
         if !start_terrain_ok || is_structure_known(start_idx, start_cx, start_cy) {
             return Err(MapError::InvalidStart(request.start));
         }
 
-        let goal_terrain_ok = goal_cell.flags.contains(CellFlags::GROUND_PATHABLE)
-            && !goal_cell.flags.contains(CellFlags::UNPASSABLE_CLIFF);
+        let goal_terrain_ok = map.terrain_step_is_connected((goal_cx, goal_cy), (goal_cx, goal_cy));
         if !goal_terrain_ok || is_structure_known(goal_idx, goal_cx, goal_cy) {
             return Err(MapError::InvalidGoal(request.goal));
         }
@@ -491,6 +480,13 @@ impl Pathfinder {
             return Err(MapError::InvalidStart(request.start));
         }
         if clearance_table[goal_idx] < req_clearance {
+            return Err(MapError::InvalidGoal(request.goal));
+        }
+
+        if !self.segment_is_passable(map, request, request.start, request.start) {
+            return Err(MapError::InvalidStart(request.start));
+        }
+        if !self.segment_is_passable(map, request, request.goal, request.goal) {
             return Err(MapError::InvalidGoal(request.goal));
         }
 
@@ -528,11 +524,6 @@ impl Pathfinder {
             let cy = (current_idx / (self.width as usize)) as u32;
             let current_g = self.buffers.g_score[current_idx];
 
-            let cell = match map.cell(cx, cy) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-
             // Explore 8 neighbors
             for dy in -1i32..=1i32 {
                 for dx in -1i32..=1i32 {
@@ -560,8 +551,7 @@ impl Pathfinder {
                         for ox in 0..req_clearance as u32 {
                             let fx = nx_u32 + ox;
                             let fy = ny_u32 + oy;
-                            let f_idx = (fy as usize) * (self.width as usize) + (fx as usize);
-                            if is_structure_known(f_idx, fx, fy) {
+                            if !is_cell_passable_for_request(map, request, fx as i32, fy as i32) {
                                 footprint_blocked = true;
                                 break;
                             }
@@ -590,54 +580,19 @@ impl Pathfinder {
                         }
                     }
 
-                    // Cliff connectivity invariant
-                    let cliff_passable = n_cell.cliff_level == cell.cliff_level
-                        || n_cell.flags.contains(CellFlags::RAMP)
-                        || cell.flags.contains(CellFlags::RAMP);
-
-                    if !cliff_passable {
+                    if !map.terrain_step_is_connected((cx, cy), (nx_u32, ny_u32)) {
                         continue;
                     }
 
                     let is_diag = dx != 0 && dy != 0;
 
-                    // Corner pinch validation for diagonal movement
-                    if is_diag {
-                        let orth_x_cell = map.cell(nx_u32, cy);
-                        let orth_y_cell = map.cell(cx, ny_u32);
-
-                        let orth_x_is_cliff = orth_x_cell
-                            .as_ref()
-                            .is_ok_and(|c| c.flags.contains(CellFlags::UNPASSABLE_CLIFF));
-                        let orth_y_is_cliff = orth_y_cell
-                            .as_ref()
-                            .is_ok_and(|c| c.flags.contains(CellFlags::UNPASSABLE_CLIFF));
-
-                        if orth_x_is_cliff || orth_y_is_cliff {
-                            continue;
-                        }
-
-                        let orth_x_idx = (cy as usize) * (self.width as usize) + (nx_u32 as usize);
-                        let orth_y_idx = (ny_u32 as usize) * (self.width as usize) + (cx as usize);
-
-                        let orth_x_passable = orth_x_cell.is_ok_and(|c| {
-                            c.flags.contains(CellFlags::GROUND_PATHABLE)
-                                && !is_structure_known(orth_x_idx, nx_u32, cy)
-                        });
-                        let orth_y_passable = orth_y_cell.is_ok_and(|c| {
-                            c.flags.contains(CellFlags::GROUND_PATHABLE)
-                                && !is_structure_known(orth_y_idx, cx, ny_u32)
-                        });
-
-                        // Small units can slip through diagonal corners between buildings
-                        if request.clearance == UnitClearance::Small {
-                            if !orth_x_passable && !orth_y_passable {
-                                // Diagonal squeeze between two structures is allowed for Small
-                            }
-                        } else if !orth_x_passable || !orth_y_passable {
-                            // Medium and Large units cannot cut diagonal corners with obstacles
-                            continue;
-                        }
+                    // Structure corner squeezing is separate from terrain topology.
+                    if is_diag
+                        && request.clearance != UnitClearance::Small
+                        && (!is_cell_passable_for_request(map, request, nx, cy as i32)
+                            || !is_cell_passable_for_request(map, request, cx as i32, ny))
+                    {
+                        continue;
                     }
 
                     let step_cost = if is_diag { 14 } else { 10 };
@@ -680,7 +635,13 @@ impl Pathfinder {
         self.build_portals(map, request);
 
         // Run Simple Stupid Funnel string-pulling
-        let waypoints = self.run_funnel(map, request);
+        let mut waypoints = self.run_funnel(map, request);
+        if !waypoints
+            .windows(2)
+            .all(|pair| self.segment_is_passable(map, request, pair[0], pair[1]))
+        {
+            waypoints = self.smooth_connected_corridor(map, request)?;
+        }
 
         let mut total_length = SimScalar::ZERO;
         for w in waypoints.windows(2) {
@@ -691,6 +652,108 @@ impl Pathfinder {
             waypoints,
             total_length,
         })
+    }
+
+    /// Validates a continuous world-space segment using this request's current
+    /// ground clearance, vision and remembered structure policy without allocating.
+    /// This is the same predicate used to verify and smooth generated routes.
+    #[must_use]
+    pub fn segment_is_passable(
+        &self,
+        map: &GameMap,
+        request: &PathRequestWithVision<'_>,
+        start: SimVec2,
+        goal: SimVec2,
+    ) -> bool {
+        let required = request.clearance.required_clearance_cells();
+        let clearance = if request.vision.is_some() || request.known_structures.is_some() {
+            &self.static_clearance_grid
+        } else {
+            &self.clearance_grid
+        };
+        map.ground_segment_is_connected(start, goal, |previous, next| {
+            let index = (next.1 as usize) * (self.width as usize) + next.0 as usize;
+            if clearance[index] < required {
+                return false;
+            }
+            for oy in 0..u32::from(required) {
+                for ox in 0..u32::from(required) {
+                    if !is_cell_passable_for_request(
+                        map,
+                        request,
+                        (next.0 + ox) as i32,
+                        (next.1 + oy) as i32,
+                    ) {
+                        return false;
+                    }
+                }
+            }
+            if previous.0 != next.0
+                && previous.1 != next.1
+                && request.clearance != UnitClearance::Small
+            {
+                return is_cell_passable_for_request(
+                    map,
+                    request,
+                    previous.0 as i32,
+                    next.1 as i32,
+                ) && is_cell_passable_for_request(
+                    map,
+                    request,
+                    next.0 as i32,
+                    previous.1 as i32,
+                );
+            }
+            true
+        })
+    }
+
+    /// Constrains string-pulling to visible points of the verified A* corridor.
+    ///
+    /// Funnel corner offsets and widened portals can leave the original corridor.
+    /// When their segments are invalid, greedily retain the furthest visible corridor
+    /// center. Every retained edge is tested against the complete request policy.
+    fn smooth_connected_corridor(
+        &mut self,
+        map: &GameMap,
+        request: &PathRequestWithVision<'_>,
+    ) -> Result<Vec<SimVec2>> {
+        self.buffers.waypoints_scratch.clear();
+        self.buffers.waypoints_scratch.push(request.start);
+        let end_index = self.buffers.corridor_cells.len() + 1;
+        let point = |index: usize| -> Result<SimVec2> {
+            if index == 0 {
+                Ok(request.start)
+            } else if index == end_index {
+                Ok(request.goal)
+            } else {
+                let cell = self.buffers.corridor_cells[index - 1];
+                map.cell_to_world_center(cell % self.width, cell / self.width)
+            }
+        };
+        let mut current_index = 0;
+        while current_index < end_index {
+            let current = point(current_index)?;
+            let mut visible = None;
+            for candidate in ((current_index + 1)..=end_index).rev() {
+                let candidate_point = point(candidate)?;
+                if self.segment_is_passable(map, request, current, candidate_point) {
+                    visible = Some((candidate, candidate_point));
+                    break;
+                }
+            }
+            let Some((index, next)) = visible else {
+                return Err(MapError::NoPathFound {
+                    start: request.start,
+                    goal: request.goal,
+                });
+            };
+            if self.buffers.waypoints_scratch.last() != Some(&next) {
+                self.buffers.waypoints_scratch.push(next);
+            }
+            current_index = index;
+        }
+        Ok(self.buffers.waypoints_scratch.clone())
     }
 
     fn build_portals(&mut self, map: &GameMap, request: &PathRequestWithVision<'_>) {
@@ -769,12 +832,6 @@ impl Pathfinder {
         let dx = x2 - x1;
         let dy = y2 - y1;
 
-        let base_cell1 = map.cell(x1 as u32, y1 as u32).ok();
-        let base_cell2 = map.cell(x2 as u32, y2 as u32).ok();
-        let base_is_ramp = base_cell1.is_some_and(|c| c.flags.contains(CellFlags::RAMP))
-            || base_cell2.is_some_and(|c| c.flags.contains(CellFlags::RAMP));
-        let base_cliff = base_cell1.map_or(CliffLevel(0), |c| c.cliff_level);
-
         if dx > 0 {
             // East step (+X): portal along line x = x2
             let mut y_up = y1;
@@ -784,8 +841,8 @@ impl Pathfinder {
                     request,
                     (x1, y_up + 1),
                     (x2, y_up + 1),
-                    base_cliff,
-                    base_is_ramp,
+                    (x1, y_up),
+                    (x2, y_up),
                 )
             {
                 y_up += 1;
@@ -797,8 +854,8 @@ impl Pathfinder {
                     request,
                     (x1, y_down - 1),
                     (x2, y_down - 1),
-                    base_cliff,
-                    base_is_ramp,
+                    (x1, y_down),
+                    (x2, y_down),
                 )
             {
                 y_down -= 1;
@@ -816,8 +873,8 @@ impl Pathfinder {
                     request,
                     (x1, y_up + 1),
                     (x2, y_up + 1),
-                    base_cliff,
-                    base_is_ramp,
+                    (x1, y_up),
+                    (x2, y_up),
                 )
             {
                 y_up += 1;
@@ -829,8 +886,8 @@ impl Pathfinder {
                     request,
                     (x1, y_down - 1),
                     (x2, y_down - 1),
-                    base_cliff,
-                    base_is_ramp,
+                    (x1, y_down),
+                    (x2, y_down),
                 )
             {
                 y_down -= 1;
@@ -848,8 +905,8 @@ impl Pathfinder {
                     request,
                     (x_left - 1, y1),
                     (x_left - 1, y2),
-                    base_cliff,
-                    base_is_ramp,
+                    (x_left, y1),
+                    (x_left, y2),
                 )
             {
                 x_left -= 1;
@@ -861,8 +918,8 @@ impl Pathfinder {
                     request,
                     (x_right + 1, y1),
                     (x_right + 1, y2),
-                    base_cliff,
-                    base_is_ramp,
+                    (x_right, y1),
+                    (x_right, y2),
                 )
             {
                 x_right += 1;
@@ -880,8 +937,8 @@ impl Pathfinder {
                     request,
                     (x_left - 1, y1),
                     (x_left - 1, y2),
-                    base_cliff,
-                    base_is_ramp,
+                    (x_left, y1),
+                    (x_left, y2),
                 )
             {
                 x_left -= 1;
@@ -893,8 +950,8 @@ impl Pathfinder {
                     request,
                     (x_right + 1, y1),
                     (x_right + 1, y2),
-                    base_cliff,
-                    base_is_ramp,
+                    (x_right, y1),
+                    (x_right, y2),
                 )
             {
                 x_right += 1;
@@ -1049,10 +1106,24 @@ fn is_cell_passable_for_request(
     let Ok(c) = map.cell(ux, uy) else {
         return false;
     };
-    if !c.flags.contains(CellFlags::GROUND_PATHABLE)
-        || c.flags.contains(CellFlags::UNPASSABLE_CLIFF)
-    {
+    if !map.terrain_step_is_connected((ux, uy), (ux, uy)) {
         return false;
+    }
+    if request.block_unexplored_ramps {
+        if let Some(vision) = request.vision {
+            let Ok((start_x, start_y)) = map.world_to_cell(request.start) else {
+                return false;
+            };
+            let Ok(start_cell) = map.cell(start_x, start_y) else {
+                return false;
+            };
+            if (ux, uy) != (start_x, start_y)
+                && vision.visibility_at(ux, uy) == VisibilityState::Unexplored
+                && (c.ramp.is_some() || c.cliff_level > start_cell.cliff_level)
+            {
+                return false;
+            }
+        }
     }
     if c.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE) {
         let is_known = if let Some(mask) = request.known_structures {
@@ -1070,44 +1141,25 @@ fn is_cell_passable_for_request(
     true
 }
 
-/// Returns `true` if candidate portal pair cells `(x1, y1)` and `(x2, y2)` are passable,
-/// mutually cliff-compatible, and cliff-compatible with the step's base cliff level.
+/// Extends a portal only across a connected strip of terrain on both sides.
 #[inline]
 fn is_portal_pair_compatible(
     map: &GameMap,
     request: &PathRequestWithVision<'_>,
     p1: (i32, i32),
     p2: (i32, i32),
-    base_cliff: CliffLevel,
-    base_is_ramp: bool,
+    previous1: (i32, i32),
+    previous2: (i32, i32),
 ) -> bool {
-    let (x1, y1) = p1;
-    let (x2, y2) = p2;
-    if !is_cell_passable_for_request(map, request, x1, y1)
-        || !is_cell_passable_for_request(map, request, x2, y2)
+    if !is_cell_passable_for_request(map, request, p1.0, p1.1)
+        || !is_cell_passable_for_request(map, request, p2.0, p2.1)
     {
         return false;
     }
-    let Ok(c1) = map.cell(x1 as u32, y1 as u32) else {
-        return false;
-    };
-    let Ok(c2) = map.cell(x2 as u32, y2 as u32) else {
-        return false;
-    };
-    let mutual = c1.cliff_level == c2.cliff_level
-        || c1.flags.contains(CellFlags::RAMP)
-        || c2.flags.contains(CellFlags::RAMP);
-    if !mutual {
-        return false;
-    }
-    if !base_is_ramp {
-        let c1_match = c1.cliff_level == base_cliff || c1.flags.contains(CellFlags::RAMP);
-        let c2_match = c2.cliff_level == base_cliff || c2.flags.contains(CellFlags::RAMP);
-        if !c1_match || !c2_match {
-            return false;
-        }
-    }
-    true
+    let cell = |p: (i32, i32)| (p.0 as u32, p.1 as u32);
+    map.terrain_step_is_connected(cell(p1), cell(p2))
+        && map.terrain_step_is_connected(cell(previous1), cell(p1))
+        && map.terrain_step_is_connected(cell(previous2), cell(p2))
 }
 
 #[inline]
