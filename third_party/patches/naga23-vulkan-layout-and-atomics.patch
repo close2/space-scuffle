@@ -1,0 +1,365 @@
+--- a/src/back/spv/mod.rs
++++ b/src/back/spv/mod.rs
+@@ -406,7 +406,12 @@
+ /// [`proc::TypeResolution`]: crate::proc::TypeResolution
+ #[derive(Debug, PartialEq, Hash, Eq, Copy, Clone)]
+ enum LookupType {
++    /// Undecorated logical values and local/workgroup pointees. Unsized block
++    /// structures are interface-only and alias their Interface ID instead.
+     Handle(Handle<crate::Type>),
++    /// Buffer-interface composites preserving host offsets and strides. Types
++    /// without layout decorations reuse their logical ID.
++    Interface(Handle<crate::Type>),
+     Local(LocalType),
+ }
+ 
+--- a/src/back/spv/writer.rs
++++ b/src/back/spv/writer.rs
+@@ -189,7 +189,9 @@
+             Entry::Occupied(e) => *e.get(),
+             Entry::Vacant(e) => {
+                 let local = match lookup_ty {
+-                    LookupType::Handle(_handle) => unreachable!("Handles are populated at start"),
++                    LookupType::Handle(_) | LookupType::Interface(_) => {
++                        unreachable!("Handles are populated at start")
++                    }
+                     LookupType::Local(local) => local,
+                 };
+ 
+@@ -898,7 +900,12 @@
+                 Instruction::type_pointer(id, class, base_id)
+             }
+             LocalType::Pointer { base, class } => {
+-                let type_id = self.get_type_id(LookupType::Handle(base));
++                let lookup = if interface_storage_class(class) {
++                    LookupType::Interface(base)
++                } else {
++                    LookupType::Handle(base)
++                };
++                let type_id = self.get_type_id(lookup);
+                 Instruction::type_pointer(id, class, type_id)
+             }
+             LocalType::Image(image) => {
+@@ -911,7 +918,7 @@
+                 Instruction::type_sampled_image(id, image_type_id)
+             }
+             LocalType::BindingArray { base, size } => {
+-                let inner_ty = self.get_type_id(LookupType::Handle(base));
++                let inner_ty = self.get_type_id(LookupType::Interface(base));
+                 let scalar_id = self.get_constant_scalar(crate::Literal::U32(size));
+                 Instruction::type_array(id, inner_ty, scalar_id)
+             }
+@@ -958,13 +965,9 @@
+                 }
+             }
+         } else {
+-            use spirv::Decoration;
+-
+             let id = self.id_gen.next();
+             let instruction = match ty.inner {
+-                crate::TypeInner::Array { base, size, stride } => {
+-                    self.decorate(id, Decoration::ArrayStride, &[stride]);
+-
++                crate::TypeInner::Array { base, size, .. } => {
+                     let type_id = self.get_type_id(LookupType::Handle(base));
+                     match size {
+                         crate::ArraySize::Constant(length) => {
+@@ -975,7 +978,7 @@
+                     }
+                 }
+                 crate::TypeInner::BindingArray { base, size } => {
+-                    let type_id = self.get_type_id(LookupType::Handle(base));
++                    let type_id = self.get_type_id(LookupType::Interface(base));
+                     match size {
+                         crate::ArraySize::Constant(length) => {
+                             let length_id = self.get_index_constant(length.get());
+@@ -988,26 +991,30 @@
+                     ref members,
+                     span: _,
+                 } => {
+-                    let mut has_runtime_array = false;
++                    // Runtime-array structures are interface-only and cannot be
++                    // loaded as whole logical values. Keep one valid Block type.
++                    let interface_only = members.last().is_some_and(|member| {
++                        matches!(
++                            arena[member.ty].inner,
++                            crate::TypeInner::Array {
++                                size: crate::ArraySize::Dynamic,
++                                ..
++                            }
++                        )
++                    });
+                     let mut member_ids = Vec::with_capacity(members.len());
+                     for (index, member) in members.iter().enumerate() {
+-                        let member_ty = &arena[member.ty];
+-                        match member_ty.inner {
+-                            crate::TypeInner::Array {
+-                                base: _,
+-                                size: crate::ArraySize::Dynamic,
+-                                stride: _,
+-                            } => {
+-                                has_runtime_array = true;
+-                            }
+-                            _ => (),
++                        if interface_only {
++                            self.decorate_struct_member(id, index, member, arena)?;
+                         }
+-                        self.decorate_struct_member(id, index, member, arena)?;
+-                        let member_id = self.get_type_id(LookupType::Handle(member.ty));
+-                        member_ids.push(member_id);
+-                    }
+-                    if has_runtime_array {
+-                        self.decorate(id, Decoration::Block, &[]);
++                        member_ids.push(self.get_type_id(if interface_only {
++                            LookupType::Interface(member.ty)
++                        } else {
++                            LookupType::Handle(member.ty)
++                        }));
++                    }
++                    if interface_only {
++                        self.decorate(id, spirv::Decoration::Block, &[]);
+                     }
+                     Instruction::type_struct(id, member_ids.as_slice())
+                 }
+@@ -1694,9 +1701,13 @@
+         let init_word = global_variable
+             .init
+             .map(|constant| self.constant_ids[constant]);
+-        let inner_type_id = self.get_type_id(
+-            substitute_inner_type_lookup.unwrap_or(LookupType::Handle(global_variable.ty)),
+-        );
++        let inner_type_id = self.get_type_id(substitute_inner_type_lookup.unwrap_or(
++            if interface_storage_class(class) {
++                LookupType::Interface(global_variable.ty)
++            } else {
++                LookupType::Handle(global_variable.ty)
++            },
++        ));
+ 
+         // generate the wrapping structure if needed
+         let pointer_type_id = if global_needs_wrapper(ir_module, global_variable) {
+@@ -1746,7 +1757,7 @@
+                             }
+                         }
+                         if should_decorate {
+-                            let decorated_id = self.get_type_id(LookupType::Handle(base));
++                            let decorated_id = self.get_type_id(LookupType::Interface(base));
+                             self.decorate(decorated_id, Decoration::Block, &[]);
+                         }
+                     }
+@@ -1771,6 +1782,59 @@
+         Instruction::variable(pointer_type_id, id, class, init_word)
+             .to_words(&mut self.logical_layout.declarations);
+         Ok(id)
++    }
++
++    /// Creates the host-visible type variant separately from logical values.
++    /// Buffer layout decorations must never leak into workgroup/private variables.
++    fn write_interface_type(
++        &mut self,
++        arena: &UniqueArena<crate::Type>,
++        handle: Handle<crate::Type>,
++    ) -> Result<(), Error> {
++        let logical = self.get_type_id(LookupType::Handle(handle));
++        let id = match &arena[handle].inner {
++            crate::TypeInner::Array { base, size, stride } => {
++                let id = self.id_gen.next();
++                let base_id = self.get_type_id(LookupType::Interface(*base));
++                self.decorate(id, spirv::Decoration::ArrayStride, &[*stride]);
++                let instruction = match *size {
++                    crate::ArraySize::Constant(length) => {
++                        let length_id = self.get_index_constant(length.get());
++                        Instruction::type_array(id, base_id, length_id)
++                    }
++                    crate::ArraySize::Dynamic => Instruction::type_runtime_array(id, base_id),
++                };
++                instruction.to_words(&mut self.logical_layout.declarations);
++                id
++            }
++            crate::TypeInner::Struct { members, .. } => {
++                let interface_only = members.last().is_some_and(|member| {
++                    matches!(
++                        arena[member.ty].inner,
++                        crate::TypeInner::Array {
++                            size: crate::ArraySize::Dynamic,
++                            ..
++                        }
++                    )
++                });
++                if interface_only {
++                    logical
++                } else {
++                    let id = self.id_gen.next();
++                    let mut member_ids = Vec::with_capacity(members.len());
++                    for (index, member) in members.iter().enumerate() {
++                        self.decorate_struct_member(id, index, member, arena)?;
++                        member_ids.push(self.get_type_id(LookupType::Interface(member.ty)));
++                    }
++                    Instruction::type_struct(id, &member_ids)
++                        .to_words(&mut self.logical_layout.declarations);
++                    id
++                }
++            }
++            _ => logical,
++        };
++        self.lookup_type.insert(LookupType::Interface(handle), id);
++        Ok(())
+     }
+ 
+     /// Write the necessary decorations for a struct member.
+@@ -1937,6 +2001,7 @@
+         // write all types
+         for (handle, _) in ir_module.types.iter() {
+             self.write_type_declaration_arena(&ir_module.types, handle)?;
++            self.write_interface_type(&ir_module.types, handle)?;
+         }
+ 
+         // write all const-expressions as constants
+@@ -2103,3 +2168,13 @@
+     writer.write_physical_layout();
+     assert_eq!(writer.physical_layout.bound, 3);
+ }
++
++/// Explicit layout is required only for host-visible buffer interfaces.
++fn interface_storage_class(class: spirv::StorageClass) -> bool {
++    matches!(
++        class,
++        spirv::StorageClass::Uniform
++            | spirv::StorageClass::StorageBuffer
++            | spirv::StorageClass::PushConstant
++    )
++}
+--- a/src/back/spv/block.rs
++++ b/src/back/spv/block.rs
+@@ -1972,6 +1972,72 @@
+         }
+     }
+ 
++    /// Returns a buffer-interface pointee when a load/store crosses a layout boundary.
++    fn interface_pointee(&self, pointer: Handle<crate::Expression>) -> Option<Handle<crate::Type>> {
++        match *self.fun_info[pointer].ty.inner_with(&self.ir_module.types) {
++            crate::TypeInner::Pointer {
++                base,
++                space:
++                    crate::AddressSpace::Uniform
++                    | crate::AddressSpace::Storage { .. }
++                    | crate::AddressSpace::PushConstant,
++            } => Some(base),
++            _ => None,
++        }
++    }
++
++    /// Converts composite values without changing scalar bits or buffer layout.
++    fn convert_layout(
++        &mut self,
++        ty: Handle<crate::Type>,
++        value: Word,
++        to_interface: bool,
++        block: &mut Block,
++    ) -> Word {
++        let logical = self.get_type_id(LookupType::Handle(ty));
++        let interface = self.get_type_id(LookupType::Interface(ty));
++        if logical == interface {
++            return value;
++        }
++        // The validator forbids loading/storing unsized values. After the ID
++        // equality check, only sized arrays/structures can need conversion:
++        // scalar/vector/matrix types share IDs and unsized blocks alias IDs.
++        let children: Vec<_> = match &self.ir_module.types[ty].inner {
++            crate::TypeInner::Array {
++                base,
++                size: crate::ArraySize::Constant(length),
++                ..
++            } => vec![*base; length.get() as usize],
++            crate::TypeInner::Struct { members, .. } => {
++                members.iter().map(|member| member.ty).collect()
++            }
++            _ => unreachable!("Only sized composite values cross an interface layout boundary"),
++        };
++        let mut values = Vec::with_capacity(children.len());
++        for (index, child) in children.into_iter().enumerate() {
++            let source_type = self.get_type_id(if to_interface {
++                LookupType::Handle(child)
++            } else {
++                LookupType::Interface(child)
++            });
++            let extracted = self.gen_id();
++            block.body.push(Instruction::composite_extract(
++                source_type,
++                extracted,
++                value,
++                &[index as u32],
++            ));
++            values.push(self.convert_layout(child, extracted, to_interface, block));
++        }
++        let result = self.gen_id();
++        block.body.push(Instruction::composite_construct(
++            if to_interface { interface } else { logical },
++            result,
++            &values,
++        ));
++        result
++    }
++
+     fn write_checked_load(
+         &mut self,
+         pointer: Handle<crate::Expression>,
+@@ -1979,7 +2045,11 @@
+         access_type_adjustment: AccessTypeAdjustment,
+         result_type_id: Word,
+     ) -> Result<Word, Error> {
+-        match self.write_expression_pointer(pointer, block, access_type_adjustment)? {
++        let interface_pointee = self.interface_pointee(pointer);
++        let result_type_id = interface_pointee.map_or(result_type_id, |ty| {
++            self.get_type_id(LookupType::Interface(ty))
++        });
++        let loaded = match self.write_expression_pointer(pointer, block, access_type_adjustment)? {
+             ExpressionPointer::Ready { pointer_id } => {
+                 let id = self.gen_id();
+                 let atomic_space =
+@@ -2031,7 +2101,12 @@
+                 );
+                 Ok(value)
+             }
+-        }
++        }?;
++        Ok(if let Some(ty) = interface_pointee {
++            self.convert_layout(ty, loaded, false, block)
++        } else {
++            loaded
++        })
+     }
+ 
+     fn spill_to_internal_variable(&mut self, base: Handle<crate::Expression>, block: &mut Block) {
+@@ -2599,7 +2674,10 @@
+                     self.writer.write_barrier(flags, &mut block);
+                 }
+                 Statement::Store { pointer, value } => {
+-                    let value_id = self.cached[value];
++                    let mut value_id = self.cached[value];
++                    if let Some(ty) = self.interface_pointee(pointer) {
++                        value_id = self.convert_layout(ty, value_id, true, &mut block);
++                    }
+                     match self.write_expression_pointer(
+                         pointer,
+                         &mut block,
+--- a/src/back/spv/helpers.rs
++++ b/src/back/spv/helpers.rs
+@@ -72,12 +72,12 @@
+     pub(super) const fn to_spirv_semantics_and_scope(
+         self,
+     ) -> (spirv::MemorySemantics, spirv::Scope) {
++        // WGSL atomics use relaxed ordering. Storage-class memory-semantics
++        // bits require stronger ordering in Vulkan and must not be added here.
++        // Control/memory barriers retain their independently emitted semantics.
+         match self {
+-            Self::Storage { .. } => (spirv::MemorySemantics::UNIFORM_MEMORY, spirv::Scope::Device),
+-            Self::WorkGroup => (
+-                spirv::MemorySemantics::WORKGROUP_MEMORY,
+-                spirv::Scope::Workgroup,
+-            ),
++            Self::Storage { .. } => (spirv::MemorySemantics::empty(), spirv::Scope::Device),
++            Self::WorkGroup => (spirv::MemorySemantics::empty(), spirv::Scope::Workgroup),
+             _ => (spirv::MemorySemantics::empty(), spirv::Scope::Invocation),
+         }
+     }

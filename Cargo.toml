@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["third_party/naga", "tools/renderer_compatibility"]
 members = [
     "crates/sim_types",
     "crates/sim_map",
@@ -72,3 +73,7 @@ sim_types = { path = "crates/sim_types" }
 sim_map = { path = "crates/sim_map" }
 sim_core = { path = "crates/sim_core" }
 asset_baker = { path = "crates/asset_baker" }
+
+# Reviewed Vulkan compiler corrections; provenance and regression commands live in third_party/README.md.
+[patch.crates-io]
+naga = { path = "third_party/naga" }
