@@ -43,7 +43,7 @@ use bevy::time::TimeUpdateStrategy;
 use bevy::window::{PrimaryWindow, WindowCloseRequested};
 use bevy_egui::EguiPlugin;
 use client::battle_pipeline::session::BattleSession;
-use client::bubble_shader::{BubbleDomeMaterial, FlipbookRegistry};
+use client::bubble_shader::{BubbleDomeMaterial, BubbleInstance, FlipbookRegistry};
 use client::camera::RtsCamera;
 use client::editor::camera::{focus_cell, CAMERA_HEIGHT_EASE_PER_SEC};
 use client::editor::commands::{ChangeSet, EditCommand, History};
@@ -73,6 +73,7 @@ use sim_map::map_format::{
 };
 use sim_map::validation::validate_map;
 use sim_types::commands::{PlayerCommand, TickBundle, UnitOrder};
+use sim_types::enums::ShapeKind;
 use sim_types::ids::{EntityId, PlayerId, Tick};
 use sim_types::math::{SimScalar, SimVec2};
 
@@ -1616,4 +1617,87 @@ fn tool_and_overlay_shortcuts_reach_their_state() {
             .brush_radius,
         radius + 1
     );
+}
+
+#[test]
+fn playtest_click_selects_a_unit_and_right_click_commands_it() {
+    let mut harness = EditorHarness::new();
+    harness.tap_key(KeyCode::F5);
+    harness.step(6);
+    assert_eq!(harness.phase(), EditorPhase::Playtesting);
+
+    // Frame player 0's base, then find a mobile unit of theirs on screen.
+    let world = harness.app.world_mut();
+    let mut camera = world.query::<&mut RtsCamera>();
+    camera.single_mut(world).target = Vec2::new(12.0, 12.0);
+    harness.step(3);
+
+    let world = harness.app.world_mut();
+    let (camera, camera_transform) = world
+        .query_filtered::<(&Camera, &GlobalTransform), With<RtsCamera>>()
+        .single(world);
+    let (camera, camera_transform) = (camera.clone(), *camera_transform);
+    let mut bubbles =
+        world.query_filtered::<(&GlobalTransform, &BubbleInstance), With<LiveBattleBubble>>();
+    let (unit, unit_position) = bubbles
+        .iter(world)
+        .filter(|(_, bubble)| {
+            bubble.0.owner == PlayerId(0) && matches!(bubble.0.shape, ShapeKind::UnitSphere)
+        })
+        .find_map(|(transform, bubble)| {
+            camera
+                .world_to_viewport(&camera_transform, transform.translation())
+                .ok()
+                .map(|position| (bubble.0.entity_id, position))
+        })
+        .expect("player 0 must have a mobile unit in view");
+
+    // Left click selects it, and the highlight survives snapshot republication.
+    harness.move_cursor(unit_position);
+    harness.press_left();
+    harness.release_left();
+    harness.step(3);
+    let selected = harness
+        .app
+        .world()
+        .resource::<PlaytestState>()
+        .selected_unit_ids
+        .clone();
+    assert_eq!(selected, vec![unit], "the clicked unit must be selected");
+    let world = harness.app.world_mut();
+    let mut drawn = world.query::<(&BubbleInstance, &MeshMaterial3d<BubbleDomeMaterial>)>();
+    let (instance, material) = drawn
+        .iter(world)
+        .find(|(bubble, _)| bubble.0.entity_id == unit)
+        .expect("selected unit is drawn");
+    assert!(instance.0.selected);
+    let material = world
+        .resource::<Assets<BubbleDomeMaterial>>()
+        .get(&material.0)
+        .expect("bubble material exists");
+    assert_eq!(
+        material.uniform.selected, 1,
+        "the shader must show the selection"
+    );
+
+    // Right click issues a real move through the production command queue.
+    let outcomes_before = harness
+        .app
+        .world()
+        .resource::<BattleSession>()
+        .outcome_count;
+    let target = harness.cell_on_screen(20, 20);
+    harness.move_cursor(target);
+    harness.send_mouse(MouseButton::Right, ButtonState::Pressed);
+    harness.send_mouse(MouseButton::Right, ButtonState::Released);
+    harness.step(4);
+
+    let session = harness.app.world().resource::<BattleSession>();
+    assert!(
+        session.outcome_count > outcomes_before,
+        "the order must reach the simulation; queue status: {:?}",
+        session.commands.status()
+    );
+    let lab = harness.app.world().resource::<LabState>();
+    assert_eq!(lab.battle_failure, None);
 }
