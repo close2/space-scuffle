@@ -22,7 +22,7 @@ const DOWNLOAD_URL: &str =
 fn client(key: &str, shim: &CurlShim) -> VeoClient {
     VeoClient::with_credentials(VeoCredentials {
         api_key: key.to_string(),
-        project_id: "test-project".to_string(),
+        project_id: Some("test-project".to_string()),
     })
     .with_curl_path(shim.path())
 }
@@ -319,7 +319,7 @@ fn b2_a_key_with_config_syntax_cannot_inject_curl_options() {
 fn b2_debug_output_redacts_the_key() {
     let credentials = VeoCredentials {
         api_key: GEMINI_KEY.to_string(),
-        project_id: "test-project".to_string(),
+        project_id: Some("test-project".to_string()),
     };
     let client = VeoClient::with_credentials(credentials.clone());
 
@@ -335,10 +335,13 @@ fn b2_endpoint_urls_carry_no_key() {
     for key in [GEMINI_KEY, VERTEX_KEY] {
         let client = VeoClient::with_credentials(VeoCredentials {
             api_key: key.to_string(),
-            project_id: "test-project".to_string(),
+            project_id: Some("test-project".to_string()),
         });
-        assert!(!client.build_initiate_url().contains(key));
-        assert!(!client.build_poll_url("operations/op1").contains(key));
+        assert!(!client.build_initiate_url().expect("URL").contains(key));
+        assert!(!client
+            .build_poll_url("operations/op1")
+            .expect("URL")
+            .contains(key));
     }
 }
 
@@ -363,7 +366,7 @@ fn b2_api_error_text_never_contains_the_key() {
 fn b2_missing_curl_is_a_typed_error() {
     let client = VeoClient::with_credentials(VeoCredentials {
         api_key: GEMINI_KEY.to_string(),
-        project_id: "test-project".to_string(),
+        project_id: Some("test-project".to_string()),
     })
     .with_curl_path(Path::new("/nonexistent/curl"));
 

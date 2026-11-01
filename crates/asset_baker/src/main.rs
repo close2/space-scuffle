@@ -70,11 +70,11 @@ enum Commands {
     /// Generates genuine 3D animation videos using Google Veo video generation models.
     #[command(name = "generate-veo")]
     GenerateVeo {
-        /// Specific unit archetype to generate (e.g. "marine", "marauder", "zealot", "command_dome").
+        /// Exact unit slug from the catalog. Near matches are refused.
         #[arg(short, long)]
         unit: Option<String>,
 
-        /// Flag to generate all 4 starter archetypes: marine, zealot, marauder, command_dome.
+        /// Flag to generate every showcase hero in the catalog.
         #[arg(long)]
         all_starters: bool,
 
@@ -252,6 +252,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             };
 
+            // Refuse a mistyped unit before credentials are read or anything is spent.
+            for u in &units {
+                asset_baker::validate_catalog_slug(u)?;
+            }
+
             let client = match asset_baker::veo_client::VeoClient::new_auto() {
                 Ok(c) => c.with_model(&model),
                 Err(e) => {
@@ -274,7 +279,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if dry_run {
                     println!("\n--- [DRY RUN] Plan for unit: {} ---", u);
                     for state in [AnimState::Idle, AnimState::Walk, AnimState::Attack] {
-                        let prompt = asset_baker::build_action_prompt(&u, state);
+                        let prompt = asset_baker::build_action_prompt(&u, state)?;
                         let state_str = match state {
                             AnimState::Idle => "idle",
                             AnimState::Walk => "walk",

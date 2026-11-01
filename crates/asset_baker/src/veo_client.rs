@@ -1,8 +1,8 @@
 //! Strongly-typed Google Gemini and Vertex AI Veo Video Generation client.
 //!
 //! # Architectural Charter
-//! In accordance with [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md) and
-//! [06-factions-and-video-style-guide.md](file:///home/cl/projects/space-scuffle/docs/06-factions-and-video-style-guide.md),
+//! In accordance with `AGENTS.md` and
+//! `docs/06-factions-and-video-style-guide.md`,
 //! this module provides an automated client for generating authentic 3D unit animation
 //! clips (`Idle`, `Walk`, `Attack`) using Google's Veo video generation models.
 //!
@@ -62,8 +62,8 @@ use std::time::Duration;
 /// Default Veo model identifier for video generation.
 pub const DEFAULT_VEO_MODEL: &str = "veo-3.1-fast-generate-001";
 
-/// Default Google Cloud project number placeholder when `GOOGLE_CLOUD_PROJECT` is not set.
-pub const DEFAULT_PROJECT_ID: &str = "000000000000";
+/// Prefix that identifies a Vertex AI Express Mode key.
+const VERTEX_KEY_PREFIX: &str = "AQ.";
 
 /// Default polling interval in seconds for asynchronous video operations.
 pub const DEFAULT_POLL_INTERVAL_SECS: u64 = 5;
@@ -230,8 +230,8 @@ pub struct VeoApiErrorDetail {
 pub struct VeoCredentials {
     /// Secret API key token.
     pub api_key: String,
-    /// Associated Google Cloud project ID or project number.
-    pub project_id: String,
+    /// Google Cloud project ID or project number. Vertex AI requires it, the Gemini API does not.
+    pub project_id: Option<String>,
 }
 
 impl std::fmt::Debug for VeoCredentials {
@@ -472,7 +472,7 @@ impl VeoClient {
     /// Checks if the API key corresponds to a Vertex AI Express Mode key (`AQ.` prefix).
     #[must_use]
     pub fn is_vertex_ai(&self) -> bool {
-        self.credentials.api_key.starts_with("AQ.")
+        self.credentials.api_key.starts_with(VERTEX_KEY_PREFIX)
     }
 
     /// Replaces every occurrence of the API key in text that came from the network or curl.
@@ -704,19 +704,31 @@ impl VeoClient {
         })
     }
 
+    /// Returns the Vertex AI model path, which needs a project.
+    fn vertex_model_url(&self) -> Result<String, BakerError> {
+        let project = self
+            .credentials
+            .project_id
+            .as_deref()
+            .ok_or(BakerError::ProjectIdMissing)?;
+        Ok(format!(
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/{project}/locations/us-central1/publishers/google/models/{}",
+            self.model
+        ))
+    }
+
     /// Builds the full initiate endpoint URL for `:predictLongRunning`.
-    #[must_use]
-    pub fn build_initiate_url(&self) -> String {
+    ///
+    /// # Errors
+    /// Returns [`BakerError::ProjectIdMissing`] for a Vertex AI key without a project.
+    pub fn build_initiate_url(&self) -> Result<String, BakerError> {
         if self.is_vertex_ai() {
-            format!(
-                "https://us-central1-aiplatform.googleapis.com/v1/projects/{}/locations/us-central1/publishers/google/models/{}:predictLongRunning",
-                self.credentials.project_id, self.model
-            )
+            Ok(format!("{}:predictLongRunning", self.vertex_model_url()?))
         } else {
-            format!(
+            Ok(format!(
                 "https://generativelanguage.googleapis.com/v1beta/models/{}:predictLongRunning",
                 self.model
-            )
+            ))
         }
     }
 
@@ -724,16 +736,20 @@ impl VeoClient {
     ///
     /// For Vertex AI, polling is performed via the `fetchPredictOperation` endpoint.
     /// For Gemini API, polling is performed via GET on the operation path.
-    #[must_use]
-    pub fn build_poll_url(&self, operation_name: &str) -> String {
+    ///
+    /// # Errors
+    /// Returns [`BakerError::ProjectIdMissing`] for a Vertex AI key without a project.
+    pub fn build_poll_url(&self, operation_name: &str) -> Result<String, BakerError> {
         if self.is_vertex_ai() {
-            format!(
-                "https://us-central1-aiplatform.googleapis.com/v1/projects/{}/locations/us-central1/publishers/google/models/{}:fetchPredictOperation",
-                self.credentials.project_id, self.model
-            )
+            Ok(format!(
+                "{}:fetchPredictOperation",
+                self.vertex_model_url()?
+            ))
         } else {
             let clean_op = operation_name.trim_start_matches('/');
-            format!("https://generativelanguage.googleapis.com/v1beta/{clean_op}")
+            Ok(format!(
+                "https://generativelanguage.googleapis.com/v1beta/{clean_op}"
+            ))
         }
     }
 
@@ -745,8 +761,9 @@ impl VeoClient {
     ///
     /// # Errors
     /// Returns [`BakerError::VeoApiError`] on HTTP failure or non-success API responses,
-    /// [`BakerError::Io`] on filesystem read failures, or [`BakerError::CurlExecutionFailed`]
-    /// on curl execution failures.
+    /// [`BakerError::Io`] on filesystem read failures, [`BakerError::CurlExecutionFailed`]
+    /// on curl execution failures, or [`BakerError::ProjectIdMissing`] for a Vertex AI key
+    /// without a project.
     pub fn initiate_generation(
         &self,
         prompt: &str,
@@ -780,7 +797,7 @@ impl VeoClient {
         };
 
         let json_body = serde_json::to_string(&request_body)?;
-        let url = self.build_initiate_url();
+        let url = self.build_initiate_url()?;
 
         let resp_json = self.with_retries(request_started_no_work, || {
             self.api_request(&url, Some(&json_body), API_REQUEST_TIMEOUT)
@@ -820,10 +837,11 @@ impl VeoClient {
     /// [`BakerError::VeoTransientExhausted`] after too many consecutive transient faults,
     /// [`BakerError::VeoOperationFailed`] if the API reports that the operation failed, or
     /// [`BakerError::VeoHttpStatus`] for a permanent HTTP error. None of these stop the
-    /// operation itself, except the failure that the API reports.
+    /// operation itself, except the failure that the API reports. Also returns
+    /// [`BakerError::ProjectIdMissing`] for a Vertex AI key without a project.
     pub fn poll_operation(&self, operation_name: &str) -> Result<VeoOperation, BakerError> {
         let deadline = std::time::Instant::now() + self.poll_timeout;
-        let url = self.build_poll_url(operation_name);
+        let url = self.build_poll_url(operation_name)?;
         let poll_body = self
             .is_vertex_ai()
             .then(|| serde_json::json!({ "operationName": operation_name }).to_string());
@@ -996,9 +1014,11 @@ impl VeoClient {
     /// resumed, see the module docs.
     ///
     /// # Errors
-    /// Returns [`BakerError::CachedVideoInvalid`] if a cached clip is invalid. It is neither
-    /// reused nor replaced, because replacing it would silently spend money. Otherwise
-    /// returns [`BakerError`] on API, download, or FFmpeg transcoding errors.
+    /// Returns [`BakerError::UnknownArchetype`] before any API call or filesystem change if
+    /// `unit_name` is not an exact catalog slug. Returns [`BakerError::CachedVideoInvalid`] if
+    /// a cached clip is invalid. It is neither reused nor replaced, because replacing it would
+    /// silently spend money. Otherwise returns [`BakerError`] on API, download, or FFmpeg
+    /// transcoding errors.
     pub fn generate_and_bake_unit(
         &self,
         unit_name: &str,
@@ -1008,6 +1028,8 @@ impl VeoClient {
         frame_size: u32,
         fps: u32,
     ) -> Result<FlipbookAtlasMeta, BakerError> {
+        validate_catalog_slug(unit_name)?;
+
         std::fs::create_dir_all(videos_dir).map_err(|source| BakerError::Io {
             path: videos_dir.to_path_buf(),
             source,
@@ -1109,7 +1131,7 @@ impl VeoClient {
             None
         };
 
-        let prompt = build_action_prompt(unit_name, state);
+        let prompt = build_action_prompt(unit_name, state)?;
 
         println!("==> Initiating Veo video generation for {unit_name} [{state:?}]...");
         let op = self.initiate_generation(&prompt, ref_keyframe)?;
@@ -1133,32 +1155,51 @@ impl VeoClient {
     }
 }
 
+/// Looks up the catalog entry whose slug is exactly `slug`.
+///
+/// Matching is deliberately exact, including case. A slug selects paid generation and names
+/// files, so a near match must be an error rather than a guess.
+fn exact_catalog_archetype<'a>(
+    slug: &str,
+    catalog: &'a sim_core::UnitCatalog,
+) -> Result<&'a sim_core::UnitArchetype, BakerError> {
+    catalog
+        .get_by_slug(slug)
+        .filter(|archetype| archetype.slug == slug)
+        .ok_or_else(|| BakerError::UnknownArchetype {
+            name: slug.to_string(),
+            valid: catalog.archetypes().map(|a| a.slug.clone()).collect(),
+        })
+}
+
+/// Checks that `slug` exactly names a catalog unit and is safe to use in a file name.
+///
+/// # Errors
+/// Returns [`BakerError::UnknownArchetype`] if `slug` is not an exact catalog slug, or
+/// [`BakerError::ValidationFailed`] if a catalog slug cannot name a portable file.
+pub fn validate_catalog_slug(slug: &str) -> Result<(), BakerError> {
+    exact_catalog_archetype(slug, &sim_core::UnitCatalog::default())?;
+    crate::media::media_paths(Path::new(""), slug).map_err(|error| {
+        BakerError::ValidationFailed {
+            name: slug.to_string(),
+            reason: error.to_string(),
+        }
+    })?;
+    Ok(())
+}
+
 /// Constructs a descriptive action prompt adhering to Space Scuffle's stylized art direction.
-#[must_use]
-pub fn build_action_prompt(unit_name: &str, state: AnimState) -> String {
+///
+/// `unit_name` must be an exact catalog slug. There is no generic prompt for unknown units,
+/// because money must not be spent on a clip that no catalog unit can use.
+///
+/// # Errors
+/// Returns [`BakerError::UnknownArchetype`] if `unit_name` is not an exact catalog slug.
+pub fn build_action_prompt(unit_name: &str, state: AnimState) -> Result<String, BakerError> {
     let base_style = "Stylized hand-painted 3D character, Arcane and StarCraft II cinematic portrait aesthetic, dark slate-indigo radial studio backdrop (#0B101B), dramatic 3/4 isometric front hero framing, glowing cyan/amber energy cores, bold proportions.";
 
     let catalog = sim_core::UnitCatalog::default();
-    let arch_opt = catalog
-        .get_by_slug(unit_name)
-        .or_else(|| catalog.get_by_name(unit_name))
-        .or_else(|| {
-            let clean = unit_name.to_lowercase().replace(['-', ' '], "_");
-            catalog
-                .get_by_slug(&clean)
-                .or_else(|| catalog.get_by_name(&clean))
-        })
-        .or_else(|| {
-            let lower = unit_name.to_lowercase();
-            catalog.archetypes().find(|a| {
-                a.sc2_inspiration
-                    .as_deref()
-                    .unwrap_or("")
-                    .to_lowercase()
-                    .contains(&lower)
-                    || a.display_name.to_lowercase().contains(&lower)
-            })
-        });
+    let arch = exact_catalog_archetype(unit_name, &catalog)?;
 
     let action_desc = match state {
         AnimState::Idle => "Idle animation: steady rhythmic breathing movement, subtle weapon glow pulse, head and radar scanning smoothly in place.",
@@ -1169,17 +1210,13 @@ pub fn build_action_prompt(unit_name: &str, state: AnimState) -> String {
         AnimState::Cast => "Active tactical combat animation.",
     };
 
-    if let Some(arch) = arch_opt {
-        if let Some(prompt) = arch.veo_prompt(state) {
-            return format!("{prompt} {action_desc} {base_style}");
-        }
-        return format!(
-            "{}: {} {action_desc} {base_style}",
-            arch.display_name, arch.lore_description
-        );
+    if let Some(prompt) = arch.veo_prompt(state) {
+        return Ok(format!("{prompt} {action_desc} {base_style}"));
     }
-
-    format!("{unit_name}: Sci-fi tactical combat unit with heavy armored plating and vibrant energy emitters. {action_desc} {base_style}")
+    Ok(format!(
+        "{}: {} {action_desc} {base_style}",
+        arch.display_name, arch.lore_description
+    ))
 }
 
 /// Recursively searches a JSON value for base64 encoded video content.
@@ -1243,75 +1280,78 @@ fn find_video_uri(value: &serde_json::Value) -> Option<String> {
     }
 }
 
-/// Resolves the API key and Google Cloud project from environment variables or configuration files.
+/// Resolves the API key and Google Cloud project from the process environment and from
+/// configuration files relative to the working directory.
 ///
-/// Priority:
-/// 1. `GEMINI_API_KEY` or `GOOGLE_API_KEY` environment variables.
-/// 2. `/home/cl/projects/space-scuffle/.env` or `.env` in the working directory.
-/// 3. `/home/cl/projects/space-scuffle/tmp/api-key.txt` or `tmp/api-key.txt`.
+/// See [`resolve_credentials_from`] for the priority order.
 ///
 /// # Errors
-/// Returns [`BakerError::ApiKeyMissing`] if no key can be found.
+/// As [`resolve_credentials_from`], or [`BakerError::Io`] if the working directory is unknown.
 pub fn resolve_credentials() -> Result<VeoCredentials, BakerError> {
-    let mut api_key = std::env::var("GEMINI_API_KEY")
-        .or_else(|_| std::env::var("GOOGLE_API_KEY"))
-        .ok()
-        .filter(|k| !k.trim().is_empty());
+    let root = std::env::current_dir().map_err(|source| BakerError::Io {
+        path: PathBuf::from("."),
+        source,
+    })?;
+    resolve_credentials_from(|name| std::env::var(name).ok(), &root)
+}
 
-    let mut project_id = std::env::var("GOOGLE_CLOUD_PROJECT")
-        .ok()
-        .filter(|p| !p.trim().is_empty());
+/// Resolves credentials from explicit sources, so that nothing depends on process state.
+///
+/// Priority:
+/// 1. `GEMINI_API_KEY` or `GOOGLE_API_KEY`, and `GOOGLE_CLOUD_PROJECT`, from `lookup`.
+/// 2. `.env` in `search_root`, then in its parent.
+/// 3. `tmp/api-key.txt` in `search_root`, then in its parent.
+///
+/// # Errors
+/// Returns [`BakerError::ApiKeyMissing`] if no key can be found,
+/// [`BakerError::ProjectIdMissing`] for a Vertex AI key without a project, or
+/// [`BakerError::Io`] if a candidate file exists but cannot be read.
+pub fn resolve_credentials_from(
+    lookup: impl Fn(&str) -> Option<String>,
+    search_root: &Path,
+) -> Result<VeoCredentials, BakerError> {
+    let present = |name: &str| lookup(name).filter(|value| !value.trim().is_empty());
+    let mut api_key = present("GEMINI_API_KEY").or_else(|| present("GOOGLE_API_KEY"));
+    let mut project_id = present("GOOGLE_CLOUD_PROJECT");
 
-    let env_paths = [
-        PathBuf::from("/home/cl/projects/space-scuffle/.env"),
-        PathBuf::from(".env"),
-        PathBuf::from("../.env"),
-    ];
+    let read_if_present = |path: &Path| match std::fs::read_to_string(path) {
+        Ok(content) => Ok(Some(content)),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(BakerError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    };
 
-    for path in &env_paths {
+    let parent_root = search_root.join("..");
+    for root in [search_root, parent_root.as_path()] {
         if api_key.is_some() && project_id.is_some() {
             break;
         }
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(path) {
-                if api_key.is_none() {
-                    api_key = parse_key_from_env_content(&content);
-                }
-                if project_id.is_none() {
-                    project_id = parse_project_from_env_content(&content);
-                }
-            }
+        if let Some(content) = read_if_present(&root.join(".env"))? {
+            api_key = api_key.or_else(|| parse_key_from_env_content(&content));
+            project_id = project_id.or_else(|| parse_project_from_env_content(&content));
         }
     }
 
-    let txt_paths = [
-        PathBuf::from("/home/cl/projects/space-scuffle/tmp/api-key.txt"),
-        PathBuf::from("tmp/api-key.txt"),
-        PathBuf::from("../tmp/api-key.txt"),
-    ];
-
-    for path in &txt_paths {
+    for root in [search_root, parent_root.as_path()] {
         if api_key.is_some() && project_id.is_some() {
             break;
         }
-        if path.exists() {
-            if let Ok(content) = std::fs::read_to_string(path) {
-                if api_key.is_none() {
-                    api_key = parse_key_from_api_txt(&content);
-                }
-                if project_id.is_none() {
-                    project_id = parse_project_from_api_txt(&content);
-                }
-            }
+        if let Some(content) = read_if_present(&root.join("tmp/api-key.txt"))? {
+            api_key = api_key.or_else(|| parse_key_from_api_txt(&content));
+            project_id = project_id.or_else(|| parse_project_from_api_txt(&content));
         }
     }
 
     let key = api_key.ok_or(BakerError::ApiKeyMissing)?;
-    let proj = project_id.unwrap_or_else(|| DEFAULT_PROJECT_ID.to_string());
+    if key.starts_with(VERTEX_KEY_PREFIX) && project_id.is_none() {
+        return Err(BakerError::ProjectIdMissing);
+    }
 
     Ok(VeoCredentials {
         api_key: key,
-        project_id: proj,
+        project_id,
     })
 }
 

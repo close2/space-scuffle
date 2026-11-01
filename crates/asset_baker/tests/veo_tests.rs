@@ -9,13 +9,15 @@
 
 use asset_baker::veo_client::{
     build_action_prompt, parse_key_from_api_txt, parse_key_from_env_content,
-    parse_project_from_api_txt, parse_project_from_env_content, resolve_credentials, VeoClient,
-    VeoCredentials, VeoGenerateRequest, VeoImageInput, VeoInstance, VeoParameters,
+    parse_project_from_api_txt, parse_project_from_env_content, resolve_credentials_from,
+    VeoClient, VeoCredentials, VeoGenerateRequest, VeoImageInput, VeoInstance, VeoParameters,
 };
 use asset_baker::{
-    bake_multi_action_videos, bake_multi_action_videos_with_states, FlipbookAtlasMeta,
+    bake_custom_video, bake_multi_action_videos, bake_multi_action_videos_with_states, BakerError,
+    FlipbookAtlasMeta,
 };
 use sim_types::enums::AnimState;
+use std::path::Path;
 
 mod common;
 
@@ -60,16 +62,132 @@ project number: 000000000000
     assert_eq!(proj, "000000000000");
 }
 
+const FAKE_GEMINI_KEY: &str = "AIzaFAKE-test-only-not-a-credential";
+const FAKE_VERTEX_KEY: &str = "AQ.FAKE-test-only-not-a-credential";
+
+/// A credential source with nothing in it, for tests that use only their temporary files.
+fn empty_environment(_: &str) -> Option<String> {
+    None
+}
+
+/// Reads credentials from a temporary root only. Neither the process environment nor any file
+/// outside the root is consulted, so running this suite never touches a developer's real key.
+fn resolve_in(root: &Path) -> Result<VeoCredentials, BakerError> {
+    resolve_credentials_from(empty_environment, root)
+}
+
 #[test]
-fn test_resolve_credentials_from_workspace() {
-    let creds = if let Ok(c) = resolve_credentials() {
-        c
-    } else {
-        std::env::set_var("GEMINI_API_KEY", "AIzaSyCiFallbackTestKey12345");
-        resolve_credentials().expect("Should resolve credentials from env fallback in CI")
-    };
-    assert_ne!(creds.api_key, "");
-    assert_ne!(creds.project_id, "");
+fn b5_vertex_key_without_a_project_is_a_typed_error() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().join("workspace");
+    std::fs::create_dir_all(&root).expect("root");
+    std::fs::write(
+        root.join(".env"),
+        format!("GOOGLE_API_KEY={FAKE_VERTEX_KEY}\n"),
+    )
+    .expect("env");
+
+    let result = resolve_in(&root);
+
+    assert!(
+        matches!(result, Err(BakerError::ProjectIdMissing)),
+        "a placeholder project must not be substituted: {result:?}"
+    );
+}
+
+#[test]
+fn b5_gemini_key_does_not_need_a_project() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().join("workspace");
+    std::fs::create_dir_all(&root).expect("root");
+    std::fs::write(
+        root.join(".env"),
+        format!("GEMINI_API_KEY={FAKE_GEMINI_KEY}\n"),
+    )
+    .expect("env");
+
+    let credentials = resolve_in(&root).expect("Gemini credentials");
+
+    assert_eq!(credentials.api_key, FAKE_GEMINI_KEY);
+    assert_eq!(credentials.project_id, None);
+}
+
+#[test]
+fn b5_environment_lookup_takes_priority_over_files() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().join("workspace");
+    std::fs::create_dir_all(&root).expect("root");
+    std::fs::write(root.join(".env"), "GEMINI_API_KEY=AIzaFromFile\n").expect("env");
+
+    let credentials = resolve_credentials_from(
+        |name| match name {
+            "GOOGLE_API_KEY" => Some(FAKE_VERTEX_KEY.to_string()),
+            "GOOGLE_CLOUD_PROJECT" => Some("from-environment".to_string()),
+            _ => None,
+        },
+        &root,
+    )
+    .expect("credentials");
+
+    assert_eq!(credentials.api_key, FAKE_VERTEX_KEY);
+    assert_eq!(credentials.project_id.as_deref(), Some("from-environment"));
+}
+
+#[test]
+fn b5_key_and_project_are_found_in_api_key_txt_and_in_the_parent_directory() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().join("workspace");
+    std::fs::create_dir_all(root.join("crate")).expect("root");
+    std::fs::create_dir_all(root.join("tmp")).expect("tmp");
+    std::fs::write(
+        root.join("tmp/api-key.txt"),
+        format!("Gemini API Key: {FAKE_VERTEX_KEY}\nproject number: 123\n"),
+    )
+    .expect("key file");
+
+    let credentials = resolve_in(&root.join("crate")).expect("credentials");
+
+    assert_eq!(credentials.api_key, FAKE_VERTEX_KEY);
+    assert_eq!(credentials.project_id.as_deref(), Some("123"));
+}
+
+#[test]
+fn b5_missing_key_is_reported_and_no_outside_location_is_consulted() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().join("workspace");
+    std::fs::create_dir_all(&root).expect("root");
+
+    let result = resolve_in(&root);
+
+    assert!(
+        matches!(result, Err(BakerError::ApiKeyMissing)),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn b5_unreadable_credential_file_is_not_silently_ignored() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().join("workspace");
+    std::fs::create_dir_all(root.join(".env")).expect("a directory where the file should be");
+
+    let result = resolve_in(&root);
+
+    assert!(matches!(result, Err(BakerError::Io { .. })), "{result:?}");
+}
+
+#[test]
+fn b5_no_source_file_contains_a_developer_home_path() {
+    let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    for entry in std::fs::read_dir(&sources).expect("read src") {
+        let path = entry.expect("entry").path();
+        let text = std::fs::read_to_string(&path).expect("read source");
+        assert!(
+            !text.contains("/home/"),
+            "{} has a home path",
+            path.display()
+        );
+    }
 }
 
 #[test]
@@ -126,43 +244,48 @@ fn test_veo_client_endpoint_routing() {
     // 1. Vertex AI mode with AQ. key
     let vertex_client = VeoClient::with_credentials(VeoCredentials {
         api_key: "AQ.SecretVertexKey".to_string(),
-        project_id: "000000000000".to_string(),
+        project_id: Some("000000000000".to_string()),
     });
     assert!(vertex_client.is_vertex_ai());
-    let vertex_init_url = vertex_client.build_initiate_url();
+    let vertex_init_url = vertex_client.build_initiate_url().expect("URL");
     assert!(vertex_init_url.contains("us-central1-aiplatform.googleapis.com"));
     assert!(vertex_init_url.contains("projects/000000000000"));
     assert!(vertex_init_url.contains("veo-3.1-fast-generate-001:predictLongRunning"));
 
-    let vertex_poll_url = vertex_client.build_poll_url("operations/12345");
+    let vertex_poll_url = vertex_client
+        .build_poll_url("operations/12345")
+        .expect("URL");
     assert!(vertex_poll_url.contains("fetchPredictOperation"));
 
     // 2. Gemini Developer API mode with AIza key
     let gemini_client = VeoClient::with_credentials(VeoCredentials {
         api_key: "AIzaSyGeminiKey".to_string(),
-        project_id: "000000000000".to_string(),
+        project_id: Some("000000000000".to_string()),
     });
     assert!(!gemini_client.is_vertex_ai());
-    let gemini_init_url = gemini_client.build_initiate_url();
+    let gemini_init_url = gemini_client.build_initiate_url().expect("URL");
     assert!(gemini_init_url.contains("generativelanguage.googleapis.com"));
     assert!(gemini_init_url.contains("v1beta/models/veo-3.1-fast-generate-001:predictLongRunning"));
 
-    let gemini_poll_url = gemini_client.build_poll_url("operations/abcde");
+    let gemini_poll_url = gemini_client
+        .build_poll_url("operations/abcde")
+        .expect("URL");
     assert!(gemini_poll_url.contains("generativelanguage.googleapis.com/v1beta/operations/abcde"));
 }
 
 #[test]
 fn test_action_prompts_conformity() {
-    let pulse_bot_idle = build_action_prompt("pulse_bot", AnimState::Idle);
+    let pulse_bot_idle = build_action_prompt("pulse_bot", AnimState::Idle).expect("catalog slug");
     assert!(pulse_bot_idle.contains("Pulse Bot"));
     assert!(pulse_bot_idle.contains("Idle animation"));
     assert!(pulse_bot_idle.contains("#0B101B"));
 
-    let psi_grey_attack = build_action_prompt("psi_grey", AnimState::Attack);
+    let psi_grey_attack = build_action_prompt("psi_grey", AnimState::Attack).expect("catalog slug");
     assert!(psi_grey_attack.contains("Psi-Blade Grey"));
     assert!(psi_grey_attack.contains("Attack animation"));
 
-    let rhino_beetle_walk = build_action_prompt("rhino_beetle", AnimState::Walk);
+    let rhino_beetle_walk =
+        build_action_prompt("rhino_beetle", AnimState::Walk).expect("catalog slug");
     assert!(rhino_beetle_walk.contains("Rhino-Beetle"));
     assert!(rhino_beetle_walk.contains("Walk animation"));
 }
@@ -334,4 +457,60 @@ fn test_multi_action_webgpu_height_bound() {
     assert_eq!(img.width(), 512);
     assert_eq!(img.height(), strip_height);
     assert!(img.height() <= 16384);
+}
+
+#[test]
+fn b9_traversal_in_an_atlas_name_cannot_escape_the_output_directory() {
+    let clip = common::fixture_clip();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let output = dir.path().join("deep/output");
+
+    let multi = bake_multi_action_videos_with_states(
+        "../../escaped",
+        &[(AnimState::Idle, clip.as_path())],
+        &output,
+        32,
+        5,
+    );
+    let single = bake_custom_video(&clip, &output, "../../escaped", 32, 5);
+
+    assert!(multi.is_err(), "{multi:?}");
+    assert!(single.is_err(), "{single:?}");
+    assert!(!dir.path().join("escaped.png").exists());
+}
+
+#[test]
+fn b5_vertex_endpoints_refuse_a_missing_project_instead_of_substituting_one() {
+    let client = VeoClient::with_credentials(VeoCredentials {
+        api_key: FAKE_VERTEX_KEY.to_string(),
+        project_id: None,
+    });
+
+    assert!(matches!(
+        client.build_initiate_url(),
+        Err(BakerError::ProjectIdMissing)
+    ));
+    assert!(matches!(
+        client.build_poll_url("operations/op"),
+        Err(BakerError::ProjectIdMissing)
+    ));
+}
+
+#[test]
+fn b9_prompts_exist_only_for_exact_catalog_slugs() {
+    for unit in [
+        "fictional_unit",
+        "Pulse-Bot",
+        "PULSE_BOT",
+        "Pulse Bot",
+        "pulse",
+    ] {
+        assert!(
+            matches!(
+                build_action_prompt(unit, AnimState::Idle),
+                Err(BakerError::UnknownArchetype { .. })
+            ),
+            "{unit:?} must not receive a prompt"
+        );
+    }
 }

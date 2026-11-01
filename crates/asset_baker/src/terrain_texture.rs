@@ -1,7 +1,7 @@
 //! Image processing algorithms for terrain themes and PBR material derivation.
 //!
 //! # Architectural Charter
-//! In accordance with [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md) and
+//! In accordance with `AGENTS.md` and
 //! Section 4.2 of `docs/plans/21-plan-map-editor.md`, `terrain_texture` provides authentic,
 //! mathematically rigorous image processing algorithms to prepare AI-generated source art
 //! for the dual-grid marching squares terrain renderer.

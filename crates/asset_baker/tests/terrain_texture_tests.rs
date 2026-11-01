@@ -1,7 +1,7 @@
 //! Unit and integration tests for terrain theme loading, validation, and texture processing.
 //!
 //! # Architectural Charter
-//! In accordance with [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md) and
+//! In accordance with `AGENTS.md` and
 //! Section 4.3 of `docs/plans/21-plan-map-editor.md` (v3.1), these tests mathematically verify:
 //! - Separable two-pass Burt-Adelson Laplacian pyramid multiband blending for tileability.
 //! - Wrap seam quantification metric (`seam_score`).

@@ -1,8 +1,8 @@
 //! Space Scuffle asset baking and flipbook atlas generation library.
 //!
 //! # Architectural Charter
-//! In accordance with [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md) and
-//! [06-factions-and-video-style-guide.md](file:///home/cl/projects/space-scuffle/docs/06-factions-and-video-style-guide.md),
+//! In accordance with `AGENTS.md` and
+//! `docs/06-factions-and-video-style-guide.md`,
 //! `asset_baker` provides an offline build-time pipeline that transforms both raw video
 //! files (`.mp4`, `.webm`) and AI-generated video sequences from Google Veo into deterministic,
 //! GPU-ready vertical strip image atlases paired with strongly-typed `.flipbook.ron`
@@ -54,9 +54,9 @@ pub use terrain_theme::{
     LAYER_INDEX_GRASS, LAYER_INDEX_METAL_PLATE, MAX_THEME_TEXTURE_SIZE, MIN_THEME_TEXTURE_SIZE,
 };
 pub use veo_client::{
-    build_action_prompt, resolve_credentials, VeoClient, VeoCredentials, VeoGenerateRequest,
-    VeoGenerateVideoResponse, VeoImageInput, VeoInstance, VeoOperation, VeoParameters,
-    VeoVideoOutput, DEFAULT_VEO_MODEL,
+    build_action_prompt, resolve_credentials, resolve_credentials_from, validate_catalog_slug,
+    VeoClient, VeoCredentials, VeoGenerateRequest, VeoGenerateVideoResponse, VeoImageInput,
+    VeoInstance, VeoOperation, VeoParameters, VeoVideoOutput, DEFAULT_VEO_MODEL,
 };
 
 use std::collections::BTreeMap;
@@ -89,7 +89,6 @@ pub fn find_concept_video() -> Option<PathBuf> {
         PathBuf::from("tmp/gemini_generated_video_de659ff9.mp4"),
         PathBuf::from("../tmp/gemini_generated_video_de659ff9.mp4"),
         PathBuf::from("../../tmp/gemini_generated_video_de659ff9.mp4"),
-        PathBuf::from("/home/cl/projects/space-scuffle/tmp/gemini_generated_video_de659ff9.mp4"),
     ];
     candidates.into_iter().find(|candidate| candidate.exists())
 }
@@ -107,7 +106,6 @@ pub fn find_keyframes_dir() -> Option<PathBuf> {
         PathBuf::from("assets/ai_keyframes"),
         PathBuf::from("../assets/ai_keyframes"),
         PathBuf::from("../../assets/ai_keyframes"),
-        PathBuf::from("/home/cl/projects/space-scuffle/assets/ai_keyframes"),
     ];
     candidates.into_iter().find(|candidate| candidate.is_dir())
 }
@@ -235,8 +233,7 @@ pub fn bake_custom_video(
     size: u32,
     fps: u32,
 ) -> Result<FlipbookAtlasMeta, BakerError> {
-    let png_path = output_dir.join(format!("{name}.png"));
-    let ron_path = output_dir.join(format!("{name}.flipbook.ron"));
+    let (png_path, ron_path) = ffmpeg_importer::atlas_output_paths(output_dir, name)?;
     let config = FfmpegExtractConfig {
         ffmpeg_path: PathBuf::from("/usr/bin/ffmpeg"),
         target_size: size,

@@ -140,6 +140,23 @@ impl Default for FfmpegExtractConfig {
     }
 }
 
+/// Returns the PNG and manifest paths for an atlas, refusing a name that is not one safe file
+/// name component, so that output stays inside `output_dir`.
+///
+/// # Errors
+/// Returns [`BakerError::ValidationFailed`] for an empty name, separators or traversal.
+pub fn atlas_output_paths(
+    output_dir: &Path,
+    atlas_name: &str,
+) -> Result<(PathBuf, PathBuf), BakerError> {
+    crate::media::media_paths(output_dir, atlas_name).map_err(|error| {
+        BakerError::ValidationFailed {
+            name: atlas_name.to_string(),
+            reason: error.to_string(),
+        }
+    })
+}
+
 /// Extracts frames from a video file, center-crops to a 1:1 square, scales, and packs into a PNG vertical strip.
 ///
 /// # Arguments
@@ -398,6 +415,8 @@ pub fn bake_multi_action_videos_with_states<P: AsRef<Path>>(
     frame_size: u32,
     fps: u32,
 ) -> Result<FlipbookAtlasMeta, BakerError> {
+    let (output_png_path, output_meta_path) = atlas_output_paths(output_dir, unit_name)?;
+
     let ffmpeg_path = PathBuf::from("/usr/bin/ffmpeg");
     if !ffmpeg_path.exists() {
         return Err(BakerError::FfmpegNotFound { path: ffmpeg_path });
@@ -615,9 +634,6 @@ pub fn bake_multi_action_videos_with_states<P: AsRef<Path>>(
         path: output_dir.to_path_buf(),
         source,
     })?;
-
-    let output_png_path = output_dir.join(format!("{unit_name}.png"));
-    let output_meta_path = output_dir.join(format!("{unit_name}.flipbook.ron"));
 
     packed_strip
         .save(&output_png_path)

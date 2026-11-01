@@ -97,6 +97,10 @@ pub enum BakerError {
     )]
     ApiKeyMissing,
 
+    /// A Vertex AI key needs a Google Cloud project, and none was configured.
+    #[error("a Vertex AI API key requires GOOGLE_CLOUD_PROJECT to be set, in the environment or in .env")]
+    ProjectIdMissing,
+
     /// The API key contains control characters and cannot be sent as an HTTP header value.
     #[error("the configured API key contains control characters and was not used")]
     InvalidApiKey,

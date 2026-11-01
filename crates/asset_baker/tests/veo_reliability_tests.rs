@@ -28,7 +28,7 @@ const CATALOG_UNIT: &str = "pulse_bot";
 fn client(shim: &CurlShim) -> VeoClient {
     VeoClient::with_credentials(VeoCredentials {
         api_key: KEY.to_string(),
-        project_id: "test-project".to_string(),
+        project_id: Some("test-project".to_string()),
     })
     .with_curl_path(shim.path())
     .with_poll_interval(Duration::from_millis(1))
@@ -525,4 +525,41 @@ fn b4_an_unreadable_record_stops_the_run_instead_of_paying_again() {
 
     assert!(result.is_err());
     assert!(server.requests().is_empty(), "no API call may be made");
+}
+
+#[test]
+fn b9_only_exact_catalog_slugs_can_spend_money_or_touch_the_filesystem() {
+    let server = FakeServer::start(|_, _| Reply::status(500, "must not be called"));
+    let shim = CurlShim::new(&server);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let videos = dir.path().join("videos");
+
+    for unit in [
+        "fictional_unit",
+        "Pulse-Bot",
+        "PULSE_BOT",
+        "pulse bot",
+        "Pulse Bot",
+        "",
+        "../../escaped",
+        "pulse_bot/../../escaped",
+        "/etc/escaped",
+    ] {
+        let result = client(&shim).generate_and_bake_unit(
+            unit,
+            &dir.path().join("keyframes"),
+            &videos,
+            &dir.path().join("out"),
+            64,
+            5,
+        );
+
+        assert!(
+            matches!(result, Err(BakerError::UnknownArchetype { .. })),
+            "{unit:?}: {result:?}"
+        );
+    }
+
+    assert!(server.requests().is_empty(), "no API call may be made");
+    assert!(!videos.exists(), "no directory may be created");
 }
