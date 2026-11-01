@@ -113,6 +113,17 @@ pub struct LabState {
     pub swarm_active: bool,
     /// Swarm entities list.
     pub swarm_bubble_count: usize,
+    // --- 3D Volumetric Smog & 10 Bouncing Bubbles State ---
+    /// Whether the 10-bubble wall-bouncing kinematics are active.
+    pub smog_bouncing_active: bool,
+    /// 3D volumetric smog field visibility toggle.
+    pub opt_smog_volume: bool,
+    /// Smog emission rate multiplier.
+    pub smog_emission_rate: f32,
+    /// Moving bubble wake physical influence strength.
+    pub smog_wake_influence: f32,
+    /// Count of currently active smog bubbles.
+    pub smog_bubble_count: usize,
 }
 
 impl Default for LabState {
@@ -151,8 +162,13 @@ impl Default for LabState {
             battle_paused: false,
             simulation_speed: 1,
             last_checksum_hex: "0x0000000000000000".to_string(),
-            swarm_active: false,
+            swarm_active: true,
             swarm_bubble_count: 0,
+            smog_bouncing_active: true,
+            opt_smog_volume: true,
+            smog_emission_rate: 5.0,
+            smog_wake_influence: 3.4,
+            smog_bubble_count: 0,
         }
     }
 }
@@ -190,7 +206,9 @@ pub fn lab_ui_system(
     };
 
     // Render SC2-Style Bottom-Center Selected Unit Video Portrait & Status HUD
-    if lab_state.current_tab == LabTab::VisualLab {
+    if lab_state.current_tab == LabTab::VisualLab
+        && !(lab_state.smog_bouncing_active && lab_state.opt_smog_volume)
+    {
         render_selected_unit_hud(
             &ctx,
             &mut contexts,
@@ -331,6 +349,19 @@ fn render_visual_lab_tab(
     geometry: &mut crate::input_policy::UiGeometry,
     effect_owner: PlayerId,
 ) {
+    ui.heading("3D Smog & 10 Bouncing Bubbles");
+    if ui
+        .checkbox(&mut state.opt_smog_volume, "3D Volumetric Smog Field")
+        .changed()
+    {
+        state.opt_mist_wake = state.opt_smog_volume;
+    }
+    ui.checkbox(&mut state.smog_bouncing_active, "10-Bubble Wall Bouncing");
+    ui.add(egui::Slider::new(&mut state.smog_emission_rate, 0.0..=5.0).text("Emission Rate"));
+    ui.add(egui::Slider::new(&mut state.smog_wake_influence, 0.0..=5.0).text("Wake Influence"));
+    ui.label(format!("Active Smog Bubbles: {}", state.smog_bubble_count));
+
+    ui.separator();
     ui.heading("Selected actor");
     if let Some(actor) = catalog.get_by_slug(&state.archetype_name) {
         ui.strong(&actor.display_name);
@@ -443,7 +474,12 @@ fn render_visual_lab_tab(
     ui.checkbox(&mut state.opt_glare, "Glass Glare & Specular Reflection");
     ui.checkbox(&mut state.opt_fresnel, "Iridescent Fresnel Rim");
     ui.checkbox(&mut state.opt_inner_warp, "Spherical Inner Video Warp");
-    ui.checkbox(&mut state.opt_mist_wake, "Volumetric FBM Mist Wake");
+    if ui
+        .checkbox(&mut state.opt_mist_wake, "Volumetric FBM Mist Wake")
+        .changed()
+    {
+        state.opt_smog_volume = state.opt_mist_wake;
+    }
     ui.checkbox(
         &mut state.opt_facing_chevron,
         "Direct-on-Sphere Facing Stripe",

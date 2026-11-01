@@ -9,7 +9,7 @@
 #![warn(missing_docs)]
 
 use clap::Parser;
-use client::{run_app_with_scenario, ClientMode};
+use client::{run_app_with_options, ClientMode};
 
 /// Command-line arguments configuring the client launch mode.
 #[derive(Parser, Debug)]
@@ -41,6 +41,10 @@ pub struct CliArgs {
     /// Declarative battle scenario, relative to the selected assets root.
     #[arg(long, default_value = client::runtime_battle::DEFAULT_BATTLE_SCENARIO)]
     pub scenario: std::path::PathBuf,
+
+    /// Optional output file path for capturing a full-resolution PNG screenshot on `max_frames`.
+    #[arg(long)]
+    pub screenshot_out: Option<std::path::PathBuf>,
 }
 
 fn main() -> bevy::app::AppExit {
@@ -56,5 +60,5 @@ fn main() -> bevy::app::AppExit {
         ClientMode::VisualLab
     };
 
-    run_app_with_scenario(mode, args.max_frames, &args.scenario)
+    run_app_with_options(mode, args.max_frames, &args.scenario, args.screenshot_out)
 }

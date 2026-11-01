@@ -13,7 +13,7 @@ use bevy::render::render_phase::ViewSortedRenderPhases;
 
 /// Explicit controlled-fixture declaration; never present in ordinary captures.
 #[derive(Resource, Clone)]
-pub(crate) struct ControlledFixture(pub FixtureSpec);
+pub struct ControlledFixture(pub FixtureSpec);
 
 /// Returns the declared visible identities only in the explicit controlled profile.
 pub(crate) fn participants(world: &World) -> Option<[u32; 2]> {

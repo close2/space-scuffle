@@ -53,6 +53,7 @@ pub(super) fn capture(
         Option<&LabPreviewBubble>,
         Option<&SwarmBubble>,
         Option<&LiveBattleBubble>,
+        Option<&crate::smog::BouncingSmogBubble>,
         Option<&MeshMaterial3d<BubbleDomeMaterial>>,
         Option<&MeshMaterial3d<StandardMaterial>>,
         Option<&MeshMaterial3d<crate::mist::MistWakeMaterial>>,
@@ -69,6 +70,7 @@ pub(super) fn capture(
         lab,
         swarm,
         live,
+        smog,
         shell,
         standard,
         mist,
@@ -121,7 +123,12 @@ pub(super) fn capture(
             frame.limitations.push(format!("multiple material associations on visible mesh {entity:?}; adapter precedence cannot establish all draw sources"));
         }
         let logical = if let Some(instance) = instance {
-            let domains = [lab.is_some(), swarm.is_some(), live.is_some()];
+            let domains = [
+                lab.is_some(),
+                swarm.is_some(),
+                live.is_some(),
+                smog.is_some(),
+            ];
             if domains.into_iter().filter(|flag| *flag).count() != 1 {
                 return Err(AuditError::Source(format!(
                     "ambiguous shell domain {entity:?}"
@@ -132,6 +139,8 @@ pub(super) fn capture(
                     "Swarm"
                 } else if lab.is_some() {
                     "VisualLab"
+                } else if smog.is_some() {
+                    "Smog"
                 } else {
                     "Battle"
                 },

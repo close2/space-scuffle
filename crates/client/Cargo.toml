@@ -12,6 +12,10 @@ name = "client"
 path = "src/main.rs"
 
 [[bin]]
+name = "map_editor"
+path = "src/bin/map_editor.rs"
+
+[[bin]]
 name = "terrain_preview"
 path = "src/bin/terrain_preview.rs"
 

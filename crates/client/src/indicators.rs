@@ -403,47 +403,70 @@ pub fn update_indicators_system(
 
         for &child in children {
             if let Ok(handle) = tether_query.get(child) {
-                if let Some(material) = materials.get_mut(&handle.0) {
-                    material.base_color = style.color();
-                    material.emissive = LinearRgba::from(style.color()) * 1.5;
+                if let Some(material) = materials.get(&handle.0) {
+                    if material.base_color != style.color() {
+                        if let Some(material_mut) = materials.get_mut(&handle.0) {
+                            material_mut.base_color = style.color();
+                            material_mut.emissive = LinearRgba::from(style.color()) * 1.5;
+                        }
+                    }
                 }
             }
             // 1. Update Holographic Ground Reticle Uniform & Visibility
             if let Ok((ring_mat_handle, mut ring_vis)) = ring_query.get_mut(child) {
-                *ring_vis = selection_vis;
-                if let Some(mat) = ring_materials.get_mut(&ring_mat_handle.0) {
-                    mat.uniform.is_selected = u32::from(is_selected);
-                    mat.uniform.team_color = style.linear;
+                if *ring_vis != selection_vis {
+                    *ring_vis = selection_vis;
+                }
+                if let Some(mat) = ring_materials.get(&ring_mat_handle.0) {
+                    let target_is_selected = u32::from(is_selected);
+                    if mat.uniform.is_selected != target_is_selected
+                        || mat.uniform.team_color != style.linear
+                    {
+                        if let Some(mat_mut) = ring_materials.get_mut(&ring_mat_handle.0) {
+                            mat_mut.uniform.is_selected = target_is_selected;
+                            mat_mut.uniform.team_color = style.linear;
+                        }
+                    }
                 }
             }
 
             // 2. Update Floating Overhead Health & Shield Bar Root and its Children
             if let Ok(mut bar_vis) = overhead_query.get_mut(child) {
-                *bar_vis = selection_vis;
+                if *bar_vis != selection_vis {
+                    *bar_vis = selection_vis;
+                }
 
-                if let Ok(bar_children) = children_query.get(child) {
-                    for &grandchild in bar_children {
-                        // Update Health Bar Scale & Dynamic Material Threshold
-                        if let Ok((mut hp_tf, mut hp_mat)) = hp_bar_query.get_mut(grandchild) {
-                            let clamped_hp = instance.hp_ratio.clamp(0.0, 1.0);
-                            hp_tf.scale.x = clamped_hp;
-                            hp_tf.translation.x = (clamped_hp - 1.0) * 0.5;
+                if is_selected {
+                    if let Ok(bar_children) = children_query.get(child) {
+                        for &grandchild in bar_children {
+                            // Update Health Bar Scale & Dynamic Material Threshold
+                            if let Ok((mut hp_tf, mut hp_mat)) = hp_bar_query.get_mut(grandchild) {
+                                let clamped_hp = instance.hp_ratio.clamp(0.0, 1.0);
+                                if (hp_tf.scale.x - clamped_hp).abs() > 1e-4 {
+                                    hp_tf.scale.x = clamped_hp;
+                                    hp_tf.translation.x = (clamped_hp - 1.0) * 0.5;
+                                }
 
-                            let target_mat = if clamped_hp > 0.50 {
-                                assets.hp_green_mat.clone()
-                            } else if clamped_hp > 0.25 {
-                                assets.hp_yellow_mat.clone()
-                            } else {
-                                assets.hp_red_mat.clone()
-                            };
-                            *hp_mat = MeshMaterial3d(target_mat);
-                        }
+                                let target_mat = if clamped_hp > 0.50 {
+                                    assets.hp_green_mat.clone()
+                                } else if clamped_hp > 0.25 {
+                                    assets.hp_yellow_mat.clone()
+                                } else {
+                                    assets.hp_red_mat.clone()
+                                };
+                                if hp_mat.0 != target_mat {
+                                    *hp_mat = MeshMaterial3d(target_mat);
+                                }
+                            }
 
-                        // Update Shield Bar Scale
-                        if let Ok(mut shield_tf) = shield_bar_query.get_mut(grandchild) {
-                            let clamped_shield = instance.shield_ratio.clamp(0.0, 1.0);
-                            shield_tf.scale.x = clamped_shield;
-                            shield_tf.translation.x = (clamped_shield - 1.0) * 0.5;
+                            // Update Shield Bar Scale
+                            if let Ok(mut shield_tf) = shield_bar_query.get_mut(grandchild) {
+                                let clamped_shield = instance.shield_ratio.clamp(0.0, 1.0);
+                                if (shield_tf.scale.x - clamped_shield).abs() > 1e-4 {
+                                    shield_tf.scale.x = clamped_shield;
+                                    shield_tf.translation.x = (clamped_shield - 1.0) * 0.5;
+                                }
+                            }
                         }
                     }
                 }

@@ -5,7 +5,7 @@
 
 mod assets;
 mod association;
-pub(crate) mod fixture;
+pub mod fixture;
 #[cfg(test)]
 mod gpu_tests;
 pub(crate) mod interval;

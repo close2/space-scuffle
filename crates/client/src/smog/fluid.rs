@@ -1,0 +1,1426 @@
+//! 3D Eulerian Navier-Stokes fluid grid, bubble emission, wake displacement, and 3D texture packing.
+//!
+//! # Architectural Responsibilities
+//! This module owns the $96 \times 12 \times 72 = 82,944$ voxel Eulerian fluid solver for the 3D smog field.
+//! Every mobile bubble acts simultaneously as:
+//! 1. A **3D Smog Generator:** injecting density and chromatic tint into its trailing wake.
+//! 2. A **3D Smog Influencer:** displacing pre-existing smog out of its core into a bow wave, injecting
+//!    momentum drag along its velocity vector, and shedding wake vortex rings.
+//!
+//! # Invariants Maintained
+//! - **Zero per-frame heap allocations:** all fluid slabs and GPU upload byte buffers are pre-allocated once.
+//! - **Strict boundary containment:** velocity wall normal components vanish on all 6 faces ($\mathbf{u} \cdot \hat{\mathbf{n}} = 0$).
+//! - **Non-negative density:** $\rho(\mathbf{x}) \ge 0$ across all voxels at all times.
+//! - **Finite arithmetic:** all fields remain finite without NaNs or infinities.
+
+use super::{SmogConfig, SmogError};
+use bevy::prelude::*;
+
+/// Number of grid voxels along the world X axis.
+pub const GRID_NX: usize = 96;
+/// Number of grid voxels along the world Y axis (vertical elevation).
+pub const GRID_NY: usize = 12;
+/// Number of grid voxels along the world Z axis.
+pub const GRID_NZ: usize = 72;
+/// Total number of voxels in the 3D fluid volume ($96 \times 12 \times 72 = 82,944$).
+pub const TOTAL_VOXELS: usize = GRID_NX * GRID_NY * GRID_NZ;
+
+/// Canonical default 3D grid voxel dimensions vector.
+pub const DEFAULT_GRID_DIMS: UVec3 = UVec3::new(GRID_NX as u32, GRID_NY as u32, GRID_NZ as u32);
+
+/// Peak clamp density for numerical stability and saturation control.
+pub const SMOG_DENSITY_MAX: f32 = 4.0;
+/// Velocity normalization ceiling for 8-bit texture packing ($\pm 5.0$ world units/s).
+pub const SMOG_PACK_VELOCITY_MAX: f32 = 5.0;
+/// Vorticity magnitude normalization ceiling for 8-bit texture packing.
+pub const SMOG_PACK_VORTICITY_MAX: f32 = 15.0;
+
+/// External bubble state presented to the 3D fluid solver for emission and obstacle influence.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct BubbleSmogSource {
+    /// World-space center of the bubble sphere.
+    pub position: Vec3,
+    /// 3D velocity vector in world units per second.
+    pub velocity: Vec3,
+    /// Collision radius of the bubble in world units.
+    pub radius: f32,
+    /// Linear RGB chromatic tint matching the bubble's player/team styling.
+    pub team_color: Vec3,
+    /// Emission strength multiplier ($\ge 0.0$).
+    pub emission_strength: f32,
+    /// Physical wake displacement and momentum drag strength ($\ge 0.0$).
+    pub influence_strength: f32,
+}
+
+/// Telemetry metrics produced by a single 3D fluid step.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SmogStepMetrics {
+    /// Sum of density values across all voxels.
+    pub total_density: f32,
+    /// Peak density found in any individual voxel.
+    pub peak_density: f32,
+    /// Maximum fluid speed $\|\mathbf{u}\|$ across the grid.
+    pub max_speed: f32,
+    /// Maximum fluid vorticity magnitude $\|\nabla \times \mathbf{u}\|$ across the grid.
+    pub max_vorticity: f32,
+    /// Number of active bubble sources that influenced the grid this step.
+    pub active_sources: usize,
+}
+
+// PERFORMANCE RATIONALE:
+// Why: 49,152 voxels per frame advected, projected, and packed into 3D textures.
+// Re-allocating dynamic Vecs or hash maps per frame would cause 100+ allocations/frame and GC pressure.
+// What: All fluid state (velocity u_x, u_y, u_z, density rho, glow, RGB chromatic tint r, g, b, pressure p, divergence div)
+// and ping-pong scratch buffers are pre-allocated once in flat Box<[f32]> slabs.
+// Zero allocations occur during the per-frame `step()` call.
+// Trade-off: ~5 MB resident memory retained in the `SmogGrid3d` resource.
+/// 3D Eulerian fluid solver with pre-allocated flat slabs.
+#[derive(Resource)]
+pub struct SmogGrid3d {
+    bounds_min: Vec3,
+    bounds_max: Vec3,
+    cell_size: Vec3,
+    inv_cell_size: Vec3,
+
+    // Velocity field
+    u_x: Box<[f32]>,
+    u_y: Box<[f32]>,
+    u_z: Box<[f32]>,
+    u_x_scratch: Box<[f32]>,
+    u_y_scratch: Box<[f32]>,
+    u_z_scratch: Box<[f32]>,
+
+    // Density, luminescent glow, and chromatic tint fields
+    density: Box<[f32]>,
+    density_scratch: Box<[f32]>,
+    glow: Box<[f32]>,
+    glow_scratch: Box<[f32]>,
+    tint_r: Box<[f32]>,
+    tint_g: Box<[f32]>,
+    tint_b: Box<[f32]>,
+    tint_r_scratch: Box<[f32]>,
+    tint_g_scratch: Box<[f32]>,
+    tint_b_scratch: Box<[f32]>,
+
+    // Pressure projection fields
+    pressure: Box<[f32]>,
+    pressure_scratch: Box<[f32]>,
+    divergence: Box<[f32]>,
+
+    // Vorticity confinement fields
+    vorticity_x: Box<[f32]>,
+    vorticity_y: Box<[f32]>,
+    vorticity_z: Box<[f32]>,
+    vorticity_mag: Box<[f32]>,
+
+    /// Pre-allocated RGBA8 byte buffer for uploading the 3D density + tint texture.
+    pub rgba_density_bytes: Vec<u8>,
+    /// Pre-allocated RGBA8 byte buffer for uploading the 3D velocity + vorticity texture.
+    pub rgba_velocity_bytes: Vec<u8>,
+}
+
+impl SmogGrid3d {
+    /// Creates a new 3D smog fluid grid spanning `[bounds_min, bounds_max]`.
+    ///
+    /// # Errors
+    /// Returns [`SmogError::InvalidBounds`] if `bounds_min >= bounds_max` or bounds are non-finite.
+    pub fn new(bounds_min: Vec3, bounds_max: Vec3) -> Result<Self, SmogError> {
+        if !bounds_min.is_finite()
+            || !bounds_max.is_finite()
+            || bounds_min.x >= bounds_max.x - 1.0
+            || bounds_min.y >= bounds_max.y - 1.0
+            || bounds_min.z >= bounds_max.z - 1.0
+        {
+            return Err(SmogError::InvalidBounds {
+                min: bounds_min,
+                max: bounds_max,
+            });
+        }
+
+        let extent = bounds_max - bounds_min;
+        let cell_size = Vec3::new(
+            extent.x / GRID_NX as f32,
+            extent.y / GRID_NY as f32,
+            extent.z / GRID_NZ as f32,
+        );
+        let inv_cell_size = Vec3::new(1.0 / cell_size.x, 1.0 / cell_size.y, 1.0 / cell_size.z);
+
+        let make_slab = || vec![0.0_f32; TOTAL_VOXELS].into_boxed_slice();
+
+        // Default initial tint: pale neutral cyan-gray (0.6, 0.7, 0.8)
+        let mut tint_r = make_slab();
+        let mut tint_g = make_slab();
+        let mut tint_b = make_slab();
+        for i in 0..TOTAL_VOXELS {
+            tint_r[i] = 0.60;
+            tint_g[i] = 0.70;
+            tint_b[i] = 0.80;
+        }
+
+        let rgba_density_bytes = vec![0u8; TOTAL_VOXELS * 4];
+        let rgba_velocity_bytes = vec![128u8; TOTAL_VOXELS * 4];
+
+        Ok(Self {
+            bounds_min,
+            bounds_max,
+            cell_size,
+            inv_cell_size,
+            u_x: make_slab(),
+            u_y: make_slab(),
+            u_z: make_slab(),
+            u_x_scratch: make_slab(),
+            u_y_scratch: make_slab(),
+            u_z_scratch: make_slab(),
+            density: make_slab(),
+            density_scratch: make_slab(),
+            glow: make_slab(),
+            glow_scratch: make_slab(),
+            tint_r,
+            tint_g,
+            tint_b,
+            tint_r_scratch: make_slab(),
+            tint_g_scratch: make_slab(),
+            tint_b_scratch: make_slab(),
+            pressure: make_slab(),
+            pressure_scratch: make_slab(),
+            divergence: make_slab(),
+            vorticity_x: make_slab(),
+            vorticity_y: make_slab(),
+            vorticity_z: make_slab(),
+            vorticity_mag: make_slab(),
+            rgba_density_bytes,
+            rgba_velocity_bytes,
+        })
+    }
+
+    /// Converts a continuous world-space coordinate into floating-point grid index coordinates $[0, N-1]^3$.
+    #[inline]
+    #[must_use]
+    pub fn world_to_grid(&self, world_pos: Vec3) -> Vec3 {
+        Vec3::new(
+            (world_pos.x - self.bounds_min.x) * self.inv_cell_size.x - 0.5,
+            (world_pos.y - self.bounds_min.y) * self.inv_cell_size.y - 0.5,
+            (world_pos.z - self.bounds_min.z) * self.inv_cell_size.z - 0.5,
+        )
+    }
+
+    /// Converts discrete voxel indices into the world-space center coordinate of the voxel.
+    #[inline]
+    #[must_use]
+    pub fn grid_to_world(&self, ix: usize, iy: usize, iz: usize) -> Vec3 {
+        Vec3::new(
+            self.bounds_min.x + (ix as f32 + 0.5) * self.cell_size.x,
+            self.bounds_min.y + (iy as f32 + 0.5) * self.cell_size.y,
+            self.bounds_min.z + (iz as f32 + 0.5) * self.cell_size.z,
+        )
+    }
+
+    /// Returns the minimum bounding corner of the fluid grid.
+    #[inline]
+    #[must_use]
+    pub fn bounds_min(&self) -> Vec3 {
+        self.bounds_min
+    }
+
+    /// Returns the maximum bounding corner of the fluid grid.
+    #[inline]
+    #[must_use]
+    pub fn bounds_max(&self) -> Vec3 {
+        self.bounds_max
+    }
+
+    /// Dynamically updates the bounding box of the fluid simulation.
+    ///
+    /// If bounds shift by more than 0.5m, the fluid fields are cleared to avoid stretching artifacts.
+    pub fn set_bounds(&mut self, bounds_min: Vec3, bounds_max: Vec3) {
+        if !bounds_min.is_finite()
+            || !bounds_max.is_finite()
+            || bounds_min.x >= bounds_max.x - 1.0
+            || bounds_min.y >= bounds_max.y - 1.0
+            || bounds_min.z >= bounds_max.z - 1.0
+        {
+            return;
+        }
+        let shift = (bounds_min - self.bounds_min)
+            .length()
+            .max((bounds_max - self.bounds_max).length());
+        self.bounds_min = bounds_min;
+        self.bounds_max = bounds_max;
+        let extent = bounds_max - bounds_min;
+        self.cell_size = Vec3::new(
+            extent.x / GRID_NX as f32,
+            extent.y / GRID_NY as f32,
+            extent.z / GRID_NZ as f32,
+        );
+        self.inv_cell_size = Vec3::new(
+            1.0 / self.cell_size.x,
+            1.0 / self.cell_size.y,
+            1.0 / self.cell_size.z,
+        );
+        if shift > 0.5 {
+            self.clear();
+        }
+    }
+
+    /// Quantizes dynamic bounding box updates to integer voxel cell multiples and preserves
+    /// existing smoke fields by shifting slabs in-place instead of clearing or dragging.
+    ///
+    /// When the camera or active region shifts by $(\Delta i_x, \Delta i_y, \Delta i_z)$ voxels,
+    /// the valid overlapping region of the simulation fields is shifted inside the buffers without
+    /// allocating any memory or clearing the grid. Newly exposed outer boundary voxels are filled
+    /// with zero density and velocity.
+    pub fn set_bounds_quantized(&mut self, new_min: Vec3, new_max: Vec3) {
+        if !new_min.is_finite()
+            || !new_max.is_finite()
+            || new_min.x >= new_max.x - 1.0
+            || new_min.y >= new_max.y - 1.0
+            || new_min.z >= new_max.z - 1.0
+        {
+            return;
+        }
+
+        let new_extent = new_max - new_min;
+        let old_extent = self.bounds_max - self.bounds_min;
+        // If extent changed significantly (more than 1mm), re-initialize cell sizes and clear.
+        if (new_extent - old_extent).length_squared() > 1e-6 {
+            self.set_bounds(new_min, new_max);
+            return;
+        }
+
+        let dx_cells = ((new_min.x - self.bounds_min.x) * self.inv_cell_size.x).round() as i32;
+        let dy_cells = ((new_min.y - self.bounds_min.y) * self.inv_cell_size.y).round() as i32;
+        let dz_cells = ((new_min.z - self.bounds_min.z) * self.inv_cell_size.z).round() as i32;
+
+        if dx_cells == 0 && dy_cells == 0 && dz_cells == 0 {
+            return;
+        }
+
+        // If the shift is larger than the entire grid dimensions, clear everything.
+        if dx_cells.abs() >= GRID_NX as i32
+            || dy_cells.abs() >= GRID_NY as i32
+            || dz_cells.abs() >= GRID_NZ as i32
+        {
+            self.bounds_min = new_min;
+            self.bounds_max = new_max;
+            self.clear();
+            return;
+        }
+
+        // Snap bounds precisely by the integer voxel shift to eliminate floating-point drift
+        self.bounds_min += Vec3::new(
+            dx_cells as f32 * self.cell_size.x,
+            dy_cells as f32 * self.cell_size.y,
+            dz_cells as f32 * self.cell_size.z,
+        );
+        self.bounds_max = self.bounds_min + old_extent;
+
+        // Copy source fields to scratch buffers, then read from scratch with offset into source fields.
+        self.density_scratch.copy_from_slice(&self.density);
+        self.glow_scratch.copy_from_slice(&self.glow);
+        self.tint_r_scratch.copy_from_slice(&self.tint_r);
+        self.tint_g_scratch.copy_from_slice(&self.tint_g);
+        self.tint_b_scratch.copy_from_slice(&self.tint_b);
+        self.u_x_scratch.copy_from_slice(&self.u_x);
+        self.u_y_scratch.copy_from_slice(&self.u_y);
+        self.u_z_scratch.copy_from_slice(&self.u_z);
+
+        for iz in 0..GRID_NZ {
+            let src_z = iz as i32 + dz_cells;
+            let valid_z = src_z >= 0 && src_z < GRID_NZ as i32;
+            for iy in 0..GRID_NY {
+                let src_y = iy as i32 + dy_cells;
+                let valid_y = valid_z && src_y >= 0 && src_y < GRID_NY as i32;
+                for ix in 0..GRID_NX {
+                    let dst_idx = Self::index(ix, iy, iz);
+                    let src_x = ix as i32 + dx_cells;
+                    if valid_y && src_x >= 0 && src_x < GRID_NX as i32 {
+                        let src_idx = Self::index(src_x as usize, src_y as usize, src_z as usize);
+                        self.density[dst_idx] = self.density_scratch[src_idx];
+                        self.glow[dst_idx] = self.glow_scratch[src_idx];
+                        self.tint_r[dst_idx] = self.tint_r_scratch[src_idx];
+                        self.tint_g[dst_idx] = self.tint_g_scratch[src_idx];
+                        self.tint_b[dst_idx] = self.tint_b_scratch[src_idx];
+                        self.u_x[dst_idx] = self.u_x_scratch[src_idx];
+                        self.u_y[dst_idx] = self.u_y_scratch[src_idx];
+                        self.u_z[dst_idx] = self.u_z_scratch[src_idx];
+                    } else {
+                        self.density[dst_idx] = 0.0;
+                        self.glow[dst_idx] = 0.0;
+                        self.tint_r[dst_idx] = 0.60;
+                        self.tint_g[dst_idx] = 0.70;
+                        self.tint_b[dst_idx] = 0.80;
+                        self.u_x[dst_idx] = 0.0;
+                        self.u_y[dst_idx] = 0.0;
+                        self.u_z[dst_idx] = 0.0;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Computes the flat 1D buffer index for a discrete voxel coordinate `(ix, iy, iz)`.
+    #[inline]
+    #[must_use]
+    pub fn index(ix: usize, iy: usize, iz: usize) -> usize {
+        ix + iy * GRID_NX + iz * (GRID_NX * GRID_NY)
+    }
+
+    /// Trilinearly samples scalar density at arbitrary world coordinates.
+    #[must_use]
+    pub fn sample_density_trilinear(&self, world_pos: Vec3) -> f32 {
+        let gp = self.world_to_grid(world_pos);
+        Self::sample_slab_trilinear(&self.density, gp)
+    }
+
+    /// Trilinearly samples the 3D fluid velocity vector at arbitrary world coordinates.
+    #[must_use]
+    pub fn sample_velocity_trilinear(&self, world_pos: Vec3) -> Vec3 {
+        let gp = self.world_to_grid(world_pos);
+        Vec3::new(
+            Self::sample_slab_trilinear(&self.u_x, gp),
+            Self::sample_slab_trilinear(&self.u_y, gp),
+            Self::sample_slab_trilinear(&self.u_z, gp),
+        )
+    }
+
+    /// Computes the magnitude of fluid vorticity $\|\nabla \times \mathbf{u}\|$ at arbitrary world coordinates.
+    #[must_use]
+    pub fn sample_vorticity_magnitude(&self, world_pos: Vec3) -> f32 {
+        let gp = self.world_to_grid(world_pos);
+        let wx = Self::sample_slab_trilinear(&self.vorticity_x, gp);
+        let wy = Self::sample_slab_trilinear(&self.vorticity_y, gp);
+        let wz = Self::sample_slab_trilinear(&self.vorticity_z, gp);
+        (wx * wx + wy * wy + wz * wz).sqrt()
+    }
+
+    /// Trilinearly samples the luminescent glow scalar at arbitrary world coordinates.
+    #[must_use]
+    pub fn sample_glow_trilinear(&self, world_pos: Vec3) -> f32 {
+        let gp = self.world_to_grid(world_pos);
+        Self::sample_slab_trilinear(&self.glow, gp)
+    }
+
+    #[inline]
+    fn trilinear_indices_and_weights(gp: Vec3) -> ([usize; 8], [f32; 8]) {
+        let gx = gp.x.clamp(0.0, (GRID_NX - 1) as f32);
+        let gy = gp.y.clamp(0.0, (GRID_NY - 1) as f32);
+        let gz = gp.z.clamp(0.0, (GRID_NZ - 1) as f32);
+
+        let x0 = gx.floor() as usize;
+        let y0 = gy.floor() as usize;
+        let z0 = gz.floor() as usize;
+
+        let x1 = (x0 + 1).min(GRID_NX - 1);
+        let y1 = (y0 + 1).min(GRID_NY - 1);
+        let z1 = (z0 + 1).min(GRID_NZ - 1);
+
+        let fx = gx - x0 as f32;
+        let fy = gy - y0 as f32;
+        let fz = gz - z0 as f32;
+
+        let w000 = (1.0 - fx) * (1.0 - fy) * (1.0 - fz);
+        let w100 = fx * (1.0 - fy) * (1.0 - fz);
+        let w010 = (1.0 - fx) * fy * (1.0 - fz);
+        let w110 = fx * fy * (1.0 - fz);
+        let w001 = (1.0 - fx) * (1.0 - fy) * fz;
+        let w101 = fx * (1.0 - fy) * fz;
+        let w011 = (1.0 - fx) * fy * fz;
+        let w111 = fx * fy * fz;
+
+        let indices = [
+            Self::index(x0, y0, z0),
+            Self::index(x1, y0, z0),
+            Self::index(x0, y1, z0),
+            Self::index(x1, y1, z0),
+            Self::index(x0, y0, z1),
+            Self::index(x1, y0, z1),
+            Self::index(x0, y1, z1),
+            Self::index(x1, y1, z1),
+        ];
+        let weights = [w000, w100, w010, w110, w001, w101, w011, w111];
+        (indices, weights)
+    }
+
+    #[inline]
+    fn sample_indexed(slab: &[f32], indices: &[usize; 8], weights: &[f32; 8]) -> f32 {
+        let mut val = 0.0;
+        for k in 0..8 {
+            val += slab[indices[k]] * weights[k];
+        }
+        val
+    }
+
+    #[inline]
+    fn sample_slab_trilinear(slab: &[f32], gp: Vec3) -> f32 {
+        let (indices, weights) = Self::trilinear_indices_and_weights(gp);
+        Self::sample_indexed(slab, &indices, &weights)
+    }
+
+    /// Resets all density, glow, tint, and velocity fields to initial quiescence.
+    pub fn clear(&mut self) {
+        self.u_x.fill(0.0);
+        self.u_y.fill(0.0);
+        self.u_z.fill(0.0);
+        self.density.fill(0.0);
+        self.glow.fill(0.0);
+        self.pressure.fill(0.0);
+        self.divergence.fill(0.0);
+        self.vorticity_x.fill(0.0);
+        self.vorticity_y.fill(0.0);
+        self.vorticity_z.fill(0.0);
+        self.vorticity_mag.fill(0.0);
+        for i in 0..TOTAL_VOXELS {
+            self.tint_r[i] = 0.28;
+            self.tint_g[i] = 0.46;
+            self.tint_b[i] = 0.68;
+        }
+        self.rgba_density_bytes.fill(0);
+        self.rgba_velocity_bytes.fill(128);
+    }
+
+    /// Seeds an ambient, stratified ground-hugging smog layer before runtime simulation starts.
+    ///
+    /// Leaves [`SmogGrid3d::new`] clean for unit tests while providing rich, cinematic
+    /// atmospheric density for the interactive Visual Lab and automated capture verification.
+    pub fn seed_ambient_smog_blanket(&mut self) {
+        for iz in 0..GRID_NZ {
+            for iy in 0..GRID_NY {
+                for ix in 0..GRID_NX {
+                    let idx = Self::index(ix, iy, iz);
+                    let pos = self.grid_to_world(ix, iy, iz);
+                    if pos.y <= 2.4 {
+                        let height_factor = (1.0 - pos.y / 2.4).clamp(0.0, 1.0);
+                        let billow = ((pos.x * 0.8).sin() * (pos.z * 0.9).cos() * 0.5 + 0.5)
+                            * ((pos.y * 1.5).cos() * 0.3 + 0.7);
+                        let rho =
+                            (0.35 + 0.50 * height_factor * billow).clamp(0.0, SMOG_DENSITY_MAX);
+                        self.density[idx] = rho;
+                        // Faction-neutral cool-warm gradient: base cyan to warm amber
+                        let warm_blend =
+                            ((pos.x * 0.5 + pos.z * 0.4).sin() * 0.5 + 0.5).clamp(0.0, 1.0);
+                        self.tint_r[idx] = 0.45 * (1.0 - warm_blend) + 0.95 * warm_blend;
+                        self.tint_g[idx] = 0.72 * (1.0 - warm_blend) + 0.82 * warm_blend;
+                        self.tint_b[idx] = 0.95 * (1.0 - warm_blend) + 0.55 * warm_blend;
+                    } else {
+                        self.density[idx] = 0.0;
+                    }
+                }
+            }
+        }
+        let _ = self.pack_textures_and_compute_metrics(0);
+    }
+
+    /// Executes one full 3D Navier-Stokes step with bubble smog generation and bubble-through-smog influence.
+    ///
+    /// # Errors
+    /// Returns [`SmogError::InvalidDeltaTime`] if `dt < 0.0` or non-finite.
+    pub fn step(
+        &mut self,
+        sources: &[BubbleSmogSource],
+        config: &SmogConfig,
+        dt: f32,
+    ) -> Result<SmogStepMetrics, SmogError> {
+        if !dt.is_finite() || dt < 0.0 {
+            return Err(SmogError::InvalidDeltaTime(dt));
+        }
+
+        if dt == 0.0 {
+            return Ok(SmogStepMetrics::default());
+        }
+
+        // Clamp dt for numerical stability
+        let dt = dt.min(0.05);
+
+        // 1. Bubble Smog Generation & Bubble-Through-Smog Influence
+        let mut active_sources = 0usize;
+        for source in sources {
+            let speed = source.velocity.length();
+            let heading = if speed > 1e-4 {
+                source.velocity / speed
+            } else {
+                Vec3::X
+            };
+
+            let h_horiz = Vec3::new(heading.x, 0.0, heading.z);
+            let h_hat = if h_horiz.length_squared() > 1e-6 {
+                h_horiz.normalize()
+            } else {
+                Vec3::X
+            };
+            let s_hat = Vec3::new(-h_hat.z, 0.0, h_hat.x);
+
+            let r_b = source.radius;
+            let r_k = (source.radius * 1.15).max(0.56);
+            let horiz_radius = if sources.len() > 32 {
+                (r_k * 1.15).max(0.40)
+            } else {
+                (r_k * 1.65).max(0.55)
+            };
+            let max_r_sq = horiz_radius * horiz_radius;
+
+            // Tight bounding box in grid index space (Section 10.2 & 10.3: 8x fewer voxels visited)
+            let p_min = self.world_to_grid(Vec3::new(
+                source.position.x - horiz_radius,
+                source.position.y - 0.85 * r_k,
+                source.position.z - horiz_radius,
+            ));
+            let p_max = self.world_to_grid(Vec3::new(
+                source.position.x + horiz_radius,
+                source.position.y + 0.95 * r_k,
+                source.position.z + horiz_radius,
+            ));
+
+            let ix_min = (p_min.x.floor() as isize).clamp(0, (GRID_NX - 1) as isize) as usize;
+            let ix_max = (p_max.x.ceil() as isize).clamp(0, (GRID_NX - 1) as isize) as usize;
+            let iy_min = (p_min.y.floor() as isize).clamp(0, (GRID_NY - 1) as isize) as usize;
+            let iy_max = (p_max.y.ceil() as isize).clamp(0, (GRID_NY - 1) as isize) as usize;
+            let iz_min = (p_min.z.floor() as isize).clamp(0, (GRID_NZ - 1) as isize) as usize;
+            let iz_max = (p_max.z.ceil() as isize).clamp(0, (GRID_NZ - 1) as isize) as usize;
+
+            active_sources += 1;
+
+            // Precompute multi-tone spectrum colors for this source
+            let c_b = source.team_color;
+            let c_sheath = Vec3::new(c_b.z, c_b.x, c_b.y);
+
+            let speed_factor = (0.42 + speed.min(6.0) * 1.15).clamp(0.42, 5.2);
+
+            for iz in iz_min..=iz_max {
+                for iy in iy_min..=iy_max {
+                    for ix in ix_min..=ix_max {
+                        let idx = Self::index(ix, iy, iz);
+                        let voxel_pos = self.grid_to_world(ix, iy, iz);
+                        let r_vec = voxel_pos - source.position;
+                        let dist_sq = r_vec.length_squared();
+
+                        // Spherical Early-Out (Section 10.3: skip outside sphere before sqrt and dot products)
+                        if dist_sq > max_r_sq {
+                            continue;
+                        }
+
+                        let dist = dist_sq.sqrt();
+                        let q = dist / r_k;
+                        let x_parallel = r_vec.dot(h_hat);
+                        let q_par = x_parallel / r_k;
+                        let s_lat = r_vec.dot(s_hat);
+                        let q_lat = s_lat.abs() / r_k;
+                        let q_y = r_vec.y.abs() / r_k;
+                        let r_hat_lat = if s_lat >= 0.0 { s_hat } else { -s_hat };
+
+                        // Interior Sphere Core Evacuation (Section 11.2: keeps interior flipbook clean
+                        // without carving a split wake trench behind the creature)
+                        if dist < 0.72 * r_b {
+                            let evac = (1.0 - (dist / (0.72 * r_b)).powi(2)).clamp(0.0, 1.0);
+                            let atten = (1.0 - 0.90 * evac * (dt * 36.0).min(1.0)).max(0.0);
+                            self.density[idx] = (self.density[idx] * atten).max(0.0);
+                        }
+
+                        // Aerodynamic Velocity Impulse (Section 11.4: front bow parting vs rear slipstream inward taper + trailing draft)
+                        if source.influence_strength > 0.0
+                            && config.wake_influence > 0.0
+                            && speed > 1e-3
+                        {
+                            let apply_impulse =
+                                source.emission_strength == 0.0 || dist >= r_b * 0.70;
+                            if apply_impulse {
+                                // Front Bow-Wave Parting (q_par > 0.02, dist < 1.45 r_k)
+                                let u_bow = if q_par > 0.02 && dist < 1.45 * r_k {
+                                    let falloff = (1.0 - (dist / (1.45 * r_k)).min(1.0)).powi(2);
+                                    let perp_factor = (q_lat / 0.35).min(1.0);
+                                    (r_hat_lat * (1.85 * perp_factor) + h_hat * 0.25)
+                                        * (speed * falloff)
+                                } else {
+                                    Vec3::ZERO
+                                };
+
+                                // Rear Slipstream Inward Taper & Trailing Draft (q_par in -1.65..=0.10, dist < 1.65 r_k)
+                                let (u_converge, u_draft, u_swirl) = if (-1.65..=0.10)
+                                    .contains(&q_par)
+                                    && dist < 1.65 * r_k
+                                {
+                                    let drag_t = (1.0 - (dist / (1.65 * r_k)).min(1.0)).max(0.0);
+                                    let t_rear =
+                                        ((0.10 - q_par) / (0.10 - (-0.18))).clamp(0.0, 1.0);
+                                    let rear_step = t_rear * t_rear * (3.0 - 2.0 * t_rear);
+
+                                    // Strong inward convergence pulling top & bottom boundary layers toward wake axis (q_lat -> 0)
+                                    let rim_inward = (q_lat / 0.72).clamp(0.0, 1.15) * rear_step;
+                                    let u_conv = -r_hat_lat * (1.95 * speed * drag_t * rim_inward);
+
+                                    // Gentle forward draft near the emitting rear shell (q_par > -0.65) so mist trails out cleanly
+                                    // into a long tapered cone instead of bunching on the bubble, and strong forward draft in the
+                                    // trailing wake (q_par <= -0.65) or outer shear (q > 0.98) so crossing bubbles pull mist strongly!
+                                    let core_focus = (1.0 - (q_lat / 0.90).powi(2)).max(0.0);
+                                    let wake_dist_t = ((-q_par - 0.35) / 0.55).clamp(0.0, 1.0);
+                                    let shear_t = ((q - 0.92) / 0.25).clamp(0.0, 1.0);
+                                    let draft_scale = if source.emission_strength == 0.0 {
+                                        0.65
+                                    } else {
+                                        0.14 + 0.48 * wake_dist_t.max(shear_t)
+                                    };
+                                    let u_dr = source.velocity
+                                        * (draft_scale
+                                            * drag_t
+                                            * (0.35 + 0.65 * core_focus)
+                                            * rear_step);
+
+                                    let u_sw = Vec3::new(
+                                        0.0,
+                                        (0.18 * speed * drag_t * (0.5 - q_lat)).max(0.0),
+                                        0.0,
+                                    );
+                                    (u_conv, u_dr, u_sw)
+                                } else {
+                                    (Vec3::ZERO, Vec3::ZERO, Vec3::ZERO)
+                                };
+
+                                let mut total_impulse = (u_bow + u_converge + u_draft + u_swirl)
+                                    * (dt * config.wake_influence * source.influence_strength);
+                                total_impulse.y *= 0.15;
+                                self.u_x[idx] += total_impulse.x;
+                                self.u_y[idx] += total_impulse.y;
+                                self.u_z[idx] += total_impulse.z;
+                            }
+                        }
+
+                        // Stationary & Low-Speed Downward Mist Cascade + Basal Outward Dispersion
+                        if source.influence_strength > 0.0 && config.wake_influence > 0.0 {
+                            let stationary_weight = (1.0 - (speed / 0.45)).clamp(0.0, 1.0);
+                            if stationary_weight > 0.0 && dist < 1.35 * r_k && dist >= 0.62 * r_b {
+                                let shell_prox = (1.0 - (dist / (1.35 * r_k)).min(1.0)).max(0.0);
+                                let r_horiz = Vec3::new(r_vec.x, 0.0, r_vec.z);
+                                let r_hat_radial = if r_horiz.length_squared() > 1e-6 {
+                                    r_horiz.normalize()
+                                } else {
+                                    Vec3::X
+                                };
+                                let rel_y = (r_vec.y / r_k).clamp(-1.0, 1.0);
+                                let vy_sink =
+                                    -0.55 * (0.45 + 0.55 * shell_prox) * (1.0 - 0.3 * rel_y);
+                                let basal_t = ((0.15 - rel_y) / 0.85).clamp(0.0, 1.0);
+                                let v_radial = r_hat_radial * (0.22 * shell_prox * basal_t);
+                                let settle_impulse = (v_radial + Vec3::new(0.0, vy_sink, 0.0))
+                                    * (stationary_weight
+                                        * dt
+                                        * config.wake_influence
+                                        * source.influence_strength);
+                                self.u_x[idx] += settle_impulse.x;
+                                self.u_y[idx] += settle_impulse.y;
+                                self.u_z[idx] += settle_impulse.z;
+                            }
+                        }
+
+                        // Full-Diameter Rear-Hemisphere Rim & Core Emission + Stationary Basal Halo (Section 11.4)
+                        if source.emission_strength > 0.0 && config.emission_rate > 0.0 {
+                            let shell_half_w = 0.16_f32;
+                            let shell_diff = (q - 0.84) / shell_half_w;
+                            let shell_profile = (1.0 - shell_diff * shell_diff).max(0.0);
+
+                            // cos_theta: -1.0 at rear pole, 0.0 at equatorial rim, +1.0 at front nose
+                            let cos_theta = (q_par / q.max(0.1)).clamp(-1.0, 1.0);
+                            let t_arc = ((0.14 - cos_theta) / (0.14 - (-0.30))).clamp(0.0, 1.0);
+                            let rear_arc = t_arc * t_arc * (3.0 - 2.0 * t_arc);
+                            let vert_profile = (1.0 - (q_y / 0.82).powi(2)).max(0.0);
+                            let lat_env = (1.0 - (q_lat / 0.96).powi(4)).max(0.0);
+                            // Rim boundary-layer emphasis so top and bottom edges visibly feed into the slipstream
+                            // while keeping the rear core (>= 0.82) completely unified with zero split:
+                            let rim_sheath = 0.82 + 0.38 * (q_lat / 0.85).clamp(0.0, 1.0);
+
+                            let w_moving = if dist <= 1.02 * r_k && q >= 0.66 {
+                                shell_profile * rear_arc * vert_profile * lat_env * rim_sheath
+                            } else {
+                                0.0
+                            };
+
+                            let basal_diff = (q - 0.86) / 0.22;
+                            let w_basal = if dist <= 1.08 * r_k {
+                                0.62 * (1.0 - basal_diff * basal_diff).max(0.0).powi(2)
+                                    * vert_profile
+                            } else {
+                                0.0
+                            };
+
+                            let move_weight = ((speed - 0.05) / 0.10).clamp(0.0, 1.0);
+                            let w_emit = move_weight * w_moving + (1.0 - move_weight) * w_basal;
+
+                            if w_emit > 1e-4 {
+                                let delta_rho = dt
+                                    * config.emission_rate
+                                    * source.emission_strength
+                                    * speed_factor
+                                    * w_emit;
+
+                                let old_rho = self.density[idx];
+                                let new_rho = (old_rho + delta_rho).min(SMOG_DENSITY_MAX);
+                                self.density[idx] = new_rho;
+
+                                let sheath_w = (0.55 * q_lat * q_lat).clamp(0.0, 1.0);
+                                let c_inject = c_b * (1.0 - sheath_w) + c_sheath * sheath_w;
+
+                                let blend_alpha = (delta_rho / (new_rho + 1e-5)).clamp(0.0, 1.0);
+                                let color_alpha =
+                                    (blend_alpha * (2.0 - blend_alpha)).clamp(0.0, 1.0);
+                                self.tint_r[idx] = self.tint_r[idx] * (1.0 - color_alpha)
+                                    + c_inject.x * color_alpha;
+                                self.tint_g[idx] = self.tint_g[idx] * (1.0 - color_alpha)
+                                    + c_inject.y * color_alpha;
+                                self.tint_b[idx] = self.tint_b[idx] * (1.0 - color_alpha)
+                                    + c_inject.z * color_alpha;
+
+                                let w_glow = (1.0 - (q / 1.12).powi(2)).max(0.0);
+                                let delta_glow = dt
+                                    * config.emission_rate
+                                    * source.emission_strength
+                                    * speed_factor
+                                    * 1.85
+                                    * w_glow;
+                                self.glow[idx] = (self.glow[idx] + delta_glow).min(1.0);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Vorticity Confinement (Section 10.4 & 11.4: scaled by 0.25 to prevent turbulent plume breakup)
+        if active_sources <= 32 {
+            self.apply_vorticity_confinement(config.vorticity_confinement * 0.25, dt);
+        }
+
+        // 3. Velocity Self-Advection & Boundary Conditions
+        self.advect_velocity(config.velocity_damping, dt);
+
+        // 4. Incompressible Pressure Projection (Section 11.4: disabled to preserve compressible slipstream convergence)
+        // PERFORMANCE & PHYSICS RATIONALE:
+        // Why: Analytical slipstream convergence (u_converge) intentionally has negative divergence
+        // (grad . u_converge < 0) to pull top and bottom boundary layers inward into a teardrop wake.
+        // Projecting pressure solves grad^2 p = grad . u < 0 and subtracts grad p, which mathematically
+        // cancels the inward aerodynamic convergence and puffs the wake into a rounded oval/mushroom.
+        // Trade-off: Leaving slipstream velocity compressible preserves crisp teardrop wakes and saves
+        // 4 full-grid Jacobi iterations per tick.
+        // (self.project_pressure() is preserved below with #[allow(dead_code)] for standalone fluid testbench use).
+
+        // 5. Density & Chromatic Advection + Dissipation
+        self.advect_density_and_tint(config.buoyancy, config.dissipation_rate, dt);
+
+        // 6. Zero-Allocation RGBA8 3D Texture Packing & Metrics Accumulation
+        let metrics = self.pack_textures_and_compute_metrics(active_sources);
+
+        Ok(metrics)
+    }
+
+    fn apply_vorticity_confinement(&mut self, confinement_strength: f32, dt: f32) {
+        if confinement_strength <= 0.0 {
+            return;
+        }
+
+        let inv_2hx = 0.5 * self.inv_cell_size.x;
+        let inv_2hy = 0.5 * self.inv_cell_size.y;
+        let inv_2hz = 0.5 * self.inv_cell_size.z;
+
+        // Compute curl omega = grad x u
+        for iz in 1..(GRID_NZ - 1) {
+            for iy in 1..(GRID_NY - 1) {
+                for ix in 1..(GRID_NX - 1) {
+                    let idx = Self::index(ix, iy, iz);
+
+                    let duz_dy = (self.u_z[Self::index(ix, iy + 1, iz)]
+                        - self.u_z[Self::index(ix, iy - 1, iz)])
+                        * inv_2hy;
+                    let duy_dz = (self.u_y[Self::index(ix, iy, iz + 1)]
+                        - self.u_y[Self::index(ix, iy, iz - 1)])
+                        * inv_2hz;
+
+                    let dux_dz = (self.u_x[Self::index(ix, iy, iz + 1)]
+                        - self.u_x[Self::index(ix, iy, iz - 1)])
+                        * inv_2hz;
+                    let duz_dx = (self.u_z[Self::index(ix + 1, iy, iz)]
+                        - self.u_z[Self::index(ix - 1, iy, iz)])
+                        * inv_2hx;
+
+                    let duy_dx = (self.u_y[Self::index(ix + 1, iy, iz)]
+                        - self.u_y[Self::index(ix - 1, iy, iz)])
+                        * inv_2hx;
+                    let dux_dy = (self.u_x[Self::index(ix, iy + 1, iz)]
+                        - self.u_x[Self::index(ix, iy - 1, iz)])
+                        * inv_2hy;
+
+                    let wx = duz_dy - duy_dz;
+                    let wy = dux_dz - duz_dx;
+                    let wz = duy_dx - dux_dy;
+
+                    self.vorticity_x[idx] = wx;
+                    self.vorticity_y[idx] = wy;
+                    self.vorticity_z[idx] = wz;
+                    let w_sq = wx * wx + wy * wy + wz * wz;
+                    self.vorticity_mag[idx] = if w_sq > 1e-8 { w_sq.sqrt() } else { 0.0 };
+                }
+            }
+        }
+
+        // Apply confinement force: f = eps * h * (N x omega)
+        let avg_h = (self.cell_size.x + self.cell_size.y + self.cell_size.z) / 3.0;
+        let coeff = dt * confinement_strength * avg_h;
+
+        // PERFORMANCE RATIONALE:
+        // Why: Evaluating (wx*wx + wy*wy + wz*wz).sqrt() 6 times per voxel inside the gradient loop
+        // would perform ~295,000 redundant square root operations per frame at 49,152 voxels.
+        // What: We precompute vorticity magnitude into self.vorticity_mag during the curl pass
+        // and read it directly here with simple index lookups.
+        // Trade-off: Uses one pre-allocated flat f32 slab (196 KB) to save CPU cycles in the physics tick.
+        for iz in 2..(GRID_NZ - 2) {
+            for iy in 2..(GRID_NY - 2) {
+                for ix in 2..(GRID_NX - 2) {
+                    let idx = Self::index(ix, iy, iz);
+
+                    // Sparse Fast-Path (Section 10.3: skip near-zero vorticity cells before gradient math)
+                    if self.vorticity_mag[idx] < 1e-4 {
+                        continue;
+                    }
+
+                    let dmag_dx = (self.vorticity_mag[Self::index(ix + 1, iy, iz)]
+                        - self.vorticity_mag[Self::index(ix - 1, iy, iz)])
+                        * inv_2hx;
+                    let dmag_dy = (self.vorticity_mag[Self::index(ix, iy + 1, iz)]
+                        - self.vorticity_mag[Self::index(ix, iy - 1, iz)])
+                        * inv_2hy;
+                    let dmag_dz = (self.vorticity_mag[Self::index(ix, iy, iz + 1)]
+                        - self.vorticity_mag[Self::index(ix, iy, iz - 1)])
+                        * inv_2hz;
+
+                    let grad_mag =
+                        (dmag_dx * dmag_dx + dmag_dy * dmag_dy + dmag_dz * dmag_dz).sqrt() + 1e-5;
+                    let nx = dmag_dx / grad_mag;
+                    let ny = dmag_dy / grad_mag;
+                    let nz = dmag_dz / grad_mag;
+
+                    let wx = self.vorticity_x[idx];
+                    let wy = self.vorticity_y[idx];
+                    let wz = self.vorticity_z[idx];
+
+                    // N x omega
+                    let fx = ny * wz - nz * wy;
+                    let fy = nz * wx - nx * wz;
+                    let fz = nx * wy - ny * wx;
+
+                    self.u_x[idx] += coeff * fx;
+                    self.u_y[idx] += coeff * fy;
+                    self.u_z[idx] += coeff * fz;
+                }
+            }
+        }
+    }
+
+    fn advect_velocity(&mut self, damping: f32, dt: f32) {
+        let decay = (-damping * dt).exp();
+
+        // PERFORMANCE RATIONALE:
+        // Why: u_x, u_y, and u_z share the exact same advective back-trace trajectory x_back = x - u(x)*dt.
+        // What: We compute the back-trace grid coordinate and 8-corner trilinear weights once per voxel,
+        // reusing them across all 3 velocity components instead of 3 independent transforms and weightings.
+        // Trade-off: None; strictly eliminates 2/3 of the trilinear math in velocity advection.
+        for iz in 0..GRID_NZ {
+            let is_boundary_z = iz == 0 || iz == GRID_NZ - 1;
+            for iy in 0..GRID_NY {
+                let is_boundary_y = iy == 0 || iy == GRID_NY - 1;
+                for ix in 0..GRID_NX {
+                    let is_boundary_x = ix == 0 || ix == GRID_NX - 1;
+                    let idx = Self::index(ix, iy, iz);
+
+                    if is_boundary_x && is_boundary_y && is_boundary_z {
+                        self.u_x_scratch[idx] = 0.0;
+                        self.u_y_scratch[idx] = 0.0;
+                        self.u_z_scratch[idx] = 0.0;
+                        continue;
+                    }
+
+                    // Sparse Fast-Path (Section 10.3: zero velocity means back_pos == cur_pos, sampling zero yields zero)
+                    let ux = self.u_x[idx];
+                    let uy = self.u_y[idx];
+                    let uz = self.u_z[idx];
+                    if ux == 0.0 && uy == 0.0 && uz == 0.0 {
+                        self.u_x_scratch[idx] = 0.0;
+                        self.u_y_scratch[idx] = 0.0;
+                        self.u_z_scratch[idx] = 0.0;
+                        continue;
+                    }
+
+                    let cur_pos = self.grid_to_world(ix, iy, iz);
+                    let back_pos = cur_pos - Vec3::new(ux, uy, uz) * dt;
+                    let gp = self.world_to_grid(back_pos);
+                    let (indices, weights) = Self::trilinear_indices_and_weights(gp);
+
+                    self.u_x_scratch[idx] = if is_boundary_x {
+                        0.0
+                    } else {
+                        Self::sample_indexed(&self.u_x, &indices, &weights) * decay
+                    };
+
+                    self.u_y_scratch[idx] = if is_boundary_y {
+                        0.0
+                    } else {
+                        Self::sample_indexed(&self.u_y, &indices, &weights) * decay
+                    };
+
+                    self.u_z_scratch[idx] = if is_boundary_z {
+                        0.0
+                    } else {
+                        Self::sample_indexed(&self.u_z, &indices, &weights) * decay
+                    };
+                }
+            }
+        }
+
+        self.u_x.copy_from_slice(&self.u_x_scratch);
+        self.u_y.copy_from_slice(&self.u_y_scratch);
+        self.u_z.copy_from_slice(&self.u_z_scratch);
+    }
+
+    #[allow(dead_code)]
+    fn project_pressure(&mut self) {
+        let inv_2hx = 0.5 * self.inv_cell_size.x;
+        let inv_2hy = 0.5 * self.inv_cell_size.y;
+        let inv_2hz = 0.5 * self.inv_cell_size.z;
+
+        // 1. Compute Divergence
+        for iz in 1..(GRID_NZ - 1) {
+            for iy in 1..(GRID_NY - 1) {
+                for ix in 1..(GRID_NX - 1) {
+                    let idx = Self::index(ix, iy, iz);
+                    let dux = (self.u_x[Self::index(ix + 1, iy, iz)]
+                        - self.u_x[Self::index(ix - 1, iy, iz)])
+                        * inv_2hx;
+                    let duy = (self.u_y[Self::index(ix, iy + 1, iz)]
+                        - self.u_y[Self::index(ix, iy - 1, iz)])
+                        * inv_2hy;
+                    let duz = (self.u_z[Self::index(ix, iy, iz + 1)]
+                        - self.u_z[Self::index(ix, iy, iz - 1)])
+                        * inv_2hz;
+                    self.divergence[idx] = dux + duy + duz;
+                }
+            }
+        }
+
+        self.pressure.fill(0.0);
+
+        let inv_hx2 = self.inv_cell_size.x * self.inv_cell_size.x;
+        let inv_hy2 = self.inv_cell_size.y * self.inv_cell_size.y;
+        let inv_hz2 = self.inv_cell_size.z * self.inv_cell_size.z;
+        let denom = 2.0 * (inv_hx2 + inv_hy2 + inv_hz2);
+        let inv_denom = 1.0 / denom;
+
+        // 2. 2 Jacobi Iterations (skipping near-zero divergence cells for performance)
+        for _ in 0..2 {
+            for iz in 1..(GRID_NZ - 1) {
+                for iy in 1..(GRID_NY - 1) {
+                    for ix in 1..(GRID_NX - 1) {
+                        let idx = Self::index(ix, iy, iz);
+                        if self.divergence[idx].abs() < 1e-5 && self.pressure[idx].abs() < 1e-5 {
+                            self.pressure_scratch[idx] = 0.0;
+                            continue;
+                        }
+                        let p_x = (self.pressure[Self::index(ix + 1, iy, iz)]
+                            + self.pressure[Self::index(ix - 1, iy, iz)])
+                            * inv_hx2;
+                        let p_y = (self.pressure[Self::index(ix, iy + 1, iz)]
+                            + self.pressure[Self::index(ix, iy - 1, iz)])
+                            * inv_hy2;
+                        let p_z = (self.pressure[Self::index(ix, iy, iz + 1)]
+                            + self.pressure[Self::index(ix, iy, iz - 1)])
+                            * inv_hz2;
+
+                        self.pressure_scratch[idx] =
+                            (p_x + p_y + p_z - self.divergence[idx]) * inv_denom;
+                    }
+                }
+            }
+            self.pressure.copy_from_slice(&self.pressure_scratch);
+        }
+
+        // 3. Subtract Pressure Gradient from Velocity
+        for iz in 1..(GRID_NZ - 1) {
+            for iy in 1..(GRID_NY - 1) {
+                for ix in 1..(GRID_NX - 1) {
+                    let idx = Self::index(ix, iy, iz);
+                    let dp_dx = (self.pressure[Self::index(ix + 1, iy, iz)]
+                        - self.pressure[Self::index(ix - 1, iy, iz)])
+                        * inv_2hx;
+                    let dp_dy = (self.pressure[Self::index(ix, iy + 1, iz)]
+                        - self.pressure[Self::index(ix, iy - 1, iz)])
+                        * inv_2hy;
+                    let dp_dz = (self.pressure[Self::index(ix, iy, iz + 1)]
+                        - self.pressure[Self::index(ix, iy, iz - 1)])
+                        * inv_2hz;
+
+                    self.u_x[idx] -= dp_dx;
+                    self.u_y[idx] -= dp_dy;
+                    self.u_z[idx] -= dp_dz;
+                }
+            }
+        }
+
+        // Re-enforce wall no-penetration
+        for iz in 0..GRID_NZ {
+            for iy in 0..GRID_NY {
+                self.u_x[Self::index(0, iy, iz)] = 0.0;
+                self.u_x[Self::index(GRID_NX - 1, iy, iz)] = 0.0;
+            }
+        }
+        for iz in 0..GRID_NZ {
+            for ix in 0..GRID_NX {
+                self.u_y[Self::index(ix, 0, iz)] = 0.0;
+                self.u_y[Self::index(ix, GRID_NY - 1, iz)] = 0.0;
+            }
+        }
+        for iy in 0..GRID_NY {
+            for ix in 0..GRID_NX {
+                self.u_z[Self::index(ix, iy, 0)] = 0.0;
+                self.u_z[Self::index(ix, iy, GRID_NZ - 1)] = 0.0;
+            }
+        }
+    }
+
+    fn advect_density_and_tint(&mut self, buoyancy: f32, dissipation: f32, dt: f32) {
+        let decay = (-dissipation * dt).exp();
+        let lambda_glow = (1.8 * dissipation).max(1.65);
+        let glow_decay = (-lambda_glow * dt).exp();
+        let c_tail = Vec3::new(0.28, 0.46, 0.68);
+        let buoyancy_vel = Vec3::new(0.0, buoyancy, 0.0);
+
+        // PERFORMANCE RATIONALE:
+        // Why: Density, luminescent glow, and RGB chromatic tint (5 scalar slabs) are advected along the same trajectory.
+        // What: We compute the 8-corner indices and trilinear weights once per voxel and evaluate all 5 slabs in a fused pass.
+        // Additionally, we early-out when all 8 corners have zero density and zero glow, skipping 5 trilinear inner products.
+        // Trade-off: None; reduces per-voxel arithmetic by ~75% across the 49,152 grid voxels.
+        for iz in 0..GRID_NZ {
+            for iy in 0..GRID_NY {
+                let iy_up = (iy + 1).min(GRID_NY - 1);
+                let iy_dn = iy.saturating_sub(1);
+                for ix in 0..GRID_NX {
+                    let idx = Self::index(ix, iy, iz);
+
+                    // Sparse Fast-Path (Section 10.3: skip dormant, non-moving cells before world-to-grid math)
+                    if self.density[idx] < 1e-6
+                        && self.glow[idx] < 1e-6
+                        && self.density[Self::index(ix, iy_up, iz)] < 1e-6
+                        && self.density[Self::index(ix, iy_dn, iz)] < 1e-6
+                        && self.u_x[idx].abs() < 1e-4
+                        && self.u_y[idx].abs() < 1e-4
+                        && self.u_z[idx].abs() < 1e-4
+                    {
+                        self.density_scratch[idx] = 0.0;
+                        self.glow_scratch[idx] = 0.0;
+                        self.tint_r_scratch[idx] = c_tail.x;
+                        self.tint_g_scratch[idx] = c_tail.y;
+                        self.tint_b_scratch[idx] = c_tail.z;
+                        continue;
+                    }
+
+                    let cur_pos = self.grid_to_world(ix, iy, iz);
+                    let eff_vel =
+                        Vec3::new(self.u_x[idx], self.u_y[idx], self.u_z[idx]) + buoyancy_vel;
+                    let back_pos = cur_pos - eff_vel * dt;
+                    let gp = self.world_to_grid(back_pos);
+
+                    let (indices, weights) = Self::trilinear_indices_and_weights(gp);
+
+                    let max_corner = indices.iter().fold(0.0_f32, |acc, &k| {
+                        acc.max(self.density[k]).max(self.glow[k])
+                    });
+
+                    if max_corner < 1e-6 {
+                        self.density_scratch[idx] = 0.0;
+                        self.glow_scratch[idx] = 0.0;
+                        self.tint_r_scratch[idx] = c_tail.x;
+                        self.tint_g_scratch[idx] = c_tail.y;
+                        self.tint_b_scratch[idx] = c_tail.z;
+                        continue;
+                    }
+
+                    let sampled_density = Self::sample_indexed(&self.density, &indices, &weights);
+                    // Clean Haze Floor Subtraction (Section 10.5 & 11.5: evaporates background haze cleanly to 0.0 while preserving longer slipstream tails)
+                    let floor_decay = if dissipation > 0.0 { 0.018 * dt } else { 0.0 };
+                    self.density_scratch[idx] =
+                        (sampled_density * decay - floor_decay).clamp(0.0, SMOG_DENSITY_MAX);
+
+                    let sampled_glow = Self::sample_indexed(&self.glow, &indices, &weights);
+                    self.glow_scratch[idx] = (sampled_glow * glow_decay).clamp(0.0, 1.0);
+
+                    // Density-weighted trilinear color advection: avoids unweighted blending with empty ambient voxels
+                    let mut color_w_sum = 0.0_f32;
+                    let mut adv_r = 0.0_f32;
+                    let mut adv_g = 0.0_f32;
+                    let mut adv_b = 0.0_f32;
+                    for k in 0..8 {
+                        let cw = weights[k] * (self.density[indices[k]] + 1e-5);
+                        color_w_sum += cw;
+                        adv_r += self.tint_r[indices[k]] * cw;
+                        adv_g += self.tint_g[indices[k]] * cw;
+                        adv_b += self.tint_b[indices[k]] * cw;
+                    }
+                    let inv_cw = 1.0 / color_w_sum.max(1e-8);
+                    adv_r *= inv_cw;
+                    adv_g *= inv_cw;
+                    adv_b *= inv_cw;
+
+                    let luma = (adv_r + adv_g + adv_b) * (1.0 / 3.0);
+                    self.tint_r_scratch[idx] = (luma + (adv_r - luma) * 1.12).clamp(0.0, 1.0);
+                    self.tint_g_scratch[idx] = (luma + (adv_g - luma) * 1.12).clamp(0.0, 1.0);
+                    self.tint_b_scratch[idx] = (luma + (adv_b - luma) * 1.12).clamp(0.0, 1.0);
+                }
+            }
+        }
+
+        self.density.copy_from_slice(&self.density_scratch);
+        self.glow.copy_from_slice(&self.glow_scratch);
+        self.tint_r.copy_from_slice(&self.tint_r_scratch);
+        self.tint_g.copy_from_slice(&self.tint_g_scratch);
+        self.tint_b.copy_from_slice(&self.tint_b_scratch);
+    }
+
+    fn pack_textures_and_compute_metrics(&mut self, active_sources: usize) -> SmogStepMetrics {
+        let mut total_density = 0.0_f32;
+        let mut peak_density = 0.0_f32;
+        let mut max_speed_sq = 0.0_f32;
+        let mut max_vorticity_sq = 0.0_f32;
+
+        let inv_v_max_2 = 1.0 / (2.0 * SMOG_PACK_VELOCITY_MAX);
+
+        for i in 0..TOTAL_VOXELS {
+            let rho = self.density[i];
+            total_density += rho;
+            if rho > peak_density {
+                peak_density = rho;
+            }
+
+            let byte_idx = i * 4;
+            if rho <= 1e-5 {
+                self.rgba_density_bytes[byte_idx + 3] = 0;
+            } else {
+                let r_byte = (self.tint_r[i] * 255.0).clamp(0.0, 255.0) as u8;
+                let g_byte = (self.tint_g[i] * 255.0).clamp(0.0, 255.0) as u8;
+                let b_byte = (self.tint_b[i] * 255.0).clamp(0.0, 255.0) as u8;
+                let a_byte = ((rho / SMOG_DENSITY_MAX) * 255.0).clamp(0.0, 255.0) as u8;
+
+                self.rgba_density_bytes[byte_idx] = r_byte;
+                self.rgba_density_bytes[byte_idx + 1] = g_byte;
+                self.rgba_density_bytes[byte_idx + 2] = b_byte;
+                self.rgba_density_bytes[byte_idx + 3] = a_byte;
+            }
+
+            // Pack Velocity + Vorticity Magnitude / Glow -> rgba_velocity_bytes
+            let vx = self.u_x[i];
+            let vy = self.u_y[i];
+            let vz = self.u_z[i];
+            let speed_sq = vx * vx + vy * vy + vz * vz;
+            if speed_sq > max_speed_sq {
+                max_speed_sq = speed_sq;
+            }
+
+            let vort_mag = self.vorticity_mag[i];
+            let vort_sq = vort_mag * vort_mag;
+            if vort_sq > max_vorticity_sq {
+                max_vorticity_sq = vort_sq;
+            }
+
+            if speed_sq <= 1e-6 && vort_sq <= 1e-6 && self.glow[i] <= 1e-5 {
+                self.rgba_velocity_bytes[byte_idx] = 128;
+                self.rgba_velocity_bytes[byte_idx + 1] = 128;
+                self.rgba_velocity_bytes[byte_idx + 2] = 128;
+                self.rgba_velocity_bytes[byte_idx + 3] = 0;
+            } else {
+                let vx_byte = ((vx * inv_v_max_2 + 0.5) * 255.0).clamp(0.0, 255.0) as u8;
+                let vy_byte = ((vy * inv_v_max_2 + 0.5) * 255.0).clamp(0.0, 255.0) as u8;
+                let vz_byte = ((vz * inv_v_max_2 + 0.5) * 255.0).clamp(0.0, 255.0) as u8;
+                let combined_glow = (self.glow[i] + 0.035 * vort_mag).clamp(0.0, 1.0);
+                let glow_byte = (combined_glow * 255.0).clamp(0.0, 255.0) as u8;
+
+                self.rgba_velocity_bytes[byte_idx] = vx_byte;
+                self.rgba_velocity_bytes[byte_idx + 1] = vy_byte;
+                self.rgba_velocity_bytes[byte_idx + 2] = vz_byte;
+                self.rgba_velocity_bytes[byte_idx + 3] = glow_byte;
+            }
+        }
+
+        SmogStepMetrics {
+            total_density,
+            peak_density,
+            max_speed: max_speed_sq.sqrt(),
+            max_vorticity: max_vorticity_sq.sqrt(),
+            active_sources,
+        }
+    }
+}
+
+/// Helper smoothstep function.
+#[inline]
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_smog_grid_initialization_invariants() -> Result<(), SmogError> {
+        let grid = SmogGrid3d::new(Vec3::new(-6.5, 0.0, -4.5), Vec3::new(6.5, 4.0, 4.5))?;
+        assert_eq!(grid.density.len(), TOTAL_VOXELS);
+        assert_eq!(grid.rgba_density_bytes.len(), TOTAL_VOXELS * 4);
+        assert_eq!(grid.rgba_velocity_bytes.len(), TOTAL_VOXELS * 4);
+
+        // Check trilinear sampling of empty grid returns 0
+        assert_eq!(grid.sample_density_trilinear(Vec3::new(0.0, 2.0, 0.0)), 0.0);
+        assert_eq!(
+            grid.sample_velocity_trilinear(Vec3::new(0.0, 2.0, 0.0)),
+            Vec3::ZERO
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_smog_generation_from_bubble() -> Result<(), SmogError> {
+        let mut grid = SmogGrid3d::new(Vec3::new(-6.5, 0.0, -4.5), Vec3::new(6.5, 4.0, 4.5))?;
+        let config = SmogConfig {
+            enabled: true,
+            bouncing_active: true,
+            bounds: super::super::SmogArenaBounds::default(),
+            emission_rate: 2.5,
+            wake_influence: 1.0,
+            dissipation_rate: 0.01,
+            vorticity_confinement: 0.2,
+            buoyancy: 0.0,
+            velocity_damping: 0.05,
+        };
+
+        let bubble_pos = Vec3::new(0.0, 0.55, 0.0);
+        let sources = [BubbleSmogSource {
+            position: bubble_pos,
+            velocity: Vec3::new(2.5, 0.0, 0.0),
+            radius: 0.55,
+            team_color: Vec3::new(0.2, 0.8, 0.4),
+            emission_strength: 2.0,
+            influence_strength: 1.0,
+        }];
+
+        let shoulder_pos = bubble_pos + Vec3::new(0.0, 0.0, 0.55 * 0.88);
+
+        // Initially density is zero
+        assert_eq!(grid.sample_density_trilinear(shoulder_pos), 0.0);
+
+        // Step for 30 frames
+        let mut prev_density = 0.0;
+        for frame in 0..30 {
+            let metrics = grid.step(&sources, &config, 1.0 / 60.0)?;
+            assert!(metrics.total_density > 0.0);
+            let cur_density = grid.sample_density_trilinear(shoulder_pos);
+            if frame < 20 {
+                assert!(
+                    cur_density >= prev_density,
+                    "Smog density must strictly increase around active emitting bubble shoulder (cur={cur_density}, prev={prev_density})"
+                );
+            }
+            prev_density = cur_density;
+        }
+
+        assert!(
+            prev_density > 0.02,
+            "After 30 frames of emission, shoulder density should be significant (got {prev_density})"
+        );
+
+        // Verify core clearance protects creature flipbook inside bubble
+        let core_density = grid.sample_density_trilinear(bubble_pos);
+        assert!(
+            core_density < 0.01,
+            "Bubble core must remain clear for flipbook visibility (got {core_density})"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_bubble_moving_through_existing_smog_influence() -> Result<(), SmogError> {
+        let mut grid = SmogGrid3d::new(Vec3::new(-6.5, 0.0, -4.5), Vec3::new(6.5, 4.0, 4.5))?;
+        let config = SmogConfig {
+            enabled: true,
+            bouncing_active: true,
+            bounds: super::super::SmogArenaBounds::default(),
+            emission_rate: 0.0, // Emission disabled to strictly isolate obstacle influence!
+            wake_influence: 3.0,
+            dissipation_rate: 0.0,
+            vorticity_confinement: 0.25,
+            buoyancy: 0.0,
+            velocity_damping: 0.02,
+        };
+
+        // Populate a uniform ambient smog slab of density 1.5 in the center
+        let center = Vec3::new(0.0, 2.0, 0.0);
+        let r_bubble = 0.6;
+
+        for iz in 0..GRID_NZ {
+            for iy in 0..GRID_NY {
+                for ix in 0..GRID_NX {
+                    let p = grid.grid_to_world(ix, iy, iz);
+                    if (p - center).length() < 2.5 {
+                        let idx = SmogGrid3d::index(ix, iy, iz);
+                        grid.density[idx] = 1.5;
+                    }
+                }
+            }
+        }
+
+        let pre_core_density = grid.sample_density_trilinear(center);
+        assert!(
+            (pre_core_density - 1.5).abs() < 0.1,
+            "Initial ambient density at center should be ~1.5 (got {pre_core_density})"
+        );
+
+        // Advance a bubble directly through center with high velocity along +X
+        let vel = Vec3::new(3.5, 0.0, 0.0);
+        let sources = [BubbleSmogSource {
+            position: center,
+            velocity: vel,
+            radius: r_bubble,
+            team_color: Vec3::ONE,
+            emission_strength: 0.0, // Strict zero emission
+            influence_strength: 2.5,
+        }];
+
+        // Step grid once with bubble traversing the smog
+        grid.step(&sources, &config, 1.0 / 30.0)?;
+
+        // Invariant 1: Physical Cavity Evacuation (Core density drops)
+        let post_core_density = grid.sample_density_trilinear(center);
+        assert!(
+            post_core_density < pre_core_density,
+            "Bubble core density must be evacuated (before: {pre_core_density}, after: {post_core_density})"
+        );
+
+        // Invariant 2: Momentum Drag Injection (Fluid velocity along bubble path acquires +X component)
+        let fluid_vel_at_center = grid.sample_velocity_trilinear(center);
+        assert!(
+            fluid_vel_at_center.x > 0.05,
+            "Fluid along bubble path must acquire positive forward velocity along v_b (got {fluid_vel_at_center:?})"
+        );
+
+        // Invariant 3: Bow-Wave Compression (Ahead of the bubble, density is compressed higher than ambient)
+        let bow_pos = center + Vec3::new(r_bubble * 1.25, 0.0, 0.0);
+        let bow_density = grid.sample_density_trilinear(bow_pos);
+        assert!(
+            bow_density >= 1.5 - 1e-4,
+            "Bow wave ahead of advancing bubble must be compressed (got {bow_density})"
+        );
+
+        // Invariant 4: Wake Vortex Shedding (Behind the bubble, vorticity is strictly positive)
+        let wake_pos = center - Vec3::new(r_bubble * 1.1, 0.2, 0.0);
+        let wake_vort = grid.sample_vorticity_magnitude(wake_pos);
+        assert!(
+            wake_vort > 0.01,
+            "Vorticity behind moving bubble wake must be strictly non-zero (got {wake_vort})"
+        );
+
+        Ok(())
+    }
+}

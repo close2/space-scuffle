@@ -104,6 +104,7 @@ fn actual_loaded_scene_validates_temporary_and_synchronized_proxy_lifecycles(
         .add_plugins(crate::ClientAppPlugin {
             mode: crate::ClientMode::VisualLab,
             max_frames: None,
+            screenshot_out: None,
         })
         .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
             std::time::Duration::ZERO,

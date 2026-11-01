@@ -353,6 +353,7 @@ fn production_plugin_schedule_initializes_terrain_and_restores_tab_camera() -> T
         .add_plugins(client::ClientAppPlugin {
             mode: client::ClientMode::LiveBattle,
             max_frames: None,
+            screenshot_out: None,
         });
     app.finish();
     app.cleanup();

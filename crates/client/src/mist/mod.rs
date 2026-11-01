@@ -435,6 +435,7 @@ pub fn update_mist_wake_system(
             Option<&MistMotion>,
             Has<AssignedEmitter>,
         ),
+        Without<crate::smog::BouncingSmogBubble>,
     >,
     mut ribbons: Query<
         '_,
@@ -449,7 +450,17 @@ pub fn update_mist_wake_system(
     >,
     mut exit: EventWriter<'_, AppExit>,
     timing: Option<ResMut<'_, MistCpuTiming>>,
+    smog_config: Option<Res<'_, crate::smog::SmogConfig>>,
 ) {
+    if smog_config.as_ref().is_some_and(|c| c.enabled) {
+        for (_, mut vis, _, _) in &mut ribbons {
+            if *vis != Visibility::Hidden {
+                *vis = Visibility::Hidden;
+            }
+        }
+        return;
+    }
+
     let timer = benchmark::CpuTimer::new(timing.is_some());
     let Some(mut pool) = pool else {
         return;
@@ -546,8 +557,13 @@ pub fn update_mist_wake_system(
                         None
                     }
                 });
-            let enabled = override_motion.map_or(true, |m| m.enabled)
-                && (preview.is_none() || lab.as_ref().map_or(true, |l| l.opt_mist_wake));
+            let smog_replaces_mist = smog_config.as_ref().is_some_and(|c| c.enabled);
+            let enabled = !smog_replaces_mist
+                && override_motion.map_or(true, |m| m.enabled)
+                && (preview.is_none()
+                    || lab.as_ref().map_or(true, |l| {
+                        l.opt_mist_wake && !(l.smog_bouncing_active && l.opt_smog_volume)
+                    }));
             if enabled {
                 if !slot.was_enabled {
                     slot.history.reset();

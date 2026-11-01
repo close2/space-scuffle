@@ -48,6 +48,7 @@ pub mod bubble_optics;
 pub mod bubble_shader;
 pub mod camera;
 pub mod camera_drag;
+pub mod editor;
 pub mod indicators;
 pub mod input_policy;
 pub mod lab_ui;
@@ -62,6 +63,7 @@ pub mod runtime_capture;
 pub mod scene_controller;
 pub mod selection;
 pub mod shell_order_audit;
+pub mod smog;
 pub mod terrain;
 pub mod vfx;
 
@@ -87,6 +89,12 @@ pub use scene_controller::{
 pub use selection::{
     handle_viewport_selection_system, ray_sphere_intersect, selection_system, HeroLineupIndex,
     SelectionState,
+};
+pub use smog::{
+    initial_bouncing_bubbles, step_bouncing_kinematics, BouncingBubbleState, BouncingSmogBubble,
+    BubbleSmogSource, SmogArenaBounds, SmogConfig, SmogError, SmogGrid3d, SmogPlugin, SmogStats,
+    SmogStepMetrics, SmogTextures, SmogVolumeMarker, SmogVolumeMaterial, SmogVolumeUniformGpu,
+    BOUNCING_BUBBLE_COUNT, MAX_SMOG_SHADER_BUBBLES,
 };
 pub use vfx::{
     process_combat_events_system, setup_vfx_assets_system, spawn_death_shatter,
@@ -176,16 +184,21 @@ pub enum ClientMode {
 }
 
 /// Maximum frame limit before exiting the application cleanly.
-#[derive(Resource, Debug, Clone, Copy, Default)]
+#[derive(Resource, Debug, Clone, Default)]
 pub struct FrameLimit {
     /// Optional frame count cap.
     pub max_frames: Option<u64>,
     /// Accumulated frames rendered.
     pub current_frame: u64,
+    /// Optional screenshot output path.
+    pub screenshot_out: Option<PathBuf>,
+    /// Whether a screenshot request is already pending.
+    pub screenshot_pending: bool,
 }
 
 /// System that exits the application when the target frame count is reached.
 pub fn frame_limit_system(
+    mut commands: Commands<'_, '_>,
     mut frame_limit: ResMut<'_, FrameLimit>,
     mut exit_events: EventWriter<'_, AppExit>,
     render_status: Option<Res<'_, runtime_battle::BattleRenderStatus>>,
@@ -196,6 +209,10 @@ pub fn frame_limit_system(
     if let Some(max) = frame_limit.max_frames {
         frame_limit.current_frame += 1;
         if frame_limit.current_frame >= max {
+            if frame_limit.screenshot_pending {
+                return;
+            }
+
             let battle_failed = lab.is_some_and(|lab| {
                 lab.current_tab == LabTab::LiveBattle
                     && (lab.sim_world.is_none()
@@ -214,6 +231,38 @@ pub fn frame_limit_system(
             {
                 error!("Render verification reached its frame limit before valid GPU pipelines and battle assets were ready");
                 exit_events.send(AppExit::error());
+                return;
+            }
+
+            if let Some(screenshot_path) = frame_limit.screenshot_out.clone() {
+                frame_limit.screenshot_pending = true;
+                commands
+                    .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
+                    .observe(
+                        move |trigger: Trigger<
+                            '_,
+                            bevy::render::view::screenshot::ScreenshotCaptured,
+                        >,
+                              mut exit: EventWriter<'_, AppExit>| {
+                            let save_result = (|| -> Result<(), Box<dyn std::error::Error>> {
+                                let dynamic = trigger.event().0.clone().try_into_dynamic()?;
+                                if let Some(parent) = screenshot_path.parent() {
+                                    std::fs::create_dir_all(parent)?;
+                                }
+                                let pixels = dynamic.to_rgb8();
+                                pixels.save(&screenshot_path)?;
+                                info!("Saved screenshot to: {}", screenshot_path.display());
+                                Ok(())
+                            })();
+
+                            if let Err(err) = save_result {
+                                error!("Failed to capture/save screenshot: {err}");
+                                exit.send(AppExit::error());
+                            } else {
+                                exit.send(AppExit::Success);
+                            }
+                        },
+                    );
             } else {
                 exit_events.send(AppExit::Success);
             }
@@ -227,6 +276,8 @@ pub struct ClientAppPlugin {
     pub mode: ClientMode,
     /// Optional frame limit for automated testing.
     pub max_frames: Option<u64>,
+    /// Optional screenshot output path.
+    pub screenshot_out: Option<PathBuf>,
 }
 
 impl Plugin for ClientAppPlugin {
@@ -266,6 +317,8 @@ impl Plugin for ClientAppPlugin {
         .insert_resource(FrameLimit {
             max_frames: self.max_frames,
             current_frame: 0,
+            screenshot_out: self.screenshot_out.clone(),
+            screenshot_pending: false,
         })
         .add_event::<CombatVisualEvent>()
         .add_plugins(MaterialPlugin::<BubbleDomeMaterial>::default())
@@ -273,6 +326,8 @@ impl Plugin for ClientAppPlugin {
         .add_plugins(mist::MistWakePlugin)
         .add_plugins(bubble_optics::BubbleOpticsPlugin)
         .add_plugins(MaterialPlugin::<CombatFxMaterial>::default())
+        .add_plugins(MaterialPlugin::<SmogVolumeMaterial>::default())
+        .add_plugins(SmogPlugin)
         .configure_sets(
             Update,
             (
@@ -381,10 +436,11 @@ pub fn spawn_camera_system(mut commands: Commands<'_, '_>, lab_state: Res<'_, La
 /// Runs the Space Scuffle client application with the specified launch mode.
 #[must_use]
 pub fn run_app(mode: ClientMode, max_frames: Option<u64>) -> AppExit {
-    run_app_with_scenario(
+    run_app_with_options(
         mode,
         max_frames,
         std::path::Path::new(runtime_battle::DEFAULT_BATTLE_SCENARIO),
+        None,
     )
 }
 
@@ -394,6 +450,17 @@ pub fn run_app_with_scenario(
     mode: ClientMode,
     max_frames: Option<u64>,
     scenario_path: &std::path::Path,
+) -> AppExit {
+    run_app_with_options(mode, max_frames, scenario_path, None)
+}
+
+/// Runs the game with full options including launch mode, max frames, scenario path, and screenshot path.
+#[must_use]
+pub fn run_app_with_options(
+    mode: ClientMode,
+    max_frames: Option<u64>,
+    scenario_path: &std::path::Path,
+    screenshot_out: Option<PathBuf>,
 ) -> AppExit {
     if mode == ClientMode::HeadlessCheck {
         return match run_headless_check() {
@@ -408,7 +475,7 @@ pub fn run_app_with_scenario(
         };
     }
 
-    match build_graphical_app(mode, max_frames, scenario_path) {
+    match build_graphical_app_with_options(mode, max_frames, scenario_path, screenshot_out) {
         Ok(mut app) => {
             let media_policy = app.world().resource::<media::MediaFailurePolicy>().clone();
             media_policy.final_exit(render_compatibility::run_render_app(&mut app))
@@ -446,6 +513,19 @@ pub fn build_graphical_app(
     max_frames: Option<u64>,
     scenario_path: &std::path::Path,
 ) -> Result<App, ClientStartupError> {
+    build_graphical_app_with_options(mode, max_frames, scenario_path, None)
+}
+
+/// Builds the production graphical application with screenshot export support.
+///
+/// # Errors
+/// Returns typed asset/scenario errors, or rejects the separate headless-check mode.
+pub fn build_graphical_app_with_options(
+    mode: ClientMode,
+    max_frames: Option<u64>,
+    scenario_path: &std::path::Path,
+    screenshot_out: Option<PathBuf>,
+) -> Result<App, ClientStartupError> {
     if mode == ClientMode::HeadlessCheck {
         return Err(ClientStartupError::HeadlessMode);
     }
@@ -482,7 +562,11 @@ pub fn build_graphical_app(
         )
         .add_plugins(FrameTimeDiagnosticsPlugin)
         .add_plugins(EguiPlugin)
-        .add_plugins(ClientAppPlugin { mode, max_frames });
+        .add_plugins(ClientAppPlugin {
+            mode,
+            max_frames,
+            screenshot_out,
+        });
     Ok(app)
 }
 
@@ -572,6 +656,13 @@ pub fn run_headless_check() -> Result<(), String> {
     app.init_resource::<Assets<SelectionRingMaterial>>();
     app.init_resource::<Assets<MistWakeMaterial>>();
     app.init_resource::<Assets<CombatFxMaterial>>();
+    app.init_resource::<Assets<SmogVolumeMaterial>>();
+    app.init_resource::<SmogConfig>();
+    app.init_resource::<SmogStats>();
+    app.insert_resource(
+        SmogGrid3d::new(Vec3::new(-6.5, 0.0, -4.5), Vec3::new(6.5, 2.8, 4.5))
+            .map_err(|error| error.to_string())?,
+    );
     app.init_resource::<ButtonInput<KeyCode>>();
     app.init_resource::<ButtonInput<MouseButton>>();
     app.add_event::<bevy::input::mouse::MouseMotion>();
@@ -621,6 +712,7 @@ pub fn run_headless_check() -> Result<(), String> {
             setup_vfx_assets_system,
             spawn_arena_environment,
             spawn_camera_system,
+            smog::setup_smog_volume_system,
         ),
     );
 
@@ -644,6 +736,11 @@ pub fn run_headless_check() -> Result<(), String> {
             )
                 .chain(),
             sync_swarm_stress_system,
+            (
+                smog::sync_bouncing_smog_bubbles_system,
+                smog::update_smog_field_system,
+            )
+                .chain(),
         ),
     );
 

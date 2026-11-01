@@ -75,6 +75,19 @@ pub fn run_capture(options: CaptureOptions) -> Result<AppExit, CaptureError> {
     app.world_mut()
         .resource_mut::<crate::LabState>()
         .simulation_speed = 1;
+    app.world_mut()
+        .resource_mut::<crate::LabState>()
+        .smog_bouncing_active = false;
+    app.world_mut()
+        .resource_mut::<crate::LabState>()
+        .opt_smog_volume = false;
+    if let Some(mut smog_config) = app
+        .world_mut()
+        .get_resource_mut::<crate::smog::SmogConfig>()
+    {
+        smog_config.bouncing_active = false;
+        smog_config.enabled = false;
+    }
     let evidence = pipelines::PipelineEvidence::new(app.world().resource::<AssetServer>());
     app.insert_resource(session)
         .insert_resource(crate::media::MediaFailurePolicy::new(true))

@@ -34,8 +34,8 @@ pub fn spawn_arena_environment(
     mut meshes: ResMut<'_, Assets<Mesh>>,
     mut materials: ResMut<'_, Assets<StandardMaterial>>,
 ) {
-    // 1. Low-Ground Floor (Cliff Level 1: y = 0.0, 32x32 tiles centered at x=16, z=16)
-    let low_ground_mesh = meshes.add(Plane3d::default().mesh().size(32.0, 32.0));
+    // 1. Low-Ground Floor (Cliff Level 1: y = 0.0, 64x64 tiles centered at x=16, z=16)
+    let low_ground_mesh = meshes.add(Plane3d::default().mesh().size(64.0, 64.0));
     let dark_metal_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.08, 0.10, 0.14),
         metallic: 0.85,
