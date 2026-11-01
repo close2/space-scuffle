@@ -21,6 +21,7 @@
 pub mod catalog;
 pub mod checksum;
 pub mod combat;
+pub(crate) mod combat_resolution;
 pub mod entity;
 pub mod error;
 #[expect(
