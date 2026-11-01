@@ -88,6 +88,9 @@ pub enum ClientMediaError {
         /// Identity whose handle or metadata was substituted.
         slug: String,
     },
+    /// The smog presentation could not start or continue.
+    #[error(transparent)]
+    Smog(#[from] crate::smog::SmogError),
 }
 
 struct Admitted {

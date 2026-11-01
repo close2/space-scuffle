@@ -316,26 +316,7 @@ fn test_moving_bubble_influences_and_perturbs_existing_smog() -> Result<(), Smog
 
 #[test]
 fn test_full_bevy_schedule_ten_bubbles_and_smog_grid() -> Result<(), Box<dyn std::error::Error>> {
-    let mut app = App::new();
-    app.add_plugins(MinimalPlugins);
-
-    app.init_resource::<Assets<Mesh>>();
-    app.init_resource::<Assets<StandardMaterial>>();
-    app.init_resource::<Assets<Image>>();
-    app.init_resource::<Assets<client::BubbleDomeMaterial>>();
-    app.init_resource::<Assets<client::SelectionRingMaterial>>();
-    app.init_resource::<Assets<client::MistWakeMaterial>>();
-    app.init_resource::<Assets<client::CombatFxMaterial>>();
-    app.init_resource::<Assets<client::smog::SmogVolumeMaterial>>();
-    app.init_resource::<client::CatalogResource>();
-    app.init_resource::<client::RenderEntityMap>();
-    app.init_resource::<client::SelectionState>();
-
-    let root = resolve_root()?;
-    app.insert_resource(root);
-
-    // Add production SmogPlugin
-    app.add_plugins(SmogPlugin);
+    let mut app = production_smog_app(client::LabState::default())?;
 
     // Step 60 frames in headless Bevy
     for _ in 0..60 {
@@ -1052,6 +1033,142 @@ fn smog_stepping_never_modifies_image_or_material_assets() -> Result<(), Box<dyn
         steps,
         "every step must publish one GPU upload generation"
     );
+    Ok(())
+}
+
+/// Replaces the assets root with one holding no flipbooks, keeping the real catalog and palette.
+fn without_any_media(app: &mut App) -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    std::fs::create_dir(directory.path().join("shaders"))?;
+    std::fs::create_dir(directory.path().join("textures"))?;
+    std::fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/shaders/bubble_dome.wgsl"),
+        directory.path().join("shaders/bubble_dome.wgsl"),
+    )?;
+    app.insert_resource(ResolvedAssetsRoot::from_directory(directory.path())?);
+    Ok(directory)
+}
+
+fn has_error_exit(app: &App) -> bool {
+    app.world()
+        .resource::<Events<AppExit>>()
+        .iter_current_update_events()
+        .any(|event| matches!(event, AppExit::Error(_)))
+}
+
+fn smog_failure(app: &App) -> Option<String> {
+    let status = app.world().resource::<client::media::ClientMediaStatus>();
+    assert_eq!(status.failure().is_some(), status.failure_text().is_some());
+    status
+        .failure()
+        .filter(|error| matches!(error, client::media::ClientMediaError::Smog(_)))
+        .map(ToString::to_string)
+}
+
+/// C-6: with no admitted actor the old startup fabricated unit types and bound a white texture.
+#[test]
+fn smog_without_admitted_media_fails_without_spawning_stand_ins(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = production_smog_app(client::LabState::default())?;
+    app.insert_resource(client::media::MediaFailurePolicy::new(true));
+    let _directory = without_any_media(&mut app)?;
+
+    app.update();
+
+    assert_eq!(
+        app.world_mut()
+            .query::<&BouncingSmogBubble>()
+            .iter(app.world())
+            .count(),
+        0,
+        "no stand-in actor may be spawned"
+    );
+    let failure = smog_failure(&app).ok_or("startup must record a typed smog failure")?;
+    assert!(failure.contains("no admitted mobile"), "{failure}");
+    assert_eq!(
+        app.world().resource::<client::LabState>().battle_failure,
+        Some(failure)
+    );
+    assert!(has_error_exit(&app), "a bounded run must exit with failure");
+    Ok(())
+}
+
+/// C-6: invalid arena bounds were logged at `warn` and left a client with no bubbles.
+#[test]
+fn smog_startup_with_invalid_bounds_reports_a_typed_failure(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = production_smog_app(client::LabState::default())?;
+    app.insert_resource(SmogConfig {
+        bounds: SmogArenaBounds {
+            min: Vec3::splat(4.0),
+            max: Vec3::splat(-4.0),
+        },
+        ..default()
+    });
+
+    app.update();
+
+    let failure = smog_failure(&app).ok_or("startup must record a typed smog failure")?;
+    assert!(failure.contains("invalid arena bounds"), "{failure}");
+    Ok(())
+}
+
+/// C-6: a failing kinematics step was logged at `warn` and the bubbles froze.
+#[test]
+fn smog_runtime_step_failure_reaches_the_media_failure_path(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = production_smog_app(client::LabState::default())?;
+    app.update();
+    app.update();
+    assert_eq!(smog_failure(&app), None);
+
+    app.world_mut().resource_mut::<SmogConfig>().bounds = SmogArenaBounds {
+        min: Vec3::splat(4.0),
+        max: Vec3::splat(-4.0),
+    };
+    app.update();
+
+    let failure = smog_failure(&app).ok_or("a failed step must record a typed failure")?;
+    assert!(failure.contains("invalid arena bounds"), "{failure}");
+    let steps = app.world().resource::<SmogStats>().step_count;
+    app.update();
+    assert_eq!(
+        app.world().resource::<SmogStats>().step_count,
+        steps,
+        "a failed presentation must stop stepping"
+    );
+    Ok(())
+}
+
+/// C-6: bubbles are real catalog identities with their own media, owned by a palette preview role.
+#[test]
+fn smog_actors_use_admitted_identities_and_palette_owners() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut app = production_smog_app(client::LabState::default())?;
+    app.update();
+    let world = app.world_mut();
+    let bubbles: Vec<_> = world
+        .query::<(&BouncingSmogBubble, &client::BubbleInstance)>()
+        .iter(world)
+        .map(|(bubble, instance)| (bubble.index, instance.0.clone()))
+        .collect();
+    assert_eq!(bubbles.len(), BOUNCING_BUBBLE_COUNT);
+    let world = app.world();
+    let palette = world.resource::<client::player_presentation::PlayerPalette>();
+    let catalog = world.resource::<client::CatalogResource>();
+    let registry = world.resource::<client::FlipbookRegistry>();
+    let media = world.resource::<client::media::ClientMediaStatus>();
+    for (index, instance) in bubbles {
+        assert_eq!(instance.owner, palette.showcase(index));
+        assert!(catalog.get(instance.unit_type).is_ok());
+        media.require(registry, instance.unit_type, instance.anim_state)?;
+        assert!(
+            instance.entity_id.0 >= client::smog::SHOWCASE_ENTITY_ID_BASE,
+            "{:?} is inside the range the simulation allocates from",
+            instance.entity_id
+        );
+    }
     Ok(())
 }
 

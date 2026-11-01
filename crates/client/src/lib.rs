@@ -659,6 +659,7 @@ pub fn run_headless_check() -> Result<(), String> {
     app.init_resource::<Assets<SmogVolumeMaterial>>();
     app.init_resource::<SmogConfig>();
     app.init_resource::<SmogStats>();
+    app.init_resource::<smog::SmogGpuFrame>();
     app.insert_resource(
         SmogGrid3d::new(Vec3::new(-6.5, 0.0, -4.5), Vec3::new(6.5, 2.8, 4.5))
             .map_err(|error| error.to_string())?,
@@ -712,7 +713,7 @@ pub fn run_headless_check() -> Result<(), String> {
             setup_vfx_assets_system,
             spawn_arena_environment,
             spawn_camera_system,
-            smog::setup_smog_volume_system,
+            smog::setup_smog_volume_system.after(setup_bubble_assets_system),
         ),
     );
 

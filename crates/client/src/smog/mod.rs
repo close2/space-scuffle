@@ -24,7 +24,7 @@ pub use gpu_upload::{SmogGpuFrame, SMOG_UPLOAD_LOG_TARGET};
 pub use kinematics::{
     bubble_team_color, generate_bouncing_bubbles, initial_bouncing_bubbles,
     step_bouncing_kinematics, BouncingBubbleState, BouncingSmogBubble, SmogArenaBounds,
-    BOUNCING_BUBBLE_COUNT,
+    BOUNCING_BUBBLE_COUNT, MAX_BOUNCING_BUBBLES,
 };
 pub use material::{
     SmogVolumeMarker, SmogVolumeMaterial, SmogVolumeUniformGpu, MAX_SMOG_SHADER_BUBBLES,
@@ -38,9 +38,17 @@ use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::render::{ExtractSchedule, RenderApp};
-use sim_types::enums::ShapeKind;
+use sim_types::enums::{AnimState, ShapeKind};
+use sim_types::ids::UnitTypeId;
 use sim_types::snapshot::BubbleRenderInstance;
-use sim_types::{EntityId, PlayerId};
+use sim_types::EntityId;
+
+/// First [`EntityId`] of the showcase bubbles, which exist only in the client.
+///
+/// [`BubbleRenderInstance`] requires an identity, but these actors have no simulation entity. The
+/// range sits at the top of `u32`, far beyond the upward-counting simulation allocator, so a
+/// showcase identity can never alias a battle entity.
+pub const SHOWCASE_ENTITY_ID_BASE: u32 = u32::MAX - MAX_BOUNCING_BUBBLES as u32;
 
 /// Strongly-typed error conditions originating in the smog subsystem.
 #[derive(Debug, thiserror::Error, Clone, PartialEq)]
@@ -69,6 +77,9 @@ pub enum SmogError {
     /// Source configuration violated physical constraints.
     #[error("invalid source configuration: {0}")]
     InvalidSource(&'static str),
+    /// No catalog identity has the media a smog actor must present.
+    #[error("no admitted mobile unit has its own media for the smog showcase")]
+    NoAdmittedActor,
 }
 
 /// Runtime configuration parameters controlling 3D smog generation, dissipation, and bubble kinematics.
@@ -172,7 +183,9 @@ impl Plugin for SmogPlugin {
 }
 
 /// Startup system initializing the 3D textures, the volumetric bounding proxy entity,
-/// running 45 pre-warm steps, and dynamically spawning the 10 mobile bouncing bubbles from the unit catalog.
+/// running the pre-warm steps, and spawning the 10 mobile bouncing bubbles from admitted catalog identities.
+///
+/// Failures stop before any asset or entity is created, and reach the visible media diagnostic.
 pub fn setup_smog_volume_system(
     mut commands: Commands<'_, '_>,
     mut meshes: ResMut<'_, Assets<Mesh>>,
@@ -181,37 +194,23 @@ pub fn setup_smog_volume_system(
     mut bubble_materials: ResMut<'_, Assets<BubbleDomeMaterial>>,
     mut grid: ResMut<'_, SmogGrid3d>,
     config: Res<'_, SmogConfig>,
-    catalog: Option<Res<'_, CatalogResource>>,
-    registry: Option<Res<'_, FlipbookRegistry>>,
-    media_status: Option<Res<'_, crate::media::ClientMediaStatus>>,
-    _palette: Option<Res<'_, crate::player_presentation::PlayerPalette>>,
-    shared_meshes: Option<Res<'_, BubbleSharedMeshes>>,
+    catalog: Res<'_, CatalogResource>,
+    registry: Res<'_, FlipbookRegistry>,
+    mut media_status: ResMut<'_, crate::media::ClientMediaStatus>,
+    mut owners: crate::player_presentation::PresentationContext<'_>,
+    shared_meshes: Res<'_, BubbleSharedMeshes>,
+    mut lab_state: ResMut<'_, crate::LabState>,
+    mut exit: EventWriter<'_, AppExit>,
 ) {
-    // 1. Initialize kinematics initial states and run 26-step warmup
-    let mut initial_states = match initial_bouncing_bubbles(&config.bounds) {
-        Ok(states) => states,
-        Err(err) => {
-            warn!("Failed to initialize bouncing bubble states: {err}");
+    let admission = admitted_smog_actors(&catalog, &registry, &media_status)
+        .and_then(|actors| Ok((prewarm_smog_field(&mut grid, &config)?, actors)));
+    let (initial_states, mobile_archetypes) = match admission {
+        Ok(admitted) => admitted,
+        Err(error) => {
+            crate::media::reject(error.into(), &mut media_status, &mut lab_state, &mut exit);
             return;
         }
     };
-
-    for _ in 0..26 {
-        let _ = step_bouncing_kinematics(&mut initial_states, &config.bounds, 1.0 / 30.0);
-        let mut prewarm_sources = [BubbleSmogSource::default(); BOUNCING_BUBBLE_COUNT];
-        for (j, state) in initial_states.iter().enumerate() {
-            let team_color = bubble_team_color(j);
-            prewarm_sources[j] = BubbleSmogSource {
-                position: state.position,
-                velocity: state.velocity,
-                radius: state.radius,
-                team_color,
-                emission_strength: 1.0,
-                influence_strength: 1.0,
-            };
-        }
-        let _ = grid.step(&prewarm_sources, &config, 1.0 / 30.0);
-    }
 
     // 2. Initialize persistent 3D textures with pre-warmed data
     // PERFORMANCE RATIONALE:
@@ -383,84 +382,18 @@ pub fn setup_smog_volume_system(
         material_handle: mat_handle,
     });
 
-    // 4. Dynamically spawn the 10 Bouncing Bubbles from CatalogResource (Zero hardcoded slugs)
-    let sphere_mesh = shared_meshes.as_ref().map_or_else(
-        || meshes.add(Sphere::new(1.0).mesh().uv(32, 18)),
-        |sm| sm.sphere_mesh.clone(),
-    );
-
-    let mobile_archetypes: Vec<_> = if let Some(cat) = &catalog {
-        let admitted: Vec<_> = cat
-            .archetypes()
-            .filter(|a| !matches!(a.shape, ShapeKind::BuildingDome { .. }))
-            .filter(|a| {
-                registry
-                    .as_ref()
-                    .is_none_or(|r| r.get_texture(a.unit_type_id).is_some())
-                    && media_status
-                        .as_ref()
-                        .and_then(|ms| ms.audit(a.unit_type_id))
-                        .is_none_or(|audit| {
-                            audit.status
-                                != asset_baker::media_audit::MediaAuditStatus::KnownConceptDuplicate
-                        })
-            })
-            .cloned()
-            .collect();
-        if admitted.is_empty() {
-            cat.archetypes()
-                .filter(|a| !matches!(a.shape, ShapeKind::BuildingDome { .. }))
-                .cloned()
-                .collect()
-        } else {
-            admitted
-        }
-    } else {
-        Vec::new()
-    };
-
-    let fallback_texture = images.add(Image::new_fill(
-        Extent3d {
-            width: 4,
-            height: 4,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        &[255, 255, 255, 255],
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
-    ));
+    // 5. Spawn the 10 Bouncing Bubbles from admitted catalog identities (Zero hardcoded slugs)
+    let sphere_mesh = shared_meshes.sphere_mesh.clone();
 
     for (i, state) in initial_states.iter().enumerate() {
-        let owner = PlayerId((i % 2) as u8 + 1);
-
-        let (unit_type_id, texture, meta) = if !mobile_archetypes.is_empty() {
-            let arch = &mobile_archetypes[i % mobile_archetypes.len()];
-            let tex = registry
-                .as_ref()
-                .and_then(|r| r.get_texture(arch.unit_type_id))
-                .or_else(|| {
-                    registry
-                        .as_ref()
-                        .and_then(|r| r.get_texture_by_name("concept_video"))
-                })
-                .or_else(|| {
-                    registry
-                        .as_ref()
-                        .and_then(|r| r.textures_by_id.values().next().cloned())
-                })
-                .unwrap_or_else(|| fallback_texture.clone());
-            let m = registry
-                .as_ref()
-                .and_then(|r| r.get_meta(arch.unit_type_id));
-            (arch.unit_type_id, Some(tex), m)
-        } else {
-            (
-                sim_types::ids::UnitTypeId(100 + i as u16),
-                Some(fallback_texture.clone()),
-                None,
-            )
-        };
+        let owner = owners.palette.showcase(i);
+        if let Err(error) = owners.palette.preview_style(owner) {
+            owners.reject(error, &mut exit);
+            return;
+        }
+        let unit_type_id = mobile_archetypes[i % mobile_archetypes.len()];
+        let texture = registry.get_texture(unit_type_id);
+        let meta = registry.get_meta(unit_type_id);
 
         let tc = bubble_team_color(i);
         let linear_tc = Color::srgb(tc.x, tc.y, tc.z).to_linear();
@@ -475,7 +408,7 @@ pub fn setup_smog_volume_system(
         };
 
         let render_instance = BubbleRenderInstance {
-            entity_id: EntityId(20_000 + i as u32),
+            entity_id: EntityId(SHOWCASE_ENTITY_ID_BASE + i as u32),
             shape: ShapeKind::UnitSphere,
             silhouette: sim_types::enums::SilhouetteClass::LightProngs,
             unit_type: unit_type_id,
@@ -489,7 +422,7 @@ pub fn setup_smog_volume_system(
             is_attacking: false,
             weapon_visual: sim_types::enums::WeaponVisualKind::Hitscan,
             attack_target_pos: None,
-            anim_state: sim_types::enums::AnimState::Walk,
+            anim_state: AnimState::Walk,
             anim_progress: 0.0,
             hp_ratio: 1.0,
             shield_ratio: 1.0,
@@ -530,6 +463,66 @@ pub fn setup_smog_volume_system(
     }
 }
 
+/// Lists the mobile catalog identities that can present smog actors, in catalog order.
+///
+/// An actor walks, so its own media must admit the walk action. Known copies of the concept video
+/// are excluded because they would show the same art under several identities.
+///
+/// # Errors
+/// Returns [`SmogError::NoAdmittedActor`] when no identity qualifies. Nothing is substituted.
+fn admitted_smog_actors(
+    catalog: &CatalogResource,
+    registry: &FlipbookRegistry,
+    media: &crate::media::ClientMediaStatus,
+) -> Result<Vec<UnitTypeId>, SmogError> {
+    let actors: Vec<UnitTypeId> = catalog
+        .archetypes()
+        .filter(|archetype| !matches!(archetype.shape, ShapeKind::BuildingDome { .. }))
+        .map(|archetype| archetype.unit_type_id)
+        .filter(|&unit_type| {
+            media.require(registry, unit_type, AnimState::Walk).is_ok()
+                && media.audit(unit_type).is_none_or(|audit| {
+                    audit.status
+                        != asset_baker::media_audit::MediaAuditStatus::KnownConceptDuplicate
+                })
+        })
+        .collect();
+    if actors.is_empty() {
+        return Err(SmogError::NoAdmittedActor);
+    }
+    Ok(actors)
+}
+
+/// Runs the startup warm-up so the first drawn frame already shows developed smog.
+///
+/// # Errors
+/// Returns the first [`SmogError`] from bubble initialization, kinematics or the fluid step.
+fn prewarm_smog_field(
+    grid: &mut SmogGrid3d,
+    config: &SmogConfig,
+) -> Result<[BouncingBubbleState; BOUNCING_BUBBLE_COUNT], SmogError> {
+    const PREWARM_DT_SECS: f32 = 1.0 / 30.0;
+    const PREWARM_STEPS: usize = 26;
+
+    let mut states = initial_bouncing_bubbles(&config.bounds)?;
+    for _ in 0..PREWARM_STEPS {
+        step_bouncing_kinematics(&mut states, &config.bounds, PREWARM_DT_SECS)?;
+        let mut sources = [BubbleSmogSource::default(); BOUNCING_BUBBLE_COUNT];
+        for (index, state) in states.iter().enumerate() {
+            sources[index] = BubbleSmogSource {
+                position: state.position,
+                velocity: state.velocity,
+                radius: state.radius,
+                team_color: bubble_team_color(index),
+                emission_strength: 1.0,
+                influence_strength: 1.0,
+            };
+        }
+        grid.step(&sources, config, PREWARM_DT_SECS)?;
+    }
+    Ok(states)
+}
+
 /// Per-frame kinematics system updating the 10 bouncing bubbles with elastic reflections and peer collisions.
 // PERFORMANCE RATIONALE:
 // Why: Allocating a `Vec<BouncingBubbleState>` on every frame causes unnecessary heap churn.
@@ -538,7 +531,9 @@ pub fn setup_smog_volume_system(
 pub fn sync_bouncing_smog_bubbles_system(
     time: Res<'_, Time>,
     config: Res<'_, SmogConfig>,
-    lab_state: Option<Res<'_, crate::LabState>>,
+    mut lab_state: ResMut<'_, crate::LabState>,
+    mut media_status: ResMut<'_, crate::media::ClientMediaStatus>,
+    mut exit: EventWriter<'_, AppExit>,
     mut stats: ResMut<'_, SmogStats>,
     mut scratch: Local<'_, Vec<BouncingBubbleState>>,
     mut query: Query<
@@ -552,14 +547,12 @@ pub fn sync_bouncing_smog_bubbles_system(
         ),
     >,
 ) {
-    let in_active_tab = lab_state
-        .as_ref()
-        .is_none_or(|l| l.current_tab == crate::LabTab::VisualLab);
-    let bouncing_active = lab_state.as_ref().map_or(config.bouncing_active, |l| {
-        l.smog_bouncing_active && l.opt_smog_volume
-    });
-
-    let is_visible = in_active_tab && bouncing_active;
+    if media_status.retain_failure(&mut lab_state) {
+        return;
+    }
+    let is_visible = lab_state.current_tab == crate::LabTab::VisualLab
+        && lab_state.smog_bouncing_active
+        && lab_state.opt_smog_volume;
 
     for (_, _, _, mut vis) in &mut query {
         let target_vis = if is_visible {
@@ -602,8 +595,8 @@ pub fn sync_bouncing_smog_bubbles_system(
     // Step kinematics
     let (wb, pb) = match step_bouncing_kinematics(&mut scratch, &config.bounds, dt) {
         Ok(counts) => counts,
-        Err(err) => {
-            warn!("step_bouncing_kinematics failed: {err}");
+        Err(error) => {
+            crate::media::reject(error.into(), &mut media_status, &mut lab_state, &mut exit);
             return;
         }
     };
@@ -647,7 +640,9 @@ pub fn sync_bouncing_smog_bubbles_system(
 pub(crate) fn update_smog_field_system(
     time: Res<'_, Time>,
     config: Res<'_, SmogConfig>,
-    mut lab_state: Option<ResMut<'_, crate::LabState>>,
+    mut lab_state: ResMut<'_, crate::LabState>,
+    mut media_status: ResMut<'_, crate::media::ClientMediaStatus>,
+    mut exit: EventWriter<'_, AppExit>,
     mut stats: ResMut<'_, SmogStats>,
     mut grid: ResMut<'_, SmogGrid3d>,
     mut gpu_frame: ResMut<'_, SmogGpuFrame>,
@@ -674,15 +669,13 @@ pub(crate) fn update_smog_field_system(
     camera_query: Query<'_, '_, &crate::camera::RtsCamera>,
     controlled_fixture: Option<Res<'_, crate::shell_order_audit::fixture::ControlledFixture>>,
 ) {
-    let in_controlled_fixture = controlled_fixture.is_some();
-    let enabled = !in_controlled_fixture
-        && lab_state
-            .as_ref()
-            .map_or(config.enabled, |l| l.opt_smog_volume && l.opt_mist_wake);
+    if media_status.retain_failure(&mut lab_state) {
+        return;
+    }
+    let enabled =
+        controlled_fixture.is_none() && lab_state.opt_smog_volume && lab_state.opt_mist_wake;
 
-    let current_tab = lab_state
-        .as_ref()
-        .map_or(crate::LabTab::VisualLab, |l| l.current_tab);
+    let current_tab = lab_state.current_tab;
     let (target_min, target_max) = match current_tab {
         crate::LabTab::VisualLab => (Vec3::new(-6.5, 0.0, -4.5), Vec3::new(6.5, 2.8, 4.5)),
         crate::LabTab::SwarmStressTest => (Vec3::new(4.0, 0.0, 7.0), Vec3::new(28.0, 2.8, 24.0)),
@@ -768,10 +761,8 @@ pub(crate) fn update_smog_field_system(
     }
 
     let mut effective_config = config.clone();
-    if let Some(ref l) = lab_state {
-        effective_config.emission_rate = l.smog_emission_rate;
-        effective_config.wake_influence = l.smog_wake_influence;
-    }
+    effective_config.emission_rate = lab_state.smog_emission_rate;
+    effective_config.wake_influence = lab_state.smog_wake_influence;
 
     sources_scratch.clear();
     let mut packed_pos_radius = [Vec4::ZERO; MAX_SMOG_SHADER_BUBBLES];
@@ -800,10 +791,7 @@ pub(crate) fn update_smog_field_system(
                 if preview.is_some() {
                     mist_motion
                         .and_then(|m| m.conveyor_velocity)
-                        .unwrap_or_else(|| {
-                            let spd = lab_state.as_ref().map_or(0.0, |l| l.speed);
-                            Vec3::new(-spd, 0.0, 0.0)
-                        })
+                        .unwrap_or_else(|| Vec3::new(-lab_state.speed, 0.0, 0.0))
                 } else {
                     Vec3::new(instance.0.velocity[0], 0.0, instance.0.velocity[1])
                 }
@@ -882,22 +870,23 @@ pub(crate) fn update_smog_field_system(
             for (i, src) in sources_scratch.iter().enumerate() {
                 prewarm_sources[i].position = src.position - src.velocity * t_back;
             }
-            let _ = grid.step(&prewarm_sources, &effective_config, prewarm_dt);
+            if let Err(error) = grid.step(&prewarm_sources, &effective_config, prewarm_dt) {
+                crate::media::reject(error.into(), &mut media_status, &mut lab_state, &mut exit);
+                return;
+            }
         }
     }
 
     // Step 3D fluid simulation
     let metrics = match grid.step(&sources_scratch, &effective_config, dt) {
         Ok(m) => m,
-        Err(err) => {
-            warn!("SmogGrid3d::step failed: {err}");
+        Err(error) => {
+            crate::media::reject(error.into(), &mut media_status, &mut lab_state, &mut exit);
             return;
         }
     };
 
-    if let Some(ref mut l) = lab_state {
-        l.smog_bubble_count = sources_scratch.len();
-    }
+    lab_state.smog_bubble_count = sources_scratch.len();
 
     stats.total_density = metrics.total_density;
     stats.peak_density = metrics.peak_density;
