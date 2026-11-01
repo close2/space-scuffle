@@ -22,7 +22,6 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::window::WindowCloseRequested;
 use bevy_egui::{egui, EguiContexts};
-use sim_core::scenario::{PlayerSetup, StartLoadoutCatalog};
 use sim_map::grid::{CellFlags, CliffLevel, RampDir, TerrainKind};
 use sim_map::map_format::{
     MapDocument, MapEntityId, MapMetadata, MAX_MAP_DIMENSION, MIN_MAP_DIMENSION,
@@ -35,7 +34,7 @@ use crate::editor::commands::{ChangeSet, EditCommand, History, MapEntity};
 use crate::editor::document::EditorDocument;
 use crate::editor::file_browser::{FileBrowserAction, FileBrowserMode, FileBrowserState};
 use crate::editor::los_preview::{LosPreviewState, StartLoadoutCatalogResource};
-use crate::editor::playtest::{initialize_playtest_world, EditorPhase, PlaytestState};
+use crate::editor::playtest::PlaytestEntry;
 use crate::editor::stroke::StrokeRecorder;
 use crate::editor::symmetry::SymmetryMode;
 use crate::editor::tools::{
@@ -198,7 +197,7 @@ impl Default for EditorToolState {
     }
 }
 
-/// Contextual system parameters for the editor UI (time, input, windows, cameras, events, phase).
+/// Contextual system parameters for the editor UI (time, input, windows, cameras, events).
 #[derive(SystemParam)]
 pub struct EditorUiContext<'w, 's> {
     /// Global simulation and app clock time.
@@ -227,10 +226,6 @@ pub struct EditorUiContext<'w, 's> {
     pub exit_events: EventWriter<'w, AppExit>,
     /// Writer for camera jump and focus events.
     pub focus_events: EventWriter<'w, EditorCameraFocus>,
-    /// Transition handle to switch editor phases.
-    pub editor_phase: ResMut<'w, NextState<EditorPhase>>,
-    /// Current editor phase (Editing vs Playtesting).
-    pub current_phase: Res<'w, State<EditorPhase>>,
 }
 
 /// Document, tool, history, modal, and playtest state for the editor UI.
@@ -250,8 +245,8 @@ pub struct EditorUiState<'w> {
     pub unsaved_modal: ResMut<'w, UnsavedChangesModalState>,
     /// Dynamic line-of-sight preview calculations and state.
     pub los_state: ResMut<'w, LosPreviewState>,
-    /// Playtest simulation state and pending commands.
-    pub playtest_state: ResMut<'w, PlaytestState>,
+    /// Validation, preparation and commit of a playtest session.
+    pub playtest: PlaytestEntry<'w>,
 }
 
 /// Terrain rendering, field images, and catalog references for the editor UI.
@@ -289,8 +284,6 @@ pub fn editor_ui_system(
         mut close_events,
         mut exit_events,
         mut focus_events,
-        mut editor_phase,
-        current_phase,
     } = ctx;
 
     let EditorUiState {
@@ -301,7 +294,7 @@ pub fn editor_ui_system(
         mut new_map_modal,
         mut unsaved_modal,
         mut los_state,
-        mut playtest_state,
+        mut playtest,
     } = state;
 
     let EditorUiTerrain {
@@ -339,35 +332,11 @@ pub fn editor_ui_system(
         }
     }
 
-    // 2. Playtesting Mode Header UI
-    if *current_phase.get() == EditorPhase::Playtesting {
-        let Some(ctx) = contexts.try_ctx_mut() else {
-            return;
-        };
-        egui::TopBottomPanel::top("playtest_top_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.colored_label(egui::Color32::from_rgb(100, 255, 100), "PLAYTESTING (25 Hz)");
-                ui.separator();
-                ui.label(format!("Tick: {}", playtest_state.current_tick));
-                ui.separator();
-                ui.label(format!("Checksum: 0x{:016X}", playtest_state.last_checksum));
-                ui.separator();
-                ui.label("Controls: Left-click select (Shift add), Right-click move, Ctrl+Right-click attack-move");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Return to Editor (Esc)").clicked() {
-                        editor_phase.set(EditorPhase::Editing);
-                    }
-                });
-            });
-        });
-        return;
-    }
-
     let Some(ctx) = contexts.try_ctx_mut() else {
         return;
     };
 
-    // 3. Window Close Interception
+    // 2. Window Close Interception
     for _ in close_events.read() {
         if doc.dirty {
             unsaved_modal.is_open = true;
@@ -407,10 +376,9 @@ pub fn editor_ui_system(
         } else if keyboard.just_pressed(KeyCode::F5) {
             handle_playtest_entry(
                 &mut doc,
-                &mut editor_phase,
-                &mut playtest_state,
-                &tool_state,
-                loadouts.as_deref().map(|l| &l.0),
+                &mut playtest,
+                &mut tool_state,
+                &maps_dir,
                 &mut focus_events,
             );
         } else if keyboard.just_pressed(KeyCode::KeyB) {
@@ -579,10 +547,9 @@ pub fn editor_ui_system(
             if ui.button("Playtest (F5)").clicked() {
                 handle_playtest_entry(
                     &mut doc,
-                    &mut editor_phase,
-                    &mut playtest_state,
-                    &tool_state,
-                    loadouts.as_deref().map(|l| &l.0),
+                    &mut playtest,
+                    &mut tool_state,
+                    &maps_dir,
                     &mut focus_events,
                 );
             }
@@ -1237,45 +1204,24 @@ fn handle_save_action(
 
 fn handle_playtest_entry(
     doc: &mut EditorDocument,
-    phase: &mut NextState<EditorPhase>,
-    playtest: &mut PlaytestState,
-    tool_state: &EditorToolState,
-    loadouts: Option<&StartLoadoutCatalog>,
+    playtest: &mut PlaytestEntry<'_>,
+    tool_state: &mut EditorToolState,
+    maps_dir: &Path,
     focus_events: &mut EventWriter<'_, EditorCameraFocus>,
 ) {
-    doc.revalidate();
-    if !doc.validation.errors.is_empty() {
-        if let Some(first_err) = doc.validation.errors.first() {
-            focus_events.send(EditorCameraFocus {
-                cell: first_err.location().min,
-            });
+    match playtest.enter(doc, &tool_state.player_loadouts, maps_dir) {
+        Ok(autosaved) => {
+            if let Some(path) = autosaved {
+                tool_state.last_status_message = Some(format!("Autosaved {}", path.display()));
+            }
         }
-        playtest.error_banner = Some("Cannot playtest: map has validation errors.".into());
-        return;
-    }
-
-    let Some(loads) = loadouts else {
-        playtest.error_banner = Some("Start loadouts catalog not loaded.".into());
-        return;
-    };
-
-    let players: Vec<PlayerSetup> = (0..doc.doc.start_locations.len() as u8)
-        .map(|slot| PlayerSetup {
-            player_slot: slot,
-            loadout_slug: tool_state.player_loadouts[slot as usize].clone(),
-        })
-        .collect();
-
-    match initialize_playtest_world(doc, loads, &players) {
-        Ok(_world) => {
-            playtest.error_banner = None;
-            playtest.selected_unit_ids.clear();
-            playtest.pending_commands.clear();
-            playtest.accumulator_secs = 0.0;
-            phase.set(EditorPhase::Playtesting);
-        }
-        Err(e) => {
-            playtest.error_banner = Some(format!("Playtest init error: {e}"));
+        Err(error) => {
+            if let Some(first_error) = doc.validation.errors.first() {
+                focus_events.send(EditorCameraFocus {
+                    cell: first_error.location().min,
+                });
+            }
+            playtest.state.error_banner = Some(format!("Cannot playtest: {error}"));
         }
     }
 }

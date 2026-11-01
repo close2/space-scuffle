@@ -26,6 +26,7 @@ pub mod file_browser;
 pub mod los_preview;
 pub mod markers;
 pub mod playtest;
+pub mod startup;
 pub mod stroke;
 pub mod symmetry;
 pub mod tools;
@@ -49,10 +50,12 @@ pub use markers::{
     MarkerEntities, MarkerSpriteEntry, StartLocationVisualEntry,
 };
 pub use playtest::{
-    initialize_playtest_world, playtest_input_system, playtest_step_system,
-    teardown_playtest_system, EditorPhase, PlaytestState, MAX_STEPS_PER_FRAME, PLAYTEST_SEED,
-    SIM_TICK_SECS,
+    autosave_path, initialize_playtest_world, playtest_exit_system, playtest_hud_system,
+    playtest_input_system, playtest_metadata, playtest_players, sync_playtest_selection_system,
+    sync_playtest_status_system, teardown_playtest_system, EditorPhase, EditorRulesResource,
+    PlaytestEntry, PlaytestEntryError, PlaytestState, AUTOSAVE_SUFFIX, PLAYTEST_SEED,
 };
+pub use startup::{EditorStartup, EditorStartupError, InitialDocument};
 pub use stroke::StrokeRecorder;
 pub use symmetry::SymmetryMode;
 pub use tools::{
@@ -68,7 +71,8 @@ pub use ui::{
     RampToolMode, UnsavedChangesModalState, VALIDATION_DEBOUNCE_SECS,
 };
 pub use verification::{
-    check_render_pipelines, get_verify_poses, update_render_verification_system, CaptureStep,
-    PipelineSync, VerifyPose, VerifyRenderState, EXIT_CODE_VERIFICATION_FAILURE,
-    POSE_SETTLING_FRAMES, VERIFY_WARMUP_TIMEOUT_FRAMES,
+    check_render_pipelines, get_verify_poses, update_playtest_verification_system,
+    update_render_verification_system, CaptureStep, PipelineSync, VerifyPose, VerifyRenderState,
+    EXIT_CODE_VERIFICATION_FAILURE, PLAYTEST_BASELINE_POSE, PLAYTEST_POSE, POSE_SETTLING_FRAMES,
+    VERIFY_WARMUP_TIMEOUT_FRAMES,
 };

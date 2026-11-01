@@ -12,6 +12,11 @@
 //!    before capturing screenshots.
 //! 4. **Strict Timeout & Exit Codes:** Exits with code 1 if pipeline compilation fails, on timeout
 //!    exceeding 900 frames, or if screenshot output is missing. Exits with code 0 on complete success.
+//! 5. **Real Playtest Rendering:** After the reference poses, a baseline of a start location is
+//!    captured, the playtest is entered through the same [`PlaytestEntry`] path as `F5`, and the
+//!    identical view is captured again, so comparing the two proves units reach the screen.
+//! 6. **Complete Output Only:** A pose advances only once its PNG decodes, so a partially written
+//!    file is never reported as captured.
 
 use std::f32::consts::PI;
 use std::fs;
@@ -26,6 +31,11 @@ use bevy::render::render_resource::{CachedPipelineState, PipelineCache};
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 
 use crate::camera::RtsCamera;
+use crate::editor::document::EditorDocument;
+use crate::editor::playtest::PlaytestEntry;
+use crate::editor::ui::EditorToolState;
+use crate::lab_ui::LabState;
+use crate::scene_controller::LiveBattleBubble;
 use crate::terrain::{
     TerrainChunks, TerrainParamsState, OVERLAY_FLAG_BRUSH, OVERLAY_FLAG_GRID,
     OVERLAY_FLAG_PATHABILITY, OVERLAY_FLAG_VALIDATION,
@@ -36,6 +46,18 @@ pub const VERIFY_WARMUP_TIMEOUT_FRAMES: u32 = 900;
 
 /// Number of frames to wait for scene settling before triggering screenshot capture.
 pub const POSE_SETTLING_FRAMES: u32 = 10;
+
+/// File stem of the capture taken just before entering the playtest.
+pub const PLAYTEST_BASELINE_POSE: &str = "playtest_baseline";
+
+/// File stem of the capture showing live playtest units at the same camera pose.
+pub const PLAYTEST_POSE: &str = "playtest";
+
+/// Camera distance in world units for the playtest comparison captures.
+const PLAYTEST_CAMERA_DISTANCE: f32 = 22.0;
+
+/// Camera pitch in radians for the playtest comparison captures.
+const PLAYTEST_CAMERA_PITCH: f32 = 58.0 * (PI / 180.0);
 
 /// Exit code for verification failure (pipeline error or timeout).
 pub const EXIT_CODE_VERIFICATION_FAILURE: NonZeroU8 = match NonZeroU8::new(1) {
@@ -141,23 +163,41 @@ pub struct VerifyRenderState {
     pub step: CaptureStep,
     /// Total frames elapsed since application start.
     pub total_frames: u32,
-    /// Poses to capture.
-    pub poses: [VerifyPose; 4],
+    /// Poses to capture, ending with the playtest baseline.
+    pub poses: Vec<VerifyPose>,
 }
 
 impl VerifyRenderState {
     /// Creates a new verification state writing to `out_dir`.
+    ///
+    /// `playtest_focus` is the ground point `(x, z)` in world units of a start location, where
+    /// the playtest comparison captures look.
     #[must_use]
-    pub fn new(out_dir: PathBuf) -> Self {
+    pub fn new(out_dir: PathBuf, playtest_focus: Vec2) -> Self {
         let _ = fs::create_dir_all(&out_dir);
+        let mut poses = get_verify_poses().to_vec();
+        poses.push(VerifyPose {
+            name: PLAYTEST_BASELINE_POSE,
+            target: playtest_focus,
+            distance: PLAYTEST_CAMERA_DISTANCE,
+            pitch: PLAYTEST_CAMERA_PITCH,
+            overlay_flags: 0,
+            brush_center: None,
+            brush_radius: None,
+        });
         Self {
             out_dir,
             current_pose_idx: 0,
             step: CaptureStep::WaitingForWarmup,
             total_frames: 0,
-            poses: get_verify_poses(),
+            poses,
         }
     }
+}
+
+/// Returns `true` once the PNG at `path` exists and decodes completely.
+fn capture_is_complete(path: &std::path::Path) -> bool {
+    image::open(path).is_ok()
 }
 
 /// System running in `RenderApp`'s `Render` schedule monitoring pipeline cache state.
@@ -189,6 +229,9 @@ pub fn update_render_verification_system(
     mut terrain_params: Option<ResMut<'_, TerrainParamsState>>,
     mut cam_query: Query<'_, '_, (&mut RtsCamera, &mut Transform)>,
     mut exit_events: EventWriter<'_, AppExit>,
+    mut doc: ResMut<'_, EditorDocument>,
+    tool_state: Res<'_, EditorToolState>,
+    mut playtest: PlaytestEntry<'_>,
 ) {
     // 1. Pipeline compilation error guard
     if sync.has_error.load(Ordering::SeqCst) {
@@ -207,13 +250,16 @@ pub fn update_render_verification_system(
     }
     state.total_frames += 1;
 
-    // 3. Completion check
+    // 3. All editing poses captured: hand over to the playtest comparison
     if state.current_pose_idx >= state.poses.len() {
-        println!(
-            "All {} verification screenshots captured successfully. Exiting 0.",
-            state.poses.len()
-        );
-        exit_events.send(AppExit::Success);
+        let maps_dir = crate::resolve_assets_dir().join("maps");
+        match playtest.enter(&mut doc, &tool_state.player_loadouts, &maps_dir) {
+            Ok(_) => state.step = CaptureStep::WaitingForWarmup,
+            Err(error) => {
+                eprintln!("CRITICAL: Playtest entry failed during verification: {error}");
+                exit_events.send(AppExit::Error(EXIT_CODE_VERIFICATION_FAILURE));
+            }
+        }
         return;
     }
 
@@ -265,19 +311,71 @@ pub fn update_render_verification_system(
         }
         CaptureStep::WaitingForFile => {
             let file_path = state.out_dir.join(format!("{}.png", pose.name));
-            if file_path.exists() {
-                if let Ok(meta) = fs::metadata(&file_path) {
-                    if meta.len() > 1024 {
-                        println!("Captured pose '{}' ({} bytes)", pose.name, meta.len());
-                        state.current_pose_idx += 1;
-                        state.step = CaptureStep::WaitingForWarmup;
+            if capture_is_complete(&file_path) {
+                println!("Captured pose '{}'", pose.name);
+                state.current_pose_idx += 1;
+                state.step = CaptureStep::WaitingForWarmup;
+            }
+        }
+    }
+}
 
-                        if state.current_pose_idx >= state.poses.len() {
-                            println!("All verification screenshots captured. Exiting 0.");
-                            exit_events.send(AppExit::Success);
-                        }
-                    }
-                }
+/// System capturing live playtest units from the baseline pose, then exiting the application.
+///
+/// Exits with code 1 if a pipeline fails, the battle reports a failure, or units do not appear
+/// before the frame budget runs out; exits with code 0 once the capture is complete.
+pub fn update_playtest_verification_system(
+    mut commands: Commands<'_, '_>,
+    mut state: ResMut<'_, VerifyRenderState>,
+    sync: Res<'_, PipelineSync>,
+    lab: Res<'_, LabState>,
+    bubbles: Query<'_, '_, (), With<LiveBattleBubble>>,
+    mut exit_events: EventWriter<'_, AppExit>,
+) {
+    if sync.has_error.load(Ordering::SeqCst) {
+        eprintln!("CRITICAL: Pipeline cache compilation error detected; exiting code 1");
+        exit_events.send(AppExit::Error(EXIT_CODE_VERIFICATION_FAILURE));
+        return;
+    }
+    if let Some(failure) = &lab.battle_failure {
+        eprintln!("CRITICAL: Playtest failed during verification: {failure}");
+        exit_events.send(AppExit::Error(EXIT_CODE_VERIFICATION_FAILURE));
+        return;
+    }
+    if state.total_frames >= VERIFY_WARMUP_TIMEOUT_FRAMES {
+        eprintln!("CRITICAL TIMEOUT: Playtest units never became ready for capture");
+        exit_events.send(AppExit::Error(EXIT_CODE_VERIFICATION_FAILURE));
+        return;
+    }
+    state.total_frames += 1;
+
+    let ready = !bubbles.is_empty() && !sync.has_pending.load(Ordering::SeqCst);
+    let file_path = state.out_dir.join(format!("{PLAYTEST_POSE}.png"));
+    match state.step {
+        CaptureStep::WaitingForWarmup => {
+            if ready {
+                state.step = CaptureStep::Settling(0);
+            }
+        }
+        CaptureStep::Settling(frames) => {
+            state.step = if !ready {
+                CaptureStep::WaitingForWarmup
+            } else if frames >= POSE_SETTLING_FRAMES {
+                CaptureStep::Capturing
+            } else {
+                CaptureStep::Settling(frames + 1)
+            };
+        }
+        CaptureStep::Capturing => {
+            commands
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk(file_path));
+            state.step = CaptureStep::WaitingForFile;
+        }
+        CaptureStep::WaitingForFile => {
+            if capture_is_complete(&file_path) {
+                println!("Captured pose '{PLAYTEST_POSE}'. All verification captures complete.");
+                exit_events.send(AppExit::Success);
             }
         }
     }
