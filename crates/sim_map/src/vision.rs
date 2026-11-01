@@ -187,12 +187,8 @@ impl PlayerVisionMap {
         let is_air = matches!(source.mover_type, MoverType::Air | MoverType::CliffWalker);
         let source_in_blocker = center_cell.flags.contains(CellFlags::LOS_BLOCKER);
 
-        let r_int = source
-            .sight_radius
-            .0
-            .ceil()
-            .to_num::<i32>()
-            .clamp(0, MAX_PRECOMPUTED_RADIUS as i32) as usize;
+        let r_int = (source.sight_radius.saturating_ceil().saturating_to_u32() as usize)
+            .min(MAX_PRECOMPUTED_RADIUS);
         let r_sq = source.sight_radius * source.sight_radius;
 
         self.current_source_gen = self.current_source_gen.wrapping_add(1);

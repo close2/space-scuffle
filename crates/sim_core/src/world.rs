@@ -2615,7 +2615,10 @@ impl SimWorld {
 
                 let eff_dist =
                     (dist - target_radius - attacker_radius).max(SimScalar::from_num(0.05));
-                let ticks_to_impact = (eff_dist / proj_speed).0.ceil().to_num::<u32>().max(1);
+                let ticks_to_impact = (eff_dist / proj_speed)
+                    .saturating_ceil()
+                    .saturating_to_u32()
+                    .max(1);
                 let flight_duration_secs = (ticks_to_impact as f32) / 25.0;
 
                 self.projectiles.push(ActiveProjectile {

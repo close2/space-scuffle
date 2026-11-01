@@ -105,9 +105,9 @@ fn test_cross_platform_determinism_checksum() {
     let final_checksum = hasher.digest();
     eprintln!("sim_map reference checksum: 0x{:016x}", final_checksum);
 
-    // Fixed-seed reference after ramp-portal transition preservation and
-    // disconnected corner quad offsetting.
-    const EXPECTED_CHECKSUM: u64 = 0xef17_1de1_6d2a_e55b;
+    // Fixed-seed reference after exact SimVec2 length and normalisation (F-1, F-3), which
+    // changes the low bits of funnel corner offsets and hashed path lengths.
+    const EXPECTED_CHECKSUM: u64 = 0xedd0_e611_e62b_d644;
     assert_eq!(
         final_checksum, EXPECTED_CHECKSUM,
         "Checksum diverged from reference"
