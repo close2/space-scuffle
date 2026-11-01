@@ -290,6 +290,23 @@ fn test_render_verification_under_xvfb() {
     let temp_dir = tempfile::tempdir().expect("create temp dir for map editor screenshots");
     let out_dir = temp_dir.path();
 
+    let poses = [
+        "overview",
+        "cliff_corner",
+        "ramp",
+        "overlays",
+        PLAYTEST_BASELINE_POSE,
+        PLAYTEST_POSE,
+    ];
+
+    // Leftovers from an earlier run: valid PNGs, but far too small to pass the checks below. A
+    // run that accepts them instead of capturing fresh output must fail this test.
+    for pose in poses {
+        image::RgbImage::new(4, 4)
+            .save(out_dir.join(format!("{pose}.png")))
+            .expect("seed stale capture");
+    }
+
     let mut cmd = if xvfb_run.exists() {
         let mut c = std::process::Command::new(xvfb_run);
         c.arg("-a")
@@ -335,14 +352,6 @@ fn test_render_verification_under_xvfb() {
         status.code()
     );
 
-    let poses = [
-        "overview",
-        "cliff_corner",
-        "ramp",
-        "overlays",
-        PLAYTEST_BASELINE_POSE,
-        PLAYTEST_POSE,
-    ];
     for pose in poses {
         let file_path = out_dir.join(format!("{pose}.png"));
         assert!(

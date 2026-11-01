@@ -57,7 +57,7 @@ use crate::editor::ui::{
 };
 use crate::editor::verification::{
     check_render_pipelines, update_playtest_verification_system, update_render_verification_system,
-    PipelineSync, VerifyRenderState,
+    PipelineSync, VerifyOutputDir, VerifyRenderState,
 };
 use crate::indicators::{
     setup_indicator_assets_system, update_indicators_system, SelectionRingMaterial,
@@ -130,8 +130,8 @@ pub struct MapsDirectory(pub PathBuf);
 pub struct MapEditorPlugin {
     /// Catalogs and initial document, loaded and validated before the app is built.
     pub startup: EditorStartup,
-    /// Optional output directory for automated render verification screenshots.
-    pub verify_render: Option<PathBuf>,
+    /// Prepared output directory for automated render verification screenshots.
+    pub verify_render: Option<VerifyOutputDir>,
     /// Optional frame count cap before automatic clean shutdown.
     pub max_frames: Option<u64>,
 }

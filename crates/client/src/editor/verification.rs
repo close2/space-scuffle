@@ -17,6 +17,8 @@
 //!    identical view is captured again, so comparing the two proves units reach the screen.
 //! 6. **Complete Output Only:** A pose advances only once its PNG decodes, so a partially written
 //!    file is never reported as captured.
+//! 7. **Fresh Output Only:** Captures from earlier runs are deleted before the application starts.
+//!    [`VerifyOutputDir`] can only be built by that step, so a run cannot pass on stale files.
 
 use std::f32::consts::PI;
 use std::fs;
@@ -174,8 +176,7 @@ impl VerifyRenderState {
     /// `playtest_focus` is the ground point `(x, z)` in world units of a start location, where
     /// the playtest comparison captures look.
     #[must_use]
-    pub fn new(out_dir: PathBuf, playtest_focus: Vec2) -> Self {
-        let _ = fs::create_dir_all(&out_dir);
+    pub fn new(out_dir: VerifyOutputDir, playtest_focus: Vec2) -> Self {
         let mut poses = get_verify_poses().to_vec();
         poses.push(VerifyPose {
             name: PLAYTEST_BASELINE_POSE,
@@ -187,12 +188,71 @@ impl VerifyRenderState {
             brush_radius: None,
         });
         Self {
-            out_dir,
+            out_dir: out_dir.0,
             current_pose_idx: 0,
             step: CaptureStep::WaitingForWarmup,
             total_frames: 0,
             poses,
         }
+    }
+}
+
+/// Failure preparing the render verification output directory.
+#[derive(Debug, thiserror::Error)]
+pub enum VerifyOutputError {
+    /// The directory could not be created.
+    #[error("cannot create verification output directory {path}: {source}")]
+    CreateDirectory {
+        /// Exact attempted path.
+        path: PathBuf,
+        /// Operating-system failure.
+        source: std::io::Error,
+    },
+    /// A capture from an earlier run could not be deleted, so it could be mistaken for new output.
+    #[error("cannot remove stale capture {path}: {source}")]
+    RemoveStaleCapture {
+        /// Exact attempted path.
+        path: PathBuf,
+        /// Operating-system failure.
+        source: std::io::Error,
+    },
+}
+
+/// Output directory that exists and holds no capture from an earlier run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifyOutputDir(PathBuf);
+
+impl VerifyOutputDir {
+    /// Creates `path` if needed and deletes every capture this run will write.
+    ///
+    /// Other files are left alone, since the directory belongs to the caller.
+    ///
+    /// # Errors
+    /// Returns [`VerifyOutputError`] if the directory cannot be created or a stale capture cannot
+    /// be deleted.
+    pub fn prepare(path: PathBuf) -> Result<Self, VerifyOutputError> {
+        fs::create_dir_all(&path).map_err(|source| VerifyOutputError::CreateDirectory {
+            path: path.clone(),
+            source,
+        })?;
+        let names = get_verify_poses().map(|pose| pose.name);
+        for name in names
+            .into_iter()
+            .chain([PLAYTEST_BASELINE_POSE, PLAYTEST_POSE])
+        {
+            let capture = path.join(format!("{name}.png"));
+            match fs::remove_file(&capture) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(source) => {
+                    return Err(VerifyOutputError::RemoveStaleCapture {
+                        path: capture,
+                        source,
+                    });
+                }
+            }
+        }
+        Ok(Self(path))
     }
 }
 
@@ -379,5 +439,72 @@ pub fn update_playtest_verification_system(
                 exit_events.send(AppExit::Success);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pose_names() -> Vec<&'static str> {
+        get_verify_poses()
+            .map(|pose| pose.name)
+            .into_iter()
+            .chain([PLAYTEST_BASELINE_POSE, PLAYTEST_POSE])
+            .collect()
+    }
+
+    #[test]
+    fn prepare_removes_every_capture_and_leaves_other_files(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        for name in pose_names() {
+            fs::write(dir.path().join(format!("{name}.png")), "stale")?;
+        }
+        let unrelated = dir.path().join("notes.txt");
+        fs::write(&unrelated, "keep")?;
+
+        VerifyOutputDir::prepare(dir.path().to_path_buf())?;
+
+        for name in pose_names() {
+            assert!(!dir.path().join(format!("{name}.png")).exists(), "{name}");
+        }
+        assert!(unrelated.exists(), "only captures may be deleted");
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_creates_a_missing_directory() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let nested = dir.path().join("a/b");
+        VerifyOutputDir::prepare(nested.clone())?;
+        assert!(nested.is_dir());
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_reports_a_path_that_cannot_be_a_directory() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        let file = dir.path().join("occupied");
+        fs::write(&file, "file")?;
+        let result = VerifyOutputDir::prepare(file.join("out"));
+        assert!(matches!(
+            result,
+            Err(VerifyOutputError::CreateDirectory { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_reports_a_capture_it_cannot_delete() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        fs::create_dir(dir.path().join("overview.png"))?;
+        let result = VerifyOutputDir::prepare(dir.path().to_path_buf());
+        assert!(matches!(
+            result,
+            Err(VerifyOutputError::RemoveStaleCapture { .. })
+        ));
+        Ok(())
     }
 }

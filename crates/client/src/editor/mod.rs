@@ -81,7 +81,7 @@ pub use ui::{
 };
 pub use verification::{
     check_render_pipelines, get_verify_poses, update_playtest_verification_system,
-    update_render_verification_system, CaptureStep, PipelineSync, VerifyPose, VerifyRenderState,
-    EXIT_CODE_VERIFICATION_FAILURE, PLAYTEST_BASELINE_POSE, PLAYTEST_POSE, POSE_SETTLING_FRAMES,
-    VERIFY_WARMUP_TIMEOUT_FRAMES,
+    update_render_verification_system, CaptureStep, PipelineSync, VerifyOutputDir,
+    VerifyOutputError, VerifyPose, VerifyRenderState, EXIT_CODE_VERIFICATION_FAILURE,
+    PLAYTEST_BASELINE_POSE, PLAYTEST_POSE, POSE_SETTLING_FRAMES, VERIFY_WARMUP_TIMEOUT_FRAMES,
 };

@@ -25,7 +25,9 @@ use bevy::app::AppExit;
 use bevy::prelude::*;
 use bevy_egui::EguiPlugin;
 use clap::Parser;
-use client::editor::{editor_window_plugin, EditorStartup, InitialDocument, MapEditorPlugin};
+use client::editor::{
+    editor_window_plugin, EditorStartup, InitialDocument, MapEditorPlugin, VerifyOutputDir,
+};
 
 /// CLI arguments for the `map_editor` binary.
 #[derive(Parser, Debug)]
@@ -80,12 +82,13 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    if let Some(ref dir) = args.verify_render {
-        if let Err(error) = std::fs::create_dir_all(dir) {
-            eprintln!("map_editor: cannot create {}: {error}", dir.display());
+    let verify_render = match args.verify_render.map(VerifyOutputDir::prepare).transpose() {
+        Ok(verify_render) => verify_render,
+        Err(error) => {
+            eprintln!("map_editor: {error}");
             return ExitCode::FAILURE;
         }
-    }
+    };
     let asset_path = startup.assets_root.as_path().to_string_lossy().to_string();
 
     let mut app = App::new();
@@ -103,7 +106,7 @@ fn main() -> ExitCode {
 
     app.add_plugins(MapEditorPlugin {
         startup,
-        verify_render: args.verify_render,
+        verify_render,
         max_frames: args.max_frames,
     });
 
