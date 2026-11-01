@@ -558,3 +558,84 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
         );
     }
 }
+
+/// S-13: a unit-specific upgrade bonus falls off with splash distance like all other damage.
+#[test]
+fn s13_splash_falloff_scales_stat_bonus_damage() {
+    use sim_core::calculate_splash_damage_upgraded;
+    use sim_types::{PlayerUpgradeState, UnitStatDeltas};
+
+    let weapon = dummy_weapon_spec(SimScalar::from_num(20), SimScalar::ZERO, SimScalar::ZERO);
+    let target = dummy_target_archetype(AttributeFlags::empty(), SimScalar::ZERO, SimScalar::ZERO);
+    let splash = SplashSpec {
+        inner_radius: SimScalar::ONE,
+        middle_radius: SimScalar::from_num(2),
+        outer_radius: SimScalar::from_num(4),
+        friendly_fire: false,
+    };
+    let mut attacker = PlayerUpgradeState::default();
+    attacker.unit_stat_modifiers.insert(
+        "shooter".to_owned(),
+        UnitStatDeltas {
+            bonus_damage_delta: SimScalar::from_num(8),
+            ..UnitStatDeltas::default()
+        },
+    );
+    let res = calculate_splash_damage_upgraded(
+        &weapon,
+        Some("shooter"),
+        &attacker,
+        &splash,
+        SimScalar::from_num(3),
+        &target,
+        &PlayerUpgradeState::default(),
+        SimScalar::ZERO,
+        SimScalar::from_num(100),
+    )
+    .expect("inside the outer radius");
+    assert_eq!(res.life_damage, SimScalar::from_num(7), "(20 + 8) at 25%");
+}
+
+/// S-14: per-level attribute bonus follows the attribute the weapon actually has a bonus for.
+#[test]
+fn s14_bonus_upgrade_follows_the_weapons_attribute_bonus() {
+    use sim_core::calculate_hit_damage_upgraded;
+    use sim_types::{PlayerUpgradeState, WeaponClass};
+
+    let mut upgrades = PlayerUpgradeState::default();
+    upgrades
+        .weapon_levels
+        .insert(WeaponClass::DirectorateVehicle, 2);
+    let mut weapon = dummy_weapon_spec(
+        SimScalar::from_num(10),
+        SimScalar::ZERO,
+        SimScalar::from_num(5),
+    );
+    weapon.bonus_upgrade_per_level = SimScalar::ONE;
+    weapon.weapon_class = Some(WeaponClass::DirectorateVehicle);
+
+    let damage = |attributes| {
+        let target = dummy_target_archetype(attributes, SimScalar::ZERO, SimScalar::ZERO);
+        calculate_hit_damage_upgraded(
+            &weapon,
+            None,
+            &upgrades,
+            &target,
+            &PlayerUpgradeState::default(),
+            SimScalar::ZERO,
+            SimScalar::from_num(100),
+        )
+        .life_damage
+    };
+    assert_eq!(damage(AttributeFlags::LIGHT), SimScalar::from_num(17));
+    assert_eq!(
+        damage(AttributeFlags::ARMORED),
+        SimScalar::from_num(10),
+        "no armored bonus means no armored per-level growth"
+    );
+    assert_eq!(
+        damage(AttributeFlags::LIGHT | AttributeFlags::ARMORED),
+        SimScalar::from_num(17),
+        "the per-level bonus is granted once"
+    );
+}

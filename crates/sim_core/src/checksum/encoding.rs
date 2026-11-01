@@ -12,7 +12,7 @@ use sim_map::{
     TerrainKind, Watchtower,
 };
 use sim_types::{
-    AnimState, ArmorClass, AttributeFlags, EntityId, PlayerId, PlayerUpgradeState,
+    AnimState, ArmorClass, AttributeFlags, EntityId, MoverType, PlayerId, PlayerUpgradeState,
     ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, SplashSpec, Tick, UnitOrder,
     UnitStatDeltas, UnitTypeId, VisibilityState, WeaponClass, WeaponSpec, WeaponVisualKind,
 };
@@ -256,6 +256,7 @@ fields!(ActiveProjectile {
     current_pos,
     target_id,
     target_pos,
+    target_mover,
     speed,
     weapon_spec,
     source_slug,
@@ -373,6 +374,7 @@ tags!(VisibilityState { Unexplored = 0, Fogged = 1, Visible = 2 });
 tags!(RampDir { North = 0, South = 1, East = 2, West = 3, NorthEast = 4, NorthWest = 5, SouthEast = 6, SouthWest = 7 });
 tags!(TerrainKind { Grass = 0, MetalPlate = 1, Dirt = 2, Abyss = 3 });
 tags!(ResourceKind { Mineral = 0, Gas = 1 });
+tags!(MoverType { Ground = 0, Air = 1, CliffJumper = 2, CliffWalker = 3 });
 tags!(WeaponClass {
     DirectorateInfantry = 0, DirectorateVehicle = 1, DirectorateShip = 2,
     EnclaveGround = 3, EnclaveAir = 4, SwarmMelee = 5, SwarmMissile = 6, SwarmFlyer = 7,
@@ -492,7 +494,7 @@ mod tests {
         // Domain length, UTF-8 domain, schema u32, u16, i32, option tags/payload,
         // then UTF-8 string byte length and its two encoded bytes.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 5, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 6, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
             0xff, 0xff, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0xc3, 0xa9,
         ];
         assert_eq!(encoder.finish(), xxh64(&bytes, 0));
@@ -516,7 +518,7 @@ mod tests {
         // Domain length and bytes, schema 5, queue length, archetype u16,
         // then the full remaining duration u32 (0x0001_0001).
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 5, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 6, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
             0x34, 0x12, 1, 0, 1, 0, 0x78, 0x56, 0x34, 0x12,
         ];
         assert_eq!(digest(&queue), xxh64(&bytes, 0));
@@ -524,7 +526,7 @@ mod tests {
 
     #[test]
     fn carrier_identity_has_explicit_option_tag_and_all_id_bytes() {
-        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 5, 0, 0, 0];
+        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 6, 0, 0, 0];
         bytes.push(0);
         assert_eq!(digest(&None::<sim_types::EntityId>), xxh64(&bytes, 0));
         bytes.pop();

@@ -196,20 +196,21 @@ fn test_idle_unit_flees_undetected_cloaked_attacker() {
         .order_queue
         .push_back(UnitOrder::AttackTarget { target: marine_id });
 
-    // Step simulation for 50 ticks
+    // Step simulation for 50 ticks. The gunship's double strike can finish the marine
+    // first, so the flight is judged on its last living position.
+    let mut last_position = marine_pos;
     for tick in 0..50 {
         world.step(&empty_bundle(tick));
+        if let Some(marine) = world.entities.get(&marine_id) {
+            last_position = marine.position;
+        }
     }
 
-    let marine = world
-        .entities
-        .get(&marine_id)
-        .expect("marine must be alive");
     assert!(
-        marine.position.x < marine_pos.x,
+        last_position.x < marine_pos.x,
         "Marine must have fled westward away from unseen attacker at x=15: initial x = {}, final x = {}",
         marine_pos.x.to_f32(),
-        marine.position.x.to_f32()
+        last_position.x.to_f32()
     );
 }
 

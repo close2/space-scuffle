@@ -76,6 +76,7 @@ fn projectile() -> ActiveProjectile {
         current_pos: point(2, 2),
         target_id: Some(EntityId(2)),
         target_pos: point(3, 3),
+        target_mover: MoverType::Ground,
         speed: SimScalar::ONE,
         weapon_spec: weapon(),
         source_slug: Some("fixture-source".to_owned()),

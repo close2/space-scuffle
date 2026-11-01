@@ -12,7 +12,8 @@
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
 use crate::entity::{Entity, WeaponPhase};
 use sim_types::{
-    AttributeFlags, EntityId, PlayerUpgradeState, SimAngle, SimScalar, SimVec2, UnitOrder,
+    AttributeFlags, EntityId, MoverType, PlayerUpgradeState, SimAngle, SimScalar, SimVec2,
+    UnitOrder,
 };
 
 // PERFORMANCE RATIONALE:
@@ -34,6 +35,46 @@ pub struct DamageResolution {
 /// Minimum damage clamp applied to any penetrating attack in `StarCraft` II.
 pub const MIN_DAMAGE_CLAMP: SimScalar = SimScalar::HALF;
 
+/// Raw damage of one strike before falloff and armor, in hit points.
+///
+/// Sums the base damage, weapon-level scaling, unit-specific stat bonus and attribute bonus.
+/// The per-level attribute growth is granted once, and only when `spec` carries an authored
+/// bonus against an attribute the target actually has.
+fn raw_strike_damage(
+    spec: &WeaponSpec,
+    attacker_slug: Option<&str>,
+    attacker_upgrades: &PlayerUpgradeState,
+    target_archetype: &UnitArchetype,
+) -> SimScalar {
+    let weapon_lvl = spec
+        .weapon_class
+        .and_then(|wc| attacker_upgrades.weapon_levels.get(&wc).copied())
+        .unwrap_or(0);
+    let level = SimScalar::from_i32(i32::from(weapon_lvl));
+    let stat_bonus_dmg = attacker_slug
+        .and_then(|slug| attacker_upgrades.unit_stat_modifiers.get(slug))
+        .map_or(SimScalar::ZERO, |m| m.bonus_damage_delta);
+
+    let armored_bonus = target_archetype
+        .attributes
+        .contains(AttributeFlags::ARMORED)
+        .then_some(spec.bonus_armored)
+        .filter(|bonus| *bonus > SimScalar::ZERO);
+    let light_bonus = target_archetype
+        .attributes
+        .contains(AttributeFlags::LIGHT)
+        .then_some(spec.bonus_light)
+        .filter(|bonus| *bonus > SimScalar::ZERO);
+
+    let mut raw_damage = spec.base_damage + spec.upgrade_bonus_per_level * level + stat_bonus_dmg;
+    if armored_bonus.is_some() || light_bonus.is_some() {
+        raw_damage += armored_bonus.unwrap_or(SimScalar::ZERO);
+        raw_damage += light_bonus.unwrap_or(SimScalar::ZERO);
+        raw_damage += spec.bonus_upgrade_per_level * level;
+    }
+    raw_damage
+}
+
 /// Calculates the exact damage applied by an incoming weapon strike against a target,
 /// incorporating attacker weapon levels, target armor levels, target shield levels,
 /// and unit-specific stat modifications.
@@ -47,34 +88,29 @@ pub fn calculate_hit_damage_upgraded(
     target_shields: SimScalar,
     target_hp: SimScalar,
 ) -> DamageResolution {
+    mitigate_strike(
+        raw_strike_damage(
+            attacker_spec,
+            attacker_slug,
+            attacker_upgrades,
+            target_archetype,
+        ),
+        target_archetype,
+        target_upgrades,
+        target_shields,
+        target_hp,
+    )
+}
+
+/// Applies shield armor, spillover, life armor and the minimum-damage clamp to `raw_damage`.
+fn mitigate_strike(
+    raw_damage: SimScalar,
+    target_archetype: &UnitArchetype,
+    target_upgrades: &PlayerUpgradeState,
+    target_shields: SimScalar,
+    target_hp: SimScalar,
+) -> DamageResolution {
     let half = MIN_DAMAGE_CLAMP;
-
-    // 1. Resolve firing unit's weapon upgrade bonus and stat bonus damage
-    let weapon_lvl = attacker_spec
-        .weapon_class
-        .and_then(|wc| attacker_upgrades.weapon_levels.get(&wc).copied())
-        .unwrap_or(0);
-
-    let upgrade_bonus =
-        attacker_spec.upgrade_bonus_per_level * SimScalar::from_i32(i32::from(weapon_lvl));
-    let stat_bonus_dmg = attacker_slug
-        .and_then(|slug| attacker_upgrades.unit_stat_modifiers.get(slug))
-        .map_or(SimScalar::ZERO, |m| m.bonus_damage_delta);
-
-    let mut raw_damage = attacker_spec.base_damage + upgrade_bonus + stat_bonus_dmg;
-
-    // 2. Add attribute bonus damage (e.g. +10 vs Armored, +5 vs Light)
-    if target_archetype
-        .attributes
-        .contains(AttributeFlags::ARMORED)
-    {
-        raw_damage += attacker_spec.bonus_armored;
-        raw_damage +=
-            attacker_spec.bonus_upgrade_per_level * SimScalar::from_i32(i32::from(weapon_lvl));
-    }
-    if target_archetype.attributes.contains(AttributeFlags::LIGHT) {
-        raw_damage += attacker_spec.bonus_light;
-    }
 
     let mut applied_shield_damage = SimScalar::ZERO;
     let mut applied_life_damage = SimScalar::ZERO;
@@ -189,23 +225,37 @@ pub fn calculate_splash_damage_upgraded(
         return None;
     };
 
-    let mut scaled_spec = attacker_spec.clone();
-    scaled_spec.base_damage = attacker_spec.base_damage * damage_multiplier;
-    scaled_spec.bonus_armored = attacker_spec.bonus_armored * damage_multiplier;
-    scaled_spec.bonus_light = attacker_spec.bonus_light * damage_multiplier;
-    scaled_spec.upgrade_bonus_per_level = attacker_spec.upgrade_bonus_per_level * damage_multiplier;
-    scaled_spec.bonus_upgrade_per_level = attacker_spec.bonus_upgrade_per_level * damage_multiplier;
-    scaled_spec.splash = None;
-
-    Some(calculate_hit_damage_upgraded(
-        &scaled_spec,
-        attacker_slug,
-        attacker_upgrades,
+    // PERFORMANCE RATIONALE:
+    // Why: Splash runs once per entity in the blast, and a scaled `WeaponSpec` clone allocates.
+    // What: Scale the summed raw damage, which also covers the unit-specific stat bonus.
+    // Trade-off: None for readability: one multiplication replaces one per damage component.
+    Some(mitigate_strike(
+        raw_strike_damage(
+            attacker_spec,
+            attacker_slug,
+            attacker_upgrades,
+            target_archetype,
+        ) * damage_multiplier,
         target_archetype,
         target_upgrades,
         target_shields,
         target_hp,
     ))
+}
+
+/// Whether area damage centred on a `primary` entity reaches an `other` entity.
+///
+/// Ground and air are separate planes. A [`MoverType::CliffWalker`] stands in both, so it
+/// shares a plane with everything.
+#[must_use]
+pub const fn shares_combat_plane(primary: MoverType, other: MoverType) -> bool {
+    match (primary, other) {
+        (MoverType::CliffWalker, _)
+        | (_, MoverType::CliffWalker)
+        | (MoverType::Air, MoverType::Air) => true,
+        (MoverType::Air, _) | (_, MoverType::Air) => false,
+        _ => true,
+    }
 }
 
 /// Calculates splash damage falloff across concentric circular zones (100% / 50% / 25%).

@@ -12,8 +12,8 @@ use crate::catalog::{UnitArchetype, WeaponSpec};
 use crate::movement::MovementMathError;
 use crate::weapon_timing::{combined_attack_rate, AttackRate, InvalidBuffAttackRate};
 use sim_types::{
-    AnimState, EntityId, OverclockSpec, PlayerId, ShapeKind, SimAngle, SimScalar, SimVec2, Tick,
-    UnitOrder, UnitTypeId,
+    AnimState, EntityId, MoverType, OverclockSpec, PlayerId, ShapeKind, SimAngle, SimScalar,
+    SimVec2, Tick, UnitOrder, UnitTypeId,
 };
 use std::collections::VecDeque;
 
@@ -109,6 +109,8 @@ pub struct ActiveProjectile {
     pub target_id: Option<EntityId>,
     /// Target coordinates in world space.
     pub target_pos: SimVec2,
+    /// Locomotion layer of the target, retained so an impact on bare ground keeps its plane.
+    pub target_mover: MoverType,
     /// Travel speed per tick.
     pub speed: SimScalar,
     /// Weapon specification for damage resolution.

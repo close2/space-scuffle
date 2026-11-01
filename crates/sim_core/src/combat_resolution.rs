@@ -19,8 +19,8 @@
 
 use crate::catalog::{SplashSpec, WeaponSpec};
 use crate::combat::{
-    calculate_hit_damage_upgraded, calculate_splash_damage_upgraded, step_entity_weapon,
-    DamageResolution,
+    calculate_hit_damage_upgraded, calculate_splash_damage_upgraded, shares_combat_plane,
+    step_entity_weapon, DamageResolution,
 };
 use crate::entity::ActiveProjectile;
 use crate::weapon_timing::{resolve_attack_period, SimulationDiagnostic};
@@ -72,6 +72,8 @@ struct HitSource<'a> {
 struct ResolvedHit {
     position: SimVec2,
     angle: SimAngle,
+    /// Combat plane of the area damage this hit may cause.
+    plane: MoverType,
 }
 
 /// Outcome of advancing one projectile by a tick.
@@ -288,11 +290,13 @@ impl SimWorld {
                     .map_or(UnitTypeId(0), |a| a.unit_type_id),
             )
             .map_or(SimScalar::HALF, |a| a.collision_radius);
-        let target_radius = self
+        let (target_radius, target_mover) = self
             .entities
             .get(&shot.target)
             .and_then(|t| self.catalog.get(t.unit_type_id).ok())
-            .map_or(SimScalar::HALF, |a| a.collision_radius);
+            .map_or((SimScalar::HALF, MoverType::Ground), |a| {
+                (a.collision_radius, a.mover_type)
+            });
 
         let delta = target_pos - shot.origin;
         let dist = delta.length();
@@ -341,6 +345,7 @@ impl SimWorld {
             current_pos: shot.origin,
             target_id: Some(shot.target),
             target_pos,
+            target_mover,
             speed,
             weapon_spec: shot.weapon,
             source_slug: Some(shot.source_slug),
@@ -357,37 +362,31 @@ impl SimWorld {
             attacker: Some(shot.attacker),
             origin: shot.origin,
         };
-        let Some(hit) = self.apply_weapon_hit(source, shot.target, shot.weapon.attacks_count)
-        else {
+        let Some(hit) = self.apply_weapon_hit(source, shot.target) else {
             return;
         };
         if let Some(splash) = &shot.weapon.splash {
-            self.apply_splash(
-                source,
-                splash,
-                hit,
-                [Some(shot.target), Some(shot.attacker)],
-            );
+            self.apply_splash(source, splash, hit, Some(shot.target));
         }
         self.emit_instant_hit_visual(shot, hit);
     }
 
-    /// Applies `strikes` direct strikes of `source` to `target_id`, then its retaliation.
+    /// Applies every strike of `source` to `target_id`, then the target's retaliation.
     ///
     /// Returns the landed hit, or `None` when the target no longer exists.
     fn apply_weapon_hit(
         &mut self,
         source: HitSource<'_>,
         target_id: EntityId,
-        strikes: u8,
     ) -> Option<ResolvedHit> {
         let target = self.entities.get_mut(&target_id)?;
         let target_arch = self.catalog.get(target.unit_type_id).ok()?;
         let position = target.position;
+        let plane = target_arch.mover_type;
         let angle = hit_angle(source.origin, position);
         let attacker_upgrades = upgrades_of(&self.player_upgrades, source.owner);
         let target_upgrades = upgrades_of(&self.player_upgrades, target.owner);
-        for _ in 0..strikes {
+        for _ in 0..source.weapon.attacks_count {
             let resolution = calculate_hit_damage_upgraded(
                 source.weapon,
                 source.slug,
@@ -402,24 +401,30 @@ impl SimWorld {
         if let Some(attacker) = source.attacker {
             self.apply_combat_retaliation_prevalidated(target_id, attacker);
         }
-        Some(ResolvedHit { position, angle })
+        Some(ResolvedHit {
+            position,
+            angle,
+            plane,
+        })
     }
 
-    /// Applies `splash` around `hit.position`, sparing the `excluded` entities.
+    /// Applies `splash` around `hit.position` on the plane of the primary target.
     ///
-    /// Each struck entity then runs its retaliation against the attacker.
+    /// Spares `primary`, already struck directly, and the attacker, which never damages
+    /// itself. Each struck entity then runs its retaliation against the attacker.
     fn apply_splash(
         &mut self,
         source: HitSource<'_>,
         splash: &SplashSpec,
         hit: ResolvedHit,
-        excluded: [Option<EntityId>; 2],
+        primary: Option<EntityId>,
     ) {
         let mut splash_hits = std::mem::take(&mut self.combat.splash_hits);
         splash_hits.clear();
         let attacker_upgrades = upgrades_of(&self.player_upgrades, source.owner);
         for (&other_id, other) in &self.entities {
-            if excluded.contains(&Some(other_id))
+            if Some(other_id) == primary
+                || Some(other_id) == source.attacker
                 || !other.is_alive()
                 || other.is_loaded_in_transport()
                 || (!splash.friendly_fire && other.owner == source.owner)
@@ -433,6 +438,11 @@ impl SimWorld {
             let Ok(other_arch) = self.catalog.get(other.unit_type_id) else {
                 continue;
             };
+            if !shares_combat_plane(hit.plane, other_arch.mover_type)
+                || !source.weapon.target_flags.intersects(other_arch.attributes)
+            {
+                continue;
+            }
             let resolution = calculate_splash_damage_upgraded(
                 source.weapon,
                 source.slug,
@@ -562,10 +572,11 @@ impl SimWorld {
                 Some(SimScalar::ZERO)
             }
             ProjectileTargetLossBehavior::RetargetNearest { search_radius } => {
-                let (new_id, new_pos, new_radius) =
+                let (new_id, new_pos, new_radius, new_mover) =
                     self.nearest_projectile_retarget(proj, search_radius)?;
                 proj.target_id = Some(new_id);
                 proj.target_pos = new_pos;
+                proj.target_mover = new_mover;
                 Some(new_radius)
             }
         }
@@ -576,8 +587,8 @@ impl SimWorld {
         &mut self,
         proj: &ActiveProjectile,
         search_radius: SimScalar,
-    ) -> Option<(EntityId, SimVec2, SimScalar)> {
-        let mut best: Option<(EntityId, SimVec2, SimScalar, SimScalar)> = None;
+    ) -> Option<(EntityId, SimVec2, SimScalar, MoverType)> {
+        let mut best: Option<(EntityId, SimVec2, SimScalar, MoverType, SimScalar)> = None;
         let search_r2 = search_radius * search_radius;
 
         self.scratch_neighbors.clear();
@@ -615,16 +626,17 @@ impl SimWorld {
                 continue;
             }
             let d2 = proj.current_pos.distance_sq(candidate.position);
-            if d2 <= search_r2 && best.as_ref().is_none_or(|b| d2 < b.3) {
+            if d2 <= search_r2 && best.as_ref().is_none_or(|b| d2 < b.4) {
                 best = Some((
                     candidate_id,
                     candidate.position,
                     candidate_arch.collision_radius,
+                    candidate_arch.mover_type,
                     d2,
                 ));
             }
         }
-        best.map(|(id, position, radius, _)| (id, position, radius))
+        best.map(|(id, position, radius, mover, _)| (id, position, radius, mover))
     }
 
     /// Applies the damage of a landed projectile: on its target, or on bare ground.
@@ -637,19 +649,20 @@ impl SimWorld {
             origin: proj.source_pos,
         };
         if let Some(target_id) = proj.target_id {
-            let Some(hit) = self.apply_weapon_hit(source, target_id, 1) else {
+            let Some(hit) = self.apply_weapon_hit(source, target_id) else {
                 return;
             };
             if let Some(splash) = &proj.weapon_spec.splash {
-                self.apply_splash(source, splash, hit, [Some(target_id), None]);
+                self.apply_splash(source, splash, hit, Some(target_id));
             }
         } else if let Some(splash) = &proj.weapon_spec.splash {
             // Ballistic impact at ground coordinate (ImpactLastKnownPosition) with splash
             let hit = ResolvedHit {
                 position: proj.target_pos,
                 angle: hit_angle(proj.source_pos, proj.target_pos),
+                plane: proj.target_mover,
             };
-            self.apply_splash(source, splash, hit, [None, None]);
+            self.apply_splash(source, splash, hit, None);
         }
     }
 }
