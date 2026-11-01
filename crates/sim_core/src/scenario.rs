@@ -34,7 +34,7 @@ use crate::world::SimWorld;
 /// Starting unit and structure composition for a player faction or loadout.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StartLoadout {
-    /// Unique identifier slug (e.g. "standard_automaton").
+    /// Unique identifier slug (e.g. "`standard_automaton`").
     pub slug: String,
     /// User-facing display name.
     pub display_name: String,
@@ -106,7 +106,7 @@ pub enum ScenarioError {
     #[error("failed to deserialize scenario RON: {0}")]
     Ron(#[from] ron::error::SpannedError),
 
-    /// Map document conversion to GameMap failed.
+    /// Map document conversion to `GameMap` failed.
     #[error("failed to convert map document to game map: {0}")]
     MapConversion(#[from] MapFormatError),
 
@@ -197,6 +197,10 @@ pub fn build_world(
 /// # Errors
 /// Returns [`ScenarioError`] for invalid maps, absent loadout identities, invalid
 /// footprints, missing player starts, or failed entity placement.
+#[expect(
+    clippy::too_many_lines,
+    reason = "sequential scenario construction; splitting is plan step 9.2"
+)]
 pub fn build_world_with_catalogs(
     doc: &MapDocument,
     loadouts: &StartLoadoutCatalog,
@@ -234,8 +238,8 @@ pub fn build_world_with_catalogs(
     let mut sorted_starts = doc.start_locations.clone();
     sorted_starts.sort_by_key(|loc| loc.player_slot);
 
-    let map_w = world.map.width() as i32;
-    let map_h = world.map.height() as i32;
+    let map_w = i32::try_from(world.map.width()).unwrap_or(i32::MAX);
+    let map_h = i32::try_from(world.map.height()).unwrap_or(i32::MAX);
     let mut claimed_cells = BTreeSet::new();
 
     // 5. Spawn structures and units for each player in start location slot order.
@@ -261,14 +265,14 @@ pub fn build_world_with_catalogs(
             ShapeKind::BuildingDome {
                 footprint_w,
                 footprint_h,
-            } => (footprint_w as u32, footprint_h as u32),
+            } => (u32::from(footprint_w), u32::from(footprint_h)),
             ShapeKind::UnitSphere => {
                 return Err(ScenarioError::TownHallNotADome(loadout.town_hall.clone()));
             }
         };
 
-        let fp_w = start_loc.footprint.0 as u32;
-        let fp_h = start_loc.footprint.1 as u32;
+        let fp_w = u32::from(start_loc.footprint.0);
+        let fp_h = u32::from(start_loc.footprint.1);
         if hall_w > fp_w || hall_h > fp_h {
             return Err(ScenarioError::TownHallDoesNotFit {
                 slot: start_loc.player_slot,
@@ -306,10 +310,11 @@ pub fn build_world_with_catalogs(
             .cliff_level;
 
         // Place mobile units on concentric rings around town hall footprint.
-        let x_min = hall_cell_x as i32;
-        let x_max = (hall_cell_x + hall_w - 1) as i32;
-        let y_min = hall_cell_y as i32;
-        let y_max = (hall_cell_y + hall_h - 1) as i32;
+        let cell_coordinate = |value: u32| i32::try_from(value).unwrap_or(i32::MAX);
+        let x_min = cell_coordinate(hall_cell_x);
+        let x_max = cell_coordinate(hall_cell_x + hall_w - 1);
+        let y_min = cell_coordinate(hall_cell_y);
+        let y_max = cell_coordinate(hall_cell_y + hall_h - 1);
 
         let mut spawned_count = 0;
         let total_needed = units_to_spawn.len();
@@ -331,8 +336,9 @@ pub fn build_world_with_catalogs(
                 if cx < 0 || cy < 0 || cx >= map_w || cy >= map_h {
                     continue;
                 }
-                let ux = cx as u32;
-                let uy = cy as u32;
+                let (Ok(ux), Ok(uy)) = (u32::try_from(cx), u32::try_from(cy)) else {
+                    continue;
+                };
 
                 let Ok(cell) = world.map.cell(ux, uy) else {
                     continue;

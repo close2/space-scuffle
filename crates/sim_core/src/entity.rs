@@ -6,7 +6,7 @@
 //! ## Invariants Maintained
 //! 1. All calculations and component fields strictly use deterministic fixed-point math.
 //! 2. No heap allocation occurs during standard per-tick updates.
-//! 3. Weapon phases and order transitions strictly obey StarCraft II micro mechanics.
+//! 3. Weapon phases and order transitions strictly obey `StarCraft` II micro mechanics.
 
 use crate::catalog::{UnitArchetype, WeaponSpec};
 use crate::movement::MovementMathError;
@@ -59,7 +59,7 @@ pub enum WeaponPhase {
         /// Target entity handle being aligned towards.
         target_id: EntityId,
     },
-    /// DamagePoint wind-up in progress. Moving before completion cancels the attack without damage.
+    /// `DamagePoint` wind-up in progress. Moving before completion cancels the attack without damage.
     Windup {
         /// Target entity handle.
         target_id: EntityId,
@@ -147,9 +147,9 @@ pub struct Entity {
     pub energy: SimScalar,
     /// Ticks elapsed since last sustaining damage (for 10s / 250-tick shield regen).
     pub ticks_since_last_damage: u16,
-    /// StarCraft II style order queue.
+    /// `StarCraft` II style order queue.
     pub order_queue: VecDeque<UnitOrder>,
-    /// Simple Stupid Funnel string-pulled waypoints along NavMesh.
+    /// Simple Stupid Funnel string-pulled waypoints along `NavMesh`.
     pub current_funnel_waypoints: Vec<SimVec2>,
     /// Weapon state machine phase.
     pub weapon_phase: WeaponPhase,
@@ -188,11 +188,11 @@ pub struct Entity {
     pub is_sieged: bool,
     /// Active siege mode weapon configuration.
     pub siege_weapon: Option<WeaponSpec>,
-    /// Active generalized stance / mode identifier (e.g. "siege_mode", "burrowed").
+    /// Active generalized stance / mode identifier (e.g. "`siege_mode`", "burrowed").
     pub active_mode: Option<String>,
     /// Remaining ticks of channeled casting / transformation.
     pub channeling_remaining_ticks: u16,
-    /// Pending ability queued or being channeled: (ability_index, target_pos, target_entity).
+    /// Pending ability queued or being channeled: (`ability_index`, `target_pos`, `target_entity`).
     pub pending_ability: Option<(u8, Option<SimVec2>, Option<EntityId>)>,
     /// Independent ability cooldown timers for up to 4 ability slots.
     pub ability_cooldowns: [u16; 4],

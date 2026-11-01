@@ -1,6 +1,6 @@
 //! High-Ground Fog of War, Line-of-Sight Raycasting, and Watchtowers.
 //!
-//! This module implements StarCraft II-parity Fog of War visibility.
+//! This module implements `StarCraft` II-parity Fog of War visibility.
 //! It enforces high-ground line-of-sight occlusion, low-ground spotter mechanics,
 //! tall grass / smoke vent blockers, and neutral capturable watchtowers.
 //!
@@ -52,8 +52,8 @@ impl RayTable {
         let mut rays_by_radius = Vec::with_capacity(MAX_PRECOMPUTED_RADIUS + 1);
         rays_by_radius.push(Vec::new()); // R = 0
 
-        for r in 1..=MAX_PRECOMPUTED_RADIUS {
-            let r_i32 = r as i32;
+        for r in 1..=MAX_SIGHT_RADIUS_CELLS {
+            let r_i32 = i32::try_from(r).unwrap_or(i32::MAX);
             let max_r_sq = r_i32 * r_i32;
             let mut rays = Vec::new();
 
@@ -87,7 +87,10 @@ impl RayTable {
 
         loop {
             if x * x + y * y <= max_r_sq {
-                points.push((x as i8, y as i8));
+                // Offsets never exceed MAX_SIGHT_RADIUS_CELLS, which is far below i8::MAX.
+                if let (Ok(step_x), Ok(step_y)) = (i8::try_from(x), i8::try_from(y)) {
+                    points.push((step_x, step_y));
+                }
             } else {
                 break;
             }
@@ -122,7 +125,7 @@ fn get_ray_table() -> &'static RayTable {
 pub struct VisionSource {
     /// World position of the observing unit.
     pub pos: SimVec2,
-    /// Locomotion classification (Ground vs Air vs CliffWalker).
+    /// Locomotion classification (Ground vs Air vs `CliffWalker`).
     pub mover_type: MoverType,
     /// Maximum sight radius in world units.
     pub sight_radius: SimScalar,
@@ -194,7 +197,7 @@ impl PlayerVisionMap {
     /// - High-ground occlusion for ground observers.
     /// - Height-based ramp visibility for ground observers: a surface is visible up to half a
     ///   cliff above the observer's own surface height.
-    /// - LoS blocker smoke-vent occlusion.
+    /// - `LoS` blocker smoke-vent occlusion.
     /// - Air observer elevation bypassing cliff occlusion.
     pub fn apply_vision_source(&mut self, map: &GameMap, source: &VisionSource) {
         let Ok((center_x, center_y)) = map.world_to_cell(source.pos) else {
@@ -243,12 +246,11 @@ impl PlayerVisionMap {
                     continue;
                 }
 
-                let tx = center_x as i32 + dx as i32;
-                let ty = center_y as i32 + dy as i32;
-
-                if !map.in_bounds(tx, ty) {
+                let Some((tx, ty)) =
+                    map.offset_cell((center_x, center_y), (i32::from(dx), i32::from(dy)))
+                else {
                     break;
-                }
+                };
 
                 let dist_sq = (SimScalar::from_num(dx) * SimScalar::from_num(dx))
                     + (SimScalar::from_num(dy) * SimScalar::from_num(dy));
@@ -256,9 +258,8 @@ impl PlayerVisionMap {
                     break;
                 }
 
-                let target_cell = match map.cell(tx as u32, ty as u32) {
-                    Ok(c) => c,
-                    Err(_) => break,
+                let Ok(target_cell) = map.cell(tx, ty) else {
+                    break;
                 };
 
                 // High-ground check. Between flat cells this is a cliff level comparison;
@@ -266,7 +267,7 @@ impl PlayerVisionMap {
                 if !is_air {
                     let occluded = if target_cell.ramp.is_some() {
                         let surface = map
-                            .cell_to_world_center(tx as u32, ty as u32)
+                            .cell_to_world_center(tx, ty)
                             .map(|center| map.terrain_altitude_scalar(center));
                         surface.map_or(true, |height| height > sight_ceiling)
                     } else if source_on_ramp {

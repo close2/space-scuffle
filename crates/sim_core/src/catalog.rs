@@ -38,7 +38,7 @@ use std::sync::OnceLock;
 pub struct UnitArchetype {
     /// Unique archetype identifier.
     pub unit_type_id: UnitTypeId,
-    /// Canonical internal slug name (e.g. "starter_infantry").
+    /// Canonical internal slug name (e.g. "`starter_infantry`").
     pub slug: String,
     /// Canonical name (matches slug for backwards compatibility).
     pub name: String,
@@ -48,7 +48,7 @@ pub struct UnitArchetype {
     pub display_name: String,
     /// Lore background description.
     pub lore_description: String,
-    /// StarCraft II mechanical inspiration / analogue.
+    /// `StarCraft` II mechanical inspiration / analogue.
     pub sc2_inspiration: Option<String>,
     /// Whether this unit is featured in the Visual Lab hero showcase.
     pub showcase_hero: bool,
@@ -68,7 +68,7 @@ pub struct UnitArchetype {
     pub shape: ShapeKind,
     /// Rim silhouette collar classification.
     pub silhouette: SilhouetteClass,
-    /// Locomotion classification (Ground, Air, CliffWalker).
+    /// Locomotion classification (Ground, Air, `CliffWalker`).
     pub mover_type: MoverType,
     /// Armor classification and category bitflags.
     pub attributes: AttributeFlags,
@@ -122,7 +122,7 @@ pub struct UnitArchetype {
     /// Specialized anti-air weapon configuration, if equipped.
     #[serde(default)]
     pub air_weapon: Option<WeaponSpec>,
-    /// Primary weapon configuration, if equipped (mirrors ground_weapon for backwards compatibility).
+    /// Primary weapon configuration, if equipped (mirrors `ground_weapon` for backwards compatibility).
     #[serde(default)]
     pub weapon: Option<WeaponSpec>,
     /// Whether this entity detects cloaked / burrowed units.
@@ -184,10 +184,10 @@ impl UnitArchetype {
             MoverType::Air => air,
             MoverType::CliffWalker => match (ground, air) {
                 (Some(g), Some(a)) => {
-                    let dps_g = (g.base_damage.raw() * g.attacks_count as i64 * 1000)
-                        / g.period_ticks.max(1) as i64;
-                    let dps_a = (a.base_damage.raw() * a.attacks_count as i64 * 1000)
-                        / a.period_ticks.max(1) as i64;
+                    let dps_g = (g.base_damage.raw() * i64::from(g.attacks_count) * 1000)
+                        / i64::from(g.period_ticks.max(1));
+                    let dps_a = (a.base_damage.raw() * i64::from(a.attacks_count) * 1000)
+                        / i64::from(a.period_ticks.max(1));
                     if dps_a > dps_g {
                         Some(a)
                     } else {
@@ -216,7 +216,7 @@ impl UnitArchetype {
         &self.lore_description
     }
 
-    /// StarCraft II mechanical inspiration / analogue.
+    /// `StarCraft` II mechanical inspiration / analogue.
     #[must_use]
     pub fn sc2_analogue(&self) -> Option<&str> {
         self.sc2_inspiration.as_deref()
@@ -783,6 +783,10 @@ impl UnitArchetypeDef {
     /// degrees, so any arc of 180 degrees or more is unrestricted. Binary angles wrap at 360
     /// degrees, so an authored 360 must not pass through `from_degrees`, which would map it to
     /// an arc of zero: the strictest possible value rather than the most permissive.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "validated finite and below 180 here, and arcs are authored in whole degrees"
+    )]
     fn firing_half_angle(degrees: f32) -> SimAngle {
         if degrees >= 180.0 {
             SimAngle::DEG_180
@@ -836,6 +840,10 @@ impl UnitArchetypeDef {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one flat field mapping from the authored definition"
+    )]
     fn into_archetype(self) -> UnitArchetype {
         let overclock = self.capabilities.overclock.map(|o| OverclockSpec {
             hp_cost: SimScalar::from_f32_lossy(o.hp_cost),
@@ -925,6 +933,10 @@ impl UnitArchetypeDef {
                 if deg >= 180.0 {
                     SimAngle::PI
                 } else {
+                    #[expect(
+                        clippy::cast_possible_truncation,
+                        reason = "clamped to 0..180 above, and rates are authored in whole degrees"
+                    )]
                     SimAngle::from_degrees(deg as i32)
                 }
             },
@@ -970,7 +982,7 @@ struct StructureArchetypeDef {
     pub display_name: String,
     /// Lore background description.
     pub lore_description: String,
-    /// StarCraft II mechanical inspiration / analogue.
+    /// `StarCraft` II mechanical inspiration / analogue.
     pub sc2_inspiration: Option<String>,
     /// Footprint width and height in grid cells.
     pub footprint: (u32, u32),
@@ -1033,7 +1045,7 @@ impl StructureArchetypeDef {
     /// Converts a structure definition into a unified [`UnitArchetype`].
     #[must_use]
     pub fn into_archetype(self) -> UnitArchetype {
-        let radius = SimScalar::from_num(self.footprint.0 as f64 * 0.5);
+        let radius = SimScalar::from_num(f64::from(self.footprint.0) * 0.5);
         let ground_weapon = self.ground_weapon.map(UnitArchetypeDef::convert_weapon);
         let air_weapon = self.air_weapon.map(UnitArchetypeDef::convert_weapon);
         // `weapon` is the ground fallback of `weapon_against`, so an air weapon must never fill it.
@@ -1055,7 +1067,7 @@ impl StructureArchetypeDef {
         };
 
         UnitArchetype {
-            unit_type_id: UnitTypeId(self.structure_type_id as u16),
+            unit_type_id: UnitTypeId(u16::try_from(self.structure_type_id).unwrap_or(u16::MAX)),
             name: self.slug.clone(),
             slug: self.slug,
             faction: self.faction,
@@ -1070,8 +1082,8 @@ impl StructureArchetypeDef {
             capabilities,
             veo_prompts: self.veo_prompts,
             shape: ShapeKind::BuildingDome {
-                footprint_w: self.footprint.0 as u8,
-                footprint_h: self.footprint.1 as u8,
+                footprint_w: u8::try_from(self.footprint.0).unwrap_or(u8::MAX),
+                footprint_h: u8::try_from(self.footprint.1).unwrap_or(u8::MAX),
             },
             silhouette: SilhouetteClass::StructureBase,
             mover_type: MoverType::Ground,

@@ -361,7 +361,26 @@ impl GameMap {
     #[must_use]
     #[inline]
     pub fn in_bounds(&self, x: i32, y: i32) -> bool {
-        x >= 0 && y >= 0 && (x as u32) < self.width && (y as u32) < self.height
+        u32::try_from(x).is_ok_and(|x| x < self.width)
+            && u32::try_from(y).is_ok_and(|y| y < self.height)
+    }
+
+    /// Returns the cell at a signed offset from `cell`, or `None` if that leaves the map.
+    #[must_use]
+    #[inline]
+    pub fn offset_cell(&self, cell: (u32, u32), offset: (i32, i32)) -> Option<(u32, u32)> {
+        let x = cell.0.checked_add_signed(offset.0)?;
+        let y = cell.1.checked_add_signed(offset.1)?;
+        (x < self.width && y < self.height).then_some((x, y))
+    }
+
+    fn out_of_bounds(&self, x: u32, y: u32) -> MapError {
+        MapError::OutOfBounds {
+            x: i32::try_from(x).unwrap_or(i32::MAX),
+            y: i32::try_from(y).unwrap_or(i32::MAX),
+            width: self.width,
+            height: self.height,
+        }
     }
 
     /// Retrieves an immutable reference to the cell at discrete grid coordinates `(x, y)`.
@@ -370,12 +389,7 @@ impl GameMap {
     /// Returns `Err(MapError::OutOfBounds)` if coordinates fall outside the map.
     pub fn cell(&self, x: u32, y: u32) -> Result<&MapCell> {
         if x >= self.width || y >= self.height {
-            return Err(MapError::OutOfBounds {
-                x: x as i32,
-                y: y as i32,
-                width: self.width,
-                height: self.height,
-            });
+            return Err(self.out_of_bounds(x, y));
         }
         let idx = (y as usize) * (self.width as usize) + (x as usize);
         Ok(&self.cells[idx])
@@ -387,12 +401,7 @@ impl GameMap {
     /// Returns `Err(MapError::OutOfBounds)` if coordinates fall outside the map.
     pub fn cell_mut(&mut self, x: u32, y: u32) -> Result<&mut MapCell> {
         if x >= self.width || y >= self.height {
-            return Err(MapError::OutOfBounds {
-                x: x as i32,
-                y: y as i32,
-                width: self.width,
-                height: self.height,
-            });
+            return Err(self.out_of_bounds(x, y));
         }
         let idx = (y as usize) * (self.width as usize) + (x as usize);
         Ok(&mut self.cells[idx])
@@ -411,17 +420,13 @@ impl GameMap {
                 height: self.height,
             });
         }
-        let cx = pos.x.0.to_num::<i64>();
-        let cy = pos.y.0.to_num::<i64>();
-        if cx >= i64::from(self.width) || cy >= i64::from(self.height) {
-            return Err(MapError::OutOfBounds {
-                x: cx as i32,
-                y: cy as i32,
-                width: self.width,
-                height: self.height,
-            });
+        // Both coordinates are nonnegative here, so this conversion is a plain floor.
+        let cx = pos.x.saturating_to_u32();
+        let cy = pos.y.saturating_to_u32();
+        if cx >= self.width || cy >= self.height {
+            return Err(self.out_of_bounds(cx, cy));
         }
-        Ok((cx as u32, cy as u32))
+        Ok((cx, cy))
     }
 
     /// Converts discrete grid cell coordinates into the continuous world center position `(x + 0.5, y + 0.5)`.
@@ -430,12 +435,7 @@ impl GameMap {
     /// Returns `Err(MapError::OutOfBounds)` if cell coordinates are outside map bounds.
     pub fn cell_to_world_center(&self, x: u32, y: u32) -> Result<SimVec2> {
         if x >= self.width || y >= self.height {
-            return Err(MapError::OutOfBounds {
-                x: x as i32,
-                y: y as i32,
-                width: self.width,
-                height: self.height,
-            });
+            return Err(self.out_of_bounds(x, y));
         }
         Ok(SimVec2::new(
             SimScalar::from_num(x) + SimScalar::HALF,
@@ -466,43 +466,33 @@ impl GameMap {
         };
 
         // Walk in -s (descending direction)
+        let continues_run = |candidate: Option<(u32, u32)>| {
+            candidate.filter(|&(cx, cy)| {
+                self.cell(cx, cy).is_ok_and(|neighbor| {
+                    neighbor.ramp == Some(dir) && neighbor.cliff_level == cell.cliff_level
+                })
+            })
+        };
+
         let mut index = 0u8;
-        let mut cx = x as i32;
-        let mut cy = y as i32;
+        let mut at = (x, y);
         while index < MAX_RAMP_RUN_CELLS - 1 {
-            cx -= dx;
-            cy -= dy;
-            if cx < 0 || cy < 0 {
+            let Some(next) = continues_run(self.offset_cell(at, (-dx, -dy))) else {
                 break;
-            }
-            match self.cell(cx as u32, cy as u32) {
-                Ok(neighbor)
-                    if neighbor.ramp == Some(dir) && neighbor.cliff_level == cell.cliff_level =>
-                {
-                    index += 1;
-                }
-                _ => break,
-            }
+            };
+            at = next;
+            index += 1;
         }
 
         // Walk in +s (ascending direction)
         let mut after = 0u8;
-        cx = x as i32;
-        cy = y as i32;
+        at = (x, y);
         while after < MAX_RAMP_RUN_CELLS - 1 {
-            cx += dx;
-            cy += dy;
-            if cx < 0 || cy < 0 {
+            let Some(next) = continues_run(self.offset_cell(at, (dx, dy))) else {
                 break;
-            }
-            match self.cell(cx as u32, cy as u32) {
-                Ok(neighbor)
-                    if neighbor.ramp == Some(dir) && neighbor.cliff_level == cell.cliff_level =>
-                {
-                    after += 1;
-                }
-                _ => break,
-            }
+            };
+            at = next;
+            after += 1;
         }
 
         let run_len = index + 1 + after;
@@ -520,13 +510,11 @@ impl GameMap {
     /// If on a ramp cell, performs deterministic linear interpolation along the ramp axis using `RampProfile`.
     #[must_use]
     pub fn terrain_altitude_scalar(&self, pos: SimVec2) -> SimScalar {
-        let (cx, cy) = match self.world_to_cell(pos) {
-            Ok(c) => c,
-            Err(_) => return SimScalar::ZERO,
+        let Ok((cx, cy)) = self.world_to_cell(pos) else {
+            return SimScalar::ZERO;
         };
-        let cell = match self.cell(cx, cy) {
-            Ok(c) => c,
-            Err(_) => return SimScalar::ZERO,
+        let Ok(cell) = self.cell(cx, cy) else {
+            return SimScalar::ZERO;
         };
         let Some(profile) = self.ramp_profile(cx, cy) else {
             return cell.cliff_level.height_scalar();
@@ -720,7 +708,7 @@ impl GameMap {
         }
     }
 
-    /// Constructs the canonical 64x64 two-level StarCraft II-style test arena.
+    /// Constructs the canonical 64x64 two-level `StarCraft` II-style test arena.
     ///
     /// Features:
     /// - Low ground (Cliff Level 1) in the southern half.
@@ -730,6 +718,10 @@ impl GameMap {
     /// - Neutral Watchtower at mid-ground vantage point.
     /// - Balanced resource clusters (8 mineral patches + 2 gas geysers) per base.
     #[must_use]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one declarative map fixture; splitting it would only scatter the layout"
+    )]
     pub fn default_arena() -> Self {
         let width = 64u32;
         let height = 64u32;

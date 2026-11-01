@@ -38,6 +38,10 @@ fn fixture() -> TestResult<(SimWorld, [EntityId; 3])> {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one scenario table exercising every transport transition"
+)]
 fn malformed_links_block_tick_before_any_gameplay_side_effect() -> TestResult {
     type Corrupt = fn(&mut SimWorld, [EntityId; 3]);
     let cases: &[(&str, Corrupt)] = &[

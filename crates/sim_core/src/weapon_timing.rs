@@ -122,7 +122,7 @@ pub fn combined_attack_rate(buffs: &[ActiveBuff]) -> Result<AttackRate, InvalidB
     }
     // The preceding clamp bounds every intermediate; the initial identity also
     // fits i64, so this conversion is lossless.
-    let raw = raw as i64;
+    let raw = i64::try_from(raw).unwrap_or(i64::MAX);
     Ok(AttackRate(SimScalar::from_raw(raw)))
 }
 
@@ -136,6 +136,6 @@ pub fn resolve_attack_period(base_ticks: u16, delta_ticks: i32, rate: AttackRate
     let numerator = (i128::from(base_ticks) + i128::from(delta_ticks)) << 32;
     let scaled = numerator / i128::from(rate.value().raw());
     let bounded = scaled.clamp(1, i128::from(u16::MAX));
-    // The immediately preceding clamp proves this conversion is lossless.
-    bounded as u16
+    // The immediately preceding clamp proves this conversion cannot fail.
+    u16::try_from(bounded).unwrap_or(u16::MAX)
 }

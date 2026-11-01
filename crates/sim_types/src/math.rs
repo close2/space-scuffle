@@ -185,7 +185,6 @@ impl SimScalar {
 
     /// Constructs a `SimScalar` from a standard 32-bit signed integer.
     #[must_use]
-    #[allow(clippy::cast_lossless)]
     pub const fn from_i32(val: i32) -> Self {
         Self(I32F32::from_bits((val as i64) << 32))
     }
@@ -347,7 +346,6 @@ impl SimScalar {
     // shifted left by 32 bits into a 128-bit unsigned integer: sqrt(X * 2^32) = sqrt(x) * 2^32.
     // Trade-off: Uses 128-bit integer arithmetic which takes slightly more cycles than a single hardware
     // float instruction, in exchange for 100% bit-for-bit platform-independent determinism.
-    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
     pub fn sqrt(self) -> Result<Self, MathError> {
         let bits = self.0.to_bits();
         if bits < 0 {
@@ -357,7 +355,9 @@ impl SimScalar {
             return Ok(Self::ZERO);
         }
         let wide = u128::from(bits.unsigned_abs()) << 32;
-        Ok(Self(I32F32::from_bits(wide.isqrt() as i64)))
+        Ok(Self::from_raw(
+            i64::try_from(wide.isqrt()).unwrap_or(i64::MAX),
+        ))
     }
 }
 
@@ -842,7 +842,11 @@ impl SimAngle {
 
     /// Converts degrees integer to binary angle with exact Euclidean modulo wrapping.
     #[must_use]
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "`wrapped` is in 0..360, so the scaled angle is in 0..65536"
+    )]
     pub fn from_degrees(deg: i32) -> Self {
         let wrapped = i64::from(deg.rem_euclid(360));
         Self(((wrapped * 65536) / 360) as u16)
@@ -864,7 +868,10 @@ impl SimAngle {
     ///
     /// Positive values denote counter-clockwise rotation; negative values denote clockwise rotation.
     #[must_use]
-    #[allow(clippy::cast_possible_wrap)]
+    #[expect(
+        clippy::cast_possible_wrap,
+        reason = "reading the wrapped difference as two's complement is what gives the shortest arc"
+    )]
     pub fn diff(self, other: Self) -> i16 {
         other.0.wrapping_sub(self.0) as i16
     }
@@ -897,7 +904,11 @@ impl SimAngle {
     // Trade-off: 4 KB of static read-only memory in exchange for O(1) branch-predictable lookups and
     // 100% bit-for-bit determinism across all targets.
     #[must_use]
-    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
+        reason = "`quad_angle` is at most 16384 and the sine is at most 2^32, within both targets"
+    )]
     pub fn sin(self) -> SimScalar {
         let a = self.0;
         let (quad_angle, negative) = match a {

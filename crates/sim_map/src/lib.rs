@@ -15,16 +15,7 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
-#![allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss,
-    clippy::cast_precision_loss,
-    clippy::too_many_lines,
-    clippy::doc_markdown,
-    clippy::manual_let_else,
-    clippy::cast_lossless
-)]
+#![deny(clippy::unreachable)]
 
 pub mod error;
 pub mod grid;

@@ -1,7 +1,7 @@
 //! # Sim Core: Deterministic RTS Simulation Engine
 //!
 //! `sim_core` implements the authoritative, deterministic simulation tick loop for
-//! **Space Scuffle**. It models StarCraft II-grade RTS combat mechanics, including:
+//! **Space Scuffle**. It models `StarCraft` II-grade RTS combat mechanics, including:
 //! - 4-phase weapon state machines with animation backswing cancellation.
 //! - Independent turret tracking decoupled from hull navigation.
 //! - Shield absorption, armor reduction, spillover damage, and 10-second shield regen delays.
@@ -16,26 +16,30 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
-#![allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss,
-    clippy::cast_precision_loss,
-    clippy::too_many_lines,
-    clippy::doc_markdown,
-    clippy::manual_let_else,
-    clippy::cast_lossless,
-    clippy::module_name_repetitions
-)]
+#![deny(clippy::unreachable)]
 
 pub mod catalog;
 pub mod checksum;
 pub mod combat;
 pub mod entity;
 pub mod error;
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::doc_markdown,
+    clippy::too_many_lines,
+    reason = "module-wide until the movement redesign (remediation Phase 4) rewrites this code"
+)]
 pub mod movement;
 pub mod production;
 pub mod scenario;
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::doc_markdown,
+    clippy::too_many_lines,
+    reason = "module-wide until the movement redesign (remediation Phase 4) rewrites this code"
+)]
 pub mod steering;
 pub mod tech_tree;
 pub mod transport;

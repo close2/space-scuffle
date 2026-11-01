@@ -154,6 +154,10 @@ pub struct PathfinderBuffers {
     waypoints_scratch: Vec<SimVec2>,
 }
 
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "heap positions index the cell grid, whose indices are stored as u32 by design"
+)]
 impl PathfinderBuffers {
     fn new(size: usize) -> Self {
         Self {
@@ -278,6 +282,20 @@ impl PathfinderBuffers {
     }
 }
 
+/// Converts a cell coordinate for signed grid arithmetic.
+///
+/// Saturates, which stays correct: `i32::MAX` is off every map, like the coordinate it replaces.
+#[inline]
+fn signed(coordinate: u32) -> i32 {
+    i32::try_from(coordinate).unwrap_or(i32::MAX)
+}
+
+/// Converts a signed grid coordinate back to a cell coordinate; negatives map off every map.
+#[inline]
+fn unsigned(coordinate: i32) -> u32 {
+    u32::try_from(coordinate).unwrap_or(u32::MAX)
+}
+
 /// Reusable storage for the clearance distance transform.
 ///
 /// Works on a lattice with a point every half cell, `2w + 1` by `2h + 1` points. Lattice
@@ -390,6 +408,13 @@ impl ClearanceWorkspace {
     // parabolas along each row. All arithmetic is integer, so the result is deterministic.
     // Trade-off: Retained scratch buffers and an algorithm that needs explaining, in exchange
     // for an exact field with no heap allocation per recomputation.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
+        clippy::cast_sign_loss,
+        reason = "lattice coordinates are at most twice a map side, far below i64::MAX, and \
+                  `first` is past a valid start and below `columns` where it is converted"
+    )]
     fn run_distance_transform(&mut self) {
         let (columns, rows) = (self.lattice_width, self.lattice_height);
         // The border is always a wall, so every distance below is finite.
@@ -577,6 +602,14 @@ impl Pathfinder {
     ///
     /// # Errors
     /// Returns [`MapError::NoPathFound`] if no valid route connects the start and goal cells.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one search loop whose steps share local state; splitting is plan step 9.2"
+    )]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "cell indices are stored as u32 by design, and start was validated on the map"
+    )]
     pub fn find_path_with_vision(
         &mut self,
         map: &GameMap,
@@ -693,8 +726,8 @@ impl Pathfinder {
                 break;
             }
 
-            let cx = (current_idx % (self.width as usize)) as u32;
-            let cy = (current_idx / (self.width as usize)) as u32;
+            let cx = current_u32 % self.width;
+            let cy = current_u32 / self.width;
             let current_g = self.buffers.g_score[current_idx];
 
             // Explore 8 neighbors
@@ -704,15 +737,9 @@ impl Pathfinder {
                         continue;
                     }
 
-                    let nx = cx as i32 + dx;
-                    let ny = cy as i32 + dy;
-
-                    if !map.in_bounds(nx, ny) {
+                    let Some((nx_u32, ny_u32)) = map.offset_cell((cx, cy), (dx, dy)) else {
                         continue;
-                    }
-
-                    let nx_u32 = nx as u32;
-                    let ny_u32 = ny as u32;
+                    };
                     let n_idx = (ny_u32 as usize) * (self.width as usize) + (nx_u32 as usize);
 
                     if clearance_table[n_idx] < req_clearance {
@@ -723,9 +750,8 @@ impl Pathfinder {
                         continue;
                     }
 
-                    let n_cell = match map.cell(nx_u32, ny_u32) {
-                        Ok(c) => c,
-                        Err(_) => continue,
+                    let Ok(n_cell) = map.cell(nx_u32, ny_u32) else {
+                        continue;
                     };
 
                     if request.block_unexplored_ramps {
@@ -748,8 +774,13 @@ impl Pathfinder {
                     // Terrain topology ignores occupancy, so structures are checked here: two
                     // buildings touching at a corner leave no gap for a unit of any size.
                     if is_diag
-                        && (!is_cell_passable_for_request(map, request, nx, cy as i32)
-                            || !is_cell_passable_for_request(map, request, cx as i32, ny))
+                        && (!is_cell_passable_for_request(map, request, signed(nx_u32), signed(cy))
+                            || !is_cell_passable_for_request(
+                                map,
+                                request,
+                                signed(cx),
+                                signed(ny_u32),
+                            ))
                     {
                         continue;
                     }
@@ -842,13 +873,13 @@ impl Pathfinder {
                 return is_cell_passable_for_request(
                     map,
                     request,
-                    previous.0 as i32,
-                    next.1 as i32,
+                    signed(previous.0),
+                    signed(next.1),
                 ) && is_cell_passable_for_request(
                     map,
                     request,
-                    next.0 as i32,
-                    previous.1 as i32,
+                    signed(next.0),
+                    signed(previous.1),
                 );
             }
             true
@@ -971,13 +1002,13 @@ impl Pathfinder {
         }
 
         for i in 0..corridor_len - 1 {
-            let c1 = self.buffers.corridor_cells[i] as usize;
-            let c2 = self.buffers.corridor_cells[i + 1] as usize;
+            let c1 = self.buffers.corridor_cells[i];
+            let c2 = self.buffers.corridor_cells[i + 1];
 
-            let x1 = (c1 % (width as usize)) as i32;
-            let y1 = (c1 / (width as usize)) as i32;
-            let x2 = (c2 % (width as usize)) as i32;
-            let y2 = (c2 / (width as usize)) as i32;
+            let x1 = signed(c1 % width);
+            let y1 = signed(c1 / width);
+            let x2 = signed(c2 % width);
+            let y2 = signed(c2 / width);
 
             let dx = x2 - x1;
             let dy = y2 - y1;
@@ -1024,6 +1055,10 @@ impl Pathfinder {
         });
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "four symmetric direction arms; splitting is plan step 9.2"
+    )]
     fn add_orthogonal_portal(
         portals: &mut Vec<PortalEdge>,
         map: &GameMap,
@@ -1041,7 +1076,7 @@ impl Pathfinder {
         if dx > 0 {
             // East step (+X): portal along line x = x2
             let mut y_up = y1;
-            while y_up + 1 < height as i32
+            while y_up + 1 < signed(height)
                 && is_portal_pair_compatible(
                     map,
                     request,
@@ -1073,7 +1108,7 @@ impl Pathfinder {
         } else if dx < 0 {
             // West step (-X): portal along line x = x1
             let mut y_up = y1;
-            while y_up + 1 < height as i32
+            while y_up + 1 < signed(height)
                 && is_portal_pair_compatible(
                     map,
                     request,
@@ -1118,7 +1153,7 @@ impl Pathfinder {
                 x_left -= 1;
             }
             let mut x_right = x1;
-            while x_right + 1 < width as i32
+            while x_right + 1 < signed(width)
                 && is_portal_pair_compatible(
                     map,
                     request,
@@ -1150,7 +1185,7 @@ impl Pathfinder {
                 x_left -= 1;
             }
             let mut x_right = x1;
-            while x_right + 1 < width as i32
+            while x_right + 1 < signed(width)
                 && is_portal_pair_compatible(
                     map,
                     request,
@@ -1260,8 +1295,8 @@ impl Pathfinder {
         map: &GameMap,
         request: &PathRequestWithVision<'_>,
     ) -> SimVec2 {
-        let vx = vertex.x.0.round().to_num::<i32>();
-        let vy = vertex.y.0.round().to_num::<i32>();
+        let vx = vertex.x.0.saturating_round().saturating_to_num::<i32>();
+        let vy = vertex.y.0.saturating_round().saturating_to_num::<i32>();
 
         let offsets = [
             (-1i32, -1i32, 1i32, 1i32),
@@ -1290,10 +1325,11 @@ impl Pathfinder {
         // cliff or ramp side-wall disconnects any orthogonal edge in the 2x2 quad.
         let mut min_margin = SimScalar::ZERO;
         if blocked_count == 0 && vx > 0 && vy > 0 {
-            let q00 = ((vx - 1) as u32, (vy - 1) as u32);
-            let q10 = (vx as u32, (vy - 1) as u32);
-            let q01 = ((vx - 1) as u32, vy as u32);
-            let q11 = (vx as u32, vy as u32);
+            let (ux, uy) = (unsigned(vx), unsigned(vy));
+            let q00 = (ux - 1, uy - 1);
+            let q10 = (ux, uy - 1);
+            let q01 = (ux - 1, uy);
+            let q11 = (ux, uy);
             if !map.terrain_step_is_connected(q00, q11) {
                 let quad = [
                     (q00, [q10, q01], -1_i32, -1_i32),
@@ -1373,7 +1409,8 @@ fn body_fits(
     x: u32,
     y: u32,
 ) -> bool {
-    if !is_cell_passable_for_request(map, request, x as i32, y as i32) {
+    let (cell_x, cell_y) = (signed(x), signed(y));
+    if !is_cell_passable_for_request(map, request, cell_x, cell_y) {
         return false;
     }
     let required = request.clearance.required_clearance();
@@ -1385,7 +1422,6 @@ fn body_fits(
     // `required` eighths overlaps another cell when 4 * sqrt(D) < required, for D the squared
     // half-cell distance from the centre to that cell, hence the squared comparison below.
     let limit = u32::from(required) * u32::from(required);
-    let (cell_x, cell_y) = (x as i32, y as i32);
     let reach = 2;
     (0..=2).any(|offset_y| {
         (0..=2).any(|offset_x| {
@@ -1417,11 +1453,9 @@ fn is_cell_passable_for_request(
     x: i32,
     y: i32,
 ) -> bool {
-    if !map.in_bounds(x, y) {
+    let (Ok(ux), Ok(uy)) = (u32::try_from(x), u32::try_from(y)) else {
         return false;
-    }
-    let ux = x as u32;
-    let uy = y as u32;
+    };
     let Ok(c) = map.cell(ux, uy) else {
         return false;
     };
@@ -1475,7 +1509,7 @@ fn is_portal_pair_compatible(
     {
         return false;
     }
-    let cell = |p: (i32, i32)| (p.0 as u32, p.1 as u32);
+    let cell = |p: (i32, i32)| (unsigned(p.0), unsigned(p.1));
     map.terrain_step_is_connected(cell(p1), cell(p2))
         && map.terrain_step_is_connected(cell(previous1), cell(p1))
         && map.terrain_step_is_connected(cell(previous2), cell(p2))
@@ -1488,7 +1522,7 @@ fn tri_area(a: SimVec2, b: SimVec2, c: SimVec2) -> SimScalar {
 
 #[inline]
 fn octile_heuristic(x1: u32, y1: u32, x2: u32, y2: u32) -> u32 {
-    let dx = (x1 as i32 - x2 as i32).unsigned_abs();
-    let dy = (y1 as i32 - y2 as i32).unsigned_abs();
+    let dx = x1.abs_diff(x2);
+    let dy = y1.abs_diff(y2);
     10 * dx.max(dy) + 4 * dx.min(dy)
 }

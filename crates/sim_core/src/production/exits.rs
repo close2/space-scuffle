@@ -35,6 +35,10 @@ impl SimWorld {
         Ok(())
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one exit search; splitting is plan step 9.2"
+    )]
     pub(crate) fn production_exit(
         &mut self,
         producer: EntityId,
@@ -87,7 +91,7 @@ impl SimWorld {
             } else {
                 let raw = i128::from(source.collision_radius.raw());
                 let cell = |position: SimScalar, offset: i128| -> i64 {
-                    ((i128::from(position.raw()) + offset) >> 32) as i64
+                    i64::try_from((i128::from(position.raw()) + offset) >> 32).unwrap_or(i64::MAX)
                 };
                 (
                     cell(origin.x, -raw),
@@ -97,7 +101,8 @@ impl SimWorld {
                 )
             };
         let margin =
-            ((i128::from(radius.raw()) + (1_i128 << 31) + (1_i128 << 32) - 1) >> 32) as i64;
+            i64::try_from((i128::from(radius.raw()) + (1_i128 << 31) + (1_i128 << 32) - 1) >> 32)
+                .unwrap_or(i64::MAX);
         let bounds = (left - margin, bottom - margin, right + margin, top + margin);
         // A product wider than the map cannot have any legal endpoint. Avoid
         // enumerating an enormous authored-radius perimeter in this case.
@@ -163,7 +168,7 @@ impl SimWorld {
                 let ceil = ((reach_raw + (1_i128 << 32) - 1) >> 32)
                     .min(i128::from(self.map.width().max(self.map.height())));
                 let query_radius =
-                    SimScalar::from_raw((ceil << 32).min(i128::from(i64::MAX)) as i64);
+                    SimScalar::from_raw(i64::try_from(ceil << 32).unwrap_or(i64::MAX));
                 self.production.occupancy.query_radius(
                     point,
                     query_radius,
@@ -189,7 +194,7 @@ impl SimWorld {
                     let dy = (i128::from(point.y.raw()) - i128::from(other.position.y.raw()))
                         .unsigned_abs();
                     let sum = (i128::from(radius.raw()) + i128::from(arch.collision_radius.raw()))
-                        as u128;
+                        .unsigned_abs();
                     // Each term fits u128; reject by axes before adding squares so
                     // extreme setup coordinates cannot overflow the squared sum.
                     if dx < sum && dy < sum && dx * dx < sum * sum - dy * dy {
