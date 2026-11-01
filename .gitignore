@@ -9,3 +9,4 @@ tmp/
 *.pem
 *.key
 .claude/worktrees/
+*.scmap.ron.autosave
