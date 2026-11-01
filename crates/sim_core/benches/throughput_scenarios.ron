@@ -1,0 +1,19 @@
+// Scenario table for `cargo bench -p sim_core --bench throughput`.
+//
+// Mirrors the attack-move throughput table in Appendix A of
+// docs/plans/2026-11-01-codebase-remediation.md. Each run builds a flat map, splits
+// `units` evenly between two players in opposite corners, orders both sides to
+// attack-move across the map, and measures `ticks` steps of the real `SimWorld`.
+(
+    unit_slug: "pulse_bot",
+    seed: 7,
+    ticks: 300,
+    repeats: 3,
+    scenarios: [
+        (map_cells: 64, units: 0),
+        (map_cells: 64, units: 100),
+        (map_cells: 64, units: 400),
+        (map_cells: 128, units: 400),
+        (map_cells: 256, units: 0),
+    ],
+)

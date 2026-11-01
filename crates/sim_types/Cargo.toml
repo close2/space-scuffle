@@ -17,6 +17,7 @@ thiserror.workspace = true
 bitflags.workspace = true
 
 [dev-dependencies]
+proptest.workspace = true
 bincode = "1.3.3"
 ron.workspace = true
 xxhash-rust.workspace = true
