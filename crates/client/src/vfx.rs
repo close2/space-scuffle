@@ -255,7 +255,7 @@ pub fn spawn_death_shatter(
     // 2. 16 Explosive Crystalline Glass Shards (Mode 5 crystalline shard silhouette)
     for i in 0..16 {
         let phi = (i as f32) * 2.399_963_2; // Golden ratio spiral
-        let theta = (i as f32) * 1.618_034;
+        let theta = (i as f32) * std::f32::consts::GOLDEN_RATIO;
         let dir = Vec3::new(
             theta.sin() * phi.cos(),
             theta.cos().abs() + 0.25, // Upward explosion bias

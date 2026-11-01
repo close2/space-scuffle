@@ -418,7 +418,7 @@ fn orm_ranges_respected() {
         for x in 0..size {
             let fx = x as f32 / 16.0;
             let fy = y as f32 / 16.0;
-            let val = ((fx.sin() + fy.cos()) * 0.5 + 0.5).clamp(0.0, 1.0);
+            let val = (f32::midpoint(fx.sin(), fy.cos()) + 0.5).clamp(0.0, 1.0);
             height.put_pixel(x, y, Luma([val]));
         }
     }

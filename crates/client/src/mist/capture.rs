@@ -546,7 +546,7 @@ fn setup_capture_scene(
                 enabled: !options.shell_case()
                     && options
                         .benchmark_emitters
-                        .map_or(true, |count| index < usize::from(count)),
+                        .is_none_or(|count| index < usize::from(count)),
             },
         ));
     }

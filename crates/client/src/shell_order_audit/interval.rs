@@ -93,7 +93,7 @@ impl Collector {
                     .as_ref()
                     .map_or(0, |report| report.retained_bytes),
             )
-            .map_or(true, |total| total > self.config.max_bytes)
+            .is_none_or(|total| total > self.config.max_bytes)
         {
             return Err(AuditError::Budget("assets and phase records"));
         }
@@ -243,7 +243,7 @@ impl Collector {
             .ok_or(AuditError::Budget("byte accounting overflow"))?;
         if total
             .checked_add(self.asset_bytes)
-            .map_or(true, |size| size > self.config.max_bytes)
+            .is_none_or(|size| size > self.config.max_bytes)
         {
             return Err(AuditError::Budget("retained evidence bytes"));
         }

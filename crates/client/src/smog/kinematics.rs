@@ -242,7 +242,7 @@ pub fn generate_bouncing_bubbles(
         let fz = (iz as f32 + 0.5) / (nz as f32).max(1.0);
 
         // Deterministic offset to break perfect grid alignment
-        let jitter_x = ((i as f32 * 1.618_034).sin() * 0.25) * cell_size_x;
+        let jitter_x = ((i as f32 * std::f32::consts::GOLDEN_RATIO).sin() * 0.25) * cell_size_x;
         let jitter_z = ((i as f32 * std::f32::consts::PI).sin() * 0.25) * cell_size_z;
 
         let r_i = radius + ((i % 5) as f32) * 0.01;

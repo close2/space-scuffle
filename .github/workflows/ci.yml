@@ -35,13 +35,14 @@ jobs:
             libxi-dev \
             libwayland-dev \
             libxkbcommon-dev \
+            libxkbcommon-x11-0 \
             mesa-vulkan-drivers \
             vulkan-tools \
             xvfb \
             ffmpeg
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.0
         with:
           components: rustfmt, clippy
 
@@ -52,7 +53,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Lint workspace (cargo clippy)
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Run all workspace unit & integration tests (including xvfb + llvmpipe GPU tests)
-        run: cargo test --workspace
+        run: cargo test --workspace --locked

@@ -836,7 +836,7 @@ fn event_matches_contact(
     team == source.1
         && team != victim.1
         && impact[..2] == victim.0[..2]
-        && from.map_or(true, |from| from[..2] == source.0[..2])
+        && from.is_none_or(|from| from[..2] == source.0[..2])
 }
 
 fn correlated_combat(

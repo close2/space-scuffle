@@ -314,9 +314,9 @@ pub fn setup_smog_volume_system(
         volume_max.z - volume_min.z,
     );
     let center = Vec3::new(
-        (volume_min.x + volume_max.x) * 0.5,
-        (volume_min.y + volume_max.y) * 0.5,
-        (volume_min.z + volume_max.z) * 0.5,
+        f32::midpoint(volume_min.x, volume_max.x),
+        f32::midpoint(volume_min.y, volume_max.y),
+        f32::midpoint(volume_min.z, volume_max.z),
     );
 
     let mut packed_pos_radius = [Vec4::ZERO; MAX_SMOG_SHADER_BUBBLES];
@@ -383,11 +383,11 @@ pub fn setup_smog_volume_system(
             .filter(|a| {
                 registry
                     .as_ref()
-                    .map_or(true, |r| r.get_texture(a.unit_type_id).is_some())
+                    .is_none_or(|r| r.get_texture(a.unit_type_id).is_some())
                     && media_status
                         .as_ref()
                         .and_then(|ms| ms.audit(a.unit_type_id))
-                        .map_or(true, |audit| {
+                        .is_none_or(|audit| {
                             audit.status
                                 != asset_baker::media_audit::MediaAuditStatus::KnownConceptDuplicate
                         })
@@ -541,7 +541,7 @@ pub fn sync_bouncing_smog_bubbles_system(
 ) {
     let in_active_tab = lab_state
         .as_ref()
-        .map_or(true, |l| l.current_tab == crate::LabTab::VisualLab);
+        .is_none_or(|l| l.current_tab == crate::LabTab::VisualLab);
     let bouncing_active = lab_state.as_ref().map_or(config.bouncing_active, |l| {
         l.smog_bouncing_active && l.opt_smog_volume
     });

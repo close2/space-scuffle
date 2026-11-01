@@ -219,7 +219,9 @@ pub fn load_unit_media(
         ));
     }
     let alpha_range = rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .fold([u8::MAX, 0], |[low, high], pixel| {
             [low.min(pixel[3]), high.max(pixel[3])]
         });

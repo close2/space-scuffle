@@ -559,9 +559,9 @@ pub fn update_mist_wake_system(
                 });
             let smog_replaces_mist = smog_config.as_ref().is_some_and(|c| c.enabled);
             let enabled = !smog_replaces_mist
-                && override_motion.map_or(true, |m| m.enabled)
+                && override_motion.is_none_or(|m| m.enabled)
                 && (preview.is_none()
-                    || lab.as_ref().map_or(true, |l| {
+                    || lab.as_ref().is_none_or(|l| {
                         l.opt_mist_wake && !(l.smog_bouncing_active && l.opt_smog_volume)
                     }));
             if enabled {

@@ -12,7 +12,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.80.0"
+rust-version = "1.99.0"
 authors = ["Space Scuffle Systems Engineering Team"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/space-scuffle/space-scuffle"
@@ -42,7 +42,8 @@ cast_sign_loss = "warn"
 
 [workspace.dependencies]
 # Fixed-point deterministic math
-fixed = { version = "1.28.0", features = ["serde"] }
+# Exact pin: this crate defines authoritative arithmetic, so upgrades are checksum-schema events.
+fixed = { version = "=1.31.0", features = ["serde"] }
 
 # Serialization
 serde = { version = "1.0.218", features = ["derive"] }
@@ -77,3 +78,10 @@ asset_baker = { path = "crates/asset_baker" }
 # Reviewed Vulkan compiler corrections; provenance and regression commands live in third_party/README.md.
 [patch.crates-io]
 naga = { path = "third_party/naga" }
+
+# Dependencies are optimised so asset decoding and fixed-point math do not dominate test time.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.test]
+debug = "line-tables-only"

@@ -189,7 +189,7 @@ pub fn playtest_input_system(
             let radius = instance.0.radius;
 
             if let Some(t) = ray_sphere_intersect(ray_origin, ray_dir, center, radius) {
-                if closest_hit.as_ref().map_or(true, |(_, min_t)| t < *min_t) {
+                if closest_hit.as_ref().is_none_or(|(_, min_t)| t < *min_t) {
                     closest_hit = Some((instance.0.entity_id, t));
                 }
             }

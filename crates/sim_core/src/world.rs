@@ -2900,7 +2900,7 @@ impl SimWorld {
                                         let d2 = proj.current_pos.distance_sq(cand.position);
                                         if d2 <= search_r2 {
                                             let is_better =
-                                                best_cand.as_ref().map_or(true, |b| d2 < b.3);
+                                                best_cand.as_ref().is_none_or(|b| d2 < b.3);
                                             if is_better {
                                                 best_cand = Some((
                                                     cand_id,

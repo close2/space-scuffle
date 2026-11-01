@@ -467,7 +467,7 @@ fn integer_sqrt(value: u128) -> u128 {
     // x + value/x remains below 2^66 and division never uses zero.
     let mut x = 1_u128 << (128 - value.leading_zeros()).div_ceil(2);
     loop {
-        let next = (x + value / x) / 2;
+        let next = u128::midpoint(x, value / x);
         if next >= x {
             return x;
         }

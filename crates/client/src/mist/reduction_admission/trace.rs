@@ -480,14 +480,14 @@ fn commands(
     let mut result = Vec::new();
     let mut order = (tick == 0).then_some(UnitOrder::Move { target: forward });
     match &case.family {
-        MotionFamily::Zigzag { dwell_ticks } if tick % dwell_ticks == 0 => {
+        MotionFamily::Zigzag { dwell_ticks } if tick.is_multiple_of(*dwell_ticks) => {
             let lateral = arithmetic(setup.extent.checked_mul(corpus.spec.zigzag_lateral_ratio))?;
             order = Some(UnitOrder::Move {
                 target: add(
                     forward,
                     SimVec2::new(
                         SimScalar::ZERO,
-                        if tick / dwell_ticks % 2 == 0 {
+                        if (tick / dwell_ticks).is_multiple_of(2) {
                             lateral
                         } else {
                             -lateral
@@ -510,7 +510,7 @@ fn commands(
                 / u32::try_from(corpus.spec.curve_directions.len())
                     .map_err(|_| AdmissionError::Specification("curve directions"))?)
             .max(1);
-            if tick % interval == 0 {
+            if tick.is_multiple_of(interval) {
                 let index = usize::try_from(tick / interval)
                     .map_err(|_| AdmissionError::Specification("curve index"))?
                     % corpus.spec.curve_directions.len();
@@ -1422,7 +1422,7 @@ pub(super) fn replay(
         MotionFamily::Ramp
             if summary
                 .ground_range
-                .map_or(true, |range| range[1] <= range[0]) =>
+                .is_none_or(|range| range[1] <= range[0]) =>
         {
             record_failure(
                 &mut summary,

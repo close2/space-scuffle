@@ -190,9 +190,9 @@ fn gather(world: &World, config: &AuditConfig) -> Result<EpochEvidence, AuditErr
                     world.resource::<RenderMaterialInstances<crate::BubbleDomeMaterial>>();
                 let prepared =
                     world.resource::<RenderAssets<PreparedMaterial<crate::BubbleDomeMaterial>>>();
-                if !instances
+                if instances
                     .get(&item.entity.1)
-                    .is_some_and(|id| prepared.get(*id).is_some())
+                    .is_none_or(|id| prepared.get(*id).is_none())
                 {
                     pending.push(format!("prepared shell {main_entity}"));
                 }

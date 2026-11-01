@@ -240,7 +240,7 @@ pub fn update_render_verification_system(
 
     let chunks_ready = terrain_chunks
         .as_ref()
-        .map_or(true, |tc| tc.chunks.iter().all(|c| !c.dirty));
+        .is_none_or(|tc| tc.chunks.iter().all(|c| !c.dirty));
     let pipeline_ready = !sync.has_pending.load(Ordering::SeqCst);
 
     match state.step {

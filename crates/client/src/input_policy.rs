@@ -203,7 +203,7 @@ pub fn apply_world_viewport(
     // the last valid rectangle for restoration, but never render through UI.
     camera.is_active = viewport.is_some();
     if let Some(viewport) = viewport {
-        if camera.viewport.as_ref().map_or(true, |current| {
+        if camera.viewport.as_ref().is_none_or(|current| {
             current.physical_position != viewport.physical_position
                 || current.physical_size != viewport.physical_size
         }) {

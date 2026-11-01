@@ -757,7 +757,7 @@ fn reduce_loaded(
                         errors: error,
                         forced: false,
                     };
-                    if next.map_or(true, |old| {
+                    if next.is_none_or(|old| {
                         !old.forced
                             && (error.maximum_ratio() > old.errors.maximum_ratio()
                                 || (error.maximum_ratio() == old.errors.maximum_ratio()
@@ -784,7 +784,7 @@ fn reduce_loaded(
                     end,
                     field: "positive representable chord and reciprocal",
                 })?;
-                if next.map_or(true, |old| !old.forced || index < old.index) {
+                if next.is_none_or(|old| !old.forced || index < old.index) {
                     next = Some(Split {
                         interval,
                         index,

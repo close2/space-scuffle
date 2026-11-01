@@ -47,7 +47,7 @@ pub fn ray_sphere_intersect(
 
     let sqrt_d = discriminant.sqrt();
     let t1 = (-b - sqrt_d) * 0.5;
-    let t2 = (-b + sqrt_d) * 0.5;
+    let t2 = f32::midpoint(-b, sqrt_d);
 
     if t1 > 0.0 {
         Some(t1)
@@ -157,7 +157,7 @@ pub fn selection_system(
         if let Some(t) = ray_sphere_intersect(ray_origin, ray_dir, center, radius) {
             if closest_hit
                 .as_ref()
-                .map_or(true, |(_, _, _, min_t)| t < *min_t)
+                .is_none_or(|(_, _, _, min_t)| t < *min_t)
             {
                 closest_hit = Some((entity, instance.0.entity_id, hero_idx.map(|h| h.0), t));
             }

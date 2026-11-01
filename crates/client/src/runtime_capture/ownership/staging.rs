@@ -106,7 +106,10 @@ pub(super) fn prepare(world: &mut World) -> Result<Option<Stage>, CaptureError> 
     origin[0] += actor.radius * 1.8;
     origin[1] = front + DEMONSTRATION_GAP;
     origin[2] += actor.radius * 1.5;
-    let focus = Vec2::new(origin[0] + 1.0, (origin[1] + actor.world_pos[1]) * 0.5);
+    let focus = Vec2::new(
+        origin[0] + 1.0,
+        f32::midpoint(origin[1], actor.world_pos[1]),
+    );
     if !Vec3::from_array(origin).is_finite() || !focus.is_finite() {
         return Err(failure("foreground stage arithmetic overflowed"));
     }

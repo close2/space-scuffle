@@ -268,7 +268,7 @@ fn test_surface_heights_match_simulation() {
             for dx in base_cx.saturating_sub(1)..=(base_cx + 1).min(chunk_cols - 1) {
                 let chunk_idx = (dy * chunk_cols + dx) as usize;
                 let mesh = &chunk_meshes[chunk_idx];
-                for tri in mesh.indices.chunks_exact(3) {
+                for tri in mesh.indices.as_chunks::<3>().0 {
                     let v0 = Vec3::from(mesh.positions[tri[0] as usize]);
                     let v1 = Vec3::from(mesh.positions[tri[1] as usize]);
                     let v2 = Vec3::from(mesh.positions[tri[2] as usize]);
@@ -394,7 +394,7 @@ fn test_indices_in_range_and_winding_consistent() {
             build_chunk_mesh(&map, cx, cy, &mut scratch);
             let num_vertices = scratch.positions.len();
 
-            for (tri_idx, tri) in scratch.indices.chunks_exact(3).enumerate() {
+            for (tri_idx, tri) in scratch.indices.as_chunks::<3>().0.iter().enumerate() {
                 assert!(
                     (tri[0] as usize) < num_vertices,
                     "index 0 out of bounds in chunk ({cx},{cy})"

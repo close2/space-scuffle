@@ -381,9 +381,7 @@ pub fn update_indicators_system(
         ),
     >,
 ) {
-    let opt_brackets = lab_state
-        .as_ref()
-        .map_or(true, |s| s.opt_selection_brackets);
+    let opt_brackets = lab_state.as_ref().is_none_or(|s| s.opt_selection_brackets);
 
     for (instance_wrapper, children) in instance_query.iter() {
         let instance = &instance_wrapper.0;
