@@ -9,10 +9,13 @@
 //! 1. **Zero Per-Frame Allocations:** Scratch buffers for brush coordinates and cell footprints
 //!    are reused across render frames.
 //! 2. **Shortcuts & Pointer Decoupling:** Global shortcuts and viewport clicks are strictly
-//!    suppressed while egui windows or text inputs capture keyboard or pointer focus.
-//! 3. **Validation Debounce:** Live validation is debounced by [`VALIDATION_DEBOUNCE_SECS`] (0.4s)
+//!    suppressed while egui windows or text inputs capture keyboard or pointer focus. Ending a
+//!    drag is not: a stroke finishes wherever its button is released.
+//! 3. **Stroke Integrity:** Undo, redo and playtest entry are blocked while a stroke is live,
+//!    because its recorded before-states describe the document as the stroke found it.
+//! 4. **Validation Debounce:** Live validation is debounced by [`VALIDATION_DEBOUNCE_SECS`] (0.4s)
 //!    following edits, but runs synchronously before document saves and playtest transitions.
-//! 4. **Unsaved Edits Guard:** Closing, opening, or creating maps with unsaved changes prompts
+//! 5. **Unsaved Edits Guard:** Closing, opening, or creating maps with unsaved changes prompts
 //!    an explicit Save / Discard / Cancel modal. `dirty` stays set until the document is really
 //!    saved or replaced, and the guarded action resumes only after its edits are resolved.
 
@@ -344,23 +347,28 @@ pub fn editor_ui_system(
 
         if ctrl && keyboard.just_pressed(KeyCode::KeyS) {
             handle_save_action(&mut doc, &mut file_browser, &maps_dir, &mut tool_state);
-        } else if ctrl && keyboard.just_pressed(KeyCode::KeyZ) {
-            let mut cs = ChangeSet::default();
-            if history.undo(&mut doc.doc, &mut cs) {
-                doc.apply_changeset(&cs, now_secs);
-                doc.sync_terrain(&cs, &mut terrain_state);
-                tool_state.last_status_message = Some("Undo edit".into());
+        } else if ctrl && !shift && keyboard.just_pressed(KeyCode::KeyZ) {
+            if !tool_state.is_painting {
+                let mut cs = ChangeSet::default();
+                if history.undo(&mut doc.doc, &mut cs) {
+                    doc.apply_changeset(&cs, now_secs);
+                    doc.sync_terrain(&cs, &mut terrain_state);
+                    tool_state.last_status_message = Some("Undo edit".into());
+                }
             }
-        } else if (ctrl && keyboard.just_pressed(KeyCode::KeyY))
-            || (ctrl && shift && keyboard.just_pressed(KeyCode::KeyZ))
+        } else if ctrl
+            && (keyboard.just_pressed(KeyCode::KeyY)
+                || (shift && keyboard.just_pressed(KeyCode::KeyZ)))
         {
-            let mut cs = ChangeSet::default();
-            if history.redo(&mut doc.doc, &mut cs) {
-                doc.apply_changeset(&cs, now_secs);
-                doc.sync_terrain(&cs, &mut terrain_state);
-                tool_state.last_status_message = Some("Redo edit".into());
+            if !tool_state.is_painting {
+                let mut cs = ChangeSet::default();
+                if history.redo(&mut doc.doc, &mut cs) {
+                    doc.apply_changeset(&cs, now_secs);
+                    doc.sync_terrain(&cs, &mut terrain_state);
+                    tool_state.last_status_message = Some("Redo edit".into());
+                }
             }
-        } else if keyboard.just_pressed(KeyCode::F5) {
+        } else if keyboard.just_pressed(KeyCode::F5) && !tool_state.is_painting {
             handle_playtest_entry(
                 &mut doc,
                 &mut playtest,
@@ -465,8 +473,8 @@ pub fn editor_ui_system(
             });
 
             ui.menu_button("Edit", |ui| {
-                let can_undo = history.can_undo();
-                let can_redo = history.can_redo();
+                let can_undo = history.can_undo() && !tool_state.is_painting;
+                let can_redo = history.can_redo() && !tool_state.is_painting;
                 if ui
                     .add_enabled(can_undo, egui::Button::new("Undo (Ctrl+Z)"))
                     .clicked()
@@ -1160,6 +1168,31 @@ pub fn editor_ui_system(
         terrain_params.overlay_flags &= !OVERLAY_FLAG_BRUSH;
         tool_state.hovered_cell = None;
     }
+
+    finish_released_gestures(&mouse_buttons, &mut history, &mut tool_state);
+}
+
+/// Ends any drag whose button is no longer held, wherever the pointer ended up.
+///
+/// The viewport tools only run while the pointer is over terrain, so a release above a panel,
+/// off the map or outside the window never reaches them. Recording here guarantees that a stroke
+/// already applied to the document always gets its undo entry. A box drag that was not released
+/// over the terrain has no end cell, so it is cancelled.
+fn finish_released_gestures(
+    mouse_buttons: &ButtonInput<MouseButton>,
+    history: &mut History,
+    tool_state: &mut EditorToolState,
+) {
+    if mouse_buttons.pressed(MouseButton::Left) {
+        return;
+    }
+    if tool_state.is_painting {
+        tool_state.is_painting = false;
+        if let Some(cmd) = tool_state.stroke_recorder.finish("Paint Brush") {
+            history.push_applied(cmd);
+        }
+    }
+    tool_state.box_start_cell = None;
 }
 
 fn find_entity_by_id(doc: &MapDocument, id: MapEntityId) -> Option<MapEntity> {
@@ -1528,11 +1561,6 @@ fn handle_viewport_tool_interaction(
                     &mut tool_state.scratch_coords,
                 );
                 sync_scratch_cells_to_terrain(&tool_state.scratch_coords, doc, terrain, now_secs);
-            } else if mouse_buttons.just_released(MouseButton::Left) && tool_state.is_painting {
-                tool_state.is_painting = false;
-                if let Some(cmd) = tool_state.stroke_recorder.finish("Paint Brush") {
-                    history.push_applied(cmd);
-                }
             }
         }
         EditorTool::Box => {

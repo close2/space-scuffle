@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
+use bevy::input::mouse::MouseButtonInput;
 use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::render::settings::{RenderCreation, WgpuSettings};
@@ -50,12 +51,13 @@ use client::editor::playtest::{
     autosave_path, initialize_playtest_world, EditorPhase, PlaytestState,
 };
 use client::editor::{
-    editor_window_plugin, EditorStartup, InitialDocument, MapEditorPlugin, PendingUnsavedAction,
-    UnsavedChangesModalState, PLAYTEST_BASELINE_POSE, PLAYTEST_POSE,
+    editor_window_plugin, EditorStartup, EditorToolState, InitialDocument, MapEditorPlugin,
+    PendingUnsavedAction, UnsavedChangesModalState, PLAYTEST_BASELINE_POSE, PLAYTEST_POSE,
 };
 use client::lab_ui::LabState;
 use client::resolve_assets_dir;
 use client::scene_controller::LiveBattleBubble;
+use client::terrain::TerrainState;
 use sim_core::catalog::RuntimeCatalogs;
 use sim_core::scenario::{PlayerSetup, StartLoadoutCatalog};
 use sim_map::grid::{CellFlags, CliffLevel, TerrainKind};
@@ -520,6 +522,88 @@ impl EditorHarness {
         self.step(1);
     }
 
+    /// Moves the OS cursor to `position` (logical pixels) for both Bevy and egui.
+    fn move_cursor(&mut self, position: Vec2) {
+        let window = self.window();
+        self.app
+            .world_mut()
+            .query::<&mut Window>()
+            .single_mut(self.app.world_mut())
+            .set_cursor_position(Some(position));
+        self.app.world_mut().send_event(CursorMoved {
+            window,
+            position,
+            delta: None,
+        });
+        self.step(1);
+    }
+
+    /// Removes the cursor from the window, as dragging outside it does.
+    fn cursor_leaves_window(&mut self) {
+        self.app
+            .world_mut()
+            .query::<&mut Window>()
+            .single_mut(self.app.world_mut())
+            .set_cursor_position(None);
+        self.step(1);
+    }
+
+    /// Returns the window position showing the center of cell `(x, y)`.
+    fn cell_on_screen(&mut self, x: u32, y: u32) -> Vec2 {
+        let terrain = self.app.world().resource::<TerrainState>();
+        let ground = Vec3::new(
+            x as f32 + 0.5,
+            terrain.map.terrain_altitude_at(SimVec2::new(
+                SimScalar::from_num(x as f32 + 0.5),
+                SimScalar::from_num(y as f32 + 0.5),
+            )),
+            y as f32 + 0.5,
+        );
+        let world = self.app.world_mut();
+        let (camera, transform) = world
+            .query_filtered::<(&Camera, &GlobalTransform), With<RtsCamera>>()
+            .single(world);
+        camera
+            .world_to_viewport(transform, ground)
+            .expect("cell must be in front of the editor camera")
+    }
+
+    fn send_mouse(&mut self, button: MouseButton, state: ButtonState) {
+        let window = self.window();
+        self.app.world_mut().send_event(MouseButtonInput {
+            button,
+            state,
+            window,
+        });
+        self.step(1);
+    }
+
+    fn press_left(&mut self) {
+        self.send_mouse(MouseButton::Left, ButtonState::Pressed);
+    }
+
+    fn release_left(&mut self) {
+        self.send_mouse(MouseButton::Left, ButtonState::Released);
+    }
+
+    /// Selects cliff level 2 and presses the primary button over cell `(x, y)` with the Brush.
+    ///
+    /// Blank maps are level 1, so the tool's default level would paint nothing.
+    fn begin_stroke_at(&mut self, x: u32, y: u32) {
+        self.tap_key(KeyCode::Digit3);
+        let position = self.cell_on_screen(x, y);
+        self.move_cursor(position);
+        self.press_left();
+    }
+
+    fn cell_level(&self, x: u32, y: u32) -> u8 {
+        self.doc().doc.cell(x, y).expect("cell in bounds").level.0
+    }
+
+    fn history(&self) -> &History {
+        self.app.world().resource::<History>()
+    }
+
     /// Delivers the operating system's close request, as clicking the window's X does.
     fn close_window(&mut self) {
         let window = self.window();
@@ -837,4 +921,117 @@ fn window_close_during_a_clean_playtest_exits() {
     harness.step(4);
     harness.close_window();
     assert_eq!(harness.app.should_exit(), Some(AppExit::Success));
+}
+
+#[test]
+fn stroke_released_over_a_ui_panel_keeps_its_undo_entry() {
+    let mut harness = EditorHarness::new();
+    harness.begin_stroke_at(32, 32);
+    assert_eq!(harness.cell_level(32, 32), 2, "the stroke must paint live");
+
+    // The left toolbox panel covers this window position. egui samples the pointer once per
+    // frame, so give it a frame to report that it owns the pointer.
+    harness.move_cursor(Vec2::new(100.0, 450.0));
+    harness.step(1);
+    assert_eq!(
+        harness
+            .app
+            .world()
+            .resource::<EditorToolState>()
+            .hovered_cell,
+        None,
+        "the panel must own the pointer for this test to mean anything"
+    );
+    harness.release_left();
+    harness.step(1);
+
+    assert!(
+        !harness
+            .app
+            .world()
+            .resource::<EditorToolState>()
+            .is_painting
+    );
+    assert_eq!(
+        harness.history().undo_len(),
+        1,
+        "the stroke must be undoable"
+    );
+    harness.send_key(KeyCode::ControlLeft, ButtonState::Pressed);
+    harness.step(1);
+    harness.tap_key(KeyCode::KeyZ);
+    assert_eq!(
+        harness.cell_level(32, 32),
+        1,
+        "undo must restore the stroke"
+    );
+}
+
+#[test]
+fn stroke_released_outside_the_window_keeps_its_undo_entry() {
+    let mut harness = EditorHarness::new();
+    harness.begin_stroke_at(32, 32);
+    harness.cursor_leaves_window();
+    harness.release_left();
+    harness.step(1);
+
+    assert!(
+        !harness
+            .app
+            .world()
+            .resource::<EditorToolState>()
+            .is_painting
+    );
+    assert_eq!(harness.history().undo_len(), 1);
+}
+
+#[test]
+fn undo_and_playtest_are_blocked_during_an_active_stroke() {
+    let mut harness = EditorHarness::new();
+    harness.make_dirty();
+    assert_eq!(harness.history().undo_len(), 1);
+    harness.begin_stroke_at(32, 32);
+
+    harness.send_key(KeyCode::ControlLeft, ButtonState::Pressed);
+    harness.step(1);
+    harness.tap_key(KeyCode::KeyZ);
+    harness.send_key(KeyCode::ControlLeft, ButtonState::Released);
+    harness.step(1);
+    assert_eq!(
+        harness.history().undo_len(),
+        1,
+        "undo during a live stroke would corrupt the recorded before-states"
+    );
+
+    harness.tap_key(KeyCode::F5);
+    harness.step(2);
+    assert_eq!(harness.phase(), EditorPhase::Editing);
+
+    harness.release_left();
+    harness.step(1);
+    assert_eq!(harness.history().undo_len(), 2);
+}
+
+#[test]
+fn ctrl_shift_z_redoes_and_ctrl_z_undoes() {
+    let mut harness = EditorHarness::new();
+    harness.make_dirty();
+
+    harness.send_key(KeyCode::ControlLeft, ButtonState::Pressed);
+    harness.step(1);
+    harness.tap_key(KeyCode::KeyZ);
+    assert_eq!(harness.history().undo_len(), 0);
+    assert_eq!(harness.history().redo_len(), 1);
+
+    harness.send_key(KeyCode::ShiftLeft, ButtonState::Pressed);
+    harness.step(1);
+    harness.tap_key(KeyCode::KeyZ);
+    assert_eq!(harness.history().redo_len(), 0, "Ctrl+Shift+Z must redo");
+    assert_eq!(harness.history().undo_len(), 1);
+
+    harness.send_key(KeyCode::ShiftLeft, ButtonState::Released);
+    harness.step(1);
+    harness.tap_key(KeyCode::KeyZ);
+    harness.tap_key(KeyCode::KeyY);
+    assert_eq!(harness.history().undo_len(), 1, "Ctrl+Y must still redo");
 }
