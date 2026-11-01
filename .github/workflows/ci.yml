@@ -37,6 +37,7 @@ jobs:
             libxkbcommon-dev \
             libxkbcommon-x11-0 \
             mesa-vulkan-drivers \
+            vulkan-validationlayers \
             vulkan-tools \
             xvfb \
             ffmpeg
