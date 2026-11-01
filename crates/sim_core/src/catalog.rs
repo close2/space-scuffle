@@ -15,6 +15,7 @@
 //!    are modeled as explicit optional specs, enabling data-driven behaviors.
 
 use crate::error::{SimCoreError, SimResult};
+use crate::upgrades::UpgradeCatalog;
 use serde::{Deserialize, Serialize};
 use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AnimState, ArchetypeCapabilities, ArmorClass,
@@ -506,6 +507,60 @@ impl UnitCatalog {
         Ok(())
     }
 
+    /// Checks every reference between this catalog and `upgrades`.
+    ///
+    /// Each archetype's `researches_upgrades` must name a real upgrade, and each upgrade's
+    /// `researched_at` and `requires_structures` must name structures in this catalog. Without
+    /// this, a typo in any of the three files loads cleanly and only surfaces as a research
+    /// option that can never be taken.
+    ///
+    /// # Errors
+    /// Returns [`SimCoreError::CatalogInvalidValue`] naming the first unresolved reference.
+    pub fn validate_upgrade_references(&self, upgrades: &UpgradeCatalog) -> SimResult<()> {
+        let unresolved =
+            |definition: &str, field: &str, reason| SimCoreError::CatalogInvalidValue {
+                definition: definition.to_owned(),
+                field: field.to_owned(),
+                reason,
+            };
+        for archetype in self.archetypes() {
+            for reference in &archetype.researches_upgrades {
+                if upgrades.get_by_slug(reference).is_none() {
+                    return Err(unresolved(
+                        &archetype.slug,
+                        "researches_upgrades",
+                        "reference does not resolve in the upgrade catalog",
+                    ));
+                }
+            }
+        }
+        let is_structure = |slug: &str| {
+            self.get_by_slug(slug)
+                .is_some_and(|target| matches!(target.shape, ShapeKind::BuildingDome { .. }))
+        };
+        for upgrade in upgrades.upgrades() {
+            if !is_structure(&upgrade.researched_at) {
+                return Err(unresolved(
+                    &upgrade.slug,
+                    "researched_at",
+                    "must reference a structure in the unit catalog",
+                ));
+            }
+            if !upgrade
+                .requires_structures
+                .iter()
+                .all(|slug| is_structure(slug))
+            {
+                return Err(unresolved(
+                    &upgrade.slug,
+                    "requires_structures",
+                    "must reference structures in the unit catalog",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Iterates over all registered archetypes in the catalog.
     pub fn archetypes(&self) -> impl Iterator<Item = &UnitArchetype> {
         self.archetypes.iter().flatten()
@@ -722,6 +777,20 @@ struct UnitArchetypeDef {
 }
 
 impl UnitArchetypeDef {
+    /// Converts an authored firing arc in degrees to the maximum aim deviation in binary angle.
+    ///
+    /// `is_within_firing_arc` compares the shortest angular difference, which never exceeds 180
+    /// degrees, so any arc of 180 degrees or more is unrestricted. Binary angles wrap at 360
+    /// degrees, so an authored 360 must not pass through `from_degrees`, which would map it to
+    /// an arc of zero: the strictest possible value rather than the most permissive.
+    fn firing_half_angle(degrees: f32) -> SimAngle {
+        if degrees >= 180.0 {
+            SimAngle::DEG_180
+        } else {
+            SimAngle::from_degrees(degrees as i32)
+        }
+    }
+
     fn convert_weapon(w: WeaponSpecDef) -> WeaponSpec {
         WeaponSpec {
             name: w.name,
@@ -729,7 +798,7 @@ impl UnitArchetypeDef {
             target_flags: w.target_flags.into_flags(),
             min_range: SimScalar::from_f32_lossy(w.min_range),
             max_range: SimScalar::from_f32_lossy(w.max_range),
-            firing_arc: SimAngle::from_degrees(w.firing_arc_deg as i32),
+            firing_arc: Self::firing_half_angle(w.firing_arc_deg),
             has_turret: w.has_turret,
             turret_turn_rate: {
                 if !w.has_turret && w.turret_turn_rate_deg <= 0.0 {
@@ -967,7 +1036,8 @@ impl StructureArchetypeDef {
         let radius = SimScalar::from_num(self.footprint.0 as f64 * 0.5);
         let ground_weapon = self.ground_weapon.map(UnitArchetypeDef::convert_weapon);
         let air_weapon = self.air_weapon.map(UnitArchetypeDef::convert_weapon);
-        let weapon = ground_weapon.clone().or_else(|| air_weapon.clone());
+        // `weapon` is the ground fallback of `weapon_against`, so an air weapon must never fill it.
+        let weapon = ground_weapon.clone();
 
         let mut attributes = AttributeFlags::STRUCTURE | AttributeFlags::ARMORED;
         if self.max_shields > 0.0 {

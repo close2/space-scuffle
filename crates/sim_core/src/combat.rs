@@ -367,6 +367,19 @@ pub fn step_entity_weapon(
 
                 if is_within_firing_arc(current_aim, entity.position, target_pos, weapon.firing_arc)
                 {
+                    // An unrestricted arc removes the aiming gate, not the aiming: the turret
+                    // or hull keeps slewing, so a firing weapon never stays pointed away.
+                    if weapon.firing_arc >= SimAngle::DEG_180 {
+                        if weapon.has_turret {
+                            entity.turret_angle = entity
+                                .turret_angle
+                                .rotate_towards(target_angle, weapon.turret_turn_rate.raw());
+                        } else {
+                            entity.heading = entity
+                                .heading
+                                .rotate_towards(target_angle, weapon.turret_turn_rate.raw());
+                        }
+                    }
                     // CRITICAL COOLDOWN GUARD:
                     // An entity may align with a target while its weapon is on cooldown,
                     // but MUST NOT start Windup until cooldown has fully elapsed!
