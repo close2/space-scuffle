@@ -145,7 +145,67 @@ impl Default for BubbleUniformGpu {
     }
 }
 
+/// Updates a bubble material only when the change would be visible.
+///
+/// Returns `true` when the asset was modified.
+// PERFORMANCE RATIONALE:
+// Why: `Assets::get_mut` emits `AssetEvent::Modified`, and Bevy then rebuilds that material's uniform
+// buffer and bind group. Unconditional writes did this for every unit on every frame.
+// What: An immutable lookup compares first, so only a visible change reaches `get_mut`.
+// Trade-off: Two lookups for a changed material, in exchange for none of that work when unchanged.
+pub fn sync_bubble_material(
+    materials: &mut Assets<BubbleDomeMaterial>,
+    handle: &Handle<BubbleDomeMaterial>,
+    uniform: &BubbleUniformGpu,
+    texture: Option<Handle<Image>>,
+) -> bool {
+    let unchanged = materials.get(handle).is_none_or(|material| {
+        material.uniform.renders_same_as(uniform) && material.video_texture == texture
+    });
+    if unchanged {
+        return false;
+    }
+    let Some(material) = materials.get_mut(handle) else {
+        return false;
+    };
+    material.uniform.apply_snapshot(uniform);
+    material.video_texture = texture;
+    true
+}
+
 impl BubbleUniformGpu {
+    /// Returns a copy of `snapshot` that keeps this uniform's optics lanes and CPU-only fields.
+    ///
+    /// Optics lanes belong to `bubble_optics`. `world_pos` and `anim_progress` are never read by
+    /// `bubble_dome.wgsl`, because the mesh transform places the bubble and `frame_index` selects
+    /// the frame, so a change in only those fields would not alter one pixel.
+    fn normalized_to(&self, snapshot: &Self) -> Self {
+        Self {
+            world_pos: self.world_pos,
+            anim_progress: self.anim_progress,
+            optics_media: self.optics_media,
+            optics_glare: self.optics_glare,
+            optics_signals: self.optics_signals,
+            optics_light: self.optics_light,
+            ..*snapshot
+        }
+    }
+
+    /// Whether applying `snapshot` would leave everything the fragment shader reads unchanged.
+    #[must_use]
+    pub fn renders_same_as(&self, snapshot: &Self) -> bool {
+        *self == self.normalized_to(snapshot)
+    }
+
+    /// Writes the snapshot-owned fields of `snapshot`, preserving the optics lanes.
+    pub fn apply_snapshot(&mut self, snapshot: &Self) {
+        *self = Self {
+            world_pos: snapshot.world_pos,
+            anim_progress: snapshot.anim_progress,
+            ..self.normalized_to(snapshot)
+        };
+    }
+
     /// Packs a snapshot and optional metadata using an already resolved linear ownership style.
     #[must_use]
     pub fn from_instance(

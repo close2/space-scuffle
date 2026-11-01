@@ -251,6 +251,24 @@ fn test_bubble_feature_flags_all_drive_the_fragment_shader() {
     );
 }
 
+/// `BubbleUniformGpu::renders_same_as` ignores these two fields because no pixel depends on them.
+/// If the shader starts reading one, that comparison would hide real changes.
+#[test]
+fn test_bubble_fragment_does_not_read_cpu_only_uniform_fields() {
+    let shader = production_module("bubble_dome.wgsl");
+    let fragment = shader.entry_point(ShaderStage::Fragment, "fragment");
+    for field in ["world_pos", "anim_progress"] {
+        assert!(
+            !shader.reads_global_member(fragment, field),
+            "bubble_dome.wgsl reads {field}; include it in BubbleUniformGpu::renders_same_as"
+        );
+    }
+    assert!(
+        shader.reads_global_member(fragment, "frame_index"),
+        "the probe must see fields the fragment does read"
+    );
+}
+
 #[test]
 fn test_selection_ring_uniform_and_shader_invariants() {
     let shader = production_module("selection_ring.wgsl");

@@ -15,9 +15,10 @@
 //! - Components (`Transform`, `BubbleInstance`) are mutated in place without issuing `commands.insert`.
 
 use crate::bubble_shader::{
-    BubbleDomeMaterial, BubbleInstance, BubbleSharedMeshes, BubbleUniformGpu, FlipbookRegistry,
-    FLAG_ATTACK_APERTURE, FLAG_CLOAKED, FLAG_CRACKS, FLAG_CRT_GLITCH, FLAG_FACING_STRIPE,
-    FLAG_FRESNEL, FLAG_GLARE, FLAG_INNER_WARP, FLAG_SELECTED, FLAG_SPEED_BOOSTED,
+    sync_bubble_material, BubbleDomeMaterial, BubbleInstance, BubbleSharedMeshes, BubbleUniformGpu,
+    FlipbookRegistry, FLAG_ATTACK_APERTURE, FLAG_CLOAKED, FLAG_CRACKS, FLAG_CRT_GLITCH,
+    FLAG_FACING_STRIPE, FLAG_FRESNEL, FLAG_GLARE, FLAG_INNER_WARP, FLAG_SELECTED,
+    FLAG_SPEED_BOOSTED,
 };
 use crate::indicators::{attach_bubble_indicators, IndicatorAssets, SelectionRingMaterial};
 use crate::lab_ui::{LabState, LabTab};
@@ -469,13 +470,14 @@ pub fn sync_lab_preview_system(
         }
         uniform.feature_flags = feature_flags;
 
-        if let Some(mat) = bubble_materials.get_mut(&mat_handle.0) {
-            mat.uniform = uniform;
-            mat.video_texture = texture;
-        }
+        sync_bubble_material(&mut bubble_materials, &mat_handle.0, &uniform, texture);
 
-        transform.translation = pos;
-        transform.scale = Vec3::splat(radius);
+        // Writing through `Mut` flags change detection even for an equal value.
+        transform.set_if_neq(
+            transform
+                .with_translation(pos)
+                .with_scale(Vec3::splat(radius)),
+        );
 
         // Mutate component in place without issuing commands.entity(e).insert(...)
         bubble_instance.0 = instance;
@@ -550,17 +552,22 @@ pub fn sync_live_battle_system(
         let target_pos = pos;
         if let Some(&e) = render_entities.0.get(&instance.entity_id) {
             if let Ok((_, mut transform, mut bubble, mut mesh, mat_handle)) = query.get_mut(e) {
-                if let Some(mat) = bubble_materials.get_mut(&mat_handle.0) {
-                    mat.uniform = uniform;
-                    mat.video_texture = texture;
-                }
-                transform.translation = target_pos;
-                mesh.0 = if is_dome {
-                    shared_meshes.dome_mesh.clone()
+                sync_bubble_material(&mut bubble_materials, &mat_handle.0, &uniform, texture);
+                // Writing through `Mut` flags change detection even for an equal value, and a
+                // changed `Mesh3d` makes Bevy re-extract the instance.
+                transform.set_if_neq(
+                    transform
+                        .with_translation(target_pos)
+                        .with_scale(Vec3::splat(instance.radius)),
+                );
+                let target_mesh = if is_dome {
+                    &shared_meshes.dome_mesh
                 } else {
-                    shared_meshes.sphere_mesh.clone()
+                    &shared_meshes.sphere_mesh
                 };
-                transform.scale = Vec3::splat(instance.radius);
+                if mesh.0 != *target_mesh {
+                    mesh.0.clone_from(target_mesh);
+                }
                 bubble.0 = instance.clone();
             }
         } else {
