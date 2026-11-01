@@ -37,7 +37,7 @@ use bevy::prelude::*;
 use bevy::render::settings::{RenderCreation, WgpuSettings};
 use bevy::render::RenderPlugin;
 use bevy::time::TimeUpdateStrategy;
-use bevy::window::PrimaryWindow;
+use bevy::window::{PrimaryWindow, WindowCloseRequested};
 use bevy_egui::EguiPlugin;
 use client::battle_pipeline::session::BattleSession;
 use client::bubble_shader::{BubbleDomeMaterial, FlipbookRegistry};
@@ -50,7 +50,8 @@ use client::editor::playtest::{
     autosave_path, initialize_playtest_world, EditorPhase, PlaytestState,
 };
 use client::editor::{
-    EditorStartup, InitialDocument, MapEditorPlugin, PLAYTEST_BASELINE_POSE, PLAYTEST_POSE,
+    editor_window_plugin, EditorStartup, InitialDocument, MapEditorPlugin, PendingUnsavedAction,
+    UnsavedChangesModalState, PLAYTEST_BASELINE_POSE, PLAYTEST_POSE,
 };
 use client::lab_ui::LabState;
 use client::resolve_assets_dir;
@@ -464,7 +465,8 @@ impl EditorHarness {
                 .set(AssetPlugin {
                     file_path,
                     ..default()
-                }),
+                })
+                .set(editor_window_plugin()),
         );
         app.add_plugins(EguiPlugin);
         app.add_plugins(MapEditorPlugin {
@@ -516,6 +518,24 @@ impl EditorHarness {
         self.step(1);
         self.send_key(key, ButtonState::Released);
         self.step(1);
+    }
+
+    /// Delivers the operating system's close request, as clicking the window's X does.
+    fn close_window(&mut self) {
+        let window = self.window();
+        self.app
+            .world_mut()
+            .send_event(WindowCloseRequested { window });
+        self.step(2);
+    }
+
+    /// Returns the live window count; Bevy exits and tears down once this reaches zero.
+    fn window_count(&mut self) -> usize {
+        self.app
+            .world_mut()
+            .query::<&Window>()
+            .iter(self.app.world())
+            .count()
     }
 
     fn phase(&self) -> EditorPhase {
@@ -768,4 +788,53 @@ fn map_editor_reports_bad_cli_input_without_panicking() {
         assert!(!stderr.contains("panicked"), "{args:?} panicked: {stderr}");
         assert!(stderr.contains("map_editor:"), "{args:?} output: {stderr}");
     }
+}
+
+#[test]
+fn window_close_with_unsaved_work_asks_instead_of_closing() {
+    let mut harness = EditorHarness::new();
+    harness.make_dirty();
+
+    harness.close_window();
+
+    assert_eq!(harness.window_count(), 1, "the window must stay open");
+    assert_eq!(harness.app.should_exit(), None);
+    let modal = harness.app.world().resource::<UnsavedChangesModalState>();
+    assert!(modal.is_open);
+    assert_eq!(modal.pending_action, Some(PendingUnsavedAction::Quit));
+}
+
+#[test]
+fn window_close_during_playtest_returns_to_the_unsaved_prompt() {
+    let mut harness = EditorHarness::new();
+    harness.make_dirty();
+    harness.tap_key(KeyCode::F5);
+    harness.step(4);
+    assert_eq!(harness.phase(), EditorPhase::Playtesting);
+
+    harness.close_window();
+    harness.step(2);
+
+    assert_eq!(harness.window_count(), 1, "the window must stay open");
+    assert_eq!(harness.app.should_exit(), None);
+    assert_eq!(harness.phase(), EditorPhase::Editing);
+    let modal = harness.app.world().resource::<UnsavedChangesModalState>();
+    assert!(modal.is_open, "the prompt only renders while editing");
+    assert_eq!(modal.pending_action, Some(PendingUnsavedAction::Quit));
+}
+
+#[test]
+fn window_close_exits_cleanly_when_there_is_nothing_to_save() {
+    let mut harness = EditorHarness::new();
+    harness.close_window();
+    assert_eq!(harness.app.should_exit(), Some(AppExit::Success));
+}
+
+#[test]
+fn window_close_during_a_clean_playtest_exits() {
+    let mut harness = EditorHarness::new();
+    harness.tap_key(KeyCode::F5);
+    harness.step(4);
+    harness.close_window();
+    assert_eq!(harness.app.should_exit(), Some(AppExit::Success));
 }

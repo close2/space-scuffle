@@ -33,7 +33,9 @@ pub mod tools;
 pub mod ui;
 pub mod verification;
 
-pub use app::{MapEditorPlugin, ThemeCatalogResource};
+pub use app::{
+    editor_window_close_system, editor_window_plugin, MapEditorPlugin, ThemeCatalogResource,
+};
 pub use camera::{editor_camera_system, focus_cell, EditorCameraFocus, CAMERA_HEIGHT_EASE_PER_SEC};
 pub use commands::{
     CellDelta, ChangeSet, EditCommand, History, MapEntity, MAX_UNDO_CELL_DELTAS, MAX_UNDO_COMMANDS,
@@ -67,8 +69,9 @@ pub use tools::{
     DEFAULT_WATCHTOWER_REVEAL_RADIUS_TENTHS, MAX_BRUSH_RADIUS,
 };
 pub use ui::{
-    editor_ui_system, EditorTool, EditorToolState, NewMapModalState, PendingUnsavedAction,
-    RampToolMode, UnsavedChangesModalState, VALIDATION_DEBOUNCE_SECS,
+    apply_unsaved_choice, editor_ui_system, EditorTool, EditorToolState, NewMapModalState,
+    PendingUnsavedAction, RampToolMode, UnsavedChangesModalState, UnsavedChoice, UnsavedOutcome,
+    VALIDATION_DEBOUNCE_SECS,
 };
 pub use verification::{
     check_render_pipelines, get_verify_poses, update_playtest_verification_system,

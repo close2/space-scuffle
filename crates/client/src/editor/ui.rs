@@ -13,14 +13,14 @@
 //! 3. **Validation Debounce:** Live validation is debounced by [`VALIDATION_DEBOUNCE_SECS`] (0.4s)
 //!    following edits, but runs synchronously before document saves and playtest transitions.
 //! 4. **Unsaved Edits Guard:** Closing, opening, or creating maps with unsaved changes prompts
-//!    an explicit Save / Discard / Cancel modal.
+//!    an explicit Save / Discard / Cancel modal. `dirty` stays set until the document is really
+//!    saved or replaced, and the guarded action resumes only after its edits are resolved.
 
 use std::path::Path;
 
 use bevy::app::AppExit;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
-use bevy::window::WindowCloseRequested;
 use bevy_egui::{egui, EguiContexts};
 use sim_map::grid::{CellFlags, CliffLevel, RampDir, TerrainKind};
 use sim_map::map_format::{
@@ -220,8 +220,6 @@ pub struct EditorUiContext<'w, 's> {
             &'static mut crate::camera::RtsCamera,
         ),
     >,
-    /// Reader for OS window close requests.
-    pub close_events: EventReader<'w, 's, WindowCloseRequested>,
     /// Writer for exiting the application gracefully.
     pub exit_events: EventWriter<'w, AppExit>,
     /// Writer for camera jump and focus events.
@@ -281,7 +279,6 @@ pub fn editor_ui_system(
         mouse_buttons,
         windows,
         camera_query,
-        mut close_events,
         mut exit_events,
         mut focus_events,
     } = ctx;
@@ -335,16 +332,6 @@ pub fn editor_ui_system(
     let Some(ctx) = contexts.try_ctx_mut() else {
         return;
     };
-
-    // 2. Window Close Interception
-    for _ in close_events.read() {
-        if doc.dirty {
-            unsaved_modal.is_open = true;
-            unsaved_modal.pending_action = Some(PendingUnsavedAction::Quit);
-        } else {
-            exit_events.send(AppExit::Success);
-        }
-    }
 
     let wants_keyboard = ctx.wants_keyboard_input();
     let wants_pointer = ctx.wants_pointer_input() || ctx.is_pointer_over_area();
@@ -1114,6 +1101,15 @@ pub fn editor_ui_system(
                     Ok(()) => {
                         doc.mark_saved(path.clone());
                         tool_state.last_status_message = Some(format!("Saved {}", path.display()));
+                        let outcome = resume_pending_action(
+                            &mut unsaved_modal,
+                            &mut file_browser,
+                            &maps_dir,
+                            &mut new_map_modal,
+                        );
+                        if outcome == UnsavedOutcome::Exit {
+                            exit_events.send(AppExit::Success);
+                        }
                     }
                     Err(e) => {
                         file_browser.error_banner = Some(format!("Failed to save map: {e}"));
@@ -1121,7 +1117,7 @@ pub fn editor_ui_system(
                     }
                 }
             }
-            FileBrowserAction::Cancel => {}
+            FileBrowserAction::Cancel => unsaved_modal.pending_action = None,
         }
     }
 
@@ -1179,12 +1175,23 @@ fn find_entity_by_id(doc: &MapDocument, id: MapEntityId) -> Option<MapEntity> {
     }
 }
 
+/// Result of attempting to save the current document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SaveOutcome {
+    /// The document is on disk and no longer dirty.
+    Saved,
+    /// The document has no path, so the Save As dialog was opened.
+    AwaitingPath,
+    /// Writing failed; the reason is on the status bar.
+    Failed,
+}
+
 fn handle_save_action(
     doc: &mut EditorDocument,
     file_browser: &mut FileBrowserState,
     maps_dir: &Path,
     tool_state: &mut EditorToolState,
-) {
+) -> SaveOutcome {
     if let Some(path) = doc.path.clone() {
         doc.revalidate();
         let map_file = doc.doc.encode();
@@ -1192,13 +1199,16 @@ fn handle_save_action(
             Ok(()) => {
                 doc.mark_saved(path.clone());
                 tool_state.last_status_message = Some(format!("Saved {}", path.display()));
+                SaveOutcome::Saved
             }
             Err(e) => {
                 tool_state.last_status_message = Some(format!("Save error: {e}"));
+                SaveOutcome::Failed
             }
         }
     } else {
         file_browser.open(FileBrowserMode::Save, maps_dir, Some("untitled.scmap.ron"));
+        SaveOutcome::AwaitingPath
     }
 }
 
@@ -1312,6 +1322,85 @@ fn render_new_map_modal(
         });
 }
 
+/// Button pressed in the unsaved changes dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnsavedChoice {
+    /// Save the document, then continue with the guarded action.
+    Save,
+    /// Abandon the edits and continue with the guarded action.
+    Discard,
+    /// Keep editing and abandon the guarded action.
+    Cancel,
+}
+
+/// What the application must do after an unsaved changes decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnsavedOutcome {
+    /// Keep running.
+    Continue,
+    /// The user chose to quit, and their document is resolved.
+    Exit,
+}
+
+/// Continues the action the unsaved changes prompt was guarding, once its edits are resolved.
+fn resume_pending_action(
+    modal: &mut UnsavedChangesModalState,
+    file_browser: &mut FileBrowserState,
+    maps_dir: &Path,
+    new_map: &mut NewMapModalState,
+) -> UnsavedOutcome {
+    match modal.pending_action.take() {
+        Some(PendingUnsavedAction::NewMap) => new_map.is_open = true,
+        Some(PendingUnsavedAction::OpenFile) => {
+            file_browser.open(FileBrowserMode::Open, maps_dir, None);
+        }
+        Some(PendingUnsavedAction::Quit) => return UnsavedOutcome::Exit,
+        None => {}
+    }
+    UnsavedOutcome::Continue
+}
+
+/// Applies the user's decision in the unsaved changes dialog.
+///
+/// - [`UnsavedChoice::Save`] resumes the guarded action once the document is on disk. An untitled
+///   document keeps the action pending until the Save As dialog finishes. A failed save keeps
+///   the prompt open so the edits are not lost.
+/// - [`UnsavedChoice::Discard`] resumes the action but leaves [`EditorDocument::dirty`] set: the
+///   edits still exist until a new document replaces them, and that dialog can be cancelled.
+/// - [`UnsavedChoice::Cancel`] abandons the action.
+pub fn apply_unsaved_choice(
+    choice: UnsavedChoice,
+    modal: &mut UnsavedChangesModalState,
+    doc: &mut EditorDocument,
+    file_browser: &mut FileBrowserState,
+    maps_dir: &Path,
+    new_map: &mut NewMapModalState,
+    tool_state: &mut EditorToolState,
+) -> UnsavedOutcome {
+    match choice {
+        UnsavedChoice::Save => match handle_save_action(doc, file_browser, maps_dir, tool_state) {
+            SaveOutcome::Saved => {
+                modal.is_open = false;
+                resume_pending_action(modal, file_browser, maps_dir, new_map)
+            }
+            SaveOutcome::AwaitingPath => {
+                modal.is_open = false;
+                UnsavedOutcome::Continue
+            }
+            SaveOutcome::Failed => UnsavedOutcome::Continue,
+        },
+        UnsavedChoice::Discard => {
+            modal.is_open = false;
+            resume_pending_action(modal, file_browser, maps_dir, new_map)
+        }
+        UnsavedChoice::Cancel => {
+            modal.is_open = false;
+            modal.pending_action = None;
+            UnsavedOutcome::Continue
+        }
+    }
+}
+
 fn render_unsaved_changes_modal(
     ctx: &egui::Context,
     modal: &mut UnsavedChangesModalState,
@@ -1326,6 +1415,7 @@ fn render_unsaved_changes_modal(
         return;
     }
 
+    let mut choice = None;
     egui::Window::new("Unsaved Changes")
         .collapsible(false)
         .resizable(false)
@@ -1337,29 +1427,31 @@ fn render_unsaved_changes_modal(
 
             ui.horizontal(|ui| {
                 if ui.button("Save").clicked() {
-                    modal.is_open = false;
-                    handle_save_action(doc, file_browser, maps_dir, tool_state);
+                    choice = Some(UnsavedChoice::Save);
                 }
                 if ui.button("Discard").clicked() {
-                    modal.is_open = false;
-                    doc.dirty = false;
-                    match modal.pending_action.take() {
-                        Some(PendingUnsavedAction::NewMap) => new_map.is_open = true,
-                        Some(PendingUnsavedAction::OpenFile) => {
-                            file_browser.open(FileBrowserMode::Open, maps_dir, None);
-                        }
-                        Some(PendingUnsavedAction::Quit) => {
-                            exit_events.send(AppExit::Success);
-                        }
-                        None => {}
-                    }
+                    choice = Some(UnsavedChoice::Discard);
                 }
                 if ui.button("Cancel").clicked() {
-                    modal.is_open = false;
-                    modal.pending_action = None;
+                    choice = Some(UnsavedChoice::Cancel);
                 }
             });
         });
+
+    if let Some(choice) = choice {
+        let outcome = apply_unsaved_choice(
+            choice,
+            modal,
+            doc,
+            file_browser,
+            maps_dir,
+            new_map,
+            tool_state,
+        );
+        if outcome == UnsavedOutcome::Exit {
+            exit_events.send(AppExit::Success);
+        }
+    }
 }
 
 fn handle_viewport_tool_interaction(

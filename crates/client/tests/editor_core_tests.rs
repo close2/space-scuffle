@@ -21,6 +21,7 @@ use client::editor::commands::{
     CellDelta, ChangeSet, EditCommand, History, MapEntity, MAX_UNDO_COMMANDS,
 };
 use client::editor::document::EditorDocument;
+use client::editor::file_browser::{FileBrowserMode, FileBrowserState};
 use client::editor::stroke::StrokeRecorder;
 use client::editor::symmetry::SymmetryMode;
 use client::editor::tools::{
@@ -30,6 +31,10 @@ use client::editor::tools::{
     EntityToolKind, PaintOp, RampPlacement, RampPlacementError, StartFootprintError,
     DEFAULT_GAS_AMOUNT, DEFAULT_MINERAL_AMOUNT, DEFAULT_WATCHTOWER_CAPTURE_RADIUS_TENTHS,
     DEFAULT_WATCHTOWER_REVEAL_RADIUS_TENTHS,
+};
+use client::editor::ui::{
+    apply_unsaved_choice, EditorToolState, NewMapModalState, PendingUnsavedAction,
+    UnsavedChangesModalState, UnsavedChoice, UnsavedOutcome,
 };
 use client::terrain::TerrainState;
 use sim_core::catalog::UnitCatalog;
@@ -1302,4 +1307,124 @@ fn test_authorable_flags_and_constants() {
     assert_eq!(DEFAULT_GAS_AMOUNT, 2500);
     assert_eq!(DEFAULT_WATCHTOWER_CAPTURE_RADIUS_TENTHS, 30);
     assert_eq!(DEFAULT_WATCHTOWER_REVEAL_RADIUS_TENTHS, 120);
+}
+
+/// Everything [`apply_unsaved_choice`] touches, starting from a dirty document with a guarded action.
+struct UnsavedFlow {
+    modal: UnsavedChangesModalState,
+    doc: EditorDocument,
+    browser: FileBrowserState,
+    new_map: NewMapModalState,
+    tools: EditorToolState,
+    dir: tempfile::TempDir,
+}
+
+impl UnsavedFlow {
+    fn new(pending: PendingUnsavedAction, saved_path: bool) -> Self {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = saved_path.then(|| dir.path().join("flow.scmap.ron"));
+        let mut doc = EditorDocument::new(fixture_document(32, 32), path);
+        doc.dirty = true;
+        Self {
+            modal: UnsavedChangesModalState {
+                is_open: true,
+                pending_action: Some(pending),
+            },
+            doc,
+            browser: FileBrowserState::default(),
+            new_map: NewMapModalState::default(),
+            tools: EditorToolState::new(32, 32),
+            dir,
+        }
+    }
+
+    fn choose(&mut self, choice: UnsavedChoice) -> UnsavedOutcome {
+        apply_unsaved_choice(
+            choice,
+            &mut self.modal,
+            &mut self.doc,
+            &mut self.browser,
+            self.dir.path(),
+            &mut self.new_map,
+            &mut self.tools,
+        )
+    }
+}
+
+#[test]
+fn test_unsaved_discard_keeps_dirty_until_the_document_is_replaced() {
+    let mut flow = UnsavedFlow::new(PendingUnsavedAction::OpenFile, true);
+    assert_eq!(
+        flow.choose(UnsavedChoice::Discard),
+        UnsavedOutcome::Continue
+    );
+    assert!(
+        flow.browser.is_open,
+        "discard must continue to the open dialog"
+    );
+    assert!(
+        flow.doc.dirty,
+        "cancelling the open dialog must leave the edits flagged as unsaved"
+    );
+
+    let mut flow = UnsavedFlow::new(PendingUnsavedAction::NewMap, true);
+    flow.choose(UnsavedChoice::Discard);
+    assert!(flow.new_map.is_open);
+    assert!(flow.doc.dirty);
+}
+
+#[test]
+fn test_unsaved_discard_quit_exits() {
+    let mut flow = UnsavedFlow::new(PendingUnsavedAction::Quit, true);
+    assert_eq!(flow.choose(UnsavedChoice::Discard), UnsavedOutcome::Exit);
+}
+
+#[test]
+fn test_unsaved_save_resumes_the_guarded_action() {
+    let mut flow = UnsavedFlow::new(PendingUnsavedAction::Quit, true);
+    assert_eq!(flow.choose(UnsavedChoice::Save), UnsavedOutcome::Exit);
+    assert!(!flow.doc.dirty);
+    assert_eq!(flow.modal.pending_action, None);
+
+    let mut flow = UnsavedFlow::new(PendingUnsavedAction::OpenFile, true);
+    assert_eq!(flow.choose(UnsavedChoice::Save), UnsavedOutcome::Continue);
+    assert!(flow.browser.is_open, "save must resume the open dialog");
+    assert_eq!(flow.browser.mode, FileBrowserMode::Open);
+
+    let mut flow = UnsavedFlow::new(PendingUnsavedAction::NewMap, true);
+    flow.choose(UnsavedChoice::Save);
+    assert!(flow.new_map.is_open, "save must resume the new map dialog");
+}
+
+#[test]
+fn test_unsaved_save_of_untitled_map_defers_the_action_to_the_save_dialog() {
+    let mut flow = UnsavedFlow::new(PendingUnsavedAction::Quit, false);
+    assert_eq!(flow.choose(UnsavedChoice::Save), UnsavedOutcome::Continue);
+    assert!(flow.browser.is_open);
+    assert_eq!(flow.browser.mode, FileBrowserMode::Save);
+    assert_eq!(
+        flow.modal.pending_action,
+        Some(PendingUnsavedAction::Quit),
+        "the action must wait for the save dialog"
+    );
+}
+
+#[test]
+fn test_unsaved_failed_save_keeps_the_prompt_and_the_action() {
+    let mut flow = UnsavedFlow::new(PendingUnsavedAction::Quit, true);
+    flow.doc.path = Some(flow.dir.path().join("missing_dir/flow.scmap.ron"));
+    assert_eq!(flow.choose(UnsavedChoice::Save), UnsavedOutcome::Continue);
+    assert!(flow.modal.is_open, "a failed save must not lose the prompt");
+    assert_eq!(flow.modal.pending_action, Some(PendingUnsavedAction::Quit));
+    assert!(flow.doc.dirty);
+    assert!(flow.tools.last_status_message.is_some());
+}
+
+#[test]
+fn test_unsaved_cancel_abandons_the_action_and_keeps_the_edits() {
+    let mut flow = UnsavedFlow::new(PendingUnsavedAction::Quit, true);
+    assert_eq!(flow.choose(UnsavedChoice::Cancel), UnsavedOutcome::Continue);
+    assert!(!flow.modal.is_open);
+    assert_eq!(flow.modal.pending_action, None);
+    assert!(flow.doc.dirty);
 }

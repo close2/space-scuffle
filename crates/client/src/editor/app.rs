@@ -13,7 +13,9 @@
 //! 3. **Non-Destructive Playtest Isolation:** Playtest initializes a separate simulation world and
 //!    completely tears down all live bubbles and visual FX upon returning to `EditorPhase::Editing`.
 //!    It runs the game client's ordered [`BattleSet`] stages rather than a parallel tick loop.
-//! 4. **Acyclic Module Organization:** Does not depend on the main Visual Lab ui (`lab_ui_system`)
+//! 4. **Unsaved Work Survives Closing:** Bevy's close-on-request behavior is disabled; the window
+//!    only closes through [`editor_window_close_system`], in every phase.
+//! 5. **Acyclic Module Organization:** Does not depend on the main Visual Lab ui (`lab_ui_system`)
 //!    or arena environment generators (`spawn_arena_environment`).
 
 use std::path::PathBuf;
@@ -22,6 +24,7 @@ use bevy::app::AppExit;
 use bevy::pbr::MaterialPlugin;
 use bevy::prelude::*;
 use bevy::render::{Render, RenderApp};
+use bevy::window::WindowCloseRequested;
 
 use crate::battle_pipeline::driver::{advance_battle_ticks, publish_combat_events};
 use crate::battle_pipeline::session::BattleSession;
@@ -46,7 +49,8 @@ use crate::editor::playtest::{
 };
 use crate::editor::startup::EditorStartup;
 use crate::editor::ui::{
-    editor_ui_system, EditorToolState, NewMapModalState, UnsavedChangesModalState,
+    editor_ui_system, EditorToolState, NewMapModalState, PendingUnsavedAction,
+    UnsavedChangesModalState,
 };
 use crate::editor::verification::{
     check_render_pipelines, update_playtest_verification_system, update_render_verification_system,
@@ -71,6 +75,49 @@ use crate::{frame_limit_system, CatalogResource, FrameLimit};
 /// Newtype resource wrapper around [`TerrainThemeCatalog`](asset_baker::TerrainThemeCatalog) for Bevy ECS insertion.
 #[derive(Resource, Debug, Clone, Deref, DerefMut)]
 pub struct ThemeCatalogResource(pub asset_baker::TerrainThemeCatalog);
+
+/// Returns the window configuration for the editor.
+///
+/// `close_when_requested` is disabled because Bevy would otherwise destroy the window as soon as
+/// the user clicks its X, before [`editor_window_close_system`] can protect unsaved work.
+#[must_use]
+pub fn editor_window_plugin() -> WindowPlugin {
+    WindowPlugin {
+        primary_window: Some(Window {
+            title: "Space Scuffle — Map Editor".to_string(),
+            resolution: (1600.0_f32, 900.0_f32).into(),
+            ..default()
+        }),
+        close_when_requested: false,
+        ..default()
+    }
+}
+
+/// System handling the operating system's window close request in every phase.
+///
+/// A clean document exits immediately. Unsaved work opens the Save / Discard / Cancel prompt,
+/// which renders only while editing, so a dirty playtest first returns to editing.
+pub fn editor_window_close_system(
+    mut close_events: EventReader<'_, '_, WindowCloseRequested>,
+    doc: Res<'_, EditorDocument>,
+    phase: Res<'_, State<EditorPhase>>,
+    mut next_phase: ResMut<'_, NextState<EditorPhase>>,
+    mut modal: ResMut<'_, UnsavedChangesModalState>,
+    mut exit: EventWriter<'_, AppExit>,
+) {
+    if close_events.read().count() == 0 {
+        return;
+    }
+    if !doc.dirty {
+        exit.send(AppExit::Success);
+        return;
+    }
+    modal.is_open = true;
+    modal.pending_action = Some(PendingUnsavedAction::Quit);
+    if *phase.get() == EditorPhase::Playtesting {
+        next_phase.set(EditorPhase::Editing);
+    }
+}
 
 /// Bevy plugin assembling the complete Space Scuffle map editor application.
 pub struct MapEditorPlugin {
@@ -170,6 +217,7 @@ impl Plugin for MapEditorPlugin {
             Update,
             (
                 frame_limit_system,
+                editor_window_close_system,
                 editor_camera_system,
                 update_marker_billboards_system,
                 sync_marker_entities_system,

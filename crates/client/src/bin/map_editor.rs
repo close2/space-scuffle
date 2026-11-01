@@ -23,10 +23,9 @@ use std::process::ExitCode;
 
 use bevy::app::AppExit;
 use bevy::prelude::*;
-use bevy::window::WindowPlugin;
 use bevy_egui::EguiPlugin;
 use clap::Parser;
-use client::editor::{EditorStartup, InitialDocument, MapEditorPlugin};
+use client::editor::{editor_window_plugin, EditorStartup, InitialDocument, MapEditorPlugin};
 
 /// CLI arguments for the `map_editor` binary.
 #[derive(Parser, Debug)]
@@ -97,14 +96,7 @@ fn main() -> ExitCode {
                 file_path: asset_path,
                 ..default()
             })
-            .set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "Space Scuffle — Map Editor".to_string(),
-                    resolution: (1600.0_f32, 900.0_f32).into(),
-                    ..default()
-                }),
-                ..default()
-            }),
+            .set(editor_window_plugin()),
     );
 
     app.add_plugins(EguiPlugin);
