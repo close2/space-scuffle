@@ -35,6 +35,9 @@ use crate::camera::RtsCamera;
 use crate::editor::camera::{editor_camera_system, EditorCameraFocus};
 use crate::editor::commands::History;
 use crate::editor::document::EditorDocument;
+use crate::editor::document_load::{
+    apply_document_load_system, EditorTerrainSpawner, LoadDocumentRequest,
+};
 use crate::editor::file_browser::FileBrowserState;
 use crate::editor::los_preview::{
     update_los_preview_system, LosPreviewState, StartLoadoutCatalogResource,
@@ -64,7 +67,7 @@ use crate::media::MediaFailurePolicy;
 use crate::player_presentation::PresentationStatus;
 use crate::scene_controller::{sync_live_battle_system, RenderEntityMap};
 use crate::selection::SelectionState;
-use crate::terrain::{spawn_terrain, TerrainMaterial, TerrainPlugin, TerrainState};
+use crate::terrain::{TerrainPlugin, TerrainState};
 use crate::vfx::{
     process_combat_events_system, setup_vfx_assets_system, update_beams_system,
     update_melee_slashes_system, update_mist_wake_system, update_projectiles_system,
@@ -186,6 +189,7 @@ impl Plugin for MapEditorPlugin {
             })
             .add_event::<CombatVisualEvent>()
             .add_event::<EditorCameraFocus>()
+            .add_event::<LoadDocumentRequest>()
             .add_plugins(TerrainPlugin)
             .add_plugins(BubbleOpticsPlugin)
             .add_plugins(MaterialPlugin::<BubbleDomeMaterial>::default())
@@ -218,6 +222,7 @@ impl Plugin for MapEditorPlugin {
             (
                 frame_limit_system,
                 editor_window_close_system,
+                apply_document_load_system.after(editor_ui_system),
                 editor_camera_system,
                 update_marker_billboards_system,
                 sync_marker_entities_system,
@@ -330,51 +335,17 @@ fn editor_los_system(
 /// [`EditorStartup`] validated the theme, so a failure here means an asset vanished or is
 /// corrupt; the application logs it and exits with an error instead of opening an empty scene.
 fn setup_editor_scene(
+    mut spawner: EditorTerrainSpawner<'_, '_>,
     mut commands: Commands<'_, '_>,
     doc: Res<'_, EditorDocument>,
-    theme_catalog: Res<'_, ThemeCatalogResource>,
-    mut meshes: ResMut<'_, Assets<Mesh>>,
-    mut terrain_materials: ResMut<'_, Assets<TerrainMaterial>>,
-    mut std_materials: ResMut<'_, Assets<StandardMaterial>>,
-    mut images: ResMut<'_, Assets<Image>>,
     mut exit: EventWriter<'_, AppExit>,
 ) {
-    let assets_dir = crate::resolve_assets_dir();
-
-    // 1. Look up theme from catalog
-    let theme_slug = &doc.doc.metadata.theme;
-    let Some(theme) = theme_catalog.get(theme_slug) else {
-        error!("Map requests unknown terrain theme {theme_slug}");
-        exit.send(AppExit::error());
-        return;
-    };
-
-    let game_map = match doc.doc.to_game_map() {
-        Ok(map) => map,
-        Err(error) => {
-            error!("Cannot build terrain from the map document: {error}");
-            exit.send(AppExit::error());
-            return;
-        }
-    };
-
-    // 2. Spawn Shared Terrain Hierarchy
-    if let Err(error) = spawn_terrain(
-        &mut commands,
-        &mut meshes,
-        &mut terrain_materials,
-        &mut std_materials,
-        &mut images,
-        theme,
-        game_map,
-        &assets_dir,
-    ) {
+    if let Err(error) = spawner.spawn(&doc.doc, None) {
         error!("Cannot load terrain: {error}");
         exit.send(AppExit::error());
         return;
     }
 
-    // 3. Spawn Camera
     let center_x = (doc.doc.width as f32) * 0.5;
     let center_z = (doc.doc.height as f32) * 0.5;
     let cam = RtsCamera {

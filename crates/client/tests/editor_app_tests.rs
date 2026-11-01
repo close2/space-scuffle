@@ -24,6 +24,7 @@
     clippy::doc_markdown,
     clippy::too_many_lines,
     clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
     clippy::suspicious_command_arg_space
 )]
 
@@ -51,13 +52,17 @@ use client::editor::playtest::{
     autosave_path, initialize_playtest_world, EditorPhase, PlaytestState,
 };
 use client::editor::{
-    editor_window_plugin, EditorStartup, EditorToolState, InitialDocument, MapEditorPlugin,
-    PendingUnsavedAction, UnsavedChangesModalState, PLAYTEST_BASELINE_POSE, PLAYTEST_POSE,
+    editor_window_plugin, EditorStartup, EditorToolState, InitialDocument, LoadDocumentRequest,
+    LosPreviewState, MapEditorPlugin, PendingUnsavedAction, SymmetryMode, UnsavedChangesModalState,
+    PLAYTEST_BASELINE_POSE, PLAYTEST_POSE,
 };
 use client::lab_ui::LabState;
 use client::resolve_assets_dir;
 use client::scene_controller::LiveBattleBubble;
-use client::terrain::TerrainState;
+use client::terrain::{
+    TerrainChunks, TerrainFieldImages, TerrainMaterial, TerrainParamsState, TerrainState,
+    CHUNK_DUAL_CELLS,
+};
 use sim_core::catalog::RuntimeCatalogs;
 use sim_core::scenario::{PlayerSetup, StartLoadoutCatalog};
 use sim_map::grid::{CellFlags, CliffLevel, TerrainKind};
@@ -600,6 +605,36 @@ impl EditorHarness {
         self.doc().doc.cell(x, y).expect("cell in bounds").level.0
     }
 
+    /// Writes `doc` beside the fixture map and opens it through the real load path.
+    fn open(&mut self, doc: &EditorDocument, file_name: &str) -> PathBuf {
+        let path = self
+            .path()
+            .parent()
+            .expect("fixture has a directory")
+            .join(file_name);
+        doc.doc.encode().save_atomic(&path).expect("write map");
+        self.request_open(path.clone());
+        path
+    }
+
+    fn request_open(&mut self, path: PathBuf) {
+        self.app
+            .world_mut()
+            .send_event(LoadDocumentRequest::Open(path));
+        self.step(3);
+    }
+
+    fn terrain_level(&self, x: u32, y: u32) -> u8 {
+        self.app
+            .world()
+            .resource::<TerrainState>()
+            .map
+            .cell(x, y)
+            .expect("cell in bounds")
+            .cliff_level
+            .0
+    }
+
     fn history(&self) -> &History {
         self.app.world().resource::<History>()
     }
@@ -1034,4 +1069,139 @@ fn ctrl_shift_z_redoes_and_ctrl_z_undoes() {
     harness.tap_key(KeyCode::KeyZ);
     harness.tap_key(KeyCode::KeyY);
     assert_eq!(harness.history().undo_len(), 1, "Ctrl+Y must still redo");
+}
+
+#[test]
+fn symmetric_brush_updates_the_mirrored_terrain() {
+    for (mode, mirror) in [
+        (SymmetryMode::MirrorX, (43, 32)),
+        (SymmetryMode::MirrorY, (20, 31)),
+        (SymmetryMode::Rotate180, (43, 31)),
+    ] {
+        let mut harness = EditorHarness::new();
+        harness
+            .app
+            .world_mut()
+            .resource_mut::<EditorToolState>()
+            .symmetry = mode;
+
+        harness.begin_stroke_at(20, 32);
+        harness.release_left();
+        harness.step(1);
+
+        assert_eq!(harness.cell_level(20, 32), 2, "{mode:?}: primary document");
+        assert_eq!(
+            harness.terrain_level(20, 32),
+            2,
+            "{mode:?}: primary terrain"
+        );
+        assert_eq!(
+            harness.cell_level(mirror.0, mirror.1),
+            2,
+            "{mode:?}: mirrored document"
+        );
+        assert_eq!(
+            harness.terrain_level(mirror.0, mirror.1),
+            2,
+            "{mode:?}: the renderer must show what the document holds"
+        );
+    }
+}
+
+#[test]
+fn opening_a_different_size_map_rebuilds_terrain_for_that_size() {
+    let mut harness = EditorHarness::new();
+    harness.make_dirty();
+    let replacement = playable_document(96, 80);
+
+    harness.open(&replacement, "larger.scmap.ron");
+
+    assert_eq!(harness.doc().doc.width, 96);
+    assert!(
+        !harness.doc().dirty,
+        "a freshly opened map has no unsaved work"
+    );
+    assert_eq!(harness.history().undo_len(), 0);
+
+    let expected_chunks = 96_u32.div_ceil(CHUNK_DUAL_CELLS) * 80_u32.div_ceil(CHUNK_DUAL_CELLS);
+    let world = harness.app.world();
+    let chunks = world.resource::<TerrainChunks>();
+    assert_eq!(chunks.chunks.len() as u32, expected_chunks);
+    assert_eq!(chunks.cols, 96_u32.div_ceil(CHUNK_DUAL_CELLS));
+
+    let fields = world.resource::<TerrainFieldImages>();
+    let images = world.resource::<Assets<Image>>();
+    for handle in [&fields.splat, &fields.overlay] {
+        let image = images.get(handle).expect("field image exists");
+        assert_eq!(image.size(), UVec2::new(96, 80), "field texture size");
+    }
+    assert_eq!(
+        world.resource::<TerrainParamsState>().map_size,
+        Vec2::new(96.0, 80.0)
+    );
+    let los = world.resource::<LosPreviewState>();
+    assert_eq!(los.vision_map.width(), 96);
+
+    let world = harness.app.world_mut();
+    let rendered = world
+        .query_filtered::<Entity, With<MeshMaterial3d<TerrainMaterial>>>()
+        .iter(world)
+        .count();
+    assert_eq!(
+        rendered as u32, expected_chunks,
+        "no chunk of the previous map may survive"
+    );
+
+    // Cells beyond the old 64x64 bounds must be editable and rendered.
+    harness.begin_stroke_at(70, 40);
+    harness.release_left();
+    harness.step(1);
+    assert_eq!(harness.cell_level(70, 40), 2);
+    assert_eq!(harness.terrain_level(70, 40), 2);
+    assert_eq!(harness.history().undo_len(), 1);
+}
+
+#[test]
+fn opening_a_map_with_an_unknown_theme_is_refused_and_reported() {
+    let mut harness = EditorHarness::new();
+    harness.make_dirty();
+    let edited = harness.doc().doc.clone();
+    let mut unknown = playable_document(96, 80);
+    unknown.doc.metadata.theme = "theme_absent_from_catalog".to_string();
+
+    harness.open(&unknown, "unknown_theme.scmap.ron");
+
+    assert_eq!(
+        harness.doc().doc,
+        edited,
+        "a failed open must keep the document"
+    );
+    assert!(harness.doc().dirty);
+    assert_eq!(harness.history().undo_len(), 1, "and its undo history");
+    let message = harness
+        .app
+        .world()
+        .resource::<EditorToolState>()
+        .last_status_message
+        .clone()
+        .expect("the failure must be reported");
+    assert!(
+        message.contains("theme_absent_from_catalog"),
+        "got: {message}"
+    );
+}
+
+#[test]
+fn opening_a_corrupt_file_is_refused_and_reported() {
+    let mut harness = EditorHarness::new();
+    let authored = harness.doc().doc.clone();
+    let corrupt = harness.path().with_file_name("corrupt.scmap.ron");
+    fs::write(&corrupt, "(not a map").expect("write corrupt file");
+
+    harness.request_open(corrupt);
+
+    assert_eq!(harness.doc().doc, authored);
+    let browser = harness.app.world().resource::<FileBrowserState>();
+    assert!(browser.is_open, "the open dialog must stay available");
+    assert!(browser.error_banner.is_some(), "the failure must be shown");
 }

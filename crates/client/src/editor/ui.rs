@@ -35,6 +35,7 @@ use crate::editor::app::ThemeCatalogResource;
 use crate::editor::camera::EditorCameraFocus;
 use crate::editor::commands::{ChangeSet, EditCommand, History, MapEntity};
 use crate::editor::document::EditorDocument;
+use crate::editor::document_load::LoadDocumentRequest;
 use crate::editor::file_browser::{FileBrowserAction, FileBrowserMode, FileBrowserState};
 use crate::editor::los_preview::{LosPreviewState, StartLoadoutCatalogResource};
 use crate::editor::playtest::PlaytestEntry;
@@ -227,6 +228,8 @@ pub struct EditorUiContext<'w, 's> {
     pub exit_events: EventWriter<'w, AppExit>,
     /// Writer for camera jump and focus events.
     pub focus_events: EventWriter<'w, EditorCameraFocus>,
+    /// Writer asking to replace the active document.
+    pub load_requests: EventWriter<'w, LoadDocumentRequest>,
 }
 
 /// Document, tool, history, modal, and playtest state for the editor UI.
@@ -284,6 +287,7 @@ pub fn editor_ui_system(
         camera_query,
         mut exit_events,
         mut focus_events,
+        mut load_requests,
     } = ctx;
 
     let EditorUiState {
@@ -1085,23 +1089,7 @@ pub fn editor_ui_system(
     if let Some(action) = file_browser.render(ctx, &maps_dir) {
         match action {
             FileBrowserAction::Load(path) => {
-                match sim_map::map_format::MapFile::load(&path).and_then(|f| f.decode()) {
-                    Ok(loaded_doc) => {
-                        *doc = EditorDocument::new(loaded_doc, Some(path.clone()));
-                        history.clear();
-                        if let Ok(gm) = doc.doc.to_game_map() {
-                            terrain_state.replace_map(gm);
-                        }
-                        tool_state
-                            .stroke_recorder
-                            .resize(doc.doc.width, doc.doc.height);
-                        tool_state.last_status_message = Some(format!("Opened {}", path.display()));
-                    }
-                    Err(e) => {
-                        file_browser.error_banner = Some(format!("Failed to open map: {e}"));
-                        file_browser.is_open = true;
-                    }
-                }
+                load_requests.send(LoadDocumentRequest::Open(path));
             }
             FileBrowserAction::Save(path) => {
                 let map_file = doc.doc.encode();
@@ -1132,11 +1120,8 @@ pub fn editor_ui_system(
     render_new_map_modal(
         ctx,
         &mut new_map_modal,
-        &mut doc,
-        &mut history,
-        &mut terrain_state,
         theme_catalog.as_ref(),
-        &mut tool_state,
+        &mut load_requests,
     );
 
     render_unsaved_changes_modal(
@@ -1272,11 +1257,8 @@ fn handle_playtest_entry(
 fn render_new_map_modal(
     ctx: &egui::Context,
     state: &mut NewMapModalState,
-    doc: &mut EditorDocument,
-    history: &mut History,
-    terrain: &mut TerrainState,
     theme_catalog: Option<&Res<'_, ThemeCatalogResource>>,
-    tool_state: &mut EditorToolState,
+    load_requests: &mut EventWriter<'_, LoadDocumentRequest>,
 ) {
     if !state.is_open {
         return;
@@ -1334,13 +1316,8 @@ fn render_new_map_modal(
                     };
                     match EditorDocument::new_blank(state.width, state.height, meta) {
                         Ok(new_doc) => {
-                            *doc = new_doc;
-                            history.clear();
-                            if let Ok(gm) = doc.doc.to_game_map() {
-                                terrain.replace_map(gm);
-                            }
-                            tool_state.stroke_recorder.resize(state.width, state.height);
-                            tool_state.last_status_message = Some("Created new blank map".into());
+                            load_requests.send(LoadDocumentRequest::Replace(Box::new(new_doc)));
+                            state.error_banner = None;
                             state.is_open = false;
                         }
                         Err(e) => {
@@ -1548,7 +1525,13 @@ fn handle_viewport_tool_interaction(
                     tool_state.symmetry,
                     &mut tool_state.scratch_coords,
                 );
-                sync_scratch_cells_to_terrain(&tool_state.scratch_coords, doc, terrain, now_secs);
+                sync_stamp_to_terrain(
+                    &tool_state.scratch_coords,
+                    tool_state.symmetry,
+                    doc,
+                    terrain,
+                    now_secs,
+                );
             } else if mouse_buttons.pressed(MouseButton::Left) && tool_state.is_painting {
                 paint_brush_stamp(
                     &mut tool_state.stroke_recorder,
@@ -1560,7 +1543,13 @@ fn handle_viewport_tool_interaction(
                     tool_state.symmetry,
                     &mut tool_state.scratch_coords,
                 );
-                sync_scratch_cells_to_terrain(&tool_state.scratch_coords, doc, terrain, now_secs);
+                sync_stamp_to_terrain(
+                    &tool_state.scratch_coords,
+                    tool_state.symmetry,
+                    doc,
+                    terrain,
+                    now_secs,
+                );
             }
         }
         EditorTool::Box => {
@@ -1676,37 +1665,48 @@ fn handle_viewport_tool_interaction(
     }
 }
 
-fn sync_scratch_cells_to_terrain(
+/// Copies a brush stamp from the document into the terrain, including its mirrored footprint.
+///
+/// `cells` holds only the primary footprint; [`paint_brush_stamp`] also painted its reflection.
+// PERFORMANCE RATIONALE:
+// Why: A single bounding box around a stamp and its mirror spans most of the map, and copying it
+// on every drag frame is O(W × H).
+// What: The primary and mirrored rectangles are copied separately, so the work stays O(brush).
+// Trade-off: Two terrain writes per stamp. `TerrainState` still unions them when choosing dirty
+// chunks, so the throttled mesh rebuild covers the band between them.
+fn sync_stamp_to_terrain(
     cells: &[(u32, u32)],
+    symmetry: SymmetryMode,
     doc: &mut EditorDocument,
     terrain: &mut TerrainState,
     now_secs: f64,
 ) {
-    if cells.is_empty() {
+    let Some(&first) = cells.first() else {
         return;
-    }
-    let mut min_x = u32::MAX;
-    let mut min_y = u32::MAX;
-    let mut max_x = 0;
-    let mut max_y = 0;
-
-    for &(x, y) in cells {
-        min_x = min_x.min(x);
-        min_y = min_y.min(y);
-        max_x = max_x.max(x);
-        max_y = max_y.max(y);
-    }
-
-    let rect = CellRect {
-        min: (min_x, min_y),
-        max_inclusive: (max_x, max_y),
     };
+    let mut rect = CellRect {
+        min: first,
+        max_inclusive: first,
+    };
+    for &(x, y) in cells {
+        rect.min = (rect.min.0.min(x), rect.min.1.min(y));
+        rect.max_inclusive = (rect.max_inclusive.0.max(x), rect.max_inclusive.1.max(y));
+    }
 
-    terrain.apply_cells(rect, |x, y, target_cell| {
-        if let Some(spec) = doc.doc.cell(x, y) {
-            *target_cell = MapDocument::to_map_cell(spec);
-        }
-    });
+    let copy_rect = |rect: CellRect, terrain: &mut TerrainState| {
+        terrain.apply_cells(rect, |x, y, target_cell| {
+            if let Some(spec) = doc.doc.cell(x, y) {
+                *target_cell = MapDocument::to_map_cell(spec);
+            }
+        });
+    };
+    copy_rect(rect, terrain);
+    if symmetry != SymmetryMode::None {
+        copy_rect(
+            symmetry.mirror_rect(rect, doc.doc.width, doc.doc.height),
+            terrain,
+        );
+    }
 
     doc.revision = doc.revision.wrapping_add(1);
     doc.dirty = true;

@@ -22,6 +22,7 @@ pub mod app;
 pub mod camera;
 pub mod commands;
 pub mod document;
+pub mod document_load;
 pub mod file_browser;
 pub mod los_preview;
 pub mod markers;
@@ -41,6 +42,10 @@ pub use commands::{
     CellDelta, ChangeSet, EditCommand, History, MapEntity, MAX_UNDO_CELL_DELTAS, MAX_UNDO_COMMANDS,
 };
 pub use document::EditorDocument;
+pub use document_load::{
+    apply_document_load_system, DocumentLoadError, EditorTerrainRoot, EditorTerrainSpawner,
+    LoadDocumentRequest,
+};
 pub use file_browser::{FileBrowserAction, FileBrowserMode, FileBrowserState};
 pub use los_preview::{
     resolve_los_preview_sight_radius, update_los_preview_system, LosPreviewState,
