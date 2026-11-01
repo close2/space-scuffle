@@ -48,7 +48,7 @@ fn test_ffmpeg_not_found_error() {
 #[test]
 fn test_video_source_not_found_error() {
     let temp_dir = tempfile::tempdir().expect("tempdir creation failed");
-    common::fixture_clip();
+    let _ = common::fixture_clip();
     let ffmpeg_path = PathBuf::from("/usr/bin/ffmpeg");
 
     let fake_video = temp_dir.path().join("ghost_video.mp4");
