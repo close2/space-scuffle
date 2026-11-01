@@ -58,3 +58,69 @@ jobs:
 
       - name: Run all workspace unit & integration tests (including xvfb + llvmpipe GPU tests)
         run: cargo test --workspace --locked
+
+  # The charter requires bit-for-bit identical simulation on every target. These jobs make
+  # that claim executable: each target replays the same golden fixture, in debug and release,
+  # so a platform or build-profile divergence fails with the first differing checkpoint.
+  determinism-native:
+    name: Determinism (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-latest
+          - name: Windows x86_64
+            os: windows-latest
+          - name: macOS ARM64
+            os: macos-14
+
+    steps:
+      # Embedded data files must be byte-identical across hosts; never translate line endings.
+      - name: Disable line-ending conversion
+        run: git config --global core.autocrlf false
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.99.0
+
+      - name: Rust Cargo Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test simulation crates (debug profile)
+        run: cargo test -p sim_types -p sim_map -p sim_core --locked
+
+      - name: Replay golden fixture (release profile)
+        run: cargo test -p sim_core --test golden_replay_tests --locked --release
+
+  determinism-wasm:
+    name: Determinism (wasm32)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain with WebAssembly targets
+        uses: dtolnay/rust-toolchain@1.99.0
+        with:
+          targets: wasm32-wasip1, wasm32-unknown-unknown
+
+      - name: Install wasmtime
+        uses: bytecodealliance/actions/wasmtime/setup@v1
+
+      - name: Rust Cargo Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check simulation crates (wasm32-unknown-unknown)
+        run: cargo check -p sim_types -p sim_map -p sim_core --target wasm32-unknown-unknown --locked
+
+      - name: Replay golden fixture under wasmtime (wasm32-wasip1)
+        run: cargo test -p sim_core --test golden_replay_tests --target wasm32-wasip1 --locked --release
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime

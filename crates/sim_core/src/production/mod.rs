@@ -257,7 +257,7 @@ impl SimWorld {
                 || resources.supply_max != resources.supply_provided_total.min(STANDARD_SUPPLY_CAP)
             {
                 return Err(ProductionInvariant::LedgerMismatch {
-                    player: PlayerId(index as u8),
+                    player: PlayerId(u8::try_from(index).unwrap_or(u8::MAX)),
                 });
             }
         }
@@ -393,6 +393,10 @@ impl SimWorld {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one production transaction; splitting is plan step 9.2"
+    )]
     fn prepare_admission(
         &self,
         player: PlayerId,

@@ -19,3 +19,8 @@ rand.workspace = true
 rand_chacha.workspace = true
 serde.workspace = true
 ron.workspace = true
+
+# Release throughput report; run with `cargo bench -p sim_core --bench throughput`.
+[[bench]]
+name = "throughput"
+harness = false

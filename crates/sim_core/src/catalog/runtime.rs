@@ -76,10 +76,16 @@ impl RuntimeCatalogs {
         let upgrades_path = directory.join("upgrades.ron");
         let upgrades = UpgradeCatalog::from_ron_str(&read(&upgrades_path)?).map_err(|source| {
             CatalogLoadError::Invalid {
-                path: upgrades_path,
+                path: upgrades_path.clone(),
                 source,
             }
         })?;
+        units
+            .validate_upgrade_references(&upgrades)
+            .map_err(|source| CatalogLoadError::Invalid {
+                path: upgrades_path,
+                source,
+            })?;
         Ok(Self { units, upgrades })
     }
 }

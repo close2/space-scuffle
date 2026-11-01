@@ -184,6 +184,24 @@ pub enum MapFormatError {
         y: u32,
     },
 
+    /// Resource or watchtower cell lies outside the map grid.
+    #[error("entity {id:?} at cell ({x}, {y}) lies outside the map")]
+    EntityOutOfBounds {
+        /// Map entity identifier.
+        id: MapEntityId,
+        /// X coordinate of the entity cell.
+        x: u32,
+        /// Y coordinate of the entity cell.
+        y: u32,
+    },
+
+    /// Watchtower identifier cannot be mapped into the simulation entity ID range.
+    #[error("watchtower identifier {id:?} is too large for the simulation entity range")]
+    EntityIdOutOfRange {
+        /// Map entity identifier.
+        id: MapEntityId,
+    },
+
     /// Low-level map error from `GameMap` operations.
     #[error("map error: {0}")]
     GameMap(#[from] MapError),
@@ -198,7 +216,7 @@ pub struct MapMetadata {
     pub author: String,
     /// Detailed description of the map layout and mechanics.
     pub description: String,
-    /// Visual and acoustic terrain theme slug (e.g. "orbital_foundry").
+    /// Visual and acoustic terrain theme slug (e.g. "`orbital_foundry`").
     pub theme: String,
 }
 
@@ -389,6 +407,10 @@ impl MapFile {
     ///
     /// # Errors
     /// Returns a typed [`MapFormatError`] describing the first invalid property detected.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one validation pass per layer in the documented error order; see plan step 9.2"
+    )]
     pub fn decode(&self) -> Result<MapDocument, MapFormatError> {
         if !(MIN_MAP_DIMENSION..=MAX_MAP_DIMENSION).contains(&self.width)
             || !(MIN_MAP_DIMENSION..=MAX_MAP_DIMENSION).contains(&self.height)
@@ -408,20 +430,22 @@ impl MapFile {
 
         // 1. Validate row counts and row lengths in layer order
         for &(layer, rows) in &layers {
-            if rows.len() as u32 != self.height {
+            let row_count = saturating_u32(rows.len());
+            if row_count != self.height {
                 return Err(MapFormatError::RowCount {
                     layer,
                     expected: self.height,
-                    found: rows.len() as u32,
+                    found: row_count,
                 });
             }
             for (row_idx, row_str) in rows.iter().enumerate() {
-                if row_str.chars().count() as u32 != self.width {
+                let columns = saturating_u32(row_str.chars().count());
+                if columns != self.width {
                     return Err(MapFormatError::RowLength {
                         layer,
-                        row: row_idx as u32,
+                        row: saturating_u32(row_idx),
                         expected: self.width,
-                        found: row_str.chars().count() as u32,
+                        found: columns,
                     });
                 }
             }
@@ -434,7 +458,7 @@ impl MapFile {
                 if !matches!(ch, '0'..='3') {
                     return Err(MapFormatError::InvalidCellChar {
                         layer: MapLayer::Levels,
-                        x: col_idx as u32,
+                        x: saturating_u32(col_idx),
                         y,
                         ch,
                     });
@@ -445,10 +469,10 @@ impl MapFile {
         for row_idx in 0..self.height {
             let y = self.height - 1 - row_idx;
             for (col_idx, ch) in self.terrain[row_idx as usize].chars().enumerate() {
-                if !matches!(ch, 'G' | 'M' | 'D' | 'A') {
+                if terrain_from_char(ch).is_none() {
                     return Err(MapFormatError::InvalidCellChar {
                         layer: MapLayer::Terrain,
-                        x: col_idx as u32,
+                        x: saturating_u32(col_idx),
                         y,
                         ch,
                     });
@@ -459,10 +483,10 @@ impl MapFile {
         for row_idx in 0..self.height {
             let y = self.height - 1 - row_idx;
             for (col_idx, ch) in self.ramps[row_idx as usize].chars().enumerate() {
-                if !matches!(ch, '.' | 'N' | 'S' | 'E' | 'W') {
+                if ramp_from_char(ch).is_none() {
                     return Err(MapFormatError::InvalidCellChar {
                         layer: MapLayer::Ramps,
-                        x: col_idx as u32,
+                        x: saturating_u32(col_idx),
                         y,
                         ch,
                     });
@@ -476,7 +500,7 @@ impl MapFile {
                 if ch.to_digit(16).is_none() {
                     return Err(MapFormatError::InvalidCellChar {
                         layer: MapLayer::Flags,
-                        x: col_idx as u32,
+                        x: saturating_u32(col_idx),
                         y,
                         ch,
                     });
@@ -505,23 +529,23 @@ impl MapFile {
             let flag_chars: Vec<char> = self.flags[row_idx as usize].chars().collect();
 
             for x in 0..self.width {
-                let lvl = level_chars[x as usize] as u8 - b'0';
-                let trn = match terrain_chars[x as usize] {
-                    'G' => TerrainKind::Grass,
-                    'M' => TerrainKind::MetalPlate,
-                    'D' => TerrainKind::Dirt,
-                    'A' => TerrainKind::Abyss,
-                    _ => unreachable!(),
-                };
-                let rmp = match ramp_chars[x as usize] {
-                    '.' => None,
-                    'N' => Some(RampDir::North),
-                    'S' => Some(RampDir::South),
-                    'E' => Some(RampDir::East),
-                    'W' => Some(RampDir::West),
-                    _ => unreachable!(),
-                };
-                let flag_val = flag_chars[x as usize].to_digit(16).unwrap_or(0) as u16;
+                let invalid = |layer, ch| MapFormatError::InvalidCellChar { layer, x, y, ch };
+                let level_char = level_chars[x as usize];
+                let lvl = level_char
+                    .to_digit(4)
+                    .and_then(|digit| u8::try_from(digit).ok())
+                    .ok_or_else(|| invalid(MapLayer::Levels, level_char))?;
+                let terrain_char = terrain_chars[x as usize];
+                let trn = terrain_from_char(terrain_char)
+                    .ok_or_else(|| invalid(MapLayer::Terrain, terrain_char))?;
+                let ramp_char = ramp_chars[x as usize];
+                let rmp =
+                    ramp_from_char(ramp_char).ok_or_else(|| invalid(MapLayer::Ramps, ramp_char))?;
+                let flag_char = flag_chars[x as usize];
+                let flag_val = flag_char
+                    .to_digit(16)
+                    .and_then(|digit| u16::try_from(digit).ok())
+                    .ok_or_else(|| invalid(MapLayer::Flags, flag_char))?;
                 let flg = CellFlags::from_bits_truncate(flag_val);
 
                 let cell_idx = (y * self.width + x) as usize;
@@ -629,7 +653,7 @@ impl MapDocument {
                 };
                 rmp_row.push(rmp_char);
 
-                let authorable_bits = (spec.flags.bits() & 0x000F) as u32;
+                let authorable_bits = u32::from(spec.flags.bits() & 0x000F);
                 let flg_char = char::from_digit(authorable_bits, 16)
                     .unwrap_or('0')
                     .to_ascii_uppercase();
@@ -674,6 +698,14 @@ impl MapDocument {
         } else {
             None
         }
+    }
+
+    /// Returns the cell at a signed offset from `cell`, or `None` if that leaves the grid.
+    #[must_use]
+    pub fn offset_cell(&self, cell: (u32, u32), offset: (i32, i32)) -> Option<(u32, u32)> {
+        let x = cell.0.checked_add_signed(offset.0)?;
+        let y = cell.1.checked_add_signed(offset.1)?;
+        (x < self.width && y < self.height).then_some((x, y))
     }
 
     /// Returns a mutable reference to the cell specification at `(x, y)`, or `None` if out of bounds.
@@ -725,6 +757,7 @@ impl MapDocument {
 
         let mut resources = Vec::with_capacity(self.resources.len());
         for res in &self.resources {
+            self.require_cell_in_bounds(res.id, res.cell)?;
             let center = SimVec2::new(
                 SimScalar::from_num(res.cell.0) + SimScalar::HALF,
                 SimScalar::from_num(res.cell.1) + SimScalar::HALF,
@@ -739,17 +772,19 @@ impl MapDocument {
 
         let mut watchtowers = Vec::with_capacity(self.watchtowers.len());
         for wt in &self.watchtowers {
+            self.require_cell_in_bounds(wt.id, wt.cell)?;
+            let id = WATCHTOWER_ENTITY_ID_BASE
+                .checked_add(wt.id.0)
+                .ok_or(MapFormatError::EntityIdOutOfRange { id: wt.id })?;
             let center = SimVec2::new(
                 SimScalar::from_num(wt.cell.0) + SimScalar::HALF,
                 SimScalar::from_num(wt.cell.1) + SimScalar::HALF,
             );
-            let cap_rad = SimScalar::from_num(wt.capture_radius_tenths) / SimScalar::from_num(10);
-            let rev_rad = SimScalar::from_num(wt.reveal_radius_tenths) / SimScalar::from_num(10);
             watchtowers.push(Watchtower {
-                id: EntityId(WATCHTOWER_ENTITY_ID_BASE + wt.id.0),
+                id: EntityId(id),
                 pos: center,
-                capture_radius: cap_rad,
-                reveal_radius: rev_rad,
+                capture_radius: tenths_to_radius(wt.capture_radius_tenths),
+                reveal_radius: tenths_to_radius(wt.reveal_radius_tenths),
                 controlling_player: None,
             });
         }
@@ -848,24 +883,18 @@ impl MapDocument {
         let mut watchtowers = Vec::with_capacity(map.watchtowers().len());
         for wt in map.watchtowers() {
             let (cx, cy) = map.world_to_cell(wt.pos).map_err(MapFormatError::GameMap)?;
-            let cap_scaled = wt.capture_radius * SimScalar::from_num(10);
-            let rev_scaled = wt.reveal_radius * SimScalar::from_num(10);
-
-            if cap_scaled.0.frac() != 0
-                || cap_scaled < SimScalar::ZERO
-                || cap_scaled > SimScalar::from_num(u16::MAX)
-                || rev_scaled.0.frac() != 0
-                || rev_scaled < SimScalar::ZERO
-                || rev_scaled > SimScalar::from_num(u16::MAX)
-            {
+            let (Some(capture_radius_tenths), Some(reveal_radius_tenths)) = (
+                radius_to_tenths(wt.capture_radius),
+                radius_to_tenths(wt.reveal_radius),
+            ) else {
                 return Err(MapFormatError::NonTenthRadius { x: cx, y: cy });
-            }
+            };
 
             watchtowers.push(MapWatchtower {
                 id: MapEntityId(next_id),
                 cell: (cx, cy),
-                capture_radius_tenths: cap_scaled.0.to_num::<u16>(),
-                reveal_radius_tenths: rev_scaled.0.to_num::<u16>(),
+                capture_radius_tenths,
+                reveal_radius_tenths,
             });
             next_id += 1;
         }
@@ -893,6 +922,71 @@ impl MapDocument {
             .max()
             .unwrap_or(0);
         let max_id = max_res.max(max_wt).max(max_start);
-        MapEntityId(max_id + 1)
+        MapEntityId(max_id.saturating_add(1))
     }
+
+    fn require_cell_in_bounds(
+        &self,
+        id: MapEntityId,
+        cell: (u32, u32),
+    ) -> Result<(), MapFormatError> {
+        if cell.0 < self.width && cell.1 < self.height {
+            Ok(())
+        } else {
+            Err(MapFormatError::EntityOutOfBounds {
+                id,
+                x: cell.0,
+                y: cell.1,
+            })
+        }
+    }
+}
+
+/// Decodes one terrain layer character.
+fn terrain_from_char(ch: char) -> Option<TerrainKind> {
+    match ch {
+        'G' => Some(TerrainKind::Grass),
+        'M' => Some(TerrainKind::MetalPlate),
+        'D' => Some(TerrainKind::Dirt),
+        'A' => Some(TerrainKind::Abyss),
+        _ => None,
+    }
+}
+
+/// Decodes one ramp layer character. The outer `None` means the character is invalid.
+#[expect(
+    clippy::option_option,
+    reason = "'.' is a valid cell with no ramp, which differs from an invalid character"
+)]
+fn ramp_from_char(ch: char) -> Option<Option<RampDir>> {
+    match ch {
+        '.' => Some(None),
+        'N' => Some(Some(RampDir::North)),
+        'S' => Some(Some(RampDir::South)),
+        'E' => Some(Some(RampDir::East)),
+        'W' => Some(Some(RampDir::West)),
+        _ => None,
+    }
+}
+
+/// Converts a row or column count for error reporting, which needs no more than saturation.
+fn saturating_u32(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+/// Converts an authored radius in tenths of a world unit to world units.
+fn tenths_to_radius(tenths: u16) -> SimScalar {
+    SimScalar::from_num(tenths) / SimScalar::from_num(10)
+}
+
+/// Recovers the exact tenths value of a radius, or `None` if it is not one.
+///
+/// Most tenths have no exact Q32.32 representation, so `tenths / 10` is truncated and multiplying
+/// back by ten falls just short of a whole number. The test is therefore not whether the scaled
+/// value is whole: round to the nearest tenth, then require [`tenths_to_radius`] to reproduce the
+/// input bit for bit.
+fn radius_to_tenths(radius: SimScalar) -> Option<u16> {
+    let nearest = (radius * SimScalar::from_num(10) + SimScalar::HALF).saturating_to_u32();
+    let tenths = u16::try_from(nearest).ok()?;
+    (tenths_to_radius(tenths) == radius).then_some(tenths)
 }

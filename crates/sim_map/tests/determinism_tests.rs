@@ -105,9 +105,9 @@ fn test_cross_platform_determinism_checksum() {
     let final_checksum = hasher.digest();
     eprintln!("sim_map reference checksum: 0x{:016x}", final_checksum);
 
-    // Fixed-seed reference after ramp-portal transition preservation and
-    // disconnected corner quad offsetting.
-    const EXPECTED_CHECKSUM: u64 = 0xef17_1de1_6d2a_e55b;
+    // Fixed-seed reference after the symmetric clearance field (M-8), which admits cells near
+    // +x and +y walls that the corner-anchored field refused, changing the hashed routes.
+    const EXPECTED_CHECKSUM: u64 = 0x69cd_c3bf_29fa_dbd8;
     assert_eq!(
         final_checksum, EXPECTED_CHECKSUM,
         "Checksum diverged from reference"

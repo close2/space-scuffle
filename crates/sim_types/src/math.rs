@@ -7,6 +7,20 @@
 //!
 //! Angular orientation is represented as discrete Binary Radians (`u16`), where modular 360-degree
 //! circle wrapping is handled naturally by hardware integer overflow with zero branch misprediction.
+//!
+//! # Overflow Policy
+//! Lockstep requires one answer per input, so `SimScalar` has exactly one overflow behaviour in
+//! every build profile: **all operators and conversions saturate** at [`SimScalar::MIN`] and
+//! [`SimScalar::MAX`]. Debug and release therefore cannot diverge, and no operator panics on
+//! overflow. Saturation is the policy rather than wrapping because it keeps comparisons honest:
+//! an overflowing squared distance stays larger than any range instead of turning negative.
+//! Dividing by zero saturates by the sign of the dividend, and `0 / 0` is zero.
+//!
+//! Callers that can act on overflow use the `checked_*` methods, which return `None`.
+//!
+//! `SimVec2` length, distance and normalisation are computed from exact 128-bit squares of the
+//! raw components, so neither precision loss nor saturation in a Q32.32 square can affect them.
+//! Applying `+` and friends to `I32F32` directly bypasses this policy; only this module may do it.
 
 use crate::errors::MathError;
 use crate::sin_table::SIN_TABLE;
@@ -171,15 +185,18 @@ impl SimScalar {
 
     /// Constructs a `SimScalar` from a standard 32-bit signed integer.
     #[must_use]
-    #[allow(clippy::cast_lossless)]
     pub const fn from_i32(val: i32) -> Self {
         Self(I32F32::from_bits((val as i64) << 32))
     }
 
-    /// Constructs a `SimScalar` from any type implementing `ToFixed`.
+    /// Constructs a `SimScalar` from any type implementing `ToFixed`, saturating out-of-range values.
+    ///
+    /// # Panics
+    /// Panics in every build profile if `val` is a floating-point NaN, which has no numeric
+    /// meaning to saturate to. Authored data is rejected before conversion at load time.
     #[must_use]
     pub fn from_num<T: fixed::traits::ToFixed>(val: T) -> Self {
-        Self(I32F32::from_num(val))
+        Self(I32F32::saturating_from_num(val))
     }
 
     /// Converts scalar to `f32` at the visualization / snapshot boundary.
@@ -192,13 +209,16 @@ impl SimScalar {
         self.0.to_num::<f32>()
     }
 
-    /// Converts `f32` to fixed-point for asset baking and data loading.
+    /// Converts `f32` to fixed-point for asset baking and data loading, saturating out-of-range values.
     ///
     /// # Safety & Charter Invariant
     /// Forbidden inside tick updates; use only during initial config/map parsing.
+    ///
+    /// # Panics
+    /// Panics in every build profile if `val` is NaN; see [`Self::from_num`].
     #[must_use]
     pub fn from_f32_lossy(val: f32) -> Self {
-        Self(I32F32::from_num(val))
+        Self(I32F32::saturating_from_num(val))
     }
 
     /// Saturating addition.
@@ -219,10 +239,34 @@ impl SimScalar {
         Self(self.0.saturating_mul(rhs.0))
     }
 
-    /// Saturating division. Returns `MAX` or `MIN` on overflow or division by zero.
+    /// Saturating division. Returns `MAX` or `MIN` on overflow.
+    ///
+    /// Dividing by zero returns `MAX` for a positive dividend, `MIN` for a negative one, and
+    /// zero for `0 / 0`, so a zero divisor can never panic inside a simulation tick.
     #[must_use]
     pub fn saturating_div(self, rhs: Self) -> Self {
+        if rhs.0 == I32F32::ZERO {
+            return match self.0.cmp(&I32F32::ZERO) {
+                std::cmp::Ordering::Greater => Self::MAX,
+                std::cmp::Ordering::Less => Self::MIN,
+                std::cmp::Ordering::Equal => Self::ZERO,
+            };
+        }
         Self(self.0.saturating_div(rhs.0))
+    }
+
+    /// Rounds up to the next whole world unit, saturating at the largest whole value.
+    #[must_use]
+    pub fn saturating_ceil(self) -> Self {
+        Self(self.0.saturating_ceil())
+    }
+
+    /// Whole-unit value rounded towards negative infinity, as `u32`, saturating at both bounds.
+    ///
+    /// Negative values return 0. Use this for tick and cell counts derived from scalars.
+    #[must_use]
+    pub fn saturating_to_u32(self) -> u32 {
+        self.0.saturating_to_num::<u32>()
     }
 
     /// Checked addition. Returns `None` if overflow occurred.
@@ -302,7 +346,6 @@ impl SimScalar {
     // shifted left by 32 bits into a 128-bit unsigned integer: sqrt(X * 2^32) = sqrt(x) * 2^32.
     // Trade-off: Uses 128-bit integer arithmetic which takes slightly more cycles than a single hardware
     // float instruction, in exchange for 100% bit-for-bit platform-independent determinism.
-    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
     pub fn sqrt(self) -> Result<Self, MathError> {
         let bits = self.0.to_bits();
         if bits < 0 {
@@ -312,32 +355,10 @@ impl SimScalar {
             return Ok(Self::ZERO);
         }
         let wide = u128::from(bits.unsigned_abs()) << 32;
-        let root = isqrt_u128(wide);
-        Ok(Self(I32F32::from_bits(root as i64)))
+        Ok(Self::from_raw(
+            i64::try_from(wide.isqrt()).unwrap_or(i64::MAX),
+        ))
     }
-}
-
-/// Bitwise integer square root algorithm for `u128` values.
-///
-/// Compatible with MSRV 1.80.0 without hardware floating-point instructions.
-const fn isqrt_u128(val: u128) -> u128 {
-    if val <= 1 {
-        return val;
-    }
-    let shift = val.ilog2() & !1;
-    let mut one = 1u128 << shift;
-    let mut num = val;
-    let mut res = 0u128;
-    while one != 0 {
-        if num >= res + one {
-            num -= res + one;
-            res = (res >> 1) + one;
-        } else {
-            res >>= 1;
-        }
-        one >>= 2;
-    }
-    res
 }
 
 impl fmt::Debug for SimScalar {
@@ -355,171 +376,171 @@ impl fmt::Display for SimScalar {
 impl Add for SimScalar {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
-        Self(self.0 + rhs.0)
+        SimScalar::saturating_add(self, rhs)
     }
 }
 
 impl Add<&SimScalar> for SimScalar {
     type Output = Self;
     fn add(self, rhs: &SimScalar) -> Self {
-        Self(self.0 + rhs.0)
+        SimScalar::saturating_add(self, *rhs)
     }
 }
 
 impl Add<SimScalar> for &SimScalar {
     type Output = SimScalar;
     fn add(self, rhs: SimScalar) -> SimScalar {
-        SimScalar(self.0 + rhs.0)
+        SimScalar::saturating_add(*self, rhs)
     }
 }
 
 impl Add<&SimScalar> for &SimScalar {
     type Output = SimScalar;
     fn add(self, rhs: &SimScalar) -> SimScalar {
-        SimScalar(self.0 + rhs.0)
+        SimScalar::saturating_add(*self, *rhs)
     }
 }
 
 impl AddAssign for SimScalar {
     fn add_assign(&mut self, rhs: Self) {
-        self.0 += rhs.0;
+        *self = self.saturating_add(rhs);
     }
 }
 
 impl Sub for SimScalar {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self {
-        Self(self.0 - rhs.0)
+        SimScalar::saturating_sub(self, rhs)
     }
 }
 
 impl Sub<&SimScalar> for SimScalar {
     type Output = Self;
     fn sub(self, rhs: &SimScalar) -> Self {
-        Self(self.0 - rhs.0)
+        SimScalar::saturating_sub(self, *rhs)
     }
 }
 
 impl Sub<SimScalar> for &SimScalar {
     type Output = SimScalar;
     fn sub(self, rhs: SimScalar) -> SimScalar {
-        SimScalar(self.0 - rhs.0)
+        SimScalar::saturating_sub(*self, rhs)
     }
 }
 
 impl Sub<&SimScalar> for &SimScalar {
     type Output = SimScalar;
     fn sub(self, rhs: &SimScalar) -> SimScalar {
-        SimScalar(self.0 - rhs.0)
+        SimScalar::saturating_sub(*self, *rhs)
     }
 }
 
 impl SubAssign for SimScalar {
     fn sub_assign(&mut self, rhs: Self) {
-        self.0 -= rhs.0;
+        *self = self.saturating_sub(rhs);
     }
 }
 
 impl Mul for SimScalar {
     type Output = Self;
     fn mul(self, rhs: Self) -> Self {
-        Self(self.0 * rhs.0)
+        SimScalar::saturating_mul(self, rhs)
     }
 }
 
 impl Mul<&SimScalar> for SimScalar {
     type Output = Self;
     fn mul(self, rhs: &SimScalar) -> Self {
-        Self(self.0 * rhs.0)
+        SimScalar::saturating_mul(self, *rhs)
     }
 }
 
 impl Mul<SimScalar> for &SimScalar {
     type Output = SimScalar;
     fn mul(self, rhs: SimScalar) -> SimScalar {
-        SimScalar(self.0 * rhs.0)
+        SimScalar::saturating_mul(*self, rhs)
     }
 }
 
 impl Mul<&SimScalar> for &SimScalar {
     type Output = SimScalar;
     fn mul(self, rhs: &SimScalar) -> SimScalar {
-        SimScalar(self.0 * rhs.0)
+        SimScalar::saturating_mul(*self, *rhs)
     }
 }
 
 impl MulAssign for SimScalar {
     fn mul_assign(&mut self, rhs: Self) {
-        self.0 *= rhs.0;
+        *self = self.saturating_mul(rhs);
     }
 }
 
 impl Mul<i32> for SimScalar {
     type Output = Self;
     fn mul(self, rhs: i32) -> Self {
-        Self(self.0 * I32F32::from_num(rhs))
+        self.saturating_mul(Self::from_i32(rhs))
     }
 }
 
 impl Mul<SimScalar> for i32 {
     type Output = SimScalar;
     fn mul(self, rhs: SimScalar) -> SimScalar {
-        SimScalar(I32F32::from_num(self) * rhs.0)
+        SimScalar::from_i32(self).saturating_mul(rhs)
     }
 }
 
 impl Div for SimScalar {
     type Output = Self;
     fn div(self, rhs: Self) -> Self {
-        Self(self.0 / rhs.0)
+        SimScalar::saturating_div(self, rhs)
     }
 }
 
 impl Div<&SimScalar> for SimScalar {
     type Output = Self;
     fn div(self, rhs: &SimScalar) -> Self {
-        Self(self.0 / rhs.0)
+        SimScalar::saturating_div(self, *rhs)
     }
 }
 
 impl Div<SimScalar> for &SimScalar {
     type Output = SimScalar;
     fn div(self, rhs: SimScalar) -> SimScalar {
-        SimScalar(self.0 / rhs.0)
+        SimScalar::saturating_div(*self, rhs)
     }
 }
 
 impl Div<&SimScalar> for &SimScalar {
     type Output = SimScalar;
     fn div(self, rhs: &SimScalar) -> SimScalar {
-        SimScalar(self.0 / rhs.0)
+        SimScalar::saturating_div(*self, *rhs)
     }
 }
 
 impl DivAssign for SimScalar {
     fn div_assign(&mut self, rhs: Self) {
-        self.0 /= rhs.0;
+        *self = self.saturating_div(rhs);
     }
 }
 
 impl Div<i32> for SimScalar {
     type Output = Self;
     fn div(self, rhs: i32) -> Self {
-        Self(self.0 / I32F32::from_num(rhs))
+        self.saturating_div(Self::from_i32(rhs))
     }
 }
 
 impl Neg for SimScalar {
     type Output = Self;
     fn neg(self) -> Self {
-        Self(-self.0)
+        Self(self.0.saturating_neg())
     }
 }
 
 impl Neg for &SimScalar {
     type Output = SimScalar;
     fn neg(self) -> SimScalar {
-        SimScalar(-self.0)
+        SimScalar(self.0.saturating_neg())
     }
 }
 
@@ -571,19 +592,62 @@ impl SimVec2 {
         self.x * rhs.y - self.y * rhs.x
     }
 
-    /// Computes squared Euclidean length: `x^2 + y^2`.
+    /// Computes squared Euclidean length: `x^2 + y^2`, in squared world units.
+    ///
+    /// Saturates at [`SimScalar::MAX`] and truncates below 2^-32, so it is suited to range
+    /// comparisons. Use [`Self::length`] or [`Self::normalize`] to recover a magnitude or
+    /// direction, because those are exact where this square is not.
     #[must_use]
     pub fn length_sq(self) -> SimScalar {
         self.x * self.x + self.y * self.y
     }
 
-    /// Computes Euclidean length: `sqrt(x^2 + y^2)`.
+    /// Exact `x_raw^2 + y_raw^2` in squared raw units (2^-64 squared world units).
+    // PERFORMANCE RATIONALE:
+    // Why: A Q32.32 square discards the low 32 bits and saturates near 46341 world units, so a
+    // length derived from it is wrong for both very small and very large vectors.
+    // What: Square the raw components in `u128`. Each magnitude is at most 2^63, so each square
+    // is at most 2^126 and their sum at most 2^127, which cannot overflow.
+    // Trade-off: 128-bit multiplication per length query in exchange for an exact result with
+    // no precision or range special cases and no floating-point instructions.
+    fn norm_squared_raw(self) -> u128 {
+        let x = u128::from(self.x.raw().unsigned_abs());
+        let y = u128::from(self.y.raw().unsigned_abs());
+        x * x + y * y
+    }
+
+    /// Computes Euclidean length `sqrt(x^2 + y^2)` in world units, exact to 2^-32.
+    ///
+    /// Returns the floor of the true length, saturating at [`SimScalar::MAX`]. A nonzero vector
+    /// never reports zero length.
     #[must_use]
     pub fn length(self) -> SimScalar {
-        match self.length_sq().sqrt() {
-            Ok(len) => len,
-            Err(_) => SimScalar::ZERO,
+        let raw_length = self.norm_squared_raw().isqrt();
+        SimScalar::from_raw(i64::try_from(raw_length).unwrap_or(i64::MAX))
+    }
+
+    /// Scales this vector to unit length, or returns `None` for the zero vector.
+    // PERFORMANCE RATIONALE:
+    // Why: Dividing by a floor-rounded raw length loses all accuracy for tiny vectors: (1, 1) in
+    // raw units has length 1, which would produce a "unit" vector of length sqrt(2).
+    // What: Shift the exact square left by an even amount so its top bit is set. The root then
+    // carries the full 64 bits of precision whatever the input magnitude.
+    // Trade-off: One extra shift and a 128-bit division per component, in exchange for a result
+    // accurate at every magnitude. For the shift `s`, `component^2 << s` is below 2^128, so
+    // `component << (s / 2)` is below 2^64 and the further 32-bit shift fits comfortably in i128.
+    fn unit_vector(self) -> Option<Self> {
+        let square = self.norm_squared_raw();
+        if square == 0 {
+            return None;
         }
+        let shift = square.leading_zeros() & !1;
+        let scale = shift / 2;
+        let root = i128::try_from((square << shift).isqrt()).ok()?;
+        let unit_component = |component: SimScalar| {
+            let scaled = (i128::from(component.raw()) << scale) << 32;
+            SimScalar::from_raw(i64::try_from(scaled / root).unwrap_or(i64::MAX))
+        };
+        Some(Self::new(unit_component(self.x), unit_component(self.y)))
     }
 
     /// Computes squared Euclidean distance between two points.
@@ -598,33 +662,18 @@ impl SimVec2 {
         (self - rhs).length()
     }
 
-    /// Normalizes vector to unit length.
+    /// Normalizes vector to unit length, accurate at every magnitude.
     ///
     /// # Errors
-    /// Returns `Err(MathError::ZeroLengthVector)` if length is below `SimScalar::EPSILON`.
+    /// Returns `Err(MathError::ZeroLengthVector)` only for the exact zero vector.
     pub fn normalize(self) -> Result<Self, MathError> {
-        let len = self.length();
-        if len <= SimScalar::EPSILON {
-            return Err(MathError::ZeroLengthVector);
-        }
-        Ok(Self {
-            x: self.x / len,
-            y: self.y / len,
-        })
+        self.unit_vector().ok_or(MathError::ZeroLengthVector)
     }
 
-    /// Normalizes vector or returns `SimVec2::ZERO` if length is below `SimScalar::EPSILON`.
+    /// Normalizes vector to unit length, or returns `SimVec2::ZERO` for the exact zero vector.
     #[must_use]
     pub fn normalize_or_zero(self) -> Self {
-        let len = self.length();
-        if len <= SimScalar::EPSILON {
-            Self::ZERO
-        } else {
-            Self {
-                x: self.x / len,
-                y: self.y / len,
-            }
-        }
+        self.unit_vector().unwrap_or(Self::ZERO)
     }
 
     /// Rotates vector counter-clockwise by `angle` using deterministic trigonometry.
@@ -793,7 +842,11 @@ impl SimAngle {
 
     /// Converts degrees integer to binary angle with exact Euclidean modulo wrapping.
     #[must_use]
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "`wrapped` is in 0..360, so the scaled angle is in 0..65536"
+    )]
     pub fn from_degrees(deg: i32) -> Self {
         let wrapped = i64::from(deg.rem_euclid(360));
         Self(((wrapped * 65536) / 360) as u16)
@@ -815,7 +868,10 @@ impl SimAngle {
     ///
     /// Positive values denote counter-clockwise rotation; negative values denote clockwise rotation.
     #[must_use]
-    #[allow(clippy::cast_possible_wrap)]
+    #[expect(
+        clippy::cast_possible_wrap,
+        reason = "reading the wrapped difference as two's complement is what gives the shortest arc"
+    )]
     pub fn diff(self, other: Self) -> i16 {
         other.0.wrapping_sub(self.0) as i16
     }
@@ -848,7 +904,11 @@ impl SimAngle {
     // Trade-off: 4 KB of static read-only memory in exchange for O(1) branch-predictable lookups and
     // 100% bit-for-bit determinism across all targets.
     #[must_use]
-    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
+        reason = "`quad_angle` is at most 16384 and the sine is at most 2^32, within both targets"
+    )]
     pub fn sin(self) -> SimScalar {
         let a = self.0;
         let (quad_angle, negative) = match a {

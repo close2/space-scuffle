@@ -1,6 +1,6 @@
 //! # Combat Systems, Weapon State Machine & Damage Resolution
 //!
-//! Enforces StarCraft II-parity weapon state machines, angular turret tracking,
+//! Enforces `StarCraft` II-parity weapon state machines, angular turret tracking,
 //! target acquisition priority, exact shield spillover damage formulas, and splash falloff.
 //!
 //! ## Invariants Maintained
@@ -31,7 +31,7 @@ pub struct DamageResolution {
     pub killed: bool,
 }
 
-/// Minimum damage clamp applied to any penetrating attack in StarCraft II.
+/// Minimum damage clamp applied to any penetrating attack in `StarCraft` II.
 pub const MIN_DAMAGE_CLAMP: SimScalar = SimScalar::HALF;
 
 /// Calculates the exact damage applied by an incoming weapon strike against a target,
@@ -56,7 +56,7 @@ pub fn calculate_hit_damage_upgraded(
         .unwrap_or(0);
 
     let upgrade_bonus =
-        attacker_spec.upgrade_bonus_per_level * SimScalar::from_i32(weapon_lvl as i32);
+        attacker_spec.upgrade_bonus_per_level * SimScalar::from_i32(i32::from(weapon_lvl));
     let stat_bonus_dmg = attacker_slug
         .and_then(|slug| attacker_upgrades.unit_stat_modifiers.get(slug))
         .map_or(SimScalar::ZERO, |m| m.bonus_damage_delta);
@@ -70,7 +70,7 @@ pub fn calculate_hit_damage_upgraded(
     {
         raw_damage += attacker_spec.bonus_armored;
         raw_damage +=
-            attacker_spec.bonus_upgrade_per_level * SimScalar::from_i32(weapon_lvl as i32);
+            attacker_spec.bonus_upgrade_per_level * SimScalar::from_i32(i32::from(weapon_lvl));
     }
     if target_archetype.attributes.contains(AttributeFlags::LIGHT) {
         raw_damage += attacker_spec.bonus_light;
@@ -82,7 +82,7 @@ pub fn calculate_hit_damage_upgraded(
     if target_shields > SimScalar::ZERO {
         // Shield mitigation: base shield armor + shield_level upgrade
         let effective_shield_armor = target_archetype.shield_armor
-            + SimScalar::from_i32(target_upgrades.shield_level as i32);
+            + SimScalar::from_i32(i32::from(target_upgrades.shield_level));
         let shield_mitigated = (raw_damage - effective_shield_armor).max(half);
 
         if shield_mitigated <= target_shields {
@@ -106,8 +106,9 @@ pub fn calculate_hit_damage_upgraded(
                 .get(&target_archetype.slug)
                 .map_or(SimScalar::ZERO, |m| m.armor_delta);
 
-            let effective_life_armor =
-                target_archetype.life_armor + SimScalar::from_i32(armor_lvl as i32) + stat_armor;
+            let effective_life_armor = target_archetype.life_armor
+                + SimScalar::from_i32(i32::from(armor_lvl))
+                + stat_armor;
 
             applied_life_damage = (leftover_raw - effective_life_armor).max(half);
         }
@@ -124,7 +125,7 @@ pub fn calculate_hit_damage_upgraded(
             .map_or(SimScalar::ZERO, |m| m.armor_delta);
 
         let effective_life_armor =
-            target_archetype.life_armor + SimScalar::from_i32(armor_lvl as i32) + stat_armor;
+            target_archetype.life_armor + SimScalar::from_i32(i32::from(armor_lvl)) + stat_armor;
 
         applied_life_damage = (raw_damage - effective_life_armor).max(half);
     }
@@ -139,7 +140,7 @@ pub fn calculate_hit_damage_upgraded(
 
 /// Calculates the exact damage applied by an incoming weapon strike against a target.
 ///
-/// Implements StarCraft II armor mitigation and shield spillover with default (unupgraded) player state:
+/// Implements `StarCraft` II armor mitigation and shield spillover with default (unupgraded) player state:
 /// 1. Computes raw damage including attribute bonuses ([`AttributeFlags::ARMORED`], [`AttributeFlags::LIGHT`]).
 /// 2. If target has active shields, mitigates by `target.shield_armor` (clamped to 0.5 minimum).
 /// 3. If damage exceeds remaining shields, remaining raw damage spills over into HP, mitigated by `target.life_armor`.
@@ -324,6 +325,10 @@ pub fn is_within_firing_arc(
 
 /// Advances the weapon state machine for an entity for a single tick.
 /// A carried actor returns false without changing any field, including cooldown.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one weapon state machine; combat extraction is plan step 3.1"
+)]
 pub fn step_entity_weapon(
     entity: &mut Entity,
     weapon: &WeaponSpec,
@@ -367,6 +372,19 @@ pub fn step_entity_weapon(
 
                 if is_within_firing_arc(current_aim, entity.position, target_pos, weapon.firing_arc)
                 {
+                    // An unrestricted arc removes the aiming gate, not the aiming: the turret
+                    // or hull keeps slewing, so a firing weapon never stays pointed away.
+                    if weapon.firing_arc >= SimAngle::DEG_180 {
+                        if weapon.has_turret {
+                            entity.turret_angle = entity
+                                .turret_angle
+                                .rotate_towards(target_angle, weapon.turret_turn_rate.raw());
+                        } else {
+                            entity.heading = entity
+                                .heading
+                                .rotate_towards(target_angle, weapon.turret_turn_rate.raw());
+                        }
+                    }
                     // CRITICAL COOLDOWN GUARD:
                     // An entity may align with a target while its weapon is on cooldown,
                     // but MUST NOT start Windup until cooldown has fully elapsed!

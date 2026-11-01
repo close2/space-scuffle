@@ -212,6 +212,10 @@ impl SimWorld {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "one production transaction; splitting is plan step 9.2"
+)]
 pub(super) fn validate_job_source(
     catalog: &crate::UnitCatalog,
     map: &sim_map::GameMap,

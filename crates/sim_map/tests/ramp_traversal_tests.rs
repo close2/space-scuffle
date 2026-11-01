@@ -188,8 +188,9 @@ fn continuous_segments_visit_intervening_cells_and_exact_boundaries() -> TestRes
 fn clearance_and_smoothing_keep_ramp_side_walls_closed() -> TestResult {
     let map = ramp_map()?;
     let mut pathfinder = Pathfinder::new(&map);
-    assert!(pathfinder.clearance_at(6, 6) >= 2);
-    assert_eq!(pathfinder.clearance_at(5, 6), 1);
+    // The ramp is three cells wide, and its side wall limits the ground beside it.
+    assert!(pathfinder.clearance_at(6, 6) >= UnitClearance::Large.required_clearance());
+    assert!(pathfinder.clearance_at(5, 6) < pathfinder.clearance_at(2, 2));
     for clearance in [
         UnitClearance::Small,
         UnitClearance::Medium,
@@ -276,6 +277,8 @@ fn real_structures_obey_knowledge_and_same_cell_footprint_policy() -> TestResult
     for y in 0..16 {
         map.place_structure(EntityId(y + 1), 8, y, 1, 1)?;
     }
+    // Together with the wall this leaves cell (7, 7) one cell wide.
+    map.place_structure(EntityId(100), 6, 7, 1, 1)?;
     let mut pathfinder = Pathfinder::new(&map);
     let unknown = vec![false; 256];
     let known = vec![true; 256];
@@ -299,7 +302,7 @@ fn real_structures_obey_knowledge_and_same_cell_footprint_policy() -> TestResult
             }
         )
         .is_err());
-    // The anchor cell is clear, but the Large footprint overlaps a known wall.
+    // The cell itself is clear, but no point in it fits a Large disc between known walls.
     let same_cell = PathRequestWithVision {
         start: center(7, 7),
         goal: center(7, 7),

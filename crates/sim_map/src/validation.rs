@@ -19,8 +19,12 @@ use sim_types::{SimScalar, SimVec2};
 
 use crate::error::PlacementFailureReason;
 use crate::grid::{CellFlags, CliffLevel, RampDir, TerrainKind, MAX_RAMP_RUN_CELLS};
-use crate::map_format::{MapDocument, MapEntityId};
+use crate::map_format::{
+    MapDocument, MapEntityId, MapStartLocation, MAX_MAP_DIMENSION, MIN_MAP_DIMENSION,
+    WATCHTOWER_ENTITY_ID_BASE,
+};
 use crate::pathfinding::{PathRequest, Pathfinder, UnitClearance};
+use crate::vision::MAX_SIGHT_RADIUS_CELLS;
 
 /// Minimum number of player start locations required for a valid playable map.
 pub const MIN_START_LOCATIONS: usize = 2;
@@ -69,6 +73,19 @@ impl MapValidationReport {
 /// Strongly-typed map validation errors that prevent a map from being simulated.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MapValidationError {
+    /// Document dimensions are unsupported or disagree with the stored cell grid.
+    ///
+    /// Reported alone: no other check can index a grid whose shape is unknown.
+    #[error("map grid has {cells} cells, which does not fit dimensions {width}x{height}")]
+    CellGridMismatch {
+        /// Declared width in cells.
+        width: u32,
+        /// Declared height in cells.
+        height: u32,
+        /// Number of cells actually stored.
+        cells: usize,
+    },
+
     /// Abyss terrain marked as buildable or ground pathable.
     #[error("abyss cell at ({x}, {y}) is marked traversable or buildable")]
     AbyssCellTraversable {
@@ -94,6 +111,13 @@ pub enum MapValidationError {
         x: u32,
         /// Y coordinate of cell.
         y: u32,
+    },
+
+    /// Watchtower identifier cannot be mapped into the simulation entity ID range.
+    #[error("watchtower {id:?} identifier is too large for the simulation entity range")]
+    EntityIdOutOfRange {
+        /// Entity ID of watchtower.
+        id: MapEntityId,
     },
 
     /// Ramp cell lacking the ground pathable flag.
@@ -262,6 +286,13 @@ pub enum MapValidationError {
         id: MapEntityId,
     },
 
+    /// Watchtower reveal radius is larger than vision can honour.
+    #[error("watchtower {id:?} reveal radius exceeds {MAX_SIGHT_RADIUS_CELLS} cells")]
+    WatchtowerRevealTooLarge {
+        /// Entity ID of watchtower.
+        id: MapEntityId,
+    },
+
     /// Pathfinding between start locations failed (bases are disconnected).
     #[error("pathfinding between start locations {a:?} and {b:?} failed; bases are unreachable")]
     StartLocationsUnreachable {
@@ -373,14 +404,48 @@ struct RampRunInfo {
     cells: Vec<(u32, u32)>,
 }
 
+/// Returns the grid step of a cardinal ramp, or `None` for a legacy diagonal direction.
+fn ramp_axis(dir: RampDir) -> Option<(i32, i32)> {
+    match dir {
+        RampDir::North => Some((0, 1)),
+        RampDir::South => Some((0, -1)),
+        RampDir::East => Some((1, 0)),
+        RampDir::West => Some((-1, 0)),
+        _ => None,
+    }
+}
+
+/// Tests whether a start footprint fits on the grid, widening so huge coordinates cannot wrap.
+fn footprint_in_bounds(start: &MapStartLocation, width: u32, height: u32) -> bool {
+    u64::from(start.cell.0) + u64::from(start.footprint.0) <= u64::from(width)
+        && u64::from(start.cell.1) + u64::from(start.footprint.1) <= u64::from(height)
+}
+
 /// Evaluates all validation rules on the given map document, returning a deterministic report.
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "numbered checks in documented order; splitting is plan step 9.2"
+)]
 pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
 
     let width = doc.width;
     let height = doc.height;
+
+    // Check 0: CellGridMismatch. Every later check indexes `cells` by (y * width + x), so an
+    // untrusted document must prove its shape before any of them may run.
+    let supported = (MIN_MAP_DIMENSION..=MAX_MAP_DIMENSION).contains(&width)
+        && (MIN_MAP_DIMENSION..=MAX_MAP_DIMENSION).contains(&height);
+    if !supported || doc.cells.len() as u64 != u64::from(width) * u64::from(height) {
+        errors.push(MapValidationError::CellGridMismatch {
+            width,
+            height,
+            cells: doc.cells.len(),
+        });
+        return MapValidationReport { errors, warnings };
+    }
 
     // Check 1: AbyssCellTraversable
     for y in 0..height {
@@ -440,38 +505,24 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
         for x in 0..width {
             let spec = &doc.cells[(y * width + x) as usize];
             let Some(dir) = spec.ramp else { continue };
-            let (dx, dy) = match dir {
-                RampDir::North => (0i32, 1i32),
-                RampDir::South => (0i32, -1i32),
-                RampDir::East => (1i32, 0i32),
-                RampDir::West => (-1i32, 0i32),
-                _ => continue,
+            let Some((dx, dy)) = ramp_axis(dir) else {
+                continue;
             };
 
-            let prev_x = x as i32 - dx;
-            let prev_y = y as i32 - dy;
-            let is_first =
-                if prev_x < 0 || prev_y < 0 || prev_x >= width as i32 || prev_y >= height as i32 {
-                    true
-                } else {
-                    doc.cell(prev_x as u32, prev_y as u32).and_then(|c| c.ramp) != Some(dir)
-                };
+            let previous = doc
+                .offset_cell((x, y), (-dx, -dy))
+                .and_then(|cell| doc.cell(cell.0, cell.1));
+            let is_first = previous.and_then(|c| c.ramp) != Some(dir);
 
             if is_first {
                 let mut run_cells = Vec::new();
-                let mut cx = x as i32;
-                let mut cy = y as i32;
-                while cx >= 0 && cy >= 0 && cx < width as i32 && cy < height as i32 {
-                    let Some(c_spec) = doc.cell(cx as u32, cy as u32) else {
-                        break;
-                    };
-                    if c_spec.ramp == Some(dir) {
-                        run_cells.push((cx as u32, cy as u32));
-                        cx += dx;
-                        cy += dy;
-                    } else {
+                let mut next = Some((x, y));
+                while let Some(cell) = next {
+                    if doc.cell(cell.0, cell.1).and_then(|c| c.ramp) != Some(dir) {
                         break;
                     }
+                    run_cells.push(cell);
+                    next = doc.offset_cell(cell, (dx, dy));
                 }
                 let Some(&last) = run_cells.last() else {
                     continue;
@@ -492,40 +543,30 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
             errors.push(MapValidationError::RampRunTooLong {
                 x: run.first.0,
                 y: run.first.1,
-                len: run.cells.len() as u8,
+                len: u8::try_from(run.cells.len()).unwrap_or(u8::MAX),
             });
         }
     }
 
     // Check 7: RampUpperLandingMismatch
     for run in &ramp_runs {
-        let (dx, dy) = match run.dir {
-            RampDir::North => (0i32, 1i32),
-            RampDir::South => (0i32, -1i32),
-            RampDir::East => (1i32, 0i32),
-            RampDir::West => (-1i32, 0i32),
-            _ => continue,
+        let Some((dx, dy)) = ramp_axis(run.dir) else {
+            continue;
         };
-        let next_x = run.last.0 as i32 + dx;
-        let next_y = run.last.1 as i32 + dy;
         let Some(first_cell) = doc.cell(run.first.0, run.first.1) else {
             continue;
         };
         let low_level = first_cell.level;
 
-        let mismatch =
-            if next_x < 0 || next_y < 0 || next_x >= width as i32 || next_y >= height as i32 {
-                true
-            } else {
-                match doc.cell(next_x as u32, next_y as u32) {
-                    Some(next_cell) => {
-                        next_cell.ramp.is_some()
-                            || next_cell.terrain == TerrainKind::Abyss
-                            || next_cell.level.0 != low_level.0 + 1
-                    }
-                    None => true,
-                }
-            };
+        let upper = doc
+            .offset_cell(run.last, (dx, dy))
+            .and_then(|cell| doc.cell(cell.0, cell.1));
+        let mismatch = upper.is_none_or(|next_cell| {
+            next_cell.ramp.is_some()
+                || next_cell.terrain == TerrainKind::Abyss
+                || !next_cell.flags.contains(CellFlags::GROUND_PATHABLE)
+                || next_cell.level.0 != low_level.0 + 1
+        });
 
         if mismatch {
             errors.push(MapValidationError::RampUpperLandingMismatch {
@@ -537,33 +578,23 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
 
     // Check 8: RampLowerLandingMismatch
     for run in &ramp_runs {
-        let (dx, dy) = match run.dir {
-            RampDir::North => (0i32, 1i32),
-            RampDir::South => (0i32, -1i32),
-            RampDir::East => (1i32, 0i32),
-            RampDir::West => (-1i32, 0i32),
-            _ => continue,
+        let Some((dx, dy)) = ramp_axis(run.dir) else {
+            continue;
         };
-        let prev_x = run.first.0 as i32 - dx;
-        let prev_y = run.first.1 as i32 - dy;
         let Some(first_cell) = doc.cell(run.first.0, run.first.1) else {
             continue;
         };
         let low_level = first_cell.level;
 
-        let mismatch =
-            if prev_x < 0 || prev_y < 0 || prev_x >= width as i32 || prev_y >= height as i32 {
-                true
-            } else {
-                match doc.cell(prev_x as u32, prev_y as u32) {
-                    Some(prev_cell) => {
-                        prev_cell.ramp.is_some()
-                            || prev_cell.terrain == TerrainKind::Abyss
-                            || prev_cell.level != low_level
-                    }
-                    None => true,
-                }
-            };
+        let lower = doc
+            .offset_cell(run.first, (-dx, -dy))
+            .and_then(|cell| doc.cell(cell.0, cell.1));
+        let mismatch = lower.is_none_or(|prev_cell| {
+            prev_cell.ramp.is_some()
+                || prev_cell.terrain == TerrainKind::Abyss
+                || !prev_cell.flags.contains(CellFlags::GROUND_PATHABLE)
+                || prev_cell.level != low_level
+        });
 
         if mismatch {
             errors.push(MapValidationError::RampLowerLandingMismatch {
@@ -662,15 +693,15 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
             let start_a = &doc.start_locations[i];
             let start_b = &doc.start_locations[j];
 
-            let ca_x = start_a.cell.0 as i64 * 2 + start_a.footprint.0 as i64;
-            let ca_y = start_a.cell.1 as i64 * 2 + start_a.footprint.1 as i64;
-            let cb_x = start_b.cell.0 as i64 * 2 + start_b.footprint.0 as i64;
-            let cb_y = start_b.cell.1 as i64 * 2 + start_b.footprint.1 as i64;
+            let ca_x = i64::from(start_a.cell.0) * 2 + i64::from(start_a.footprint.0);
+            let ca_y = i64::from(start_a.cell.1) * 2 + i64::from(start_a.footprint.1);
+            let cb_x = i64::from(start_b.cell.0) * 2 + i64::from(start_b.footprint.0);
+            let cb_y = i64::from(start_b.cell.1) * 2 + i64::from(start_b.footprint.1);
 
             let diff_x = (ca_x - cb_x).abs();
             let diff_y = (ca_y - cb_y).abs();
             let chebyshev_doubled = diff_x.max(diff_y);
-            let distance = (chebyshev_doubled / 2) as u32;
+            let distance = u32::try_from(chebyshev_doubled / 2).unwrap_or(u32::MAX);
 
             if distance < MIN_START_SEPARATION_CELLS {
                 errors.push(MapValidationError::StartLocationsTooClose {
@@ -720,12 +751,17 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
         }
     }
     for s in &doc.start_locations {
-        if s.cell.0 + s.footprint.0 as u32 > width || s.cell.1 + s.footprint.1 as u32 > height {
+        if !footprint_in_bounds(s, width, height) {
             errors.push(MapValidationError::EntityOutOfBounds {
                 id: s.id,
                 x: s.cell.0,
                 y: s.cell.1,
             });
+        }
+    }
+    for wt in &doc.watchtowers {
+        if WATCHTOWER_ENTITY_ID_BASE.checked_add(wt.id.0).is_none() {
+            errors.push(MapValidationError::EntityIdOutOfRange { id: wt.id });
         }
     }
 
@@ -745,9 +781,12 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
     // Check 18: ResourceInsideStartFootprint
     for r in &doc.resources {
         for s in &doc.start_locations {
-            let in_x = r.cell.0 >= s.cell.0 && r.cell.0 < s.cell.0 + s.footprint.0 as u32;
-            let in_y = r.cell.1 >= s.cell.1 && r.cell.1 < s.cell.1 + s.footprint.1 as u32;
-            if in_x && in_y {
+            let in_axis = |value: u32, start: u32, size: u8| {
+                value >= start && u64::from(value) < u64::from(start) + u64::from(size)
+            };
+            if in_axis(r.cell.0, s.cell.0, s.footprint.0)
+                && in_axis(r.cell.1, s.cell.1, s.footprint.1)
+            {
                 errors.push(MapValidationError::ResourceInsideStartFootprint {
                     id: r.id,
                     start: s.id,
@@ -786,6 +825,9 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
     for wt in &doc.watchtowers {
         if wt.capture_radius_tenths == 0 || wt.reveal_radius_tenths == 0 {
             errors.push(MapValidationError::ZeroWatchtowerRadius { id: wt.id });
+        }
+        if u32::from(wt.reveal_radius_tenths) > MAX_SIGHT_RADIUS_CELLS * 10 {
+            errors.push(MapValidationError::WatchtowerRevealTooLarge { id: wt.id });
         }
     }
 
@@ -856,10 +898,10 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
     // Warnings:
     // 1. NarrowRamp: run width perpendicular to dir < MIN_RECOMMENDED_RAMP_WIDTH
     for run in &ramp_runs {
-        let (perp_dx, perp_dy) = match run.dir {
+        let perpendicular = match run.dir {
             RampDir::North | RampDir::South => (1i32, 0i32),
             RampDir::East | RampDir::West => (0i32, 1i32),
-            _ => (0i32, 0i32),
+            _ => continue,
         };
 
         let (x, y) = run.first;
@@ -868,41 +910,25 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
         };
         let base_level = first_cell.level;
 
-        // Walk negative perpendicular
-        let mut count_neg = 0u8;
-        let mut cx = x as i32 - perp_dx;
-        let mut cy = y as i32 - perp_dy;
-        while cx >= 0 && cy >= 0 && cx < width as i32 && cy < height as i32 {
-            let Some(neighbor) = doc.cell(cx as u32, cy as u32) else {
-                break;
-            };
-            if neighbor.ramp == Some(run.dir) && neighbor.level == base_level {
-                count_neg += 1;
-                cx -= perp_dx;
-                cy -= perp_dy;
-            } else {
-                break;
+        let count_beside = |step: (i32, i32)| {
+            let mut count = 0u8;
+            let mut at = (x, y);
+            while let Some(next) = doc.offset_cell(at, step) {
+                let matches_run = doc.cell(next.0, next.1).is_some_and(|neighbor| {
+                    neighbor.ramp == Some(run.dir) && neighbor.level == base_level
+                });
+                if !matches_run {
+                    break;
+                }
+                count = count.saturating_add(1);
+                at = next;
             }
-        }
+            count
+        };
+        let count_neg = count_beside((-perpendicular.0, -perpendicular.1));
+        let count_pos = count_beside(perpendicular);
 
-        // Walk positive perpendicular
-        let mut count_pos = 0u8;
-        cx = x as i32 + perp_dx;
-        cy = y as i32 + perp_dy;
-        while cx >= 0 && cy >= 0 && cx < width as i32 && cy < height as i32 {
-            let Some(neighbor) = doc.cell(cx as u32, cy as u32) else {
-                break;
-            };
-            if neighbor.ramp == Some(run.dir) && neighbor.level == base_level {
-                count_pos += 1;
-                cx += perp_dx;
-                cy += perp_dy;
-            } else {
-                break;
-            }
-        }
-
-        let width = 1 + count_neg + count_pos;
+        let width = count_neg.saturating_add(count_pos).saturating_add(1);
         if width < MIN_RECOMMENDED_RAMP_WIDTH {
             warnings.push(MapValidationWarning::NarrowRamp { x, y, width });
         }
@@ -934,20 +960,27 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
 
     // 3 & 4. Resource association & imbalance
     let radius_sq =
-        (RESOURCE_ASSOCIATION_RADIUS_CELLS as i32) * (RESOURCE_ASSOCIATION_RADIUS_CELLS as i32);
+        i64::from(RESOURCE_ASSOCIATION_RADIUS_CELLS) * i64::from(RESOURCE_ASSOCIATION_RADIUS_CELLS);
     let mut slot_resource_counts: BTreeMap<u8, usize> = BTreeMap::new();
     for s in &doc.start_locations {
         slot_resource_counts.insert(s.player_slot, 0);
     }
 
     for r in &doc.resources {
-        let mut best: Option<(u8, i32)> = None;
+        // Out-of-bounds entities are already errors; association is only defined on the grid.
+        if r.cell.0 >= width || r.cell.1 >= height {
+            continue;
+        }
+        let mut best: Option<(u8, i64)> = None;
 
         for s in &doc.start_locations {
-            let center_x = s.cell.0 as i32 + s.footprint.0 as i32 / 2;
-            let center_y = s.cell.1 as i32 + s.footprint.1 as i32 / 2;
-            let dx = r.cell.0 as i32 - center_x;
-            let dy = r.cell.1 as i32 - center_y;
+            if !footprint_in_bounds(s, width, height) {
+                continue;
+            }
+            let center_x = i64::from(s.cell.0) + i64::from(s.footprint.0) / 2;
+            let center_y = i64::from(s.cell.1) + i64::from(s.footprint.1) / 2;
+            let dx = i64::from(r.cell.0) - center_x;
+            let dy = i64::from(r.cell.1) - center_y;
             let dist_sq = dx * dx + dy * dy;
 
             if dist_sq <= radius_sq {

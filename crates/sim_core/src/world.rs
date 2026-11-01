@@ -154,6 +154,7 @@ pub struct SimWorld {
     // Reusable per-tick scratch buffers to eliminate allocations
     scratch_neighbors: Vec<EntityId>,
     scratch_targets: Vec<(TargetPriorityKey, EntityId)>,
+    scratch_watchtower_units: Vec<(PlayerId, SimVec2)>,
 }
 
 impl SimWorld {
@@ -242,6 +243,7 @@ impl SimWorld {
             known_blocked_cells,
             scratch_neighbors: Vec::with_capacity(32),
             scratch_targets: Vec::with_capacity(64),
+            scratch_watchtower_units: Vec::new(),
         };
 
         world.last_checksum = world.compute_checksum();
@@ -254,19 +256,20 @@ impl SimWorld {
     /// - 64x64 flat arena.
     /// - Blue Squad (Player 0): 10 Marines + 2 Marauders at (15.0, 32.0).
     /// - Red Squad (Player 1): 8 Zealots + 2 Siege Tanks at (45.0, 32.0).
-    /// - Blue Base: CommandDome at (5, 5), SupplyDome at (12, 5), BarracksDome at (16, 5).
-    /// - Red Base: CommandDome at (54, 54), SupplyDome at (48, 54), BarracksDome at (42, 54).
+    /// - Blue Base: `CommandDome` at (5, 5), `SupplyDome` at (12, 5), `BarracksDome` at (16, 5).
+    /// - Red Base: `CommandDome` at (54, 54), `SupplyDome` at (48, 54), `BarracksDome` at (42, 54).
     ///
     /// # Panics
     /// Panics if standard starter archetypes are missing from the embedded catalog.
     #[must_use]
     #[allow(clippy::expect_used)]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "split in plan steps 3.1 and 9.1, which own this file's structure"
+    )]
     pub fn new_default_battle_sandbox() -> Self {
         let default_cell = MapCell::default_ground(CliffLevel(0));
-        let map = match GameMap::new(64, 64, default_cell) {
-            Ok(m) => m,
-            Err(_) => unreachable!("invariant: 64x64 default map dimensions are valid"),
-        };
+        let map = GameMap::new(64, 64, default_cell).expect("invariant: 64x64 is a valid map size");
         let mut world = Self::new(map, 0x5EED_BEEF);
 
         // Resolve sandbox unit IDs dynamically by role/capability from declarative catalog
@@ -821,6 +824,10 @@ impl SimWorld {
     ///
     /// Validates energy cost, cooldowns, range, terrain pathability, and channeling.
     /// Returns `true` if cast successfully; `false` otherwise.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "split in plan steps 3.1 and 9.1, which own this file's structure"
+    )]
     pub(crate) fn try_execute_ability_prevalidated(
         &mut self,
         entity_id: EntityId,
@@ -843,9 +850,8 @@ impl SimWorld {
             .get(entity.unit_type_id)
             .map_err(|_| MovementInvariant::MissingArchetype(entity_id))?;
 
-        let ability = match arch.abilities.get(ability_index as usize) {
-            Some(a) => a,
-            None => return Ok(false),
+        let Some(ability) = arch.abilities.get(ability_index as usize) else {
+            return Ok(false);
         };
 
         if let Some(&cd) = entity.ability_cooldowns.get(ability_index as usize) {
@@ -1092,6 +1098,10 @@ impl SimWorld {
     }
 
     // Normal step or public dispatcher validated once. No command writes carrier links.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "split in plan steps 3.1 and 9.1, which own this file's structure"
+    )]
     fn process_commands_prevalidated(&mut self, input: &TickBundle) {
         for (command_index, cmd) in input.commands.iter().enumerate() {
             if matches!(
@@ -1224,6 +1234,10 @@ impl SimWorld {
     /// the next queued job starts advancing on the following update.
     /// Direct phase callers must establish `validate_transport_links` beforehand;
     /// normal `step_into` establishes this precondition once for its phase sequence.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "split in plan steps 3.1 and 9.1, which own this file's structure"
+    )]
     pub fn update_production_and_buffs(&mut self) {
         self.advance_production();
         let catalog = &self.catalog;
@@ -1444,10 +1458,43 @@ impl SimWorld {
         self.complete_production();
     }
 
+    /// Assigns each watchtower from the ground units standing on the map this tick.
+    ///
+    /// Air units overfly towers, and structures and transported cargo do not occupy them.
+    // PERFORMANCE RATIONALE:
+    // Why: This runs every tick, and most maps have few towers while battles have many units.
+    // What: Skip entirely on towerless maps; otherwise reuse one scratch buffer of positions.
+    // Trade-off: One retained allocation in exchange for no per-tick heap use.
+    fn update_watchtower_control(&mut self) {
+        if self.map.watchtowers().is_empty() {
+            return;
+        }
+        self.scratch_watchtower_units.clear();
+        for entity in self.entities.values() {
+            if entity.is_loaded_in_transport() || !entity.is_completed {
+                continue;
+            }
+            let occupies = self.catalog.get(entity.unit_type_id).is_ok_and(|arch| {
+                matches!(
+                    arch.mover_type,
+                    sim_types::MoverType::Ground | sim_types::MoverType::CliffJumper
+                ) && !arch.is_immobile_by_default()
+            });
+            if occupies {
+                self.scratch_watchtower_units
+                    .push((entity.owner, entity.position));
+            }
+        }
+        self.map
+            .update_watchtower_capture(&self.scratch_watchtower_units);
+    }
+
     /// Phase 3: Update per-player Fog of War visibility maps and remembered obstacle perception.
     /// Direct phase callers must establish `validate_transport_links` beforehand;
     /// normal `step_into` establishes this precondition once for its phase sequence.
     pub fn update_vision(&mut self) {
+        self.update_watchtower_control();
+
         for p in 0..8 {
             self.vision_maps[p].begin_tick_update();
         }
@@ -1470,9 +1517,10 @@ impl SimWorld {
             }
         }
 
-        for p in 0..8 {
-            self.vision_maps[p].apply_watchtowers(&self.map, PlayerId(p as u8));
-            self.vision_maps[p].end_tick_update();
+        for player in 0..8_u8 {
+            let vision = &mut self.vision_maps[usize::from(player)];
+            vision.apply_watchtowers(&self.map, PlayerId(player));
+            vision.end_tick_update();
         }
 
         let width = self.map.width() as usize;
@@ -1494,13 +1542,11 @@ impl SimWorld {
             if self.known_blocked_cells[p].len() != total_cells {
                 self.known_blocked_cells[p].resize(total_cells, false);
             }
-            for cy in 0..height {
-                for cx in 0..width {
-                    if self.vision_maps[p].visibility_at(cx as u32, cy as u32)
-                        == VisibilityState::Visible
-                    {
-                        let idx = cy * width + cx;
-                        if let Ok(cell) = self.map.cell(cx as u32, cy as u32) {
+            for cy in 0..self.map.height() {
+                for cx in 0..self.map.width() {
+                    if self.vision_maps[p].visibility_at(cx, cy) == VisibilityState::Visible {
+                        let idx = cy as usize * width + cx as usize;
+                        if let Ok(cell) = self.map.cell(cx, cy) {
                             self.known_blocked_cells[p][idx] =
                                 cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE);
                         }
@@ -1668,7 +1714,7 @@ impl SimWorld {
         if desired_dist < SimScalar::ZERO || !policy.contains(map, victim_pos) {
             return Err(MovementMathError::InvalidDistance);
         }
-        let threshold = (SimScalar::from_f32_lossy(0.0001).raw() as u128) << 32;
+        let threshold = u128::from(SimScalar::from_f32_lossy(0.0001).raw().unsigned_abs()) << 32;
         let away = if squared_distance(victim_pos, threat_pos) > (0, threshold) {
             direction(victim_pos, threat_pos)?
         } else {
@@ -1735,6 +1781,10 @@ impl SimWorld {
     }
 
     // Called from valid combat/hazard phases; no relation fields are mutated.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "split in plan steps 3.1 and 9.1, which own this file's structure"
+    )]
     fn apply_combat_retaliation_prevalidated(
         &mut self,
         victim_id: EntityId,
@@ -1905,6 +1955,10 @@ impl SimWorld {
     /// Phase 4: Deterministic target acquisition.
     /// Direct phase callers must establish `validate_transport_links` beforehand;
     /// normal `step_into` establishes this precondition once for its phase sequence.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "split in plan steps 3.1 and 9.1, which own this file's structure"
+    )]
     pub fn acquire_targets(&mut self) {
         // Populate spatial hash grid with current entity positions
         self.spatial_hash.clear();
@@ -1995,9 +2049,8 @@ impl SimWorld {
                     continue;
                 }
 
-                let (cx, cy) = match self.map.world_to_cell(neighbor.position) {
-                    Ok(c) => c,
-                    Err(_) => continue,
+                let Ok((cx, cy)) = self.map.world_to_cell(neighbor.position) else {
+                    continue;
                 };
 
                 // Visibility and detection checks
@@ -2127,6 +2180,10 @@ impl SimWorld {
     /// Phase 6: Resolve circle-circle collisions, engagement anchoring, and push priority.
     /// Direct phase callers must establish `validate_transport_links` beforehand;
     /// normal `step_into` establishes this precondition once for its phase sequence.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "split in plan steps 3.1 and 9.1, which own this file's structure"
+    )]
     pub fn resolve_collisions_and_push(&mut self) {
         let mut entries = std::mem::take(&mut self.movement.collision_entries);
         entries.clear();
@@ -2455,6 +2512,10 @@ impl SimWorld {
     /// Phase 7: Advance weapon state machines, fire attacks, and step projectiles.
     /// Direct phase callers must establish `validate_transport_links` beforehand;
     /// normal `step_into` establishes this precondition once for its phase sequence.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "split in plan steps 3.1 and 9.1, which own this file's structure"
+    )]
     pub fn step_weapons_and_projectiles(&mut self) {
         // Collect target snapshots first to decouple reads from mutations
         let mut target_snapshots = BTreeMap::new();
@@ -2615,7 +2676,14 @@ impl SimWorld {
 
                 let eff_dist =
                     (dist - target_radius - attacker_radius).max(SimScalar::from_num(0.05));
-                let ticks_to_impact = (eff_dist / proj_speed).0.ceil().to_num::<u32>().max(1);
+                let ticks_to_impact = (eff_dist / proj_speed)
+                    .saturating_ceil()
+                    .saturating_to_u32()
+                    .max(1);
+                #[expect(
+                    clippy::cast_precision_loss,
+                    reason = "presentation only: this value drives no simulation decision"
+                )]
                 let flight_duration_secs = (ticks_to_impact as f32) / 25.0;
 
                 self.projectiles.push(ActiveProjectile {

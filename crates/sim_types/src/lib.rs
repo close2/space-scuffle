@@ -16,6 +16,7 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+#![deny(clippy::unreachable)]
 
 pub mod commands;
 pub mod enums;

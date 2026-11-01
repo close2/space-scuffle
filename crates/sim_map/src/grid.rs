@@ -232,6 +232,8 @@ pub struct PlacedStructure {
     pub width: u8,
     /// Foundation height in 1x1 cells.
     pub height: u8,
+    /// Row-major flags of the footprint cells from before placement, restored on removal.
+    pub prior_flags: Vec<CellFlags>,
 }
 
 /// The authoritative game map representing terrain, cliffs, ramps, and obstacles.
@@ -359,7 +361,26 @@ impl GameMap {
     #[must_use]
     #[inline]
     pub fn in_bounds(&self, x: i32, y: i32) -> bool {
-        x >= 0 && y >= 0 && (x as u32) < self.width && (y as u32) < self.height
+        u32::try_from(x).is_ok_and(|x| x < self.width)
+            && u32::try_from(y).is_ok_and(|y| y < self.height)
+    }
+
+    /// Returns the cell at a signed offset from `cell`, or `None` if that leaves the map.
+    #[must_use]
+    #[inline]
+    pub fn offset_cell(&self, cell: (u32, u32), offset: (i32, i32)) -> Option<(u32, u32)> {
+        let x = cell.0.checked_add_signed(offset.0)?;
+        let y = cell.1.checked_add_signed(offset.1)?;
+        (x < self.width && y < self.height).then_some((x, y))
+    }
+
+    fn out_of_bounds(&self, x: u32, y: u32) -> MapError {
+        MapError::OutOfBounds {
+            x: i32::try_from(x).unwrap_or(i32::MAX),
+            y: i32::try_from(y).unwrap_or(i32::MAX),
+            width: self.width,
+            height: self.height,
+        }
     }
 
     /// Retrieves an immutable reference to the cell at discrete grid coordinates `(x, y)`.
@@ -368,12 +389,7 @@ impl GameMap {
     /// Returns `Err(MapError::OutOfBounds)` if coordinates fall outside the map.
     pub fn cell(&self, x: u32, y: u32) -> Result<&MapCell> {
         if x >= self.width || y >= self.height {
-            return Err(MapError::OutOfBounds {
-                x: x as i32,
-                y: y as i32,
-                width: self.width,
-                height: self.height,
-            });
+            return Err(self.out_of_bounds(x, y));
         }
         let idx = (y as usize) * (self.width as usize) + (x as usize);
         Ok(&self.cells[idx])
@@ -385,12 +401,7 @@ impl GameMap {
     /// Returns `Err(MapError::OutOfBounds)` if coordinates fall outside the map.
     pub fn cell_mut(&mut self, x: u32, y: u32) -> Result<&mut MapCell> {
         if x >= self.width || y >= self.height {
-            return Err(MapError::OutOfBounds {
-                x: x as i32,
-                y: y as i32,
-                width: self.width,
-                height: self.height,
-            });
+            return Err(self.out_of_bounds(x, y));
         }
         let idx = (y as usize) * (self.width as usize) + (x as usize);
         Ok(&mut self.cells[idx])
@@ -409,17 +420,13 @@ impl GameMap {
                 height: self.height,
             });
         }
-        let cx = pos.x.0.to_num::<i64>();
-        let cy = pos.y.0.to_num::<i64>();
-        if cx >= i64::from(self.width) || cy >= i64::from(self.height) {
-            return Err(MapError::OutOfBounds {
-                x: cx as i32,
-                y: cy as i32,
-                width: self.width,
-                height: self.height,
-            });
+        // Both coordinates are nonnegative here, so this conversion is a plain floor.
+        let cx = pos.x.saturating_to_u32();
+        let cy = pos.y.saturating_to_u32();
+        if cx >= self.width || cy >= self.height {
+            return Err(self.out_of_bounds(cx, cy));
         }
-        Ok((cx as u32, cy as u32))
+        Ok((cx, cy))
     }
 
     /// Converts discrete grid cell coordinates into the continuous world center position `(x + 0.5, y + 0.5)`.
@@ -428,12 +435,7 @@ impl GameMap {
     /// Returns `Err(MapError::OutOfBounds)` if cell coordinates are outside map bounds.
     pub fn cell_to_world_center(&self, x: u32, y: u32) -> Result<SimVec2> {
         if x >= self.width || y >= self.height {
-            return Err(MapError::OutOfBounds {
-                x: x as i32,
-                y: y as i32,
-                width: self.width,
-                height: self.height,
-            });
+            return Err(self.out_of_bounds(x, y));
         }
         Ok(SimVec2::new(
             SimScalar::from_num(x) + SimScalar::HALF,
@@ -464,43 +466,33 @@ impl GameMap {
         };
 
         // Walk in -s (descending direction)
+        let continues_run = |candidate: Option<(u32, u32)>| {
+            candidate.filter(|&(cx, cy)| {
+                self.cell(cx, cy).is_ok_and(|neighbor| {
+                    neighbor.ramp == Some(dir) && neighbor.cliff_level == cell.cliff_level
+                })
+            })
+        };
+
         let mut index = 0u8;
-        let mut cx = x as i32;
-        let mut cy = y as i32;
+        let mut at = (x, y);
         while index < MAX_RAMP_RUN_CELLS - 1 {
-            cx -= dx;
-            cy -= dy;
-            if cx < 0 || cy < 0 {
+            let Some(next) = continues_run(self.offset_cell(at, (-dx, -dy))) else {
                 break;
-            }
-            match self.cell(cx as u32, cy as u32) {
-                Ok(neighbor)
-                    if neighbor.ramp == Some(dir) && neighbor.cliff_level == cell.cliff_level =>
-                {
-                    index += 1;
-                }
-                _ => break,
-            }
+            };
+            at = next;
+            index += 1;
         }
 
         // Walk in +s (ascending direction)
         let mut after = 0u8;
-        cx = x as i32;
-        cy = y as i32;
+        at = (x, y);
         while after < MAX_RAMP_RUN_CELLS - 1 {
-            cx += dx;
-            cy += dy;
-            if cx < 0 || cy < 0 {
+            let Some(next) = continues_run(self.offset_cell(at, (dx, dy))) else {
                 break;
-            }
-            match self.cell(cx as u32, cy as u32) {
-                Ok(neighbor)
-                    if neighbor.ramp == Some(dir) && neighbor.cliff_level == cell.cliff_level =>
-                {
-                    after += 1;
-                }
-                _ => break,
-            }
+            };
+            at = next;
+            after += 1;
         }
 
         let run_len = index + 1 + after;
@@ -518,13 +510,11 @@ impl GameMap {
     /// If on a ramp cell, performs deterministic linear interpolation along the ramp axis using `RampProfile`.
     #[must_use]
     pub fn terrain_altitude_scalar(&self, pos: SimVec2) -> SimScalar {
-        let (cx, cy) = match self.world_to_cell(pos) {
-            Ok(c) => c,
-            Err(_) => return SimScalar::ZERO,
+        let Ok((cx, cy)) = self.world_to_cell(pos) else {
+            return SimScalar::ZERO;
         };
-        let cell = match self.cell(cx, cy) {
-            Ok(c) => c,
-            Err(_) => return SimScalar::ZERO,
+        let Ok(cell) = self.cell(cx, cy) else {
+            return SimScalar::ZERO;
         };
         let Some(profile) = self.ramp_profile(cx, cy) else {
             return cell.cliff_level.height_scalar();
@@ -633,12 +623,14 @@ impl GameMap {
     ) -> Result<()> {
         self.can_place_building(cell_x, cell_y, w, h)?;
 
+        let mut prior_flags = Vec::with_capacity(usize::from(w) * usize::from(h));
         for dy in 0..h {
             for dx in 0..w {
                 let cx = cell_x + u32::from(dx);
                 let cy = cell_y + u32::from(dy);
                 let idx = (cy as usize) * (self.width as usize) + (cx as usize);
                 let cell = &mut self.cells[idx];
+                prior_flags.push(cell.flags);
                 cell.flags.insert(CellFlags::OCCUPIED_BY_STRUCTURE);
                 cell.flags
                     .remove(CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE);
@@ -653,13 +645,16 @@ impl GameMap {
                 top_left: (cell_x, cell_y),
                 width: w,
                 height: h,
+                prior_flags,
             },
         );
 
         Ok(())
     }
 
-    /// Removes a building foundation dome from the map, restoring ground passability and buildability.
+    /// Removes a building foundation dome, restoring exactly the cell flags found at placement.
+    ///
+    /// A cell that was buildable but not walkable stays unwalkable after the building is gone.
     ///
     /// # Errors
     /// Returns `Err(MapError::StructureNotFound)` if `id` is not registered on the map.
@@ -669,15 +664,16 @@ impl GameMap {
             .remove(&id)
             .ok_or(MapError::StructureNotFound(id))?;
 
+        let mut prior_flags = placed.prior_flags.iter();
         for dy in 0..placed.height {
             for dx in 0..placed.width {
                 let cx = placed.top_left.0 + u32::from(dx);
                 let cy = placed.top_left.1 + u32::from(dy);
                 let idx = (cy as usize) * (self.width as usize) + (cx as usize);
                 let cell = &mut self.cells[idx];
-                cell.flags.remove(CellFlags::OCCUPIED_BY_STRUCTURE);
-                cell.flags
-                    .insert(CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE);
+                if let Some(flags) = prior_flags.next() {
+                    cell.flags = *flags;
+                }
                 cell.occupying_structure = None;
             }
         }
@@ -685,7 +681,11 @@ impl GameMap {
         Ok(placed)
     }
 
-    /// Updates ownership of neutral watchtowers based on occupying ground units.
+    /// Updates ownership of neutral watchtowers from the ground units currently near them.
+    ///
+    /// `units` lists each eligible unit's owner and world position. A tower belongs to the only
+    /// player with a unit inside its capture radius. It becomes neutral when two players contest
+    /// it or when it is vacated, so holding a tower's vision requires staying on it.
     pub fn update_watchtower_capture(&mut self, units: &[(PlayerId, SimVec2)]) {
         for tower in &mut self.watchtowers {
             let mut occupying_player = None;
@@ -704,15 +704,11 @@ impl GameMap {
                 }
             }
 
-            if contested {
-                tower.controlling_player = None;
-            } else if let Some(p) = occupying_player {
-                tower.controlling_player = Some(p);
-            }
+            tower.controlling_player = if contested { None } else { occupying_player };
         }
     }
 
-    /// Constructs the canonical 64x64 two-level StarCraft II-style test arena.
+    /// Constructs the canonical 64x64 two-level `StarCraft` II-style test arena.
     ///
     /// Features:
     /// - Low ground (Cliff Level 1) in the southern half.
@@ -722,6 +718,10 @@ impl GameMap {
     /// - Neutral Watchtower at mid-ground vantage point.
     /// - Balanced resource clusters (8 mineral patches + 2 gas geysers) per base.
     #[must_use]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one declarative map fixture; splitting it would only scatter the layout"
+    )]
     pub fn default_arena() -> Self {
         let width = 64u32;
         let height = 64u32;

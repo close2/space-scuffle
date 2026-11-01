@@ -2,12 +2,16 @@
 //!
 //! Preserves existing valid f32/f64 quantization while rejecting nonfinite and
 //! out-of-range fixed-point input, narrowing identifier/footprint conversions and
-//! blank identities. This is decoding validation, not a balance or tech-tree audit.
+//! blank identities. It also rejects every value the tick loop cannot handle: a
+//! zero divisor, an empty attack cadence, an inverted range or a body with no size
+//! fails here, once, instead of on every peer during a match. This is safety
+//! validation, not a balance audit: odd but runnable authored values remain legal.
 
 use super::{StructureArchetypeDef, UnitArchetypeDef, UnitModeSpecDef, WeaponSpecDef};
 use crate::error::{SimCoreError, SimResult};
 use crate::weapon_timing::AttackRate;
-use sim_types::{AbilityEffectSpec, AbilitySpec, SimScalar};
+use sim_map::MAX_SIGHT_RADIUS_CELLS;
+use sim_types::{AbilityEffectSpec, AbilitySpec, ProjectileTargetLossBehavior, SimScalar};
 
 fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
     SimCoreError::CatalogInvalidValue {
@@ -39,6 +43,32 @@ fn nonnegative(definition: &str, field: &str, value: f64) -> SimResult<()> {
     scalar(definition, field, value)?;
     if value < 0.0 {
         return Err(invalid(definition, field, "must be nonnegative"));
+    }
+    Ok(())
+}
+
+/// Rejects a value that would not remain strictly positive once quantized to Q32.32.
+fn positive(definition: &str, field: &str, value: f32) -> SimResult<()> {
+    scalar(definition, field, f64::from(value))?;
+    if SimScalar::from_f32_lossy(value) <= SimScalar::ZERO {
+        return Err(invalid(
+            definition,
+            field,
+            "must remain strictly positive after Q32.32 conversion",
+        ));
+    }
+    Ok(())
+}
+
+/// Rejects a sight radius that vision would have to shorten.
+fn sight(definition: &str, field: &str, value: f64) -> SimResult<()> {
+    nonnegative(definition, field, value)?;
+    if value > f64::from(MAX_SIGHT_RADIUS_CELLS) {
+        return Err(invalid(
+            definition,
+            field,
+            "must not exceed the maximum sight radius supported by vision",
+        ));
     }
     Ok(())
 }
@@ -133,7 +163,27 @@ impl UnitArchetypeDef {
         ] {
             scalar(&self.slug, field, f64::from(value))?;
         }
-        nonnegative(&self.slug, "max_speed", f64::from(self.max_speed))?;
+        for (field, value) in [
+            ("max_hp", self.max_hp),
+            ("collision_radius", self.collision_radius),
+        ] {
+            positive(&self.slug, field, value)?;
+        }
+        for (field, value) in [
+            ("max_shields", self.max_shields),
+            ("max_energy", self.max_energy),
+            ("hp_regen_per_tick", self.hp_regen_per_tick),
+            ("shield_regen_per_tick", self.shield_regen_per_tick),
+            ("energy_regen_per_tick", self.energy_regen_per_tick),
+            ("max_speed", self.max_speed),
+            ("acceleration", self.acceleration),
+            ("deceleration", self.deceleration),
+            ("separation_radius", self.separation_radius),
+            ("scan_range", self.scan_range),
+        ] {
+            nonnegative(&self.slug, field, f64::from(value))?;
+        }
+        sight(&self.slug, "sight_radius", f64::from(self.sight_radius))?;
         angle(&self.slug, "turn_rate_deg", self.turn_rate_deg)?;
         for (name, weapon) in [
             ("weapon", &self.weapon),
@@ -200,22 +250,71 @@ impl WeaponSpecDef {
         ] {
             scalar(definition, &format!("{prefix}.{field}"), f64::from(value))?;
         }
+        for (field, value) in [
+            ("min_range", self.min_range),
+            ("max_range", self.max_range),
+            ("base_damage", self.base_damage),
+        ] {
+            nonnegative(definition, &format!("{prefix}.{field}"), f64::from(value))?;
+        }
+        if self.min_range > self.max_range {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.min_range"),
+                "must not exceed max_range",
+            ));
+        }
+        if self.attacks_count == 0 {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.attacks_count"),
+                "a weapon must strike at least once per attack cycle",
+            ));
+        }
+        if self.period_ticks == 0 {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.period_ticks"),
+                "an attack cycle must last at least one tick",
+            ));
+        }
         angle(
             definition,
             &format!("{prefix}.firing_arc_deg"),
             self.firing_arc_deg,
         )?;
+        if !(0.0..=360.0).contains(&self.firing_arc_deg) {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.firing_arc_deg"),
+                "must lie in 0..=360 degrees",
+            ));
+        }
         angle(
             definition,
             &format!("{prefix}.turret_turn_rate_deg"),
             self.turret_turn_rate_deg,
         )?;
         if let Some(speed) = self.projectile_speed {
-            scalar(
-                definition,
-                &format!("{prefix}.projectile_speed"),
-                f64::from(speed),
-            )?;
+            positive(definition, &format!("{prefix}.projectile_speed"), speed)?;
+            if self.max_projectile_lifetime_ticks == 0 {
+                return Err(invalid(
+                    definition,
+                    &format!("{prefix}.max_projectile_lifetime_ticks"),
+                    "a projectile must live for at least one tick",
+                ));
+            }
+        }
+        if let ProjectileTargetLossBehavior::RetargetNearest { search_radius } =
+            self.target_loss_behavior
+        {
+            if search_radius < SimScalar::ZERO {
+                return Err(invalid(
+                    definition,
+                    &format!("{prefix}.target_loss_behavior.search_radius"),
+                    "must be nonnegative",
+                ));
+            }
         }
         if let Some(splash) = &self.splash {
             for (field, value) in [
@@ -223,11 +322,20 @@ impl WeaponSpecDef {
                 ("middle_radius", splash.middle_radius),
                 ("outer_radius", splash.outer_radius),
             ] {
-                scalar(
+                nonnegative(
                     definition,
                     &format!("{prefix}.splash.{field}"),
                     f64::from(value),
                 )?;
+            }
+            if splash.inner_radius > splash.middle_radius
+                || splash.middle_radius > splash.outer_radius
+            {
+                return Err(invalid(
+                    definition,
+                    &format!("{prefix}.splash.middle_radius"),
+                    "splash radii must not decrease from inner to outer",
+                ));
             }
         }
         Ok(())
@@ -243,7 +351,7 @@ impl UnitModeSpecDef {
             f64::from(self.energy_cost_per_second),
         )?;
         if let Some(radius) = self.sight_radius_override {
-            scalar(
+            sight(
                 definition,
                 &format!("{prefix}.sight_radius_override"),
                 f64::from(radius),
@@ -292,6 +400,17 @@ impl StructureArchetypeDef {
             ("sight_radius", self.sight_radius),
         ] {
             scalar(&self.slug, field, value)?;
+        }
+        for (field, value) in [
+            ("max_hp", self.max_hp),
+            ("max_shields", self.max_shields),
+            ("max_energy", self.max_energy),
+        ] {
+            nonnegative(&self.slug, field, value)?;
+        }
+        sight(&self.slug, "sight_radius", self.sight_radius)?;
+        if self.max_hp <= 0.0 {
+            return Err(invalid(&self.slug, "max_hp", "must be strictly positive"));
         }
         for (name, weapon) in [
             ("ground_weapon", &self.ground_weapon),

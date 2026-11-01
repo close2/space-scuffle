@@ -15,20 +15,10 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
-#![allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss,
-    clippy::cast_precision_loss,
-    clippy::too_many_lines,
-    clippy::doc_markdown,
-    clippy::manual_let_else,
-    clippy::cast_lossless
-)]
+#![deny(clippy::unreachable)]
 
 pub mod error;
 pub mod grid;
-pub mod loader;
 pub mod map_format;
 pub mod pathfinding;
 pub mod traversal;
@@ -40,7 +30,6 @@ pub use grid::{
     CellFlags, CliffLevel, GameMap, MapCell, PlacedStructure, RampDir, RampProfile, ResourceKind,
     ResourceNode, TerrainKind, Watchtower, CLIFF_LEVEL_HEIGHT, MAX_RAMP_RUN_CELLS,
 };
-pub use loader::ScMapData;
 pub use map_format::{
     MapCellSpec, MapDocument, MapEntityId, MapFile, MapFormatError, MapLayer, MapMetadata,
     MapResource, MapStartLocation, MapWatchtower, CURRENT_MAP_FORMAT_VERSION, MAX_MAP_DIMENSION,
@@ -56,7 +45,7 @@ pub use validation::{
     MAX_PLAYER_SLOTS, MIN_RECOMMENDED_RAMP_WIDTH, MIN_START_LOCATIONS, MIN_START_SEPARATION_CELLS,
     RESOURCE_ASSOCIATION_RADIUS_CELLS, VALIDATION_PATH_CLEARANCE,
 };
-pub use vision::{PlayerVisionMap, VisionSource};
+pub use vision::{PlayerVisionMap, VisionSource, MAX_SIGHT_RADIUS_CELLS};
 
 /// Canonical type alias for [`GameMap`] matching simulation core naming conventions.
 pub type SimMap = GameMap;
