@@ -54,16 +54,16 @@ use client::editor::playtest::{
 };
 use client::editor::tools::PaintOp;
 use client::editor::{
-    editor_ui_system, editor_window_plugin, EditorStartup, EditorToolState, InitialDocument,
-    LoadDocumentRequest, LosPreviewState, MapEditorPlugin, PendingUnsavedAction, SymmetryMode,
-    UnsavedChangesModalState, PLAYTEST_BASELINE_POSE, PLAYTEST_POSE,
+    editor_ui_system, editor_window_plugin, EditorStartup, EditorTool, EditorToolState,
+    InitialDocument, LoadDocumentRequest, LosPreviewState, MapEditorPlugin, PendingUnsavedAction,
+    SymmetryMode, UnsavedChangesModalState, PLAYTEST_BASELINE_POSE, PLAYTEST_POSE,
 };
 use client::lab_ui::LabState;
 use client::resolve_assets_dir;
 use client::scene_controller::LiveBattleBubble;
 use client::terrain::{
     TerrainChunks, TerrainFieldImages, TerrainMaterial, TerrainParamsState, TerrainState,
-    CHUNK_DUAL_CELLS,
+    CHUNK_DUAL_CELLS, OVERLAY_FLAG_BUILDABILITY, OVERLAY_FLAG_GRID, OVERLAY_FLAG_PATHABILITY,
 };
 use sim_core::catalog::RuntimeCatalogs;
 use sim_core::scenario::{PlayerSetup, StartLoadoutCatalog};
@@ -243,19 +243,22 @@ fn test_zero_hardcoded_creature_names() {
         "\"siege_tank\"",
     ];
 
-    let entries = fs::read_dir(&editor_dir).expect("read editor dir");
-    for entry in entries {
-        let entry = entry.expect("valid entry");
-        let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "rs") {
-            let content = fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("failed to read {path:?}: {e}"));
+    let mut directories = vec![editor_dir];
+    while let Some(directory) = directories.pop() {
+        for entry in fs::read_dir(&directory).expect("read editor dir") {
+            let path = entry.expect("valid entry").path();
+            if path.is_dir() {
+                directories.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let content = fs::read_to_string(&path)
+                    .unwrap_or_else(|e| panic!("failed to read {path:?}: {e}"));
 
-            for slug in &forbidden_slugs {
-                assert!(
-                    !content.contains(slug),
-                    "Violation of AGENTS.md §3.3: hardcoded unit slug {slug} found in file {path:?}"
-                );
+                for slug in &forbidden_slugs {
+                    assert!(
+                        !content.contains(slug),
+                        "Violation of AGENTS.md §3.3: hardcoded unit slug {slug} found in file {path:?}"
+                    );
+                }
             }
         }
     }
@@ -1550,4 +1553,67 @@ fn edit_save_playtest_return_and_reopen_round_trip() {
     harness.step(10);
     assert_eq!(harness.phase(), EditorPhase::Playtesting);
     assert!(harness.bubble_count() > 0);
+}
+
+#[test]
+fn tool_and_overlay_shortcuts_reach_their_state() {
+    let mut harness = EditorHarness::new();
+
+    for (key, tool) in [
+        (KeyCode::KeyX, EditorTool::Box),
+        (KeyCode::KeyR, EditorTool::Ramp),
+        (KeyCode::KeyE, EditorTool::Entity),
+        (KeyCode::KeyQ, EditorTool::Select),
+        (KeyCode::KeyT, EditorTool::Eraser),
+        (KeyCode::KeyB, EditorTool::Brush),
+    ] {
+        harness.tap_key(key);
+        assert_eq!(
+            harness
+                .app
+                .world()
+                .resource::<EditorToolState>()
+                .current_tool,
+            tool,
+            "{key:?}"
+        );
+    }
+
+    let flags = |harness: &EditorHarness| {
+        harness
+            .app
+            .world()
+            .resource::<TerrainParamsState>()
+            .overlay_flags
+    };
+    for (key, flag) in [
+        (KeyCode::KeyG, OVERLAY_FLAG_GRID),
+        (KeyCode::KeyP, OVERLAY_FLAG_PATHABILITY),
+        (KeyCode::KeyU, OVERLAY_FLAG_BUILDABILITY),
+    ] {
+        let before = flags(&harness) & flag;
+        harness.tap_key(key);
+        assert_ne!(flags(&harness) & flag, before, "{key:?}");
+    }
+
+    harness.tap_key(KeyCode::KeyV);
+    assert!(
+        harness.app.world().resource::<LosPreviewState>().enabled,
+        "V toggles LOS"
+    );
+
+    let radius = harness
+        .app
+        .world()
+        .resource::<EditorToolState>()
+        .brush_radius;
+    harness.tap_key(KeyCode::BracketRight);
+    assert_eq!(
+        harness
+            .app
+            .world()
+            .resource::<EditorToolState>()
+            .brush_radius,
+        radius + 1
+    );
 }
