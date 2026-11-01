@@ -89,18 +89,6 @@ pub enum MapError {
         goal: SimVec2,
     },
 
-    /// Deserialization of RON map format failed.
-    #[error("failed to deserialize map RON data: {0}")]
-    RonDeserializationError(String),
-
-    /// Serialization of RON map format failed.
-    #[error("failed to serialize map RON data: {0}")]
-    RonSerializationError(String),
-
-    /// Parsing of Tiled TMJ map format failed.
-    #[error("failed to parse Tiled TMJ map: {0}")]
-    TiledParseError(String),
-
     /// Map dimensions must be greater than zero.
     #[error("invalid map dimensions: width={width}, height={height}")]
     InvalidDimensions {

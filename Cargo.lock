@@ -4996,7 +4996,6 @@ dependencies = [
  "rand_chacha 0.3.1",
  "ron",
  "serde",
- "serde_json",
  "sim_types",
  "thiserror 2.0.21",
  "xxhash-rust",

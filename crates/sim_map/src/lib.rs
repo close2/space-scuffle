@@ -28,7 +28,6 @@
 
 pub mod error;
 pub mod grid;
-pub mod loader;
 pub mod map_format;
 pub mod pathfinding;
 pub mod traversal;
@@ -40,7 +39,6 @@ pub use grid::{
     CellFlags, CliffLevel, GameMap, MapCell, PlacedStructure, RampDir, RampProfile, ResourceKind,
     ResourceNode, TerrainKind, Watchtower, CLIFF_LEVEL_HEIGHT, MAX_RAMP_RUN_CELLS,
 };
-pub use loader::ScMapData;
 pub use map_format::{
     MapCellSpec, MapDocument, MapEntityId, MapFile, MapFormatError, MapLayer, MapMetadata,
     MapResource, MapStartLocation, MapWatchtower, CURRENT_MAP_FORMAT_VERSION, MAX_MAP_DIMENSION,
