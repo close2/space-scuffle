@@ -239,6 +239,22 @@ fn s16_unit_vitals_and_geometry_must_be_usable() {
 }
 
 #[test]
+fn f12_catalog_sight_beyond_vision_is_rejected_not_shortened() {
+    assert_rejected(
+        UNITS,
+        "sight_radius: 9.0",
+        "sight_radius: 33.0",
+        "sight_radius",
+    );
+    assert_rejected(
+        STRUCTURES,
+        "sight_radius: 22.0",
+        "sight_radius: 33.0",
+        "sight_radius",
+    );
+}
+
+#[test]
 fn s16_bundle_resolves_every_upgrade_reference() -> TestResult {
     let units = UnitCatalog::from_ron_str_bundle(UNITS, STRUCTURES)?;
     units.validate_upgrade_references(&UpgradeCatalog::from_ron_str(UPGRADES)?)?;

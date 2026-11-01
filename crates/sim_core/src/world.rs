@@ -154,6 +154,7 @@ pub struct SimWorld {
     // Reusable per-tick scratch buffers to eliminate allocations
     scratch_neighbors: Vec<EntityId>,
     scratch_targets: Vec<(TargetPriorityKey, EntityId)>,
+    scratch_watchtower_units: Vec<(PlayerId, SimVec2)>,
 }
 
 impl SimWorld {
@@ -242,6 +243,7 @@ impl SimWorld {
             known_blocked_cells,
             scratch_neighbors: Vec::with_capacity(32),
             scratch_targets: Vec::with_capacity(64),
+            scratch_watchtower_units: Vec::new(),
         };
 
         world.last_checksum = world.compute_checksum();
@@ -1444,10 +1446,43 @@ impl SimWorld {
         self.complete_production();
     }
 
+    /// Assigns each watchtower from the ground units standing on the map this tick.
+    ///
+    /// Air units overfly towers, and structures and transported cargo do not occupy them.
+    // PERFORMANCE RATIONALE:
+    // Why: This runs every tick, and most maps have few towers while battles have many units.
+    // What: Skip entirely on towerless maps; otherwise reuse one scratch buffer of positions.
+    // Trade-off: One retained allocation in exchange for no per-tick heap use.
+    fn update_watchtower_control(&mut self) {
+        if self.map.watchtowers().is_empty() {
+            return;
+        }
+        self.scratch_watchtower_units.clear();
+        for entity in self.entities.values() {
+            if entity.is_loaded_in_transport() || !entity.is_completed {
+                continue;
+            }
+            let occupies = self.catalog.get(entity.unit_type_id).is_ok_and(|arch| {
+                matches!(
+                    arch.mover_type,
+                    sim_types::MoverType::Ground | sim_types::MoverType::CliffJumper
+                ) && !arch.is_immobile_by_default()
+            });
+            if occupies {
+                self.scratch_watchtower_units
+                    .push((entity.owner, entity.position));
+            }
+        }
+        self.map
+            .update_watchtower_capture(&self.scratch_watchtower_units);
+    }
+
     /// Phase 3: Update per-player Fog of War visibility maps and remembered obstacle perception.
     /// Direct phase callers must establish `validate_transport_links` beforehand;
     /// normal `step_into` establishes this precondition once for its phase sequence.
     pub fn update_vision(&mut self) {
+        self.update_watchtower_control();
+
         for p in 0..8 {
             self.vision_maps[p].begin_tick_update();
         }

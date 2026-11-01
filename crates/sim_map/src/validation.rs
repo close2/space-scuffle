@@ -24,6 +24,7 @@ use crate::map_format::{
     WATCHTOWER_ENTITY_ID_BASE,
 };
 use crate::pathfinding::{PathRequest, Pathfinder, UnitClearance};
+use crate::vision::MAX_SIGHT_RADIUS_CELLS;
 
 /// Minimum number of player start locations required for a valid playable map.
 pub const MIN_START_LOCATIONS: usize = 2;
@@ -281,6 +282,13 @@ pub enum MapValidationError {
     /// Watchtower has zero capture radius or zero reveal radius.
     #[error("watchtower {id:?} has zero capture or reveal radius")]
     ZeroWatchtowerRadius {
+        /// Entity ID of watchtower.
+        id: MapEntityId,
+    },
+
+    /// Watchtower reveal radius is larger than vision can honour.
+    #[error("watchtower {id:?} reveal radius exceeds {MAX_SIGHT_RADIUS_CELLS} cells")]
+    WatchtowerRevealTooLarge {
         /// Entity ID of watchtower.
         id: MapEntityId,
     },
@@ -838,6 +846,9 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
     for wt in &doc.watchtowers {
         if wt.capture_radius_tenths == 0 || wt.reveal_radius_tenths == 0 {
             errors.push(MapValidationError::ZeroWatchtowerRadius { id: wt.id });
+        }
+        if u32::from(wt.reveal_radius_tenths) > MAX_SIGHT_RADIUS_CELLS * 10 {
+            errors.push(MapValidationError::WatchtowerRevealTooLarge { id: wt.id });
         }
     }
 

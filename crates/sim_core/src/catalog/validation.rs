@@ -10,6 +10,7 @@
 use super::{StructureArchetypeDef, UnitArchetypeDef, UnitModeSpecDef, WeaponSpecDef};
 use crate::error::{SimCoreError, SimResult};
 use crate::weapon_timing::AttackRate;
+use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{AbilityEffectSpec, AbilitySpec, ProjectileTargetLossBehavior, SimScalar};
 
 fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
@@ -54,6 +55,19 @@ fn positive(definition: &str, field: &str, value: f32) -> SimResult<()> {
             definition,
             field,
             "must remain strictly positive after Q32.32 conversion",
+        ));
+    }
+    Ok(())
+}
+
+/// Rejects a sight radius that vision would have to shorten.
+fn sight(definition: &str, field: &str, value: f64) -> SimResult<()> {
+    nonnegative(definition, field, value)?;
+    if value > f64::from(MAX_SIGHT_RADIUS_CELLS) {
+        return Err(invalid(
+            definition,
+            field,
+            "must not exceed the maximum sight radius supported by vision",
         ));
     }
     Ok(())
@@ -165,11 +179,11 @@ impl UnitArchetypeDef {
             ("acceleration", self.acceleration),
             ("deceleration", self.deceleration),
             ("separation_radius", self.separation_radius),
-            ("sight_radius", self.sight_radius),
             ("scan_range", self.scan_range),
         ] {
             nonnegative(&self.slug, field, f64::from(value))?;
         }
+        sight(&self.slug, "sight_radius", f64::from(self.sight_radius))?;
         angle(&self.slug, "turn_rate_deg", self.turn_rate_deg)?;
         for (name, weapon) in [
             ("weapon", &self.weapon),
@@ -337,7 +351,7 @@ impl UnitModeSpecDef {
             f64::from(self.energy_cost_per_second),
         )?;
         if let Some(radius) = self.sight_radius_override {
-            nonnegative(
+            sight(
                 definition,
                 &format!("{prefix}.sight_radius_override"),
                 f64::from(radius),
@@ -391,10 +405,10 @@ impl StructureArchetypeDef {
             ("max_hp", self.max_hp),
             ("max_shields", self.max_shields),
             ("max_energy", self.max_energy),
-            ("sight_radius", self.sight_radius),
         ] {
             nonnegative(&self.slug, field, value)?;
         }
+        sight(&self.slug, "sight_radius", self.sight_radius)?;
         if self.max_hp <= 0.0 {
             return Err(invalid(&self.slug, "max_hp", "must be strictly positive"));
         }

@@ -176,6 +176,25 @@ fn f6_radii_that_are_not_tenths_are_still_rejected() -> TestResult {
 }
 
 #[test]
+fn f12_watchtower_reveal_beyond_vision_is_rejected() -> TestResult {
+    let too_large = |report: &sim_map::MapValidationReport| {
+        report
+            .errors
+            .iter()
+            .any(|error| matches!(error, MapValidationError::WatchtowerRevealTooLarge { .. }))
+    };
+    let limit = u16::try_from(sim_map::MAX_SIGHT_RADIUS_CELLS * 10)?;
+
+    let mut doc = blank(32)?;
+    doc.watchtowers.push(watchtower(1, (4, 4), 30, limit));
+    assert!(!too_large(&validate_map(&doc)));
+
+    doc.watchtowers[0].reveal_radius_tenths = limit + 1;
+    assert!(too_large(&validate_map(&doc)));
+    Ok(())
+}
+
+#[test]
 fn f10_removing_a_structure_restores_the_cell_flags_it_found() -> TestResult {
     let mut map = GameMap::new(16, 16, MapCell::default_ground(CliffLevel(1)))?;
     // Buildable but not walkable, for example a pad over a chasm.

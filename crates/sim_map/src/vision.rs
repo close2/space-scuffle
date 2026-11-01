@@ -3,6 +3,14 @@
 //! This module implements StarCraft II-parity Fog of War visibility.
 //! It enforces high-ground line-of-sight occlusion, low-ground spotter mechanics,
 //! tall grass / smoke vent blockers, and neutral capturable watchtowers.
+//!
+//! Ground sight follows surface height. On flat terrain that reduces to comparing cliff levels.
+//! On a ramp the observer's and target's heights vary continuously, so a unit at the foot of a
+//! ramp cannot see its top, and one cresting it can see the plateau ahead.
+//!
+//! # Invariants
+//! Sight radii above [`MAX_SIGHT_RADIUS_CELLS`] are rejected when maps and catalogs load, so
+//! the clamp in [`PlayerVisionMap::apply_vision_source`] never shortens authored data.
 
 use crate::grid::{CellFlags, GameMap};
 use sim_types::{MoverType, PlayerId, SimScalar, SimVec2, VisibilityState};
@@ -12,17 +20,29 @@ use std::sync::OnceLock;
 // Why: In a 400-unit battle, computing dynamic raycasts per unit every tick (25 Hz)
 // generates over 100,000 ray queries per second, leading to high CPU usage and heap churn.
 // What:
-// 1. We precompute circular Bresenham ray offset tables indexed by integer sight radius (R <= 16).
+// 1. We precompute circular Bresenham ray offset tables indexed by integer sight radius, up to
+//    `MAX_SIGHT_RADIUS_CELLS`. The table is built once, on first use.
 // 2. Each PlayerVisionMap uses flat pre-allocated Vec<u16> sight counters and Vec<u8> state buffers.
 // 3. Incrementing/decrementing sight counters avoids any heap allocations during simulation ticks.
-// Trade-off: Slightly larger static memory footprint (< 256 KB per player map) in exchange for
-// deterministic, cache-friendly O(1) tile updates and zero per-tick heap allocations.
+// Trade-off: A static table of a few hundred kilobytes and a per-player map of three flat buffers,
+// in exchange for deterministic, cache-friendly O(1) tile updates and zero per-tick heap allocations.
 
-const MAX_PRECOMPUTED_RADIUS: usize = 16;
+/// Largest sight radius in whole cells that vision can honour.
+///
+/// Long-range structures author sight above the common unit range, so this must stay at or above
+/// the largest shipped value. Larger authored values are rejected at load, never shortened.
+pub const MAX_SIGHT_RADIUS_CELLS: u32 = 32;
+const MAX_PRECOMPUTED_RADIUS: usize = MAX_SIGHT_RADIUS_CELLS as usize;
+
+/// Highest surface a ground observer can see above its own, in world units: half a cliff.
+///
+/// A plateau one cliff up stays hidden from level ground, while a ramp reveals itself and the
+/// ground beyond as the observer climbs past its midpoint.
+const MAX_UPHILL_SIGHT: SimScalar = SimScalar::from_raw(3 << 31);
 
 /// Precomputed Bresenham rays for all integer radii up to `MAX_PRECOMPUTED_RADIUS`.
 struct RayTable {
-    /// Indexed by radius `R` (0..=16), each contains a list of rays.
+    /// Indexed by radius `R` (0..=`MAX_PRECOMPUTED_RADIUS`), each contains a list of rays.
     /// Each ray is a list of relative `(dx, dy)` cell offsets from origin.
     rays_by_radius: Vec<Vec<Vec<(i8, i8)>>>,
 }
@@ -172,7 +192,8 @@ impl PlayerVisionMap {
     ///
     /// Enforces:
     /// - High-ground occlusion for ground observers.
-    /// - Ascending ramp visibility for ground observers.
+    /// - Height-based ramp visibility for ground observers: a surface is visible up to half a
+    ///   cliff above the observer's own surface height.
     /// - LoS blocker smoke-vent occlusion.
     /// - Air observer elevation bypassing cliff occlusion.
     pub fn apply_vision_source(&mut self, map: &GameMap, source: &VisionSource) {
@@ -184,6 +205,8 @@ impl PlayerVisionMap {
         };
 
         let source_cliff = center_cell.cliff_level;
+        let source_on_ramp = center_cell.ramp.is_some();
+        let sight_ceiling = map.terrain_altitude_scalar(source.pos) + MAX_UPHILL_SIGHT;
         let is_air = matches!(source.mover_type, MoverType::Air | MoverType::CliffWalker);
         let source_in_blocker = center_cell.flags.contains(CellFlags::LOS_BLOCKER);
 
@@ -238,14 +261,20 @@ impl PlayerVisionMap {
                     Err(_) => break,
                 };
 
-                // High-ground check:
-                // Ground units at cliff_level = L cannot see onto cliff_level > L
-                // unless target cell is an ascending ramp from L.
-                if !is_air && target_cell.cliff_level > source_cliff {
-                    let is_ascending_ramp = target_cell.flags.contains(CellFlags::RAMP)
-                        && target_cell.cliff_level == source_cliff;
-                    if !is_ascending_ramp {
-                        // High ground ledge occludes view
+                // High-ground check. Between flat cells this is a cliff level comparison;
+                // heights are only computed when the observer or target stands on a ramp.
+                if !is_air {
+                    let occluded = if target_cell.ramp.is_some() {
+                        let surface = map
+                            .cell_to_world_center(tx as u32, ty as u32)
+                            .map(|center| map.terrain_altitude_scalar(center));
+                        surface.map_or(true, |height| height > sight_ceiling)
+                    } else if source_on_ramp {
+                        target_cell.cliff_level.height_scalar() > sight_ceiling
+                    } else {
+                        target_cell.cliff_level > source_cliff
+                    };
+                    if occluded {
                         break;
                     }
                 }

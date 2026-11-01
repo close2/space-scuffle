@@ -693,7 +693,11 @@ impl GameMap {
         Ok(placed)
     }
 
-    /// Updates ownership of neutral watchtowers based on occupying ground units.
+    /// Updates ownership of neutral watchtowers from the ground units currently near them.
+    ///
+    /// `units` lists each eligible unit's owner and world position. A tower belongs to the only
+    /// player with a unit inside its capture radius. It becomes neutral when two players contest
+    /// it or when it is vacated, so holding a tower's vision requires staying on it.
     pub fn update_watchtower_capture(&mut self, units: &[(PlayerId, SimVec2)]) {
         for tower in &mut self.watchtowers {
             let mut occupying_player = None;
@@ -712,11 +716,7 @@ impl GameMap {
                 }
             }
 
-            if contested {
-                tower.controlling_player = None;
-            } else if let Some(p) = occupying_player {
-                tower.controlling_player = Some(p);
-            }
+            tower.controlling_player = if contested { None } else { occupying_player };
         }
     }
 
