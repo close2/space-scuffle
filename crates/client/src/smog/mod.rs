@@ -12,6 +12,7 @@
 //!    and velocity textures with sub-voxel analytical spherical cavity carving and bow-wave rim compression.
 
 pub mod fluid;
+pub mod gpu_upload;
 pub mod kinematics;
 pub mod material;
 
@@ -19,6 +20,7 @@ pub use fluid::{
     BubbleSmogSource, SmogGrid3d, SmogStepMetrics, GRID_NX, GRID_NY, GRID_NZ, SMOG_DENSITY_MAX,
     TOTAL_VOXELS,
 };
+pub use gpu_upload::{SmogGpuFrame, SMOG_UPLOAD_LOG_TARGET};
 pub use kinematics::{
     bubble_team_color, generate_bouncing_bubbles, initial_bouncing_bubbles,
     step_bouncing_kinematics, BouncingBubbleState, BouncingSmogBubble, SmogArenaBounds,
@@ -35,6 +37,7 @@ use crate::CatalogResource;
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::render::{ExtractSchedule, RenderApp};
 use sim_types::enums::ShapeKind;
 use sim_types::snapshot::BubbleRenderInstance;
 use sim_types::{EntityId, PlayerId};
@@ -152,6 +155,7 @@ impl Plugin for SmogPlugin {
 
         app.init_resource::<SmogConfig>()
             .init_resource::<SmogStats>()
+            .init_resource::<SmogGpuFrame>()
             .insert_resource(grid)
             .add_systems(
                 Startup,
@@ -161,14 +165,14 @@ impl Plugin for SmogPlugin {
                 Update,
                 (sync_bouncing_smog_bubbles_system, update_smog_field_system).chain(),
             );
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.add_systems(ExtractSchedule, gpu_upload::upload_smog_frame_system);
+        }
     }
 }
 
 /// Startup system initializing the 3D textures, the volumetric bounding proxy entity,
 /// running 45 pre-warm steps, and dynamically spawning the 10 mobile bouncing bubbles from the unit catalog.
-// PERFORMANCE RATIONALE:
-// Why: 3D textures are created once at startup and mutated in-place every frame via `copy_from_slice`.
-// What: Avoids destroying and reallocating GPU textures and bind groups per frame.
 pub fn setup_smog_volume_system(
     mut commands: Commands<'_, '_>,
     mut meshes: ResMut<'_, Assets<Mesh>>,
@@ -210,6 +214,11 @@ pub fn setup_smog_volume_system(
     }
 
     // 2. Initialize persistent 3D textures with pre-warmed data
+    // PERFORMANCE RATIONALE:
+    // Why: These textures change every frame, so a retained main-world copy is never read again.
+    // What: Render-world usage drops ~1.66 MB of CPU bytes after the first extraction; later frames
+    // reach the same textures through `gpu_upload`.
+    // Trade-off: The main world can no longer read these images back.
     let make_3d_image = |data: Vec<u8>| {
         let size = Extent3d {
             width: GRID_NX as u32,
@@ -221,7 +230,7 @@ pub fn setup_smog_volume_system(
             TextureDimension::D3,
             data,
             TextureFormat::Rgba8Unorm,
-            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+            RenderAssetUsages::RENDER_WORLD,
         );
         image.sampler =
             bevy::image::ImageSampler::Descriptor(bevy::image::ImageSamplerDescriptor {
@@ -363,6 +372,10 @@ pub fn setup_smog_volume_system(
         SmogVolumeMarker,
     ));
 
+    commands.insert_resource(SmogGpuFrame {
+        uniform,
+        generation: 0,
+    });
     commands.insert_resource(SmogTextures {
         density_image,
         velocity_image,
@@ -625,8 +638,8 @@ pub fn sync_bouncing_smog_bubbles_system(
     }
 }
 
-/// Per-frame fluid field update system: collects sources, steps `SmogGrid3d`, updates 3D textures,
-/// and packs bubble spheres into `SmogVolumeMaterial.uniform`.
+/// Per-frame fluid field update system: collects sources, steps `SmogGrid3d`, and publishes the
+/// packed uniform in [`SmogGpuFrame`] for the render-world upload.
 // PERFORMANCE RATIONALE:
 // Why: Re-allocating source lists per frame creates garbage.
 // What: We reuse a `Local<Vec<BubbleSmogSource>>` scratch buffer, achieving zero allocations per frame.
@@ -637,9 +650,7 @@ pub(crate) fn update_smog_field_system(
     mut lab_state: Option<ResMut<'_, crate::LabState>>,
     mut stats: ResMut<'_, SmogStats>,
     mut grid: ResMut<'_, SmogGrid3d>,
-    textures: Option<Res<'_, SmogTextures>>,
-    mut images: ResMut<'_, Assets<Image>>,
-    mut volume_materials: ResMut<'_, Assets<SmogVolumeMaterial>>,
+    mut gpu_frame: ResMut<'_, SmogGpuFrame>,
     mut sources_scratch: Local<'_, Vec<BubbleSmogSource>>,
     mut volume_query: Query<
         '_,
@@ -895,24 +906,13 @@ pub(crate) fn update_smog_field_system(
     stats.active_bubbles = sources_scratch.len();
     stats.step_count += 1;
 
-    // Update 3D GPU textures via in-place byte copy
-    if let Some(tex) = &textures {
-        if let Some(density_img) = images.get_mut(&tex.density_image) {
-            density_img.data.copy_from_slice(&grid.rgba_density_bytes);
-        }
-        if let Some(vel_img) = images.get_mut(&tex.velocity_image) {
-            vel_img.data.copy_from_slice(&grid.rgba_velocity_bytes);
-        }
-
-        // Update GPU Uniforms
-        if let Some(material) = volume_materials.get_mut(&tex.material_handle) {
-            material.uniform.volume_min = Vec4::new(actual_min.x, actual_min.y, actual_min.z, 0.4);
-            material.uniform.volume_max = Vec4::new(actual_max.x, actual_max.y, actual_max.z, 1.15);
-            material.uniform.base_tint_time.w += dt;
-            material.uniform.control_params.x = packed_count as f32;
-            material.uniform.control_params.w = if enabled { 1.0 } else { 0.0 };
-            material.uniform.bubble_pos_radius = packed_pos_radius;
-            material.uniform.bubble_vel_boost = packed_vel_boost;
-        }
-    }
+    let uniform = &mut gpu_frame.uniform;
+    uniform.volume_min = Vec4::new(actual_min.x, actual_min.y, actual_min.z, 0.4);
+    uniform.volume_max = Vec4::new(actual_max.x, actual_max.y, actual_max.z, 1.15);
+    uniform.base_tint_time.w += dt;
+    uniform.control_params.x = packed_count as f32;
+    uniform.control_params.w = 1.0;
+    uniform.bubble_pos_radius = packed_pos_radius;
+    uniform.bubble_vel_boost = packed_vel_boost;
+    gpu_frame.generation += 1;
 }

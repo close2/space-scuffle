@@ -3,6 +3,13 @@
 
 #![allow(clippy::cast_precision_loss)]
 
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/gpu_run.rs"]
+mod gpu_run;
+
 use bevy::prelude::*;
 use client::smog::{
     bubble_team_color, generate_bouncing_bubbles, initial_bouncing_bubbles,
@@ -920,21 +927,15 @@ fn live_battle_low_ground_and_high_ground_units_preserve_true_world_y(
         b_max.y
     );
 
-    // Verify SmogVolumeMaterial uniform matches grid bounds bit-for-bit and preserves true world Y
-    let tex_res = app.world().resource::<client::smog::SmogTextures>();
-    let mats = app
-        .world()
-        .resource::<Assets<client::smog::SmogVolumeMaterial>>();
-    let mat = mats
-        .get(&tex_res.material_handle)
-        .ok_or("missing SmogVolumeMaterial")?;
+    // Verify the published GPU uniform matches grid bounds bit-for-bit and preserves true world Y
+    let uniform = app.world().resource::<client::smog::SmogGpuFrame>().uniform;
 
-    assert_eq!(mat.uniform.volume_min.truncate(), b_min);
-    assert_eq!(mat.uniform.volume_max.truncate(), b_max);
-    assert!((mat.uniform.control_params.x - 2.0).abs() < 1e-4);
+    assert_eq!(uniform.volume_min.truncate(), b_min);
+    assert_eq!(uniform.volume_max.truncate(), b_max);
+    assert!((uniform.control_params.x - 2.0).abs() < 1e-4);
 
-    let y0 = mat.uniform.bubble_pos_radius[0].y;
-    let y1 = mat.uniform.bubble_pos_radius[1].y;
+    let y0 = uniform.bubble_pos_radius[0].y;
+    let y1 = uniform.bubble_pos_radius[1].y;
     let low_y = y0.min(y1);
     let high_y = y0.max(y1);
 
@@ -959,5 +960,141 @@ fn live_battle_low_ground_and_high_ground_units_preserve_true_world_y(
         "Zero smog should float at y=3.45 directly above the lower-level unit at x=22.0 (got {displaced_above_low_unit})"
     );
 
+    Ok(())
+}
+
+/// Headless application with the production smog plugin, real catalog, palette and media.
+fn production_smog_app(lab: client::LabState) -> Result<App, Box<dyn std::error::Error>> {
+    let root = resolve_root()?;
+    let definition = client::runtime_battle::BattleDefinition::load(
+        root.as_path(),
+        client::runtime_battle::DEFAULT_BATTLE_SCENARIO.as_ref(),
+    )?;
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_event::<AppExit>();
+    app.init_resource::<client::RenderEntityMap>();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<Image>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.init_resource::<Assets<client::bubble_shader::BubbleDomeMaterial>>();
+    app.init_resource::<Assets<client::smog::SmogVolumeMaterial>>();
+    app.insert_resource(definition.palette.clone());
+    app.init_resource::<client::player_presentation::PresentationStatus>();
+    app.insert_resource(root);
+    app.insert_resource(client::CatalogResource(definition.catalogs.units.clone()));
+    app.insert_resource(lab);
+    app.add_systems(Startup, client::bubble_shader::setup_bubble_assets_system);
+    app.add_plugins(SmogPlugin);
+    Ok(app)
+}
+
+/// Per-type counts of `AssetEvent::Modified`, the signal that re-prepares a render asset.
+#[derive(Resource, Default)]
+struct ModifiedAssetCounts {
+    images: usize,
+    smog_materials: usize,
+}
+
+/// Flushes asset events as a full app does, and counts modifications.
+fn track_asset_modifications(app: &mut App) {
+    app.add_event::<AssetEvent<Image>>();
+    app.add_event::<AssetEvent<client::smog::SmogVolumeMaterial>>();
+    app.init_resource::<ModifiedAssetCounts>();
+    app.add_systems(
+        First,
+        (
+            Assets::<Image>::asset_events,
+            Assets::<client::smog::SmogVolumeMaterial>::asset_events,
+        ),
+    );
+    app.add_systems(
+        Last,
+        |mut images: EventReader<'_, '_, AssetEvent<Image>>,
+         mut materials: EventReader<'_, '_, AssetEvent<client::smog::SmogVolumeMaterial>>,
+         mut counts: ResMut<'_, ModifiedAssetCounts>| {
+            counts.images += images
+                .read()
+                .filter(|event| matches!(event, AssetEvent::Modified { .. }))
+                .count();
+            counts.smog_materials += materials
+                .read()
+                .filter(|event| matches!(event, AssetEvent::Modified { .. }))
+                .count();
+        },
+    );
+}
+
+/// C-2: a modified image is destroyed and recreated by Bevy's render asset pipeline, and a modified
+/// material rebuilds its bind group. Neither may happen per frame while the field animates.
+#[test]
+fn smog_stepping_never_modifies_image_or_material_assets() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut app = production_smog_app(client::LabState::default())?;
+    track_asset_modifications(&mut app);
+
+    for _ in 0..60 {
+        app.update();
+    }
+
+    let steps = app.world().resource::<SmogStats>().step_count;
+    assert!(steps >= 58, "smog must keep stepping (got {steps} steps)");
+    let counts = app.world().resource::<ModifiedAssetCounts>();
+    assert_eq!(
+        (counts.images, counts.smog_materials),
+        (0, 0),
+        "image and smog material Modified events over {steps} steps"
+    );
+    assert_eq!(
+        app.world()
+            .resource::<client::smog::SmogGpuFrame>()
+            .generation,
+        steps,
+        "every step must publish one GPU upload generation"
+    );
+    Ok(())
+}
+
+/// C-2 end to end: the real render world writes each published step to the GPU exactly once.
+#[test]
+fn smog_steps_reach_the_gpu_through_queue_writes() -> Result<(), Box<dyn std::error::Error>> {
+    if gpu_run::gpu_tests_opted_out() {
+        return Ok(());
+    }
+    let mut command =
+        gpu_run::virtual_gpu_command(std::path::Path::new(env!("CARGO_BIN_EXE_client")));
+    command.args(["--lab", "--max-frames", "60"]);
+    command.env(
+        "RUST_LOG",
+        format!("warn,{}=debug", client::smog::SMOG_UPLOAD_LOG_TARGET),
+    );
+    let output = command.output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "client exited with {:?}:\n{}",
+        output.status.code(),
+        gpu_run::tail(&stderr)
+    );
+    let generations: Vec<u64> = stderr
+        .lines()
+        .filter_map(|line| {
+            line.rsplit_once("uploaded smog generation ")?
+                .1
+                .trim()
+                .parse()
+                .ok()
+        })
+        .collect();
+    assert!(
+        generations.len() >= 30,
+        "expected a GPU upload per rendered step, saw {}:\n{}",
+        generations.len(),
+        gpu_run::tail(&stderr)
+    );
+    assert!(
+        generations.windows(2).all(|pair| pair[0] < pair[1]),
+        "generations must strictly increase: {generations:?}"
+    );
     Ok(())
 }
