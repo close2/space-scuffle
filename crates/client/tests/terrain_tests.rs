@@ -48,6 +48,13 @@
 
 use std::path::{Path, PathBuf};
 
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/gpu_run.rs"]
+mod gpu_run;
+
 use bevy::prelude::*;
 use client::resolve_assets_dir;
 use client::terrain::fields::{create_overlay_image, create_splat_image};
@@ -957,56 +964,17 @@ fn test_picking_scenarios() {
 
 #[test]
 fn test_terrain_preview_renders() {
-    if std::env::var("SPACE_SCUFFLE_SKIP_GPU_TESTS").as_deref() == Ok("1") {
-        eprintln!("WARNING: SPACE_SCUFFLE_SKIP_GPU_TESTS=1 is set; skipping windowed GPU test");
+    if gpu_run::gpu_tests_opted_out() {
         return;
     }
-
-    let bin_path = env!("CARGO_BIN_EXE_terrain_preview");
-    let xvfb_run = Path::new("/usr/bin/xvfb-run");
 
     let temp_dir =
         tempfile::tempdir().expect("Failed to create temporary directory for terrain screenshots");
     let out_dir = temp_dir.path();
 
-    let mut cmd = if xvfb_run.exists() {
-        let mut c = std::process::Command::new(xvfb_run);
-        c.arg("-a").arg(bin_path);
-        c
-    } else {
-        assert!(
-            !(std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_err()),
-            "CRITICAL: No graphical display detected and /usr/bin/xvfb-run is missing! \
-             GPU tests require a display or xvfb-run. Set SPACE_SCUFFLE_SKIP_GPU_TESTS=1 to bypass."
-        );
-        std::process::Command::new(bin_path)
-    };
-
+    let mut cmd = gpu_run::virtual_gpu_command(Path::new(env!("CARGO_BIN_EXE_terrain_preview")));
     cmd.arg("--out").arg(out_dir);
-    cmd.env_remove("WAYLAND_DISPLAY");
-    cmd.env("WINIT_UNIX_BACKEND", "x11");
-    cmd.env("WGPU_BACKEND", "vulkan");
-    cmd.env("SPACE_SCUFFLE_VIRTUAL_GPU", "1");
-
-    let lvp_candidates = [
-        Path::new("/usr/share/vulkan/icd.d/lvp_icd.json"),
-        Path::new("/usr/share/vulkan/icd.d/lvp_icd.x86_64.json"),
-    ];
-    if let Some(lvp_icd) = lvp_candidates.into_iter().find(|p| p.exists()) {
-        cmd.env("VK_ICD_FILENAMES", lvp_icd);
-        cmd.env("WGPU_ADAPTER_NAME", "llvmpipe");
-        cmd.env("LIBGL_ALWAYS_SOFTWARE", "1");
-    }
-
-    let status = cmd
-        .status()
-        .expect("Failed to execute terrain_preview binary");
-
-    assert!(
-        status.success(),
-        "terrain_preview binary failed with status: {:?}",
-        status.code()
-    );
+    gpu_run::assert_passes_validation(&mut cmd, "terrain_preview");
 
     let poses = ["overview", "p0_base", "mesa", "chasm"];
     let void_srgb = [0.01_f32, 0.012_f32, 0.03_f32];

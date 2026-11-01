@@ -39,4 +39,6 @@ blake3 = "1.8.7"
 
 [dev-dependencies]
 naga = { version = "23.1.0", features = ["wgsl-in"] }
+# Same composer and feature set as bevy_render, so tests resolve `#import` exactly as production does.
+naga_oil = { version = "0.16.0", default-features = false, features = ["test_shader"] }
 tempfile = "3.17"

@@ -1,0 +1,22 @@
+// Audited list of flipbooks in assets/textures, read by test_flipbook_textures_512_invariants.
+//
+// This is test data, not Rust, so that it stays outside the zero-hardcoded-slugs rule (AGENTS.md
+// §3.3). The test fails if it and the directory disagree, so baking or removing a flipbook has to
+// be recorded here. Catalog units absent from `catalog_units` have no flipbook.
+(
+    catalog_units: [
+        "assembly_bay_dome",
+        "capacitor_dome",
+        "flying_saucer",
+        "foundry_core_dome",
+        "psi_grey",
+        "pulse_bot",
+        "railgun_crawler",
+        "rhino_beetle",
+        "tesla_sentinel_dome",
+        "welder_drone",
+    ],
+    non_catalog: [
+        "concept_video",
+    ],
+)
