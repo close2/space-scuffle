@@ -6,7 +6,8 @@ use super::math::{checked_vec_add, checked_vec_scale, distance};
 use super::{MotionPolicy, MovementInvariant, MovementLayer, MovementMathError};
 use crate::entity::Entity;
 use crate::steering::{
-    check_cluster_arrival_with, compute_unified_local_steering, SteeringObstacle,
+    check_cluster_arrival_with, compute_unified_local_steering, compute_unified_local_steering_ext,
+    SteeringObstacle,
 };
 use crate::{SimWorld, WeaponPhase};
 use sim_map::{PathRequestWithVision, UnitClearance};
@@ -312,14 +313,25 @@ impl SimWorld {
                 .then_some(&self.known_blocked_cells[owner]),
         };
         if policy.layer == MovementLayer::Ground {
-            let mut previous = actor.position;
-            let valid = actor.current_funnel_waypoints.iter().all(|&point| {
-                let valid = self
-                    .pathfinder
-                    .segment_is_passable(&self.map, &req, previous, point);
-                previous = point;
-                valid
-            });
+            let valid = if self.vision_aware_pathfinding {
+                let mut previous = actor.position;
+                !actor.current_funnel_waypoints.is_empty()
+                    && actor.current_funnel_waypoints.iter().all(|&point| {
+                        let passable = self
+                            .pathfinder
+                            .segment_is_passable(&self.map, &req, previous, point);
+                        previous = point;
+                        passable
+                    })
+            } else if let Some(&first_wp) = actor.current_funnel_waypoints.first() {
+                policy.permits_segment(&self.map, actor.position, first_wp)
+                    && actor.current_funnel_waypoints.windows(2).all(|w| {
+                        self.pathfinder
+                            .segment_is_passable(&self.map, &req, w[0], w[1])
+                    })
+            } else {
+                false
+            };
             if !valid {
                 proposal.clear_route = true;
             }
@@ -330,35 +342,6 @@ impl SimWorld {
                 && policy.permits_segment(&self.map, actor.position, target)
             {
                 proposal.position = target;
-                proposal.finish();
-                return Ok(MotionAction::Commit(proposal));
-            }
-            // Arrival needs a local terrain path through its settled witness.
-            // This is not displacement/placement: occupied cells retain their
-            // underlying terrain, preserving settlement near an occupied goal.
-            // Both legs use the shared ramp/diagonal predicate without consulting
-            // fog or hidden structure knowledge. Air retains geometric arrival.
-            if check_cluster_arrival_with(
-                Some(id),
-                actor.position,
-                policy.radius,
-                target,
-                obstacles,
-                |witness| {
-                    policy.layer == MovementLayer::Air
-                        || (self.map.ground_segment_is_connected(
-                            actor.position,
-                            witness.pos,
-                            |_, _| true,
-                        ) && self.map.ground_segment_is_connected(
-                            witness.pos,
-                            target,
-                            |_, _| true,
-                        ))
-                },
-            )
-            .map_err(|e| arithmetic(id, e))?
-            {
                 proposal.finish();
                 return Ok(MotionAction::Commit(proposal));
             }
@@ -373,6 +356,66 @@ impl SimWorld {
                     }
                     proposal.replacement = Some(path.waypoints);
                 }
+            }
+        }
+        while proposal.route(actor).len() >= 2 {
+            let first = proposal.route(actor)[0];
+            let subsequent = proposal.route(actor)[1];
+            let d = distance(actor.position, first).map_err(|e| arithmetic(id, e))?;
+            let same_cell =
+                self.map.world_to_cell(actor.position).ok() == self.map.world_to_cell(first).ok();
+            let handoff_radius = speed.max(SimScalar::from_f32_lossy(0.28));
+            let close = d <= speed || (d <= handoff_radius && same_cell);
+            let subsequent_passable = match policy.layer {
+                MovementLayer::Air => policy.permits_segment(&self.map, actor.position, subsequent),
+                MovementLayer::Ground => {
+                    policy.permits_segment(&self.map, actor.position, subsequent)
+                        && self.pathfinder.segment_is_passable(
+                            &self.map,
+                            &req,
+                            actor.position,
+                            subsequent,
+                        )
+                }
+            };
+            if close && subsequent_passable {
+                proposal.remove_prefix += 1;
+            } else {
+                break;
+            }
+        }
+        if proposal.route(actor).len() <= 1 {
+            // Arrival needs a local terrain path through its settled witness.
+            // This is not displacement/placement: occupied cells retain their
+            // underlying terrain, preserving settlement near an occupied goal.
+            // Both legs use the shared ramp/diagonal predicate without consulting
+            // fog or hidden structure knowledge. Air retains geometric arrival.
+            if check_cluster_arrival_with(
+                Some(id),
+                actor.position,
+                policy.radius,
+                target,
+                obstacles,
+                |witness| {
+                    self.entities
+                        .get(&witness.id)
+                        .is_some_and(|w| w.owner == actor.owner)
+                        && (policy.layer == MovementLayer::Air
+                            || (self.map.ground_segment_is_connected(
+                                actor.position,
+                                witness.pos,
+                                |_, _| true,
+                            ) && self.map.ground_segment_is_connected(
+                                witness.pos,
+                                target,
+                                |_, _| true,
+                            )))
+                },
+            )
+            .map_err(|e| arithmetic(id, e))?
+            {
+                proposal.finish();
+                return Ok(MotionAction::Commit(proposal));
             }
         }
         let next = proposal.route(actor).first().copied().unwrap_or(target);
@@ -393,23 +436,40 @@ impl SimWorld {
                 proposal.anim = AnimState::Walk;
             }
         } else {
-            let direction = compute_unified_local_steering(
+            let dist_to_target = distance(actor.position, target).unwrap_or(SimScalar::ZERO);
+            let is_corridor =
+                proposal.route(actor).len() > 1 || dist_to_target > SimScalar::from_num(4);
+            let mut direction = compute_unified_local_steering_ext(
                 id,
                 actor.position,
                 policy.radius,
                 next,
                 None,
                 obstacles,
+                is_corridor,
             )
             .map_err(|e| arithmetic(id, e))?;
-            prepare_slide(
-                &self.map,
-                policy,
-                actor,
-                &mut proposal,
-                checked_vec_scale(direction, speed).map_err(|e| arithmetic(id, e))?,
-            )
-            .map_err(|e| arithmetic(id, e))?;
+            let mut velocity =
+                checked_vec_scale(direction, speed).map_err(|e| arithmetic(id, e))?;
+            if policy.layer == MovementLayer::Ground {
+                let steered_pos =
+                    checked_vec_add(actor.position, velocity).map_err(|e| arithmetic(id, e))?;
+                if policy.permits_segment(&self.map, actor.position, steered_pos)
+                    && self
+                        .map
+                        .ground_segment_is_connected(actor.position, next, |_, _| true)
+                    && !self
+                        .map
+                        .ground_segment_is_connected(steered_pos, next, |_, _| true)
+                {
+                    direction = super::math::direction(next, actor.position)
+                        .map_err(|e| arithmetic(id, e))?;
+                    velocity =
+                        checked_vec_scale(direction, speed).map_err(|e| arithmetic(id, e))?;
+                }
+            }
+            prepare_slide(&self.map, policy, actor, &mut proposal, velocity)
+                .map_err(|e| arithmetic(id, e))?;
         }
         Ok(MotionAction::Commit(proposal))
     }
@@ -536,9 +596,9 @@ fn prepare_slide(
         let x = SimVec2::new(next.x, actor.position.y);
         let y = SimVec2::new(actor.position.x, next.y);
         if policy.permits_segment(map, actor.position, x) {
-            Some((x, SimVec2::new(velocity.x, SimScalar::ZERO)))
+            Some((x, velocity))
         } else if policy.permits_segment(map, actor.position, y) {
-            Some((y, SimVec2::new(SimScalar::ZERO, velocity.y)))
+            Some((y, velocity))
         } else {
             None
         }

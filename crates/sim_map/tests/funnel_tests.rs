@@ -9,7 +9,7 @@
 )]
 
 use sim_map::{
-    CellFlags, CliffLevel, GameMap, MapCell, PathRequest, Pathfinder, UnitClearance,
+    CellFlags, CliffLevel, GameMap, MapCell, MapFile, PathRequest, Pathfinder, UnitClearance,
     CORNER_SAFETY_MARGIN,
 };
 use sim_types::{EntityId, SimScalar, SimVec2};
@@ -222,4 +222,56 @@ fn test_sandbox_all_blue_units_direct_path_no_errant_detour() {
             );
         }
     }
+}
+
+#[test]
+fn test_showcase_canyon_ramp_funnel_paths_are_concise() -> Result<(), Box<dyn std::error::Error>> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../assets/maps/showcase_canyon.scmap.ron");
+    let map = MapFile::load(&path)?.decode()?.to_game_map()?;
+    let mut pathfinder = Pathfinder::new(&map);
+
+    // Ramp 1: Low-ground (32.0, 52.5) to High-ground (41.0, 52.5)
+    let r1_start = SimVec2::new(
+        SimScalar::from_f32_lossy(32.0),
+        SimScalar::from_f32_lossy(52.5),
+    );
+    let r1_goal = SimVec2::new(
+        SimScalar::from_f32_lossy(41.0),
+        SimScalar::from_f32_lossy(52.5),
+    );
+    let r1_req = PathRequest {
+        start: r1_start,
+        goal: r1_goal,
+        clearance: UnitClearance::Small,
+    };
+    let r1_path = pathfinder.find_path(&map, &r1_req)?;
+    assert!(
+        r1_path.waypoints.len() <= 4,
+        "Ramp 1 path must be concise (<= 4 waypoints, got {:?})",
+        r1_path.waypoints
+    );
+
+    // Ramp 2: Low-ground (32.0, 11.5) to High-ground (23.0, 11.5)
+    let r2_start = SimVec2::new(
+        SimScalar::from_f32_lossy(32.0),
+        SimScalar::from_f32_lossy(11.5),
+    );
+    let r2_goal = SimVec2::new(
+        SimScalar::from_f32_lossy(23.0),
+        SimScalar::from_f32_lossy(11.5),
+    );
+    let r2_req = PathRequest {
+        start: r2_start,
+        goal: r2_goal,
+        clearance: UnitClearance::Small,
+    };
+    let r2_path = pathfinder.find_path(&map, &r2_req)?;
+    assert!(
+        r2_path.waypoints.len() <= 4,
+        "Ramp 2 path must be concise (<= 4 waypoints, got {:?})",
+        r2_path.waypoints
+    );
+
+    Ok(())
 }

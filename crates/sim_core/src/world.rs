@@ -2180,12 +2180,22 @@ impl SimWorld {
                 .get(entity_a.unit_type_id)
                 .map_or(0, |a| a.push_priority);
 
+            let has_attack_target_a = entity_a
+                .current_target
+                .or_else(|| {
+                    if let Some(UnitOrder::AttackTarget { target }) = entity_a.order_queue.front() {
+                        Some(*target)
+                    } else {
+                        None
+                    }
+                })
+                .is_some_and(|tid| self.entities.get(&tid).is_some_and(Entity::is_alive));
             let is_engaged_a = matches!(
                 entity_a.weapon_phase,
                 WeaponPhase::RotatingToTarget { .. }
                     | WeaponPhase::Windup { .. }
                     | WeaponPhase::Backswing { .. }
-            ) || (entity_a.current_target.is_some()
+            ) || (has_attack_target_a
                 && entity_a.order_queue.front().is_some_and(|o| {
                     matches!(
                         o,
@@ -2250,12 +2260,24 @@ impl SimWorld {
                         .get(entity_b.unit_type_id)
                         .map_or(0, |a| a.push_priority);
 
+                    let has_attack_target_b = entity_b
+                        .current_target
+                        .or_else(|| {
+                            if let Some(UnitOrder::AttackTarget { target }) =
+                                entity_b.order_queue.front()
+                            {
+                                Some(*target)
+                            } else {
+                                None
+                            }
+                        })
+                        .is_some_and(|tid| self.entities.get(&tid).is_some_and(Entity::is_alive));
                     let is_engaged_b = matches!(
                         entity_b.weapon_phase,
                         WeaponPhase::RotatingToTarget { .. }
                             | WeaponPhase::Windup { .. }
                             | WeaponPhase::Backswing { .. }
-                    ) || (entity_b.current_target.is_some()
+                    ) || (has_attack_target_b
                         && entity_b.order_queue.front().is_some_and(|o| {
                             matches!(
                                 o,
@@ -2265,14 +2287,34 @@ impl SimWorld {
                         && entity_b.velocity == SimVec2::ZERO);
 
                     let eff_cannot_be_pushed_a = entity_a.cannot_be_pushed()
-                        || (owner_a == entity_b.owner && is_engaged_a && priority_a >= priority_b);
+                        || (owner_a == entity_b.owner
+                            && is_engaged_a
+                            && (priority_a >= priority_b
+                                || (entity_a.velocity == SimVec2::ZERO
+                                    && entity_b.velocity != SimVec2::ZERO)));
                     let eff_cannot_be_pushed_b = entity_b.cannot_be_pushed()
-                        || (owner_a == entity_b.owner && is_engaged_b && priority_b >= priority_a);
+                        || (owner_a == entity_b.owner
+                            && is_engaged_b
+                            && (priority_b >= priority_a
+                                || (entity_b.velocity == SimVec2::ZERO && vel_a != SimVec2::ZERO)));
+
+                    // SC2 Push Rule: PushPriority lateral yielding applies only when a moving
+                    // unit contacts a stationary (Idle) unit. When two friendly dynamic units
+                    // are both moving, contact resolution is purely radial along the line of centers.
+                    let both_moving_dynamic = owner_a == entity_b.owner
+                        && vel_a != SimVec2::ZERO
+                        && entity_b.velocity != SimVec2::ZERO
+                        && !eff_cannot_be_pushed_a
+                        && !eff_cannot_be_pushed_b;
 
                     let a_params = PushEntityParams {
                         id: id_a,
                         pos: pos_a,
-                        vel: vel_a,
+                        vel: if both_moving_dynamic {
+                            SimVec2::ZERO
+                        } else {
+                            vel_a
+                        },
                         owner: owner_a,
                         is_holding: is_holding_a,
                         push_priority: priority_a,
@@ -2281,7 +2323,11 @@ impl SimWorld {
                     let b_params = PushEntityParams {
                         id: id_b,
                         pos: entity_b.position,
-                        vel: entity_b.velocity,
+                        vel: if both_moving_dynamic {
+                            SimVec2::ZERO
+                        } else {
+                            entity_b.velocity
+                        },
                         owner: entity_b.owner,
                         is_holding: entity_b.is_holding_position,
                         push_priority: priority_b,

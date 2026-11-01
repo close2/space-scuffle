@@ -737,7 +737,70 @@ impl Pathfinder {
             let mut visible = None;
             for candidate in ((current_index + 1)..=end_index).rev() {
                 let candidate_point = point(candidate)?;
-                if self.segment_is_passable(map, request, current, candidate_point) {
+                let skips_ramp_turn = if candidate > current_index + 1 {
+                    ((current_index + 1)..candidate).any(|k| {
+                        if k == 0 || k >= end_index {
+                            return false;
+                        }
+                        let curr_cell = self.buffers.corridor_cells[k - 1];
+                        let curr_cx = curr_cell % self.width;
+                        let curr_cy = curr_cell / self.width;
+                        let is_curr_ramp = map
+                            .cell(curr_cx, curr_cy)
+                            .is_ok_and(|c| c.flags.contains(CellFlags::RAMP));
+
+                        let prev_is_ramp = if k == 1 {
+                            let (scx, scy) = map
+                                .world_to_cell(request.start)
+                                .unwrap_or((curr_cx, curr_cy));
+                            map.cell(scx, scy)
+                                .is_ok_and(|c| c.flags.contains(CellFlags::RAMP))
+                        } else {
+                            let prev_cell = self.buffers.corridor_cells[k - 2];
+                            map.cell(prev_cell % self.width, prev_cell / self.width)
+                                .is_ok_and(|c| c.flags.contains(CellFlags::RAMP))
+                        };
+
+                        let next_is_ramp = if k + 1 == end_index {
+                            let (gcx, gcy) = map
+                                .world_to_cell(request.goal)
+                                .unwrap_or((curr_cx, curr_cy));
+                            map.cell(gcx, gcy)
+                                .is_ok_and(|c| c.flags.contains(CellFlags::RAMP))
+                        } else {
+                            let next_cell = self.buffers.corridor_cells[k];
+                            map.cell(next_cell % self.width, next_cell / self.width)
+                                .is_ok_and(|c| c.flags.contains(CellFlags::RAMP))
+                        };
+
+                        let ramp_transition =
+                            is_curr_ramp != prev_is_ramp || is_curr_ramp != next_is_ramp;
+                        if !ramp_transition {
+                            return false;
+                        }
+                        let anchor_c = if current_index == 0 {
+                            map.world_to_cell(request.start)
+                                .unwrap_or((curr_cx, curr_cy))
+                        } else {
+                            let cell = self.buffers.corridor_cells[current_index - 1];
+                            (cell % self.width, cell / self.width)
+                        };
+                        let candidate_c = if candidate == end_index {
+                            map.world_to_cell(request.goal)
+                                .unwrap_or((curr_cx, curr_cy))
+                        } else {
+                            let cell = self.buffers.corridor_cells[candidate - 1];
+                            (cell % self.width, cell / self.width)
+                        };
+                        let collinear = anchor_c.0 == candidate_c.0 || anchor_c.1 == candidate_c.1;
+                        !collinear
+                    })
+                } else {
+                    false
+                };
+                if !skips_ramp_turn
+                    && self.segment_is_passable(map, request, current, candidate_point)
+                {
                     visible = Some((candidate, candidate_point));
                     break;
                 }
@@ -1080,12 +1143,72 @@ impl Pathfinder {
             }
         }
 
+        // If all 4 cells around `(vx, vy)` are individually passable, check whether a
+        // cliff or ramp side-wall disconnects any orthogonal edge in the 2x2 quad.
+        let mut min_margin = SimScalar::ZERO;
+        if blocked_count == 0 && vx > 0 && vy > 0 {
+            let q00 = ((vx - 1) as u32, (vy - 1) as u32);
+            let q10 = (vx as u32, (vy - 1) as u32);
+            let q01 = ((vx - 1) as u32, vy as u32);
+            let q11 = (vx as u32, vy as u32);
+            if !map.terrain_step_is_connected(q00, q11) {
+                let quad = [
+                    (q00, [q10, q01], -1_i32, -1_i32),
+                    (q10, [q00, q11], 1_i32, -1_i32),
+                    (q01, [q00, q11], -1_i32, 1_i32),
+                    (q11, [q10, q01], 1_i32, 1_i32),
+                ];
+                let mut ramp_pivot_x = 0_i32;
+                let mut ramp_pivot_y = 0_i32;
+                let mut has_ramp_pivot = false;
+                for &(cell, orth, into_x, into_y) in &quad {
+                    let is_ramp = map
+                        .cell(cell.0, cell.1)
+                        .is_ok_and(|c| c.flags.contains(CellFlags::RAMP));
+                    let connected_to_both = orth
+                        .iter()
+                        .all(|&nbr| map.terrain_step_is_connected(cell, nbr));
+                    let touches_ramp = orth.iter().any(|&nbr| {
+                        map.cell(nbr.0, nbr.1)
+                            .is_ok_and(|c| c.flags.contains(CellFlags::RAMP))
+                    });
+                    if !is_ramp && connected_to_both && touches_ramp {
+                        ramp_pivot_x += into_x;
+                        ramp_pivot_y += into_y;
+                        has_ramp_pivot = true;
+                    }
+                }
+                if has_ramp_pivot {
+                    dir_x = SimScalar::from_num(ramp_pivot_x);
+                    dir_y = SimScalar::from_num(ramp_pivot_y);
+                    blocked_count += 1;
+                } else {
+                    for &(cell, orth, away_x, away_y) in &[
+                        (q00, [q10, q01], 1_i32, 1_i32),
+                        (q10, [q00, q11], -1_i32, 1_i32),
+                        (q01, [q00, q11], 1_i32, -1_i32),
+                        (q11, [q10, q01], -1_i32, -1_i32),
+                    ] {
+                        if orth
+                            .iter()
+                            .any(|&nbr| !map.terrain_step_is_connected(cell, nbr))
+                        {
+                            dir_x += SimScalar::from_num(away_x);
+                            dir_y += SimScalar::from_num(away_y);
+                            blocked_count += 1;
+                        }
+                    }
+                }
+                min_margin = SimScalar::from_f32_lossy(0.25);
+            }
+        }
+
         if blocked_count == 0 || (dir_x == SimScalar::ZERO && dir_y == SimScalar::ZERO) {
             return vertex;
         }
 
         let dir = SimVec2::new(dir_x, dir_y).normalize_or_zero();
-        let offset_dist = clearance.radius_scalar() + CORNER_SAFETY_MARGIN;
+        let offset_dist = (clearance.radius_scalar() + CORNER_SAFETY_MARGIN).max(min_margin);
         vertex + SimVec2::new(dir.x * offset_dist, dir.y * offset_dist)
     }
 }

@@ -15,7 +15,7 @@
 use crate::entity::Entity;
 use crate::movement::math::{
     checked_dot, checked_normalize, checked_vec_add, checked_vec_div, checked_vec_neg,
-    checked_vec_scale, checked_vec_sub, difference_product, direction, squared_distance,
+    checked_vec_scale, checked_vec_sub, difference_product, direction, distance, squared_distance,
     within_distance,
 };
 use sim_types::{EntityId, SimScalar, SimVec2};
@@ -152,6 +152,96 @@ pub struct SteeringObstacle {
     pub velocity: SimVec2,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct BlockerCandidate {
+    square: (u128, u128),
+    pos: SimVec2,
+    radius: SimScalar,
+    velocity: SimVec2,
+    lat: SimScalar,
+}
+
+fn calc_steering_weight(
+    blocker: &BlockerCandidate,
+    unit_pos: SimVec2,
+    unit_radius: SimScalar,
+    goal_dir: SimVec2,
+    is_corridor: bool,
+) -> SimScalar {
+    let obs_forward =
+        difference_product(goal_dir, blocker.velocity, SimVec2::ZERO, false).unwrap_or(0);
+    let obs_fwd_scalar = SimScalar::from_raw((obs_forward >> 32) as i64);
+    let is_co_moving = is_corridor
+        && blocker.velocity != SimVec2::ZERO
+        && obs_fwd_scalar >= -SimScalar::from_f32_lossy(0.15);
+
+    let combined = unit_radius.saturating_add(blocker.radius);
+    let Ok(dist) = distance(unit_pos, blocker.pos) else {
+        return SimScalar::ZERO;
+    };
+    let lookahead_margin = if is_co_moving {
+        SimScalar::from_f32_lossy(0.08)
+    } else {
+        SimScalar::from_f32_lossy(0.35)
+    };
+    let threshold = combined + lookahead_margin;
+    if dist >= threshold {
+        return SimScalar::ZERO;
+    }
+    let sep_thresh = combined;
+    let emergency_min = combined * SimScalar::from_f32_lossy(0.85);
+
+    let corridor_half_width = combined + SimScalar::from_f32_lossy(0.05);
+    let lat_pen = (corridor_half_width - blocker.lat).max(SimScalar::ZERO);
+    let lat_t = if corridor_half_width > SimScalar::ZERO {
+        (lat_pen / corridor_half_width).min(SimScalar::ONE)
+    } else {
+        SimScalar::ONE
+    };
+
+    let (w_touch, w_max) = if is_co_moving {
+        (
+            SimScalar::from_f32_lossy(0.25),
+            SimScalar::from_f32_lossy(0.35),
+        )
+    } else {
+        (
+            SimScalar::from_f32_lossy(0.85),
+            SimScalar::from_f32_lossy(0.85),
+        )
+    };
+
+    let radial_w = if dist < emergency_min {
+        w_max
+    } else if dist < sep_thresh {
+        let pen = (sep_thresh - dist).max(SimScalar::ZERO);
+        let range = sep_thresh - emergency_min;
+        let frac = if range > SimScalar::ZERO {
+            (pen / range).min(SimScalar::ONE)
+        } else {
+            SimScalar::ONE
+        };
+        w_touch + (w_max - w_touch) * frac
+    } else {
+        let pen = (threshold - dist).max(SimScalar::ZERO);
+        let range = threshold - sep_thresh;
+        let frac = if range > SimScalar::ZERO {
+            (pen / range).min(SimScalar::ONE)
+        } else {
+            SimScalar::ZERO
+        };
+        w_touch * frac
+    };
+
+    let effective_lat_t = if !is_corridor && dist < sep_thresh {
+        SimScalar::from_f32_lossy(0.75) + SimScalar::from_f32_lossy(0.25) * lat_t
+    } else {
+        lat_t
+    };
+
+    radial_w * effective_lat_t
+}
+
 /// Computes normalized local travel direction with deterministic nearest-blocker steering.
 /// Positions and positive radii are planar world units. Input obstacle order resolves
 /// equal-distance ties; world callers supply stable EntityId order.
@@ -220,6 +310,133 @@ pub fn compute_unified_local_steering(
     } else {
         Ok(goal_dir)
     }
+}
+
+/// Computes normalized local travel direction with corridor-awareness.
+/// When `is_corridor` is true, units following intermediate corridor waypoints
+/// treat front squadmates as column leaders to march smoothly without lateral jitter.
+///
+/// # Errors
+/// Rejects nonpositive radii or unrepresentable geometry without mutation.
+pub fn compute_unified_local_steering_ext(
+    unit_id: EntityId,
+    unit_pos: SimVec2,
+    unit_radius: SimScalar,
+    goal_pos: SimVec2,
+    ignored_entity: Option<EntityId>,
+    obstacles: &[SteeringObstacle],
+    is_corridor: bool,
+) -> Result<SimVec2, PushGeometryError> {
+    if !is_corridor {
+        return compute_unified_local_steering(
+            unit_id,
+            unit_pos,
+            unit_radius,
+            goal_pos,
+            ignored_entity,
+            obstacles,
+        );
+    }
+    if unit_radius <= SimScalar::ZERO {
+        return Err(PushGeometryError::InvalidDistance);
+    }
+    let goal_dir = direction(goal_pos, unit_pos)?;
+    if goal_dir == SimVec2::ZERO {
+        return Ok(SimVec2::ZERO);
+    }
+
+    let mut closest_left: Option<BlockerCandidate> = None;
+    let mut closest_right: Option<BlockerCandidate> = None;
+    let lookahead = SimScalar::from_f32_lossy(0.35);
+
+    for obs in obstacles {
+        if obs.id == unit_id || Some(obs.id) == ignored_entity {
+            continue;
+        }
+        if obs.radius <= SimScalar::ZERO {
+            return Err(PushGeometryError::InvalidDistance);
+        }
+        let combined = i128::from(unit_radius.raw()) + i128::from(obs.radius.raw());
+        let threshold = combined + i128::from(lookahead.raw());
+        if obs.pos == unit_pos || !within_distance(unit_pos, obs.pos, threshold) {
+            continue;
+        }
+        let proj = difference_product(goal_dir, obs.pos, unit_pos, false)?;
+        if proj <= 0 {
+            continue;
+        }
+        let cross = difference_product(goal_dir, obs.pos, unit_pos, true)?;
+        let corridor_half_width = combined + i128::from(SimScalar::from_f32_lossy(0.05).raw());
+        if (cross.unsigned_abs() >> 32) >= corridor_half_width as u128 {
+            continue;
+        }
+        let obs_forward =
+            difference_product(goal_dir, obs.velocity, SimVec2::ZERO, false).unwrap_or(0);
+        let obs_fwd_scalar = SimScalar::from_raw((obs_forward >> 32) as i64);
+        let lat_raw = (cross.unsigned_abs() >> 32) as i64;
+        let proj_raw = (proj >> 32) as i64;
+
+        if is_corridor
+            && obs.velocity != SimVec2::ZERO
+            && obs_fwd_scalar >= -SimScalar::from_f32_lossy(0.15)
+        {
+            let is_column_leader = proj_raw > lat_raw;
+            let boid_threshold = combined + i128::from(SimScalar::from_f32_lossy(0.08).raw());
+            let is_outside_boid_shell = !within_distance(unit_pos, obs.pos, boid_threshold);
+            if is_column_leader || is_outside_boid_shell {
+                continue;
+            }
+        }
+
+        let is_left_obstacle = if cross != 0 {
+            cross > 0
+        } else {
+            unit_id.0 >= obs.id.0
+        };
+
+        let square = squared_distance(unit_pos, obs.pos);
+        let lat = SimScalar::from_raw((cross.unsigned_abs() >> 32) as i64);
+        let candidate = BlockerCandidate {
+            square,
+            pos: obs.pos,
+            radius: obs.radius,
+            velocity: obs.velocity,
+            lat,
+        };
+
+        if is_left_obstacle {
+            if closest_left.is_none()
+                || closest_left
+                    .as_ref()
+                    .is_some_and(|best| square < best.square)
+            {
+                closest_left = Some(candidate);
+            }
+        } else if closest_right.is_none()
+            || closest_right
+                .as_ref()
+                .is_some_and(|best| square < best.square)
+        {
+            closest_right = Some(candidate);
+        }
+    }
+
+    let weight_left = closest_left.as_ref().map_or(SimScalar::ZERO, |b| {
+        calc_steering_weight(b, unit_pos, unit_radius, goal_dir, is_corridor)
+    });
+    let weight_right = closest_right.as_ref().map_or(SimScalar::ZERO, |b| {
+        calc_steering_weight(b, unit_pos, unit_radius, goal_dir, is_corridor)
+    });
+
+    let net_weight = weight_right - weight_left;
+
+    if net_weight == SimScalar::ZERO {
+        return Ok(goal_dir);
+    }
+
+    let tangent_left = SimVec2::new(-goal_dir.y, goal_dir.x);
+    let lateral_offset = checked_vec_scale(tangent_left, net_weight)?;
+    checked_normalize(checked_vec_add(goal_dir, lateral_offset)?)
 }
 
 /// Checks geometric settled-neighbor arrival in world units, without self-exclusion.
@@ -499,17 +716,21 @@ fn checked_dynamic_push(
         } else if dot < SimScalar::ZERO {
             perp = checked_vec_neg(perp)?;
         }
-        let wedge = checked_vec_scale(perp, SimScalar::from_f32_lossy(0.25))?;
-        let direction_a = checked_normalize(checked_vec_add(separation, wedge)?)?;
-        let direction_b = checked_normalize(checked_vec_neg(checked_vec_add(separation, wedge)?)?)?;
-        Ok((
-            checked_vec_scale(direction_a, half)?,
-            checked_vec_scale(direction_b, half)?,
-        ))
-    } else {
-        let correction = checked_vec_scale(separation, half)?;
-        Ok((correction, checked_vec_neg(correction)?))
+        let wedge_dir_a = checked_normalize(checked_vec_add(
+            separation,
+            checked_vec_scale(perp, SimScalar::from_f32_lossy(0.25))?,
+        )?)?;
+        let wedge_dir_b = checked_normalize(checked_vec_add(
+            checked_vec_neg(separation)?,
+            checked_vec_scale(checked_vec_neg(perp)?, SimScalar::from_f32_lossy(0.25))?,
+        )?)?;
+        return Ok((
+            checked_vec_scale(wedge_dir_a, half)?,
+            checked_vec_scale(wedge_dir_b, half)?,
+        ));
     }
+    let correction = checked_vec_scale(separation, half)?;
+    Ok((correction, checked_vec_neg(correction)?))
 }
 
 // Only classify squared magnitude against zero/epsilon; no physical squared
