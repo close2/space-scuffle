@@ -10,7 +10,9 @@
 use asset_baker::ffmpeg_importer::FfmpegExtractConfig;
 use asset_baker::{bake_concept_video, extract_and_pack_video, BakerError};
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+
+mod common;
 
 #[test]
 fn test_ffmpeg_not_found_error() {
@@ -46,10 +48,8 @@ fn test_ffmpeg_not_found_error() {
 #[test]
 fn test_video_source_not_found_error() {
     let temp_dir = tempfile::tempdir().expect("tempdir creation failed");
+    common::fixture_clip();
     let ffmpeg_path = PathBuf::from("/usr/bin/ffmpeg");
-    if !ffmpeg_path.exists() {
-        return; // Skip if environment lacks ffmpeg
-    }
 
     let fake_video = temp_dir.path().join("ghost_video.mp4");
     let png_path = temp_dir.path().join("out.png");
@@ -80,17 +80,11 @@ fn test_video_source_not_found_error() {
 
 #[test]
 fn test_concept_video_bake_smoke() {
-    let ffmpeg_path = PathBuf::from("/usr/bin/ffmpeg");
-    let concept_video = Path::new("tmp/gemini_generated_video_de659ff9.mp4");
-
-    if !ffmpeg_path.exists() || !concept_video.exists() {
-        eprintln!("Skipping test_concept_video_bake_smoke: ffmpeg or concept video missing.");
-        return;
-    }
+    let concept_video = common::fixture_clip();
 
     let temp_dir = tempfile::tempdir().expect("tempdir creation failed");
     let meta =
-        bake_concept_video(concept_video, temp_dir.path()).expect("Concept video bake failed");
+        bake_concept_video(&concept_video, temp_dir.path()).expect("Concept video bake failed");
 
     assert_eq!(meta.name, "concept_video");
     assert_eq!(meta.frame_width, 256);

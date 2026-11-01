@@ -16,7 +16,8 @@ use asset_baker::{
     bake_multi_action_videos, bake_multi_action_videos_with_states, FlipbookAtlasMeta,
 };
 use sim_types::enums::AnimState;
-use std::path::Path;
+
+mod common;
 
 #[test]
 fn test_env_content_key_and_project_parsing() {
@@ -168,18 +169,13 @@ fn test_action_prompts_conformity() {
 
 #[test]
 fn test_bake_multi_action_videos_with_concept_video() {
-    let ffmpeg_path = Path::new("/usr/bin/ffmpeg");
-    let test_mp4 = Path::new("tmp/gemini_generated_video_de659ff9.mp4");
-
-    if !ffmpeg_path.exists() || !test_mp4.exists() {
-        eprintln!("Skipping test_bake_multi_action_videos: ffmpeg or concept video missing.");
-        return;
-    }
+    let clip = common::fixture_clip();
+    let test_mp4 = clip.as_path();
 
     let temp_dir = tempfile::tempdir().expect("Failed to create tempdir");
     let output_dir = temp_dir.path();
 
-    // Stitch two clips (representing Idle and Walk) using the real concept video
+    // Stitch two clips (representing Idle and Walk) using the real fixture clip
     let clips = [(AnimState::Idle, test_mp4), (AnimState::Walk, test_mp4)];
 
     let meta = bake_multi_action_videos_with_states("test_unit", &clips, output_dir, 128, 5)
@@ -228,13 +224,8 @@ fn test_bake_multi_action_videos_with_concept_video() {
 
 #[test]
 fn test_bake_multi_action_videos_sequential_api() {
-    let ffmpeg_path = Path::new("/usr/bin/ffmpeg");
-    let test_mp4 = Path::new("tmp/gemini_generated_video_de659ff9.mp4");
-
-    if !ffmpeg_path.exists() || !test_mp4.exists() {
-        eprintln!("Skipping test_bake_multi_action_videos_sequential_api: ffmpeg or concept video missing.");
-        return;
-    }
+    let clip = common::fixture_clip();
+    let test_mp4 = clip.as_path();
 
     let temp_dir = tempfile::tempdir().expect("Failed to create tempdir");
     let output_dir = temp_dir.path();
@@ -250,15 +241,8 @@ fn test_bake_multi_action_videos_sequential_api() {
 
 #[test]
 fn test_multi_action_distinct_frame_offsets() {
-    let ffmpeg_path = Path::new("/usr/bin/ffmpeg");
-    let test_mp4 = Path::new("tmp/gemini_generated_video_de659ff9.mp4");
-
-    if !ffmpeg_path.exists() || !test_mp4.exists() {
-        eprintln!(
-            "Skipping test_multi_action_distinct_frame_offsets: ffmpeg or concept video missing."
-        );
-        return;
-    }
+    let clip = common::fixture_clip();
+    let test_mp4 = clip.as_path();
 
     let temp_dir = tempfile::tempdir().expect("Failed to create tempdir");
     let output_dir = temp_dir.path();
@@ -315,15 +299,8 @@ fn test_multi_action_distinct_frame_offsets() {
 
 #[test]
 fn test_multi_action_webgpu_height_bound() {
-    let ffmpeg_path = Path::new("/usr/bin/ffmpeg");
-    let test_mp4 = Path::new("tmp/gemini_generated_video_de659ff9.mp4");
-
-    if !ffmpeg_path.exists() || !test_mp4.exists() {
-        eprintln!(
-            "Skipping test_multi_action_webgpu_height_bound: ffmpeg or concept video missing."
-        );
-        return;
-    }
+    let clip = common::fixture_clip();
+    let test_mp4 = clip.as_path();
 
     let temp_dir = tempfile::tempdir().expect("Failed to create tempdir");
     let output_dir = temp_dir.path();
