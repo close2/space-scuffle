@@ -24,6 +24,7 @@
     clippy::doc_markdown,
     clippy::too_many_lines,
     clippy::cast_precision_loss,
+    clippy::needless_pass_by_value,
     clippy::cast_possible_truncation,
     clippy::suspicious_command_arg_space
 )]
@@ -51,10 +52,11 @@ use client::editor::file_browser::FileBrowserState;
 use client::editor::playtest::{
     autosave_path, initialize_playtest_world, EditorPhase, PlaytestState,
 };
+use client::editor::tools::PaintOp;
 use client::editor::{
-    editor_window_plugin, EditorStartup, EditorToolState, InitialDocument, LoadDocumentRequest,
-    LosPreviewState, MapEditorPlugin, PendingUnsavedAction, SymmetryMode, UnsavedChangesModalState,
-    PLAYTEST_BASELINE_POSE, PLAYTEST_POSE,
+    editor_ui_system, editor_window_plugin, EditorStartup, EditorToolState, InitialDocument,
+    LoadDocumentRequest, LosPreviewState, MapEditorPlugin, PendingUnsavedAction, SymmetryMode,
+    UnsavedChangesModalState, PLAYTEST_BASELINE_POSE, PLAYTEST_POSE,
 };
 use client::lab_ui::LabState;
 use client::resolve_assets_dir;
@@ -67,6 +69,7 @@ use sim_core::catalog::RuntimeCatalogs;
 use sim_core::scenario::{PlayerSetup, StartLoadoutCatalog};
 use sim_map::grid::{CellFlags, CliffLevel, TerrainKind};
 use sim_map::map_format::{MapCellSpec, MapEntityId, MapFile, MapMetadata, MapStartLocation};
+use sim_map::validation::validate_map;
 use sim_types::commands::{PlayerCommand, TickBundle, UnitOrder};
 use sim_types::ids::{EntityId, PlayerId, Tick};
 use sim_types::math::{SimScalar, SimVec2};
@@ -635,6 +638,25 @@ impl EditorHarness {
             .0
     }
 
+    /// Returns the text on the status bar.
+    fn status(&self) -> String {
+        self.app
+            .world()
+            .resource::<EditorToolState>()
+            .last_status_message
+            .clone()
+            .unwrap_or_default()
+    }
+
+    /// Selects the Eraser and clicks cell `(x, y)` once.
+    fn erase_at(&mut self, x: u32, y: u32) {
+        self.tap_key(KeyCode::KeyT);
+        let position = self.cell_on_screen(x, y);
+        self.move_cursor(position);
+        self.press_left();
+        self.release_left();
+    }
+
     fn history(&self) -> &History {
         self.app.world().resource::<History>()
     }
@@ -848,14 +870,9 @@ fn refused_playtest_stays_in_editing_and_explains_why() {
     harness.step(3);
 
     assert_eq!(harness.phase(), EditorPhase::Editing);
-    let banner = harness
-        .app
-        .world()
-        .resource::<PlaytestState>()
-        .error_banner
-        .clone()
-        .expect("a refused playtest must say why");
-    assert!(banner.contains("validation"), "got: {banner}");
+    let status = harness.status();
+    assert!(status.contains("Cannot playtest"), "got: {status}");
+    assert!(status.contains("validation"), "got: {status}");
     assert_eq!(harness.bubble_count(), 0);
 }
 
@@ -873,13 +890,10 @@ fn missing_media_refuses_entry_without_poisoning_later_playtests() {
     harness.tap_key(KeyCode::F5);
     harness.step(3);
     assert_eq!(harness.phase(), EditorPhase::Editing);
-    let banner = harness
-        .app
-        .world()
-        .resource::<PlaytestState>()
-        .error_banner
-        .clone();
-    assert!(banner.is_some(), "missing media must be reported");
+    assert!(
+        harness.status().contains("Cannot playtest"),
+        "missing media must reach the status bar"
+    );
 
     harness
         .app
@@ -1204,4 +1218,113 @@ fn opening_a_corrupt_file_is_refused_and_reported() {
     let browser = harness.app.world().resource::<FileBrowserState>();
     assert!(browser.is_open, "the open dialog must stay available");
     assert!(browser.error_banner.is_some(), "the failure must be shown");
+}
+
+#[test]
+fn eraser_click_on_abyss_changes_nothing() {
+    let mut fixture = playable_document(64, 64);
+    let abyss = PaintOp::Terrain(TerrainKind::Abyss);
+    let cell = fixture.doc.cell_mut(32, 32).expect("cell in bounds");
+    *cell = abyss.apply_to_cell(cell);
+    let mut harness = EditorHarness::with_document(&fixture);
+
+    harness.erase_at(32, 32);
+
+    assert_eq!(validate_map(&harness.doc().doc).errors, Vec::new());
+    assert_eq!(harness.history().undo_len(), 0);
+    assert!(!harness.doc().dirty);
+}
+
+#[test]
+fn eraser_never_makes_a_mirrored_abyss_cell_traversable() {
+    let mut fixture = playable_document(64, 64);
+    let abyss = PaintOp::Terrain(TerrainKind::Abyss);
+    let mirrored = fixture.doc.cell_mut(43, 32).expect("cell in bounds");
+    *mirrored = abyss.apply_to_cell(mirrored);
+    let primary = fixture.doc.cell_mut(20, 32).expect("cell in bounds");
+    primary.flags.insert(CellFlags::LOS_BLOCKER);
+    let mut harness = EditorHarness::with_document(&fixture);
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<EditorToolState>()
+        .symmetry = SymmetryMode::MirrorX;
+
+    harness.erase_at(20, 32);
+
+    assert_eq!(validate_map(&harness.doc().doc).errors, Vec::new());
+    let primary = harness.doc().doc.cell(20, 32).expect("cell in bounds");
+    assert!(!primary.flags.contains(CellFlags::LOS_BLOCKER));
+    assert_eq!(harness.history().undo_len(), 1);
+}
+
+#[test]
+fn eraser_mirrors_cell_edits_under_symmetry() {
+    let mut fixture = playable_document(64, 64);
+    for (x, y) in [(20, 32), (43, 32)] {
+        let cell = fixture.doc.cell_mut(x, y).expect("cell in bounds");
+        cell.flags.insert(CellFlags::LOS_BLOCKER);
+    }
+    let mut harness = EditorHarness::with_document(&fixture);
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<EditorToolState>()
+        .symmetry = SymmetryMode::MirrorX;
+
+    harness.erase_at(20, 32);
+
+    for (x, y) in [(20, 32), (43, 32)] {
+        let flags = harness.doc().doc.cell(x, y).expect("cell in bounds").flags;
+        assert!(
+            !flags.contains(CellFlags::LOS_BLOCKER),
+            "({x}, {y}) must be erased"
+        );
+    }
+    assert_eq!(harness.history().undo_len(), 1, "one click is one edit");
+}
+
+#[test]
+fn idle_frames_do_not_mark_the_document_or_terrain_changed() {
+    #[derive(Resource, Default)]
+    struct ChangeCounts {
+        doc: u32,
+        terrain: u32,
+        params: u32,
+    }
+
+    fn count_changes(
+        doc: Res<'_, EditorDocument>,
+        terrain: Res<'_, TerrainState>,
+        params: Res<'_, TerrainParamsState>,
+        mut counts: ResMut<'_, ChangeCounts>,
+    ) {
+        counts.doc += u32::from(doc.is_changed());
+        counts.terrain += u32::from(terrain.is_changed());
+        counts.params += u32::from(params.is_changed());
+    }
+
+    let mut harness = EditorHarness::new();
+    harness
+        .app
+        .init_resource::<ChangeCounts>()
+        .add_systems(Update, count_changes.after(editor_ui_system));
+    harness.step(5);
+    *harness.app.world_mut().resource_mut::<ChangeCounts>() = ChangeCounts::default();
+
+    harness.step(10);
+
+    let counts = harness.app.world().resource::<ChangeCounts>();
+    assert_eq!(
+        counts.doc, 0,
+        "markers rebuild whenever the document changes"
+    );
+    assert_eq!(
+        counts.terrain, 0,
+        "markers rebuild whenever the terrain changes"
+    );
+    assert_eq!(
+        counts.params, 0,
+        "params changes re-upload the terrain material"
+    );
 }

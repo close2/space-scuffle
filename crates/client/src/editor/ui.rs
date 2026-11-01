@@ -25,13 +25,13 @@ use bevy::app::AppExit;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use sim_map::grid::{CellFlags, CliffLevel, RampDir, TerrainKind};
+use sim_map::grid::{CliffLevel, RampDir, TerrainKind};
 use sim_map::map_format::{
     MapDocument, MapEntityId, MapMetadata, MAX_MAP_DIMENSION, MIN_MAP_DIMENSION,
 };
 use sim_map::validation::CellRect;
 
-use crate::editor::app::ThemeCatalogResource;
+use crate::editor::app::{MapsDirectory, ThemeCatalogResource};
 use crate::editor::camera::EditorCameraFocus;
 use crate::editor::commands::{ChangeSet, EditCommand, History, MapEntity};
 use crate::editor::document::EditorDocument;
@@ -42,9 +42,10 @@ use crate::editor::playtest::PlaytestEntry;
 use crate::editor::stroke::StrokeRecorder;
 use crate::editor::symmetry::SymmetryMode;
 use crate::editor::tools::{
-    box_fill_command, check_ramp_placement, delete_entity_command, erase_entities_command,
-    infer_ramp, paint_brush_stamp, pick_entity, place_entity_command, place_ramp_command,
-    resolve_start_footprint, AuthorableFlag, BrushShape, EntityToolKind, PaintOp, MAX_BRUSH_RADIUS,
+    box_fill_command, check_ramp_placement, delete_entity_command, erase_cell_command,
+    erase_entities_command, infer_ramp, paint_brush_stamp, pick_entity, place_entity_command,
+    place_ramp_command, resolve_start_footprint, AuthorableFlag, BrushShape, EntityToolKind,
+    PaintOp, MAX_BRUSH_RADIUS,
 };
 use crate::terrain::{
     pick_terrain, update_overlay_image, TerrainFieldImages, TerrainParamsState, TerrainState,
@@ -270,6 +271,8 @@ pub struct EditorUiTerrain<'w> {
     pub loadouts: Option<Res<'w, StartLoadoutCatalogResource>>,
     /// Dynamic unit catalog definitions.
     pub unit_catalog: Option<Res<'w, crate::CatalogResource>>,
+    /// Directory that file dialogs browse.
+    pub maps_directory: Res<'w, MapsDirectory>,
 }
 
 /// Primary editor UI and interactive viewport tool system.
@@ -309,10 +312,11 @@ pub fn editor_ui_system(
         theme_catalog,
         loadouts,
         unit_catalog,
+        maps_directory,
     } = terrain;
 
     let now_secs = time.elapsed_secs_f64();
-    let maps_dir = crate::resolve_assets_dir().join("maps");
+    let maps_dir = maps_directory.as_path();
 
     // 1. Debounced Validation Check
     if !doc.is_validation_current()
@@ -350,7 +354,7 @@ pub fn editor_ui_system(
         let shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
 
         if ctrl && keyboard.just_pressed(KeyCode::KeyS) {
-            handle_save_action(&mut doc, &mut file_browser, &maps_dir, &mut tool_state);
+            handle_save_action(&mut doc, &mut file_browser, maps_dir, &mut tool_state);
         } else if ctrl && !shift && keyboard.just_pressed(KeyCode::KeyZ) {
             if !tool_state.is_painting {
                 let mut cs = ChangeSet::default();
@@ -377,7 +381,7 @@ pub fn editor_ui_system(
                 &mut doc,
                 &mut playtest,
                 &mut tool_state,
-                &maps_dir,
+                maps_dir,
                 &mut focus_events,
             );
         } else if keyboard.just_pressed(KeyCode::KeyB) {
@@ -446,18 +450,18 @@ pub fn editor_ui_system(
                         unsaved_modal.is_open = true;
                         unsaved_modal.pending_action = Some(PendingUnsavedAction::OpenFile);
                     } else {
-                        file_browser.open(FileBrowserMode::Open, &maps_dir, None);
+                        file_browser.open(FileBrowserMode::Open, maps_dir, None);
                     }
                 }
                 if ui.button("Save (Ctrl+S)").clicked() {
                     ui.close_menu();
-                    handle_save_action(&mut doc, &mut file_browser, &maps_dir, &mut tool_state);
+                    handle_save_action(&mut doc, &mut file_browser, maps_dir, &mut tool_state);
                 }
                 if ui.button("Save As…").clicked() {
                     ui.close_menu();
                     file_browser.open(
                         FileBrowserMode::Save,
-                        &maps_dir,
+                        maps_dir,
                         doc.path
                             .as_ref()
                             .and_then(|p| p.file_name())
@@ -548,7 +552,7 @@ pub fn editor_ui_system(
                     &mut doc,
                     &mut playtest,
                     &mut tool_state,
-                    &maps_dir,
+                    maps_dir,
                     &mut focus_events,
                 );
             }
@@ -835,14 +839,13 @@ pub fn editor_ui_system(
             // Metadata editor
             ui.collapsing("Map Metadata", |ui| {
                 let mut title = doc.doc.metadata.title.clone();
-                if ui
+                let response = ui
                     .horizontal(|ui| {
                         ui.label("Title:");
                         ui.text_edit_singleline(&mut title)
                     })
-                    .inner
-                    .changed()
-                {
+                    .inner;
+                if response.changed() {
                     let mut after = doc.doc.metadata.clone();
                     after.title = title;
                     let cmd = EditCommand::SetMetadata {
@@ -850,19 +853,21 @@ pub fn editor_ui_system(
                         after,
                     };
                     let mut cs = ChangeSet::default();
-                    history.execute(cmd, &mut doc.doc, &mut cs);
+                    history.execute_merged(cmd, &mut doc.doc, &mut cs);
                     doc.apply_changeset(&cs, now_secs);
+                }
+                if response.lost_focus() {
+                    history.seal_merge();
                 }
 
                 let mut author = doc.doc.metadata.author.clone();
-                if ui
+                let response = ui
                     .horizontal(|ui| {
                         ui.label("Author:");
                         ui.text_edit_singleline(&mut author)
                     })
-                    .inner
-                    .changed()
-                {
+                    .inner;
+                if response.changed() {
                     let mut after = doc.doc.metadata.clone();
                     after.author = author;
                     let cmd = EditCommand::SetMetadata {
@@ -870,8 +875,11 @@ pub fn editor_ui_system(
                         after,
                     };
                     let mut cs = ChangeSet::default();
-                    history.execute(cmd, &mut doc.doc, &mut cs);
+                    history.execute_merged(cmd, &mut doc.doc, &mut cs);
                     doc.apply_changeset(&cs, now_secs);
+                }
+                if response.lost_focus() {
+                    history.seal_merge();
                 }
 
                 if let Some(catalog) = &theme_catalog {
@@ -916,10 +924,9 @@ pub fn editor_ui_system(
                         ui.label(format!("Type: {:?}", res.kind));
                         ui.label(format!("Cell: ({}, {})", res.cell.0, res.cell.1));
                         let mut amount = res.amount;
-                        if ui
-                            .add(egui::Slider::new(&mut amount, 100..=50000).text("Amount"))
-                            .changed()
-                        {
+                        let response =
+                            ui.add(egui::Slider::new(&mut amount, 100..=50000).text("Amount"));
+                        if response.changed() {
                             let mut after = res.clone();
                             after.amount = amount;
                             let cmd = EditCommand::ModifyEntity {
@@ -927,8 +934,11 @@ pub fn editor_ui_system(
                                 after: MapEntity::Resource(after),
                             };
                             let mut cs = ChangeSet::default();
-                            history.execute(cmd, &mut doc.doc, &mut cs);
+                            history.execute_merged(cmd, &mut doc.doc, &mut cs);
                             doc.apply_changeset(&cs, now_secs);
+                        }
+                        if response.drag_stopped() {
+                            history.seal_merge();
                         }
                     }
 
@@ -941,13 +951,10 @@ pub fn editor_ui_system(
                         ui.label("Type: Sensor Watchtower");
                         ui.label(format!("Cell: ({}, {})", tower.cell.0, tower.cell.1));
                         let mut cap = tower.capture_radius_tenths;
-                        if ui
-                            .add(
-                                egui::Slider::new(&mut cap, 10..=100)
-                                    .text("Capture Radius (tenths)"),
-                            )
-                            .changed()
-                        {
+                        let response = ui.add(
+                            egui::Slider::new(&mut cap, 10..=100).text("Capture Radius (tenths)"),
+                        );
+                        if response.changed() {
                             let mut after = tower.clone();
                             after.capture_radius_tenths = cap;
                             let cmd = EditCommand::ModifyEntity {
@@ -955,8 +962,11 @@ pub fn editor_ui_system(
                                 after: MapEntity::Watchtower(after),
                             };
                             let mut cs = ChangeSet::default();
-                            history.execute(cmd, &mut doc.doc, &mut cs);
+                            history.execute_merged(cmd, &mut doc.doc, &mut cs);
                             doc.apply_changeset(&cs, now_secs);
+                        }
+                        if response.drag_stopped() {
+                            history.seal_merge();
                         }
                     }
 
@@ -973,10 +983,9 @@ pub fn editor_ui_system(
                         ui.label("Type: Start Location");
                         ui.label(format!("Cell: ({}, {})", start.cell.0, start.cell.1));
                         let mut slot = start.player_slot;
-                        if ui
-                            .add(egui::Slider::new(&mut slot, 0..=7).text("Player Slot"))
-                            .changed()
-                        {
+                        let response =
+                            ui.add(egui::Slider::new(&mut slot, 0..=7).text("Player Slot"));
+                        if response.changed() {
                             let mut after = start.clone();
                             after.player_slot = slot;
                             let cmd = EditCommand::ModifyEntity {
@@ -984,8 +993,11 @@ pub fn editor_ui_system(
                                 after: MapEntity::StartLocation(after),
                             };
                             let mut cs = ChangeSet::default();
-                            history.execute(cmd, &mut doc.doc, &mut cs);
+                            history.execute_merged(cmd, &mut doc.doc, &mut cs);
                             doc.apply_changeset(&cs, now_secs);
+                        }
+                        if response.drag_stopped() {
+                            history.seal_merge();
                         }
                     }
 
@@ -1086,7 +1098,7 @@ pub fn editor_ui_system(
     });
 
     // 9. Modals: File Browser, New Map, Unsaved Changes
-    if let Some(action) = file_browser.render(ctx, &maps_dir) {
+    if let Some(action) = file_browser.render(ctx, maps_dir) {
         match action {
             FileBrowserAction::Load(path) => {
                 load_requests.send(LoadDocumentRequest::Open(path));
@@ -1100,7 +1112,7 @@ pub fn editor_ui_system(
                         let outcome = resume_pending_action(
                             &mut unsaved_modal,
                             &mut file_browser,
-                            &maps_dir,
+                            maps_dir,
                             &mut new_map_modal,
                         );
                         if outcome == UnsavedOutcome::Exit {
@@ -1129,7 +1141,7 @@ pub fn editor_ui_system(
         &mut unsaved_modal,
         &mut doc,
         &mut file_browser,
-        &maps_dir,
+        maps_dir,
         &mut new_map_modal,
         &mut tool_state,
         &mut exit_events,
@@ -1150,7 +1162,7 @@ pub fn editor_ui_system(
         );
     } else {
         // Clear brush overlay highlight when pointer is over UI
-        terrain_params.overlay_flags &= !OVERLAY_FLAG_BRUSH;
+        hide_brush_overlay(&mut terrain_params);
         tool_state.hovered_cell = None;
     }
 
@@ -1249,7 +1261,7 @@ fn handle_playtest_entry(
                     cell: first_error.location().min,
                 });
             }
-            playtest.state.error_banner = Some(format!("Cannot playtest: {error}"));
+            tool_state.last_status_message = Some(format!("Cannot playtest: {error}"));
         }
     }
 }
@@ -1414,7 +1426,7 @@ pub fn apply_unsaved_choice(
 fn render_unsaved_changes_modal(
     ctx: &egui::Context,
     modal: &mut UnsavedChangesModalState,
-    doc: &mut EditorDocument,
+    doc: &mut ResMut<'_, EditorDocument>,
     file_browser: &mut FileBrowserState,
     maps_dir: &Path,
     new_map: &mut NewMapModalState,
@@ -1464,22 +1476,59 @@ fn render_unsaved_changes_modal(
     }
 }
 
+/// Hides the brush outline, touching the parameters only if it is showing.
+fn hide_brush_overlay(terrain_params: &mut ResMut<'_, TerrainParamsState>) {
+    if terrain_params.overlay_flags & OVERLAY_FLAG_BRUSH != 0 {
+        terrain_params.overlay_flags &= !OVERLAY_FLAG_BRUSH;
+    }
+}
+
+/// Shows the brush outline over `cell`, touching the parameters only if something moved.
+fn show_brush_overlay(
+    terrain_params: &mut ResMut<'_, TerrainParamsState>,
+    cell: (u32, u32),
+    radius: u8,
+    shape: BrushShape,
+) {
+    let center = Vec2::new(cell.0 as f32 + 0.5, cell.1 as f32 + 0.5);
+    let radius = f32::from(radius);
+    let shape = match shape {
+        BrushShape::Circle => 0,
+        BrushShape::Square => 1,
+    };
+    if terrain_params.brush_center != center
+        || terrain_params.brush_radius.to_bits() != radius.to_bits()
+        || terrain_params.brush_shape != shape
+        || terrain_params.overlay_flags & OVERLAY_FLAG_BRUSH == 0
+    {
+        terrain_params.brush_center = center;
+        terrain_params.brush_radius = radius;
+        terrain_params.brush_shape = shape;
+        terrain_params.overlay_flags |= OVERLAY_FLAG_BRUSH;
+    }
+}
+
+// PERFORMANCE RATIONALE:
+// Why: A plain `&mut EditorDocument` argument is taken through `DerefMut`, which flags the resource
+// changed on every frame and made every marker rebuild and the terrain material re-upload per frame.
+// What: These helpers borrow the `ResMut` wrappers and dereference mutably only on a real edit.
+// Trade-off: Slightly noisier signatures in exchange for idle frames that do no rebuild work.
 fn handle_viewport_tool_interaction(
     mouse_buttons: &ButtonInput<MouseButton>,
     windows: &Query<'_, '_, &Window>,
     camera_query: &Query<'_, '_, (&Camera, &GlobalTransform, &mut crate::camera::RtsCamera)>,
-    doc: &mut EditorDocument,
+    doc: &mut ResMut<'_, EditorDocument>,
     history: &mut History,
     tool_state: &mut EditorToolState,
-    terrain: &mut TerrainState,
-    terrain_params: &mut TerrainParamsState,
+    terrain: &mut ResMut<'_, TerrainState>,
+    terrain_params: &mut ResMut<'_, TerrainParamsState>,
     now_secs: f64,
 ) {
     let Ok(window) = windows.get_single() else {
         return;
     };
     let Some(cursor_pos) = window.cursor_position() else {
-        terrain_params.overlay_flags &= !OVERLAY_FLAG_BRUSH;
+        hide_brush_overlay(terrain_params);
         tool_state.hovered_cell = None;
         return;
     };
@@ -1495,17 +1544,16 @@ fn handle_viewport_tool_interaction(
     // Update brush hover overlay
     let hit_cell = if let Some(ref h) = hit {
         tool_state.hovered_cell = Some(h.cell);
-        terrain_params.brush_center = Vec2::new(h.cell.0 as f32 + 0.5, h.cell.1 as f32 + 0.5);
-        terrain_params.brush_radius = tool_state.brush_radius as f32;
-        terrain_params.brush_shape = match tool_state.brush_shape {
-            BrushShape::Circle => 0,
-            BrushShape::Square => 1,
-        };
-        terrain_params.overlay_flags |= OVERLAY_FLAG_BRUSH;
+        show_brush_overlay(
+            terrain_params,
+            h.cell,
+            tool_state.brush_radius,
+            tool_state.brush_shape,
+        );
         h.cell
     } else {
         tool_state.hovered_cell = None;
-        terrain_params.overlay_flags &= !OVERLAY_FLAG_BRUSH;
+        hide_brush_overlay(terrain_params);
         return;
     };
 
@@ -1641,20 +1689,9 @@ fn handle_viewport_tool_interaction(
                     history.execute(cmd, &mut doc.doc, &mut cs);
                     doc.apply_changeset(&cs, now_secs);
                     tool_state.last_status_message = Some("Erased entity".into());
-                } else if let Some(cell) = doc.doc.cell(hit_cell.0, hit_cell.1) {
-                    let mut after = cell.clone();
-                    after.flags = CellFlags::GROUND_PATHABLE | CellFlags::BUILDABLE;
-                    after.ramp = None;
-                    let deltas = vec![crate::editor::commands::CellDelta {
-                        x: hit_cell.0,
-                        y: hit_cell.1,
-                        before: cell.clone(),
-                        after,
-                    }];
-                    let cmd = EditCommand::PaintCells {
-                        label: "Erase Cell",
-                        deltas,
-                    };
+                } else if let Some(cmd) =
+                    erase_cell_command(&doc.doc, hit_cell, tool_state.symmetry)
+                {
                     let mut cs = ChangeSet::default();
                     history.execute(cmd, &mut doc.doc, &mut cs);
                     doc.apply_changeset(&cs, now_secs);

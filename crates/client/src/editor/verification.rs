@@ -31,6 +31,7 @@ use bevy::render::render_resource::{CachedPipelineState, PipelineCache};
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 
 use crate::camera::RtsCamera;
+use crate::editor::app::MapsDirectory;
 use crate::editor::document::EditorDocument;
 use crate::editor::playtest::PlaytestEntry;
 use crate::editor::ui::EditorToolState;
@@ -231,6 +232,7 @@ pub fn update_render_verification_system(
     mut exit_events: EventWriter<'_, AppExit>,
     mut doc: ResMut<'_, EditorDocument>,
     tool_state: Res<'_, EditorToolState>,
+    maps_dir: Res<'_, MapsDirectory>,
     mut playtest: PlaytestEntry<'_>,
 ) {
     // 1. Pipeline compilation error guard
@@ -252,7 +254,6 @@ pub fn update_render_verification_system(
 
     // 3. All editing poses captured: hand over to the playtest comparison
     if state.current_pose_idx >= state.poses.len() {
-        let maps_dir = crate::resolve_assets_dir().join("maps");
         match playtest.enter(&mut doc, &tool_state.player_loadouts, &maps_dir) {
             Ok(_) => state.step = CaptureStep::WaitingForWarmup,
             Err(error) => {

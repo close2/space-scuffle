@@ -83,8 +83,6 @@ pub struct PlaytestState {
     pub current_tick: u64,
     /// Checksum of the latest published simulation snapshot.
     pub last_checksum: u64,
-    /// Why the most recent attempt to enter playtest was refused, shown on the status bar.
-    pub error_banner: Option<String>,
 }
 
 /// Typed reason a playtest could not start; the editor stays in [`EditorPhase::Editing`].
@@ -221,7 +219,7 @@ pub struct PlaytestEntry<'w> {
     pub lab: ResMut<'w, LabState>,
     /// Live battle pipeline replaced by a successful entry.
     pub session: ResMut<'w, BattleSession>,
-    /// Status shown on the HUD and status bar.
+    /// Status shown on the HUD.
     pub state: ResMut<'w, PlaytestState>,
     /// Transition handle to switch editor phases.
     pub phase: ResMut<'w, NextState<EditorPhase>>,
@@ -291,7 +289,6 @@ impl PlaytestEntry<'_> {
         self.state.selected_unit_ids.clear();
         self.state.current_tick = 0;
         self.state.last_checksum = 0;
-        self.state.error_banner = None;
         self.phase.set(EditorPhase::Playtesting);
         Ok(autosaved)
     }

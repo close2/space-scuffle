@@ -1428,3 +1428,155 @@ fn test_unsaved_cancel_abandons_the_action_and_keeps_the_edits() {
     assert_eq!(flow.modal.pending_action, None);
     assert!(flow.doc.dirty);
 }
+
+fn start_location(id: u32, slot: u8, cell: (u32, u32)) -> MapStartLocation {
+    MapStartLocation {
+        id: MapEntityId(id),
+        player_slot: slot,
+        cell,
+        footprint: (5, 5),
+    }
+}
+
+fn apply(cmd: &EditCommand, doc: &mut MapDocument) {
+    let mut cs = ChangeSet::default();
+    cmd.apply(doc, &mut cs);
+    assert!(cs.entities_changed);
+}
+
+const START_TOOL: EntityToolKind = EntityToolKind::StartLocation {
+    slot: 0,
+    footprint: (5, 5),
+};
+
+#[test]
+fn test_mirrored_start_creates_the_missing_partner_when_primary_exists() {
+    let mut doc = fixture_document(32, 32);
+    doc.start_locations.push(start_location(1, 0, (2, 2)));
+    let original = doc.clone();
+
+    let cmd = place_entity_command(&doc, START_TOOL, (4, 4), SymmetryMode::Rotate180);
+    apply(&cmd, &mut doc);
+
+    let primary = doc.start_locations.iter().find(|s| s.player_slot == 0);
+    let partner = doc.start_locations.iter().find(|s| s.player_slot == 1);
+    assert_eq!(primary.map(|s| s.cell), Some((4, 4)));
+    assert_eq!(
+        partner.map(|s| s.cell),
+        Some((23, 23)),
+        "symmetric authoring must produce the mirrored partner"
+    );
+
+    let mut cs = ChangeSet::default();
+    cmd.revert(&mut doc, &mut cs);
+    assert_eq!(doc, original, "the placement must undo as one edit");
+}
+
+#[test]
+fn test_mirrored_start_moves_a_lone_partner_without_duplicating_its_slot() {
+    let mut doc = fixture_document(32, 32);
+    doc.start_locations.push(start_location(1, 1, (20, 20)));
+    let original = doc.clone();
+
+    let cmd = place_entity_command(&doc, START_TOOL, (4, 4), SymmetryMode::Rotate180);
+    apply(&cmd, &mut doc);
+
+    let partners: Vec<_> = doc
+        .start_locations
+        .iter()
+        .filter(|s| s.player_slot == 1)
+        .collect();
+    assert_eq!(partners.len(), 1, "player slots must stay unique");
+    assert_eq!(
+        partners[0].id,
+        MapEntityId(1),
+        "the partner keeps its identity"
+    );
+    assert_eq!(partners[0].cell, (23, 23));
+    assert!(doc.start_locations.iter().any(|s| s.player_slot == 0));
+
+    let mut cs = ChangeSet::default();
+    cmd.revert(&mut doc, &mut cs);
+    assert_eq!(doc, original);
+}
+
+fn titled(doc: &MapDocument, title: &str) -> EditCommand {
+    let before = doc.metadata.clone();
+    let mut after = before.clone();
+    after.title = title.to_string();
+    EditCommand::SetMetadata { before, after }
+}
+
+#[test]
+fn test_continuous_edit_is_one_undo_entry() {
+    let mut doc = fixture_document(16, 16);
+    let original = doc.clone();
+    let mut history = History::new();
+    let mut cs = ChangeSet::default();
+
+    for typed in ["M", "Ma", "Map"] {
+        history.execute_merged(titled(&doc, typed), &mut doc, &mut cs);
+    }
+
+    assert_eq!(doc.metadata.title, "Map");
+    assert_eq!(history.undo_len(), 1, "typing one word is one edit");
+    assert!(history.undo(&mut doc, &mut cs));
+    assert_eq!(
+        doc, original,
+        "undo must restore the text before typing began"
+    );
+    assert!(history.redo(&mut doc, &mut cs));
+    assert_eq!(doc.metadata.title, "Map");
+}
+
+#[test]
+fn test_sealed_edit_does_not_merge_with_the_next_one() {
+    let mut doc = fixture_document(16, 16);
+    let mut history = History::new();
+    let mut cs = ChangeSet::default();
+
+    history.execute_merged(titled(&doc, "First"), &mut doc, &mut cs);
+    history.seal_merge();
+    history.execute_merged(titled(&doc, "Second"), &mut doc, &mut cs);
+    assert_eq!(history.undo_len(), 2);
+    assert!(history.undo(&mut doc, &mut cs));
+    assert_eq!(doc.metadata.title, "First");
+}
+
+#[test]
+fn test_continuous_edit_does_not_merge_across_other_commands_or_entities() {
+    let mut doc = fixture_document(16, 16);
+    let resource = |id, amount| {
+        MapEntity::Resource(MapResource {
+            id: MapEntityId(id),
+            kind: ResourceKind::Mineral,
+            cell: (id, 1),
+            amount,
+        })
+    };
+    let mut history = History::new();
+    let mut cs = ChangeSet::default();
+    history.execute(
+        EditCommand::AddEntities {
+            entities: vec![resource(1, 100), resource(2, 100)],
+        },
+        &mut doc,
+        &mut cs,
+    );
+
+    let modify = |id, from, to| EditCommand::ModifyEntity {
+        before: resource(id, from),
+        after: resource(id, to),
+    };
+    history.execute_merged(modify(1, 100, 200), &mut doc, &mut cs);
+    history.execute_merged(modify(1, 200, 300), &mut doc, &mut cs);
+    assert_eq!(history.undo_len(), 2, "one slider drag is one edit");
+    history.execute_merged(modify(2, 100, 200), &mut doc, &mut cs);
+    assert_eq!(history.undo_len(), 3, "another entity is another edit");
+
+    history.undo(&mut doc, &mut cs);
+    history.undo(&mut doc, &mut cs);
+    assert_eq!(doc.resources[0].amount, 100);
+    history.execute_merged(modify(1, 100, 150), &mut doc, &mut cs);
+    assert_eq!(history.redo_len(), 0);
+}

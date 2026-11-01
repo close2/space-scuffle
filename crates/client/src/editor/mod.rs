@@ -35,7 +35,8 @@ pub mod ui;
 pub mod verification;
 
 pub use app::{
-    editor_window_close_system, editor_window_plugin, MapEditorPlugin, ThemeCatalogResource,
+    editor_window_close_system, editor_window_plugin, MapEditorPlugin, MapsDirectory,
+    ThemeCatalogResource,
 };
 pub use camera::{editor_camera_system, focus_cell, EditorCameraFocus, CAMERA_HEIGHT_EASE_PER_SEC};
 pub use commands::{
@@ -67,9 +68,9 @@ pub use stroke::StrokeRecorder;
 pub use symmetry::SymmetryMode;
 pub use tools::{
     box_fill_command, brush_footprint, check_ramp_placement, delete_entity_command,
-    erase_entities_command, infer_ramp, move_entity_command, paint_brush_stamp, pick_entity,
-    place_entity_command, place_ramp_command, resolve_start_footprint, AuthorableFlag, BrushShape,
-    EntityToolKind, PaintOp, RampPlacement, RampPlacementError, StartFootprintError,
+    erase_cell_command, erase_entities_command, infer_ramp, move_entity_command, paint_brush_stamp,
+    pick_entity, place_entity_command, place_ramp_command, resolve_start_footprint, AuthorableFlag,
+    BrushShape, EntityToolKind, PaintOp, RampPlacement, RampPlacementError, StartFootprintError,
     DEFAULT_GAS_AMOUNT, DEFAULT_MINERAL_AMOUNT, DEFAULT_WATCHTOWER_CAPTURE_RADIUS_TENTHS,
     DEFAULT_WATCHTOWER_REVEAL_RADIUS_TENTHS, MAX_BRUSH_RADIUS,
 };

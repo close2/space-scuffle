@@ -122,6 +122,10 @@ pub fn editor_window_close_system(
     }
 }
 
+/// Absolute path of the `assets/maps` directory, resolved once at startup.
+#[derive(Resource, Debug, Clone, Deref)]
+pub struct MapsDirectory(pub PathBuf);
+
 /// Bevy plugin assembling the complete Space Scuffle map editor application.
 pub struct MapEditorPlugin {
     /// Catalogs and initial document, loaded and validated before the app is built.
@@ -158,6 +162,7 @@ impl Plugin for MapEditorPlugin {
 
         // 1. Register Core Resources
         app.init_state::<EditorPhase>()
+            .insert_resource(MapsDirectory(assets_root.as_path().join("maps")))
             .insert_resource(assets_root)
             .insert_resource(CatalogResource(catalogs.units.clone()))
             .insert_resource(EditorRulesResource(catalogs))

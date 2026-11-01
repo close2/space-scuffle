@@ -113,6 +113,11 @@ pub enum EditCommand {
         /// Metadata state after edit.
         after: MapMetadata,
     },
+    /// Applies several commands as one undoable edit, reverting them in reverse order.
+    Batch {
+        /// Commands in application order.
+        commands: Vec<EditCommand>,
+    },
 }
 
 /// Bounding rectangle and subsystem flags describing document mutations.
@@ -243,6 +248,11 @@ impl EditCommand {
                 doc.metadata = after.clone();
                 cs.metadata_changed = true;
             }
+            Self::Batch { commands } => {
+                for command in commands {
+                    command.apply(doc, cs);
+                }
+            }
         }
     }
 
@@ -285,6 +295,11 @@ impl EditCommand {
                 doc.metadata = before.clone();
                 cs.metadata_changed = true;
             }
+            Self::Batch { commands } => {
+                for command in commands.iter().rev() {
+                    command.revert(doc, cs);
+                }
+            }
         }
     }
 
@@ -298,6 +313,37 @@ impl EditCommand {
             | Self::ModifyEntity { .. }
             | Self::ModifyEntities { .. }
             | Self::SetMetadata { .. } => 0,
+            Self::Batch { commands } => commands.iter().map(Self::cell_delta_count).sum(),
+        }
+    }
+
+    /// Extends this command with `next` if `next` continues the same edit from where it stopped.
+    ///
+    /// Returns `true` if `next` was absorbed. Reverting the result restores the state from
+    /// before this command, as if the intermediate steps never happened.
+    fn absorb(&mut self, next: &Self) -> bool {
+        match (self, next) {
+            (
+                Self::SetMetadata { after, .. },
+                Self::SetMetadata {
+                    before: next_before,
+                    after: next_after,
+                },
+            ) if after == next_before => {
+                after.clone_from(next_after);
+                true
+            }
+            (
+                Self::ModifyEntity { after, .. },
+                Self::ModifyEntity {
+                    before: next_before,
+                    after: next_after,
+                },
+            ) if after == next_before => {
+                after.clone_from(next_after);
+                true
+            }
+            _ => false,
         }
     }
 }
@@ -310,6 +356,8 @@ pub struct History {
     total_deltas: usize,
     max_commands: usize,
     max_deltas: usize,
+    /// Whether the newest undo entry may still absorb the next step of a continuous edit.
+    merge_open: bool,
 }
 
 impl Default for History {
@@ -334,11 +382,13 @@ impl History {
             total_deltas: 0,
             max_commands,
             max_deltas,
+            merge_open: false,
         }
     }
 
     /// Clears redo stack, appends an already applied command to undo history, and evicts oldest commands exceeding limits.
     pub fn push_applied(&mut self, cmd: EditCommand) {
+        self.merge_open = false;
         self.redo.clear();
         let deltas = cmd.cell_delta_count();
         self.total_deltas += deltas;
@@ -353,10 +403,37 @@ impl History {
         self.push_applied(cmd);
     }
 
+    /// Executes one step of a continuous edit such as typing or dragging a slider.
+    ///
+    /// Consecutive steps that continue each other share one undo entry until [`Self::seal_merge`]
+    /// or any other history operation. A step that does not continue the newest entry starts a
+    /// new one.
+    pub fn execute_merged(&mut self, cmd: EditCommand, doc: &mut MapDocument, cs: &mut ChangeSet) {
+        cmd.apply(doc, cs);
+        if self.merge_open {
+            if let Some(newest) = self.undo.back_mut() {
+                if newest.absorb(&cmd) {
+                    self.redo.clear();
+                    return;
+                }
+            }
+        }
+        self.push_applied(cmd);
+        self.merge_open = true;
+    }
+
+    /// Ends the current continuous edit, so the next step starts a new undo entry.
+    ///
+    /// Called when a text field loses focus or a slider drag stops.
+    pub fn seal_merge(&mut self) {
+        self.merge_open = false;
+    }
+
     /// Reverts the most recent command on the undo stack, pushing it onto redo.
     ///
     /// Returns `true` if a command was undone, `false` if undo was empty.
     pub fn undo(&mut self, doc: &mut MapDocument, cs: &mut ChangeSet) -> bool {
+        self.merge_open = false;
         if let Some(cmd) = self.undo.pop_back() {
             self.total_deltas = self.total_deltas.saturating_sub(cmd.cell_delta_count());
             cmd.revert(doc, cs);
@@ -371,6 +448,7 @@ impl History {
     ///
     /// Returns `true` if a command was redone, `false` if redo was empty.
     pub fn redo(&mut self, doc: &mut MapDocument, cs: &mut ChangeSet) -> bool {
+        self.merge_open = false;
         if let Some(cmd) = self.redo.pop() {
             cmd.apply(doc, cs);
             self.total_deltas += cmd.cell_delta_count();
@@ -387,6 +465,7 @@ impl History {
         self.undo.clear();
         self.redo.clear();
         self.total_deltas = 0;
+        self.merge_open = false;
     }
 
     fn enforce_limits(&mut self) {
