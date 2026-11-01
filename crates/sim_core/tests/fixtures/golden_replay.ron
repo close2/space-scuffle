@@ -1,0 +1,54 @@
+// Golden lockstep replay: a real battle on the shipped default arena, with the world
+// checksum recorded every `checkpoint_interval` ticks.
+//
+// Every target (Linux, Windows, macOS ARM64, wasm32-wasip1) replays this script and must
+// reproduce `checksums` exactly. A simulation change that alters behaviour updates this
+// list in the commit that explains why. See tests/golden_replay_tests.rs.
+(
+    checksum_schema: 4,
+    seed: 0x5EED_0F_5CAFF1E,
+    total_ticks: 1000,
+    checkpoint_interval: 50,
+    squads: [
+        (name: "blue_infantry", player: 0, slug: "pulse_bot", count: 16, origin: (18, 10), columns: 8),
+        (name: "blue_armor", player: 0, slug: "rhino_beetle", count: 4, origin: (24, 6), columns: 4),
+        (name: "red_psi", player: 1, slug: "psi_grey", count: 12, origin: (40, 48), columns: 6),
+        (name: "red_siege", player: 1, slug: "railgun_crawler", count: 3, origin: (36, 44), columns: 3),
+    ],
+    structures: [
+        (player: 0, slug: "foundry_core_dome", cell: (6, 6)),
+        (player: 1, slug: "foundry_core_dome", cell: (52, 52)),
+    ],
+    orders: [
+        (tick: 5, squads: ["blue_infantry", "blue_armor"], order: AttackMove(32, 46)),
+        (tick: 40, squads: ["red_psi"], order: AttackMove(32, 20)),
+        (tick: 120, squads: ["red_siege"], order: AttackMove(32, 28)),
+        (tick: 260, squads: ["blue_infantry"], order: UseStim),
+        (tick: 400, squads: ["blue_armor"], order: Move(20, 12)),
+        (tick: 520, squads: ["blue_armor"], order: AttackMove(32, 46)),
+        (tick: 640, squads: ["red_psi"], order: HoldPosition),
+        (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
+    ],
+    checksums: [
+        0xe6f9a272e708a487,
+        0xf3fc0989ad9802c6,
+        0x69fbbfaec2598e18,
+        0xcfdc78ef72c7bc76,
+        0x5064fe7a2d34b9fc,
+        0xd0ed3ca83b1b8efd,
+        0xccfc584321747d3c,
+        0x05d5c3f4c858736c,
+        0x53489556179c89d1,
+        0x5392041ef5e8d64c,
+        0xd0d8da6e35362f12,
+        0x1f646d1f98e00bfe,
+        0xf7d15dac09bb19d0,
+        0xf9569a999a3d6fe3,
+        0x372e4a1578156dda,
+        0x27d2fb3d6f298678,
+        0xc8eb2cc4a48fc258,
+        0xd4bc1c1aa2958225,
+        0xc740b0f081213c66,
+        0xb20700408ae00741,
+    ],
+)
