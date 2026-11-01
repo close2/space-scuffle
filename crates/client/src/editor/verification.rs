@@ -12,6 +12,13 @@
 //!    before capturing screenshots.
 //! 4. **Strict Timeout & Exit Codes:** Exits with code 1 if pipeline compilation fails, on timeout
 //!    exceeding 900 frames, or if screenshot output is missing. Exits with code 0 on complete success.
+//! 5. **Real Playtest Rendering:** After the reference poses, a baseline of a start location is
+//!    captured, the playtest is entered through the same [`PlaytestEntry`] path as `F5`, and the
+//!    identical view is captured again, so comparing the two proves units reach the screen.
+//! 6. **Complete Output Only:** A pose advances only once its PNG decodes, so a partially written
+//!    file is never reported as captured.
+//! 7. **Fresh Output Only:** Captures from earlier runs are deleted before the application starts.
+//!    [`VerifyOutputDir`] can only be built by that step, so a run cannot pass on stale files.
 
 use std::f32::consts::PI;
 use std::fs;
@@ -26,6 +33,12 @@ use bevy::render::render_resource::{CachedPipelineState, PipelineCache};
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 
 use crate::camera::RtsCamera;
+use crate::editor::app::MapsDirectory;
+use crate::editor::document::EditorDocument;
+use crate::editor::playtest::PlaytestEntry;
+use crate::editor::ui::EditorToolState;
+use crate::lab_ui::LabState;
+use crate::scene_controller::LiveBattleBubble;
 use crate::terrain::{
     TerrainChunks, TerrainParamsState, OVERLAY_FLAG_BRUSH, OVERLAY_FLAG_GRID,
     OVERLAY_FLAG_PATHABILITY, OVERLAY_FLAG_VALIDATION,
@@ -36,6 +49,18 @@ pub const VERIFY_WARMUP_TIMEOUT_FRAMES: u32 = 900;
 
 /// Number of frames to wait for scene settling before triggering screenshot capture.
 pub const POSE_SETTLING_FRAMES: u32 = 10;
+
+/// File stem of the capture taken just before entering the playtest.
+pub const PLAYTEST_BASELINE_POSE: &str = "playtest_baseline";
+
+/// File stem of the capture showing live playtest units at the same camera pose.
+pub const PLAYTEST_POSE: &str = "playtest";
+
+/// Camera distance in world units for the playtest comparison captures.
+const PLAYTEST_CAMERA_DISTANCE: f32 = 22.0;
+
+/// Camera pitch in radians for the playtest comparison captures.
+const PLAYTEST_CAMERA_PITCH: f32 = 58.0 * (PI / 180.0);
 
 /// Exit code for verification failure (pipeline error or timeout).
 pub const EXIT_CODE_VERIFICATION_FAILURE: NonZeroU8 = match NonZeroU8::new(1) {
@@ -141,23 +166,99 @@ pub struct VerifyRenderState {
     pub step: CaptureStep,
     /// Total frames elapsed since application start.
     pub total_frames: u32,
-    /// Poses to capture.
-    pub poses: [VerifyPose; 4],
+    /// Poses to capture, ending with the playtest baseline.
+    pub poses: Vec<VerifyPose>,
 }
 
 impl VerifyRenderState {
     /// Creates a new verification state writing to `out_dir`.
+    ///
+    /// `playtest_focus` is the ground point `(x, z)` in world units of a start location, where
+    /// the playtest comparison captures look.
     #[must_use]
-    pub fn new(out_dir: PathBuf) -> Self {
-        let _ = fs::create_dir_all(&out_dir);
+    pub fn new(out_dir: VerifyOutputDir, playtest_focus: Vec2) -> Self {
+        let mut poses = get_verify_poses().to_vec();
+        poses.push(VerifyPose {
+            name: PLAYTEST_BASELINE_POSE,
+            target: playtest_focus,
+            distance: PLAYTEST_CAMERA_DISTANCE,
+            pitch: PLAYTEST_CAMERA_PITCH,
+            overlay_flags: 0,
+            brush_center: None,
+            brush_radius: None,
+        });
         Self {
-            out_dir,
+            out_dir: out_dir.0,
             current_pose_idx: 0,
             step: CaptureStep::WaitingForWarmup,
             total_frames: 0,
-            poses: get_verify_poses(),
+            poses,
         }
     }
+}
+
+/// Failure preparing the render verification output directory.
+#[derive(Debug, thiserror::Error)]
+pub enum VerifyOutputError {
+    /// The directory could not be created.
+    #[error("cannot create verification output directory {path}: {source}")]
+    CreateDirectory {
+        /// Exact attempted path.
+        path: PathBuf,
+        /// Operating-system failure.
+        source: std::io::Error,
+    },
+    /// A capture from an earlier run could not be deleted, so it could be mistaken for new output.
+    #[error("cannot remove stale capture {path}: {source}")]
+    RemoveStaleCapture {
+        /// Exact attempted path.
+        path: PathBuf,
+        /// Operating-system failure.
+        source: std::io::Error,
+    },
+}
+
+/// Output directory that exists and holds no capture from an earlier run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifyOutputDir(PathBuf);
+
+impl VerifyOutputDir {
+    /// Creates `path` if needed and deletes every capture this run will write.
+    ///
+    /// Other files are left alone, since the directory belongs to the caller.
+    ///
+    /// # Errors
+    /// Returns [`VerifyOutputError`] if the directory cannot be created or a stale capture cannot
+    /// be deleted.
+    pub fn prepare(path: PathBuf) -> Result<Self, VerifyOutputError> {
+        fs::create_dir_all(&path).map_err(|source| VerifyOutputError::CreateDirectory {
+            path: path.clone(),
+            source,
+        })?;
+        let names = get_verify_poses().map(|pose| pose.name);
+        for name in names
+            .into_iter()
+            .chain([PLAYTEST_BASELINE_POSE, PLAYTEST_POSE])
+        {
+            let capture = path.join(format!("{name}.png"));
+            match fs::remove_file(&capture) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(source) => {
+                    return Err(VerifyOutputError::RemoveStaleCapture {
+                        path: capture,
+                        source,
+                    });
+                }
+            }
+        }
+        Ok(Self(path))
+    }
+}
+
+/// Returns `true` once the PNG at `path` exists and decodes completely.
+fn capture_is_complete(path: &std::path::Path) -> bool {
+    image::open(path).is_ok()
 }
 
 /// System running in `RenderApp`'s `Render` schedule monitoring pipeline cache state.
@@ -189,6 +290,10 @@ pub fn update_render_verification_system(
     mut terrain_params: Option<ResMut<'_, TerrainParamsState>>,
     mut cam_query: Query<'_, '_, (&mut RtsCamera, &mut Transform)>,
     mut exit_events: EventWriter<'_, AppExit>,
+    mut doc: ResMut<'_, EditorDocument>,
+    tool_state: Res<'_, EditorToolState>,
+    maps_dir: Res<'_, MapsDirectory>,
+    mut playtest: PlaytestEntry<'_>,
 ) {
     // 1. Pipeline compilation error guard
     if sync.has_error.load(Ordering::SeqCst) {
@@ -207,13 +312,15 @@ pub fn update_render_verification_system(
     }
     state.total_frames += 1;
 
-    // 3. Completion check
+    // 3. All editing poses captured: hand over to the playtest comparison
     if state.current_pose_idx >= state.poses.len() {
-        println!(
-            "All {} verification screenshots captured successfully. Exiting 0.",
-            state.poses.len()
-        );
-        exit_events.send(AppExit::Success);
+        match playtest.enter(&mut doc, &tool_state.player_loadouts, &maps_dir) {
+            Ok(_) => state.step = CaptureStep::WaitingForWarmup,
+            Err(error) => {
+                eprintln!("CRITICAL: Playtest entry failed during verification: {error}");
+                exit_events.send(AppExit::Error(EXIT_CODE_VERIFICATION_FAILURE));
+            }
+        }
         return;
     }
 
@@ -265,20 +372,139 @@ pub fn update_render_verification_system(
         }
         CaptureStep::WaitingForFile => {
             let file_path = state.out_dir.join(format!("{}.png", pose.name));
-            if file_path.exists() {
-                if let Ok(meta) = fs::metadata(&file_path) {
-                    if meta.len() > 1024 {
-                        println!("Captured pose '{}' ({} bytes)", pose.name, meta.len());
-                        state.current_pose_idx += 1;
-                        state.step = CaptureStep::WaitingForWarmup;
-
-                        if state.current_pose_idx >= state.poses.len() {
-                            println!("All verification screenshots captured. Exiting 0.");
-                            exit_events.send(AppExit::Success);
-                        }
-                    }
-                }
+            if capture_is_complete(&file_path) {
+                println!("Captured pose '{}'", pose.name);
+                state.current_pose_idx += 1;
+                state.step = CaptureStep::WaitingForWarmup;
             }
         }
+    }
+}
+
+/// System capturing live playtest units from the baseline pose, then exiting the application.
+///
+/// Exits with code 1 if a pipeline fails, the battle reports a failure, or units do not appear
+/// before the frame budget runs out; exits with code 0 once the capture is complete.
+pub fn update_playtest_verification_system(
+    mut commands: Commands<'_, '_>,
+    mut state: ResMut<'_, VerifyRenderState>,
+    sync: Res<'_, PipelineSync>,
+    lab: Res<'_, LabState>,
+    bubbles: Query<'_, '_, (), With<LiveBattleBubble>>,
+    mut exit_events: EventWriter<'_, AppExit>,
+) {
+    if sync.has_error.load(Ordering::SeqCst) {
+        eprintln!("CRITICAL: Pipeline cache compilation error detected; exiting code 1");
+        exit_events.send(AppExit::Error(EXIT_CODE_VERIFICATION_FAILURE));
+        return;
+    }
+    if let Some(failure) = &lab.battle_failure {
+        eprintln!("CRITICAL: Playtest failed during verification: {failure}");
+        exit_events.send(AppExit::Error(EXIT_CODE_VERIFICATION_FAILURE));
+        return;
+    }
+    if state.total_frames >= VERIFY_WARMUP_TIMEOUT_FRAMES {
+        eprintln!("CRITICAL TIMEOUT: Playtest units never became ready for capture");
+        exit_events.send(AppExit::Error(EXIT_CODE_VERIFICATION_FAILURE));
+        return;
+    }
+    state.total_frames += 1;
+
+    let ready = !bubbles.is_empty() && !sync.has_pending.load(Ordering::SeqCst);
+    let file_path = state.out_dir.join(format!("{PLAYTEST_POSE}.png"));
+    match state.step {
+        CaptureStep::WaitingForWarmup => {
+            if ready {
+                state.step = CaptureStep::Settling(0);
+            }
+        }
+        CaptureStep::Settling(frames) => {
+            state.step = if !ready {
+                CaptureStep::WaitingForWarmup
+            } else if frames >= POSE_SETTLING_FRAMES {
+                CaptureStep::Capturing
+            } else {
+                CaptureStep::Settling(frames + 1)
+            };
+        }
+        CaptureStep::Capturing => {
+            commands
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk(file_path));
+            state.step = CaptureStep::WaitingForFile;
+        }
+        CaptureStep::WaitingForFile => {
+            if capture_is_complete(&file_path) {
+                println!("Captured pose '{PLAYTEST_POSE}'. All verification captures complete.");
+                exit_events.send(AppExit::Success);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pose_names() -> Vec<&'static str> {
+        get_verify_poses()
+            .map(|pose| pose.name)
+            .into_iter()
+            .chain([PLAYTEST_BASELINE_POSE, PLAYTEST_POSE])
+            .collect()
+    }
+
+    #[test]
+    fn prepare_removes_every_capture_and_leaves_other_files(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        for name in pose_names() {
+            fs::write(dir.path().join(format!("{name}.png")), "stale")?;
+        }
+        let unrelated = dir.path().join("notes.txt");
+        fs::write(&unrelated, "keep")?;
+
+        VerifyOutputDir::prepare(dir.path().to_path_buf())?;
+
+        for name in pose_names() {
+            assert!(!dir.path().join(format!("{name}.png")).exists(), "{name}");
+        }
+        assert!(unrelated.exists(), "only captures may be deleted");
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_creates_a_missing_directory() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let nested = dir.path().join("a/b");
+        VerifyOutputDir::prepare(nested.clone())?;
+        assert!(nested.is_dir());
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_reports_a_path_that_cannot_be_a_directory() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        let file = dir.path().join("occupied");
+        fs::write(&file, "file")?;
+        let result = VerifyOutputDir::prepare(file.join("out"));
+        assert!(matches!(
+            result,
+            Err(VerifyOutputError::CreateDirectory { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn prepare_reports_a_capture_it_cannot_delete() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        fs::create_dir(dir.path().join("overview.png"))?;
+        let result = VerifyOutputDir::prepare(dir.path().to_path_buf());
+        assert!(matches!(
+            result,
+            Err(VerifyOutputError::RemoveStaleCapture { .. })
+        ));
+        Ok(())
     }
 }

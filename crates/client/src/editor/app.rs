@@ -12,144 +12,166 @@
 //!    preventing any interference with normal map authoring.
 //! 3. **Non-Destructive Playtest Isolation:** Playtest initializes a separate simulation world and
 //!    completely tears down all live bubbles and visual FX upon returning to `EditorPhase::Editing`.
-//! 4. **Acyclic Module Organization:** Does not depend on the main Visual Lab ui (`lab_ui_system`)
+//!    It runs the game client's ordered [`BattleSet`] stages rather than a parallel tick loop.
+//! 4. **Unsaved Work Survives Closing:** Bevy's close-on-request behavior is disabled; the window
+//!    only closes through [`editor_window_close_system`], in every phase.
+//! 5. **Acyclic Module Organization:** Does not depend on the main Visual Lab ui (`lab_ui_system`)
 //!    or arena environment generators (`spawn_arena_environment`).
-
-#![allow(clippy::expect_used, clippy::panic)]
 
 use std::path::PathBuf;
 
-use asset_baker::TerrainThemeCatalog;
+use bevy::app::AppExit;
 use bevy::pbr::MaterialPlugin;
 use bevy::prelude::*;
 use bevy::render::{Render, RenderApp};
-use sim_core::scenario::{build_world, PlayerSetup, StartLoadoutCatalog};
-use sim_map::map_format::{MapFile, MapMetadata};
+use bevy::window::WindowCloseRequested;
 
-use crate::terrain::TerrainState;
-
+use crate::battle_pipeline::driver::{advance_battle_ticks, publish_combat_events};
+use crate::battle_pipeline::session::BattleSession;
+use crate::battle_pipeline::BattleSet;
+use crate::bubble_optics::BubbleOpticsPlugin;
 use crate::bubble_shader::{setup_bubble_assets_system, BubbleDomeMaterial};
 use crate::camera::RtsCamera;
 use crate::editor::camera::{editor_camera_system, EditorCameraFocus};
 use crate::editor::commands::History;
 use crate::editor::document::EditorDocument;
+use crate::editor::document_load::{
+    apply_document_load_system, EditorTerrainSpawner, LoadDocumentRequest,
+};
 use crate::editor::file_browser::FileBrowserState;
 use crate::editor::los_preview::{
     update_los_preview_system, LosPreviewState, StartLoadoutCatalogResource,
 };
 use crate::editor::markers::{
     setup_marker_assets, sync_marker_entities_system, update_marker_billboards_system,
-    MapEntityVisualCatalog,
 };
 use crate::editor::playtest::{
-    playtest_input_system, playtest_step_system, teardown_playtest_system, EditorPhase,
-    PlaytestState, PLAYTEST_SEED,
+    playtest_exit_system, playtest_hud_system, playtest_input_system,
+    sync_playtest_selection_system, sync_playtest_status_system, teardown_playtest_system,
+    EditorPhase, EditorRulesResource, PlaytestState,
 };
+use crate::editor::startup::EditorStartup;
 use crate::editor::ui::{
-    editor_ui_system, EditorToolState, NewMapModalState, UnsavedChangesModalState,
+    editor_ui_system, EditorToolState, NewMapModalState, PendingUnsavedAction,
+    UnsavedChangesModalState,
 };
 use crate::editor::verification::{
-    check_render_pipelines, update_render_verification_system, PipelineSync, VerifyRenderState,
+    check_render_pipelines, update_playtest_verification_system, update_render_verification_system,
+    PipelineSync, VerifyOutputDir, VerifyRenderState,
 };
 use crate::indicators::{
     setup_indicator_assets_system, update_indicators_system, SelectionRingMaterial,
 };
 use crate::lab_ui::{LabState, LabTab};
+use crate::media::MediaFailurePolicy;
+use crate::player_presentation::PresentationStatus;
 use crate::scene_controller::{sync_live_battle_system, RenderEntityMap};
 use crate::selection::SelectionState;
-use crate::terrain::{spawn_terrain, TerrainMaterial, TerrainPlugin};
+use crate::terrain::{TerrainPlugin, TerrainState};
 use crate::vfx::{
     process_combat_events_system, setup_vfx_assets_system, update_beams_system,
     update_melee_slashes_system, update_mist_wake_system, update_projectiles_system,
     update_shatter_system, CombatFxMaterial, CombatVisualEvent, MistWakeMaterial,
 };
-use crate::{frame_limit_system, FrameLimit};
+use crate::{frame_limit_system, CatalogResource, FrameLimit};
 
-/// Newtype resource wrapper around [`TerrainThemeCatalog`] for Bevy ECS insertion.
+/// Newtype resource wrapper around [`TerrainThemeCatalog`](asset_baker::TerrainThemeCatalog) for Bevy ECS insertion.
 #[derive(Resource, Debug, Clone, Deref, DerefMut)]
-pub struct ThemeCatalogResource(pub TerrainThemeCatalog);
+pub struct ThemeCatalogResource(pub asset_baker::TerrainThemeCatalog);
+
+/// Returns the window configuration for the editor.
+///
+/// `close_when_requested` is disabled because Bevy would otherwise destroy the window as soon as
+/// the user clicks its X, before [`editor_window_close_system`] can protect unsaved work.
+#[must_use]
+pub fn editor_window_plugin() -> WindowPlugin {
+    WindowPlugin {
+        primary_window: Some(Window {
+            title: "Space Scuffle — Map Editor".to_string(),
+            resolution: (1600.0_f32, 900.0_f32).into(),
+            ..default()
+        }),
+        close_when_requested: false,
+        ..default()
+    }
+}
+
+/// System handling the operating system's window close request in every phase.
+///
+/// A clean document exits immediately. Unsaved work opens the Save / Discard / Cancel prompt,
+/// which renders only while editing, so a dirty playtest first returns to editing.
+pub fn editor_window_close_system(
+    mut close_events: EventReader<'_, '_, WindowCloseRequested>,
+    doc: Res<'_, EditorDocument>,
+    phase: Res<'_, State<EditorPhase>>,
+    mut next_phase: ResMut<'_, NextState<EditorPhase>>,
+    mut modal: ResMut<'_, UnsavedChangesModalState>,
+    mut exit: EventWriter<'_, AppExit>,
+) {
+    if close_events.read().count() == 0 {
+        return;
+    }
+    if !doc.dirty {
+        exit.send(AppExit::Success);
+        return;
+    }
+    modal.is_open = true;
+    modal.pending_action = Some(PendingUnsavedAction::Quit);
+    if *phase.get() == EditorPhase::Playtesting {
+        next_phase.set(EditorPhase::Editing);
+    }
+}
+
+/// Absolute path of the `assets/maps` directory, resolved once at startup.
+#[derive(Resource, Debug, Clone, Deref)]
+pub struct MapsDirectory(pub PathBuf);
 
 /// Bevy plugin assembling the complete Space Scuffle map editor application.
-#[derive(Default)]
 pub struct MapEditorPlugin {
-    /// Optional file path of an initial map to open on startup.
-    pub map_path: Option<PathBuf>,
-    /// Optional dimensions `(width, height)` for initializing a blank map on startup.
-    pub new_dimensions: Option<(u32, u32)>,
-    /// Optional output directory for automated render verification screenshots.
-    pub verify_render: Option<PathBuf>,
+    /// Catalogs and initial document, loaded and validated before the app is built.
+    pub startup: EditorStartup,
+    /// Prepared output directory for automated render verification screenshots.
+    pub verify_render: Option<VerifyOutputDir>,
     /// Optional frame count cap before automatic clean shutdown.
     pub max_frames: Option<u64>,
 }
 
 impl Plugin for MapEditorPlugin {
     fn build(&self, app: &mut App) {
-        let assets_dir = crate::resolve_assets_dir();
+        let EditorStartup {
+            assets_root,
+            themes,
+            loadouts,
+            visuals,
+            catalogs,
+            palette,
+            document,
+        } = self.startup.clone();
+        let map_w = document.doc.width;
+        let map_h = document.doc.height;
+        let automated = self.max_frames.is_some() || self.verify_render.is_some();
+        let playtest_focus = document.doc.start_locations.first().map_or_else(
+            || Vec2::new(map_w as f32, map_h as f32) * 0.5,
+            |start| {
+                Vec2::new(
+                    start.cell.0 as f32 + f32::from(start.footprint.0) * 0.5,
+                    start.cell.1 as f32 + f32::from(start.footprint.1) * 0.5,
+                )
+            },
+        );
 
-        // 1. Load Catalogs
-        let themes_path = assets_dir.join("catalog/terrain_themes.ron");
-        let theme_catalog = TerrainThemeCatalog::load(&themes_path).unwrap_or_else(|e| {
-            panic!(
-                "failed to load theme catalog at {}: {e}",
-                themes_path.display()
-            )
-        });
-
-        let loadouts_path = assets_dir.join("catalog/start_loadouts.ron");
-        let start_loadouts = StartLoadoutCatalog::load(&loadouts_path).unwrap_or_else(|e| {
-            panic!(
-                "failed to load start loadouts at {}: {e}",
-                loadouts_path.display()
-            )
-        });
-
-        let visuals_path = assets_dir.join("catalog/map_entity_visuals.ron");
-        let entity_visuals = MapEntityVisualCatalog::load(&visuals_path).unwrap_or_else(|e| {
-            panic!(
-                "failed to load entity visuals at {}: {e}",
-                visuals_path.display()
-            )
-        });
-
-        // 2. Initialize Initial Document
-        let initial_doc = if let Some(ref path) = self.map_path {
-            let file = MapFile::load(path)
-                .unwrap_or_else(|e| panic!("failed to load map at {}: {e}", path.display()));
-            let doc = file
-                .decode()
-                .unwrap_or_else(|e| panic!("failed to decode map at {}: {e}", path.display()));
-            EditorDocument::new(doc, Some(path.clone()))
-        } else if let Some((w, h)) = self.new_dimensions {
-            let meta = MapMetadata {
-                theme: "orbital_foundry".to_string(),
-                ..MapMetadata::default()
-            };
-            EditorDocument::new_blank(w, h, meta).expect("valid new blank map dimensions")
-        } else {
-            let default_path = assets_dir.join("maps/showcase_canyon.scmap.ron");
-            if default_path.exists() {
-                let file = MapFile::load(&default_path)
-                    .unwrap_or_else(|e| panic!("failed to load default map: {e}"));
-                let doc = file
-                    .decode()
-                    .unwrap_or_else(|e| panic!("failed to decode default map: {e}"));
-                EditorDocument::new(doc, Some(default_path))
-            } else {
-                EditorDocument::new_blank(64, 64, MapMetadata::default())
-                    .expect("valid fallback blank map")
-            }
-        };
-
-        let map_w = initial_doc.doc.width;
-        let map_h = initial_doc.doc.height;
-
-        // 3. Register Core Resources
+        // 1. Register Core Resources
         app.init_state::<EditorPhase>()
-            .init_resource::<crate::CatalogResource>()
-            .insert_resource(ThemeCatalogResource(theme_catalog))
-            .insert_resource(StartLoadoutCatalogResource(start_loadouts))
-            .insert_resource(entity_visuals)
-            .insert_resource(initial_doc)
+            .insert_resource(MapsDirectory(assets_root.as_path().join("maps")))
+            .insert_resource(assets_root)
+            .insert_resource(CatalogResource(catalogs.units.clone()))
+            .insert_resource(EditorRulesResource(catalogs))
+            .insert_resource(ThemeCatalogResource(themes))
+            .insert_resource(StartLoadoutCatalogResource(loadouts))
+            .insert_resource(visuals)
+            .insert_resource(palette)
+            .insert_resource(document)
+            .insert_resource(MediaFailurePolicy::new(automated))
             .init_resource::<History>()
             .insert_resource(EditorToolState::new(map_w, map_h))
             .init_resource::<FileBrowserState>()
@@ -159,6 +181,12 @@ impl Plugin for MapEditorPlugin {
             .init_resource::<PlaytestState>()
             .init_resource::<RenderEntityMap>()
             .init_resource::<SelectionState>()
+            .init_resource::<PresentationStatus>()
+            .init_resource::<BattleSession>()
+            .insert_resource(LabState {
+                current_tab: LabTab::LiveBattle,
+                ..default()
+            })
             .insert_resource(FrameLimit {
                 max_frames: self.max_frames,
                 current_frame: 0,
@@ -166,20 +194,22 @@ impl Plugin for MapEditorPlugin {
             })
             .add_event::<CombatVisualEvent>()
             .add_event::<EditorCameraFocus>()
+            .add_event::<LoadDocumentRequest>()
             .add_plugins(TerrainPlugin)
+            .add_plugins(BubbleOpticsPlugin)
             .add_plugins(MaterialPlugin::<BubbleDomeMaterial>::default())
             .add_plugins(MaterialPlugin::<SelectionRingMaterial>::default())
             .add_plugins(MaterialPlugin::<MistWakeMaterial>::default())
             .add_plugins(MaterialPlugin::<CombatFxMaterial>::default());
 
-        // 4. Verification Mode Synchronization
+        // 2. Verification Mode Synchronization
         let pipeline_sync = PipelineSync::default();
         if let Some(ref verify_dir) = self.verify_render {
             app.insert_resource(pipeline_sync.clone());
-            app.insert_resource(VerifyRenderState::new(verify_dir.clone()));
+            app.insert_resource(VerifyRenderState::new(verify_dir.clone(), playtest_focus));
         }
 
-        // 5. Register Startup Systems
+        // 3. Register Startup Systems
         app.add_systems(
             Startup,
             (
@@ -191,11 +221,13 @@ impl Plugin for MapEditorPlugin {
             ),
         );
 
-        // 6. Register Global & Editing Systems
+        // 4. Register Global & Editing Systems
         app.add_systems(
             Update,
             (
                 frame_limit_system,
+                editor_window_close_system,
+                apply_document_load_system.after(editor_ui_system),
                 editor_camera_system,
                 update_marker_billboards_system,
                 sync_marker_entities_system,
@@ -206,7 +238,10 @@ impl Plugin for MapEditorPlugin {
         if self.verify_render.is_some() {
             app.add_systems(
                 Update,
-                update_render_verification_system.run_if(in_state(EditorPhase::Editing)),
+                (
+                    update_render_verification_system.run_if(in_state(EditorPhase::Editing)),
+                    update_playtest_verification_system.run_if(in_state(EditorPhase::Playtesting)),
+                ),
             );
         } else {
             app.add_systems(
@@ -215,28 +250,56 @@ impl Plugin for MapEditorPlugin {
             );
         }
 
-        // 7. Register Playtesting Systems
-        app.add_systems(OnEnter(EditorPhase::Playtesting), setup_playtest_lab_state);
+        // 5. Register Playtesting Systems, in the game client's stage order
         app.add_systems(OnExit(EditorPhase::Playtesting), teardown_playtest_system);
+
+        app.configure_sets(
+            Update,
+            (
+                BattleSet::CollectIntent,
+                BattleSet::AdvanceTicks,
+                BattleSet::PreparePresentation,
+                BattleSet::Present,
+            )
+                .chain()
+                .run_if(in_state(EditorPhase::Playtesting)),
+        );
 
         app.add_systems(
             Update,
             (
-                playtest_step_system.before(sync_live_battle_system),
-                playtest_input_system,
-                sync_live_battle_system,
-                process_combat_events_system,
-                update_indicators_system,
-                update_mist_wake_system,
-                update_projectiles_system,
-                update_beams_system,
-                update_melee_slashes_system,
-                update_shatter_system,
-            )
-                .run_if(in_state(EditorPhase::Playtesting)),
+                (
+                    playtest_exit_system,
+                    playtest_input_system,
+                    playtest_hud_system,
+                )
+                    .in_set(BattleSet::CollectIntent),
+                advance_battle_ticks.in_set(BattleSet::AdvanceTicks),
+                (sync_live_battle_system, apply_deferred)
+                    .chain()
+                    .in_set(BattleSet::PreparePresentation),
+                (
+                    sync_playtest_status_system,
+                    sync_playtest_selection_system,
+                    publish_combat_events,
+                    process_combat_events_system,
+                    update_indicators_system,
+                    update_mist_wake_system,
+                )
+                    .chain()
+                    .in_set(BattleSet::Present),
+                (
+                    update_projectiles_system,
+                    update_beams_system,
+                    update_melee_slashes_system,
+                    update_shatter_system,
+                )
+                    .after(process_combat_events_system)
+                    .in_set(BattleSet::Present),
+            ),
         );
 
-        // 8. Hook RenderApp for PipelineCache error checking in verify mode
+        // 6. Hook RenderApp for PipelineCache error checking in verify mode
         if self.verify_render.is_some() {
             if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
                 render_app.insert_resource(pipeline_sync);
@@ -253,7 +316,7 @@ fn editor_los_system(
     terrain_params: ResMut<'_, crate::terrain::TerrainParamsState>,
     field_images: Option<Res<'_, crate::terrain::TerrainFieldImages>>,
     images: ResMut<'_, Assets<Image>>,
-    catalog: Option<Res<'_, crate::CatalogResource>>,
+    catalog: Option<Res<'_, CatalogResource>>,
     loadouts: Option<Res<'_, StartLoadoutCatalogResource>>,
     tool_state: Res<'_, EditorToolState>,
 ) {
@@ -273,43 +336,21 @@ fn editor_los_system(
 }
 
 /// Spawns the initial 3D RTS camera and instantiates the shared terrain renderer hierarchy.
+///
+/// [`EditorStartup`] validated the theme, so a failure here means an asset vanished or is
+/// corrupt; the application logs it and exits with an error instead of opening an empty scene.
 fn setup_editor_scene(
+    mut spawner: EditorTerrainSpawner<'_, '_>,
     mut commands: Commands<'_, '_>,
     doc: Res<'_, EditorDocument>,
-    theme_catalog: Res<'_, ThemeCatalogResource>,
-    mut meshes: ResMut<'_, Assets<Mesh>>,
-    mut terrain_materials: ResMut<'_, Assets<TerrainMaterial>>,
-    mut std_materials: ResMut<'_, Assets<StandardMaterial>>,
-    mut images: ResMut<'_, Assets<Image>>,
+    mut exit: EventWriter<'_, AppExit>,
 ) {
-    let assets_dir = crate::resolve_assets_dir();
+    if let Err(error) = spawner.spawn(&doc.doc, None) {
+        error!("Cannot load terrain: {error}");
+        exit.send(AppExit::error());
+        return;
+    }
 
-    // 1. Look up theme from catalog
-    let theme_slug = &doc.doc.metadata.theme;
-    let theme = theme_catalog
-        .get(theme_slug)
-        .or_else(|| theme_catalog.themes.first())
-        .expect("at least one terrain theme must exist in catalog");
-
-    let game_map = doc
-        .doc
-        .to_game_map()
-        .unwrap_or_else(|e| panic!("failed to convert document to GameMap: {e}"));
-
-    // 2. Spawn Shared Terrain Hierarchy
-    spawn_terrain(
-        &mut commands,
-        &mut meshes,
-        &mut terrain_materials,
-        &mut std_materials,
-        &mut images,
-        theme,
-        game_map,
-        &assets_dir,
-    )
-    .expect("failed to spawn shared terrain hierarchy");
-
-    // 3. Spawn Camera
     let center_x = (doc.doc.width as f32) * 0.5;
     let center_z = (doc.doc.height as f32) * 0.5;
     let cam = RtsCamera {
@@ -320,29 +361,4 @@ fn setup_editor_scene(
     let transform = cam.compute_transform();
 
     commands.spawn((Camera3d::default(), transform, cam));
-}
-
-/// Sets up the paused [`LabState`] when entering playtesting mode.
-fn setup_playtest_lab_state(
-    mut commands: Commands<'_, '_>,
-    doc: Res<'_, EditorDocument>,
-    loadouts: Res<'_, StartLoadoutCatalogResource>,
-    tool_state: Res<'_, EditorToolState>,
-) {
-    let players: Vec<PlayerSetup> = (0..doc.doc.start_locations.len() as u8)
-        .map(|slot| PlayerSetup {
-            player_slot: slot,
-            loadout_slug: tool_state.player_loadouts[slot as usize].clone(),
-        })
-        .collect();
-
-    let world = build_world(&doc.doc, &loadouts.0, &players, PLAYTEST_SEED)
-        .expect("validated map must successfully construct SimWorld");
-
-    commands.insert_resource(LabState {
-        current_tab: LabTab::LiveBattle,
-        sim_world: Some(world),
-        battle_paused: true,
-        ..default()
-    });
 }

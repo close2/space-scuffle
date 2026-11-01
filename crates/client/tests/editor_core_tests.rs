@@ -21,6 +21,7 @@ use client::editor::commands::{
     CellDelta, ChangeSet, EditCommand, History, MapEntity, MAX_UNDO_COMMANDS,
 };
 use client::editor::document::EditorDocument;
+use client::editor::file_browser::{FileBrowserMode, FileBrowserState};
 use client::editor::stroke::StrokeRecorder;
 use client::editor::symmetry::SymmetryMode;
 use client::editor::tools::{
@@ -30,6 +31,10 @@ use client::editor::tools::{
     EntityToolKind, PaintOp, RampPlacement, RampPlacementError, StartFootprintError,
     DEFAULT_GAS_AMOUNT, DEFAULT_MINERAL_AMOUNT, DEFAULT_WATCHTOWER_CAPTURE_RADIUS_TENTHS,
     DEFAULT_WATCHTOWER_REVEAL_RADIUS_TENTHS,
+};
+use client::editor::ui::{
+    apply_unsaved_choice, EditorToolState, NewMapModalState, PendingUnsavedAction,
+    UnsavedChangesModalState, UnsavedChoice, UnsavedOutcome,
 };
 use client::terrain::TerrainState;
 use sim_core::catalog::UnitCatalog;
@@ -1302,4 +1307,276 @@ fn test_authorable_flags_and_constants() {
     assert_eq!(DEFAULT_GAS_AMOUNT, 2500);
     assert_eq!(DEFAULT_WATCHTOWER_CAPTURE_RADIUS_TENTHS, 30);
     assert_eq!(DEFAULT_WATCHTOWER_REVEAL_RADIUS_TENTHS, 120);
+}
+
+/// Everything [`apply_unsaved_choice`] touches, starting from a dirty document with a guarded action.
+struct UnsavedFlow {
+    modal: UnsavedChangesModalState,
+    doc: EditorDocument,
+    browser: FileBrowserState,
+    new_map: NewMapModalState,
+    tools: EditorToolState,
+    dir: tempfile::TempDir,
+}
+
+impl UnsavedFlow {
+    fn new(pending: PendingUnsavedAction, saved_path: bool) -> Self {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = saved_path.then(|| dir.path().join("flow.scmap.ron"));
+        let mut doc = EditorDocument::new(fixture_document(32, 32), path);
+        doc.dirty = true;
+        Self {
+            modal: UnsavedChangesModalState {
+                is_open: true,
+                pending_action: Some(pending),
+            },
+            doc,
+            browser: FileBrowserState::default(),
+            new_map: NewMapModalState::default(),
+            tools: EditorToolState::new(32, 32),
+            dir,
+        }
+    }
+
+    fn choose(&mut self, choice: UnsavedChoice) -> UnsavedOutcome {
+        apply_unsaved_choice(
+            choice,
+            &mut self.modal,
+            &mut self.doc,
+            &mut self.browser,
+            self.dir.path(),
+            &mut self.new_map,
+            &mut self.tools,
+        )
+    }
+}
+
+#[test]
+fn test_unsaved_discard_keeps_dirty_until_the_document_is_replaced() {
+    let mut flow = UnsavedFlow::new(PendingUnsavedAction::OpenFile, true);
+    assert_eq!(
+        flow.choose(UnsavedChoice::Discard),
+        UnsavedOutcome::Continue
+    );
+    assert!(
+        flow.browser.is_open,
+        "discard must continue to the open dialog"
+    );
+    assert!(
+        flow.doc.dirty,
+        "cancelling the open dialog must leave the edits flagged as unsaved"
+    );
+
+    let mut flow = UnsavedFlow::new(PendingUnsavedAction::NewMap, true);
+    flow.choose(UnsavedChoice::Discard);
+    assert!(flow.new_map.is_open);
+    assert!(flow.doc.dirty);
+}
+
+#[test]
+fn test_unsaved_discard_quit_exits() {
+    let mut flow = UnsavedFlow::new(PendingUnsavedAction::Quit, true);
+    assert_eq!(flow.choose(UnsavedChoice::Discard), UnsavedOutcome::Exit);
+}
+
+#[test]
+fn test_unsaved_save_resumes_the_guarded_action() {
+    let mut flow = UnsavedFlow::new(PendingUnsavedAction::Quit, true);
+    assert_eq!(flow.choose(UnsavedChoice::Save), UnsavedOutcome::Exit);
+    assert!(!flow.doc.dirty);
+    assert_eq!(flow.modal.pending_action, None);
+
+    let mut flow = UnsavedFlow::new(PendingUnsavedAction::OpenFile, true);
+    assert_eq!(flow.choose(UnsavedChoice::Save), UnsavedOutcome::Continue);
+    assert!(flow.browser.is_open, "save must resume the open dialog");
+    assert_eq!(flow.browser.mode, FileBrowserMode::Open);
+
+    let mut flow = UnsavedFlow::new(PendingUnsavedAction::NewMap, true);
+    flow.choose(UnsavedChoice::Save);
+    assert!(flow.new_map.is_open, "save must resume the new map dialog");
+}
+
+#[test]
+fn test_unsaved_save_of_untitled_map_defers_the_action_to_the_save_dialog() {
+    let mut flow = UnsavedFlow::new(PendingUnsavedAction::Quit, false);
+    assert_eq!(flow.choose(UnsavedChoice::Save), UnsavedOutcome::Continue);
+    assert!(flow.browser.is_open);
+    assert_eq!(flow.browser.mode, FileBrowserMode::Save);
+    assert_eq!(
+        flow.modal.pending_action,
+        Some(PendingUnsavedAction::Quit),
+        "the action must wait for the save dialog"
+    );
+}
+
+#[test]
+fn test_unsaved_failed_save_keeps_the_prompt_and_the_action() {
+    let mut flow = UnsavedFlow::new(PendingUnsavedAction::Quit, true);
+    flow.doc.path = Some(flow.dir.path().join("missing_dir/flow.scmap.ron"));
+    assert_eq!(flow.choose(UnsavedChoice::Save), UnsavedOutcome::Continue);
+    assert!(flow.modal.is_open, "a failed save must not lose the prompt");
+    assert_eq!(flow.modal.pending_action, Some(PendingUnsavedAction::Quit));
+    assert!(flow.doc.dirty);
+    assert!(flow.tools.last_status_message.is_some());
+}
+
+#[test]
+fn test_unsaved_cancel_abandons_the_action_and_keeps_the_edits() {
+    let mut flow = UnsavedFlow::new(PendingUnsavedAction::Quit, true);
+    assert_eq!(flow.choose(UnsavedChoice::Cancel), UnsavedOutcome::Continue);
+    assert!(!flow.modal.is_open);
+    assert_eq!(flow.modal.pending_action, None);
+    assert!(flow.doc.dirty);
+}
+
+fn start_location(id: u32, slot: u8, cell: (u32, u32)) -> MapStartLocation {
+    MapStartLocation {
+        id: MapEntityId(id),
+        player_slot: slot,
+        cell,
+        footprint: (5, 5),
+    }
+}
+
+fn apply(cmd: &EditCommand, doc: &mut MapDocument) {
+    let mut cs = ChangeSet::default();
+    cmd.apply(doc, &mut cs);
+    assert!(cs.entities_changed);
+}
+
+const START_TOOL: EntityToolKind = EntityToolKind::StartLocation {
+    slot: 0,
+    footprint: (5, 5),
+};
+
+#[test]
+fn test_mirrored_start_creates_the_missing_partner_when_primary_exists() {
+    let mut doc = fixture_document(32, 32);
+    doc.start_locations.push(start_location(1, 0, (2, 2)));
+    let original = doc.clone();
+
+    let cmd = place_entity_command(&doc, START_TOOL, (4, 4), SymmetryMode::Rotate180);
+    apply(&cmd, &mut doc);
+
+    let primary = doc.start_locations.iter().find(|s| s.player_slot == 0);
+    let partner = doc.start_locations.iter().find(|s| s.player_slot == 1);
+    assert_eq!(primary.map(|s| s.cell), Some((4, 4)));
+    assert_eq!(
+        partner.map(|s| s.cell),
+        Some((23, 23)),
+        "symmetric authoring must produce the mirrored partner"
+    );
+
+    let mut cs = ChangeSet::default();
+    cmd.revert(&mut doc, &mut cs);
+    assert_eq!(doc, original, "the placement must undo as one edit");
+}
+
+#[test]
+fn test_mirrored_start_moves_a_lone_partner_without_duplicating_its_slot() {
+    let mut doc = fixture_document(32, 32);
+    doc.start_locations.push(start_location(1, 1, (20, 20)));
+    let original = doc.clone();
+
+    let cmd = place_entity_command(&doc, START_TOOL, (4, 4), SymmetryMode::Rotate180);
+    apply(&cmd, &mut doc);
+
+    let partners: Vec<_> = doc
+        .start_locations
+        .iter()
+        .filter(|s| s.player_slot == 1)
+        .collect();
+    assert_eq!(partners.len(), 1, "player slots must stay unique");
+    assert_eq!(
+        partners[0].id,
+        MapEntityId(1),
+        "the partner keeps its identity"
+    );
+    assert_eq!(partners[0].cell, (23, 23));
+    assert!(doc.start_locations.iter().any(|s| s.player_slot == 0));
+
+    let mut cs = ChangeSet::default();
+    cmd.revert(&mut doc, &mut cs);
+    assert_eq!(doc, original);
+}
+
+fn titled(doc: &MapDocument, title: &str) -> EditCommand {
+    let before = doc.metadata.clone();
+    let mut after = before.clone();
+    after.title = title.to_string();
+    EditCommand::SetMetadata { before, after }
+}
+
+#[test]
+fn test_continuous_edit_is_one_undo_entry() {
+    let mut doc = fixture_document(16, 16);
+    let original = doc.clone();
+    let mut history = History::new();
+    let mut cs = ChangeSet::default();
+
+    for typed in ["M", "Ma", "Map"] {
+        history.execute_merged(titled(&doc, typed), &mut doc, &mut cs);
+    }
+
+    assert_eq!(doc.metadata.title, "Map");
+    assert_eq!(history.undo_len(), 1, "typing one word is one edit");
+    assert!(history.undo(&mut doc, &mut cs));
+    assert_eq!(
+        doc, original,
+        "undo must restore the text before typing began"
+    );
+    assert!(history.redo(&mut doc, &mut cs));
+    assert_eq!(doc.metadata.title, "Map");
+}
+
+#[test]
+fn test_sealed_edit_does_not_merge_with_the_next_one() {
+    let mut doc = fixture_document(16, 16);
+    let mut history = History::new();
+    let mut cs = ChangeSet::default();
+
+    history.execute_merged(titled(&doc, "First"), &mut doc, &mut cs);
+    history.seal_merge();
+    history.execute_merged(titled(&doc, "Second"), &mut doc, &mut cs);
+    assert_eq!(history.undo_len(), 2);
+    assert!(history.undo(&mut doc, &mut cs));
+    assert_eq!(doc.metadata.title, "First");
+}
+
+#[test]
+fn test_continuous_edit_does_not_merge_across_other_commands_or_entities() {
+    let mut doc = fixture_document(16, 16);
+    let resource = |id, amount| {
+        MapEntity::Resource(MapResource {
+            id: MapEntityId(id),
+            kind: ResourceKind::Mineral,
+            cell: (id, 1),
+            amount,
+        })
+    };
+    let mut history = History::new();
+    let mut cs = ChangeSet::default();
+    history.execute(
+        EditCommand::AddEntities {
+            entities: vec![resource(1, 100), resource(2, 100)],
+        },
+        &mut doc,
+        &mut cs,
+    );
+
+    let modify = |id, from, to| EditCommand::ModifyEntity {
+        before: resource(id, from),
+        after: resource(id, to),
+    };
+    history.execute_merged(modify(1, 100, 200), &mut doc, &mut cs);
+    history.execute_merged(modify(1, 200, 300), &mut doc, &mut cs);
+    assert_eq!(history.undo_len(), 2, "one slider drag is one edit");
+    history.execute_merged(modify(2, 100, 200), &mut doc, &mut cs);
+    assert_eq!(history.undo_len(), 3, "another entity is another edit");
+
+    history.undo(&mut doc, &mut cs);
+    history.undo(&mut doc, &mut cs);
+    assert_eq!(doc.resources[0].amount, 100);
+    history.execute_merged(modify(1, 100, 150), &mut doc, &mut cs);
+    assert_eq!(history.redo_len(), 0);
 }

@@ -15,20 +15,19 @@
     clippy::needless_pass_by_value,
     clippy::too_many_lines,
     clippy::cast_precision_loss,
-    clippy::expect_used,
-    clippy::panic,
     clippy::doc_markdown
 )]
 
 use std::path::PathBuf;
+use std::process::ExitCode;
 
 use bevy::app::AppExit;
 use bevy::prelude::*;
-use bevy::window::WindowPlugin;
 use bevy_egui::EguiPlugin;
 use clap::Parser;
-use client::editor::MapEditorPlugin;
-use client::resolve_assets_dir;
+use client::editor::{
+    editor_window_plugin, EditorStartup, InitialDocument, MapEditorPlugin, VerifyOutputDir,
+};
 
 /// CLI arguments for the `map_editor` binary.
 #[derive(Parser, Debug)]
@@ -69,39 +68,50 @@ fn parse_dimensions(s: &str) -> Result<(u32, u32), String> {
     Ok((w, h))
 }
 
-fn main() -> AppExit {
+fn main() -> ExitCode {
     let args = CliArgs::parse();
-    if let Some(ref dir) = args.verify_render {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let assets_dir = resolve_assets_dir();
+    let initial = match (args.map, args.new) {
+        (Some(path), _) => InitialDocument::Open(path),
+        (None, Some((width, height))) => InitialDocument::Blank { width, height },
+        (None, None) => InitialDocument::Default,
+    };
+    let startup = match EditorStartup::load(&initial) {
+        Ok(startup) => startup,
+        Err(error) => {
+            eprintln!("map_editor: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let verify_render = match args.verify_render.map(VerifyOutputDir::prepare).transpose() {
+        Ok(verify_render) => verify_render,
+        Err(error) => {
+            eprintln!("map_editor: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let asset_path = startup.assets_root.as_path().to_string_lossy().to_string();
 
     let mut app = App::new();
 
     app.add_plugins(
         DefaultPlugins
             .set(AssetPlugin {
-                file_path: assets_dir.to_string_lossy().to_string(),
+                file_path: asset_path,
                 ..default()
             })
-            .set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "Space Scuffle — Map Editor".to_string(),
-                    resolution: (1600.0_f32, 900.0_f32).into(),
-                    ..default()
-                }),
-                ..default()
-            }),
+            .set(editor_window_plugin()),
     );
 
     app.add_plugins(EguiPlugin);
 
     app.add_plugins(MapEditorPlugin {
-        map_path: args.map,
-        new_dimensions: args.new,
-        verify_render: args.verify_render,
+        startup,
+        verify_render,
         max_frames: args.max_frames,
     });
 
-    app.run()
+    match app.run() {
+        AppExit::Success => ExitCode::SUCCESS,
+        AppExit::Error(code) => ExitCode::from(code.get()),
+    }
 }

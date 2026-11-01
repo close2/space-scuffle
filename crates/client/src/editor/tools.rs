@@ -623,8 +623,8 @@ pub enum EntityToolKind {
 /// Constructs an [`EditCommand`] to place a new entity at discrete cell coordinates,
 /// including its mirrored partner under `symmetry`.
 ///
-/// If placing a start location for an already occupied player slot, replaces it with [`EditCommand::ModifyEntity`]
-/// or [`EditCommand::ModifyEntities`].
+/// If placing a start location for an already occupied player slot, moves it instead. Under symmetry
+/// the result always holds both slots, adding whichever is missing as one [`EditCommand::Batch`].
 #[must_use]
 pub fn place_entity_command(
     doc: &MapDocument,
@@ -725,60 +725,81 @@ pub fn place_entity_command(
                 cell
             };
 
-            // Case 1: Both exist -> ModifyEntities
-            if let (Some(pe), Some(te)) = (primary_existing, partner_existing) {
-                let before_p = MapEntity::StartLocation(pe.clone());
-                let after_p = MapEntity::StartLocation(MapStartLocation {
-                    id: pe.id,
+            let primary_after = |id| {
+                MapEntity::StartLocation(MapStartLocation {
+                    id,
                     player_slot: slot,
                     cell,
                     footprint,
-                });
-                let before_t = MapEntity::StartLocation(te.clone());
-                let after_t = MapEntity::StartLocation(MapStartLocation {
-                    id: te.id,
+                })
+            };
+            let partner_after = |id| {
+                MapEntity::StartLocation(MapStartLocation {
+                    id,
                     player_slot: partner_slot,
                     cell: mirrored_anchor,
                     footprint,
-                });
-                return EditCommand::ModifyEntities {
-                    modifications: vec![(before_p, after_p), (before_t, after_t)],
-                };
+                })
+            };
+
+            // Without symmetry only the primary slot is involved.
+            if symmetry == SymmetryMode::None {
+                return primary_existing.map_or_else(
+                    || EditCommand::AddEntities {
+                        entities: vec![primary_after(doc.next_entity_id())],
+                    },
+                    |existing| EditCommand::ModifyEntity {
+                        before: MapEntity::StartLocation(existing.clone()),
+                        after: primary_after(existing.id),
+                    },
+                );
             }
 
-            // Case 2: Only primary exists
-            if let Some(pe) = primary_existing {
-                let before_p = MapEntity::StartLocation(pe.clone());
-                let after_p = MapEntity::StartLocation(MapStartLocation {
-                    id: pe.id,
-                    player_slot: slot,
-                    cell,
-                    footprint,
-                });
-                return EditCommand::ModifyEntity {
-                    before: before_p,
-                    after: after_p,
-                };
+            // A mirrored placement always leaves both slots present and paired. A slot that
+            // already exists is moved, keeping its identity and its one-start-per-slot rule.
+            let new_id = doc.next_entity_id();
+            match (primary_existing, partner_existing) {
+                (Some(primary), Some(partner)) => EditCommand::ModifyEntities {
+                    modifications: vec![
+                        (
+                            MapEntity::StartLocation(primary.clone()),
+                            primary_after(primary.id),
+                        ),
+                        (
+                            MapEntity::StartLocation(partner.clone()),
+                            partner_after(partner.id),
+                        ),
+                    ],
+                },
+                (Some(primary), None) => EditCommand::Batch {
+                    commands: vec![
+                        EditCommand::ModifyEntity {
+                            before: MapEntity::StartLocation(primary.clone()),
+                            after: primary_after(primary.id),
+                        },
+                        EditCommand::AddEntities {
+                            entities: vec![partner_after(new_id)],
+                        },
+                    ],
+                },
+                (None, Some(partner)) => EditCommand::Batch {
+                    commands: vec![
+                        EditCommand::ModifyEntity {
+                            before: MapEntity::StartLocation(partner.clone()),
+                            after: partner_after(partner.id),
+                        },
+                        EditCommand::AddEntities {
+                            entities: vec![primary_after(new_id)],
+                        },
+                    ],
+                },
+                (None, None) => EditCommand::AddEntities {
+                    entities: vec![
+                        primary_after(new_id),
+                        partner_after(MapEntityId(new_id.0 + 1)),
+                    ],
+                },
             }
-
-            // Case 3: Neither exists -> AddEntities
-            let primary_id = doc.next_entity_id();
-            let mut entities = vec![MapEntity::StartLocation(MapStartLocation {
-                id: primary_id,
-                player_slot: slot,
-                cell,
-                footprint,
-            })];
-
-            if symmetry != SymmetryMode::None && (mirrored_anchor != cell || partner_slot != slot) {
-                entities.push(MapEntity::StartLocation(MapStartLocation {
-                    id: MapEntityId(primary_id.0 + 1),
-                    player_slot: partner_slot,
-                    cell: mirrored_anchor,
-                    footprint,
-                }));
-            }
-            EditCommand::AddEntities { entities }
         }
     }
 }
@@ -913,6 +934,48 @@ pub fn delete_entity_command(entity: &MapEntity) -> EditCommand {
     EditCommand::RemoveEntities {
         entities: vec![entity.clone()],
     }
+}
+
+/// Clears painted ramps and flags from `cell`, restoring default buildable ground.
+///
+/// Abyss cells are returned unchanged: they must stay non-traversable to remain valid.
+fn erased_cell(cell: &MapCellSpec) -> MapCellSpec {
+    let mut out = cell.clone();
+    if out.terrain != TerrainKind::Abyss {
+        out.ramp = None;
+        out.flags = CellFlags::GROUND_PATHABLE | CellFlags::BUILDABLE;
+    }
+    out
+}
+
+/// Constructs an [`EditCommand::PaintCells`] clearing `cell` and its reflection under `symmetry`.
+///
+/// Returns `None` if neither cell has anything to erase, so a no-op leaves no undo entry.
+#[must_use]
+pub fn erase_cell_command(
+    doc: &MapDocument,
+    cell: (u32, u32),
+    symmetry: SymmetryMode,
+) -> Option<EditCommand> {
+    let mirrored = symmetry.mirror_cell(cell, doc.width, doc.height);
+    let deltas: Vec<CellDelta> = BTreeSet::from([cell, mirrored])
+        .into_iter()
+        .filter_map(|(x, y)| {
+            let before = doc.cell(x, y)?;
+            let after = erased_cell(before);
+            (*before != after).then(|| CellDelta {
+                x,
+                y,
+                before: before.clone(),
+                after,
+            })
+        })
+        .collect();
+
+    (!deltas.is_empty()).then_some(EditCommand::PaintCells {
+        label: "Erase Cell",
+        deltas,
+    })
 }
 
 /// Identifies all entities intersecting `footprint_cells` (and their symmetric reflections under `symmetry`)

@@ -69,19 +69,6 @@ impl TerrainState {
         }
     }
 
-    /// Completely replaces the underlying map and triggers a full chunk rebuild.
-    pub fn replace_map(&mut self, map: GameMap) {
-        self.map = map;
-        self.revision = self.revision.wrapping_add(1);
-        self.dirty_cells = Some(CellRect {
-            min: (0, 0),
-            max_inclusive: (
-                self.map.width().saturating_sub(1),
-                self.map.height().saturating_sub(1),
-            ),
-        });
-    }
-
     /// Applies a mutation closure to all cells within `rect` and marks them dirty.
     pub fn apply_cells(&mut self, rect: CellRect, mut f: impl FnMut(u32, u32, &mut MapCell)) {
         let w = self.map.width();

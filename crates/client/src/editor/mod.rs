@@ -22,22 +22,31 @@ pub mod app;
 pub mod camera;
 pub mod commands;
 pub mod document;
+pub mod document_load;
 pub mod file_browser;
 pub mod los_preview;
 pub mod markers;
 pub mod playtest;
+pub mod startup;
 pub mod stroke;
 pub mod symmetry;
 pub mod tools;
 pub mod ui;
 pub mod verification;
 
-pub use app::{MapEditorPlugin, ThemeCatalogResource};
+pub use app::{
+    editor_window_close_system, editor_window_plugin, MapEditorPlugin, MapsDirectory,
+    ThemeCatalogResource,
+};
 pub use camera::{editor_camera_system, focus_cell, EditorCameraFocus, CAMERA_HEIGHT_EASE_PER_SEC};
 pub use commands::{
     CellDelta, ChangeSet, EditCommand, History, MapEntity, MAX_UNDO_CELL_DELTAS, MAX_UNDO_COMMANDS,
 };
 pub use document::EditorDocument;
+pub use document_load::{
+    apply_document_load_system, DocumentLoadError, EditorTerrainRoot, EditorTerrainSpawner,
+    LoadDocumentRequest,
+};
 pub use file_browser::{FileBrowserAction, FileBrowserMode, FileBrowserState};
 pub use los_preview::{
     resolve_los_preview_sight_radius, update_los_preview_system, LosPreviewState,
@@ -49,26 +58,30 @@ pub use markers::{
     MarkerEntities, MarkerSpriteEntry, StartLocationVisualEntry,
 };
 pub use playtest::{
-    initialize_playtest_world, playtest_input_system, playtest_step_system,
-    teardown_playtest_system, EditorPhase, PlaytestState, MAX_STEPS_PER_FRAME, PLAYTEST_SEED,
-    SIM_TICK_SECS,
+    autosave_path, initialize_playtest_world, playtest_exit_system, playtest_hud_system,
+    playtest_input_system, playtest_metadata, playtest_players, sync_playtest_selection_system,
+    sync_playtest_status_system, teardown_playtest_system, EditorPhase, EditorRulesResource,
+    PlaytestEntry, PlaytestEntryError, PlaytestState, AUTOSAVE_SUFFIX, PLAYTEST_SEED,
 };
+pub use startup::{EditorStartup, EditorStartupError, InitialDocument};
 pub use stroke::StrokeRecorder;
 pub use symmetry::SymmetryMode;
 pub use tools::{
     box_fill_command, brush_footprint, check_ramp_placement, delete_entity_command,
-    erase_entities_command, infer_ramp, move_entity_command, paint_brush_stamp, pick_entity,
-    place_entity_command, place_ramp_command, resolve_start_footprint, AuthorableFlag, BrushShape,
-    EntityToolKind, PaintOp, RampPlacement, RampPlacementError, StartFootprintError,
+    erase_cell_command, erase_entities_command, infer_ramp, move_entity_command, paint_brush_stamp,
+    pick_entity, place_entity_command, place_ramp_command, resolve_start_footprint, AuthorableFlag,
+    BrushShape, EntityToolKind, PaintOp, RampPlacement, RampPlacementError, StartFootprintError,
     DEFAULT_GAS_AMOUNT, DEFAULT_MINERAL_AMOUNT, DEFAULT_WATCHTOWER_CAPTURE_RADIUS_TENTHS,
     DEFAULT_WATCHTOWER_REVEAL_RADIUS_TENTHS, MAX_BRUSH_RADIUS,
 };
 pub use ui::{
-    editor_ui_system, EditorTool, EditorToolState, NewMapModalState, PendingUnsavedAction,
-    RampToolMode, UnsavedChangesModalState, VALIDATION_DEBOUNCE_SECS,
+    apply_unsaved_choice, editor_ui_system, EditorTool, EditorToolState, EntityDrag,
+    NewMapModalState, PendingUnsavedAction, RampToolMode, UnsavedChangesModalState, UnsavedChoice,
+    UnsavedOutcome, VALIDATION_DEBOUNCE_SECS,
 };
 pub use verification::{
-    check_render_pipelines, get_verify_poses, update_render_verification_system, CaptureStep,
-    PipelineSync, VerifyPose, VerifyRenderState, EXIT_CODE_VERIFICATION_FAILURE,
-    POSE_SETTLING_FRAMES, VERIFY_WARMUP_TIMEOUT_FRAMES,
+    check_render_pipelines, get_verify_poses, update_playtest_verification_system,
+    update_render_verification_system, CaptureStep, PipelineSync, VerifyOutputDir,
+    VerifyOutputError, VerifyPose, VerifyRenderState, EXIT_CODE_VERIFICATION_FAILURE,
+    PLAYTEST_BASELINE_POSE, PLAYTEST_POSE, POSE_SETTLING_FRAMES, VERIFY_WARMUP_TIMEOUT_FRAMES,
 };
