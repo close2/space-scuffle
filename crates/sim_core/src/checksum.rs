@@ -26,7 +26,8 @@ use std::collections::BTreeMap;
 
 /// Canonical dynamic-state encoding version; changing it invalidates older digests.
 /// Schema 4 replaces the loaded boolean with an optional exact carrier identity.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 4;
+/// Schema 5 records the terrain flags each placed structure must restore on removal.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 5;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

@@ -232,6 +232,8 @@ pub struct PlacedStructure {
     pub width: u8,
     /// Foundation height in 1x1 cells.
     pub height: u8,
+    /// Row-major flags of the footprint cells from before placement, restored on removal.
+    pub prior_flags: Vec<CellFlags>,
 }
 
 /// The authoritative game map representing terrain, cliffs, ramps, and obstacles.
@@ -633,12 +635,14 @@ impl GameMap {
     ) -> Result<()> {
         self.can_place_building(cell_x, cell_y, w, h)?;
 
+        let mut prior_flags = Vec::with_capacity(usize::from(w) * usize::from(h));
         for dy in 0..h {
             for dx in 0..w {
                 let cx = cell_x + u32::from(dx);
                 let cy = cell_y + u32::from(dy);
                 let idx = (cy as usize) * (self.width as usize) + (cx as usize);
                 let cell = &mut self.cells[idx];
+                prior_flags.push(cell.flags);
                 cell.flags.insert(CellFlags::OCCUPIED_BY_STRUCTURE);
                 cell.flags
                     .remove(CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE);
@@ -653,13 +657,16 @@ impl GameMap {
                 top_left: (cell_x, cell_y),
                 width: w,
                 height: h,
+                prior_flags,
             },
         );
 
         Ok(())
     }
 
-    /// Removes a building foundation dome from the map, restoring ground passability and buildability.
+    /// Removes a building foundation dome, restoring exactly the cell flags found at placement.
+    ///
+    /// A cell that was buildable but not walkable stays unwalkable after the building is gone.
     ///
     /// # Errors
     /// Returns `Err(MapError::StructureNotFound)` if `id` is not registered on the map.
@@ -669,15 +676,16 @@ impl GameMap {
             .remove(&id)
             .ok_or(MapError::StructureNotFound(id))?;
 
+        let mut prior_flags = placed.prior_flags.iter();
         for dy in 0..placed.height {
             for dx in 0..placed.width {
                 let cx = placed.top_left.0 + u32::from(dx);
                 let cy = placed.top_left.1 + u32::from(dy);
                 let idx = (cy as usize) * (self.width as usize) + (cx as usize);
                 let cell = &mut self.cells[idx];
-                cell.flags.remove(CellFlags::OCCUPIED_BY_STRUCTURE);
-                cell.flags
-                    .insert(CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE);
+                if let Some(flags) = prior_flags.next() {
+                    cell.flags = *flags;
+                }
                 cell.occupying_structure = None;
             }
         }

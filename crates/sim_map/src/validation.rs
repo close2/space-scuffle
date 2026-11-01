@@ -19,7 +19,10 @@ use sim_types::{SimScalar, SimVec2};
 
 use crate::error::PlacementFailureReason;
 use crate::grid::{CellFlags, CliffLevel, RampDir, TerrainKind, MAX_RAMP_RUN_CELLS};
-use crate::map_format::{MapDocument, MapEntityId};
+use crate::map_format::{
+    MapDocument, MapEntityId, MapStartLocation, MAX_MAP_DIMENSION, MIN_MAP_DIMENSION,
+    WATCHTOWER_ENTITY_ID_BASE,
+};
 use crate::pathfinding::{PathRequest, Pathfinder, UnitClearance};
 
 /// Minimum number of player start locations required for a valid playable map.
@@ -69,6 +72,19 @@ impl MapValidationReport {
 /// Strongly-typed map validation errors that prevent a map from being simulated.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MapValidationError {
+    /// Document dimensions are unsupported or disagree with the stored cell grid.
+    ///
+    /// Reported alone: no other check can index a grid whose shape is unknown.
+    #[error("map grid has {cells} cells, which does not fit dimensions {width}x{height}")]
+    CellGridMismatch {
+        /// Declared width in cells.
+        width: u32,
+        /// Declared height in cells.
+        height: u32,
+        /// Number of cells actually stored.
+        cells: usize,
+    },
+
     /// Abyss terrain marked as buildable or ground pathable.
     #[error("abyss cell at ({x}, {y}) is marked traversable or buildable")]
     AbyssCellTraversable {
@@ -94,6 +110,13 @@ pub enum MapValidationError {
         x: u32,
         /// Y coordinate of cell.
         y: u32,
+    },
+
+    /// Watchtower identifier cannot be mapped into the simulation entity ID range.
+    #[error("watchtower {id:?} identifier is too large for the simulation entity range")]
+    EntityIdOutOfRange {
+        /// Entity ID of watchtower.
+        id: MapEntityId,
     },
 
     /// Ramp cell lacking the ground pathable flag.
@@ -373,6 +396,12 @@ struct RampRunInfo {
     cells: Vec<(u32, u32)>,
 }
 
+/// Tests whether a start footprint fits on the grid, widening so huge coordinates cannot wrap.
+fn footprint_in_bounds(start: &MapStartLocation, width: u32, height: u32) -> bool {
+    u64::from(start.cell.0) + u64::from(start.footprint.0) <= u64::from(width)
+        && u64::from(start.cell.1) + u64::from(start.footprint.1) <= u64::from(height)
+}
+
 /// Evaluates all validation rules on the given map document, returning a deterministic report.
 #[must_use]
 pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
@@ -381,6 +410,19 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
 
     let width = doc.width;
     let height = doc.height;
+
+    // Check 0: CellGridMismatch. Every later check indexes `cells` by (y * width + x), so an
+    // untrusted document must prove its shape before any of them may run.
+    let supported = (MIN_MAP_DIMENSION..=MAX_MAP_DIMENSION).contains(&width)
+        && (MIN_MAP_DIMENSION..=MAX_MAP_DIMENSION).contains(&height);
+    if !supported || doc.cells.len() as u64 != u64::from(width) * u64::from(height) {
+        errors.push(MapValidationError::CellGridMismatch {
+            width,
+            height,
+            cells: doc.cells.len(),
+        });
+        return MapValidationReport { errors, warnings };
+    }
 
     // Check 1: AbyssCellTraversable
     for y in 0..height {
@@ -492,7 +534,7 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
             errors.push(MapValidationError::RampRunTooLong {
                 x: run.first.0,
                 y: run.first.1,
-                len: run.cells.len() as u8,
+                len: u8::try_from(run.cells.len()).unwrap_or(u8::MAX),
             });
         }
     }
@@ -521,6 +563,7 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
                     Some(next_cell) => {
                         next_cell.ramp.is_some()
                             || next_cell.terrain == TerrainKind::Abyss
+                            || !next_cell.flags.contains(CellFlags::GROUND_PATHABLE)
                             || next_cell.level.0 != low_level.0 + 1
                     }
                     None => true,
@@ -559,6 +602,7 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
                     Some(prev_cell) => {
                         prev_cell.ramp.is_some()
                             || prev_cell.terrain == TerrainKind::Abyss
+                            || !prev_cell.flags.contains(CellFlags::GROUND_PATHABLE)
                             || prev_cell.level != low_level
                     }
                     None => true,
@@ -670,7 +714,7 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
             let diff_x = (ca_x - cb_x).abs();
             let diff_y = (ca_y - cb_y).abs();
             let chebyshev_doubled = diff_x.max(diff_y);
-            let distance = (chebyshev_doubled / 2) as u32;
+            let distance = u32::try_from(chebyshev_doubled / 2).unwrap_or(u32::MAX);
 
             if distance < MIN_START_SEPARATION_CELLS {
                 errors.push(MapValidationError::StartLocationsTooClose {
@@ -720,12 +764,17 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
         }
     }
     for s in &doc.start_locations {
-        if s.cell.0 + s.footprint.0 as u32 > width || s.cell.1 + s.footprint.1 as u32 > height {
+        if !footprint_in_bounds(s, width, height) {
             errors.push(MapValidationError::EntityOutOfBounds {
                 id: s.id,
                 x: s.cell.0,
                 y: s.cell.1,
             });
+        }
+    }
+    for wt in &doc.watchtowers {
+        if WATCHTOWER_ENTITY_ID_BASE.checked_add(wt.id.0).is_none() {
+            errors.push(MapValidationError::EntityIdOutOfRange { id: wt.id });
         }
     }
 
@@ -745,9 +794,12 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
     // Check 18: ResourceInsideStartFootprint
     for r in &doc.resources {
         for s in &doc.start_locations {
-            let in_x = r.cell.0 >= s.cell.0 && r.cell.0 < s.cell.0 + s.footprint.0 as u32;
-            let in_y = r.cell.1 >= s.cell.1 && r.cell.1 < s.cell.1 + s.footprint.1 as u32;
-            if in_x && in_y {
+            let in_axis = |value: u32, start: u32, size: u8| {
+                value >= start && u64::from(value) < u64::from(start) + u64::from(size)
+            };
+            if in_axis(r.cell.0, s.cell.0, s.footprint.0)
+                && in_axis(r.cell.1, s.cell.1, s.footprint.1)
+            {
                 errors.push(MapValidationError::ResourceInsideStartFootprint {
                     id: r.id,
                     start: s.id,
@@ -902,7 +954,7 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
             }
         }
 
-        let width = 1 + count_neg + count_pos;
+        let width = count_neg.saturating_add(count_pos).saturating_add(1);
         if width < MIN_RECOMMENDED_RAMP_WIDTH {
             warnings.push(MapValidationWarning::NarrowRamp { x, y, width });
         }
@@ -941,9 +993,16 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
     }
 
     for r in &doc.resources {
+        // Out-of-bounds entities are already errors; association is only defined on the grid.
+        if r.cell.0 >= width || r.cell.1 >= height {
+            continue;
+        }
         let mut best: Option<(u8, i32)> = None;
 
         for s in &doc.start_locations {
+            if !footprint_in_bounds(s, width, height) {
+                continue;
+            }
             let center_x = s.cell.0 as i32 + s.footprint.0 as i32 / 2;
             let center_y = s.cell.1 as i32 + s.footprint.1 as i32 / 2;
             let dx = r.cell.0 as i32 - center_x;

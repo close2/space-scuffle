@@ -184,6 +184,24 @@ pub enum MapFormatError {
         y: u32,
     },
 
+    /// Resource or watchtower cell lies outside the map grid.
+    #[error("entity {id:?} at cell ({x}, {y}) lies outside the map")]
+    EntityOutOfBounds {
+        /// Map entity identifier.
+        id: MapEntityId,
+        /// X coordinate of the entity cell.
+        x: u32,
+        /// Y coordinate of the entity cell.
+        y: u32,
+    },
+
+    /// Watchtower identifier cannot be mapped into the simulation entity ID range.
+    #[error("watchtower identifier {id:?} is too large for the simulation entity range")]
+    EntityIdOutOfRange {
+        /// Map entity identifier.
+        id: MapEntityId,
+    },
+
     /// Low-level map error from `GameMap` operations.
     #[error("map error: {0}")]
     GameMap(#[from] MapError),
@@ -725,6 +743,7 @@ impl MapDocument {
 
         let mut resources = Vec::with_capacity(self.resources.len());
         for res in &self.resources {
+            self.require_cell_in_bounds(res.id, res.cell)?;
             let center = SimVec2::new(
                 SimScalar::from_num(res.cell.0) + SimScalar::HALF,
                 SimScalar::from_num(res.cell.1) + SimScalar::HALF,
@@ -739,17 +758,19 @@ impl MapDocument {
 
         let mut watchtowers = Vec::with_capacity(self.watchtowers.len());
         for wt in &self.watchtowers {
+            self.require_cell_in_bounds(wt.id, wt.cell)?;
+            let id = WATCHTOWER_ENTITY_ID_BASE
+                .checked_add(wt.id.0)
+                .ok_or(MapFormatError::EntityIdOutOfRange { id: wt.id })?;
             let center = SimVec2::new(
                 SimScalar::from_num(wt.cell.0) + SimScalar::HALF,
                 SimScalar::from_num(wt.cell.1) + SimScalar::HALF,
             );
-            let cap_rad = SimScalar::from_num(wt.capture_radius_tenths) / SimScalar::from_num(10);
-            let rev_rad = SimScalar::from_num(wt.reveal_radius_tenths) / SimScalar::from_num(10);
             watchtowers.push(Watchtower {
-                id: EntityId(WATCHTOWER_ENTITY_ID_BASE + wt.id.0),
+                id: EntityId(id),
                 pos: center,
-                capture_radius: cap_rad,
-                reveal_radius: rev_rad,
+                capture_radius: tenths_to_radius(wt.capture_radius_tenths),
+                reveal_radius: tenths_to_radius(wt.reveal_radius_tenths),
                 controlling_player: None,
             });
         }
@@ -848,24 +869,18 @@ impl MapDocument {
         let mut watchtowers = Vec::with_capacity(map.watchtowers().len());
         for wt in map.watchtowers() {
             let (cx, cy) = map.world_to_cell(wt.pos).map_err(MapFormatError::GameMap)?;
-            let cap_scaled = wt.capture_radius * SimScalar::from_num(10);
-            let rev_scaled = wt.reveal_radius * SimScalar::from_num(10);
-
-            if cap_scaled.0.frac() != 0
-                || cap_scaled < SimScalar::ZERO
-                || cap_scaled > SimScalar::from_num(u16::MAX)
-                || rev_scaled.0.frac() != 0
-                || rev_scaled < SimScalar::ZERO
-                || rev_scaled > SimScalar::from_num(u16::MAX)
-            {
+            let (Some(capture_radius_tenths), Some(reveal_radius_tenths)) = (
+                radius_to_tenths(wt.capture_radius),
+                radius_to_tenths(wt.reveal_radius),
+            ) else {
                 return Err(MapFormatError::NonTenthRadius { x: cx, y: cy });
-            }
+            };
 
             watchtowers.push(MapWatchtower {
                 id: MapEntityId(next_id),
                 cell: (cx, cy),
-                capture_radius_tenths: cap_scaled.0.to_num::<u16>(),
-                reveal_radius_tenths: rev_scaled.0.to_num::<u16>(),
+                capture_radius_tenths,
+                reveal_radius_tenths,
             });
             next_id += 1;
         }
@@ -893,6 +908,39 @@ impl MapDocument {
             .max()
             .unwrap_or(0);
         let max_id = max_res.max(max_wt).max(max_start);
-        MapEntityId(max_id + 1)
+        MapEntityId(max_id.saturating_add(1))
     }
+
+    fn require_cell_in_bounds(
+        &self,
+        id: MapEntityId,
+        cell: (u32, u32),
+    ) -> Result<(), MapFormatError> {
+        if cell.0 < self.width && cell.1 < self.height {
+            Ok(())
+        } else {
+            Err(MapFormatError::EntityOutOfBounds {
+                id,
+                x: cell.0,
+                y: cell.1,
+            })
+        }
+    }
+}
+
+/// Converts an authored radius in tenths of a world unit to world units.
+fn tenths_to_radius(tenths: u16) -> SimScalar {
+    SimScalar::from_num(tenths) / SimScalar::from_num(10)
+}
+
+/// Recovers the exact tenths value of a radius, or `None` if it is not one.
+///
+/// Most tenths have no exact Q32.32 representation, so `tenths / 10` is truncated and multiplying
+/// back by ten falls just short of a whole number. The test is therefore not whether the scaled
+/// value is whole: round to the nearest tenth, then require [`tenths_to_radius`] to reproduce the
+/// input bit for bit.
+fn radius_to_tenths(radius: SimScalar) -> Option<u16> {
+    let nearest = (radius * SimScalar::from_num(10) + SimScalar::HALF).saturating_to_u32();
+    let tenths = u16::try_from(nearest).ok()?;
+    (tenths_to_radius(tenths) == radius).then_some(tenths)
 }
