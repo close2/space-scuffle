@@ -43,9 +43,9 @@ use crate::editor::stroke::StrokeRecorder;
 use crate::editor::symmetry::SymmetryMode;
 use crate::editor::tools::{
     box_fill_command, check_ramp_placement, delete_entity_command, erase_cell_command,
-    erase_entities_command, infer_ramp, paint_brush_stamp, pick_entity, place_entity_command,
-    place_ramp_command, resolve_start_footprint, AuthorableFlag, BrushShape, EntityToolKind,
-    PaintOp, MAX_BRUSH_RADIUS,
+    erase_entities_command, infer_ramp, move_entity_command, paint_brush_stamp, pick_entity,
+    place_entity_command, place_ramp_command, resolve_start_footprint, AuthorableFlag, BrushShape,
+    EntityToolKind, PaintOp, MAX_BRUSH_RADIUS,
 };
 use crate::terrain::{
     pick_terrain, update_overlay_image, TerrainFieldImages, TerrainParamsState, TerrainState,
@@ -93,6 +93,15 @@ pub enum PendingUnsavedAction {
     OpenFile,
     /// Exit the application.
     Quit,
+}
+
+/// Entity being dragged by the Select tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntityDrag {
+    /// The entity under the pointer when the drag began.
+    pub id: MapEntityId,
+    /// Cell the pointer grabbed, which may be any cell of a multi-cell footprint.
+    pub grab_cell: (u32, u32),
 }
 
 /// Modal state for creating a new map.
@@ -161,6 +170,10 @@ pub struct EditorToolState {
     pub last_status_message: Option<String>,
     /// Anchor cell for the Box fill tool drag operation.
     pub box_start_cell: Option<(u32, u32)>,
+    /// Anchor cell for the Ramp tool drag operation.
+    pub ramp_start_cell: Option<(u32, u32)>,
+    /// Active entity move started by the Select tool.
+    pub entity_drag: Option<EntityDrag>,
     /// Whether a brush stroke drag is currently active.
     pub is_painting: bool,
     /// Live stroke recorder for freehand brush painting.
@@ -188,6 +201,8 @@ impl EditorToolState {
             hovered_cell: None,
             last_status_message: None,
             box_start_cell: None,
+            ramp_start_cell: None,
+            entity_drag: None,
             is_painting: false,
             stroke_recorder: StrokeRecorder::new(width, height),
             scratch_coords: Vec::with_capacity(256),
@@ -345,7 +360,6 @@ pub fn editor_ui_system(
     };
 
     let wants_keyboard = ctx.wants_keyboard_input();
-    let wants_pointer = ctx.wants_pointer_input() || ctx.is_pointer_over_area();
 
     // 4. Global Shortcuts (only when keyboard not captured by text fields)
     if !wants_keyboard {
@@ -1148,6 +1162,9 @@ pub fn editor_ui_system(
     );
 
     // 10. Viewport 3D Interaction: Picking, Brush Strokes, Box Fill, Entity Operations
+    // egui only knows what the panels cover once they have been shown this frame, so asking
+    // earlier lets clicks and drag releases fall through to the terrain behind them.
+    let wants_pointer = ctx.wants_pointer_input() || ctx.is_pointer_over_area();
     if !wants_pointer {
         handle_viewport_tool_interaction(
             &mouse_buttons,
@@ -1173,8 +1190,8 @@ pub fn editor_ui_system(
 ///
 /// The viewport tools only run while the pointer is over terrain, so a release above a panel,
 /// off the map or outside the window never reaches them. Recording here guarantees that a stroke
-/// already applied to the document always gets its undo entry. A box drag that was not released
-/// over the terrain has no end cell, so it is cancelled.
+/// already applied to the document always gets its undo entry. Box, ramp and entity drags change
+/// nothing until released over the terrain, so without an end cell they are cancelled.
 fn finish_released_gestures(
     mouse_buttons: &ButtonInput<MouseButton>,
     history: &mut History,
@@ -1190,6 +1207,8 @@ fn finish_released_gestures(
         }
     }
     tool_state.box_start_cell = None;
+    tool_state.ramp_start_cell = None;
+    tool_state.entity_drag = None;
 }
 
 fn find_entity_by_id(doc: &MapDocument, id: MapEntityId) -> Option<MapEntity> {
@@ -1625,39 +1644,14 @@ fn handle_viewport_tool_interaction(
         }
         EditorTool::Ramp => {
             if mouse_buttons.just_pressed(MouseButton::Left) {
-                let rect = CellRect {
-                    min: (hit_cell.0, hit_cell.1),
-                    max_inclusive: (hit_cell.0, hit_cell.1),
-                };
-                let placement_res = match tool_state.ramp_mode {
-                    RampToolMode::Auto => infer_ramp(&doc.doc, rect),
-                    RampToolMode::Manual(dir) => check_ramp_placement(&doc.doc, rect, dir),
-                };
-
-                match placement_res {
-                    Ok(placement) => {
-                        match place_ramp_command(
-                            &doc.doc,
-                            rect,
-                            placement,
-                            tool_state.symmetry,
-                            "Place Ramp",
-                        ) {
-                            Ok(cmd) => {
-                                let mut cs = ChangeSet::default();
-                                history.execute(cmd, &mut doc.doc, &mut cs);
-                                doc.apply_changeset(&cs, now_secs);
-                                doc.sync_terrain(&cs, terrain);
-                                tool_state.last_status_message = Some("Placed ramp".into());
-                            }
-                            Err(e) => {
-                                tool_state.last_status_message = Some(format!("Ramp error: {e}"));
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tool_state.last_status_message = Some(format!("Ramp error: {e}"));
-                    }
+                tool_state.ramp_start_cell = Some(hit_cell);
+            } else if mouse_buttons.just_released(MouseButton::Left) {
+                if let Some(start_cell) = tool_state.ramp_start_cell.take() {
+                    let rect = CellRect {
+                        min: (start_cell.0.min(hit_cell.0), start_cell.1.min(hit_cell.1)),
+                        max_inclusive: (start_cell.0.max(hit_cell.0), start_cell.1.max(hit_cell.1)),
+                    };
+                    place_ramp_rect(rect, doc, history, tool_state, terrain, now_secs);
                 }
             }
         }
@@ -1677,7 +1671,16 @@ fn handle_viewport_tool_interaction(
         }
         EditorTool::Select => {
             if mouse_buttons.just_pressed(MouseButton::Left) {
-                tool_state.selected_entity_id = pick_entity(&doc.doc, hit_cell).map(|e| e.id());
+                let picked = pick_entity(&doc.doc, hit_cell).map(|entity| entity.id());
+                tool_state.selected_entity_id = picked;
+                tool_state.entity_drag = picked.map(|id| EntityDrag {
+                    id,
+                    grab_cell: hit_cell,
+                });
+            } else if mouse_buttons.just_released(MouseButton::Left) {
+                if let Some(drag) = tool_state.entity_drag.take() {
+                    move_dragged_entity(drag, hit_cell, doc, history, tool_state, now_secs);
+                }
             }
         }
         EditorTool::Eraser => {
@@ -1700,6 +1703,66 @@ fn handle_viewport_tool_interaction(
             }
         }
     }
+}
+
+/// Validates and applies a ramp over `rect`, reporting a rejected placement on the status bar.
+fn place_ramp_rect(
+    rect: CellRect,
+    doc: &mut ResMut<'_, EditorDocument>,
+    history: &mut History,
+    tool_state: &mut EditorToolState,
+    terrain: &mut ResMut<'_, TerrainState>,
+    now_secs: f64,
+) {
+    let placement = match tool_state.ramp_mode {
+        RampToolMode::Auto => infer_ramp(&doc.doc, rect),
+        RampToolMode::Manual(dir) => check_ramp_placement(&doc.doc, rect, dir),
+    };
+    let command = placement.and_then(|placement| {
+        place_ramp_command(&doc.doc, rect, placement, tool_state.symmetry, "Place Ramp")
+    });
+    match command {
+        Ok(cmd) => {
+            let mut cs = ChangeSet::default();
+            history.execute(cmd, &mut doc.doc, &mut cs);
+            doc.apply_changeset(&cs, now_secs);
+            doc.sync_terrain(&cs, terrain);
+            tool_state.last_status_message = Some("Placed ramp".into());
+        }
+        Err(e) => {
+            tool_state.last_status_message = Some(format!("Ramp error: {e}"));
+        }
+    }
+}
+
+/// Moves the dragged entity by the distance between its grab cell and `drop_cell`.
+///
+/// A multi-cell base keeps its position under the pointer wherever it was grabbed. Dropping on
+/// the grab cell is a plain click, which leaves no undo entry and no unsaved changes.
+fn move_dragged_entity(
+    drag: EntityDrag,
+    drop_cell: (u32, u32),
+    doc: &mut ResMut<'_, EditorDocument>,
+    history: &mut History,
+    tool_state: &mut EditorToolState,
+    now_secs: f64,
+) {
+    if drop_cell == drag.grab_cell {
+        return;
+    }
+    let Some(entity) = find_entity_by_id(&doc.doc, drag.id) else {
+        return;
+    };
+    let anchor = entity.cell();
+    let new_cell = (
+        (anchor.0 + drop_cell.0).saturating_sub(drag.grab_cell.0),
+        (anchor.1 + drop_cell.1).saturating_sub(drag.grab_cell.1),
+    );
+    let cmd = move_entity_command(&doc.doc, &entity, new_cell, tool_state.symmetry);
+    let mut cs = ChangeSet::default();
+    history.execute(cmd, &mut doc.doc, &mut cs);
+    doc.apply_changeset(&cs, now_secs);
+    tool_state.last_status_message = Some("Moved entity".into());
 }
 
 /// Copies a brush stamp from the document into the terrain, including its mirrored footprint.

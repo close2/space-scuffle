@@ -67,8 +67,10 @@ use client::terrain::{
 };
 use sim_core::catalog::RuntimeCatalogs;
 use sim_core::scenario::{PlayerSetup, StartLoadoutCatalog};
-use sim_map::grid::{CellFlags, CliffLevel, TerrainKind};
-use sim_map::map_format::{MapCellSpec, MapEntityId, MapFile, MapMetadata, MapStartLocation};
+use sim_map::grid::{CellFlags, CliffLevel, RampDir, ResourceKind, TerrainKind};
+use sim_map::map_format::{
+    MapCellSpec, MapEntityId, MapFile, MapMetadata, MapResource, MapStartLocation,
+};
 use sim_map::validation::validate_map;
 use sim_types::commands::{PlayerCommand, TickBundle, UnitOrder};
 use sim_types::ids::{EntityId, PlayerId, Tick};
@@ -657,6 +659,17 @@ impl EditorHarness {
             .unwrap_or_default()
     }
 
+    /// Drags the primary button from cell `from` to cell `to`.
+    fn drag_cells(&mut self, from: (u32, u32), to: (u32, u32)) {
+        let start = self.cell_on_screen(from.0, from.1);
+        self.move_cursor(start);
+        self.press_left();
+        let end = self.cell_on_screen(to.0, to.1);
+        self.move_cursor(end);
+        self.release_left();
+        self.step(1);
+    }
+
     /// Selects the Eraser and clicks cell `(x, y)` once.
     fn erase_at(&mut self, x: u32, y: u32) {
         self.tap_key(KeyCode::KeyT);
@@ -1176,11 +1189,11 @@ fn opening_a_different_size_map_rebuilds_terrain_for_that_size() {
     );
 
     // Cells beyond the old 64x64 bounds must be editable and rendered.
-    harness.begin_stroke_at(70, 40);
+    harness.begin_stroke_at(66, 40);
     harness.release_left();
     harness.step(1);
-    assert_eq!(harness.cell_level(70, 40), 2);
-    assert_eq!(harness.terrain_level(70, 40), 2);
+    assert_eq!(harness.cell_level(66, 40), 2);
+    assert_eq!(harness.terrain_level(66, 40), 2);
     assert_eq!(harness.history().undo_len(), 1);
 }
 
@@ -1336,4 +1349,205 @@ fn idle_frames_do_not_mark_the_document_or_terrain_changed() {
         counts.params, 0,
         "params changes re-upload the terrain material"
     );
+}
+
+/// A map with a level 2 plateau on rows `16..28` and level 1 ground from row 28 onward.
+///
+/// The editor camera looks toward -Y, so the plateau is behind its foot rather than hiding it.
+fn plateau_document() -> EditorDocument {
+    let mut fixture = playable_document(64, 64);
+    for y in 16..28 {
+        for x in 20..44 {
+            fixture.doc.cell_mut(x, y).expect("cell in bounds").level = CliffLevel(2);
+        }
+    }
+    fixture
+}
+
+#[test]
+fn ramp_tool_drag_places_the_whole_rectangle() {
+    let mut harness = EditorHarness::with_document(&plateau_document());
+    harness.tap_key(KeyCode::KeyR);
+
+    harness.drag_cells((30, 28), (33, 29));
+
+    for y in 28..=29 {
+        for x in 30..=33 {
+            let cell = harness.doc().doc.cell(x, y).expect("cell in bounds");
+            assert_eq!(cell.ramp, Some(RampDir::South), "ramp at ({x}, {y})");
+        }
+    }
+    assert_eq!(harness.history().undo_len(), 1, "one drag is one edit");
+    assert_eq!(
+        harness
+            .app
+            .world()
+            .resource::<TerrainState>()
+            .map
+            .cell(33, 29)
+            .expect("in bounds")
+            .ramp,
+        Some(RampDir::South),
+        "the renderer must show the ramp"
+    );
+}
+
+#[test]
+fn ramp_tool_click_still_places_a_single_cell_ramp() {
+    let mut harness = EditorHarness::with_document(&plateau_document());
+    harness.tap_key(KeyCode::KeyR);
+
+    harness.drag_cells((30, 28), (30, 28));
+
+    let cell = harness.doc().doc.cell(30, 28).expect("cell in bounds");
+    assert_eq!(cell.ramp, Some(RampDir::South));
+}
+
+#[test]
+fn ramp_tool_reports_a_rejected_drag() {
+    let mut harness = EditorHarness::with_document(&plateau_document());
+    harness.tap_key(KeyCode::KeyR);
+
+    // Spans the cliff edge, so its cells have mixed levels.
+    harness.drag_cells((30, 26), (33, 29));
+
+    assert!(
+        harness.status().starts_with("Ramp error"),
+        "got: {}",
+        harness.status()
+    );
+    assert_eq!(harness.history().undo_len(), 0);
+}
+
+fn document_with_mineral(cell: (u32, u32)) -> EditorDocument {
+    let mut fixture = playable_document(64, 64);
+    fixture.doc.resources.push(MapResource {
+        id: MapEntityId(10),
+        kind: ResourceKind::Mineral,
+        cell,
+        amount: 1500,
+    });
+    fixture
+}
+
+#[test]
+fn select_tool_drag_moves_an_entity_as_one_undoable_edit() {
+    let mut harness = EditorHarness::with_document(&document_with_mineral((30, 30)));
+    harness.tap_key(KeyCode::KeyQ);
+
+    harness.drag_cells((30, 30), (34, 28));
+
+    assert_eq!(harness.doc().doc.resources[0].cell, (34, 28));
+    assert_eq!(harness.history().undo_len(), 1);
+    assert!(harness.doc().dirty);
+    let selected = harness
+        .app
+        .world()
+        .resource::<EditorToolState>()
+        .selected_entity_id;
+    assert_eq!(selected, Some(MapEntityId(10)));
+
+    harness.send_key(KeyCode::ControlLeft, ButtonState::Pressed);
+    harness.step(1);
+    harness.tap_key(KeyCode::KeyZ);
+    assert_eq!(harness.doc().doc.resources[0].cell, (30, 30));
+}
+
+#[test]
+fn select_tool_click_selects_without_moving() {
+    let mut harness = EditorHarness::with_document(&document_with_mineral((30, 30)));
+    harness.tap_key(KeyCode::KeyQ);
+
+    harness.drag_cells((30, 30), (30, 30));
+
+    assert_eq!(harness.doc().doc.resources[0].cell, (30, 30));
+    assert_eq!(harness.history().undo_len(), 0);
+    assert!(!harness.doc().dirty);
+    let selected = harness
+        .app
+        .world()
+        .resource::<EditorToolState>()
+        .selected_entity_id;
+    assert_eq!(selected, Some(MapEntityId(10)));
+}
+
+#[test]
+fn select_tool_drag_keeps_the_grab_offset_of_a_multi_cell_base() {
+    let mut harness = EditorHarness::new();
+    harness.tap_key(KeyCode::KeyQ);
+    assert_eq!(harness.doc().doc.start_locations[0].cell, (8, 8));
+
+    // Grabbed by its center, cell (10, 10), and dropped two cells over.
+    harness.drag_cells((10, 10), (12, 11));
+
+    assert_eq!(harness.doc().doc.start_locations[0].cell, (10, 9));
+}
+
+#[test]
+fn select_tool_drag_released_over_a_panel_cancels_the_move() {
+    let mut harness = EditorHarness::with_document(&document_with_mineral((30, 30)));
+    harness.tap_key(KeyCode::KeyQ);
+    let start = harness.cell_on_screen(30, 30);
+    harness.move_cursor(start);
+    harness.press_left();
+    harness.move_cursor(Vec2::new(100.0, 450.0));
+    harness.step(1);
+    harness.release_left();
+    harness.step(1);
+
+    assert_eq!(harness.doc().doc.resources[0].cell, (30, 30));
+    assert_eq!(harness.history().undo_len(), 0);
+
+    // The cancelled drag must not revive on the next click elsewhere.
+    harness.drag_cells((40, 40), (41, 41));
+    assert_eq!(harness.doc().doc.resources[0].cell, (30, 30));
+}
+
+/// Phase 7 exit criterion: edit, save, playtest, return and reopen.
+#[test]
+fn edit_save_playtest_return_and_reopen_round_trip() {
+    let mut harness = EditorHarness::new();
+
+    // Edit with a real brush stroke.
+    harness.begin_stroke_at(32, 32);
+    harness.release_left();
+    harness.step(1);
+    assert!(harness.doc().dirty);
+    assert_eq!(harness.history().undo_len(), 1);
+    let edited = harness.doc().doc.clone();
+
+    // Save with the real shortcut.
+    harness.send_key(KeyCode::ControlLeft, ButtonState::Pressed);
+    harness.step(1);
+    harness.tap_key(KeyCode::KeyS);
+    harness.send_key(KeyCode::ControlLeft, ButtonState::Released);
+    harness.step(1);
+    assert!(!harness.doc().dirty, "Ctrl+S must save");
+
+    // Playtest: the edited map must really run.
+    harness.tap_key(KeyCode::F5);
+    harness.step(20);
+    assert_eq!(harness.phase(), EditorPhase::Playtesting);
+    assert!(harness.bubble_count() > 0);
+
+    // Return: the document and undo history are as they were.
+    harness.tap_key(KeyCode::Escape);
+    harness.step(2);
+    assert_eq!(harness.phase(), EditorPhase::Editing);
+    assert_eq!(harness.doc().doc, edited);
+    assert_eq!(harness.history().undo_len(), 1);
+    assert!(!harness.doc().dirty);
+
+    // Reopen from disk through the real load path.
+    let path = harness.path();
+    harness.request_open(path);
+    assert_eq!(harness.doc().doc, edited, "the edit must survive on disk");
+    assert_eq!(harness.terrain_level(32, 32), 2, "and reach the renderer");
+    assert_eq!(harness.history().undo_len(), 0);
+
+    // The reopened map must still playtest.
+    harness.tap_key(KeyCode::F5);
+    harness.step(10);
+    assert_eq!(harness.phase(), EditorPhase::Playtesting);
+    assert!(harness.bubble_count() > 0);
 }

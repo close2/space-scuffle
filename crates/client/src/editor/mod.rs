@@ -75,9 +75,9 @@ pub use tools::{
     DEFAULT_WATCHTOWER_REVEAL_RADIUS_TENTHS, MAX_BRUSH_RADIUS,
 };
 pub use ui::{
-    apply_unsaved_choice, editor_ui_system, EditorTool, EditorToolState, NewMapModalState,
-    PendingUnsavedAction, RampToolMode, UnsavedChangesModalState, UnsavedChoice, UnsavedOutcome,
-    VALIDATION_DEBOUNCE_SECS,
+    apply_unsaved_choice, editor_ui_system, EditorTool, EditorToolState, EntityDrag,
+    NewMapModalState, PendingUnsavedAction, RampToolMode, UnsavedChangesModalState, UnsavedChoice,
+    UnsavedOutcome, VALIDATION_DEBOUNCE_SECS,
 };
 pub use verification::{
     check_render_pipelines, get_verify_poses, update_playtest_verification_system,

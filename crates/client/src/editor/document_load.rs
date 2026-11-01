@@ -190,6 +190,8 @@ pub fn apply_document_load_system(
     tool_state.stroke_recorder.resize(width, height);
     tool_state.is_painting = false;
     tool_state.box_start_cell = None;
+    tool_state.ramp_start_cell = None;
+    tool_state.entity_drag = None;
     tool_state.selected_entity_id = None;
     tool_state.hovered_cell = None;
     los_state.resize(width, height);
