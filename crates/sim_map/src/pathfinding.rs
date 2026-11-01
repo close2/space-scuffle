@@ -4,6 +4,17 @@
 //! It computes multi-radius unit clearance, executes A* corridor searches on the grid,
 //! and applies the Simple Stupid Funnel algorithm with corner clearance offsets to
 //! produce smooth, arbitrary-angle Euclidean waypoints.
+//!
+//! # Clearance model
+//! A unit is a disc. Clearance answers one question for each cell: how large a disc can stand
+//! somewhere inside this cell without overlapping a wall? Walls are blocked cells, cliff edges
+//! and the map border. The answer is a Euclidean distance field, so it is symmetric: it cannot
+//! depend on which side of a unit a wall lies, and mirroring a map mirrors its clearance.
+//!
+//! # Invariants
+//! - `clearance_at` is zero exactly on cells no unit may enter.
+//! - A diagonal step requires both cells it passes between to be open, for every unit size:
+//!   two obstacles touching at a corner leave no gap.
 
 use crate::error::{MapError, Result};
 use crate::grid::{CellFlags, GameMap};
@@ -28,11 +39,11 @@ pub const CORNER_SAFETY_MARGIN: SimScalar = SimScalar::from_raw(214_748_365); //
 /// Unit clearance tier determining navigation aperture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum UnitClearance {
-    /// Radius ~0.375. Light infantry (e.g. Marine); can squeeze through diagonal corners.
+    /// Radius 0.375. Light infantry (e.g. Marine); fits a gap one cell wide.
     Small,
-    /// Radius ~0.625. Standard combat units; requires 1 full cell.
+    /// Radius 0.625. Standard combat units; needs a gap two cells wide.
     Medium,
-    /// Radius ~1.125. Massive units / siege tanks; requires 2x2 clear passage.
+    /// Radius 1.0. The largest ground units; fits exactly in a gap two cells wide.
     Large,
 }
 
@@ -44,17 +55,20 @@ impl UnitClearance {
         match self {
             Self::Small => SimScalar::from_num(0.375),
             Self::Medium => SimScalar::from_num(0.625),
-            Self::Large => SimScalar::from_num(1.125),
+            Self::Large => SimScalar::ONE,
         }
     }
 
-    /// Returns the minimum contiguous clearance box size in 1x1 cells.
+    /// Returns the clearance this tier needs, in eighths of a world unit, rounded up.
+    ///
+    /// Compare against [`Pathfinder::clearance_at`].
     #[must_use]
     #[inline]
-    pub fn required_clearance_cells(self) -> u8 {
+    pub fn required_clearance(self) -> u8 {
         match self {
-            Self::Small | Self::Medium => 1,
-            Self::Large => 2,
+            Self::Small => 3,
+            Self::Medium => 5,
+            Self::Large => 8,
         }
     }
 }
@@ -258,14 +272,209 @@ impl PathfinderBuffers {
     }
 }
 
+/// Reusable storage for the clearance distance transform.
+///
+/// Works on a lattice with a point every half cell, `2w + 1` by `2h + 1` points. Lattice
+/// coordinates are therefore half-cell units, and `(2x, 2y)` is the corner of cell `(x, y)`.
+struct ClearanceWorkspace {
+    lattice_width: usize,
+    lattice_height: usize,
+    /// Lattice points lying on a wall.
+    walls: Vec<bool>,
+    /// Squared distance to the nearest wall, in squared half-cell units.
+    squared_distance: Vec<u32>,
+    /// One-dimensional distance to the nearest wall along each column.
+    column_distance: Vec<u32>,
+    /// Column index of each parabola in the row's lower envelope.
+    envelope_column: Vec<usize>,
+    /// First row position at which each parabola is the minimum.
+    envelope_start: Vec<usize>,
+}
+
+impl ClearanceWorkspace {
+    fn new(width: usize, height: usize) -> Self {
+        let lattice_width = 2 * width + 1;
+        let lattice_height = 2 * height + 1;
+        let points = lattice_width * lattice_height;
+        Self {
+            lattice_width,
+            lattice_height,
+            walls: vec![false; points],
+            squared_distance: vec![0; points],
+            column_distance: vec![0; points],
+            envelope_column: vec![0; lattice_width],
+            envelope_start: vec![0; lattice_width],
+        }
+    }
+
+    fn mark_wall(&mut self, x: usize, y: usize) {
+        self.walls[y * self.lattice_width + x] = true;
+    }
+
+    /// Marks the map border and every wall that belongs to terrain.
+    fn mark_terrain_walls(&mut self, map: &GameMap) {
+        self.walls.fill(false);
+        for x in 0..self.lattice_width {
+            self.mark_wall(x, 0);
+            self.mark_wall(x, self.lattice_height - 1);
+        }
+        for y in 0..self.lattice_height {
+            self.mark_wall(0, y);
+            self.mark_wall(self.lattice_width - 1, y);
+        }
+        let (width, height) = (map.width(), map.height());
+        for y in 0..height {
+            for x in 0..width {
+                let cell = (x, y);
+                if !map.terrain_step_is_connected(cell, cell) {
+                    self.mark_cell_wall(x as usize, y as usize);
+                    continue;
+                }
+                let east = (x + 1, y);
+                if x + 1 < width
+                    && map.terrain_step_is_connected(east, east)
+                    && !map.terrain_step_is_connected(cell, east)
+                {
+                    let edge = 2 * x as usize + 2;
+                    for offset in 0..=2 {
+                        self.mark_wall(edge, 2 * y as usize + offset);
+                    }
+                }
+                let north = (x, y + 1);
+                if y + 1 < height
+                    && map.terrain_step_is_connected(north, north)
+                    && !map.terrain_step_is_connected(cell, north)
+                {
+                    let edge = 2 * y as usize + 2;
+                    for offset in 0..=2 {
+                        self.mark_wall(2 * x as usize + offset, edge);
+                    }
+                }
+            }
+        }
+    }
+
+    fn mark_cell_wall(&mut self, x: usize, y: usize) {
+        for offset_y in 0..=2 {
+            for offset_x in 0..=2 {
+                self.mark_wall(2 * x + offset_x, 2 * y + offset_y);
+            }
+        }
+    }
+
+    /// Adds every structure footprint cell to the walls. Returns whether there were any.
+    fn mark_structure_walls(&mut self, map: &GameMap) -> bool {
+        let mut found = false;
+        let width = map.width() as usize;
+        for (index, cell) in map.cells().iter().enumerate() {
+            if cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE) {
+                self.mark_cell_wall(index % width, index / width);
+                found = true;
+            }
+        }
+        found
+    }
+
+    /// Computes the exact squared Euclidean distance from every lattice point to a wall.
+    // PERFORMANCE RATIONALE:
+    // Why: Clearance is recomputed for the whole map whenever a structure changes, and a naive
+    // nearest-wall search visits O(points * walls) pairs.
+    // What: The two-pass transform of Meijster et al. runs in O(points). The first pass finds
+    // the nearest wall along each column; the second takes the lower envelope of the resulting
+    // parabolas along each row. All arithmetic is integer, so the result is deterministic.
+    // Trade-off: Retained scratch buffers and an algorithm that needs explaining, in exchange
+    // for an exact field with no heap allocation per recomputation.
+    fn run_distance_transform(&mut self) {
+        let (columns, rows) = (self.lattice_width, self.lattice_height);
+        // The border is always a wall, so every distance below is finite.
+        for x in 0..columns {
+            let mut distance = u32::MAX;
+            for y in 0..rows {
+                distance = if self.walls[y * columns + x] {
+                    0
+                } else {
+                    distance.saturating_add(1)
+                };
+                self.column_distance[y * columns + x] = distance;
+            }
+            for y in (0..rows - 1).rev() {
+                let above = self.column_distance[(y + 1) * columns + x].saturating_add(1);
+                let here = &mut self.column_distance[y * columns + x];
+                *here = (*here).min(above);
+            }
+        }
+
+        for y in 0..rows {
+            let row = y * columns;
+            let height = |x: usize| i64::from(self.column_distance[row + x]);
+            let parabola = |at: usize, x: usize| {
+                let across = at as i64 - x as i64;
+                across * across + height(x) * height(x)
+            };
+            let crossing = |left: usize, right: usize| {
+                let (l, r) = (left as i64, right as i64);
+                (r * r - l * l + height(right) * height(right) - height(left) * height(left))
+                    .div_euclid(2 * (r - l))
+            };
+
+            let mut top = 0_usize;
+            self.envelope_column[0] = 0;
+            self.envelope_start[0] = 0;
+            for x in 1..columns {
+                loop {
+                    let start = self.envelope_start[top];
+                    if parabola(start, self.envelope_column[top]) <= parabola(start, x) {
+                        let first = crossing(self.envelope_column[top], x) + 1;
+                        if first < columns as i64 {
+                            top += 1;
+                            self.envelope_column[top] = x;
+                            self.envelope_start[top] = first as usize;
+                        }
+                        break;
+                    }
+                    if top == 0 {
+                        self.envelope_column[0] = x;
+                        break;
+                    }
+                    top -= 1;
+                }
+            }
+            for x in (0..columns).rev() {
+                let squared = parabola(x, self.envelope_column[top]);
+                self.squared_distance[row + x] = u32::try_from(squared).unwrap_or(u32::MAX);
+                if top > 0 && x == self.envelope_start[top] {
+                    top -= 1;
+                }
+            }
+        }
+    }
+
+    /// Writes the clearance of each cell: the best clearance at any lattice point in the cell.
+    fn write_cell_clearance(&self, grid: &mut [u8], width: usize) {
+        for (index, clearance) in grid.iter_mut().enumerate() {
+            let (x, y) = (index % width, index / width);
+            let mut best = 0;
+            for offset_y in 0..=2 {
+                for offset_x in 0..=2 {
+                    let point = (2 * y + offset_y) * self.lattice_width + 2 * x + offset_x;
+                    best = best.max(self.squared_distance[point]);
+                }
+            }
+            // Distance in eighths of a cell is 4 * sqrt(best), since `best` is in half cells.
+            *clearance = u8::try_from((16 * u64::from(best)).isqrt()).unwrap_or(u8::MAX);
+        }
+    }
+}
+
 /// Dynamic pathfinder operating over `GameMap`.
 pub struct Pathfinder {
     width: u32,
     height: u32,
-    /// Clearance value per cell: maximum square size in cells that fits at this cell.
+    /// Clearance per cell in eighths of a world unit, counting every structure as a wall.
     clearance_grid: Vec<u8>,
-    /// Static clearance value per cell, ignoring dynamic structure obstacles.
+    /// Clearance per cell in eighths of a world unit, ignoring structures.
     static_clearance_grid: Vec<u8>,
+    clearance_workspace: ClearanceWorkspace,
     /// Incremented whenever obstacles change, invalidating cached paths.
     nav_version: u32,
     buffers: PathfinderBuffers,
@@ -283,6 +492,7 @@ impl Pathfinder {
             height,
             clearance_grid: vec![0; size],
             static_clearance_grid: vec![0; size],
+            clearance_workspace: ClearanceWorkspace::new(width as usize, height as usize),
             nav_version: 1,
             buffers: PathfinderBuffers::new(size),
         };
@@ -297,7 +507,10 @@ impl Pathfinder {
         self.nav_version
     }
 
-    /// Clearance value in cells at `(x, y)`.
+    /// Radius of the largest disc that fits somewhere in cell `(x, y)`, counting structures.
+    ///
+    /// Measured in eighths of a world unit, rounded down and saturating at 255 (31.875 units).
+    /// Zero means no unit can enter the cell. Out-of-bounds cells report zero.
     #[must_use]
     pub fn clearance_at(&self, x: u32, y: u32) -> u8 {
         if x >= self.width || y >= self.height {
@@ -307,7 +520,7 @@ impl Pathfinder {
         }
     }
 
-    /// Static terrain clearance value in cells at `(x, y)` ignoring structures.
+    /// Same as [`Self::clearance_at`] but ignoring structures, in eighths of a world unit.
     #[must_use]
     pub fn static_clearance_at(&self, x: u32, y: u32) -> u8 {
         if x >= self.width || y >= self.height {
@@ -317,67 +530,21 @@ impl Pathfinder {
         }
     }
 
-    /// Recomputes the clearance grid across the entire map.
+    /// Recomputes both clearance grids across the entire map.
     pub fn recompute_clearance(&mut self, map: &GameMap) {
-        let w = self.width as usize;
-        let h = self.height as usize;
-        self.clearance_grid.fill(0);
-        self.static_clearance_grid.fill(0);
+        let width = self.width as usize;
+        let workspace = &mut self.clearance_workspace;
 
-        for y in (0..h).rev() {
-            for x in (0..w).rev() {
-                let idx = y * w + x;
-                let cell = match map.cell(x as u32, y as u32) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
+        workspace.mark_terrain_walls(map);
+        workspace.run_distance_transform();
+        workspace.write_cell_clearance(&mut self.static_clearance_grid, width);
 
-                let static_passable =
-                    map.terrain_step_is_connected((x as u32, y as u32), (x as u32, y as u32));
-                let dynamic_passable =
-                    static_passable && !cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE);
-
-                let origin = (x as u32, y as u32);
-                let right = ((x + 1) as u32, y as u32);
-                let down = (x as u32, (y + 1) as u32);
-                let diagonal = ((x + 1) as u32, (y + 1) as u32);
-                let cliff_match = map.terrain_step_is_connected(origin, right)
-                    && map.terrain_step_is_connected(origin, down)
-                    && map.terrain_step_is_connected(right, diagonal)
-                    && map.terrain_step_is_connected(down, diagonal);
-
-                if static_passable {
-                    if x == w - 1 || y == h - 1 {
-                        self.static_clearance_grid[idx] = 1;
-                    } else {
-                        let right = self.static_clearance_grid[idx + 1];
-                        let down = self.static_clearance_grid[idx + w];
-                        let diag = self.static_clearance_grid[idx + w + 1];
-                        if cliff_match {
-                            let min_c = right.min(down).min(diag);
-                            self.static_clearance_grid[idx] = min_c.saturating_add(1);
-                        } else {
-                            self.static_clearance_grid[idx] = 1;
-                        }
-                    }
-                }
-
-                if dynamic_passable {
-                    if x == w - 1 || y == h - 1 {
-                        self.clearance_grid[idx] = 1;
-                    } else {
-                        let right = self.clearance_grid[idx + 1];
-                        let down = self.clearance_grid[idx + w];
-                        let diag = self.clearance_grid[idx + w + 1];
-                        if cliff_match {
-                            let min_c = right.min(down).min(diag);
-                            self.clearance_grid[idx] = min_c.saturating_add(1);
-                        } else {
-                            self.clearance_grid[idx] = 1;
-                        }
-                    }
-                }
-            }
+        if workspace.mark_structure_walls(map) {
+            workspace.run_distance_transform();
+            workspace.write_cell_clearance(&mut self.clearance_grid, width);
+        } else {
+            self.clearance_grid
+                .copy_from_slice(&self.static_clearance_grid);
         }
 
         self.nav_version = self.nav_version.wrapping_add(1);
@@ -416,7 +583,7 @@ impl Pathfinder {
             .world_to_cell(request.goal)
             .map_err(|_| MapError::InvalidGoal(request.goal))?;
 
-        let req_clearance = request.clearance.required_clearance_cells();
+        let req_clearance = request.clearance.required_clearance();
 
         let start_cell = map
             .cell(start_cx, start_cy)
@@ -546,21 +713,7 @@ impl Pathfinder {
                         continue;
                     }
 
-                    let mut footprint_blocked = false;
-                    for oy in 0..req_clearance as u32 {
-                        for ox in 0..req_clearance as u32 {
-                            let fx = nx_u32 + ox;
-                            let fy = ny_u32 + oy;
-                            if !is_cell_passable_for_request(map, request, fx as i32, fy as i32) {
-                                footprint_blocked = true;
-                                break;
-                            }
-                        }
-                        if footprint_blocked {
-                            break;
-                        }
-                    }
-                    if footprint_blocked {
+                    if !body_fits(&self.clearance_grid, map, request, nx_u32, ny_u32) {
                         continue;
                     }
 
@@ -586,9 +739,9 @@ impl Pathfinder {
 
                     let is_diag = dx != 0 && dy != 0;
 
-                    // Structure corner squeezing is separate from terrain topology.
+                    // Terrain topology ignores occupancy, so structures are checked here: two
+                    // buildings touching at a corner leave no gap for a unit of any size.
                     if is_diag
-                        && request.clearance != UnitClearance::Small
                         && (!is_cell_passable_for_request(map, request, nx, cy as i32)
                             || !is_cell_passable_for_request(map, request, cx as i32, ny))
                     {
@@ -665,7 +818,7 @@ impl Pathfinder {
         start: SimVec2,
         goal: SimVec2,
     ) -> bool {
-        let required = request.clearance.required_clearance_cells();
+        let required = request.clearance.required_clearance();
         let clearance = if request.vision.is_some() || request.known_structures.is_some() {
             &self.static_clearance_grid
         } else {
@@ -676,22 +829,10 @@ impl Pathfinder {
             if clearance[index] < required {
                 return false;
             }
-            for oy in 0..u32::from(required) {
-                for ox in 0..u32::from(required) {
-                    if !is_cell_passable_for_request(
-                        map,
-                        request,
-                        (next.0 + ox) as i32,
-                        (next.1 + oy) as i32,
-                    ) {
-                        return false;
-                    }
-                }
+            if !body_fits(&self.clearance_grid, map, request, next.0, next.1) {
+                return false;
             }
-            if previous.0 != next.0
-                && previous.1 != next.1
-                && request.clearance != UnitClearance::Small
-            {
+            if previous.0 != next.0 && previous.1 != next.1 {
                 return is_cell_passable_for_request(
                     map,
                     request,
@@ -1211,6 +1352,59 @@ impl Pathfinder {
         let offset_dist = (clearance.radius_scalar() + CORNER_SAFETY_MARGIN).max(min_margin);
         vertex + SimVec2::new(dir.x * offset_dist, dir.y * offset_dist)
     }
+}
+
+/// Tests whether a unit's disc fits at some point of cell `(x, y)` under this request's knowledge.
+///
+/// The caller has already checked the cell against the clearance table that applies to the
+/// request. A request with player knowledge uses the static table, because which structures it
+/// knows differs per player and cannot be precomputed.
+// PERFORMANCE RATIONALE:
+// Why: This runs for every neighbour the search expands, and most cells have no structure nearby.
+// What: `all_structures` treats every structure as a wall, so a cell with enough clearance there
+// fits whatever the player knows, and only cells near a structure need the per-cell disc test.
+// Trade-off: Two code paths, in exchange for a table lookup in the common case.
+fn body_fits(
+    all_structures: &[u8],
+    map: &GameMap,
+    request: &PathRequestWithVision<'_>,
+    x: u32,
+    y: u32,
+) -> bool {
+    if !is_cell_passable_for_request(map, request, x as i32, y as i32) {
+        return false;
+    }
+    let required = request.clearance.required_clearance();
+    let index = (y as usize) * (map.width() as usize) + (x as usize);
+    if !request.block_unexplored_ramps && all_structures[index] >= required {
+        return true;
+    }
+    // Candidate disc centres are the nine half-cell lattice points of this cell. A disc of
+    // `required` eighths overlaps another cell when 4 * sqrt(D) < required, for D the squared
+    // half-cell distance from the centre to that cell, hence the squared comparison below.
+    let limit = u32::from(required) * u32::from(required);
+    let (cell_x, cell_y) = (x as i32, y as i32);
+    let reach = 2;
+    (0..=2).any(|offset_y| {
+        (0..=2).any(|offset_x| {
+            let (centre_x, centre_y) = (2 * cell_x + offset_x, 2 * cell_y + offset_y);
+            ((cell_y - reach)..=(cell_y + reach)).all(|other_y| {
+                ((cell_x - reach)..=(cell_x + reach)).all(|other_x| {
+                    let gap_x = half_cell_gap(centre_x, other_x);
+                    let gap_y = half_cell_gap(centre_y, other_y);
+                    16 * (gap_x * gap_x + gap_y * gap_y) >= limit
+                        || is_cell_passable_for_request(map, request, other_x, other_y)
+                })
+            })
+        })
+    })
+}
+
+/// Distance in half cells from a lattice coordinate to the extent of a cell along one axis.
+#[inline]
+fn half_cell_gap(point: i32, cell: i32) -> u32 {
+    let (low, high) = (2 * cell, 2 * cell + 2);
+    (low - point).max(point - high).max(0).unsigned_abs()
 }
 
 /// Returns `true` if cell `(x, y)` is walkable terrain and not blocked by a known structure.
