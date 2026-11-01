@@ -146,6 +146,10 @@ pub struct PathfinderBuffers {
     visited_generation: Vec<u32>,
     current_generation: u32,
     corridor_cells: Vec<u32>,
+    /// Start cell, corridor cells, then goal cell, as `(x, y)`.
+    corridor_nodes: Vec<(u32, u32)>,
+    /// Entry `i` counts ramp transitions among `corridor_nodes[..i]`.
+    ramp_transitions_before: Vec<u32>,
     portals: Vec<PortalEdge>,
     waypoints_scratch: Vec<SimVec2>,
 }
@@ -161,6 +165,8 @@ impl PathfinderBuffers {
             visited_generation: vec![0; size],
             current_generation: 0,
             corridor_cells: Vec::with_capacity(256),
+            corridor_nodes: Vec::with_capacity(256),
+            ramp_transitions_before: Vec::with_capacity(256),
             portals: Vec::with_capacity(256),
             waypoints_scratch: Vec::with_capacity(64),
         }
@@ -849,99 +855,95 @@ impl Pathfinder {
         })
     }
 
+    /// Records each corridor node's cell and where ramp transitions fall along the corridor.
+    ///
+    /// Nodes are the start cell, every corridor cell, then the goal cell. A node is a ramp
+    /// transition when it differs from either neighbour in being on a ramp.
+    // PERFORMANCE RATIONALE:
+    // Why: Smoothing asks, for every candidate shortcut, whether it skips a ramp transition.
+    // Rescanning the skipped nodes made each anchor quadratic in corridor length.
+    // What: A prefix count of transitions answers that question for any node range in O(1).
+    // Trade-off: Two reusable buffers filled once per fallback, in exchange for a smoothing
+    // pass whose cost no longer depends on how many nodes each shortcut skips.
+    fn index_corridor(&mut self, map: &GameMap, request: &PathRequestWithVision<'_>) -> Result<()> {
+        let start = map.world_to_cell(request.start)?;
+        let goal = map.world_to_cell(request.goal)?;
+        let width = self.width;
+        let buffers = &mut self.buffers;
+
+        buffers.corridor_nodes.clear();
+        buffers.corridor_nodes.push(start);
+        buffers.corridor_nodes.extend(
+            buffers
+                .corridor_cells
+                .iter()
+                .map(|cell| (cell % width, cell / width)),
+        );
+        buffers.corridor_nodes.push(goal);
+
+        let nodes = &buffers.corridor_nodes;
+        let is_ramp = |index: usize| {
+            let (x, y) = nodes[index];
+            map.cell(x, y)
+                .is_ok_and(|cell| cell.flags.contains(CellFlags::RAMP))
+        };
+        buffers.ramp_transitions_before.clear();
+        buffers.ramp_transitions_before.push(0);
+        let mut transitions = 0;
+        for index in 0..nodes.len() {
+            let interior = index > 0 && index + 1 < nodes.len();
+            if interior
+                && (is_ramp(index) != is_ramp(index - 1) || is_ramp(index) != is_ramp(index + 1))
+            {
+                transitions += 1;
+            }
+            buffers.ramp_transitions_before.push(transitions);
+        }
+        Ok(())
+    }
+
     /// Constrains string-pulling to visible points of the verified A* corridor.
     ///
     /// Funnel corner offsets and widened portals can leave the original corridor.
     /// When their segments are invalid, greedily retain the furthest visible corridor
-    /// center. Every retained edge is tested against the complete request policy.
+    /// center. Every retained edge is tested against the complete request policy, and a
+    /// shortcut may only cut across a ramp transition in a straight grid line, so it cannot
+    /// slip off a ramp's side.
     fn smooth_connected_corridor(
         &mut self,
         map: &GameMap,
         request: &PathRequestWithVision<'_>,
     ) -> Result<Vec<SimVec2>> {
+        self.index_corridor(map, request)?;
         self.buffers.waypoints_scratch.clear();
         self.buffers.waypoints_scratch.push(request.start);
-        let end_index = self.buffers.corridor_cells.len() + 1;
+        let end_index = self.buffers.corridor_nodes.len() - 1;
         let point = |index: usize| -> Result<SimVec2> {
             if index == 0 {
                 Ok(request.start)
             } else if index == end_index {
                 Ok(request.goal)
             } else {
-                let cell = self.buffers.corridor_cells[index - 1];
-                map.cell_to_world_center(cell % self.width, cell / self.width)
+                let (x, y) = self.buffers.corridor_nodes[index];
+                map.cell_to_world_center(x, y)
             }
         };
         let mut current_index = 0;
         while current_index < end_index {
             let current = point(current_index)?;
+            let anchor = self.buffers.corridor_nodes[current_index];
             let mut visible = None;
             for candidate in ((current_index + 1)..=end_index).rev() {
+                let target = self.buffers.corridor_nodes[candidate];
+                let skipped_transitions = candidate > current_index + 1
+                    && self.buffers.ramp_transitions_before[candidate]
+                        > self.buffers.ramp_transitions_before[current_index + 1];
+                let collinear = anchor.0 == target.0 || anchor.1 == target.1;
+                if skipped_transitions && !collinear {
+                    continue;
+                }
                 let candidate_point = point(candidate)?;
-                let skips_ramp_turn = if candidate > current_index + 1 {
-                    ((current_index + 1)..candidate).any(|k| {
-                        if k == 0 || k >= end_index {
-                            return false;
-                        }
-                        let curr_cell = self.buffers.corridor_cells[k - 1];
-                        let curr_cx = curr_cell % self.width;
-                        let curr_cy = curr_cell / self.width;
-                        let is_curr_ramp = map
-                            .cell(curr_cx, curr_cy)
-                            .is_ok_and(|c| c.flags.contains(CellFlags::RAMP));
-
-                        let prev_is_ramp = if k == 1 {
-                            let (scx, scy) = map
-                                .world_to_cell(request.start)
-                                .unwrap_or((curr_cx, curr_cy));
-                            map.cell(scx, scy)
-                                .is_ok_and(|c| c.flags.contains(CellFlags::RAMP))
-                        } else {
-                            let prev_cell = self.buffers.corridor_cells[k - 2];
-                            map.cell(prev_cell % self.width, prev_cell / self.width)
-                                .is_ok_and(|c| c.flags.contains(CellFlags::RAMP))
-                        };
-
-                        let next_is_ramp = if k + 1 == end_index {
-                            let (gcx, gcy) = map
-                                .world_to_cell(request.goal)
-                                .unwrap_or((curr_cx, curr_cy));
-                            map.cell(gcx, gcy)
-                                .is_ok_and(|c| c.flags.contains(CellFlags::RAMP))
-                        } else {
-                            let next_cell = self.buffers.corridor_cells[k];
-                            map.cell(next_cell % self.width, next_cell / self.width)
-                                .is_ok_and(|c| c.flags.contains(CellFlags::RAMP))
-                        };
-
-                        let ramp_transition =
-                            is_curr_ramp != prev_is_ramp || is_curr_ramp != next_is_ramp;
-                        if !ramp_transition {
-                            return false;
-                        }
-                        let anchor_c = if current_index == 0 {
-                            map.world_to_cell(request.start)
-                                .unwrap_or((curr_cx, curr_cy))
-                        } else {
-                            let cell = self.buffers.corridor_cells[current_index - 1];
-                            (cell % self.width, cell / self.width)
-                        };
-                        let candidate_c = if candidate == end_index {
-                            map.world_to_cell(request.goal)
-                                .unwrap_or((curr_cx, curr_cy))
-                        } else {
-                            let cell = self.buffers.corridor_cells[candidate - 1];
-                            (cell % self.width, cell / self.width)
-                        };
-                        let collinear = anchor_c.0 == candidate_c.0 || anchor_c.1 == candidate_c.1;
-                        !collinear
-                    })
-                } else {
-                    false
-                };
-                if !skips_ramp_turn
-                    && self.segment_is_passable(map, request, current, candidate_point)
-                {
+                if self.segment_is_passable(map, request, current, candidate_point) {
                     visible = Some((candidate, candidate_point));
                     break;
                 }
