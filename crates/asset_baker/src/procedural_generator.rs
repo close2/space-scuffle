@@ -2,8 +2,15 @@
 //!
 //! This module provides a complete, deterministic, zero-dependency offline rendering engine
 //! that generates stylized, high-contrast sprite animation sequences for all starter units
-//! and structures. The resulting vertical strips and `.flipbook.ron` manifests ensure
-//! that Space Scuffle possesses a complete visual presentation without external video assets.
+//! and structures.
+//!
+//! # Test Fixtures Only
+//! Under owner decision D6 these atlases are test fixtures and never game media. The charter
+//! forbids procedural stand-ins for real art, so this module maintains two invariants:
+//! - An archetype is selected by its exact catalog slug. A near match could otherwise replace
+//!   a different unit's art.
+//! - [`write_procedural_atlas`] refuses any directory inside a runtime asset bundle, which is
+//!   recognised by [`RUNTIME_BUNDLE_MARKER`] rather than by its name or location.
 //!
 //! # Archetypes Implemented:
 //! - **Mobile Units (192x192, 8 frames/state, 15 FPS):**
@@ -30,11 +37,16 @@
 
 use crate::error::BakerError;
 use crate::manifest::{ActionSlice, FlipbookAtlasMeta, FlipbookLayout};
+use crate::veo_client::exact_catalog_archetype;
 use image::{Rgba, RgbaImage};
 use sim_core::{UnitArchetype, UnitCatalog};
 use sim_types::enums::{AnimState, ShapeKind, SilhouetteClass};
 use std::collections::BTreeMap;
 use std::f32::consts::PI;
+use std::path::{Component, Path, PathBuf};
+
+/// A directory containing this relative path is the root of a runtime asset bundle.
+pub const RUNTIME_BUNDLE_MARKER: &str = "catalog/units.ron";
 
 /// Container holding the generated metadata and packed image for a procedural atlas.
 #[derive(Debug, Clone)]
@@ -45,48 +57,81 @@ pub struct ProceduralAtlasOutput {
     pub image: RgbaImage,
 }
 
-fn resolve_archetype<'a>(
-    name: &str,
-    catalog: &'a UnitCatalog,
-) -> Result<&'a UnitArchetype, BakerError> {
-    let clean = name.to_lowercase().replace(['-', ' '], "_");
-    if let Some(arch) = catalog
-        .get_by_slug(&clean)
-        .or_else(|| catalog.get_by_name(&clean))
-    {
-        return Ok(arch);
+/// Removes `.` and `..` from a path without consulting the filesystem.
+fn lexically_normalized(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other),
+        }
     }
-    let clean_alnum: String = clean.chars().filter(|c| c.is_alphanumeric()).collect();
-    let words: Vec<&str> = clean.split('_').filter(|w| !w.is_empty()).collect();
-    if let Some(arch) = catalog.archetypes().find(|a| {
-        let slug_alnum: String = a.slug.chars().filter(|c| c.is_alphanumeric()).collect();
-        if slug_alnum == clean_alnum {
-            return true;
+    normalized
+}
+
+/// Refuses a directory that lies inside a runtime asset bundle.
+///
+/// The directory need not exist yet. Both its written path and the real location of its
+/// deepest existing ancestor are checked, so a symbolic link cannot lead into a bundle.
+///
+/// # Errors
+/// Returns [`BakerError::RuntimePathRefused`] for a directory inside a bundle, or
+/// [`BakerError::Io`] if the working directory is unknown.
+pub fn ensure_outside_runtime_assets(output_dir: &Path) -> Result<(), BakerError> {
+    let absolute = std::path::absolute(output_dir).map_err(|source| BakerError::Io {
+        path: output_dir.to_path_buf(),
+        source,
+    })?;
+    let written = lexically_normalized(&absolute);
+    let resolved = written
+        .ancestors()
+        .find_map(|ancestor| ancestor.canonicalize().ok());
+
+    for path in std::iter::once(&written).chain(resolved.as_ref()) {
+        let bundle = path
+            .ancestors()
+            .find(|ancestor| ancestor.join(RUNTIME_BUNDLE_MARKER).is_file());
+        if let Some(bundle) = bundle {
+            return Err(BakerError::RuntimePathRefused {
+                path: output_dir.to_path_buf(),
+                bundle: bundle.to_path_buf(),
+            });
         }
-        let display_lower = a.display_name.to_lowercase();
-        let sc2_lower = a.sc2_inspiration.as_deref().unwrap_or("").to_lowercase();
-        let sc2_alnum: String = sc2_lower.chars().filter(|c| c.is_alphanumeric()).collect();
-        if !clean_alnum.is_empty() && sc2_alnum.contains(&clean_alnum) {
-            return true;
-        }
-        if clean_alnum == "worker" && a.capabilities.harvester.is_some() {
-            return true;
-        }
-        if !words.is_empty()
-            && words
-                .iter()
-                .all(|&w| sc2_lower.contains(w) || display_lower.contains(w) || a.slug.contains(w))
-        {
-            return true;
-        }
-        false
-    }) {
-        return Ok(arch);
     }
-    Err(BakerError::UnknownArchetype {
-        name: name.to_string(),
-        valid: catalog.archetypes().map(|a| a.slug.clone()).collect(),
-    })
+    Ok(())
+}
+
+/// Writes a procedural atlas as `<name>.png` and `<name>.flipbook.ron` in `output_dir`.
+///
+/// # Errors
+/// Returns [`BakerError::RuntimePathRefused`] if `output_dir` is inside a runtime asset
+/// bundle, in which case nothing is created. Otherwise returns [`BakerError::Io`] or
+/// [`BakerError::ImageProcessing`] on a write failure.
+pub fn write_procedural_atlas(
+    output: &ProceduralAtlasOutput,
+    output_dir: &Path,
+) -> Result<(), BakerError> {
+    ensure_outside_runtime_assets(output_dir)?;
+    std::fs::create_dir_all(output_dir).map_err(|source| BakerError::Io {
+        path: output_dir.to_path_buf(),
+        source,
+    })?;
+
+    let name = &output.meta.name;
+    let png_path = output_dir.join(format!("{name}.png"));
+    output
+        .image
+        .save(&png_path)
+        .map_err(|source| BakerError::ImageProcessing {
+            path: png_path.clone(),
+            source,
+        })?;
+    output
+        .meta
+        .save_to_ron(&output_dir.join(format!("{name}.flipbook.ron")))
 }
 
 /// Generates a procedural vertical strip atlas for a mobile unit archetype.
@@ -103,7 +148,7 @@ pub fn generate_procedural_unit_atlas(
     fps: u32,
 ) -> Result<ProceduralAtlasOutput, BakerError> {
     let catalog = UnitCatalog::default();
-    let arch = resolve_archetype(unit_name, &catalog)?;
+    let arch = exact_catalog_archetype(unit_name, &catalog)?;
 
     if matches!(arch.shape, ShapeKind::BuildingDome { .. }) {
         return Err(BakerError::UnknownArchetype {
@@ -171,7 +216,7 @@ pub fn generate_procedural_dome_atlas(
     fps: u32,
 ) -> Result<ProceduralAtlasOutput, BakerError> {
     let catalog = UnitCatalog::default();
-    let arch = resolve_archetype(dome_name, &catalog)?;
+    let arch = exact_catalog_archetype(dome_name, &catalog)?;
 
     if !matches!(arch.shape, ShapeKind::BuildingDome { .. }) {
         return Err(BakerError::UnknownArchetype {
@@ -248,7 +293,7 @@ pub fn generate_procedural_atlas(
     fps: Option<u32>,
 ) -> Result<ProceduralAtlasOutput, BakerError> {
     let catalog = UnitCatalog::default();
-    let arch = resolve_archetype(archetype, &catalog)?;
+    let arch = exact_catalog_archetype(archetype, &catalog)?;
 
     if matches!(arch.shape, ShapeKind::BuildingDome { .. }) {
         let size = frame_size.unwrap_or(256);

@@ -2,7 +2,7 @@
 //!
 //! Provides CLI commands to generate authentic video-backed flipbook atlases using
 //! Google Veo video generation models, transcode multi-action videos via FFmpeg,
-//! or synthesize procedural vector fallback atlases.
+//! or synthesize procedural atlases for use as test fixtures.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -162,14 +162,14 @@ enum Commands {
         name: String,
     },
 
-    /// Synthesizes a single procedural archetype atlas.
+    /// Synthesizes a single procedural atlas as a test fixture, never as game media.
     Procedural {
-        /// Archetype name (e.g. "marine", "command_dome", "zealot").
+        /// Exact archetype slug from the catalog. Near matches are refused.
         #[arg(short, long)]
         archetype: String,
 
-        /// Target output directory for generated assets.
-        #[arg(short, long, default_value = "assets/textures")]
+        /// Output directory, which must be outside any runtime asset bundle.
+        #[arg(short, long)]
         output_dir: PathBuf,
 
         /// Frame dimension in pixels (defaults to 192 for units, 256 for domes).
@@ -394,14 +394,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             fps,
         } => {
             println!("==> Synthesizing procedural archetype '{}'...", archetype);
+            // Checked first so that a refused path does not cost the render.
+            asset_baker::ensure_outside_runtime_assets(&output_dir)?;
             let output = asset_baker::generate_procedural_atlas(&archetype, size, fps)?;
-            std::fs::create_dir_all(&output_dir)?;
-
-            let png_path = output_dir.join(format!("{}.png", output.meta.name));
-            let ron_path = output_dir.join(format!("{}.flipbook.ron", output.meta.name));
-
-            output.image.save(&png_path)?;
-            output.meta.save_to_ron(&ron_path)?;
+            asset_baker::write_procedural_atlas(&output, &output_dir)?;
 
             println!(
                 "    Successfully generated '{}' ({} frames at {}x{} @ {} fps).",

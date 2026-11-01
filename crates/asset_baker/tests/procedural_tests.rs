@@ -97,21 +97,6 @@ fn test_unknown_archetype_error() {
 }
 
 #[test]
-fn test_archetype_case_and_symbol_insensitivity() {
-    // CamelCase, hyphens, and aliases should normalize cleanly
-    let output1 = generate_procedural_atlas("SiegeTank", None, None).expect("SiegeTank failed");
-    assert_eq!(output1.meta.name, "railgun_crawler");
-
-    let output2 =
-        generate_procedural_atlas("command-dome", None, None).expect("command-dome failed");
-    assert_eq!(output2.meta.name, "foundry_core_dome");
-
-    let output3 =
-        generate_procedural_atlas("Railgun-Crawler", None, None).expect("Railgun-Crawler failed");
-    assert_eq!(output3.meta.name, "railgun_crawler");
-}
-
-#[test]
 fn test_generate_all_procedural_atlases_to_disk() {
     let temp_dir = tempfile::tempdir().expect("tempdir creation failed");
     let metas = generate_all_procedural_atlases(temp_dir.path()).expect("generate_all failed");

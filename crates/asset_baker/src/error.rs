@@ -97,6 +97,15 @@ pub enum BakerError {
     )]
     ApiKeyMissing,
 
+    /// Procedural output was aimed at a runtime asset bundle, which only real media may enter.
+    #[error("refusing to write procedural output to '{path}': it is inside the runtime asset bundle '{bundle}'. Procedural atlases are test fixtures only")]
+    RuntimePathRefused {
+        /// The refused output directory.
+        path: PathBuf,
+        /// Root of the runtime bundle that contains it.
+        bundle: PathBuf,
+    },
+
     /// A Vertex AI key needs a Google Cloud project, and none was configured.
     #[error("a Vertex AI API key requires GOOGLE_CLOUD_PROJECT to be set, in the environment or in .env")]
     ProjectIdMissing,

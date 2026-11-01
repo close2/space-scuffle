@@ -1159,7 +1159,7 @@ impl VeoClient {
 ///
 /// Matching is deliberately exact, including case. A slug selects paid generation and names
 /// files, so a near match must be an error rather than a guess.
-fn exact_catalog_archetype<'a>(
+pub(crate) fn exact_catalog_archetype<'a>(
     slug: &str,
     catalog: &'a sim_core::UnitCatalog,
 ) -> Result<&'a sim_core::UnitArchetype, BakerError> {

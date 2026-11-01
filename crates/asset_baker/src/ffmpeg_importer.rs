@@ -4,6 +4,14 @@
 //! video inputs (`.mp4`, `.webm`, etc.) into standardized square frame sequences,
 //! which are then composited into single vertical strip PNGs accompanied by `.flipbook.ron`
 //! manifests.
+//!
+//! # Invariants
+//! - **Whole clips:** a clip with more frames than the GPU texture budget allows is sampled
+//!   evenly from its first to its last frame, and is never cut short. Sampled frames keep the
+//!   manifest's playback rate, so such a clip plays faster than real time. The bake reports
+//!   this on stderr, because the only way to avoid it is a smaller frame size.
+//! - **No invented actions:** a manifest lists only actions that a source clip was supplied
+//!   for, so [`crate::media::require_action`] can report the rest as missing.
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -18,6 +26,9 @@ use sim_types::enums::AnimState;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// Maximum texture dimension in pixels that WebGPU guarantees.
+const MAX_STRIP_HEIGHT: u32 = 16384;
 
 /// Default location of the `ffprobe` executable.
 pub const DEFAULT_FFPROBE_PATH: &str = "/usr/bin/ffprobe";
@@ -140,6 +151,103 @@ impl Default for FfmpegExtractConfig {
     }
 }
 
+/// Chooses `wanted` frame indices spread evenly over `0..available`.
+///
+/// When frames must be dropped the result always includes the first and the last frame, or
+/// just the first if `wanted` is 1. When `wanted >= available`, every index is returned.
+#[must_use]
+pub fn evenly_spaced_indices(available: usize, wanted: usize) -> Vec<usize> {
+    if wanted >= available {
+        return (0..available).collect();
+    }
+    if wanted <= 1 {
+        return vec![0; wanted];
+    }
+    (0..wanted)
+        .map(|step| step * (available - 1) / (wanted - 1))
+        .collect()
+}
+
+/// Reduces a clip's frames to `budget`, keeping its whole duration. See the module docs.
+fn fit_clip_to_budget(frames: Vec<PathBuf>, budget: usize, label: &str, fps: u32) -> Vec<PathBuf> {
+    if frames.len() <= budget {
+        return frames;
+    }
+    eprintln!(
+        "    Note: '{label}' has {} frames at {fps} fps but the texture budget allows {budget}. \
+         Sampling evenly across the whole clip, which then plays up to {}x faster. \
+         Use a smaller frame size to keep more frames.",
+        frames.len(),
+        frames.len().div_ceil(budget.max(1))
+    );
+    evenly_spaced_indices(frames.len(), budget)
+        .into_iter()
+        .filter_map(|index| frames.get(index).cloned())
+        .collect()
+}
+
+/// Decodes a whole clip into square PNG frames in `frames_dir`, sorted in temporal order.
+fn extract_clip_frames(
+    ffmpeg_path: &Path,
+    video_path: &Path,
+    frame_size: u32,
+    fps: u32,
+    frames_dir: &Path,
+) -> Result<Vec<PathBuf>, BakerError> {
+    let frame_pattern = frames_dir.join("frame_%05d.png");
+
+    // PERFORMANCE RATIONALE:
+    // Why: Runtime software or hardware decoding of 50+ concurrent MP4 video streams inside 3D unit
+    // bubbles saturates GPU video decoders and causes massive framerate stuttering.
+    // What: We pre-decode video offline using FFmpeg's hardware-accelerated SIMD decoders, applying
+    // `crop=min(iw\,ih):min(iw\,ih)` to center-crop arbitrary aspect ratios to a 1:1 square, bilinear
+    // scaling to power-of-two dimensions (e.g., 256x256), and clean temporal downsampling (e.g., 24 -> 15 FPS).
+    // Trade-off: Higher disk storage footprint (~20-50MB per baked strip) in exchange for O(1) texture
+    // array slice sampling with zero runtime decoding overhead.
+    let filter =
+        format!("crop=min(iw\\,ih):min(iw\\,ih),scale={frame_size}:{frame_size},fps={fps}");
+
+    let output = Command::new(ffmpeg_path)
+        .arg("-y")
+        .arg("-i")
+        .arg(video_path)
+        .arg("-vf")
+        .arg(&filter)
+        .arg(&frame_pattern)
+        .output()
+        .map_err(|source| BakerError::Io {
+            path: ffmpeg_path.to_path_buf(),
+            source,
+        })?;
+
+    if !output.status.success() {
+        return Err(BakerError::FfmpegExecutionFailed {
+            code: output.status.code(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        });
+    }
+
+    // Collect all generated PNG frame paths sorted in ascending numerical order
+    let mut frame_paths: Vec<PathBuf> = std::fs::read_dir(frames_dir)
+        .map_err(|source| BakerError::Io {
+            path: frames_dir.to_path_buf(),
+            source,
+        })?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "png"))
+        .collect();
+    frame_paths.sort();
+
+    if frame_paths.is_empty() {
+        return Err(BakerError::ValidationFailed {
+            name: video_path.display().to_string(),
+            reason: "FFmpeg execution succeeded but produced 0 output frame files".into(),
+        });
+    }
+    Ok(frame_paths)
+}
+
 /// Returns the PNG and manifest paths for an atlas, refusing a name that is not one safe file
 /// name component, so that output stays inside `output_dir`.
 ///
@@ -166,7 +274,7 @@ pub fn atlas_output_paths(
 /// - `atlas_name`: Semantic identifier for this atlas (e.g. `"concept_video"`).
 /// - `config`: Extraction parameters including frame dimensions and framerate.
 /// - `actions_mapping`: Optional custom mapping of [`AnimState`] to [`ActionSlice`]. If empty,
-///   defaults to mapping [`AnimState::Idle`] across the entire sequence.
+///   the whole clip becomes a single [`AnimState::Idle`] action and no other action is listed.
 ///
 /// # Errors
 /// Returns [`BakerError::FfmpegNotFound`] if the binary is absent, [`BakerError::FfmpegExecutionFailed`]
@@ -204,70 +312,22 @@ pub fn extract_and_pack_video(
         source,
     })?;
 
-    let frame_pattern = temp_dir.path().join("frame_%05d.png");
-
-    // PERFORMANCE RATIONALE:
-    // Why: Runtime software or hardware decoding of 50+ concurrent MP4 video streams inside 3D unit
-    // bubbles saturates GPU video decoders and causes massive framerate stuttering.
-    // What: We pre-decode video offline using FFmpeg's hardware-accelerated SIMD decoders, applying
-    // `crop=min(iw\,ih):min(iw\,ih)` to center-crop arbitrary aspect ratios to a 1:1 square, bilinear
-    // scaling to power-of-two dimensions (e.g., 256x256), and clean temporal downsampling (e.g., 24 -> 15 FPS).
-    // Trade-off: Higher disk storage footprint (~20-50MB per baked strip) in exchange for O(1) texture
-    // array slice sampling with zero runtime decoding overhead.
-    let filter = format!(
-        "crop=min(iw\\,ih):min(iw\\,ih),scale={}:{},fps={}",
-        config.target_size, config.target_size, config.target_fps
-    );
-
-    let output = Command::new(&config.ffmpeg_path)
-        .arg("-y")
-        .arg("-i")
-        .arg(video_path)
-        .arg("-vf")
-        .arg(&filter)
-        .arg(&frame_pattern)
-        .output()
-        .map_err(|source| BakerError::Io {
-            path: config.ffmpeg_path.clone(),
-            source,
-        })?;
-
-    if !output.status.success() {
-        return Err(BakerError::FfmpegExecutionFailed {
-            code: output.status.code(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        });
-    }
-
-    // Collect all generated PNG frame paths sorted in ascending numerical order
-    let mut frame_paths: Vec<PathBuf> = std::fs::read_dir(temp_dir.path())
-        .map_err(|source| BakerError::Io {
-            path: temp_dir.path().to_path_buf(),
-            source,
-        })?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "png"))
-        .collect();
-    frame_paths.sort();
-
-    if frame_paths.is_empty() {
-        return Err(BakerError::ValidationFailed {
-            name: atlas_name.to_string(),
-            reason: "FFmpeg execution succeeded but produced 0 output frame files".into(),
-        });
-    }
+    let frame_paths = extract_clip_frames(
+        &config.ffmpeg_path,
+        video_path,
+        config.target_size,
+        config.target_fps,
+        temp_dir.path(),
+    )?;
 
     // PERFORMANCE RATIONALE:
     // Why: WebGPU and standard desktop GPU drivers enforce `max_texture_dimension_2d <= 16384` pixels.
-    // What: We cap the number of vertically stacked frames to `16384 / config.target_size`
-    // (e.g., 32 frames at 512x512 = 16384 px, or 64 frames at 256x256 = 16384 px).
-    // Trade-off: Bounds single-strip duration to the hardware texture limit while guaranteeing zero
+    // What: We keep at most `16384 / config.target_size` vertically stacked frames, sampled across
+    // the whole clip (e.g., 32 frames at 512x512 = 16384 px, or 64 frames at 256x256 = 16384 px).
+    // Trade-off: Bounds temporal resolution to the hardware texture limit while guaranteeing zero
     // GPU texture allocation panics across Vulkan, Metal, DX12, and WebGPU.
-    let max_frames = (16384 / config.target_size.max(1)) as usize;
-    if frame_paths.len() > max_frames {
-        frame_paths.truncate(max_frames);
-    }
+    let max_frames = (MAX_STRIP_HEIGHT / config.target_size.max(1)) as usize;
+    let frame_paths = fit_clip_to_budget(frame_paths, max_frames, atlas_name, config.target_fps);
 
     let total_frames = frame_paths.len() as u32;
     let strip_height = config.target_size.saturating_mul(total_frames);
@@ -306,27 +366,18 @@ pub fn extract_and_pack_video(
             source,
         })?;
 
-    // If no action mappings are specified, map standard AnimStates across the sequence
+    // A lone clip says nothing about any other action, so no other action is claimed for it.
     let mut actions = actions_mapping;
     if actions.is_empty() {
-        for state in [
-            AnimState::Constructing,
+        actions.insert(
             AnimState::Idle,
-            AnimState::Walk,
-            AnimState::Attack,
-            AnimState::Cast,
-            AnimState::Die,
-        ] {
-            actions.insert(
-                state,
-                ActionSlice {
-                    start_frame: 0,
-                    frame_count: total_frames,
-                    looping: !matches!(state, AnimState::Constructing | AnimState::Die),
-                    hold_last_frame: matches!(state, AnimState::Constructing | AnimState::Die),
-                },
-            );
-        }
+            ActionSlice {
+                start_frame: 0,
+                frame_count: total_frames,
+                looping: true,
+                hold_last_frame: false,
+            },
+        );
     }
 
     let meta = FlipbookAtlasMeta {
@@ -346,18 +397,19 @@ pub fn extract_and_pack_video(
 /// Bakes multiple video clips corresponding to sequential animation states into a single
 /// vertical strip PNG and `.flipbook.ron` manifest.
 ///
-/// Maps input video paths sequentially to [`AnimState::Idle`], [`AnimState::Walk`], and [`AnimState::Attack`].
+/// Maps input video paths sequentially to [`AnimState::Idle`], [`AnimState::Walk`],
+/// [`AnimState::Attack`], and [`AnimState::Die`]. Only those actions are listed in the manifest.
 ///
 /// # Arguments
 /// - `unit_name`: Semantic archetype name (e.g., `"marine"`, `"zealot"`).
-/// - `video_paths`: Ordered slice of video file paths corresponding to Idle, Walk, and Attack.
+/// - `video_paths`: Ordered slice of up to four video file paths, one per action above.
 /// - `output_dir`: Directory where `<unit_name>.png` and `<unit_name>.flipbook.ron` will be created.
 /// - `frame_size`: Square frame dimensions in pixels (e.g., 256 or 512).
 /// - `fps`: Framerate for temporal downsampling.
 ///
 /// # Errors
-/// Returns [`BakerError`] if FFmpeg execution fails, image files cannot be read or written,
-/// or validation invariants are violated.
+/// Returns [`BakerError::ValidationFailed`] for no paths or more than four, or [`BakerError`]
+/// if FFmpeg execution fails or image files cannot be read or written.
 pub fn bake_multi_action_videos<P: AsRef<Path>>(
     unit_name: &str,
     video_paths: &[P],
@@ -379,24 +431,26 @@ pub fn bake_multi_action_videos<P: AsRef<Path>>(
         });
     }
 
-    let clips: Vec<(AnimState, &P)> = video_paths
-        .iter()
-        .enumerate()
-        .map(|(i, path)| {
-            let state = if i < DEFAULT_STATES.len() {
-                DEFAULT_STATES[i]
-            } else {
-                AnimState::Idle
-            };
-            (state, path)
-        })
-        .collect();
+    if video_paths.len() > DEFAULT_STATES.len() {
+        return Err(BakerError::ValidationFailed {
+            name: unit_name.to_string(),
+            reason: format!(
+                "{} videos supplied but only {DEFAULT_STATES:?} can be mapped by position",
+                video_paths.len()
+            ),
+        });
+    }
+
+    let clips: Vec<(AnimState, &P)> = DEFAULT_STATES.into_iter().zip(video_paths).collect();
 
     bake_multi_action_videos_with_states(unit_name, &clips, output_dir, frame_size, fps)
 }
 
 /// Bakes multiple video clips corresponding to explicit animation states into a single
 /// vertical strip PNG and `.flipbook.ron` manifest.
+///
+/// Every clip is represented from start to end, and the manifest lists exactly the supplied
+/// states. See the module docs.
 ///
 /// # Arguments
 /// - `unit_name`: Semantic archetype name (e.g., `"marine"`, `"zealot"`).
@@ -429,7 +483,7 @@ pub fn bake_multi_action_videos_with_states<P: AsRef<Path>>(
         });
     }
 
-    let max_total_frames = 16384 / frame_size.max(1);
+    let max_total_frames = MAX_STRIP_HEIGHT / frame_size.max(1);
     let k = clips.len() as u32;
     let max_frames_per_clip = (max_total_frames / k).max(1) as usize;
 
@@ -457,59 +511,20 @@ pub fn bake_multi_action_videos_with_states<P: AsRef<Path>>(
             source,
         })?;
 
-        let frame_pattern = temp_dir.path().join("frame_%05d.png");
-        let filter =
-            format!("crop=min(iw\\,ih):min(iw\\,ih),scale={frame_size}:{frame_size},fps={fps}");
-
-        let output = Command::new(&ffmpeg_path)
-            .arg("-y")
-            .arg("-i")
-            .arg(video_path)
-            .arg("-vf")
-            .arg(&filter)
-            .arg(&frame_pattern)
-            .output()
-            .map_err(|source| BakerError::Io {
-                path: ffmpeg_path.clone(),
-                source,
-            })?;
-
-        if !output.status.success() {
-            return Err(BakerError::FfmpegExecutionFailed {
-                code: output.status.code(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            });
-        }
-
-        let mut frame_paths: Vec<PathBuf> = std::fs::read_dir(temp_dir.path())
-            .map_err(|source| BakerError::Io {
-                path: temp_dir.path().to_path_buf(),
-                source,
-            })?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().is_some_and(|ext| ext == "png"))
-            .collect();
-        frame_paths.sort();
-
-        if frame_paths.is_empty() {
-            return Err(BakerError::ValidationFailed {
-                name: unit_name.to_string(),
-                reason: format!(
-                    "FFmpeg extraction produced 0 frames for clip '{}' ({:?})",
-                    video_path.display(),
-                    state
-                ),
-            });
-        }
+        let frame_paths =
+            extract_clip_frames(&ffmpeg_path, video_path, frame_size, fps, temp_dir.path())?;
 
         // PERFORMANCE RATIONALE:
         // Why: WebGPU limits 2D texture dimensions to 16384 pixels.
-        // What: We cap each action clip to max_frames_per_clip = (16384 / frame_size) / K frames.
-        // Trade-off: Guarantees total strip height <= 16384 px across any number of action clips.
-        if frame_paths.len() > max_frames_per_clip {
-            frame_paths.truncate(max_frames_per_clip);
-        }
+        // What: We keep max_frames_per_clip = (16384 / frame_size) / K frames, sampled across each clip.
+        // Trade-off: Guarantees total strip height <= 16384 px across any number of action clips,
+        // at the cost of temporal resolution in clips that exceed their share.
+        let frame_paths = fit_clip_to_budget(
+            frame_paths,
+            max_frames_per_clip,
+            &format!("{unit_name} {state:?}"),
+            fps,
+        );
 
         let clip_frame_count = frame_paths.len() as u32;
         let (looping, hold_last_frame) = match state {
@@ -542,72 +557,6 @@ pub fn bake_multi_action_videos_with_states<P: AsRef<Path>>(
     }
 
     let total_frames = all_frames.len() as u32;
-
-    // PERFORMANCE RATIONALE:
-    // Why: The simulation and visual shader can transition an entity into any AnimState at runtime.
-    // Missing enum keys in meta.actions cause the client to drop back to frame 0 or trigger fallback logic.
-    // What: We explicitly map all unrepresented AnimState variants to valid, semantically appropriate
-    // slices of the existing action frames.
-    // Trade-off: Zero additional GPU texture memory while guaranteeing O(1) total action coverage.
-    let idle_slice = actions.get(&AnimState::Idle).copied();
-    let attack_slice = actions.get(&AnimState::Attack).copied();
-    let fallback_slice = idle_slice
-        .or(attack_slice)
-        .or_else(|| actions.values().next().copied())
-        .unwrap_or(ActionSlice {
-            start_frame: 0,
-            frame_count: total_frames.max(1),
-            looping: true,
-            hold_last_frame: false,
-        });
-
-    actions.entry(AnimState::Idle).or_insert(fallback_slice);
-    let resolved_idle = actions
-        .get(&AnimState::Idle)
-        .copied()
-        .unwrap_or(fallback_slice);
-
-    actions.entry(AnimState::Walk).or_insert(ActionSlice {
-        start_frame: resolved_idle.start_frame,
-        frame_count: resolved_idle.frame_count,
-        looping: true,
-        hold_last_frame: false,
-    });
-
-    actions.entry(AnimState::Attack).or_insert(ActionSlice {
-        start_frame: resolved_idle.start_frame,
-        frame_count: resolved_idle.frame_count,
-        looping: false,
-        hold_last_frame: false,
-    });
-
-    let attack_or_idle = actions
-        .get(&AnimState::Attack)
-        .copied()
-        .unwrap_or(resolved_idle);
-
-    actions
-        .entry(AnimState::Constructing)
-        .or_insert(ActionSlice {
-            start_frame: fallback_slice.start_frame,
-            frame_count: fallback_slice.frame_count,
-            looping: false,
-            hold_last_frame: true,
-        });
-
-    actions.entry(AnimState::Cast).or_insert(ActionSlice {
-        start_frame: attack_slice.unwrap_or(attack_or_idle).start_frame,
-        frame_count: attack_slice.unwrap_or(attack_or_idle).frame_count,
-        looping: false,
-        hold_last_frame: false,
-    });
-
-    actions.entry(AnimState::Die).or_insert(ActionSlice {
-        start_frame: attack_slice.unwrap_or(attack_or_idle).start_frame,
-        frame_count: attack_slice.unwrap_or(attack_or_idle).frame_count,
-        looping: false,
-        hold_last_frame: true,
-    });
 
     let strip_height = frame_size.saturating_mul(total_frames);
 
@@ -654,4 +603,39 @@ pub fn bake_multi_action_videos_with_states<P: AsRef<Path>>(
 
     meta.save_to_ron(&output_meta_path)?;
     Ok(meta)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::evenly_spaced_indices;
+
+    #[test]
+    fn indices_cover_first_and_last_frame() {
+        assert_eq!(evenly_spaced_indices(60, 10)[0], 0);
+        assert_eq!(evenly_spaced_indices(60, 10)[9], 59);
+        assert_eq!(evenly_spaced_indices(5, 2), vec![0, 4]);
+    }
+
+    #[test]
+    fn indices_are_strictly_increasing_and_evenly_spread() {
+        let indices = evenly_spaced_indices(1000, 7);
+        assert_eq!(indices.len(), 7);
+        for pair in indices.windows(2) {
+            let gap = pair[1] - pair[0];
+            assert!((166..=167).contains(&gap), "uneven gap {gap}");
+        }
+    }
+
+    #[test]
+    fn nothing_is_dropped_within_budget() {
+        assert_eq!(evenly_spaced_indices(3, 3), vec![0, 1, 2]);
+        assert_eq!(evenly_spaced_indices(3, 9), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn degenerate_requests_are_handled() {
+        assert_eq!(evenly_spaced_indices(5, 1), vec![0]);
+        assert_eq!(evenly_spaced_indices(5, 0), Vec::<usize>::new());
+        assert_eq!(evenly_spaced_indices(0, 4), Vec::<usize>::new());
+    }
 }

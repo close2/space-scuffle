@@ -13,7 +13,7 @@
 //! - [`manifest`]: Structural layout and slice metadata via [`FlipbookAtlasMeta`].
 //! - [`ffmpeg_importer`]: Transcoding, center-cropping, scaling, and strip packing via external FFmpeg.
 //! - [`veo_client`]: Strongly-typed Google Gemini and Vertex AI Veo Video Generation client.
-//! - [`procedural_generator`]: Pure-Rust procedural sprite synthesizers for mobile units and building domes.
+//! - [`procedural_generator`]: Pure-Rust sprite synthesizers that produce test fixtures only.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -36,8 +36,8 @@ pub use ffmpeg_importer::{
 };
 pub use manifest::{ActionSlice, FlipbookAtlasMeta, FlipbookLayout};
 pub use procedural_generator::{
-    generate_procedural_atlas, generate_procedural_dome_atlas, generate_procedural_unit_atlas,
-    ProceduralAtlasOutput,
+    ensure_outside_runtime_assets, generate_procedural_atlas, generate_procedural_dome_atlas,
+    generate_procedural_unit_atlas, write_procedural_atlas, ProceduralAtlasOutput,
 };
 pub use terrain_texture::{
     bake_theme, derive_height, derive_normal, derive_orm, find_horizontal_min_cut,
@@ -110,58 +110,34 @@ pub fn find_keyframes_dir() -> Option<PathBuf> {
     candidates.into_iter().find(|candidate| candidate.is_dir())
 }
 
-/// Generates all default procedural unit bubbles and building domes and writes their
-/// `.png` image strips and `.flipbook.ron` manifests into the target directory.
+/// Generates all default procedural unit bubbles and building domes as test fixtures and writes
+/// their `.png` image strips and `.flipbook.ron` manifests into the target directory.
 ///
 /// # Arguments
-/// - `output_dir`: Directory where all generated flipbook images and manifests will be written.
+/// - `output_dir`: Directory for the fixtures, which must be outside any runtime asset bundle.
 ///
 /// # Errors
-/// Returns [`BakerError::Io`] if directory creation or file writing fails,
+/// Returns [`BakerError::RuntimePathRefused`] if `output_dir` is inside a runtime asset bundle,
+/// [`BakerError::Io`] if directory creation or file writing fails,
 /// or [`BakerError::ValidationFailed`] if any atlas fails invariant checks.
 pub fn generate_all_procedural_atlases(
     output_dir: &Path,
 ) -> Result<Vec<FlipbookAtlasMeta>, BakerError> {
-    std::fs::create_dir_all(output_dir).map_err(|source| BakerError::Io {
-        path: output_dir.to_path_buf(),
-        source,
-    })?;
+    ensure_outside_runtime_assets(output_dir)?;
 
     let mut generated_metas = Vec::new();
 
     // 1. Generate Mobile Units (192x192, 15 FPS)
     for unit_name in default_unit_archetypes() {
         let output = generate_procedural_unit_atlas(&unit_name, 192, 15)?;
-        let png_path = output_dir.join(format!("{unit_name}.png"));
-        let ron_path = output_dir.join(format!("{unit_name}.flipbook.ron"));
-
-        output
-            .image
-            .save(&png_path)
-            .map_err(|source| BakerError::ImageProcessing {
-                path: png_path.clone(),
-                source,
-            })?;
-
-        output.meta.save_to_ron(&ron_path)?;
+        write_procedural_atlas(&output, output_dir)?;
         generated_metas.push(output.meta);
     }
 
     // 2. Generate Building Domes (256x256, 15 FPS)
     for dome_name in default_dome_archetypes() {
         let output = generate_procedural_dome_atlas(&dome_name, 256, 15)?;
-        let png_path = output_dir.join(format!("{dome_name}.png"));
-        let ron_path = output_dir.join(format!("{dome_name}.flipbook.ron"));
-
-        output
-            .image
-            .save(&png_path)
-            .map_err(|source| BakerError::ImageProcessing {
-                path: png_path.clone(),
-                source,
-            })?;
-
-        output.meta.save_to_ron(&ron_path)?;
+        write_procedural_atlas(&output, output_dir)?;
         generated_metas.push(output.meta);
     }
 
@@ -188,7 +164,8 @@ pub fn bake_starter_units_from_real_video(
 /// Bakes the standard Space Scuffle concept video into a Texture2DArray vertical strip and RON manifest.
 ///
 /// Uses default production settings: 256x256 resolution, 24 FPS temporal downsampling,
-/// and maps the entire video sequence to [`sim_types::enums::AnimState::Idle`].
+/// and maps the entire video sequence to [`sim_types::enums::AnimState::Idle`], the only
+/// action listed in the manifest.
 ///
 /// # Errors
 /// Returns [`BakerError::FfmpegNotFound`] if FFmpeg is not installed,

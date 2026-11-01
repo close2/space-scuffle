@@ -391,33 +391,13 @@ fn test_multi_action_distinct_frame_offsets() {
     assert!(walk.frame_count > 0);
     assert!(attack.frame_count > 0);
 
-    // Invariant: all 6 AnimState variants must be present
-    for state in [
-        AnimState::Constructing,
-        AnimState::Idle,
-        AnimState::Walk,
-        AnimState::Attack,
-        AnimState::Cast,
-        AnimState::Die,
-    ] {
+    // Invariant: only the supplied actions are listed
+    for state in [AnimState::Constructing, AnimState::Cast, AnimState::Die] {
         assert!(
-            meta.actions.contains_key(&state),
-            "Manifest must contain fallback mapping for {state:?}"
+            !meta.actions.contains_key(&state),
+            "Manifest must not invent an action for {state:?}"
         );
     }
-
-    // Verify Constructing holds last frame and is non-looping
-    let constructing = meta
-        .actions
-        .get(&AnimState::Constructing)
-        .expect("Constructing slice");
-    assert!(!constructing.looping);
-    assert!(constructing.hold_last_frame);
-
-    // Verify Die holds last frame and is non-looping
-    let die = meta.actions.get(&AnimState::Die).expect("Die slice");
-    assert!(!die.looping);
-    assert!(die.hold_last_frame);
 }
 
 #[test]
