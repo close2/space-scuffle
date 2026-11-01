@@ -119,6 +119,65 @@ pub enum BakerError {
         reason: String,
     },
 
+    /// An HTTP request finished with a non-success status.
+    #[error("Veo request failed with HTTP {status}: {body}")]
+    VeoHttpStatus {
+        /// HTTP status code.
+        status: u16,
+        /// Start of the response body, with the API key removed.
+        body: String,
+    },
+
+    /// Polling stopped after repeated transient faults. The operation itself may still finish.
+    #[error("gave up polling Veo operation '{operation}' after {attempts} failed attempts: {last_error}. The operation may still be running, and a rerun resumes it")]
+    VeoTransientExhausted {
+        /// Resource name of the operation.
+        operation: String,
+        /// Number of consecutive failed attempts.
+        attempts: u32,
+        /// Description of the final fault.
+        last_error: String,
+    },
+
+    /// The API reported that an operation ended without a usable result.
+    #[error("Veo operation '{operation}' failed: {message}")]
+    VeoOperationFailed {
+        /// Resource name of the operation.
+        operation: String,
+        /// Failure reported by the API.
+        message: String,
+    },
+
+    /// A paid operation was started, but its name could not be saved for resuming.
+    #[error("Veo operation '{operation}' was started but could not be recorded at '{path}': {source}. Record the name by hand, because rerunning would pay for a new generation")]
+    OperationNotRecorded {
+        /// Resource name of the operation.
+        operation: String,
+        /// Path of the record that could not be written.
+        path: PathBuf,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// A file is not a complete, playable video.
+    #[error("'{path}' is not a valid video: {reason}")]
+    VideoValidationFailed {
+        /// Path of the rejected file.
+        path: PathBuf,
+        /// Why the file was rejected.
+        reason: String,
+    },
+
+    /// A file in the video cache is not a valid video.
+    #[error("cached video '{path}' is invalid: {reason}. It was not reused and no new generation was paid for. Delete the file to regenerate it")]
+    CachedVideoInvalid {
+        /// Path of the rejected cache entry.
+        path: PathBuf,
+        /// Why the file was rejected.
+        reason: String,
+    },
+
     /// Google Veo or Vertex AI API returned an error response.
     #[error("Veo API error: {message}")]
     VeoApiError {

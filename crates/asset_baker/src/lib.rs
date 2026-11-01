@@ -32,7 +32,7 @@ pub mod veo_client;
 pub use error::BakerError;
 pub use ffmpeg_importer::{
     bake_multi_action_videos, bake_multi_action_videos_with_states, extract_and_pack_video,
-    FfmpegExtractConfig,
+    probe_video, FfmpegExtractConfig, VideoProbe,
 };
 pub use manifest::{ActionSlice, FlipbookAtlasMeta, FlipbookLayout};
 pub use procedural_generator::{

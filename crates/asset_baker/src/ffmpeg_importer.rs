@@ -19,6 +19,106 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Default location of the `ffprobe` executable.
+pub const DEFAULT_FFPROBE_PATH: &str = "/usr/bin/ffprobe";
+
+/// Measured properties of a video file that passed [`probe_video`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VideoProbe {
+    /// Width of the first video stream in pixels.
+    pub width: u32,
+    /// Height of the first video stream in pixels.
+    pub height: u32,
+    /// Container duration in seconds.
+    pub duration_seconds: f64,
+    /// Number of video packets actually read from the file.
+    pub packets: u64,
+}
+
+/// Verifies with `ffprobe` that `video_path` is a complete video and measures it.
+///
+/// Every packet of the first video stream is read. A container header can survive truncation,
+/// so the packets read must also match the frame count that the header declares, if any.
+/// Only local file access is allowed, because the file may be an untrusted download and some
+/// container formats can reference URLs.
+///
+/// # Errors
+/// Returns [`BakerError::FfmpegNotFound`] if `ffprobe_path` does not exist, or
+/// [`BakerError::VideoValidationFailed`] if the file is not a complete video.
+pub fn probe_video(ffprobe_path: &Path, video_path: &Path) -> Result<VideoProbe, BakerError> {
+    if !ffprobe_path.exists() {
+        return Err(BakerError::FfmpegNotFound {
+            path: ffprobe_path.to_path_buf(),
+        });
+    }
+    let invalid = |reason: String| BakerError::VideoValidationFailed {
+        path: video_path.to_path_buf(),
+        reason,
+    };
+
+    let output = Command::new(ffprobe_path)
+        .args(["-v", "error", "-protocol_whitelist", "file"])
+        .args(["-count_packets", "-select_streams", "v:0"])
+        .args(["-show_entries"])
+        .arg("stream=width,height,nb_frames,nb_read_packets:format=duration")
+        .args(["-of", "json", "-i"])
+        .arg(video_path)
+        .output()
+        .map_err(|source| BakerError::Io {
+            path: ffprobe_path.to_path_buf(),
+            source,
+        })?;
+    if !output.status.success() {
+        return Err(invalid(format!(
+            "ffprobe rejected it: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let stream = report
+        .get("streams")
+        .and_then(|streams| streams.get(0))
+        .ok_or_else(|| invalid("it has no video stream".into()))?;
+    let number = |value: Option<&serde_json::Value>| -> Option<u64> {
+        value.and_then(|v| v.as_u64().or_else(|| v.as_str()?.parse().ok()))
+    };
+    let dimension = |field: &str| {
+        number(stream.get(field))
+            .and_then(|value| u32::try_from(value).ok())
+            .filter(|value| *value > 0)
+            .ok_or_else(|| invalid(format!("its video stream has no valid {field}")))
+    };
+    let width = dimension("width")?;
+    let height = dimension("height")?;
+
+    let duration_seconds = report
+        .pointer("/format/duration")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|text| text.parse::<f64>().ok())
+        .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+        .ok_or_else(|| invalid("it has no positive duration".into()))?;
+
+    let packets = number(stream.get("nb_read_packets")).unwrap_or(0);
+    if packets == 0 {
+        return Err(invalid("no video packets could be read".into()));
+    }
+    if let Some(declared) = number(stream.get("nb_frames")) {
+        if declared != packets {
+            return Err(invalid(format!(
+                "it is truncated: the header declares {declared} frames but {packets} were read"
+            )));
+        }
+    }
+
+    Ok(VideoProbe {
+        width,
+        height,
+        duration_seconds,
+        packets,
+    })
+}
+
 /// Configuration parameters for FFmpeg video extraction and scaling.
 #[derive(Debug, Clone)]
 pub struct FfmpegExtractConfig {
