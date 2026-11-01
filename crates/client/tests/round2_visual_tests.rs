@@ -1,14 +1,37 @@
 //! Automated regression tests for Round 2 visual polish, textures, shaders, and selection.
 //!
 //! # Invariants Verified
-//! - `assets/shaders/bubble_dome.wgsl` exists on disk and contains valid uniform struct declarations.
+//! - Every file in `assets/shaders` composes with its real Bevy imports and passes strict naga
+//!   validation under each shader-def variant the mesh pipeline can request.
+//! - Module IR of shipped shaders matches the Rust uniform layouts, bindings and feature flags.
 //! - `BubbleUniformGpu` memory layout is strictly 160 bytes and 16-byte aligned.
-//! - Flipbook textures maintain 512x512 resolution and stay within WebGPU 16384 height limits.
+//! - The catalog units with flipbooks are exactly the audited set, each 512 wide and within the
+//!   WebGPU 16384 height limit.
 //! - Ray-sphere selection math passes direct hit, tangent, and miss scenarios.
 //! - 4-Hero showcase entities span inside camera frustum with hero framing preset.
 //! - `StarCraft` II style 3-faction roster exhibits correct lore names, titles, and faction assignments.
+//! - The real client starts on the virtual GPU with no unlisted Vulkan validation findings.
+//! - No catalog slug appears in production Rust source.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::doc_markdown
+)]
+
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/gpu_run.rs"]
+mod gpu_run;
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/shader_ir.rs"]
+mod shader_ir;
 
 use asset_baker::FlipbookAtlasMeta;
 use bevy::prelude::*;
@@ -25,66 +48,241 @@ use client::indicators::{
 use client::resolve_assets_dir;
 use client::selection::ray_sphere_intersect;
 use client::vfx::{CombatFxMaterial, CombatFxUniformGpu, MistWakeMaterial, MistWakeUniformGpu};
+use naga::ShaderStage;
+use serde::Deserialize;
+use shader_ir::{
+    compose_and_validate, discards, discards_when_below, has_named_let, production_module,
+    shipped_source, SHADER_VARIANTS,
+};
 use sim_core::catalog::UnitCatalog;
 use sim_types::enums::{Faction, ShapeKind, SilhouetteClass, WeaponVisualKind};
 use sim_types::ids::{EntityId, PlayerId, UnitTypeId};
 use sim_types::snapshot::BubbleRenderInstance;
+use std::collections::BTreeSet;
 use std::fs;
 use std::mem::{align_of, size_of};
 
+/// Every Rust feature flag with the WGSL constant that must mirror it.
+const BUBBLE_FLAGS: [(&str, u32); 10] = [
+    ("FLAG_CLOAKED", FLAG_CLOAKED),
+    ("FLAG_SELECTED", FLAG_SELECTED),
+    ("FLAG_GLARE", FLAG_GLARE),
+    ("FLAG_FRESNEL", FLAG_FRESNEL),
+    ("FLAG_INNER_WARP", FLAG_INNER_WARP),
+    ("FLAG_CRACKS", FLAG_CRACKS),
+    ("FLAG_CRT_GLITCH", FLAG_CRT_GLITCH),
+    ("FLAG_SPEED_BOOSTED", FLAG_SPEED_BOOSTED),
+    ("FLAG_FACING_STRIPE", FLAG_FACING_STRIPE),
+    ("FLAG_ATTACK_APERTURE", FLAG_ATTACK_APERTURE),
+];
+
+/// Discovers every shipped `.wgsl` file, so a new shader cannot escape validation.
+fn shipped_shader_files() -> Vec<String> {
+    let directory = resolve_assets_dir().join("shaders");
+    let mut names: Vec<String> = fs::read_dir(&directory)
+        .expect("assets/shaders must be readable")
+        .map(|entry| entry.expect("assets/shaders entry").path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "wgsl")
+        })
+        .map(|path| {
+            let name = path.file_name().expect("invariant: read_dir yields names");
+            name.to_str().expect("shader names are UTF-8").to_owned()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn test_every_shipped_shader_composes_and_validates_in_every_variant() {
+    let files = shipped_shader_files();
+    for required in [
+        "bubble_dome.wgsl",
+        "combat_fx.wgsl",
+        "mist_wake.wgsl",
+        "selection_ring.wgsl",
+        "smog_volume.wgsl",
+        "terrain.wgsl",
+    ] {
+        assert!(
+            files.iter().any(|file| file == required),
+            "{required} was not discovered in assets/shaders"
+        );
+    }
+    let mut failures = Vec::new();
+    for file in &files {
+        let source = shipped_source(file);
+        for variant in SHADER_VARIANTS {
+            match compose_and_validate(file, &source, variant) {
+                Ok(shader) => assert!(
+                    !shader.module.entry_points.is_empty(),
+                    "{file} [{}] has no entry points",
+                    variant.name
+                ),
+                Err(error) => failures.push(error),
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "shipped shaders failed validation:\n{}",
+        failures.join("\n")
+    );
+}
+
+/// The checker must reject a real type error, or a green shader suite means nothing.
+#[test]
+fn test_validation_rejects_type_error_injected_into_real_shader() {
+    let source = shipped_source("selection_ring.wgsl");
+    let broken = source.replace(
+        "return vec4<f32>(final_color, ring_alpha);",
+        "return vec4<f32>(final_color, 1u);",
+    );
+    assert_ne!(source, broken, "the injected fault must change the source");
+    let error = compose_and_validate("selection_ring.wgsl", &broken, SHADER_VARIANTS[0])
+        .expect_err("a vec4<f32> built from a u32 must not validate");
+    assert!(error.contains("selection_ring.wgsl"), "{error}");
+}
+
+/// A misspelt import must be a composition error, never a silently dropped module.
+#[test]
+fn test_validation_rejects_unknown_import() {
+    let source = shipped_source("selection_ring.wgsl").replace(
+        "#import bevy_pbr::forward_io::VertexOutput",
+        "#import bevy_pbr::forward_iox::VertexOutput",
+    );
+    compose_and_validate("selection_ring.wgsl", &source, SHADER_VARIANTS[0])
+        .expect_err("an unknown import must not compose");
+}
+
 #[test]
 fn test_shader_wgsl_syntax_and_uniform_alignment() {
-    let assets_dir = resolve_assets_dir();
-    let shader_path = assets_dir.join("shaders/bubble_dome.wgsl");
-    let shader_source = fs::read_to_string(&shader_path)
-        .or_else(|_| fs::read_to_string("assets/shaders/bubble_dome.wgsl"))
-        .expect("bubble_dome.wgsl must be present on disk");
+    let shader = production_module("bubble_dome.wgsl");
+    let fragment = shader.entry_point(ShaderStage::Fragment, "fragment");
 
-    assert!(shader_source.contains("struct BubbleUniform"));
-    assert!(shader_source.contains("@group(2) @binding(0)"));
-    assert!(shader_source.contains("@group(2) @binding(1)"));
-    assert!(shader_source.contains("@group(2) @binding(2)"));
-    assert!(shader_source.contains("FLAG_GLARE"));
-    assert!(shader_source.contains("FLAG_FRESNEL"));
-    assert!(shader_source.contains("FLAG_INNER_WARP"));
-    assert!(shader_source.contains("FLAG_FACING_STRIPE"));
-    assert!(shader_source.contains("FLAG_ATTACK_APERTURE"));
-    assert!(
-        shader_source.contains("n_dot_v"),
-        "bubble_dome.wgsl must compute n_dot_v for perspective-correct horizon"
+    assert_eq!(
+        shader.uniform_struct_at(2, 0),
+        ("BubbleUniform".to_owned(), size_of::<BubbleUniformGpu>())
     );
-    assert!(shader_source.contains("screen_right"));
-    assert!(shader_source.contains("world_from_view"));
-    assert!(shader_source.contains("p_screen_at_zc"));
+    let texture = &shader.module.types[shader.global_at(2, 1).ty].inner;
+    assert!(
+        matches!(
+            texture,
+            naga::TypeInner::Image {
+                dim: naga::ImageDimension::D2,
+                arrayed: true,
+                class: naga::ImageClass::Sampled {
+                    kind: naga::ScalarKind::Float,
+                    multi: false
+                }
+            }
+        ),
+        "@binding(1) must be texture_2d_array<f32>, found {texture:?}"
+    );
+    let sampler = &shader.module.types[shader.global_at(2, 2).ty].inner;
+    assert!(
+        matches!(sampler, naga::TypeInner::Sampler { comparison: false }),
+        "@binding(2) must be a filtering sampler, found {sampler:?}"
+    );
+
+    for (name, value) in BUBBLE_FLAGS {
+        assert_eq!(
+            shader.u32_constant(name),
+            Some(value),
+            "WGSL {name} must equal the Rust flag"
+        );
+    }
+
+    // Perspective-correct horizon and the camera view-plane basis.
+    for local in ["n_dot_v", "screen_right", "p_screen_at_zc"] {
+        assert!(
+            has_named_let(fragment, local),
+            "fragment must compute {local}"
+        );
+    }
+    assert!(
+        shader.reads_global_member(fragment, "world_from_view"),
+        "fragment must derive its basis from view.world_from_view"
+    );
 
     // Verify memory layout exactly equals 160 bytes and 16-byte alignment
     assert_eq!(size_of::<BubbleUniformGpu>(), 160);
     assert_eq!(align_of::<BubbleUniformGpu>(), 16);
 }
 
+/// Returns the flags that the real bubble fragment shader declares but never reads.
+fn bubble_flags_unread_by_fragment() -> Vec<&'static str> {
+    let shader = production_module("bubble_dome.wgsl");
+    let fragment = shader.entry_point(ShaderStage::Fragment, "fragment");
+    let read = shader.constants_read_by(fragment);
+    BUBBLE_FLAGS
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| !read.contains(*name))
+        .collect()
+}
+
+/// Flags already known to have no effect, tracked by the ignored test below.
+const KNOWN_UNREAD_BUBBLE_FLAGS: [&str; 2] = ["FLAG_INNER_WARP", "FLAG_SPEED_BOOSTED"];
+
+/// Keeps the working flags covered while the known gap stays open.
+#[test]
+fn test_bubble_feature_flags_have_no_new_unread_flags() {
+    let unexpected: Vec<&str> = bubble_flags_unread_by_fragment()
+        .into_iter()
+        .filter(|name| !KNOWN_UNREAD_BUBBLE_FLAGS.contains(name))
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "bubble_dome.wgsl stopped reading: {unexpected:?}"
+    );
+}
+
+/// A Rust flag that no fragment code reads is a material option with no visual effect.
+#[test]
+#[ignore = "remediation Q-10: FLAG_INNER_WARP and FLAG_SPEED_BOOSTED are declared in bubble_dome.wgsl but never read; the fix is a production change"]
+fn test_bubble_feature_flags_all_drive_the_fragment_shader() {
+    let unread = bubble_flags_unread_by_fragment();
+    assert!(
+        unread.is_empty(),
+        "flags set from Rust but never read by bubble_dome.wgsl: {unread:?}"
+    );
+}
+
 #[test]
 fn test_selection_ring_uniform_and_shader_invariants() {
-    let assets_dir = resolve_assets_dir();
-    let shader_path = assets_dir.join("shaders/selection_ring.wgsl");
-    let shader_source = fs::read_to_string(&shader_path)
-        .or_else(|_| fs::read_to_string("assets/shaders/selection_ring.wgsl"))
-        .expect("selection_ring.wgsl must be present on disk");
+    let shader = production_module("selection_ring.wgsl");
+    let fragment = shader.entry_point(ShaderStage::Fragment, "fragment");
 
-    assert!(shader_source.contains("struct SelectionRingUniform"));
-    assert!(shader_source.contains("@group(2) @binding(0)"));
-    assert!(shader_source.contains("@fragment"));
-    assert!(
-        shader_source.contains("ring_alpha < 0.02"),
-        "selection_ring.wgsl must discard fragments with ring_alpha < 0.02"
+    assert_eq!(
+        shader.uniform_struct_at(2, 0),
+        (
+            "SelectionRingUniform".to_owned(),
+            size_of::<SelectionRingUniformGpu>()
+        )
     );
     assert!(
-        shader_source.contains("discard;"),
-        "selection_ring.wgsl must invoke discard; to prevent opaque black discs"
+        discards_when_below(fragment, "ring_alpha", 0.02),
+        "selection_ring.wgsl must discard fragments with ring_alpha < 0.02 to prevent opaque black discs"
     );
 
     // Verify memory layout exactly equals 32 bytes and 16-byte alignment
     assert_eq!(size_of::<SelectionRingUniformGpu>(), 32);
     assert_eq!(align_of::<SelectionRingUniformGpu>(), 16);
+}
+
+/// The discard probe must see a changed threshold, so it cannot pass on any `discard`.
+#[test]
+fn test_discard_probe_detects_changed_threshold() {
+    let source =
+        shipped_source("selection_ring.wgsl").replace("ring_alpha < 0.02", "ring_alpha < 0.5");
+    let shader = compose_and_validate("selection_ring.wgsl", &source, SHADER_VARIANTS[0])
+        .expect("the changed threshold is still valid WGSL");
+    let fragment = shader.entry_point(ShaderStage::Fragment, "fragment");
+    assert!(discards(fragment));
+    assert!(!discards_when_below(fragment, "ring_alpha", 0.02));
 }
 
 #[test]
@@ -98,7 +296,22 @@ fn test_selection_ring_material_alpha_and_depth_bias() {
 
 #[test]
 fn test_mist_wake_uniform_and_shader_invariants() {
-    // Actual shader compilation is enforced by mist_preview's production render pipeline.
+    let shader = production_module("mist_wake.wgsl");
+    shader.entry_point(ShaderStage::Vertex, "vertex");
+    shader.entry_point(ShaderStage::Fragment, "fragment");
+    let uniform = shader.global_at(2, 2);
+    assert!(
+        matches!(uniform.space, naga::AddressSpace::Storage { .. }),
+        "mist uniform must stay in the storage address space used by the bind group"
+    );
+    let ty = &shader.module.types[uniform.ty];
+    assert_eq!(ty.name.as_deref(), Some("MistWakeUniform"));
+    let naga::TypeInner::Struct { span, .. } = ty.inner else {
+        panic!("MistWakeUniform must be a struct");
+    };
+    // The bound struct is `FrameGpu`: the 64-byte appearance block plus the geometry lane.
+    assert_eq!(span as usize, size_of::<client::mist::gpu::FrameGpu>());
+
     assert_eq!(size_of::<MistWakeUniformGpu>(), 64);
     assert_eq!(align_of::<MistWakeUniformGpu>(), 16);
     assert_eq!(size_of::<client::mist::gpu::FrameGpu>(), 80);
@@ -115,29 +328,75 @@ fn test_sphere_tessellation_high_density() {
     );
 }
 
+/// The audited flipbook set in `tests/data/flipbook_coverage.ron`.
+#[derive(Debug, Deserialize)]
+struct FlipbookCoverage {
+    /// Slugs of catalog archetypes that ship a baked flipbook.
+    catalog_units: BTreeSet<String>,
+    /// Flipbooks in `assets/textures` that belong to no catalog archetype.
+    non_catalog: BTreeSet<String>,
+}
+
 #[test]
 fn test_flipbook_textures_512_invariants() {
-    let assets_dir = resolve_assets_dir();
-    let textures_dir = assets_dir.join("textures");
-    if !textures_dir.exists() {
-        return; // Skip if run prior to baking
+    let coverage: FlipbookCoverage = ron::from_str(include_str!("data/flipbook_coverage.ron"))
+        .expect("flipbook_coverage.ron must parse");
+    let textures_dir = resolve_assets_dir().join("textures");
+    let catalog = UnitCatalog::default();
+    let catalog_slugs: BTreeSet<String> = catalog.archetypes().map(|a| a.slug.clone()).collect();
+
+    let on_disk: BTreeSet<String> = fs::read_dir(&textures_dir)
+        .expect("assets/textures must exist: run the asset baker before testing")
+        .map(|entry| entry.expect("assets/textures entry").file_name())
+        .filter_map(|name| name.into_string().ok())
+        .filter_map(|name| name.strip_suffix(".flipbook.ron").map(str::to_owned))
+        .collect();
+    let declared: BTreeSet<String> = coverage
+        .catalog_units
+        .union(&coverage.non_catalog)
+        .cloned()
+        .collect();
+    assert_eq!(
+        on_disk, declared,
+        "assets/textures and tests/data/flipbook_coverage.ron disagree"
+    );
+    let not_in_catalog: Vec<_> = coverage.catalog_units.difference(&catalog_slugs).collect();
+    assert!(
+        not_in_catalog.is_empty(),
+        "coverage names units missing from the catalog: {not_in_catalog:?}"
+    );
+    let wrongly_non_catalog: Vec<_> = coverage.non_catalog.intersection(&catalog_slugs).collect();
+    assert!(
+        wrongly_non_catalog.is_empty(),
+        "non_catalog entries are real catalog units: {wrongly_non_catalog:?}"
+    );
+    for hero in catalog.archetypes().filter(|a| a.showcase_hero) {
+        assert!(
+            coverage.catalog_units.contains(&hero.slug),
+            "showcase hero {} must ship a flipbook",
+            hero.slug
+        );
     }
 
-    let catalog = UnitCatalog::default();
-    for arch in catalog.archetypes() {
-        let name = &arch.slug;
+    for name in &on_disk {
         let png_path = textures_dir.join(format!("{name}.png"));
         let ron_path = textures_dir.join(format!("{name}.flipbook.ron"));
-        if png_path.exists() && ron_path.exists() {
-            let img = image::open(&png_path).expect("failed to open flipbook image");
-            assert_eq!(img.width(), 512, "{name} width must be exactly 512");
-            // Strict WebGPU max_texture_dimension_2d hardware invariant:
-            assert!(
-                img.height() <= 16384,
-                "{name} height {} exceeds wgpu limit 16384!",
-                img.height()
-            );
-        }
+        let img = image::open(&png_path)
+            .unwrap_or_else(|error| panic!("{name}: flipbook PNG must open: {error}"));
+        let meta = FlipbookAtlasMeta::load_from_ron(&ron_path)
+            .unwrap_or_else(|error| panic!("{name}: manifest must load: {error}"));
+        assert_eq!(img.width(), 512, "{name} width must be exactly 512");
+        assert_eq!(
+            img.height(),
+            meta.total_frames * 512,
+            "{name} height must hold every manifest frame"
+        );
+        // Strict WebGPU max_texture_dimension_2d hardware invariant:
+        assert!(
+            img.height() <= 16384,
+            "{name} height {} exceeds wgpu limit 16384!",
+            img.height()
+        );
     }
 }
 
@@ -525,47 +784,22 @@ fn test_bevy_ecs_schedule_all_systems_no_conflicts() -> Result<(), Box<dyn std::
 
 #[test]
 fn test_real_gpu_startup_and_frame_limit_30() {
-    let client_bin = env!("CARGO_BIN_EXE_client");
-    let xvfb_run = std::path::Path::new("/usr/bin/xvfb-run");
-
-    let mut cmd = if xvfb_run.exists() {
-        let mut c = std::process::Command::new(xvfb_run);
-        c.arg("-a").arg(client_bin);
-        c
-    } else {
-        if std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_err() {
-            eprintln!("Skipping windowed GPU test: no graphical display detected");
-            return;
-        }
-        std::process::Command::new(client_bin)
-    };
-
-    cmd.arg("--lab").arg("--max-frames").arg("30");
-    // Ensure test runs strictly on virtual display and never appears on the user's desktop
-    cmd.env_remove("WAYLAND_DISPLAY");
-    cmd.env("WINIT_UNIX_BACKEND", "x11");
-    cmd.env("WGPU_BACKEND", "vulkan");
-    cmd.env("SPACE_SCUFFLE_VIRTUAL_GPU", "1");
-
-    let lvp_candidates = [
-        std::path::Path::new("/usr/share/vulkan/icd.d/lvp_icd.json"),
-        std::path::Path::new("/usr/share/vulkan/icd.d/lvp_icd.x86_64.json"),
-    ];
-    if let Some(lvp_icd) = lvp_candidates.into_iter().find(|p| p.exists()) {
-        cmd.env("VK_ICD_FILENAMES", lvp_icd);
-        cmd.env("WGPU_ADAPTER_NAME", "llvmpipe");
-        cmd.env("LIBGL_ALWAYS_SOFTWARE", "1");
+    if gpu_run::gpu_tests_opted_out() {
+        return;
     }
-
-    let status = cmd.status().expect("Failed to execute client binary");
-
-    assert!(
-        status.success(),
-        "Client binary failed when launching virtual GPU window with --lab --max-frames 30"
-    );
+    let client_bin = std::path::Path::new(env!("CARGO_BIN_EXE_client"));
+    let mut command = gpu_run::virtual_gpu_command(client_bin);
+    command.arg("--lab").arg("--max-frames").arg("30");
+    gpu_run::assert_passes_validation(&mut command, "client --lab --max-frames 30");
 }
 
-fn scan_src_for_forbidden_slugs(dir: &std::path::Path, forbidden: &[&str]) {
+/// Collects each use of a slug in production Rust under `dir`, returning the files scanned.
+fn scan_src_for_forbidden_slugs(
+    dir: &std::path::Path,
+    forbidden: &BTreeSet<String>,
+    hits: &mut Vec<String>,
+) -> usize {
+    let mut scanned = 0;
     for entry in fs::read_dir(dir).expect("read_dir") {
         let entry = entry.expect("dir entry");
         let path = entry.path();
@@ -573,44 +807,50 @@ fn scan_src_for_forbidden_slugs(dir: &std::path::Path, forbidden: &[&str]) {
             if path.file_name().is_some_and(|n| n == "target") {
                 continue;
             }
-            scan_src_for_forbidden_slugs(&path, forbidden);
+            scanned += scan_src_for_forbidden_slugs(&path, forbidden, hits);
         } else if path.extension().is_some_and(|ext| ext == "rs") {
             let path_str = path.to_string_lossy();
             if path_str.contains("/src/") {
+                scanned += 1;
                 let content = fs::read_to_string(&path).expect("Failed to read source file");
-                for &slug in forbidden {
-                    assert!(
-                        !content.contains(slug),
-                        "Forbidden creature/unit slug '{slug}' found in production source file: {}",
-                        path.display()
-                    );
+                for slug in forbidden {
+                    if content.contains(slug.as_str()) {
+                        hits.push(format!("{slug} in {}", path.display()));
+                    }
                 }
             }
         }
     }
+    scanned
 }
 
 #[test]
 fn test_zero_hardcoded_creature_names_in_rust_src() {
     // AGENTS.md §3.3: Strict zero creature/building identifiers or slugs in Rust source code across all crates.
-    let forbidden_slugs = [
-        "rhino_beetle",
-        "pulse_bot",
-        "psi_grey",
-        "railgun_crawler",
-        "flying_saucer",
-        "welder_drone",
-        "foundry_core_dome",
-        "assembly_bay_dome",
-        "capacitor_dome",
-        "tesla_sentinel_dome",
-    ];
+    let catalog = UnitCatalog::default();
+    let forbidden_slugs: BTreeSet<String> = catalog.archetypes().map(|a| a.slug.clone()).collect();
+    assert_eq!(
+        forbidden_slugs.len(),
+        catalog.archetypes().count(),
+        "catalog slugs must be unique"
+    );
+    assert!(
+        forbidden_slugs.iter().all(|slug| !slug.trim().is_empty()),
+        "a blank slug would match every file"
+    );
 
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workspace_dir = manifest_dir.parent().unwrap().parent().unwrap();
     let crates_dir = workspace_dir.join("crates");
 
-    scan_src_for_forbidden_slugs(&crates_dir, &forbidden_slugs);
+    let mut hits = Vec::new();
+    let scanned = scan_src_for_forbidden_slugs(&crates_dir, &forbidden_slugs, &mut hits);
+    assert!(scanned > 0, "the scan must reach production source files");
+    assert!(
+        hits.is_empty(),
+        "catalog slugs found in production source:\n{}",
+        hits.join("\n")
+    );
 }
 
 #[test]
@@ -781,27 +1021,26 @@ fn test_all_combat_vfx_entities_despawn_after_lifetime() -> Result<(), Box<dyn s
 /// Invariant test verifying procedural volumetric combat VFX shader layout and material properties.
 #[test]
 fn test_combat_fx_shader_and_uniform_layout() {
-    let assets_dir = resolve_assets_dir();
-    let shader_path = assets_dir.join("shaders/combat_fx.wgsl");
-    let shader_source = fs::read_to_string(&shader_path)
-        .or_else(|_| fs::read_to_string("assets/shaders/combat_fx.wgsl"))
-        .expect("combat_fx.wgsl must be present on disk");
+    let shader = production_module("combat_fx.wgsl");
+    let fragment = shader.entry_point(ShaderStage::Fragment, "fragment");
 
-    assert!(shader_source.contains("struct CombatFxUniform"));
-    assert!(shader_source.contains("@group(2) @binding(0)"));
-    assert!(shader_source.contains("@fragment"));
+    assert_eq!(
+        shader.uniform_struct_at(2, 0),
+        (
+            "CombatFxUniform".to_owned(),
+            size_of::<CombatFxUniformGpu>()
+        )
+    );
     assert!(
-        shader_source.contains("discard;"),
-        "combat_fx.wgsl must invoke discard; to prevent rectangular billboard artifacts"
+        discards(fragment),
+        "combat_fx.wgsl must discard to prevent rectangular billboard artifacts"
     );
 
-    // Verify all 6 procedural combat modes are implemented in WGSL
-    assert!(shader_source.contains("fx.fx_kind == 0u"));
-    assert!(shader_source.contains("fx.fx_kind == 1u"));
-    assert!(shader_source.contains("fx.fx_kind == 2u"));
-    assert!(shader_source.contains("fx.fx_kind == 3u"));
-    assert!(shader_source.contains("fx.fx_kind == 4u"));
-    assert!(shader_source.contains("fx.fx_kind == 5u"));
+    // Verify all 6 procedural combat modes are branches of the real fragment shader.
+    assert_eq!(
+        shader.branch_values_of_member(fragment, "fx", "fx_kind"),
+        BTreeSet::from([0, 1, 2, 3, 4, 5])
+    );
 
     // Verify memory layout exactly equals 32 bytes and 16-byte alignment
     assert_eq!(size_of::<CombatFxUniformGpu>(), 32);
