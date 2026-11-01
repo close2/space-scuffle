@@ -11,7 +11,17 @@
 //!   authentication (`projects/{project}/locations/us-central1/publishers/google/models/{model}`).
 //!   Polls via the `fetchPredictOperation` RPC with `{"operationName": "{operation_name}"}`.
 //! - **Gemini Developer API (`AIza` prefix):** Uses `generativelanguage.googleapis.com/v1beta`
-//!   and polls GET `v1beta/{operation_name}?key={api_key}`.
+//!   and polls GET `v1beta/{operation_name}`.
+//!
+//! # Credential Handling Invariants
+//! The API key is a paid credential, so this module maintains the following:
+//! - It never appears in a process argument list or a URL. Process arguments are visible to
+//!   other local users. The key travels only as an `x-goog-api-key` header, inside a curl
+//!   configuration written to curl's standard input (`curl --config -`).
+//! - It is sent only over HTTPS and only to [`TRUSTED_API_HOSTS`].
+//! - curl never follows redirects itself. Each redirect hop is validated here and fetched
+//!   without the key, even if a hop returns to a trusted host.
+//! - `Debug` output redacts it, and error text that came from the network is scrubbed of it.
 //!
 //! # WebGPU Texture Dimensions & Invariants
 //! Generated `.mp4` video clips are downloaded into `assets/videos/<unit>_<state>.mp4`
@@ -32,7 +42,7 @@ use base64::prelude::*;
 use serde::{Deserialize, Serialize};
 use sim_types::enums::AnimState;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 /// Default Veo model identifier for video generation.
@@ -46,6 +56,21 @@ pub const DEFAULT_POLL_INTERVAL_SECS: u64 = 5;
 
 /// Default maximum polling duration in seconds (5 minutes).
 pub const DEFAULT_POLL_TIMEOUT_SECS: u64 = 300;
+
+/// The only hosts that may receive the API key. A download URI on any other host is refused.
+pub const TRUSTED_API_HOSTS: [&str; 2] = [
+    "generativelanguage.googleapis.com",
+    "us-central1-aiplatform.googleapis.com",
+];
+
+/// Maximum number of redirects followed for one download.
+pub const MAX_REDIRECT_HOPS: usize = 5;
+
+/// Replacement text for the API key in diagnostics.
+const REDACTED: &str = "[REDACTED]";
+
+/// curl `--write-out` format: the HTTP status, then the redirect target if there is one.
+const CURL_WRITE_OUT: &str = "%{http_code}\n%{redirect_url}\n";
 
 /// Represents an image input payload formatted for Google's video generation models.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -161,12 +186,77 @@ pub struct VeoApiErrorDetail {
 }
 
 /// Resolved API credentials and configuration for Google Veo video generation.
-#[derive(Debug, Clone)]
+///
+/// `Debug` is implemented by hand so that the key cannot reach logs.
+#[derive(Clone)]
 pub struct VeoCredentials {
     /// Secret API key token.
     pub api_key: String,
     /// Associated Google Cloud project ID or project number.
     pub project_id: String,
+}
+
+impl std::fmt::Debug for VeoCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VeoCredentials")
+            .field("api_key", &REDACTED)
+            .field("project_id", &self.project_id)
+            .finish()
+    }
+}
+
+/// One curl invocation.
+struct CurlRequest<'a> {
+    /// Target URL, which never contains the key.
+    url: &'a str,
+    /// File holding a JSON body to POST. `None` issues a GET.
+    post_body: Option<&'a Path>,
+    /// Whether to send the API key. Only ever true for a [`TRUSTED_API_HOSTS`] URL.
+    authenticated: bool,
+    /// File that receives the response body.
+    output: &'a Path,
+}
+
+/// The parts of a completed curl invocation that callers act on.
+struct CurlResponse {
+    /// HTTP status code.
+    status: u16,
+    /// Target of a redirect response, or empty.
+    redirect_url: String,
+}
+
+/// Returns the host of an `https://` URL, or `None` for any other scheme.
+///
+/// `None` is also returned for an explicit port or userinfo. Both are unnecessary for Google's
+/// endpoints, and userinfo is the classic way to disguise the true host of a URL.
+fn https_host(url: &str) -> Option<&str> {
+    let authority = url
+        .strip_prefix("https://")?
+        .split(['/', '?', '#'])
+        .next()?;
+    (!authority.is_empty() && !authority.contains(['@', ':'])).then_some(authority)
+}
+
+/// Removes the query and fragment, which may hold signed tokens, for use in diagnostics.
+fn without_query(url: &str) -> &str {
+    url.split(['?', '#']).next().unwrap_or(url)
+}
+
+/// Accepts `url` only if it is HTTPS on one of the [`TRUSTED_API_HOSTS`].
+fn ensure_trusted_host(url: &str) -> Result<(), BakerError> {
+    let trusted = https_host(url).is_some_and(|host| {
+        TRUSTED_API_HOSTS
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(host))
+    });
+    if trusted {
+        Ok(())
+    } else {
+        Err(BakerError::UntrustedHost {
+            url: without_query(url).to_string(),
+            reason: format!("only HTTPS on {TRUSTED_API_HOSTS:?} is allowed"),
+        })
+    }
 }
 
 /// Strongly-typed client for Google Veo Video Generation.
@@ -222,6 +312,13 @@ impl VeoClient {
         self
     }
 
+    /// Overrides the curl executable, by default `/usr/bin/curl`.
+    #[must_use]
+    pub fn with_curl_path(mut self, curl_path: &Path) -> Self {
+        self.curl_path = curl_path.to_path_buf();
+        self
+    }
+
     /// Accessor for the configured model name.
     #[must_use]
     pub fn model(&self) -> &str {
@@ -234,18 +331,188 @@ impl VeoClient {
         self.credentials.api_key.starts_with("AQ.")
     }
 
+    /// Replaces every occurrence of the API key in text that came from the network or curl.
+    fn redact(&self, text: &str) -> String {
+        if self.credentials.api_key.is_empty() {
+            text.to_string()
+        } else {
+            text.replace(&self.credentials.api_key, REDACTED)
+        }
+    }
+
+    /// Renders the curl configuration that carries the key, which is written to curl's stdin.
+    fn curl_auth_config(&self) -> Result<String, BakerError> {
+        let key = &self.credentials.api_key;
+        // A newline would end the quoted value and start a new curl option.
+        if key.is_empty() || key.chars().any(char::is_control) {
+            return Err(BakerError::InvalidApiKey);
+        }
+        let escaped = key.replace('\\', "\\\\").replace('"', "\\\"");
+        Ok(format!("header = \"x-goog-api-key: {escaped}\"\n"))
+    }
+
+    /// Runs curl once and reports the HTTP status.
+    ///
+    /// `-q` must stay first: it stops a user `.curlrc` from re-enabling redirects. `--proto`
+    /// restricts the transfer to HTTPS. `-L` is deliberately absent, see the module docs.
+    fn run_curl(&self, request: &CurlRequest<'_>) -> Result<CurlResponse, BakerError> {
+        let io_error = |source| BakerError::Io {
+            path: self.curl_path.clone(),
+            source,
+        };
+        let auth_config = if request.authenticated {
+            Some(self.curl_auth_config()?)
+        } else {
+            None
+        };
+
+        let mut command = Command::new(&self.curl_path);
+        command
+            .arg("-q")
+            .arg("--silent")
+            .arg("--show-error")
+            .arg("--proto")
+            .arg("=https")
+            .arg("--output")
+            .arg(request.output)
+            .arg("--write-out")
+            .arg(CURL_WRITE_OUT);
+        if auth_config.is_some() {
+            command.arg("--config").arg("-");
+        }
+        if let Some(body) = request.post_body {
+            let mut data_argument = std::ffi::OsString::from("@");
+            data_argument.push(body);
+            command
+                .arg("--request")
+                .arg("POST")
+                .arg("--header")
+                .arg("Content-Type: application/json")
+                .arg("--data-binary")
+                .arg(data_argument);
+        }
+        command
+            .arg(request.url)
+            .stdin(if auth_config.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let mut child = command.spawn().map_err(io_error)?;
+        if let (Some(config), Some(mut stdin)) = (auth_config, child.stdin.take()) {
+            use std::io::Write;
+            match stdin.write_all(config.as_bytes()) {
+                // curl exited without reading its config. Its exit status reports the cause.
+                Err(source) if source.kind() != std::io::ErrorKind::BrokenPipe => {
+                    return Err(io_error(source));
+                }
+                Ok(()) | Err(_) => {}
+            }
+        }
+        let output = child.wait_with_output().map_err(io_error)?;
+
+        if !output.status.success() {
+            return Err(BakerError::CurlExecutionFailed {
+                code: output.status.code(),
+                stderr: self.redact(&String::from_utf8_lossy(&output.stderr)),
+            });
+        }
+
+        let report = String::from_utf8_lossy(&output.stdout);
+        let mut lines = report.lines();
+        let status = lines.next().and_then(|line| line.trim().parse().ok());
+        let Some(status) = status else {
+            return Err(BakerError::VeoApiError {
+                message: format!("curl reported no HTTP status: {}", self.redact(&report)),
+            });
+        };
+        Ok(CurlResponse {
+            status,
+            redirect_url: lines.next().unwrap_or_default().trim().to_string(),
+        })
+    }
+
+    /// Sends one authenticated JSON API request and parses the JSON response.
+    fn api_request(
+        &self,
+        url: &str,
+        post_body: Option<&str>,
+    ) -> Result<serde_json::Value, BakerError> {
+        ensure_trusted_host(url)?;
+        let temp_path = std::env::temp_dir();
+        let temp_error = |source| BakerError::Io {
+            path: temp_path.clone(),
+            source,
+        };
+
+        // The body cannot use stdin, which carries the key, and it may be too large for argv.
+        let body_file = post_body
+            .map(|body| {
+                let file = tempfile::NamedTempFile::new().map_err(temp_error)?;
+                std::fs::write(file.path(), body).map_err(temp_error)?;
+                Ok::<_, BakerError>(file)
+            })
+            .transpose()?;
+        let response_file = tempfile::NamedTempFile::new().map_err(temp_error)?;
+
+        self.run_curl(&CurlRequest {
+            url,
+            post_body: body_file.as_ref().map(tempfile::NamedTempFile::path),
+            authenticated: true,
+            output: response_file.path(),
+        })?;
+
+        let bytes = std::fs::read(response_file.path()).map_err(temp_error)?;
+        Ok(serde_json::from_slice(&bytes)?)
+    }
+
+    /// Downloads `uri` to `output`, following redirects under the policy in the module docs.
+    fn download(&self, uri: &str, output: &Path) -> Result<(), BakerError> {
+        ensure_trusted_host(uri)?;
+        let mut url = uri.to_string();
+        let mut authenticated = true;
+
+        for _ in 0..=MAX_REDIRECT_HOPS {
+            let response = self.run_curl(&CurlRequest {
+                url: &url,
+                post_body: None,
+                authenticated,
+                output,
+            })?;
+            if !(300..400).contains(&response.status) {
+                return Ok(());
+            }
+            if https_host(&response.redirect_url).is_none() {
+                return Err(BakerError::RedirectRefused {
+                    url: without_query(&response.redirect_url).to_string(),
+                    reason: format!("HTTP {} target is not plain HTTPS", response.status),
+                });
+            }
+            url = response.redirect_url;
+            authenticated = false;
+        }
+
+        Err(BakerError::RedirectRefused {
+            url: without_query(&url).to_string(),
+            reason: format!("more than {MAX_REDIRECT_HOPS} redirects"),
+        })
+    }
+
     /// Builds the full initiate endpoint URL for `:predictLongRunning`.
     #[must_use]
     pub fn build_initiate_url(&self) -> String {
         if self.is_vertex_ai() {
             format!(
-                "https://us-central1-aiplatform.googleapis.com/v1/projects/{}/locations/us-central1/publishers/google/models/{}:predictLongRunning?key={}",
-                self.credentials.project_id, self.model, self.credentials.api_key
+                "https://us-central1-aiplatform.googleapis.com/v1/projects/{}/locations/us-central1/publishers/google/models/{}:predictLongRunning",
+                self.credentials.project_id, self.model
             )
         } else {
             format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/{}:predictLongRunning?key={}",
-                self.model, self.credentials.api_key
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:predictLongRunning",
+                self.model
             )
         }
     }
@@ -258,15 +525,12 @@ impl VeoClient {
     pub fn build_poll_url(&self, operation_name: &str) -> String {
         if self.is_vertex_ai() {
             format!(
-                "https://us-central1-aiplatform.googleapis.com/v1/projects/{}/locations/us-central1/publishers/google/models/{}:fetchPredictOperation?key={}",
-                self.credentials.project_id, self.model, self.credentials.api_key
+                "https://us-central1-aiplatform.googleapis.com/v1/projects/{}/locations/us-central1/publishers/google/models/{}:fetchPredictOperation",
+                self.credentials.project_id, self.model
             )
         } else {
             let clean_op = operation_name.trim_start_matches('/');
-            format!(
-                "https://generativelanguage.googleapis.com/v1beta/{}?key={}",
-                clean_op, self.credentials.api_key
-            )
+            format!("https://generativelanguage.googleapis.com/v1beta/{clean_op}")
         }
     }
 
@@ -315,48 +579,7 @@ impl VeoClient {
         let json_body = serde_json::to_string(&request_body)?;
         let url = self.build_initiate_url();
 
-        let mut child = Command::new(&self.curl_path)
-            .arg("-s")
-            .arg("-X")
-            .arg("POST")
-            .arg("-H")
-            .arg("Content-Type: application/json")
-            .arg("--data-binary")
-            .arg("@-")
-            .arg(&url)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|source| BakerError::Io {
-                path: self.curl_path.clone(),
-                source,
-            })?;
-
-        if let Some(mut stdin) = child.stdin.take() {
-            use std::io::Write;
-            stdin
-                .write_all(json_body.as_bytes())
-                .map_err(|source| BakerError::Io {
-                    path: self.curl_path.clone(),
-                    source,
-                })?;
-        }
-
-        let output = child.wait_with_output().map_err(|source| BakerError::Io {
-            path: self.curl_path.clone(),
-            source,
-        })?;
-
-        if !output.status.success() {
-            return Err(BakerError::CurlExecutionFailed {
-                code: output.status.code(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            });
-        }
-
-        let resp_text = String::from_utf8_lossy(&output.stdout);
-        let resp_json: serde_json::Value = serde_json::from_str(&resp_text)?;
+        let resp_json = self.api_request(&url, Some(&json_body))?;
 
         if let Some(err_val) = resp_json.get("error") {
             let msg = err_val
@@ -364,14 +587,17 @@ impl VeoClient {
                 .and_then(|m| m.as_str())
                 .unwrap_or("Unknown API error");
             return Err(BakerError::VeoApiError {
-                message: format!("Veo initiate error: {msg}"),
+                message: self.redact(&format!("Veo initiate error: {msg}")),
             });
         }
 
+        let resp_text = resp_json.to_string();
         let op: VeoOperation = serde_json::from_value(resp_json)?;
         if op.name.is_empty() && !op.done {
             return Err(BakerError::VeoApiError {
-                message: format!("No operation name returned in API response: {resp_text}"),
+                message: self.redact(&format!(
+                    "No operation name returned in API response: {resp_text}"
+                )),
             });
         }
 
@@ -388,41 +614,10 @@ impl VeoClient {
         let url = self.build_poll_url(operation_name);
 
         while start.elapsed() < self.poll_timeout {
-            let output = if self.is_vertex_ai() {
-                let poll_body = serde_json::json!({ "operationName": operation_name });
-                Command::new(&self.curl_path)
-                    .arg("-s")
-                    .arg("-X")
-                    .arg("POST")
-                    .arg("-H")
-                    .arg("Content-Type: application/json")
-                    .arg("-d")
-                    .arg(poll_body.to_string())
-                    .arg(&url)
-                    .output()
-            } else {
-                Command::new(&self.curl_path)
-                    .arg("-s")
-                    .arg("-H")
-                    .arg("Content-Type: application/json")
-                    .arg(&url)
-                    .output()
-            };
-
-            let output = output.map_err(|source| BakerError::Io {
-                path: self.curl_path.clone(),
-                source,
-            })?;
-
-            if !output.status.success() {
-                return Err(BakerError::CurlExecutionFailed {
-                    code: output.status.code(),
-                    stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                });
-            }
-
-            let resp_text = String::from_utf8_lossy(&output.stdout);
-            let resp_json: serde_json::Value = serde_json::from_str(&resp_text)?;
+            let poll_body = self
+                .is_vertex_ai()
+                .then(|| serde_json::json!({ "operationName": operation_name }).to_string());
+            let resp_json = self.api_request(&url, poll_body.as_deref())?;
 
             if let Some(err_val) = resp_json.get("error") {
                 let msg = err_val
@@ -430,7 +625,7 @@ impl VeoClient {
                     .and_then(|m| m.as_str())
                     .unwrap_or("Unknown polling error");
                 return Err(BakerError::VeoApiError {
-                    message: format!("Veo poll error: {msg}"),
+                    message: self.redact(&format!("Veo poll error: {msg}")),
                 });
             }
 
@@ -498,39 +693,36 @@ impl VeoClient {
 
         // 2. Check for downloadable video URI
         if let Some(uri) = find_video_uri(resp_val) {
-            let output = Command::new(&self.curl_path)
-                .arg("-L")
-                .arg("-s")
-                .arg("-H")
-                .arg(format!("x-goog-api-key: {}", self.credentials.api_key))
-                .arg("-o")
-                .arg(destination_mp4)
-                .arg(&uri)
-                .output()
+            let parent = destination_mp4.parent().unwrap_or(Path::new("."));
+            let partial = tempfile::Builder::new()
+                .prefix(".veo-download-")
+                .suffix(".part")
+                .tempfile_in(parent)
                 .map_err(|source| BakerError::Io {
-                    path: self.curl_path.clone(),
+                    path: parent.to_path_buf(),
                     source,
                 })?;
+            self.download(&uri, partial.path())?;
 
-            if !output.status.success() {
-                return Err(BakerError::CurlExecutionFailed {
-                    code: output.status.code(),
-                    stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                });
-            }
-
-            let meta = std::fs::metadata(destination_mp4).map_err(|source| BakerError::Io {
-                path: destination_mp4.to_path_buf(),
+            let meta = std::fs::metadata(partial.path()).map_err(|source| BakerError::Io {
+                path: partial.path().to_path_buf(),
                 source,
             })?;
             if meta.len() == 0 {
                 return Err(BakerError::VeoApiError {
                     message: format!(
-                        "Downloaded video file at {} was empty",
+                        "Downloaded video for {} was empty",
                         destination_mp4.display()
                     ),
                 });
             }
+
+            partial
+                .persist(destination_mp4)
+                .map_err(|error| BakerError::Io {
+                    path: destination_mp4.to_path_buf(),
+                    source: error.error,
+                })?;
 
             return Ok(());
         }

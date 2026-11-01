@@ -97,6 +97,28 @@ pub enum BakerError {
     )]
     ApiKeyMissing,
 
+    /// The API key contains control characters and cannot be sent as an HTTP header value.
+    #[error("the configured API key contains control characters and was not used")]
+    InvalidApiKey,
+
+    /// A URL named a host that may not receive requests from this client.
+    #[error("refusing to contact untrusted URL '{url}': {reason}")]
+    UntrustedHost {
+        /// The refused URL, without any query string.
+        url: String,
+        /// Why the URL was refused.
+        reason: String,
+    },
+
+    /// A download redirect violated the redirect policy.
+    #[error("refusing download redirect to '{url}': {reason}")]
+    RedirectRefused {
+        /// The refused redirect target, without any query string.
+        url: String,
+        /// Why the redirect was refused.
+        reason: String,
+    },
+
     /// Google Veo or Vertex AI API returned an error response.
     #[error("Veo API error: {message}")]
     VeoApiError {
