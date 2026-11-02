@@ -127,3 +127,25 @@ flowchart TD
 2. **Stage 2 — Implementation Sub-Agent (`flash`):**
    - Only after the detailed plan in `docs/plans/` is complete may `flash` Implementation Sub-Agents be launched to write the code and tests strictly following that blueprint.
 
+---
+
+## 7. Shared Development Server: GPU Access
+
+Development runs on a shared VM. Its physical **AMD Radeon RX 580** (Ellesmere, `/dev/dri/renderD128`, driven by `radv`) is shared with another autonomous agent user, and the machine also has software Vulkan (`lavapipe` / `llvmpipe`). Every agent must follow these rules:
+
+- **Hardware GPU work must hold the GPU lock.** Wrap every command that may run on the physical GPU in `with-gpu-lock`. Unlocked use risks VRAM contention, driver resets, and skewed benchmark or gate timings. This includes running `client` or any other binary directly with no driver selected, because Vulkan may then pick the physical GPU.
+  ```bash
+  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json with-gpu-lock <command>
+  ```
+- **Software Vulkan needs no lock.** Use it when the work does not depend on real GPU behaviour or timing:
+  ```bash
+  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json <command>
+  ```
+- **The lock's timeout is 600 seconds by default.** `with-gpu-lock` takes an exclusive `flock` on `/run/lock/gpu.lock` and releases it when the command exits. For longer runs, set `GPU_LOCK_TIMEOUT=1200 with-gpu-lock <command>`, and hold the lock only for the GPU command itself.
+- **The quality gate runs on software Vulkan.** The client test harness (`crates/client/tests/support/gpu_run.rs`) pins GPU tests to `lavapipe` under `xvfb-run`, so `cargo test --workspace` does not need the lock. Frame-budget measurements must use the physical GPU, under the lock.
+
+---
+
+## 8. Asynchronous Questions for the Owner
+
+Decisions that belong to the owner live in `docs/questions/`, one file per question. Every agent must read `docs/questions/README.md`, check `docs/questions/open/` at the start of each session and before each push, act on answered questions, and record new ones there with the default it will follow meanwhile.
