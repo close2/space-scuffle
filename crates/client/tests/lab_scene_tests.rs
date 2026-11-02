@@ -244,3 +244,17 @@ fn smog_does_not_wash_out_bubbles_beyond_the_volume_centre() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn game_camera_owns_the_depth_prepass_smog_clips_against() -> TestResult {
+    let mut app = App::new();
+    app.insert_resource(client::LabState::default())
+        .add_systems(Startup, client::spawn_camera_system);
+    app.update();
+    let mut cameras = app.world_mut().query_filtered::<Entity, (
+        With<Camera3d>,
+        With<bevy::core_pipeline::prepass::DepthPrepass>,
+    )>();
+    assert_eq!(cameras.iter(app.world()).count(), 1);
+    Ok(())
+}

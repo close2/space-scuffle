@@ -422,6 +422,9 @@ impl Plugin for ClientAppPlugin {
 }
 
 /// Spawns the RTS perspective camera, defaulting to close-up hero framing in Visual Lab mode.
+///
+/// The camera owns its [`DepthPrepass`](bevy::core_pipeline::prepass::DepthPrepass) from its first
+/// frame, because `smog_volume.wgsl` clips the volume against that depth.
 pub fn spawn_camera_system(mut commands: Commands<'_, '_>, lab_state: Res<'_, LabState>) {
     let rts_cam = if lab_state.current_tab == LabTab::VisualLab {
         RtsCamera::hero_framing()
@@ -430,7 +433,12 @@ pub fn spawn_camera_system(mut commands: Commands<'_, '_>, lab_state: Res<'_, La
     };
     let transform = rts_cam.compute_transform();
 
-    commands.spawn((Camera3d::default(), transform, rts_cam));
+    commands.spawn((
+        Camera3d::default(),
+        bevy::core_pipeline::prepass::DepthPrepass,
+        transform,
+        rts_cam,
+    ));
 }
 
 /// Runs the Space Scuffle client application with the specified launch mode.

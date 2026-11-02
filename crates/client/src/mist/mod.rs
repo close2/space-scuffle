@@ -33,7 +33,6 @@ mod upload;
 pub use material::{MistWakeMaterial, MistWakeUniformGpu};
 
 use crate::{BubbleInstance, LabPreviewBubble, LabState, ResolvedAssetsRoot};
-use bevy::core_pipeline::prepass::DepthPrepass;
 use bevy::prelude::*;
 use bevy::render::primitives::Aabb;
 use bevy::render::renderer::RenderDevice;
@@ -277,7 +276,7 @@ pub struct MistPool {
     acknowledged: Vec<gpu::PublishedSlot>,
 }
 
-/// Installs production mist rendering, sampling, bounded allocation, and depth prepass.
+/// Installs production mist rendering, sampling and bounded allocation.
 pub struct MistWakePlugin;
 
 impl Plugin for MistWakePlugin {
@@ -292,21 +291,11 @@ impl Plugin for MistWakePlugin {
                     .after(TransformSystem::TransformPropagate),
             )
             .add_systems(Startup, setup_mist)
-            .add_systems(PreUpdate, attach_depth_prepass)
             .add_systems(
                 PostUpdate,
                 update_mist_wake_system.before(TransformSystem::TransformPropagate),
             );
         upload::install(app);
-    }
-}
-
-fn attach_depth_prepass(
-    mut commands: Commands<'_, '_>,
-    cameras: Query<'_, '_, Entity, (With<Camera3d>, Without<DepthPrepass>)>,
-) {
-    for entity in &cameras {
-        commands.entity(entity).insert(DepthPrepass);
     }
 }
 
