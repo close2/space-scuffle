@@ -6,8 +6,11 @@ use std::collections::VecDeque;
 use std::fmt::Write;
 
 use bevy::prelude::Resource;
-use sim_core::{Entity, SimWorld, UnitArchetype};
-use sim_types::{EntityId, PlayerCommand, PlayerId, SimScalar, Tick, TickBundle, UnitOrder};
+use sim_core::{movement::MovementLayer, Entity, SimWorld, UnitArchetype};
+use sim_types::{
+    EntityId, PlayerCommand, PlayerId, ShapeKind, SimScalar, Tick, TickBundle, UnitOrder,
+    UnitTypeId,
+};
 
 /// Successful session-commit identity, independent of ticks and recycled entity IDs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -68,7 +71,7 @@ pub enum SubmissionError {
     /// Ownership cannot be inferred from a prior selection.
     #[error("command recipient {0:?} is owned by another player")]
     ForeignRecipient(EntityId),
-    /// A dead, incomplete or transported recipient cannot execute these controls.
+    /// A dead, transported or (for every order but cancelling) unfinished recipient.
     #[error("command recipient {0:?} is unavailable")]
     UnavailableRecipient(EntityId),
     /// Required authored mechanic is absent or currently inapplicable.
@@ -83,6 +86,15 @@ pub enum SubmissionError {
     /// The pointer found neither a target nor walkable ground to send units to.
     #[error("no walkable ground at the order destination")]
     NoDestination,
+    /// The match has ended, so nothing further can be ordered. Looking around still works.
+    #[error("the match is over")]
+    MatchOver,
+    /// This player was defeated in a match that continues without them.
+    #[error("{0:?} has been defeated")]
+    PlayerDefeated(PlayerId),
+    /// A `Build` names an identity the loaded catalog does not hold.
+    #[error("structure {0:?} is not in the catalog")]
+    InvalidStructure(UnitTypeId),
 }
 
 impl SubmissionError {
@@ -210,18 +222,20 @@ impl BattleCommandQueue {
         order: UnitOrder,
         queued: bool,
     ) -> Result<SubmissionSequence, SubmissionError> {
+        accepts_orders(world, player)?;
         supported(&order)?;
+        let subject = order_subject(world, player, &order)?;
         let mut recipients = Vec::new();
         for entity in world
             .entities
             .values()
-            .filter(|e| e.owner == player && can_receive_orders(e))
+            .filter(|e| e.owner == player && can_receive_order(e, &order))
         {
             let archetype = world
                 .catalog
                 .get(entity.unit_type_id)
                 .map_err(|_| SubmissionError::MissingArchetype(entity.id))?;
-            if capable(entity, archetype, &order) {
+            if can_execute(entity, archetype, &order, subject) {
                 recipients.push(entity.id);
             }
         }
@@ -252,14 +266,15 @@ impl BattleCommandQueue {
         order: UnitOrder,
         queued: bool,
     ) -> Result<SubmissionSequence, SubmissionError> {
+        accepts_orders(world, player)?;
         supported(&order)?;
-        let target = attack_target(world, player, &order)?;
+        let subject = order_subject(world, player, &order)?;
         let mut recipients = Vec::with_capacity(selection.len());
         for id in selection {
             let Some(entity) = world
                 .entities
                 .get(id)
-                .filter(|entity| entity.owner == player && can_receive_orders(entity))
+                .filter(|entity| entity.owner == player && can_receive_order(entity, &order))
             else {
                 continue;
             };
@@ -267,7 +282,7 @@ impl BattleCommandQueue {
                 .catalog
                 .get(entity.unit_type_id)
                 .map_err(|_| SubmissionError::MissingArchetype(*id))?;
-            if can_execute(entity, archetype, &order, target) {
+            if can_execute(entity, archetype, &order, subject) {
                 recipients.push(*id);
             }
         }
@@ -348,25 +363,70 @@ impl BattleCommandQueue {
     }
 }
 
-fn supported(order: &UnitOrder) -> Result<(), SubmissionError> {
+/// Refuses every order once the match has ended or `player` has been defeated.
+///
+/// This is the simulation's own rule, checked here so a closed match answers at submission
+/// instead of queueing commands the world will only refuse.
+fn accepts_orders(world: &SimWorld, player: PlayerId) -> Result<(), SubmissionError> {
+    if world.match_state.result.is_over() {
+        return Err(SubmissionError::MatchOver);
+    }
+    if world.match_state.is_defeated(player) {
+        return Err(SubmissionError::PlayerDefeated(player));
+    }
+    Ok(())
+}
+
+/// Whether the battle queue carries `order` at all. Exhaustive, so a new order cannot be
+/// refused by accident: it fails to compile until someone decides here.
+const fn supported(order: &UnitOrder) -> Result<(), SubmissionError> {
     match order {
-        UnitOrder::Move { .. }
+        UnitOrder::Idle
+        | UnitOrder::Move { .. }
         | UnitOrder::AttackMove { .. }
         | UnitOrder::AttackTarget { .. }
         | UnitOrder::HoldPosition
         | UnitOrder::Stop
-        | UnitOrder::Idle
         | UnitOrder::UseStim
-        | UnitOrder::Produce { .. } => Ok(()),
-        _ => Err(SubmissionError::UnsupportedOrder),
+        | UnitOrder::Produce { .. }
+        | UnitOrder::Harvest { .. }
+        | UnitOrder::ReturnCargo
+        | UnitOrder::Build { .. }
+        | UnitOrder::Construct { .. }
+        | UnitOrder::CancelConstruction
+        | UnitOrder::Research { .. }
+        | UnitOrder::CancelProduction { .. }
+        | UnitOrder::Load { .. }
+        | UnitOrder::UnloadAll => Ok(()),
+        // Abilities have no UI in Phase 5, so this order is refused deliberately.
+        UnitOrder::CastAbility { .. } => Err(SubmissionError::UnsupportedOrder),
     }
 }
 
-fn capable(entity: &Entity, archetype: &UnitArchetype, order: &UnitOrder) -> bool {
-    let mobile = !entity.is_immobile && archetype.max_speed > SimScalar::ZERO;
-    let armed = archetype.weapon.is_some()
+/// Whether `archetype` carries any weapon. The one rule client admission and the card share.
+#[must_use]
+pub const fn is_armed(archetype: &UnitArchetype) -> bool {
+    archetype.weapon.is_some()
         || archetype.ground_weapon.is_some()
-        || archetype.air_weapon.is_some();
+        || archetype.air_weapon.is_some()
+}
+
+/// Whether `builder` can raise `structure`: the rule `sim_core` applies when it admits `Build`.
+fn can_raise(builder: &UnitArchetype, structure: &UnitArchetype) -> bool {
+    builder.capabilities.can_construct
+        && builder.faction == structure.faction
+        && matches!(structure.shape, ShapeKind::BuildingDome { .. })
+}
+
+/// Whether `entity` has what `order` asks for. `subject` comes from [`order_subject`].
+fn capable(
+    entity: &Entity,
+    archetype: &UnitArchetype,
+    order: &UnitOrder,
+    subject: Option<&UnitArchetype>,
+) -> bool {
+    let mobile = !entity.is_immobile && archetype.max_speed > SimScalar::ZERO;
+    let armed = is_armed(archetype);
     match order {
         // These roster controls intentionally address movable actors only. This is
         // a UI selection policy, not a general simulation order-permission rule.
@@ -380,63 +440,109 @@ fn capable(entity: &Entity, archetype: &UnitArchetype, order: &UnitOrder) -> boo
         UnitOrder::UseStim => archetype.overclock.is_some_and(|spec| {
             entity.hp > SimScalar::ONE && spec.attack_rate_multiplier > SimScalar::ZERO
         }),
-        // Production authorizes the entire group/product transaction in sim_core.
+        // Production and research authorize the entire group/product transaction in sim_core.
         // Client admission does not fabricate a receipt or preempt its typed outcome.
-        UnitOrder::Produce { .. } => true,
-        _ => false,
+        UnitOrder::Produce { .. } | UnitOrder::Research { .. } => true,
+        UnitOrder::Harvest { .. } => archetype.capabilities.harvester.is_some(),
+        UnitOrder::ReturnCargo => entity.cargo.is_some(),
+        UnitOrder::Build { .. } | UnitOrder::Construct { .. } => {
+            subject.is_some_and(|structure| can_raise(archetype, structure))
+        }
+        UnitOrder::CancelConstruction => entity.construction.is_some(),
+        UnitOrder::CancelProduction { .. } => !entity.production_queue.is_empty(),
+        UnitOrder::Load { carrier } => {
+            mobile
+                && entity.id != *carrier
+                && MovementLayer::from_mover(archetype.mover_type) == MovementLayer::Ground
+        }
+        UnitOrder::UnloadAll => archetype.capabilities.transport_capacity > 0,
+        UnitOrder::CastAbility { .. } => false,
     }
 }
 
-/// Whether `entity` exists in play and is finished, whatever the order.
-fn can_receive_orders(entity: &Entity) -> bool {
-    entity.is_alive() && entity.is_completed && !entity.is_loaded_in_transport()
+/// Whether `entity` is in play to hear `order`. Only cancelling reaches an unfinished foundation.
+fn can_receive_order(entity: &Entity, order: &UnitOrder) -> bool {
+    entity.is_alive()
+        && !entity.is_loaded_in_transport()
+        && (entity.is_completed || matches!(order, UnitOrder::CancelConstruction))
 }
 
-/// Whether `entity` can carry out `order`. `target` is the archetype an attack order aims at.
+/// Whether `entity` can carry out `order`. `subject` comes from [`order_subject`].
 fn can_execute(
     entity: &Entity,
     archetype: &UnitArchetype,
     order: &UnitOrder,
-    target: Option<&UnitArchetype>,
+    subject: Option<&UnitArchetype>,
 ) -> bool {
-    let reaches_target = target.is_none_or(|target| {
-        archetype
-            .weapon_against(
-                target.mover_type,
-                entity
-                    .is_sieged
-                    .then_some(entity.siege_weapon.as_ref())
-                    .flatten(),
-            )
-            .is_some()
-    });
-    reaches_target && capable(entity, archetype, order)
+    let reaches_target = !matches!(order, UnitOrder::AttackTarget { .. })
+        || subject.is_some_and(|target| {
+            archetype
+                .weapon_against(
+                    target.mover_type,
+                    entity
+                        .is_sieged
+                        .then_some(entity.siege_weapon.as_ref())
+                        .flatten(),
+                )
+                .is_some()
+        });
+    reaches_target && capable(entity, archetype, order, subject)
 }
 
-/// Resolves the archetype of a direct attack's target, or `None` for every other order.
-fn attack_target<'w>(
+/// The archetype an order is aimed at: an attack's target, or the structure of `Build` or
+/// `Construct`. Every other order has no subject.
+fn order_subject<'w>(
     world: &'w SimWorld,
     player: PlayerId,
     order: &UnitOrder,
 ) -> Result<Option<&'w UnitArchetype>, SubmissionError> {
-    let UnitOrder::AttackTarget { target, .. } = *order else {
-        return Ok(None);
+    let (aimed_at, entity) = match *order {
+        UnitOrder::AttackTarget { target, .. } => (
+            target,
+            world.entities.get(&target).filter(|entity| {
+                entity.owner != player && world.is_entity_available_for_combat(player, target)
+            }),
+        ),
+        UnitOrder::Construct { foundation } => (
+            foundation,
+            world
+                .entities
+                .get(&foundation)
+                .filter(|entity| entity.owner == player && entity.is_alive()),
+        ),
+        UnitOrder::Build { structure_type, .. } => {
+            return world
+                .catalog
+                .get(structure_type)
+                .map(Some)
+                .map_err(|_| SubmissionError::InvalidStructure(structure_type));
+        }
+        UnitOrder::Idle
+        | UnitOrder::Move { .. }
+        | UnitOrder::AttackMove { .. }
+        | UnitOrder::HoldPosition
+        | UnitOrder::Stop
+        | UnitOrder::UseStim
+        | UnitOrder::Produce { .. }
+        | UnitOrder::Harvest { .. }
+        | UnitOrder::ReturnCargo
+        | UnitOrder::CastAbility { .. }
+        | UnitOrder::CancelConstruction
+        | UnitOrder::Research { .. }
+        | UnitOrder::CancelProduction { .. }
+        | UnitOrder::Load { .. }
+        | UnitOrder::UnloadAll => return Ok(None),
     };
-    let entity = world
-        .entities
-        .get(&target)
-        .filter(|entity| {
-            entity.owner != player && world.is_entity_available_for_combat(player, target)
-        })
-        .ok_or(SubmissionError::InvalidTarget(target))?;
+    let entity = entity.ok_or(SubmissionError::InvalidTarget(aimed_at))?;
     world
         .catalog
         .get(entity.unit_type_id)
         .map(Some)
-        .map_err(|_| SubmissionError::MissingArchetype(target))
+        .map_err(|_| SubmissionError::MissingArchetype(aimed_at))
 }
 
 fn validate(world: &SimWorld, command: &PlayerCommand) -> Result<(), SubmissionError> {
+    accepts_orders(world, command.player_id)?;
     supported(&command.order)?;
     if usize::from(command.player_id.0) >= world.player_resources.len() {
         return Err(SubmissionError::InvalidPlayer(command.player_id));
@@ -444,7 +550,7 @@ fn validate(world: &SimWorld, command: &PlayerCommand) -> Result<(), SubmissionE
     if command.entities.is_empty() {
         return Err(SubmissionError::EmptySelection);
     }
-    let target = attack_target(world, command.player_id, &command.order)?;
+    let subject = order_subject(world, command.player_id, &command.order)?;
     for id in &command.entities {
         let entity = world
             .entities
@@ -453,14 +559,14 @@ fn validate(world: &SimWorld, command: &PlayerCommand) -> Result<(), SubmissionE
         if entity.owner != command.player_id {
             return Err(SubmissionError::ForeignRecipient(*id));
         }
-        if !can_receive_orders(entity) {
+        if !can_receive_order(entity, &command.order) {
             return Err(SubmissionError::UnavailableRecipient(*id));
         }
         let archetype = world
             .catalog
             .get(entity.unit_type_id)
             .map_err(|_| SubmissionError::MissingArchetype(*id))?;
-        if !can_execute(entity, archetype, &command.order, target) {
+        if !can_execute(entity, archetype, &command.order, subject) {
             return Err(SubmissionError::Capability(*id));
         }
     }

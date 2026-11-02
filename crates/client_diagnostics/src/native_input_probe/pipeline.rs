@@ -110,6 +110,13 @@ fn observe_identity(trace: &mut Trace, session: &BattleSession) -> Option<Entity
                 value.player.0,
                 value.result.is_ok(),
             ),
+            AdmissionOutcome::Game(value) => (
+                notice.sequence.0,
+                value.tick.0,
+                value.command_index,
+                value.player.0,
+                value.result.is_ok(),
+            ),
         };
         trace.last_outcome = Some(identity);
     }

@@ -203,8 +203,10 @@ pub enum TaskEventKind {
 pub struct TaskEvent {
     /// Executed tick that produced this event.
     pub tick: Tick,
-    /// Unit concerned.
+    /// Unit concerned. It may be gone by the time a consumer reads this event.
     pub entity: EntityId,
+    /// Player the unit belonged to when the event happened, so a consumer can filter by viewer.
+    pub owner: PlayerId,
     /// What happened.
     pub kind: TaskEventKind,
 }
@@ -312,6 +314,13 @@ impl SimWorld {
     #[must_use]
     pub fn task_events(&self) -> &[TaskEvent] {
         &self.economy.events
+    }
+
+    /// Drains task events without discarding the buffer's capacity.
+    ///
+    /// Derived output, like [`Self::drain_game_command_outcomes`]: no checksum sees it.
+    pub fn drain_task_events(&mut self) -> std::vec::Drain<'_, TaskEvent> {
+        self.economy.events.drain(..)
     }
 
     pub(crate) fn clear_economy_outcomes(&mut self) {
@@ -572,19 +581,24 @@ impl SimWorld {
     }
 
     /// Ends the front task order of `id`, reporting `kind` if there is something to report.
+    ///
+    /// An unregistered `id` has no order to end and no owner to tell, so it reports nothing.
     pub(crate) fn end_task(&mut self, id: EntityId, kind: Option<TaskEventKind>) {
-        if let Some(actor) = self.entities.get_mut(&id) {
-            actor.order_queue.pop_front();
-            actor.abandon_task_leg();
-            actor.velocity = SimVec2::ZERO;
-            actor.current_funnel_waypoints.clear();
-            actor.movement.restart();
-            actor.current_anim = AnimState::Idle;
-        }
+        let Some(actor) = self.entities.get_mut(&id) else {
+            return;
+        };
+        actor.order_queue.pop_front();
+        actor.abandon_task_leg();
+        actor.velocity = SimVec2::ZERO;
+        actor.current_funnel_waypoints.clear();
+        actor.movement.restart();
+        actor.current_anim = AnimState::Idle;
+        let owner = actor.owner;
         if let Some(kind) = kind {
             self.economy.events.push(TaskEvent {
                 tick: Tick(self.current_tick),
                 entity: id,
+                owner,
                 kind,
             });
         }

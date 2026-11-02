@@ -5,7 +5,7 @@
 pub mod clock;
 pub mod driver;
 pub mod session;
-mod status;
+pub mod status;
 
 pub mod commands;
 pub mod timeline;

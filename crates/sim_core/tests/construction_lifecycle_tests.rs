@@ -399,6 +399,29 @@ fn losing_the_builder_pauses_and_another_can_resume() -> TestResult {
 }
 
 #[test]
+fn a_task_event_names_its_owner_and_drains_once() -> TestResult {
+    let (mut world, worker, dome) = fixture()?;
+    order(&mut world, ME, vec![worker], build(dome, 14, 12));
+    let site = walk_until_laid(&mut world, dome)?;
+    idle(&mut world, 5);
+    order(&mut world, ME, vec![site], UnitOrder::CancelConstruction);
+    let mut events: Vec<_> = world.drain_task_events().collect();
+    for _ in 0..5 {
+        idle(&mut world, 1);
+        events.extend(world.drain_task_events());
+    }
+    assert_eq!(world.task_events(), []);
+    let [event] = events.as_slice() else {
+        return Err(format!("expected the builder's one event, got {events:?}").into());
+    };
+    assert_eq!(
+        (event.entity, event.owner, &event.kind),
+        (worker, ME, &TaskEventKind::FoundationLost)
+    );
+    Ok(())
+}
+
+#[test]
 fn a_dead_builder_leaves_the_foundation_standing() -> TestResult {
     let (mut world, worker, dome) = fixture()?;
     order(&mut world, ME, vec![worker], build(dome, 14, 12));

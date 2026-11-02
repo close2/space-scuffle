@@ -6,7 +6,9 @@ use std::fmt::Write;
 use std::time::Duration;
 
 use bevy::prelude::*;
-use sim_core::{movement::MovementOutcome, production::ProductionOutcome, SimWorld};
+use sim_core::{
+    economy::GameCommandOutcome, movement::MovementOutcome, production::ProductionOutcome, SimWorld,
+};
 use sim_types::Tick;
 
 use super::clock::BattleClockError;
@@ -21,6 +23,8 @@ pub enum AdmissionOutcome {
     Production(ProductionOutcome),
     /// One actual Move/AttackMove transaction result.
     Movement(MovementOutcome),
+    /// Economy, construction, cancellation, transport and refused commands.
+    Game(GameCommandOutcome),
 }
 
 impl AdmissionOutcome {
@@ -28,6 +32,7 @@ impl AdmissionOutcome {
         match self {
             Self::Production(value) => (value.tick, value.command_index, value.player),
             Self::Movement(value) => (value.tick, value.command_index, value.player),
+            Self::Game(value) => (value.tick, value.command_index, value.player),
         }
     }
 }
@@ -106,6 +111,7 @@ impl BattleSession {
     ) -> Result<(), PipelineError> {
         self.notices.clear();
         self.rejected.clear();
+        self.task_events.clear();
         self.diagnostics.clear();
         self.unmatched_outcomes.clear();
         if !self.ready {
@@ -135,6 +141,7 @@ impl BattleSession {
             )?;
             world.step_into(&self.input, self.frames.begin_tick()?);
             let publication = self.frames.finish_tick();
+            self.task_events.extend(world.drain_task_events());
             let outcomes = self.capture_outcomes(world);
             self.clock.consume_tick()?;
             publication?;
@@ -209,6 +216,11 @@ impl BattleSession {
         for outcome in world.drain_movement_outcomes() {
             if let Err(error) = self.record_outcome(generation, AdmissionOutcome::Movement(outcome))
             {
+                failure = Some(error);
+            }
+        }
+        for outcome in world.drain_game_command_outcomes() {
+            if let Err(error) = self.record_outcome(generation, AdmissionOutcome::Game(outcome)) {
                 failure = Some(error);
             }
         }
