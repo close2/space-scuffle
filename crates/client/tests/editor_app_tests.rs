@@ -43,6 +43,7 @@ use bevy::time::TimeUpdateStrategy;
 use bevy::window::{PrimaryWindow, WindowCloseRequested};
 use bevy_egui::EguiPlugin;
 use client::battle_pipeline::session::BattleSession;
+use client::battle_selection::BattleSelection;
 use client::bubble_shader::{BubbleDomeMaterial, BubbleInstance, FlipbookRegistry};
 use client::camera::RtsCamera;
 use client::editor::camera::{focus_cell, CAMERA_HEIGHT_EASE_PER_SEC};
@@ -76,6 +77,13 @@ use sim_types::commands::{PlayerCommand, TickBundle, UnitOrder};
 use sim_types::enums::ShapeKind;
 use sim_types::ids::{EntityId, PlayerId, Tick};
 use sim_types::math::{SimScalar, SimVec2};
+
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/gpu_run.rs"]
+mod gpu_run;
 
 /// Rows at the top of a capture covered by the playtest HUD, excluded from the comparison.
 const PLAYTEST_HUD_HEIGHT_PIXELS: u32 = 64;
@@ -285,13 +293,9 @@ fn test_editor_camera_focus_and_altitude_tracking() {
 
 #[test]
 fn test_render_verification_under_xvfb() {
-    if std::env::var("SPACE_SCUFFLE_SKIP_GPU_TESTS").is_ok_and(|v| v == "1") {
-        eprintln!("WARNING: SPACE_SCUFFLE_SKIP_GPU_TESTS=1 is set; skipping windowed GPU test");
+    if gpu_run::gpu_tests_opted_out() {
         return;
     }
-
-    let bin_path = env!("CARGO_BIN_EXE_map_editor");
-    let xvfb_run = Path::new("/usr/bin/xvfb-run");
 
     let temp_dir = tempfile::tempdir().expect("create temp dir for map editor screenshots");
     let out_dir = temp_dir.path();
@@ -313,50 +317,15 @@ fn test_render_verification_under_xvfb() {
             .expect("seed stale capture");
     }
 
-    let mut cmd = if xvfb_run.exists() {
-        let mut c = std::process::Command::new(xvfb_run);
-        c.arg("-a")
-            .arg("-s")
-            .arg("-screen 0 1600x900x24 +extension GLX")
-            .arg(bin_path);
-        c
-    } else {
-        if std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_err() {
-            eprintln!("Skipping render verification test: no graphical display detected and xvfb-run missing");
-            return;
-        }
-        std::process::Command::new(bin_path)
-    };
-
+    // The editor window is 1600x900, which must fit on the virtual screen.
+    let mut cmd = gpu_run::virtual_gpu_command_on_screen(
+        Path::new(env!("CARGO_BIN_EXE_map_editor")),
+        Some("1600x900x24"),
+    );
     cmd.arg("--verify-render").arg(out_dir);
     cmd.arg("--map")
         .arg("assets/maps/showcase_canyon.scmap.ron");
-
-    // Headless virtual GPU environment configuration matching AGENTS.md §1.2 & §4
-    cmd.env_remove("WAYLAND_DISPLAY");
-    cmd.env("WINIT_UNIX_BACKEND", "x11");
-    cmd.env("WGPU_BACKEND", "vulkan");
-    cmd.env("SPACE_SCUFFLE_VIRTUAL_GPU", "1");
-
-    let lvp_candidates = [
-        Path::new("/usr/share/vulkan/icd.d/lvp_icd.json"),
-        Path::new("/usr/share/vulkan/icd.d/lvp_icd.x86_64.json"),
-    ];
-    if let Some(lvp_icd) = lvp_candidates.into_iter().find(|p| p.exists()) {
-        cmd.env("VK_ICD_FILENAMES", lvp_icd);
-        cmd.env("WGPU_ADAPTER_NAME", "llvmpipe");
-        cmd.env("LIBGL_ALWAYS_SOFTWARE", "1");
-    }
-
-    let status = cmd
-        .status()
-        .expect("Failed to execute map_editor binary under xvfb");
-
-    assert!(
-        status.success(),
-        "map_editor --verify-render failed with status: {:?}",
-        status.code()
-    );
+    gpu_run::assert_passes_validation(&mut cmd, "map_editor --verify-render");
 
     for pose in poses {
         let file_path = out_dir.join(format!("{pose}.png"));
@@ -961,6 +930,46 @@ fn window_close_with_unsaved_work_asks_instead_of_closing() {
     let modal = harness.app.world().resource::<UnsavedChangesModalState>();
     assert!(modal.is_open);
     assert_eq!(modal.pending_action, Some(PendingUnsavedAction::Quit));
+}
+
+#[test]
+fn a_failed_playtest_battle_keeps_the_editor_open_for_the_unsaved_prompt() {
+    let mut harness = EditorHarness::new();
+    harness.make_dirty();
+    harness.tap_key(KeyCode::F5);
+    harness.step(4);
+    assert_eq!(harness.phase(), EditorPhase::Playtesting);
+
+    // A world that disagrees with its published snapshot is a fatal pipeline error.
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<BattleSession>()
+        .world_mut()
+        .expect("playtest world")
+        .current_tick += 7;
+    // Exit events expire after two frames, so each frame is checked.
+    for _ in 0..3 {
+        harness.step(1);
+        assert_eq!(harness.app.should_exit(), None, "the editor must stay open");
+    }
+    let failure = harness
+        .app
+        .world()
+        .resource::<LabState>()
+        .battle_failure
+        .clone();
+    assert!(failure.is_some(), "the HUD must have something to report");
+
+    harness.tap_key(KeyCode::Escape);
+    harness.step(2);
+    assert_eq!(harness.phase(), EditorPhase::Editing);
+    assert!(harness.doc().dirty, "unsaved work must survive");
+
+    harness.close_window();
+    let modal = harness.app.world().resource::<UnsavedChangesModalState>();
+    assert!(modal.is_open, "closing must still ask about unsaved work");
+    assert_eq!(harness.app.should_exit(), None);
 }
 
 #[test]
@@ -1660,9 +1669,9 @@ fn playtest_click_selects_a_unit_and_right_click_commands_it() {
     let selected = harness
         .app
         .world()
-        .resource::<PlaytestState>()
-        .selected_unit_ids
-        .clone();
+        .resource::<BattleSelection>()
+        .ids()
+        .to_vec();
     assert_eq!(selected, vec![unit], "the clicked unit must be selected");
     let world = harness.app.world_mut();
     let mut drawn = world.query::<(&BubbleInstance, &MeshMaterial3d<BubbleDomeMaterial>)>();

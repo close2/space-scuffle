@@ -31,6 +31,7 @@ use bevy::app::AppExit;
 use bevy::prelude::*;
 use bevy::render::render_resource::{CachedPipelineState, PipelineCache};
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
+use bevy_egui::{egui, EguiContexts};
 
 use crate::camera::RtsCamera;
 use crate::editor::app::MapsDirectory;
@@ -280,6 +281,21 @@ pub fn check_render_pipelines(pipeline_cache: Res<'_, PipelineCache>, sync: Res<
     }) || pipeline_cache.waiting_pipelines().next().is_some();
 
     sync.has_pending.store(pending, Ordering::SeqCst);
+}
+
+/// System keeping the window's surface in use on every frame of a verification run.
+///
+/// Bevy 0.15 redirects the camera to an off-screen texture on a screenshot frame and copies it back
+/// to the window only once its copy pipeline has compiled, which is never on the first screenshot.
+/// Verification draws no editor UI, so nothing else touches the window on that frame, and
+/// presenting an acquired image no command used is a Vulkan validation error. One egui shape gives
+/// the UI pass something to draw over the corner of the window, which captures do not include.
+pub fn keep_window_surface_in_use(mut contexts: EguiContexts<'_, '_>) {
+    if let Some(context) = contexts.try_ctx_mut() {
+        context
+            .layer_painter(egui::LayerId::background())
+            .circle_filled(egui::Pos2::ZERO, 1.0, egui::Color32::BLACK);
+    }
 }
 
 /// System advancing the automated verification state machine and capturing screenshots.

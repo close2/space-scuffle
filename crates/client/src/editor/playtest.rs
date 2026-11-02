@@ -38,7 +38,8 @@ use crate::battle_pipeline::driver::PipelineError;
 use crate::battle_pipeline::session::{
     BattleSession, CommittedBattleMetadata, ParticipantMetadata,
 };
-use crate::bubble_shader::{BubbleDomeMaterial, BubbleInstance, FlipbookRegistry};
+use crate::battle_selection::BattleSelection;
+use crate::bubble_shader::{BubbleInstance, FlipbookRegistry};
 use crate::editor::document::EditorDocument;
 use crate::editor::los_preview::StartLoadoutCatalogResource;
 use crate::lab_ui::{LabState, LabTab};
@@ -74,11 +75,9 @@ pub enum EditorPhase {
 #[derive(Resource, Debug, Clone, Deref)]
 pub struct EditorRulesResource(pub RuntimeCatalogs);
 
-/// ECS Resource mirroring playtest status for the HUD and holding the local selection.
+/// ECS Resource mirroring playtest status for the HUD.
 #[derive(Resource, Debug, Default)]
 pub struct PlaytestState {
-    /// Currently selected player unit IDs, kept sorted for allocation-free membership tests.
-    pub selected_unit_ids: Vec<EntityId>,
     /// Tick of the latest published simulation snapshot.
     pub current_tick: u64,
     /// Checksum of the latest published simulation snapshot.
@@ -233,6 +232,8 @@ pub struct PlaytestEntry<'w> {
     pub registry: Res<'w, FlipbookRegistry>,
     /// Admission evidence for the loaded unit media.
     pub media: Res<'w, ClientMediaStatus>,
+    /// Local selection, which names units of the replaced session.
+    pub selection: ResMut<'w, BattleSelection>,
 }
 
 impl PlaytestEntry<'_> {
@@ -285,7 +286,7 @@ impl PlaytestEntry<'_> {
             ..default()
         };
         *self.session = session.with_world(world);
-        self.state.selected_unit_ids.clear();
+        self.selection.clear_all();
         self.state.current_tick = 0;
         self.state.last_checksum = 0;
         self.phase.set(EditorPhase::Playtesting);
@@ -382,7 +383,7 @@ pub fn playtest_input_system(
     camera_query: Query<'_, '_, (&Camera, &GlobalTransform), With<crate::camera::RtsCamera>>,
     mut contexts: EguiContexts<'_, '_>,
     terrain_state: Option<Res<'_, TerrainState>>,
-    mut playtest_state: ResMut<'_, PlaytestState>,
+    mut selection: ResMut<'_, BattleSelection>,
     mut session: ResMut<'_, BattleSession>,
     bubble_query: Query<'_, '_, (&GlobalTransform, &BubbleInstance), With<LiveBattleBubble>>,
 ) {
@@ -428,18 +429,11 @@ pub fn playtest_input_system(
             }
         }
 
-        let selection = &mut playtest_state.selected_unit_ids;
         if let Some((hit_id, _)) = closest_hit {
             if shift {
-                match selection.binary_search(&hit_id) {
-                    Ok(index) => {
-                        selection.remove(index);
-                    }
-                    Err(index) => selection.insert(index, hit_id),
-                }
+                selection.toggle(hit_id);
             } else {
-                selection.clear();
-                selection.push(hit_id);
+                selection.select_only(hit_id);
             }
         } else if !shift {
             selection.clear();
@@ -447,9 +441,7 @@ pub fn playtest_input_system(
     }
 
     // 2. Right Click: Issue Move or Attack-Move Order to Selected Units
-    if mouse_buttons.just_pressed(MouseButton::Right)
-        && !playtest_state.selected_unit_ids.is_empty()
-    {
+    if mouse_buttons.just_pressed(MouseButton::Right) && !selection.ids().is_empty() {
         let Some(terrain) = &terrain_state else {
             return;
         };
@@ -465,7 +457,7 @@ pub fn playtest_input_system(
             };
             let command = PlayerCommand {
                 player_id: PlayerId(0),
-                entities: playtest_state.selected_unit_ids.clone(),
+                entities: selection.ids().to_vec(),
                 order,
                 queue: shift,
             };
@@ -480,62 +472,6 @@ pub fn playtest_input_system(
     }
 }
 
-/// System reapplying the local selection after the snapshot overwrites each bubble.
-///
-/// [`sync_live_battle_system`](crate::scene_controller::sync_live_battle_system) republishes
-/// every instance from the snapshot, which knows nothing about local selection, so the highlight
-/// must be restored each frame.
-// PERFORMANCE RATIONALE:
-// Why: This runs for every bubble on every frame of a battle.
-// What: Selection IDs stay sorted, so membership is a binary search, and pruning dead units
-// reuses the existing vector.
-// Trade-off: Selection edits pay O(S) to keep order in exchange for O(N log S) frames with no
-// heap allocation.
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "Bevy passes system parameters by value"
-)]
-pub fn sync_playtest_selection_system(
-    mut playtest_state: ResMut<'_, PlaytestState>,
-    render_entities: Res<'_, RenderEntityMap>,
-    mut bubbles: Query<
-        '_,
-        '_,
-        (&mut BubbleInstance, &MeshMaterial3d<BubbleDomeMaterial>),
-        With<LiveBattleBubble>,
-    >,
-    mut bubble_materials: ResMut<'_, Assets<BubbleDomeMaterial>>,
-) {
-    if playtest_state
-        .selected_unit_ids
-        .iter()
-        .any(|id| !render_entities.0.contains_key(id))
-    {
-        playtest_state
-            .selected_unit_ids
-            .retain(|id| render_entities.0.contains_key(id));
-    }
-
-    for (mut instance, material) in &mut bubbles {
-        let is_selected = playtest_state
-            .selected_unit_ids
-            .binary_search(&instance.0.entity_id)
-            .is_ok();
-        if instance.0.selected != is_selected {
-            instance.0.selected = is_selected;
-        }
-        let flag = u32::from(is_selected);
-        if bubble_materials
-            .get(&material.0)
-            .is_some_and(|gpu| gpu.uniform.selected != flag)
-        {
-            if let Some(gpu) = bubble_materials.get_mut(&material.0) {
-                gpu.uniform.selected = flag;
-            }
-        }
-    }
-}
-
 /// System that cleans up playtest entities, bubbles, and visual effects upon exiting to editing.
 #[expect(
     clippy::needless_pass_by_value,
@@ -544,7 +480,7 @@ pub fn sync_playtest_selection_system(
 pub fn teardown_playtest_system(
     mut commands: Commands<'_, '_>,
     mut render_entities: ResMut<'_, RenderEntityMap>,
-    mut playtest_state: ResMut<'_, PlaytestState>,
+    mut selection: ResMut<'_, BattleSelection>,
     mut lab: ResMut<'_, LabState>,
     mut session: ResMut<'_, BattleSession>,
     bubble_query: Query<'_, '_, Entity, With<LiveBattleBubble>>,
@@ -564,5 +500,5 @@ pub fn teardown_playtest_system(
         current_tab: LabTab::LiveBattle,
         ..default()
     };
-    playtest_state.selected_unit_ids.clear();
+    selection.clear_all();
 }

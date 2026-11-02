@@ -69,6 +69,7 @@ fn app(
         .init_resource::<Assets<client::SelectionRingMaterial>>()
         .init_resource::<client::RenderEntityMap>()
         .init_resource::<client::selection::SelectionState>()
+        .init_resource::<client::battle_selection::BattleSelection>()
         .insert_resource(client::ResolvedAssetsRoot::from_directory(directory)?)
         .insert_resource(client::CatalogResource(catalog))
         .insert_resource(policy)

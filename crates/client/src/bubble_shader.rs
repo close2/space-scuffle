@@ -302,6 +302,22 @@ impl BubbleUniformGpu {
     }
 }
 
+impl BubbleUniformGpu {
+    /// Returns this uniform with its selection highlight set to `selected`.
+    ///
+    /// The simulation never reports a selection, so a live bubble's highlight is applied here.
+    #[must_use]
+    pub fn with_selection(mut self, selected: bool) -> Self {
+        self.selected = u32::from(selected);
+        if selected {
+            self.feature_flags |= FLAG_SELECTED;
+        } else {
+            self.feature_flags &= !FLAG_SELECTED;
+        }
+        self
+    }
+}
+
 /// Custom Bevy 3D material implementing the Bubble & Dome WGSL pipeline.
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 pub struct BubbleDomeMaterial {

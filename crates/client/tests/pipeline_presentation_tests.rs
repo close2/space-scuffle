@@ -41,6 +41,7 @@ fn presentation_app() -> Result<App, Box<dyn std::error::Error>> {
     .init_asset::<client::BubbleDomeMaterial>()
     .init_asset::<client::SelectionRingMaterial>()
     .init_resource::<client::RenderEntityMap>()
+    .init_resource::<client::battle_selection::BattleSelection>()
     .insert_resource(definition.palette.clone())
     .init_resource::<client::player_presentation::PresentationStatus>()
     .insert_resource(root)

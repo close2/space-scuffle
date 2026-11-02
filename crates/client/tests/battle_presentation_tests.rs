@@ -189,6 +189,7 @@ fn selected_actor_identity_matches_the_actual_entity_after_selection_changes() -
     app.insert_resource(client::CatalogResource(world.catalog.clone()))
         .init_resource::<client::LabState>()
         .init_resource::<client::SelectionState>()
+        .init_resource::<client::battle_selection::BattleSelection>()
         .add_systems(Update, client::lab_ui::sync_selected_actor_identity);
     for (index, (unit_type, _)) in actors.iter().enumerate() {
         let id = world.spawn_unit(*unit_type, PlayerId(0), sim_types::SimVec2::ZERO)?;

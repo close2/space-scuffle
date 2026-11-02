@@ -15,6 +15,7 @@
 //!
 //! # Core Subsystems
 //! - [`camera`]: `StarCraft` II style RTS camera with 58° pitch, WASD pan, scroll zoom, and hotkey bookmarks.
+//! - [`battle_input`]: Live battle selection, box drag, right-click orders and control groups.
 //! - [`lab_stage`]: Flat stage and lights for the map-less Lab and Swarm scenes.
 //! - [`bubble_shader`]: Custom `BubbleDomeMaterial` and GPU uniform packing for unit spheres and domes.
 //! - [`indicators`]: Ground selection rings, equatorial facing chevron, attack focal lens, and collar meshes.
@@ -25,14 +26,17 @@
 #![warn(missing_docs)]
 
 pub mod assets;
+pub mod battle_input;
 pub mod battle_pipeline;
 pub mod battle_presentation;
+pub mod battle_selection;
 pub mod bubble_optics;
 pub mod bubble_shader;
 pub mod camera;
 pub mod camera_drag;
 pub mod editor;
 pub mod indicators;
+pub mod input_bindings;
 pub mod input_policy;
 pub mod lab_stage;
 pub mod lab_ui;
@@ -66,10 +70,7 @@ pub use scene_controller::{
     sync_lab_preview_system, sync_live_battle_system, sync_swarm_stress_system, LabPreviewBubble,
     LiveBattleBubble, RenderEntityMap, SwarmBubble,
 };
-pub use selection::{
-    handle_viewport_selection_system, ray_sphere_intersect, selection_system, HeroLineupIndex,
-    SelectionState,
-};
+pub use selection::{ray_sphere_intersect, selection_system, HeroLineupIndex, SelectionState};
 pub use smog::{
     initial_bouncing_bubbles, step_bouncing_kinematics, BouncingBubbleState, BouncingSmogBubble,
     BubbleSmogSource, SmogArenaBounds, SmogConfig, SmogError, SmogGrid3d, SmogPlugin, SmogStats,
@@ -322,6 +323,7 @@ impl Plugin for ClientAppPlugin {
         .add_plugins(MaterialPlugin::<CombatFxMaterial>::default())
         .add_plugins(MaterialPlugin::<SmogVolumeMaterial>::default())
         .add_plugins(SmogPlugin)
+        .add_plugins(battle_input::BattleInputPlugin)
         .configure_sets(
             Update,
             (
@@ -660,6 +662,7 @@ pub fn run_headless_check() -> Result<(), String> {
     app.init_resource::<CatalogResource>();
     app.init_resource::<RenderEntityMap>();
     app.init_resource::<SelectionState>();
+    app.init_resource::<battle_selection::BattleSelection>();
     app.init_resource::<input_policy::InputOwnership>();
     app.init_resource::<camera_drag::CameraDragState>();
     app.add_event::<bevy::window::WindowEvent>();

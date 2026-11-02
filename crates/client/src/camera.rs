@@ -3,13 +3,17 @@
 //! # Architectural Responsibilities
 //! This module owns RTS camera locomotion, 58° perspective pitch projection, smooth WASD/arrow
 //! keyboard panning, middle-mouse grab-scroll, scroll-wheel exponential zoom, and hotkey
-//! camera bookmarks (Ctrl+F1..F4 save, F1..F4 recall).
+//! camera bookmarks (Ctrl+F1..F4 save, F1..F4 recall). Its keys live in [`crate::input_bindings`].
 //!
 //! # Invariants
 //! - Pitch angle is fixed at 58.0 degrees (`~1.012` radians) matching classical RTS overview framing.
 //! - Zoom distance is clamped to `[3.0, 48.0]` world units.
 //! - Camera look target sits squarely on the ground plane (y = 0 or terrain surface).
 
+use crate::input_bindings::{
+    any_pressed, CAMERA_BOOKMARK_KEYS, CONTROL_MODIFIERS, PAN_BACK_KEYS, PAN_FORWARD_KEYS,
+    PAN_LEFT_KEYS, PAN_RIGHT_KEYS,
+};
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use std::collections::HashMap;
@@ -195,20 +199,20 @@ pub fn camera_control_system(
 
     // 1. Keyboard Panning (WASD / Arrow Keys)
     let mut pan_dir = Vec2::ZERO;
-    if keyboard.pressed(KeyCode::KeyW) || keyboard.pressed(KeyCode::ArrowUp) {
+    if any_pressed(&keyboard, &PAN_FORWARD_KEYS) {
         pan_dir.y -= 1.0;
     }
-    if keyboard.pressed(KeyCode::KeyS) || keyboard.pressed(KeyCode::ArrowDown) {
+    if any_pressed(&keyboard, &PAN_BACK_KEYS) {
         pan_dir.y += 1.0;
     }
-    if keyboard.pressed(KeyCode::KeyA) || keyboard.pressed(KeyCode::ArrowLeft) {
+    if any_pressed(&keyboard, &PAN_LEFT_KEYS) {
         pan_dir.x -= 1.0;
     }
-    if keyboard.pressed(KeyCode::KeyD) || keyboard.pressed(KeyCode::ArrowRight) {
+    if any_pressed(&keyboard, &PAN_RIGHT_KEYS) {
         pan_dir.x += 1.0;
     }
 
-    let ctrl = keyboard.pressed(KeyCode::ControlLeft) || keyboard.pressed(KeyCode::ControlRight);
+    let ctrl = any_pressed(&keyboard, &CONTROL_MODIFIERS);
     if ownership.keyboard && !ctrl {
         cam.pan(pan_dir, dt);
     }
@@ -231,7 +235,7 @@ pub fn camera_control_system(
     }
 
     // 4. Camera Bookmarks (Ctrl+F1..F4 save, F1..F4 recall)
-    for key in [KeyCode::F1, KeyCode::F2, KeyCode::F3, KeyCode::F4] {
+    for key in CAMERA_BOOKMARK_KEYS {
         if ownership.keyboard && keyboard.just_pressed(key) {
             if ctrl {
                 cam.save_bookmark(key);

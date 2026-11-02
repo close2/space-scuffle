@@ -80,6 +80,9 @@ pub enum SubmissionError {
     /// A direct attack needs a live, exposed hostile target.
     #[error("attack target {0:?} is unavailable or friendly")]
     InvalidTarget(EntityId),
+    /// The pointer found neither a target nor walkable ground to send units to.
+    #[error("no walkable ground at the order destination")]
+    NoDestination,
 }
 
 impl SubmissionError {
@@ -209,15 +212,63 @@ impl BattleCommandQueue {
     ) -> Result<SubmissionSequence, SubmissionError> {
         supported(&order)?;
         let mut recipients = Vec::new();
-        for entity in world.entities.values().filter(|e| {
-            e.owner == player && e.is_alive() && e.is_completed && !e.is_loaded_in_transport()
-        }) {
+        for entity in world
+            .entities
+            .values()
+            .filter(|e| e.owner == player && can_receive_orders(e))
+        {
             let archetype = world
                 .catalog
                 .get(entity.unit_type_id)
                 .map_err(|_| SubmissionError::MissingArchetype(entity.id))?;
             if capable(entity, archetype, &order) {
                 recipients.push(entity.id);
+            }
+        }
+        self.submit(
+            world,
+            PlayerCommand {
+                player_id: player,
+                entities: recipients,
+                order,
+                queue: queued,
+            },
+        )
+    }
+
+    /// Sends `order` to the members of `selection` that can carry it out.
+    ///
+    /// `selection` is client state and may name units that died, changed owner or lack the
+    /// capability, so those are left out here rather than rejecting the whole group. Allocation
+    /// belongs to the user action, not to frame synchronization.
+    /// # Errors
+    /// Returns [`SubmissionError::EmptySelection`] if no member can carry out `order`, or the
+    /// other typed errors of [`Self::submit`].
+    pub fn submit_selection(
+        &mut self,
+        world: &SimWorld,
+        player: PlayerId,
+        selection: &[EntityId],
+        order: UnitOrder,
+        queued: bool,
+    ) -> Result<SubmissionSequence, SubmissionError> {
+        supported(&order)?;
+        let target = attack_target(world, player, &order)?;
+        let mut recipients = Vec::with_capacity(selection.len());
+        for id in selection {
+            let Some(entity) = world
+                .entities
+                .get(id)
+                .filter(|entity| entity.owner == player && can_receive_orders(entity))
+            else {
+                continue;
+            };
+            let archetype = world
+                .catalog
+                .get(entity.unit_type_id)
+                .map_err(|_| SubmissionError::MissingArchetype(*id))?;
+            if can_execute(entity, archetype, &order, target) {
+                recipients.push(*id);
             }
         }
         self.submit(
@@ -336,6 +387,55 @@ fn capable(entity: &Entity, archetype: &UnitArchetype, order: &UnitOrder) -> boo
     }
 }
 
+/// Whether `entity` exists in play and is finished, whatever the order.
+fn can_receive_orders(entity: &Entity) -> bool {
+    entity.is_alive() && entity.is_completed && !entity.is_loaded_in_transport()
+}
+
+/// Whether `entity` can carry out `order`. `target` is the archetype an attack order aims at.
+fn can_execute(
+    entity: &Entity,
+    archetype: &UnitArchetype,
+    order: &UnitOrder,
+    target: Option<&UnitArchetype>,
+) -> bool {
+    let reaches_target = target.is_none_or(|target| {
+        archetype
+            .weapon_against(
+                target.mover_type,
+                entity
+                    .is_sieged
+                    .then_some(entity.siege_weapon.as_ref())
+                    .flatten(),
+            )
+            .is_some()
+    });
+    reaches_target && capable(entity, archetype, order)
+}
+
+/// Resolves the archetype of a direct attack's target, or `None` for every other order.
+fn attack_target<'w>(
+    world: &'w SimWorld,
+    player: PlayerId,
+    order: &UnitOrder,
+) -> Result<Option<&'w UnitArchetype>, SubmissionError> {
+    let UnitOrder::AttackTarget { target, .. } = *order else {
+        return Ok(None);
+    };
+    let entity = world
+        .entities
+        .get(&target)
+        .filter(|entity| {
+            entity.owner != player && world.is_entity_available_for_combat(player, target)
+        })
+        .ok_or(SubmissionError::InvalidTarget(target))?;
+    world
+        .catalog
+        .get(entity.unit_type_id)
+        .map(Some)
+        .map_err(|_| SubmissionError::MissingArchetype(target))
+}
+
 fn validate(world: &SimWorld, command: &PlayerCommand) -> Result<(), SubmissionError> {
     supported(&command.order)?;
     if usize::from(command.player_id.0) >= world.player_resources.len() {
@@ -344,24 +444,7 @@ fn validate(world: &SimWorld, command: &PlayerCommand) -> Result<(), SubmissionE
     if command.entities.is_empty() {
         return Err(SubmissionError::EmptySelection);
     }
-    let target_definition = if let UnitOrder::AttackTarget { target, .. } = command.order {
-        let target_entity = world
-            .entities
-            .get(&target)
-            .filter(|entity| {
-                entity.owner != command.player_id
-                    && world.is_entity_available_for_combat(command.player_id, target)
-            })
-            .ok_or(SubmissionError::InvalidTarget(target))?;
-        Some(
-            world
-                .catalog
-                .get(target_entity.unit_type_id)
-                .map_err(|_| SubmissionError::MissingArchetype(target))?,
-        )
-    } else {
-        None
-    };
+    let target = attack_target(world, command.player_id, &command.order)?;
     for id in &command.entities {
         let entity = world
             .entities
@@ -370,25 +453,14 @@ fn validate(world: &SimWorld, command: &PlayerCommand) -> Result<(), SubmissionE
         if entity.owner != command.player_id {
             return Err(SubmissionError::ForeignRecipient(*id));
         }
-        if !entity.is_alive() || !entity.is_completed || entity.is_loaded_in_transport() {
+        if !can_receive_orders(entity) {
             return Err(SubmissionError::UnavailableRecipient(*id));
         }
         let archetype = world
             .catalog
             .get(entity.unit_type_id)
             .map_err(|_| SubmissionError::MissingArchetype(*id))?;
-        if target_definition.is_some_and(|target| {
-            archetype
-                .weapon_against(
-                    target.mover_type,
-                    entity
-                        .is_sieged
-                        .then_some(entity.siege_weapon.as_ref())
-                        .flatten(),
-                )
-                .is_none()
-        }) || !capable(entity, archetype, &command.order)
-        {
+        if !can_execute(entity, archetype, &command.order, target) {
             return Err(SubmissionError::Capability(*id));
         }
     }
