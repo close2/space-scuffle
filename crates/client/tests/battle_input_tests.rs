@@ -134,6 +134,14 @@ impl Harness {
             .battle_paused = false;
     }
 
+    fn pause(&mut self) {
+        self.app
+            .world_mut()
+            .resource_mut::<LabState>()
+            .battle_paused = true;
+        self.step(2);
+    }
+
     fn world(&self) -> &SimWorld {
         self.app
             .world()
@@ -526,6 +534,45 @@ fn a_hidden_bubble_is_clicked_through() {
     harness.click(MouseButton::Left, position);
 
     assert_eq!(harness.selection().ids().len(), 0);
+}
+
+#[test]
+fn a_unit_behind_a_cliff_is_not_picked() {
+    let mut harness = Harness::battle();
+    let enemy = harness.enemy_units()[0];
+
+    // The camera looks toward -Z, so ground just north of a plateau's edge is behind that edge.
+    let map = &harness.world().map;
+    let level = |x: u32, y: u32| map.cell(x, y).ok().map(|cell| cell.cliff_level.0);
+    let (x, y) = (2..map.width() - 2)
+        .flat_map(|x| (3..map.height() - 2).map(move |y| (x, y)))
+        .find(|&(x, y)| {
+            let edge_is_straight = (x - 1..=x + 1).all(|side| {
+                level(side, y) > level(side, y - 1)
+                    && level(side, y - 1) == level(side, y - 2)
+                    && level(side, y + 1) == level(side, y)
+                    && map.ramp_profile(side, y).is_none()
+                    && map.ramp_profile(side, y - 1).is_none()
+            });
+            edge_is_straight && level(x, y - 1) != Some(0)
+        })
+        .expect("the map must have a plateau");
+    let behind = Vec2::new(x as f32 + 0.5, y as f32 - 0.4);
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&enemy)
+        .expect("enemy")
+        .position = sim_position(behind);
+    harness.resume();
+    harness.step(1);
+    harness.pause();
+    harness.look_at(behind);
+    let on_plateau = harness.unit_on_screen(enemy);
+
+    harness.click(MouseButton::Left, on_plateau);
+
+    assert_eq!(harness.selection().inspected(), None, "the cliff hides it");
 }
 
 #[test]
