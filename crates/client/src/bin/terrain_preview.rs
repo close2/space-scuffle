@@ -15,13 +15,10 @@
 //! - Exit `1`: Any pipeline shader compilation failure (`CachedPipelineState::Err`).
 //! - Exit `2`: Timeout exceeding 600 rendered frames before completing all captures.
 
-#![allow(
-    clippy::needless_pass_by_value,
-    clippy::too_many_lines,
-    clippy::cast_precision_loss,
+#![expect(
     clippy::expect_used,
     clippy::panic,
-    clippy::doc_markdown
+    reason = "a preview tool fails loudly on its fixed fixture instead of recovering"
 )]
 
 use asset_baker::TerrainThemeCatalog;
@@ -41,14 +38,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-const EXIT_CODE_PIPELINE_ERROR: NonZeroU8 = match NonZeroU8::new(1) {
-    Some(v) => v,
-    None => unreachable!(),
-};
-const EXIT_CODE_TIMEOUT: NonZeroU8 = match NonZeroU8::new(2) {
-    Some(v) => v,
-    None => unreachable!(),
-};
+const EXIT_CODE_PIPELINE_ERROR: NonZeroU8 = NonZeroU8::MIN;
+const EXIT_CODE_TIMEOUT: NonZeroU8 = NonZeroU8::MIN.saturating_add(1);
 
 /// CLI command line options for `terrain_preview`.
 #[derive(Parser, Debug)]
@@ -105,7 +96,7 @@ fn compute_pose_transform(pose: &CameraPose) -> Transform {
     Transform::from_translation(eye_pos).looking_at(look_at_pos, Vec3::Y)
 }
 
-/// Pipeline creation synchronization between RenderApp and MainApp.
+/// Pipeline creation synchronization between `RenderApp` and `MainApp`.
 #[derive(Resource, Clone)]
 struct PipelineSync {
     has_pending: Arc<AtomicBool>,
@@ -222,6 +213,10 @@ fn setup_preview_scene(
     commands.spawn((Camera3d::default(), initial_transform, PreviewCamera));
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn check_render_pipelines(pipeline_cache: Res<'_, PipelineCache>, sync: Res<'_, PipelineSync>) {
     for p in pipeline_cache.pipelines() {
         if let CachedPipelineState::Err(ref err) = p.state {
@@ -241,6 +236,10 @@ fn check_render_pipelines(pipeline_cache: Res<'_, PipelineCache>, sync: Res<'_, 
     sync.has_pending.store(pending, Ordering::SeqCst);
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn update_preview_poses(
     mut commands: Commands<'_, '_>,
     mut state: ResMut<'_, PreviewState>,

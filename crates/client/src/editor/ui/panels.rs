@@ -271,6 +271,10 @@ pub(super) fn render_toolbox(
         });
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 fn render_paint_options(ui: &mut egui::Ui, tool_state: &mut EditorToolState) {
     if tool_state.current_tool == EditorTool::Brush {
         ui.label("Brush Shape:");

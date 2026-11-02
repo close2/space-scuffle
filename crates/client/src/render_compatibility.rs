@@ -84,6 +84,10 @@ pub fn run_render_app(app: &mut App) -> AppExit {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn extract_exit_request(
     exits: Extract<'_, '_, Res<'_, Events<AppExit>>>,
     mut final_frame: ResMut<'_, FinalRenderFrame>,
@@ -92,6 +96,10 @@ fn extract_exit_request(
     final_frame.0 = !exits.is_empty();
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn finish_final_render(
     final_frame: Res<'_, FinalRenderFrame>,
     status: Res<'_, ShutdownStatus>,

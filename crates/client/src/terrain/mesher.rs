@@ -154,6 +154,11 @@ pub fn surface_class(map: &GameMap, cx: i32, cy: i32) -> SurfaceClass {
 
 /// Returns the effective numeric cliff level of cell `(cx, cy)` at its local corner `(corner_fx, corner_fy)`.
 #[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
 pub fn corner_marching_level(
     map: &GameMap,
     cx: i32,
@@ -179,6 +184,10 @@ pub fn corner_marching_level(
 
 /// Returns the world altitude `H(level)` for a given discrete cliff level.
 #[must_use]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
 pub fn cliff_level_height(level: i32) -> f32 {
     if level < 0 {
         ABYSS_WALL_BOTTOM_Y
@@ -203,6 +212,11 @@ pub fn pcg2d(v: (u32, u32)) -> (u32, u32) {
 
 /// Computes a pseudo-random floating point value in `[0.0, 1.0]` for 3D integer coordinates.
 #[must_use]
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
 pub fn hash_i32_3(qx: i32, qz: i32, qy: i32) -> f32 {
     let (h1, _) = pcg2d((qx as u32, qz as u32));
     let (h2, _) = pcg2d((h1, qy as u32));
@@ -589,6 +603,12 @@ pub fn is_ramp_connected(map: &GameMap, ca: (i32, i32), cb: (i32, i32)) -> bool 
 
 /// Evaluates ambient occlusion at a floor or ramp vertex.
 #[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
 pub fn compute_floor_ao(map: &GameMap, vx: f32, vy: f32, vz: f32) -> f32 {
     let min_cx = (vx - AO_RADIUS_CELLS).floor().max(0.0) as u32;
     let max_cx = (vx + AO_RADIUS_CELLS).ceil().min((map.width() - 1) as f32) as u32;
@@ -648,6 +668,11 @@ pub struct WallProfileRow {
 
 /// Generates the wall profile rows for an edge midpoint crossing.
 #[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
 pub fn generate_wall_profile(
     p: Vec2,
     d: Vec2,
@@ -823,6 +848,15 @@ fn push_quad_oriented(
 /// Generates a chunk mesh for chunk `(chunk_x, chunk_y)` into the provided scratchpad.
 ///
 /// Returns statistical metrics [`MeshStats`] for test verification.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 pub fn build_chunk_mesh(
     map: &GameMap,
     chunk_x: u32,

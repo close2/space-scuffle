@@ -27,6 +27,10 @@ use std::time::Duration;
 /// # Errors
 /// Returns startup/script/output errors. Runtime GPU/state/readback failures emit
 /// `AppExit::Error` and retain an incomplete manifest with diagnostic evidence.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "capture coordinates are bounded by the window size and frame budget"
+)]
 pub fn run_capture(options: CaptureOptions) -> Result<AppExit, CaptureError> {
     let mut app =
         client::build_graphical_app(client::ClientMode::LiveBattle, None, &options.scenario)?;
@@ -125,6 +129,10 @@ pub fn run_capture(options: CaptureOptions) -> Result<AppExit, CaptureError> {
     Ok(exit)
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn isolate_ui_input(
     mut inputs: Query<'_, '_, (&mut bevy_egui::EguiInput, &mut bevy_egui::EguiContext)>,
     mut session: ResMut<'_, driver::Session>,

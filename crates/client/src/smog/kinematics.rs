@@ -2,14 +2,14 @@
 //!
 //! # Architectural Responsibilities
 //! This module owns the continuous 3D motion of the 10 mobile bubbles within the bounded arena.
-//! Every bubble moves with arbitrary 3D velocity $\mathbf{v}_i$, reflecting elastically off all 6
+//! Every bubble moves with arbitrary 3D velocity `$\mathbf{v}_i$`, reflecting elastically off all 6
 //! boundary walls and resolving elastic collisions upon sphere-sphere contact.
 //!
 //! # Invariants Maintained
 //! - Exactly [`BOUNCING_BUBBLE_COUNT`] (10) bubbles are simulated and contained.
-//! - Strict containment: every bubble center $\mathbf{p}_i$ satisfies
-//!   $\Omega_{\min} + R_i \le \mathbf{p}_i \le \Omega_{\max} - R_i$ at all times.
-//! - Heading angle $\theta_i = \operatorname{atan2}(v_{i,z}, v_{i,x})$ remains synchronized with horizontal velocity.
+//! - Strict containment: every bubble center `$\mathbf{p}_i$` satisfies
+//!   `$\Omega_{\min} + R_i \le \mathbf{p}_i \le \Omega_{\max} - R_i$` at all times.
+//! - Heading angle `$\theta_i = \operatorname{atan2}(v_{i,z}, v_{i,x})$` remains synchronized with horizontal velocity.
 //! - Pairwise elastic collision resolution conserves momentum and kinetic energy without penetration.
 
 use super::SmogError;
@@ -142,6 +142,10 @@ pub const SHOWCASE_BUBBLE_PALETTE: [Vec3; BOUNCING_BUBBLE_COUNT] = [
 
 /// Returns the curated or deterministic bioluminescent base color for a bubble by index.
 #[must_use]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+)]
 pub fn bubble_team_color(index: usize) -> Vec3 {
     if index < SHOWCASE_BUBBLE_PALETTE.len() {
         SHOWCASE_BUBBLE_PALETTE[index]
@@ -158,13 +162,19 @@ pub fn bubble_team_color(index: usize) -> Vec3 {
 
 /// Generates an arbitrary number of well-separated bouncing bubble states on the horizontal map plane.
 ///
-/// For `count <= 10`, uses hand-curated well-distributed positions across the $(X, Z)$ ground plane.
+/// For `count <= 10`, uses hand-curated well-distributed positions across the `$(X, Z)$` ground plane.
 /// For larger crowds up to 400, distributes bubbles across a 2D map-plane lattice with deterministic
-/// jitter to ensure non-overlapping starting configurations. All bubbles have $v_y = 0.0$ and
-/// $p_y = \text{bounds.min.y} + R_i$.
+/// jitter to ensure non-overlapping starting configurations. All bubbles have `$v_y = 0.0$` and
+/// `$p_y = \text{bounds.min.y} + R_i$`.
 ///
 /// # Errors
 /// Returns [`SmogError::InvalidBounds`] if `bounds` is invalid.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+)]
 pub fn generate_bouncing_bubbles(
     count: usize,
     bounds: &SmogArenaBounds,
@@ -275,8 +285,8 @@ pub fn generate_bouncing_bubbles(
 
 /// Generates 10 well-separated initial bouncing bubble states inside `bounds`.
 ///
-/// Every bubble is given a distinct radius $R_i \in [0.46, 0.64]$ and arbitrary 3D velocity
-/// with speeds in $[2.4, 4.1]$ world units per second and varied directional orientations.
+/// Every bubble is given a distinct radius `$R_i \in [0.46, 0.64]$` and arbitrary 3D velocity
+/// with speeds in `$[2.4, 4.1]$` world units per second and varied directional orientations.
 ///
 /// # Errors
 /// Returns [`SmogError::InvalidBounds`] if `bounds` is invalid.
@@ -305,6 +315,17 @@ pub fn initial_bouncing_bubbles(
 /// # Errors
 /// Returns [`SmogError::InvalidDeltaTime`] if `dt < 0.0` or non-finite.
 /// Returns [`SmogError::InvalidBounds`] if `bounds` is invalid.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 pub fn step_bouncing_kinematics(
     states: &mut [BouncingBubbleState],
     bounds: &SmogArenaBounds,

@@ -289,6 +289,10 @@ pub struct EditorUiTerrain<'w> {
 }
 
 /// Primary editor UI and interactive viewport tool system.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn editor_ui_system(
     mut input: EditorUiContext<'_, '_>,
     mut state: EditorUiState<'_>,

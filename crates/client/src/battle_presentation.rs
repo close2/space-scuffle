@@ -59,6 +59,14 @@ pub struct BattlePresentation {
 }
 
 /// Refreshes cached metadata after session changes and counts after actual ticks.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 pub fn refresh_battle_presentation(
     session: Res<'_, crate::battle_pipeline::session::BattleSession>,
     mut presentation: ResMut<'_, BattlePresentation>,

@@ -11,13 +11,6 @@
 //! - `--verify-render <out_dir>`: Automated render verification mode capturing reference screenshots.
 //! - `--max-frames <n>`: Cap execution to `n` frames before clean shutdown (used in headless testing).
 
-#![allow(
-    clippy::needless_pass_by_value,
-    clippy::too_many_lines,
-    clippy::cast_precision_loss,
-    clippy::doc_markdown
-)]
-
 use std::path::PathBuf;
 use std::process::ExitCode;
 

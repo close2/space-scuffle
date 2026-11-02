@@ -151,6 +151,10 @@ impl Session {
             failure: None,
         }
     }
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "capture coordinates are bounded by the window size and frame budget"
+    )]
     pub(super) fn ui_startup_seconds(&self) -> f64 {
         self.frames as f64 * 0.04
     }
@@ -174,6 +178,10 @@ impl Session {
         self.settled += 1;
         self.settled >= 4
     }
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "Bevy passes system parameters by value"
+    )]
     fn fail(&mut self, error: CaptureError, world: &mut World) {
         error!("{error}");
         self.failure = Some(error.to_string());
@@ -302,6 +310,10 @@ pub(super) fn control(world: &mut World) {
     });
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 fn control_inner(world: &mut World, session: &mut Session) -> Result<(), CaptureError> {
     if matches!(session.stage, Stage::Complete | Stage::Failed) {
         return Ok(());
@@ -319,7 +331,7 @@ fn control_inner(world: &mut World, session: &mut Session) -> Result<(), Capture
                 .resource::<client::battle_pipeline::session::BattleSession>()
                 .commands
                 .generation()
-                .map(|generation| generation.value());
+                .map(client::battle_pipeline::commands::SessionGeneration::value);
         }
         match goal {
             Goal::NeutralWatchtower
@@ -495,6 +507,14 @@ pub(super) fn observe(world: &mut World) {
     });
 }
 
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "capture coordinates are bounded by the window size and frame budget"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 fn observe_inner(world: &mut World, session: &mut Session) -> Result<(), CaptureError> {
     if matches!(session.stage, Stage::Complete | Stage::Failed) {
         return Ok(());
@@ -953,6 +973,14 @@ fn displayed_contact(
         )
 }
 
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "capture coordinates are bounded by the window size and frame budget"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 fn verify_frame(world: &mut World, session: &mut Session) -> Result<Option<Record>, CaptureError> {
     let goal = session.goal();
     let pipeline = world.resource::<client::battle_pipeline::session::BattleSession>();
@@ -1360,6 +1388,10 @@ fn validate_callback_token(
     Ok(())
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn readback(
     trigger: Trigger<'_, ScreenshotCaptured>,
     mut session: ResMut<'_, Session>,

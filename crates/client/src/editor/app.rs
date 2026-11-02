@@ -100,6 +100,10 @@ pub fn editor_window_plugin() -> WindowPlugin {
 ///
 /// A clean document exits immediately. Unsaved work opens the Save / Discard / Cancel prompt,
 /// which renders only while editing, so a dirty playtest first returns to editing.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn editor_window_close_system(
     mut close_events: EventReader<'_, '_, WindowCloseRequested>,
     doc: Res<'_, EditorDocument>,
@@ -137,6 +141,14 @@ pub struct MapEditorPlugin {
 }
 
 impl Plugin for MapEditorPlugin {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "map cell coordinates stay far below the range of f32 and i32"
+    )]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "a single ordered sequence that shares its local state"
+    )]
     fn build(&self, app: &mut App) {
         let EditorStartup {
             assets_root,
@@ -307,6 +319,14 @@ impl Plugin for MapEditorPlugin {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 fn editor_los_system(
     los_state: ResMut<'_, LosPreviewState>,
     doc: Res<'_, EditorDocument>,
@@ -337,6 +357,14 @@ fn editor_los_system(
 ///
 /// [`EditorStartup`] validated the theme, so a failure here means an asset vanished or is
 /// corrupt; the application logs it and exits with an error instead of opening an empty scene.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn setup_editor_scene(
     mut spawner: EditorTerrainSpawner<'_, '_>,
     mut commands: Commands<'_, '_>,

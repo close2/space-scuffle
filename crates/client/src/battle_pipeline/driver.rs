@@ -228,6 +228,10 @@ impl BattleSession {
 }
 
 /// Executes the only production client simulation tick path.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn advance_battle_ticks(
     time: Res<'_, Time>,
     mut lab: ResMut<'_, crate::LabState>,
@@ -283,6 +287,10 @@ pub fn advance_battle_ticks(
 }
 
 /// Delivers only events whose corresponding pose has already been published.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn publish_combat_events(
     lab: Res<'_, crate::LabState>,
     mut session: ResMut<'_, BattleSession>,

@@ -294,6 +294,10 @@ impl PlaytestEntry<'_> {
 }
 
 /// System returning to editing when `Escape` is pressed during playtest.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn playtest_exit_system(
     keyboard: Res<'_, ButtonInput<KeyCode>>,
     mut next_phase: ResMut<'_, NextState<EditorPhase>>,
@@ -304,6 +308,10 @@ pub fn playtest_exit_system(
 }
 
 /// System mirroring the latest published snapshot's tick and checksum into [`PlaytestState`].
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn sync_playtest_status_system(
     session: Res<'_, BattleSession>,
     mut playtest_state: ResMut<'_, PlaytestState>,
@@ -317,6 +325,10 @@ pub fn sync_playtest_status_system(
 }
 
 /// System drawing the playtest status bar, order feedback and any battle failure.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn playtest_hud_system(
     mut contexts: EguiContexts<'_, '_>,
     playtest_state: Res<'_, PlaytestState>,
@@ -355,6 +367,14 @@ pub fn playtest_hud_system(
 }
 
 /// System handling unit selection and move/attack orders during playtest.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 pub fn playtest_input_system(
     mouse_buttons: Res<'_, ButtonInput<MouseButton>>,
     keyboard: Res<'_, ButtonInput<KeyCode>>,
@@ -471,6 +491,10 @@ pub fn playtest_input_system(
 // reuses the existing vector.
 // Trade-off: Selection edits pay O(S) to keep order in exchange for O(N log S) frames with no
 // heap allocation.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn sync_playtest_selection_system(
     mut playtest_state: ResMut<'_, PlaytestState>,
     render_entities: Res<'_, RenderEntityMap>,
@@ -513,6 +537,10 @@ pub fn sync_playtest_selection_system(
 }
 
 /// System that cleans up playtest entities, bubbles, and visual effects upon exiting to editing.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn teardown_playtest_system(
     mut commands: Commands<'_, '_>,
     mut render_entities: ResMut<'_, RenderEntityMap>,

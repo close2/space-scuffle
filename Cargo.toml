@@ -34,6 +34,7 @@ expect_used = "warn"
 panic = "warn"
 todo = "deny"
 unimplemented = "deny"
+unreachable = "deny"
 # Style adjustments for domain terminology:
 module_name_repetitions = "allow"
 similar_names = "allow"

@@ -56,6 +56,10 @@ pub struct SmogGpuFrame {
 // What: Extraction already has exclusive main-world access, so `Queue::write_texture` copies the
 // slabs straight into wgpu's staging memory, with no allocation or asset event in this crate.
 // Trade-off: Extraction blocks the main world for that memcpy, about 1.66 MB per frame.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub(crate) fn upload_smog_frame_system(
     frame: Extract<'_, '_, Res<'_, SmogGpuFrame>>,
     grid: Extract<'_, '_, Res<'_, SmogGrid3d>>,
@@ -107,6 +111,10 @@ fn uniform_buffer_of(material: &PreparedMaterial<SmogVolumeMaterial>) -> Option<
 }
 
 /// Replaces the whole contents of one grid-sized `Rgba8Unorm` 3D texture.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+)]
 fn write_grid_texture(queue: &RenderQueue, texture: &Texture, bytes: &[u8]) {
     debug_assert_eq!(bytes.len(), TOTAL_VOXELS * BYTES_PER_VOXEL as usize);
     queue.write_texture(

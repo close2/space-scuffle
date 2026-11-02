@@ -19,9 +19,9 @@ fn failure(message: impl Into<String>) -> CaptureError {
 /// Raw positions are deterministic Q32.32 world X/Y; pixels are physical window X/Y.
 #[derive(Debug, Clone, Serialize)]
 pub(super) struct TransportProof {
-    /// Actual selected passenger EntityId, not an archetype index.
+    /// Actual selected passenger `EntityId`, not an archetype index.
     pub passenger: u32,
-    /// Actual selected carrier EntityId, retained after unloading.
+    /// Actual selected carrier `EntityId`, retained after unloading.
     pub carrier: u32,
     /// Successful typed receipt action; absent for the before checkpoint.
     pub receipt_action: Option<String>,
@@ -35,11 +35,11 @@ pub(super) struct TransportProof {
     pub passenger_raw: [i64; 2],
     /// Actual capture-time carrier position in raw Q32.32 world X/Y.
     pub carrier_raw: [i64; 2],
-    /// Sorted expected live noncargo EntityIds after exactly this transaction.
+    /// Sorted expected live noncargo `EntityIds` after exactly this transaction.
     pub expected_members: Vec<u32>,
-    /// Sorted EntityIds actually displayed by the exact-current timeline.
+    /// Sorted `EntityIds` actually displayed by the exact-current timeline.
     pub published_members: Vec<u32>,
-    /// Sorted EntityIds found in real LiveBattleBubble ECS instances.
+    /// Sorted `EntityIds` found in real `LiveBattleBubble` ECS instances.
     pub rendered_members: Vec<u32>,
     /// Selected owner supply: used, capped capacity, uncapped provided total.
     pub supply: [u32; 3],
@@ -328,6 +328,14 @@ impl TransportState {
     /// `region` is normalized window ROI, `resolution` physical pixels, and `pose`
     /// is world X/Z focus, world-unit camera distance and XYZ camera translation.
     /// Returns complete artifact evidence or a typed error without accepting an image.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "capture coordinates are bounded by the window size and frame budget"
+    )]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "a single ordered sequence that shares its local state"
+    )]
     pub(super) fn verify(
         &mut self,
         world: &mut World,

@@ -113,6 +113,14 @@ impl KeyDelivery {
 ///
 /// # Errors
 /// Returns typed startup, option validation or evidence-file failures.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "capture coordinates are bounded by the window size and frame budget"
+)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn run(options: ProbeOptions) -> Result<AppExit, ProbeError> {
     if options.width == 0
         || options.height == 0
@@ -213,6 +221,14 @@ pub enum ProbeError {
     Recording,
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 fn observe(
     mut evidence: ResMut<'_, Evidence>,
     mut keys: EventReader<'_, '_, KeyboardInput>,

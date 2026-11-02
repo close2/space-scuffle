@@ -28,7 +28,7 @@ use bevy::app::AppExit;
 use bevy::prelude::*;
 use sim_core::catalog::{UnitArchetype, UnitCatalog};
 use sim_types::enums::{AnimState, ShapeKind, WeaponVisualKind};
-use sim_types::ids::{EntityId, UnitTypeId};
+use sim_types::ids::{EntityId, PlayerId, UnitTypeId};
 use sim_types::snapshot::BubbleRenderInstance;
 use std::collections::BTreeMap;
 
@@ -39,7 +39,7 @@ pub struct LabPreviewBubble;
 /// Marker component for live battle simulation bubble entities.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LiveBattleBubble {
-    /// Authoritative simulation EntityId.
+    /// Authoritative simulation `EntityId`.
     pub entity_id: EntityId,
 }
 
@@ -117,11 +117,157 @@ impl ShowcaseLineup {
     }
 }
 
+/// World position and radius of lineup slot `index`, in world units.
+fn preview_placement(index: usize, is_dome: bool) -> (Vec3, f32) {
+    let x = match index {
+        0 => -3.6,
+        1 => -1.2,
+        2 => 1.2,
+        _ => 4.2,
+    };
+    let radius = if is_dome { 1.35 } else { 0.85 };
+    let y = if is_dome { 0.0 } else { radius };
+    (Vec3::new(x, y, 0.0), radius)
+}
+
+/// Builds the snapshot of one preview actor. Lab controls act on the selected actor only.
+///
+/// `elapsed_seconds` is presentation time, and `pos` is in Bevy world space.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "presentation values are bounded by frame, atlas and window sizes"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "explicit inputs keep this helper free of hidden state"
+)]
+fn preview_instance(
+    lab: &LabState,
+    archetype: &UnitArchetype,
+    index: usize,
+    owner: PlayerId,
+    pos: Vec3,
+    radius: f32,
+    is_selected: bool,
+    elapsed_seconds: f32,
+) -> BubbleRenderInstance {
+    let selected_or = |value: f32, otherwise: f32| if is_selected { value } else { otherwise };
+    let anim_state = if is_selected {
+        lab.anim_state
+    } else {
+        AnimState::Idle
+    };
+    BubbleRenderInstance {
+        entity_id: EntityId(100 + index as u32),
+        shape: archetype.shape,
+        silhouette: archetype.silhouette,
+        unit_type: archetype.unit_type_id,
+        owner,
+        world_pos: [pos.x, pos.z, 0.0],
+        ground_z: 0.0,
+        radius,
+        velocity: [selected_or(lab.speed, 0.0), 0.0],
+        heading_angle_rad: selected_or(lab.heading_angle_deg.to_radians(), 0.0),
+        aim_angle_rad: selected_or(lab.aim_angle_deg.to_radians(), 0.0),
+        is_attacking: is_selected && lab.anim_state == AnimState::Attack,
+        weapon_visual: WeaponVisualKind::Hitscan,
+        attack_target_pos: None,
+        anim_state,
+        anim_progress: (elapsed_seconds * 1.5).fract(),
+        hp_ratio: selected_or(lab.hp_ratio, 1.0),
+        shield_ratio: selected_or(lab.shield_ratio, 1.0),
+        shield_hit_flash: selected_or(lab.shield_hit_flash, 0.0),
+        hull_hit_angle_rad: selected_or(lab.hit_angle_deg.to_radians(), 0.0),
+        hull_hit_flash: selected_or(lab.hull_hit_flash, 0.0),
+        build_or_queue_progress: Some(selected_or(lab.build_progress, 1.0)),
+        selected: is_selected,
+        cloaked: is_selected && lab.cloaked,
+        speed_boosted: is_selected && lab.speed_boosted,
+    }
+}
+
+/// Packs the Lab's optical toggles and the actor's own state into shader feature flags.
+fn preview_feature_flags(lab: &LabState, instance: &BubbleRenderInstance, selected: bool) -> u32 {
+    [
+        (lab.opt_glare, FLAG_GLARE),
+        (lab.opt_fresnel, FLAG_FRESNEL),
+        (lab.opt_inner_warp, FLAG_INNER_WARP),
+        (lab.opt_cracks, FLAG_CRACKS),
+        (lab.opt_crt_glitch, FLAG_CRT_GLITCH),
+        (lab.opt_facing_chevron, FLAG_FACING_STRIPE),
+        (lab.opt_focal_lens, FLAG_ATTACK_APERTURE),
+        (selected, FLAG_SELECTED),
+        (instance.cloaked, FLAG_CLOAKED),
+        (instance.speed_boosted, FLAG_SPEED_BOOSTED),
+    ]
+    .into_iter()
+    .filter(|(enabled, _)| *enabled)
+    .fold(0, |flags, (_, flag)| flags | flag)
+}
+
+/// Builds the snapshot of one walking swarm bubble.
+///
+/// `world_xz` is in Bevy world units, and `speed_x` is in world units per second.
+fn swarm_instance(
+    archetype: &UnitArchetype,
+    entity_id: u32,
+    owner: PlayerId,
+    world_xz: Vec2,
+    speed_x: f32,
+) -> BubbleRenderInstance {
+    BubbleRenderInstance {
+        entity_id: EntityId(entity_id),
+        shape: ShapeKind::UnitSphere,
+        silhouette: archetype.silhouette,
+        unit_type: archetype.unit_type_id,
+        owner,
+        world_pos: [world_xz.x, world_xz.y, 0.5],
+        ground_z: 0.0,
+        radius: 0.45,
+        velocity: [speed_x, 0.0],
+        heading_angle_rad: if speed_x < 0.0 {
+            std::f32::consts::PI
+        } else {
+            0.0
+        },
+        aim_angle_rad: 0.0,
+        is_attacking: false,
+        weapon_visual: WeaponVisualKind::Hitscan,
+        attack_target_pos: None,
+        anim_state: AnimState::Walk,
+        anim_progress: 0.0,
+        hp_ratio: 1.0,
+        shield_ratio: 1.0,
+        shield_hit_flash: 0.0,
+        hull_hit_angle_rad: 0.0,
+        hull_hit_flash: 0.0,
+        build_or_queue_progress: None,
+        selected: false,
+        cloaked: false,
+        speed_boosted: false,
+    }
+}
+
 /// Synchronizes the 4-Hero Showcase Lineup in the Visual Lab with GUI state and selection.
 ///
 /// Queries `CatalogResource` dynamically for all archetypes flagged with `showcase_hero: true`
 /// sorted by `showcase_order`. Contains zero hardcoded creature names or unit type IDs.
-#[allow(clippy::type_complexity)]
+#[expect(
+    clippy::type_complexity,
+    reason = "a Bevy query declares its whole data access in one type"
+)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 pub fn sync_lab_preview_system(
     mut owners: crate::player_presentation::PresentationContext<'_>,
     mut commands: Commands<'_, '_>,
@@ -213,83 +359,23 @@ pub fn sync_lab_preview_system(
             let is_dome = matches!(arch.shape, ShapeKind::BuildingDome { .. });
             let is_selected = idx == lab_state.selected_hero_index;
 
-            let x = match idx {
-                0 => -3.6,
-                1 => -1.2,
-                2 => 1.2,
-                _ => 4.2,
-            };
-            let radius = if is_dome { 1.35 } else { 0.85 };
-            let y = if is_dome { 0.0 } else { radius };
-            let pos = Vec3::new(x, y, 0.0);
+            let (pos, radius) = preview_placement(idx, is_dome);
             let owner = owners.palette.showcase(idx);
 
             let texture = registry.get_texture(arch.unit_type_id);
             let meta = registry.get_meta(arch.unit_type_id);
 
-            let instance = BubbleRenderInstance {
-                entity_id: EntityId(100 + idx as u32),
-                shape: arch.shape,
-                silhouette: arch.silhouette,
-                unit_type: arch.unit_type_id,
+            let elapsed = time.elapsed_secs();
+            let instance = preview_instance(
+                &lab_state,
+                arch,
+                idx,
                 owner,
-                world_pos: [pos.x, pos.z, 0.0],
-                ground_z: 0.0,
+                pos,
                 radius,
-                velocity: if is_selected {
-                    [lab_state.speed, 0.0]
-                } else {
-                    [0.0, 0.0]
-                },
-                heading_angle_rad: if is_selected {
-                    lab_state.heading_angle_deg.to_radians()
-                } else {
-                    0.0
-                },
-                aim_angle_rad: if is_selected {
-                    lab_state.aim_angle_deg.to_radians()
-                } else {
-                    0.0
-                },
-                is_attacking: is_selected && lab_state.anim_state == AnimState::Attack,
-                weapon_visual: WeaponVisualKind::Hitscan,
-                attack_target_pos: None,
-                anim_state: if is_selected {
-                    lab_state.anim_state
-                } else {
-                    AnimState::Idle
-                },
-                anim_progress: (time.elapsed_secs() * 1.5).fract(),
-                hp_ratio: if is_selected { lab_state.hp_ratio } else { 1.0 },
-                shield_ratio: if is_selected {
-                    lab_state.shield_ratio
-                } else {
-                    1.0
-                },
-                shield_hit_flash: if is_selected {
-                    lab_state.shield_hit_flash
-                } else {
-                    0.0
-                },
-                hull_hit_angle_rad: if is_selected {
-                    lab_state.hit_angle_deg.to_radians()
-                } else {
-                    0.0
-                },
-                hull_hit_flash: if is_selected {
-                    lab_state.hull_hit_flash
-                } else {
-                    0.0
-                },
-                build_or_queue_progress: Some(if is_selected {
-                    lab_state.build_progress
-                } else {
-                    1.0
-                }),
-                selected: is_selected,
-                cloaked: is_selected && lab_state.cloaked,
-                speed_boosted: is_selected && lab_state.speed_boosted,
-            };
+                is_selected,
+                elapsed,
+            );
 
             let style = match owners.palette.preview_style(instance.owner) {
                 Ok(style) => style,
@@ -299,38 +385,7 @@ pub fn sync_lab_preview_system(
                 }
             };
             let mut uniform = BubbleUniformGpu::from_instance(&instance, meta, style);
-            let mut feature_flags = 0u32;
-            if lab_state.opt_glare {
-                feature_flags |= FLAG_GLARE;
-            }
-            if lab_state.opt_fresnel {
-                feature_flags |= FLAG_FRESNEL;
-            }
-            if lab_state.opt_inner_warp {
-                feature_flags |= FLAG_INNER_WARP;
-            }
-            if lab_state.opt_cracks {
-                feature_flags |= FLAG_CRACKS;
-            }
-            if lab_state.opt_crt_glitch {
-                feature_flags |= FLAG_CRT_GLITCH;
-            }
-            if lab_state.opt_facing_chevron {
-                feature_flags |= FLAG_FACING_STRIPE;
-            }
-            if lab_state.opt_focal_lens {
-                feature_flags |= FLAG_ATTACK_APERTURE;
-            }
-            if is_selected {
-                feature_flags |= FLAG_SELECTED;
-            }
-            if instance.cloaked {
-                feature_flags |= FLAG_CLOAKED;
-            }
-            if instance.speed_boosted {
-                feature_flags |= FLAG_SPEED_BOOSTED;
-            }
-            uniform.feature_flags = feature_flags;
+            uniform.feature_flags = preview_feature_flags(&lab_state, &instance, is_selected);
 
             let mat = bubble_materials.add(BubbleDomeMaterial {
                 uniform,
@@ -409,15 +464,7 @@ pub fn sync_lab_preview_system(
         };
 
         let is_dome = matches!(arch.shape, ShapeKind::BuildingDome { .. });
-        let x = match hero_idx.0 {
-            0 => -3.6,
-            1 => -1.2,
-            2 => 1.2,
-            _ => 4.2,
-        };
-        let radius = if is_dome { 1.35 } else { 0.85 };
-        let y = if is_dome { 0.0 } else { radius };
-        let pos = Vec3::new(x, y, 0.0);
+        let (pos, radius) = preview_placement(hero_idx.0, is_dome);
         let owner = owners.palette.showcase(hero_idx.0);
 
         let (texture, meta) = if is_selected && lab_state.use_concept_video {
@@ -432,69 +479,16 @@ pub fn sync_lab_preview_system(
             )
         };
 
-        let instance = BubbleRenderInstance {
-            entity_id: EntityId(100 + hero_idx.0 as u32),
-            shape: arch.shape,
-            silhouette: arch.silhouette,
-            unit_type: arch.unit_type_id,
+        let instance = preview_instance(
+            &lab_state,
+            arch,
+            hero_idx.0,
             owner,
-            world_pos: [pos.x, pos.z, 0.0],
-            ground_z: 0.0,
+            pos,
             radius,
-            velocity: if is_selected {
-                [lab_state.speed, 0.0]
-            } else {
-                [0.0, 0.0]
-            },
-            heading_angle_rad: if is_selected {
-                lab_state.heading_angle_deg.to_radians()
-            } else {
-                0.0
-            },
-            aim_angle_rad: if is_selected {
-                lab_state.aim_angle_deg.to_radians()
-            } else {
-                0.0
-            },
-            is_attacking: is_selected && lab_state.anim_state == AnimState::Attack,
-            weapon_visual: WeaponVisualKind::Hitscan,
-            attack_target_pos: None,
-            anim_state: if is_selected {
-                lab_state.anim_state
-            } else {
-                AnimState::Idle
-            },
-            anim_progress: (time.elapsed_secs() * 1.5).fract(),
-            hp_ratio: if is_selected { lab_state.hp_ratio } else { 1.0 },
-            shield_ratio: if is_selected {
-                lab_state.shield_ratio
-            } else {
-                1.0
-            },
-            shield_hit_flash: if is_selected {
-                lab_state.shield_hit_flash
-            } else {
-                0.0
-            },
-            hull_hit_angle_rad: if is_selected {
-                lab_state.hit_angle_deg.to_radians()
-            } else {
-                0.0
-            },
-            hull_hit_flash: if is_selected {
-                lab_state.hull_hit_flash
-            } else {
-                0.0
-            },
-            build_or_queue_progress: Some(if is_selected {
-                lab_state.build_progress
-            } else {
-                1.0
-            }),
-            selected: is_selected,
-            cloaked: is_selected && lab_state.cloaked,
-            speed_boosted: is_selected && lab_state.speed_boosted,
-        };
+            is_selected,
+            time.elapsed_secs(),
+        );
 
         let style = match owners.palette.preview_style(instance.owner) {
             Ok(style) => style,
@@ -504,38 +498,7 @@ pub fn sync_lab_preview_system(
             }
         };
         let mut uniform = BubbleUniformGpu::from_instance(&instance, meta, style);
-        let mut feature_flags = 0u32;
-        if lab_state.opt_glare {
-            feature_flags |= FLAG_GLARE;
-        }
-        if lab_state.opt_fresnel {
-            feature_flags |= FLAG_FRESNEL;
-        }
-        if lab_state.opt_inner_warp {
-            feature_flags |= FLAG_INNER_WARP;
-        }
-        if lab_state.opt_cracks {
-            feature_flags |= FLAG_CRACKS;
-        }
-        if lab_state.opt_crt_glitch {
-            feature_flags |= FLAG_CRT_GLITCH;
-        }
-        if lab_state.opt_facing_chevron {
-            feature_flags |= FLAG_FACING_STRIPE;
-        }
-        if lab_state.opt_focal_lens {
-            feature_flags |= FLAG_ATTACK_APERTURE;
-        }
-        if is_selected {
-            feature_flags |= FLAG_SELECTED;
-        }
-        if instance.cloaked {
-            feature_flags |= FLAG_CLOAKED;
-        }
-        if instance.speed_boosted {
-            feature_flags |= FLAG_SPEED_BOOSTED;
-        }
-        uniform.feature_flags = feature_flags;
+        uniform.feature_flags = preview_feature_flags(&lab_state, &instance, is_selected);
 
         sync_bubble_material(&mut bubble_materials, &mat_handle.0, &uniform, texture);
 
@@ -566,6 +529,14 @@ type LiveBattleQuery<'w, 's> = Query<
 
 /// Applies the retained displayed snapshot; never executes simulation or consumes output.
 /// Spatial transforms and material instances use exactly the same published pose.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 pub fn sync_live_battle_system(
     mut owners: crate::player_presentation::PresentationContext<'_>,
     mut commands: Commands<'_, '_>,
@@ -709,6 +680,10 @@ const SWARM_SPACING: f32 = 1.2;
 pub const SWARM_MAX_Z: f32 = SWARM_MIN_Z + 9.0 * SWARM_SPACING;
 
 /// World `(x, z)` spawn position of swarm bubble `index`, where `index` is below 200.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "presentation values are bounded by frame, atlas and window sizes"
+)]
 fn swarm_spawn_position(index: u32) -> Vec2 {
     let row = (index % 10) as f32;
     let column = ((index % 100) / 10) as f32;
@@ -721,6 +696,24 @@ fn swarm_spawn_position(index: u32) -> Vec2 {
 }
 
 /// Spawns and animates 200 colliding bubbles for the swarm stress test.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "presentation values are bounded by frame, atlas and window sizes"
+)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 pub fn sync_swarm_stress_system(
     mut owners: crate::player_presentation::PresentationContext<'_>,
     mut commands: Commands<'_, '_>,
@@ -772,11 +765,8 @@ pub fn sync_swarm_stress_system(
     lab_state.swarm_bubble_count = count;
 
     if count == 0 {
-        let swarm_unit_type = mobile_arch.unit_type_id;
-        let swarm_silhouette = mobile_arch.silhouette;
-
-        let meta = registry.get_meta(swarm_unit_type);
-        let texture = registry.get_texture(swarm_unit_type);
+        let meta = registry.get_meta(mobile_arch.unit_type_id);
+        let texture = registry.get_texture(mobile_arch.unit_type_id);
 
         if let Some(mut cam) = camera_query.iter_mut().next() {
             cam.target = Vec2::new(
@@ -807,33 +797,8 @@ pub fn sync_swarm_stress_system(
             }
         };
 
-        let primary_dummy_instance = BubbleRenderInstance {
-            entity_id: EntityId(1000),
-            shape: ShapeKind::UnitSphere,
-            silhouette: swarm_silhouette,
-            unit_type: swarm_unit_type,
-            owner: primary_owner,
-            world_pos: [8.0, 10.0, 0.5],
-            ground_z: 0.0,
-            radius: 0.45,
-            velocity: [1.5, 0.0],
-            heading_angle_rad: 0.0,
-            aim_angle_rad: 0.0,
-            is_attacking: false,
-            weapon_visual: WeaponVisualKind::Hitscan,
-            attack_target_pos: None,
-            anim_state: AnimState::Walk,
-            anim_progress: 0.0,
-            hp_ratio: 1.0,
-            shield_ratio: 1.0,
-            shield_hit_flash: 0.0,
-            hull_hit_angle_rad: 0.0,
-            hull_hit_flash: 0.0,
-            build_or_queue_progress: None,
-            selected: false,
-            cloaked: false,
-            speed_boosted: false,
-        };
+        let primary_dummy_instance =
+            swarm_instance(mobile_arch, 1000, primary_owner, Vec2::new(8.0, 10.0), 1.5);
         let primary_uniform =
             BubbleUniformGpu::from_instance(&primary_dummy_instance, meta, primary_style);
         let primary_mat = bubble_materials.add(BubbleDomeMaterial {
@@ -842,33 +807,13 @@ pub fn sync_swarm_stress_system(
             alpha_mode: AlphaMode::Blend,
         });
 
-        let secondary_dummy_instance = BubbleRenderInstance {
-            entity_id: EntityId(1100),
-            shape: ShapeKind::UnitSphere,
-            silhouette: swarm_silhouette,
-            unit_type: swarm_unit_type,
-            owner: secondary_owner,
-            world_pos: [24.0, 10.0, 0.5],
-            ground_z: 0.0,
-            radius: 0.45,
-            velocity: [-1.5, 0.0],
-            heading_angle_rad: std::f32::consts::PI,
-            aim_angle_rad: 0.0,
-            is_attacking: false,
-            weapon_visual: WeaponVisualKind::Hitscan,
-            attack_target_pos: None,
-            anim_state: AnimState::Walk,
-            anim_progress: 0.0,
-            hp_ratio: 1.0,
-            shield_ratio: 1.0,
-            shield_hit_flash: 0.0,
-            hull_hit_angle_rad: 0.0,
-            hull_hit_flash: 0.0,
-            build_or_queue_progress: None,
-            selected: false,
-            cloaked: false,
-            speed_boosted: false,
-        };
+        let secondary_dummy_instance = swarm_instance(
+            mobile_arch,
+            1100,
+            secondary_owner,
+            Vec2::new(24.0, 10.0),
+            -1.5,
+        );
         let secondary_uniform =
             BubbleUniformGpu::from_instance(&secondary_dummy_instance, meta, secondary_style);
         let secondary_mat = bubble_materials.add(BubbleDomeMaterial {
@@ -886,37 +831,8 @@ pub fn sync_swarm_stress_system(
             };
             let Vec2 { x, y: z } = swarm_spawn_position(i);
 
-            let instance = BubbleRenderInstance {
-                entity_id: EntityId(1000 + i),
-                shape: ShapeKind::UnitSphere,
-                silhouette: swarm_silhouette,
-                unit_type: swarm_unit_type,
-                owner,
-                world_pos: [x, z, 0.5],
-                ground_z: 0.0,
-                radius: 0.45,
-                velocity: [if primary_group { 1.5 } else { -1.5 }, 0.0],
-                heading_angle_rad: if primary_group {
-                    0.0
-                } else {
-                    std::f32::consts::PI
-                },
-                aim_angle_rad: 0.0,
-                is_attacking: false,
-                weapon_visual: WeaponVisualKind::Hitscan,
-                attack_target_pos: None,
-                anim_state: AnimState::Walk,
-                anim_progress: 0.0,
-                hp_ratio: 1.0,
-                shield_ratio: 1.0,
-                shield_hit_flash: 0.0,
-                hull_hit_angle_rad: 0.0,
-                hull_hit_flash: 0.0,
-                build_or_queue_progress: None,
-                selected: false,
-                cloaked: false,
-                speed_boosted: false,
-            };
+            let speed_x = if primary_group { 1.5 } else { -1.5 };
+            let instance = swarm_instance(mobile_arch, 1000 + i, owner, Vec2::new(x, z), speed_x);
 
             let mat = if primary_group {
                 primary_mat.clone()

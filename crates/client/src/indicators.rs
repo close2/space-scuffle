@@ -318,7 +318,18 @@ pub fn attach_bubble_indicators(
 }
 
 /// Updates visibility, uniform parameters, and scales of selection reticle and overhead bars.
-#[allow(clippy::type_complexity)]
+#[expect(
+    clippy::type_complexity,
+    reason = "a Bevy query declares its whole data access in one type"
+)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 pub fn update_indicators_system(
     mut owners: crate::player_presentation::PresentationContext<'_>,
     mut exit: EventWriter<'_, AppExit>,

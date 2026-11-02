@@ -16,7 +16,10 @@ use client::{run_app_with_options, ClientMode};
 #[command(name = "client")]
 #[command(about = "Space Scuffle Bevy 3D Client & Bubble Visual Lab")]
 #[command(version)]
-#[allow(clippy::struct_excessive_bools)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is an independent user-facing toggle"
+)]
 pub struct CliArgs {
     /// Boot into the Interactive Bubble & Dome Visual Lab inspector (default).
     #[arg(long, default_value_t = false)]

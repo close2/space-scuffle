@@ -4,9 +4,6 @@
 //! or error reason. Vulkan validation and the external process watchdog determine
 //! whether native resources survive until all compilation and submission work ends.
 
-// Bevy system parameters are consumed by the scheduler, not ordinary callers.
-#![allow(clippy::needless_pass_by_value)]
-
 use bevy::prelude::*;
 use bevy::render::render_resource::{CachedPipelineState, PipelineCache};
 use bevy::render::{Render, RenderApp, RenderSet};
@@ -26,6 +23,10 @@ struct Options {
 #[derive(Resource, Clone, Default)]
 struct CompileObserved(Arc<AtomicBool>);
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn inspect_compilation(cache: Res<'_, PipelineCache>, observed: Res<'_, CompileObserved>) {
     if cache
         .pipelines()
@@ -35,6 +36,10 @@ fn inspect_compilation(cache: Res<'_, PipelineCache>, observed: Res<'_, CompileO
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn request_early_exit(
     observed: Res<'_, CompileObserved>,
     options: Res<'_, Options>,

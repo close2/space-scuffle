@@ -1,6 +1,6 @@
 //! Connects the existing egui renderer to the camera's actual screenshot attachment.
 //!
-//! Bevy 0.15 redirects camera output for screenshots, while bevy_egui 0.33 reads
+//! Bevy 0.15 redirects camera output for screenshots, while `bevy_egui` 0.33 reads
 //! the extracted window view directly. The capture-only adapter shares that output
 //! view; the acquired native surface texture and production UI pipeline stay intact.
 //! Window extraction drops this borrowed view at the start of the following frame.
@@ -10,6 +10,10 @@ use bevy::prelude::*;
 use bevy::render::camera::{ExtractedCamera, NormalizedRenderTarget};
 use bevy::render::view::{ExtractedWindows, ViewTarget};
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub(super) fn align_ui_attachment(
     cameras: Query<'_, '_, (&ExtractedCamera, &ViewTarget)>,
     mut windows: ResMut<'_, ExtractedWindows>,

@@ -1,7 +1,7 @@
 //! 3D Eulerian Navier-Stokes fluid grid, bubble emission, wake displacement, and 3D texture packing.
 //!
 //! # Architectural Responsibilities
-//! This module owns the $96 \times 12 \times 72 = 82,944$ voxel Eulerian fluid solver for the 3D smog field.
+//! This module owns the `$96 \times 12 \times 72 = 82,944$` voxel Eulerian fluid solver for the 3D smog field.
 //! Every mobile bubble acts simultaneously as:
 //! 1. A **3D Smog Generator:** injecting density and chromatic tint into its trailing wake.
 //! 2. A **3D Smog Influencer:** displacing pre-existing smog out of its core into a bow wave, injecting
@@ -9,8 +9,8 @@
 //!
 //! # Invariants Maintained
 //! - **Zero per-frame heap allocations:** all fluid slabs and GPU upload byte buffers are pre-allocated once.
-//! - **Strict boundary containment:** velocity wall normal components vanish on all 6 faces ($\mathbf{u} \cdot \hat{\mathbf{n}} = 0$).
-//! - **Non-negative density:** $\rho(\mathbf{x}) \ge 0$ across all voxels at all times.
+//! - **Strict boundary containment:** velocity wall normal components vanish on all 6 faces (`$\mathbf{u} \cdot \hat{\mathbf{n}} = 0$`).
+//! - **Non-negative density:** `$\rho(\mathbf{x}) \ge 0$` across all voxels at all times.
 //! - **Finite arithmetic:** all fields remain finite without NaNs or infinities.
 
 use super::{SmogConfig, SmogError};
@@ -22,12 +22,12 @@ pub const GRID_NX: usize = 96;
 pub const GRID_NY: usize = 12;
 /// Number of grid voxels along the world Z axis.
 pub const GRID_NZ: usize = 72;
-/// Total number of voxels in the 3D fluid volume ($96 \times 12 \times 72 = 82,944$).
+/// Total number of voxels in the 3D fluid volume (`$96 \times 12 \times 72 = 82,944$`).
 pub const TOTAL_VOXELS: usize = GRID_NX * GRID_NY * GRID_NZ;
 
 /// Peak clamp density for numerical stability and saturation control.
 pub const SMOG_DENSITY_MAX: f32 = 4.0;
-/// Velocity normalization ceiling for 8-bit texture packing ($\pm 5.0$ world units/s).
+/// Velocity normalization ceiling for 8-bit texture packing (`$\pm 5.0$` world units/s).
 pub const SMOG_PACK_VELOCITY_MAX: f32 = 5.0;
 /// External bubble state presented to the 3D fluid solver for emission and obstacle influence.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -40,9 +40,9 @@ pub struct BubbleSmogSource {
     pub radius: f32,
     /// Linear RGB chromatic tint matching the bubble's player/team styling.
     pub team_color: Vec3,
-    /// Emission strength multiplier ($\ge 0.0$).
+    /// Emission strength multiplier (`$\ge 0.0$`).
     pub emission_strength: f32,
-    /// Physical wake displacement and momentum drag strength ($\ge 0.0$).
+    /// Physical wake displacement and momentum drag strength (`$\ge 0.0$`).
     pub influence_strength: f32,
 }
 
@@ -53,9 +53,9 @@ pub struct SmogStepMetrics {
     pub total_density: f32,
     /// Peak density found in any individual voxel.
     pub peak_density: f32,
-    /// Maximum fluid speed $\|\mathbf{u}\|$ across the grid.
+    /// Maximum fluid speed `$\|\mathbf{u}\|$` across the grid.
     pub max_speed: f32,
-    /// Maximum fluid vorticity magnitude $\|\nabla \times \mathbf{u}\|$ across the grid.
+    /// Maximum fluid vorticity magnitude `$\|\nabla \times \mathbf{u}\|$` across the grid.
     pub max_vorticity: f32,
     /// Number of active bubble sources that influenced the grid this step.
     pub active_sources: usize,
@@ -117,6 +117,10 @@ impl SmogGrid3d {
     ///
     /// # Errors
     /// Returns [`SmogError::InvalidBounds`] if `bounds_min >= bounds_max` or bounds are non-finite.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+    )]
     pub fn new(bounds_min: Vec3, bounds_max: Vec3) -> Result<Self, SmogError> {
         if !bounds_min.is_finite()
             || !bounds_max.is_finite()
@@ -185,7 +189,7 @@ impl SmogGrid3d {
         })
     }
 
-    /// Converts a continuous world-space coordinate into floating-point grid index coordinates $[0, N-1]^3$.
+    /// Converts a continuous world-space coordinate into floating-point grid index coordinates `$[0, N-1]^3$`.
     #[inline]
     #[must_use]
     pub fn world_to_grid(&self, world_pos: Vec3) -> Vec3 {
@@ -199,6 +203,10 @@ impl SmogGrid3d {
     /// Converts discrete voxel indices into the world-space center coordinate of the voxel.
     #[inline]
     #[must_use]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+    )]
     pub fn grid_to_world(&self, ix: usize, iy: usize, iz: usize) -> Vec3 {
         Vec3::new(
             self.bounds_min.x + (ix as f32 + 0.5) * self.cell_size.x,
@@ -224,6 +232,10 @@ impl SmogGrid3d {
     /// Dynamically updates the bounding box of the fluid simulation.
     ///
     /// If bounds shift by more than 0.5m, the fluid fields are cleared to avoid stretching artifacts.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+    )]
     pub fn set_bounds(&mut self, bounds_min: Vec3, bounds_max: Vec3) {
         if !bounds_min.is_finite()
             || !bounds_max.is_finite()
@@ -257,10 +269,17 @@ impl SmogGrid3d {
     /// Quantizes dynamic bounding box updates to integer voxel cell multiples and preserves
     /// existing smoke fields by shifting slabs in-place instead of clearing or dragging.
     ///
-    /// When the camera or active region shifts by $(\Delta i_x, \Delta i_y, \Delta i_z)$ voxels,
+    /// When the camera or active region shifts by `$(\Delta i_x, \Delta i_y, \Delta i_z)$` voxels,
     /// the valid overlapping region of the simulation fields is shifted inside the buffers without
     /// allocating any memory or clearing the grid. Newly exposed outer boundary voxels are filled
     /// with zero density and velocity.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss,
+        reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+    )]
     pub fn set_bounds_quantized(&mut self, new_min: Vec3, new_max: Vec3) {
         if !new_min.is_finite()
             || !new_max.is_finite()
@@ -375,7 +394,7 @@ impl SmogGrid3d {
         )
     }
 
-    /// Computes the magnitude of fluid vorticity $\|\nabla \times \mathbf{u}\|$ at arbitrary world coordinates.
+    /// Computes the magnitude of fluid vorticity `$\|\nabla \times \mathbf{u}\|$` at arbitrary world coordinates.
     #[must_use]
     pub fn sample_vorticity_magnitude(&self, world_pos: Vec3) -> f32 {
         let gp = self.world_to_grid(world_pos);
@@ -393,6 +412,12 @@ impl SmogGrid3d {
     }
 
     #[inline]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss,
+        reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+    )]
     fn trilinear_indices_and_weights(gp: Vec3) -> ([usize; 8], [f32; 8]) {
         let gx = gp.x.clamp(0.0, (GRID_NX - 1) as f32);
         let gy = gp.y.clamp(0.0, (GRID_NY - 1) as f32);
@@ -474,6 +499,16 @@ impl SmogGrid3d {
     ///
     /// # Errors
     /// Returns [`SmogError::InvalidDeltaTime`] if `dt < 0.0` or non-finite.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
+        clippy::cast_sign_loss,
+        reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+    )]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "a single ordered sequence that shares its local state"
+    )]
     pub fn step(
         &mut self,
         sources: &[BubbleSmogSource],
@@ -1033,6 +1068,11 @@ impl SmogGrid3d {
         self.tint_b.copy_from_slice(&self.tint_b_scratch);
     }
 
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+    )]
     fn pack_textures_and_compute_metrics(&mut self, active_sources: usize) -> SmogStepMetrics {
         let mut total_density = 0.0_f32;
         let mut peak_density = 0.0_f32;

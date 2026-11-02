@@ -99,6 +99,10 @@ fn hide_brush_overlay(terrain_params: &mut ResMut<'_, TerrainParamsState>) {
 }
 
 /// Shows the brush outline over `cell`, touching the parameters only if something moved.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
 fn show_brush_overlay(
     terrain_params: &mut ResMut<'_, TerrainParamsState>,
     cell: (u32, u32),
@@ -128,6 +132,10 @@ fn show_brush_overlay(
 // changed on every frame and made every marker rebuild and the terrain material re-upload per frame.
 // What: These helpers borrow the `ResMut` wrappers and dereference mutably only on a real edit.
 // Trade-off: Slightly noisier signatures in exchange for idle frames that do no rebuild work.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 fn handle_viewport_tool_interaction(
     mouse_buttons: &ButtonInput<MouseButton>,
     windows: &Query<'_, '_, &Window>,

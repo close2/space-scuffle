@@ -57,6 +57,10 @@ impl PipelineEvidence {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub(super) fn inspect(cache: Res<'_, PipelineCache>, evidence: Res<'_, PipelineEvidence>) {
     let mut counts = [0; 3];
     let mut pending = cache.waiting_pipelines().next().is_some();

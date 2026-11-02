@@ -131,6 +131,10 @@ fn actual_loaded_scene_validates_temporary_and_synchronized_proxy_lifecycles(
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 fn verify_loaded_proxy_frames(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     use super::model::AssociationKind;
     use bevy::render::{

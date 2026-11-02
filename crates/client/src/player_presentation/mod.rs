@@ -22,6 +22,11 @@ pub struct PlayerStyle {
 }
 
 impl PlayerStyle {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "presentation values are bounded by frame, atlas and window sizes"
+    )]
     fn prepare(rgb: (f32, f32, f32)) -> Result<Self, PresentationError> {
         let (r, g, b) = rgb;
         if [r, g, b]

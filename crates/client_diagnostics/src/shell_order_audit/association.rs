@@ -14,7 +14,7 @@ use bevy::render::sync_world::{MainEntity, TemporaryRenderEntity};
 use bevy::render::view::RenderVisibleEntities;
 use std::collections::BTreeMap;
 
-/// Exact public tuple corresponding to Bevy 0.15's private DrawMaterial alias.
+/// Exact public tuple corresponding to Bevy 0.15's private `DrawMaterial` alias.
 /// Looking up this type inspects existing registration; it never adds a draw.
 type MaterialDraw<M> = (
     SetItemPipeline,

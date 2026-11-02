@@ -31,7 +31,7 @@ fn client_source_holds_no_audit_hooks() -> std::io::Result<()> {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../client/src");
     let mut files = Vec::new();
     rust_files(&source, &mut files)?;
-    assert!(!files.is_empty());
+    assert!(files.len() > 10, "client source tree not found");
     for file in files {
         let text = std::fs::read_to_string(&file)?;
         for forbidden in [

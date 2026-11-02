@@ -129,6 +129,14 @@ fn read_document(path: &Path) -> Result<EditorDocument, DocumentLoadError> {
 /// System replacing the active document when a [`LoadDocumentRequest`] arrives.
 ///
 /// Only the latest request of a frame is honored; the UI cannot issue two in one frame.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 pub fn apply_document_load_system(
     mut requests: EventReader<'_, '_, LoadDocumentRequest>,
     mut spawner: EditorTerrainSpawner<'_, '_>,

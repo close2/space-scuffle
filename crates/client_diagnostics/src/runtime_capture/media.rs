@@ -27,6 +27,10 @@ pub(super) struct ValidatedMedia {
 }
 
 impl ValidatedMedia {
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "Bevy passes system parameters by value"
+    )]
     pub(super) fn validate(
         &mut self,
         root: &Path,

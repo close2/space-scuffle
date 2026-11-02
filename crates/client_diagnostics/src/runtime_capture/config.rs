@@ -272,6 +272,10 @@ impl CaptureScript {
     ///
     /// # Errors
     /// Rejects any ambiguous, unsupported or unbounded capture request.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "a single ordered sequence that shares its local state"
+    )]
     pub fn validate(&self) -> Result<(), CaptureError> {
         let invalid = |reason: &str| CaptureError::InvalidScript(reason.into());
         if let Some(audit) = &self.shell_audit {

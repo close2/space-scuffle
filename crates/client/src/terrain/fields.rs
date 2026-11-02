@@ -1,7 +1,7 @@
 //! Splat and overlay field texture generators and partial region updaters.
 //!
 //! # Architectural Responsibilities
-//! - **Splat Texture:** Binds cell surface types (Grass, MetalPlate, Dirt) into an RGBA8
+//! - **Splat Texture:** Binds cell surface types (Grass, `MetalPlate`, Dirt) into an RGBA8
 //!   texture used by the terrain WGSL shader for continuous height-blended ground texturing.
 //!   Abyss cells sample their nearest non-abyss neighbour to eliminate hard dark fringes at cliff rims.
 //! - **Overlay Texture:** Encodes tactical cell flags (ground pathability, buildability),
@@ -18,7 +18,7 @@ use sim_map::validation::{CellRect, MapValidationReport};
 use sim_map::vision::PlayerVisionMap;
 use sim_types::VisibilityState;
 
-/// Creates a new WxH [`Image`] initialized with splat weights from the simulation map.
+/// Creates a new `WxH` [`Image`] initialized with splat weights from the simulation map.
 #[must_use]
 pub fn create_splat_image(map: &GameMap) -> Image {
     let width = map.width();
@@ -49,7 +49,7 @@ pub fn create_splat_image(map: &GameMap) -> Image {
     image
 }
 
-/// Creates a new WxH [`Image`] initialized with tactical overlay channels from the simulation map.
+/// Creates a new `WxH` [`Image`] initialized with tactical overlay channels from the simulation map.
 #[must_use]
 pub fn create_overlay_image(map: &GameMap) -> Image {
     let width = map.width();

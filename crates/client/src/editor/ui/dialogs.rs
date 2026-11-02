@@ -261,6 +261,10 @@ pub fn apply_unsaved_choice(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 fn render_unsaved_changes_modal(
     ctx: &egui::Context,
     modal: &mut UnsavedChangesModalState,

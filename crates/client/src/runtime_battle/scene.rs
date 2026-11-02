@@ -77,6 +77,10 @@ pub struct SceneCameraState {
 }
 
 /// Restores each tab's camera without allowing a battle map to displace hero framing.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn sync_scene_camera(
     lab: Res<'_, LabState>,
     mut saved: Local<'_, SceneCameraState>,
@@ -106,6 +110,18 @@ pub fn sync_scene_camera(
 }
 
 /// Installs or resets the selected battle transactionally using the same loaded definition.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 pub fn manage_battle_scene(
     mut commands: Commands<'_, '_>,
     definition: Option<Res<'_, BattleDefinition>>,
@@ -347,6 +363,10 @@ fn spawn_map_object(
 }
 
 /// Applies the session's published map state and updates billboards.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn update_map_presentation(
     mut presentation: Option<ResMut<'_, MapPresentation>>,
     session: Res<'_, crate::battle_pipeline::session::BattleSession>,

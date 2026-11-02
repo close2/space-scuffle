@@ -10,6 +10,10 @@ use bevy::render::view::ViewVisibility;
 use client::{BubbleDomeMaterial, BubbleInstance, LabPreviewBubble, LiveBattleBubble, SwarmBubble};
 
 /// Captures actual visible Swarm and background CPU sources, or None outside that scene.
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 pub(super) fn capture(
     world: &mut World,
     assets: &mut super::assets::Inventory,

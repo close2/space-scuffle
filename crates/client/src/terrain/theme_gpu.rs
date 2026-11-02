@@ -2,7 +2,7 @@
 //! and void backdrop setup.
 //!
 //! # Architectural Responsibilities
-//! - **Texture Arrays with CPU Mips:** Loads baked layer PNGs (Grass, MetalPlate, Dirt, Cliff)
+//! - **Texture Arrays with CPU Mips:** Loads baked layer PNGs (Grass, `MetalPlate`, Dirt, Cliff)
 //!   and compiles them into 4-layer 2D texture arrays with full CPU-generated mip chains.
 //! - **Color-Space Correct Mip Filtering:** Albedo maps average in linear RGB and re-encode to sRGB;
 //!   normal maps decode to vectors, average, renormalize, and re-encode; ORM maps average linearly.
@@ -38,6 +38,11 @@ pub use asset_baker::{linear_to_srgb, srgb_to_linear};
 
 /// Downsamples an RGBA8 albedo image by 2x using linear color averaging.
 #[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
 pub fn downsample_albedo_linear(src: &RgbaImage) -> RgbaImage {
     let (sw, sh) = src.dimensions();
     let dw = (sw / 2).max(1);
@@ -91,6 +96,11 @@ pub fn downsample_albedo_linear(src: &RgbaImage) -> RgbaImage {
 
 /// Downsamples an RGBA8 normal map by 2x with vector decoding, averaging, and renormalization.
 #[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
 pub fn downsample_normal_renormalized(src: &RgbaImage) -> RgbaImage {
     let (sw, sh) = src.dimensions();
     let dw = (sw / 2).max(1);
@@ -137,6 +147,10 @@ pub fn downsample_normal_renormalized(src: &RgbaImage) -> RgbaImage {
 
 /// Downsamples an RGBA8 ORM map by 2x using linear channel averaging.
 #[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
 pub fn downsample_orm_linear(src: &RgbaImage) -> RgbaImage {
     let (sw, sh) = src.dimensions();
     let dw = (sw / 2).max(1);
@@ -201,6 +215,16 @@ pub fn generate_mip_chain(
 /// # Errors
 /// Returns [`TerrainThemeError::MissingSource`] if any required texture file is missing,
 /// or [`TerrainThemeError::Image`] on decoding failure.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 pub fn load_theme_texture_arrays(
     theme: &TerrainTheme,
     assets_root: &Path,

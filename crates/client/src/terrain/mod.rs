@@ -170,6 +170,14 @@ impl Plugin for TerrainPlugin {
 // What: We limit chunk rebuilds to at most `MAX_CHUNK_REBUILDS_PER_FRAME` (8) per frame,
 // reusing `MesherScratch` to eliminate dynamic heap allocations.
 // Splat and overlay textures are updated at most once per frame across the accumulated dirty rect.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 pub fn update_terrain_system(
     mut commands: Commands<'_, '_>,
     mut terrain_state: ResMut<'_, TerrainState>,
@@ -265,6 +273,10 @@ pub fn update_terrain_system(
 ///
 /// # Errors
 /// Returns [`TerrainThemeError`] if required baked texture files cannot be loaded from `assets_dir`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 pub fn spawn_terrain(
     commands: &mut Commands<'_, '_>,
     meshes: &mut Assets<Mesh>,
@@ -296,6 +308,14 @@ pub fn spawn_terrain(
 ///
 /// # Errors
 /// Returns [`TerrainThemeError`] if a required real texture cannot be loaded.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 pub fn spawn_terrain_owned(
     commands: &mut Commands<'_, '_>,
     meshes: &mut Assets<Mesh>,

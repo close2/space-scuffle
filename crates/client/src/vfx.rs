@@ -36,12 +36,12 @@ mod gpu_layout {
         /// Normalized effect lifetime progress [0.0, 1.0].
         pub age: f32,
         /// Effect classification kind:
-        /// 0 = FX_LASER_BEAM (Continuous high-energy laser with muzzle & impact flares)
-        /// 1 = FX_HITSCAN_TRACER (Supersonic kinetic/pulse tracer with Mach shock rings)
-        /// 2 = FX_LIGHTNING_ARC (3-phase domain-warped jagged electric arc)
-        /// 3 = FX_MELEE_SLASH (Sweeping crescent psi-blade with trailing energy veil)
-        /// 4 = FX_PLASMA_PROJECTILE (Blazing comet-tail plasma orb)
-        /// 5 = FX_IMPACT_STARBURST (8-pointed radial starburst & refractive shockwave)
+        /// 0 = `FX_LASER_BEAM` (Continuous high-energy laser with muzzle & impact flares)
+        /// 1 = `FX_HITSCAN_TRACER` (Supersonic kinetic/pulse tracer with Mach shock rings)
+        /// 2 = `FX_LIGHTNING_ARC` (3-phase domain-warped jagged electric arc)
+        /// 3 = `FX_MELEE_SLASH` (Sweeping crescent psi-blade with trailing energy veil)
+        /// 4 = `FX_PLASMA_PROJECTILE` (Blazing comet-tail plasma orb)
+        /// 5 = `FX_IMPACT_STARBURST` (8-pointed radial starburst & refractive shockwave)
         pub fx_kind: u32,
         /// Randomization seed for turbulence, branching, and sparks.
         pub seed: f32,
@@ -200,6 +200,10 @@ pub fn setup_vfx_assets_system(
 // Trade-off: Particles do not persist indefinitely, which aligns with RTS visual readability.
 
 /// Spawns a central detonation starburst and 16 crystalline glass shards collapsing outward when a bubble or dome is destroyed.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "presentation values are bounded by frame, atlas and window sizes"
+)]
 pub fn spawn_death_shatter(
     commands: &mut Commands<'_, '_>,
     assets: &VfxSharedAssets,
@@ -294,6 +298,10 @@ pub fn projectile_card_rotation(velocity: Vec3, position: Vec3, camera_position:
 }
 
 /// Updates in-flight projectiles with lifetime aging, material uniform updates, and velocity alignment.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn update_projectiles_system(
     mut commands: Commands<'_, '_>,
     time: Res<'_, Time>,
@@ -330,6 +338,10 @@ pub fn update_projectiles_system(
 }
 
 /// Updates continuous beam and lightning ribbon components with lifetime aging and billboard camera orientation.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn update_beams_system(
     mut commands: Commands<'_, '_>,
     time: Res<'_, Time>,
@@ -365,6 +377,10 @@ pub fn update_beams_system(
 }
 
 /// Updates expanding crescent psi-blade slashes with lifetime aging and uniform progression.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn update_melee_slashes_system(
     mut commands: Commands<'_, '_>,
     time: Res<'_, Time>,
@@ -387,6 +403,10 @@ pub fn update_melee_slashes_system(
 }
 
 /// Updates and advances death shatter glass shards under gravity with procedural volumetric starburst materials.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn update_shatter_system(
     mut commands: Commands<'_, '_>,
     time: Res<'_, Time>,
@@ -410,7 +430,9 @@ pub fn update_shatter_system(
                 mat.uniform.age = progress;
             }
 
-            if shard.velocity != Vec3::ZERO {
+            if shard.velocity == Vec3::ZERO {
+                transform.rotation = cam_rotation;
+            } else {
                 shard.velocity += gravity * dt;
                 transform.translation += shard.velocity * dt;
                 transform.rotate(Quat::from_euler(
@@ -419,14 +441,24 @@ pub fn update_shatter_system(
                     shard.angular_velocity.y * dt,
                     shard.angular_velocity.z * dt,
                 ));
-            } else {
-                transform.rotation = cam_rotation;
             }
         }
     }
 }
 
 /// Consumes and visualizes all combat events received from the authoritative simulation snapshot via procedural volumetric shader instances.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 pub fn process_combat_events_system(
     mut owners: crate::player_presentation::PresentationContext<'_>,
     lab: Res<'_, crate::LabState>,

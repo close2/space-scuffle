@@ -117,6 +117,10 @@ pub fn brush_footprint(
 ///
 /// Cells located directly on a symmetry axis are visited twice in geometry, but are
 /// stamped and touched exactly once due to the single-touch generation invariant of [`StrokeRecorder`].
+#[expect(
+    clippy::too_many_arguments,
+    reason = "explicit inputs keep this helper free of hidden state"
+)]
 pub fn paint_brush_stamp(
     recorder: &mut StrokeRecorder,
     doc: &mut MapDocument,
@@ -368,6 +372,10 @@ pub fn infer_ramp(doc: &MapDocument, rect: CellRect) -> Result<RampPlacement, Ra
         Err(RampPlacementError::Ambiguous)
     } else {
         let dir = candidates[0];
+        #[expect(
+            clippy::unreachable,
+            reason = "candidates holds only the four cardinal directions"
+        )]
         let run_len = match dir {
             RampDir::North | RampDir::South => max_y - min_y + 1,
             RampDir::East | RampDir::West => max_x - min_x + 1,
@@ -626,6 +634,10 @@ pub enum EntityToolKind {
 /// If placing a start location for an already occupied player slot, moves it instead. Under symmetry
 /// the result always holds both slots, adding whichever is missing as one [`EditCommand::Batch`].
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 pub fn place_entity_command(
     doc: &MapDocument,
     kind: EntityToolKind,
@@ -702,12 +714,12 @@ pub fn place_entity_command(
         EntityToolKind::StartLocation { slot, footprint } => {
             let primary_existing = doc.start_locations.iter().find(|s| s.player_slot == slot);
             let partner_slot = slot ^ 1;
-            let partner_existing = if symmetry != SymmetryMode::None {
+            let partner_existing = if symmetry == SymmetryMode::None {
+                None
+            } else {
                 doc.start_locations
                     .iter()
                     .find(|s| s.player_slot == partner_slot)
-            } else {
-                None
             };
 
             let primary_rect = CellRect {
@@ -717,12 +729,12 @@ pub fn place_entity_command(
                     cell.1 + u32::from(footprint.1).saturating_sub(1),
                 ),
             };
-            let mirrored_anchor = if symmetry != SymmetryMode::None {
+            let mirrored_anchor = if symmetry == SymmetryMode::None {
+                cell
+            } else {
                 symmetry
                     .mirror_rect(primary_rect, doc.width, doc.height)
                     .min
-            } else {
-                cell
             };
 
             let primary_after = |id| {

@@ -168,6 +168,10 @@ impl Plugin for BubbleOpticsPlugin {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn load_style(
     mut commands: Commands<'_, '_>,
     root: Res<'_, ResolvedAssetsRoot>,
@@ -183,7 +187,10 @@ fn load_style(
 }
 
 // Explicit visibility/layer contracts mirror the renderer light extraction inputs.
-#[allow(clippy::type_complexity)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn sync_optics(
     style: Option<Res<'_, BubbleOptics>>,
     lights: Query<

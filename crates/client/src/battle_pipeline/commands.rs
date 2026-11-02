@@ -260,10 +260,10 @@ impl BattleCommandQueue {
         bundle.commands.clear();
         sequences.clear();
         while let Some(pending) = self.pending.pop_front() {
-            let result = if pending.generation != generation {
-                Err(SubmissionError::StaleGeneration)
-            } else {
+            let result = if pending.generation == generation {
                 validate(world, &pending.command)
+            } else {
+                Err(SubmissionError::StaleGeneration)
             };
             if let Err(reason) = result {
                 self.reject(&reason);

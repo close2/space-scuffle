@@ -31,6 +31,10 @@ pub struct EditorCameraFocus {
 }
 
 /// Sets the camera focus point squarely on the center of cell `(x, y)`.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
 pub fn focus_cell(cam: &mut RtsCamera, x: u32, y: u32) {
     cam.target = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
 }
@@ -39,6 +43,18 @@ pub fn focus_cell(cam: &mut RtsCamera, x: u32, y: u32) {
 ///
 /// Drives keyboard panning (WASD / Arrows), middle-mouse drag panning, scroll wheel zooming,
 /// and map boundary clamping with smooth terrain height following.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 pub fn editor_camera_system(
     time: Res<'_, Time>,
     keyboard: Res<'_, ButtonInput<KeyCode>>,
@@ -99,12 +115,12 @@ pub fn editor_camera_system(
     }
 
     // 4. Scroll Wheel Zoom, inhibited when pointer is interacting with egui
-    if !wants_pointer {
+    if wants_pointer {
+        scroll_events.clear();
+    } else {
         for ev in scroll_events.read() {
             cam.zoom(ev.y);
         }
-    } else {
-        scroll_events.clear();
     }
 
     // 5. Clamp Target Coordinates to Map Bounds and Follow Smooth Terrain Altitude

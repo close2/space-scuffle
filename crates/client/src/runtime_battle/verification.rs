@@ -53,6 +53,10 @@ impl Plugin for BattleRenderVerificationPlugin {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn inspect_pipelines(cache: Res<'_, PipelineCache>, status: Res<'_, BattleRenderStatus>) {
     let mut ready = 0;
     let mut pending = cache.waiting_pipelines().next().is_some();
@@ -75,6 +79,10 @@ fn inspect_pipelines(cache: Res<'_, PipelineCache>, status: Res<'_, BattleRender
     status.settled.store(!pending, Ordering::Release);
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn fail_on_pipeline_error(
     status: Res<'_, BattleRenderStatus>,
     time: Res<'_, Time>,

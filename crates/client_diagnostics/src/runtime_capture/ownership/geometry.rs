@@ -99,6 +99,10 @@ impl ProjectionView {
                 .physical_from_window(logical),
         )
     }
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "capture coordinates are bounded by the window size and frame budget"
+    )]
     fn inside(&self, point: Vec2) -> bool {
         let [x, y, w, h] = self.region;
         let size = Vec2::new(self.resolution[0] as f32, self.resolution[1] as f32);

@@ -14,7 +14,7 @@
 //!    with zero display server dependencies.
 //!
 //! # Core Subsystems
-//! - [`camera`]: StarCraft II style RTS camera with 58° pitch, WASD pan, scroll zoom, and hotkey bookmarks.
+//! - [`camera`]: `StarCraft` II style RTS camera with 58° pitch, WASD pan, scroll zoom, and hotkey bookmarks.
 //! - [`lab_stage`]: Flat stage and lights for the map-less Lab and Swarm scenes.
 //! - [`bubble_shader`]: Custom `BubbleDomeMaterial` and GPU uniform packing for unit spheres and domes.
 //! - [`indicators`]: Ground selection rings, equatorial facing chevron, attack focal lens, and collar meshes.
@@ -23,21 +23,6 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
-#![allow(
-    clippy::doc_markdown,
-    clippy::too_many_lines,
-    clippy::module_name_repetitions,
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_lossless,
-    clippy::many_single_char_names,
-    clippy::redundant_closure_for_method_calls,
-    clippy::cast_sign_loss,
-    clippy::needless_pass_by_value,
-    clippy::too_many_arguments,
-    clippy::if_not_else
-)]
 
 pub mod assets;
 pub mod battle_pipeline;
@@ -170,7 +155,7 @@ pub enum ClientMode {
     /// Boot into the Close-Up Visual Showcase Inspector.
     #[default]
     VisualLab,
-    /// Boot into the 2-Army deterministic sim_core combat sandbox.
+    /// Boot into the 2-Army deterministic `sim_core` combat sandbox.
     LiveBattle,
     /// Boot into the 200-bubble swarm readability stress test.
     SwarmStressTest,
@@ -192,6 +177,14 @@ pub struct FrameLimit {
 }
 
 /// System that exits the application when the target frame count is reached.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 pub fn frame_limit_system(
     mut commands: Commands<'_, '_>,
     mut frame_limit: ResMut<'_, FrameLimit>,
@@ -279,6 +272,10 @@ pub struct ClientAppPlugin {
 }
 
 impl Plugin for ClientAppPlugin {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "a single ordered sequence that shares its local state"
+    )]
     fn build(&self, app: &mut App) {
         let initial_tab = match self.mode {
             ClientMode::VisualLab | ClientMode::HeadlessCheck => LabTab::VisualLab,
@@ -422,6 +419,10 @@ impl Plugin for ClientAppPlugin {
 ///
 /// The camera owns its [`DepthPrepass`](bevy::core_pipeline::prepass::DepthPrepass) from its first
 /// frame, because `smog_volume.wgsl` clips the volume against that depth.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn spawn_camera_system(mut commands: Commands<'_, '_>, lab_state: Res<'_, LabState>) {
     let rts_cam = if lab_state.current_tab == LabTab::VisualLab {
         RtsCamera::hero_framing()
@@ -563,6 +564,10 @@ pub fn build_graphical_app_with_options(
 ///
 /// # Errors
 /// Returns an error string if simulation stepping, camera invariants, or uniform packing fail.
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 pub fn run_headless_check() -> Result<(), String> {
     // 1. Initialize Headless Simulation World
     let mut world = SimWorld::new_default_battle_sandbox();

@@ -188,7 +188,7 @@ pub struct SmogVolumeMaterial {
     #[texture(3, dimension = "3d")]
     #[sampler(4)]
     pub velocity_texture: Handle<Image>,
-    /// 3D Tileable Wispy Noise Texture (32x32x32 Rgba8Unorm, Repeat sampler) for O(1) filament detail.
+    /// 3D Tileable Wispy Noise Texture (32x32x32 `Rgba8Unorm`, Repeat sampler) for O(1) filament detail.
     #[texture(5, dimension = "3d")]
     #[sampler(6)]
     pub noise_texture: Handle<Image>,
@@ -242,6 +242,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+    )]
     fn cavity_slots_keep_the_nearest_sources_in_any_offer_order() {
         for reversed in [false, true] {
             let mut slots = CavitySlots::default();

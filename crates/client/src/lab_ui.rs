@@ -1,11 +1,11 @@
-//! bevy_egui interactive inspector dashboard and visual lab controls.
+//! `bevy_egui` interactive inspector dashboard and visual lab controls.
 //!
 //! # Architectural Responsibilities
 //! This module provides a complete interactive inspection suite with three modes:
 //! 1. **Close-Up Visual Lab:** Scrutinize single-bubble materials, Voronoi damage cracks,
 //!    CRT scanlines, chromatic aberration, Fresnel rims, heading chevron, and turret focal lenses.
 //! 2. **Live Combat Sandbox:** Deterministic 2-army battlefield stepping `sim_core::SimWorld`
-//!    at 25 Hz with StarCraft II unit micro (Attack-Move, Kite, Hold, Stim).
+//!    at 25 Hz with `StarCraft` II unit micro (Attack-Move, Kite, Hold, Stim).
 //! 3. **200-Bubble Swarm Stress Test:** High-density collision readability and frame rate stress test.
 
 use crate::bubble_shader::FlipbookRegistry;
@@ -28,7 +28,7 @@ pub enum LabTab {
     /// Detailed close-up shader, flipbook, and indicator inspection.
     #[default]
     VisualLab,
-    /// Live 2-army deterministic sim_core combat sandbox.
+    /// Live 2-army deterministic `sim_core` combat sandbox.
     LiveBattle,
     /// 200-bubble swarm readability and performance stress test.
     SwarmStressTest,
@@ -124,7 +124,10 @@ impl LabVfxTrigger {
 
 /// Central state resource for the Visual Lab inspector and sandbox controls.
 #[derive(Resource)]
-#[allow(clippy::struct_excessive_bools)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is an independent user-facing toggle"
+)]
 pub struct LabState {
     /// Currently visible tab.
     pub current_tab: LabTab,
@@ -158,15 +161,15 @@ pub struct LabState {
     /// Whether to force the 240-frame concept video texture.
     pub use_concept_video: bool,
     // --- Modular Visual Sub-System Toggles (V2 / V4 / V5 / V6) ---
-    /// Dual-light studio specular glare flag (FLAG_GLARE).
+    /// Dual-light studio specular glare flag (`FLAG_GLARE`).
     pub opt_glare: bool,
-    /// Iridescent thin-film soap bubble Fresnel rim flag (FLAG_FRESNEL).
+    /// Iridescent thin-film soap bubble Fresnel rim flag (`FLAG_FRESNEL`).
     pub opt_fresnel: bool,
-    /// Spherical inner video barrel curvature & vignette flag (FLAG_INNER_WARP).
+    /// Spherical inner video barrel curvature & vignette flag (`FLAG_INNER_WARP`).
     pub opt_inner_warp: bool,
-    /// Voronoi spiderweb damage cracks flag (FLAG_CRACKS).
+    /// Voronoi spiderweb damage cracks flag (`FLAG_CRACKS`).
     pub opt_cracks: bool,
-    /// CRT scanlines and chromatic aberration flag (FLAG_CRT_GLITCH).
+    /// CRT scanlines and chromatic aberration flag (`FLAG_CRT_GLITCH`).
     pub opt_crt_glitch: bool,
     /// Equatorial hull facing chevron indicator flag.
     pub opt_facing_chevron: bool,
@@ -256,7 +259,19 @@ impl Default for LabState {
 // Why: Redrawing the entire bevy_egui UI layout on every frame can incur CPU string allocations.
 // What: Cached archetype lists, dynamic catalog lookups, and direct in-place slider mutation.
 // Trade-off: Minimal UI state allocations yielding zero frame latency spikes.
-/// Primary bevy_egui inspector system rendering the tabbed visual lab.
+/// Primary `bevy_egui` inspector system rendering the tabbed visual lab.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 pub fn lab_ui_system(
     palette: Res<'_, crate::player_presentation::PlayerPalette>,
     owner_status: Res<'_, crate::player_presentation::PresentationStatus>,
@@ -399,6 +414,10 @@ pub fn lab_ui_system(
 }
 
 /// Binds the inspector identity to the actual selected showcase entity.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn sync_selected_actor_identity(
     actors: Query<'_, '_, (Entity, &crate::BubbleInstance, &crate::HeroLineupIndex)>,
     mut selection: ResMut<'_, SelectionState>,
@@ -424,6 +443,10 @@ pub fn sync_selected_actor_identity(
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 fn render_visual_lab_tab(
     ui: &mut egui::Ui,
     state: &mut LabState,
@@ -557,6 +580,10 @@ fn render_visual_lab_tab(
     });
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 fn render_live_battle_tab(
     ui: &mut egui::Ui,
     state: &mut LabState,
@@ -747,7 +774,17 @@ fn render_swarm_tab(ui: &mut egui::Ui, state: &mut LabState, diagnostics: &Diagn
     });
 }
 
-/// Renders the StarCraft II style bottom-center unit portrait, faction lore, vitals, and weapon HUD.
+/// Renders the `StarCraft` II style bottom-center unit portrait, faction lore, vitals, and weapon HUD.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "presentation values are bounded by frame, atlas and window sizes"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 fn render_selected_unit_hud(
     ctx: &egui::Context,
     contexts: &mut EguiContexts<'_, '_>,

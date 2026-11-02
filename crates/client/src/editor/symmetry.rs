@@ -7,7 +7,7 @@
 //! # Invariants Maintained
 //! 1. **Involution (Self-Inverse):** For any symmetry mode `M` and coordinate `C`, `mirror(mirror(C)) == C`.
 //! 2. **Ramp Orientation Preservation:** Ramps reflected across an axis invert their climbing direction
-//!    along that axis (e.g. MirrorX maps East ↔ West; MirrorY maps North ↔ South).
+//!    along that axis (e.g. `MirrorX` maps East ↔ West; `MirrorY` maps North ↔ South).
 //! 3. **Partner Slot Mapping:** Starting location player slots map `s ↔ s ^ 1` (slot 0 ↔ 1, 2 ↔ 3, etc.).
 //! 4. **Footprint Anchor Invariance:** Mirrored multi-cell rectangles use the minimum corner `(min_x, min_y)`
 //!    of the reflected bounding box as their anchor.

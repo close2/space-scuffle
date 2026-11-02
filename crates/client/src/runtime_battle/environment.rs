@@ -38,7 +38,7 @@ struct SceneEnvironmentState {
 
 /// Applies game scene resources and root visibility as one presentation stage.
 ///
-/// Startup captures the Lab stage values. PostUpdate runs after UI/scene commands
+/// Startup captures the Lab stage values. `PostUpdate` runs after UI/scene commands
 /// and before visibility propagation; standalone terrain/editor setup is unchanged.
 pub struct SceneEnvironmentPlugin;
 
@@ -55,6 +55,10 @@ impl Plugin for SceneEnvironmentPlugin {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn capture_stage_environment(
     ambient: Res<'_, AmbientLight>,
     clear: Res<'_, ClearColor>,
@@ -81,6 +85,10 @@ type VisibleScenes<'w, 's> = (
     Query<'w, 's, &'static mut Visibility, With<LabStageMarker>>,
 );
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn apply_scene_environment(
     mut lab: ResMut<'_, LabState>,
     mut state: ResMut<'_, SceneEnvironmentState>,

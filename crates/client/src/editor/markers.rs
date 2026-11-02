@@ -116,6 +116,10 @@ pub struct MarkerAssets {
 pub struct MarkerEntities(pub BTreeMap<MapEntityId, Entity>);
 
 /// Initializes marker assets from the loaded visual catalog.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn setup_marker_assets(
     mut commands: Commands<'_, '_>,
     asset_server: Res<'_, AssetServer>,
@@ -183,6 +187,10 @@ pub fn setup_marker_assets(
 // Why: Billboard orientation must track camera movement every frame.
 // What: Modifies Transform::rotation in place directly inside the ECS query with zero allocations.
 // Trade-off: O(M) simple trigonometric yaw updates where M is the small count of map markers.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn update_marker_billboards_system(
     cam_query: Query<'_, '_, &GlobalTransform, With<RtsCamera>>,
     mut billboard_query: Query<'_, '_, (&GlobalTransform, &mut Transform, &MapMarkerComponent)>,
@@ -209,6 +217,10 @@ pub fn update_marker_billboards_system(
 }
 
 /// Synchronizes spawned marker entities with the authoritative document.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
 pub fn reconcile_marker_entities(
     commands: &mut Commands<'_, '_>,
     doc: &MapDocument,
@@ -268,7 +280,7 @@ pub fn reconcile_marker_entities(
     }
 
     for start in &doc.start_locations {
-        let (fw, fh) = (start.footprint.0 as f32, start.footprint.1 as f32);
+        let (fw, fh) = (f32::from(start.footprint.0), f32::from(start.footprint.1));
         let center_x = start.cell.0 as f32 + fw * 0.5;
         let center_z = start.cell.1 as f32 + fh * 0.5;
         let ground_y = terrain.map.terrain_altitude_at(SimVec2::new(
@@ -323,6 +335,10 @@ pub fn reconcile_marker_entities(
 }
 
 /// System synchronizing marker entities whenever the document or terrain revision advances.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn sync_marker_entities_system(
     mut commands: Commands<'_, '_>,
     doc: Res<'_, EditorDocument>,

@@ -102,6 +102,10 @@ pub struct HeroLineupIndex(pub usize);
 
 /// System processing left-click viewport raycasting to select unit bubbles and domes.
 #[allow(clippy::type_complexity)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn selection_system(
     mouse_buttons: Res<'_, ButtonInput<MouseButton>>,
     windows: Query<'_, '_, &Window, With<bevy::window::PrimaryWindow>>,

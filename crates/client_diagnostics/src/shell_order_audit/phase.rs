@@ -101,6 +101,10 @@ fn observe_inner(world: &mut World, sorted: bool, bridge: &AuditBridge) -> Resul
     bridge.lock()?.collector.complete(actual)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 fn gather(world: &World, config: &AuditConfig) -> Result<EpochEvidence, AuditError> {
     let extracted = world.resource::<Extracted>();
     let source = extracted

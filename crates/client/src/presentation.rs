@@ -40,6 +40,10 @@ impl Plugin for AudioPolicyPlugin {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn report_audio_policy(policy: Res<'_, AudioPolicy>) {
     info!(
         "Game audio policy: {:?}; no audio output device requested because playback is not implemented",

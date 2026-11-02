@@ -1,5 +1,5 @@
 //! CPU tests of the real sole tick path. Media callbacks here isolate lifecycle
-//! failures; separate runtime_media integration tests use the actual asset loader.
+//! failures; separate `runtime_media` integration tests use the actual asset loader.
 
 use super::*;
 use crate::battle_pipeline::session::CommittedBattleMetadata;

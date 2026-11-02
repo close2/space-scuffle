@@ -76,11 +76,11 @@ mod gpu_layout {
     pub struct BubbleUniformGpu {
         /// Team Fresnel rim and ground indicator color (RGBA).
         pub team_color: Vec4,
-        /// Authoritative 3D center position [x, ground_y, altitude_z].
+        /// Authoritative 3D center position [x, `ground_y`, `altitude_z`].
         pub world_pos: Vec3,
         /// Sphere collision radius in world units.
         pub radius: f32,
-        /// 0 = UnitSphere (mobile), 1 = BuildingDome (grounded structure).
+        /// 0 = `UnitSphere` (mobile), 1 = `BuildingDome` (grounded structure).
         pub shape_kind: u32,
         /// Facing orientation angle in radians.
         pub heading_angle_rad: f32,
@@ -110,7 +110,7 @@ mod gpu_layout {
         pub cloaked: u32,
         /// Modular feature bitflags bitmask (glare, fresnel, inner warp, cracks, scanlines).
         pub feature_flags: u32,
-        /// Exact active frame index in the Texture2DArray.
+        /// Exact active frame index in the `Texture2DArray`.
         pub frame_index: u32,
         /// Media exposure stops, dielectric reflectance, Fresnel power, reflection strength.
         pub optics_media: Vec4,
@@ -217,6 +217,12 @@ impl BubbleUniformGpu {
 
     /// Packs a snapshot and optional metadata using an already resolved linear ownership style.
     #[must_use]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss,
+        reason = "presentation values are bounded by frame, atlas and window sizes"
+    )]
     pub fn from_instance(
         instance: &BubbleRenderInstance,
         meta: Option<&FlipbookAtlasMeta>,
@@ -302,7 +308,7 @@ pub struct BubbleDomeMaterial {
     /// Primary per-bubble parameter uniform.
     #[uniform(0)]
     pub uniform: BubbleUniformGpu,
-    /// Texture2DArray carrying all animation frames.
+    /// `Texture2DArray` carrying all animation frames.
     #[texture(1, dimension = "2d_array")]
     #[sampler(2)]
     pub video_texture: Option<Handle<Image>>,
@@ -323,13 +329,13 @@ impl Material for BubbleDomeMaterial {
 /// Registry storing loaded flipbook manifests and GPU texture arrays.
 #[derive(Resource, Default)]
 pub struct FlipbookRegistry {
-    /// Atlas metadata keyed by UnitTypeId.
+    /// Atlas metadata keyed by `UnitTypeId`.
     pub manifests_by_id: BTreeMap<UnitTypeId, FlipbookAtlasMeta>,
-    /// GPU texture array handles keyed by UnitTypeId.
+    /// GPU texture array handles keyed by `UnitTypeId`.
     pub textures_by_id: BTreeMap<UnitTypeId, Handle<Image>>,
-    /// 2D strip images for UI portraits in egui keyed by UnitTypeId.
+    /// 2D strip images for UI portraits in egui keyed by `UnitTypeId`.
     pub portrait_images_by_id: BTreeMap<UnitTypeId, Handle<Image>>,
-    /// Atlas metadata keyed by archetype name (e.g. for demo assets like "concept_video").
+    /// Atlas metadata keyed by archetype name (e.g. for demo assets like "`concept_video`").
     pub manifests: BTreeMap<String, FlipbookAtlasMeta>,
     /// GPU texture array handles keyed by archetype name.
     pub textures: BTreeMap<String, Handle<Image>>,
@@ -356,19 +362,19 @@ impl FlipbookRegistry {
         self.portrait_images_by_id.get(&unit_type).cloned()
     }
 
-    /// Looks up metadata by string name/slug (e.g. "concept_video").
+    /// Looks up metadata by string name/slug (e.g. "`concept_video`").
     #[must_use]
     pub fn get_meta_by_name(&self, name: &str) -> Option<&FlipbookAtlasMeta> {
         self.manifests.get(name)
     }
 
-    /// Looks up texture by string name/slug (e.g. "concept_video").
+    /// Looks up texture by string name/slug (e.g. "`concept_video`").
     #[must_use]
     pub fn get_texture_by_name(&self, name: &str) -> Option<Handle<Image>> {
         self.textures.get(name).cloned()
     }
 
-    /// Looks up portrait image by string name/slug (e.g. "concept_video").
+    /// Looks up portrait image by string name/slug (e.g. "`concept_video`").
     #[must_use]
     pub fn get_portrait_by_name(&self, name: &str) -> Option<Handle<Image>> {
         self.portrait_images.get(name).cloned()
@@ -385,6 +391,10 @@ pub struct BubbleSharedMeshes {
 }
 
 /// Sets up shared meshes and loads all texture array assets dynamically from `CatalogResource`.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn setup_bubble_assets_system(
     mut commands: Commands<'_, '_>,
     mut meshes: ResMut<'_, Assets<Mesh>>,

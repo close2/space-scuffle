@@ -125,6 +125,10 @@ impl InputOwnership {
 }
 
 /// Samples current-pass UI ownership after widgets have consumed their input.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn sample_input_ownership(
     mut ownership: ResMut<'_, InputOwnership>,
     windows: Query<'_, '_, (Entity, &Window), With<PrimaryWindow>>,
@@ -183,6 +187,10 @@ pub fn physical_viewport(rect: egui::Rect, scale: f32, window: UVec2) -> Option<
 }
 
 /// Keeps rendering/picking in the same unobscured physical viewport after resize.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn apply_world_viewport(
     geometry: Res<'_, UiGeometry>,
     windows: Query<'_, '_, &Window, With<PrimaryWindow>>,

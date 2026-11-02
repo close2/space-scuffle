@@ -127,6 +127,10 @@ impl ButtonDelivery {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub(super) fn record(
     mut evidence: ResMut<'_, Evidence>,
     mut buttons: EventReader<'_, '_, MouseButtonInput>,

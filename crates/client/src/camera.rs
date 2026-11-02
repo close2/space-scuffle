@@ -1,4 +1,4 @@
-//! StarCraft II style RTS perspective camera controller.
+//! `StarCraft` II style RTS perspective camera controller.
 //!
 //! # Architectural Responsibilities
 //! This module owns RTS camera locomotion, 58° perspective pitch projection, smooth WASD/arrow
@@ -20,7 +20,7 @@ pub const MIN_CAMERA_DISTANCE: f32 = 3.0;
 /// Maximum zoom distance in world units for full battlefield overview.
 pub const MAX_CAMERA_DISTANCE: f32 = 48.0;
 
-/// Default StarCraft II perspective pitch in radians (58.0 degrees).
+/// Default `StarCraft` II perspective pitch in radians (58.0 degrees).
 pub const DEFAULT_CAMERA_PITCH_RAD: f32 = 58.0 * (std::f32::consts::PI / 180.0);
 
 /// Time constant of the look-at height following the terrain, in seconds.
@@ -161,6 +161,18 @@ impl RtsCamera {
 }
 
 /// System controlling RTS camera movement via keyboard, mouse grab, scroll wheel, and bookmarks.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "presentation values are bounded by frame, atlas and window sizes"
+)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 pub fn camera_control_system(
     time: Res<'_, Time>,
     keyboard: Res<'_, ButtonInput<KeyCode>>,
@@ -259,6 +271,10 @@ mod tests {
     use super::*;
 
     #[test]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "presentation values are bounded by frame, atlas and window sizes"
+    )]
     fn look_at_easing_is_frame_rate_independent() {
         let eased = |frames: u32| {
             let mut camera = RtsCamera {

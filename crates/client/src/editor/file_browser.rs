@@ -115,6 +115,10 @@ impl FileBrowserState {
     }
 
     /// Renders the file browser modal window, returning an action when a choice is made.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "a single ordered sequence that shares its local state"
+    )]
     pub fn render(&mut self, ctx: &egui::Context, maps_dir: &Path) -> Option<FileBrowserAction> {
         if !self.is_open {
             return None;
@@ -215,12 +219,12 @@ impl FileBrowserState {
                                         name.push_str(".scmap.ron");
                                     }
                                     let target_path = maps_dir.join(&name);
-                                    if !target_path.exists() {
-                                        self.error_banner =
-                                            Some(format!("File '{name}' not found."));
-                                    } else {
+                                    if target_path.exists() {
                                         self.close();
                                         action = Some(FileBrowserAction::Load(target_path));
+                                    } else {
+                                        self.error_banner =
+                                            Some(format!("File '{name}' not found."));
                                     }
                                 }
                             }

@@ -69,9 +69,16 @@ pub(super) struct OwnershipState {
 
 impl OwnershipState {
     /// Records actual admitted effects, rejecting unexplained disappearance or identity changes.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "a single ordered sequence that shares its local state"
+    )]
     pub(super) fn observe(&mut self, world: &mut World, view: View) -> Result<(), CaptureError> {
         let pipeline = world.resource::<BattleSession>();
-        let generation = pipeline.commands.generation().map(|value| value.value());
+        let generation = pipeline
+            .commands
+            .generation()
+            .map(client::battle_pipeline::commands::SessionGeneration::value);
         let tick = pipeline.frames.presented().tick.0;
         let preview =
             world.resource::<client::LabState>().current_tab != client::LabTab::LiveBattle;

@@ -85,6 +85,18 @@ impl LosPreviewState {
 }
 
 /// System updating the LOS preview and synchronizing the overlay image texture.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 pub fn update_los_preview_system(
     mut los_state: ResMut<'_, LosPreviewState>,
     doc: Res<'_, EditorDocument>,

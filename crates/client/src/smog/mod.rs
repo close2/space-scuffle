@@ -4,7 +4,7 @@
 //! In accordance with the Stage 1 architectural blueprint and `AGENTS.md`, this module implements:
 //! 1. **10 Bouncing Bubbles Kinematics:** 10 mobile units (`BouncingSmogBubble`) spawned dynamically from
 //!    `CatalogResource` (with zero hardcoded creature slugs), executing elastic 3D wall and sphere-sphere bouncing.
-//! 2. **Bubble-Driven 3D Eulerian Smog Grid:** $64 \times 24 \times 48 = 73,728$ voxels simulated with zero per-frame
+//! 2. **Bubble-Driven 3D Eulerian Smog Grid:** `$64 \times 24 \times 48 = 73,728$` voxels simulated with zero per-frame
 //!    heap allocations. Every bubble is simultaneously a smog generator (injecting density and chromatic tint)
 //!    and a moving obstacle/influencer (evacuating core density, compressing bow waves, injecting momentum drag,
 //!    and shedding wake vortices).
@@ -100,6 +100,10 @@ pub fn live_battle_window_center(focus: Vec2, map_size: Vec2) -> Vec2 {
 /// [`BubbleRenderInstance`] requires an identity, but these actors have no simulation entity. The
 /// range sits at the top of `u32`, far beyond the upward-counting simulation allocator, so a
 /// showcase identity can never alias a battle entity.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+)]
 pub const SHOWCASE_ENTITY_ID_BASE: u32 = u32::MAX - MAX_BOUNCING_BUBBLES as u32;
 
 /// Strongly-typed error conditions originating in the smog subsystem.
@@ -212,7 +216,7 @@ pub struct SmogPlugin;
 
 impl Plugin for SmogPlugin {
     fn build(&self, app: &mut App) {
-        #[allow(clippy::expect_used)]
+        #[expect(clippy::expect_used, reason = "the message states the invariant")]
         let grid = SmogGrid3d::new(LAB_VOLUME_MIN, LAB_VOLUME_MAX)
             .expect("invariant: LAB_VOLUME_MIN is below LAB_VOLUME_MAX by over 1.0 on each axis");
 
@@ -241,6 +245,24 @@ impl Plugin for SmogPlugin {
 /// running the pre-warm steps, and spawning the 10 mobile bouncing bubbles from admitted catalog identities.
 ///
 /// Failures stop before any asset or entity is created, and reach the visible media diagnostic.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 pub fn setup_smog_volume_system(
     mut commands: Commands<'_, '_>,
     mut meshes: ResMut<'_, Assets<Mesh>>,
@@ -303,6 +325,12 @@ pub fn setup_smog_volume_system(
     let velocity_image = images.add(make_3d_image(grid.rgba_velocity_bytes.clone()));
 
     // 3. Generate pre-baked tileable 32x32x32 3D wispy noise texture
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss,
+        reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+    )]
     let make_3d_noise_image = || {
         const NOISE_DIM: usize = 32;
         let mut noise_data = Vec::with_capacity(NOISE_DIM * NOISE_DIM * NOISE_DIM * 4);
@@ -571,6 +599,14 @@ fn prewarm_smog_field(
 // Why: Allocating a `Vec<BouncingBubbleState>` on every frame causes unnecessary heap churn.
 // What: We maintain a pre-allocated `Local<Vec<BouncingBubbleState>>` scratch vector.
 // Trade-off: Zero per-frame allocations during steady-state simulation.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 pub fn sync_bouncing_smog_bubbles_system(
     time: Res<'_, Time>,
     config: Res<'_, SmogConfig>,
@@ -679,7 +715,26 @@ pub fn sync_bouncing_smog_bubbles_system(
 // PERFORMANCE RATIONALE:
 // Why: Re-allocating source lists per frame creates garbage.
 // What: We reuse a `Local<Vec<BubbleSmogSource>>` scratch buffer, achieving zero allocations per frame.
-#[allow(clippy::type_complexity)]
+#[expect(
+    clippy::type_complexity,
+    reason = "a Bevy query declares its whole data access in one type"
+)]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 pub(crate) fn update_smog_field_system(
     time: Res<'_, Time>,
     config: Res<'_, SmogConfig>,

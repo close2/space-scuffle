@@ -36,6 +36,15 @@ fn is_inside_cell_1d(val: f32, min_val: f32, max_val: f32, step: i32) -> bool {
 ///
 /// Returns `None` if the ray misses all cell surfaces (e.g. pointing into the void).
 #[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 pub fn pick_terrain(map: &GameMap, origin: Vec3, dir: Vec3) -> Option<TerrainHit> {
     if dir.length_squared() < 1e-8 {
         return None;
@@ -119,7 +128,9 @@ pub fn pick_terrain(map: &GameMap, origin: Vec3, dir: Vec3) -> Option<TerrainHit
         let cell_min_z = cy as f32;
         let cell_max_z = (cy + 1) as f32;
 
-        let (t_entry_x, t_exit_x) = if norm_dir.x != 0.0 {
+        let (t_entry_x, t_exit_x) = if norm_dir.x == 0.0 {
+            (-f32::INFINITY, f32::INFINITY)
+        } else {
             let t1 = (cell_min_x - origin.x) / norm_dir.x;
             let t2 = (cell_max_x - origin.x) / norm_dir.x;
             if t1 < t2 {
@@ -127,11 +138,11 @@ pub fn pick_terrain(map: &GameMap, origin: Vec3, dir: Vec3) -> Option<TerrainHit
             } else {
                 (t2, t1)
             }
-        } else {
-            (-f32::INFINITY, f32::INFINITY)
         };
 
-        let (t_entry_z, t_exit_z) = if norm_dir.z != 0.0 {
+        let (t_entry_z, t_exit_z) = if norm_dir.z == 0.0 {
+            (-f32::INFINITY, f32::INFINITY)
+        } else {
             let t1 = (cell_min_z - origin.z) / norm_dir.z;
             let t2 = (cell_max_z - origin.z) / norm_dir.z;
             if t1 < t2 {
@@ -139,8 +150,6 @@ pub fn pick_terrain(map: &GameMap, origin: Vec3, dir: Vec3) -> Option<TerrainHit
             } else {
                 (t2, t1)
             }
-        } else {
-            (-f32::INFINITY, f32::INFINITY)
         };
 
         let t_cell_entry = t_entry_x.max(t_entry_z).max(0.0);

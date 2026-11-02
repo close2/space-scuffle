@@ -63,10 +63,7 @@ const PLAYTEST_CAMERA_DISTANCE: f32 = 22.0;
 const PLAYTEST_CAMERA_PITCH: f32 = 58.0 * (PI / 180.0);
 
 /// Exit code for verification failure (pipeline error or timeout).
-pub const EXIT_CODE_VERIFICATION_FAILURE: NonZeroU8 = match NonZeroU8::new(1) {
-    Some(v) => v,
-    None => unreachable!(),
-};
+pub const EXIT_CODE_VERIFICATION_FAILURE: NonZeroU8 = NonZeroU8::MIN;
 
 /// Camera pose specification for render verification.
 #[derive(Debug, Clone)]
@@ -133,7 +130,7 @@ pub fn get_verify_poses() -> [VerifyPose; 4] {
     ]
 }
 
-/// Pipeline creation synchronization between RenderApp and MainApp.
+/// Pipeline creation synchronization between `RenderApp` and `MainApp`.
 #[derive(Resource, Clone, Default)]
 pub struct PipelineSync {
     /// Atomic flag indicating whether any render pipelines are pending compilation.
@@ -262,6 +259,10 @@ fn capture_is_complete(path: &std::path::Path) -> bool {
 }
 
 /// System running in `RenderApp`'s `Render` schedule monitoring pipeline cache state.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn check_render_pipelines(pipeline_cache: Res<'_, PipelineCache>, sync: Res<'_, PipelineSync>) {
     for p in pipeline_cache.pipelines() {
         if let CachedPipelineState::Err(ref err) = p.state {
@@ -282,6 +283,14 @@ pub fn check_render_pipelines(pipeline_cache: Res<'_, PipelineCache>, sync: Res<
 }
 
 /// System advancing the automated verification state machine and capturing screenshots.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 pub fn update_render_verification_system(
     mut commands: Commands<'_, '_>,
     mut state: ResMut<'_, VerifyRenderState>,
@@ -385,6 +394,10 @@ pub fn update_render_verification_system(
 ///
 /// Exits with code 1 if a pipeline fails, the battle reports a failure, or units do not appear
 /// before the frame budget runs out; exits with code 0 once the capture is complete.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 pub fn update_playtest_verification_system(
     mut commands: Commands<'_, '_>,
     mut state: ResMut<'_, VerifyRenderState>,

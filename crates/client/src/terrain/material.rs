@@ -1,4 +1,4 @@
-//! Custom Bevy ExtendedMaterial and GPU uniform binding for the shared terrain renderer.
+//! Custom Bevy `ExtendedMaterial` and GPU uniform binding for the shared terrain renderer.
 //!
 //! # Architectural Responsibilities
 //! - Binds terrain uniform properties ([`TerrainParams`]) into `@group(2) @binding(100)`.
@@ -70,6 +70,10 @@ pub use gpu_layout::TerrainParams;
 impl TerrainParams {
     /// Constructs [`TerrainParams`] directly from the declarative [`TerrainTheme`] and map grid dimensions.
     #[must_use]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "map cell coordinates stay far below the range of f32 and i32"
+    )]
     pub fn from_theme(theme: &TerrainTheme, map_w: u32, map_h: u32) -> Self {
         let (gr_r, gr_g, gr_b) = theme.lighting.guardrail_emissive_srgb;
         let intensity = theme.lighting.guardrail_emissive_intensity;

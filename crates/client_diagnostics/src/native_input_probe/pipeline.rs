@@ -61,7 +61,10 @@ fn output(snapshot: &sim_types::RenderSnapshot, actor: EntityId) -> Option<&Bubb
 }
 
 fn observe_identity(trace: &mut Trace, session: &BattleSession) -> Option<EntityId> {
-    let generation = session.commands.generation().map(|value| value.value());
+    let generation = session
+        .commands
+        .generation()
+        .map(client::battle_pipeline::commands::SessionGeneration::value);
     let old_actor = trace.actor;
     if generation != trace.generation {
         trace.generation = generation;
@@ -113,6 +116,14 @@ fn observe_identity(trace: &mut Trace, session: &BattleSession) -> Option<Entity
     old_actor
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 fn record(
     mut trace: ResMut<'_, Trace>,
     time: Res<'_, Time>,
@@ -166,7 +177,10 @@ fn record(
                 .iter()
                 .all(|image| images.contains(*image))
             });
-    let generation = session.commands.generation().map(|value| value.value());
+    let generation = session
+        .commands
+        .generation()
+        .map(client::battle_pipeline::commands::SessionGeneration::value);
     let old_actor = observe_identity(&mut trace, &session);
     let published = trace
         .actor

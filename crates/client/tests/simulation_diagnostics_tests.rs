@@ -37,6 +37,10 @@ fn actual_definition_and_palette() -> Result<
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 fn live_sync_reports_and_stops_on_invalid_simulation_rate() -> Result<(), Box<dyn std::error::Error>>
 {
     let (root, definition, palette) = actual_definition_and_palette()?;

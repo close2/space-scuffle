@@ -109,7 +109,7 @@ pub enum AuditError {
 pub(crate) struct LogicalIdentity {
     /// Actual renderer producer domain.
     pub domain: &'static str,
-    /// Logical snapshot EntityId, distinct from either Bevy entity namespace.
+    /// Logical snapshot `EntityId`, distinct from either Bevy entity namespace.
     pub entity: u32,
     /// Committed generation; zero denotes the persistent Swarm preview domain.
     pub generation: u64,
@@ -122,7 +122,7 @@ pub(crate) struct SourceItem {
     pub main_entity: u64,
     /// Present for a validated shell producer identity.
     pub logical: Option<LogicalIdentity>,
-    /// Actual PlayerId value for a shell; absent for unrelated geometry.
+    /// Actual `PlayerId` value for a shell; absent for unrelated geometry.
     pub owner: Option<u8>,
     /// Column-major world transform as exact f32 bits.
     pub world_from_local: [u32; 16],
@@ -205,7 +205,7 @@ pub(crate) struct AssetRecord {
 pub(crate) enum DrawAdapter {
     /// Actual registered bubble material draw tuple.
     Shell,
-    /// Actual registered StandardMaterial draw tuple.
+    /// Actual registered `StandardMaterial` draw tuple.
     Standard,
 }
 
@@ -214,7 +214,7 @@ pub(crate) enum DrawAdapter {
 pub(crate) enum AssociationKind {
     /// A marker-proven temporary proxy and its actual supported draw tuple.
     Temporary(DrawAdapter),
-    /// A persistent render entity with matching MainEntity and supported draw.
+    /// A persistent render entity with matching `MainEntity` and supported draw.
     Synchronized(DrawAdapter),
     /// Required actual registration has not yet appeared.
     Pending,
@@ -227,9 +227,9 @@ pub(crate) enum AssociationKind {
 pub(crate) struct RenderAssociation {
     /// Exact raw render/main pair occurs once in this view's actual mesh list.
     pub visible_pair_confirmed: bool,
-    /// Actual render-world TemporaryRenderEntity component presence.
+    /// Actual render-world `TemporaryRenderEntity` component presence.
     pub temporary_marker: bool,
-    /// Actual render-world MainEntity component, absent on marker-only proxies.
+    /// Actual render-world `MainEntity` component, absent on marker-only proxies.
     pub render_main_entity: Option<u64>,
     /// Checked draw and lifecycle classification; no guessed identity.
     pub kind: AssociationKind,
@@ -244,7 +244,7 @@ pub(crate) struct PhaseEntry {
     pub render_entity: u64,
     /// Actual per-view mapping, marker and supported draw proof.
     pub association: RenderAssociation,
-    /// Actual MainEntity bits carried by the queued draw.
+    /// Actual `MainEntity` bits carried by the queued draw.
     pub main_entity: u64,
     /// Validated shell identity when this is a supported shell draw.
     pub logical: Option<LogicalIdentity>,

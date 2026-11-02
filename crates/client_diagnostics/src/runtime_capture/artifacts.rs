@@ -14,6 +14,16 @@ pub(super) struct ImageMetrics {
     pub samples: usize,
 }
 
+#[expect(
+    clippy::many_single_char_names,
+    reason = "x, y, w and h name one normalized rectangle"
+)]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "capture coordinates are bounded by the window size and frame budget"
+)]
 pub(super) fn measure(
     image: &image::RgbImage,
     region: [f32; 4],
@@ -142,6 +152,10 @@ mod tests {
     use super::measure;
 
     #[test]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "capture coordinates are bounded by the window size and frame budget"
+    )]
     fn gameplay_region_rejects_blank_pixels_even_when_ui_region_has_detail() {
         let mut image = image::RgbImage::from_pixel(64, 64, image::Rgb([8, 8, 8]));
         for y in 0..64 {
