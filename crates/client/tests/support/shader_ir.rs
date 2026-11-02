@@ -55,7 +55,7 @@ pub struct ShaderVariant {
     pub multisampled: bool,
     /// Adds `DEPTH_PREPASS`, enabling the prepass depth reads in volume shaders.
     pub depth_prepass: bool,
-    /// Adds `TONEMAP_IN_SHADER` with the production Tony McMapface LUT and `DEBAND_DITHER`.
+    /// Adds `TONEMAP_IN_SHADER` with the production Tony `McMapface` LUT and `DEBAND_DITHER`.
     pub tonemap: bool,
     /// Adds `PREMULTIPLY_ALPHA` and `BLEND_PREMULTIPLIED_ALPHA`, used by `AlphaMode::Blend`.
     pub premultiplied_blend: bool,
@@ -391,6 +391,55 @@ impl ValidatedShader {
                 return false;
             };
             members.get(*index as usize).and_then(|m| m.name.as_deref()) == Some(member)
+        })
+    }
+
+    /// Returns `true` when `caller` calls the function named `callee` directly.
+    pub fn calls(&self, caller: &Function, callee: &str) -> bool {
+        let mut found = false;
+        visit_statements(&caller.body, &mut |statement| {
+            if let Statement::Call { function, .. } = statement {
+                found |= self.module.functions[*function].name.as_deref() == Some(callee);
+            }
+        });
+        found
+    }
+
+    /// Returns `true` when `function` reads component `index` of `member` of a struct argument.
+    ///
+    /// `.x` is component 0 and `.y` is component 1, so this tells `in.uv.y` from `in.uv.x`. A read
+    /// of the whole member, such as `in.uv * 3.0`, is not a read of one component.
+    pub fn reads_argument_component(
+        &self,
+        function: &Function,
+        member: &str,
+        component: u32,
+    ) -> bool {
+        function.expressions.iter().any(|(_, expression)| {
+            let Expression::AccessIndex { base, index } = *expression else {
+                return false;
+            };
+            if index != component {
+                return false;
+            }
+            let Expression::AccessIndex {
+                base: argument,
+                index: member_index,
+            } = function.expressions[base]
+            else {
+                return false;
+            };
+            let Expression::FunctionArgument(position) = function.expressions[argument] else {
+                return false;
+            };
+            let ty = function.arguments[position as usize].ty;
+            let TypeInner::Struct { members, .. } = &self.module.types[ty].inner else {
+                return false;
+            };
+            members
+                .get(member_index as usize)
+                .and_then(|m| m.name.as_deref())
+                == Some(member)
         })
     }
 
