@@ -55,7 +55,11 @@ pub(crate) fn ground_footprint_connected(
     };
     for y in (bounds.1 >> 32)..=((bounds.3 - 1) >> 32) {
         for x in (bounds.0 >> 32)..=((bounds.2 - 1) >> 32) {
-            let cell = (x as u32, y as u32);
+            // The footprint lies inside the map, checked above, so these are valid cells.
+            let (Ok(cell_x), Ok(cell_y)) = (u32::try_from(x), u32::try_from(y)) else {
+                return false;
+            };
+            let cell = (cell_x, cell_y);
             if !touches(cell.0, cell.1) {
                 continue;
             }
@@ -84,9 +88,9 @@ pub(crate) fn ground_footprint_connected(
 
 /// Exact open-interior slab intersection; mere tangency is not footprint overlap.
 /// The caller first bounds both full-radius endpoints inside the map. With
-/// M=i64::MAX and U=2^32, raw endpoints lie in [r,M], so |delta|<=M-r.
-/// Cell edges (including one west/south neighbor) give |numerator|<=M+r+2U.
-/// Thus every product is <=(M+r+2U)(M-r)<=M²+2UM<2^127. A stationary
+/// `M=i64::MAX` and `U=2^32`, raw endpoints lie in `[r,M]`, so `|delta|<=M-r`.
+/// Cell edges (including one west/south neighbor) give `|numerator|<=M+r+2U`.
+/// Thus every product is `<=(M+r+2U)(M-r)<=M²+2UM<2^127`. A stationary
 /// segment uses no delta products. All expansion/index arithmetic stays i128.
 pub(crate) fn segment_overlaps_open_box(
     start: (i128, i128),

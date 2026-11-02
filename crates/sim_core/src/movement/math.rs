@@ -41,7 +41,7 @@ pub(crate) fn direction(a: SimVec2, b: SimVec2) -> Result<SimVec2, MovementMathE
     let x = i128::from(a.x.raw()) - i128::from(b.x.raw());
     let y = i128::from(a.y.raw()) - i128::from(b.y.raw());
     let norm = raw_norm(a, b);
-    if norm <= SimScalar::EPSILON.raw() as u128 {
+    if norm <= u128::from(SimScalar::EPSILON.raw().unsigned_abs()) {
         return Ok(SimVec2::ZERO);
     }
     let divisor = i128::try_from(norm).map_err(|_| MovementMathError::Unrepresentable)?;
@@ -131,10 +131,9 @@ pub(crate) fn squared_distance(a: SimVec2, b: SimVec2) -> (u128, u128) {
 }
 
 pub(crate) fn within_distance(a: SimVec2, b: SimVec2, threshold: i128) -> bool {
-    if threshold < 0 {
+    let Ok(n) = u128::try_from(threshold) else {
         return false;
-    }
-    let n = threshold as u128;
+    };
     // Thresholds are sums of at most two nonnegative signed raw radii and a
     // positive fixed margin: fewer than65 bits. Larger thresholds cover every
     // representable planar position pair without needing a square.

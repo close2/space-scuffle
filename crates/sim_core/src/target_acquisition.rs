@@ -13,7 +13,9 @@
 //!    and an explicit attack ends only when it can no longer be carried out.
 //! 2. A holding or immobile unit only considers targets its weapon reaches from where it
 //!    stands, and acquisition never moves a unit off a hold order.
-//! 3. Candidates are ranked by [`TargetPriorityKey`], so the choice is deterministic.
+//! 3. Candidates are ranked by [`TargetPriorityKey`], so the choice is deterministic. A unit that
+//!    cannot hit its automatic target takes an equal enemy it can hit from where it stands, because
+//!    bodies now block: walking on around a crowd would only lose the blows.
 //! 4. Damage from a unit's own side never causes retaliation, flight or alerts.
 
 use crate::catalog::UnitArchetype;
@@ -448,7 +450,13 @@ impl SimWorld {
             };
         };
         if let Some((held, held_distance)) = scan.current {
+            let in_reach_now = reachable_current.is_none()
+                && self
+                    .entities
+                    .get(&best.entity_id)
+                    .is_some_and(|enemy| self.reaches_from_here(entity, arch, enemy));
             let keeps = best.threat_priority <= held.threat_priority
+                && !in_reach_now
                 && (reachable_current.is_some()
                     || held_distance <= best_distance + RETARGET_DISTANCE_MARGIN);
             if keeps {
@@ -481,6 +489,7 @@ impl SimWorld {
                 continue;
             };
             if neighbor.owner == entity.owner
+                || entity.movement.abandoned_target == Some(neighbor_id)
                 || !Self::is_entity_targetable(neighbor, &self.map, &self.vision_maps, entity.owner)
             {
                 continue;
@@ -547,5 +556,6 @@ impl SimWorld {
             Some(_) => return,
         }
         unit.current_funnel_waypoints.clear();
+        unit.movement.restart();
     }
 }

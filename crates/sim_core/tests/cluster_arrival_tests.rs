@@ -206,7 +206,14 @@ fn flat_and_air_keep_arrival_and_pop_only_the_current_order() -> TestResult {
             );
             assert_eq!(w.movement_outcomes().len(), 2);
             assert!(w.movement_outcomes().iter().all(|o| o.result.is_ok()));
-            assert_eq!(w.entities[&ids[0]].position, start);
+            // The unit on the goal is done at once and walks off to its queued order, so the
+            // other one settles on the goal itself. Only the first order may end either way.
+            for _ in 0..16 {
+                if w.entities[&ids[0]].order_queue.len() == 1 {
+                    break;
+                }
+                tick(&mut w, Vec::new());
+            }
             assert_eq!(w.entities[&ids[0]].order_queue.len(), 1);
             assert_eq!(
                 w.entities[&ids[0]].order_queue.front(),
@@ -245,7 +252,7 @@ fn disconnected_arrival_cannot_pop_a_queued_followup() -> TestResult {
 }
 
 #[test]
-fn registered_foundation_remains_an_occupied_terrain_witness() -> TestResult {
+fn order_onto_a_foundation_ends_beside_it_without_revealing_it() -> TestResult {
     for fog in [false, true] {
         for attack in [false, true] {
             let (mut w, kind) = world(flat()?, MoverType::Ground, fog)?;
@@ -278,24 +285,35 @@ fn registered_foundation_remains_an_occupied_terrain_witness() -> TestResult {
                 .map
                 .ground_segment_is_connected(center(9, 10), goal, |_, _| true));
             assert!(!SimWorld::is_position_pathable(&w.map, center(9, 10), goal));
-            // Querying arrival must not discover the registered structure through
-            // a knowledge side channel. Exercise actual unknown then revealed
-            // masks; the normal tick below owns legitimate vision publication.
+            // Moving must not discover the registered structure through a knowledge side
+            // channel. Exercise actual unknown then revealed masks; the normal tick below
+            // owns legitimate vision publication.
             assert!(!w.known_blocked_cells[0][10 * 64 + 10]);
             w.try_issue_movement(PlayerId(0), &[actor], &order(attack, goal), false)?;
             let unknown = w.known_blocked_cells.clone();
             w.step_movement_and_steering();
             assert_eq!(w.known_blocked_cells, unknown);
-            assert!(w.entities[&actor].order_queue.is_empty());
+            w.entities.get_mut(&actor).ok_or("actor")?.position = center(9, 10);
             tick(&mut w, vec![command(&[actor], attack, goal, false)]);
             assert!(w.movement_outcomes()[0].result.is_ok());
             assert!(w.known_blocked_cells[0][10 * 64 + 10]);
+            // Once seen, the foundation is not a destination: the nearest point is, and the
+            // actor walks there and stops against nothing but its own arrival.
             let revealed = w.known_blocked_cells.clone();
             w.try_issue_movement(PlayerId(0), &[actor], &order(attack, goal), false)?;
-            w.step_movement_and_steering();
+            for _ in 0..40 {
+                w.step_movement_and_steering();
+                if w.entities[&actor].order_queue.is_empty() {
+                    break;
+                }
+            }
             assert_eq!(w.known_blocked_cells, revealed);
             assert!(w.entities[&actor].order_queue.is_empty());
-            assert_eq!(w.entities[&actor].position, center(9, 10));
+            assert!(!SimWorld::is_position_pathable(
+                &w.map,
+                w.entities[&actor].position,
+                goal
+            ));
             assert_eq!(w.entities[&foundation].position, goal);
             assert_eq!(w.map.structures().get(&foundation), Some(&placement));
             assert!(w.diagnostics().is_empty(), "{:?}", w.diagnostics());

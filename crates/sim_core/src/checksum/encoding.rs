@@ -4,7 +4,7 @@
 //! enum tags keep the byte stream independent of platform layouts and serde formats.
 //! Exhaustive struct destructuring makes field additions require checksum review.
 
-use crate::entity::{ActiveBuff, ActiveProjectile, Entity, WeaponPhase};
+use crate::entity::{ActiveBuff, ActiveProjectile, Entity, MovementMemory, WeaponPhase};
 use crate::production::ProductionJob;
 use crate::world::{ActiveHazardZone, PlayerResources};
 use sim_map::{
@@ -194,6 +194,17 @@ macro_rules! fields {
 }
 
 fields!(SimVec2 { x, y });
+fields!(MovementMemory {
+    arrived_at,
+    progress_best,
+    progress_legs,
+    progress_tail,
+    stalled_ticks,
+    repath_cooldown,
+    abandoned_target,
+    abandoned_ticks,
+    flank_left
+});
 fields!(ActiveBuff {
     buff_id,
     remaining_ticks,
@@ -220,6 +231,7 @@ fields!(Entity {
     ticks_since_last_damage,
     order_queue,
     current_funnel_waypoints,
+    movement,
     weapon_phase,
     weapon_cooldown_remaining,
     active_buffs,
@@ -497,7 +509,7 @@ mod tests {
         // Domain length, UTF-8 domain, schema u32, u16, i32, option tags/payload,
         // then UTF-8 string byte length and its two encoded bytes.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 7, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 8, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
             0xff, 0xff, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0xc3, 0xa9,
         ];
         assert_eq!(encoder.finish(), xxh64(&bytes, 0));
@@ -521,7 +533,7 @@ mod tests {
         // Domain length and bytes, schema 5, queue length, archetype u16,
         // then the full remaining duration u32 (0x0001_0001).
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 7, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 8, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
             0x34, 0x12, 1, 0, 1, 0, 0x78, 0x56, 0x34, 0x12,
         ];
         assert_eq!(digest(&queue), xxh64(&bytes, 0));
@@ -529,7 +541,7 @@ mod tests {
 
     #[test]
     fn carrier_identity_has_explicit_option_tag_and_all_id_bytes() {
-        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 7, 0, 0, 0];
+        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 8, 0, 0, 0];
         bytes.push(0);
         assert_eq!(digest(&None::<sim_types::EntityId>), xxh64(&bytes, 0));
         bytes.pop();

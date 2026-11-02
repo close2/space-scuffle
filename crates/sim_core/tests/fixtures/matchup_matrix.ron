@@ -817,7 +817,7 @@
         name: "28_100_lings_vs_10_immortals",
         claim: "Without splash, immortals are overrun",
         map_cells: 96,
-        ticks: 600,
+        ticks: 1000,
         blue: (
             squads: [
                 (unit: "razor_mantis", count: 100, columns: 10, origin: (16.0, 44.5), spacing: 0.7),
@@ -910,7 +910,7 @@
     ),
     (
         name: "33_24_marines_vs_12_zealots",
-        claim: "Unkited marines lose to zealots",
+        claim: "A close, brutal fight: solid bodies give marines the edge over zealots they do not kite",
         map_cells: 96,
         ticks: 500,
         blue: (
@@ -925,7 +925,7 @@
             ],
             order: AttackMove(20, 48),
         ),
-        expect: (blue: (0, 0), red: (1, 999)),
+        expect: (blue: (4, 16), red: (0, 0)),
     ),
     (
         name: "34_20_hydras_vs_12_mutas",

@@ -21,6 +21,17 @@ use sim_core::SimWorld;
 use sim_map::{CliffLevel, GameMap, MapCell, MapFile};
 use sim_types::{EntityId, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder};
 
+/// Whether two consecutive tick displacements point in opposing directions.
+///
+/// Compares directions, not raw dot products: per-tick steps are about 0.1 long, so an
+/// unnormalised dot product can never get near a threshold like -0.3.
+fn reverses(delta: SimVec2, previous: SimVec2) -> bool {
+    match (delta.normalize(), previous.normalize()) {
+        (Ok(now), Ok(before)) => now.dot(before) < SimScalar::from_f32_lossy(-0.3),
+        _ => false,
+    }
+}
+
 fn empty_bundle(tick: u32) -> TickBundle {
     TickBundle {
         tick: Tick(tick),
@@ -275,9 +286,12 @@ fn test_converging_units_respect_speed_cap_and_do_not_vibrate() {
         unit_tracker.insert(id, (p, None, 0));
     }
 
+    let target_hp = world.entities[&target_id].hp;
+
     // Step 120 ticks
     for tick in 1..=120 {
         world.step(&empty_bundle(tick));
+        assert_eq!(world.diagnostics(), []);
 
         for &id in &converging_ids {
             let Some(ent) = world.entities.get(&id) else {
@@ -303,11 +317,9 @@ fn test_converging_units_respect_speed_cap_and_do_not_vibrate() {
             // Invariant 2: Anti-vibration ping-pong reversal check
             if let Some(p_delta) = *prev_delta {
                 let threshold = SimScalar::from_f32_lossy(0.015);
-                if tick_disp > threshold && p_delta.length() > threshold {
-                    let dot = delta.dot(p_delta);
-                    if dot < SimScalar::from_f32_lossy(-0.3) {
-                        *reversals += 1;
-                    }
+                if tick_disp > threshold && p_delta.length() > threshold && reverses(delta, p_delta)
+                {
+                    *reversals += 1;
                 }
             }
 
@@ -325,6 +337,15 @@ fn test_converging_units_respect_speed_cap_and_do_not_vibrate() {
             reversals
         );
     }
+
+    // Invariant 4: the group really reached the enemy, rather than holding still politely.
+    assert!(
+        world
+            .entities
+            .get(&target_id)
+            .is_none_or(|target| target.hp < target_hp),
+        "converging melee units never damaged their target"
+    );
 }
 
 fn load_canyon_map() -> GameMap {
@@ -529,6 +550,7 @@ fn test_higher_priority_melee_slides_around_engaged_ranged_ally() {
         .order_queue
         .push_back(UnitOrder::attack(enemy_id));
 
+    let enemy_hp = world.entities[&enemy_id].hp;
     let min_sep_threshold = (r_ranged + r_melee) * SimScalar::from_f32_lossy(0.80);
     let mut prev_melee_pos = melee_pos;
     let mut prev_melee_delta: Option<SimVec2> = None;
@@ -536,6 +558,7 @@ fn test_higher_priority_melee_slides_around_engaged_ranged_ally() {
 
     for tick in 1..=80 {
         world.step(&empty_bundle(tick));
+        assert_eq!(world.diagnostics(), []);
         let ranged_curr = world.entities[&ranged_id].position;
         let melee_curr = world.entities[&melee_id].position;
         let ranged_drift = (ranged_curr - ranged_pos).length();
@@ -562,7 +585,7 @@ fn test_higher_priority_melee_slides_around_engaged_ranged_ally() {
         if let Some(p_delta) = prev_melee_delta {
             if disp > SimScalar::from_f32_lossy(0.015)
                 && p_delta.length() > SimScalar::from_f32_lossy(0.015)
-                && delta.dot(p_delta) < SimScalar::from_f32_lossy(-0.3)
+                && reverses(delta, p_delta)
             {
                 reversals += 1;
             }
@@ -575,6 +598,13 @@ fn test_higher_priority_melee_slides_around_engaged_ranged_ally() {
         reversals <= 2,
         "Melee unit wrapping around ally must not vibrate (reversals = {})",
         reversals
+    );
+    assert!(
+        world
+            .entities
+            .get(&enemy_id)
+            .is_none_or(|enemy| enemy.hp < enemy_hp),
+        "the pair must reach and damage the enemy"
     );
 }
 

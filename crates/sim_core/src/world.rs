@@ -18,10 +18,7 @@ use crate::movement::{
     DisplacementAdmissionError, MotionPolicy, MovementInvariant, MovementLayer, MovementMathError,
     MovementOutcome,
 };
-use crate::steering::{
-    compute_push_displacement_with_mobility, CollisionMobility, PushEntityParams, SpatialHashGrid,
-    SPATIAL_CELL_SIZE,
-};
+use crate::steering::{SpatialHashGrid, SPATIAL_CELL_SIZE};
 use crate::upgrades::{UpgradeCatalog, OVERCLOCK_ABILITY_SLUG};
 use crate::weapon_timing::{resolve_attack_period, AttackRate, SimulationDiagnostic};
 use rand::SeedableRng;
@@ -42,6 +39,10 @@ use std::collections::BTreeMap;
 // What: Persistent scratch buffers (spatial query results, candidate targets, dead entity lists)
 // are stored directly inside `SimWorld` and cleared each tick without heap reallocation.
 // Trade-off: Slightly larger persistent struct footprint in exchange for zero per-tick heap allocations.
+
+/// Squared distance, in raw Q64.64, within which a threat counts as standing on its victim.
+/// Fixed at 0.0001 world units squared, in the same widened scale as `squared_distance`.
+const FLEE_COINCIDENCE_SQUARED: u128 = 429_497 << 32;
 
 /// Player economy and supply vitals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -746,6 +747,7 @@ impl SimWorld {
         self.tick_diagnostics.clear();
         self.production.outcomes.clear();
         self.movement.outcomes.clear();
+        self.movement.route_outcomes.clear();
         self.current_tick = self.current_tick.wrapping_add(1);
 
         if let Err(source) = self.validate_transport_links() {
@@ -1497,8 +1499,11 @@ impl SimWorld {
                     if self.vision_maps[p].visibility_at(cx, cy) == VisibilityState::Visible {
                         let idx = cy as usize * width + cx as usize;
                         if let Ok(cell) = self.map.cell(cx, cy) {
-                            self.known_blocked_cells[p][idx] =
-                                cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE);
+                            let known = cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE);
+                            if self.known_blocked_cells[p][idx] != known {
+                                self.known_blocked_cells[p][idx] = known;
+                                self.movement.recheck_routes[p] = true;
+                            }
                         }
                     }
                 }
@@ -1600,8 +1605,7 @@ impl SimWorld {
         if desired_dist < SimScalar::ZERO || !policy.contains(map, victim_pos) {
             return Err(MovementMathError::InvalidDistance);
         }
-        let threshold = u128::from(SimScalar::from_f32_lossy(0.0001).raw().unsigned_abs()) << 32;
-        let away = if squared_distance(victim_pos, threat_pos) > (0, threshold) {
+        let away = if squared_distance(victim_pos, threat_pos) > (0, FLEE_COINCIDENCE_SQUARED) {
             direction(victim_pos, threat_pos)?
         } else {
             -SimVec2::X_AXIS
@@ -1680,340 +1684,6 @@ impl SimWorld {
                     && !cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE)
             })
         })
-    }
-
-    /// Phase 6: Resolve circle-circle collisions, engagement anchoring, and push priority.
-    /// Direct phase callers must establish `validate_transport_links` beforehand;
-    /// normal `step_into` establishes this precondition once for its phase sequence.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "split in plan steps 3.1 and 9.1, which own this file's structure"
-    )]
-    pub fn resolve_collisions_and_push(&mut self) {
-        let mut entries = std::mem::take(&mut self.movement.collision_entries);
-        entries.clear();
-        self.spatial_hash.clear();
-        let mut max_radii = [SimScalar::ZERO; 2];
-        for (id, entity) in &self.entities {
-            if entity.is_alive() && !entity.is_loaded_in_transport() {
-                match self.motion_entry(*id) {
-                    Ok(entry) => {
-                        let policy = entry.policy;
-                        entries.push(entry);
-                        max_radii[policy.layer.index()] =
-                            max_radii[policy.layer.index()].max(policy.radius);
-                        self.spatial_hash.insert(*id, entity.position);
-                    }
-                    Err(source) => {
-                        self.tick_diagnostics
-                            .push(SimulationDiagnostic::MovementInvariant {
-                                tick: Tick(self.current_tick),
-                                source,
-                            });
-                    }
-                }
-            }
-        }
-
-        let mut friendly_pushes: BTreeMap<EntityId, SimVec2> = BTreeMap::new();
-        let mut hard_pushes: BTreeMap<EntityId, SimVec2> = BTreeMap::new();
-
-        for entry_a in &entries {
-            let id_a = entry_a.id;
-            let Some(entity_a) = self.entities.get(&id_a) else {
-                continue;
-            };
-            if !entity_a.is_alive()
-                || entity_a.is_mineral_walking
-                || entity_a.is_loaded_in_transport()
-            {
-                continue;
-            }
-
-            let policy_a = entry_a.policy;
-            let radius_a = policy_a.radius;
-
-            let pos_a = entity_a.position;
-            let vel_a = entity_a.velocity;
-            let owner_a = entity_a.owner;
-            let is_holding_a = entity_a.is_holding_position;
-            let priority_a = self
-                .catalog
-                .get(entity_a.unit_type_id)
-                .map_or(0, |a| a.push_priority);
-
-            let has_attack_target_a = entity_a
-                .current_target
-                .or_else(|| {
-                    if let Some(UnitOrder::AttackTarget { target, .. }) =
-                        entity_a.order_queue.front()
-                    {
-                        Some(*target)
-                    } else {
-                        None
-                    }
-                })
-                .is_some_and(|tid| self.entities.get(&tid).is_some_and(Entity::is_alive));
-            let is_engaged_a = matches!(
-                entity_a.weapon_phase,
-                WeaponPhase::RotatingToTarget { .. }
-                    | WeaponPhase::Windup { .. }
-                    | WeaponPhase::Backswing { .. }
-            ) || (has_attack_target_a
-                && entity_a.order_queue.front().is_some_and(|o| {
-                    matches!(
-                        o,
-                        UnitOrder::AttackTarget { .. } | UnitOrder::AttackMove { .. }
-                    )
-                })
-                && entity_a.velocity == SimVec2::ZERO);
-
-            self.spatial_hash.query_radius(
-                pos_a,
-                crate::movement::conservative_query_radius(
-                    &self.map,
-                    radius_a,
-                    max_radii[policy_a.layer.index()],
-                ),
-                &mut self.scratch_neighbors,
-            );
-
-            for &id_b in &self.scratch_neighbors {
-                if id_b.0 <= id_a.0 {
-                    continue;
-                }
-
-                let Some(entity_b) = self.entities.get(&id_b) else {
-                    continue;
-                };
-                if !entity_b.is_alive()
-                    || entity_b.is_mineral_walking
-                    || entity_b.is_loaded_in_transport()
-                {
-                    continue;
-                }
-
-                let Ok(index_b) = entries.binary_search_by_key(&id_b, |entry| entry.id) else {
-                    continue;
-                };
-                let policy_b = entries[index_b].policy;
-                if policy_a.layer != policy_b.layer {
-                    continue;
-                }
-                let radius_b = policy_b.radius;
-                if crate::movement::circles_overlap(pos_a, radius_a, entity_b.position, radius_b) {
-                    let arithmetic = radius_a.checked_add(radius_b).and_then(|combined| {
-                        crate::movement::checked_distance(pos_a, entity_b.position)
-                            .map(|dist| (combined, dist))
-                    });
-                    let Some((combined, dist)) = arithmetic else {
-                        self.tick_diagnostics
-                            .push(SimulationDiagnostic::MovementInvariant {
-                            tick: Tick(self.current_tick),
-                            source: MovementInvariant::InvalidState {
-                                entity: id_a,
-                                reason:
-                                    "collision geometry exceeds fixed-point local push arithmetic",
-                            },
-                        });
-                        continue;
-                    };
-
-                    let priority_b = self
-                        .catalog
-                        .get(entity_b.unit_type_id)
-                        .map_or(0, |a| a.push_priority);
-
-                    let has_attack_target_b = entity_b
-                        .current_target
-                        .or_else(|| {
-                            if let Some(UnitOrder::AttackTarget { target, .. }) =
-                                entity_b.order_queue.front()
-                            {
-                                Some(*target)
-                            } else {
-                                None
-                            }
-                        })
-                        .is_some_and(|tid| self.entities.get(&tid).is_some_and(Entity::is_alive));
-                    let is_engaged_b = matches!(
-                        entity_b.weapon_phase,
-                        WeaponPhase::RotatingToTarget { .. }
-                            | WeaponPhase::Windup { .. }
-                            | WeaponPhase::Backswing { .. }
-                    ) || (has_attack_target_b
-                        && entity_b.order_queue.front().is_some_and(|o| {
-                            matches!(
-                                o,
-                                UnitOrder::AttackTarget { .. } | UnitOrder::AttackMove { .. }
-                            )
-                        })
-                        && entity_b.velocity == SimVec2::ZERO);
-
-                    let eff_cannot_be_pushed_a = entity_a.cannot_be_pushed()
-                        || (owner_a == entity_b.owner
-                            && is_engaged_a
-                            && (priority_a >= priority_b
-                                || (entity_a.velocity == SimVec2::ZERO
-                                    && entity_b.velocity != SimVec2::ZERO)));
-                    let eff_cannot_be_pushed_b = entity_b.cannot_be_pushed()
-                        || (owner_a == entity_b.owner
-                            && is_engaged_b
-                            && (priority_b >= priority_a
-                                || (entity_b.velocity == SimVec2::ZERO && vel_a != SimVec2::ZERO)));
-
-                    // SC2 Push Rule: PushPriority lateral yielding applies only when a moving
-                    // unit contacts a stationary (Idle) unit. When two friendly dynamic units
-                    // are both moving, contact resolution is purely radial along the line of centers.
-                    let both_moving_dynamic = owner_a == entity_b.owner
-                        && vel_a != SimVec2::ZERO
-                        && entity_b.velocity != SimVec2::ZERO
-                        && !eff_cannot_be_pushed_a
-                        && !eff_cannot_be_pushed_b;
-
-                    let a_params = PushEntityParams {
-                        id: id_a,
-                        pos: pos_a,
-                        vel: if both_moving_dynamic {
-                            SimVec2::ZERO
-                        } else {
-                            vel_a
-                        },
-                        owner: owner_a,
-                        is_holding: is_holding_a,
-                        push_priority: priority_a,
-                        cannot_be_pushed: eff_cannot_be_pushed_a,
-                    };
-                    let b_params = PushEntityParams {
-                        id: id_b,
-                        pos: entity_b.position,
-                        vel: if both_moving_dynamic {
-                            SimVec2::ZERO
-                        } else {
-                            entity_b.velocity
-                        },
-                        owner: entity_b.owner,
-                        is_holding: entity_b.is_holding_position,
-                        push_priority: priority_b,
-                        cannot_be_pushed: eff_cannot_be_pushed_b,
-                    };
-                    let mobility = |actor: &Entity| {
-                        if actor.is_immobile
-                            || actor.unpushable
-                            || self.map.structures().contains_key(&actor.id)
-                        {
-                            CollisionMobility::Fixed
-                        } else {
-                            CollisionMobility::Dynamic
-                        }
-                    };
-                    let (delta_a, delta_b) = match compute_push_displacement_with_mobility(
-                        a_params,
-                        b_params,
-                        dist,
-                        combined,
-                        mobility(entity_a),
-                        mobility(entity_b),
-                    ) {
-                        Ok(displacement) => displacement,
-                        Err(source) => {
-                            self.tick_diagnostics
-                                .push(SimulationDiagnostic::MovementInvariant {
-                                    tick: Tick(self.current_tick),
-                                    source: MovementInvariant::PushGeometry {
-                                        entity: id_a,
-                                        source,
-                                    },
-                                });
-                            continue;
-                        }
-                    };
-
-                    let pushes = if owner_a == entity_b.owner {
-                        &mut friendly_pushes
-                    } else {
-                        &mut hard_pushes
-                    };
-                    if let Err(source) = crate::movement::collision::accumulate_pair(
-                        pushes, id_a, id_b, delta_a, delta_b,
-                    ) {
-                        self.tick_diagnostics
-                            .push(SimulationDiagnostic::MovementInvariant {
-                                tick: Tick(self.current_tick),
-                                source: MovementInvariant::Arithmetic {
-                                    entity: id_a,
-                                    operation: "collision pair accumulation",
-                                    source,
-                                },
-                            });
-                    }
-                }
-            }
-        }
-
-        // Preserve the established friendly base-speed cap; upgrades/buffs were
-        // validated at entry but this round does not rebalance crowd correction.
-        for (hard, pushes) in [(false, friendly_pushes), (true, hard_pushes)] {
-            for (id, push) in pushes {
-                let Ok(index) = entries.binary_search_by_key(&id, |entry| entry.id) else {
-                    continue;
-                };
-                let policy = entries[index].policy;
-                let Some(actor) = self.entities.get_mut(&id) else {
-                    continue;
-                };
-                if actor.is_immobile || actor.unpushable || self.map.structures().contains_key(&id)
-                {
-                    continue;
-                }
-                let proposed = if hard {
-                    crate::movement::math::checked_vec_add(actor.position, push)
-                } else {
-                    let speed = match self.catalog.get(actor.unit_type_id) {
-                        Ok(arch) => arch.max_speed,
-                        Err(_) => continue,
-                    };
-                    crate::movement::collision::soft_position(
-                        actor.position,
-                        actor.pos_at_tick_start,
-                        push,
-                        speed,
-                    )
-                };
-                let proposed = match proposed {
-                    Ok(position) => position,
-                    Err(source) => {
-                        self.tick_diagnostics
-                            .push(SimulationDiagnostic::MovementInvariant {
-                                tick: Tick(self.current_tick),
-                                source: MovementInvariant::Arithmetic {
-                                    entity: id,
-                                    operation: "collision application",
-                                    source,
-                                },
-                            });
-                        continue;
-                    }
-                };
-                let accepted = if policy.permits_segment(&self.map, actor.position, proposed) {
-                    Some(proposed)
-                } else {
-                    let x = SimVec2::new(proposed.x, actor.position.y);
-                    let y = SimVec2::new(actor.position.x, proposed.y);
-                    if policy.permits_segment(&self.map, actor.position, x) {
-                        Some(x)
-                    } else if policy.permits_segment(&self.map, actor.position, y) {
-                        Some(y)
-                    } else {
-                        None
-                    }
-                };
-                if let Some(position) = accepted {
-                    actor.position = position;
-                }
-            }
-        }
-        self.movement.collision_entries = entries;
     }
 
     /// Phase 8: Reap destroyed entities and emit death shatter visuals.
