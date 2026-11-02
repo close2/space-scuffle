@@ -203,6 +203,16 @@ impl<'a> LogRecord<'a> {
     }
 }
 
+/// Returns `true` for a best-practices message ID from any supported layer version.
+///
+/// Layers name these `BestPractices-...`; 1.3.239 and other older ones name them
+/// `UNASSIGNED-BestPractices-...`. Other `UNASSIGNED-` IDs are not best-practices findings.
+pub fn is_best_practices_id(id: &str) -> bool {
+    id.strip_prefix("UNASSIGNED-")
+        .unwrap_or(id)
+        .starts_with("BestPractices-")
+}
+
 /// Extracts `<ID>` from a messenger header of the form `<TYPE> [<ID> (0x<number>)]`.
 fn message_id(header: &str) -> Option<&str> {
     let (_, bracketed) = header.split_once('[')?;

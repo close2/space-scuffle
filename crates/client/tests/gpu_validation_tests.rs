@@ -174,6 +174,25 @@ fn listed_notice_does_not_hide_a_real_validation_error() {
     assert!(violations[0].contains("VUID-vkCmdDraw-None-08600"));
 }
 
+#[test]
+fn best_practices_ids_are_recognised_in_both_layer_naming_forms() {
+    assert!(gpu_run::is_best_practices_id(
+        "BestPractices-vkCreateRenderPass-image-requires-memory"
+    ));
+    assert!(gpu_run::is_best_practices_id(
+        "UNASSIGNED-BestPractices-vkCreateRenderPass-image-requires-memory"
+    ));
+    for other in [
+        "UNASSIGNED-khronos-validation-createinstance-status-message",
+        "VUID-vkCmdDraw-None-08600",
+        "Unable to find extension: VK_EXT_swapchain_colorspace",
+        "NotBestPractices-vkCreateRenderPass",
+        "UNASSIGNED-UNASSIGNED-BestPractices-vkCreateRenderPass",
+    ] {
+        assert!(!gpu_run::is_best_practices_id(other), "{other}");
+    }
+}
+
 /// Positive control: the gate must fail on findings the real layer emits in a real run.
 ///
 /// Best-practices checks are off in normal runs and are known to report on Bevy's render passes,
@@ -201,7 +220,7 @@ fn real_layer_findings_reach_the_gate() {
     assert!(
         report
             .unlisted(VALIDATION_ALLOWLIST)
-            .any(|finding| finding.id.starts_with("BestPractices-")),
+            .any(|finding| gpu_run::is_best_practices_id(&finding.id)),
         "best-practices findings did not reach the gate: {:?}",
         report.findings
     );
