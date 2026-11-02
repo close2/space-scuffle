@@ -70,6 +70,8 @@ pub struct ShowcaseLineup {
 
 impl ShowcaseLineup {
     /// Rebuilds the lineup from `catalog` if `catalog_changed`, reusing its storage.
+    ///
+    /// The owning system must call this on every run, or it can miss the only change signal.
     pub fn refresh(&mut self, catalog: &UnitCatalog, catalog_changed: bool) {
         if !catalog_changed {
             return;
@@ -298,6 +300,9 @@ pub fn sync_lab_preview_system(
         With<LabPreviewBubble>,
     >,
 ) {
+    // Runs before any early return, because `is_changed` reports a change only once.
+    lineup.refresh(&catalog.0, catalog.is_changed());
+
     if lab_state.current_tab != LabTab::VisualLab {
         // Despawn preview bubbles when switching tabs
         for (entity, _, _, _, _, _) in &query {
@@ -310,8 +315,6 @@ pub fn sync_lab_preview_system(
     let dt = time.delta_secs();
     lab_state.shield_hit_flash = (lab_state.shield_hit_flash - dt * 3.0).max(0.0);
     lab_state.hull_hit_flash = (lab_state.hull_hit_flash - dt * 3.0).max(0.0);
-
-    lineup.refresh(&catalog.0, catalog.is_changed());
 
     let hero_count = query.iter().count();
     let expected_heroes = lineup.len().min(4);

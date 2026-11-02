@@ -116,6 +116,33 @@ fn default_visual_lab_shows_the_actors_its_controls_act_on() -> TestResult {
     Ok(())
 }
 
+/// C-15: a client that starts in battle must still fill the lineup when the Lab opens later.
+#[test]
+fn lab_opened_after_starting_in_battle_spawns_the_lineup() -> TestResult {
+    let mut app = scene_app(client::LabState {
+        current_tab: client::LabTab::LiveBattle,
+        ..default()
+    })?;
+    app.add_systems(Update, client::sync_lab_preview_system);
+    app.update();
+    app.update();
+
+    app.world_mut()
+        .resource_mut::<client::LabState>()
+        .current_tab = client::LabTab::VisualLab;
+    app.update();
+    app.update();
+
+    let mut heroes = app
+        .world_mut()
+        .query_filtered::<(), With<client::LabPreviewBubble>>();
+    assert!(
+        heroes.iter(app.world()).count() > 0,
+        "the lineup must spawn"
+    );
+    Ok(())
+}
+
 /// C-9: effects at `[16, 16]` landed about 22 world units from the lab camera's focus.
 #[test]
 fn every_lab_vfx_trigger_stays_inside_the_lab_camera_view() {
