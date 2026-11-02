@@ -290,6 +290,24 @@ pub fn spawn_death_shatter(
     }
 }
 
+/// Tilt of the melee slash card about world X, in radians, so it lies toward the RTS camera.
+const MELEE_CARD_TILT_RAD: f32 = -0.6108;
+
+/// Rotation of a projectile card: local -X follows `velocity`, and the face turns to the camera.
+///
+/// `position` and `camera_position` are world space. A shot along the view axis leaves the face
+/// direction free, so any perpendicular is used. `velocity` must be nonzero.
+#[must_use]
+pub fn projectile_card_rotation(velocity: Vec3, position: Vec3, camera_position: Vec3) -> Quat {
+    let tail = -velocity.normalize();
+    let to_camera = (camera_position - position).normalize_or_zero();
+    let toward_camera = to_camera.reject_from_normalized(tail);
+    let face = toward_camera
+        .try_normalize()
+        .unwrap_or_else(|| tail.any_orthonormal_vector());
+    Quat::from_mat3(&Mat3::from_cols(tail, face.cross(tail), face))
+}
+
 /// Updates in-flight projectiles with lifetime aging, material uniform updates, and velocity alignment.
 pub fn update_projectiles_system(
     mut commands: Commands<'_, '_>,
@@ -299,9 +317,11 @@ pub fn update_projectiles_system(
     mut query: Query<'_, '_, (Entity, &mut Transform, &mut ProjectileVisual)>,
 ) {
     let dt = time.delta_secs();
-    let cam_rotation = camera_query
+    let (cam_rotation, cam_pos) = camera_query
         .get_single()
-        .map_or(Quat::IDENTITY, |t| t.rotation);
+        .map_or((Quat::IDENTITY, Vec3::Y * 20.0), |t| {
+            (t.rotation, t.translation)
+        });
 
     for (entity, mut transform, mut proj) in &mut query {
         proj.lifetime.tick(time.delta());
@@ -315,7 +335,8 @@ pub fn update_projectiles_system(
             }
 
             if proj.velocity.length_squared() > 0.01 {
-                transform.rotation = Quat::from_rotation_arc(-Vec3::X, proj.velocity.normalize());
+                transform.rotation =
+                    projectile_card_rotation(proj.velocity, transform.translation, cam_pos);
             } else {
                 transform.rotation = cam_rotation;
             }
@@ -516,7 +537,7 @@ pub fn process_combat_events_system(
                 });
 
                 let rot = if v.length_squared() > 0.01 {
-                    Quat::from_rotation_arc(-Vec3::X, v.normalize())
+                    projectile_card_rotation(v, p, cam_pos)
                 } else {
                     Quat::IDENTITY
                 };
@@ -608,7 +629,9 @@ pub fn process_combat_events_system(
                     },
                 });
 
-                let rot = Quat::from_rotation_x(-0.6108) * Quat::from_rotation_y(-angle_rad);
+                // The shader sweeps the crescent by `primary_color.w`; rotating the card as well
+                // would apply the angle twice and turn it edge-on at quarter turns.
+                let rot = Quat::from_rotation_x(MELEE_CARD_TILT_RAD);
 
                 commands.spawn((
                     CombatLightEffect,

@@ -18,7 +18,7 @@ use bevy_egui::{egui, EguiContexts};
 use sim_core::catalog::UnitCatalog;
 use sim_core::world::SimWorld;
 use sim_types::commands::UnitOrder;
-use sim_types::enums::{AnimState, AttributeFlags, Faction, SilhouetteClass};
+use sim_types::enums::{AnimState, AttributeFlags, Faction};
 use sim_types::ids::PlayerId;
 use sim_types::math::SimVec2;
 use sim_types::snapshot::CombatEventVisual;
@@ -33,6 +33,94 @@ pub enum LabTab {
     LiveBattle,
     /// 200-bubble swarm readability and performance stress test.
     SwarmStressTest,
+}
+
+/// A Visual Lab button that plays one combat effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabVfxTrigger {
+    /// Death shatter burst.
+    GlassShatter,
+    /// Instant ballistic tracer.
+    HitscanFire,
+    /// Travelling plasma projectile.
+    PlasmaBolt,
+    /// Continuous straight beam.
+    LaserBeam,
+    /// Continuous jagged arc.
+    LightningArc,
+    /// Melee crescent.
+    MeleeSlash,
+}
+
+impl LabVfxTrigger {
+    /// Every trigger, in button order.
+    pub const ALL: [Self; 6] = [
+        Self::GlassShatter,
+        Self::HitscanFire,
+        Self::PlasmaBolt,
+        Self::LaserBeam,
+        Self::LightningArc,
+        Self::MeleeSlash,
+    ];
+
+    /// Button caption.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::GlassShatter => "Glass Shatter",
+            Self::HitscanFire => "Hitscan Fire",
+            Self::PlasmaBolt => "Plasma Bolt",
+            Self::LaserBeam => "Laser Beam",
+            Self::LightningArc => "Lightning Arc",
+            Self::MeleeSlash => "Melee Slash",
+        }
+    }
+
+    /// Builds the event for this trigger. `heading_rad` orients the melee slash.
+    /// Positions use the snapshot convention `[x, y, altitude]` in world units.
+    #[must_use]
+    pub fn event(self, heading_rad: f32, owner: PlayerId) -> CombatEventVisual {
+        // On the showcase stage, centred on the lab camera's focus at the world origin.
+        let origin = [-1.5, 0.0, 1.0];
+        let target = [1.5, 0.8, 1.0];
+        match self {
+            Self::GlassShatter => CombatEventVisual::BubbleShatter {
+                pos: origin,
+                radius: 0.6,
+                is_dome: false,
+                owner,
+            },
+            Self::HitscanFire => CombatEventVisual::HitscanTracer {
+                from: origin,
+                to: target,
+                owner,
+            },
+            Self::PlasmaBolt => CombatEventVisual::ProjectileVisual {
+                pos: origin,
+                vel: [2.5, 0.7, 0.0],
+                owner,
+                duration_secs: Some(1.2),
+            },
+            Self::LaserBeam => CombatEventVisual::BeamVisual {
+                from: origin,
+                to: target,
+                is_lightning: false,
+                owner,
+            },
+            Self::LightningArc => CombatEventVisual::BeamVisual {
+                from: origin,
+                to: target,
+                is_lightning: true,
+                owner,
+            },
+            Self::MeleeSlash => CombatEventVisual::MeleeSlashVisual {
+                pos: origin,
+                angle_rad: heading_rad,
+                radius: 1.0,
+                owner,
+            },
+        }
+    }
 }
 
 /// Central state resource for the Visual Lab inspector and sandbox controls.
@@ -58,11 +146,9 @@ pub struct LabState {
     pub build_progress: f32,
     /// Active animation state.
     pub anim_state: AnimState,
-    /// Active silhouette classification collar.
-    pub silhouette: SilhouetteClass,
     /// Active cloaking shimmer flag.
     pub cloaked: bool,
-    /// Active stimpack / hyper-wake particle flag.
+    /// Active stimpack flag, shown as a pulsing rim on the selected actor.
     pub speed_boosted: bool,
     /// Direction of incoming damage in degrees.
     pub hit_angle_deg: f32,
@@ -114,7 +200,8 @@ pub struct LabState {
     /// Swarm entities list.
     pub swarm_bubble_count: usize,
     // --- 3D Volumetric Smog & 10 Bouncing Bubbles State ---
-    /// Whether the 10-bubble wall-bouncing kinematics are active.
+    /// Whether the 10-bubble wall-bouncing showcase replaces the hero lineup. Off by default,
+    /// because the lab's actor controls and unit HUD act on the lineup.
     pub smog_bouncing_active: bool,
     /// 3D volumetric smog field visibility toggle.
     pub opt_smog_volume: bool,
@@ -138,7 +225,6 @@ impl Default for LabState {
             speed: 2.5,
             build_progress: 1.0,
             anim_state: AnimState::Idle,
-            silhouette: SilhouetteClass::LightProngs,
             cloaked: false,
             speed_boosted: false,
             hit_angle_deg: 45.0,
@@ -164,7 +250,7 @@ impl Default for LabState {
             last_checksum_hex: "0x0000000000000000".to_string(),
             swarm_active: true,
             swarm_bubble_count: 0,
-            smog_bouncing_active: true,
+            smog_bouncing_active: false,
             opt_smog_volume: true,
             smog_emission_rate: 5.0,
             smog_wake_influence: 3.4,
@@ -432,41 +518,9 @@ fn render_visual_lab_tab(
         ui.selectable_value(&mut state.anim_state, AnimState::Constructing, "Construct");
     });
 
-    ui.separator();
-    ui.heading("Silhouette Collar");
-    egui::ComboBox::from_label("Collar Mesh")
-        .selected_text(format!("{:?}", state.silhouette))
-        .show_ui(ui, |ui| {
-            ui.selectable_value(
-                &mut state.silhouette,
-                SilhouetteClass::LightProngs,
-                "LightProngs (Infantry/Scout)",
-            );
-            ui.selectable_value(
-                &mut state.silhouette,
-                SilhouetteClass::HeavyHex,
-                "HeavyHex (Armored/Tank)",
-            );
-            ui.selectable_value(
-                &mut state.silhouette,
-                SilhouetteClass::CasterHalo,
-                "CasterHalo (Caster/Support)",
-            );
-            ui.selectable_value(
-                &mut state.silhouette,
-                SilhouetteClass::MeleeSpikes,
-                "MeleeSpikes (Brawler/Zealot)",
-            );
-            ui.selectable_value(
-                &mut state.silhouette,
-                SilhouetteClass::StructureBase,
-                "StructureBase (Dome)",
-            );
-        });
-
     ui.horizontal_wrapped(|ui| {
         ui.checkbox(&mut state.cloaked, "Cloaked (Refraction)");
-        ui.checkbox(&mut state.speed_boosted, "Stimpack (Hyper Mist)");
+        ui.checkbox(&mut state.speed_boosted, "Stimpack (Boost Rim)");
     });
 
     ui.separator();
@@ -504,55 +558,15 @@ fn render_visual_lab_tab(
         if ui.button("Hull Flare Surge").clicked() {
             state.hull_hit_flash = 1.0;
         }
-        if ui.button("Glass Shatter").clicked() {
-            events.send(CombatVisualEvent(CombatEventVisual::BubbleShatter {
-                pos: [16.0, 16.0, 1.0],
-                radius: 0.6,
-                is_dome: false,
-                owner: effect_owner,
-            }));
-        }
     });
 
     ui.horizontal_wrapped(|ui| {
-        if ui.button("Hitscan Fire").clicked() {
-            events.send(CombatVisualEvent(CombatEventVisual::HitscanTracer {
-                from: [16.0, 16.0, 1.0],
-                to: [20.0, 20.0, 1.0],
-                owner: effect_owner,
-            }));
-        }
-        if ui.button("Plasma Bolt").clicked() {
-            events.send(CombatVisualEvent(CombatEventVisual::ProjectileVisual {
-                pos: [16.0, 16.0, 1.0],
-                vel: [6.0, 6.0, 0.0],
-                owner: effect_owner,
-                duration_secs: Some(1.2),
-            }));
-        }
-        if ui.button("Laser Beam").clicked() {
-            events.send(CombatVisualEvent(CombatEventVisual::BeamVisual {
-                from: [16.0, 16.0, 1.0],
-                to: [22.0, 22.0, 1.0],
-                is_lightning: false,
-                owner: effect_owner,
-            }));
-        }
-        if ui.button("Lightning Arc").clicked() {
-            events.send(CombatVisualEvent(CombatEventVisual::BeamVisual {
-                from: [16.0, 16.0, 1.0],
-                to: [22.0, 22.0, 1.0],
-                is_lightning: true,
-                owner: effect_owner,
-            }));
-        }
-        if ui.button("Melee Slash").clicked() {
-            events.send(CombatVisualEvent(CombatEventVisual::MeleeSlashVisual {
-                pos: [16.0, 16.0, 1.0],
-                angle_rad: state.heading_angle_deg.to_radians(),
-                radius: 1.0,
-                owner: effect_owner,
-            }));
+        for trigger in LabVfxTrigger::ALL {
+            if ui.button(trigger.label()).clicked() {
+                events.send(CombatVisualEvent(
+                    trigger.event(state.heading_angle_deg.to_radians(), effect_owner),
+                ));
+            }
         }
     });
 }
@@ -926,7 +940,9 @@ fn render_selected_unit_hud(
                                 ui.label(format!("Range: {:.1} u", weapon.max_range.to_f32()));
                                 ui.label(format!(
                                     "Period: {:.2}s ({} ticks)",
-                                    f32::from(weapon.period_ticks) / 25.0,
+                                    f32::from(weapon.period_ticks)
+                                        * crate::battle_pipeline::clock::SIM_TICK_PERIOD
+                                            .as_secs_f32(),
                                     weapon.period_ticks
                                 ));
                                 ui.label(format!("Push Priority: {}", arch.push_priority));

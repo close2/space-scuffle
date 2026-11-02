@@ -3,6 +3,13 @@
 
 #![allow(clippy::cast_precision_loss)]
 
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/gpu_run.rs"]
+mod gpu_run;
+
 use bevy::prelude::*;
 use client::smog::{
     bubble_team_color, generate_bouncing_bubbles, initial_bouncing_bubbles,
@@ -309,26 +316,7 @@ fn test_moving_bubble_influences_and_perturbs_existing_smog() -> Result<(), Smog
 
 #[test]
 fn test_full_bevy_schedule_ten_bubbles_and_smog_grid() -> Result<(), Box<dyn std::error::Error>> {
-    let mut app = App::new();
-    app.add_plugins(MinimalPlugins);
-
-    app.init_resource::<Assets<Mesh>>();
-    app.init_resource::<Assets<StandardMaterial>>();
-    app.init_resource::<Assets<Image>>();
-    app.init_resource::<Assets<client::BubbleDomeMaterial>>();
-    app.init_resource::<Assets<client::SelectionRingMaterial>>();
-    app.init_resource::<Assets<client::MistWakeMaterial>>();
-    app.init_resource::<Assets<client::CombatFxMaterial>>();
-    app.init_resource::<Assets<client::smog::SmogVolumeMaterial>>();
-    app.init_resource::<client::CatalogResource>();
-    app.init_resource::<client::RenderEntityMap>();
-    app.init_resource::<client::SelectionState>();
-
-    let root = resolve_root()?;
-    app.insert_resource(root);
-
-    // Add production SmogPlugin
-    app.add_plugins(SmogPlugin);
+    let mut app = production_smog_app(bouncing_lab())?;
 
     // Step 60 frames in headless Bevy
     for _ in 0..60 {
@@ -882,6 +870,11 @@ fn live_battle_low_ground_and_high_ground_units_preserve_true_world_y(
     });
     app.add_systems(Startup, client::bubble_shader::setup_bubble_assets_system);
     app.add_plugins(SmogPlugin);
+    app.insert_resource(client::terrain::TerrainState::new(sim_map::GameMap::new(
+        64,
+        64,
+        sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+    )?));
 
     // Spawn an RtsCamera with look_at_y set to high-ground altitude (3.0 + 1.2 = 4.2)
     // while looking at units on both the lower level (ground_z = 0.0) and upper level (ground_z = 3.0).
@@ -920,21 +913,15 @@ fn live_battle_low_ground_and_high_ground_units_preserve_true_world_y(
         b_max.y
     );
 
-    // Verify SmogVolumeMaterial uniform matches grid bounds bit-for-bit and preserves true world Y
-    let tex_res = app.world().resource::<client::smog::SmogTextures>();
-    let mats = app
-        .world()
-        .resource::<Assets<client::smog::SmogVolumeMaterial>>();
-    let mat = mats
-        .get(&tex_res.material_handle)
-        .ok_or("missing SmogVolumeMaterial")?;
+    // Verify the published GPU uniform matches grid bounds bit-for-bit and preserves true world Y
+    let uniform = app.world().resource::<client::smog::SmogGpuFrame>().uniform;
 
-    assert_eq!(mat.uniform.volume_min.truncate(), b_min);
-    assert_eq!(mat.uniform.volume_max.truncate(), b_max);
-    assert!((mat.uniform.control_params.x - 2.0).abs() < 1e-4);
+    assert_eq!(uniform.volume_min.truncate(), b_min);
+    assert_eq!(uniform.volume_max.truncate(), b_max);
+    assert!((uniform.control_params.x - 2.0).abs() < 1e-4);
 
-    let y0 = mat.uniform.bubble_pos_radius[0].y;
-    let y1 = mat.uniform.bubble_pos_radius[1].y;
+    let y0 = uniform.bubble_pos_radius[0].y;
+    let y1 = uniform.bubble_pos_radius[1].y;
     let low_y = y0.min(y1);
     let high_y = y0.max(y1);
 
@@ -959,5 +946,514 @@ fn live_battle_low_ground_and_high_ground_units_preserve_true_world_y(
         "Zero smog should float at y=3.45 directly above the lower-level unit at x=22.0 (got {displaced_above_low_unit})"
     );
 
+    Ok(())
+}
+
+/// Visual Lab state with the 10-bubble showcase switched on.
+fn bouncing_lab() -> client::LabState {
+    client::LabState {
+        smog_bouncing_active: true,
+        ..default()
+    }
+}
+
+/// Headless application with the production smog plugin, real catalog, palette and media.
+fn production_smog_app(lab: client::LabState) -> Result<App, Box<dyn std::error::Error>> {
+    let root = resolve_root()?;
+    let definition = client::runtime_battle::BattleDefinition::load(
+        root.as_path(),
+        client::runtime_battle::DEFAULT_BATTLE_SCENARIO.as_ref(),
+    )?;
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_event::<AppExit>();
+    app.init_resource::<client::RenderEntityMap>();
+    app.init_resource::<Assets<Mesh>>();
+    app.init_resource::<Assets<Image>>();
+    app.init_resource::<Assets<StandardMaterial>>();
+    app.init_resource::<Assets<client::bubble_shader::BubbleDomeMaterial>>();
+    app.init_resource::<Assets<client::smog::SmogVolumeMaterial>>();
+    app.insert_resource(definition.palette.clone());
+    app.init_resource::<client::player_presentation::PresentationStatus>();
+    app.insert_resource(root);
+    app.insert_resource(client::CatalogResource(definition.catalogs.units.clone()));
+    app.insert_resource(lab);
+    app.add_systems(Startup, client::bubble_shader::setup_bubble_assets_system);
+    app.add_plugins(SmogPlugin);
+    Ok(app)
+}
+
+/// Per-type counts of `AssetEvent::Modified`, the signal that re-prepares a render asset.
+#[derive(Resource, Default)]
+struct ModifiedAssetCounts {
+    images: usize,
+    smog_materials: usize,
+}
+
+/// Flushes asset events as a full app does, and counts modifications.
+fn track_asset_modifications(app: &mut App) {
+    app.add_event::<AssetEvent<Image>>();
+    app.add_event::<AssetEvent<client::smog::SmogVolumeMaterial>>();
+    app.init_resource::<ModifiedAssetCounts>();
+    app.add_systems(
+        First,
+        (
+            Assets::<Image>::asset_events,
+            Assets::<client::smog::SmogVolumeMaterial>::asset_events,
+        ),
+    );
+    app.add_systems(
+        Last,
+        |mut images: EventReader<'_, '_, AssetEvent<Image>>,
+         mut materials: EventReader<'_, '_, AssetEvent<client::smog::SmogVolumeMaterial>>,
+         mut counts: ResMut<'_, ModifiedAssetCounts>| {
+            counts.images += images
+                .read()
+                .filter(|event| matches!(event, AssetEvent::Modified { .. }))
+                .count();
+            counts.smog_materials += materials
+                .read()
+                .filter(|event| matches!(event, AssetEvent::Modified { .. }))
+                .count();
+        },
+    );
+}
+
+/// C-2: a modified image is destroyed and recreated by Bevy's render asset pipeline, and a modified
+/// material rebuilds its bind group. Neither may happen per frame while the field animates.
+#[test]
+fn smog_stepping_never_modifies_image_or_material_assets() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut app = production_smog_app(bouncing_lab())?;
+    track_asset_modifications(&mut app);
+
+    for _ in 0..60 {
+        app.update();
+    }
+
+    let steps = app.world().resource::<SmogStats>().step_count;
+    assert!(steps >= 58, "smog must keep stepping (got {steps} steps)");
+    let counts = app.world().resource::<ModifiedAssetCounts>();
+    assert_eq!(
+        (counts.images, counts.smog_materials),
+        (0, 0),
+        "image and smog material Modified events over {steps} steps"
+    );
+    assert_eq!(
+        app.world()
+            .resource::<client::smog::SmogGpuFrame>()
+            .generation,
+        steps,
+        "every step must publish one GPU upload generation"
+    );
+    Ok(())
+}
+
+/// Replaces the assets root with one holding no flipbooks, keeping the real catalog and palette.
+fn without_any_media(app: &mut App) -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    std::fs::create_dir(directory.path().join("shaders"))?;
+    std::fs::create_dir(directory.path().join("textures"))?;
+    std::fs::copy(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/shaders/bubble_dome.wgsl"),
+        directory.path().join("shaders/bubble_dome.wgsl"),
+    )?;
+    app.insert_resource(ResolvedAssetsRoot::from_directory(directory.path())?);
+    Ok(directory)
+}
+
+fn has_error_exit(app: &App) -> bool {
+    app.world()
+        .resource::<Events<AppExit>>()
+        .iter_current_update_events()
+        .any(|event| matches!(event, AppExit::Error(_)))
+}
+
+fn smog_failure(app: &App) -> Option<String> {
+    let status = app.world().resource::<client::media::ClientMediaStatus>();
+    assert_eq!(status.failure().is_some(), status.failure_text().is_some());
+    status
+        .failure()
+        .filter(|error| matches!(error, client::media::ClientMediaError::Smog(_)))
+        .map(ToString::to_string)
+}
+
+/// C-6: with no admitted actor the old startup fabricated unit types and bound a white texture.
+#[test]
+fn smog_without_admitted_media_fails_without_spawning_stand_ins(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = production_smog_app(client::LabState::default())?;
+    app.insert_resource(client::media::MediaFailurePolicy::new(true));
+    let _directory = without_any_media(&mut app)?;
+
+    app.update();
+
+    assert_eq!(
+        app.world_mut()
+            .query::<&BouncingSmogBubble>()
+            .iter(app.world())
+            .count(),
+        0,
+        "no stand-in actor may be spawned"
+    );
+    let failure = smog_failure(&app).ok_or("startup must record a typed smog failure")?;
+    assert!(failure.contains("no admitted mobile"), "{failure}");
+    assert_eq!(
+        app.world().resource::<client::LabState>().battle_failure,
+        Some(failure)
+    );
+    assert!(has_error_exit(&app), "a bounded run must exit with failure");
+    Ok(())
+}
+
+/// C-6: invalid arena bounds were logged at `warn` and left a client with no bubbles.
+#[test]
+fn smog_startup_with_invalid_bounds_reports_a_typed_failure(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = production_smog_app(client::LabState::default())?;
+    app.insert_resource(SmogConfig {
+        bounds: SmogArenaBounds {
+            min: Vec3::splat(4.0),
+            max: Vec3::splat(-4.0),
+        },
+        ..default()
+    });
+
+    app.update();
+
+    let failure = smog_failure(&app).ok_or("startup must record a typed smog failure")?;
+    assert!(failure.contains("invalid arena bounds"), "{failure}");
+    Ok(())
+}
+
+/// C-6: a failing kinematics step was logged at `warn` and the bubbles froze.
+#[test]
+fn smog_runtime_step_failure_reaches_the_media_failure_path(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = production_smog_app(bouncing_lab())?;
+    app.update();
+    app.update();
+    assert_eq!(smog_failure(&app), None);
+
+    app.world_mut().resource_mut::<SmogConfig>().bounds = SmogArenaBounds {
+        min: Vec3::splat(4.0),
+        max: Vec3::splat(-4.0),
+    };
+    app.update();
+
+    let failure = smog_failure(&app).ok_or("a failed step must record a typed failure")?;
+    assert!(failure.contains("invalid arena bounds"), "{failure}");
+    let steps = app.world().resource::<SmogStats>().step_count;
+    app.update();
+    assert_eq!(
+        app.world().resource::<SmogStats>().step_count,
+        steps,
+        "a failed presentation must stop stepping"
+    );
+    Ok(())
+}
+
+/// C-6: bubbles are real catalog identities with their own media, owned by a palette preview role.
+#[test]
+fn smog_actors_use_admitted_identities_and_palette_owners() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut app = production_smog_app(client::LabState::default())?;
+    app.update();
+    let world = app.world_mut();
+    let bubbles: Vec<_> = world
+        .query::<(&BouncingSmogBubble, &client::BubbleInstance)>()
+        .iter(world)
+        .map(|(bubble, instance)| (bubble.index, instance.0.clone()))
+        .collect();
+    assert_eq!(bubbles.len(), BOUNCING_BUBBLE_COUNT);
+    let world = app.world();
+    let palette = world.resource::<client::player_presentation::PlayerPalette>();
+    let catalog = world.resource::<client::CatalogResource>();
+    let registry = world.resource::<client::FlipbookRegistry>();
+    let media = world.resource::<client::media::ClientMediaStatus>();
+    for (index, instance) in bubbles {
+        assert_eq!(instance.owner, palette.showcase(index));
+        assert!(catalog.get(instance.unit_type).is_ok());
+        media.require(registry, instance.unit_type, instance.anim_state)?;
+        assert!(
+            instance.entity_id.0 >= client::smog::SHOWCASE_ENTITY_ID_BASE,
+            "{:?} is inside the range the simulation allocates from",
+            instance.entity_id
+        );
+    }
+    Ok(())
+}
+
+/// Live battle app on a flat map of the given size, with one camera.
+fn live_battle_smog_app(
+    width: u32,
+    height: u32,
+    camera_target: Vec2,
+) -> Result<App, Box<dyn std::error::Error>> {
+    let mut app = production_smog_app(client::LabState {
+        current_tab: client::LabTab::LiveBattle,
+        ..default()
+    })?;
+    let map = sim_map::GameMap::new(
+        width,
+        height,
+        sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+    )?;
+    app.insert_resource(client::terrain::TerrainState::new(map));
+    app.world_mut().spawn(client::camera::RtsCamera {
+        target: camera_target,
+        look_at_y: 1.2,
+        ..default()
+    });
+    Ok(app)
+}
+
+/// C-13: the window clamp was fixed to a 64x64 map, so the far side of a larger map had no smog.
+#[test]
+fn live_battle_volume_follows_the_camera_across_a_map_larger_than_64(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = live_battle_smog_app(128, 96, Vec2::new(100.0, 80.0))?;
+    app.update();
+    app.update();
+
+    let grid = app.world().resource::<SmogGrid3d>();
+    let center = (grid.bounds_min() + grid.bounds_max()) * 0.5;
+    assert!((center.x - 100.0).abs() < 1.0, "center x {}", center.x);
+    assert!((center.z - 80.0).abs() < 1.0, "center z {}", center.z);
+    Ok(())
+}
+
+/// C-13: the same clamp must keep the volume on a small map instead of hanging off its edge.
+#[test]
+fn live_battle_volume_stays_inside_a_map_smaller_than_64() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut app = live_battle_smog_app(40, 36, Vec2::new(39.0, 35.0))?;
+    app.update();
+    app.update();
+
+    let grid = app.world().resource::<SmogGrid3d>();
+    assert!(
+        grid.bounds_max().x <= 40.0 + 1.0 && grid.bounds_max().z <= 36.0 + 1.0,
+        "volume reaches {} on a 40x36 map",
+        grid.bounds_max()
+    );
+    Ok(())
+}
+
+/// A map narrower than the window centres the volume, rather than panicking on an inverted clamp.
+#[test]
+fn live_battle_volume_centres_on_a_map_narrower_than_its_window(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = live_battle_smog_app(20, 16, Vec2::new(3.0, 3.0))?;
+    app.update();
+    app.update();
+
+    let grid = app.world().resource::<SmogGrid3d>();
+    let center = (grid.bounds_min() + grid.bounds_max()) * 0.5;
+    assert!((center.x - 10.0).abs() < 1.0, "center x {}", center.x);
+    assert!((center.z - 8.0).abs() < 1.0, "center z {}", center.z);
+    Ok(())
+}
+
+/// A live battle window exists only once a map does, so no map means no smog rather than a guess.
+#[test]
+fn live_battle_without_a_loaded_map_does_not_step_smog() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = production_smog_app(client::LabState {
+        current_tab: client::LabTab::LiveBattle,
+        ..default()
+    })?;
+    for _ in 0..4 {
+        app.update();
+    }
+    assert_eq!(app.world().resource::<SmogStats>().step_count, 0);
+    let mut volumes = app
+        .world_mut()
+        .query_filtered::<&Visibility, With<client::SmogVolumeMarker>>();
+    assert_eq!(volumes.single(app.world()), Visibility::Hidden);
+    Ok(())
+}
+
+/// C-13: snapshot velocity is world units per tick and the tick rate is 25 Hz, not 20.
+#[test]
+fn live_battle_velocity_scale_comes_from_the_simulation_tick_rate(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = live_battle_smog_app(64, 64, Vec2::new(24.0, 24.0))?;
+    app.world_mut().spawn((
+        make_test_battle_unit(9001, Vec3::new(24.0, 0.45, 24.0), 0.0, 0.45),
+        Transform::from_translation(Vec3::new(24.0, 0.45, 24.0)),
+        Visibility::Inherited,
+    ));
+    app.update();
+    app.update();
+
+    let velocity = app
+        .world()
+        .resource::<client::smog::SmogGpuFrame>()
+        .uniform
+        .bubble_vel_boost[0];
+    let per_tick = 0.12; // `make_test_battle_unit`
+    let expected = per_tick / client::battle_pipeline::clock::SIM_TICK_PERIOD.as_secs_f32();
+    assert!(
+        (velocity.x - expected).abs() < 1e-4,
+        "world units per second: got {}, expected {expected}",
+        velocity.x
+    );
+    Ok(())
+}
+
+/// C-13: with more units than analytic cavities, the slots must go to the units nearest the view
+/// centre. The old code kept whichever 16 came first in query order.
+#[test]
+fn live_battle_cavity_slots_go_to_the_units_nearest_the_view_center(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = live_battle_smog_app(64, 64, Vec2::new(24.0, 24.0))?;
+    for index in 0..20u32 {
+        // The first entity spawned is the farthest, the last is on the view centre.
+        let offset = (20 - index) as f32 * 0.5;
+        let position = Vec3::new(24.0 + offset, 0.45, 24.0);
+        app.world_mut().spawn((
+            make_test_battle_unit(9000 + index, position, 0.0, 0.45),
+            Transform::from_translation(position),
+            Visibility::Inherited,
+        ));
+    }
+    app.update();
+    app.update();
+
+    let uniform = app.world().resource::<client::smog::SmogGpuFrame>().uniform;
+    assert_eq!(
+        uniform.control_params.x,
+        client::MAX_SMOG_SHADER_BUBBLES as f32
+    );
+    let mut slots: Vec<f32> = uniform
+        .bubble_pos_radius
+        .iter()
+        .map(|slot| (slot.x - 24.0) / 0.5)
+        .collect();
+    slots.sort_by(f32::total_cmp);
+    let expected: Vec<f32> = (1..=16).map(|offset| offset as f32).collect();
+    assert_eq!(slots, expected);
+    Ok(())
+}
+
+/// C-13: smog reads the transforms the presentation stage wrote this frame. The probe is registered
+/// after the plugin, so without ordering the single-threaded executor would run smog first.
+#[test]
+fn smog_runs_in_present_after_the_frame_is_published() -> Result<(), Box<dyn std::error::Error>> {
+    use client::battle_pipeline::BattleSet;
+
+    #[derive(Component)]
+    struct Probe;
+
+    let mut app = live_battle_smog_app(64, 64, Vec2::new(24.0, 24.0))?;
+    let start = Vec3::new(24.0, 0.45, 24.0);
+    app.world_mut().spawn((
+        Probe,
+        make_test_battle_unit(9001, start, 0.0, 0.45),
+        Transform::from_translation(start),
+        Visibility::Inherited,
+    ));
+    app.configure_sets(
+        Update,
+        (BattleSet::PreparePresentation, BattleSet::Present).chain(),
+    );
+    app.add_systems(
+        Update,
+        (|mut units: Query<'_, '_, &mut Transform, With<Probe>>| {
+            for mut transform in &mut units {
+                transform.translation.x += 0.25;
+            }
+        })
+        .in_set(BattleSet::PreparePresentation),
+    );
+    app.edit_schedule(Update, |schedule| {
+        schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
+    });
+
+    app.update();
+    app.update();
+
+    let packed = app
+        .world()
+        .resource::<client::smog::SmogGpuFrame>()
+        .uniform
+        .bubble_pos_radius[0]
+        .x;
+    let published = app
+        .world_mut()
+        .query_filtered::<&Transform, With<Probe>>()
+        .single(app.world())
+        .translation
+        .x;
+    assert_eq!(packed, published);
+
+    // An executor may still pick the right order by luck, so also require the declared membership.
+    let schedules = app.world().resource::<Schedules>();
+    let schedule = schedules.get(Update).ok_or("Update schedule")?;
+    let graph = schedule.graph();
+    let present = graph
+        .system_sets()
+        .find(|(_, set, _)| format!("{set:?}") == "Present")
+        .map(|(id, _, _)| id)
+        .ok_or("Present set")?;
+    for name in [
+        "sync_bouncing_smog_bubbles_system",
+        "update_smog_field_system",
+    ] {
+        let system = schedule
+            .systems()?
+            .find(|(_, system)| system.name().ends_with(name))
+            .map(|(id, _)| id)
+            .ok_or(name)?;
+        assert!(
+            graph.hierarchy().graph().contains_edge(present, system),
+            "{name} must be a member of BattleSet::Present"
+        );
+    }
+    Ok(())
+}
+
+/// C-2 end to end: the real render world writes each published step to the GPU exactly once.
+#[test]
+fn smog_steps_reach_the_gpu_through_queue_writes() -> Result<(), Box<dyn std::error::Error>> {
+    if gpu_run::gpu_tests_opted_out() {
+        return Ok(());
+    }
+    let mut command =
+        gpu_run::virtual_gpu_command(std::path::Path::new(env!("CARGO_BIN_EXE_client")));
+    command.args(["--lab", "--max-frames", "60"]);
+    command.env(
+        "RUST_LOG",
+        format!("warn,{}=debug", client::smog::SMOG_UPLOAD_LOG_TARGET),
+    );
+    let output = command.output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "client exited with {:?}:\n{}",
+        output.status.code(),
+        gpu_run::tail(&stderr)
+    );
+    let generations: Vec<u64> = stderr
+        .lines()
+        .filter_map(|line| {
+            line.rsplit_once("uploaded smog generation ")?
+                .1
+                .trim()
+                .parse()
+                .ok()
+        })
+        .collect();
+    assert!(
+        generations.len() >= 30,
+        "expected a GPU upload per rendered step, saw {}:\n{}",
+        generations.len(),
+        gpu_run::tail(&stderr)
+    );
+    assert!(
+        generations.windows(2).all(|pair| pair[0] < pair[1]),
+        "generations must strictly increase: {generations:?}"
+    );
     Ok(())
 }

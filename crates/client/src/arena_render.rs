@@ -23,6 +23,12 @@ pub struct MineralNodeMarker;
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GasGeyserMarker;
 
+/// Horizontal `(min, max)` corners of the high-ground plateau, as world `(x, z)`.
+pub const HIGH_GROUND_FOOTPRINT: (Vec2, Vec2) = (Vec2::new(16.0, 16.0), Vec2::new(32.0, 32.0));
+
+/// Horizontal `(min, max)` corners of the ramp and its rails, as world `(x, z)`.
+pub const RAMP_FOOTPRINT: (Vec2, Vec2) = (Vec2::new(14.0, 15.0), Vec2::new(18.0, 21.0));
+
 // PERFORMANCE RATIONALE:
 // Why: Spawning individual tiny tiles creates thousands of draw calls and stalls the GPU driver.
 // What: Static map geometry (low ground, plateau, ramp, resource nodes) uses coarse batched meshes
@@ -52,7 +58,10 @@ pub fn spawn_arena_environment(
     ));
 
     // 2. High-Ground Plateau (Cliff Level 2: y = 3.0, 16x16 tiles in upper right centered at x=24, z=24)
-    let high_ground_mesh = meshes.add(Cuboid::new(16.0, 3.0, 16.0));
+    let (plateau_min, plateau_max) = HIGH_GROUND_FOOTPRINT;
+    let plateau_size = plateau_max - plateau_min;
+    let plateau_center = (plateau_min + plateau_max) * 0.5;
+    let high_ground_mesh = meshes.add(Cuboid::new(plateau_size.x, 3.0, plateau_size.y));
     let plateau_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.12, 0.15, 0.20),
         metallic: 0.90,
@@ -64,7 +73,7 @@ pub fn spawn_arena_environment(
     commands.spawn((
         Mesh3d(high_ground_mesh),
         MeshMaterial3d(plateau_mat),
-        Transform::from_xyz(24.0, 1.5, 24.0),
+        Transform::from_xyz(plateau_center.x, 1.5, plateau_center.y),
         ArenaMapMarker,
     ));
 

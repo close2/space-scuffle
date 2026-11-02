@@ -10,8 +10,15 @@
 //!    and shedding wake vortices).
 //! 3. **3D Volumetric Raymarching Material:** Front-to-back Beer-Lambert raymarching shader sampling 3D density
 //!    and velocity textures with sub-voxel analytical spherical cavity carving and bow-wave rim compression.
+//! 4. **Persistent GPU Upload:** [`gpu_upload`] writes each step into textures and a uniform buffer that live
+//!    for the whole run. After startup the smog assets are never modified.
+//!
+//! # Failure Policy
+//! Startup and step failures are typed [`SmogError`] values reported through the media failure path.
+//! Nothing here substitutes another unit's media, a placeholder texture or an invented identity.
 
 pub mod fluid;
+pub mod gpu_upload;
 pub mod kinematics;
 pub mod material;
 
@@ -19,25 +26,81 @@ pub use fluid::{
     BubbleSmogSource, SmogGrid3d, SmogStepMetrics, GRID_NX, GRID_NY, GRID_NZ, SMOG_DENSITY_MAX,
     TOTAL_VOXELS,
 };
+pub use gpu_upload::{SmogGpuFrame, SMOG_UPLOAD_LOG_TARGET};
 pub use kinematics::{
     bubble_team_color, generate_bouncing_bubbles, initial_bouncing_bubbles,
     step_bouncing_kinematics, BouncingBubbleState, BouncingSmogBubble, SmogArenaBounds,
-    BOUNCING_BUBBLE_COUNT,
+    BOUNCING_BUBBLE_COUNT, MAX_BOUNCING_BUBBLES,
 };
 pub use material::{
-    SmogVolumeMarker, SmogVolumeMaterial, SmogVolumeUniformGpu, MAX_SMOG_SHADER_BUBBLES,
+    CavitySlots, SmogVolumeMarker, SmogVolumeMaterial, SmogVolumeUniformGpu,
+    MAX_SMOG_SHADER_BUBBLES,
 };
 
+use crate::battle_pipeline::clock::SIM_TICK_PERIOD;
+use crate::battle_pipeline::BattleSet;
 use crate::bubble_shader::{
     BubbleDomeMaterial, BubbleInstance, BubbleSharedMeshes, BubbleUniformGpu, FlipbookRegistry,
 };
+use crate::scene_controller::{SWARM_MAX_X, SWARM_MAX_Z, SWARM_MIN_X, SWARM_MIN_Z};
 use crate::CatalogResource;
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use sim_types::enums::ShapeKind;
+use bevy::render::{ExtractSchedule, RenderApp};
+use sim_types::enums::{AnimState, ShapeKind};
+use sim_types::ids::UnitTypeId;
 use sim_types::snapshot::BubbleRenderInstance;
-use sim_types::{EntityId, PlayerId};
+use sim_types::EntityId;
+
+/// Minimum corner of the Visual Lab smog volume in Bevy world units.
+pub const LAB_VOLUME_MIN: Vec3 = Vec3::new(-6.5, 0.0, -4.5);
+
+/// Maximum corner of the Visual Lab smog volume in Bevy world units.
+pub const LAB_VOLUME_MAX: Vec3 = Vec3::new(6.5, 2.8, 4.5);
+
+/// Gap between the swarm's bounce range and the smog volume walls, in world units.
+const SWARM_VOLUME_MARGIN: f32 = 2.0;
+
+/// Half of the live battle smog window along world X, in world units.
+const LIVE_BATTLE_HALF_EXTENT_X: f32 = 14.0;
+
+/// Half of the live battle smog window along world Z, in world units.
+const LIVE_BATTLE_HALF_EXTENT_Z: f32 = 11.0;
+
+/// Height of the live battle smog window, in world units. Spans both cliff levels.
+const LIVE_BATTLE_EXTENT_Y: f32 = 4.8;
+
+/// Gap kept between the live battle smog window and the map edge, in world units.
+const LIVE_BATTLE_MAP_MARGIN: f32 = 0.5;
+
+/// Horizontal centre of the live battle smog window for a camera focus.
+///
+/// `focus` and the result are `(world x, world z)`. `map_size` is the map's `(width, height)` in
+/// world units. The window stays on the map, and centres on an axis too short to contain it.
+#[must_use]
+pub fn live_battle_window_center(focus: Vec2, map_size: Vec2) -> Vec2 {
+    let inset =
+        Vec2::new(LIVE_BATTLE_HALF_EXTENT_X, LIVE_BATTLE_HALF_EXTENT_Z) + LIVE_BATTLE_MAP_MARGIN;
+    let axis = |focus: f32, size: f32, inset: f32| {
+        if size >= inset * 2.0 {
+            focus.clamp(inset, size - inset)
+        } else {
+            size * 0.5
+        }
+    };
+    Vec2::new(
+        axis(focus.x, map_size.x, inset.x),
+        axis(focus.y, map_size.y, inset.y),
+    )
+}
+
+/// First [`EntityId`] of the showcase bubbles, which exist only in the client.
+///
+/// [`BubbleRenderInstance`] requires an identity, but these actors have no simulation entity. The
+/// range sits at the top of `u32`, far beyond the upward-counting simulation allocator, so a
+/// showcase identity can never alias a battle entity.
+pub const SHOWCASE_ENTITY_ID_BASE: u32 = u32::MAX - MAX_BOUNCING_BUBBLES as u32;
 
 /// Strongly-typed error conditions originating in the smog subsystem.
 #[derive(Debug, thiserror::Error, Clone, PartialEq)]
@@ -66,6 +129,9 @@ pub enum SmogError {
     /// Source configuration violated physical constraints.
     #[error("invalid source configuration: {0}")]
     InvalidSource(&'static str),
+    /// No catalog identity has the media a smog actor must present.
+    #[error("no admitted mobile unit has its own media for the smog showcase")]
+    NoAdmittedActor,
 }
 
 /// Runtime configuration parameters controlling 3D smog generation, dissipation, and bubble kinematics.
@@ -147,11 +213,12 @@ pub struct SmogPlugin;
 impl Plugin for SmogPlugin {
     fn build(&self, app: &mut App) {
         #[allow(clippy::expect_used)]
-        let grid = SmogGrid3d::new(Vec3::new(-6.5, 0.0, -4.5), Vec3::new(6.5, 2.8, 4.5))
-            .expect("invariant: hardcoded default smog grid bounds -6.5..6.5, 0.0..2.8, -4.5..4.5 are strictly positive and finite");
+        let grid = SmogGrid3d::new(LAB_VOLUME_MIN, LAB_VOLUME_MAX)
+            .expect("invariant: LAB_VOLUME_MIN is below LAB_VOLUME_MAX by over 1.0 on each axis");
 
         app.init_resource::<SmogConfig>()
             .init_resource::<SmogStats>()
+            .init_resource::<SmogGpuFrame>()
             .insert_resource(grid)
             .add_systems(
                 Startup,
@@ -159,16 +226,21 @@ impl Plugin for SmogPlugin {
             )
             .add_systems(
                 Update,
-                (sync_bouncing_smog_bubbles_system, update_smog_field_system).chain(),
+                (sync_bouncing_smog_bubbles_system, update_smog_field_system)
+                    .chain()
+                    .in_set(BattleSet::Present)
+                    .after(crate::camera::camera_control_system),
             );
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.add_systems(ExtractSchedule, gpu_upload::upload_smog_frame_system);
+        }
     }
 }
 
 /// Startup system initializing the 3D textures, the volumetric bounding proxy entity,
-/// running 45 pre-warm steps, and dynamically spawning the 10 mobile bouncing bubbles from the unit catalog.
-// PERFORMANCE RATIONALE:
-// Why: 3D textures are created once at startup and mutated in-place every frame via `copy_from_slice`.
-// What: Avoids destroying and reallocating GPU textures and bind groups per frame.
+/// running the pre-warm steps, and spawning the 10 mobile bouncing bubbles from admitted catalog identities.
+///
+/// Failures stop before any asset or entity is created, and reach the visible media diagnostic.
 pub fn setup_smog_volume_system(
     mut commands: Commands<'_, '_>,
     mut meshes: ResMut<'_, Assets<Mesh>>,
@@ -177,39 +249,30 @@ pub fn setup_smog_volume_system(
     mut bubble_materials: ResMut<'_, Assets<BubbleDomeMaterial>>,
     mut grid: ResMut<'_, SmogGrid3d>,
     config: Res<'_, SmogConfig>,
-    catalog: Option<Res<'_, CatalogResource>>,
-    registry: Option<Res<'_, FlipbookRegistry>>,
-    media_status: Option<Res<'_, crate::media::ClientMediaStatus>>,
-    _palette: Option<Res<'_, crate::player_presentation::PlayerPalette>>,
-    shared_meshes: Option<Res<'_, BubbleSharedMeshes>>,
+    catalog: Res<'_, CatalogResource>,
+    registry: Res<'_, FlipbookRegistry>,
+    mut media_status: ResMut<'_, crate::media::ClientMediaStatus>,
+    mut owners: crate::player_presentation::PresentationContext<'_>,
+    shared_meshes: Res<'_, BubbleSharedMeshes>,
+    mut lab_state: ResMut<'_, crate::LabState>,
+    mut exit: EventWriter<'_, AppExit>,
 ) {
-    // 1. Initialize kinematics initial states and run 26-step warmup
-    let mut initial_states = match initial_bouncing_bubbles(&config.bounds) {
-        Ok(states) => states,
-        Err(err) => {
-            warn!("Failed to initialize bouncing bubble states: {err}");
+    let admission = admitted_smog_actors(&catalog, &registry, &media_status)
+        .and_then(|actors| Ok((prewarm_smog_field(&mut grid, &config)?, actors)));
+    let (initial_states, mobile_archetypes) = match admission {
+        Ok(admitted) => admitted,
+        Err(error) => {
+            crate::media::reject(error.into(), &mut media_status, &mut lab_state, &mut exit);
             return;
         }
     };
 
-    for _ in 0..26 {
-        let _ = step_bouncing_kinematics(&mut initial_states, &config.bounds, 1.0 / 30.0);
-        let mut prewarm_sources = [BubbleSmogSource::default(); BOUNCING_BUBBLE_COUNT];
-        for (j, state) in initial_states.iter().enumerate() {
-            let team_color = bubble_team_color(j);
-            prewarm_sources[j] = BubbleSmogSource {
-                position: state.position,
-                velocity: state.velocity,
-                radius: state.radius,
-                team_color,
-                emission_strength: 1.0,
-                influence_strength: 1.0,
-            };
-        }
-        let _ = grid.step(&prewarm_sources, &config, 1.0 / 30.0);
-    }
-
     // 2. Initialize persistent 3D textures with pre-warmed data
+    // PERFORMANCE RATIONALE:
+    // Why: These textures change every frame, so a retained main-world copy is never read again.
+    // What: Render-world usage drops ~1.66 MB of CPU bytes after the first extraction; later frames
+    // reach the same textures through `gpu_upload`.
+    // Trade-off: The main world can no longer read these images back.
     let make_3d_image = |data: Vec<u8>| {
         let size = Extent3d {
             width: GRID_NX as u32,
@@ -221,7 +284,7 @@ pub fn setup_smog_volume_system(
             TextureDimension::D3,
             data,
             TextureFormat::Rgba8Unorm,
-            RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
+            RenderAssetUsages::RENDER_WORLD,
         );
         image.sampler =
             bevy::image::ImageSampler::Descriptor(bevy::image::ImageSamplerDescriptor {
@@ -306,18 +369,10 @@ pub fn setup_smog_volume_system(
     let noise_image = images.add(make_3d_noise_image());
 
     // 4. Initialize SmogVolumeMaterial and spawn volume bounding box entity
-    let volume_min = Vec4::new(-6.5, 0.0, -4.5, 0.4);
-    let volume_max = Vec4::new(6.5, 2.8, 4.5, 1.15);
-    let extent = Vec3::new(
-        volume_max.x - volume_min.x,
-        volume_max.y - volume_min.y,
-        volume_max.z - volume_min.z,
-    );
-    let center = Vec3::new(
-        f32::midpoint(volume_min.x, volume_max.x),
-        f32::midpoint(volume_min.y, volume_max.y),
-        f32::midpoint(volume_min.z, volume_max.z),
-    );
+    let volume_min = LAB_VOLUME_MIN.extend(0.4);
+    let volume_max = LAB_VOLUME_MAX.extend(1.15);
+    let extent = LAB_VOLUME_MAX - LAB_VOLUME_MIN;
+    let center = (LAB_VOLUME_MIN + LAB_VOLUME_MAX) * 0.5;
 
     let mut packed_pos_radius = [Vec4::ZERO; MAX_SMOG_SHADER_BUBBLES];
     let mut packed_vel_boost = [Vec4::ZERO; MAX_SMOG_SHADER_BUBBLES];
@@ -354,15 +409,19 @@ pub fn setup_smog_volume_system(
         noise_texture: noise_image.clone(),
     });
 
-    let box_mesh = meshes.add(Cuboid::new(extent.x, extent.y, extent.z));
+    let box_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     commands.spawn((
         Mesh3d(box_mesh),
         MeshMaterial3d(mat_handle.clone()),
-        Transform::from_translation(center),
+        Transform::from_translation(center).with_scale(extent),
         Visibility::default(),
         SmogVolumeMarker,
     ));
 
+    commands.insert_resource(SmogGpuFrame {
+        uniform,
+        generation: 0,
+    });
     commands.insert_resource(SmogTextures {
         density_image,
         velocity_image,
@@ -370,84 +429,18 @@ pub fn setup_smog_volume_system(
         material_handle: mat_handle,
     });
 
-    // 4. Dynamically spawn the 10 Bouncing Bubbles from CatalogResource (Zero hardcoded slugs)
-    let sphere_mesh = shared_meshes.as_ref().map_or_else(
-        || meshes.add(Sphere::new(1.0).mesh().uv(32, 18)),
-        |sm| sm.sphere_mesh.clone(),
-    );
-
-    let mobile_archetypes: Vec<_> = if let Some(cat) = &catalog {
-        let admitted: Vec<_> = cat
-            .archetypes()
-            .filter(|a| !matches!(a.shape, ShapeKind::BuildingDome { .. }))
-            .filter(|a| {
-                registry
-                    .as_ref()
-                    .is_none_or(|r| r.get_texture(a.unit_type_id).is_some())
-                    && media_status
-                        .as_ref()
-                        .and_then(|ms| ms.audit(a.unit_type_id))
-                        .is_none_or(|audit| {
-                            audit.status
-                                != asset_baker::media_audit::MediaAuditStatus::KnownConceptDuplicate
-                        })
-            })
-            .cloned()
-            .collect();
-        if admitted.is_empty() {
-            cat.archetypes()
-                .filter(|a| !matches!(a.shape, ShapeKind::BuildingDome { .. }))
-                .cloned()
-                .collect()
-        } else {
-            admitted
-        }
-    } else {
-        Vec::new()
-    };
-
-    let fallback_texture = images.add(Image::new_fill(
-        Extent3d {
-            width: 4,
-            height: 4,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        &[255, 255, 255, 255],
-        TextureFormat::Rgba8UnormSrgb,
-        RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
-    ));
+    // 5. Spawn the 10 Bouncing Bubbles from admitted catalog identities (Zero hardcoded slugs)
+    let sphere_mesh = shared_meshes.sphere_mesh.clone();
 
     for (i, state) in initial_states.iter().enumerate() {
-        let owner = PlayerId((i % 2) as u8 + 1);
-
-        let (unit_type_id, texture, meta) = if !mobile_archetypes.is_empty() {
-            let arch = &mobile_archetypes[i % mobile_archetypes.len()];
-            let tex = registry
-                .as_ref()
-                .and_then(|r| r.get_texture(arch.unit_type_id))
-                .or_else(|| {
-                    registry
-                        .as_ref()
-                        .and_then(|r| r.get_texture_by_name("concept_video"))
-                })
-                .or_else(|| {
-                    registry
-                        .as_ref()
-                        .and_then(|r| r.textures_by_id.values().next().cloned())
-                })
-                .unwrap_or_else(|| fallback_texture.clone());
-            let m = registry
-                .as_ref()
-                .and_then(|r| r.get_meta(arch.unit_type_id));
-            (arch.unit_type_id, Some(tex), m)
-        } else {
-            (
-                sim_types::ids::UnitTypeId(100 + i as u16),
-                Some(fallback_texture.clone()),
-                None,
-            )
-        };
+        let owner = owners.palette.showcase(i);
+        if let Err(error) = owners.palette.preview_style(owner) {
+            owners.reject(error, &mut exit);
+            return;
+        }
+        let unit_type_id = mobile_archetypes[i % mobile_archetypes.len()];
+        let texture = registry.get_texture(unit_type_id);
+        let meta = registry.get_meta(unit_type_id);
 
         let tc = bubble_team_color(i);
         let linear_tc = Color::srgb(tc.x, tc.y, tc.z).to_linear();
@@ -462,7 +455,7 @@ pub fn setup_smog_volume_system(
         };
 
         let render_instance = BubbleRenderInstance {
-            entity_id: EntityId(20_000 + i as u32),
+            entity_id: EntityId(SHOWCASE_ENTITY_ID_BASE + i as u32),
             shape: ShapeKind::UnitSphere,
             silhouette: sim_types::enums::SilhouetteClass::LightProngs,
             unit_type: unit_type_id,
@@ -476,7 +469,7 @@ pub fn setup_smog_volume_system(
             is_attacking: false,
             weapon_visual: sim_types::enums::WeaponVisualKind::Hitscan,
             attack_target_pos: None,
-            anim_state: sim_types::enums::AnimState::Walk,
+            anim_state: AnimState::Walk,
             anim_progress: 0.0,
             hp_ratio: 1.0,
             shield_ratio: 1.0,
@@ -517,6 +510,66 @@ pub fn setup_smog_volume_system(
     }
 }
 
+/// Lists the mobile catalog identities that can present smog actors, in catalog order.
+///
+/// An actor walks, so its own media must admit the walk action. Known copies of the concept video
+/// are excluded because they would show the same art under several identities.
+///
+/// # Errors
+/// Returns [`SmogError::NoAdmittedActor`] when no identity qualifies. Nothing is substituted.
+fn admitted_smog_actors(
+    catalog: &CatalogResource,
+    registry: &FlipbookRegistry,
+    media: &crate::media::ClientMediaStatus,
+) -> Result<Vec<UnitTypeId>, SmogError> {
+    let actors: Vec<UnitTypeId> = catalog
+        .archetypes()
+        .filter(|archetype| !matches!(archetype.shape, ShapeKind::BuildingDome { .. }))
+        .map(|archetype| archetype.unit_type_id)
+        .filter(|&unit_type| {
+            media.require(registry, unit_type, AnimState::Walk).is_ok()
+                && media.audit(unit_type).is_none_or(|audit| {
+                    audit.status
+                        != asset_baker::media_audit::MediaAuditStatus::KnownConceptDuplicate
+                })
+        })
+        .collect();
+    if actors.is_empty() {
+        return Err(SmogError::NoAdmittedActor);
+    }
+    Ok(actors)
+}
+
+/// Runs the startup warm-up so the first drawn frame already shows developed smog.
+///
+/// # Errors
+/// Returns the first [`SmogError`] from bubble initialization, kinematics or the fluid step.
+fn prewarm_smog_field(
+    grid: &mut SmogGrid3d,
+    config: &SmogConfig,
+) -> Result<[BouncingBubbleState; BOUNCING_BUBBLE_COUNT], SmogError> {
+    const PREWARM_DT_SECS: f32 = 1.0 / 30.0;
+    const PREWARM_STEPS: usize = 26;
+
+    let mut states = initial_bouncing_bubbles(&config.bounds)?;
+    for _ in 0..PREWARM_STEPS {
+        step_bouncing_kinematics(&mut states, &config.bounds, PREWARM_DT_SECS)?;
+        let mut sources = [BubbleSmogSource::default(); BOUNCING_BUBBLE_COUNT];
+        for (index, state) in states.iter().enumerate() {
+            sources[index] = BubbleSmogSource {
+                position: state.position,
+                velocity: state.velocity,
+                radius: state.radius,
+                team_color: bubble_team_color(index),
+                emission_strength: 1.0,
+                influence_strength: 1.0,
+            };
+        }
+        grid.step(&sources, config, PREWARM_DT_SECS)?;
+    }
+    Ok(states)
+}
+
 /// Per-frame kinematics system updating the 10 bouncing bubbles with elastic reflections and peer collisions.
 // PERFORMANCE RATIONALE:
 // Why: Allocating a `Vec<BouncingBubbleState>` on every frame causes unnecessary heap churn.
@@ -525,7 +578,9 @@ pub fn setup_smog_volume_system(
 pub fn sync_bouncing_smog_bubbles_system(
     time: Res<'_, Time>,
     config: Res<'_, SmogConfig>,
-    lab_state: Option<Res<'_, crate::LabState>>,
+    mut lab_state: ResMut<'_, crate::LabState>,
+    mut media_status: ResMut<'_, crate::media::ClientMediaStatus>,
+    mut exit: EventWriter<'_, AppExit>,
     mut stats: ResMut<'_, SmogStats>,
     mut scratch: Local<'_, Vec<BouncingBubbleState>>,
     mut query: Query<
@@ -539,14 +594,12 @@ pub fn sync_bouncing_smog_bubbles_system(
         ),
     >,
 ) {
-    let in_active_tab = lab_state
-        .as_ref()
-        .is_none_or(|l| l.current_tab == crate::LabTab::VisualLab);
-    let bouncing_active = lab_state.as_ref().map_or(config.bouncing_active, |l| {
-        l.smog_bouncing_active && l.opt_smog_volume
-    });
-
-    let is_visible = in_active_tab && bouncing_active;
+    if media_status.retain_failure(&mut lab_state) {
+        return;
+    }
+    let is_visible = lab_state.current_tab == crate::LabTab::VisualLab
+        && lab_state.smog_bouncing_active
+        && lab_state.opt_smog_volume;
 
     for (_, _, _, mut vis) in &mut query {
         let target_vis = if is_visible {
@@ -589,8 +642,8 @@ pub fn sync_bouncing_smog_bubbles_system(
     // Step kinematics
     let (wb, pb) = match step_bouncing_kinematics(&mut scratch, &config.bounds, dt) {
         Ok(counts) => counts,
-        Err(err) => {
-            warn!("step_bouncing_kinematics failed: {err}");
+        Err(error) => {
+            crate::media::reject(error.into(), &mut media_status, &mut lab_state, &mut exit);
             return;
         }
     };
@@ -625,8 +678,8 @@ pub fn sync_bouncing_smog_bubbles_system(
     }
 }
 
-/// Per-frame fluid field update system: collects sources, steps `SmogGrid3d`, updates 3D textures,
-/// and packs bubble spheres into `SmogVolumeMaterial.uniform`.
+/// Per-frame fluid field update system: collects sources, steps `SmogGrid3d`, and publishes the
+/// packed uniform in [`SmogGpuFrame`] for the render-world upload.
 // PERFORMANCE RATIONALE:
 // Why: Re-allocating source lists per frame creates garbage.
 // What: We reuse a `Local<Vec<BubbleSmogSource>>` scratch buffer, achieving zero allocations per frame.
@@ -634,12 +687,12 @@ pub fn sync_bouncing_smog_bubbles_system(
 pub(crate) fn update_smog_field_system(
     time: Res<'_, Time>,
     config: Res<'_, SmogConfig>,
-    mut lab_state: Option<ResMut<'_, crate::LabState>>,
+    mut lab_state: ResMut<'_, crate::LabState>,
+    mut media_status: ResMut<'_, crate::media::ClientMediaStatus>,
+    mut exit: EventWriter<'_, AppExit>,
     mut stats: ResMut<'_, SmogStats>,
     mut grid: ResMut<'_, SmogGrid3d>,
-    textures: Option<Res<'_, SmogTextures>>,
-    mut images: ResMut<'_, Assets<Image>>,
-    mut volume_materials: ResMut<'_, Assets<SmogVolumeMaterial>>,
+    mut gpu_frame: ResMut<'_, SmogGpuFrame>,
     mut sources_scratch: Local<'_, Vec<BubbleSmogSource>>,
     mut volume_query: Query<
         '_,
@@ -661,30 +714,37 @@ pub(crate) fn update_smog_field_system(
         Without<SmogVolumeMarker>,
     >,
     camera_query: Query<'_, '_, &crate::camera::RtsCamera>,
+    terrain: Option<Res<'_, crate::terrain::TerrainState>>,
     controlled_fixture: Option<Res<'_, crate::shell_order_audit::fixture::ControlledFixture>>,
 ) {
-    let in_controlled_fixture = controlled_fixture.is_some();
-    let enabled = !in_controlled_fixture
-        && lab_state
-            .as_ref()
-            .map_or(config.enabled, |l| l.opt_smog_volume && l.opt_mist_wake);
+    if media_status.retain_failure(&mut lab_state) {
+        return;
+    }
+    let enabled =
+        controlled_fixture.is_none() && lab_state.opt_smog_volume && lab_state.opt_mist_wake;
 
-    let current_tab = lab_state
-        .as_ref()
-        .map_or(crate::LabTab::VisualLab, |l| l.current_tab);
-    let (target_min, target_max) = match current_tab {
-        crate::LabTab::VisualLab => (Vec3::new(-6.5, 0.0, -4.5), Vec3::new(6.5, 2.8, 4.5)),
-        crate::LabTab::SwarmStressTest => (Vec3::new(4.0, 0.0, 7.0), Vec3::new(28.0, 2.8, 24.0)),
-        crate::LabTab::LiveBattle => {
-            const LIVE_BATTLE_EXTENT_Y: f32 = 4.8;
-            let (cam_x, cam_z, cam_ground_y) = if let Some(cam) = camera_query.iter().next() {
-                (cam.target.x, cam.target.y, (cam.look_at_y - 1.2).max(0.0))
-            } else {
-                (16.0, 32.0, 0.0)
-            };
-
-            let clamped_x = cam_x.clamp(14.5, 49.5);
-            let clamped_z = cam_z.clamp(11.5, 52.5);
+    let current_tab = lab_state.current_tab;
+    let target = match current_tab {
+        crate::LabTab::VisualLab => Some((LAB_VOLUME_MIN, LAB_VOLUME_MAX)),
+        crate::LabTab::SwarmStressTest => Some((
+            Vec3::new(
+                SWARM_MIN_X - SWARM_VOLUME_MARGIN,
+                0.0,
+                SWARM_MIN_Z - SWARM_VOLUME_MARGIN,
+            ),
+            Vec3::new(
+                SWARM_MAX_X + SWARM_VOLUME_MARGIN,
+                2.8,
+                SWARM_MAX_Z + SWARM_VOLUME_MARGIN,
+            ),
+        )),
+        // The window comes from the loaded map, so it does not exist before a map does.
+        crate::LabTab::LiveBattle => terrain.as_ref().map(|terrain| {
+            let map_size = Vec2::new(terrain.map.width() as f32, terrain.map.height() as f32);
+            let camera = camera_query.iter().next();
+            let focus = camera.map_or(map_size * 0.5, |cam| cam.target);
+            let center = live_battle_window_center(focus, map_size);
+            let cam_ground_y = camera.map_or(0.0, |cam| (cam.look_at_y - 1.2).max(0.0));
 
             // Find the lowest ground_z of visible mobile units inside the horizontal camera window
             // (treating 0.0 low ground as a valid first-class altitude).
@@ -698,7 +758,9 @@ pub(crate) fn update_smog_field_system(
                     continue;
                 }
                 let p = transform.translation;
-                if (p.x - clamped_x).abs() <= 15.5 && (p.z - clamped_z).abs() <= 12.5 {
+                if (p.x - center.x).abs() <= LIVE_BATTLE_HALF_EXTENT_X + 1.5
+                    && (p.z - center.y).abs() <= LIVE_BATTLE_HALF_EXTENT_Z + 1.5
+                {
                     let gz = instance.0.ground_z.max(0.0);
                     min_mobile_ground_y = Some(min_mobile_ground_y.map_or(gz, |cur| cur.min(gz)));
                 }
@@ -706,25 +768,32 @@ pub(crate) fn update_smog_field_system(
 
             let ground_y = min_mobile_ground_y.unwrap_or(cam_ground_y).max(0.0);
 
-            let step_x = 28.0 / GRID_NX as f32;
+            let step_x = LIVE_BATTLE_HALF_EXTENT_X * 2.0 / GRID_NX as f32;
             let step_y = LIVE_BATTLE_EXTENT_Y / GRID_NY as f32;
-            let step_z = 22.0 / GRID_NZ as f32;
+            let step_z = LIVE_BATTLE_HALF_EXTENT_Z * 2.0 / GRID_NZ as f32;
 
-            let center_x = (clamped_x / step_x).round() * step_x;
+            let center_x = (center.x / step_x).round() * step_x;
             let base_y = (ground_y / step_y).floor() * step_y;
-            let center_z = (clamped_z / step_z).round() * step_z;
+            let center_z = (center.y / step_z).round() * step_z;
 
             (
-                Vec3::new(center_x - 14.0, base_y, center_z - 11.0),
                 Vec3::new(
-                    center_x + 14.0,
+                    center_x - LIVE_BATTLE_HALF_EXTENT_X,
+                    base_y,
+                    center_z - LIVE_BATTLE_HALF_EXTENT_Z,
+                ),
+                Vec3::new(
+                    center_x + LIVE_BATTLE_HALF_EXTENT_X,
                     base_y + LIVE_BATTLE_EXTENT_Y,
-                    center_z + 11.0,
+                    center_z + LIVE_BATTLE_HALF_EXTENT_Z,
                 ),
             )
-        }
+        }),
     };
-    grid.set_bounds_quantized(target_min, target_max);
+    let enabled = enabled && target.is_some();
+    if let Some((target_min, target_max)) = target {
+        grid.set_bounds_quantized(target_min, target_max);
+    }
 
     let actual_min = grid.bounds_min();
     let actual_max = grid.bounds_max();
@@ -740,11 +809,7 @@ pub(crate) fn update_smog_field_system(
             *vis = target_vis;
         }
         transform.translation = actual_center;
-        transform.scale = Vec3::new(
-            actual_extent.x / 13.0,
-            actual_extent.y / 2.8,
-            actual_extent.z / 9.0,
-        );
+        transform.scale = actual_extent;
     }
 
     if !enabled {
@@ -757,15 +822,11 @@ pub(crate) fn update_smog_field_system(
     }
 
     let mut effective_config = config.clone();
-    if let Some(ref l) = lab_state {
-        effective_config.emission_rate = l.smog_emission_rate;
-        effective_config.wake_influence = l.smog_wake_influence;
-    }
+    effective_config.emission_rate = lab_state.smog_emission_rate;
+    effective_config.wake_influence = lab_state.smog_wake_influence;
 
     sources_scratch.clear();
-    let mut packed_pos_radius = [Vec4::ZERO; MAX_SMOG_SHADER_BUBBLES];
-    let mut packed_vel_boost = [Vec4::ZERO; MAX_SMOG_SHADER_BUBBLES];
-    let mut packed_count = 0usize;
+    let mut cavities = CavitySlots::default();
 
     for (transform, instance, bouncing, preview, mist_motion, visibility) in &bubble_query {
         if matches!(visibility, Some(Visibility::Hidden)) {
@@ -789,10 +850,7 @@ pub(crate) fn update_smog_field_system(
                 if preview.is_some() {
                     mist_motion
                         .and_then(|m| m.conveyor_velocity)
-                        .unwrap_or_else(|| {
-                            let spd = lab_state.as_ref().map_or(0.0, |l| l.speed);
-                            Vec3::new(-spd, 0.0, 0.0)
-                        })
+                        .unwrap_or_else(|| Vec3::new(-lab_state.speed, 0.0, 0.0))
                 } else {
                     Vec3::new(instance.0.velocity[0], 0.0, instance.0.velocity[1])
                 }
@@ -801,9 +859,8 @@ pub(crate) fn update_smog_field_system(
         );
 
         if is_live_battle_unit {
-            // Scale velocity from sim displacement per tick to physical m/s
-            const SIM_VELOCITY_SCALE: f32 = 20.0;
-            vel *= SIM_VELOCITY_SCALE;
+            // Snapshot velocity is world units per tick; the fluid works in world units per second.
+            vel /= SIM_TICK_PERIOD.as_secs_f32();
 
             // Anchor vertical source position to the unit's true world-space terrain level
             pos.y = instance.0.ground_z + (pos.y - instance.0.ground_z).clamp(0.35, 1.8);
@@ -846,13 +903,12 @@ pub(crate) fn update_smog_field_system(
             influence_strength,
         });
 
-        if packed_count < MAX_SMOG_SHADER_BUBBLES {
-            packed_pos_radius[packed_count] = Vec4::new(pos.x, pos.y, pos.z, radius);
-            let speed = vel.length();
-            let wake_boost = 1.0 + (speed * 0.35).min(2.0);
-            packed_vel_boost[packed_count] = Vec4::new(vel.x, vel.y, vel.z, wake_boost);
-            packed_count += 1;
-        }
+        let wake_boost = 1.0 + (vel.length() * 0.35).min(2.0);
+        cavities.offer(
+            pos.distance_squared(actual_center),
+            pos.extend(radius),
+            vel.extend(wake_boost),
+        );
     }
 
     // First-frame trajectory pre-warm for LiveBattle and SwarmStressTest:
@@ -871,22 +927,23 @@ pub(crate) fn update_smog_field_system(
             for (i, src) in sources_scratch.iter().enumerate() {
                 prewarm_sources[i].position = src.position - src.velocity * t_back;
             }
-            let _ = grid.step(&prewarm_sources, &effective_config, prewarm_dt);
+            if let Err(error) = grid.step(&prewarm_sources, &effective_config, prewarm_dt) {
+                crate::media::reject(error.into(), &mut media_status, &mut lab_state, &mut exit);
+                return;
+            }
         }
     }
 
     // Step 3D fluid simulation
     let metrics = match grid.step(&sources_scratch, &effective_config, dt) {
         Ok(m) => m,
-        Err(err) => {
-            warn!("SmogGrid3d::step failed: {err}");
+        Err(error) => {
+            crate::media::reject(error.into(), &mut media_status, &mut lab_state, &mut exit);
             return;
         }
     };
 
-    if let Some(ref mut l) = lab_state {
-        l.smog_bubble_count = sources_scratch.len();
-    }
+    lab_state.smog_bubble_count = sources_scratch.len();
 
     stats.total_density = metrics.total_density;
     stats.peak_density = metrics.peak_density;
@@ -895,24 +952,13 @@ pub(crate) fn update_smog_field_system(
     stats.active_bubbles = sources_scratch.len();
     stats.step_count += 1;
 
-    // Update 3D GPU textures via in-place byte copy
-    if let Some(tex) = &textures {
-        if let Some(density_img) = images.get_mut(&tex.density_image) {
-            density_img.data.copy_from_slice(&grid.rgba_density_bytes);
-        }
-        if let Some(vel_img) = images.get_mut(&tex.velocity_image) {
-            vel_img.data.copy_from_slice(&grid.rgba_velocity_bytes);
-        }
-
-        // Update GPU Uniforms
-        if let Some(material) = volume_materials.get_mut(&tex.material_handle) {
-            material.uniform.volume_min = Vec4::new(actual_min.x, actual_min.y, actual_min.z, 0.4);
-            material.uniform.volume_max = Vec4::new(actual_max.x, actual_max.y, actual_max.z, 1.15);
-            material.uniform.base_tint_time.w += dt;
-            material.uniform.control_params.x = packed_count as f32;
-            material.uniform.control_params.w = if enabled { 1.0 } else { 0.0 };
-            material.uniform.bubble_pos_radius = packed_pos_radius;
-            material.uniform.bubble_vel_boost = packed_vel_boost;
-        }
-    }
+    let uniform = &mut gpu_frame.uniform;
+    uniform.volume_min = Vec4::new(actual_min.x, actual_min.y, actual_min.z, 0.4);
+    uniform.volume_max = Vec4::new(actual_max.x, actual_max.y, actual_max.z, 1.15);
+    uniform.base_tint_time.w += dt;
+    uniform.control_params.x = cavities.len() as f32;
+    uniform.control_params.w = 1.0;
+    uniform.bubble_pos_radius = cavities.pos_radius();
+    uniform.bubble_vel_boost = cavities.vel_boost();
+    gpu_frame.generation += 1;
 }

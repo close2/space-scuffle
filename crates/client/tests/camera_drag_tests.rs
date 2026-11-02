@@ -259,3 +259,85 @@ fn scheduled_outside_crossing_and_camera_replacement_cancel() -> TestResult {
     );
     Ok(())
 }
+
+/// Map whose cells at `x >= 16` are one cliff level above the rest, and that level's altitude.
+fn cliff_terrain() -> TestResult<(client::terrain::TerrainState, f32)> {
+    let cliff = sim_map::CliffLevel(1);
+    let mut map = sim_map::GameMap::new(
+        32,
+        32,
+        sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+    )?;
+    for y in 0..32 {
+        for x in 16..32 {
+            map.cell_mut(x, y)?.cliff_level = cliff;
+        }
+    }
+    Ok((
+        client::terrain::TerrainState::new(map),
+        cliff.height_scalar().to_f32(),
+    ))
+}
+
+/// C-14: the look-at height jumped to the new altitude on the first frame over a cliff.
+#[test]
+fn camera_eases_its_height_when_panning_over_a_cliff() -> TestResult {
+    const FRAME: std::time::Duration = std::time::Duration::from_millis(16);
+
+    let mut rig = Rig::new(1.0, 20.0);
+    let (terrain, cliff_height) = cliff_terrain()?;
+    assert!(cliff_height > 1.0);
+    rig.app
+        .insert_resource(terrain)
+        .insert_resource(client::LabState {
+            current_tab: client::LabTab::LiveBattle,
+            ..default()
+        })
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(FRAME));
+    let set_target = |rig: &mut Rig, target: Vec2| -> TestResult {
+        rig.app
+            .world_mut()
+            .get_mut::<client::RtsCamera>(rig.camera)
+            .ok_or("camera")?
+            .target = target;
+        Ok(())
+    };
+    let look_at_y = |rig: &Rig| -> TestResult<f32> {
+        Ok(rig
+            .app
+            .world()
+            .get::<client::RtsCamera>(rig.camera)
+            .ok_or("camera")?
+            .look_at_y)
+    };
+
+    set_target(&mut rig, Vec2::new(8.0, 8.0))?;
+    for _ in 0..120 {
+        rig.app.update();
+    }
+    let low = look_at_y(&rig)?;
+    assert!((low - 1.2).abs() < 0.01, "settled on low ground at {low}");
+
+    set_target(&mut rig, Vec2::new(24.0, 8.0))?;
+    rig.app.update();
+    rig.app.update();
+    let high = low + cliff_height;
+    let early = look_at_y(&rig)?;
+    assert!(
+        early > low && early < low + (high - low) * 0.5,
+        "{early} after two frames between {low} and {high}"
+    );
+
+    let mut previous = early;
+    for _ in 0..120 {
+        rig.app.update();
+        let current = look_at_y(&rig)?;
+        assert!(current >= previous, "height must not overshoot back");
+        previous = current;
+    }
+    assert!(
+        (previous - high).abs() < 0.01,
+        "{previous} settles at {high}"
+    );
+    Ok(())
+}

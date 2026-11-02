@@ -125,16 +125,16 @@ fn warmed_paused_path_preserves_real_world_and_exact_render_pose() -> TestResult
     assert!(session.is_ready());
     assert_eq!(session.frames.presented(), session.frames.current());
     let snapshot = session.frames.presented().clone();
-    // Production AssetEvents runs in Last: each update forwards this frame's
-    // material mutations and retains only the normal two-frame event window.
+    // C-5: a paused battle changes nothing, so no material may be re-prepared. Production
+    // AssetEvents runs in Last and the event queue retains a two-frame window.
     let asset_events = app
         .world()
         .resource::<Events<AssetEvent<client::BubbleDomeMaterial>>>();
     assert_eq!(
-        asset_events.iter_current_update_events().count(),
-        snapshot.bubbles.len()
+        asset_events.len(),
+        0,
+        "paused frames must not touch materials"
     );
-    assert_eq!(asset_events.len(), snapshot.bubbles.len() * 2);
     let world = app
         .world()
         .resource::<client::LabState>()
@@ -173,6 +173,39 @@ fn warmed_paused_path_preserves_real_world_and_exact_render_pose() -> TestResult
     Ok(())
 }
 
+/// C-5: `BubbleOpticsPlugin` owns the optics lanes of a shared uniform. Snapshot sync must neither
+/// see them as a difference nor reset them, or the two systems re-prepare every material forever.
+#[test]
+fn snapshot_sync_preserves_optics_lanes_without_touching_materials() -> TestResult {
+    let mut app = presentation_app()?;
+    let light = Vec4::new(0.2, 0.9, 0.1, 0.7);
+    let mut materials = app
+        .world_mut()
+        .resource_mut::<Assets<client::BubbleDomeMaterial>>();
+    assert!(!materials.is_empty());
+    for (_, material) in materials.iter_mut() {
+        material.uniform.optics_light = light;
+    }
+    for _ in 0..4 {
+        app.update();
+    }
+    assert_eq!(
+        app.world()
+            .resource::<Events<AssetEvent<client::BubbleDomeMaterial>>>()
+            .iter_current_update_events()
+            .count(),
+        0
+    );
+    for (_, material) in app
+        .world()
+        .resource::<Assets<client::BubbleDomeMaterial>>()
+        .iter()
+    {
+        assert_eq!(material.uniform.optics_light, light);
+    }
+    Ok(())
+}
+
 // Same profiling boundary rationale as the paused phase above.
 #[inline(never)]
 fn measured_moving_no_tick_presentation(app: &mut App) {
@@ -189,6 +222,26 @@ fn measured_membership_tick(app: &mut App) {
 #[inline(never)]
 fn allocation_positive_control() -> Vec<u8> {
     std::hint::black_box(vec![17; 4096])
+}
+
+/// C-5: the shader reads no position, so a unit may only touch its material when it turns.
+fn assert_only_turning_units_touched_materials(app: &App, before: &sim_types::RenderSnapshot) {
+    let session = app.world().resource::<BattleSession>();
+    let turning = before
+        .bubbles
+        .iter()
+        .zip(&session.frames.presented().bubbles)
+        .filter(|(a, b)| a.heading_angle_rad.to_bits() != b.heading_angle_rad.to_bits())
+        .count();
+    let touched = app
+        .world()
+        .resource::<Events<AssetEvent<client::BubbleDomeMaterial>>>()
+        .len();
+    assert!(
+        turning < before.bubbles.len() && touched <= turning * 16,
+        "{touched} material events over 16 no-tick frames, {turning} of {} bubbles turning",
+        before.bubbles.len()
+    );
 }
 
 #[test]
@@ -226,6 +279,7 @@ fn moving_no_tick_frames_interpolate_and_real_death_changes_membership() -> Test
     profiler_gate()?;
     measured_moving_no_tick_presentation(&mut app);
     let session = app.world().resource::<BattleSession>();
+    assert_only_turning_units_touched_materials(&app, &before);
     assert_eq!(session.frames.current().tick, tick);
     assert_eq!(
         app.world()

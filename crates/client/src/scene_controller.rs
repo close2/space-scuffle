@@ -15,9 +15,10 @@
 //! - Components (`Transform`, `BubbleInstance`) are mutated in place without issuing `commands.insert`.
 
 use crate::bubble_shader::{
-    BubbleDomeMaterial, BubbleInstance, BubbleSharedMeshes, BubbleUniformGpu, FlipbookRegistry,
-    FLAG_ATTACK_APERTURE, FLAG_CLOAKED, FLAG_CRACKS, FLAG_CRT_GLITCH, FLAG_FACING_STRIPE,
-    FLAG_FRESNEL, FLAG_GLARE, FLAG_INNER_WARP, FLAG_SELECTED, FLAG_SPEED_BOOSTED,
+    sync_bubble_material, BubbleDomeMaterial, BubbleInstance, BubbleSharedMeshes, BubbleUniformGpu,
+    FlipbookRegistry, FLAG_ATTACK_APERTURE, FLAG_CLOAKED, FLAG_CRACKS, FLAG_CRT_GLITCH,
+    FLAG_FACING_STRIPE, FLAG_FRESNEL, FLAG_GLARE, FLAG_INNER_WARP, FLAG_SELECTED,
+    FLAG_SPEED_BOOSTED,
 };
 use crate::indicators::{attach_bubble_indicators, IndicatorAssets, SelectionRingMaterial};
 use crate::lab_ui::{LabState, LabTab};
@@ -469,13 +470,14 @@ pub fn sync_lab_preview_system(
         }
         uniform.feature_flags = feature_flags;
 
-        if let Some(mat) = bubble_materials.get_mut(&mat_handle.0) {
-            mat.uniform = uniform;
-            mat.video_texture = texture;
-        }
+        sync_bubble_material(&mut bubble_materials, &mat_handle.0, &uniform, texture);
 
-        transform.translation = pos;
-        transform.scale = Vec3::splat(radius);
+        // Writing through `Mut` flags change detection even for an equal value.
+        transform.set_if_neq(
+            transform
+                .with_translation(pos)
+                .with_scale(Vec3::splat(radius)),
+        );
 
         // Mutate component in place without issuing commands.entity(e).insert(...)
         bubble_instance.0 = instance;
@@ -550,17 +552,22 @@ pub fn sync_live_battle_system(
         let target_pos = pos;
         if let Some(&e) = render_entities.0.get(&instance.entity_id) {
             if let Ok((_, mut transform, mut bubble, mut mesh, mat_handle)) = query.get_mut(e) {
-                if let Some(mat) = bubble_materials.get_mut(&mat_handle.0) {
-                    mat.uniform = uniform;
-                    mat.video_texture = texture;
-                }
-                transform.translation = target_pos;
-                mesh.0 = if is_dome {
-                    shared_meshes.dome_mesh.clone()
+                sync_bubble_material(&mut bubble_materials, &mat_handle.0, &uniform, texture);
+                // Writing through `Mut` flags change detection even for an equal value, and a
+                // changed `Mesh3d` makes Bevy re-extract the instance.
+                transform.set_if_neq(
+                    transform
+                        .with_translation(target_pos)
+                        .with_scale(Vec3::splat(instance.radius)),
+                );
+                let target_mesh = if is_dome {
+                    &shared_meshes.dome_mesh
                 } else {
-                    shared_meshes.sphere_mesh.clone()
+                    &shared_meshes.sphere_mesh
                 };
-                transform.scale = Vec3::splat(instance.radius);
+                if mesh.0 != *target_mesh {
+                    mesh.0.clone_from(target_mesh);
+                }
                 bubble.0 = instance.clone();
             }
         } else {
@@ -621,6 +628,33 @@ pub fn sync_live_battle_system(
 
 /// Canonical alias for the sole queued client tick driver.
 pub use crate::battle_pipeline::driver::advance_battle_ticks as step_client_simulation_system;
+
+/// Smallest world X a swarm bubble centre reaches before bouncing, east of the arena resources.
+pub const SWARM_MIN_X: f32 = 13.0;
+
+/// Largest world X a swarm bubble centre reaches before bouncing.
+pub const SWARM_MAX_X: f32 = 31.0;
+
+/// World Z of the swarm's first row. All ten rows stay on open low ground, south of the ramp.
+pub const SWARM_MIN_Z: f32 = 3.6;
+
+/// World units between neighbouring swarm rows and columns.
+const SWARM_SPACING: f32 = 1.2;
+
+/// World Z of the swarm's last row.
+pub const SWARM_MAX_Z: f32 = SWARM_MIN_Z + 9.0 * SWARM_SPACING;
+
+/// World `(x, z)` spawn position of swarm bubble `index`, where `index` is below 200.
+fn swarm_spawn_position(index: u32) -> Vec2 {
+    let row = (index % 10) as f32;
+    let column = ((index % 100) / 10) as f32;
+    let x = if index < 100 {
+        SWARM_MIN_X + column * SWARM_SPACING
+    } else {
+        SWARM_MAX_X - column * SWARM_SPACING
+    };
+    Vec2::new(x, SWARM_MIN_Z + row * SWARM_SPACING)
+}
 
 /// Spawns and animates 200 colliding bubbles for the swarm stress test.
 pub fn sync_swarm_stress_system(
@@ -683,9 +717,12 @@ pub fn sync_swarm_stress_system(
 
         if controlled_fixture.is_none() {
             if let Some(mut cam) = camera_query.iter_mut().next() {
-                cam.target = Vec2::new(16.0, 15.4);
+                cam.target = Vec2::new(
+                    f32::midpoint(SWARM_MIN_X, SWARM_MAX_X),
+                    f32::midpoint(SWARM_MIN_Z, SWARM_MAX_Z),
+                );
                 cam.look_at_y = 0.5;
-                cam.distance = 22.0;
+                cam.distance = 26.0;
             }
 
             // Interactive 200-unit Swarm Stress Test:
@@ -785,14 +822,7 @@ pub fn sync_swarm_stress_system(
                 } else {
                     secondary_owner
                 };
-                let row = (i % 10) as f32;
-                let col = ((i % 100) / 10) as f32;
-                let x = if primary_group {
-                    8.0 + col * 1.2
-                } else {
-                    24.0 - col * 1.2
-                };
-                let z = 10.0 + row * 1.2;
+                let Vec2 { x, y: z } = swarm_spawn_position(i);
 
                 let instance = BubbleRenderInstance {
                     entity_id: EntityId(1000 + i),
@@ -977,13 +1007,13 @@ pub fn sync_swarm_stress_system(
             };
             let mut vx = instance.0.velocity[0];
             tf.translation.x += vx * dt;
-            if tf.translation.x <= 6.0 {
-                tf.translation.x = 6.0;
+            if tf.translation.x <= SWARM_MIN_X {
+                tf.translation.x = SWARM_MIN_X;
                 vx = vx.abs();
                 instance.0.velocity[0] = vx;
                 instance.0.heading_angle_rad = 0.0;
-            } else if tf.translation.x >= 26.0 {
-                tf.translation.x = 26.0;
+            } else if tf.translation.x >= SWARM_MAX_X {
+                tf.translation.x = SWARM_MAX_X;
                 vx = -vx.abs();
                 instance.0.velocity[0] = vx;
                 instance.0.heading_angle_rad = std::f32::consts::PI;

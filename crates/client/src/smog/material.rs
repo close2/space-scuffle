@@ -11,6 +11,7 @@
 //! - All fields are strictly finite; zero NaN or Inf values are committed to GPU uniform buffers.
 //! - Front-face culling is specialized so back-faces rasterize each covered pixel exactly once whether the camera
 //!   is inside or outside the volume bounding box.
+//! - The volume sorts behind every other transparent mesh, so it never draws over a unit.
 
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
@@ -19,6 +20,99 @@ use bevy::render::render_resource::{AsBindGroup, Face, ShaderRef, ShaderType};
 /// Maximum number of active bubble spheres packed directly into the volumetric shader uniform
 /// for sub-voxel spherical cavity carving and bow-wave compression.
 pub const MAX_SMOG_SHADER_BUBBLES: usize = 16;
+
+/// View-depth bias that makes the smog volume draw before every other transparent mesh.
+///
+/// Bevy sorts transparent meshes by the view depth of their origin, so one key stands for the whole
+/// volume. Bubbles write no depth, so the shader cannot clip against them. Captures showed the
+/// result: bubbles beyond the box centre were drawn first and smog from the whole ray landed on top
+/// of them, while nearer bubbles stayed clean, with a sharp line between the two. Drawing smog first
+/// keeps units readable at every depth, at the cost of smog never passing in front of a unit.
+/// The value only has to exceed any camera distance, and it affects sorting alone.
+pub const SMOG_SORT_BIAS: f32 = -1.0e6;
+
+// The widest supported map is far below 4096 world units, even at the maximum zoom distance.
+const _: () = assert!(SMOG_SORT_BIAS < -(crate::camera::MAX_CAMERA_DISTANCE + 4096.0));
+
+/// Chooses which bubbles receive one of the fixed analytic cavity slots.
+///
+/// A scene can hold more units than slots. Every unit still clears the coarse fluid grid; a slot
+/// only adds the sub-voxel cavity, so the slots go to the units nearest the view centre, where a
+/// missing cavity is most visible.
+// PERFORMANCE RATIONALE:
+// Why: The shader tests each slot at every raymarch step, so raising the cap multiplies fragment
+// cost, and sorting up to 400 sources each frame would allocate or reorder them.
+// What: A fixed array keeps the nearest sources seen so far. Each offer scans at most 16 slots.
+// Trade-off: Linear in slots per source, with no allocation and no change to the 608-byte uniform.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CavitySlots {
+    pos_radius: [Vec4; MAX_SMOG_SHADER_BUBBLES],
+    vel_boost: [Vec4; MAX_SMOG_SHADER_BUBBLES],
+    distance_sq: [f32; MAX_SMOG_SHADER_BUBBLES],
+    len: usize,
+}
+
+impl Default for CavitySlots {
+    fn default() -> Self {
+        Self {
+            pos_radius: [Vec4::ZERO; MAX_SMOG_SHADER_BUBBLES],
+            vel_boost: [Vec4::ZERO; MAX_SMOG_SHADER_BUBBLES],
+            distance_sq: [f32::INFINITY; MAX_SMOG_SHADER_BUBBLES],
+            len: 0,
+        }
+    }
+}
+
+impl CavitySlots {
+    /// Offers one bubble, evicting the farthest occupant when the slots are full.
+    ///
+    /// `distance_sq` is the squared world distance to the view centre. `pos_radius` is the world
+    /// centre and radius, and `vel_boost` the velocity in world units per second and wake factor.
+    pub fn offer(&mut self, distance_sq: f32, pos_radius: Vec4, vel_boost: Vec4) {
+        let slot = if self.len < MAX_SMOG_SHADER_BUBBLES {
+            self.len += 1;
+            self.len - 1
+        } else {
+            let mut farthest = 0;
+            for slot in 1..MAX_SMOG_SHADER_BUBBLES {
+                if self.distance_sq[slot] > self.distance_sq[farthest] {
+                    farthest = slot;
+                }
+            }
+            if distance_sq >= self.distance_sq[farthest] {
+                return;
+            }
+            farthest
+        };
+        self.distance_sq[slot] = distance_sq;
+        self.pos_radius[slot] = pos_radius;
+        self.vel_boost[slot] = vel_boost;
+    }
+
+    /// Number of occupied slots.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Whether no slot is occupied.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Slot contents for `SmogVolumeUniformGpu::bubble_pos_radius`.
+    #[must_use]
+    pub fn pos_radius(&self) -> [Vec4; MAX_SMOG_SHADER_BUBBLES] {
+        self.pos_radius
+    }
+
+    /// Slot contents for `SmogVolumeUniformGpu::bubble_vel_boost`.
+    #[must_use]
+    pub fn vel_boost(&self) -> [Vec4; MAX_SMOG_SHADER_BUBBLES] {
+        self.vel_boost
+    }
+}
 
 /// Marker component identifying the 3D volumetric smog bounding box entity.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,6 +190,11 @@ impl Material for SmogVolumeMaterial {
         AlphaMode::Premultiplied
     }
 
+    /// Sorts the volume behind every other transparent mesh. See [`SMOG_SORT_BIAS`].
+    fn depth_bias(&self) -> f32 {
+        SMOG_SORT_BIAS
+    }
+
     fn specialize(
         _pipeline: &bevy::pbr::MaterialPipeline<Self>,
         descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
@@ -127,6 +226,38 @@ mod tests {
             16,
             "SmogVolumeUniformGpu must be 16-byte aligned"
         );
+    }
+
+    #[test]
+    fn cavity_slots_keep_the_nearest_sources_in_any_offer_order() {
+        for reversed in [false, true] {
+            let mut slots = CavitySlots::default();
+            let total = MAX_SMOG_SHADER_BUBBLES + 5;
+            let offers: Vec<usize> = if reversed {
+                (0..total).rev().collect()
+            } else {
+                (0..total).collect()
+            };
+            for index in offers {
+                let distance = index as f32;
+                slots.offer(distance, Vec4::splat(distance), Vec4::ZERO);
+            }
+            assert_eq!(slots.len(), MAX_SMOG_SHADER_BUBBLES);
+            let mut kept: Vec<f32> = slots.pos_radius().iter().map(|slot| slot.x).collect();
+            kept.sort_by(f32::total_cmp);
+            let nearest: Vec<f32> = (0..MAX_SMOG_SHADER_BUBBLES).map(|i| i as f32).collect();
+            assert_eq!(kept, nearest);
+        }
+    }
+
+    #[test]
+    fn cavity_slots_below_capacity_keep_every_source_and_zero_the_rest() {
+        let mut slots = CavitySlots::default();
+        assert!(slots.is_empty());
+        slots.offer(4.0, Vec4::ONE, Vec4::ONE);
+        assert_eq!(slots.len(), 1);
+        assert_eq!(slots.pos_radius()[0], Vec4::ONE);
+        assert_eq!(slots.pos_radius()[1], Vec4::ZERO);
     }
 
     #[test]

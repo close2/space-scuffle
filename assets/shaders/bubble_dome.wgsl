@@ -52,7 +52,7 @@ const FLAG_FRESNEL: u32 = 8u;         // 1 << 3: Iridescent thin-film Fresnel ri
 const FLAG_INNER_WARP: u32 = 16u;     // 1 << 4: View-aligned spherical lens warp
 const FLAG_CRACKS: u32 = 32u;         // 1 << 5: Voronoi glass cracks & electrical arcing
 const FLAG_CRT_GLITCH: u32 = 64u;     // 1 << 6: CRT scanlines & chromatic aberration
-const FLAG_SPEED_BOOSTED: u32 = 128u; // 1 << 7: Hyper wake glow
+const FLAG_SPEED_BOOSTED: u32 = 128u; // 1 << 7: Pulsing rim trailing a boosted unit
 const FLAG_FACING_STRIPE: u32 = 256u; // 1 << 8: Rim-confined facing indicator
 const FLAG_ATTACK_APERTURE: u32 = 512u;// 1 << 9: Target-lock weapon aperture
 
@@ -130,7 +130,13 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Optical glass lens refraction and magnification
     let z_lens = sqrt(max(1.0 - r2, 0.0));
-    var lens_uv = vec2<f32>(0.5, 0.5) + disk * mix(0.48, 0.35, z_lens);
+    // With FLAG_INNER_WARP the media magnifies toward the centre like a spherical lens; without it
+    // the media maps flat across the disc.
+    var lens_scale = 0.48;
+    if ((bubble.feature_flags & FLAG_INNER_WARP) != 0u) {
+        lens_scale = mix(0.48, 0.35, z_lens);
+    }
+    var lens_uv = vec2<f32>(0.5, 0.5) + disk * lens_scale;
 
     // Facing-aware horizontal mirroring (aligned with screen_right)
     let heading_dir = vec3<f32>(cos(bubble.heading_angle_rad), 0.0, sin(bubble.heading_angle_rad));
@@ -259,6 +265,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
             * bubble.hull_hit_flash * bubble.optics_glare.z;
     }
 
+    // 7. Speed Boost: a warm pulsing arc on the rim behind the direction of travel.
+    var boost_glow = vec3<f32>(0.0);
+    if (bubble.shape_kind == 0u && (bubble.feature_flags & FLAG_SPEED_BOOSTED) != 0u) {
+        let heading_2d = normalize(vec2<f32>(dot(heading_dir, screen_right), -dot(heading_dir, screen_up)));
+        let trailing = smoothstep(0.15, 0.90, -dot(disk_dir, heading_2d));
+        let pulse = 0.75 + 0.25 * sin(globals.time * 14.0);
+        boost_glow = vec3<f32>(1.0, 0.62, 0.14) * trailing * smoothstep(0.80, 0.96, r)
+            * pulse * bubble.optics_signals.z;
+    }
+
     // 8. Tactical Selection Outer Rim Aura
     var selection_glow = vec3<f32>(0.0);
     let is_selected = ((bubble.feature_flags & FLAG_SELECTED) != 0u) || (bubble.selected == 1u);
@@ -268,7 +284,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // 9. Final Composite & Cloak Interference
-    let signals = direction_stripe + aim_glow + crack_glow + shield_surge + hull_surge + selection_glow;
+    let signals = direction_stripe + aim_glow + crack_glow + shield_surge + hull_surge
+        + boost_glow + selection_glow;
     let signal_peak = max(signals.r, max(signals.g, signals.b));
     let bounded_signals = signals / (1.0 + signal_peak);
     var final_rgb = video_color * (1.0 - F) + rim_color * F
