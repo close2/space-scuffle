@@ -926,7 +926,9 @@ fn render_selected_unit_hud(
                                 ui.label(format!("Range: {:.1} u", weapon.max_range.to_f32()));
                                 ui.label(format!(
                                     "Period: {:.2}s ({} ticks)",
-                                    f32::from(weapon.period_ticks) / 25.0,
+                                    f32::from(weapon.period_ticks)
+                                        * crate::battle_pipeline::clock::SIM_TICK_PERIOD
+                                            .as_secs_f32(),
                                     weapon.period_ticks
                                 ));
                                 ui.label(format!("Push Priority: {}", arch.push_priority));

@@ -27,9 +27,12 @@ pub use kinematics::{
     BOUNCING_BUBBLE_COUNT, MAX_BOUNCING_BUBBLES,
 };
 pub use material::{
-    SmogVolumeMarker, SmogVolumeMaterial, SmogVolumeUniformGpu, MAX_SMOG_SHADER_BUBBLES,
+    CavitySlots, SmogVolumeMarker, SmogVolumeMaterial, SmogVolumeUniformGpu,
+    MAX_SMOG_SHADER_BUBBLES,
 };
 
+use crate::battle_pipeline::clock::SIM_TICK_PERIOD;
+use crate::battle_pipeline::BattleSet;
 use crate::bubble_shader::{
     BubbleDomeMaterial, BubbleInstance, BubbleSharedMeshes, BubbleUniformGpu, FlipbookRegistry,
 };
@@ -42,6 +45,45 @@ use sim_types::enums::{AnimState, ShapeKind};
 use sim_types::ids::UnitTypeId;
 use sim_types::snapshot::BubbleRenderInstance;
 use sim_types::EntityId;
+
+/// Minimum corner of the Visual Lab smog volume in Bevy world units.
+pub const LAB_VOLUME_MIN: Vec3 = Vec3::new(-6.5, 0.0, -4.5);
+
+/// Maximum corner of the Visual Lab smog volume in Bevy world units.
+pub const LAB_VOLUME_MAX: Vec3 = Vec3::new(6.5, 2.8, 4.5);
+
+/// Half of the live battle smog window along world X, in world units.
+const LIVE_BATTLE_HALF_EXTENT_X: f32 = 14.0;
+
+/// Half of the live battle smog window along world Z, in world units.
+const LIVE_BATTLE_HALF_EXTENT_Z: f32 = 11.0;
+
+/// Height of the live battle smog window, in world units. Spans both cliff levels.
+const LIVE_BATTLE_EXTENT_Y: f32 = 4.8;
+
+/// Gap kept between the live battle smog window and the map edge, in world units.
+const LIVE_BATTLE_MAP_MARGIN: f32 = 0.5;
+
+/// Horizontal centre of the live battle smog window for a camera focus.
+///
+/// `focus` and the result are `(world x, world z)`. `map_size` is the map's `(width, height)` in
+/// world units. The window stays on the map, and centres on an axis too short to contain it.
+#[must_use]
+pub fn live_battle_window_center(focus: Vec2, map_size: Vec2) -> Vec2 {
+    let inset =
+        Vec2::new(LIVE_BATTLE_HALF_EXTENT_X, LIVE_BATTLE_HALF_EXTENT_Z) + LIVE_BATTLE_MAP_MARGIN;
+    let axis = |focus: f32, size: f32, inset: f32| {
+        if size >= inset * 2.0 {
+            focus.clamp(inset, size - inset)
+        } else {
+            size * 0.5
+        }
+    };
+    Vec2::new(
+        axis(focus.x, map_size.x, inset.x),
+        axis(focus.y, map_size.y, inset.y),
+    )
+}
 
 /// First [`EntityId`] of the showcase bubbles, which exist only in the client.
 ///
@@ -161,8 +203,8 @@ pub struct SmogPlugin;
 impl Plugin for SmogPlugin {
     fn build(&self, app: &mut App) {
         #[allow(clippy::expect_used)]
-        let grid = SmogGrid3d::new(Vec3::new(-6.5, 0.0, -4.5), Vec3::new(6.5, 2.8, 4.5))
-            .expect("invariant: hardcoded default smog grid bounds -6.5..6.5, 0.0..2.8, -4.5..4.5 are strictly positive and finite");
+        let grid = SmogGrid3d::new(LAB_VOLUME_MIN, LAB_VOLUME_MAX)
+            .expect("invariant: LAB_VOLUME_MIN is below LAB_VOLUME_MAX by over 1.0 on each axis");
 
         app.init_resource::<SmogConfig>()
             .init_resource::<SmogStats>()
@@ -174,7 +216,10 @@ impl Plugin for SmogPlugin {
             )
             .add_systems(
                 Update,
-                (sync_bouncing_smog_bubbles_system, update_smog_field_system).chain(),
+                (sync_bouncing_smog_bubbles_system, update_smog_field_system)
+                    .chain()
+                    .in_set(BattleSet::Present)
+                    .after(crate::camera::camera_control_system),
             );
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app.add_systems(ExtractSchedule, gpu_upload::upload_smog_frame_system);
@@ -314,18 +359,10 @@ pub fn setup_smog_volume_system(
     let noise_image = images.add(make_3d_noise_image());
 
     // 4. Initialize SmogVolumeMaterial and spawn volume bounding box entity
-    let volume_min = Vec4::new(-6.5, 0.0, -4.5, 0.4);
-    let volume_max = Vec4::new(6.5, 2.8, 4.5, 1.15);
-    let extent = Vec3::new(
-        volume_max.x - volume_min.x,
-        volume_max.y - volume_min.y,
-        volume_max.z - volume_min.z,
-    );
-    let center = Vec3::new(
-        f32::midpoint(volume_min.x, volume_max.x),
-        f32::midpoint(volume_min.y, volume_max.y),
-        f32::midpoint(volume_min.z, volume_max.z),
-    );
+    let volume_min = LAB_VOLUME_MIN.extend(0.4);
+    let volume_max = LAB_VOLUME_MAX.extend(1.15);
+    let extent = LAB_VOLUME_MAX - LAB_VOLUME_MIN;
+    let center = (LAB_VOLUME_MIN + LAB_VOLUME_MAX) * 0.5;
 
     let mut packed_pos_radius = [Vec4::ZERO; MAX_SMOG_SHADER_BUBBLES];
     let mut packed_vel_boost = [Vec4::ZERO; MAX_SMOG_SHADER_BUBBLES];
@@ -362,11 +399,11 @@ pub fn setup_smog_volume_system(
         noise_texture: noise_image.clone(),
     });
 
-    let box_mesh = meshes.add(Cuboid::new(extent.x, extent.y, extent.z));
+    let box_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     commands.spawn((
         Mesh3d(box_mesh),
         MeshMaterial3d(mat_handle.clone()),
-        Transform::from_translation(center),
+        Transform::from_translation(center).with_scale(extent),
         Visibility::default(),
         SmogVolumeMarker,
     ));
@@ -667,6 +704,7 @@ pub(crate) fn update_smog_field_system(
         Without<SmogVolumeMarker>,
     >,
     camera_query: Query<'_, '_, &crate::camera::RtsCamera>,
+    terrain: Option<Res<'_, crate::terrain::TerrainState>>,
     controlled_fixture: Option<Res<'_, crate::shell_order_audit::fixture::ControlledFixture>>,
 ) {
     if media_status.retain_failure(&mut lab_state) {
@@ -676,19 +714,18 @@ pub(crate) fn update_smog_field_system(
         controlled_fixture.is_none() && lab_state.opt_smog_volume && lab_state.opt_mist_wake;
 
     let current_tab = lab_state.current_tab;
-    let (target_min, target_max) = match current_tab {
-        crate::LabTab::VisualLab => (Vec3::new(-6.5, 0.0, -4.5), Vec3::new(6.5, 2.8, 4.5)),
-        crate::LabTab::SwarmStressTest => (Vec3::new(4.0, 0.0, 7.0), Vec3::new(28.0, 2.8, 24.0)),
-        crate::LabTab::LiveBattle => {
-            const LIVE_BATTLE_EXTENT_Y: f32 = 4.8;
-            let (cam_x, cam_z, cam_ground_y) = if let Some(cam) = camera_query.iter().next() {
-                (cam.target.x, cam.target.y, (cam.look_at_y - 1.2).max(0.0))
-            } else {
-                (16.0, 32.0, 0.0)
-            };
-
-            let clamped_x = cam_x.clamp(14.5, 49.5);
-            let clamped_z = cam_z.clamp(11.5, 52.5);
+    let target = match current_tab {
+        crate::LabTab::VisualLab => Some((LAB_VOLUME_MIN, LAB_VOLUME_MAX)),
+        crate::LabTab::SwarmStressTest => {
+            Some((Vec3::new(4.0, 0.0, 7.0), Vec3::new(28.0, 2.8, 24.0)))
+        }
+        // The window comes from the loaded map, so it does not exist before a map does.
+        crate::LabTab::LiveBattle => terrain.as_ref().map(|terrain| {
+            let map_size = Vec2::new(terrain.map.width() as f32, terrain.map.height() as f32);
+            let camera = camera_query.iter().next();
+            let focus = camera.map_or(map_size * 0.5, |cam| cam.target);
+            let center = live_battle_window_center(focus, map_size);
+            let cam_ground_y = camera.map_or(0.0, |cam| (cam.look_at_y - 1.2).max(0.0));
 
             // Find the lowest ground_z of visible mobile units inside the horizontal camera window
             // (treating 0.0 low ground as a valid first-class altitude).
@@ -702,7 +739,9 @@ pub(crate) fn update_smog_field_system(
                     continue;
                 }
                 let p = transform.translation;
-                if (p.x - clamped_x).abs() <= 15.5 && (p.z - clamped_z).abs() <= 12.5 {
+                if (p.x - center.x).abs() <= LIVE_BATTLE_HALF_EXTENT_X + 1.5
+                    && (p.z - center.y).abs() <= LIVE_BATTLE_HALF_EXTENT_Z + 1.5
+                {
                     let gz = instance.0.ground_z.max(0.0);
                     min_mobile_ground_y = Some(min_mobile_ground_y.map_or(gz, |cur| cur.min(gz)));
                 }
@@ -710,25 +749,32 @@ pub(crate) fn update_smog_field_system(
 
             let ground_y = min_mobile_ground_y.unwrap_or(cam_ground_y).max(0.0);
 
-            let step_x = 28.0 / GRID_NX as f32;
+            let step_x = LIVE_BATTLE_HALF_EXTENT_X * 2.0 / GRID_NX as f32;
             let step_y = LIVE_BATTLE_EXTENT_Y / GRID_NY as f32;
-            let step_z = 22.0 / GRID_NZ as f32;
+            let step_z = LIVE_BATTLE_HALF_EXTENT_Z * 2.0 / GRID_NZ as f32;
 
-            let center_x = (clamped_x / step_x).round() * step_x;
+            let center_x = (center.x / step_x).round() * step_x;
             let base_y = (ground_y / step_y).floor() * step_y;
-            let center_z = (clamped_z / step_z).round() * step_z;
+            let center_z = (center.y / step_z).round() * step_z;
 
             (
-                Vec3::new(center_x - 14.0, base_y, center_z - 11.0),
                 Vec3::new(
-                    center_x + 14.0,
+                    center_x - LIVE_BATTLE_HALF_EXTENT_X,
+                    base_y,
+                    center_z - LIVE_BATTLE_HALF_EXTENT_Z,
+                ),
+                Vec3::new(
+                    center_x + LIVE_BATTLE_HALF_EXTENT_X,
                     base_y + LIVE_BATTLE_EXTENT_Y,
-                    center_z + 11.0,
+                    center_z + LIVE_BATTLE_HALF_EXTENT_Z,
                 ),
             )
-        }
+        }),
     };
-    grid.set_bounds_quantized(target_min, target_max);
+    let enabled = enabled && target.is_some();
+    if let Some((target_min, target_max)) = target {
+        grid.set_bounds_quantized(target_min, target_max);
+    }
 
     let actual_min = grid.bounds_min();
     let actual_max = grid.bounds_max();
@@ -744,11 +790,7 @@ pub(crate) fn update_smog_field_system(
             *vis = target_vis;
         }
         transform.translation = actual_center;
-        transform.scale = Vec3::new(
-            actual_extent.x / 13.0,
-            actual_extent.y / 2.8,
-            actual_extent.z / 9.0,
-        );
+        transform.scale = actual_extent;
     }
 
     if !enabled {
@@ -765,9 +807,7 @@ pub(crate) fn update_smog_field_system(
     effective_config.wake_influence = lab_state.smog_wake_influence;
 
     sources_scratch.clear();
-    let mut packed_pos_radius = [Vec4::ZERO; MAX_SMOG_SHADER_BUBBLES];
-    let mut packed_vel_boost = [Vec4::ZERO; MAX_SMOG_SHADER_BUBBLES];
-    let mut packed_count = 0usize;
+    let mut cavities = CavitySlots::default();
 
     for (transform, instance, bouncing, preview, mist_motion, visibility) in &bubble_query {
         if matches!(visibility, Some(Visibility::Hidden)) {
@@ -800,9 +840,8 @@ pub(crate) fn update_smog_field_system(
         );
 
         if is_live_battle_unit {
-            // Scale velocity from sim displacement per tick to physical m/s
-            const SIM_VELOCITY_SCALE: f32 = 20.0;
-            vel *= SIM_VELOCITY_SCALE;
+            // Snapshot velocity is world units per tick; the fluid works in world units per second.
+            vel /= SIM_TICK_PERIOD.as_secs_f32();
 
             // Anchor vertical source position to the unit's true world-space terrain level
             pos.y = instance.0.ground_z + (pos.y - instance.0.ground_z).clamp(0.35, 1.8);
@@ -845,13 +884,12 @@ pub(crate) fn update_smog_field_system(
             influence_strength,
         });
 
-        if packed_count < MAX_SMOG_SHADER_BUBBLES {
-            packed_pos_radius[packed_count] = Vec4::new(pos.x, pos.y, pos.z, radius);
-            let speed = vel.length();
-            let wake_boost = 1.0 + (speed * 0.35).min(2.0);
-            packed_vel_boost[packed_count] = Vec4::new(vel.x, vel.y, vel.z, wake_boost);
-            packed_count += 1;
-        }
+        let wake_boost = 1.0 + (vel.length() * 0.35).min(2.0);
+        cavities.offer(
+            pos.distance_squared(actual_center),
+            pos.extend(radius),
+            vel.extend(wake_boost),
+        );
     }
 
     // First-frame trajectory pre-warm for LiveBattle and SwarmStressTest:
@@ -899,9 +937,9 @@ pub(crate) fn update_smog_field_system(
     uniform.volume_min = Vec4::new(actual_min.x, actual_min.y, actual_min.z, 0.4);
     uniform.volume_max = Vec4::new(actual_max.x, actual_max.y, actual_max.z, 1.15);
     uniform.base_tint_time.w += dt;
-    uniform.control_params.x = packed_count as f32;
+    uniform.control_params.x = cavities.len() as f32;
     uniform.control_params.w = 1.0;
-    uniform.bubble_pos_radius = packed_pos_radius;
-    uniform.bubble_vel_boost = packed_vel_boost;
+    uniform.bubble_pos_radius = cavities.pos_radius();
+    uniform.bubble_vel_boost = cavities.vel_boost();
     gpu_frame.generation += 1;
 }

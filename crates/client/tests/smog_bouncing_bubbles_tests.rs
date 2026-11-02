@@ -870,6 +870,11 @@ fn live_battle_low_ground_and_high_ground_units_preserve_true_world_y(
     });
     app.add_systems(Startup, client::bubble_shader::setup_bubble_assets_system);
     app.add_plugins(SmogPlugin);
+    app.insert_resource(client::terrain::TerrainState::new(sim_map::GameMap::new(
+        64,
+        64,
+        sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+    )?));
 
     // Spawn an RtsCamera with look_at_y set to high-ground altitude (3.0 + 1.2 = 4.2)
     // while looking at units on both the lower level (ground_z = 0.0) and upper level (ground_z = 3.0).
@@ -1167,6 +1172,235 @@ fn smog_actors_use_admitted_identities_and_palette_owners() -> Result<(), Box<dy
             instance.entity_id.0 >= client::smog::SHOWCASE_ENTITY_ID_BASE,
             "{:?} is inside the range the simulation allocates from",
             instance.entity_id
+        );
+    }
+    Ok(())
+}
+
+/// Live battle app on a flat map of the given size, with one camera.
+fn live_battle_smog_app(
+    width: u32,
+    height: u32,
+    camera_target: Vec2,
+) -> Result<App, Box<dyn std::error::Error>> {
+    let mut app = production_smog_app(client::LabState {
+        current_tab: client::LabTab::LiveBattle,
+        ..default()
+    })?;
+    let map = sim_map::GameMap::new(
+        width,
+        height,
+        sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+    )?;
+    app.insert_resource(client::terrain::TerrainState::new(map));
+    app.world_mut().spawn(client::camera::RtsCamera {
+        target: camera_target,
+        look_at_y: 1.2,
+        ..default()
+    });
+    Ok(app)
+}
+
+/// C-13: the window clamp was fixed to a 64x64 map, so the far side of a larger map had no smog.
+#[test]
+fn live_battle_volume_follows_the_camera_across_a_map_larger_than_64(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = live_battle_smog_app(128, 96, Vec2::new(100.0, 80.0))?;
+    app.update();
+    app.update();
+
+    let grid = app.world().resource::<SmogGrid3d>();
+    let center = (grid.bounds_min() + grid.bounds_max()) * 0.5;
+    assert!((center.x - 100.0).abs() < 1.0, "center x {}", center.x);
+    assert!((center.z - 80.0).abs() < 1.0, "center z {}", center.z);
+    Ok(())
+}
+
+/// C-13: the same clamp must keep the volume on a small map instead of hanging off its edge.
+#[test]
+fn live_battle_volume_stays_inside_a_map_smaller_than_64() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut app = live_battle_smog_app(40, 36, Vec2::new(39.0, 35.0))?;
+    app.update();
+    app.update();
+
+    let grid = app.world().resource::<SmogGrid3d>();
+    assert!(
+        grid.bounds_max().x <= 40.0 + 1.0 && grid.bounds_max().z <= 36.0 + 1.0,
+        "volume reaches {} on a 40x36 map",
+        grid.bounds_max()
+    );
+    Ok(())
+}
+
+/// A map narrower than the window centres the volume, rather than panicking on an inverted clamp.
+#[test]
+fn live_battle_volume_centres_on_a_map_narrower_than_its_window(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = live_battle_smog_app(20, 16, Vec2::new(3.0, 3.0))?;
+    app.update();
+    app.update();
+
+    let grid = app.world().resource::<SmogGrid3d>();
+    let center = (grid.bounds_min() + grid.bounds_max()) * 0.5;
+    assert!((center.x - 10.0).abs() < 1.0, "center x {}", center.x);
+    assert!((center.z - 8.0).abs() < 1.0, "center z {}", center.z);
+    Ok(())
+}
+
+/// A live battle window exists only once a map does, so no map means no smog rather than a guess.
+#[test]
+fn live_battle_without_a_loaded_map_does_not_step_smog() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = production_smog_app(client::LabState {
+        current_tab: client::LabTab::LiveBattle,
+        ..default()
+    })?;
+    for _ in 0..4 {
+        app.update();
+    }
+    assert_eq!(app.world().resource::<SmogStats>().step_count, 0);
+    let mut volumes = app
+        .world_mut()
+        .query_filtered::<&Visibility, With<client::SmogVolumeMarker>>();
+    assert_eq!(volumes.single(app.world()), Visibility::Hidden);
+    Ok(())
+}
+
+/// C-13: snapshot velocity is world units per tick and the tick rate is 25 Hz, not 20.
+#[test]
+fn live_battle_velocity_scale_comes_from_the_simulation_tick_rate(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = live_battle_smog_app(64, 64, Vec2::new(24.0, 24.0))?;
+    app.world_mut().spawn((
+        make_test_battle_unit(9001, Vec3::new(24.0, 0.45, 24.0), 0.0, 0.45),
+        Transform::from_translation(Vec3::new(24.0, 0.45, 24.0)),
+        Visibility::Inherited,
+    ));
+    app.update();
+    app.update();
+
+    let velocity = app
+        .world()
+        .resource::<client::smog::SmogGpuFrame>()
+        .uniform
+        .bubble_vel_boost[0];
+    let per_tick = 0.12; // `make_test_battle_unit`
+    let expected = per_tick / client::battle_pipeline::clock::SIM_TICK_PERIOD.as_secs_f32();
+    assert!(
+        (velocity.x - expected).abs() < 1e-4,
+        "world units per second: got {}, expected {expected}",
+        velocity.x
+    );
+    Ok(())
+}
+
+/// C-13: with more units than analytic cavities, the slots must go to the units nearest the view
+/// centre. The old code kept whichever 16 came first in query order.
+#[test]
+fn live_battle_cavity_slots_go_to_the_units_nearest_the_view_center(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = live_battle_smog_app(64, 64, Vec2::new(24.0, 24.0))?;
+    for index in 0..20u32 {
+        // The first entity spawned is the farthest, the last is on the view centre.
+        let offset = (20 - index) as f32 * 0.5;
+        let position = Vec3::new(24.0 + offset, 0.45, 24.0);
+        app.world_mut().spawn((
+            make_test_battle_unit(9000 + index, position, 0.0, 0.45),
+            Transform::from_translation(position),
+            Visibility::Inherited,
+        ));
+    }
+    app.update();
+    app.update();
+
+    let uniform = app.world().resource::<client::smog::SmogGpuFrame>().uniform;
+    assert_eq!(
+        uniform.control_params.x as usize,
+        client::MAX_SMOG_SHADER_BUBBLES
+    );
+    let mut slots: Vec<f32> = uniform
+        .bubble_pos_radius
+        .iter()
+        .map(|slot| (slot.x - 24.0) / 0.5)
+        .collect();
+    slots.sort_by(f32::total_cmp);
+    let expected: Vec<f32> = (1..=16).map(|offset| offset as f32).collect();
+    assert_eq!(slots, expected);
+    Ok(())
+}
+
+/// C-13: smog reads the transforms the presentation stage wrote this frame. The probe is registered
+/// after the plugin, so without ordering the single-threaded executor would run smog first.
+#[test]
+fn smog_runs_in_present_after_the_frame_is_published() -> Result<(), Box<dyn std::error::Error>> {
+    use client::battle_pipeline::BattleSet;
+
+    #[derive(Component)]
+    struct Probe;
+
+    let mut app = live_battle_smog_app(64, 64, Vec2::new(24.0, 24.0))?;
+    let start = Vec3::new(24.0, 0.45, 24.0);
+    app.world_mut().spawn((
+        Probe,
+        make_test_battle_unit(9001, start, 0.0, 0.45),
+        Transform::from_translation(start),
+        Visibility::Inherited,
+    ));
+    app.configure_sets(
+        Update,
+        (BattleSet::PreparePresentation, BattleSet::Present).chain(),
+    );
+    app.add_systems(
+        Update,
+        (|mut units: Query<'_, '_, &mut Transform, With<Probe>>| {
+            for mut transform in &mut units {
+                transform.translation.x += 0.25;
+            }
+        })
+        .in_set(BattleSet::PreparePresentation),
+    );
+    app.edit_schedule(Update, |schedule| {
+        schedule.set_executor_kind(bevy::ecs::schedule::ExecutorKind::SingleThreaded);
+    });
+
+    app.update();
+    app.update();
+
+    let packed = app
+        .world()
+        .resource::<client::smog::SmogGpuFrame>()
+        .uniform
+        .bubble_pos_radius[0]
+        .x;
+    let published = app
+        .world_mut()
+        .query_filtered::<&Transform, With<Probe>>()
+        .single(app.world())
+        .translation
+        .x;
+    assert_eq!(packed, published);
+
+    // An executor may still pick the right order by luck, so also require the declared membership.
+    let schedules = app.world().resource::<Schedules>();
+    let schedule = schedules.get(Update).ok_or("Update schedule")?;
+    let graph = schedule.graph();
+    let present = graph
+        .system_sets()
+        .find(|(_, set, _)| format!("{set:?}") == "Present")
+        .map(|(id, _, _)| id)
+        .ok_or("Present set")?;
+    for name in [
+        "sync_bouncing_smog_bubbles_system",
+        "update_smog_field_system",
+    ] {
+        let system = schedule
+            .systems()?
+            .find(|(_, system)| system.name().ends_with(name))
+            .map(|(id, _)| id)
+            .ok_or(name)?;
+        assert!(
+            graph.hierarchy().graph().contains_edge(present, system),
+            "{name} must be a member of BattleSet::Present"
         );
     }
     Ok(())

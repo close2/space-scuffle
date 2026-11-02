@@ -6,6 +6,9 @@ use std::time::Duration;
 
 use bevy::prelude::Resource;
 
+/// Authoritative duration of one simulation tick: 40 milliseconds, or 25 Hz.
+pub const SIM_TICK_PERIOD: Duration = Duration::from_millis(40);
+
 /// Validated interactive scheduling limits; durations are scaled simulation time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BattleClockPolicy {
@@ -20,7 +23,7 @@ pub struct BattleClockPolicy {
 impl Default for BattleClockPolicy {
     fn default() -> Self {
         Self {
-            tick_period: Duration::from_millis(40),
+            tick_period: SIM_TICK_PERIOD,
             ticks_per_frame: 5,
             maximum_debt: Duration::from_millis(250),
         }
@@ -85,7 +88,7 @@ impl BattleTickClock {
     /// # Errors
     /// Rejects a different tick period, empty frame budget or insufficient debt cap.
     pub fn new(policy: BattleClockPolicy) -> Result<Self, BattleClockError> {
-        if policy.tick_period != Duration::from_millis(40) {
+        if policy.tick_period != SIM_TICK_PERIOD {
             return Err(BattleClockError::TickPeriod);
         }
         if policy.ticks_per_frame == 0 {
