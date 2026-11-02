@@ -158,6 +158,8 @@ pub enum ClientMode {
     VisualLab,
     /// Boot into the 2-Army deterministic `sim_core` combat sandbox.
     LiveBattle,
+    /// Boot into a live battle played by a person, under [`battle_presentation::BattleProfile::Player`].
+    Skirmish,
     /// Boot into the 200-bubble swarm readability stress test.
     SwarmStressTest,
     /// Run 60 frames in headless CI mode and exit cleanly with code 0.
@@ -280,7 +282,7 @@ impl Plugin for ClientAppPlugin {
     fn build(&self, app: &mut App) {
         let initial_tab = match self.mode {
             ClientMode::VisualLab | ClientMode::HeadlessCheck => LabTab::VisualLab,
-            ClientMode::LiveBattle => LabTab::LiveBattle,
+            ClientMode::LiveBattle | ClientMode::Skirmish => LabTab::LiveBattle,
             ClientMode::SwarmStressTest => LabTab::SwarmStressTest,
         };
 
@@ -292,6 +294,12 @@ impl Plugin for ClientAppPlugin {
         if self.mode == ClientMode::SwarmStressTest {
             lab_state.swarm_active = true;
         }
+
+        let battle_profile = if self.mode == ClientMode::Skirmish {
+            battle_presentation::BattleProfile::Player
+        } else {
+            battle_presentation::BattleProfile::Sandbox
+        };
 
         app.add_plugins((
             terrain::TerrainPlugin,
@@ -305,6 +313,7 @@ impl Plugin for ClientAppPlugin {
         .insert_resource(lab_state)
         .init_resource::<SelectionState>()
         .init_resource::<player_presentation::PresentationStatus>()
+        .insert_resource(battle_profile)
         .init_resource::<battle_presentation::BattlePresentation>()
         .init_resource::<battle_pipeline::session::BattleSession>()
         .init_resource::<input_policy::UiGeometry>()

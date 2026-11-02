@@ -2,17 +2,127 @@
 //! combat orders through the production loader, with explicit failure diagnostics.
 
 use client::battle_pipeline::session::BattleSession;
+use client::battle_presentation::BattleProfile;
 use client::runtime_battle::{
     BattleDefinition, BattleInitialOrder, BattleLoadError, DEFAULT_BATTLE_SCENARIO,
+    SKIRMISH_SCENARIO,
 };
+use sim_core::scenario::StartLoadoutCatalog;
 use sim_map::MapFile;
 use sim_types::{PlayerId, Tick, TickBundle, UnitOrder};
 use std::path::PathBuf;
+
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/battle_harness.rs"]
+mod battle_harness;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 fn assets() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets")
+}
+
+#[test]
+fn skirmish_scenario_loads_through_the_client_loader() -> TestResult {
+    let definition = BattleDefinition::load(&assets(), SKIRMISH_SCENARIO.as_ref())?;
+    let world = definition.instantiate()?;
+    assert_eq!(definition.scenario.players.len(), 2);
+    assert_eq!(world.match_state.participants.count_ones(), 2);
+    for player in &definition.scenario.players {
+        let owner = PlayerId(player.player_slot);
+        let loadout = definition
+            .loadouts
+            .get(&player.loadout_slug)
+            .ok_or("the scenario must name a shipped loadout")?;
+        let town_hall = world
+            .catalog
+            .id_by_slug(&loadout.town_hall)
+            .ok_or("the loadout must name a shipped town hall")?;
+        let owned = || world.entities.values().filter(|unit| unit.owner == owner);
+        assert_eq!(
+            owned()
+                .filter(|unit| unit.unit_type_id == town_hall)
+                .count(),
+            1,
+            "each player starts with one town hall"
+        );
+        // Workers carry a weapon, so an army is what `AttackMoveToStart` would command: armed,
+        // mobile and not a harvester.
+        for unit in owned() {
+            let archetype = world.catalog.get(unit.unit_type_id)?;
+            let armed = archetype.weapon.is_some()
+                || archetype.ground_weapon.is_some()
+                || archetype.air_weapon.is_some();
+            assert!(
+                unit.is_immobile || !armed || archetype.capabilities.harvester.is_some(),
+                "{} must not start the match with an army",
+                archetype.slug
+            );
+            assert!(unit.order_queue.is_empty(), "nothing moves until ordered");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn skirmish_starts_both_players_with_the_loadout_bank() -> TestResult {
+    let definition = BattleDefinition::load(&assets(), SKIRMISH_SCENARIO.as_ref())?;
+    let loadouts = StartLoadoutCatalog::load(assets().join("catalog/start_loadouts.ron"))?;
+    let snapshot = definition.instantiate()?.build_render_snapshot();
+    for player in &definition.scenario.players {
+        let bank = loadouts
+            .get(&player.loadout_slug)
+            .and_then(|loadout| loadout.starting_resources)
+            .ok_or("a skirmish loadout must declare its starting bank")?;
+        let status = snapshot.players[usize::from(player.player_slot)];
+        assert_eq!((status.minerals, status.gas), (bank.minerals, bank.gas));
+    }
+    Ok(())
+}
+
+#[test]
+fn skirmish_mode_opens_the_live_battle_under_the_player_profile() {
+    let mut harness =
+        battle_harness::Harness::boot_scenario(client::ClientMode::Skirmish, SKIRMISH_SCENARIO);
+    assert_eq!(
+        harness
+            .app
+            .world()
+            .resource::<client::LabState>()
+            .current_tab,
+        client::LabTab::LiveBattle
+    );
+    assert_eq!(
+        *harness.app.world().resource::<BattleProfile>(),
+        BattleProfile::Player
+    );
+    assert_eq!(harness.world().current_tick, 0, "the harness boots paused");
+    assert_eq!(harness.world().match_state.participants.count_ones(), 2);
+
+    // The step asserts that no media or simulation failure stops the battle.
+    harness.resume();
+    harness.step(30);
+    assert!(harness.world().current_tick > 0, "the skirmish must run");
+}
+
+#[test]
+fn every_other_mode_keeps_the_sandbox_profile() {
+    for mode in [
+        client::ClientMode::VisualLab,
+        client::ClientMode::LiveBattle,
+        client::ClientMode::SwarmStressTest,
+        client::ClientMode::HeadlessCheck,
+    ] {
+        let harness = battle_harness::Harness::boot(mode);
+        assert_eq!(
+            *harness.app.world().resource::<BattleProfile>(),
+            BattleProfile::Sandbox,
+            "{mode:?}"
+        );
+    }
 }
 
 #[test]

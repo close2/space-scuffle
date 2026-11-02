@@ -10,6 +10,19 @@ use bevy::prelude::*;
 use bevy_egui::egui;
 use sim_types::{PlayerId, UnitTypeId};
 
+/// Who a live battle is presented to, chosen once by the launch mode.
+///
+/// `Player` is read by the systems that must differ for a person playing one side. `Sandbox`
+/// keeps the developer view that the inspector, GPU captures and pixel tests depend on.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BattleProfile {
+    /// Developer inspector with every player's data.
+    #[default]
+    Sandbox,
+    /// A person playing one side: HUD, fog and no inspector.
+    Player,
+}
+
 /// One actual archetype count displayed for a participating owner.
 #[derive(Debug)]
 pub struct RosterEntry {

@@ -33,6 +33,9 @@ use sim_types::{PlayerId, SimScalar, SimVec2, UnitOrder};
 /// Default declarative game session, resolved beneath the validated assets root.
 pub const DEFAULT_BATTLE_SCENARIO: &str = "scenarios/default_battle.ron";
 
+/// The playable skirmish, resolved beneath the validated assets root.
+pub const SKIRMISH_SCENARIO: &str = "scenarios/skirmish.ron";
+
 /// Versioned runtime scenario selecting a map, players and initial game orders.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct BattleScenarioFile {
