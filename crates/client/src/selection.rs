@@ -1,16 +1,22 @@
-//! Viewport click-to-select raycasting and analytical ray-sphere intersection.
+//! Visual Lab actor picking and the analytical ray-sphere test shared by every picker.
 //!
 //! # Architectural Responsibilities
-//! This module provides full 3D viewport entity selection for mobile unit bubbles and building domes.
-//! It computes camera rays from cursor screen coordinates and executes analytical ray-sphere intersection
-//! tests against all active entities to determine the closest hit, updating [`SelectionState`].
+//! This module computes camera rays from cursor screen coordinates and tests them against the
+//! showcase actors of the Visual Lab, updating [`SelectionState`]. Live battles select through
+//! [`crate::battle_input`] and [`crate::battle_selection`] instead.
+//!
+//! The swarm is not pickable: its 200 bubbles share two materials, so none of them can be
+//! highlighted on its own.
 //!
 //! # Invariants Maintained
 //! - Ray-sphere tests are purely analytical with zero iterative or mesh-traversal overhead.
 //! - Pointer input over `egui` UI windows takes precedence and skips viewport raycasting.
-//! - The closest entity along the camera ray ($t > 0$) is selected; ties or misses deselect cleanly.
+//! - Hidden actors are never picked. The closest visible actor along the camera ray ($t > 0$) is
+//!   selected; a miss deselects, and the Lab then falls back to its current lineup slot.
+//! - This module writes no material. Lab preview synchronization derives the highlight from
+//!   [`SelectionState`] on the next frame.
 
-use crate::bubble_shader::{BubbleDomeMaterial, BubbleInstance, FLAG_SELECTED};
+use crate::bubble_shader::BubbleInstance;
 use bevy::prelude::*;
 use sim_types::ids::EntityId;
 
@@ -100,8 +106,19 @@ impl SelectionState {
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HeroLineupIndex(pub usize);
 
-/// System processing left-click viewport raycasting to select unit bubbles and domes.
-#[allow(clippy::type_complexity)]
+type LabActorQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static GlobalTransform,
+        &'static BubbleInstance,
+        &'static InheritedVisibility,
+        &'static HeroLineupIndex,
+    ),
+>;
+
+/// System processing left-click viewport raycasting to select Visual Lab actors.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
@@ -109,23 +126,16 @@ pub struct HeroLineupIndex(pub usize);
 pub fn selection_system(
     mouse_buttons: Res<'_, ButtonInput<MouseButton>>,
     windows: Query<'_, '_, &Window, With<bevy::window::PrimaryWindow>>,
-    camera_query: Query<'_, '_, (&Camera, &GlobalTransform)>,
+    camera_query: Query<'_, '_, (&Camera, &GlobalTransform), With<crate::RtsCamera>>,
     ownership: Res<'_, crate::input_policy::InputOwnership>,
+    lab: Res<'_, crate::LabState>,
     mut selection_state: ResMut<'_, SelectionState>,
-    mut bubble_query: Query<
-        '_,
-        '_,
-        (
-            Entity,
-            &GlobalTransform,
-            &mut BubbleInstance,
-            &MeshMaterial3d<BubbleDomeMaterial>,
-            Option<&HeroLineupIndex>,
-        ),
-    >,
-    mut bubble_materials: ResMut<'_, Assets<BubbleDomeMaterial>>,
+    actors: LabActorQuery<'_, '_>,
 ) {
-    if !ownership.pointer || !mouse_buttons.just_pressed(MouseButton::Left) {
+    if lab.current_tab != crate::LabTab::VisualLab
+        || !ownership.pointer
+        || !mouse_buttons.just_pressed(MouseButton::Left)
+    {
         return;
     }
 
@@ -149,49 +159,32 @@ pub fn selection_system(
         return;
     };
 
-    let ray_origin = ray.origin;
-    let ray_dir = *ray.direction;
+    let mut closest_hit: Option<(Entity, EntityId, usize, f32)> = None;
 
-    let mut closest_hit: Option<(Entity, EntityId, Option<usize>, f32)> = None;
-
-    for (entity, transform, instance, _, hero_idx) in bubble_query.iter() {
+    for (entity, transform, instance, visibility, hero) in &actors {
+        if !visibility.get() {
+            continue;
+        }
         let center = transform.translation();
-        let radius = instance.0.radius;
-
-        if let Some(t) = ray_sphere_intersect(ray_origin, ray_dir, center, radius) {
+        if let Some(t) = ray_sphere_intersect(ray.origin, *ray.direction, center, instance.0.radius)
+        {
             if closest_hit
                 .as_ref()
                 .is_none_or(|(_, _, _, min_t)| t < *min_t)
             {
-                closest_hit = Some((entity, instance.0.entity_id, hero_idx.map(|h| h.0), t));
+                closest_hit = Some((entity, instance.0.entity_id, hero.0, t));
             }
         }
     }
 
     if let Some((hit_entity, hit_id, hero_index, _)) = closest_hit {
-        selection_state.select(hit_entity, Some(hit_id), hero_index);
-
-        for (entity, _, mut instance, mat_handle, _) in &mut bubble_query {
-            let is_selected = entity == hit_entity;
-            instance.0.selected = is_selected;
-
-            if let Some(mat) = bubble_materials.get_mut(&mat_handle.0) {
-                mat.uniform.selected = u32::from(is_selected);
-                if is_selected {
-                    mat.uniform.feature_flags |= FLAG_SELECTED;
-                } else {
-                    mat.uniform.feature_flags &= !FLAG_SELECTED;
-                }
-            }
-        }
+        selection_state.select(hit_entity, Some(hit_id), Some(hero_index));
+    } else {
+        selection_state.deselect();
     }
 }
 
-/// Canonical alias for the viewport selection handling system.
-pub use selection_system as handle_viewport_selection_system;
-
 #[cfg(test)]
-#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -203,9 +196,7 @@ mod tests {
         let radius = 1.0;
 
         let hit = ray_sphere_intersect(origin, dir, center, radius);
-        assert!(hit.is_some());
-        let t = hit.expect("invariant: direct ray aligned with sphere center must intersect");
-        assert!((t - 9.0).abs() < 1e-4);
+        assert!(hit.is_some_and(|t| (t - 9.0).abs() < 1e-4));
     }
 
     #[test]
@@ -216,9 +207,7 @@ mod tests {
         let radius = 1.0;
 
         let hit = ray_sphere_intersect(origin, dir, center, radius);
-        assert!(hit.is_some());
-        let t = hit.expect("invariant: tangent ray grazing sphere surface must intersect");
-        assert!((t - 10.0).abs() < 1e-4);
+        assert!(hit.is_some_and(|t| (t - 10.0).abs() < 1e-4));
     }
 
     #[test]

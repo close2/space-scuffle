@@ -288,8 +288,12 @@ pub fn lab_ui_system(
     mut geometry: ResMut<'_, crate::input_policy::UiGeometry>,
     mut presentation: ResMut<'_, crate::battle_presentation::BattlePresentation>,
     media: Option<Res<'_, crate::media::ClientMediaStatus>>,
-    mut session: ResMut<'_, crate::battle_pipeline::session::BattleSession>,
+    battle: (
+        ResMut<'_, crate::battle_pipeline::session::BattleSession>,
+        Res<'_, crate::battle_selection::BattleSelection>,
+    ),
 ) {
+    let (mut session, battle_selection) = battle;
     lineup.refresh(&catalog.0, catalog.is_changed());
 
     let Some(ctx) = contexts.try_ctx_mut().cloned() else {
@@ -395,6 +399,7 @@ pub fn lab_ui_system(
                                 &mut presentation,
                                 &mut geometry,
                                 &mut session,
+                                &battle_selection,
                             ),
                             LabTab::SwarmStressTest => {
                                 render_swarm_tab(ui, &mut lab_state, &diagnostics);
@@ -590,6 +595,7 @@ fn render_live_battle_tab(
     presentation: &mut crate::battle_presentation::BattlePresentation,
     geometry: &mut crate::input_policy::UiGeometry,
     session: &mut crate::battle_pipeline::session::BattleSession,
+    selection: &crate::battle_selection::BattleSelection,
 ) {
     if !session.is_ready() {
         ui.disable();
@@ -627,6 +633,12 @@ fn render_live_battle_tab(
     });
     ui.separator();
     ui.heading("Orders");
+    match (selection.inspected(), selection.ids().len()) {
+        (Some(_), _) => ui.label("Selected: one unit of another player"),
+        (None, 1) => ui.label("Selected: 1 unit"),
+        (None, count) => ui.label(format!("Selected: {count} units")),
+    };
+    ui.small(crate::input_bindings::BATTLE_CONTROLS_HELP);
     let selected_name = presentation
         .players
         .iter()

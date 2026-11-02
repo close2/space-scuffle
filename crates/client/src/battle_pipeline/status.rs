@@ -31,6 +31,7 @@ pub(super) fn submission_reason(error: &SubmissionError) -> &'static str {
         SubmissionError::Capability(_) => "a selected unit cannot perform this order",
         SubmissionError::MissingArchetype(_) => "the battle cannot process this order",
         SubmissionError::InvalidTarget(_) => "the target is unavailable or friendly",
+        SubmissionError::NoDestination => "there is no walkable ground there",
     }
 }
 

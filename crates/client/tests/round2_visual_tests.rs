@@ -676,6 +676,7 @@ fn test_bevy_ecs_schedule_all_systems_no_conflicts() -> Result<(), Box<dyn std::
     app.init_resource::<client::CatalogResource>();
     app.init_resource::<client::RenderEntityMap>();
     app.init_resource::<client::selection::SelectionState>();
+    app.init_resource::<client::battle_selection::BattleSelection>();
     // Direct headless embedding has no focused native window/UI ownership pass.
     // Register explicit noninteractive policy; keep the production Res required.
     app.init_resource::<client::input_policy::InputOwnership>();

@@ -29,6 +29,7 @@ use bevy::window::WindowCloseRequested;
 use crate::battle_pipeline::driver::{advance_battle_ticks, publish_combat_events};
 use crate::battle_pipeline::session::BattleSession;
 use crate::battle_pipeline::BattleSet;
+use crate::battle_selection::BattleSelection;
 use crate::bubble_optics::BubbleOpticsPlugin;
 use crate::bubble_shader::{setup_bubble_assets_system, BubbleDomeMaterial};
 use crate::camera::RtsCamera;
@@ -46,9 +47,8 @@ use crate::editor::markers::{
     setup_marker_assets, sync_marker_entities_system, update_marker_billboards_system,
 };
 use crate::editor::playtest::{
-    playtest_exit_system, playtest_hud_system, playtest_input_system,
-    sync_playtest_selection_system, sync_playtest_status_system, teardown_playtest_system,
-    EditorPhase, EditorRulesResource, PlaytestState,
+    playtest_exit_system, playtest_hud_system, playtest_input_system, sync_playtest_status_system,
+    teardown_playtest_system, EditorPhase, EditorRulesResource, PlaytestState,
 };
 use crate::editor::startup::EditorStartup;
 use crate::editor::ui::{
@@ -193,6 +193,7 @@ impl Plugin for MapEditorPlugin {
             .init_resource::<PlaytestState>()
             .init_resource::<RenderEntityMap>()
             .init_resource::<SelectionState>()
+            .init_resource::<BattleSelection>()
             .init_resource::<PresentationStatus>()
             .init_resource::<BattleSession>()
             .insert_resource(LabState {
@@ -291,7 +292,6 @@ impl Plugin for MapEditorPlugin {
                     .in_set(BattleSet::PreparePresentation),
                 (
                     sync_playtest_status_system,
-                    sync_playtest_selection_system,
                     publish_combat_events,
                     process_combat_events_system,
                     update_indicators_system,

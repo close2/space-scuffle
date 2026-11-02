@@ -43,6 +43,7 @@ fn scene_app(lab: client::LabState) -> TestResult<App> {
         .init_resource::<Assets<client::BubbleDomeMaterial>>()
         .init_resource::<Assets<client::SelectionRingMaterial>>()
         .init_resource::<client::selection::SelectionState>()
+        .init_resource::<client::battle_selection::BattleSelection>()
         .init_resource::<client::player_presentation::PresentationStatus>()
         .insert_resource(definition.palette.clone())
         .insert_resource(root)

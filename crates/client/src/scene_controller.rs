@@ -14,6 +14,7 @@
 //! - Live steady-state synchronization reuses storage; spawn/despawn and preview work have separate costs.
 //! - Components (`Transform`, `BubbleInstance`) are mutated in place without issuing `commands.insert`.
 
+use crate::battle_selection::BattleSelection;
 use crate::bubble_shader::{
     sync_bubble_material, BubbleDomeMaterial, BubbleInstance, BubbleSharedMeshes, BubbleUniformGpu,
     FlipbookRegistry, FLAG_ATTACK_APERTURE, FLAG_CLOAKED, FLAG_CRACKS, FLAG_CRT_GLITCH,
@@ -307,6 +308,9 @@ pub fn sync_lab_preview_system(
         // Despawn preview bubbles when switching tabs
         for (entity, _, _, _, _, _) in &query {
             commands.entity(entity).despawn_recursive();
+            if selection_state.is_selected(entity) {
+                selection_state.deselect();
+            }
         }
         return;
     }
@@ -532,6 +536,9 @@ type LiveBattleQuery<'w, 's> = Query<
 
 /// Applies the retained displayed snapshot; never executes simulation or consumes output.
 /// Spatial transforms and material instances use exactly the same published pose.
+///
+/// The snapshot has no notion of selection, so this is where [`BattleSelection`] reaches each
+/// bubble, its material and its indicators. A unit that left the snapshot is forgotten here too.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
@@ -540,12 +547,17 @@ type LiveBattleQuery<'w, 's> = Query<
     clippy::too_many_arguments,
     reason = "each Bevy system parameter is a separate declared data dependency"
 )]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a single ordered sequence that shares its local state"
+)]
 pub fn sync_live_battle_system(
     mut owners: crate::player_presentation::PresentationContext<'_>,
     mut commands: Commands<'_, '_>,
     mut exit_events: EventWriter<'_, AppExit>,
     lab_state: Res<'_, LabState>,
     session: Res<'_, crate::battle_pipeline::session::BattleSession>,
+    mut selection: ResMut<'_, BattleSelection>,
     mut render_entities: ResMut<'_, RenderEntityMap>,
     registry: Res<'_, FlipbookRegistry>,
     shared_meshes: Res<'_, BubbleSharedMeshes>,
@@ -555,6 +567,8 @@ pub fn sync_live_battle_system(
     mut ring_materials: ResMut<'_, Assets<SelectionRingMaterial>>,
     mut query: LiveBattleQuery<'_, '_>,
 ) {
+    // Entity IDs restart with each session, so this runs before anything reads the selection.
+    selection.bind_generation(session.commands.generation());
     if lab_state.current_tab != LabTab::LiveBattle {
         for (entity, _, _, _, _) in &query {
             commands.entity(entity).despawn_recursive();
@@ -581,7 +595,9 @@ pub fn sync_live_battle_system(
                 return;
             }
         };
-        let uniform = BubbleUniformGpu::from_instance(instance, meta, style);
+        let selected = selection.contains(instance.entity_id);
+        let uniform =
+            BubbleUniformGpu::from_instance(instance, meta, style).with_selection(selected);
         let is_dome = matches!(instance.shape, ShapeKind::BuildingDome { .. });
         let altitude_offset = if is_dome { 0.0 } else { instance.radius };
         let pos = Vec3::new(
@@ -609,7 +625,8 @@ pub fn sync_live_battle_system(
                 if mesh.0 != *target_mesh {
                     mesh.0.clone_from(target_mesh);
                 }
-                bubble.0 = instance.clone();
+                bubble.0.clone_from(instance);
+                bubble.0.selected = selected;
             }
         } else {
             let mat = bubble_materials.add(BubbleDomeMaterial {
@@ -624,6 +641,10 @@ pub fn sync_live_battle_system(
                 shared_meshes.sphere_mesh.clone()
             };
 
+            let instance = BubbleRenderInstance {
+                selected,
+                ..instance.clone()
+            };
             let entity = commands
                 .spawn((
                     Mesh3d(mesh),
@@ -641,7 +662,7 @@ pub fn sync_live_battle_system(
             attach_bubble_indicators(
                 &mut commands,
                 entity,
-                instance,
+                &instance,
                 &indicator_assets,
                 &mut materials,
                 &mut ring_materials,
@@ -662,6 +683,7 @@ pub fn sync_live_battle_system(
         let is_alive = live.peek().is_some_and(|record| record.entity_id == id);
         if !is_alive {
             commands.entity(entity).despawn_recursive();
+            selection.forget(id);
         }
         is_alive
     });

@@ -87,6 +87,7 @@ fn live_sync_reports_and_stops_on_invalid_simulation_rate() -> Result<(), Box<dy
         .init_resource::<Assets<BubbleDomeMaterial>>()
         .init_resource::<Assets<SelectionRingMaterial>>()
         .init_resource::<client::RenderEntityMap>()
+        .init_resource::<client::battle_selection::BattleSelection>()
         .insert_resource(session.with_world(simulation))
         .insert_resource(palette)
         .init_resource::<client::player_presentation::PresentationStatus>()

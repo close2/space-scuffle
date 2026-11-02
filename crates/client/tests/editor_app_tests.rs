@@ -43,6 +43,7 @@ use bevy::time::TimeUpdateStrategy;
 use bevy::window::{PrimaryWindow, WindowCloseRequested};
 use bevy_egui::EguiPlugin;
 use client::battle_pipeline::session::BattleSession;
+use client::battle_selection::BattleSelection;
 use client::bubble_shader::{BubbleDomeMaterial, BubbleInstance, FlipbookRegistry};
 use client::camera::RtsCamera;
 use client::editor::camera::{focus_cell, CAMERA_HEIGHT_EASE_PER_SEC};
@@ -1660,9 +1661,9 @@ fn playtest_click_selects_a_unit_and_right_click_commands_it() {
     let selected = harness
         .app
         .world()
-        .resource::<PlaytestState>()
-        .selected_unit_ids
-        .clone();
+        .resource::<BattleSelection>()
+        .ids()
+        .to_vec();
     assert_eq!(selected, vec![unit], "the clicked unit must be selected");
     let world = harness.app.world_mut();
     let mut drawn = world.query::<(&BubbleInstance, &MeshMaterial3d<BubbleDomeMaterial>)>();
