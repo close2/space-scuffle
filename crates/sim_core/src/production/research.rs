@@ -17,7 +17,7 @@ use super::{
 };
 use crate::upgrades::{UpgradeDef, UpgradeId};
 use crate::{PlayerResources, SimWorld};
-use sim_types::{EntityId, PlayerId, PlayerUpgradeState, UpgradeEffect};
+use sim_types::{EntityId, OptionLock, PlayerId, PlayerUpgradeState, UnitTypeId, UpgradeEffect};
 
 /// Whether `def` is a tier whose preceding tier `state` has not finished.
 fn tier_locked(def: &UpgradeDef, state: &PlayerUpgradeState) -> bool {
@@ -72,6 +72,39 @@ impl SimWorld {
         self.commit_job(player, admitted)
     }
 
+    /// Whether `upgrade` waits in any queue of `player`, across all structures.
+    fn upgrade_is_queued(&self, player: PlayerId, upgrade: UpgradeId) -> bool {
+        self.entities
+            .values()
+            .filter(|entity| entity.owner == player)
+            .flat_map(|entity| &entity.production_queue)
+            .any(|job| job.item == ProductionItem::Research(upgrade))
+    }
+
+    /// What would make `prepare_research` refuse `def` whichever structure was chosen, if
+    /// anything. Money is not a lock.
+    ///
+    /// `completed` holds `player`'s completed types, sorted. `prepare_research` keeps its own
+    /// typed errors, and an agreement test over real commands keeps the two in step.
+    pub(crate) fn upgrade_lock(
+        &self,
+        player: PlayerId,
+        def: &UpgradeDef,
+        completed: &[UnitTypeId],
+    ) -> Option<OptionLock> {
+        let state = self.player_upgrades.get(usize::from(player.0))?;
+        if state.completed_upgrade_slugs.contains(&def.slug) {
+            return Some(OptionLock::Researched);
+        }
+        if self.upgrade_is_queued(player, def.upgrade_id) {
+            return Some(OptionLock::Researching);
+        }
+        if tier_locked(def, state) {
+            return Some(OptionLock::TierLocked);
+        }
+        self.prerequisite_lock(&def.requires_structures, completed)
+    }
+
     fn prepare_research(
         &self,
         player: PlayerId,
@@ -94,13 +127,7 @@ impl SimWorld {
         if state.completed_upgrade_slugs.contains(&def.slug) {
             return Err(ProductionAdmissionError::UpgradeAlreadyResearched(upgrade));
         }
-        let queued = self
-            .entities
-            .values()
-            .filter(|entity| entity.owner == player)
-            .flat_map(|entity| &entity.production_queue)
-            .any(|job| job.item == ProductionItem::Research(upgrade));
-        if queued {
+        if self.upgrade_is_queued(player, upgrade) {
             return Err(ProductionAdmissionError::UpgradeAlreadyQueued(upgrade));
         }
         if tier_locked(def, state) {

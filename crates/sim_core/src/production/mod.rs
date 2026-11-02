@@ -13,7 +13,7 @@ mod research;
 
 use crate::upgrades::UpgradeId;
 use crate::{Entity, PlayerResources, SimWorld, SpatialHashGrid, UnitArchetype, SPATIAL_CELL_SIZE};
-use sim_types::{EntityId, PlayerId, ShapeKind, SimScalar, SimVec2, Tick, UnitTypeId};
+use sim_types::{EntityId, OptionLock, PlayerId, ShapeKind, SimScalar, SimVec2, Tick, UnitTypeId};
 use thiserror::Error;
 
 /// Standard effective supply limit; provider totals retain values above this cap.
@@ -563,6 +563,25 @@ impl SimWorld {
             }
         }
         Ok(None)
+    }
+
+    /// The first of `slugs` whose type is absent from `completed`, as a lock.
+    ///
+    /// The set-based form of [`Self::missing_prerequisite`], for a caller judging many subjects
+    /// at once. `completed` must be sorted. References were checked when the catalog loaded, so
+    /// a name that does not resolve is left for admission to report as an invariant failure.
+    pub(crate) fn prerequisite_lock(
+        &self,
+        slugs: &[String],
+        completed: &[UnitTypeId],
+    ) -> Option<OptionLock> {
+        slugs.iter().find_map(|slug| {
+            let required = self.catalog.get_by_slug(slug)?.unit_type_id;
+            completed
+                .binary_search(&required)
+                .is_err()
+                .then_some(OptionLock::MissingStructure(required))
+        })
     }
 
     /// The player's economy after paying for `job`, or the shortage that refuses it.

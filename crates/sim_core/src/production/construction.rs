@@ -23,17 +23,30 @@
 //! # Invariants
 //! - A foundation contributes no supply until it completes, so the supply ledger only ever
 //!   counts finished providers.
-//! - Admission and arrival run the same [`SimWorld::check_build`], so they cannot disagree.
+//! - Admission and arrival run the same [`SimWorld::check_build`], differing only in whose
+//!   [`Knowledge`] of structures counts. Money, tech, terrain and resources are judged alike.
+//! - Admission answers from what the player knows, so refusing an order can never reveal a
+//!   structure the player has not seen. The truth is applied on arrival, when the builder is
+//!   there to see it.
 //! - Sites never cover a resource node, except an extractor, which must cover a gas node.
 
 use super::{PreparedSpawn, ProductionInvariant, STANDARD_SUPPLY_CAP};
 use crate::economy::{Footprint, GameCommandError, GameCommandReceipt, TaskEventKind};
-use crate::SimWorld;
+use crate::{SimWorld, UnitArchetype};
 use sim_map::PlacementFailureReason;
 use sim_types::{
     AnimState, EntityId, PlayerId, ResourceKind, ShapeKind, SimScalar, Tick, UnitOrder, UnitTypeId,
 };
 use thiserror::Error;
+
+/// Whose knowledge of structures decides a site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Knowledge {
+    /// Every structure counts: the builder is at the site.
+    Full,
+    /// Only the player's own structures and those it remembers count.
+    Player,
+}
 
 /// Share of a foundation's payment that `CancelConstruction` returns, rounded down.
 pub const CONSTRUCTION_CANCEL_REFUND_PERCENT: u32 = 75;
@@ -97,6 +110,9 @@ pub enum BuildRejection {
     /// Terrain or an existing structure refuses the footprint.
     #[error("site is blocked: {0:?}")]
     Blocked(PlacementFailureReason),
+    /// The player remembers a structure here and has not seen the site empty since.
+    #[error("site holds a remembered structure")]
+    RememberedStructure,
     /// A non-extractor footprint would bury a resource node.
     #[error("site covers a resource node")]
     CoversResource,
@@ -110,7 +126,7 @@ pub enum BuildRejection {
 
 impl SimWorld {
     /// The footprint `structure_type` would have with its minimum corner at the given cell.
-    fn site_of(
+    pub(crate) fn site_of(
         &self,
         structure_type: UnitTypeId,
         cell_x: u32,
@@ -141,12 +157,16 @@ impl SimWorld {
     }
 
     /// Everything `player` needs to start `structure_type` here, apart from a builder.
+    ///
+    /// `knowledge` decides which structures count against the site; everything else is the
+    /// same at admission and on arrival.
     fn check_build(
         &self,
         player: PlayerId,
         structure_type: UnitTypeId,
         cell_x: u32,
         cell_y: u32,
+        knowledge: Knowledge,
     ) -> Result<Footprint, BuildRejection> {
         let site = self.site_of(structure_type, cell_x, cell_y)?;
         let resources = self
@@ -174,18 +194,63 @@ impl SimWorld {
                 available: resources.gas,
             });
         }
+        self.check_site(player, arch, site, knowledge)?;
+        Ok(site)
+    }
+
+    /// Whether `site` suits `arch`, with `knowledge` deciding which structures count.
+    ///
+    /// Terrain and the position and kind of every node are public, so they are always judged.
+    pub(crate) fn check_site(
+        &self,
+        player: PlayerId,
+        arch: &UnitArchetype,
+        site: Footprint,
+        knowledge: Knowledge,
+    ) -> Result<(), BuildRejection> {
+        let width = self.map.width() as usize;
+        let memory = self.known_blocked_cells.get(usize::from(player.0));
+        let remembered = |cell_x: u32, cell_y: u32| {
+            let index = cell_y as usize * width + cell_x as usize;
+            memory.is_some_and(|cells| cells.get(index).copied().unwrap_or(false))
+        };
+        let counts = |cell_x: u32, cell_y: u32, occupant: EntityId| match knowledge {
+            Knowledge::Full => true,
+            // Ownership comes first: on tick zero the player has seen nothing yet.
+            Knowledge::Player => {
+                self.entities
+                    .get(&occupant)
+                    .is_some_and(|structure| structure.owner == player)
+                    || remembered(cell_x, cell_y)
+            }
+        };
         #[expect(
             clippy::cast_possible_truncation,
             reason = "footprint sides were read from u8 fields in site_of"
         )]
         self.map
-            .can_place_building(site.left, site.bottom, site.width as u8, site.height as u8)
+            .can_place_building_where(
+                site.left,
+                site.bottom,
+                site.width as u8,
+                site.height as u8,
+                counts,
+            )
             .map_err(|error| match error {
                 sim_map::MapError::PlacementBlocked { reason, .. } => {
                     BuildRejection::Blocked(reason)
                 }
                 _ => BuildRejection::OutOfBounds,
             })?;
+        if knowledge == Knowledge::Player {
+            // A remembered structure stands until the player sees the cell empty. Answering from
+            // the truth here would reveal, from any distance, that it had gone.
+            let forgotten = (site.bottom..site.bottom + site.height)
+                .any(|y| (site.left..site.left + site.width).any(|x| remembered(x, y)));
+            if forgotten {
+                return Err(BuildRejection::RememberedStructure);
+            }
+        }
         let mut covers_gas = false;
         for node in self.map.resources() {
             if !site.contains_cell(node.cell) {
@@ -202,12 +267,13 @@ impl SimWorld {
         if arch.capabilities.is_gas_extractor && !covers_gas {
             return Err(BuildRejection::ExtractorNeedsGas);
         }
-        Ok(site)
+        Ok(())
     }
 
     /// Admits a `Build` order for the nearest capable selected unit.
     ///
-    /// A builder must have `can_construct` and share the structure's faction. Only that one
+    /// The site is judged by what `player` knows, so a hidden structure takes the order and
+    /// ends it on arrival. A builder must satisfy [`UnitArchetype::can_raise`]. Only that one
     /// unit takes the order; the rest of the selection is left alone. Nothing is paid yet.
     pub(crate) fn admit_build(
         &mut self,
@@ -225,16 +291,13 @@ impl SimWorld {
             return Err(GameCommandError::UnsupportedOrder);
         };
         self.validate_selection(player, recipients)?;
-        let site = self.check_build(player, structure_type, cell_x, cell_y)?;
-        let faction = self
+        let site = self.check_build(player, structure_type, cell_x, cell_y, Knowledge::Player)?;
+        let structure = self
             .catalog
             .get(structure_type)
-            .map_err(|_| BuildRejection::UnknownStructure(structure_type))?
-            .faction;
+            .map_err(|_| BuildRejection::UnknownStructure(structure_type))?;
         let builder = self
-            .nearest_recipient(recipients, site, |arch| {
-                arch.capabilities.can_construct && arch.faction == faction
-            })
+            .nearest_recipient(recipients, site, |arch| arch.can_raise(structure))
             .ok_or(GameCommandError::NoCapableBuilder)?;
         self.commit_task_order(builder, order.clone(), queue)?;
         Ok(GameCommandReceipt::Accepted { recipients: 1 })
@@ -463,7 +526,9 @@ impl SimWorld {
             }
             crate::economy::Approach::Arrived => {}
         }
-        if let Err(reason) = self.check_build(owner, structure_type, cell_x, cell_y) {
+        if let Err(reason) =
+            self.check_build(owner, structure_type, cell_x, cell_y, Knowledge::Full)
+        {
             self.end_task(id, Some(TaskEventKind::BuildAbandoned(reason)));
             return;
         }

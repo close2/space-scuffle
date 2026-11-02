@@ -23,6 +23,7 @@ pub mod enums;
 pub mod errors;
 pub mod ids;
 pub mod math;
+pub mod player_view;
 mod sin_table;
 pub mod snapshot;
 pub mod upgrades;
@@ -41,6 +42,10 @@ pub use enums::{
 pub use errors::MathError;
 pub use ids::{EntityId, PlayerId, ResourceNodeId, TeamId, Tick, UnitTypeId};
 pub use math::{SimAngle, SimScalar, SimVec2};
+pub use player_view::{
+    CarrierView, CommandOptionView, CommandSubject, OptionLock, PlayerView, QueuedItem,
+    QueuedJobView, SiteRefusal, StructureQueueView, VisibleNodeView,
+};
 pub use snapshot::{
     BubbleRenderInstance, CombatEventVisual, MatchResult, PlayerStatusView, RenderSnapshot,
     ResourceNodeView,
