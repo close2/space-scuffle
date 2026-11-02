@@ -20,14 +20,18 @@
     clippy::cast_possible_wrap
 )]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use sim_core::catalog::UnitCatalog;
 use sim_core::scenario::{
-    build_world, ring_perimeter, PlayerSetup, ScenarioError, StartLoadoutCatalog,
+    build_world, load_scenario_world, ring_perimeter, PlayerSetup, ScenarioError, ScenarioManifest,
+    StartLoadoutCatalog,
 };
 use sim_map::validation::validate_map;
-use sim_map::{CellFlags, CliffLevel, MapCellSpec, MapDocument, MapFile, MapMetadata, TerrainKind};
+use sim_map::{
+    CellFlags, CliffLevel, MapCellSpec, MapDocument, MapFile, MapMetadata, ResourceKind,
+    TerrainKind,
+};
 use sim_types::{PlayerId, ShapeKind, SimScalar, SimVec2, Tick, TickBundle};
 
 fn empty_bundle(tick: u32) -> TickBundle {
@@ -607,4 +611,90 @@ fn units_never_spawn_on_other_cliff_level() {
             "unit spawned at y = {uy} which is on the lower cliff"
         );
     }
+}
+
+fn assets_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets")
+}
+
+#[test]
+fn the_skirmish_scenario_is_a_playable_start_from_real_files() {
+    let world = load_scenario_world(&assets_root(), Path::new("scenarios/skirmish.ron"))
+        .expect("shipped skirmish scenario builds");
+    assert_eq!(world.current_tick, 0);
+    assert_eq!(world.match_state.participants.count_ones(), 2);
+    for slot in [0_u8, 1] {
+        let owned: Vec<_> = world
+            .entities
+            .values()
+            .filter(|e| e.owner == PlayerId(slot))
+            .collect();
+        let archetypes: Vec<_> = owned
+            .iter()
+            .map(|e| world.catalog.get(e.unit_type_id).expect("shipped identity"))
+            .collect();
+        assert_eq!(
+            archetypes.iter().filter(|a| a.is_resource_dropoff).count(),
+            1,
+            "one depot"
+        );
+        assert_eq!(
+            archetypes
+                .iter()
+                .filter(|a| a.capabilities.harvester.is_some() && a.capabilities.can_construct)
+                .count(),
+            6,
+            "six workers who can also build"
+        );
+        let bank = world.player_resources[usize::from(slot)];
+        assert_eq!((bank.minerals, bank.gas), (50, 0));
+        assert_eq!((bank.supply_used, bank.supply_max), (6, 15));
+
+        let home = owned
+            .iter()
+            .find(|e| e.is_immobile)
+            .expect("depot")
+            .position;
+        let nearby = |kind| {
+            world
+                .map
+                .resources()
+                .iter()
+                .filter(|n| n.kind == kind && n.pos.distance(home) < SimScalar::from_num(12))
+                .count()
+        };
+        assert_eq!(nearby(ResourceKind::Mineral), 8);
+        assert_eq!(nearby(ResourceKind::Gas), 2);
+    }
+    assert_eq!(world.diagnostics(), []);
+}
+
+#[test]
+fn a_loadout_without_a_bank_keeps_the_default() {
+    let loadouts = StartLoadoutCatalog::load(assets_root().join("catalog/start_loadouts.ron"))
+        .expect("shipped loadouts");
+    assert_eq!(
+        loadouts
+            .get("battle_automaton")
+            .expect("shipped loadout")
+            .starting_resources,
+        None
+    );
+}
+
+#[test]
+fn an_unknown_scenario_version_is_refused() {
+    let text = r#"(format_version: 2, map: "m", seed: 1, players: [])"#;
+    assert!(matches!(
+        ScenarioManifest::from_ron_str(text),
+        Err(ScenarioError::UnsupportedVersion(2))
+    ));
+}
+
+#[test]
+fn a_missing_scenario_file_is_a_typed_failure() {
+    assert!(matches!(
+        load_scenario_world(&assets_root(), Path::new("scenarios/absent.ron")),
+        Err(ScenarioError::Io(_))
+    ));
 }

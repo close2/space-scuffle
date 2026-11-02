@@ -1,0 +1,10 @@
+(
+    format_version: 1,
+    map: "maps/showcase_canyon.scmap.ron",
+    seed: 1592639215,
+    players: [
+        (player_slot: 0, loadout_slug: "standard_automaton"),
+        (player_slot: 1, loadout_slug: "standard_automaton"),
+    ],
+    initial_orders: [],
+)

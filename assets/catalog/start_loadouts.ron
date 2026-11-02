@@ -20,6 +20,7 @@
                     count: 6,
                 ),
             ],
+            starting_resources: Some((minerals: 50, gas: 0)),
         ),
     ],
 )
