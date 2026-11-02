@@ -245,6 +245,9 @@ pub struct GameMap {
     structures: BTreeMap<EntityId, PlacedStructure>,
     resources: Vec<ResourceNode>,
     watchtowers: Vec<Watchtower>,
+    /// Counts mutable accesses to cells. Derived state, neither saved nor hashed.
+    #[serde(skip)]
+    cell_revision: u64,
 }
 
 impl GameMap {
@@ -267,6 +270,7 @@ impl GameMap {
             structures: BTreeMap::new(),
             resources: Vec::new(),
             watchtowers: Vec::new(),
+            cell_revision: 0,
         })
     }
 
@@ -291,6 +295,7 @@ impl GameMap {
             structures: BTreeMap::new(),
             resources,
             watchtowers,
+            cell_revision: 0,
         })
     }
 
@@ -319,7 +324,14 @@ impl GameMap {
     #[must_use]
     #[inline]
     pub fn cells_mut(&mut self) -> &mut [MapCell] {
+        self.cell_revision = self.cell_revision.wrapping_add(1);
         &mut self.cells
+    }
+
+    /// Changes whenever cells may have been edited, so derived data knows to rebuild.
+    #[must_use]
+    pub fn cell_revision(&self) -> u64 {
+        self.cell_revision
     }
 
     /// Returns a reference to all placed structures on the map.
@@ -403,6 +415,7 @@ impl GameMap {
         if x >= self.width || y >= self.height {
             return Err(self.out_of_bounds(x, y));
         }
+        self.cell_revision = self.cell_revision.wrapping_add(1);
         let idx = (y as usize) * (self.width as usize) + (x as usize);
         Ok(&mut self.cells[idx])
     }
@@ -859,6 +872,7 @@ impl GameMap {
             structures: BTreeMap::new(),
             resources,
             watchtowers,
+            cell_revision: 0,
         }
     }
 }

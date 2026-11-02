@@ -112,6 +112,19 @@ impl SpatialHashGrid {
     /// Queries all entities located in buckets overlapping a circle centered at `pos` with `radius`.
     /// Results are populated into `out` and sorted deterministically.
     pub fn query_radius(&self, pos: SimVec2, radius: SimScalar, out: &mut Vec<EntityId>) {
+        self.query_radius_unordered(pos, radius, out);
+        // Guarantee deterministic candidate ordering
+        out.sort_unstable();
+    }
+
+    /// Like [`Self::query_radius`], in grid order rather than sorted by ID.
+    ///
+    /// The order is a pure function of the inserted positions, so this stays deterministic.
+    // PERFORMANCE RATIONALE:
+    // Why: Sorting neighbours was about a quarter of target acquisition in a 400-unit battle.
+    // What: Callers that rank candidates by a total order get them unsorted.
+    // Trade-off: Those callers must not depend on visiting order.
+    pub fn query_radius_unordered(&self, pos: SimVec2, radius: SimScalar, out: &mut Vec<EntityId>) {
         out.clear();
         let reach = radius.raw().max(1 << 32);
         let low = |value: SimScalar, cells| {
@@ -128,10 +141,6 @@ impl SpatialHashGrid {
                 }
             }
         }
-
-        // Guarantee deterministic candidate ordering
-        out.sort_unstable();
-        out.dedup();
     }
 }
 

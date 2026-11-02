@@ -478,8 +478,9 @@ impl SimWorld {
         neighbors: &mut Vec<EntityId>,
         candidates: &mut Vec<(TargetPriorityKey, EntityId)>,
     ) -> ScanResult {
+        // The ranking key ends in the entity ID, so visiting order cannot change the winner.
         self.spatial_hash
-            .query_radius(entity.position, arch.scan_range, neighbors);
+            .query_radius_unordered(entity.position, arch.scan_range, neighbors);
         candidates.clear();
         let mut result = ScanResult::default();
         let vision = self.vision_maps.get(entity.owner.0 as usize);
