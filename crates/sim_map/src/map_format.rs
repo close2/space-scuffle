@@ -12,6 +12,7 @@
 //! - Runtime state (`OCCUPIED_BY_STRUCTURE`) is strictly forbidden in map files.
 //! - Coordinate radii for watchtowers are stored in exact integer tenths of a world unit.
 //! - Entity lists (`resources`, `watchtowers`, `start_locations`) are deterministically sorted by `MapEntityId`.
+//! - Encoded bytes do not depend on the host: every line ends in `\n`, on every target.
 
 use std::fs::File;
 use std::io::Write;
@@ -29,6 +30,23 @@ use crate::grid::{
 
 /// Current format version for `*.scmap.ron` files.
 pub const CURRENT_MAP_FORMAT_VERSION: u32 = 1;
+
+/// Line terminator of every encoded `*.scmap.ron` document.
+///
+/// Invariant: a map is a data format, so its bytes must not depend on the host that wrote it.
+/// `ron` defaults `PrettyConfig::new_line` to `\r\n` when built for Windows, which is why this
+/// value is always set explicitly.
+const MAP_RON_NEWLINE: &str = "\n";
+
+/// Applies the canonical `*.scmap.ron` layout to `base`, replacing whatever `base` chose.
+///
+/// `base` is a parameter so that tests can start from the Windows default on any host.
+fn canonical_pretty_config(base: PrettyConfig) -> PrettyConfig {
+    base.depth_limit(3)
+        .indentor("    ".to_string())
+        .struct_names(false)
+        .new_line(MAP_RON_NEWLINE.to_string())
+}
 
 /// Minimum allowed map dimension (width or height) in cells.
 pub const MIN_MAP_DIMENSION: u32 = 16;
@@ -344,11 +362,7 @@ impl MapFile {
     /// # Errors
     /// Returns [`MapFormatError::RonSerialize`] on serialization failure.
     pub fn to_ron_string(&self) -> Result<String, MapFormatError> {
-        let pretty = PrettyConfig::new()
-            .depth_limit(3)
-            .indentor("    ".to_string())
-            .struct_names(false);
-        ron::ser::to_string_pretty(self, pretty)
+        ron::ser::to_string_pretty(self, canonical_pretty_config(PrettyConfig::new()))
             .map_err(|e| MapFormatError::RonSerialize(e.to_string()))
     }
 
@@ -989,4 +1003,47 @@ fn radius_to_tenths(radius: SimScalar) -> Option<u16> {
     let nearest = (radius * SimScalar::from_num(10) + SimScalar::HALF).saturating_to_u32();
     let tenths = u16::try_from(nearest).ok()?;
     (tenths_to_radius(tenths) == radius).then_some(tenths)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{canonical_pretty_config, MapFile, MapFormatError, MAP_RON_NEWLINE};
+    use ron::ser::PrettyConfig;
+
+    const SHOWCASE: &str = include_str!("../../../assets/maps/showcase_canyon.scmap.ron");
+
+    /// The config `PrettyConfig::new()` returns on Windows, reproduced on any host.
+    ///
+    /// On Linux the `ron` default is already `\n`, so only this base can show the override working.
+    fn windows_default() -> PrettyConfig {
+        PrettyConfig::new().new_line("\r\n".to_string())
+    }
+
+    #[test]
+    fn canonical_config_replaces_a_windows_default_newline() {
+        assert_eq!(MAP_RON_NEWLINE, "\n");
+        assert_eq!(
+            canonical_pretty_config(windows_default()).new_line,
+            MAP_RON_NEWLINE
+        );
+    }
+
+    #[test]
+    fn encoding_from_a_windows_default_reproduces_the_committed_bytes(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let file = MapFile::from_ron_str(SHOWCASE)?;
+        let encoded =
+            ron::ser::to_string_pretty(&file, canonical_pretty_config(windows_default()))?;
+        assert!(!encoded.contains('\r'));
+        assert_eq!(encoded, SHOWCASE);
+        Ok(())
+    }
+
+    #[test]
+    fn to_ron_string_writes_no_carriage_return() -> Result<(), MapFormatError> {
+        let encoded = MapFile::from_ron_str(SHOWCASE)?.to_ron_string()?;
+        assert!(encoded.contains('\n'));
+        assert!(!encoded.contains('\r'));
+        Ok(())
+    }
 }
