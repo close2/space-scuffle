@@ -486,6 +486,14 @@ fn inventory(
         for family in &spec.families {
             let unavailable = match family {
                 MotionFamily::Boost if arch.overclock.is_none() => Some("no authored overclock"),
+                MotionFamily::Boost
+                    if catalogs.upgrades.unlocks_ability(
+                        &arch.slug,
+                        sim_core::upgrades::OVERCLOCK_ABILITY_SLUG,
+                    ) =>
+                {
+                    Some("overclock requires research")
+                }
                 MotionFamily::Pursuit
                     if arch.weapon.is_none()
                         && arch.ground_weapon.is_none()

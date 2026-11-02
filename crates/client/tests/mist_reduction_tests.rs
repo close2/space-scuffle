@@ -43,7 +43,15 @@ fn actual_inventory_derives_complete_capability_matrix() -> TestResult {
         .iter()
         .filter(|a| a.weapon.is_some() || a.ground_weapon.is_some() || a.air_weapon.is_some())
         .count();
-    let boosts = mobile.iter().filter(|a| a.overclock.is_some()).count();
+    let boosts = mobile
+        .iter()
+        .filter(|a| {
+            a.overclock.is_some()
+                && !catalogs
+                    .upgrades
+                    .unlocks_ability(&a.slug, sim_core::upgrades::OVERCLOCK_ABILITY_SLUG)
+        })
+        .count();
     let mut movers = Vec::new();
     for arch in &mobile {
         if !movers.contains(&arch.mover_type) {
