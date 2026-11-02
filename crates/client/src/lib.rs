@@ -15,7 +15,7 @@
 //!
 //! # Core Subsystems
 //! - [`camera`]: StarCraft II style RTS camera with 58° pitch, WASD pan, scroll zoom, and hotkey bookmarks.
-//! - [`arena_render`]: Stylized 3D two-level map with metallic panels, cliffs, ramps, minerals, and geysers.
+//! - [`arena_render`]: Flat stage and lights for the map-less Lab and Swarm scenes.
 //! - [`bubble_shader`]: Custom `BubbleDomeMaterial` and GPU uniform packing for unit spheres and domes.
 //! - [`indicators`]: Ground selection rings, equatorial facing chevron, attack focal lens, and collar meshes.
 //! - [`vfx`]: Hitscan tracers, plasma bolts, lasers, lightning, and glass shatter.
@@ -24,7 +24,6 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 #![allow(
-    dead_code,
     clippy::doc_markdown,
     clippy::too_many_lines,
     clippy::module_name_repetitions,
@@ -63,7 +62,7 @@ pub mod smog;
 pub mod terrain;
 pub mod vfx;
 
-pub use arena_render::{setup_arena_system, spawn_arena_environment, ArenaMapMarker};
+pub use arena_render::{spawn_arena_environment, ArenaMapMarker};
 pub use assets::{try_resolve_assets_dir, AssetsDirError, ResolvedAssetsRoot};
 pub use bubble_shader::{
     setup_bubble_assets_system, sync_bubbles_system, BubbleDomeMaterial, BubbleInstance,
@@ -79,8 +78,8 @@ pub use indicators::{
 };
 pub use lab_ui::{lab_ui_system, LabState, LabTab};
 pub use scene_controller::{
-    step_client_simulation_system, sync_lab_preview_system, sync_live_battle_system,
-    sync_swarm_stress_system, LabPreviewBubble, LiveBattleBubble, RenderEntityMap, SwarmBubble,
+    sync_lab_preview_system, sync_live_battle_system, sync_swarm_stress_system, LabPreviewBubble,
+    LiveBattleBubble, RenderEntityMap, SwarmBubble,
 };
 pub use selection::{
     handle_viewport_selection_system, ray_sphere_intersect, selection_system, HeroLineupIndex,
@@ -434,27 +433,6 @@ pub fn spawn_camera_system(mut commands: Commands<'_, '_>, lab_state: Res<'_, La
         transform,
         rts_cam,
     ));
-}
-
-/// Runs the Space Scuffle client application with the specified launch mode.
-#[must_use]
-pub fn run_app(mode: ClientMode, max_frames: Option<u64>) -> AppExit {
-    run_app_with_options(
-        mode,
-        max_frames,
-        std::path::Path::new(runtime_battle::DEFAULT_BATTLE_SCENARIO),
-        None,
-    )
-}
-
-/// Runs the game with an explicit declarative scenario path relative to the assets root.
-#[must_use]
-pub fn run_app_with_scenario(
-    mode: ClientMode,
-    max_frames: Option<u64>,
-    scenario_path: &std::path::Path,
-) -> AppExit {
-    run_app_with_options(mode, max_frames, scenario_path, None)
 }
 
 /// Runs the game with full options including launch mode, max frames, scenario path, and screenshot path.

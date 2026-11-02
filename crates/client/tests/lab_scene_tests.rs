@@ -3,8 +3,8 @@
 //! # Invariants Verified
 //! - The default Visual Lab shows the actors its controls act on (C-8).
 //! - Combat VFX triggers place their effects inside the lab camera's view (C-9).
-//! - No swarm bubble overlaps the arena plateau or ramp, at spawn or across its bounce range, and
-//!   the whole swarm stays in view (C-10).
+//! - Every swarm bubble stays on the stage floor across its bounce range, and the whole swarm
+//!   stays in view (C-10).
 //! - Smog never draws over a bubble, at any depth, on the real GPU (C-7).
 
 #[allow(
@@ -16,13 +16,15 @@ mod gpu_run;
 
 use bevy::prelude::*;
 use bevy::render::camera::PerspectiveProjection;
-use client::arena_render::{HIGH_GROUND_FOOTPRINT, RAMP_FOOTPRINT};
 use client::lab_ui::LabVfxTrigger;
 use client::runtime_battle::{BattleDefinition, DEFAULT_BATTLE_SCENARIO};
 use client::scene_controller::{SWARM_MAX_X, SWARM_MIN_X};
 use sim_types::snapshot::CombatEventVisual;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+/// World `(min, max)` extent of the square stage floor on both horizontal axes.
+const STAGE_FLOOR: (f32, f32) = (-16.0, 48.0);
 
 /// Pixels the inspector panel leaves for the world at the default 1280x720 window.
 const WORLD_VIEWPORT_ASPECT: f32 = 920.0 / 720.0;
@@ -130,14 +132,9 @@ fn every_lab_vfx_trigger_stays_inside_the_lab_camera_view() {
     }
 }
 
-/// Whether a circle at `center` with `radius` overlaps a horizontal footprint.
-fn overlaps(center: Vec2, radius: f32, (min, max): (Vec2, Vec2)) -> bool {
-    center.distance(center.clamp(min, max)) < radius
-}
-
-/// C-10: 50 of 200 bubbles spawned inside the plateau, hidden by its geometry.
+/// C-10: the swarm must stay where the camera and the stage floor can show it.
 #[test]
-fn swarm_never_overlaps_the_arena_plateau_or_ramp() -> TestResult {
+fn swarm_stays_on_the_stage_floor_and_in_view() -> TestResult {
     let mut app = scene_app(client::LabState {
         current_tab: client::LabTab::SwarmStressTest,
         swarm_active: true,
@@ -157,23 +154,14 @@ fn swarm_never_overlaps_the_arena_plateau_or_ramp() -> TestResult {
         .collect();
     assert_eq!(bubbles.len(), 200);
 
-    let inside_at_spawn = bubbles
-        .iter()
-        .filter(|(position, radius)| {
-            overlaps(position.xz(), *radius, HIGH_GROUND_FOOTPRINT)
-                || overlaps(position.xz(), *radius, RAMP_FOOTPRINT)
-        })
-        .count();
-    assert_eq!(inside_at_spawn, 0, "bubbles spawned inside arena geometry");
-
     // Bubbles only travel along X, so each one sweeps its row across the bounce range.
     for (position, radius) in &bubbles {
         for x in [SWARM_MIN_X, position.x, SWARM_MAX_X] {
             let swept = Vec2::new(x, position.z);
             assert!(
-                !overlaps(swept, *radius, HIGH_GROUND_FOOTPRINT)
-                    && !overlaps(swept, *radius, RAMP_FOOTPRINT),
-                "row z={} reaches arena geometry at x={x}",
+                swept.min_element() - radius >= STAGE_FLOOR.0
+                    && swept.max_element() + radius <= STAGE_FLOOR.1,
+                "row z={} leaves the stage floor at x={x}",
                 position.z
             );
         }

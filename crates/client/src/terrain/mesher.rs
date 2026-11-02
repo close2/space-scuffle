@@ -129,19 +129,7 @@ pub enum SurfaceClass {
     Plateau(i32),
 }
 
-impl SurfaceClass {
-    /// Returns the effective numeric cliff level used for dual-grid marching squares.
-    ///
-    /// Ramp cells participate in dual-grid contour analysis at their lower landing level.
-    #[must_use]
-    pub fn marching_level(self) -> i32 {
-        match self {
-            Self::Void => -1,
-            Self::Ramp(p) => i32::from(p.low_level.0),
-            Self::Plateau(lvl) => lvl,
-        }
-    }
-}
+impl SurfaceClass {}
 
 /// Evaluates the surface classification of simulation cell `(cx, cy)`.
 #[must_use]

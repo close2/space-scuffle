@@ -8,38 +8,48 @@
 //! - **Melee Crescent Slashes:** Psi-blade sweep arcs across contact boundaries.
 //! - **Death Glass Shatter:** 16 refractive glass shards violently exploding outward with physics momentum.
 
-#![allow(dead_code)]
-
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
-use bevy::render::render_resource::{AsBindGroup, ShaderRef, ShaderType};
+use bevy::render::render_resource::{AsBindGroup, ShaderRef};
 use sim_types::snapshot::CombatEventVisual;
 
-/// GPU uniform representation for procedural volumetric combat visual effects.
-// PERFORMANCE RATIONALE:
-// Why: WebGPU uniform buffers require strict 16-byte alignment and explicit std140 packing.
-// What: Fields total exactly 32 bytes (16B Vec4 + 4x 4B primitive fields).
-// Trade-off: Explicit manual packing ensures zero runtime WebGPU alignment validation panics.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable, ShaderType)]
-pub struct CombatFxUniformGpu {
-    /// Primary HDR color (RGB) + Secondary parameter / angle (W).
-    pub primary_color: Vec4,
-    /// Normalized effect lifetime progress [0.0, 1.0].
-    pub age: f32,
-    /// Effect classification kind:
-    /// 0 = FX_LASER_BEAM (Continuous high-energy laser with muzzle & impact flares)
-    /// 1 = FX_HITSCAN_TRACER (Supersonic kinetic/pulse tracer with Mach shock rings)
-    /// 2 = FX_LIGHTNING_ARC (3-phase domain-warped jagged electric arc)
-    /// 3 = FX_MELEE_SLASH (Sweeping crescent psi-blade with trailing energy veil)
-    /// 4 = FX_PLASMA_PROJECTILE (Blazing comet-tail plasma orb)
-    /// 5 = FX_IMPACT_STARBURST (8-pointed radial starburst & refractive shockwave)
-    pub fx_kind: u32,
-    /// Randomization seed for turbulence, branching, and sparks.
-    pub seed: f32,
-    /// Geometric aspect ratio (length / width for ribbons, radius for discs).
-    pub aspect: f32,
+mod gpu_layout {
+    //! Holds one `ShaderType` struct, so the lint expectation below covers nothing else.
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits layout checks nothing calls"
+    )]
+
+    use bevy::prelude::*;
+    use bevy::render::render_resource::ShaderType;
+
+    /// GPU uniform representation for procedural volumetric combat visual effects.
+    // PERFORMANCE RATIONALE:
+    // Why: WebGPU uniform buffers require strict 16-byte alignment and explicit std140 packing.
+    // What: Fields total exactly 32 bytes (16B Vec4 + 4x 4B primitive fields).
+    // Trade-off: Explicit manual packing ensures zero runtime WebGPU alignment validation panics.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable, ShaderType)]
+    pub struct CombatFxUniformGpu {
+        /// Primary HDR color (RGB) + Secondary parameter / angle (W).
+        pub primary_color: Vec4,
+        /// Normalized effect lifetime progress [0.0, 1.0].
+        pub age: f32,
+        /// Effect classification kind:
+        /// 0 = FX_LASER_BEAM (Continuous high-energy laser with muzzle & impact flares)
+        /// 1 = FX_HITSCAN_TRACER (Supersonic kinetic/pulse tracer with Mach shock rings)
+        /// 2 = FX_LIGHTNING_ARC (3-phase domain-warped jagged electric arc)
+        /// 3 = FX_MELEE_SLASH (Sweeping crescent psi-blade with trailing energy veil)
+        /// 4 = FX_PLASMA_PROJECTILE (Blazing comet-tail plasma orb)
+        /// 5 = FX_IMPACT_STARBURST (8-pointed radial starburst & refractive shockwave)
+        pub fx_kind: u32,
+        /// Randomization seed for turbulence, branching, and sparks.
+        pub seed: f32,
+        /// Geometric aspect ratio (length / width for ribbons, radius for discs).
+        pub aspect: f32,
+    }
 }
+pub use gpu_layout::CombatFxUniformGpu;
 
 impl Default for CombatFxUniformGpu {
     fn default() -> Self {
@@ -165,15 +175,12 @@ pub struct VfxSharedAssets {
     pub melee_slash_mesh: Handle<Mesh>,
     /// Death shatter wedge prism mesh.
     pub shard_mesh: Handle<Mesh>,
-    /// Hyper-boosted spark material.
-    pub spark_mat: Handle<StandardMaterial>,
 }
 
 /// Sets up shared VFX mesh and material resources.
 pub fn setup_vfx_assets_system(
     mut commands: Commands<'_, '_>,
     mut meshes: ResMut<'_, Assets<Mesh>>,
-    mut materials: ResMut<'_, Assets<StandardMaterial>>,
 ) {
     let quad = meshes.add(Rectangle::new(1.0, 1.0));
     let assets = VfxSharedAssets {
@@ -182,12 +189,6 @@ pub fn setup_vfx_assets_system(
         beam_mesh: quad.clone(),
         melee_slash_mesh: quad.clone(),
         shard_mesh: quad,
-        spark_mat: materials.add(StandardMaterial {
-            base_color: Color::srgb(1.0, 0.95, 0.4),
-            emissive: LinearRgba::rgb(4.0, 3.5, 1.0),
-            unlit: true,
-            ..default()
-        }),
     };
     commands.insert_resource(assets);
 }

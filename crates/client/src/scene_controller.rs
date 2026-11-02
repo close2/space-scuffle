@@ -626,10 +626,7 @@ pub fn sync_live_battle_system(
     });
 }
 
-/// Canonical alias for the sole queued client tick driver.
-pub use crate::battle_pipeline::driver::advance_battle_ticks as step_client_simulation_system;
-
-/// Smallest world X a swarm bubble centre reaches before bouncing, east of the arena resources.
+/// Smallest world X a swarm bubble centre reaches before bouncing.
 pub const SWARM_MIN_X: f32 = 13.0;
 
 /// Largest world X a swarm bubble centre reaches before bouncing.

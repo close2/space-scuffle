@@ -3,7 +3,6 @@
 //! prepared styles. Preview roles and live participant membership remain separate
 //! from identity hue, which never determines gameplay hostility or authorization.
 
-
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;

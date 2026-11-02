@@ -15,26 +15,16 @@
 //! - `SelectionRingUniformGpu` memory layout is strictly 32 bytes and 16-byte aligned matching `selection_ring.wgsl`.
 //! - Tactical reticle mesh is a flat ground quad plane pre-allocated once and shared across all entities.
 
-#![allow(dead_code)]
-
 use crate::bubble_shader::BubbleInstance;
 use crate::lab_ui::LabState;
 use bevy::prelude::*;
-use bevy::render::render_resource::{AsBindGroup, ShaderRef, ShaderType};
-use sim_types::enums::{ShapeKind, SilhouetteClass};
+use bevy::render::render_resource::{AsBindGroup, ShaderRef};
+use sim_types::enums::ShapeKind;
 use sim_types::snapshot::BubbleRenderInstance;
 
 /// Marker for the ground selection ring entity.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GroundRingMarker;
-
-/// Marker for legacy/optional equatorial hull facing chevron.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FacingChevronMarker;
-
-/// Marker for legacy/optional dynamic attack focal lens aperture.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FocalLensMarker;
 
 /// Marker for the air unit ground shadow circle.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,21 +33,6 @@ pub struct AirShadowMarker;
 /// Marker for the vertical air tether helper line.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AirTetherMarker;
-
-/// Marker for legacy/optional unit silhouette collar ornament.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CollarMeshMarker {
-    /// Active silhouette classification.
-    pub silhouette: SilhouetteClass,
-}
-
-/// Marker for building foundation baseplates.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BaseplateMarker;
-
-/// Marker for legacy rotating root entity holding corner brackets.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SelectionBracketsRootMarker;
 
 /// Marker for the floating overhead Health and Shield bar root.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,25 +46,37 @@ pub struct OverheadHpBarMarker;
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OverheadShieldBarMarker;
 
-/// GPU uniform buffer struct matching `struct SelectionRingUniform` in `selection_ring.wgsl`.
-// PERFORMANCE RATIONALE:
-// Why: WebGPU uniform buffers require strict 16-byte alignment and explicit std140 padding.
-// What: Fields total exactly 32 bytes (16B Vec4 + 4x 4B fields).
-// Trade-off: Explicit manual padding for zero runtime alignment faults.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable, ShaderType)]
-pub struct SelectionRingUniformGpu {
-    /// Team tint color (RGBA).
-    pub team_color: Vec4,
-    /// Ground reticle radius in world units.
-    pub radius: f32,
-    /// Active selection visibility flag (1 = selected/visible, 0 = hidden).
-    pub is_selected: u32,
-    /// Breathing pulse oscillation speed.
-    pub pulse_speed: f32,
-    /// Explicit alignment padding to 32 bytes (16-byte aligned).
-    pub padding: f32,
+mod gpu_layout {
+    //! Holds one `ShaderType` struct, so the lint expectation below covers nothing else.
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits layout checks nothing calls"
+    )]
+
+    use bevy::prelude::*;
+    use bevy::render::render_resource::ShaderType;
+
+    /// GPU uniform buffer struct matching `struct SelectionRingUniform` in `selection_ring.wgsl`.
+    // PERFORMANCE RATIONALE:
+    // Why: WebGPU uniform buffers require strict 16-byte alignment and explicit std140 padding.
+    // What: Fields total exactly 32 bytes (16B Vec4 + 4x 4B fields).
+    // Trade-off: Explicit manual padding for zero runtime alignment faults.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable, ShaderType)]
+    pub struct SelectionRingUniformGpu {
+        /// Team tint color (RGBA).
+        pub team_color: Vec4,
+        /// Ground reticle radius in world units.
+        pub radius: f32,
+        /// Active selection visibility flag (1 = selected/visible, 0 = hidden).
+        pub is_selected: u32,
+        /// Breathing pulse oscillation speed.
+        pub pulse_speed: f32,
+        /// Explicit alignment padding to 32 bytes (16-byte aligned).
+        pub padding: f32,
+    }
 }
+pub use gpu_layout::SelectionRingUniformGpu;
 
 impl Default for SelectionRingUniformGpu {
     fn default() -> Self {

@@ -15,7 +15,7 @@
 
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
-use bevy::render::render_resource::{AsBindGroup, Face, ShaderRef, ShaderType};
+use bevy::render::render_resource::{AsBindGroup, Face, ShaderRef};
 
 /// Maximum number of active bubble spheres packed directly into the volumetric shader uniform
 /// for sub-voxel spherical cavity carving and bow-wave compression.
@@ -119,32 +119,45 @@ impl CavitySlots {
 #[require(NotShadowCaster)]
 pub struct SmogVolumeMarker;
 
-// PERFORMANCE RATIONALE:
-// Why: WebGPU uniform buffers require strict 16-byte alignment and std140 array stride rules.
-// What: 6 header Vec4 lanes (96B) + 16 bubble_pos_radius Vec4s (256B) + 16 bubble_vel_boost Vec4s (256B)
-// = 608 bytes total, with every field 16-byte aligned.
-// Trade-off: Fixed 16-bubble analytical sub-voxel array alongside arbitrary-bubble 3D texture grid.
-/// GPU uniform buffer struct matching `struct SmogVolumeUniform` in `assets/shaders/smog_volume.wgsl`.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable, ShaderType)]
-pub struct SmogVolumeUniformGpu {
-    /// World-space minimum corner of the 3D smog volume (XYZ) + soft depth fade distance (W).
-    pub volume_min: Vec4,
-    /// World-space maximum corner of the 3D smog volume (XYZ) + global extinction scale (W).
-    pub volume_max: Vec4,
-    /// Base ambient smog tint (RGB) + animation time in seconds (W).
-    pub base_tint_time: Vec4,
-    /// Warm scattering highlight tint (RGB) + Henyey-Greenstein phase anisotropy g (W).
-    pub warm_tint_anisotropy: Vec4,
-    /// Primary directional light direction (XYZ) + normalized light intensity (W).
-    pub light_dir_intensity: Vec4,
-    /// Control parameters: X = active bubble count, Y = bow-wave rim strength, Z = cavity strength, W = enabled.
-    pub control_params: Vec4,
-    /// XYZ = bubble world center, W = bubble radius (for up to 16 bubbles).
-    pub bubble_pos_radius: [Vec4; MAX_SMOG_SHADER_BUBBLES],
-    /// XYZ = bubble velocity vector, W = speed boost / wake intensity factor.
-    pub bubble_vel_boost: [Vec4; MAX_SMOG_SHADER_BUBBLES],
+mod gpu_layout {
+    //! Holds one `ShaderType` struct, so the lint expectation below covers nothing else.
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits layout checks nothing calls"
+    )]
+
+    use super::MAX_SMOG_SHADER_BUBBLES;
+    use bevy::prelude::*;
+    use bevy::render::render_resource::ShaderType;
+
+    // PERFORMANCE RATIONALE:
+    // Why: WebGPU uniform buffers require strict 16-byte alignment and std140 array stride rules.
+    // What: 6 header Vec4 lanes (96B) + 16 bubble_pos_radius Vec4s (256B) + 16 bubble_vel_boost Vec4s (256B)
+    // = 608 bytes total, with every field 16-byte aligned.
+    // Trade-off: Fixed 16-bubble analytical sub-voxel array alongside arbitrary-bubble 3D texture grid.
+    /// GPU uniform buffer struct matching `struct SmogVolumeUniform` in `assets/shaders/smog_volume.wgsl`.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable, ShaderType)]
+    pub struct SmogVolumeUniformGpu {
+        /// World-space minimum corner of the 3D smog volume (XYZ) + soft depth fade distance (W).
+        pub volume_min: Vec4,
+        /// World-space maximum corner of the 3D smog volume (XYZ) + global extinction scale (W).
+        pub volume_max: Vec4,
+        /// Base ambient smog tint (RGB) + animation time in seconds (W).
+        pub base_tint_time: Vec4,
+        /// Warm scattering highlight tint (RGB) + Henyey-Greenstein phase anisotropy g (W).
+        pub warm_tint_anisotropy: Vec4,
+        /// Primary directional light direction (XYZ) + normalized light intensity (W).
+        pub light_dir_intensity: Vec4,
+        /// Control parameters: X = active bubble count, Y = bow-wave rim strength, Z = cavity strength, W = enabled.
+        pub control_params: Vec4,
+        /// XYZ = bubble world center, W = bubble radius (for up to 16 bubbles).
+        pub bubble_pos_radius: [Vec4; MAX_SMOG_SHADER_BUBBLES],
+        /// XYZ = bubble velocity vector, W = speed boost / wake intensity factor.
+        pub bubble_vel_boost: [Vec4; MAX_SMOG_SHADER_BUBBLES],
+    }
 }
+pub use gpu_layout::SmogVolumeUniformGpu;
 
 impl Default for SmogVolumeUniformGpu {
     fn default() -> Self {

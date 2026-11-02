@@ -713,7 +713,7 @@ fn test_bevy_ecs_schedule_all_systems_no_conflicts() -> Result<(), Box<dyn std::
             client::bubble_shader::setup_bubble_assets_system,
             client::indicators::setup_indicator_assets_system,
             client::vfx::setup_vfx_assets_system,
-            client::arena_render::setup_arena_system,
+            client::arena_render::spawn_arena_environment,
             client::spawn_camera_system,
         ),
     );
@@ -728,14 +728,14 @@ fn test_bevy_ecs_schedule_all_systems_no_conflicts() -> Result<(), Box<dyn std::
             client::vfx::update_melee_slashes_system,
             client::vfx::update_shatter_system,
             client::vfx::process_combat_events_system,
-            client::lab_ui::sync_lab_preview_system,
+            client::scene_controller::sync_lab_preview_system,
             (
-                client::lab_ui::step_client_simulation_system,
+                client::battle_pipeline::driver::advance_battle_ticks,
                 client::sync_live_battle_system,
                 client::battle_pipeline::driver::publish_combat_events,
             )
                 .chain(),
-            client::lab_ui::sync_swarm_stress_system,
+            client::scene_controller::sync_swarm_stress_system,
         ),
     );
 

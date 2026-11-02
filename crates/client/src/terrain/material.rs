@@ -8,7 +8,7 @@
 use asset_baker::TerrainTheme;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
-use bevy::render::render_resource::{AsBindGroup, ShaderRef, ShaderType};
+use bevy::render::render_resource::{AsBindGroup, ShaderRef};
 
 /// Default sharpening exponent applied to hex-tiling blending weights.
 pub const HEX_CONTRAST: f32 = 6.0;
@@ -26,34 +26,46 @@ pub const OVERLAY_FLAG_BRUSH: u32 = 1 << 4;
 /// Overlay bitflag: Map validation error location pulsing red fill.
 pub const OVERLAY_FLAG_VALIDATION: u32 = 1 << 5;
 
-/// Uniform buffer struct bound at `@group(2) @binding(100)`.
-///
-/// Memory layout strictly satisfies std140 16-byte alignment rules (64 bytes total).
-#[derive(Clone, Copy, Debug, ShaderType, Reflect)]
-pub struct TerrainParams {
-    /// Map width and height in cell units.
-    pub map_size: Vec2,
-    /// Brush center in cell coordinates (x, y).
-    pub brush_center: Vec2,
-    /// Brush radius in cell units.
-    pub brush_radius: f32,
-    /// Brush shape: 0 = circle, 1 = square.
-    pub brush_shape: u32,
-    /// Bitwise combination of `OVERLAY_FLAG_*`.
-    pub overlay_flags: u32,
-    /// Texture tiling frequency for floor surface layers (repeats per world unit).
-    pub ground_tiles_per_unit: f32,
-    /// Texture tiling frequency for cliff triplanar projection.
-    pub cliff_tiles_per_unit: f32,
-    /// Contrast sharpening exponent for hex-tiling weight blending.
-    pub hex_contrast: f32,
-    /// Layers authored as seamless structured surfaces, sampled without random rotations.
-    pub regular_tiling_mask: u32,
-    /// Padding ensuring 16-byte alignment before the 16-byte vector.
-    pub pad: u32,
-    /// Linear emissive color multiplied by intensity for ramp guard rails.
-    pub guardrail_emissive: Vec4,
+mod gpu_layout {
+    //! Holds one `ShaderType` struct, so the lint expectation below covers nothing else.
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits layout checks nothing calls"
+    )]
+
+    use bevy::prelude::*;
+    use bevy::render::render_resource::ShaderType;
+
+    /// Uniform buffer struct bound at `@group(2) @binding(100)`.
+    ///
+    /// Memory layout strictly satisfies std140 16-byte alignment rules (64 bytes total).
+    #[derive(Clone, Copy, Debug, ShaderType, Reflect)]
+    pub struct TerrainParams {
+        /// Map width and height in cell units.
+        pub map_size: Vec2,
+        /// Brush center in cell coordinates (x, y).
+        pub brush_center: Vec2,
+        /// Brush radius in cell units.
+        pub brush_radius: f32,
+        /// Brush shape: 0 = circle, 1 = square.
+        pub brush_shape: u32,
+        /// Bitwise combination of `OVERLAY_FLAG_*`.
+        pub overlay_flags: u32,
+        /// Texture tiling frequency for floor surface layers (repeats per world unit).
+        pub ground_tiles_per_unit: f32,
+        /// Texture tiling frequency for cliff triplanar projection.
+        pub cliff_tiles_per_unit: f32,
+        /// Contrast sharpening exponent for hex-tiling weight blending.
+        pub hex_contrast: f32,
+        /// Layers authored as seamless structured surfaces, sampled without random rotations.
+        pub regular_tiling_mask: u32,
+        /// Padding ensuring 16-byte alignment before the 16-byte vector.
+        pub pad: u32,
+        /// Linear emissive color multiplied by intensity for ramp guard rails.
+        pub guardrail_emissive: Vec4,
+    }
 }
+pub use gpu_layout::TerrainParams;
 
 impl TerrainParams {
     /// Constructs [`TerrainParams`] directly from the declarative [`TerrainTheme`] and map grid dimensions.

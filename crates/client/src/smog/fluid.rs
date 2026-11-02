@@ -25,16 +25,10 @@ pub const GRID_NZ: usize = 72;
 /// Total number of voxels in the 3D fluid volume ($96 \times 12 \times 72 = 82,944$).
 pub const TOTAL_VOXELS: usize = GRID_NX * GRID_NY * GRID_NZ;
 
-/// Canonical default 3D grid voxel dimensions vector.
-pub const DEFAULT_GRID_DIMS: UVec3 = UVec3::new(GRID_NX as u32, GRID_NY as u32, GRID_NZ as u32);
-
 /// Peak clamp density for numerical stability and saturation control.
 pub const SMOG_DENSITY_MAX: f32 = 4.0;
 /// Velocity normalization ceiling for 8-bit texture packing ($\pm 5.0$ world units/s).
 pub const SMOG_PACK_VELOCITY_MAX: f32 = 5.0;
-/// Vorticity magnitude normalization ceiling for 8-bit texture packing.
-pub const SMOG_PACK_VORTICITY_MAX: f32 = 15.0;
-
 /// External bubble state presented to the 3D fluid solver for emission and obstacle influence.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct BubbleSmogSource {
@@ -104,7 +98,6 @@ pub struct SmogGrid3d {
 
     // Pressure projection fields
     pressure: Box<[f32]>,
-    pressure_scratch: Box<[f32]>,
     divergence: Box<[f32]>,
 
     // Vorticity confinement fields
@@ -182,7 +175,6 @@ impl SmogGrid3d {
             tint_g_scratch: make_slab(),
             tint_b_scratch: make_slab(),
             pressure: make_slab(),
-            pressure_scratch: make_slab(),
             divergence: make_slab(),
             vorticity_x: make_slab(),
             vorticity_y: make_slab(),
@@ -478,38 +470,6 @@ impl SmogGrid3d {
         self.rgba_velocity_bytes.fill(128);
     }
 
-    /// Seeds an ambient, stratified ground-hugging smog layer before runtime simulation starts.
-    ///
-    /// Leaves [`SmogGrid3d::new`] clean for unit tests while providing rich, cinematic
-    /// atmospheric density for the interactive Visual Lab and automated capture verification.
-    pub fn seed_ambient_smog_blanket(&mut self) {
-        for iz in 0..GRID_NZ {
-            for iy in 0..GRID_NY {
-                for ix in 0..GRID_NX {
-                    let idx = Self::index(ix, iy, iz);
-                    let pos = self.grid_to_world(ix, iy, iz);
-                    if pos.y <= 2.4 {
-                        let height_factor = (1.0 - pos.y / 2.4).clamp(0.0, 1.0);
-                        let billow = ((pos.x * 0.8).sin() * (pos.z * 0.9).cos() * 0.5 + 0.5)
-                            * ((pos.y * 1.5).cos() * 0.3 + 0.7);
-                        let rho =
-                            (0.35 + 0.50 * height_factor * billow).clamp(0.0, SMOG_DENSITY_MAX);
-                        self.density[idx] = rho;
-                        // Faction-neutral cool-warm gradient: base cyan to warm amber
-                        let warm_blend =
-                            ((pos.x * 0.5 + pos.z * 0.4).sin() * 0.5 + 0.5).clamp(0.0, 1.0);
-                        self.tint_r[idx] = 0.45 * (1.0 - warm_blend) + 0.95 * warm_blend;
-                        self.tint_g[idx] = 0.72 * (1.0 - warm_blend) + 0.82 * warm_blend;
-                        self.tint_b[idx] = 0.95 * (1.0 - warm_blend) + 0.55 * warm_blend;
-                    } else {
-                        self.density[idx] = 0.0;
-                    }
-                }
-            }
-        }
-        let _ = self.pack_textures_and_compute_metrics(0);
-    }
-
     /// Executes one full 3D Navier-Stokes step with bubble smog generation and bubble-through-smog influence.
     ///
     /// # Errors
@@ -798,7 +758,6 @@ impl SmogGrid3d {
         // cancels the inward aerodynamic convergence and puffs the wake into a rounded oval/mushroom.
         // Trade-off: Leaving slipstream velocity compressible preserves crisp teardrop wakes and saves
         // 4 full-grid Jacobi iterations per tick.
-        // (self.project_pressure() is preserved below with #[allow(dead_code)] for standalone fluid testbench use).
 
         // 5. Density & Chromatic Advection + Dissipation
         self.advect_density_and_tint(config.buoyancy, config.dissipation_rate, dt);
@@ -976,110 +935,6 @@ impl SmogGrid3d {
         self.u_z.copy_from_slice(&self.u_z_scratch);
     }
 
-    #[allow(dead_code)]
-    fn project_pressure(&mut self) {
-        let inv_2hx = 0.5 * self.inv_cell_size.x;
-        let inv_2hy = 0.5 * self.inv_cell_size.y;
-        let inv_2hz = 0.5 * self.inv_cell_size.z;
-
-        // 1. Compute Divergence
-        for iz in 1..(GRID_NZ - 1) {
-            for iy in 1..(GRID_NY - 1) {
-                for ix in 1..(GRID_NX - 1) {
-                    let idx = Self::index(ix, iy, iz);
-                    let dux = (self.u_x[Self::index(ix + 1, iy, iz)]
-                        - self.u_x[Self::index(ix - 1, iy, iz)])
-                        * inv_2hx;
-                    let duy = (self.u_y[Self::index(ix, iy + 1, iz)]
-                        - self.u_y[Self::index(ix, iy - 1, iz)])
-                        * inv_2hy;
-                    let duz = (self.u_z[Self::index(ix, iy, iz + 1)]
-                        - self.u_z[Self::index(ix, iy, iz - 1)])
-                        * inv_2hz;
-                    self.divergence[idx] = dux + duy + duz;
-                }
-            }
-        }
-
-        self.pressure.fill(0.0);
-
-        let inv_hx2 = self.inv_cell_size.x * self.inv_cell_size.x;
-        let inv_hy2 = self.inv_cell_size.y * self.inv_cell_size.y;
-        let inv_hz2 = self.inv_cell_size.z * self.inv_cell_size.z;
-        let denom = 2.0 * (inv_hx2 + inv_hy2 + inv_hz2);
-        let inv_denom = 1.0 / denom;
-
-        // 2. 2 Jacobi Iterations (skipping near-zero divergence cells for performance)
-        for _ in 0..2 {
-            for iz in 1..(GRID_NZ - 1) {
-                for iy in 1..(GRID_NY - 1) {
-                    for ix in 1..(GRID_NX - 1) {
-                        let idx = Self::index(ix, iy, iz);
-                        if self.divergence[idx].abs() < 1e-5 && self.pressure[idx].abs() < 1e-5 {
-                            self.pressure_scratch[idx] = 0.0;
-                            continue;
-                        }
-                        let p_x = (self.pressure[Self::index(ix + 1, iy, iz)]
-                            + self.pressure[Self::index(ix - 1, iy, iz)])
-                            * inv_hx2;
-                        let p_y = (self.pressure[Self::index(ix, iy + 1, iz)]
-                            + self.pressure[Self::index(ix, iy - 1, iz)])
-                            * inv_hy2;
-                        let p_z = (self.pressure[Self::index(ix, iy, iz + 1)]
-                            + self.pressure[Self::index(ix, iy, iz - 1)])
-                            * inv_hz2;
-
-                        self.pressure_scratch[idx] =
-                            (p_x + p_y + p_z - self.divergence[idx]) * inv_denom;
-                    }
-                }
-            }
-            self.pressure.copy_from_slice(&self.pressure_scratch);
-        }
-
-        // 3. Subtract Pressure Gradient from Velocity
-        for iz in 1..(GRID_NZ - 1) {
-            for iy in 1..(GRID_NY - 1) {
-                for ix in 1..(GRID_NX - 1) {
-                    let idx = Self::index(ix, iy, iz);
-                    let dp_dx = (self.pressure[Self::index(ix + 1, iy, iz)]
-                        - self.pressure[Self::index(ix - 1, iy, iz)])
-                        * inv_2hx;
-                    let dp_dy = (self.pressure[Self::index(ix, iy + 1, iz)]
-                        - self.pressure[Self::index(ix, iy - 1, iz)])
-                        * inv_2hy;
-                    let dp_dz = (self.pressure[Self::index(ix, iy, iz + 1)]
-                        - self.pressure[Self::index(ix, iy, iz - 1)])
-                        * inv_2hz;
-
-                    self.u_x[idx] -= dp_dx;
-                    self.u_y[idx] -= dp_dy;
-                    self.u_z[idx] -= dp_dz;
-                }
-            }
-        }
-
-        // Re-enforce wall no-penetration
-        for iz in 0..GRID_NZ {
-            for iy in 0..GRID_NY {
-                self.u_x[Self::index(0, iy, iz)] = 0.0;
-                self.u_x[Self::index(GRID_NX - 1, iy, iz)] = 0.0;
-            }
-        }
-        for iz in 0..GRID_NZ {
-            for ix in 0..GRID_NX {
-                self.u_y[Self::index(ix, 0, iz)] = 0.0;
-                self.u_y[Self::index(ix, GRID_NY - 1, iz)] = 0.0;
-            }
-        }
-        for iy in 0..GRID_NY {
-            for ix in 0..GRID_NX {
-                self.u_z[Self::index(ix, iy, 0)] = 0.0;
-                self.u_z[Self::index(ix, iy, GRID_NZ - 1)] = 0.0;
-            }
-        }
-    }
-
     fn advect_density_and_tint(&mut self, buoyancy: f32, dissipation: f32, dt: f32) {
         let decay = (-dissipation * dt).exp();
         let lambda_glow = (1.8 * dissipation).max(1.65);
@@ -1250,13 +1105,6 @@ impl SmogGrid3d {
             active_sources,
         }
     }
-}
-
-/// Helper smoothstep function.
-#[inline]
-fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
-    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
 }
 
 #[cfg(test)]

@@ -969,8 +969,3 @@ fn render_selected_unit_hud(
             });
         });
 }
-
-pub use crate::scene_controller::{
-    step_client_simulation_system, sync_lab_preview_system, sync_live_battle_system,
-    sync_swarm_stress_system, LabPreviewBubble, LiveBattleBubble, RenderEntityMap, SwarmBubble,
-};

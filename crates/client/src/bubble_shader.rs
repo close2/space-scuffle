@@ -10,11 +10,9 @@
 //! - Mobile units render as full UV spheres; building structures render as grounded hemisphere domes.
 //! - Missing or malformed media is retained as typed unavailable status; no texture is substituted.
 
-#![allow(dead_code)]
-
 use asset_baker::manifest::FlipbookAtlasMeta;
 use bevy::prelude::*;
-use bevy::render::render_resource::{AsBindGroup, ShaderRef, ShaderType};
+use bevy::render::render_resource::{AsBindGroup, ShaderRef};
 use sim_types::enums::{AnimState, ShapeKind};
 use sim_types::ids::UnitTypeId;
 use sim_types::snapshot::BubbleRenderInstance;
@@ -57,63 +55,74 @@ pub const DEFAULT_FEATURE_FLAGS: u32 = FLAG_GLARE
     | FLAG_FACING_STRIPE
     | FLAG_ATTACK_APERTURE;
 
-/// GPU uniform buffer struct matching `struct BubbleUniform` in `bubble_dome.wgsl`.
-// PERFORMANCE RATIONALE:
-// Why: WebGPU uniform buffers require strict 16-byte alignment and explicit std140 padding.
-// What: Fields are strictly ordered: vec4 (16B), vec3+f32 (16B), 4x u32/f32 (16B) chunks, totaling exactly 160 bytes.
-// Modular optical feature toggles are packed into `feature_flags: u32` bitmask with four additional optical vec4 lanes after the original 96 bytes.
-// Trade-off: Manual struct layout in exchange for zero runtime padding overhead and zero shader misalignment faults.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable, ShaderType)]
-#[allow(dead_code)]
-pub struct BubbleUniformGpu {
-    /// Team Fresnel rim and ground indicator color (RGBA).
-    pub team_color: Vec4,
-    /// Authoritative 3D center position [x, ground_y, altitude_z].
-    pub world_pos: Vec3,
-    /// Sphere collision radius in world units.
-    pub radius: f32,
-    /// 0 = UnitSphere (mobile), 1 = BuildingDome (grounded structure).
-    pub shape_kind: u32,
-    /// Facing orientation angle in radians.
-    pub heading_angle_rad: f32,
-    /// Independent weapon turret aim angle in radians.
-    pub aim_angle_rad: f32,
-    /// Active firing / windup state flag (1 = firing, 0 = idle).
-    pub is_attacking: u32,
-    /// High-level animation action state index.
-    pub anim_state: u32,
-    /// Normalized animation progress [0.0, 1.0].
-    pub anim_progress: f32,
-    /// Health ratio [0.0, 1.0] (cracks appear < 0.75, critical glitch < 0.35).
-    pub hp_ratio: f32,
-    /// Shield energy ratio [0.0, 1.0].
-    pub shield_ratio: f32,
-    /// Decaying shield ripple flash intensity [0.0, 1.0].
-    pub shield_hit_flash: f32,
-    /// Direction the last hull hit originated from in radians.
-    pub hull_hit_angle_rad: f32,
-    /// Decaying hull impact flare intensity [0.0, 1.0].
-    pub hull_hit_flash: f32,
-    /// Vertical construction wireframe scanline fill [0.0, 1.0].
-    pub build_progress: f32,
-    /// Selection highlight flag (1 = selected, 0 = unselected).
-    pub selected: u32,
-    /// Stealth cloaking flag (1 = cloaked shimmer, 0 = opaque).
-    pub cloaked: u32,
-    /// Modular feature bitflags bitmask (glare, fresnel, inner warp, cracks, scanlines).
-    pub feature_flags: u32,
-    /// Exact active frame index in the Texture2DArray.
-    pub frame_index: u32,
-    /// Media exposure stops, dielectric reflectance, Fresnel power, reflection strength.
-    pub optics_media: Vec4,
-    /// Glare roughness/strength, hit strength, hull hit angular width in radians.
-    pub optics_glare: Vec4,
-    /// Selection strength, shell alpha, facing strength, attack strength.
-    pub optics_signals: Vec4,
-    /// Direction toward the main light in world space; W is normalized illuminance.
-    pub optics_light: Vec4,
+mod gpu_layout {
+    //! Holds one `ShaderType` struct, so the lint expectation below covers nothing else.
+    #![expect(
+        dead_code,
+        reason = "the ShaderType derive emits layout checks nothing calls"
+    )]
+
+    use bevy::prelude::*;
+    use bevy::render::render_resource::ShaderType;
+
+    /// GPU uniform buffer struct matching `struct BubbleUniform` in `bubble_dome.wgsl`.
+    // PERFORMANCE RATIONALE:
+    // Why: WebGPU uniform buffers require strict 16-byte alignment and explicit std140 padding.
+    // What: Fields are strictly ordered: vec4 (16B), vec3+f32 (16B), 4x u32/f32 (16B) chunks, totaling exactly 160 bytes.
+    // Modular optical feature toggles are packed into `feature_flags: u32` bitmask with four additional optical vec4 lanes after the original 96 bytes.
+    // Trade-off: Manual struct layout in exchange for zero runtime padding overhead and zero shader misalignment faults.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable, ShaderType)]
+    pub struct BubbleUniformGpu {
+        /// Team Fresnel rim and ground indicator color (RGBA).
+        pub team_color: Vec4,
+        /// Authoritative 3D center position [x, ground_y, altitude_z].
+        pub world_pos: Vec3,
+        /// Sphere collision radius in world units.
+        pub radius: f32,
+        /// 0 = UnitSphere (mobile), 1 = BuildingDome (grounded structure).
+        pub shape_kind: u32,
+        /// Facing orientation angle in radians.
+        pub heading_angle_rad: f32,
+        /// Independent weapon turret aim angle in radians.
+        pub aim_angle_rad: f32,
+        /// Active firing / windup state flag (1 = firing, 0 = idle).
+        pub is_attacking: u32,
+        /// High-level animation action state index.
+        pub anim_state: u32,
+        /// Normalized animation progress [0.0, 1.0].
+        pub anim_progress: f32,
+        /// Health ratio [0.0, 1.0] (cracks appear < 0.75, critical glitch < 0.35).
+        pub hp_ratio: f32,
+        /// Shield energy ratio [0.0, 1.0].
+        pub shield_ratio: f32,
+        /// Decaying shield ripple flash intensity [0.0, 1.0].
+        pub shield_hit_flash: f32,
+        /// Direction the last hull hit originated from in radians.
+        pub hull_hit_angle_rad: f32,
+        /// Decaying hull impact flare intensity [0.0, 1.0].
+        pub hull_hit_flash: f32,
+        /// Vertical construction wireframe scanline fill [0.0, 1.0].
+        pub build_progress: f32,
+        /// Selection highlight flag (1 = selected, 0 = unselected).
+        pub selected: u32,
+        /// Stealth cloaking flag (1 = cloaked shimmer, 0 = opaque).
+        pub cloaked: u32,
+        /// Modular feature bitflags bitmask (glare, fresnel, inner warp, cracks, scanlines).
+        pub feature_flags: u32,
+        /// Exact active frame index in the Texture2DArray.
+        pub frame_index: u32,
+        /// Media exposure stops, dielectric reflectance, Fresnel power, reflection strength.
+        pub optics_media: Vec4,
+        /// Glare roughness/strength, hit strength, hull hit angular width in radians.
+        pub optics_glare: Vec4,
+        /// Selection strength, shell alpha, facing strength, attack strength.
+        pub optics_signals: Vec4,
+        /// Direction toward the main light in world space; W is normalized illuminance.
+        pub optics_light: Vec4,
+    }
 }
+pub use gpu_layout::BubbleUniformGpu;
 
 impl Default for BubbleUniformGpu {
     fn default() -> Self {

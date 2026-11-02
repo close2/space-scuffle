@@ -726,7 +726,7 @@ fn swarm_stress_test_200_bubbles_populates_smog_field_with_default_5_0_and_3_4(
     });
     app.add_systems(Startup, client::bubble_shader::setup_bubble_assets_system);
     app.add_plugins(SmogPlugin);
-    app.add_systems(Update, client::lab_ui::sync_swarm_stress_system);
+    app.add_systems(Update, client::scene_controller::sync_swarm_stress_system);
 
     // Run ticks to spawn the 200 swarm bubbles and step the smog field
     for _ in 0..10 {
