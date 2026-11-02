@@ -29,7 +29,7 @@ struct BubbleUniform {
     shield_hit_flash: f32,       // Decaying ripple intensity
     hull_hit_angle_rad: f32,     // Direction of last damage impact
     hull_hit_flash: f32,         // Decaying impact flare
-    build_progress: f32,         // Vertical construction scanline fill (0.0..1.0)
+    build_progress: f32,         // Built share of the shell's height while anim_state is Constructing (0.0..1.0)
     selected: u32,
     cloaked: u32,
     feature_flags: u32,          // Bitmask controlling modular optics (offset 88)
@@ -77,6 +77,16 @@ fn voronoi_cracks(uv: vec2<f32>) -> f32 {
         }
     }
     return 1.0 - smoothstep(0.01, 0.04, min_dist);
+}
+
+// Share of a shell's height below this fragment: 0 at the base, 1 at the top. A dome stands on its
+// centre, so only its upper half counts. UVs cannot give this: Bevy's UV sphere has its poles on Z.
+fn construction_height(world_y: f32, center_y: f32, radius: f32, shape_kind: u32) -> f32 {
+    let height = (world_y - center_y) / max(radius, 0.001);
+    if (shape_kind == 1u) {
+        return clamp(height, 0.0, 1.0);
+    }
+    return clamp(0.5 * (height + 1.0), 0.0, 1.0);
 }
 
 @fragment
@@ -170,10 +180,11 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Progressive Construction Scanline Fill
     if (bubble.anim_state == 0u) { // Constructing
-        if (in.uv.y > bubble.build_progress) {
-            let grid_line = step(0.92, fract(in.uv.y * 20.0)) + step(0.92, fract(in.uv.x * 20.0));
+        let fill_height = construction_height(in.world_position.y, sphere_center.y, bubble.radius, bubble.shape_kind);
+        if (fill_height > bubble.build_progress) {
+            let grid_line = step(0.92, fract(fill_height * 20.0)) + step(0.92, fract(in.uv.x * 20.0));
             video_color = vec3<f32>(0.1, 0.6, 1.0) * min(grid_line, 1.0);
-        } else if (abs(in.uv.y - bubble.build_progress) < 0.02) {
+        } else if (abs(fill_height - bubble.build_progress) < 0.02) {
             video_color += vec3<f32>(1.0, 0.9, 0.4) * 0.8;
         }
     }

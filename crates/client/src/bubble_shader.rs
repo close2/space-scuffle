@@ -7,7 +7,8 @@
 //!
 //! # Invariants
 //! - `BubbleUniformGpu` memory layout is strictly 160 bytes and 16-byte aligned matching `bubble_dome.wgsl`.
-//! - Mobile units render as full UV spheres; building structures render as grounded hemisphere domes.
+//! - Mobile units and building domes share one full UV sphere mesh. A dome is placed with its centre
+//!   on the ground, so its lower half lies below the terrain and only the upper half is seen.
 //! - Missing or malformed media is retained as typed unavailable status; no texture is substituted.
 
 use asset_baker::manifest::FlipbookAtlasMeta;
@@ -102,7 +103,8 @@ mod gpu_layout {
         pub hull_hit_angle_rad: f32,
         /// Decaying hull impact flare intensity [0.0, 1.0].
         pub hull_hit_flash: f32,
-        /// Vertical construction wireframe scanline fill [0.0, 1.0].
+        /// Built share of the shell's height [0.0, 1.0]: 0 at the base, 1 at the top. Read only while
+        /// `anim_state` is `AnimState::Constructing`, so a production queue never paints the shell.
         pub build_progress: f32,
         /// Selection highlight flag (1 = selected, 0 = unselected).
         pub selected: u32,
@@ -402,7 +404,7 @@ impl FlipbookRegistry {
 pub struct BubbleSharedMeshes {
     /// Unit mobile sphere mesh (radius 1.0).
     pub sphere_mesh: Handle<Mesh>,
-    /// Building dome hemisphere mesh (radius 1.0, y >= 0.0).
+    /// Building dome mesh (radius 1.0): a full sphere whose lower half lies below the ground.
     pub dome_mesh: Handle<Mesh>,
 }
 
@@ -423,7 +425,8 @@ pub fn setup_bubble_assets_system(
     // 1. Mobile Unit Sphere Mesh (radius 1.0, high-tessellation UV sphere for smooth silhouette)
     let sphere = meshes.add(Sphere::new(1.0).mesh().uv(80, 52));
 
-    // 2. Building Dome Hemisphere Mesh (radius 1.0, high-tessellation UV hemisphere)
+    // 2. Building Dome Mesh (radius 1.0). A full sphere: its centre stands on the ground, which hides
+    // the lower half.
     let dome = meshes.add(Sphere::new(1.0).mesh().uv(80, 52));
 
     commands.insert_resource(BubbleSharedMeshes {
