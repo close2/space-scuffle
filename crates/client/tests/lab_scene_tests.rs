@@ -6,6 +6,7 @@
 //! - Every swarm bubble stays on the stage floor across its bounce range, and the whole swarm
 //!   stays in view (C-10).
 //! - Smog never draws over a bubble, at any depth, on the real GPU (C-7).
+//! - The Construction Progress slider drives the fill of the selected dome or sphere alone (5.8).
 
 #[allow(
     dead_code,
@@ -19,6 +20,7 @@ use bevy::render::camera::PerspectiveProjection;
 use client::lab_ui::LabVfxTrigger;
 use client::runtime_battle::{BattleDefinition, DEFAULT_BATTLE_SCENARIO};
 use client::scene_controller::{SWARM_MAX_X, SWARM_MIN_X};
+use sim_types::enums::{AnimState, ShapeKind};
 use sim_types::snapshot::CombatEventVisual;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -208,6 +210,53 @@ fn swarm_stays_on_the_stage_floor_and_in_view() -> TestResult {
                 to_ndc(&camera, swept)
             );
         }
+    }
+    Ok(())
+}
+
+/// 5.8: the shader takes its height from `shape_kind`, so the slider must keep working on both shapes.
+#[test]
+fn construction_slider_reaches_the_selected_dome_or_sphere() -> TestResult {
+    const PROGRESS: f32 = 0.3;
+    let probe = scene_app(client::LabState::default())?;
+    let catalog = &probe.world().resource::<client::CatalogResource>().0;
+    let mut lineup = client::scene_controller::ShowcaseLineup::default();
+    lineup.refresh(catalog, true);
+    let shapes: Vec<bool> = lineup
+        .archetypes(catalog)
+        .map(|archetype| matches!(archetype.shape, ShapeKind::BuildingDome { .. }))
+        .collect();
+    assert!(shapes.contains(&true) && shapes.contains(&false));
+
+    for (selected, is_dome) in shapes.into_iter().enumerate() {
+        let mut app = scene_app(client::LabState {
+            anim_state: AnimState::Constructing,
+            build_progress: PROGRESS,
+            selected_hero_index: selected,
+            ..default()
+        })?;
+        app.add_systems(Update, client::sync_lab_preview_system);
+        app.update();
+        app.update();
+
+        let mut heroes = app.world_mut().query::<(
+            &client::HeroLineupIndex,
+            &MeshMaterial3d<client::BubbleDomeMaterial>,
+        )>();
+        let materials = app.world().resource::<Assets<client::BubbleDomeMaterial>>();
+        let mut seen = 0;
+        for (index, material) in heroes.iter(app.world()) {
+            let uniform = materials.get(&material.0).ok_or("material lost")?.uniform;
+            seen += 1;
+            if index.0 == selected {
+                assert_eq!(uniform.shape_kind, u32::from(is_dome));
+                assert_eq!(uniform.anim_state, AnimState::Constructing as u32);
+                assert_eq!(uniform.build_progress, PROGRESS);
+            } else {
+                assert_ne!(uniform.anim_state, AnimState::Constructing as u32);
+            }
+        }
+        assert!(seen > 1, "the lineup must spawn for slot {selected}");
     }
     Ok(())
 }

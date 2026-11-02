@@ -54,6 +54,8 @@ pub struct BubbleRenderInstance {
     /// Progress (0.0..=1.0) of a foundation's construction or, on a finished building, of the
     /// job at the front of its queue. `None` when neither is under way. A foundation is told
     /// from a producing building by `anim_state`, which is `AnimState::Constructing` on it.
+    /// A client draws only the foundation case in the world. Production progress belongs in a
+    /// panel for the owner, so that the world view cannot show an enemy's queue.
     pub build_or_queue_progress: Option<f32>,
     /// Selection highlight flag (activates double ground ring).
     pub selected: bool,
