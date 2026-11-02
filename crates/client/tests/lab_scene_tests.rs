@@ -5,6 +5,14 @@
 //! - Combat VFX triggers place their effects inside the lab camera's view (C-9).
 //! - No swarm bubble overlaps the arena plateau or ramp, at spawn or across its bounce range, and
 //!   the whole swarm stays in view (C-10).
+//! - Smog never draws over a bubble, at any depth, on the real GPU (C-7).
+
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/gpu_run.rs"]
+mod gpu_run;
 
 use bevy::prelude::*;
 use bevy::render::camera::PerspectiveProjection;
@@ -185,5 +193,54 @@ fn swarm_never_overlaps_the_arena_plateau_or_ramp() -> TestResult {
             );
         }
     }
+    Ok(())
+}
+
+/// Median luminance of the rectangle `x_range` by `y_range` of a screenshot.
+fn median_luminance(
+    image: &image::GrayImage,
+    x_range: std::ops::Range<u32>,
+    y_range: std::ops::Range<u32>,
+) -> u8 {
+    let mut samples: Vec<u8> = y_range
+        .flat_map(|y| x_range.clone().map(move |x| (x, y)))
+        .map(|(x, y)| image.get_pixel(x, y).0[0])
+        .collect();
+    samples.sort_unstable();
+    samples[samples.len() / 2]
+}
+
+/// C-7: the volume had one sort key, its box centre. Bubbles beyond that depth were drawn first and
+/// all the smog on the ray landed on them, so far rows washed out and near rows did not.
+///
+/// The swarm is uniform art, so with correct compositing the far rows cannot be brighter than the
+/// near rows. Measured on the real renderer, medians were 96 far and 77 near before the fix, and 77
+/// far and 82 near after it. The bands are the rows' screen positions at the fixed 1280x720 window.
+#[test]
+fn smog_does_not_wash_out_bubbles_beyond_the_volume_centre() -> TestResult {
+    const ROWS_X: std::ops::Range<u32> = 480..1170;
+    const FAR_ROWS_Y: std::ops::Range<u32> = 205..390;
+    const NEAR_ROWS_Y: std::ops::Range<u32> = 400..545;
+    /// Headroom over the near rows, well below the 19 levels of the defect.
+    const TOLERANCE: u8 = 8;
+
+    if gpu_run::gpu_tests_opted_out() {
+        return Ok(());
+    }
+    let directory = tempfile::tempdir()?;
+    let screenshot = directory.path().join("swarm.png");
+    let mut command =
+        gpu_run::virtual_gpu_command(std::path::Path::new(env!("CARGO_BIN_EXE_client")));
+    command.args(["--swarm", "--max-frames", "40", "--screenshot-out"]);
+    command.arg(&screenshot);
+    gpu_run::assert_passes_validation(&mut command, "client --swarm --max-frames 40");
+
+    let image = image::open(&screenshot)?.to_luma8();
+    let far = median_luminance(&image, ROWS_X, FAR_ROWS_Y);
+    let near = median_luminance(&image, ROWS_X, NEAR_ROWS_Y);
+    assert!(
+        far <= near.saturating_add(TOLERANCE),
+        "smog washes out far rows: median luminance {far} far, {near} near"
+    );
     Ok(())
 }

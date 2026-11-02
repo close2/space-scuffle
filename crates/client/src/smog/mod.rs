@@ -10,6 +10,12 @@
 //!    and shedding wake vortices).
 //! 3. **3D Volumetric Raymarching Material:** Front-to-back Beer-Lambert raymarching shader sampling 3D density
 //!    and velocity textures with sub-voxel analytical spherical cavity carving and bow-wave rim compression.
+//! 4. **Persistent GPU Upload:** [`gpu_upload`] writes each step into textures and a uniform buffer that live
+//!    for the whole run. After startup the smog assets are never modified.
+//!
+//! # Failure Policy
+//! Startup and step failures are typed [`SmogError`] values reported through the media failure path.
+//! Nothing here substitutes another unit's media, a placeholder texture or an invented identity.
 
 pub mod fluid;
 pub mod gpu_upload;

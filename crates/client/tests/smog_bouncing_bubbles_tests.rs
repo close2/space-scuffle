@@ -1323,8 +1323,8 @@ fn live_battle_cavity_slots_go_to_the_units_nearest_the_view_center(
 
     let uniform = app.world().resource::<client::smog::SmogGpuFrame>().uniform;
     assert_eq!(
-        uniform.control_params.x as usize,
-        client::MAX_SMOG_SHADER_BUBBLES
+        uniform.control_params.x,
+        client::MAX_SMOG_SHADER_BUBBLES as f32
     );
     let mut slots: Vec<f32> = uniform
         .bubble_pos_radius

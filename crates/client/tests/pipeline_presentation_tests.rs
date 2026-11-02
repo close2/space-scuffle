@@ -224,6 +224,26 @@ fn allocation_positive_control() -> Vec<u8> {
     std::hint::black_box(vec![17; 4096])
 }
 
+/// C-5: the shader reads no position, so a unit may only touch its material when it turns.
+fn assert_only_turning_units_touched_materials(app: &App, before: &sim_types::RenderSnapshot) {
+    let session = app.world().resource::<BattleSession>();
+    let turning = before
+        .bubbles
+        .iter()
+        .zip(&session.frames.presented().bubbles)
+        .filter(|(a, b)| a.heading_angle_rad.to_bits() != b.heading_angle_rad.to_bits())
+        .count();
+    let touched = app
+        .world()
+        .resource::<Events<AssetEvent<client::BubbleDomeMaterial>>>()
+        .len();
+    assert!(
+        turning < before.bubbles.len() && touched <= turning * 16,
+        "{touched} material events over 16 no-tick frames, {turning} of {} bubbles turning",
+        before.bubbles.len()
+    );
+}
+
 #[test]
 fn moving_no_tick_frames_interpolate_and_real_death_changes_membership() -> TestResult {
     let mut app = presentation_app()?;
@@ -259,22 +279,7 @@ fn moving_no_tick_frames_interpolate_and_real_death_changes_membership() -> Test
     profiler_gate()?;
     measured_moving_no_tick_presentation(&mut app);
     let session = app.world().resource::<BattleSession>();
-    // C-5: the shader reads no position, so a unit may only touch its material when it turns.
-    let turning = before
-        .bubbles
-        .iter()
-        .zip(&session.frames.presented().bubbles)
-        .filter(|(a, b)| a.heading_angle_rad.to_bits() != b.heading_angle_rad.to_bits())
-        .count();
-    let touched = app
-        .world()
-        .resource::<Events<AssetEvent<client::BubbleDomeMaterial>>>()
-        .len();
-    assert!(
-        turning < before.bubbles.len() && touched <= turning * 16,
-        "{touched} material events over 16 no-tick frames, {turning} of {} bubbles turning",
-        before.bubbles.len()
-    );
+    assert_only_turning_units_touched_materials(&app, &before);
     assert_eq!(session.frames.current().tick, tick);
     assert_eq!(
         app.world()

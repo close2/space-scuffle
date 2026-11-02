@@ -11,6 +11,7 @@
 //! - All fields are strictly finite; zero NaN or Inf values are committed to GPU uniform buffers.
 //! - Front-face culling is specialized so back-faces rasterize each covered pixel exactly once whether the camera
 //!   is inside or outside the volume bounding box.
+//! - The volume sorts behind every other transparent mesh, so it never draws over a unit.
 
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
@@ -19,6 +20,19 @@ use bevy::render::render_resource::{AsBindGroup, Face, ShaderRef, ShaderType};
 /// Maximum number of active bubble spheres packed directly into the volumetric shader uniform
 /// for sub-voxel spherical cavity carving and bow-wave compression.
 pub const MAX_SMOG_SHADER_BUBBLES: usize = 16;
+
+/// View-depth bias that makes the smog volume draw before every other transparent mesh.
+///
+/// Bevy sorts transparent meshes by the view depth of their origin, so one key stands for the whole
+/// volume. Bubbles write no depth, so the shader cannot clip against them. Captures showed the
+/// result: bubbles beyond the box centre were drawn first and smog from the whole ray landed on top
+/// of them, while nearer bubbles stayed clean, with a sharp line between the two. Drawing smog first
+/// keeps units readable at every depth, at the cost of smog never passing in front of a unit.
+/// The value only has to exceed any camera distance, and it affects sorting alone.
+pub const SMOG_SORT_BIAS: f32 = -1.0e6;
+
+// The widest supported map is far below 4096 world units, even at the maximum zoom distance.
+const _: () = assert!(SMOG_SORT_BIAS < -(crate::camera::MAX_CAMERA_DISTANCE + 4096.0));
 
 /// Chooses which bubbles receive one of the fixed analytic cavity slots.
 ///
@@ -59,13 +73,13 @@ impl CavitySlots {
             self.len += 1;
             self.len - 1
         } else {
-            let (farthest, &farthest_distance) = self
-                .distance_sq
-                .iter()
-                .enumerate()
-                .max_by(|a, b| a.1.total_cmp(b.1))
-                .expect("invariant: the array has MAX_SMOG_SHADER_BUBBLES > 0 entries");
-            if distance_sq >= farthest_distance {
+            let mut farthest = 0;
+            for slot in 1..MAX_SMOG_SHADER_BUBBLES {
+                if self.distance_sq[slot] > self.distance_sq[farthest] {
+                    farthest = slot;
+                }
+            }
+            if distance_sq >= self.distance_sq[farthest] {
                 return;
             }
             farthest
@@ -174,6 +188,11 @@ impl Material for SmogVolumeMaterial {
 
     fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::Premultiplied
+    }
+
+    /// Sorts the volume behind every other transparent mesh. See [`SMOG_SORT_BIAS`].
+    fn depth_bias(&self) -> f32 {
+        SMOG_SORT_BIAS
     }
 
     fn specialize(
