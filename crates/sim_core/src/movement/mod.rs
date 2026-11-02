@@ -8,13 +8,15 @@
 
 pub(crate) mod collision;
 pub(crate) mod geometry;
+mod grid;
 mod locomotion;
 pub(crate) mod math;
+pub(crate) mod tuning;
 pub use math::MovementMathError;
 
 use crate::{Entity, SimWorld, SimulationDiagnostic, SteeringObstacle, UnitCatalog};
 use sim_map::GameMap;
-use sim_types::{EntityId, MoverType, PlayerId, SimScalar, SimVec2, Tick, UnitOrder};
+use sim_types::{AttackOrigin, EntityId, MoverType, PlayerId, SimScalar, SimVec2, Tick, UnitOrder};
 use thiserror::Error;
 
 /// Collision/navigation domain derived from the authored mover capability.
@@ -113,7 +115,7 @@ pub enum MovementAdmissionError {
     /// The destination cannot contain this actor's full radius.
     #[error("movement destination lies outside the full-radius map domain of {0:?}")]
     OutsideDomain(EntityId),
-    /// This API only admits Move and AttackMove orders.
+    /// This API only admits `Move` and `AttackMove` orders.
     #[error("movement admission requires Move or AttackMove")]
     UnsupportedOrder,
     /// Authoritative state is malformed; also emitted through diagnostics.
@@ -139,6 +141,38 @@ pub struct MovementOutcome {
     pub player: PlayerId,
     /// Atomic selection result. Normal rejection is nonfatal.
     pub result: Result<MovementReceipt, MovementAdmissionError>,
+}
+
+/// What became of a unit's route, for callers that must show or react to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteOutcomeKind {
+    /// The destination cannot be reached, so the order now ends at the nearest point that can.
+    Retargeted {
+        /// Destination in the order as issued, in world units.
+        requested: SimVec2,
+        /// Nearest reachable point the unit walks to instead, in world units.
+        reachable: SimVec2,
+    },
+    /// No point closer to the destination is reachable from here; the order ended.
+    Unreachable,
+    /// The unit stopped getting closer for too long; the order ended where it stands.
+    NoProgress,
+    /// An attack order ended because its target has no route the unit may take.
+    PursuitAbandoned {
+        /// The target given up on.
+        target: EntityId,
+    },
+}
+
+/// One unit's route event during a tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RouteOutcome {
+    /// Executed tick that produced this event.
+    pub tick: Tick,
+    /// Unit concerned.
+    pub entity: EntityId,
+    /// What happened.
+    pub kind: RouteOutcomeKind,
 }
 
 /// Exact destination placement rejection; no nearest-free substitution is performed.
@@ -170,13 +204,27 @@ pub enum DisplacementAdmissionError {
 #[derive(Default)]
 pub(crate) struct MovementWorkspace {
     pub outcomes: Vec<MovementOutcome>,
+    pub route_outcomes: Vec<RouteOutcome>,
+    pub path_searches: u64,
     pub obstacles: [Vec<SteeringObstacle>; 2],
+    grids: [grid::BodyGrid; 2],
+    largest_radius: [SimScalar; 2],
+    neighbours: Vec<SteeringObstacle>,
     recipients: Vec<EntityId>,
     entries: Vec<locomotion::MotionEntry>,
-    pub(crate) collision_entries: Vec<locomotion::MotionEntry>,
+    /// Whether `entries` came from this tick's movement phase and may serve collision.
+    entries_are_fresh: bool,
+    bodies: Vec<collision::CollisionBody>,
+    pushes: Vec<collision::BodyPush>,
+    collision_grid: grid::BodyGrid,
+    pair_scratch: Vec<usize>,
     phase_ids: Vec<EntityId>,
-    pursuits: Vec<(locomotion::MotionEntry, EntityId)>,
+    pursuits: Vec<(locomotion::MotionEntry, EntityId, AttackOrigin)>,
     casts: Vec<(locomotion::MotionEntry, locomotion::CastRequest)>,
+    reach_cache: Option<locomotion::ReachCache>,
+    /// Per player: knowledge of the map changed, so every route is looked at this tick.
+    pub recheck_routes: [bool; 8],
+    seen_nav_version: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -252,7 +300,7 @@ impl MotionPolicy {
 pub(crate) fn circles_overlap(a: SimVec2, ar: SimScalar, b: SimVec2, br: SimScalar) -> bool {
     let dx = (i128::from(a.x.raw()) - i128::from(b.x.raw())).unsigned_abs();
     let dy = (i128::from(a.y.raw()) - i128::from(b.y.raw())).unsigned_abs();
-    let sum = (i128::from(ar.raw()) + i128::from(br.raw())) as u128;
+    let sum = (i128::from(ar.raw()) + i128::from(br.raw())).unsigned_abs();
     dx < sum && dy < sum && dx * dx < sum * sum - dy * dy
 }
 
@@ -267,6 +315,19 @@ impl SimWorld {
     /// catch-up advances again; indices belong to that exact tick's input bundle.
     pub fn drain_movement_outcomes(&mut self) -> std::vec::Drain<'_, MovementOutcome> {
         self.movement.outcomes.drain(..)
+    }
+
+    /// Route events of the latest tick. Derived output, excluded from checksums and never
+    /// consulted by the simulation; cleared at the start of every tick.
+    #[must_use]
+    pub fn route_outcomes(&self) -> &[RouteOutcome] {
+        &self.movement.route_outcomes
+    }
+
+    /// Total pathfinder searches this world has run. Derived output for tests and benchmarks.
+    #[must_use]
+    pub fn path_search_count(&self) -> u64 {
+        self.movement.path_searches
     }
 
     pub(crate) fn report_movement_invariant(&mut self, source: MovementInvariant) {
@@ -434,21 +495,8 @@ impl SimWorld {
     }
 }
 
-/// Conservative integer envelope for the existing grid's floor-based radius API.
-/// Wide addition precedes ceiling; map clipping bounds iteration without reducing
-/// the set of possible in-map collider centers.
-pub(crate) fn conservative_query_radius(
-    map: &GameMap,
-    first: SimScalar,
-    maximum: SimScalar,
-) -> SimScalar {
-    let raw = i128::from(first.raw()) + i128::from(maximum.raw());
-    let cells = ((raw + (1_i128 << 32) - 1) >> 32).min(i128::from(map.width().max(map.height())));
-    SimScalar::from_raw((cells << 32).min(i128::from(i64::MAX)) as i64)
-}
-
 /// Euclidean distance in raw Q32.32, widening before squaring. The squared
-/// intermediate is Q64.64 and never narrows to SimScalar. If its u128 sum or
+/// intermediate is Q64.64 and never narrows to `SimScalar`. If its u128 sum or
 /// final i64 root does not fit, the final distance itself cannot be represented.
 #[must_use]
 pub fn checked_distance(a: SimVec2, b: SimVec2) -> Option<SimScalar> {

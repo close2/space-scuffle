@@ -4,7 +4,7 @@
 //! enum tags keep the byte stream independent of platform layouts and serde formats.
 //! Exhaustive struct destructuring makes field additions require checksum review.
 
-use crate::entity::{ActiveBuff, ActiveProjectile, Entity, WeaponPhase};
+use crate::entity::{ActiveBuff, ActiveProjectile, Entity, MovementMemory, WeaponPhase};
 use crate::production::ProductionJob;
 use crate::world::{ActiveHazardZone, PlayerResources};
 use sim_map::{
@@ -20,11 +20,27 @@ use sim_types::{
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use xxhash_rust::xxh64::Xxh64;
 
-pub(super) struct Encoder(Xxh64);
+/// Bytes gathered before the hasher sees them.
+const ENCODER_BUFFER_BYTES: usize = 4096;
+
+// PERFORMANCE RATIONALE:
+// Why: A world digest is millions of one- and two-byte fields, and each hasher update call costs
+// far more than the bytes it carries. On a 256x256 map this dominated the whole tick.
+// What: Gather fields in a stack buffer and hand the hasher whole blocks.
+// Trade-off: A copy per field. xxHash is a stream, so the digest is byte-for-byte unchanged.
+pub(super) struct Encoder {
+    hasher: Xxh64,
+    buffer: [u8; ENCODER_BUFFER_BYTES],
+    filled: usize,
+}
 
 impl Encoder {
     pub(super) fn new(domain: &str) -> Self {
-        let mut encoder = Self(Xxh64::new(0));
+        let mut encoder = Self {
+            hasher: Xxh64::new(0),
+            buffer: [0; ENCODER_BUFFER_BYTES],
+            filled: 0,
+        };
         domain.encode(&mut encoder);
         super::CHECKSUM_SCHEMA_VERSION.encode(&mut encoder);
         encoder
@@ -34,8 +50,22 @@ impl Encoder {
         (length as u64).encode(self);
     }
 
-    pub(super) fn finish(self) -> u64 {
-        self.0.digest()
+    fn write(&mut self, bytes: &[u8]) {
+        if bytes.len() > ENCODER_BUFFER_BYTES - self.filled {
+            self.hasher.update(&self.buffer[..self.filled]);
+            self.filled = 0;
+            if bytes.len() > ENCODER_BUFFER_BYTES {
+                self.hasher.update(bytes);
+                return;
+            }
+        }
+        self.buffer[self.filled..self.filled + bytes.len()].copy_from_slice(bytes);
+        self.filled += bytes.len();
+    }
+
+    pub(super) fn finish(mut self) -> u64 {
+        self.hasher.update(&self.buffer[..self.filled]);
+        self.hasher.digest()
     }
 }
 
@@ -47,7 +77,7 @@ macro_rules! integers {
     ($($ty:ty),+ $(,)?) => {$ (
         impl Canonical for $ty {
             fn encode(&self, encoder: &mut Encoder) {
-                encoder.0.update(&self.to_le_bytes());
+                encoder.write(&self.to_le_bytes());
             }
         }
     )+};
@@ -63,7 +93,7 @@ impl Canonical for bool {
 impl Canonical for str {
     fn encode(&self, encoder: &mut Encoder) {
         encoder.length(self.len());
-        encoder.0.update(self.as_bytes());
+        encoder.write(self.as_bytes());
     }
 }
 
@@ -194,6 +224,17 @@ macro_rules! fields {
 }
 
 fields!(SimVec2 { x, y });
+fields!(MovementMemory {
+    arrived_at,
+    progress_best,
+    progress_legs,
+    progress_tail,
+    stalled_ticks,
+    repath_cooldown,
+    abandoned_target,
+    abandoned_ticks,
+    flank_left
+});
 fields!(ActiveBuff {
     buff_id,
     remaining_ticks,
@@ -220,6 +261,7 @@ fields!(Entity {
     ticks_since_last_damage,
     order_queue,
     current_funnel_waypoints,
+    movement,
     weapon_phase,
     weapon_cooldown_remaining,
     active_buffs,
@@ -497,7 +539,7 @@ mod tests {
         // Domain length, UTF-8 domain, schema u32, u16, i32, option tags/payload,
         // then UTF-8 string byte length and its two encoded bytes.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 7, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 8, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
             0xff, 0xff, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0xc3, 0xa9,
         ];
         assert_eq!(encoder.finish(), xxh64(&bytes, 0));
@@ -507,6 +549,27 @@ mod tests {
         let mut encoder = Encoder::new("test");
         value.encode(&mut encoder);
         encoder.finish()
+    }
+
+    #[test]
+    fn digest_does_not_depend_on_how_fields_meet_the_buffer() {
+        // Straddles the buffer boundary and then exceeds the whole buffer in one field.
+        for length in [
+            1,
+            super::ENCODER_BUFFER_BYTES - 1,
+            super::ENCODER_BUFFER_BYTES,
+            3 * super::ENCODER_BUFFER_BYTES,
+        ] {
+            let text = "x".repeat(length);
+            let mut encoder = Encoder::new("test");
+            7_u32.encode(&mut encoder);
+            text.as_str().encode(&mut encoder);
+            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 8, 0, 0, 0];
+            bytes.extend([7, 0, 0, 0]);
+            bytes.extend((length as u64).to_le_bytes());
+            bytes.extend(text.as_bytes());
+            assert_eq!(encoder.finish(), xxh64(&bytes, 0));
+        }
     }
 
     #[test]
@@ -521,7 +584,7 @@ mod tests {
         // Domain length and bytes, schema 5, queue length, archetype u16,
         // then the full remaining duration u32 (0x0001_0001).
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 7, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 8, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
             0x34, 0x12, 1, 0, 1, 0, 0x78, 0x56, 0x34, 0x12,
         ];
         assert_eq!(digest(&queue), xxh64(&bytes, 0));
@@ -529,7 +592,7 @@ mod tests {
 
     #[test]
     fn carrier_identity_has_explicit_option_tag_and_all_id_bytes() {
-        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 7, 0, 0, 0];
+        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 8, 0, 0, 0];
         bytes.push(0);
         assert_eq!(digest(&None::<sim_types::EntityId>), xxh64(&bytes, 0));
         bytes.pop();

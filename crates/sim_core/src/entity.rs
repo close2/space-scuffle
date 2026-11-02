@@ -124,6 +124,44 @@ pub struct ActiveProjectile {
     pub remaining_lifetime_ticks: u16,
 }
 
+/// What a unit remembers about its movement order between ticks.
+///
+/// All of this is authoritative: it decides when an order ends, so it is hashed by the checksum.
+/// A new order starts it afresh, apart from [`Self::abandoned_target`], which outlives orders.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MovementMemory {
+    /// Destination this unit finished moving to. Others heading there stop against this unit.
+    pub arrived_at: Option<SimVec2>,
+    /// Shortest remaining route length seen on this order, in world units.
+    pub progress_best: Option<SimScalar>,
+    /// Waypoint count of the route `progress_tail` was measured on.
+    pub progress_legs: u16,
+    /// Route length beyond the next waypoint, in world units.
+    pub progress_tail: SimScalar,
+    /// Ticks since the remaining route length last shortened.
+    pub stalled_ticks: u16,
+    /// Ticks until this unit may search for a route again.
+    pub repath_cooldown: u16,
+    /// Enemy this unit gave up chasing, which automatic targeting skips for a while.
+    pub abandoned_target: Option<EntityId>,
+    /// Ticks until that enemy may be chosen again.
+    pub abandoned_ticks: u16,
+    /// Side this unit walks along a crowd blocking its target: left of its heading when true.
+    pub flank_left: bool,
+}
+
+impl MovementMemory {
+    /// Clears everything tied to the current order.
+    pub(crate) fn restart(&mut self) {
+        *self = Self {
+            abandoned_target: self.abandoned_target,
+            abandoned_ticks: self.abandoned_ticks,
+            flank_left: self.flank_left,
+            ..Self::default()
+        };
+    }
+}
+
 /// Authoritative simulation entity state for a single unit or building dome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
@@ -138,7 +176,8 @@ pub struct Entity {
     pub position: SimVec2,
     /// Authoritative position at the start of the current simulation tick.
     pub pos_at_tick_start: SimVec2,
-    /// 2D linear velocity per tick.
+    /// During the tick, the velocity movement intends; afterward, the displacement this unit
+    /// actually achieved. A unit pressing against a wall therefore reads as stationary.
     pub velocity: SimVec2,
     /// Hull facing angle.
     pub heading: SimAngle,
@@ -156,6 +195,8 @@ pub struct Entity {
     pub order_queue: VecDeque<UnitOrder>,
     /// Simple Stupid Funnel string-pulled waypoints along `NavMesh`.
     pub current_funnel_waypoints: Vec<SimVec2>,
+    /// Movement order progress carried between ticks.
+    pub movement: MovementMemory,
     /// Weapon state machine phase.
     pub weapon_phase: WeaponPhase,
     /// Remaining ticks until weapon cooldown expires.
@@ -221,7 +262,7 @@ impl Entity {
     #[must_use]
     #[inline]
     pub fn cannot_be_pushed(&self) -> bool {
-        self.is_holding_position || self.unpushable || self.is_immobile
+        self.is_on_hold() || self.unpushable || self.is_immobile
     }
 
     /// Creates a new entity initialized from its archetype definition.
@@ -250,6 +291,11 @@ impl Entity {
             ticks_since_last_damage: 250, // Starts ready for shield regen
             order_queue: VecDeque::new(),
             current_funnel_waypoints: Vec::new(),
+            movement: MovementMemory {
+                // Half of any group goes each way round, without needing to confer.
+                flank_left: id.0.is_multiple_of(2),
+                ..MovementMemory::default()
+            },
             weapon_phase: WeaponPhase::Ready,
             weapon_cooldown_remaining: 0,
             active_buffs: Vec::new(),
@@ -369,6 +415,7 @@ impl Entity {
             return;
         }
 
+        self.movement.restart();
         match order {
             UnitOrder::Move { target } => {
                 self.handle_interrupting_move(target);

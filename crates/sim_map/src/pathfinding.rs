@@ -59,6 +59,26 @@ impl UnitClearance {
         }
     }
 
+    /// Selects the tier that routes a disc of `radius` world units.
+    ///
+    /// A gap is a whole number of cells wide, so the only width that separates the tiers below
+    /// [`Self::Large`] is one cell: any disc of radius 0.5 or less fits through it. Routing such a
+    /// unit as [`Self::Medium`] would forbid gaps that its collision body passes.
+    #[must_use]
+    pub fn for_radius(radius: SimScalar) -> Self {
+        if radius <= SimScalar::HALF {
+            Self::Small
+        } else if radius <= Self::MEDIUM_TIER_LIMIT {
+            Self::Medium
+        } else {
+            Self::Large
+        }
+    }
+
+    /// Largest radius [`Self::Medium`] routes, 0.875. It and [`Self::Large`] both need a gap two
+    /// cells wide, so this boundary only decides how far routes keep from corners.
+    const MEDIUM_TIER_LIMIT: SimScalar = SimScalar::from_raw(7 << 29);
+
     /// Returns the clearance this tier needs, in eighths of a world unit, rounded up.
     ///
     /// Compare against [`Pathfinder::clearance_at`].
@@ -703,6 +723,89 @@ impl Pathfinder {
             });
         }
 
+        if self.segment_is_passable(map, request, request.start, request.goal) {
+            // PERFORMANCE RATIONALE:
+            // Why: An army crossing open ground issues hundreds of searches whose funnel
+            // collapses to the straight line, each visiting and portalling every corridor cell.
+            // What: Test the straight line first with the predicate that validates routes.
+            // Trade-off: A failed test adds one line walk before the search, which is small
+            // next to the search it precedes.
+            return Ok(PathResult {
+                waypoints: vec![request.start, request.goal],
+                total_length: request.start.distance(request.goal),
+            });
+        }
+
+        let found_path = self.search_corridor(map, request, start_idx, (goal_cx, goal_cy));
+
+        if !found_path {
+            return Err(MapError::NoPathFound {
+                start: request.start,
+                goal: request.goal,
+            });
+        }
+
+        // Reconstruct corridor of cells
+        self.buffers.corridor_cells.clear();
+        let mut curr = goal_idx as u32;
+        self.buffers.corridor_cells.push(curr);
+        while curr != start_idx as u32 {
+            curr = self.buffers.came_from[curr as usize];
+            self.buffers.corridor_cells.push(curr);
+        }
+        self.buffers.corridor_cells.reverse();
+
+        // Build portals from corridor
+        self.build_portals(map, request);
+
+        // Run Simple Stupid Funnel string-pulling
+        let mut waypoints = self.run_funnel(map, request);
+        if !waypoints
+            .windows(2)
+            .all(|pair| self.segment_is_passable(map, request, pair[0], pair[1]))
+        {
+            waypoints = self.smooth_connected_corridor(map, request)?;
+        }
+
+        let mut total_length = SimScalar::ZERO;
+        for w in waypoints.windows(2) {
+            total_length += w[0].distance(w[1]);
+        }
+
+        Ok(PathResult {
+            waypoints,
+            total_length,
+        })
+    }
+
+    /// Runs A* from `start_idx` toward `goal`, leaving every cell it reached marked visited.
+    ///
+    /// Returns whether the goal cell was reached. On `false` the search has exhausted the region
+    /// connected to the start, which is what [`Self::nearest_reachable_point`] relies on.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "cell indices are stored as u32 by design, and start was validated on the map"
+    )]
+    fn search_corridor(
+        &mut self,
+        map: &GameMap,
+        request: &PathRequestWithVision<'_>,
+        start_idx: usize,
+        (goal_cx, goal_cy): (u32, u32),
+    ) -> bool {
+        let goal_idx = (goal_cy as usize) * (self.width as usize) + (goal_cx as usize);
+        let start_cx = start_idx as u32 % self.width;
+        let start_cy = start_idx as u32 / self.width;
+        let req_clearance = request.clearance.required_clearance();
+        let start_cliff = map
+            .cell(start_cx, start_cy)
+            .map_or(crate::grid::CliffLevel(0), |cell| cell.cliff_level);
+        let clearance_table = if request.vision.is_some() || request.known_structures.is_some() {
+            &self.static_clearance_grid
+        } else {
+            &self.clearance_grid
+        };
+
         // Initialize A* search state
         self.buffers.current_generation = self.buffers.current_generation.wrapping_add(1);
         if self.buffers.current_generation == 0 {
@@ -803,45 +906,65 @@ impl Pathfinder {
         }
 
         self.buffers.clear_open();
+        found_path
+    }
 
-        if !found_path {
-            return Err(MapError::NoPathFound {
-                start: request.start,
-                goal: request.goal,
-            });
+    /// Finds the world point closest to `request.goal` that this unit can actually reach.
+    ///
+    /// A blocked goal, or one cut off from the start, is the normal case for a click on a cliff
+    /// or behind a wall. The answer is the centre of the reachable cell nearest the goal, with ties
+    /// going to the lowest cell index, so every unit in one connected region gets the same point.
+    /// Returns `Ok(None)` when the unit already stands in that cell.
+    ///
+    /// # Errors
+    /// Returns [`MapError::InvalidStart`] if the unit cannot path from where it stands, including
+    /// when `request.start` lacks this tier's clearance.
+    // PERFORMANCE RATIONALE:
+    // Why: The answer needs the whole connected region, and a group asks the same question.
+    // What: The search that fails has already marked that region; this scans the marks once.
+    // Trade-off: O(map area) per call, so callers must cache per goal and throttle by unit.
+    pub fn nearest_reachable_point(
+        &mut self,
+        map: &GameMap,
+        request: &PathRequestWithVision<'_>,
+    ) -> Result<Option<SimVec2>> {
+        let invalid_start = || MapError::InvalidStart(request.start);
+        let (start_cx, start_cy) = map
+            .world_to_cell(request.start)
+            .map_err(|_| invalid_start())?;
+        let start_idx = (start_cy as usize) * (self.width as usize) + (start_cx as usize);
+        let clearance_table = if request.vision.is_some() || request.known_structures.is_some() {
+            &self.static_clearance_grid
+        } else {
+            &self.clearance_grid
+        };
+        if clearance_table[start_idx] < request.clearance.required_clearance() {
+            return Err(invalid_start());
         }
+        let goal = map
+            .world_to_cell(request.goal)
+            .map_err(|_| MapError::InvalidGoal(request.goal))?;
+        self.search_corridor(map, request, start_idx, goal);
 
-        // Reconstruct corridor of cells
-        self.buffers.corridor_cells.clear();
-        let mut curr = goal_idx as u32;
-        self.buffers.corridor_cells.push(curr);
-        while curr != start_idx as u32 {
-            curr = self.buffers.came_from[curr as usize];
-            self.buffers.corridor_cells.push(curr);
+        let generation = self.buffers.current_generation;
+        let mut best: Option<(u64, u32)> = None;
+        for (index, &mark) in self.buffers.visited_generation.iter().enumerate() {
+            if mark != generation {
+                continue;
+            }
+            let Ok(index) = u32::try_from(index) else {
+                break;
+            };
+            let dx = u64::from((index % self.width).abs_diff(goal.0));
+            let dy = u64::from((index / self.width).abs_diff(goal.1));
+            let distance_sq = dx * dx + dy * dy;
+            if best.is_none_or(|(closest, _)| distance_sq < closest) {
+                best = Some((distance_sq, index));
+            }
         }
-        self.buffers.corridor_cells.reverse();
-
-        // Build portals from corridor
-        self.build_portals(map, request);
-
-        // Run Simple Stupid Funnel string-pulling
-        let mut waypoints = self.run_funnel(map, request);
-        if !waypoints
-            .windows(2)
-            .all(|pair| self.segment_is_passable(map, request, pair[0], pair[1]))
-        {
-            waypoints = self.smooth_connected_corridor(map, request)?;
-        }
-
-        let mut total_length = SimScalar::ZERO;
-        for w in waypoints.windows(2) {
-            total_length += w[0].distance(w[1]);
-        }
-
-        Ok(PathResult {
-            waypoints,
-            total_length,
-        })
+        best.filter(|&(_, index)| index as usize != start_idx)
+            .map(|(_, index)| map.cell_to_world_center(index % self.width, index / self.width))
+            .transpose()
     }
 
     /// Validates a continuous world-space segment using this request's current

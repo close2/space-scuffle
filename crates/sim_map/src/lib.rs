@@ -45,7 +45,7 @@ pub use validation::{
     MAX_PLAYER_SLOTS, MIN_RECOMMENDED_RAMP_WIDTH, MIN_START_LOCATIONS, MIN_START_SEPARATION_CELLS,
     RESOURCE_ASSOCIATION_RADIUS_CELLS, VALIDATION_PATH_CLEARANCE,
 };
-pub use vision::{PlayerVisionMap, VisionSource, MAX_SIGHT_RADIUS_CELLS};
+pub use vision::{watchtower_source, PlayerVisionMap, VisionSource, MAX_SIGHT_RADIUS_CELLS};
 
 /// Canonical type alias for [`GameMap`] matching simulation core naming conventions.
 pub type SimMap = GameMap;

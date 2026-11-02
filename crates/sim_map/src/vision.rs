@@ -12,7 +12,7 @@
 //! Sight radii above [`MAX_SIGHT_RADIUS_CELLS`] are rejected when maps and catalogs load, so
 //! the clamp in [`PlayerVisionMap::apply_vision_source`] never shortens authored data.
 
-use crate::grid::{CellFlags, GameMap};
+use crate::grid::{CellFlags, GameMap, Watchtower};
 use sim_types::{MoverType, PlayerId, SimScalar, SimVec2, VisibilityState};
 use std::sync::OnceLock;
 
@@ -120,8 +120,19 @@ fn get_ray_table() -> &'static RayTable {
     GLOBAL_RAY_TABLE.get_or_init(RayTable::new)
 }
 
+/// How one cast changes a vision map.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SightChange {
+    /// Counts the source only; [`PlayerVisionMap::end_tick_update`] settles visibility afterward.
+    Tally,
+    /// Adds the source and settles each cell at once.
+    Add,
+    /// Takes the source back out and settles each cell at once.
+    Remove,
+}
+
 /// Vision source query parameters.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VisionSource {
     /// World position of the observing unit.
     pub pos: SimVec2,
@@ -131,6 +142,17 @@ pub struct VisionSource {
     pub sight_radius: SimScalar,
     /// Whether this observer is an active detector (reveals cloaked / burrowed units).
     pub is_detector: bool,
+}
+
+/// The sight a watchtower gives its controlling player.
+#[must_use]
+pub fn watchtower_source(tower: &Watchtower) -> VisionSource {
+    VisionSource {
+        pos: tower.pos,
+        mover_type: MoverType::Air, // Elevated observation platform overlooks cliffs
+        sight_radius: tower.reveal_radius,
+        is_detector: false,
+    }
 }
 
 /// Authoritative Fog of War map for a single player.
@@ -148,6 +170,8 @@ pub struct PlayerVisionMap {
     visited_in_source: Vec<u32>,
     /// Monotonically increasing generation ID for per-source deduplication.
     current_source_gen: u32,
+    /// Counts full recounts, so an incremental owner can tell it no longer knows the contents.
+    recount_revision: u64,
 }
 
 impl PlayerVisionMap {
@@ -163,11 +187,20 @@ impl PlayerVisionMap {
             detector_counter: vec![0; size],
             visited_in_source: vec![0; size],
             current_source_gen: 0,
+            recount_revision: 0,
         }
+    }
+
+    /// Changes whenever a full recount begins or fog is reset. Sources added incrementally before
+    /// that are no longer accounted for.
+    #[must_use]
+    pub fn recount_revision(&self) -> u64 {
+        self.recount_revision
     }
 
     /// Sets all cells on the map to `VisibilityState::Fogged` (competitive SC2 melee map terrain knowledge).
     pub fn set_all_fogged(&mut self) {
+        self.recount_revision = self.recount_revision.wrapping_add(1);
         self.states.fill(VisibilityState::Fogged);
     }
 
@@ -187,6 +220,7 @@ impl PlayerVisionMap {
 
     /// Resets active tick sight counters before re-evaluating allied units.
     pub fn begin_tick_update(&mut self) {
+        self.recount_revision = self.recount_revision.wrapping_add(1);
         self.visible_counter.fill(0);
         self.detector_counter.fill(0);
     }
@@ -200,6 +234,45 @@ impl PlayerVisionMap {
     /// - `LoS` blocker smoke-vent occlusion.
     /// - Air observer elevation bypassing cliff occlusion.
     pub fn apply_vision_source(&mut self, map: &GameMap, source: &VisionSource) {
+        self.cast(map, source, SightChange::Tally);
+    }
+
+    /// Adds a source outside the tick update, settling every cell it touches immediately.
+    ///
+    /// Together with [`Self::remove_vision_source`] this leaves the map exactly as a full recount
+    /// would, provided the terrain has not changed since the removed source was added.
+    pub fn add_vision_source(&mut self, map: &GameMap, source: &VisionSource) {
+        self.cast(map, source, SightChange::Add);
+    }
+
+    /// Removes a source added earlier, settling every cell it touched immediately.
+    pub fn remove_vision_source(&mut self, map: &GameMap, source: &VisionSource) {
+        self.cast(map, source, SightChange::Remove);
+    }
+
+    /// Records one source seeing the cell at `index`.
+    #[inline]
+    fn mark(&mut self, index: usize, is_detector: bool, change: SightChange) {
+        if change == SightChange::Remove {
+            self.visible_counter[index] = self.visible_counter[index].saturating_sub(1);
+            if is_detector {
+                self.detector_counter[index] = self.detector_counter[index].saturating_sub(1);
+            }
+            if self.visible_counter[index] == 0 && self.states[index] == VisibilityState::Visible {
+                self.states[index] = VisibilityState::Fogged;
+            }
+            return;
+        }
+        self.visible_counter[index] = self.visible_counter[index].saturating_add(1);
+        if is_detector {
+            self.detector_counter[index] = self.detector_counter[index].saturating_add(1);
+        }
+        if change == SightChange::Add {
+            self.states[index] = VisibilityState::Visible;
+        }
+    }
+
+    fn cast(&mut self, map: &GameMap, source: &VisionSource, change: SightChange) {
         let Ok((center_x, center_y)) = map.world_to_cell(source.pos) else {
             return;
         };
@@ -226,10 +299,7 @@ impl PlayerVisionMap {
         // Always reveal observer's own cell
         let center_idx = (center_y as usize) * (self.width as usize) + (center_x as usize);
         self.visited_in_source[center_idx] = self.current_source_gen;
-        self.visible_counter[center_idx] = self.visible_counter[center_idx].saturating_add(1);
-        if source.is_detector {
-            self.detector_counter[center_idx] = self.detector_counter[center_idx].saturating_add(1);
-        }
+        self.mark(center_idx, source.is_detector, change);
 
         if r_int == 0 {
             return;
@@ -252,9 +322,10 @@ impl PlayerVisionMap {
                     break;
                 };
 
-                let dist_sq = (SimScalar::from_num(dx) * SimScalar::from_num(dx))
-                    + (SimScalar::from_num(dy) * SimScalar::from_num(dy));
-                if dist_sq > r_sq {
+                // Whole cells, so this is exact, and far cheaper than scalar products per step.
+                let dist_sq =
+                    i64::from(i32::from(dx) * i32::from(dx) + i32::from(dy) * i32::from(dy));
+                if (dist_sq << 32) > r_sq.raw() {
                     break;
                 }
 
@@ -289,11 +360,7 @@ impl PlayerVisionMap {
                     let t_idx = (ty as usize) * (self.width as usize) + (tx as usize);
                     if self.visited_in_source[t_idx] != self.current_source_gen {
                         self.visited_in_source[t_idx] = self.current_source_gen;
-                        self.visible_counter[t_idx] = self.visible_counter[t_idx].saturating_add(1);
-                        if source.is_detector {
-                            self.detector_counter[t_idx] =
-                                self.detector_counter[t_idx].saturating_add(1);
-                        }
+                        self.mark(t_idx, source.is_detector, change);
                     }
                     break;
                 }
@@ -304,11 +371,7 @@ impl PlayerVisionMap {
                 let t_idx = (ty as usize) * (self.width as usize) + (tx as usize);
                 if self.visited_in_source[t_idx] != self.current_source_gen {
                     self.visited_in_source[t_idx] = self.current_source_gen;
-                    self.visible_counter[t_idx] = self.visible_counter[t_idx].saturating_add(1);
-                    if source.is_detector {
-                        self.detector_counter[t_idx] =
-                            self.detector_counter[t_idx].saturating_add(1);
-                    }
+                    self.mark(t_idx, source.is_detector, change);
                 }
             }
         }
@@ -318,13 +381,7 @@ impl PlayerVisionMap {
     pub fn apply_watchtowers(&mut self, map: &GameMap, player: PlayerId) {
         for tower in map.watchtowers() {
             if tower.controlling_player == Some(player) {
-                let source = VisionSource {
-                    pos: tower.pos,
-                    mover_type: MoverType::Air, // Elevated observation platform overlooks cliffs
-                    sight_radius: tower.reveal_radius,
-                    is_detector: false,
-                };
-                self.apply_vision_source(map, &source);
+                self.apply_vision_source(map, &watchtower_source(tower));
             }
         }
     }
@@ -380,5 +437,79 @@ impl PlayerVisionMap {
     #[must_use]
     pub fn detector_counter(&self) -> &[u16] {
         &self.detector_counter
+    }
+}
+
+#[cfg(test)]
+mod incremental_tests {
+    use super::*;
+    use crate::grid::{CliffLevel, MapCell};
+    use crate::RampDir;
+
+    fn source(x: i32, y: i32, is_detector: bool) -> VisionSource {
+        VisionSource {
+            pos: SimVec2::from_i32(x, y),
+            mover_type: MoverType::Ground,
+            sight_radius: SimScalar::from_i32(6),
+            is_detector,
+        }
+    }
+
+    fn terrain() -> crate::Result<GameMap> {
+        let flat = MapCell::default_ground(CliffLevel(0));
+        let mut map = GameMap::new(24, 24, flat)?;
+        for x in 0..24 {
+            map.cell_mut(x, 12)?.cliff_level = CliffLevel(1);
+        }
+        for y in 8..11 {
+            let cell = map.cell_mut(9, y)?;
+            cell.ramp = Some(RampDir::North);
+            cell.flags |= CellFlags::RAMP;
+        }
+        Ok(map)
+    }
+
+    fn recount(map: &GameMap, sources: &[VisionSource]) -> PlayerVisionMap {
+        let mut vision = PlayerVisionMap::new(map.width(), map.height());
+        vision.set_all_fogged();
+        vision.begin_tick_update();
+        for source in sources {
+            vision.apply_vision_source(map, source);
+        }
+        vision.end_tick_update();
+        vision
+    }
+
+    #[test]
+    fn moving_a_source_matches_a_full_recount() -> crate::Result<()> {
+        let map = terrain()?;
+        let (fixed, before, after) = (
+            source(4, 4, true),
+            source(9, 9, false),
+            source(16, 18, true),
+        );
+        let mut incremental = recount(&map, &[fixed, before]);
+        incremental.remove_vision_source(&map, &before);
+        incremental.add_vision_source(&map, &after);
+
+        // A recount that first saw `before` carries the same fog memory, then moves on.
+        let mut full = recount(&map, &[fixed, before]);
+        full.begin_tick_update();
+        full.apply_vision_source(&map, &fixed);
+        full.apply_vision_source(&map, &after);
+        full.end_tick_update();
+
+        assert_eq!(incremental.states(), full.states());
+        assert_eq!(incremental.visible_counter(), full.visible_counter());
+        assert_eq!(incremental.detector_counter(), full.detector_counter());
+        Ok(())
+    }
+
+    #[test]
+    fn a_recount_is_visible_to_an_incremental_owner() {
+        let mut vision = PlayerVisionMap::new(8, 8);
+        let start = vision.recount_revision();
+        vision.begin_tick_update();
+        assert_ne!(vision.recount_revision(), start);
     }
 }

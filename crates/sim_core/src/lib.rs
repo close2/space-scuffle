@@ -24,23 +24,9 @@ pub mod combat;
 pub(crate) mod combat_resolution;
 pub mod entity;
 pub mod error;
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::doc_markdown,
-    clippy::too_many_lines,
-    reason = "module-wide until the movement redesign (remediation Phase 4) rewrites this code"
-)]
 pub mod movement;
 pub mod production;
 pub mod scenario;
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::doc_markdown,
-    clippy::too_many_lines,
-    reason = "module-wide until the movement redesign (remediation Phase 4) rewrites this code"
-)]
 pub mod steering;
 pub(crate) mod target_acquisition;
 pub mod tech_tree;
@@ -57,13 +43,12 @@ pub use combat::{
     is_within_firing_arc, step_entity_weapon, DamageResolution, TargetPriorityKey, WeaponTarget,
     MIN_DAMAGE_CLAMP, RELEASE_RANGE_SLOP,
 };
-pub use entity::{ActiveBuff, ActiveProjectile, Entity, WeaponPhase};
+pub use entity::{ActiveBuff, ActiveProjectile, Entity, MovementMemory, WeaponPhase};
 pub use error::{SimCoreError, SimResult};
 pub use steering::{
     check_cluster_arrival, compute_concave_arc_steering, compute_push_displacement,
-    compute_unified_local_steering, compute_unified_local_steering_ext, resolve_push_interaction,
-    PushEntityParams, SpatialHashGrid, SteeringObstacle, GRID_HEIGHT, GRID_WIDTH,
-    SPATIAL_CELL_SIZE,
+    compute_unified_local_steering, resolve_push_interaction, PushEntityParams, SpatialHashGrid,
+    SteeringObstacle, GRID_HEIGHT, GRID_WIDTH, SPATIAL_CELL_SIZE,
 };
 pub use tech_tree::TechTreeValidator;
 pub use upgrades::{UpgradeCatalog, UpgradeDef, UpgradeId};

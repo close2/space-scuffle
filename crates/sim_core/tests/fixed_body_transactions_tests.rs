@@ -51,8 +51,8 @@ fn checked_dynamic_branches_accept_large_representable_normal_geometry() -> Test
                 b.vel = point(30_000, 40_000);
             }
             3 => {
-                a.is_holding = true;
-                b.is_holding = true;
+                a.cannot_be_pushed = true;
+                b.cannot_be_pushed = true;
             }
             4 => a.vel = point(30_000, 40_000),
             5 => b.vel = point(30_000, 40_000),
@@ -157,24 +157,15 @@ fn weighted_dynamic_api_uses_the_same_checked_priority_core() -> TestResult {
 }
 
 #[test]
-fn moving_pair_wedge_is_reciprocal_and_idle_first_tie_uses_original_id_order() -> TestResult {
+fn moving_pair_is_radial_and_idle_first_tie_uses_original_id_order() -> TestResult {
     let mut a = params(1, point(6, 5));
     let mut b = params(2, point(5, 5));
     a.vel = point(1, 0);
     b.vel = point(1, 0);
     let (da, db) = compute_push_displacement(a, b, SimScalar::ONE, SimScalar::from_num(2))?;
-    assert!(
-        da.y < SimScalar::ZERO,
-        "lower ID chooses the original downward wedge"
-    );
-    assert!(
-        db.y > SimScalar::ZERO,
-        "other moving actor receives the opposite wedge"
-    );
-    // Independent signed normalization/scaling rounds at raw precision; the
-    // opposite directions may differ by at most two raw units after both steps.
-    assert!((da.x + db.x).abs() <= SimScalar::from_raw(2));
-    assert!((da.y + db.y).abs() <= SimScalar::from_raw(2));
+    assert_eq!(da.y, SimScalar::ZERO, "moving units get no sideways wedge");
+    assert_eq!(db.y, SimScalar::ZERO, "moving units get no sideways wedge");
+    assert_eq!(da.x, -db.x);
     a.vel = SimVec2::ZERO;
     let (da, db) = compute_push_displacement(a, b, SimScalar::ONE, SimScalar::from_num(2))?;
     assert!(

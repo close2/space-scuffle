@@ -29,7 +29,8 @@ use std::collections::BTreeMap;
 /// Schema 5 records the terrain flags each placed structure must restore on removal.
 /// Schema 6 records the locomotion layer each projectile's splash lands on.
 /// Schema 7 marks whether an attack order is the player's or automatic.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 7;
+/// Schema 8 adds each unit's movement memory: arrival, stall and repath state.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 8;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

@@ -18,16 +18,14 @@ use crate::movement::{
     DisplacementAdmissionError, MotionPolicy, MovementInvariant, MovementLayer, MovementMathError,
     MovementOutcome,
 };
-use crate::steering::{
-    compute_push_displacement_with_mobility, CollisionMobility, PushEntityParams, SpatialHashGrid,
-    SPATIAL_CELL_SIZE,
-};
+use crate::steering::{SpatialHashGrid, SPATIAL_CELL_SIZE};
 use crate::upgrades::{UpgradeCatalog, OVERCLOCK_ABILITY_SLUG};
 use crate::weapon_timing::{resolve_attack_period, AttackRate, SimulationDiagnostic};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use sim_map::{
-    CellFlags, CliffLevel, GameMap, MapCell, Pathfinder, PlayerVisionMap, SimMap, VisionSource,
+    watchtower_source, CellFlags, CliffLevel, GameMap, MapCell, Pathfinder, PlayerVisionMap,
+    SimMap, VisionSource,
 };
 use sim_types::{
     AbilityEffectSpec, AttributeFlags, BubbleRenderInstance, CombatEventVisual, EntityId, PlayerId,
@@ -42,6 +40,10 @@ use std::collections::BTreeMap;
 // What: Persistent scratch buffers (spatial query results, candidate targets, dead entity lists)
 // are stored directly inside `SimWorld` and cleared each tick without heap reallocation.
 // Trade-off: Slightly larger persistent struct footprint in exchange for zero per-tick heap allocations.
+
+/// Squared distance, in raw Q64.64, within which a threat counts as standing on its victim.
+/// Fixed at 0.0001 world units squared, in the same widened scale as `squared_distance`.
+const FLEE_COINCIDENCE_SQUARED: u128 = 429_497 << 32;
 
 /// Player economy and supply vitals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +70,14 @@ impl Default for PlayerResources {
             supply_provided_total: 0,
         }
     }
+}
+
+/// One sight source already counted into a player's vision map.
+#[derive(Clone, Copy)]
+struct AppliedSight {
+    id: EntityId,
+    owner: usize,
+    source: VisionSource,
 }
 
 /// Active continuous hazard/AoE zone (e.g. Psionic Storm) ticking in the world.
@@ -154,6 +164,15 @@ pub struct SimWorld {
     pub(crate) scratch_targets: Vec<(TargetPriorityKey, EntityId)>,
     pub(crate) scratch_acquisitions: Vec<(EntityId, crate::target_acquisition::Acquisition)>,
     scratch_watchtower_units: Vec<(PlayerId, SimVec2)>,
+    scratch_sights: Vec<AppliedSight>,
+    /// Sources currently included in `vision_maps`, sorted by ID.
+    counted_sights: Vec<AppliedSight>,
+    /// Map cell revision `counted_sights` was cast on; `None` until the first count.
+    counted_cell_revision: Option<u64>,
+    /// Each vision map's recount revision when `counted_sights` was last in step with it.
+    counted_recounts: [u64; 8],
+    /// Indices of the cells set in each player's `known_blocked_cells`.
+    known_blocked_lists: [Vec<usize>; 8],
 }
 
 impl SimWorld {
@@ -245,6 +264,11 @@ impl SimWorld {
             scratch_targets: Vec::with_capacity(64),
             scratch_acquisitions: Vec::with_capacity(64),
             scratch_watchtower_units: Vec::new(),
+            scratch_sights: Vec::new(),
+            counted_sights: Vec::new(),
+            counted_cell_revision: None,
+            counted_recounts: [0; 8],
+            known_blocked_lists: Default::default(),
         };
 
         world.last_checksum = world.compute_checksum();
@@ -746,6 +770,7 @@ impl SimWorld {
         self.tick_diagnostics.clear();
         self.production.outcomes.clear();
         self.movement.outcomes.clear();
+        self.movement.route_outcomes.clear();
         self.current_tick = self.current_tick.wrapping_add(1);
 
         if let Err(source) = self.validate_transport_links() {
@@ -1435,24 +1460,18 @@ impl SimWorld {
             .update_watchtower_capture(&self.scratch_watchtower_units);
     }
 
-    /// Phase 3: Update per-player Fog of War visibility maps and remembered obstacle perception.
-    /// Direct phase callers must establish `validate_transport_links` beforehand;
-    /// normal `step_into` establishes this precondition once for its phase sequence.
-    pub fn update_vision(&mut self) {
-        self.update_watchtower_control();
-
-        for p in 0..8 {
-            self.vision_maps[p].begin_tick_update();
-        }
-
+    /// Lists every sight source for this tick in ID order, watchtowers after all entities.
+    fn collect_sights(&self, sights: &mut Vec<AppliedSight>) {
+        sights.clear();
         for entity in self.entities.values() {
-            if entity.is_loaded_in_transport() {
+            if entity.is_loaded_in_transport() || usize::from(entity.owner.0) >= 8 {
                 continue;
             }
             if let Ok(arch) = self.catalog.get(entity.unit_type_id) {
-                let p = entity.owner.0 as usize;
-                if p < 8 {
-                    let source = VisionSource {
+                sights.push(AppliedSight {
+                    id: entity.id,
+                    owner: usize::from(entity.owner.0),
+                    source: VisionSource {
                         pos: entity.position,
                         mover_type: arch.mover_type,
                         sight_radius: Self::sight_radius_from_upgrades(
@@ -1461,30 +1480,133 @@ impl SimWorld {
                             entity.owner,
                         ),
                         is_detector: arch.is_detector,
-                    };
-                    self.vision_maps[p].apply_vision_source(&self.map, &source);
-                }
+                    },
+                });
             }
         }
-
-        for player in 0..8_u8 {
-            let vision = &mut self.vision_maps[usize::from(player)];
-            vision.apply_watchtowers(&self.map, PlayerId(player));
-            vision.end_tick_update();
+        // Towers take the top of the ID range, in ascending order to keep the list sorted.
+        for (index, tower) in self.map.watchtowers().iter().enumerate().rev() {
+            let Some(owner) = tower.controlling_player.map(|p| usize::from(p.0)) else {
+                continue;
+            };
+            let Ok(offset) = u32::try_from(index) else {
+                continue;
+            };
+            if owner < 8 {
+                sights.push(AppliedSight {
+                    id: EntityId(u32::MAX - offset),
+                    owner,
+                    source: watchtower_source(tower),
+                });
+            }
         }
+    }
 
+    /// Whether two sources see exactly the same cells, so nothing need be recast.
+    ///
+    /// Height only varies inside a ramp cell, so elsewhere the cell stands in for the position.
+    fn sees_the_same(&self, a: &VisionSource, b: &VisionSource) -> bool {
+        if (a.mover_type, a.sight_radius, a.is_detector)
+            != (b.mover_type, b.sight_radius, b.is_detector)
+        {
+            return false;
+        }
+        if a.pos == b.pos {
+            return true;
+        }
+        let cell = self.map.world_to_cell(a.pos);
+        cell.is_ok()
+            && cell == self.map.world_to_cell(b.pos)
+            && cell.is_ok_and(|(x, y)| self.map.cell(x, y).is_ok_and(|c| c.ramp.is_none()))
+    }
+
+    /// Phase 3: Update per-player Fog of War visibility maps and remembered obstacle perception.
+    /// Direct phase callers must establish `validate_transport_links` beforehand;
+    /// normal `step_into` establishes this precondition once for its phase sequence.
+    // PERFORMANCE RATIONALE:
+    // Why: Casting every unit's sight each tick was the largest cost of a 400-unit battle, and
+    // settling and resetting eight maps cost O(map area) even with no units at all.
+    // What: A unit's sight only changes when it enters a new cell, about one tick in ten. Keep
+    // the sources already counted and recast only those that changed, as a removal plus an
+    // addition, settling just the cells they touch.
+    // Trade-off: One retained list of sources, and a full recount whenever terrain or a map is
+    // edited outside this function. Counters and states end exactly as a full recount leaves them.
+    pub fn update_vision(&mut self) {
+        self.update_watchtower_control();
+
+        let mut sights = std::mem::take(&mut self.scratch_sights);
+        self.collect_sights(&mut sights);
+        let mut counted = std::mem::take(&mut self.counted_sights);
+        let in_step = self.counted_cell_revision == Some(self.map.cell_revision())
+            && (0..8).all(|p| self.vision_maps[p].recount_revision() == self.counted_recounts[p]);
+        if in_step {
+            self.recast_changed_sights(&counted, &sights);
+        } else {
+            for vision in &mut self.vision_maps {
+                vision.begin_tick_update();
+            }
+            for sight in &sights {
+                self.vision_maps[sight.owner].apply_vision_source(&self.map, &sight.source);
+            }
+            for vision in &mut self.vision_maps {
+                vision.end_tick_update();
+            }
+            self.counted_cell_revision = Some(self.map.cell_revision());
+            for p in 0..8 {
+                self.counted_recounts[p] = self.vision_maps[p].recount_revision();
+            }
+        }
+        std::mem::swap(&mut counted, &mut sights);
+        self.counted_sights = counted;
+        self.scratch_sights = sights;
+
+        self.update_known_structures();
+    }
+
+    /// Walks the old and new ID-sorted source lists together, recasting only the differences.
+    fn recast_changed_sights(&mut self, counted: &[AppliedSight], sights: &[AppliedSight]) {
+        let (mut old, mut new) = (counted.iter().peekable(), sights.iter().peekable());
+        loop {
+            match (old.peek().copied(), new.peek().copied()) {
+                (Some(gone), next) if next.is_none_or(|n| gone.id < n.id) => {
+                    self.vision_maps[gone.owner].remove_vision_source(&self.map, &gone.source);
+                    old.next();
+                }
+                (Some(before), Some(after)) if before.id == after.id => {
+                    if before.owner != after.owner
+                        || !self.sees_the_same(&before.source, &after.source)
+                    {
+                        self.vision_maps[before.owner]
+                            .remove_vision_source(&self.map, &before.source);
+                        self.vision_maps[after.owner].add_vision_source(&self.map, &after.source);
+                    }
+                    old.next();
+                    new.next();
+                }
+                (_, Some(added)) => {
+                    self.vision_maps[added.owner].add_vision_source(&self.map, &added.source);
+                    new.next();
+                }
+                _ => return,
+            }
+        }
+    }
+
+    /// Updates each player's memory of structures from the cells it sees now.
+    // PERFORMANCE RATIONALE:
+    // Why: Scanning every visible cell of every player is O(map area) per tick, for a record that
+    // can only change at a structure's footprint or at a cell already remembered as blocked.
+    // What: Visit those two sets alone, tracked per player in `known_blocked_lists`.
+    // Trade-off: One retained index list per player, bounded by the structure cells on the map.
+    fn update_known_structures(&mut self) {
         let width = self.map.width() as usize;
-        let height = self.map.height() as usize;
-        let total_cells = width * height;
-
+        let total_cells = width * self.map.height() as usize;
         let mut active_players = [false; 8];
         for ent in self.entities.values() {
-            let p = ent.owner.0 as usize;
-            if p < 8 {
-                active_players[p] = true;
+            if let Some(active) = active_players.get_mut(usize::from(ent.owner.0)) {
+                *active = true;
             }
         }
-
         for (p, &is_active) in active_players.iter().enumerate() {
             if !is_active {
                 continue;
@@ -1492,17 +1614,39 @@ impl SimWorld {
             if self.known_blocked_cells[p].len() != total_cells {
                 self.known_blocked_cells[p].resize(total_cells, false);
             }
-            for cy in 0..self.map.height() {
-                for cx in 0..self.map.width() {
-                    if self.vision_maps[p].visibility_at(cx, cy) == VisibilityState::Visible {
-                        let idx = cy as usize * width + cx as usize;
-                        if let Ok(cell) = self.map.cell(cx, cy) {
-                            self.known_blocked_cells[p][idx] =
-                                cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE);
+            for structure in self.map.structures().values() {
+                let (left, top) = structure.top_left;
+                for y in top..top + u32::from(structure.height) {
+                    for x in left..left + u32::from(structure.width) {
+                        let idx = y as usize * width + x as usize;
+                        if self.vision_maps[p].visibility_at(x, y) == VisibilityState::Visible
+                            && !self.known_blocked_cells[p][idx]
+                        {
+                            self.known_blocked_cells[p][idx] = true;
+                            self.known_blocked_lists[p].push(idx);
+                            self.movement.recheck_routes[p] = true;
                         }
                     }
                 }
             }
+            let mut list = std::mem::take(&mut self.known_blocked_lists[p]);
+            list.retain(|&idx| {
+                let (Ok(x), Ok(y)) = (u32::try_from(idx % width), u32::try_from(idx / width))
+                else {
+                    return false;
+                };
+                let stale = self.vision_maps[p].visibility_at(x, y) == VisibilityState::Visible
+                    && self
+                        .map
+                        .cell(x, y)
+                        .is_ok_and(|c| !c.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE));
+                if stale {
+                    self.known_blocked_cells[p][idx] = false;
+                    self.movement.recheck_routes[p] = true;
+                }
+                !stale
+            });
+            self.known_blocked_lists[p] = list;
         }
     }
 
@@ -1600,8 +1744,7 @@ impl SimWorld {
         if desired_dist < SimScalar::ZERO || !policy.contains(map, victim_pos) {
             return Err(MovementMathError::InvalidDistance);
         }
-        let threshold = u128::from(SimScalar::from_f32_lossy(0.0001).raw().unsigned_abs()) << 32;
-        let away = if squared_distance(victim_pos, threat_pos) > (0, threshold) {
+        let away = if squared_distance(victim_pos, threat_pos) > (0, FLEE_COINCIDENCE_SQUARED) {
             direction(victim_pos, threat_pos)?
         } else {
             -SimVec2::X_AXIS
@@ -1680,340 +1823,6 @@ impl SimWorld {
                     && !cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE)
             })
         })
-    }
-
-    /// Phase 6: Resolve circle-circle collisions, engagement anchoring, and push priority.
-    /// Direct phase callers must establish `validate_transport_links` beforehand;
-    /// normal `step_into` establishes this precondition once for its phase sequence.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "split in plan steps 3.1 and 9.1, which own this file's structure"
-    )]
-    pub fn resolve_collisions_and_push(&mut self) {
-        let mut entries = std::mem::take(&mut self.movement.collision_entries);
-        entries.clear();
-        self.spatial_hash.clear();
-        let mut max_radii = [SimScalar::ZERO; 2];
-        for (id, entity) in &self.entities {
-            if entity.is_alive() && !entity.is_loaded_in_transport() {
-                match self.motion_entry(*id) {
-                    Ok(entry) => {
-                        let policy = entry.policy;
-                        entries.push(entry);
-                        max_radii[policy.layer.index()] =
-                            max_radii[policy.layer.index()].max(policy.radius);
-                        self.spatial_hash.insert(*id, entity.position);
-                    }
-                    Err(source) => {
-                        self.tick_diagnostics
-                            .push(SimulationDiagnostic::MovementInvariant {
-                                tick: Tick(self.current_tick),
-                                source,
-                            });
-                    }
-                }
-            }
-        }
-
-        let mut friendly_pushes: BTreeMap<EntityId, SimVec2> = BTreeMap::new();
-        let mut hard_pushes: BTreeMap<EntityId, SimVec2> = BTreeMap::new();
-
-        for entry_a in &entries {
-            let id_a = entry_a.id;
-            let Some(entity_a) = self.entities.get(&id_a) else {
-                continue;
-            };
-            if !entity_a.is_alive()
-                || entity_a.is_mineral_walking
-                || entity_a.is_loaded_in_transport()
-            {
-                continue;
-            }
-
-            let policy_a = entry_a.policy;
-            let radius_a = policy_a.radius;
-
-            let pos_a = entity_a.position;
-            let vel_a = entity_a.velocity;
-            let owner_a = entity_a.owner;
-            let is_holding_a = entity_a.is_holding_position;
-            let priority_a = self
-                .catalog
-                .get(entity_a.unit_type_id)
-                .map_or(0, |a| a.push_priority);
-
-            let has_attack_target_a = entity_a
-                .current_target
-                .or_else(|| {
-                    if let Some(UnitOrder::AttackTarget { target, .. }) =
-                        entity_a.order_queue.front()
-                    {
-                        Some(*target)
-                    } else {
-                        None
-                    }
-                })
-                .is_some_and(|tid| self.entities.get(&tid).is_some_and(Entity::is_alive));
-            let is_engaged_a = matches!(
-                entity_a.weapon_phase,
-                WeaponPhase::RotatingToTarget { .. }
-                    | WeaponPhase::Windup { .. }
-                    | WeaponPhase::Backswing { .. }
-            ) || (has_attack_target_a
-                && entity_a.order_queue.front().is_some_and(|o| {
-                    matches!(
-                        o,
-                        UnitOrder::AttackTarget { .. } | UnitOrder::AttackMove { .. }
-                    )
-                })
-                && entity_a.velocity == SimVec2::ZERO);
-
-            self.spatial_hash.query_radius(
-                pos_a,
-                crate::movement::conservative_query_radius(
-                    &self.map,
-                    radius_a,
-                    max_radii[policy_a.layer.index()],
-                ),
-                &mut self.scratch_neighbors,
-            );
-
-            for &id_b in &self.scratch_neighbors {
-                if id_b.0 <= id_a.0 {
-                    continue;
-                }
-
-                let Some(entity_b) = self.entities.get(&id_b) else {
-                    continue;
-                };
-                if !entity_b.is_alive()
-                    || entity_b.is_mineral_walking
-                    || entity_b.is_loaded_in_transport()
-                {
-                    continue;
-                }
-
-                let Ok(index_b) = entries.binary_search_by_key(&id_b, |entry| entry.id) else {
-                    continue;
-                };
-                let policy_b = entries[index_b].policy;
-                if policy_a.layer != policy_b.layer {
-                    continue;
-                }
-                let radius_b = policy_b.radius;
-                if crate::movement::circles_overlap(pos_a, radius_a, entity_b.position, radius_b) {
-                    let arithmetic = radius_a.checked_add(radius_b).and_then(|combined| {
-                        crate::movement::checked_distance(pos_a, entity_b.position)
-                            .map(|dist| (combined, dist))
-                    });
-                    let Some((combined, dist)) = arithmetic else {
-                        self.tick_diagnostics
-                            .push(SimulationDiagnostic::MovementInvariant {
-                            tick: Tick(self.current_tick),
-                            source: MovementInvariant::InvalidState {
-                                entity: id_a,
-                                reason:
-                                    "collision geometry exceeds fixed-point local push arithmetic",
-                            },
-                        });
-                        continue;
-                    };
-
-                    let priority_b = self
-                        .catalog
-                        .get(entity_b.unit_type_id)
-                        .map_or(0, |a| a.push_priority);
-
-                    let has_attack_target_b = entity_b
-                        .current_target
-                        .or_else(|| {
-                            if let Some(UnitOrder::AttackTarget { target, .. }) =
-                                entity_b.order_queue.front()
-                            {
-                                Some(*target)
-                            } else {
-                                None
-                            }
-                        })
-                        .is_some_and(|tid| self.entities.get(&tid).is_some_and(Entity::is_alive));
-                    let is_engaged_b = matches!(
-                        entity_b.weapon_phase,
-                        WeaponPhase::RotatingToTarget { .. }
-                            | WeaponPhase::Windup { .. }
-                            | WeaponPhase::Backswing { .. }
-                    ) || (has_attack_target_b
-                        && entity_b.order_queue.front().is_some_and(|o| {
-                            matches!(
-                                o,
-                                UnitOrder::AttackTarget { .. } | UnitOrder::AttackMove { .. }
-                            )
-                        })
-                        && entity_b.velocity == SimVec2::ZERO);
-
-                    let eff_cannot_be_pushed_a = entity_a.cannot_be_pushed()
-                        || (owner_a == entity_b.owner
-                            && is_engaged_a
-                            && (priority_a >= priority_b
-                                || (entity_a.velocity == SimVec2::ZERO
-                                    && entity_b.velocity != SimVec2::ZERO)));
-                    let eff_cannot_be_pushed_b = entity_b.cannot_be_pushed()
-                        || (owner_a == entity_b.owner
-                            && is_engaged_b
-                            && (priority_b >= priority_a
-                                || (entity_b.velocity == SimVec2::ZERO && vel_a != SimVec2::ZERO)));
-
-                    // SC2 Push Rule: PushPriority lateral yielding applies only when a moving
-                    // unit contacts a stationary (Idle) unit. When two friendly dynamic units
-                    // are both moving, contact resolution is purely radial along the line of centers.
-                    let both_moving_dynamic = owner_a == entity_b.owner
-                        && vel_a != SimVec2::ZERO
-                        && entity_b.velocity != SimVec2::ZERO
-                        && !eff_cannot_be_pushed_a
-                        && !eff_cannot_be_pushed_b;
-
-                    let a_params = PushEntityParams {
-                        id: id_a,
-                        pos: pos_a,
-                        vel: if both_moving_dynamic {
-                            SimVec2::ZERO
-                        } else {
-                            vel_a
-                        },
-                        owner: owner_a,
-                        is_holding: is_holding_a,
-                        push_priority: priority_a,
-                        cannot_be_pushed: eff_cannot_be_pushed_a,
-                    };
-                    let b_params = PushEntityParams {
-                        id: id_b,
-                        pos: entity_b.position,
-                        vel: if both_moving_dynamic {
-                            SimVec2::ZERO
-                        } else {
-                            entity_b.velocity
-                        },
-                        owner: entity_b.owner,
-                        is_holding: entity_b.is_holding_position,
-                        push_priority: priority_b,
-                        cannot_be_pushed: eff_cannot_be_pushed_b,
-                    };
-                    let mobility = |actor: &Entity| {
-                        if actor.is_immobile
-                            || actor.unpushable
-                            || self.map.structures().contains_key(&actor.id)
-                        {
-                            CollisionMobility::Fixed
-                        } else {
-                            CollisionMobility::Dynamic
-                        }
-                    };
-                    let (delta_a, delta_b) = match compute_push_displacement_with_mobility(
-                        a_params,
-                        b_params,
-                        dist,
-                        combined,
-                        mobility(entity_a),
-                        mobility(entity_b),
-                    ) {
-                        Ok(displacement) => displacement,
-                        Err(source) => {
-                            self.tick_diagnostics
-                                .push(SimulationDiagnostic::MovementInvariant {
-                                    tick: Tick(self.current_tick),
-                                    source: MovementInvariant::PushGeometry {
-                                        entity: id_a,
-                                        source,
-                                    },
-                                });
-                            continue;
-                        }
-                    };
-
-                    let pushes = if owner_a == entity_b.owner {
-                        &mut friendly_pushes
-                    } else {
-                        &mut hard_pushes
-                    };
-                    if let Err(source) = crate::movement::collision::accumulate_pair(
-                        pushes, id_a, id_b, delta_a, delta_b,
-                    ) {
-                        self.tick_diagnostics
-                            .push(SimulationDiagnostic::MovementInvariant {
-                                tick: Tick(self.current_tick),
-                                source: MovementInvariant::Arithmetic {
-                                    entity: id_a,
-                                    operation: "collision pair accumulation",
-                                    source,
-                                },
-                            });
-                    }
-                }
-            }
-        }
-
-        // Preserve the established friendly base-speed cap; upgrades/buffs were
-        // validated at entry but this round does not rebalance crowd correction.
-        for (hard, pushes) in [(false, friendly_pushes), (true, hard_pushes)] {
-            for (id, push) in pushes {
-                let Ok(index) = entries.binary_search_by_key(&id, |entry| entry.id) else {
-                    continue;
-                };
-                let policy = entries[index].policy;
-                let Some(actor) = self.entities.get_mut(&id) else {
-                    continue;
-                };
-                if actor.is_immobile || actor.unpushable || self.map.structures().contains_key(&id)
-                {
-                    continue;
-                }
-                let proposed = if hard {
-                    crate::movement::math::checked_vec_add(actor.position, push)
-                } else {
-                    let speed = match self.catalog.get(actor.unit_type_id) {
-                        Ok(arch) => arch.max_speed,
-                        Err(_) => continue,
-                    };
-                    crate::movement::collision::soft_position(
-                        actor.position,
-                        actor.pos_at_tick_start,
-                        push,
-                        speed,
-                    )
-                };
-                let proposed = match proposed {
-                    Ok(position) => position,
-                    Err(source) => {
-                        self.tick_diagnostics
-                            .push(SimulationDiagnostic::MovementInvariant {
-                                tick: Tick(self.current_tick),
-                                source: MovementInvariant::Arithmetic {
-                                    entity: id,
-                                    operation: "collision application",
-                                    source,
-                                },
-                            });
-                        continue;
-                    }
-                };
-                let accepted = if policy.permits_segment(&self.map, actor.position, proposed) {
-                    Some(proposed)
-                } else {
-                    let x = SimVec2::new(proposed.x, actor.position.y);
-                    let y = SimVec2::new(actor.position.x, proposed.y);
-                    if policy.permits_segment(&self.map, actor.position, x) {
-                        Some(x)
-                    } else if policy.permits_segment(&self.map, actor.position, y) {
-                        Some(y)
-                    } else {
-                        None
-                    }
-                };
-                if let Some(position) = accepted {
-                    actor.position = position;
-                }
-            }
-        }
-        self.movement.collision_entries = entries;
     }
 
     /// Phase 8: Reap destroyed entities and emit death shatter visuals.

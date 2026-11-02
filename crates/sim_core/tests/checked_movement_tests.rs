@@ -433,15 +433,13 @@ fn public_steering_handles_extreme_directions_and_wide_obstacle_thresholds() -> 
     let start = SimVec2::new(min, SimScalar::ZERO);
     let end = SimVec2::new(max, SimScalar::ZERO);
     let obstacle = SteeringObstacle {
-        id: EntityId(2),
-        pos: end,
-        radius: max,
-        velocity: SimVec2::ZERO,
+        settled_on: Some(end),
+        ..SteeringObstacle::new(EntityId(2), end, max, SimVec2::ZERO)
     };
     // Radius sum plus the existing lookahead exceeds one scalar, and the raw
     // obstacle difference exceeds i64. Both comparison and direction are valid.
     let detour = compute_unified_local_steering(EntityId(1), start, max, end, None, &[obstacle])?;
-    assert!(detour.x > SimScalar::ZERO && detour.y > SimScalar::ZERO);
+    assert!(detour.x > SimScalar::ZERO);
     assert!(check_cluster_arrival_except(
         Some(EntityId(1)),
         start,
@@ -649,33 +647,37 @@ fn direct_ability_missing_archetype_is_diagnosed_without_mutation() -> TestResul
 }
 
 #[test]
-fn legacy_lookahead_and_arrival_raw_thresholds_keep_boundary_branch() -> TestResult {
+fn lookahead_and_arrival_thresholds_are_exact_at_their_boundaries() -> TestResult {
     use sim_core::steering::{
         check_cluster_arrival_except, compute_unified_local_steering, SteeringObstacle,
     };
-    // Freeze the existing f32-authored conversion, not a newly rounded f64 value.
-    let lookahead = SimScalar::from_raw(1_503_238_528);
-    let touch_margin = SimScalar::from_raw(644_245_120);
-    assert_eq!(SimScalar::from_f32_lossy(0.35), lookahead);
-    assert_eq!(SimScalar::from_f32_lossy(0.15), touch_margin);
-    let obstacle = SteeringObstacle {
-        id: EntityId(2),
-        pos: SimVec2::new(SimScalar::ONE + lookahead, SimScalar::ZERO),
-        radius: SimScalar::HALF,
-        velocity: SimVec2::ZERO,
-    };
-    let at_boundary = compute_unified_local_steering(
+    // The named constants are exact rationals: 0.35 and 0.15 world units.
+    let lookahead = SimScalar::from_raw((35_i64 << 32) / 100);
+    let touch_margin = SimScalar::from_raw((15_i64 << 32) / 100);
+    let inside = SteeringObstacle::new(
+        EntityId(2),
+        SimVec2::new(
+            SimScalar::ONE + lookahead / SimScalar::from_num(2),
+            SimScalar::ZERO,
+        ),
+        SimScalar::HALF,
+        SimVec2::ZERO,
+    );
+    let deflected = compute_unified_local_steering(
         EntityId(1),
         SimVec2::ZERO,
         SimScalar::HALF,
         point(8, 0),
         None,
-        &[obstacle],
+        &[inside],
     )?;
-    assert!(at_boundary.y > SimScalar::ZERO);
-    let outside = SteeringObstacle {
-        pos: obstacle.pos + SimVec2::new(SimScalar::EPSILON, SimScalar::ZERO),
-        ..obstacle
+    assert!(
+        deflected.y < SimScalar::ZERO,
+        "dead ahead passes on the right"
+    );
+    let at_boundary = SteeringObstacle {
+        pos: SimVec2::new(SimScalar::ONE + lookahead, SimScalar::ZERO),
+        ..inside
     };
     assert_eq!(
         compute_unified_local_steering(
@@ -684,13 +686,16 @@ fn legacy_lookahead_and_arrival_raw_thresholds_keep_boundary_branch() -> TestRes
             SimScalar::HALF,
             point(8, 0),
             None,
-            &[outside]
+            &[at_boundary]
         )?,
-        SimVec2::X_AXIS
+        SimVec2::X_AXIS,
+        "influence fades to nothing exactly at the lookahead"
     );
+    let settled_point = SimVec2::new(SimScalar::ONE + touch_margin, SimScalar::ZERO);
     let settled = SteeringObstacle {
-        pos: SimVec2::new(SimScalar::ONE + touch_margin, SimScalar::ZERO),
-        ..obstacle
+        pos: settled_point,
+        settled_on: Some(settled_point),
+        ..inside
     };
     assert!(check_cluster_arrival_except(
         Some(EntityId(1)),
@@ -699,8 +704,10 @@ fn legacy_lookahead_and_arrival_raw_thresholds_keep_boundary_branch() -> TestRes
         settled.pos,
         &[settled]
     )?);
+    let outside_point = settled.pos + SimVec2::new(SimScalar::EPSILON, SimScalar::ZERO);
     let outside = SteeringObstacle {
-        pos: settled.pos + SimVec2::new(SimScalar::EPSILON, SimScalar::ZERO),
+        pos: outside_point,
+        settled_on: Some(outside_point),
         ..settled
     };
     assert!(!check_cluster_arrival_except(
