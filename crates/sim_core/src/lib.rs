@@ -22,8 +22,10 @@ pub mod catalog;
 pub mod checksum;
 pub mod combat;
 pub(crate) mod combat_resolution;
+pub mod economy;
 pub mod entity;
 pub mod error;
+pub mod match_state;
 pub mod movement;
 pub mod production;
 pub mod scenario;
@@ -43,7 +45,9 @@ pub use combat::{
     is_within_firing_arc, step_entity_weapon, DamageResolution, TargetPriorityKey, WeaponTarget,
     MIN_DAMAGE_CLAMP, RELEASE_RANGE_SLOP,
 };
-pub use entity::{ActiveBuff, ActiveProjectile, Entity, MovementMemory, WeaponPhase};
+pub use entity::{
+    ActiveBuff, ActiveProjectile, Cargo, Entity, MovementMemory, UnitTask, WeaponPhase,
+};
 pub use error::{SimCoreError, SimResult};
 pub use steering::{
     check_cluster_arrival, compute_concave_arc_steering, compute_push_displacement,

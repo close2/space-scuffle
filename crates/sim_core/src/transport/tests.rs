@@ -121,9 +121,12 @@ fn malformed_links_block_tick_before_any_gameplay_side_effect() -> TestResult {
                 .get_mut(&ids[0])
                 .expect("fixture contains every spawned participant");
             e.production_queue.push_back(ProductionJob {
-                product: e.unit_type_id,
+                item: crate::production::ProductionItem::Unit(e.unit_type_id),
                 remaining_ticks: 2,
+                total_ticks: 2,
                 reserved_supply: 0,
+                paid_minerals: 0,
+                paid_gas: 0,
             });
         }),
     ];

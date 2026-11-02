@@ -1,6 +1,6 @@
 //! Player intent, unit orders, and lockstep tick input bundles.
 
-use crate::ids::{EntityId, PlayerId, Tick, UnitTypeId};
+use crate::ids::{EntityId, PlayerId, ResourceNodeId, Tick, UnitTypeId};
 use crate::math::{SimScalar, SimVec2};
 use crate::weapon::WeaponSpec;
 use serde::{Deserialize, Serialize};
@@ -53,21 +53,26 @@ pub enum UnitOrder {
         /// Archetype ID to build.
         unit_type: UnitTypeId,
     },
-    /// Harvest resources from a resource node (mineral crystal or gas geyser).
+    /// Gather from a resource node and carry the yield to a depot, repeatedly.
     Harvest {
-        /// Resource node entity handle.
-        target: EntityId,
+        /// Map resource node to gather from.
+        target: ResourceNodeId,
     },
-    /// Return harvested cargo to the nearest friendly Command Dome.
+    /// Carry held cargo to the nearest completed friendly depot, then resume gathering.
     ReturnCargo,
-    /// Construct a building dome foundation at the specified grid cell coordinates.
+    /// Walk to a site, pay and lay a foundation there, then raise it.
     Build {
         /// Archetype ID of structure to construct.
         structure_type: UnitTypeId,
-        /// Top-left cell X coordinate.
+        /// Minimum-corner cell X coordinate.
         cell_x: u32,
-        /// Top-left cell Y coordinate.
+        /// Minimum-corner cell Y coordinate.
         cell_y: u32,
+    },
+    /// Walk to an unfinished friendly foundation and work on it until it completes.
+    Construct {
+        /// Foundation to work on.
+        foundation: EntityId,
     },
     /// Cast an active tactical ability or spell.
     CastAbility {
@@ -78,6 +83,25 @@ pub enum UnitOrder {
         /// Target entity handle (for single-target spells like EMP or Snipe).
         target_entity: Option<EntityId>,
     },
+    /// Abandon the selected foundations for a partial refund.
+    CancelConstruction,
+    /// Queue a catalog upgrade at a selected completed research structure.
+    Research {
+        /// Catalog upgrade identifier (`upgrade_id` in `upgrades.ron`).
+        upgrade: u32,
+    },
+    /// Remove one job from the selected structure's queue for a full refund.
+    CancelProduction {
+        /// Position in the queue, where zero is the job in progress.
+        job_index: u32,
+    },
+    /// Walk to a friendly carrier and board it.
+    Load {
+        /// Carrier to board.
+        carrier: EntityId,
+    },
+    /// Set every passenger down around this carrier.
+    UnloadAll,
 }
 
 impl UnitOrder {
@@ -253,6 +277,13 @@ pub struct ArchetypeCapabilities {
     /// Whether this structure extracts vespene gas for harvesters.
     #[serde(default)]
     pub is_gas_extractor: bool,
+    /// Whether this unit can raise structures of its own faction.
+    #[serde(default)]
+    pub can_construct: bool,
+    /// Passenger slots this unit carries; zero means it is no carrier. A passenger
+    /// fills as many slots as its supply cost, and at least one.
+    #[serde(default)]
+    pub transport_capacity: u32,
     /// Active abilities and spells available to this archetype.
     #[serde(default)]
     pub abilities: Vec<AbilitySpec>,

@@ -332,7 +332,10 @@ impl SimWorld {
         let mut neighbors = std::mem::take(&mut self.scratch_neighbors);
         let mut candidates = std::mem::take(&mut self.scratch_targets);
         for (&id, entity) in &self.entities {
-            if entity.channeling_remaining_ticks > 0 || entity.is_loaded_in_transport() {
+            if entity.channeling_remaining_ticks > 0
+                || entity.is_loaded_in_transport()
+                || !entity.is_completed
+            {
                 continue;
             }
             let Ok(arch) = self.catalog.get(entity.unit_type_id) else {

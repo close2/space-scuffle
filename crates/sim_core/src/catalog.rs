@@ -698,6 +698,10 @@ struct CapabilitiesDef {
     #[serde(default)]
     is_resource_dropoff: bool,
     #[serde(default)]
+    can_construct: bool,
+    #[serde(default)]
+    transport_capacity: u32,
+    #[serde(default)]
     abilities: Vec<AbilitySpec>,
     #[serde(default)]
     modes: Vec<UnitModeSpecDef>,
@@ -958,6 +962,8 @@ impl UnitArchetypeDef {
             harvester,
             is_resource_dropoff,
             is_gas_extractor: false,
+            can_construct: self.capabilities.can_construct,
+            transport_capacity: self.capabilities.transport_capacity,
             abilities: abilities.clone(),
             modes: modes.clone(),
         };
@@ -1145,6 +1151,8 @@ impl StructureArchetypeDef {
             harvester: None,
             is_resource_dropoff: self.is_resource_dropoff,
             is_gas_extractor: self.is_gas_extractor,
+            can_construct: false,
+            transport_capacity: 0,
             abilities: self.abilities.clone(),
             modes: Vec::new(),
         };

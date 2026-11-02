@@ -58,9 +58,12 @@ fn production_admission_distinguishes_acceptance_and_resource_shortage() {
             Ok(ProductionReceipt {
                 producer: EntityId(123),
                 job: ProductionJob {
-                    product: UnitTypeId(60000),
+                    item: sim_core::production::ProductionItem::Unit(UnitTypeId(60000)),
                     remaining_ticks: 45,
+                    total_ticks: 45,
                     reserved_supply: 2,
+                    paid_minerals: 0,
+                    paid_gas: 0,
                 },
             }),
             "Production order accepted",

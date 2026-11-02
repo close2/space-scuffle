@@ -13,7 +13,8 @@ use crate::movement::MovementMathError;
 use crate::weapon_timing::{combined_attack_rate, AttackRate, InvalidBuffAttackRate};
 use sim_types::{
     AbilityEffectSpec, AnimState, AttackOrigin, EntityId, MoverType, OverclockSpec, PlayerId,
-    ShapeKind, SimAngle, SimScalar, SimVec2, Tick, UnitOrder, UnitTypeId,
+    ResourceKind, ResourceNodeId, ShapeKind, SimAngle, SimScalar, SimVec2, Tick, UnitOrder,
+    UnitTypeId,
 };
 use std::collections::VecDeque;
 
@@ -162,6 +163,34 @@ impl MovementMemory {
     }
 }
 
+/// Resources a harvester is holding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cargo {
+    /// What it holds.
+    pub kind: ResourceKind,
+    /// How much, in resource units.
+    pub amount: u32,
+}
+
+/// What a unit remembers about the task order it is working through; see [`crate::economy`].
+///
+/// All of it decides what the unit does next, so all of it is hashed by the checksum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct UnitTask {
+    /// Where the current leg is walking to, in world units. `None` between legs.
+    pub goal: Option<SimVec2>,
+    /// Legs set off on since the task last got where it was going.
+    pub legs: u8,
+    /// Ticks left gathering; zero when not gathering.
+    pub gather_ticks: u16,
+    /// Ticks spent waiting for a site or for ground to clear.
+    pub wait_ticks: u16,
+    /// Depot a carrying unit is heading for.
+    pub depot: Option<EntityId>,
+    /// Node last gathered from, where `ReturnCargo` resumes. Outlives orders.
+    pub last_node: Option<ResourceNodeId>,
+}
+
 /// Authoritative simulation entity state for a single unit or building dome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
@@ -210,6 +239,12 @@ pub struct Entity {
     pub captured_supply_used: u32,
     /// Completed supply provision captured at spawn, independent of later catalog edits.
     pub captured_supply_provided: u32,
+    /// Task order progress carried between ticks.
+    pub task: UnitTask,
+    /// Resources this harvester holds; survives order changes until delivered.
+    pub cargo: Option<Cargo>,
+    /// Construction record while this building is an unfinished foundation.
+    pub construction: Option<crate::production::construction::Construction>,
     /// Mineral walking flag allowing pass-through of unit collisions.
     pub is_mineral_walking: bool,
     /// Flag indicating whether the unit is anchored in Hold Position.
@@ -302,6 +337,9 @@ impl Entity {
             production_queue: VecDeque::new(),
             captured_supply_used: archetype.supply_cost,
             captured_supply_provided: archetype.supply_provided,
+            task: UnitTask::default(),
+            cargo: None,
+            construction: None,
             is_mineral_walking: false,
             is_holding_position: false,
             current_anim: AnimState::Idle,
@@ -338,6 +376,28 @@ impl Entity {
     #[must_use]
     pub const fn is_loaded_in_transport(&self) -> bool {
         self.transport_carrier.is_some()
+    }
+
+    /// Whether the front order is a task, which [`crate::economy`] drives instead of movement.
+    #[must_use]
+    pub fn has_task_order(&self) -> bool {
+        matches!(
+            self.order_queue.front(),
+            Some(
+                UnitOrder::Harvest { .. }
+                    | UnitOrder::ReturnCargo
+                    | UnitOrder::Build { .. }
+                    | UnitOrder::Construct { .. }
+                    | UnitOrder::Load { .. }
+                    | UnitOrder::UnloadAll
+            )
+        )
+    }
+
+    /// Drops everything tied to the current task leg; what outlives an order stays.
+    pub(crate) fn abandon_task_leg(&mut self) {
+        self.task = crate::economy::fresh_leg(self.task);
+        self.is_mineral_walking = false;
     }
 
     /// Handles player move/stop input during combat, executing SC2 backswing cancellation.
@@ -416,6 +476,7 @@ impl Entity {
         }
 
         self.movement.restart();
+        self.abandon_task_leg();
         match order {
             UnitOrder::Move { target } => {
                 self.handle_interrupting_move(target);

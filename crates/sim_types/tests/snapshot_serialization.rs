@@ -175,6 +175,7 @@ fn test_render_snapshot_full_serialization() {
         checksum: 0xABCD_EF01_2345_6789,
         bubbles,
         combat_events,
+        ..RenderSnapshot::default()
     };
 
     for owner in [PlayerId(0), PlayerId(2), PlayerId(7), PlayerId::NEUTRAL] {

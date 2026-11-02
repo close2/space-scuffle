@@ -1,29 +1,48 @@
-//! Atomic capability-driven training and captured supply accounting.
+//! Atomic capability-driven training, research, construction and supply accounting.
 //!
-//! Authored catalogs authorize products. Commands reserve full FIFO supply at
-//! admission; completion transfers that reservation into a registered entity.
+//! Authored catalogs authorize products. Commands pay and reserve full FIFO supply at
+//! admission; completion transfers that reservation into a registered entity, or into a
+//! researched upgrade. Cancelling a queued job returns exactly what its admission took.
 //! Logical failures occur before authoritative writes. Scratch/output buffers are
 //! derived, reusable and excluded from checksums; clients must consume outcomes.
 
+pub mod construction;
 mod exits;
 mod lifecycle;
+mod research;
 
-use crate::{Entity, PlayerResources, SimWorld, SpatialHashGrid, SPATIAL_CELL_SIZE};
+use crate::upgrades::UpgradeId;
+use crate::{Entity, PlayerResources, SimWorld, SpatialHashGrid, UnitArchetype, SPATIAL_CELL_SIZE};
 use sim_types::{EntityId, PlayerId, ShapeKind, SimScalar, SimVec2, Tick, UnitTypeId};
 use thiserror::Error;
 
 /// Standard effective supply limit; provider totals retain values above this cap.
 pub const STANDARD_SUPPLY_CAP: u32 = 200;
 
-/// Accepted FIFO training job with a lossless 25 Hz countdown.
+/// What a queued job delivers when its countdown ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductionItem {
+    /// A mobile unit of this archetype, emerging at a free exit.
+    Unit(UnitTypeId),
+    /// This catalog upgrade, applied to the owner.
+    Research(UpgradeId),
+}
+
+/// Accepted FIFO job with a lossless 25 Hz countdown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProductionJob {
     /// Catalog identity selected at admission.
-    pub product: UnitTypeId,
+    pub item: ProductionItem,
     /// Remaining production updates; zero means ready, possibly awaiting an exit.
     pub remaining_ticks: u32,
+    /// Countdown length at admission, the denominator of published progress.
+    pub total_ticks: u32,
     /// Full supply captured and reserved at admission, including waiting jobs.
     pub reserved_supply: u32,
+    /// Minerals taken at admission, which cancelling returns.
+    pub paid_minerals: u32,
+    /// Gas taken at admission, which cancelling returns.
+    pub paid_gas: u32,
 }
 
 /// Corrupt state or unrepresentable arithmetic, never an ordinary player rejection.
@@ -144,6 +163,21 @@ pub enum ProductionAdmissionError {
         /// Effective capacity.
         capacity: u32,
     },
+    /// Requested upgrade is not present in the selected catalog.
+    #[error("unknown upgrade {0}")]
+    UnknownUpgrade(UpgradeId),
+    /// None of the valid selections is a completed structure researching this upgrade.
+    #[error("no selected completed structure researches upgrade {0}")]
+    NoEligibleResearcher(UpgradeId),
+    /// The player already owns this upgrade; researching it again would double its effects.
+    #[error("upgrade {0} is already researched")]
+    UpgradeAlreadyResearched(UpgradeId),
+    /// The player already has this upgrade in some queue.
+    #[error("upgrade {0} is already being researched")]
+    UpgradeAlreadyQueued(UpgradeId),
+    /// A tiered upgrade needs its preceding tier first.
+    #[error("upgrade {0} requires its preceding tier")]
+    UpgradeTierLocked(UpgradeId),
     /// Corrupt authoritative state; consumers must stop/report the diagnostic.
     #[error(transparent)]
     Invariant(#[from] ProductionInvariant),
@@ -369,34 +403,10 @@ impl SimWorld {
         recipients: &[EntityId],
         product: UnitTypeId,
     ) -> Result<ProductionReceipt, ProductionAdmissionError> {
-        let result = self.prepare_admission(player, recipients, product);
-        match result {
-            Ok((receipt, economy)) => {
-                // Exclusive world access preserves the validated recipient through commit.
-                let Some(producer) = self.entities.get_mut(&receipt.producer) else {
-                    let error = ProductionInvariant::EntityState {
-                        entity: receipt.producer,
-                        reason: "validated recipient disappeared before admission commit",
-                    };
-                    self.report_production_failure(error.clone());
-                    return Err(error.into());
-                };
-                producer.production_queue.push_back(receipt.job);
-                self.player_resources[usize::from(player.0)] = economy;
-                Ok(receipt)
-            }
-            Err(ProductionAdmissionError::Invariant(ref error)) => {
-                self.report_production_failure(error.clone());
-                result.map(|(receipt, _)| receipt)
-            }
-            Err(error) => Err(error),
-        }
+        let admitted = self.prepare_admission(player, recipients, product);
+        self.commit_job(player, admitted)
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one production transaction; splitting is plan step 9.2"
-    )]
     fn prepare_admission(
         &self,
         player: PlayerId,
@@ -415,6 +425,63 @@ impl SimWorld {
                 product,
             ));
         }
+        let producer = self
+            .select_producer(player, recipients, |source| {
+                let mut permits = false;
+                for slug in &source.trains_units {
+                    let target = self.catalog.get_by_slug(slug).ok_or(
+                        ProductionInvariant::InvalidDefinition {
+                            unit_type: source.unit_type_id,
+                            field: "trains_units reference",
+                        },
+                    )?;
+                    permits |= target.unit_type_id == product;
+                }
+                Ok(permits)
+            })?
+            .ok_or(ProductionAdmissionError::NoEligibleProducer)?;
+        self.validate_supply_ledger()?;
+        let job = ProductionJob {
+            item: ProductionItem::Unit(product),
+            remaining_ticks: arch.build_time_ticks,
+            total_ticks: arch.build_time_ticks,
+            reserved_supply: arch.supply_cost,
+            paid_minerals: arch.mineral_cost,
+            paid_gas: arch.gas_cost,
+        };
+        let source = self
+            .entities
+            .get(&producer)
+            .ok_or(ProductionInvariant::EntityState {
+                entity: producer,
+                reason: "selected producer disappeared during preparation",
+            })?;
+        lifecycle::validate_job_source(
+            &self.catalog,
+            &self.upgrade_catalog,
+            &self.map,
+            source,
+            &job,
+        )?;
+        if let Some(missing) =
+            self.missing_prerequisite(player, product, &arch.requires_structures)?
+        {
+            return Err(ProductionAdmissionError::MissingPrerequisite(missing));
+        }
+        let economy = Self::charge_job(resources, &job)?;
+        Ok((ProductionReceipt { producer, job }, economy))
+    }
+
+    /// Validates every selected recipient and returns the first completed one `permits` accepts.
+    ///
+    /// All selections must exist, be alive, owned and in the world, so one bad identity refuses
+    /// the whole command whichever position it holds in the selection.
+    fn select_producer(
+        &self,
+        player: PlayerId,
+        recipients: &[EntityId],
+        permits: impl Fn(&UnitArchetype) -> Result<bool, ProductionInvariant>,
+    ) -> Result<Option<EntityId>, ProductionAdmissionError> {
         if recipients.is_empty() {
             return Err(ProductionAdmissionError::EmptySelection);
         }
@@ -433,70 +500,50 @@ impl SimWorld {
             if !entity.is_alive() {
                 return Err(ProductionAdmissionError::DeadRecipient(*id));
             }
-            let producer = self.catalog.get(entity.unit_type_id).map_err(|_| {
+            let source = self.catalog.get(entity.unit_type_id).map_err(|_| {
                 ProductionInvariant::MissingArchetype {
                     entity: *id,
                     unit_type: entity.unit_type_id,
                 }
             })?;
-            let mut permits = false;
-            for slug in &producer.trains_units {
-                let target = self.catalog.get_by_slug(slug).ok_or(
-                    ProductionInvariant::InvalidDefinition {
-                        unit_type: producer.unit_type_id,
-                        field: "trains_units reference",
-                    },
-                )?;
-                permits |= target.unit_type_id == product;
-            }
-            if chosen.is_none() && entity.is_completed && permits {
+            let permitted = permits(source)?;
+            if chosen.is_none() && entity.is_completed && permitted {
                 chosen = Some(*id);
             }
         }
-        let producer = chosen.ok_or(ProductionAdmissionError::NoEligibleProducer)?;
-        self.validate_supply_ledger()?;
-        let source = self
-            .entities
-            .get(&producer)
-            .ok_or(ProductionInvariant::EntityState {
-                entity: producer,
-                reason: "selected producer disappeared during preparation",
-            })?;
-        lifecycle::validate_job_source(
-            &self.catalog,
-            &self.map,
-            source,
-            &ProductionJob {
-                product,
-                remaining_ticks: arch.build_time_ticks,
-                reserved_supply: arch.supply_cost,
-            },
-        )?;
-        for (index, slug) in arch.requires_structures.iter().enumerate() {
+        Ok(chosen)
+    }
+
+    /// The first of `slugs` for which `player` has no completed structure, if any.
+    pub(crate) fn missing_prerequisite(
+        &self,
+        player: PlayerId,
+        subject: UnitTypeId,
+        slugs: &[String],
+    ) -> Result<Option<UnitTypeId>, ProductionInvariant> {
+        for (index, slug) in slugs.iter().enumerate() {
             let required =
                 self.catalog
                     .get_by_slug(slug)
                     .ok_or(ProductionInvariant::InvalidDefinition {
-                        unit_type: product,
+                        unit_type: subject,
                         field: "requires_structures reference",
                     })?;
-            if arch.requires_structures[..index].iter().any(|prior| {
+            if slugs[..index].iter().any(|prior| {
                 self.catalog
                     .get_by_slug(prior)
                     .is_some_and(|a| a.unit_type_id == required.unit_type_id)
             }) {
                 return Err(ProductionInvariant::InvalidDefinition {
-                    unit_type: product,
+                    unit_type: subject,
                     field: "duplicate prerequisite reference",
-                }
-                .into());
+                });
             }
             if !matches!(required.shape, ShapeKind::BuildingDome { .. }) {
                 return Err(ProductionInvariant::InvalidDefinition {
-                    unit_type: product,
+                    unit_type: subject,
                     field: "prerequisite is not a structure",
-                }
-                .into());
+                });
             }
             let mut found = false;
             for entity in self.entities.values().filter(|e| {
@@ -508,55 +555,81 @@ impl SimWorld {
                         unit_type: entity.unit_type_id,
                     }
                 })?;
-                found |= !entity.is_loaded_in_transport()
-                    && entity.unit_type_id == required.unit_type_id
+                found |= entity.unit_type_id == required.unit_type_id
                     && self.map.structures().contains_key(&entity.id);
             }
             if !found {
-                return Err(ProductionAdmissionError::MissingPrerequisite(
-                    required.unit_type_id,
-                ));
+                return Ok(Some(required.unit_type_id));
             }
         }
-        if resources.minerals < arch.mineral_cost {
+        Ok(None)
+    }
+
+    /// The player's economy after paying for `job`, or the shortage that refuses it.
+    fn charge_job(
+        resources: &PlayerResources,
+        job: &ProductionJob,
+    ) -> Result<PlayerResources, ProductionAdmissionError> {
+        if resources.minerals < job.paid_minerals {
             return Err(ProductionAdmissionError::Minerals {
-                required: arch.mineral_cost,
+                required: job.paid_minerals,
                 available: resources.minerals,
             });
         }
-        if resources.gas < arch.gas_cost {
+        if resources.gas < job.paid_gas {
             return Err(ProductionAdmissionError::Gas {
-                required: arch.gas_cost,
+                required: job.paid_gas,
                 available: resources.gas,
             });
         }
-        let used = resources.supply_used.checked_add(arch.supply_cost).ok_or(
-            ProductionInvariant::Arithmetic {
+        let used = resources
+            .supply_used
+            .checked_add(job.reserved_supply)
+            .ok_or(ProductionInvariant::Arithmetic {
                 operation: "enqueue supply",
-            },
-        )?;
-        if used > resources.supply_max {
+            })?;
+        if job.reserved_supply > 0 && used > resources.supply_max {
             return Err(ProductionAdmissionError::Supply {
                 used: resources.supply_used,
-                required: arch.supply_cost,
+                required: job.reserved_supply,
                 capacity: resources.supply_max,
             });
         }
         let mut economy = *resources;
-        economy.minerals -= arch.mineral_cost;
-        economy.gas -= arch.gas_cost;
+        economy.minerals -= job.paid_minerals;
+        economy.gas -= job.paid_gas;
         economy.supply_used = used;
-        Ok((
-            ProductionReceipt {
-                producer,
-                job: ProductionJob {
-                    product,
-                    remaining_ticks: arch.build_time_ticks,
-                    reserved_supply: arch.supply_cost,
-                },
-            },
-            economy,
-        ))
+        Ok(economy)
+    }
+
+    /// Commits an admitted job and its payment together.
+    fn commit_job(
+        &mut self,
+        player: PlayerId,
+        admitted: Result<(ProductionReceipt, PlayerResources), ProductionAdmissionError>,
+    ) -> Result<ProductionReceipt, ProductionAdmissionError> {
+        match admitted {
+            Ok((receipt, economy)) => {
+                // Exclusive world access preserves the validated recipient through commit.
+                let Some(producer) = self.entities.get_mut(&receipt.producer) else {
+                    let error = ProductionInvariant::EntityState {
+                        entity: receipt.producer,
+                        reason: "validated recipient disappeared before admission commit",
+                    };
+                    self.report_production_failure(error.clone());
+                    return Err(error.into());
+                };
+                producer.production_queue.push_back(receipt.job);
+                self.player_resources[usize::from(player.0)] = economy;
+                Ok(receipt)
+            }
+            Err(error) => {
+                if let ProductionAdmissionError::Invariant(source) = &error {
+                    self.report_production_failure(source.clone());
+                }
+                Err(error)
+            }
+        }
     }
 
     /// Derived command outcomes; callers consume once or inspect until the next full tick.

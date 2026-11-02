@@ -190,12 +190,20 @@ impl MotionProposal {
             {
                 *target = destination;
             }
+            if actor.has_task_order() {
+                actor.task.goal = Some(destination);
+            }
         }
         if self.clear_target {
             actor.current_target = None;
         }
         if self.pop_order {
-            actor.order_queue.pop_front();
+            // Movement ends a task's leg, never the task: the task decides what comes next.
+            if actor.has_task_order() {
+                actor.task.goal = None;
+            } else {
+                actor.order_queue.pop_front();
+            }
         }
     }
 }
@@ -738,6 +746,9 @@ impl SimWorld {
         }
         let mut target = match actor.order_queue.front() {
             Some(UnitOrder::Move { target } | UnitOrder::AttackMove { target }) => *target,
+            Some(_) if actor.has_task_order() && actor.task.goal.is_some() => {
+                actor.task.goal.unwrap_or(actor.position)
+            }
             Some(UnitOrder::AttackTarget { target, origin }) => {
                 return Ok(MotionAction::Pursue(*target, *origin))
             }

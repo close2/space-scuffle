@@ -2,6 +2,8 @@
 //!
 //! Encapsulates all authoritative simulation components in [`SimWorld`], driving
 //! the deterministic lockstep loop through an invariant 10-phase execution pipeline at 25 Hz.
+//! Phase 2 includes unit tasks ([`crate::economy`]); phase 8 settles the match
+//! ([`crate::match_state`]).
 //!
 //! ## Invariants Maintained
 //! 1. All calculations use deterministic fixed-point math (`SimScalar`, `SimVec2`, `SimAngle`).
@@ -12,6 +14,7 @@
 use crate::catalog::{UnitArchetype, UnitCatalog, WeaponSpec};
 use crate::checksum::compute_simulation_checksum;
 use crate::combat::TargetPriorityKey;
+use crate::economy::{GameCommandError, GameCommandOutcome};
 use crate::entity::{ActiveProjectile, Entity, WeaponPhase};
 use crate::error::{SimCoreError, SimResult};
 use crate::movement::{
@@ -29,8 +32,9 @@ use sim_map::{
 };
 use sim_types::{
     AbilityEffectSpec, AttributeFlags, BubbleRenderInstance, CombatEventVisual, EntityId, PlayerId,
-    PlayerUpgradeState, RenderSnapshot, ShapeKind, SimAngle, SimScalar, SimVec2, Tick, TickBundle,
-    UnitOrder, UnitTypeId, VisibilityState, WeaponVisualKind,
+    PlayerStatusView, PlayerUpgradeState, RenderSnapshot, ResourceNodeId, ResourceNodeView,
+    ShapeKind, SimAngle, SimScalar, SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId,
+    VisibilityState, WeaponVisualKind,
 };
 use std::collections::BTreeMap;
 
@@ -149,6 +153,9 @@ pub struct SimWorld {
     #[cfg(test)]
     pub(crate) transport_validation_count: std::cell::Cell<usize>,
     pub(crate) production: crate::production::ProductionWorkspace,
+    pub(crate) economy: crate::economy::EconomyWorkspace,
+    /// Authoritative standing of the match: participants, defeats and result.
+    pub match_state: crate::match_state::MatchState,
     pub(crate) combat: crate::combat_resolution::CombatWorkspace,
     /// Active continuous hazard/AoE zones (e.g. Psionic Storm) ticking in the world.
     pub active_hazards: Vec<ActiveHazardZone>,
@@ -255,6 +262,8 @@ impl SimWorld {
             #[cfg(test)]
             transport_validation_count: std::cell::Cell::new(0),
             production: crate::production::ProductionWorkspace::new(width, height),
+            economy: crate::economy::EconomyWorkspace::default(),
+            match_state: crate::match_state::MatchState::default(),
             combat: crate::combat_resolution::CombatWorkspace::default(),
             active_hazards: Vec::new(),
             next_hazard_id: 1,
@@ -769,6 +778,7 @@ impl SimWorld {
     pub fn step_into(&mut self, input: &TickBundle, output: &mut RenderSnapshot) {
         self.tick_diagnostics.clear();
         self.production.outcomes.clear();
+        self.clear_economy_outcomes();
         self.movement.outcomes.clear();
         self.movement.route_outcomes.clear();
         self.current_tick = self.current_tick.wrapping_add(1);
@@ -781,6 +791,7 @@ impl SimWorld {
         }
         self.process_commands_prevalidated(input);
         self.update_production_and_buffs();
+        self.update_unit_tasks();
         self.update_vision();
         self.acquire_targets();
         self.step_movement_and_steering();
@@ -1135,6 +1146,45 @@ impl SimWorld {
     )]
     fn process_commands_prevalidated(&mut self, input: &TickBundle) {
         for (command_index, cmd) in input.commands.iter().enumerate() {
+            let closed = if self.match_state.result.is_over() {
+                Some(GameCommandError::MatchOver)
+            } else if self.match_state.is_defeated(cmd.player_id) {
+                Some(GameCommandError::PlayerDefeated(cmd.player_id))
+            } else {
+                None
+            };
+            if let Some(error) = closed {
+                self.economy.outcomes.push(GameCommandOutcome {
+                    tick: Tick(self.current_tick),
+                    command_index,
+                    player: cmd.player_id,
+                    result: Err(error),
+                });
+                continue;
+            }
+            if matches!(
+                cmd.order,
+                UnitOrder::Build { .. }
+                    | UnitOrder::Construct { .. }
+                    | UnitOrder::CancelConstruction
+                    | UnitOrder::Harvest { .. }
+                    | UnitOrder::ReturnCargo
+                    | UnitOrder::CancelProduction { .. }
+                    | UnitOrder::Load { .. }
+                    | UnitOrder::UnloadAll
+            ) {
+                let result = self.admit_game_command(cmd);
+                if let Err(GameCommandError::Invariant(source)) = &result {
+                    self.report_production_failure(source.clone());
+                }
+                self.economy.outcomes.push(GameCommandOutcome {
+                    tick: Tick(self.current_tick),
+                    command_index,
+                    player: cmd.player_id,
+                    result,
+                });
+                continue;
+            }
             if matches!(
                 cmd.order,
                 UnitOrder::Move { .. } | UnitOrder::AttackMove { .. }
@@ -1153,9 +1203,16 @@ impl SimWorld {
                 });
                 continue;
             }
-            if let UnitOrder::Produce { unit_type } = cmd.order {
-                let result =
-                    self.queue_production_prevalidated(cmd.player_id, &cmd.entities, unit_type);
+            if let UnitOrder::Produce { .. } | UnitOrder::Research { .. } = cmd.order {
+                let result = match cmd.order {
+                    UnitOrder::Research { upgrade } => {
+                        self.queue_research_prevalidated(cmd.player_id, &cmd.entities, upgrade)
+                    }
+                    UnitOrder::Produce { unit_type } => {
+                        self.queue_production_prevalidated(cmd.player_id, &cmd.entities, unit_type)
+                    }
+                    _ => continue,
+                };
                 self.production
                     .outcomes
                     .push(crate::production::ProductionOutcome {
@@ -1172,13 +1229,6 @@ impl SimWorld {
             }
 
             match &cmd.order {
-                UnitOrder::Build {
-                    structure_type,
-                    cell_x,
-                    cell_y,
-                } => {
-                    let _ = self.spawn_structure(*structure_type, cmd.player_id, *cell_x, *cell_y);
-                }
                 UnitOrder::UseStim => {
                     for &ent_id in &cmd.entities {
                         let Some(actor) = self
@@ -1332,7 +1382,7 @@ impl SimWorld {
                 }
 
                 entity.ticks_since_last_damage = entity.ticks_since_last_damage.saturating_add(1);
-                if entity.ticks_since_last_damage >= 250 {
+                if entity.ticks_since_last_damage >= 250 && entity.is_completed {
                     entity.shields =
                         (entity.shields + arch.shield_regen_per_tick).min(arch.max_shields);
                 }
@@ -1828,6 +1878,7 @@ impl SimWorld {
     /// Phase 8: Reap destroyed entities and emit death shatter visuals.
     pub fn reap_dead_and_emit_shatter(&mut self) {
         self.reap_transport_groups();
+        self.update_match_state();
     }
 
     /// Phase 9: Compute the versioned 64-bit dynamic-state checksum.
@@ -1846,6 +1897,18 @@ impl SimWorld {
         output
     }
 
+    /// Fraction of a foundation built, or of a building's front job done.
+    fn published_progress(entity: &Entity) -> Option<f32> {
+        let (remaining, total) = match (&entity.construction, entity.production_queue.front()) {
+            (Some(record), _) => (record.remaining_ticks, record.total_ticks),
+            (None, Some(job)) => (job.remaining_ticks, job.total_ticks),
+            (None, None) => return None,
+        };
+        let done = total.saturating_sub(remaining);
+        let fraction = u64::from(done) * (1 << 16) / u64::from(total.max(1));
+        Some(SimScalar::from_raw(i64::try_from(fraction).unwrap_or(0) << 16).to_f32())
+    }
+
     /// Writes the current immutable visual state into caller-owned reusable buffers.
     ///
     /// Entity records are ordered by entity ID. This consumes pending visual events
@@ -1862,6 +1925,32 @@ impl SimWorld {
         output.combat_events.clear();
         output.tick = Tick(self.current_tick);
         output.checksum = self.last_checksum;
+        output.match_result = self.match_state.result;
+        for (slot, view) in output.players.iter_mut().enumerate() {
+            let resources = &self.player_resources[slot];
+            *view = PlayerStatusView {
+                minerals: resources.minerals,
+                gas: resources.gas,
+                supply_used: resources.supply_used,
+                supply_max: resources.supply_max,
+                defeated: self.match_state.defeated & (1 << slot) != 0,
+            };
+        }
+        output.resource_nodes.clear();
+        output
+            .resource_nodes
+            .extend(
+                self.map
+                    .resources()
+                    .iter()
+                    .zip(0_u32..)
+                    .map(|(node, index)| ResourceNodeView {
+                        id: ResourceNodeId(index),
+                        kind: node.kind,
+                        position: [node.pos.x.to_f32(), node.pos.y.to_f32()],
+                        remaining: node.remaining,
+                    }),
+            );
 
         for entity in self.entities.values() {
             if entity.is_loaded_in_transport() {
@@ -1932,7 +2021,7 @@ impl SimWorld {
                 shield_hit_flash: shield_flash,
                 hull_hit_angle_rad: entity.last_hit_angle.to_radians_f32(),
                 hull_hit_flash: hull_flash,
-                build_or_queue_progress: None,
+                build_or_queue_progress: Self::published_progress(entity),
                 selected: false,
                 cloaked: entity.is_cloaked,
                 speed_boosted,

@@ -299,7 +299,7 @@ fn corrupt_ready_job_and_allocator_emit_evidence_without_losing_job() -> TestRes
                     .production_queue
                     .front_mut()
                     .ok_or("job absent")?
-                    .product = UnitTypeId(u16::MAX);
+                    .item = sim_core::production::ProductionItem::Unit(UnitTypeId(u16::MAX));
             }
             1 => f.world.next_entity_id = u32::MAX,
             _ => f.world.player_resources[0].supply_used += 1,

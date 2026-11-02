@@ -5,17 +5,20 @@
 //! Exhaustive struct destructuring makes field additions require checksum review.
 
 use crate::entity::{ActiveBuff, ActiveProjectile, Entity, MovementMemory, WeaponPhase};
-use crate::production::ProductionJob;
+use crate::entity::{Cargo, UnitTask};
+use crate::match_state::MatchState;
+use crate::production::construction::Construction;
+use crate::production::{ProductionItem, ProductionJob};
 use crate::world::{ActiveHazardZone, PlayerResources};
 use sim_map::{
     CellFlags, CliffLevel, MapCell, PlacedStructure, RampDir, ResourceKind, ResourceNode,
     TerrainKind, Watchtower,
 };
 use sim_types::{
-    AnimState, ArmorClass, AttackOrigin, AttributeFlags, EntityId, MoverType, PlayerId,
-    PlayerUpgradeState, ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, SplashSpec,
-    Tick, UnitOrder, UnitStatDeltas, UnitTypeId, VisibilityState, WeaponClass, WeaponSpec,
-    WeaponVisualKind,
+    AnimState, ArmorClass, AttackOrigin, AttributeFlags, EntityId, MatchResult, MoverType,
+    PlayerId, PlayerUpgradeState, ProjectileTargetLossBehavior, ResourceNodeId, SimAngle,
+    SimScalar, SimVec2, SplashSpec, Tick, UnitOrder, UnitStatDeltas, UnitTypeId, VisibilityState,
+    WeaponClass, WeaponSpec, WeaponVisualKind,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use xxhash_rust::xxh64::Xxh64;
@@ -187,7 +190,14 @@ macro_rules! wrapper {
         }
     )+};
 }
-wrapper!(EntityId, UnitTypeId, PlayerId, Tick, CliffLevel);
+wrapper!(
+    EntityId,
+    UnitTypeId,
+    PlayerId,
+    Tick,
+    CliffLevel,
+    ResourceNodeId
+);
 
 impl Canonical for SimScalar {
     fn encode(&self, encoder: &mut Encoder) {
@@ -242,9 +252,12 @@ fields!(ActiveBuff {
     attack_rate_multiplier
 });
 fields!(ProductionJob {
-    product,
+    item,
     remaining_ticks,
-    reserved_supply
+    total_ticks,
+    reserved_supply,
+    paid_minerals,
+    paid_gas
 });
 fields!(Entity {
     id,
@@ -268,6 +281,9 @@ fields!(Entity {
     production_queue,
     captured_supply_used,
     captured_supply_provided,
+    task,
+    cargo,
+    construction,
     is_mineral_walking,
     is_holding_position,
     current_anim,
@@ -418,6 +434,61 @@ tags!(RampDir { North = 0, South = 1, East = 2, West = 3, NorthEast = 4, NorthWe
 tags!(TerrainKind { Grass = 0, MetalPlate = 1, Dirt = 2, Abyss = 3 });
 tags!(ResourceKind { Mineral = 0, Gas = 1 });
 tags!(AttackOrigin { Explicit = 0, Acquired = 1 });
+fields!(Cargo { kind, amount });
+fields!(UnitTask {
+    goal,
+    legs,
+    gather_ticks,
+    wait_ticks,
+    depot,
+    last_node
+});
+fields!(Construction {
+    remaining_ticks,
+    total_ticks,
+    hp_per_tick,
+    final_hp_residue,
+    paid_minerals,
+    paid_gas,
+    last_worked_tick
+});
+fields!(MatchState {
+    result,
+    participants,
+    defeated
+});
+
+impl Canonical for MatchResult {
+    fn encode(&self, encoder: &mut Encoder) {
+        match self {
+            Self::InProgress => 0_u8.encode(encoder),
+            Self::Victory { winner, tick } => {
+                1_u8.encode(encoder);
+                winner.encode(encoder);
+                tick.encode(encoder);
+            }
+            Self::Draw { tick } => {
+                2_u8.encode(encoder);
+                tick.encode(encoder);
+            }
+        }
+    }
+}
+
+impl Canonical for ProductionItem {
+    fn encode(&self, encoder: &mut Encoder) {
+        match self {
+            Self::Unit(product) => {
+                0_u8.encode(encoder);
+                product.encode(encoder);
+            }
+            Self::Research(upgrade) => {
+                1_u8.encode(encoder);
+                upgrade.encode(encoder);
+            }
+        }
+    }
+}
 tags!(MoverType { Ground = 0, Air = 1, CliffJumper = 2, CliffWalker = 3 });
 tags!(WeaponClass {
     DirectorateInfantry = 0, DirectorateVehicle = 1, DirectorateShip = 2,
@@ -519,6 +590,24 @@ impl Canonical for UnitOrder {
                 target_pos.encode(encoder);
                 target_entity.encode(encoder);
             }
+            Self::Construct { foundation } => {
+                12_u8.encode(encoder);
+                foundation.encode(encoder);
+            }
+            Self::CancelConstruction => 13_u8.encode(encoder),
+            Self::Research { upgrade } => {
+                14_u8.encode(encoder);
+                upgrade.encode(encoder);
+            }
+            Self::CancelProduction { job_index } => {
+                15_u8.encode(encoder);
+                job_index.encode(encoder);
+            }
+            Self::Load { carrier } => {
+                16_u8.encode(encoder);
+                carrier.encode(encoder);
+            }
+            Self::UnloadAll => 17_u8.encode(encoder),
         }
     }
 }
@@ -539,7 +628,7 @@ mod tests {
         // Domain length, UTF-8 domain, schema u32, u16, i32, option tags/payload,
         // then UTF-8 string byte length and its two encoded bytes.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 8, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 9, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
             0xff, 0xff, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0xc3, 0xa9,
         ];
         assert_eq!(encoder.finish(), xxh64(&bytes, 0));
@@ -564,7 +653,7 @@ mod tests {
             let mut encoder = Encoder::new("test");
             7_u32.encode(&mut encoder);
             text.as_str().encode(&mut encoder);
-            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 8, 0, 0, 0];
+            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 9, 0, 0, 0];
             bytes.extend([7, 0, 0, 0]);
             bytes.extend((length as u64).to_le_bytes());
             bytes.extend(text.as_bytes());
@@ -576,23 +665,26 @@ mod tests {
     fn production_queue_encodes_all_four_remaining_tick_bytes() {
         let queue: std::collections::VecDeque<crate::production::ProductionJob> =
             [crate::production::ProductionJob {
-                product: sim_types::UnitTypeId(0x1234),
+                item: crate::production::ProductionItem::Unit(sim_types::UnitTypeId(0x1234)),
                 remaining_ticks: 65_537,
+                total_ticks: 2,
                 reserved_supply: 0x1234_5678,
+                paid_minerals: 3,
+                paid_gas: 4,
             }]
             .into();
-        // Domain length and bytes, schema 5, queue length, archetype u16,
-        // then the full remaining duration u32 (0x0001_0001).
+        // Domain length and bytes, schema 5, queue length, item tag, archetype u16,
+        // then the full remaining duration u32 (0x0001_0001), total, supply and payments.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 8, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0,
-            0x34, 0x12, 1, 0, 1, 0, 0x78, 0x56, 0x34, 0x12,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 9, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+            0x34, 0x12, 1, 0, 1, 0, 2, 0, 0, 0, 0x78, 0x56, 0x34, 0x12, 3, 0, 0, 0, 4, 0, 0, 0,
         ];
         assert_eq!(digest(&queue), xxh64(&bytes, 0));
     }
 
     #[test]
     fn carrier_identity_has_explicit_option_tag_and_all_id_bytes() {
-        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 8, 0, 0, 0];
+        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 9, 0, 0, 0];
         bytes.push(0);
         assert_eq!(digest(&None::<sim_types::EntityId>), xxh64(&bytes, 0));
         bytes.pop();

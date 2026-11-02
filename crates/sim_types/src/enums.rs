@@ -82,6 +82,15 @@ pub enum AnimState {
     Die,
 }
 
+/// Type of natural resource node, and of the cargo a harvester takes from one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ResourceKind {
+    /// Standard mineral crystal cluster.
+    Mineral,
+    /// High-energy vespene gas geyser.
+    Gas,
+}
+
 /// Visual category of an active weapon attack.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WeaponVisualKind {

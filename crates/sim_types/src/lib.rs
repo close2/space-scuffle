@@ -35,13 +35,16 @@ pub use commands::{
     UnitOrder,
 };
 pub use enums::{
-    AnimState, AttributeFlags, Faction, MoverType, ShapeKind, SilhouetteClass, VisibilityState,
-    WeaponVisualKind,
+    AnimState, AttributeFlags, Faction, MoverType, ResourceKind, ShapeKind, SilhouetteClass,
+    VisibilityState, WeaponVisualKind,
 };
 pub use errors::MathError;
-pub use ids::{EntityId, PlayerId, TeamId, Tick, UnitTypeId};
+pub use ids::{EntityId, PlayerId, ResourceNodeId, TeamId, Tick, UnitTypeId};
 pub use math::{SimAngle, SimScalar, SimVec2};
-pub use snapshot::{BubbleRenderInstance, CombatEventVisual, RenderSnapshot};
+pub use snapshot::{
+    BubbleRenderInstance, CombatEventVisual, MatchResult, PlayerStatusView, RenderSnapshot,
+    ResourceNodeView,
+};
 pub use upgrades::{
     ArmorClass, PlayerUpgradeState, UnitStatDeltas, UpgradeApplicationError, UpgradeEffect,
     UpgradeStat, WeaponClass,

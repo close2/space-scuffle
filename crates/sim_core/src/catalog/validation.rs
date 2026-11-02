@@ -142,6 +142,23 @@ fn ability_rates(definition: &str, prefix: &str, abilities: &[AbilitySpec]) -> S
 }
 
 impl UnitArchetypeDef {
+    /// A harvester that carries nothing would loop forever without earning.
+    fn validate_harvester(&self) -> SimResult<()> {
+        if self
+            .capabilities
+            .harvester
+            .as_ref()
+            .is_some_and(|spec| spec.harvest_capacity == 0)
+        {
+            return Err(invalid(
+                &self.slug,
+                "capabilities.harvester.harvest_capacity",
+                "must be positive",
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn validate(&self) -> SimResult<()> {
         validate_slug(&self.slug)?;
         for (field, value) in [
@@ -194,6 +211,7 @@ impl UnitArchetypeDef {
                 weapon.validate(&self.slug, name)?;
             }
         }
+        self.validate_harvester()?;
         if let Some(overclock) = &self.capabilities.overclock {
             for (field, value) in [
                 ("capabilities.overclock.hp_cost", overclock.hp_cost),

@@ -4,9 +4,10 @@
 //! participation. A single passenger-side link is authoritative; inverse queries
 //! derive membership in stable entity order. Public transactions validate once,
 //! prepare without mutation, then commit under exclusive world access. This is a
-//! low-level project lifecycle API, not a capacity/range-based boarding command.
+//! low-level lifecycle API; [`orders`] builds the player's range and capacity rules on it.
 
 mod lifecycle;
+mod orders;
 #[cfg(test)]
 mod tests;
 
@@ -248,6 +249,7 @@ impl SimWorld {
             })?;
         actor.transport_carrier = Some(carrier);
         actor.order_queue.clear();
+        actor.abandon_task_leg();
         actor.velocity = SimVec2::ZERO;
         actor.current_target = None;
         actor.current_funnel_waypoints.clear();

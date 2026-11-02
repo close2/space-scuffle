@@ -68,6 +68,7 @@
                     harvest_rate_ticks: 60,
                 )),
                 is_resource_dropoff: false,
+                can_construct: true,
             ),
             veo_prompts: {
                 Idle: "Welder Drone: Compact hovering utility bot with dual plasma welding arcs and mineral collector clamps. Steady hovering idle.",
@@ -1060,6 +1061,7 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+                transport_capacity: 8,
             ),
             veo_prompts: {
                 Idle: "Repair Shuttle: Heavy twin-engine aerodyne dropship with green nanite healing emitters hovering steady.",
@@ -1376,6 +1378,7 @@
                     harvest_rate_ticks: 60,
                 )),
                 is_resource_dropoff: false,
+                can_construct: true,
             ),
             veo_prompts: {
                 Idle: "Levitation Drone: Small gleaming alien probe with floating crystalline eye and humming repulsor field.",
@@ -1991,6 +1994,7 @@
                 overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
+                transport_capacity: 8,
             ),
             veo_prompts: {
                 Idle: "Phase Transporter: Levitating faceted purple crystal vessel surrounded by floating containment pylons.",
@@ -2226,6 +2230,7 @@
                     harvest_rate_ticks: 60,
                 )),
                 is_resource_dropoff: false,
+                can_construct: true,
             ),
             veo_prompts: {
                 Idle: "Forager Ant: Iridescent forest insect worker with large grasping mandibles and bioluminescent antennae.",

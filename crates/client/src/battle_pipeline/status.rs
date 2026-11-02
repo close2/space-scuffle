@@ -94,6 +94,11 @@ fn write_production_reason(output: &mut String, error: &ProductionAdmissionError
             );
             return;
         }
+        ProductionAdmissionError::UnknownUpgrade(_)
+        | ProductionAdmissionError::NoEligibleResearcher(_)
+        | ProductionAdmissionError::UpgradeAlreadyResearched(_)
+        | ProductionAdmissionError::UpgradeAlreadyQueued(_)
+        | ProductionAdmissionError::UpgradeTierLocked(_) => "this research is unavailable",
         ProductionAdmissionError::Invariant(_) => "the battle cannot process this order",
     };
     output.push_str(reason);

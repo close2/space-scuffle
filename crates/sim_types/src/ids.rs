@@ -82,6 +82,22 @@ impl fmt::Display for TeamId {
     }
 }
 
+/// Natural resource node identifier: the node's index in the map's stable resource list.
+///
+/// Resource nodes are map data, not entities, so an [`EntityId`] cannot name one. Nodes are
+/// never removed from that list; an exhausted node keeps its identifier with nothing left.
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+)]
+#[repr(transparent)]
+pub struct ResourceNodeId(pub u32);
+
+impl fmt::Display for ResourceNodeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ResourceNode({})", self.0)
+    }
+}
+
 /// Unit archetype identifier indexing into the static Unit Catalog.
 #[derive(
     Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,

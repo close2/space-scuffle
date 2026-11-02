@@ -18,15 +18,15 @@
 //!   and units are placed.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sim_map::{
-    validate_map, CellFlags, MapDocument, MapFormatError, MapValidationError, TerrainKind,
+    validate_map, CellFlags, MapDocument, MapFile, MapFormatError, MapValidationError, TerrainKind,
 };
 use sim_types::{PlayerId, ShapeKind, SimScalar, SimVec2};
 
-use crate::catalog::UnitCatalog;
+use crate::catalog::{RuntimeCatalogs, UnitCatalog};
 use crate::error::SimCoreError;
 use crate::upgrades::UpgradeCatalog;
 use crate::world::SimWorld;
@@ -42,6 +42,18 @@ pub struct StartLoadout {
     pub town_hall: String,
     /// Mobile unit types and counts to spawn around the town hall.
     pub units: Vec<LoadoutUnit>,
+    /// Bank this loadout starts with. Omitted, the player keeps the world's default bank.
+    #[serde(default)]
+    pub starting_resources: Option<StartingResources>,
+}
+
+/// Resources a player starts a match with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StartingResources {
+    /// Mineral reserve.
+    pub minerals: u32,
+    /// Vespene gas reserve.
+    pub gas: u32,
 }
 
 /// Mobile unit count entry within a start loadout.
@@ -150,6 +162,76 @@ pub enum ScenarioError {
     /// Simulation engine failed to spawn an entity.
     #[error("failed to spawn entity: {0}")]
     Spawn(#[from] SimCoreError),
+
+    /// Scenario file declares a schema version this build does not read.
+    #[error("unsupported scenario format version {0}")]
+    UnsupportedVersion(u32),
+
+    /// Rule catalogs in the assets directory could not be loaded.
+    #[error(transparent)]
+    Catalogs(#[from] crate::catalog::CatalogLoadError),
+}
+
+/// The scenario file schema version this build reads.
+pub const SCENARIO_FORMAT_VERSION: u32 = 1;
+
+/// The parts of a scenario file the simulation needs: map, seed and players.
+///
+/// Scenario files are shared with the client, which also reads a list of initial orders. That
+/// list is the client's own and this type passes over it, so a playable start must carry
+/// everything in its loadouts.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ScenarioManifest {
+    /// Scenario schema version.
+    pub format_version: u32,
+    /// Map path relative to the assets directory.
+    pub map: PathBuf,
+    /// Deterministic seed of the match.
+    pub seed: u64,
+    /// Player slots and their loadouts.
+    pub players: Vec<PlayerSetup>,
+}
+
+impl ScenarioManifest {
+    /// Parses a scenario from RON text.
+    ///
+    /// # Errors
+    /// Returns [`ScenarioError::Ron`] on bad syntax and [`ScenarioError::UnsupportedVersion`]
+    /// on a schema this build does not read.
+    pub fn from_ron_str(text: &str) -> Result<Self, ScenarioError> {
+        let manifest: Self = ron::from_str(text)?;
+        if manifest.format_version != SCENARIO_FORMAT_VERSION {
+            return Err(ScenarioError::UnsupportedVersion(manifest.format_version));
+        }
+        Ok(manifest)
+    }
+}
+
+/// Builds the starting world of the scenario at `scenario_path` under `assets_root`.
+///
+/// Reads the scenario, its map, the start loadouts and all rule catalogs from real files, with
+/// no embedded substitute. `scenario_path` is relative to `assets_root`, for example
+/// `scenarios/skirmish.ron`.
+///
+/// # Errors
+/// Returns a typed I/O, parse, catalog or placement failure.
+pub fn load_scenario_world(
+    assets_root: &Path,
+    scenario_path: &Path,
+) -> Result<SimWorld, ScenarioError> {
+    let manifest =
+        ScenarioManifest::from_ron_str(&std::fs::read_to_string(assets_root.join(scenario_path))?)?;
+    let document = MapFile::load(&assets_root.join(&manifest.map))?.decode()?;
+    let loadouts = StartLoadoutCatalog::load(assets_root.join("catalog/start_loadouts.ron"))?;
+    let catalogs = RuntimeCatalogs::load_from_directory(assets_root.join("catalog"))?;
+    build_world_with_catalogs(
+        &document,
+        &loadouts,
+        &manifest.players,
+        manifest.seed,
+        catalogs.units,
+        catalogs.upgrades,
+    )
 }
 
 /// Builds an authoritative simulation [`SimWorld`] from a map document, loadouts, and player setup.
@@ -167,7 +249,8 @@ pub enum ScenarioError {
 ///    - Within each ring, cells are visited in perimeter order:
 ///      South edge (X ascending) -> East edge (Y ascending) -> North edge (X descending) -> West edge (Y descending).
 ///    - Units are only placed on in-bounds, ground-pathable, non-abyss, non-ramp, unoccupied cells.
-/// 6. Recomputes the world checksum for authoritative simulation start.
+///    - A loadout's `starting_resources` replace the player's default bank.
+/// 6. Records the match's players and recomputes the world checksum.
 ///
 /// # Errors
 /// Returns [`ScenarioError`] on invalid maps, missing start locations, unknown slugs,
@@ -279,6 +362,12 @@ pub fn build_world_with_catalogs(
             });
         }
 
+        if let Some(start) = loadout.starting_resources {
+            let resources = &mut world.player_resources[usize::from(start_loc.player_slot)];
+            resources.minerals = start.minerals;
+            resources.gas = start.gas;
+        }
+
         // Verify all unit slugs exist in the catalog.
         let mut units_to_spawn = Vec::new();
         for unit_entry in &loadout.units {
@@ -382,7 +471,8 @@ pub fn build_world_with_catalogs(
         }
     }
 
-    // 6. Deterministically recompute simulation checksum.
+    // 6. Record the match's players, then deterministically recompute the checksum.
+    world.update_match_state();
     world.last_checksum = world.compute_checksum();
     Ok(world)
 }

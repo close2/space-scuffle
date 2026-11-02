@@ -236,6 +236,7 @@ impl BattleFrameState {
         if self.hold_current || !self.previous_valid || alpha >= 1.0 {
             self.presented.tick = self.current.tick;
             self.presented.checksum = self.current.checksum;
+            self.presented.copy_match_status_from(&self.current);
             self.presented
                 .bubbles
                 .extend(self.current.bubbles.iter().cloned());
@@ -243,6 +244,7 @@ impl BattleFrameState {
         }
         self.presented.tick = self.previous.tick;
         self.presented.checksum = self.previous.checksum;
+        self.presented.copy_match_status_from(&self.previous);
         // PERFORMANCE RATIONALE:
         // Why: Membership matching must not scan all entities for every record.
         // What: Merge the two authoritative entity-ID-ordered sequences once.

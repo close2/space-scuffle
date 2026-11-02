@@ -30,7 +30,9 @@ use std::collections::BTreeMap;
 /// Schema 6 records the locomotion layer each projectile's splash lands on.
 /// Schema 7 marks whether an attack order is the player's or automatic.
 /// Schema 8 adds each unit's movement memory: arrival, stall and repath state.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 8;
+/// Schema 9 adds task progress, cargo, foundation records, job payments and research jobs,
+/// typed resource-node harvest targets, the new orders, and the match standing.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 9;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.
@@ -87,6 +89,7 @@ pub fn compute_simulation_checksum(world: &SimWorld) -> u64 {
     "players".encode(&mut encoder);
     world.player_resources.as_slice().encode(&mut encoder);
     world.player_upgrades.as_slice().encode(&mut encoder);
+    world.match_state.encode(&mut encoder);
     "hazards".encode(&mut encoder);
     world.active_hazards.encode(&mut encoder);
 

@@ -188,6 +188,7 @@ impl SimWorld {
             if !entity.is_alive()
                 || entity.channeling_remaining_ticks > 0
                 || entity.is_loaded_in_transport()
+                || !entity.is_completed
             {
                 continue;
             }

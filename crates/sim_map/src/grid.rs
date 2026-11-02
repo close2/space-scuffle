@@ -8,6 +8,7 @@
 use crate::error::{MapError, PlacementFailureReason, Result};
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
+pub use sim_types::ResourceKind;
 use sim_types::{EntityId, PlayerId, SimScalar, SimVec2};
 use std::collections::BTreeMap;
 
@@ -182,15 +183,6 @@ impl MapCell {
             occupying_structure: None,
         }
     }
-}
-
-/// Type of natural resource node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ResourceKind {
-    /// Standard mineral crystal cluster.
-    Mineral,
-    /// High-energy vespene gas geyser.
-    Gas,
 }
 
 /// Natural resource node located on the map.

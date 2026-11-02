@@ -1,7 +1,7 @@
 //! Authoritative rendering snapshot consumed by the client visualization layer.
 
-use crate::enums::{AnimState, ShapeKind, SilhouetteClass, WeaponVisualKind};
-use crate::ids::{EntityId, PlayerId, Tick, UnitTypeId};
+use crate::enums::{AnimState, ResourceKind, ShapeKind, SilhouetteClass, WeaponVisualKind};
+use crate::ids::{EntityId, PlayerId, ResourceNodeId, Tick, UnitTypeId};
 use serde::{Deserialize, Serialize};
 
 /// Comprehensive visual parameters for a single bubble or building dome.
@@ -51,7 +51,9 @@ pub struct BubbleRenderInstance {
     pub hull_hit_angle_rad: f32,
     /// Decaying impact flare intensity (0.0..=1.0) at hull impact point.
     pub hull_hit_flash: f32,
-    /// Construction/production progress for building domes (radial ground ring fill).
+    /// Progress (0.0..=1.0) of a foundation's construction or, on a finished building, of the
+    /// job at the front of its queue. `None` when neither is under way. A foundation is told
+    /// from a producing building by `anim_state`, which is `AnimState::Constructing` on it.
     pub build_or_queue_progress: Option<f32>,
     /// Selection highlight flag (activates double ground ring).
     pub selected: bool,
@@ -136,6 +138,62 @@ impl CombatEventVisual {
     }
 }
 
+/// Authoritative result of a match.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MatchResult {
+    /// Two or more players are still undefeated, or the world has no opposing players.
+    #[default]
+    InProgress,
+    /// One player outlasted every other.
+    Victory {
+        /// The last undefeated player.
+        winner: PlayerId,
+        /// Tick the match ended on.
+        tick: Tick,
+    },
+    /// The last undefeated players all lost their last structure on one tick.
+    Draw {
+        /// Tick the match ended on.
+        tick: Tick,
+    },
+}
+
+impl MatchResult {
+    /// Whether the match has ended, after which commands are refused.
+    #[must_use]
+    pub const fn is_over(self) -> bool {
+        !matches!(self, Self::InProgress)
+    }
+}
+
+/// One player slot's economy and standing, for HUDs and end-of-match screens.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlayerStatusView {
+    /// Mineral reserve.
+    pub minerals: u32,
+    /// Vespene gas reserve.
+    pub gas: u32,
+    /// Supply in use, including queued reservations.
+    pub supply_used: u32,
+    /// Effective supply capacity.
+    pub supply_max: u32,
+    /// Whether this player has lost every structure.
+    pub defeated: bool,
+}
+
+/// One resource node as a player would pick or render it.
+#[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ResourceNodeView {
+    /// Identifier a `UnitOrder::Harvest` names.
+    pub id: ResourceNodeId,
+    /// Mineral or gas.
+    pub kind: ResourceKind,
+    /// World position of the node centre: `[x, y]`.
+    pub position: [f32; 2],
+    /// Units left to gather; zero marks an exhausted node.
+    pub remaining: u32,
+}
+
 /// Complete, immutable snapshot of a single simulation frame passed to the renderer.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RenderSnapshot {
@@ -147,6 +205,27 @@ pub struct RenderSnapshot {
     pub bubbles: Vec<BubbleRenderInstance>,
     /// Visual combat events triggered during this tick.
     pub combat_events: Vec<CombatEventVisual>,
+    /// Authoritative match result as of this frame.
+    #[serde(default)]
+    pub match_result: MatchResult,
+    /// Economy and standing, indexed by player slot.
+    #[serde(default)]
+    pub players: [PlayerStatusView; 8],
+    /// Every map resource node in identifier order, including exhausted ones.
+    #[serde(default)]
+    pub resource_nodes: Vec<ResourceNodeView>,
+}
+
+impl RenderSnapshot {
+    /// Copies the frame-wide match, economy and resource state of `source` into this frame.
+    ///
+    /// Presentation frames assemble their records themselves and use this for the rest. The
+    /// node list reuses this frame's storage, so a warmed frame allocates nothing.
+    pub fn copy_match_status_from(&mut self, source: &Self) {
+        self.match_result = source.match_result;
+        self.players = source.players;
+        self.resource_nodes.clone_from(&source.resource_nodes);
+    }
 }
 
 #[cfg(test)]
@@ -195,6 +274,17 @@ mod tests {
             checksum: 0x1234_5678_9ABC_DEF0,
             bubbles: vec![instance],
             combat_events: vec![event],
+            match_result: MatchResult::Victory {
+                winner: PlayerId(1),
+                tick: Tick(40),
+            },
+            players: [PlayerStatusView::default(); 8],
+            resource_nodes: vec![ResourceNodeView {
+                id: ResourceNodeId(3),
+                kind: ResourceKind::Gas,
+                position: [4.5, 6.5],
+                remaining: 25,
+            }],
         };
 
         let ron_str = ron::to_string(&snapshot).expect("invariant: valid ron serialization");

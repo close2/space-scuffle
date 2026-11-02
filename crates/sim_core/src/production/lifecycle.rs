@@ -1,11 +1,14 @@
-//! Training countdown, completion and death transaction preparation.
+//! Queue countdown, completion, cancellation and death transaction preparation.
 //!
 //! A ready front remains registered until a legal child is committed. Dead entities
 //! retain ledger contributions until validated reap; no refund or resurrection occurs.
+//! Cancelling is the one voluntary exit from a queue: it returns the job's exact payment.
 
-use super::{ProductionBlock, ProductionInvariant, STANDARD_SUPPLY_CAP};
+use super::{
+    ProductionBlock, ProductionInvariant, ProductionItem, ProductionJob, STANDARD_SUPPLY_CAP,
+};
 use crate::{PlayerResources, SimWorld, SimulationDiagnostic};
-use sim_types::{EntityId, ShapeKind, Tick};
+use sim_types::{EntityId, ShapeKind, Tick, UnitTypeId};
 
 impl SimWorld {
     pub(crate) fn advance_production(&mut self) {
@@ -29,7 +32,15 @@ impl SimWorld {
                     entity: entity.id,
                     reason: "production source has no front job",
                 })
-                .and_then(|job| validate_job_source(&self.catalog, &self.map, entity, job))
+                .and_then(|job| {
+                    validate_job_source(
+                        &self.catalog,
+                        &self.upgrade_catalog,
+                        &self.map,
+                        entity,
+                        job,
+                    )
+                })
             {
                 self.tick_diagnostics
                     .push(SimulationDiagnostic::ProductionInvariant {
@@ -77,11 +88,18 @@ impl SimWorld {
                 continue;
             };
             let owner = entity.owner;
+            let product = match job.item {
+                ProductionItem::Unit(product) => product,
+                ProductionItem::Research(upgrade) => {
+                    self.complete_research(producer, owner, upgrade, &job);
+                    continue;
+                }
+            };
             let result = self
-                .production_exit(producer, job.product)
+                .production_exit(producer, product)
                 .and_then(|position| {
                     position
-                        .map(|pos| self.prepare_spawn(job.product, owner, pos, job.reserved_supply))
+                        .map(|pos| self.prepare_spawn(product, owner, pos, job.reserved_supply))
                         .transpose()
                 });
             match result {
@@ -116,6 +134,57 @@ impl SimWorld {
                 Err(error) => self.report_production_failure(error),
             }
         }
+    }
+
+    /// Removes the queued job at `job_index` and returns its payment and supply reservation.
+    ///
+    /// The job's progress is lost. A job already ready and waiting for an exit can still be
+    /// cancelled. Rejection leaves queue and economy unchanged; `Ok(None)` means no such job.
+    ///
+    /// # Errors
+    /// Returns [`ProductionInvariant`] if the refund or release cannot be represented.
+    pub(crate) fn cancel_production_job(
+        &mut self,
+        producer: EntityId,
+        job_index: u32,
+    ) -> Result<Option<ProductionJob>, ProductionInvariant> {
+        let Some(entity) = self.entities.get(&producer) else {
+            return Ok(None);
+        };
+        let Some(job) = usize::try_from(job_index)
+            .ok()
+            .and_then(|index| entity.production_queue.get(index).copied())
+        else {
+            return Ok(None);
+        };
+        let slot = usize::from(entity.owner.0);
+        let resources =
+            self.player_resources
+                .get(slot)
+                .ok_or(ProductionInvariant::InvalidPlayer {
+                    player: entity.owner,
+                })?;
+        let overflow = ProductionInvariant::Arithmetic {
+            operation: "cancelled job refund",
+        };
+        let mut economy = *resources;
+        economy.minerals = economy
+            .minerals
+            .checked_add(job.paid_minerals)
+            .ok_or_else(|| overflow.clone())?;
+        economy.gas = economy
+            .gas
+            .checked_add(job.paid_gas)
+            .ok_or_else(|| overflow.clone())?;
+        economy.supply_used = economy
+            .supply_used
+            .checked_sub(job.reserved_supply)
+            .ok_or(overflow)?;
+        if let Some(entity) = self.entities.get_mut(&producer) {
+            entity.production_queue.remove(job_index as usize);
+        }
+        self.player_resources[slot] = economy;
+        Ok(Some(job))
     }
 
     /// Prepares one lifecycle release against the caller's cumulative group balance.
@@ -212,15 +281,12 @@ impl SimWorld {
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "one production transaction; splitting is plan step 9.2"
-)]
 pub(super) fn validate_job_source(
     catalog: &crate::UnitCatalog,
+    upgrades: &crate::UpgradeCatalog,
     map: &sim_map::GameMap,
     entity: &crate::Entity,
-    job: &super::ProductionJob,
+    job: &ProductionJob,
 ) -> Result<(), ProductionInvariant> {
     if entity.is_loaded_in_transport() {
         return Err(ProductionInvariant::EntityState {
@@ -235,53 +301,25 @@ pub(super) fn validate_job_source(
                 entity: entity.id,
                 unit_type: entity.unit_type_id,
             })?;
-    let target = catalog
-        .get(job.product)
-        .map_err(|_| ProductionInvariant::MissingArchetype {
-            entity: entity.id,
-            unit_type: job.product,
-        })?;
-    if target.supply_cost != job.reserved_supply
-        || matches!(target.shape, ShapeKind::BuildingDome { .. })
-    {
-        return Err(ProductionInvariant::EntityState {
-            entity: entity.id,
-            reason: "queued product is unsupported or differs from reserved supply",
+    if source.collision_radius <= sim_types::SimScalar::ZERO {
+        return Err(ProductionInvariant::InvalidDefinition {
+            unit_type: source.unit_type_id,
+            field: "collision_radius",
         });
     }
-    for arch in [source, target] {
-        if arch.collision_radius <= sim_types::SimScalar::ZERO {
-            return Err(ProductionInvariant::InvalidDefinition {
-                unit_type: arch.unit_type_id,
-                field: "collision_radius",
+    match job.item {
+        ProductionItem::Unit(product) => validate_unit_job(catalog, entity, source, job, product)?,
+        ProductionItem::Research(upgrade) => {
+            let researched = upgrades.get_by_id(upgrade).is_some_and(|def| {
+                source.researches_upgrades.contains(&def.slug) && job.reserved_supply == 0
             });
+            if !researched {
+                return Err(ProductionInvariant::EntityState {
+                    entity: entity.id,
+                    reason: "queued upgrade is unknown or not researched at this structure",
+                });
+            }
         }
-    }
-    let mut permits = false;
-    for (index, slug) in source.trains_units.iter().enumerate() {
-        let product = catalog
-            .get_by_slug(slug)
-            .ok_or(ProductionInvariant::InvalidDefinition {
-                unit_type: source.unit_type_id,
-                field: "trains_units reference",
-            })?;
-        if source.trains_units[..index].iter().any(|prior| {
-            catalog
-                .get_by_slug(prior)
-                .is_some_and(|a| a.unit_type_id == product.unit_type_id)
-        }) {
-            return Err(ProductionInvariant::InvalidDefinition {
-                unit_type: source.unit_type_id,
-                field: "duplicate trains_units reference",
-            });
-        }
-        permits |= product.unit_type_id == job.product;
-    }
-    if !permits {
-        return Err(ProductionInvariant::EntityState {
-            entity: entity.id,
-            reason: "producer no longer permits its accepted product",
-        });
     }
     if let ShapeKind::BuildingDome {
         footprint_w,
@@ -350,4 +388,62 @@ pub(super) fn validate_job_source(
         }
     }
     Ok(())
+}
+
+fn validate_unit_job(
+    catalog: &crate::UnitCatalog,
+    entity: &crate::Entity,
+    source: &crate::UnitArchetype,
+    job: &ProductionJob,
+    product: UnitTypeId,
+) -> Result<(), ProductionInvariant> {
+    let target = catalog
+        .get(product)
+        .map_err(|_| ProductionInvariant::MissingArchetype {
+            entity: entity.id,
+            unit_type: product,
+        })?;
+    if target.supply_cost != job.reserved_supply
+        || matches!(target.shape, ShapeKind::BuildingDome { .. })
+    {
+        return Err(ProductionInvariant::EntityState {
+            entity: entity.id,
+            reason: "queued product is unsupported or differs from reserved supply",
+        });
+    }
+    if target.collision_radius <= sim_types::SimScalar::ZERO {
+        return Err(ProductionInvariant::InvalidDefinition {
+            unit_type: target.unit_type_id,
+            field: "collision_radius",
+        });
+    }
+    let mut permits = false;
+    for (index, slug) in source.trains_units.iter().enumerate() {
+        let candidate =
+            catalog
+                .get_by_slug(slug)
+                .ok_or(ProductionInvariant::InvalidDefinition {
+                    unit_type: source.unit_type_id,
+                    field: "trains_units reference",
+                })?;
+        if source.trains_units[..index].iter().any(|prior| {
+            catalog
+                .get_by_slug(prior)
+                .is_some_and(|a| a.unit_type_id == candidate.unit_type_id)
+        }) {
+            return Err(ProductionInvariant::InvalidDefinition {
+                unit_type: source.unit_type_id,
+                field: "duplicate trains_units reference",
+            });
+        }
+        permits |= candidate.unit_type_id == product;
+    }
+    if permits {
+        Ok(())
+    } else {
+        Err(ProductionInvariant::EntityState {
+            entity: entity.id,
+            reason: "producer no longer permits its accepted product",
+        })
+    }
 }

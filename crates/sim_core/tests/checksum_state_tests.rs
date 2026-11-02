@@ -148,7 +148,18 @@ fn every_public_entity_field_changes_the_world_checksum() {
             weapon_phase => WeaponPhase::Cooldown,
             weapon_cooldown_remaining => 7,
             active_buffs => vec![ActiveBuff { buff_id: 1, remaining_ticks: 2, speed_multiplier: SimScalar::ONE, attack_rate_multiplier: SimScalar::ONE }],
-            production_queue => [sim_core::production::ProductionJob { product: sim_types::UnitTypeId(0), remaining_ticks: 7, reserved_supply: 3 }].into(),
+            production_queue => [sim_core::production::ProductionJob { item: sim_core::production::ProductionItem::Unit(sim_types::UnitTypeId(0)), remaining_ticks: 7, total_ticks: 9, reserved_supply: 3, paid_minerals: 5, paid_gas: 6 }].into(),
+            task => sim_core::UnitTask { legs: 2, ..Default::default() },
+            cargo => Some(sim_core::Cargo { kind: ResourceKind::Gas, amount: 5 }),
+            construction => Some(sim_core::production::construction::Construction {
+                remaining_ticks: 3,
+                total_ticks: 4,
+                hp_per_tick: SimScalar::ONE,
+                final_hp_residue: SimScalar::ZERO,
+                paid_minerals: 100,
+                paid_gas: 0,
+                last_worked_tick: None,
+            }),
             captured_supply_used => 99,
             captured_supply_provided => 99,
             is_mineral_walking => true,
@@ -360,11 +371,29 @@ fn phase_order_and_target_loss_payloads_remain_distinct() {
             unit_type: sim_types::UnitTypeId(0),
         },
         UnitOrder::Harvest {
-            target: EntityId(1),
+            target: sim_types::ResourceNodeId(1),
         },
         UnitOrder::Harvest {
-            target: EntityId(2),
+            target: sim_types::ResourceNodeId(2),
         },
+        UnitOrder::Construct {
+            foundation: EntityId(1),
+        },
+        UnitOrder::Construct {
+            foundation: EntityId(2),
+        },
+        UnitOrder::CancelConstruction,
+        UnitOrder::Research { upgrade: 1 },
+        UnitOrder::Research { upgrade: 2 },
+        UnitOrder::CancelProduction { job_index: 0 },
+        UnitOrder::CancelProduction { job_index: 1 },
+        UnitOrder::Load {
+            carrier: EntityId(1),
+        },
+        UnitOrder::Load {
+            carrier: EntityId(2),
+        },
+        UnitOrder::UnloadAll,
         UnitOrder::Build {
             structure_type: unit_type,
             cell_x: 1,
