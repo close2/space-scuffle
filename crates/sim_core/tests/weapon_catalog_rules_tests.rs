@@ -282,3 +282,76 @@ fn s16_bundle_resolves_every_upgrade_reference() -> TestResult {
     );
     Ok(())
 }
+
+/// S-11: an upgrade effect the simulation could not apply is a load error.
+#[test]
+fn s11_upgrade_effects_must_resolve() -> TestResult {
+    let units = UnitCatalog::from_ron_str_bundle(UNITS, STRUCTURES)?;
+    for (from, to, field) in [
+        (
+            "ability_slug: \"overclock\"",
+            "ability_slug: \"no_such_ability\"",
+            "UnlockAbility.ability_slug",
+        ),
+        (
+            "UnlockAbility(\n                    target_slug: \"",
+            "UnlockAbility(\n                    target_slug: \"no_such_",
+            "UnlockAbility.target_slug",
+        ),
+        (
+            "ModifyUnitStat(\n                    target_slug: \"",
+            "ModifyUnitStat(\n                    target_slug: \"no_such_",
+            "ModifyUnitStat.target_slug",
+        ),
+        ("sight_delta: 0.0", "sight_delta: 40.0", "sight_delta"),
+    ] {
+        assert!(
+            UPGRADES.contains(from),
+            "fixture text {from:?} not in catalog"
+        );
+        let edited = UPGRADES.replacen(from, to, 1);
+        let result = units.validate_upgrade_references(&UpgradeCatalog::from_ron_str(&edited)?);
+        assert!(
+            matches!(result, Err(SimCoreError::CatalogInvalidValue { field: ref rejected, .. }) if rejected == field),
+            "{from:?} must be rejected, got {result:?}"
+        );
+    }
+    Ok(())
+}
+
+/// S-11: a mode override nothing applies is a load error, not a silent no-op.
+#[test]
+fn s11_mode_overrides_without_effect_are_rejected() {
+    let mode = "mode_name: \"siege_mode\",";
+    for (added, field) in [
+        ("mover_type_override: Some(Air),", "mover_type_override"),
+        (
+            "sight_radius_override: Some(12.0),",
+            "sight_radius_override",
+        ),
+        ("air_weapon_override: Some(None),", "air_weapon_override"),
+    ] {
+        let edited: &'static str = Box::leak(
+            UNITS
+                .replacen(mode, &format!("{mode} {added}"), 1)
+                .into_boxed_str(),
+        );
+        let outcome = UnitCatalog::from_ron_str_bundle(edited, STRUCTURES).map(|_| ());
+        assert!(
+            matches!(&outcome, Err(SimCoreError::CatalogInvalidValue { field: rejected, .. }) if rejected.ends_with(field)),
+            "{field} must be rejected, got {outcome:?}"
+        );
+    }
+}
+
+/// S-19: gas extraction is carried from structure data into the archetype's capabilities.
+#[test]
+fn s19_gas_extractor_flag_reaches_capabilities() -> TestResult {
+    let units = UnitCatalog::from_ron_str_bundle(UNITS, STRUCTURES)?;
+    let extractors = units
+        .archetypes()
+        .filter(|a| a.capabilities.is_gas_extractor)
+        .count();
+    assert_eq!(extractors, 3, "one extractor per faction");
+    Ok(())
+}

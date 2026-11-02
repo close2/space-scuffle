@@ -23,6 +23,9 @@ fn test_2000_tick_multi_instance_lockstep_determinism() {
         let default_cell = MapCell::default_ground(CliffLevel(0));
         let map = GameMap::new(64, 64, default_cell).expect("valid map");
         let mut world = SimWorld::new(map, seed);
+        world
+            .research_upgrade(PlayerId(0), "overclock_stim")
+            .expect("invariant: overclock_stim is a shipped upgrade");
 
         let pulse_bot_id = world
             .catalog

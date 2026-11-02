@@ -343,10 +343,6 @@
                     target_slug: "pulse_bot",
                     ability_slug: "overclock",
                 ),
-                UnlockAbility(
-                    target_slug: "shock_golem",
-                    ability_slug: "overclock",
-                ),
             ],
         ),
         (
@@ -361,12 +357,7 @@
             research_ticks: 1075,
             researched_at: "assembly_bay_dome",
             requires_structures: ["tech_module_pod"],
-            effects: [
-                UnlockAbility(
-                    target_slug: "shock_golem",
-                    ability_slug: "concussive_shells",
-                ),
-            ],
+            effects: [],
         ),
         (
             upgrade_id: 19,
@@ -405,12 +396,7 @@
             research_ticks: 1975,
             researched_at: "machining_plant_dome",
             requires_structures: ["weapons_arsenal_dome"],
-            effects: [
-                UnlockAbility(
-                    target_slug: "railgun_crawler",
-                    ability_slug: "rapid_siege",
-                ),
-            ],
+            effects: [],
         ),
         (
             upgrade_id: 21,
@@ -424,16 +410,7 @@
             research_ticks: 1975,
             researched_at: "machining_plant_dome",
             requires_structures: ["weapons_arsenal_dome"],
-            effects: [
-                UnlockAbility(
-                    target_slug: "colossus_mech",
-                    ability_slug: "rapid_mode_switch",
-                ),
-                UnlockAbility(
-                    target_slug: "sky_bastion",
-                    ability_slug: "rapid_mode_switch",
-                ),
-            ],
+            effects: [],
         ),
         (
             upgrade_id: 22,
@@ -447,12 +424,7 @@
             research_ticks: 2150,
             researched_at: "covert_ops_nexus_dome",
             requires_structures: [],
-            effects: [
-                UnlockAbility(
-                    target_slug: "specter_android",
-                    ability_slug: "cloak",
-                ),
-            ],
+            effects: [],
         ),
         (
             upgrade_id: 23,
@@ -466,12 +438,7 @@
             research_ticks: 1975,
             researched_at: "aerospace_hangar_dome",
             requires_structures: ["tech_module_pod"],
-            effects: [
-                UnlockAbility(
-                    target_slug: "cloak_gunship",
-                    ability_slug: "cloak",
-                ),
-            ],
+            effects: [],
         ),
         (
             upgrade_id: 24,
@@ -861,12 +828,7 @@
             research_ticks: 2500,
             researched_at: "cybernetics_conduit_dome",
             requires_structures: [],
-            effects: [
-                UnlockAbility(
-                    target_slug: "warp_gate_dome",
-                    ability_slug: "warp_gate",
-                ),
-            ],
+            effects: [],
         ),
         (
             upgrade_id: 43,
@@ -905,12 +867,7 @@
             research_ticks: 3025,
             researched_at: "templar_conclave_dome",
             requires_structures: [],
-            effects: [
-                UnlockAbility(
-                    target_slug: "warp_strider",
-                    ability_slug: "blink",
-                ),
-            ],
+            effects: [],
         ),
         (
             upgrade_id: 45,
@@ -949,12 +906,7 @@
             research_ticks: 2500,
             researched_at: "void_sanctuary_dome",
             requires_structures: [],
-            effects: [
-                UnlockAbility(
-                    target_slug: "shadow_visitor",
-                    ability_slug: "shadow_stride",
-                ),
-            ],
+            effects: [],
         ),
         (
             upgrade_id: 47,
@@ -968,12 +920,7 @@
             research_ticks: 1975,
             researched_at: "psionic_archives_dome",
             requires_structures: [],
-            effects: [
-                UnlockAbility(
-                    target_slug: "cerebral_elder",
-                    ability_slug: "psionic_storm",
-                ),
-            ],
+            effects: [],
         ),
         (
             upgrade_id: 48,
@@ -1512,12 +1459,7 @@
             research_ticks: 1975,
             researched_at: "carapace_mound_dome",
             requires_structures: ["canopy_grove_dome"],
-            effects: [
-                UnlockAbility(
-                    target_slug: "rhino_beetle",
-                    ability_slug: "burrow_move",
-                ),
-            ],
+            effects: [],
         ),
         (
             upgrade_id: 73,
@@ -1581,12 +1523,7 @@
             research_ticks: 1600,
             researched_at: "spine_den_dome",
             requires_structures: ["primal_world_tree_dome"],
-            effects: [
-                UnlockAbility(
-                    target_slug: "thorn_viper",
-                    ability_slug: "lunge",
-                ),
-            ],
+            effects: [],
         ),
         (
             upgrade_id: 76,
@@ -1600,12 +1537,7 @@
             research_ticks: 1975,
             researched_at: "burrow_spire_dome",
             requires_structures: ["primal_world_tree_dome"],
-            effects: [
-                UnlockAbility(
-                    target_slug: "burrow_scorpion",
-                    ability_slug: "rapid_burrow",
-                ),
-            ],
+            effects: [],
         ),
         (
             upgrade_id: 77,
@@ -1719,12 +1651,7 @@
             research_ticks: 1975,
             researched_at: "infestation_nursery_dome",
             requires_structures: [],
-            effects: [
-                UnlockAbility(
-                    target_slug: "mycelium_shaman",
-                    ability_slug: "microbial_shroud",
-                ),
-            ],
+            effects: [],
         ),
         (
             upgrade_id: 82,
@@ -1738,12 +1665,7 @@
             research_ticks: 1975,
             researched_at: "infestation_nursery_dome",
             requires_structures: [],
-            effects: [
-                UnlockAbility(
-                    target_slug: "mycelium_shaman",
-                    ability_slug: "neural_parasite",
-                ),
-            ],
+            effects: [],
         ),
     ]
 )

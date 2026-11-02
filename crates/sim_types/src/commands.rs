@@ -250,6 +250,9 @@ pub struct ArchetypeCapabilities {
     pub harvester: Option<HarvesterSpec>,
     /// Whether this structure serves as a resource dropoff node.
     pub is_resource_dropoff: bool,
+    /// Whether this structure extracts vespene gas for harvesters.
+    #[serde(default)]
+    pub is_gas_extractor: bool,
     /// Active abilities and spells available to this archetype.
     #[serde(default)]
     pub abilities: Vec<AbilitySpec>,

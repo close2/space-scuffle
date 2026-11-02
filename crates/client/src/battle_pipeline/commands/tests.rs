@@ -178,10 +178,7 @@ fn stationary_armed_actor_can_target_hostile_but_cannot_attack_move() -> TestRes
         .get_mut(&id)
         .ok_or("actor absent")?
         .is_immobile = true;
-    queue.submit(
-        &world,
-        command(id, owner, UnitOrder::attack(target), false),
-    )?;
+    queue.submit(&world, command(id, owner, UnitOrder::attack(target), false))?;
     assert_eq!(
         queue.submit(
             &world,
@@ -197,10 +194,7 @@ fn stationary_armed_actor_can_target_hostile_but_cannot_attack_move() -> TestRes
         Err(SubmissionError::Capability(id))
     );
     assert_eq!(
-        queue.submit(
-            &world,
-            command(id, owner, UnitOrder::attack(id), false)
-        ),
+        queue.submit(&world, command(id, owner, UnitOrder::attack(id), false)),
         Err(SubmissionError::InvalidTarget(id))
     );
     world.entities.get_mut(&target).ok_or("target absent")?.hp = SimScalar::ZERO;

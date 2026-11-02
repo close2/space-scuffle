@@ -22,7 +22,7 @@ use crate::steering::{
     compute_push_displacement_with_mobility, CollisionMobility, PushEntityParams, SpatialHashGrid,
     SPATIAL_CELL_SIZE,
 };
-use crate::upgrades::UpgradeCatalog;
+use crate::upgrades::{UpgradeCatalog, OVERCLOCK_ABILITY_SLUG};
 use crate::weapon_timing::{resolve_attack_period, AttackRate, SimulationDiagnostic};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -490,7 +490,8 @@ impl SimWorld {
     /// Applies a researched upgrade to a player's upgrade state, updating any affected live entities.
     ///
     /// # Errors
-    /// Returns typed errors for unknown research or unrepresentable cumulative/live stats.
+    /// Returns typed errors for unknown or already completed research, or for
+    /// unrepresentable cumulative/live stats.
     /// On failure all player state, resources and entity vitals remain unchanged.
     pub fn research_upgrade(&mut self, player_id: PlayerId, upgrade_slug: &str) -> SimResult<()> {
         let upgrade = self
@@ -505,6 +506,11 @@ impl SimWorld {
             .get(player_index)
             .ok_or(MovementMathError::InvalidOwner(player_id))?
             .clone();
+        if staged_player.completed_upgrade_slugs.contains(upgrade_slug) {
+            return Err(SimCoreError::UpgradeAlreadyResearched(
+                upgrade_slug.to_string(),
+            ));
+        }
         staged_player.apply_upgrade(upgrade_slug, &upgrade.effects)?;
         for archetype in self.catalog.archetypes() {
             Self::effective_speed_with_state(archetype, &staged_player)?;
@@ -668,6 +674,45 @@ impl SimWorld {
         owner: PlayerId,
     ) -> u16 {
         Self::effective_period_from_upgrades(&self.player_upgrades, weapon, unit_slug, owner)
+    }
+
+    /// Computes the sight radius in world units, including upgrades.
+    #[must_use]
+    pub fn effective_sight_radius(&self, archetype: &UnitArchetype, owner: PlayerId) -> SimScalar {
+        Self::sight_radius_from_upgrades(&self.player_upgrades, archetype, owner)
+    }
+
+    fn sight_radius_from_upgrades(
+        upgrades: &[PlayerUpgradeState; 8],
+        archetype: &UnitArchetype,
+        owner: PlayerId,
+    ) -> SimScalar {
+        let delta = upgrades[(owner.0 as usize).min(7)]
+            .unit_stat_modifiers
+            .get(&archetype.slug)
+            .map_or(SimScalar::ZERO, |m| m.sight_delta);
+        (archetype.sight_radius + delta).max(SimScalar::ZERO)
+    }
+
+    /// Whether `owner` may use `ability_slug` of `archetype`.
+    ///
+    /// Abilities no upgrade unlocks are always available. Otherwise the owner must have
+    /// completed an upgrade that unlocks this one.
+    #[must_use]
+    pub fn is_ability_unlocked(
+        &self,
+        archetype: &UnitArchetype,
+        owner: PlayerId,
+        ability_slug: &str,
+    ) -> bool {
+        !self
+            .upgrade_catalog
+            .unlocks_ability(&archetype.slug, ability_slug)
+            || self
+                .player_upgrade_state(owner)
+                .unlocked_abilities
+                .get(&archetype.slug)
+                .is_some_and(|unlocked| unlocked.contains(ability_slug))
     }
 
     /// Computes the effective maximum HP taking into account active upgrades.
@@ -854,6 +899,9 @@ impl SimWorld {
         let Some(ability) = arch.abilities.get(ability_index as usize) else {
             return Ok(false);
         };
+        if !self.is_ability_unlocked(arch, entity.owner, &ability.name) {
+            return Ok(false);
+        }
 
         if let Some(&cd) = entity.ability_cooldowns.get(ability_index as usize) {
             if cd > 0 {
@@ -969,72 +1017,29 @@ impl SimWorld {
             AbilityEffectSpec::Overclock(_) => {
                 // The prepared buff committed atomically with resources above.
             }
-            AbilityEffectSpec::SiegeModeToggle {
-                cast_ticks,
-                sieged_weapon,
-            } => {
+            AbilityEffectSpec::SiegeModeToggle { cast_ticks, .. } => {
                 if cast_ticks > 0 {
-                    entity.is_immobile = true;
-                    entity.unpushable = true;
-                    entity.channeling_remaining_ticks = cast_ticks;
-                    entity.pending_ability = Some((ability_index, target_pos, target_entity));
-                    entity.siege_weapon = Some(sieged_weapon);
-                    entity.velocity = SimVec2::ZERO;
-                    entity.current_funnel_waypoints.clear();
+                    entity.begin_mode_channel(cast_ticks, ability_index, target_pos, target_entity);
                 } else {
-                    entity.is_sieged = !entity.is_sieged;
-                    entity.is_immobile = entity.is_sieged;
-                    entity.unpushable = entity.is_sieged;
-                    if entity.is_sieged {
-                        entity.active_mode = Some("siege".to_string());
-                        entity.siege_weapon = Some(sieged_weapon);
+                    entity.apply_mode_transition(arch, &effect);
+                }
+                entity.velocity = SimVec2::ZERO;
+                entity.current_funnel_waypoints.clear();
+            }
+            AbilityEffectSpec::SwitchMode { ref mode_name } => {
+                if let Some(spec) = arch.get_mode(mode_name) {
+                    if spec.cast_ticks > 0 {
+                        entity.begin_mode_channel(
+                            spec.cast_ticks,
+                            ability_index,
+                            target_pos,
+                            target_entity,
+                        );
                     } else {
-                        entity.active_mode = None;
-                        entity.siege_weapon = None;
+                        entity.apply_mode_transition(arch, &effect);
                     }
                     entity.velocity = SimVec2::ZERO;
                     entity.current_funnel_waypoints.clear();
-                }
-            }
-            AbilityEffectSpec::SwitchMode { mode_name } => {
-                let mode_spec = arch.get_mode(&mode_name).cloned();
-                if let Some(spec) = mode_spec {
-                    if spec.cast_ticks > 0 {
-                        entity.is_immobile = true;
-                        entity.unpushable = true;
-                        entity.channeling_remaining_ticks = spec.cast_ticks;
-                        entity.pending_ability = Some((ability_index, target_pos, target_entity));
-                        if let Some(Some(ref w)) = spec.ground_weapon_override {
-                            entity.siege_weapon = Some(w.clone());
-                        }
-                        entity.velocity = SimVec2::ZERO;
-                        entity.current_funnel_waypoints.clear();
-                    } else {
-                        let is_currently_active = entity.active_mode.as_deref() == Some(&mode_name);
-                        if is_currently_active {
-                            entity.active_mode = None;
-                            let is_immobile_default = arch.is_immobile_by_default();
-                            entity.is_immobile = is_immobile_default;
-                            entity.unpushable = is_immobile_default;
-                            entity.is_cloaked = false;
-                            entity.siege_weapon = None;
-                            entity.is_sieged = false;
-                        } else {
-                            entity.active_mode = Some(mode_name);
-                            entity.is_immobile = spec.is_immobile;
-                            entity.unpushable = spec.unpushable;
-                            entity.is_cloaked = spec.is_cloaked;
-                            if let Some(ref w_opt) = spec.ground_weapon_override {
-                                entity.siege_weapon.clone_from(w_opt);
-                                entity.is_sieged = w_opt.is_some();
-                            } else {
-                                entity.is_sieged = false;
-                                entity.siege_weapon = None;
-                            }
-                        }
-                        entity.velocity = SimVec2::ZERO;
-                        entity.current_funnel_waypoints.clear();
-                    }
                 }
             }
             AbilityEffectSpec::BlinkTeleport { .. } => {
@@ -1159,7 +1164,9 @@ impl SimWorld {
                             continue;
                         };
                         let spec = if let Ok(arch) = self.catalog.get(actor.unit_type_id) {
-                            arch.overclock
+                            arch.overclock.filter(|_| {
+                                self.is_ability_unlocked(arch, actor.owner, OVERCLOCK_ABILITY_SLUG)
+                            })
                         } else {
                             self.report_movement_invariant(MovementInvariant::MissingArchetype(
                                 ent_id,
@@ -1254,69 +1261,13 @@ impl SimWorld {
                 entity.channeling_remaining_ticks =
                     entity.channeling_remaining_ticks.saturating_sub(1);
                 if entity.channeling_remaining_ticks == 0 {
-                    if let Some((ab_idx, _t_pos, _t_ent)) = entity.pending_ability.take() {
+                    if let Some((ability_index, _, _)) = entity.pending_ability.take() {
                         if let Ok(arch) = catalog.get(entity.unit_type_id) {
-                            if let Some(ab) = arch.abilities.get(ab_idx as usize) {
-                                match &ab.effect {
-                                    AbilityEffectSpec::SwitchMode { mode_name } => {
-                                        if let Some(spec) = arch.get_mode(mode_name) {
-                                            let is_currently_active = entity.active_mode.as_deref()
-                                                == Some(mode_name.as_str());
-                                            if is_currently_active {
-                                                entity.active_mode = None;
-                                                let is_immobile_default =
-                                                    arch.is_immobile_by_default();
-                                                entity.is_immobile = is_immobile_default;
-                                                entity.unpushable = is_immobile_default;
-                                                entity.is_cloaked = false;
-                                                entity.siege_weapon = None;
-                                                entity.is_sieged = false;
-                                            } else {
-                                                entity.active_mode = Some(mode_name.clone());
-                                                entity.is_immobile = spec.is_immobile;
-                                                entity.unpushable = spec.unpushable;
-                                                entity.is_cloaked = spec.is_cloaked;
-                                                if let Some(ref w_opt) = spec.ground_weapon_override
-                                                {
-                                                    entity.siege_weapon.clone_from(w_opt);
-                                                    entity.is_sieged = w_opt.is_some();
-                                                }
-                                            }
-                                        }
-                                    }
-                                    AbilityEffectSpec::SiegeModeToggle { .. } => {
-                                        entity.is_sieged = !entity.is_sieged;
-                                        entity.is_immobile = entity.is_sieged;
-                                        entity.unpushable = entity.is_sieged;
-                                        if entity.is_sieged {
-                                            entity.active_mode = Some("siege".to_string());
-                                        } else {
-                                            entity.active_mode = None;
-                                            entity.siege_weapon = None;
-                                        }
-                                    }
-                                    _ => {}
+                            match arch.abilities.get(usize::from(ability_index)) {
+                                Some(ability) => {
+                                    entity.apply_mode_transition(arch, &ability.effect);
                                 }
-                            } else {
-                                entity.is_sieged = !entity.is_sieged;
-                                entity.is_immobile = entity.is_sieged;
-                                entity.unpushable = entity.is_sieged;
-                                if entity.is_sieged {
-                                    entity.active_mode = Some("siege".to_string());
-                                } else {
-                                    entity.active_mode = None;
-                                    entity.siege_weapon = None;
-                                }
-                            }
-                        } else {
-                            entity.is_sieged = !entity.is_sieged;
-                            entity.is_immobile = entity.is_sieged;
-                            entity.unpushable = entity.is_sieged;
-                            if entity.is_sieged {
-                                entity.active_mode = Some("siege".to_string());
-                            } else {
-                                entity.active_mode = None;
-                                entity.siege_weapon = None;
+                                None => entity.leave_mode(arch),
                             }
                         }
                     }
@@ -1347,13 +1298,7 @@ impl SimWorld {
                                 mode.energy_cost_per_second / SimScalar::from_i32(25);
                             if entity.energy < drain_per_tick {
                                 entity.energy = SimScalar::ZERO;
-                                entity.active_mode = None;
-                                let is_immobile_default = arch.is_immobile_by_default();
-                                entity.is_immobile = is_immobile_default;
-                                entity.unpushable = is_immobile_default;
-                                entity.is_cloaked = false;
-                                entity.siege_weapon = None;
-                                entity.is_sieged = false;
+                                entity.leave_mode(arch);
                             } else {
                                 entity.energy -= drain_per_tick;
                             }
@@ -1510,7 +1455,11 @@ impl SimWorld {
                     let source = VisionSource {
                         pos: entity.position,
                         mover_type: arch.mover_type,
-                        sight_radius: arch.sight_radius,
+                        sight_radius: Self::sight_radius_from_upgrades(
+                            &self.player_upgrades,
+                            arch,
+                            entity.owner,
+                        ),
                         is_detector: arch.is_detector,
                     };
                     self.vision_maps[p].apply_vision_source(&self.map, &source);

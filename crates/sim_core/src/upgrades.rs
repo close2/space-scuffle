@@ -13,6 +13,9 @@ use sim_types::{Faction, UpgradeEffect};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+/// Ability slug under which `UnlockAbility` effects address the overclock capability.
+pub const OVERCLOCK_ABILITY_SLUG: &str = "overclock";
+
 /// Unique upgrade identifier type.
 pub type UpgradeId = u32;
 
@@ -135,6 +138,20 @@ impl UpgradeCatalog {
         self.upgrades_by_slug
             .get(slug)
             .and_then(|&id| self.get_by_id(id))
+    }
+
+    /// Whether any upgrade unlocks `ability_slug` for the archetype `target_slug`.
+    #[must_use]
+    pub fn unlocks_ability(&self, target_slug: &str, ability_slug: &str) -> bool {
+        self.upgrades().any(|upgrade| {
+            upgrade.effects.iter().any(|effect| {
+                matches!(
+                    effect,
+                    UpgradeEffect::UnlockAbility { target_slug: target, ability_slug: ability }
+                        if target == target_slug && ability == ability_slug
+                )
+            })
+        })
     }
 
     /// Iterates over all registered upgrade definitions.

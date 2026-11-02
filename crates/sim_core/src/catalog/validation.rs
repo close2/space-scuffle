@@ -365,6 +365,29 @@ impl UnitModeSpecDef {
                 weapon.validate(definition, &format!("{prefix}.{name}"))?;
             }
         }
+        // The simulation applies a mode's stance flags and a replacement ground weapon. Data
+        // asking for anything else must fail here rather than silently do nothing in a match.
+        let unsupported = [
+            ("mover_type_override", self.mover_type_override.is_some()),
+            (
+                "sight_radius_override",
+                self.sight_radius_override.is_some(),
+            ),
+            ("air_weapon_override", self.air_weapon_override.is_some()),
+            (
+                "ground_weapon_override",
+                matches!(self.ground_weapon_override, Some(None)),
+            ),
+        ];
+        for (name, authored) in unsupported {
+            if authored {
+                return Err(invalid(
+                    definition,
+                    &format!("{prefix}.{name}"),
+                    "this mode override has no simulation effect",
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -372,6 +395,12 @@ impl UnitModeSpecDef {
 impl StructureArchetypeDef {
     pub(super) fn validate(&self) -> SimResult<()> {
         validate_slug(&self.slug)?;
+        nonnegative(&self.slug, "hp_regen_per_tick", self.hp_regen_per_tick)?;
+        nonnegative(
+            &self.slug,
+            "shield_regen_per_tick",
+            self.shield_regen_per_tick,
+        )?;
         ability_rates(&self.slug, "abilities", &self.abilities)?;
         if u16::try_from(self.structure_type_id).is_err() {
             return Err(invalid(

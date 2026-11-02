@@ -12,8 +12,8 @@ use crate::catalog::{UnitArchetype, WeaponSpec};
 use crate::movement::MovementMathError;
 use crate::weapon_timing::{combined_attack_rate, AttackRate, InvalidBuffAttackRate};
 use sim_types::{
-    AnimState, AttackOrigin, EntityId, MoverType, OverclockSpec, PlayerId, ShapeKind, SimAngle,
-    SimScalar, SimVec2, Tick, UnitOrder, UnitTypeId,
+    AbilityEffectSpec, AnimState, AttackOrigin, EntityId, MoverType, OverclockSpec, PlayerId,
+    ShapeKind, SimAngle, SimScalar, SimVec2, Tick, UnitOrder, UnitTypeId,
 };
 use std::collections::VecDeque;
 
@@ -24,6 +24,9 @@ use std::collections::VecDeque;
 // traversal by EntityId.
 // Trade-off: BTreeMap has slightly higher pointer-chase overhead compared to contiguous Vecs,
 // but guarantees strict, deterministic, allocation-free in-order iteration for checksums and systems.
+
+/// `active_mode` value of the built-in siege toggle, which has no authored mode entry.
+const SIEGE_MODE_NAME: &str = "siege";
 
 /// A malformed numeric buff/cost input, distinct from ordinary cast eligibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -538,6 +541,71 @@ impl Entity {
         if life_damage > SimScalar::ZERO {
             self.hull_hit_flash_ticks = 8;
         }
+    }
+
+    /// Completes the stance change an ability effect describes, however it was started.
+    ///
+    /// Instant casts, finished channels and energy exhaustion all end here, so a stance
+    /// means the same thing on every path. Other effects change nothing.
+    pub(crate) fn apply_mode_transition(
+        &mut self,
+        arch: &UnitArchetype,
+        effect: &AbilityEffectSpec,
+    ) {
+        match effect {
+            AbilityEffectSpec::SwitchMode { mode_name } => {
+                let Some(spec) = arch.get_mode(mode_name) else {
+                    return;
+                };
+                if self.active_mode.as_deref() == Some(mode_name.as_str()) {
+                    self.leave_mode(arch);
+                } else {
+                    self.active_mode = Some(mode_name.clone());
+                    self.is_immobile = spec.is_immobile;
+                    self.unpushable = spec.unpushable;
+                    self.is_cloaked = spec.is_cloaked;
+                    self.siege_weapon = spec.ground_weapon_override.clone().flatten();
+                    self.is_sieged = self.siege_weapon.is_some();
+                }
+            }
+            AbilityEffectSpec::SiegeModeToggle { sieged_weapon, .. } => {
+                if self.is_sieged {
+                    self.leave_mode(arch);
+                } else {
+                    self.active_mode = Some(SIEGE_MODE_NAME.to_owned());
+                    self.is_sieged = true;
+                    self.is_immobile = true;
+                    self.unpushable = true;
+                    self.siege_weapon = Some(sieged_weapon.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Starts the channel that ends in a stance change; the unit is anchored meanwhile.
+    pub(crate) fn begin_mode_channel(
+        &mut self,
+        cast_ticks: u16,
+        ability_index: u8,
+        target_pos: Option<SimVec2>,
+        target_entity: Option<EntityId>,
+    ) {
+        self.is_immobile = true;
+        self.unpushable = true;
+        self.channeling_remaining_ticks = cast_ticks;
+        self.pending_ability = Some((ability_index, target_pos, target_entity));
+    }
+
+    /// Returns to the archetype's default stance.
+    pub(crate) fn leave_mode(&mut self, arch: &UnitArchetype) {
+        let is_immobile_default = arch.is_immobile_by_default();
+        self.active_mode = None;
+        self.is_immobile = is_immobile_default;
+        self.unpushable = is_immobile_default;
+        self.is_cloaked = false;
+        self.siege_weapon = None;
+        self.is_sieged = false;
     }
 
     /// The sieged weapon replacing the archetype's ground weapon, if one is active.

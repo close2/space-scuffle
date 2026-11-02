@@ -39,6 +39,7 @@ struct GoldenReplay {
     total_ticks: u32,
     checkpoint_interval: u32,
     squads: Vec<Squad>,
+    research: Vec<CompletedResearch>,
     structures: Vec<StructureSpawn>,
     orders: Vec<ScriptedOrder>,
     checksums: Vec<u64>,
@@ -53,6 +54,13 @@ struct Squad {
     count: u32,
     origin: (i32, i32),
     columns: u32,
+}
+
+/// One upgrade completed before the replay starts.
+#[derive(Debug, Deserialize)]
+struct CompletedResearch {
+    player: u8,
+    upgrade: String,
 }
 
 /// One structure placed before the replay starts.
@@ -119,6 +127,9 @@ fn populate(world: &mut SimWorld, replay: &GoldenReplay) -> Result<SquadRoster, 
             members.push(world.spawn_unit(unit_type, PlayerId(squad.player), spawn)?);
         }
         squads.insert(squad.name.clone(), (squad.player, members));
+    }
+    for research in &replay.research {
+        world.research_upgrade(PlayerId(research.player), &research.upgrade)?;
     }
     for structure in &replay.structures {
         let structure_type = world

@@ -15,13 +15,14 @@
 //!    are modeled as explicit optional specs, enabling data-driven behaviors.
 
 use crate::error::{SimCoreError, SimResult};
-use crate::upgrades::UpgradeCatalog;
+use crate::upgrades::{UpgradeCatalog, OVERCLOCK_ABILITY_SLUG};
 use serde::{Deserialize, Serialize};
+use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AnimState, ArchetypeCapabilities, ArmorClass,
     AttributeFlags, Faction, HarvesterSpec, MoverType, OverclockSpec, ProjectileTargetLossBehavior,
-    ShapeKind, SilhouetteClass, SimAngle, SimScalar, UnitModeSpec, UnitTypeId, WeaponClass,
-    WeaponVisualKind,
+    ShapeKind, SilhouetteClass, SimAngle, SimScalar, UnitModeSpec, UnitTypeId, UpgradeEffect,
+    WeaponClass, WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, WeaponSpec};
 mod runtime;
@@ -557,6 +558,80 @@ impl UnitCatalog {
                     "must reference structures in the unit catalog",
                 ));
             }
+            for effect in &upgrade.effects {
+                self.validate_upgrade_effect(&upgrade.slug, effect)?;
+            }
+        }
+        self.validate_upgraded_sight(upgrades)
+    }
+
+    /// Rejects an effect the simulation would have nothing to apply to.
+    fn validate_upgrade_effect(&self, upgrade: &str, effect: &UpgradeEffect) -> SimResult<()> {
+        let unresolved = |field: &str, reason| SimCoreError::CatalogInvalidValue {
+            definition: upgrade.to_owned(),
+            field: field.to_owned(),
+            reason,
+        };
+        match effect {
+            UpgradeEffect::ModifyUnitStat { target_slug, .. }
+                if self.get_by_slug(target_slug).is_none() =>
+            {
+                Err(unresolved(
+                    "ModifyUnitStat.target_slug",
+                    "must reference an archetype in the unit catalog",
+                ))
+            }
+            UpgradeEffect::UnlockAbility {
+                target_slug,
+                ability_slug,
+            } => {
+                let target = self.get_by_slug(target_slug).ok_or_else(|| {
+                    unresolved(
+                        "UnlockAbility.target_slug",
+                        "must reference an archetype in the unit catalog",
+                    )
+                })?;
+                let exists = (ability_slug == OVERCLOCK_ABILITY_SLUG && target.overclock.is_some())
+                    || target.abilities.iter().any(|a| a.name == *ability_slug);
+                if exists {
+                    Ok(())
+                } else {
+                    Err(unresolved(
+                        "UnlockAbility.ability_slug",
+                        "must name an ability the target archetype has",
+                    ))
+                }
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Rejects research that would carry a unit past the sight radius vision supports.
+    fn validate_upgraded_sight(&self, upgrades: &UpgradeCatalog) -> SimResult<()> {
+        let mut sight_gains: BTreeMap<&str, SimScalar> = BTreeMap::new();
+        for effect in upgrades.upgrades().flat_map(|upgrade| &upgrade.effects) {
+            if let UpgradeEffect::ModifyUnitStat {
+                target_slug,
+                sight_delta,
+                ..
+            } = effect
+            {
+                if *sight_delta > SimScalar::ZERO {
+                    *sight_gains.entry(target_slug).or_default() += *sight_delta;
+                }
+            }
+        }
+        for (slug, gain) in sight_gains {
+            let upgraded = self
+                .get_by_slug(slug)
+                .map_or(gain, |archetype| archetype.sight_radius + gain);
+            if upgraded > SimScalar::from_num(MAX_SIGHT_RADIUS_CELLS) {
+                return Err(SimCoreError::CatalogInvalidValue {
+                    definition: slug.to_owned(),
+                    field: "sight_delta".to_owned(),
+                    reason: "researched sight must not exceed the maximum vision supports",
+                });
+            }
         }
         Ok(())
     }
@@ -882,6 +957,7 @@ impl UnitArchetypeDef {
             overclock,
             harvester,
             is_resource_dropoff,
+            is_gas_extractor: false,
             abilities: abilities.clone(),
             modes: modes.clone(),
         };
@@ -998,6 +1074,12 @@ struct StructureArchetypeDef {
     pub max_shields: f64,
     /// Maximum energy points.
     pub max_energy: f64,
+    /// Hull hit points regenerated per tick.
+    #[serde(default)]
+    pub hp_regen_per_tick: f64,
+    /// Shield points regenerated per tick once the out-of-combat delay has elapsed.
+    #[serde(default)]
+    pub shield_regen_per_tick: f64,
     /// Hull life armor.
     pub life_armor: f64,
     /// Shield armor.
@@ -1062,6 +1144,7 @@ impl StructureArchetypeDef {
             overclock: None,
             harvester: None,
             is_resource_dropoff: self.is_resource_dropoff,
+            is_gas_extractor: self.is_gas_extractor,
             abilities: self.abilities.clone(),
             modes: Vec::new(),
         };
@@ -1093,8 +1176,8 @@ impl StructureArchetypeDef {
             max_energy: SimScalar::from_num(self.max_energy),
             life_armor: SimScalar::from_num(self.life_armor),
             shield_armor: SimScalar::from_num(self.shield_armor),
-            hp_regen_per_tick: SimScalar::ZERO,
-            shield_regen_per_tick: SimScalar::ZERO,
+            hp_regen_per_tick: SimScalar::from_num(self.hp_regen_per_tick),
+            shield_regen_per_tick: SimScalar::from_num(self.shield_regen_per_tick),
             energy_regen_per_tick: SimScalar::ZERO,
             max_speed: SimScalar::ZERO,
             acceleration: SimScalar::ZERO,

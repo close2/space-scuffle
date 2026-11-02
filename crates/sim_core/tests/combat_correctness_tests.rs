@@ -14,12 +14,20 @@
 //!   command cannot express, such as authoring a catalog weapon, and are commented.
 //! - Each test names the finding it covers, and asserts the correct behaviour.
 
-#![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::unwrap_used
+)]
 
-use sim_core::{SimWorld, WeaponPhase};
+use sim_core::{SimCoreError, SimWorld, UpgradeCatalog, WeaponPhase};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
-    EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
+    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttackOrigin, EntityId, PlayerCommand,
+    PlayerId, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitModeSpec, UnitOrder,
+    VisibilityState,
 };
 
 const BLUE: PlayerId = PlayerId(0);
@@ -555,4 +563,224 @@ fn s17_splash_respects_invulnerability_only() {
     arena.run(30);
     assert!((arena.vitals(shielded) - shielded_hp).abs() < f32::EPSILON);
     assert!(arena.vitals(cloaked) < cloaked_hp);
+}
+
+/// Authors a stance pair on `pulse_bot`: an armed siege stance and a plain second stance.
+fn author_stances(arena: &mut Arena, cast_ticks: u16) -> EntityId {
+    let unit = arena.spawn("pulse_bot", BLUE, 10.0, 10.0);
+    let unit_type = arena.world.entities[&unit].unit_type_id;
+    let arch = arena.world.catalog.get_mut(unit_type).unwrap();
+    let weapon = arch.weapon.clone();
+    let stance = |mode_name: &str, ground_weapon_override| UnitModeSpec {
+        mode_name: mode_name.to_owned(),
+        cast_ticks,
+        is_immobile: true,
+        unpushable: true,
+        is_cloaked: false,
+        mover_type_override: None,
+        sight_radius_override: None,
+        ground_weapon_override,
+        air_weapon_override: None,
+        energy_cost_per_second: SimScalar::ZERO,
+    };
+    let switch = |name: &str| AbilitySpec {
+        name: name.to_owned(),
+        target_kind: AbilityTargetKind::ToggleMode,
+        energy_cost: SimScalar::ZERO,
+        cooldown_ticks: 0,
+        cast_range: SimScalar::ZERO,
+        effect: AbilityEffectSpec::SwitchMode {
+            mode_name: name.to_owned(),
+        },
+    };
+    arch.modes = vec![stance("armed", Some(weapon)), stance("plain", None)];
+    arch.abilities = vec![switch("armed"), switch("plain")];
+    unit
+}
+
+fn cast(arena: &mut Arena, unit: EntityId, ability_index: u8) {
+    arena.order(
+        BLUE,
+        &[unit],
+        UnitOrder::CastAbility {
+            ability_index,
+            target_pos: None,
+            target_entity: None,
+        },
+    );
+    arena.run(6);
+}
+
+/// S-18: instant and channelled mode changes reach the same stance.
+#[test]
+fn s18_instant_and_channelled_transitions_agree() {
+    let snapshot = |cast_ticks| {
+        let mut arena = Arena::new(32);
+        let unit = author_stances(&mut arena, cast_ticks);
+        cast(&mut arena, unit, 0);
+        cast(&mut arena, unit, 1);
+        let entity = &arena.world.entities[&unit];
+        (
+            entity.active_mode.clone(),
+            entity.is_sieged,
+            entity.siege_weapon.is_some(),
+            entity.is_immobile,
+            entity.unpushable,
+        )
+    };
+    assert_eq!(snapshot(0), snapshot(3));
+    assert_eq!(
+        snapshot(3),
+        (Some("plain".to_owned()), false, false, true, true)
+    );
+}
+
+/// S-19: a shielded structure regenerates like the units of its faction.
+#[test]
+fn s19_shielded_structures_regenerate() {
+    let mut arena = Arena::new(32);
+    let unit_type = arena
+        .world
+        .catalog
+        .archetypes()
+        .find(|a| {
+            matches!(a.shape, ShapeKind::BuildingDome { .. }) && a.max_shields > SimScalar::ZERO
+        })
+        .map(|a| a.unit_type_id)
+        .unwrap();
+    let dome = arena.world.spawn_structure(unit_type, BLUE, 8, 8).unwrap();
+    // Rule fixture: damage with no attacker in the arena to complicate the regeneration delay.
+    let hurt = SimScalar::from_num(10);
+    let entity = arena.world.entities.get_mut(&dome).unwrap();
+    entity.shields = hurt;
+    arena.run(300);
+    assert!(arena.world.entities[&dome].shields > hurt);
+}
+
+/// S-10: researching twice is refused and leaves the first result standing.
+#[test]
+fn s10_repeated_research_is_rejected() {
+    let mut arena = Arena::new(32);
+    let upgrade = "chitinous_plating";
+    arena.world.research_upgrade(BLUE, upgrade).unwrap();
+    let after_first = arena.world.player_upgrade_state(BLUE).clone();
+    assert!(matches!(
+        arena.world.research_upgrade(BLUE, upgrade),
+        Err(SimCoreError::UpgradeAlreadyResearched(_))
+    ));
+    assert_eq!(*arena.world.player_upgrade_state(BLUE), after_first);
+}
+
+/// S-10: a repeat also must not grow live vitals a second time.
+#[test]
+fn s10_repeated_research_does_not_stack_live_vitals() {
+    let mut arena = Arena::new(32);
+    let unit = arena.spawn("pulse_bot", BLUE, 10.0, 10.0);
+    arena.world.research_upgrade(BLUE, "combat_shield").unwrap();
+    let hp = arena.world.entities[&unit].max_hp;
+    let repeat = arena.world.research_upgrade(BLUE, "combat_shield");
+    assert!(repeat.is_err());
+    assert_eq!(arena.world.entities[&unit].max_hp, hp);
+}
+
+/// S-11: a sight upgrade widens what the unit reveals.
+#[test]
+fn s11_sight_delta_extends_vision() {
+    let mut arena = Arena::new(64);
+    let unit = arena.spawn("pulse_bot", BLUE, 20.0, 20.0);
+    let unit_type = arena.world.entities[&unit].unit_type_id;
+    let arch = arena.world.catalog.get(unit_type).unwrap();
+    let slug = arch.slug.clone();
+    let probe = 20 + arch.sight_radius.to_f32() as u32 + 2;
+    arena.run(1);
+    assert_ne!(
+        arena.world.vision_maps[0].visibility_at(probe, 20),
+        VisibilityState::Visible
+    );
+    // Rule fixture: no shipped upgrade grants sight yet.
+    arena
+        .world
+        .player_upgrade_state_mut(BLUE)
+        .unit_stat_modifiers
+        .entry(slug)
+        .or_default()
+        .sight_delta = SimScalar::from_num(4);
+    arena.run(1);
+    assert_eq!(
+        arena.world.vision_maps[0].visibility_at(probe, 20),
+        VisibilityState::Visible
+    );
+}
+
+/// S-11: an unlock gates its capability until the owner completes the research.
+#[test]
+fn s11_unlock_gates_overclock_until_researched() {
+    let mut arena = Arena::new(32);
+    let unit = arena.spawn("pulse_bot", BLUE, 10.0, 10.0);
+    arena.order(BLUE, &[unit], UnitOrder::UseStim);
+    assert!(
+        arena.world.entities[&unit].active_buffs.is_empty(),
+        "overclock must stay locked before its research completes"
+    );
+    arena
+        .world
+        .research_upgrade(BLUE, "overclock_stim")
+        .unwrap();
+    arena.order(BLUE, &[unit], UnitOrder::UseStim);
+    assert_eq!(arena.world.entities[&unit].active_buffs.len(), 1);
+}
+
+/// S-11: an ability named by an unlock stays locked until researched too.
+#[test]
+fn s11_unlock_gates_abilities_by_name() {
+    const UPGRADES: &str = r#"(upgrades: [(
+        upgrade_id: 1, slug: "learn", name: "learn", display_name: "Learn",
+        faction: AutomatonDirectorate, level: 1, mineral_cost: 0, gas_cost: 0,
+        research_ticks: 1, researched_at: "foundry_core_dome",
+        effects: [UnlockAbility(target_slug: "pulse_bot", ability_slug: "armed")],
+    )])"#;
+    let mut arena = Arena::new(32);
+    let unit = author_stances(&mut arena, 0);
+    arena.world.upgrade_catalog = UpgradeCatalog::from_ron_str(UPGRADES).unwrap();
+    cast(&mut arena, unit, 0);
+    assert_eq!(arena.world.entities[&unit].active_mode, None);
+    arena.world.research_upgrade(BLUE, "learn").unwrap();
+    cast(&mut arena, unit, 0);
+    assert_eq!(
+        arena.world.entities[&unit].active_mode.as_deref(),
+        Some("armed")
+    );
+}
+
+/// S-2: a command cannot pass itself off as automatic and so become replaceable.
+#[test]
+fn s2_commanded_attacks_are_always_explicit() {
+    let mut arena = Arena::new(32);
+    let shooter = arena.spawn("pulse_bot", BLUE, 10.0, 10.0);
+    let target = arena.spawn("rhino_beetle", RED, 18.0, 10.0);
+    arena.order(
+        BLUE,
+        &[shooter],
+        UnitOrder::AttackTarget {
+            target,
+            origin: AttackOrigin::Acquired,
+        },
+    );
+    assert_eq!(
+        arena.world.entities[&shooter].order_queue.front(),
+        Some(&UnitOrder::attack(target))
+    );
+}
+
+/// S-13: ground and air are separate planes, and a cliff walker stands in both.
+#[test]
+fn s13_combat_planes() {
+    use sim_core::combat::shares_combat_plane;
+    use sim_types::MoverType::{Air, CliffJumper, CliffWalker, Ground};
+    assert!(shares_combat_plane(Ground, CliffJumper));
+    assert!(shares_combat_plane(Air, Air));
+    assert!(shares_combat_plane(CliffWalker, Air));
+    assert!(shares_combat_plane(Ground, CliffWalker));
+    assert!(!shares_combat_plane(Ground, Air));
+    assert!(!shares_combat_plane(Air, CliffJumper));
 }
