@@ -1427,14 +1427,14 @@ fn smog_steps_reach_the_gpu_through_queue_writes() -> Result<(), Box<dyn std::er
         format!("warn,{}=debug", client::smog::SMOG_UPLOAD_LOG_TARGET),
     );
     let output = command.output()?;
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let log = gpu_run::captured_log(&output);
     assert!(
         output.status.success(),
         "client exited with {:?}:\n{}",
         output.status.code(),
-        gpu_run::tail(&stderr)
+        gpu_run::tail(&log)
     );
-    let generations: Vec<u64> = stderr
+    let generations: Vec<u64> = log
         .lines()
         .filter_map(|line| {
             line.rsplit_once("uploaded smog generation ")?
@@ -1448,7 +1448,7 @@ fn smog_steps_reach_the_gpu_through_queue_writes() -> Result<(), Box<dyn std::er
         generations.len() >= 30,
         "expected a GPU upload per rendered step, saw {}:\n{}",
         generations.len(),
-        gpu_run::tail(&stderr)
+        gpu_run::tail(&log)
     );
     assert!(
         generations.windows(2).all(|pair| pair[0] < pair[1]),

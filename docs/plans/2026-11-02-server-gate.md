@@ -95,8 +95,9 @@ was reported, which is also consistent with an empty stream.
 
 **Fix.** The gate reads both streams through one `captured_log` helper. That applies to the failure tails and to
 `smog_steps_reach_the_gpu_through_queue_writes`, which reads upload logs from stderr and would see none on CI.
-Verified here by pointing the harness at the Ubuntu
-script, which reproduces the failure before the fix and passes after it.
+Verified here with a temporary, uncommitted harness
+change that runs the client as `sh -c 'exec "$0" "$@" 2>&1'`, the same redirection: the old stderr-only parse gives
+CI's exact message, and the new parse passes `gpu_validation_tests`. Ubuntu's script itself was read, not run.
 
 **Open risk.** Validation has never been seen working on CI, so layer 1.3.275 may report findings that neither
 layer version seen so far reported. Only a CI run can show that.

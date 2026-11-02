@@ -174,6 +174,28 @@ fn listed_notice_does_not_hide_a_real_validation_error() {
     assert!(violations[0].contains("VUID-vkCmdDraw-None-08600"));
 }
 
+/// Ubuntu 24.04's `xvfb-run` runs the command as `"$@" 2>&1`, so all logs arrive on stdout.
+#[test]
+fn log_delivered_on_stdout_is_validated_like_stderr() {
+    let log = format!("{ACTIVE_HEADER}{WARNING_FINDING}");
+    let from_stderr = ValidationReport::parse(&gpu_run::merge_streams(b"", log.as_bytes()));
+    let from_stdout = ValidationReport::parse(&gpu_run::merge_streams(log.as_bytes(), b""));
+    assert!(from_stdout.layer_active);
+    assert_eq!(from_stdout.findings.len(), 1);
+    assert_eq!(from_stdout, from_stderr);
+}
+
+#[test]
+fn log_split_across_both_streams_keeps_every_record() {
+    let log = gpu_run::merge_streams(
+        WARNING_FINDING.as_bytes(),
+        ACTIVE_HEADER.trim_end().as_bytes(),
+    );
+    let report = ValidationReport::parse(&log);
+    assert!(report.layer_active);
+    assert_eq!(report.findings.len(), 1);
+}
+
 #[test]
 fn best_practices_ids_are_recognised_in_both_layer_naming_forms() {
     assert!(gpu_run::is_best_practices_id(
@@ -212,9 +234,9 @@ fn real_layer_findings_reach_the_gate() {
     let (output, report) = gpu_run::run_validated(&mut command);
     assert!(
         output.status.success(),
-        "control run exited with {:?}. Last stderr:\n{}",
+        "control run exited with {:?}. Last output:\n{}",
         output.status.code(),
-        gpu_run::tail(&String::from_utf8_lossy(&output.stderr))
+        gpu_run::tail(&gpu_run::captured_log(&output))
     );
     assert!(report.layer_active, "control run must load the layer");
     assert!(

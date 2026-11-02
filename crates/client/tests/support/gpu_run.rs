@@ -10,9 +10,11 @@
 //! 2. The messenger forwards each message to the `log` crate under the target
 //!    `wgpu_hal::vulkan::instance`, as `<TYPE> [<ID> (0x<number>)]` plus a tab-indented body.
 //! 3. Bevy's `LogPlugin` writes those records to stderr, subject to `RUST_LOG`.
+//! 4. `xvfb-run` passes that stream on. Debian 12 and Arch keep it on stderr, but Ubuntu 24.04 runs
+//!    the command as `"$@" 2>&1`, which moves it to stdout, so [`captured_log`] reads both.
 //!
-//! The binary must be a child process because a Bevy app owns its global log subscriber, and stderr
-//! is the only interface here that needs no production change.
+//! The binary must be a child process because a Bevy app owns its global log subscriber, and its
+//! log output is the only interface here that needs no production change.
 //!
 //! # Limits of the gate
 //! - `wgpu_hal` drops three message IDs before logging them: `VUID-VkSwapchainCreateInfoKHR-pNext-07781`,
@@ -112,7 +114,7 @@ pub struct ValidationReport {
 }
 
 impl ValidationReport {
-    /// Parses captured stderr from a child that used [`VALIDATED_RUST_LOG`].
+    /// Parses the [`captured_log`] of a child that used [`VALIDATED_RUST_LOG`].
     pub fn parse(stderr: &str) -> Self {
         let mut report = Self::default();
         let lines: Vec<String> = stderr.lines().map(strip_ansi).collect();
@@ -335,13 +337,30 @@ pub fn enable_validation(command: &mut Command) {
     command.env("RUST_LOG", VALIDATED_RUST_LOG);
 }
 
+/// Joins both output streams of a run, keeping each one's lines whole and in order.
+///
+/// Lines a binary prints with `println!` are harmless, since the parser accepts only log records.
+pub fn merge_streams(stdout: &[u8], stderr: &[u8]) -> String {
+    let mut log = String::from_utf8_lossy(stderr).into_owned();
+    if !log.is_empty() && !log.ends_with('\n') {
+        log.push('\n');
+    }
+    log.push_str(&String::from_utf8_lossy(stdout));
+    log
+}
+
+/// Returns everything a run printed, wherever the wrapper delivered its log output.
+pub fn captured_log(output: &Output) -> String {
+    merge_streams(&output.stdout, &output.stderr)
+}
+
 /// Runs `command` under validation and returns its output with the parsed report.
 pub fn run_validated(command: &mut Command) -> (Output, ValidationReport) {
     enable_validation(command);
     let output = command
         .output()
         .unwrap_or_else(|error| panic!("failed to launch {command:?}: {error}"));
-    let report = ValidationReport::parse(&String::from_utf8_lossy(&output.stderr));
+    let report = ValidationReport::parse(&captured_log(&output));
     (output, report)
 }
 
@@ -350,24 +369,25 @@ pub fn run_validated(command: &mut Command) -> (Output, ValidationReport) {
 /// `label` names the run in failure messages.
 pub fn assert_passes_validation(command: &mut Command, label: &str) -> Output {
     let (output, report) = run_validated(command);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let log = captured_log(&output);
     assert_ne!(
         output.status.code(),
         Some(TIMEOUT_EXIT_CODE),
-        "{label} did not finish within {GPU_RUN_TIMEOUT_SECS} s. Last stderr:\n{}",
-        tail(&stderr)
+        "{label} did not finish within {GPU_RUN_TIMEOUT_SECS} s. Last output:\n{}",
+        tail(&log)
     );
     assert!(
         output.status.success(),
-        "{label} exited with {:?}. Last stderr:\n{}",
+        "{label} exited with {:?}. Last output:\n{}",
         output.status.code(),
-        tail(&stderr)
+        tail(&log)
     );
     let violations = report.violations(VALIDATION_ALLOWLIST);
     assert!(
         violations.is_empty(),
-        "{label} failed Vulkan validation:\n{}",
-        violations.join("\n")
+        "{label} failed Vulkan validation:\n{}\nLast output:\n{}",
+        violations.join("\n"),
+        tail(&log)
     );
     output
 }
