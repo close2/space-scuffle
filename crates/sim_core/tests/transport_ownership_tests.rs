@@ -423,7 +423,11 @@ fn public_entity_helpers_do_not_advance_cargo_weapon_or_apply_push() -> TestResu
     assert!(!sim_core::step_entity_weapon(
         &mut actor,
         &f.weapon,
-        Some((point(6, 4), SimScalar::HALF))
+        Some(sim_core::WeaponTarget {
+            id: other.id,
+            position: point(6, 4),
+            combined_radius: SimScalar::HALF,
+        })
     ));
     assert!(!actor.issue_order(UnitOrder::Stop, false)?);
     sim_core::resolve_push_interaction(
@@ -511,6 +515,7 @@ fn loaded_ground_and_air_targets_preserve_shooter_windup_without_aim_or_damage()
         weapon.damage_point_ticks = 2;
         weapon.backswing_ticks = 0;
         weapon.has_turret = true;
+        weapon.max_range = SimScalar::from_num(20);
         weapon.visual_kind = sim_types::WeaponVisualKind::Hitscan;
         let source = f.world.catalog.get_mut(f.kind)?;
         if mover == MoverType::Air {
@@ -522,7 +527,7 @@ fn loaded_ground_and_air_targets_preserve_shooter_windup_without_aim_or_damage()
         let target = f.world.spawn_unit(target_kind, PlayerId(1), point(8, 4))?;
         let carrier = f.spawn(1, 24, 24)?;
         let actor = f.world.entities.get_mut(&shooter).ok_or("shooter")?;
-        actor.issue_order(UnitOrder::AttackTarget { target }, false)?;
+        actor.issue_order(UnitOrder::attack(target), false)?;
         actor.weapon_phase = WeaponPhase::Windup {
             target_id: target,
             remaining_ticks: 1,
@@ -534,11 +539,9 @@ fn loaded_ground_and_air_targets_preserve_shooter_windup_without_aim_or_damage()
         );
         f.world.try_load_unit_into_transport(target, carrier)?;
         f.world.step_weapons_and_projectiles();
-        assert_eq!(
-            f.world.entities[&shooter].weapon_phase,
-            WeaponPhase::Cooldown
-        );
-        assert_eq!(f.world.entities[&shooter].weapon_cooldown_remaining, 8);
+        // Losing the target cancels the swing at no cost (S-12).
+        assert_eq!(f.world.entities[&shooter].weapon_phase, WeaponPhase::Ready);
+        assert_eq!(f.world.entities[&shooter].weapon_cooldown_remaining, 0);
         assert_eq!(f.world.entities[&shooter].turret_angle, original_aim);
         assert_eq!(
             (
@@ -580,12 +583,13 @@ fn loaded_shooter_retains_windup_then_resumes_without_stale_target_after_unload(
     weapon.period_ticks = 10;
     weapon.damage_point_ticks = 2;
     weapon.backswing_ticks = 0;
+    weapon.max_range = SimScalar::from_num(20);
     f.world.catalog.get_mut(f.kind)?.ground_weapon = Some(weapon);
     let shooter = f.spawn(0, 4, 4)?;
     let carrier = f.spawn(0, 24, 24)?;
     let target = f.spawn(1, 8, 4)?;
     let actor = f.world.entities.get_mut(&shooter).ok_or("shooter")?;
-    actor.issue_order(UnitOrder::AttackTarget { target }, false)?;
+    actor.issue_order(UnitOrder::attack(target), false)?;
     actor.weapon_phase = WeaponPhase::Windup {
         target_id: target,
         remaining_ticks: 1,
@@ -607,11 +611,8 @@ fn loaded_shooter_retains_windup_then_resumes_without_stale_target_after_unload(
     f.world
         .try_unload_unit_from_transport(shooter, point(4, 4))?;
     f.world.step_weapons_and_projectiles();
-    assert_eq!(
-        f.world.entities[&shooter].weapon_phase,
-        WeaponPhase::Cooldown
-    );
-    assert_eq!(f.world.entities[&shooter].weapon_cooldown_remaining, 8);
+    assert_eq!(f.world.entities[&shooter].weapon_phase, WeaponPhase::Ready);
+    assert_eq!(f.world.entities[&shooter].weapon_cooldown_remaining, 3);
     assert_eq!(f.world.entities[&target].hp, target_hp);
     assert!(f.world.projectiles.is_empty() && f.world.pending_events.is_empty());
     Ok(())
@@ -668,6 +669,7 @@ fn all_three_splash_routes_ignore_cargo_at_dormant_pickup_coordinates() -> TestR
         let mut weapon = f.weapon.clone();
         weapon.projectile_speed = None;
         weapon.suicide_on_attack = false;
+        weapon.max_range = SimScalar::from_num(20);
         weapon.splash = Some(sim_types::SplashSpec {
             inner_radius: SimScalar::from_num(2),
             middle_radius: SimScalar::from_num(3),
@@ -677,7 +679,7 @@ fn all_three_splash_routes_ignore_cargo_at_dormant_pickup_coordinates() -> TestR
         if route == 0 {
             f.world.catalog.get_mut(f.kind)?.ground_weapon = Some(weapon.clone());
             let actor = f.world.entities.get_mut(&shooter).ok_or("shooter")?;
-            actor.issue_order(UnitOrder::AttackTarget { target }, false)?;
+            actor.issue_order(UnitOrder::attack(target), false)?;
             actor.weapon_phase = WeaponPhase::Windup {
                 target_id: target,
                 remaining_ticks: 1,
@@ -741,7 +743,7 @@ fn committed_projectile_from_loaded_attacker_still_damages_without_cargo_retalia
     assert!(f.world.entities[&victim].hp < SimScalar::from_num(100));
     assert_eq!(f.world.entities[&victim].current_target, None);
     assert!(
-        !matches!(f.world.entities[&victim].order_queue.front(), Some(UnitOrder::AttackTarget { target }) if *target == attacker)
+        !matches!(f.world.entities[&victim].order_queue.front(), Some(UnitOrder::AttackTarget { target, .. }) if *target == attacker)
     );
     assert_eq!(f.world.entities[&attacker], before);
     f.world.apply_combat_retaliation(attacker, victim);
@@ -755,6 +757,7 @@ fn prepared_mutual_lethal_shots_retain_actual_sparse_owners_and_origins() -> Tes
     let mut weapon = f.weapon.clone();
     weapon.base_damage = SimScalar::from_num(1000);
     weapon.attacks_count = 1;
+    weapon.max_range = SimScalar::from_num(20);
     weapon.projectile_speed = None;
     weapon.splash = None;
     weapon.visual_kind = sim_types::WeaponVisualKind::Hitscan;
@@ -765,7 +768,7 @@ fn prepared_mutual_lethal_shots_retain_actual_sparse_owners_and_origins() -> Tes
     let b = f.spawn(7, 10, 8)?;
     for (id, target) in [(a, b), (b, a)] {
         let actor = f.world.entities.get_mut(&id).ok_or("prepared shooter")?;
-        actor.issue_order(UnitOrder::AttackTarget { target }, false)?;
+        actor.issue_order(UnitOrder::attack(target), false)?;
         actor.weapon_phase = WeaponPhase::Windup {
             target_id: target,
             remaining_ticks: 1,

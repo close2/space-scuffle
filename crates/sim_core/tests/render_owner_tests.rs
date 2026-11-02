@@ -73,7 +73,7 @@ fn fixture(
         .entities
         .get_mut(&source)
         .ok_or("source actor")?
-        .issue_order(UnitOrder::AttackTarget { target }, false)?);
+        .issue_order(UnitOrder::attack(target), false)?);
     Ok((world, source))
 }
 

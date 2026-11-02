@@ -11,7 +11,7 @@
 
 use crate::catalog::{UnitArchetype, UnitCatalog, WeaponSpec};
 use crate::checksum::compute_simulation_checksum;
-use crate::combat::{compute_threat_priority, TargetPriorityKey};
+use crate::combat::TargetPriorityKey;
 use crate::entity::{ActiveProjectile, Entity, WeaponPhase};
 use crate::error::{SimCoreError, SimResult};
 use crate::movement::{
@@ -151,7 +151,8 @@ pub struct SimWorld {
 
     // Reusable per-tick scratch buffers to eliminate allocations
     pub(crate) scratch_neighbors: Vec<EntityId>,
-    scratch_targets: Vec<(TargetPriorityKey, EntityId)>,
+    pub(crate) scratch_targets: Vec<(TargetPriorityKey, EntityId)>,
+    pub(crate) scratch_acquisitions: Vec<(EntityId, crate::target_acquisition::Acquisition)>,
     scratch_watchtower_units: Vec<(PlayerId, SimVec2)>,
 }
 
@@ -242,6 +243,7 @@ impl SimWorld {
             known_blocked_cells,
             scratch_neighbors: Vec::with_capacity(32),
             scratch_targets: Vec::with_capacity(64),
+            scratch_acquisitions: Vec::with_capacity(64),
             scratch_watchtower_units: Vec::new(),
         };
 
@@ -1391,7 +1393,7 @@ impl SimWorld {
                 hazard.ticks_until_next_interval = hazard.interval_ticks;
 
                 for (&entity_id, entity) in &mut self.entities {
-                    if !entity.is_alive() || entity.is_loaded_in_transport() {
+                    if !Self::is_damageable(entity) {
                         continue;
                     }
                     if !hazard.targets_friendly && entity.owner == hazard.owner {
@@ -1568,70 +1570,6 @@ impl SimWorld {
             .is_ok()
     }
 
-    /// Checks whether an entity is available to be tracked, acquired, or hit in combat
-    /// Checks whether an entity is available to be tracked, acquired, or hit in combat
-    /// by an attacker belonging to `attacker_owner` without whole-struct borrowing.
-    #[must_use]
-    pub fn is_target_available_for_combat(
-        entities: &BTreeMap<EntityId, Entity>,
-        map: &SimMap,
-        vision_maps: &[PlayerVisionMap; 8],
-        attacker_owner: PlayerId,
-        target_id: EntityId,
-    ) -> bool {
-        let Some(target) = entities.get(&target_id) else {
-            return false;
-        };
-
-        if !target.is_alive() || target.is_loaded_in_transport() || target.is_invulnerable {
-            return false;
-        }
-
-        if target.is_cloaked {
-            let p_idx = attacker_owner.0 as usize;
-            if let Ok((cx, cy)) = map.world_to_cell(target.position) {
-                if p_idx < vision_maps.len() {
-                    let is_vis =
-                        vision_maps[p_idx].visibility_at(cx, cy) == VisibilityState::Visible;
-                    let is_det = vision_maps[p_idx].is_detected(cx, cy);
-                    if !is_vis || !is_det {
-                        return false;
-                    }
-                } else {
-                    return false;
-                }
-            } else {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    /// Checks whether an entity is available to be tracked, acquired, or hit in combat
-    /// by an attacker belonging to `attacker_owner`.
-    ///
-    /// An entity is available if and only if:
-    /// - It exists and is alive (`hp > 0`),
-    /// - It is not loaded in a transport craft,
-    /// - It is not invulnerable (e.g. stasis, phase shift),
-    /// - If cloaked, the attacker's player possesses active detector vision at the entity's map cell.
-    #[must_use]
-    #[inline]
-    pub fn is_entity_available_for_combat(
-        &self,
-        attacker_owner: PlayerId,
-        target_id: EntityId,
-    ) -> bool {
-        Self::is_target_available_for_combat(
-            &self.entities,
-            &self.map,
-            &self.vision_maps,
-            attacker_owner,
-            target_id,
-        )
-    }
-
     /// Finds a legacy ground/radius-one autonomous flee goal in world coordinates.
     ///
     /// # Errors
@@ -1670,7 +1608,7 @@ impl SimWorld {
     }
 
     // Caller validated graph. Loaded actors have no world-space flee goal.
-    fn compute_entity_flee_destination_prevalidated(
+    pub(crate) fn compute_entity_flee_destination_prevalidated(
         &self,
         id: EntityId,
         threat: SimVec2,
@@ -1766,387 +1704,6 @@ impl SimWorld {
         Ok(None)
     }
 
-    /// Triggers combat retaliation aggro and allied call-for-help when a unit sustains damage.
-    ///
-    /// If the victim is idle, mobile, and cannot retaliate against the attacker (e.g. ground vs air,
-    /// unarmed, or attacker is untargetable/undetected), the victim automatically flees directly
-    /// away from the threat origin.
-    pub fn apply_combat_retaliation(&mut self, victim_id: EntityId, attacker_id: EntityId) {
-        if let Err(source) = self.validate_transport_links() {
-            self.report_transport_invariant(source);
-            return;
-        }
-        self.apply_combat_retaliation_prevalidated(victim_id, attacker_id);
-    }
-
-    // Called from valid combat/hazard phases; no relation fields are mutated.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "split in plan steps 3.1 and 9.1, which own this file's structure"
-    )]
-    pub(crate) fn apply_combat_retaliation_prevalidated(
-        &mut self,
-        victim_id: EntityId,
-        attacker_id: EntityId,
-    ) {
-        let victim_data = self
-            .entities
-            .get(&victim_id)
-            .filter(|v| !v.is_loaded_in_transport())
-            .map(|v| {
-                (
-                    v.position,
-                    v.owner,
-                    v.is_holding_position,
-                    v.is_immobile,
-                    v.unit_type_id,
-                    matches!(v.order_queue.front(), None | Some(UnitOrder::Idle)),
-                )
-            });
-        let Some((
-            victim_pos,
-            victim_owner,
-            victim_holding,
-            victim_immobile,
-            victim_type,
-            victim_is_idle,
-        )) = victim_data
-        else {
-            return;
-        };
-
-        let attacker_data = self.entities.get(&attacker_id).map(|a| {
-            (
-                a.is_alive(),
-                a.unit_type_id,
-                a.is_cloaked,
-                a.position,
-                a.is_loaded_in_transport(),
-            )
-        });
-        let Some((att_alive, att_type_id, att_cloaked, att_pos, att_loaded)) = attacker_data else {
-            return;
-        };
-        if !att_alive {
-            return;
-        }
-
-        let Ok(att_arch) = self.catalog.get(att_type_id) else {
-            return;
-        };
-
-        let p_idx = victim_owner.0 as usize;
-        let mut attacker_targetable = !att_loaded;
-
-        // Check visibility of attacker to victim's owner
-        if p_idx < 8 {
-            if let Ok((cx, cy)) = self.map.world_to_cell(att_pos) {
-                let is_vis =
-                    self.vision_maps[p_idx].visibility_at(cx, cy) == VisibilityState::Visible;
-                if !is_vis || (att_cloaked && !self.vision_maps[p_idx].is_detected(cx, cy)) {
-                    attacker_targetable = false;
-                }
-            } else {
-                attacker_targetable = false;
-            }
-        }
-
-        let Ok(victim_arch) = self.catalog.get(victim_type) else {
-            return;
-        };
-
-        let victim_can_hit = if attacker_targetable {
-            let active_w = victim_arch.weapon_against(att_arch.mover_type, None);
-            active_w.is_some_and(|w| w.target_flags.intersects(att_arch.attributes))
-        } else {
-            false
-        };
-
-        // Case B: Helpless victim auto-flee response
-        if !victim_can_hit
-            && victim_is_idle
-            && !victim_holding
-            && !victim_immobile
-            && victim_arch.max_speed > SimScalar::ZERO
-        {
-            let flee = self.compute_entity_flee_destination_prevalidated(
-                victim_id,
-                att_pos,
-                SimScalar::from_num(5),
-            );
-            if let Err(source) = &flee {
-                self.tick_diagnostics
-                    .push(SimulationDiagnostic::MovementInvariant {
-                        tick: Tick(self.current_tick),
-                        source: source.clone(),
-                    });
-            }
-            if let Ok(Some(flee_target)) = flee {
-                if let Some(victim) = self.entities.get_mut(&victim_id) {
-                    victim.order_queue.clear();
-                    victim.order_queue.push_back(UnitOrder::Move {
-                        target: flee_target,
-                    });
-                    victim.current_funnel_waypoints.clear();
-                    victim.current_target = None;
-                }
-            }
-        }
-
-        // If attacker is not targetable, nearby allies cannot target it either
-        if !attacker_targetable {
-            return;
-        }
-
-        // Case A: Retaliation & Call-for-Help for units capable of fighting back
-        let mut alerted_units = Vec::new();
-        let call_radius_sq = SimScalar::from_num(25); // 5.0 world units squared
-
-        for (&id, entity) in &self.entities {
-            if entity.owner != victim_owner
-                || !entity.is_alive()
-                || entity.is_holding_position
-                || entity.is_immobile
-                || entity.is_loaded_in_transport()
-            {
-                continue;
-            }
-            // Only alert units that are Idle
-            let can_retaliate = matches!(entity.order_queue.front(), None | Some(UnitOrder::Idle));
-            if !can_retaliate {
-                continue;
-            }
-            if id != victim_id && entity.position.distance_sq(victim_pos) > call_radius_sq {
-                continue;
-            }
-            // Check if unit has a weapon capable of hitting the attacker
-            let Ok(arch) = self.catalog.get(entity.unit_type_id) else {
-                continue;
-            };
-            let active_weapon = arch.weapon_against(
-                att_arch.mover_type,
-                entity
-                    .is_sieged
-                    .then_some(entity.siege_weapon.as_ref())
-                    .flatten(),
-            );
-            let Some(weapon) = active_weapon else {
-                continue;
-            };
-            if !weapon.target_flags.intersects(att_arch.attributes) {
-                continue;
-            }
-            alerted_units.push(id);
-        }
-
-        for unit_id in alerted_units {
-            if let Some(unit) = self.entities.get_mut(&unit_id) {
-                unit.order_queue.clear();
-                unit.order_queue.push_back(UnitOrder::AttackTarget {
-                    target: attacker_id,
-                });
-                unit.current_target = Some(attacker_id);
-                unit.current_funnel_waypoints.clear();
-            }
-        }
-    }
-
-    /// Phase 4: Deterministic target acquisition.
-    /// Direct phase callers must establish `validate_transport_links` beforehand;
-    /// normal `step_into` establishes this precondition once for its phase sequence.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "split in plan steps 3.1 and 9.1, which own this file's structure"
-    )]
-    pub fn acquire_targets(&mut self) {
-        // Populate spatial hash grid with current entity positions
-        self.spatial_hash.clear();
-        for (id, entity) in &self.entities {
-            if !entity.is_loaded_in_transport() {
-                self.spatial_hash.insert(*id, entity.position);
-            }
-        }
-
-        let mut auto_orders = Vec::new();
-
-        for (id, entity) in &self.entities {
-            if entity.channeling_remaining_ticks > 0 || entity.is_loaded_in_transport() {
-                continue;
-            }
-            let Ok(arch) = self.catalog.get(entity.unit_type_id) else {
-                continue;
-            };
-
-            // Evaluate if unit needs to acquire or dynamically re-evaluate target
-            let needs_target = match entity.order_queue.front() {
-                None | Some(UnitOrder::Idle | UnitOrder::AttackMove { .. }) => true,
-                Some(UnitOrder::AttackTarget { target }) => {
-                    if entity.order_queue.len() >= 2 {
-                        true
-                    } else if let Some(current_t) = self.entities.get(target) {
-                        if !current_t.is_alive() || current_t.is_loaded_in_transport() {
-                            true
-                        } else if let Ok(t_arch) = self.catalog.get(current_t.unit_type_id) {
-                            let active_w = arch.weapon_against(
-                                t_arch.mover_type,
-                                entity
-                                    .is_sieged
-                                    .then_some(entity.siege_weapon.as_ref())
-                                    .flatten(),
-                            );
-                            if let Some(w) = active_w {
-                                let w_max =
-                                    self.effective_weapon_range(w, &arch.slug, entity.owner);
-                                let eff_max =
-                                    w_max + arch.collision_radius + t_arch.collision_radius;
-                                entity.position.distance(current_t.position) > eff_max
-                            } else {
-                                true
-                            }
-                        } else {
-                            true
-                        }
-                    } else {
-                        true
-                    }
-                }
-                _ => false,
-            };
-
-            if !needs_target {
-                continue;
-            }
-
-            self.spatial_hash.query_radius(
-                entity.position,
-                arch.scan_range,
-                &mut self.scratch_neighbors,
-            );
-
-            self.scratch_targets.clear();
-            let p_idx = entity.owner.0 as usize;
-
-            for &neighbor_id in &self.scratch_neighbors {
-                if neighbor_id == *id {
-                    continue;
-                }
-                let Some(neighbor) = self.entities.get(&neighbor_id) else {
-                    continue;
-                };
-
-                // Hostile check
-                if neighbor.owner == entity.owner
-                    || !neighbor.is_alive()
-                    || neighbor.is_loaded_in_transport()
-                {
-                    continue;
-                }
-
-                // Strict scan range check
-                let dist = entity.position.distance(neighbor.position);
-                if dist > arch.scan_range {
-                    continue;
-                }
-
-                let Ok((cx, cy)) = self.map.world_to_cell(neighbor.position) else {
-                    continue;
-                };
-
-                // Visibility and detection checks
-                if p_idx < 8 {
-                    let is_vis =
-                        self.vision_maps[p_idx].visibility_at(cx, cy) == VisibilityState::Visible;
-                    if !is_vis {
-                        continue;
-                    }
-                    if neighbor.is_cloaked && !self.vision_maps[p_idx].is_detected(cx, cy) {
-                        continue;
-                    }
-                } else if neighbor.is_cloaked {
-                    continue;
-                }
-
-                let Ok(target_arch) = self.catalog.get(neighbor.unit_type_id) else {
-                    continue;
-                };
-
-                let active_weapon = arch.weapon_against(
-                    target_arch.mover_type,
-                    entity
-                        .is_sieged
-                        .then_some(entity.siege_weapon.as_ref())
-                        .flatten(),
-                );
-                let Some(weapon) = active_weapon else {
-                    continue;
-                };
-
-                // Weapon target compatibility
-                if !weapon.target_flags.intersects(target_arch.attributes) {
-                    continue;
-                }
-
-                let effective_min = if weapon.min_range > SimScalar::ZERO {
-                    weapon.min_range + arch.collision_radius + target_arch.collision_radius
-                } else {
-                    SimScalar::ZERO
-                };
-                if weapon.min_range > SimScalar::ZERO && dist < effective_min {
-                    continue;
-                }
-
-                let dist_sq = entity.position.distance_sq(neighbor.position);
-                let priority = compute_threat_priority(target_arch, neighbor.order_queue.front());
-
-                self.scratch_targets.push((
-                    TargetPriorityKey {
-                        threat_priority: priority,
-                        distance_sq: dist_sq,
-                        entity_id: neighbor_id,
-                    },
-                    neighbor_id,
-                ));
-            }
-
-            if !self.scratch_targets.is_empty() {
-                self.scratch_targets.sort_unstable_by_key(|t| t.0);
-                let best_target = self.scratch_targets[0].1;
-                auto_orders.push((*id, best_target));
-            }
-        }
-
-        for (unit_id, target_id) in auto_orders {
-            if let Some(unit) = self.entities.get_mut(&unit_id) {
-                unit.current_target = Some(target_id);
-                match unit.order_queue.front() {
-                    Some(UnitOrder::AttackMove { .. }) => {
-                        unit.order_queue
-                            .push_front(UnitOrder::AttackTarget { target: target_id });
-                        unit.current_funnel_waypoints.clear();
-                    }
-                    Some(UnitOrder::AttackTarget { target }) if *target != target_id => {
-                        if unit.order_queue.len() >= 2 {
-                            unit.order_queue[0] = UnitOrder::AttackTarget { target: target_id };
-                            unit.current_funnel_waypoints.clear();
-                        } else {
-                            unit.order_queue.clear();
-                            unit.order_queue
-                                .push_back(UnitOrder::AttackTarget { target: target_id });
-                            unit.current_funnel_waypoints.clear();
-                        }
-                    }
-                    None | Some(UnitOrder::Idle) => {
-                        unit.order_queue.clear();
-                        unit.order_queue
-                            .push_back(UnitOrder::AttackTarget { target: target_id });
-                        unit.current_funnel_waypoints.clear();
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
     /// Phase5: Prepare and atomically commit each actor's checked movement operation.
     /// Malformed state emits diagnostics without partial pose, route or order edits.
     /// Direct phase callers must establish `validate_transport_links` beforehand;
@@ -2239,7 +1796,9 @@ impl SimWorld {
             let has_attack_target_a = entity_a
                 .current_target
                 .or_else(|| {
-                    if let Some(UnitOrder::AttackTarget { target }) = entity_a.order_queue.front() {
+                    if let Some(UnitOrder::AttackTarget { target, .. }) =
+                        entity_a.order_queue.front()
+                    {
                         Some(*target)
                     } else {
                         None
@@ -2319,7 +1878,7 @@ impl SimWorld {
                     let has_attack_target_b = entity_b
                         .current_target
                         .or_else(|| {
-                            if let Some(UnitOrder::AttackTarget { target }) =
+                            if let Some(UnitOrder::AttackTarget { target, .. }) =
                                 entity_b.order_queue.front()
                             {
                                 Some(*target)

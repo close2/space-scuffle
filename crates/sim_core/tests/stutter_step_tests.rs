@@ -49,7 +49,7 @@ fn test_stutter_step_backswing_cancellation() {
     let attack_cmd = PlayerCommand {
         player_id: player_blue,
         entities: vec![marine_id],
-        order: UnitOrder::AttackTarget { target: zealot_id },
+        order: UnitOrder::attack(zealot_id),
         queue: false,
     };
     let bundle_0 = TickBundle {

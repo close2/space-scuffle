@@ -32,6 +32,13 @@ pub struct DamageResolution {
     pub killed: bool,
 }
 
+/// Extra reach a swing keeps at the moment of release, in world units.
+///
+/// An attacker stands still through its wind-up while its target keeps walking. Without this
+/// allowance a chaser would cancel every swing at a fleeing unit, one step out of range.
+/// `StarCraft` II gives its weapons the same half-cell `RangeSlop`.
+pub const RELEASE_RANGE_SLOP: SimScalar = SimScalar::HALF;
+
 /// Minimum damage clamp applied to any penetrating attack in `StarCraft` II.
 pub const MIN_DAMAGE_CLAMP: SimScalar = SimScalar::HALF;
 
@@ -314,6 +321,9 @@ impl PartialOrd for TargetPriorityKey {
     }
 }
 
+/// Highest value [`compute_threat_priority`] returns: an armed unit attacking right now.
+pub const MAX_THREAT_PRIORITY: u8 = 20;
+
 /// Evaluates the threat priority level of an enemy archetype and its current order.
 #[must_use]
 pub fn compute_threat_priority(archetype: &UnitArchetype, order: Option<&UnitOrder>) -> u8 {
@@ -322,8 +332,10 @@ pub fn compute_threat_priority(archetype: &UnitArchetype, order: Option<&UnitOrd
         || archetype.air_weapon.is_some();
     if has_weapon {
         match order {
-            Some(UnitOrder::AttackMove { .. } | UnitOrder::AttackTarget { .. }) => 20,
-            _ => 19, // Combat unit not actively attacking
+            Some(UnitOrder::AttackMove { .. } | UnitOrder::AttackTarget { .. }) => {
+                MAX_THREAT_PRIORITY
+            }
+            _ => MAX_THREAT_PRIORITY - 1, // Combat unit not actively attacking
         }
     } else if archetype.attributes.contains(AttributeFlags::STRUCTURE) {
         if archetype.is_detector {
@@ -373,16 +385,163 @@ pub fn is_within_firing_arc(
     diff <= firing_arc.raw()
 }
 
+/// The enemy a weapon cycle is working against, resolved by the combat phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WeaponTarget {
+    /// Target entity handle.
+    pub id: EntityId,
+    /// Target centre in world coordinates.
+    pub position: SimVec2,
+    /// Attacker and target collision radii combined, in world units.
+    pub combined_radius: SimScalar,
+}
+
+/// Rotates the weapon mount towards `angle` by at most one tick of turret travel.
+fn slew_towards(entity: &mut Entity, weapon: &WeaponSpec, angle: SimAngle) {
+    let step = weapon.turret_turn_rate.raw();
+    if weapon.has_turret {
+        entity.turret_angle = entity.turret_angle.rotate_towards(angle, step);
+    } else {
+        entity.heading = entity.heading.rotate_towards(angle, step);
+    }
+}
+
+/// Current aim of the weapon mount.
+fn weapon_aim(entity: &Entity, weapon: &WeaponSpec) -> SimAngle {
+    if weapon.has_turret {
+        entity.turret_angle
+    } else {
+        entity.heading
+    }
+}
+
+/// Whether `distance` lies in the engagement band, with `slop` extra reach at the far end.
+fn in_engagement_band(
+    distance: SimScalar,
+    weapon: &WeaponSpec,
+    combined_radius: SimScalar,
+    slop: SimScalar,
+) -> bool {
+    let closest = if weapon.min_range > SimScalar::ZERO {
+        weapon.min_range + combined_radius
+    } else {
+        SimScalar::ZERO
+    };
+    distance <= weapon.max_range + combined_radius + slop && distance >= closest
+}
+
+/// Steps a ready weapon: starts the swing if aimed, or begins rotating.
+fn step_ready_weapon(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget) {
+    let distance = entity.position.distance(target.position);
+    if !in_engagement_band(distance, weapon, target.combined_radius, SimScalar::ZERO) {
+        return;
+    }
+    let delta = target.position - entity.position;
+    let target_angle = SimAngle::atan2(delta.y, delta.x);
+    let aim = weapon_aim(entity, weapon);
+    if is_within_firing_arc(aim, entity.position, target.position, weapon.firing_arc) {
+        // An unrestricted arc removes the aiming gate, not the aiming: the turret
+        // or hull keeps slewing, so a firing weapon never stays pointed away.
+        if weapon.firing_arc >= SimAngle::DEG_180 {
+            slew_towards(entity, weapon, target_angle);
+        }
+        // CRITICAL COOLDOWN GUARD:
+        // An entity may align with a target while its weapon is on cooldown,
+        // but MUST NOT start Windup until cooldown has fully elapsed!
+        if entity.weapon_cooldown_remaining == 0 {
+            entity.weapon_phase = WeaponPhase::Windup {
+                target_id: target.id,
+                remaining_ticks: weapon.damage_point_ticks,
+            };
+        }
+    } else {
+        entity.weapon_phase = WeaponPhase::RotatingToTarget {
+            target_id: target.id,
+        };
+        slew_towards(entity, weapon, target_angle);
+    }
+}
+
+/// Steps a rotating weapon until it is aligned, or returns it to ready if the target left.
+fn step_rotating_weapon(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget) {
+    let distance = entity.position.distance(target.position);
+    if !in_engagement_band(distance, weapon, target.combined_radius, SimScalar::ZERO) {
+        entity.weapon_phase = WeaponPhase::Ready;
+        return;
+    }
+    let delta = target.position - entity.position;
+    slew_towards(entity, weapon, SimAngle::atan2(delta.y, delta.x));
+    let aim = weapon_aim(entity, weapon);
+    if is_within_firing_arc(aim, entity.position, target.position, weapon.firing_arc) {
+        entity.weapon_phase = if entity.weapon_cooldown_remaining == 0 {
+            WeaponPhase::Windup {
+                target_id: target.id,
+                remaining_ticks: weapon.damage_point_ticks,
+            }
+        } else {
+            // Aligned, but still cooling down: transition back to Ready to await cooldown expiry
+            WeaponPhase::Ready
+        };
+    }
+}
+
+/// Steps a swing bound to `bound`. Returns true when the shot discharges.
+///
+/// `target_opt` must be `bound` or absent. A swing without its target, or whose target left
+/// the engagement band, is cancelled: no shot, and no cooldown is charged.
+fn step_windup(
+    entity: &mut Entity,
+    weapon: &WeaponSpec,
+    target_opt: Option<WeaponTarget>,
+    bound: EntityId,
+    remaining_ticks: u16,
+) -> bool {
+    let Some(target) = target_opt.filter(|target| target.id == bound) else {
+        entity.weapon_phase = WeaponPhase::Ready;
+        return false;
+    };
+    if weapon.has_turret {
+        let delta = target.position - entity.position;
+        slew_towards(entity, weapon, SimAngle::atan2(delta.y, delta.x));
+    }
+
+    let remaining_ticks = remaining_ticks.saturating_sub(1);
+    if remaining_ticks > 0 {
+        entity.weapon_phase = WeaponPhase::Windup {
+            target_id: bound,
+            remaining_ticks,
+        };
+        return false;
+    }
+    let distance = entity.position.distance(target.position);
+    if !in_engagement_band(distance, weapon, target.combined_radius, RELEASE_RANGE_SLOP) {
+        entity.weapon_phase = WeaponPhase::Ready;
+        return false;
+    }
+
+    entity.weapon_cooldown_remaining = weapon
+        .period_ticks
+        .saturating_sub(weapon.damage_point_ticks);
+    entity.weapon_phase = if weapon.backswing_ticks > 0 {
+        WeaponPhase::Backswing {
+            target_id: bound,
+            remaining_ticks: weapon.backswing_ticks,
+        }
+    } else {
+        WeaponPhase::Cooldown
+    };
+    true
+}
+
 /// Advances the weapon state machine for an entity for a single tick.
+///
+/// `target_opt` is the available enemy this weapon should work against; during a swing the
+/// caller passes the swing's bound target. Returns true when a shot discharges this tick.
 /// A carried actor returns false without changing any field, including cooldown.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one weapon state machine; combat extraction is plan step 3.1"
-)]
 pub fn step_entity_weapon(
     entity: &mut Entity,
     weapon: &WeaponSpec,
-    target_opt: Option<(SimVec2, SimScalar)>,
+    target_opt: Option<WeaponTarget>,
 ) -> bool {
     // Valid cargo has no weapon participation; even cooldown/phase remain frozen.
     if entity.is_loaded_in_transport() {
@@ -399,121 +558,14 @@ pub fn step_entity_weapon(
 
     match entity.weapon_phase {
         WeaponPhase::Ready => {
-            if let Some((target_pos, target_radius)) = target_opt {
-                let dist = entity.position.distance(target_pos);
-                let effective_max = weapon.max_range + target_radius;
-                let effective_min = if weapon.min_range > SimScalar::ZERO {
-                    weapon.min_range + target_radius
-                } else {
-                    SimScalar::ZERO
-                };
-                if dist > effective_max || dist < effective_min {
-                    return false;
-                }
-
-                let current_aim = if weapon.has_turret {
-                    entity.turret_angle
-                } else {
-                    entity.heading
-                };
-
-                let delta = target_pos - entity.position;
-                let target_angle = SimAngle::atan2(delta.y, delta.x);
-
-                if is_within_firing_arc(current_aim, entity.position, target_pos, weapon.firing_arc)
-                {
-                    // An unrestricted arc removes the aiming gate, not the aiming: the turret
-                    // or hull keeps slewing, so a firing weapon never stays pointed away.
-                    if weapon.firing_arc >= SimAngle::DEG_180 {
-                        if weapon.has_turret {
-                            entity.turret_angle = entity
-                                .turret_angle
-                                .rotate_towards(target_angle, weapon.turret_turn_rate.raw());
-                        } else {
-                            entity.heading = entity
-                                .heading
-                                .rotate_towards(target_angle, weapon.turret_turn_rate.raw());
-                        }
-                    }
-                    // CRITICAL COOLDOWN GUARD:
-                    // An entity may align with a target while its weapon is on cooldown,
-                    // but MUST NOT start Windup until cooldown has fully elapsed!
-                    if entity.weapon_cooldown_remaining == 0 {
-                        let target_id = match entity.order_queue.front() {
-                            Some(UnitOrder::AttackTarget { target }) => *target,
-                            _ => EntityId(0),
-                        };
-                        entity.weapon_phase = WeaponPhase::Windup {
-                            target_id,
-                            remaining_ticks: weapon.damage_point_ticks,
-                        };
-                    }
-                } else {
-                    // Need to rotate to target
-                    let target_id = match entity.order_queue.front() {
-                        Some(UnitOrder::AttackTarget { target }) => *target,
-                        _ => EntityId(0),
-                    };
-                    entity.weapon_phase = WeaponPhase::RotatingToTarget { target_id };
-                    // Apply rotation step
-                    if weapon.has_turret {
-                        entity.turret_angle = entity
-                            .turret_angle
-                            .rotate_towards(target_angle, weapon.turret_turn_rate.raw());
-                    } else {
-                        entity.heading = entity
-                            .heading
-                            .rotate_towards(target_angle, weapon.turret_turn_rate.raw());
-                    }
-                }
+            if let Some(target) = target_opt {
+                step_ready_weapon(entity, weapon, target);
             }
             false
         }
-        WeaponPhase::RotatingToTarget { target_id } => {
-            if let Some((target_pos, target_radius)) = target_opt {
-                let dist = entity.position.distance(target_pos);
-                let effective_max = weapon.max_range + target_radius;
-                let effective_min = if weapon.min_range > SimScalar::ZERO {
-                    weapon.min_range + target_radius
-                } else {
-                    SimScalar::ZERO
-                };
-                if dist > effective_max || dist < effective_min {
-                    entity.weapon_phase = WeaponPhase::Ready;
-                    return false;
-                }
-
-                let delta = target_pos - entity.position;
-                let target_angle = SimAngle::atan2(delta.y, delta.x);
-
-                if weapon.has_turret {
-                    entity.turret_angle = entity
-                        .turret_angle
-                        .rotate_towards(target_angle, weapon.turret_turn_rate.raw());
-                } else {
-                    entity.heading = entity
-                        .heading
-                        .rotate_towards(target_angle, weapon.turret_turn_rate.raw());
-                }
-
-                let current_aim = if weapon.has_turret {
-                    entity.turret_angle
-                } else {
-                    entity.heading
-                };
-
-                if is_within_firing_arc(current_aim, entity.position, target_pos, weapon.firing_arc)
-                {
-                    if entity.weapon_cooldown_remaining == 0 {
-                        entity.weapon_phase = WeaponPhase::Windup {
-                            target_id,
-                            remaining_ticks: weapon.damage_point_ticks,
-                        };
-                    } else {
-                        // Aligned, but still cooling down: transition back to Ready to await cooldown expiry
-                        entity.weapon_phase = WeaponPhase::Ready;
-                    }
-                }
+        WeaponPhase::RotatingToTarget { .. } => {
+            if let Some(target) = target_opt {
+                step_rotating_weapon(entity, weapon, target);
             } else {
                 entity.weapon_phase = WeaponPhase::Ready;
             }
@@ -521,38 +573,8 @@ pub fn step_entity_weapon(
         }
         WeaponPhase::Windup {
             target_id,
-            ref mut remaining_ticks,
-        } => {
-            if let Some((target_pos, _)) = target_opt {
-                if weapon.has_turret {
-                    let delta = target_pos - entity.position;
-                    let target_angle = SimAngle::atan2(delta.y, delta.x);
-                    entity.turret_angle = entity
-                        .turret_angle
-                        .rotate_towards(target_angle, weapon.turret_turn_rate.raw());
-                }
-            }
-
-            *remaining_ticks = remaining_ticks.saturating_sub(1);
-            if *remaining_ticks == 0 {
-                // Shot fires!
-                entity.weapon_cooldown_remaining = weapon
-                    .period_ticks
-                    .saturating_sub(weapon.damage_point_ticks);
-
-                if weapon.backswing_ticks > 0 {
-                    entity.weapon_phase = WeaponPhase::Backswing {
-                        target_id,
-                        remaining_ticks: weapon.backswing_ticks,
-                    };
-                } else {
-                    entity.weapon_phase = WeaponPhase::Cooldown;
-                }
-                true // Signal shot discharged
-            } else {
-                false
-            }
-        }
+            remaining_ticks,
+        } => step_windup(entity, weapon, target_opt, target_id, remaining_ticks),
         WeaponPhase::Backswing {
             ref mut remaining_ticks,
             ..
@@ -567,11 +589,6 @@ pub fn step_entity_weapon(
             }
             false
         }
-        WeaponPhase::Cooldown => {
-            if entity.weapon_cooldown_remaining == 0 {
-                entity.weapon_phase = WeaponPhase::Ready;
-            }
-            false
-        }
+        WeaponPhase::Cooldown => false,
     }
 }

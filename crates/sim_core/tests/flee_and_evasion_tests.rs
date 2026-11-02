@@ -65,7 +65,7 @@ fn test_idle_ground_only_unit_flees_when_attacked_by_air_unit() {
         .get_mut(&muta_id)
         .unwrap()
         .order_queue
-        .push_back(UnitOrder::AttackTarget { target: zealot_id });
+        .push_back(UnitOrder::attack(zealot_id));
 
     // Step simulation for 60 ticks
     for tick in 0..60 {
@@ -137,7 +137,7 @@ fn test_hold_position_ground_unit_does_not_flee_air_attack() {
         .get_mut(&muta_id)
         .unwrap()
         .order_queue
-        .push_back(UnitOrder::AttackTarget { target: zealot_id });
+        .push_back(UnitOrder::attack(zealot_id));
 
     // Step simulation for 60 ticks
     for tick in 0..60 {
@@ -194,7 +194,7 @@ fn test_idle_unit_flees_undetected_cloaked_attacker() {
         .get_mut(&gunship_id)
         .unwrap()
         .order_queue
-        .push_back(UnitOrder::AttackTarget { target: marine_id });
+        .push_back(UnitOrder::attack(marine_id));
 
     // Step simulation for 50 ticks. The gunship's double strike can finish the marine
     // first, so the flight is judged on its last living position.

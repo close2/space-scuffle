@@ -349,12 +349,8 @@ fn phase_order_and_target_loss_payloads_remain_distinct() {
         UnitOrder::AttackMove {
             target: point(2, 1),
         },
-        UnitOrder::AttackTarget {
-            target: EntityId(1),
-        },
-        UnitOrder::AttackTarget {
-            target: EntityId(2),
-        },
+        UnitOrder::attack(EntityId(1)),
+        UnitOrder::attack(EntityId(2)),
         UnitOrder::HoldPosition,
         UnitOrder::Stop,
         UnitOrder::UseStim,

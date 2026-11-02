@@ -246,12 +246,7 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
         .entities
         .get_mut(&tank_id)
         .unwrap()
-        .issue_order(
-            UnitOrder::AttackTarget {
-                target: enemy_primary,
-            },
-            false,
-        )
+        .issue_order(UnitOrder::attack(enemy_primary), false)
         .expect("valid authored fixture order or buff");
 
     let enemy_primary_hp_before = world.entities.get(&enemy_primary).unwrap().hp;
@@ -560,7 +555,10 @@ fn test_cloak_invisibility_and_detector_reveal() {
     let target = world.entities.get(&blue_id).unwrap().order_queue.front();
     assert_eq!(
         target,
-        Some(&UnitOrder::AttackTarget { target: red_id }),
+        Some(&UnitOrder::AttackTarget {
+            target: red_id,
+            origin: sim_types::AttackOrigin::Acquired,
+        }),
         "Blue unit must acquire revealed cloaked unit once covered by allied detector"
     );
 }

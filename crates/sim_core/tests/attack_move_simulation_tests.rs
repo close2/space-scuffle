@@ -183,7 +183,10 @@ fn test_threat_priority_combatants_before_passive_structures() {
     let front_order = blue_ent.order_queue.front();
     assert_eq!(
         front_order,
-        Some(&UnitOrder::AttackTarget { target: combatant_ent_id }),
+        Some(&UnitOrder::AttackTarget {
+            target: combatant_ent_id,
+            origin: sim_types::AttackOrigin::Acquired,
+        }),
         "Unit must prioritize armed combatant (Priority 20) over closer passive structure (Priority 11)"
     );
 
@@ -582,7 +585,7 @@ fn test_projectile_speed_and_cargo_pickup_disjoint() {
         .entities
         .get_mut(&shooter_id)
         .unwrap()
-        .issue_order(UnitOrder::AttackTarget { target: target_id }, false)
+        .issue_order(UnitOrder::attack(target_id), false)
         .expect("valid authored fixture order or buff");
 
     // Step until projectile is launched

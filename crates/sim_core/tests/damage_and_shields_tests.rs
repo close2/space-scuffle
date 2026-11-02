@@ -464,7 +464,7 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
             .entities
             .get_mut(&attacker)
             .unwrap()
-            .issue_order(UnitOrder::AttackTarget { target: target_red }, false)
+            .issue_order(UnitOrder::attack(target_red), false)
             .expect("valid authored fixture order or buff");
 
         let red_hp_before = world.entities.get(&target_red).unwrap().hp;
@@ -532,7 +532,7 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
             .entities
             .get_mut(&attacker)
             .unwrap()
-            .issue_order(UnitOrder::AttackTarget { target: target_red }, false)
+            .issue_order(UnitOrder::attack(target_red), false)
             .expect("valid authored fixture order or buff");
 
         let red_hp_before = world.entities.get(&target_red).unwrap().hp;

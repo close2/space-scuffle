@@ -180,7 +180,7 @@ fn stationary_armed_actor_can_target_hostile_but_cannot_attack_move() -> TestRes
         .is_immobile = true;
     queue.submit(
         &world,
-        command(id, owner, UnitOrder::AttackTarget { target }, false),
+        command(id, owner, UnitOrder::attack(target), false),
     )?;
     assert_eq!(
         queue.submit(
@@ -199,7 +199,7 @@ fn stationary_armed_actor_can_target_hostile_but_cannot_attack_move() -> TestRes
     assert_eq!(
         queue.submit(
             &world,
-            command(id, owner, UnitOrder::AttackTarget { target: id }, false)
+            command(id, owner, UnitOrder::attack(id), false)
         ),
         Err(SubmissionError::InvalidTarget(id))
     );
@@ -316,7 +316,7 @@ fn target_availability_matches_simulation_at_submission_and_execution() -> TestR
         .ok_or("hostile target absent")?
         .id;
     let target_pos = world.entities.get(&target).ok_or("target absent")?.position;
-    let order = UnitOrder::AttackTarget { target };
+    let order = UnitOrder::attack(target);
     world
         .entities
         .get_mut(&target)

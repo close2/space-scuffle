@@ -548,7 +548,7 @@ fn commands(
                         other,
                         UnitOrder::Move { target: forward },
                     ));
-                    order = Some(UnitOrder::AttackTarget { target: other });
+                    order = Some(UnitOrder::attack(other));
                 } else if tick == setup.block_ticks * 2 {
                     order = Some(UnitOrder::AttackMove { target: forward });
                 }

@@ -14,9 +14,9 @@
 //!   command cannot express, such as authoring a catalog weapon, and are commented.
 //! - Each test names the finding it covers, and asserts the correct behaviour.
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
+#![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
-use sim_core::SimWorld;
+use sim_core::{SimWorld, WeaponPhase};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
     EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
@@ -90,7 +90,44 @@ fn point(x: f64, y: f64) -> SimVec2 {
 }
 
 fn attack(target: EntityId) -> UnitOrder {
-    UnitOrder::AttackTarget { target }
+    UnitOrder::attack(target)
+}
+
+/// Whether `unit` is currently under an attack order on `target`.
+fn front_attacks(arena: &Arena, unit: EntityId, target: EntityId) -> bool {
+    matches!(
+        arena.world.entities[&unit].order_queue.front(),
+        Some(UnitOrder::AttackTarget { target: current, .. }) if *current == target
+    )
+}
+
+/// Runs until `unit`'s weapon enters its wind-up, failing the test if it never does.
+fn run_to_windup(arena: &mut Arena, unit: EntityId) {
+    for _ in 0..60 {
+        if matches!(
+            arena.world.entities[&unit].weapon_phase,
+            WeaponPhase::Windup { .. }
+        ) {
+            return;
+        }
+        arena.run(1);
+    }
+    panic!("weapon never reached its wind-up");
+}
+
+/// Sieges `tank` through its mode ability and waits out the transformation.
+fn siege(arena: &mut Arena, tank: EntityId) {
+    arena.order(
+        BLUE,
+        &[tank],
+        UnitOrder::CastAbility {
+            ability_index: 0,
+            target_pos: None,
+            target_entity: None,
+        },
+    );
+    arena.run(80);
+    assert!(arena.world.entities[&tank].is_sieged);
 }
 
 /// S-4: a projectile weapon's `attacks_count` strikes all land, as on the instant path.
@@ -137,9 +174,7 @@ fn s4_projectile_weapon_applies_every_strike() {
 fn s13_ground_splash_does_not_reach_air() {
     let mut arena = Arena::new(32);
     let tank = arena.spawn("railgun_crawler", BLUE, 10.0, 10.0);
-    let mode = arena.world.execute_ability(tank, 0, None, None);
-    assert!(mode, "siege mode must start");
-    arena.run(80);
+    siege(&mut arena, tank);
 
     let ground_target = arena.spawn("rhino_beetle", RED, 18.0, 10.0);
     let ground_neighbour = arena.spawn("rhino_beetle", RED, 18.0, 10.4);
@@ -191,4 +226,333 @@ fn s13_projectile_splash_spares_its_attacker() {
         (arena.vitals(shooter) - hp).abs() < f32::EPSILON,
         "attacker damaged itself"
     );
+}
+
+/// S-1, reproduction r01: a holding unit shoots an enemy inside its weapon range.
+#[test]
+fn s1_hold_position_fires_at_enemy_in_range() {
+    let mut arena = Arena::new(32);
+    let holder = arena.spawn("pulse_bot", BLUE, 10.0, 10.0);
+    let enemy = arena.spawn("rhino_beetle", RED, 12.0, 10.0);
+    let start = arena.world.entities[&holder].position;
+    let hp = arena.vitals(enemy);
+    arena.order(BLUE, &[holder], UnitOrder::HoldPosition);
+    arena.run(200);
+    assert!(arena.vitals(enemy) < hp, "holder never damaged the enemy");
+    if let Some(unit) = arena.world.entities.get(&holder) {
+        assert!(
+            unit.position.distance(start) < SimScalar::from_num(1),
+            "holding must not chase"
+        );
+    }
+}
+
+/// S-1, reproduction r02: the idle control fires, so r01 is not a setup fault.
+#[test]
+fn s1_control_idle_unit_fires() {
+    let mut arena = Arena::new(32);
+    arena.spawn("pulse_bot", BLUE, 10.0, 10.0);
+    let enemy = arena.spawn("rhino_beetle", RED, 12.0, 10.0);
+    let hp = arena.vitals(enemy);
+    arena.run(200);
+    assert!(arena.vitals(enemy) < hp);
+}
+
+/// S-1: holding means no pursuit, however visible the enemy.
+#[test]
+fn s1_hold_position_does_not_pursue_beyond_range() {
+    let mut arena = Arena::new(32);
+    let holder = arena.spawn("pulse_bot", BLUE, 10.0, 10.0);
+    let enemy = arena.spawn("pulse_bot", RED, 17.5, 10.0);
+    arena.order(RED, &[enemy], UnitOrder::HoldPosition);
+    arena.order(BLUE, &[holder], UnitOrder::HoldPosition);
+    let start = arena.world.entities[&holder].position;
+    arena.run(100);
+    assert_eq!(arena.world.entities[&holder].position, start);
+    assert!(
+        matches!(
+            arena.world.entities[&holder].order_queue.front(),
+            Some(UnitOrder::HoldPosition)
+        ),
+        "the hold order must survive acquisition"
+    );
+    let unit_type = arena.world.entities[&enemy].unit_type_id;
+    let full = arena.world.catalog.get(unit_type).unwrap().max_hp;
+    assert_eq!(
+        arena.world.entities[&enemy].hp, full,
+        "enemy is out of range"
+    );
+}
+
+/// S-2, reproduction r05: an explicit focus-fire order survives a nearer enemy.
+#[test]
+fn s2_explicit_focus_fire_survives_nearby_enemy() {
+    let mut arena = Arena::new(32);
+    let shooter = arena.spawn("pulse_bot", BLUE, 10.0, 10.0);
+    arena.spawn("psi_grey", RED, 12.0, 10.0);
+    let far = arena.spawn("rhino_beetle", RED, 18.0, 10.0);
+    arena.run(2);
+    arena.order(BLUE, &[shooter], attack(far));
+    arena.run(30);
+    assert!(
+        front_attacks(&arena, shooter, far),
+        "explicit order replaced"
+    );
+}
+
+/// S-2: an explicit order stays explicit when more orders are queued behind it.
+#[test]
+fn s2_explicit_focus_fire_survives_with_queued_orders() {
+    let mut arena = Arena::new(32);
+    let shooter = arena.spawn("pulse_bot", BLUE, 10.0, 10.0);
+    arena.spawn("psi_grey", RED, 12.0, 10.0);
+    let far = arena.spawn("rhino_beetle", RED, 18.0, 10.0);
+    arena.run(2);
+    arena.step(vec![
+        PlayerCommand {
+            player_id: BLUE,
+            entities: vec![shooter],
+            order: attack(far),
+            queue: false,
+        },
+        PlayerCommand {
+            player_id: BLUE,
+            entities: vec![shooter],
+            order: UnitOrder::Move {
+                target: point(5.0, 5.0),
+            },
+            queue: true,
+        },
+    ]);
+    arena.run(10);
+    assert!(front_attacks(&arena, shooter, far));
+}
+
+/// S-2: acquired targets do not flap to an equally rated enemy that merely got closer.
+#[test]
+fn s2_acquired_target_has_hysteresis() {
+    let mut arena = Arena::new(32);
+    let shooter = arena.spawn("pulse_bot", BLUE, 10.0, 10.0);
+    let first = arena.spawn("rhino_beetle", RED, 14.0, 10.0);
+    arena.order(
+        BLUE,
+        &[shooter],
+        UnitOrder::AttackMove {
+            target: point(20.0, 10.0),
+        },
+    );
+    arena.order(RED, &[first], UnitOrder::HoldPosition);
+    arena.run(3);
+    assert!(front_attacks(&arena, shooter, first));
+
+    let closer = arena.spawn("rhino_beetle", RED, 12.0, 10.0);
+    arena.order(RED, &[closer], UnitOrder::HoldPosition);
+    arena.run(5);
+    assert!(
+        front_attacks(&arena, shooter, first),
+        "an in-range target must not be dropped for an equal, closer one"
+    );
+}
+
+/// S-2: hysteresis still yields to a strictly more dangerous target.
+#[test]
+fn s2_acquired_target_yields_to_higher_threat() {
+    let mut arena = Arena::new(32);
+    let shooter = arena.spawn("pulse_bot", BLUE, 10.0, 10.0);
+    let dome = arena.world.catalog.id_by_slug("foundry_core_dome").unwrap();
+    let passive = arena.world.spawn_structure(dome, RED, 13, 8).unwrap();
+    arena.run(3);
+    assert!(front_attacks(&arena, shooter, passive));
+    let armed = arena.spawn("rhino_beetle", RED, 10.0, 13.0);
+    arena.run(3);
+    assert!(front_attacks(&arena, shooter, armed));
+}
+
+/// S-5: friendly-fire splash neither turns allies on their own unit nor scares them away.
+#[test]
+fn s5_friendly_splash_does_not_provoke_allies() {
+    let mut arena = Arena::new(32);
+    let tank = arena.spawn("railgun_crawler", BLUE, 10.0, 10.0);
+    siege(&mut arena, tank);
+    let enemy = arena.spawn("rhino_beetle", RED, 18.0, 10.0);
+    let ally = arena.spawn("shock_golem", BLUE, 18.0, 10.6);
+    // Rule fixture: with no scan range neither unit engages the other, so only the reaction
+    // to the friendly shell can change the ally's orders.
+    for unit in [enemy, ally] {
+        let unit_type = arena.world.entities[&unit].unit_type_id;
+        arena.world.catalog.get_mut(unit_type).unwrap().scan_range = SimScalar::ZERO;
+    }
+    arena.order(RED, &[enemy], UnitOrder::HoldPosition);
+    let hp = arena.vitals(ally);
+    let position = arena.world.entities[&ally].position;
+    arena.order(BLUE, &[tank], attack(enemy));
+    let mut splashed = false;
+    for _ in 0..80 {
+        arena.run(1);
+        splashed |= arena.vitals(ally) < hp;
+        assert!(
+            !front_attacks(&arena, ally, tank),
+            "ally turned on its own tank"
+        );
+    }
+    assert!(splashed, "the fixture must splash the ally");
+    assert_eq!(
+        arena.world.entities[&ally].position, position,
+        "ally must not flee from friendly splash"
+    );
+}
+
+/// S-6: a shot goes to the target its swing started on, not whatever is current at release.
+#[test]
+fn s6_windup_fires_at_its_bound_target() {
+    let mut arena = Arena::new(32);
+    let shooter = arena.spawn("pulse_bot", BLUE, 10.0, 10.0);
+    let bound = arena.spawn("rhino_beetle", RED, 13.0, 10.0);
+    let other = arena.spawn("rhino_beetle", RED, 10.0, 13.0);
+    let hp = (arena.vitals(bound), arena.vitals(other));
+    arena.order(BLUE, &[shooter], attack(bound));
+    run_to_windup(&mut arena, shooter);
+    let WeaponPhase::Windup { target_id, .. } = arena.world.entities[&shooter].weapon_phase else {
+        panic!("the shooter must reach its wind-up");
+    };
+    assert_eq!(target_id, bound);
+    // Rule fixture: the order changes mid-swing without the interruption a command applies,
+    // which is what an automatic retarget during wind-up does.
+    let unit = arena.world.entities.get_mut(&shooter).unwrap();
+    if let Some(order) = unit.order_queue.front_mut() {
+        *order = attack(other);
+    }
+    arena.run(3);
+    assert!(
+        arena.vitals(bound) < hp.0,
+        "the bound target takes the shot"
+    );
+    assert!((arena.vitals(other) - hp.1).abs() < f32::EPSILON);
+}
+
+/// S-6, S-12: a target that left range during the swing is neither hit nor paid for.
+#[test]
+fn s6_windup_rechecks_range_at_release() {
+    let mut arena = Arena::new(32);
+    let shooter = arena.spawn("pulse_bot", BLUE, 10.0, 10.0);
+    let target = arena.spawn("rhino_beetle", RED, 13.0, 10.0);
+    let hp = arena.vitals(target);
+    arena.order(BLUE, &[shooter], attack(target));
+    run_to_windup(&mut arena, shooter);
+    // Rule fixture: a displacement no tick of movement can produce within one swing.
+    arena.world.entities.get_mut(&target).unwrap().position = point(26.0, 26.0);
+    arena.run(5);
+    assert!(
+        (arena.vitals(target) - hp).abs() < f32::EPSILON,
+        "shot landed from beyond range"
+    );
+    assert_eq!(
+        arena.world.entities[&shooter].weapon_cooldown_remaining, 0,
+        "a cancelled swing costs no cooldown"
+    );
+}
+
+/// S-7: a sieged unit drops a target inside its minimum range and engages one outside it.
+#[test]
+fn s7_sieged_unit_retargets_inside_minimum_range() {
+    let mut arena = Arena::new(32);
+    let tank = arena.spawn("railgun_crawler", BLUE, 10.0, 10.0);
+    siege(&mut arena, tank);
+    let close = arena.spawn("rhino_beetle", RED, 18.0, 10.0);
+    arena.order(RED, &[close], UnitOrder::HoldPosition);
+    arena.run(1);
+    assert!(front_attacks(&arena, tank, close));
+    // Rule fixture: the walk under the gun, condensed so shells cannot end the test first.
+    arena.world.entities.get_mut(&close).unwrap().position = point(11.2, 10.0);
+    let far = arena.spawn("rhino_beetle", RED, 20.0, 10.0);
+    arena.order(RED, &[far], UnitOrder::HoldPosition);
+    let hp = arena.vitals(far);
+    arena.run(150);
+    assert!(arena.vitals(far) < hp, "tank locked onto its blind spot");
+}
+
+/// S-7: an explicit target inside minimum range releases an immobile unit too.
+#[test]
+fn s7_sieged_unit_abandons_explicit_target_inside_minimum_range() {
+    let mut arena = Arena::new(32);
+    let tank = arena.spawn("railgun_crawler", BLUE, 10.0, 10.0);
+    siege(&mut arena, tank);
+    let close = arena.spawn("rhino_beetle", RED, 11.5, 10.0);
+    arena.order(RED, &[close], UnitOrder::HoldPosition);
+    arena.order(BLUE, &[tank], attack(close));
+    arena.run(3);
+    assert!(arena.world.entities[&tank].order_queue.is_empty());
+}
+
+/// S-12: a target dying during the swing costs no cooldown.
+#[test]
+fn s12_target_death_in_windup_burns_no_cooldown() {
+    let mut arena = Arena::new(32);
+    let shooter = arena.spawn("railgun_crawler", BLUE, 10.0, 10.0);
+    let target = arena.spawn("rhino_beetle", RED, 14.0, 10.0);
+    arena.order(BLUE, &[shooter], attack(target));
+    run_to_windup(&mut arena, shooter);
+    // Rule fixture: another source kills the target; nothing in this duel could.
+    arena.world.entities.get_mut(&target).unwrap().hp = SimScalar::ZERO;
+    arena.run(10);
+    assert_eq!(arena.world.entities[&shooter].weapon_cooldown_remaining, 0);
+}
+
+/// S-17: no shot or acquisition reaches an invulnerable or undetected cloaked unit.
+#[test]
+fn s17_attack_path_respects_availability() {
+    for (invulnerable, cloaked) in [(true, false), (false, true)] {
+        let mut arena = Arena::new(32);
+        let shooter = arena.spawn("pulse_bot", BLUE, 10.0, 10.0);
+        let target = arena.spawn("rhino_beetle", RED, 12.0, 10.0);
+        arena.order(RED, &[target], UnitOrder::Stop);
+        let hidden = arena.world.entities.get_mut(&target).unwrap();
+        // Rule fixture: no shipped ability grants these states yet.
+        hidden.is_invulnerable = invulnerable;
+        hidden.is_cloaked = cloaked;
+        let hp = arena.vitals(target);
+        arena.order(BLUE, &[shooter], UnitOrder::Stop);
+        arena.run(60);
+        assert!((arena.vitals(target) - hp).abs() < f32::EPSILON);
+    }
+}
+
+/// S-17: losing availability during the swing cancels the shot.
+#[test]
+fn s17_availability_is_rechecked_at_release() {
+    let mut arena = Arena::new(32);
+    let shooter = arena.spawn("railgun_crawler", BLUE, 10.0, 10.0);
+    let target = arena.spawn("rhino_beetle", RED, 14.0, 10.0);
+    let hp = arena.vitals(target);
+    arena.order(BLUE, &[shooter], attack(target));
+    run_to_windup(&mut arena, shooter);
+    // Rule fixture: no shipped ability grants invulnerability yet.
+    let unit = arena.world.entities.get_mut(&target).unwrap();
+    unit.is_invulnerable = true;
+    arena.run(40);
+    assert!((arena.vitals(target) - hp).abs() < f32::EPSILON);
+}
+
+/// S-17: splash stops at invulnerability but, as in SC2, reaches undetected cloaked units.
+#[test]
+fn s17_splash_respects_invulnerability_only() {
+    let mut arena = Arena::new(32);
+    let tank = arena.spawn("railgun_crawler", BLUE, 10.0, 10.0);
+    siege(&mut arena, tank);
+    let target = arena.spawn("rhino_beetle", RED, 18.0, 10.0);
+    let shielded = arena.spawn("rhino_beetle", RED, 18.0, 10.3);
+    let cloaked = arena.spawn("rhino_beetle", RED, 18.3, 10.0);
+    for unit in [target, shielded, cloaked] {
+        arena.order(RED, &[unit], UnitOrder::HoldPosition);
+    }
+    // Rule fixture: no shipped ability grants these states yet.
+    let unit = arena.world.entities.get_mut(&shielded).unwrap();
+    unit.is_invulnerable = true;
+    let unit = arena.world.entities.get_mut(&cloaked).unwrap();
+    unit.is_cloaked = true;
+    let (shielded_hp, cloaked_hp) = (arena.vitals(shielded), arena.vitals(cloaked));
+    arena.order(BLUE, &[tank], attack(target));
+    arena.run(30);
+    assert!((arena.vitals(shielded) - shielded_hp).abs() < f32::EPSILON);
+    assert!(arena.vitals(cloaked) < cloaked_hp);
 }

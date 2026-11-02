@@ -12,8 +12,8 @@ use crate::catalog::{UnitArchetype, WeaponSpec};
 use crate::movement::MovementMathError;
 use crate::weapon_timing::{combined_attack_rate, AttackRate, InvalidBuffAttackRate};
 use sim_types::{
-    AnimState, EntityId, MoverType, OverclockSpec, PlayerId, ShapeKind, SimAngle, SimScalar,
-    SimVec2, Tick, UnitOrder, UnitTypeId,
+    AnimState, AttackOrigin, EntityId, MoverType, OverclockSpec, PlayerId, ShapeKind, SimAngle,
+    SimScalar, SimVec2, Tick, UnitOrder, UnitTypeId,
 };
 use std::collections::VecDeque;
 
@@ -326,16 +326,20 @@ impl Entity {
 
     /// Issues an order, or schedules it when `queue` is true.
     /// Returns false for a loaded actor or ordinary immediate legacy-stim HP ineligibility.
+    /// An issued attack is explicit by definition, whatever origin the command claimed.
     ///
     /// # Errors
     /// Returns typed malformed buff/cost evidence before changing any field.
     pub fn issue_order(
         &mut self,
-        order: UnitOrder,
+        mut order: UnitOrder,
         queue: bool,
     ) -> Result<bool, EntityAdmissionError> {
         if self.is_loaded_in_transport() {
             return Ok(false);
+        }
+        if let UnitOrder::AttackTarget { origin, .. } = &mut order {
+            *origin = AttackOrigin::Explicit;
         }
         if !queue && matches!(order, UnitOrder::UseStim) {
             return self.apply_stimpack();
@@ -384,14 +388,14 @@ impl Entity {
                 self.current_funnel_waypoints.clear();
                 self.is_holding_position = false;
             }
-            UnitOrder::AttackTarget { target } => {
+            UnitOrder::AttackTarget { target, origin } => {
                 if matches!(self.weapon_phase, WeaponPhase::Windup { .. }) {
                     self.weapon_phase = WeaponPhase::Ready;
                 }
                 self.current_target = Some(target);
                 self.order_queue.clear();
                 self.order_queue
-                    .push_back(UnitOrder::AttackTarget { target });
+                    .push_back(UnitOrder::AttackTarget { target, origin });
                 self.current_funnel_waypoints.clear();
                 self.is_holding_position = false;
             }
@@ -534,6 +538,23 @@ impl Entity {
         if life_damage > SimScalar::ZERO {
             self.hull_hit_flash_ticks = 8;
         }
+    }
+
+    /// The sieged weapon replacing the archetype's ground weapon, if one is active.
+    #[must_use]
+    #[inline]
+    pub fn active_siege_weapon(&self) -> Option<&WeaponSpec> {
+        self.is_sieged
+            .then_some(self.siege_weapon.as_ref())
+            .flatten()
+    }
+
+    /// Whether the front order keeps this unit anchored in place.
+    #[must_use]
+    #[inline]
+    pub fn is_on_hold(&self) -> bool {
+        self.is_holding_position
+            || matches!(self.order_queue.front(), Some(UnitOrder::HoldPosition))
     }
 
     /// Whether this entity is alive (`hp > 0`).

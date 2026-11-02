@@ -311,6 +311,13 @@ impl SimWorld {
         actor.velocity = SimVec2::ZERO;
         actor.order_queue.clear();
         actor.current_funnel_waypoints.clear();
+        // A swing frozen in the hold was bound to orders the unit no longer has.
+        if matches!(
+            actor.weapon_phase,
+            crate::entity::WeaponPhase::Windup { .. }
+        ) {
+            actor.weapon_phase = crate::entity::WeaponPhase::Ready;
+        }
         Ok(TransportReceipt {
             passenger,
             carrier,

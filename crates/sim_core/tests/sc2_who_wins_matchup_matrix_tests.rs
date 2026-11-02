@@ -1135,7 +1135,7 @@ fn test_suite_12_colossus_matchups() {
             .get_mut(&v_id)
             .unwrap()
             .order_queue
-            .push_back(UnitOrder::AttackTarget { target: c_id });
+            .push_back(UnitOrder::attack(c_id));
         world
             .entities
             .get_mut(&c_id)
@@ -1553,7 +1553,7 @@ fn test_suite_20_brood_lord_vs_ground_only() {
         .get_mut(&b_id)
         .unwrap()
         .order_queue
-        .push_back(UnitOrder::AttackTarget { target: r_id });
+        .push_back(UnitOrder::attack(r_id));
     world
         .entities
         .get_mut(&r_id)

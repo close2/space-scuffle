@@ -262,7 +262,7 @@ fn test_converging_units_respect_speed_cap_and_do_not_vibrate() {
     // Order all 8 units to AttackTarget
     for &id in &converging_ids {
         if let Some(unit) = world.entities.get_mut(&id) {
-            unit.issue_order(UnitOrder::AttackTarget { target: target_id }, false)
+            unit.issue_order(UnitOrder::attack(target_id), false)
                 .expect("valid authored fixture order or buff");
         }
     }
@@ -515,7 +515,7 @@ fn test_higher_priority_melee_slides_around_engaged_ranged_ally() {
         .get_mut(&ranged_id)
         .unwrap()
         .order_queue
-        .push_back(UnitOrder::AttackTarget { target: enemy_id });
+        .push_back(UnitOrder::attack(enemy_id));
 
     // Friendly melee at (8.5, 10) pursuing the same enemy
     let melee_pos = SimVec2::new(SimScalar::from_f32_lossy(8.5), SimScalar::from_num(10));
@@ -527,7 +527,7 @@ fn test_higher_priority_melee_slides_around_engaged_ranged_ally() {
         .get_mut(&melee_id)
         .unwrap()
         .order_queue
-        .push_back(UnitOrder::AttackTarget { target: enemy_id });
+        .push_back(UnitOrder::attack(enemy_id));
 
     let min_sep_threshold = (r_ranged + r_melee) * SimScalar::from_f32_lossy(0.80);
     let mut prev_melee_pos = melee_pos;

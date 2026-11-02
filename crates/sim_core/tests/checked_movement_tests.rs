@@ -149,7 +149,7 @@ fn corrupted_registered_air_foundation_never_authors_motion_or_flee() -> TestRes
             1 => UnitOrder::AttackMove {
                 target: point(25, 25),
             },
-            _ => UnitOrder::AttackTarget { target },
+            _ => UnitOrder::attack(target),
         };
         assert!(actor.issue_order(order, false)?);
         let before = actor.clone();
@@ -227,7 +227,7 @@ fn late_pursuit_range_overflow_does_not_clear_route_or_pose_bookkeeping() -> Tes
     let id = f.spawn(f.air, point(10, 10))?;
     let target = f.spawn(f.ground, point(30, 30))?;
     let actor = f.world.entities.get_mut(&id).ok_or("actor")?;
-    assert!(actor.issue_order(UnitOrder::AttackTarget { target }, false)?);
+    assert!(actor.issue_order(UnitOrder::attack(target), false)?);
     actor.current_funnel_waypoints = vec![point(15, 15)];
     actor.pos_at_tick_start = point(4, 4);
     let slug = f.world.catalog.get(f.air)?.slug.clone();
@@ -718,12 +718,7 @@ fn unavailable_pursuit_preserves_legacy_animation_until_next_normal_phase() -> T
     let mut f = Fixture::new(32, 32)?;
     let id = f.spawn(f.air, point(8, 8))?;
     let actor = f.world.entities.get_mut(&id).ok_or("actor")?;
-    assert!(actor.issue_order(
-        UnitOrder::AttackTarget {
-            target: EntityId(u32::MAX)
-        },
-        false
-    )?);
+    assert!(actor.issue_order(UnitOrder::attack(EntityId(u32::MAX)), false)?);
     actor.current_anim = sim_types::AnimState::Walk;
     actor.velocity = SimVec2::X_AXIS;
     actor.current_funnel_waypoints = vec![point(10, 10)];

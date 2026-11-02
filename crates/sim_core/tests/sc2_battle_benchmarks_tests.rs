@@ -79,13 +79,13 @@ fn test_1v1_zealot_vs_marine_melee_pause_and_three_hit_kill() {
         )
         .expect("spawn marine");
 
-    // Zealot attacks Marine; Marine holds position
+    // Zealot attacks Marine; Marine holds position and shoots back from where it stands
     world
         .entities
         .get_mut(&zealot_id)
         .unwrap()
         .order_queue
-        .push_back(UnitOrder::AttackTarget { target: marine_id });
+        .push_back(UnitOrder::attack(marine_id));
     world
         .entities
         .get_mut(&marine_id)
@@ -97,6 +97,7 @@ fn test_1v1_zealot_vs_marine_melee_pause_and_three_hit_kill() {
         world.entities.get(&marine_id).unwrap().hp,
         SimScalar::from_num(45)
     );
+    let zealot_shields = world.entities.get(&zealot_id).unwrap().shields;
 
     // Step tick by tick and monitor exact Marine HP
     let mut kill_tick = None;
@@ -151,7 +152,19 @@ fn test_1v1_zealot_vs_marine_melee_pause_and_three_hit_kill() {
             kill_tick = Some(tick);
             break;
         }
+        assert!(
+            matches!(
+                marine_opt.and_then(|marine| marine.order_queue.front()),
+                Some(UnitOrder::HoldPosition)
+            ),
+            "The Marine must keep holding while it fights"
+        );
     }
+
+    assert!(
+        world.entities.get(&zealot_id).unwrap().shields < zealot_shields,
+        "A holding Marine fights back; it does not die passively"
+    );
 
     assert_eq!(
         kill_tick,
@@ -442,16 +455,14 @@ fn test_1_marauder_vs_1_stalker_armored_duel() {
         .get_mut(&marauder_id)
         .unwrap()
         .order_queue
-        .push_back(UnitOrder::AttackTarget { target: stalker_id });
+        .push_back(UnitOrder::attack(stalker_id));
 
     world
         .entities
         .get_mut(&stalker_id)
         .unwrap()
         .order_queue
-        .push_back(UnitOrder::AttackTarget {
-            target: marauder_id,
-        });
+        .push_back(UnitOrder::attack(marauder_id));
 
     let mut marauder_won = false;
     let mut final_tick = 0;
@@ -528,14 +539,14 @@ fn test_zergling_swarm_scaling_vs_1_zealot() {
                 .entities
                 .get_mut(&zealot_id)
                 .unwrap()
-                .issue_order(UnitOrder::AttackTarget { target: z }, false)
+                .issue_order(UnitOrder::attack(z), false)
                 .expect("valid authored fixture order or buff");
 
             world
                 .entities
                 .get_mut(&z)
                 .unwrap()
-                .issue_order(UnitOrder::AttackTarget { target: zealot_id }, false)
+                .issue_order(UnitOrder::attack(zealot_id), false)
                 .expect("valid authored fixture order or buff");
 
             // Step until this zergling is defeated
@@ -754,9 +765,7 @@ fn test_railgun_crawler_declarative_modes_and_siege_splash() {
         .get_mut(&tank_id)
         .unwrap()
         .order_queue
-        .push_back(UnitOrder::AttackTarget {
-            target: enemy_primary,
-        });
+        .push_back(UnitOrder::attack(enemy_primary));
 
     // Step 30 ticks so Tank fires 1 shot
     for tick in 0..30 {
@@ -804,9 +813,7 @@ fn test_railgun_crawler_declarative_modes_and_siege_splash() {
         .get_mut(&tank_id)
         .unwrap()
         .order_queue
-        .push_back(UnitOrder::AttackTarget {
-            target: enemy_primary,
-        });
+        .push_back(UnitOrder::attack(enemy_primary));
 
     // Step until cannon fires
     for tick in 102..170 {

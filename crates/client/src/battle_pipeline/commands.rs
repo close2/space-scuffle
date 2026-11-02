@@ -344,7 +344,7 @@ fn validate(world: &SimWorld, command: &PlayerCommand) -> Result<(), SubmissionE
     if command.entities.is_empty() {
         return Err(SubmissionError::EmptySelection);
     }
-    let target_definition = if let UnitOrder::AttackTarget { target } = command.order {
+    let target_definition = if let UnitOrder::AttackTarget { target, .. } = command.order {
         let target_entity = world
             .entities
             .get(&target)

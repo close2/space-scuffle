@@ -154,9 +154,7 @@ fn battle(
         .entities
         .get_mut(&attacker)
         .ok_or("attacker missing")?;
-    entity
-        .order_queue
-        .push_back(UnitOrder::AttackTarget { target });
+    entity.order_queue.push_back(UnitOrder::attack(target));
     entity.weapon_phase = WeaponPhase::Windup {
         target_id: target,
         remaining_ticks: 1,

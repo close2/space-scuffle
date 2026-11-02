@@ -266,7 +266,9 @@ impl SimWorld {
         }
         let target = match actor.order_queue.front() {
             Some(UnitOrder::Move { target } | UnitOrder::AttackMove { target }) => *target,
-            Some(UnitOrder::AttackTarget { target }) => return Ok(MotionAction::Pursue(*target)),
+            Some(UnitOrder::AttackTarget { target, .. }) => {
+                return Ok(MotionAction::Pursue(*target))
+            }
             Some(UnitOrder::CastAbility {
                 ability_index,
                 target_pos,

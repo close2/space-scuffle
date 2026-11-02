@@ -42,6 +42,7 @@ pub mod scenario;
     reason = "module-wide until the movement redesign (remediation Phase 4) rewrites this code"
 )]
 pub mod steering;
+pub(crate) mod target_acquisition;
 pub mod tech_tree;
 pub mod transport;
 pub mod upgrades;
@@ -53,8 +54,8 @@ pub use checksum::compute_world_checksum;
 pub use combat::{
     calculate_hit_damage, calculate_hit_damage_upgraded, calculate_splash_damage,
     calculate_splash_damage_upgraded, compute_threat_priority, is_in_weapon_range,
-    is_within_firing_arc, step_entity_weapon, DamageResolution, TargetPriorityKey,
-    MIN_DAMAGE_CLAMP,
+    is_within_firing_arc, step_entity_weapon, DamageResolution, TargetPriorityKey, WeaponTarget,
+    MIN_DAMAGE_CLAMP, RELEASE_RANGE_SLOP,
 };
 pub use entity::{ActiveBuff, ActiveProjectile, Entity, WeaponPhase};
 pub use error::{SimCoreError, SimResult};

@@ -20,9 +20,9 @@
 use crate::catalog::{SplashSpec, WeaponSpec};
 use crate::combat::{
     calculate_hit_damage_upgraded, calculate_splash_damage_upgraded, shares_combat_plane,
-    step_entity_weapon, DamageResolution,
+    step_entity_weapon, DamageResolution, WeaponTarget,
 };
-use crate::entity::ActiveProjectile;
+use crate::entity::{ActiveProjectile, WeaponPhase};
 use crate::weapon_timing::{resolve_attack_period, SimulationDiagnostic};
 use crate::world::SimWorld;
 use sim_types::{
@@ -43,8 +43,10 @@ struct TargetSnapshot {
     radius: SimScalar,
     /// Locomotion layer, retained even for cargo so weapon selection stays stable.
     mover: MoverType,
-    /// Alive and present in world space.
-    in_world: bool,
+    /// Passes the damage gate of [`SimWorld::is_damageable`].
+    damageable: bool,
+    /// Requires detection before anyone may aim at it.
+    cloaked: bool,
 }
 
 /// One discharged weapon waiting for dispatch.
@@ -160,7 +162,8 @@ impl SimWorld {
                     position: entity.position,
                     radius,
                     mover,
-                    in_world: entity.is_alive() && !entity.is_loaded_in_transport(),
+                    damageable: Self::is_damageable(entity),
+                    cloaked: entity.is_cloaked,
                 },
             ));
         }
@@ -192,37 +195,55 @@ impl SimWorld {
                 continue;
             };
 
-            let target_opt_id =
-                if let Some(UnitOrder::AttackTarget { target }) = entity.order_queue.front() {
-                    Some(*target)
-                } else {
-                    let has_turret = entity
-                        .siege_weapon
-                        .as_ref()
-                        .or(arch.ground_weapon.as_ref())
-                        .or(arch.weapon.as_ref())
-                        .is_some_and(|w| w.has_turret);
-                    if has_turret {
-                        entity.current_target
-                    } else {
-                        None
-                    }
-                };
+            // A swing stays bound to the target it started on. Otherwise the orders decide:
+            // an attack order names the target, and turrets and holders use `current_target`.
+            let target_opt_id = if let WeaponPhase::Windup { target_id, .. } = entity.weapon_phase {
+                Some(target_id)
+            } else if let Some(UnitOrder::AttackTarget { target, .. }) = entity.order_queue.front()
+            {
+                Some(*target)
+            } else {
+                let has_turret = entity
+                    .siege_weapon
+                    .as_ref()
+                    .or(arch.ground_weapon.as_ref())
+                    .or(arch.weapon.as_ref())
+                    .is_some_and(|w| w.has_turret);
+                (has_turret || entity.is_on_hold())
+                    .then_some(entity.current_target)
+                    .flatten()
+            };
 
             let target_snapshot = target_opt_id.and_then(|tid| combat.snapshot(tid));
             let target_mover = target_snapshot.map_or(MoverType::Ground, |t| t.mover);
 
-            let siege_weapon = entity
-                .is_sieged
-                .then_some(entity.siege_weapon.as_ref())
-                .flatten();
-            let Some(mut weapon) = arch.weapon_against(target_mover, siege_weapon).cloned() else {
+            let Some(mut weapon) = arch
+                .weapon_against(target_mover, entity.active_siege_weapon())
+                .cloned()
+            else {
+                // A target that vanished mid-swing may leave no weapon to resolve here.
+                if matches!(entity.weapon_phase, WeaponPhase::Windup { .. }) {
+                    entity.weapon_phase = WeaponPhase::Ready;
+                }
                 continue;
             };
 
-            let target_info = target_snapshot
-                .filter(|t| t.in_world)
-                .map(|t| (t.position, t.radius + arch.collision_radius));
+            let target_info = target_opt_id.and_then(|id| {
+                let snapshot = target_snapshot?;
+                let available = snapshot.damageable
+                    && (!snapshot.cloaked
+                        || Self::is_cloak_revealed(
+                            &self.map,
+                            &self.vision_maps,
+                            entity.owner,
+                            snapshot.position,
+                        ));
+                available.then_some(WeaponTarget {
+                    id,
+                    position: snapshot.position,
+                    combined_radius: snapshot.radius + arch.collision_radius,
+                })
+            });
 
             weapon.max_range = Self::effective_range_from_upgrades(
                 &self.player_upgrades,
@@ -236,12 +257,11 @@ impl SimWorld {
                 .map_or(0, |modifiers| modifiers.attack_cooldown_delta);
             weapon.period_ticks = resolve_attack_period(weapon.period_ticks, delta, attack_mult);
 
-            let fired = step_entity_weapon(entity, &weapon, target_info);
-            if fired {
-                if let Some(target) = target_opt_id.filter(|_| target_info.is_some()) {
+            if step_entity_weapon(entity, &weapon, target_info) {
+                if let Some(target) = target_info {
                     combat.shots.push(PreparedShot {
                         attacker: *id,
-                        target,
+                        target: target.id,
                         weapon,
                         source_slug: arch.slug.clone(),
                         origin: entity.position,
@@ -373,17 +393,25 @@ impl SimWorld {
 
     /// Applies every strike of `source` to `target_id`, then the target's retaliation.
     ///
-    /// Returns the landed hit, or `None` when the target no longer exists.
+    /// Returns where the shot landed, or `None` when the target no longer exists. A target
+    /// that became unavailable after the shot was prepared, typically killed earlier this
+    /// phase, takes no strikes, but the landed hit still carries any area damage.
     fn apply_weapon_hit(
         &mut self,
         source: HitSource<'_>,
         target_id: EntityId,
     ) -> Option<ResolvedHit> {
+        let available = self.is_entity_available_for_combat(source.owner, target_id);
         let target = self.entities.get_mut(&target_id)?;
         let target_arch = self.catalog.get(target.unit_type_id).ok()?;
-        let position = target.position;
-        let plane = target_arch.mover_type;
-        let angle = hit_angle(source.origin, position);
+        let hit = ResolvedHit {
+            position: target.position,
+            angle: hit_angle(source.origin, target.position),
+            plane: target_arch.mover_type,
+        };
+        if !available {
+            return Some(hit);
+        }
         let attacker_upgrades = upgrades_of(&self.player_upgrades, source.owner);
         let target_upgrades = upgrades_of(&self.player_upgrades, target.owner);
         for _ in 0..source.weapon.attacks_count {
@@ -396,16 +424,12 @@ impl SimWorld {
                 target.shields,
                 target.hp,
             );
-            target.apply_damage(resolution.shield_damage, resolution.life_damage, angle);
+            target.apply_damage(resolution.shield_damage, resolution.life_damage, hit.angle);
         }
         if let Some(attacker) = source.attacker {
             self.apply_combat_retaliation_prevalidated(target_id, attacker);
         }
-        Some(ResolvedHit {
-            position,
-            angle,
-            plane,
-        })
+        Some(hit)
     }
 
     /// Applies `splash` around `hit.position` on the plane of the primary target.
@@ -425,8 +449,7 @@ impl SimWorld {
         for (&other_id, other) in &self.entities {
             if Some(other_id) == primary
                 || Some(other_id) == source.attacker
-                || !other.is_alive()
-                || other.is_loaded_in_transport()
+                || !Self::is_damageable(other)
                 || (!splash.friendly_fire && other.owner == source.owner)
             {
                 continue;

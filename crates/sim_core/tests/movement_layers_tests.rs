@@ -451,7 +451,7 @@ fn actual_air_attack_pursuit_crosses_cliff_and_keeps_ground_targetability() -> T
     f.step(vec![PlayerCommand {
         player_id: PlayerId(0),
         entities: vec![attacker],
-        order: UnitOrder::AttackTarget { target: victim },
+        order: UnitOrder::attack(victim),
         queue: false,
     }]);
     for _ in 0..100 {

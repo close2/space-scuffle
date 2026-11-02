@@ -157,7 +157,7 @@ fn test_projectile_target_loss_fizzle_on_cargo_cloak_and_invulnerability() {
             .entities
             .get_mut(&shooter)
             .unwrap()
-            .issue_order(UnitOrder::AttackTarget { target }, false)
+            .issue_order(UnitOrder::attack(target), false)
             .expect("valid authored fixture order or buff");
 
         // Step until projectile launches
@@ -228,7 +228,7 @@ fn test_projectile_target_loss_fizzle_on_cargo_cloak_and_invulnerability() {
             .entities
             .get_mut(&shooter)
             .unwrap()
-            .issue_order(UnitOrder::AttackTarget { target }, false)
+            .issue_order(UnitOrder::attack(target), false)
             .expect("valid authored fixture order or buff");
 
         let mut launch_tick = 1;
@@ -294,7 +294,7 @@ fn test_projectile_target_loss_fizzle_on_cargo_cloak_and_invulnerability() {
             .entities
             .get_mut(&shooter)
             .unwrap()
-            .issue_order(UnitOrder::AttackTarget { target }, false)
+            .issue_order(UnitOrder::attack(target), false)
             .expect("valid authored fixture order or buff");
 
         let mut launch_tick = 1;
@@ -382,7 +382,7 @@ fn test_seeking_projectile_retargets_nearest_available_enemy() {
         .entities
         .get_mut(&shooter)
         .unwrap()
-        .issue_order(UnitOrder::AttackTarget { target: target1 }, false)
+        .issue_order(UnitOrder::attack(target1), false)
         .expect("valid authored fixture order or buff");
 
     // Step until projectile is in flight
@@ -484,7 +484,7 @@ fn test_missile_lifetime_timeout_expiration() {
         .entities
         .get_mut(&shooter)
         .unwrap()
-        .issue_order(UnitOrder::AttackTarget { target }, false)
+        .issue_order(UnitOrder::attack(target), false)
         .expect("valid authored fixture order or buff");
 
     // Step until missile launches
@@ -574,7 +574,7 @@ fn test_ballistic_impact_last_known_position_splash() {
         .entities
         .get_mut(&shooter)
         .unwrap()
-        .issue_order(UnitOrder::AttackTarget { target: target1 }, false)
+        .issue_order(UnitOrder::attack(target1), false)
         .expect("valid authored fixture order or buff");
 
     let mut launch_tick = 1;

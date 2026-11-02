@@ -9,6 +9,16 @@ const fn default_true() -> bool {
     true
 }
 
+/// Who chose the target of an attack order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AttackOrigin {
+    /// A player's focus-fire order: only impossibility ends it.
+    #[default]
+    Explicit,
+    /// Chosen by automatic targeting or retaliation: a better target may replace it.
+    Acquired,
+}
+
 /// Concrete order issued to an individual unit or selection group.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum UnitOrder {
@@ -28,6 +38,9 @@ pub enum UnitOrder {
     AttackTarget {
         /// Target entity handle.
         target: EntityId,
+        /// Who chose this target, which decides whether automatic targeting may replace it.
+        #[serde(default)]
+        origin: AttackOrigin,
     },
     /// Stay fixed in place; engage targets within range without displacing.
     HoldPosition,
@@ -65,6 +78,17 @@ pub enum UnitOrder {
         /// Target entity handle (for single-target spells like EMP or Snipe).
         target_entity: Option<EntityId>,
     },
+}
+
+impl UnitOrder {
+    /// A player's focus-fire order on `target`.
+    #[must_use]
+    pub const fn attack(target: EntityId) -> Self {
+        Self::AttackTarget {
+            target,
+            origin: AttackOrigin::Explicit,
+        }
+    }
 }
 
 /// Command issued by a player targeting one or more entities during a tick.
