@@ -149,6 +149,14 @@ pub struct UnitArchetype {
 }
 
 impl UnitArchetype {
+    /// Whether this unit can raise `structure`. The one rule admission and the card share.
+    #[must_use]
+    pub fn can_raise(&self, structure: &Self) -> bool {
+        self.capabilities.can_construct
+            && self.faction == structure.faction
+            && matches!(structure.shape, ShapeKind::BuildingDome { .. })
+    }
+
     /// Returns whether this archetype is immobile by default (e.g. Building Dome or zero max speed).
     #[must_use]
     #[inline]

@@ -14,6 +14,9 @@
 //!   `StarCraft` II, so a crowded line never jams on itself. A node has no worker limit.
 //! - An exhausted node sends its worker to the nearest live node of the same kind within
 //!   [`NEXT_NODE_RADIUS`]. With none left the order ends with an event.
+//! - What a distant node holds is private until the player sees it. An order to an exhausted
+//!   node out of sight is taken, and the worker walks there to find out, so neither admission
+//!   nor an event reveals it early.
 //! - Resource nodes are not obstacles, and the map keeps exhausted ones so identifiers hold.
 //! - Gas yields only through a completed extractor owned by the harvester's player, standing
 //!   over the node. Workers gather from the extractor's edge.
@@ -28,7 +31,7 @@ use crate::production::ProductionInvariant;
 use crate::SimWorld;
 use sim_types::{
     AnimState, EntityId, HarvesterSpec, PlayerId, ResourceKind, ResourceNodeId, SimScalar, SimVec2,
-    UnitOrder,
+    UnitOrder, VisibilityState,
 };
 
 /// How far an exhausted node's workers look for the next one, in world units.
@@ -64,7 +67,16 @@ impl SimWorld {
         }
     }
 
+    /// Whether `player` sees `cell` at this moment.
+    fn sees_cell(&self, player: PlayerId, cell: (u32, u32)) -> bool {
+        self.vision_maps
+            .get(usize::from(player.0))
+            .is_some_and(|vision| vision.visibility_at(cell.0, cell.1) == VisibilityState::Visible)
+    }
+
     /// Admits `Harvest` for every capable selected unit.
+    ///
+    /// An exhausted node is refused only if `player` can see that it is.
     pub(crate) fn admit_harvest(
         &mut self,
         player: PlayerId,
@@ -78,7 +90,7 @@ impl SimWorld {
             .resources()
             .get(target.0 as usize)
             .ok_or(GameCommandError::UnknownResourceNode(target))?;
-        if node.remaining == 0 {
+        if node.remaining == 0 && self.sees_cell(player, node.cell) {
             return Err(GameCommandError::ResourceExhausted(target));
         }
         if self.gather_site(player, target).is_none() {
@@ -149,7 +161,17 @@ impl SimWorld {
             return;
         };
         if node.remaining == 0 {
-            let kind = node.kind;
+            let (kind, cell) = (node.kind, node.cell);
+            if !self.sees_cell(owner, cell) {
+                match self.approach_footprint(id, Footprint::cell(cell)) {
+                    Approach::Walking => return,
+                    Approach::Unreachable => {
+                        self.end_task(id, Some(TaskEventKind::Unreachable));
+                        return;
+                    }
+                    Approach::Arrived => {}
+                }
+            }
             match self.next_node(owner, kind, position) {
                 Some(next) => self.replace_task_order(id, UnitOrder::Harvest { target: next }),
                 None => self.end_task(id, Some(TaskEventKind::ResourceExhausted)),

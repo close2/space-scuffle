@@ -27,6 +27,7 @@ pub mod entity;
 pub mod error;
 pub mod match_state;
 pub mod movement;
+pub mod player_view;
 pub mod production;
 pub mod scenario;
 pub mod steering;

@@ -46,7 +46,7 @@ impl SimWorld {
     }
 
     /// Slots of `carrier` already taken.
-    fn carrier_slots_used(&self, carrier: EntityId) -> u32 {
+    pub(crate) fn carrier_slots_used(&self, carrier: EntityId) -> u32 {
         self.entities
             .values()
             .filter(|entity| entity.transport_carrier() == Some(carrier))
