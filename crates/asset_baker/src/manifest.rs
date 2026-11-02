@@ -6,13 +6,28 @@
 //!
 //! In accordance with the Space Scuffle architectural charter, all action mappings use
 //! deterministic ordered collections ([`BTreeMap`]) to guarantee reproducible serialization
-//! across runs and platform targets.
+//! across runs and platform targets. Written files end every line in `\n` on every host.
 
 use crate::error::BakerError;
+use ron::ser::PrettyConfig;
 use serde::{Deserialize, Serialize};
 use sim_types::enums::AnimState;
 use std::collections::BTreeMap;
 use std::path::Path;
+
+/// Line terminator of every written `*.flipbook.ron` file.
+///
+/// Invariant: flipbook metadata is committed and digested, so its bytes must not depend on the
+/// host that baked it. `ron` defaults `PrettyConfig::new_line` to `\r\n` when built for Windows,
+/// which is why this value is always set explicitly.
+const MANIFEST_RON_NEWLINE: &str = "\n";
+
+/// Applies the canonical `*.flipbook.ron` layout to `base`, replacing its newline.
+///
+/// `base` is a parameter so that tests can start from the Windows default on any host.
+fn canonical_pretty_config(base: PrettyConfig) -> PrettyConfig {
+    base.new_line(MANIFEST_RON_NEWLINE.to_string())
+}
 
 /// Layout format of the packed flipbook atlas image file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -187,8 +202,8 @@ impl FlipbookAtlasMeta {
     /// [`BakerError::RonError`] on serialization failure, or [`BakerError::Io`] on write error.
     pub fn save_to_ron(&self, path: &Path) -> Result<(), BakerError> {
         self.validate()?;
-        let pretty_config = ron::ser::PrettyConfig::default();
-        let ron_string = ron::ser::to_string_pretty(self, pretty_config)?;
+        let ron_string =
+            ron::ser::to_string_pretty(self, canonical_pretty_config(PrettyConfig::default()))?;
         std::fs::write(path, ron_string).map_err(|source| BakerError::Io {
             path: path.to_path_buf(),
             source,
@@ -209,5 +224,60 @@ impl FlipbookAtlasMeta {
         let meta: Self = ron::from_str(&content)?;
         meta.validate()?;
         Ok(meta)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{canonical_pretty_config, FlipbookAtlasMeta, FlipbookLayout, MANIFEST_RON_NEWLINE};
+    use ron::ser::PrettyConfig;
+    use std::collections::BTreeMap;
+
+    /// The config `PrettyConfig::default()` returns on Windows, reproduced on any host.
+    ///
+    /// On Linux the `ron` default is already `\n`, so only this base can show the override working.
+    fn windows_default() -> PrettyConfig {
+        PrettyConfig::default().new_line("\r\n".to_string())
+    }
+
+    fn sample() -> FlipbookAtlasMeta {
+        FlipbookAtlasMeta {
+            name: "newline_probe".into(),
+            frame_width: 64,
+            frame_height: 64,
+            fps: 15,
+            total_frames: 4,
+            layout: FlipbookLayout::VerticalStrip,
+            actions: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn canonical_config_replaces_a_windows_default_newline() {
+        assert_eq!(MANIFEST_RON_NEWLINE, "\n");
+        assert_eq!(
+            canonical_pretty_config(windows_default()).new_line,
+            MANIFEST_RON_NEWLINE
+        );
+    }
+
+    #[test]
+    fn encoding_from_a_windows_default_writes_no_carriage_return() -> Result<(), ron::Error> {
+        let encoded =
+            ron::ser::to_string_pretty(&sample(), canonical_pretty_config(windows_default()))?;
+        assert!(encoded.contains('\n'));
+        assert!(!encoded.contains('\r'));
+        Ok(())
+    }
+
+    #[test]
+    fn save_to_ron_writes_no_carriage_return() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("probe.flipbook.ron");
+        sample().save_to_ron(&path)?;
+        let bytes = std::fs::read(&path)?;
+        assert!(bytes.contains(&b'\n'));
+        assert!(!bytes.contains(&b'\r'));
+        Ok(())
     }
 }
