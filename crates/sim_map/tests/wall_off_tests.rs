@@ -157,3 +157,88 @@ fn test_ramp_wall_off_geometry() {
         large_path
     );
 }
+
+/// A flat map with one placed 3x3 structure at (4, 4), one unbuildable cell and one plateau.
+fn placement_map() -> (GameMap, EntityId) {
+    let mut cells = vec![MapCell::default_ground(CliffLevel(0)); 400];
+    cells[10 * 20 + 10].flags.remove(CellFlags::BUILDABLE);
+    cells[15 * 20 + 15] = MapCell::default_ground(CliffLevel(1));
+    let mut map = GameMap::from_cells(20, 20, cells, Vec::new(), Vec::new())
+        .expect("a 20x20 grid has exactly 400 cells");
+    let occupant = EntityId(7);
+    map.place_structure(occupant, 4, 4, 3, 3)
+        .expect("open ground accepts the structure");
+    (map, occupant)
+}
+
+#[test]
+fn a_structure_the_predicate_ignores_does_not_block() {
+    let (map, _) = placement_map();
+    assert!(map.can_place_building(4, 4, 2, 2).is_err());
+    assert!(map
+        .can_place_building_where(4, 4, 2, 2, |_, _, _| false)
+        .is_ok());
+    assert!(map
+        .can_place_building_where(3, 3, 3, 3, |_, _, _| false)
+        .is_ok());
+}
+
+#[test]
+fn the_predicate_sees_each_occupied_cell_and_its_occupant() {
+    let (map, occupant) = placement_map();
+    let result = map.can_place_building_where(5, 5, 3, 3, |x, y, id| {
+        assert_eq!(id, occupant);
+        (x, y) == (6, 6)
+    });
+    assert!(matches!(
+        result,
+        Err(MapError::PlacementBlocked {
+            reason: PlacementFailureReason::OccupiedByStructure(id),
+            ..
+        }) if id == occupant
+    ));
+}
+
+#[test]
+fn the_predicate_never_excuses_terrain() {
+    let (map, _) = placement_map();
+    let terrain = |x, y, w, h| match map.can_place_building_where(x, y, w, h, |_, _, _| false) {
+        Err(MapError::PlacementBlocked { reason, .. }) => Some(reason),
+        _ => None,
+    };
+    assert_eq!(
+        terrain(10, 10, 1, 1),
+        Some(PlacementFailureReason::UnbuildableTerrain)
+    );
+    assert_eq!(
+        terrain(14, 14, 2, 2),
+        Some(PlacementFailureReason::CliffLevelMismatch)
+    );
+    assert_eq!(
+        terrain(19, 19, 2, 2),
+        Some(PlacementFailureReason::OutOfBounds)
+    );
+
+    let arena = GameMap::default_arena();
+    assert!(matches!(
+        arena.can_place_building_where(30, 31, 2, 2, |_, _, _| false),
+        Err(MapError::PlacementBlocked {
+            reason: PlacementFailureReason::OverlapsRamp,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn the_terrain_beside_an_ignored_structure_still_counts() {
+    let (mut map, _) = placement_map();
+    map.place_structure(EntityId(9), 14, 15, 1, 1)
+        .expect("flat ground beside the plateau accepts the structure");
+    assert!(matches!(
+        map.can_place_building_where(14, 15, 2, 1, |_, _, _| false),
+        Err(MapError::PlacementBlocked {
+            reason: PlacementFailureReason::CliffLevelMismatch,
+            ..
+        })
+    ));
+}

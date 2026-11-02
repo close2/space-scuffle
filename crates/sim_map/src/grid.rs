@@ -546,6 +546,28 @@ impl GameMap {
     /// - Any cell is already occupied by another structure.
     /// - Cells in the footprint straddle multiple cliff elevation plateaus.
     pub fn can_place_building(&self, cell_x: u32, cell_y: u32, w: u8, h: u8) -> Result<()> {
+        self.can_place_building_where(cell_x, cell_y, w, h, |_, _, _| true)
+    }
+
+    /// As [`Self::can_place_building`], with `occupied` deciding whether a structure on a cell
+    /// counts against the site.
+    ///
+    /// This is how a caller asks about a site by what one player knows rather than by the
+    /// truth. Terrain is public, so the predicate can never excuse it. `occupied` receives the
+    /// cell coordinates and the occupant, and is called only for cells holding a structure.
+    /// A cell whose structure it ignores is judged as the bare ground the structure was placed
+    /// on, which [`Self::place_structure`] proved buildable.
+    ///
+    /// # Errors
+    /// As [`Self::can_place_building`].
+    pub fn can_place_building_where(
+        &self,
+        cell_x: u32,
+        cell_y: u32,
+        w: u8,
+        h: u8,
+        occupied: impl Fn(u32, u32, EntityId) -> bool,
+    ) -> Result<()> {
         if w == 0 || h == 0 {
             return Err(MapError::InvalidFootprintDimensions {
                 width: w,
@@ -578,18 +600,21 @@ impl GameMap {
                     });
                 }
 
-                if cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE)
-                    || cell.occupying_structure.is_some()
-                {
+                let has_structure = cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE)
+                    || cell.occupying_structure.is_some();
+                if has_structure {
                     let occ_id = cell.occupying_structure.unwrap_or(EntityId(0));
-                    return Err(MapError::PlacementBlocked {
-                        cell_x,
-                        cell_y,
-                        reason: PlacementFailureReason::OccupiedByStructure(occ_id),
-                    });
+                    if occupied(cx, cy, occ_id) {
+                        return Err(MapError::PlacementBlocked {
+                            cell_x,
+                            cell_y,
+                            reason: PlacementFailureReason::OccupiedByStructure(occ_id),
+                        });
+                    }
                 }
 
-                if !cell.flags.contains(CellFlags::BUILDABLE) {
+                // `place_structure` clears BUILDABLE, so the flag says nothing under a structure.
+                if !has_structure && !cell.flags.contains(CellFlags::BUILDABLE) {
                     return Err(MapError::PlacementBlocked {
                         cell_x,
                         cell_y,
