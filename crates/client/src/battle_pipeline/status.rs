@@ -32,6 +32,9 @@ pub(super) fn submission_reason(error: &SubmissionError) -> &'static str {
         SubmissionError::MissingArchetype(_) => "the battle cannot process this order",
         SubmissionError::InvalidTarget(_) => "the target is unavailable or friendly",
         SubmissionError::NoDestination => "there is no walkable ground there",
+        SubmissionError::MatchOver => "the match is over",
+        SubmissionError::PlayerDefeated(_) => "you have been defeated",
+        SubmissionError::InvalidStructure(_) => "this structure is unavailable",
     }
 }
 
