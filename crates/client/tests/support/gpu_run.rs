@@ -259,6 +259,14 @@ fn display_search_start() -> u32 {
 /// # Panics
 /// Panics when neither `xvfb-run` nor a display exists. A GPU test must not pass without running.
 pub fn virtual_gpu_command(binary: &Path) -> Command {
+    virtual_gpu_command_on_screen(binary, None)
+}
+
+/// Builds a [`virtual_gpu_command`] whose display has the size `screen`, such as `1600x900x24`.
+///
+/// # Panics
+/// Panics when neither `xvfb-run` nor a display exists. A GPU test must not pass without running.
+pub fn virtual_gpu_command_on_screen(binary: &Path, screen: Option<&str>) -> Command {
     let xvfb_run = Path::new("/usr/bin/xvfb-run");
     let mut command = Command::new("timeout");
     command
@@ -271,6 +279,11 @@ pub fn virtual_gpu_command(binary: &Path) -> Command {
             .arg("-n")
             .arg(display_search_start().to_string())
             .arg("-a");
+        if let Some(screen) = screen {
+            command
+                .arg("-s")
+                .arg(format!("-screen 0 {screen} +extension GLX"));
+        }
     } else {
         assert!(
             !(std::env::var_os("WAYLAND_DISPLAY").is_none()

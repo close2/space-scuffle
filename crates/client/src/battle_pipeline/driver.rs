@@ -227,6 +227,14 @@ impl BattleSession {
     }
 }
 
+/// Present in an application with work of its own that must outlive a failed battle.
+///
+/// The interactive map editor is one: exiting there would skip its unsaved-changes prompt. Without
+/// this resource a fatal pipeline failure also exits the application with an error, which is what
+/// the game client and automated runs want.
+#[derive(Resource, Debug, Default)]
+pub struct RetainBattleFailure;
+
 /// Executes the only production client simulation tick path.
 #[expect(
     clippy::needless_pass_by_value,
@@ -238,6 +246,7 @@ pub fn advance_battle_ticks(
     mut session: ResMut<'_, BattleSession>,
     registry: Res<'_, crate::FlipbookRegistry>,
     mut media: ResMut<'_, crate::media::ClientMediaStatus>,
+    retain_failure: Option<Res<'_, RetainBattleFailure>>,
     mut exit: EventWriter<'_, AppExit>,
 ) {
     if media.retain_failure(&mut lab) || lab.battle_failure.is_some() {
@@ -280,7 +289,9 @@ pub fn advance_battle_ticks(
                 error!("Battle pipeline failed: {other}");
                 lab.battle_failure = Some(other.to_string());
                 lab.battle_paused = true;
-                exit.send(AppExit::error());
+                if retain_failure.is_none() {
+                    exit.send(AppExit::error());
+                }
             }
         }
     }

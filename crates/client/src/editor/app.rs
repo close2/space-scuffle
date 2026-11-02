@@ -26,7 +26,9 @@ use bevy::prelude::*;
 use bevy::render::{Render, RenderApp};
 use bevy::window::WindowCloseRequested;
 
-use crate::battle_pipeline::driver::{advance_battle_ticks, publish_combat_events};
+use crate::battle_pipeline::driver::{
+    advance_battle_ticks, publish_combat_events, RetainBattleFailure,
+};
 use crate::battle_pipeline::session::BattleSession;
 use crate::battle_pipeline::BattleSet;
 use crate::battle_selection::BattleSelection;
@@ -56,8 +58,8 @@ use crate::editor::ui::{
     UnsavedChangesModalState,
 };
 use crate::editor::verification::{
-    check_render_pipelines, update_playtest_verification_system, update_render_verification_system,
-    PipelineSync, VerifyOutputDir, VerifyRenderState,
+    check_render_pipelines, keep_window_surface_in_use, update_playtest_verification_system,
+    update_render_verification_system, PipelineSync, VerifyOutputDir, VerifyRenderState,
 };
 use crate::indicators::{
     setup_indicator_assets_system, update_indicators_system, SelectionRingMaterial,
@@ -214,6 +216,11 @@ impl Plugin for MapEditorPlugin {
             .add_plugins(MaterialPlugin::<SelectionRingMaterial>::default())
             .add_plugins(MaterialPlugin::<CombatFxMaterial>::default());
 
+        // A failed playtest stays on its HUD, because exiting here would skip the unsaved prompt.
+        if !automated {
+            app.init_resource::<RetainBattleFailure>();
+        }
+
         // 2. Verification Mode Synchronization
         let pipeline_sync = PipelineSync::default();
         if let Some(ref verify_dir) = self.verify_render {
@@ -251,6 +258,7 @@ impl Plugin for MapEditorPlugin {
             app.add_systems(
                 Update,
                 (
+                    keep_window_surface_in_use,
                     update_render_verification_system.run_if(in_state(EditorPhase::Editing)),
                     update_playtest_verification_system.run_if(in_state(EditorPhase::Playtesting)),
                 ),
