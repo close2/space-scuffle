@@ -1,0 +1,969 @@
+// The "who wins" matchup matrix: StarCraft II LotV 5.0.14 benchmarks as data.
+//
+// Each battle spawns two sides, orders them through PlayerCommand on the first tick, and runs
+// until one side is gone or `ticks` elapse. `expect` records survivors as inclusive ranges,
+// plus an optional hull range for each side's first unit. Every outcome must hold on every
+// seed. See tests/sc2_who_wins_matchup_matrix_tests.rs, and explain any rebaseline in the
+// commit that changes this file.
+(
+    seeds: [3203386110, 11, 22, 33],
+    spawn_jitter: 0.12,
+    battles: [
+    (
+        name: "1a_stalker_vs_roach",
+        claim: "Range 6 and +5 armored beat a roach 1v1",
+        map_cells: 64,
+        ticks: 400,
+        blue: (
+            squads: [
+                (unit: "warp_strider", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(16, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "rhino_beetle", count: 1, columns: 1, origin: (16.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "1b_stalker_vs_2_roaches",
+        claim: "Equal gas: two roaches focus down one stalker",
+        map_cells: 64,
+        ticks: 300,
+        blue: (
+            squads: [
+                (unit: "warp_strider", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(16, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "rhino_beetle", count: 2, columns: 1, origin: (16.0, 31.5), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (0, 0), red: (2, 2)),
+    ),
+    (
+        name: "2a_immortal_vs_roach",
+        claim: "An immortal three-shots a roach and loses no hull",
+        map_cells: 64,
+        ticks: 200,
+        blue: (
+            squads: [
+                (unit: "void_goliath", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(15, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "rhino_beetle", count: 1, columns: 1, origin: (15.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0), blue_lead_hp: Some((200.0, 200.0))),
+    ),
+    (
+        name: "2b_immortal_vs_2_roaches",
+        claim: "An immortal beats two roaches",
+        map_cells: 64,
+        ticks: 250,
+        blue: (
+            squads: [
+                (unit: "void_goliath", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(15, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "rhino_beetle", count: 2, columns: 1, origin: (15.0, 31.5), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "3_immortal_vs_tank",
+        claim: "An immortal beats a tank-mode tank on shields alone",
+        map_cells: 64,
+        ticks: 200,
+        blue: (
+            squads: [
+                (unit: "void_goliath", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(15, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "railgun_crawler", count: 1, columns: 1, origin: (15.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0), blue_lead_hp: Some((200.0, 200.0))),
+    ),
+    (
+        name: "4_marauder_vs_roach",
+        claim: "A marauder wins the armored duel",
+        map_cells: 64,
+        ticks: 300,
+        blue: (
+            squads: [
+                (unit: "shock_golem", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(15, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "rhino_beetle", count: 1, columns: 1, origin: (15.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "5a_hydra_vs_marine",
+        claim: "A hydra beats one marine",
+        map_cells: 64,
+        ticks: 150,
+        blue: (
+            squads: [
+                (unit: "thorn_viper", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(15, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "pulse_bot", count: 1, columns: 1, origin: (15.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "5b_hydra_vs_2_marines",
+        claim: "A hydra beats two marines at equal minerals",
+        map_cells: 64,
+        ticks: 200,
+        blue: (
+            squads: [
+                (unit: "thorn_viper", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(15, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "pulse_bot", count: 2, columns: 1, origin: (15.0, 31.6), spacing: 0.8),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "5c_hydra_vs_3_marines",
+        claim: "Three marines beat a hydra",
+        map_cells: 64,
+        ticks: 200,
+        blue: (
+            squads: [
+                (unit: "thorn_viper", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(15, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "pulse_bot", count: 3, columns: 1, origin: (15.0, 31.2), spacing: 0.8),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (0, 0), red: (1, 999)),
+    ),
+    (
+        name: "6a_roach_vs_hydra",
+        claim: "A roach beats a hydra 1v1",
+        map_cells: 64,
+        ticks: 250,
+        blue: (
+            squads: [
+                (unit: "rhino_beetle", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(15, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "thorn_viper", count: 1, columns: 1, origin: (15.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "6b_2_roaches_vs_hydra",
+        claim: "Two roaches beat a hydra without loss",
+        map_cells: 64,
+        ticks: 200,
+        blue: (
+            squads: [
+                (unit: "rhino_beetle", count: 2, columns: 1, origin: (10.0, 31.5), spacing: 1.0),
+            ],
+            order: AttackMove(15, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "thorn_viper", count: 1, columns: 1, origin: (15.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (2, 2), red: (0, 0)),
+    ),
+    (
+        name: "6c_roach_vs_2_hydras",
+        claim: "Two hydras beat a roach",
+        map_cells: 64,
+        ticks: 200,
+        blue: (
+            squads: [
+                (unit: "rhino_beetle", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(15, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "thorn_viper", count: 2, columns: 1, origin: (15.0, 31.5), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (0, 0), red: (1, 999)),
+    ),
+    (
+        name: "7_zealot_vs_roach",
+        claim: "A zealot wins when not kited",
+        map_cells: 64,
+        ticks: 300,
+        blue: (
+            squads: [
+                (unit: "psi_grey", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(15, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "rhino_beetle", count: 1, columns: 1, origin: (15.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "8_zealot_vs_stalker",
+        claim: "A zealot closes and beats a stalker when not kited",
+        map_cells: 64,
+        ticks: 300,
+        blue: (
+            squads: [
+                (unit: "psi_grey", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(15, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "warp_strider", count: 1, columns: 1, origin: (15.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "9a_hellion_vs_4_lings",
+        claim: "Flame splash clears four clumped zerglings",
+        map_cells: 64,
+        ticks: 300,
+        blue: (
+            squads: [
+                (unit: "napalm_wheeler", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(16, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "razor_mantis", count: 4, columns: 2, origin: (16.0, 31.8), spacing: 0.4),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "9b_hellion_vs_roach",
+        claim: "Armor shrugs off flame: the roach wins",
+        map_cells: 64,
+        ticks: 300,
+        blue: (
+            squads: [
+                (unit: "napalm_wheeler", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(14, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "rhino_beetle", count: 1, columns: 1, origin: (14.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (0, 0), red: (1, 1)),
+    ),
+    (
+        name: "10_2_hellions_vs_8_lings",
+        claim: "Two hellions roast eight zerglings",
+        map_cells: 64,
+        ticks: 250,
+        blue: (
+            squads: [
+                (unit: "napalm_wheeler", count: 2, columns: 1, origin: (10.0, 31.5), spacing: 1.0),
+            ],
+            order: AttackMove(16, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "razor_mantis", count: 8, columns: 2, origin: (15.0, 31.0), spacing: 0.6),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 999), red: (0, 0)),
+    ),
+    (
+        name: "11a_2_banelings_vs_5_marines",
+        claim: "Holding marines fire back and can drop a baneling, but both banelings are spent",
+        map_cells: 64,
+        ticks: 100,
+        blue: (
+            squads: [
+                (unit: "volatile_tick", count: 2, columns: 1, origin: (12.0, 31.8), spacing: 0.4),
+            ],
+            order: AttackMove(14, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "pulse_bot", count: 5, columns: 1, origin: (14.0, 31.6), spacing: 0.2),
+            ],
+            order: HoldPosition,
+        ),
+        expect: (blue: (0, 0), red: (0, 5)),
+    ),
+    (
+        name: "11b_2_banelings_vs_marauder",
+        claim: "Banelings barely scratch armor",
+        map_cells: 64,
+        ticks: 100,
+        blue: (
+            squads: [
+                (unit: "volatile_tick", count: 2, columns: 1, origin: (12.0, 31.8), spacing: 0.4),
+            ],
+            order: AttackMove(14, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "shock_golem", count: 1, columns: 1, origin: (14.0, 32.0), spacing: 1.0),
+            ],
+            order: HoldPosition,
+        ),
+        expect: (blue: (0, 0), red: (1, 1), red_lead_hp: Some((85.0, 105.0))),
+    ),
+    (
+        name: "12a_colossus_vs_6_marines",
+        claim: "Thermal lance sweeps six marines",
+        map_cells: 64,
+        ticks: 350,
+        blue: (
+            squads: [
+                (unit: "tripod_annihilator", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(16, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "pulse_bot", count: 6, columns: 2, origin: (16.0, 31.4), spacing: 0.6),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "12b_colossus_vs_3_marauders",
+        claim: "Three armor-killers fell a colossus",
+        map_cells: 64,
+        ticks: 300,
+        blue: (
+            squads: [
+                (unit: "tripod_annihilator", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(15, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "shock_golem", count: 3, columns: 1, origin: (15.0, 31.0), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (0, 0), red: (1, 999)),
+    ),
+    (
+        name: "12c_viking_vs_colossus",
+        claim: "A viking shoots a colossus from out of reach",
+        map_cells: 64,
+        ticks: 1000,
+        blue: (
+            squads: [
+                (unit: "vector_interceptor", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackFirstEnemy,
+        ),
+        red: (
+            squads: [
+                (unit: "tripod_annihilator", count: 1, columns: 1, origin: (18.0, 32.0), spacing: 1.0),
+            ],
+            order: HoldPosition,
+        ),
+        expect: (blue: (1, 1), red: (0, 0), blue_lead_hp: Some((125.0, 125.0))),
+    ),
+    (
+        name: "13_storm_vs_held_lings",
+        claim: "A storm wipes zerglings held inside it",
+        map_cells: 64,
+        ticks: 70,
+        blue: (
+            squads: [],
+            order: None,
+        ),
+        red: (
+            squads: [
+                (unit: "razor_mantis", count: 8, columns: 3, origin: (14.6, 31.6), spacing: 0.4),
+            ],
+            order: HoldPosition,
+        ),
+        hazard: Some((center: (15.0, 32.0), radius: 3, remaining_ticks: 60, interval_ticks: 10, damage_per_interval: 20)),
+        expect: (blue: (0, 0), red: (0, 0)),
+    ),
+    (
+        name: "14_thor_vs_ultralisk",
+        claim: "A thor beats an unupgraded ultralisk",
+        map_cells: 64,
+        ticks: 400,
+        blue: (
+            squads: [
+                (unit: "colossus_mech", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(18, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "stag_behemoth", count: 1, columns: 1, origin: (18.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "15_plated_ultralisk_vs_8_marines",
+        claim: "Chitinous plating makes marines nearly useless",
+        map_cells: 64,
+        ticks: 300,
+        blue: (
+            squads: [
+                (unit: "stag_behemoth", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(15, 32),
+            research: ["chitinous_plating"],
+        ),
+        red: (
+            squads: [
+                (unit: "pulse_bot", count: 8, columns: 2, origin: (15.0, 31.0), spacing: 0.6),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0), blue_lead_hp: Some((350.0, 1000.0))),
+    ),
+    (
+        name: "16a_muta_vs_marine",
+        claim: "A mutalisk beats one marine",
+        map_cells: 64,
+        ticks: 200,
+        blue: (
+            squads: [
+                (unit: "sonic_bat", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(13, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "pulse_bot", count: 1, columns: 1, origin: (13.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "16b_muta_vs_2_marines",
+        claim: "Two marines beat a mutalisk",
+        map_cells: 64,
+        ticks: 250,
+        blue: (
+            squads: [
+                (unit: "sonic_bat", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(13, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "pulse_bot", count: 2, columns: 1, origin: (13.0, 31.6), spacing: 0.8),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (0, 0), red: (1, 999)),
+    ),
+    (
+        name: "17_void_ray_vs_muta",
+        claim: "A void ray beats a mutalisk",
+        map_cells: 64,
+        ticks: 250,
+        blue: (
+            squads: [
+                (unit: "prismatic_saucer", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(14, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "sonic_bat", count: 1, columns: 1, origin: (14.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "18_void_ray_vs_corruptor",
+        claim: "The armor bonus melts a corruptor",
+        map_cells: 64,
+        ticks: 300,
+        blue: (
+            squads: [
+                (unit: "prismatic_saucer", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(14, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "sky_leviathan", count: 1, columns: 1, origin: (14.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "19_viking_vs_brood_lord",
+        claim: "A viking kills a brood lord untouched",
+        map_cells: 64,
+        ticks: 700,
+        blue: (
+            squads: [
+                (unit: "vector_interceptor", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(16, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "spore_matriarch", count: 1, columns: 1, origin: (16.0, 32.0), spacing: 1.0),
+            ],
+            order: HoldPosition,
+        ),
+        expect: (blue: (1, 1), red: (0, 0), blue_lead_hp: Some((125.0, 125.0))),
+    ),
+    (
+        name: "20_brood_lord_vs_roach",
+        claim: "A ground-only roach cannot answer a brood lord",
+        map_cells: 64,
+        ticks: 400,
+        blue: (
+            squads: [
+                (unit: "spore_matriarch", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackFirstEnemy,
+        ),
+        red: (
+            squads: [
+                (unit: "rhino_beetle", count: 1, columns: 1, origin: (15.0, 32.0), spacing: 1.0),
+            ],
+            order: HoldPosition,
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "21_lurker_vs_6_marines",
+        claim: "Spines decimate light infantry",
+        map_cells: 64,
+        ticks: 250,
+        blue: (
+            squads: [
+                (unit: "burrow_scorpion", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(16, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "pulse_bot", count: 6, columns: 2, origin: (16.0, 31.4), spacing: 0.6),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "22a_reaper_vs_2_workers",
+        claim: "The bonus vs light kills workers",
+        map_cells: 64,
+        ticks: 200,
+        blue: (
+            squads: [
+                (unit: "jet_jumper", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(14, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "welder_drone", count: 2, columns: 1, origin: (14.0, 31.5), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "22b_reaper_vs_stalker",
+        claim: "A stalker destroys a reaper",
+        map_cells: 64,
+        ticks: 200,
+        blue: (
+            squads: [
+                (unit: "jet_jumper", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(14, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "warp_strider", count: 1, columns: 1, origin: (14.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (0, 0), red: (1, 1)),
+    ),
+    (
+        name: "23a_zealot_vs_6_lings",
+        claim: "At 0/0 six zerglings beat a three-swing zealot",
+        map_cells: 64,
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "psi_grey", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(13, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "razor_mantis", count: 6, columns: 6, origin: (15.0, 32.0), spacing: 7.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (0, 0), red: (1, 999)),
+    ),
+    (
+        name: "23b_upgraded_zealot_vs_6_lings",
+        claim: "+1 weapons reach the two-swing breakpoint",
+        map_cells: 64,
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "psi_grey", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(13, 32),
+            research: ["ground_weapons_1"],
+        ),
+        red: (
+            squads: [
+                (unit: "razor_mantis", count: 6, columns: 6, origin: (15.0, 32.0), spacing: 7.0),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "24a_roach_vs_5_lings",
+        claim: "At 0/0 five zerglings beat a roach",
+        map_cells: 64,
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "rhino_beetle", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(13, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "razor_mantis", count: 5, columns: 5, origin: (15.0, 32.0), spacing: 7.5),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (0, 0), red: (1, 999)),
+    ),
+    (
+        name: "24b_upgraded_roach_vs_5_lings",
+        claim: "+1 missiles reach the two-shot breakpoint",
+        map_cells: 64,
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "rhino_beetle", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(13, 32),
+            research: ["missile_attacks_1"],
+        ),
+        red: (
+            squads: [
+                (unit: "razor_mantis", count: 5, columns: 5, origin: (15.0, 32.0), spacing: 7.5),
+            ],
+            order: AttackMove(10, 32),
+        ),
+        expect: (blue: (1, 1), red: (0, 0)),
+    ),
+    (
+        name: "25a_2_marines_vs_zealot",
+        claim: "Base marines lose to a zealot",
+        map_cells: 64,
+        ticks: 350,
+        blue: (
+            squads: [
+                (unit: "pulse_bot", count: 1, columns: 1, origin: (9.0, 30.2), spacing: 1.0),
+                (unit: "pulse_bot", count: 1, columns: 1, origin: (9.0, 33.8), spacing: 1.0),
+            ],
+            order: AttackMove(15, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "psi_grey", count: 1, columns: 1, origin: (15.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(9, 32),
+        ),
+        expect: (blue: (0, 0), red: (1, 1)),
+    ),
+    (
+        name: "25b_upgraded_marines_vs_zealot",
+        claim: "Unkited, combat shield and stim leave the zealot on its last hits but still lose",
+        map_cells: 64,
+        ticks: 400,
+        blue: (
+            squads: [
+                (unit: "pulse_bot", count: 1, columns: 1, origin: (9.5, 31.5), spacing: 1.0),
+                (unit: "pulse_bot", count: 1, columns: 1, origin: (8.0, 32.5), spacing: 1.0),
+            ],
+            order: AttackMove(15, 32),
+            research: ["combat_shield", "overclock_stim"],
+            stim: true,
+        ),
+        red: (
+            squads: [
+                (unit: "psi_grey", count: 1, columns: 1, origin: (15.0, 32.0), spacing: 1.0),
+            ],
+            order: AttackMove(9, 32),
+        ),
+        expect: (blue: (0, 0), red: (1, 1), red_lead_hp: Some((5.0, 45.0))),
+    ),
+    (
+        name: "26_100_lings_vs_6_colossi",
+        claim: "Six colossi vaporize a hundred zerglings",
+        map_cells: 96,
+        ticks: 700,
+        blue: (
+            squads: [
+                (unit: "razor_mantis", count: 100, columns: 10, origin: (24.0, 44.5), spacing: 0.7),
+            ],
+            order: AttackMove(40, 48),
+        ),
+        red: (
+            squads: [
+                (unit: "tripod_annihilator", count: 6, columns: 2, origin: (40.0, 46.0), spacing: 2.0),
+            ],
+            order: AttackMove(24, 48),
+        ),
+        expect: (blue: (0, 0), red: (5, 999)),
+    ),
+    (
+        name: "27_100_lings_vs_8_ultralisks",
+        claim: "Eight ultralisks cleave a hundred zerglings",
+        map_cells: 96,
+        ticks: 500,
+        blue: (
+            squads: [
+                (unit: "razor_mantis", count: 100, columns: 10, origin: (16.0, 44.5), spacing: 0.7),
+            ],
+            order: AttackMove(50, 48),
+        ),
+        red: (
+            squads: [
+                (unit: "stag_behemoth", count: 8, columns: 2, origin: (50.0, 45.0), spacing: 2.0),
+            ],
+            order: AttackMove(20, 48),
+        ),
+        expect: (blue: (0, 0), red: (6, 999)),
+    ),
+    (
+        name: "28_100_lings_vs_10_immortals",
+        claim: "Without splash, immortals are overrun",
+        map_cells: 96,
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "razor_mantis", count: 100, columns: 10, origin: (16.0, 44.5), spacing: 0.7),
+            ],
+            order: AttackMove(45, 48),
+        ),
+        red: (
+            squads: [
+                (unit: "void_goliath", count: 10, columns: 2, origin: (45.0, 44.0), spacing: 1.5),
+            ],
+            order: AttackMove(18, 48),
+        ),
+        expect: (blue: (10, 999), red: (0, 0)),
+    ),
+    (
+        name: "29_100_lings_vs_12_stalkers",
+        claim: "Without splash, stalkers are surrounded",
+        map_cells: 96,
+        ticks: 600,
+        blue: (
+            squads: [
+                (unit: "razor_mantis", count: 100, columns: 10, origin: (16.0, 44.5), spacing: 0.7),
+            ],
+            order: AttackMove(45, 48),
+        ),
+        red: (
+            squads: [
+                (unit: "warp_strider", count: 12, columns: 2, origin: (45.0, 43.0), spacing: 1.4),
+            ],
+            order: AttackMove(18, 48),
+        ),
+        expect: (blue: (15, 999), red: (0, 0)),
+    ),
+    (
+        name: "30_20_roaches_vs_10_immortals",
+        claim: "Equal supply: immortals crush roaches",
+        map_cells: 96,
+        ticks: 500,
+        blue: (
+            squads: [
+                (unit: "rhino_beetle", count: 20, columns: 4, origin: (20.0, 44.0), spacing: 1.2),
+            ],
+            order: AttackMove(45, 48),
+        ),
+        red: (
+            squads: [
+                (unit: "void_goliath", count: 10, columns: 2, origin: (45.0, 44.0), spacing: 1.5),
+            ],
+            order: AttackMove(20, 48),
+        ),
+        expect: (blue: (0, 0), red: (5, 999)),
+    ),
+    (
+        name: "31_15_marauders_vs_15_stalkers",
+        claim: "Equal supply is close: a small change of formation can swing the winner",
+        map_cells: 96,
+        ticks: 1000,
+        blue: (
+            squads: [
+                (unit: "shock_golem", count: 15, columns: 3, origin: (20.0, 44.0), spacing: 1.2),
+            ],
+            order: AttackMove(45, 48),
+        ),
+        red: (
+            squads: [
+                (unit: "warp_strider", count: 15, columns: 3, origin: (45.0, 44.0), spacing: 1.3),
+            ],
+            order: AttackMove(20, 48),
+        ),
+        expect: (blue: (0, 15), red: (0, 15)),
+    ),
+    (
+        name: "32_30_marines_vs_15_banelings",
+        claim: "Banelings trade far above their cost against clumped marines",
+        map_cells: 96,
+        ticks: 300,
+        blue: (
+            squads: [
+                (unit: "pulse_bot", count: 30, columns: 5, origin: (30.0, 30.0), spacing: 0.8),
+            ],
+            order: AttackMove(36, 32),
+        ),
+        red: (
+            squads: [
+                (unit: "volatile_tick", count: 15, columns: 3, origin: (36.0, 31.0), spacing: 0.8),
+            ],
+            order: AttackMove(30, 32),
+        ),
+        expect: (blue: (0, 15), red: (0, 999)),
+    ),
+    (
+        name: "33_24_marines_vs_12_zealots",
+        claim: "Unkited marines lose to zealots",
+        map_cells: 96,
+        ticks: 500,
+        blue: (
+            squads: [
+                (unit: "pulse_bot", count: 24, columns: 4, origin: (20.0, 44.0), spacing: 0.8),
+            ],
+            order: AttackMove(45, 48),
+        ),
+        red: (
+            squads: [
+                (unit: "psi_grey", count: 12, columns: 3, origin: (45.0, 44.0), spacing: 1.2),
+            ],
+            order: AttackMove(20, 48),
+        ),
+        expect: (blue: (0, 0), red: (1, 999)),
+    ),
+    (
+        name: "34_20_hydras_vs_12_mutas",
+        claim: "Hydras shred mutalisks",
+        map_cells: 96,
+        ticks: 400,
+        blue: (
+            squads: [
+                (unit: "thorn_viper", count: 20, columns: 4, origin: (20.0, 44.0), spacing: 1.0),
+            ],
+            order: AttackMove(45, 48),
+        ),
+        red: (
+            squads: [
+                (unit: "sonic_bat", count: 12, columns: 3, origin: (45.0, 44.0), spacing: 1.2),
+            ],
+            order: AttackMove(20, 48),
+        ),
+        expect: (blue: (5, 999), red: (0, 0)),
+    ),
+    (
+        name: "35_12_vikings_vs_6_colossi",
+        claim: "Vikings lose nothing; a helpless colossus may flee out of their scan range",
+        map_cells: 96,
+        ticks: 900,
+        blue: (
+            squads: [
+                (unit: "vector_interceptor", count: 12, columns: 3, origin: (28.0, 44.0), spacing: 1.5),
+            ],
+            order: AttackMove(40, 48),
+        ),
+        red: (
+            squads: [
+                (unit: "tripod_annihilator", count: 6, columns: 2, origin: (40.0, 44.0), spacing: 2.0),
+            ],
+            order: AttackMove(28, 48),
+        ),
+        expect: (blue: (12, 12), red: (0, 1)),
+    ),
+    ],
+)
