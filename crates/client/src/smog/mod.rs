@@ -36,6 +36,7 @@ use crate::battle_pipeline::BattleSet;
 use crate::bubble_shader::{
     BubbleDomeMaterial, BubbleInstance, BubbleSharedMeshes, BubbleUniformGpu, FlipbookRegistry,
 };
+use crate::scene_controller::{SWARM_MAX_X, SWARM_MAX_Z, SWARM_MIN_X, SWARM_MIN_Z};
 use crate::CatalogResource;
 use bevy::prelude::*;
 use bevy::render::render_asset::RenderAssetUsages;
@@ -51,6 +52,9 @@ pub const LAB_VOLUME_MIN: Vec3 = Vec3::new(-6.5, 0.0, -4.5);
 
 /// Maximum corner of the Visual Lab smog volume in Bevy world units.
 pub const LAB_VOLUME_MAX: Vec3 = Vec3::new(6.5, 2.8, 4.5);
+
+/// Gap between the swarm's bounce range and the smog volume walls, in world units.
+const SWARM_VOLUME_MARGIN: f32 = 2.0;
 
 /// Half of the live battle smog window along world X, in world units.
 const LIVE_BATTLE_HALF_EXTENT_X: f32 = 14.0;
@@ -716,9 +720,18 @@ pub(crate) fn update_smog_field_system(
     let current_tab = lab_state.current_tab;
     let target = match current_tab {
         crate::LabTab::VisualLab => Some((LAB_VOLUME_MIN, LAB_VOLUME_MAX)),
-        crate::LabTab::SwarmStressTest => {
-            Some((Vec3::new(4.0, 0.0, 7.0), Vec3::new(28.0, 2.8, 24.0)))
-        }
+        crate::LabTab::SwarmStressTest => Some((
+            Vec3::new(
+                SWARM_MIN_X - SWARM_VOLUME_MARGIN,
+                0.0,
+                SWARM_MIN_Z - SWARM_VOLUME_MARGIN,
+            ),
+            Vec3::new(
+                SWARM_MAX_X + SWARM_VOLUME_MARGIN,
+                2.8,
+                SWARM_MAX_Z + SWARM_VOLUME_MARGIN,
+            ),
+        )),
         // The window comes from the loaded map, so it does not exist before a map does.
         crate::LabTab::LiveBattle => terrain.as_ref().map(|terrain| {
             let map_size = Vec2::new(terrain.map.width() as f32, terrain.map.height() as f32);

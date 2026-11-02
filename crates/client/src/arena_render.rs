@@ -23,6 +23,12 @@ pub struct MineralNodeMarker;
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GasGeyserMarker;
 
+/// Horizontal `(min, max)` corners of the high-ground plateau, as world `(x, z)`.
+pub const HIGH_GROUND_FOOTPRINT: (Vec2, Vec2) = (Vec2::new(16.0, 16.0), Vec2::new(32.0, 32.0));
+
+/// Horizontal `(min, max)` corners of the ramp, as world `(x, z)`.
+pub const RAMP_FOOTPRINT: (Vec2, Vec2) = (Vec2::new(14.0, 15.0), Vec2::new(18.0, 21.0));
+
 // PERFORMANCE RATIONALE:
 // Why: Spawning individual tiny tiles creates thousands of draw calls and stalls the GPU driver.
 // What: Static map geometry (low ground, plateau, ramp, resource nodes) uses coarse batched meshes

@@ -629,6 +629,33 @@ pub fn sync_live_battle_system(
 /// Canonical alias for the sole queued client tick driver.
 pub use crate::battle_pipeline::driver::advance_battle_ticks as step_client_simulation_system;
 
+/// Smallest world X a swarm bubble centre reaches before bouncing, east of the arena resources.
+pub const SWARM_MIN_X: f32 = 13.0;
+
+/// Largest world X a swarm bubble centre reaches before bouncing.
+pub const SWARM_MAX_X: f32 = 31.0;
+
+/// World Z of the swarm's first row. All ten rows stay on open low ground, south of the ramp.
+pub const SWARM_MIN_Z: f32 = 3.6;
+
+/// World units between neighbouring swarm rows and columns.
+const SWARM_SPACING: f32 = 1.2;
+
+/// World Z of the swarm's last row.
+pub const SWARM_MAX_Z: f32 = SWARM_MIN_Z + 9.0 * SWARM_SPACING;
+
+/// World `(x, z)` spawn position of swarm bubble `index`, where `index` is below 200.
+fn swarm_spawn_position(index: u32) -> Vec2 {
+    let row = (index % 10) as f32;
+    let column = ((index % 100) / 10) as f32;
+    let x = if index < 100 {
+        SWARM_MIN_X + column * SWARM_SPACING
+    } else {
+        SWARM_MAX_X - column * SWARM_SPACING
+    };
+    Vec2::new(x, SWARM_MIN_Z + row * SWARM_SPACING)
+}
+
 /// Spawns and animates 200 colliding bubbles for the swarm stress test.
 pub fn sync_swarm_stress_system(
     mut owners: crate::player_presentation::PresentationContext<'_>,
@@ -690,9 +717,12 @@ pub fn sync_swarm_stress_system(
 
         if controlled_fixture.is_none() {
             if let Some(mut cam) = camera_query.iter_mut().next() {
-                cam.target = Vec2::new(16.0, 15.4);
+                cam.target = Vec2::new(
+                    f32::midpoint(SWARM_MIN_X, SWARM_MAX_X),
+                    f32::midpoint(SWARM_MIN_Z, SWARM_MAX_Z),
+                );
                 cam.look_at_y = 0.5;
-                cam.distance = 22.0;
+                cam.distance = 26.0;
             }
 
             // Interactive 200-unit Swarm Stress Test:
@@ -792,14 +822,7 @@ pub fn sync_swarm_stress_system(
                 } else {
                     secondary_owner
                 };
-                let row = (i % 10) as f32;
-                let col = ((i % 100) / 10) as f32;
-                let x = if primary_group {
-                    8.0 + col * 1.2
-                } else {
-                    24.0 - col * 1.2
-                };
-                let z = 10.0 + row * 1.2;
+                let Vec2 { x, y: z } = swarm_spawn_position(i);
 
                 let instance = BubbleRenderInstance {
                     entity_id: EntityId(1000 + i),
@@ -984,13 +1007,13 @@ pub fn sync_swarm_stress_system(
             };
             let mut vx = instance.0.velocity[0];
             tf.translation.x += vx * dt;
-            if tf.translation.x <= 6.0 {
-                tf.translation.x = 6.0;
+            if tf.translation.x <= SWARM_MIN_X {
+                tf.translation.x = SWARM_MIN_X;
                 vx = vx.abs();
                 instance.0.velocity[0] = vx;
                 instance.0.heading_angle_rad = 0.0;
-            } else if tf.translation.x >= 26.0 {
-                tf.translation.x = 26.0;
+            } else if tf.translation.x >= SWARM_MAX_X {
+                tf.translation.x = SWARM_MAX_X;
                 vx = -vx.abs();
                 instance.0.velocity[0] = vx;
                 instance.0.heading_angle_rad = std::f32::consts::PI;

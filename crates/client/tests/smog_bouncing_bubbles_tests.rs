@@ -316,7 +316,7 @@ fn test_moving_bubble_influences_and_perturbs_existing_smog() -> Result<(), Smog
 
 #[test]
 fn test_full_bevy_schedule_ten_bubbles_and_smog_grid() -> Result<(), Box<dyn std::error::Error>> {
-    let mut app = production_smog_app(client::LabState::default())?;
+    let mut app = production_smog_app(bouncing_lab())?;
 
     // Step 60 frames in headless Bevy
     for _ in 0..60 {
@@ -949,6 +949,14 @@ fn live_battle_low_ground_and_high_ground_units_preserve_true_world_y(
     Ok(())
 }
 
+/// Visual Lab state with the 10-bubble showcase switched on.
+fn bouncing_lab() -> client::LabState {
+    client::LabState {
+        smog_bouncing_active: true,
+        ..default()
+    }
+}
+
 /// Headless application with the production smog plugin, real catalog, palette and media.
 fn production_smog_app(lab: client::LabState) -> Result<App, Box<dyn std::error::Error>> {
     let root = resolve_root()?;
@@ -1016,7 +1024,7 @@ fn track_asset_modifications(app: &mut App) {
 #[test]
 fn smog_stepping_never_modifies_image_or_material_assets() -> Result<(), Box<dyn std::error::Error>>
 {
-    let mut app = production_smog_app(client::LabState::default())?;
+    let mut app = production_smog_app(bouncing_lab())?;
     track_asset_modifications(&mut app);
 
     for _ in 0..60 {
@@ -1123,7 +1131,7 @@ fn smog_startup_with_invalid_bounds_reports_a_typed_failure(
 #[test]
 fn smog_runtime_step_failure_reaches_the_media_failure_path(
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut app = production_smog_app(client::LabState::default())?;
+    let mut app = production_smog_app(bouncing_lab())?;
     app.update();
     app.update();
     assert_eq!(smog_failure(&app), None);
