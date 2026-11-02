@@ -159,6 +159,7 @@ pub fn write_build_rejection(output: &mut String, rejection: &BuildRejection) {
         }
         BuildRejection::OutOfBounds => "the site lies outside the map",
         BuildRejection::Blocked(reason) => placement_reason(*reason),
+        BuildRejection::RememberedStructure => "a structure was last seen on this site",
         BuildRejection::CoversResource => "the site covers a resource node",
         BuildRejection::ExtractorNeedsGas => "an extractor needs a gas node under it",
         BuildRejection::Invariant(_) => "the battle cannot process this order",

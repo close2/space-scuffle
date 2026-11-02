@@ -8,8 +8,7 @@ use std::fmt::Write;
 use bevy::prelude::Resource;
 use sim_core::{movement::MovementLayer, Entity, SimWorld, UnitArchetype};
 use sim_types::{
-    EntityId, PlayerCommand, PlayerId, ShapeKind, SimScalar, Tick, TickBundle, UnitOrder,
-    UnitTypeId,
+    EntityId, PlayerCommand, PlayerId, SimScalar, Tick, TickBundle, UnitOrder, UnitTypeId,
 };
 
 /// Successful session-commit identity, independent of ticks and recycled entity IDs.
@@ -411,13 +410,6 @@ pub const fn is_armed(archetype: &UnitArchetype) -> bool {
         || archetype.air_weapon.is_some()
 }
 
-/// Whether `builder` can raise `structure`: the rule `sim_core` applies when it admits `Build`.
-fn can_raise(builder: &UnitArchetype, structure: &UnitArchetype) -> bool {
-    builder.capabilities.can_construct
-        && builder.faction == structure.faction
-        && matches!(structure.shape, ShapeKind::BuildingDome { .. })
-}
-
 /// Whether `entity` has what `order` asks for. `subject` comes from [`order_subject`].
 fn capable(
     entity: &Entity,
@@ -446,7 +438,7 @@ fn capable(
         UnitOrder::Harvest { .. } => archetype.capabilities.harvester.is_some(),
         UnitOrder::ReturnCargo => entity.cargo.is_some(),
         UnitOrder::Build { .. } | UnitOrder::Construct { .. } => {
-            subject.is_some_and(|structure| can_raise(archetype, structure))
+            subject.is_some_and(|structure| archetype.can_raise(structure))
         }
         UnitOrder::CancelConstruction => entity.construction.is_some(),
         UnitOrder::CancelProduction { .. } => !entity.production_queue.is_empty(),

@@ -240,6 +240,7 @@ fn every_build_rejection_has_a_presentable_message() {
             available: 10,
         },
         BuildRejection::OutOfBounds,
+        BuildRejection::RememberedStructure,
         BuildRejection::Blocked(PlacementFailureReason::UnbuildableTerrain),
         BuildRejection::Blocked(PlacementFailureReason::CliffLevelMismatch),
         BuildRejection::Blocked(PlacementFailureReason::OverlapsRamp),

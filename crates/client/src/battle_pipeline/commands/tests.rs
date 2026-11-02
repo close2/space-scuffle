@@ -4,7 +4,7 @@
 use super::*;
 use sim_core::production::{ProductionItem, ProductionJob};
 use sim_map::{CliffLevel, GameMap, MapCell};
-use sim_types::{MatchResult, MoverType, ResourceNodeId, SimVec2};
+use sim_types::{MatchResult, MoverType, ResourceNodeId, ShapeKind, SimVec2};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
