@@ -19,8 +19,9 @@ fn rust_files(directory: &Path, files: &mut Vec<PathBuf>) -> std::io::Result<()>
 
 #[test]
 fn client_manifest_never_names_its_diagnostics() -> std::io::Result<()> {
-    let manifest =
-        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../client/Cargo.toml"))?;
+    let manifest = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../client/Cargo.toml"),
+    )?;
     assert!(!manifest.contains("client_diagnostics"));
     Ok(())
 }

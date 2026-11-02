@@ -503,7 +503,7 @@ fn assert_active_scene_lights(app: &mut bevy::prelude::App, battle: bool) {
         &DirectionalLight,
         &InheritedVisibility,
         &ViewVisibility,
-        Option<&client::arena_render::ArenaMapMarker>,
+        Option<&client::lab_stage::LabStageMarker>,
     )>();
     let mut visible = 0;
     for (_, inherited, extracted, arena) in lights.iter(app.world()) {

@@ -15,7 +15,7 @@
 //!
 //! # Core Subsystems
 //! - [`camera`]: StarCraft II style RTS camera with 58° pitch, WASD pan, scroll zoom, and hotkey bookmarks.
-//! - [`arena_render`]: Flat stage and lights for the map-less Lab and Swarm scenes.
+//! - [`lab_stage`]: Flat stage and lights for the map-less Lab and Swarm scenes.
 //! - [`bubble_shader`]: Custom `BubbleDomeMaterial` and GPU uniform packing for unit spheres and domes.
 //! - [`indicators`]: Ground selection rings, equatorial facing chevron, attack focal lens, and collar meshes.
 //! - [`vfx`]: Hitscan tracers, plasma bolts, lasers, lightning, and glass shatter.
@@ -39,7 +39,6 @@
     clippy::if_not_else
 )]
 
-pub mod arena_render;
 pub mod assets;
 pub mod battle_pipeline;
 pub mod battle_presentation;
@@ -50,6 +49,7 @@ pub mod camera_drag;
 pub mod editor;
 pub mod indicators;
 pub mod input_policy;
+pub mod lab_stage;
 pub mod lab_ui;
 pub mod media;
 pub mod player_presentation;
@@ -62,7 +62,6 @@ pub mod smog;
 pub mod terrain;
 pub mod vfx;
 
-pub use arena_render::{spawn_arena_environment, ArenaMapMarker};
 pub use assets::{try_resolve_assets_dir, AssetsDirError, ResolvedAssetsRoot};
 pub use bubble_shader::{
     setup_bubble_assets_system, sync_bubbles_system, BubbleDomeMaterial, BubbleInstance,
@@ -76,6 +75,7 @@ pub use indicators::{
     attach_bubble_indicators, setup_indicator_assets_system, update_indicators_system,
     IndicatorAssets, SelectionRingMaterial, SelectionRingUniformGpu,
 };
+pub use lab_stage::{spawn_lab_stage, LabStageMarker};
 pub use lab_ui::{lab_ui_system, LabState, LabTab};
 pub use scene_controller::{
     sync_lab_preview_system, sync_live_battle_system, sync_swarm_stress_system, LabPreviewBubble,
@@ -381,7 +381,7 @@ impl Plugin for ClientAppPlugin {
                 setup_bubble_assets_system,
                 setup_indicator_assets_system,
                 setup_vfx_assets_system,
-                spawn_arena_environment,
+                spawn_lab_stage,
                 spawn_camera_system,
             ),
         )
@@ -691,7 +691,7 @@ pub fn run_headless_check() -> Result<(), String> {
             setup_bubble_assets_system,
             setup_indicator_assets_system,
             setup_vfx_assets_system,
-            spawn_arena_environment,
+            spawn_lab_stage,
             spawn_camera_system,
             smog::setup_smog_volume_system.after(setup_bubble_assets_system),
         ),

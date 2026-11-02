@@ -713,7 +713,7 @@ fn test_bevy_ecs_schedule_all_systems_no_conflicts() -> Result<(), Box<dyn std::
             client::bubble_shader::setup_bubble_assets_system,
             client::indicators::setup_indicator_assets_system,
             client::vfx::setup_vfx_assets_system,
-            client::arena_render::spawn_arena_environment,
+            client::lab_stage::spawn_lab_stage,
             client::spawn_camera_system,
         ),
     );

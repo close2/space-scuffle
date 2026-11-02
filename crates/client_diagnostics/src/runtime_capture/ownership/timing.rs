@@ -2,11 +2,11 @@
 //! Capture never writes timers, shader seed, lifetimes, or ownership.
 
 use super::{super::config::CaptureError, failure, EffectKind};
+use bevy::prelude::*;
 use client::vfx::{
     BeamVisualComponent, CombatEffectOwner, CombatFxMaterial, MeleeSlashComponent,
     ProjectileVisual, ShatterShard,
 };
-use bevy::prelude::*;
 use std::time::Duration;
 
 /// Actual effect identity and time, copied without modifying production state.

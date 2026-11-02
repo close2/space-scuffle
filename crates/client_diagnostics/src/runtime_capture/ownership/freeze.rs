@@ -3,13 +3,13 @@
 //! these are source values, not a readback of the private GPU globals buffer.
 
 use super::{super::config::CaptureError, failure};
-use client::vfx::{
-    BeamVisualComponent, CombatEffectOwner, CombatFxMaterial, MeleeSlashComponent,
-    ProjectileVisual, ShatterShard,
-};
 use bevy::{
     ecs::system::{SystemParam, SystemState},
     prelude::*,
+};
+use client::vfx::{
+    BeamVisualComponent, CombatEffectOwner, CombatFxMaterial, MeleeSlashComponent,
+    ProjectileVisual, ShatterShard,
 };
 use serde::{Deserialize, Serialize};
 

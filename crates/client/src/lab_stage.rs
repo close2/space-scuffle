@@ -5,7 +5,7 @@
 //! resources, belong to `terrain/` and are never approximated here.
 //!
 //! # Invariants
-//! - Every entity carries [`ArenaMapMarker`], so the scene environment can hide the whole stage
+//! - Every entity carries [`LabStageMarker`], so the scene environment can hide the whole stage
 //!   while a committed battle root is visible.
 //! - The stage holds exactly one directional light.
 
@@ -13,10 +13,10 @@ use bevy::prelude::*;
 
 /// Marker component for static stage geometry and its light.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ArenaMapMarker;
+pub struct LabStageMarker;
 
 /// Spawns the stage floor, its directional light and the ambient light.
-pub fn spawn_arena_environment(
+pub fn spawn_lab_stage(
     mut commands: Commands<'_, '_>,
     mut meshes: ResMut<'_, Assets<Mesh>>,
     mut materials: ResMut<'_, Assets<StandardMaterial>>,
@@ -31,7 +31,7 @@ pub fn spawn_arena_environment(
             ..default()
         })),
         Transform::from_xyz(16.0, 0.0, 16.0),
-        ArenaMapMarker,
+        LabStageMarker,
     ));
 
     commands.spawn((
@@ -41,7 +41,7 @@ pub fn spawn_arena_environment(
             ..default()
         },
         Transform::from_xyz(20.0, 32.0, 20.0).looking_at(Vec3::new(16.0, 0.0, 16.0), Vec3::Y),
-        ArenaMapMarker,
+        LabStageMarker,
         Visibility::Visible,
     ));
 

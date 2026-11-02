@@ -4,11 +4,11 @@
 
 use super::super::config::CaptureError;
 use super::{failure, OwnershipState, View};
+use bevy::prelude::*;
+use bevy::time::TimeUpdateStrategy;
 use client::player_presentation::PlayerPalette;
 use client::vfx::{CombatFxMaterial, CombatVisualEvent};
 use client::{LabState, LabTab, SwarmBubble};
-use bevy::prelude::*;
-use bevy::time::TimeUpdateStrategy;
 use sim_types::CombatEventVisual;
 use std::time::Duration;
 

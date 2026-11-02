@@ -10,13 +10,13 @@ mod staging;
 mod timing;
 
 use super::config::CaptureError;
+use bevy::prelude::*;
 use client::battle_pipeline::session::BattleSession;
 use client::player_presentation::PlayerPalette;
 use client::vfx::{
     BeamVisualComponent, CombatEffectOwner, CombatFxMaterial, MeleeSlashComponent,
     ProjectileVisual, ShatterShard,
 };
-use bevy::prelude::*;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -73,7 +73,8 @@ impl OwnershipState {
         let pipeline = world.resource::<BattleSession>();
         let generation = pipeline.commands.generation().map(|value| value.value());
         let tick = pipeline.frames.presented().tick.0;
-        let preview = world.resource::<client::LabState>().current_tab != client::LabTab::LiveBattle;
+        let preview =
+            world.resource::<client::LabState>().current_tab != client::LabTab::LiveBattle;
         let reset = self.last_generation.is_some() && generation != self.last_generation;
         let dt = world.resource::<Time>().delta_secs();
         let mut query = world.query::<(

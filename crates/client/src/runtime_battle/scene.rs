@@ -4,7 +4,7 @@
 //! and authored object images share the loaded map's coordinates; per-frame updates
 //! mutate reusable snapshot records and billboards without rebuilding scene assets.
 
-use crate::arena_render::ArenaMapMarker;
+use crate::lab_stage::LabStageMarker;
 
 use super::BattleDefinition;
 use crate::camera::RtsCamera;
@@ -30,7 +30,7 @@ type MapObjectQuery<'w, 's> = Query<
         &'static mut Transform,
         &'static mut Visibility,
     ),
-    (Without<BattleSceneRoot>, Without<ArenaMapMarker>),
+    (Without<BattleSceneRoot>, Without<LabStageMarker>),
 >;
 
 /// Root owning precisely one loaded game terrain, light rig and authored map objects.

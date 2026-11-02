@@ -4,10 +4,10 @@
 //! explicit limitations; absence from the source table never means proven stability.
 
 use super::model::{AuditError, LogicalIdentity, MaterialSource, SourceFrame, SourceItem};
-use client::{BubbleDomeMaterial, BubbleInstance, LabPreviewBubble, LiveBattleBubble, SwarmBubble};
 use bevy::prelude::*;
 use bevy::render::primitives::Aabb;
 use bevy::render::view::ViewVisibility;
+use client::{BubbleDomeMaterial, BubbleInstance, LabPreviewBubble, LiveBattleBubble, SwarmBubble};
 
 /// Captures actual visible Swarm and background CPU sources, or None outside that scene.
 pub(super) fn capture(

@@ -2,11 +2,11 @@
 //! These CPU tests establish identity/lifecycle rules; native images remain required.
 
 use super::*;
+use bevy::render::mesh::MeshAabb;
+use bevy::time::TimeUpdateStrategy;
 use client::battle_pipeline::{commands::SessionGeneration, session::CommittedBattleMetadata};
 use client::runtime_battle::{BattleDefinition, DEFAULT_BATTLE_SCENARIO};
 use client::vfx::{self, CombatVisualEvent};
-use bevy::render::mesh::MeshAabb;
-use bevy::time::TimeUpdateStrategy;
 use sim_types::{CombatEventVisual, PlayerId};
 use std::time::Duration;
 

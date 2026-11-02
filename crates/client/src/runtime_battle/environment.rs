@@ -1,6 +1,6 @@
 //! Game scene ownership for global environment and visible light hierarchies.
 //!
-//! The actual arena globals are captured after Startup. A battle environment is
+//! The Lab stage globals are captured after Startup. A battle environment is
 //! attached only to its successfully committed root, so failed replacements cannot
 //! change the visible scene. Visibility is applied before inherited propagation.
 
@@ -9,7 +9,7 @@ use bevy::prelude::*;
 use bevy::render::view::VisibilitySystems;
 
 use super::BattleSceneRoot;
-use crate::arena_render::ArenaMapMarker;
+use crate::lab_stage::LabStageMarker;
 use crate::{LabState, LabTab};
 
 #[derive(Clone)]
@@ -38,7 +38,7 @@ struct SceneEnvironmentState {
 
 /// Applies game scene resources and root visibility as one presentation stage.
 ///
-/// Startup captures the real arena values. PostUpdate runs after UI/scene commands
+/// Startup captures the Lab stage values. PostUpdate runs after UI/scene commands
 /// and before visibility propagation; standalone terrain/editor setup is unchanged.
 pub struct SceneEnvironmentPlugin;
 
@@ -47,7 +47,7 @@ impl Plugin for SceneEnvironmentPlugin {
         app.init_resource::<ClearColor>()
             .init_resource::<AmbientLight>()
             .init_resource::<SceneEnvironmentState>()
-            .add_systems(PostStartup, capture_arena_environment)
+            .add_systems(PostStartup, capture_stage_environment)
             .add_systems(
                 PostUpdate,
                 apply_scene_environment.before(VisibilitySystems::VisibilityPropagate),
@@ -55,7 +55,7 @@ impl Plugin for SceneEnvironmentPlugin {
     }
 }
 
-fn capture_arena_environment(
+fn capture_stage_environment(
     ambient: Res<'_, AmbientLight>,
     clear: Res<'_, ClearColor>,
     mut state: ResMut<'_, SceneEnvironmentState>,
@@ -78,7 +78,7 @@ enum SceneEnvironmentError {
 
 type VisibleScenes<'w, 's> = (
     Query<'w, 's, (Entity, &'static mut Visibility), With<BattleSceneRoot>>,
-    Query<'w, 's, &'static mut Visibility, With<ArenaMapMarker>>,
+    Query<'w, 's, &'static mut Visibility, With<LabStageMarker>>,
 );
 
 fn apply_scene_environment(
@@ -112,7 +112,7 @@ fn apply_scene_environment(
     }
     let active = if lab.current_tab == LabTab::LiveBattle {
         // First tab selection can precede its scene commit. Keep the actual prior
-        // arena presentation until a root exists; never read a candidate theme.
+        // stage presentation until a root exists; never read a candidate theme.
         root
     } else {
         None

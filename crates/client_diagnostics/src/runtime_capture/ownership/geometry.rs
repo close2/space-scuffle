@@ -4,10 +4,10 @@
 
 use super::super::config::CaptureError;
 use super::{failure, EffectProof, OwnershipState, View};
-use client::player_presentation::PlayerPalette;
-use client::vfx::{CombatEffectOwner, CombatFxMaterial};
 use bevy::prelude::*;
 use bevy::render::primitives::Aabb;
+use client::player_presentation::PlayerPalette;
+use client::vfx::{CombatEffectOwner, CombatFxMaterial};
 use serde::Serialize;
 
 /// Actual visible shell identity, prepared linear tint, and physical-window projection.

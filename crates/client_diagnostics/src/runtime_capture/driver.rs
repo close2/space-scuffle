@@ -9,11 +9,11 @@ use super::{
     config::{CaptureError, CaptureScript, Goal},
     pipelines::{PipelineEvidence, SHADERS},
 };
-use client::runtime_battle::{BattleSceneRoot, MapPresentation};
-use client::{BubbleInstance, LabPreviewBubble, LabState, LabTab, LiveBattleBubble, RtsCamera};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use bevy::time::TimeUpdateStrategy;
+use client::runtime_battle::{BattleSceneRoot, MapPresentation};
+use client::{BubbleInstance, LabPreviewBubble, LabState, LabTab, LiveBattleBubble, RtsCamera};
 use sim_types::{EntityId, SimScalar, SimVec2};
 use std::{
     collections::BTreeMap,
@@ -1244,7 +1244,8 @@ fn verify_frame(world: &mut World, session: &mut Session) -> Result<Option<Recor
     let counts = evidence.counts();
     if goal == Goal::Combat {
         let effect_visible = world
-            .query_filtered::<&ViewVisibility, With<MeshMaterial3d<client::vfx::CombatFxMaterial>>>()
+            .query_filtered::<&ViewVisibility, With<MeshMaterial3d<client::vfx::CombatFxMaterial>>>(
+            )
             .iter(world)
             .any(|visibility| visibility.get());
         if !effect_visible {

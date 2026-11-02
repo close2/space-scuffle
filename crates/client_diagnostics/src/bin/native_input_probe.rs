@@ -4,7 +4,9 @@ use bevy::app::AppExit;
 use clap::Parser;
 
 fn main() -> AppExit {
-    match client_diagnostics::native_input_probe::run(client_diagnostics::native_input_probe::ProbeOptions::parse()) {
+    match client_diagnostics::native_input_probe::run(
+        client_diagnostics::native_input_probe::ProbeOptions::parse(),
+    ) {
         Ok(exit) => exit,
         Err(error) => {
             eprintln!("Native input probe failed: {error}");

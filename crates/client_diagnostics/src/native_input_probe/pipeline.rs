@@ -2,8 +2,8 @@
 //! reads the real published snapshots and ECS poses; it never submits commands,
 //! steps simulation, changes selection, or substitutes scene/media state.
 
-use client::battle_pipeline::{driver::AdmissionOutcome, session::BattleSession};
 use bevy::prelude::*;
+use client::battle_pipeline::{driver::AdmissionOutcome, session::BattleSession};
 use sim_types::{BubbleRenderInstance, EntityId};
 use std::{
     fs::File,

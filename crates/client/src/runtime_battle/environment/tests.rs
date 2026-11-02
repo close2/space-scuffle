@@ -77,7 +77,7 @@ fn startup_baseline_restores_through_tabs_and_real_light_visibility() -> TestRes
     let arena = app
         .world_mut()
         .spawn((
-            ArenaMapMarker,
+            LabStageMarker,
             DirectionalLight::default(),
             Transform::default(),
         ))

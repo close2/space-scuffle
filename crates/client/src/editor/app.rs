@@ -16,7 +16,7 @@
 //! 4. **Unsaved Work Survives Closing:** Bevy's close-on-request behavior is disabled; the window
 //!    only closes through [`editor_window_close_system`], in every phase.
 //! 5. **Acyclic Module Organization:** Does not depend on the main Visual Lab ui (`lab_ui_system`)
-//!    or arena environment generators (`spawn_arena_environment`).
+//!    or arena environment generators (`spawn_lab_stage`).
 
 use std::path::PathBuf;
 
