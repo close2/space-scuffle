@@ -550,9 +550,9 @@ pub fn update_mist_wake_system(
             let enabled = !smog_replaces_mist
                 && override_motion.is_none_or(|m| m.enabled)
                 && (preview.is_none()
-                    || lab.as_ref().is_none_or(|l| {
-                        l.opt_mist_wake && !(l.smog_bouncing_active && l.opt_smog_volume)
-                    }));
+                    || lab
+                        .as_ref()
+                        .is_none_or(|l| !(l.smog_bouncing_active && l.opt_smog_volume)));
             if enabled {
                 if !slot.was_enabled {
                     slot.history.reset();

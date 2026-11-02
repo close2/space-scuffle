@@ -865,7 +865,6 @@ fn live_battle_low_ground_and_high_ground_units_preserve_true_world_y(
     app.insert_resource(client::lab_ui::LabState {
         current_tab: client::LabTab::LiveBattle,
         opt_smog_volume: true,
-        opt_mist_wake: true,
         ..Default::default()
     });
     app.add_systems(Startup, client::bubble_shader::setup_bubble_assets_system);

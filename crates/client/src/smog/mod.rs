@@ -497,10 +497,6 @@ pub fn setup_smog_volume_system(
                 wall_bounces: state.wall_bounces,
                 peer_bounces: state.peer_bounces,
             },
-            crate::mist::MistMotion {
-                conveyor_velocity: None,
-                enabled: false,
-            },
             BubbleInstance(render_instance),
             Mesh3d(sphere_mesh.clone()),
             MeshMaterial3d(bubble_mat),
@@ -708,20 +704,17 @@ pub(crate) fn update_smog_field_system(
             &BubbleInstance,
             Option<&BouncingSmogBubble>,
             Option<&crate::scene_controller::LabPreviewBubble>,
-            Option<&crate::mist::MistMotion>,
             Option<&Visibility>,
         ),
         Without<SmogVolumeMarker>,
     >,
     camera_query: Query<'_, '_, &crate::camera::RtsCamera>,
     terrain: Option<Res<'_, crate::terrain::TerrainState>>,
-    controlled_fixture: Option<Res<'_, crate::shell_order_audit::fixture::ControlledFixture>>,
 ) {
     if media_status.retain_failure(&mut lab_state) {
         return;
     }
-    let enabled =
-        controlled_fixture.is_none() && lab_state.opt_smog_volume && lab_state.opt_mist_wake;
+    let enabled = lab_state.opt_smog_volume;
 
     let current_tab = lab_state.current_tab;
     let target = match current_tab {
@@ -749,7 +742,7 @@ pub(crate) fn update_smog_field_system(
             // Find the lowest ground_z of visible mobile units inside the horizontal camera window
             // (treating 0.0 low ground as a valid first-class altitude).
             let mut min_mobile_ground_y: Option<f32> = None;
-            for (transform, instance, bouncing, preview, _, vis) in &bubble_query {
+            for (transform, instance, bouncing, preview, vis) in &bubble_query {
                 if matches!(vis, Some(Visibility::Hidden))
                     || bouncing.is_some()
                     || preview.is_some()
@@ -828,7 +821,7 @@ pub(crate) fn update_smog_field_system(
     sources_scratch.clear();
     let mut cavities = CavitySlots::default();
 
-    for (transform, instance, bouncing, preview, mist_motion, visibility) in &bubble_query {
+    for (transform, instance, bouncing, preview, visibility) in &bubble_query {
         if matches!(visibility, Some(Visibility::Hidden)) {
             continue;
         }
@@ -848,9 +841,7 @@ pub(crate) fn update_smog_field_system(
         let mut vel = bouncing.map_or_else(
             || {
                 if preview.is_some() {
-                    mist_motion
-                        .and_then(|m| m.conveyor_velocity)
-                        .unwrap_or_else(|| Vec3::new(-lab_state.speed, 0.0, 0.0))
+                    Vec3::new(-lab_state.speed, 0.0, 0.0)
                 } else {
                     Vec3::new(instance.0.velocity[0], 0.0, instance.0.velocity[1])
                 }

@@ -668,7 +668,6 @@ pub fn sync_swarm_stress_system(
     mut media_status: ResMut<'_, crate::media::ClientMediaStatus>,
     shared_meshes: Res<'_, BubbleSharedMeshes>,
     mut bubble_materials: ResMut<'_, Assets<BubbleDomeMaterial>>,
-    controlled_fixture: Option<Res<'_, crate::shell_order_audit::fixture::ControlledFixture>>,
     mut camera_query: Query<'_, '_, &mut crate::camera::RtsCamera>,
     mut query: Query<
         '_,
@@ -715,47 +714,129 @@ pub fn sync_swarm_stress_system(
         let meta = registry.get_meta(swarm_unit_type);
         let texture = registry.get_texture(swarm_unit_type);
 
-        if controlled_fixture.is_none() {
-            if let Some(mut cam) = camera_query.iter_mut().next() {
-                cam.target = Vec2::new(
-                    f32::midpoint(SWARM_MIN_X, SWARM_MAX_X),
-                    f32::midpoint(SWARM_MIN_Z, SWARM_MAX_Z),
-                );
-                cam.look_at_y = 0.5;
-                cam.distance = 26.0;
+        if let Some(mut cam) = camera_query.iter_mut().next() {
+            cam.target = Vec2::new(
+                f32::midpoint(SWARM_MIN_X, SWARM_MAX_X),
+                f32::midpoint(SWARM_MIN_Z, SWARM_MAX_Z),
+            );
+            cam.look_at_y = 0.5;
+            cam.distance = 26.0;
+        }
+
+        // Interactive 200-unit Swarm Stress Test:
+        // Share only 2 Handle<BubbleDomeMaterial> instances (1 for primary 100, 1 for secondary 100)
+        // to enable Bevy GPU batching and cut BindGroup recreations from 200/frame to 2/frame.
+        let primary_owner = owners.palette.primary();
+        let secondary_owner = owners.palette.secondary();
+        let primary_style = match owners.palette.preview_style(primary_owner) {
+            Ok(s) => s,
+            Err(error) => {
+                owners.reject(error, &mut exit_events);
+                return;
             }
+        };
+        let secondary_style = match owners.palette.preview_style(secondary_owner) {
+            Ok(s) => s,
+            Err(error) => {
+                owners.reject(error, &mut exit_events);
+                return;
+            }
+        };
 
-            // Interactive 200-unit Swarm Stress Test:
-            // Share only 2 Handle<BubbleDomeMaterial> instances (1 for primary 100, 1 for secondary 100)
-            // to enable Bevy GPU batching and cut BindGroup recreations from 200/frame to 2/frame.
-            let primary_owner = owners.palette.primary();
-            let secondary_owner = owners.palette.secondary();
-            let primary_style = match owners.palette.preview_style(primary_owner) {
-                Ok(s) => s,
-                Err(error) => {
-                    owners.reject(error, &mut exit_events);
-                    return;
-                }
-            };
-            let secondary_style = match owners.palette.preview_style(secondary_owner) {
-                Ok(s) => s,
-                Err(error) => {
-                    owners.reject(error, &mut exit_events);
-                    return;
-                }
-            };
+        let primary_dummy_instance = BubbleRenderInstance {
+            entity_id: EntityId(1000),
+            shape: ShapeKind::UnitSphere,
+            silhouette: swarm_silhouette,
+            unit_type: swarm_unit_type,
+            owner: primary_owner,
+            world_pos: [8.0, 10.0, 0.5],
+            ground_z: 0.0,
+            radius: 0.45,
+            velocity: [1.5, 0.0],
+            heading_angle_rad: 0.0,
+            aim_angle_rad: 0.0,
+            is_attacking: false,
+            weapon_visual: WeaponVisualKind::Hitscan,
+            attack_target_pos: None,
+            anim_state: AnimState::Walk,
+            anim_progress: 0.0,
+            hp_ratio: 1.0,
+            shield_ratio: 1.0,
+            shield_hit_flash: 0.0,
+            hull_hit_angle_rad: 0.0,
+            hull_hit_flash: 0.0,
+            build_or_queue_progress: None,
+            selected: false,
+            cloaked: false,
+            speed_boosted: false,
+        };
+        let primary_uniform =
+            BubbleUniformGpu::from_instance(&primary_dummy_instance, meta, primary_style);
+        let primary_mat = bubble_materials.add(BubbleDomeMaterial {
+            uniform: primary_uniform,
+            video_texture: texture.clone(),
+            alpha_mode: AlphaMode::Blend,
+        });
 
-            let primary_dummy_instance = BubbleRenderInstance {
-                entity_id: EntityId(1000),
+        let secondary_dummy_instance = BubbleRenderInstance {
+            entity_id: EntityId(1100),
+            shape: ShapeKind::UnitSphere,
+            silhouette: swarm_silhouette,
+            unit_type: swarm_unit_type,
+            owner: secondary_owner,
+            world_pos: [24.0, 10.0, 0.5],
+            ground_z: 0.0,
+            radius: 0.45,
+            velocity: [-1.5, 0.0],
+            heading_angle_rad: std::f32::consts::PI,
+            aim_angle_rad: 0.0,
+            is_attacking: false,
+            weapon_visual: WeaponVisualKind::Hitscan,
+            attack_target_pos: None,
+            anim_state: AnimState::Walk,
+            anim_progress: 0.0,
+            hp_ratio: 1.0,
+            shield_ratio: 1.0,
+            shield_hit_flash: 0.0,
+            hull_hit_angle_rad: 0.0,
+            hull_hit_flash: 0.0,
+            build_or_queue_progress: None,
+            selected: false,
+            cloaked: false,
+            speed_boosted: false,
+        };
+        let secondary_uniform =
+            BubbleUniformGpu::from_instance(&secondary_dummy_instance, meta, secondary_style);
+        let secondary_mat = bubble_materials.add(BubbleDomeMaterial {
+            uniform: secondary_uniform,
+            video_texture: texture.clone(),
+            alpha_mode: AlphaMode::Blend,
+        });
+
+        for i in 0..200u32 {
+            let primary_group = i < 100;
+            let owner = if primary_group {
+                primary_owner
+            } else {
+                secondary_owner
+            };
+            let Vec2 { x, y: z } = swarm_spawn_position(i);
+
+            let instance = BubbleRenderInstance {
+                entity_id: EntityId(1000 + i),
                 shape: ShapeKind::UnitSphere,
                 silhouette: swarm_silhouette,
                 unit_type: swarm_unit_type,
-                owner: primary_owner,
-                world_pos: [8.0, 10.0, 0.5],
+                owner,
+                world_pos: [x, z, 0.5],
                 ground_z: 0.0,
                 radius: 0.45,
-                velocity: [1.5, 0.0],
-                heading_angle_rad: 0.0,
+                velocity: [if primary_group { 1.5 } else { -1.5 }, 0.0],
+                heading_angle_rad: if primary_group {
+                    0.0
+                } else {
+                    std::f32::consts::PI
+                },
                 aim_angle_rad: 0.0,
                 is_attacking: false,
                 weapon_visual: WeaponVisualKind::Hitscan,
@@ -772,225 +853,22 @@ pub fn sync_swarm_stress_system(
                 cloaked: false,
                 speed_boosted: false,
             };
-            let primary_uniform =
-                BubbleUniformGpu::from_instance(&primary_dummy_instance, meta, primary_style);
-            let primary_mat = bubble_materials.add(BubbleDomeMaterial {
-                uniform: primary_uniform,
-                video_texture: texture.clone(),
-                alpha_mode: AlphaMode::Blend,
-            });
 
-            let secondary_dummy_instance = BubbleRenderInstance {
-                entity_id: EntityId(1100),
-                shape: ShapeKind::UnitSphere,
-                silhouette: swarm_silhouette,
-                unit_type: swarm_unit_type,
-                owner: secondary_owner,
-                world_pos: [24.0, 10.0, 0.5],
-                ground_z: 0.0,
-                radius: 0.45,
-                velocity: [-1.5, 0.0],
-                heading_angle_rad: std::f32::consts::PI,
-                aim_angle_rad: 0.0,
-                is_attacking: false,
-                weapon_visual: WeaponVisualKind::Hitscan,
-                attack_target_pos: None,
-                anim_state: AnimState::Walk,
-                anim_progress: 0.0,
-                hp_ratio: 1.0,
-                shield_ratio: 1.0,
-                shield_hit_flash: 0.0,
-                hull_hit_angle_rad: 0.0,
-                hull_hit_flash: 0.0,
-                build_or_queue_progress: None,
-                selected: false,
-                cloaked: false,
-                speed_boosted: false,
+            let mat = if primary_group {
+                primary_mat.clone()
+            } else {
+                secondary_mat.clone()
             };
-            let secondary_uniform =
-                BubbleUniformGpu::from_instance(&secondary_dummy_instance, meta, secondary_style);
-            let secondary_mat = bubble_materials.add(BubbleDomeMaterial {
-                uniform: secondary_uniform,
-                video_texture: texture.clone(),
-                alpha_mode: AlphaMode::Blend,
-            });
 
-            for i in 0..200u32 {
-                let primary_group = i < 100;
-                let owner = if primary_group {
-                    primary_owner
-                } else {
-                    secondary_owner
-                };
-                let Vec2 { x, y: z } = swarm_spawn_position(i);
-
-                let instance = BubbleRenderInstance {
-                    entity_id: EntityId(1000 + i),
-                    shape: ShapeKind::UnitSphere,
-                    silhouette: swarm_silhouette,
-                    unit_type: swarm_unit_type,
-                    owner,
-                    world_pos: [x, z, 0.5],
-                    ground_z: 0.0,
-                    radius: 0.45,
-                    velocity: [if primary_group { 1.5 } else { -1.5 }, 0.0],
-                    heading_angle_rad: if primary_group {
-                        0.0
-                    } else {
-                        std::f32::consts::PI
-                    },
-                    aim_angle_rad: 0.0,
-                    is_attacking: false,
-                    weapon_visual: WeaponVisualKind::Hitscan,
-                    attack_target_pos: None,
-                    anim_state: AnimState::Walk,
-                    anim_progress: 0.0,
-                    hp_ratio: 1.0,
-                    shield_ratio: 1.0,
-                    shield_hit_flash: 0.0,
-                    hull_hit_angle_rad: 0.0,
-                    hull_hit_flash: 0.0,
-                    build_or_queue_progress: None,
-                    selected: false,
-                    cloaked: false,
-                    speed_boosted: false,
-                };
-
-                let mat = if primary_group {
-                    primary_mat.clone()
-                } else {
-                    secondary_mat.clone()
-                };
-
-                commands.spawn((
-                    Mesh3d(shared_meshes.sphere_mesh.clone()),
-                    MeshMaterial3d(mat),
-                    Transform::from_xyz(x, 0.5, z).with_scale(Vec3::splat(0.45)),
-                    BubbleInstance(instance),
-                    crate::mist::MistMotion {
-                        conveyor_velocity: None,
-                        enabled: false,
-                    },
-                    SwarmBubble,
-                ));
-            }
-        } else {
-            // Controlled fixture test mode: per-entity materials and exact original setup
-            for i in 0..200u32 {
-                let primary_group = i < 100;
-                let owner = if primary_group {
-                    owners.palette.primary()
-                } else {
-                    owners.palette.secondary()
-                };
-                let row = (i % 10) as f32;
-                let col = ((i % 100) / 10) as f32;
-                let x = if primary_group {
-                    8.0 + col * 1.2
-                } else {
-                    24.0 - col * 1.2
-                };
-                let z = 10.0 + row * 1.2;
-
-                let instance = BubbleRenderInstance {
-                    entity_id: EntityId(1000 + i),
-                    shape: ShapeKind::UnitSphere,
-                    silhouette: swarm_silhouette,
-                    unit_type: swarm_unit_type,
-                    owner,
-                    world_pos: [x, z, 0.5],
-                    ground_z: 0.0,
-                    radius: 0.45,
-                    velocity: [if primary_group { 1.5 } else { -1.5 }, 0.0],
-                    heading_angle_rad: if primary_group {
-                        0.0
-                    } else {
-                        std::f32::consts::PI
-                    },
-                    aim_angle_rad: 0.0,
-                    is_attacking: false,
-                    weapon_visual: WeaponVisualKind::Hitscan,
-                    attack_target_pos: None,
-                    anim_state: AnimState::Walk,
-                    anim_progress: 0.0,
-                    hp_ratio: 1.0,
-                    shield_ratio: 1.0,
-                    shield_hit_flash: 0.0,
-                    hull_hit_angle_rad: 0.0,
-                    hull_hit_flash: 0.0,
-                    build_or_queue_progress: None,
-                    selected: false,
-                    cloaked: false,
-                    speed_boosted: false,
-                };
-
-                let style = match owners.palette.preview_style(instance.owner) {
-                    Ok(style) => style,
-                    Err(error) => {
-                        owners.reject(error, &mut exit_events);
-                        return;
-                    }
-                };
-                let uniform = BubbleUniformGpu::from_instance(&instance, meta, style);
-
-                let mat = bubble_materials.add(BubbleDomeMaterial {
-                    uniform,
-                    video_texture: texture.clone(),
-                    alpha_mode: AlphaMode::Blend,
-                });
-
-                commands.spawn((
-                    Mesh3d(shared_meshes.sphere_mesh.clone()),
-                    MeshMaterial3d(mat),
-                    Transform::from_xyz(x, 0.5, z).with_scale(Vec3::splat(0.45)),
-                    BubbleInstance(instance),
-                    SwarmBubble,
-                ));
-            }
+            commands.spawn((
+                Mesh3d(shared_meshes.sphere_mesh.clone()),
+                MeshMaterial3d(mat),
+                Transform::from_xyz(x, 0.5, z).with_scale(Vec3::splat(0.45)),
+                BubbleInstance(instance),
+                SwarmBubble,
+            ));
         }
         lab_state.swarm_bubble_count = 200;
-    } else if controlled_fixture.is_some() {
-        // Controlled fixture test mode: original sin(z) motion and individual material updates
-        let dt = time.delta_secs();
-        let anim_progress = (time.elapsed_secs() * 2.0).fract();
-        for (_, instance, mut tf, mat_handle) in &mut query {
-            let style = match owners.palette.preview_style(instance.0.owner) {
-                Ok(style) => style,
-                Err(error) => {
-                    owners.reject(error, &mut exit_events);
-                    return;
-                }
-            };
-            tf.translation.x += (tf.translation.z.sin() * 0.5) * dt;
-
-            let new_frame = if let Some(meta) = registry.get_meta(instance.0.unit_type) {
-                if let Some(slice) = meta.actions.get(&instance.0.anim_state) {
-                    if slice.frame_count == 0 {
-                        slice.start_frame
-                    } else if slice.looping {
-                        let step = (anim_progress * slice.frame_count as f32) as u32;
-                        slice.start_frame + (step % slice.frame_count)
-                    } else {
-                        let step = (anim_progress * slice.frame_count as f32) as u32;
-                        slice.start_frame + step.min(slice.frame_count.saturating_sub(1))
-                    }
-                } else {
-                    0
-                }
-            } else {
-                0
-            };
-
-            if let Some(mat) = bubble_materials.get(&mat_handle.0) {
-                if mat.uniform.team_color != style.linear || mat.uniform.frame_index != new_frame {
-                    if let Some(mat_mut) = bubble_materials.get_mut(&mat_handle.0) {
-                        mat_mut.uniform.team_color = style.linear;
-                        mat_mut.uniform.frame_index = new_frame;
-                        mat_mut.uniform.anim_progress = anim_progress;
-                    }
-                }
-            }
-        }
     } else {
         // Interactive 200-unit Swarm Stress Test:
         // Update 200 entity transforms/velocities with map-plane bouncing,

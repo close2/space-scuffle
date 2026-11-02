@@ -5,8 +5,8 @@
 
 use super::{
     model::{
-        AssociationKind, AuditConfig, AuditError, EpochEvidence, MaterialSource, MistEvidence,
-        PhaseEntry, ViewEvidence,
+        AssociationKind, AuditConfig, AuditError, EpochEvidence, MaterialSource, PhaseEntry,
+        ViewEvidence,
     },
     AuditBridge, Extracted,
 };
@@ -79,7 +79,6 @@ fn observe_inner(world: &mut World, sorted: bool, bridge: &AuditBridge) -> Resul
     if before.epoch != actual.epoch
         || before.views.len() != actual.views.len()
         || before.source != actual.source
-        || before.mist != actual.mist
     {
         return Err(AuditError::Lifecycle(
             "source/view changed inside phase sort",
@@ -205,11 +204,6 @@ fn gather(world: &World, config: &AuditConfig) -> Result<EpochEvidence, AuditErr
                     ));
                 }
             }
-            if matches!(material, MaterialSource::Mist { .. })
-                && !prepared_material::<crate::mist::MistWakeMaterial>(world, item.entity.1)
-            {
-                pending.push(format!("prepared mist {main_entity}"));
-            }
             if matches!(material, MaterialSource::Standard { .. })
                 && !prepared_material::<StandardMaterial>(world, item.entity.1)
             {
@@ -300,33 +294,12 @@ fn gather(world: &World, config: &AuditConfig) -> Result<EpochEvidence, AuditErr
     if views.is_empty() {
         pending.push("no relevant populated view".into());
     }
-    let mist = world
-        .get_resource::<crate::mist::packet_witness::PacketWitness>()
-        .map(|witness| witness.snapshot())
-        .transpose()
-        .map_err(|error| AuditError::Source(error.to_string()))?
-        .map(MistEvidence::from);
-    if !mist.as_ref().is_some_and(|packet| packet.ready) {
-        pending.push("selected mist packet not ready".into());
-    }
-    if let Some(packet) = &mist {
-        for item in views.iter().flat_map(|view| &view.queued) {
-            if let MaterialSource::Mist { buffers, .. } = &item.material {
-                if packet.ready && *buffers != packet.targets {
-                    return Err(AuditError::Source(
-                        "actual mist material buffers differ from selected packet targets".into(),
-                    ));
-                }
-            }
-        }
-    }
     Ok(EpochEvidence {
         epoch: extracted.epoch,
         source,
         views,
         ready: pending.is_empty(),
         pending,
-        mist,
     })
 }
 

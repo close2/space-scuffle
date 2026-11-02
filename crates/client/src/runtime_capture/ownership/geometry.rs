@@ -54,7 +54,7 @@ pub(in crate::runtime_capture) struct OwnershipProof {
     pub stage_focus: Option<[f32; 2]>,
 }
 
-/// Actual shell/wake rectangle used to reject an occluded demonstration stage.
+/// Actual shell rectangle used to reject an occluded demonstration stage.
 #[derive(Debug, Clone, Serialize)]
 pub(in crate::runtime_capture) struct ObstacleProof {
     pub entity: u64,
@@ -333,14 +333,12 @@ fn obstacles(
 ) -> Result<Option<Vec<ObstacleProof>>, CaptureError> {
     let mut query = world.query_filtered::<(
         Entity,
-        Option<&crate::LabPreviewBubble>,
         Option<&Aabb>,
         Option<&GlobalTransform>,
         Option<&ViewVisibility>,
-    ), Or<(With<crate::LabPreviewBubble>, With<crate::mist::MistRibbon>)>>(
-    );
+    ), With<crate::LabPreviewBubble>>();
     let mut output = Vec::new();
-    for (entity, lab, bounds, global, visible) in query.iter(world) {
+    for (entity, bounds, global, visible) in query.iter(world) {
         let Some(visible) = visible else {
             return Ok(None);
         };
@@ -353,7 +351,7 @@ fn obstacles(
         let (minimum, maximum) = view.rectangle(bounds, global)?;
         output.push(ObstacleProof {
             entity: entity.to_bits(),
-            kind: if lab.is_some() { "shell" } else { "wake" },
+            kind: "shell",
             minimum: minimum.to_array(),
             maximum: maximum.to_array(),
         });

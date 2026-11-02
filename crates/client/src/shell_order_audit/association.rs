@@ -107,10 +107,6 @@ fn registered_adapter(
             DrawAdapter::Standard,
             functions.get_id::<MaterialDraw<StandardMaterial>>(),
         ),
-        MaterialSource::Mist { .. } => (
-            DrawAdapter::Mist,
-            functions.get_id::<MaterialDraw<crate::mist::MistWakeMaterial>>(),
-        ),
         MaterialSource::Unsupported { .. } => return Err("unsupported material draw association"),
     };
     match expected {

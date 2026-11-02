@@ -140,7 +140,7 @@ pub struct LabState {
     pub heading_angle_deg: f32,
     /// Turret aim orientation in degrees (-180°..180°).
     pub aim_angle_deg: f32,
-    /// Movement speed driving mist trail wake.
+    /// Movement speed of the preview actors through the smog field, in world units per second.
     pub speed: f32,
     /// Vertical construction scanline fill (0.0..1.0).
     pub build_progress: f32,
@@ -169,8 +169,6 @@ pub struct LabState {
     pub opt_cracks: bool,
     /// CRT scanlines and chromatic aberration flag (FLAG_CRT_GLITCH).
     pub opt_crt_glitch: bool,
-    /// Multi-layered volumetric mist wake particles flag.
-    pub opt_mist_wake: bool,
     /// Equatorial hull facing chevron indicator flag.
     pub opt_facing_chevron: bool,
     /// Weapon attack aperture focal lens flag.
@@ -236,7 +234,6 @@ impl Default for LabState {
             opt_inner_warp: true,
             opt_cracks: true,
             opt_crt_glitch: true,
-            opt_mist_wake: true,
             opt_facing_chevron: true,
             opt_focal_lens: true,
             opt_selection_brackets: true,
@@ -436,12 +433,7 @@ fn render_visual_lab_tab(
     effect_owner: PlayerId,
 ) {
     ui.heading("3D Smog & 10 Bouncing Bubbles");
-    if ui
-        .checkbox(&mut state.opt_smog_volume, "3D Volumetric Smog Field")
-        .changed()
-    {
-        state.opt_mist_wake = state.opt_smog_volume;
-    }
+    ui.checkbox(&mut state.opt_smog_volume, "3D Volumetric Smog Field");
     ui.checkbox(&mut state.smog_bouncing_active, "10-Bubble Wall Bouncing");
     ui.add(egui::Slider::new(&mut state.smog_emission_rate, 0.0..=5.0).text("Emission Rate"));
     ui.add(egui::Slider::new(&mut state.smog_wake_influence, 0.0..=5.0).text("Wake Influence"));
@@ -506,7 +498,7 @@ fn render_visual_lab_tab(
     ui.add(
         egui::Slider::new(&mut state.aim_angle_deg, -180.0..=180.0).text("Turret Aim (Focal Lens)"),
     );
-    ui.add(egui::Slider::new(&mut state.speed, 0.0..=8.0).text("Translation Speed (Mist Wake)"));
+    ui.add(egui::Slider::new(&mut state.speed, 0.0..=8.0).text("Translation Speed"));
 
     ui.separator();
     ui.heading("Action State");
@@ -528,12 +520,6 @@ fn render_visual_lab_tab(
     ui.checkbox(&mut state.opt_glare, "Glass Glare & Specular Reflection");
     ui.checkbox(&mut state.opt_fresnel, "Iridescent Fresnel Rim");
     ui.checkbox(&mut state.opt_inner_warp, "Spherical Inner Video Warp");
-    if ui
-        .checkbox(&mut state.opt_mist_wake, "Volumetric FBM Mist Wake")
-        .changed()
-    {
-        state.opt_smog_volume = state.opt_mist_wake;
-    }
     ui.checkbox(
         &mut state.opt_facing_chevron,
         "Direct-on-Sphere Facing Stripe",

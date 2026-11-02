@@ -56,7 +56,6 @@ pub(super) fn capture(
         Option<&crate::smog::BouncingSmogBubble>,
         Option<&MeshMaterial3d<BubbleDomeMaterial>>,
         Option<&MeshMaterial3d<StandardMaterial>>,
-        Option<&MeshMaterial3d<crate::mist::MistWakeMaterial>>,
     )>();
     let mut images = Vec::new();
     let mut identities = std::collections::BTreeSet::new();
@@ -73,7 +72,6 @@ pub(super) fn capture(
         smog,
         shell,
         standard,
-        mist,
     ) in query.iter(world)
     {
         let Some(visibility) = visibility else {
@@ -114,12 +112,7 @@ pub(super) fn capture(
                 .limitations
                 .push(format!("visible mesh {entity:?} missing bounds"));
         }
-        if [shell.is_some(), standard.is_some(), mist.is_some()]
-            .into_iter()
-            .filter(|present| *present)
-            .count()
-            > 1
-        {
+        if shell.is_some() && standard.is_some() {
             frame.limitations.push(format!("multiple material associations on visible mesh {entity:?}; adapter precedence cannot establish all draw sources"));
         }
         let logical = if let Some(instance) = instance {
@@ -208,22 +201,12 @@ pub(super) fn capture(
                 id: format!("{:?}", standard.0.id()),
                 description: format!("{material:?}"),
             }
-        } else if let Some(mist) = mist {
-            let material = world
-                .resource::<Assets<crate::mist::MistWakeMaterial>>()
-                .get(&mist.0)
-                .ok_or_else(|| AuditError::NotReady(format!("mist material {entity:?}")))?;
-            MaterialSource::Mist {
-                id: format!("{:?}", mist.0.id()),
-                buffers: [&material.headers, &material.samples, &material.frame]
-                    .map(|buffer| format!("Some({:?})", buffer.id())),
-            }
         } else {
             frame.limitations.push(format!(
                 "visible material adapter unsupported for {entity:?}"
             ));
             MaterialSource::Unsupported {
-                reason: "no shell, standard or mist material association",
+                reason: "no shell or standard material association",
             }
         };
         frame.items.push(SourceItem {

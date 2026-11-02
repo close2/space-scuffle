@@ -153,13 +153,6 @@ pub(crate) enum MaterialSource {
         /// Locked engine's complete CPU material descriptor.
         description: String,
     },
-    /// Actual mist material; complete selected data is in the packet witness.
-    Mist {
-        /// Actual material asset ID.
-        id: String,
-        /// Actual material-bound header, sample and frame buffers, in binding order.
-        buffers: [String; 3],
-    },
     /// No typed adapter exists; coverage is explicit rather than inferred.
     Unsupported {
         /// Concrete missing association or unsupported type.
@@ -207,36 +200,6 @@ pub(crate) struct AssetRecord {
     pub blob: String,
 }
 
-/// Serializable selection proof; string IDs are formatted only at observation.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct MistEvidence {
-    /// Whether any complete packet has been selected.
-    pub ready: bool,
-    /// Real packet sequence, allowed to advance with byte-identical contents.
-    pub sequence: u64,
-    /// Whether this render frame selected a fresh staging packet.
-    pub freshly_selected: bool,
-    /// Packed header/sample/frame bytes, not GPU-readback data.
-    pub bytes: Vec<u8>,
-    /// Persistent storage buffers actually bound by the uploader.
-    pub targets: [String; 3],
-    /// Actual staging buffer identities.
-    pub staging: Vec<String>,
-}
-
-impl From<crate::mist::packet_witness::PacketProof> for MistEvidence {
-    fn from(proof: crate::mist::packet_witness::PacketProof) -> Self {
-        Self {
-            ready: proof.ready,
-            sequence: proof.sequence,
-            freshly_selected: proof.freshly_selected,
-            bytes: proof.bytes,
-            targets: proof.targets.map(|id| format!("{id:?}")),
-            staging: proof.staging.iter().map(|id| format!("{id:?}")).collect(),
-        }
-    }
-}
-
 /// Audited built-in material tuple whose item queries use the main-world identity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub(crate) enum DrawAdapter {
@@ -244,8 +207,6 @@ pub(crate) enum DrawAdapter {
     Shell,
     /// Actual registered StandardMaterial draw tuple.
     Standard,
-    /// Actual registered mist material draw tuple.
-    Mist,
 }
 
 /// Explicit admission outcome; unsupported commands never gain a proxy exemption.
@@ -385,25 +346,16 @@ pub(crate) struct EpochEvidence {
     pub source: SourceFrame,
     /// Every relevant populated 3D view, ordered by render identity.
     pub views: Vec<ViewEvidence>,
-    /// All exact queued pipeline/material/packet requirements were ready.
+    /// All exact queued pipeline and material requirements were ready.
     pub ready: bool,
     /// Retained concrete pending states; armed intervals never discard them.
     pub pending: Vec<String>,
-    /// Actual selected packet bytes/buffers, including retained-packet frames.
-    pub mist: Option<MistEvidence>,
 }
 
 impl EpochEvidence {
-    /// Compares visible source/order, allowing byte-identical packet republication.
+    /// Compares visible source and draw order.
     pub(crate) fn same_sources_and_order(&self, other: &Self) -> bool {
         self.source == other.source
-            && match (&self.mist, &other.mist) {
-                (Some(a), Some(b)) => {
-                    a.ready == b.ready && a.bytes == b.bytes && a.targets == b.targets
-                }
-                (None, None) => true,
-                _ => false,
-            }
             && self.views.len() == other.views.len()
             && self.views.iter().zip(&other.views).all(|(a, b)| {
                 // Queue order is intentionally observed, not required to be stable

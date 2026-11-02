@@ -311,17 +311,6 @@ fn every_actual_material_content_revision_remains_semantically_distinct() {
         description: "source B".into(),
     };
     assert!(!baseline.same_draw(&changed));
-    baseline.material = MaterialSource::Mist {
-        id: "same".into(),
-        buffers: ["header".into(), "sample".into(), "frame".into()],
-    };
-    for binding in 0..3 {
-        let mut changed = baseline.clone();
-        if let MaterialSource::Mist { buffers, .. } = &mut changed.material {
-            buffers[binding].push('x');
-        }
-        assert!(!baseline.same_draw(&changed));
-    }
 }
 
 #[test]

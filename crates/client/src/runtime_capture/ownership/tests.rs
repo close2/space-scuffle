@@ -493,34 +493,6 @@ fn same_handle_shader_age_mutation_cannot_pass_frozen_timer_evidence() -> TestRe
 }
 
 #[test]
-fn relevant_missing_wake_context_blocks_an_otherwise_valid_actual_actor_stage() -> TestResult {
-    use bevy::render::primitives::Aabb;
-    let mut app = preparation_app(EffectKind::Lightning)?;
-    assert!(staging::prepare(app.world_mut())?.is_some());
-    let wake = app.world_mut().spawn(crate::mist::MistRibbon).id();
-    assert!(staging::prepare(app.world_mut())?.is_none());
-    app.world_mut()
-        .entity_mut(wake)
-        .insert(ViewVisibility::default());
-    assert!(staging::prepare(app.world_mut())?.is_some());
-    app.world_mut()
-        .entity_mut(wake)
-        .get_mut::<ViewVisibility>()
-        .ok_or("visibility")?
-        .set();
-    assert!(staging::prepare(app.world_mut())?.is_none());
-    app.world_mut().entity_mut(wake).insert((
-        GlobalTransform::IDENTITY,
-        Aabb {
-            center: Vec3::ZERO.into(),
-            half_extents: Vec3::splat(-1.0).into(),
-        },
-    ));
-    assert!(staging::prepare(app.world_mut()).is_err());
-    Ok(())
-}
-
-#[test]
 fn actual_fingerprint_ron_roundtrip_preserves_nanoseconds_above_u32() -> TestResult {
     let (mut app, _) = app()?;
     app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(

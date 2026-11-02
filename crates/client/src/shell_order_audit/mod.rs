@@ -125,6 +125,11 @@ struct Extracted {
 /// Installs only the explicitly requested bounded observer into the real renderer.
 pub(crate) fn install(app: &mut App, config: AuditConfig) -> Result<(), AuditError> {
     if let Some(fixture) = &config.fixture {
+        // The two-shell experiment measures shell order alone, so it turns smog off through the
+        // same control a player uses.
+        app.world_mut()
+            .resource_mut::<crate::LabState>()
+            .opt_smog_volume = false;
         app.insert_resource(fixture::ControlledFixture(fixture.clone()))
             .add_systems(
                 PostUpdate,
@@ -140,24 +145,12 @@ pub(crate) fn install(app: &mut App, config: AuditConfig) -> Result<(), AuditErr
         assets: assets::Inventory::default(),
         source_pending: true,
     })));
-    let root = app
-        .world()
-        .resource::<crate::ResolvedAssetsRoot>()
-        .as_path();
-    let style = crate::mist::MistStyle::load(&root.join("catalog/mist.ron"))
-        .map_err(|error| AuditError::Source(error.to_string()))?;
-    let layout = crate::mist::gpu::PacketLayout::new(style.max_emitters, style.samples_per_emitter)
-        .map_err(|error| AuditError::Source(error.to_string()))?;
-    let witness =
-        crate::mist::packet_witness::PacketWitness::new(layout, style.gpu_staging_buffers)
-            .map_err(|error| AuditError::Source(error.to_string()))?;
     app.insert_resource(bridge.clone());
     let render = app
         .get_sub_app_mut(RenderApp)
         .ok_or_else(|| AuditError::Source("actual render application absent".into()))?;
     render
         .insert_resource(bridge)
-        .insert_resource(witness)
         .init_resource::<Extracted>()
         .add_systems(ExtractSchedule, extract)
         .add_systems(

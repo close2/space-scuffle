@@ -100,7 +100,7 @@ pub(super) struct Record {
     pub scene_roots: usize,
     pub terrain_chunks: usize,
     pub required_shader_mask: u8,
-    pub ready_pipeline_counts: [usize; 4],
+    pub ready_pipeline_counts: [usize; 3],
     pub image: PathBuf,
     pub pixels: Option<ImageMetrics>,
     pub transport: Option<super::transport::TransportProof>,
@@ -117,7 +117,7 @@ pub(super) struct Manifest<'a> {
     pub assets_root: &'a Path,
     pub resolution: [u32; 2],
     pub audio_policy: crate::presentation::AudioPolicy,
-    pub shader_paths: [&'static str; 4],
+    pub shader_paths: [&'static str; 3],
     pub checkpoints: &'a [Record],
     pub control_contract: &'static str,
 }

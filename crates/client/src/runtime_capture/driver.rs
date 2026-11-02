@@ -1229,12 +1229,10 @@ fn verify_frame(world: &mut World, session: &mut Session) -> Result<Option<Recor
         return Err(failure("combat view does not contain opposing sides"));
     }
     let required_mask = if matches!(goal.ownership_view(), super::ownership::View::Effect(_)) {
-        2 | 8
+        2 | 4
     } else if lab_goal {
         2
     } else if goal == Goal::Combat {
-        1 | 2 | 8
-    } else if matches!(goal, Goal::RampEntry | Goal::RampExit) {
         1 | 2 | 4
     } else {
         1 | 2

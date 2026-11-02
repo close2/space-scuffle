@@ -1,7 +1,7 @@
 //! Exact production shader-handle readiness evidence from the actual render world.
 //!
 //! Atomic counters avoid per-frame allocations and do not enter simulation state.
-//! An unrelated UI pipeline never satisfies a terrain, bubble, mist or combat gate.
+//! An unrelated UI pipeline never satisfies a terrain, bubble or combat gate.
 
 use bevy::prelude::*;
 use bevy::render::render_resource::{
@@ -12,17 +12,16 @@ use std::sync::{
     Arc,
 };
 
-pub(super) const SHADERS: [&str; 4] = [
+pub(super) const SHADERS: [&str; 3] = [
     "shaders/terrain.wgsl",
     "shaders/bubble_dome.wgsl",
-    "shaders/mist_wake.wgsl",
     "shaders/combat_fx.wgsl",
 ];
 
 #[derive(Resource, Clone)]
 pub(super) struct PipelineEvidence {
-    handles: [Handle<Shader>; 4],
-    counts: Arc<[AtomicUsize; 4]>,
+    handles: [Handle<Shader>; 3],
+    counts: Arc<[AtomicUsize; 3]>,
     failed: Arc<AtomicBool>,
     pending: Arc<AtomicBool>,
 }
@@ -36,7 +35,7 @@ impl PipelineEvidence {
             pending: Arc::default(),
         }
     }
-    pub(super) fn counts(&self) -> [usize; 4] {
+    pub(super) fn counts(&self) -> [usize; 3] {
         std::array::from_fn(|index| self.counts[index].load(Ordering::Acquire))
     }
     pub(super) fn report_failure(&self, message: &str) {
@@ -59,7 +58,7 @@ impl PipelineEvidence {
 }
 
 pub(super) fn inspect(cache: Res<'_, PipelineCache>, evidence: Res<'_, PipelineEvidence>) {
-    let mut counts = [0; 4];
+    let mut counts = [0; 3];
     let mut pending = cache.waiting_pipelines().next().is_some();
     for pipeline in cache.pipelines() {
         match &pipeline.state {

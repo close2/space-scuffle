@@ -40,28 +40,17 @@ pub(super) fn corners(bounds: &Aabb, global: &GlobalTransform) -> Result<[Vec3; 
     Ok(points)
 }
 
-/// Uses actual current Lab actors and visible wake geometry; absence is pending.
+/// Uses actual current Lab actors; absence is pending.
 pub(super) fn prepare(world: &mut World) -> Result<Option<Stage>, CaptureError> {
     let mut query = world.query_filtered::<(
-        Option<&crate::LabPreviewBubble>,
         Option<&crate::BubbleInstance>,
         Option<&Aabb>,
         Option<&GlobalTransform>,
-        Option<&ViewVisibility>,
-    ), Or<(With<crate::LabPreviewBubble>, With<crate::mist::MistRibbon>)>>(
-    );
+    ), With<crate::LabPreviewBubble>>();
     let mut foremost: Option<f32> = None;
     let mut selected = None;
     let mut actors = 0;
-    for (lab, bubble, bounds, global, visible) in query.iter(world) {
-        if lab.is_none() {
-            let Some(visible) = visible else {
-                return Ok(None);
-            };
-            if !visible.get() {
-                continue;
-            }
-        }
+    for (bubble, bounds, global) in query.iter(world) {
         let (Some(bounds), Some(global)) = (bounds, global) else {
             return Ok(None);
         };
@@ -69,28 +58,26 @@ pub(super) fn prepare(world: &mut World) -> Result<Option<Stage>, CaptureError> 
         if bounds.half_extents.max_element() <= 0.0 {
             return Ok(None);
         }
-        if lab.is_some() {
-            let Some(bubble) = bubble else {
-                return Err(failure("Lab staging actor lacks snapshot"));
-            };
-            if !Vec3::from_array(bubble.0.world_pos).is_finite()
-                || !bubble.0.radius.is_finite()
-                || bubble.0.radius <= 0.0
-            {
-                return Err(failure("nonfinite or nonpositive Lab staging snapshot"));
-            }
-            if global
-                .translation()
-                .xz()
-                .distance(Vec2::new(bubble.0.world_pos[0], bubble.0.world_pos[1]))
-                > 0.0001
-            {
-                return Ok(None);
-            }
-            actors += 1;
-            if bubble.0.selected {
-                selected = Some(&bubble.0);
-            }
+        let Some(bubble) = bubble else {
+            return Err(failure("Lab staging actor lacks snapshot"));
+        };
+        if !Vec3::from_array(bubble.0.world_pos).is_finite()
+            || !bubble.0.radius.is_finite()
+            || bubble.0.radius <= 0.0
+        {
+            return Err(failure("nonfinite or nonpositive Lab staging snapshot"));
+        }
+        if global
+            .translation()
+            .xz()
+            .distance(Vec2::new(bubble.0.world_pos[0], bubble.0.world_pos[1]))
+            > 0.0001
+        {
+            return Ok(None);
+        }
+        actors += 1;
+        if bubble.0.selected {
+            selected = Some(&bubble.0);
         }
         for point in points {
             foremost = Some(foremost.map_or(point.z, |value| value.max(point.z)));
@@ -143,14 +130,5 @@ mod tests {
             half_extents: Vec3::splat(f32::MAX).into(),
         };
         assert!(corners(&bounds, &GlobalTransform::from_scale(Vec3::splat(2.0))).is_err());
-    }
-    #[test]
-    fn missing_ribbon_visibility_or_bounds_remains_pending() -> Result<(), CaptureError> {
-        let mut world = World::new();
-        let entity = world.spawn(crate::mist::MistRibbon).id();
-        assert!(prepare(&mut world)?.is_none());
-        world.entity_mut(entity).insert(ViewVisibility::default());
-        assert!(prepare(&mut world)?.is_none());
-        Ok(())
     }
 }

@@ -44,7 +44,6 @@ pub(super) fn frame(epoch: u64) -> EpochEvidence {
         }],
         ready: true,
         pending: vec![],
-        mist: None,
     }
 }
 
