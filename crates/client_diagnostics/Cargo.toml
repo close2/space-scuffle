@@ -1,0 +1,46 @@
+[package]
+name = "client_diagnostics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "GPU capture, render-order audit and native input probes for the Space Scuffle client"
+
+[[bin]]
+name = "battle_capture"
+path = "src/bin/battle_capture.rs"
+
+[[bin]]
+name = "native_input_probe"
+path = "src/bin/native_input_probe.rs"
+
+[[bin]]
+name = "palette_fixture"
+path = "src/bin/palette_fixture.rs"
+
+[[bin]]
+name = "renderer_shutdown_probe"
+path = "src/bin/renderer_shutdown_probe.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+client.workspace = true
+bevy.workspace = true
+bevy_egui.workspace = true
+sim_types.workspace = true
+sim_map.workspace = true
+sim_core.workspace = true
+asset_baker.workspace = true
+clap = { version = "4.5", features = ["derive"] }
+ron.workspace = true
+serde.workspace = true
+image.workspace = true
+thiserror.workspace = true
+blake3 = "1.8.7"
+bytemuck = { version = "1.25", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3.17"

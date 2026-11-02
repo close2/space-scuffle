@@ -1823,12 +1823,32 @@ dependencies = [
  "asset_baker",
  "bevy",
  "bevy_egui",
- "blake3",
  "bytemuck",
  "clap",
  "image",
  "naga",
  "naga_oil",
+ "ron",
+ "serde",
+ "sim_core",
+ "sim_map",
+ "sim_types",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "client_diagnostics"
+version = "0.1.0"
+dependencies = [
+ "asset_baker",
+ "bevy",
+ "bevy_egui",
+ "blake3",
+ "bytemuck",
+ "clap",
+ "client",
+ "image",
  "ron",
  "serde",
  "sim_core",

@@ -7,6 +7,7 @@ members = [
     "crates/sim_core",
     "crates/asset_baker",
     "crates/client",
+    "crates/client_diagnostics",
 ]
 
 [workspace.package]
@@ -77,6 +78,7 @@ sim_types = { path = "crates/sim_types" }
 sim_map = { path = "crates/sim_map" }
 sim_core = { path = "crates/sim_core" }
 asset_baker = { path = "crates/asset_baker" }
+client = { path = "crates/client" }
 
 # Reviewed Vulkan compiler corrections; provenance and regression commands live in third_party/README.md.
 [patch.crates-io]

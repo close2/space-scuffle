@@ -311,31 +311,6 @@ fn unsupported_event_owner_has_visible_failure_and_nonzero_exit() -> TestResult 
 }
 
 #[test]
-fn sparse_native_fixture_roundtrips_all_nonownership_data_and_rejects_reuse() -> TestResult {
-    let temporary = tempfile::tempdir()?;
-    let output = temporary.path().join("fresh");
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
-    let fixture = client::player_presentation::fixture::prepare(&root, &output)?;
-    let loaded = BattleDefinition::load(&root, &fixture.scenario)?;
-    assert_eq!(
-        loaded
-            .scenario
-            .players
-            .iter()
-            .map(|p| p.player_slot)
-            .collect::<Vec<_>>(),
-        vec![2, 7]
-    );
-    let world = loaded.instantiate()?;
-    assert!(world
-        .entities
-        .values()
-        .all(|actor| [PlayerId(2), PlayerId(7)].contains(&actor.owner)));
-    assert!(client::player_presentation::fixture::prepare(&root, &output).is_err());
-    Ok(())
-}
-
-#[test]
 fn removed_simulation_source_still_supplies_every_shatter_child_owner() -> TestResult {
     let definition = definition()?;
     let mut simulation = definition.instantiate()?;
