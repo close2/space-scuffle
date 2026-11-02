@@ -41,7 +41,7 @@ pub const FLAG_INNER_WARP: u32 = 1 << 4;
 pub const FLAG_CRACKS: u32 = 1 << 5;
 /// Feature bitflag: CRT scanlines & chromatic aberration jitter.
 pub const FLAG_CRT_GLITCH: u32 = 1 << 6;
-/// Feature bitflag: Speed boost / stimpack hyper wake.
+/// Feature bitflag: Pulsing rim arc trailing a speed-boosted unit.
 pub const FLAG_SPEED_BOOSTED: u32 = 1 << 7;
 /// Feature bitflag: Direct-on-sphere holographic facing stripe & nose chevron.
 pub const FLAG_FACING_STRIPE: u32 = 1 << 8;

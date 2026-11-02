@@ -212,39 +212,17 @@ fn test_shader_wgsl_syntax_and_uniform_alignment() {
     assert_eq!(align_of::<BubbleUniformGpu>(), 16);
 }
 
-/// Returns the flags that the real bubble fragment shader declares but never reads.
-fn bubble_flags_unread_by_fragment() -> Vec<&'static str> {
+/// A Rust flag that no fragment code reads is a material option with no visual effect.
+#[test]
+fn test_bubble_feature_flags_all_drive_the_fragment_shader() {
     let shader = production_module("bubble_dome.wgsl");
     let fragment = shader.entry_point(ShaderStage::Fragment, "fragment");
     let read = shader.constants_read_by(fragment);
-    BUBBLE_FLAGS
+    let unread: Vec<&str> = BUBBLE_FLAGS
         .iter()
         .map(|(name, _)| *name)
         .filter(|name| !read.contains(*name))
-        .collect()
-}
-
-/// Flags already known to have no effect, tracked by the ignored test below.
-const KNOWN_UNREAD_BUBBLE_FLAGS: [&str; 2] = ["FLAG_INNER_WARP", "FLAG_SPEED_BOOSTED"];
-
-/// Keeps the working flags covered while the known gap stays open.
-#[test]
-fn test_bubble_feature_flags_have_no_new_unread_flags() {
-    let unexpected: Vec<&str> = bubble_flags_unread_by_fragment()
-        .into_iter()
-        .filter(|name| !KNOWN_UNREAD_BUBBLE_FLAGS.contains(name))
         .collect();
-    assert!(
-        unexpected.is_empty(),
-        "bubble_dome.wgsl stopped reading: {unexpected:?}"
-    );
-}
-
-/// A Rust flag that no fragment code reads is a material option with no visual effect.
-#[test]
-#[ignore = "remediation Q-10: FLAG_INNER_WARP and FLAG_SPEED_BOOSTED are declared in bubble_dome.wgsl but never read; the fix is a production change"]
-fn test_bubble_feature_flags_all_drive_the_fragment_shader() {
-    let unread = bubble_flags_unread_by_fragment();
     assert!(
         unread.is_empty(),
         "flags set from Rust but never read by bubble_dome.wgsl: {unread:?}"

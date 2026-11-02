@@ -148,7 +148,7 @@ pub struct LabState {
     pub anim_state: AnimState,
     /// Active cloaking shimmer flag.
     pub cloaked: bool,
-    /// Active stimpack / hyper-wake particle flag.
+    /// Active stimpack flag, shown as a pulsing rim on the selected actor.
     pub speed_boosted: bool,
     /// Direction of incoming damage in degrees.
     pub hit_angle_deg: f32,
@@ -520,7 +520,7 @@ fn render_visual_lab_tab(
 
     ui.horizontal_wrapped(|ui| {
         ui.checkbox(&mut state.cloaked, "Cloaked (Refraction)");
-        ui.checkbox(&mut state.speed_boosted, "Stimpack (Hyper Mist)");
+        ui.checkbox(&mut state.speed_boosted, "Stimpack (Boost Rim)");
     });
 
     ui.separator();
