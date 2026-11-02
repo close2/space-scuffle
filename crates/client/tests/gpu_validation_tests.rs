@@ -144,6 +144,36 @@ fn allowlist_entries_carry_a_reason() {
     }
 }
 
+/// The notice is tolerated by its exact text, so losing a different extension still fails.
+#[test]
+fn only_the_listed_missing_extension_is_tolerated() {
+    let missing = |extension: &str| {
+        ValidationReport::parse(&format!(
+            "{ACTIVE_HEADER}2026-11-02T22:54:28.319598Z  WARN wgpu_hal::vulkan::instance: \
+             Unable to find extension: {extension}\n"
+        ))
+        .violations(VALIDATION_ALLOWLIST)
+    };
+    assert_eq!(missing("VK_EXT_swapchain_colorspace"), Vec::<String>::new());
+    let violations = missing("VK_EXT_debug_utils");
+    assert_eq!(violations.len(), 1);
+    assert!(violations[0].contains("VK_EXT_debug_utils"));
+}
+
+/// Tolerating the notice must not hide a real error reported in the same run.
+#[test]
+fn listed_notice_does_not_hide_a_real_validation_error() {
+    let stderr = format!(
+        "{ACTIVE_HEADER}2026-11-02T22:54:28.319598Z  WARN wgpu_hal::vulkan::instance: \
+         Unable to find extension: VK_EXT_swapchain_colorspace\n\
+         2026-11-02T22:54:29.000000Z ERROR wgpu_hal::vulkan::instance: \
+         VALIDATION [VUID-vkCmdDraw-None-08600 (0x4768cf39)]\n\tvkCmdDraw(): descriptor not bound\n"
+    );
+    let violations = ValidationReport::parse(&stderr).violations(VALIDATION_ALLOWLIST);
+    assert_eq!(violations.len(), 1);
+    assert!(violations[0].contains("VUID-vkCmdDraw-None-08600"));
+}
+
 /// Positive control: the gate must fail on findings the real layer emits in a real run.
 ///
 /// Best-practices checks are off in normal runs and are known to report on Bevy's render passes,

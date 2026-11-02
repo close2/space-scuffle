@@ -69,10 +69,16 @@ pub struct AllowedValidationId {
 
 /// Validation IDs that do not fail a run.
 ///
-/// This list is empty because no ID occurs in the client lab, battle and terrain preview runs on
-/// lavapipe with `vulkan-validation-layers` 1.4.363. Add an entry only for a defect shown to be
-/// outside this project, and name the upstream report in `reason`.
-pub const VALIDATION_ALLOWLIST: &[AllowedValidationId] = &[];
+/// Add an entry only for a message shown to be outside this project: a defect with a named upstream
+/// report, or a capability notice from the host. Matching is exact, so a listed line never hides
+/// a different finding.
+pub const VALIDATION_ALLOWLIST: &[AllowedValidationId] = &[AllowedValidationId {
+    id: "Unable to find extension: VK_EXT_swapchain_colorspace",
+    reason: "Not a validation finding. `desired_extensions` in wgpu-hal 23.0.1 \
+             (src/vulkan/instance.rs) logs this for an optional instance extension the driver does \
+             not offer, drops the extension and continues. Lavapipe in Mesa 22.3.6 does not offer \
+             it. The extension only adds wide-gamut swapchain colour spaces.",
+}];
 
 /// Severity of a validation message, as mapped by the `wgpu_hal` messenger callback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
