@@ -16,7 +16,6 @@ use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use sim_core::catalog::UnitCatalog;
-use sim_core::world::SimWorld;
 use sim_types::commands::UnitOrder;
 use sim_types::enums::{AnimState, AttributeFlags, Faction};
 use sim_types::ids::PlayerId;
@@ -178,8 +177,6 @@ pub struct LabState {
     /// Active selected hero index within the 4-hero lineup (0..4).
     pub selected_hero_index: usize,
     // --- Tab 2: Live Combat Sandbox State ---
-    /// Authoritative deterministic simulation world.
-    pub sim_world: Option<SimWorld>,
     /// Explicit request to recreate the selected declarative battle session.
     pub battle_reset_requested: bool,
     /// Visible diagnostic from a failed battle replacement; the old session is retained.
@@ -238,7 +235,6 @@ impl Default for LabState {
             opt_focal_lens: true,
             opt_selection_brackets: true,
             selected_hero_index: 0,
-            sim_world: None,
             battle_reset_requested: false,
             battle_failure: None,
             battle_start_positions: std::collections::BTreeMap::new(),
@@ -577,11 +573,10 @@ fn render_live_battle_tab(
         }
         ui.add_space(4.0);
     }
-    if let Some(world) = &state.sim_world {
+    if let Some(published) = session.published() {
         ui.label(format!(
             "Tick {} · {} active entities",
-            world.current_tick,
-            world.entities.len()
+            published.tick, published.entity_count
         ));
     } else {
         ui.label("Preparing the selected battle…");
@@ -665,12 +660,7 @@ fn render_live_battle_tab(
                     .target
                     .and_then(|owner| state.battle_start_positions.get(&owner).copied())
                 {
-                    issue_sandbox_command(
-                        state,
-                        &mut session.commands,
-                        player.owner,
-                        UnitOrder::AttackMove { target },
-                    );
+                    issue_sandbox_command(session, player.owner, UnitOrder::AttackMove { target });
                 }
             }
             if ui
@@ -678,32 +668,17 @@ fn render_live_battle_tab(
                 .clicked()
             {
                 if let Some(target) = state.battle_start_positions.get(&player.owner).copied() {
-                    issue_sandbox_command(
-                        state,
-                        &mut session.commands,
-                        player.owner,
-                        UnitOrder::Move { target },
-                    );
+                    issue_sandbox_command(session, player.owner, UnitOrder::Move { target });
                 }
             }
             if ui
                 .add_enabled(player.mobile > 0, egui::Button::new("Hold position"))
                 .clicked()
             {
-                issue_sandbox_command(
-                    state,
-                    &mut session.commands,
-                    player.owner,
-                    UnitOrder::HoldPosition,
-                );
+                issue_sandbox_command(session, player.owner, UnitOrder::HoldPosition);
             }
             if player.overclock > 0 && ui.button("Overclock").clicked() {
-                issue_sandbox_command(
-                    state,
-                    &mut session.commands,
-                    player.owner,
-                    UnitOrder::UseStim,
-                );
+                issue_sandbox_command(session, player.owner, UnitOrder::UseStim);
             }
         });
     }
@@ -726,14 +701,12 @@ fn render_live_battle_tab(
 }
 
 fn issue_sandbox_command(
-    state: &LabState,
-    queue: &mut crate::battle_pipeline::commands::BattleCommandQueue,
+    session: &mut crate::battle_pipeline::session::BattleSession,
     player_id: PlayerId,
     order: UnitOrder,
 ) {
-    let result = state
-        .sim_world
-        .as_ref()
+    let (world, queue) = session.world_and_commands();
+    let result = world
         .ok_or(crate::battle_pipeline::commands::SubmissionError::NotReady)
         .and_then(|world| queue.submit_roster_order(world, player_id, order, false));
     if let Err(error) = result {

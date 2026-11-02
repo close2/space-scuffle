@@ -125,7 +125,7 @@ pub fn manage_battle_scene(
     mut session: ResMut<'_, crate::battle_pipeline::session::BattleSession>,
 ) {
     if lab.current_tab != LabTab::LiveBattle
-        || ((lab.sim_world.is_some() || lab.battle_failure.is_some())
+        || ((session.world().is_some() || lab.battle_failure.is_some())
             && !lab.battle_reset_requested)
     {
         return;
@@ -283,9 +283,8 @@ pub fn manage_battle_scene(
     }
     lab.battle_start_positions = approaches;
     lab.last_checksum_hex.clear();
-    *session = prepared_session;
+    *session = prepared_session.with_world(world);
     lab.battle_failure = None;
-    lab.sim_world = Some(world);
     commands
         .entity(new_root)
         .insert(super::environment::CommittedBattleEnvironment::from_theme(
@@ -347,9 +346,8 @@ fn spawn_map_object(
         .set_parent(root);
 }
 
-/// Copies dynamic map-object state at the snapshot boundary and updates billboards.
+/// Applies the session's published map state and updates billboards.
 pub fn update_map_presentation(
-    lab: Res<'_, LabState>,
     mut presentation: Option<ResMut<'_, MapPresentation>>,
     session: Res<'_, crate::battle_pipeline::session::BattleSession>,
     mut owners: crate::player_presentation::PresentationContext<'_>,
@@ -358,22 +356,26 @@ pub fn update_map_presentation(
     cameras: Query<'_, '_, &GlobalTransform, With<Camera3d>>,
     mut objects: MapObjectQuery<'_, '_>,
 ) {
-    let (Some(world), Some(presentation)) = (lab.sim_world.as_ref(), presentation.as_mut()) else {
+    let (Some(published), Some(presentation)) = (session.published(), presentation.as_mut()) else {
         return;
     };
-    if presentation.tick != Some(world.current_tick) {
-        for (record, node) in presentation.objects.iter_mut().zip(world.map.resources()) {
-            record.visible = node.remaining > 0;
-        }
-        for (record, tower) in presentation
+    if presentation.tick != Some(published.tick) {
+        for (record, present) in presentation
             .objects
             .iter_mut()
-            .skip(world.map.resources().len())
-            .zip(world.map.watchtowers())
+            .zip(&published.resources_present)
         {
-            record.owner = tower.controlling_player;
+            record.visible = *present;
         }
-        presentation.tick = Some(world.current_tick);
+        for (record, owner) in presentation
+            .objects
+            .iter_mut()
+            .skip(published.resources_present.len())
+            .zip(&published.watchtower_owners)
+        {
+            record.owner = *owner;
+        }
+        presentation.tick = Some(published.tick);
     }
     let Ok(camera) = cameras.get_single() else {
         return;
@@ -382,11 +384,11 @@ pub fn update_map_presentation(
         let Some(record) = presentation.objects.get(object.index) else {
             continue;
         };
-        *visibility = if record.visible {
+        visibility.set_if_neq(if record.visible {
             Visibility::Inherited
         } else {
             Visibility::Hidden
-        };
+        });
         let tint = if record.ownership_tint {
             match owners
                 .palette
@@ -401,13 +403,20 @@ pub fn update_map_presentation(
         } else {
             Color::WHITE
         };
-        if let Some(material) = materials.get_mut(&material_handle.0) {
-            if material.base_color != tint {
+        // `get_mut` flags the asset modified, so an unchanged tint must stay on `get`.
+        let tint_changed = materials
+            .get(&material_handle.0)
+            .is_some_and(|material| material.base_color != tint);
+        if tint_changed {
+            if let Some(material) = materials.get_mut(&material_handle.0) {
                 material.base_color = tint;
             }
         }
-        transform.translation = record.position;
         let facing = camera.translation() - record.position;
-        transform.rotation = Quat::from_rotation_y(facing.x.atan2(facing.z));
+        transform.set_if_neq(Transform {
+            translation: record.position,
+            rotation: Quat::from_rotation_y(facing.x.atan2(facing.z)),
+            ..*transform
+        });
     }
 }

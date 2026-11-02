@@ -1,4 +1,5 @@
-//! Owns one committed client's command/timing/presentation lifetime. Candidate
+//! Owns one committed battle: its authoritative world and its command, timing and
+//! presentation lifetime. Candidate
 //! sessions are prepared before scene replacement; failed candidates leave the
 //! existing generation, metadata, commands and published evidence intact.
 
@@ -62,9 +63,52 @@ impl CommittedBattleMetadata {
     }
 }
 
+/// Authoritative state copied for presentation at the end of each executed tick.
+///
+/// Presentation reads this record instead of the world, which keeps fixed-point simulation state
+/// behind the session boundary.
+///
+// PERFORMANCE RATIONALE:
+// Why: Map objects are read every frame but only change on a simulation tick.
+// What: One record whose buffers are refilled in place when the tick advances.
+// Trade-off: A small retained copy in exchange for no per-frame allocation or world access.
+#[derive(Debug, Clone, Default)]
+pub struct PublishedBattleState {
+    /// Simulation tick these values describe.
+    pub tick: u32,
+    /// Number of entities in the authoritative world, alive or awaiting removal.
+    pub entity_count: usize,
+    /// Whether each map resource still has anything to harvest, in map resource order.
+    pub resources_present: Vec<bool>,
+    /// Controlling player of each watchtower, in map watchtower order.
+    pub watchtower_owners: Vec<Option<PlayerId>>,
+}
+
+impl PublishedBattleState {
+    fn refresh(&mut self, world: &SimWorld) {
+        self.tick = world.current_tick;
+        self.entity_count = world.entities.len();
+        self.resources_present.clear();
+        self.resources_present
+            .extend(world.map.resources().iter().map(|node| node.remaining > 0));
+        self.watchtower_owners.clear();
+        self.watchtower_owners.extend(
+            world
+                .map
+                .watchtowers()
+                .iter()
+                .map(|tower| tower.controlling_player),
+        );
+    }
+}
+
 /// Persistent storage for a single successful battle generation.
 #[derive(Resource)]
 pub struct BattleSession {
+    /// Authoritative simulation of this generation; absent until a battle is committed.
+    world: Option<SimWorld>,
+    /// Presentation copy of `world`, present exactly when `world` is.
+    published: Option<PublishedBattleState>,
     /// Captured intent; only the sole tick driver dequeues it.
     pub commands: BattleCommandQueue,
     /// Checked wall-time scheduling debt and slowdown diagnostics.
@@ -94,6 +138,8 @@ pub struct BattleSession {
 impl Default for BattleSession {
     fn default() -> Self {
         Self {
+            world: None,
+            published: None,
             commands: BattleCommandQueue::default(),
             clock: BattleTickClock::default(),
             frames: BattleFrameState::default(),
@@ -145,6 +191,83 @@ impl BattleSession {
         world.write_render_snapshot(session.frames.initialize(generation)?);
         session.frames.finish_initialization()?;
         Ok(session)
+    }
+
+    /// Hands the candidate world to this session and publishes its first presentation state.
+    #[must_use]
+    pub fn with_world(mut self, world: SimWorld) -> Self {
+        let mut published = PublishedBattleState::default();
+        published.refresh(&world);
+        self.published = Some(published);
+        self.world = Some(world);
+        self
+    }
+
+    /// Drops the committed world, which leaves the session with nothing to present.
+    pub fn release_world(&mut self) {
+        self.world = None;
+        self.published = None;
+    }
+
+    /// Authoritative world of this generation, if one is committed.
+    #[must_use]
+    pub fn world(&self) -> Option<&SimWorld> {
+        self.world.as_ref()
+    }
+
+    /// Mutable authoritative world, for external control between ticks.
+    ///
+    /// Presentation keeps the previous values until the next tick or [`Self::publish`].
+    pub fn world_mut(&mut self) -> Option<&mut SimWorld> {
+        self.world.as_mut()
+    }
+
+    /// Splits the session into the world and the queue that admits commands against it.
+    pub fn world_and_commands(&mut self) -> (Option<&SimWorld>, &mut BattleCommandQueue) {
+        (self.world.as_ref(), &mut self.commands)
+    }
+
+    /// Copies the committed world for presentation now, without waiting for a tick.
+    pub fn publish(&mut self) {
+        if let (Some(world), Some(published)) = (&self.world, &mut self.published) {
+            published.refresh(world);
+        }
+    }
+
+    /// Latest presentation copy of the world, if one is committed.
+    #[must_use]
+    pub fn published(&self) -> Option<&PublishedBattleState> {
+        self.published.as_ref()
+    }
+
+    /// Advances the committed world and republishes it when a tick executed.
+    ///
+    /// Does nothing without a committed world.
+    ///
+    /// # Errors
+    /// Propagates [`Self::advance`] failures. The world stays in the session.
+    pub fn advance_committed(
+        &mut self,
+        elapsed: std::time::Duration,
+        active: bool,
+        paused: bool,
+        speed: u32,
+        validate_media: impl FnMut(
+            &sim_types::RenderSnapshot,
+        ) -> Result<(), crate::media::ClientMediaError>,
+    ) -> Result<(), PipelineError> {
+        // The world leaves `self` only because `advance` borrows both, and it always returns.
+        let Some(mut world) = self.world.take() else {
+            return Ok(());
+        };
+        let result = self.advance(&mut world, elapsed, active, paused, speed, validate_media);
+        if let Some(published) = &mut self.published {
+            if published.tick != world.current_tick {
+                published.refresh(&world);
+            }
+        }
+        self.world = Some(world);
+        result
     }
 
     /// Controls are actionable only after the committed world's media is validated.

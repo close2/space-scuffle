@@ -65,7 +65,7 @@ pub fn refresh_battle_presentation(
     mut lab: ResMut<'_, crate::LabState>,
     mut exit: EventWriter<'_, AppExit>,
 ) {
-    let Some(world) = lab.sim_world.as_ref() else {
+    let Some(world) = session.world() else {
         return;
     };
     let Some(generation) = session.commands.generation() else {

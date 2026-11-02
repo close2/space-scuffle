@@ -340,10 +340,10 @@ fn control_inner(world: &mut World, session: &mut Session) -> Result<(), Capture
                 session.stage = Stage::Settle;
             }
             Goal::CargoBefore | Goal::CargoLoaded | Goal::CargoUnloaded => {
-                let mut lab = world.resource_mut::<LabState>();
-                let simulation = lab
-                    .sim_world
-                    .as_mut()
+                let mut pipeline =
+                    world.resource_mut::<client::battle_pipeline::session::BattleSession>();
+                let simulation = pipeline
+                    .world_mut()
                     .ok_or_else(|| failure("transport simulation missing"))?;
                 if goal == Goal::CargoBefore {
                     let spec = session
@@ -373,7 +373,7 @@ fn control_inner(world: &mut World, session: &mut Session) -> Result<(), Capture
                 if goal == Goal::CargoBefore {
                     session.stage = Stage::Settle;
                 } else {
-                    lab.battle_paused = false;
+                    world.resource_mut::<LabState>().battle_paused = false;
                     *world.resource_mut::<TimeUpdateStrategy>() =
                         TimeUpdateStrategy::ManualDuration(Duration::from_millis(40));
                     session.stage = Stage::Advancing;
@@ -390,9 +390,8 @@ fn control_inner(world: &mut World, session: &mut Session) -> Result<(), Capture
             Goal::Lab => {
                 session.saved_camera = Some(camera(world)?.0);
                 session.saved_checksum = world
-                    .resource::<LabState>()
-                    .sim_world
-                    .as_ref()
+                    .resource::<client::battle_pipeline::session::BattleSession>()
+                    .world()
                     .map(sim_core::SimWorld::compute_checksum);
                 world.resource_mut::<LabState>().current_tab = LabTab::VisualLab;
                 session.stage = Stage::Settle;
@@ -402,10 +401,9 @@ fn control_inner(world: &mut World, session: &mut Session) -> Result<(), Capture
                 session.stage = Stage::Settle;
             }
             Goal::RampEntry | Goal::RampExit | Goal::Combat => {
-                let lab = world.resource::<LabState>();
-                let simulation = lab
-                    .sim_world
-                    .as_ref()
+                let pipeline = world.resource::<client::battle_pipeline::session::BattleSession>();
+                let simulation = pipeline
+                    .world()
                     .ok_or_else(|| failure("battle disappeared"))?;
                 session.start_tick = simulation.current_tick;
                 session.last_tick = simulation.current_tick;
@@ -452,10 +450,9 @@ fn control_inner(world: &mut World, session: &mut Session) -> Result<(), Capture
 
 fn simulation_tick(world: &World) -> Result<u32, CaptureError> {
     world
-        .get_resource::<LabState>()
+        .get_resource::<client::battle_pipeline::session::BattleSession>()
         .ok_or_else(|| failure("battle controls missing"))?
-        .sim_world
-        .as_ref()
+        .world()
         .map(|w| w.current_tick)
         .ok_or_else(|| failure("battle simulation missing"))
 }
@@ -560,7 +557,10 @@ fn observe_inner(world: &mut World, session: &mut Session) -> Result<(), Capture
     if let Some(error) = &lab.battle_failure {
         return Err(failure(error.clone()));
     }
-    let Some(simulation) = lab.sim_world.as_ref() else {
+    let Some(simulation) = world
+        .resource::<client::battle_pipeline::session::BattleSession>()
+        .world()
+    else {
         return Ok(());
     };
     if !simulation.diagnostics().is_empty() {
@@ -615,9 +615,8 @@ fn observe_inner(world: &mut World, session: &mut Session) -> Result<(), Capture
         };
         update_prior(
             world
-                .resource::<LabState>()
-                .sim_world
-                .as_ref()
+                .resource::<client::battle_pipeline::session::BattleSession>()
+                .world()
                 .ok_or_else(|| failure("battle disappeared"))?,
             &mut session.prior,
         )?;
@@ -878,9 +877,8 @@ fn correlated_combat(
         .combat_proofs
         .retain(|proof| proof.tick > pipeline.frames.presented().tick.0);
     let simulation = world
-        .resource::<LabState>()
-        .sim_world
-        .as_ref()
+        .resource::<client::battle_pipeline::session::BattleSession>()
+        .world()
         .ok_or_else(|| failure("battle disappeared"))?;
     let snapshot = pipeline.frames.current();
     if snapshot.tick.0 != simulation.current_tick {
@@ -957,10 +955,9 @@ fn displayed_contact(
 
 fn verify_frame(world: &mut World, session: &mut Session) -> Result<Option<Record>, CaptureError> {
     let goal = session.goal();
-    let lab = world.resource::<LabState>();
-    let simulation = lab
-        .sim_world
-        .as_ref()
+    let pipeline = world.resource::<client::battle_pipeline::session::BattleSession>();
+    let simulation = pipeline
+        .world()
         .ok_or_else(|| failure("battle missing during capture"))?;
     let tick = simulation.current_tick;
     let checksum = simulation.compute_checksum();
@@ -995,7 +992,7 @@ fn verify_frame(world: &mut World, session: &mut Session) -> Result<Option<Recor
     } else {
         LabTab::LiveBattle
     };
-    if lab.current_tab != expected_tab {
+    if world.resource::<LabState>().current_tab != expected_tab {
         return Err(failure("production tab transition did not occur"));
     }
     let map = world.resource::<client::terrain::TerrainState>();
@@ -1366,7 +1363,7 @@ fn validate_callback_token(
 fn readback(
     trigger: Trigger<'_, ScreenshotCaptured>,
     mut session: ResMut<'_, Session>,
-    lab: Res<'_, LabState>,
+    pipeline: Res<'_, client::battle_pipeline::session::BattleSession>,
     visual: super::ownership::ReadbackEvidence<'_, '_>,
     audit: Option<Res<'_, crate::shell_order_audit::AuditBridge>>,
     mut exit: EventWriter<'_, AppExit>,
@@ -1377,9 +1374,8 @@ fn readback(
             .take()
             .ok_or_else(|| failure("unexpected screenshot callback"))?;
         validate_callback_token(session.stage, entity, trigger.entity())?;
-        if lab
-            .sim_world
-            .as_ref()
+        if pipeline
+            .world()
             .map(|world| (world.current_tick, world.compute_checksum()))
             != Some((record.tick, record.checksum))
         {
@@ -1582,10 +1578,10 @@ mod tests {
             session.index = if goal == Goal::CargoLoaded { 1 } else { 2 };
             session.stage = Stage::Apply;
             let mut world = World::new();
-            world.insert_resource(LabState {
-                sim_world: Some(simulation),
-                ..Default::default()
-            });
+            world.insert_resource(LabState::default());
+            world.insert_resource(
+                client::battle_pipeline::session::BattleSession::default().with_world(simulation),
+            );
             world.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
             world.init_resource::<Events<AppExit>>();
             let error = control_inner(&mut world, &mut session)

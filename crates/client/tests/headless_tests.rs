@@ -135,8 +135,6 @@ fn test_lab_state_transitions() {
 
     // Switch tab to Live Battle
     state.current_tab = LabTab::LiveBattle;
-    state.sim_world = Some(SimWorld::new_default_battle_sandbox());
-    assert!(state.sim_world.is_some());
 }
 
 #[test]

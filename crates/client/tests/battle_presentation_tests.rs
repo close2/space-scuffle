@@ -47,12 +47,9 @@ fn actual_rosters_sparse_owners_and_retained_labels_follow_the_session() -> Test
         client::battle_pipeline::session::CommittedBattleMetadata::from_definition(&definition)?,
     )?;
     let mut app = App::new();
-    app.insert_resource(session)
+    app.insert_resource(session.with_world(world))
         .insert_resource(definition)
-        .insert_resource(client::LabState {
-            sim_world: Some(world),
-            ..default()
-        })
+        .insert_resource(client::LabState { ..default() })
         .init_resource::<BattlePresentation>()
         .add_event::<AppExit>()
         .add_systems(Update, refresh_battle_presentation);
@@ -99,8 +96,10 @@ fn actual_rosters_sparse_owners_and_retained_labels_follow_the_session() -> Test
         );
         assert_eq!(entry.label, text);
     }
-    let mut lab = app.world_mut().resource_mut::<client::LabState>();
-    let world = lab.sim_world.as_mut().ok_or("world absent")?;
+    let mut session = app
+        .world_mut()
+        .resource_mut::<client::battle_pipeline::session::BattleSession>();
+    let world = session.world_mut().ok_or("world absent")?;
     let victim = *world.entities.keys().next().ok_or("empty roster")?;
     world.entities.get_mut(&victim).ok_or("victim absent")?.hp = sim_types::SimScalar::ZERO;
     world.reap_dead_and_emit_shatter();
@@ -147,12 +146,9 @@ fn alternate_real_loadout_changes_the_ui_roster_without_unit_constants() -> Test
         client::battle_pipeline::session::CommittedBattleMetadata::from_definition(&definition)?,
     )?;
     let mut app = App::new();
-    app.insert_resource(session)
+    app.insert_resource(session.with_world(world))
         .insert_resource(definition)
-        .insert_resource(client::LabState {
-            sim_world: Some(world),
-            ..default()
-        })
+        .insert_resource(client::LabState { ..default() })
         .init_resource::<BattlePresentation>()
         .add_event::<AppExit>()
         .add_systems(Update, refresh_battle_presentation);
@@ -168,9 +164,8 @@ fn alternate_real_loadout_changes_the_ui_roster_without_unit_constants() -> Test
     );
     let world = app
         .world()
-        .resource::<client::LabState>()
-        .sim_world
-        .as_ref()
+        .resource::<client::battle_pipeline::session::BattleSession>()
+        .world()
         .ok_or("world absent")?;
     for entry in &presentation.players[0].roster {
         assert_eq!(entry.name, world.catalog.get(entry.unit_type)?.display_name);
@@ -251,12 +246,9 @@ fn candidate_definition_changes_do_not_relabel_committed_generation() -> TestRes
         .map(|player| player.label.clone())
         .collect();
     let mut app = App::new();
-    app.insert_resource(session)
+    app.insert_resource(session.with_world(simulation))
         .insert_resource(definition)
-        .insert_resource(client::LabState {
-            sim_world: Some(simulation),
-            ..default()
-        })
+        .insert_resource(client::LabState { ..default() })
         .init_resource::<BattlePresentation>()
         .add_event::<AppExit>()
         .add_systems(Update, refresh_battle_presentation);

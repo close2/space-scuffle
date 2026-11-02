@@ -338,9 +338,8 @@ impl TransportState {
         pose: ([f32; 2], f32, [f32; 3]),
     ) -> Result<TransportProof, CaptureError> {
         let simulation = world
-            .resource::<client::LabState>()
-            .sim_world
-            .as_ref()
+            .resource::<client::battle_pipeline::session::BattleSession>()
+            .world()
             .ok_or_else(|| failure("transport world missing"))?;
         self.verify_simulation(simulation, goal)?;
         let passenger_raw = raw(simulation.entities[&self.passenger].position);
@@ -451,9 +450,8 @@ impl TransportState {
 
 fn project_position(world: &mut World, position: SimVec2) -> Result<[f32; 2], CaptureError> {
     let simulation = world
-        .resource::<client::LabState>()
-        .sim_world
-        .as_ref()
+        .resource::<client::battle_pipeline::session::BattleSession>()
+        .world()
         .ok_or_else(|| failure("transport world missing"))?;
     let height = simulation.map.terrain_altitude_at(position);
     let point = Vec3::new(position.x.to_f32(), height, position.y.to_f32());

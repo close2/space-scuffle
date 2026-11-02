@@ -201,7 +201,7 @@ fn record(
     let [ix, iy, iz] = actual.map_or([f32::NAN; 3], |(_, instance, _)| instance.0.world_pos);
     let (sequence, tick, index, player, accepted) =
         trace.last_outcome.unwrap_or((0, 0, 0, u8::MAX, false));
-    let world = lab.sim_world.as_ref();
+    let world = session.world();
     trace.frame += 1;
     let frame = trace.frame;
     let changes = trace.changes;

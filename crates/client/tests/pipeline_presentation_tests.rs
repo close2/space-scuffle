@@ -45,10 +45,9 @@ fn presentation_app() -> Result<App, Box<dyn std::error::Error>> {
     .init_resource::<client::player_presentation::PresentationStatus>()
     .insert_resource(root)
     .insert_resource(client::CatalogResource(definition.catalogs.units.clone()))
-    .insert_resource(session)
+    .insert_resource(session.with_world(simulation))
     .insert_resource(client::LabState {
         current_tab: client::LabTab::LiveBattle,
-        sim_world: Some(simulation),
         battle_paused: true,
         simulation_speed: 1,
         ..default()
@@ -114,9 +113,8 @@ fn warmed_paused_path_preserves_real_world_and_exact_render_pose() -> TestResult
     let mut app = presentation_app()?;
     let before = app
         .world()
-        .resource::<client::LabState>()
-        .sim_world
-        .as_ref()
+        .resource::<BattleSession>()
+        .world()
         .ok_or("world missing")?
         .compute_checksum();
     profiler_gate()?;
@@ -137,9 +135,8 @@ fn warmed_paused_path_preserves_real_world_and_exact_render_pose() -> TestResult
     );
     let world = app
         .world()
-        .resource::<client::LabState>()
-        .sim_world
-        .as_ref()
+        .resource::<BattleSession>()
+        .world()
         .ok_or("world missing")?;
     assert_eq!(world.current_tick, 0);
     assert_eq!(world.compute_checksum(), before);
@@ -268,9 +265,8 @@ fn moving_no_tick_frames_interpolate_and_real_death_changes_membership() -> Test
         .tick;
     let checksum = app
         .world()
-        .resource::<client::LabState>()
-        .sim_world
-        .as_ref()
+        .resource::<BattleSession>()
+        .world()
         .ok_or("world missing")?
         .compute_checksum();
     *app.world_mut()
@@ -283,9 +279,8 @@ fn moving_no_tick_frames_interpolate_and_real_death_changes_membership() -> Test
     assert_eq!(session.frames.current().tick, tick);
     assert_eq!(
         app.world()
-            .resource::<client::LabState>()
-            .sim_world
-            .as_ref()
+            .resource::<BattleSession>()
+            .world()
             .ok_or("world missing")?
             .compute_checksum(),
         checksum
@@ -301,8 +296,8 @@ fn moving_no_tick_frames_interpolate_and_real_death_changes_membership() -> Test
     );
     let victim = before.bubbles.first().ok_or("real roster empty")?.entity_id;
     {
-        let mut lab = app.world_mut().resource_mut::<client::LabState>();
-        let simulation = lab.sim_world.as_mut().ok_or("world missing")?;
+        let mut session = app.world_mut().resource_mut::<BattleSession>();
+        let simulation = session.world_mut().ok_or("world missing")?;
         simulation
             .entities
             .get_mut(&victim)

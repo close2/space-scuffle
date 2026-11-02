@@ -173,16 +173,16 @@ fn normal_live_game_retains_missing_png_error_and_later_close_fails() -> TestRes
         definition.catalogs.units.clone(),
         LabState {
             current_tab: LabTab::LiveBattle,
-            sim_world: Some(simulation),
             battle_paused: false,
             ..default()
         },
         policy.clone(),
     )?;
-    app.insert_resource(session).add_systems(
-        Update,
-        client::battle_pipeline::driver::advance_battle_ticks,
-    );
+    app.insert_resource(session.with_world(simulation))
+        .add_systems(
+            Update,
+            client::battle_pipeline::driver::advance_battle_ticks,
+        );
     app.update();
     assert!(
         !has_error_exit(&app),
@@ -201,7 +201,11 @@ fn normal_live_game_retains_missing_png_error_and_later_close_fails() -> TestRes
     assert!(lab.battle_paused);
     assert!(lab.battle_failure.is_some());
     assert_eq!(
-        lab.sim_world.as_ref().ok_or("retained world")?.current_tick,
+        app.world()
+            .resource::<client::battle_pipeline::session::BattleSession>()
+            .world()
+            .ok_or("retained world")?
+            .current_tick,
         0
     );
     app.world_mut().resource_mut::<LabState>().battle_failure = None;
@@ -211,9 +215,8 @@ fn normal_live_game_retains_missing_png_error_and_later_close_fails() -> TestRes
     assert!(app.world().resource::<LabState>().battle_paused);
     assert_eq!(
         app.world()
-            .resource::<LabState>()
-            .sim_world
-            .as_ref()
+            .resource::<client::battle_pipeline::session::BattleSession>()
+            .world()
             .ok_or("retained world")?
             .current_tick,
         0

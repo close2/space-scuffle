@@ -282,10 +282,9 @@ impl PlaytestEntry<'_> {
 
         *self.lab = LabState {
             current_tab: LabTab::LiveBattle,
-            sim_world: Some(world),
             ..default()
         };
-        *self.session = session;
+        *self.session = session.with_world(world);
         self.state.selected_unit_ids.clear();
         self.state.current_tick = 0;
         self.state.last_checksum = 0;
@@ -364,7 +363,6 @@ pub fn playtest_input_system(
     mut contexts: EguiContexts<'_, '_>,
     terrain_state: Option<Res<'_, TerrainState>>,
     mut playtest_state: ResMut<'_, PlaytestState>,
-    lab: Res<'_, LabState>,
     mut session: ResMut<'_, BattleSession>,
     bubble_query: Query<'_, '_, (&GlobalTransform, &BubbleInstance), With<LiveBattleBubble>>,
 ) {
@@ -432,7 +430,7 @@ pub fn playtest_input_system(
     if mouse_buttons.just_pressed(MouseButton::Right)
         && !playtest_state.selected_unit_ids.is_empty()
     {
-        let (Some(terrain), Some(world)) = (&terrain_state, lab.sim_world.as_ref()) else {
+        let Some(terrain) = &terrain_state else {
             return;
         };
         if let Some(hit) = pick_terrain(&terrain.map, ray_origin, ray_dir) {
@@ -451,8 +449,12 @@ pub fn playtest_input_system(
                 order,
                 queue: shift,
             };
-            if let Err(error) = session.commands.submit(world, command) {
-                session.commands.reject(&error);
+            let (world, queue) = session.world_and_commands();
+            let Some(world) = world else {
+                return;
+            };
+            if let Err(error) = queue.submit(world, command) {
+                queue.reject(&error);
             }
         }
     }
@@ -529,6 +531,7 @@ pub fn teardown_playtest_system(
 
     render_entities.0.clear();
     session.suspend();
+    session.release_world();
     *lab = LabState {
         current_tab: LabTab::LiveBattle,
         ..default()

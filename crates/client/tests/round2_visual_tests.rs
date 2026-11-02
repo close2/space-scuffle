@@ -702,7 +702,6 @@ fn test_bevy_ecs_schedule_all_systems_no_conflicts() -> Result<(), Box<dyn std::
     )?);
     let lab_state = client::lab_ui::LabState {
         current_tab: client::lab_ui::LabTab::LiveBattle,
-        sim_world: Some(world),
         ..Default::default()
     };
     app.insert_resource(lab_state);

@@ -236,9 +236,13 @@ fn observe(
     >,
     mut contexts: EguiContexts<'_, '_>,
     selection: Res<'_, client::SelectionState>,
-    lab: Res<'_, client::LabState>,
+    battle: (
+        Res<'_, client::LabState>,
+        Res<'_, client::battle_pipeline::session::BattleSession>,
+    ),
     mut exit: EventWriter<'_, AppExit>,
 ) {
+    let (lab, session) = battle;
     for event in keys.read() {
         evidence.keys += 1;
         evidence.key_delivery.record(event);
@@ -290,7 +294,7 @@ fn observe(
     let result = write!(writer, "{frame},{keys},{wheels},{motions},{},{},{},{},{},{},{},{tab},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
         u8::from(window.focused), u8::from(ctx.wants_keyboard_input()), u8::from(ctx.wants_pointer_input()),
         camera.target.x, camera.target.y, camera.distance, selection.selected_entity_id.map_or(u32::MAX, |id| id.0),
-        lab.sim_world.as_ref().map_or(0, |world| world.current_tick), u8::from(lab.battle_paused),
+        session.world().map_or(0, |world| world.current_tick), u8::from(lab.battle_paused),
         window.width(), window.height(), window.scale_factor(), ctx.pixels_per_point(), cursor.x, cursor.y,
         subject.0, subject.1.x, subject.1.y, u8::from(keyboard.pressed(KeyCode::KeyW)),
         u8::from(keyboard.pressed(KeyCode::KeyA)), u8::from(keyboard.pressed(KeyCode::KeyS)),

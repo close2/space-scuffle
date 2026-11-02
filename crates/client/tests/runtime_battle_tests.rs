@@ -1,6 +1,7 @@
 //! Verifies real versioned battle startup, deterministic reset and map-relative
 //! combat orders through the production loader, with explicit failure diagnostics.
 
+use client::battle_pipeline::session::BattleSession;
 use client::runtime_battle::{
     BattleDefinition, BattleInitialOrder, BattleLoadError, DEFAULT_BATTLE_SCENARIO,
 };
@@ -179,7 +180,7 @@ fn runtime_scene_app() -> Result<bevy::prelude::App, Box<dyn std::error::Error>>
         battle_paused: true,
         ..default()
     })
-    .init_resource::<client::battle_pipeline::session::BattleSession>()
+    .init_resource::<BattleSession>()
     .init_resource::<client::RenderEntityMap>()
     .init_resource::<client::SelectionState>()
     .add_systems(
@@ -220,10 +221,9 @@ fn runtime_scene_reset_and_tab_visibility_preserve_the_loaded_map() -> TestResul
         .count();
     assert_eq!(scene_count, 1);
     let original_chunks = app.world().resource::<TerrainChunks>().chunks.len();
-    let lab = app.world().resource::<client::LabState>();
-    let world = lab
-        .sim_world
-        .as_ref()
+    let session = app.world().resource::<BattleSession>();
+    let world = session
+        .world()
         .ok_or("battle scene did not create a simulation")?;
     assert_eq!(
         world.map.cells(),
@@ -256,9 +256,8 @@ fn runtime_scene_reset_and_tab_visibility_preserve_the_loaded_map() -> TestResul
     );
     assert_eq!(
         app.world()
-            .resource::<client::LabState>()
-            .sim_world
-            .as_ref()
+            .resource::<BattleSession>()
+            .world()
             .ok_or("reset lost world")?
             .compute_checksum(),
         initial_checksum
@@ -378,11 +377,7 @@ fn production_plugin_schedule_initializes_terrain_and_restores_tab_camera() -> T
     assert!(app
         .world()
         .contains_resource::<client::terrain::TerrainState>());
-    assert!(app
-        .world()
-        .resource::<client::LabState>()
-        .sim_world
-        .is_some());
+    assert!(app.world().resource::<BattleSession>().world().is_some());
     assert_active_scene_lights(&mut app, true);
     let battle_camera = camera_pose(&mut app);
     app.world_mut()
@@ -526,22 +521,18 @@ fn assert_active_scene_lights(app: &mut bevy::prelude::App, battle: bool) {
 #[test]
 fn failed_candidate_retains_pipeline_generation_commands_and_published_metadata() -> TestResult {
     use bevy::prelude::*;
-    use client::battle_pipeline::session::BattleSession;
     let mut app = runtime_scene_app()?;
     app.update();
     app.world_mut()
-        .resource_scope(|world, mut session: Mut<'_, BattleSession>| -> TestResult {
-            let simulation = world
-                .resource::<client::LabState>()
-                .sim_world
-                .as_ref()
-                .ok_or("world absent")?;
+        .resource_scope(|_, mut session: Mut<'_, BattleSession>| -> TestResult {
+            let (simulation, queue) = session.world_and_commands();
+            let simulation = simulation.ok_or("world absent")?;
             let actor = simulation
                 .entities
                 .values()
                 .find(|actor| !actor.is_immobile)
                 .ok_or("mobile actor absent")?;
-            session.commands.submit(
+            queue.submit(
                 simulation,
                 sim_types::PlayerCommand {
                     player_id: actor.owner,
@@ -559,9 +550,8 @@ fn failed_candidate_retains_pipeline_generation_commands_and_published_metadata(
     let title = session.metadata.map_title.clone();
     let checksum = app
         .world()
-        .resource::<client::LabState>()
-        .sim_world
-        .as_ref()
+        .resource::<BattleSession>()
+        .world()
         .ok_or("world absent")?
         .compute_checksum();
     let original_dir = {
@@ -583,9 +573,8 @@ fn failed_candidate_retains_pipeline_generation_commands_and_published_metadata(
     assert_eq!(session.metadata.map_title, title);
     assert_eq!(
         app.world()
-            .resource::<client::LabState>()
-            .sim_world
-            .as_ref()
+            .resource::<BattleSession>()
+            .world()
             .ok_or("world absent")?
             .compute_checksum(),
         checksum
@@ -633,7 +622,6 @@ fn changed_palette(
 
 #[test]
 fn palette_and_labels_commit_together_and_failed_candidate_keeps_old_colors() -> TestResult {
-    use client::battle_pipeline::session::BattleSession;
     use client::player_presentation::PlayerPalette;
     let mut app = runtime_scene_app()?;
     app.update();
@@ -699,8 +687,8 @@ fn real_watchtower_material_uses_neutral_and_committed_player_palette() -> TestR
     app.update();
     for owner in [None, Some(PlayerId(0)), Some(PlayerId(1))] {
         let position = {
-            let mut lab = app.world_mut().resource_mut::<client::LabState>();
-            let simulation = lab.sim_world.as_mut().ok_or("world")?;
+            let mut session = app.world_mut().resource_mut::<BattleSession>();
+            let simulation = session.world_mut().ok_or("world")?;
             let tower = simulation
                 .map
                 .watchtowers_mut()
@@ -715,6 +703,7 @@ fn real_watchtower_material_uses_neutral_and_committed_player_palette() -> TestR
                 .ok_or("tower record")?
                 .position
         };
+        app.world_mut().resource_mut::<BattleSession>().publish();
         app.world_mut().resource_mut::<MapPresentation>().tick = None;
         app.update();
         let expected = app

@@ -243,11 +243,11 @@ pub fn advance_battle_ticks(
     let active = lab.current_tab == crate::LabTab::LiveBattle;
     let paused = lab.battle_paused;
     let speed = lab.simulation_speed;
-    let Some(world) = lab.sim_world.as_mut() else {
+    if session.world().is_none() {
         return;
-    };
+    }
     let before = session.frames.current().tick;
-    let result = session.advance(world, time.delta(), active, paused, speed, |snapshot| {
+    let result = session.advance_committed(time.delta(), active, paused, speed, |snapshot| {
         for instance in &snapshot.bubbles {
             media.require(&registry, instance.unit_type, instance.anim_state)?;
         }

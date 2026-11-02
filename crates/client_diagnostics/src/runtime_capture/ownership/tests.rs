@@ -24,10 +24,9 @@ fn app() -> Result<(App, OwnershipState), Box<dyn std::error::Error>> {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins)
         .insert_resource(definition.palette)
-        .insert_resource(session)
+        .insert_resource(session.with_world(simulation))
         .insert_resource(client::LabState {
             current_tab: client::LabTab::LiveBattle,
-            sim_world: Some(simulation),
             ..default()
         })
         .init_resource::<client::player_presentation::PresentationStatus>()
@@ -183,9 +182,8 @@ pub(in crate::runtime_capture) fn preparation_app(
     let (mut app, mut evidence) = app()?;
     let mut actor = app
         .world_mut()
-        .resource_mut::<client::LabState>()
-        .sim_world
-        .as_mut()
+        .resource_mut::<BattleSession>()
+        .world_mut()
         .ok_or("real simulation")?
         .build_render_snapshot()
         .bubbles
@@ -438,9 +436,8 @@ fn extra_actual_time_after_acceptance_rejects_visual_readback_without_sim_tick_c
     );
     let before = app
         .world()
-        .resource::<client::LabState>()
-        .sim_world
-        .as_ref()
+        .resource::<BattleSession>()
+        .world()
         .ok_or("world")?
         .compute_checksum();
     app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
@@ -449,9 +446,8 @@ fn extra_actual_time_after_acceptance_rejects_visual_readback_without_sim_tick_c
     app.update();
     let after = app
         .world()
-        .resource::<client::LabState>()
-        .sim_world
-        .as_ref()
+        .resource::<BattleSession>()
+        .world()
         .ok_or("world")?
         .compute_checksum();
     assert_eq!(before, after);

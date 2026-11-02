@@ -756,9 +756,9 @@ fn f5_enters_playtest_and_renders_units_from_the_session() {
         lab.battle_failure, None,
         "the battle must run without failure"
     );
-    let sim_world = lab
-        .sim_world
-        .as_ref()
+    let session = world.resource::<BattleSession>();
+    let sim_world = session
+        .world()
         .expect("playtest world must exist while playtesting");
     assert!(
         sim_world.current_tick >= 20,
@@ -840,8 +840,8 @@ fn escape_returns_to_editing_and_removes_every_battle_entity() {
     assert!(harness
         .app
         .world()
-        .resource::<LabState>()
-        .sim_world
+        .resource::<BattleSession>()
+        .world()
         .is_none());
     assert_eq!(
         harness.doc().doc,

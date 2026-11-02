@@ -108,11 +108,8 @@ fn csv_columns_keep_actual_component_evidence_and_failures_survive_resource_drop
         .init_resource::<client::runtime_battle::BattleRenderStatus>()
         .init_resource::<Assets<client::terrain::TerrainMaterial>>()
         .init_resource::<Assets<Image>>()
-        .insert_resource(session)
-        .insert_resource(client::LabState {
-            sim_world: Some(world),
-            ..default()
-        });
+        .insert_resource(session.with_world(world))
+        .insert_resource(client::LabState { ..default() });
     app.world_mut().spawn((
         client::LiveBattleBubble {
             entity_id: actor.entity_id,

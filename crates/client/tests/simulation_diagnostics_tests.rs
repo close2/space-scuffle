@@ -83,14 +83,13 @@ fn live_sync_reports_and_stops_on_invalid_simulation_rate() -> Result<(), Box<dy
         .init_resource::<Assets<BubbleDomeMaterial>>()
         .init_resource::<Assets<SelectionRingMaterial>>()
         .init_resource::<client::RenderEntityMap>()
-        .insert_resource(session)
+        .insert_resource(session.with_world(simulation))
         .insert_resource(palette)
         .init_resource::<client::player_presentation::PresentationStatus>()
         .insert_resource(root)
         .insert_resource(client::CatalogResource(definition.catalogs.units.clone()))
         .insert_resource(client::LabState {
             current_tab: client::LabTab::LiveBattle,
-            sim_world: Some(simulation),
             battle_paused: false,
             simulation_speed: 1,
             ..default()
@@ -128,7 +127,11 @@ fn live_sync_reports_and_stops_on_invalid_simulation_rate() -> Result<(), Box<dy
         .ok_or("failure evidence not retained for UI")?;
     assert!(message.contains("buff index 0 (ID 42)"));
     assert!(message.contains("raw value 0"));
-    let simulation = lab.sim_world.as_ref().ok_or("world missing")?;
+    let simulation = app
+        .world()
+        .resource::<client::battle_pipeline::session::BattleSession>()
+        .world()
+        .ok_or("world missing")?;
     assert_eq!(
         simulation.current_tick, 1,
         "failure must stop catch-up after its first tick"

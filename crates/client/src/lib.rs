@@ -200,6 +200,7 @@ pub fn frame_limit_system(
     lab: Option<Res<'_, LabState>>,
     map_presentation: Option<Res<'_, runtime_battle::MapPresentation>>,
     images: Option<Res<'_, Assets<Image>>>,
+    session: Option<Res<'_, battle_pipeline::session::BattleSession>>,
 ) {
     if let Some(max) = frame_limit.max_frames {
         frame_limit.current_frame += 1;
@@ -210,7 +211,9 @@ pub fn frame_limit_system(
 
             let battle_failed = lab.is_some_and(|lab| {
                 lab.current_tab == LabTab::LiveBattle
-                    && (lab.sim_world.is_none()
+                    && (session
+                        .as_ref()
+                        .is_none_or(|session| session.world().is_none())
                         || lab.battle_failure.is_some()
                         || !map_presentation.as_ref().is_some_and(|presentation| {
                             images.as_ref().is_some_and(|images| {
@@ -676,10 +679,9 @@ pub fn run_headless_check() -> Result<(), String> {
             .map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())?;
-    app.insert_resource(session);
+    app.insert_resource(session.with_world(world));
     let lab_state = LabState {
         current_tab: LabTab::LiveBattle,
-        sim_world: Some(world),
         ..default()
     };
     app.insert_resource(lab_state);
