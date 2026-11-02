@@ -121,6 +121,8 @@ pub struct BattleSession {
     pub notices: Vec<CommandNotice>,
     /// Revalidation rejections from that frame, separate from authoritative outcomes.
     pub rejected: Vec<RejectedSubmission>,
+    /// Task events of every tick executed in the latest active frame, in tick order.
+    pub task_events: Vec<sim_core::economy::TaskEvent>,
     /// Fatal simulation diagnostics retained after draining the authoritative output.
     pub diagnostics: Vec<sim_core::SimulationDiagnostic>,
     /// Actual outcomes whose malformed correlation caused a fatal pipeline error.
@@ -146,6 +148,7 @@ impl Default for BattleSession {
             metadata: CommittedBattleMetadata::default(),
             notices: Vec::new(),
             rejected: Vec::new(),
+            task_events: Vec::new(),
             diagnostics: Vec::new(),
             unmatched_outcomes: Vec::new(),
             outcome_count: 0,

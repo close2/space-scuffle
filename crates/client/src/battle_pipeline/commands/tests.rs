@@ -830,7 +830,8 @@ fn a_foundation_finished_while_its_cancel_waits_is_a_capability_rejection() -> T
 
 #[test]
 fn commands_after_the_match_are_refused_at_submission_and_at_preparation() -> TestResult {
-    let closes: [(fn(&mut SimWorld), SubmissionError); 2] = [
+    type Close = fn(&mut SimWorld);
+    let closes: [(Close, SubmissionError); 2] = [
         (
             |world| {
                 world.match_state.result = MatchResult::Draw { tick: Tick(1) };

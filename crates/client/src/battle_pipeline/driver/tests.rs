@@ -3,7 +3,11 @@
 
 use super::*;
 use crate::battle_pipeline::session::CommittedBattleMetadata;
-use sim_types::{PlayerCommand, SimScalar, SimVec2, UnitOrder, UnitTypeId};
+use sim_core::economy::{GameCommandError, TaskEventKind};
+use sim_core::production::construction::BuildRejection;
+use sim_types::{
+    PlayerCommand, PlayerId, ResourceNodeId, ShapeKind, SimScalar, SimVec2, UnitOrder, UnitTypeId,
+};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -189,7 +193,7 @@ fn later_media_failure_retains_completed_ticks_outcomes_and_pending_events() -> 
         .push(sim_types::CombatEventVisual::HitscanTracer {
             from: [0.0; 3],
             to: [1.0; 3],
-            owner: sim_types::PlayerId(0),
+            owner: PlayerId(0),
         });
     let result = session.advance(
         &mut world,
@@ -254,7 +258,7 @@ fn five_tick_budget_retains_time_and_delivers_delayed_combat_once() -> TestResul
         .push(sim_types::CombatEventVisual::HitscanTracer {
             from: [0.0; 3],
             to: [1.0; 3],
-            owner: sim_types::PlayerId(0),
+            owner: PlayerId(0),
         });
     session.advance(
         &mut world,
@@ -362,5 +366,160 @@ fn fatal_simulation_preserves_completed_snapshot_and_actual_outcomes() -> TestRe
     assert_eq!(session.notices.len(), 1);
     assert_ne!(session.diagnostics, []);
     assert_eq!(world.diagnostics(), []);
+    Ok(())
+}
+
+#[test]
+fn a_refused_build_reaches_the_session_as_a_notice() -> TestResult {
+    let map = sim_map::GameMap::new(
+        64,
+        64,
+        sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
+    )?;
+    let mut world = SimWorld::new(map, 7);
+    let mut session = BattleSession::prepare(
+        SessionGeneration::FIRST,
+        &mut world,
+        CommittedBattleMetadata::default(),
+    )?;
+    let owner = PlayerId(0);
+    let builder_type = world
+        .catalog
+        .archetypes()
+        .find(|archetype| archetype.capabilities.can_construct)
+        .ok_or("builder missing")?;
+    let (unit_type, faction) = (builder_type.unit_type_id, builder_type.faction);
+    let structure_type = world
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            matches!(archetype.shape, ShapeKind::BuildingDome { .. })
+                && archetype.faction == faction
+                && archetype.requires_structures.is_empty()
+                && archetype.mineral_cost > 0
+        })
+        .ok_or("structure missing")?
+        .unit_type_id;
+    let position = SimVec2::new(SimScalar::from_i32(10), SimScalar::from_i32(10));
+    let builder = world.spawn_unit(unit_type, owner, position)?;
+    world.player_resources[0].minerals = 0;
+    let sequence = session.commands.submit(
+        &world,
+        PlayerCommand {
+            player_id: owner,
+            entities: vec![builder],
+            order: UnitOrder::Build {
+                structure_type,
+                cell_x: 30,
+                cell_y: 30,
+            },
+            queue: false,
+        },
+    )?;
+    session.advance(
+        &mut world,
+        Duration::from_millis(40),
+        true,
+        false,
+        1,
+        |_| Ok(()),
+    )?;
+    assert_eq!(session.notices.len(), 1);
+    assert_eq!(session.notices[0].sequence, sequence);
+    assert!(matches!(
+        &session.notices[0].outcome,
+        AdmissionOutcome::Game(outcome) if matches!(
+            outcome.result,
+            Err(GameCommandError::Build(BuildRejection::Minerals { available: 0, .. }))
+        )
+    ));
+    assert_eq!(session.outcome_count, 1);
+    assert_eq!(world.game_command_outcomes(), []);
+    assert!(
+        session
+            .outcome_status
+            .starts_with("Order rejected: not enough minerals"),
+        "{}",
+        session.outcome_status
+    );
+    Ok(())
+}
+
+#[test]
+fn task_events_of_every_tick_in_a_frame_survive() -> TestResult {
+    let (mut world, mut session) = fixture()?;
+    let (id, owner) = {
+        let catalog = &world.catalog;
+        let actor = world
+            .entities
+            .values()
+            .find(|actor| {
+                !actor.is_immobile
+                    && catalog
+                        .get(actor.unit_type_id)
+                        .is_ok_and(|a| a.capabilities.harvester.is_none())
+            })
+            .ok_or("non-harvester missing")?;
+        (actor.id, actor.owner)
+    };
+    // Two task orders the unit cannot do end one per tick, so each tick has its own event.
+    let order = UnitOrder::Harvest {
+        target: ResourceNodeId(0),
+    };
+    let actor = world.entities.get_mut(&id).ok_or("actor missing")?;
+    assert!(actor.issue_order(order.clone(), false)?);
+    assert!(actor.issue_order(order, true)?);
+    session.advance(
+        &mut world,
+        Duration::from_millis(120),
+        true,
+        false,
+        1,
+        |_| Ok(()),
+    )?;
+    assert_eq!(world.current_tick, 3);
+    assert_eq!(world.task_events(), []);
+    let seen: Vec<_> = session
+        .task_events
+        .iter()
+        .map(|event| (event.tick, event.entity, event.owner, event.kind.clone()))
+        .collect();
+    assert_eq!(
+        seen,
+        [Tick(1), Tick(2)].map(|tick| (tick, id, owner, TaskEventKind::NotCapable))
+    );
+    session.advance(
+        &mut world,
+        Duration::from_millis(10),
+        true,
+        false,
+        1,
+        |_| Ok(()),
+    )?;
+    assert_eq!(session.task_events, []);
+    Ok(())
+}
+
+#[test]
+fn a_match_ending_while_a_command_waits_is_reported_as_a_rejection() -> TestResult {
+    let (mut world, mut session) = fixture()?;
+    let sequence = session.commands.submit(&world, mobile_order(&world)?)?;
+    world.match_state.result = sim_types::MatchResult::Draw { tick: Tick(0) };
+    session.advance(
+        &mut world,
+        Duration::from_millis(40),
+        true,
+        false,
+        1,
+        |_| Ok(()),
+    )?;
+    assert_eq!(session.notices.len(), 0);
+    assert_eq!(session.rejected.len(), 1);
+    assert_eq!(session.rejected[0].sequence, sequence);
+    assert_eq!(session.rejected[0].reason, SubmissionError::MatchOver);
+    assert_eq!(
+        session.commands.status(),
+        "Order rejected: the match is over"
+    );
     Ok(())
 }
