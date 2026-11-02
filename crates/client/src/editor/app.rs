@@ -70,8 +70,8 @@ use crate::selection::SelectionState;
 use crate::terrain::{TerrainPlugin, TerrainState};
 use crate::vfx::{
     process_combat_events_system, setup_vfx_assets_system, update_beams_system,
-    update_melee_slashes_system, update_mist_wake_system, update_projectiles_system,
-    update_shatter_system, CombatFxMaterial, CombatVisualEvent, MistWakeMaterial,
+    update_melee_slashes_system, update_projectiles_system, update_shatter_system,
+    CombatFxMaterial, CombatVisualEvent,
 };
 use crate::{frame_limit_system, CatalogResource, FrameLimit};
 
@@ -199,7 +199,6 @@ impl Plugin for MapEditorPlugin {
             .add_plugins(BubbleOpticsPlugin)
             .add_plugins(MaterialPlugin::<BubbleDomeMaterial>::default())
             .add_plugins(MaterialPlugin::<SelectionRingMaterial>::default())
-            .add_plugins(MaterialPlugin::<MistWakeMaterial>::default())
             .add_plugins(MaterialPlugin::<CombatFxMaterial>::default());
 
         // 2. Verification Mode Synchronization
@@ -284,7 +283,6 @@ impl Plugin for MapEditorPlugin {
                     publish_combat_events,
                     process_combat_events_system,
                     update_indicators_system,
-                    update_mist_wake_system,
                 )
                     .chain()
                     .in_set(BattleSet::Present),

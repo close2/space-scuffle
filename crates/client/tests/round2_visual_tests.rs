@@ -47,7 +47,7 @@ use client::indicators::{
 };
 use client::resolve_assets_dir;
 use client::selection::ray_sphere_intersect;
-use client::vfx::{CombatFxMaterial, CombatFxUniformGpu, MistWakeMaterial, MistWakeUniformGpu};
+use client::vfx::{CombatFxMaterial, CombatFxUniformGpu};
 use naga::ShaderStage;
 use serde::Deserialize;
 use shader_ir::{
@@ -101,7 +101,6 @@ fn test_every_shipped_shader_composes_and_validates_in_every_variant() {
     for required in [
         "bubble_dome.wgsl",
         "combat_fx.wgsl",
-        "mist_wake.wgsl",
         "selection_ring.wgsl",
         "smog_volume.wgsl",
         "terrain.wgsl",
@@ -288,30 +287,6 @@ fn test_selection_ring_material_alpha_and_depth_bias() {
     };
     assert_eq!(mat.alpha_mode(), AlphaMode::Blend);
     assert_eq!(mat.depth_bias(), 0.0);
-}
-
-#[test]
-fn test_mist_wake_uniform_and_shader_invariants() {
-    let shader = production_module("mist_wake.wgsl");
-    shader.entry_point(ShaderStage::Vertex, "vertex");
-    shader.entry_point(ShaderStage::Fragment, "fragment");
-    let uniform = shader.global_at(2, 2);
-    assert!(
-        matches!(uniform.space, naga::AddressSpace::Storage { .. }),
-        "mist uniform must stay in the storage address space used by the bind group"
-    );
-    let ty = &shader.module.types[uniform.ty];
-    assert_eq!(ty.name.as_deref(), Some("MistWakeUniform"));
-    let naga::TypeInner::Struct { span, .. } = ty.inner else {
-        panic!("MistWakeUniform must be a struct");
-    };
-    // The bound struct is `FrameGpu`: the 64-byte appearance block plus the geometry lane.
-    assert_eq!(span as usize, size_of::<client::mist::gpu::FrameGpu>());
-
-    assert_eq!(size_of::<MistWakeUniformGpu>(), 64);
-    assert_eq!(align_of::<MistWakeUniformGpu>(), 16);
-    assert_eq!(size_of::<client::mist::gpu::FrameGpu>(), 80);
-    assert_eq!(align_of::<client::mist::gpu::FrameGpu>(), 16);
 }
 
 #[test]
@@ -692,7 +667,6 @@ fn test_bevy_ecs_schedule_all_systems_no_conflicts() -> Result<(), Box<dyn std::
     app.init_resource::<Assets<Image>>();
     app.init_resource::<Assets<client::bubble_shader::BubbleDomeMaterial>>();
     app.init_resource::<Assets<SelectionRingMaterial>>();
-    app.init_resource::<Assets<MistWakeMaterial>>();
     app.init_resource::<Assets<CombatFxMaterial>>();
     app.init_resource::<ButtonInput<KeyCode>>();
     app.init_resource::<ButtonInput<MouseButton>>();
@@ -749,7 +723,6 @@ fn test_bevy_ecs_schedule_all_systems_no_conflicts() -> Result<(), Box<dyn std::
         (
             client::camera::update_camera_system,
             client::indicators::update_indicators_system,
-            client::vfx::update_vfx_system,
             client::vfx::update_projectiles_system,
             client::vfx::update_beams_system,
             client::vfx::update_melee_slashes_system,

@@ -903,7 +903,7 @@ pub(crate) fn update_smog_field_system(
     }
 
     // First-frame trajectory pre-warm for LiveBattle and SwarmStressTest:
-    // If mist is empty and units are moving, run 15 historical sub-steps backwards along velocity
+    // If smog is empty and units are moving, run 15 historical sub-steps backwards along velocity
     // to establish clean wake slipstreams immediately on transition.
     if matches!(
         current_tab,

@@ -39,9 +39,6 @@ pub struct ProbeOptions {
     /// Optional new CSV for passive authoritative/presented/actual-component evidence.
     #[arg(long)]
     pub pipeline_trace: Option<PathBuf>,
-    /// New directory for passive actual Lab/battle/Lab directional-light evidence.
-    #[arg(long)]
-    pub mist_light_trace: Option<PathBuf>,
     /// Explicit virtual frame duration for the pipeline probe; not measured display FPS.
     #[arg(long, requires = "pipeline_trace")]
     pub frame_step_nanos: Option<u64>,
@@ -170,12 +167,6 @@ pub fn run(options: ProbeOptions) -> Result<AppExit, ProbeError> {
     if let Some(path) = &options.pipeline_trace {
         pipeline::install(&mut app, path, failed.clone())?;
     }
-    let mist_trace = options
-        .mist_light_trace
-        .as_ref()
-        .map(|path| crate::mist::scene_light_trace::install(&mut app, path))
-        .transpose()
-        .map_err(|error| ProbeError::LightTrace(error.to_string()))?;
     if let Some(nanos) = options.frame_step_nanos {
         app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
             std::time::Duration::from_nanos(nanos),
@@ -196,13 +187,6 @@ pub fn run(options: ProbeOptions) -> Result<AppExit, ProbeError> {
     let exit = media_policy.final_exit(crate::render_compatibility::run_render_app(&mut app));
     if failed.load(Ordering::Acquire) && matches!(exit, AppExit::Success) {
         return Err(ProbeError::Recording);
-    }
-    if matches!(exit, AppExit::Success) {
-        if let Some(trace) = mist_trace {
-            trace
-                .finish()
-                .map_err(|error| ProbeError::LightTrace(error.to_string()))?;
-        }
     }
     Ok(exit)
 }
@@ -227,9 +211,6 @@ pub enum ProbeError {
     /// A recording error already reported through the production exit path.
     #[error("native input evidence recording failed")]
     Recording,
-    /// Actual production scene lighting was incomplete or failed verification.
-    #[error("native scene light evidence failed: {0}")]
-    LightTrace(String),
 }
 
 fn observe(

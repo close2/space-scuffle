@@ -47,7 +47,7 @@ use crate::player_presentation::{PlayerPalette, PresentationError};
 use crate::scene_controller::{LiveBattleBubble, RenderEntityMap};
 use crate::selection::ray_sphere_intersect;
 use crate::terrain::{pick_terrain, TerrainState};
-use crate::vfx::{CombatFxMaterial, MistWakeMaterial};
+use crate::vfx::CombatFxMaterial;
 
 /// Authoritative deterministic random seed for editor playtests.
 pub const PLAYTEST_SEED: u64 = 0x5CA1_AB1E;
@@ -519,15 +519,11 @@ pub fn teardown_playtest_system(
     mut session: ResMut<'_, BattleSession>,
     bubble_query: Query<'_, '_, Entity, With<LiveBattleBubble>>,
     vfx_fx_query: Query<'_, '_, Entity, With<MeshMaterial3d<CombatFxMaterial>>>,
-    vfx_wake_query: Query<'_, '_, Entity, With<MeshMaterial3d<MistWakeMaterial>>>,
 ) {
     for entity in &bubble_query {
         commands.entity(entity).despawn_recursive();
     }
     for entity in &vfx_fx_query {
-        commands.entity(entity).despawn_recursive();
-    }
-    for entity in &vfx_wake_query {
         commands.entity(entity).despawn_recursive();
     }
 

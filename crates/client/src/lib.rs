@@ -18,7 +18,7 @@
 //! - [`arena_render`]: Stylized 3D two-level map with metallic panels, cliffs, ramps, minerals, and geysers.
 //! - [`bubble_shader`]: Custom `BubbleDomeMaterial` and GPU uniform packing for unit spheres and domes.
 //! - [`indicators`]: Ground selection rings, equatorial facing chevron, attack focal lens, and collar meshes.
-//! - [`vfx`]: Trailing mist wake, hitscan tracers, plasma bolts, lasers, lightning, and glass shatter.
+//! - [`vfx`]: Hitscan tracers, plasma bolts, lasers, lightning, and glass shatter.
 //! - [`lab_ui`]: Tabbed `bevy_egui` dashboard (Visual Lab, Live Combat Sandbox, Swarm Stress Test).
 
 #![forbid(unsafe_code)]
@@ -53,7 +53,6 @@ pub mod indicators;
 pub mod input_policy;
 pub mod lab_ui;
 pub mod media;
-pub mod mist;
 pub mod native_input_probe;
 pub mod player_presentation;
 pub mod presentation;
@@ -98,9 +97,9 @@ pub use smog::{
 };
 pub use vfx::{
     process_combat_events_system, setup_vfx_assets_system, spawn_death_shatter,
-    update_beams_system, update_melee_slashes_system, update_mist_wake_system,
-    update_projectiles_system, update_shatter_system, update_vfx_system, CombatFxMaterial,
-    CombatFxUniformGpu, CombatVisualEvent, MistWakeMaterial, MistWakeUniformGpu, VfxSharedAssets,
+    update_beams_system, update_melee_slashes_system, update_projectiles_system,
+    update_shatter_system, CombatFxMaterial, CombatFxUniformGpu, CombatVisualEvent,
+    VfxSharedAssets,
 };
 
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
@@ -323,7 +322,6 @@ impl Plugin for ClientAppPlugin {
         .add_event::<CombatVisualEvent>()
         .add_plugins(MaterialPlugin::<BubbleDomeMaterial>::default())
         .add_plugins(MaterialPlugin::<SelectionRingMaterial>::default())
-        .add_plugins(mist::MistWakePlugin)
         .add_plugins(bubble_optics::BubbleOpticsPlugin)
         .add_plugins(MaterialPlugin::<CombatFxMaterial>::default())
         .add_plugins(MaterialPlugin::<SmogVolumeMaterial>::default())
@@ -662,7 +660,6 @@ pub fn run_headless_check() -> Result<(), String> {
     app.init_resource::<Assets<Image>>();
     app.init_resource::<Assets<BubbleDomeMaterial>>();
     app.init_resource::<Assets<SelectionRingMaterial>>();
-    app.init_resource::<Assets<MistWakeMaterial>>();
     app.init_resource::<Assets<CombatFxMaterial>>();
     app.init_resource::<Assets<SmogVolumeMaterial>>();
     app.init_resource::<SmogConfig>();
@@ -731,7 +728,6 @@ pub fn run_headless_check() -> Result<(), String> {
         (
             camera_control_system,
             update_indicators_system,
-            update_mist_wake_system,
             update_projectiles_system,
             update_beams_system,
             update_melee_slashes_system,

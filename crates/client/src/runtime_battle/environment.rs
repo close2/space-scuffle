@@ -2,8 +2,7 @@
 //!
 //! The actual arena globals are captured after Startup. A battle environment is
 //! attached only to its successfully committed root, so failed replacements cannot
-//! change the visible scene. Visibility is applied before inherited propagation;
-//! custom mist lighting has a separately documented filtering defect.
+//! change the visible scene. Visibility is applied before inherited propagation.
 
 use asset_baker::TerrainTheme;
 use bevy::prelude::*;

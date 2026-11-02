@@ -1,8 +1,7 @@
-//! Particle mist wake, combat weapon VFX, and death shatter explosions.
+//! Combat weapon VFX and death shatter explosions.
 //!
 //! # Architectural Responsibilities
 //! This module renders all dynamic combat VFX:
-//! - **Trailing Mist & Sparks Wake:** Directional vapor wake trailing moving bubbles opposite to velocity.
 //! - **Hitscan Tracers:** Instant ballistic lines with muzzle flash and impact ripples.
 //! - **Traveling Projectiles:** Plasma grenade bolts and missiles with tail glow.
 //! - **Continuous Beams & Lightning:** Continuous lasers and crackling jagged lightning arcs.
@@ -15,10 +14,6 @@ use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderRef, ShaderType};
 use sim_types::snapshot::CombatEventVisual;
-
-/// Compatibility alias; pooled mist updates are owned by the production mist plugin.
-pub use crate::mist::update_mist_wake_system as update_vfx_system;
-pub use crate::mist::{update_mist_wake_system, MistWakeMaterial, MistWakeUniformGpu};
 
 /// GPU uniform representation for procedural volumetric combat visual effects.
 // PERFORMANCE RATIONALE:
@@ -160,8 +155,6 @@ pub struct ShatterShard {
 /// Shared mesh and material assets for combat VFX.
 #[derive(Resource)]
 pub struct VfxSharedAssets {
-    /// Mist wake particle sphere mesh.
-    pub mist_mesh: Handle<Mesh>,
     /// Hitscan tracer beam cylinder mesh.
     pub tracer_mesh: Handle<Mesh>,
     /// Plasma projectile sphere mesh.
@@ -172,8 +165,6 @@ pub struct VfxSharedAssets {
     pub melee_slash_mesh: Handle<Mesh>,
     /// Death shatter wedge prism mesh.
     pub shard_mesh: Handle<Mesh>,
-    /// Mist wake material.
-    pub mist_mat: Handle<StandardMaterial>,
     /// Hyper-boosted spark material.
     pub spark_mat: Handle<StandardMaterial>,
 }
@@ -186,18 +177,11 @@ pub fn setup_vfx_assets_system(
 ) {
     let quad = meshes.add(Rectangle::new(1.0, 1.0));
     let assets = VfxSharedAssets {
-        mist_mesh: quad.clone(),
         tracer_mesh: quad.clone(),
         projectile_mesh: quad.clone(),
         beam_mesh: quad.clone(),
         melee_slash_mesh: quad.clone(),
         shard_mesh: quad,
-        mist_mat: materials.add(StandardMaterial {
-            base_color: Color::srgba(0.8, 0.9, 1.0, 0.35),
-            alpha_mode: AlphaMode::Blend,
-            unlit: true,
-            ..default()
-        }),
         spark_mat: materials.add(StandardMaterial {
             base_color: Color::srgb(1.0, 0.95, 0.4),
             emissive: LinearRgba::rgb(4.0, 3.5, 1.0),
@@ -210,7 +194,7 @@ pub fn setup_vfx_assets_system(
 
 // PERFORMANCE RATIONALE:
 // Why: Uncapped particle emission when 200 bubbles are moving causes rapid frame rate drops.
-// What: Shards, beams, and mist particles use strict hard lifetimes (0.15s - 0.75s) and are
+// What: Shards and beams use strict hard lifetimes (0.15s - 0.75s) and are
 // automatically culled and despawned in batches.
 // Trade-off: Particles do not persist indefinitely, which aligns with RTS visual readability.
 
