@@ -265,6 +265,7 @@ pub fn lab_ui_system(
     mut selection_state: ResMut<'_, SelectionState>,
     registry: Res<'_, FlipbookRegistry>,
     catalog: Res<'_, CatalogResource>,
+    mut lineup: Local<'_, crate::scene_controller::ShowcaseLineup>,
     mut combat_events: EventWriter<'_, CombatVisualEvent>,
     diagnostics: Res<'_, DiagnosticsStore>,
     windows: Query<'_, '_, &Window, With<bevy::window::PrimaryWindow>>,
@@ -274,6 +275,8 @@ pub fn lab_ui_system(
     media: Option<Res<'_, crate::media::ClientMediaStatus>>,
     mut session: ResMut<'_, crate::battle_pipeline::session::BattleSession>,
 ) {
+    lineup.refresh(&catalog.0, catalog.is_changed());
+
     let Some(ctx) = contexts.try_ctx_mut().cloned() else {
         // Closing the primary window removes its egui context before the final
         // Update. A live window without its required context is still an error.
@@ -295,6 +298,7 @@ pub fn lab_ui_system(
             &mut selection_state,
             &registry,
             &catalog,
+            &lineup,
         );
     }
 
@@ -751,16 +755,17 @@ fn render_selected_unit_hud(
     selection_state: &mut SelectionState,
     registry: &FlipbookRegistry,
     catalog: &UnitCatalog,
+    lineup: &crate::scene_controller::ShowcaseLineup,
 ) {
-    let mut heroes: Vec<_> = catalog.archetypes().filter(|a| a.showcase_hero).collect();
-    heroes.sort_by_key(|a| a.showcase_order.unwrap_or(u8::MAX));
-
     let active_hero_idx = selection_state
         .selected_hero_index
         .unwrap_or(lab_state.selected_hero_index)
-        .min(heroes.len().saturating_sub(1));
+        .min(lineup.len().saturating_sub(1));
 
-    let arch = heroes.get(active_hero_idx).copied();
+    let arch = lineup
+        .ids()
+        .get(active_hero_idx)
+        .and_then(|id| catalog.get(*id).ok());
 
     egui::TopBottomPanel::bottom("selected_unit_hud")
         .exact_height(240.0)
@@ -928,7 +933,7 @@ fn render_selected_unit_hud(
                         // Quick-Select Hero Showcase Lineup Buttons
                         ui.horizontal_wrapped(|ui| {
                             ui.strong("Hero Showcase Lineup:");
-                            for (idx, hero_arch) in heroes.iter().enumerate() {
+                            for (idx, hero_arch) in lineup.archetypes(catalog).enumerate() {
                                 let label = format!("{}. {}", idx + 1, hero_arch.display_name);
                                 if ui.selectable_label(active_hero_idx == idx, label).clicked() {
                                     lab_state.selected_hero_index = idx;

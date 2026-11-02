@@ -246,3 +246,35 @@ fn game_camera_owns_the_depth_prepass_smog_clips_against() -> TestResult {
     assert_eq!(cameras.iter(app.world()).count(), 1);
     Ok(())
 }
+
+/// C-15: the lineup is sorted once, so frames with an unchanged catalog neither sort nor allocate.
+#[test]
+fn showcase_lineup_rebuilds_only_when_the_catalog_changes() -> TestResult {
+    let root = client::ResolvedAssetsRoot::from_directory(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
+    )?;
+    let definition = BattleDefinition::load(root.as_path(), DEFAULT_BATTLE_SCENARIO.as_ref())?;
+    let catalog = &definition.catalogs.units;
+
+    let mut lineup = client::scene_controller::ShowcaseLineup::default();
+    lineup.refresh(catalog, false);
+    assert!(lineup.is_empty(), "an unchanged catalog must not rebuild");
+
+    lineup.refresh(catalog, true);
+    assert!(!lineup.is_empty());
+    let orders: Vec<_> = lineup
+        .archetypes(catalog)
+        .map(|archetype| archetype.showcase_order.unwrap_or(u8::MAX))
+        .collect();
+    assert!(orders.is_sorted(), "lineup must follow showcase_order");
+
+    let storage = lineup.ids().as_ptr();
+    lineup.refresh(catalog, false);
+    lineup.refresh(catalog, true);
+    assert_eq!(
+        lineup.ids().as_ptr(),
+        storage,
+        "a rebuild reuses its storage"
+    );
+    Ok(())
+}

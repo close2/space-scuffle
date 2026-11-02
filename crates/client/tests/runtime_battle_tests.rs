@@ -727,3 +727,32 @@ fn real_watchtower_material_uses_neutral_and_committed_player_palette() -> TestR
     }
     Ok(())
 }
+
+/// Counts material modification events seen by the app.
+#[derive(bevy::prelude::Resource, Default)]
+struct ModifiedMaterials(u32);
+
+/// C-15: `get_mut` flags an asset modified even when the value is equal.
+#[test]
+fn steady_map_objects_leave_their_materials_unmodified() -> TestResult {
+    use bevy::prelude::*;
+    let mut app = runtime_scene_app()?;
+    app.init_resource::<ModifiedMaterials>().add_systems(
+        Last,
+        |mut events: EventReader<'_, '_, AssetEvent<StandardMaterial>>,
+         mut count: ResMut<'_, ModifiedMaterials>| {
+            for event in events.read() {
+                count.0 += u32::from(matches!(event, AssetEvent::Modified { .. }));
+            }
+        },
+    );
+    for _ in 0..3 {
+        app.update();
+    }
+    app.world_mut().resource_mut::<ModifiedMaterials>().0 = 0;
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(app.world().resource::<ModifiedMaterials>().0, 0);
+    Ok(())
+}

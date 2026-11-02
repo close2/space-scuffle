@@ -26,8 +26,9 @@ use crate::selection::{HeroLineupIndex, SelectionState};
 use crate::CatalogResource;
 use bevy::app::AppExit;
 use bevy::prelude::*;
+use sim_core::catalog::{UnitArchetype, UnitCatalog};
 use sim_types::enums::{AnimState, ShapeKind, WeaponVisualKind};
-use sim_types::ids::EntityId;
+use sim_types::ids::{EntityId, UnitTypeId};
 use sim_types::snapshot::BubbleRenderInstance;
 use std::collections::BTreeMap;
 
@@ -56,6 +57,66 @@ pub struct SwarmBubble;
 #[derive(Resource, Default, Debug, Deref, DerefMut)]
 pub struct RenderEntityMap(pub BTreeMap<EntityId, Entity>);
 
+/// Catalog identities flagged `showcase_hero`, sorted by `showcase_order`.
+///
+// PERFORMANCE RATIONALE:
+// Why: The preview synchronizer and the unit HUD both need the lineup on every frame.
+// What: Each keeps one sorted list in system-local state and rebuilds it when the catalog changes.
+// Trade-off: A catalog lookup per actor in exchange for no per-frame allocation or sort.
+#[derive(Debug, Default)]
+pub struct ShowcaseLineup {
+    ids: Vec<UnitTypeId>,
+}
+
+impl ShowcaseLineup {
+    /// Rebuilds the lineup from `catalog` if `catalog_changed`, reusing its storage.
+    pub fn refresh(&mut self, catalog: &UnitCatalog, catalog_changed: bool) {
+        if !catalog_changed {
+            return;
+        }
+        self.ids.clear();
+        self.ids.extend(
+            catalog
+                .archetypes()
+                .filter(|archetype| archetype.showcase_hero)
+                .map(|archetype| archetype.unit_type_id),
+        );
+        self.ids.sort_by_key(|id| {
+            catalog
+                .get(*id)
+                .ok()
+                .and_then(|archetype| archetype.showcase_order)
+                .unwrap_or(u8::MAX)
+        });
+    }
+
+    /// Number of identities in the lineup.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.ids.len()
+    }
+
+    /// Whether the catalog flags no showcase identity.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.ids.is_empty()
+    }
+
+    /// Identities in lineup order.
+    #[must_use]
+    pub fn ids(&self) -> &[UnitTypeId] {
+        &self.ids
+    }
+
+    /// Archetypes in lineup order. An identity missing from `catalog` is skipped.
+    pub fn archetypes<'a>(
+        &'a self,
+        catalog: &'a UnitCatalog,
+    ) -> impl Iterator<Item = &'a UnitArchetype> + 'a {
+        self.ids.iter().filter_map(|id| catalog.get(*id).ok())
+    }
+}
+
 /// Synchronizes the 4-Hero Showcase Lineup in the Visual Lab with GUI state and selection.
 ///
 /// Queries `CatalogResource` dynamically for all archetypes flagged with `showcase_hero: true`
@@ -69,6 +130,7 @@ pub fn sync_lab_preview_system(
     mut lab_state: ResMut<'_, LabState>,
     mut selection_state: ResMut<'_, SelectionState>,
     catalog: Res<'_, CatalogResource>,
+    mut lineup: Local<'_, ShowcaseLineup>,
     registry: Res<'_, FlipbookRegistry>,
     mut media_status: ResMut<'_, crate::media::ClientMediaStatus>,
     shared_meshes: Res<'_, BubbleSharedMeshes>,
@@ -103,13 +165,10 @@ pub fn sync_lab_preview_system(
     lab_state.shield_hit_flash = (lab_state.shield_hit_flash - dt * 3.0).max(0.0);
     lab_state.hull_hit_flash = (lab_state.hull_hit_flash - dt * 3.0).max(0.0);
 
-    // Filter and sort showcase heroes dynamically from catalog
-    let mut heroes: Vec<&sim_core::catalog::UnitArchetype> =
-        catalog.0.archetypes().filter(|a| a.showcase_hero).collect();
-    heroes.sort_by_key(|a| a.showcase_order.unwrap_or(u8::MAX));
+    lineup.refresh(&catalog.0, catalog.is_changed());
 
     let hero_count = query.iter().count();
-    let expected_heroes = heroes.len().min(4);
+    let expected_heroes = lineup.len().min(4);
 
     if media_status.retain_failure(&mut lab_state) {
         return;
@@ -120,7 +179,11 @@ pub fn sync_lab_preview_system(
         .min(expected_heroes.saturating_sub(1));
     // Admit the entire requested lineup before creating any material. Successful
     // lookups use cached startup evidence and never touch files or allocate.
-    for (index, arch) in heroes.iter().take(expected_heroes).enumerate() {
+    for (index, arch) in lineup
+        .archetypes(&catalog.0)
+        .take(expected_heroes)
+        .enumerate()
+    {
         let action = if index == selected {
             lab_state.anim_state
         } else {
@@ -146,7 +209,7 @@ pub fn sync_lab_preview_system(
             commands.entity(entity).despawn_recursive();
         }
 
-        for (idx, &arch) in heroes.iter().take(4).enumerate() {
+        for (idx, arch) in lineup.archetypes(&catalog.0).take(4).enumerate() {
             let is_dome = matches!(arch.shape, ShapeKind::BuildingDome { .. });
             let is_selected = idx == lab_state.selected_hero_index;
 
@@ -337,7 +400,11 @@ pub fn sync_lab_preview_system(
             *vis = target_vis;
         }
         let is_selected = hero_idx.0 == active_hero_idx;
-        let Some(&arch) = heroes.get(hero_idx.0) else {
+        let Some(arch) = lineup
+            .ids()
+            .get(hero_idx.0)
+            .and_then(|id| catalog.0.get(*id).ok())
+        else {
             continue;
         };
 
