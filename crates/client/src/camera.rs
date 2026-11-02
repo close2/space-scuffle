@@ -23,6 +23,9 @@ pub const MAX_CAMERA_DISTANCE: f32 = 48.0;
 /// Default StarCraft II perspective pitch in radians (58.0 degrees).
 pub const DEFAULT_CAMERA_PITCH_RAD: f32 = 58.0 * (std::f32::consts::PI / 180.0);
 
+/// Time constant of the look-at height following the terrain, in seconds.
+pub const LOOK_AT_SMOOTHING_SECS: f32 = 0.12;
+
 /// Logical scroll pixels corresponding to one wheel line at the default sensitivity.
 pub const SCROLL_PIXELS_PER_LINE: f32 = 40.0;
 
@@ -114,6 +117,15 @@ impl RtsCamera {
     pub fn zoom(&mut self, scroll_delta: f32) {
         let zoom_step = -scroll_delta * (self.distance * 0.12);
         self.distance = (self.distance + zoom_step).clamp(MIN_CAMERA_DISTANCE, MAX_CAMERA_DISTANCE);
+    }
+
+    /// Eases the look-at height toward `target_y`, in world units, over `dt` seconds.
+    ///
+    /// Exponential decay gives the same path at any frame rate and never overshoots, so a pan over
+    /// a cliff rises smoothly instead of snapping the view.
+    pub fn ease_look_at_y(&mut self, target_y: f32, dt: f32) {
+        let remaining = (-dt / LOOK_AT_SMOOTHING_SECS).exp();
+        self.look_at_y = target_y + (self.look_at_y - target_y) * remaining;
     }
 
     /// Stores current camera bookmark for the specified key code.
@@ -230,7 +242,8 @@ pub fn camera_control_system(
                 sim_types::SimScalar::from_num(cam.target.x),
                 sim_types::SimScalar::from_num(cam.target.y),
             );
-            cam.look_at_y = terrain.map.terrain_altitude_scalar(focus).to_f32() + 1.2;
+            let target_y = terrain.map.terrain_altitude_scalar(focus).to_f32() + 1.2;
+            cam.ease_look_at_y(target_y, dt);
         }
     }
 
@@ -240,3 +253,33 @@ pub fn camera_control_system(
 
 /// Canonical alias for the camera control system.
 pub use camera_control_system as update_camera_system;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn look_at_easing_is_frame_rate_independent() {
+        let eased = |frames: u32| {
+            let mut camera = RtsCamera {
+                look_at_y: 0.0,
+                ..default()
+            };
+            for _ in 0..frames {
+                camera.ease_look_at_y(3.0, 0.5 / frames as f32);
+            }
+            camera.look_at_y
+        };
+        assert!((eased(15) - eased(120)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn look_at_easing_with_zero_time_holds_the_height() {
+        let mut camera = RtsCamera {
+            look_at_y: 1.5,
+            ..default()
+        };
+        camera.ease_look_at_y(9.0, 0.0);
+        assert_eq!(camera.look_at_y, 1.5);
+    }
+}
