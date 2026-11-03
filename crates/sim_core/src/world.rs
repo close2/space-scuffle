@@ -28,7 +28,7 @@ mod upkeep;
 mod vision;
 
 pub use abilities::ActiveHazardZone;
-use vision::AppliedSight;
+use vision::VisionWorkspace;
 
 use crate::catalog::UnitCatalog;
 use crate::checksum::compute_simulation_checksum;
@@ -142,16 +142,8 @@ pub struct SimWorld {
     pub(crate) scratch_neighbors: Vec<EntityId>,
     pub(crate) scratch_targets: Vec<(TargetPriorityKey, EntityId)>,
     pub(crate) scratch_acquisitions: Vec<(EntityId, crate::target_acquisition::Acquisition)>,
-    scratch_watchtower_units: Vec<(PlayerId, SimVec2)>,
-    scratch_sights: Vec<AppliedSight>,
-    /// Sources currently included in `vision_maps`, sorted by ID.
-    counted_sights: Vec<AppliedSight>,
-    /// Map cell revision `counted_sights` was cast on; `None` until the first count.
-    counted_cell_revision: Option<u64>,
-    /// Each vision map's recount revision when `counted_sights` was last in step with it.
-    counted_recounts: [u64; 8],
-    /// Indices of the cells set in each player's `known_blocked_cells`.
-    known_blocked_lists: [Vec<usize>; 8],
+    /// Phase 3 bookkeeping derived from `vision_maps`; excluded from the checksum.
+    pub(crate) vision: VisionWorkspace,
 }
 
 impl SimWorld {
@@ -244,12 +236,7 @@ impl SimWorld {
             scratch_neighbors: Vec::with_capacity(32),
             scratch_targets: Vec::with_capacity(64),
             scratch_acquisitions: Vec::with_capacity(64),
-            scratch_watchtower_units: Vec::new(),
-            scratch_sights: Vec::new(),
-            counted_sights: Vec::new(),
-            counted_cell_revision: None,
-            counted_recounts: [0; 8],
-            known_blocked_lists: Default::default(),
+            vision: VisionWorkspace::default(),
         };
 
         world.last_checksum = world.compute_checksum();

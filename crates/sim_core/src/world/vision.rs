@@ -15,14 +15,34 @@
 
 use crate::SimWorld;
 use sim_map::{watchtower_source, CellFlags, VisionSource};
-use sim_types::{EntityId, VisibilityState};
+use sim_types::{EntityId, PlayerId, SimVec2, VisibilityState};
 
 /// One sight source already counted into a player's vision map.
 #[derive(Clone, Copy)]
-pub(super) struct AppliedSight {
+struct AppliedSight {
     id: EntityId,
     owner: usize,
     source: VisionSource,
+}
+
+/// Derived vision bookkeeping; excluded from the checksum and rebuilt by a full recount.
+///
+/// Holds the sources already counted into `SimWorld::vision_maps` and the revisions they were
+/// counted against, so phase 3 can recast only what changed since the previous tick.
+#[derive(Default)]
+pub(crate) struct VisionWorkspace {
+    /// Ground units able to hold a watchtower this tick, as `(owner, position)`.
+    watchtower_units: Vec<(PlayerId, SimVec2)>,
+    /// This tick's sight sources, sorted by ID; reused across ticks.
+    sights: Vec<AppliedSight>,
+    /// Sources currently included in `vision_maps`, sorted by ID.
+    counted: Vec<AppliedSight>,
+    /// Map cell revision `counted` was cast on; `None` until the first count.
+    counted_cell_revision: Option<u64>,
+    /// Each vision map's recount revision when `counted` was last in step with it.
+    counted_recounts: [u64; 8],
+    /// Indices of the cells set in each player's `known_blocked_cells`.
+    known_blocked_lists: [Vec<usize>; 8],
 }
 
 impl SimWorld {
@@ -37,7 +57,7 @@ impl SimWorld {
         if self.map.watchtowers().is_empty() {
             return;
         }
-        self.scratch_watchtower_units.clear();
+        self.vision.watchtower_units.clear();
         for entity in self.entities.values() {
             if entity.is_loaded_in_transport() || !entity.is_completed {
                 continue;
@@ -49,12 +69,13 @@ impl SimWorld {
                 ) && !arch.is_immobile_by_default()
             });
             if occupies {
-                self.scratch_watchtower_units
+                self.vision
+                    .watchtower_units
                     .push((entity.owner, entity.position));
             }
         }
         self.map
-            .update_watchtower_capture(&self.scratch_watchtower_units);
+            .update_watchtower_capture(&self.vision.watchtower_units);
     }
 
     /// Lists every sight source for this tick in ID order, watchtowers after all entities.
@@ -131,11 +152,12 @@ impl SimWorld {
     pub fn update_vision(&mut self) {
         self.update_watchtower_control();
 
-        let mut sights = std::mem::take(&mut self.scratch_sights);
+        let mut sights = std::mem::take(&mut self.vision.sights);
         self.collect_sights(&mut sights);
-        let mut counted = std::mem::take(&mut self.counted_sights);
-        let in_step = self.counted_cell_revision == Some(self.map.cell_revision())
-            && (0..8).all(|p| self.vision_maps[p].recount_revision() == self.counted_recounts[p]);
+        let mut counted = std::mem::take(&mut self.vision.counted);
+        let in_step = self.vision.counted_cell_revision == Some(self.map.cell_revision())
+            && (0..8)
+                .all(|p| self.vision_maps[p].recount_revision() == self.vision.counted_recounts[p]);
         if in_step {
             self.recast_changed_sights(&counted, &sights);
         } else {
@@ -148,14 +170,14 @@ impl SimWorld {
             for vision in &mut self.vision_maps {
                 vision.end_tick_update();
             }
-            self.counted_cell_revision = Some(self.map.cell_revision());
+            self.vision.counted_cell_revision = Some(self.map.cell_revision());
             for p in 0..8 {
-                self.counted_recounts[p] = self.vision_maps[p].recount_revision();
+                self.vision.counted_recounts[p] = self.vision_maps[p].recount_revision();
             }
         }
         std::mem::swap(&mut counted, &mut sights);
-        self.counted_sights = counted;
-        self.scratch_sights = sights;
+        self.vision.counted = counted;
+        self.vision.sights = sights;
 
         self.update_known_structures();
     }
@@ -193,7 +215,7 @@ impl SimWorld {
     // PERFORMANCE RATIONALE:
     // Why: Scanning every visible cell of every player is O(map area) per tick, for a record that
     // can only change at a structure's footprint or at a cell already remembered as blocked.
-    // What: Visit those two sets alone, tracked per player in `known_blocked_lists`.
+    // What: Visit those two sets alone, tracked per player in `VisionWorkspace::known_blocked_lists`.
     // Trade-off: One retained index list per player, bounded by the structure cells on the map.
     fn update_known_structures(&mut self) {
         let width = self.map.width() as usize;
@@ -220,13 +242,13 @@ impl SimWorld {
                             && !self.known_blocked_cells[p][idx]
                         {
                             self.known_blocked_cells[p][idx] = true;
-                            self.known_blocked_lists[p].push(idx);
+                            self.vision.known_blocked_lists[p].push(idx);
                             self.movement.recheck_routes[p] = true;
                         }
                     }
                 }
             }
-            let mut list = std::mem::take(&mut self.known_blocked_lists[p]);
+            let mut list = std::mem::take(&mut self.vision.known_blocked_lists[p]);
             list.retain(|&idx| {
                 let (Ok(x), Ok(y)) = (u32::try_from(idx % width), u32::try_from(idx / width))
                 else {
@@ -243,7 +265,7 @@ impl SimWorld {
                 }
                 !stale
             });
-            self.known_blocked_lists[p] = list;
+            self.vision.known_blocked_lists[p] = list;
         }
     }
 }
