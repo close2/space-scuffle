@@ -35,11 +35,18 @@ use bevy::prelude::*;
 use client::battle_hud::model::HudModel;
 use client::battle_pipeline::fog::BattleFog;
 use client::battle_pipeline::session::BattleSession;
+use client::battle_presentation::{BattlePresentation, PlayerPresentation};
 use client::runtime_battle::SKIRMISH_SCENARIO;
 use client::scene_controller::RenderEntityMap;
 use client::smog::SmogStats;
+use client::vfx::{
+    BeamVisualComponent, CombatVisualEvent, MeleeSlashComponent, ProjectileVisual, ShatterShard,
+};
 use client::ClientMode;
-use sim_types::{AttackOrigin, EntityId, PlayerCommand, PlayerId, UnitOrder, UnitTypeId};
+use sim_types::{
+    AttackOrigin, CombatEventVisual, EntityId, PlayerCommand, PlayerId, SimScalar, UnitOrder,
+    UnitTypeId,
+};
 
 #[allow(
     dead_code,
@@ -51,6 +58,9 @@ mod battle_harness;
 use battle_harness::{sim_position, Harness, LOCAL_PLAYER};
 
 const ENEMY: PlayerId = PlayerId(1);
+
+/// A slot the skirmish does not seat, for fights the viewer takes no part in.
+const THIRD_PARTY: PlayerId = PlayerId(2);
 
 /// A soldier with shipped media and a weapon.
 const SOLDIER: &str = "pulse_bot";
@@ -449,6 +459,197 @@ fn an_enemy_in_sight_stays_inspected() {
     run_ticks(&mut harness, 25);
     assert_eq!(harness.selection().inspected(), Some(foe));
     assert!(model(&harness).focus.is_some());
+}
+
+// --- Combat events (G-22) -------------------------------------------------------------------------
+
+/// What reached the visual layer, recorded on every frame.
+#[derive(Resource, Default)]
+struct Delivered {
+    events: Vec<CombatEventVisual>,
+    /// Largest number of live effect entities seen on any frame.
+    peak_effects: usize,
+}
+
+type EffectFilter = Or<(
+    With<ProjectileVisual>,
+    With<BeamVisualComponent>,
+    With<MeleeSlashComponent>,
+    With<ShatterShard>,
+)>;
+
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+fn record_delivery(
+    mut events: EventReader<'_, '_, CombatVisualEvent>,
+    effects: Query<'_, '_, (), EffectFilter>,
+    mut delivered: ResMut<'_, Delivered>,
+) {
+    delivered
+        .events
+        .extend(events.read().map(|event| event.0.clone()));
+    delivered.peak_effects = delivered.peak_effects.max(effects.iter().count());
+}
+
+fn recording(mut harness: Harness) -> Harness {
+    harness
+        .app
+        .init_resource::<Delivered>()
+        .add_systems(PostUpdate, record_delivery);
+    harness
+}
+
+fn delivered(harness: &Harness) -> &Delivered {
+    harness.app.world().resource::<Delivered>()
+}
+
+/// Has an enemy soldier kill a soldier of a third player at `place`, by the real weapon path.
+///
+/// Neither party is the viewer, so the viewer's own units cannot lend the fight any sight. The
+/// skirmish seats two players, so setup seats the third in the session's metadata.
+fn fight_at(harness: &mut Harness, place: Vec2) {
+    let mut session = harness.app.world_mut().resource_mut::<BattleSession>();
+    if session.metadata.players.len() == 2 {
+        let mut third = session.metadata.players[1].clone();
+        third.owner = THIRD_PARTY;
+        session.metadata.players.push(third.clone());
+        let mut presentation = harness.app.world_mut().resource_mut::<BattlePresentation>();
+        presentation.players.push(PlayerPresentation {
+            owner: THIRD_PARTY,
+            label: third.label,
+            color: third.color,
+            roster: Vec::new(),
+            mobile: 0,
+            armed: 0,
+            overclock: 0,
+        });
+    }
+    let beside = harness.open_ground(place, 2.0);
+    let shooter = spawn_soldier(harness, ENEMY, place);
+    let victim = spawn_soldier(harness, THIRD_PARTY, beside);
+    let unit = harness.world_mut().entities.get_mut(&victim).unwrap();
+    unit.hp = SimScalar::from_i32(1);
+    submit(
+        harness,
+        ENEMY,
+        &[shooter],
+        UnitOrder::AttackTarget {
+            target: victim,
+            origin: AttackOrigin::Explicit,
+        },
+    );
+    run_until(harness, "the victim dies", |harness| {
+        !harness.world().entities.contains_key(&victim)
+    });
+    run_ticks(harness, 3);
+}
+
+#[test]
+fn combat_out_of_sight_sends_no_visual_events_and_the_queue_still_drains() {
+    let mut harness = recording(skirmish());
+    let foe = mobile(&harness, ENEMY)[0];
+    let far = harness.open_ground(harness.simulated_position(foe), 5.0);
+    fight_at(&mut harness, far);
+
+    assert_eq!(delivered(&harness).events, []);
+    assert_eq!(delivered(&harness).peak_effects, 0, "tracers and shatters");
+    let session = harness.app.world().resource::<BattleSession>();
+    assert_eq!(session.frames.pending_event_count(), 0);
+}
+
+#[test]
+fn combat_in_sight_is_delivered() {
+    let mut harness = recording(skirmish());
+    let place = harness.open_ground(home(&harness), 4.0);
+    fight_at(&mut harness, place);
+
+    let seen = delivered(&harness);
+    assert!(
+        seen.events
+            .iter()
+            .any(|event| matches!(event, CombatEventVisual::BubbleShatter { .. })),
+        "{:?}",
+        seen.events
+    );
+    assert!(seen.peak_effects > 0, "the effects must have been spawned");
+}
+
+/// Publishes `events` through the world's real queue and returns what was delivered of them.
+fn deliver(harness: &mut Harness, events: &[CombatEventVisual]) -> Vec<CombatEventVisual> {
+    harness.world_mut().pending_events.extend_from_slice(events);
+    run_ticks(harness, 3);
+    let session = harness.app.world().resource::<BattleSession>();
+    assert_eq!(session.frames.pending_event_count(), 0, "the queue drains");
+    harness
+        .app
+        .world()
+        .resource::<Delivered>()
+        .events
+        .iter()
+        .filter(|event| events.contains(event))
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn each_kind_of_event_is_judged_where_it_lands() {
+    let mut harness = recording(skirmish());
+    let seen = home(&harness);
+    let fog = harness.simulated_position(mobile(&harness, ENEMY)[0]);
+    let foe_tracer = |from: Vec2, to: Vec2| CombatEventVisual::HitscanTracer {
+        from: [from.x, from.y, 0.5],
+        to: [to.x, to.y, 0.5],
+        owner: ENEMY,
+    };
+    let foe_beam = |to: Vec2| CombatEventVisual::BeamVisual {
+        from: [fog.x, fog.y, 0.5],
+        to: [to.x, to.y, 0.5],
+        is_lightning: false,
+        owner: ENEMY,
+    };
+    let foe_shatter = |at: Vec2| CombatEventVisual::BubbleShatter {
+        pos: [at.x, at.y, 0.5],
+        radius: 0.5,
+        is_dome: false,
+        owner: ENEMY,
+    };
+    let foe_slash = |at: Vec2| CombatEventVisual::MeleeSlashVisual {
+        pos: [at.x, at.y, 0.5],
+        angle_rad: 0.0,
+        radius: 0.5,
+        owner: ENEMY,
+    };
+    let foe_shot = |from: Vec2, to: Vec2| CombatEventVisual::ProjectileVisual {
+        pos: [from.x, from.y, 0.5],
+        vel: [(to.x - from.x) * 2.0, (to.y - from.y) * 2.0, 0.0],
+        owner: ENEMY,
+        duration_secs: Some(0.5),
+    };
+    let own_tracer = CombatEventVisual::HitscanTracer {
+        from: [seen.x, seen.y, 0.5],
+        to: [fog.x, fog.y, 0.5],
+        owner: LOCAL_PLAYER,
+    };
+    let landing_in_sight = vec![
+        foe_tracer(fog, seen),
+        foe_beam(seen),
+        foe_shatter(seen),
+        foe_slash(seen),
+        foe_shot(fog, seen),
+        own_tracer,
+    ];
+    let landing_in_fog = vec![
+        foe_tracer(seen, fog),
+        foe_beam(fog),
+        foe_shatter(fog),
+        foe_slash(fog),
+        foe_shot(seen, fog),
+    ];
+    let mut all = landing_in_fog;
+    all.extend_from_slice(&landing_in_sight);
+    assert_eq!(deliver(&mut harness, &all), landing_in_sight);
 }
 
 // --- No allocation on the per-frame path (charter 3.3) -------------------------------------------

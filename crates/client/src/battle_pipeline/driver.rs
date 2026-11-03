@@ -13,6 +13,7 @@ use sim_types::Tick;
 
 use super::clock::BattleClockError;
 use super::commands::{SessionGeneration, SubmissionError, SubmissionSequence};
+use super::fog::BattleFog;
 use super::session::BattleSession;
 use super::timeline::TimelineError;
 
@@ -316,6 +317,10 @@ pub fn advance_battle_ticks(
 }
 
 /// Delivers only events whose corresponding pose has already been published.
+///
+/// Under `fog`, an event the viewer may not see is dropped here, after it leaves the queue, so the
+/// queue drains whatever the viewer sees. Without `fog` every event is delivered, as the editor
+/// and the sandbox need.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
@@ -323,13 +328,16 @@ pub fn advance_battle_ticks(
 pub fn publish_combat_events(
     lab: Res<'_, crate::LabState>,
     mut session: ResMut<'_, BattleSession>,
+    fog: Option<Res<'_, BattleFog>>,
     mut events: EventWriter<'_, crate::CombatVisualEvent>,
 ) {
     if lab.current_tab != crate::LabTab::LiveBattle || session.presentation_blocked {
         return;
     }
     while let Some(event) = session.frames.pop_presented_event() {
-        events.send(crate::CombatVisualEvent(event.event));
+        if fog.as_ref().is_none_or(|fog| fog.reveals(&event.event)) {
+            events.send(crate::CombatVisualEvent(event.event));
+        }
     }
 }
 
