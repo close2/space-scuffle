@@ -40,7 +40,10 @@ pub use enums::{
     VisibilityState, WeaponVisualKind,
 };
 pub use errors::MathError;
-pub use ids::{EntityId, PlayerId, ResourceNodeId, TeamId, Tick, UnitTypeId};
+pub use ids::{
+    EntityId, PerPlayer, PlayerId, PlayerSlot, PlayerSlotError, ResourceNodeId, TeamId, Tick,
+    UnitTypeId, MAX_PLAYERS,
+};
 pub use math::{SimAngle, SimScalar, SimVec2};
 pub use player_view::{
     CarrierView, CommandOptionView, CommandSubject, OptionLock, PlayerView, QueuedItem,
