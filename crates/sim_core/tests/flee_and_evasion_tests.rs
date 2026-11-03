@@ -33,7 +33,7 @@ fn empty_bundle(tick: u32) -> TickBundle {
 fn create_test_world() -> SimWorld {
     let map =
         GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0))).expect("invariant: valid map");
-    SimWorld::new(map, 0x4242)
+    sim_fixtures::world(map, 0x4242)
 }
 
 /// Test 1: Idle Ground-Only Unit Flees When Attacked by Air Unit.

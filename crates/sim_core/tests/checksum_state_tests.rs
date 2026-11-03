@@ -46,7 +46,7 @@ fn world() -> SimWorld {
         }],
     )
     .expect("fixture dimensions match its 256 cells");
-    let mut world = SimWorld::new(map, 1234);
+    let mut world = sim_fixtures::world(map, 1234);
     let unit_type = world
         .catalog
         .archetypes()

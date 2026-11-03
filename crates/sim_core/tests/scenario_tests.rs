@@ -22,9 +22,8 @@
 
 use std::path::{Path, PathBuf};
 
-use sim_core::catalog::UnitCatalog;
 use sim_core::scenario::{
-    build_world, load_scenario_world, ring_perimeter, PlayerSetup, ScenarioError, ScenarioManifest,
+    load_scenario_world, ring_perimeter, PlayerSetup, ScenarioError, ScenarioManifest,
     StartLoadoutCatalog,
 };
 use sim_map::validation::validate_map;
@@ -126,7 +125,8 @@ fn showcase_two_players_spawns_expected_entities() {
         },
     ];
 
-    let world = build_world(&doc, &loadouts, &players, 42).expect("build_world should succeed");
+    let world = sim_fixtures::scenario_world(&doc, &loadouts, &players, 42)
+        .expect("build_world should succeed");
 
     // Exactly 2 structures + 12 units = 14 entities.
     assert_eq!(world.entities.len(), 14);
@@ -246,8 +246,10 @@ fn build_world_is_deterministic() {
     ];
 
     let seed = 0x5CA1_AB1E;
-    let mut world1 = build_world(&doc, &loadouts, &players, seed).expect("build world 1");
-    let mut world2 = build_world(&doc, &loadouts, &players, seed).expect("build world 2");
+    let mut world1 =
+        sim_fixtures::scenario_world(&doc, &loadouts, &players, seed).expect("build world 1");
+    let mut world2 =
+        sim_fixtures::scenario_world(&doc, &loadouts, &players, seed).expect("build world 2");
 
     assert_eq!(
         world1.compute_checksum(),
@@ -282,7 +284,7 @@ fn error_invalid_map() {
         loadout_slug: "standard_automaton".to_string(),
     }];
 
-    let res = build_world(&doc, &loadouts, &players, 1);
+    let res = sim_fixtures::scenario_world(&doc, &loadouts, &players, 1);
     assert!(
         matches!(res, Err(ScenarioError::InvalidMap(ref errors)) if !errors.is_empty()),
         "expected non-empty InvalidMap error"
@@ -307,7 +309,7 @@ fn error_missing_start_location() {
         },
     ];
 
-    let res = build_world(&doc, &loadouts, &players, 1);
+    let res = sim_fixtures::scenario_world(&doc, &loadouts, &players, 1);
     assert!(
         matches!(res, Err(ScenarioError::MissingStartLocation { slot: 7 })),
         "expected MissingStartLocation for slot 7"
@@ -326,7 +328,7 @@ fn error_unknown_loadout() {
         loadout_slug: "non_existent_faction".to_string(),
     }];
 
-    let res = build_world(&doc, &loadouts, &players, 1);
+    let res = sim_fixtures::scenario_world(&doc, &loadouts, &players, 1);
     assert!(
         matches!(res, Err(ScenarioError::UnknownLoadout(ref slug)) if slug == "non_existent_faction"),
         "expected UnknownLoadout for non_existent_faction"
@@ -354,7 +356,7 @@ fn error_unknown_slug() {
         loadout_slug: "custom_loadout".to_string(),
     }];
 
-    let res = build_world(&doc, &loadouts, &players, 1);
+    let res = sim_fixtures::scenario_world(&doc, &loadouts, &players, 1);
     assert!(
         matches!(res, Err(ScenarioError::UnknownSlug(ref slug)) if slug == "ghost_building_slug"),
         "expected UnknownSlug for ghost_building_slug"
@@ -383,7 +385,7 @@ fn error_town_hall_not_a_dome() {
         loadout_slug: "unit_as_hall".to_string(),
     }];
 
-    let res = build_world(&doc, &loadouts, &players, 1);
+    let res = sim_fixtures::scenario_world(&doc, &loadouts, &players, 1);
     assert!(
         matches!(res, Err(ScenarioError::TownHallNotADome(ref slug)) if slug == "welder_drone"),
         "expected TownHallNotADome for welder_drone"
@@ -404,7 +406,7 @@ fn error_town_hall_does_not_fit() {
         loadout_slug: "standard_automaton".to_string(),
     }];
 
-    let res = build_world(&doc, &loadouts, &players, 1);
+    let res = sim_fixtures::scenario_world(&doc, &loadouts, &players, 1);
     assert!(
         matches!(res, Err(ScenarioError::TownHallDoesNotFit { slot: 0 })),
         "expected TownHallDoesNotFit for slot 0"
@@ -436,7 +438,7 @@ fn error_not_enough_spawn_cells() {
         loadout_slug: "swarms_overflow".to_string(),
     }];
 
-    let res = build_world(&doc, &loadouts, &players, 1);
+    let res = sim_fixtures::scenario_world(&doc, &loadouts, &players, 1);
     assert!(
         matches!(res, Err(ScenarioError::NotEnoughSpawnCells { slot: 0 })),
         "expected NotEnoughSpawnCells for slot 0"
@@ -471,7 +473,7 @@ fn real_loadout_file_resolves() {
 
     assert_ne!(loadout_catalog.loadouts.len(), 0);
 
-    let unit_catalog = UnitCatalog::new_starter_roster();
+    let unit_catalog = sim_fixtures::shipped_catalogs().units;
 
     for loadout in &loadout_catalog.loadouts {
         // Town hall slug must resolve in the unit catalog.
@@ -579,7 +581,8 @@ fn units_never_spawn_on_other_cliff_level() {
         },
     ];
 
-    let world = build_world(&doc, &loadouts, &players, 123).expect("build_world must succeed");
+    let world = sim_fixtures::scenario_world(&doc, &loadouts, &players, 123)
+        .expect("build_world must succeed");
 
     let p0_units: Vec<_> = world
         .entities

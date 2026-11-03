@@ -14,7 +14,7 @@ use sim_types::{PlayerCommand, PlayerId, SimScalar, TickBundle, UnitOrder, UnitT
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 fn fixture() -> TestResult<(SimWorld, [EntityId; 3])> {
     let map = GameMap::new(40, 40, MapCell::default_ground(CliffLevel(0)))?;
-    let mut world = SimWorld::new(map, 51);
+    let mut world = crate::test_support::world(map, 51);
     let kind = world
         .catalog
         .archetypes()

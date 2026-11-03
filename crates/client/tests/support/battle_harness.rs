@@ -520,7 +520,7 @@ fn link_tree(from: &Path, to: &Path) {
 pub fn fixture_root(identities: &[&str]) -> tempfile::TempDir {
     let directory = tempfile::tempdir().expect("temporary directory");
     let textures = directory.path().join("textures");
-    let catalog = sim_core::UnitCatalog::default_catalog();
+    let catalog = sim_fixtures::shipped_catalogs().units;
     for identity in identities {
         let mut atlas = asset_baker::generate_procedural_atlas(
             &catalog,

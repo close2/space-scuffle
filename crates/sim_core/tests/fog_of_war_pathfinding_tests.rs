@@ -13,7 +13,6 @@
     clippy::too_many_lines
 )]
 
-use sim_core::SimWorld;
 use sim_map::{
     CellFlags, CliffLevel, GameMap, MapCell, PathRequestWithVision, RampDir, UnitClearance,
 };
@@ -61,7 +60,7 @@ fn test_unexplored_ramp_blocks_path_until_scouted() {
 
     let map = GameMap::from_cells(width, height, cells, Vec::new(), Vec::new())
         .expect("invariant: valid map");
-    let mut world = SimWorld::new(map, 0x1234);
+    let mut world = sim_fixtures::world(map, 0x1234);
 
     let start_pos = SimVec2::new(SimScalar::from_num(4), SimScalar::from_num(15));
     let high_goal = SimVec2::new(SimScalar::from_num(24), SimScalar::from_num(15));
@@ -130,7 +129,7 @@ fn test_fogged_ramp_wall_off_causes_dynamic_repath_on_vision() {
 
     let map = GameMap::from_cells(width, height, cells, Vec::new(), Vec::new())
         .expect("invariant: valid map");
-    let mut world = SimWorld::new(map, 0x5678);
+    let mut world = sim_fixtures::world(map, 0x5678);
 
     let player_blue = PlayerId(0);
 
@@ -249,7 +248,7 @@ fn test_high_ground_vision_occlusion_and_ramp_elevation() {
 
     let map = GameMap::from_cells(width, height, cells, Vec::new(), Vec::new())
         .expect("invariant: valid map");
-    let mut world = SimWorld::new(map, 0x9999);
+    let mut world = sim_fixtures::world(map, 0x9999);
 
     let player_blue = PlayerId(0);
     let player_red = PlayerId(1);

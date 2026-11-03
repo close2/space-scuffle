@@ -11,7 +11,6 @@
     clippy::too_many_lines
 )]
 
-use sim_core::SimWorld;
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder};
 
@@ -22,7 +21,7 @@ fn test_2000_tick_multi_instance_lockstep_determinism() {
     let create_world = || {
         let default_cell = MapCell::default_ground(CliffLevel(0));
         let map = GameMap::new(64, 64, default_cell).expect("valid map");
-        let mut world = SimWorld::new(map, seed);
+        let mut world = sim_fixtures::world(map, seed);
         world
             .research_upgrade(PlayerId(0), "overclock_stim")
             .expect("invariant: overclock_stim is a shipped upgrade");

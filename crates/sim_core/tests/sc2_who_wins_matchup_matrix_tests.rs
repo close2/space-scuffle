@@ -253,7 +253,7 @@ fn play(battle: &Battle, seed: u64, spawn_jitter: f32) -> Outcome {
         MapCell::default_ground(CliffLevel(0)),
     )
     .expect("invariant: matrix arenas have a valid size");
-    let mut world = SimWorld::new(map, seed);
+    let mut world = sim_fixtures::world(map, seed);
     let mut jitter = Jitter::new(seed, spawn_jitter);
     let blue = spawn_side(&mut world, BLUE, &battle.blue, &mut jitter);
     let red = spawn_side(&mut world, RED, &battle.red, &mut jitter);

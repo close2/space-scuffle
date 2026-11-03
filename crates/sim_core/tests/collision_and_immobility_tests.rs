@@ -15,9 +15,8 @@
     clippy::unreadable_literal
 )]
 
-use sim_core::scenario::{build_world, PlayerSetup, StartLoadoutCatalog};
+use sim_core::scenario::{PlayerSetup, StartLoadoutCatalog};
 use sim_core::steering::{compute_push_displacement, PushEntityParams};
-use sim_core::SimWorld;
 use sim_map::{CliffLevel, GameMap, MapCell, MapFile};
 use sim_types::{EntityId, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder};
 
@@ -140,7 +139,7 @@ fn test_immobile_unit_unpushable_during_siege_and_spell() {
     let height = 32;
     let map = GameMap::new(width, height, MapCell::default_ground(CliffLevel(0)))
         .expect("invariant: valid map");
-    let mut world = SimWorld::new(map, 0x51E6E);
+    let mut world = sim_fixtures::world(map, 0x51E6E);
 
     let player_blue = PlayerId(0);
 
@@ -224,7 +223,7 @@ fn test_converging_units_respect_speed_cap_and_do_not_vibrate() {
     let height = 64;
     let map = GameMap::new(width, height, MapCell::default_ground(CliffLevel(0)))
         .expect("invariant: valid map");
-    let mut world = SimWorld::new(map, 0x00C0_FFEE);
+    let mut world = sim_fixtures::world(map, 0x00C0_FFEE);
 
     let player_blue = PlayerId(0);
     let player_red = PlayerId(1);
@@ -364,7 +363,7 @@ fn load_canyon_map() -> GameMap {
 #[test]
 fn test_squad_move_across_ramp_settles_and_auto_acquires() {
     let map = load_canyon_map();
-    let mut world = SimWorld::new(map, 0x1234);
+    let mut world = sim_fixtures::world(map, 0x1234);
     let p_blue = PlayerId(0);
     let p_red = PlayerId(1);
 
@@ -479,7 +478,7 @@ fn test_squad_move_across_ramp_settles_and_auto_acquires() {
 #[test]
 fn test_higher_priority_melee_slides_around_engaged_ranged_ally() {
     let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0))).expect("valid flat map");
-    let mut world = SimWorld::new(map, 0x1234);
+    let mut world = sim_fixtures::world(map, 0x1234);
     let p_blue = PlayerId(0);
     let p_red = PlayerId(1);
 
@@ -612,7 +611,7 @@ fn test_higher_priority_melee_slides_around_engaged_ranged_ally() {
 #[test]
 fn test_live_battle_10_unit_squad_ramp_traversal() {
     let map = load_canyon_map();
-    let mut world = SimWorld::new(map, 0x1234);
+    let mut world = sim_fixtures::world(map, 0x1234);
     let p_blue = PlayerId(0);
 
     let small_arch = world
@@ -722,7 +721,8 @@ fn test_live_battle_scenario_dual_ramp_traversal() {
             loadout_slug: "battle_automaton".to_string(),
         },
     ];
-    let mut world = build_world(&doc, &loadouts, &players, 1592639215).expect("build world");
+    let mut world =
+        sim_fixtures::scenario_world(&doc, &loadouts, &players, 1592639215).expect("build world");
 
     let p0 = PlayerId(0);
     let p1 = PlayerId(1);
@@ -816,8 +816,8 @@ fn test_live_battle_scenario_dual_ramp_traversal() {
     }
 
     // Vice-versa: fresh world, Player 1 squad marching to Player 0 base approach (5.5, 5.5)
-    let mut world_rev =
-        build_world(&doc, &loadouts, &players, 1592639215).expect("build world rev");
+    let mut world_rev = sim_fixtures::scenario_world(&doc, &loadouts, &players, 1592639215)
+        .expect("build world rev");
     let mut p1_combatants = Vec::new();
     let mut small_medium_p1 = 0;
     let mut large_p1 = 0;
@@ -911,7 +911,7 @@ fn battlefield_bubble_trajectories_are_smooth_without_micro_jitter(
             loadout_slug: "battle_automaton".to_string(),
         },
     ];
-    let mut world = build_world(&doc, &loadouts, &players, 1592639215)?;
+    let mut world = sim_fixtures::scenario_world(&doc, &loadouts, &players, 1592639215)?;
 
     let p0 = PlayerId(0);
     let target_approach_p1 = SimVec2::new(
@@ -1093,7 +1093,7 @@ fn battlefield_bubble_trajectories_are_smooth_without_micro_jitter(
 fn test_sc2_moving_units_never_push_each_other_laterally() -> Result<(), Box<dyn std::error::Error>>
 {
     let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
-    let mut world = SimWorld::new(map, 0x5C20);
+    let mut world = sim_fixtures::world(map, 0x5C20);
     let unit_type = world
         .catalog
         .archetypes()

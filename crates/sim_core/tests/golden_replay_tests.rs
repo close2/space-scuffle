@@ -149,7 +149,7 @@ fn populate(world: &mut SimWorld, replay: &GoldenReplay) -> Result<SquadRoster, 
 /// Runs the script, returning the checksum recorded at each checkpoint.
 fn replay_checksums(replay: &GoldenReplay) -> Result<(Vec<u64>, SimWorld), Box<dyn Error>> {
     let map = MapFile::from_ron_str(MAP)?.decode()?.to_game_map()?;
-    let mut world = SimWorld::new(map, replay.seed);
+    let mut world = sim_fixtures::world(map, replay.seed);
     let squads = populate(&mut world, replay)?;
 
     let mut checksums = Vec::new();

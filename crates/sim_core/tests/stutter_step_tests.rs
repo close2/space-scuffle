@@ -12,7 +12,7 @@
     clippy::too_many_lines
 )]
 
-use sim_core::{SimWorld, WeaponPhase};
+use sim_core::WeaponPhase;
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder};
 
@@ -20,7 +20,7 @@ use sim_types::{PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, U
 fn test_stutter_step_backswing_cancellation() {
     let default_cell = MapCell::default_ground(CliffLevel(0));
     let map = GameMap::new(64, 64, default_cell).expect("invariant: valid map");
-    let mut world = SimWorld::new(map, 0x1234_5678);
+    let mut world = sim_fixtures::world(map, 0x1234_5678);
 
     let player_blue = PlayerId(0);
     let player_red = PlayerId(1);

@@ -43,4 +43,6 @@ blake3 = "1.8.7"
 bytemuck = { version = "1.25", features = ["derive"] }
 
 [dev-dependencies]
+# The shipped catalogs and worlds, embedded for tests only; production loads them from disk.
+sim_fixtures.workspace = true
 tempfile = "3.17"

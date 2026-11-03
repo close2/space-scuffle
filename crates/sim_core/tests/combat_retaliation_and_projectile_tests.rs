@@ -38,7 +38,7 @@ fn create_test_world(seed: u64) -> SimWorld {
     let height = 32;
     let map = GameMap::new(width, height, MapCell::default_ground(CliffLevel(0)))
         .expect("invariant: valid map");
-    SimWorld::new(map, seed)
+    sim_fixtures::world(map, seed)
 }
 
 /// Real same-owner carrier kept beyond acquisition/splash range of these fixtures.

@@ -1002,7 +1002,7 @@ fn can_raise_matches_admission_for_every_catalog_pair() -> TestResult {
         }],
         Vec::new(),
     )?;
-    let mut world = SimWorld::new(map, 5);
+    let mut world = sim_fixtures::world(map, 5);
     world.catalog = UnitCatalog::from_ron_str_bundle(UNITS, STRUCTURES)?;
     world.player_resources[0].minerals = RICH;
     world.player_resources[0].gas = RICH;

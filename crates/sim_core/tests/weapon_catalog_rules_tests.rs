@@ -25,7 +25,7 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 fn flat_world(side: u32) -> Result<SimWorld, Box<dyn std::error::Error>> {
     let map = GameMap::new(side, side, MapCell::default_ground(CliffLevel(0)))?;
-    Ok(SimWorld::new(map, 7))
+    Ok(sim_fixtures::world(map, 7))
 }
 
 fn run(world: &mut SimWorld, ticks: u32) {

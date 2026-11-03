@@ -148,7 +148,10 @@ use sim_types::ids::Tick;
 ///
 /// Provides dynamic archetype definitions, unit vitals, weapon specs, and showcase metadata
 /// to client rendering, HUD, and inspector systems with zero hardcoded creature slugs.
-#[derive(Resource, Debug, Clone, Default, Deref, DerefMut)]
+///
+/// It has no default: the app builder inserts the catalog it loaded from disk before adding
+/// [`ClientAppPlugin`], and a missing catalog fails loudly instead of using a compiled-in one.
+#[derive(Resource, Debug, Clone, Deref, DerefMut)]
 pub struct CatalogResource(pub sim_core::catalog::UnitCatalog);
 
 /// Runtime operational mode for the Space Scuffle client application.
@@ -333,8 +336,7 @@ impl ClientAppPlugin {
         lab_state: LabState,
         battle_profile: battle_presentation::BattleProfile,
     ) {
-        app.init_resource::<CatalogResource>()
-            .insert_resource(media::MediaFailurePolicy::new(self.max_frames.is_some()))
+        app.insert_resource(media::MediaFailurePolicy::new(self.max_frames.is_some()))
             .init_resource::<RenderEntityMap>()
             .insert_resource(lab_state)
             .init_resource::<SelectionState>()
@@ -782,7 +784,6 @@ fn insert_headless_resources(app: &mut App) -> Result<(), String> {
     app.add_event::<bevy::input::mouse::MouseMotion>();
     app.add_event::<bevy::input::mouse::MouseWheel>();
     app.add_event::<CombatVisualEvent>();
-    app.init_resource::<CatalogResource>();
     app.init_resource::<RenderEntityMap>();
     app.init_resource::<SelectionState>();
     app.init_resource::<battle_selection::BattleSelection>();

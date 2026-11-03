@@ -36,7 +36,7 @@ fn structure(world: &SimWorld, slug: &str) -> Result<UnitTypeId, Box<dyn Error>>
 
 fn fixture() -> Result<Fixture, Box<dyn Error>> {
     let map = GameMap::new(48, 48, MapCell::default_ground(CliffLevel(0)))?;
-    let mut world = SimWorld::new(map, 21);
+    let mut world = sim_fixtures::world(map, 21);
     world.spawn_structure(structure(&world, "foundry_core_dome")?, ME, 2, 2)?;
     let lab = world.spawn_structure(structure(&world, "assembly_bay_dome")?, ME, 12, 2)?;
     world.spawn_structure(structure(&world, "tech_module_pod")?, ME, 18, 2)?;

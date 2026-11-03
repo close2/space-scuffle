@@ -11,8 +11,8 @@ use sim_types::{
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-fn fixture() -> Result<(SimWorld, BattleSession), PipelineError> {
-    let mut world = SimWorld::new_default_battle_sandbox();
+fn fixture() -> Result<(SimWorld, BattleSession), Box<dyn std::error::Error>> {
+    let mut world = sim_fixtures::default_battle_sandbox()?;
     let session = BattleSession::prepare(
         SessionGeneration::FIRST,
         &mut world,
@@ -125,7 +125,7 @@ fn catchup_preserves_first_tick_rejections_before_later_ticks_clear_sim_outputs(
 
 #[test]
 fn exhaustion_precedes_command_dequeue_or_world_step() -> TestResult {
-    let mut world = SimWorld::new_default_battle_sandbox();
+    let mut world = sim_fixtures::default_battle_sandbox()?;
     world.current_tick = u32::MAX;
     let mut session = BattleSession::prepare(
         SessionGeneration::FIRST,
@@ -226,7 +226,7 @@ fn reset_replaces_generation_and_old_commands_without_replaying_events() -> Test
     let (mut world, mut session) = fixture()?;
     session.commands.submit(&world, mobile_order(&world)?)?;
     session.advance(&mut world, Duration::ZERO, true, true, 1, |_| Ok(()))?;
-    let mut candidate = SimWorld::new_default_battle_sandbox();
+    let mut candidate = sim_fixtures::default_battle_sandbox()?;
     let replacement = BattleSession::prepare(
         session.next_generation()?,
         &mut candidate,
@@ -376,7 +376,7 @@ fn a_refused_build_reaches_the_session_as_a_notice() -> TestResult {
         64,
         sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
     )?;
-    let mut world = SimWorld::new(map, 7);
+    let mut world = sim_fixtures::world(map, 7);
     let mut session = BattleSession::prepare(
         SessionGeneration::FIRST,
         &mut world,

@@ -58,7 +58,7 @@ fn fixture() -> Result<(SimWorld, EntityId, UnitTypeId), Box<dyn Error>> {
         }],
         Vec::new(),
     )?;
-    let mut world = SimWorld::new(map, 7);
+    let mut world = sim_fixtures::world(map, 7);
     let builder = builder_type(&world)?;
     let hall = id_of(&world, "foundry_core_dome")?;
     world.spawn_structure(hall, ME, 2, 2)?;

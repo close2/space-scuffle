@@ -7,7 +7,7 @@ use sim_core::steering::{
     compute_push_displacement, compute_push_displacement_with_mobility, resolve_push_interaction,
     CollisionMobility, PushEntityParams, PushGeometryError,
 };
-use sim_core::{Entity, UnitCatalog};
+use sim_core::Entity;
 use sim_types::{EntityId, PlayerId, ShapeKind, SimScalar, SimVec2};
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 fn point(x: i32, y: i32) -> SimVec2 {
@@ -25,7 +25,7 @@ fn params(id: u32, pos: SimVec2) -> PushEntityParams {
     }
 }
 fn entities() -> Result<(Entity, Entity), Box<dyn std::error::Error>> {
-    let catalog = UnitCatalog::new_starter_roster();
+    let catalog = sim_fixtures::shipped_catalogs().units;
     let archetype = catalog
         .archetypes()
         .find(|a| !matches!(a.shape, ShapeKind::BuildingDome { .. }) && !a.is_immobile_by_default())

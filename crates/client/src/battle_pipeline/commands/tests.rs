@@ -13,7 +13,7 @@ const THEM: PlayerId = PlayerId(1);
 
 fn fixture(
 ) -> Result<(SimWorld, BattleCommandQueue, EntityId, PlayerId), Box<dyn std::error::Error>> {
-    let world = SimWorld::new_default_battle_sandbox();
+    let world = sim_fixtures::default_battle_sandbox()?;
     let actor = world
         .entities
         .values()
@@ -62,7 +62,7 @@ fn type_where(
 /// An empty flat world with a funded player, so nothing but the order under test can refuse.
 fn role_fixture() -> Result<(SimWorld, BattleCommandQueue), Box<dyn std::error::Error>> {
     let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
-    let mut world = SimWorld::new(map, 7);
+    let mut world = sim_fixtures::world(map, 7);
     world.player_resources[0].minerals = 10_000;
     world.player_resources[0].gas = 10_000;
     let mut queue = BattleCommandQueue::default();
