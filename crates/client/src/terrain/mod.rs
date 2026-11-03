@@ -170,6 +170,8 @@ impl Plugin for TerrainPlugin {
 // What: We limit chunk rebuilds to at most `MAX_CHUNK_REBUILDS_PER_FRAME` (8) per frame,
 // reusing `MesherScratch` to eliminate dynamic heap allocations.
 // Splat and overlay textures are updated at most once per frame across the accumulated dirty rect.
+// Trade-off: A large edit takes several frames to appear in full, and the accumulated dirty rect
+// may re-upload texels that did not change.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"

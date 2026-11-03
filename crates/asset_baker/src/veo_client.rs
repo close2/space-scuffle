@@ -41,11 +41,7 @@
 //! into vertical strip PNGs where total height is guaranteed:
 //! `strip_height = total_frames * frame_size <= 16384` px.
 
-#![allow(
-    clippy::cast_possible_truncation,
-    clippy::doc_markdown,
-    clippy::too_many_lines
-)]
+#![allow(clippy::cast_possible_truncation, clippy::doc_markdown)]
 
 use crate::error::BakerError;
 use crate::ffmpeg_importer::{

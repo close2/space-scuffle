@@ -23,9 +23,6 @@ use std::collections::BTreeMap;
 #[derive(Component, Clone, Debug, Deref, DerefMut)]
 pub struct BubbleInstance(pub BubbleRenderInstance);
 
-/// GPU uniform buffer struct matching `struct BubbleUniform` in `bubble_dome.wgsl`.
-// PERFORMANCE RATIONALE:
-// Why: WebGPU uniform buffers require strict 16-byte alignment and explicit std140 padding.
 /// Feature bitflag: Cloaking shimmer interference.
 pub const FLAG_CLOAKED: u32 = 1 << 0;
 /// Feature bitflag: Tactical selection outer rim glow.

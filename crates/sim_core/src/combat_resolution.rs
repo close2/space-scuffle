@@ -327,7 +327,8 @@ impl SimWorld {
             clippy::cast_precision_loss,
             reason = "presentation only: this value drives no simulation decision"
         )]
-        let flight_duration_secs = (ticks_to_impact as f32) / 25.0;
+        let flight_duration_secs =
+            (ticks_to_impact as f32) / f32::from(sim_types::TICKS_PER_SECOND);
 
         // Emit visual projectile event for client VFX rendering
         let spawn_pos_2d = shot.origin + dir * attacker_radius;

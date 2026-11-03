@@ -7,9 +7,10 @@
 //! themselves run as `crates/workspace_checks/tests/charter.rs`, one `#[test]` per check ID.
 //!
 //! # How it fits
-//! The crate is a development tool (`publish = false`) and depends on no other workspace crate,
-//! so it reads the simulation and client crates as text, the dependency graph through Cargo,
-//! and the list of tracked files through Git.
+//! The crate is a development tool (`publish = false`). Its library depends on no other
+//! workspace crate, so it reads the simulation and client crates as text, the dependency graph
+//! through Cargo, and the list of tracked files through Git. Its test target alone depends on
+//! `sim_types`, for the one constant check C17 compares `DESIGN.md` with.
 //! `cargo test --workspace`, the gate every agent runs and CI's `check-and-test` job runs, executes
 //! its tests; no extra CI step is needed. Check IDs (`C2`, `C3`, ...) are the ones used in the
 //! Phase 9 blueprint (`docs/plans/2026-11-03-phase-9-structure-and-docs.md`) and in the charter.
@@ -23,19 +24,34 @@
 //! - Traversal is deterministic (sorted by path) and never follows symbolic links; the client's
 //!   `assets` link would otherwise pull the whole media tree into every scan.
 
+mod charter_claims;
 mod checks;
+mod conventions;
+mod design_doc;
 mod docs;
 mod gpu;
+mod graph;
 mod identities;
+mod markdown;
 mod metadata;
 mod production_rules;
 mod source;
+
+pub use charter_claims::{
+    charter_paths_exist, ci_runs_the_gate, test_subjects, CI_WORKFLOW, PROPERTY_TESTED_CRATES,
+    UNTRACKED_PATHS,
+};
 
 pub use checks::{float_ratchet, FLOAT_RATCHET_MESSAGE};
 pub use checks::{
     module_docs, no_mutable_statics, no_work_markers, simulation_clippy_config,
     typed_library_errors, FloatAllowance, LIBRARY_CRATES, SIMULATION_CRATES,
 };
+pub use conventions::{
+    function_length_limit, performance_rationale_format, LENGTH_THRESHOLD_SETTING,
+    RATIONALE_LABELS, RATIONALE_MARKER, RATIONALE_WINDOW,
+};
+pub use design_doc::{design_doc, DESIGN_DOC, SUBSYSTEM_STATUSES};
 pub use docs::{
     notebook_references, plan_id, plan_index, tracked_files, EVIDENCE_RETENTION_LINE,
     LEGACY_PLAN_IDS, PLAN_STATUSES,
@@ -43,6 +59,7 @@ pub use docs::{
 pub use gpu::{
     in_process_render_devices, HEADLESS_CHECK_WINDOW, HEADLESS_WINDOW, RENDER_DEVICE_MARKERS,
 };
+pub use graph::charter_graph;
 pub use identities::{
     folded, no_catalog_identities_in_code, slug_fields, FORMER_IDENTITY_VARIANTS, IDENTITY_CATALOGS,
 };

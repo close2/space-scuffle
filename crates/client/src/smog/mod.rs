@@ -776,6 +776,8 @@ type SmogVolumeQuery<'w, 's> = Query<
 // PERFORMANCE RATIONALE:
 // Why: Re-allocating source lists per frame creates garbage.
 // What: We reuse a `Local<Vec<BubbleSmogSource>>` scratch buffer, achieving zero allocations per frame.
+// Trade-off: The buffer keeps its peak capacity for the life of the app, and the system must
+// clear it before each use instead of starting from a fresh list.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"

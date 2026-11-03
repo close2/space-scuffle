@@ -6582,6 +6582,7 @@ name = "workspace_checks"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "sim_types",
  "tempfile",
  "thiserror 2.0.21",
 ]

@@ -1,6 +1,6 @@
 # AGENTS.md — Engineering Standards & Architectural Charter
 
-This document is the binding engineering charter for all human developers and AI agents working on **Space Scuffle**. Every pull request, crate, module, shader, and test must adhere strictly to these principles.
+This document is the binding engineering charter for all human developers and AI agents working on **Space Scuffle**. Every pull request, crate, module, shader, and test must adhere strictly to these principles. Each rule carries a tag saying how it is checked; §9 explains the tags.
 
 ---
 
@@ -9,19 +9,27 @@ This document is the binding engineering charter for all human developers and AI
 **Space Scuffle** is built to be an exemplary, production-grade software engineering showcase—a codebase that can be presented to university students and systems engineers as a reference for how to design, document, test, and scale a large, real-time, deterministic project in Rust.
 
 ### 1.1 Zero Shortcuts, Zero `TODO`s, Zero Placeholders
-- **No `todo!()`, `unimplemented!()`, or `// TODO` comments:** Every feature, function, and match arm committed to a crate must be complete, handled properly, and tested.
-- **Do It Right, Not "What's Easiest":** Never choose a quick hack, magic number, global mutable state, or leaky abstraction just to make something compile faster. Choose the architecturally sound data structure and algorithm from the start.
-- **No Silent Failures or Blind `.unwrap()`:**
-  - Production library crates (`sim_types`, `sim_map`, `sim_core`, `asset_baker`) must use explicit, strongly-typed error enums (`thiserror`) and `Result<T, E>`.
-  - `expect("...")` is only permitted when an invariant is mathematically guaranteed by the immediately preceding lines, and the message must state the invariant (e.g., `.expect("invariant: non-empty polygon verified at line 42")`).
+- **No `todo!()`, `unimplemented!()` or `TODO`/`FIXME`/`XXX` comments.** Every feature, function and match arm on
+  `main` is complete, handled and tested. [CI: clippy, C3]
+- **Do it right, not what is easiest.** No quick hacks, magic numbers or leaky abstractions; choose the sound data
+  structure and algorithm from the start. [Review] No global mutable state. [CI: C13]
+- **No silent failures:**
+  - No `.unwrap()`. [CI: clippy]
+  - Library crates (`sim_types`, `sim_map`, `sim_core`, `asset_baker`) return typed `thiserror` enums, never
+    `String` or boxed errors. [CI: C14]
+  - `expect` is permitted only when the immediately preceding code guarantees the invariant, and its message starts
+    with `invariant:` and states it. [CI: clippy, C10]
+  - A fallible result is never discarded with `let _ =` in the simulation crates. [CI: C12]
 
 ### 1.2 Zero Fake Assets, Procedural Stand-Ins, or Silent Workarounds
-- **Never Fake High-Quality Media or Systems in Code:**
+- **Never Fake High-Quality Media or Systems in Code:** [Review]
   - When a task requires real video sequences (e.g., Veo `.mp4` animations), real 3D rendering, or an external service/API, **never** invent a cheap programmatic hack to pretend the requirement is met (such as drawing crude pixel shapes in Rust, wobbling/translating a single static JPEG by a few pixels to fake a "walking/attacking video", or silently substituting dummy data).
-- **Stop and Escalate When a Tool, Key, or Asset Is Blocked:**
+- **Stop and Escalate When a Tool, Key, or Asset Is Blocked:** [Procedure]
   - If an API key is missing, a service is disabled, a shader fails to load, or a tool cannot produce the required quality, **fail loudly and ask the user immediately** rather than writing a silent fallback or low-quality workaround.
-- **Real End-to-End Verification Only:**
-  - Tests must verify that the real shader compiles, the real asset files exist at the exact runtime path used by the binary, and the actual visual entities appear inside the camera frustum—never pass a test by bypassing the real asset loader in a mock mode.
+- **Real End-to-End Verification Only:** tests compile the real shaders, load real assets from the runtime paths the
+  binary uses, and never pass by skipping work; a local GPU opt-out panics in CI. Procedural flipbooks exist only as
+  temporary test fixtures, never under `assets/`. [CI: C15 subjects, `runtime_assets_tests.rs`,
+  `runtime_media_tests.rs`, `bake_integrity_tests.rs`]
 
 ---
 
@@ -29,11 +37,11 @@ This document is the binding engineering charter for all human developers and AI
 
 Because this codebase serves as a teaching example for large-scale architecture:
 
-1. **Module-Level Architecture Docs (`//!`):**
+1. **Module-Level Architecture Docs (`//!`):** [CI: C4]
    - Every file/module must begin with a `//!` doc comment explaining **what responsibility this module owns**, **how it fits into the larger system**, and **what invariants it maintains**.
 2. **Public API Docs (`///`):**
-   - All public structs, enums, traits, and functions must have `///` rustdoc comments explaining parameters, return values, coordinate spaces, and units (e.g., radians vs. binary angles, ticks vs. seconds, world units vs. grid cells).
-3. **Justified Performance Optimizations (`// PERFORMANCE RATIONALE:`):**
+   - All public structs, enums, traits, and functions must have `///` rustdoc comments. [CI: missing_docs] They explain parameters, return values, coordinate spaces, and units (e.g., radians vs. binary angles, ticks vs. seconds, world units vs. grid cells). [Review]
+3. **Justified Performance Optimizations (`// PERFORMANCE RATIONALE:`):** [CI: C11 format; Review]
    - Default to clean, idiomatic, readable, and type-safe Rust.
    - Whenever we diverge from the most idiomatic or elegant code for performance reasons (e.g., flat structure-of-arrays layout, lookup tables for deterministic trig, GPU buffer packing, avoiding allocations in hot loops), you **must** document it with a structured comment block:
      ```rust
@@ -43,6 +51,9 @@ Because this codebase serves as a teaching example for large-scale architecture:
      // Trade-off: Slightly more bookkeeping on position updates in exchange for O(N) neighborhood queries
      // and zero heap allocations during the simulation tick.
      ```
+4. **Short Functions:**
+   - No production function exceeds 100 lines, as counted by `clippy::too_many_lines` with the threshold in
+     `clippy.toml`. Tests are exempt. A suppression outside test code is not allowed. [CI: clippy, C8]
 
 ---
 
@@ -51,71 +62,119 @@ Because this codebase serves as a teaching example for large-scale architecture:
 ### 3.1 The Simulation Boundary (`sim_types`, `sim_map`, `sim_core`)
 - **100% Platform-Independent Determinism:**
   - Simulation crates (`sim_types`, `sim_map`, `sim_core`) must produce **bit-for-bit identical results** across Linux (`x86_64`), Windows (`x86_64`), macOS (`ARM64`), and WebAssembly (`wasm32`).
-  - **Forbidden in Simulation State:** Never use `f32` or `f64` for authoritative simulation positions, velocities, angles, health, or cooldowns. Use the deterministic fixed-point types in `sim_types` (`SimScalar`, `SimVec2`, `SimAngle`).
-  - **Forbidden Non-Deterministic Collections:** Never iterate over standard `std::collections::HashMap` or `HashSet` (which use randomized SipHash seeds per process). Use `BTreeMap`, `BTreeSet`, deterministic index maps, or sorted `Vec`s.
-  - **No System Clock or Thread-Local RNG in Simulation:** All randomness in `sim_core` must come from an explicit, seeded deterministic PRNG (`ChaCha8Rng` or `Pcg64Mcg`) stored inside `SimWorld` state.
+  - **No Floats in Authoritative State:** positions, velocities, angles, health and cooldowns use `SimScalar`,
+    `SimVec2` and `SimAngle`. Floats appear in the simulation crates only where they produce presentation output or
+    read authored data. [CI: C7]
+  - **Forbidden Non-Deterministic Collections and Clocks:** `std::collections::HashMap`, `HashSet`,
+    `Instant::now` and `SystemTime::now` are disallowed in the simulation crates by their `clippy.toml`. All
+    randomness comes from the seeded `ChaCha8Rng` in `SimWorld`. [CI: C9, clippy]
+  - **Verified on every target:** a golden replay produces the same checksum at every checkpoint on Linux x86_64,
+    Windows x86_64, macOS ARM64 and `wasm32-wasip1`, in debug and release. [CI: determinism jobs]
 - **Zero Engine / GPU Dependencies in Simulation:**
-  - `sim_types`, `sim_map`, and `sim_core` must **never** depend on `bevy`, `wgpu`, `winit`, or windowing/audio libraries. They must compile cleanly in headless environments and run at 10,000+ ticks/second in unit tests and bot runners.
+  - `sim_types`, `sim_map` and `sim_core` never depend, even transitively, on `bevy`, `wgpu`, `winit`, `egui`,
+    `naga` or windowing and audio libraries, and they build for `wasm32-unknown-unknown`. [CI: C2, determinism-wasm]
+  - **Throughput:** every scenario of the release benchmark (`cargo bench -p sim_core --bench throughput`) runs at
+    least in real time (25 ticks per second). Current figures are in `DESIGN.md` §5. [CI: throughput job]
 
 ### 3.2 The Visual & Client Layer (`client`, `asset_baker`)
-- `client` consumes immutable `RenderSnapshot` values produced by the simulation (or by the interactive Visual Lab controller) and translates them into Bevy ECS components, `wgpu` shader instances, and `egui` inspector panels.
-- Conversion from deterministic fixed-point (`SimScalar`) to GPU floating-point (`f32`) happens **only** at the `RenderSnapshot` boundary.
+- `client` owns the authoritative `SimWorld` of a match (`BattleSession`) and changes it only by submitting
+  `PlayerCommand`s through the tick. It presents the world from `RenderSnapshot` and `PlayerView`, and reads the
+  catalog and map for admission, placement and terrain. [Review]
+- Fixed-point values become `f32` only on the way to presentation: in `RenderSnapshot` and `PlayerView` output, and
+  in client code that meshes, picks or draws. No float flows back into simulation state except through
+  `SimScalar`'s checked conversions of player input. [CI: C7 for the simulation side; Review for the client]
 
 ### 3.3 Data-Driven Game Catalog & Zero Hardcoded Creatures
-- **Zero Hardcoded Creature / Building Identifiers in Rust:**
-  - Rust source code across all crates (`sim_types`, `sim_core`, `asset_baker`, `client`) must **never** define unit-specific constants, enums, or string matches (e.g., `rhino_beetle`, `pulse_bot`, `marine`, `RhinoBeetle`).
-  - Adding, removing, or rebalancing units must require **zero code changes and zero recompilation**.
-  - All creature and building identities, vitals, weapon envelopes, faction lore, showcase flags, and media generation prompts reside strictly in declarative data files (`assets/catalog/units.ron`).
-- **Capability-Driven Mechanics:**
+- **Zero Hardcoded Identities in Rust:**
+  - No crate defines unit-, structure-, faction-, weapon-class- or armour-class-specific constants, enums or string
+    matches (e.g. `rhino_beetle`, `pulse_bot`, `marine`, `RhinoBeetle`). [CI: C5]
+  - Adding, removing or rebalancing these requires zero code changes and zero recompilation: production code reads
+    them at run time and embeds no catalog. [CI: C6, `runtime_catalog_tests.rs`]
+  - They live in `assets/catalog/` (`assets/catalog/units.ron`, `assets/catalog/structures.ron`,
+    `assets/catalog/upgrades.ron`, `assets/catalog/factions.ron`, `assets/catalog/start_loadouts.ron`) and
+    `assets/scenarios/`.
+- **Capability-Driven Mechanics:** [CI: C5 partial; Review]
   - Mechanics (e.g., stim/overclock, harvesting, detectors) must be queried via optional capability components on `UnitArchetype` (`Option<OverclockSpec>`, `Option<HarvesterSpec>`), never by branching on specific `UnitTypeId`s.
 - **Dynamic Asset Loading & Zero Per-Frame Allocations:**
-  - The client and asset baker dynamically discover flipbook textures and catalog entries.
-  - Per-frame client synchronization systems must never perform heap allocations (e.g. allocating `HashMap`s every frame) or $O(N^2)$ linear searches.
+  - The client and asset baker discover flipbooks and catalog entries at run time.
+  - Battle and preview synchronization systems allocate nothing in steady state and use no O(N²) search. [Review;
+    CI checks only that retained buffers are reused, in `battle_hud_tests.rs` and `battle_result_tests.rs`; a
+    counting-allocator test awaits the owner's answer to `docs/questions/open/0011-allocation-counter-unsafe.md`]
 
 ---
 
 ## 4. Testing Standards (Unit, Property & Integration Tests)
 
-Code without tests is considered incomplete. Every crate must include both unit tests and integration tests:
+Code without tests is considered incomplete.
 
-1. **Unit Tests (`#[cfg(test)] mod tests`):**
+1. **Unit Tests (`#[cfg(test)] mod tests`):** [CI: C15]
    - Test every nontrivial algorithm, edge case, boundary condition, and error path alongside the implementation.
-2. **Integration & Behavioral Tests (`crates/<crate>/tests/*.rs`):**
-   - Verify end-to-end subsystem behaviors through public APIs:
-     - **`sim_types`:** Fixed-point arithmetic identities, overflow boundaries, trig accuracy, angle wrapping, and snapshot serialization.
-     - **`sim_map`:** High-ground vs. low-ground line-of-sight occlusion, air-spotter reveal, building footprint placement & ramp wall-offs, dynamic NavMesh carving, and Simple Stupid Funnel shortest-path invariants.
-     - **`sim_core`:** SC2 weapon timing state machine (`TurnRate` -> `DamagePoint` -> `Fire` -> cancelable `Backswing` for stutter-step micro + `Cooldown`), turret independent tracking, shield armor vs. life armor spillover, friendly push priority vs. `HoldPosition`, and multi-thousand-tick determinism checksum verification.
-     - **`asset_baker`:** Procedural flipbook generation, frame dimension/count validation, and metadata round-trip serialization.
-     - **`client`:** Shader pipeline compilation, material uniform packing, camera math, and headless/scene state transitions.
-3. **Quality Gate Before Completing Any Task:**
+2. **Integration & Behavioral Tests (`crates/<crate>/tests/*.rs`):** [CI: C15]
+   - Every crate has `#[cfg(test)]` unit tests and `tests/*.rs` integration tests that verify end-to-end subsystem
+     behaviour through public APIs. Each crate covers at least the subjects below, in the files named:
+
+| Crate | Subject | Test files |
+|---|---|---|
+| `sim_types` | Fixed-point identities, overflow policy, trig, angle wrap, serialization; property tests | `math_identities.rs`, `overflow_policy_tests.rs`, `trig_determinism.rs`, `angle_extremes_tests.rs`, `scalar_serialization.rs`, `snapshot_serialization.rs`, `math_properties.rs` |
+| `sim_map` | High-ground line of sight, air reveal, ramps, structure wall-offs, clearance field, A* corridor and funnel; property tests | `vision_tests.rs`, `ramp_vision_tests.rs`, `wall_off_tests.rs`, `clearance_field_tests.rs`, `funnel_tests.rs`, `reachability_tests.rs`, `pathfinding_properties.rs`, `validation_tests.rs` |
+| `sim_core` | Weapon timing with cancelable backswing, turrets, shield and armour spillover, push priority versus Hold Position, a whole match through `PlayerCommand`, cross-target golden replay | `stutter_step_tests.rs`, `turret_tracking_tests.rs`, `damage_and_shields_tests.rs`, `push_priority_tests.rs`, `full_match_tests.rs`, `golden_replay_tests.rs` |
+| `asset_baker` | Fixture flipbooks, frame validation, manifest round trip, media integrity, procedural output kept out of runtime paths | `procedural_tests.rs`, `bake_integrity_tests.rs`, `manifest_tests.rs`, `media_tests.rs` |
+| `client` | Shader validation, uniform packing, camera, scene transitions, a skirmish won through input alone | `gpu_validation_tests.rs`, `round2_visual_tests.rs`, `camera_drag_tests.rs`, `lab_scene_tests.rs`, `skirmish_match_tests.rs` |
+| `client_diagnostics` | Capture pipeline and one-way dependency on `client` | `runtime_capture_tests.rs`, `dependency_direction_tests.rs` |
+| `sim_fixtures` | The embedded catalogs equal the shipped files; the battle sandbox is built whole | `fixture_tests.rs` |
+| `workspace_checks` | The charter checks of §9 | `charter.rs` |
+
+3. **Quality Gate Before Completing Any Task:** [CI: C16]
    - Every agent must run and pass:
-     - `cargo test --workspace`
-     - `cargo clippy --workspace --all-targets -- -D warnings`
+     - `cargo test --workspace --locked`
+     - `cargo clippy --workspace --all-targets --locked -- -D warnings`
      - `cargo fmt --all -- --check`
 
 ---
 
 ## 5. Workspace Crate Ownership & Dependency Graph
 
-To prevent circular dependencies and keep compilation fast, the dependency graph is strictly acyclic:
+The dependency graph is acyclic. An arrow points from a dependency to its dependent; a dashed arrow is a
+dev-dependency. [CI: C1]
 
 ```mermaid
 flowchart TD
-    ST["crates/sim_types<br/>(Fixed-Point Math, IDs, Enums, RenderSnapshot)"]
-    SM["crates/sim_map<br/>(Cliffs, Ramps, High-Ground FoW, NavMesh + Funnel)"]
-    SC["crates/sim_core<br/>(Deterministic Tick, SC2 Combat, Steering, Push Priority)"]
-    AB["crates/asset_baker<br/>(Video & Procedural Flipbook Atlas Generator)"]
-    CL["crates/client<br/>(Bevy 3D Renderer, Bubble/Dome WGSL Shaders, Visual Lab UI)"]
+    ST["crates/sim_types<br/>(fixed-point math, IDs, commands, RenderSnapshot, PlayerView)"]
+    SM["crates/sim_map<br/>(cliffs, ramps, vision, clearance A* + funnel, map format)"]
+    SC["crates/sim_core<br/>(deterministic tick, combat, movement, economy, catalogs)"]
+    AB["crates/asset_baker<br/>(Veo and ffmpeg flipbook baking, terrain textures)"]
+    CL["crates/client<br/>(Bevy renderer, HUD, input, map editor)"]
+    CD["crates/client_diagnostics<br/>(capture, audit and probe tools)"]
+    FX["crates/sim_fixtures<br/>(test-only shipped-data fixtures)"]
+    WC["crates/workspace_checks<br/>(charter checks)"]
 
     ST --> SM
     ST --> SC
     SM --> SC
     ST --> AB
+    SC --> AB
     ST --> CL
     SM --> CL
     SC --> CL
     AB --> CL
+    ST --> CD
+    SM --> CD
+    SC --> CD
+    AB --> CD
+    CL --> CD
+    ST --> FX
+    SM --> FX
+    SC --> FX
+    FX -.-> SC
+    FX -.-> AB
+    FX -.-> CL
+    FX -.-> CD
+    ST -.-> WC
 ```
+
+`asset_baker` depends on `sim_core` for the unit catalog it discovers archetypes from. `sim_fixtures` embeds the
+shipped catalogs for tests only; `sim_core` uses it in its integration tests, and its own unit tests embed the same
+files through `sim_core::test_support`, because a dev-dependency cycle would link a second copy of `sim_core`.
 
 ---
 
@@ -159,3 +218,39 @@ Development runs on a shared VM. Its physical **AMD Radeon RX 580** (Ellesmere, 
 ## 8. Asynchronous Questions for the Owner
 
 Decisions that belong to the owner live in `docs/questions/`, one file per question. Every agent must read `docs/questions/README.md`, check `docs/questions/open/` at the start of each session and before each push, act on answered questions, and record new ones there with the default it will follow meanwhile.
+
+---
+
+## 9. How This Charter Is Checked
+
+Each rule above carries a tag. **[CI: …]** names a check that runs on every push to `main`: a clippy lint, a CI job
+in `.github/workflows/ci.yml`, a named test, or a check `Cn` in `crates/workspace_checks/tests/charter.rs`.
+**[Review]** marks a judgement CI cannot make; reviewers apply it. **[Procedure]** governs how agents work.
+Sections 6 to 8 are procedures; §6 is governed by the owner (`docs/questions/`).
+
+A statement of fact about the code that no check covers does not belong in this charter. Add the check, or reword
+the statement as a rule for reviewers.
+
+| Check | Verifies |
+|---|---|
+| C1 | §5 graph equals the Cargo graph |
+| C2 | Simulation crates have no engine, GPU, window or audio dependency |
+| C3 | No `TODO`, `FIXME`, `XXX` |
+| C4 | Every Rust file begins with `//!` |
+| C5 | No catalog identity in production Rust |
+| C6 | No embedded `assets/` data in production code |
+| C7 | Floats in the simulation crates only at listed boundaries |
+| C8 | No `too_many_lines` suppression outside tests; one threshold everywhere |
+| C9 | Simulation crates' `clippy.toml` disallow `HashMap`, `HashSet` and clocks |
+| C10 | `expect` messages state an invariant |
+| C11 | `PERFORMANCE RATIONALE` blocks have Why, What, Trade-off |
+| C12 | No discarded results in the simulation crates |
+| C13 | No mutable statics |
+| C14 | Library crates return typed errors |
+| C15 | §4 test subjects exist; every crate has unit and integration tests |
+| C16 | CI runs the §4.3 gate |
+| C17 | `DESIGN.md` links and evidence resolve; its tick rate matches the code |
+| C18 | `docs/plans/README.md` indexes every plan once |
+| C19 | No `file:///` links; lost `/tmp` evidence is marked |
+| C20 | Paths named in this charter exist |
+| C21 | No test builds a render device in its own process; GPU tests go through the harness of §7 |

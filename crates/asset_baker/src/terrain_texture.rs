@@ -53,10 +53,9 @@
 //! - All neighborhood sampling uses toroidal wrap-around addressing for seamless tiling.
 //! - Zero placeholders, zero dummy fallbacks: missing or invalid source art fails loudly.
 
-// PERFORMANCE RATIONALE:
-// Pixel coordinate math, image buffer index conversions, and Gaussian kernel strides
+// Cast lints: pixel coordinate math, image buffer index conversions and Gaussian kernel strides
 // operate on bounded dimensions (256 <= size <= 2048). Numeric casts between u32, usize,
-// i32, and f32 are mathematically guaranteed never to overflow or wrap.
+// i32 and f32 are mathematically guaranteed never to overflow or wrap.
 #![allow(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
@@ -215,10 +214,12 @@ pub fn load_and_resize(source: &Path, size: u32) -> Result<Rgba32FImage, Terrain
         linear_source.put_pixel(x, y, Rgba([r, g, b, a]));
     }
 
-    // PERFORMANCE RATIONALE & IDENTITY PRESERVATION:
-    // When the input source image dimensions already match the requested texture_size,
-    // skipping Lanczos3 resampling avoids kernel filtering dispersion and float rounding,
-    // preserving the exact bit-for-bit photometric source pixels of seamless textures.
+    // PERFORMANCE RATIONALE:
+    // Why: Lanczos3 resampling to the size the image already has costs a full kernel pass and
+    // still disperses and rounds every pixel.
+    // What: When the source already matches `texture_size`, its linear pixels are used as they are.
+    // Trade-off: One more branch, in exchange for skipping the pass and keeping a seamless
+    // texture's photometric pixels bit for bit.
     let resized_linear = if w == size && h == size {
         linear_source
     } else {

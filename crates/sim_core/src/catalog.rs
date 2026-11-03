@@ -914,7 +914,7 @@ impl UnitArchetypeDef {
                     SimAngle::PI
                 } else {
                     let deg = if w.turret_turn_rate_deg > 360.0 {
-                        f64::from(w.turret_turn_rate_deg) / 25.0
+                        f64::from(w.turret_turn_rate_deg) / f64::from(sim_types::TICKS_PER_SECOND)
                     } else {
                         f64::from(w.turret_turn_rate_deg)
                     };

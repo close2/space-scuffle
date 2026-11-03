@@ -10,8 +10,9 @@
 //!    in authoritative state.
 //! 2. **Platform Independence:** Math operations yield identical bit-level results
 //!    across `x86_64`, `aarch64`, and `wasm32`.
-//! 3. **Decoupled Snapshot Boundary:** Conversion to floating-point occurs strictly at
-//!    the `RenderSnapshot` boundary, shielding the simulation from rendering details.
+//! 3. **Decoupled Presentation Boundary:** Fixed-point values become floating-point only in
+//!    presentation output (`RenderSnapshot`, `PlayerView`), and floats enter only as authored
+//!    data converted at load, shielding the simulation from rendering details.
 //! 4. **Zero Unchecked Failures:** All fallible operations return explicit `Result<T, MathError>`.
 
 #![forbid(unsafe_code)]
@@ -60,3 +61,16 @@ pub use weapon::{
     default_projectile_lifetime_ticks, ProjectileTargetLossBehavior, SplashSpec, WeaponSpec,
     DEFAULT_PROJECTILE_LIFETIME_TICKS,
 };
+
+/// Simulation ticks per second of game time: the one fixed tick rate of every match (25 Hz,
+/// 40 ms of game time per tick).
+///
+/// Every duration the simulation stores is a whole number of ticks; this constant converts
+/// rates and durations authored in seconds (catalog energy drain, turret turn rates given per
+/// second, projectile flight times shown to the player) into ticks. It is a `u16` because every
+/// stored duration (cooldowns, build times, timeouts) is a `u16` tick count, and a `u16`
+/// converts losslessly to `u32`, `i32`, `f32` and `f64`.
+///
+/// `DESIGN.md` states this rate, and check C17 (`crates/workspace_checks/tests/charter.rs`)
+/// fails if the two disagree.
+pub const TICKS_PER_SECOND: u16 = 25;
