@@ -162,50 +162,51 @@ Severity is impact on someone using the game or relying on the charter.
 | ID | Sev | Evidence | Defect | Where |
 |---|---|---|---|---|
 | C-1 | Crit | **[V]** | Selection lasts one frame: sync overwrites it from a snapshot where `selected` is always false, so rings and HP bars never show in battle. **Fixed** in `822c1b6` (5.1) | `scene_controller.rs:564`, `world.rs:3197` |
-| C-2 | Crit | [A] | Smog destroys and recreates two 3D textures every frame, ~1.66 MB; the code comment claims the opposite | `smog/mod.rs:900`, `:169` |
+| C-2 | Crit | [A] | Smog destroys and recreates two 3D textures every frame, ~1.66 MB; the code comment claims the opposite. **Fixed** in `52abebb` (6.1): persistent smog textures written in place with `Queue::write_texture`; 116 image and 58 material `Modified` events over 59 steps went to 0 and 0 | `smog/mod.rs:900`, `:169` |
 | C-3 | High | **[V]** | No unit-level commands: no right-click outside the editor, `pick_terrain` unused, only the whole roster can be ordered. **Fixed** in `822c1b6` (5.2), context orders in `6bc1fab` | `lab_ui.rs:738` |
-| C-4 | High | **[V]** | `mist/` is permanently off: smog `enabled` defaults true, so 14,677 lines do nothing at runtime while still allocating [A] | `mist/mod.rs:455` |
-| C-5 | High | [A] | Every unit's material is re-prepared every frame | `scene_controller.rs:553` |
-| C-6 | High | [A] | Smog startup is a chain of silent fallbacks against charter §1.2, with fabricated unit IDs | `smog/mod.rs:397`–`:454` |
-| C-7 | High | [A] | Smog draws over units by a single box-centre sort key, likely a remaining cause of smog in front of units. Needs a capture | `smog/material.rs:108` |
-| C-8 | Med | [A] | Visual Lab default state hides its own subject; several controls do nothing | `lab_ui.rs:167`, `:437` |
-| C-9 | Med | [A] | Combat VFX buttons spawn ~22 units off-screen | `lab_ui.rs:509` |
-| C-10 | Med | [A] | 50 of 200 swarm bubbles spawn inside the arena plateau | `scene_controller.rs:790` |
+| C-4 | High | **[V]** | `mist/` is permanently off: smog `enabled` defaults true, so 14,677 lines do nothing at runtime while still allocating [A]. **Fixed** in `4c9fda6` and `0f31027` (6.2): the depth prepass is attached at camera setup and the runtime `mist/` is deleted (D2) | `mist/mod.rs:455` |
+| C-5 | High | [A] | Every unit's material is re-prepared every frame. **Fixed** in `9f419bb` (6.1): sync compares before `Assets::get_mut`; a paused frame modifies 0 of 26 bubble materials | `scene_controller.rs:553` |
+| C-6 | High | [A] | Smog startup is a chain of silent fallbacks against charter §1.2, with fabricated unit IDs. **Fixed** in `ba9a5c1` (6.3): smog failures are typed and reach the media failure path | `smog/mod.rs:397`–`:454` |
+| C-7 | High | [A] | Smog draws over units by a single box-centre sort key, likely a remaining cause of smog in front of units. Needs a capture. **Fixed** in `c37943a` (6.3): smog now never draws in front of a unit, a deliberate trade, proved by a GPU luminance test on the 200-bubble swarm | `smog/material.rs:108` |
+| C-8 | Med | [A] | Visual Lab default state hides its own subject; several controls do nothing. **Fixed** in `7117874` and `93afd13` (6.5) | `lab_ui.rs:167`, `:437` |
+| C-9 | Med | [A] | Combat VFX buttons spawn ~22 units off-screen. **Fixed** in `7117874` (6.5) | `lab_ui.rs:509` |
+| C-10 | Med | [A] | 50 of 200 swarm bubbles spawn inside the arena plateau. **Fixed** in `7117874` (6.5) | `scene_controller.rs:790` |
 | C-11 | Med | [A] | Construction progress never reaches the shader; dome fill direction is also wrong. **Fixed**: progress published in `3a2865e`, fill by height in `d90e76e` (5.8); pixels on the live skirmish in `7a432f9` | `world.rs:3196`, `bubble_shader.rs:332` |
 | C-12 | Med | [A] | Selection hits hidden entities and shared materials. **Fixed** in `822c1b6` (5.1); fogged enemies unpickable in `24c656f` | `selection.rs:153` |
-| C-13 | Med | [A] | Smog: unordered systems, hardcoded 64×64 clamps, 16-cavity cap, velocity scale 20 vs 25 Hz tick | `smog/mod.rs:160`, `:686`, `:849`, `:805` |
-| C-14 | Med | [A] | Camera snaps on cliffs; projectile cards go edge-on; melee rotated twice | `camera.rs:233`, `vfx.rs:318`, `:611` |
-| C-15 | Med | [A] | Per-frame allocation and asset churn; `LabState` owns the authoritative world | `scene_controller.rs:106`, `lab_ui.rs:98` |
-| C-16 | Med | [A] | Parallel implementations: `arena_render` vs `terrain/`, `bubble_shader` vs `bubble_optics`, and dead markers | `lib.rs:27` |
+| C-13 | Med | [A] | Smog: unordered systems, hardcoded 64×64 clamps, 16-cavity cap, velocity scale 20 vs 25 Hz tick. **Fixed** in `12296f2` (6.3): ordered systems, bounds from the map, velocity scale from the tick rate; the 16-cavity cap is kept on purpose | `smog/mod.rs:160`, `:686`, `:849`, `:805` |
+| C-14 | Med | [A] | Camera snaps on cliffs; projectile cards go edge-on; melee rotated twice. **Fixed** in `ab5ef61` (6.5) | `camera.rs:233`, `vfx.rs:318`, `:611` |
+| C-15 | Med | [A] | Per-frame allocation and asset churn; `LabState` owns the authoritative world. **Fixed** in `257824d`, `52620f6` and `00eff7c` (6.6). Proved by test: asset churn, entities and retained buffers in `6cc3ec6` (`sync_steady_state_tests.rs`); allocations per steady frame counted under valgrind DHAT in `77a9db6` (`sync_allocation_count_tests.rs`); one owner per concern in `88ca528` (`system_ownership_tests.rs`) | `scene_controller.rs:106`, `lab_ui.rs:98` |
+| C-16 | Med | [A] | Parallel implementations: `arena_render` vs `terrain/`, `bubble_shader` vs `bubble_optics`, and dead markers. **Fixed** in `8392b40`, `07f7014` and `64fd330` (6.6); the writer table of `88ca528` keeps one writer per concern | `lib.rs:27` |
+| C-17 | Med | **[V]** | Every combat effect creates its own `CombatFxMaterial` asset: one per tracer, projectile, beam and slash. In a 400-unit fight that is hundreds of material creations and removals a second, each with its own uniform buffer and bind group. It is event-driven, so outside the steady-state claim of Phase 6, but it is the most likely asset cost at 400 units. Found while planning the Phase 6 exit (`docs/plans/2026-11-03-close-phase-6-7-8-exits.md` §2.4); WP6 of that plan measures it; no fix is planned yet | `vfx.rs` `hitscan_tracer`, `projectile`, `beam`, `melee_slash` |
 
 ### 4.5 Map editor
 
 | ID | Sev | Evidence | Defect | Where |
 |---|---|---|---|---|
-| E-1 | Crit | **[V]** | F5 Playtest panics and loses unsaved work: editor registers none of `BattleSession`, `PlayerPalette`, `PresentationStatus`; Bevy 0.15 defaults to panic. Confirmed in source, not run. [A] Even with them, the playtest world feeds no snapshot | `editor/app.rs:227` |
-| E-2 | High | **[V]** | Window X bypasses the unsaved-changes guard: `close_when_requested` is never set | `bin/map_editor.rs:87` |
-| E-3 | High | [A] | Releasing a stroke over the UI loses its undo entry | `editor/ui.rs:1459` |
-| E-4 | High | [A] | Symmetric painting does not update the mirrored terrain | `editor/ui.rs:1480`, `tools.rs:130` |
-| E-5 | High | [A] | Opening a different-size map leaves old chunks and garbled textures; `Err` swallowed | `terrain/mod.rs:73`, `editor/ui.rs:1130` |
-| E-6 | Med | [A] | Discard clears `dirty` too early; Save never resumes the pending action | `editor/ui.rs:1393` |
-| E-7 | Med | **[V]** | Ctrl+Shift+Z undoes: the Ctrl+Z branch runs first, so redo is unreachable | `editor/ui.rs:391` |
-| E-8 | Med | [A] | Other logic faults: start-location symmetry, silent playtest errors, Eraser creates invalid cells, per-keystroke undo entries, `doc` marked changed every frame | `tools.rs:729`, `ui.rs:1253`, `:1589`, `:318` |
-| E-9 | Med | [A] | Render verification can pass on stale PNGs from an earlier run | `verification.rs:152` |
-| E-10 | Low | [A] | Plan gaps: drag ramps, entity moving, playtest HUD unreachable; panics on bad CLI input; 919-line `editor_ui_system` | `ui.rs:277`, `app.rs:117` |
+| E-1 | Crit | **[V]** | F5 Playtest panics and loses unsaved work: editor registers none of `BattleSession`, `PlayerPalette`, `PresentationStatus`; Bevy 0.15 defaults to panic. Confirmed in source, not run. [A] Even with them, the playtest world feeds no snapshot. **Fixed** in `9875f48` and `bce31af` (7.1) | `editor/app.rs:227` |
+| E-2 | High | **[V]** | Window X bypasses the unsaved-changes guard: `close_when_requested` is never set. **Fixed** in `1e03482` (7.2) | `bin/map_editor.rs:87` |
+| E-3 | High | [A] | Releasing a stroke over the UI loses its undo entry. **Fixed** in `270217a` (7.3) | `editor/ui.rs:1459` |
+| E-4 | High | [A] | Symmetric painting does not update the mirrored terrain. **Fixed** in `956682c` (7.4) | `editor/ui.rs:1480`, `tools.rs:130` |
+| E-5 | High | [A] | Opening a different-size map leaves old chunks and garbled textures; `Err` swallowed. **Fixed** in `956682c` (7.4); the document-load order is pinned by test in `88ca528` | `terrain/mod.rs:73`, `editor/ui.rs:1130` |
+| E-6 | Med | [A] | Discard clears `dirty` too early; Save never resumes the pending action. **Fixed** in `1e03482` (7.2) | `editor/ui.rs:1393` |
+| E-7 | Med | **[V]** | Ctrl+Shift+Z undoes: the Ctrl+Z branch runs first, so redo is unreachable. **Fixed** in `270217a` (7.3) | `editor/ui.rs:391` |
+| E-8 | Med | [A] | Other logic faults: start-location symmetry, silent playtest errors, Eraser creates invalid cells, per-keystroke undo entries, `doc` marked changed every frame. **Fixed** in `96eab79` (7.5) | `tools.rs:729`, `ui.rs:1253`, `:1589`, `:318` |
+| E-9 | Med | [A] | Render verification can pass on stale PNGs from an earlier run. **Fixed** in `ca953f5` and `69dd84e` (7.5) | `verification.rs:152` |
+| E-10 | Low | [A] | Plan gaps: drag ramps, entity moving, playtest HUD unreachable; panics on bad CLI input; 919-line `editor_ui_system`. **Fixed** in `b9c65f3` and `1318d30` (7.5) | `ui.rs:277`, `app.rs:117` |
 
 ### 4.6 Asset baker and media
 
 | ID | Sev | Evidence | Defect | Where |
 |---|---|---|---|---|
-| B-1 | High | **[V]** | Six catalog units are byte-identical copies of `concept_video.png`, and players see them | `assets/textures/` |
-| B-2 | High | [V] | API key is in curl's argv and `-L` can forward it to redirect hosts. [A] Derived `Debug` prints it | `veo_client.rs:501` |
-| B-3 | High | [A] | HTTP error bodies are saved as `.mp4` and cached forever: no `--fail`, no temp file, size-only cache check | `veo_client.rs:501`, `:492` |
-| B-4 | High | [A] | Veo polling can hang and loses paid operations on transient errors | `veo_client.rs:390` |
-| B-5 | Med | [A] | `DEFAULT_PROJECT_ID = "000000000000"` is silently substituted; `/home/cl/...` paths are hardcoded, including key lookup | `veo_client.rs:42`, `:778` |
-| B-6 | Med | [A] | Default bake silently keeps ~0.67 s of each 4 s clip | `ffmpeg_importer.rs:313` |
-| B-7 | Med | [A] | Importer fabricates missing actions, defeating `require_action` | `ffmpeg_importer.rs:194`, `:427` |
-| B-8 | Med | [A] | `procedural` can overwrite real art via fuzzy name matching | `procedural_generator.rs:61` |
-| B-9 | Med | [A] | Veo accepts unknown units and unsanitised path components | `veo_client.rs:641`, `:672` |
+| B-1 | High | **[V]** | Six catalog units are byte-identical copies of `concept_video.png`, and players see them. Open: step 8.5, blocked on the owner (D7, Q0001) | `assets/textures/` |
+| B-2 | High | [V] | API key is in curl's argv and `-L` can forward it to redirect hosts. [A] Derived `Debug` prints it. **Fixed** in `b342c77` (8.1) | `veo_client.rs:501` |
+| B-3 | High | [A] | HTTP error bodies are saved as `.mp4` and cached forever: no `--fail`, no temp file, size-only cache check. **Fixed** in `4c425c8` (8.2) | `veo_client.rs:501`, `:492` |
+| B-4 | High | [A] | Veo polling can hang and loses paid operations on transient errors. **Fixed** in `4c425c8` (8.2) | `veo_client.rs:390` |
+| B-5 | Med | [A] | `DEFAULT_PROJECT_ID = "000000000000"` is silently substituted; `/home/cl/...` paths are hardcoded, including key lookup. **Fixed** in `d3f70d5` (8.3) | `veo_client.rs:42`, `:778` |
+| B-6 | Med | [A] | Default bake silently keeps ~0.67 s of each 4 s clip. **Fixed** in `cf784cd` (8.4) | `ffmpeg_importer.rs:313` |
+| B-7 | Med | [A] | Importer fabricates missing actions, defeating `require_action`. **Fixed** in `cf784cd` (8.4) | `ffmpeg_importer.rs:194`, `:427` |
+| B-8 | Med | [A] | `procedural` can overwrite real art via fuzzy name matching. **Fixed** in `cf784cd` (8.4) | `procedural_generator.rs:61` |
+| B-9 | Med | [A] | Veo accepts unknown units and unsanitised path components. **Fixed** in `d3f70d5` (8.3) | `veo_client.rs:641`, `:672` |
 
 ### 4.7 Engineering system
 
@@ -214,7 +215,7 @@ Severity is impact on someone using the game or relying on the charter.
 | Q-1 | Crit | **[V]** | CI has never passed, and 17 commits are unpushed. [A] Last failure may be missing `libxkbcommon-x11` (suspected) |
 | Q-2 | Crit | [A] | Determinism across platforms is unverified: no matrix, no wasm target, no golden `SimWorld` checksum |
 | Q-3 | High | **[R]** | Performance claim is false. See Appendix A; nothing in the repo measures it |
-| Q-4 | High | **[V]** | Clippy is hollow: crate-wide allows remove the lints this engine most needs |
+| Q-4 | High | **[V]** | Clippy is hollow: crate-wide allows remove the lints this engine most needs. **Fixed**: `sim_core` and `sim_map` in `e469b8b` (1.8), `client` in `64fd330` (6.6). `asset_baker` keeps one crate-wide `clippy::doc_markdown` allow |
 | Q-5 | High | **[V]** | Video tests skip silently: `crates/asset_baker/tmp` does not exist. Other silent `return`s [A] |
 | Q-6 | High | [A] | No property testing, despite charter §4's heading |
 | Q-7 | High | [A] | Vulkan validation errors do not fail tests |
@@ -349,43 +350,68 @@ of media, per `docs/questions/open/0001-media-scope.md`. Plan and evidence:
 
 ### Phase 6: Client performance and structure (L)
 
-| Step | Finding | Action |
-|---|---|---|
-| 6.1 | C-2, C-5 | Persistent smog textures with `queue.write_texture`; dirty checks before `get_mut`. Measure before and after |
-| 6.2 | C-4, D2 | Remove the losing fog system; move the depth prepass to camera setup |
-| 6.3 | C-6, C-7, C-13 | Typed smog failures; correct compositing with a capture to prove it; map-derived bounds |
-| 6.4 | D3 | Create `client_diagnostics`; move capture and audit there; delete rejected reducer code; remove `ControlledFixture` branches from production paths |
-| 6.5 | C-8 to C-10, C-14 | Fix Lab defaults and dead controls, off-screen VFX, swarm placement, camera damping, card orientation |
-| 6.6 | C-15, C-16 | Move the world from `LabState` to `BattleSession`; remove arena, dead markers and aliases; then drop `client` crate-wide allows |
+| Step | Finding | Action | Status |
+|---|---|---|---|
+| 6.1 | C-2, C-5 | Persistent smog textures with `queue.write_texture`; dirty checks before `get_mut`. Measure before and after | Done, `52abebb`, `9f419bb`; before and after counts in the commit messages |
+| 6.2 | C-4, D2 | Remove the losing fog system; move the depth prepass to camera setup | Done, `4c9fda6`, `0f31027` |
+| 6.3 | C-6, C-7, C-13 | Typed smog failures; correct compositing with a capture to prove it; map-derived bounds | Done, `ba9a5c1`, `c37943a`, `12296f2`; compositing proved on the swarm scene, not yet in a live battle |
+| 6.4 | D3 | Create `client_diagnostics`; move capture and audit there; delete rejected reducer code; remove `ControlledFixture` branches from production paths | Done, `5654fda`, `bd909dc`, `0f31027` |
+| 6.5 | C-8 to C-10, C-14 | Fix Lab defaults and dead controls, off-screen VFX, swarm placement, camera damping, card orientation | Done, `7117874`, `93afd13`, `ab5ef61` |
+| 6.6 | C-15, C-16 | Move the world from `LabState` to `BattleSession`; remove arena, dead markers and aliases; then drop `client` crate-wide allows | Done, `257824d`, `52620f6`, `00eff7c`, `8392b40`, `07f7014`, `64fd330`; proved by test in `6cc3ec6`, `77a9db6`, `88ca528` |
 
 **Exit:** no per-frame heap allocation or asset churn in sync systems, proved by test; one owner per concern;
 frame budget measured at 200 and 400 units.
 
 ### Phase 7: Editor hardening (M, parallel)
 
-| Step | Finding | Action |
-|---|---|---|
-| 7.1 | E-1 | Add an App-level test that enters Playtest. Register resources and feed the session from the editor world. Autosave before entry |
-| 7.2 | E-2, E-6 | Handle window close in every phase; correct `dirty` handling; resume pending actions after save |
-| 7.3 | E-3, E-7 | Finish strokes outside the pointer guard; block undo while painting; fix redo order |
-| 7.4 | E-4, E-5 | Sync the rects actually touched; one `load_document` that rebuilds chunks and surfaces errors |
-| 7.5 | E-8 to E-10 | Remaining logic faults; verification on fresh output; split `editor_ui_system` |
+| Step | Finding | Action | Status |
+|---|---|---|---|
+| 7.1 | E-1 | Add an App-level test that enters Playtest. Register resources and feed the session from the editor world. Autosave before entry | Done, `9875f48`; selection and orders end to end `bce31af` |
+| 7.2 | E-2, E-6 | Handle window close in every phase; correct `dirty` handling; resume pending actions after save | Done, `1e03482` |
+| 7.3 | E-3, E-7 | Finish strokes outside the pointer guard; block undo while painting; fix redo order | Done, `270217a` |
+| 7.4 | E-4, E-5 | Sync the rects actually touched; one `load_document` that rebuilds chunks and surfaces errors | Done, `956682c`; load order pinned by test in `88ca528` |
+| 7.5 | E-8 to E-10 | Remaining logic faults; verification on fresh output; split `editor_ui_system` | Done, `96eab79` (E-8), `ca953f5` and `69dd84e` (E-9), `b9c65f3` and `1318d30` (E-10) |
 
 **Exit:** edit, save, playtest, return and reopen is covered by an automated App test.
 
+**Exit status (2026-11-03): met; CI green on `main` at `6b39cd2` (run 41665216936).**
+`crates/client/tests/editor_app_tests.rs::edit_save_playtest_return_and_reopen_round_trip` (added in `b9c65f3`,
+merged in `7decbd7`) boots the real `MapEditorPlugin` on a fixture map and drives it with input events. It paints a
+stroke, saves with Ctrl+S, enters playtest with F5 and checks that bubbles are drawn, returns with Escape with the
+document and its history intact, reopens the file through the real load path (`LoadDocumentRequest::Open`) and
+playtests again. It needs no GPU (`backends: None`), so it runs in CI's `cargo test --workspace`. Limits, which do
+not affect the criterion: the save uses the shortcut, not the egui button; the reopen sends the event the file
+browser sends, not a click; editor egui clicks and text fields are not exercised. The order of
+`apply_document_load_system` after `editor_ui_system`, unpinned when the exit was met, is pinned since `88ca528`
+(`document_load_applies_after_the_editor_ui_requests_it`). Plan: `docs/plans/2026-11-03-close-phase-6-7-8-exits.md`
+§2.2.
+
 ### Phase 8: Asset pipeline and media (M, parallel)
 
-| Step | Finding | Action |
-|---|---|---|
-| 8.1 | B-2 | Pass the key through `curl -K -` or a native client; allowlist hosts; follow redirects without the key; redact `Debug` |
-| 8.2 | B-3, B-4 | `--fail-with-body`, temp file, validate with ffprobe, rename; timeouts, bounded retries, persisted operation names |
-| 8.3 | B-5, B-9 | Typed error for a missing project; remove `/home/cl` paths; exact catalog slugs only |
-| 8.4 | B-6, B-7, B-8 | Resample the whole clip or fail; never fabricate actions; procedural output outside runtime paths, per D6 |
-| 8.5 | B-1, D7 | Remove the six copied atlases; generate real media for the required set; make `audit-media --strict` pass for that set |
+| Step | Finding | Action | Status |
+|---|---|---|---|
+| 8.1 | B-2 | Pass the key through `curl -K -` or a native client; allowlist hosts; follow redirects without the key; redact `Debug` | Done, `b342c77`; tests `veo_transport_tests.rs` (`b2_*`) |
+| 8.2 | B-3, B-4 | `--fail-with-body`, temp file, validate with ffprobe, rename; timeouts, bounded retries, persisted operation names | Done, `4c425c8`; tests `veo_reliability_tests.rs` (`b3_*`, `b4_*`) |
+| 8.3 | B-5, B-9 | Typed error for a missing project; remove `/home/cl` paths; exact catalog slugs only | Done, `d3f70d5`; tests `veo_tests.rs` (`b5_*`, `b9_*`) and `veo_reliability_tests.rs` (`b9_*`) |
+| 8.4 | B-6, B-7, B-8 | Resample the whole clip or fail; never fabricate actions; procedural output outside runtime paths, per D6 | Done, `cf784cd`; tests `bake_integrity_tests.rs` (`b6_*`, `b7_*`, `b8_*`) |
+| 8.5 | B-1, D7 | Remove the six copied atlases; generate real media for the required set; make `audit-media --strict` pass for that set | Blocked on the owner, Q0001 |
 
 Generating media spends real money and needs the owner's approval per run.
 
 **Exit:** strict audit passes for the agreed set; a failed download cannot enter the cache.
+
+**Exit status (2026-11-03): not met.** Steps 8.1 to 8.4 are done. A failed download cannot enter the cache:
+`crates/asset_baker/tests/veo_reliability_tests.rs` checks it with `b3_http_error_body_never_becomes_a_video`,
+`b3_success_status_with_a_non_video_body_is_rejected`, `b3_truncated_video_is_rejected`,
+`b3_inline_bytes_are_validated_too`, `b3_failed_download_preserves_the_existing_file` and
+`b3_poisoned_cache_entry_is_refused_without_spending_money`, each asserting that nothing was cached, green on CI at
+`6b39cd2` (run 41665216936). The strict audit waits for step 8.5, which is blocked on the owner: there is no agreed
+set until [Q0001](../questions/open/0001-media-scope.md) is answered, and paid generation needs approval for each
+run. Two notes for whoever runs 8.5. First, Vertex authentication moved to an `x-goog-api-key` header and has never
+been tried against the live service. Second, a Vertex result delivered as `gcsUri` would be refused by the download
+allowlist in `veo_client.rs` (`generativelanguage.googleapis.com`, `us-central1-aiplatform.googleapis.com`). That
+refusal is loud and costs nothing, but it would stop the run. The first approved 8.5 run checks both. Plan:
+`docs/plans/2026-11-03-close-phase-6-7-8-exits.md` §2.3.
 
 ### Phase 9: Structure and documentation (M)
 
