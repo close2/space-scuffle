@@ -1178,10 +1178,12 @@ impl Pathfinder {
         });
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "four symmetric direction arms; splitting is plan step 9.2"
-    )]
+    /// Pushes the portal crossed by one orthogonal step from cell `(x1, y1)` to cell `(x2, y2)`.
+    ///
+    /// The portal lies on the grid line shared by the two cells. It is widened along that line,
+    /// in both directions, while the strip beside it stays connected on both sides
+    /// ([`is_portal_pair_compatible`]), and its ends are ordered left then right as seen walking
+    /// the step, per [`ORTHOGONAL_PORTALS`]. A zero step pushes nothing.
     fn add_orthogonal_portal(
         portals: &mut Vec<PortalEdge>,
         map: &GameMap,
@@ -1191,140 +1193,69 @@ impl Pathfinder {
         x2: i32,
         y2: i32,
     ) {
-        let width = map.width();
-        let height = map.height();
         let dx = x2 - x1;
         let dy = y2 - y1;
-
-        if dx > 0 {
-            // East step (+X): portal along line x = x2
-            let mut y_up = y1;
-            while y_up + 1 < signed(height)
-                && is_portal_pair_compatible(
-                    map,
-                    request,
-                    (x1, y_up + 1),
-                    (x2, y_up + 1),
-                    (x1, y_up),
-                    (x2, y_up),
-                )
-            {
-                y_up += 1;
-            }
-            let mut y_down = y1;
-            while y_down > 0
-                && is_portal_pair_compatible(
-                    map,
-                    request,
-                    (x1, y_down - 1),
-                    (x2, y_down - 1),
-                    (x1, y_down),
-                    (x2, y_down),
-                )
-            {
-                y_down -= 1;
-            }
-            portals.push(PortalEdge {
-                left: SimVec2::new(SimScalar::from_num(x2), SimScalar::from_num(y_up + 1)),
-                right: SimVec2::new(SimScalar::from_num(x2), SimScalar::from_num(y_down)),
-            });
+        // The x axis takes precedence, as for any step that reaches here from `build_portals`.
+        let step = if dx > 0 {
+            (1, 0)
         } else if dx < 0 {
-            // West step (-X): portal along line x = x1
-            let mut y_up = y1;
-            while y_up + 1 < signed(height)
-                && is_portal_pair_compatible(
-                    map,
-                    request,
-                    (x1, y_up + 1),
-                    (x2, y_up + 1),
-                    (x1, y_up),
-                    (x2, y_up),
-                )
-            {
-                y_up += 1;
-            }
-            let mut y_down = y1;
-            while y_down > 0
-                && is_portal_pair_compatible(
-                    map,
-                    request,
-                    (x1, y_down - 1),
-                    (x2, y_down - 1),
-                    (x1, y_down),
-                    (x2, y_down),
-                )
-            {
-                y_down -= 1;
-            }
-            portals.push(PortalEdge {
-                left: SimVec2::new(SimScalar::from_num(x1), SimScalar::from_num(y_down)),
-                right: SimVec2::new(SimScalar::from_num(x1), SimScalar::from_num(y_up + 1)),
-            });
+            (-1, 0)
         } else if dy > 0 {
-            // North step (+Y): portal along line y = y2
-            let mut x_left = x1;
-            while x_left > 0
-                && is_portal_pair_compatible(
-                    map,
-                    request,
-                    (x_left - 1, y1),
-                    (x_left - 1, y2),
-                    (x_left, y1),
-                    (x_left, y2),
-                )
-            {
-                x_left -= 1;
-            }
-            let mut x_right = x1;
-            while x_right + 1 < signed(width)
-                && is_portal_pair_compatible(
-                    map,
-                    request,
-                    (x_right + 1, y1),
-                    (x_right + 1, y2),
-                    (x_right, y1),
-                    (x_right, y2),
-                )
-            {
-                x_right += 1;
-            }
-            portals.push(PortalEdge {
-                left: SimVec2::new(SimScalar::from_num(x_left), SimScalar::from_num(y2)),
-                right: SimVec2::new(SimScalar::from_num(x_right + 1), SimScalar::from_num(y2)),
-            });
+            (0, 1)
         } else if dy < 0 {
-            // South step (-Y): portal along line y = y1
-            let mut x_left = x1;
-            while x_left > 0
-                && is_portal_pair_compatible(
-                    map,
-                    request,
-                    (x_left - 1, y1),
-                    (x_left - 1, y2),
-                    (x_left, y1),
-                    (x_left, y2),
-                )
-            {
-                x_left -= 1;
-            }
-            let mut x_right = x1;
-            while x_right + 1 < signed(width)
-                && is_portal_pair_compatible(
-                    map,
-                    request,
-                    (x_right + 1, y1),
-                    (x_right + 1, y2),
-                    (x_right, y1),
-                    (x_right, y2),
-                )
-            {
-                x_right += 1;
-            }
-            portals.push(PortalEdge {
-                left: SimVec2::new(SimScalar::from_num(x_right + 1), SimScalar::from_num(y1)),
-                right: SimVec2::new(SimScalar::from_num(x_left), SimScalar::from_num(y1)),
-            });
+            (0, -1)
+        } else {
+            return;
+        };
+        let Some(&(_, _, handedness)) = ORTHOGONAL_PORTALS
+            .iter()
+            .find(|&&(step_x, step_y, _)| (step_x, step_y) == step)
+        else {
+            return;
+        };
+
+        // A step along x crosses a vertical grid line and the portal is widened along y; a step
+        // along y crosses a horizontal one and the portal is widened along x.
+        let along_x = step.0 != 0;
+        let extent = signed(if along_x { map.height() } else { map.width() });
+        let line = if along_x { x1.max(x2) } else { y1.max(y2) };
+        let origin = if along_x { y1 } else { x1 };
+        let from = |t: i32| if along_x { (x1, t) } else { (t, y1) };
+        let to = |t: i32| if along_x { (x2, t) } else { (t, y2) };
+        let compatible = |next: i32, previous: i32| -> bool {
+            is_portal_pair_compatible(
+                map,
+                request,
+                from(next),
+                to(next),
+                from(previous),
+                to(previous),
+            )
+        };
+
+        let mut high = origin;
+        while high + 1 < extent && compatible(high + 1, high) {
+            high += 1;
         }
+        let mut low = origin;
+        while low > 0 && compatible(low - 1, low) {
+            low -= 1;
+        }
+
+        let point = |t: i32| {
+            if along_x {
+                SimVec2::new(SimScalar::from_num(line), SimScalar::from_num(t))
+            } else {
+                SimVec2::new(SimScalar::from_num(t), SimScalar::from_num(line))
+            }
+        };
+        let low_end = point(low);
+        let high_end = point(high + 1);
+        let (left, right) = match handedness {
+            PortalHandedness::HighIsLeft => (high_end, low_end),
+            PortalHandedness::LowIsLeft => (low_end, high_end),
+        };
+        portals.push(PortalEdge { left, right });
     }
 
     fn run_funnel(&mut self, map: &GameMap, request: &PathRequestWithVision<'_>) -> Vec<SimVec2> {
@@ -1616,6 +1547,25 @@ fn is_cell_passable_for_request(
     }
     true
 }
+
+/// Which end of an orthogonal portal the funnel treats as its left side.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PortalHandedness {
+    /// The end at the higher coordinate along the portal's line is on the left.
+    HighIsLeft,
+    /// The end at the lower coordinate along the portal's line is on the left.
+    LowIsLeft,
+}
+
+/// Each orthogonal grid step `(dx, dy)` with the side of its portal that lies on the walker's
+/// left: walking east (+x) the left is +y, walking west -y, walking north (+y) -x, walking south
+/// +x. The funnel requires this orientation, so a wrong row bends every path through that face.
+const ORTHOGONAL_PORTALS: [(i32, i32, PortalHandedness); 4] = [
+    (1, 0, PortalHandedness::HighIsLeft),
+    (-1, 0, PortalHandedness::LowIsLeft),
+    (0, 1, PortalHandedness::LowIsLeft),
+    (0, -1, PortalHandedness::HighIsLeft),
+];
 
 /// Extends a portal only across a connected strip of terrain on both sides.
 #[inline]
