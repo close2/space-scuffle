@@ -1340,6 +1340,10 @@ Relative links only. It states what exists, not what was once hoped for; intent 
 - **Found by WP1, a test gap:** swapping `update_vision` and `acquire_targets` in `step_into` leaves the golden replay
   (`crates/sim_core/tests/fixtures/golden_replay.ron`) passing; three behaviour tests catch it instead. The replay's
   scenario never acquires a target whose visibility changes on the same tick, so it does not pin the phase order.
+- **Found by WP6, a test gap that constrains WP13:** no test pins client system order where reversing it makes no
+  schedule cycle. `sample_input_ownership.before(lab_ui_system)` and the editor's
+  `apply_document_load_system.before(editor_ui_system)` both pass every client test. WP13 must not claim CI checks
+  system ordering unless an ordering test is added first.
 
 ## 10. Decisions for the owner
 
