@@ -52,7 +52,9 @@ pub struct PlayerPresentation {
     pub mobile: usize,
     /// Living mobile armed units eligible for attack-move.
     pub armed: usize,
-    /// Living mobile units with the actual optional overclock capability.
+    /// Living mobile units that can overclock now, by
+    /// [`can_overclock`](crate::battle_pipeline::commands::can_overclock): the roster's
+    /// `Overclock` button is offered only when this is non-zero.
     pub overclock: usize,
 }
 
@@ -176,7 +178,9 @@ pub fn refresh_battle_presentation(
                     || archetype.ground_weapon.is_some()
                     || archetype.air_weapon.is_some(),
             );
-            player.overclock += usize::from(archetype.overclock.is_some());
+            player.overclock += usize::from(crate::battle_pipeline::commands::can_overclock(
+                world, entity, archetype,
+            ));
         }
     }
     // PERFORMANCE RATIONALE:
