@@ -75,10 +75,9 @@ const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
                  presentation-only flight time of a projectile visual event",
     },
     FloatAllowance {
-        path: "crates/sim_core/src/world.rs",
+        path: "crates/sim_core/src/world/snapshot.rs",
         count: 3,
-        reason: "presentation: progress and hit-flash ratios written into `RenderSnapshot` \
-                 (moves to `world/snapshot.rs` in Phase 9 WP1)",
+        reason: "presentation: progress and hit-flash ratios written into `RenderSnapshot`",
     },
 ];
 
