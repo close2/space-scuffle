@@ -28,6 +28,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # valgrind: crates/client/tests/sync_allocation_count_tests.rs counts the live battle sync's
+      # steady-state heap allocations from outside the process with it (charter §3.3, Q0011). The
+      # test fails, never skips, without it. It runs eight children of about 2 minutes each under
+      # valgrind, at most one per core.
       - name: Install Linux system & virtual Vulkan GPU dependencies
         run: |
           sudo apt-get update
@@ -46,6 +50,7 @@ jobs:
             vulkan-validationlayers \
             vulkan-tools \
             xvfb \
+            valgrind \
             ffmpeg
 
       - name: Install Rust toolchain
