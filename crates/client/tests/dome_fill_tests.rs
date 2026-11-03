@@ -104,10 +104,12 @@ const AZIMUTH_STEP_DEGREES: usize = 3;
 /// progress than this is neither built nor unbuilt.
 const SCAN_LINE_MARGIN: f32 = 0.05;
 /// Largest mean difference from the finished shot of a built ring, in levels of 255. Measured on
-/// lavapipe: at most 0.02, and 24 for the built rings the old `uv.y` fill left unbuilt.
+/// lavapipe: at most 0.02, and 24 for the built rings the old `uv.y` fill left unbuilt. On
+/// 2026-11-03 the gate measured at most 0.06 on radv and 0.01 on lavapipe.
 const BUILT_LIMIT: f32 = 2.0;
 /// Smallest mean difference from the finished shot of an unbuilt ring, in levels of 255. Measured
-/// on lavapipe: at least 56, and at most 2.2 for the unbuilt rings the old fill drew as built.
+/// on lavapipe: at least 56, and at most 2.2 for the unbuilt rings the old fill drew as built. On
+/// 2026-11-03 the gate measured at least 56.49 on radv and 56.43 on lavapipe.
 const UNBUILT_FLOOR: f32 = 10.0;
 
 /// The warning windowed runs logged on lavapipe before Mesa 25. It concerns the swapchain, not this
@@ -598,6 +600,7 @@ fn a_foundation_fills_from_rim_to_apex_on_the_real_renderer() -> TestResult {
     let bands: Vec<Band> =
         ron::from_str(&std::fs::read_to_string(directory.path().join(BANDS_FILE))?)?;
     let mut failures = Vec::new();
+    let (mut largest_built, mut smallest_unbuilt) = (0.0_f32, f32::INFINITY);
     for (name, state, progress) in SHOTS {
         let shot = capture(directory.path(), name)?;
         for band in &bands {
@@ -611,6 +614,11 @@ fn a_foundation_fills_from_rim_to_apex_on_the_real_renderer() -> TestResult {
             let filling = state == AnimState::Constructing;
             let built = !filling || band.share + SCAN_LINE_MARGIN < progress;
             let unbuilt = filling && band.share - SCAN_LINE_MARGIN > progress;
+            if built {
+                largest_built = largest_built.max(difference);
+            } else if unbuilt {
+                smallest_unbuilt = smallest_unbuilt.min(difference);
+            }
             if (built && difference > BUILT_LIMIT) || (unbuilt && difference < UNBUILT_FLOOR) {
                 failures.push(format!(
                     "{name} {} at {}: difference {difference:.2}, built {built}",
@@ -619,6 +627,7 @@ fn a_foundation_fills_from_rim_to_apex_on_the_real_renderer() -> TestResult {
             }
         }
     }
+    eprintln!("built rings differ by at most {largest_built:.2}, unbuilt by at least {smallest_unbuilt:.2}");
     assert!(failures.is_empty(), "wrong fill: {failures:#?}");
     Ok(())
 }

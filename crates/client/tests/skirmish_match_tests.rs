@@ -266,9 +266,13 @@ const AZIMUTH_STEP_DEGREES: usize = 3;
 /// A ring this near a presented share is neither built nor unbuilt in that shot.
 const SCAN_LINE_MARGIN: f32 = 0.06;
 /// Smallest mean difference, in levels of 255, between the shots of a ring the fill crossed.
-/// `dome_fill_tests.rs` measured at least 56 between built and unbuilt rings on lavapipe.
+/// `dome_fill_tests.rs` measured at least 56 between built and unbuilt rings on lavapipe. On
+/// 2026-11-03 the gate measured crossed rings changing by 71.1 to 85.0 on radv and 70.7 to 84.2 on
+/// lavapipe.
 const CROSSED_FLOOR: f32 = 10.0;
-/// How many times the change of a crossed ring must exceed that of a ring built in both shots.
+/// How many times the change of a crossed ring must exceed that of a ring built in both shots. On
+/// 2026-11-03 rings built in both shots changed by at most 8.7 on radv and 9.6 on lavapipe, so the
+/// smallest ratio was 8.2 and 7.4.
 const CROSSED_RATIO: f32 = 3.0;
 
 /// Screen pixels of one ring of the foundation's dome.
