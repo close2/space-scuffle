@@ -2,7 +2,7 @@
 //!
 //! # Responsibility
 //! This crate owns the real-GPU capture harness, the transparent-phase audit, the native input
-//! probe and the capture input fixtures. Each one builds the production application through the
+//! probe, the capture input fixtures and the frame-budget measurement. Each one builds the production application through the
 //! public `client` API and attaches itself through ordinary plugins, schedules and state.
 //!
 //! # Place in the workspace
@@ -16,6 +16,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod frame_budget;
 pub mod native_input_probe;
 pub mod palette_fixture;
 pub mod runtime_capture;
