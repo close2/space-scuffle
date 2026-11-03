@@ -22,8 +22,8 @@ use sim_core::scenario::{build_world_with_catalogs, ScenarioManifest, StartLoado
 use sim_core::{SimWorld, UnitCatalog, UpgradeCatalog};
 use sim_map::MapFile;
 use sim_types::{
-    AnimState, EntityId, MatchResult, PlayerCommand, PlayerId, RenderSnapshot, ResourceKind,
-    ResourceNodeId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId,
+    AnimState, EntityId, MatchResult, PlayerCommand, PlayerId, PlayerSlot, RenderSnapshot,
+    ResourceKind, ResourceNodeId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId,
 };
 use std::collections::BTreeSet;
 use std::error::Error;
@@ -147,7 +147,7 @@ impl Script {
 
     fn afford(world: &SimWorld, unit_type: UnitTypeId) -> bool {
         world.catalog.get(unit_type).is_ok_and(|arch| {
-            let bank = &world.player_resources[0];
+            let bank = &world.player_resources[PlayerSlot::ALL[0]];
             bank.minerals >= arch.mineral_cost && bank.gas >= arch.gas_cost
         })
     }
@@ -178,7 +178,7 @@ impl Script {
     }
 
     fn research_done(world: &SimWorld) -> bool {
-        world.player_upgrades[0]
+        world.player_upgrades[PlayerSlot::ALL[0]]
             .completed_upgrade_slugs
             .contains("overclock_stim")
     }
@@ -296,7 +296,7 @@ impl Script {
                     return Vec::new();
                 };
                 let cost = world.upgrade_catalog.get_by_id(self.stim_upgrade);
-                let bank = &world.player_resources[0];
+                let bank = &world.player_resources[PlayerSlot::ALL[0]];
                 if !cost.is_some_and(|c| bank.minerals >= c.mineral_cost && bank.gas >= c.gas_cost)
                 {
                     return Vec::new();
@@ -401,7 +401,8 @@ fn advance(
     if world.current_tick >= TICK_LIMIT {
         return Err(format!(
             "stalled at {:?} with {:?}",
-            script.stage, world.player_resources[0]
+            script.stage,
+            world.player_resources[PlayerSlot::ALL[0]]
         ));
     }
     let bundle = TickBundle {
@@ -616,7 +617,7 @@ fn stim_is_locked_until_researched_through_the_whole_tech_path() -> Result<(), B
         }
     }
     assert!(refused, "the unit existed before the research ended");
-    assert!(world.player_upgrades[0]
+    assert!(world.player_upgrades[PlayerSlot::ALL[0]]
         .completed_upgrade_slugs
         .contains("overclock_stim"));
     Ok(())

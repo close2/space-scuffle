@@ -31,7 +31,7 @@ use sim_map::{
     CellFlags, CliffLevel, MapCellSpec, MapDocument, MapFile, MapMetadata, ResourceKind,
     TerrainKind,
 };
-use sim_types::{PlayerId, ShapeKind, SimScalar, SimVec2, Tick, TickBundle};
+use sim_types::{PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, Tick, TickBundle};
 
 fn empty_bundle(tick: u32) -> TickBundle {
     TickBundle {
@@ -649,7 +649,9 @@ fn the_skirmish_scenario_is_a_playable_start_from_real_files() {
             6,
             "six workers who can also build"
         );
-        let bank = world.player_resources[usize::from(slot)];
+        let player =
+            PlayerSlot::new(slot).expect("invariant: scenario start slots are player slots");
+        let bank = world.player_resources[player];
         assert_eq!((bank.minerals, bank.gas), (50, 0));
         assert_eq!((bank.supply_used, bank.supply_max), (6, 15));
 

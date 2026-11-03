@@ -41,8 +41,8 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use sim_map::{Pathfinder, PlayerVisionMap, SimMap};
 use sim_types::{
-    CombatEventVisual, EntityId, PlayerId, PlayerUpgradeState, RenderSnapshot, ShapeKind,
-    SimScalar, SimVec2, TickBundle, UnitTypeId,
+    CombatEventVisual, EntityId, PerPlayer, PlayerId, PlayerUpgradeState, RenderSnapshot,
+    ShapeKind, SimScalar, SimVec2, TickBundle, UnitTypeId,
 };
 use std::collections::BTreeMap;
 
@@ -100,18 +100,18 @@ pub struct SimWorld {
     pub map: SimMap,
     /// Dynamic clearance A* pathfinder and Simple Stupid Funnel string-puller.
     pub pathfinder: Pathfinder,
-    /// Per-player Fog of War visibility maps (up to 8 players).
-    pub vision_maps: [PlayerVisionMap; 8],
+    /// Per-player Fog of War visibility maps, one per [`sim_types::PlayerSlot`].
+    pub vision_maps: PerPlayer<PlayerVisionMap>,
     /// Static archetype specifications.
     pub catalog: UnitCatalog,
     /// Static upgrade specifications and effects catalog.
     pub upgrade_catalog: UpgradeCatalog,
-    /// Per-player active upgrade state (up to 8 players).
-    pub player_upgrades: [PlayerUpgradeState; 8],
+    /// Per-player active upgrade state, one per [`sim_types::PlayerSlot`].
+    pub player_upgrades: PerPlayer<PlayerUpgradeState>,
     /// Flat 2D spatial hash accelerating neighborhood queries.
     pub spatial_hash: SpatialHashGrid,
-    /// Per-player economic resources and supply caps.
-    pub player_resources: [PlayerResources; 8],
+    /// Per-player economic resources and supply caps, one per [`sim_types::PlayerSlot`].
+    pub player_resources: PerPlayer<PlayerResources>,
     /// Checksum calculated at the conclusion of the previous tick.
     pub last_checksum: u64,
     /// Transient visual events generated during the current tick for renderer consumption.
@@ -135,7 +135,7 @@ pub struct SimWorld {
     /// Whether pathfinding respects fog-of-war vision and known obstacles.
     pub vision_aware_pathfinding: bool,
     /// Per-player known blocked cells (structures seen in visible cells and remembered through fog).
-    pub known_blocked_cells: [Vec<bool>; 8],
+    pub known_blocked_cells: PerPlayer<Vec<bool>>,
 
     // Reusable per-tick scratch buffers to eliminate allocations
     pub(crate) scratch_neighbors: Vec<EntityId>,
@@ -162,31 +162,14 @@ impl SimWorld {
         let pathfinder = Pathfinder::new(&map);
         let spatial_hash = SpatialHashGrid::new(width as usize, height as usize, SPATIAL_CELL_SIZE);
 
-        let mut vision_maps = [
-            PlayerVisionMap::new(width, height),
-            PlayerVisionMap::new(width, height),
-            PlayerVisionMap::new(width, height),
-            PlayerVisionMap::new(width, height),
-            PlayerVisionMap::new(width, height),
-            PlayerVisionMap::new(width, height),
-            PlayerVisionMap::new(width, height),
-            PlayerVisionMap::new(width, height),
-        ];
-        for v in &mut vision_maps {
-            v.set_all_fogged();
-        }
+        let vision_maps = PerPlayer::from_fn(|_| {
+            let mut vision = PlayerVisionMap::new(width, height);
+            vision.set_all_fogged();
+            vision
+        });
 
         let total_cells = (width as usize) * (height as usize);
-        let known_blocked_cells = [
-            vec![false; total_cells],
-            vec![false; total_cells],
-            vec![false; total_cells],
-            vec![false; total_cells],
-            vec![false; total_cells],
-            vec![false; total_cells],
-            vec![false; total_cells],
-            vec![false; total_cells],
-        ];
+        let known_blocked_cells = PerPlayer::from_fn(|_| vec![false; total_cells]);
 
         let mut world = Self {
             current_tick: 0,
@@ -201,9 +184,9 @@ impl SimWorld {
             vision_maps,
             catalog,
             upgrade_catalog,
-            player_upgrades: Default::default(),
+            player_upgrades: PerPlayer::default(),
             spatial_hash,
-            player_resources: [PlayerResources::default(); 8],
+            player_resources: PerPlayer::default(),
             last_checksum: 0,
             pending_events: Vec::new(),
             tick_diagnostics: Vec::new(),

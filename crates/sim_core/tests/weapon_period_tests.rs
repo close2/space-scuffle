@@ -142,6 +142,7 @@ fn battle(
     durable_target.hp = durable_target.max_hp;
     world
         .player_upgrade_state_mut(PlayerId(0))
+        .ok_or("player 0 has no upgrade slot")?
         .unit_stat_modifiers
         .insert(
             slug,

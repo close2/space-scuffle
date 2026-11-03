@@ -15,7 +15,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use sim_types::{SimScalar, SimVec2};
+use sim_types::{PlayerSlot, SimScalar, SimVec2, MAX_PLAYERS};
 
 use crate::error::PlacementFailureReason;
 use crate::grid::{CellFlags, CliffLevel, GameMap, RampDir, TerrainKind, MAX_RAMP_RUN_CELLS};
@@ -28,9 +28,6 @@ use crate::vision::MAX_SIGHT_RADIUS_CELLS;
 
 /// Minimum number of player start locations required for a valid playable map.
 pub const MIN_START_LOCATIONS: usize = 2;
-
-/// Maximum number of player slots supported by the simulation architecture.
-pub const MAX_PLAYER_SLOTS: u8 = 8;
 
 /// Minimum Chebyshev distance between start location footprint centers.
 pub const MIN_START_SEPARATION_CELLS: u32 = 16;
@@ -189,9 +186,9 @@ pub enum MapValidationError {
         count: usize,
     },
 
-    /// Player slot index is out of supported range `0..MAX_PLAYER_SLOTS`.
+    /// Player slot index is out of supported range `0..sim_types::MAX_PLAYERS`.
     #[error(
-        "player slot {slot} for start location {id:?} exceeds maximum allowed ({MAX_PLAYER_SLOTS})"
+        "player slot {slot} for start location {id:?} exceeds maximum allowed ({MAX_PLAYERS})"
     )]
     PlayerSlotOutOfRange {
         /// Entity ID of start location.
@@ -721,7 +718,7 @@ impl ValidationContext<'_> {
 
         // Check 11: PlayerSlotOutOfRange
         for start in &doc.start_locations {
-            if start.player_slot >= MAX_PLAYER_SLOTS {
+            if PlayerSlot::new(start.player_slot).is_none() {
                 self.errors.push(MapValidationError::PlayerSlotOutOfRange {
                     id: start.id,
                     slot: start.player_slot,

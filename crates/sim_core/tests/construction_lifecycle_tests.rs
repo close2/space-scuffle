@@ -13,8 +13,8 @@ use sim_core::production::construction::{BuildRejection, CONSTRUCTION_CANCEL_REF
 use sim_core::{SimWorld, UnitArchetype};
 use sim_map::{CliffLevel, GameMap, MapCell, ResourceKind, ResourceNode};
 use sim_types::{
-    AnimState, EntityId, PlayerCommand, PlayerId, ShapeKind, SimScalar, SimVec2, Tick, TickBundle,
-    UnitOrder, UnitTypeId,
+    AnimState, EntityId, PlayerCommand, PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, Tick,
+    TickBundle, UnitOrder, UnitTypeId,
 };
 use std::error::Error;
 
@@ -63,8 +63,8 @@ fn fixture() -> Result<(SimWorld, EntityId, UnitTypeId), Box<dyn Error>> {
     let hall = id_of(&world, "foundry_core_dome")?;
     world.spawn_structure(hall, ME, 2, 2)?;
     let worker = world.spawn_unit(builder, ME, at(12, 12))?;
-    world.player_resources[0].minerals = 1000;
-    world.player_resources[0].gas = 100;
+    world.player_resources[PlayerSlot::ALL[0]].minerals = 1000;
+    world.player_resources[PlayerSlot::ALL[0]].gas = 100;
     let dome = id_of(&world, "capacitor_dome")?;
     Ok((world, worker, dome))
 }
@@ -133,8 +133,8 @@ fn build_is_neither_free_nor_instant() -> TestResult {
     let (mut world, worker, dome) = fixture()?;
     let price = cost(&world, dome)?;
     let (minerals, gas) = (
-        world.player_resources[0].minerals,
-        world.player_resources[0].gas,
+        world.player_resources[PlayerSlot::ALL[0]].minerals,
+        world.player_resources[PlayerSlot::ALL[0]].gas,
     );
     let (x, y) = (24, 12);
 
@@ -149,23 +149,27 @@ fn build_is_neither_free_nor_instant() -> TestResult {
         "the builder must walk first"
     );
     assert_eq!(
-        world.player_resources[0].minerals, minerals,
+        world.player_resources[PlayerSlot::ALL[0]].minerals,
+        minerals,
         "paid only on arrival"
     );
 
     let site = walk_until_laid(&mut world, dome)?;
     assert_eq!(
-        world.player_resources[0].minerals,
+        world.player_resources[PlayerSlot::ALL[0]].minerals,
         minerals - price.mineral_cost
     );
-    assert_eq!(world.player_resources[0].gas, gas - price.gas_cost);
+    assert_eq!(
+        world.player_resources[PlayerSlot::ALL[0]].gas,
+        gas - price.gas_cost
+    );
 
     let entity = &world.entities[&site];
     assert!(!entity.is_completed);
     assert_eq!(entity.captured_supply_provided, 0);
     assert_eq!(entity.hp, entity.max_hp / SimScalar::from_num(10));
     assert_eq!(entity.current_anim, AnimState::Constructing);
-    let supply = world.player_resources[0].supply_max;
+    let supply = world.player_resources[PlayerSlot::ALL[0]].supply_max;
     world.validate_supply_ledger()?;
 
     let ticks = price.build_time_ticks;
@@ -176,7 +180,7 @@ fn build_is_neither_free_nor_instant() -> TestResult {
     assert_eq!(entity.hp, entity.max_hp);
     assert_eq!(entity.current_anim, AnimState::Idle);
     assert_eq!(
-        world.player_resources[0].supply_max,
+        world.player_resources[PlayerSlot::ALL[0]].supply_max,
         supply + price.supply_provided
     );
     assert!(world.entities[&worker].order_queue.is_empty());
@@ -236,7 +240,7 @@ fn rejections_change_nothing() -> TestResult {
         ),
     ];
     for (selection, command, player, bank) in cases {
-        world.player_resources[0].minerals = bank;
+        world.player_resources[PlayerSlot::ALL[0]].minerals = bank;
         let entities = world.entities.clone();
         let economy = world.player_resources;
         order(&mut world, player, selection, command);
@@ -254,7 +258,7 @@ fn rejections_change_nothing() -> TestResult {
 #[test]
 fn typed_rejections_name_the_cause() -> TestResult {
     let (mut world, worker, dome) = fixture()?;
-    world.player_resources[0].minerals = 0;
+    world.player_resources[PlayerSlot::ALL[0]].minerals = 0;
     order(&mut world, ME, vec![worker], build(dome, 14, 14));
     assert!(matches!(
         &world.game_command_outcomes()[0].result,
@@ -264,7 +268,7 @@ fn typed_rejections_name_the_cause() -> TestResult {
         }))
     ));
 
-    world.player_resources[0].minerals = 1000;
+    world.player_resources[PlayerSlot::ALL[0]].minerals = 1000;
     let unit = world.spawn_unit(id_of(&world, "pulse_bot")?, ME, at(30, 12))?;
     order(&mut world, ME, vec![unit], build(dome, 14, 14));
     assert_eq!(
@@ -288,7 +292,7 @@ fn typed_rejections_name_the_cause() -> TestResult {
 fn the_money_is_checked_again_on_arrival() -> TestResult {
     let (mut world, worker, dome) = fixture()?;
     order(&mut world, ME, vec![worker], build(dome, 30, 30));
-    world.player_resources[0].minerals = 0;
+    world.player_resources[PlayerSlot::ALL[0]].minerals = 0;
     for _ in 0..600 {
         idle(&mut world, 1);
         if let Some(event) = world.task_events().first() {
@@ -297,7 +301,7 @@ fn the_money_is_checked_again_on_arrival() -> TestResult {
                 TaskEventKind::BuildAbandoned(BuildRejection::Minerals { .. })
             ));
             assert_eq!(foundation_of(&world, dome), None);
-            assert_eq!(world.player_resources[0].minerals, 0);
+            assert_eq!(world.player_resources[PlayerSlot::ALL[0]].minerals, 0);
             return Ok(());
         }
     }
@@ -450,7 +454,7 @@ fn cancelling_refunds_the_documented_share_and_clears_the_site() -> TestResult {
     let price = cost(&world, dome)?;
     order(&mut world, ME, vec![worker], build(dome, 14, 12));
     let site = walk_until_laid(&mut world, dome)?;
-    let bank = world.player_resources[0].minerals;
+    let bank = world.player_resources[PlayerSlot::ALL[0]].minerals;
     order(&mut world, ME, vec![site], UnitOrder::CancelConstruction);
     let refund = price.mineral_cost * CONSTRUCTION_CANCEL_REFUND_PERCENT / 100;
     assert_eq!(
@@ -460,7 +464,10 @@ fn cancelling_refunds_the_documented_share_and_clears_the_site() -> TestResult {
             gas: price.gas_cost * CONSTRUCTION_CANCEL_REFUND_PERCENT / 100,
         })
     );
-    assert_eq!(world.player_resources[0].minerals, bank + refund);
+    assert_eq!(
+        world.player_resources[PlayerSlot::ALL[0]].minerals,
+        bank + refund
+    );
     assert!(!world.entities.contains_key(&site));
     assert!(!world.map.structures().contains_key(&site));
     assert!(world.map.can_place_building(14, 12, 2, 2).is_ok());
@@ -486,7 +493,7 @@ fn cancel_is_all_or_nothing_and_only_for_foundations() -> TestResult {
         .ok_or("hall")?;
     order(&mut world, ME, vec![worker], build(dome, 14, 12));
     let site = walk_until_laid(&mut world, dome)?;
-    let bank = world.player_resources[0];
+    let bank = world.player_resources[PlayerSlot::ALL[0]];
     order(
         &mut world,
         ME,
@@ -497,7 +504,7 @@ fn cancel_is_all_or_nothing_and_only_for_foundations() -> TestResult {
         world.game_command_outcomes()[0].result,
         Err(GameCommandError::NotAFoundation(hall))
     );
-    assert_eq!(world.player_resources[0], bank);
+    assert_eq!(world.player_resources[PlayerSlot::ALL[0]], bank);
     assert!(world.entities.contains_key(&site));
     Ok(())
 }
@@ -527,11 +534,14 @@ fn a_foundation_can_be_destroyed_for_no_refund_and_does_not_fight() -> TestResul
         "a foundation has no weapons yet"
     );
     assert!(world.entities[&site].hp < world.entities[&site].max_hp);
-    let bank = world.player_resources[0];
+    let bank = world.player_resources[PlayerSlot::ALL[0]];
     world.entities.get_mut(&site).ok_or("site")?.hp = SimScalar::ZERO;
     idle(&mut world, 2);
     assert!(!world.entities.contains_key(&site));
-    assert_eq!(world.player_resources[0].minerals, bank.minerals);
+    assert_eq!(
+        world.player_resources[PlayerSlot::ALL[0]].minerals,
+        bank.minerals
+    );
     assert!(!matches!(
         world.entities[&worker].order_queue.front(),
         Some(UnitOrder::Construct { .. })

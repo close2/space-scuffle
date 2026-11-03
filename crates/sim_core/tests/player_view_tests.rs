@@ -23,9 +23,9 @@ use sim_core::scenario::{build_world_with_catalogs, ScenarioManifest, StartLoado
 use sim_core::{SimWorld, UnitArchetype, UnitCatalog, UpgradeCatalog};
 use sim_map::{CliffLevel, GameMap, MapCell, MapFile, PlacementFailureReason, ResourceNode};
 use sim_types::{
-    CommandOptionView, CommandSubject, EntityId, OptionLock, PlayerCommand, PlayerId, PlayerView,
-    QueuedItem, ResourceKind, ResourceNodeId, ShapeKind, SimScalar, SimVec2, SiteRefusal, Tick,
-    TickBundle, UnitOrder, UnitTypeId, VisibilityState,
+    CommandOptionView, CommandSubject, EntityId, OptionLock, PlayerCommand, PlayerId, PlayerSlot,
+    PlayerView, QueuedItem, ResourceKind, ResourceNodeId, ShapeKind, SimScalar, SimVec2,
+    SiteRefusal, Tick, TickBundle, UnitOrder, UnitTypeId, VisibilityState,
 };
 use std::error::Error;
 
@@ -161,7 +161,10 @@ fn nodes_of_side(world: &SimWorld, home: bool, kind: ResourceKind) -> Vec<Resour
 
 fn sees_node(world: &SimWorld, player: PlayerId, node: ResourceNodeId) -> bool {
     let (x, y) = world.map.resources()[node.0 as usize].cell;
-    world.vision_maps[usize::from(player.0)].visibility_at(x, y) == VisibilityState::Visible
+    world
+        .vision_maps
+        .get(player)
+        .is_some_and(|vision| vision.visibility_at(x, y) == VisibilityState::Visible)
 }
 
 /// Exhausts every node on the far side, so a worker there finds nothing to move on to.
@@ -219,8 +222,8 @@ fn open_site(world: &SimWorld, structure: UnitTypeId) -> Result<(u32, u32), Box<
 /// A fresh world at `stage`, reached by replaying the same commands every time.
 fn world_at(stage: Stage) -> Result<SimWorld, Box<dyn Error>> {
     let mut world = skirmish()?;
-    world.player_resources[0].minerals = RICH;
-    world.player_resources[0].gas = RICH;
+    world.player_resources[PlayerSlot::ALL[0]].minerals = RICH;
+    world.player_resources[PlayerSlot::ALL[0]].gas = RICH;
     idle(&mut world, 1);
     if stage == Stage::Opening {
         return Ok(world);
@@ -269,7 +272,7 @@ fn world_at(stage: Stage) -> Result<SimWorld, Box<dyn Error>> {
         return Ok(world);
     }
     until(&mut world, WALK_LIMIT, |w| {
-        w.player_upgrades[0]
+        w.player_upgrades[PlayerSlot::ALL[0]]
             .completed_upgrade_slugs
             .contains("overclock_stim")
     })?;
@@ -449,7 +452,7 @@ fn a_warmed_view_keeps_its_buffers() -> TestResult {
     }
 
     let mut world = skirmish()?;
-    world.player_resources[0].minerals = RICH;
+    world.player_resources[PlayerSlot::ALL[0]].minerals = RICH;
     let crew = builders(&world, HOME);
     let target = nodes_of_side(&world, true, ResourceKind::Mineral)[0];
     let (base, _) = base_of(&world, HOME)?;
@@ -479,7 +482,7 @@ fn a_warmed_view_keeps_its_buffers() -> TestResult {
 #[test]
 fn no_enemy_data_reaches_the_view() -> TestResult {
     let mut world = skirmish()?;
-    world.player_resources[1].minerals = RICH;
+    world.player_resources[PlayerSlot::ALL[1]].minerals = RICH;
     let enemy_crew = builders(&world, AWAY);
     let (enemy_base, _) = base_of(&world, AWAY)?;
     let worker = world.entities[&enemy_crew[0]].unit_type_id;
@@ -520,17 +523,21 @@ fn no_enemy_data_reaches_the_view() -> TestResult {
     assert!(home.laden.iter().all(|id| world.entities[id].owner == HOME));
     assert_eq!(home.carriers.len(), 0);
     assert_eq!(
-        home.status.minerals, world.player_resources[0].minerals,
+        home.status.minerals,
+        world.player_resources[PlayerSlot::ALL[0]].minerals,
         "the status is the viewer's own"
     );
-    assert_eq!(home.visibility, world.vision_maps[0].states());
+    assert_eq!(
+        home.visibility,
+        world.vision_maps[PlayerSlot::ALL[0]].states()
+    );
     Ok(())
 }
 
 #[test]
 fn the_view_reports_the_viewers_own_queue_cargo_and_carrier() -> TestResult {
     let mut world = skirmish()?;
-    world.player_resources[0].minerals = RICH;
+    world.player_resources[PlayerSlot::ALL[0]].minerals = RICH;
     let crew = builders(&world, HOME);
     let (base, _) = base_of(&world, HOME)?;
     let worker_type = world.entities[&crew[0]].unit_type_id;
@@ -761,11 +768,14 @@ fn glimpse_enemy_base(world: &mut SimWorld) -> Result<(u32, u32), Box<dyn Error>
     idle(world, 3);
     let (x, y) = corner;
     let index = y as usize * world.map.width() as usize + x as usize;
-    assert!(world.known_blocked_cells[0][index], "the scout saw it");
+    assert!(
+        world.known_blocked_cells[PlayerSlot::ALL[0]][index],
+        "the scout saw it"
+    );
     world.entities.get_mut(&scout).ok_or("just spawned")?.hp = SimScalar::ZERO;
     idle(world, 3);
     assert_eq!(
-        world.vision_maps[0].visibility_at(x, y),
+        world.vision_maps[PlayerSlot::ALL[0]].visibility_at(x, y),
         VisibilityState::Fogged
     );
     Ok(corner)
@@ -788,7 +798,7 @@ fn preview_refuses_a_structure_seen_once_even_in_fog() -> TestResult {
 fn a_structure_gone_in_fog_stays_remembered_until_seen_empty() -> TestResult {
     let mut world = skirmish()?;
     idle(&mut world, 3);
-    world.player_resources[0].minerals = RICH;
+    world.player_resources[PlayerSlot::ALL[0]].minerals = RICH;
     let (x, y) = glimpse_enemy_base(&mut world)?;
     // A second enemy structure keeps the match alive once the first falls out of sight.
     let structure = type_of(&world, "assembly_bay_dome")?;
@@ -877,7 +887,7 @@ fn preview_judges_public_terrain_and_nodes_at_any_range() -> TestResult {
 fn a_build_on_a_hidden_structure_is_accepted_and_abandoned_on_arrival() -> TestResult {
     let mut world = skirmish()?;
     idle(&mut world, 3);
-    world.player_resources[0].minerals = RICH;
+    world.player_resources[PlayerSlot::ALL[0]].minerals = RICH;
     let (_, site) = base_of(&world, AWAY)?;
     let structure = type_of(&world, "assembly_bay_dome")?;
     let builder = builders(&world, HOME)[0];
@@ -913,7 +923,11 @@ fn a_build_on_a_hidden_structure_is_accepted_and_abandoned_on_arrival() -> TestR
         ),
         "{abandoned:?}"
     );
-    assert_eq!(world.player_resources[0].minerals, RICH, "nothing was paid");
+    assert_eq!(
+        world.player_resources[PlayerSlot::ALL[0]].minerals,
+        RICH,
+        "nothing was paid"
+    );
     assert_eq!(world.map.structures().len(), structures_before);
     assert!(!matches!(
         world.entities[&builder].order_queue.front(),
@@ -1004,8 +1018,8 @@ fn can_raise_matches_admission_for_every_catalog_pair() -> TestResult {
     )?;
     let mut world = sim_fixtures::world(map, 5);
     world.catalog = UnitCatalog::from_ron_str_bundle(UNITS, STRUCTURES)?;
-    world.player_resources[0].minerals = RICH;
-    world.player_resources[0].gas = RICH;
+    world.player_resources[PlayerSlot::ALL[0]].minerals = RICH;
+    world.player_resources[PlayerSlot::ALL[0]].gas = RICH;
     let ids: Vec<UnitTypeId> = world.catalog.archetypes().map(|a| a.unit_type_id).collect();
 
     // Prerequisites are another rule's business: lift them so only the pair decides.

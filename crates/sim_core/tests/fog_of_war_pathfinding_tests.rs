@@ -17,7 +17,8 @@ use sim_map::{
     CellFlags, CliffLevel, GameMap, MapCell, PathRequestWithVision, RampDir, UnitClearance,
 };
 use sim_types::{
-    EntityId, MoverType, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder, VisibilityState,
+    EntityId, MoverType, PlayerId, PlayerSlot, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
+    VisibilityState,
 };
 
 /// Empty tick input helper.
@@ -67,7 +68,7 @@ fn test_unexplored_ramp_blocks_path_until_scouted() {
 
     // Confirm that at tick 0, distant ramp is Fogged
     assert_eq!(
-        world.vision_maps[0].visibility_at(15, 15),
+        world.vision_maps[PlayerSlot::ALL[0]].visibility_at(15, 15),
         VisibilityState::Fogged,
         "Distant ramp must be Fogged at tick 0"
     );
@@ -77,9 +78,9 @@ fn test_unexplored_ramp_blocks_path_until_scouted() {
         start: start_pos,
         goal: high_goal,
         clearance: UnitClearance::Medium,
-        vision: Some(&world.vision_maps[0]),
+        vision: Some(&world.vision_maps[PlayerSlot::ALL[0]]),
         block_unexplored_ramps: false,
-        known_structures: Some(&world.known_blocked_cells[0]),
+        known_structures: Some(&world.known_blocked_cells[PlayerSlot::ALL[0]]),
     };
 
     let path_result = world.pathfinder.find_path_with_vision(&world.map, &req);
@@ -194,12 +195,12 @@ fn test_fogged_ramp_wall_off_causes_dynamic_repath_on_vision() {
 
         // Check if blue discovered the blocked cell
         let blocked_idx = (10 * width + 14) as usize;
-        if world.known_blocked_cells[0][blocked_idx] {
+        if world.known_blocked_cells[PlayerSlot::ALL[0]][blocked_idx] {
             discovered_blocker = true;
             // Partial revelation can legitimately leave a different primary lane
             // apparently open. Require the alternate route once all lanes are known.
-            let whole_wall_known =
-                (9..=11).all(|y| world.known_blocked_cells[0][(y * width + 14) as usize]);
+            let whole_wall_known = (9..=11)
+                .all(|y| world.known_blocked_cells[PlayerSlot::ALL[0]][(y * width + 14) as usize]);
             if whole_wall_known && !ent.current_funnel_waypoints.is_empty() {
                 let has_rerouted = ent
                     .current_funnel_waypoints
@@ -291,7 +292,7 @@ fn test_high_ground_vision_occlusion_and_ramp_elevation() {
 
     // Blue unit cannot see red unit due to cliff occlusion
     assert_ne!(
-        world.vision_maps[0].visibility_at(18, 5),
+        world.vision_maps[PlayerSlot::ALL[0]].visibility_at(18, 5),
         VisibilityState::Visible,
         "High ground cliff cell must be occluded for low-ground observer"
     );

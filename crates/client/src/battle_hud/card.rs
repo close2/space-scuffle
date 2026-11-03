@@ -660,6 +660,7 @@ mod tests {
     use sim_core::entity::Cargo;
     use sim_core::{SimWorld, UnitArchetype};
     use sim_map::{CliffLevel, GameMap, MapCell, ResourceKind};
+    use sim_types::PlayerSlot;
     use sim_types::{MatchResult, PlayerId, ShapeKind, SimScalar, SimVec2, Tick};
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -1105,7 +1106,7 @@ mod tests {
     fn a_price_is_a_tooltip_and_shortage_is_not_a_lock() -> TestResult {
         let mut world = flat_world()?;
         let structure = factory(&mut world, 30)?;
-        world.player_resources[0].minerals = 0;
+        world.player_resources[PlayerSlot::ALL[0]].minerals = 0;
         let card = card_for(&world, &[structure]);
         let (position, slot) = card
             .slots

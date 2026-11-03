@@ -31,7 +31,7 @@
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use sim_types::snapshot::PlayerStatusView;
-use sim_types::{MatchResult, PlayerId, Tick};
+use sim_types::{MatchResult, PlayerId, Tick, MAX_PLAYERS};
 
 use super::model::{clock_seconds, write_clock, HudModel};
 use super::panels::visible;
@@ -78,13 +78,13 @@ impl ViewerResult {
 #[must_use]
 pub fn viewer_result(
     result: MatchResult,
-    players: &[PlayerStatusView; 8],
+    players: &[PlayerStatusView; MAX_PLAYERS],
     viewer: PlayerId,
 ) -> Option<ViewerResult> {
     match result {
-        MatchResult::InProgress => players
-            .get(usize::from(viewer.0))
-            .is_some_and(|status| status.defeated)
+        MatchResult::InProgress => viewer
+            .slot()
+            .is_some_and(|slot| players[slot.index()].defeated)
             .then_some(ViewerResult::Eliminated),
         MatchResult::Victory { winner, .. } if winner == viewer => Some(ViewerResult::Victory),
         MatchResult::Victory { .. } => Some(ViewerResult::Defeat),
@@ -123,7 +123,12 @@ impl ResultScreen {
     }
 
     /// Brings the screen up to date, rewriting the text only when the final tick changed.
-    fn update(&mut self, result: MatchResult, players: &[PlayerStatusView; 8], viewer: PlayerId) {
+    fn update(
+        &mut self,
+        result: MatchResult,
+        players: &[PlayerStatusView; MAX_PLAYERS],
+        viewer: PlayerId,
+    ) {
         self.verdict = viewer_result(result, players, viewer);
         let tick = final_tick(result);
         if self.written == tick {

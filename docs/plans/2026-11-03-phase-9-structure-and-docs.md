@@ -1347,6 +1347,10 @@ Relative links only. It states what exists, not what was once hoped for; intent 
   schedule cycle. `sample_input_ownership.before(lab_ui_system)` and the editor's
   `apply_document_load_system.before(editor_ui_system)` both pass every client test. WP13 must not claim CI checks
   system ordering unless an ordering test is added first.
+- **Found by WP7, a behaviour quirk for a later bugfix plan:** above 512 bubbles, the all-pairs fallback in
+  `step_bouncing_kinematics` (`crates/client/src/smog/kinematics.rs`) never adds its contacts to the returned
+  `peer_bounces` count, so it reports 0 every step; each bubble's own counter is correct.
+  `kinematics_all_pairs_fallback_golden` pins today's value, so the fix changes that golden deliberately.
 
 ## 10. Decisions for the owner
 

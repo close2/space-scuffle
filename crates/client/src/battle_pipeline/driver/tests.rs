@@ -6,7 +6,8 @@ use crate::battle_pipeline::session::CommittedBattleMetadata;
 use sim_core::economy::{GameCommandError, TaskEventKind};
 use sim_core::production::construction::BuildRejection;
 use sim_types::{
-    PlayerCommand, PlayerId, ResourceNodeId, ShapeKind, SimScalar, SimVec2, UnitOrder, UnitTypeId,
+    PlayerCommand, PlayerId, PlayerSlot, ResourceNodeId, ShapeKind, SimScalar, SimVec2, UnitOrder,
+    UnitTypeId,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -402,7 +403,7 @@ fn a_refused_build_reaches_the_session_as_a_notice() -> TestResult {
         .unit_type_id;
     let position = SimVec2::new(SimScalar::from_i32(10), SimScalar::from_i32(10));
     let builder = world.spawn_unit(unit_type, owner, position)?;
-    world.player_resources[0].minerals = 0;
+    world.player_resources[PlayerSlot::ALL[0]].minerals = 0;
     let sequence = session.commands.submit(
         &world,
         PlayerCommand {

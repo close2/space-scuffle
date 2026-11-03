@@ -26,7 +26,7 @@ use sim_core::{SimCoreError, SimWorld, UpgradeCatalog, WeaponPhase};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttackOrigin, EntityId, PlayerCommand,
-    PlayerId, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitModeSpec, UnitOrder,
+    PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitModeSpec, UnitOrder,
     VisibilityState,
 };
 
@@ -663,12 +663,22 @@ fn s10_repeated_research_is_rejected() {
     let mut arena = Arena::new(32);
     let upgrade = "chitinous_plating";
     arena.world.research_upgrade(BLUE, upgrade).unwrap();
-    let after_first = arena.world.player_upgrade_state(BLUE).clone();
+    let after_first = arena
+        .world
+        .player_upgrade_state(BLUE)
+        .expect("invariant: BLUE has a player slot")
+        .clone();
     assert!(matches!(
         arena.world.research_upgrade(BLUE, upgrade),
         Err(SimCoreError::UpgradeAlreadyResearched(_))
     ));
-    assert_eq!(*arena.world.player_upgrade_state(BLUE), after_first);
+    assert_eq!(
+        *arena
+            .world
+            .player_upgrade_state(BLUE)
+            .expect("invariant: BLUE has a player slot"),
+        after_first
+    );
 }
 
 /// S-10: a repeat also must not grow live vitals a second time.
@@ -694,20 +704,21 @@ fn s11_sight_delta_extends_vision() {
     let probe = 20 + arch.sight_radius.to_f32() as u32 + 2;
     arena.run(1);
     assert_ne!(
-        arena.world.vision_maps[0].visibility_at(probe, 20),
+        arena.world.vision_maps[PlayerSlot::ALL[0]].visibility_at(probe, 20),
         VisibilityState::Visible
     );
     // Rule fixture: no shipped upgrade grants sight yet.
     arena
         .world
         .player_upgrade_state_mut(BLUE)
+        .expect("invariant: BLUE has a player slot")
         .unit_stat_modifiers
         .entry(slug)
         .or_default()
         .sight_delta = SimScalar::from_num(4);
     arena.run(1);
     assert_eq!(
-        arena.world.vision_maps[0].visibility_at(probe, 20),
+        arena.world.vision_maps[PlayerSlot::ALL[0]].visibility_at(probe, 20),
         VisibilityState::Visible
     );
 }

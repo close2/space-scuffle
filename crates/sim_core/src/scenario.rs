@@ -25,7 +25,7 @@ use sim_map::{
     validate_map, CellFlags, CliffLevel, MapDocument, MapFile, MapFormatError, MapStartLocation,
     MapValidationError, TerrainKind,
 };
-use sim_types::{PlayerId, ShapeKind, SimScalar, SimVec2, UnitTypeId};
+use sim_types::{PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, UnitTypeId};
 
 use crate::catalog::{RuntimeCatalogs, UnitCatalog};
 use crate::error::SimCoreError;
@@ -309,11 +309,7 @@ pub fn build_world_with_catalogs(
             continue;
         };
         let resolved = resolve_loadout(&world, loadouts, player, start_loc)?;
-        apply_starting_bank(
-            &mut world,
-            start_loc.player_slot,
-            resolved.starting_resources,
-        );
+        apply_starting_bank(&mut world, start_loc, resolved.starting_resources)?;
         let hall = place_town_hall(&mut world, start_loc, &resolved)?;
         place_ring_units(
             &mut world,
@@ -412,13 +408,31 @@ fn resolve_loadout(
     })
 }
 
-/// Step 5, a loadout's `starting_resources` replace player `slot`'s default bank.
-fn apply_starting_bank(world: &mut SimWorld, slot: u8, starting: Option<StartingResources>) {
+/// Step 5, a loadout's `starting_resources` replace the start location's player's default bank.
+///
+/// # Errors
+/// [`ScenarioError::InvalidMap`] with [`MapValidationError::PlayerSlotOutOfRange`] if the start
+/// location's slot has no player storage. Step 1's `validate_map` already rejects such a map,
+/// so this only restates that check where the slot is used.
+fn apply_starting_bank(
+    world: &mut SimWorld,
+    start_loc: &MapStartLocation,
+    starting: Option<StartingResources>,
+) -> Result<(), ScenarioError> {
+    let Some(slot) = PlayerSlot::new(start_loc.player_slot) else {
+        return Err(ScenarioError::InvalidMap(vec![
+            MapValidationError::PlayerSlotOutOfRange {
+                id: start_loc.id,
+                slot: start_loc.player_slot,
+            },
+        ]));
+    };
     if let Some(start) = starting {
-        let resources = &mut world.player_resources[usize::from(slot)];
+        let resources = &mut world.player_resources[slot];
         resources.minerals = start.minerals;
         resources.gas = start.gas;
     }
+    Ok(())
 }
 
 /// Step 5, the town hall: centres it in the start footprint, `top_left + (fp - hall) / 2`,

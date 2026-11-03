@@ -45,7 +45,10 @@ use crate::{SimWorld, WeaponPhase};
 use sim_map::{
     MapError, PathRequestWithVision, PathResult, Pathfinder, PlayerVisionMap, SimMap, UnitClearance,
 };
-use sim_types::{AnimState, AttackOrigin, EntityId, SimAngle, SimScalar, SimVec2, Tick, UnitOrder};
+use sim_types::{
+    AnimState, AttackOrigin, EntityId, PerPlayer, PlayerSlot, SimAngle, SimScalar, SimVec2, Tick,
+    UnitOrder, MAX_PLAYERS,
+};
 use std::ops::ControlFlow;
 
 /// An actor validated for this tick, with the rates it moves at.
@@ -630,7 +633,7 @@ impl SimWorld {
         let navigation = self.pathfinder.nav_version();
         if navigation != self.movement.seen_nav_version {
             self.movement.seen_nav_version = navigation;
-            self.movement.recheck_routes = [true; 8];
+            self.movement.recheck_routes = PerPlayer::from_array([true; MAX_PLAYERS]);
         }
     }
 
@@ -697,11 +700,11 @@ impl SimWorld {
         self.movement.entries_are_fresh = true;
         self.movement.pursuits = pursuits;
         self.movement.casts = casts;
-        self.movement.recheck_routes = [false; 8];
+        self.movement.recheck_routes = PerPlayer::from_array([false; MAX_PLAYERS]);
     }
 
     /// Whether this tick is one on which `id`'s route gets looked at.
-    fn route_check_due(&self, id: EntityId, owner: usize) -> bool {
+    fn route_check_due(&self, id: EntityId, owner: PlayerSlot) -> bool {
         self.movement.recheck_routes[owner]
             || self
                 .current_tick
@@ -738,7 +741,11 @@ impl SimWorld {
                 reason: "active movement order is outside the current full-radius domain",
             });
         }
-        let owner = usize::from(actor.owner.0);
+        // `MotionEntry` creation already rejected owners without a slot (`effective_max_speed`).
+        let owner = actor
+            .owner
+            .slot()
+            .ok_or_else(|| arithmetic(id, MovementMathError::InvalidOwner(actor.owner)))?;
         // Fresh knowledge of the map cannot wait out a cooldown: the route may lead into a wall.
         let map_news = self.movement.recheck_routes[owner];
         let cooled_down = proposal.memory.repath_cooldown == 0 || map_news;
@@ -869,7 +876,11 @@ impl SimWorld {
         }
 
         let goal = target.position;
-        let owner = usize::from(actor.owner.0);
+        // `MotionEntry` creation already rejected owners without a slot (`effective_max_speed`).
+        let owner = actor
+            .owner
+            .slot()
+            .ok_or_else(|| arithmetic(id, MovementMathError::InvalidOwner(actor.owner)))?;
         let knowledge = self
             .vision_aware_pathfinding
             .then_some((&self.vision_maps[owner], &self.known_blocked_cells[owner]));
@@ -926,7 +937,10 @@ impl SimWorld {
         ) else {
             return Ok(None);
         };
-        let delta = self.player_upgrades[usize::from(actor.owner.0)]
+        let delta = self
+            .player_upgrades
+            .get(actor.owner)
+            .ok_or_else(|| arithmetic(id, MovementMathError::InvalidOwner(actor.owner)))?
             .unit_stat_modifiers
             .get(&arch.slug)
             .map_or(SimScalar::ZERO, |m| m.weapon_range_delta);

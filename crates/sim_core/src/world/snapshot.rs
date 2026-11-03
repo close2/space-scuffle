@@ -18,8 +18,8 @@ use crate::entity::{Entity, WeaponPhase};
 use crate::SimWorld;
 use sim_map::SimMap;
 use sim_types::{
-    BubbleRenderInstance, PlayerStatusView, RenderSnapshot, ResourceNodeId, ResourceNodeView,
-    SimScalar, Tick, WeaponVisualKind,
+    BubbleRenderInstance, PlayerSlot, PlayerStatusView, RenderSnapshot, ResourceNodeId,
+    ResourceNodeView, SimScalar, Tick, WeaponVisualKind,
 };
 
 impl SimWorld {
@@ -79,14 +79,14 @@ impl SimWorld {
 
     /// Writes every player slot's resources, supply and defeat flag.
     fn write_player_views(&self, output: &mut RenderSnapshot) {
-        for (slot, view) in output.players.iter_mut().enumerate() {
+        for (slot, view) in PlayerSlot::ALL.into_iter().zip(output.players.iter_mut()) {
             let resources = &self.player_resources[slot];
             *view = PlayerStatusView {
                 minerals: resources.minerals,
                 gas: resources.gas,
                 supply_used: resources.supply_used,
                 supply_max: resources.supply_max,
-                defeated: self.match_state.defeated & (1 << slot) != 0,
+                defeated: self.match_state.defeated & (1 << slot.index()) != 0,
             };
         }
     }

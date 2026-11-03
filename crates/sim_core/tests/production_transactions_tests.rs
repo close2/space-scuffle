@@ -6,7 +6,9 @@
 use sim_core::production::{ProductionAdmissionError as Rejection, ProductionInvariant};
 use sim_core::{ActiveHazardZone, SimWorld, UnitCatalog, UpgradeCatalog};
 use sim_map::{CliffLevel, GameMap, MapCell};
-use sim_types::{EntityId, PlayerId, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitTypeId};
+use sim_types::{
+    EntityId, PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitTypeId,
+};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 struct Fixture {
@@ -90,8 +92,8 @@ fn rejected_admissions_preserve_authoritative_state() -> TestResult {
     for field in 0..3 {
         let mut f = Fixture::new()?;
         match field {
-            0 => f.world.player_resources[0].minerals = 0,
-            1 => f.world.player_resources[0].gas = 0,
+            0 => f.world.player_resources[PlayerSlot::ALL[0]].minerals = 0,
+            1 => f.world.player_resources[PlayerSlot::ALL[0]].gas = 0,
             _ => f.world.catalog.get_mut(f.product)?.supply_cost = 21,
         }
         let before = f.world.compute_checksum();
@@ -130,9 +132,9 @@ fn selection_order_and_reservations_are_exact() -> TestResult {
     assert_eq!(receipt.producer, second);
     assert_eq!(f.world.entities[&second].production_queue.len(), 1);
     assert!(f.world.entities[&f.producer].production_queue.is_empty());
-    assert_eq!(f.world.player_resources[0].minerals, 993);
-    assert_eq!(f.world.player_resources[0].gas, 497);
-    assert_eq!(f.world.player_resources[0].supply_used, 2);
+    assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]].minerals, 993);
+    assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]].gas, 497);
+    assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]].supply_used, 2);
     for _ in 0..19 {
         f.admit()?;
     }
@@ -180,8 +182,11 @@ fn captured_supply_survives_catalog_edits_and_provider_loss() -> TestResult {
     let second = f
         .world
         .spawn_structure(f.producer_type, PlayerId(0), 20, 20)?;
-    assert_eq!(f.world.player_resources[0].supply_provided_total, 210);
-    assert_eq!(f.world.player_resources[0].supply_max, 200);
+    assert_eq!(
+        f.world.player_resources[PlayerSlot::ALL[0]].supply_provided_total,
+        210
+    );
+    assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]].supply_max, 200);
     f.admit()?;
     f.admit()?;
     let unit = f.world.spawn_unit(f.product, PlayerId(0), point(2, 2))?;
@@ -194,9 +199,12 @@ fn captured_supply_survives_catalog_edits_and_provider_loss() -> TestResult {
         .hp = SimScalar::ZERO;
     f.world.reap_dead_and_emit_shatter();
     assert_eq!(f.world.diagnostics(), []);
-    assert_eq!(f.world.player_resources[0].supply_used, 0);
-    assert_eq!(f.world.player_resources[0].supply_provided_total, 190);
-    assert_eq!(f.world.player_resources[0].supply_max, 190);
+    assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]].supply_used, 0);
+    assert_eq!(
+        f.world.player_resources[PlayerSlot::ALL[0]].supply_provided_total,
+        190
+    );
+    assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]].supply_max, 190);
     assert!(f.world.entities.contains_key(&second));
     f.world.validate_supply_ledger()?;
     Ok(())
@@ -233,9 +241,12 @@ fn dead_and_hazard_killed_producers_never_finish_or_leak_supply() -> TestResult 
         f.tick();
         assert!(f.world.entities.is_empty());
         assert_eq!(f.world.next_entity_id, next);
-        assert_eq!(f.world.player_resources[0].supply_used, 0);
-        assert_eq!(f.world.player_resources[0].supply_provided_total, 0);
-        assert_eq!(f.world.player_resources[0].minerals, 993);
+        assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]].supply_used, 0);
+        assert_eq!(
+            f.world.player_resources[PlayerSlot::ALL[0]].supply_provided_total,
+            0
+        );
+        assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]].minerals, 993);
         assert_eq!(f.world.diagnostics(), []);
         f.world.validate_supply_ledger()?;
     }
@@ -280,7 +291,7 @@ fn clear_but_disconnected_plateau_is_not_a_production_exit() -> TestResult {
     f.world.update_production_and_buffs();
     assert_eq!(f.world.entities.len(), 2);
     assert!(f.world.entities[&f.producer].production_queue.is_empty());
-    assert_eq!(f.world.player_resources[0].supply_used, 2);
+    assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]].supply_used, 2);
     f.world.validate_supply_ledger()?;
     Ok(())
 }
@@ -302,14 +313,14 @@ fn corrupt_ready_job_and_allocator_emit_evidence_without_losing_job() -> TestRes
                     .item = sim_core::production::ProductionItem::Unit(UnitTypeId(u16::MAX));
             }
             1 => f.world.next_entity_id = u32::MAX,
-            _ => f.world.player_resources[0].supply_used += 1,
+            _ => f.world.player_resources[PlayerSlot::ALL[0]].supply_used += 1,
         }
-        let economy = f.world.player_resources[0];
+        let economy = f.world.player_resources[PlayerSlot::ALL[0]];
         let next = f.world.next_entity_id;
         f.world.update_production_and_buffs();
         assert_eq!(f.world.entities.len(), 1);
         assert_eq!(f.world.entities[&f.producer].production_queue.len(), 1);
-        assert_eq!(f.world.player_resources[0], economy);
+        assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]], economy);
         assert_eq!(f.world.next_entity_id, next);
         assert_ne!(f.world.diagnostics(), []);
     }
@@ -404,7 +415,7 @@ fn mutated_producer_definition_fails_before_countdown_changes() -> TestResult {
                 .remaining_ticks,
             10
         );
-        assert_eq!(f.world.player_resources[0].supply_used, 2);
+        assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]].supply_used, 2);
         assert_ne!(f.world.diagnostics(), []);
         assert_eq!(f.world.production_blocks(), []);
     }
@@ -448,12 +459,12 @@ fn real_structure_ring_preserves_paid_ready_job_until_removal() -> TestResult {
         }
         f.admit()?;
         let next = f.world.next_entity_id;
-        let economy = f.world.player_resources[0];
+        let economy = f.world.player_resources[PlayerSlot::ALL[0]];
         for _ in 0..3 {
             f.world.update_production_and_buffs();
         }
         assert_eq!(f.world.next_entity_id, next);
-        assert_eq!(f.world.player_resources[0], economy);
+        assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]], economy);
         assert_eq!(f.world.entities[&f.producer].production_queue.len(), 1);
         assert_eq!(f.world.production_blocks().len(), 1);
         assert_eq!(f.world.diagnostics(), []);
@@ -464,7 +475,10 @@ fn real_structure_ring_preserves_paid_ready_job_until_removal() -> TestResult {
         f.world.update_production_and_buffs();
         assert_eq!(f.world.entities.len(), 2);
         assert_eq!(f.world.entities[&f.producer].production_queue.len(), 0);
-        assert_eq!(f.world.player_resources[0].minerals, economy.minerals);
+        assert_eq!(
+            f.world.player_resources[PlayerSlot::ALL[0]].minerals,
+            economy.minerals
+        );
         f.world.validate_supply_ledger()?;
     }
     Ok(())
@@ -718,7 +732,7 @@ fn checked_supply_and_vitals_overflow_reject_before_spawn() -> TestResult {
     f.world.catalog.get_mut(f.product)?.supply_provided = 0;
     f.world.catalog.get_mut(f.product)?.max_hp = SimScalar::from_raw(i64::MAX);
     let slug = f.world.catalog.get(f.product)?.slug.clone();
-    let modifier = f.world.player_upgrades[0]
+    let modifier = f.world.player_upgrades[PlayerSlot::ALL[0]]
         .unit_stat_modifiers
         .entry(slug)
         .or_default();
@@ -770,12 +784,12 @@ fn fractional_mobile_producer_keeps_paid_job_until_its_full_exit_is_clear() -> T
     f.world
         .try_queue_production(PlayerId(0), &[producer], f.product)?;
     let next = f.world.next_entity_id;
-    let economy = f.world.player_resources[0];
+    let economy = f.world.player_resources[PlayerSlot::ALL[0]];
     for _ in 0..3 {
         f.world.update_production_and_buffs();
     }
     assert_eq!(f.world.next_entity_id, next);
-    assert_eq!(f.world.player_resources[0], economy);
+    assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]], economy);
     assert_eq!(f.world.entities[&producer].position, origin);
     assert_eq!(
         f.world.entities[&producer]
@@ -795,7 +809,10 @@ fn fractional_mobile_producer_keeps_paid_job_until_its_full_exit_is_clear() -> T
     f.world.update_production_and_buffs();
     assert_eq!(f.world.next_entity_id, next + 1);
     assert_eq!(f.world.entities[&producer].production_queue.len(), 0);
-    assert_eq!(f.world.player_resources[0].minerals, economy.minerals);
+    assert_eq!(
+        f.world.player_resources[PlayerSlot::ALL[0]].minerals,
+        economy.minerals
+    );
     f.world.validate_supply_ledger()?;
     Ok(())
 }
@@ -834,7 +851,7 @@ fn extreme_mobile_source_radius_rejects_before_perimeter_enumeration() -> TestRe
         .try_queue_production(PlayerId(0), &[producer], f.product)?;
     f.world.catalog.get_mut(source_type)?.collision_radius = SimScalar::from_raw(i64::MAX);
     let next = f.world.next_entity_id;
-    let economy = f.world.player_resources[0];
+    let economy = f.world.player_resources[PlayerSlot::ALL[0]];
     f.world.update_production_and_buffs();
     assert_eq!(
         f.world.entities[&producer]
@@ -845,7 +862,7 @@ fn extreme_mobile_source_radius_rejects_before_perimeter_enumeration() -> TestRe
         10
     );
     assert_eq!(f.world.next_entity_id, next);
-    assert_eq!(f.world.player_resources[0], economy);
+    assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]], economy);
     assert_eq!(f.world.production_blocks(), []);
     Ok(())
 }

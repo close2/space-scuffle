@@ -43,8 +43,8 @@ use client::{window_title, ClientMode, FlipbookRegistry, LabState, RtsCamera};
 use sim_core::UnitArchetype;
 use sim_map::ResourceKind;
 use sim_types::{
-    CommandSubject, EntityId, MatchResult, PlayerId, ResourceNodeId, ShapeKind, SimScalar, Tick,
-    UnitOrder, UnitTypeId,
+    CommandSubject, EntityId, MatchResult, PlayerId, PlayerSlot, ResourceNodeId, ShapeKind,
+    SimScalar, Tick, UnitOrder, UnitTypeId,
 };
 
 #[allow(
@@ -155,8 +155,8 @@ fn run_ticks(harness: &mut Harness, ticks: u32) {
 #[test]
 fn the_player_profile_shows_no_inspector_and_no_other_players_data() {
     let mut harness = skirmish();
-    harness.world_mut().player_resources[0].minerals = 1234;
-    harness.world_mut().player_resources[1].minerals = 5678;
+    harness.world_mut().player_resources[PlayerSlot::ALL[0]].minerals = 1234;
+    harness.world_mut().player_resources[PlayerSlot::ALL[1]].minerals = 5678;
     run_ticks(&mut harness, 1);
 
     let geometry = harness.app.world().resource::<UiGeometry>();
@@ -462,7 +462,7 @@ fn resources_show_the_bank_and_change_with_income() {
     let status = model(&harness).view.status;
     assert_eq!(
         status.minerals,
-        harness.world().player_resources[0].minerals
+        harness.world().player_resources[PlayerSlot::ALL[0]].minerals
     );
     assert_eq!(
         model(&harness).resource_line,
@@ -642,7 +642,7 @@ fn a_refused_order_appears_in_the_feed() {
     let mut harness = skirmish();
     let base = structure_of(&harness, LOCAL_PLAYER);
     let unit_type = trainable(&harness);
-    harness.world_mut().player_resources[0].minerals = 0;
+    harness.world_mut().player_resources[PlayerSlot::ALL[0]].minerals = 0;
     let needed = harness.world().catalog.get(unit_type).unwrap().mineral_cost;
 
     submit(
@@ -667,7 +667,7 @@ fn a_refund_is_reported() {
     let base = structure_of(&harness, LOCAL_PLAYER);
     let unit_type = trainable(&harness);
     let price = harness.world().catalog.get(unit_type).unwrap().mineral_cost;
-    harness.world_mut().player_resources[0].minerals = price;
+    harness.world_mut().player_resources[PlayerSlot::ALL[0]].minerals = price;
     submit(
         &mut harness,
         LOCAL_PLAYER,
@@ -713,7 +713,7 @@ fn a_refused_order_of_another_player_stays_out_of_the_feed() {
     let mut harness = skirmish();
     let base = structure_of(&harness, ENEMY);
     let unit_type = trainable(&harness);
-    harness.world_mut().player_resources[1].minerals = 0;
+    harness.world_mut().player_resources[PlayerSlot::ALL[1]].minerals = 0;
 
     submit(
         &mut harness,
@@ -969,7 +969,7 @@ fn a_failure_does_not_repeat_the_last_evidence_of_the_battle() {
     let mut harness = skirmish();
     let base = structure_of(&harness, LOCAL_PLAYER);
     let unit_type = trainable(&harness);
-    harness.world_mut().player_resources[0].minerals = 0;
+    harness.world_mut().player_resources[PlayerSlot::ALL[0]].minerals = 0;
     submit(
         &mut harness,
         LOCAL_PLAYER,

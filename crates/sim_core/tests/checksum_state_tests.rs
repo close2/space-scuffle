@@ -17,10 +17,13 @@ use sim_map::{
 };
 use sim_types::{
     AnimState, ArmorClass, AttributeFlags, EntityId, MoverType, PlayerCommand, PlayerId,
-    ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, SplashSpec, Tick, TickBundle,
-    UnitOrder, UnitStatDeltas, WeaponClass, WeaponVisualKind,
+    PlayerSlot, ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, SplashSpec, Tick,
+    TickBundle, UnitOrder, UnitStatDeltas, WeaponClass, WeaponVisualKind,
 };
 use std::collections::BTreeSet;
+
+/// The first player slot, which every mutation below edits.
+const P0: PlayerSlot = PlayerSlot::ALL[0];
 
 fn point(x: i32, y: i32) -> SimVec2 {
     SimVec2::new(SimScalar::from_i32(x), SimScalar::from_i32(y))
@@ -476,36 +479,36 @@ fn player_world_map_and_rng_state_are_observable() {
         ("projectile generator", |w| w.next_projectile_id += 1),
         ("hazard generator", |w| w.next_hazard_id += 1),
         ("vision pathfinding", |w| w.vision_aware_pathfinding = false),
-        ("minerals", |w| w.player_resources[0].minerals += 1),
-        ("gas", |w| w.player_resources[0].gas += 1),
-        ("supply used", |w| w.player_resources[0].supply_used += 1),
-        ("supply max", |w| w.player_resources[0].supply_max += 1),
+        ("minerals", |w| w.player_resources[P0].minerals += 1),
+        ("gas", |w| w.player_resources[P0].gas += 1),
+        ("supply used", |w| w.player_resources[P0].supply_used += 1),
+        ("supply max", |w| w.player_resources[P0].supply_max += 1),
         ("uncapped supply", |w| {
-            w.player_resources[0].supply_provided_total += 1;
+            w.player_resources[P0].supply_provided_total += 1;
         }),
         ("weapon level", |w| {
-            w.player_upgrades[0]
+            w.player_upgrades[P0]
                 .weapon_levels
                 .insert(WeaponClass::EnclaveGround, 1);
         }),
         ("armor level", |w| {
-            w.player_upgrades[0]
+            w.player_upgrades[P0]
                 .armor_levels
                 .insert(ArmorClass::EnclaveGround, 1);
         }),
-        ("shield level", |w| w.player_upgrades[0].shield_level = 1),
+        ("shield level", |w| w.player_upgrades[P0].shield_level = 1),
         ("completed research", |w| {
-            w.player_upgrades[0]
+            w.player_upgrades[P0]
                 .completed_upgrade_slugs
                 .insert("fixture-upgrade".to_owned());
         }),
         ("stat modifier", |w| {
-            w.player_upgrades[0]
+            w.player_upgrades[P0]
                 .unit_stat_modifiers
                 .insert("fixture-unit".to_owned(), UnitStatDeltas::default());
         }),
         ("ability unlock", |w| {
-            w.player_upgrades[0].unlocked_abilities.insert(
+            w.player_upgrades[P0].unlocked_abilities.insert(
                 "fixture-unit".to_owned(),
                 BTreeSet::from(["fixture-ability".to_owned()]),
             );
@@ -554,11 +557,11 @@ fn player_world_map_and_rng_state_are_observable() {
             w.map.watchtowers_mut()[0].controlling_player = Some(PlayerId(0));
         }),
         ("fog history", |w| {
-            w.vision_maps[0] = PlayerVisionMap::new(16, 16);
+            w.vision_maps[P0] = PlayerVisionMap::new(16, 16);
         }),
-        ("known obstacle", |w| w.known_blocked_cells[0][0] = true),
+        ("known obstacle", |w| w.known_blocked_cells[P0][0] = true),
         ("known obstacle length", |w| {
-            w.known_blocked_cells[0].pop();
+            w.known_blocked_cells[P0].pop();
         }),
         ("navigation revision", |w| {
             w.pathfinder.recompute_clearance(&w.map);
@@ -587,7 +590,7 @@ fn stat_buff_and_pending_ability_payloads_are_sensitive() {
             armor_delta => SimScalar::ONE, attack_cooldown_delta => -1, bonus_damage_delta => SimScalar::ONE,
         },
         |delta| {
-            world.player_upgrades[0]
+            world.player_upgrades[P0]
                 .unit_stat_modifiers
                 .insert("fixture-unit".to_owned(), *delta);
             world.compute_checksum()
@@ -639,9 +642,9 @@ fn fog_counters_and_stale_clearance_are_detected() {
         sight_radius: SimScalar::ONE,
         is_detector: false,
     };
-    world.vision_maps[0].apply_vision_source(&world.map, &source);
+    world.vision_maps[P0].apply_vision_source(&world.map, &source);
     let once = world.compute_checksum();
-    world.vision_maps[0].apply_vision_source(&world.map, &source);
+    world.vision_maps[P0].apply_vision_source(&world.map, &source);
     assert_ne!(
         once,
         world.compute_checksum(),
@@ -656,15 +659,15 @@ fn fog_counters_and_stale_clearance_are_detected() {
             ..source
         },
     );
-    world.vision_maps[0].begin_tick_update();
-    world.vision_maps[0].apply_vision_source(&world.map, &source);
+    world.vision_maps[P0].begin_tick_update();
+    world.vision_maps[P0].apply_vision_source(&world.map, &source);
     let without_detection = world.compute_checksum();
-    assert_eq!(world.vision_maps[0].states(), detector_vision.states());
+    assert_eq!(world.vision_maps[P0].states(), detector_vision.states());
     assert_eq!(
-        world.vision_maps[0].visible_counter(),
+        world.vision_maps[P0].visible_counter(),
         detector_vision.visible_counter()
     );
-    world.vision_maps[0] = detector_vision;
+    world.vision_maps[P0] = detector_vision;
     assert_ne!(
         without_detection,
         world.compute_checksum(),

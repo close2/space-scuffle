@@ -9,7 +9,9 @@ use crate::movement::MovementAdmissionError;
 use crate::production::{ProductionAdmissionError, ProductionInvariant, ProductionJob};
 use crate::{SimWorld, SimulationDiagnostic};
 use sim_map::{CliffLevel, GameMap, MapCell};
-use sim_types::{PlayerCommand, PlayerId, SimScalar, TickBundle, UnitOrder, UnitTypeId};
+use sim_types::{
+    PlayerCommand, PlayerId, PlayerSlot, SimScalar, TickBundle, UnitOrder, UnitTypeId,
+};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 fn fixture() -> TestResult<(SimWorld, [EntityId; 3])> {
@@ -307,7 +309,7 @@ fn ledger_failure_blocks_every_death_group_before_any_release() -> TestResult {
     let (mut world, ids) = fixture()?;
     world.entities.get_mut(&ids[1]).ok_or("carrier")?.hp = SimScalar::ZERO;
     world.entities.get_mut(&ids[2]).ok_or("unrelated")?.hp = SimScalar::ZERO;
-    world.player_resources[0].supply_used += 1;
+    world.player_resources[PlayerSlot::ALL[0]].supply_used += 1;
     let before = world.entities.clone();
     let resources = world.player_resources;
     world.reap_dead_and_emit_shatter();

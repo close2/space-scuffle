@@ -37,8 +37,8 @@ use sim_core::{
 };
 use sim_map::{Pathfinder, PlayerVisionMap, SimMap};
 use sim_types::{
-    CombatEventVisual, EntityId, PlayerId, PlayerUpgradeState, RenderSnapshot, SimScalar, SimVec2,
-    TickBundle, UnitTypeId,
+    CombatEventVisual, EntityId, PerPlayer, PlayerId, PlayerUpgradeState, RenderSnapshot,
+    SimScalar, SimVec2, TickBundle, UnitTypeId,
 };
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
@@ -62,8 +62,8 @@ fn sim_world_public_methods_keep_their_signatures() {
         SimWorld::spawn_structure;
 
     // Upgrades, research and effective statistics.
-    let _: fn(&SimWorld, PlayerId) -> &PlayerUpgradeState = SimWorld::player_upgrade_state;
-    let _: fn(&mut SimWorld, PlayerId) -> &mut PlayerUpgradeState =
+    let _: fn(&SimWorld, PlayerId) -> Option<&PlayerUpgradeState> = SimWorld::player_upgrade_state;
+    let _: fn(&mut SimWorld, PlayerId) -> Option<&mut PlayerUpgradeState> =
         SimWorld::player_upgrade_state_mut;
     let _: fn(&mut SimWorld, PlayerId, &str) -> SimResult<()> = SimWorld::research_upgrade;
     let _: fn(&SimWorld, PlayerId, &str) -> SimResult<()> = SimWorld::can_construct_structure;
@@ -114,19 +114,19 @@ fn sim_world_public_fields_keep_their_types() {
     let _: fn(&SimWorld) -> &u32 = |w| &w.next_projectile_id;
     let _: fn(&SimWorld) -> &SimMap = |w| &w.map;
     let _: fn(&SimWorld) -> &Pathfinder = |w| &w.pathfinder;
-    let _: fn(&SimWorld) -> &[PlayerVisionMap; 8] = |w| &w.vision_maps;
+    let _: fn(&SimWorld) -> &PerPlayer<PlayerVisionMap> = |w| &w.vision_maps;
     let _: fn(&SimWorld) -> &UnitCatalog = |w| &w.catalog;
     let _: fn(&SimWorld) -> &UpgradeCatalog = |w| &w.upgrade_catalog;
-    let _: fn(&SimWorld) -> &[PlayerUpgradeState; 8] = |w| &w.player_upgrades;
+    let _: fn(&SimWorld) -> &PerPlayer<PlayerUpgradeState> = |w| &w.player_upgrades;
     let _: fn(&SimWorld) -> &SpatialHashGrid = |w| &w.spatial_hash;
-    let _: fn(&SimWorld) -> &[PlayerResources; 8] = |w| &w.player_resources;
+    let _: fn(&SimWorld) -> &PerPlayer<PlayerResources> = |w| &w.player_resources;
     let _: fn(&SimWorld) -> &u64 = |w| &w.last_checksum;
     let _: fn(&SimWorld) -> &Vec<CombatEventVisual> = |w| &w.pending_events;
     let _: fn(&SimWorld) -> &MatchState = |w| &w.match_state;
     let _: fn(&SimWorld) -> &Vec<ActiveHazardZone> = |w| &w.active_hazards;
     let _: fn(&SimWorld) -> &u32 = |w| &w.next_hazard_id;
     let _: fn(&SimWorld) -> &bool = |w| &w.vision_aware_pathfinding;
-    let _: fn(&SimWorld) -> &[Vec<bool>; 8] = |w| &w.known_blocked_cells;
+    let _: fn(&SimWorld) -> &PerPlayer<Vec<bool>> = |w| &w.known_blocked_cells;
 }
 
 /// `PlayerResources` and `ActiveHazardZone` are built field by field, so their field sets and

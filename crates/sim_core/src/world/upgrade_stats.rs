@@ -13,26 +13,40 @@
 //! - `research_upgrade` stages every player and entity write and commits only after all of them
 //!   are proven representable, so a failure leaves the world unchanged.
 //! - Effective speed is never negative: a negative result is an error, not a clamp.
+//! - Only owners with a [`sim_types::PlayerSlot`] have upgrades. A neutral or out-of-range
+//!   owner reads [`NO_UPGRADES`] and never another player's state (9.4, F-07).
 
 use crate::catalog::{UnitArchetype, WeaponSpec};
 use crate::error::{SimCoreError, SimResult};
 use crate::movement::MovementMathError;
 use crate::weapon_timing::{resolve_attack_period, AttackRate};
 use crate::SimWorld;
-use sim_types::{PlayerId, PlayerUpgradeState, SimScalar};
+use sim_types::{PerPlayer, PlayerId, PlayerUpgradeState, SimScalar};
+
+/// The upgrade state of every owner without a player slot (neutral and out-of-range IDs).
+static NO_UPGRADES: PlayerUpgradeState = PlayerUpgradeState::new();
 
 impl SimWorld {
-    /// Returns a shared reference to the player's active upgrade state.
+    /// Returns the player's active upgrade state, or `None` for an owner without a player slot.
     #[must_use]
-    pub fn player_upgrade_state(&self, player: PlayerId) -> &PlayerUpgradeState {
-        let idx = (player.0 as usize).min(7);
-        &self.player_upgrades[idx]
+    pub fn player_upgrade_state(&self, player: PlayerId) -> Option<&PlayerUpgradeState> {
+        self.player_upgrades.get(player)
     }
 
-    /// Returns a mutable reference to the player's active upgrade state.
-    pub fn player_upgrade_state_mut(&mut self, player: PlayerId) -> &mut PlayerUpgradeState {
-        let idx = (player.0 as usize).min(7);
-        &mut self.player_upgrades[idx]
+    /// Upgrade state `owner` fights and moves with: its own, or [`NO_UPGRADES`] without a slot.
+    pub(crate) fn upgrades_of(
+        upgrades: &PerPlayer<PlayerUpgradeState>,
+        owner: PlayerId,
+    ) -> &PlayerUpgradeState {
+        upgrades.get(owner).unwrap_or(&NO_UPGRADES)
+    }
+
+    /// Returns the player's mutable upgrade state, or `None` for an owner without a player slot.
+    pub fn player_upgrade_state_mut(
+        &mut self,
+        player: PlayerId,
+    ) -> Option<&mut PlayerUpgradeState> {
+        self.player_upgrades.get_mut(player)
     }
 
     /// Applies a researched upgrade to a player's upgrade state, updating any affected live entities.
@@ -48,12 +62,10 @@ impl SimWorld {
             .ok_or_else(|| SimCoreError::UnknownUpgrade(upgrade_slug.to_string()))?
             .clone();
 
-        let player_index = usize::from(player_id.0);
-        let mut staged_player = self
-            .player_upgrades
-            .get(player_index)
-            .ok_or(MovementMathError::InvalidOwner(player_id))?
-            .clone();
+        let player_slot = player_id
+            .slot()
+            .ok_or(MovementMathError::InvalidOwner(player_id))?;
+        let mut staged_player = self.player_upgrades[player_slot].clone();
         if staged_player.completed_upgrade_slugs.contains(upgrade_slug) {
             return Err(SimCoreError::UpgradeAlreadyResearched(
                 upgrade_slug.to_string(),
@@ -96,7 +108,7 @@ impl SimWorld {
             }
         }
 
-        self.player_upgrades[player_index] = staged_player;
+        self.player_upgrades[player_slot] = staged_player;
         for (entity, hp, max_hp) in staged_vitals {
             entity.hp = hp;
             entity.max_hp = max_hp;
@@ -130,12 +142,12 @@ impl SimWorld {
     }
 
     pub(crate) fn effective_speed_from_upgrades(
-        upgrades: &[PlayerUpgradeState; 8],
+        upgrades: &PerPlayer<PlayerUpgradeState>,
         archetype: &UnitArchetype,
         owner: PlayerId,
     ) -> Result<SimScalar, MovementMathError> {
         let state = upgrades
-            .get(usize::from(owner.0))
+            .get(owner)
             .ok_or(MovementMathError::InvalidOwner(owner))?;
         Self::effective_speed_with_state(archetype, state)
     }
@@ -162,13 +174,12 @@ impl SimWorld {
     }
 
     pub(crate) fn effective_range_from_upgrades(
-        upgrades: &[PlayerUpgradeState; 8],
+        upgrades: &PerPlayer<PlayerUpgradeState>,
         weapon: &WeaponSpec,
         unit_slug: &str,
         owner: PlayerId,
     ) -> SimScalar {
-        let p_idx = (owner.0 as usize).min(7);
-        let range_delta = upgrades[p_idx]
+        let range_delta = Self::upgrades_of(upgrades, owner)
             .unit_stat_modifiers
             .get(unit_slug)
             .map_or(SimScalar::ZERO, |m| m.weapon_range_delta);
@@ -176,13 +187,12 @@ impl SimWorld {
     }
 
     fn effective_period_from_upgrades(
-        upgrades: &[PlayerUpgradeState; 8],
+        upgrades: &PerPlayer<PlayerUpgradeState>,
         weapon: &WeaponSpec,
         unit_slug: &str,
         owner: PlayerId,
     ) -> u16 {
-        let p_idx = (owner.0 as usize).min(7);
-        let cd_delta = upgrades[p_idx]
+        let cd_delta = Self::upgrades_of(upgrades, owner)
             .unit_stat_modifiers
             .get(unit_slug)
             .map_or(0, |m| m.attack_cooldown_delta);
@@ -231,11 +241,11 @@ impl SimWorld {
     }
 
     pub(super) fn sight_radius_from_upgrades(
-        upgrades: &[PlayerUpgradeState; 8],
+        upgrades: &PerPlayer<PlayerUpgradeState>,
         archetype: &UnitArchetype,
         owner: PlayerId,
     ) -> SimScalar {
-        let delta = upgrades[(owner.0 as usize).min(7)]
+        let delta = Self::upgrades_of(upgrades, owner)
             .unit_stat_modifiers
             .get(&archetype.slug)
             .map_or(SimScalar::ZERO, |m| m.sight_delta);
@@ -256,8 +266,7 @@ impl SimWorld {
         !self
             .upgrade_catalog
             .unlocks_ability(&archetype.slug, ability_slug)
-            || self
-                .player_upgrade_state(owner)
+            || Self::upgrades_of(&self.player_upgrades, owner)
                 .unlocked_abilities
                 .get(&archetype.slug)
                 .is_some_and(|unlocked| unlocked.contains(ability_slug))
@@ -266,8 +275,7 @@ impl SimWorld {
     /// Computes the effective maximum HP taking into account active upgrades.
     #[must_use]
     pub fn effective_max_hp(&self, archetype: &UnitArchetype, owner: PlayerId) -> SimScalar {
-        let hp_delta = self
-            .player_upgrade_state(owner)
+        let hp_delta = Self::upgrades_of(&self.player_upgrades, owner)
             .unit_stat_modifiers
             .get(&archetype.slug)
             .map_or(SimScalar::ZERO, |m| m.max_hp_delta);

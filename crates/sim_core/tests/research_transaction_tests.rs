@@ -71,6 +71,7 @@ fn research_failure_preserves_all_state_including_costs_and_live_entities(
         } else {
             world
                 .player_upgrade_state_mut(PlayerId(0))
+                .ok_or("player 0 has no upgrade slot")?
                 .unit_stat_modifiers
                 .insert(
                     slug.clone(),
@@ -104,6 +105,7 @@ fn research_failure_preserves_all_state_including_costs_and_live_entities(
         assert_eq!(world.player_resources, before_resources);
         assert!(!world
             .player_upgrade_state(PlayerId(0))
+            .ok_or("player 0 has no upgrade slot")?
             .completed_upgrade_slugs
             .contains(&upgrade_slug));
     }

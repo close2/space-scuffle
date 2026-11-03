@@ -49,8 +49,14 @@ fn test_weapon_vs_armor_and_shield_upgrade_scaling() {
         .expect("research infantry_weapons_1");
 
     // Hit 1: pulse_bot (6 base + 1 upgrade = 7 damage) strikes base psi_grey (50 shields, 0 shield armor)
-    let p1_upgrades = world.player_upgrade_state(p1).clone();
-    let p2_upgrades = world.player_upgrade_state(p2).clone();
+    let p1_upgrades = world
+        .player_upgrade_state(p1)
+        .expect("invariant: p1 has a player slot")
+        .clone();
+    let p2_upgrades = world
+        .player_upgrade_state(p2)
+        .expect("invariant: p2 has a player slot")
+        .clone();
     let weapon = bot_arch.weapon.as_ref().expect("pulse_bot weapon");
 
     let res1 = calculate_hit_damage_upgraded(
@@ -75,7 +81,10 @@ fn test_weapon_vs_armor_and_shield_upgrade_scaling() {
         .research_upgrade(p2, "ground_armor_1")
         .expect("research ground_armor_1");
 
-    let p2_upgrades_lvl1 = world.player_upgrade_state(p2).clone();
+    let p2_upgrades_lvl1 = world
+        .player_upgrade_state(p2)
+        .expect("invariant: p2 has a player slot")
+        .clone();
 
     // Hit 2: against shields with 1 shield armor: 7 - 1 = 6 shield damage
     let res2 = calculate_hit_damage_upgraded(
@@ -354,8 +363,14 @@ fn test_multi_level_upgrade_stacking_3_plus_3() {
         .research_upgrade(p3, "chitinous_plating")
         .expect("research chitinous_plating");
 
-    let p1_upgrades = world.player_upgrade_state(p1).clone();
-    let p3_upgrades = world.player_upgrade_state(p3).clone();
+    let p1_upgrades = world
+        .player_upgrade_state(p1)
+        .expect("invariant: p1 has a player slot")
+        .clone();
+    let p3_upgrades = world
+        .player_upgrade_state(p3)
+        .expect("invariant: p3 has a player slot")
+        .clone();
 
     // Damage calculation:
     // Base damage: 40.0 + 4.0 * 3 = 52.0
@@ -376,4 +391,46 @@ fn test_multi_level_upgrade_stacking_3_plus_3() {
     assert_eq!(res.shield_damage, SimScalar::ZERO);
     assert_eq!(res.life_damage, SimScalar::from_num(90.0));
     assert!(!res.killed);
+}
+
+/// An out-of-range owner must not read another player's upgrades (9.4, F-07).
+///
+/// Player 9 has no storage slot. Before WP11 every lookup clamped it to slot 7 with
+/// `.min(7)`, so player 9 silently fought with player 7's research.
+#[test]
+fn out_of_range_owner_does_not_alias_player_seven_upgrades() {
+    let mut world = create_test_world();
+    let catalog = sim_fixtures::shipped_catalogs().units;
+    let colossus_id = catalog
+        .id_by_slug("tripod_annihilator")
+        .expect("tripod_annihilator in catalog");
+    let colossus_arch = catalog.get(colossus_id).expect("colossus arch");
+    let weapon = colossus_arch.weapon.as_ref().expect("colossus weapon");
+
+    world
+        .research_upgrade(PlayerId(7), "extended_thermal_lance")
+        .expect("research extended_thermal_lance for player 7");
+    assert_eq!(
+        world.effective_weapon_range(weapon, &colossus_arch.slug, PlayerId(7)),
+        weapon.max_range + SimScalar::from_num(2.0)
+    );
+
+    assert_eq!(
+        world.effective_weapon_range(weapon, &colossus_arch.slug, PlayerId(9)),
+        weapon.max_range
+    );
+    assert_eq!(
+        world.effective_weapon_range(weapon, &colossus_arch.slug, PlayerId::NEUTRAL),
+        weapon.max_range
+    );
+}
+
+/// An out-of-range player has no mutable upgrade state to write (9.4, F-07).
+#[test]
+fn out_of_range_player_has_no_mutable_upgrade_state() {
+    let mut world = create_test_world();
+    assert!(world.player_upgrade_state_mut(PlayerId(7)).is_some());
+    assert!(world.player_upgrade_state_mut(PlayerId(9)).is_none());
+    assert!(world.player_upgrade_state(PlayerId(9)).is_none());
+    assert!(world.player_upgrade_state_mut(PlayerId::NEUTRAL).is_none());
 }

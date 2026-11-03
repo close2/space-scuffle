@@ -71,7 +71,7 @@ impl TechTreeValidator {
             .get_by_slug(upgrade_slug)
             .ok_or_else(|| SimCoreError::UnknownUpgrade(upgrade_slug.to_string()))?;
 
-        let player_state = world.player_upgrade_state(player_id);
+        let player_state = SimWorld::upgrades_of(&world.player_upgrades, player_id);
         if player_state.completed_upgrade_slugs.contains(upgrade_slug) {
             return Err(SimCoreError::UpgradeAlreadyResearched(
                 upgrade_slug.to_string(),

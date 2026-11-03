@@ -272,12 +272,18 @@ impl CaptureScript {
     ///
     /// # Errors
     /// Rejects any ambiguous, unsupported or unbounded capture request.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "a single ordered sequence that shares its local state"
-    )]
+    /// Sections are checked in a fixed order (shell audit, frame controls, checkpoint
+    /// sequence, then each checkpoint), so a script with several faults always reports the
+    /// first in that order.
     pub fn validate(&self) -> Result<(), CaptureError> {
-        let invalid = |reason: &str| CaptureError::InvalidScript(reason.into());
+        self.validate_shell_audit()?;
+        self.validate_frame_controls()?;
+        self.validate_checkpoint_sequence()?;
+        self.validate_checkpoint_entries()
+    }
+
+    /// The optional render-order audit is valid and runs only inside the ownership profile.
+    fn validate_shell_audit(&self) -> Result<(), CaptureError> {
         if let Some(audit) = &self.shell_audit {
             audit.validate()?;
             if !self.ownership || self.transport.is_some() {
@@ -286,6 +292,12 @@ impl CaptureScript {
                 ));
             }
         }
+        Ok(())
+    }
+
+    /// Version, output resolution, wait budgets, ramp owner, overview focus and the
+    /// normalized gameplay region are all bounded and finite.
+    fn validate_frame_controls(&self) -> Result<(), CaptureError> {
         if self.format_version != 1 {
             return Err(invalid("unsupported format version"));
         }
@@ -322,6 +334,12 @@ impl CaptureScript {
         {
             return Err(invalid("gameplay analysis region must be inside the image"));
         }
+        Ok(())
+    }
+
+    /// The checkpoint goals form exactly one supported profile: the seven battle goals,
+    /// those goals followed by the ten ownership checks, or the three-goal transport sequence.
+    fn validate_checkpoint_sequence(&self) -> Result<(), CaptureError> {
         let required = [
             Goal::Overview,
             Goal::RampEntry,
@@ -394,6 +412,12 @@ impl CaptureScript {
                 "expected the seven battle goals, or the explicit transport sequence",
             ));
         }
+        Ok(())
+    }
+
+    /// Every checkpoint has a unique filename-safe name, a supported camera distance in
+    /// world units and a tick bound of at most 10,000 ticks.
+    fn validate_checkpoint_entries(&self) -> Result<(), CaptureError> {
         let mut names = std::collections::BTreeSet::new();
         for checkpoint in &self.checkpoints {
             if checkpoint.name.is_empty()
@@ -419,4 +443,9 @@ impl CaptureScript {
         }
         Ok(())
     }
+}
+
+/// A script-contract rejection with its human-readable reason.
+fn invalid(reason: &str) -> CaptureError {
+    CaptureError::InvalidScript(reason.into())
 }

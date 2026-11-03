@@ -109,11 +109,21 @@ fn slug(harness: &Harness, slug: &str) -> UnitTypeId {
 }
 
 fn minerals(harness: &Harness) -> u32 {
-    harness.world().player_resources[usize::from(LOCAL_PLAYER.0)].minerals
+    harness
+        .world()
+        .player_resources
+        .get(LOCAL_PLAYER)
+        .expect("invariant: LOCAL_PLAYER has a player slot")
+        .minerals
 }
 
 fn fund(harness: &mut Harness) {
-    harness.world_mut().player_resources[usize::from(LOCAL_PLAYER.0)].minerals = RICH;
+    harness
+        .world_mut()
+        .player_resources
+        .get_mut(LOCAL_PLAYER)
+        .expect("invariant: LOCAL_PLAYER has a player slot")
+        .minerals = RICH;
 }
 
 fn card(harness: &Harness) -> &CommandCard {

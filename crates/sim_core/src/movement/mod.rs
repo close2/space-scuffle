@@ -17,7 +17,9 @@ pub use math::MovementMathError;
 
 use crate::{Entity, SimWorld, SimulationDiagnostic, SteeringObstacle, UnitCatalog};
 use sim_map::GameMap;
-use sim_types::{AttackOrigin, EntityId, MoverType, PlayerId, SimScalar, SimVec2, Tick, UnitOrder};
+use sim_types::{
+    AttackOrigin, EntityId, MoverType, PerPlayer, PlayerId, SimScalar, SimVec2, Tick, UnitOrder,
+};
 use thiserror::Error;
 
 /// Collision/navigation domain derived from the authored mover capability.
@@ -224,7 +226,7 @@ pub(crate) struct MovementWorkspace {
     casts: Vec<(locomotion::MotionEntry, locomotion::CastRequest)>,
     reach_cache: Option<locomotion::ReachCache>,
     /// Per player: knowledge of the map changed, so every route is looked at this tick.
-    pub recheck_routes: [bool; 8],
+    pub recheck_routes: PerPlayer<bool>,
     seen_nav_version: u32,
 }
 
@@ -407,7 +409,7 @@ impl SimWorld {
         recipients: &[EntityId],
         order: &UnitOrder,
     ) -> Result<(), MovementAdmissionError> {
-        if usize::from(player.0) >= self.player_resources.len() {
+        if player.slot().is_none() {
             return Err(MovementAdmissionError::InvalidPlayer(player));
         }
         let target = match order {

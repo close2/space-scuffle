@@ -9,7 +9,7 @@ use sim_core::{SimWorld, UpgradeCatalog};
 use sim_map::{CellFlags, CliffLevel, GameMap, MapCell};
 use sim_types::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, EntityId, MoverType, PlayerCommand,
-    PlayerId, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId,
+    PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -609,11 +609,14 @@ fn trained_air_actor_keeps_supply_capture_after_obstacle_crossing_and_death() ->
     }
     assert_eq!(f.world.entities[&child].position, point(3.5, 15.5));
     f.world.validate_supply_ledger()?;
-    let before = f.world.player_resources[0].supply_used;
+    let before = f.world.player_resources[PlayerSlot::ALL[0]].supply_used;
     f.world.catalog.get_mut(f.air)?.supply_cost = 99;
     f.world.entities.get_mut(&child).ok_or("child")?.hp = SimScalar::ZERO;
     f.world.reap_dead_and_emit_shatter();
-    assert_eq!(f.world.player_resources[0].supply_used, before - captured);
+    assert_eq!(
+        f.world.player_resources[PlayerSlot::ALL[0]].supply_used,
+        before - captured
+    );
     f.world.validate_supply_ledger()?;
     Ok(())
 }

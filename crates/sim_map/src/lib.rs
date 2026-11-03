@@ -42,7 +42,7 @@ pub use pathfinding::{
 pub use sim_types::VisibilityState;
 pub use validation::{
     validate_map, CellRect, MapValidationError, MapValidationReport, MapValidationWarning,
-    MAX_PLAYER_SLOTS, MIN_RECOMMENDED_RAMP_WIDTH, MIN_START_LOCATIONS, MIN_START_SEPARATION_CELLS,
+    MIN_RECOMMENDED_RAMP_WIDTH, MIN_START_LOCATIONS, MIN_START_SEPARATION_CELLS,
     RESOURCE_ASSOCIATION_RADIUS_CELLS, VALIDATION_PATH_CLEARANCE,
 };
 pub use vision::{watchtower_source, PlayerVisionMap, VisionSource, MAX_SIGHT_RADIUS_CELLS};
