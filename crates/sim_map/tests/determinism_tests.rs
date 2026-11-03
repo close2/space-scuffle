@@ -12,17 +12,24 @@
     clippy::doc_markdown
 )]
 
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/arena.rs"]
+mod arena;
+
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use sim_map::{GameMap, PathRequest, Pathfinder, PlayerVisionMap, UnitClearance, VisionSource};
+use sim_map::{PathRequest, Pathfinder, PlayerVisionMap, UnitClearance, VisionSource};
 use sim_types::{MoverType, PlayerId, SimScalar, SimVec2};
 use std::time::Instant;
 use xxhash_rust::xxh64::Xxh64;
 
 #[test]
 fn test_cross_platform_determinism_checksum() {
-    let arena = GameMap::default_arena();
+    let arena = arena::default_arena();
     let mut pathfinder = Pathfinder::new(&arena);
     let mut vision = PlayerVisionMap::new(arena.width(), arena.height());
 
@@ -120,7 +127,7 @@ fn test_cross_platform_determinism_checksum() {
     reason = "wall-clock timing measures the pathfinder and vision code; it never enters simulation state"
 )]
 fn test_performance_quality_gate() {
-    let arena = GameMap::default_arena();
+    let arena = arena::default_arena();
     let mut pathfinder = Pathfinder::new(&arena);
     let mut vision = PlayerVisionMap::new(arena.width(), arena.height());
 

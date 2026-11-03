@@ -8,6 +8,13 @@
     clippy::doc_markdown
 )]
 
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/arena.rs"]
+mod arena;
+
 use sim_map::{
     CellFlags, CliffLevel, GameMap, MapCell, MapError, PathRequest, Pathfinder,
     PlacementFailureReason, RampDir, UnitClearance,
@@ -16,7 +23,7 @@ use sim_types::{EntityId, SimScalar, SimVec2};
 
 #[test]
 fn test_building_placement_invariants() {
-    let arena = GameMap::default_arena();
+    let arena = arena::default_arena();
     let mut map = arena;
 
     let building_1 = EntityId(201);
@@ -219,7 +226,7 @@ fn the_predicate_never_excuses_terrain() {
         Some(PlacementFailureReason::OutOfBounds)
     );
 
-    let arena = GameMap::default_arena();
+    let arena = arena::default_arena();
     assert!(matches!(
         arena.can_place_building_where(30, 31, 2, 2, |_, _, _| false),
         Err(MapError::PlacementBlocked {

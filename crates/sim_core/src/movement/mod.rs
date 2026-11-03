@@ -7,6 +7,7 @@
 //! surface invariant diagnostics before advancing an unhealthy match.
 
 pub(crate) mod collision;
+mod flee;
 pub(crate) mod geometry;
 mod grid;
 mod locomotion;
