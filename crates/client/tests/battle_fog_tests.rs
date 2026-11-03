@@ -824,7 +824,9 @@ fn a_battle_reset_forgets_what_the_last_one_saw() {
         billboard_drawn(&mut harness, line[0]),
         "a new map, a new node"
     );
-    assert_eq!(harness.world().current_tick, 0);
+    // A new match starts unpaused (Phase 5 addendum A4), so its clock has run since the commit,
+    // at most one tick for each of the four frames.
+    assert!(harness.world().current_tick <= 4, "a new match's clock");
 }
 
 // --- The end of a match ------------------------------------------------------------------------

@@ -34,11 +34,13 @@ use client::battle_hud::actions::HudIntent;
 use client::battle_hud::card::{CardAction, CardPage, CommandCard};
 use client::battle_hud::feed::BattleFeed;
 use client::battle_hud::model::HudModel;
+use client::battle_hud::panels::MAX_SIMULATION_SPEED;
 use client::battle_hud::placement::{PlacementGhost, PlacementPreview};
 use client::battle_hud::queue::QueuePanel;
 use client::battle_hud::result::{ResultScreen, ViewerResult};
 use client::battle_hud::HudGeometry;
 use client::battle_input::command_mode::CommandMode;
+use client::battle_input::order_marker::ORDER_MARKER_SECONDS;
 use client::battle_pipeline::commands::SubmissionError;
 use client::battle_pipeline::session::BattleSession;
 use client::input_bindings::{CONTROL_GROUP_KEYS, HOLD_POSITION_KEY, STOP_KEY};
@@ -672,7 +674,10 @@ fn play_again_starts_a_new_match_with_clean_state() {
         "the click must commit a new session"
     );
     assert_eq!(harness.world().match_state.result, MatchResult::InProgress);
-    assert_eq!(harness.world().current_tick, 0);
+    // A new match starts unpaused (addendum A4), so the frame that commits it runs its first
+    // tick. The harness pauses it there to inspect the fresh state.
+    assert_eq!(harness.world().current_tick, 1);
+    harness.pause();
     assert!(
         !harness
             .app
@@ -702,7 +707,7 @@ fn play_again_starts_a_new_match_with_clean_state() {
         let model = model(harness);
         assert_eq!(model.selected_facts().len(), 0);
         assert!(model.orders_open, "the new match takes orders");
-        assert_eq!(model.view.tick, Tick(0));
+        assert_eq!(model.view.tick, Tick(1));
         assert_eq!(model.clock_line, "0:00");
         assert_eq!(model.resource_line, opening);
         assert_eq!(model.focus, None);
@@ -839,4 +844,65 @@ fn exit_ends_the_app_successfully() {
     );
 
     assert_eq!(harness.app.should_exit(), Some(AppExit::Success));
+}
+
+fn lab(harness: &Harness) -> &LabState {
+    harness.app.world().resource::<LabState>()
+}
+
+/// Addendum A4 and A5: `Play again` starts unpaused at normal speed, though both live in
+/// `LabState`, and no order marker of the finished match survives into the new one.
+#[test]
+fn play_again_starts_unpaused_at_normal_speed_with_no_marker_of_the_last_match() {
+    let mut harness = skirmish();
+    assert!(lab(&harness).battle_paused, "the harness boots paused");
+    harness.click(
+        MouseButton::Left,
+        point(hud(&harness).pause.expect("Pause")),
+    );
+    assert!(!lab(&harness).battle_paused);
+    while lab(&harness).simulation_speed < MAX_SIMULATION_SPEED {
+        harness.click(
+            MouseButton::Left,
+            point(hud(&harness).speed_up.expect("speed up")),
+        );
+    }
+
+    // An order in the match's last moments leaves a marker on the ground.
+    let worker = workers(&harness)[0];
+    harness.select(worker);
+    let ground = harness.open_ground(harness.simulated_position(worker), 4.0);
+    let at = harness.ground_on_screen(ground);
+    harness.click(MouseButton::Right, at);
+    assert!(harness.marker().is_some(), "the order shows its marker");
+    raze(&mut harness, &[ENEMY]);
+    let mut frames = 0;
+    while screen(&harness).verdict().is_none() {
+        assert!(frames < END_FRAMES, "the staged end must reach the screen");
+        harness.step(1);
+        frames += 1;
+    }
+    harness.click(
+        MouseButton::Left,
+        point(hud(&harness).pause.expect("Pause")),
+    );
+    assert!(lab(&harness).battle_paused);
+    assert!(
+        harness.marker().is_some(),
+        "the marker is still within its {ORDER_MARKER_SECONDS} s"
+    );
+
+    harness.click(
+        MouseButton::Left,
+        point(hud(&harness).play_again.expect("the button is up")),
+    );
+
+    // The frame that commits the new match runs its first tick, since it starts unpaused.
+    assert_eq!(harness.world().current_tick, 1, "a new match began");
+    assert_eq!(harness.marker(), None, "no marker of the last match");
+    let fresh = LabState::default();
+    assert_eq!(lab(&harness).battle_paused, fresh.battle_paused);
+    assert_eq!(lab(&harness).simulation_speed, fresh.simulation_speed);
+    harness.step(2);
+    assert!(harness.world().current_tick > 0, "the new match runs");
 }

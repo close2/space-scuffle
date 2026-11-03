@@ -309,6 +309,14 @@ pub fn manage_battle_scene(
     }
     lab.battle_start_positions = approaches;
     lab.last_checksum_hex.clear();
+    // A replacement is a new match, so it starts unpaused at normal speed, as the first one does
+    // from `LabState::default`. The first commit leaves both alone: whoever booted the client
+    // paused, such as a capture or a test harness, still finds it paused.
+    if session.commands.generation().is_some() {
+        let fresh = LabState::default();
+        lab.battle_paused = fresh.battle_paused;
+        lab.simulation_speed = fresh.simulation_speed;
+    }
     *session = prepared_session.with_world(world);
     lab.battle_failure = None;
     commands
