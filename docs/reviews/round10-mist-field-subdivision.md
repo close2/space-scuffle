@@ -4,7 +4,7 @@ Status: mathematical review only during the round10c source freeze. The proposed
 
 ## Mathematical input and normalization
 
-This review evaluates version1 in [the field oracle proposal](../plans/44-field-oracle-review.md). Set actor radius r=1, unboosted density, modulation1, and straight source length L=2. The32 source edges partition [0,2] uniformly; the reduced representation is one edge. Normalized age decreases linearly from1 to0, and path coordinate is affine. These endpoint ages are a mathematical special case, not a claim about the current retained history ring or a legal25Hz command trajectory. Position, source-arc age and path interpolation errors are zero; source and reduced arc lengths are identical.
+This review evaluates version1 in [the field oracle proposal](plan44-field-oracle-review.md). Set actor radius r=1, unboosted density, modulation1, and straight source length L=2. The32 source edges partition [0,2] uniformly; the reduced representation is one edge. Normalized age decreases linearly from1 to0, and path coordinate is affine. These endpoint ages are a mathematical special case, not a claim about the current retained history ring or a legal25Hz command trajectory. Position, source-arc age and path interpolation errors are zero; source and reduced arc lengths are identical.
 
 For an edge [a,b], define clamped smoothstep S as in the proposal, then
 

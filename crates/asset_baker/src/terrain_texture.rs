@@ -2,7 +2,7 @@
 //!
 //! # Architectural Charter
 //! In accordance with `AGENTS.md` and
-//! Section 4.2 of `docs/plans/21-plan-map-editor.md`, `terrain_texture` provides authentic,
+//! Section 4.2 of `docs/plans/21b-plan-map-editor.md`, `terrain_texture` provides authentic,
 //! mathematically rigorous image processing algorithms to prepare AI-generated source art
 //! for the dual-grid marching squares terrain renderer.
 //!
