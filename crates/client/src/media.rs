@@ -178,6 +178,23 @@ impl ClientMediaStatus {
         )
     }
 
+    /// Whether every action the simulation can publish for `unit_type` is admitted.
+    ///
+    /// The tick driver refuses a snapshot action by action, so an identity is presentable only
+    /// if no action of it could stop the match. Performs no I/O.
+    ///
+    /// # Errors
+    /// Returns the first failure of [`Self::require`], in [`AnimState::ALL`] order.
+    pub fn presentable(
+        &self,
+        registry: &FlipbookRegistry,
+        unit_type: UnitTypeId,
+    ) -> Result<(), ClientMediaError> {
+        AnimState::ALL
+            .into_iter()
+            .try_for_each(|action| self.require(registry, unit_type, action))
+    }
+
     /// Admits the explicit concept-demo control without relabeling it as unit media.
     ///
     /// # Errors

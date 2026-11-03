@@ -147,6 +147,106 @@ fn exact_registry_preserves_unavailable_ids_and_rejects_changed_bindings() -> Te
     Ok(())
 }
 
+/// The shipped registry, as the running client builds it, with its catalog.
+fn shipped_media() -> Result<(App, UnitCatalog), Box<dyn std::error::Error>> {
+    let catalog = bundle()?.catalogs.units;
+    let mut app = app(
+        &root(),
+        catalog.clone(),
+        LabState::default(),
+        MediaFailurePolicy::default(),
+    )?;
+    app.update();
+    Ok((app, catalog))
+}
+
+fn presentable(app: &App, unit_type: UnitTypeId) -> Result<(), ClientMediaError> {
+    app.world()
+        .resource::<ClientMediaStatus>()
+        .presentable(app.world().resource::<FlipbookRegistry>(), unit_type)
+}
+
+#[test]
+fn presentable_accepts_a_shipped_identity() -> TestResult {
+    let (app, catalog) = shipped_media()?;
+    let shipped = catalog
+        .archetypes()
+        .find(|arch| {
+            root()
+                .join("textures")
+                .join(format!("{}.flipbook.ron", arch.slug))
+                .exists()
+        })
+        .ok_or("the catalog must have an identity with shipped media")?;
+    presentable(&app, shipped.unit_type_id)?;
+    Ok(())
+}
+
+#[test]
+fn presentable_refuses_an_identity_without_media() -> TestResult {
+    let (app, catalog) = shipped_media()?;
+    let missing = catalog
+        .archetypes()
+        .find(|arch| {
+            !root()
+                .join("textures")
+                .join(format!("{}.flipbook.ron", arch.slug))
+                .exists()
+        })
+        .ok_or("the catalog must have an identity without media")?;
+    let Err(error) = presentable(&app, missing.unit_type_id) else {
+        return Err("no media was shipped for it".into());
+    };
+    assert!(
+        matches!(error, ClientMediaError::Unavailable { ref slug, .. } if *slug == missing.slug)
+    );
+    assert!(matches!(
+        presentable(&app, UnitTypeId(u16::MAX)),
+        Err(ClientMediaError::UnknownIdentity { .. })
+    ));
+    Ok(())
+}
+
+#[test]
+fn presentable_refuses_an_identity_missing_a_single_action() -> TestResult {
+    let definition = bundle()?;
+    let archetype = definition
+        .catalogs
+        .units
+        .archetypes()
+        .find(|arch| arch.showcase_hero)
+        .ok_or("showcase media")?;
+    let (id, slug) = (archetype.unit_type_id, archetype.slug.clone());
+    let directory = temporary_root()?;
+    copy_media(directory.path(), &slug, true)?;
+    let metadata_path = directory
+        .path()
+        .join("textures")
+        .join(format!("{slug}.flipbook.ron"));
+    let mut metadata: FlipbookAtlasMeta = ron::from_str(&std::fs::read_to_string(&metadata_path)?)?;
+    metadata.actions.remove(&AnimState::Cast);
+    std::fs::write(&metadata_path, ron::to_string(&metadata)?)?;
+    let mut app = app(
+        directory.path(),
+        definition.catalogs.units.clone(),
+        LabState::default(),
+        MediaFailurePolicy::default(),
+    )?;
+    app.update();
+
+    let status = app.world().resource::<ClientMediaStatus>();
+    let registry = app.world().resource::<FlipbookRegistry>();
+    status.require(registry, id, AnimState::Idle)?;
+    let Err(error) = status.presentable(registry, id) else {
+        return Err("a snapshot may publish the missing action".into());
+    };
+    assert!(
+        matches!(error, ClientMediaError::Unavailable { ref source, .. }
+            if matches!(source.as_ref(), MediaLoadError::MissingAction { action: AnimState::Cast, .. }))
+    );
+    Ok(())
+}
+
 #[test]
 fn normal_live_game_retains_missing_png_error_and_later_close_fails() -> TestResult {
     let definition = bundle()?;

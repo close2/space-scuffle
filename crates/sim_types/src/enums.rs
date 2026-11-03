@@ -82,6 +82,21 @@ pub enum AnimState {
     Die,
 }
 
+impl AnimState {
+    /// Every action, in declaration order.
+    ///
+    /// A consumer that must cover each action the simulation can publish iterates this. The
+    /// `every_action_is_listed_in_order` test ties it to the declaration.
+    pub const ALL: [Self; 6] = [
+        Self::Constructing,
+        Self::Idle,
+        Self::Walk,
+        Self::Attack,
+        Self::Cast,
+        Self::Die,
+    ];
+}
+
 /// Type of natural resource node, and of the cargo a harvester takes from one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ResourceKind {
@@ -159,6 +174,28 @@ pub enum VisibilityState {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    /// Declaration position of `state`. The exhaustive match stops a new variant from compiling
+    /// until it is given a position here, and the test below then requires it in `ALL`.
+    const fn declared_position(state: AnimState) -> usize {
+        match state {
+            AnimState::Constructing => 0,
+            AnimState::Idle => 1,
+            AnimState::Walk => 2,
+            AnimState::Attack => 3,
+            AnimState::Cast => 4,
+            AnimState::Die => 5,
+        }
+    }
+
+    #[test]
+    fn every_action_is_listed_in_order() {
+        const LAST: AnimState = AnimState::Die;
+        assert_eq!(AnimState::ALL.len(), declared_position(LAST) + 1);
+        for (position, state) in AnimState::ALL.into_iter().enumerate() {
+            assert_eq!(declared_position(state), position, "{state:?}");
+        }
+    }
 
     #[test]
     fn test_attribute_bitflags() {
