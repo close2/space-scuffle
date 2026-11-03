@@ -30,4 +30,22 @@ Please say which of these you want changed (a number and "no" is enough):
    owns the `SimWorld` and reads it directly to admit orders and place buildings. The text would say so, instead
    of the code being changed to match the old text.
 
+### Update (2026-11-03, Phase 9 WP13)
+
+The charter text is now committed (`0336642`), so you can read it in `AGENTS.md` instead of the blueprint. Each
+rule carries a tag (`[CI: ...]`, `[Review]`, `[Procedure]`), and the new §9 lists the checks C1 to C21. Where the
+committed text differs from the blueprint's proposal:
+
+8. **Allocation claim (§3.3):** "battle sync systems allocate nothing in steady state" is tagged as a review rule,
+   not a CI check, because the counting-allocator test waits on your answer to Q0011.
+9. **Test table (§4):** two more rows, `sim_fixtures` and `workspace_checks`, so that every crate has one; the
+   procedural-output rule of §1.2 cites `bake_integrity_tests.rs`, which is where it is tested.
+10. **Gate commands (§4.3):** written with `--locked`, as CI and every agent already run them.
+11. **§7 and §8** are exactly as they are on `main`; the blueprint was written before §7 was rewritten for the GPU
+    test harness.
+12. **Tick rate:** `sim_types::TICKS_PER_SECOND` is a `u16`, not the blueprint's `u32`, because every stored
+    duration is a `u16` tick count and a `u16` converts to the float and integer types without casts.
+
+Say "no" to any numbered item and the text goes back to what it said before Phase 9, or to what you prefer.
+
 ## Answer

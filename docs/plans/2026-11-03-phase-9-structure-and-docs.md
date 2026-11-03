@@ -6,6 +6,9 @@ Finishes Phase 9 of `docs/plans/2026-11-01-codebase-remediation.md` (steps 9.1 t
 
 **Exit criterion:** the charter describes the code as it is, and every claim in it is checked by CI.
 
+**Implementation status (2026-11-03):** all fourteen packages are implemented (WP13 in `0336642`); the status
+per step is in the remediation plan's Phase 9 table, and deviations are recorded in each package's commit.
+
 **Status of this document:** Stage 1 blueprint under charter §6. It was written by static reading only, on `main` at
 `7c947ad`: nothing was compiled or run, because a full gate was running in the checkout. Every `file:line` was read at
 that commit and will drift; search for the quoted symbol if it does. A claim about runtime behaviour that could not be

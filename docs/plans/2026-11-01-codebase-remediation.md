@@ -114,7 +114,7 @@ Severity is impact on someone using the game or relying on the charter.
 | S-17 | Med | [A] | Attack path ignores cloak and invulnerability (latent: no shipped cloak) | `world.rs:2477` |
 | S-18 | Med | [A] | Mode-transition copies have diverged; instant vs channel behave differently | `world.rs:1006`, `:1250` |
 | S-19 | Med | [A] | Shielded structures never regenerate; `is_gas_extractor` ignored | `catalog.rs:1014` |
-| S-20 | Med | [V] | `world.rs` is 3,205 lines; `step_weapons_and_projectiles` is ~630, with 3 splash copies that already disagree | `world.rs:2458` |
+| S-20 | Med | [V] | `world.rs` is 3,205 lines; `step_weapons_and_projectiles` is ~630, with 3 splash copies that already disagree. **Fixed**: combat moved out in Phase 3 (3.1); the rest split in `8ac33ad` (9.1), leaving `world.rs` a 373-line module root | `world.rs:2458` |
 
 ### 4.2 Movement (`steering.rs`, `movement/`)
 
@@ -155,7 +155,7 @@ Severity is impact on someone using the game or relying on the charter.
 | F-10 | Med | [A] | Destroying a structure fabricates pathability | `grid.rs:679` |
 | F-11 | Med | [A] | Ramp landing validation ignores pathability | `validation.rs:522`, `:560` |
 | F-12 | Med | [A] | Sight radius silently capped at 16 | `vision.rs:21` |
-| F-13 | Med | [A] | Faction names, armour classes and abilities in Rust enums, against charter §3.3 | `enums.rs:8`, `upgrades.rs:47` |
+| F-13 | Med | [A] | Faction names, armour classes and abilities in Rust enums, against charter §3.3. **Fixed** in `56f243f` (9.3): factions, weapon and armour classes are data in `assets/catalog/factions.ron`, checked by C5; ability kinds stay engine mechanics (Phase 9 decision D-7) | `enums.rs:8`, `upgrades.rs:47` |
 
 ### 4.4 Client runtime
 
@@ -219,10 +219,10 @@ Severity is impact on someone using the game or relying on the charter.
 | Q-6 | High | [A] | No property testing, despite charter §4's heading |
 | Q-7 | High | [A] | Vulkan validation errors do not fail tests |
 | Q-8 | High | [A] | Rust policy is false: `rust-version` 1.80 vs locked `fixed` needing 1.93; floating `stable` toolchain; `fixed` on a caret range |
-| Q-9 | High | [A] | `DESIGN.md` is stale: 22.4/30 Hz vs 25, NavMesh + RVO vs grid A*, nonexistent crates, absolute `file:///` links |
-| Q-10 | Med | [A] | Shader "syntax" tests are `.contains()`; 66 plans with colliding numbers and no status index; 545 `/tmp` references, so evidence is ephemeral |
+| Q-9 | High | [A] | `DESIGN.md` is stale: 22.4/30 Hz vs 25, NavMesh + RVO vs grid A*, nonexistent crates, absolute `file:///` links. **Fixed** in `0336642` (9.5): rewritten with a per-subsystem status table, checked by C17 |
+| Q-10 | Med | [A] | Shader "syntax" tests are `.contains()`; 66 plans with colliding numbers and no status index; 545 `/tmp` references, so evidence is ephemeral. **Fixed**: shader tests in Phase 1 (`bb406f9`); plan index, unique IDs and retention lines in `10d92c5` (9.6), checked by C18 and C19 |
 | Q-11 | Med | **[V]** | `tools/renderer_compatibility/target` (1.3 GB) is unignored, a `git add -A` hazard; no `[profile]` section |
-| Q-12 | Med | [A] | `asset_baker → sim_core` is not in charter §5; `sim_map` needs `serde_json` only for dead code |
+| Q-12 | Med | [A] | `asset_baker → sim_core` is not in charter §5; `sim_map` needs `serde_json` only for dead code. **Fixed**: `serde_json` left `sim_map` before Phase 9; the edge is drawn and §5 is checked against Cargo by C1 in `0336642` (9.5) |
 
 ---
 
@@ -389,16 +389,26 @@ Generating media spends real money and needs the owner's approval per run.
 
 ### Phase 9: Structure and documentation (M)
 
-| Step | Finding | Action |
-|---|---|---|
-| 9.1 | S-20 | Split the rest of `world.rs`: abilities, vision, collision |
-| 9.2 | large functions | Split `validate_map`, `build_chunk_mesh` and `sync_*`. Enable `too_many_lines` |
-| 9.3 | F-13 | Move faction and armour identity into catalog data |
-| 9.4 | F-5 legacy, F-7 legacy | Close the open 2026-10-26 items: sandbox `let _`, `.min(7)`, compatibility `include_str!`, typed `PlayerId` |
-| 9.5 | Q-9, Q-12 | Rewrite `DESIGN.md` with per-subsystem status; align charter §4 and §5 |
-| 9.6 | Q-10 | One plan status index; fix numbering; move kept evidence out of `/tmp` |
+| Step | Finding | Action | Status |
+|---|---|---|---|
+| 9.1 | S-20 | Split the rest of `world.rs`: abilities, vision, collision | Done, WP1 `8ac33ad` |
+| 9.2 | large functions | Split `validate_map`, `build_chunk_mesh` and `sync_*`. Enable `too_many_lines` | Done: threshold and guard rails WP0 `808b6dd`; splits WP2 `b3e47ae`, WP3 `bdb3abf`, WP4 `ec55bf2`, WP5 `554bb81`, WP6 `821c6b0`, WP7 `295f1d9`, WP8 `ed7aa8e`; last suppressions removed and C8 in `0336642` |
+| 9.3 | F-13 | Move faction and armour identity into catalog data | Done, WP12 `56f243f` |
+| 9.4 | F-5 legacy, F-7 legacy | Close the open 2026-10-26 items: sandbox `let _`, `.min(7)`, compatibility `include_str!`, typed `PlayerId` | Done: WP10 `2797d4a` (F-05, F-08), WP11 `331ccb4` (F-07) |
+| 9.5 | Q-9, Q-12 | Rewrite `DESIGN.md` with per-subsystem status; align charter §4 and §5 | Done, WP13 `0336642` |
+| 9.6 | Q-10 | One plan status index; fix numbering; move kept evidence out of `/tmp` | Done, WP9 `10d92c5` |
 
 **Exit:** the charter describes the code as it is, and every claim in it is checked by CI.
+
+**Exit status (2026-11-03): met locally; CI confirmation follows the push of WP13.** Every rule of `AGENTS.md`
+now carries a tag: a CI check, a review rule or a procedure (charter §9). The checks are clippy lints, the CI jobs
+(`check-and-test`, the determinism jobs and the new `throughput` job) and C1 to C21 in
+`crates/workspace_checks/tests/charter.rs`. Claims that no check covers were reworded as review rules: the client's
+read discipline (§3.2), the steady-state allocation claim of §3.3 until Q0011 is answered, documentation quality
+and when a performance divergence is justified. Charter §6 is unchanged (Q0003). The owner can object to any
+charter change in Q0010. Gaps found during the phase and left for later plans are listed in §9 of
+`docs/plans/2026-11-03-phase-9-structure-and-docs.md` and in `DESIGN.md` §4. Plan:
+`docs/plans/2026-11-03-phase-9-structure-and-docs.md`.
 
 ---
 

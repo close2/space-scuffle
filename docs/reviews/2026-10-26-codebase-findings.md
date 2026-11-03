@@ -55,6 +55,9 @@
 - **Problem:** Violates AGENTS.md §1.1 (no silent failures). A catalog change that breaks a spawn
   produces a quietly smaller sandbox.
 - **Fix:** Return `SimResult<Self>`; move sandbox layout into data (a scenario RON).
+- **Status (2026-11-03): closed** by Phase 9 WP10 (`2797d4a`): the sandbox left `sim_core` for the test-only
+  `sim_fixtures` crate and returns `Result<SimWorld, SandboxError>`, reporting any spawn it cannot make; check C12
+  rejects `let _ =` on a result in the simulation crates.
 
 ### F-06 `spawn_structure` burns an `EntityId` on failure
 - **Where:** `world.rs` L406–414: `next_entity_id` is incremented before `place_structure` can fail.
@@ -67,6 +70,8 @@
   pattern likely for resources/vision arrays.
 - **Problem:** Player 9's upgrades are player 7's upgrades. Should be a typed error or a
   compile-time bound (`PlayerId` constructor validating `< MAX_PLAYERS`).
+- **Status (2026-11-03): closed** by Phase 9 WP11 (`331ccb4`): per-player storage is `PerPlayer<T>`, indexed only
+  by a `PlayerSlot` proven to be below `MAX_PLAYERS`; a neutral or out-of-range player has no slot.
 
 ### F-08 Unit catalog is compiled into the binary
 - **Where:** `crates/sim_core/src/catalog.rs` `new_starter_roster` uses
@@ -75,6 +80,8 @@
   an O(n) case-insensitive scan.
 - **Fix:** Inject the catalog into `SimWorld::new` (loaded from disk by the caller); keep a
   `BTreeMap<String, UnitTypeId>` slug index.
+- **Status (2026-11-03): closed** by Phase 9 WP10 (`2797d4a`): production code loads every catalog from disk at
+  run time and embeds none (check C6); only the test-only `sim_fixtures` crate embeds the shipped files.
 
 ### F-09 Shader "tests" do not compile shaders; GPU test can pass without a GPU
 - **Where:** `crates/client/tests/round2_visual_tests.rs` (`test_shader_wgsl_syntax_and_uniform_alignment`
