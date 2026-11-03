@@ -89,5 +89,14 @@ naga = { path = "third_party/naga" }
 [profile.dev.package."*"]
 opt-level = 2
 
+# The simulation is optimised too, so whole matches fit the gate: the skirmish exit test
+# (`crates/client/tests/skirmish_match_tests.rs`) and `full_match_tests.rs` play thousands of ticks.
+# Overflow checks and debug assertions stay on, as in the rest of the dev profile.
+[profile.dev.package.sim_core]
+opt-level = 2
+
+[profile.dev.package.sim_map]
+opt-level = 2
+
 [profile.test]
 debug = "line-tables-only"

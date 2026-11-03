@@ -773,8 +773,9 @@ fn load_needs_a_mobile_ground_unit_other_than_the_carrier() -> TestResult {
     let entity = world.entities.get(&carrier).ok_or("carrier absent")?;
     let mut ground = world.catalog.get(entity.unit_type_id)?.clone();
     ground.mover_type = MoverType::Ground;
-    assert!(!capable(entity, &ground, &order, None));
+    assert!(!capable(&world, entity, &ground, &order, None));
     assert!(capable(
+        &world,
         entity,
         &ground,
         &UnitOrder::Load { carrier: passenger },
@@ -964,5 +965,83 @@ fn arming_is_any_weapon_slot() -> TestResult {
     assert!(!is_armed(&unarmed));
     unarmed.air_weapon = armed.weapon.clone();
     assert!(is_armed(&unarmed));
+    Ok(())
+}
+
+/// G-8: in a mixed selection, only units whose overclock is unlocked receive it. One overclock
+/// type needs research and another does not, so the order is admitted, and before this rule the
+/// locked units received it and silently did nothing.
+#[test]
+fn stim_goes_only_to_units_whose_overclock_is_unlocked() -> TestResult {
+    let (mut world, mut queue) = role_fixture()?;
+    let locks = |world: &SimWorld, a: &UnitArchetype| {
+        world
+            .upgrade_catalog
+            .unlocks_ability(&a.slug, OVERCLOCK_ABILITY_SLUG)
+    };
+    let locked_type = type_where(&world, |a| {
+        !is_dome(a) && a.overclock.is_some() && locks(&world, a)
+    })?;
+    let free_type = type_where(&world, |a| {
+        !is_dome(a) && a.overclock.is_some() && !locks(&world, a)
+    })?;
+    let locked = unit_where(&mut world, 0, |a| a.unit_type_id == locked_type)?;
+    let free = unit_where(&mut world, 1, |a| a.unit_type_id == free_type)?;
+
+    queue.submit_selection(&world, ME, &[locked, free], UnitOrder::UseStim, false)?;
+    let (_, sent) = queue.pending_commands().last().ok_or("nothing queued")?;
+    assert_eq!(sent.entities, [free], "the locked unit cannot stim yet");
+    assert_eq!(
+        queue.submit(&world, command(locked, ME, UnitOrder::UseStim, false)),
+        Err(SubmissionError::Capability(locked))
+    );
+    assert_eq!(
+        queue.submit_selection(&world, ME, &[locked], UnitOrder::UseStim, false),
+        Err(SubmissionError::EmptySelection)
+    );
+
+    let locked_slug = world.catalog.get(locked_type)?.slug.clone();
+    let unlock = world
+        .upgrade_catalog
+        .upgrades()
+        .find(|upgrade| {
+            upgrade.effects.iter().any(|effect| {
+                matches!(effect, sim_types::UpgradeEffect::UnlockAbility { target_slug, ability_slug }
+                    if *target_slug == locked_slug && ability_slug == OVERCLOCK_ABILITY_SLUG)
+            })
+        })
+        .ok_or("the catalog names the unlocking upgrade")?
+        .slug
+        .clone();
+    world.research_upgrade(ME, &unlock)?;
+    queue.submit_selection(&world, ME, &[locked, free], UnitOrder::UseStim, false)?;
+    let (_, sent) = queue.pending_commands().last().ok_or("nothing queued")?;
+    assert_eq!(sent.entities, [locked, free]);
+    Ok(())
+}
+
+/// The inspector's roster `Overclock` goes through the same rule.
+#[test]
+fn roster_stim_skips_units_whose_overclock_is_locked() -> TestResult {
+    let (mut world, mut queue) = role_fixture()?;
+    let locked_type = type_where(&world, |a| {
+        !is_dome(a)
+            && a.overclock.is_some()
+            && world
+                .upgrade_catalog
+                .unlocks_ability(&a.slug, OVERCLOCK_ABILITY_SLUG)
+    })?;
+    let locked = unit_where(&mut world, 0, |a| a.unit_type_id == locked_type)?;
+    let entity = world.entities.get(&locked).ok_or("unit absent")?;
+    assert!(!can_overclock(
+        &world,
+        entity,
+        world.catalog.get(locked_type)?
+    ));
+    assert_eq!(
+        queue.submit_roster_order(&world, ME, UnitOrder::UseStim, false),
+        Err(SubmissionError::EmptySelection)
+    );
+    assert_eq!(queue.pending_len(), 0);
     Ok(())
 }

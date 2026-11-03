@@ -207,32 +207,61 @@ fn presentable_refuses_an_identity_without_media() -> TestResult {
     Ok(())
 }
 
-#[test]
-fn presentable_refuses_an_identity_missing_a_single_action() -> TestResult {
-    let definition = bundle()?;
-    let archetype = definition
-        .catalogs
-        .units
-        .archetypes()
-        .find(|arch| arch.showcase_hero)
-        .ok_or("showcase media")?;
-    let (id, slug) = (archetype.unit_type_id, archetype.slug.clone());
+/// Boots the media registry on a temporary root holding `slug`'s real files, with `strip`
+/// removed from its metadata. The directory must outlive the app.
+fn media_without(
+    catalog: &UnitCatalog,
+    slug: &str,
+    strip: AnimState,
+) -> Result<(tempfile::TempDir, App), Box<dyn std::error::Error>> {
     let directory = temporary_root()?;
-    copy_media(directory.path(), &slug, true)?;
+    copy_media(directory.path(), slug, true)?;
     let metadata_path = directory
         .path()
         .join("textures")
         .join(format!("{slug}.flipbook.ron"));
     let mut metadata: FlipbookAtlasMeta = ron::from_str(&std::fs::read_to_string(&metadata_path)?)?;
-    metadata.actions.remove(&AnimState::Cast);
+    assert!(
+        metadata.actions.remove(&strip).is_some(),
+        "{slug}'s shipped media authors {strip:?}"
+    );
     std::fs::write(&metadata_path, ron::to_string(&metadata)?)?;
     let mut app = app(
         directory.path(),
-        definition.catalogs.units.clone(),
+        catalog.clone(),
         LabState::default(),
         MediaFailurePolicy::default(),
     )?;
     app.update();
+    Ok((directory, app))
+}
+
+/// Whether `slug` ships its media metadata.
+fn ships_media(slug: &str) -> bool {
+    root()
+        .join("textures")
+        .join(format!("{slug}.flipbook.ron"))
+        .exists()
+}
+
+#[test]
+fn presentable_refuses_an_identity_missing_a_single_action() -> TestResult {
+    let definition = bundle()?;
+    let catalog = &definition.catalogs.units;
+    // The rule names an action this identity can publish, so its absence must refuse it.
+    let (archetype, strip) = catalog
+        .archetypes()
+        .filter(|arch| ships_media(&arch.slug))
+        .find_map(|arch| {
+            catalog
+                .publishable_actions(arch)
+                .iter()
+                .find(|&action| action != AnimState::Idle)
+                .map(|action| (arch, action))
+        })
+        .ok_or("an identity with shipped media that publishes more than Idle")?;
+    let id = archetype.unit_type_id;
+    let (_directory, app) = media_without(catalog, &archetype.slug, strip)?;
 
     let status = app.world().resource::<ClientMediaStatus>();
     let registry = app.world().resource::<FlipbookRegistry>();
@@ -242,8 +271,38 @@ fn presentable_refuses_an_identity_missing_a_single_action() -> TestResult {
     };
     assert!(
         matches!(error, ClientMediaError::Unavailable { ref source, .. }
-            if matches!(source.as_ref(), MediaLoadError::MissingAction { action: AnimState::Cast, .. }))
+            if matches!(source.as_ref(), MediaLoadError::MissingAction { action, .. } if *action == strip))
     );
+    Ok(())
+}
+
+/// D-9: media lacking an action the simulation never publishes for that identity, such as a
+/// walk for a structure, must not keep the identity off the card.
+#[test]
+fn presentable_ignores_an_action_the_simulation_never_publishes() -> TestResult {
+    let definition = bundle()?;
+    let catalog = &definition.catalogs.units;
+    let structure = catalog
+        .archetypes()
+        .find(|arch| {
+            matches!(arch.shape, ShapeKind::BuildingDome { .. }) && ships_media(&arch.slug)
+        })
+        .ok_or("a structure with shipped media")?;
+    assert!(
+        !catalog
+            .publishable_actions(structure)
+            .contains(AnimState::Walk),
+        "the simulation never walks {}",
+        structure.slug
+    );
+    let (_directory, app) = media_without(catalog, &structure.slug, AnimState::Walk)?;
+
+    let status = app.world().resource::<ClientMediaStatus>();
+    let registry = app.world().resource::<FlipbookRegistry>();
+    assert!(status
+        .require(registry, structure.unit_type_id, AnimState::Walk)
+        .is_err());
+    status.presentable(registry, structure.unit_type_id)?;
     Ok(())
 }
 

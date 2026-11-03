@@ -8,10 +8,16 @@
 //! # Invariants
 //! - The pool is spawned once, so showing a marker allocates nothing and needs no `Commands`.
 //! - A marker confirms that the client accepted an order, not that the unit arrived.
+//! - No marker outlives its session. The pool outlives every session, so [`update_order_markers`]
+//!   hides all of it on the frame a new generation commits. That system runs in `Present`, after
+//!   `CommitSession`, so a marker shown earlier in that frame confirmed an order of the replaced
+//!   session, whose queue the commit discarded.
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
+use crate::battle_pipeline::commands::SessionGeneration;
+use crate::battle_pipeline::session::BattleSession;
 use crate::indicators::{IndicatorAssets, SelectionRingMaterial, SelectionRingUniformGpu};
 
 /// Seconds a marker stays on screen.
@@ -57,12 +63,14 @@ pub struct OrderMarker {
     slot: usize,
 }
 
-/// Materials of the marker pool and the slot the next order will use.
+/// Materials of the marker pool, the slot the next order will use, and the session it serves.
 #[derive(Resource, Debug)]
 pub struct OrderMarkerAssets {
     move_material: Handle<SelectionRingMaterial>,
     attack_material: Handle<SelectionRingMaterial>,
     next_slot: usize,
+    /// Session whose orders the visible markers confirm. `None` before the first commit.
+    generation: Option<SessionGeneration>,
 }
 
 /// Spawns the hidden marker pool.
@@ -90,6 +98,7 @@ pub fn setup_order_markers(
         move_material: material(MOVE_MARKER_COLOR),
         attack_material: material(ATTACK_MARKER_COLOR),
         next_slot: 0,
+        generation: None,
     };
     for slot in 0..ORDER_MARKER_POOL_SIZE {
         commands.spawn((
@@ -148,15 +157,28 @@ impl OrderMarkers<'_, '_> {
     }
 }
 
-/// Shrinks visible markers and hides the expired ones.
+/// Shrinks visible markers and hides the expired ones. When a new session has committed since the
+/// last frame, hides every marker instead and restarts the slot cycle.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
 )]
 pub fn update_order_markers(
     time: Res<'_, Time>,
+    session: Option<Res<'_, BattleSession>>,
+    assets: Option<ResMut<'_, OrderMarkerAssets>>,
     mut markers: Query<'_, '_, (&mut OrderMarker, &mut Transform, &mut Visibility)>,
 ) {
+    let generation = session.and_then(|session| session.commands.generation());
+    if let Some(mut assets) = assets.filter(|assets| assets.generation != generation) {
+        assets.generation = generation;
+        assets.next_slot = 0;
+        for (mut marker, _, mut visibility) in &mut markers {
+            marker.remaining = 0.0;
+            *visibility = Visibility::Hidden;
+        }
+        return;
+    }
     for (mut marker, mut transform, mut visibility) in &mut markers {
         if marker.remaining <= 0.0 {
             continue;

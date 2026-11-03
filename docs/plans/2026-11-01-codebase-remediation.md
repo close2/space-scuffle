@@ -102,9 +102,9 @@ Severity is impact on someone using the game or relying on the charter.
 | S-5 | High | [A] | Friendly-fire splash makes allies attack their own unit: no owner check found | `world.rs:1738`, `:1856` |
 | S-6 | High | [A] | Windup fires at the current target, ignoring `Windup.target_id`, with no range recheck | `combat.rs:454`, `world.rs:2568` |
 | S-7 | High | [A] | A sieged unit locks onto a target inside min range and stops firing | `world.rs:1949`, `combat.rs:355` |
-| S-8 | High | **[V]** | `Build` is free, instant and unchecked, and its result is discarded | `world.rs:1139` |
-| S-9 | High | **[V]** | **There is no income.** The only write to minerals is a subtraction; `Harvest` and `ReturnCargo` have no handler | `production/mod.rs:542` |
-| S-10 | High | **[V]** | `research_upgrade` has no non-test caller. [A] Cost and time unread; not idempotent | `world.rs:491` |
+| S-8 | High | **[V]** | `Build` is free, instant and unchecked, and its result is discarded. **Fixed** in `3a2865e` (5.4): transactional admission, payment on arrival, construction lifecycle | `world.rs:1139` |
+| S-9 | High | **[V]** | **There is no income.** The only write to minerals is a subtraction; `Harvest` and `ReturnCargo` have no handler. **Fixed** in `3a2865e` (5.5); income through real input in `7a432f9` | `production/mod.rs:542` |
+| S-10 | High | **[V]** | `research_upgrade` has no non-test caller. [A] Cost and time unread; not idempotent. **Fixed**: repeats rejected in `3052128` (3.9), research order and queue in `3a2865e` (5.6), card entry in `5482e95` | `world.rs:491` |
 | S-11 | High | [A] | `Unlock*` upgrades, `sight_delta` and several overrides are never read | `world.rs:824` |
 | S-12 | Med | [A] | Target dying in Windup burns a full cooldown | `combat.rs:458` |
 | S-13 | Med | [A] | Ground splash hits air; stat bonus ignores falloff | `world.rs:2705`, `combat.rs:191` |
@@ -161,9 +161,9 @@ Severity is impact on someone using the game or relying on the charter.
 
 | ID | Sev | Evidence | Defect | Where |
 |---|---|---|---|---|
-| C-1 | Crit | **[V]** | Selection lasts one frame: sync overwrites it from a snapshot where `selected` is always false, so rings and HP bars never show in battle | `scene_controller.rs:564`, `world.rs:3197` |
+| C-1 | Crit | **[V]** | Selection lasts one frame: sync overwrites it from a snapshot where `selected` is always false, so rings and HP bars never show in battle. **Fixed** in `822c1b6` (5.1) | `scene_controller.rs:564`, `world.rs:3197` |
 | C-2 | Crit | [A] | Smog destroys and recreates two 3D textures every frame, ~1.66 MB; the code comment claims the opposite | `smog/mod.rs:900`, `:169` |
-| C-3 | High | **[V]** | No unit-level commands: no right-click outside the editor, `pick_terrain` unused, only the whole roster can be ordered | `lab_ui.rs:738` |
+| C-3 | High | **[V]** | No unit-level commands: no right-click outside the editor, `pick_terrain` unused, only the whole roster can be ordered. **Fixed** in `822c1b6` (5.2), context orders in `6bc1fab` | `lab_ui.rs:738` |
 | C-4 | High | **[V]** | `mist/` is permanently off: smog `enabled` defaults true, so 14,677 lines do nothing at runtime while still allocating [A] | `mist/mod.rs:455` |
 | C-5 | High | [A] | Every unit's material is re-prepared every frame | `scene_controller.rs:553` |
 | C-6 | High | [A] | Smog startup is a chain of silent fallbacks against charter §1.2, with fabricated unit IDs | `smog/mod.rs:397`–`:454` |
@@ -171,8 +171,8 @@ Severity is impact on someone using the game or relying on the charter.
 | C-8 | Med | [A] | Visual Lab default state hides its own subject; several controls do nothing | `lab_ui.rs:167`, `:437` |
 | C-9 | Med | [A] | Combat VFX buttons spawn ~22 units off-screen | `lab_ui.rs:509` |
 | C-10 | Med | [A] | 50 of 200 swarm bubbles spawn inside the arena plateau | `scene_controller.rs:790` |
-| C-11 | Med | [A] | Construction progress never reaches the shader; dome fill direction is also wrong | `world.rs:3196`, `bubble_shader.rs:332` |
-| C-12 | Med | [A] | Selection hits hidden entities and shared materials | `selection.rs:153` |
+| C-11 | Med | [A] | Construction progress never reaches the shader; dome fill direction is also wrong. **Fixed**: progress published in `3a2865e`, fill by height in `d90e76e` (5.8); pixels on the live skirmish in `7a432f9` | `world.rs:3196`, `bubble_shader.rs:332` |
+| C-12 | Med | [A] | Selection hits hidden entities and shared materials. **Fixed** in `822c1b6` (5.1); fogged enemies unpickable in `24c656f` | `selection.rs:153` |
 | C-13 | Med | [A] | Smog: unordered systems, hardcoded 64×64 clamps, 16-cavity cap, velocity scale 20 vs 25 Hz tick | `smog/mod.rs:160`, `:686`, `:849`, `:805` |
 | C-14 | Med | [A] | Camera snaps on cliffs; projectile cards go edge-on; melee rotated twice | `camera.rs:233`, `vfx.rs:318`, `:611` |
 | C-15 | Med | [A] | Per-frame allocation and asset churn; `LabState` owns the authoritative world | `scene_controller.rs:106`, `lab_ui.rs:98` |
@@ -265,7 +265,7 @@ Size: S under a day, M a few days, L a week or more.
 | 1.6 | Q-10 | Replace `.contains()` shader tests with naga parse and validate |
 | 1.7 | Q-7 | Fail on unlisted Vulkan validation IDs, with a documented allowlist |
 | 1.8 | Q-4 | Remove crate-wide allows from `sim_core` and `sim_map`; replace with `#[expect(..., reason = "...")]` per site. Add `clippy::unreachable`. Replace casts with checked conversions. `client` follows in Phase 6 |
-| 1.9 | new | Add one end-to-end test that plays a battle through `PlayerCommand` only, to game end |
+| 1.9 | new | Add one end-to-end test that plays a battle through `PlayerCommand` only, to game end. **Done**: `full_match_tests.rs` in `9111d8e`; through input events alone, `skirmish_match_tests.rs` in `7a432f9` |
 
 **Exit:** the suite cannot be green with skipped real work; determinism runs on all four targets, or the
 charter is corrected. Any platform divergence becomes a top-priority finding.
@@ -327,18 +327,25 @@ short orders; 400-unit benchmark at least 2× Appendix A.
 
 ### Phase 5: Playable game loop (L, depends on D1 and D5)
 
-| Step | Finding | Action |
-|---|---|---|
-| 5.1 | C-1, C-12 | Keep selection client-side, applied in sync; respect visibility; handle misses |
-| 5.2 | C-3 | Right-click move and attack through `BattleCommandQueue`, owner-filtered |
-| 5.3 | new | Box select, control groups, Hold and Stop bindings |
-| 5.4 | S-8 | Transactional `Build` admission with cost, tech, builder and typed outcome, plus a construction lifecycle |
-| 5.5 | S-9 | Harvester state machine and income; retype `Harvest.target` |
-| 5.6 | S-10 | Research order and queue, reusing the production transaction |
-| 5.7 | new | Production cancel and refund; load and unload orders; win and loss condition |
-| 5.8 | C-11 | Publish construction progress; fix dome fill |
+| Step | Finding | Action | Status |
+|---|---|---|---|
+| 5.1 | C-1, C-12 | Keep selection client-side, applied in sync; respect visibility; handle misses | Done, `822c1b6` |
+| 5.2 | C-3 | Right-click move and attack through `BattleCommandQueue`, owner-filtered | Done, `822c1b6`; context orders `6bc1fab` |
+| 5.3 | new | Box select, control groups, Hold and Stop bindings | Done, `822c1b6` |
+| 5.4 | S-8 | Transactional `Build` admission with cost, tech, builder and typed outcome, plus a construction lifecycle | Done, `3a2865e`; knowledge-based admission `866563f`; card and placement `5482e95` |
+| 5.5 | S-9 | Harvester state machine and income; retype `Harvest.target` | Done, `3a2865e`; right click on a node `6bc1fab` |
+| 5.6 | S-10 | Research order and queue, reusing the production transaction | Done, `3a2865e`; card `5482e95`; stim admission by unlock `ced793b` |
+| 5.7 | new | Production cancel and refund; load and unload orders; win and loss condition | Done, `3a2865e`; queue panel `5482e95`; result screen `760532a` |
+| 5.8 | C-11 | Publish construction progress; fix dome fill | Done, `3a2865e`, `d90e76e`, `f093116` |
 
 **Exit:** a person can play a match to a result using only mouse and keyboard, and 1.9 covers it.
+
+**Exit status (2026-11-03): met locally, pending CI on `main`.** `skirmish_match_tests.rs` (`7a432f9`) wins the shipped
+skirmish headless through input events alone, with a pilot that reads only the screen, and proves the HUD, the
+placement and the dome fill on a real window under Vulkan validation. It runs as `cargo run -p client -- --skirmish`.
+Gas, research and transport are built and tested on temporary fixture roots, and disabled in the shipped game for want
+of media, per `docs/questions/open/0001-media-scope.md`. Plan and evidence:
+`docs/plans/2026-11-02-phase-5-playable-client.md`, `docs/evidence/2026-11-03-result-window-victory.md`.
 
 ### Phase 6: Client performance and structure (L)
 

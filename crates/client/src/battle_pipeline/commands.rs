@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use std::fmt::Write;
 
 use bevy::prelude::Resource;
+use sim_core::upgrades::OVERCLOCK_ABILITY_SLUG;
 use sim_core::{movement::MovementLayer, Entity, SimWorld, UnitArchetype};
 use sim_types::{
     EntityId, PlayerCommand, PlayerId, SimScalar, SiteRefusal, Tick, TickBundle, UnitOrder,
@@ -260,7 +261,7 @@ impl BattleCommandQueue {
                 .catalog
                 .get(entity.unit_type_id)
                 .map_err(|_| SubmissionError::MissingArchetype(entity.id))?;
-            if can_execute(entity, archetype, &order, subject) {
+            if can_execute(world, entity, archetype, &order, subject) {
                 recipients.push(entity.id);
             }
         }
@@ -307,7 +308,7 @@ impl BattleCommandQueue {
                 .catalog
                 .get(entity.unit_type_id)
                 .map_err(|_| SubmissionError::MissingArchetype(*id))?;
-            if can_execute(entity, archetype, &order, subject) {
+            if can_execute(world, entity, archetype, &order, subject) {
                 recipients.push(*id);
             }
         }
@@ -411,7 +412,7 @@ pub fn any_recipient(
                 world
                     .catalog
                     .get(entity.unit_type_id)
-                    .is_ok_and(|archetype| can_execute(entity, archetype, order, subject))
+                    .is_ok_and(|archetype| can_execute(world, entity, archetype, order, subject))
             })
     })
 }
@@ -464,8 +465,23 @@ pub const fn is_armed(archetype: &UnitArchetype) -> bool {
         || archetype.air_weapon.is_some()
 }
 
+/// Whether `entity`, of `archetype`, can overclock now. The one rule admission and the
+/// inspector share.
+///
+/// The archetype must declare an overclock that speeds its attacks, the unit must be able to pay
+/// the health it costs, and its owner must have unlocked the ability, which is the simulation's
+/// own test in [`SimWorld::is_ability_unlocked`]. A unit failing any of these would receive the
+/// order and silently do nothing.
+#[must_use]
+pub fn can_overclock(world: &SimWorld, entity: &Entity, archetype: &UnitArchetype) -> bool {
+    archetype.overclock.is_some_and(|spec| {
+        entity.hp > SimScalar::ONE && spec.attack_rate_multiplier > SimScalar::ZERO
+    }) && world.is_ability_unlocked(archetype, entity.owner, OVERCLOCK_ABILITY_SLUG)
+}
+
 /// Whether `entity` has what `order` asks for. `subject` comes from [`order_subject`].
 fn capable(
+    world: &SimWorld,
     entity: &Entity,
     archetype: &UnitArchetype,
     order: &UnitOrder,
@@ -483,9 +499,7 @@ fn capable(
         UnitOrder::AttackTarget { .. } => {
             armed || entity.is_sieged && entity.siege_weapon.is_some()
         }
-        UnitOrder::UseStim => archetype.overclock.is_some_and(|spec| {
-            entity.hp > SimScalar::ONE && spec.attack_rate_multiplier > SimScalar::ZERO
-        }),
+        UnitOrder::UseStim => can_overclock(world, entity, archetype),
         // Production and research authorize the entire group/product transaction in sim_core.
         // Client admission does not fabricate a receipt or preempt its typed outcome.
         UnitOrder::Produce { .. } | UnitOrder::Research { .. } => true,
@@ -515,6 +529,7 @@ fn can_receive_order(entity: &Entity, order: &UnitOrder) -> bool {
 
 /// Whether `entity` can carry out `order`. `subject` comes from [`order_subject`].
 fn can_execute(
+    world: &SimWorld,
     entity: &Entity,
     archetype: &UnitArchetype,
     order: &UnitOrder,
@@ -532,7 +547,7 @@ fn can_execute(
                 )
                 .is_some()
         });
-    reaches_target && capable(entity, archetype, order, subject)
+    reaches_target && capable(world, entity, archetype, order, subject)
 }
 
 /// The archetype an order is aimed at: an attack's target, or the structure of `Build` or
@@ -612,7 +627,7 @@ fn validate(world: &SimWorld, command: &PlayerCommand) -> Result<(), SubmissionE
             .catalog
             .get(entity.unit_type_id)
             .map_err(|_| SubmissionError::MissingArchetype(*id))?;
-        if !can_execute(entity, archetype, &command.order, subject) {
+        if !can_execute(world, entity, archetype, &command.order, subject) {
             return Err(SubmissionError::Capability(*id));
         }
     }
