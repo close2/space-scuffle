@@ -16,7 +16,10 @@ jobs:
   check-and-test:
     name: Format, Clippy & Workspace Tests (Headless + Virtual GPU)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The suite runs about 20 GPU processes on lavapipe, one after another, and passed 30 minutes
+    # in November 2026 with every test green so far. 60 leaves room without hiding a real hang:
+    # each GPU run has its own 300 s limit in crates/client/tests/support/gpu_run.rs.
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
