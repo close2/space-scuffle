@@ -110,7 +110,7 @@ const BUILT_LIMIT: f32 = 2.0;
 /// on lavapipe: at least 56, and at most 2.2 for the unbuilt rings the old fill drew as built.
 const UNBUILT_FLOOR: f32 = 10.0;
 
-/// The warning every windowed run currently logs on lavapipe. It concerns the swapchain, not this
+/// The warning windowed runs logged on lavapipe before Mesa 25. It concerns the swapchain, not this
 /// shader, so it gives this test no reason to fail.
 const MISSING_COLORSPACE_EXTENSION: gpu_run::AllowedValidationId = gpu_run::AllowedValidationId {
     id: "Unable to find extension: VK_EXT_swapchain_colorspace",
@@ -459,16 +459,13 @@ fn run_child() -> TestResult<tempfile::TempDir> {
     let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
     command.args(["--ignored", "--exact", "--nocapture", CHILD_TEST]);
     command.env(CHILD_OUT_VAR, directory.path());
-    let (output, report) = gpu_run::run_validated(&mut command);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "dome child exited with {:?}:\n{}",
-        output.status.code(),
-        gpu_run::tail(&stderr)
-    );
+    let (run, report) = command.run_validated("windowed dome child");
     let violations = report.violations(&[MISSING_COLORSPACE_EXTENSION]);
-    assert!(violations.is_empty(), "{violations:#?}");
+    assert!(
+        violations.is_empty(),
+        "{}: {violations:#?}",
+        run.context("windowed dome child")
+    );
     Ok(directory)
 }
 

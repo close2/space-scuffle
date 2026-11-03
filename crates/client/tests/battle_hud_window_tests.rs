@@ -46,7 +46,8 @@ const CHILD_TEST: &str = "windowed_hud_child";
 /// Frame cap that makes the media policy strict. The GPU run's own deadline ends a stuck child.
 const CHILD_FRAME_LIMIT: u64 = 100_000;
 /// Frames with panels before reporting, so egui and the camera agree on the surface size. Few,
-/// because a frame of the shipped map takes seconds on the software renderer.
+/// because a frame of the shipped map takes seconds on lavapipe. This counts frames, not time, so
+/// it holds however short a frame is.
 const SETTLE_FRAMES: u32 = 2;
 
 /// What the child saw, in the units each field names.
@@ -78,14 +79,7 @@ fn the_skirmish_window_gives_the_camera_only_what_the_panels_leave() -> TestResu
     let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
     command.args(["--ignored", "--exact", "--nocapture", CHILD_TEST]);
     command.env(CHILD_OUT_VAR, &report_path);
-    let output = command.output()?;
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "child exited with {:?}:\n{}",
-        output.status.code(),
-        gpu_run::tail(&stderr)
-    );
+    command.run("windowed HUD child");
 
     let report: WindowReport = ron::from_str(&std::fs::read_to_string(&report_path)?)?;
     assert_eq!(report.title, "Space Scuffle");

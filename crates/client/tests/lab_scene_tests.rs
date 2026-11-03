@@ -298,7 +298,7 @@ fn smog_does_not_wash_out_bubbles_beyond_the_volume_centre() -> TestResult {
         gpu_run::virtual_gpu_command(std::path::Path::new(env!("CARGO_BIN_EXE_client")));
     command.args(["--swarm", "--max-frames", "40", "--screenshot-out"]);
     command.arg(&screenshot);
-    gpu_run::assert_passes_validation(&mut command, "client --swarm --max-frames 40");
+    command.assert_passes_validation("client --swarm --max-frames 40");
 
     let image = image::open(&screenshot)?.to_luma8();
     let far = median_luminance(&image, ROWS_X, FAR_ROWS_Y);

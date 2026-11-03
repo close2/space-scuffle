@@ -759,7 +759,7 @@ fn test_real_gpu_startup_and_frame_limit_30() {
     let client_bin = std::path::Path::new(env!("CARGO_BIN_EXE_client"));
     let mut command = gpu_run::virtual_gpu_command(client_bin);
     command.arg("--lab").arg("--max-frames").arg("30");
-    gpu_run::assert_passes_validation(&mut command, "client --lab --max-frames 30");
+    command.assert_passes_validation("client --lab --max-frames 30");
 }
 
 /// Collects each use of a slug in production Rust under `dir`, returning the files scanned.

@@ -293,8 +293,8 @@ fn the_skirmish_hud_and_foundation_render_cleanly_on_a_real_window() -> TestResu
     let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
     command.args(["--ignored", "--exact", "--nocapture", CHILD_TEST]);
     command.env(CHILD_OUT_VAR, directory.path());
-    gpu_run::allow_for_hex_tiling_driver_defect(&mut command);
-    gpu_run::assert_passes_validation(&mut command, "windowed skirmish");
+    command.allow_for_hex_tiling_driver_defect();
+    command.assert_passes_validation("windowed skirmish");
     eprintln!(
         "windowed skirmish child took {:.1} s",
         started.elapsed().as_secs_f64()
