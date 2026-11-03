@@ -30,6 +30,7 @@
 
 #![allow(
     clippy::expect_used,
+    clippy::panic,
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     clippy::cast_sign_loss
@@ -49,7 +50,7 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use sim_map::{
     validate_map, CellFlags, CliffLevel, GameMap, MapDocument, MapEntityId, MapFile,
-    MapValidationError, PathRequest, PathRequestWithVision, PathResult, Pathfinder,
+    MapFormatError, MapValidationError, PathRequest, PathRequestWithVision, PathResult, Pathfinder,
     PlayerVisionMap, RampDir, TerrainKind, UnitClearance, VisionSource,
 };
 use sim_types::{EntityId, MoverType, SimScalar, SimVec2};
@@ -453,25 +454,43 @@ fn damage_file(file: &mut MapFile, rng: &mut ChaCha8Rng) {
     }
 }
 
-#[test]
-fn decode_matches_the_recorded_corpus_digest() {
+/// The decoding corpus: every well-shaped document of [`document_corpus`] encoded, damaged at
+/// the file level, serialised, parsed back and decoded, in corpus order.
+///
+/// The short-grid document is the one `MapDocument::encode` refuses, with
+/// `CellCountMismatch`; any other refusal fails the calling test.
+fn decoded_corpus() -> Vec<Result<MapDocument, MapFormatError>> {
     let corpus = document_corpus();
     let mut rng = ChaCha8Rng::seed_from_u64(DECODE_SEED);
-    let mut hasher = Xxh64::new(0);
-    let mut failures = BTreeSet::new();
-    // `MapDocument::encode` requires a well-shaped grid, so the short-grid document is skipped.
-    let well_shaped = corpus
-        .iter()
-        .filter(|doc| doc.cells.len() as u64 == u64::from(doc.width) * u64::from(doc.height));
-    for doc in well_shaped {
-        let mut file = doc.encode();
+    let mut results = Vec::with_capacity(corpus.len());
+    for doc in &corpus {
+        let mut file = match doc.encode() {
+            Ok(file) => file,
+            Err(MapFormatError::CellCountMismatch { .. }) => continue,
+            Err(error) => panic!("a corpus document must encode: {error}"),
+        };
         for _ in 0..rng.gen_range(0..=2) {
             damage_file(&mut file, &mut rng);
         }
         let text = file.to_ron_string().expect("an encoded map serialises");
         let parsed = MapFile::from_ron_str(&text).expect("serialised RON parses back");
-        let result = parsed.decode();
-        if let Err(error) = &result {
+        results.push(parsed.decode());
+    }
+    results
+}
+
+#[test]
+fn decode_matches_the_recorded_corpus_digest() {
+    let mut hasher = Xxh64::new(0);
+    let mut failures = BTreeSet::new();
+    let results = decoded_corpus();
+    assert_eq!(
+        results.len(),
+        document_corpus().len() - 1,
+        "only the short-grid document is refused by encode"
+    );
+    for result in &results {
+        if let Err(error) = result {
             failures.insert(
                 format!("{error:?}")
                     .split([' ', '{', '('])
@@ -494,6 +513,45 @@ fn decode_matches_the_recorded_corpus_digest() {
         assert!(failures.contains(required), "corpus must raise {required}");
     }
     assert_eq!(digest, DECODE_GOLDEN, "decode output changed");
+}
+
+/// Encodes `doc`, serialises it, parses it back and decodes it, as a save and a load do.
+fn save_and_reload(doc: &MapDocument) -> Result<MapDocument, MapFormatError> {
+    let text = doc.encode()?.to_ron_string()?;
+    MapFile::from_ron_str(&text)?.decode()
+}
+
+/// Every document `decode` produces encodes again and survives a save and a load unchanged:
+/// each shipped map under `assets/maps/`, and every successful result of the decoding corpus.
+#[test]
+fn encode_accepts_every_document_decode_produces() {
+    let maps_dir = arena::map_path("");
+    let mut shipped: Vec<_> = std::fs::read_dir(&maps_dir)
+        .expect("assets/maps is readable")
+        .map(|entry| entry.expect("assets/maps entry is readable").path())
+        .filter(|path| path.to_string_lossy().ends_with(".scmap.ron"))
+        .collect();
+    shipped.sort();
+    assert!(shipped.len() >= 2, "both shipped maps are found");
+    for path in &shipped {
+        let doc = MapFile::load(path)
+            .and_then(|file| file.decode())
+            .expect("a shipped map loads and decodes");
+        let reloaded = save_and_reload(&doc)
+            .unwrap_or_else(|error| panic!("{} must encode: {error}", path.display()));
+        assert_eq!(reloaded, doc, "{} round-trips", path.display());
+    }
+    let mut decoded = 0_usize;
+    for doc in decoded_corpus().into_iter().flatten() {
+        let reloaded = save_and_reload(&doc).expect("a decoded corpus document encodes");
+        assert_eq!(reloaded, doc, "a decoded corpus document round-trips");
+        decoded += 1;
+    }
+    // 91 of the 202 damaged files decode today; the bound only guards against an empty loop.
+    assert!(
+        decoded >= 50,
+        "the corpus decodes enough documents: {decoded}"
+    );
 }
 
 /// Places a few seeded structures, so known-structure and occupancy paths are exercised.

@@ -275,7 +275,7 @@ impl PlaytestEntry<'_> {
 
         let autosaved = if doc.dirty {
             let path = autosave_path(doc, maps_dir);
-            doc.doc.encode().save_atomic(&path)?;
+            doc.doc.encode()?.save_atomic(&path)?;
             Some(path)
         } else {
             None

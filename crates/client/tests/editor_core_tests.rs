@@ -26,9 +26,9 @@ use client::editor::stroke::StrokeRecorder;
 use client::editor::symmetry::SymmetryMode;
 use client::editor::tools::{
     box_fill_command, brush_footprint, check_ramp_placement, delete_entity_command,
-    erase_entities_command, infer_ramp, move_entity_command, paint_brush_stamp, pick_entity,
-    place_entity_command, place_ramp_command, resolve_start_footprint, AuthorableFlag, BrushShape,
-    EntityToolKind, PaintOp, RampPlacement, RampPlacementError, StartFootprintError,
+    erase_cell_command, erase_entities_command, infer_ramp, move_entity_command, paint_brush_stamp,
+    pick_entity, place_entity_command, place_ramp_command, resolve_start_footprint, AuthorableFlag,
+    BrushShape, EntityToolKind, PaintOp, RampPlacement, RampPlacementError, StartFootprintError,
     DEFAULT_GAS_AMOUNT, DEFAULT_MINERAL_AMOUNT, DEFAULT_WATCHTOWER_CAPTURE_RADIUS_TENTHS,
     DEFAULT_WATCHTOWER_REVEAL_RADIUS_TENTHS,
 };
@@ -1585,4 +1585,145 @@ fn test_continuous_edit_does_not_merge_across_other_commands_or_entities() {
     assert_eq!(doc.resources[0].amount, 100);
     history.execute_merged(modify(1, 100, 150), &mut doc, &mut cs);
     assert_eq!(history.redo_len(), 0);
+}
+
+/// Fails the test, naming `step`, unless `doc` encodes.
+fn assert_encodes(doc: &MapDocument, step: &str) {
+    if let Err(error) = doc.encode() {
+        panic!("{step} left a document encode refuses: {error}");
+    }
+}
+
+/// A 32 x 32 document with a level-2 plateau on the side `dir` ascends towards, so a 3 x 3
+/// ramp at the centre-left of that edge qualifies; returns the document and the ramp's rect.
+fn ramp_fixture(dir: RampDir) -> (MapDocument, CellRect) {
+    let mut doc = fixture_document(32, 32);
+    for y in 0..32 {
+        for x in 0..32 {
+            let high = match dir {
+                RampDir::North => y >= 16,
+                RampDir::South => y < 16,
+                RampDir::East => x >= 16,
+                _ => x < 16,
+            };
+            if high {
+                doc.cell_mut(x, y).expect("in bounds").level = CliffLevel(2);
+            }
+        }
+    }
+    let rect = match dir {
+        RampDir::North => CellRect {
+            min: (6, 13),
+            max_inclusive: (8, 15),
+        },
+        RampDir::South => CellRect {
+            min: (6, 16),
+            max_inclusive: (8, 18),
+        },
+        RampDir::East => CellRect {
+            min: (13, 6),
+            max_inclusive: (15, 8),
+        },
+        _ => CellRect {
+            min: (16, 6),
+            max_inclusive: (18, 8),
+        },
+    };
+    (doc, rect)
+}
+
+/// Every cell-editing tool, with and without symmetry, leaves a document `encode` accepts, so
+/// a save that succeeded before `encode` returned errors cannot start failing (WP2, D-5).
+#[test]
+fn every_editor_tool_leaves_an_encodable_document() {
+    let symmetries = [
+        SymmetryMode::None,
+        SymmetryMode::MirrorX,
+        SymmetryMode::MirrorY,
+        SymmetryMode::Rotate180,
+    ];
+    let flags = [
+        AuthorableFlag::Buildable,
+        AuthorableFlag::GroundPathable,
+        AuthorableFlag::LosBlocker,
+        AuthorableFlag::SpeedZone,
+    ];
+    let mut ops: Vec<PaintOp> = (0..=3)
+        .map(|level| PaintOp::Level(CliffLevel(level)))
+        .collect();
+    for terrain in [
+        TerrainKind::Grass,
+        TerrainKind::MetalPlate,
+        TerrainKind::Dirt,
+        TerrainKind::Abyss,
+    ] {
+        ops.push(PaintOp::Terrain(terrain));
+    }
+    for flag in flags {
+        ops.push(PaintOp::Flag { flag, value: true });
+        ops.push(PaintOp::Flag { flag, value: false });
+    }
+
+    let mut doc = fixture_document(32, 32);
+    let mut recorder = StrokeRecorder::new(32, 32);
+    let mut buf = Vec::new();
+    for symmetry in symmetries {
+        for (index, op) in ops.iter().enumerate() {
+            let offset = u32::try_from(index).expect("fewer ops than u32::MAX");
+            recorder.begin();
+            for shape in [BrushShape::Circle, BrushShape::Square] {
+                paint_brush_stamp(
+                    &mut recorder,
+                    &mut doc,
+                    shape,
+                    2,
+                    (3 + offset, 5 + offset % 7),
+                    op,
+                    symmetry,
+                    &mut buf,
+                );
+            }
+            let _stroke = recorder.finish("Paint");
+            assert_encodes(&doc, &format!("brush {op:?} with {symmetry:?}"));
+
+            let rect = CellRect {
+                min: (offset, 20),
+                max_inclusive: (offset + 3, 24),
+            };
+            box_fill_command(&doc, rect, op, symmetry, "Fill")
+                .apply(&mut doc, &mut ChangeSet::empty());
+            assert_encodes(&doc, &format!("box fill {op:?} with {symmetry:?}"));
+
+            if let Some(erase) = erase_cell_command(&doc, (offset, 22), symmetry) {
+                erase.apply(&mut doc, &mut ChangeSet::empty());
+            }
+            assert_encodes(&doc, &format!("eraser after {op:?} with {symmetry:?}"));
+        }
+    }
+
+    for dir in [RampDir::North, RampDir::South, RampDir::East, RampDir::West] {
+        let mut placed = 0;
+        for symmetry in symmetries {
+            let (mut ramp_doc, rect) = ramp_fixture(dir);
+            let placement =
+                check_ramp_placement(&ramp_doc, rect, dir).expect("fixture ramp qualifies");
+            // A mirrored ramp may lack its own landing; the tool then refuses and edits nothing.
+            if let Ok(command) = place_ramp_command(&ramp_doc, rect, placement, symmetry, "Ramp") {
+                command.apply(&mut ramp_doc, &mut ChangeSet::empty());
+                placed += 1;
+            }
+            assert_encodes(&ramp_doc, &format!("ramp {dir:?} with {symmetry:?}"));
+            if let Some(erase) = erase_cell_command(&ramp_doc, rect.min, symmetry) {
+                erase.apply(&mut ramp_doc, &mut ChangeSet::empty());
+            }
+            assert_encodes(
+                &ramp_doc,
+                &format!("eraser on ramp {dir:?} with {symmetry:?}"),
+            );
+        }
+        assert!(
+            placed >= 2,
+            "{dir:?} ramps are placed with and without symmetry"
+        );
+    }
 }

@@ -262,7 +262,7 @@ mod tests {
                 ..MapMetadata::default()
             },
         )?;
-        doc.encode().save_atomic(&path)?;
+        doc.encode()?.save_atomic(&path)?;
         let result = EditorStartup::load_from(root()?, &InitialDocument::Open(path));
         assert!(matches!(result, Err(EditorStartupError::UnknownTheme(_))));
         Ok(())

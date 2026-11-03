@@ -506,8 +506,7 @@ fn handle_save_action(
 ) -> SaveOutcome {
     if let Some(path) = doc.path.clone() {
         doc.revalidate();
-        let map_file = doc.doc.encode();
-        match map_file.save_atomic(&path) {
+        match doc.doc.encode().and_then(|file| file.save_atomic(&path)) {
             Ok(()) => {
                 doc.mark_saved(path.clone());
                 tool_state.last_status_message = Some(format!("Saved {}", path.display()));

@@ -24,7 +24,7 @@ fn blank_document_roundtrip() {
         theme: "orbital_foundry".to_string(),
     };
     let doc = MapDocument::new_blank(32, 32, metadata).expect("new_blank failed");
-    let file = doc.encode();
+    let file = doc.encode().expect("a valid document encodes");
     let ron_str = file.to_ron_string().expect("to_ron_string failed");
     let loaded_file = MapFile::from_ron_str(&ron_str).expect("from_ron_str failed");
     let decoded_doc = loaded_file.decode().expect("decode failed");
@@ -49,7 +49,7 @@ fn showcase_roundtrip_is_byte_identical() {
     let raw_bytes = std::fs::read_to_string(&path).expect("read showcase_canyon failed");
 
     let doc = file.decode().expect("decode failed");
-    let encoded_file = doc.encode();
+    let encoded_file = doc.encode().expect("a valid document encodes");
     let re_encoded_str = encoded_file.to_ron_string().expect("to_ron_string failed");
 
     assert_eq!(raw_bytes, re_encoded_str);
@@ -67,7 +67,7 @@ fn row_zero_is_north() {
     // (x=0, y=15) is North-West cell. Row 0 in file is y = height - 1 = 15.
     doc.cell_mut(0, 15).expect("in bounds").level = CliffLevel(3);
 
-    let file = doc.encode();
+    let file = doc.encode().expect("a valid document encodes");
     assert_eq!(file.levels.len(), 16);
     assert!(
         file.levels[0].starts_with('3'),
@@ -162,7 +162,8 @@ fn row_count_error() {
         },
     )
     .unwrap()
-    .encode();
+    .encode()
+    .expect("a valid document encodes");
     file.levels.pop(); // now 15 rows instead of 16
 
     let err = file.decode().unwrap_err();
@@ -189,7 +190,8 @@ fn row_length_error() {
         },
     )
     .unwrap()
-    .encode();
+    .encode()
+    .expect("a valid document encodes");
     file.terrain[0].push('D'); // now 17 columns in row 0
 
     let err = file.decode().unwrap_err();
@@ -217,7 +219,8 @@ fn invalid_cell_char_levels() {
         },
     )
     .unwrap()
-    .encode();
+    .encode()
+    .expect("a valid document encodes");
     // In row 0 (y = 15), column 2 (x = 2), insert '4'
     file.levels[0].replace_range(2..3, "4");
 
@@ -246,7 +249,8 @@ fn invalid_cell_char_terrain() {
         },
     )
     .unwrap()
-    .encode();
+    .encode()
+    .expect("a valid document encodes");
     // In row 3 (y = 12), column 4 (x = 4), insert 'X'
     file.terrain[3].replace_range(4..5, "X");
 
@@ -275,7 +279,8 @@ fn invalid_cell_char_ramps() {
         },
     )
     .unwrap()
-    .encode();
+    .encode()
+    .expect("a valid document encodes");
     // In row 5 (y = 10), column 1 (x = 1), insert 'Q'
     file.ramps[5].replace_range(1..2, "Q");
 
@@ -304,7 +309,8 @@ fn invalid_cell_char_flags() {
         },
     )
     .unwrap()
-    .encode();
+    .encode()
+    .expect("a valid document encodes");
     // In row 2 (y = 13), column 3 (x = 3), insert 'G' (invalid hex)
     file.flags[2].replace_range(3..4, "G");
 
@@ -465,7 +471,8 @@ fn save_atomic_leaves_no_tmp_file() {
         },
     )
     .unwrap()
-    .encode();
+    .encode()
+    .expect("a valid document encodes");
 
     file.save_atomic(&map_path)
         .expect("save_atomic must succeed");
@@ -494,7 +501,8 @@ fn save_atomic_overwrites_existing() {
         },
     )
     .unwrap()
-    .encode();
+    .encode()
+    .expect("a valid document encodes");
 
     file.save_atomic(&map_path)
         .expect("save_atomic overwrite must succeed");
@@ -503,4 +511,142 @@ fn save_atomic_overwrites_existing() {
     assert_eq!(loaded.metadata.title, "Overwritten");
 
     let _ = std::fs::remove_file(&map_path);
+}
+
+/// A 16 x 16 blank document used by the `encode` rejection tests.
+fn small_document() -> MapDocument {
+    MapDocument::new_blank(
+        16,
+        16,
+        MapMetadata {
+            title: "Encode Rejection".to_string(),
+            author: "Tester".to_string(),
+            description: "A document encode must refuse".to_string(),
+            theme: "orbital_foundry".to_string(),
+        },
+    )
+    .expect("16 x 16 lies inside the supported range")
+}
+
+#[test]
+fn encode_of_a_document_with_too_few_cells_does_not_panic() {
+    let mut doc = small_document();
+    doc.cells.pop();
+    let outcome = std::panic::catch_unwind(|| doc.encode());
+    assert!(
+        matches!(
+            outcome,
+            Ok(Err(MapFormatError::CellCountMismatch {
+                width: 16,
+                height: 16,
+                found: 255
+            }))
+        ),
+        "encode must return CellCountMismatch, not panic: {outcome:?}"
+    );
+}
+
+#[test]
+fn encode_rejects_a_document_with_too_many_cells() {
+    let mut doc = small_document();
+    doc.cells.push(doc.cells[0].clone());
+    assert!(matches!(
+        doc.encode(),
+        Err(MapFormatError::CellCountMismatch {
+            width: 16,
+            height: 16,
+            found: 257
+        })
+    ));
+}
+
+#[test]
+fn encode_rejects_dimensions_out_of_range() {
+    let mut doc = small_document();
+    doc.width = 8;
+    doc.height = 32;
+    assert!(matches!(
+        doc.encode(),
+        Err(MapFormatError::DimensionsOutOfRange {
+            width: 8,
+            height: 32
+        })
+    ));
+}
+
+#[test]
+fn encode_rejects_a_diagonal_ramp() {
+    let mut doc = small_document();
+    doc.cell_mut(4, 5).expect("in bounds").ramp = Some(RampDir::NorthEast);
+    assert!(matches!(
+        doc.encode(),
+        Err(MapFormatError::UnsupportedDiagonalRamp { x: 4, y: 5 })
+    ));
+}
+
+#[test]
+fn encode_rejects_a_level_above_three() {
+    let mut doc = small_document();
+    doc.cell_mut(4, 5).expect("in bounds").level = CliffLevel(4);
+    assert!(matches!(
+        doc.encode(),
+        Err(MapFormatError::LevelOutOfRange {
+            x: 4,
+            y: 5,
+            level: 4
+        })
+    ));
+}
+
+#[test]
+fn encode_rejects_non_authorable_flags() {
+    for (bit, raw) in [
+        (CellFlags::OCCUPIED_BY_STRUCTURE, 0x10),
+        (CellFlags::RAMP, 0x20),
+        (CellFlags::UNPASSABLE_CLIFF, 0x40),
+    ] {
+        let mut doc = small_document();
+        doc.cell_mut(4, 5).expect("in bounds").flags |= bit;
+        let result = doc.encode();
+        assert!(
+            matches!(
+                result,
+                Err(MapFormatError::NonAuthorableFlags { x: 4, y: 5, bits }) if bits == raw
+            ),
+            "{bit:?}: {result:?}"
+        );
+    }
+}
+
+/// The first offending cell in row-major order from `y = 0` is reported, as `from_game_map`
+/// reports it, whatever kind of error the later cells carry.
+#[test]
+fn encode_reports_the_first_offending_cell_in_row_major_order() {
+    let mut doc = small_document();
+    doc.cell_mut(0, 9).expect("in bounds").level = CliffLevel(9);
+    doc.cell_mut(15, 3).expect("in bounds").ramp = Some(RampDir::SouthEast);
+    assert!(matches!(
+        doc.encode(),
+        Err(MapFormatError::UnsupportedDiagonalRamp { x: 15, y: 3 })
+    ));
+}
+
+/// `encode` and `from_game_map` reject the same diagonal ramp with the same variant.
+#[test]
+fn encode_and_from_game_map_agree_on_a_diagonal_ramp() {
+    let mut doc = small_document();
+    let mut map = doc.to_game_map().expect("a blank document converts");
+    let cell = map.cell_mut(4, 5).expect("in bounds");
+    cell.ramp = Some(RampDir::NorthWest);
+    cell.flags |= CellFlags::RAMP;
+    let from_map = MapDocument::from_game_map(&map, doc.metadata.clone());
+    doc.cell_mut(4, 5).expect("in bounds").ramp = Some(RampDir::NorthWest);
+    assert!(matches!(
+        from_map,
+        Err(MapFormatError::UnsupportedDiagonalRamp { x: 4, y: 5 })
+    ));
+    assert!(matches!(
+        doc.encode(),
+        Err(MapFormatError::UnsupportedDiagonalRamp { x: 4, y: 5 })
+    ));
 }

@@ -10,6 +10,9 @@
 //! - Cell grid layers are stored as row strings with North at row 0 (`y = height - 1 - row_idx`).
 //! - Derived flags (`RAMP`, `UNPASSABLE_CLIFF`) are never persisted in the authorable flags layer.
 //! - Runtime state (`OCCUPIED_BY_STRUCTURE`) is strictly forbidden in map files.
+//! - Encoding never converts silently: `MapDocument::encode` and `MapDocument::from_game_map`
+//!   share one per-cell check, so a cell either survives a save and load unchanged or the save
+//!   fails with a typed error.
 //! - Coordinate radii for watchtowers are stored in exact integer tenths of a world unit.
 //! - Entity lists (`resources`, `watchtowers`, `start_locations`) are deterministically sorted by `MapEntityId`.
 //! - Encoded bytes do not depend on the host: every line ends in `\n`, on every target.
@@ -37,6 +40,52 @@ pub const CURRENT_MAP_FORMAT_VERSION: u32 = 1;
 /// `ron` defaults `PrettyConfig::new_line` to `\r\n` when built for Windows, which is why this
 /// value is always set explicitly.
 const MAP_RON_NEWLINE: &str = "\n";
+
+/// The four flag bits an author may set; the flags layer stores exactly these as one hex digit.
+const AUTHORABLE_FLAGS: CellFlags = CellFlags::BUILDABLE
+    .union(CellFlags::GROUND_PATHABLE)
+    .union(CellFlags::LOS_BLOCKER)
+    .union(CellFlags::SPEED_ZONE);
+
+/// Upper-case hexadecimal digits of the flags layer, indexed by the authorable bits (`0..=15`).
+const FLAG_DIGITS: [char; 16] = [
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F',
+];
+
+/// Checks one editable cell against everything format v1 cannot represent.
+///
+/// Shared by [`MapDocument::encode`] and [`MapDocument::from_game_map`], so the two cannot
+/// drift. Checks, in order: cliff level within `0..=3`, a cardinal (or no) ramp, and no flag
+/// bits outside [`AUTHORABLE_FLAGS`]. `(x, y)` are simulation cell coordinates, used only in
+/// the error.
+///
+/// # Errors
+/// [`MapFormatError::LevelOutOfRange`], [`MapFormatError::UnsupportedDiagonalRamp`] or
+/// [`MapFormatError::NonAuthorableFlags`], for the first check that fails.
+fn check_cell(x: u32, y: u32, spec: &MapCellSpec) -> Result<(), MapFormatError> {
+    if spec.level > CliffLevel::MAX {
+        return Err(MapFormatError::LevelOutOfRange {
+            x,
+            y,
+            level: spec.level.0,
+        });
+    }
+    if matches!(
+        spec.ramp,
+        Some(RampDir::NorthEast | RampDir::NorthWest | RampDir::SouthEast | RampDir::SouthWest)
+    ) {
+        return Err(MapFormatError::UnsupportedDiagonalRamp { x, y });
+    }
+    let extra = spec.flags.difference(AUTHORABLE_FLAGS);
+    if !extra.is_empty() {
+        return Err(MapFormatError::NonAuthorableFlags {
+            x,
+            y,
+            bits: u32::from(extra.bits()),
+        });
+    }
+    Ok(())
+}
 
 /// Applies the canonical `*.scmap.ron` layout to `base`, replacing whatever `base` chose.
 ///
@@ -157,7 +206,33 @@ pub enum MapFormatError {
         level: u8,
     },
 
-    /// Diagonal ramp encountered when converting from `GameMap` (format v1 supports cardinal ramps only).
+    /// A [`MapDocument`]'s cell vector does not hold exactly `width * height` cells, so it
+    /// cannot be encoded row by row.
+    #[error("document of {width}x{height} cells holds {found} cell specifications")]
+    CellCountMismatch {
+        /// Grid width in cells.
+        width: u32,
+        /// Grid height in cells.
+        height: u32,
+        /// Number of entries actually present in `MapDocument::cells`.
+        found: usize,
+    },
+
+    /// A [`MapCellSpec`] carries flag bits outside the four authorable ones (`BUILDABLE`,
+    /// `GROUND_PATHABLE`, `LOS_BLOCKER`, `SPEED_ZONE`). Derived bits (`RAMP`,
+    /// `UNPASSABLE_CLIFF`) and runtime state (`OCCUPIED_BY_STRUCTURE`) are never authored.
+    #[error("non-authorable flag bits {bits:#06x} in cell ({x}, {y})")]
+    NonAuthorableFlags {
+        /// X coordinate of cell.
+        x: u32,
+        /// Y coordinate of cell.
+        y: u32,
+        /// The offending bits, as the raw `CellFlags` value with the authorable bits removed.
+        bits: u32,
+    },
+
+    /// Diagonal ramp encountered when converting from `GameMap` or encoding a [`MapDocument`]
+    /// (format v1 supports cardinal ramps only).
     #[error("unsupported diagonal ramp at cell ({x}, {y})")]
     UnsupportedDiagonalRamp {
         /// X coordinate of cell.
@@ -623,8 +698,23 @@ impl MapDocument {
     }
 
     /// Encodes this editable document into a compact [`MapFile`] ready for serialization.
-    #[must_use]
-    pub fn encode(&self) -> MapFile {
+    ///
+    /// Everything is checked before anything is written, so the result either succeeds or
+    /// names the first thing format v1 cannot represent. A document that
+    /// [`MapFile::decode`] or [`MapDocument::from_game_map`] produced always encodes.
+    ///
+    /// # Errors
+    /// - [`MapFormatError::DimensionsOutOfRange`] if width or height is outside
+    ///   `MIN_MAP_DIMENSION..=MAX_MAP_DIMENSION`.
+    /// - [`MapFormatError::CellCountMismatch`] if `cells.len() != width * height`.
+    /// - Per cell, in row-major order from `y = 0`, the first error of the checks
+    ///   [`MapDocument::from_game_map`] also applies: [`MapFormatError::LevelOutOfRange`],
+    ///   [`MapFormatError::UnsupportedDiagonalRamp`], [`MapFormatError::NonAuthorableFlags`].
+    ///   `from_game_map`'s ramp- and abyss-flag consistency checks concern the derived `RAMP`
+    ///   and `UNPASSABLE_CLIFF` bits, which a [`MapCellSpec`] cannot carry: they are
+    ///   non-authorable, so they are rejected as [`MapFormatError::NonAuthorableFlags`].
+    pub fn encode(&self) -> Result<MapFile, MapFormatError> {
+        self.check_encodable()?;
         let mut levels = Vec::with_capacity(self.height as usize);
         let mut terrain = Vec::with_capacity(self.height as usize);
         let mut ramps = Vec::with_capacity(self.height as usize);
@@ -638,8 +728,10 @@ impl MapDocument {
             let mut flg_row = String::with_capacity(self.width as usize);
 
             for x in 0..self.width {
+                // Index and digit arithmetic are in range: `check_encodable` verified the cell
+                // count and that every level lies in `0..=3`.
                 let spec = &self.cells[(y * self.width + x) as usize];
-                lvl_row.push((b'0' + spec.level.0) as char);
+                lvl_row.push(char::from(b'0' + spec.level.0));
                 let trn_char = match spec.terrain {
                     TerrainKind::Grass => 'G',
                     TerrainKind::MetalPlate => 'M',
@@ -649,19 +741,25 @@ impl MapDocument {
                 trn_row.push(trn_char);
 
                 let rmp_char = match spec.ramp {
+                    None => '.',
                     Some(RampDir::North) => 'N',
                     Some(RampDir::South) => 'S',
                     Some(RampDir::East) => 'E',
                     Some(RampDir::West) => 'W',
-                    None | Some(_) => '.',
+                    // `check_encodable` already rejected diagonals; this arm keeps the match
+                    // total without a panic path and returns the same error.
+                    Some(
+                        RampDir::NorthEast
+                        | RampDir::NorthWest
+                        | RampDir::SouthEast
+                        | RampDir::SouthWest,
+                    ) => return Err(MapFormatError::UnsupportedDiagonalRamp { x, y }),
                 };
                 rmp_row.push(rmp_char);
 
-                let authorable_bits = u32::from(spec.flags.bits() & 0x000F);
-                let flg_char = char::from_digit(authorable_bits, 16)
-                    .unwrap_or('0')
-                    .to_ascii_uppercase();
-                flg_row.push(flg_char);
+                // `check_encodable` rejected every bit outside the low four, so the digit is
+                // the whole flags value; the mask only keeps the index total.
+                flg_row.push(FLAG_DIGITS[usize::from(spec.flags.bits() & 0x000F)]);
             }
 
             levels.push(lvl_row);
@@ -679,7 +777,7 @@ impl MapDocument {
         let mut start_locations = self.start_locations.clone();
         start_locations.sort_by_key(|s| s.id);
 
-        MapFile {
+        Ok(MapFile {
             format_version: CURRENT_MAP_FORMAT_VERSION,
             metadata: self.metadata.clone(),
             width: self.width,
@@ -691,7 +789,32 @@ impl MapDocument {
             resources,
             watchtowers,
             start_locations,
+        })
+    }
+
+    /// Encode stage 0: dimensions in range, exactly `width * height` cells, and every cell
+    /// representable ([`check_cell`]), in row-major order from `y = 0`.
+    fn check_encodable(&self) -> Result<(), MapFormatError> {
+        let (width, height) = (self.width, self.height);
+        if !(MIN_MAP_DIMENSION..=MAX_MAP_DIMENSION).contains(&width)
+            || !(MIN_MAP_DIMENSION..=MAX_MAP_DIMENSION).contains(&height)
+        {
+            return Err(MapFormatError::DimensionsOutOfRange { width, height });
         }
+        if self.cells.len() != (width as usize) * (height as usize) {
+            return Err(MapFormatError::CellCountMismatch {
+                width,
+                height,
+                found: self.cells.len(),
+            });
+        }
+        // Rows of `width` cells, so `zip` with `0..height` and `0..width` visits every cell once.
+        for (y, row) in (0..height).zip(self.cells.chunks_exact(width as usize)) {
+            for (x, spec) in (0..width).zip(row) {
+                check_cell(x, y, spec)?;
+            }
+        }
+        Ok(())
     }
 
     /// Returns a reference to the cell specification at `(x, y)`, or `None` if out of bounds.
@@ -727,11 +850,7 @@ impl MapDocument {
     /// deriving `RAMP` and `UNPASSABLE_CLIFF` flags and ensuring runtime state is clear.
     #[must_use]
     pub fn to_map_cell(spec: &MapCellSpec) -> MapCell {
-        let mut flags = spec.flags
-            & (CellFlags::BUILDABLE
-                | CellFlags::GROUND_PATHABLE
-                | CellFlags::LOS_BLOCKER
-                | CellFlags::SPEED_ZONE);
+        let mut flags = spec.flags & AUTHORABLE_FLAGS;
         if spec.ramp.is_some() {
             flags.insert(CellFlags::RAMP);
         }
@@ -821,25 +940,15 @@ impl MapDocument {
             for x in 0..width {
                 let cell = map.cell(x, y).map_err(MapFormatError::GameMap)?;
 
-                if cell.cliff_level.0 > 3 {
-                    return Err(MapFormatError::LevelOutOfRange {
-                        x,
-                        y,
-                        level: cell.cliff_level.0,
-                    });
-                }
-
-                if let Some(ramp_dir) = cell.ramp {
-                    if matches!(
-                        ramp_dir,
-                        RampDir::NorthEast
-                            | RampDir::NorthWest
-                            | RampDir::SouthEast
-                            | RampDir::SouthWest
-                    ) {
-                        return Err(MapFormatError::UnsupportedDiagonalRamp { x, y });
-                    }
-                }
+                // Derived and runtime bits are checked against the `MapCell` below, so only the
+                // authorable bits enter the spec, and `check_cell`'s flag check cannot fail here.
+                let spec = MapCellSpec {
+                    level: cell.cliff_level,
+                    terrain: cell.terrain_kind,
+                    ramp: cell.ramp,
+                    flags: cell.flags & AUTHORABLE_FLAGS,
+                };
+                check_cell(x, y, &spec)?;
 
                 if cell.flags.contains(CellFlags::OCCUPIED_BY_STRUCTURE)
                     || cell.occupying_structure.is_some()
@@ -857,18 +966,7 @@ impl MapDocument {
                     return Err(MapFormatError::InconsistentAbyssFlag { x, y });
                 }
 
-                let authorable_flags = cell.flags
-                    & (CellFlags::BUILDABLE
-                        | CellFlags::GROUND_PATHABLE
-                        | CellFlags::LOS_BLOCKER
-                        | CellFlags::SPEED_ZONE);
-
-                cells.push(MapCellSpec {
-                    level: cell.cliff_level,
-                    terrain: cell.terrain_kind,
-                    ramp: cell.ramp,
-                    flags: authorable_flags,
-                });
+                cells.push(spec);
             }
         }
 
@@ -997,7 +1095,10 @@ fn radius_to_tenths(radius: SimScalar) -> Option<u16> {
 
 #[cfg(test)]
 mod tests {
-    use super::{canonical_pretty_config, MapFile, MapFormatError, MAP_RON_NEWLINE};
+    use super::{
+        canonical_pretty_config, check_cell, MapCellSpec, MapFile, MapFormatError, MAP_RON_NEWLINE,
+    };
+    use crate::grid::{CellFlags, CliffLevel, RampDir, TerrainKind};
     use ron::ser::PrettyConfig;
 
     const SHOWCASE: &str = include_str!("../../../assets/maps/showcase_canyon.scmap.ron");
@@ -1035,5 +1136,44 @@ mod tests {
         assert!(encoded.contains('\n'));
         assert!(!encoded.contains('\r'));
         Ok(())
+    }
+
+    /// A cell that breaks all three rules reports them in `from_game_map`'s order, one at a
+    /// time as each is fixed, and an authorable cell passes.
+    #[test]
+    fn check_cell_reports_level_then_diagonal_then_flags() {
+        let mut spec = MapCellSpec {
+            level: CliffLevel(7),
+            terrain: TerrainKind::Grass,
+            ramp: Some(RampDir::SouthWest),
+            flags: CellFlags::BUILDABLE | CellFlags::RAMP | CellFlags::UNPASSABLE_CLIFF,
+        };
+        assert!(matches!(
+            check_cell(2, 9, &spec),
+            Err(MapFormatError::LevelOutOfRange {
+                x: 2,
+                y: 9,
+                level: 7
+            })
+        ));
+        spec.level = CliffLevel::MAX;
+        assert!(matches!(
+            check_cell(2, 9, &spec),
+            Err(MapFormatError::UnsupportedDiagonalRamp { x: 2, y: 9 })
+        ));
+        spec.ramp = Some(RampDir::South);
+        assert!(matches!(
+            check_cell(2, 9, &spec),
+            Err(MapFormatError::NonAuthorableFlags {
+                x: 2,
+                y: 9,
+                bits: 0x0060
+            })
+        ));
+        spec.flags = CellFlags::BUILDABLE
+            | CellFlags::GROUND_PATHABLE
+            | CellFlags::LOS_BLOCKER
+            | CellFlags::SPEED_ZONE;
+        assert!(check_cell(2, 9, &spec).is_ok());
     }
 }
