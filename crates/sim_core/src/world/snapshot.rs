@@ -13,8 +13,10 @@
 //!   `pending_events`.
 //! - Bubbles are ordered by entity ID.
 
+use crate::catalog::UnitArchetype;
 use crate::entity::{Entity, WeaponPhase};
 use crate::SimWorld;
+use sim_map::SimMap;
 use sim_types::{
     BubbleRenderInstance, PlayerStatusView, RenderSnapshot, ResourceNodeId, ResourceNodeView,
     SimScalar, Tick, WeaponVisualKind,
@@ -57,6 +59,26 @@ impl SimWorld {
         output.tick = Tick(self.current_tick);
         output.checksum = self.last_checksum;
         output.match_result = self.match_state.result;
+        self.write_player_views(output);
+        self.write_resource_nodes(output);
+
+        for entity in self.entities.values() {
+            if entity.is_loaded_in_transport() {
+                continue;
+            }
+            let Ok(arch) = self.catalog.get(entity.unit_type_id) else {
+                continue;
+            };
+            output
+                .bubbles
+                .push(bubble_instance(entity, arch, &self.map));
+        }
+
+        output.combat_events.append(&mut self.pending_events);
+    }
+
+    /// Writes every player slot's resources, supply and defeat flag.
+    fn write_player_views(&self, output: &mut RenderSnapshot) {
         for (slot, view) in output.players.iter_mut().enumerate() {
             let resources = &self.player_resources[slot];
             *view = PlayerStatusView {
@@ -67,6 +89,10 @@ impl SimWorld {
                 defeated: self.match_state.defeated & (1 << slot) != 0,
             };
         }
+    }
+
+    /// Replaces the resource node list with the map's nodes, in map order.
+    fn write_resource_nodes(&self, output: &mut RenderSnapshot) {
         output.resource_nodes.clear();
         output
             .resource_nodes
@@ -82,83 +108,75 @@ impl SimWorld {
                         remaining: node.remaining,
                     }),
             );
+    }
+}
 
-        for entity in self.entities.values() {
-            if entity.is_loaded_in_transport() {
-                continue;
-            }
-            let Ok(arch) = self.catalog.get(entity.unit_type_id) else {
-                continue;
-            };
+/// The render record of one entity of archetype `arch` standing on `map`.
+fn bubble_instance(entity: &Entity, arch: &UnitArchetype, map: &SimMap) -> BubbleRenderInstance {
+    let ground_z = map.terrain_altitude_at(entity.position);
+    let altitude_z = if matches!(arch.mover_type, sim_types::MoverType::Air) {
+        ground_z + 2.5
+    } else {
+        ground_z
+    };
 
-            let ground_z = self.map.terrain_altitude_at(entity.position);
-            let altitude_z = if matches!(arch.mover_type, sim_types::MoverType::Air) {
-                ground_z + 2.5
-            } else {
-                ground_z
-            };
+    let is_attacking = matches!(
+        entity.weapon_phase,
+        WeaponPhase::Windup { .. } | WeaponPhase::Backswing { .. }
+    );
 
-            let is_attacking = matches!(
-                entity.weapon_phase,
-                WeaponPhase::Windup { .. } | WeaponPhase::Backswing { .. }
-            );
+    let hp_ratio = if entity.max_hp > SimScalar::ZERO {
+        (entity.hp / entity.max_hp).to_f32().clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
 
-            let hp_ratio = if entity.max_hp > SimScalar::ZERO {
-                (entity.hp / entity.max_hp).to_f32().clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
+    let shield_ratio = if arch.max_shields > SimScalar::ZERO {
+        (entity.shields / arch.max_shields).to_f32().clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
 
-            let shield_ratio = if arch.max_shields > SimScalar::ZERO {
-                (entity.shields / arch.max_shields).to_f32().clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
+    let shield_flash = (f32::from(entity.shield_hit_flash_ticks)) / 8.0;
+    let hull_flash = (f32::from(entity.hull_hit_flash_ticks)) / 8.0;
 
-            let shield_flash = (f32::from(entity.shield_hit_flash_ticks)) / 8.0;
-            let hull_flash = (f32::from(entity.hull_hit_flash_ticks)) / 8.0;
+    let speed_boosted = entity.active_buffs.iter().any(|b| b.buff_id == 1);
 
-            let speed_boosted = entity.active_buffs.iter().any(|b| b.buff_id == 1);
-
-            output.bubbles.push(BubbleRenderInstance {
-                entity_id: entity.id,
-                shape: arch.shape,
-                silhouette: arch.silhouette,
-                unit_type: entity.unit_type_id,
-                owner: entity.owner,
-                world_pos: [
-                    entity.position.x.to_f32(),
-                    entity.position.y.to_f32(),
-                    altitude_z,
-                ],
-                ground_z,
-                radius: arch.collision_radius.to_f32(),
-                velocity: [entity.velocity.x.to_f32(), entity.velocity.y.to_f32()],
-                heading_angle_rad: entity.heading.to_radians_f32(),
-                aim_angle_rad: entity.turret_angle.to_radians_f32(),
-                is_attacking,
-                weapon_visual: entity
-                    .siege_weapon
-                    .as_ref()
-                    .map(|w| w.visual_kind)
-                    .or_else(|| arch.ground_weapon.as_ref().map(|w| w.visual_kind))
-                    .or_else(|| arch.weapon.as_ref().map(|w| w.visual_kind))
-                    .unwrap_or(WeaponVisualKind::None),
-                attack_target_pos: None,
-                anim_state: entity.current_anim,
-                anim_progress: entity.anim_progress.to_f32(),
-                hp_ratio,
-                shield_ratio,
-                shield_hit_flash: shield_flash,
-                hull_hit_angle_rad: entity.last_hit_angle.to_radians_f32(),
-                hull_hit_flash: hull_flash,
-                build_or_queue_progress: Self::published_progress(entity),
-                selected: false,
-                cloaked: entity.is_cloaked,
-                speed_boosted,
-            });
-        }
-
-        output.combat_events.append(&mut self.pending_events);
+    BubbleRenderInstance {
+        entity_id: entity.id,
+        shape: arch.shape,
+        silhouette: arch.silhouette,
+        unit_type: entity.unit_type_id,
+        owner: entity.owner,
+        world_pos: [
+            entity.position.x.to_f32(),
+            entity.position.y.to_f32(),
+            altitude_z,
+        ],
+        ground_z,
+        radius: arch.collision_radius.to_f32(),
+        velocity: [entity.velocity.x.to_f32(), entity.velocity.y.to_f32()],
+        heading_angle_rad: entity.heading.to_radians_f32(),
+        aim_angle_rad: entity.turret_angle.to_radians_f32(),
+        is_attacking,
+        weapon_visual: entity
+            .siege_weapon
+            .as_ref()
+            .map(|w| w.visual_kind)
+            .or_else(|| arch.ground_weapon.as_ref().map(|w| w.visual_kind))
+            .or_else(|| arch.weapon.as_ref().map(|w| w.visual_kind))
+            .unwrap_or(WeaponVisualKind::None),
+        attack_target_pos: None,
+        anim_state: entity.current_anim,
+        anim_progress: entity.anim_progress.to_f32(),
+        hp_ratio,
+        shield_ratio,
+        shield_hit_flash: shield_flash,
+        hull_hit_angle_rad: entity.last_hit_angle.to_radians_f32(),
+        hull_hit_flash: hull_flash,
+        build_or_queue_progress: SimWorld::published_progress(entity),
+        selected: false,
+        cloaked: entity.is_cloaked,
+        speed_boosted,
     }
 }
