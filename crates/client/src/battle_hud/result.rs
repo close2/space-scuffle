@@ -122,6 +122,19 @@ impl ResultScreen {
         &self.length_line
     }
 
+    /// The cached text buffer, as `(name, address, capacity)`.
+    ///
+    /// Evidence for the steady-state tests that a refresh reuses storage. Not part of the HUD's
+    /// interface.
+    #[doc(hidden)]
+    pub fn retained_buffers(&self) -> impl Iterator<Item = (&'static str, usize, usize)> + '_ {
+        std::iter::once((
+            "result.length_line",
+            self.length_line.as_ptr().addr(),
+            self.length_line.capacity(),
+        ))
+    }
+
     /// Brings the screen up to date, rewriting the text only when the final tick changed.
     fn update(
         &mut self,

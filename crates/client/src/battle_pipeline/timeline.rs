@@ -280,6 +280,30 @@ impl BattleFrameState {
         }
     }
 
+    /// The buffers rebuilt on every frame, as `(name, address, capacity in elements)`.
+    ///
+    /// `previous` and `current` trade places on each tick by design, so only the presented pose
+    /// and the event queue are listed. A `VecDeque` exposes no buffer address, only a moving
+    /// front, so the queue reports address 0 and its capacity. Evidence for the steady-state
+    /// tests; not part of the timeline's interface.
+    #[doc(hidden)]
+    pub fn retained_buffers(&self) -> impl Iterator<Item = (&'static str, usize, usize)> + '_ {
+        [
+            (
+                "frames.presented.bubbles",
+                self.presented.bubbles.as_ptr().addr(),
+                self.presented.bubbles.capacity(),
+            ),
+            (
+                "frames.presented.combat_events",
+                self.presented.combat_events.as_ptr().addr(),
+                self.presented.combat_events.capacity(),
+            ),
+            ("frames.pending_events", 0, self.pending_events.capacity()),
+        ]
+        .into_iter()
+    }
+
     /// Returns retained events awaiting their displayed tick, for diagnostics/tests.
     #[must_use]
     pub fn pending_event_count(&self) -> usize {
