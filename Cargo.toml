@@ -41,6 +41,10 @@ similar_names = "allow"
 cast_possible_truncation = "warn"
 cast_precision_loss = "warn"
 cast_sign_loss = "warn"
+# Stated explicitly although `pedantic` already enables it: no production function may
+# exceed the threshold in clippy.toml (100 counted lines). Test code is exempt by policy
+# (Phase 9 decision D-1); production suppressions are being removed by Phase 9 step 9.2.
+too_many_lines = "warn"
 
 [workspace.dependencies]
 # Fixed-point deterministic math
