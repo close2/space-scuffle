@@ -78,8 +78,7 @@ fn handle_file_browser(
                 load_requests.send(LoadDocumentRequest::Open(path));
             }
             FileBrowserAction::Save(path) => {
-                let map_file = doc.doc.encode();
-                match map_file.save_atomic(&path) {
+                match doc.doc.encode().and_then(|file| file.save_atomic(&path)) {
                     Ok(()) => {
                         doc.mark_saved(path.clone());
                         tool_state.last_status_message = Some(format!("Saved {}", path.display()));

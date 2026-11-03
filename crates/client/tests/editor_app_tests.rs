@@ -430,7 +430,7 @@ impl EditorHarness {
         let path = dir.path().join(FIXTURE_MAP_FILE);
         doc.doc
             .encode()
-            .save_atomic(&path)
+            .and_then(|file| file.save_atomic(&path))
             .expect("write fixture map");
         let mut harness = Self::boot(&InitialDocument::Open(path));
         harness.fixture_dir = Some(dir);
@@ -607,7 +607,10 @@ impl EditorHarness {
             .parent()
             .expect("fixture has a directory")
             .join(file_name);
-        doc.doc.encode().save_atomic(&path).expect("write map");
+        doc.doc
+            .encode()
+            .and_then(|file| file.save_atomic(&path))
+            .expect("write map");
         self.request_open(path.clone());
         path
     }
