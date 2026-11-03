@@ -20,7 +20,7 @@ use std::fmt::Write;
 
 use bevy::prelude::*;
 use sim_types::snapshot::{BubbleRenderInstance, PlayerStatusView};
-use sim_types::{AnimState, EntityId, PlayerId, PlayerView, UnitTypeId};
+use sim_types::{AnimState, EntityId, PlayerId, PlayerView, Tick, UnitTypeId};
 
 use super::catalog::CommandCatalog;
 use super::feed::BattleFeed;
@@ -162,11 +162,11 @@ impl HudModel {
                 status.minerals, status.gas, status.supply_used, status.supply_max
             );
         }
-        let seconds = (SIM_TICK_PERIOD * self.view.tick.0).as_secs();
+        let seconds = clock_seconds(self.view.tick);
         if self.shown_seconds != Some(seconds) {
             self.shown_seconds = Some(seconds);
             self.clock_line.clear();
-            let _ = write!(self.clock_line, "{}:{:02}", seconds / 60, seconds % 60);
+            write_clock(&mut self.clock_line, seconds);
         }
     }
 
@@ -249,6 +249,16 @@ impl HudModel {
             })
         });
     }
+}
+
+/// Whole seconds of match time at `tick`.
+pub(super) fn clock_seconds(tick: Tick) -> u64 {
+    (SIM_TICK_PERIOD * tick.0).as_secs()
+}
+
+/// Appends `seconds` of match time to `line` as minutes and seconds.
+pub(super) fn write_clock(line: &mut String, seconds: u64) {
+    let _ = write!(line, "{}:{:02}", seconds / 60, seconds % 60);
 }
 
 /// Finds `id` in `bubbles`, which the simulation publishes sorted by entity ID.

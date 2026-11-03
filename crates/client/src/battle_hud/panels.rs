@@ -8,8 +8,9 @@
 //! # How it fits
 //! Runs before [`lab_ui_system`](crate::lab_ui_system), which measures the room the panels leave.
 //! That room becomes the camera viewport and the world's hit test, as [`battle_hud`](super)
-//! explains. The feed and the note on a refused site float over the world. Neither takes input,
-//! so a click on them lands in the world beneath.
+//! explains. The feed and the note on a refused site float too, but they take no input, so a
+//! click on them lands in the world beneath. The one floating surface that takes clicks is the
+//! [`result`](super::result) window, which draws itself.
 //!
 //! A click is recorded in [`HudIntent`], and [`actions`](super::actions) carries it out.
 //!
@@ -163,7 +164,8 @@ pub fn battle_hud_system(
     }
 }
 
-fn visible(response: &egui::Response, clip: egui::Rect) -> Option<egui::Rect> {
+/// The part of `response` inside `clip`, or `None` if nothing of it shows.
+pub(super) fn visible(response: &egui::Response, clip: egui::Rect) -> Option<egui::Rect> {
     let rect = response.rect.intersect(clip);
     rect.is_positive().then_some(rect)
 }
