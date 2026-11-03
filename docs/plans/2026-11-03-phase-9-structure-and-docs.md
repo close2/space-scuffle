@@ -1337,6 +1337,9 @@ Relative links only. It states what exists, not what was once hoped for; intent 
 - **Found by WP2, a library panic for a later bugfix plan:** `MapDocument::encode` (`crates/sim_map/src/map_format.rs`)
   indexes out of bounds when `cells.len() != width * height`, instead of returning a typed error (charter §1.1). The
   decode corpus in `validation_golden_tests.rs` skips such documents, so the fix needs its own failing test first.
+- **Found by WP1, a test gap:** swapping `update_vision` and `acquire_targets` in `step_into` leaves the golden replay
+  (`crates/sim_core/tests/fixtures/golden_replay.ron`) passing; three behaviour tests catch it instead. The replay's
+  scenario never acquires a target whose visibility changes on the same tick, so it does not pin the phase order.
 
 ## 10. Decisions for the owner
 
