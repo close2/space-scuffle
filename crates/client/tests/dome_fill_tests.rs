@@ -35,19 +35,15 @@ mod gpu_run;
 #[path = "support/shader_ir.rs"]
 mod shader_ir;
 
-use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::prelude::*;
 use bevy::render::mesh::VertexAttributeValues;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
-use bevy::winit::{WakeUp, WinitPlugin};
-use bevy_egui::EguiPlugin;
 use client::bubble_shader::{
     sync_bubble_material, BubbleSharedMeshes, BubbleUniformGpu, FlipbookRegistry,
 };
 use client::player_presentation::PlayerPalette;
-use client::presentation::GamePresentationPlugins;
 use client::runtime_battle::{BattleDefinition, BattleRenderStatus, DEFAULT_BATTLE_SCENARIO};
-use client::{BubbleDomeMaterial, CatalogResource, ClientAppPlugin, ClientMode, RtsCamera};
+use client::{BubbleDomeMaterial, CatalogResource, ClientMode, RtsCamera};
 use naga::ShaderStage;
 use serde::{Deserialize, Serialize};
 use shader_ir::production_module;
@@ -636,40 +632,11 @@ fn a_foundation_fills_from_rim_to_apex_on_the_real_renderer() -> TestResult {
 /// such a thread by default. That is the only reason this repeats the production assembly: the
 /// builder has no way to set [`WinitPlugin::run_on_any_thread`], which a shipped client must not use.
 fn windowed_client() -> TestResult<App> {
-    let root = client::ResolvedAssetsRoot::resolve()?;
-    let file_path = root.bevy_file_path()?.to_owned();
-    let definition = BattleDefinition::load(root.as_path(), DEFAULT_BATTLE_SCENARIO.as_ref())?;
-    let mut winit = WinitPlugin::<WakeUp>::default();
-    winit.run_on_any_thread = true;
-    let mut app = App::new();
-    app.insert_resource(CatalogResource(definition.catalogs.units.clone()))
-        .insert_resource(definition.palette.clone())
-        .insert_resource(definition)
-        .insert_resource(root)
-        .add_plugins(
-            GamePresentationPlugins
-                .set(AssetPlugin {
-                    file_path,
-                    ..default()
-                })
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        resolution: (1280.0_f32, 720.0_f32).into(),
-                        visible: false,
-                        ..default()
-                    }),
-                    ..default()
-                })
-                .set(winit),
-        )
-        .add_plugins(FrameTimeDiagnosticsPlugin)
-        .add_plugins(EguiPlugin)
-        .add_plugins(ClientAppPlugin {
-            mode: ClientMode::VisualLab,
-            max_frames: Some(CHILD_FRAME_LIMIT),
-            screenshot_out: None,
-        });
-    Ok(app)
+    Ok(client::build_graphical_app_off_main_thread(
+        ClientMode::VisualLab,
+        Some(CHILD_FRAME_LIMIT),
+        DEFAULT_BATTLE_SCENARIO.as_ref(),
+    )?)
 }
 
 /// The child of [`a_foundation_fills_from_rim_to_apex_on_the_real_renderer`].

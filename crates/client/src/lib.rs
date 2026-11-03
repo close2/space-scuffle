@@ -537,6 +537,31 @@ pub fn build_graphical_app_with_options(
     scenario_path: &std::path::Path,
     screenshot_out: Option<PathBuf>,
 ) -> Result<App, ClientStartupError> {
+    assemble_graphical_app(mode, max_frames, scenario_path, screenshot_out, false)
+}
+
+/// Builds the production graphical application for a window opened away from the main thread.
+///
+/// A test that needs a real window runs on a libtest thread, which the default window backend
+/// refuses. Everything else is what [`build_graphical_app`] builds.
+///
+/// # Errors
+/// Returns typed asset/scenario errors, or rejects the separate headless-check mode.
+pub fn build_graphical_app_off_main_thread(
+    mode: ClientMode,
+    max_frames: Option<u64>,
+    scenario_path: &std::path::Path,
+) -> Result<App, ClientStartupError> {
+    assemble_graphical_app(mode, max_frames, scenario_path, None, true)
+}
+
+fn assemble_graphical_app(
+    mode: ClientMode,
+    max_frames: Option<u64>,
+    scenario_path: &std::path::Path,
+    screenshot_out: Option<PathBuf>,
+    run_on_any_thread: bool,
+) -> Result<App, ClientStartupError> {
     if mode == ClientMode::HeadlessCheck {
         return Err(ClientStartupError::HeadlessMode);
     }
@@ -549,6 +574,8 @@ pub fn build_graphical_app_with_options(
     let is_virtual_or_test =
         max_frames.is_some() || std::env::var("SPACE_SCUFFLE_VIRTUAL_GPU").is_ok();
     let is_visible = !is_virtual_or_test || std::env::var("SPACE_SCUFFLE_SHOW_WINDOW").is_ok();
+    let mut window_backend = bevy::winit::WinitPlugin::<bevy::winit::WakeUp>::default();
+    window_backend.run_on_any_thread = run_on_any_thread;
 
     let mut app = App::new();
     app.insert_resource(catalog)
@@ -569,7 +596,8 @@ pub fn build_graphical_app_with_options(
                         ..default()
                     }),
                     ..default()
-                }),
+                })
+                .set(window_backend),
         )
         .add_plugins(FrameTimeDiagnosticsPlugin)
         .add_plugins(EguiPlugin)
