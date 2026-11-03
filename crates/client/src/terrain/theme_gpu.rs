@@ -15,7 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
-use asset_baker::terrain_theme::{TerrainTheme, TerrainThemeError};
+use asset_baker::terrain_theme::{TerrainTheme, TerrainThemeError, ThemeLayer};
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::pbr::{CascadeShadowConfigBuilder, DirectionalLight};
 use bevy::prelude::*;
@@ -241,6 +241,10 @@ pub fn generate_mip_chain(
 
 /// Loads a theme's baked PNG textures and creates three 4-layer 2D array [`Image`] assets.
 ///
+/// Textures load layer by layer in [`TerrainTheme::ordered_layers`] order (`load_layer`); each
+/// map kind then becomes one array (`build_texture_array`) whose layers carry full CPU mip chains
+/// in layer-major order.
+///
 /// # Errors
 /// Returns [`TerrainThemeError::MissingSource`] if any required texture file is missing,
 /// [`TerrainThemeError::Image`] on decoding failure, or
@@ -249,11 +253,7 @@ pub fn generate_mip_chain(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
-    reason = "map cell coordinates stay far below the range of f32 and i32"
-)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "a single ordered sequence that shares its local state"
+    reason = "texture sizes stay far below the range of f32 and u32"
 )]
 pub fn load_theme_texture_arrays(
     theme: &TerrainTheme,
@@ -269,69 +269,104 @@ pub fn load_theme_texture_arrays(
         );
     }
 
-    let size = theme.texture_size;
-    let mip_levels = (size as f32).log2() as u32 + 1;
-
-    let ordered_layers = theme.ordered_layers();
-
     let mut albedo_bases = Vec::with_capacity(4);
     let mut normal_bases = Vec::with_capacity(4);
     let mut orm_bases = Vec::with_capacity(4);
-
-    for layer in ordered_layers {
-        let paths = theme.baked_paths(layer);
-
-        let albedo_path = assets_root.join(&paths.albedo);
-        let normal_path = assets_root.join(&paths.normal);
-        let orm_path = assets_root.join(&paths.orm);
-
-        if !albedo_path.exists() {
-            return Err(TerrainThemeError::MissingSource(albedo_path));
-        }
-        if !normal_path.exists() {
-            return Err(TerrainThemeError::MissingSource(normal_path));
-        }
-        if !orm_path.exists() {
-            return Err(TerrainThemeError::MissingSource(orm_path));
-        }
-
-        let albedo_img = image::open(&albedo_path)
-            .map_err(|e| TerrainThemeError::Image(format!("{}: {e}", albedo_path.display())))?
-            .to_rgba8();
-        let normal_img = image::open(&normal_path)
-            .map_err(|e| TerrainThemeError::Image(format!("{}: {e}", normal_path.display())))?
-            .to_rgba8();
-        let orm_img = image::open(&orm_path)
-            .map_err(|e| TerrainThemeError::Image(format!("{}: {e}", orm_path.display())))?
-            .to_rgba8();
-
-        albedo_bases.push(albedo_img);
-        normal_bases.push(normal_img);
-        orm_bases.push(orm_img);
+    for layer in theme.ordered_layers() {
+        let [albedo, normal, orm] = load_layer(theme, layer, assets_root)?;
+        albedo_bases.push(albedo);
+        normal_bases.push(normal);
+        orm_bases.push(orm);
     }
 
-    // Generate mip chains for all 4 layers
-    let mut albedo_chains = Vec::with_capacity(4);
-    let mut normal_chains = Vec::with_capacity(4);
-    let mut orm_chains = Vec::with_capacity(4);
-
-    for img in albedo_bases {
-        albedo_chains.push(generate_mip_chain(
-            img,
-            mip_levels,
+    let array = ArrayShape {
+        size: theme.texture_size,
+        mip_levels: (theme.texture_size as f32).log2() as u32 + 1,
+        anisotropy_clamp,
+    };
+    Ok(ThemeGpuTextures {
+        albedo: build_texture_array(
+            albedo_bases,
             downsample_albedo_linear,
-        ));
-    }
-    for img in normal_bases {
-        normal_chains.push(generate_mip_chain(
-            img,
-            mip_levels,
+            TextureFormat::Rgba8UnormSrgb,
+            &array,
+        ),
+        normal: build_texture_array(
+            normal_bases,
             downsample_normal_renormalized,
-        ));
+            TextureFormat::Rgba8Unorm,
+            &array,
+        ),
+        orm: build_texture_array(
+            orm_bases,
+            downsample_orm_linear,
+            TextureFormat::Rgba8Unorm,
+            &array,
+        ),
+    })
+}
+
+/// Loads one theme layer's baked `[albedo, normal, orm]` images.
+///
+/// All three files are checked for existence before any is decoded, so a missing file is reported
+/// ahead of a corrupt sibling.
+///
+/// # Errors
+/// [`TerrainThemeError::MissingSource`] for the first missing file in albedo, normal, orm order;
+/// otherwise [`TerrainThemeError::Image`] for the first file that fails to decode.
+fn load_layer(
+    theme: &TerrainTheme,
+    layer: &ThemeLayer,
+    assets_root: &Path,
+) -> Result<[RgbaImage; 3], TerrainThemeError> {
+    let paths = theme.baked_paths(layer);
+    let files = [
+        assets_root.join(&paths.albedo),
+        assets_root.join(&paths.normal),
+        assets_root.join(&paths.orm),
+    ];
+    if let Some(missing) = files.iter().find(|path| !path.exists()) {
+        return Err(TerrainThemeError::MissingSource(missing.clone()));
     }
-    for img in orm_bases {
-        orm_chains.push(generate_mip_chain(img, mip_levels, downsample_orm_linear));
-    }
+    let [albedo, normal, orm] = &files;
+    Ok([
+        decode_rgba(albedo)?,
+        decode_rgba(normal)?,
+        decode_rgba(orm)?,
+    ])
+}
+
+/// Decodes the image at `path` to RGBA8.
+fn decode_rgba(path: &Path) -> Result<RgbaImage, TerrainThemeError> {
+    Ok(image::open(path)
+        .map_err(|e| TerrainThemeError::Image(format!("{}: {e}", path.display())))?
+        .to_rgba8())
+}
+
+/// Shape and sampling shared by the three terrain texture arrays.
+struct ArrayShape {
+    /// Edge length of mip 0 in texels.
+    size: u32,
+    /// Mip levels per layer, down to 1x1.
+    mip_levels: u32,
+    /// Anisotropic filtering clamp of the sampler.
+    anisotropy_clamp: u16,
+}
+
+/// Builds one 4-layer 2D array [`Image`] from its layer base images: a CPU mip chain per layer
+/// made with `downsample`, packed layer-major (`[layer 0 mips, layer 1 mips, ...]`), with a
+/// repeating trilinear sampler.
+fn build_texture_array(
+    bases: Vec<RgbaImage>,
+    downsample: fn(&RgbaImage) -> RgbaImage,
+    format: TextureFormat,
+    shape: &ArrayShape,
+) -> Image {
+    let ArrayShape {
+        size,
+        mip_levels,
+        anisotropy_clamp,
+    } = *shape;
 
     // Calculate total buffer size across all 4 layers and their mips
     let mut per_layer_bytes = 0usize;
@@ -342,57 +377,44 @@ pub fn load_theme_texture_arrays(
     let total_bytes = per_layer_bytes * 4;
 
     // Pack in layer-major order: Layer 0 (all mips), Layer 1 (all mips), ...
-    let mut albedo_data = Vec::with_capacity(total_bytes);
-    let mut normal_data = Vec::with_capacity(total_bytes);
-    let mut orm_data = Vec::with_capacity(total_bytes);
-
-    for l in 0..4 {
-        for m in 0..mip_levels as usize {
-            albedo_data.extend_from_slice(&albedo_chains[l][m]);
-            normal_data.extend_from_slice(&normal_chains[l][m]);
-            orm_data.extend_from_slice(&orm_chains[l][m]);
+    let mut data = Vec::with_capacity(total_bytes);
+    for base in bases {
+        for mip in generate_mip_chain(base, mip_levels, downsample) {
+            data.extend_from_slice(&mip);
         }
     }
 
-    let make_image = |data: Vec<u8>, format: TextureFormat| -> Image {
-        Image {
-            data,
-            texture_descriptor: TextureDescriptor {
-                label: None,
-                size: Extent3d {
-                    width: size,
-                    height: size,
-                    depth_or_array_layers: 4,
-                },
-                mip_level_count: mip_levels,
-                sample_count: 1,
-                dimension: TextureDimension::D2,
-                format,
-                usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-                view_formats: &[],
+    Image {
+        data,
+        texture_descriptor: TextureDescriptor {
+            label: None,
+            size: Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: 4,
             },
-            texture_view_descriptor: Some(TextureViewDescriptor {
-                dimension: Some(TextureViewDimension::D2Array),
-                ..default()
-            }),
-            sampler: ImageSampler::Descriptor(ImageSamplerDescriptor {
-                address_mode_u: ImageAddressMode::Repeat,
-                address_mode_v: ImageAddressMode::Repeat,
-                mag_filter: ImageFilterMode::Linear,
-                min_filter: ImageFilterMode::Linear,
-                mipmap_filter: ImageFilterMode::Linear,
-                anisotropy_clamp,
-                ..default()
-            }),
-            asset_usage: RenderAssetUsages::default(),
-        }
-    };
-
-    Ok(ThemeGpuTextures {
-        albedo: make_image(albedo_data, TextureFormat::Rgba8UnormSrgb),
-        normal: make_image(normal_data, TextureFormat::Rgba8Unorm),
-        orm: make_image(orm_data, TextureFormat::Rgba8Unorm),
-    })
+            mip_level_count: mip_levels,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+            view_formats: &[],
+        },
+        texture_view_descriptor: Some(TextureViewDescriptor {
+            dimension: Some(TextureViewDimension::D2Array),
+            ..default()
+        }),
+        sampler: ImageSampler::Descriptor(ImageSamplerDescriptor {
+            address_mode_u: ImageAddressMode::Repeat,
+            address_mode_v: ImageAddressMode::Repeat,
+            mag_filter: ImageFilterMode::Linear,
+            min_filter: ImageFilterMode::Linear,
+            mipmap_filter: ImageFilterMode::Linear,
+            anisotropy_clamp,
+            ..default()
+        }),
+        asset_usage: RenderAssetUsages::default(),
+    }
 }
 
 /// Spawns theme directional and ambient lights into the scene.
