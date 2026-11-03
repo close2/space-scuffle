@@ -4,7 +4,9 @@
 //! Proves, through the production [`client::ClientAppPlugin`], that a frame on which nothing new
 //! happens creates, modifies and removes no asset, spawns and despawns no entity, and keeps every
 //! retained buffer of the sync systems at the same address and capacity. A moving frame may only
-//! modify the bubble material of a unit whose heading changed (C-5).
+//! modify the bubble material of a unit whose heading changed (C-5). A frame of steady combat
+//! modifies and removes no combat effect material, and adds one only while the pool of effect
+//! slots grows (C-17).
 //!
 //! # How it fits
 //! This is layers 1 and 2 of blueprint D-2 (`docs/plans/2026-11-03-close-phase-6-7-8-exits.md`).
@@ -65,7 +67,7 @@ use client::runtime_battle::{MapPresentation, SKIRMISH_SCENARIO};
 use client::smog::SmogVolumeMaterial;
 use client::terrain::material::TerrainMaterial;
 use client::terrain::{MesherScratch, TerrainChunks};
-use client::vfx::CombatFxMaterial;
+use client::vfx::{CombatFxMaterial, CombatFxMaterialPool, CombatLightEffect};
 use client::{ClientMode, CombatVisualEvent, SmogGrid3d, SwarmBubble};
 use sim_types::snapshot::BubbleRenderInstance;
 use sim_types::{EntityId, RenderSnapshot};
@@ -91,6 +93,15 @@ const PAUSED_FRAMES: usize = 64;
 /// Ticks of warm-up before a moving window, and the window's length, in simulation ticks.
 const WARM_TICKS: u32 = 30;
 const MOVING_TICKS: u32 = 200;
+
+/// Frames of combat before the effect window, so the pool of effect materials can reach its size.
+const COMBAT_WARM_FRAMES: usize = 120;
+
+/// Length of the combat effect window, in frames.
+const COMBAT_FRAMES: usize = 240;
+
+/// Fewest combat events the effect window must hold to show steady combat.
+const MIN_COMBAT_EVENTS: u64 = 100;
 
 /// A marching window shorter than this does not show steady movement.
 const MIN_MARCH_TICKS: u32 = 50;
@@ -132,6 +143,8 @@ struct AssetEventTally {
     counts: BTreeMap<(&'static str, EventKind), u64>,
     /// Combat events the client published, so a window can end before contact.
     combat_events: u64,
+    /// Combat effect entities spawned, counted when their [`CombatLightEffect`] is added.
+    effects_spawned: u64,
 }
 
 impl AssetEventTally {
@@ -168,6 +181,18 @@ fn count_combat_events(
     mut tally: ResMut<'_, AssetEventTally>,
 ) {
     tally.combat_events += events.read().count() as u64;
+}
+
+/// Counts the combat effect entities spawned since the last frame.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+fn count_spawned_effects(
+    spawned: Query<'_, '_, (), Added<CombatLightEffect>>,
+    mut tally: ResMut<'_, AssetEventTally>,
+) {
+    tally.effects_spawned += spawned.iter().count() as u64;
 }
 
 /// Declares the watched asset types: [`add_tallies`] adds one tally system per type, and
@@ -220,7 +245,7 @@ watched_assets!(
 fn observe(harness: &mut Harness) {
     let app = &mut harness.app;
     app.init_resource::<AssetEventTally>()
-        .add_systems(Last, count_combat_events);
+        .add_systems(Last, (count_combat_events, count_spawned_effects));
     add_tallies(app);
     // The tally systems read every event still buffered, so the observation starts clean.
     harness.step(1);
@@ -821,5 +846,71 @@ fn swarm_stress_frames_create_modify_and_remove_nothing() {
         moved(&buffers, &retained_buffers(harness.app.world())),
         Vec::new(),
         "retained buffers that moved or grew"
+    );
+}
+
+/// Material slots the effect pool has created since the client started.
+fn pool_created(harness: &Harness) -> u64 {
+    harness
+        .app
+        .world()
+        .resource::<CombatFxMaterialPool>()
+        .created()
+}
+
+/// C-17: steady combat reuses pooled effect materials and never re-prepares one.
+///
+/// Every effect writes its shader data into its own component and the render world copies it into
+/// the slot's existing GPU buffer, so the window may add materials only while the pool grows, and
+/// must modify and remove none.
+#[test]
+fn combat_frames_reuse_effect_materials() {
+    let mut harness = Harness::battle();
+    settle(&mut harness, true);
+    harness.resume();
+    let start = harness.world().current_tick;
+    while tallies(&harness).combat_events == 0 {
+        harness.step(1);
+        assert!(
+            harness.world().current_tick < start + 2_000,
+            "the armies never met"
+        );
+    }
+    harness.step(COMBAT_WARM_FRAMES);
+    reset(&mut harness);
+    let created_before = pool_created(&harness);
+    harness.step(COMBAT_FRAMES);
+    let grown = pool_created(&harness) - created_before;
+    let tally = tallies(&harness);
+    let materials = type_name::<Assets<CombatFxMaterial>>();
+    let added = tally.count(materials, EventKind::Added);
+    eprintln!(
+        "combat window: {} combat events, {} effects spawned, {added} materials added, pool grew by \
+         {grown}",
+        tally.combat_events, tally.effects_spawned
+    );
+    assert!(
+        tally.combat_events >= MIN_COMBAT_EVENTS,
+        "the window must hold steady combat: {} combat events",
+        tally.combat_events
+    );
+    assert_eq!(
+        tally.count(materials, EventKind::Modified),
+        0,
+        "effect materials modified"
+    );
+    assert_eq!(
+        tally.count(materials, EventKind::Removed),
+        0,
+        "effect materials removed"
+    );
+    assert!(
+        added <= grown,
+        "{added} effect materials added while the pool created {grown}"
+    );
+    assert!(
+        added < tally.effects_spawned,
+        "{added} effect materials added for {} effects spawned: slots are not reused",
+        tally.effects_spawned
     );
 }

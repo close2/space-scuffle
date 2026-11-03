@@ -95,66 +95,66 @@ Severity is impact on someone using the game or relying on the charter.
 
 | ID | Sev | Evidence | Defect | Where |
 |---|---|---|---|---|
-| S-1 | High | **[R]** | Hold Position units never fire: `_ => false`, and the weapon step reads targets only from `AttackTarget` | `world.rs:1960`, `:2507` |
-| S-2 | High | **[R]** | Explicit focus fire is replaced by the nearest enemy within 3 ticks | `world.rs:1930`, `:2075` |
-| S-3 | High | **[R]** | Anti-air-only structures shoot ground units: `weapon = ground.or(air)` | `catalog.rs:970`, `:177` |
-| S-4 | High | **[V]** | Projectile weapons ignore `attacks_count`: one hit vs the instant path's loop, so `attacks_count: 2` projectile units are likely at half damage | `world.rs:2970` vs `:2677` |
-| S-5 | High | [A] | Friendly-fire splash makes allies attack their own unit: no owner check found | `world.rs:1738`, `:1856` |
-| S-6 | High | [A] | Windup fires at the current target, ignoring `Windup.target_id`, with no range recheck | `combat.rs:454`, `world.rs:2568` |
-| S-7 | High | [A] | A sieged unit locks onto a target inside min range and stops firing | `world.rs:1949`, `combat.rs:355` |
+| S-1 | High | **[R]** | Hold Position units never fire: `_ => false`, and the weapon step reads targets only from `AttackTarget`. **Fixed** in `56437da` (3.3): holders acquire in-range targets without pursuit; test `combat_correctness_tests.rs::s1_hold_position_fires_at_enemy_in_range` | `world.rs:1960`, `:2507` |
+| S-2 | High | **[R]** | Explicit focus fire is replaced by the nearest enemy within 3 ticks. **Fixed** in `56437da` (3.4): explicit and acquired targets are marked, acquired ones with hysteresis; player commands always explicit in `3052128`; test `combat_correctness_tests.rs::s2_explicit_focus_fire_survives_nearby_enemy` | `world.rs:1930`, `:2075` |
+| S-3 | High | **[R]** | Anti-air-only structures shoot ground units: `weapon = ground.or(air)`. **Fixed** in `f3d6ba2` (2.8); test `weapon_catalog_rules_tests.rs::s3_air_only_structure_does_not_shoot_ground_units` | `catalog.rs:970`, `:177` |
+| S-4 | High | **[V]** | Projectile weapons ignore `attacks_count`: one hit vs the instant path's loop, so `attacks_count: 2` projectile units are likely at half damage. **Fixed** in `7a0e01c` (3.2); test `combat_correctness_tests.rs::s4_projectile_weapon_applies_every_strike` | `world.rs:2970` vs `:2677` |
+| S-5 | High | [A] | Friendly-fire splash makes allies attack their own unit: no owner check found. **Fixed** in `56437da` (3.5); test `combat_correctness_tests.rs::s5_friendly_splash_does_not_provoke_allies` | `world.rs:1738`, `:1856` |
+| S-6 | High | [A] | Windup fires at the current target, ignoring `Windup.target_id`, with no range recheck. **Fixed** in `56437da` (3.6); tests `combat_correctness_tests.rs::s6_windup_fires_at_its_bound_target`, `::s6_windup_rechecks_range_at_release` | `combat.rs:454`, `world.rs:2568` |
+| S-7 | High | [A] | A sieged unit locks onto a target inside min range and stops firing. **Fixed** in `56437da` (3.6); test `combat_correctness_tests.rs::s7_sieged_unit_retargets_inside_minimum_range` | `world.rs:1949`, `combat.rs:355` |
 | S-8 | High | **[V]** | `Build` is free, instant and unchecked, and its result is discarded. **Fixed** in `3a2865e` (5.4): transactional admission, payment on arrival, construction lifecycle | `world.rs:1139` |
 | S-9 | High | **[V]** | **There is no income.** The only write to minerals is a subtraction; `Harvest` and `ReturnCargo` have no handler. **Fixed** in `3a2865e` (5.5); income through real input in `7a432f9` | `production/mod.rs:542` |
 | S-10 | High | **[V]** | `research_upgrade` has no non-test caller. [A] Cost and time unread; not idempotent. **Fixed**: repeats rejected in `3052128` (3.9), research order and queue in `3a2865e` (5.6), card entry in `5482e95` | `world.rs:491` |
-| S-11 | High | [A] | `Unlock*` upgrades, `sight_delta` and several overrides are never read | `world.rs:824` |
-| S-12 | Med | [A] | Target dying in Windup burns a full cooldown | `combat.rs:458` |
-| S-13 | Med | [A] | Ground splash hits air; stat bonus ignores falloff | `world.rs:2705`, `combat.rs:191` |
-| S-14 | Med | [A] | `bonus_upgrade_per_level` only applies vs ARMORED | `combat.rs:67` |
-| S-15 | Med | **[V]** | `firing_arc_deg: 360` wraps to arc 0, the strictest possible; 16 catalog entries use it. Per-shot cost not measured | `catalog.rs:732`, `math.rs:797`, `combat.rs:322` |
-| S-16 | Med | [A] | Catalog validation allows crashes: `projectile_speed: 0` divides by zero on every peer | `validation.rs:213`, `world.rs:2618` |
-| S-17 | Med | [A] | Attack path ignores cloak and invulnerability (latent: no shipped cloak) | `world.rs:2477` |
-| S-18 | Med | [A] | Mode-transition copies have diverged; instant vs channel behave differently | `world.rs:1006`, `:1250` |
-| S-19 | Med | [A] | Shielded structures never regenerate; `is_gas_extractor` ignored | `catalog.rs:1014` |
+| S-11 | High | [A] | `Unlock*` upgrades, `sight_delta` and several overrides are never read. **Fixed** in `3052128` (3.9): `sight_delta` feeds vision, unlocks gate abilities and overclock, and an effect nothing applies is a load error; tests `combat_correctness_tests.rs::s11_sight_delta_extends_vision`, `weapon_catalog_rules_tests.rs::s11_upgrade_effects_must_resolve` | `world.rs:824` |
+| S-12 | Med | [A] | Target dying in Windup burns a full cooldown. **Fixed** in `56437da` (3.6); test `combat_correctness_tests.rs::s12_target_death_in_windup_burns_no_cooldown` | `combat.rs:458` |
+| S-13 | Med | [A] | Ground splash hits air; stat bonus ignores falloff. **Fixed** in `7a0e01c` (3.2); tests `combat_correctness_tests.rs::s13_ground_splash_does_not_reach_air`, `damage_and_shields_tests.rs::s13_splash_falloff_scales_stat_bonus_damage` | `world.rs:2705`, `combat.rs:191` |
+| S-14 | Med | [A] | `bonus_upgrade_per_level` only applies vs ARMORED. **Fixed** in `7a0e01c` (3.2); test `damage_and_shields_tests.rs::s14_bonus_upgrade_follows_the_weapons_attribute_bonus` | `combat.rs:67` |
+| S-15 | Med | **[V]** | `firing_arc_deg: 360` wraps to arc 0, the strictest possible; 16 catalog entries use it. Per-shot cost not measured. **Fixed** in `f3d6ba2` (2.8): an arc of 180° or more is unrestricted; test `weapon_catalog_rules_tests.rs::s15_authored_360_degree_arc_is_unrestricted` | `catalog.rs:732`, `math.rs:797`, `combat.rs:322` |
+| S-16 | Med | [A] | Catalog validation allows crashes: `projectile_speed: 0` divides by zero on every peer. **Fixed** in `f3d6ba2` (2.3); test `weapon_catalog_rules_tests.rs::s16_projectile_speed_must_be_positive` | `validation.rs:213`, `world.rs:2618` |
+| S-17 | Med | [A] | Attack path ignores cloak and invulnerability (latent: no shipped cloak). **Fixed** in `56437da` (3.7); test `combat_correctness_tests.rs::s17_attack_path_respects_availability` | `world.rs:2477` |
+| S-18 | Med | [A] | Mode-transition copies have diverged; instant vs channel behave differently. **Fixed** in `3052128` (3.8): one `apply_mode_transition`; test `combat_correctness_tests.rs::s18_instant_and_channelled_transitions_agree` | `world.rs:1006`, `:1250` |
+| S-19 | Med | [A] | Shielded structures never regenerate; `is_gas_extractor` ignored. **Fixed** in `3052128` (3.8): authored structure regeneration, and `is_gas_extractor` reaches the capabilities, consumed by the economy in `3a2865e` (5.5); tests `combat_correctness_tests.rs::s19_shielded_structures_regenerate`, `weapon_catalog_rules_tests.rs::s19_gas_extractor_flag_reaches_capabilities` | `catalog.rs:1014` |
 | S-20 | Med | [V] | `world.rs` is 3,205 lines; `step_weapons_and_projectiles` is ~630, with 3 splash copies that already disagree. **Fixed**: combat moved out in Phase 3 (3.1); the rest split in `8ac33ad` (9.1), leaving `world.rs` a 373-line module root | `world.rs:2458` |
 
 ### 4.2 Movement (`steering.rs`, `movement/`)
 
 | ID | Sev | Evidence | Defect | Where |
 |---|---|---|---|---|
-| M-1 | Crit | **[R]** | Friendly units walk through each other: head-on centres reach 0.03 against contact distance 0.75. `goal_dir·velocity` is compared as if it were a cosine | `steering.rs:379`, `:174`; `collision.rs:43` |
-| M-2 | Crit | **[R]** | Short orders on a stationary group are dropped on tick 1: 0.000 progress. Idle squadmates count as "settled" | `locomotion.rs:387`, `steering.rs:509` |
-| M-3 | High | **[R]** | Unreachable orders never end: 20/20 still ordered after 500 ticks at 15.67 ms/tick. The `find_path` error is dropped and A* reruns | `locomotion.rs:349`, `:421` |
-| M-4 | High | **[R]** | Enemies shove Hold Position units: 0.324 displacement. Hostile branch runs before the immobile check | `steering.rs:612`, `world.rs:2336` |
-| M-5 | High | [A] | Corner waypoints cannot pop when a blocker sits on them: handoff 0.28 vs contact 0.75 | `locomotion.rs:361` |
-| M-6 | High | [A] | Stuck units are invisible: velocity stays nonzero with zero displacement, no stuck detection | `locomotion.rs:593` |
-| M-7 | High | [A] | Pursuit has no pathing: melee slides along cliffs instead of taking the ramp. Planned, never implemented | `locomotion.rs:562` |
-| M-8 | High | [A] | Clearance is corner-anchored and asymmetric, so large units fail near +x/+y walls. Compounds M-3 | `pathfinding.rs:52`, `:479`, `:679` |
-| M-9 | High | [A] | Ramp-corner slide trap is back: X is always tried before Y | `locomotion.rs:596`, `world.rs:2437` |
-| M-10 | High | [A] | Route-retention fix is dead code in the live game: `vision_aware_pathfinding` is always true | `locomotion.rs:316`, `world.rs:241` |
-| M-11 | High | [A] | Steering is O(N²) despite a documented spatial hash | `steering.rs:265`, `:352`, `:496` |
-| M-12 | High | [A] | Smooth steering excludes final approach and pursuit, with a discontinuity at exactly 4 m | `locomotion.rs:440` |
-| M-13 | Med | [A] | Buffed units lose speed on any friendly contact; cap uses base speed | `world.rs:2408` |
-| M-14 | Med | [A] | Wedge still in `compute_push_displacement`; low-priority movers shove high-priority idlers | `steering.rs:699` |
-| M-15 | Med | [A] | Unrelated idle friendlies and buildings end Move orders early | `locomotion.rs:399` |
-| M-16 | Med | [A] | Exact head-on tie-break steers both units to the same world side | `steering.rs:296`, `:391` |
-| M-17 | Med | [A] | Collision and steering ignore cliff separation | `world.rs:2236` |
-| M-18 | Low | [A] | `from_f32_lossy` in tick loops, contrary to its docs; magic numbers throughout | `steering.rs:176` onward |
+| M-1 | Crit | **[R]** | Friendly units walk through each other: head-on centres reach 0.03 against contact distance 0.75. `goal_dir·velocity` is compared as if it were a cosine. **Fixed** in `d4109e2` (4.1); test `movement_contact_tests.rs::head_on_friendlies_keep_contact_and_pass` (repro r03) | `steering.rs:379`, `:174`; `collision.rs:43` |
+| M-2 | Crit | **[R]** | Short orders on a stationary group are dropped on tick 1: 0.000 progress. Idle squadmates count as "settled". **Fixed** in `d4109e2` (4.2): arrival is recorded per destination, not inferred from velocity; test `movement_contact_tests.rs::short_order_on_a_stationary_pair_moves_them` (repro r04) | `locomotion.rs:387`, `steering.rs:509` |
+| M-3 | High | **[R]** | Unreachable orders never end: 20/20 still ordered after 500 ticks at 15.67 ms/tick. The `find_path` error is dropped and A* reruns. **Fixed** in `d4109e2` (4.3), on the nearest-reachable-point search of `b10e9ca`; tests `movement_contact_tests.rs::unreachable_order_reports_retargets_and_terminates`, `reachability_tests.rs::nearest_point_is_shared_across_a_connected_region` | `locomotion.rs:349`, `:421` |
+| M-4 | High | **[R]** | Enemies shove Hold Position units: 0.324 displacement. Hostile branch runs before the immobile check. **Fixed** in `d4109e2` (4.4); test `movement_contact_tests.rs::enemy_cannot_shove_a_holding_unit` (repro r07) | `steering.rs:612`, `world.rs:2336` |
+| M-5 | High | [A] | Corner waypoints cannot pop when a blocker sits on them: handoff 0.28 vs contact 0.75. **Fixed** in `d4109e2` (4.5). The finding as written was not reproduced (the old code escaped by rebuilding its route every tick); that rebuild is gone, and waypoints now pop by passing; test `movement_contact_tests.rs::route_continues_past_a_blocker_on_its_corner_waypoint` | `locomotion.rs:361` |
+| M-6 | High | [A] | Stuck units are invisible: velocity stays nonzero with zero displacement, no stuck detection. **Fixed** in `d4109e2` (4.5): velocity holds achieved displacement, with no-progress detection; test `movement_contact_tests.rs::stuck_unit_reports_no_motion_and_abandons_its_order` | `locomotion.rs:593` |
+| M-7 | High | [A] | Pursuit has no pathing: melee slides along cliffs instead of taking the ramp. Planned, never implemented. **Fixed** in `d4109e2` (4.6); test `movement_contact_tests.rs::melee_pursuit_takes_the_ramp_and_reaches_the_enemy` | `locomotion.rs:562` |
+| M-8 | High | [A] | Clearance is corner-anchored and asymmetric, so large units fail near +x/+y walls. Compounds M-3. **Fixed** in `1ed9888` (2.4); tests `clearance_field_tests.rs::m8_clearance_is_invariant_under_map_rotation`, `pathfinding_properties.rs::clearance_has_no_directional_bias` | `pathfinding.rs:52`, `:479`, `:679` |
+| M-9 | High | [A] | Ramp-corner slide trap is back: X is always tried before Y. **Fixed** in `d4109e2` (4.5): one slide helper tries the dominant axis first; test `movement_contact_tests.rs::pursuit_rounds_a_single_blocked_cell_promptly` | `locomotion.rs:596`, `world.rs:2437` |
+| M-10 | High | [A] | Route-retention fix is dead code in the live game: `vision_aware_pathfinding` is always true. **Fixed** in `d4109e2` (4.7): the first leg of a route asks only whether the unit can walk it, so retention runs; test `movement_contact_tests.rs::route_survives_cells_narrower_than_the_tier` | `locomotion.rs:316`, `world.rs:241` |
+| M-11 | High | [A] | Steering is O(N²) despite a documented spatial hash. **Fixed** in `d4109e2` (4.8): neighbours come from a tick-start grid; test `movement/grid.rs::query_returns_every_body_in_reach_and_skips_far_ones`; cost measured by the release benchmark (Q-3) | `steering.rs:265`, `:352`, `:496` |
+| M-12 | High | [A] | Smooth steering excludes final approach and pursuit, with a discontinuity at exactly 4 m. **Fixed** in `d4109e2` (4.7): one continuous steering function, the 4 m switch deleted. No test pins the absence of the seam; the movement suites cover it only indirectly | `locomotion.rs:440` |
+| M-13 | Med | [A] | Buffed units lose speed on any friendly contact; cap uses base speed. **Fixed** in `d4109e2` (4.9); test `movement_contact_tests.rs::buffed_unit_keeps_its_speed_through_friendly_contact` | `world.rs:2408` |
+| M-14 | Med | [A] | Wedge still in `compute_push_displacement`; low-priority movers shove high-priority idlers. **Fixed** in `d4109e2` (4.4); tests `movement_contact_tests.rs::low_priority_mover_does_not_shove_a_high_priority_idler`, `::moving_pair_separates_radially` | `steering.rs:699` |
+| M-15 | Med | [A] | Unrelated idle friendlies and buildings end Move orders early. **Fixed** in `d4109e2` (4.2); tests `movement_contact_tests.rs::unrelated_idle_friendly_on_the_line_does_not_end_a_move`, `::building_beside_the_goal_does_not_end_a_move` | `locomotion.rs:399` |
+| M-16 | Med | [A] | Exact head-on tie-break steers both units to the same world side. **Fixed** in `d4109e2` (4.1); test `movement_contact_tests.rs::exact_head_on_tie_separates_to_opposite_world_sides` | `steering.rs:296`, `:391` |
+| M-17 | Med | [A] | Collision and steering ignore cliff separation. **Fixed** in `d4109e2` (4.9); test `movement_contact_tests.rs::units_on_either_side_of_a_cliff_do_not_push_each_other` | `world.rs:2236` |
+| M-18 | Low | [A] | `from_f32_lossy` in tick loops, contrary to its docs; magic numbers throughout. **Fixed** in `d4109e2` (4.9): tuning lives in `movement/tuning.rs` as exact rationals, with no float in tick loops; checked by C7 (`workspace_checks` `charter.rs::c07_floats_in_simulation_crates_only_at_listed_boundaries`, `35ba670`) | `steering.rs:176` onward |
 
 ### 4.3 Foundations (`sim_types`, `sim_map`)
 
 | ID | Sev | Evidence | Defect | Where |
 |---|---|---|---|---|
-| F-1 | High | **[R]** | Debug and release disagree: `length()` of (32768, 32768) panics in debug, returns 0 in release. Peers on different profiles diverge | `math.rs:358`, `:583` |
-| F-2 | High | **[V]** | Watchtower capture is never called, so towers never grant vision. [A] Ownership never releases | `grid.rs:689`, `:709` |
-| F-3 | Med | **[R]** | `normalize()` is wrong for small vectors: length 1.4142 | `math.rs:576`, `:605` |
-| F-4 | Med | **[V]** | Ramp visibility branch is dead: `cliff_level > s` and `== s` cannot both hold | `vision.rs:248` |
-| F-5 | Med | [A] | `validate_map`, the gate for untrusted files, converts before bounds-checking and can overflow | `validation.rs:622`, `:704`, `:951` |
-| F-6 | Med | [A] | 160 of tenths 1..=200 fail round-trip, e.g. radius 12.3 is rejected | `map_format.rs:746`, `:851` |
-| F-7 | Med | [A] | Small units are routed through zero-width diagonal gaps, so diagonal wall-offs do not work | `pathfinding.rs:590` |
-| F-8 | Med | [A] | Legacy Tiled importer and `ScMapData` bypass all validation, with no production caller | `loader.rs` |
-| F-9 | Med | [A] | New ramp fallback is roughly cubic and swallows errors | `pathfinding.rs:738` |
-| F-10 | Med | [A] | Destroying a structure fabricates pathability | `grid.rs:679` |
-| F-11 | Med | [A] | Ramp landing validation ignores pathability | `validation.rs:522`, `:560` |
-| F-12 | Med | [A] | Sight radius silently capped at 16 | `vision.rs:21` |
+| F-1 | High | **[R]** | Debug and release disagree: `length()` of (32768, 32768) panics in debug, returns 0 in release. Peers on different profiles diverge. **Fixed** in `71c4df0` (2.1, 2.2): saturating operators, exact `i128` length; tests `overflow_policy_tests.rs::r10_length_of_large_vector_is_exact`, `::operators_saturate_at_both_bounds`; debug and release replays agree in the CI determinism jobs (Q-2) | `math.rs:358`, `:583` |
+| F-2 | High | **[V]** | Watchtower capture is never called, so towers never grant vision. [A] Ownership never releases. **Fixed** in `dae34ba` (2.6); tests `watchtower_tick_tests.rs::f2_unit_walking_onto_a_tower_captures_it_and_gains_vision`, `::f2_tower_is_released_when_its_occupant_dies` | `grid.rs:689`, `:709` |
+| F-3 | Med | **[R]** | `normalize()` is wrong for small vectors: length 1.4142. **Fixed** in `71c4df0` (2.2); test `overflow_policy_tests.rs::r11_normalize_small_vector_is_unit` | `math.rs:576`, `:605` |
+| F-4 | Med | **[V]** | Ramp visibility branch is dead: `cliff_level > s` and `== s` cannot both hold. **Fixed** in `dae34ba` (2.6): ramp vision by height; test `ramp_vision_tests.rs::f4_observer_near_the_top_of_a_ramp_sees_the_plateau` | `vision.rs:248` |
+| F-5 | Med | [A] | `validate_map`, the gate for untrusted files, converts before bounds-checking and can overflow. **Fixed** in `1c79d85` (2.3); test `map_gate_tests.rs::f5_huge_resource_cell_reports_out_of_bounds` | `validation.rs:622`, `:704`, `:951` |
+| F-6 | Med | [A] | 160 of tenths 1..=200 fail round-trip, e.g. radius 12.3 is rejected. **Fixed** in `1c79d85` (2.7); test `map_gate_tests.rs::f6_every_authorable_tenth_round_trips` | `map_format.rs:746`, `:851` |
+| F-7 | Med | [A] | Small units are routed through zero-width diagonal gaps, so diagonal wall-offs do not work. **Fixed** in `1ed9888` (2.5); test `clearance_field_tests.rs::f7_no_tier_passes_between_structures_touching_at_a_corner` | `pathfinding.rs:590` |
+| F-8 | Med | [A] | Legacy Tiled importer and `ScMapData` bypass all validation, with no production caller. **Fixed** in `91bcb27` (2.7): the importer, `ScMapData` and `sim_map`'s `serde_json` are deleted; no test, as the code is gone | `loader.rs` |
+| F-9 | Med | [A] | New ramp fallback is roughly cubic and swallows errors. **Fixed** in `06edc46` (2.5); test `ramp_smoothing_tests.rs::f9_real_map_routes_stay_legal_across_ramps` | `pathfinding.rs:738` |
+| F-10 | Med | [A] | Destroying a structure fabricates pathability. **Fixed** in `1c79d85` (2.5); test `map_gate_tests.rs::f10_removing_a_structure_restores_the_cell_flags_it_found` | `grid.rs:679` |
+| F-11 | Med | [A] | Ramp landing validation ignores pathability. **Fixed** in `1c79d85` (2.5); test `map_gate_tests.rs::f11_upper_landing_must_be_ground_pathable` | `validation.rs:522`, `:560` |
+| F-12 | Med | [A] | Sight radius silently capped at 16. **Fixed** in `dae34ba` (2.6): oversized sight is rejected at load, not capped; tests `ramp_vision_tests.rs::f12_sight_beyond_the_old_cap_reaches_its_authored_distance`, `weapon_catalog_rules_tests.rs::f12_catalog_sight_beyond_vision_is_rejected_not_shortened` | `vision.rs:21` |
 | F-13 | Med | [A] | Faction names, armour classes and abilities in Rust enums, against charter §3.3. **Fixed** in `56f243f` (9.3): factions, weapon and armour classes are data in `assets/catalog/factions.ron`, checked by C5; ability kinds stay engine mechanics (Phase 9 decision D-7) | `enums.rs:8`, `upgrades.rs:47` |
 
 ### 4.4 Client runtime
@@ -213,17 +213,17 @@ Severity is impact on someone using the game or relying on the charter.
 
 | ID | Sev | Evidence | Defect |
 |---|---|---|---|
-| Q-1 | Crit | **[V]** | CI has never passed, and 17 commits are unpushed. [A] Last failure may be missing `libxkbcommon-x11` (suspected) |
-| Q-2 | Crit | [A] | Determinism across platforms is unverified: no matrix, no wasm target, no golden `SimWorld` checksum |
-| Q-3 | High | **[R]** | Performance claim is false. See Appendix A; nothing in the repo measures it |
+| Q-1 | Crit | **[V]** | CI has never passed, and 17 commits are unpushed. [A] Last failure may be missing `libxkbcommon-x11` (suspected). **Fixed**: X11 runtime library and `--locked` in `c44a317` (0.3); first green run on `main` is 41568002256 (`6a3aa26`, 2026-11-03, all five jobs), and `main` is pushed as work merges. CI is not a required check (Q0005) |
+| Q-2 | Crit | [A] | Determinism across platforms is unverified: no matrix, no wasm target, no golden `SimWorld` checksum. **Fixed** in `98af39a` (1.3): golden replay checksums on Linux x86_64, Windows x86_64, macOS ARM64 (debug and release) and `wasm32-wasip1` under wasmtime; test `golden_replay_tests.rs::golden_replay_reproduces_every_checkpoint`; first all-green CI run 41568002256 |
+| Q-3 | High | **[R]** | Performance claim is false. See Appendix A; nothing in the repo measures it. **Fixed**: release benchmark of Appendix A's scenarios in `412aefa` (1.4); per-tick map and sight costs cut in `ae075fb`; the charter claim replaced by a real-time floor, checked by the CI `throughput` job, in `4f3ee7d` and `0336642` (9.5); figures in `DESIGN.md` §5 |
 | Q-4 | High | **[V]** | Clippy is hollow: crate-wide allows remove the lints this engine most needs. **Fixed**: `sim_core` and `sim_map` in `e469b8b` (1.8), `client` in `64fd330` (6.6). `asset_baker` keeps one crate-wide `clippy::doc_markdown` allow |
-| Q-5 | High | **[V]** | Video tests skip silently: `crates/asset_baker/tmp` does not exist. Other silent `return`s [A] |
-| Q-6 | High | [A] | No property testing, despite charter §4's heading |
-| Q-7 | High | [A] | Vulkan validation errors do not fail tests |
-| Q-8 | High | [A] | Rust policy is false: `rust-version` 1.80 vs locked `fixed` needing 1.93; floating `stable` toolchain; `fixed` on a caret range |
+| Q-5 | High | **[V]** | Video tests skip silently: `crates/asset_baker/tmp` does not exist. Other silent `return`s [A]. **Fixed**: a committed fixture clip in `1b6faff` (1.1), loaded by `asset_baker/tests/common/mod.rs::fixture_clip`; the other silent passes removed, and `SPACE_SCUFFLE_SKIP_GPU_TESTS` rejected on CI, in `8329538` (1.1) |
+| Q-6 | High | [A] | No property testing, despite charter §4's heading. **Fixed**: `proptest` added in `412aefa` (1.5); properties in `71c4df0` (`sim_types/tests/math_properties.rs`: arithmetic, angle wrap) and `1ed9888` (`pathfinding_properties.rs::funnel_paths_are_legal_and_no_shorter_than_a_straight_line`) |
+| Q-7 | High | [A] | Vulkan validation errors do not fail tests. **Fixed** in `8329538` (1.7): GPU tests fail on an unlisted validation ID or a missing layer; CI installs the layers in `37011d3`; tests `gpu_validation_tests.rs::error_finding_with_validation_id_is_an_unlisted_violation`, `::live_battle_passes_vulkan_validation` |
+| Q-8 | High | [A] | Rust policy is false: `rust-version` 1.80 vs locked `fixed` needing 1.93; floating `stable` toolchain; `fixed` on a caret range. **Fixed** in `c44a317` (0.4): `rust-toolchain.toml` pins 1.99.0, `rust-version = "1.99.0"`, `fixed = "=1.31.0"`; no test, CI builds with the pinned toolchain and `--locked` |
 | Q-9 | High | [A] | `DESIGN.md` is stale: 22.4/30 Hz vs 25, NavMesh + RVO vs grid A*, nonexistent crates, absolute `file:///` links. **Fixed** in `0336642` (9.5): rewritten with a per-subsystem status table, checked by C17 |
 | Q-10 | Med | [A] | Shader "syntax" tests are `.contains()`; 66 plans with colliding numbers and no status index; 545 `/tmp` references, so evidence is ephemeral. **Fixed**: shader tests in Phase 1 (`bb406f9`); plan index, unique IDs and retention lines in `10d92c5` (9.6), checked by C18 and C19 |
-| Q-11 | Med | **[V]** | `tools/renderer_compatibility/target` (1.3 GB) is unignored, a `git add -A` hazard; no `[profile]` section |
+| Q-11 | Med | **[V]** | `tools/renderer_compatibility/target` (1.3 GB) is unignored, a `git add -A` hazard; no `[profile]` section. **Fixed**: unrooted `target/` in `.gitignore` in `ecce29f` (0.1), which ignores `tools/renderer_compatibility/target`; `[profile]` sections in `c44a317` (0.5); no test |
 | Q-12 | Med | [A] | `asset_baker → sim_core` is not in charter §5; `sim_map` needs `serde_json` only for dead code. **Fixed**: `serde_json` left `sim_map` before Phase 9; the edge is drawn and §5 is checked against Cargo by C1 in `0336642` (9.5) |
 
 ---
