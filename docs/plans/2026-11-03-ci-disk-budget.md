@@ -1,6 +1,6 @@
 # CI disk budget: compressed debug info and a disk guard
 
-Date: 2026-11-03. Status: Partly done (implemented locally; CI verification pending). Scope: `.github/workflows/ci.yml` and a new repository `.cargo/config.toml`. No
+Date: 2026-11-03. Status: Done (verified on CI in run 41639354662). Scope: `.github/workflows/ci.yml` and a new repository `.cargo/config.toml`. No
 Rust source changes.
 
 ## 1. Problem
@@ -258,4 +258,16 @@ passed (3 passed, 1 ignored, 118 s). `runtime_battle_tests` on the RX 580 under 
 
 ### 8.2 CI
 
-To be filled in after the push: the run ID, the three `df` figures and the `du` figure (§5 steps 5 to 7).
+Run 41639354662 on `main` at `c529d4c` (the first green run carrying the change; run 41630288360 on `79887c6`
+failed only on the smog goldens and showed the same figures):
+
+| Step | `/` size | Used | Free | `target/` |
+|---|---|---|---|---|
+| After the cache restore | 145 GiB | 64 GiB | 81 GiB | 3.0 GiB |
+| Disk budget (before the test build) | 145 GiB | 65 GiB | 80 GiB (79 GiB by the guard's count, 12 required) | 3.7 GiB |
+| After the test build | 145 GiB | 74 GiB | 71 GiB | 13 GiB |
+
+`Test binaries carry compressed debug info` passed. This runner had about ten times the free space of the runner that
+hit the SIGBUS at `87fd289`; GitHub's runner disk varies, which is why the guard checks free space at run time rather
+than assuming a size. With compression the test build used 13 GiB of `target/`, so even the earlier small runner
+(about 14 GB free) now has room.
