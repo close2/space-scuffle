@@ -14,7 +14,8 @@ use crate::terrain::{spawn_terrain_owned, TerrainMaterial};
 use crate::{LabState, LabTab, ResolvedAssetsRoot, SelectionState};
 use bevy::prelude::*;
 use sim_map::ResourceKind;
-use sim_types::PlayerId;
+use sim_types::{PlayerId, SimVec2};
+use std::collections::BTreeMap;
 
 type BattleEffectFilter = Or<(
     With<crate::vfx::ProjectileVisual>,
@@ -119,7 +120,172 @@ pub fn sync_scene_camera(
     saved.last_tab = Some(lab.current_tab);
 }
 
+/// Logs that battle setup `stage` failed with `error`, and records the failure on the Lab.
+///
+/// A recorded failure stops [`manage_battle_scene`] from retrying until the next reset request.
+fn record_battle_failure(lab: &mut LabState, stage: &str, error: &dyn std::fmt::Display) {
+    error!("{stage} failed: {error}");
+    lab.battle_failure = Some(error.to_string());
+}
+
+/// Prepares the next session generation for `world` from `definition`, without installing it.
+///
+/// # Errors
+/// [`PipelineError`](crate::battle_pipeline::driver::PipelineError) if the generation counter is
+/// exhausted, the definition's metadata is invalid, or the world cannot be prepared.
+fn prepare_session(
+    definition: &BattleDefinition,
+    current: &crate::battle_pipeline::session::BattleSession,
+    world: &mut sim_core::world::SimWorld,
+) -> Result<
+    crate::battle_pipeline::session::BattleSession,
+    crate::battle_pipeline::driver::PipelineError,
+> {
+    let generation = current.next_generation()?;
+    let metadata =
+        crate::battle_pipeline::session::CommittedBattleMetadata::from_definition(definition)?;
+    crate::battle_pipeline::session::BattleSession::prepare(generation, world, metadata)
+}
+
+/// Spawns one billboard per resource node, then one per watchtower, under `root`, and returns
+/// the presentation records in the same order.
+///
+/// Positions are ground-anchored centres in Bevy world space, read from `map`.
+fn spawn_map_objects(
+    commands: &mut Commands<'_, '_>,
+    root: Entity,
+    map: &sim_map::GameMap,
+    visuals: &super::MapVisualCatalog,
+    asset_server: &AssetServer,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) -> MapPresentation {
+    let mineral = load_map_sprite(asset_server, meshes, materials, &visuals.mineral);
+    let gas = load_map_sprite(asset_server, meshes, materials, &visuals.gas);
+    let tower_sprite = load_map_sprite(asset_server, meshes, materials, &visuals.watchtower);
+    let mut presentation = MapPresentation {
+        sprite_images: vec![
+            mineral.image.clone(),
+            gas.image.clone(),
+            tower_sprite.image.clone(),
+        ],
+        ..default()
+    };
+    for node in map.resources() {
+        let visual = match node.kind {
+            ResourceKind::Mineral => &mineral,
+            ResourceKind::Gas => &gas,
+        };
+        let ground = map.terrain_altitude_scalar(node.pos).to_f32();
+        let position = Vec3::new(
+            node.pos.x.to_f32(),
+            ground + visual.size * 0.5,
+            node.pos.y.to_f32(),
+        );
+        spawn_map_object(commands, root, presentation.objects.len(), visual, position);
+        presentation.objects.push(MapObjectSnapshot {
+            position,
+            visible: node.remaining > 0,
+            owner: None,
+            ownership_tint: false,
+        });
+    }
+    for tower in map.watchtowers() {
+        // A tower's ownership tint is independent; geometry and texture stay shared.
+        let visual = MapSpriteAssets {
+            material: materials.add(tower_sprite.base_material.clone()),
+            ..tower_sprite.clone()
+        };
+        let ground = map.terrain_altitude_scalar(tower.pos).to_f32();
+        let position = Vec3::new(
+            tower.pos.x.to_f32(),
+            ground + visual.size * 0.5,
+            tower.pos.y.to_f32(),
+        );
+        spawn_map_object(
+            commands,
+            root,
+            presentation.objects.len(),
+            &visual,
+            position,
+        );
+        presentation.objects.push(MapObjectSnapshot {
+            position,
+            visible: true,
+            owner: tower.controlling_player,
+            ownership_tint: true,
+        });
+    }
+    presentation
+}
+
+/// Despawns the previous battle's scene roots, unit bubbles and effects, and forgets their
+/// render mapping and selection.
+fn retire_previous_battle(
+    commands: &mut Commands<'_, '_>,
+    scenes: &Query<'_, '_, Entity, With<BattleSceneRoot>>,
+    bubbles: &Query<'_, '_, Entity, With<LiveBattleBubble>>,
+    effects: &Query<'_, '_, Entity, BattleEffectFilter>,
+    render_entities: &mut RenderEntityMap,
+    selection: &mut SelectionState,
+) {
+    for root in scenes {
+        commands.entity(root).despawn_recursive();
+    }
+    for bubble in bubbles {
+        commands.entity(bubble).despawn_recursive();
+    }
+    for effect in effects {
+        commands.entity(effect).despawn_recursive();
+    }
+    render_entities.0.clear();
+    selection.deselect();
+}
+
+/// Points every RTS camera at the first player's start approach, if there is one.
+fn focus_battle_cameras(
+    cameras: &mut Query<'_, '_, &mut RtsCamera>,
+    approaches: &BTreeMap<PlayerId, SimVec2>,
+    map: &sim_map::GameMap,
+) {
+    if let Some(focus) = approaches.values().next() {
+        for mut camera in cameras {
+            camera.target = Vec2::new(focus.x.to_f32(), focus.y.to_f32());
+            camera.look_at_y = map.terrain_altitude_scalar(*focus).to_f32() + 1.2;
+            camera.distance = 22.0;
+        }
+    }
+}
+
+/// Installs `prepared` with `world` as the active session and resets the Lab's battle state.
+fn commit_battle(
+    lab: &mut LabState,
+    session: &mut crate::battle_pipeline::session::BattleSession,
+    prepared: crate::battle_pipeline::session::BattleSession,
+    world: sim_core::world::SimWorld,
+    approaches: BTreeMap<PlayerId, SimVec2>,
+) {
+    lab.battle_start_positions = approaches;
+    lab.last_checksum_hex.clear();
+    // A replacement is a new match, so it starts unpaused at normal speed, as the first one does
+    // from `LabState::default`. The first commit leaves both alone: whoever booted the client
+    // paused, such as a capture or a test harness, still finds it paused.
+    if session.commands.generation().is_some() {
+        let fresh = LabState::default();
+        lab.battle_paused = fresh.battle_paused;
+        lab.simulation_speed = fresh.simulation_speed;
+    }
+    *session = prepared.with_world(world);
+    lab.battle_failure = None;
+}
+
 /// Installs or resets the selected battle transactionally using the same loaded definition.
+///
+/// Each stage that can fail (world, start approaches, session, terrain) runs before the old
+/// scene is touched, so a failure leaves the running battle in place. Only then are the map
+/// objects spawned ([`spawn_map_objects`]), the old scene retired ([`retire_previous_battle`]),
+/// the cameras focused ([`focus_battle_cameras`]) and the new session installed
+/// ([`commit_battle`]).
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
@@ -127,10 +293,6 @@ pub fn sync_scene_camera(
 #[expect(
     clippy::too_many_arguments,
     reason = "each Bevy system parameter is a separate declared data dependency"
-)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "a single ordered sequence that shares its local state"
 )]
 pub fn manage_battle_scene(
     mut commands: Commands<'_, '_>,
@@ -163,30 +325,21 @@ pub fn manage_battle_scene(
     let mut world = match definition.instantiate() {
         Ok(world) => world,
         Err(error) => {
-            error!("Battle initialization failed: {error}");
-            lab.battle_failure = Some(error.to_string());
+            record_battle_failure(&mut lab, "Battle initialization", &error);
             return;
         }
     };
     let approaches = match definition.start_approaches(&world) {
         Ok(positions) => positions,
         Err(error) => {
-            error!("Battle approach validation failed: {error}");
-            lab.battle_failure = Some(error.to_string());
+            record_battle_failure(&mut lab, "Battle approach validation", &error);
             return;
         }
     };
-    let prepared_session = (|| {
-        let generation = session.next_generation()?;
-        let metadata =
-            crate::battle_pipeline::session::CommittedBattleMetadata::from_definition(&definition)?;
-        crate::battle_pipeline::session::BattleSession::prepare(generation, &mut world, metadata)
-    })();
-    let prepared_session = match prepared_session {
+    let prepared_session = match prepare_session(&definition, &session, &mut world) {
         Ok(prepared) => prepared,
         Err(error) => {
-            error!("Battle pipeline preparation failed: {error}");
-            lab.battle_failure = Some(error.to_string());
+            record_battle_failure(&mut lab, "Battle pipeline preparation", &error);
             return;
         }
     };
@@ -206,119 +359,29 @@ pub fn manage_battle_scene(
         Some(0),
     ) {
         commands.entity(new_root).despawn_recursive();
-        error!("Battle terrain initialization failed: {error}");
-        lab.battle_failure = Some(error.to_string());
+        record_battle_failure(&mut lab, "Battle terrain initialization", &error);
         return;
     }
 
-    let mineral = load_map_sprite(
+    let presentation = spawn_map_objects(
+        &mut commands,
+        new_root,
+        &world.map,
+        &definition.visuals,
         &asset_server,
         &mut meshes,
         &mut materials,
-        &definition.visuals.mineral,
     );
-    let gas = load_map_sprite(
-        &asset_server,
-        &mut meshes,
-        &mut materials,
-        &definition.visuals.gas,
+    retire_previous_battle(
+        &mut commands,
+        &scenes,
+        &bubbles,
+        &effects,
+        &mut render_entities,
+        &mut selection,
     );
-    let tower_sprite = load_map_sprite(
-        &asset_server,
-        &mut meshes,
-        &mut materials,
-        &definition.visuals.watchtower,
-    );
-    let mut presentation = MapPresentation {
-        sprite_images: vec![
-            mineral.image.clone(),
-            gas.image.clone(),
-            tower_sprite.image.clone(),
-        ],
-        ..default()
-    };
-    for node in world.map.resources() {
-        let visual = match node.kind {
-            ResourceKind::Mineral => &mineral,
-            ResourceKind::Gas => &gas,
-        };
-        let ground = world.map.terrain_altitude_scalar(node.pos).to_f32();
-        let position = Vec3::new(
-            node.pos.x.to_f32(),
-            ground + visual.size * 0.5,
-            node.pos.y.to_f32(),
-        );
-        spawn_map_object(
-            &mut commands,
-            new_root,
-            presentation.objects.len(),
-            visual,
-            position,
-        );
-        presentation.objects.push(MapObjectSnapshot {
-            position,
-            visible: node.remaining > 0,
-            owner: None,
-            ownership_tint: false,
-        });
-    }
-    for tower in world.map.watchtowers() {
-        // A tower's ownership tint is independent; geometry and texture stay shared.
-        let visual = MapSpriteAssets {
-            material: materials.add(tower_sprite.base_material.clone()),
-            ..tower_sprite.clone()
-        };
-        let ground = world.map.terrain_altitude_scalar(tower.pos).to_f32();
-        let position = Vec3::new(
-            tower.pos.x.to_f32(),
-            ground + visual.size * 0.5,
-            tower.pos.y.to_f32(),
-        );
-        spawn_map_object(
-            &mut commands,
-            new_root,
-            presentation.objects.len(),
-            &visual,
-            position,
-        );
-        presentation.objects.push(MapObjectSnapshot {
-            position,
-            visible: true,
-            owner: tower.controlling_player,
-            ownership_tint: true,
-        });
-    }
-
-    for root in &scenes {
-        commands.entity(root).despawn_recursive();
-    }
-    for bubble in &bubbles {
-        commands.entity(bubble).despawn_recursive();
-    }
-    for effect in &effects {
-        commands.entity(effect).despawn_recursive();
-    }
-    render_entities.0.clear();
-    selection.deselect();
-    if let Some(focus) = approaches.values().next() {
-        for mut camera in &mut cameras {
-            camera.target = Vec2::new(focus.x.to_f32(), focus.y.to_f32());
-            camera.look_at_y = world.map.terrain_altitude_scalar(*focus).to_f32() + 1.2;
-            camera.distance = 22.0;
-        }
-    }
-    lab.battle_start_positions = approaches;
-    lab.last_checksum_hex.clear();
-    // A replacement is a new match, so it starts unpaused at normal speed, as the first one does
-    // from `LabState::default`. The first commit leaves both alone: whoever booted the client
-    // paused, such as a capture or a test harness, still finds it paused.
-    if session.commands.generation().is_some() {
-        let fresh = LabState::default();
-        lab.battle_paused = fresh.battle_paused;
-        lab.simulation_speed = fresh.simulation_speed;
-    }
-    *session = prepared_session.with_world(world);
-    lab.battle_failure = None;
+    focus_battle_cameras(&mut cameras, &approaches, &world.map);
+    commit_battle(&mut lab, &mut session, prepared_session, world, approaches);
     commands
         .entity(new_root)
         .insert(super::environment::CommittedBattleEnvironment::from_theme(
