@@ -36,6 +36,10 @@ pub const TERRAIN_MAX_ANISOTROPY: u16 = 16;
 /// gradients and `maxAnisotropy`. `hex_sample` in `terrain.wgsl` is correct, but its coordinates
 /// jump across hex edges, so one sample there reads about 10^9 texels and a frame does not finish.
 /// See `docs/plans/2026-11-02-server-gate.md`.
+///
+/// The GPU test harness (`crates/client/tests/support/gpu_run.rs`) sets it only for a child on
+/// `lavapipe` before Mesa 25.1, never for one on `radv`, which renders the production sampler
+/// (Q0009, `docs/plans/2026-11-03-gpu-test-harness.md` decision D7).
 pub const TERRAIN_ANISOTROPY_OVERRIDE_ENV: &str = "SPACE_SCUFFLE_TERRAIN_MAX_ANISOTROPY";
 
 /// GPU texture resources created from a terrain theme.

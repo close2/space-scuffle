@@ -6,6 +6,13 @@
 //! - Real validation output reaches the gate: best-practices checks produce findings in the same
 //!   run path as the clean runs. Without this control a broken capture would look like a clean run.
 //! - Live battle mode, which builds a different pipeline set from the lab, is clean.
+//! - Driver selection (`docs/plans/2026-11-03-gpu-test-harness.md`, decision D1) picks `radv` only
+//!   with every host prerequisite, and a forced driver never falls back.
+//! - The GPU lock (decision D2) is held by a child exactly while it runs, a busy lock times out
+//!   without starting the child, and a lock held by an ancestor fails at once. These tests lock a
+//!   private file and run on every host, CI included.
+//! - `radv` never lowers terrain anisotropy (decision D7), and every run proves the adapter it
+//!   rendered on (decision D6).
 
 #![allow(clippy::expect_used, clippy::panic)]
 
@@ -16,8 +23,14 @@
 #[path = "support/gpu_run.rs"]
 mod gpu_run;
 
-use gpu_run::{AllowedValidationId, FindingSeverity, ValidationReport, VALIDATION_ALLOWLIST};
-use std::path::Path;
+use gpu_run::{
+    AdapterEvidence, AllowedValidationId, DriverRequest, DriverSelectionError, FindingSeverity,
+    GpuCommand, GpuDriver, GpuLock, GpuLockError, HostGpu, MissingPrerequisite, RenderNode,
+    ValidationReport, VALIDATION_ALLOWLIST,
+};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{Duration, Instant};
 
 /// Stderr excerpt in the exact form produced by the real client, including ANSI colours.
 const ACTIVE_HEADER: &str = "\u{1b}[2m2026-11-01T22:32:19.649733Z\u{1b}[0m \u{1b}[32m INFO\u{1b}[0m \
@@ -262,13 +275,7 @@ fn real_layer_findings_reach_the_gate() {
         "VK_LAYER_ENABLES",
         "VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT",
     );
-    let (output, report) = gpu_run::run_validated(&mut command);
-    assert!(
-        output.status.success(),
-        "control run exited with {:?}. Last output:\n{}",
-        output.status.code(),
-        gpu_run::tail(&gpu_run::captured_log(&output))
-    );
+    let (_, report) = command.run_validated("control run, client --lab with best practices");
     assert!(report.layer_active, "control run must load the layer");
     assert!(
         report
@@ -286,7 +293,7 @@ fn live_battle_passes_vulkan_validation() {
     }
     let mut command = gpu_run::virtual_gpu_command(Path::new(env!("CARGO_BIN_EXE_client")));
     command.args(["--battle", "--max-frames", "60"]);
-    gpu_run::assert_passes_validation(&mut command, "client --battle --max-frames 60");
+    command.assert_passes_validation("client --battle --max-frames 60");
 }
 
 /// The command line a player uses: `client --skirmish`, with the HUD and fog of the `Player`
@@ -298,6 +305,401 @@ fn skirmish_passes_vulkan_validation() {
     }
     let mut command = gpu_run::virtual_gpu_command(Path::new(env!("CARGO_BIN_EXE_client")));
     command.args(["--skirmish", "--max-frames", "60"]);
-    gpu_run::allow_for_hex_tiling_driver_defect(&mut command);
-    gpu_run::assert_passes_validation(&mut command, "client --skirmish --max-frames 60");
+    command.allow_for_hex_tiling_driver_defect();
+    command.assert_passes_validation("client --skirmish --max-frames 60");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Driver selection, the GPU lock and adapter evidence (plan 2026-11-03-gpu-test-harness)
+// ---------------------------------------------------------------------------------------------
+
+/// A host with the given prerequisites, with the paths this server uses.
+fn host(radv_manifest: bool, render_node: RenderNode, lock_tool: bool, lavapipe: bool) -> HostGpu {
+    HostGpu {
+        radv_manifest: radv_manifest
+            .then(|| PathBuf::from("/usr/share/vulkan/icd.d/radeon_icd.json")),
+        render_node,
+        lock_tool: lock_tool.then(|| PathBuf::from("/usr/local/bin/with-gpu-lock")),
+        lavapipe_manifest: lavapipe.then(|| PathBuf::from("/usr/share/vulkan/icd.d/lvp_icd.json")),
+    }
+}
+
+/// The render node of this server, usable.
+fn usable_node() -> RenderNode {
+    RenderNode::Usable(PathBuf::from("/dev/dri/renderD128"))
+}
+
+/// R1: `auto` picks `radv` only with all three prerequisites, a forced driver never falls back,
+/// and every missing prerequisite is named.
+#[test]
+fn driver_selection_matrix() {
+    let full = host(true, usable_node(), true, true);
+    let selection = gpu_run::select_driver(DriverRequest::Auto, &full).expect("radv host");
+    assert_eq!(selection.driver, GpuDriver::Radv);
+    assert_eq!(
+        selection.manifest,
+        PathBuf::from("/usr/share/vulkan/icd.d/radeon_icd.json")
+    );
+    assert_eq!(
+        selection.to_string(),
+        "driver radv (auto: radeon_icd.json, /dev/dri/renderD128, with-gpu-lock on PATH)"
+    );
+
+    let inaccessible = RenderNode::Inaccessible(PathBuf::from("/dev/dri/renderD128"));
+    let lacking_one = [
+        (
+            host(false, usable_node(), true, true),
+            MissingPrerequisite::RadvManifest,
+        ),
+        (
+            host(true, RenderNode::Missing, true, true),
+            MissingPrerequisite::RenderNode,
+        ),
+        (
+            host(true, inaccessible, true, true),
+            MissingPrerequisite::RenderNodeAccess(PathBuf::from("/dev/dri/renderD128")),
+        ),
+        (
+            host(true, usable_node(), false, true),
+            MissingPrerequisite::LockTool,
+        ),
+    ];
+    for (host, missing) in &lacking_one {
+        let auto = gpu_run::select_driver(DriverRequest::Auto, host).expect("lavapipe fallback");
+        assert_eq!(auto.driver, GpuDriver::Lavapipe, "{host:?}");
+        assert!(auto.reason.contains(&missing.to_string()), "{auto}");
+        assert_eq!(
+            gpu_run::select_driver(DriverRequest::Radv, host),
+            Err(DriverSelectionError::RadvUnavailable(vec![missing.clone()])),
+            "forced radv must fail, not fall back: {host:?}"
+        );
+    }
+
+    let bare = host(false, RenderNode::Missing, false, true);
+    let Err(error) = gpu_run::select_driver(DriverRequest::Radv, &bare) else {
+        panic!("forced radv on a host without a GPU must fail");
+    };
+    let message = error.to_string();
+    for named in [
+        "radv manifest",
+        "render node",
+        "with-gpu-lock is not on PATH",
+    ] {
+        assert!(message.contains(named), "{message} must name {named}");
+    }
+    assert!(message.contains("never falls back"), "{message}");
+
+    let forced = gpu_run::select_driver(DriverRequest::Lavapipe, &full).expect("lavapipe");
+    assert_eq!(forced.driver, GpuDriver::Lavapipe);
+    assert_eq!(forced.to_string(), "driver lavapipe (forced)");
+    assert_eq!(
+        gpu_run::select_driver(
+            DriverRequest::Lavapipe,
+            &host(true, usable_node(), true, false)
+        ),
+        Err(DriverSelectionError::LavapipeMissing)
+    );
+    assert!(matches!(
+        gpu_run::select_driver(
+            DriverRequest::Auto,
+            &host(false, RenderNode::Missing, false, false)
+        ),
+        Err(DriverSelectionError::NoDriver(missing)) if missing.len() == 3
+    ));
+
+    assert_eq!(DriverRequest::parse(None), Ok(DriverRequest::Auto));
+    assert_eq!(DriverRequest::parse(Some("auto")), Ok(DriverRequest::Auto));
+    assert_eq!(DriverRequest::parse(Some("radv")), Ok(DriverRequest::Radv));
+    assert_eq!(
+        DriverRequest::parse(Some("lavapipe")),
+        Ok(DriverRequest::Lavapipe)
+    );
+    for invalid in ["", "RADV", "llvmpipe", "nvidia"] {
+        let error = DriverRequest::parse(Some(invalid)).expect_err(invalid);
+        assert!(
+            error.to_string().contains("use radv, lavapipe or auto"),
+            "{error}"
+        );
+    }
+}
+
+/// R2: a child run through `GpuCommand` sees its lock held, and the lock is free once `run`
+/// returns. The child asks real `flock(1)`, so this is the protocol `with-gpu-lock` speaks.
+#[test]
+fn a_child_holds_the_gpu_lock_only_while_it_runs() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let lock = directory.path().join("gpu.lock");
+    let out = directory.path().join("out");
+    let mut command = GpuCommand::lock_probe(Path::new("/bin/sh"), &lock, Duration::from_secs(5));
+    command
+        .args(["-c", r#"flock -n "$LOCK" true; echo $? > "$OUT""#])
+        .env("LOCK", &lock)
+        .env("OUT", &out);
+    let run = command.run("lock probe");
+    assert_eq!(
+        std::fs::read_to_string(&out)?.trim(),
+        "1",
+        "flock -n inside the child must find the lock held"
+    );
+    assert!(run.lock_wait.is_some(), "a locked run reports its wait");
+    let after = Command::new("flock")
+        .arg("-n")
+        .arg(&lock)
+        .arg("true")
+        .status()?;
+    assert!(after.success(), "the lock must be free once run returns");
+    Ok(())
+}
+
+/// R3: with the lock held elsewhere, `try_run` times out after its wait and never starts the
+/// child.
+#[test]
+fn a_busy_lock_times_out_without_starting_the_child() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let lock = directory.path().join("gpu.lock");
+    let marker = directory.path().join("started");
+    let holder = std::fs::File::create(&lock)?;
+    holder.lock()?;
+    let mut command = GpuCommand::lock_probe(Path::new("/bin/sh"), &lock, Duration::from_secs(1));
+    command
+        .args(["-c", r#"touch "$MARKER""#])
+        .env("MARKER", &marker);
+    let started = Instant::now();
+    let result = command.try_run("busy lock probe");
+    let elapsed = started.elapsed();
+    let Err(GpuLockError::TimedOut { waited, holder, .. }) = result else {
+        panic!("a busy lock must time out, got {result:?}");
+    };
+    assert!(waited >= Duration::from_secs(1), "waited {waited:?}");
+    assert!(elapsed < Duration::from_secs(10), "took {elapsed:?}");
+    assert!(
+        !marker.exists(),
+        "the child must not start without the lock"
+    );
+    if let Some(holder) = holder {
+        assert_eq!(holder.pid, std::process::id(), "this process holds it");
+    }
+    Ok(())
+}
+
+/// Variable naming the private lock file of [`ancestor_lock_child`].
+const ANCESTOR_LOCK_VAR: &str = "SPACE_SCUFFLE_ANCESTOR_LOCK";
+
+/// R4: a lock held by an ancestor fails at once instead of waiting out the wait limit. The test
+/// re-executes itself under real `flock(1)`, the way `with-gpu-lock cargo test` would run.
+#[test]
+fn an_ancestor_holding_the_lock_fails_fast() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let lock = directory.path().join("gpu.lock");
+    let output = Command::new("flock")
+        .arg(&lock)
+        .arg(std::env::current_exe()?)
+        .args(["--ignored", "--exact", "--nocapture", "ancestor_lock_child"])
+        .env(ANCESTOR_LOCK_VAR, &lock)
+        .output()?;
+    let log = gpu_run::captured_log(&output);
+    assert!(
+        output.status.success(),
+        "the child under flock must see HeldByAncestor at once:\n{}",
+        gpu_run::tail(&log)
+    );
+    assert!(log.contains("1 passed"), "the child test must run:\n{log}");
+    Ok(())
+}
+
+/// The child of [`an_ancestor_holding_the_lock_fails_fast`], run under `flock <lock>`.
+#[test]
+#[ignore = "launched by an_ancestor_holding_the_lock_fails_fast under flock(1)"]
+fn ancestor_lock_child() {
+    let lock = std::env::var_os(ANCESTOR_LOCK_VAR).expect("the parent names the lock");
+    let started = Instant::now();
+    let result = GpuLock::acquire(Path::new(&lock), Duration::from_secs(60));
+    let elapsed = started.elapsed();
+    let Err(GpuLockError::HeldByAncestor { holder, .. }) = &result else {
+        panic!("expected HeldByAncestor after {elapsed:?}, got {result:?}");
+    };
+    assert!(elapsed < Duration::from_secs(2), "took {elapsed:?}");
+    assert!(holder.command_line.contains("flock"), "{holder}");
+    let message = result.expect_err("checked above").to_string();
+    assert!(message.contains("without with-gpu-lock"), "{message}");
+}
+
+/// The `/proc/locks` and `/proc/<pid>/stat` parsers behind the ancestor check, on fixture text.
+#[test]
+fn proc_locks_and_stat_lines_are_parsed() {
+    let locks = "1: FLOCK  ADVISORY  WRITE 2533986 08:10:87952619 0 EOF\n\
+                 1: -> FLOCK  ADVISORY  WRITE 2600000 08:10:87952619 0 EOF\n\
+                 2: POSIX  ADVISORY  WRITE 2415563 00:1a:42 0 EOF\n\
+                 3: FLOCK  ADVISORY  WRITE 2415564 00:1a:42 0 EOF\n";
+    assert_eq!(
+        gpu_run::flock_holder_pid(locks, 8, 16, 87_952_619),
+        Some(2_533_986)
+    );
+    assert_eq!(gpu_run::flock_holder_pid(locks, 0, 26, 42), Some(2_415_564));
+    assert_eq!(gpu_run::flock_holder_pid(locks, 8, 16, 1), None);
+    assert_eq!(gpu_run::flock_holder_pid("garbage\n\n", 8, 16, 1), None);
+
+    assert_eq!(
+        gpu_run::stat_parent_pid("4242 (cargo) S 4100 4242 4100 0 -1"),
+        Some(4100)
+    );
+    assert_eq!(
+        gpu_run::stat_parent_pid("77 (odd) name (x)) R 12 77 12 0"),
+        Some(12)
+    );
+    assert_eq!(gpu_run::stat_parent_pid("77 no parentheses"), None);
+
+    let parents = |pid| match pid {
+        30 => Some(20),
+        20 => Some(10),
+        10 => Some(1),
+        1 => Some(0),
+        _ => None,
+    };
+    assert_eq!(gpu_run::ancestor_chain(30, parents), [30, 20, 10, 1]);
+    assert_eq!(gpu_run::ancestor_chain(5, Some).len(), 4_096);
+
+    // 8:16 as glibc's makedev encodes it, and a major and minor beyond the old 8-bit fields.
+    assert_eq!(gpu_run::split_device(0x0810), (8, 16));
+    let wide = (0x1000_u64 << 32) | (0x234 << 8) | (0x0005_6700 << 12) | 0x89;
+    assert_eq!(gpu_run::split_device(wide), (0x1234, 0x0005_6789));
+}
+
+/// R5: `radv` never lowers terrain anisotropy; `lavapipe` does only before Mesa 25.1 (Q0009).
+#[test]
+fn radv_never_lowers_terrain_anisotropy() {
+    for release in [Some((22, 3)), Some((25, 0)), Some((25, 1)), None] {
+        assert_eq!(gpu_run::anisotropy_override(GpuDriver::Radv, release), None);
+    }
+    assert_eq!(
+        gpu_run::anisotropy_override(GpuDriver::Lavapipe, Some((25, 0))),
+        Some("1")
+    );
+    assert_eq!(
+        gpu_run::anisotropy_override(GpuDriver::Lavapipe, Some((22, 3))),
+        Some("1")
+    );
+    assert_eq!(
+        gpu_run::anisotropy_override(GpuDriver::Lavapipe, Some((25, 1))),
+        None
+    );
+    assert_eq!(
+        gpu_run::anisotropy_override(GpuDriver::Lavapipe, None),
+        None
+    );
+}
+
+/// Bevy's adapter line from a `radv` run on this server's RX 580, ANSI colours included (plan
+/// section 3.1).
+const RADV_ADAPTER_LINE: &str = "\u{1b}[2m2026-11-03T08:43:02.757205Z\u{1b}[0m \u{1b}[32m INFO\u{1b}[0m \
+\u{1b}[2mbevy_render::renderer\u{1b}[0m\u{1b}[2m:\u{1b}[0m AdapterInfo { name: \"AMD Radeon RX 580 Series \
+(RADV POLARIS10)\", vendor: 4098, device: 26591, device_type: DiscreteGpu, driver: \"radv\", \
+driver_info: \"Mesa 25.0.7-2+deb13u1\", backend: Vulkan }\n";
+
+/// Bevy's adapter line from a `lavapipe` run of `client --lab` on this server.
+const LAVAPIPE_ADAPTER_LINE: &str = "\u{1b}[2m2026-11-03T09:51:52.365083Z\u{1b}[0m \u{1b}[32m INFO\u{1b}[0m \
+\u{1b}[2mbevy_render::renderer\u{1b}[0m\u{1b}[2m:\u{1b}[0m AdapterInfo { name: \"llvmpipe (LLVM 19.1.7, 256 \
+bits)\", vendor: 65541, device: 0, device_type: Cpu, driver: \"llvmpipe\", driver_info: \"Mesa \
+25.0.7-2+deb13u1 (LLVM 19.1.7)\", backend: Vulkan }\n";
+
+/// R6: both real adapter lines parse, and a validated run whose line is missing or names another
+/// driver has a violation.
+#[test]
+fn adapter_lines_are_parsed_and_checked() {
+    let radv = AdapterEvidence::parse(RADV_ADAPTER_LINE).expect("the radv line parses");
+    assert_eq!(radv.name, "AMD Radeon RX 580 Series (RADV POLARIS10)");
+    assert_eq!(radv.driver, "radv");
+    assert_eq!(radv.driver_info, "Mesa 25.0.7-2+deb13u1");
+    let lavapipe = AdapterEvidence::parse(LAVAPIPE_ADAPTER_LINE).expect("the lavapipe line parses");
+    assert_eq!(lavapipe.driver, "llvmpipe");
+    assert!(lavapipe.name.starts_with("llvmpipe"), "{lavapipe:?}");
+    assert!(
+        lavapipe.driver_info.starts_with("Mesa 25.0.7"),
+        "{lavapipe:?}"
+    );
+    assert_eq!(AdapterEvidence::parse(ACTIVE_HEADER), None);
+
+    let on_radv = ValidationReport::parse(&format!("{ACTIVE_HEADER}{RADV_ADAPTER_LINE}"));
+    assert_eq!(on_radv.adapter.as_ref(), Some(&radv));
+    assert_eq!(
+        on_radv
+            .clone()
+            .expecting(GpuDriver::Radv)
+            .violations(VALIDATION_ALLOWLIST),
+        Vec::<String>::new()
+    );
+    let mismatched = on_radv
+        .expecting(GpuDriver::Lavapipe)
+        .violations(VALIDATION_ALLOWLIST);
+    assert_eq!(mismatched.len(), 1, "{mismatched:?}");
+    assert!(mismatched[0].contains("not on lavapipe"), "{mismatched:?}");
+
+    let missing = ValidationReport::parse(ACTIVE_HEADER)
+        .expecting(GpuDriver::Radv)
+        .violations(VALIDATION_ALLOWLIST);
+    assert_eq!(missing.len(), 1, "{missing:?}");
+    assert!(missing[0].contains("no AdapterInfo line"), "{missing:?}");
+    assert_eq!(
+        ValidationReport::parse(&format!("{ACTIVE_HEADER}{LAVAPIPE_ADAPTER_LINE}"))
+            .expecting(GpuDriver::Lavapipe)
+            .violations(VALIDATION_ALLOWLIST),
+        Vec::<String>::new()
+    );
+}
+
+/// R7: the driver the harness selected is the one that rendered. On this server with `auto` that
+/// is `radv`; with `SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe` (CI) it is `llvmpipe`.
+#[test]
+fn the_selected_driver_is_the_one_that_rendered() {
+    if gpu_run::gpu_tests_opted_out() {
+        return;
+    }
+    let request = DriverRequest::parse(std::env::var(gpu_run::DRIVER_VAR).ok().as_deref())
+        .expect("a valid driver request");
+    let expected = match request {
+        DriverRequest::Radv => GpuDriver::Radv,
+        DriverRequest::Auto if HostGpu::probe().missing_radv_prerequisites().is_empty() => {
+            GpuDriver::Radv
+        }
+        DriverRequest::Lavapipe | DriverRequest::Auto => GpuDriver::Lavapipe,
+    };
+    let mut command = gpu_run::virtual_gpu_command(Path::new(env!("CARGO_BIN_EXE_client")));
+    command.args(["--lab", "--max-frames", "10"]);
+    let run = command.run("client --lab --max-frames 10");
+    let rendered = run
+        .adapter
+        .as_ref()
+        .map_or("nothing", |adapter| adapter.driver.as_str());
+    assert_eq!(
+        rendered,
+        expected.adapter_driver(),
+        "expected {expected}, rendered on {rendered}"
+    );
+    assert_eq!(gpu_run::selected_driver().driver, expected);
+}
+
+/// R8: the host's `with-gpu-lock`, when present, locks the same file as the harness, so a change
+/// to the host script fails the gate instead of splitting the protocol.
+#[test]
+fn the_host_lock_tool_uses_the_harness_lock_file() -> Result<(), Box<dyn std::error::Error>> {
+    let Some(tool) = gpu_run::find_on_path(gpu_run::LOCK_TOOL) else {
+        eprintln!(
+            "{} is not on PATH; this host does not declare the lock protocol",
+            gpu_run::LOCK_TOOL
+        );
+        return Ok(());
+    };
+    let script = std::fs::read_to_string(&tool)?;
+    assert!(
+        script.contains("flock"),
+        "{} must use flock",
+        tool.display()
+    );
+    assert!(
+        script.contains(gpu_run::GPU_LOCK_PATH),
+        "{} must lock {}",
+        tool.display(),
+        gpu_run::GPU_LOCK_PATH
+    );
+    Ok(())
 }

@@ -11,6 +11,9 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   SPACE_SCUFFLE_VIRTUAL_GPU: "1"
+  # The runner has no GPU. Forcing lavapipe keeps CI from depending on the harness's `auto`
+  # choice: a future runner with a GPU then stays on lavapipe instead of changing driver silently.
+  SPACE_SCUFFLE_GPU_TEST_DRIVER: lavapipe
 
 jobs:
   check-and-test:
@@ -18,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     # The suite runs about 20 GPU processes on lavapipe, one after another, and passed 30 minutes
     # in November 2026 with every test green so far. 60 leaves room without hiding a real hang:
-    # each GPU run has its own 300 s limit in crates/client/tests/support/gpu_run.rs.
+    # each GPU run has its own 300 s limit on lavapipe in crates/client/tests/support/gpu_run.rs.
     timeout-minutes: 60
 
     steps:

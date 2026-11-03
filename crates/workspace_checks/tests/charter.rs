@@ -20,9 +20,10 @@
 use std::error::Error;
 use workspace_checks::{
     cargo_metadata, engine_free_simulation, expect_messages_state_invariants, float_ratchet,
-    module_docs, no_discarded_results_in_simulation, no_embedded_assets, no_mutable_statics,
-    no_work_markers, notebook_references, plan_index, render, repo_root, simulation_clippy_config,
-    tracked_files, typed_library_errors, Finding, FloatAllowance, SIMULATION_CRATES,
+    in_process_render_devices, module_docs, no_discarded_results_in_simulation, no_embedded_assets,
+    no_mutable_statics, no_work_markers, notebook_references, plan_index, render, repo_root,
+    simulation_clippy_config, tracked_files, typed_library_errors, Finding, FloatAllowance,
+    SIMULATION_CRATES,
 };
 
 /// Fails with every finding of `check`, or passes when there are none.
@@ -156,5 +157,11 @@ fn c18_every_plan_has_one_index_row_with_a_known_status() -> Result<(), Box<dyn 
 fn c19_no_file_urls_and_lost_tmp_evidence_is_marked() -> Result<(), Box<dyn Error>> {
     let root = repo_root();
     assert_clean("C19", &notebook_references(&root, &tracked_files(&root)?)?);
+    Ok(())
+}
+
+#[test]
+fn c21_no_test_builds_a_render_device_in_its_own_process() -> Result<(), Box<dyn Error>> {
+    assert_clean("C21", &in_process_render_devices(&repo_root())?);
     Ok(())
 }

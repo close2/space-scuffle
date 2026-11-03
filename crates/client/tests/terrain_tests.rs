@@ -29,7 +29,7 @@
 //! 10. **Amanatides-Woo Raycasting:** Ray tests correctly identify plateau surfaces, continuous ramps,
 //!     lip occlusion, and abyss misses.
 //! 11. **Virtual GPU Terrain Preview Render Verification (§5.7b):** `terrain_preview` binary
-//!     executes under virtual GPU (xvfb + lavapipe) and renders 4 canonical camera views of
+//!     executes under the test GPU (xvfb + radv or lavapipe) and renders 4 canonical camera views of
 //!     `showcase_canyon` with `orbital_foundry` theme to 1600x900 PNGs. Verifies non-trivial
 //!     luminance distribution (mean in [0.06, 0.85], std-dev > 0.06), and <20% void color
 //!     in the central 50% framing region.
@@ -974,8 +974,8 @@ fn test_terrain_preview_renders() {
 
     let mut cmd = gpu_run::virtual_gpu_command(Path::new(env!("CARGO_BIN_EXE_terrain_preview")));
     cmd.arg("--out").arg(out_dir);
-    gpu_run::allow_for_hex_tiling_driver_defect(&mut cmd);
-    gpu_run::assert_passes_validation(&mut cmd, "terrain_preview");
+    cmd.allow_for_hex_tiling_driver_defect();
+    cmd.assert_passes_validation("terrain_preview");
 
     let poses = ["overview", "p0_base", "mesa", "chasm"];
     let void_srgb = [0.01_f32, 0.012_f32, 0.03_f32];

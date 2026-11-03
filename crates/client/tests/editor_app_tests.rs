@@ -325,8 +325,8 @@ fn test_render_verification_under_xvfb() {
     cmd.arg("--verify-render").arg(out_dir);
     cmd.arg("--map")
         .arg("assets/maps/showcase_canyon.scmap.ron");
-    gpu_run::allow_for_hex_tiling_driver_defect(&mut cmd);
-    gpu_run::assert_passes_validation(&mut cmd, "map_editor --verify-render");
+    cmd.allow_for_hex_tiling_driver_defect();
+    cmd.assert_passes_validation("map_editor --verify-render");
 
     for pose in poses {
         let file_path = out_dir.join(format!("{pose}.png"));

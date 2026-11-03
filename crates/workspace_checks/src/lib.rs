@@ -25,6 +25,7 @@
 
 mod checks;
 mod docs;
+mod gpu;
 mod metadata;
 mod production_rules;
 mod source;
@@ -37,6 +38,9 @@ pub use checks::{
 pub use docs::{
     notebook_references, plan_id, plan_index, tracked_files, EVIDENCE_RETENTION_LINE,
     LEGACY_PLAN_IDS, PLAN_STATUSES,
+};
+pub use gpu::{
+    in_process_render_devices, HEADLESS_CHECK_WINDOW, HEADLESS_WINDOW, RENDER_DEVICE_MARKERS,
 };
 pub use metadata::{cargo_metadata, engine_free_simulation, FORBIDDEN_SIMULATION_DEPENDENCIES};
 pub use production_rules::{
