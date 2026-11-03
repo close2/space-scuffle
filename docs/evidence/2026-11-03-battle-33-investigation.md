@@ -3,8 +3,9 @@
 This is the evidence file of [the battle 33 investigation plan](../plans/2026-11-04-zealot-marine-investigation.md),
 which answers the owner's request in [Q0007](../questions/open/0007-combat-baselines.md): find out why published
 StarCraft II sources say zealots win this fight, and why our battle 33 leaves 6 to 13 of 24 marines alive. The plan's
-D-5 gives this file seven sections. **Only section 1 (WP1, reference research) is written so far.** WP2 to WP5 add
-sections 2 to 7 below it. This file changes no code, catalog value or expected result.
+D-5 gives this file seven sections. **Sections 1 (WP1, reference research), 2 and 3 (WP2, comparison and analytic
+model) are written so far.** WP3 adds the measured contact fraction to section 3 and writes section 4; WP4 and WP5 add
+sections 5 to 7. This file changes no code, catalog value or expected result.
 
 ## 1. Reference: what StarCraft II does (WP1)
 
@@ -325,3 +326,228 @@ Editor field semantics:
 Community tests and discussion:
 
 - The forum, video and TL.net sources are linked in the rows of §1.8 to §1.11, each with its date.
+
+## 2. Comparison: our data and rules against the reference (WP2)
+
+Written 2026-11-03 against `main` at `eef92c3`. "Ours" is read from `assets/catalog/units.ron` (`pulse_bot`, `psi_grey`)
+and from `crates/sim_core/src`; the reference is §1.
+
+### 2.1 Summary
+
+1. **Two values are unconverted Normal-time numbers.** The marine's speed (0.09 per tick) and the zealot's shield
+   regeneration (0.08 per tick) are the editor's Normal values put straight into our Faster-based ticks. Both should be
+   28.6 % higher. The zealot's speed has the same editor value (2.25) and **was** converted (0.126), and doc 07's own
+   roster table gives the marine 0.1260. The shield-regeneration delay, hard-coded as 250 ticks in `sim_core`, is the
+   same mistake (10 Normal s; the reference is 178.6 ticks).
+2. **None of the data differences decides battle 33 in the model.** Together they move the contact fraction the
+   zealots need from 0.577 (reference values) to 0.607 (ours), about 0.4 of a zealot (§3.3). The ones that favour the
+   marines are the zealot period (+2.7 %), the marine period (−2.4 %) and the zealot's 4-tick wind-up, which can be
+   cancelled. The ones that favour the zealots are melee range 0.3 (7 zealots fit around a marine instead of 5) and
+   both strikes in one tick.
+3. **Four flagged differences have no effect in battle 33.** Separation radius is read by no system in `sim_core`.
+   Push priority applies between friends only, and each side has one unit type. Backswing neither stops movement nor
+   delays the next attack. Attributes do not matter, because the marine's weapon has no attribute bonus.
+4. **What does decide the battle is how many zealots fight at once (§3).** The data puts battle 33 close to the
+   crossover. The survivors we see (6 to 13 of 24) fit 4 to 6 zealots in contact at a time, which is what the
+   marine block's front face holds. Depending on how pre-contact damage is counted, 5 to 8 zealots in contact
+   throughout would give the zealots the win.
+
+### 2.2 Time base
+
+`sim_types::TICKS_PER_SECOND` is 25 (`crates/sim_types/src/lib.rs`), and doc 07 §2 defines a tick as 1/25 of a
+Faster second. Every reference time below is converted explicitly:
+
+- Faster seconds = editor (Normal) seconds ÷ 1.4.
+- Our ticks = Faster seconds × 25.
+- Speeds and rates per second are multiplied by 1.4, then divided by 25 for "per tick".
+
+The catalog's per-tick fields and tick counts are converted back the same way for the "ours" column, so 0.09 per tick
+reads as 2.25 per Faster second. Values with no time base (life, damage, radii, priorities) are compared directly.
+
+### 2.3 Marine (`pulse_bot`)
+
+"Favours" says which side the difference helps **in battle 33**, compared with the reference value. "Documented"
+says whether a project document chose the value.
+
+| Field | Ours (catalog or rule) | Reference, editor (Normal) | Reference in our ticks | Delta (ours − ref) | Documented? | Favours in battle 33 |
+|---|---|---|---|---|---|---|
+| Life / armour | 45 / 0 | 45 / 0 | — | 0 | — | neither |
+| Attributes | Light, Biological (`bits: 5`) | Light, Biological | — | none | — | neither |
+| Movement speed | **0.09 per tick = 2.25 per Faster s** | 2.25 per Normal s | **0.126 per tick** (3.15 per Faster s) | **−0.036 per tick (−28.6 %)** | No. In the first commit `3d9a9c4`; doc 07's roster table says 0.1260 | Almost neither: no kiting in battle 33. It lengthens the walk to engagement (77.4 against 66.4 ticks, §3.2) and how fast rear marines step into range (3.7 against 3.2 ticks per 0.8 of depth). Pre-contact shots are the same (66). Zealots slightly, if at all |
+| Acceleration / deceleration | 0.09 per tick (parsed, unused: speed changes are instant, plan §2.3) | 1000 (instant) | instant | none in effect | — | neither |
+| Turn rate | 999 ° per tick, clamped to 180 ° (instant) | 999.84 ° per Normal s | 56.0 ° per tick (1399.8 ° per Faster s); effectively instant | both instant | — | neither |
+| Collision radius | 0.375 | 0.375 | — | 0 | — | neither |
+| Separation radius | 0.45 | 0.375 | — | +0.075 | No | **neither: no `sim_core` system reads `separation_radius`.** Movement and contact use `collision_radius` (`movement/mod.rs`, `MotionPolicy::resolve`) |
+| Push priority | 20 | 10 | — | +10 | Doc 07 roster | **neither:** priority only orders friendly contact (`steering.rs`, `checked_dynamic_push`), and all 24 blue units share it |
+| Sight | 9 | 9 | — | 0 | — | neither |
+| Scan (acquisition) range | **9**, centre to centre (`target_acquisition.rs`) | 5.5 | — | **+3.5** | No | Unclear. Marines turn from the attack-move line to the closest zealot at 9 instead of 5.5. Both sides are attack-moving at each other, so both acquire well before contact anyway. WP4 can measure it |
+| Damage | 6 | 6 | — | 0 | — | neither |
+| Range | 5, from edge to edge (both radii: `combat.rs`, `in_engagement_band`) | 5, from the attacker's edge; the target's radius is **verify** (§1.5) | — | 0 if the target's radius counts | — | neither (engagement at 5.875 between centres either way) |
+| Period (cooldown) | **15 ticks** = 0.600 Faster s | 0.8608 s | **15.37** (0.6149 Faster s) | −0.37 ticks (−2.4 %) | Doc 07 §2 rounds 0.61 × 25 = 15 | **marines:** DPS 10.0 against 9.76 per Faster s (+2.5 %) |
+| Damage point | 2 ticks | 0.05 s | 0.89 | +1.1 ticks | Plan 17 §2.2 (0.08 s) | neither: the first shot is about 1 tick later, and approaching zealots never leave the band during it |
+| Backswing | 4 ticks | 0.75 s | 13.39 | −9.39 ticks | No | **neither.** In `sim_core` the backswing does not hold the unit in place (only the wind-up does: `locomotion.rs`). It ends before the cooldown (13 ticks) does, so it never delays the next shot. It matters only for stutter-step orders, which battle 33 does not give |
+| Random delay before firing | none (deterministic) | −0.0625 to +0.125 s | −1.12 to +2.23 ticks | not modelled | — | marines slightly, **if** the delay lengthens the mean period (§1.4, verify): +0.56 ticks on average would make the reference period 15.93 |
+| Release slop | 0.5 at the end of the wind-up only (`RELEASE_RANGE_SLOP`) | `RangeSlop` 1 | — | −0.5 | Comment in `combat.rs` calls it "the same half-cell `RangeSlop`" | neither for the marine (its targets walk towards it) |
+
+### 2.4 Zealot (`psi_grey`)
+
+| Field | Ours (catalog or rule) | Reference, editor (Normal) | Reference in our ticks | Delta (ours − ref) | Documented? | Favours in battle 33 |
+|---|---|---|---|---|---|---|
+| Life / shields / life armour / shield armour | 100 / 50 / 1 / 0 | 100 / 50 / 1 / 0 | — | 0 | — | neither |
+| Attributes | Light, **Psionic** (`bits: 17`) | Light, **Biological** | — | Psionic instead of Biological | No document chooses it; it matches the unit's lore text ("psionic exo-carapace") | **neither:** the marine's weapon has no attribute bonus, and no rule in battle 33 reads either flag |
+| Movement speed | 0.126 per tick = 3.15 per Faster s | 2.25 per Normal s | 0.126 per tick | 0 | Doc 07 roster | neither (converted correctly, unlike the marine's identical editor value) |
+| Acceleration / turn rate | 0.126 per tick (unused) / 999 ° per tick (instant) | 1000 / 999.84 ° per Normal s | instant | none in effect | — | neither |
+| Collision radius | 0.5 | 0.5 (core default) | — | 0 | — | neither |
+| Separation radius | 0.6 | 0.375 | — | +0.225 | No | **neither: not read by `sim_core`** (as for the marine) |
+| Push priority | 25 | 10 | — | +15 | Doc 07 roster | **neither:** friendly contact only, and all 12 red units share it |
+| Sight | 9 | 9 | — | 0 | — | neither |
+| Scan range | **9**, centre to centre | 5 | — | **+4** | No | Unclear: rear zealots pick a marine from farther away. WP4 |
+| Weapon range | **0.3**, edge to edge: in band at 1.175 between centres, released up to 1.675 | **0.1** | — | **+0.2** | Plan 17 §2.2 says 0.3; doc 07's roster says 0.2 | **zealots:** up to 7 zealots fit on the ring around one marine instead of 5, and about 6 instead of 5 along the marine block's front (§3.4). The walk under fire is 1.6 ticks shorter, too little to cost a marine shot |
+| Period (cooldown) | **22 ticks** = 0.88 Faster s | 1.2 s | **21.43** (0.8571 Faster s) | +0.57 ticks (+2.7 %) | Plan 17 §2.2 says 22 (0.88 s); doc 07 says 21 | **marines:** DPS 18.18 against 18.67 per Faster s (−2.6 %) |
+| Damage point | **4 ticks** | **0** | **0** | +4 ticks | Plan 17 Bug 3 chose 4 as a "realistic SC2 frontswing"; the reference has none | **marines.** (a) The first strike lands 4 ticks after the zealot reaches its band, and it stands still during the wind-up (`locomotion.rs`). (b) A wind-up whose target dies or leaves the band (1.675 between centres) is cancelled with no damage and no cooldown (`combat.rs`, `step_windup`). With 24 marines focusing fire and other zealots killing the same marine, (b) can waste swings. WP3 counts them |
+| Backswing | 6 ticks | 0.5 s (default) | 8.93 | −2.93 ticks | Plan 17 Bug 3 | **neither:** it ends before the cooldown (18 ticks) does, and it does not hold the unit |
+| Strikes per attack | 2 × 8 **in the same tick** (`combat_resolution.rs`, `apply_weapon_hit` loops `attacks_count`) | 2 × 8, the second 0.28 s later, only if the target is within 2.1 | **5 ticks apart** | second strike 5 ticks earlier | No | **zealots, slightly:** each killing swing lands 5 ticks sooner. Both sides waste the second strike when the first kills |
+| Shield regeneration | **0.08 per tick = 2 per Faster s** | 2 per Normal s | **0.112 per tick** (2.8 per Faster s) | **−0.032 per tick (−28.6 %)** | No. Doc 03 §1.1 itself says 2.8 per second | **neither** in battle 33 (see the delay below) |
+| Shield regeneration delay | **250 ticks**, hard-coded in `sim_core` (`world/upkeep.rs`; module doc of `combat.rs`: "10-second (250-tick)") | 10 s | **178.6** (7.14 Faster s) | +71.4 ticks (+40 %) | Doc 03 §1.1 says "10 seconds" (the Normal value) | **neither** in battle 33: a zealot under fire is hit far more often than every 179 ticks, and unhit zealots are already full |
+| Damage rules | shield armour first, spillover minus life armour, minimum 0.5 (`combat.rs`, `mitigate_strike`) | same (§1.8) | — | none | — | neither: 29 marine shots kill a zealot under both, and 6 strikes (3 swings) kill a marine |
+
+### 2.5 Rules that are not catalog data
+
+| Rule | Ours | Reference (§1.8) | Favours in battle 33 |
+|---|---|---|---|
+| Contact between enemies | Enemies separate evenly along the line of centres, whatever their push priority, unless one holds position (`steering.rs`, `checked_dynamic_push`, rule 3). Hostile correction is uncapped (`movement/collision.rs`) | Unresolved: sources disagree whether enemies can push each other at all | Unclear. A zealot walking into the marine block shoves the marine half the overlap back. That keeps the marine inside the zealot's band, but it reshapes the front. WP3 and WP4 |
+| Wind-up cancellation | A wind-up is bound to its target and cancelled with no cooldown if the target dies or leaves the band | The zealot has no wind-up; the marine's (0.89 ticks) is shorter than one of ours | marines (through the zealot's 4 ticks, §2.4) |
+| Effective period with a damage point of 0 | By reading `step_entity_weapon`: a weapon with `damage_point_ticks: 0` enters its wind-up on the tick the cooldown ends and releases on the next tick, so it fires every `period + 1` ticks. With a damage point of 1 or more it fires every `period` ticks | Every 21.43 ticks | none today (neither unit has a damage point of 0). **WP4 note:** the counterfactual "zealot damage point 0" must also set `period_ticks: 21` to fire every 22 ticks, or it changes two things at once. WP3's trace can confirm the reading |
+| Overkill | Shots prepared and applied in entity-id order; a target killed earlier in the phase wastes the later shots | No smart fire; same-loop waste **not found** | unknown; WP3 counts wasted shots |
+| Target choice | threat priority, then distance, then id; switching margin 1.0; call for help to idle allies within 5 | Keep the target until it dies or leaves range; closest only after losing it | unclear |
+
+### 2.6 Found outside battle 33
+
+Two more differences of the same kind, which battle 33 does not exercise:
+
+- **Stimpack (`overclock`) duration:** 250 ticks (10 Faster s) against 15 Normal s = 10.71 Faster s = **267.9 ticks**.
+  The speed and attack-rate multipliers (1.5) and the life cost (10) match. Battle 25b uses Stimpack.
+- **Doc 07 disagrees with the catalog** on three values in battle 33: the marine's speed (0.1260 against 0.09), the
+  zealot's range (0.2 against 0.3) and the zealot's period (21 against 22 ticks).
+
+## 3. Analytic model (WP2)
+
+A Lanchester square-law model with the number of zealots in contact as its parameter. It answers one question: how
+many zealots must be fighting at once, on average, for the zealots to win battle 33? The script that produced the
+numbers is a throwaway (`~/scratch/b33/zm_wp2_model.py`, not committed); every formula is given here, so the tables
+can be checked by hand.
+
+### 3.1 Per-pair numbers
+
+| Quantity | Ours | Reference | How |
+|---|---|---|---|
+| Marine shots to kill a zealot | 29 | 29 | 8 shots take 48 shields; the 9th takes the last 2 and spills 6 × (1 − 2/6) − 1 = 3 into life; then 20 shots of 5 take the remaining 97 |
+| Zealot strikes to kill a marine | 6 (3 swings) | 6 (3 swings) | ⌈45 ÷ 8⌉; the 6th strike overkills by 3 |
+| One marine kills one zealot in (T_M) | 29 × 15 = **435 ticks** (17.4 Faster s) | 29 × 15.37 = **445.8 ticks** (17.8 s) | sustained fire |
+| One zealot kills one marine in (T_Z) | 3 × 22 = **66 ticks** (2.64 s) | 3 × 21.43 = **64.3 ticks** (2.57 s) | sustained swings |
+| First marine dead after the first zealot reaches its band | 4 + 2 × 22 = **48 ticks** | 0 + 2 × 21.43 + 5 = **47.9 ticks** | our 4-tick wind-up cancels out the reference's 5-tick strike gap |
+
+The plan's back-of-envelope figures (§2.4) hold: about 17 marine-seconds per zealot and 2.5 to 2.6 zealot-seconds per
+marine.
+
+### 3.2 The approach
+
+Battle 33 starts the fronts 22.6 apart (marine front at x = 22.4, zealot front at x = 45). The marines engage at
+5 + 0.375 + 0.5 = 5.875 between centres; the zealots strike at 0.3 + 0.875 = 1.175 (ours) or 0.1 + 0.875 = 0.975
+(reference, counting the target's radius).
+
+| Phase | Ours | Reference |
+|---|---|---|
+| Walk until the marine front is in range: (22.6 − 5.875) ÷ (v_marine + v_zealot) | 16.725 ÷ 0.216 = **77.4 ticks** | 16.725 ÷ 0.252 = **66.4 ticks** |
+| Zealots walk through marine fire: (5.875 − contact) ÷ 0.126 | 4.7 ÷ 0.126 = 37.3 ticks | 4.9 ÷ 0.126 = 38.9 ticks |
+| Plus the zealot's wind-up | + 4 = **41.3 ticks of fire** before the first strike | + 0 = **38.9 ticks** |
+| First zealot strike | tick ≈ 119 | tick ≈ 105 |
+| Rear marine columns enter range later by 0.8 k ÷ (v_marine + v_zealot) | 3.7 ticks per column | 3.2 ticks per column |
+| Marine shots before contact (first shot after the damage point, then every period) | 3, 3, 3 and 2 per marine by column: **66 shots** | 3, 3, 3, 2: **66 shots** |
+| Zealot-equivalents of that fire (66 ÷ 29) | **2.28** | **2.28** |
+| Contact time left in the 500-tick battle | 381 ticks | 395 ticks |
+
+The marine's slower speed only delays the meeting; the fire window depends on the zealot's speed, which is the same.
+
+### 3.3 Square law with a contact fraction
+
+**Model.** With M marines and Z zealots alive, and a fraction f of the zealots in contact:
+
+- dM/dt = −f Z ÷ T_Z
+- dZ/dt = −M ÷ T_M
+
+The zealots win when f Z₀² ÷ T_Z > M₀² ÷ T_M, so the **critical contact fraction** is
+**f\* = (M₀ ÷ Z₀)² × T_Z ÷ T_M**. If the marines win, their survivors are S = √(M₀² − f (T_M ÷ T_Z) Z₀²), so a
+survivor count implies f = (M₀² − S²) T_Z ÷ (T_M Z₀²).
+
+**Assumptions.**
+
+1. From contact on, all 24 marines fire. Range 5.875 between centres covers the marine block (2.4 deep) and the
+   front zealots.
+2. Damage counts as a fraction of a kill (a health pool). Real zealots keep their full damage until they die, so the
+   two pre-contact variants bracket the truth:
+   - **A**: the 66 pre-contact shots are spread and kill nobody, so Z₀ = 12 at contact.
+   - **B**: the pre-contact damage counts as 2.28 dead zealots, so Z₀ = 9.72.
+3. Sustained rates only. No overkill or wasted shots, no cancelled swings, no shield regeneration, no random delay.
+4. f is constant through the fight.
+
+**Results.**
+
+| | Ours, A | Ours, B | Reference, A | Reference, B |
+|---|---|---|---|---|
+| Critical fraction f\* | **0.607** | **0.924** | **0.577** | **0.878** |
+| Zealots in contact at the start, f\* × Z₀ | 7.3 | 9.0 | 6.9 | 8.5 |
+| f implied by 16 marine survivors (top of the expected range) | 0.337 | 0.513 | 0.320 | 0.488 |
+| f implied by 13 survivors | 0.429 | 0.653 | 0.408 | 0.621 |
+| f implied by 6 survivors | 0.569 | 0.866 | 0.541 | 0.824 |
+| f implied by 4 survivors (bottom of the expected range) | 0.590 | 0.899 | 0.561 | 0.854 |
+
+With every zealot in contact (f = 1, variant A) the zealots win clearly in both data sets: 7.5 (ours) or 7.8
+(reference) of 12 survive. At f = 0.5 the marines win with 10.1 (ours) or 8.8 (reference) alive. The data
+differences of §2 move f\* by 0.03 (5 %), about 0.4 of a zealot.
+
+### 3.4 Contact capped by the front
+
+A constant fraction is not the geometry of battle 33. Zealots in contact are limited by the room along the marine
+block, not by how many zealots are alive. So a second form caps them at K:
+dM/dt = −min(Z, K) ÷ T_Z, with dZ/dt as before.
+
+**How many zealots fit.**
+
+- **Around one marine.** At most ⌊π ÷ asin(0.5 ÷ r)⌋ zealots fit on a ring of radius r, because zealots are 1.0
+  apart (two radii of 0.5). For our band, r = 1.175 gives **7**. For the reference, r = 0.975 gives **5**, and so does
+  touching distance (r = 0.875).
+- **Along the marine block's front face.** The six front marines span 4.0 between centres. A zealot standing 1.0
+  ahead of the face reaches a front marine across a span of 4.0 + 2√(1.175² − 1.0²) = 5.2, which holds **6** zealots.
+  The reference zealot touching the face reaches across 4.0 + 2√(0.975² − 0.875²) = 4.9, which holds **5**.
+- **All round the block.** The contour of the 2.4 × 4.0 block holds about 20 (ours) or 19 (reference) zealots. So all
+  12 zealots fit only if they wrap around the flanks.
+
+**Results** (survivors when the fight ends; † marks a fight that lasts longer than the contact time left in 500
+ticks, so the battle would end on time with both sides alive).
+
+| K (zealots in contact at most) | Ours, A | Ours, B | Reference, A | Reference, B |
+|---|---|---|---|---|
+| 3 | marines, 12.7 | marines, 15.8 | marines, 11.8 | marines, 15.3 |
+| 4 | marines, 7.0 † | marines, 13.0 | marines, 4.6 † | marines, 12.1 |
+| 5 | zealots, 2.8 | marines, 10.0 | zealots, 3.5 | marines, 8.7 |
+| 6 | zealots, 4.5 | marines, 6.6 | zealots, 5.0 | marines, 4.1 † |
+| 7 | zealots, 5.6 | marines, 1.3 † | zealots, 6.0 | zealots, 2.0 |
+| 8 | zealots, 6.4 | zealots, 2.0 | zealots, 6.7 | zealots, 2.9 |
+
+**Reading.** The zealots need **5 or more** in contact for the whole fight (variant A) or **8 or more** (variant B).
+Battle 33's 6 to 13 survivors match about **K = 4 to 6**: the marine block's front face, with little wrap-around onto
+its flanks. The reference data gives the same picture, with the crossover at most one zealot lower. So the catalog
+differences cannot by themselves turn a zealot win into a marine win. What decides battle 33 is how many zealots
+reach marines at once. That depends on our rules for solid enemy bodies, flanking (`flank_if_blocked`), target
+switching and hostile contact (§2.5), which the plan's history notes tie to commit `d4109e2`.
+
+**A consistency check, not evidence.** If the front grows with the square root of the army, then at test O1's size
+(50 marines against 25 zealots, §1.9) K scales by √(25 ÷ 12) ≈ 1.44: from about 5 to about 7. With the reference
+data, variant A at K = 7 leaves **20.3 of 50 marines** alive; O1 reported 20. This agrees with the sources' view that
+marines gain as numbers grow (§1.10). O1 is a single anecdotal test.
+
+### 3.5 Measured contact fraction
+
+WP3 measures this: per tick, the number of zealots in contact, its mean and maximum, and the fraction of zealot time
+spent blocked or flanking. It is to be compared with f\* and K above.
