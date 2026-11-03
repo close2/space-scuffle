@@ -17,7 +17,7 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use sim_core::catalog::{UnitArchetype, UnitCatalog};
 use sim_types::commands::UnitOrder;
-use sim_types::enums::{AnimState, AttributeFlags, Faction};
+use sim_types::enums::{AnimState, AttributeFlags};
 use sim_types::ids::PlayerId;
 use sim_types::math::SimVec2;
 use sim_types::snapshot::CombatEventVisual;
@@ -927,7 +927,7 @@ fn render_selected_unit_hud(
                 // Right unit lore, faction badge, live vitals, weapon stats, and quick-select buttons
                 ui.vertical(|ui| {
                     if let Some(arch) = arch {
-                        render_unit_identity_row(ui, lab_state, arch);
+                        render_unit_identity_row(ui, lab_state, catalog, arch);
                         render_unit_role_row(ui, arch);
                         ui.separator();
                         render_unit_combat_rows(ui, lab_state, arch);
@@ -1007,25 +1007,35 @@ fn render_unit_portrait(
     );
 }
 
-/// The faction badge of `arch`: its display name and its sRGB badge colour.
-fn faction_badge(arch: &UnitArchetype) -> (&'static str, egui::Color32) {
-    match arch.faction {
-        Faction::AutomatonDirectorate => (
-            "Automaton Directorate",
-            egui::Color32::from_rgb(60, 150, 255),
-        ),
-        Faction::CosmicEnclave => ("Cosmic Enclave", egui::Color32::from_rgb(50, 230, 230)),
-        Faction::SylvanSwarm => ("Sylvan Swarm", egui::Color32::from_rgb(255, 120, 40)),
-    }
+/// The faction badge of `arch`: its faction's display name and sRGB accent colour, both read
+/// from `assets/catalog/factions.ron` through the catalog. `None` for an archetype whose faction
+/// the catalog does not define, which only programmatic registration can produce.
+fn faction_badge<'a>(
+    catalog: &'a UnitCatalog,
+    arch: &UnitArchetype,
+) -> Option<(&'a str, egui::Color32)> {
+    let faction = catalog.factions().faction(arch.faction)?;
+    let (red, green, blue) = faction.accent_srgb;
+    Some((
+        faction.display_name.as_str(),
+        egui::Color32::from_rgb(red, green, blue),
+    ))
 }
 
 /// Faction badge and names on the left; health and shields, scaled by the lab's ratios, on the
 /// right.
-fn render_unit_identity_row(ui: &mut egui::Ui, lab_state: &LabState, arch: &UnitArchetype) {
-    let (faction_name, faction_color) = faction_badge(arch);
+fn render_unit_identity_row(
+    ui: &mut egui::Ui,
+    lab_state: &LabState,
+    catalog: &UnitCatalog,
+    arch: &UnitArchetype,
+) {
+    let badge = faction_badge(catalog, arch);
 
     ui.horizontal_wrapped(|ui| {
-        ui.colored_label(faction_color, format!("[ {faction_name} ]"));
+        if let Some((faction_name, faction_color)) = badge {
+            ui.colored_label(faction_color, format!("[ {faction_name} ]"));
+        }
         ui.strong(format!("{} — {}", arch.display_name, arch.name));
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1133,4 +1143,54 @@ fn render_lineup_buttons(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Phase 9 WP12: the badge now comes from `factions.ron`. Players must see what they saw
+    /// when the names and colours were a `match` here, so the shipped data is pinned to them.
+    #[test]
+    fn shipped_faction_badges_are_unchanged_and_come_from_the_catalog() {
+        let catalog = sim_fixtures::shipped_catalogs().units;
+        let mut badges: Vec<(&str, egui::Color32)> = catalog
+            .archetypes()
+            .filter_map(|arch| faction_badge(&catalog, arch))
+            .collect();
+        assert_eq!(
+            badges.len(),
+            catalog.archetypes().count(),
+            "every shipped archetype has a badge"
+        );
+        badges.sort_by_key(|(name, _)| *name);
+        badges.dedup();
+        assert_eq!(
+            badges,
+            [
+                (
+                    "Automaton Directorate",
+                    egui::Color32::from_rgb(60, 150, 255)
+                ),
+                ("Cosmic Enclave", egui::Color32::from_rgb(50, 230, 230)),
+                ("Sylvan Swarm", egui::Color32::from_rgb(255, 120, 40)),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_archetype_whose_faction_is_not_in_the_catalog_has_no_badge() -> Result<(), &'static str> {
+        let catalog = sim_fixtures::shipped_catalogs().units;
+        let mut arch = catalog
+            .archetypes()
+            .next()
+            .cloned()
+            .ok_or("the shipped catalog has archetypes")?;
+        arch.faction = (0..=u8::MAX)
+            .map(sim_types::FactionId)
+            .find(|id| catalog.factions().faction(*id).is_none())
+            .ok_or("fewer than 256 factions are shipped")?;
+        assert_eq!(faction_badge(&catalog, &arch), None);
+        Ok(())
+    }
 }

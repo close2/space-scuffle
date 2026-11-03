@@ -20,10 +20,10 @@
 use std::error::Error;
 use workspace_checks::{
     cargo_metadata, engine_free_simulation, expect_messages_state_invariants, float_ratchet,
-    in_process_render_devices, module_docs, no_discarded_results_in_simulation, no_embedded_assets,
-    no_mutable_statics, no_work_markers, notebook_references, plan_index, render, repo_root,
-    simulation_clippy_config, tracked_files, typed_library_errors, Finding, FloatAllowance,
-    SIMULATION_CRATES,
+    in_process_render_devices, module_docs, no_catalog_identities_in_code,
+    no_discarded_results_in_simulation, no_embedded_assets, no_mutable_statics, no_work_markers,
+    notebook_references, plan_index, render, repo_root, simulation_clippy_config, tracked_files,
+    typed_library_errors, Finding, FloatAllowance, SIMULATION_CRATES,
 };
 
 /// Fails with every finding of `check`, or passes when there are none.
@@ -40,11 +40,6 @@ fn assert_clean(check: &str, findings: &[Finding]) {
 /// Phase 9 WP0. Every entry is a boundary where floats leave or enter the simulation; none of
 /// them stores a float in authoritative state.
 const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
-    FloatAllowance {
-        path: "crates/sim_types/src/enums.rs",
-        count: 1,
-        reason: "presentation: `Faction::primary_color` returns linear RGBA for the renderer",
-    },
     FloatAllowance {
         path: "crates/sim_types/src/math.rs",
         count: 12,
@@ -102,6 +97,12 @@ fn c03_no_unfinished_work_markers() -> Result<(), Box<dyn Error>> {
 #[test]
 fn c04_every_rust_file_begins_with_module_docs() -> Result<(), Box<dyn Error>> {
     assert_clean("C4", &module_docs(&repo_root())?);
+    Ok(())
+}
+
+#[test]
+fn c05_production_code_names_no_catalog_identity() -> Result<(), Box<dyn Error>> {
+    assert_clean("C5", &no_catalog_identities_in_code(&repo_root())?);
     Ok(())
 }
 

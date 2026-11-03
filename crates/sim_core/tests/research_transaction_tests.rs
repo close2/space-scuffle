@@ -3,7 +3,7 @@
 //! Fixtures reuse loaded authored identities while replacing effect values to
 //! exercise signed aggregation and live-vital overflow through the real API.
 
-use sim_core::{SimCoreError, UpgradeCatalog, UpgradeDef};
+use sim_core::{SimCoreError, UpgradeCatalog};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{PlayerId, SimScalar, SimVec2, UnitStatDeltas, UpgradeEffect};
 
@@ -18,11 +18,6 @@ fn effect(slug: &str, delta: i32, hp: SimScalar) -> UpgradeEffect {
         attack_cooldown_delta: delta,
         bonus_damage_delta: SimScalar::ZERO,
     }
-}
-
-#[derive(serde::Serialize)]
-struct AuthoredUpgrades {
-    upgrades: Vec<UpgradeDef>,
 }
 
 #[test]
@@ -48,10 +43,7 @@ fn research_failure_preserves_all_state_including_costs_and_live_entities(
             effect(&slug, 0, SimScalar::ONE),
             effect(&slug, 1, SimScalar::ONE),
         ];
-        world.upgrade_catalog =
-            UpgradeCatalog::from_ron_str(&ron::to_string(&AuthoredUpgrades {
-                upgrades: vec![upgrade],
-            })?)?;
+        world.upgrade_catalog = UpgradeCatalog::from_definitions([upgrade])?;
         if live_vital_overflow {
             world
                 .entities

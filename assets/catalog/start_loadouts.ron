@@ -13,6 +13,9 @@
         (
             slug: "standard_automaton",
             display_name: "Automaton Directorate — standard start",
+            // The map editor preselects this loadout for every player slot. Exactly one
+            // loadout must set it.
+            editor_default: true,
             town_hall: "foundry_core_dome",
             units: [
                 (

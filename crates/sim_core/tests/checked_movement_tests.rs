@@ -4,7 +4,7 @@
 use sim_core::catalog::RuntimeCatalogs;
 use sim_core::entity::{ActiveBuff, EntityAdmissionError};
 use sim_core::movement::{MovementInvariant, MovementMathError};
-use sim_core::{SimCoreError, SimWorld, UnitCatalog, UpgradeCatalog, UpgradeDef};
+use sim_core::{SimCoreError, SimWorld, UnitCatalog, UpgradeCatalog};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, EntityId, MoverType, OverclockSpec,
@@ -345,10 +345,6 @@ fn ordered_speed_fold_and_direct_buff_admission_have_explicit_boundaries() -> Te
     Ok(())
 }
 
-#[derive(serde::Serialize)]
-struct AuthoredUpgrades {
-    upgrades: Vec<UpgradeDef>,
-}
 #[test]
 fn rejected_speed_research_preserves_resources_research_and_live_vitals() -> TestResult {
     let mut f = Fixture::new(64, 64)?;
@@ -374,9 +370,7 @@ fn rejected_speed_research_preserves_resources_research_and_live_vitals() -> Tes
             bonus_damage_delta: SimScalar::ZERO,
         },
     ];
-    f.world.upgrade_catalog = UpgradeCatalog::from_ron_str(&ron::to_string(&AuthoredUpgrades {
-        upgrades: vec![upgrade],
-    })?)?;
+    f.world.upgrade_catalog = UpgradeCatalog::from_definitions([upgrade])?;
     let entities = f.world.entities.clone();
     let players = f.world.player_upgrades.clone();
     let resources = f.world.player_resources;
@@ -402,11 +396,11 @@ fn authored_negative_speed_is_rejected_while_zero_is_valid() -> TestResult {
     let mut negative = source.clone();
     negative.replace_range(start..end, " -0.125");
     assert!(
-        matches!(UnitCatalog::from_ron_str(&negative),Err(SimCoreError::CatalogInvalidValue{field,..}) if field=="max_speed")
+        matches!(UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &negative),Err(SimCoreError::CatalogInvalidValue{field,..}) if field=="max_speed")
     );
     let mut zero = source;
     zero.replace_range(start..end, " 0.0");
-    assert!(UnitCatalog::from_ron_str(&zero).is_ok());
+    assert!(UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &zero).is_ok());
     Ok(())
 }
 
@@ -586,7 +580,7 @@ fn authored_negative_capability_and_ability_values_are_rejected_at_load() -> Tes
         let mut invalid = source.clone();
         invalid.replace_range(start..end, " -1.0");
         assert!(
-            matches!(UnitCatalog::from_ron_str(&invalid),Err(SimCoreError::CatalogInvalidValue{field:actual,..})if actual.contains(field)),
+            matches!(UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &invalid),Err(SimCoreError::CatalogInvalidValue{field:actual,..})if actual.contains(field)),
             "field {field}"
         );
     }

@@ -1,0 +1,56 @@
+// Faction, weapon-class and armour-class identities.
+//
+// Units, structures and upgrades refer to these by slug (`faction: "cosmic_enclave"`,
+// `armor_class: Some("enclave_air_armor")`, `WeaponDamageLevel(weapon_class: "...")`), and the
+// loader resolves each slug to the numeric ID below.
+//
+// IDs are stable: `faction_id` and `class_id` are hashed into the simulation checksum (a
+// unit's weapon class and every player's researched weapon and armour levels), so changing,
+// reusing or reordering one is a checksum-schema event that invalidates recorded replays.
+// The class IDs equal the checksum tags the former Rust enums had, in their former order.
+// Adding a faction or class needs a new, unused ID and no code change.
+//
+// `accent_srgb` is the faction's badge colour in the Visual Lab, as 8-bit sRGB.
+(
+    factions: [
+        (
+            faction_id: 0,
+            slug: "automaton_directorate",
+            display_name: "Automaton Directorate",
+            accent_srgb: (60, 150, 255),
+            lore: "Industrial war-machines, railguns and overclock reactors.",
+        ),
+        (
+            faction_id: 1,
+            slug: "cosmic_enclave",
+            display_name: "Cosmic Enclave",
+            accent_srgb: (50, 230, 230),
+            lore: "Roswell Greys in flying saucers, with psi-blades and regenerating shields.",
+        ),
+        (
+            faction_id: 2,
+            slug: "sylvan_swarm",
+            display_name: "Sylvan Swarm",
+            accent_srgb: (255, 120, 40),
+            lore: "Bioluminescent predators, armoured beetles and corrosive bio-acid.",
+        ),
+    ],
+    weapon_classes: [
+        (class_id: 0, slug: "directorate_infantry_weapons", faction: "automaton_directorate", display_name: "Infantry Weapons"),
+        (class_id: 1, slug: "directorate_vehicle_weapons", faction: "automaton_directorate", display_name: "Vehicle Weapons"),
+        (class_id: 2, slug: "directorate_ship_weapons", faction: "automaton_directorate", display_name: "Ship Weapons"),
+        (class_id: 3, slug: "enclave_ground_weapons", faction: "cosmic_enclave", display_name: "Ground Weapons"),
+        (class_id: 4, slug: "enclave_air_weapons", faction: "cosmic_enclave", display_name: "Air Weapons"),
+        (class_id: 5, slug: "swarm_melee_attacks", faction: "sylvan_swarm", display_name: "Melee Attacks"),
+        (class_id: 6, slug: "swarm_missile_attacks", faction: "sylvan_swarm", display_name: "Missile Attacks"),
+        (class_id: 7, slug: "swarm_flyer_attacks", faction: "sylvan_swarm", display_name: "Flyer Attacks"),
+    ],
+    armor_classes: [
+        (class_id: 0, slug: "directorate_infantry_armor", faction: "automaton_directorate", display_name: "Infantry Armor"),
+        (class_id: 1, slug: "directorate_vehicle_plating", faction: "automaton_directorate", display_name: "Vehicle Plating"),
+        (class_id: 2, slug: "enclave_ground_armor", faction: "cosmic_enclave", display_name: "Ground Armor"),
+        (class_id: 3, slug: "enclave_air_armor", faction: "cosmic_enclave", display_name: "Air Armor"),
+        (class_id: 4, slug: "swarm_ground_carapace", faction: "sylvan_swarm", display_name: "Ground Carapace"),
+        (class_id: 5, slug: "swarm_flyer_carapace", faction: "sylvan_swarm", display_name: "Flyer Carapace"),
+    ],
+)

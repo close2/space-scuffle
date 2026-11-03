@@ -16,9 +16,9 @@
 use sim_core::UnitArchetype;
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
-    AnimState, ArchetypeCapabilities, AttributeFlags, EntityId, Faction, MoverType, PlayerCommand,
-    PlayerId, ShapeKind, SilhouetteClass, SimAngle, SimScalar, SimVec2, Tick, TickBundle,
-    UnitOrder, UnitTypeId, WeaponSpec, WeaponVisualKind,
+    AnimState, ArchetypeCapabilities, AttributeFlags, EntityId, FactionId, MoverType,
+    PlayerCommand, PlayerId, ShapeKind, SilhouetteClass, SimAngle, SimScalar, SimVec2, Tick,
+    TickBundle, UnitOrder, UnitTypeId, WeaponSpec, WeaponVisualKind,
 };
 use std::collections::BTreeMap;
 
@@ -252,7 +252,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         unit_type_id: UnitTypeId(50),
         slug: "dual_goliath".to_string(),
         name: "dual_goliath".to_string(),
-        faction: Faction::AutomatonDirectorate,
+        faction: FactionId(0),
         display_name: "Dual Goliath".to_string(),
         lore_description: "Dual ground/air walker".to_string(),
         sc2_inspiration: None,

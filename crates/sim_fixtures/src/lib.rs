@@ -2,8 +2,8 @@
 //!
 //! # Responsibility
 //! Gives tests, benches of other crates and diagnostics tests the worlds and catalogs that the
-//! simulation used to construct from data compiled into `sim_core`: the shipped unit, structure
-//! and upgrade catalogs, the shipped start loadouts, a world on any map with those catalogs, a
+//! simulation used to construct from data compiled into `sim_core`: the shipped faction, unit,
+//! structure and upgrade catalogs, the shipped start loadouts, a world on any map with those catalogs, a
 //! scenario world, and the fixed battle sandbox. The files under `assets/catalog/` are embedded
 //! with `include_str!`, so the golden replay runs under wasmtime without filesystem access.
 //!
@@ -29,13 +29,15 @@ mod sandbox;
 
 pub use sandbox::{default_battle_sandbox, default_battle_sandbox_on, SandboxError};
 
-use sim_core::catalog::RuntimeCatalogs;
+use sim_core::catalog::{FactionCatalog, RuntimeCatalogs};
 use sim_core::scenario::{
     build_world_with_catalogs, PlayerSetup, ScenarioError, StartLoadoutCatalog,
 };
 use sim_core::{SimWorld, UnitCatalog, UpgradeCatalog};
 use sim_map::{MapDocument, SimMap};
 
+/// The shipped `assets/catalog/factions.ron`.
+pub const FACTIONS_RON: &str = include_str!("../../../assets/catalog/factions.ron");
 /// The shipped `assets/catalog/units.ron`.
 pub const UNITS_RON: &str = include_str!("../../../assets/catalog/units.ron");
 /// The shipped `assets/catalog/structures.ron`.
@@ -45,6 +47,16 @@ pub const UPGRADES_RON: &str = include_str!("../../../assets/catalog/upgrades.ro
 /// The shipped `assets/catalog/start_loadouts.ron`.
 pub const START_LOADOUTS_RON: &str = include_str!("../../../assets/catalog/start_loadouts.ron");
 
+/// The shipped faction, weapon-class and armor-class identities.
+///
+/// # Panics
+/// Panics if the shipped `factions.ron` does not parse or is inconsistent.
+#[must_use]
+pub fn shipped_factions() -> FactionCatalog {
+    FactionCatalog::from_ron_str(FACTIONS_RON)
+        .expect("invariant: the shipped factions.ron is valid")
+}
+
 /// The shipped unit, structure and upgrade catalogs, validated exactly as
 /// [`RuntimeCatalogs::load_from_directory`] validates them on disk.
 ///
@@ -52,9 +64,10 @@ pub const START_LOADOUTS_RON: &str = include_str!("../../../assets/catalog/start
 /// Panics if the shipped catalog files do not parse or reference each other inconsistently.
 #[must_use]
 pub fn shipped_catalogs() -> RuntimeCatalogs {
-    let units = UnitCatalog::from_ron_str_bundle(UNITS_RON, STRUCTURES_RON)
+    let factions = shipped_factions();
+    let units = UnitCatalog::from_ron_str_bundle(&factions, UNITS_RON, STRUCTURES_RON)
         .expect("invariant: the shipped units.ron and structures.ron are valid");
-    let upgrades = UpgradeCatalog::from_ron_str(UPGRADES_RON)
+    let upgrades = UpgradeCatalog::from_ron_str(&factions, UPGRADES_RON)
         .expect("invariant: the shipped upgrades.ron is valid");
     units
         .validate_upgrade_references(&upgrades)

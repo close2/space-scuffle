@@ -206,6 +206,7 @@ impl MapEditorPlugin {
             assets_root,
             themes,
             loadouts,
+            default_loadout,
             visuals,
             catalogs,
             palette,
@@ -226,7 +227,7 @@ impl MapEditorPlugin {
             .insert_resource(document)
             .insert_resource(MediaFailurePolicy::new(automated))
             .init_resource::<History>()
-            .insert_resource(EditorToolState::new(map_w, map_h))
+            .insert_resource(EditorToolState::new(map_w, map_h, &default_loadout))
             .init_resource::<FileBrowserState>()
             .init_resource::<NewMapModalState>()
             .init_resource::<UnsavedChangesModalState>()

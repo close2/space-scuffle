@@ -21,7 +21,7 @@ use sim_core::{
     MIN_DAMAGE_CLAMP,
 };
 use sim_types::{
-    ArchetypeCapabilities, AttributeFlags, Faction, MoverType, ShapeKind, SilhouetteClass,
+    ArchetypeCapabilities, AttributeFlags, FactionId, MoverType, ShapeKind, SilhouetteClass,
     SimAngle, SimScalar, SimVec2, Tick, TickBundle, UnitTypeId, WeaponVisualKind,
 };
 
@@ -34,7 +34,7 @@ fn dummy_target_archetype(
         unit_type_id: UnitTypeId(99),
         slug: "dummy_target".to_string(),
         name: "dummy_target".to_string(),
-        faction: Faction::AutomatonDirectorate,
+        faction: FactionId(0),
         display_name: "Dummy Target".to_string(),
         lore_description: "Target dummy for unit tests".to_string(),
         sc2_inspiration: None,
@@ -598,19 +598,17 @@ fn s13_splash_falloff_scales_stat_bonus_damage() {
 #[test]
 fn s14_bonus_upgrade_follows_the_weapons_attribute_bonus() {
     use sim_core::calculate_hit_damage_upgraded;
-    use sim_types::{PlayerUpgradeState, WeaponClass};
+    use sim_types::{PlayerUpgradeState, WeaponClassId};
 
     let mut upgrades = PlayerUpgradeState::default();
-    upgrades
-        .weapon_levels
-        .insert(WeaponClass::DirectorateVehicle, 2);
+    upgrades.weapon_levels.insert(WeaponClassId(1), 2);
     let mut weapon = dummy_weapon_spec(
         SimScalar::from_num(10),
         SimScalar::ZERO,
         SimScalar::from_num(5),
     );
     weapon.bonus_upgrade_per_level = SimScalar::ONE;
-    weapon.weapon_class = Some(WeaponClass::DirectorateVehicle);
+    weapon.weapon_class = Some(WeaponClassId(1));
 
     let damage = |attributes| {
         let target = dummy_target_archetype(attributes, SimScalar::ZERO, SimScalar::ZERO);

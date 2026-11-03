@@ -98,6 +98,8 @@ pub struct EditorStartup {
     pub themes: TerrainThemeCatalog,
     /// Starting army compositions.
     pub loadouts: StartLoadoutCatalog,
+    /// Slug of the loadout marked `editor_default`, preselected for every player slot.
+    pub default_loadout: String,
     /// Map marker sprites.
     pub visuals: MapEntityVisualCatalog,
     /// External unit, structure and upgrade rules.
@@ -128,6 +130,7 @@ impl EditorStartup {
         let root = assets_root.as_path();
         let themes = TerrainThemeCatalog::load(&root.join("catalog/terrain_themes.ron"))?;
         let loadouts = StartLoadoutCatalog::load(root.join("catalog/start_loadouts.ron"))?;
+        let default_loadout = loadouts.editor_default()?.slug.clone();
         let catalogs = RuntimeCatalogs::load_from_directory(root.join("catalog"))?;
 
         let visuals_path = root.join("catalog/map_entity_visuals.ron");
@@ -156,6 +159,7 @@ impl EditorStartup {
             assets_root,
             themes,
             loadouts,
+            default_loadout,
             visuals,
             catalogs,
             palette,
@@ -275,6 +279,19 @@ mod tests {
         )?;
         assert!(startup.catalogs.units.archetypes().next().is_some());
         assert_ne!(startup.loadouts.loadouts.len(), 0);
+        let flagged: Vec<_> = startup
+            .loadouts
+            .loadouts
+            .iter()
+            .filter(|loadout| loadout.editor_default)
+            .map(|loadout| loadout.slug.as_str())
+            .collect();
+        assert_eq!(flagged, [startup.default_loadout.as_str()]);
+        let tools = crate::editor::ui::EditorToolState::new(32, 32, &startup.default_loadout);
+        assert!(tools
+            .player_loadouts
+            .iter()
+            .all(|slug| *slug == startup.default_loadout));
         Ok(())
     }
 }

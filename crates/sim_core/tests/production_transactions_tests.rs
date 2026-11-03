@@ -355,7 +355,7 @@ fn catalog_reference_validation_is_complete_bundle_only() -> TestResult {
     let source = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog/units.ron"),
     )?;
-    assert!(UnitCatalog::from_ron_str(&source).is_ok());
+    assert!(UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &source).is_ok());
     Ok(())
 }
 

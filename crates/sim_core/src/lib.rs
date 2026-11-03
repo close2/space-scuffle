@@ -72,19 +72,29 @@ pub use world::{ActiveHazardZone, PlayerResources, SimWorld};
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 pub(crate) mod test_support {
-    use crate::catalog::RuntimeCatalogs;
+    use crate::catalog::{FactionCatalog, RuntimeCatalogs};
     use crate::{SimWorld, UnitCatalog, UpgradeCatalog};
+
+    /// The shipped faction and class identities.
+    pub(crate) fn shipped_factions() -> FactionCatalog {
+        FactionCatalog::from_ron_str(include_str!("../../../assets/catalog/factions.ron"))
+            .expect("invariant: the shipped factions.ron is valid")
+    }
 
     /// The shipped unit, structure and upgrade catalogs.
     pub(crate) fn shipped_catalogs() -> RuntimeCatalogs {
+        let factions = shipped_factions();
         let units = UnitCatalog::from_ron_str_bundle(
+            &factions,
             include_str!("../../../assets/catalog/units.ron"),
             include_str!("../../../assets/catalog/structures.ron"),
         )
         .expect("invariant: the shipped units.ron and structures.ron are valid");
-        let upgrades =
-            UpgradeCatalog::from_ron_str(include_str!("../../../assets/catalog/upgrades.ron"))
-                .expect("invariant: the shipped upgrades.ron is valid");
+        let upgrades = UpgradeCatalog::from_ron_str(
+            &factions,
+            include_str!("../../../assets/catalog/upgrades.ron"),
+        )
+        .expect("invariant: the shipped upgrades.ron is valid");
         RuntimeCatalogs { units, upgrades }
     }
 

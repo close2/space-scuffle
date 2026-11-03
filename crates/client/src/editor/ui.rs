@@ -185,9 +185,11 @@ pub struct EditorToolState {
 }
 
 impl EditorToolState {
-    /// Creates a new editor tool state for a map of dimensions `width × height`.
+    /// Creates a new editor tool state for a map of dimensions `width × height`, with
+    /// `default_loadout` (the slug of the catalog's `editor_default` loadout) selected for every
+    /// player slot.
     #[must_use]
-    pub fn new(width: u32, height: u32) -> Self {
+    pub fn new(width: u32, height: u32, default_loadout: &str) -> Self {
         Self {
             current_tool: EditorTool::Brush,
             paint_op: PaintOp::Level(CliffLevel(1)),
@@ -206,14 +208,8 @@ impl EditorToolState {
             is_painting: false,
             stroke_recorder: StrokeRecorder::new(width, height),
             scratch_coords: Vec::with_capacity(256),
-            player_loadouts: std::array::from_fn(|_| "standard_automaton".to_string()),
+            player_loadouts: std::array::from_fn(|_| default_loadout.to_owned()),
         }
-    }
-}
-
-impl Default for EditorToolState {
-    fn default() -> Self {
-        Self::new(64, 64)
     }
 }
 

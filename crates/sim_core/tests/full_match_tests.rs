@@ -55,8 +55,8 @@ fn skirmish(seed: u64) -> Result<SimWorld, Box<dyn Error>> {
         &loadouts,
         &manifest.players,
         seed,
-        UnitCatalog::from_ron_str_bundle(UNITS, STRUCTURES)?,
-        UpgradeCatalog::from_ron_str(UPGRADES)?,
+        UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), UNITS, STRUCTURES)?,
+        UpgradeCatalog::from_ron_str(&sim_fixtures::shipped_factions(), UPGRADES)?,
     )?)
 }
 

@@ -39,6 +39,10 @@ pub struct StartLoadout {
     pub slug: String,
     /// User-facing display name.
     pub display_name: String,
+    /// Whether the map editor preselects this loadout for every player slot. Exactly one
+    /// loadout in a catalog sets it ([`StartLoadoutCatalog::from_ron_str`] checks).
+    #[serde(default)]
+    pub editor_default: bool,
     /// Slug of the faction town hall structure to spawn at the start location.
     pub town_hall: String,
     /// Mobile unit types and counts to spawn around the town hall.
@@ -77,9 +81,32 @@ impl StartLoadoutCatalog {
     /// Deserializes a loadouts catalog from a RON string.
     ///
     /// # Errors
-    /// Returns [`ScenarioError::Ron`] if the string violates RON syntax or schema.
+    /// Returns [`ScenarioError::Ron`] if the string violates RON syntax or schema, or
+    /// [`ScenarioError::EditorDefaultLoadout`] unless exactly one loadout sets `editor_default`.
     pub fn from_ron_str(s: &str) -> Result<Self, ScenarioError> {
-        Ok(ron::from_str(s)?)
+        let catalog: Self = ron::from_str(s)?;
+        catalog.editor_default()?;
+        Ok(catalog)
+    }
+
+    /// The loadout the map editor preselects for every player slot: the one that sets
+    /// `editor_default`.
+    ///
+    /// # Errors
+    /// Returns [`ScenarioError::EditorDefaultLoadout`] with the number of flagged loadouts unless
+    /// that number is exactly one. A parsed catalog always has one; a catalog edited through its
+    /// public field may not.
+    pub fn editor_default(&self) -> Result<&StartLoadout, ScenarioError> {
+        let mut flagged = self
+            .loadouts
+            .iter()
+            .filter(|loadout| loadout.editor_default);
+        match (flagged.next(), flagged.count()) {
+            (Some(loadout), 0) => Ok(loadout),
+            (first, rest) => Err(ScenarioError::EditorDefaultLoadout {
+                count: usize::from(first.is_some()) + rest,
+            }),
+        }
     }
 
     /// Loads and deserializes a loadouts catalog from a filesystem path.
@@ -137,6 +164,13 @@ pub enum ScenarioError {
     /// Start loadout slug was not found in the catalog.
     #[error("unknown loadout slug: {0}")]
     UnknownLoadout(String),
+
+    /// A start loadout catalog does not mark exactly one loadout `editor_default`.
+    #[error("start loadouts must mark exactly one loadout editor_default, found {count}")]
+    EditorDefaultLoadout {
+        /// Number of loadouts that set `editor_default`.
+        count: usize,
+    },
 
     /// Unit or structure slug was not found in the unit catalog.
     #[error("unknown unit or structure slug: {0}")]
@@ -640,6 +674,7 @@ mod tests {
             loadouts: vec![StartLoadout {
                 slug: "placement".to_string(),
                 display_name: "Placement".to_string(),
+                editor_default: true,
                 town_hall: hall.slug.clone(),
                 units: vec![
                     LoadoutUnit {

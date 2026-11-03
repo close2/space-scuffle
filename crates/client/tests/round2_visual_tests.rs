@@ -54,7 +54,7 @@ use shader_ir::{
     compose_and_validate, discards, discards_when_below, has_named_let, production_module,
     shipped_source, SHADER_VARIANTS,
 };
-use sim_types::enums::{Faction, ShapeKind, SilhouetteClass, WeaponVisualKind};
+use sim_types::enums::{ShapeKind, SilhouetteClass, WeaponVisualKind};
 use sim_types::ids::{EntityId, PlayerId, UnitTypeId};
 use sim_types::snapshot::BubbleRenderInstance;
 use std::collections::BTreeSet;
@@ -620,21 +620,29 @@ fn test_ground_unit_altitude_never_spawns_air_tether() -> Result<(), Box<dyn std
 #[test]
 fn test_three_factions_roster_integrity() {
     let catalog = sim_fixtures::shipped_catalogs().units;
+    let faction_of = |arch: &sim_core::UnitArchetype| {
+        catalog
+            .factions()
+            .faction(arch.faction)
+            .map(|faction| faction.slug.clone())
+            .expect("every shipped archetype names a shipped faction")
+    };
     let hero1 = catalog.get(UnitTypeId(2)).expect("Hero 1");
     assert_eq!(hero1.display_name, "Aegis Pulse Bot");
-    assert_eq!(hero1.faction, Faction::AutomatonDirectorate);
+    assert_eq!(faction_of(hero1), "automaton_directorate");
 
     let hero2 = catalog.get(UnitTypeId(4)).expect("Hero 2");
     assert_eq!(hero2.display_name, "Psi-Blade Grey");
-    assert_eq!(hero2.faction, Faction::CosmicEnclave);
+    assert_eq!(faction_of(hero2), "cosmic_enclave");
 
     let hero3 = catalog.get(UnitTypeId(3)).expect("Hero 3");
     assert_eq!(hero3.display_name, "Bombardier Rhino-Beetle");
-    assert_eq!(hero3.faction, Faction::SylvanSwarm);
+    assert_eq!(faction_of(hero3), "sylvan_swarm");
 
     let dome = catalog.get(UnitTypeId(7)).expect("Foundry Core Dome");
     assert_eq!(dome.display_name, "Foundry Core Dome");
-    assert_eq!(dome.faction, Faction::AutomatonDirectorate);
+    assert_eq!(faction_of(dome), "automaton_directorate");
+    assert_eq!(catalog.factions().factions().count(), 3);
 }
 
 #[test]

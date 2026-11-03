@@ -37,7 +37,7 @@ struct AddedUnit {
 fn bundle_with_added_unit(root: &Path) -> Result<AddedUnit, Box<dyn Error>> {
     let catalog = root.join("catalog");
     fs::create_dir_all(&catalog)?;
-    for file in ["structures.ron", "upgrades.ron"] {
+    for file in ["factions.ron", "structures.ron", "upgrades.ron"] {
         fs::copy(
             shipped_assets().join("catalog").join(file),
             catalog.join(file),

@@ -15,10 +15,10 @@ use sim_map::{
     TerrainKind, Watchtower,
 };
 use sim_types::{
-    AnimState, ArmorClass, AttackOrigin, AttributeFlags, EntityId, MatchResult, MoverType,
+    AnimState, ArmorClassId, AttackOrigin, AttributeFlags, EntityId, MatchResult, MoverType,
     PlayerId, PlayerUpgradeState, ProjectileTargetLossBehavior, ResourceNodeId, SimAngle,
     SimScalar, SimVec2, SplashSpec, Tick, UnitOrder, UnitStatDeltas, UnitTypeId, VisibilityState,
-    WeaponClass, WeaponSpec, WeaponVisualKind,
+    WeaponClassId, WeaponSpec, WeaponVisualKind,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use xxhash_rust::xxh64::Xxh64;
@@ -190,13 +190,18 @@ macro_rules! wrapper {
         }
     )+};
 }
+// Weapon and armor classes are catalog data (`assets/catalog/factions.ron`). Their authored IDs
+// equal the explicit tags the former Rust enums had here, so they encode as the same single byte
+// and every recorded checksum is unchanged. Changing an authored class ID is a schema change.
 wrapper!(
     EntityId,
     UnitTypeId,
     PlayerId,
     Tick,
     CliffLevel,
-    ResourceNodeId
+    ResourceNodeId,
+    WeaponClassId,
+    ArmorClassId
 );
 
 impl Canonical for SimScalar {
@@ -490,14 +495,6 @@ impl Canonical for ProductionItem {
     }
 }
 tags!(MoverType { Ground = 0, Air = 1, CliffJumper = 2, CliffWalker = 3 });
-tags!(WeaponClass {
-    DirectorateInfantry = 0, DirectorateVehicle = 1, DirectorateShip = 2,
-    EnclaveGround = 3, EnclaveAir = 4, SwarmMelee = 5, SwarmMissile = 6, SwarmFlyer = 7,
-});
-tags!(ArmorClass {
-    DirectorateInfantry = 0, DirectoratePlating = 1, EnclaveGround = 2,
-    EnclaveAir = 3, SwarmGroundCarapace = 4, SwarmFlyerCarapace = 5,
-});
 
 impl Canonical for WeaponPhase {
     fn encode(&self, encoder: &mut Encoder) {
@@ -638,6 +635,57 @@ mod tests {
         let mut encoder = Encoder::new("test");
         value.encode(&mut encoder);
         encoder.finish()
+    }
+
+    /// Phase 9 WP12 (D-6): weapon and armor classes moved from Rust enums with explicit checksum
+    /// tags into `factions.ron`. Each shipped class ID equals its former tag and encodes as the
+    /// same single byte, alone, in an `Option` and as a level-map key, so no recorded checksum
+    /// or golden replay changes.
+    #[test]
+    fn shipped_class_ids_encode_exactly_as_the_former_enum_tags() -> crate::error::SimResult<()> {
+        use sim_types::{ArmorClassId, WeaponClassId};
+        use std::collections::BTreeMap;
+        // (slug, former tag) in the former declaration order of `WeaponClass` and `ArmorClass`.
+        const WEAPON_TAGS: [(&str, u8); 8] = [
+            ("directorate_infantry_weapons", 0),
+            ("directorate_vehicle_weapons", 1),
+            ("directorate_ship_weapons", 2),
+            ("enclave_ground_weapons", 3),
+            ("enclave_air_weapons", 4),
+            ("swarm_melee_attacks", 5),
+            ("swarm_missile_attacks", 6),
+            ("swarm_flyer_attacks", 7),
+        ];
+        const ARMOR_TAGS: [(&str, u8); 6] = [
+            ("directorate_infantry_armor", 0),
+            ("directorate_vehicle_plating", 1),
+            ("enclave_ground_armor", 2),
+            ("enclave_air_armor", 3),
+            ("swarm_ground_carapace", 4),
+            ("swarm_flyer_carapace", 5),
+        ];
+        let factions = crate::test_support::shipped_factions();
+        assert_eq!(factions.weapon_classes().count(), WEAPON_TAGS.len());
+        assert_eq!(factions.armor_classes().count(), ARMOR_TAGS.len());
+        let mut weapon_levels = (BTreeMap::new(), BTreeMap::new());
+        for (slug, tag) in WEAPON_TAGS {
+            let id = factions.resolve_weapon_class("test", slug)?;
+            assert_eq!(id, WeaponClassId(tag), "{slug}");
+            assert_eq!(digest(&Some(id)), digest(&Some(tag)), "{slug}");
+            weapon_levels.0.insert(id, tag + 1);
+            weapon_levels.1.insert(tag, tag + 1);
+        }
+        assert_eq!(digest(&weapon_levels.0), digest(&weapon_levels.1));
+        let mut armor_levels = (BTreeMap::new(), BTreeMap::new());
+        for (slug, tag) in ARMOR_TAGS {
+            let id = factions.resolve_armor_class("test", slug)?;
+            assert_eq!(id, ArmorClassId(tag), "{slug}");
+            assert_eq!(digest(&id), digest(&tag), "{slug}");
+            armor_levels.0.insert(id, tag + 1);
+            armor_levels.1.insert(tag, tag + 1);
+        }
+        assert_eq!(digest(&armor_levels.0), digest(&armor_levels.1));
+        Ok(())
     }
 
     #[test]

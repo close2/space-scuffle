@@ -26,6 +26,7 @@
 mod checks;
 mod docs;
 mod gpu;
+mod identities;
 mod metadata;
 mod production_rules;
 mod source;
@@ -41,6 +42,9 @@ pub use docs::{
 };
 pub use gpu::{
     in_process_render_devices, HEADLESS_CHECK_WINDOW, HEADLESS_WINDOW, RENDER_DEVICE_MARKERS,
+};
+pub use identities::{
+    folded, no_catalog_identities_in_code, slug_fields, FORMER_IDENTITY_VARIANTS, IDENTITY_CATALOGS,
 };
 pub use metadata::{cargo_metadata, engine_free_simulation, FORBIDDEN_SIMULATION_DEPENDENCIES};
 pub use production_rules::{

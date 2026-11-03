@@ -63,7 +63,9 @@ fn assert_rejected(source: &'static str, from: &str, to: &str, field: &str) {
     } else {
         (UNITS, edited.as_str())
     };
-    let outcome = UnitCatalog::from_ron_str_bundle(units, structures).map(|_| ());
+    let outcome =
+        UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), units, structures)
+            .map(|_| ());
     assert!(
         matches!(
             &outcome,
@@ -76,7 +78,7 @@ fn assert_rejected(source: &'static str, from: &str, to: &str, field: &str) {
 
 #[test]
 fn shipped_catalog_passes_validation() -> TestResult {
-    UnitCatalog::from_ron_str_bundle(UNITS, STRUCTURES)?;
+    UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), UNITS, STRUCTURES)?;
     Ok(())
 }
 
@@ -256,13 +258,20 @@ fn f12_catalog_sight_beyond_vision_is_rejected_not_shortened() {
 
 #[test]
 fn s16_bundle_resolves_every_upgrade_reference() -> TestResult {
-    let units = UnitCatalog::from_ron_str_bundle(UNITS, STRUCTURES)?;
-    units.validate_upgrade_references(&UpgradeCatalog::from_ron_str(UPGRADES)?)?;
+    let units =
+        UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), UNITS, STRUCTURES)?;
+    units.validate_upgrade_references(&UpgradeCatalog::from_ron_str(
+        &sim_fixtures::shipped_factions(),
+        UPGRADES,
+    )?)?;
 
     let location = "researched_at: \"";
     assert!(UPGRADES.contains(location), "fixture text not in catalog");
     let dangling = UPGRADES.replacen(location, "researched_at: \"no_such_", 1);
-    let result = units.validate_upgrade_references(&UpgradeCatalog::from_ron_str(&dangling)?);
+    let result = units.validate_upgrade_references(&UpgradeCatalog::from_ron_str(
+        &sim_fixtures::shipped_factions(),
+        &dangling,
+    )?);
     assert!(
         matches!(result, Err(SimCoreError::CatalogInvalidValue { ref field, .. }) if field == "researched_at"),
         "dangling researched_at must be rejected, got {result:?}"
@@ -274,8 +283,12 @@ fn s16_bundle_resolves_every_upgrade_reference() -> TestResult {
         1,
     );
     assert_ne!(structures, STRUCTURES, "fixture text not in catalog");
-    let bad_units = UnitCatalog::from_ron_str_bundle(UNITS, &structures)?;
-    let result = bad_units.validate_upgrade_references(&UpgradeCatalog::from_ron_str(UPGRADES)?);
+    let bad_units =
+        UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), UNITS, &structures)?;
+    let result = bad_units.validate_upgrade_references(&UpgradeCatalog::from_ron_str(
+        &sim_fixtures::shipped_factions(),
+        UPGRADES,
+    )?);
     assert!(
         matches!(result, Err(SimCoreError::CatalogInvalidValue { ref field, .. }) if field == "researches_upgrades"),
         "dangling researches_upgrades must be rejected, got {result:?}"
@@ -286,7 +299,8 @@ fn s16_bundle_resolves_every_upgrade_reference() -> TestResult {
 /// S-11: an upgrade effect the simulation could not apply is a load error.
 #[test]
 fn s11_upgrade_effects_must_resolve() -> TestResult {
-    let units = UnitCatalog::from_ron_str_bundle(UNITS, STRUCTURES)?;
+    let units =
+        UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), UNITS, STRUCTURES)?;
     for (from, to, field) in [
         (
             "ability_slug: \"overclock\"",
@@ -310,7 +324,10 @@ fn s11_upgrade_effects_must_resolve() -> TestResult {
             "fixture text {from:?} not in catalog"
         );
         let edited = UPGRADES.replacen(from, to, 1);
-        let result = units.validate_upgrade_references(&UpgradeCatalog::from_ron_str(&edited)?);
+        let result = units.validate_upgrade_references(&UpgradeCatalog::from_ron_str(
+            &sim_fixtures::shipped_factions(),
+            &edited,
+        )?);
         assert!(
             matches!(result, Err(SimCoreError::CatalogInvalidValue { field: ref rejected, .. }) if rejected == field),
             "{from:?} must be rejected, got {result:?}"
@@ -336,7 +353,9 @@ fn s11_mode_overrides_without_effect_are_rejected() {
                 .replacen(mode, &format!("{mode} {added}"), 1)
                 .into_boxed_str(),
         );
-        let outcome = UnitCatalog::from_ron_str_bundle(edited, STRUCTURES).map(|_| ());
+        let outcome =
+            UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), edited, STRUCTURES)
+                .map(|_| ());
         assert!(
             matches!(&outcome, Err(SimCoreError::CatalogInvalidValue { field: rejected, .. }) if rejected.ends_with(field)),
             "{field} must be rejected, got {outcome:?}"
@@ -347,7 +366,8 @@ fn s11_mode_overrides_without_effect_are_rejected() {
 /// S-19: gas extraction is carried from structure data into the archetype's capabilities.
 #[test]
 fn s19_gas_extractor_flag_reaches_capabilities() -> TestResult {
-    let units = UnitCatalog::from_ron_str_bundle(UNITS, STRUCTURES)?;
+    let units =
+        UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), UNITS, STRUCTURES)?;
     let extractors = units
         .archetypes()
         .filter(|a| a.capabilities.is_gas_extractor)
