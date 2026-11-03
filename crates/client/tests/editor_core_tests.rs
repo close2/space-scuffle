@@ -1332,7 +1332,14 @@ impl UnsavedFlow {
             doc,
             browser: FileBrowserState::default(),
             new_map: NewMapModalState::default(),
-            tools: EditorToolState::new(32, 32),
+            tools: EditorToolState::new(
+                32,
+                32,
+                &sim_fixtures::shipped_loadouts()
+                    .editor_default()
+                    .expect("the shipped loadouts mark one editor default")
+                    .slug,
+            ),
             dir,
         }
     }

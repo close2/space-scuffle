@@ -344,6 +344,7 @@ fn error_unknown_slug() {
             (
                 slug: "custom_loadout",
                 display_name: "Custom",
+                editor_default: true,
                 town_hall: "ghost_building_slug",
                 units: [],
             ),
@@ -373,6 +374,7 @@ fn error_town_hall_not_a_dome() {
             (
                 slug: "unit_as_hall",
                 display_name: "Unit as Hall",
+                editor_default: true,
                 town_hall: "welder_drone",
                 units: [],
             ),
@@ -424,6 +426,7 @@ fn error_not_enough_spawn_cells() {
             (
                 slug: "swarms_overflow",
                 display_name: "Too Many Units",
+                editor_default: true,
                 town_hall: "foundry_core_dome",
                 units: [
                     (slug: "welder_drone", count: 100),
@@ -701,5 +704,49 @@ fn a_missing_scenario_file_is_a_typed_failure() {
     assert!(matches!(
         load_scenario_world(&assets_root(), Path::new("scenarios/absent.ron")),
         Err(ScenarioError::Io(_))
+    ));
+}
+
+/// D-12 (Phase 9 WP12): the map editor's default loadout is data, so the catalog must name
+/// exactly one; none or several is a typed load error, not a silent first-entry fallback.
+#[test]
+fn start_loadouts_mark_exactly_one_editor_default() {
+    let shipped = std::fs::read_to_string(resolve_path("../../assets/catalog/start_loadouts.ron"))
+        .expect("shipped loadouts");
+    let catalog = StartLoadoutCatalog::from_ron_str(&shipped).expect("shipped loadouts parse");
+    let default = catalog.editor_default().expect("one editor default");
+    assert!(default.editor_default);
+    assert_eq!(
+        catalog.loadouts.iter().filter(|l| l.editor_default).count(),
+        1
+    );
+
+    let flag = "editor_default: true,";
+    assert_eq!(
+        shipped.matches(flag).count(),
+        1,
+        "the flag is authored once"
+    );
+    let none = shipped.replace(flag, "");
+    assert!(matches!(
+        StartLoadoutCatalog::from_ron_str(&none),
+        Err(ScenarioError::EditorDefaultLoadout { count: 0 })
+    ));
+    let every = none.replace("display_name:", &format!("{flag} display_name:"));
+    let count = catalog.loadouts.len();
+    assert!(count > 1, "the shipped catalog has several loadouts");
+    assert!(matches!(
+        StartLoadoutCatalog::from_ron_str(&every),
+        Err(ScenarioError::EditorDefaultLoadout { count: found }) if found == count
+    ));
+
+    let mut edited = catalog.clone();
+    edited
+        .loadouts
+        .iter_mut()
+        .for_each(|l| l.editor_default = false);
+    assert!(matches!(
+        edited.editor_default(),
+        Err(ScenarioError::EditorDefaultLoadout { count: 0 })
     ));
 }
