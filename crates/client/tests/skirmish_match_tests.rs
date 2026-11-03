@@ -13,10 +13,16 @@
 //!
 //! # How it fits
 //! The windowed test re-executes this binary as its child, so no scripted-play code ships in the
-//! client. A lavapipe frame of the shipped map takes seconds, so the child stages what would take
-//! minutes of play: it boots paused and funds the bank, then sets the foundation's construction
-//! share for each shot, through the world. That makes it a rendering test of the HUD, the ghost and
-//! the fill, not a claim of play; the headless run stages nothing.
+//! client. A debug build on the test GPU cannot play minutes of the match in the run limit, so the
+//! child stages what would take minutes of play: it funds the bank, then sets the foundation's
+//! construction share for each shot, through the world. That makes it a rendering test of the HUD,
+//! the ghost and the fill, not a claim of play; the headless match stages nothing.
+//!
+//! Each staging step runs the clock until the session publishes a later tick, and only then stops
+//! it ([`StagePhase`]). A frame is not a tick: a `lavapipe` frame of the shipped map takes seconds,
+//! but a `radv` frame is far shorter than the 40 ms tick.
+//! `a_staged_share_is_published_however_short_the_frame` runs the same step headless under 5 ms
+//! frames.
 //!
 //! # Invariants
 //! - The headless run fails on any battle failure, simulation diagnostic, client refusal or
@@ -47,13 +53,15 @@ mod gpu_run;
 mod skirmish_pilot;
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use battle_harness::{Harness, LOCAL_PLAYER};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
+use bevy::time::TimeUpdateStrategy;
 use bevy::window::PrimaryWindow;
 use client::battle_hud::feed::BattleFeed;
+use client::battle_hud::model::HudModel;
 use client::battle_hud::result::{ResultScreen, ViewerResult};
 use client::battle_hud::HudGeometry;
 use client::battle_pipeline::driver::AdmissionOutcome;
@@ -371,19 +379,121 @@ fn mean_difference(a: &image::RgbImage, b: &image::RgbImage, pixels: &[(u32, u32
     total as f32 / (pixels.len() * 3) as f32
 }
 
-/// Where the windowed child is.
-#[derive(Resource, Default)]
+/// How far the staging of the bank and of one construction share has got.
+///
+/// Each step that changes the world runs the clock until the session has published a later tick,
+/// and only then stops it, so the step reaches the screen however short a frame is (plan
+/// `2026-11-03-gpu-test-harness`, decision D9). A frame is not a tick: on `radv` a frame of the
+/// shipped map is far shorter than the 40 ms tick.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum StagePhase {
+    /// The bank has not been funded yet.
+    #[default]
+    Fund,
+    /// The bank was funded when tick `since` was published; the clock runs until a later one is.
+    FundPublishing { since: u32 },
+    /// The funded bank is published and the clock stopped; waiting for the pilot's foundation.
+    AwaitFoundation,
+    /// The share was set when tick `since` was published; the clock runs until a later one is.
+    SharePublishing { since: u32 },
+    /// The share is published and the clock stopped; `frames` have been rendered since.
+    Settling { frames: u32 },
+    /// [`SETTLE_FRAMES`] frames have been rendered: the shot is ready to capture.
+    Ready,
+}
+
+/// Where the staging of the windowed child's shots stands.
+#[derive(Resource, Debug, Default)]
 struct Staging {
-    directory: PathBuf,
-    /// Whether the bank has been funded.
-    funded: bool,
-    /// Whether the clock has then been stopped.
-    prepared: bool,
+    phase: StagePhase,
     /// Index into [`SHARES`] of the shot being staged.
     shot: usize,
-    /// Frames rendered since the shot was staged.
-    settled: u32,
-    capture_pending: bool,
+}
+
+impl Staging {
+    /// Moves on to the next share once the current shot has been taken.
+    fn shot_taken(&mut self) {
+        self.shot += 1;
+        self.phase = StagePhase::AwaitFoundation;
+    }
+}
+
+/// The latest tick the session published, or 0 before the first.
+fn published_tick(session: &BattleSession) -> u32 {
+    session.published().map_or(0, |published| published.tick)
+}
+
+/// Stages the child through the world: funds the bank at boot, then, once the pilot has raised a
+/// foundation, sets its share for each shot. Shared by the windowed child and
+/// `a_staged_share_is_published_however_short_the_frame`, so the headless test runs this code.
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "a Bevy system with one declared parameter per dependency"
+)]
+fn stage_construction(
+    mut staging: ResMut<'_, Staging>,
+    mut session: ResMut<'_, BattleSession>,
+    mut lab: ResMut<'_, LabState>,
+    pilot: Res<'_, Pilot>,
+) {
+    if !session.is_ready() {
+        return;
+    }
+    let tick = published_tick(&session);
+    staging.phase = match staging.phase {
+        StagePhase::Fund => {
+            let world = session.world_mut().expect("a ready session has a world");
+            world.player_resources[usize::from(LOCAL_PLAYER.0)].minerals += STAGED_MINERALS;
+            lab.battle_paused = false;
+            StagePhase::FundPublishing { since: tick }
+        }
+        StagePhase::SharePublishing { since } | StagePhase::FundPublishing { since }
+            if tick <= since =>
+        {
+            staging.phase
+        }
+        StagePhase::FundPublishing { .. } => {
+            lab.battle_paused = true;
+            StagePhase::AwaitFoundation
+        }
+        StagePhase::AwaitFoundation => {
+            let Some(&share) = SHARES.get(staging.shot) else {
+                return;
+            };
+            if pilot.stage() != Stage::Done {
+                return;
+            }
+            let world = session.world_mut().expect("a ready session has a world");
+            let construction = world
+                .entities
+                .values_mut()
+                .find_map(|unit| {
+                    (unit.owner == LOCAL_PLAYER)
+                        .then_some(unit.construction.as_mut())
+                        .flatten()
+                })
+                .expect("the pilot raised a foundation");
+            construction.remaining_ticks =
+                ((1.0 - share) * construction.total_ticks as f32).round() as u32;
+            lab.battle_paused = false;
+            StagePhase::SharePublishing { since: tick }
+        }
+        StagePhase::SharePublishing { .. } => {
+            lab.battle_paused = true;
+            StagePhase::Settling { frames: 0 }
+        }
+        StagePhase::Settling { frames } if frames + 1 >= SETTLE_FRAMES => StagePhase::Ready,
+        StagePhase::Settling { frames } => StagePhase::Settling { frames: frames + 1 },
+        StagePhase::Ready => StagePhase::Ready,
+    };
+}
+
+/// What the windowed child has captured so far.
+#[derive(Resource, Default)]
+struct Capture {
+    directory: PathBuf,
+    /// Whether a screenshot has been requested and not yet written.
+    pending: bool,
     report: WindowedReport,
 }
 
@@ -405,19 +515,16 @@ fn foundation(
         })
 }
 
-/// Stages the child: funds the bank at boot, then, once the pilot has raised a foundation, sets
-/// its share for each shot and captures it.
+/// Captures each staged share once [`stage_construction`] reports it ready, then exits.
 #[allow(
     clippy::needless_pass_by_value,
     clippy::too_many_arguments,
-    clippy::too_many_lines,
     reason = "a Bevy system with one declared parameter per dependency"
 )]
-fn stage_shots(
+fn capture_shots(
     mut commands: Commands<'_, '_>,
-    mut staging: ResMut<'_, Staging>,
-    mut session: ResMut<'_, BattleSession>,
-    mut lab: ResMut<'_, LabState>,
+    staging: Res<'_, Staging>,
+    mut capture: ResMut<'_, Capture>,
     pilot: Res<'_, Pilot>,
     hud: Res<'_, HudGeometry>,
     ui: Res<'_, UiGeometry>,
@@ -432,48 +539,7 @@ fn stage_shots(
             window.focused = true;
         }
     }
-    if !session.is_ready() || staging.capture_pending {
-        return;
-    }
-    if !staging.funded {
-        // Funded on a running frame, so a tick publishes the bank to the HUD; stopped on the next.
-        let world = session.world_mut().expect("a ready session has a world");
-        world.player_resources[usize::from(LOCAL_PLAYER.0)].minerals += STAGED_MINERALS;
-        staging.funded = true;
-        return;
-    }
-    if !staging.prepared {
-        lab.battle_paused = true;
-        staging.prepared = true;
-        return;
-    }
-    if pilot.stage() != Stage::Done {
-        return;
-    }
-    let Some(&share) = SHARES.get(staging.shot) else {
-        return;
-    };
-    if staging.settled == 0 {
-        // Set the share, then let one tick publish it before stopping the clock again.
-        let world = session.world_mut().expect("a ready session has a world");
-        let construction = world
-            .entities
-            .values_mut()
-            .find_map(|unit| {
-                (unit.owner == LOCAL_PLAYER)
-                    .then_some(unit.construction.as_mut())
-                    .flatten()
-            })
-            .expect("the pilot raised a foundation");
-        construction.remaining_ticks =
-            ((1.0 - share) * construction.total_ticks as f32).round() as u32;
-        lab.battle_paused = false;
-        staging.settled = 1;
-        return;
-    }
-    lab.battle_paused = true;
-    staging.settled += 1;
-    if staging.settled < SETTLE_FRAMES {
+    if staging.phase != StagePhase::Ready || capture.pending {
         return;
     }
     let (Some((centre, radius, presented)), Ok((camera, transform))) =
@@ -481,22 +547,23 @@ fn stage_shots(
     else {
         panic!("the foundation is on screen");
     };
-    staging.report.presented.push(presented);
+    capture.report.presented.push(presented);
     if staging.shot == 0 {
-        staging.report.rings = rings(camera, transform, centre, radius);
+        capture.report.rings = rings(camera, transform, centre, radius);
         let scale = ui.pixels_per_point;
         let bottom = hud.bottom.expect("the command panel is up");
         let world = ui.world.expect("the world is on screen");
-        staging.report.panel_top = (bottom.top() * scale).ceil() as u32;
-        staging.report.world_middle = (world.center().y * scale) as u32;
-        staging.report.pilot_log.clone_from(&pilot.log);
+        capture.report.panel_top = (bottom.top() * scale).ceil() as u32;
+        capture.report.world_middle = (world.center().y * scale) as u32;
+        capture.report.pilot_log.clone_from(&pilot.log);
     }
-    staging.capture_pending = true;
+    capture.pending = true;
     let name = if staging.shot == 0 { "early" } else { "late" };
-    let path = staging.directory.join(format!("{name}.png"));
+    let path = capture.directory.join(format!("{name}.png"));
     commands.spawn(Screenshot::primary_window()).observe(
         move |trigger: Trigger<'_, ScreenshotCaptured>,
               mut staging: ResMut<'_, Staging>,
+              mut capture: ResMut<'_, Capture>,
               mut exit: EventWriter<'_, AppExit>| {
             trigger
                 .event()
@@ -507,12 +574,11 @@ fn stage_shots(
                 .to_rgb8()
                 .save(&path)
                 .expect("a screenshot must be written");
-            staging.shot += 1;
-            staging.settled = 0;
-            staging.capture_pending = false;
+            staging.shot_taken();
+            capture.pending = false;
             if staging.shot == SHARES.len() {
-                let text = ron::to_string(&staging.report).expect("plain data");
-                std::fs::write(staging.directory.join(RINGS_FILE), text)
+                let text = ron::to_string(&capture.report).expect("plain data");
+                std::fs::write(capture.directory.join(RINGS_FILE), text)
                     .expect("the parent's directory is writable");
                 exit.send(AppExit::Success);
             }
@@ -552,6 +618,98 @@ fn rings(camera: &Camera, transform: &GlobalTransform, centre: Vec3, radius: f32
         .collect()
 }
 
+/// Frame time of the short-frame test, in milliseconds: an eighth of the 40 ms tick, so most
+/// frames run no tick, as on `radv`.
+const SHORT_FRAME_MS: u64 = 5;
+/// Frames the short-frame test may take before it fails.
+const SHORT_FRAME_LIMIT: u32 = 40_000;
+/// Largest difference between a staged share and the one presented. The tick that publishes a
+/// share also advances construction by one tick of its total.
+const SHARE_TOLERANCE: f32 = 0.05;
+
+/// The viewer's foundation's presented construction share, if it is on the field.
+fn presented_share(harness: &mut Harness) -> Option<f32> {
+    let world = harness.app.world_mut();
+    world
+        .query_filtered::<&BubbleInstance, With<LiveBattleBubble>>()
+        .iter(world)
+        .find(|bubble| {
+            bubble.0.owner == LOCAL_PLAYER && bubble.0.anim_state == AnimState::Constructing
+        })
+        .map(|bubble| bubble.0.build_or_queue_progress.unwrap_or(0.0))
+}
+
+/// D9 (plan `2026-11-03-gpu-test-harness`): the windowed child's staging step, under frames an
+/// eighth of a tick long, still publishes the funded bank and each staged share before it stops
+/// the clock. This is the deterministic form of the race `radv`'s short frames exposed.
+#[test]
+fn a_staged_share_is_published_however_short_the_frame() {
+    let mut harness = Harness::boot_scenario(ClientMode::Skirmish, SKIRMISH_SCENARIO);
+    // The production client starts its skirmish running, and the child stages from there.
+    harness.resume();
+    harness
+        .app
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            SHORT_FRAME_MS,
+        )));
+    skirmish_pilot::install(&mut harness.app, PilotGoal::FoundationRaised);
+    harness
+        .app
+        .init_resource::<Staging>()
+        .add_systems(Update, stage_construction.in_set(BattleSet::Present));
+
+    let mut previous = StagePhase::Fund;
+    let mut presented = Vec::new();
+    for _ in 0..SHORT_FRAME_LIMIT {
+        harness.step(1);
+        let phase = harness.app.world().resource::<Staging>().phase;
+        if matches!(previous, StagePhase::FundPublishing { .. }) && phase != previous {
+            let bank = harness
+                .app
+                .world()
+                .resource::<HudModel>()
+                .view
+                .status
+                .minerals;
+            assert!(
+                bank >= STAGED_MINERALS,
+                "the clock stopped before a tick published the funded bank: the HUD shows {bank}"
+            );
+        }
+        previous = phase;
+        if phase != StagePhase::Ready {
+            continue;
+        }
+        assert!(
+            harness.app.world().resource::<LabState>().battle_paused,
+            "the clock is stopped for the shot"
+        );
+        let shot = harness.app.world().resource::<Staging>().shot;
+        let share = presented_share(&mut harness).expect("the foundation is on the field");
+        assert!(
+            (share - SHARES[shot]).abs() < SHARE_TOLERANCE,
+            "shot {shot} staged {} but presented {share}; presented so far {presented:?}",
+            SHARES[shot]
+        );
+        presented.push(share);
+        harness
+            .app
+            .world_mut()
+            .resource_mut::<Staging>()
+            .shot_taken();
+        if presented.len() == SHARES.len() {
+            break;
+        }
+    }
+    assert_eq!(
+        presented.len(),
+        SHARES.len(),
+        "staging stopped in {previous:?}, the pilot in {:?}\n{}",
+        harness.app.world().resource::<Pilot>().stage(),
+        harness.app.world().resource::<Pilot>().log
+    );
+}
+
 /// The child of [`the_skirmish_hud_and_foundation_render_cleanly_on_a_real_window`].
 #[test]
 #[ignore = "launched by the test above on a virtual display"]
@@ -566,10 +724,16 @@ fn windowed_skirmish_child() {
     app.add_plugins(SkirmishPilotPlugin {
         goal: PilotGoal::FoundationRaised,
     })
-    .insert_resource(Staging {
+    .init_resource::<Staging>()
+    .insert_resource(Capture {
         directory: Path::new(&directory).to_path_buf(),
-        ..Staging::default()
+        ..Capture::default()
     })
-    .add_systems(Update, stage_shots.in_set(BattleSet::Present));
+    .add_systems(
+        Update,
+        (stage_construction, capture_shots)
+            .chain()
+            .in_set(BattleSet::Present),
+    );
     assert!(client::render_compatibility::run_render_app(&mut app).is_success());
 }
