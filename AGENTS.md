@@ -135,11 +135,11 @@ Development runs on a shared VM. Its physical **AMD Radeon RX 580** (Ellesmere, 
 
 - **Hardware GPU work must hold the GPU lock.** Wrap every command that may run on the physical GPU in `with-gpu-lock`. Unlocked use risks VRAM contention, driver resets, and skewed benchmark or gate timings. This includes running `client` or any other binary directly with no driver selected, because Vulkan may then pick the physical GPU.
   ```bash
-  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json with-gpu-lock <command>
+  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json with-gpu-lock <command>
   ```
 - **Software Vulkan needs no lock.** Use it when the work does not depend on real GPU behaviour or timing:
   ```bash
-  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json <command>
+  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json <command>
   ```
 - **The lock's timeout is 600 seconds by default.** `with-gpu-lock` takes an exclusive `flock` on `/run/lock/gpu.lock` and releases it when the command exits. For longer runs, set `GPU_LOCK_TIMEOUT=1200 with-gpu-lock <command>`, and hold the lock only for the GPU command itself.
 - **The quality gate runs on software Vulkan.** The client test harness (`crates/client/tests/support/gpu_run.rs`) pins GPU tests to `lavapipe` under `xvfb-run`, so `cargo test --workspace` does not need the lock. Frame-budget measurements must use the physical GPU, under the lock.

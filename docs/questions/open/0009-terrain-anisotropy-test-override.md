@@ -23,8 +23,8 @@ The options:
 
 1. **Keep the override (default).** The gate runs here today, and CI keeps full coverage.
 2. **Move the server to Mesa 25.1 or later, then delete the override.** This is the cleanest result, but it needs
-   root. Debian's `bookworm-backports` offers 25.0.7, which is still before the rewrite, so it means Debian 13 or
-   another Mesa source.
+   root. Update 2026-11-03: the server now runs Debian 13, whose Mesa is 25.0.7, still before the rewrite. So this
+   now means `trixie-backports` or another Mesa source, once one carries 25.1 or later.
 3. **Run the two terrain render tests on the physical GPU on this server.** `radv` is not affected, but the gate
    would then need the GPU lock, which AGENTS.md section 7 deliberately avoids.
 
