@@ -4,6 +4,13 @@ Finishes Phase 5 of `docs/plans/2026-11-01-codebase-remediation.md`.
 
 **Exit criterion:** a person can play a match to a result using only mouse and keyboard, and 1.9 covers it.
 
+**Delivery status (2026-11-03):** WP0 to WP9 and the addendum (§8) are delivered; the exit criterion is met locally
+and awaits CI on `main`. A person plays the shipped skirmish with `cargo run -p client -- --skirmish`: mine, raise
+structures from the card with a placement preview, train, group, attack-move, win or lose, and play again, under fog,
+with mouse and keyboard only. `skirmish_match_tests.rs` (`7a432f9`) proves it. **Deferred:** gas, research and
+transport are built and proven on temporary fixture roots (D-9), but disabled in the shipped game ("No approved media")
+until media exists, per `docs/questions/open/0001-media-scope.md`. Out of scope as listed in §6.
+
 **Status of this document:** Stage 1 blueprint under charter §6. It was written by static reading only: nothing
 was compiled or run. Every `file:line` reference was read on branch `codebase-remediation` at `b263734`. Where a
 claim is a prediction about runtime behaviour, it is marked **verify**, and the implementer must confirm it with
