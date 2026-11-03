@@ -1013,6 +1013,12 @@ These are single runs at low load, not the figures of record; WP6 measures those
   only.
 - [Q0018](../questions/open/0018-frame-budget-army-layout.md): the army layout of the scenarios. Default (a), eight
   players on a circle.
+  **Answered 2026-11-03:** (a) now, and (b) as a to-do. **Follow-up (not started, no plan yet):** let
+  `sim_core::scenario::build_world_with_catalogs` keep placing a player's starting units on rings 4, 5, … around its
+  town hall once rings 1 to 3 are full, up to a stated limit, so two players of 100 and 200 units each can be loaded.
+  Scenarios that load today must place the same units on the same cells (their checksums unchanged, proved by the
+  golden replay and the matrix). It changes `sim_core`, so it needs its own blueprint with tests; after it lands,
+  the frame budget is re-measured with two-army scenarios in `crates/client_diagnostics/data/frame_budget.ron`.
 - [Q0019](../questions/open/0019-frame-budget-display-path.md): whether a headless KWin compositor on the RX 580 is
   acceptable as the display path of record. Default: yes, labelled as such.
 - [Q0011](../questions/open/0011-allocation-counter-unsafe.md) stays open. This plan follows its default and adds an

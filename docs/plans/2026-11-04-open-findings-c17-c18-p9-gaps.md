@@ -18,8 +18,9 @@ are not committed: a standalone copy of `fluid.rs`, and a release build of `e85f
 smog systems. Line numbers drift; search for the quoted symbol. A claim about runtime behaviour that could not be
 confirmed is marked **verify**, and the first test of its package confirms or refutes it.
 
-**Out of scope:** step 8.5 (B-1, D7), blocked on the owner (Q0001); Q0014 (host-independent smog math), whose
-default (a) stays in force; everything listed in §8.
+**Out of scope:** step 8.5 (B-1, D7), now planned in `2026-11-04-phase-8-5-veo-media` (Q0001 answered); Q0014
+(host-independent smog math), answered (b) and planned in `2026-11-04-libm-smog-math`, which runs after WP9 (§4);
+everything listed in §8.
 
 ---
 
@@ -455,8 +456,8 @@ are the measure of record.
 | File | Owner, in order |
 |---|---|
 | `crates/client/src/smog/kinematics.rs` | WP1 |
-| `crates/client/tests/smog_golden_tests.rs` | WP1, then WP6, WP8 (accessor rename only), WP9 |
-| `crates/client/src/smog/fluid.rs`, new `smog/bricks.rs` | WP7, then WP8, then WP9 |
+| `crates/client/tests/smog_golden_tests.rs` | WP1, then WP6, WP8 (accessor rename only), WP9; then plan `2026-11-04-libm-smog-math` |
+| `crates/client/src/smog/fluid.rs`, new `smog/bricks.rs` | WP7, then WP8, then WP9; then plan `2026-11-04-libm-smog-math` (call sites only) |
 | `crates/client/src/smog/mod.rs`, `smog/gpu_upload.rs` | WP8 (byte accessors only) |
 | new `crates/client/benches/smog_solver.rs`, `crates/client/Cargo.toml` (`[[bench]]` entry) | WP6 |
 | `crates/client/src/vfx.rs` (may become `vfx/mod.rs` plus submodules), `crates/client/src/lib.rs`, `crates/client/src/editor/app.rs` (registration only) | WP3 |
@@ -488,6 +489,12 @@ are the measure of record.
 | WP7 | C-18 bit-exact I: ping-pong slabs, truncating cast, dead slabs | C-18 (part) | S (half a day) | WP6 | B |
 | WP8 | C-18 bit-exact II: brick sparsity | C-18 (part) | L (3 to 4 days) | WP7; WP3 merged before its last commit | B |
 | WP9 | C-18 deliberate: quiescence; goldens re-recorded; A/B measurement | C-18 | M (1 day, plus about 20 min of locked GPU) | WP8, WP3 | B |
+
+**Followed by** (amended 2026-11-03 after Q0014's answer): plan
+[`2026-11-04-libm-smog-math`](2026-11-04-libm-smog-math.md) (Q0014 option b) starts only after WP9 is merged (or
+WP8, if Q0020 is answered "no"), and never runs beside WP6 to WP9, because it owns the same two files. It re-records
+the smog goldens a second time, in its own commit, as class H. Nothing in WP6 to WP9 changes for it: their goldens
+stay class L, and their commits are proved against the server's glibc as planned.
 | WP10 | Audit of the remediation rows of Phases 0 to 4 | §2.4 | M (1 day, documentation) | none | A2 |
 | WP11 | Records: `DESIGN.md`, remediation plan, Phase 9 §9, plan index | all | S (2 to 3 h) | all others, CI green on `main` | C |
 
@@ -941,7 +948,7 @@ why, and D-3 is the fix.
 | `write_buffer` per live effect costs more than expected at 300 live effects | Measured by WP3's A/B runs; the write is skipped for unchanged instances (`Changed`) |
 | The new replay fixture is slow under wasmtime | At most 600 ticks; the CI determinism jobs show its time |
 | Three gates at once on 16 cores slow each other | At most three (§4); documentation WPs use the light gate |
-| Re-recorded smog goldens conflict with a later Q0014 (b) | Both are class-L re-records with their own commit message; Q0014's would follow this plan's |
+| Re-recorded smog goldens conflict with Q0014 (b) | Q0014 was answered (b); plan `2026-11-04-libm-smog-math` runs strictly after WP9 and re-records in its own commit as class H, so each golden change has one cause |
 
 ---
 
@@ -951,7 +958,8 @@ why, and D-3 is the fix.
   exactly zero (D-3)? Default: yes. WP9 makes the change and re-records the smog goldens. If the owner says no, WP9
   keeps WP8's bit-exact solver, and C-18 stays partly open with D-1's trigger.
 - **Q0015 (open):** this plan publishes before-and-after figures and passes or fails no frame time.
-- **Q0014 (open):** default (a) holds; every re-recorded smog golden remains class L.
+- **Q0014 (answered 2026-11-03, option b):** carried out by plan `2026-11-04-libm-smog-math` after WP9. Within this
+  plan, every re-recorded smog golden remains class L.
 
 ---
 
@@ -962,6 +970,6 @@ why, and D-3 is the fix.
 - The frame-budget figures of record in `DESIGN.md` §5 (five interleaved runs per scenario): WP9's A/B runs are
   attribution. A full re-measurement of record is a separate task.
 - Exit paragraphs for remediation Phases 0 to 4 (WP10 reports whether they are needed).
-- Step 8.5 (Q0001), Q0014 (b), the remediation plan's §6 items, the single slow first-tick frame, and C-7 in a live
+- Step 8.5 (Q0001; plan `2026-11-04-phase-8-5-veo-media`), Q0014 (b) (plan `2026-11-04-libm-smog-math`, after WP9), the remediation plan's §6 items, the single slow first-tick frame, and C-7 in a live
   battle (§2.4).
 - Any change to charter §6.
