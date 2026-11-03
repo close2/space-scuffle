@@ -10,7 +10,12 @@
 //!   [`SMOKE_FRAMES`] measured frames of the 400-unit scenario on the test GPU, under Vulkan
 //!   validation, through the client's GPU harness (`crates/client/tests/support/gpu_run.rs`), and
 //!   checks the report it writes. It proves the measurement works; its numbers mean nothing (plan
-//!   `docs/plans/2026-11-03-close-phase-6-7-8-exits.md`, decision D-4).
+//!   `docs/plans/2026-11-03-close-phase-6-7-8-exits.md`, decision D-4). It declares
+//!   `--display-path xvfb-software-present`, the harness's path, and checks that the report
+//!   records it (`WP5b`).
+//! - `a_contradicting_display_path_is_refused_before_anything_is_written` runs the binary with a
+//!   declared path its environment contradicts. It exits before any renderer exists, so it needs
+//!   neither the GPU harness nor the lock.
 //!
 //! # Invariants
 //! - No test edits the repository's `assets/`: every root is built in a temporary directory.
@@ -30,6 +35,7 @@
 #[path = "../../client/tests/support/gpu_run.rs"]
 mod gpu_run;
 
+use client_diagnostics::frame_budget::display::DisplayPath;
 use client_diagnostics::frame_budget::{fixture, report::FrameBudgetReport, FrameBudgetSpec};
 use sim_types::ShapeKind;
 use std::collections::BTreeMap;
@@ -182,7 +188,10 @@ fn frame_budget_smoke_run_writes_a_valid_report() -> Result<(), Box<dyn Error>> 
         Path::new(env!("CARGO_BIN_EXE_frame_budget")),
         Some("1280x720x24"),
     );
+    // The harness removes `WAYLAND_DISPLAY` from every renderer child and runs it under Xvfb
+    // (`GpuCommand::renderer`), which is exactly what this path declares.
     command
+        .args(["--display-path", "xvfb-software-present"])
         .arg("--work-dir")
         .arg(work.path())
         .args(["--scenario", "400"])
@@ -227,5 +236,50 @@ fn frame_budget_smoke_run_writes_a_valid_report() -> Result<(), Box<dyn Error>> 
     }
     assert!(summary.interval_ms.p50 > 0.0, "{summary:?}");
     assert_ne!(report.environment.adapter, "");
+    assert_eq!(
+        report.environment.display_path,
+        DisplayPath::XvfbSoftwarePresent
+    );
+    let recorded = |name: &str| {
+        report
+            .environment
+            .graphics_environment
+            .iter()
+            .find(|(variable, _)| variable == name)
+            .map(|(_, value)| value.clone())
+    };
+    let display = recorded("DISPLAY");
+    assert!(
+        display.as_deref().is_some_and(|value| value != "unset"),
+        "DISPLAY is recorded: {display:?}"
+    );
+    assert_eq!(recorded("WAYLAND_DISPLAY").as_deref(), Some("unset"));
+    assert_eq!(report.gpu_passes, None);
+    Ok(())
+}
+
+#[test]
+fn a_contradicting_display_path_is_refused_before_anything_is_written() -> Result<(), Box<dyn Error>>
+{
+    let work = tempfile::tempdir()?;
+    // No renderer is ever built: the tool checks the declared path before anything else, so
+    // this child runs without the GPU harness.
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_frame_budget"))
+        .args(["--display-path", "kwin-virtual"])
+        .arg("--work-dir")
+        .arg(work.path())
+        .args(["--scenario", "0"])
+        .arg("--out")
+        .arg(work.path().join("report.ron"))
+        .env_remove("WAYLAND_DISPLAY")
+        .env("DISPLAY", ":frame-budget-test-dummy")
+        .env_remove("MESA_VK_WSI_DEBUG")
+        .output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{stderr}");
+    assert!(stderr.contains("WAYLAND_DISPLAY"), "{stderr}");
+    assert!(stderr.contains("frame_budget failed"), "{stderr}");
+    let left: Vec<_> = std::fs::read_dir(work.path())?.collect();
+    assert!(left.is_empty(), "the work directory holds {left:?}");
     Ok(())
 }

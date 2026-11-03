@@ -30,8 +30,16 @@
 //! - Combat events are counted as the growth of the timeline's pending-event queue across the
 //!   tick driver: the driver queues every event of every tick it runs, and presentation removes
 //!   them only later in the frame (`BattleSet::Present`).
+//! - With [`RecorderConfig::gpu_passes`] (a `--render-diagnostics` run, plan `WP5b`), every
+//!   `render/…/elapsed_gpu` diagnostic of Bevy's `DiagnosticsStore` is read on every measured
+//!   frame, and a reading is counted only when its time is newer than the last one taken
+//!   ([`GpuPassAccumulator`]): GPU timings arrive a few frames late, after a readback, and the
+//!   store shows the latest one on every frame until the next arrives. Readings already present
+//!   at the end of the warm-up are marked, not counted. If none is present by then, the run
+//!   fails with [`RecordingError::NoGpuTimestamps`].
 
-use super::report::FrameSample;
+use super::report::{FrameSample, GpuPassTiming};
+use bevy::diagnostic::DiagnosticsStore;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
@@ -79,6 +87,127 @@ pub struct RecorderConfig {
     pub min_in_view_fraction: f64,
     /// Rows preallocated for the window.
     pub capacity: usize,
+    /// Whether to collect per-pass GPU timings from Bevy's render diagnostics.
+    pub gpu_passes: bool,
+}
+
+/// Suffix of Bevy's GPU time diagnostic of a render span.
+const GPU_PASS_SUFFIX: &str = "/elapsed_gpu";
+
+/// Root of Bevy's render diagnostics.
+const RENDER_DIAGNOSTIC_ROOT: &str = "render/";
+
+/// Passes preallocated for GPU timings; Bevy 0.15 instruments about a dozen spans.
+const GPU_PASS_CAPACITY: usize = 64;
+
+/// Whether `path` is the GPU time of a render span, `render/<span…>/elapsed_gpu`.
+#[must_use]
+pub fn is_gpu_pass_path(path: &str) -> bool {
+    path.strip_prefix(RENDER_DIAGNOSTIC_ROOT)
+        .and_then(|rest| rest.strip_suffix(GPU_PASS_SUFFIX))
+        .is_some_and(|span| !span.is_empty())
+}
+
+/// The running GPU time of one render span over the measured window.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GpuPassAccumulator {
+    /// Bevy's diagnostic path.
+    path: String,
+    /// Time of the last reading taken or marked.
+    last_taken: Option<Instant>,
+    /// Sum of the readings taken, in milliseconds.
+    sum_ms: f64,
+    /// Readings taken.
+    samples: u32,
+    /// Largest reading taken, in milliseconds.
+    max_ms: f64,
+}
+
+impl GpuPassAccumulator {
+    /// An accumulator with no reading for the diagnostic `path`.
+    #[must_use]
+    pub fn new(path: &str) -> Self {
+        Self {
+            path: path.to_owned(),
+            last_taken: None,
+            sum_ms: 0.0,
+            samples: 0,
+            max_ms: 0.0,
+        }
+    }
+
+    /// Bevy's diagnostic path of this pass.
+    #[must_use]
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Marks the reading made at `time` as seen without counting it (a warm-up reading).
+    pub fn prime(&mut self, time: Instant) {
+        if self.last_taken.is_none_or(|last| time > last) {
+            self.last_taken = Some(time);
+        }
+    }
+
+    /// Counts the reading `value_ms` made at `time` if it is newer than the last one taken or
+    /// marked, and says whether it was counted.
+    pub fn offer(&mut self, time: Instant, value_ms: f64) -> bool {
+        if self.last_taken.is_some_and(|last| time <= last) {
+            return false;
+        }
+        self.last_taken = Some(time);
+        self.sum_ms += value_ms;
+        self.samples += 1;
+        self.max_ms = self.max_ms.max(value_ms);
+        true
+    }
+
+    /// Mean and largest reading, or `None` if no reading was counted.
+    #[must_use]
+    pub fn timing(&self) -> Option<GpuPassTiming> {
+        (self.samples > 0).then(|| GpuPassTiming {
+            path: self.path.clone(),
+            samples: self.samples,
+            mean_ms: self.sum_ms / f64::from(self.samples),
+            max_ms: self.max_ms,
+        })
+    }
+}
+
+/// Offers every GPU pass reading of `store` to `passes`, counting it when `count` is set and
+/// only marking it otherwise. Returns how many GPU pass diagnostics hold a reading.
+///
+/// A pass first seen here gets its accumulator, which allocates its path once; the warm-up
+/// sees every pass Bevy instruments, so the measured window normally allocates nothing.
+fn observe_gpu_passes(
+    passes: &mut Vec<GpuPassAccumulator>,
+    store: &DiagnosticsStore,
+    count: bool,
+) -> usize {
+    let mut seen = 0;
+    for diagnostic in store.iter() {
+        let path = diagnostic.path().as_str();
+        let Some(measurement) = diagnostic.measurement() else {
+            continue;
+        };
+        if !is_gpu_pass_path(path) {
+            continue;
+        }
+        seen += 1;
+        let index = passes
+            .iter()
+            .position(|pass| pass.path() == path)
+            .unwrap_or_else(|| {
+                passes.push(GpuPassAccumulator::new(path));
+                passes.len() - 1
+            });
+        if count {
+            passes[index].offer(measurement.time, measurement.value);
+        } else {
+            passes[index].prime(measurement.time);
+        }
+    }
+    seen
 }
 
 /// Why a measurement failed while the client ran.
@@ -125,6 +254,13 @@ pub enum RecordingError {
     /// The production camera is missing.
     #[error("the production camera is missing")]
     MissingCamera,
+    /// `--render-diagnostics` was asked for, but no GPU pass timing had arrived by the end of
+    /// the warm-up.
+    #[error(
+        "no GPU pass timing (render/…/elapsed_gpu) arrived by the end of the warm-up: the \
+         adapter lacks TIMESTAMP_QUERY, or the warm-up is shorter than the readback"
+    )]
+    NoGpuTimestamps,
 }
 
 /// What a finished measurement hands back.
@@ -142,6 +278,8 @@ pub struct RecordedRun {
     pub present_mode: String,
     /// `/proc/loadavg` when the window ended.
     pub load_after: String,
+    /// Per-pass GPU timings, when [`RecorderConfig::gpu_passes`] was set.
+    pub gpu_passes: Option<Vec<GpuPassTiming>>,
 }
 
 /// Shared slot through which the recorder's result leaves the App.
@@ -192,6 +330,7 @@ pub struct FrameRecorder {
     ticks_executed: u32,
     pending_events_before: usize,
     combat_events: u32,
+    gpu_passes: Vec<GpuPassAccumulator>,
     handle: RecorderHandle,
 }
 
@@ -218,6 +357,11 @@ pub fn install(app: &mut App, config: RecorderConfig) -> RecorderHandle {
         ticks_executed: 0,
         pending_events_before: 0,
         combat_events: 0,
+        gpu_passes: Vec::with_capacity(if config.gpu_passes {
+            GPU_PASS_CAPACITY
+        } else {
+            0
+        }),
         handle: handle.clone(),
     })
     .add_systems(First, begin_frame)
@@ -308,6 +452,7 @@ struct FrameEvidence<'w, 's> {
     cameras: Query<'w, 's, (&'static Camera, &'static GlobalTransform), With<RtsCamera>>,
     windows: Query<'w, 's, &'static Window, With<PrimaryWindow>>,
     adapter: Option<Res<'w, RenderAdapterInfo>>,
+    diagnostics: Option<Res<'w, DiagnosticsStore>>,
     exit: EventWriter<'w, AppExit>,
 }
 
@@ -319,7 +464,7 @@ fn end_frame(mut recorder: ResMut<'_, FrameRecorder>, mut evidence: FrameEvidenc
     let step = match recorder.phase {
         Phase::WaitingForReady => wait_for_ready(&evidence)
             .map(|ready| ready.then_some(Phase::WarmingUp(recorder.config.warmup_frames))),
-        Phase::WarmingUp(left) => warm_up(&recorder, &mut evidence, left).map(Some),
+        Phase::WarmingUp(left) => warm_up(&mut recorder, &mut evidence, left).map(Some),
         Phase::Measuring { start_tick } => measure(&mut recorder, &evidence, update, start_tick),
         Phase::Done => Ok(None),
     };
@@ -377,13 +522,21 @@ fn check_health(evidence: &FrameEvidence<'_, '_>) -> Result<(), RecordingError> 
 
 /// Counts down the warm-up; on its last frame checks the unit count and starts the battle.
 fn warm_up(
-    recorder: &FrameRecorder,
+    recorder: &mut FrameRecorder,
     evidence: &mut FrameEvidence<'_, '_>,
     left: u32,
 ) -> Result<Phase, RecordingError> {
     check_health(evidence)?;
     if left > 0 {
         return Ok(Phase::WarmingUp(left - 1));
+    }
+    if recorder.config.gpu_passes {
+        let seen = evidence.diagnostics.as_ref().map_or(0, |store| {
+            observe_gpu_passes(&mut recorder.gpu_passes, store, false)
+        });
+        if seen == 0 {
+            return Err(RecordingError::NoGpuTimestamps);
+        }
     }
     let world = evidence
         .session
@@ -420,6 +573,11 @@ fn measure(
     start_tick: u32,
 ) -> Result<Option<Phase>, RecordingError> {
     check_health(evidence)?;
+    if recorder.config.gpu_passes {
+        if let Some(store) = &evidence.diagnostics {
+            observe_gpu_passes(&mut recorder.gpu_passes, store, true);
+        }
+    }
     let tick = world_tick(&evidence.session).ok_or(RecordingError::MissingWorld)?;
     let frame = u32::try_from(recorder.samples.len()).unwrap_or(u32::MAX);
     let (camera, transform) = evidence
@@ -523,10 +681,71 @@ fn finish(recorder: &mut FrameRecorder, evidence: &mut FrameEvidence<'_, '_>) {
         resolution,
         present_mode,
         load_after: super::read_load_average(),
+        gpu_passes: recorder.config.gpu_passes.then(|| {
+            recorder
+                .gpu_passes
+                .iter()
+                .filter_map(GpuPassAccumulator::timing)
+                .collect()
+        }),
     };
     info!("frame_budget: measured {} frames", run.samples.len());
     recorder.handle.put(Ok(run));
     recorder.phase = Phase::Done;
     evidence.lab.battle_paused = true;
     evidence.exit.send(AppExit::Success);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_gpu_pass_accumulator_takes_each_reading_once() {
+        let start = Instant::now();
+        let at = |millis: u64| start + Duration::from_millis(millis);
+        let mut pass = GpuPassAccumulator::new("render/main_opaque_pass_3d/elapsed_gpu");
+        // A reading seen during the warm-up marks its time without counting.
+        pass.prime(at(0));
+        assert!(!pass.offer(at(0), 50.0), "a primed reading is not counted");
+        // The readback delivers a new value only every few frames; the recorder sees the
+        // latest one on every frame.
+        let frames = [
+            (10, 2.0),
+            (10, 2.0),
+            (20, 4.0),
+            (20, 4.0),
+            (20, 4.0),
+            (30, 3.0),
+            (25, 9.0),
+        ];
+        let taken: Vec<bool> = frames
+            .iter()
+            .map(|&(millis, value)| pass.offer(at(millis), value))
+            .collect();
+        assert_eq!(taken, [true, false, true, false, false, true, false]);
+        assert_eq!(
+            pass.timing(),
+            Some(GpuPassTiming {
+                path: "render/main_opaque_pass_3d/elapsed_gpu".into(),
+                samples: 3,
+                mean_ms: 3.0,
+                max_ms: 4.0,
+            })
+        );
+        assert_eq!(
+            GpuPassAccumulator::new("render/shadows/elapsed_gpu").timing(),
+            None,
+            "a pass with no reading has no timing"
+        );
+    }
+
+    #[test]
+    fn only_render_gpu_timings_are_pass_timings() {
+        assert!(is_gpu_pass_path("render/main_opaque_pass_3d/elapsed_gpu"));
+        assert!(is_gpu_pass_path("render/shadows/cascade_2/elapsed_gpu"));
+        assert!(!is_gpu_pass_path("render/main_opaque_pass_3d/elapsed_cpu"));
+        assert!(!is_gpu_pass_path("fps"));
+        assert!(!is_gpu_pass_path("frame_time/elapsed_gpu"));
+    }
 }

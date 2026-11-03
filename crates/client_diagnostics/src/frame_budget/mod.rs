@@ -4,11 +4,15 @@
 //! Owns the measurement of remediation Phase 6's exit criterion "frame budget measured at 200
 //! and 400 units" (plan `docs/plans/2026-11-03-close-phase-6-7-8-exits.md`, decision D-4, work
 //! package WP5). One run:
+//! 0. checks the declared `--display-path` against the environment ([`display`], `WP5b`), before
+//!    anything is read or written;
 //! 1. reads the spec ([`FrameBudgetSpec`], `crates/client_diagnostics/data/frame_budget.ron`);
 //! 2. builds the measurement's assets root under `--work-dir` ([`fixture`]);
 //! 3. points `SPACE_SCUFFLE_ASSETS` at that root and builds the production client with
 //!    `client::build_graphical_app(ClientMode::LiveBattle, ..)` on the chosen scenario, with
-//!    `PresentMode::AutoNoVsync` so the frame interval reflects work, not the display;
+//!    `PresentMode::AutoNoVsync` so the frame interval reflects work, not the display, at the
+//!    `--resolution` asked for (default 1280×720), and with Bevy's `RenderDiagnosticsPlugin`
+//!    when `--render-diagnostics` asks for per-pass GPU timings (attribution runs only);
 //! 4. adds the recorder ([`recorder`]), which holds the camera on the spec's pose, waits for the
 //!    battle to be ready, renders the warm-up frames, then measures every frame;
 //! 5. writes the report ([`report`]) as RON to `--out` and returns it for the Markdown summary.
@@ -29,7 +33,9 @@
 //! - The run fails with a typed error, never a partial report, when the battle fails, the match
 //!   ends early, the scenario has the wrong number of units or too few units are in view.
 //! - A report file is never overwritten.
+//! - A run whose environment contradicts its declared display path writes nothing.
 
+pub mod display;
 pub mod fixture;
 pub mod recorder;
 pub mod report;
@@ -39,6 +45,7 @@ use bevy::window::{PresentMode, PrimaryWindow};
 use clap::Parser;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 /// The spec schema version this build reads.
 pub const SPEC_FORMAT_VERSION: u32 = 1;
@@ -76,6 +83,77 @@ pub struct FrameBudgetOptions {
     /// spec's warm-up within the GPU harness's run limit.
     #[arg(long)]
     pub warmup_frames: Option<u32>,
+    /// Where the frames are presented. Checked against the environment before anything else
+    /// happens, and recorded in the report.
+    #[arg(long, value_enum)]
+    pub display_path: display::DisplayPath,
+    /// Window size in physical pixels, `<width>x<height>`, each side from 320 to 7680.
+    #[arg(long, default_value_t = Resolution::default())]
+    pub resolution: Resolution,
+    /// Attribution runs only: add Bevy's `RenderDiagnosticsPlugin` and report the mean GPU time
+    /// of each pass it instruments. Timestamp queries and their readback add work, so such a
+    /// run is never a figure of record.
+    #[arg(long)]
+    pub render_diagnostics: bool,
+}
+
+/// Smallest window side `--resolution` accepts, in physical pixels.
+pub const MIN_RESOLUTION_SIDE: u32 = 320;
+/// Largest window side `--resolution` accepts, in physical pixels.
+pub const MAX_RESOLUTION_SIDE: u32 = 7680;
+
+/// A window size in physical pixels, written `<width>x<height>` (such as `1280x720`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Resolution {
+    /// Width in physical pixels.
+    pub width: u32,
+    /// Height in physical pixels.
+    pub height: u32,
+}
+
+impl Default for Resolution {
+    /// The client's default window, 1280×720.
+    fn default() -> Self {
+        Self {
+            width: 1280,
+            height: 720,
+        }
+    }
+}
+
+impl std::fmt::Display for Resolution {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}x{}", self.width, self.height)
+    }
+}
+
+/// Why a `--resolution` value was refused.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ResolutionError {
+    /// The value is not two integers joined by `x`.
+    #[error("resolution {0:?} is not <width>x<height>, such as 1280x720")]
+    Format(String),
+    /// A side lies outside the accepted range.
+    #[error(
+        "resolution {0:?} has a side outside {MIN_RESOLUTION_SIDE} to {MAX_RESOLUTION_SIDE} pixels"
+    )]
+    OutOfRange(String),
+}
+
+impl FromStr for Resolution {
+    type Err = ResolutionError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let format = || ResolutionError::Format(text.to_owned());
+        let (width, height) = text.split_once('x').ok_or_else(format)?;
+        let side = |value: &str| value.parse::<u32>().map_err(|_| format());
+        let (width, height) = (side(width)?, side(height)?);
+        let range = MIN_RESOLUTION_SIDE..=MAX_RESOLUTION_SIDE;
+        if !(range.contains(&width) && range.contains(&height)) {
+            return Err(ResolutionError::OutOfRange(text.to_owned()));
+        }
+        Ok(Self { width, height })
+    }
 }
 
 /// The arena map the fixture generates.
@@ -163,6 +241,9 @@ pub struct FrameBudgetSpec {
 /// Why a frame-budget run failed.
 #[derive(Debug, thiserror::Error)]
 pub enum FrameBudgetError {
+    /// The declared display path contradicts the environment.
+    #[error(transparent)]
+    DisplayPath(#[from] display::DisplayPathError),
     /// The spec could not be read.
     #[error("frame-budget spec {path}: {source}")]
     SpecIo {
@@ -320,6 +401,9 @@ impl FrameBudgetSpec {
 /// Every [`FrameBudgetError`]: a bad spec or scenario, an existing report, a fixture or startup
 /// failure, a failed measurement, or an early exit.
 pub fn run(options: &FrameBudgetOptions) -> Result<report::FrameBudgetReport, FrameBudgetError> {
+    display::check_display_path(options.display_path, |name| {
+        std::env::var_os(name).map(|value| value.to_string_lossy().into_owned())
+    })?;
     let load_before = read_load_average();
     let spec = FrameBudgetSpec::load(&options.spec)?;
     let scenario = spec.scenario(&options.scenario)?.clone();
@@ -336,7 +420,10 @@ pub fn run(options: &FrameBudgetOptions) -> Result<report::FrameBudgetReport, Fr
         None,
         &fixture::scenario_path(&scenario.name),
     )?;
-    configure_window(&mut app)?;
+    configure_window(&mut app, options.resolution)?;
+    if options.render_diagnostics {
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
     app.world_mut()
         .resource_mut::<client::LabState>()
         .battle_paused = true;
@@ -357,6 +444,7 @@ pub fn run(options: &FrameBudgetOptions) -> Result<report::FrameBudgetReport, Fr
             camera_distance: spec.camera.distance,
             min_in_view_fraction: spec.min_in_view_fraction,
             capacity: usize::try_from(spec.max_recorded_frames).unwrap_or(usize::MAX),
+            gpu_passes: options.render_diagnostics,
         },
     );
     let exit = client::render_compatibility::run_render_app(&mut app);
@@ -375,6 +463,7 @@ pub fn run(options: &FrameBudgetOptions) -> Result<report::FrameBudgetReport, Fr
         load_after: recorded.load_after,
         resolution: recorded.resolution,
         present_mode: recorded.present_mode,
+        display_path: options.display_path,
         graphics_environment: graphics_environment(),
     };
     let report = report::FrameBudgetReport::new(
@@ -385,6 +474,7 @@ pub fn run(options: &FrameBudgetOptions) -> Result<report::FrameBudgetReport, Fr
             window: window.to_string(),
             combat_window_ticks: spec.combat_window_ticks,
             environment,
+            gpu_passes: recorded.gpu_passes,
         },
         recorded.samples,
     )?;
@@ -398,8 +488,8 @@ pub fn default_source_assets() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")
 }
 
-/// Sets the primary window to the client's default size at scale factor 1 and turns vsync off.
-fn configure_window(app: &mut App) -> Result<(), FrameBudgetError> {
+/// Sets the primary window to `resolution` physical pixels at scale factor 1 and turns vsync off.
+fn configure_window(app: &mut App, resolution: Resolution) -> Result<(), FrameBudgetError> {
     let mut query = app
         .world_mut()
         .query_filtered::<&mut Window, With<PrimaryWindow>>();
@@ -407,6 +497,9 @@ fn configure_window(app: &mut App) -> Result<(), FrameBudgetError> {
         .get_single_mut(app.world_mut())
         .map_err(|_| FrameBudgetError::NoWindow)?;
     window.resolution.set_scale_factor_override(Some(1.0));
+    window
+        .resolution
+        .set_physical_resolution(resolution.width, resolution.height);
     window.present_mode = PresentMode::AutoNoVsync;
     window.title = "Space Scuffle — frame budget".into();
     Ok(())
@@ -442,13 +535,19 @@ fn source_commit() -> String {
 
 /// The graphics variables that change what a run measures, as the process saw them.
 fn graphics_environment() -> Vec<(String, String)> {
-    ["MESA_VK_WSI_DEBUG", "VK_ICD_FILENAMES", "WGPU_BACKEND"]
-        .into_iter()
-        .map(|name| {
-            let value = std::env::var(name).unwrap_or_else(|_| "unset".into());
-            (name.to_owned(), value)
-        })
-        .collect()
+    [
+        display::MESA_VK_WSI_DEBUG,
+        "VK_ICD_FILENAMES",
+        "WGPU_BACKEND",
+        display::DISPLAY,
+        display::WAYLAND_DISPLAY,
+    ]
+    .into_iter()
+    .map(|name| {
+        let value = std::env::var(name).unwrap_or_else(|_| "unset".into());
+        (name.to_owned(), value)
+    })
+    .collect()
 }
 
 #[cfg(test)]
@@ -503,6 +602,37 @@ mod tests {
         let mut broken = spec;
         broken.measure_ticks = 0;
         assert!(broken.validate().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn a_resolution_parses_two_sides_in_range() -> Result<(), ResolutionError> {
+        assert_eq!(
+            "1280x720".parse::<Resolution>()?,
+            Resolution {
+                width: 1280,
+                height: 720
+            }
+        );
+        assert_eq!(
+            "640x360".parse::<Resolution>()?,
+            Resolution {
+                width: 640,
+                height: 360
+            }
+        );
+        assert_eq!(Resolution::default().to_string(), "1280x720");
+        for refused in [
+            "0x720",
+            "1280",
+            "1280x720x2",
+            "8000x720",
+            "axb",
+            "",
+            "319x720",
+        ] {
+            assert!(refused.parse::<Resolution>().is_err(), "{refused:?}");
+        }
         Ok(())
     }
 }
