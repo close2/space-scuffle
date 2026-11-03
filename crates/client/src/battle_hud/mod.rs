@@ -13,7 +13,8 @@
 //!                      world rectangle
 //!                      apply_hud_intent, before collect_pointer_intent
 //!                      collect_card_keys, after collect_key_intent
-//! PreparePresentation  sync_live_battle_system, refresh_hud_model, collect_battle_feed,
+//! PreparePresentation  sync_live_battle_system, refresh_hud_model, refresh_battle_fog,
+//!                      apply_battle_fog, refresh_hud_focus, collect_battle_feed,
 //!                      refresh_command_card, refresh_queue_panel, refresh_result_screen
 //! Present              update_placement_preview
 //! ```
@@ -36,6 +37,7 @@ pub mod actions;
 pub mod card;
 pub mod catalog;
 pub mod feed;
+pub mod fog;
 pub mod model;
 pub mod panels;
 pub mod placement;
@@ -46,6 +48,7 @@ use bevy::prelude::*;
 use bevy_egui::egui;
 
 use crate::battle_input::{collect_key_intent, collect_pointer_intent};
+use crate::battle_pipeline::fog::BattleFog;
 use crate::battle_pipeline::BattleSet;
 use crate::battle_presentation::BattleProfile;
 use crate::input_bindings::COMMAND_CARD_SLOTS;
@@ -102,6 +105,10 @@ pub struct BattleHudPlugin;
 
 impl Plugin for BattleHudPlugin {
     fn build(&self, app: &mut App) {
+        // Readers take the fog as an `Option`, and its absence is what keeps `Sandbox` unfiltered.
+        if app.world().get_resource::<BattleProfile>() == Some(&BattleProfile::Player) {
+            app.init_resource::<BattleFog>();
+        }
         app.init_resource::<HudGeometry>()
             .init_resource::<model::HudModel>()
             .init_resource::<feed::BattleFeed>()
@@ -129,6 +136,9 @@ impl Plugin for BattleHudPlugin {
                         .in_set(BattleSet::CollectIntent),
                     (
                         model::refresh_hud_model,
+                        fog::refresh_battle_fog,
+                        fog::apply_battle_fog,
+                        model::refresh_hud_focus,
                         feed::collect_battle_feed,
                         card::refresh_command_card,
                         queue::refresh_queue_panel,

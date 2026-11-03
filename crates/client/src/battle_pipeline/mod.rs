@@ -4,6 +4,7 @@
 
 pub mod clock;
 pub mod driver;
+pub mod fog;
 pub mod session;
 pub mod status;
 

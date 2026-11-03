@@ -275,8 +275,8 @@ fn bubble_of(bubbles: &[BubbleRenderInstance], id: EntityId) -> Option<&BubbleRe
 // Trade-off: A little state in exchange for a frame with no world access or allocation.
 /// Brings [`HudModel`] up to date with the session and the selection.
 ///
-/// O(S) in the selection on a frame without change, plus O(log N) in the bubbles for the focused
-/// unit's bars.
+/// O(S) in the selection on a frame without change. The focused unit's bars follow in
+/// [`refresh_hud_focus`].
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
@@ -293,7 +293,6 @@ pub fn refresh_hud_model(
     let model = &mut *model;
     let Some(world) = session.world() else {
         model.viewer = None;
-        model.focus = None;
         return;
     };
     let generation = session.commands.generation();
@@ -328,5 +327,25 @@ pub fn refresh_hud_model(
         model.rebuild_selection(&selection, bubbles);
         model.refills += 1;
     }
-    model.update_focus(&selection, bubbles);
+}
+
+/// Points the panel at the single selected or inspected unit.
+///
+/// Runs after the fog, on its own, because the fog can end an inspection and the panel is drawn
+/// from this on the next frame: a focus taken any earlier would show a hidden enemy for one frame.
+/// O(log N) in the bubbles.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+pub fn refresh_hud_focus(
+    session: Res<'_, BattleSession>,
+    selection: Res<'_, BattleSelection>,
+    mut model: ResMut<'_, HudModel>,
+) {
+    if model.viewer.is_some() {
+        model.update_focus(&selection, &session.frames.presented().bubbles);
+    } else {
+        model.focus = None;
+    }
 }
