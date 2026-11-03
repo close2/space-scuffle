@@ -85,6 +85,13 @@ use sim_types::math::{SimScalar, SimVec2};
 #[path = "support/gpu_run.rs"]
 mod gpu_run;
 
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/schedule_order.rs"]
+mod schedule_order;
+
 /// Rows at the top of a capture covered by the playtest HUD, excluded from the comparison.
 const PLAYTEST_HUD_HEIGHT_PIXELS: u32 = 64;
 
@@ -1710,4 +1717,26 @@ fn playtest_click_selects_a_unit_and_right_click_commands_it() {
     );
     let lab = harness.app.world().resource::<LabState>();
     assert_eq!(lab.battle_failure, None);
+}
+
+/// File > Open and File > New send their [`LoadDocumentRequest`] from `editor_ui_system`, and
+/// `apply_document_load_system` must apply it later in the same frame. Reversed, the request would
+/// wait a frame and the UI would draw one frame of the old document after the user chose another.
+/// No schedule cycle would catch that, so the declared order is pinned here (step 7.4; Phase 9
+/// blueprint §9, finding of WP6).
+#[test]
+fn document_load_applies_after_the_editor_ui_requests_it() {
+    let harness = EditorHarness::new();
+    let schedules = harness.app.world().resource::<Schedules>();
+    let update = schedules
+        .get(Update)
+        .expect("invariant: every Bevy App has an Update schedule");
+    assert!(
+        schedule_order::runs_before(
+            update,
+            "client::editor::ui::editor_ui_system",
+            "client::editor::document_load::apply_document_load_system",
+        ),
+        "apply_document_load_system must be ordered after editor_ui_system"
+    );
 }
