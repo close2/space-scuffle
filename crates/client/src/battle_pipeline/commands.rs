@@ -362,6 +362,34 @@ impl BattleCommandQueue {
     }
 }
 
+/// Whether any member of `selection` could carry out `order` right now.
+///
+/// The question [`BattleCommandQueue::submit_selection`] answers member by member, for input that
+/// must choose what a gesture means before it submits anything.
+#[must_use]
+pub fn any_recipient(
+    world: &SimWorld,
+    player: PlayerId,
+    selection: &[EntityId],
+    order: &UnitOrder,
+) -> bool {
+    let Ok(subject) = order_subject(world, player, order) else {
+        return false;
+    };
+    selection.iter().any(|id| {
+        world
+            .entities
+            .get(id)
+            .filter(|entity| entity.owner == player && can_receive_order(entity, order))
+            .is_some_and(|entity| {
+                world
+                    .catalog
+                    .get(entity.unit_type_id)
+                    .is_ok_and(|archetype| can_execute(entity, archetype, order, subject))
+            })
+    })
+}
+
 /// Refuses every order once the match has ended or `player` has been defeated.
 ///
 /// This is the simulation's own rule, checked here so a closed match answers at submission

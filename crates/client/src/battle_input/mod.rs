@@ -4,7 +4,8 @@
 //! Owns the player's hands on a live battle: left click and box drag change
 //! [`BattleSelection`], right click and the order keys go through
 //! [`BattleCommandQueue`](crate::battle_pipeline::commands::BattleCommandQueue), and control group
-//! keys store and recall selections. Keys come from [`crate::input_bindings`].
+//! keys store and recall selections. What a right click means is decided by [`context_order()`].
+//! Keys come from [`crate::input_bindings`].
 //!
 //! # How it fits
 //! These systems run in [`BattleSet::CollectIntent`], after UI ownership is sampled and before the
@@ -17,8 +18,9 @@
 //!   another player, one the simulation says that player can target.
 //! - Orders go only to the local player's units; a foreign unit can be looked at, never ordered.
 //! - Picking costs O(N) per click and box selection O(N) per release. Nothing here scans bubbles
-//!   on a frame without a click or release, and such frames allocate nothing.
+//!   or resource nodes on a frame without a click or release, and such frames allocate nothing.
 
+pub mod context_order;
 pub mod gesture;
 pub mod order_marker;
 
@@ -29,7 +31,7 @@ use bevy::window::PrimaryWindow;
 use bevy_egui::{egui, EguiContexts};
 use sim_core::SimWorld;
 use sim_types::enums::ShapeKind;
-use sim_types::{AttackOrigin, EntityId, PlayerId, SimScalar, SimVec2, UnitOrder};
+use sim_types::{EntityId, PlayerId, ResourceNodeId, UnitOrder};
 
 use crate::battle_pipeline::commands::SubmissionError;
 use crate::battle_pipeline::session::BattleSession;
@@ -44,15 +46,20 @@ use crate::input_bindings::{
 };
 use crate::input_policy::{world_to_window, InputOwnership, ViewportCoordinates};
 use crate::lab_ui::{LabState, LabTab};
+use crate::runtime_battle::MapPresentation;
 use crate::scene_controller::LiveBattleBubble;
 use crate::selection::ray_sphere_intersect;
 use crate::terrain::{pick_terrain, TerrainState};
 
+use context_order::{context_order, PointerTarget};
 use gesture::{GestureOutcome, SelectionGesture};
-use order_marker::{OrderMarkerKind, OrderMarkers};
+use order_marker::OrderMarkers;
 
 /// Extra pick radius in world units, so small units stay clickable from a zoomed-out camera.
 const PICK_RADIUS_PADDING: f32 = 0.15;
+
+/// Pick radius of a resource billboard in world units, about its authored half diagonal.
+const NODE_PICK_RADIUS: f32 = 1.0;
 
 /// How far in front of a bubble, in world units, terrain must be to count as hiding it.
 const TERRAIN_OCCLUSION_MARGIN: f32 = 0.05;
@@ -112,6 +119,8 @@ pub struct BattleView<'w, 's> {
     lab: Res<'w, LabState>,
     presentation: Res<'w, BattlePresentation>,
     terrain: Option<Res<'w, TerrainState>>,
+    /// Map billboards, absent until a battle first commits.
+    map_objects: Option<Res<'w, MapPresentation>>,
     bubbles: BubbleQuery<'w, 's>,
 }
 
@@ -203,6 +212,68 @@ impl BattleView<'_, '_> {
             .terrain_distance(ray)
             .is_some_and(|ground| ground + TERRAIN_OCCLUSION_MARGIN < distance);
         (!hidden).then_some(unit)
+    }
+
+    // PERFORMANCE RATIONALE:
+    // Why: A click must find the node under the pointer among the map's resource billboards.
+    // What: One analytic ray-sphere test per node.
+    // Trade-off: O(nodes) per click rather than a spatial index, because this runs on a click, and
+    // a map holds tens of nodes.
+    /// Returns the nearest shown resource node under `ray`, with its billboard's centre.
+    fn pick_node(&self, world: &SimWorld, ray: Ray3d) -> Option<(ResourceNodeId, Vec3)> {
+        let objects = &self.map_objects.as_ref()?.objects;
+        // Records hold resources first, in map order, so a record's index is its node's ID.
+        let resources = objects.get(..world.map.resources().len())?;
+        let (index, center, distance) = (0_u32..)
+            .zip(resources)
+            .filter(|(_, object)| object.visible)
+            .filter_map(|(index, object)| {
+                let distance = ray_sphere_intersect(
+                    ray.origin,
+                    *ray.direction,
+                    object.position,
+                    NODE_PICK_RADIUS,
+                )?;
+                Some((index, object.position, distance))
+            })
+            .min_by(|a, b| a.2.total_cmp(&b.2))?;
+        let hidden = self
+            .terrain_distance(ray)
+            .is_some_and(|ground| ground + TERRAIN_OCCLUSION_MARGIN < distance);
+        (!hidden).then_some((ResourceNodeId(index), center))
+    }
+
+    /// Returns the terrain point under `ray`, in Bevy world space.
+    fn ground_point(&self, ray: Ray3d) -> Option<Vec3> {
+        let terrain = self.terrain.as_ref()?;
+        let hit = pick_terrain(&terrain.map, ray.origin, *ray.direction)?;
+        Some(hit.point)
+    }
+
+    /// Resolves what a right click along `ray` landed on, or `None` if it found nothing at all.
+    ///
+    /// Units come first, so a dome over a gas node wins. Neutral units count as ground.
+    fn pointer_target(
+        &self,
+        world: &SimWorld,
+        owner: PlayerId,
+        ray: Ray3d,
+    ) -> Option<PointerTarget> {
+        let ground = self.ground_point(ray);
+        let unit = self
+            .pick_unit(world, owner, ray)
+            .filter(|unit| unit.owner != PlayerId::NEUTRAL);
+        if let Some(unit) = unit {
+            return Some(if unit.owner == owner {
+                PointerTarget::Friendly(unit.id, ground.unwrap_or(unit.ground))
+            } else {
+                PointerTarget::Enemy(unit.id, unit.ground)
+            });
+        }
+        if let Some((node, center)) = self.pick_node(world, ray) {
+            return Some(PointerTarget::Node(node, ground.unwrap_or(center)));
+        }
+        ground.map(PointerTarget::Ground)
     }
 
     /// Returns the local player's units inside `area`, a rectangle in window coordinates.
@@ -333,7 +404,7 @@ fn apply_click(
     }
 }
 
-/// Attacks the enemy under `ray`, or else moves to the ground under it.
+/// Sends the selection the order that a right click along `ray` means.
 fn issue_pointer_order(
     view: &BattleView<'_, '_>,
     ray: Ray3d,
@@ -348,29 +419,11 @@ fn issue_pointer_order(
         queue.reject(&SubmissionError::NotReady);
         return;
     };
-    let enemy = view
-        .pick_unit(world, owner, ray)
-        .filter(|unit| unit.owner != owner && unit.owner != PlayerId::NEUTRAL);
-    let order = if let Some(enemy) = enemy {
-        let order = UnitOrder::AttackTarget {
-            target: enemy.id,
-            origin: AttackOrigin::Explicit,
-        };
-        Some((order, OrderMarkerKind::Attack, enemy.ground))
-    } else {
-        view.terrain.as_ref().and_then(|terrain| {
-            let hit = pick_terrain(&terrain.map, ray.origin, *ray.direction)?;
-            let target = SimVec2::new(
-                SimScalar::from_num(hit.point.x),
-                SimScalar::from_num(hit.point.z),
-            );
-            Some((UnitOrder::Move { target }, OrderMarkerKind::Move, hit.point))
-        })
-    };
-    let Some((order, kind, position)) = order else {
+    let Some(target) = view.pointer_target(world, owner, ray) else {
         queue.reject(&SubmissionError::NoDestination);
         return;
     };
+    let (order, kind, position) = context_order(world, owner, selection.ids(), target);
     match queue.submit_selection(world, owner, selection.ids(), order, queued) {
         Ok(_) => markers.show(kind, position),
         Err(error) => queue.reject(&error),
