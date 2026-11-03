@@ -12,7 +12,7 @@
 //! Everything runs on the shipped default arena through `SimWorld::step`.
 
 use sim_core::SimWorld;
-use sim_map::{GameMap, VisibilityState};
+use sim_map::{MapFile, VisibilityState};
 use sim_types::{
     EntityId, MoverType, PlayerCommand, PlayerId, SimVec2, Tick, TickBundle, UnitOrder,
 };
@@ -21,8 +21,15 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 const UNIT: &str = "pulse_bot";
 
-fn arena() -> SimWorld {
-    SimWorld::new(GameMap::default_arena(), 11)
+/// The shipped default arena, loaded from `assets/maps/default_arena.scmap.ron`.
+fn arena() -> Result<SimWorld, Box<dyn std::error::Error>> {
+    let map = MapFile::load(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/maps/default_arena.scmap.ron"),
+    )?
+    .decode()?
+    .to_game_map()?;
+    Ok(SimWorld::new(map, 11))
 }
 
 fn spawn(
@@ -66,7 +73,7 @@ fn controller(world: &SimWorld) -> Option<PlayerId> {
 
 #[test]
 fn f2_unit_walking_onto_a_tower_captures_it_and_gains_vision() -> TestResult {
-    let mut world = arena();
+    let mut world = arena()?;
     let tower = tower_position(&world)?;
     let unit = spawn(&mut world, UNIT, 0, tower + SimVec2::from_i32(-12, -2))?;
     let far_cell = (28, 38);
@@ -105,7 +112,7 @@ fn f2_unit_walking_onto_a_tower_captures_it_and_gains_vision() -> TestResult {
 
 #[test]
 fn f2_two_players_on_a_tower_contest_it() -> TestResult {
-    let mut world = arena();
+    let mut world = arena()?;
     let tower = tower_position(&world)?;
     spawn(&mut world, UNIT, 0, tower)?;
     let mut tick = 0;
@@ -120,7 +127,7 @@ fn f2_two_players_on_a_tower_contest_it() -> TestResult {
 
 #[test]
 fn f2_tower_is_released_when_its_occupant_dies() -> TestResult {
-    let mut world = arena();
+    let mut world = arena()?;
     let tower = tower_position(&world)?;
     let unit = spawn(&mut world, UNIT, 0, tower)?;
     let mut tick = 0;
@@ -135,7 +142,7 @@ fn f2_tower_is_released_when_its_occupant_dies() -> TestResult {
 
 #[test]
 fn f2_air_units_do_not_capture_towers() -> TestResult {
-    let mut world = arena();
+    let mut world = arena()?;
     let tower = tower_position(&world)?;
     let air = world
         .catalog

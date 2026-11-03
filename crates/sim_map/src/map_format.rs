@@ -421,11 +421,44 @@ impl MapFile {
     ///
     /// # Errors
     /// Returns a typed [`MapFormatError`] describing the first invalid property detected.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one validation pass per layer in the documented error order; see plan step 9.2"
-    )]
     pub fn decode(&self) -> Result<MapDocument, MapFormatError> {
+        self.check_dimensions()?;
+        self.check_row_shapes()?;
+        self.check_layer_chars()?;
+        let cells = self.assemble_cells()?;
+
+        let mut resources = self.resources.clone();
+        resources.sort_by_key(|r| r.id);
+
+        let mut watchtowers = self.watchtowers.clone();
+        watchtowers.sort_by_key(|w| w.id);
+
+        let mut start_locations = self.start_locations.clone();
+        start_locations.sort_by_key(|s| s.id);
+
+        Ok(MapDocument {
+            metadata: self.metadata.clone(),
+            width: self.width,
+            height: self.height,
+            cells,
+            resources,
+            watchtowers,
+            start_locations,
+        })
+    }
+
+    /// The four cell layers in the documented error order, each with its row strings.
+    fn layers(&self) -> [(MapLayer, &Vec<String>); 4] {
+        [
+            (MapLayer::Levels, &self.levels),
+            (MapLayer::Terrain, &self.terrain),
+            (MapLayer::Ramps, &self.ramps),
+            (MapLayer::Flags, &self.flags),
+        ]
+    }
+
+    /// Decode stage 0: both dimensions lie in `MIN_MAP_DIMENSION..=MAX_MAP_DIMENSION`.
+    fn check_dimensions(&self) -> Result<(), MapFormatError> {
         if !(MIN_MAP_DIMENSION..=MAX_MAP_DIMENSION).contains(&self.width)
             || !(MIN_MAP_DIMENSION..=MAX_MAP_DIMENSION).contains(&self.height)
         {
@@ -434,16 +467,12 @@ impl MapFile {
                 height: self.height,
             });
         }
+        Ok(())
+    }
 
-        let layers = [
-            (MapLayer::Levels, &self.levels),
-            (MapLayer::Terrain, &self.terrain),
-            (MapLayer::Ramps, &self.ramps),
-            (MapLayer::Flags, &self.flags),
-        ];
-
-        // 1. Validate row counts and row lengths in layer order
-        for &(layer, rows) in &layers {
+    /// Decode stage 1: every layer has `height` rows of `width` characters, in layer order.
+    fn check_row_shapes(&self) -> Result<(), MapFormatError> {
+        for (layer, rows) in self.layers() {
             let row_count = saturating_u32(rows.len());
             if row_count != self.height {
                 return Err(MapFormatError::RowCount {
@@ -464,65 +493,44 @@ impl MapFile {
                 }
             }
         }
+        Ok(())
+    }
 
-        // 2. Validate characters layer by layer, top to bottom (row 0 to height-1), left to right (col 0 to width-1)
-        for row_idx in 0..self.height {
-            let y = self.height - 1 - row_idx;
-            for (col_idx, ch) in self.levels[row_idx as usize].chars().enumerate() {
-                if !matches!(ch, '0'..='3') {
-                    return Err(MapFormatError::InvalidCellChar {
-                        layer: MapLayer::Levels,
-                        x: saturating_u32(col_idx),
-                        y,
-                        ch,
-                    });
+    /// Decode stage 2: every character is valid for its layer, checked layer by layer, top to
+    /// bottom (row 0 to height-1), left to right (col 0 to width-1).
+    ///
+    /// Requires stage 1, which proved every layer has `height` rows.
+    fn check_layer_chars(&self) -> Result<(), MapFormatError> {
+        for (layer, rows) in self.layers() {
+            let is_valid: fn(char) -> bool = match layer {
+                MapLayer::Levels => |ch| matches!(ch, '0'..='3'),
+                MapLayer::Terrain => |ch| terrain_from_char(ch).is_some(),
+                MapLayer::Ramps => |ch| ramp_from_char(ch).is_some(),
+                MapLayer::Flags => |ch| ch.is_ascii_hexdigit(),
+            };
+            for row_idx in 0..self.height {
+                let y = self.height - 1 - row_idx;
+                for (col_idx, ch) in rows[row_idx as usize].chars().enumerate() {
+                    if !is_valid(ch) {
+                        return Err(MapFormatError::InvalidCellChar {
+                            layer,
+                            x: saturating_u32(col_idx),
+                            y,
+                            ch,
+                        });
+                    }
                 }
             }
         }
+        Ok(())
+    }
 
-        for row_idx in 0..self.height {
-            let y = self.height - 1 - row_idx;
-            for (col_idx, ch) in self.terrain[row_idx as usize].chars().enumerate() {
-                if terrain_from_char(ch).is_none() {
-                    return Err(MapFormatError::InvalidCellChar {
-                        layer: MapLayer::Terrain,
-                        x: saturating_u32(col_idx),
-                        y,
-                        ch,
-                    });
-                }
-            }
-        }
-
-        for row_idx in 0..self.height {
-            let y = self.height - 1 - row_idx;
-            for (col_idx, ch) in self.ramps[row_idx as usize].chars().enumerate() {
-                if ramp_from_char(ch).is_none() {
-                    return Err(MapFormatError::InvalidCellChar {
-                        layer: MapLayer::Ramps,
-                        x: saturating_u32(col_idx),
-                        y,
-                        ch,
-                    });
-                }
-            }
-        }
-
-        for row_idx in 0..self.height {
-            let y = self.height - 1 - row_idx;
-            for (col_idx, ch) in self.flags[row_idx as usize].chars().enumerate() {
-                if ch.to_digit(16).is_none() {
-                    return Err(MapFormatError::InvalidCellChar {
-                        layer: MapLayer::Flags,
-                        x: saturating_u32(col_idx),
-                        y,
-                        ch,
-                    });
-                }
-            }
-        }
-
-        // 3. Assemble MapCellSpec array in row-major order: index = y * width + x
+    /// Decode stage 3: assembles the `MapCellSpec` array in row-major order,
+    /// `index = y * width + x`.
+    ///
+    /// Requires stages 1 and 2. The per-character conversions still return typed errors rather
+    /// than trusting them.
+    fn assemble_cells(&self) -> Result<Vec<MapCellSpec>, MapFormatError> {
         let total_cells = (self.width as usize) * (self.height as usize);
         let mut cells = Vec::with_capacity(total_cells);
         cells.resize(
@@ -571,25 +579,7 @@ impl MapFile {
                 };
             }
         }
-
-        let mut resources = self.resources.clone();
-        resources.sort_by_key(|r| r.id);
-
-        let mut watchtowers = self.watchtowers.clone();
-        watchtowers.sort_by_key(|w| w.id);
-
-        let mut start_locations = self.start_locations.clone();
-        start_locations.sort_by_key(|s| s.id);
-
-        Ok(MapDocument {
-            metadata: self.metadata.clone(),
-            width: self.width,
-            height: self.height,
-            cells,
-            resources,
-            watchtowers,
-            start_locations,
-        })
+        Ok(cells)
     }
 }
 

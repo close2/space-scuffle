@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use sim_types::{SimScalar, SimVec2};
 
 use crate::error::PlacementFailureReason;
-use crate::grid::{CellFlags, CliffLevel, RampDir, TerrainKind, MAX_RAMP_RUN_CELLS};
+use crate::grid::{CellFlags, CliffLevel, GameMap, RampDir, TerrainKind, MAX_RAMP_RUN_CELLS};
 use crate::map_format::{
     MapDocument, MapEntityId, MapStartLocation, MAX_MAP_DIMENSION, MIN_MAP_DIMENSION,
     WATCHTOWER_ENTITY_ID_BASE,
@@ -422,88 +422,76 @@ fn footprint_in_bounds(start: &MapStartLocation, width: u32, height: u32) -> boo
 }
 
 /// Evaluates all validation rules on the given map document, returning a deterministic report.
+///
+/// Checks run in their documented numerical order (0 to 22, then warnings W1 to W4). Check 0
+/// proves the grid's shape and, on failure, is reported alone. Check 22 runs only when no
+/// fundamental terrain, ramp, start or bounds error was found.
 #[must_use]
-#[expect(
-    clippy::too_many_lines,
-    reason = "numbered checks in documented order; splitting is plan step 9.2"
-)]
 pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
-    let mut errors = Vec::new();
-    let mut warnings = Vec::new();
+    if let Err(mismatch) = check_grid_shape(doc) {
+        return MapValidationReport {
+            errors: vec![mismatch],
+            warnings: Vec::new(),
+        };
+    }
 
+    let mut ctx = ValidationContext {
+        doc,
+        width: doc.width,
+        height: doc.height,
+        errors: Vec::new(),
+        warnings: Vec::new(),
+        ramp_runs: Vec::new(),
+        game_map: None,
+    };
+    ctx.check_cells();
+    ctx.check_ramp_cells();
+    ctx.ramp_runs = collect_ramp_runs(doc);
+    ctx.check_ramp_runs();
+    ctx.check_start_slots();
+    // Build temporary GameMap for footprint and pathability testing
+    ctx.game_map = doc.to_game_map().ok();
+    ctx.check_start_placement();
+    ctx.check_entity_ids_and_bounds();
+    ctx.check_entity_placement();
+    ctx.check_reachability();
+    ctx.collect_warnings();
+
+    MapValidationReport {
+        errors: ctx.errors,
+        warnings: ctx.warnings,
+    }
+}
+
+/// Check 0: `CellGridMismatch`.
+///
+/// Every later check indexes `cells` by `y * width + x`, so an untrusted document must prove its
+/// shape before any of them may run.
+fn check_grid_shape(doc: &MapDocument) -> Result<(), MapValidationError> {
     let width = doc.width;
     let height = doc.height;
-
-    // Check 0: CellGridMismatch. Every later check indexes `cells` by (y * width + x), so an
-    // untrusted document must prove its shape before any of them may run.
     let supported = (MIN_MAP_DIMENSION..=MAX_MAP_DIMENSION).contains(&width)
         && (MIN_MAP_DIMENSION..=MAX_MAP_DIMENSION).contains(&height);
     if !supported || doc.cells.len() as u64 != u64::from(width) * u64::from(height) {
-        errors.push(MapValidationError::CellGridMismatch {
+        return Err(MapValidationError::CellGridMismatch {
             width,
             height,
             cells: doc.cells.len(),
         });
-        return MapValidationReport { errors, warnings };
     }
+    Ok(())
+}
 
-    // Check 1: AbyssCellTraversable
-    for y in 0..height {
-        for x in 0..width {
-            let spec = &doc.cells[(y * width + x) as usize];
-            if spec.terrain == TerrainKind::Abyss
-                && (spec.flags.contains(CellFlags::BUILDABLE)
-                    || spec.flags.contains(CellFlags::GROUND_PATHABLE))
-            {
-                errors.push(MapValidationError::AbyssCellTraversable { x, y });
-            }
-        }
-    }
-
-    // Check 2: RampOnAbyss
-    for y in 0..height {
-        for x in 0..width {
-            let spec = &doc.cells[(y * width + x) as usize];
-            if spec.ramp.is_some() && spec.terrain == TerrainKind::Abyss {
-                errors.push(MapValidationError::RampOnAbyss { x, y });
-            }
-        }
-    }
-
-    // Check 3: RampAtTopLevel
-    for y in 0..height {
-        for x in 0..width {
-            let spec = &doc.cells[(y * width + x) as usize];
-            if spec.ramp.is_some() && spec.level == CliffLevel::MAX {
-                errors.push(MapValidationError::RampAtTopLevel { x, y });
-            }
-        }
-    }
-
-    // Check 4: RampNotPathable
-    for y in 0..height {
-        for x in 0..width {
-            let spec = &doc.cells[(y * width + x) as usize];
-            if spec.ramp.is_some() && !spec.flags.contains(CellFlags::GROUND_PATHABLE) {
-                errors.push(MapValidationError::RampNotPathable { x, y });
-            }
-        }
-    }
-
-    // Check 5: RampBuildable
-    for y in 0..height {
-        for x in 0..width {
-            let spec = &doc.cells[(y * width + x) as usize];
-            if spec.ramp.is_some() && spec.flags.contains(CellFlags::BUILDABLE) {
-                errors.push(MapValidationError::RampBuildable { x, y });
-            }
-        }
-    }
-
+/// Finds every contiguous cardinal ramp run, in row-major order of its first (lowest) cell.
+///
+/// A run starts at a ramp cell whose predecessor against the ramp's direction is not a ramp of
+/// the same direction, and extends along that direction while cells keep it. Legacy diagonal
+/// ramps form no run.
+fn collect_ramp_runs(doc: &MapDocument) -> Vec<RampRunInfo> {
     let mut ramp_runs: Vec<RampRunInfo> = Vec::new();
-    for y in 0..height {
-        for x in 0..width {
-            let spec = &doc.cells[(y * width + x) as usize];
+    for y in 0..doc.height {
+        for x in 0..doc.width {
+            let spec = &doc.cells[(y * doc.width + x) as usize];
             let Some(dir) = spec.ramp else { continue };
             let Some((dx, dy)) = ramp_axis(dir) else {
                 continue;
@@ -536,488 +524,646 @@ pub fn validate_map(doc: &MapDocument) -> MapValidationReport {
             }
         }
     }
+    ramp_runs
+}
 
-    // Check 6: RampRunTooLong
-    for run in &ramp_runs {
-        if run.cells.len() > MAX_RAMP_RUN_CELLS as usize {
-            errors.push(MapValidationError::RampRunTooLong {
-                x: run.first.0,
-                y: run.first.1,
-                len: u8::try_from(run.cells.len()).unwrap_or(u8::MAX),
-            });
-        }
-    }
+/// State shared by the check groups of one [`validate_map`] call.
+///
+/// Invariant: constructed only after [`check_grid_shape`] accepted `doc`, so every
+/// `y * width + x` index with `x < width` and `y < height` is inside `doc.cells`.
+struct ValidationContext<'d> {
+    /// The document under validation.
+    doc: &'d MapDocument,
+    /// Grid width in cells, equal to `doc.width`.
+    width: u32,
+    /// Grid height in cells, equal to `doc.height`.
+    height: u32,
+    /// Errors in check order.
+    errors: Vec<MapValidationError>,
+    /// Warnings in warning order.
+    warnings: Vec<MapValidationWarning>,
+    /// Contiguous ramp runs, filled before checks 6 to 9 and reused by warning W1.
+    ramp_runs: Vec<RampRunInfo>,
+    /// The document as a runtime map, or `None` when it does not convert. Used by checks 13
+    /// and 22.
+    game_map: Option<GameMap>,
+}
 
-    // Check 7: RampUpperLandingMismatch
-    for run in &ramp_runs {
-        let Some((dx, dy)) = ramp_axis(run.dir) else {
-            continue;
-        };
-        let Some(first_cell) = doc.cell(run.first.0, run.first.1) else {
-            continue;
-        };
-        let low_level = first_cell.level;
-
-        let upper = doc
-            .offset_cell(run.last, (dx, dy))
-            .and_then(|cell| doc.cell(cell.0, cell.1));
-        let mismatch = upper.is_none_or(|next_cell| {
-            next_cell.ramp.is_some()
-                || next_cell.terrain == TerrainKind::Abyss
-                || !next_cell.flags.contains(CellFlags::GROUND_PATHABLE)
-                || next_cell.level.0 != low_level.0 + 1
-        });
-
-        if mismatch {
-            errors.push(MapValidationError::RampUpperLandingMismatch {
-                x: run.last.0,
-                y: run.last.1,
-            });
-        }
-    }
-
-    // Check 8: RampLowerLandingMismatch
-    for run in &ramp_runs {
-        let Some((dx, dy)) = ramp_axis(run.dir) else {
-            continue;
-        };
-        let Some(first_cell) = doc.cell(run.first.0, run.first.1) else {
-            continue;
-        };
-        let low_level = first_cell.level;
-
-        let lower = doc
-            .offset_cell(run.first, (-dx, -dy))
-            .and_then(|cell| doc.cell(cell.0, cell.1));
-        let mismatch = lower.is_none_or(|prev_cell| {
-            prev_cell.ramp.is_some()
-                || prev_cell.terrain == TerrainKind::Abyss
-                || !prev_cell.flags.contains(CellFlags::GROUND_PATHABLE)
-                || prev_cell.level != low_level
-        });
-
-        if mismatch {
-            errors.push(MapValidationError::RampLowerLandingMismatch {
-                x: run.first.0,
-                y: run.first.1,
-            });
-        }
-    }
-
-    // Check 9: RampRunLevelMismatch
-    for run in &ramp_runs {
-        for window in run.cells.windows(2) {
-            let (c1_x, c1_y) = window[0];
-            let (c2_x, c2_y) = window[1];
-            let Some(spec1) = doc.cell(c1_x, c1_y) else {
-                continue;
-            };
-            let Some(spec2) = doc.cell(c2_x, c2_y) else {
-                continue;
-            };
-            if spec1.level != spec2.level {
-                errors.push(MapValidationError::RampRunLevelMismatch { x: c2_x, y: c2_y });
+impl ValidationContext<'_> {
+    /// Check 1: `AbyssCellTraversable`.
+    fn check_cells(&mut self) {
+        let doc = self.doc;
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let spec = &doc.cells[(y * self.width + x) as usize];
+                if spec.terrain == TerrainKind::Abyss
+                    && (spec.flags.contains(CellFlags::BUILDABLE)
+                        || spec.flags.contains(CellFlags::GROUND_PATHABLE))
+                {
+                    self.errors
+                        .push(MapValidationError::AbyssCellTraversable { x, y });
+                }
             }
         }
     }
 
-    // Check 10: TooFewStartLocations
-    if doc.start_locations.len() < MIN_START_LOCATIONS {
-        errors.push(MapValidationError::TooFewStartLocations {
-            count: doc.start_locations.len(),
-        });
-    }
+    /// Checks 2 to 5: per-cell ramp rules, each a full row-major pass in check order.
+    fn check_ramp_cells(&mut self) {
+        let doc = self.doc;
+        let width = self.width;
+        let height = self.height;
 
-    // Check 11: PlayerSlotOutOfRange
-    for start in &doc.start_locations {
-        if start.player_slot >= MAX_PLAYER_SLOTS {
-            errors.push(MapValidationError::PlayerSlotOutOfRange {
-                id: start.id,
-                slot: start.player_slot,
-            });
+        // Check 2: RampOnAbyss
+        for y in 0..height {
+            for x in 0..width {
+                let spec = &doc.cells[(y * width + x) as usize];
+                if spec.ramp.is_some() && spec.terrain == TerrainKind::Abyss {
+                    self.errors.push(MapValidationError::RampOnAbyss { x, y });
+                }
+            }
+        }
+
+        // Check 3: RampAtTopLevel
+        for y in 0..height {
+            for x in 0..width {
+                let spec = &doc.cells[(y * width + x) as usize];
+                if spec.ramp.is_some() && spec.level == CliffLevel::MAX {
+                    self.errors
+                        .push(MapValidationError::RampAtTopLevel { x, y });
+                }
+            }
+        }
+
+        // Check 4: RampNotPathable
+        for y in 0..height {
+            for x in 0..width {
+                let spec = &doc.cells[(y * width + x) as usize];
+                if spec.ramp.is_some() && !spec.flags.contains(CellFlags::GROUND_PATHABLE) {
+                    self.errors
+                        .push(MapValidationError::RampNotPathable { x, y });
+                }
+            }
+        }
+
+        // Check 5: RampBuildable
+        for y in 0..height {
+            for x in 0..width {
+                let spec = &doc.cells[(y * width + x) as usize];
+                if spec.ramp.is_some() && spec.flags.contains(CellFlags::BUILDABLE) {
+                    self.errors.push(MapValidationError::RampBuildable { x, y });
+                }
+            }
         }
     }
 
-    // Check 12: DuplicatePlayerSlot
-    let mut seen_slots = BTreeSet::new();
-    for start in &doc.start_locations {
-        if !seen_slots.insert(start.player_slot) {
-            errors.push(MapValidationError::DuplicatePlayerSlot {
-                id: start.id,
-                slot: start.player_slot,
+    /// Checks 6 to 9: per-run ramp rules over `ramp_runs`, each a full pass in check order.
+    fn check_ramp_runs(&mut self) {
+        let doc = self.doc;
+
+        // Check 6: RampRunTooLong
+        for run in &self.ramp_runs {
+            if run.cells.len() > MAX_RAMP_RUN_CELLS as usize {
+                self.errors.push(MapValidationError::RampRunTooLong {
+                    x: run.first.0,
+                    y: run.first.1,
+                    len: u8::try_from(run.cells.len()).unwrap_or(u8::MAX),
+                });
+            }
+        }
+
+        // Check 7: RampUpperLandingMismatch
+        for run in &self.ramp_runs {
+            let Some((dx, dy)) = ramp_axis(run.dir) else {
+                continue;
+            };
+            let Some(first_cell) = doc.cell(run.first.0, run.first.1) else {
+                continue;
+            };
+            let low_level = first_cell.level;
+
+            let upper = doc
+                .offset_cell(run.last, (dx, dy))
+                .and_then(|cell| doc.cell(cell.0, cell.1));
+            let mismatch = upper.is_none_or(|next_cell| {
+                next_cell.ramp.is_some()
+                    || next_cell.terrain == TerrainKind::Abyss
+                    || !next_cell.flags.contains(CellFlags::GROUND_PATHABLE)
+                    || next_cell.level.0 != low_level.0 + 1
             });
+
+            if mismatch {
+                self.errors
+                    .push(MapValidationError::RampUpperLandingMismatch {
+                        x: run.last.0,
+                        y: run.last.1,
+                    });
+            }
+        }
+
+        // Check 8: RampLowerLandingMismatch
+        for run in &self.ramp_runs {
+            let Some((dx, dy)) = ramp_axis(run.dir) else {
+                continue;
+            };
+            let Some(first_cell) = doc.cell(run.first.0, run.first.1) else {
+                continue;
+            };
+            let low_level = first_cell.level;
+
+            let lower = doc
+                .offset_cell(run.first, (-dx, -dy))
+                .and_then(|cell| doc.cell(cell.0, cell.1));
+            let mismatch = lower.is_none_or(|prev_cell| {
+                prev_cell.ramp.is_some()
+                    || prev_cell.terrain == TerrainKind::Abyss
+                    || !prev_cell.flags.contains(CellFlags::GROUND_PATHABLE)
+                    || prev_cell.level != low_level
+            });
+
+            if mismatch {
+                self.errors
+                    .push(MapValidationError::RampLowerLandingMismatch {
+                        x: run.first.0,
+                        y: run.first.1,
+                    });
+            }
+        }
+
+        // Check 9: RampRunLevelMismatch
+        for run in &self.ramp_runs {
+            for window in run.cells.windows(2) {
+                let (c1_x, c1_y) = window[0];
+                let (c2_x, c2_y) = window[1];
+                let Some(spec1) = doc.cell(c1_x, c1_y) else {
+                    continue;
+                };
+                let Some(spec2) = doc.cell(c2_x, c2_y) else {
+                    continue;
+                };
+                if spec1.level != spec2.level {
+                    self.errors
+                        .push(MapValidationError::RampRunLevelMismatch { x: c2_x, y: c2_y });
+                }
+            }
         }
     }
 
-    // Build temporary GameMap for footprint and pathability testing
-    let game_map_res = doc.to_game_map();
+    /// Checks 10 to 12: start location count and player slots.
+    fn check_start_slots(&mut self) {
+        let doc = self.doc;
 
-    // Check 13: StartFootprintBlocked
-    if let Ok(ref map) = game_map_res {
+        // Check 10: TooFewStartLocations
+        if doc.start_locations.len() < MIN_START_LOCATIONS {
+            self.errors.push(MapValidationError::TooFewStartLocations {
+                count: doc.start_locations.len(),
+            });
+        }
+
+        // Check 11: PlayerSlotOutOfRange
         for start in &doc.start_locations {
-            match map.can_place_building(
-                start.cell.0,
-                start.cell.1,
-                start.footprint.0,
-                start.footprint.1,
-            ) {
-                Ok(()) => {}
-                Err(crate::error::MapError::PlacementBlocked { reason, .. }) => {
-                    errors.push(MapValidationError::StartFootprintBlocked {
-                        id: start.id,
-                        reason,
-                    });
-                }
-                Err(
-                    crate::error::MapError::OutOfBounds { .. }
-                    | crate::error::MapError::InvalidFootprintDimensions { .. },
-                ) => {
-                    errors.push(MapValidationError::StartFootprintBlocked {
-                        id: start.id,
-                        reason: PlacementFailureReason::OutOfBounds,
-                    });
-                }
-                Err(_) => {
-                    errors.push(MapValidationError::StartFootprintBlocked {
-                        id: start.id,
-                        reason: PlacementFailureReason::UnbuildableTerrain,
-                    });
-                }
+            if start.player_slot >= MAX_PLAYER_SLOTS {
+                self.errors.push(MapValidationError::PlayerSlotOutOfRange {
+                    id: start.id,
+                    slot: start.player_slot,
+                });
             }
         }
-    }
 
-    // Check 14: StartLocationsTooClose
-    for i in 0..doc.start_locations.len() {
-        for j in (i + 1)..doc.start_locations.len() {
-            let start_a = &doc.start_locations[i];
-            let start_b = &doc.start_locations[j];
-
-            let ca_x = i64::from(start_a.cell.0) * 2 + i64::from(start_a.footprint.0);
-            let ca_y = i64::from(start_a.cell.1) * 2 + i64::from(start_a.footprint.1);
-            let cb_x = i64::from(start_b.cell.0) * 2 + i64::from(start_b.footprint.0);
-            let cb_y = i64::from(start_b.cell.1) * 2 + i64::from(start_b.footprint.1);
-
-            let diff_x = (ca_x - cb_x).abs();
-            let diff_y = (ca_y - cb_y).abs();
-            let chebyshev_doubled = diff_x.max(diff_y);
-            let distance = u32::try_from(chebyshev_doubled / 2).unwrap_or(u32::MAX);
-
-            if distance < MIN_START_SEPARATION_CELLS {
-                errors.push(MapValidationError::StartLocationsTooClose {
-                    a: start_a.id,
-                    b: start_b.id,
-                    distance,
+        // Check 12: DuplicatePlayerSlot
+        let mut seen_slots = BTreeSet::new();
+        for start in &doc.start_locations {
+            if !seen_slots.insert(start.player_slot) {
+                self.errors.push(MapValidationError::DuplicatePlayerSlot {
+                    id: start.id,
+                    slot: start.player_slot,
                 });
             }
         }
     }
 
-    // Check 15: DuplicateEntityId
-    let mut seen_ids = BTreeSet::new();
-    for r in &doc.resources {
-        if !seen_ids.insert(r.id) {
-            errors.push(MapValidationError::DuplicateEntityId { id: r.id });
-        }
-    }
-    for wt in &doc.watchtowers {
-        if !seen_ids.insert(wt.id) {
-            errors.push(MapValidationError::DuplicateEntityId { id: wt.id });
-        }
-    }
-    for s in &doc.start_locations {
-        if !seen_ids.insert(s.id) {
-            errors.push(MapValidationError::DuplicateEntityId { id: s.id });
-        }
-    }
+    /// Checks 13 and 14: start footprints on the runtime map, then pairwise start separation.
+    fn check_start_placement(&mut self) {
+        let doc = self.doc;
 
-    // Check 16: EntityOutOfBounds
-    for r in &doc.resources {
-        if r.cell.0 >= width || r.cell.1 >= height {
-            errors.push(MapValidationError::EntityOutOfBounds {
-                id: r.id,
-                x: r.cell.0,
-                y: r.cell.1,
-            });
-        }
-    }
-    for wt in &doc.watchtowers {
-        if wt.cell.0 >= width || wt.cell.1 >= height {
-            errors.push(MapValidationError::EntityOutOfBounds {
-                id: wt.id,
-                x: wt.cell.0,
-                y: wt.cell.1,
-            });
-        }
-    }
-    for s in &doc.start_locations {
-        if !footprint_in_bounds(s, width, height) {
-            errors.push(MapValidationError::EntityOutOfBounds {
-                id: s.id,
-                x: s.cell.0,
-                y: s.cell.1,
-            });
-        }
-    }
-    for wt in &doc.watchtowers {
-        if WATCHTOWER_ENTITY_ID_BASE.checked_add(wt.id.0).is_none() {
-            errors.push(MapValidationError::EntityIdOutOfRange { id: wt.id });
-        }
-    }
-
-    // Check 17: ResourceOnBlockedCell
-    for r in &doc.resources {
-        if r.cell.0 < width && r.cell.1 < height {
-            let spec = &doc.cells[(r.cell.1 * width + r.cell.0) as usize];
-            if spec.terrain == TerrainKind::Abyss
-                || spec.ramp.is_some()
-                || !spec.flags.contains(CellFlags::GROUND_PATHABLE)
-            {
-                errors.push(MapValidationError::ResourceOnBlockedCell { id: r.id });
-            }
-        }
-    }
-
-    // Check 18: ResourceInsideStartFootprint
-    for r in &doc.resources {
-        for s in &doc.start_locations {
-            let in_axis = |value: u32, start: u32, size: u8| {
-                value >= start && u64::from(value) < u64::from(start) + u64::from(size)
-            };
-            if in_axis(r.cell.0, s.cell.0, s.footprint.0)
-                && in_axis(r.cell.1, s.cell.1, s.footprint.1)
-            {
-                errors.push(MapValidationError::ResourceInsideStartFootprint {
-                    id: r.id,
-                    start: s.id,
-                });
-            }
-        }
-    }
-
-    // Check 19: EntitiesOverlap (resources and watchtowers sharing the same cell)
-    let mut cell_entities: Vec<(MapEntityId, (u32, u32))> = Vec::new();
-    for r in &doc.resources {
-        cell_entities.push((r.id, r.cell));
-    }
-    for wt in &doc.watchtowers {
-        cell_entities.push((wt.id, wt.cell));
-    }
-    for i in 0..cell_entities.len() {
-        for j in (i + 1)..cell_entities.len() {
-            if cell_entities[i].1 == cell_entities[j].1 {
-                errors.push(MapValidationError::EntitiesOverlap {
-                    a: cell_entities[i].0,
-                    b: cell_entities[j].0,
-                });
-            }
-        }
-    }
-
-    // Check 20: ZeroResourceAmount
-    for r in &doc.resources {
-        if r.amount == 0 {
-            errors.push(MapValidationError::ZeroResourceAmount { id: r.id });
-        }
-    }
-
-    // Check 21: ZeroWatchtowerRadius
-    for wt in &doc.watchtowers {
-        if wt.capture_radius_tenths == 0 || wt.reveal_radius_tenths == 0 {
-            errors.push(MapValidationError::ZeroWatchtowerRadius { id: wt.id });
-        }
-        if u32::from(wt.reveal_radius_tenths) > MAX_SIGHT_RADIUS_CELLS * 10 {
-            errors.push(MapValidationError::WatchtowerRevealTooLarge { id: wt.id });
-        }
-    }
-
-    // Check 22: StartLocationsUnreachable
-    // Pathfinding is only evaluated if fundamental terrain, ramp, and start errors are absent.
-    let has_fundamental_errors = errors.iter().any(|e| {
-        matches!(
-            e,
-            MapValidationError::AbyssCellTraversable { .. }
-                | MapValidationError::RampOnAbyss { .. }
-                | MapValidationError::RampAtTopLevel { .. }
-                | MapValidationError::RampNotPathable { .. }
-                | MapValidationError::RampBuildable { .. }
-                | MapValidationError::RampRunTooLong { .. }
-                | MapValidationError::RampUpperLandingMismatch { .. }
-                | MapValidationError::RampLowerLandingMismatch { .. }
-                | MapValidationError::RampRunLevelMismatch { .. }
-                | MapValidationError::TooFewStartLocations { .. }
-                | MapValidationError::PlayerSlotOutOfRange { .. }
-                | MapValidationError::DuplicatePlayerSlot { .. }
-                | MapValidationError::StartFootprintBlocked { .. }
-                | MapValidationError::StartLocationsTooClose { .. }
-                | MapValidationError::EntityOutOfBounds { .. }
-        )
-    });
-
-    if !has_fundamental_errors {
-        if let Ok(ref map) = game_map_res {
-            let mut sorted_starts = doc.start_locations.clone();
-            sorted_starts.sort_by_key(|s| s.player_slot);
-
-            for i in 0..sorted_starts.len() {
-                for j in (i + 1)..sorted_starts.len() {
-                    let start_a = &sorted_starts[i];
-                    let start_b = &sorted_starts[j];
-
-                    let pos_a = SimVec2::new(
-                        SimScalar::from_num(start_a.cell.0)
-                            + SimScalar::from_num(start_a.footprint.0) * SimScalar::HALF,
-                        SimScalar::from_num(start_a.cell.1)
-                            + SimScalar::from_num(start_a.footprint.1) * SimScalar::HALF,
-                    );
-                    let pos_b = SimVec2::new(
-                        SimScalar::from_num(start_b.cell.0)
-                            + SimScalar::from_num(start_b.footprint.0) * SimScalar::HALF,
-                        SimScalar::from_num(start_b.cell.1)
-                            + SimScalar::from_num(start_b.footprint.1) * SimScalar::HALF,
-                    );
-
-                    let mut pathfinder = Pathfinder::new(map);
-                    let req = PathRequest {
-                        start: pos_a,
-                        goal: pos_b,
-                        clearance: VALIDATION_PATH_CLEARANCE,
-                    };
-
-                    if pathfinder.find_path(map, &req).is_err() {
-                        errors.push(MapValidationError::StartLocationsUnreachable {
-                            a: start_a.id,
-                            b: start_b.id,
+        // Check 13: StartFootprintBlocked
+        if let Some(ref map) = self.game_map {
+            for start in &doc.start_locations {
+                match map.can_place_building(
+                    start.cell.0,
+                    start.cell.1,
+                    start.footprint.0,
+                    start.footprint.1,
+                ) {
+                    Ok(()) => {}
+                    Err(crate::error::MapError::PlacementBlocked { reason, .. }) => {
+                        self.errors.push(MapValidationError::StartFootprintBlocked {
+                            id: start.id,
+                            reason,
+                        });
+                    }
+                    Err(
+                        crate::error::MapError::OutOfBounds { .. }
+                        | crate::error::MapError::InvalidFootprintDimensions { .. },
+                    ) => {
+                        self.errors.push(MapValidationError::StartFootprintBlocked {
+                            id: start.id,
+                            reason: PlacementFailureReason::OutOfBounds,
+                        });
+                    }
+                    Err(_) => {
+                        self.errors.push(MapValidationError::StartFootprintBlocked {
+                            id: start.id,
+                            reason: PlacementFailureReason::UnbuildableTerrain,
                         });
                     }
                 }
             }
         }
-    }
 
-    // Warnings:
-    // 1. NarrowRamp: run width perpendicular to dir < MIN_RECOMMENDED_RAMP_WIDTH
-    for run in &ramp_runs {
-        let perpendicular = match run.dir {
-            RampDir::North | RampDir::South => (1i32, 0i32),
-            RampDir::East | RampDir::West => (0i32, 1i32),
-            _ => continue,
-        };
+        // Check 14: StartLocationsTooClose
+        for i in 0..doc.start_locations.len() {
+            for j in (i + 1)..doc.start_locations.len() {
+                let start_a = &doc.start_locations[i];
+                let start_b = &doc.start_locations[j];
 
-        let (x, y) = run.first;
-        let Some(first_cell) = doc.cell(x, y) else {
-            continue;
-        };
-        let base_level = first_cell.level;
+                let ca_x = i64::from(start_a.cell.0) * 2 + i64::from(start_a.footprint.0);
+                let ca_y = i64::from(start_a.cell.1) * 2 + i64::from(start_a.footprint.1);
+                let cb_x = i64::from(start_b.cell.0) * 2 + i64::from(start_b.footprint.0);
+                let cb_y = i64::from(start_b.cell.1) * 2 + i64::from(start_b.footprint.1);
 
-        let count_beside = |step: (i32, i32)| {
-            let mut count = 0u8;
-            let mut at = (x, y);
-            while let Some(next) = doc.offset_cell(at, step) {
-                let matches_run = doc.cell(next.0, next.1).is_some_and(|neighbor| {
-                    neighbor.ramp == Some(run.dir) && neighbor.level == base_level
-                });
-                if !matches_run {
-                    break;
+                let diff_x = (ca_x - cb_x).abs();
+                let diff_y = (ca_y - cb_y).abs();
+                let chebyshev_doubled = diff_x.max(diff_y);
+                let distance = u32::try_from(chebyshev_doubled / 2).unwrap_or(u32::MAX);
+
+                if distance < MIN_START_SEPARATION_CELLS {
+                    self.errors
+                        .push(MapValidationError::StartLocationsTooClose {
+                            a: start_a.id,
+                            b: start_b.id,
+                            distance,
+                        });
                 }
-                count = count.saturating_add(1);
-                at = next;
-            }
-            count
-        };
-        let count_neg = count_beside((-perpendicular.0, -perpendicular.1));
-        let count_pos = count_beside(perpendicular);
-
-        let width = count_neg.saturating_add(count_pos).saturating_add(1);
-        if width < MIN_RECOMMENDED_RAMP_WIDTH {
-            warnings.push(MapValidationWarning::NarrowRamp { x, y, width });
-        }
-    }
-
-    // 2. DiagonalPinch: 2x2 block where exactly the two diagonal cells are higher
-    for y in 0..(height.saturating_sub(1)) {
-        for x in 0..(width.saturating_sub(1)) {
-            let (Some(c00), Some(c10), Some(c01), Some(c11)) = (
-                doc.cell(x, y),
-                doc.cell(x + 1, y),
-                doc.cell(x, y + 1),
-                doc.cell(x + 1, y + 1),
-            ) else {
-                continue;
-            };
-            let l00 = c00.level.0;
-            let l10 = c10.level.0;
-            let l01 = c01.level.0;
-            let l11 = c11.level.0;
-
-            let is_pinch = (l10 > l00 || l00 > l10) && l10 == l01 && l00 == l11;
-
-            if is_pinch {
-                warnings.push(MapValidationWarning::DiagonalPinch { x, y });
             }
         }
     }
 
-    // 3 & 4. Resource association & imbalance
-    let radius_sq =
-        i64::from(RESOURCE_ASSOCIATION_RADIUS_CELLS) * i64::from(RESOURCE_ASSOCIATION_RADIUS_CELLS);
-    let mut slot_resource_counts: BTreeMap<u8, usize> = BTreeMap::new();
-    for s in &doc.start_locations {
-        slot_resource_counts.insert(s.player_slot, 0);
-    }
+    /// Checks 15 and 16: duplicate entity IDs, then entity bounds and watchtower ID range.
+    fn check_entity_ids_and_bounds(&mut self) {
+        let doc = self.doc;
+        let width = self.width;
+        let height = self.height;
 
-    for r in &doc.resources {
-        // Out-of-bounds entities are already errors; association is only defined on the grid.
-        if r.cell.0 >= width || r.cell.1 >= height {
-            continue;
+        // Check 15: DuplicateEntityId
+        let mut seen_ids = BTreeSet::new();
+        for r in &doc.resources {
+            if !seen_ids.insert(r.id) {
+                self.errors
+                    .push(MapValidationError::DuplicateEntityId { id: r.id });
+            }
         }
-        let mut best: Option<(u8, i64)> = None;
+        for wt in &doc.watchtowers {
+            if !seen_ids.insert(wt.id) {
+                self.errors
+                    .push(MapValidationError::DuplicateEntityId { id: wt.id });
+            }
+        }
+        for s in &doc.start_locations {
+            if !seen_ids.insert(s.id) {
+                self.errors
+                    .push(MapValidationError::DuplicateEntityId { id: s.id });
+            }
+        }
 
+        // Check 16: EntityOutOfBounds
+        for r in &doc.resources {
+            if r.cell.0 >= width || r.cell.1 >= height {
+                self.errors.push(MapValidationError::EntityOutOfBounds {
+                    id: r.id,
+                    x: r.cell.0,
+                    y: r.cell.1,
+                });
+            }
+        }
+        for wt in &doc.watchtowers {
+            if wt.cell.0 >= width || wt.cell.1 >= height {
+                self.errors.push(MapValidationError::EntityOutOfBounds {
+                    id: wt.id,
+                    x: wt.cell.0,
+                    y: wt.cell.1,
+                });
+            }
+        }
         for s in &doc.start_locations {
             if !footprint_in_bounds(s, width, height) {
+                self.errors.push(MapValidationError::EntityOutOfBounds {
+                    id: s.id,
+                    x: s.cell.0,
+                    y: s.cell.1,
+                });
+            }
+        }
+        for wt in &doc.watchtowers {
+            if WATCHTOWER_ENTITY_ID_BASE.checked_add(wt.id.0).is_none() {
+                self.errors
+                    .push(MapValidationError::EntityIdOutOfRange { id: wt.id });
+            }
+        }
+    }
+
+    /// Checks 17 to 21: resource cells and footprints, overlaps, amounts and watchtower radii.
+    fn check_entity_placement(&mut self) {
+        let doc = self.doc;
+        let width = self.width;
+        let height = self.height;
+
+        // Check 17: ResourceOnBlockedCell
+        for r in &doc.resources {
+            if r.cell.0 < width && r.cell.1 < height {
+                let spec = &doc.cells[(r.cell.1 * width + r.cell.0) as usize];
+                if spec.terrain == TerrainKind::Abyss
+                    || spec.ramp.is_some()
+                    || !spec.flags.contains(CellFlags::GROUND_PATHABLE)
+                {
+                    self.errors
+                        .push(MapValidationError::ResourceOnBlockedCell { id: r.id });
+                }
+            }
+        }
+
+        // Check 18: ResourceInsideStartFootprint
+        for r in &doc.resources {
+            for s in &doc.start_locations {
+                let in_axis = |value: u32, start: u32, size: u8| {
+                    value >= start && u64::from(value) < u64::from(start) + u64::from(size)
+                };
+                if in_axis(r.cell.0, s.cell.0, s.footprint.0)
+                    && in_axis(r.cell.1, s.cell.1, s.footprint.1)
+                {
+                    self.errors
+                        .push(MapValidationError::ResourceInsideStartFootprint {
+                            id: r.id,
+                            start: s.id,
+                        });
+                }
+            }
+        }
+
+        // Check 19: EntitiesOverlap (resources and watchtowers sharing the same cell)
+        let mut cell_entities: Vec<(MapEntityId, (u32, u32))> = Vec::new();
+        for r in &doc.resources {
+            cell_entities.push((r.id, r.cell));
+        }
+        for wt in &doc.watchtowers {
+            cell_entities.push((wt.id, wt.cell));
+        }
+        for i in 0..cell_entities.len() {
+            for j in (i + 1)..cell_entities.len() {
+                if cell_entities[i].1 == cell_entities[j].1 {
+                    self.errors.push(MapValidationError::EntitiesOverlap {
+                        a: cell_entities[i].0,
+                        b: cell_entities[j].0,
+                    });
+                }
+            }
+        }
+
+        // Check 20: ZeroResourceAmount
+        for r in &doc.resources {
+            if r.amount == 0 {
+                self.errors
+                    .push(MapValidationError::ZeroResourceAmount { id: r.id });
+            }
+        }
+
+        // Check 21: ZeroWatchtowerRadius
+        for wt in &doc.watchtowers {
+            if wt.capture_radius_tenths == 0 || wt.reveal_radius_tenths == 0 {
+                self.errors
+                    .push(MapValidationError::ZeroWatchtowerRadius { id: wt.id });
+            }
+            if u32::from(wt.reveal_radius_tenths) > MAX_SIGHT_RADIUS_CELLS * 10 {
+                self.errors
+                    .push(MapValidationError::WatchtowerRevealTooLarge { id: wt.id });
+            }
+        }
+    }
+
+    /// Check 22: `StartLocationsUnreachable`, for every pair of starts in player-slot order.
+    ///
+    /// Pathfinding is only evaluated if fundamental terrain, ramp, and start errors are absent.
+    fn check_reachability(&mut self) {
+        let has_fundamental_errors = self.errors.iter().any(|e| {
+            matches!(
+                e,
+                MapValidationError::AbyssCellTraversable { .. }
+                    | MapValidationError::RampOnAbyss { .. }
+                    | MapValidationError::RampAtTopLevel { .. }
+                    | MapValidationError::RampNotPathable { .. }
+                    | MapValidationError::RampBuildable { .. }
+                    | MapValidationError::RampRunTooLong { .. }
+                    | MapValidationError::RampUpperLandingMismatch { .. }
+                    | MapValidationError::RampLowerLandingMismatch { .. }
+                    | MapValidationError::RampRunLevelMismatch { .. }
+                    | MapValidationError::TooFewStartLocations { .. }
+                    | MapValidationError::PlayerSlotOutOfRange { .. }
+                    | MapValidationError::DuplicatePlayerSlot { .. }
+                    | MapValidationError::StartFootprintBlocked { .. }
+                    | MapValidationError::StartLocationsTooClose { .. }
+                    | MapValidationError::EntityOutOfBounds { .. }
+            )
+        });
+        if has_fundamental_errors {
+            return;
+        }
+        let Some(ref map) = self.game_map else {
+            return;
+        };
+
+        let mut sorted_starts = self.doc.start_locations.clone();
+        sorted_starts.sort_by_key(|s| s.player_slot);
+
+        for i in 0..sorted_starts.len() {
+            for j in (i + 1)..sorted_starts.len() {
+                let start_a = &sorted_starts[i];
+                let start_b = &sorted_starts[j];
+
+                let pos_a = SimVec2::new(
+                    SimScalar::from_num(start_a.cell.0)
+                        + SimScalar::from_num(start_a.footprint.0) * SimScalar::HALF,
+                    SimScalar::from_num(start_a.cell.1)
+                        + SimScalar::from_num(start_a.footprint.1) * SimScalar::HALF,
+                );
+                let pos_b = SimVec2::new(
+                    SimScalar::from_num(start_b.cell.0)
+                        + SimScalar::from_num(start_b.footprint.0) * SimScalar::HALF,
+                    SimScalar::from_num(start_b.cell.1)
+                        + SimScalar::from_num(start_b.footprint.1) * SimScalar::HALF,
+                );
+
+                let mut pathfinder = Pathfinder::new(map);
+                let req = PathRequest {
+                    start: pos_a,
+                    goal: pos_b,
+                    clearance: VALIDATION_PATH_CLEARANCE,
+                };
+
+                if pathfinder.find_path(map, &req).is_err() {
+                    self.errors
+                        .push(MapValidationError::StartLocationsUnreachable {
+                            a: start_a.id,
+                            b: start_b.id,
+                        });
+                }
+            }
+        }
+    }
+
+    /// Warnings W1 to W4, in order: narrow ramps, diagonal pinches, then resource association
+    /// and balance.
+    fn collect_warnings(&mut self) {
+        self.warn_narrow_ramps();
+        self.warn_diagonal_pinches();
+        self.warn_resource_balance();
+    }
+
+    /// W1. `NarrowRamp`: run width perpendicular to its direction below
+    /// [`MIN_RECOMMENDED_RAMP_WIDTH`].
+    fn warn_narrow_ramps(&mut self) {
+        let doc = self.doc;
+        for run in &self.ramp_runs {
+            let perpendicular = match run.dir {
+                RampDir::North | RampDir::South => (1i32, 0i32),
+                RampDir::East | RampDir::West => (0i32, 1i32),
+                _ => continue,
+            };
+
+            let (x, y) = run.first;
+            let Some(first_cell) = doc.cell(x, y) else {
+                continue;
+            };
+            let base_level = first_cell.level;
+
+            let count_beside = |step: (i32, i32)| {
+                let mut count = 0u8;
+                let mut at = (x, y);
+                while let Some(next) = doc.offset_cell(at, step) {
+                    let matches_run = doc.cell(next.0, next.1).is_some_and(|neighbor| {
+                        neighbor.ramp == Some(run.dir) && neighbor.level == base_level
+                    });
+                    if !matches_run {
+                        break;
+                    }
+                    count = count.saturating_add(1);
+                    at = next;
+                }
+                count
+            };
+            let count_neg = count_beside((-perpendicular.0, -perpendicular.1));
+            let count_pos = count_beside(perpendicular);
+
+            let width = count_neg.saturating_add(count_pos).saturating_add(1);
+            if width < MIN_RECOMMENDED_RAMP_WIDTH {
+                self.warnings
+                    .push(MapValidationWarning::NarrowRamp { x, y, width });
+            }
+        }
+    }
+
+    /// W2. `DiagonalPinch`: a 2x2 block where exactly the two diagonal cells are higher.
+    fn warn_diagonal_pinches(&mut self) {
+        let doc = self.doc;
+        for y in 0..(self.height.saturating_sub(1)) {
+            for x in 0..(self.width.saturating_sub(1)) {
+                let (Some(c00), Some(c10), Some(c01), Some(c11)) = (
+                    doc.cell(x, y),
+                    doc.cell(x + 1, y),
+                    doc.cell(x, y + 1),
+                    doc.cell(x + 1, y + 1),
+                ) else {
+                    continue;
+                };
+                let l00 = c00.level.0;
+                let l10 = c10.level.0;
+                let l01 = c01.level.0;
+                let l11 = c11.level.0;
+
+                let is_pinch = (l10 > l00 || l00 > l10) && l10 == l01 && l00 == l11;
+
+                if is_pinch {
+                    self.warnings
+                        .push(MapValidationWarning::DiagonalPinch { x, y });
+                }
+            }
+        }
+    }
+
+    /// W3 and W4. `UnassignedResource` for each resource no start claims, then
+    /// `ResourceImbalance` for each start with fewer resources than the best-served one.
+    fn warn_resource_balance(&mut self) {
+        let doc = self.doc;
+        let width = self.width;
+        let height = self.height;
+
+        let radius_sq = i64::from(RESOURCE_ASSOCIATION_RADIUS_CELLS)
+            * i64::from(RESOURCE_ASSOCIATION_RADIUS_CELLS);
+        let mut slot_resource_counts: BTreeMap<u8, usize> = BTreeMap::new();
+        for s in &doc.start_locations {
+            slot_resource_counts.insert(s.player_slot, 0);
+        }
+
+        for r in &doc.resources {
+            // Out-of-bounds entities are already errors; association is only defined on the grid.
+            if r.cell.0 >= width || r.cell.1 >= height {
                 continue;
             }
-            let center_x = i64::from(s.cell.0) + i64::from(s.footprint.0) / 2;
-            let center_y = i64::from(s.cell.1) + i64::from(s.footprint.1) / 2;
-            let dx = i64::from(r.cell.0) - center_x;
-            let dy = i64::from(r.cell.1) - center_y;
-            let dist_sq = dx * dx + dy * dy;
+            let mut best: Option<(u8, i64)> = None;
 
-            if dist_sq <= radius_sq {
-                match best {
-                    None => best = Some((s.player_slot, dist_sq)),
-                    Some((best_slot, best_dist)) => {
-                        if dist_sq < best_dist
-                            || (dist_sq == best_dist && s.player_slot < best_slot)
-                        {
-                            best = Some((s.player_slot, dist_sq));
+            for s in &doc.start_locations {
+                if !footprint_in_bounds(s, width, height) {
+                    continue;
+                }
+                let center_x = i64::from(s.cell.0) + i64::from(s.footprint.0) / 2;
+                let center_y = i64::from(s.cell.1) + i64::from(s.footprint.1) / 2;
+                let dx = i64::from(r.cell.0) - center_x;
+                let dy = i64::from(r.cell.1) - center_y;
+                let dist_sq = dx * dx + dy * dy;
+
+                if dist_sq <= radius_sq {
+                    match best {
+                        None => best = Some((s.player_slot, dist_sq)),
+                        Some((best_slot, best_dist)) => {
+                            if dist_sq < best_dist
+                                || (dist_sq == best_dist && s.player_slot < best_slot)
+                            {
+                                best = Some((s.player_slot, dist_sq));
+                            }
                         }
                     }
                 }
             }
+
+            if let Some((slot, _)) = best {
+                *slot_resource_counts.entry(slot).or_insert(0) += 1;
+            } else {
+                self.warnings
+                    .push(MapValidationWarning::UnassignedResource { id: r.id });
+            }
         }
 
-        if let Some((slot, _)) = best {
-            *slot_resource_counts.entry(slot).or_insert(0) += 1;
-        } else {
-            warnings.push(MapValidationWarning::UnassignedResource { id: r.id });
+        let max_count = slot_resource_counts.values().copied().max().unwrap_or(0);
+        for s in &doc.start_locations {
+            let count = slot_resource_counts
+                .get(&s.player_slot)
+                .copied()
+                .unwrap_or(0);
+            if count < max_count {
+                self.warnings.push(MapValidationWarning::ResourceImbalance {
+                    slot: s.player_slot,
+                    count,
+                    max_count,
+                });
+            }
         }
     }
-
-    let max_count = slot_resource_counts.values().copied().max().unwrap_or(0);
-    for s in &doc.start_locations {
-        let count = slot_resource_counts
-            .get(&s.player_slot)
-            .copied()
-            .unwrap_or(0);
-        if count < max_count {
-            warnings.push(MapValidationWarning::ResourceImbalance {
-                slot: s.player_slot,
-                count,
-                max_count,
-            });
-        }
-    }
-
-    MapValidationReport { errors, warnings }
 }

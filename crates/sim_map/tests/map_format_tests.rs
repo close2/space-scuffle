@@ -12,7 +12,6 @@
 use sim_map::{
     CellFlags, CliffLevel, GameMap, MapCell, MapDocument, MapFile, MapFormatError, MapLayer,
     MapMetadata, RampDir, TerrainKind, Watchtower, CURRENT_MAP_FORMAT_VERSION,
-    WATCHTOWER_ENTITY_ID_BASE,
 };
 use sim_types::{EntityId, SimScalar, SimVec2};
 
@@ -78,47 +77,6 @@ fn row_zero_is_north() {
         file.levels[15].starts_with('1'),
         "row 15 must represent southernmost row (y=0), starts with '1'"
     );
-}
-
-#[test]
-fn default_arena_file_equals_code_arena() {
-    let path = map_path("default_arena.scmap.ron");
-    let file = MapFile::load(&path).expect("load default_arena failed");
-    let doc = file.decode().expect("decode failed");
-    let file_map = doc.to_game_map().expect("to_game_map failed");
-    let code_map = GameMap::default_arena();
-
-    assert_eq!(file_map.width(), code_map.width());
-    assert_eq!(file_map.height(), code_map.height());
-
-    // Element-wise comparison of all cells
-    assert_eq!(file_map.cells(), code_map.cells());
-
-    // Element-wise comparison of all resources
-    assert_eq!(file_map.resources().len(), code_map.resources().len());
-    for (fr, cr) in file_map.resources().iter().zip(code_map.resources().iter()) {
-        assert_eq!(fr.cell, cr.cell);
-        assert_eq!(fr.kind, cr.kind);
-        assert_eq!(fr.remaining, cr.remaining);
-        assert_eq!(fr.pos, cr.pos);
-    }
-
-    // Element-wise comparison of watchtowers:
-    // EXCEPT watchtower entity id: default_arena() uses EntityId(100) while to_game_map assigns
-    // WATCHTOWER_ENTITY_ID_BASE + map_id by design (§2.2).
-    assert_eq!(file_map.watchtowers().len(), code_map.watchtowers().len());
-    for (fw, cw) in file_map
-        .watchtowers()
-        .iter()
-        .zip(code_map.watchtowers().iter())
-    {
-        assert_eq!(fw.id, EntityId(WATCHTOWER_ENTITY_ID_BASE + 21)); // map entity id 21
-        assert_eq!(cw.id, EntityId(100)); // code arena default
-        assert_eq!(fw.pos, cw.pos);
-        assert_eq!(fw.capture_radius, cw.capture_radius);
-        assert_eq!(fw.reveal_radius, cw.reveal_radius);
-        assert_eq!(fw.controlling_player, cw.controlling_player);
-    }
 }
 
 #[test]

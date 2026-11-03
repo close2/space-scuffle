@@ -13,6 +13,13 @@
 //! height of every cell can be worked out by hand: level 1 is 3.0 world units, level 2 is 6.0,
 //! and the ramp rises 0.75 per cell.
 
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/arena.rs"]
+mod arena;
+
 use sim_map::{
     CellFlags, CliffLevel, GameMap, MapCell, PlayerVisionMap, RampDir, VisibilityState,
     VisionSource, MAX_SIGHT_RADIUS_CELLS,
@@ -159,7 +166,7 @@ fn f12_largest_supported_radius_is_honoured() -> TestResult {
 
 #[test]
 fn f2_vacated_tower_is_released() {
-    let mut arena = GameMap::default_arena();
+    let mut arena = arena::default_arena();
     let player = PlayerId(1);
     let tower = arena.watchtowers()[0].pos;
 
