@@ -974,6 +974,7 @@ fn test_terrain_preview_renders() {
 
     let mut cmd = gpu_run::virtual_gpu_command(Path::new(env!("CARGO_BIN_EXE_terrain_preview")));
     cmd.arg("--out").arg(out_dir);
+    gpu_run::allow_for_hex_tiling_driver_defect(&mut cmd);
     gpu_run::assert_passes_validation(&mut cmd, "terrain_preview");
 
     let poses = ["overview", "p0_base", "mesa", "chasm"];

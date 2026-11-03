@@ -22,6 +22,11 @@
 //!   `VUID-VkRenderPassBeginInfo-framebuffer-04627` when the OBS layer is present. This gate
 //!   cannot see them.
 //! - Only code paths the binary reaches during the run are validated.
+//! - On lavapipe before Mesa 25.1, `terrain_preview` and `map_editor --verify-render` render without
+//!   anisotropic filtering, because that driver's sampler does not finish a frame with `hex_sample`
+//!   (see [`allow_for_hex_tiling_driver_defect`]). Hex-tiled ground under anisotropic filtering is
+//!   then unverified on that host. Every other run, and Mesa 25.1 and later, use the production
+//!   sampler.
 //!
 //! # Invariants
 //! - A run counts as validated only if the loader reported inserting the layer, so a missing layer
@@ -34,9 +39,23 @@
 use std::path::Path;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::OnceLock;
 
-/// Wall-clock limit for one GPU run, in seconds. Debug builds on lavapipe finish in under 60.
+/// Wall-clock limit for one GPU run, in seconds.
+///
+/// Debug builds on lavapipe, on 16 cores of a loaded EPYC 7301, take about 90 s for
+/// `client --battle --max-frames 60`, 50 to 80 s for `terrain_preview`, and about 80 s for
+/// `map_editor --verify-render`. The limit leaves room for a machine shared with other work.
 const GPU_RUN_TIMEOUT_SECS: u32 = 300;
+
+/// Terrain sampler override read by `client::terrain::theme_gpu`.
+const TERRAIN_ANISOTROPY_OVERRIDE_ENV: &str = "SPACE_SCUFFLE_TERRAIN_MAX_ANISOTROPY";
+
+/// First Mesa release, as `(major, minor)`, whose llvmpipe bounds anisotropic sampling.
+///
+/// The bounded algorithm from the Vulkan specification is absent from the 25.0.0 source of
+/// `lp_bld_sample_soa.c` and present in 25.1.0.
+const FIRST_BOUNDED_ANISOTROPY_MESA: (u32, u32) = (25, 1);
 
 /// Exit status of GNU `timeout` when the deadline expired.
 const TIMEOUT_EXIT_CODE: i32 = 124;
@@ -240,6 +259,77 @@ fn strip_ansi(line: &str) -> String {
     plain
 }
 
+/// Extracts `(major, minor)` from `vulkaninfo --summary` text with a line such as
+/// `driverInfo = Mesa 22.3.6 (LLVM 15.0.6)`, or returns `None` for any other driver.
+pub fn mesa_release(summary: &str) -> Option<(u32, u32)> {
+    let line = summary.lines().find(|line| line.contains("driverInfo"))?;
+    let (_, version) = line.split_once("Mesa ")?;
+    let mut parts = version.split(['.', ' ', '-']);
+    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+}
+
+/// Returns `true` when this Mesa release cannot finish a frame of hex-tiled terrain.
+///
+/// Before [`FIRST_BOUNDED_ANISOTROPY_MESA`], llvmpipe's anisotropic sampler ignores explicit
+/// gradients and `maxAnisotropy`. Any clamp above 1 selects that path, so a smaller window or
+/// a longer deadline does not help: measured at 64x36 the first terrain frame was still
+/// unfinished after 120 s. The measurements are in `docs/plans/2026-11-02-server-gate.md`.
+pub fn driver_stalls_on_anisotropic_hex_tiling(summary: &str) -> bool {
+    mesa_release(summary).is_some_and(|release| release < FIRST_BOUNDED_ANISOTROPY_MESA)
+}
+
+/// Lowers terrain anisotropy to 1 for this `command` if its lavapipe driver has the sampler defect.
+///
+/// Call this only for runs that draw hex-tiled ground. Other runs keep the production sampler, so
+/// `client --battle` still creates it under validation on an affected host.
+pub fn allow_for_hex_tiling_driver_defect(command: &mut Command) {
+    if lavapipe_manifest().is_some_and(lavapipe_needs_bounded_anisotropy) {
+        command.env(TERRAIN_ANISOTROPY_OVERRIDE_ENV, "1");
+    }
+}
+
+/// Returns the installed lavapipe manifest, if any.
+fn lavapipe_manifest() -> Option<&'static Path> {
+    [
+        Path::new("/usr/share/vulkan/icd.d/lvp_icd.json"),
+        Path::new("/usr/share/vulkan/icd.d/lvp_icd.x86_64.json"),
+    ]
+    .into_iter()
+    .find(|path| path.exists())
+}
+
+/// Asks the lavapipe driver in `manifest` for its version, once per test process.
+///
+/// Returns `false` if `vulkaninfo` cannot answer. The run then uses the production sampler, so an
+/// affected driver fails by timeout rather than quietly losing coverage.
+fn lavapipe_needs_bounded_anisotropy(manifest: &Path) -> bool {
+    static NEEDS_BOUND: OnceLock<bool> = OnceLock::new();
+    *NEEDS_BOUND.get_or_init(|| {
+        let summary = Command::new("vulkaninfo")
+            .arg("--summary")
+            .env("VK_ICD_FILENAMES", manifest)
+            .output();
+        match summary {
+            Ok(output) if output.status.success() => {
+                let needs_bound = driver_stalls_on_anisotropic_hex_tiling(
+                    &String::from_utf8_lossy(&output.stdout),
+                );
+                if needs_bound {
+                    eprintln!(
+                        "WARNING: this Mesa cannot finish hex-tiled terrain with anisotropic \
+                         filtering; terrain renders run at anisotropy 1"
+                    );
+                }
+                needs_bound
+            }
+            other => {
+                eprintln!("WARNING: vulkaninfo gave no driver version: {other:?}");
+                false
+            }
+        }
+    })
+}
+
 /// Returns `true` when an explicit local opt-out asks to skip GPU tests.
 ///
 /// `SPACE_SCUFFLE_SKIP_GPU_TESTS=1` exists for developers without a usable GPU stack. It panics
@@ -317,11 +407,7 @@ pub fn virtual_gpu_command_on_screen(binary: &Path, screen: Option<&str>) -> Com
     command.env("WGPU_BACKEND", "vulkan");
     command.env("SPACE_SCUFFLE_VIRTUAL_GPU", "1");
 
-    let lavapipe_manifests = [
-        Path::new("/usr/share/vulkan/icd.d/lvp_icd.json"),
-        Path::new("/usr/share/vulkan/icd.d/lvp_icd.x86_64.json"),
-    ];
-    if let Some(manifest) = lavapipe_manifests.into_iter().find(|path| path.exists()) {
+    if let Some(manifest) = lavapipe_manifest() {
         command.env("VK_ICD_FILENAMES", manifest);
         command.env("WGPU_ADAPTER_NAME", "llvmpipe");
         command.env("LIBGL_ALWAYS_SOFTWARE", "1");

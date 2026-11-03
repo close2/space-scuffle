@@ -197,6 +197,37 @@ fn log_split_across_both_streams_keeps_every_record() {
 }
 
 #[test]
+fn mesa_release_is_read_from_the_vulkaninfo_summary() {
+    let summary = "\tdeviceName         = llvmpipe (LLVM 15.0.6, 256 bits)\n\
+                   \tdriverInfo         = Mesa 22.3.6 (LLVM 15.0.6)\n";
+    assert_eq!(gpu_run::mesa_release(summary), Some((22, 3)));
+    assert_eq!(
+        gpu_run::mesa_release("driverInfo = Mesa 25.2.8-0ubuntu0.24.04.4 (LLVM 20.1.2)"),
+        Some((25, 2))
+    );
+    assert_eq!(gpu_run::mesa_release("driverInfo = 535.183.01"), None);
+    assert_eq!(gpu_run::mesa_release("no driver line"), None);
+}
+
+/// The production sampler must stay in use on every driver that can run it.
+#[test]
+fn only_mesa_before_the_sampler_rewrite_lowers_anisotropy() {
+    let stalls = |version: &str| {
+        gpu_run::driver_stalls_on_anisotropic_hex_tiling(&format!(
+            "driverInfo = Mesa {version} (LLVM 15.0.6)"
+        ))
+    };
+    assert!(stalls("22.3.6"));
+    assert!(stalls("25.0.7"));
+    assert!(!stalls("25.1.0"));
+    assert!(!stalls("25.2.8"));
+    assert!(!stalls("26.0.1"));
+    assert!(!gpu_run::driver_stalls_on_anisotropic_hex_tiling(
+        "driverInfo = 535.183.01"
+    ));
+}
+
+#[test]
 fn best_practices_ids_are_recognised_in_both_layer_naming_forms() {
     assert!(gpu_run::is_best_practices_id(
         "BestPractices-vkCreateRenderPass-image-requires-memory"

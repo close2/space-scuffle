@@ -45,7 +45,7 @@ Conclusions:
   one that stalls.
 - `perf` puts the stalled process in `llvmpipe-N` threads, in `[JIT]` code. Rust, debug or release, is not a factor:
   the release build behaves the same.
-- Cutting pixels by 494 times does not make that frame finish, and neither does a smaller clamp. This is why
+- Cutting pixels 625 times does not make that frame finish, and neither does a smaller clamp. This is why
   a smaller window, fewer frames, an opt-level, or a longer timeout cannot fix it.
 
 **Cause.** A defect in llvmpipe's anisotropic sampler, triggered by a valid shader.
@@ -59,7 +59,7 @@ one sample, of which `hex_sample` takes nine per layer. The work is finite but i
 thousands of quads cross hex edges. Bypassing `hex_sample` removes the stall with anisotropy 16 still on.
 
 The rewrite to the N-probe algorithm of the Vulkan specification is absent from the 25.0.0 source and present in
-25.1.0. CI runs Mesa 25.2.8 and finished this same render in about 110 s. Debian's `bookworm-backports` offers
+25.1.0. CI runs Mesa 25.2.8 and finished the same `map_editor` render with exit 0 in under 200 s. Debian's `bookworm-backports` offers
 25.0.7, so an apt upgrade is unlikely to help here, and the server user has no root access.
 
 **Fix.** The shader and the production sampler are correct and stay unchanged. The render has to run at
@@ -67,8 +67,9 @@ The rewrite to the N-probe algorithm of the Vulkan specification is absent from 
 
 - `client::terrain::theme_gpu` reads `SPACE_SCUFFLE_TERRAIN_MAX_ANISOTROPY`. Unset means the production value 16.
   An invalid value is a typed error, and an override logs a warning.
-- `gpu_run.rs` reads `driverInfo` from `vulkaninfo --summary` and sets the variable to 1 only for Mesa older than
-  25.1, saying so on stderr. Mesa 25.1 and later, including CI and current notebooks, keep running at 16.
+- `gpu_run.rs` reads `driverInfo` from `vulkaninfo --summary`. `allow_for_hex_tiling_driver_defect` sets the variable
+  to 1 only for Mesa older than 25.1, saying so on stderr, and only the two tests that draw hex-tiled ground call
+  it. Mesa 25.1 and later, including CI and any notebook on a current Mesa, keep running at 16.
 - If the version is unknown, the harness keeps the production sampler, so the failure direction is a timeout
   and not a quiet reduction in coverage.
 
