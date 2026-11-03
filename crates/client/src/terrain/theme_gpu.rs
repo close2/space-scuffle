@@ -10,6 +10,8 @@
 //!   matching Bevy 0.15's default `TextureDataOrder::LayerMajor`.
 //! - **Strict Error Handling:** Fails loudly with [`TerrainThemeError::MissingSource`] if any
 //!   baked asset is absent. Zero dummy fallbacks or procedural stand-ins.
+//! - **Sampler Quality:** Terrain texture arrays filter at [`TERRAIN_MAX_ANISOTROPY`]. Only the
+//!   explicit, logged test override [`TERRAIN_ANISOTROPY_OVERRIDE_ENV`] changes that.
 
 use std::path::{Path, PathBuf};
 
@@ -24,6 +26,18 @@ use bevy::render::render_resource::{
 };
 use image::RgbaImage;
 
+/// Anisotropic filtering clamp of the terrain texture arrays.
+pub const TERRAIN_MAX_ANISOTROPY: u16 = 16;
+
+/// Environment variable that replaces [`TERRAIN_MAX_ANISOTROPY`] for a test run.
+///
+/// Players never set this. It exists for lavapipe in Mesa releases before 25.1, whose anisotropic
+/// sampler visits every texel of a footprint taken from coordinate differences, ignoring explicit
+/// gradients and `maxAnisotropy`. `hex_sample` in `terrain.wgsl` is correct, but its coordinates
+/// jump across hex edges, so one sample there reads about 10^9 texels and a frame does not finish.
+/// See `docs/plans/2026-11-02-server-gate.md`.
+pub const TERRAIN_ANISOTROPY_OVERRIDE_ENV: &str = "SPACE_SCUFFLE_TERRAIN_MAX_ANISOTROPY";
+
 /// GPU texture resources created from a terrain theme.
 pub struct ThemeGpuTextures {
     /// 4-layer 2D array texture containing albedo maps in sRGB format.
@@ -35,6 +49,21 @@ pub struct ThemeGpuTextures {
 }
 
 pub use asset_baker::{linear_to_srgb, srgb_to_linear};
+
+/// Returns the anisotropy clamp for `override_value`, the override variable's text if it is set.
+///
+/// # Errors
+/// Returns [`TerrainThemeError::InvalidAnisotropyOverride`] unless the text is an integer from 1
+/// to 16, so a mistyped override cannot silently change what a test renders.
+pub fn terrain_anisotropy_clamp(override_value: Option<&str>) -> Result<u16, TerrainThemeError> {
+    let Some(text) = override_value else {
+        return Ok(TERRAIN_MAX_ANISOTROPY);
+    };
+    text.parse()
+        .ok()
+        .filter(|clamp| (1..=TERRAIN_MAX_ANISOTROPY).contains(clamp))
+        .ok_or_else(|| TerrainThemeError::InvalidAnisotropyOverride(text.to_owned()))
+}
 
 /// Downsamples an RGBA8 albedo image by 2x using linear color averaging.
 #[must_use]
@@ -214,7 +243,8 @@ pub fn generate_mip_chain(
 ///
 /// # Errors
 /// Returns [`TerrainThemeError::MissingSource`] if any required texture file is missing,
-/// or [`TerrainThemeError::Image`] on decoding failure.
+/// [`TerrainThemeError::Image`] on decoding failure, or
+/// [`TerrainThemeError::InvalidAnisotropyOverride`] if [`TERRAIN_ANISOTROPY_OVERRIDE_ENV`] is malformed.
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
@@ -229,6 +259,16 @@ pub fn load_theme_texture_arrays(
     theme: &TerrainTheme,
     assets_root: &Path,
 ) -> Result<ThemeGpuTextures, TerrainThemeError> {
+    let anisotropy_override = std::env::var_os(TERRAIN_ANISOTROPY_OVERRIDE_ENV)
+        .map(|value| value.to_string_lossy().into_owned());
+    let anisotropy_clamp = terrain_anisotropy_clamp(anisotropy_override.as_deref())?;
+    if anisotropy_clamp != TERRAIN_MAX_ANISOTROPY {
+        warn!(
+            "{TERRAIN_ANISOTROPY_OVERRIDE_ENV} lowers terrain anisotropy from \
+             {TERRAIN_MAX_ANISOTROPY} to {anisotropy_clamp}; this is a test-only setting"
+        );
+    }
+
     let size = theme.texture_size;
     let mip_levels = (size as f32).log2() as u32 + 1;
 
@@ -341,7 +381,7 @@ pub fn load_theme_texture_arrays(
                 mag_filter: ImageFilterMode::Linear,
                 min_filter: ImageFilterMode::Linear,
                 mipmap_filter: ImageFilterMode::Linear,
-                anisotropy_clamp: 16,
+                anisotropy_clamp,
                 ..default()
             }),
             asset_usage: RenderAssetUsages::default(),
@@ -492,4 +532,37 @@ pub fn setup_theme_backdrop(
         .id();
 
     Ok(entity)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn production_runs_at_the_full_clamp() {
+        assert!(matches!(
+            terrain_anisotropy_clamp(None),
+            Ok(TERRAIN_MAX_ANISOTROPY)
+        ));
+    }
+
+    #[test]
+    fn override_accepts_every_clamp_in_range() {
+        assert!(matches!(terrain_anisotropy_clamp(Some("1")), Ok(1)));
+        assert!(matches!(terrain_anisotropy_clamp(Some("16")), Ok(16)));
+    }
+
+    #[test]
+    fn malformed_override_is_refused_and_names_the_value() {
+        for text in ["", "0", "17", "-1", "1.5", "off"] {
+            let result = terrain_anisotropy_clamp(Some(text));
+            assert!(
+                matches!(
+                    &result,
+                    Err(TerrainThemeError::InvalidAnisotropyOverride(value)) if value == text
+                ),
+                "{text:?} must be refused by value, got {result:?}"
+            );
+        }
+    }
 }

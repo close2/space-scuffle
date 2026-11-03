@@ -144,6 +144,108 @@ fn allowlist_entries_carry_a_reason() {
     }
 }
 
+/// The notice is tolerated by its exact text, so losing a different extension still fails.
+#[test]
+fn only_the_listed_missing_extension_is_tolerated() {
+    let missing = |extension: &str| {
+        ValidationReport::parse(&format!(
+            "{ACTIVE_HEADER}2026-11-02T22:54:28.319598Z  WARN wgpu_hal::vulkan::instance: \
+             Unable to find extension: {extension}\n"
+        ))
+        .violations(VALIDATION_ALLOWLIST)
+    };
+    assert_eq!(missing("VK_EXT_swapchain_colorspace"), Vec::<String>::new());
+    let violations = missing("VK_EXT_debug_utils");
+    assert_eq!(violations.len(), 1);
+    assert!(violations[0].contains("VK_EXT_debug_utils"));
+}
+
+/// Tolerating the notice must not hide a real error reported in the same run.
+#[test]
+fn listed_notice_does_not_hide_a_real_validation_error() {
+    let stderr = format!(
+        "{ACTIVE_HEADER}2026-11-02T22:54:28.319598Z  WARN wgpu_hal::vulkan::instance: \
+         Unable to find extension: VK_EXT_swapchain_colorspace\n\
+         2026-11-02T22:54:29.000000Z ERROR wgpu_hal::vulkan::instance: \
+         VALIDATION [VUID-vkCmdDraw-None-08600 (0x4768cf39)]\n\tvkCmdDraw(): descriptor not bound\n"
+    );
+    let violations = ValidationReport::parse(&stderr).violations(VALIDATION_ALLOWLIST);
+    assert_eq!(violations.len(), 1);
+    assert!(violations[0].contains("VUID-vkCmdDraw-None-08600"));
+}
+
+/// Ubuntu 24.04's `xvfb-run` runs the command as `"$@" 2>&1`, so all logs arrive on stdout.
+#[test]
+fn log_delivered_on_stdout_is_validated_like_stderr() {
+    let log = format!("{ACTIVE_HEADER}{WARNING_FINDING}");
+    let from_stderr = ValidationReport::parse(&gpu_run::merge_streams(b"", log.as_bytes()));
+    let from_stdout = ValidationReport::parse(&gpu_run::merge_streams(log.as_bytes(), b""));
+    assert!(from_stdout.layer_active);
+    assert_eq!(from_stdout.findings.len(), 1);
+    assert_eq!(from_stdout, from_stderr);
+}
+
+#[test]
+fn log_split_across_both_streams_keeps_every_record() {
+    let log = gpu_run::merge_streams(
+        WARNING_FINDING.as_bytes(),
+        ACTIVE_HEADER.trim_end().as_bytes(),
+    );
+    let report = ValidationReport::parse(&log);
+    assert!(report.layer_active);
+    assert_eq!(report.findings.len(), 1);
+}
+
+#[test]
+fn mesa_release_is_read_from_the_vulkaninfo_summary() {
+    let summary = "\tdeviceName         = llvmpipe (LLVM 15.0.6, 256 bits)\n\
+                   \tdriverInfo         = Mesa 22.3.6 (LLVM 15.0.6)\n";
+    assert_eq!(gpu_run::mesa_release(summary), Some((22, 3)));
+    assert_eq!(
+        gpu_run::mesa_release("driverInfo = Mesa 25.2.8-0ubuntu0.24.04.4 (LLVM 20.1.2)"),
+        Some((25, 2))
+    );
+    assert_eq!(gpu_run::mesa_release("driverInfo = 535.183.01"), None);
+    assert_eq!(gpu_run::mesa_release("no driver line"), None);
+}
+
+/// The production sampler must stay in use on every driver that can run it.
+#[test]
+fn only_mesa_before_the_sampler_rewrite_lowers_anisotropy() {
+    let stalls = |version: &str| {
+        gpu_run::driver_stalls_on_anisotropic_hex_tiling(&format!(
+            "driverInfo = Mesa {version} (LLVM 15.0.6)"
+        ))
+    };
+    assert!(stalls("22.3.6"));
+    assert!(stalls("25.0.7"));
+    assert!(!stalls("25.1.0"));
+    assert!(!stalls("25.2.8"));
+    assert!(!stalls("26.0.1"));
+    assert!(!gpu_run::driver_stalls_on_anisotropic_hex_tiling(
+        "driverInfo = 535.183.01"
+    ));
+}
+
+#[test]
+fn best_practices_ids_are_recognised_in_both_layer_naming_forms() {
+    assert!(gpu_run::is_best_practices_id(
+        "BestPractices-vkCreateRenderPass-image-requires-memory"
+    ));
+    assert!(gpu_run::is_best_practices_id(
+        "UNASSIGNED-BestPractices-vkCreateRenderPass-image-requires-memory"
+    ));
+    for other in [
+        "UNASSIGNED-khronos-validation-createinstance-status-message",
+        "VUID-vkCmdDraw-None-08600",
+        "Unable to find extension: VK_EXT_swapchain_colorspace",
+        "NotBestPractices-vkCreateRenderPass",
+        "UNASSIGNED-UNASSIGNED-BestPractices-vkCreateRenderPass",
+    ] {
+        assert!(!gpu_run::is_best_practices_id(other), "{other}");
+    }
+}
+
 /// Positive control: the gate must fail on findings the real layer emits in a real run.
 ///
 /// Best-practices checks are off in normal runs and are known to report on Bevy's render passes,
@@ -163,15 +265,15 @@ fn real_layer_findings_reach_the_gate() {
     let (output, report) = gpu_run::run_validated(&mut command);
     assert!(
         output.status.success(),
-        "control run exited with {:?}. Last stderr:\n{}",
+        "control run exited with {:?}. Last output:\n{}",
         output.status.code(),
-        gpu_run::tail(&String::from_utf8_lossy(&output.stderr))
+        gpu_run::tail(&gpu_run::captured_log(&output))
     );
     assert!(report.layer_active, "control run must load the layer");
     assert!(
         report
             .unlisted(VALIDATION_ALLOWLIST)
-            .any(|finding| finding.id.starts_with("BestPractices-")),
+            .any(|finding| gpu_run::is_best_practices_id(&finding.id)),
         "best-practices findings did not reach the gate: {:?}",
         report.findings
     );

@@ -10,9 +10,11 @@
 //! 2. The messenger forwards each message to the `log` crate under the target
 //!    `wgpu_hal::vulkan::instance`, as `<TYPE> [<ID> (0x<number>)]` plus a tab-indented body.
 //! 3. Bevy's `LogPlugin` writes those records to stderr, subject to `RUST_LOG`.
+//! 4. `xvfb-run` passes that stream on. Debian 12 and Arch keep it on stderr, but Ubuntu 24.04 runs
+//!    the command as `"$@" 2>&1`, which moves it to stdout, so [`captured_log`] reads both.
 //!
-//! The binary must be a child process because a Bevy app owns its global log subscriber, and stderr
-//! is the only interface here that needs no production change.
+//! The binary must be a child process because a Bevy app owns its global log subscriber, and its
+//! log output is the only interface here that needs no production change.
 //!
 //! # Limits of the gate
 //! - `wgpu_hal` drops three message IDs before logging them: `VUID-VkSwapchainCreateInfoKHR-pNext-07781`,
@@ -20,6 +22,11 @@
 //!   `VUID-VkRenderPassBeginInfo-framebuffer-04627` when the OBS layer is present. This gate
 //!   cannot see them.
 //! - Only code paths the binary reaches during the run are validated.
+//! - On lavapipe before Mesa 25.1, `terrain_preview` and `map_editor --verify-render` render without
+//!   anisotropic filtering, because that driver's sampler does not finish a frame with `hex_sample`
+//!   (see [`allow_for_hex_tiling_driver_defect`]). Hex-tiled ground under anisotropic filtering is
+//!   then unverified on that host. Every other run, and Mesa 25.1 and later, use the production
+//!   sampler.
 //!
 //! # Invariants
 //! - A run counts as validated only if the loader reported inserting the layer, so a missing layer
@@ -32,9 +39,23 @@
 use std::path::Path;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::OnceLock;
 
-/// Wall-clock limit for one GPU run, in seconds. Debug builds on lavapipe finish in under 60.
+/// Wall-clock limit for one GPU run, in seconds.
+///
+/// Debug builds on lavapipe, on 16 cores of a loaded EPYC 7301, take about 90 s for
+/// `client --battle --max-frames 60`, 50 to 80 s for `terrain_preview`, and about 80 s for
+/// `map_editor --verify-render`. The limit leaves room for a machine shared with other work.
 const GPU_RUN_TIMEOUT_SECS: u32 = 300;
+
+/// Terrain sampler override read by `client::terrain::theme_gpu`.
+const TERRAIN_ANISOTROPY_OVERRIDE_ENV: &str = "SPACE_SCUFFLE_TERRAIN_MAX_ANISOTROPY";
+
+/// First Mesa release, as `(major, minor)`, whose llvmpipe bounds anisotropic sampling.
+///
+/// The bounded algorithm from the Vulkan specification is absent from the 25.0.0 source of
+/// `lp_bld_sample_soa.c` and present in 25.1.0.
+const FIRST_BOUNDED_ANISOTROPY_MESA: (u32, u32) = (25, 1);
 
 /// Exit status of GNU `timeout` when the deadline expired.
 const TIMEOUT_EXIT_CODE: i32 = 124;
@@ -69,10 +90,16 @@ pub struct AllowedValidationId {
 
 /// Validation IDs that do not fail a run.
 ///
-/// This list is empty because no ID occurs in the client lab, battle and terrain preview runs on
-/// lavapipe with `vulkan-validation-layers` 1.4.363. Add an entry only for a defect shown to be
-/// outside this project, and name the upstream report in `reason`.
-pub const VALIDATION_ALLOWLIST: &[AllowedValidationId] = &[];
+/// Add an entry only for a message shown to be outside this project: a defect with a named upstream
+/// report, or a capability notice from the host. Matching is exact, so a listed line never hides
+/// a different finding.
+pub const VALIDATION_ALLOWLIST: &[AllowedValidationId] = &[AllowedValidationId {
+    id: "Unable to find extension: VK_EXT_swapchain_colorspace",
+    reason: "Not a validation finding. `desired_extensions` in wgpu-hal 23.0.1 \
+             (src/vulkan/instance.rs) logs this for an optional instance extension the driver does \
+             not offer, drops the extension and continues. Lavapipe in Mesa 22.3.6 does not offer \
+             it. The extension only adds wide-gamut swapchain colour spaces.",
+}];
 
 /// Severity of a validation message, as mapped by the `wgpu_hal` messenger callback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,7 +133,7 @@ pub struct ValidationReport {
 }
 
 impl ValidationReport {
-    /// Parses captured stderr from a child that used [`VALIDATED_RUST_LOG`].
+    /// Parses the [`captured_log`] of a child that used [`VALIDATED_RUST_LOG`].
     pub fn parse(stderr: &str) -> Self {
         let mut report = Self::default();
         let lines: Vec<String> = stderr.lines().map(strip_ansi).collect();
@@ -197,6 +224,16 @@ impl<'a> LogRecord<'a> {
     }
 }
 
+/// Returns `true` for a best-practices message ID from any supported layer version.
+///
+/// Layers name these `BestPractices-...`; 1.3.239 and other older ones name them
+/// `UNASSIGNED-BestPractices-...`. Other `UNASSIGNED-` IDs are not best-practices findings.
+pub fn is_best_practices_id(id: &str) -> bool {
+    id.strip_prefix("UNASSIGNED-")
+        .unwrap_or(id)
+        .starts_with("BestPractices-")
+}
+
 /// Extracts `<ID>` from a messenger header of the form `<TYPE> [<ID> (0x<number>)]`.
 fn message_id(header: &str) -> Option<&str> {
     let (_, bracketed) = header.split_once('[')?;
@@ -220,6 +257,77 @@ fn strip_ansi(line: &str) -> String {
         }
     }
     plain
+}
+
+/// Extracts `(major, minor)` from `vulkaninfo --summary` text with a line such as
+/// `driverInfo = Mesa 22.3.6 (LLVM 15.0.6)`, or returns `None` for any other driver.
+pub fn mesa_release(summary: &str) -> Option<(u32, u32)> {
+    let line = summary.lines().find(|line| line.contains("driverInfo"))?;
+    let (_, version) = line.split_once("Mesa ")?;
+    let mut parts = version.split(['.', ' ', '-']);
+    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+}
+
+/// Returns `true` when this Mesa release cannot finish a frame of hex-tiled terrain.
+///
+/// Before [`FIRST_BOUNDED_ANISOTROPY_MESA`], llvmpipe's anisotropic sampler ignores explicit
+/// gradients and `maxAnisotropy`. Any clamp above 1 selects that path, so a smaller window or
+/// a longer deadline does not help: measured at 64x36 the first terrain frame was still
+/// unfinished after 120 s. The measurements are in `docs/plans/2026-11-02-server-gate.md`.
+pub fn driver_stalls_on_anisotropic_hex_tiling(summary: &str) -> bool {
+    mesa_release(summary).is_some_and(|release| release < FIRST_BOUNDED_ANISOTROPY_MESA)
+}
+
+/// Lowers terrain anisotropy to 1 for this `command` if its lavapipe driver has the sampler defect.
+///
+/// Call this only for runs that draw hex-tiled ground. Other runs keep the production sampler, so
+/// `client --battle` still creates it under validation on an affected host.
+pub fn allow_for_hex_tiling_driver_defect(command: &mut Command) {
+    if lavapipe_manifest().is_some_and(lavapipe_needs_bounded_anisotropy) {
+        command.env(TERRAIN_ANISOTROPY_OVERRIDE_ENV, "1");
+    }
+}
+
+/// Returns the installed lavapipe manifest, if any.
+fn lavapipe_manifest() -> Option<&'static Path> {
+    [
+        Path::new("/usr/share/vulkan/icd.d/lvp_icd.json"),
+        Path::new("/usr/share/vulkan/icd.d/lvp_icd.x86_64.json"),
+    ]
+    .into_iter()
+    .find(|path| path.exists())
+}
+
+/// Asks the lavapipe driver in `manifest` for its version, once per test process.
+///
+/// Returns `false` if `vulkaninfo` cannot answer. The run then uses the production sampler, so an
+/// affected driver fails by timeout rather than quietly losing coverage.
+fn lavapipe_needs_bounded_anisotropy(manifest: &Path) -> bool {
+    static NEEDS_BOUND: OnceLock<bool> = OnceLock::new();
+    *NEEDS_BOUND.get_or_init(|| {
+        let summary = Command::new("vulkaninfo")
+            .arg("--summary")
+            .env("VK_ICD_FILENAMES", manifest)
+            .output();
+        match summary {
+            Ok(output) if output.status.success() => {
+                let needs_bound = driver_stalls_on_anisotropic_hex_tiling(
+                    &String::from_utf8_lossy(&output.stdout),
+                );
+                if needs_bound {
+                    eprintln!(
+                        "WARNING: this Mesa cannot finish hex-tiled terrain with anisotropic \
+                         filtering; terrain renders run at anisotropy 1"
+                    );
+                }
+                needs_bound
+            }
+            other => {
+                eprintln!("WARNING: vulkaninfo gave no driver version: {other:?}");
+                false
+            }
+        }
+    })
 }
 
 /// Returns `true` when an explicit local opt-out asks to skip GPU tests.
@@ -299,11 +407,7 @@ pub fn virtual_gpu_command_on_screen(binary: &Path, screen: Option<&str>) -> Com
     command.env("WGPU_BACKEND", "vulkan");
     command.env("SPACE_SCUFFLE_VIRTUAL_GPU", "1");
 
-    let lavapipe_manifests = [
-        Path::new("/usr/share/vulkan/icd.d/lvp_icd.json"),
-        Path::new("/usr/share/vulkan/icd.d/lvp_icd.x86_64.json"),
-    ];
-    if let Some(manifest) = lavapipe_manifests.into_iter().find(|path| path.exists()) {
+    if let Some(manifest) = lavapipe_manifest() {
         command.env("VK_ICD_FILENAMES", manifest);
         command.env("WGPU_ADAPTER_NAME", "llvmpipe");
         command.env("LIBGL_ALWAYS_SOFTWARE", "1");
@@ -319,13 +423,30 @@ pub fn enable_validation(command: &mut Command) {
     command.env("RUST_LOG", VALIDATED_RUST_LOG);
 }
 
+/// Joins both output streams of a run, keeping each one's lines whole and in order.
+///
+/// Lines a binary prints with `println!` are harmless, since the parser accepts only log records.
+pub fn merge_streams(stdout: &[u8], stderr: &[u8]) -> String {
+    let mut log = String::from_utf8_lossy(stderr).into_owned();
+    if !log.is_empty() && !log.ends_with('\n') {
+        log.push('\n');
+    }
+    log.push_str(&String::from_utf8_lossy(stdout));
+    log
+}
+
+/// Returns everything a run printed, wherever the wrapper delivered its log output.
+pub fn captured_log(output: &Output) -> String {
+    merge_streams(&output.stdout, &output.stderr)
+}
+
 /// Runs `command` under validation and returns its output with the parsed report.
 pub fn run_validated(command: &mut Command) -> (Output, ValidationReport) {
     enable_validation(command);
     let output = command
         .output()
         .unwrap_or_else(|error| panic!("failed to launch {command:?}: {error}"));
-    let report = ValidationReport::parse(&String::from_utf8_lossy(&output.stderr));
+    let report = ValidationReport::parse(&captured_log(&output));
     (output, report)
 }
 
@@ -334,24 +455,25 @@ pub fn run_validated(command: &mut Command) -> (Output, ValidationReport) {
 /// `label` names the run in failure messages.
 pub fn assert_passes_validation(command: &mut Command, label: &str) -> Output {
     let (output, report) = run_validated(command);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let log = captured_log(&output);
     assert_ne!(
         output.status.code(),
         Some(TIMEOUT_EXIT_CODE),
-        "{label} did not finish within {GPU_RUN_TIMEOUT_SECS} s. Last stderr:\n{}",
-        tail(&stderr)
+        "{label} did not finish within {GPU_RUN_TIMEOUT_SECS} s. Last output:\n{}",
+        tail(&log)
     );
     assert!(
         output.status.success(),
-        "{label} exited with {:?}. Last stderr:\n{}",
+        "{label} exited with {:?}. Last output:\n{}",
         output.status.code(),
-        tail(&stderr)
+        tail(&log)
     );
     let violations = report.violations(VALIDATION_ALLOWLIST);
     assert!(
         violations.is_empty(),
-        "{label} failed Vulkan validation:\n{}",
-        violations.join("\n")
+        "{label} failed Vulkan validation:\n{}\nLast output:\n{}",
+        violations.join("\n"),
+        tail(&log)
     );
     output
 }

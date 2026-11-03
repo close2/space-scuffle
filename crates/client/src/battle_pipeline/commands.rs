@@ -8,7 +8,8 @@ use std::fmt::Write;
 use bevy::prelude::Resource;
 use sim_core::{movement::MovementLayer, Entity, SimWorld, UnitArchetype};
 use sim_types::{
-    EntityId, PlayerCommand, PlayerId, SimScalar, Tick, TickBundle, UnitOrder, UnitTypeId,
+    EntityId, PlayerCommand, PlayerId, SimScalar, SiteRefusal, Tick, TickBundle, UnitOrder,
+    UnitTypeId,
 };
 
 /// Successful session-commit identity, independent of ticks and recycled entity IDs.
@@ -94,6 +95,9 @@ pub enum SubmissionError {
     /// A `Build` names an identity the loaded catalog does not hold.
     #[error("structure {0:?} is not in the catalog")]
     InvalidStructure(UnitTypeId),
+    /// The site cannot take the structure, by what the player knows. No entity is named.
+    #[error("the site was refused: {0:?}")]
+    SiteRefused(SiteRefusal),
 }
 
 impl SubmissionError {
@@ -379,6 +383,34 @@ impl BattleCommandQueue {
         }
         Ok(())
     }
+}
+
+/// Whether any member of `selection` could carry out `order` right now.
+///
+/// The question [`BattleCommandQueue::submit_selection`] answers member by member, for input that
+/// must choose what a gesture means before it submits anything.
+#[must_use]
+pub fn any_recipient(
+    world: &SimWorld,
+    player: PlayerId,
+    selection: &[EntityId],
+    order: &UnitOrder,
+) -> bool {
+    let Ok(subject) = order_subject(world, player, order) else {
+        return false;
+    };
+    selection.iter().any(|id| {
+        world
+            .entities
+            .get(id)
+            .filter(|entity| entity.owner == player && can_receive_order(entity, order))
+            .is_some_and(|entity| {
+                world
+                    .catalog
+                    .get(entity.unit_type_id)
+                    .is_ok_and(|archetype| can_execute(entity, archetype, order, subject))
+            })
+    })
 }
 
 /// Refuses every order once the match has ended or `player` has been defeated.

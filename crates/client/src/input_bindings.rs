@@ -9,6 +9,8 @@
 //! - No key appears in two entries of [`ACTION_KEYS`]; a unit test enforces this. WASD pans the
 //!   camera, which is why Hold and Stop do not use the `StarCraft` II `H` and `S` pair verbatim:
 //!   `S` belongs to panning, so Stop uses [`STOP_KEY`].
+//! - [`COMMAND_CARD_KEYS`] belong to card positions, never to a unit, so what a key does depends
+//!   only on what the card shows there.
 //! - Modifiers change what a key does but are not actions of their own.
 //!
 //! The map editor has its own tool shortcuts and is deliberately outside this table.
@@ -36,6 +38,31 @@ pub const HOLD_POSITION_KEY: KeyCode = KeyCode::KeyH;
 /// Orders the selected units to stop.
 pub const STOP_KEY: KeyCode = KeyCode::KeyX;
 
+/// Leaves a command mode or goes back one card page.
+pub const CANCEL_KEY: KeyCode = KeyCode::Escape;
+
+/// Number of command card positions.
+pub const COMMAND_CARD_SLOTS: usize = 15;
+
+/// Key of each command card position, in reading order. A position's key never depends on the unit.
+pub const COMMAND_CARD_KEYS: [KeyCode; COMMAND_CARD_SLOTS] = [
+    KeyCode::KeyQ,
+    KeyCode::KeyE,
+    KeyCode::KeyR,
+    KeyCode::KeyT,
+    KeyCode::KeyY,
+    KeyCode::KeyF,
+    KeyCode::KeyG,
+    KeyCode::KeyJ,
+    KeyCode::KeyK,
+    KeyCode::KeyL,
+    KeyCode::KeyZ,
+    KeyCode::KeyC,
+    KeyCode::KeyV,
+    KeyCode::KeyB,
+    KeyCode::KeyN,
+];
+
 /// Number of control groups, one per entry of [`CONTROL_GROUP_KEYS`].
 pub const CONTROL_GROUP_COUNT: usize = 10;
 
@@ -62,19 +89,22 @@ pub const CONTROL_MODIFIERS: [KeyCode; 2] = [KeyCode::ControlLeft, KeyCode::Cont
 pub const SHIFT_MODIFIERS: [KeyCode; 2] = [KeyCode::ShiftLeft, KeyCode::ShiftRight];
 
 /// Every action key, grouped by the action that owns it.
-pub const ACTION_KEYS: [&[KeyCode]; 7] = [
+pub const ACTION_KEYS: [&[KeyCode]; 9] = [
     &PAN_FORWARD_KEYS,
     &PAN_BACK_KEYS,
     &PAN_LEFT_KEYS,
     &PAN_RIGHT_KEYS,
     &CAMERA_BOOKMARK_KEYS,
     &[HOLD_POSITION_KEY, STOP_KEY],
+    &[CANCEL_KEY],
+    &COMMAND_CARD_KEYS,
     &CONTROL_GROUP_KEYS,
 ];
 
 /// One-line summary of the battle controls, shown in the inspector.
 pub const BATTLE_CONTROLS_HELP: &str = "Left click selects, drag boxes, Shift adds. Right click \
-moves or attacks, Shift queues. H holds, X stops. Ctrl+0-9 assigns a group, 0-9 recalls it.";
+moves, attacks, gathers, builds or boards by its target, Shift queues. H holds, X stops. Escape \
+cancels a command mode. Ctrl+0-9 assigns a group, 0-9 recalls it.";
 
 /// Returns whether any key of `keys` is held.
 #[must_use]
@@ -97,6 +127,24 @@ mod tests {
             assert!(
                 !keys[index + 1..].contains(key),
                 "{key:?} is bound to two actions"
+            );
+        }
+    }
+
+    #[test]
+    fn command_card_keys_avoid_panning_hold_and_stop() {
+        let reserved: Vec<KeyCode> = [
+            PAN_FORWARD_KEYS.as_slice(),
+            &PAN_BACK_KEYS,
+            &PAN_LEFT_KEYS,
+            &PAN_RIGHT_KEYS,
+            &[HOLD_POSITION_KEY, STOP_KEY, CANCEL_KEY],
+        ]
+        .concat();
+        for key in &COMMAND_CARD_KEYS {
+            assert!(
+                !reserved.contains(key),
+                "{key:?} is a card key and reserved"
             );
         }
     }

@@ -58,6 +58,10 @@ pub enum TerrainThemeError {
     #[error("Unknown terrain theme slug: '{0}'")]
     UnknownTheme(String),
 
+    /// The terrain sampler override holds something other than a clamp from 1 to 16.
+    #[error("Terrain anisotropy override must be an integer from 1 to 16, not '{0}'")]
+    InvalidAnisotropyOverride(String),
+
     /// Theme specification failed structural or mathematical validation.
     #[error("Terrain theme '{theme}' is invalid: {reason}")]
     Invalid {
