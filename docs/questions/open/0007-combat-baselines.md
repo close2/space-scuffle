@@ -18,3 +18,10 @@ These were changed during Phase 3, and nothing was tuned to reach them.
 ## Answer
 
 Owner (2026-11-03): Keep all five as committed. I do however want an "investigation" why internet says that Zealots should win, and why we have 6-13 of 24 marines surviving. This is a big difference.
+
+## Effect of the answer
+
+2026-11-03. All five items stay as committed; nothing is reverted. The owner asked for an investigation of battle
+33: why published StarCraft II sources say zealots win this matchup, while the simulation leaves 6 to 13 of 24
+marines alive. A plan for that investigation is being written. This question stays open until its findings are
+reported here.
