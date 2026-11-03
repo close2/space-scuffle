@@ -6,7 +6,7 @@ use sim_core::{
     movement::{MovementOutcome, MovementReceipt},
     production::{ProductionInvariant, ProductionJob, ProductionOutcome, ProductionReceipt},
 };
-use sim_types::{EntityId, PlayerId, ResourceNodeId, Tick, UnitTypeId};
+use sim_types::{EntityId, PlayerId, ResourceNodeId, SiteRefusal, Tick, UnitTypeId};
 
 /// An identity whose digits would stand out in any message that leaked it.
 const ID: EntityId = EntityId(987_654);
@@ -402,5 +402,45 @@ fn closed_match_rejections_read_as_game_over_not_as_a_fault() {
         ),
     ] {
         assert_eq!(submission_reason(&error), expected);
+    }
+}
+
+#[test]
+fn a_refused_site_reads_like_the_same_rejection_on_arrival() {
+    let pairs = [
+        (SiteRefusal::OutOfBounds, BuildRejection::OutOfBounds),
+        (
+            SiteRefusal::UnbuildableTerrain,
+            BuildRejection::Blocked(PlacementFailureReason::UnbuildableTerrain),
+        ),
+        (
+            SiteRefusal::CliffLevelMismatch,
+            BuildRejection::Blocked(PlacementFailureReason::CliffLevelMismatch),
+        ),
+        (
+            SiteRefusal::OverlapsRamp,
+            BuildRejection::Blocked(PlacementFailureReason::OverlapsRamp),
+        ),
+        (
+            SiteRefusal::KnownStructure,
+            BuildRejection::Blocked(PlacementFailureReason::OccupiedByStructure(ID)),
+        ),
+        (SiteRefusal::CoversResource, BuildRejection::CoversResource),
+        (
+            SiteRefusal::ExtractorNeedsGas,
+            BuildRejection::ExtractorNeedsGas,
+        ),
+        (
+            SiteRefusal::InvalidRequest,
+            BuildRejection::UnknownStructure(UnitTypeId(1)),
+        ),
+    ];
+    for (refusal, rejection) in pairs {
+        let mut arrival = String::new();
+        write_build_rejection(&mut arrival, &rejection);
+        assert_eq!(
+            submission_reason(&SubmissionError::SiteRefused(refusal)),
+            arrival
+        );
     }
 }

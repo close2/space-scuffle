@@ -4,8 +4,9 @@
 //! Owns the player's hands on a live battle: left click and box drag change
 //! [`BattleSelection`], right click and the order keys go through
 //! [`BattleCommandQueue`](crate::battle_pipeline::commands::BattleCommandQueue), and control group
-//! keys store and recall selections. What a right click means is decided by [`context_order()`].
-//! Keys come from [`crate::input_bindings`].
+//! keys store and recall selections. What a right click means is decided by [`context_order()`],
+//! and while a [`CommandMode`] is armed, the left button belongs to it. Keys come from
+//! [`crate::input_bindings`].
 //!
 //! # How it fits
 //! These systems run in [`BattleSet::CollectIntent`], after UI ownership is sampled and before the
@@ -17,9 +18,12 @@
 //! - Only units the player can see are picked: Bevy-visible, not behind terrain, and for a unit of
 //!   another player, one the simulation says that player can target.
 //! - Orders go only to the local player's units; a foreign unit can be looked at, never ordered.
+//! - Once the match is over no gesture orders anything or reports a refusal, and left click still
+//!   selects, so the player can look around.
 //! - Picking costs O(N) per click and box selection O(N) per release. Nothing here scans bubbles
 //!   or resource nodes on a frame without a click or release, and such frames allocate nothing.
 
+pub mod command_mode;
 pub mod context_order;
 pub mod gesture;
 pub mod order_marker;
@@ -41,8 +45,8 @@ use crate::battle_selection::BattleSelection;
 use crate::bubble_shader::BubbleInstance;
 use crate::camera::RtsCamera;
 use crate::input_bindings::{
-    any_pressed, CONTROL_GROUP_KEYS, CONTROL_MODIFIERS, HOLD_POSITION_KEY, SHIFT_MODIFIERS,
-    STOP_KEY,
+    any_pressed, CANCEL_KEY, CONTROL_GROUP_KEYS, CONTROL_MODIFIERS, HOLD_POSITION_KEY,
+    SHIFT_MODIFIERS, STOP_KEY,
 };
 use crate::input_policy::{world_to_window, InputOwnership, ViewportCoordinates};
 use crate::lab_ui::{LabState, LabTab};
@@ -51,6 +55,7 @@ use crate::scene_controller::LiveBattleBubble;
 use crate::selection::ray_sphere_intersect;
 use crate::terrain::{pick_terrain, TerrainState};
 
+use command_mode::{orders_open, CommandMode};
 use context_order::{context_order, PointerTarget};
 use gesture::{GestureOutcome, SelectionGesture};
 use order_marker::OrderMarkers;
@@ -77,6 +82,7 @@ impl Plugin for BattleInputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BattleSelection>()
             .init_resource::<SelectionGesture>()
+            .init_resource::<CommandMode>()
             .add_systems(
                 Startup,
                 order_marker::setup_order_markers.after(crate::setup_indicator_assets_system),
@@ -315,10 +321,22 @@ impl BattleView<'_, '_> {
     }
 }
 
-/// Reads the mouse: left button selects, right button orders.
+/// What this frame's pointer handlers share.
+#[derive(Debug, Clone, Copy)]
+struct PointerFrame {
+    /// The local player.
+    owner: PlayerId,
+    /// Whether Shift is held.
+    shift: bool,
+    /// The cursor clamped to the world viewport, in window coordinates.
+    cursor: Option<Vec2>,
+}
+
+/// Reads the mouse: left button selects, right button orders, unless a [`CommandMode`] is armed.
 #[expect(
     clippy::needless_pass_by_value,
-    reason = "Bevy passes system parameters by value"
+    clippy::too_many_arguments,
+    reason = "Bevy passes each system parameter by value"
 )]
 pub fn collect_pointer_intent(
     mouse: Res<'_, ButtonInput<MouseButton>>,
@@ -328,17 +346,61 @@ pub fn collect_pointer_intent(
     mut selection: ResMut<'_, BattleSelection>,
     mut session: ResMut<'_, BattleSession>,
     mut markers: OrderMarkers<'_, '_>,
+    mut mode: ResMut<'_, CommandMode>,
 ) {
     let owner = view.presentation.controlled;
     selection.bind_owner(owner);
+    mode.reconcile(session.world(), owner, selection.ids());
     let focused = view.windows.get_single().is_ok_and(|window| window.focused);
     let (Some(owner), true, true) = (owner, focused, view.is_open(&session)) else {
         gesture.cancel();
         return;
     };
-    let shift = any_pressed(&keyboard, &SHIFT_MODIFIERS);
-    let cursor = view.cursor_in_viewport();
+    let frame = PointerFrame {
+        owner,
+        shift: any_pressed(&keyboard, &SHIFT_MODIFIERS),
+        cursor: view.cursor_in_viewport(),
+    };
+    if *mode == CommandMode::Normal {
+        handle_normal_pointer(
+            &mouse,
+            &view,
+            frame,
+            &mut gesture,
+            &mut selection,
+            &mut session,
+            &mut markers,
+        );
+    } else {
+        // A mode armed during a drag takes over the button, so the box is abandoned.
+        gesture.cancel();
+        handle_targeting_pointer(
+            &mouse,
+            &view,
+            frame,
+            &mut mode,
+            &selection,
+            &mut session,
+            &mut markers,
+        );
+    }
+}
 
+/// Left press and release select, and a right press issues the order its target implies.
+fn handle_normal_pointer(
+    mouse: &ButtonInput<MouseButton>,
+    view: &BattleView<'_, '_>,
+    frame: PointerFrame,
+    gesture: &mut SelectionGesture,
+    selection: &mut BattleSelection,
+    session: &mut BattleSession,
+    markers: &mut OrderMarkers<'_, '_>,
+) {
+    let PointerFrame {
+        owner,
+        shift,
+        cursor,
+    } = frame;
     if mouse.just_pressed(MouseButton::Left) && view.ownership.pointer {
         if let Some(cursor) = cursor {
             gesture.begin(cursor);
@@ -352,7 +414,7 @@ pub fn collect_pointer_intent(
         if let (Some(outcome), Some(world)) = (gesture.finish(), session.world()) {
             match outcome {
                 GestureOutcome::Click(position) => {
-                    apply_click(&view, world, owner, position, shift, &mut selection);
+                    apply_click(view, world, owner, position, shift, selection);
                 }
                 GestureOutcome::Box(area) => {
                     if !shift {
@@ -367,18 +429,56 @@ pub fn collect_pointer_intent(
     if mouse.just_pressed(MouseButton::Right)
         && view.ownership.pointer
         && !selection.ids().is_empty()
+        && session.world().is_none_or(orders_open)
     {
         if let Some(ray) = cursor.and_then(|cursor| view.ray(cursor)) {
-            issue_pointer_order(
-                &view,
-                ray,
-                owner,
-                shift,
-                &selection,
-                &mut session,
-                &mut markers,
-            );
+            issue_pointer_order(view, ray, frame, selection, session, markers);
         }
+    }
+}
+
+/// A left press issues the armed mode's order at the ground, and a right press cancels the mode.
+///
+/// Only an accepted order ends the mode, and Shift keeps it for the next site. A refusal leaves it
+/// armed, so the player can try elsewhere. No gesture begins, so the selection stays as it is.
+fn handle_targeting_pointer(
+    mouse: &ButtonInput<MouseButton>,
+    view: &BattleView<'_, '_>,
+    frame: PointerFrame,
+    mode: &mut CommandMode,
+    selection: &BattleSelection,
+    session: &mut BattleSession,
+    markers: &mut OrderMarkers<'_, '_>,
+) {
+    if !view.ownership.pointer {
+        return;
+    }
+    if mouse.just_pressed(MouseButton::Right) {
+        *mode = CommandMode::Normal;
+        return;
+    }
+    if !mouse.just_pressed(MouseButton::Left) {
+        return;
+    }
+    let ground = frame
+        .cursor
+        .and_then(|cursor| view.ray(cursor))
+        .and_then(|ray| view.ground_point(ray));
+    let (world, queue) = session.world_and_commands();
+    let result = world.ok_or(SubmissionError::NotReady).and_then(|world| {
+        let ground = ground.ok_or(SubmissionError::NoDestination)?;
+        let (order, kind, position) = mode.order_at(world, frame.owner, ground)?;
+        queue.submit_selection(world, frame.owner, selection.ids(), order, frame.shift)?;
+        Ok((kind, position))
+    });
+    match result {
+        Ok((kind, position)) => {
+            markers.show(kind, position);
+            if !frame.shift {
+                *mode = CommandMode::Normal;
+            }
+        }
+        Err(error) => queue.reject(&error),
     }
 }
 
@@ -408,12 +508,12 @@ fn apply_click(
 fn issue_pointer_order(
     view: &BattleView<'_, '_>,
     ray: Ray3d,
-    owner: PlayerId,
-    queued: bool,
+    frame: PointerFrame,
     selection: &BattleSelection,
     session: &mut BattleSession,
     markers: &mut OrderMarkers<'_, '_>,
 ) {
+    let PointerFrame { owner, shift, .. } = frame;
     let (world, queue) = session.world_and_commands();
     let Some(world) = world else {
         queue.reject(&SubmissionError::NotReady);
@@ -424,13 +524,13 @@ fn issue_pointer_order(
         return;
     };
     let (order, kind, position) = context_order(world, owner, selection.ids(), target);
-    match queue.submit_selection(world, owner, selection.ids(), order, queued) {
+    match queue.submit_selection(world, owner, selection.ids(), order, shift) {
         Ok(_) => markers.show(kind, position),
         Err(error) => queue.reject(&error),
     }
 }
 
-/// Reads the keyboard: control groups, Hold and Stop.
+/// Reads the keyboard: control groups, Hold, Stop and leaving a command mode.
 ///
 /// Keys are read as ordered events, not from [`ButtonInput`]. At a low frame rate a whole Ctrl+1
 /// chord can arrive within one frame, and by then `ButtonInput` shows Ctrl as already released,
@@ -446,8 +546,10 @@ pub fn collect_key_intent(
     view: BattleView<'_, '_>,
     mut selection: ResMut<'_, BattleSelection>,
     mut session: ResMut<'_, BattleSession>,
+    mut mode: ResMut<'_, CommandMode>,
 ) {
     let owned = view.ownership.keyboard && view.is_open(&session);
+    let open = session.world().is_some_and(orders_open);
     for event in events.read() {
         let pressed = event.state.is_pressed();
         if CONTROL_MODIFIERS.contains(&event.key_code) {
@@ -462,9 +564,11 @@ pub fn collect_key_intent(
                 } else {
                     selection.recall_group(index);
                 }
-            } else if event.key_code == HOLD_POSITION_KEY {
+            } else if event.key_code == CANCEL_KEY {
+                *mode = CommandMode::Normal;
+            } else if open && event.key_code == HOLD_POSITION_KEY {
                 order_selection(&view, &selection, &mut session, UnitOrder::HoldPosition);
-            } else if event.key_code == STOP_KEY {
+            } else if open && event.key_code == STOP_KEY {
                 order_selection(&view, &selection, &mut session, UnitOrder::Stop);
             }
         }

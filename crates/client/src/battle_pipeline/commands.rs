@@ -8,7 +8,8 @@ use std::fmt::Write;
 use bevy::prelude::Resource;
 use sim_core::{movement::MovementLayer, Entity, SimWorld, UnitArchetype};
 use sim_types::{
-    EntityId, PlayerCommand, PlayerId, SimScalar, Tick, TickBundle, UnitOrder, UnitTypeId,
+    EntityId, PlayerCommand, PlayerId, SimScalar, SiteRefusal, Tick, TickBundle, UnitOrder,
+    UnitTypeId,
 };
 
 /// Successful session-commit identity, independent of ticks and recycled entity IDs.
@@ -94,6 +95,9 @@ pub enum SubmissionError {
     /// A `Build` names an identity the loaded catalog does not hold.
     #[error("structure {0:?} is not in the catalog")]
     InvalidStructure(UnitTypeId),
+    /// The site cannot take the structure, by what the player knows. No entity is named.
+    #[error("the site was refused: {0:?}")]
+    SiteRefused(SiteRefusal),
 }
 
 impl SubmissionError {

@@ -15,6 +15,7 @@ use sim_core::{
     transport::TransportAdmissionError,
 };
 use sim_map::PlacementFailureReason;
+use sim_types::SiteRefusal;
 
 use super::{commands::SubmissionError, driver::AdmissionOutcome};
 
@@ -45,6 +46,26 @@ pub(super) fn submission_reason(error: &SubmissionError) -> &'static str {
         SubmissionError::MatchOver => "the match is over",
         SubmissionError::PlayerDefeated(_) => "you have been defeated",
         SubmissionError::InvalidStructure(_) => "this structure is unavailable",
+        SubmissionError::SiteRefused(refusal) => site_reason(*refusal),
+    }
+}
+
+/// Says why a site cannot be ordered, in the words of the matching [`BuildRejection`].
+#[must_use]
+pub const fn site_reason(refusal: SiteRefusal) -> &'static str {
+    match refusal {
+        SiteRefusal::InvalidRequest => "this structure is unavailable",
+        SiteRefusal::OutOfBounds => placement_reason(PlacementFailureReason::OutOfBounds),
+        SiteRefusal::UnbuildableTerrain => {
+            placement_reason(PlacementFailureReason::UnbuildableTerrain)
+        }
+        SiteRefusal::CliffLevelMismatch => {
+            placement_reason(PlacementFailureReason::CliffLevelMismatch)
+        }
+        SiteRefusal::OverlapsRamp => placement_reason(PlacementFailureReason::OverlapsRamp),
+        SiteRefusal::KnownStructure => "a structure is in the way",
+        SiteRefusal::CoversResource => "the site covers a resource node",
+        SiteRefusal::ExtractorNeedsGas => "an extractor needs a gas node under it",
     }
 }
 
