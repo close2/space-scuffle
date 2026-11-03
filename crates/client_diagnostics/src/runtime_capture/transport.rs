@@ -8,7 +8,7 @@ use super::config::{CaptureError, Goal, TransportCaptureSpec};
 use bevy::prelude::*;
 use serde::Serialize;
 use sim_core::{transport::TransportReceipt, PlayerResources, SimWorld};
-use sim_types::{CombatEventVisual, EntityId, SimVec2};
+use sim_types::{CombatEventVisual, EntityId, PerPlayer, PlayerSlot, SimVec2};
 use std::collections::BTreeSet;
 
 fn failure(message: impl Into<String>) -> CaptureError {
@@ -71,8 +71,8 @@ pub(super) struct TransportState {
     pickup: SimVec2,
     carrier_start: SimVec2,
     destination: SimVec2,
-    owner: usize,
-    economy: [PlayerResources; 8],
+    owner: PlayerSlot,
+    economy: PerPlayer<PlayerResources>,
     initial_members: BTreeSet<EntityId>,
     expected_members: BTreeSet<EntityId>,
     receipt: Option<TransportReceipt>,
@@ -104,6 +104,8 @@ impl TransportState {
         simulation: &SimWorld,
         spec: &TransportCaptureSpec,
     ) -> Result<Self, CaptureError> {
+        let owner = PlayerSlot::new(spec.owner)
+            .ok_or_else(|| failure("transport owner has no player slot"))?;
         let mut candidates = Vec::new();
         for (&id, actor) in &simulation.entities {
             if actor.owner.0 != spec.owner
@@ -156,7 +158,7 @@ impl TransportState {
             pickup,
             carrier_start,
             destination: SimVec2::from_i32(spec.destination[0], spec.destination[1]),
-            owner: usize::from(spec.owner),
+            owner,
             economy: simulation.player_resources,
             expected_members: initial_members.clone(),
             initial_members,

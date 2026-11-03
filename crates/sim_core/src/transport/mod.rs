@@ -361,7 +361,7 @@ impl SimWorld {
         if actor.id != id {
             return Err(invalid("map key and entity identity differ"));
         }
-        if usize::from(actor.owner.0) >= self.player_resources.len() {
+        if actor.owner.slot().is_none() {
             return Err(invalid("owner slot is invalid"));
         }
         self.catalog

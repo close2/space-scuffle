@@ -1,7 +1,7 @@
 //! Authoritative rendering snapshot consumed by the client visualization layer.
 
 use crate::enums::{AnimState, ResourceKind, ShapeKind, SilhouetteClass, WeaponVisualKind};
-use crate::ids::{EntityId, PlayerId, ResourceNodeId, Tick, UnitTypeId};
+use crate::ids::{EntityId, PlayerId, ResourceNodeId, Tick, UnitTypeId, MAX_PLAYERS};
 use serde::{Deserialize, Serialize};
 
 /// Comprehensive visual parameters for a single bubble or building dome.
@@ -235,9 +235,9 @@ pub struct RenderSnapshot {
     /// Authoritative match result as of this frame.
     #[serde(default)]
     pub match_result: MatchResult,
-    /// Economy and standing, indexed by player slot.
+    /// Economy and standing, indexed by [`crate::PlayerSlot::index`].
     #[serde(default)]
-    pub players: [PlayerStatusView; 8],
+    pub players: [PlayerStatusView; MAX_PLAYERS],
     /// Every map resource node in identifier order, including exhausted ones.
     #[serde(default)]
     pub resource_nodes: Vec<ResourceNodeView>,
@@ -358,7 +358,7 @@ mod tests {
                 winner: PlayerId(1),
                 tick: Tick(40),
             },
-            players: [PlayerStatusView::default(); 8],
+            players: [PlayerStatusView::default(); MAX_PLAYERS],
             resource_nodes: vec![ResourceNodeView {
                 id: ResourceNodeId(3),
                 kind: ResourceKind::Gas,

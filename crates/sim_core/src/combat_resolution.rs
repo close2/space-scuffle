@@ -26,9 +26,8 @@ use crate::entity::{ActiveProjectile, WeaponPhase};
 use crate::weapon_timing::{resolve_attack_period, SimulationDiagnostic};
 use crate::world::SimWorld;
 use sim_types::{
-    CombatEventVisual, EntityId, MoverType, PlayerId, PlayerUpgradeState,
-    ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, Tick, UnitOrder, UnitTypeId,
-    WeaponVisualKind,
+    CombatEventVisual, EntityId, MoverType, PlayerId, ProjectileTargetLossBehavior, SimAngle,
+    SimScalar, SimVec2, Tick, UnitOrder, UnitTypeId, WeaponVisualKind,
 };
 
 /// Lowest impact distance used for flight timing, so a point-blank launch still takes a tick.
@@ -112,11 +111,6 @@ impl CombatWorkspace {
             .ok()
             .map(|index| self.snapshots[index].1)
     }
-}
-
-/// Upgrade state of `owner`; out-of-range owners share the last slot, as everywhere else.
-fn upgrades_of(upgrades: &[PlayerUpgradeState; 8], owner: PlayerId) -> &PlayerUpgradeState {
-    &upgrades[(owner.0 as usize).min(7)]
 }
 
 /// Direction a hit arrives from, as stored for hull-impact rendering.
@@ -252,7 +246,7 @@ impl SimWorld {
                 &arch.slug,
                 entity.owner,
             );
-            let delta = upgrades_of(&self.player_upgrades, entity.owner)
+            let delta = Self::upgrades_of(&self.player_upgrades, entity.owner)
                 .unit_stat_modifiers
                 .get(&arch.slug)
                 .map_or(0, |modifiers| modifiers.attack_cooldown_delta);
@@ -413,8 +407,8 @@ impl SimWorld {
         if !available {
             return Some(hit);
         }
-        let attacker_upgrades = upgrades_of(&self.player_upgrades, source.owner);
-        let target_upgrades = upgrades_of(&self.player_upgrades, target.owner);
+        let attacker_upgrades = Self::upgrades_of(&self.player_upgrades, source.owner);
+        let target_upgrades = Self::upgrades_of(&self.player_upgrades, target.owner);
         for _ in 0..source.weapon.attacks_count {
             let resolution = calculate_hit_damage_upgraded(
                 source.weapon,
@@ -446,7 +440,7 @@ impl SimWorld {
     ) {
         let mut splash_hits = std::mem::take(&mut self.combat.splash_hits);
         splash_hits.clear();
-        let attacker_upgrades = upgrades_of(&self.player_upgrades, source.owner);
+        let attacker_upgrades = Self::upgrades_of(&self.player_upgrades, source.owner);
         for (&other_id, other) in &self.entities {
             if Some(other_id) == primary
                 || Some(other_id) == source.attacker
@@ -474,7 +468,7 @@ impl SimWorld {
                 splash,
                 distance,
                 other_arch,
-                upgrades_of(&self.player_upgrades, other.owner),
+                Self::upgrades_of(&self.player_upgrades, other.owner),
                 other.shields,
                 other.hp,
             );

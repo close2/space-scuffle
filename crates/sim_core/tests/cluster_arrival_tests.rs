@@ -5,8 +5,8 @@
 use sim_core::{catalog::RuntimeCatalogs, SimWorld};
 use sim_map::{CliffLevel, GameMap, MapCell, MapFile, PathRequest, UnitClearance};
 use sim_types::{
-    EntityId, MoverType, PlayerCommand, PlayerId, ShapeKind, SimScalar, SimVec2, Tick, TickBundle,
-    UnitOrder, UnitTypeId,
+    EntityId, MoverType, PlayerCommand, PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, Tick,
+    TickBundle, UnitOrder, UnitTypeId,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -131,7 +131,7 @@ fn authored_cliff_groups_follow_real_ramp_and_replay_exactly() -> TestResult {
             assert!(path.waypoints.iter().any(|p| p.y >= SimScalar::from_num(8)));
             let ids = pair(&mut first, kind, start, witness)?;
             assert_eq!(ids, pair(&mut second, second_kind, start, witness)?);
-            let supply = first.player_resources[0].supply_used;
+            let supply = first.player_resources[PlayerSlot::ALL[0]].supply_used;
             let mut reached = false;
             for frame in 0..256 {
                 let before = ids.map(|id| first.entities[&id].position);
@@ -159,7 +159,10 @@ fn authored_cliff_groups_follow_real_ramp_and_replay_exactly() -> TestResult {
                 assert!(first.diagnostics().is_empty(), "{:?}", first.diagnostics());
                 assert_eq!(second.diagnostics(), []);
                 first.validate_supply_ledger()?;
-                assert_eq!(first.player_resources[0].supply_used, supply);
+                assert_eq!(
+                    first.player_resources[PlayerSlot::ALL[0]].supply_used,
+                    supply
+                );
                 for (id, previous) in ids.into_iter().zip(before) {
                     assert!(first.map.ground_segment_is_connected(
                         previous,
@@ -288,7 +291,7 @@ fn order_onto_a_foundation_ends_beside_it_without_revealing_it() -> TestResult {
             // Moving must not discover the registered structure through a knowledge side
             // channel. Exercise actual unknown then revealed masks; the normal tick below
             // owns legitimate vision publication.
-            assert!(!w.known_blocked_cells[0][10 * 64 + 10]);
+            assert!(!w.known_blocked_cells[PlayerSlot::ALL[0]][10 * 64 + 10]);
             w.try_issue_movement(PlayerId(0), &[actor], &order(attack, goal), false)?;
             let unknown = w.known_blocked_cells.clone();
             w.step_movement_and_steering();
@@ -296,7 +299,7 @@ fn order_onto_a_foundation_ends_beside_it_without_revealing_it() -> TestResult {
             w.entities.get_mut(&actor).ok_or("actor")?.position = center(9, 10);
             tick(&mut w, vec![command(&[actor], attack, goal, false)]);
             assert!(w.movement_outcomes()[0].result.is_ok());
-            assert!(w.known_blocked_cells[0][10 * 64 + 10]);
+            assert!(w.known_blocked_cells[PlayerSlot::ALL[0]][10 * 64 + 10]);
             // Once seen, the foundation is not a destination: the nearest point is, and the
             // actor walks there and stops against nothing but its own arrival.
             let revealed = w.known_blocked_cells.clone();

@@ -438,7 +438,11 @@ fn stage_shots(
     if !staging.funded {
         // Funded on a running frame, so a tick publishes the bank to the HUD; stopped on the next.
         let world = session.world_mut().expect("a ready session has a world");
-        world.player_resources[usize::from(LOCAL_PLAYER.0)].minerals += STAGED_MINERALS;
+        world
+            .player_resources
+            .get_mut(LOCAL_PLAYER)
+            .expect("invariant: LOCAL_PLAYER has a player slot")
+            .minerals += STAGED_MINERALS;
         staging.funded = true;
         return;
     }

@@ -13,7 +13,7 @@
 
 use sim_core::{SimWorld, WeaponPhase};
 use sim_map::{CliffLevel, GameMap, MapCell};
-use sim_types::{PlayerId, SimScalar, SimVec2, Tick, TickBundle, VisibilityState};
+use sim_types::{PlayerId, PlayerSlot, SimScalar, SimVec2, Tick, TickBundle, VisibilityState};
 
 #[test]
 fn test_high_ground_combat_occlusion_and_spotter_reveal() {
@@ -70,7 +70,7 @@ fn test_high_ground_combat_occlusion_and_spotter_reveal() {
 
     // 1. High ground tile at (12, 10) must NOT be visible to Player Blue
     assert_ne!(
-        world.vision_maps[0].visibility_at(12, 10),
+        world.vision_maps[PlayerSlot::ALL[0]].visibility_at(12, 10),
         VisibilityState::Visible,
         "High ground tile must be occluded by cliff ledge from low ground"
     );
@@ -105,7 +105,7 @@ fn test_high_ground_combat_occlusion_and_spotter_reveal() {
 
     // 4. High ground tile at (12, 10) is now Visible!
     assert_eq!(
-        world.vision_maps[0].visibility_at(12, 10),
+        world.vision_maps[PlayerSlot::ALL[0]].visibility_at(12, 10),
         VisibilityState::Visible,
         "High ground tile must be revealed by aerial spotter"
     );

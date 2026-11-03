@@ -8,8 +8,8 @@ use sim_core::{SimCoreError, SimWorld, UnitCatalog, UpgradeCatalog, UpgradeDef};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, EntityId, MoverType, OverclockSpec,
-    PlayerCommand, PlayerId, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
-    UnitStatDeltas, UnitTypeId, UpgradeEffect,
+    PlayerCommand, PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, Tick, TickBundle,
+    UnitOrder, UnitStatDeltas, UnitTypeId, UpgradeEffect,
 };
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 struct Fixture {
@@ -195,13 +195,15 @@ fn invalid_ingress_preserves_every_movement_field_and_other_valid_actors_progres
             3 => actor.owner = PlayerId(u8::MAX),
             _ => {
                 let slug = f.world.catalog.get(f.air)?.slug.clone();
-                f.world.player_upgrades[0].unit_stat_modifiers.insert(
-                    slug,
-                    UnitStatDeltas {
-                        move_speed_delta: -SimScalar::ONE,
-                        ..Default::default()
-                    },
-                );
+                f.world.player_upgrades[PlayerSlot::ALL[0]]
+                    .unit_stat_modifiers
+                    .insert(
+                        slug,
+                        UnitStatDeltas {
+                            move_speed_delta: -SimScalar::ONE,
+                            ..Default::default()
+                        },
+                    );
             }
         }
         let before = f.world.entities[&id].clone();
@@ -231,13 +233,15 @@ fn late_pursuit_range_overflow_does_not_clear_route_or_pose_bookkeeping() -> Tes
     actor.current_funnel_waypoints = vec![point(15, 15)];
     actor.pos_at_tick_start = point(4, 4);
     let slug = f.world.catalog.get(f.air)?.slug.clone();
-    f.world.player_upgrades[0].unit_stat_modifiers.insert(
-        slug,
-        UnitStatDeltas {
-            weapon_range_delta: SimScalar::MAX,
-            ..Default::default()
-        },
-    );
+    f.world.player_upgrades[PlayerSlot::ALL[0]]
+        .unit_stat_modifiers
+        .insert(
+            slug,
+            UnitStatDeltas {
+                weapon_range_delta: SimScalar::MAX,
+                ..Default::default()
+            },
+        );
     let before = f.world.entities[&id].clone();
     f.world.step_movement_and_steering();
     assert_eq!(f.world.entities[&id], before);

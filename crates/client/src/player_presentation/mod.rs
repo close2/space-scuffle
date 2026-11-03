@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use bevy::prelude::*;
 use bevy_egui::egui;
 use serde::Deserialize;
-use sim_types::PlayerId;
+use sim_types::{PerPlayer, PlayerId, PlayerSlot, MAX_PLAYERS};
 
 /// A prepared ownership style: sRGB for UI and linear RGB for rendered materials.
 #[derive(Clone, Copy, Debug)]
@@ -79,10 +79,10 @@ struct PaletteFile {
 /// A replacement is prepared before commit and published with its scene generation.
 #[derive(Resource, Clone, Debug)]
 pub struct PlayerPalette {
-    styles: Vec<PlayerStyle>,
+    styles: PerPlayer<PlayerStyle>,
     neutral: PlayerStyle,
     preview: PreviewRoles,
-    preview_members: [bool; 8],
+    preview_members: PerPlayer<bool>,
 }
 
 /// Explicit palette, owner-domain or committed participant mismatch.
@@ -156,16 +156,19 @@ impl PlayerPalette {
     }
 
     fn prepare(mut file: PaletteFile, count: usize) -> Result<Self, PresentationError> {
-        if file.player_colors_srgb.len() != 8 {
+        if file.player_colors_srgb.len() != MAX_PLAYERS {
             return Err(PresentationError::Slots(file.player_colors_srgb.len()));
         }
-        let styles = file
+        let styles: [PlayerStyle; MAX_PLAYERS] = file
             .player_colors_srgb
             .into_iter()
             .map(PlayerStyle::prepare)
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?
+            .try_into()
+            .map_err(|styles: Vec<PlayerStyle>| PresentationError::Slots(styles.len()))?;
+        let styles = PerPlayer::from_array(styles);
         let neutral = PlayerStyle::prepare(file.neutral_color_srgb)?;
-        let mut preview_members = [false; 8];
+        let mut preview_members = PerPlayer::<bool>::default();
         for owner in [
             file.preview_owners.primary,
             file.preview_owners.secondary,
@@ -178,10 +181,10 @@ impl PlayerPalette {
                 .iter()
                 .map(|v| v.owner),
         ) {
-            if usize::from(owner) >= styles.len() {
+            let Some(slot) = PlayerSlot::new(owner) else {
                 return Err(PresentationError::PreviewOwner(owner));
-            }
-            preview_members[usize::from(owner)] = true;
+            };
+            preview_members[slot] = true;
         }
         file.preview_owners
             .showcase_overrides
@@ -212,7 +215,7 @@ impl PlayerPalette {
             return Ok(self.neutral);
         }
         self.styles
-            .get(usize::from(owner.0))
+            .get(owner)
             .copied()
             .ok_or(PresentationError::Owner(owner))
     }
@@ -274,7 +277,7 @@ impl PlayerPalette {
     /// Rejects otherwise valid palette owners absent from authored preview roles.
     pub fn preview_style(&self, owner: PlayerId) -> Result<PlayerStyle, PresentationError> {
         let style = self.resolve(owner)?;
-        if owner == PlayerId::NEUTRAL || self.preview_members[usize::from(owner.0)] {
+        if owner == PlayerId::NEUTRAL || self.preview_members.get(owner) == Some(&true) {
             return Ok(style);
         }
         Err(PresentationError::Participant {

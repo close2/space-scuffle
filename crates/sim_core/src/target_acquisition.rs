@@ -25,7 +25,8 @@ use crate::weapon_timing::SimulationDiagnostic;
 use crate::world::SimWorld;
 use sim_map::{PlayerVisionMap, SimMap};
 use sim_types::{
-    AttackOrigin, EntityId, PlayerId, SimScalar, SimVec2, Tick, UnitOrder, VisibilityState,
+    AttackOrigin, EntityId, PerPlayer, PlayerId, SimScalar, SimVec2, Tick, UnitOrder,
+    VisibilityState,
 };
 use std::collections::BTreeMap;
 
@@ -91,7 +92,7 @@ impl SimWorld {
     pub(crate) fn is_entity_targetable(
         target: &Entity,
         map: &SimMap,
-        vision_maps: &[PlayerVisionMap; 8],
+        vision_maps: &PerPlayer<PlayerVisionMap>,
         attacker_owner: PlayerId,
     ) -> bool {
         if !Self::is_damageable(target) {
@@ -105,11 +106,11 @@ impl SimWorld {
     #[must_use]
     pub(crate) fn is_cloak_revealed(
         map: &SimMap,
-        vision_maps: &[PlayerVisionMap; 8],
+        vision_maps: &PerPlayer<PlayerVisionMap>,
         viewer: PlayerId,
         position: SimVec2,
     ) -> bool {
-        let Some(vision) = vision_maps.get(viewer.0 as usize) else {
+        let Some(vision) = vision_maps.get(viewer) else {
             return false;
         };
         map.world_to_cell(position).is_ok_and(|(cx, cy)| {
@@ -123,7 +124,7 @@ impl SimWorld {
     pub fn is_target_available_for_combat(
         entities: &BTreeMap<EntityId, Entity>,
         map: &SimMap,
-        vision_maps: &[PlayerVisionMap; 8],
+        vision_maps: &PerPlayer<PlayerVisionMap>,
         attacker_owner: PlayerId,
         target_id: EntityId,
     ) -> bool {
@@ -223,7 +224,7 @@ impl SimWorld {
         if attacker.is_loaded_in_transport() {
             return false;
         }
-        let Some(vision) = self.vision_maps.get(viewer.0 as usize) else {
+        let Some(vision) = self.vision_maps.get(viewer) else {
             return true;
         };
         self.map
@@ -486,7 +487,7 @@ impl SimWorld {
             .query_radius_unordered(entity.position, arch.scan_range, neighbors);
         candidates.clear();
         let mut result = ScanResult::default();
-        let vision = self.vision_maps.get(entity.owner.0 as usize);
+        let vision = self.vision_maps.get(entity.owner);
 
         for &neighbor_id in neighbors.iter() {
             let Some(neighbor) = self.entities.get(&neighbor_id) else {

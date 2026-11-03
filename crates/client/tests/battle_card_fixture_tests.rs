@@ -35,7 +35,9 @@ use client::battle_input::command_mode::CommandMode;
 use client::battle_pipeline::session::BattleSession;
 use client::runtime_battle::SKIRMISH_SCENARIO;
 use client::{ClientMode, LabState};
-use sim_types::{EntityId, OptionLock, PlayerCommand, ResourceKind, UnitOrder, UnitTypeId};
+use sim_types::{
+    EntityId, OptionLock, PlayerCommand, PlayerSlot, ResourceKind, UnitOrder, UnitTypeId,
+};
 
 #[allow(
     dead_code,
@@ -75,7 +77,11 @@ const FAST: u32 = 4;
 
 fn boot(root: &Path, scenario: &str) -> Harness {
     let mut harness = Harness::boot_root(root, ClientMode::Skirmish, scenario);
-    let bank = &mut harness.world_mut().player_resources[usize::from(LOCAL_PLAYER.0)];
+    let bank = harness
+        .world_mut()
+        .player_resources
+        .get_mut(LOCAL_PLAYER)
+        .expect("invariant: LOCAL_PLAYER has a player slot");
     bank.minerals = RICH;
     bank.gas = RICH;
     harness
@@ -259,7 +265,7 @@ fn gas_through_the_card_extractor_snap_harvest_and_income() {
                 .any(|unit| unit.unit_type_id == extractor && unit.is_completed)
         });
         let building = unit_of(&harness, extractor);
-        let gas_before = harness.world().player_resources[0].gas;
+        let gas_before = harness.world().player_resources[PlayerSlot::ALL[0]].gas;
         harness.look_at(gas_at);
         harness.select(worker);
         assert_eq!(harness.selection().ids(), [worker]);
@@ -282,7 +288,7 @@ fn gas_through_the_card_extractor_snap_harvest_and_income() {
         );
 
         run_until(&mut harness, "gas income", |harness| {
-            harness.world().player_resources[0].gas > gas_before
+            harness.world().player_resources[PlayerSlot::ALL[0]].gas > gas_before
         });
     });
 }
