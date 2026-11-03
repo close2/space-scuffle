@@ -288,3 +288,16 @@ fn live_battle_passes_vulkan_validation() {
     command.args(["--battle", "--max-frames", "60"]);
     gpu_run::assert_passes_validation(&mut command, "client --battle --max-frames 60");
 }
+
+/// The command line a player uses: `client --skirmish`, with the HUD and fog of the `Player`
+/// profile, through the real binary and Vulkan validation.
+#[test]
+fn skirmish_passes_vulkan_validation() {
+    if gpu_run::gpu_tests_opted_out() {
+        return;
+    }
+    let mut command = gpu_run::virtual_gpu_command(Path::new(env!("CARGO_BIN_EXE_client")));
+    command.args(["--skirmish", "--max-frames", "60"]);
+    gpu_run::allow_for_hex_tiling_driver_defect(&mut command);
+    gpu_run::assert_passes_validation(&mut command, "client --skirmish --max-frames 60");
+}
