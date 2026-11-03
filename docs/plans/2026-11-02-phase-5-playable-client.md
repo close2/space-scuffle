@@ -1523,3 +1523,68 @@ research and transport are built and tested but disabled in the real game, shown
 **Assumptions, each overridable without replanning:** remediation decision D6 stands, so procedural atlases are
 allowed in temporary test fixtures. Fog hides enemies but draws no shroud (D-10). `client` with no flags keeps opening
 the Visual Lab, and players use `--skirmish`.
+
+---
+
+## 8. Addendum: follow-ups found by WP0 to WP8 (written before WP9)
+
+Stage 1 addendum under charter §6. Packages WP0 to WP8 are merged. Each item below was found by one of them, is
+fixed before WP9's exit proof, and lands as its own commit, failing test first.
+
+**A1: the media gate asks only for what the simulation can publish (D-9).** `ClientMediaStatus::presentable` required
+every `AnimState`, including `Walk` for an immobile dome. Authentic extractor media without a walk clip would then
+stay disabled, which breaks D-9's promise that real media switches an entry on with no code change.
+
+- `sim_core/src/published_actions.rs` owns the rule `UnitCatalog::publishable_actions(&UnitArchetype) -> ActionSet`,
+  a `Copy` bit set. It reads capability data only: `Idle` always; `Constructing` when any archetype `can_raise` it;
+  `Walk` when it can ever move (mobile by default, a mode that clears `is_immobile`, or a burrow toggle); `Attack`
+  when it can move and can ever be armed; `Cast` for a harvester or a builder; never `Die`, which leaves the
+  snapshot. The module table names the writer of `Entity::current_anim` behind each rule.
+- The rule may over-approximate, never under-approximate. Two tests hold it to what worlds emit:
+  `published_actions_tests.rs` (every archetype fights and casts every ability on open ground) and
+  `full_match_tests.rs` (every snapshot of the scripted match, which adds harvesting and construction, and must
+  show all five states).
+- `load_registry` stores each identity's set beside its admission, and `presentable` checks only that set.
+- Tests: `presentable_ignores_an_action_the_simulation_never_publishes` (a shipped dome stripped of `Walk` stays
+  presentable), and `presentable_refuses_an_identity_missing_a_single_action` now strips an action the rule names.
+  The fixture root fills only the published gaps.
+
+**A2: stim admission checks the unlock (G-8 remainder).** `capable` for `UseStim` checked only the archetype, so a
+mixed selection of a researched and an unresearched overclock type was admitted whole, and the unresearched units
+silently did nothing. Add `pub fn can_overclock(world, entity, archetype) -> bool` in `battle_pipeline/commands.rs`:
+the archetype has an overclock with a positive rate, the unit can pay its health, and
+`SimWorld::is_ability_unlocked(archetype, owner, OVERCLOCK_ABILITY_SLUG)`. `capable` takes the world and calls it, so
+`submit_selection` drops the locked members and `submit` refuses a command naming one. The inspector's roster
+`Overclock` already goes through `submit_roster_order`, which now applies the rule; its button is shown only when
+`PlayerPresentation::overclock`, now counted with the same function, is non-zero. Tests: one mixed selection in
+`commands/tests.rs` (only the unlocked type receives the order, and both do after research) and the roster path.
+
+**A3: a real image of the result window.** WP8's X display grabs came back black. Capture the result window from
+the virtual X server's own framebuffer while the production child shows it, look at it, and keep it under
+`docs/evidence/` with a note on how it was made. Bevy screenshots do not count, because they show egui flat.
+
+**A4: a new match starts unpaused at normal speed.** Pause and speed live in `LabState`, so they carried into
+`Play again`. `manage_battle_scene` resets both when it commits a replacement generation. The first commit leaves
+them alone, so a harness or capture that boots paused keeps doing so. Test: pause and raise the speed through the
+HUD, finish the match, press `Play again` by a real click, and assert `Pause` is off and the speed is 1.
+
+**A5: no order marker survives into a new session.** The marker pool is spawned once, so a marker shown in the last
+0.7 s of a match survived `Play again`. `OrderMarkerAssets` records the session generation, and
+`update_order_markers` hides the whole pool and restarts the slot cycle when it changes. That system runs in
+`Present`, after `CommitSession`, so any marker issued earlier in the replacing frame belongs to the old session.
+Test: issue an order, press `Play again` within the marker's lifetime, and assert every marker is hidden.
+
+**WP9 deviations from §4, decided here.**
+
+- *Windowed child staging.* A lavapipe frame of the shipped map takes seconds, and the clock caps a frame at five
+  ticks, so the windowed child cannot earn minerals or wait out construction inside `gpu_run`'s 300 s limit. Its
+  pilot raises the foundation through real input, as in the headless run, but the child first funds the bank and
+  later sets the foundation's construction share, both through `world_mut`. That makes it a rendering test of the
+  HUD, the ghost and the fill, as §4 already says of its staged end, and its doc comment says so. The headless test
+  stages nothing.
+- *The fill check uses WP3's ring method,* not the thirds of the dome's screen rectangle, because WP3 showed the
+  thirds check passes on the broken `uv.y` shader. The child projects rings of the live foundation's surface through
+  the live camera. A ring between the early and the late share must change between the two shots far more than a
+  ring below both shares, which is built in both.
+- *Rejections the pilot provokes.* None on the path, as §4 says. The test counts `BattleCommandQueue` refusals and
+  `BattleSession::rejected` records and fails on any.
