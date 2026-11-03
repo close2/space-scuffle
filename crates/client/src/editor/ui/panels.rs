@@ -271,117 +271,132 @@ pub(super) fn render_toolbox(
         });
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "a single ordered sequence that shares its local state"
-)]
+/// Options shared by the Brush and Box tools: the brush shape (Brush only), then the paint mode.
 fn render_paint_options(ui: &mut egui::Ui, tool_state: &mut EditorToolState) {
     if tool_state.current_tool == EditorTool::Brush {
-        ui.label("Brush Shape:");
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut tool_state.brush_shape, BrushShape::Circle, "Circle");
-            ui.selectable_value(&mut tool_state.brush_shape, BrushShape::Square, "Square");
-        });
-
-        ui.add_space(4.0);
-        ui.label(format!("Radius: {} ([ / ])", tool_state.brush_radius));
-        let mut r = tool_state.brush_radius;
-        if ui
-            .add(egui::Slider::new(&mut r, 1..=MAX_BRUSH_RADIUS))
-            .changed()
-        {
-            tool_state.brush_radius = r;
-        }
-        ui.separator();
+        render_brush_shape_options(ui, tool_state);
     }
 
     ui.label("Paint Mode:");
     ui.group(|ui| {
-        ui.label("Cliff Level (1–4):");
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut tool_state.paint_op, PaintOp::Level(CliffLevel(0)), "0");
-            ui.selectable_value(&mut tool_state.paint_op, PaintOp::Level(CliffLevel(1)), "1");
-            ui.selectable_value(&mut tool_state.paint_op, PaintOp::Level(CliffLevel(2)), "2");
-            ui.selectable_value(&mut tool_state.paint_op, PaintOp::Level(CliffLevel(3)), "3");
-        });
-
+        render_cliff_level_ops(ui, tool_state);
         ui.add_space(4.0);
-        ui.label("Terrain Surface:");
-        ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(
-                &mut tool_state.paint_op,
-                PaintOp::Terrain(TerrainKind::Dirt),
-                "Dirt",
-            );
-            ui.selectable_value(
-                &mut tool_state.paint_op,
-                PaintOp::Terrain(TerrainKind::Grass),
-                "Grass",
-            );
-            ui.selectable_value(
-                &mut tool_state.paint_op,
-                PaintOp::Terrain(TerrainKind::MetalPlate),
-                "Metal",
-            );
-            ui.selectable_value(
-                &mut tool_state.paint_op,
-                PaintOp::Terrain(TerrainKind::Abyss),
-                "Abyss",
-            );
-        });
-
+        render_terrain_surface_ops(ui, tool_state);
         ui.add_space(4.0);
-        ui.label("Authorable Flags:");
-        ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(
-                &mut tool_state.paint_op,
-                PaintOp::Flag {
-                    flag: AuthorableFlag::GroundPathable,
-                    value: true,
-                },
-                "+Path",
-            );
-            ui.selectable_value(
-                &mut tool_state.paint_op,
-                PaintOp::Flag {
-                    flag: AuthorableFlag::GroundPathable,
-                    value: false,
-                },
-                "-Path",
-            );
-            ui.selectable_value(
-                &mut tool_state.paint_op,
-                PaintOp::Flag {
-                    flag: AuthorableFlag::Buildable,
-                    value: true,
-                },
-                "+Build",
-            );
-            ui.selectable_value(
-                &mut tool_state.paint_op,
-                PaintOp::Flag {
-                    flag: AuthorableFlag::Buildable,
-                    value: false,
-                },
-                "-Build",
-            );
-            ui.selectable_value(
-                &mut tool_state.paint_op,
-                PaintOp::Flag {
-                    flag: AuthorableFlag::LosBlocker,
-                    value: true,
-                },
-                "+LosBlock",
-            );
-            ui.selectable_value(
-                &mut tool_state.paint_op,
-                PaintOp::Flag {
-                    flag: AuthorableFlag::LosBlocker,
-                    value: false,
-                },
-                "-LosBlock",
-            );
-        });
+        render_authorable_flag_ops(ui, tool_state);
+    });
+}
+
+/// Brush shape and radius (cells, `1..=MAX_BRUSH_RADIUS`), followed by a separator.
+fn render_brush_shape_options(ui: &mut egui::Ui, tool_state: &mut EditorToolState) {
+    ui.label("Brush Shape:");
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut tool_state.brush_shape, BrushShape::Circle, "Circle");
+        ui.selectable_value(&mut tool_state.brush_shape, BrushShape::Square, "Square");
+    });
+
+    ui.add_space(4.0);
+    ui.label(format!("Radius: {} ([ / ])", tool_state.brush_radius));
+    let mut r = tool_state.brush_radius;
+    if ui
+        .add(egui::Slider::new(&mut r, 1..=MAX_BRUSH_RADIUS))
+        .changed()
+    {
+        tool_state.brush_radius = r;
+    }
+    ui.separator();
+}
+
+/// Paint operations that set the cliff level.
+fn render_cliff_level_ops(ui: &mut egui::Ui, tool_state: &mut EditorToolState) {
+    ui.label("Cliff Level (1–4):");
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut tool_state.paint_op, PaintOp::Level(CliffLevel(0)), "0");
+        ui.selectable_value(&mut tool_state.paint_op, PaintOp::Level(CliffLevel(1)), "1");
+        ui.selectable_value(&mut tool_state.paint_op, PaintOp::Level(CliffLevel(2)), "2");
+        ui.selectable_value(&mut tool_state.paint_op, PaintOp::Level(CliffLevel(3)), "3");
+    });
+}
+
+/// Paint operations that set the terrain surface kind.
+fn render_terrain_surface_ops(ui: &mut egui::Ui, tool_state: &mut EditorToolState) {
+    ui.label("Terrain Surface:");
+    ui.horizontal_wrapped(|ui| {
+        ui.selectable_value(
+            &mut tool_state.paint_op,
+            PaintOp::Terrain(TerrainKind::Dirt),
+            "Dirt",
+        );
+        ui.selectable_value(
+            &mut tool_state.paint_op,
+            PaintOp::Terrain(TerrainKind::Grass),
+            "Grass",
+        );
+        ui.selectable_value(
+            &mut tool_state.paint_op,
+            PaintOp::Terrain(TerrainKind::MetalPlate),
+            "Metal",
+        );
+        ui.selectable_value(
+            &mut tool_state.paint_op,
+            PaintOp::Terrain(TerrainKind::Abyss),
+            "Abyss",
+        );
+    });
+}
+
+/// Paint operations that set or clear one authorable cell flag.
+fn render_authorable_flag_ops(ui: &mut egui::Ui, tool_state: &mut EditorToolState) {
+    ui.label("Authorable Flags:");
+    ui.horizontal_wrapped(|ui| {
+        ui.selectable_value(
+            &mut tool_state.paint_op,
+            PaintOp::Flag {
+                flag: AuthorableFlag::GroundPathable,
+                value: true,
+            },
+            "+Path",
+        );
+        ui.selectable_value(
+            &mut tool_state.paint_op,
+            PaintOp::Flag {
+                flag: AuthorableFlag::GroundPathable,
+                value: false,
+            },
+            "-Path",
+        );
+        ui.selectable_value(
+            &mut tool_state.paint_op,
+            PaintOp::Flag {
+                flag: AuthorableFlag::Buildable,
+                value: true,
+            },
+            "+Build",
+        );
+        ui.selectable_value(
+            &mut tool_state.paint_op,
+            PaintOp::Flag {
+                flag: AuthorableFlag::Buildable,
+                value: false,
+            },
+            "-Build",
+        );
+        ui.selectable_value(
+            &mut tool_state.paint_op,
+            PaintOp::Flag {
+                flag: AuthorableFlag::LosBlocker,
+                value: true,
+            },
+            "+LosBlock",
+        );
+        ui.selectable_value(
+            &mut tool_state.paint_op,
+            PaintOp::Flag {
+                flag: AuthorableFlag::LosBlocker,
+                value: false,
+            },
+            "-LosBlock",
+        );
     });
 }
 
