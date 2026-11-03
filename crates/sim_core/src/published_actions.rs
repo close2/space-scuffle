@@ -146,6 +146,7 @@ mod tests {
 
     fn shipped() -> UnitCatalog {
         UnitCatalog::from_ron_str_bundle(
+            &crate::test_support::shipped_factions(),
             include_str!("../../../assets/catalog/units.ron"),
             include_str!("../../../assets/catalog/structures.ron"),
         )

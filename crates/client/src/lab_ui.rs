@@ -17,7 +17,7 @@ use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use sim_core::catalog::{UnitArchetype, UnitCatalog};
 use sim_types::commands::UnitOrder;
-use sim_types::enums::{AnimState, AttributeFlags, Faction};
+use sim_types::enums::{AnimState, AttributeFlags};
 use sim_types::ids::PlayerId;
 use sim_types::math::SimVec2;
 use sim_types::snapshot::CombatEventVisual;
@@ -927,7 +927,7 @@ fn render_selected_unit_hud(
                 // Right unit lore, faction badge, live vitals, weapon stats, and quick-select buttons
                 ui.vertical(|ui| {
                     if let Some(arch) = arch {
-                        render_unit_identity_row(ui, lab_state, arch);
+                        render_unit_identity_row(ui, lab_state, catalog, arch);
                         render_unit_role_row(ui, arch);
                         ui.separator();
                         render_unit_combat_rows(ui, lab_state, arch);
@@ -1007,25 +1007,35 @@ fn render_unit_portrait(
     );
 }
 
-/// The faction badge of `arch`: its display name and its sRGB badge colour.
-fn faction_badge(arch: &UnitArchetype) -> (&'static str, egui::Color32) {
-    match arch.faction {
-        Faction::AutomatonDirectorate => (
-            "Automaton Directorate",
-            egui::Color32::from_rgb(60, 150, 255),
-        ),
-        Faction::CosmicEnclave => ("Cosmic Enclave", egui::Color32::from_rgb(50, 230, 230)),
-        Faction::SylvanSwarm => ("Sylvan Swarm", egui::Color32::from_rgb(255, 120, 40)),
-    }
+/// The faction badge of `arch`: its faction's display name and sRGB accent colour, both read
+/// from `assets/catalog/factions.ron` through the catalog. `None` for an archetype whose faction
+/// the catalog does not define, which only programmatic registration can produce.
+fn faction_badge<'a>(
+    catalog: &'a UnitCatalog,
+    arch: &UnitArchetype,
+) -> Option<(&'a str, egui::Color32)> {
+    let faction = catalog.factions().faction(arch.faction)?;
+    let (red, green, blue) = faction.accent_srgb;
+    Some((
+        faction.display_name.as_str(),
+        egui::Color32::from_rgb(red, green, blue),
+    ))
 }
 
 /// Faction badge and names on the left; health and shields, scaled by the lab's ratios, on the
 /// right.
-fn render_unit_identity_row(ui: &mut egui::Ui, lab_state: &LabState, arch: &UnitArchetype) {
-    let (faction_name, faction_color) = faction_badge(arch);
+fn render_unit_identity_row(
+    ui: &mut egui::Ui,
+    lab_state: &LabState,
+    catalog: &UnitCatalog,
+    arch: &UnitArchetype,
+) {
+    let badge = faction_badge(catalog, arch);
 
     ui.horizontal_wrapped(|ui| {
-        ui.colored_label(faction_color, format!("[ {faction_name} ]"));
+        if let Some((faction_name, faction_color)) = badge {
+            ui.colored_label(faction_color, format!("[ {faction_name} ]"));
+        }
         ui.strong(format!("{} — {}", arch.display_name, arch.name));
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

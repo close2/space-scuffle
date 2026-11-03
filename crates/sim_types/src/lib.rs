@@ -36,13 +36,13 @@ pub use commands::{
     UnitOrder,
 };
 pub use enums::{
-    AnimState, AttributeFlags, Faction, MoverType, ResourceKind, ShapeKind, SilhouetteClass,
+    AnimState, AttributeFlags, MoverType, ResourceKind, ShapeKind, SilhouetteClass,
     VisibilityState, WeaponVisualKind,
 };
 pub use errors::MathError;
 pub use ids::{
-    EntityId, PerPlayer, PlayerId, PlayerSlot, PlayerSlotError, ResourceNodeId, TeamId, Tick,
-    UnitTypeId, MAX_PLAYERS,
+    ArmorClassId, EntityId, FactionId, PerPlayer, PlayerId, PlayerSlot, PlayerSlotError,
+    ResourceNodeId, TeamId, Tick, UnitTypeId, WeaponClassId, MAX_PLAYERS,
 };
 pub use math::{SimAngle, SimScalar, SimVec2};
 pub use player_view::{
@@ -54,8 +54,7 @@ pub use snapshot::{
     ResourceNodeView,
 };
 pub use upgrades::{
-    ArmorClass, PlayerUpgradeState, UnitStatDeltas, UpgradeApplicationError, UpgradeEffect,
-    UpgradeStat, WeaponClass,
+    PlayerUpgradeState, UnitStatDeltas, UpgradeApplicationError, UpgradeEffect, UpgradeStat,
 };
 pub use weapon::{
     default_projectile_lifetime_ticks, ProjectileTargetLossBehavior, SplashSpec, WeaponSpec,

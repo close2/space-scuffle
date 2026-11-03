@@ -56,8 +56,8 @@ fn skirmish() -> Result<SimWorld, Box<dyn Error>> {
         &loadouts,
         &manifest.players,
         3,
-        UnitCatalog::from_ron_str_bundle(UNITS, STRUCTURES)?,
-        UpgradeCatalog::from_ron_str(UPGRADES)?,
+        UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), UNITS, STRUCTURES)?,
+        UpgradeCatalog::from_ron_str(&sim_fixtures::shipped_factions(), UPGRADES)?,
     )?)
 }
 
@@ -1017,7 +1017,8 @@ fn can_raise_matches_admission_for_every_catalog_pair() -> TestResult {
         Vec::new(),
     )?;
     let mut world = sim_fixtures::world(map, 5);
-    world.catalog = UnitCatalog::from_ron_str_bundle(UNITS, STRUCTURES)?;
+    world.catalog =
+        UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), UNITS, STRUCTURES)?;
     world.player_resources[PlayerSlot::ALL[0]].minerals = RICH;
     world.player_resources[PlayerSlot::ALL[0]].gas = RICH;
     let ids: Vec<UnitTypeId> = world.catalog.archetypes().map(|a| a.unit_type_id).collect();

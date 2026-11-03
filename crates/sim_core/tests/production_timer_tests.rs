@@ -45,7 +45,7 @@ impl Fixture {
             "real catalog must define production durations"
         );
         edited.push_str(rest);
-        let mut catalog = UnitCatalog::from_ron_str(&edited)?;
+        let mut catalog = UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &edited)?;
         assert!(catalog.archetypes().all(|a| a.build_time_ticks == duration));
         catalog.load_structures_from_ron_str(&std::fs::read_to_string(
             directory.join("structures.ron"),

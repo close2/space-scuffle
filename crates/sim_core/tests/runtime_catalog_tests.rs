@@ -14,7 +14,13 @@ use sim_types::{PlayerId, SimScalar, SimVec2, UnitTypeId};
 use std::path::{Path, PathBuf};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
-const FILES: [&str; 3] = ["units.ron", "structures.ron", "upgrades.ron"];
+/// The rule files a bundle holds; `factions.ron` is last so the indices of the others are stable.
+const FILES: [&str; 4] = [
+    "units.ron",
+    "structures.ron",
+    "upgrades.ron",
+    "factions.ron",
+];
 
 fn catalog_directory() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")
@@ -255,11 +261,11 @@ fn missing_and_malformed_selected_files_fail_with_exact_path() -> TestResult {
 fn authored_identity_conflicts_and_narrowing_errors_are_typed() -> TestResult {
     let units = std::fs::read_to_string(catalog_directory().join(FILES[0]))?;
     let structures = std::fs::read_to_string(catalog_directory().join(FILES[1]))?;
-    let base = UnitCatalog::from_ron_str(&units)?;
+    let base = UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &units)?;
     let first = base.archetypes().next().expect("unit catalog nonempty");
     let duplicated = duplicate_definitions(&units, "units", str::to_owned);
     assert!(matches!(
-        UnitCatalog::from_ron_str(&duplicated),
+        UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &duplicated),
         Err(SimCoreError::CatalogDuplicateId { .. })
     ));
     let duplicate_slug = duplicate_definitions(&units, "units", |definitions| {
@@ -271,7 +277,7 @@ fn authored_identity_conflicts_and_narrowing_errors_are_typed() -> TestResult {
         )
     });
     assert!(matches!(
-        UnitCatalog::from_ron_str(&duplicate_slug),
+        UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &duplicate_slug),
         Err(SimCoreError::CatalogDuplicateSlug { .. })
     ));
     let cross_id = replace_first_field(
@@ -280,7 +286,7 @@ fn authored_identity_conflicts_and_narrowing_errors_are_typed() -> TestResult {
         &first.unit_type_id.0.to_string(),
     );
     assert!(matches!(
-        UnitCatalog::from_ron_str_bundle(&units, &cross_id),
+        UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), &units, &cross_id),
         Err(SimCoreError::CatalogDuplicateId { .. })
     ));
     let cross_slug = replace_first_field(
@@ -289,7 +295,7 @@ fn authored_identity_conflicts_and_narrowing_errors_are_typed() -> TestResult {
         &format!("{:?}", first.slug.to_ascii_uppercase()),
     );
     assert!(matches!(
-        UnitCatalog::from_ron_str_bundle(&units, &cross_slug),
+        UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), &units, &cross_slug),
         Err(SimCoreError::CatalogDuplicateSlug { .. })
     ));
     for (field, value) in [
@@ -300,12 +306,12 @@ fn authored_identity_conflicts_and_narrowing_errors_are_typed() -> TestResult {
     ] {
         let invalid = replace_first_field(&structures, field, value);
         assert!(
-            matches!(UnitCatalog::from_ron_str_bundle(&units, &invalid), Err(SimCoreError::CatalogInvalidValue { field: reported, .. }) if reported == field)
+            matches!(UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), &units, &invalid), Err(SimCoreError::CatalogInvalidValue { field: reported, .. }) if reported == field)
         );
     }
     let invalid_slug = replace_first_field(&units, "slug", "\"\"");
     assert!(matches!(
-        UnitCatalog::from_ron_str(&invalid_slug),
+        UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &invalid_slug),
         Err(SimCoreError::CatalogInvalidValue { .. })
     ));
     Ok(())
@@ -385,7 +391,7 @@ fn invalid_numbers_fail_before_fixed_point_conversion_with_file_context() -> Tes
 fn structure_additions_are_atomic_on_a_late_identity_error() -> TestResult {
     let units = std::fs::read_to_string(catalog_directory().join(FILES[0]))?;
     let structures = std::fs::read_to_string(catalog_directory().join(FILES[1]))?;
-    let mut catalog = UnitCatalog::from_ron_str(&units)?;
+    let mut catalog = UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &units)?;
     let original = catalog.clone();
     let duplicated = duplicate_definitions(&structures, "structures", str::to_owned);
     assert!(matches!(
@@ -404,7 +410,7 @@ fn upgrade_duplicates_fail_and_sparse_ids_do_not_require_dense_storage() -> Test
     let source = std::fs::read_to_string(catalog_directory().join(FILES[2]))?;
     let duplicated = duplicate_definitions(&source, "upgrades", str::to_owned);
     assert!(matches!(
-        UpgradeCatalog::from_ron_str(&duplicated),
+        UpgradeCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &duplicated),
         Err(SimCoreError::CatalogDuplicateId {
             kind: "upgrade",
             ..
@@ -414,14 +420,14 @@ fn upgrade_duplicates_fail_and_sparse_ids_do_not_require_dense_storage() -> Test
         replace_first_field(definitions, "upgrade_id", &u32::MAX.to_string())
     });
     assert!(matches!(
-        UpgradeCatalog::from_ron_str(&duplicated_slug),
+        UpgradeCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &duplicated_slug),
         Err(SimCoreError::CatalogDuplicateSlug {
             kind: "upgrade",
             ..
         })
     ));
     let sparse = replace_first_field(&source, "upgrade_id", &u32::MAX.to_string());
-    let catalog = UpgradeCatalog::from_ron_str(&sparse)?;
+    let catalog = UpgradeCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &sparse)?;
     assert!(catalog.get_by_id(u32::MAX).is_some());
     assert!(catalog
         .upgrades()
@@ -439,7 +445,7 @@ fn slug_index_tracks_mutations_clones_and_storage_identity() -> TestResult {
         .next()
         .expect("catalog contains an archetype")
         .clone();
-    let mut catalog = UnitCatalog::from_ron_str("(units: [])")?;
+    let mut catalog = UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), "(units: [])")?;
     for (id, slug) in [
         (3, "fixture-gamma"),
         (2, "fixture-beta"),

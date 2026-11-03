@@ -1,8 +1,8 @@
 //! Weapon specifications, firing geometry envelopes, and splash profiles.
 
 use crate::enums::{AttributeFlags, WeaponVisualKind};
+use crate::ids::WeaponClassId;
 use crate::math::{SimAngle, SimScalar};
-use crate::upgrades::WeaponClass;
 use serde::{Deserialize, Serialize};
 
 /// Concentric circular splash falloff parameters (`StarCraft` II standard).
@@ -88,9 +88,10 @@ pub struct WeaponSpec {
     pub splash: Option<SplashSpec>,
     /// Projectile linear flight speed per tick (`None` for hitscan / continuous beams).
     pub projectile_speed: Option<SimScalar>,
-    /// High-level weapon classification determining which scaling upgrade applies.
+    /// Weapon class whose `WeaponDamageLevel` upgrades scale this weapon, resolved from its
+    /// slug in `assets/catalog/factions.ron`; `None` for a weapon no upgrade scales.
     #[serde(default)]
-    pub weapon_class: Option<WeaponClass>,
+    pub weapon_class: Option<WeaponClassId>,
     /// Damage increase per upgrade level.
     #[serde(default)]
     pub upgrade_bonus_per_level: SimScalar,

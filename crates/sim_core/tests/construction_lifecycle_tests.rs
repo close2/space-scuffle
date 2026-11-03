@@ -519,7 +519,7 @@ fn a_foundation_can_be_destroyed_for_no_refund_and_does_not_fight() -> TestResul
             matches!(a.shape, ShapeKind::BuildingDome { .. })
                 && a.ground_weapon.is_some()
                 && a.requires_structures.is_empty()
-                && a.faction == world_faction(&world)
+                && Some(a.faction) == world_faction(&world)
         })
         .map(|a| a.unit_type_id);
     let dome = turret.unwrap_or(id_of(&world, "capacitor_dome")?);
@@ -549,12 +549,13 @@ fn a_foundation_can_be_destroyed_for_no_refund_and_does_not_fight() -> TestResul
     Ok(())
 }
 
-fn world_faction(world: &SimWorld) -> sim_types::Faction {
+/// The faction of the catalog's first builder, if it has one.
+fn world_faction(world: &SimWorld) -> Option<sim_types::FactionId> {
     world
         .catalog
         .archetypes()
         .find(|a| a.capabilities.can_construct)
-        .map_or(sim_types::Faction::AutomatonDirectorate, |a| a.faction)
+        .map(|a| a.faction)
 }
 
 #[test]

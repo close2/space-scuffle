@@ -13,21 +13,27 @@
 //! 3. **O(1) Indexed Lookups:** Archetypes are registered by [`UnitTypeId`] in a contiguous slab.
 //! 4. **Capability-Driven Simulation:** Capabilities (overclock/stim, harvesting, resource dropoff)
 //!    are modeled as explicit optional specs, enabling data-driven behaviors.
+//! 5. **Factions and Classes Are Data:** Definitions name their faction, weapon class and armor
+//!    class by slug; loading resolves each against the catalog's [`FactionCatalog`]
+//!    (`assets/catalog/factions.ron`) and fails with a typed error naming the definition when a
+//!    slug is unknown. The catalog keeps that [`FactionCatalog`] for presentation lookups.
 
 use crate::error::{SimCoreError, SimResult};
 use crate::upgrades::{UpgradeCatalog, OVERCLOCK_ABILITY_SLUG};
 use serde::{Deserialize, Serialize};
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
-    default_projectile_lifetime_ticks, AbilitySpec, AnimState, ArchetypeCapabilities, ArmorClass,
-    AttributeFlags, Faction, HarvesterSpec, MoverType, OverclockSpec, ProjectileTargetLossBehavior,
-    ShapeKind, SilhouetteClass, SimAngle, SimScalar, UnitModeSpec, UnitTypeId, UpgradeEffect,
-    WeaponClass, WeaponVisualKind,
+    default_projectile_lifetime_ticks, AbilitySpec, AnimState, ArchetypeCapabilities, ArmorClassId,
+    AttributeFlags, FactionId, HarvesterSpec, MoverType, OverclockSpec,
+    ProjectileTargetLossBehavior, ShapeKind, SilhouetteClass, SimAngle, SimScalar, UnitModeSpec,
+    UnitTypeId, UpgradeEffect, WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, WeaponSpec};
+mod factions;
 mod runtime;
 mod validation;
 
+pub use factions::{ArmorClassDef, FactionCatalog, FactionDef, WeaponClassDef};
 pub use runtime::{CatalogLoadError, RuntimeCatalogs};
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -43,8 +49,8 @@ pub struct UnitArchetype {
     pub slug: String,
     /// Canonical name (matches slug for backwards compatibility).
     pub name: String,
-    /// Canonical faction classification.
-    pub faction: Faction,
+    /// Faction this archetype belongs to, resolved from its slug in `factions.ron`.
+    pub faction: FactionId,
     /// Human-readable official display name (e.g. "Aegis Pulse Bot").
     pub display_name: String,
     /// Lore background description.
@@ -140,9 +146,10 @@ pub struct UnitArchetype {
     /// Upgrade slugs that can be researched at this dome.
     #[serde(default)]
     pub researches_upgrades: Vec<String>,
-    /// High-level life armor classification determining which armor plating upgrade applies.
+    /// Armor class whose `ArmorLevel` upgrades raise this hull's life armor, resolved from its
+    /// slug in `factions.ron`; `None` for a hull no upgrade raises.
     #[serde(default)]
-    pub armor_class: Option<ArmorClass>,
+    pub armor_class: Option<ArmorClassId>,
     /// Declarative transformation stances and operational modes (e.g. Siege Mode, Burrowed Mode).
     #[serde(default)]
     pub modes: Vec<UnitModeSpec>,
@@ -249,28 +256,39 @@ impl UnitArchetype {
 pub struct UnitCatalog {
     archetypes: Vec<Option<UnitArchetype>>,
     slug_index: OnceLock<Vec<(String, usize)>>,
+    factions: FactionCatalog,
 }
 
 impl UnitCatalog {
-    /// Deserializes a catalog from a raw RON string.
+    /// Deserializes a catalog from a raw RON string, resolving faction and class slugs against
+    /// `factions`, which the catalog keeps (see [`Self::factions`]).
     ///
     /// # Errors
     /// Returns [`SimCoreError`] for malformed RON, duplicate identities, blank slugs,
-    /// or numeric values that cannot be safely converted to simulation types.
-    pub fn from_ron_str(ron_data: &str) -> SimResult<Self> {
+    /// numeric values that cannot be safely converted to simulation types, or a faction or
+    /// class slug `factions` does not define ([`SimCoreError::UnknownFaction`],
+    /// [`SimCoreError::UnknownWeaponClass`], [`SimCoreError::UnknownArmorClass`]).
+    pub fn from_ron_str(factions: &FactionCatalog, ron_data: &str) -> SimResult<Self> {
         let catalog_file: CatalogFile = ron::from_str(ron_data)
             .map_err(|e| SimCoreError::RonDeserializationError(e.to_string()))?;
 
         let mut catalog = Self {
             archetypes: vec![None; 128],
             slug_index: OnceLock::new(),
+            factions: factions.clone(),
         };
         catalog.register_authored_batch(catalog_file.units.into_iter().map(|def| {
             def.validate()?;
-            Ok(def.into_archetype())
+            def.into_archetype(factions)
         }))?;
         catalog.slug_index();
         Ok(catalog)
+    }
+
+    /// The faction, weapon-class and armor-class identities this catalog was resolved against.
+    #[must_use]
+    pub fn factions(&self) -> &FactionCatalog {
+        &self.factions
     }
 
     /// Loads additional structures from a raw RON string and registers them into the catalog.
@@ -285,45 +303,52 @@ impl UnitCatalog {
         // Stage the complete addition so a later malformed definition cannot leave
         // callers with an unexpectedly partially modified catalog.
         let mut staged = self.clone();
+        let factions = &self.factions;
         staged.register_authored_batch(catalog_file.structures.into_iter().map(|def| {
             def.validate()?;
-            Ok(def.into_archetype())
+            def.into_archetype(factions)
         }))?;
         staged.slug_index();
         *self = staged;
         Ok(())
     }
 
-    /// Deserializes and consolidates both units and structures RON strings into a unified catalog.
+    /// Deserializes and consolidates both units and structures RON strings into a unified catalog,
+    /// resolving faction and class slugs against `factions`.
     ///
     /// # Errors
-    /// Returns [`SimCoreError`] if either file is malformed, contains unsafe values,
-    /// or reuses an ID or ASCII-insensitive slug within the combined catalog.
-    pub fn from_ron_str_bundle(units_ron: &str, structures_ron: &str) -> SimResult<Self> {
-        let mut catalog = Self::from_ron_str(units_ron)?;
+    /// Returns [`SimCoreError`] if either file is malformed, contains unsafe values, names an
+    /// unknown faction or class, or reuses an ID or ASCII-insensitive slug within the combined
+    /// catalog.
+    pub fn from_ron_str_bundle(
+        factions: &FactionCatalog,
+        units_ron: &str,
+        structures_ron: &str,
+    ) -> SimResult<Self> {
+        let mut catalog = Self::from_ron_str(factions, units_ron)?;
         catalog.load_structures_from_ron_str(structures_ron)?;
         catalog.validate_production_references()?;
         Ok(catalog)
     }
 
-    /// Deserializes the catalog from an on-disk path.
+    /// Deserializes the units file at `path`, resolving slugs against `factions`.
     ///
     /// # Errors
-    /// Returns [`SimCoreError::IoError`] if the file cannot be read,
-    /// or [`SimCoreError::RonDeserializationError`] if parsing fails.
-    pub fn load_from_file(path: impl AsRef<Path>) -> SimResult<Self> {
+    /// Returns [`SimCoreError::IoError`] if the file cannot be read, or any error of
+    /// [`Self::from_ron_str`].
+    pub fn load_from_file(factions: &FactionCatalog, path: impl AsRef<Path>) -> SimResult<Self> {
         let content = std::fs::read_to_string(path.as_ref())
             .map_err(|e| SimCoreError::IoError(e.to_string()))?;
-        Self::from_ron_str(&content)
+        Self::from_ron_str(factions, &content)
     }
 
     /// Alias for [`Self::load_from_file`].
     ///
     /// # Errors
-    /// Returns [`SimCoreError::IoError`] if the file cannot be read,
-    /// or [`SimCoreError::RonDeserializationError`] if parsing fails.
-    pub fn from_file(path: impl AsRef<Path>) -> SimResult<Self> {
-        Self::load_from_file(path)
+    /// Returns [`SimCoreError::IoError`] if the file cannot be read, or any error of
+    /// [`Self::from_ron_str`].
+    pub fn from_file(factions: &FactionCatalog, path: impl AsRef<Path>) -> SimResult<Self> {
+        Self::load_from_file(factions, path)
     }
 
     /// Registers or replaces an archetype at its numeric ID for programmatic editing.
@@ -714,8 +739,21 @@ struct UnitModeSpecDef {
 }
 
 impl UnitModeSpecDef {
-    fn into_mode_spec(self) -> UnitModeSpec {
-        UnitModeSpec {
+    fn into_mode_spec(
+        self,
+        factions: &FactionCatalog,
+        definition: &str,
+    ) -> SimResult<UnitModeSpec> {
+        let resolve = |weapon: Option<Option<WeaponSpecDef>>| {
+            weapon
+                .map(|w_opt| {
+                    w_opt
+                        .map(|w| UnitArchetypeDef::convert_weapon(w, factions, definition))
+                        .transpose()
+                })
+                .transpose()
+        };
+        Ok(UnitModeSpec {
             mode_name: self.mode_name,
             cast_ticks: self.cast_ticks,
             is_immobile: self.is_immobile,
@@ -723,14 +761,10 @@ impl UnitModeSpecDef {
             is_cloaked: self.is_cloaked,
             mover_type_override: self.mover_type_override,
             sight_radius_override: self.sight_radius_override.map(SimScalar::from_f32_lossy),
-            ground_weapon_override: self
-                .ground_weapon_override
-                .map(|w_opt| w_opt.map(UnitArchetypeDef::convert_weapon)),
-            air_weapon_override: self
-                .air_weapon_override
-                .map(|w_opt| w_opt.map(UnitArchetypeDef::convert_weapon)),
+            ground_weapon_override: resolve(self.ground_weapon_override)?,
+            air_weapon_override: resolve(self.air_weapon_override)?,
             energy_cost_per_second: SimScalar::from_f32_lossy(self.energy_cost_per_second),
-        }
+        })
     }
 }
 
@@ -763,7 +797,7 @@ struct WeaponSpecDef {
     splash: Option<SplashSpecDef>,
     projectile_speed: Option<f32>,
     #[serde(default)]
-    weapon_class: Option<WeaponClass>,
+    weapon_class: Option<String>,
     #[serde(default)]
     upgrade_bonus_per_level: f32,
     #[serde(default)]
@@ -780,7 +814,7 @@ struct WeaponSpecDef {
 struct UnitArchetypeDef {
     slug: String,
     unit_type_id: u16,
-    faction: Faction,
+    faction: String,
     display_name: String,
     lore: String,
     sc2_analogue: String,
@@ -832,7 +866,7 @@ struct UnitArchetypeDef {
     #[serde(default)]
     researches_upgrades: Vec<String>,
     #[serde(default)]
-    armor_class: Option<ArmorClass>,
+    armor_class: Option<String>,
     #[serde(default)]
     modes: Vec<UnitModeSpecDef>,
 }
@@ -856,8 +890,18 @@ impl UnitArchetypeDef {
         }
     }
 
-    fn convert_weapon(w: WeaponSpecDef) -> WeaponSpec {
-        WeaponSpec {
+    /// Converts an authored weapon of the definition `definition`, resolving its class slug.
+    fn convert_weapon(
+        w: WeaponSpecDef,
+        factions: &FactionCatalog,
+        definition: &str,
+    ) -> SimResult<WeaponSpec> {
+        let weapon_class = w
+            .weapon_class
+            .as_deref()
+            .map(|slug| factions.resolve_weapon_class(definition, slug))
+            .transpose()?;
+        Ok(WeaponSpec {
             name: w.name,
             visual_kind: w.visual_kind,
             target_flags: w.target_flags.into_flags(),
@@ -892,89 +936,112 @@ impl UnitArchetypeDef {
                 friendly_fire: s.friendly_fire,
             }),
             projectile_speed: w.projectile_speed.map(SimScalar::from_f32_lossy),
-            weapon_class: w.weapon_class,
+            weapon_class,
             upgrade_bonus_per_level: SimScalar::from_f32_lossy(w.upgrade_bonus_per_level),
             bonus_upgrade_per_level: SimScalar::from_f32_lossy(w.bonus_upgrade_per_level),
             target_loss_behavior: w.target_loss_behavior,
             max_projectile_lifetime_ticks: w.max_projectile_lifetime_ticks,
             suicide_on_attack: w.suicide_on_attack,
+        })
+    }
+
+    /// The authored hull turn rate (`turn_rate_deg`, degrees per tick) clamped to `0..=180`.
+    fn turn_rate(&self) -> SimAngle {
+        let deg = self.turn_rate_deg.clamp(0.0, 180.0);
+        if deg >= 180.0 {
+            SimAngle::PI
+        } else {
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "clamped to 0..180 above, and rates are authored in whole degrees"
+            )]
+            SimAngle::from_degrees(deg as i32)
         }
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one flat field mapping from the authored definition"
-    )]
-    fn into_archetype(self) -> UnitArchetype {
-        let overclock = self.capabilities.overclock.map(|o| OverclockSpec {
+    /// The capability bundle, abilities and modes of this definition.
+    ///
+    /// Abilities and modes authored under `capabilities` take precedence over the legacy
+    /// top-level lists. Mode weapon overrides resolve their class against `factions`.
+    fn capabilities(
+        &mut self,
+        factions: &FactionCatalog,
+    ) -> SimResult<(ArchetypeCapabilities, Vec<AbilitySpec>, Vec<UnitModeSpec>)> {
+        let authored = std::mem::take(&mut self.capabilities);
+        let overclock = authored.overclock.map(|o| OverclockSpec {
             hp_cost: SimScalar::from_f32_lossy(o.hp_cost),
             duration_ticks: o.duration_ticks,
             speed_multiplier: SimScalar::from_f32_lossy(o.speed_multiplier),
             attack_rate_multiplier: SimScalar::from_f32_lossy(o.attack_rate_multiplier),
         });
-
-        let harvester = self.capabilities.harvester.map(|h| HarvesterSpec {
+        let harvester = authored.harvester.map(|h| HarvesterSpec {
             harvest_capacity: h.harvest_capacity,
             harvest_rate_ticks: h.harvest_rate_ticks,
         });
-
-        let is_resource_dropoff = self.capabilities.is_resource_dropoff;
-
-        let abilities = if self.capabilities.abilities.is_empty() {
-            self.abilities
+        let abilities = if authored.abilities.is_empty() {
+            std::mem::take(&mut self.abilities)
         } else {
-            self.capabilities.abilities
+            authored.abilities
         };
-
-        let modes: Vec<UnitModeSpec> = if self.capabilities.modes.is_empty() {
-            self.modes
-                .into_iter()
-                .map(UnitModeSpecDef::into_mode_spec)
-                .collect()
+        let authored_modes = if authored.modes.is_empty() {
+            std::mem::take(&mut self.modes)
         } else {
-            self.capabilities
-                .modes
-                .into_iter()
-                .map(UnitModeSpecDef::into_mode_spec)
-                .collect()
+            authored.modes
         };
-
+        let modes = authored_modes
+            .into_iter()
+            .map(|mode| mode.into_mode_spec(factions, &self.slug))
+            .collect::<SimResult<Vec<_>>>()?;
         let capabilities = ArchetypeCapabilities {
             overclock,
             harvester,
-            is_resource_dropoff,
+            is_resource_dropoff: authored.is_resource_dropoff,
             is_gas_extractor: false,
-            can_construct: self.capabilities.can_construct,
-            transport_capacity: self.capabilities.transport_capacity,
+            can_construct: authored.can_construct,
+            transport_capacity: authored.transport_capacity,
             abilities: abilities.clone(),
             modes: modes.clone(),
         };
+        Ok((capabilities, abilities, modes))
+    }
 
-        let weapon = self.weapon.map(Self::convert_weapon);
-        let ground_weapon = self
-            .ground_weapon
-            .map(Self::convert_weapon)
-            .or_else(|| weapon.clone());
-        let air_weapon = self.air_weapon.map(Self::convert_weapon);
+    /// Converts this definition, resolving its faction, armor class and weapon classes against
+    /// `factions`.
+    fn into_archetype(mut self, factions: &FactionCatalog) -> SimResult<UnitArchetype> {
+        let faction = factions.resolve_faction(&self.slug, &self.faction)?;
+        let armor_class = self
+            .armor_class
+            .as_deref()
+            .map(|slug| factions.resolve_armor_class(&self.slug, slug))
+            .transpose()?;
+        let (capabilities, abilities, modes) = self.capabilities(factions)?;
+        let convert = |weapon: Option<WeaponSpecDef>| {
+            weapon
+                .map(|w| Self::convert_weapon(w, factions, &self.slug))
+                .transpose()
+        };
+        let weapon = convert(self.weapon.take())?;
+        let ground_weapon = convert(self.ground_weapon.take())?.or_else(|| weapon.clone());
+        let air_weapon = convert(self.air_weapon.take())?;
+        let veo_prompts = std::mem::take(&mut self.veo_prompts)
+            .into_iter()
+            .map(|(state, prompt)| (format!("{state:?}"), prompt))
+            .collect();
+        let turn_rate = self.turn_rate();
 
-        let mut veo_prompts = BTreeMap::new();
-        for (state, prompt) in self.veo_prompts {
-            veo_prompts.insert(format!("{state:?}"), prompt);
-        }
-
-        UnitArchetype {
+        Ok(UnitArchetype {
             unit_type_id: UnitTypeId(self.unit_type_id),
             name: self.slug.clone(),
             slug: self.slug,
-            faction: self.faction,
+            faction,
             display_name: self.display_name,
             lore_description: self.lore,
             sc2_inspiration: Some(self.sc2_analogue),
             showcase_hero: self.showcase_hero,
             showcase_order: self.showcase_order,
-            overclock,
-            harvester,
-            is_resource_dropoff,
+            overclock: capabilities.overclock,
+            harvester: capabilities.harvester,
+            is_resource_dropoff: capabilities.is_resource_dropoff,
             capabilities,
             veo_prompts,
             shape: self.shape,
@@ -992,18 +1059,7 @@ impl UnitArchetypeDef {
             max_speed: SimScalar::from_f32_lossy(self.max_speed),
             acceleration: SimScalar::from_f32_lossy(self.acceleration),
             deceleration: SimScalar::from_f32_lossy(self.deceleration),
-            turn_rate: {
-                let deg = self.turn_rate_deg.clamp(0.0, 180.0);
-                if deg >= 180.0 {
-                    SimAngle::PI
-                } else {
-                    #[expect(
-                        clippy::cast_possible_truncation,
-                        reason = "clamped to 0..180 above, and rates are authored in whole degrees"
-                    )]
-                    SimAngle::from_degrees(deg as i32)
-                }
-            },
+            turn_rate,
             collision_radius: SimScalar::from_f32_lossy(self.collision_radius),
             separation_radius: SimScalar::from_f32_lossy(self.separation_radius),
             push_priority: self.push_priority,
@@ -1022,9 +1078,9 @@ impl UnitArchetypeDef {
             requires_structures: self.requires_structures,
             trains_units: self.trains_units,
             researches_upgrades: self.researches_upgrades,
-            armor_class: self.armor_class,
+            armor_class,
             modes,
-        }
+        })
     }
 }
 
@@ -1040,8 +1096,8 @@ struct StructureArchetypeDef {
     slug: String,
     /// Canonical name.
     pub name: String,
-    /// Canonical faction classification.
-    pub faction: Faction,
+    /// Faction slug, resolved against `factions.ron`.
+    pub faction: String,
     /// Human-readable display name.
     pub display_name: String,
     /// Lore background description.
@@ -1112,12 +1168,18 @@ struct StructureArchetypeDef {
 }
 
 impl StructureArchetypeDef {
-    /// Converts a structure definition into a unified [`UnitArchetype`].
-    #[must_use]
-    pub fn into_archetype(self) -> UnitArchetype {
+    /// Converts a structure definition into a unified [`UnitArchetype`], resolving its faction
+    /// and weapon classes against `factions`.
+    pub fn into_archetype(self, factions: &FactionCatalog) -> SimResult<UnitArchetype> {
         let radius = SimScalar::from_num(f64::from(self.footprint.0) * 0.5);
-        let ground_weapon = self.ground_weapon.map(UnitArchetypeDef::convert_weapon);
-        let air_weapon = self.air_weapon.map(UnitArchetypeDef::convert_weapon);
+        let faction = factions.resolve_faction(&self.slug, &self.faction)?;
+        let convert = |weapon: Option<WeaponSpecDef>| {
+            weapon
+                .map(|w| UnitArchetypeDef::convert_weapon(w, factions, &self.slug))
+                .transpose()
+        };
+        let ground_weapon = convert(self.ground_weapon)?;
+        let air_weapon = convert(self.air_weapon)?;
         // `weapon` is the ground fallback of `weapon_against`, so an air weapon must never fill it.
         let weapon = ground_weapon.clone();
 
@@ -1139,11 +1201,11 @@ impl StructureArchetypeDef {
             modes: Vec::new(),
         };
 
-        UnitArchetype {
+        Ok(UnitArchetype {
             unit_type_id: UnitTypeId(u16::try_from(self.structure_type_id).unwrap_or(u16::MAX)),
             name: self.slug.clone(),
             slug: self.slug,
-            faction: self.faction,
+            faction,
             display_name: self.display_name,
             lore_description: self.lore_description,
             sc2_inspiration: self.sc2_inspiration,
@@ -1193,7 +1255,7 @@ impl StructureArchetypeDef {
             researches_upgrades: self.researches_upgrades,
             armor_class: None,
             modes: Vec::new(),
-        }
+        })
     }
 }
 

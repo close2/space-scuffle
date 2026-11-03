@@ -16,9 +16,9 @@ use sim_map::{
     TerrainKind, VisionSource, Watchtower,
 };
 use sim_types::{
-    AnimState, ArmorClass, AttributeFlags, EntityId, MoverType, PlayerCommand, PlayerId,
+    AnimState, ArmorClassId, AttributeFlags, EntityId, MoverType, PlayerCommand, PlayerId,
     PlayerSlot, ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, SplashSpec, Tick,
-    TickBundle, UnitOrder, UnitStatDeltas, WeaponClass, WeaponVisualKind,
+    TickBundle, UnitOrder, UnitStatDeltas, WeaponClassId, WeaponVisualKind,
 };
 use std::collections::BTreeSet;
 
@@ -269,7 +269,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
             bonus_armored => SimScalar::ONE, bonus_light => SimScalar::ONE, attacks_count => 2,
             period_ticks => 2, damage_point_ticks => 1, backswing_ticks => 1,
             splash => Some(SplashSpec { inner_radius: SimScalar::ONE, middle_radius: SimScalar::ONE, outer_radius: SimScalar::ONE, friendly_fire: true }),
-            projectile_speed => Some(SimScalar::ONE), weapon_class => Some(WeaponClass::EnclaveGround),
+            projectile_speed => Some(SimScalar::ONE), weapon_class => Some(WeaponClassId(3)),
             upgrade_bonus_per_level => SimScalar::ONE, bonus_upgrade_per_level => SimScalar::ONE,
             target_loss_behavior => ProjectileTargetLossBehavior::ImpactLastKnownPosition,
             max_projectile_lifetime_ticks => 2, suicide_on_attack => true,
@@ -489,12 +489,12 @@ fn player_world_map_and_rng_state_are_observable() {
         ("weapon level", |w| {
             w.player_upgrades[P0]
                 .weapon_levels
-                .insert(WeaponClass::EnclaveGround, 1);
+                .insert(WeaponClassId(3), 1);
         }),
         ("armor level", |w| {
             w.player_upgrades[P0]
                 .armor_levels
-                .insert(ArmorClass::EnclaveGround, 1);
+                .insert(ArmorClassId(2), 1);
         }),
         ("shield level", |w| w.player_upgrades[P0].shield_level = 1),
         ("completed research", |w| {

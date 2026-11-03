@@ -315,6 +315,48 @@ impl fmt::Display for UnitTypeId {
     }
 }
 
+/// Faction identity: the `faction_id` of a faction defined in `assets/catalog/factions.ron`.
+///
+/// Archetypes and upgrades name their faction by slug; the catalog loader resolves the slug to
+/// this ID, which rules compare (a builder raises only structures of its own faction).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(transparent)]
+pub struct FactionId(pub u8);
+
+impl fmt::Display for FactionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Faction({})", self.0)
+    }
+}
+
+/// Weapon-class identity: the `class_id` of a weapon class in `assets/catalog/factions.ron`.
+///
+/// Part of the checksum schema: a weapon's class and each player's researched weapon levels
+/// (keyed and ordered by this ID) are hashed as this `u8`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(transparent)]
+pub struct WeaponClassId(pub u8);
+
+impl fmt::Display for WeaponClassId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "WeaponClass({})", self.0)
+    }
+}
+
+/// Armor-class identity: the `class_id` of an armor class in `assets/catalog/factions.ron`.
+///
+/// Part of the checksum schema: each player's researched armor levels (keyed and ordered by
+/// this ID) are hashed as this `u8`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(transparent)]
+pub struct ArmorClassId(pub u8);
+
+impl fmt::Display for ArmorClassId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ArmorClass({})", self.0)
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {

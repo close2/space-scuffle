@@ -40,11 +40,6 @@ fn assert_clean(check: &str, findings: &[Finding]) {
 /// them stores a float in authoritative state.
 const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
     FloatAllowance {
-        path: "crates/sim_types/src/enums.rs",
-        count: 1,
-        reason: "presentation: `Faction::primary_color` returns linear RGBA for the renderer",
-    },
-    FloatAllowance {
         path: "crates/sim_types/src/math.rs",
         count: 12,
         reason: "boundary conversions: RON/serde float input to `SimScalar`, and `to_f32` \

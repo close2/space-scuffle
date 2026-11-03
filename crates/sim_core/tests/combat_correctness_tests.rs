@@ -746,13 +746,14 @@ fn s11_unlock_gates_overclock_until_researched() {
 fn s11_unlock_gates_abilities_by_name() {
     const UPGRADES: &str = r#"(upgrades: [(
         upgrade_id: 1, slug: "learn", name: "learn", display_name: "Learn",
-        faction: AutomatonDirectorate, level: 1, mineral_cost: 0, gas_cost: 0,
+        faction: "automaton_directorate", level: 1, mineral_cost: 0, gas_cost: 0,
         research_ticks: 1, researched_at: "foundry_core_dome",
         effects: [UnlockAbility(target_slug: "pulse_bot", ability_slug: "armed")],
     )])"#;
     let mut arena = Arena::new(32);
     let unit = author_stances(&mut arena, 0);
-    arena.world.upgrade_catalog = UpgradeCatalog::from_ron_str(UPGRADES).unwrap();
+    arena.world.upgrade_catalog =
+        UpgradeCatalog::from_ron_str(&sim_fixtures::shipped_factions(), UPGRADES).unwrap();
     cast(&mut arena, unit, 0);
     assert_eq!(arena.world.entities[&unit].active_mode, None);
     arena.world.research_upgrade(BLUE, "learn").unwrap();

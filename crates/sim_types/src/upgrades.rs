@@ -1,13 +1,16 @@
-//! # Deterministic Upgrade Matrix, Weapon/Armor Classes & Player Upgrade State
+//! # Deterministic Upgrade Effects & Player Upgrade State
 //!
-//! Strongly-typed enums and deterministic state structures defining weapon damage scaling,
-//! armor mitigation levels, unit stat modifications, and research progress per player.
+//! Upgrade effects and the deterministic per-player state they modify: weapon damage levels per
+//! weapon class, armor levels per armor class, unit stat modifications, and research progress.
+//! Weapon and armor classes are data (`assets/catalog/factions.ron`); the simulation stores only
+//! their resolved [`WeaponClassId`] and [`ArmorClassId`].
 //!
 //! ## Invariants Maintained
 //! 1. All stat deltas and bonus scaling values strictly use [`SimScalar`].
 //! 2. Zero non-deterministic collections: upgrade state uses deterministic [`BTreeMap`] and [`BTreeSet`].
 //! 3. Zero heap allocations during per-tick combat damage resolution.
 
+use crate::ids::{ArmorClassId, WeaponClassId};
 use crate::math::SimScalar;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -42,58 +45,20 @@ pub struct UpgradeApplicationError {
     pub stat: UpgradeStat,
 }
 
-/// High-level weapon classification determining which scaling upgrade applies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub enum WeaponClass {
-    /// Directorate infantry ballistic weapons (Marine, Marauder, Reaper, Ghost).
-    DirectorateInfantry,
-    /// Directorate ground vehicle cannons and railguns (Hellion, Tank, Thor).
-    DirectorateVehicle,
-    /// Directorate aerial ordnance and missiles (Viking, Banshee, Liberator).
-    DirectorateShip,
-    /// Cosmic Enclave ground psionic blades and particle beams (Zealot, Stalker, Immortal, Colossus).
-    EnclaveGround,
-    /// Cosmic Enclave aerial ray projectors and interceptors (Phoenix, Void Ray, Carrier).
-    EnclaveAir,
-    /// Sylvan Swarm melee claws, scythes, and cleaving horns (Zergling, Ultralisk).
-    SwarmMelee,
-    /// Sylvan Swarm projectile acid, spines, and bile (Roach, Ravager, Hydralisk, Lurker).
-    SwarmMissile,
-    /// Sylvan Swarm aerial flyers and parasites (Mutalisk, Corruptor, Brood Lord).
-    SwarmFlyer,
-}
-
-/// High-level life armor classification determining which armor plating upgrade applies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub enum ArmorClass {
-    /// Directorate infantry composite armor.
-    DirectorateInfantry,
-    /// Directorate vehicle and ship reinforced plating.
-    DirectoratePlating,
-    /// Cosmic Enclave ground exosuits and strider hulls.
-    EnclaveGround,
-    /// Cosmic Enclave starship chassis.
-    EnclaveAir,
-    /// Sylvan Swarm ground chitinous carapace.
-    SwarmGroundCarapace,
-    /// Sylvan Swarm aerial flyer carapace.
-    SwarmFlyerCarapace,
-}
-
 /// Composable upgrade effect modifying weapon scaling, armor, unit stats, or abilities.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UpgradeEffect {
     /// Advances scaling weapon level for an entire weapon class.
     WeaponDamageLevel {
-        /// Weapon class receiving the level advancement.
-        weapon_class: WeaponClass,
+        /// Weapon class receiving the level advancement, as resolved from its catalog slug.
+        weapon_class: WeaponClassId,
         /// New level tier (1..=3).
         level: u8,
     },
     /// Advances life armor level for an entire armor class.
     ArmorLevel {
-        /// Armor class receiving the level advancement.
-        armor_class: ArmorClass,
+        /// Armor class receiving the level advancement, as resolved from its catalog slug.
+        armor_class: ArmorClassId,
         /// New level tier (1..=3).
         level: u8,
     },
@@ -160,9 +125,9 @@ pub struct UnitStatDeltas {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct PlayerUpgradeState {
     /// Researched weapon level (0..=3) per weapon classification.
-    pub weapon_levels: BTreeMap<WeaponClass, u8>,
+    pub weapon_levels: BTreeMap<WeaponClassId, u8>,
     /// Researched armor level (0..=3) per armor classification.
-    pub armor_levels: BTreeMap<ArmorClass, u8>,
+    pub armor_levels: BTreeMap<ArmorClassId, u8>,
     /// Researched global shield armor level (0..=3).
     pub shield_level: u8,
     /// Set of completed upgrade slugs (e.g. `combat_shield`, `phase_blink`).

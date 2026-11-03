@@ -3,39 +3,6 @@
 use bitflags::bitflags;
 use serde::{Deserialize, Serialize};
 
-/// Canonical sci-fi factions in Space Scuffle.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Faction {
-    /// Industrial war-machines, railguns, and overclock reactors (Terran mechanical archetype).
-    AutomatonDirectorate,
-    /// Classic Roswell Greys, flying saucers, psi-blades, and regenerating shields (Protoss archetype).
-    CosmicEnclave,
-    /// Bioluminescent predators, armored beetles, and corrosive bio-acid (Zerg archetype).
-    SylvanSwarm,
-}
-
-impl Faction {
-    /// Human-readable faction title.
-    #[must_use]
-    pub const fn display_name(self) -> &'static str {
-        match self {
-            Self::AutomatonDirectorate => "The Automaton Directorate",
-            Self::CosmicEnclave => "The Cosmic Enclave",
-            Self::SylvanSwarm => "The Sylvan Swarm",
-        }
-    }
-
-    /// Primary tactical UI accent color (RGBA).
-    #[must_use]
-    pub const fn primary_color(self) -> [f32; 4] {
-        match self {
-            Self::AutomatonDirectorate => [0.18, 0.65, 1.0, 1.0], // Cyan / Cobalt
-            Self::CosmicEnclave => [0.72, 0.25, 1.0, 1.0],        // Psionic Violet / Chrome
-            Self::SylvanSwarm => [0.22, 0.95, 0.35, 1.0],         // Bioluminescent Emerald
-        }
-    }
-}
-
 /// Geometric shape category determining base model geometry and collision bounds.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ShapeKind {
@@ -250,28 +217,5 @@ mod tests {
         let vis_dec: VisibilityState =
             ron::from_str(&vis_ron).expect("invariant: valid ron deserialization");
         assert_eq!(vis, vis_dec);
-
-        let faction = Faction::AutomatonDirectorate;
-        let fac_ron = ron::to_string(&faction).expect("invariant: valid ron serialization");
-        let fac_dec: Faction =
-            ron::from_str(&fac_ron).expect("invariant: valid ron deserialization");
-        assert_eq!(faction, fac_dec);
-    }
-
-    #[test]
-    fn test_faction_display_and_color() {
-        assert_eq!(
-            Faction::AutomatonDirectorate.display_name(),
-            "The Automaton Directorate"
-        );
-        assert_eq!(Faction::CosmicEnclave.display_name(), "The Cosmic Enclave");
-        assert_eq!(Faction::SylvanSwarm.display_name(), "The Sylvan Swarm");
-
-        let col_auto = Faction::AutomatonDirectorate.primary_color();
-        assert_eq!(col_auto[3], 1.0);
-        let col_cosm = Faction::CosmicEnclave.primary_color();
-        assert_eq!(col_cosm[3], 1.0);
-        let col_sylv = Faction::SylvanSwarm.primary_color();
-        assert_eq!(col_sylv[3], 1.0);
     }
 }

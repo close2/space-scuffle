@@ -108,6 +108,33 @@ pub enum SimCoreError {
         reason: &'static str,
     },
 
+    /// An authored definition names a faction that `factions.ron` does not define.
+    #[error("'{definition}' names unknown faction '{slug}'")]
+    UnknownFaction {
+        /// Slug of the unit, structure, upgrade or class that names the faction.
+        definition: String,
+        /// The faction slug that resolved to nothing.
+        slug: String,
+    },
+
+    /// An authored definition names a weapon class that `factions.ron` does not define.
+    #[error("'{definition}' names unknown weapon class '{slug}'")]
+    UnknownWeaponClass {
+        /// Slug of the unit, structure or upgrade that names the weapon class.
+        definition: String,
+        /// The weapon-class slug that resolved to nothing.
+        slug: String,
+    },
+
+    /// An authored definition names an armor class that `factions.ron` does not define.
+    #[error("'{definition}' names unknown armor class '{slug}'")]
+    UnknownArmorClass {
+        /// Slug of the unit or upgrade that names the armor class.
+        definition: String,
+        /// The armor-class slug that resolved to nothing.
+        slug: String,
+    },
+
     /// Missing prerequisite structure required for building construction or research.
     #[error("Missing prerequisite structure '{required}' to produce/research '{target}'")]
     MissingPrerequisiteStructure {
