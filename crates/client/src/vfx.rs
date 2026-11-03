@@ -446,7 +446,280 @@ pub fn update_shatter_system(
     }
 }
 
+/// Snapshot `[x, y, altitude]` coordinates as a Bevy world position (Y up).
+fn world_point(position: &[f32; 3]) -> Vec3 {
+    Vec3::new(position[0], position[2], position[1])
+}
+
+/// A ribbon card stretched between two world points and turned to face the camera.
+struct RibbonPlacement {
+    /// Midpoint of the two ends, in world space.
+    center: Vec3,
+    /// Rotation taking the card's local Y along the ribbon with its face toward the camera.
+    rotation: Quat,
+    /// Distance between the two ends, in world units.
+    length: f32,
+}
+
+impl RibbonPlacement {
+    /// Places a ribbon from `from` to `to` facing `camera_position`, all in world space.
+    ///
+    /// Returns `None` unless the ends are more than 0.01 world units apart (a NaN length
+    /// included), because closer ends have no direction.
+    fn between(from: Vec3, to: Vec3, camera_position: Vec3) -> Option<Self> {
+        let delta = to - from;
+        let length = delta.length();
+        if length > 0.01 {
+            let center = from + delta * 0.5;
+            let dir = delta / length;
+            let to_cam = (camera_position - center).normalize_or_zero();
+            let right = dir.cross(to_cam).normalize_or_zero();
+            let normal = right.cross(dir).normalize_or_zero();
+            Some(Self {
+                center,
+                rotation: Quat::from_mat3(&Mat3::from_cols(right, dir, normal)),
+                length,
+            })
+        } else {
+            None
+        }
+    }
+}
+
+/// Spawns combat effects for admitted visual events, one method per event kind.
+struct CombatEffectSpawner<'a, 'w, 's> {
+    /// Command queue the effect entities are spawned through.
+    commands: &'a mut Commands<'w, 's>,
+    /// Shared effect meshes.
+    assets: &'a VfxSharedAssets,
+    /// Store that receives one new material per effect.
+    materials: &'a mut Assets<CombatFxMaterial>,
+    /// Camera position in world space, which ribbons and projectile cards face.
+    camera_position: Vec3,
+}
+
+impl CombatEffectSpawner<'_, '_, '_> {
+    /// Spawns the effect of `event`, tinted with its source owner's `style`.
+    fn spawn(
+        &mut self,
+        event: &CombatEventVisual,
+        style: crate::player_presentation::PlayerStyle,
+        owner: sim_types::PlayerId,
+    ) {
+        match event {
+            CombatEventVisual::HitscanTracer { from, to, .. } => {
+                self.hitscan_tracer(world_point(from), world_point(to), style, owner);
+            }
+            CombatEventVisual::ProjectileVisual {
+                pos,
+                vel,
+                owner: _,
+                duration_secs,
+            } => {
+                let lifetime = duration_secs.unwrap_or(0.35);
+                self.projectile(world_point(pos), world_point(vel), lifetime, style, owner);
+            }
+            CombatEventVisual::BeamVisual {
+                from,
+                to,
+                is_lightning,
+                owner: _,
+            } => {
+                let (from, to) = (world_point(from), world_point(to));
+                self.beam(from, to, *is_lightning, style, owner);
+            }
+            CombatEventVisual::MeleeSlashVisual {
+                pos,
+                angle_rad,
+                radius,
+                owner: _,
+            } => self.melee_slash(pos, *angle_rad, *radius, style, owner),
+            CombatEventVisual::BubbleShatter {
+                pos,
+                radius,
+                is_dome: _,
+                owner: _,
+            } => spawn_death_shatter(
+                self.commands,
+                self.assets,
+                self.materials,
+                world_point(pos),
+                *radius,
+                style,
+                owner,
+            ),
+        }
+    }
+
+    /// A 0.12 s supersonic tracer ribbon from `p1` to `p2` (world space).
+    fn hitscan_tracer(
+        &mut self,
+        p1: Vec3,
+        p2: Vec3,
+        style: crate::player_presentation::PlayerStyle,
+        owner: sim_types::PlayerId,
+    ) {
+        let Some(ribbon) = RibbonPlacement::between(p1, p2, self.camera_position) else {
+            return;
+        };
+        let team_hdr = style.linear.truncate().extend(0.0);
+        let mat = self.materials.add(CombatFxMaterial {
+            uniform: CombatFxUniformGpu {
+                primary_color: team_hdr,
+                age: 0.0,
+                fx_kind: 1, // Mode 1: Supersonic Hitscan / Railgun Tracer Bolt
+                seed: (p1.x * 13.1 + p2.z * 19.7).fract().abs(),
+                aspect: ribbon.length / 0.55,
+            },
+        });
+        self.commands.spawn((
+            CombatLightEffect,
+            CombatEffectOwner(owner),
+            Mesh3d(self.assets.tracer_mesh.clone()),
+            MeshMaterial3d(mat.clone()),
+            Transform::from_translation(ribbon.center)
+                .with_rotation(ribbon.rotation)
+                .with_scale(Vec3::new(0.55, ribbon.length, 1.0)),
+            BeamVisualComponent {
+                from: p1,
+                to: p2,
+                is_lightning: false,
+                lifetime: Timer::from_seconds(0.12, TimerMode::Once),
+                material_handle: mat,
+            },
+        ));
+    }
+
+    /// A plasma projectile card at `p` flying at `v` (world units per second) for `lifetime`
+    /// seconds.
+    fn projectile(
+        &mut self,
+        p: Vec3,
+        v: Vec3,
+        lifetime: f32,
+        style: crate::player_presentation::PlayerStyle,
+        owner: sim_types::PlayerId,
+    ) {
+        let team_hdr = style.linear.truncate().extend(0.0);
+        let mat = self.materials.add(CombatFxMaterial {
+            uniform: CombatFxUniformGpu {
+                primary_color: team_hdr,
+                age: 0.0,
+                fx_kind: 4, // Mode 4: Plasma projectile
+                seed: (p.x * 29.3 + p.z * 41.7).fract().abs(),
+                aspect: 1.0,
+            },
+        });
+        let rot = if v.length_squared() > 0.01 {
+            projectile_card_rotation(v, p, self.camera_position)
+        } else {
+            Quat::IDENTITY
+        };
+        self.commands.spawn((
+            CombatLightEffect,
+            CombatEffectOwner(owner),
+            Mesh3d(self.assets.projectile_mesh.clone()),
+            MeshMaterial3d(mat.clone()),
+            Transform::from_translation(p)
+                .with_rotation(rot)
+                .with_scale(Vec3::splat(1.1)),
+            ProjectileVisual {
+                velocity: v,
+                lifetime: Timer::from_seconds(lifetime, TimerMode::Once),
+                material_handle: mat,
+            },
+        ));
+    }
+
+    /// A continuous laser (0.25 s) or lightning arc (0.18 s) from `p1` to `p2` (world space).
+    fn beam(
+        &mut self,
+        p1: Vec3,
+        p2: Vec3,
+        is_lightning: bool,
+        style: crate::player_presentation::PlayerStyle,
+        owner: sim_types::PlayerId,
+    ) {
+        let Some(ribbon) = RibbonPlacement::between(p1, p2, self.camera_position) else {
+            return;
+        };
+        let team_hdr = style.linear.truncate().extend(0.0);
+        let fx_kind = if is_lightning { 2 } else { 0 };
+        let width = if is_lightning { 0.95 } else { 0.65 };
+        let duration = if is_lightning { 0.18 } else { 0.25 };
+        let mat = self.materials.add(CombatFxMaterial {
+            uniform: CombatFxUniformGpu {
+                primary_color: team_hdr,
+                age: 0.0,
+                fx_kind,
+                seed: (p1.x * 37.7 + p2.z * 53.1).fract().abs(),
+                aspect: ribbon.length / width,
+            },
+        });
+        self.commands.spawn((
+            CombatLightEffect,
+            CombatEffectOwner(owner),
+            Mesh3d(self.assets.beam_mesh.clone()),
+            MeshMaterial3d(mat.clone()),
+            Transform::from_translation(ribbon.center)
+                .with_rotation(ribbon.rotation)
+                .with_scale(Vec3::new(width, ribbon.length, 1.0)),
+            BeamVisualComponent {
+                from: p1,
+                to: p2,
+                is_lightning,
+                lifetime: Timer::from_seconds(duration, TimerMode::Once),
+                material_handle: mat,
+            },
+        ));
+    }
+
+    /// A 0.20 s crescent slash at snapshot position `pos`, swept by `angle_rad` (radians), with
+    /// `radius` in world units.
+    fn melee_slash(
+        &mut self,
+        pos: &[f32; 3],
+        angle_rad: f32,
+        radius: f32,
+        style: crate::player_presentation::PlayerStyle,
+        owner: sim_types::PlayerId,
+    ) {
+        let p = Vec3::new(pos[0], pos[2] + 0.35, pos[1]);
+        let mut team_hdr = style.linear.truncate().extend(0.0);
+        team_hdr.w = angle_rad;
+        let mat = self.materials.add(CombatFxMaterial {
+            uniform: CombatFxUniformGpu {
+                primary_color: team_hdr,
+                age: 0.0,
+                fx_kind: 3, // Mode 3: Sweeping Crescent Psi-Blade Melee Slash
+                seed: (pos[0] * 19.3 + pos[1] * 23.7).fract().abs(),
+                aspect: 1.0,
+            },
+        });
+        // The shader sweeps the crescent by `primary_color.w`; rotating the card as well
+        // would apply the angle twice and turn it edge-on at quarter turns.
+        let rot = Quat::from_rotation_x(MELEE_CARD_TILT_RAD);
+        self.commands.spawn((
+            CombatLightEffect,
+            CombatEffectOwner(owner),
+            Mesh3d(self.assets.melee_slash_mesh.clone()),
+            MeshMaterial3d(mat.clone()),
+            Transform::from_translation(p)
+                .with_rotation(rot)
+                .with_scale(Vec3::splat(radius * 2.6)),
+            MeleeSlashComponent {
+                lifetime: Timer::from_seconds(0.20, TimerMode::Once),
+                radius,
+                material_handle: mat,
+            },
+        ));
+    }
+}
+
 /// Consumes and visualizes all combat events received from the authoritative simulation snapshot via procedural volumetric shader instances.
+///
+/// Each event's owner style is resolved against the live battle or the preview roles, and the
+/// event is then spawned by its kind's [`CombatEffectSpawner`] method.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
@@ -454,10 +727,6 @@ pub fn update_shatter_system(
 #[expect(
     clippy::too_many_arguments,
     reason = "each Bevy system parameter is a separate declared data dependency"
-)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "a single ordered sequence that shares its local state"
 )]
 pub fn process_combat_events_system(
     mut owners: crate::player_presentation::PresentationContext<'_>,
@@ -470,9 +739,15 @@ pub fn process_combat_events_system(
     camera_query: Query<'_, '_, &Transform, With<Camera3d>>,
     mut fx_materials: ResMut<'_, Assets<CombatFxMaterial>>,
 ) {
-    let cam_pos = camera_query
+    let camera_position = camera_query
         .get_single()
         .map_or(Vec3::Y * 20.0, |t| t.translation);
+    let mut spawner = CombatEffectSpawner {
+        commands: &mut commands,
+        assets: &vfx_assets,
+        materials: &mut fx_materials,
+        camera_position,
+    };
 
     for event_wrapper in event_reader.read() {
         let owner = event_wrapper.0.owner();
@@ -488,200 +763,6 @@ pub fn process_combat_events_system(
                 return;
             }
         };
-        match &event_wrapper.0 {
-            CombatEventVisual::HitscanTracer { from, to, .. } => {
-                let p1 = Vec3::new(from[0], from[2], from[1]);
-                let p2 = Vec3::new(to[0], to[2], to[1]);
-                let delta = p2 - p1;
-                let length = delta.length();
-                if length > 0.01 {
-                    let center = p1 + delta * 0.5;
-                    let dir = delta / length;
-                    let to_cam = (cam_pos - center).normalize_or_zero();
-                    let right = dir.cross(to_cam).normalize_or_zero();
-                    let normal = right.cross(dir).normalize_or_zero();
-                    let rot = Quat::from_mat3(&Mat3::from_cols(right, dir, normal));
-
-                    let team_hdr = style.linear.truncate().extend(0.0);
-
-                    let mat = fx_materials.add(CombatFxMaterial {
-                        uniform: CombatFxUniformGpu {
-                            primary_color: team_hdr,
-                            age: 0.0,
-                            fx_kind: 1, // Mode 1: Supersonic Hitscan / Railgun Tracer Bolt
-                            seed: (p1.x * 13.1 + p2.z * 19.7).fract().abs(),
-                            aspect: length / 0.55,
-                        },
-                    });
-
-                    commands.spawn((
-                        CombatLightEffect,
-                        CombatEffectOwner(owner),
-                        Mesh3d(vfx_assets.tracer_mesh.clone()),
-                        MeshMaterial3d(mat.clone()),
-                        Transform::from_translation(center)
-                            .with_rotation(rot)
-                            .with_scale(Vec3::new(0.55, length, 1.0)),
-                        BeamVisualComponent {
-                            from: p1,
-                            to: p2,
-                            is_lightning: false,
-                            lifetime: Timer::from_seconds(0.12, TimerMode::Once),
-                            material_handle: mat,
-                        },
-                    ));
-                }
-            }
-            CombatEventVisual::ProjectileVisual {
-                pos,
-                vel,
-                owner: _,
-                duration_secs,
-            } => {
-                let p = Vec3::new(pos[0], pos[2], pos[1]);
-                let v = Vec3::new(vel[0], vel[2], vel[1]);
-                let team_hdr = style.linear.truncate().extend(0.0);
-                let lifetime = duration_secs.unwrap_or(0.35);
-
-                let mat = fx_materials.add(CombatFxMaterial {
-                    uniform: CombatFxUniformGpu {
-                        primary_color: team_hdr,
-                        age: 0.0,
-                        fx_kind: 4, // Mode 4: Plasma projectile
-                        seed: (p.x * 29.3 + p.z * 41.7).fract().abs(),
-                        aspect: 1.0,
-                    },
-                });
-
-                let rot = if v.length_squared() > 0.01 {
-                    projectile_card_rotation(v, p, cam_pos)
-                } else {
-                    Quat::IDENTITY
-                };
-
-                commands.spawn((
-                    CombatLightEffect,
-                    CombatEffectOwner(owner),
-                    Mesh3d(vfx_assets.projectile_mesh.clone()),
-                    MeshMaterial3d(mat.clone()),
-                    Transform::from_translation(p)
-                        .with_rotation(rot)
-                        .with_scale(Vec3::splat(1.1)),
-                    ProjectileVisual {
-                        velocity: v,
-                        lifetime: Timer::from_seconds(lifetime, TimerMode::Once),
-                        material_handle: mat,
-                    },
-                ));
-            }
-            CombatEventVisual::BeamVisual {
-                from,
-                to,
-                is_lightning,
-                owner: _,
-            } => {
-                let p1 = Vec3::new(from[0], from[2], from[1]);
-                let p2 = Vec3::new(to[0], to[2], to[1]);
-                let delta = p2 - p1;
-                let length = delta.length();
-                if length > 0.01 {
-                    let center = p1 + delta * 0.5;
-                    let dir = delta / length;
-                    let to_cam = (cam_pos - center).normalize_or_zero();
-                    let right = dir.cross(to_cam).normalize_or_zero();
-                    let normal = right.cross(dir).normalize_or_zero();
-                    let rot = Quat::from_mat3(&Mat3::from_cols(right, dir, normal));
-
-                    let team_hdr = style.linear.truncate().extend(0.0);
-
-                    let fx_kind = if *is_lightning { 2 } else { 0 };
-                    let width = if *is_lightning { 0.95 } else { 0.65 };
-                    let duration = if *is_lightning { 0.18 } else { 0.25 };
-
-                    let mat = fx_materials.add(CombatFxMaterial {
-                        uniform: CombatFxUniformGpu {
-                            primary_color: team_hdr,
-                            age: 0.0,
-                            fx_kind,
-                            seed: (p1.x * 37.7 + p2.z * 53.1).fract().abs(),
-                            aspect: length / width,
-                        },
-                    });
-
-                    commands.spawn((
-                        CombatLightEffect,
-                        CombatEffectOwner(owner),
-                        Mesh3d(vfx_assets.beam_mesh.clone()),
-                        MeshMaterial3d(mat.clone()),
-                        Transform::from_translation(center)
-                            .with_rotation(rot)
-                            .with_scale(Vec3::new(width, length, 1.0)),
-                        BeamVisualComponent {
-                            from: p1,
-                            to: p2,
-                            is_lightning: *is_lightning,
-                            lifetime: Timer::from_seconds(duration, TimerMode::Once),
-                            material_handle: mat,
-                        },
-                    ));
-                }
-            }
-            CombatEventVisual::MeleeSlashVisual {
-                pos,
-                angle_rad,
-                radius,
-                owner: _,
-            } => {
-                let p = Vec3::new(pos[0], pos[2] + 0.35, pos[1]);
-                let mut team_hdr = style.linear.truncate().extend(0.0);
-                team_hdr.w = *angle_rad;
-
-                let mat = fx_materials.add(CombatFxMaterial {
-                    uniform: CombatFxUniformGpu {
-                        primary_color: team_hdr,
-                        age: 0.0,
-                        fx_kind: 3, // Mode 3: Sweeping Crescent Psi-Blade Melee Slash
-                        seed: (pos[0] * 19.3 + pos[1] * 23.7).fract().abs(),
-                        aspect: 1.0,
-                    },
-                });
-
-                // The shader sweeps the crescent by `primary_color.w`; rotating the card as well
-                // would apply the angle twice and turn it edge-on at quarter turns.
-                let rot = Quat::from_rotation_x(MELEE_CARD_TILT_RAD);
-
-                commands.spawn((
-                    CombatLightEffect,
-                    CombatEffectOwner(owner),
-                    Mesh3d(vfx_assets.melee_slash_mesh.clone()),
-                    MeshMaterial3d(mat.clone()),
-                    Transform::from_translation(p)
-                        .with_rotation(rot)
-                        .with_scale(Vec3::splat(*radius * 2.6)),
-                    MeleeSlashComponent {
-                        lifetime: Timer::from_seconds(0.20, TimerMode::Once),
-                        radius: *radius,
-                        material_handle: mat,
-                    },
-                ));
-            }
-            CombatEventVisual::BubbleShatter {
-                pos,
-                radius,
-                is_dome: _,
-                owner: _,
-            } => {
-                let p = Vec3::new(pos[0], pos[2], pos[1]);
-                spawn_death_shatter(
-                    &mut commands,
-                    &vfx_assets,
-                    &mut fx_materials,
-                    p,
-                    *radius,
-                    style,
-                    owner,
-                );
-            }
-        }
+        spawner.spawn(&event_wrapper.0, style, owner);
     }
 }
