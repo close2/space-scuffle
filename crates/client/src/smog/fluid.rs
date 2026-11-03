@@ -499,16 +499,6 @@ impl SmogGrid3d {
     ///
     /// # Errors
     /// Returns [`SmogError::InvalidDeltaTime`] if `dt < 0.0` or non-finite.
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_possible_wrap,
-        clippy::cast_sign_loss,
-        reason = "fluid grid indices and counts stay far below the range of f32 and i32"
-    )]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "a single ordered sequence that shares its local state"
-    )]
     pub fn step(
         &mut self,
         sources: &[BubbleSmogSource],
@@ -527,255 +517,7 @@ impl SmogGrid3d {
         let dt = dt.min(0.05);
 
         // 1. Bubble Smog Generation & Bubble-Through-Smog Influence
-        let mut active_sources = 0usize;
-        for source in sources {
-            let speed = source.velocity.length();
-            let heading = if speed > 1e-4 {
-                source.velocity / speed
-            } else {
-                Vec3::X
-            };
-
-            let h_horiz = Vec3::new(heading.x, 0.0, heading.z);
-            let h_hat = if h_horiz.length_squared() > 1e-6 {
-                h_horiz.normalize()
-            } else {
-                Vec3::X
-            };
-            let s_hat = Vec3::new(-h_hat.z, 0.0, h_hat.x);
-
-            let r_b = source.radius;
-            let r_k = (source.radius * 1.15).max(0.56);
-            let horiz_radius = if sources.len() > 32 {
-                (r_k * 1.15).max(0.40)
-            } else {
-                (r_k * 1.65).max(0.55)
-            };
-            let max_r_sq = horiz_radius * horiz_radius;
-
-            // Tight bounding box in grid index space (Section 10.2 & 10.3: 8x fewer voxels visited)
-            let p_min = self.world_to_grid(Vec3::new(
-                source.position.x - horiz_radius,
-                source.position.y - 0.85 * r_k,
-                source.position.z - horiz_radius,
-            ));
-            let p_max = self.world_to_grid(Vec3::new(
-                source.position.x + horiz_radius,
-                source.position.y + 0.95 * r_k,
-                source.position.z + horiz_radius,
-            ));
-
-            let ix_min = (p_min.x.floor() as isize).clamp(0, (GRID_NX - 1) as isize) as usize;
-            let ix_max = (p_max.x.ceil() as isize).clamp(0, (GRID_NX - 1) as isize) as usize;
-            let iy_min = (p_min.y.floor() as isize).clamp(0, (GRID_NY - 1) as isize) as usize;
-            let iy_max = (p_max.y.ceil() as isize).clamp(0, (GRID_NY - 1) as isize) as usize;
-            let iz_min = (p_min.z.floor() as isize).clamp(0, (GRID_NZ - 1) as isize) as usize;
-            let iz_max = (p_max.z.ceil() as isize).clamp(0, (GRID_NZ - 1) as isize) as usize;
-
-            active_sources += 1;
-
-            // Precompute multi-tone spectrum colors for this source
-            let c_b = source.team_color;
-            let c_sheath = Vec3::new(c_b.z, c_b.x, c_b.y);
-
-            let speed_factor = (0.42 + speed.min(6.0) * 1.15).clamp(0.42, 5.2);
-
-            for iz in iz_min..=iz_max {
-                for iy in iy_min..=iy_max {
-                    for ix in ix_min..=ix_max {
-                        let idx = Self::index(ix, iy, iz);
-                        let voxel_pos = self.grid_to_world(ix, iy, iz);
-                        let r_vec = voxel_pos - source.position;
-                        let dist_sq = r_vec.length_squared();
-
-                        // Spherical Early-Out (Section 10.3: skip outside sphere before sqrt and dot products)
-                        if dist_sq > max_r_sq {
-                            continue;
-                        }
-
-                        let dist = dist_sq.sqrt();
-                        let q = dist / r_k;
-                        let x_parallel = r_vec.dot(h_hat);
-                        let q_par = x_parallel / r_k;
-                        let s_lat = r_vec.dot(s_hat);
-                        let q_lat = s_lat.abs() / r_k;
-                        let q_y = r_vec.y.abs() / r_k;
-                        let r_hat_lat = if s_lat >= 0.0 { s_hat } else { -s_hat };
-
-                        // Interior Sphere Core Evacuation (Section 11.2: keeps interior flipbook clean
-                        // without carving a split wake trench behind the creature)
-                        if dist < 0.72 * r_b {
-                            let evac = (1.0 - (dist / (0.72 * r_b)).powi(2)).clamp(0.0, 1.0);
-                            let atten = (1.0 - 0.90 * evac * (dt * 36.0).min(1.0)).max(0.0);
-                            self.density[idx] = (self.density[idx] * atten).max(0.0);
-                        }
-
-                        // Aerodynamic Velocity Impulse (Section 11.4: front bow parting vs rear slipstream inward taper + trailing draft)
-                        if source.influence_strength > 0.0
-                            && config.wake_influence > 0.0
-                            && speed > 1e-3
-                        {
-                            let apply_impulse =
-                                source.emission_strength == 0.0 || dist >= r_b * 0.70;
-                            if apply_impulse {
-                                // Front Bow-Wave Parting (q_par > 0.02, dist < 1.45 r_k)
-                                let u_bow = if q_par > 0.02 && dist < 1.45 * r_k {
-                                    let falloff = (1.0 - (dist / (1.45 * r_k)).min(1.0)).powi(2);
-                                    let perp_factor = (q_lat / 0.35).min(1.0);
-                                    (r_hat_lat * (1.85 * perp_factor) + h_hat * 0.25)
-                                        * (speed * falloff)
-                                } else {
-                                    Vec3::ZERO
-                                };
-
-                                // Rear Slipstream Inward Taper & Trailing Draft (q_par in -1.65..=0.10, dist < 1.65 r_k)
-                                let (u_converge, u_draft, u_swirl) = if (-1.65..=0.10)
-                                    .contains(&q_par)
-                                    && dist < 1.65 * r_k
-                                {
-                                    let drag_t = (1.0 - (dist / (1.65 * r_k)).min(1.0)).max(0.0);
-                                    let t_rear =
-                                        ((0.10 - q_par) / (0.10 - (-0.18))).clamp(0.0, 1.0);
-                                    let rear_step = t_rear * t_rear * (3.0 - 2.0 * t_rear);
-
-                                    // Strong inward convergence pulling top & bottom boundary layers toward wake axis (q_lat -> 0)
-                                    let rim_inward = (q_lat / 0.72).clamp(0.0, 1.15) * rear_step;
-                                    let u_conv = -r_hat_lat * (1.95 * speed * drag_t * rim_inward);
-
-                                    // Gentle forward draft near the emitting rear shell (q_par > -0.65) so mist trails out cleanly
-                                    // into a long tapered cone instead of bunching on the bubble, and strong forward draft in the
-                                    // trailing wake (q_par <= -0.65) or outer shear (q > 0.98) so crossing bubbles pull mist strongly!
-                                    let core_focus = (1.0 - (q_lat / 0.90).powi(2)).max(0.0);
-                                    let wake_dist_t = ((-q_par - 0.35) / 0.55).clamp(0.0, 1.0);
-                                    let shear_t = ((q - 0.92) / 0.25).clamp(0.0, 1.0);
-                                    let draft_scale = if source.emission_strength == 0.0 {
-                                        0.65
-                                    } else {
-                                        0.14 + 0.48 * wake_dist_t.max(shear_t)
-                                    };
-                                    let u_dr = source.velocity
-                                        * (draft_scale
-                                            * drag_t
-                                            * (0.35 + 0.65 * core_focus)
-                                            * rear_step);
-
-                                    let u_sw = Vec3::new(
-                                        0.0,
-                                        (0.18 * speed * drag_t * (0.5 - q_lat)).max(0.0),
-                                        0.0,
-                                    );
-                                    (u_conv, u_dr, u_sw)
-                                } else {
-                                    (Vec3::ZERO, Vec3::ZERO, Vec3::ZERO)
-                                };
-
-                                let mut total_impulse = (u_bow + u_converge + u_draft + u_swirl)
-                                    * (dt * config.wake_influence * source.influence_strength);
-                                total_impulse.y *= 0.15;
-                                self.u_x[idx] += total_impulse.x;
-                                self.u_y[idx] += total_impulse.y;
-                                self.u_z[idx] += total_impulse.z;
-                            }
-                        }
-
-                        // Stationary & Low-Speed Downward Mist Cascade + Basal Outward Dispersion
-                        if source.influence_strength > 0.0 && config.wake_influence > 0.0 {
-                            let stationary_weight = (1.0 - (speed / 0.45)).clamp(0.0, 1.0);
-                            if stationary_weight > 0.0 && dist < 1.35 * r_k && dist >= 0.62 * r_b {
-                                let shell_prox = (1.0 - (dist / (1.35 * r_k)).min(1.0)).max(0.0);
-                                let r_horiz = Vec3::new(r_vec.x, 0.0, r_vec.z);
-                                let r_hat_radial = if r_horiz.length_squared() > 1e-6 {
-                                    r_horiz.normalize()
-                                } else {
-                                    Vec3::X
-                                };
-                                let rel_y = (r_vec.y / r_k).clamp(-1.0, 1.0);
-                                let vy_sink =
-                                    -0.55 * (0.45 + 0.55 * shell_prox) * (1.0 - 0.3 * rel_y);
-                                let basal_t = ((0.15 - rel_y) / 0.85).clamp(0.0, 1.0);
-                                let v_radial = r_hat_radial * (0.22 * shell_prox * basal_t);
-                                let settle_impulse = (v_radial + Vec3::new(0.0, vy_sink, 0.0))
-                                    * (stationary_weight
-                                        * dt
-                                        * config.wake_influence
-                                        * source.influence_strength);
-                                self.u_x[idx] += settle_impulse.x;
-                                self.u_y[idx] += settle_impulse.y;
-                                self.u_z[idx] += settle_impulse.z;
-                            }
-                        }
-
-                        // Full-Diameter Rear-Hemisphere Rim & Core Emission + Stationary Basal Halo (Section 11.4)
-                        if source.emission_strength > 0.0 && config.emission_rate > 0.0 {
-                            let shell_half_w = 0.16_f32;
-                            let shell_diff = (q - 0.84) / shell_half_w;
-                            let shell_profile = (1.0 - shell_diff * shell_diff).max(0.0);
-
-                            // cos_theta: -1.0 at rear pole, 0.0 at equatorial rim, +1.0 at front nose
-                            let cos_theta = (q_par / q.max(0.1)).clamp(-1.0, 1.0);
-                            let t_arc = ((0.14 - cos_theta) / (0.14 - (-0.30))).clamp(0.0, 1.0);
-                            let rear_arc = t_arc * t_arc * (3.0 - 2.0 * t_arc);
-                            let vert_profile = (1.0 - (q_y / 0.82).powi(2)).max(0.0);
-                            let lat_env = (1.0 - (q_lat / 0.96).powi(4)).max(0.0);
-                            // Rim boundary-layer emphasis so top and bottom edges visibly feed into the slipstream
-                            // while keeping the rear core (>= 0.82) completely unified with zero split:
-                            let rim_sheath = 0.82 + 0.38 * (q_lat / 0.85).clamp(0.0, 1.0);
-
-                            let w_moving = if dist <= 1.02 * r_k && q >= 0.66 {
-                                shell_profile * rear_arc * vert_profile * lat_env * rim_sheath
-                            } else {
-                                0.0
-                            };
-
-                            let basal_diff = (q - 0.86) / 0.22;
-                            let w_basal = if dist <= 1.08 * r_k {
-                                0.62 * (1.0 - basal_diff * basal_diff).max(0.0).powi(2)
-                                    * vert_profile
-                            } else {
-                                0.0
-                            };
-
-                            let move_weight = ((speed - 0.05) / 0.10).clamp(0.0, 1.0);
-                            let w_emit = move_weight * w_moving + (1.0 - move_weight) * w_basal;
-
-                            if w_emit > 1e-4 {
-                                let delta_rho = dt
-                                    * config.emission_rate
-                                    * source.emission_strength
-                                    * speed_factor
-                                    * w_emit;
-
-                                let old_rho = self.density[idx];
-                                let new_rho = (old_rho + delta_rho).min(SMOG_DENSITY_MAX);
-                                self.density[idx] = new_rho;
-
-                                let sheath_w = (0.55 * q_lat * q_lat).clamp(0.0, 1.0);
-                                let c_inject = c_b * (1.0 - sheath_w) + c_sheath * sheath_w;
-
-                                let blend_alpha = (delta_rho / (new_rho + 1e-5)).clamp(0.0, 1.0);
-                                let color_alpha =
-                                    (blend_alpha * (2.0 - blend_alpha)).clamp(0.0, 1.0);
-                                self.tint_r[idx] = self.tint_r[idx] * (1.0 - color_alpha)
-                                    + c_inject.x * color_alpha;
-                                self.tint_g[idx] = self.tint_g[idx] * (1.0 - color_alpha)
-                                    + c_inject.y * color_alpha;
-                                self.tint_b[idx] = self.tint_b[idx] * (1.0 - color_alpha)
-                                    + c_inject.z * color_alpha;
-
-                                let w_glow = (1.0 - (q / 1.12).powi(2)).max(0.0);
-                                let delta_glow = dt
-                                    * config.emission_rate
-                                    * source.emission_strength
-                                    * speed_factor
-                                    * 1.85
-                                    * w_glow;
-                                self.glow[idx] = (self.glow[idx] + delta_glow).min(1.0);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let active_sources = self.inject_sources(sources, config, dt);
 
         // 2. Vorticity Confinement (Section 10.4 & 11.4: scaled by 0.25 to prevent turbulent plume breakup)
         if active_sources <= 32 {
@@ -801,6 +543,245 @@ impl SmogGrid3d {
         let metrics = self.pack_textures_and_compute_metrics(active_sources);
 
         Ok(metrics)
+    }
+
+    /// Stage 1 of [`Self::step`]: every source evacuates its core, pushes the fluid around it and
+    /// emits smog into its wake. Sources are applied in slice order, each seeing the field the
+    /// previous ones left. Returns the number of sources applied.
+    fn inject_sources(
+        &mut self,
+        sources: &[BubbleSmogSource],
+        config: &SmogConfig,
+        dt: f32,
+    ) -> usize {
+        let mut active_sources = 0usize;
+        for source in sources {
+            let frame = SourceFrame::new(source, sources.len());
+            active_sources += 1;
+            self.inject_source(&frame, config, dt);
+        }
+        active_sources
+    }
+
+    /// Inclusive voxel index ranges `[min, max]` per axis of the box a source can touch.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_possible_wrap,
+        clippy::cast_sign_loss,
+        reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+    )]
+    fn source_voxel_box(&self, frame: &SourceFrame<'_>) -> [(usize, usize); 3] {
+        let source = frame.source;
+        let horiz_radius = frame.horiz_radius;
+        let r_k = frame.r_k;
+        // Tight bounding box in grid index space (Section 10.2 & 10.3: 8x fewer voxels visited)
+        let p_min = self.world_to_grid(Vec3::new(
+            source.position.x - horiz_radius,
+            source.position.y - 0.85 * r_k,
+            source.position.z - horiz_radius,
+        ));
+        let p_max = self.world_to_grid(Vec3::new(
+            source.position.x + horiz_radius,
+            source.position.y + 0.95 * r_k,
+            source.position.z + horiz_radius,
+        ));
+
+        let ix_min = (p_min.x.floor() as isize).clamp(0, (GRID_NX - 1) as isize) as usize;
+        let ix_max = (p_max.x.ceil() as isize).clamp(0, (GRID_NX - 1) as isize) as usize;
+        let iy_min = (p_min.y.floor() as isize).clamp(0, (GRID_NY - 1) as isize) as usize;
+        let iy_max = (p_max.y.ceil() as isize).clamp(0, (GRID_NY - 1) as isize) as usize;
+        let iz_min = (p_min.z.floor() as isize).clamp(0, (GRID_NZ - 1) as isize) as usize;
+        let iz_max = (p_max.z.ceil() as isize).clamp(0, (GRID_NZ - 1) as isize) as usize;
+        [(ix_min, ix_max), (iy_min, iy_max), (iz_min, iz_max)]
+    }
+
+    /// Applies one source to every voxel of its box inside its spherical reach, in z, y, x order.
+    /// Per voxel the four effects run in a fixed order: core evacuation, aerodynamic impulse,
+    /// stationary settling, emission.
+    fn inject_source(&mut self, frame: &SourceFrame<'_>, config: &SmogConfig, dt: f32) {
+        let [(ix_min, ix_max), (iy_min, iy_max), (iz_min, iz_max)] = self.source_voxel_box(frame);
+        for iz in iz_min..=iz_max {
+            for iy in iy_min..=iy_max {
+                for ix in ix_min..=ix_max {
+                    let Some(voxel) = self.voxel_offset(frame, ix, iy, iz) else {
+                        continue;
+                    };
+                    self.evacuate_core(frame, &voxel, dt);
+                    self.apply_wake_impulse(frame, &voxel, config, dt);
+                    self.apply_stationary_settling(frame, &voxel, config, dt);
+                    self.emit_smog(frame, &voxel, config, dt);
+                }
+            }
+        }
+    }
+
+    /// The voxel's offset from the source, or `None` outside the source's spherical reach.
+    fn voxel_offset(
+        &self,
+        frame: &SourceFrame<'_>,
+        ix: usize,
+        iy: usize,
+        iz: usize,
+    ) -> Option<VoxelOffset> {
+        let idx = Self::index(ix, iy, iz);
+        let voxel_pos = self.grid_to_world(ix, iy, iz);
+        let r_vec = voxel_pos - frame.source.position;
+        let dist_sq = r_vec.length_squared();
+
+        // Spherical Early-Out (Section 10.3: skip outside sphere before sqrt and dot products)
+        if dist_sq > frame.max_r_sq {
+            return None;
+        }
+
+        let r_k = frame.r_k;
+        let dist = dist_sq.sqrt();
+        let q = dist / r_k;
+        let x_parallel = r_vec.dot(frame.h_hat);
+        let q_par = x_parallel / r_k;
+        let s_lat = r_vec.dot(frame.s_hat);
+        let q_lat = s_lat.abs() / r_k;
+        let q_y = r_vec.y.abs() / r_k;
+        let r_hat_lat = if s_lat >= 0.0 {
+            frame.s_hat
+        } else {
+            -frame.s_hat
+        };
+        Some(VoxelOffset {
+            idx,
+            r_vec,
+            dist,
+            q,
+            q_par,
+            q_lat,
+            q_y,
+            r_hat_lat,
+        })
+    }
+
+    /// Interior Sphere Core Evacuation (Section 11.2: keeps interior flipbook clean without carving
+    /// a split wake trench behind the creature).
+    fn evacuate_core(&mut self, frame: &SourceFrame<'_>, voxel: &VoxelOffset, dt: f32) {
+        let r_b = frame.r_b;
+        let dist = voxel.dist;
+        let idx = voxel.idx;
+        if dist < 0.72 * r_b {
+            let evac = (1.0 - (dist / (0.72 * r_b)).powi(2)).clamp(0.0, 1.0);
+            let atten = (1.0 - 0.90 * evac * (dt * 36.0).min(1.0)).max(0.0);
+            self.density[idx] = (self.density[idx] * atten).max(0.0);
+        }
+    }
+
+    /// Aerodynamic Velocity Impulse (Section 11.4: front bow parting vs rear slipstream inward
+    /// taper + trailing draft), for a moving source.
+    fn apply_wake_impulse(
+        &mut self,
+        frame: &SourceFrame<'_>,
+        voxel: &VoxelOffset,
+        config: &SmogConfig,
+        dt: f32,
+    ) {
+        let source = frame.source;
+        if source.influence_strength > 0.0 && config.wake_influence > 0.0 && frame.speed > 1e-3 {
+            let apply_impulse = source.emission_strength == 0.0 || voxel.dist >= frame.r_b * 0.70;
+            if apply_impulse {
+                let u_bow = bow_wave_velocity(frame, voxel);
+                let (u_converge, u_draft, u_swirl) = slipstream_velocity(frame, voxel);
+
+                let mut total_impulse = (u_bow + u_converge + u_draft + u_swirl)
+                    * (dt * config.wake_influence * source.influence_strength);
+                total_impulse.y *= 0.15;
+                let idx = voxel.idx;
+                self.u_x[idx] += total_impulse.x;
+                self.u_y[idx] += total_impulse.y;
+                self.u_z[idx] += total_impulse.z;
+            }
+        }
+    }
+
+    /// Stationary & Low-Speed Downward Mist Cascade + Basal Outward Dispersion.
+    fn apply_stationary_settling(
+        &mut self,
+        frame: &SourceFrame<'_>,
+        voxel: &VoxelOffset,
+        config: &SmogConfig,
+        dt: f32,
+    ) {
+        let source = frame.source;
+        let r_k = frame.r_k;
+        let dist = voxel.dist;
+        let r_vec = voxel.r_vec;
+        if source.influence_strength > 0.0 && config.wake_influence > 0.0 {
+            let stationary_weight = (1.0 - (frame.speed / 0.45)).clamp(0.0, 1.0);
+            if stationary_weight > 0.0 && dist < 1.35 * r_k && dist >= 0.62 * frame.r_b {
+                let shell_prox = (1.0 - (dist / (1.35 * r_k)).min(1.0)).max(0.0);
+                let r_horiz = Vec3::new(r_vec.x, 0.0, r_vec.z);
+                let r_hat_radial = if r_horiz.length_squared() > 1e-6 {
+                    r_horiz.normalize()
+                } else {
+                    Vec3::X
+                };
+                let rel_y = (r_vec.y / r_k).clamp(-1.0, 1.0);
+                let vy_sink = -0.55 * (0.45 + 0.55 * shell_prox) * (1.0 - 0.3 * rel_y);
+                let basal_t = ((0.15 - rel_y) / 0.85).clamp(0.0, 1.0);
+                let v_radial = r_hat_radial * (0.22 * shell_prox * basal_t);
+                let settle_impulse = (v_radial + Vec3::new(0.0, vy_sink, 0.0))
+                    * (stationary_weight * dt * config.wake_influence * source.influence_strength);
+                let idx = voxel.idx;
+                self.u_x[idx] += settle_impulse.x;
+                self.u_y[idx] += settle_impulse.y;
+                self.u_z[idx] += settle_impulse.z;
+            }
+        }
+    }
+
+    /// Full-Diameter Rear-Hemisphere Rim & Core Emission + Stationary Basal Halo (Section 11.4):
+    /// deposits density, blends the injected tint, and adds glow.
+    fn emit_smog(
+        &mut self,
+        frame: &SourceFrame<'_>,
+        voxel: &VoxelOffset,
+        config: &SmogConfig,
+        dt: f32,
+    ) {
+        let source = frame.source;
+        if source.emission_strength > 0.0 && config.emission_rate > 0.0 {
+            let w_emit = emission_weight(frame, voxel);
+            if w_emit > 1e-4 {
+                let idx = voxel.idx;
+                let q = voxel.q;
+                let q_lat = voxel.q_lat;
+                let delta_rho = dt
+                    * config.emission_rate
+                    * source.emission_strength
+                    * frame.speed_factor
+                    * w_emit;
+
+                let old_rho = self.density[idx];
+                let new_rho = (old_rho + delta_rho).min(SMOG_DENSITY_MAX);
+                self.density[idx] = new_rho;
+
+                let sheath_w = (0.55 * q_lat * q_lat).clamp(0.0, 1.0);
+                let c_inject = frame.c_b * (1.0 - sheath_w) + frame.c_sheath * sheath_w;
+
+                let blend_alpha = (delta_rho / (new_rho + 1e-5)).clamp(0.0, 1.0);
+                let color_alpha = (blend_alpha * (2.0 - blend_alpha)).clamp(0.0, 1.0);
+                self.tint_r[idx] =
+                    self.tint_r[idx] * (1.0 - color_alpha) + c_inject.x * color_alpha;
+                self.tint_g[idx] =
+                    self.tint_g[idx] * (1.0 - color_alpha) + c_inject.y * color_alpha;
+                self.tint_b[idx] =
+                    self.tint_b[idx] * (1.0 - color_alpha) + c_inject.z * color_alpha;
+
+                let w_glow = (1.0 - (q / 1.12).powi(2)).max(0.0);
+                let delta_glow = dt
+                    * config.emission_rate
+                    * source.emission_strength
+                    * frame.speed_factor
+                    * 1.85
+                    * w_glow;
+                self.glow[idx] = (self.glow[idx] + delta_glow).min(1.0);
+            }
+        }
     }
 
     fn apply_vorticity_confinement(&mut self, confinement_strength: f32, dt: f32) {
@@ -1145,6 +1126,188 @@ impl SmogGrid3d {
             active_sources,
         }
     }
+}
+
+/// Per-source quantities shared by every voxel a bubble touches during one injection pass.
+///
+/// All lengths are world units; `speed` is world units per second; `h_hat` and `s_hat` are the
+/// horizontal heading and its horizontal left-hand side, both unit length with `y = 0`.
+struct SourceFrame<'a> {
+    source: &'a BubbleSmogSource,
+    speed: f32,
+    h_hat: Vec3,
+    s_hat: Vec3,
+    /// Bubble radius.
+    r_b: f32,
+    /// Smog kernel radius: the bubble radius widened, with a floor.
+    r_k: f32,
+    /// Horizontal reach of the injection box around the source centre.
+    horiz_radius: f32,
+    max_r_sq: f32,
+    /// Core emission tint (the team colour).
+    c_b: Vec3,
+    /// Rim emission tint: the team colour's channels rotated.
+    c_sheath: Vec3,
+    /// Emission multiplier from speed, in `[0.42, 5.2]`.
+    speed_factor: f32,
+}
+
+impl<'a> SourceFrame<'a> {
+    /// Precomputes the frame of `source`. `source_count` is the number of sources this step; a
+    /// crowd of more than 32 uses a tighter wake radius.
+    fn new(source: &'a BubbleSmogSource, source_count: usize) -> Self {
+        let speed = source.velocity.length();
+        let heading = if speed > 1e-4 {
+            source.velocity / speed
+        } else {
+            Vec3::X
+        };
+
+        let h_horiz = Vec3::new(heading.x, 0.0, heading.z);
+        let h_hat = if h_horiz.length_squared() > 1e-6 {
+            h_horiz.normalize()
+        } else {
+            Vec3::X
+        };
+        let s_hat = Vec3::new(-h_hat.z, 0.0, h_hat.x);
+
+        let r_b = source.radius;
+        let r_k = (source.radius * 1.15).max(0.56);
+        let horiz_radius = if source_count > 32 {
+            (r_k * 1.15).max(0.40)
+        } else {
+            (r_k * 1.65).max(0.55)
+        };
+        let max_r_sq = horiz_radius * horiz_radius;
+
+        // Precompute multi-tone spectrum colors for this source
+        let c_b = source.team_color;
+        let c_sheath = Vec3::new(c_b.z, c_b.x, c_b.y);
+
+        let speed_factor = (0.42 + speed.min(6.0) * 1.15).clamp(0.42, 5.2);
+
+        Self {
+            source,
+            speed,
+            h_hat,
+            s_hat,
+            r_b,
+            r_k,
+            horiz_radius,
+            max_r_sq,
+            c_b,
+            c_sheath,
+            speed_factor,
+        }
+    }
+}
+
+/// Geometry of one voxel relative to a source, in the source's heading frame.
+///
+/// `q*` values are distances divided by the kernel radius `r_k`: `q` radial, `q_par` signed
+/// along the heading (positive ahead), `q_lat` unsigned to the side, `q_y` unsigned vertical.
+struct VoxelOffset {
+    idx: usize,
+    r_vec: Vec3,
+    dist: f32,
+    q: f32,
+    q_par: f32,
+    q_lat: f32,
+    q_y: f32,
+    /// Horizontal unit vector from the wake axis toward this voxel's side.
+    r_hat_lat: Vec3,
+}
+
+/// Front Bow-Wave Parting (`q_par > 0.02`, `dist < 1.45 r_k`): velocity, in world units per
+/// second, that pushes fluid ahead of the bubble out to its sides.
+fn bow_wave_velocity(frame: &SourceFrame<'_>, voxel: &VoxelOffset) -> Vec3 {
+    let r_k = frame.r_k;
+    let dist = voxel.dist;
+    if voxel.q_par > 0.02 && dist < 1.45 * r_k {
+        let falloff = (1.0 - (dist / (1.45 * r_k)).min(1.0)).powi(2);
+        let perp_factor = (voxel.q_lat / 0.35).min(1.0);
+        (voxel.r_hat_lat * (1.85 * perp_factor) + frame.h_hat * 0.25) * (frame.speed * falloff)
+    } else {
+        Vec3::ZERO
+    }
+}
+
+/// Rear Slipstream Inward Taper & Trailing Draft (`q_par` in `-1.65..=0.10`, `dist < 1.65 r_k`):
+/// the `(convergence, draft, swirl)` velocities, in world units per second, behind the bubble.
+fn slipstream_velocity(frame: &SourceFrame<'_>, voxel: &VoxelOffset) -> (Vec3, Vec3, Vec3) {
+    let source = frame.source;
+    let speed = frame.speed;
+    let r_k = frame.r_k;
+    let dist = voxel.dist;
+    let q = voxel.q;
+    let q_par = voxel.q_par;
+    let q_lat = voxel.q_lat;
+    if (-1.65..=0.10).contains(&q_par) && dist < 1.65 * r_k {
+        let drag_t = (1.0 - (dist / (1.65 * r_k)).min(1.0)).max(0.0);
+        let t_rear = ((0.10 - q_par) / (0.10 - (-0.18))).clamp(0.0, 1.0);
+        let rear_step = t_rear * t_rear * (3.0 - 2.0 * t_rear);
+
+        // Strong inward convergence pulling top & bottom boundary layers toward wake axis (q_lat -> 0)
+        let rim_inward = (q_lat / 0.72).clamp(0.0, 1.15) * rear_step;
+        let u_conv = -voxel.r_hat_lat * (1.95 * speed * drag_t * rim_inward);
+
+        // Gentle forward draft near the emitting rear shell (q_par > -0.65) so mist trails out cleanly
+        // into a long tapered cone instead of bunching on the bubble, and strong forward draft in the
+        // trailing wake (q_par <= -0.65) or outer shear (q > 0.98) so crossing bubbles pull mist strongly!
+        let core_focus = (1.0 - (q_lat / 0.90).powi(2)).max(0.0);
+        let wake_dist_t = ((-q_par - 0.35) / 0.55).clamp(0.0, 1.0);
+        let shear_t = ((q - 0.92) / 0.25).clamp(0.0, 1.0);
+        let draft_scale = if source.emission_strength == 0.0 {
+            0.65
+        } else {
+            0.14 + 0.48 * wake_dist_t.max(shear_t)
+        };
+        let u_dr =
+            source.velocity * (draft_scale * drag_t * (0.35 + 0.65 * core_focus) * rear_step);
+
+        let u_sw = Vec3::new(0.0, (0.18 * speed * drag_t * (0.5 - q_lat)).max(0.0), 0.0);
+        (u_conv, u_dr, u_sw)
+    } else {
+        (Vec3::ZERO, Vec3::ZERO, Vec3::ZERO)
+    }
+}
+
+/// Emission weight of a voxel: the rear-hemisphere rim shell for a moving source, blended toward
+/// the basal halo as the source slows to a stop. Dimensionless, `>= 0`.
+fn emission_weight(frame: &SourceFrame<'_>, voxel: &VoxelOffset) -> f32 {
+    let r_k = frame.r_k;
+    let dist = voxel.dist;
+    let q = voxel.q;
+    let q_lat = voxel.q_lat;
+    let shell_half_w = 0.16_f32;
+    let shell_diff = (q - 0.84) / shell_half_w;
+    let shell_profile = (1.0 - shell_diff * shell_diff).max(0.0);
+
+    // cos_theta: -1.0 at rear pole, 0.0 at equatorial rim, +1.0 at front nose
+    let cos_theta = (voxel.q_par / q.max(0.1)).clamp(-1.0, 1.0);
+    let t_arc = ((0.14 - cos_theta) / (0.14 - (-0.30))).clamp(0.0, 1.0);
+    let rear_arc = t_arc * t_arc * (3.0 - 2.0 * t_arc);
+    let vert_profile = (1.0 - (voxel.q_y / 0.82).powi(2)).max(0.0);
+    let lat_env = (1.0 - (q_lat / 0.96).powi(4)).max(0.0);
+    // Rim boundary-layer emphasis so top and bottom edges visibly feed into the slipstream
+    // while keeping the rear core (>= 0.82) completely unified with zero split:
+    let rim_sheath = 0.82 + 0.38 * (q_lat / 0.85).clamp(0.0, 1.0);
+
+    let w_moving = if dist <= 1.02 * r_k && q >= 0.66 {
+        shell_profile * rear_arc * vert_profile * lat_env * rim_sheath
+    } else {
+        0.0
+    };
+
+    let basal_diff = (q - 0.86) / 0.22;
+    let w_basal = if dist <= 1.08 * r_k {
+        0.62 * (1.0 - basal_diff * basal_diff).max(0.0).powi(2) * vert_profile
+    } else {
+        0.0
+    };
+
+    let move_weight = ((frame.speed - 0.05) / 0.10).clamp(0.0, 1.0);
+    move_weight * w_moving + (1.0 - move_weight) * w_basal
 }
 
 #[cfg(test)]
