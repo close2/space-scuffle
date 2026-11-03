@@ -83,6 +83,21 @@ impl BattleFeed {
         (0..self.len).map(|offset| &self.lines[(self.oldest + offset) % FEED_LINES])
     }
 
+    /// The text buffer of every slot of the ring, live or not, as `(name, address, capacity)`.
+    ///
+    /// Evidence for the steady-state tests that a line is rewritten in place. Not part of the
+    /// HUD's interface.
+    #[doc(hidden)]
+    pub fn retained_buffers(&self) -> impl Iterator<Item = (&'static str, usize, usize)> + '_ {
+        self.lines.iter().map(|line| {
+            (
+                "feed.lines.text",
+                line.text.as_ptr().addr(),
+                line.text.capacity(),
+            )
+        })
+    }
+
     /// Removes every line and forgets what was read, for a new session.
     pub fn clear(&mut self) {
         self.oldest = 0;

@@ -36,3 +36,30 @@ The options:
 
 ## Answer
 
+
+## Note from an agent
+
+2026-11-03, exits WP3 of `docs/plans/2026-11-03-close-phase-6-7-8-exits.md`. This note does not answer the question
+and does not change its default.
+
+A fourth way to count was built that needs no `unsafe` and no new dependency:
+`crates/client/tests/sync_allocation_count_tests.rs`. Its parent test re-runs its own test binary under
+`valgrind --tool=dhat`, which replaces `malloc` from outside the process and records each heap block with the stack
+that allocated it. No code of ours replaces the allocator, so `unsafe_code = "forbid"` holds everywhere. CI installs
+`valgrind` from Ubuntu's archive.
+
+What it measures: the production live synchroniser (`sync_live_battle_system` with the battle driver) on the real
+default battle, paused, with `MinimalPlugins` and the single-threaded executor. It counts only the blocks allocated
+inside the measured frames (by call stack), at 64 and at 128 frames, and asserts that the client's systems add
+nothing per frame beyond a baseline app without them. A planted control (one `Vec` per frame) must count exactly one
+allocation per frame. Measured on 2026-11-03: 0 blocks in the window for the live sync and for the baseline, 64 and
+128 for the control. Planting `Vec::with_capacity(1)` in `update_live_instance` fails the test with 1,664 blocks
+over 64 frames (one per bubble per frame).
+
+What it does not measure: the whole client frame (renderer, egui, the simulation tick), and Bevy's multi-threaded
+executor. That executor allocates about 18 blocks a frame for its own task spawning (`bevy_tasks`,
+`async_executor`), and its count varies with thread timing. Whole-process totals also vary by about 2 blocks between
+identical runs, because Bevy builds schedule graphs with `std`'s random `RandomState`; that is why the test counts by
+call stack instead of using memcheck's `total heap usage`.
+
+The owner can still choose option 1 or 2. Either would replace how the test counts, not what it asserts.

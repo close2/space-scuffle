@@ -53,6 +53,24 @@ impl BattleSelection {
         }
     }
 
+    /// Every growable buffer this selection retains, as `(name, address, capacity in elements)`.
+    ///
+    /// Evidence for the steady-state tests that frames without a gesture leave storage alone. Not
+    /// part of the selection's interface.
+    #[doc(hidden)]
+    pub fn retained_buffers(&self) -> impl Iterator<Item = (&'static str, usize, usize)> + '_ {
+        std::iter::once((
+            "selection.selected",
+            self.selected.as_ptr().addr(),
+            self.selected.capacity(),
+        ))
+        .chain(
+            self.groups
+                .iter()
+                .map(|group| ("selection.groups", group.as_ptr().addr(), group.capacity())),
+        )
+    }
+
     /// Removes the selection and every control group.
     pub fn clear_all(&mut self) {
         self.clear();
