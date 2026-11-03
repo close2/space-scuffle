@@ -400,7 +400,7 @@ Generating media spends real money and needs the owner's approval per run.
 
 **Exit:** the charter describes the code as it is, and every claim in it is checked by CI.
 
-**Exit status (2026-11-03): met locally; CI confirmation follows the push of WP13.** Every rule of `AGENTS.md`
+**Exit status (2026-11-03): met; CI green on `main` at `6b39cd2` (run 41665216936, all six jobs including `throughput`).** Every rule of `AGENTS.md`
 now carries a tag: a CI check, a review rule or a procedure (charter §9). The checks are clippy lints, the CI jobs
 (`check-and-test`, the determinism jobs and the new `throughput` job) and C1 to C21 in
 `crates/workspace_checks/tests/charter.rs`. Claims that no check covers were reworded as review rules: the client's
