@@ -224,7 +224,7 @@ fn write_arena(spec: &FrameBudgetSpec, root: &Path) -> Result<(), FixtureError> 
         return Err(FixtureError::MapWarnings(report.warnings));
     }
     let path = root.join(&spec.map.file);
-    document.encode().save_atomic(&path)?;
+    document.encode()?.save_atomic(&path)?;
     Ok(())
 }
 

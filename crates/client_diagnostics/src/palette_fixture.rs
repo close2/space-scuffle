@@ -107,7 +107,7 @@ pub fn prepare(assets_root: &Path, output: &Path) -> Result<SparseFixture, Fixtu
     for start in &mut document.start_locations {
         start.player_slot = remap(start.player_slot, false)?;
     }
-    document.encode().save_atomic(&map)?;
+    document.encode()?.save_atomic(&map)?;
     let mut modified = original.scenario.clone();
     modified.map.clone_from(&map);
     remap_scenario(&mut modified, false)?;
