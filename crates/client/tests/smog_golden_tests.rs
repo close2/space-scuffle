@@ -458,7 +458,10 @@ fn kinematics_hash(
 const GOLDEN_KINEMATICS_SHOWCASE: u64 = 0xb7a3_f586_377e_729a;
 const GOLDEN_KINEMATICS_NON_PLANAR: u64 = 0x4e79_ecfc_c959_7e43;
 const GOLDEN_KINEMATICS_GRID_400: u64 = 0x6aca_fe91_b0ed_7b8a;
-const GOLDEN_KINEMATICS_FALLBACK_600: u64 = 0x8d1d_c59d_6fba_ec0f;
+/// Re-recorded for Phase 9 §9 gap 3 (WP1 of the 2026-11-04 open-findings plan): the all-pairs
+/// fallback now returns its real contact count, so each step's hashed `peers` value changed. The
+/// positions, velocities and per-bubble counters did not. Previous value: `0x8d1d_c59d_6fba_ec0f`.
+const GOLDEN_KINEMATICS_FALLBACK_600: u64 = 0xcd78_5a1b_373f_3636;
 
 /// Class H: literal positions and velocities; heading checked by relation.
 #[test]
