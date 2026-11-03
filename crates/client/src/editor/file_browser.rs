@@ -115,10 +115,10 @@ impl FileBrowserState {
     }
 
     /// Renders the file browser modal window, returning an action when a choice is made.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "a single ordered sequence that shares its local state"
-    )]
+    ///
+    /// The window shows, top to bottom: the error banner, the directory, the file list, the
+    /// file name input, the overwrite prompt when active, and the action buttons. When several
+    /// controls produce an action in one frame, the last one drawn wins.
     pub fn render(&mut self, ctx: &egui::Context, maps_dir: &Path) -> Option<FileBrowserAction> {
         if !self.is_open {
             return None;
@@ -148,114 +148,24 @@ impl FileBrowserState {
                 ui.label(format!("Directory: {}", maps_dir.display()));
                 ui.add_space(4.0);
 
-                // File list scroll area
-                ui.group(|ui| {
-                    ui.set_height(180.0);
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        for file_name in &self.file_list {
-                            let is_selected = self.selected_file.as_deref() == Some(file_name);
-                            if ui.selectable_label(is_selected, file_name).clicked() {
-                                self.selected_file = Some(file_name.clone());
-                                self.filename_input.clone_from(file_name);
-                                self.overwrite_confirm = false;
-                                self.error_banner = None;
-                            }
-                        }
-                    });
-                });
+                self.render_file_list(ui);
 
                 ui.add_space(8.0);
 
-                // Filename input
-                ui.horizontal(|ui| {
-                    ui.label("File name:");
-                    let response = ui.text_edit_singleline(&mut self.filename_input);
-                    if response.changed() {
-                        self.overwrite_confirm = false;
-                        self.error_banner = None;
-                    }
-                });
+                self.render_filename_input(ui);
 
                 ui.add_space(8.0);
 
-                // Overwrite prompt if active
                 if self.overwrite_confirm {
-                    ui.group(|ui| {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(250, 180, 50),
-                            format!("File '{}' already exists. Overwrite?", self.filename_input),
-                        );
-                        ui.horizontal(|ui| {
-                            if ui.button("Yes, Overwrite").clicked() {
-                                let mut name = self.filename_input.trim().to_string();
-                                if !name.ends_with(".scmap.ron") {
-                                    name.push_str(".scmap.ron");
-                                }
-                                let target_path = maps_dir.join(&name);
-                                self.close();
-                                action = Some(FileBrowserAction::Save(target_path));
-                            }
-                            if ui.button("Cancel").clicked() {
-                                self.overwrite_confirm = false;
-                            }
-                        });
-                    });
+                    if let Some(chosen) = self.render_overwrite_prompt(ui, maps_dir) {
+                        action = Some(chosen);
+                    }
                     ui.add_space(4.0);
                 }
 
-                // Action buttons
-                ui.horizontal(|ui| {
-                    match self.mode {
-                        FileBrowserMode::Open => {
-                            if ui.button("Open").clicked() {
-                                let trimmed = self.filename_input.trim();
-                                if trimmed.is_empty() {
-                                    self.error_banner =
-                                        Some("Please select or enter a file name.".into());
-                                } else {
-                                    let mut name = trimmed.to_string();
-                                    if !name.ends_with(".scmap.ron") {
-                                        name.push_str(".scmap.ron");
-                                    }
-                                    let target_path = maps_dir.join(&name);
-                                    if target_path.exists() {
-                                        self.close();
-                                        action = Some(FileBrowserAction::Load(target_path));
-                                    } else {
-                                        self.error_banner =
-                                            Some(format!("File '{name}' not found."));
-                                    }
-                                }
-                            }
-                        }
-                        FileBrowserMode::Save => {
-                            if !self.overwrite_confirm && ui.button("Save").clicked() {
-                                let trimmed = self.filename_input.trim();
-                                if trimmed.is_empty() {
-                                    self.error_banner = Some("Please enter a file name.".into());
-                                } else {
-                                    let mut name = trimmed.to_string();
-                                    if !name.ends_with(".scmap.ron") {
-                                        name.push_str(".scmap.ron");
-                                    }
-                                    let target_path = maps_dir.join(&name);
-                                    if target_path.exists() {
-                                        self.overwrite_confirm = true;
-                                    } else {
-                                        self.close();
-                                        action = Some(FileBrowserAction::Save(target_path));
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if ui.button("Cancel").clicked() {
-                        self.close();
-                        action = Some(FileBrowserAction::Cancel);
-                    }
-                });
+                if let Some(chosen) = self.render_action_buttons(ui, maps_dir) {
+                    action = Some(chosen);
+                }
             });
 
         if !open_window && action.is_none() {
@@ -265,4 +175,136 @@ impl FileBrowserState {
 
         action
     }
+
+    /// Scrollable list of discovered map files; a click selects the file and fills the name input.
+    fn render_file_list(&mut self, ui: &mut egui::Ui) {
+        ui.group(|ui| {
+            ui.set_height(180.0);
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                for file_name in &self.file_list {
+                    let is_selected = self.selected_file.as_deref() == Some(file_name);
+                    if ui.selectable_label(is_selected, file_name).clicked() {
+                        self.selected_file = Some(file_name.clone());
+                        self.filename_input.clone_from(file_name);
+                        self.overwrite_confirm = false;
+                        self.error_banner = None;
+                    }
+                }
+            });
+        });
+    }
+
+    /// Single-line file name input; editing it clears the overwrite prompt and the error banner.
+    fn render_filename_input(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label("File name:");
+            let response = ui.text_edit_singleline(&mut self.filename_input);
+            if response.changed() {
+                self.overwrite_confirm = false;
+                self.error_banner = None;
+            }
+        });
+    }
+
+    /// Asks whether to overwrite the existing file; confirming closes the dialog and saves.
+    fn render_overwrite_prompt(
+        &mut self,
+        ui: &mut egui::Ui,
+        maps_dir: &Path,
+    ) -> Option<FileBrowserAction> {
+        let mut action = None;
+        ui.group(|ui| {
+            ui.colored_label(
+                egui::Color32::from_rgb(250, 180, 50),
+                format!("File '{}' already exists. Overwrite?", self.filename_input),
+            );
+            ui.horizontal(|ui| {
+                if ui.button("Yes, Overwrite").clicked() {
+                    let name = canonical_map_file_name(self.filename_input.trim());
+                    let target_path = maps_dir.join(&name);
+                    self.close();
+                    action = Some(FileBrowserAction::Save(target_path));
+                }
+                if ui.button("Cancel").clicked() {
+                    self.overwrite_confirm = false;
+                }
+            });
+        });
+        action
+    }
+
+    /// The mode's confirm button (Open or Save) followed by Cancel.
+    fn render_action_buttons(
+        &mut self,
+        ui: &mut egui::Ui,
+        maps_dir: &Path,
+    ) -> Option<FileBrowserAction> {
+        let mut action = None;
+        ui.horizontal(|ui| {
+            match self.mode {
+                FileBrowserMode::Open => {
+                    if ui.button("Open").clicked() {
+                        action = self.submit_open(maps_dir);
+                    }
+                }
+                FileBrowserMode::Save => {
+                    if !self.overwrite_confirm && ui.button("Save").clicked() {
+                        action = self.submit_save(maps_dir);
+                    }
+                }
+            }
+
+            if ui.button("Cancel").clicked() {
+                self.close();
+                action = Some(FileBrowserAction::Cancel);
+            }
+        });
+        action
+    }
+
+    /// Opens the named file if it exists; otherwise sets the error banner and returns `None`.
+    fn submit_open(&mut self, maps_dir: &Path) -> Option<FileBrowserAction> {
+        let trimmed = self.filename_input.trim();
+        if trimmed.is_empty() {
+            self.error_banner = Some("Please select or enter a file name.".into());
+            return None;
+        }
+        let name = canonical_map_file_name(trimmed);
+        let target_path = maps_dir.join(&name);
+        if target_path.exists() {
+            self.close();
+            Some(FileBrowserAction::Load(target_path))
+        } else {
+            self.error_banner = Some(format!("File '{name}' not found."));
+            None
+        }
+    }
+
+    /// Saves to the named file, first raising the overwrite prompt when it already exists.
+    fn submit_save(&mut self, maps_dir: &Path) -> Option<FileBrowserAction> {
+        let trimmed = self.filename_input.trim();
+        if trimmed.is_empty() {
+            self.error_banner = Some("Please enter a file name.".into());
+            return None;
+        }
+        let name = canonical_map_file_name(trimmed);
+        let target_path = maps_dir.join(&name);
+        if target_path.exists() {
+            self.overwrite_confirm = true;
+            None
+        } else {
+            self.close();
+            Some(FileBrowserAction::Save(target_path))
+        }
+    }
+}
+
+/// Appends the canonical `.scmap.ron` extension to `name` unless it already ends with it.
+fn canonical_map_file_name(name: &str) -> String {
+    let mut name = name.to_string();
+    if !name.ends_with(".scmap.ron") {
+        name.push_str(".scmap.ron");
+    }
+    name
 }

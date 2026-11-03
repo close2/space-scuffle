@@ -634,10 +634,6 @@ pub enum EntityToolKind {
 /// If placing a start location for an already occupied player slot, moves it instead. Under symmetry
 /// the result always holds both slots, adding whichever is missing as one [`EditCommand::Batch`].
 #[must_use]
-#[expect(
-    clippy::too_many_lines,
-    reason = "a single ordered sequence that shares its local state"
-)]
 pub fn place_entity_command(
     doc: &MapDocument,
     kind: EntityToolKind,
@@ -645,174 +641,176 @@ pub fn place_entity_command(
     symmetry: SymmetryMode,
 ) -> EditCommand {
     match kind {
-        EntityToolKind::Mineral => {
-            let primary_id = doc.next_entity_id();
-            let mut entities = vec![MapEntity::Resource(MapResource {
-                id: primary_id,
+        EntityToolKind::Mineral => place_mirrored_entities(doc, cell, symmetry, |id, cell| {
+            MapEntity::Resource(MapResource {
+                id,
                 kind: ResourceKind::Mineral,
                 cell,
                 amount: DEFAULT_MINERAL_AMOUNT,
-            })];
-
-            if symmetry != SymmetryMode::None {
-                let mirrored_cell = symmetry.mirror_cell(cell, doc.width, doc.height);
-                if mirrored_cell != cell {
-                    entities.push(MapEntity::Resource(MapResource {
-                        id: MapEntityId(primary_id.0 + 1),
-                        kind: ResourceKind::Mineral,
-                        cell: mirrored_cell,
-                        amount: DEFAULT_MINERAL_AMOUNT,
-                    }));
-                }
-            }
-            EditCommand::AddEntities { entities }
-        }
-        EntityToolKind::Gas => {
-            let primary_id = doc.next_entity_id();
-            let mut entities = vec![MapEntity::Resource(MapResource {
-                id: primary_id,
+            })
+        }),
+        EntityToolKind::Gas => place_mirrored_entities(doc, cell, symmetry, |id, cell| {
+            MapEntity::Resource(MapResource {
+                id,
                 kind: ResourceKind::Gas,
                 cell,
                 amount: DEFAULT_GAS_AMOUNT,
-            })];
-
-            if symmetry != SymmetryMode::None {
-                let mirrored_cell = symmetry.mirror_cell(cell, doc.width, doc.height);
-                if mirrored_cell != cell {
-                    entities.push(MapEntity::Resource(MapResource {
-                        id: MapEntityId(primary_id.0 + 1),
-                        kind: ResourceKind::Gas,
-                        cell: mirrored_cell,
-                        amount: DEFAULT_GAS_AMOUNT,
-                    }));
-                }
-            }
-            EditCommand::AddEntities { entities }
-        }
-        EntityToolKind::Watchtower => {
-            let primary_id = doc.next_entity_id();
-            let mut entities = vec![MapEntity::Watchtower(MapWatchtower {
-                id: primary_id,
+            })
+        }),
+        EntityToolKind::Watchtower => place_mirrored_entities(doc, cell, symmetry, |id, cell| {
+            MapEntity::Watchtower(MapWatchtower {
+                id,
                 cell,
                 capture_radius_tenths: DEFAULT_WATCHTOWER_CAPTURE_RADIUS_TENTHS,
                 reveal_radius_tenths: DEFAULT_WATCHTOWER_REVEAL_RADIUS_TENTHS,
-            })];
-
-            if symmetry != SymmetryMode::None {
-                let mirrored_cell = symmetry.mirror_cell(cell, doc.width, doc.height);
-                if mirrored_cell != cell {
-                    entities.push(MapEntity::Watchtower(MapWatchtower {
-                        id: MapEntityId(primary_id.0 + 1),
-                        cell: mirrored_cell,
-                        capture_radius_tenths: DEFAULT_WATCHTOWER_CAPTURE_RADIUS_TENTHS,
-                        reveal_radius_tenths: DEFAULT_WATCHTOWER_REVEAL_RADIUS_TENTHS,
-                    }));
-                }
-            }
-            EditCommand::AddEntities { entities }
-        }
+            })
+        }),
         EntityToolKind::StartLocation { slot, footprint } => {
-            let primary_existing = doc.start_locations.iter().find(|s| s.player_slot == slot);
-            let partner_slot = slot ^ 1;
-            let partner_existing = if symmetry == SymmetryMode::None {
-                None
-            } else {
-                doc.start_locations
-                    .iter()
-                    .find(|s| s.player_slot == partner_slot)
-            };
-
-            let primary_rect = CellRect {
-                min: cell,
-                max_inclusive: (
-                    cell.0 + u32::from(footprint.0).saturating_sub(1),
-                    cell.1 + u32::from(footprint.1).saturating_sub(1),
-                ),
-            };
-            let mirrored_anchor = if symmetry == SymmetryMode::None {
-                cell
-            } else {
-                symmetry
-                    .mirror_rect(primary_rect, doc.width, doc.height)
-                    .min
-            };
-
-            let primary_after = |id| {
-                MapEntity::StartLocation(MapStartLocation {
-                    id,
-                    player_slot: slot,
-                    cell,
-                    footprint,
-                })
-            };
-            let partner_after = |id| {
-                MapEntity::StartLocation(MapStartLocation {
-                    id,
-                    player_slot: partner_slot,
-                    cell: mirrored_anchor,
-                    footprint,
-                })
-            };
-
-            // Without symmetry only the primary slot is involved.
-            if symmetry == SymmetryMode::None {
-                return primary_existing.map_or_else(
-                    || EditCommand::AddEntities {
-                        entities: vec![primary_after(doc.next_entity_id())],
-                    },
-                    |existing| EditCommand::ModifyEntity {
-                        before: MapEntity::StartLocation(existing.clone()),
-                        after: primary_after(existing.id),
-                    },
-                );
-            }
-
-            // A mirrored placement always leaves both slots present and paired. A slot that
-            // already exists is moved, keeping its identity and its one-start-per-slot rule.
-            let new_id = doc.next_entity_id();
-            match (primary_existing, partner_existing) {
-                (Some(primary), Some(partner)) => EditCommand::ModifyEntities {
-                    modifications: vec![
-                        (
-                            MapEntity::StartLocation(primary.clone()),
-                            primary_after(primary.id),
-                        ),
-                        (
-                            MapEntity::StartLocation(partner.clone()),
-                            partner_after(partner.id),
-                        ),
-                    ],
-                },
-                (Some(primary), None) => EditCommand::Batch {
-                    commands: vec![
-                        EditCommand::ModifyEntity {
-                            before: MapEntity::StartLocation(primary.clone()),
-                            after: primary_after(primary.id),
-                        },
-                        EditCommand::AddEntities {
-                            entities: vec![partner_after(new_id)],
-                        },
-                    ],
-                },
-                (None, Some(partner)) => EditCommand::Batch {
-                    commands: vec![
-                        EditCommand::ModifyEntity {
-                            before: MapEntity::StartLocation(partner.clone()),
-                            after: partner_after(partner.id),
-                        },
-                        EditCommand::AddEntities {
-                            entities: vec![primary_after(new_id)],
-                        },
-                    ],
-                },
-                (None, None) => EditCommand::AddEntities {
-                    entities: vec![
-                        primary_after(new_id),
-                        partner_after(MapEntityId(new_id.0 + 1)),
-                    ],
-                },
-            }
+            place_start_location_command(doc, slot, footprint, cell, symmetry)
         }
+    }
+}
+
+/// Adds one single-cell entity built by `make` at `cell` with the document's next entity ID,
+/// plus its mirror under `symmetry` with the following ID. A cell that mirrors onto itself (on
+/// the symmetry axis) is placed once.
+fn place_mirrored_entities(
+    doc: &MapDocument,
+    cell: (u32, u32),
+    symmetry: SymmetryMode,
+    make: impl Fn(MapEntityId, (u32, u32)) -> MapEntity,
+) -> EditCommand {
+    let primary_id = doc.next_entity_id();
+    let mut entities = vec![make(primary_id, cell)];
+
+    if symmetry != SymmetryMode::None {
+        let mirrored_cell = symmetry.mirror_cell(cell, doc.width, doc.height);
+        if mirrored_cell != cell {
+            entities.push(make(MapEntityId(primary_id.0 + 1), mirrored_cell));
+        }
+    }
+    EditCommand::AddEntities { entities }
+}
+
+/// Places or moves the start location of player `slot` with its town hall `footprint` (cells)
+/// anchored at `cell`. Under symmetry the partner slot `slot ^ 1` is placed or moved to the
+/// mirrored footprint as well.
+fn place_start_location_command(
+    doc: &MapDocument,
+    slot: u8,
+    footprint: (u8, u8),
+    cell: (u32, u32),
+    symmetry: SymmetryMode,
+) -> EditCommand {
+    let primary_existing = doc.start_locations.iter().find(|s| s.player_slot == slot);
+    let primary_after = |id| {
+        MapEntity::StartLocation(MapStartLocation {
+            id,
+            player_slot: slot,
+            cell,
+            footprint,
+        })
+    };
+
+    // Without symmetry only the primary slot is involved.
+    if symmetry == SymmetryMode::None {
+        return primary_existing.map_or_else(
+            || EditCommand::AddEntities {
+                entities: vec![primary_after(doc.next_entity_id())],
+            },
+            |existing| EditCommand::ModifyEntity {
+                before: MapEntity::StartLocation(existing.clone()),
+                after: primary_after(existing.id),
+            },
+        );
+    }
+
+    let partner_slot = slot ^ 1;
+    let partner_existing = doc
+        .start_locations
+        .iter()
+        .find(|s| s.player_slot == partner_slot);
+    let primary_rect = CellRect {
+        min: cell,
+        max_inclusive: (
+            cell.0 + u32::from(footprint.0).saturating_sub(1),
+            cell.1 + u32::from(footprint.1).saturating_sub(1),
+        ),
+    };
+    let mirrored_anchor = symmetry
+        .mirror_rect(primary_rect, doc.width, doc.height)
+        .min;
+    let partner_after = |id| {
+        MapEntity::StartLocation(MapStartLocation {
+            id,
+            player_slot: partner_slot,
+            cell: mirrored_anchor,
+            footprint,
+        })
+    };
+
+    pair_start_locations(
+        primary_existing,
+        partner_existing,
+        doc.next_entity_id(),
+        primary_after,
+        partner_after,
+    )
+}
+
+/// Builds the mirrored start placement from what already exists in each slot.
+///
+/// A mirrored placement always leaves both slots present and paired. A slot that already exists
+/// is moved, keeping its identity and its one-start-per-slot rule; a missing slot is added with
+/// `new_id` (and `new_id + 1` when both are missing).
+fn pair_start_locations(
+    primary_existing: Option<&MapStartLocation>,
+    partner_existing: Option<&MapStartLocation>,
+    new_id: MapEntityId,
+    primary_after: impl Fn(MapEntityId) -> MapEntity,
+    partner_after: impl Fn(MapEntityId) -> MapEntity,
+) -> EditCommand {
+    match (primary_existing, partner_existing) {
+        (Some(primary), Some(partner)) => EditCommand::ModifyEntities {
+            modifications: vec![
+                (
+                    MapEntity::StartLocation(primary.clone()),
+                    primary_after(primary.id),
+                ),
+                (
+                    MapEntity::StartLocation(partner.clone()),
+                    partner_after(partner.id),
+                ),
+            ],
+        },
+        (Some(primary), None) => EditCommand::Batch {
+            commands: vec![
+                EditCommand::ModifyEntity {
+                    before: MapEntity::StartLocation(primary.clone()),
+                    after: primary_after(primary.id),
+                },
+                EditCommand::AddEntities {
+                    entities: vec![partner_after(new_id)],
+                },
+            ],
+        },
+        (None, Some(partner)) => EditCommand::Batch {
+            commands: vec![
+                EditCommand::ModifyEntity {
+                    before: MapEntity::StartLocation(partner.clone()),
+                    after: partner_after(partner.id),
+                },
+                EditCommand::AddEntities {
+                    entities: vec![primary_after(new_id)],
+                },
+            ],
+        },
+        (None, None) => EditCommand::AddEntities {
+            entities: vec![
+                primary_after(new_id),
+                partner_after(MapEntityId(new_id.0 + 1)),
+            ],
+        },
     }
 }
 
