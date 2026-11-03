@@ -286,7 +286,8 @@ fn smog_does_not_wash_out_bubbles_beyond_the_volume_centre() -> TestResult {
     const ROWS_X: std::ops::Range<u32> = 480..1170;
     const FAR_ROWS_Y: std::ops::Range<u32> = 205..390;
     const NEAR_ROWS_Y: std::ops::Range<u32> = 400..545;
-    /// Headroom over the near rows, well below the 19 levels of the defect.
+    /// Headroom over the near rows, well below the 19 levels of the defect. On 2026-11-03 the gate
+    /// measured far 83 against near 86 on radv, and 75 against 80 on lavapipe.
     const TOLERANCE: u8 = 8;
 
     if gpu_run::gpu_tests_opted_out() {
@@ -298,11 +299,12 @@ fn smog_does_not_wash_out_bubbles_beyond_the_volume_centre() -> TestResult {
         gpu_run::virtual_gpu_command(std::path::Path::new(env!("CARGO_BIN_EXE_client")));
     command.args(["--swarm", "--max-frames", "40", "--screenshot-out"]);
     command.arg(&screenshot);
-    gpu_run::assert_passes_validation(&mut command, "client --swarm --max-frames 40");
+    command.assert_passes_validation("client --swarm --max-frames 40");
 
     let image = image::open(&screenshot)?.to_luma8();
     let far = median_luminance(&image, ROWS_X, FAR_ROWS_Y);
     let near = median_luminance(&image, ROWS_X, NEAR_ROWS_Y);
+    eprintln!("median luminance {far} far, {near} near");
     assert!(
         far <= near.saturating_add(TOLERANCE),
         "smog washes out far rows: median luminance {far} far, {near} near"

@@ -11,6 +11,9 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   SPACE_SCUFFLE_VIRTUAL_GPU: "1"
+  # The runner has no GPU. Forcing lavapipe keeps CI from depending on the harness's `auto`
+  # choice: a future runner with a GPU then stays on lavapipe instead of changing driver silently.
+  SPACE_SCUFFLE_GPU_TEST_DRIVER: lavapipe
 
 jobs:
   check-and-test:
@@ -18,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     # The suite runs about 20 GPU processes on lavapipe, one after another, and passed 30 minutes
     # in November 2026 with every test green so far. 60 leaves room without hiding a real hang:
-    # each GPU run has its own 300 s limit in crates/client/tests/support/gpu_run.rs.
+    # each GPU run has its own 300 s limit on lavapipe in crates/client/tests/support/gpu_run.rs.
     timeout-minutes: 60
 
     steps:
@@ -53,14 +56,49 @@ jobs:
       - name: Rust Cargo Cache
         uses: Swatinem/rust-cache@v2
 
+      # The test build needs about 9.1 GiB of target/ when cold (docs/plans/2026-11-03-ci-disk-budget.md).
+      # Report the disk before any build, so a red run shows how much the runner had to begin with.
+      - name: Disk report after cache restore
+        run: |
+          df -h / "$GITHUB_WORKSPACE"
+          du -sh target 2>/dev/null || echo "target/ not restored"
+
       - name: Check formatting (cargo fmt)
         run: cargo fmt --all -- --check
 
       - name: Lint workspace (cargo clippy)
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      - name: Disk budget before the test build
+        run: |
+          df -h "$GITHUB_WORKSPACE"
+          du -sh target
+          need_gib=12
+          avail_gib=$(( $(df --output=avail -k "$GITHUB_WORKSPACE" | tail -1) / 1024 / 1024 ))
+          if [ "$avail_gib" -lt "$need_gib" ]; then
+            echo "::error title=Disk budget::${avail_gib} GiB free under $GITHUB_WORKSPACE; the test build needs ${need_gib} GiB (docs/plans/2026-11-03-ci-disk-budget.md)"
+            exit 1
+          fi
+          echo "Disk budget: ${avail_gib} GiB free, ${need_gib} GiB required"
+
       - name: Run all workspace unit & integration tests (including xvfb + llvmpipe GPU tests)
         run: cargo test --workspace --locked
+
+      - name: Test binaries carry compressed debug info
+        run: |
+          bin=$(ls -t target/debug/deps/skirmish_match_tests-* | grep -v '\.d$' | head -1)
+          readelf -SW "$bin" | sed 's/^ *\[ *[0-9]*\]//' \
+            | awk '$1 == ".debug_info" { found = 1; ok = ($7 ~ /C/) } END { exit !(found && ok) }' \
+            || { echo "::error title=Disk budget::$bin has uncompressed .debug_info; is RUSTFLAGS overriding .cargo/config.toml?"; exit 1; }
+          ls -l "$bin"
+
+      - name: Disk report after the test build
+        if: always()
+        run: |
+          df -h "$GITHUB_WORKSPACE"
+          du -sh target target/debug/deps 2>/dev/null || true
+          find target/debug/deps -maxdepth 1 -type f -size +100M -printf '%s %f\n' 2>/dev/null \
+            | sort -rn | head -5 | awk '{ printf "%6.0f MiB  %s\n", $1 / 1048576, $2 }'
 
   # The charter requires bit-for-bit identical simulation on every target. These jobs make
   # that claim executable: each target replays the same golden fixture, in debug and release,

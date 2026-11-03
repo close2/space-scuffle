@@ -25,6 +25,7 @@
 
 mod checks;
 mod docs;
+mod gpu;
 mod identities;
 mod metadata;
 mod production_rules;
@@ -38,6 +39,9 @@ pub use checks::{
 pub use docs::{
     notebook_references, plan_id, plan_index, tracked_files, EVIDENCE_RETENTION_LINE,
     LEGACY_PLAN_IDS, PLAN_STATUSES,
+};
+pub use gpu::{
+    in_process_render_devices, HEADLESS_CHECK_WINDOW, HEADLESS_WINDOW, RENDER_DEVICE_MARKERS,
 };
 pub use identities::{
     folded, no_catalog_identities_in_code, slug_fields, FORMER_IDENTITY_VARIANTS, IDENTITY_CATALOGS,

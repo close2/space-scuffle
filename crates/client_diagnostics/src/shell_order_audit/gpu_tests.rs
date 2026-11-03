@@ -2,6 +2,11 @@
 //!
 //! This tests cache lifecycle safety, not shader correctness or visual acceptance.
 //! Native captures separately compile the actual scene pipelines and inspect images.
+//!
+//! Both tests build a real render device, so each runs as a GPU child of this test binary
+//! through the client's GPU test harness, on the selected driver and under the shared GPU lock
+//! (`docs/plans/2026-11-03-gpu-test-harness.md`, section 11). The `#[test]` entries only launch
+//! their `#[ignore]`d child.
 
 use bevy::prelude::*;
 use bevy::render::{
@@ -9,9 +14,38 @@ use bevy::render::{
     RenderApp,
 };
 
+#[allow(
+    dead_code,
+    reason = "the client's test harness, shared by several test binaries that each use a subset"
+)]
+#[path = "../../../client/tests/support/gpu_run.rs"]
+mod gpu_run;
+
+/// Runs the ignored child `name` of this module as a GPU child.
+fn run_child(name: &str) {
+    if gpu_run::gpu_tests_opted_out() {
+        return;
+    }
+    let module = module_path!()
+        .split_once("::")
+        .map_or(module_path!(), |(_, inside)| inside);
+    gpu_run::run_test_child(&format!("{module}::{name}"), name);
+}
+
 #[test]
-fn actual_renderer_new_queue_id_is_pending_without_indexing_unpublished_storage(
-) -> Result<(), Box<dyn std::error::Error>> {
+fn actual_renderer_new_queue_id_is_pending_without_indexing_unpublished_storage() {
+    run_child("actual_renderer_new_queue_id_child");
+}
+
+#[test]
+fn actual_loaded_scene_validates_temporary_and_synchronized_proxy_lifecycles() {
+    run_child("actual_loaded_scene_child");
+}
+
+/// The child of [`actual_renderer_new_queue_id_is_pending_without_indexing_unpublished_storage`].
+#[test]
+#[ignore = "launched through gpu_run by the test above"]
+fn actual_renderer_new_queue_id_child() -> Result<(), Box<dyn std::error::Error>> {
     let root = client::ResolvedAssetsRoot::from_directory(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
     )?;
@@ -68,10 +102,11 @@ fn actual_renderer_new_queue_id_is_pending_without_indexing_unpublished_storage(
     Ok(())
 }
 
-/// Real client startup and scene extraction; every exit joins renderer workers.
+/// Real client startup and scene extraction; every exit joins renderer workers. The child of
+/// [`actual_loaded_scene_validates_temporary_and_synchronized_proxy_lifecycles`].
 #[test]
-fn actual_loaded_scene_validates_temporary_and_synchronized_proxy_lifecycles(
-) -> Result<(), Box<dyn std::error::Error>> {
+#[ignore = "launched through gpu_run by actual_loaded_scene_validates_temporary_and_synchronized_proxy_lifecycles"]
+fn actual_loaded_scene_child() -> Result<(), Box<dyn std::error::Error>> {
     let root = client::ResolvedAssetsRoot::from_directory(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
     )?;

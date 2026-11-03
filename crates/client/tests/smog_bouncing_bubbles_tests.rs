@@ -1415,9 +1415,9 @@ fn smog_runs_in_present_after_the_frame_is_published() -> Result<(), Box<dyn std
 
 /// C-2 end to end: the real render world writes each published step to the GPU exactly once.
 #[test]
-fn smog_steps_reach_the_gpu_through_queue_writes() -> Result<(), Box<dyn std::error::Error>> {
+fn smog_steps_reach_the_gpu_through_queue_writes() {
     if gpu_run::gpu_tests_opted_out() {
-        return Ok(());
+        return;
     }
     let mut command =
         gpu_run::virtual_gpu_command(std::path::Path::new(env!("CARGO_BIN_EXE_client")));
@@ -1426,14 +1426,7 @@ fn smog_steps_reach_the_gpu_through_queue_writes() -> Result<(), Box<dyn std::er
         "RUST_LOG",
         format!("warn,{}=debug", client::smog::SMOG_UPLOAD_LOG_TARGET),
     );
-    let output = command.output()?;
-    let log = gpu_run::captured_log(&output);
-    assert!(
-        output.status.success(),
-        "client exited with {:?}:\n{}",
-        output.status.code(),
-        gpu_run::tail(&log)
-    );
+    let log = command.run("client --lab --max-frames 60").log();
     let generations: Vec<u64> = log
         .lines()
         .filter_map(|line| {
@@ -1454,5 +1447,4 @@ fn smog_steps_reach_the_gpu_through_queue_writes() -> Result<(), Box<dyn std::er
         generations.windows(2).all(|pair| pair[0] < pair[1]),
         "generations must strictly increase: {generations:?}"
     );
-    Ok(())
 }

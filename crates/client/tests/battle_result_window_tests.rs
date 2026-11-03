@@ -91,15 +91,8 @@ fn the_exit_button_ends_the_real_client_successfully() -> TestResult {
     let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
     command.args(["--ignored", "--exact", "--nocapture", CHILD_TEST]);
     command.env(CHILD_OUT_VAR, &report_path);
-    gpu_run::allow_for_hex_tiling_driver_defect(&mut command);
-    let output = command.output()?;
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "child exited with {:?}:\n{}",
-        output.status.code(),
-        gpu_run::tail(&stderr)
-    );
+    command.allow_for_hex_tiling_driver_defect();
+    command.run("windowed result child");
 
     let report: ResultReport = ron::from_str(&std::fs::read_to_string(&report_path)?)?;
     assert_eq!(report.verdict, "Victory");
@@ -222,7 +215,8 @@ fn drive_to_exit(
             *stage = Stage::Hovering;
         }
         Stage::Hovering => {
-            // egui refuses a click held for over 0.8 s, longer than a software-rendered frame.
+            // egui refuses a click held for over 0.8 s, which a lavapipe frame can exceed, so both
+            // halves of the click go in one frame on every driver.
             send(ButtonState::Pressed);
             send(ButtonState::Released);
             *stage = Stage::Released;

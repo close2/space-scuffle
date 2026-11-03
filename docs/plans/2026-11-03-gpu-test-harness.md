@@ -1,6 +1,6 @@
 # GPU test harness on the physical GPU, one lock per test child
 
-Date: 2026-11-03. Status: Proposed. Host: the shared Debian 13 VM (16 cores of an AMD EPYC 7301, load average
+Date: 2026-11-03. Status: Partly done (implemented; the CI run of section 7, step 7, follows the push). Host: the shared Debian 13 VM (16 cores of an AMD EPYC 7301, load average
 about 30 during the probes), AMD Radeon RX 580 on `radv` and `lavapipe`, both Mesa 25.0.7, Vulkan validation
 layers 1.4.309. CI: GitHub `ubuntu-latest`, no GPU, `lavapipe` on Mesa 25.2.8.
 
@@ -324,6 +324,8 @@ adjust them but must keep the property that no caller can run a GPU child withou
   frame-budget measurement, to hold the lock for up to 1200 s, and 351 s waits were already seen. A peer's
   legitimate use must not turn the gate red. `GPU_LOCK_TIMEOUT` has the same meaning as for `with-gpu-lock`, so
   one variable controls both.
+- **Superseded by the owner (Q0012, 2026-11-03):** the default is now 290 s (4 min 50 s). Every GPU user locks per
+  device use, so a wait should last seconds; a single long command that needs more sets `GPU_LOCK_TIMEOUT`.
 - On expiry, the test fails with `GpuLockError::TimedOut { path, waited }`. The message names the waited time, the
   holder's PID and command line from `/proc/locks` when readable, and says that `SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe`
   runs the tests without the GPU. It never falls back by itself.
@@ -535,3 +537,69 @@ The bullet "**Software Vulkan is the fallback, not the default.**" stays as it i
 
 These are recorded as `docs/questions/open/` entries by WP4 if the owner has not answered in chat (1 updates
 Q0009; 2 and 3 get one new question).
+
+## 11. Implementation record: deviations and the in-process scope addition
+
+Added during implementation, 2026-11-03.
+
+### 11.1 Deviations from the sketch in sections 4 to 6
+
+- **WP1 and WP2 are one commit.** WP1 changes the harness API that every WP2 call site uses, so neither builds alone.
+- **Lock self-tests use `GpuCommand::lock_probe`.** D3 sketched `with_private_lock(path)` on a renderer command. A
+  renderer command needs a selected driver and `xvfb-run`, and its adapter check would fail on `sh`. `lock_probe`
+  runs a plain program under `timeout` with a private lock and no adapter check, so R2 to R4 run on every host.
+  `GpuRun::driver` is therefore an `Option` (`None` for a lock probe), and the ledger writes `driver=none
+  lock=private lock` for those lines.
+- **`ValidationReport::violations` keeps its signature.** The report carries `expected_driver`, which
+  `run_validated` sets; with it set, `violations` adds the adapter check (D6). The pure parser tests are unchanged.
+- **`run` checks the exit status itself.** Every caller expected success, so `run` fails on a timeout, an
+  unsuccessful exit and a wrong or missing adapter line, each message starting with label, driver and adapter.
+  `try_run` returns a lock failure as `GpuLockError` (R3).
+- **No `cfg(target_os = "linux")` around the lock.** `File::try_lock` is portable in std; only the `/proc`
+  readers and Unix file modes are behind `cfg(unix)`. `radv` is still Linux-only, because D1 needs `/dev/dri`.
+- **Auto with neither driver fails.** `auto` on a host with no `radv` prerequisites and no `lavapipe` manifest
+  is a `DriverSelectionError::NoDriver`, not a run on whatever Vulkan offers.
+
+### 11.2 Scope addition: tests that build a render device in their own process
+
+Found by Phase 9 WP8: three tests built a Bevy renderer with real backends inside the test process, without
+`gpu_run.rs`:
+
+| Test | File |
+|---|---|
+| `production_plugin_schedule_initializes_terrain_and_restores_tab_camera` | `crates/client/tests/runtime_battle_tests.rs` |
+| `actual_renderer_new_queue_id_is_pending_without_indexing_unpublished_storage` | `crates/client_diagnostics/src/shell_order_audit/gpu_tests.rs` |
+| `actual_loaded_scene_validates_temporary_and_synchronized_proxy_lifecycles` | same file |
+
+A search of every test file and `#[cfg(test)]` item under `crates/` for `DefaultPlugins`,
+`GamePresentationPlugins`, `RenderPlugin`, `WgpuSettings`, `build_graphical_app*`, `Instance::new` and
+`request_adapter` found no others. The battle harness, `shader_ir.rs` and the editor harness use
+`WgpuSettings { backends: None }`, which creates no device. `runtime_capture_tests`' `build_graphical_app` call
+uses `ClientMode::HeadlessCheck`, which the client refuses before any renderer starts. The `runtime_capture`
+ownership tests use `MinimalPlugins` in this tree.
+
+**What those tests did on this server.** With no `WGPU_BACKEND`, Bevy asks every wgpu backend. Run in-process
+with `VK_ICD_FILENAMES` pointing at `lavapipe`, the client test chose `AMD Radeon RX 580 Series (radeonsi, ...)`
+on the **OpenGL** backend, through EGL, with no lock, and failed with a flood of `wgpu_hal::gles` errors ("view
+dimension will be equal to `CubeArray` rather than `D2Array`"), which is the `Some(Error(1))` WP8 saw. The same
+test with `WGPU_BACKEND=vulkan` passes on `lavapipe` in 13 s (`~/scratch/logs/gpu-harness-rbt-lvp.log`). So the
+failure is not `lavapipe`-specific: it is wgpu's GL backend on the RX 580, reached because the in-process test had
+no driver environment. With no variables at all, the loader also offers `radv`, and the test passed in-process
+in this plan's first `radv` gate, presumably on the discrete Vulkan adapter, but without the lock.
+
+**Decision (not covered by D1 to D9).** Such a test must not build the device in the test process: the Vulkan
+loader reads `VK_ICD_FILENAMES` and wgpu reads `WGPU_BACKEND` and `WGPU_ADAPTER_NAME` only from the process
+environment, and setting them from a multi-threaded test process is unsound. Each test is split the way the window
+tests already are: its body becomes an `#[ignore]`d child, and the `#[test]` calls `gpu_run::run_test_child`,
+which re-executes the test binary through a `GpuCommand`. The child therefore gets driver selection, the driver
+environment (including `WGPU_BACKEND=vulkan`), the lock only for its own run, the run limit, the adapter check and
+a ledger line. `client_diagnostics` includes the client's `gpu_run.rs` by `#[path]`, so there is one harness.
+
+**Check C21** (`crates/workspace_checks/src/gpu.rs`, run by `tests/charter.rs`) fails the gate on a new unpinned
+in-process GPU test. In test code it flags `DefaultPlugins`, `GamePresentationPlugins`, `build_graphical_app`,
+`build_graphical_app_off_main_thread`, `build_graphical_app_with_options` and `request_adapter`, unless
+`backends: None` follows within 15 lines, `HeadlessCheck` follows within 3 lines, or the file uses `gpu_run` and
+the marker is inside an `#[ignore]`d test (a launched child) or a helper that is not a test. Its limit: it does
+not follow calls, so a helper is trusted to be called only by launched children. Red run against the three files
+as they were: "C21: 3 finding(s)", one per test above (`~/scratch/logs/gpu-harness-red-C21.log`). The ID C21 is
+used because the Phase 9 blueprint reserves C20.

@@ -1,6 +1,6 @@
 # CI disk budget: compressed debug info and a disk guard
 
-Date: 2026-11-03. Status: Proposed. Scope: `.github/workflows/ci.yml` and a new repository `.cargo/config.toml`. No
+Date: 2026-11-03. Status: Done (verified on CI in run 41639354662). Scope: `.github/workflows/ci.yml` and a new repository `.cargo/config.toml`. No
 Rust source changes.
 
 ## 1. Problem
@@ -216,7 +216,58 @@ On CI, after the push:
    one, save about 11 GiB on top of option A, and shorten every gate run. It is a refactor of
    `crates/client/tests/`, and it is not part of this plan.
 
+Both decisions are asked as [Q0013](../questions/open/0013-ci-disk-budget.md), which states the defaults above.
+
 ## 8. Results
 
-To be filled in by the implementation: local `du` after the `--no-run` build, and the CI run ID with its `df` and
-`du` figures.
+### 8.1 Local (2026-11-03, implementation)
+
+Both builds were cold `cargo test --workspace --locked --no-run` runs from the same commit tree on this VM, with
+`RUSTC_WRAPPER=sccache` and `CARGO_INCREMENTAL=0`. The linker was the user's `mold` (from `~/.cargo/config.toml`,
+whose `rustflags` cargo joins with the repository's), not CI's `rust-lld`, so CI's figures will differ somewhat.
+
+| Quantity | Without `.cargo/config.toml` | With it |
+|---|---|---|
+| `du -sm` of the target directory | 21 088 MiB | 9 742 MiB (-54 %) |
+| Five largest executables in `debug/deps` | 458 to 468 MiB | 234 to 241 MiB |
+| `skirmish_match_tests` | 458 MiB | 234 MiB (245 043 400 bytes) |
+| `.debug_info` / `.debug_line` of `skirmish_match_tests` | 101.1 / 49.6 MiB, flag empty | 34.3 / 14.3 MiB, flag `C` |
+
+The `target/` figure meets §5 step 2 (at most about 10 GiB). The largest binaries are slightly above the
+"about 100 to 230 MiB" that §5 step 5 expects; that range came from `rust-lld`, and these numbers from `mold`.
+
+The four `ci.yml` snippets were extracted from the parsed workflow and run with `bash -e` (the shell GitHub uses
+for `run:` without `shell:`) in a directory holding each target directory as `target/`:
+
+- "Test binaries carry compressed debug info": exit 0 with compression, and exit 1 with
+  `::error title=Disk budget::target/debug/deps/skirmish_match_tests-... has uncompressed .debug_info; ...` without.
+- "Disk budget": prints `Disk budget: 1248 GiB free, 12 GiB required`, and with the threshold raised to 99999 in a
+  copy it prints the `::error` line and exits 1.
+- Both disk reports exit 0 and print the figures above.
+
+Backtrace (§5 step 4): with an assertion in `the_pilot_reads_the_screen_only` flipped temporarily, not committed,
+`RUST_BACKTRACE=1` printed `panicked at crates/client/tests/skirmish_match_tests.rs:219:9` and the frame
+`at ./tests/skirmish_match_tests.rs:219:9`, from a binary whose `.debug_info` carries the `C` flag.
+
+Gate, after the rebuild: `cargo fmt --all -- --check` and `cargo clippy --workspace --all-targets --locked -- -D
+warnings` pass. `cargo test --workspace --locked --no-fail-fast` on lavapipe: 1 504 passed, 2 failed, 4 ignored.
+The failures were `production_plugin_schedule_initializes_terrain_and_restores_tab_camera`, known to fail only on
+lavapipe, and `the_skirmish_hud_and_foundation_render_cleanly_on_a_real_window`, whose child hit its 300 s limit
+while the shared VM's load average was about 40 on 16 cores. Rerun alone on lavapipe, `skirmish_match_tests`
+passed (3 passed, 1 ignored, 118 s). `runtime_battle_tests` on the RX 580 under `with-gpu-lock`: 18 passed.
+
+### 8.2 CI
+
+Run 41639354662 on `main` at `c529d4c` (the first green run carrying the change; run 41630288360 on `79887c6`
+failed only on the smog goldens and showed the same figures):
+
+| Step | `/` size | Used | Free | `target/` |
+|---|---|---|---|---|
+| After the cache restore | 145 GiB | 64 GiB | 81 GiB | 3.0 GiB |
+| Disk budget (before the test build) | 145 GiB | 65 GiB | 80 GiB (79 GiB by the guard's count, 12 required) | 3.7 GiB |
+| After the test build | 145 GiB | 74 GiB | 71 GiB | 13 GiB |
+
+`Test binaries carry compressed debug info` passed. This runner had about ten times the free space of the runner that
+hit the SIGBUS at `87fd289`; GitHub's runner disk varies, which is why the guard checks free space at run time rather
+than assuming a size. With compression the test build used 13 GiB of `target/`, so even the earlier small runner
+(about 14 GB free) now has room.
