@@ -1,8 +1,8 @@
 //! Integration tests for the shared terrain renderer (`crates/client/src/terrain/`).
 //!
 //! # Architectural Charter & Invariants
-//! In accordance with [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md) and
-//! [Implementation Plan 21 §5.8](file:///home/cl/projects/space-scuffle/docs/plans/21-plan-map-editor.md),
+//! In accordance with `AGENTS.md` and
+//! Implementation Plan 21 §5.8 (`docs/plans/21b-plan-map-editor.md`),
 //! these tests verify the textbook-grade correctness, determinism, and performance invariants
 //! of the shared terrain renderer:
 //!

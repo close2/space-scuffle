@@ -11,7 +11,7 @@
 > - `crates/client/src/scene_controller.rs`  
 > - `crates/client/src/lab_ui.rs`  
 > - `crates/client/tests/round2_visual_tests.rs`  
-> **Charter Compliance:** Strictly adheres to [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md) Section 1 (Zero Shortcuts & Zero Placeholders), Section 2 (Architecture Documentation & Pedagogical Quality), Section 3 (Strict Determinism & Separation of Concerns), Section 4 (Testing Standards), and Section 6 (Mandatory Two-Stage Sub-Agent Workflow).
+> **Charter Compliance:** Strictly adheres to [AGENTS.md](../../AGENTS.md) Section 1 (Zero Shortcuts & Zero Placeholders), Section 2 (Architecture Documentation & Pedagogical Quality), Section 3 (Strict Determinism & Separation of Concerns), Section 4 (Testing Standards), and Section 6 (Mandatory Two-Stage Sub-Agent Workflow).
 
 ---
 

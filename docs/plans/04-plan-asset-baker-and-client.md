@@ -3,7 +3,7 @@
 > **Document Version:** 1.0.0  
 > **Status:** Approved Architectural Blueprint  
 > **Target Crates:** `crates/asset_baker`, `crates/client`, `assets/shaders/`  
-> **Charter Compliance:** Strictly adheres to [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md), [02-bubble-visual-design.md](file:///home/cl/projects/space-scuffle/docs/02-bubble-visual-design.md), and [05-parallel-implementation-plans.md](file:///home/cl/projects/space-scuffle/docs/05-parallel-implementation-plans.md).
+> **Charter Compliance:** Strictly adheres to [AGENTS.md](../../AGENTS.md), [02-bubble-visual-design.md](../02-bubble-visual-design.md), and [05-parallel-implementation-plans.md](../05-parallel-implementation-plans.md).
 
 ---
 
@@ -646,7 +646,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### 2.1 Objective & Architectural Responsibilities
 
-`crates/client` is the interactive visual layer. It has **zero authoritative simulation logic** (satisfying [AGENTS.md Section 3](file:///home/cl/projects/space-scuffle/AGENTS.md)), but provides rich 3D visualization, camera control, particle and beam rendering, and an interactive **Visual Lab** inspector panel.
+`crates/client` is the interactive visual layer. It has **zero authoritative simulation logic** (satisfying [AGENTS.md Section 3](../../AGENTS.md)), but provides rich 3D visualization, camera control, particle and beam rendering, and an interactive **Visual Lab** inspector panel.
 
 **Core Responsibilities:**
 - Implement three runtime launch modes:

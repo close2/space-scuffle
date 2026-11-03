@@ -1,5 +1,7 @@
 # Transport ownership — final native verified; workspace gates pending
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Approved plan: [51](../plans/51-round9-transport-ownership.md). Root released implementation after all three round9 workspace gates passed and independently accepted the immutable post50 candidate (446 files; source inventory `c0a670382d1a2194844a1cdc40ad3f336046ac9242476b1b897cea2f90ba65bf`).50 performance remains inconclusive; this round does not change that status.
 
 The simulation now owns one crate-private passenger carrier Option with public read-only getters. Typed load/unload validate identity, owner, completion, nesting, foundations and paid/channel work before mutation. Unload retains45 exact endpoint geometry. Captured economy and passive state remain intact. No transport range, capacity, capability, player boarding input or construction behavior was invented.

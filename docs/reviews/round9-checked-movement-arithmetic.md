@@ -1,5 +1,7 @@
 # Checked movement arithmetic — source frozen, combined gate pending
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Plan: `docs/plans/50-round7-checked-movement-arithmetic.md`. Correctness implementation is authorized; performance and final acceptance remain held. No editor, authored asset, visual substitution, construction or broad combat arithmetic work is included.
 
 The implementation shares checked geometry among steering, locomotion and collision, including129-bit signed-domain direction normalization. Atomic compact proposals borrow actor routes/orders rather than clone actors; newly generated paths retain their existing allocation costs. Derived retained scratch buffers grow with population; collision aggregate BTreeMaps still allocate. No zero-allocation or throughput claim is made.

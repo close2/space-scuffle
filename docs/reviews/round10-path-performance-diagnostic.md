@@ -1,5 +1,7 @@
 # Round10 path-performance failure: independent source review
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: read-only diagnosis; no product edits, builds, benchmark launches or test reruns by this reviewer. Root owns one declared six-trial diagnostic series. The failed full gate remains failed; no threshold change or replacement pass is implied.
 
 ## Retained failure

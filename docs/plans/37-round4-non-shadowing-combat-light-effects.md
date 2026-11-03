@@ -1,5 +1,7 @@
 # Round 4 — Non-shadowing combat light effects
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: approved by the orchestrator; implementation waits for release of the coordinated gate freeze and precedes the larger plan 35 GPU storage change.
 
 ## Goal and evidence

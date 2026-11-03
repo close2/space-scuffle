@@ -1,5 +1,7 @@
 # Round46: restore scene presentation resources across game tabs
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: implementation released after the repaired full workspace gate and independently verified plan35 source snapshot; focused implementation verification is in progress before plan38 scheduling changes. This blueprint addresses the confirmed presentation-resource leak; it does not change camera bindings or expand plan36's repair window.
 
 ## Goal and observed evidence

@@ -3,7 +3,7 @@
 > **Document Version:** 1.0.0  
 > **Status:** Approved Architectural Blueprint & Specification (Stage 1 Complete)  
 > **Target Crates & Paths:** `assets/catalog/`, `crates/sim_types/`, `crates/sim_core/`, `crates/sim_core/tests/upgrades_and_tech_tree_tests.rs`  
-> **Charter Compliance:** Strictly adheres to [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md) Section 1 (Zero Placeholders & Silent Failures), Section 2 (Pedagogical Quality & Architecture Docs), Section 3 (Strict Determinism & Separation of Concerns), Section 3.3 (Data-Driven Game Catalog & Zero Hardcoded Creatures), Section 4 (Testing Standards), and Section 6 (Mandatory Two-Stage Sub-Agent Workflow: Plan First, Implement Second).
+> **Charter Compliance:** Strictly adheres to [AGENTS.md](../../AGENTS.md) Section 1 (Zero Placeholders & Silent Failures), Section 2 (Pedagogical Quality & Architecture Docs), Section 3 (Strict Determinism & Separation of Concerns), Section 3.3 (Data-Driven Game Catalog & Zero Hardcoded Creatures), Section 4 (Testing Standards), and Section 6 (Mandatory Two-Stage Sub-Agent Workflow: Plan First, Implement Second).
 
 ---
 

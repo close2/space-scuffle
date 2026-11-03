@@ -1,5 +1,7 @@
 # Round 5: truthful, shared player presentation
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: implementation and focused verification complete in round10. Final normal05/sparse02 native runs each produced17 fresh actual-AMD images with exact effect timing/readback provenance; source is frozen at preservation05 for the coordinated full workspace gate. Earlier numeric-only visual rejections and native04 serialization failure remain preserved. Overall art quality remains separately rejected. This work integrates the accepted36/38/46 lifecycle contracts.
 
 ## Goal and scope

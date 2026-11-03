@@ -1,5 +1,7 @@
 # Bubble optics — implementation and actual verification
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: production shader implemented; full visual acceptance remains pending.
 
 ## Color contract and implementation

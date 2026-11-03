@@ -4,7 +4,7 @@
 > **Status:** Authoritative Architectural Design Document  
 > **Pinned Reference:** *StarCraft II: Legacy of the Void (LotV)* **Patch 5.0.14** (November 25, 2024, Blizzard Entertainment & Community Balance Council)  
 > **Simulation Frequency:** 25 Hz Fixed-Point Tick Rate (`1 real second = 25 ticks`, `1 tick = 40 ms`)  
-> **Charter Compliance:** Strictly adheres to [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md) Section 1 (Zero Placeholders & Textbook Grade Quality), Section 2 (Pedagogical Quality & Module Docs), Section 3 (Strict Determinism & Separation of Concerns), and Section 3.3 (Data-Driven Game Catalog & Zero Hardcoded Creatures).
+> **Charter Compliance:** Strictly adheres to [AGENTS.md](../AGENTS.md) Section 1 (Zero Placeholders & Textbook Grade Quality), Section 2 (Pedagogical Quality & Module Docs), Section 3 (Strict Determinism & Separation of Concerns), and Section 3.3 (Data-Driven Game Catalog & Zero Hardcoded Creatures).
 
 ---
 

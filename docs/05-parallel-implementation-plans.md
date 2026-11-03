@@ -83,7 +83,7 @@ space-scuffle/
 ## 4. Sub-Agent Plan A: Bevy Visual Bubble & Dome Lab (`crates/client`)
 
 ### Objective
-Build the Bevy 3D visual client with an interactive **"Bubble & Dome Visual Lab" mode** so you can inspect, test, and tweak every visual mechanism from [02-bubble-visual-design.md](file:///home/cl/projects/space-scuffle/docs/02-bubble-visual-design.md) in real time at both close-up inspection zoom and standard RTS camera height.
+Build the Bevy 3D visual client with an interactive **"Bubble & Dome Visual Lab" mode** so you can inspect, test, and tweak every visual mechanism from [02-bubble-visual-design.md](02-bubble-visual-design.md) in real time at both close-up inspection zoom and standard RTS camera height.
 
 ### Detailed Tasks for Sub-Agent A
 1. **RTS Camera & Stylized Two-Level Arena (`camera.rs`, `terrain_render.rs`):**

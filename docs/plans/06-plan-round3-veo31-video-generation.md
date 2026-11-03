@@ -3,7 +3,7 @@
 > **Document Version:** 1.0.0  
 > **Status:** Approved Architectural Blueprint & Implementation Specification  
 > **Target Crates:** `crates/asset_baker`  
-> **Charter Compliance:** Strictly adheres to [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md) (Section 1.2 "Zero Fake Assets" and Section 6 "Two-Stage Sub-Agent Workflow") and [06-factions-and-video-style-guide.md](file:///home/cl/projects/space-scuffle/docs/06-factions-and-video-style-guide.md).
+> **Charter Compliance:** Strictly adheres to [AGENTS.md](../../AGENTS.md) (Section 1.2 "Zero Fake Assets" and Section 6 "Two-Stage Sub-Agent Workflow") and [06-factions-and-video-style-guide.md](../06-factions-and-video-style-guide.md).
 
 ---
 
@@ -29,7 +29,7 @@ In Round 2, the visual engine, selection HUD, and shader pipeline were upgraded 
      $$\text{max\_total\_frames} = \left\lfloor \frac{16384}{\text{frame\_size}} \right\rfloor = 32$$
      $$\text{max\_frames\_per\_clip} = \left\lfloor \frac{\text{max\_total\_frames}}{K} \right\rfloor = \left\lfloor \frac{32}{3} \right\rfloor = 10 \text{ frames/clip}$$
      Ensuring $3 \times 10 \times 512 = 15360\text{ px} \le 16384\text{ px}$ (safely within WebGPU hardware limits).
-   - Guarantee that all 6 enum variants of [`AnimState`](file:///home/cl/projects/space-scuffle/crates/sim_types/src/enums.rs) (`Constructing`, `Idle`, `Walk`, `Attack`, `Cast`, `Die`) are mapped to valid action slices in the `.flipbook.ron` manifest, preventing client sampling panic.
+   - Guarantee that all 6 enum variants of [`AnimState`](../../crates/sim_types/src/enums.rs) (`Constructing`, `Idle`, `Walk`, `Attack`, `Cast`, `Die`) are mapped to valid action slices in the `.flipbook.ron` manifest, preventing client sampling panic.
 3. **End-to-End Asset Generation for 4 Showcase Heroes:**
    - Execute `asset_baker generate-veo --all-starters` to generate 12 real `.mp4` video clips into `assets/videos/` and bake 4 multi-action flipbook atlases (`marine`, `zealot`, `marauder`, `command_dome`) into `assets/textures/`.
    - Verify that `.flipbook.ron` manifests have distinct non-overlapping `start_frame` offsets for `Idle` ($0$), `Walk` ($10$), and `Attack` ($20$).
@@ -281,7 +281,7 @@ When combining $K$ distinct animation clips (e.g., $K = 3$ for `Idle`, `Walk`, `
 $$72 \times 512 = 36864 \text{ px} > 16384 \text{ px} \quad (\mathbf{FAIL: \text{WebGPU Allocation Crash}})$$
 
 #### Mathematical Solution — Dynamic Per-Clip Frame Budget:
-In [`bake_multi_action_videos_with_states`](file:///home/cl/projects/space-scuffle/crates/asset_baker/src/ffmpeg_importer.rs):
+In [`bake_multi_action_videos_with_states`](../../crates/asset_baker/src/ffmpeg_importer.rs):
 ```rust
 let max_total_frames = 16384 / frame_size.max(1);
 let k = clips.len() as u32;
@@ -311,7 +311,7 @@ let clip_frame_count = frame_paths.len() as u32;
 
 ### 2.2 Comprehensive `AnimState` Fallback Mapping in Manifest
 
-Space Scuffle units can enter 6 discrete simulation animation states defined in [`AnimState`](file:///home/cl/projects/space-scuffle/crates/sim_types/src/enums.rs):
+Space Scuffle units can enter 6 discrete simulation animation states defined in [`AnimState`](../../crates/sim_types/src/enums.rs):
 - `Constructing`
 - `Idle`
 - `Walk`

@@ -1,5 +1,7 @@
 # Persistent mist release preservation recipe
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Run this recipe only after the coordinated gate passes and while the orchestrator still holds the source freeze. The snapshot preserves the tested current workspace, including concurrent approved simulation/client work; it is not presented as a one-file derivative of the older dynamic-mesh baseline. Its inventory and complete baseline difference identify that distinction. The baseline snapshots and executable remain untouched. No snapshot, release build or measurement has been performed by writing this recipe.
 
 The build/runtime allowlist is the root Cargo manifest/lock/toolchain/charter, all five crate trees, all actual assets and the reviewed vendored compiler tree. Git state, credentials, tool state, generated targets and verification artifacts under `tmp/verification`, plus external compatibility tooling, are excluded. Authored capture scripts under `assets/captures`, including `default_battle.ron`, are retained as runtime assets. The only permitted symlink is the existing `crates/client/assets -> ../../assets`, whose target must resolve inside the snapshot. A new root Cargo configuration or unexpected symlink stops preservation for review. Current crate files comprise Rust and Cargo manifests; current assets comprise RON, WGSL and actual PNG/JPEG/MP4 media. The root Cargo patch points to `third_party/naga`; all compile-time include paths remain inside these roots.

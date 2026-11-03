@@ -1,7 +1,7 @@
 //! Integration and application-level tests for the Space Scuffle Map Editor.
 //!
 //! # Architectural Charter
-//! In accordance with Implementation Plan 21 §7.3 and §7.4 and [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md),
+//! In accordance with Implementation Plan 21 §7.3 and §7.4 and `AGENTS.md`,
 //! this test suite validates:
 //! 1. **Playtesting Document Isolation:** Entering playtesting mode, executing combat orders, and returning
 //!    to editing mode leaves the authored document cells, entities, and undo/redo history completely undamaged.

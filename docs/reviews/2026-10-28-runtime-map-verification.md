@@ -1,5 +1,7 @@
 # Runtime map integration verification — 2026-10-28
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Blueprint: `docs/plans/28-round2-runtime-maps-and-matching-terrain.md`.
 
 ## Implementation boundary

@@ -1,5 +1,7 @@
 # Round 11 closeout
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 The user requested completion of the running rounds and no new rounds. All three
 delegated lanes have finished their current implementation, evidence or planning
 work. No follow-up implementation is released. The coordinated workspace gate

@@ -1,10 +1,12 @@
 # Round54: choose a mist field with explicit subdivision semantics
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: advisory architecture and small independent offline mathematics only. Root approved this investigation, not a product field, shader, evaluator, asset, packet layout, quadrature budget increase or renderer change.52 remains frozen pending the combined gate. This document does not edit or supersede44's approved CPU Stage3 scope. Any subsequent field implementation requires that stage's real retained-source artifacts, a reviewed model decision and explicit root release.
 
 ## Goal and existing rejection
 
-Resolve the demonstrated straight varying-age subdivision discrepancy without pretending that position/time/path control accuracy proves density fidelity. The current proposed field sums per-segment axial windows multiplied by attributes evaluated at each segment's **clamped** projection. On the retained mathematical line of length2r with affine normalized age1→0,32 source edges reduce to one with zero control error and zero arc deficit, yet mass changes by−5.176% and the sampled central broadside transmittance changes0.836810→0.996490. See [independent derivation and provenance](../reviews/round10-mist-field-subdivision.md) and [44's exact field proposal](44-field-oracle-review.md).
+Resolve the demonstrated straight varying-age subdivision discrepancy without pretending that position/time/path control accuracy proves density fidelity. The current proposed field sums per-segment axial windows multiplied by attributes evaluated at each segment's **clamped** projection. On the retained mathematical line of length2r with affine normalized age1→0,32 source edges reduce to one with zero control error and zero arc deficit, yet mass changes by−5.176% and the sampled central broadside transmittance changes0.836810→0.996490. See [independent derivation and provenance](../reviews/round10-mist-field-subdivision.md) and [44's exact field proposal](../reviews/plan44-field-oracle-review.md).
 
 The error is in the model/representation relationship, before packing, shader execution or view-ray quadrature. A new model must be evaluated as a new declared field on **both** source and reduced representations; quietly redefining only the reference to bless coarse output is not a fidelity repair. No current ribbon defect, legal command trajectory, rendered image or visual acceptance is inferred from this mathematical example.
 

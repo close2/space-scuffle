@@ -1,6 +1,6 @@
 # Codebase Findings — 2026-10-26
 
-> Collected while researching [Plan 21 — Map Editor](../plans/21-plan-map-editor.md).
+> Collected while researching [Plan 21 — Map Editor](../plans/21b-plan-map-editor.md).
 > These findings are **outside** the map-editor scope unless marked *(fixed by Plan 21)*.
 > Each entry: location, problem, why it matters, recommended fix. Severity: **High** (wrong
 > behaviour / determinism risk), **Medium** (charter violation / latent bug), **Low** (hygiene).

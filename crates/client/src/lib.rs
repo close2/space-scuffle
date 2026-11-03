@@ -1,8 +1,8 @@
 //! Space Scuffle Bevy 3D renderer, tactical indicators, and Bubble Visual Lab.
 //!
 //! # Architectural Charter
-//! In accordance with [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md) and
-//! [Implementation Plan 04](file:///home/cl/projects/space-scuffle/docs/plans/04-plan-asset-baker-and-client.md),
+//! In accordance with `AGENTS.md` and
+//! Implementation Plan 04 (`docs/plans/04-plan-asset-baker-and-client.md`),
 //! `crates/client` provides the interactive visual layer for Space Scuffle.
 //!
 //! # Invariants Maintained

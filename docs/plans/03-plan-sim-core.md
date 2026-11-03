@@ -2,7 +2,7 @@
 
 > **Architectural Charter & Pedagogical Standard:**
 > This blueprint specifies the complete architectural, algorithmic, and mathematical design of `crates/sim_core` for **Space Scuffle**.
-> As mandated by [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md), this document is a textbook-grade engineering reference. It defines bit-for-bit cross-platform determinism, StarCraft II combat timing parity, multi-layer steering with Boid separation and push priority, and an authoritative fixed-tick pipeline operating at $25\text{ Hz}$ ($40\text{ ms}$ per tick).
+> As mandated by [AGENTS.md](../../AGENTS.md), this document is a textbook-grade engineering reference. It defines bit-for-bit cross-platform determinism, StarCraft II combat timing parity, multi-layer steering with Boid separation and push priority, and an authoritative fixed-tick pipeline operating at $25\text{ Hz}$ ($40\text{ ms}$ per tick).
 > Zero placeholders, zero floating-point numbers in simulation state, and zero non-deterministic standard collections.
 
 ---

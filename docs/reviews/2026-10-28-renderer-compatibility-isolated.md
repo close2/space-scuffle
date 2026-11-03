@@ -1,5 +1,7 @@
 # Isolated renderer compiler compatibility checkpoint
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 The approved blueprint is `docs/plans/31-round3-renderer-validation-compatibility.md`. The isolated checkpoint under `/tmp/space-scuffle-render-compatibility` is now integrated into the root workspace after orchestrator approval; production validation remains in progress.
 
 ## Provenance

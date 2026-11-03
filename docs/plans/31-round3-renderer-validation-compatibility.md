@@ -1,5 +1,7 @@
 # Round 3: validation-clean Vulkan rendering on the locked client stack
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: approved staged implementation; isolated compiler/native-surface evidence passed, workspace integration and native validation in progress.
 
 ## Goal and acceptance boundary

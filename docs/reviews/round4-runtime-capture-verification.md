@@ -1,5 +1,7 @@
 # Round 4 production capture verification
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: capture acquisition, repeatability and negative verification complete; source frozen for shared gates. Visual product quality is **not accepted** by this report.
 
 ## Implemented contract

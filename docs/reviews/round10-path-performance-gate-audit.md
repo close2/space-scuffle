@@ -1,5 +1,7 @@
 # Round 10b: unchanged pathfinding timing failure
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 This is a read-only diagnostic review, not a performance fix or a passing workspace
 gate. Product source, compiler profiles and test thresholds remain unchanged.
 

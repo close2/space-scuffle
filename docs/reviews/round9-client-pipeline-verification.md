@@ -1,5 +1,7 @@
 # Round38 production command/tick/presentation verification
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: production migration implemented and focused verification passed; final native cadence evidence and the coordinated complete workspace gate remain pending. No editor files were developed in this round. Functional verification does not accept the existing terrain, creature media or mist art.
 
 ## Production behavior

@@ -1,7 +1,7 @@
 //! Space Scuffle standalone map editor binary.
 //!
 //! # Architectural Responsibilities
-//! In accordance with [Plan 21 §7.1](file:///home/cl/projects/space-scuffle/docs/plans/21-plan-map-editor.md),
+//! In accordance with Plan 21 §7.1 (`docs/plans/21b-plan-map-editor.md`),
 //! this binary boots the dedicated windowed Bevy application (1600×900) for interactive map authoring,
 //! holographic asset inspection, and deterministic playtest battles.
 //!

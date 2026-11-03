@@ -1,7 +1,8 @@
 //! The charter's checkable claims, run against this repository.
 //!
 //! # Responsibility
-//! One `#[test]` per check, named after its ID (`c02_...`, `c03_...`). Each runs the check from
+//! One `#[test]` per check, named after its ID (`c02_...`, `c03_...`); C18 and C19 judge the
+//! documentation (plan index, notebook paths) rather than code. Each runs the check from
 //! the `workspace_checks` library on the repository root and fails with every finding, one
 //! `path:line: message` per line, so a single run shows all the work to do.
 //!
@@ -19,8 +20,8 @@
 use std::error::Error;
 use workspace_checks::{
     cargo_metadata, engine_free_simulation, float_ratchet, module_docs, no_mutable_statics,
-    no_work_markers, render, repo_root, simulation_clippy_config, typed_library_errors, Finding,
-    FloatAllowance, SIMULATION_CRATES,
+    no_work_markers, notebook_references, plan_index, render, repo_root, simulation_clippy_config,
+    tracked_files, typed_library_errors, Finding, FloatAllowance, SIMULATION_CRATES,
 };
 
 /// Fails with every finding of `check`, or passes when there are none.
@@ -124,5 +125,18 @@ fn c13_no_mutable_statics() -> Result<(), Box<dyn Error>> {
 #[test]
 fn c14_library_crates_return_typed_errors() -> Result<(), Box<dyn Error>> {
     assert_clean("C14", &typed_library_errors(&repo_root())?);
+    Ok(())
+}
+
+#[test]
+fn c18_every_plan_has_one_index_row_with_a_known_status() -> Result<(), Box<dyn Error>> {
+    assert_clean("C18", &plan_index(&repo_root())?);
+    Ok(())
+}
+
+#[test]
+fn c19_no_file_urls_and_lost_tmp_evidence_is_marked() -> Result<(), Box<dyn Error>> {
+    let root = repo_root();
+    assert_clean("C19", &notebook_references(&root, &tracked_files(&root)?)?);
     Ok(())
 }

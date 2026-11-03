@@ -1,5 +1,7 @@
 # Phase 9 Blueprint: Structure and Documentation
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Finishes Phase 9 of `docs/plans/2026-11-01-codebase-remediation.md` (steps 9.1 to 9.6).
 
 **Exit criterion:** the charter describes the code as it is, and every claim in it is checked by CI.

@@ -1,5 +1,7 @@
 # Round 3 weapon-period implementation validation
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Plan 32 implementation is frozen for the orchestrator's independent workspace checkpoint. This is an implementation evidence record, not a claim of independent visual or cross-platform verification.
 
 ## Delivered contract

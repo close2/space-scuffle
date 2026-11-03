@@ -1,5 +1,7 @@
 # Production mist round — verification record
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: implementation in progress; visual acceptance explicitly withheld.
 
 ## Completed engineering contracts

@@ -1,5 +1,7 @@
 # Round47: cancel camera drag ownership across focus loss
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: architecture approved, implementation released after the round7 combined workspace gate passed with unchanged source fingerprints. This bounded repair precedes38 camera integration. Focused implementation verification is in progress; native and subsequent integrated gates remain required.
 
 ## Evidence and precise problem

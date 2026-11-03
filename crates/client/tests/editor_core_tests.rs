@@ -1,7 +1,7 @@
 //! Pure logic integration tests for the Space Scuffle map editor core.
 //!
 //! # Architectural Charter
-//! In accordance with Implementation Plan 21 §6.5 and [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md),
+//! In accordance with Implementation Plan 21 §6.5 and `AGENTS.md`,
 //! this test suite validates editor commands, undo/redo history limits, drag stroke deduplication,
 //! brush footprint geometry with zero per-frame allocation, ramp landing inference with symmetry,
 //! entity tool workflows, town hall start footprint catalog resolution, and symmetry transformations

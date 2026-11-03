@@ -1,5 +1,7 @@
 # Round47 camera gesture verification
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Bounded source implementation passed orchestrator review. Native verification includes five initial checks and a successful three-check ordinary-focus sequence, with two failed attempts preserved. Post-minimize requested pointer motion never arrives; that remains a platform/delivery limitation, not a passed stationarity test. The next combined workspace gate is still required; the successful round7 gate preceded this change.
 
 ## Implementation and independent-review corrections

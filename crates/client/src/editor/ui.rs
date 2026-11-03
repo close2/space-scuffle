@@ -1,7 +1,7 @@
 //! Full-featured egui UI for the Space Scuffle map editor.
 //!
 //! # Architectural Charter
-//! In accordance with Implementation Plan 21 §7.3 and [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md),
+//! In accordance with Implementation Plan 21 §7.3 and `AGENTS.md`,
 //! this module provides the interactive user interface: top menu bar, left toolbox, right
 //! inspector/validation panel with cell jumping, bottom status bar, and modal confirmation dialogs.
 //! [`editor_ui_system`] orchestrates one frame; `panels`, `dialogs` and `viewport` hold the parts.

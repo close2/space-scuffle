@@ -1,7 +1,7 @@
 //! Map editor camera controller subsystem.
 //!
 //! # Architectural Charter
-//! In accordance with Implementation Plan 21 §7.2 and [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md),
+//! In accordance with Implementation Plan 21 §7.2 and `AGENTS.md`,
 //! this module provides the dedicated RTS camera navigation system for the map editor.
 //!
 //! # Invariants Maintained

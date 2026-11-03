@@ -29,7 +29,7 @@ In Blizzard's StarCraft II engine (as documented by lead pathfinding engineer Ja
 
 ### 2.1 Moving-vs-Moving Perpendicular Wedge in `checked_dynamic_push` (`crates/sim_core/src/steering.rs`)
 
-In [`crates/sim_core/src/steering.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/steering.rs#L683-L716):
+In [`crates/sim_core/src/steering.rs`](../../crates/sim_core/src/steering.rs#L683-L716):
 ```rust
     let half = overlap * SimScalar::HALF;
     let move_dir = if a_moving {
@@ -70,7 +70,7 @@ In [`crates/sim_core/src/steering.rs`](file:///home/cl/projects/space-scuffle/cr
 
 ### 2.2 Co-Moving Boid Separation vs. Stationary Blocker Bypass (`crates/sim_core/src/steering.rs`)
 
-In [`crates/sim_core/src/steering.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/steering.rs#L164-L227) (`calc_steering_weight` and `compute_unified_local_steering_ext`):
+In [`crates/sim_core/src/steering.rs`](../../crates/sim_core/src/steering.rs#L164-L227) (`calc_steering_weight` and `compute_unified_local_steering_ext`):
 - Currently, `calc_steering_weight` uses the same `0.85` ($40.4^\circ$) maximum tangent weight `(w_touch, w_max) = (0.85, 0.85)` for both stationary blockers (`obs.velocity == SimVec2::ZERO`) and co-moving squadmates (`obs.velocity != SimVec2::ZERO`), and ignores `_ = obs_forward`.
 - **SC2 Fix:**
   1. In `compute_unified_local_steering_ext` (lines 363–372):
@@ -93,7 +93,7 @@ Tracing `EntityId(13)` (a `Large` unit with `policy.radius = 0.75`) approaching 
      `static_legs_ok && (first_leg_ok || actor.current_funnel_waypoints.len() >= 2)`
    - Because `actor.current_funnel_waypoints` had 2+ waypoints (`[(29.481, 11.519), ...]`), `locomotion.rs` **ignored** `first_leg_ok == false` (`!policy.permits_segment(&self.map, actor.position, first_wp)`) when `Unit 13` was at `y > 12.0` (`(23.0, 12.4)`), so `Unit 13` never repathed to add the ramp-entrance waypoint `(25.519, 11.519)` and walked straight into the cliff wall at `x = 26.0, y = 12.50`!
 2. **Why `task-776` oscillated at ticks 161..177 when `first_leg_ok` WAS required:**
-   - Look at lines 353–370 of [`crates/sim_core/src/movement/locomotion.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/movement/locomotion.rs#L353-L370):
+   - Look at lines 353–370 of [`crates/sim_core/src/movement/locomotion.rs`](../../crates/sim_core/src/movement/locomotion.rs#L353-L370):
      ```rust
         while proposal.route(actor).len() >= 2 {
             let first = proposal.route(actor)[0];
@@ -163,7 +163,7 @@ Tracing `EntityId(13)` (a `Large` unit with `policy.radius = 0.75`) approaching 
 
 ## 3. Step-by-Step Implementation Plan for Stage 2
 
-### Step 1: SC2 Push Priority & Boid Steering in [`crates/sim_core/src/steering.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/steering.rs)
+### Step 1: SC2 Push Priority & Boid Steering in [`crates/sim_core/src/steering.rs`](../../crates/sim_core/src/steering.rs)
 
 1. **In `calc_steering_weight` (lines 164–227):**
    - Compute `obs_fwd_scalar = SimScalar::from_raw((obs_forward >> 32) as i64);`.
@@ -208,7 +208,7 @@ Tracing `EntityId(13)` (a `Large` unit with `policy.radius = 0.75`) approaching 
      Ok((correction, checked_vec_neg(correction)?))
      ```
 
-### Step 2: SC2 Waypoint Handoff & Corridor Guard in [`crates/sim_core/src/movement/locomotion.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/movement/locomotion.rs)
+### Step 2: SC2 Waypoint Handoff & Corridor Guard in [`crates/sim_core/src/movement/locomotion.rs`](../../crates/sim_core/src/movement/locomotion.rs)
 
 1. **Imports (lines 5–7):**
    - Remove unused `checked_vec_sub`:
@@ -247,7 +247,7 @@ Tracing `EntityId(13)` (a `Large` unit with `policy.radius = 0.75`) approaching 
    - Keep the `ground_segment_is_connected` steering guard (lines 456–467).
    - Restore `Some((x, velocity))` and `Some((y, velocity))` in `prepare_slide` (lines 599–606).
 
-### Step 3: Unit & Integration Tests in [`crates/sim_core/tests/collision_and_immobility_tests.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/tests/collision_and_immobility_tests.rs)
+### Step 3: Unit & Integration Tests in [`crates/sim_core/tests/collision_and_immobility_tests.rs`](../../crates/sim_core/tests/collision_and_immobility_tests.rs)
 
 1. **Add Unit Test `test_sc2_moving_units_never_push_each_other_laterally`:**
    - Construct two moving friendly `PushEntityParams` (`a.vel = (1, 0)`, `b.vel = (1, 0)`, overlapping along X at `(5.0, 10.0)` and `(5.5, 10.0)`).

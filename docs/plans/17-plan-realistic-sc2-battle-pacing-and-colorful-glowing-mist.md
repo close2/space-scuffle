@@ -5,7 +5,7 @@
 ### 1.1 Problem Statement & User Observations
 In recent playtests of the live combat simulation (`--battle`), the user reported two critical issues:
 1. *"I have started the attack in the attack simulation again. If the values are valid units, then the battle is far too soon over. Do close-combat weapons have their pause? It seems as if the enemy units die as soon as a close-range unit reaches the unit."*
-2. *"Also the mist is still not looking good. Take a look at the images in tmp. We want something like this. A colorful glowing mist."* (referencing [`Gemini_Generated_Image_12da9g12da9g12da.jpg`](file:///home/cl/projects/space-scuffle/tmp/Gemini_Generated_Image_12da9g12da9g12da.jpg) and [`damaged bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg`](file:///home/cl/projects/space-scuffle/tmp/damaged bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg)).
+2. *"Also the mist is still not looking good. Take a look at the images in tmp. We want something like this. A colorful glowing mist."* (referencing `Gemini_Generated_Image_12da9g12da9g12da.jpg` (an untracked file in `tmp/`, not in the repository) and `damaged bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg` (an untracked file in `tmp/`, not in the repository)).
 
 ### 1.2 Forensic Investigation of the 4 Root Causes
 
@@ -29,7 +29,7 @@ Our deep-dive inspection of `crates/client/src/scene_controller.rs`, `crates/sim
 ```
 
 #### Bug 1: Unthrottled Per-Render-Frame Simulation Stepping in `sync_live_battle_system`
-- **Location:** [`crates/client/src/scene_controller.rs:494`](file:///home/cl/projects/space-scuffle/crates/client/src/scene_controller.rs#L494)
+- **Location:** [`crates/client/src/scene_controller.rs:494`](../../crates/client/src/scene_controller.rs#L494)
 - **Mechanism:**
   `sync_live_battle_system` is scheduled in Bevy's standard `Update` schedule. It did not take `Res<Time>` as a dependency, and contained the loop:
   ```rust
@@ -43,9 +43,9 @@ Our deep-dive inspection of `crates/client/src/scene_controller.rs`, `crates/sim
   Decouple the simulation tick rate from the display render frame rate. Add `pub battle_tick_accumulator_secs: f32` to `LabState`. In `sync_live_battle_system`, consume `time.delta_secs() * (speed as f32)` in discrete $0.04\text{s}$ increments, capped at a maximum of 5 ticks per frame to prevent a spiral of death during frame drops.
 
 #### Bug 2: `railgun_crawler` (Unsieged Tank Mode) Erroneously Given Siege Mode $40+30$ AoE Splash Every 18 Ticks
-- **Location:** [`assets/catalog/units.ron:334-360`](file:///home/cl/projects/space-scuffle/assets/catalog/units.ron#L334-L360)
+- **Location:** [`assets/catalog/units.ron:334-360`](../../assets/catalog/units.ron#L334-L360)
 - **Mechanism:**
-  In `new_default_battle_sandbox()` ([`crates/sim_core/src/world.rs:321-346`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/world.rs#L321-L346)), Red army has 8 `psi_grey` (Zealots) at $x = 45$ and 2 `railgun_crawler` (Siege Tanks) at $x = 48$. Blue army has 10 `pulse_bot` (Marines, 45 HP) at $x = 15$ and 2 `rhino_beetle` (Marauders) at $x = 12$.
+  In `new_default_battle_sandbox()` ([`crates/sim_core/src/world.rs:321-346`](../../crates/sim_core/src/world.rs#L321-L346)), Red army has 8 `psi_grey` (Zealots) at $x = 45$ and 2 `railgun_crawler` (Siege Tanks) at $x = 48$. Blue army has 10 `pulse_bot` (Marines, 45 HP) at $x = 15$ and 2 `rhino_beetle` (Marauders) at $x = 12$.
   In `units.ron`, `railgun_crawler`'s un-sieged primary weapon was configured with:
   ```ron
   base_damage: 40.0,
@@ -64,7 +64,7 @@ Our deep-dive inspection of `crates/client/src/scene_controller.rs`, `crates/sim
   Restore `railgun_crawler`'s un-sieged weapon to authentic SC2 Tank Mode stats: `base_damage: 15.0`, `bonus_armored: 10.0`, `period_ticks: 26`, `damage_point_ticks: 4`, `backswing_ticks: 4`, and `splash: None`. Move the $40.0 + 30.0$ AoE splash weapon strictly into its `SiegeModeToggle` ability's `sieged_weapon` with `period_ticks: 54`.
 
 #### Bug 3: `step_entity_weapon` Missing Cooldown Guard in `Ready` & `RotatingToTarget` + Target-Switch Cooldown Reset
-- **Location:** [`crates/sim_core/src/combat.rs:334-433`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/combat.rs#L334-L433)
+- **Location:** [`crates/sim_core/src/combat.rs:334-433`](../../crates/sim_core/src/combat.rs#L334-L433)
 - **Mechanism:**
   In `step_entity_weapon`:
   ```rust
@@ -97,7 +97,7 @@ Our deep-dive inspection of `crates/client/src/scene_controller.rs`, `crates/sim
   In `units.ron`, assign realistic front-swing windups (`damage_point_ticks: 4`) and backswings (`backswing_ticks: 6`) to melee weapons (`psi_grey`, `welder_drone`, `razor_mantis`), guaranteeing a distinct, readable windup animation and rhythm between strikes.
 
 #### Bug 4: Visual Mist Aesthetics & Shader Deficiencies
-- **Location:** [`assets/shaders/mist_wake.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/mist_wake.wgsl) and [`crates/client/src/vfx.rs:59-71, 265-371`](file:///home/cl/projects/space-scuffle/crates/client/src/vfx.rs#L59-L71)
+- **Location:** `assets/shaders/mist_wake.wgsl` (since removed from the repository) and [`crates/client/src/vfx.rs:59-71, 265-371`](../../crates/client/src/vfx.rs#L59-L71)
 - **Mechanism:**
   The current mist implementation:
   1. Uses `AlphaMode::Blend` with `alpha <= 0.18`. Standard alpha blending with low alpha against dark floor textures looks like faint, muddy, blue-grey smudges rather than a luminous energy wake.
@@ -105,7 +105,7 @@ Our deep-dive inspection of `crates/client/src/scene_controller.rs`, `crates/sim
   3. Uses unrotated UV coordinates on tiny circular quads (`radius * 0.85`), failing to sweep back along the sphere's movement vector `trail_dir`.
 - **Architectural Remedy:**
   Switch `MistWakeMaterial` to `AlphaMode::Add` (Additive Blending). In additive blending (`src_color * src_alpha + dst_color`), overlapping wisps bloom into vibrant, luminous highlights and can **never** darken the arena floor or look muddy.
-  Re-architect `mist_wake.wgsl` to sample a rich, multi-color iridescent palette (violet-magenta core, electric cyan-blue, pearlescent pink-white, and fiery golden-amber / orange-coral outer rim ribbons), aligned along the movement vector with longitudinal slipstream streaks, procedural iridescent micro-bubbles, and glittering star-sparks matching [`Gemini_Generated_Image_12da9g12da9g12da.jpg`](file:///home/cl/projects/space-scuffle/tmp/Gemini_Generated_Image_12da9g12da9g12da.jpg).
+  Re-architect `mist_wake.wgsl` to sample a rich, multi-color iridescent palette (violet-magenta core, electric cyan-blue, pearlescent pink-white, and fiery golden-amber / orange-coral outer rim ribbons), aligned along the movement vector with longitudinal slipstream streaks, procedural iridescent micro-bubbles, and glittering star-sparks matching `Gemini_Generated_Image_12da9g12da9g12da.jpg` (an untracked file in `tmp/`, not in the repository).
 
 ---
 
@@ -113,7 +113,7 @@ Our deep-dive inspection of `crates/client/src/scene_controller.rs`, `crates/sim
 
 ### 2.1 The StarCraft II Time Base: "Faster" Speed Translation
 StarCraft II competitive multiplayer is played at **Faster** speed ($1.4\times$ Normal speed).
-In *Space Scuffle*, our simulation tick rate is defined in [`sim_types`](file:///home/cl/projects/space-scuffle/crates/sim_types/src/lib.rs) as:
+In *Space Scuffle*, our simulation tick rate is defined in [`sim_types`](../../crates/sim_types/src/lib.rs) as:
 $$\text{TICKS\_PER\_SECOND} = 25\quad (\Delta t = 0.04\text{s per tick})$$
 All weapon periods, damage points, cooldowns, and speeds translate directly between SC2 Faster seconds and simulation ticks:
 $$\text{ticks} = \text{round}(\text{seconds} \times 25.0)$$
@@ -616,7 +616,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 ## 5. Headless Verification & SC2 Matchup Benchmark Tests
 
 We will create a comprehensive, dedicated integration test suite at:
-[`crates/sim_core/tests/sc2_battle_benchmarks_tests.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/tests/sc2_battle_benchmarks_tests.rs)
+[`crates/sim_core/tests/sc2_battle_benchmarks_tests.rs`](../../crates/sim_core/tests/sc2_battle_benchmarks_tests.rs)
 
 The suite will include 6 rigorous, headless behavioral tests:
 
@@ -666,13 +666,13 @@ The suite will include 6 rigorous, headless behavioral tests:
 
 | Step | File | Action | Key Verification |
 | :--- | :--- | :--- | :--- |
-| **1** | [`crates/client/src/lab_ui.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/lab_ui.rs) | Add `pub battle_tick_accumulator_secs: f32` to `LabState` struct & default. | `cargo check -p client` |
-| **2** | [`crates/client/src/scene_controller.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/scene_controller.rs) | Update `sync_live_battle_system` to consume `time.delta_secs() * speed` in discrete 0.04s increments (max 5 per frame). | Live battle runs at genuine 25 Hz on 144 Hz display. |
-| **3** | [`assets/catalog/units.ron`](file:///home/cl/projects/space-scuffle/assets/catalog/units.ron) | 1. `railgun_crawler`: change un-sieged weapon to base 15, bonus armored 10, period 26, `splash: None`, HP 175. Siege mode weapon stays 40+30 splash, period 54.<br>2. `warp_strider`: HP 80, Shields 80, period 34.<br>3. `psi_grey`: period 22, damage point 4, backswing 6.<br>4. `pulse_bot`: period 15, damage point 2, backswing 4.<br>5. `rhino_beetle`: period 27, damage point 2, backswing 4. | Catalog parses cleanly; weapon stats match SC2 LotV. |
-| **4** | [`crates/sim_core/src/combat.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/combat.rs) | In `step_entity_weapon`, add `if entity.weapon_cooldown_remaining == 0` check before entering `WeaponPhase::Windup` in `Ready` and `RotatingToTarget`. | Cooldown bypass eliminated on retarget. |
-| **5** | [`assets/shaders/mist_wake.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/mist_wake.wgsl) | Implement trail-rotated iridescent shader with electric cyan, neon violet-magenta, golden-amber ribbons, speed-streaks, micro-bubbles, and star-sparks. | Shader compiles cleanly with naga. |
-| **6** | [`crates/client/src/vfx.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/vfx.rs) | 1. Set `alpha_mode: AlphaMode::Add` on `MistWakeMaterial`.<br>2. Pass `flow_angle` in `uniform.base_color.w`.<br>3. Scale particles to `radius * 2.1` initial, `radius * 3.2` target, lifetime `0.75s`. | Colorful glowing slipstream rendered behind moving units. |
-| **7** | [`crates/sim_core/tests/sc2_battle_benchmarks_tests.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/tests/sc2_battle_benchmarks_tests.rs) | Create the 6 headless SC2 matchup benchmark integration tests. | All 6 tests pass cleanly. |
+| **1** | [`crates/client/src/lab_ui.rs`](../../crates/client/src/lab_ui.rs) | Add `pub battle_tick_accumulator_secs: f32` to `LabState` struct & default. | `cargo check -p client` |
+| **2** | [`crates/client/src/scene_controller.rs`](../../crates/client/src/scene_controller.rs) | Update `sync_live_battle_system` to consume `time.delta_secs() * speed` in discrete 0.04s increments (max 5 per frame). | Live battle runs at genuine 25 Hz on 144 Hz display. |
+| **3** | [`assets/catalog/units.ron`](../../assets/catalog/units.ron) | 1. `railgun_crawler`: change un-sieged weapon to base 15, bonus armored 10, period 26, `splash: None`, HP 175. Siege mode weapon stays 40+30 splash, period 54.<br>2. `warp_strider`: HP 80, Shields 80, period 34.<br>3. `psi_grey`: period 22, damage point 4, backswing 6.<br>4. `pulse_bot`: period 15, damage point 2, backswing 4.<br>5. `rhino_beetle`: period 27, damage point 2, backswing 4. | Catalog parses cleanly; weapon stats match SC2 LotV. |
+| **4** | [`crates/sim_core/src/combat.rs`](../../crates/sim_core/src/combat.rs) | In `step_entity_weapon`, add `if entity.weapon_cooldown_remaining == 0` check before entering `WeaponPhase::Windup` in `Ready` and `RotatingToTarget`. | Cooldown bypass eliminated on retarget. |
+| **5** | `assets/shaders/mist_wake.wgsl` (since removed from the repository) | Implement trail-rotated iridescent shader with electric cyan, neon violet-magenta, golden-amber ribbons, speed-streaks, micro-bubbles, and star-sparks. | Shader compiles cleanly with naga. |
+| **6** | [`crates/client/src/vfx.rs`](../../crates/client/src/vfx.rs) | 1. Set `alpha_mode: AlphaMode::Add` on `MistWakeMaterial`.<br>2. Pass `flow_angle` in `uniform.base_color.w`.<br>3. Scale particles to `radius * 2.1` initial, `radius * 3.2` target, lifetime `0.75s`. | Colorful glowing slipstream rendered behind moving units. |
+| **7** | [`crates/sim_core/tests/sc2_battle_benchmarks_tests.rs`](../../crates/sim_core/tests/sc2_battle_benchmarks_tests.rs) | Create the 6 headless SC2 matchup benchmark integration tests. | All 6 tests pass cleanly. |
 | **8** | Workspace Quality Gate | Run cargo tests, clippy, and fmt. | `cargo test --workspace`<br>`cargo clippy --workspace --all-targets -- -D warnings`<br>`cargo fmt --all -- --check` |
 
 ---

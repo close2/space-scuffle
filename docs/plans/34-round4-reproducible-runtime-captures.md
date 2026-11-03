@@ -1,5 +1,7 @@
 # Round 4: Reproducible captures of the production game
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: approved and implemented; capture-only egui attachment amendment approved. Source frozen for shared gates; actual acceptance evidence is recorded in docs/reviews/round4-runtime-capture-verification.md.
 
 ## Goal and evidence

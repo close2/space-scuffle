@@ -1,5 +1,7 @@
 # Round 2 catalog and normal-startup verification
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Reviewed 2026-10-28 in a read-only verification round against plans 28 and 29. No implementation changes were made during this review.
 
 ## Verified
