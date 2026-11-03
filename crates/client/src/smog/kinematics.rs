@@ -336,11 +336,7 @@ pub fn step_bouncing_kinematics(
     let step_peer_bounces = if states.len() <= MAX_BOUNCING_BUBBLES {
         resolve_contacts_spatial_grid(states, bounds)
     } else {
-        resolve_contacts_all_pairs(states, bounds);
-        // The all-pairs fallback has never added its contacts to the step count; the per-bubble
-        // `peer_bounces` counters still record them. Kept as is because Phase 9 changes no
-        // behaviour; `kinematics_all_pairs_fallback_golden` pins it until a bugfix changes it.
-        0
+        resolve_contacts_all_pairs(states, bounds)
     };
 
     // 3. Heading Angle Synchronization
@@ -487,13 +483,21 @@ fn resolve_contacts_spatial_grid(
 }
 
 /// Stage 2 beyond [`MAX_BOUNCING_BUBBLES`]: resolves every pair `i < j` in index order.
-fn resolve_contacts_all_pairs(states: &mut [BouncingBubbleState], bounds: &SmogArenaBounds) {
+///
+/// Returns the number of pairs that exchanged an impulse (the step's peer-bounce count), the same
+/// quantity [`resolve_contacts_spatial_grid`] returns, so the step's count does not depend on
+/// which stage-2 path ran.
+fn resolve_contacts_all_pairs(states: &mut [BouncingBubbleState], bounds: &SmogArenaBounds) -> u64 {
     let n = states.len();
+    let mut step_peer_bounces = 0u64;
     for i in 0..n {
         for j in (i + 1)..n {
-            resolve_contact(states, i, j, bounds);
+            if resolve_contact(states, i, j, bounds) {
+                step_peer_bounces += 1;
+            }
         }
     }
+    step_peer_bounces
 }
 
 /// Separates two overlapping bubbles by mass (volume, `r^3`) and, if they approach, exchanges an
@@ -715,6 +719,57 @@ mod tests {
             "Bubbles must be separated after resolution (dist={dist}, min={min_sep})"
         );
 
+        Ok(())
+    }
+
+    /// Above [`MAX_BOUNCING_BUBBLES`] the step takes the all-pairs path; its returned peer count
+    /// must equal the contacts it resolved (Phase 9 §9 gap 3).
+    #[test]
+    fn all_pairs_fallback_reports_its_contacts() -> Result<(), SmogError> {
+        let bounds = SmogArenaBounds::default();
+        let r = 0.05;
+        // A resting lattice in the XZ plane, 0.3 world units apart (no two bubbles touch),
+        // rows at z = -2.7 ..= 2.4, so the strip near z = 2.8 is free for the colliding pair.
+        // The first two entries are placeholders for the colliding pair, set below.
+        let lattice = (0u16..18).flat_map(|row| (0u16..30).map(move |column| (column, row)));
+        let mut states: Vec<BouncingBubbleState> = [(0, 0), (0, 0)]
+            .into_iter()
+            .chain(lattice.take(MAX_BOUNCING_BUBBLES))
+            .enumerate()
+            .map(|(index, (column, row))| {
+                let (column, row) = (f32::from(column), f32::from(row));
+                BouncingBubbleState {
+                    index,
+                    position: Vec3::new(-4.5 + 0.3 * column, 1.4, -2.7 + 0.3 * row),
+                    velocity: Vec3::ZERO,
+                    radius: r,
+                    heading_angle_rad: 0.0,
+                    wall_bounces: 0,
+                    peer_bounces: 0,
+                }
+            })
+            .collect();
+        // The first two overlap and approach along X, as in the two-bubble collision test.
+        states[0].position = Vec3::new(-0.04, 1.4, 2.8);
+        states[0].velocity = Vec3::new(2.0, 0.0, 0.0);
+        states[1].position = Vec3::new(0.04, 1.4, 2.8);
+        states[1].velocity = Vec3::new(-2.0, 0.0, 0.0);
+        states[1].heading_angle_rad = std::f32::consts::PI;
+        assert!(
+            states.len() > MAX_BOUNCING_BUBBLES,
+            "must take the fallback"
+        );
+
+        let (walls, peers) = step_bouncing_kinematics(&mut states, &bounds, 0.01)?;
+
+        let per_bubble_sum: u64 = states.iter().map(|state| state.peer_bounces).sum();
+        assert_eq!(walls, 0, "no bubble reaches a wall in one step");
+        assert_eq!(
+            peers,
+            per_bubble_sum / 2,
+            "the returned count must equal the contacts the per-bubble counters record"
+        );
+        assert_eq!(peers, 1, "exactly the one approaching pair collides");
         Ok(())
     }
 

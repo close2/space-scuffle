@@ -38,3 +38,11 @@ after that plan lands.
 ## Answer
 
 Owner (2026-11-03): Option a for now (eight players on a circle for 0, 200 and 400 units), option b as todo (allow the scenario builder to continue placing units on rings 4+ for two-army battles).
+
+## Effect of the answer
+
+2026-11-03. Option (a) is in effect: the published frame budget uses the eight-player circle of
+`crates/client_diagnostics/data/frame_budget.ron`, which `DESIGN.md` §5 and the evidence now cite as the owner's
+choice. Option (b), letting the scenario builder place units on rings 4 and beyond so that two armies of 100 and 200
+units can load, is to be done later; after it lands the measurement is redone with two armies. This question stays
+open until then.

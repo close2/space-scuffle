@@ -216,7 +216,7 @@ On CI, after the push:
    one, save about 11 GiB on top of option A, and shorten every gate run. It is a refactor of
    `crates/client/tests/`, and it is not part of this plan.
 
-Both decisions are asked as [Q0013](../questions/open/0013-ci-disk-budget.md), which states the defaults above.
+Both decisions are asked as [Q0013](../questions/closed/0013-ci-disk-budget.md), which states the defaults above.
 
 ## 8. Results
 

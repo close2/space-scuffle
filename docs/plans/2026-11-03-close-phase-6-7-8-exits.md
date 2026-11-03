@@ -36,7 +36,7 @@ It stays blocked on the owner. Phase 8 therefore cannot fully exit through this 
 
 Every step of the three phases except 8.5 has landed (§2.1 to §2.3). What is missing is proof, measurement and
 bookkeeping, not fixes. One new question was filed:
-[Q0015](../questions/open/0015-client-frame-time-target.md), on the frame-time target. Its default is to measure
+[Q0015](../questions/closed/0015-client-frame-time-target.md), on the frame-time target. Its default is to measure
 and publish without a pass or fail line.
 
 A valgrind probe (§5.2) shows that an allocation count without `unsafe` is feasible and reproducible. It also
@@ -537,7 +537,7 @@ with tag **[R]**, fix it in its own commit naming that ID, and keep the test.
 
 **Files (owned):** new `crates/client/tests/sync_allocation_count_tests.rs`; `.github/workflows/ci.yml` (add
 `valgrind` to the `check-and-test` apt list); `AGENTS.md` §3.3 tag (step 6 only);
-`docs/questions/open/0011-allocation-counter-unsafe.md` (a `## Note from an agent` section only; the question and
+`docs/questions/closed/0011-allocation-counter-unsafe.md` (a `## Note from an agent` section only; the question and
 default are not edited).
 
 **Feasibility, measured while planning (§5.2).** Read §5.2 before step 1. It records whether a Bevy test child runs
@@ -1009,13 +1009,13 @@ These are single runs at low load, not the figures of record; WP6 measures those
 
 ## 7. Decisions for the owner
 
-- [Q0015](../questions/open/0015-client-frame-time-target.md): the frame-time target. Default: measure and publish
+- [Q0015](../questions/closed/0015-client-frame-time-target.md): the frame-time target. Default: measure and publish
   only.
 - [Q0018](../questions/open/0018-frame-budget-army-layout.md): the army layout of the scenarios. Default (a), eight
   players on a circle.
-- [Q0019](../questions/open/0019-frame-budget-display-path.md): whether a headless KWin compositor on the RX 580 is
+- [Q0019](../questions/closed/0019-frame-budget-display-path.md): whether a headless KWin compositor on the RX 580 is
   acceptable as the display path of record. Default: yes, labelled as such.
-- [Q0011](../questions/open/0011-allocation-counter-unsafe.md) stays open. This plan follows its default and adds an
+- [Q0011](../questions/closed/0011-allocation-counter-unsafe.md) stays open. This plan follows its default and adds an
   external count that needs no `unsafe` (D-2). The owner may still choose option 1 or 2, which would replace WP3's
   method, not its test's assertions.
 - [Q0001](../questions/open/0001-media-scope.md) still blocks 8.5 and with it Phase 8's exit.

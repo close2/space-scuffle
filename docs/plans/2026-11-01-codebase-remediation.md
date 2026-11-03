@@ -83,7 +83,7 @@ These change the scope of the phases below. Each has a recommendation, which the
 | D5 | Economy and tech: build or cut? | **Build a minimal version** (P5.5 to P5.7), or remove the orders | `Harvest`, `ReturnCargo`, research and construction do not function, which breaks charter §1.1 |
 | D6 | Are procedural flipbooks allowed? | **Test fixtures only, never at runtime paths** | §1.2 forbids stand-ins, §4 and §5 require them |
 | D7 | Required media scope? | **The units in shipped loadouts, then expand** | Only 4 of 91 catalog identities have real media; 81 have none and 6 are copies of one image |
-| D8 | Charter §6 model rule | **Make it tool-neutral** | It names a Gemini model and is an uncommitted edit. This audit's agents ran on Claude, so it could not be followed literally |
+| D8 | Charter §6 model rule | **Make it tool-neutral** | It names a Gemini model and is an uncommitted edit. This audit's agents ran on Claude, so it could not be followed literally. Approved by the owner (Q0003); §6 names no model |
 
 ---
 
@@ -253,7 +253,8 @@ Size: S under a day, M a few days, L a week or more.
 | 0.5 | Add profiles: `[profile.dev.package."*"] opt-level = 2`, `[profile.test] debug = "line-tables-only"` |
 | 0.6 | Resolve D1 to D8 and record the outcomes here |
 
-**Exit:** green CI on `main`; clean working tree; CI required on the default branch.
+**Exit:** green CI on `main`; clean working tree. The third criterion, CI required on the default branch, was
+dropped by the owner (Q0005): CI is not a required check. Agents look at CI regularly and fix it when it is red.
 
 ### Phase 1: Make verification truthful (L)
 
@@ -492,7 +493,7 @@ run `cargo test --release --test repro -- --nocapture --test-threads=1`.
 | r07 hold shove | M-4 | **FAIL**: holder displaced 0.324 |
 | r08 crowd of 60 | steering arrival | pass, not reproduced |
 | r13 crowd of 150 | steering arrival | pass, not reproduced |
-| r09 unreachable | M-3 | **FAIL**: 20/20 still ordered, 15.67 ms/tick |
+| r09 unreachable | M-3 | **FAIL**: 20/20 still ordered, 15.67 ms/tick. Expectation rewritten (Q0006), see below |
 | r10 large length | F-1 | **FAIL**: release returns 0; debug panics with add overflow |
 | r11 small normalise | F-3 | **FAIL**: 1.4142 |
 
@@ -647,17 +648,26 @@ fn walled(n: u32) -> GameMap {
     m
 }
 
-#[test] fn r09_unreachable_order_terminates_or_reports() {
+// Expectation rewritten 2026-11-03 (Q0006): the owner chose to keep walking to the nearest reachable point,
+// so the order ends there (about 545 ticks at speed 0.09), on the near side of the wall. The audit's version
+// asserted no order left after 500 ticks. The scratch repro crate no longer exists, so this version was not run
+// here; the check that runs is `movement_contact_tests::unreachable_order_reports_retargets_and_terminates`
+// in sim_core.
+#[test] fn r09_unreachable_order_walks_to_nearest_reachable_point() {
     let mut w = SimWorld::new(walled(64), 7); let mut t = 0;
     let mut ids = vec![];
     for i in 0..20 { ids.push(unit(&mut w, "pulse_bot", 0, 5.0 + (i % 5) as f64 * 1.5, 5.0 + (i / 5) as f64 * 1.5)); }
     order(&mut w, &mut t, 0, ids.clone(), UnitOrder::Move { target: v(50.0, 50.0) });
-    let start = std::time::Instant::now();
-    run(&mut w, &mut t, 500);
-    let ms = start.elapsed().as_secs_f64() * 1000.0 / 500.0;
+    run(&mut w, &mut t, 900);
     let busy = ids.iter().filter(|i| !w.entities[i].order_queue.is_empty()).count();
-    println!("unreachable: {busy}/20 still ordered after 500 ticks, {ms:.2} ms/tick");
+    println!("unreachable: {busy}/20 still ordered after 900 ticks");
     assert_eq!(busy, 0);
+    for i in &ids {
+        let p = w.entities[i].position;
+        assert!(p.x.to_f32() < 32.0, "unit crossed the wall");
+        let d = f64::hypot((p.x.to_f32() - 31.5) as f64, (p.y.to_f32() - 50.5) as f64);
+        assert!(d < 6.0, "unit stopped {d:.2} from the nearest reachable point");
+    }
 }
 
 #[test] fn r10_length_of_large_vector_is_not_zero() {
