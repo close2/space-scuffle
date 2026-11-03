@@ -138,6 +138,31 @@ impl CombatEventVisual {
             | Self::BubbleShatter { owner, .. } => *owner,
         }
     }
+
+    /// Returns where this event lands on the map plane, `[x, y]` in world units.
+    ///
+    /// That is the impact of a tracer or beam, the expected arrival of a timed projectile, and the
+    /// position of anything else. A client judges whether a viewer may see an event by this point.
+    /// Every event position is `[x, y, altitude]`, so the first two components are the map plane.
+    /// Derived from visual data only, so it takes no part in the simulation.
+    #[must_use]
+    pub fn anchor(&self) -> [f32; 2] {
+        match self {
+            Self::HitscanTracer { to, .. } | Self::BeamVisual { to, .. } => [to[0], to[1]],
+            Self::ProjectileVisual {
+                pos,
+                vel,
+                duration_secs,
+                ..
+            } => {
+                let flight = duration_secs.unwrap_or(0.0);
+                [pos[0] + vel[0] * flight, pos[1] + vel[1] * flight]
+            }
+            Self::MeleeSlashVisual { pos, .. } | Self::BubbleShatter { pos, .. } => {
+                [pos[0], pos[1]]
+            }
+        }
+    }
 }
 
 /// Authoritative result of a match.
@@ -234,6 +259,59 @@ impl RenderSnapshot {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    const OWNER: PlayerId = PlayerId(1);
+
+    #[test]
+    fn a_tracer_and_a_beam_are_anchored_at_their_impact() {
+        let tracer = CombatEventVisual::HitscanTracer {
+            from: [1.0, 2.0, 3.0],
+            to: [4.0, 5.0, 6.0],
+            owner: OWNER,
+        };
+        let beam = CombatEventVisual::BeamVisual {
+            from: [1.0, 2.0, 3.0],
+            to: [7.0, 8.0, 9.0],
+            is_lightning: true,
+            owner: OWNER,
+        };
+        assert_eq!(tracer.anchor(), [4.0, 5.0]);
+        assert_eq!(beam.anchor(), [7.0, 8.0]);
+    }
+
+    #[test]
+    fn a_melee_slash_and_a_shatter_are_anchored_where_they_happen() {
+        let slash = CombatEventVisual::MeleeSlashVisual {
+            pos: [4.0, 5.0, 6.0],
+            angle_rad: 1.0,
+            radius: 2.0,
+            owner: OWNER,
+        };
+        let shatter = CombatEventVisual::BubbleShatter {
+            pos: [7.0, 8.0, 9.0],
+            radius: 1.0,
+            is_dome: true,
+            owner: OWNER,
+        };
+        assert_eq!(slash.anchor(), [4.0, 5.0]);
+        assert_eq!(shatter.anchor(), [7.0, 8.0]);
+    }
+
+    #[test]
+    fn a_timed_projectile_is_anchored_where_it_arrives() {
+        let shot = |duration_secs| CombatEventVisual::ProjectileVisual {
+            pos: [1.0, 2.0, 3.0],
+            vel: [4.0, -2.0, 8.0],
+            owner: OWNER,
+            duration_secs,
+        };
+        assert_eq!(shot(Some(0.5)).anchor(), [3.0, 1.0]);
+        assert_eq!(
+            shot(None).anchor(),
+            [1.0, 2.0],
+            "with no flight time, only its current position is known"
+        );
+    }
 
     #[test]
     fn test_snapshot_roundtrip() {
