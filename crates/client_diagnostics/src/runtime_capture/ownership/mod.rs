@@ -14,8 +14,8 @@ use bevy::prelude::*;
 use client::battle_pipeline::session::BattleSession;
 use client::player_presentation::PlayerPalette;
 use client::vfx::{
-    BeamVisualComponent, CombatEffectOwner, CombatFxMaterial, MeleeSlashComponent,
-    ProjectileVisual, ShatterShard,
+    BeamVisualComponent, CombatEffectOwner, CombatFxInstance, CombatFxMaterial,
+    MeleeSlashComponent, ProjectileVisual, ShatterShard,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -103,21 +103,20 @@ impl OwnershipState {
             Entity,
             Option<&CombatEffectOwner>,
             &MeshMaterial3d<CombatFxMaterial>,
+            &CombatFxInstance,
             Option<&BeamVisualComponent>,
             Option<&ProjectileVisual>,
             Option<&MeleeSlashComponent>,
             Option<&ShatterShard>,
         )>();
         let mut present = BTreeSet::new();
-        for (entity, owner, handle, beam, projectile, melee, shard) in query.iter(world) {
+        for (entity, owner, handle, instance, beam, projectile, melee, shard) in query.iter(world) {
             let owner =
                 owner.ok_or_else(|| failure("actual effect has no captured owner component"))?;
             let id = entity.to_bits();
             present.insert(id);
-            let material = world
-                .resource::<Assets<CombatFxMaterial>>()
-                .get(&handle.0)
-                .ok_or_else(|| failure("ownership effect material missing"))?;
+            // The live shader data is the effect's instance; its pooled material only names it.
+            let shader = &instance.uniform;
             let remaining = beam
                 .map(|v| v.lifetime.remaining_secs())
                 .or_else(|| projectile.map(|v| v.lifetime.remaining_secs()))
@@ -129,12 +128,7 @@ impl OwnershipState {
                     || proof.owner != owner.0 .0
                     || proof.material != format!("{:?}", handle.0.id())
                     || proof.linear_rgb.map(f32::to_bits)
-                        != material
-                            .uniform
-                            .primary_color
-                            .truncate()
-                            .to_array()
-                            .map(f32::to_bits)
+                        != shader.primary_color.truncate().to_array().map(f32::to_bits)
                 {
                     return Err(failure("retained effect identity/material/owner changed"));
                 }
@@ -147,7 +141,7 @@ impl OwnershipState {
                     palette.battle_style(owner.0, &world.resource::<BattleSession>().metadata)
                 }
                 .map_err(|error| failure(error.to_string()))?;
-                if style.linear.truncate() != material.uniform.primary_color.truncate() {
+                if style.linear.truncate() != shader.primary_color.truncate() {
                     return Err(failure("new effect hue differs from its admitted owner"));
                 }
                 self.effects.insert(

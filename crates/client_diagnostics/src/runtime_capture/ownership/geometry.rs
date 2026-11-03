@@ -7,7 +7,7 @@ use super::{failure, EffectProof, OwnershipState, View};
 use bevy::prelude::*;
 use bevy::render::primitives::Aabb;
 use client::player_presentation::PlayerPalette;
-use client::vfx::{CombatEffectOwner, CombatFxMaterial};
+use client::vfx::{CombatEffectOwner, CombatFxInstance};
 use serde::Serialize;
 
 /// Actual visible shell identity, prepared linear tint, and physical-window projection.
@@ -279,24 +279,21 @@ fn effect_geometry(
     let mut query = world.query::<(
         Entity,
         &CombatEffectOwner,
-        &MeshMaterial3d<CombatFxMaterial>,
+        &CombatFxInstance,
         &GlobalTransform,
         &ViewVisibility,
         Option<&Aabb>,
     )>();
     let owner = world.resource::<PlayerPalette>().effect();
-    let materials = world.resource::<Assets<CombatFxMaterial>>();
     let mut output = Vec::new();
     let mut count = 0;
-    for (entity, captured, handle, global, visible, bounds) in query.iter(world) {
-        let material = materials
-            .get(&handle.0)
-            .ok_or_else(|| failure("preview effect material missing"))?;
-        if captured.0 != owner || material.uniform.fx_kind != kind.shader_kind() {
+    for (entity, captured, instance, global, visible, bounds) in query.iter(world) {
+        let shader = &instance.uniform;
+        if captured.0 != owner || shader.fx_kind != kind.shader_kind() {
             return Err(failure("preview contains stale/wrong-owner effect"));
         }
         count += 1;
-        if material.uniform.age <= 0.0 {
+        if shader.age <= 0.0 {
             return Ok(None);
         }
         let Some(bounds) = bounds else {
@@ -308,10 +305,7 @@ fn effect_geometry(
                 global,
                 entity,
                 Some(kind.shader_kind()),
-                (
-                    captured.0 .0,
-                    material.uniform.primary_color.truncate().to_array(),
-                ),
+                (captured.0 .0, shader.primary_color.truncate().to_array()),
             )? {
                 output.push(proof);
             }

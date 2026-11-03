@@ -236,6 +236,7 @@ fn effect_app(palette: &PlayerPalette, owner: PlayerId) -> App {
         .init_resource::<Assets<Mesh>>()
         .init_resource::<Assets<StandardMaterial>>()
         .init_resource::<Assets<CombatFxMaterial>>()
+        .init_resource::<vfx::CombatFxMaterialPool>()
         .add_systems(Startup, vfx::setup_vfx_assets_system)
         .add_systems(Update, vfx::process_combat_events_system);
     app
@@ -253,16 +254,11 @@ fn all_effects_preserve_sparse_source_hue_and_packed_angle() -> TestResult {
         app.update();
         let mut query = app
             .world_mut()
-            .query::<(&MeshMaterial3d<CombatFxMaterial>, &vfx::CombatEffectOwner)>();
+            .query::<(&vfx::CombatFxInstance, &vfx::CombatEffectOwner)>();
         let mut count = 0;
-        for (handle, captured_owner) in query.iter(app.world()) {
+        for (instance, captured_owner) in query.iter(app.world()) {
             assert_eq!(captured_owner.0, owner);
-            let uniform = &app
-                .world()
-                .resource::<Assets<CombatFxMaterial>>()
-                .get(&handle.0)
-                .ok_or("effect material")?
-                .uniform;
+            let uniform = &instance.uniform;
             assert_eq!(
                 uniform.primary_color.truncate(),
                 palette.resolve(owner)?.linear.truncate()

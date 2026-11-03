@@ -6,7 +6,7 @@ use bevy::render::mesh::MeshAabb;
 use bevy::time::TimeUpdateStrategy;
 use client::battle_pipeline::{commands::SessionGeneration, session::CommittedBattleMetadata};
 use client::runtime_battle::{BattleDefinition, DEFAULT_BATTLE_SCENARIO};
-use client::vfx::{self, CombatVisualEvent};
+use client::vfx::{self, CombatFxInstance, CombatVisualEvent};
 use sim_types::{CombatEventVisual, PlayerId};
 use std::time::Duration;
 
@@ -33,6 +33,7 @@ fn app() -> Result<(App, OwnershipState), Box<dyn std::error::Error>> {
         .init_resource::<Assets<Mesh>>()
         .init_resource::<Assets<StandardMaterial>>()
         .init_resource::<Assets<CombatFxMaterial>>()
+        .init_resource::<vfx::CombatFxMaterialPool>()
         .add_event::<CombatVisualEvent>()
         .add_event::<AppExit>()
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO))
@@ -242,7 +243,7 @@ struct ActualAge {
 
 fn actual_timers(world: &mut World) -> Result<Vec<ActualAge>, Box<dyn std::error::Error>> {
     let mut query = world.query::<(
-        &MeshMaterial3d<CombatFxMaterial>,
+        &CombatFxInstance,
         Option<&BeamVisualComponent>,
         Option<&ProjectileVisual>,
         Option<&MeleeSlashComponent>,
@@ -250,21 +251,17 @@ fn actual_timers(world: &mut World) -> Result<Vec<ActualAge>, Box<dyn std::error
     )>();
     query
         .iter(world)
-        .map(|(handle, beam, projectile, melee, shard)| {
+        .map(|(instance, beam, projectile, melee, shard)| {
             let timer = beam
                 .map(|value| &value.lifetime)
                 .or_else(|| projectile.map(|value| &value.lifetime))
                 .or_else(|| melee.map(|value| &value.lifetime))
                 .or_else(|| shard.map(|value| &value.lifetime))
                 .ok_or("actual lifetime")?;
-            let material = world
-                .resource::<Assets<CombatFxMaterial>>()
-                .get(&handle.0)
-                .ok_or("actual material")?;
             Ok(ActualAge {
                 elapsed: timer.elapsed(),
                 duration: timer.duration(),
-                shader_age: material.uniform.age,
+                shader_age: instance.uniform.age,
             })
         })
         .collect()
@@ -461,7 +458,7 @@ fn extra_actual_time_after_acceptance_rejects_visual_readback_without_sim_tick_c
 }
 
 #[test]
-fn same_handle_shader_age_mutation_cannot_pass_frozen_timer_evidence() -> TestResult {
+fn instance_shader_age_mutation_cannot_pass_frozen_timer_evidence() -> TestResult {
     let mut app = preparation_app(EffectKind::Lightning)?;
     for _ in 0..40 {
         app.update();
@@ -471,16 +468,9 @@ fn same_handle_shader_age_mutation_cannot_pass_frozen_timer_evidence() -> TestRe
     }
     let accepted = Fingerprint::capture(app.world_mut())?;
     let entity = Entity::from_bits(accepted.effects.first().ok_or("sample")?.entity);
-    let handle = app
-        .world()
-        .get::<MeshMaterial3d<CombatFxMaterial>>(entity)
-        .ok_or("actual material")?
-        .0
-        .clone();
     app.world_mut()
-        .resource_mut::<Assets<CombatFxMaterial>>()
-        .get_mut(&handle)
-        .ok_or("loaded material")?
+        .get_mut::<CombatFxInstance>(entity)
+        .ok_or("actual effect instance")?
         .uniform
         .age = 0.0;
     assert!(Fingerprint::capture(app.world_mut()).is_err());
