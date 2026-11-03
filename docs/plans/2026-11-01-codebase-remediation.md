@@ -340,7 +340,7 @@ short orders; 400-unit benchmark at least 2× Appendix A.
 
 **Exit:** a person can play a match to a result using only mouse and keyboard, and 1.9 covers it.
 
-**Exit status (2026-11-03): met locally, pending CI on `main`.** `skirmish_match_tests.rs` (`7a432f9`) wins the shipped
+**Exit status (2026-11-03): met; CI green on `main` at `7c947ad` (run 41583874524, all five jobs).** `skirmish_match_tests.rs` (`7a432f9`) wins the shipped
 skirmish headless through input events alone, with a pilot that reads only the screen, and proves the HUD, the
 placement and the dome fill on a real window under Vulkan validation. It runs as `cargo run -p client -- --skirmish`.
 Gas, research and transport are built and tested on temporary fixture roots, and disabled in the shipped game for want
