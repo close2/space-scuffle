@@ -136,13 +136,14 @@ Development runs on a shared VM. Its physical **AMD Radeon RX 580** (Ellesmere, 
 - **Use the physical GPU.** It is the default for every GPU task: rendering, visual checks, validation runs and GPU tests. The other users need it only about 1% of the time, so do not avoid it.
 - **Hold the GPU lock per command, never for hours.** Wrap each command that runs on the physical GPU in `with-gpu-lock`, and release it between tasks so the other users get a short slot. Lock one test process or one capture at a time, not a whole test suite or session. A wait of a few seconds for the lock is normal. Unlocked use risks VRAM contention, driver resets, and skewed timings. This includes running `client` or any other binary with no driver selected, because Vulkan may then pick the physical GPU.
   ```bash
-  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json with-gpu-lock <command>
+  WGPU_BACKEND=vulkan VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json with-gpu-lock <command>
   ```
 - **The lock's timeout is 600 seconds by default.** `with-gpu-lock` takes an exclusive `flock` on `/run/lock/gpu.lock` and releases it when the command exits. Raise it with `GPU_LOCK_TIMEOUT=1200` only for a single long command, such as a frame-budget measurement.
 - **Software Vulkan is the fallback, not the default.** Use `lavapipe` only where no physical GPU exists (CI) or to reproduce a CI result exactly. It needs no lock:
   ```bash
-  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json <command>
+  WGPU_BACKEND=vulkan VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json <command>
   ```
+  `WGPU_BACKEND=vulkan` is required in both commands: `VK_ICD_FILENAMES` only filters Vulkan drivers, and without it wgpu may fall back to its OpenGL backend, which runs on the physical GPU through `radeonsi` with no lock. The ICD files are `radeon_icd.json` and `lvp_icd.json`; the `*.x86_64.json` names some distributions use do not exist on this server.
 - **GPU tests lock the GPU themselves, one test child at a time.** `crates/client/tests/support/gpu_run.rs` runs
   each GPU test child on the physical GPU (`radv`, with `MESA_VK_WSI_DEBUG=sw` under `xvfb-run`). It takes
   `/run/lock/gpu.lock`, the lock `with-gpu-lock` uses, just before the child starts, and releases it when the
