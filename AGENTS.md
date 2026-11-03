@@ -148,7 +148,7 @@ Development runs on a shared VM. Its physical **AMD Radeon RX 580** (Ellesmere, 
   each GPU test child on the physical GPU (`radv`, with `MESA_VK_WSI_DEBUG=sw` under `xvfb-run`). It takes
   `/run/lock/gpu.lock`, the lock `with-gpu-lock` uses, just before the child starts, and releases it when the
   child exits, so other users get the GPU between children. Run `cargo test --workspace` as it is and never wrap it
-  in `with-gpu-lock`; the harness detects that and fails. A child waits up to `GPU_LOCK_TIMEOUT` (default 1200 s)
+  in `with-gpu-lock`; the harness detects that and fails. A child waits up to `GPU_LOCK_TIMEOUT` (default 290 s)
   for the lock and then has 120 s to finish. Where the radeon driver, a usable render node or `with-gpu-lock` is
   missing, as on CI, the harness uses `lavapipe` with no lock. `SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe` reproduces
   CI on this server, and `=radv` fails instead of falling back.

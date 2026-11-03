@@ -26,4 +26,15 @@ Two things are yours to decide:
    Recommendation: keep 1200 s.
 
 ## Answer
+Owner, in chat on 2026-11-03 (copied by the orchestrating agent): the other process will fix its locking. It now uses
+a no-op hook in its device code that its tests and gates fill with the lock, so it locks per GPU use instead of
+around a whole test run. 
 
+Part 2, owner in chat on 2026-11-03: wait 4 minutes 50 seconds. Once the peer's locking is fixed a wait should be a
+few seconds; waiting up to 290 s does no harm.
+
+## Resolution
+
+Part 1 is fixed outside this repository by the other user, as the owner described. Part 2: `DEFAULT_LOCK_WAIT_SECS` in
+`crates/client/tests/support/gpu_run.rs` is now 290 s, and AGENTS.md §7 says so. `GPU_LOCK_TIMEOUT` still overrides it
+per run.

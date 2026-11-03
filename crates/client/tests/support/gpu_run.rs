@@ -86,12 +86,13 @@ use std::time::{Duration, Instant};
 /// another file.
 pub const GPU_LOCK_PATH: &str = "/run/lock/gpu.lock";
 
-/// Default wait for the shared lock, in seconds, when `GPU_LOCK_TIMEOUT` is unset.
+/// Default wait for the shared lock, in seconds (4 min 50 s), when `GPU_LOCK_TIMEOUT` is unset.
 ///
-/// Above `with-gpu-lock`'s own 600 s because the charter lets one long command, such as a
-/// frame-budget measurement, hold the lock for 1200 s, and the plan's probes saw waits of up to
-/// 351 s behind a peer (plan section 3.4).
-pub const DEFAULT_LOCK_WAIT_SECS: u64 = 1_200;
+/// The owner's decision in `docs/questions/closed/0012-gpu-lock-peer-and-wait-limit.md`: every
+/// user of the GPU now locks per device use, so a wait should last seconds; 290 s tolerates a
+/// slow peer while failing a gate that is stuck behind a suite-wide hold. A single long command
+/// that needs more sets `GPU_LOCK_TIMEOUT`.
+pub const DEFAULT_LOCK_WAIT_SECS: u64 = 290;
 
 /// Variable that overrides [`DEFAULT_LOCK_WAIT_SECS`], in whole seconds, as for `with-gpu-lock`.
 pub const LOCK_WAIT_VAR: &str = "GPU_LOCK_TIMEOUT";

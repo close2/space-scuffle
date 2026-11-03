@@ -324,6 +324,8 @@ adjust them but must keep the property that no caller can run a GPU child withou
   frame-budget measurement, to hold the lock for up to 1200 s, and 351 s waits were already seen. A peer's
   legitimate use must not turn the gate red. `GPU_LOCK_TIMEOUT` has the same meaning as for `with-gpu-lock`, so
   one variable controls both.
+- **Superseded by the owner (Q0012, 2026-11-03):** the default is now 290 s (4 min 50 s). Every GPU user locks per
+  device use, so a wait should last seconds; a single long command that needs more sets `GPU_LOCK_TIMEOUT`.
 - On expiry, the test fails with `GpuLockError::TimedOut { path, waited }`. The message names the waited time, the
   holder's PID and command line from `/proc/locks` when readable, and says that `SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe`
   runs the tests without the GPU. It never falls back by itself.
