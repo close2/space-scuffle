@@ -330,14 +330,6 @@ impl TransportState {
     /// `region` is normalized window ROI, `resolution` physical pixels, and `pose`
     /// is world X/Z focus, world-unit camera distance and XYZ camera translation.
     /// Returns complete artifact evidence or a typed error without accepting an image.
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "capture coordinates are bounded by the window size and frame budget"
-    )]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "a single ordered sequence that shares its local state"
-    )]
     pub(super) fn verify(
         &mut self,
         world: &mut World,
@@ -356,6 +348,46 @@ impl TransportState {
         let carrier_raw = raw(simulation.entities[&self.carrier].position);
         let resource = simulation.player_resources[self.owner];
         let tick = simulation.current_tick;
+        let (published, rendered) = self.verify_membership(world, tick)?;
+        self.verify_camera_pose(pose)?;
+        let pixels = self.verify_viewport(world, goal, projected, region, resolution)?;
+        Ok(TransportProof {
+            passenger: self.passenger.0,
+            carrier: self.carrier.0,
+            receipt_action: self.receipt.map(|receipt| format!("{:?}", receipt.action)),
+            pickup_raw: raw(self.pickup),
+            carrier_start_raw: raw(self.carrier_start),
+            destination_raw: raw(self.destination),
+            passenger_raw,
+            carrier_raw,
+            expected_members: self.expected_members.iter().map(|id| id.0).collect(),
+            published_members: published.iter().map(|id| id.0).collect(),
+            rendered_members: rendered.iter().map(|id| id.0).collect(),
+            supply: [
+                resource.supply_used,
+                resource.supply_max,
+                resource.supply_provided_total,
+            ],
+            transaction_tick: self.transaction_tick,
+            publication_tick: tick,
+            observed_display_ticks: self.observed_display_ticks.clone(),
+            passenger_pixel: pixels.passenger,
+            carrier_pixel: pixels.carrier,
+            pickup_pixel: pixels.pickup,
+            destination_pixel: pixels.destination,
+            shatter_events: 0,
+            shatter_shards: 0,
+        })
+    }
+
+    /// Checks that the current and presented frames both sit at authoritative `tick`, and
+    /// that they and the `LiveBattleBubble` ECS instances hold exactly the expected members.
+    /// Returns the presented and rendered membership sets.
+    fn verify_membership(
+        &self,
+        world: &mut World,
+        tick: u32,
+    ) -> Result<(BTreeSet<EntityId>, BTreeSet<EntityId>), CaptureError> {
         let frames = &world
             .resource::<client::battle_pipeline::session::BattleSession>()
             .frames;
@@ -389,6 +421,12 @@ impl TransportState {
                 "transport published/ECS membership differs from the exact expected set",
             ));
         }
+        Ok((published, rendered))
+    }
+
+    /// Requires the camera pose (world X/Z focus, distance in world units, XYZ translation)
+    /// to be bit-identical to the one recorded at the previous transport checkpoint.
+    fn verify_camera_pose(&mut self, pose: ([f32; 2], f32, [f32; 3])) -> Result<(), CaptureError> {
         if self.camera_pose.is_some_and(|previous| {
             previous.0.map(f32::to_bits) != pose.0.map(f32::to_bits)
                 || previous.1.to_bits() != pose.1.to_bits()
@@ -399,6 +437,24 @@ impl TransportState {
             ));
         }
         self.camera_pose = Some(pose);
+        Ok(())
+    }
+
+    /// Finds the carrier and passenger among the `projected` physical-pixel centers inside the
+    /// normalized gameplay `region`, and projects the pickup and endpoint through the actual
+    /// camera. Only a loaded passenger may be absent from the image.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "capture coordinates are bounded by the window size and frame budget"
+    )]
+    fn verify_viewport(
+        &self,
+        world: &mut World,
+        goal: Goal,
+        projected: &[(Option<u32>, Vec2)],
+        region: [f32; 4],
+        resolution: [u32; 2],
+    ) -> Result<ViewportPixels, CaptureError> {
         let [x, y, w, h] = region;
         let inside = |p: Vec2| {
             p.x >= x * resolution[0] as f32
@@ -412,50 +468,41 @@ impl TransportState {
                 .find(|(candidate, p)| *candidate == Some(id.0) && inside(*p))
                 .map(|(_, p)| p.to_array())
         };
-        let carrier_pixel = pixel(self.carrier).ok_or_else(|| {
+        let carrier = pixel(self.carrier).ok_or_else(|| {
             failure("transport carrier is not visibly inside the gameplay viewport")
         })?;
-        let passenger_pixel = pixel(self.passenger);
-        if goal != Goal::CargoLoaded && passenger_pixel.is_none() {
+        let passenger = pixel(self.passenger);
+        if goal != Goal::CargoLoaded && passenger.is_none() {
             return Err(failure(
                 "transport passenger is not visibly inside the gameplay viewport",
             ));
         }
-        let pickup_pixel = project_position(world, self.pickup)?;
-        let destination_pixel = project_position(world, self.destination)?;
-        if !inside(Vec2::from_array(pickup_pixel)) || !inside(Vec2::from_array(destination_pixel)) {
+        let pickup = project_position(world, self.pickup)?;
+        let destination = project_position(world, self.destination)?;
+        if !inside(Vec2::from_array(pickup)) || !inside(Vec2::from_array(destination)) {
             return Err(failure(
                 "transport pickup/endpoint lies outside the fixed gameplay viewport",
             ));
         }
-        Ok(TransportProof {
-            passenger: self.passenger.0,
-            carrier: self.carrier.0,
-            receipt_action: self.receipt.map(|receipt| format!("{:?}", receipt.action)),
-            pickup_raw: raw(self.pickup),
-            carrier_start_raw: raw(self.carrier_start),
-            destination_raw: raw(self.destination),
-            passenger_raw,
-            carrier_raw,
-            expected_members: self.expected_members.iter().map(|id| id.0).collect(),
-            published_members: published.iter().map(|id| id.0).collect(),
-            rendered_members: rendered.iter().map(|id| id.0).collect(),
-            supply: [
-                resource.supply_used,
-                resource.supply_max,
-                resource.supply_provided_total,
-            ],
-            transaction_tick: self.transaction_tick,
-            publication_tick: tick,
-            observed_display_ticks: self.observed_display_ticks.clone(),
-            passenger_pixel,
-            carrier_pixel,
-            pickup_pixel,
-            destination_pixel,
-            shatter_events: 0,
-            shatter_shards: 0,
+        Ok(ViewportPixels {
+            carrier,
+            passenger,
+            pickup,
+            destination,
         })
     }
+}
+
+/// Physical window pixels of the transport participants and endpoints at one checkpoint.
+struct ViewportPixels {
+    /// Visible carrier center.
+    carrier: [f32; 2],
+    /// Visible passenger center; absent only while loaded.
+    passenger: Option<[f32; 2]>,
+    /// Original pickup position projected onto the current terrain.
+    pickup: [f32; 2],
+    /// Unload endpoint projected onto the current terrain.
+    destination: [f32; 2],
 }
 
 fn project_position(world: &mut World, position: SimVec2) -> Result<[f32; 2], CaptureError> {

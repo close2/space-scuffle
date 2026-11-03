@@ -162,3 +162,42 @@ fn selected_zero_speed_or_missing_definition_fails_without_ordinal_replacement()
     assert!(TransportState::select(&simulation, &spec).is_err());
     Ok(())
 }
+
+/// Characterises the check order of `verify`: membership, then the fixed camera pose,
+/// then the viewport pixels. Each stage is made to fail in turn.
+#[test]
+fn verify_checks_membership_then_camera_pose_then_viewport() -> TestResult {
+    let (simulation, mut state, pipeline) = fixture()?;
+    let mut world = World::new();
+    world.insert_resource(pipeline.with_world(simulation));
+    let region = [0.0, 0.0, 1.0, 1.0];
+    let resolution = [1280, 720];
+    let pose = ([11.0, 10.0], 22.0, [11.0, 20.0, 18.0]);
+    let error = state
+        .verify(&mut world, Goal::CargoBefore, &[], region, resolution, pose)
+        .err()
+        .ok_or("a frame with no rendered members must fail")?;
+    assert!(
+        error.to_string().contains("ECS membership differs"),
+        "{error}"
+    );
+    for id in state.expected_members.clone() {
+        world.spawn(client::LiveBattleBubble { entity_id: id });
+    }
+    state.camera_pose = Some(([0.0, 0.0], 22.0, [11.0, 20.0, 18.0]));
+    let error = state
+        .verify(&mut world, Goal::CargoBefore, &[], region, resolution, pose)
+        .err()
+        .ok_or("a moved camera must fail")?;
+    assert!(error.to_string().contains("camera changed"), "{error}");
+    state.camera_pose = Some(pose);
+    let error = state
+        .verify(&mut world, Goal::CargoBefore, &[], region, resolution, pose)
+        .err()
+        .ok_or("an unprojected carrier must fail")?;
+    assert!(
+        error.to_string().contains("carrier is not visibly inside"),
+        "{error}"
+    );
+    Ok(())
+}
