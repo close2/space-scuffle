@@ -180,11 +180,12 @@ files through `sim_core::test_support`, because a dev-dependency cycle would lin
 
 ## 6. Mandatory Two-Stage Sub-Agent Workflow (Plan First, Implement Second)
 
-1. **Stage 1 — Architect Planning Sub-Agent (`pro` / `inherit`):**
-   - Before any feature, refactor, or bugfix is implemented, a high-reasoning Planning Sub-Agent must first analyze the problem and write a complete, textbook-grade implementation blueprint in `docs/plans/`.
+1. **Stage 1 — Architect Planning Sub-Agent:**
+   - Before any feature, refactor, or bugfix is implemented, a Planning Sub-Agent must first analyze the problem and write a complete, textbook-grade implementation blueprint in `docs/plans/`.
    - The main orchestrator agent must **never** bypass the planning stage by editing code directly or launching an implementation sub-agent without an approved blueprint.
-2. **Stage 2 — Implementation Sub-Agent (`flash`):**
-   - Only after the detailed plan in `docs/plans/` is complete may `flash` Implementation Sub-Agents be launched to write the code and tests strictly following that blueprint.
+2. **Stage 2 — Implementation Sub-Agent:**
+   - Only after the detailed plan in `docs/plans/` is complete may Implementation Sub-Agents be launched to write the code and tests strictly following that blueprint.
+3. **Tool-neutral:** the charter names no model or tool for either stage; each session uses the agents it has.
 
 ---
 
@@ -218,6 +219,11 @@ Development runs on a shared VM. Its physical **AMD Radeon RX 580** (Ellesmere, 
 ## 8. Asynchronous Questions for the Owner
 
 Decisions that belong to the owner live in `docs/questions/`, one file per question. Every agent must read `docs/questions/README.md`, check `docs/questions/open/` at the start of each session and before each push, act on answered questions, and record new ones there with the default it will follow meanwhile.
+
+- **Scoping is the agent's call, if written down.** An agent may narrow or defer scope without asking, and records
+  each such decision in its plan's decisions or out-of-scope section, so it can be brought back (Q0002).
+- **Where the specification is silent on a game rule, do what StarCraft II does.** Search how StarCraft II handles
+  it, and cite the source in the plan (Q0008).
 
 ---
 
