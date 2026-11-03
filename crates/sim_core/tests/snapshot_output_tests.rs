@@ -16,8 +16,8 @@ fn destroy_first_live_units(world: &mut SimWorld, count: usize) {
 
 #[test]
 fn reusable_and_compatibility_ticks_match_through_combat_and_deaths() -> TestResult {
-    let mut allocating = SimWorld::new_default_battle_sandbox();
-    let mut reusable = SimWorld::new_default_battle_sandbox();
+    let mut allocating = sim_fixtures::default_battle_sandbox()?;
+    let mut reusable = sim_fixtures::default_battle_sandbox()?;
     let mut output = RenderSnapshot::default();
     let mut observed_events = 0;
     for tick in 0..120 {
@@ -52,7 +52,7 @@ fn reusable_and_compatibility_ticks_match_through_combat_and_deaths() -> TestRes
 
 #[test]
 fn extraction_drains_once_and_preserves_output_and_producer_capacity() -> TestResult {
-    let mut world = SimWorld::new_default_battle_sandbox();
+    let mut world = sim_fixtures::default_battle_sandbox()?;
     let mut output = RenderSnapshot::default();
     destroy_first_live_units(&mut world, 3);
     let checksum_before = world.compute_checksum();
@@ -94,7 +94,7 @@ fn extraction_drains_once_and_preserves_output_and_producer_capacity() -> TestRe
 
 #[test]
 fn growth_and_later_shrink_replace_membership_without_replaying_events() -> TestResult {
-    let mut world = SimWorld::new_default_battle_sandbox();
+    let mut world = sim_fixtures::default_battle_sandbox()?;
     let mut output = world.build_render_snapshot();
     let old_len = output.bubbles.len();
     let actor = world
@@ -128,8 +128,8 @@ fn growth_and_later_shrink_replace_membership_without_replaying_events() -> Test
 #[test]
 fn command_trace_preserves_paid_jobs_and_per_tick_production_movement_outcomes() -> TestResult {
     use sim_types::{PlayerCommand, SimVec2, UnitOrder, UnitTypeId};
-    let mut allocating = SimWorld::new_default_battle_sandbox();
-    let mut reusable = SimWorld::new_default_battle_sandbox();
+    let mut allocating = sim_fixtures::default_battle_sandbox()?;
+    let mut reusable = sim_fixtures::default_battle_sandbox()?;
     let (producer, owner, product) = allocating
         .entities
         .values()

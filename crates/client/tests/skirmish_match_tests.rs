@@ -229,7 +229,7 @@ fn the_pilot_reads_the_screen_only() {
             "skirmish_pilot.rs must not use {forbidden}"
         );
     }
-    let catalog = sim_core::UnitCatalog::default_catalog();
+    let catalog = sim_fixtures::shipped_catalogs().units;
     for archetype in catalog.archetypes() {
         assert!(
             !source.contains(&format!("\"{}\"", archetype.slug)),

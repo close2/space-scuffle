@@ -15,7 +15,6 @@
     clippy::too_many_lines
 )]
 
-use sim_core::catalog::UnitCatalog;
 use sim_core::combat::calculate_hit_damage_upgraded;
 use sim_core::error::SimCoreError;
 use sim_core::world::SimWorld;
@@ -26,13 +25,13 @@ use sim_types::math::{SimScalar, SimVec2};
 fn create_test_world() -> SimWorld {
     let default_cell = MapCell::default_ground(CliffLevel(0));
     let map = GameMap::new(64, 64, default_cell).expect("invariant: valid map");
-    SimWorld::new(map, 0x1234_5678)
+    sim_fixtures::world(map, 0x1234_5678)
 }
 
 #[test]
 fn test_weapon_vs_armor_and_shield_upgrade_scaling() {
     let mut world = create_test_world();
-    let catalog = UnitCatalog::default();
+    let catalog = sim_fixtures::shipped_catalogs().units;
     let p1 = PlayerId(1);
     let p2 = PlayerId(2);
 
@@ -119,7 +118,7 @@ fn test_weapon_vs_armor_and_shield_upgrade_scaling() {
 #[test]
 fn test_combat_shield_hp_bonus() {
     let mut world = create_test_world();
-    let catalog = UnitCatalog::default();
+    let catalog = sim_fixtures::shipped_catalogs().units;
     let p1 = PlayerId(1);
     let pulse_bot_id = catalog
         .id_by_slug("pulse_bot")
@@ -183,7 +182,7 @@ fn test_combat_shield_hp_bonus() {
 #[test]
 fn test_extended_thermal_lance_range() {
     let mut world = create_test_world();
-    let catalog = UnitCatalog::default();
+    let catalog = sim_fixtures::shipped_catalogs().units;
     let p2 = PlayerId(2);
     let colossus_id = catalog
         .id_by_slug("tripod_annihilator")
@@ -218,7 +217,7 @@ fn test_extended_thermal_lance_range() {
 #[test]
 fn test_metabolic_boost_speed() {
     let mut world = create_test_world();
-    let catalog = UnitCatalog::default();
+    let catalog = sim_fixtures::shipped_catalogs().units;
     let p3 = PlayerId(3);
     let mantis_id = catalog
         .id_by_slug("razor_mantis")
@@ -256,7 +255,7 @@ fn test_metabolic_boost_speed() {
 #[test]
 fn test_tech_tree_prerequisite_validation() {
     let mut world = create_test_world();
-    let catalog = UnitCatalog::default();
+    let catalog = sim_fixtures::shipped_catalogs().units;
     let p1 = PlayerId(1);
 
     // Command dome exists
@@ -321,7 +320,7 @@ fn test_tech_tree_prerequisite_validation() {
 #[test]
 fn test_multi_level_upgrade_stacking_3_plus_3() {
     let mut world = create_test_world();
-    let catalog = UnitCatalog::default();
+    let catalog = sim_fixtures::shipped_catalogs().units;
     let p1 = PlayerId(1);
     let p3 = PlayerId(3);
 
@@ -401,7 +400,7 @@ fn test_multi_level_upgrade_stacking_3_plus_3() {
 #[test]
 fn out_of_range_owner_does_not_alias_player_seven_upgrades() {
     let mut world = create_test_world();
-    let catalog = UnitCatalog::default();
+    let catalog = sim_fixtures::shipped_catalogs().units;
     let colossus_id = catalog
         .id_by_slug("tripod_annihilator")
         .expect("tripod_annihilator in catalog");

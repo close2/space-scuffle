@@ -8,7 +8,7 @@
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
 use asset_baker::veo_client::{VeoClient, VeoCredentials, VeoOperation};
-use asset_baker::BakerError;
+use asset_baker::{BakerError, UnitMediaDirs};
 use base64::prelude::*;
 use common::{CurlShim, FakeServer, Reply};
 use serde_json::json;
@@ -18,6 +18,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 mod common;
+
+/// The shipped unit catalog; the baker itself loads it from disk at run time.
+fn catalog() -> sim_core::UnitCatalog {
+    sim_fixtures::shipped_catalogs().units
+}
 
 const KEY: &str = "AIzaFAKE-test-only-not-a-credential";
 const DOWNLOAD_URL: &str =
@@ -195,10 +200,13 @@ fn b3_poisoned_cache_entry_is_refused_without_spending_money() {
     std::fs::write(&poisoned, HTML_ERROR.repeat(50)).expect("poison cache");
 
     let result = client(&shim).generate_and_bake_unit(
+        &catalog(),
         CATALOG_UNIT,
-        &dir.path().join("keyframes"),
-        &videos,
-        &dir.path().join("out"),
+        &UnitMediaDirs {
+            keyframes: &dir.path().join("keyframes"),
+            videos: &videos,
+            output: &dir.path().join("out"),
+        },
         64,
         5,
     );
@@ -398,10 +406,13 @@ fn b4_an_interrupted_run_resumes_the_paid_operation_instead_of_paying_again() {
     let videos = dir.path().join("videos");
     let run = |client: &VeoClient| {
         client.generate_and_bake_unit(
+            &catalog(),
             CATALOG_UNIT,
-            &dir.path().join("keyframes"),
-            &videos,
-            &dir.path().join("out"),
+            &UnitMediaDirs {
+                keyframes: &dir.path().join("keyframes"),
+                videos: &videos,
+                output: &dir.path().join("out"),
+            },
             64,
             5,
         )
@@ -450,10 +461,13 @@ fn b4_a_failed_download_keeps_the_record_so_the_result_is_not_paid_for_twice() {
     let videos = dir.path().join("videos");
     let run = |client: &VeoClient| {
         client.generate_and_bake_unit(
+            &catalog(),
             CATALOG_UNIT,
-            &dir.path().join("keyframes"),
-            &videos,
-            &dir.path().join("out"),
+            &UnitMediaDirs {
+                keyframes: &dir.path().join("keyframes"),
+                videos: &videos,
+                output: &dir.path().join("out"),
+            },
             64,
             5,
         )
@@ -483,10 +497,13 @@ fn b4_a_terminally_failed_operation_clears_its_record() {
     let videos = dir.path().join("videos");
 
     let result = client(&shim).generate_and_bake_unit(
+        &catalog(),
         CATALOG_UNIT,
-        &dir.path().join("keyframes"),
-        &videos,
-        &dir.path().join("out"),
+        &UnitMediaDirs {
+            keyframes: &dir.path().join("keyframes"),
+            videos: &videos,
+            output: &dir.path().join("out"),
+        },
         64,
         5,
     );
@@ -515,10 +532,13 @@ fn b4_an_unreadable_record_stops_the_run_instead_of_paying_again() {
     .expect("corrupt record");
 
     let result = client(&shim).generate_and_bake_unit(
+        &catalog(),
         CATALOG_UNIT,
-        &dir.path().join("keyframes"),
-        &videos,
-        &dir.path().join("out"),
+        &UnitMediaDirs {
+            keyframes: &dir.path().join("keyframes"),
+            videos: &videos,
+            output: &dir.path().join("out"),
+        },
         64,
         5,
     );
@@ -546,10 +566,13 @@ fn b9_only_exact_catalog_slugs_can_spend_money_or_touch_the_filesystem() {
         "/etc/escaped",
     ] {
         let result = client(&shim).generate_and_bake_unit(
+            &catalog(),
             unit,
-            &dir.path().join("keyframes"),
-            &videos,
-            &dir.path().join("out"),
+            &UnitMediaDirs {
+                keyframes: &dir.path().join("keyframes"),
+                videos: &videos,
+                output: &dir.path().join("out"),
+            },
             64,
             5,
         );

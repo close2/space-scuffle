@@ -44,7 +44,7 @@ impl Arena {
         let map = GameMap::new(cells, cells, MapCell::default_ground(CliffLevel(0)))
             .expect("invariant: test maps have a valid size");
         Self {
-            world: SimWorld::new(map, 7),
+            world: sim_fixtures::world(map, 7),
             tick: 0,
         }
     }

@@ -46,7 +46,7 @@ fn empty_bundle(tick: u32) -> TickBundle {
 fn create_test_world() -> SimWorld {
     let map =
         GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0))).expect("invariant: valid map");
-    SimWorld::new(map, 0x4242)
+    sim_fixtures::world(map, 0x4242)
 }
 
 /// Test 1: 1 Zealot vs 1 Marine at Point-Blank Range.
@@ -645,7 +645,8 @@ fn test_zergling_swarm_scaling_vs_1_zealot() {
 /// Verifies no units die at tick 40 or 60, and battle actively rages past tick 200.
 #[test]
 fn test_default_battle_sandbox_pacing_and_no_instant_melee_wipe() {
-    let mut world = SimWorld::new_default_battle_sandbox();
+    let mut world =
+        sim_fixtures::default_battle_sandbox().expect("invariant: the default sandbox builds");
     let initial_count = world.entities.len();
     assert!(
         initial_count >= 20,

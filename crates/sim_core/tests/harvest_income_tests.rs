@@ -59,7 +59,7 @@ fn fixture(mineral: u32) -> Result<Fixture, Box<dyn Error>> {
         ],
         Vec::new(),
     )?;
-    let mut world = SimWorld::new(map, 11);
+    let mut world = sim_fixtures::world(map, 11);
     let (worker_type, spec) = world
         .catalog
         .archetypes()

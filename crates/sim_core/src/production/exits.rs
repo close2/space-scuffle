@@ -302,7 +302,7 @@ mod tests {
             32,
             sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
         )?;
-        let mut world = crate::SimWorld::new(map, 1);
+        let mut world = crate::test_support::world(map, 1);
         let dome = |shape: &ShapeKind| matches!(shape, ShapeKind::BuildingDome { .. });
         let producer_type = world
             .catalog
@@ -374,7 +374,7 @@ mod tests {
             sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
         )?;
         map.place_structure(sim_types::EntityId(1), 2, 2, 1, 1)?;
-        let world = crate::SimWorld::new(map, 1);
+        let world = crate::test_support::world(map, 1);
         let radius = sim_types::SimScalar::from_num(0.375);
         let tangent = sim_types::SimVec2::new(
             sim_types::SimScalar::from_num(3.375),

@@ -27,6 +27,7 @@ mod checks;
 mod docs;
 mod gpu;
 mod metadata;
+mod production_rules;
 mod source;
 
 pub use checks::{float_ratchet, FLOAT_RATCHET_MESSAGE};
@@ -42,6 +43,10 @@ pub use gpu::{
     in_process_render_devices, HEADLESS_CHECK_WINDOW, HEADLESS_WINDOW, RENDER_DEVICE_MARKERS,
 };
 pub use metadata::{cargo_metadata, engine_free_simulation, FORBIDDEN_SIMULATION_DEPENDENCIES};
+pub use production_rules::{
+    expect_messages_state_invariants, no_discarded_results_in_simulation, no_embedded_assets,
+    INVARIANT_PREFIX,
+};
 pub use source::{blank_comments_and_literals, code_text, rust_files, strip_test_items, Scope};
 
 use std::fmt;

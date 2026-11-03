@@ -251,12 +251,6 @@ pub struct UnitCatalog {
     slug_index: OnceLock<Vec<(String, usize)>>,
 }
 
-impl Default for UnitCatalog {
-    fn default() -> Self {
-        Self::new_starter_roster()
-    }
-}
-
 impl UnitCatalog {
     /// Deserializes a catalog from a raw RON string.
     ///
@@ -330,26 +324,6 @@ impl UnitCatalog {
     /// or [`SimCoreError::RonDeserializationError`] if parsing fails.
     pub fn from_file(path: impl AsRef<Path>) -> SimResult<Self> {
         Self::load_from_file(path)
-    }
-
-    /// Creates a default catalog consolidating embedded `units.ron` and `structures.ron`.
-    /// Guarantees that headless unit tests never fail due to missing disk paths.
-    ///
-    /// # Panics
-    /// Panics if the compile-time embedded catalog RON contains syntax errors.
-    #[must_use]
-    #[allow(clippy::expect_used)]
-    pub fn new_starter_roster() -> Self {
-        const EMBEDDED_UNITS: &str = include_str!("../../../assets/catalog/units.ron");
-        const EMBEDDED_STRUCTURES: &str = include_str!("../../../assets/catalog/structures.ron");
-        Self::from_ron_str_bundle(EMBEDDED_UNITS, EMBEDDED_STRUCTURES)
-            .expect("invariant: embedded catalog assets must be syntactically valid")
-    }
-
-    /// Alias for [`Self::new_starter_roster`].
-    #[must_use]
-    pub fn default_catalog() -> Self {
-        Self::new_starter_roster()
     }
 
     /// Registers or replaces an archetype at its numeric ID for programmatic editing.
@@ -1230,7 +1204,7 @@ mod tests {
 
     #[test]
     fn test_starter_roster_completeness_and_factions() {
-        let catalog = UnitCatalog::new_starter_roster();
+        let catalog = crate::test_support::shipped_catalogs().units;
 
         // 10 archetypes registered (IDs 1 through 10)
         for id in 1..=10 {
@@ -1259,7 +1233,7 @@ mod tests {
 
     #[test]
     fn test_lookup_by_slug_and_display_name() {
-        let catalog = UnitCatalog::new_starter_roster();
+        let catalog = crate::test_support::shipped_catalogs().units;
         let first = catalog
             .archetypes()
             .next()
@@ -1288,7 +1262,7 @@ mod tests {
 
     #[test]
     fn test_veo_prompt_resolution() {
-        let catalog = UnitCatalog::new_starter_roster();
+        let catalog = crate::test_support::shipped_catalogs().units;
         let first = catalog.archetypes().next().unwrap();
         let idle_prompt = first.veo_prompt(AnimState::Idle);
         assert!(idle_prompt.is_some());

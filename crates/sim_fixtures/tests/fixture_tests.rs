@@ -1,0 +1,112 @@
+//! Behaviour of the test fixtures: the sandbox scene and the embedded shipped data.
+//!
+//! # Responsibility
+//! Pins that the battle sandbox is built whole or not at all, that its scene is unchanged from
+//! the constructor it replaced, and that the embedded catalogs are the files the game loads.
+//!
+//! # How it fits
+//! Every other crate's tests build worlds through `sim_fixtures`; these tests make sure those
+//! worlds are what the shipped data and the former `sim_core` constructors produced.
+//!
+//! # Invariants
+//! - The sandbox reports a spawn it cannot make; it never returns a world with entities missing.
+//! - The embedded catalogs equal `RuntimeCatalogs::load_from_directory("assets/catalog")`.
+
+use sim_core::catalog::RuntimeCatalogs;
+use sim_fixtures::{default_battle_sandbox, default_battle_sandbox_on, SandboxError};
+use sim_map::{CliffLevel, GameMap, MapCell};
+use sim_types::{PlayerId, ShapeKind};
+use std::error::Error;
+use std::path::PathBuf;
+
+/// Checksum of the default sandbox's spawned state, recorded from
+/// `SimWorld::new_default_battle_sandbox` before Phase 9 WP10 moved it here.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 2_420_571_548_553_850_683;
+
+fn shipped_catalog_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")
+}
+
+#[test]
+fn sandbox_on_a_map_too_small_for_its_scene_is_an_error() -> Result<(), Box<dyn Error>> {
+    let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    let result = default_battle_sandbox_on(map);
+    assert!(
+        matches!(result, Err(SandboxError::Spawn { .. })),
+        "a scene whose entities lie outside a 32x32 map must fail, got {:?}",
+        result.map(|world| world.entities.len())
+    );
+    Ok(())
+}
+
+#[test]
+fn default_sandbox_spawns_both_armies_and_bases_whole() -> Result<(), Box<dyn Error>> {
+    let world = default_battle_sandbox()?;
+    let count = |owner: PlayerId, structure: bool| {
+        world
+            .entities
+            .values()
+            .filter(|e| e.owner == owner)
+            .filter(|e| {
+                world
+                    .catalog
+                    .get(e.unit_type_id)
+                    .is_ok_and(|a| matches!(a.shape, ShapeKind::BuildingDome { .. }) == structure)
+            })
+            .count()
+    };
+    assert_eq!(
+        count(PlayerId(0), false),
+        12,
+        "ten ranged and two armoured units"
+    );
+    assert_eq!(
+        count(PlayerId(1), false),
+        10,
+        "eight melee and two turreted units"
+    );
+    assert_eq!(
+        count(PlayerId(0), true),
+        3,
+        "command, supply and production"
+    );
+    assert_eq!(
+        count(PlayerId(1), true),
+        3,
+        "command, supply and production"
+    );
+    assert_eq!(world.last_checksum(), world.compute_checksum());
+    assert_eq!(world.last_checksum(), DEFAULT_SANDBOX_CHECKSUM);
+    Ok(())
+}
+
+#[test]
+fn embedded_catalogs_are_the_shipped_files() -> Result<(), Box<dyn Error>> {
+    let embedded = sim_fixtures::shipped_catalogs();
+    let on_disk = RuntimeCatalogs::load_from_directory(shipped_catalog_dir())?;
+    let slugs = |catalogs: &RuntimeCatalogs| {
+        catalogs
+            .units
+            .archetypes()
+            .map(|a| (a.unit_type_id, a.slug.clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(slugs(&embedded), slugs(&on_disk));
+    assert_eq!(
+        embedded
+            .upgrades
+            .upgrades()
+            .map(|u| u.upgrade_id)
+            .collect::<Vec<_>>(),
+        on_disk
+            .upgrades
+            .upgrades()
+            .map(|u| u.upgrade_id)
+            .collect::<Vec<_>>()
+    );
+    let loadouts = sim_core::scenario::StartLoadoutCatalog::load(
+        shipped_catalog_dir().join("start_loadouts.ron"),
+    )?;
+    assert_eq!(sim_fixtures::shipped_loadouts(), loadouts);
+    Ok(())
+}

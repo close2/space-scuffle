@@ -253,30 +253,9 @@ pub fn load_scenario_world(
 ///    - A loadout's `starting_resources` replace the player's default bank.
 /// 6. Records the match's players and recomputes the world checksum.
 ///
-/// # Errors
-/// Returns [`ScenarioError`] on invalid maps, missing start locations, unknown slugs,
-/// dome fitting failures, or entity spawning failures.
-pub fn build_world(
-    doc: &MapDocument,
-    loadouts: &StartLoadoutCatalog,
-    players: &[PlayerSetup],
-    seed: u64,
-) -> Result<SimWorld, ScenarioError> {
-    build_world_with_catalogs(
-        doc,
-        loadouts,
-        players,
-        seed,
-        UnitCatalog::new_starter_roster(),
-        UpgradeCatalog::default_catalog(),
-    )
-}
-
-/// Builds a validated scenario using supplied unit and upgrade rule catalogs.
-///
-/// Uses the same deterministic cell placement and seed semantics as [`build_world`],
-/// resolving all loadout identities against `catalog`. No catalog files are read and
-/// no embedded definitions are substituted. The catalogs are consumed by the world.
+/// Resolves all loadout identities against `catalog`. No catalog files are read and no
+/// embedded definitions are substituted; the catalogs are consumed by the world. Production
+/// callers load them from disk ([`load_scenario_world`], `RuntimeCatalogs::load_from_directory`).
 ///
 /// # Errors
 /// Returns [`ScenarioError`] for invalid maps, absent loadout identities, invalid
@@ -598,9 +577,10 @@ pub fn ring_perimeter(x0: i32, x1: i32, y0: i32, y1: i32) -> impl Iterator<Item 
 
 #[cfg(test)]
 mod tests {
-    use super::{build_world, ring_perimeter, LoadoutUnit, PlayerSetup, StartLoadout};
+    use super::{
+        build_world_with_catalogs, ring_perimeter, LoadoutUnit, PlayerSetup, StartLoadout,
+    };
     use super::{ScenarioError, StartLoadoutCatalog};
-    use crate::catalog::UnitCatalog;
     use sim_map::{CellFlags, CliffLevel, MapCellSpec, MapDocument, MapMetadata, MapStartLocation};
     use sim_map::{MapEntityId, TerrainKind};
     use sim_types::{ShapeKind, SimScalar, SimVec2, UnitTypeId};
@@ -641,7 +621,7 @@ mod tests {
     fn units_fill_the_nearest_ring_first_in_perimeter_and_loadout_order(
     ) -> Result<(), ScenarioError> {
         let missing = |what: &str| ScenarioError::UnknownSlug(what.to_string());
-        let catalog = UnitCatalog::new_starter_roster();
+        let catalog = crate::test_support::shipped_catalogs().units;
         let hall = catalog
             .archetypes()
             .find(|a| {
@@ -678,7 +658,15 @@ mod tests {
             player_slot: 0,
             loadout_slug: "placement".to_string(),
         }];
-        let world = build_world(&open_document(), &loadouts, &players, 7)?;
+        let catalogs = crate::test_support::shipped_catalogs();
+        let world = build_world_with_catalogs(
+            &open_document(),
+            &loadouts,
+            &players,
+            7,
+            catalogs.units,
+            catalogs.upgrades,
+        )?;
 
         let placed = world
             .map

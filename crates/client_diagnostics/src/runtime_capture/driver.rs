@@ -1300,7 +1300,7 @@ mod tests {
     #[test]
     fn delayed_combat_requires_original_tick_ids_positions_and_event(
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut simulation = sim_core::SimWorld::new_default_battle_sandbox();
+        let mut simulation = sim_fixtures::default_battle_sandbox()?;
         let snapshot = simulation.build_render_snapshot();
         let victim = snapshot.bubbles.first().ok_or("victim absent")?;
         let source = snapshot

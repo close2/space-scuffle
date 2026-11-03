@@ -14,12 +14,19 @@ use asset_baker::procedural_generator::{
 use asset_baker::{
     default_dome_archetypes, default_unit_archetypes, generate_all_procedural_atlases, BakerError,
 };
+use sim_core::UnitCatalog;
 use sim_types::enums::AnimState;
+
+/// The shipped unit catalog; the baker itself loads it from disk at run time.
+fn catalog() -> UnitCatalog {
+    sim_fixtures::shipped_catalogs().units
+}
 
 #[test]
 fn test_all_mobile_units_generation() {
-    for unit in default_unit_archetypes() {
-        let output = generate_procedural_unit_atlas(&unit, 192, 15)
+    let catalog = catalog();
+    for unit in default_unit_archetypes(&catalog) {
+        let output = generate_procedural_unit_atlas(&catalog, &unit, 192, 15)
             .unwrap_or_else(|e| panic!("Failed to generate unit {unit}: {e:?}"));
 
         assert_eq!(output.meta.name, unit);
@@ -53,8 +60,9 @@ fn test_all_mobile_units_generation() {
 
 #[test]
 fn test_all_building_domes_generation() {
-    for dome in default_dome_archetypes() {
-        let output = generate_procedural_dome_atlas(&dome, 256, 15)
+    let catalog = catalog();
+    for dome in default_dome_archetypes(&catalog) {
+        let output = generate_procedural_dome_atlas(&catalog, &dome, 256, 15)
             .unwrap_or_else(|e| panic!("Failed to generate dome {dome}: {e:?}"));
 
         assert_eq!(output.meta.name, dome);
@@ -86,7 +94,7 @@ fn test_all_building_domes_generation() {
 
 #[test]
 fn test_unknown_archetype_error() {
-    let result = generate_procedural_atlas("fictional_battlecruiser", None, None);
+    let result = generate_procedural_atlas(&catalog(), "fictional_battlecruiser", None, None);
     match result {
         Err(BakerError::UnknownArchetype { name, valid }) => {
             assert_eq!(name, "fictional_battlecruiser");
@@ -99,9 +107,12 @@ fn test_unknown_archetype_error() {
 #[test]
 fn test_generate_all_procedural_atlases_to_disk() {
     let temp_dir = tempfile::tempdir().expect("tempdir creation failed");
-    let metas = generate_all_procedural_atlases(temp_dir.path()).expect("generate_all failed");
+    let catalog = catalog();
+    let metas =
+        generate_all_procedural_atlases(&catalog, temp_dir.path()).expect("generate_all failed");
 
-    let expected = default_unit_archetypes().len() + default_dome_archetypes().len();
+    let expected =
+        default_unit_archetypes(&catalog).len() + default_dome_archetypes(&catalog).len();
     assert_eq!(metas.len(), expected);
 
     for meta in &metas {

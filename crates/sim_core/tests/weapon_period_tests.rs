@@ -108,7 +108,7 @@ fn battle(
     rate: SimScalar,
 ) -> Result<(SimWorld, EntityId, EntityId, u16), Box<dyn std::error::Error>> {
     let map = GameMap::new(16, 16, MapCell::default_ground(CliffLevel(0)))?;
-    let mut world = SimWorld::new(map, 123);
+    let mut world = sim_fixtures::world(map, 123);
     let unit_type = world
         .catalog
         .archetypes()

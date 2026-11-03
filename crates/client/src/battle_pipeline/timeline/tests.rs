@@ -8,7 +8,7 @@ use sim_types::{PlayerId, SimScalar};
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 fn fixture() -> Result<(BattleFrameState, SimWorld), Box<dyn std::error::Error>> {
-    let mut world = SimWorld::new_default_battle_sandbox();
+    let mut world = sim_fixtures::default_battle_sandbox()?;
     let mut state = BattleFrameState::default();
     world.write_render_snapshot(state.initialize(SessionGeneration::FIRST)?);
     state.finish_initialization()?;
@@ -166,7 +166,7 @@ fn initialization_and_tick_publication_are_explicit_boundaries() -> TestResult {
         Err(TimelineError::NotInitialized)
     ));
     assert_eq!(state.present(0.0), Err(TimelineError::NotInitialized));
-    let mut world = SimWorld::new_default_battle_sandbox();
+    let mut world = sim_fixtures::default_battle_sandbox()?;
     world.write_render_snapshot(state.initialize(SessionGeneration::FIRST)?);
     assert!(matches!(
         state.begin_tick(),
@@ -203,7 +203,7 @@ fn initialization_and_tick_publication_are_explicit_boundaries() -> TestResult {
 fn exhausted_tick_preflight_preserves_world_pending_commands_and_event_evidence() -> TestResult {
     use super::super::commands::BattleCommandQueue;
     use sim_types::{PlayerCommand, UnitOrder};
-    let mut world = SimWorld::new_default_battle_sandbox();
+    let mut world = sim_fixtures::default_battle_sandbox()?;
     world.current_tick = u32::MAX;
     let mut state = BattleFrameState::default();
     world.pending_events.push(event());

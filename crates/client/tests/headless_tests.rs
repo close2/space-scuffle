@@ -15,7 +15,6 @@ use client::camera::{
 };
 use client::lab_ui::{LabState, LabTab};
 use client::run_headless_check;
-use sim_core::world::SimWorld;
 use sim_types::commands::TickBundle;
 use sim_types::enums::{AnimState, ShapeKind, SilhouetteClass, WeaponVisualKind};
 use sim_types::ids::{EntityId, PlayerId, Tick, UnitTypeId};
@@ -145,7 +144,8 @@ fn test_headless_ci_runner() {
 
 #[test]
 fn test_headless_simulation_stepping() {
-    let mut world = SimWorld::new_default_battle_sandbox();
+    let mut world =
+        sim_fixtures::default_battle_sandbox().expect("invariant: the default sandbox builds");
     let initial_checksum = world.compute_checksum();
 
     for _ in 0..60 {

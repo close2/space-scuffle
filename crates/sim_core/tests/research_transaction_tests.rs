@@ -3,7 +3,7 @@
 //! Fixtures reuse loaded authored identities while replacing effect values to
 //! exercise signed aggregation and live-vital overflow through the real API.
 
-use sim_core::{SimCoreError, SimWorld, UpgradeCatalog, UpgradeDef};
+use sim_core::{SimCoreError, UpgradeCatalog, UpgradeDef};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{PlayerId, SimScalar, SimVec2, UnitStatDeltas, UpgradeEffect};
 
@@ -30,7 +30,7 @@ fn research_failure_preserves_all_state_including_costs_and_live_entities(
 ) -> Result<(), Box<dyn std::error::Error>> {
     for (live_vital_overflow, invalid_identity) in [(false, false), (true, false), (false, true)] {
         let map = GameMap::new(16, 16, MapCell::default_ground(CliffLevel(0)))?;
-        let mut world = SimWorld::new(map, 12);
+        let mut world = sim_fixtures::world(map, 12);
         let archetype = world.catalog.archetypes().next().ok_or("catalog empty")?;
         let unit_type = archetype.unit_type_id;
         let slug = archetype.slug.clone();

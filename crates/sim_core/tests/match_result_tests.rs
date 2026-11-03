@@ -32,7 +32,7 @@ fn at(x: i32, y: i32) -> SimVec2 {
 
 fn world() -> Result<(SimWorld, UnitTypeId), Box<dyn Error>> {
     let map = GameMap::new(48, 48, MapCell::default_ground(CliffLevel(0)))?;
-    let world = SimWorld::new(map, 41);
+    let world = sim_fixtures::world(map, 41);
     let dome = world
         .catalog
         .id_by_slug("capacitor_dome")

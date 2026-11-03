@@ -354,6 +354,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sim_core",
+ "sim_fixtures",
  "sim_types",
  "tempfile",
  "thiserror 2.0.21",
@@ -1831,6 +1832,7 @@ dependencies = [
  "ron",
  "serde",
  "sim_core",
+ "sim_fixtures",
  "sim_map",
  "sim_types",
  "tempfile",
@@ -1852,6 +1854,7 @@ dependencies = [
  "ron",
  "serde",
  "sim_core",
+ "sim_fixtures",
  "sim_map",
  "sim_types",
  "tempfile",
@@ -5001,10 +5004,21 @@ dependencies = [
  "rand_chacha 0.3.1",
  "ron",
  "serde",
+ "sim_fixtures",
  "sim_map",
  "sim_types",
  "thiserror 2.0.21",
  "xxhash-rust",
+]
+
+[[package]]
+name = "sim_fixtures"
+version = "0.1.0"
+dependencies = [
+ "sim_core",
+ "sim_map",
+ "sim_types",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

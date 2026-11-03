@@ -209,7 +209,7 @@ mod tests {
             ],
             Vec::new(),
         )?;
-        Ok(SimWorld::new(map, 11))
+        Ok(sim_fixtures::world(map, 11))
     }
 
     fn is_dome(archetype: &UnitArchetype) -> bool {

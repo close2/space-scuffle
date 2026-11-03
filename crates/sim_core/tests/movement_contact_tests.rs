@@ -189,7 +189,7 @@ fn grid_of(
 /// Appendix A r03 (M-1), extended: they must also finish by passing each other.
 #[test]
 fn head_on_friendlies_keep_contact_and_pass() -> TestResult {
-    let mut world = SimWorld::new(flat(64)?, SEED);
+    let mut world = sim_fixtures::world(flat(64)?, SEED);
     let kind = small_unit(&world)?;
     let a = spawn(&mut world, kind, BLUE, at(20.0, 30.0))?;
     let b = spawn(&mut world, kind, BLUE, at(40.0, 30.0))?;
@@ -229,7 +229,7 @@ fn head_on_friendlies_keep_contact_and_pass() -> TestResult {
 #[test]
 fn exact_head_on_tie_separates_to_opposite_world_sides() -> TestResult {
     for swapped in [false, true] {
-        let mut world = SimWorld::new(flat(64)?, SEED);
+        let mut world = sim_fixtures::world(flat(64)?, SEED);
         let kind = small_unit(&world)?;
         let (west, east) = (at(25.0, 30.0), at(35.0, 30.0));
         let first = spawn(&mut world, kind, BLUE, if swapped { east } else { west })?;
@@ -270,7 +270,7 @@ fn exact_head_on_tie_separates_to_opposite_world_sides() -> TestResult {
 
 #[test]
 fn crossing_streams_do_not_interpenetrate_and_all_arrive() -> TestResult {
-    let mut world = SimWorld::new(flat(64)?, SEED);
+    let mut world = sim_fixtures::world(flat(64)?, SEED);
     let kind = small_unit(&world)?;
     let east = grid_of(&mut world, kind, BLUE, 6, 2, (10.0, 28.0), 1.5)?;
     let north = grid_of(&mut world, kind, BLUE, 6, 3, (26.0, 10.0), 1.5)?;
@@ -318,7 +318,7 @@ fn crossing_streams_do_not_interpenetrate_and_all_arrive() -> TestResult {
 /// Appendix A r04 (M-2): stationary squadmates are not a settled group.
 #[test]
 fn short_order_on_a_stationary_pair_moves_them() -> TestResult {
-    let mut world = SimWorld::new(flat(32)?, SEED);
+    let mut world = sim_fixtures::world(flat(32)?, SEED);
     let kind = small_unit(&world)?;
     let a = spawn(&mut world, kind, BLUE, at(10.0, 10.0))?;
     let b = spawn(&mut world, kind, BLUE, at(10.8, 10.0))?;
@@ -344,7 +344,7 @@ fn short_order_on_a_stationary_pair_moves_them() -> TestResult {
 /// M-15: strangers near the goal are not the mover's group, so they cannot end its order.
 #[test]
 fn unrelated_idle_friendly_on_the_line_does_not_end_a_move() -> TestResult {
-    let mut world = SimWorld::new(flat(32)?, SEED);
+    let mut world = sim_fixtures::world(flat(32)?, SEED);
     let kind = small_unit(&world)?;
     let goal = at(20.0, 10.0);
     let stranger = spawn(&mut world, kind, BLUE, at(19.0, 10.0))?;
@@ -364,7 +364,7 @@ fn unrelated_idle_friendly_on_the_line_does_not_end_a_move() -> TestResult {
 /// M-15: walking past a building next to the goal is not arriving.
 #[test]
 fn building_beside_the_goal_does_not_end_a_move() -> TestResult {
-    let mut world = SimWorld::new(flat(32)?, SEED);
+    let mut world = sim_fixtures::world(flat(32)?, SEED);
     let kind = small_unit(&world)?;
     let dome = world
         .catalog
@@ -389,7 +389,7 @@ fn building_beside_the_goal_does_not_end_a_move() -> TestResult {
 /// A group that shares a destination still settles on contact instead of crowding its centre.
 #[test]
 fn a_group_settles_around_a_shared_destination() -> TestResult {
-    let mut world = SimWorld::new(flat(64)?, SEED);
+    let mut world = sim_fixtures::world(flat(64)?, SEED);
     let kind = small_unit(&world)?;
     let ids = grid_of(&mut world, kind, BLUE, 40, 8, (5.0, 5.0), 1.0)?;
     let goal = at(40.0, 40.0);
@@ -409,7 +409,7 @@ fn a_group_settles_around_a_shared_destination() -> TestResult {
 /// Appendix A r07 (M-4): an enemy walking into a holder goes around it.
 #[test]
 fn enemy_cannot_shove_a_holding_unit() -> TestResult {
-    let mut world = SimWorld::new(flat(32)?, SEED);
+    let mut world = sim_fixtures::world(flat(32)?, SEED);
     let small = small_unit(&world)?;
     let large = ground_unit(&world, |r| r > SimScalar::from_num(0.5)).ok_or("catalog body")?;
     let holder = spawn(&mut world, small, BLUE, at(15.0, 15.0))?;
@@ -441,7 +441,7 @@ fn enemy_cannot_shove_a_holding_unit() -> TestResult {
 /// A hold reached through the queue anchors the unit exactly like an immediate one.
 #[test]
 fn queued_hold_is_not_pushed_by_friend_or_foe() -> TestResult {
-    let mut world = SimWorld::new(flat(32)?, SEED);
+    let mut world = sim_fixtures::world(flat(32)?, SEED);
     let kind = small_unit(&world)?;
     let holder = spawn(&mut world, kind, BLUE, at(12.0, 15.0))?;
     tick(
@@ -523,7 +523,7 @@ fn run_until(
 /// 0.09 that is about 545 ticks away, so the appendix's 500-tick horizon is extended.
 #[test]
 fn unreachable_order_reports_retargets_and_terminates() -> TestResult {
-    let mut world = SimWorld::new(walled(64)?, SEED);
+    let mut world = sim_fixtures::world(walled(64)?, SEED);
     let kind = small_unit(&world)?;
     let ids = grid_of(&mut world, kind, BLUE, 20, 5, (5.0, 5.0), 1.5)?;
     let searches_before = world.path_search_count();
@@ -559,7 +559,7 @@ fn unreachable_order_reports_retargets_and_terminates() -> TestResult {
 /// A click on impassable ground behaves like a click beside it.
 #[test]
 fn order_into_a_blocked_cell_stops_beside_it() -> TestResult {
-    let mut world = SimWorld::new(walled(32)?, SEED);
+    let mut world = sim_fixtures::world(walled(32)?, SEED);
     let kind = small_unit(&world)?;
     let unit = spawn(&mut world, kind, BLUE, at(10.5, 10.5))?;
     order(
@@ -592,7 +592,7 @@ fn fully_enclosed_unit_ends_its_order_with_a_typed_outcome() -> TestResult {
     ] {
         map.cell_mut(x, y)?.flags = CellFlags::empty();
     }
-    let mut world = SimWorld::new(map, SEED);
+    let mut world = sim_fixtures::world(map, SEED);
     let kind = small_unit(&world)?;
     let unit = spawn(&mut world, kind, BLUE, at(5.5, 5.5))?;
     order(
@@ -615,7 +615,7 @@ fn fully_enclosed_unit_ends_its_order_with_a_typed_outcome() -> TestResult {
 /// M-5: a corner waypoint with a parked unit on it can still be passed.
 #[test]
 fn route_continues_past_a_blocker_on_its_corner_waypoint() -> TestResult {
-    let mut world = SimWorld::new(wall_with_gap(32, 16, 12..16)?, SEED);
+    let mut world = sim_fixtures::world(wall_with_gap(32, 16, 12..16)?, SEED);
     let kind = small_unit(&world)?;
     let unit = spawn(&mut world, kind, BLUE, at(8.5, 24.5))?;
     let goal = at(24.5, 24.5);
@@ -640,7 +640,7 @@ fn route_continues_past_a_blocker_on_its_corner_waypoint() -> TestResult {
 /// M-6: a walled-in mover reports zero achieved velocity and eventually gives up.
 #[test]
 fn stuck_unit_reports_no_motion_and_abandons_its_order() -> TestResult {
-    let mut world = SimWorld::new(wall_with_gap(32, 16, 15..17)?, SEED);
+    let mut world = sim_fixtures::world(wall_with_gap(32, 16, 15..17)?, SEED);
     let kind = small_unit(&world)?;
     let plug = [
         spawn(&mut world, kind, BLUE, at(16.5, 15.4))?,
@@ -696,7 +696,7 @@ fn melee_pursuit_takes_the_ramp_and_reaches_the_enemy() -> TestResult {
             cell.flags = CellFlags::GROUND_PATHABLE | CellFlags::RAMP;
         }
     }
-    let mut world = SimWorld::new(map, SEED);
+    let mut world = sim_fixtures::world(map, SEED);
     let melee = world
         .catalog
         .archetypes()
@@ -731,7 +731,7 @@ fn acquired_attack_without_a_short_route_is_dropped() -> TestResult {
         map.cell_mut(x, 24)?.flags = CellFlags::empty();
     }
     map.cell_mut(47, 24)?.flags = CellFlags::GROUND_PATHABLE;
-    let mut world = SimWorld::new(map, SEED);
+    let mut world = sim_fixtures::world(map, SEED);
     let kind = world
         .catalog
         .archetypes()
@@ -760,7 +760,7 @@ fn acquired_attack_without_a_short_route_is_dropped() -> TestResult {
 /// An explicit attack on something unreachable ends rather than pressing against the wall.
 #[test]
 fn explicit_attack_on_an_unreachable_target_ends_with_a_report() -> TestResult {
-    let mut world = SimWorld::new(walled(32)?, SEED);
+    let mut world = sim_fixtures::world(walled(32)?, SEED);
     let kind = small_unit(&world)?;
     let attacker = spawn(&mut world, kind, BLUE, at(4.5, 10.5))?;
     let target = spawn(&mut world, kind, RED, at(27.5, 10.5))?;
@@ -787,7 +787,7 @@ fn explicit_attack_on_an_unreachable_target_ends_with_a_report() -> TestResult {
 #[test]
 fn group_passes_a_two_cell_choke() -> TestResult {
     for pick_large in [false, true] {
-        let mut world = SimWorld::new(wall_with_gap(48, 24, 22..24)?, SEED);
+        let mut world = sim_fixtures::world(wall_with_gap(48, 24, 22..24)?, SEED);
         let kind = if pick_large {
             ground_unit(&world, |r| r >= SimScalar::from_num(0.75)).ok_or("catalog body")?
         } else {
@@ -812,7 +812,7 @@ fn group_passes_a_two_cell_choke() -> TestResult {
 /// Clearance now agrees with physics: a disc of radius 0.5 fits a one-cell gap.
 #[test]
 fn radius_half_unit_routes_through_a_one_cell_gap() -> TestResult {
-    let mut world = SimWorld::new(wall_with_gap(32, 16, 15..16)?, SEED);
+    let mut world = sim_fixtures::world(wall_with_gap(32, 16, 15..16)?, SEED);
     let kind = ground_unit(&world, |r| r == SimScalar::HALF).ok_or("catalog body")?;
     assert_eq!(
         UnitClearance::for_radius(SimScalar::HALF),
@@ -836,7 +836,7 @@ fn radius_half_unit_routes_through_a_one_cell_gap() -> TestResult {
 /// A body wider than its surroundings is not trapped: it leaves by the only way out.
 #[test]
 fn large_unit_spawned_in_a_one_cell_gap_can_leave() -> TestResult {
-    let mut world = SimWorld::new(wall_with_gap(32, 16, 15..16)?, SEED);
+    let mut world = sim_fixtures::world(wall_with_gap(32, 16, 15..16)?, SEED);
     let kind = ground_unit(&world, |r| r > SimScalar::from_num(0.6)).ok_or("catalog body")?;
     let unit = spawn(&mut world, kind, BLUE, at(16.5, 15.5))?;
     order(
@@ -856,7 +856,7 @@ fn large_unit_spawned_in_a_one_cell_gap_can_leave() -> TestResult {
 /// Ramps carry a whole squad, and nobody ends the order on the wrong level.
 #[test]
 fn squad_climbs_a_ramp_and_reaches_its_target() -> TestResult {
-    let mut world = SimWorld::new(canyon()?, SEED);
+    let mut world = sim_fixtures::world(canyon()?, SEED);
     let kind = small_unit(&world)?;
     let source = world
         .map
@@ -891,7 +891,7 @@ fn squad_climbs_a_ramp_and_reaches_its_target() -> TestResult {
 /// M-13: friendly contact must not cap a unit below its effective speed.
 #[test]
 fn buffed_unit_keeps_its_speed_through_friendly_contact() -> TestResult {
-    let mut world = SimWorld::new(flat(64)?, SEED);
+    let mut world = sim_fixtures::world(flat(64)?, SEED);
     let kind = small_unit(&world)?;
     let fast = spawn(&mut world, kind, BLUE, at(10.0, 30.0))?;
     let beside = spawn(&mut world, kind, BLUE, at(10.0, 30.6))?;
@@ -947,7 +947,7 @@ fn units_on_either_side_of_a_cliff_do_not_push_each_other() -> TestResult {
             map.cell_mut(x, y)?.cliff_level = CliffLevel(1);
         }
     }
-    let mut world = SimWorld::new(map, SEED);
+    let mut world = sim_fixtures::world(map, SEED);
     let kind = small_unit(&world)?;
     let below = spawn(&mut world, kind, BLUE, at(10.0, 15.8))?;
     let above = spawn(&mut world, kind, BLUE, at(10.0, 16.2))?;
@@ -970,7 +970,7 @@ fn route_survives_cells_narrower_than_the_tier() -> TestResult {
         map.cell_mut(x, 14)?.flags = CellFlags::empty();
         map.cell_mut(x, 16)?.flags = CellFlags::empty();
     }
-    let mut world = SimWorld::new(map, SEED);
+    let mut world = sim_fixtures::world(map, SEED);
     let kind = ground_unit(&world, |r| r > SimScalar::from_num(0.6)).ok_or("catalog body")?;
     let unit = spawn(&mut world, kind, BLUE, at(11.5, 15.5))?;
     order(
@@ -997,7 +997,7 @@ fn route_survives_cells_narrower_than_the_tier() -> TestResult {
 fn pursuit_rounds_a_single_blocked_cell_promptly() -> TestResult {
     let mut map = flat(24)?;
     map.cell_mut(6, 6)?.flags = CellFlags::empty();
-    let mut world = SimWorld::new(map, SEED);
+    let mut world = sim_fixtures::world(map, SEED);
     let kind = world
         .catalog
         .archetypes()

@@ -670,7 +670,7 @@ mod tests {
 
     fn flat_world() -> Outcome<SimWorld> {
         let map = GameMap::new(96, 96, MapCell::default_ground(CliffLevel(0)))?;
-        Ok(SimWorld::new(map, 21))
+        Ok(sim_fixtures::world(map, 21))
     }
 
     fn is_dome(archetype: &UnitArchetype) -> bool {

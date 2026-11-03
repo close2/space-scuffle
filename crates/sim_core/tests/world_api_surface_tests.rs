@@ -55,9 +55,7 @@ type FleeEntity =
 #[test]
 fn sim_world_public_methods_keep_their_signatures() {
     // Construction and spawning.
-    let _: fn(SimMap, u64) -> SimWorld = SimWorld::new;
     let _: fn(SimMap, u64, UnitCatalog, UpgradeCatalog) -> SimWorld = SimWorld::with_catalogs;
-    let _: fn() -> SimWorld = SimWorld::new_default_battle_sandbox;
     let _: fn(&mut SimWorld, UnitTypeId, PlayerId, SimVec2) -> SimResult<EntityId> =
         SimWorld::spawn_unit;
     let _: fn(&mut SimWorld, UnitTypeId, PlayerId, u32, u32) -> SimResult<EntityId> =

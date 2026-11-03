@@ -5,9 +5,32 @@
 //! Pins the exact output of [`SmogGrid3d::step`], [`step_bouncing_kinematics`],
 //! `setup_smog_volume_system` and `update_smog_field_system` so that the structural splits of
 //! `crates/client/src/smog/{mod,fluid,kinematics}.rs` (Phase 9, WP7, step 9.2) are provably
-//! behaviour-preserving. Every `f32` is hashed by its raw bits (`to_bits`), so a reordered float
-//! expression, a reordered solver stage or a reordered collision pass changes the hash and fails
-//! the test.
+//! behaviour-preserving. Every hashed `f32` is hashed by its raw bits (`to_bits`), so a reordered
+//! float expression, a reordered solver stage or a reordered collision pass changes the hash and
+//! fails the test.
+//!
+//! # Two classes of golden
+//! The client may use the host's `libm` (charter §3.1 binds only the simulation crates), and the
+//! last bit of `sinf`, `cosf`, `atan2f`, `expf` and `powf` differs between glibc versions, musl,
+//! macOS and Windows. A golden that hashes a `libm` result pins the host as well as the code, so
+//! every golden here belongs to one of two classes (plan
+//! `docs/plans/2026-11-03-host-independent-smog-goldens.md`):
+//!
+//! - **Class H, host-independent.** No `libm` result reaches the hash. Values that `libm` computes
+//!   are either supplied as recorded literals ([`smog_crowd_trig::CROWD_TRIG_BITS`] for the crowd
+//!   generator's trig) or left out of the hash and checked by an exact relation that holds on every
+//!   host: a heading equals this host's `atan2f` of the final velocity, bit for bit, and a showcase
+//!   rotation equals this host's `Quat::from_rotation_y(-heading)`. The four kinematics goldens are
+//!   class H.
+//! - **Class L, `libm`-bound.** Production code calls `libm` on the hashed path, and a test cannot
+//!   remove the call without changing smog output. Each class-L golden names its functions in its
+//!   doc comment: the fluid goldens use `expf` (and `sinf` through `bubble_team_color` beyond the
+//!   palette); the startup and system goldens use `expf` and `powf` (`Color::to_linear`), the
+//!   system goldens with battle or preview bubbles also `sinf`; the noise golden uses `sinf`,
+//!   `cosf` and `powf`. [`smog_golden_libm_canary`] pins the exact `libm` results these goldens
+//!   consume, so a host with a different `libm` fails the canary with a message saying so rather
+//!   than looking like a behaviour change. Making them host-independent is owner question
+//!   `docs/questions/open/0014-host-independent-smog-math.md`.
 //!
 //! # Fit
 //! The fluid and kinematics goldens run on the CPU only, through the public smog API: the fluid
@@ -22,20 +45,30 @@
 //!   nonzero buoyancy and zero dissipation.
 //! - Kinematics: the 10-bubble showcase, a non-planar set, the 400-bubble spatial-hash path and the
 //!   600-bubble all-pairs fallback beyond [`client::smog::MAX_BOUNCING_BUBBLES`].
-//! - Systems: the Visual Lab startup and showcase frames (textures, noise, material, bubbles,
-//!   uniform), a Visual Lab preview bubble, the swarm tab and the live battle tab (window
+//! - Crowd inputs: [`crowd_lattice`] is the generator's crowd branch with its trig supplied by the
+//!   caller; [`crowd_generator_matches_lattice`] pins it to [`generate_bouncing_bubbles`] bit for
+//!   bit, and [`crowd_trig_table_matches_host`] ties the recorded table to the generator's trig.
+//! - Systems: the Visual Lab startup and showcase frames (textures, material, bubbles, uniform),
+//!   the noise texture, a Visual Lab preview bubble, the swarm tab and the live battle tab (window
 //!   placement, velocity scale, trajectory pre-warm and cavity slots).
 //!
 //! # Invariants
-//! - The golden constants were recorded on `main` at `9dbf715`, before any WP7 edit.
+//! - The fluid constants were recorded on `main` at `9dbf715`, before any WP7 edit, and did not
+//!   change when this file moved to the two classes.
+//! - Every other constant was recorded by running this file, unchanged, against `9dbf715` and then
+//!   confirmed unchanged on `main` at `3f57fec` (glibc 2.41, `x86_64`).
 //! - A golden may only change together with a deliberate, documented change in smog output.
 
 #![allow(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
     clippy::unwrap_used,
     clippy::expect_used
 )]
+
+#[path = "support/smog_crowd_trig.rs"]
+mod smog_crowd_trig;
 
 use std::time::Duration;
 
@@ -48,6 +81,7 @@ use client::smog::{
     SmogStepMetrics, SmogTextures, GRID_NX, GRID_NY, GRID_NZ, LAB_VOLUME_MAX, LAB_VOLUME_MIN,
 };
 use client::ResolvedAssetsRoot;
+use smog_crowd_trig::CROWD_TRIG_BITS;
 
 /// Fluid steps run per fluid scenario.
 const FLUID_STEPS: usize = 120;
@@ -60,6 +94,9 @@ const FIELD_CHECKPOINT: usize = 30;
 
 /// Fixed fluid and kinematics step, in seconds.
 const STEP_DT: f32 = 1.0 / 60.0;
+
+/// Horizontal speed, in world units per second, above which `sync_headings` re-derives a heading.
+const HEADING_SYNC_MIN_SPEED: f32 = 1e-4;
 
 /// 64-bit FNV-1a, written out so the golden does not depend on a hasher whose algorithm may
 /// change between Rust or crate releases.
@@ -109,12 +146,13 @@ impl Fnv64 {
         self.u64(m.active_sources as u64);
     }
 
+    /// Hashes a kinematics state without its heading: the heading is `atan2f` of the velocity, a
+    /// host `libm` result, and is checked by [`assert_heading_synced`] instead.
     fn state(&mut self, s: &BouncingBubbleState) {
         self.u64(s.index as u64);
         self.vec3(s.position);
         self.vec3(s.velocity);
         self.f32(s.radius);
-        self.f32(s.heading_angle_rad);
         self.u64(s.wall_bounces);
         self.u64(s.peer_bounces);
     }
@@ -138,9 +176,44 @@ impl Fnv64 {
         self.bytes(&grid.rgba_velocity_bytes);
     }
 
+    /// Hashes an image's bytes, descriptor, sampler and usage.
+    fn image(&mut self, image: &Image) {
+        self.bytes(&image.data);
+        self.bytes(format!("{:?}", image.texture_descriptor).as_bytes());
+        self.bytes(format!("{:?}", image.sampler).as_bytes());
+        self.bytes(format!("{:?}", image.asset_usage).as_bytes());
+    }
+
     fn finish(&self) -> u64 {
         self.0
     }
+}
+
+/// The heading `sync_headings` gives a bubble moving at `velocity` (world units per second) whose
+/// heading was `previous` (radians): this host's `atan2f` of the horizontal velocity, or
+/// `previous` when the bubble barely moves horizontally. The expression is the production one, so
+/// on any host both sides call the same `atan2f` on the same bits.
+fn expected_heading(velocity: Vec3, previous: f32) -> f32 {
+    let speed_xz = (velocity.x * velocity.x + velocity.z * velocity.z).sqrt();
+    if speed_xz > HEADING_SYNC_MIN_SPEED {
+        velocity.z.atan2(velocity.x)
+    } else {
+        previous
+    }
+}
+
+/// Asserts the heading relation: `state.heading_angle_rad` is bit-equal to
+/// [`expected_heading`] of its final velocity and `previous` heading.
+fn assert_heading_synced(state: &BouncingBubbleState, previous: f32, context: &str) {
+    let expected = expected_heading(state.velocity, previous);
+    assert_eq!(
+        state.heading_angle_rad.to_bits(),
+        expected.to_bits(),
+        "{context}: bubble {} heading {} is not synced to velocity {:?} (expected {expected})",
+        state.index,
+        state.heading_angle_rad,
+        state.velocity,
+    );
 }
 
 /// How a fluid scenario derives a source from a kinematics state.
@@ -173,6 +246,93 @@ fn source_for(index: usize, state: &BouncingBubbleState, mix: SourceMix) -> Bubb
         }
     }
     source
+}
+
+/// The four trig values the crowd generator uses for bubble `i`, from the recorded table:
+/// `sin(i * GOLDEN_RATIO)`, `sin(i * PI)`, `cos(i * golden angle)` and `sin(i * golden angle)`.
+fn table_trig(i: usize) -> [f32; 4] {
+    CROWD_TRIG_BITS[i].map(f32::from_bits)
+}
+
+/// The same four values as [`table_trig`], computed by this host's `libm` with the generator's
+/// expressions.
+fn host_trig(i: usize) -> [f32; 4] {
+    let phi = (i as f32) * 2.399_963_1;
+    [
+        (i as f32 * std::f32::consts::GOLDEN_RATIO).sin(),
+        (i as f32 * std::f32::consts::PI).sin(),
+        phi.cos(),
+        phi.sin(),
+    ]
+}
+
+/// The crowd branch of [`generate_bouncing_bubbles`] (`count > 10`), expression for expression,
+/// with its four trig calls replaced by `trig(i)` (ordered as [`table_trig`]).
+///
+/// With [`table_trig`] the result depends on no `libm` call except the unhashed initial heading,
+/// so the crowd scenarios are host-independent. On the recording host the table equals the
+/// host's trig, so this returns exactly what the generator returns.
+fn crowd_lattice(
+    count: usize,
+    bounds: &SmogArenaBounds,
+    trig: impl Fn(usize) -> [f32; 4],
+) -> Vec<BouncingBubbleState> {
+    assert!(
+        count > client::BOUNCING_BUBBLE_COUNT && count <= CROWD_TRIG_BITS.len(),
+        "the lattice replicates the crowd branch for 11..=600 bubbles, not {count}"
+    );
+    let radius = if count <= 20 {
+        0.42
+    } else if count <= 100 {
+        0.30
+    } else {
+        0.24
+    };
+
+    let domain_x = (bounds.max.x - bounds.min.x - radius * 2.0).max(1.0);
+    let domain_z = (bounds.max.z - bounds.min.z - radius * 2.0).max(1.0);
+
+    let aspect = domain_x / domain_z;
+    let nx = ((count as f32 * aspect).sqrt().round() as usize).max(1);
+    let nz = count.div_ceil(nx);
+    let cell_size_x = domain_x / nx as f32;
+    let cell_size_z = domain_z / nz as f32;
+
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count {
+        let ix = i % nx;
+        let iz = i / nx;
+
+        let fx = (ix as f32 + 0.5) / (nx as f32);
+        let fz = (iz as f32 + 0.5) / (nz as f32).max(1.0);
+
+        let [sin_golden_ratio, sin_pi, cos_phi, sin_phi] = trig(i);
+        let jitter_x = (sin_golden_ratio * 0.25) * cell_size_x;
+        let jitter_z = (sin_pi * 0.25) * cell_size_z;
+
+        let r_i = radius + ((i % 5) as f32) * 0.01;
+        let pos = Vec3::new(
+            (bounds.min.x + r_i + fx * domain_x + jitter_x)
+                .clamp(bounds.min.x + r_i, bounds.max.x - r_i),
+            bounds.min.y + r_i,
+            (bounds.min.z + r_i + fz * domain_z + jitter_z)
+                .clamp(bounds.min.z + r_i, bounds.max.z - r_i),
+        );
+
+        let speed = 2.2 + ((i % 7) as f32) * 0.25;
+        let vel = Vec3::new(cos_phi * speed, 0.0, sin_phi * speed);
+
+        out.push(BouncingBubbleState {
+            index: i,
+            position: pos,
+            velocity: vel,
+            radius: r_i,
+            heading_angle_rad: vel.z.atan2(vel.x),
+            wall_bounces: 0,
+            peer_bounces: 0,
+        });
+    }
+    out
 }
 
 /// Runs kinematics and fluid together for [`FLUID_STEPS`] and hashes metrics and fields.
@@ -219,6 +379,8 @@ const GOLDEN_FLUID_MIXED_24: u64 = 0x2e2d_8269_5e27_898d;
 const GOLDEN_FLUID_CROWD_48: u64 = 0x6ab3_c16e_837d_e74b;
 
 /// The showcase: ten emitting bubbles with confinement on, default configuration.
+///
+/// Class L: `expf` (the velocity, density and glow decay factors).
 #[test]
 fn fluid_showcase_golden() -> Result<(), SmogError> {
     let config = SmogConfig::default();
@@ -232,10 +394,13 @@ fn fluid_showcase_golden() -> Result<(), SmogError> {
 }
 
 /// Twenty-four mixed sources: confinement still on, every source branch exercised.
+///
+/// Class L: `expf` (decay factors) and `sinf` (`bubble_team_color` for indices 10 and up). The
+/// crowd comes from the recorded trig table, not from this host's trig.
 #[test]
 fn fluid_mixed_sources_golden() -> Result<(), SmogError> {
     let config = crowd_config();
-    let states = generate_bouncing_bubbles(24, &config.bounds)?;
+    let states = crowd_lattice(24, &config.bounds, table_trig);
     let hash = fluid_scenario_hash(states, &config, SourceMix::Mixed)?;
     assert_eq!(
         hash, GOLDEN_FLUID_MIXED_24,
@@ -246,10 +411,13 @@ fn fluid_mixed_sources_golden() -> Result<(), SmogError> {
 
 /// Forty-eight mixed sources: past the 32-source limit, so the crowd wake radius applies and
 /// confinement is skipped.
+///
+/// Class L: `expf` (decay factors) and `sinf` (`bubble_team_color` for indices 10 and up). The
+/// crowd comes from the recorded trig table, not from this host's trig.
 #[test]
 fn fluid_crowd_golden() -> Result<(), SmogError> {
     let config = crowd_config();
-    let states = generate_bouncing_bubbles(48, &config.bounds)?;
+    let states = crowd_lattice(48, &config.bounds, table_trig);
     let hash = fluid_scenario_hash(states, &config, SourceMix::Mixed)?;
     assert_eq!(
         hash, GOLDEN_FLUID_CROWD_48,
@@ -258,20 +426,25 @@ fn fluid_crowd_golden() -> Result<(), SmogError> {
     Ok(())
 }
 
-/// Steps kinematics for [`KINEMATICS_STEPS`] and hashes the event counts and every state.
+/// Steps kinematics for [`KINEMATICS_STEPS`], hashes the event counts and every state without its
+/// heading, and checks the heading relation for every state after every step.
 fn kinematics_hash(
     mut states: Vec<BouncingBubbleState>,
     bounds: &SmogArenaBounds,
+    context: &str,
 ) -> Result<u64, SmogError> {
+    let mut previous_headings: Vec<f32> = states.iter().map(|s| s.heading_angle_rad).collect();
     let mut h = Fnv64::new();
     let mut total_walls = 0;
-    for _ in 0..KINEMATICS_STEPS {
+    for step in 1..=KINEMATICS_STEPS {
         let (walls, peers) = step_bouncing_kinematics(&mut states, bounds, STEP_DT)?;
         total_walls += walls;
         h.u64(walls);
         h.u64(peers);
-        for state in &states {
+        for (state, previous) in states.iter().zip(previous_headings.iter_mut()) {
             h.state(state);
+            assert_heading_synced(state, *previous, &format!("{context}, step {step}"));
+            *previous = state.heading_angle_rad;
         }
     }
     assert!(total_walls > 0, "the scenario must reach a wall");
@@ -282,16 +455,17 @@ fn kinematics_hash(
     Ok(h.finish())
 }
 
-const GOLDEN_KINEMATICS_SHOWCASE: u64 = 0x6f2f_7e74_b1d3_130d;
-const GOLDEN_KINEMATICS_NON_PLANAR: u64 = 0x0344_7f94_b623_00ee;
-const GOLDEN_KINEMATICS_GRID_400: u64 = 0xe9db_6f7d_fd52_d328;
-const GOLDEN_KINEMATICS_FALLBACK_600: u64 = 0xd093_7643_a076_3ad5;
+const GOLDEN_KINEMATICS_SHOWCASE: u64 = 0xb7a3_f586_377e_729a;
+const GOLDEN_KINEMATICS_NON_PLANAR: u64 = 0x4e79_ecfc_c959_7e43;
+const GOLDEN_KINEMATICS_GRID_400: u64 = 0x6aca_fe91_b0ed_7b8a;
+const GOLDEN_KINEMATICS_FALLBACK_600: u64 = 0x8d1d_c59d_6fba_ec0f;
 
+/// Class H: literal positions and velocities; heading checked by relation.
 #[test]
 fn kinematics_showcase_golden() -> Result<(), SmogError> {
     let bounds = SmogArenaBounds::default();
     let states = initial_bouncing_bubbles(&bounds)?.to_vec();
-    let hash = kinematics_hash(states, &bounds)?;
+    let hash = kinematics_hash(states, &bounds, "kinematics showcase")?;
     assert_eq!(
         hash, GOLDEN_KINEMATICS_SHOWCASE,
         "kinematics showcase golden: {hash:#018x}"
@@ -300,6 +474,8 @@ fn kinematics_showcase_golden() -> Result<(), SmogError> {
 }
 
 /// Bubbles lifted off the floor with vertical velocity: the 3D (not planar) contact branch.
+///
+/// Class H: literal positions and velocities; heading checked by relation.
 #[test]
 fn kinematics_non_planar_golden() -> Result<(), SmogError> {
     let bounds = SmogArenaBounds::default();
@@ -308,7 +484,7 @@ fn kinematics_non_planar_golden() -> Result<(), SmogError> {
         state.position.y = bounds.min.y + state.radius + 0.3 + (i % 3) as f32 * 0.5;
         state.velocity.y = if i % 2 == 0 { 1.7 } else { -2.3 };
     }
-    let hash = kinematics_hash(states, &bounds)?;
+    let hash = kinematics_hash(states, &bounds, "kinematics non-planar")?;
     assert_eq!(
         hash, GOLDEN_KINEMATICS_NON_PLANAR,
         "kinematics non-planar golden: {hash:#018x}"
@@ -316,11 +492,12 @@ fn kinematics_non_planar_golden() -> Result<(), SmogError> {
     Ok(())
 }
 
+/// Class H: the 400-bubble crowd from the recorded trig table; heading checked by relation.
 #[test]
 fn kinematics_spatial_grid_golden() -> Result<(), SmogError> {
     let bounds = SmogArenaBounds::default();
-    let states = generate_bouncing_bubbles(400, &bounds)?;
-    let hash = kinematics_hash(states, &bounds)?;
+    let states = crowd_lattice(400, &bounds, table_trig);
+    let hash = kinematics_hash(states, &bounds, "kinematics grid")?;
     assert_eq!(
         hash, GOLDEN_KINEMATICS_GRID_400,
         "kinematics grid golden: {hash:#018x}"
@@ -328,16 +505,113 @@ fn kinematics_spatial_grid_golden() -> Result<(), SmogError> {
     Ok(())
 }
 
+/// Class H: the 600-bubble crowd from the recorded trig table; heading checked by relation.
 #[test]
 fn kinematics_all_pairs_fallback_golden() -> Result<(), SmogError> {
     let bounds = SmogArenaBounds::default();
-    let states = generate_bouncing_bubbles(600, &bounds)?;
-    let hash = kinematics_hash(states, &bounds)?;
+    let states = crowd_lattice(600, &bounds, table_trig);
+    let hash = kinematics_hash(states, &bounds, "kinematics fallback")?;
     assert_eq!(
         hash, GOLDEN_KINEMATICS_FALLBACK_600,
         "kinematics fallback golden: {hash:#018x}"
     );
     Ok(())
+}
+
+/// Pins [`crowd_lattice`] to the production generator: with this host's trig, both give
+/// bit-identical index, position, velocity and radius for every crowd size class, and the
+/// generator's initial heading satisfies the heading relation. Host-independent: both sides call
+/// the same host `libm` on the same bits.
+#[test]
+fn crowd_generator_matches_lattice() -> Result<(), SmogError> {
+    let bounds = SmogArenaBounds::default();
+    for count in [11, 20, 21, 24, 48, 100, 101, 400, 600] {
+        let generated = generate_bouncing_bubbles(count, &bounds)?;
+        let lattice = crowd_lattice(count, &bounds, host_trig);
+        assert_eq!(generated.len(), lattice.len(), "crowd {count}: length");
+        for (g, l) in generated.iter().zip(&lattice) {
+            let context = format!("crowd {count}, bubble {}", g.index);
+            assert_eq!(g.index, l.index, "{context}: index");
+            for (axis, gv, lv) in [
+                ("position.x", g.position.x, l.position.x),
+                ("position.y", g.position.y, l.position.y),
+                ("position.z", g.position.z, l.position.z),
+                ("velocity.x", g.velocity.x, l.velocity.x),
+                ("velocity.y", g.velocity.y, l.velocity.y),
+                ("velocity.z", g.velocity.z, l.velocity.z),
+                ("radius", g.radius, l.radius),
+            ] {
+                assert_eq!(
+                    gv.to_bits(),
+                    lv.to_bits(),
+                    "{context}: {axis} generator {gv} lattice {lv}"
+                );
+            }
+            assert_eq!((g.wall_bounces, g.peer_bounces), (0, 0), "{context}");
+            assert_eq!(
+                g.heading_angle_rad.to_bits(),
+                g.velocity.z.atan2(g.velocity.x).to_bits(),
+                "{context}: initial heading is atan2 of the initial velocity"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Distance in units in the last place between two finite `f32` values.
+fn ulp_distance(a: f32, b: f32) -> u64 {
+    let ordered = |v: f32| {
+        let bits = v.to_bits();
+        if bits & 0x8000_0000 == 0 {
+            i64::from(bits)
+        } else {
+            -i64::from(bits & 0x7fff_ffff)
+        }
+    };
+    ordered(a).abs_diff(ordered(b))
+}
+
+/// Ties [`CROWD_TRIG_BITS`] to the generator's trig: every entry is within 2 ulps of this host's
+/// value.
+///
+/// This checks where the table came from, not behaviour, so it has a tolerance. glibc, musl and
+/// macOS `sinf`/`cosf` are faithfully rounded on these arguments, so two hosts differ by at most
+/// one ulp, while a table of anything other than the generator's trig would be off by far more.
+/// The bound leaves one ulp of headroom for a less accurate `libm`. The bit-exact pin of the
+/// generator is [`crowd_generator_matches_lattice`].
+#[test]
+fn crowd_trig_table_matches_host() {
+    const MAX_ULPS: u64 = 2;
+    let names = [
+        "sin(i * GOLDEN_RATIO)",
+        "sin(i * PI)",
+        "cos(i * golden angle)",
+        "sin(i * golden angle)",
+    ];
+    let mut largest = (0, 0, 0);
+    for i in 0..CROWD_TRIG_BITS.len() {
+        let table = table_trig(i);
+        let host = host_trig(i);
+        for k in 0..4 {
+            let gap = ulp_distance(table[k], host[k]);
+            if gap > largest.0 {
+                largest = (gap, i, k);
+            }
+        }
+    }
+    let (gap, i, k) = largest;
+    println!(
+        "largest crowd trig gap: {gap} ulp ({} at i = {i})",
+        names[k]
+    );
+    assert!(
+        gap <= MAX_ULPS,
+        "crowd trig table entry {} at i = {i} is {gap} ulps from this host's value (table {}, \
+         host {}); the table does not hold the generator's trig",
+        names[k],
+        table_trig(i)[k],
+        host_trig(i)[k],
+    );
 }
 
 fn resolve_root() -> Result<ResolvedAssetsRoot, Box<dyn std::error::Error>> {
@@ -412,8 +686,134 @@ fn battle_unit(entity_id: u32, pos: Vec3, velocity: [f32; 2]) -> client::BubbleI
     })
 }
 
+/// Whether the showcase bubbles have been stepped by `sync_bouncing_smog_bubbles_system` since
+/// they were spawned, which decides which heading relations hold.
+#[derive(Clone, Copy)]
+enum ShowcasePhase<'a> {
+    /// Never stepped (the startup frame, or a tab that hides the showcase): heading and aim are
+    /// still the spawn heading and the rotation is the identity.
+    Unstepped,
+    /// Stepped: the heading follows the velocity, the rotation follows the heading, and the aim
+    /// keeps the spawn value recorded in `spawn_aims` (bits, by bubble index).
+    Stepped { spawn_aims: &'a [u32] },
+}
+
+/// Checks the showcase heading relations and returns each showcase bubble's aim bits by index.
+///
+/// The showcase spawns from the startup pre-warm, which ends with `sync_headings`, so the spawn
+/// heading of every bubble is this host's `atan2f` of its spawn velocity, and the aim equals it
+/// (the aim is never updated). In both phases the instance velocity, the material uniform's
+/// heading and aim (written once at spawn) and the relations below are compared bit for bit:
+///
+/// - [`ShowcasePhase::Unstepped`]: heading bits equal aim bits equal [`expected_heading`] of the
+///   bubble's velocity, and `transform.rotation` is `Quat::IDENTITY` bit for bit.
+/// - [`ShowcasePhase::Stepped`]: aim bits equal the spawn aim, heading bits equal
+///   [`expected_heading`] of the velocity, and `transform.rotation` equals this host's
+///   `Quat::from_rotation_y(-heading)` bit for bit.
+///
+/// Every showcase bubble moves faster than [`HEADING_SYNC_MIN_SPEED`] (elastic collisions keep the
+/// speed), which is asserted, so the previous-heading branch of the relation is never needed.
+fn check_showcase_headings(app: &mut App, phase: ShowcasePhase<'_>) -> Vec<u32> {
+    let world = app.world_mut();
+    let mut bubbles: Vec<_> = world
+        .query::<(
+            &BouncingSmogBubble,
+            &Transform,
+            &client::BubbleInstance,
+            &MeshMaterial3d<client::bubble_shader::BubbleDomeMaterial>,
+        )>()
+        .iter(world)
+        .map(|(bubble, transform, instance, material)| {
+            (
+                bubble.clone(),
+                *transform,
+                instance.0.clone(),
+                material.0.clone(),
+            )
+        })
+        .collect();
+    bubbles.sort_by_key(|(bubble, ..)| bubble.index);
+    assert_eq!(
+        bubbles.len(),
+        client::BOUNCING_BUBBLE_COUNT,
+        "every showcase bubble exists"
+    );
+    let materials = world.resource::<Assets<client::bubble_shader::BubbleDomeMaterial>>();
+    let mut aims = Vec::with_capacity(bubbles.len());
+    for (bubble, transform, instance, material) in &bubbles {
+        let index = bubble.index;
+        let v = bubble.velocity;
+        let speed_xz = (v.x * v.x + v.z * v.z).sqrt();
+        assert!(
+            speed_xz > HEADING_SYNC_MIN_SPEED,
+            "showcase bubble {index} must move horizontally (speed {speed_xz})"
+        );
+        assert_eq!(
+            instance.velocity.map(f32::to_bits),
+            [v.x.to_bits(), v.z.to_bits()],
+            "showcase bubble {index}: instance velocity follows the bubble"
+        );
+        let heading = instance.heading_angle_rad;
+        let aim = instance.aim_angle_rad;
+        let synced = expected_heading(v, heading);
+        assert_eq!(
+            heading.to_bits(),
+            synced.to_bits(),
+            "showcase bubble {index}: heading {heading} is not atan2 of velocity {v:?}"
+        );
+        let uniform = materials
+            .get(material)
+            .expect("bubble material exists")
+            .uniform;
+        match phase {
+            ShowcasePhase::Unstepped => {
+                assert_eq!(
+                    aim.to_bits(),
+                    heading.to_bits(),
+                    "showcase bubble {index}: aim starts at the spawn heading"
+                );
+                assert_eq!(
+                    transform.rotation.to_array().map(f32::to_bits),
+                    Quat::IDENTITY.to_array().map(f32::to_bits),
+                    "showcase bubble {index}: an unstepped bubble is not rotated"
+                );
+            }
+            ShowcasePhase::Stepped { spawn_aims } => {
+                assert_eq!(
+                    aim.to_bits(),
+                    spawn_aims[index],
+                    "showcase bubble {index}: aim is never updated"
+                );
+                assert_eq!(
+                    transform.rotation.to_array().map(f32::to_bits),
+                    Quat::from_rotation_y(-heading).to_array().map(f32::to_bits),
+                    "showcase bubble {index}: rotation {:?} does not follow heading {heading}",
+                    transform.rotation
+                );
+            }
+        }
+        assert_eq!(
+            [
+                uniform.heading_angle_rad.to_bits(),
+                uniform.aim_angle_rad.to_bits()
+            ],
+            [aim.to_bits(), aim.to_bits()],
+            "showcase bubble {index}: the material keeps the spawn heading as heading and aim"
+        );
+        aims.push(aim.to_bits());
+    }
+    aims
+}
+
 /// Hashes the published uniform, stats, field, volume proxy and every showcase bubble.
-fn hash_smog_app(app: &mut App, h: &mut Fnv64) {
+///
+/// Showcase heading and aim are host `atan2f` results and the stepped rotation is host
+/// `sinf`/`cosf` of the heading, so they are checked by [`check_showcase_headings`] (called here)
+/// instead of hashed: the render instance and the material uniform are hashed with heading and
+/// aim set to `0.0`, and the rotation is hashed only in [`ShowcasePhase::Unstepped`], where the
+/// relation makes it `Quat::IDENTITY`.
+fn hash_smog_app(app: &mut App, h: &mut Fnv64, phase: ShowcasePhase<'_>) {
+    check_showcase_headings(app, phase);
     let world = app.world_mut();
     let frame = world.resource::<SmogGpuFrame>();
     h.bytes(bytemuck::bytes_of(&frame.uniform));
@@ -466,32 +866,33 @@ fn hash_smog_app(app: &mut App, h: &mut Fnv64) {
         h.u64(bubble.wall_bounces);
         h.u64(bubble.peer_bounces);
         h.vec3(transform.translation);
-        h.quat(transform.rotation);
+        if let ShowcasePhase::Unstepped = phase {
+            h.quat(transform.rotation);
+        }
         h.vec3(transform.scale);
+        let mut instance = instance.clone();
+        instance.heading_angle_rad = 0.0;
+        instance.aim_angle_rad = 0.0;
         h.bytes(format!("{instance:?}").as_bytes());
         h.bytes(format!("{visibility:?}").as_bytes());
         let material = materials.get(material).expect("bubble material exists");
-        h.bytes(bytemuck::bytes_of(&material.uniform));
+        let mut uniform = material.uniform;
+        uniform.heading_angle_rad = 0.0;
+        uniform.aim_angle_rad = 0.0;
+        h.bytes(bytemuck::bytes_of(&uniform));
         h.bytes(format!("{:?}", material.alpha_mode).as_bytes());
         h.bytes(format!("{:?}", material.video_texture.is_some()).as_bytes());
     }
 }
 
-/// Hashes the three 3D textures and the volume material created at startup.
+/// Hashes the density and velocity 3D textures and the volume material created at startup. The
+/// noise texture is hashed by [`smog_noise_texture_golden`] alone.
 fn hash_smog_startup_assets(app: &App, h: &mut Fnv64) {
     let world = app.world();
     let textures = world.resource::<SmogTextures>();
     let images = world.resource::<Assets<Image>>();
-    for handle in [
-        &textures.density_image,
-        &textures.velocity_image,
-        &textures.noise_image,
-    ] {
-        let image = images.get(handle).expect("smog image exists");
-        h.bytes(&image.data);
-        h.bytes(format!("{:?}", image.texture_descriptor).as_bytes());
-        h.bytes(format!("{:?}", image.sampler).as_bytes());
-        h.bytes(format!("{:?}", image.asset_usage).as_bytes());
+    for handle in [&textures.density_image, &textures.velocity_image] {
+        h.image(images.get(handle).expect("smog image exists"));
     }
     let materials = world.resource::<Assets<client::smog::SmogVolumeMaterial>>();
     let material = materials
@@ -516,28 +917,62 @@ fn require_smog_activity(app: &App) -> usize {
     stats.active_bubbles
 }
 
-const GOLDEN_SYSTEMS_STARTUP: u64 = 0xc22d_27e6_2102_f857;
-const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0x6eba_f3b3_5763_21f6;
-const GOLDEN_SYSTEMS_SWARM: u64 = 0xb535_0265_8fff_6213;
-const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0xf9f1_5ce0_99f2_8320;
+const GOLDEN_SYSTEMS_STARTUP: u64 = 0xab37_4d13_4f79_14a3;
+const GOLDEN_SYSTEMS_NOISE: u64 = 0x1fe2_2cc0_e03e_f783;
+const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0x8ebb_0c5c_3ade_e97d;
+const GOLDEN_SYSTEMS_SWARM: u64 = 0xe2c6_74a7_9745_ed93;
+const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0x62be_ff3d_0b7e_e248;
 
-/// Startup assets, as `setup_smog_volume_system` creates them before any frame steps them.
-#[test]
-fn smog_startup_assets_golden() -> Result<(), Box<dyn std::error::Error>> {
+/// The headless Visual Lab app after its startup frame (the clock's first update has `dt = 0`).
+fn startup_app() -> Result<App, Box<dyn std::error::Error>> {
     let mut app = production_smog_app(client::LabState {
         smog_bouncing_active: true,
         ..default()
     })?;
     app.update();
+    Ok(app)
+}
+
+/// Startup assets, as `setup_smog_volume_system` creates them before any frame steps them.
+///
+/// Class L: `expf` (the pre-warm's decay factors) and `powf` (the showcase colours'
+/// `Color::to_linear`).
+#[test]
+fn smog_startup_assets_golden() -> Result<(), Box<dyn std::error::Error>> {
+    let mut app = startup_app()?;
     let mut h = Fnv64::new();
     hash_smog_startup_assets(&app, &mut h);
-    hash_smog_app(&mut app, &mut h);
+    hash_smog_app(&mut app, &mut h, ShowcasePhase::Unstepped);
     let hash = h.finish();
     assert_eq!(hash, GOLDEN_SYSTEMS_STARTUP, "startup golden: {hash:#018x}");
     Ok(())
 }
 
-/// Visual Lab showcase with a preview bubble, through both systems for 40 frames.
+/// The tileable 3D noise texture created at startup: bytes, descriptor, sampler and usage.
+///
+/// Class L: `sinf`, `cosf` and `powf` (the noise texel), each quantised to `u8`.
+#[test]
+fn smog_noise_texture_golden() -> Result<(), Box<dyn std::error::Error>> {
+    let app = startup_app()?;
+    let world = app.world();
+    let textures = world.resource::<SmogTextures>();
+    let images = world.resource::<Assets<Image>>();
+    let mut h = Fnv64::new();
+    h.image(
+        images
+            .get(&textures.noise_image)
+            .expect("noise image exists"),
+    );
+    let hash = h.finish();
+    assert_eq!(hash, GOLDEN_SYSTEMS_NOISE, "noise golden: {hash:#018x}");
+    Ok(())
+}
+
+/// Visual Lab showcase with a preview bubble, through both systems for 40 frames. The showcase
+/// heading relations are checked every frame.
+///
+/// Class L: `expf` (decay factors), `powf` (showcase colours) and `sinf` (the preview's
+/// `bubble_team_color(77)`).
 #[test]
 fn smog_visual_lab_systems_golden() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = production_smog_app(client::LabState {
@@ -547,6 +982,10 @@ fn smog_visual_lab_systems_golden() -> Result<(), Box<dyn std::error::Error>> {
         ..default()
     })?;
     app.update();
+    let spawn_aims = check_showcase_headings(&mut app, ShowcasePhase::Unstepped);
+    let stepped = ShowcasePhase::Stepped {
+        spawn_aims: &spawn_aims,
+    };
     let preview = Vec3::new(1.2, 0.6, -0.4);
     app.world_mut().spawn((
         client::scene_controller::LabPreviewBubble,
@@ -557,8 +996,9 @@ fn smog_visual_lab_systems_golden() -> Result<(), Box<dyn std::error::Error>> {
     let mut h = Fnv64::new();
     for frame in 1..=40 {
         app.update();
+        check_showcase_headings(&mut app, stepped);
         if frame % 10 == 0 {
-            hash_smog_app(&mut app, &mut h);
+            hash_smog_app(&mut app, &mut h, stepped);
         }
     }
     assert_eq!(
@@ -574,6 +1014,9 @@ fn smog_visual_lab_systems_golden() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Swarm tab: the swarm window, the swarm velocity scale and filter, and the trajectory pre-warm.
+///
+/// Class L: `expf` (decay factors), `powf` (showcase colours) and `sinf` (`bubble_team_color`
+/// of the swarm units' ids).
 #[test]
 fn smog_swarm_systems_golden() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = production_smog_app(client::LabState {
@@ -605,7 +1048,7 @@ fn smog_swarm_systems_golden() -> Result<(), Box<dyn std::error::Error>> {
     for frame in 1..=12 {
         app.update();
         if frame % 4 == 0 {
-            hash_smog_app(&mut app, &mut h);
+            hash_smog_app(&mut app, &mut h, ShowcasePhase::Unstepped);
         }
     }
     assert_eq!(
@@ -620,6 +1063,9 @@ fn smog_swarm_systems_golden() -> Result<(), Box<dyn std::error::Error>> {
 
 /// Live battle tab on a 64x48 map: window placement from camera and units, tick-rate velocity
 /// scale, vertical anchoring, the camera-volume filter, pre-warm and nearest-first cavity slots.
+///
+/// Class L: `expf` (decay factors), `powf` (showcase colours) and `sinf` (`bubble_team_color`
+/// of the battle units' ids).
 #[test]
 fn smog_live_battle_systems_golden() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = production_smog_app(client::LabState {
@@ -663,7 +1109,7 @@ fn smog_live_battle_systems_golden() -> Result<(), Box<dyn std::error::Error>> {
     for frame in 1..=12 {
         app.update();
         if frame % 4 == 0 {
-            hash_smog_app(&mut app, &mut h);
+            hash_smog_app(&mut app, &mut h, ShowcasePhase::Unstepped);
         }
     }
     assert_eq!(
@@ -683,4 +1129,57 @@ fn smog_live_battle_systems_golden() -> Result<(), Box<dyn std::error::Error>> {
         "live battle golden: {hash:#018x}"
     );
     Ok(())
+}
+
+/// The canary's recorded hash of every `libm` result the class-L goldens consume (glibc 2.41,
+/// `x86_64`).
+const GOLDEN_LIBM_CANARY: u64 = 0xd3dc_9154_746f_1272;
+
+/// Pins the exact production `libm` results the class-L goldens consume, so a host whose `libm`
+/// differs from the recording host fails here with a message that says so.
+///
+/// It hashes the bits of: the fluid's three `expf` decay factors, written exactly as in
+/// `fluid.rs`, for the default and crowd configurations (the system goldens' effective
+/// configuration changes only emission and wake, not the decay rates) at the golden step, the
+/// manual clock's step and the pre-warm step; `bubble_team_color` (`sinf`) for every index a
+/// class-L golden uses beyond the palette; and `Color::to_linear` (`powf`) of the ten showcase
+/// palette colours. The noise texel's calls are too many to list; [`smog_noise_texture_golden`]
+/// covers them.
+#[test]
+fn smog_golden_libm_canary() {
+    let mut h = Fnv64::new();
+    let clock_dt = Duration::from_secs_f32(STEP_DT).as_secs_f32();
+    let prewarm_dt = 1.0_f32 / 30.0;
+    for c in [SmogConfig::default(), crowd_config()] {
+        for dt in [STEP_DT, clock_dt, prewarm_dt] {
+            h.f32((-c.velocity_damping * dt).exp());
+            h.f32((-c.dissipation_rate * dt).exp());
+            h.f32((-(1.8 * c.dissipation_rate).max(1.65) * dt).exp());
+        }
+    }
+    let team_indices = (10..48)
+        .chain([77])
+        .chain(5000..=5030)
+        .chain([6000])
+        .chain(9000..9022)
+        .chain([9100]);
+    for index in team_indices {
+        h.vec3(bubble_team_color(index));
+    }
+    for c in client::smog::kinematics::SHOWCASE_BUBBLE_PALETTE {
+        let linear = Color::srgb(c.x, c.y, c.z).to_linear();
+        h.f32(linear.red);
+        h.f32(linear.green);
+        h.f32(linear.blue);
+        h.f32(linear.alpha);
+    }
+    let hash = h.finish();
+    assert_eq!(
+        hash, GOLDEN_LIBM_CANARY,
+        "libm canary {hash:#018x}: this host's libm (expf, sinf or powf) differs from the \
+         recording host (glibc 2.41, x86_64), so the class-L smog goldens (fluid, startup, noise \
+         and system goldens) are not comparable on this host. The fix is owner question \
+         docs/questions/open/0014-host-independent-smog-math.md (host-independent smog math), \
+         not re-recording the goldens."
+    );
 }

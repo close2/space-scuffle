@@ -54,7 +54,6 @@ use shader_ir::{
     compose_and_validate, discards, discards_when_below, has_named_let, production_module,
     shipped_source, SHADER_VARIANTS,
 };
-use sim_core::catalog::UnitCatalog;
 use sim_types::enums::{Faction, ShapeKind, SilhouetteClass, WeaponVisualKind};
 use sim_types::ids::{EntityId, PlayerId, UnitTypeId};
 use sim_types::snapshot::BubbleRenderInstance;
@@ -313,7 +312,7 @@ fn test_flipbook_textures_512_invariants() {
     let coverage: FlipbookCoverage = ron::from_str(include_str!("data/flipbook_coverage.ron"))
         .expect("flipbook_coverage.ron must parse");
     let textures_dir = resolve_assets_dir().join("textures");
-    let catalog = UnitCatalog::default();
+    let catalog = sim_fixtures::shipped_catalogs().units;
     let catalog_slugs: BTreeSet<String> = catalog.archetypes().map(|a| a.slug.clone()).collect();
 
     let on_disk: BTreeSet<String> = fs::read_dir(&textures_dir)
@@ -375,7 +374,7 @@ fn test_flipbook_textures_512_invariants() {
 fn test_starter_manifests_multi_action_offsets_and_bounds() {
     let assets_dir = resolve_assets_dir();
     let textures_dir = assets_dir.join("textures");
-    let catalog = UnitCatalog::default();
+    let catalog = sim_fixtures::shipped_catalogs().units;
     let starters: Vec<_> = catalog.archetypes().filter(|a| a.showcase_hero).collect();
 
     for arch in starters {
@@ -620,7 +619,7 @@ fn test_ground_unit_altitude_never_spawns_air_tether() -> Result<(), Box<dyn std
 
 #[test]
 fn test_three_factions_roster_integrity() {
-    let catalog = UnitCatalog::new_starter_roster();
+    let catalog = sim_fixtures::shipped_catalogs().units;
     let hero1 = catalog.get(UnitTypeId(2)).expect("Hero 1");
     assert_eq!(hero1.display_name, "Aegis Pulse Bot");
     assert_eq!(hero1.faction, Faction::AutomatonDirectorate);
@@ -673,7 +672,9 @@ fn test_bevy_ecs_schedule_all_systems_no_conflicts() -> Result<(), Box<dyn std::
     app.add_event::<bevy::input::mouse::MouseMotion>();
     app.add_event::<bevy::input::mouse::MouseWheel>();
     app.add_event::<client::vfx::CombatVisualEvent>();
-    app.init_resource::<client::CatalogResource>();
+    app.insert_resource(client::CatalogResource(
+        sim_fixtures::shipped_catalogs().units,
+    ));
     app.init_resource::<client::RenderEntityMap>();
     app.init_resource::<client::selection::SelectionState>();
     app.init_resource::<client::battle_selection::BattleSelection>();
@@ -796,7 +797,7 @@ fn scan_src_for_forbidden_slugs(
 #[test]
 fn test_zero_hardcoded_creature_names_in_rust_src() {
     // AGENTS.md §3.3: Strict zero creature/building identifiers or slugs in Rust source code across all crates.
-    let catalog = UnitCatalog::default();
+    let catalog = sim_fixtures::shipped_catalogs().units;
     let forbidden_slugs: BTreeSet<String> = catalog.archetypes().map(|a| a.slug.clone()).collect();
     assert_eq!(
         forbidden_slugs.len(),
