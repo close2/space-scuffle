@@ -662,6 +662,36 @@ fn a_refused_order_appears_in_the_feed() {
 }
 
 #[test]
+fn a_refund_is_reported() {
+    let mut harness = skirmish();
+    let base = structure_of(&harness, LOCAL_PLAYER);
+    let unit_type = trainable(&harness);
+    let price = harness.world().catalog.get(unit_type).unwrap().mineral_cost;
+    harness.world_mut().player_resources[0].minerals = price;
+    submit(
+        &mut harness,
+        LOCAL_PLAYER,
+        &[base],
+        UnitOrder::Produce { unit_type },
+    );
+    run_ticks(&mut harness, 1);
+    assert_eq!(model(&harness).view.jobs.len(), 1, "the job must be queued");
+
+    submit(
+        &mut harness,
+        LOCAL_PLAYER,
+        &[base],
+        UnitOrder::CancelProduction { job_index: 0 },
+    );
+    run_ticks(&mut harness, 1);
+
+    assert_eq!(
+        feed_lines(&harness),
+        [format!("Cancelled: refunded {price} minerals, 0 gas")]
+    );
+}
+
+#[test]
 fn an_accepted_order_is_not_reported() {
     let mut harness = skirmish();
     let crew = workers(&harness, LOCAL_PLAYER);
