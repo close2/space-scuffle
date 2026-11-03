@@ -22,9 +22,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sim_map::{
-    validate_map, CellFlags, MapDocument, MapFile, MapFormatError, MapValidationError, TerrainKind,
+    validate_map, CellFlags, CliffLevel, MapDocument, MapFile, MapFormatError, MapStartLocation,
+    MapValidationError, TerrainKind,
 };
-use sim_types::{PlayerId, ShapeKind, SimScalar, SimVec2};
+use sim_types::{PlayerId, ShapeKind, SimScalar, SimVec2, UnitTypeId};
 
 use crate::catalog::{RuntimeCatalogs, UnitCatalog};
 use crate::error::SimCoreError;
@@ -280,10 +281,6 @@ pub fn build_world(
 /// # Errors
 /// Returns [`ScenarioError`] for invalid maps, absent loadout identities, invalid
 /// footprints, missing player starts, or failed entity placement.
-#[expect(
-    clippy::too_many_lines,
-    reason = "sequential scenario construction; splitting is plan step 9.2"
-)]
 pub fn build_world_with_catalogs(
     doc: &MapDocument,
     loadouts: &StartLoadoutCatalog,
@@ -321,8 +318,6 @@ pub fn build_world_with_catalogs(
     let mut sorted_starts = doc.start_locations.clone();
     sorted_starts.sort_by_key(|loc| loc.player_slot);
 
-    let map_w = i32::try_from(world.map.width()).unwrap_or(i32::MAX);
-    let map_h = i32::try_from(world.map.height()).unwrap_or(i32::MAX);
     let mut claimed_cells = BTreeSet::new();
 
     // 5. Spawn structures and units for each player in start location slot order.
@@ -334,147 +329,240 @@ pub fn build_world_with_catalogs(
             // Start locations without an assigned player are left empty.
             continue;
         };
-
-        let loadout = loadouts
-            .get(&player.loadout_slug)
-            .ok_or_else(|| ScenarioError::UnknownLoadout(player.loadout_slug.clone()))?;
-
-        let th_arch = world
-            .catalog
-            .get_by_slug(&loadout.town_hall)
-            .ok_or_else(|| ScenarioError::UnknownSlug(loadout.town_hall.clone()))?;
-
-        let (hall_w, hall_h) = match th_arch.shape {
-            ShapeKind::BuildingDome {
-                footprint_w,
-                footprint_h,
-            } => (u32::from(footprint_w), u32::from(footprint_h)),
-            ShapeKind::UnitSphere => {
-                return Err(ScenarioError::TownHallNotADome(loadout.town_hall.clone()));
-            }
-        };
-
-        let fp_w = u32::from(start_loc.footprint.0);
-        let fp_h = u32::from(start_loc.footprint.1);
-        if hall_w > fp_w || hall_h > fp_h {
-            return Err(ScenarioError::TownHallDoesNotFit {
-                slot: start_loc.player_slot,
-            });
-        }
-
-        if let Some(start) = loadout.starting_resources {
-            let resources = &mut world.player_resources[usize::from(start_loc.player_slot)];
-            resources.minerals = start.minerals;
-            resources.gas = start.gas;
-        }
-
-        // Verify all unit slugs exist in the catalog.
-        let mut units_to_spawn = Vec::new();
-        for unit_entry in &loadout.units {
-            let unit_arch = world
-                .catalog
-                .get_by_slug(&unit_entry.slug)
-                .ok_or_else(|| ScenarioError::UnknownSlug(unit_entry.slug.clone()))?;
-            for _ in 0..unit_entry.count {
-                units_to_spawn.push(unit_arch.unit_type_id);
-            }
-        }
-
-        // Center the town hall in the start footprint.
-        let (tl_x, tl_y) = start_loc.cell;
-        let hall_cell_x = tl_x + (fp_w - hall_w) / 2;
-        let hall_cell_y = tl_y + (fp_h - hall_h) / 2;
-
-        world.spawn_structure(
-            th_arch.unit_type_id,
-            PlayerId(start_loc.player_slot),
-            hall_cell_x,
-            hall_cell_y,
+        let resolved = resolve_loadout(&world, loadouts, player, start_loc)?;
+        apply_starting_bank(
+            &mut world,
+            start_loc.player_slot,
+            resolved.starting_resources,
+        );
+        let hall = place_town_hall(&mut world, start_loc, &resolved)?;
+        place_ring_units(
+            &mut world,
+            start_loc.player_slot,
+            &hall,
+            &resolved.units,
+            &mut claimed_cells,
         )?;
-
-        let anchor_cliff_level = world
-            .map
-            .cell(hall_cell_x, hall_cell_y)
-            .map_err(|e| ScenarioError::Spawn(SimCoreError::MapError(e.to_string())))?
-            .cliff_level;
-
-        // Place mobile units on concentric rings around town hall footprint.
-        let cell_coordinate = |value: u32| i32::try_from(value).unwrap_or(i32::MAX);
-        let x_min = cell_coordinate(hall_cell_x);
-        let x_max = cell_coordinate(hall_cell_x + hall_w - 1);
-        let y_min = cell_coordinate(hall_cell_y);
-        let y_max = cell_coordinate(hall_cell_y + hall_h - 1);
-
-        let mut spawned_count = 0;
-        let total_needed = units_to_spawn.len();
-
-        for d in 1..=3 {
-            if spawned_count >= total_needed {
-                break;
-            }
-
-            let x0 = x_min - d;
-            let x1 = x_max + d;
-            let y0 = y_min - d;
-            let y1 = y_max + d;
-
-            for (cx, cy) in ring_perimeter(x0, x1, y0, y1) {
-                if spawned_count >= total_needed {
-                    break;
-                }
-                if cx < 0 || cy < 0 || cx >= map_w || cy >= map_h {
-                    continue;
-                }
-                let (Ok(ux), Ok(uy)) = (u32::try_from(cx), u32::try_from(cy)) else {
-                    continue;
-                };
-
-                let Ok(cell) = world.map.cell(ux, uy) else {
-                    continue;
-                };
-
-                // Units must spawn on the same cliff plateau as the town hall anchor cell.
-                if cell.cliff_level != anchor_cliff_level {
-                    continue;
-                }
-                if !cell.flags.contains(CellFlags::GROUND_PATHABLE) {
-                    continue;
-                }
-                if cell.terrain_kind == TerrainKind::Abyss {
-                    continue;
-                }
-                if cell.ramp.is_some() || cell.flags.contains(CellFlags::RAMP) {
-                    continue;
-                }
-                if cell.occupying_structure.is_some() {
-                    continue;
-                }
-                if claimed_cells.contains(&(ux, uy)) {
-                    continue;
-                }
-
-                let pos = SimVec2::new(
-                    SimScalar::from_num(ux) + SimScalar::HALF,
-                    SimScalar::from_num(uy) + SimScalar::HALF,
-                );
-                let unit_type = units_to_spawn[spawned_count];
-                world.spawn_unit(unit_type, PlayerId(start_loc.player_slot), pos)?;
-                claimed_cells.insert((ux, uy));
-                spawned_count += 1;
-            }
-        }
-
-        if spawned_count < total_needed {
-            return Err(ScenarioError::NotEnoughSpawnCells {
-                slot: start_loc.player_slot,
-            });
-        }
     }
 
     // 6. Record the match's players, then deterministically recompute the checksum.
     world.update_match_state();
     world.last_checksum = world.compute_checksum();
     Ok(world)
+}
+
+/// One player's loadout resolved against the unit catalog and checked against its start.
+struct ResolvedLoadout {
+    /// Archetype of the town hall to spawn.
+    town_hall: UnitTypeId,
+    /// Town hall footprint `(width, height)` in cells.
+    hall_size: (u32, u32),
+    /// Bank replacing the player's default, if the loadout names one.
+    starting_resources: Option<StartingResources>,
+    /// Archetype of every mobile unit to spawn, in loadout order.
+    units: Vec<UnitTypeId>,
+}
+
+/// The cells a placed town hall covers, inclusive, and the plateau its units must share.
+struct PlacedHall {
+    x_min: i32,
+    x_max: i32,
+    y_min: i32,
+    y_max: i32,
+    /// Cliff level of the hall's anchor cell.
+    cliff_level: CliffLevel,
+}
+
+/// Step 5, first part: resolves `player`'s loadout and checks that its town hall is a dome
+/// that fits the start footprint and that every unit slug names an archetype.
+///
+/// # Errors
+/// [`ScenarioError::UnknownLoadout`], [`ScenarioError::UnknownSlug`],
+/// [`ScenarioError::TownHallNotADome`] or [`ScenarioError::TownHallDoesNotFit`], checked in
+/// that order: loadout, town hall slug, shape, fit, then each unit slug.
+fn resolve_loadout(
+    world: &SimWorld,
+    loadouts: &StartLoadoutCatalog,
+    player: &PlayerSetup,
+    start_loc: &MapStartLocation,
+) -> Result<ResolvedLoadout, ScenarioError> {
+    let loadout = loadouts
+        .get(&player.loadout_slug)
+        .ok_or_else(|| ScenarioError::UnknownLoadout(player.loadout_slug.clone()))?;
+
+    let th_arch = world
+        .catalog
+        .get_by_slug(&loadout.town_hall)
+        .ok_or_else(|| ScenarioError::UnknownSlug(loadout.town_hall.clone()))?;
+
+    let (hall_w, hall_h) = match th_arch.shape {
+        ShapeKind::BuildingDome {
+            footprint_w,
+            footprint_h,
+        } => (u32::from(footprint_w), u32::from(footprint_h)),
+        ShapeKind::UnitSphere => {
+            return Err(ScenarioError::TownHallNotADome(loadout.town_hall.clone()));
+        }
+    };
+
+    let fp_w = u32::from(start_loc.footprint.0);
+    let fp_h = u32::from(start_loc.footprint.1);
+    if hall_w > fp_w || hall_h > fp_h {
+        return Err(ScenarioError::TownHallDoesNotFit {
+            slot: start_loc.player_slot,
+        });
+    }
+
+    // Verify all unit slugs exist in the catalog.
+    let mut units_to_spawn = Vec::new();
+    for unit_entry in &loadout.units {
+        let unit_arch = world
+            .catalog
+            .get_by_slug(&unit_entry.slug)
+            .ok_or_else(|| ScenarioError::UnknownSlug(unit_entry.slug.clone()))?;
+        for _ in 0..unit_entry.count {
+            units_to_spawn.push(unit_arch.unit_type_id);
+        }
+    }
+
+    Ok(ResolvedLoadout {
+        town_hall: th_arch.unit_type_id,
+        hall_size: (hall_w, hall_h),
+        starting_resources: loadout.starting_resources,
+        units: units_to_spawn,
+    })
+}
+
+/// Step 5, a loadout's `starting_resources` replace player `slot`'s default bank.
+fn apply_starting_bank(world: &mut SimWorld, slot: u8, starting: Option<StartingResources>) {
+    if let Some(start) = starting {
+        let resources = &mut world.player_resources[usize::from(slot)];
+        resources.minerals = start.minerals;
+        resources.gas = start.gas;
+    }
+}
+
+/// Step 5, the town hall: centres it in the start footprint, `top_left + (fp - hall) / 2`,
+/// and spawns it for the start's player.
+///
+/// # Errors
+/// [`ScenarioError::Spawn`] when the structure cannot be placed or its anchor cell read.
+fn place_town_hall(
+    world: &mut SimWorld,
+    start_loc: &MapStartLocation,
+    resolved: &ResolvedLoadout,
+) -> Result<PlacedHall, ScenarioError> {
+    let (hall_w, hall_h) = resolved.hall_size;
+    let fp_w = u32::from(start_loc.footprint.0);
+    let fp_h = u32::from(start_loc.footprint.1);
+
+    // Center the town hall in the start footprint.
+    let (tl_x, tl_y) = start_loc.cell;
+    let hall_cell_x = tl_x + (fp_w - hall_w) / 2;
+    let hall_cell_y = tl_y + (fp_h - hall_h) / 2;
+
+    world.spawn_structure(
+        resolved.town_hall,
+        PlayerId(start_loc.player_slot),
+        hall_cell_x,
+        hall_cell_y,
+    )?;
+
+    let anchor_cliff_level = world
+        .map
+        .cell(hall_cell_x, hall_cell_y)
+        .map_err(|e| ScenarioError::Spawn(SimCoreError::MapError(e.to_string())))?
+        .cliff_level;
+
+    let cell_coordinate = |value: u32| i32::try_from(value).unwrap_or(i32::MAX);
+    Ok(PlacedHall {
+        x_min: cell_coordinate(hall_cell_x),
+        x_max: cell_coordinate(hall_cell_x + hall_w - 1),
+        y_min: cell_coordinate(hall_cell_y),
+        y_max: cell_coordinate(hall_cell_y + hall_h - 1),
+        cliff_level: anchor_cliff_level,
+    })
+}
+
+/// Step 5, the units: spawns `units` for player `slot` on rings `d = 1, 2, 3` around `hall`,
+/// each ring in [`ring_perimeter`] order, skipping cells that are off the map, on another
+/// plateau, not ground-pathable, abyss, ramp, occupied by a structure, or in `claimed_cells`.
+///
+/// # Errors
+/// [`ScenarioError::NotEnoughSpawnCells`] when the rings hold too few cells, and
+/// [`ScenarioError::Spawn`] when a unit cannot be spawned.
+fn place_ring_units(
+    world: &mut SimWorld,
+    slot: u8,
+    hall: &PlacedHall,
+    units: &[UnitTypeId],
+    claimed_cells: &mut BTreeSet<(u32, u32)>,
+) -> Result<(), ScenarioError> {
+    let map_w = i32::try_from(world.map.width()).unwrap_or(i32::MAX);
+    let map_h = i32::try_from(world.map.height()).unwrap_or(i32::MAX);
+    let mut spawned_count = 0;
+    let total_needed = units.len();
+
+    for d in 1..=3 {
+        if spawned_count >= total_needed {
+            break;
+        }
+
+        let x0 = hall.x_min - d;
+        let x1 = hall.x_max + d;
+        let y0 = hall.y_min - d;
+        let y1 = hall.y_max + d;
+
+        for (cx, cy) in ring_perimeter(x0, x1, y0, y1) {
+            if spawned_count >= total_needed {
+                break;
+            }
+            if cx < 0 || cy < 0 || cx >= map_w || cy >= map_h {
+                continue;
+            }
+            let (Ok(ux), Ok(uy)) = (u32::try_from(cx), u32::try_from(cy)) else {
+                continue;
+            };
+
+            let Ok(cell) = world.map.cell(ux, uy) else {
+                continue;
+            };
+
+            // Units must spawn on the same cliff plateau as the town hall anchor cell.
+            if cell.cliff_level != hall.cliff_level {
+                continue;
+            }
+            if !cell.flags.contains(CellFlags::GROUND_PATHABLE) {
+                continue;
+            }
+            if cell.terrain_kind == TerrainKind::Abyss {
+                continue;
+            }
+            if cell.ramp.is_some() || cell.flags.contains(CellFlags::RAMP) {
+                continue;
+            }
+            if cell.occupying_structure.is_some() {
+                continue;
+            }
+            if claimed_cells.contains(&(ux, uy)) {
+                continue;
+            }
+
+            let pos = SimVec2::new(
+                SimScalar::from_num(ux) + SimScalar::HALF,
+                SimScalar::from_num(uy) + SimScalar::HALF,
+            );
+            let unit_type = units[spawned_count];
+            world.spawn_unit(unit_type, PlayerId(slot), pos)?;
+            claimed_cells.insert((ux, uy));
+            spawned_count += 1;
+        }
+    }
+
+    if spawned_count < total_needed {
+        return Err(ScenarioError::NotEnoughSpawnCells { slot });
+    }
+    Ok(())
 }
 
 /// Returns an iterator yielding discrete integer coordinates along the perimeter of the rectangle
@@ -492,4 +580,122 @@ pub fn ring_perimeter(x0: i32, x1: i32, y0: i32, y1: i32) -> impl Iterator<Item 
     let west = ((y0 + 1)..y1).rev().map(move |y| (x0, y));
 
     south.chain(east).chain(north).chain(west)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_world, ring_perimeter, LoadoutUnit, PlayerSetup, StartLoadout};
+    use super::{ScenarioError, StartLoadoutCatalog};
+    use crate::catalog::UnitCatalog;
+    use sim_map::{CellFlags, CliffLevel, MapCellSpec, MapDocument, MapMetadata, MapStartLocation};
+    use sim_map::{MapEntityId, TerrainKind};
+    use sim_types::{ShapeKind, SimScalar, SimVec2, UnitTypeId};
+
+    /// A 32x32 open grass map with a 5x5 start at `(6, 6)` for slot 0 and an unused one.
+    fn open_document() -> MapDocument {
+        let cell = MapCellSpec {
+            level: CliffLevel(0),
+            ramp: None,
+            terrain: TerrainKind::Grass,
+            flags: CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE,
+        };
+        let start = |id: u32, player_slot: u8, at: u32| MapStartLocation {
+            id: MapEntityId(id),
+            player_slot,
+            cell: (at, at),
+            footprint: (5, 5),
+        };
+        MapDocument {
+            metadata: MapMetadata {
+                title: "Placement".to_string(),
+                author: "scenario tests".to_string(),
+                description: "Open ground with one used start".to_string(),
+                theme: "orbital_foundry".to_string(),
+            },
+            width: 32,
+            height: 32,
+            cells: vec![cell; 32 * 32],
+            resources: Vec::new(),
+            watchtowers: Vec::new(),
+            start_locations: vec![start(1, 0, 6), start(2, 1, 24)],
+        }
+    }
+
+    /// Pins where units land: the hall's rings nearest first, each in perimeter order, every
+    /// unit in loadout order, at the centre of its cell. Every name comes from the catalog.
+    #[test]
+    fn units_fill_the_nearest_ring_first_in_perimeter_and_loadout_order(
+    ) -> Result<(), ScenarioError> {
+        let missing = |what: &str| ScenarioError::UnknownSlug(what.to_string());
+        let catalog = UnitCatalog::new_starter_roster();
+        let hall = catalog
+            .archetypes()
+            .find(|a| {
+                matches!(a.shape, ShapeKind::BuildingDome { footprint_w, footprint_h }
+                    if footprint_w <= 5 && footprint_h <= 5)
+            })
+            .ok_or_else(|| missing("a dome of at most 5x5 cells"))?;
+        let mut mobile = catalog
+            .archetypes()
+            .filter(|a| matches!(a.shape, ShapeKind::UnitSphere));
+        let (first, second) = mobile
+            .next()
+            .zip(mobile.next())
+            .ok_or_else(|| missing("two mobile units"))?;
+        let loadouts = StartLoadoutCatalog {
+            loadouts: vec![StartLoadout {
+                slug: "placement".to_string(),
+                display_name: "Placement".to_string(),
+                town_hall: hall.slug.clone(),
+                units: vec![
+                    LoadoutUnit {
+                        slug: first.slug.clone(),
+                        count: 1,
+                    },
+                    LoadoutUnit {
+                        slug: second.slug.clone(),
+                        count: 24,
+                    },
+                ],
+                starting_resources: None,
+            }],
+        };
+        let players = [PlayerSetup {
+            player_slot: 0,
+            loadout_slug: "placement".to_string(),
+        }];
+        let world = build_world(&open_document(), &loadouts, &players, 7)?;
+
+        let placed = world
+            .map
+            .structures()
+            .values()
+            .next()
+            .ok_or_else(|| missing("the placed town hall"))?;
+        let left = i32::try_from(placed.top_left.0).unwrap_or(i32::MAX);
+        let bottom = i32::try_from(placed.top_left.1).unwrap_or(i32::MAX);
+        let right = left + i32::from(placed.width) - 1;
+        let top = bottom + i32::from(placed.height) - 1;
+        let centre = |c: i32| SimScalar::from_i32(c) + SimScalar::HALF;
+        let expected: Vec<(UnitTypeId, SimVec2)> = (1..=3)
+            .flat_map(|d| ring_perimeter(left - d, right + d, bottom - d, top + d))
+            .take(25)
+            .enumerate()
+            .map(|(index, (x, y))| {
+                let unit = if index == 0 { first } else { second };
+                (unit.unit_type_id, SimVec2::new(centre(x), centre(y)))
+            })
+            .collect();
+        let spawned: Vec<(UnitTypeId, SimVec2)> = world
+            .entities
+            .values()
+            .filter(|e| !world.map.structures().contains_key(&e.id))
+            .map(|e| (e.unit_type_id, e.position))
+            .collect();
+        assert_eq!(spawned, expected);
+        // The first ring holds fewer than 25 cells, so the order of rings decides the result.
+        let first_ring = 2 * (right - left + 3) + 2 * (top - bottom + 1);
+        assert!(first_ring < 25, "first ring of {first_ring} cells");
+        Ok(())
+    }
 }

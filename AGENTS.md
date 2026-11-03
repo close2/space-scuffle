@@ -133,16 +133,17 @@ flowchart TD
 
 Development runs on a shared VM. Its physical **AMD Radeon RX 580** (Ellesmere, `/dev/dri/renderD128`, driven by `radv`) is shared with another autonomous agent user, and the machine also has software Vulkan (`lavapipe` / `llvmpipe`). Every agent must follow these rules:
 
-- **Hardware GPU work must hold the GPU lock.** Wrap every command that may run on the physical GPU in `with-gpu-lock`. Unlocked use risks VRAM contention, driver resets, and skewed benchmark or gate timings. This includes running `client` or any other binary directly with no driver selected, because Vulkan may then pick the physical GPU.
+- **Use the physical GPU.** It is the default for every GPU task: rendering, visual checks, validation runs and GPU tests. The other users need it only about 1% of the time, so do not avoid it.
+- **Hold the GPU lock per command, never for hours.** Wrap each command that runs on the physical GPU in `with-gpu-lock`, and release it between tasks so the other users get a short slot. Lock one test process or one capture at a time, not a whole test suite or session. A wait of a few seconds for the lock is normal. Unlocked use risks VRAM contention, driver resets, and skewed timings. This includes running `client` or any other binary with no driver selected, because Vulkan may then pick the physical GPU.
   ```bash
   VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json with-gpu-lock <command>
   ```
-- **Software Vulkan needs no lock.** Use it when the work does not depend on real GPU behaviour or timing:
+- **The lock's timeout is 600 seconds by default.** `with-gpu-lock` takes an exclusive `flock` on `/run/lock/gpu.lock` and releases it when the command exits. Raise it with `GPU_LOCK_TIMEOUT=1200` only for a single long command, such as a frame-budget measurement.
+- **Software Vulkan is the fallback, not the default.** Use `lavapipe` only where no physical GPU exists (CI) or to reproduce a CI result exactly. It needs no lock:
   ```bash
   VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json <command>
   ```
-- **The lock's timeout is 600 seconds by default.** `with-gpu-lock` takes an exclusive `flock` on `/run/lock/gpu.lock` and releases it when the command exits. For longer runs, set `GPU_LOCK_TIMEOUT=1200 with-gpu-lock <command>`, and hold the lock only for the GPU command itself.
-- **The quality gate runs on software Vulkan.** The client test harness (`crates/client/tests/support/gpu_run.rs`) pins GPU tests to `lavapipe` under `xvfb-run`, so `cargo test --workspace` does not need the lock. Frame-budget measurements must use the physical GPU, under the lock.
+- **The test harness still pins GPU tests to `lavapipe`.** `crates/client/tests/support/gpu_run.rs` runs them under `xvfb-run` on software Vulkan today. Moving it to the physical GPU, with one lock per test child, is planned in `docs/plans/2026-11-03-gpu-test-harness.md`. Until that lands, run ad hoc renders and captures on the physical GPU yourself.
 - **Large files go on `~/scratch`.** The root disk is small and shared. The main checkout's own `target/` may stay on it for fast linking, but every agent worktree must build with `CARGO_TARGET_DIR=/home/spacescuffle/scratch/cargo-target/<worktree-name>`, and large logs, captures and corpora belong under `~/scratch`. Remove a worktree, or at least its `target/`, once its branch is merged.
 
 ---
