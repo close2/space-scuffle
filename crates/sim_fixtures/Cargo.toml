@@ -18,3 +18,5 @@ sim_types.workspace = true
 sim_map.workspace = true
 sim_core.workspace = true
 thiserror.workspace = true
+serde.workspace = true
+ron.workspace = true

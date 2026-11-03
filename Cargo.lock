@@ -5015,6 +5015,8 @@ dependencies = [
 name = "sim_fixtures"
 version = "0.1.0"
 dependencies = [
+ "ron",
+ "serde",
  "sim_core",
  "sim_map",
  "sim_types",
