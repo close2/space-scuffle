@@ -14,15 +14,17 @@
 //!   scene does not hold.
 //! - A frame on which neither tick, viewer nor selection changed rewrites nothing and allocates
 //!   nothing. A rewrite reuses every retained buffer.
+//! - [`HudModel::selected_facts`] holds the selection in its order, less any unit not presented.
 
 use std::fmt::Write;
 
 use bevy::prelude::*;
 use sim_types::snapshot::{BubbleRenderInstance, PlayerStatusView};
-use sim_types::{EntityId, PlayerId, PlayerView, UnitTypeId};
+use sim_types::{AnimState, EntityId, PlayerId, PlayerView, UnitTypeId};
 
 use super::catalog::CommandCatalog;
 use super::feed::BattleFeed;
+use crate::battle_input::command_mode::orders_open;
 use crate::battle_pipeline::clock::SIM_TICK_PERIOD;
 use crate::battle_pipeline::commands::SessionGeneration;
 use crate::battle_pipeline::session::BattleSession;
@@ -40,6 +42,19 @@ pub struct SelectionGroup {
     pub count: usize,
     /// Cached display text.
     pub label: String,
+}
+
+/// One selected unit, as the command card and the queue panel read it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectedFact {
+    /// The unit.
+    pub id: EntityId,
+    /// Its catalog identity.
+    pub unit_type: UnitTypeId,
+    /// Whether it is an unfinished structure, read from its presented action.
+    pub foundation: bool,
+    /// A foundation's share done, from 0.0 to 1.0, and otherwise 0.0.
+    pub build_progress: f32,
 }
 
 /// The one unit a selection is looking at, for its name and bars.
@@ -63,6 +78,8 @@ pub struct HudModel {
     pub catalog: CommandCatalog,
     /// Whose HUD this is. `None` until a battle is committed, and the HUD then draws no panels.
     pub viewer: Option<PlayerId>,
+    /// Whether the match still takes orders.
+    pub orders_open: bool,
     /// The single selected or inspected unit, if there is exactly one.
     pub focus: Option<FocusedUnit>,
     /// Cached bank and supply text, rewritten only when its numbers change.
@@ -79,6 +96,10 @@ pub struct HudModel {
     group_count: usize,
     /// Scratch list of selected types, sorted during a rebuild.
     selected_types: Vec<UnitTypeId>,
+    /// The selection, unit by unit.
+    facts: Vec<SelectedFact>,
+    /// How many times the selection has changed.
+    selection_changes: u64,
     shown_status: Option<PlayerStatusView>,
     shown_seconds: Option<u64>,
     refills: u64,
@@ -91,10 +112,42 @@ impl HudModel {
         &self.groups[..self.group_count]
     }
 
-    /// How many times this model has been rewritten, for tests of its change detection.
+    /// One fact per selected unit the scene holds. Empty for an inspected enemy.
+    #[must_use]
+    pub fn selected_facts(&self) -> &[SelectedFact] {
+        &self.facts
+    }
+
+    /// How many times this model has been rewritten: the change detection of what derives from it.
     #[must_use]
     pub const fn refills(&self) -> u64 {
         self.refills
+    }
+
+    /// How many times the selection has changed, so a reader can tell that from a new tick.
+    #[must_use]
+    pub const fn selection_changes(&self) -> u64 {
+        self.selection_changes
+    }
+
+    /// Whether the summary still describes `selection`.
+    fn selection_is_current(&self, selection: &BattleSelection) -> bool {
+        selection.ids() == self.last_selection && selection.inspected() == self.last_inspected
+    }
+
+    /// Catches the summary up with `selection` between two refreshes.
+    ///
+    /// A key that follows a click or a group recall can arrive before the next refresh, and it
+    /// must meet the selection the player just made.
+    pub fn sync_selection(
+        &mut self,
+        selection: &BattleSelection,
+        bubbles: &[BubbleRenderInstance],
+    ) {
+        if !self.selection_is_current(selection) {
+            self.rebuild_selection(selection, bubbles);
+            self.refills += 1;
+        }
     }
 
     /// Rewrites the cached lines whose numbers changed.
@@ -119,9 +172,26 @@ impl HudModel {
 
     /// Rebuilds the summary of `selection` from `bubbles`, which are sorted by entity ID.
     fn rebuild_selection(&mut self, selection: &BattleSelection, bubbles: &[BubbleRenderInstance]) {
+        if !self.selection_is_current(selection) {
+            self.selection_changes += 1;
+        }
         self.last_selection.clear();
         self.last_selection.extend_from_slice(selection.ids());
         self.last_inspected = selection.inspected();
+        self.facts.clear();
+        self.facts.extend(selection.ids().iter().filter_map(|id| {
+            let bubble = bubble_of(bubbles, *id)?;
+            let foundation = bubble.anim_state == AnimState::Constructing;
+            Some(SelectedFact {
+                id: *id,
+                unit_type: bubble.unit_type,
+                foundation,
+                build_progress: bubble
+                    .build_or_queue_progress
+                    .filter(|_| foundation)
+                    .unwrap_or_default(),
+            })
+        }));
         self.selected_types.clear();
         self.selected_types.extend(
             selection
@@ -240,13 +310,11 @@ pub fn refresh_hud_model(
     let tick_changed = model.written != written;
     if tick_changed {
         world.write_player_view(viewer, &mut model.view);
+        model.orders_open = orders_open(world);
         model.written = written;
         model.rewrite_lines();
     }
-    if tick_changed
-        || selection.ids() != model.last_selection
-        || selection.inspected() != model.last_inspected
-    {
+    if tick_changed || !model.selection_is_current(&selection) {
         model.rebuild_selection(&selection, bubbles);
         model.refills += 1;
     }

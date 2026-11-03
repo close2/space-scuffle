@@ -9,8 +9,8 @@
 //! The per-row rules of the right click live in `battle_input::context_order` and the site
 //! arithmetic in `battle_input::command_mode`, both tested there without Bevy. This file proves
 //! that the pointer reaches those rules: that a billboard on the screen resolves to its node, that
-//! the resulting order earns income, and that a mode owns the left button until it ends. Nothing
-//! enters a mode yet, as the command card comes later, so tests set `CommandMode` directly.
+//! the resulting order earns income, and that a mode owns the left button until it ends. Entering
+//! a mode from the card belongs to `battle_card_tests.rs`, so tests here set `CommandMode` directly.
 //!
 //! # Limits
 //! Shares the limits of `support/battle_harness.rs`: no window and no renderer. An order whose

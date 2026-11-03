@@ -18,10 +18,12 @@
 
 use std::collections::BTreeMap;
 
-use sim_core::upgrades::UpgradeCatalog;
+use sim_core::upgrades::{UpgradeCatalog, OVERCLOCK_ABILITY_SLUG};
 use sim_core::{UnitArchetype, UnitCatalog};
 use sim_types::enums::ShapeKind;
-use sim_types::{SimScalar, UnitTypeId};
+use sim_types::{SimScalar, UnitTypeId, UpgradeEffect};
+
+use crate::battle_pipeline::commands::is_armed;
 
 /// What one catalog identity is called and can do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +42,8 @@ pub struct ArchetypeCommands {
     pub harvester: bool,
     /// Whether it has an overclock ability, researched or not.
     pub overclock: bool,
+    /// Catalog ID of the upgrade that unlocks its overclock, if one must be researched.
+    pub overclock_unlock: Option<u32>,
     /// Whether it can transport other units.
     pub carrier: bool,
     /// Whether it is a structure.
@@ -131,11 +135,10 @@ fn commands_of(
     ArchetypeCommands {
         label: archetype.display_name.clone(),
         mobile: !archetype.is_immobile_by_default(),
-        armed: archetype.weapon.is_some()
-            || archetype.ground_weapon.is_some()
-            || archetype.air_weapon.is_some(),
+        armed: is_armed(archetype),
         harvester: archetype.capabilities.harvester.is_some(),
         overclock: archetype.overclock.is_some(),
+        overclock_unlock: overclock_unlock(archetype, upgrades),
         carrier: archetype.capabilities.transport_capacity > 0,
         structure: is_structure(archetype),
         shielded: archetype.max_shields > SimScalar::ZERO,
@@ -160,6 +163,22 @@ fn commands_of(
             .collect(),
         unpresentable,
     }
+}
+
+/// The upgrade whose effects unlock `archetype`'s overclock, if any.
+fn overclock_unlock(archetype: &UnitArchetype, upgrades: &UpgradeCatalog) -> Option<u32> {
+    upgrades
+        .upgrades()
+        .find(|upgrade| {
+            upgrade.effects.iter().any(|effect| {
+                matches!(
+                    effect,
+                    UpgradeEffect::UnlockAbility { target_slug, ability_slug }
+                        if *target_slug == archetype.slug && ability_slug == OVERCLOCK_ABILITY_SLUG
+                )
+            })
+        })
+        .map(|upgrade| upgrade.upgrade_id)
 }
 
 const fn is_structure(archetype: &UnitArchetype) -> bool {
