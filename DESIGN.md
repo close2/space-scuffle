@@ -154,8 +154,30 @@ The slowest scenario runs at about eight times real time. CI's `throughput` job 
 `--floor 25`, the tick rate: a scenario below real time fails the job, and every run's table is published in the
 job summary (charter §3.1).
 
-**Frame budget.** Not yet measured at 200 and 400 units; that is the exit criterion of remediation Phase 6
-([`docs/plans/2026-11-01-codebase-remediation.md`](docs/plans/2026-11-01-codebase-remediation.md)).
+The handover's higher figures (11,114 ticks/s on the empty map, 639 at 400 units) came from the owner's notebook
+and were never reproduced on this server at any commit. The 3 to 4 % residual at 400 units since `b263734` is code
+layout (branch prediction), not a regression in the simulation
+([`docs/evidence/2026-11-03-throughput-history.md`](docs/evidence/2026-11-03-throughput-history.md)).
+
+**Frame budget.** `frame_budget` (`crates/client_diagnostics`) runs the real client on a flat 128×128 arena where
+eight players attack-move across a circle with 0, 25 or 50 units each (Q0018's default). It measures 1,500 ticks
+(60 s of game time) after a warm-up. Measured on 2026-11-03 at `c918aa9` on the RX 580 through a headless KWin
+compositor, with hardware present, 1280×720 and vsync off, and no monitor (Q0019's default). Release build, 16
+dedicated cores, load average 1.6 to 3.9 (one run of the 0 scenario at 8.5). Each figure is the median of five
+interleaved runs, in ms:
+
+| Units | Frame interval p50 | p95 | p99 | max | Main update p50 | Simulation p50 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 12.3 | 15.2 | 16.6 | 22.6 | 10.8 | 0.07 |
+| 200 | 15.6 | 19.0 | 20.6 | 44.7 | 13.9 | 0.09 |
+| 400 | 16.3 | 20.9 | 23.6 | 68.7 | 14.1 | 0.10 |
+
+Reference lines (Q0015, no pass or fail): 16.7 ms is 60 frames per second, 33.3 ms is 30. The maximum at 200 and
+400 units is the single frame of the first tick. The client is CPU-bound in the main world: a quarter of the pixels
+changes the 400 median by 3 %, and the GPU passes Bevy times add up to 3.6 ms. Its largest cost is the smog solver,
+about 8.2 ms of every frame at any unit count (finding C-18). Commands, every run, the attribution runs and why
+Xvfb's figures are not the game's are in
+[`docs/evidence/2026-11-03-frame-budget.md`](docs/evidence/2026-11-03-frame-budget.md).
 
 ---
 
