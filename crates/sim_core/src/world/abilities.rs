@@ -1,8 +1,8 @@
 //! Active abilities and the hazard zones they leave behind.
 //!
 //! # Responsibility
-//! Owns [`ActiveHazardZone`], ability casting (admission, payment and effect) and the
-//! world-level overclock used by the stim order.
+//! Owns [`ActiveHazardZone`], ability casting (admission, payment and effect), the
+//! world-level overclock used by the stim order, and the phase 2 step of hazard zones.
 //!
 //! # How it fits
 //! Casts run in phase 1 (`process_commands`) and when a queued cast reaches the front of an
@@ -18,7 +18,9 @@ use crate::catalog::UnitArchetype;
 use crate::entity::{Entity, PreparedOverclock};
 use crate::movement::{DisplacementAdmissionError, MovementInvariant, MovementMathError};
 use crate::SimWorld;
-use sim_types::{AbilityEffectSpec, EntityId, PlayerId, SimScalar, SimVec2};
+use sim_types::{
+    AbilityEffectSpec, EntityId, PlayerId, SimAngle, SimScalar, SimVec2, Tick, UnitOrder,
+};
 
 /// Active continuous hazard/AoE zone (e.g. Psionic Storm) ticking in the world.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -464,5 +466,90 @@ impl SimWorld {
             damage_per_interval: spec.damage_per_interval,
             targets_friendly: spec.friendly_fire,
         });
+    }
+
+    /// Phase 2: ages each hazard zone, applies its damage pulses, and sends idle mobile
+    /// victims out of its radius. Expired zones are removed after the pass.
+    pub(super) fn step_hazards(&mut self) {
+        let cur_tick = self.current_tick;
+        let mut expired_hazards = Vec::new();
+        let mut hazard_flee_candidates = Vec::new();
+        for (h_idx, hazard) in self.active_hazards.iter_mut().enumerate() {
+            if hazard.remaining_ticks == 0 {
+                expired_hazards.push(h_idx);
+                continue;
+            }
+            hazard.remaining_ticks = hazard.remaining_ticks.saturating_sub(1);
+
+            if hazard.ticks_until_next_interval > 0 {
+                hazard.ticks_until_next_interval =
+                    hazard.ticks_until_next_interval.saturating_sub(1);
+            }
+
+            if hazard.ticks_until_next_interval == 0 {
+                hazard.ticks_until_next_interval = hazard.interval_ticks;
+
+                for (&entity_id, entity) in &mut self.entities {
+                    if !Self::is_damageable(entity) {
+                        continue;
+                    }
+                    if !hazard.targets_friendly && entity.owner == hazard.owner {
+                        continue;
+                    }
+                    if entity.last_storm_damage_tick == Some(Tick(cur_tick)) {
+                        continue;
+                    }
+                    let dist = hazard.center.distance(entity.position);
+                    if dist <= hazard.radius {
+                        let dmg = hazard.damage_per_interval;
+                        let (shield_dmg, life_dmg) = if entity.shields >= dmg {
+                            (dmg, SimScalar::ZERO)
+                        } else {
+                            let s = entity.shields;
+                            (s, dmg - s)
+                        };
+                        entity.apply_damage(shield_dmg, life_dmg, SimAngle::ZERO);
+                        entity.last_storm_damage_tick = Some(Tick(cur_tick));
+
+                        // Idle mobile units evacuate the persistent hazard zone
+                        if matches!(entity.order_queue.front(), None | Some(UnitOrder::Idle))
+                            && !entity.is_holding_position
+                            && !entity.is_immobile
+                            && !entity.is_loaded_in_transport()
+                        {
+                            hazard_flee_candidates.push((
+                                entity_id,
+                                entity.position,
+                                hazard.center,
+                                hazard.radius,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        for h_idx in expired_hazards.into_iter().rev() {
+            self.active_hazards.remove(h_idx);
+        }
+
+        // Direct hazard evacuation moves outside the affected radius
+        for (id, _pos, center, radius) in hazard_flee_candidates {
+            let flee_dist = radius + SimScalar::from_num(2);
+            let flee = self.compute_entity_flee_destination_prevalidated(id, center, flee_dist);
+            if let Err(source) = flee {
+                self.report_movement_invariant(source);
+                continue;
+            }
+            if let Ok(Some(flee_target)) = flee {
+                if let Some(unit) = self.entities.get_mut(&id) {
+                    unit.order_queue.clear();
+                    unit.order_queue.push_back(UnitOrder::Move {
+                        target: flee_target,
+                    });
+                    unit.current_funnel_waypoints.clear();
+                    unit.current_target = None;
+                }
+            }
+        }
     }
 }
