@@ -135,6 +135,19 @@ impl From<PathRequest> for PathRequestWithVision<'_> {
     }
 }
 
+/// Grid cells and flat indices of a path request's validated endpoints.
+#[derive(Clone, Copy, Debug)]
+struct PathEndpoints {
+    /// Start cell `(x, y)`.
+    start: (u32, u32),
+    /// Goal cell `(x, y)`.
+    goal: (u32, u32),
+    /// Row-major index of the start cell.
+    start_idx: usize,
+    /// Row-major index of the goal cell.
+    goal_idx: usize,
+}
+
 /// Resulting path consisting of smooth, corner-rounded waypoints.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathResult {
@@ -622,19 +635,86 @@ impl Pathfinder {
     ///
     /// # Errors
     /// Returns [`MapError::NoPathFound`] if no valid route connects the start and goal cells.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one search loop whose steps share local state; splitting is plan step 9.2"
-    )]
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "cell indices are stored as u32 by design, and start was validated on the map"
-    )]
     pub fn find_path_with_vision(
         &mut self,
         map: &GameMap,
         request: &PathRequestWithVision<'_>,
     ) -> Result<PathResult> {
+        let PathEndpoints {
+            start: (start_cx, start_cy),
+            goal: (goal_cx, goal_cy),
+            start_idx,
+            goal_idx,
+        } = self.validate_endpoints(map, request)?;
+
+        if start_cx == goal_cx && start_cy == goal_cy {
+            return Ok(PathResult {
+                waypoints: vec![request.start, request.goal],
+                total_length: request.start.distance(request.goal),
+            });
+        }
+
+        if self.segment_is_passable(map, request, request.start, request.goal) {
+            // PERFORMANCE RATIONALE:
+            // Why: An army crossing open ground issues hundreds of searches whose funnel
+            // collapses to the straight line, each visiting and portalling every corridor cell.
+            // What: Test the straight line first with the predicate that validates routes.
+            // Trade-off: A failed test adds one line walk before the search, which is small
+            // next to the search it precedes.
+            return Ok(PathResult {
+                waypoints: vec![request.start, request.goal],
+                total_length: request.start.distance(request.goal),
+            });
+        }
+
+        let found_path = self.search_corridor(map, request, start_idx, (goal_cx, goal_cy));
+
+        if !found_path {
+            return Err(MapError::NoPathFound {
+                start: request.start,
+                goal: request.goal,
+            });
+        }
+
+        self.reconstruct_corridor(start_idx, goal_idx);
+
+        // Build portals from corridor
+        self.build_portals(map, request);
+
+        // Run Simple Stupid Funnel string-pulling
+        let mut waypoints = self.run_funnel(map, request);
+        if !waypoints
+            .windows(2)
+            .all(|pair| self.segment_is_passable(map, request, pair[0], pair[1]))
+        {
+            waypoints = self.smooth_connected_corridor(map, request)?;
+        }
+
+        let mut total_length = SimScalar::ZERO;
+        for w in waypoints.windows(2) {
+            total_length += w[0].distance(w[1]);
+        }
+
+        Ok(PathResult {
+            waypoints,
+            total_length,
+        })
+    }
+
+    /// Resolves and checks both endpoints of `request`, in the order its errors are reported.
+    ///
+    /// Each endpoint must lie on the map, on connected terrain, outside any structure the request
+    /// knows of, with enough clearance, and on a passable point. A goal on an unexplored ramp or
+    /// unexplored higher ground is refused as unreachable when the request blocks those.
+    ///
+    /// # Errors
+    /// Returns [`MapError::InvalidStart`], [`MapError::InvalidGoal`] or
+    /// [`MapError::NoPathFound`], whichever check fails first.
+    fn validate_endpoints(
+        &self,
+        map: &GameMap,
+        request: &PathRequestWithVision<'_>,
+    ) -> Result<PathEndpoints> {
         let (start_cx, start_cy) = map
             .world_to_cell(request.start)
             .map_err(|_| MapError::InvalidStart(request.start))?;
@@ -716,36 +796,23 @@ impl Pathfinder {
             return Err(MapError::InvalidGoal(request.goal));
         }
 
-        if start_cx == goal_cx && start_cy == goal_cy {
-            return Ok(PathResult {
-                waypoints: vec![request.start, request.goal],
-                total_length: request.start.distance(request.goal),
-            });
-        }
+        Ok(PathEndpoints {
+            start: (start_cx, start_cy),
+            goal: (goal_cx, goal_cy),
+            start_idx,
+            goal_idx,
+        })
+    }
 
-        if self.segment_is_passable(map, request, request.start, request.goal) {
-            // PERFORMANCE RATIONALE:
-            // Why: An army crossing open ground issues hundreds of searches whose funnel
-            // collapses to the straight line, each visiting and portalling every corridor cell.
-            // What: Test the straight line first with the predicate that validates routes.
-            // Trade-off: A failed test adds one line walk before the search, which is small
-            // next to the search it precedes.
-            return Ok(PathResult {
-                waypoints: vec![request.start, request.goal],
-                total_length: request.start.distance(request.goal),
-            });
-        }
-
-        let found_path = self.search_corridor(map, request, start_idx, (goal_cx, goal_cy));
-
-        if !found_path {
-            return Err(MapError::NoPathFound {
-                start: request.start,
-                goal: request.goal,
-            });
-        }
-
-        // Reconstruct corridor of cells
+    /// Walks `came_from` back from `goal_idx` and stores the cells, start first, in
+    /// `buffers.corridor_cells`.
+    ///
+    /// Requires a search that reached `goal_idx` from `start_idx`.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "cell indices are stored as u32 by design, and start was validated on the map"
+    )]
+    fn reconstruct_corridor(&mut self, start_idx: usize, goal_idx: usize) {
         self.buffers.corridor_cells.clear();
         let mut curr = goal_idx as u32;
         self.buffers.corridor_cells.push(curr);
@@ -754,28 +821,6 @@ impl Pathfinder {
             self.buffers.corridor_cells.push(curr);
         }
         self.buffers.corridor_cells.reverse();
-
-        // Build portals from corridor
-        self.build_portals(map, request);
-
-        // Run Simple Stupid Funnel string-pulling
-        let mut waypoints = self.run_funnel(map, request);
-        if !waypoints
-            .windows(2)
-            .all(|pair| self.segment_is_passable(map, request, pair[0], pair[1]))
-        {
-            waypoints = self.smooth_connected_corridor(map, request)?;
-        }
-
-        let mut total_length = SimScalar::ZERO;
-        for w in waypoints.windows(2) {
-            total_length += w[0].distance(w[1]);
-        }
-
-        Ok(PathResult {
-            waypoints,
-            total_length,
-        })
     }
 
     /// Runs A* from `start_idx` toward `goal`, leaving every cell it reached marked visited.
