@@ -1091,6 +1091,27 @@ pub fn virtual_gpu_command(binary: &Path) -> GpuCommand {
     virtual_gpu_command_on_screen(binary, None)
 }
 
+/// Runs the ignored libtest entry `test_name` of this test binary as a GPU child, and fails unless
+/// it passes on the selected driver.
+///
+/// A test that builds a real render device in its own process would pick an adapter with no
+/// driver selection and no lock (Vulkan or, without `WGPU_BACKEND`, even OpenGL on the physical
+/// GPU). Such a test is split instead: its body becomes an `#[ignore]`d child, and its `#[test]`
+/// calls this. `test_name` is the full libtest name, with its module path inside the crate, such
+/// as `shell_order_audit::gpu_tests::actual_renderer_child`. Check C21 in
+/// `crates/workspace_checks` fails the gate on an in-process render device that is not split
+/// this way.
+///
+/// # Panics
+/// As [`GpuCommand::run`], and when this test binary's path is unknown.
+pub fn run_test_child(test_name: &str, label: &str) -> GpuRun {
+    let binary = std::env::current_exe()
+        .unwrap_or_else(|error| panic!("{label}: this test binary's path is unknown: {error}"));
+    let mut command = virtual_gpu_command(&binary);
+    command.args(["--ignored", "--exact", "--nocapture", test_name]);
+    command.run(label)
+}
+
 /// Builds a [`virtual_gpu_command`] whose display has the size `screen`, such as `1600x900x24`.
 ///
 /// # Panics

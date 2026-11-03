@@ -18,6 +18,12 @@ use std::path::PathBuf;
 )]
 #[path = "support/battle_harness.rs"]
 mod battle_harness;
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/gpu_run.rs"]
+mod gpu_run;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -432,8 +438,23 @@ fn structured_terrain_sampling_preserves_uniform_layout() -> TestResult {
     Ok(())
 }
 
+/// The production plugin schedule builds a real render device, so it runs as a GPU child on the
+/// selected driver under the GPU lock (`docs/plans/2026-11-03-gpu-test-harness.md`, section 11).
 #[test]
-fn production_plugin_schedule_initializes_terrain_and_restores_tab_camera() -> TestResult {
+fn production_plugin_schedule_initializes_terrain_and_restores_tab_camera() {
+    if gpu_run::gpu_tests_opted_out() {
+        return;
+    }
+    gpu_run::run_test_child(
+        "production_plugin_schedule_child",
+        "in-process production plugin schedule",
+    );
+}
+
+/// The child of [`production_plugin_schedule_initializes_terrain_and_restores_tab_camera`].
+#[test]
+#[ignore = "launched by production_plugin_schedule_initializes_terrain_and_restores_tab_camera through gpu_run"]
+fn production_plugin_schedule_child() -> TestResult {
     use bevy::prelude::*;
     use bevy::winit::WinitPlugin;
     let root = client::ResolvedAssetsRoot::from_directory(&assets())?;
