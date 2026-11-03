@@ -13,6 +13,8 @@
 //! - Everything here names entities of one session and one owner. Entity IDs restart with each
 //!   session, so a new generation or owner clears all of it.
 //! - A unit that leaves the snapshot is forgotten everywhere, including control groups.
+//! - A unit of anyone else that the fog hides stops being inspected, through
+//!   [`apply_battle_fog`](crate::battle_hud::fog::apply_battle_fog).
 
 use bevy::prelude::*;
 use sim_types::{EntityId, PlayerId};
@@ -106,6 +108,11 @@ impl BattleSelection {
         self.inspected = Some(id);
     }
 
+    /// Stops looking at the unit of another player, if any. The selection and groups stay.
+    pub fn stop_inspecting(&mut self) {
+        self.inspected = None;
+    }
+
     /// Adds the local player's units `ids` to the selection.
     pub fn extend(&mut self, ids: impl IntoIterator<Item = EntityId>) {
         self.inspected = None;
@@ -197,6 +204,18 @@ mod tests {
         selection.toggle(EntityId(1));
         assert_eq!(selection.inspected(), None);
         assert_eq!(selection.ids(), ids(&[1]));
+    }
+
+    #[test]
+    fn stopping_an_inspection_keeps_the_groups() {
+        let mut selection = BattleSelection::default();
+        selection.extend(ids(&[1, 2]));
+        selection.assign_group(0);
+        selection.inspect(EntityId(7));
+        selection.stop_inspecting();
+        assert_eq!(selection.inspected(), None);
+        assert!(!selection.contains(EntityId(7)));
+        assert_eq!(selection.group(0), ids(&[1, 2]));
     }
 
     #[test]

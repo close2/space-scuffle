@@ -9,7 +9,8 @@
 //! # How it fits
 //! ```text
 //! CollectIntent        battle_hud_system, then lab_ui_system computes the world rectangle
-//! PreparePresentation  sync_live_battle_system, refresh_hud_model, collect_battle_feed
+//! PreparePresentation  sync_live_battle_system, refresh_hud_model, refresh_battle_fog,
+//!                      apply_battle_fog, refresh_hud_focus, collect_battle_feed
 //! ```
 //! The bars are egui panels drawn before [`lab_ui_system`](crate::lab_ui_system) measures what is
 //! left, so that rectangle is both the camera viewport and the hit test
@@ -27,12 +28,14 @@
 
 pub mod catalog;
 pub mod feed;
+pub mod fog;
 pub mod model;
 pub mod panels;
 
 use bevy::prelude::*;
 use bevy_egui::egui;
 
+use crate::battle_pipeline::fog::BattleFog;
 use crate::battle_pipeline::BattleSet;
 use crate::battle_presentation::BattleProfile;
 
@@ -72,6 +75,10 @@ pub struct BattleHudPlugin;
 
 impl Plugin for BattleHudPlugin {
     fn build(&self, app: &mut App) {
+        // Readers take the fog as an `Option`, and its absence is what keeps `Sandbox` unfiltered.
+        if app.world().get_resource::<BattleProfile>() == Some(&BattleProfile::Player) {
+            app.init_resource::<BattleFog>();
+        }
         app.init_resource::<HudGeometry>()
             .init_resource::<model::HudModel>()
             .init_resource::<feed::BattleFeed>()
@@ -81,7 +88,13 @@ impl Plugin for BattleHudPlugin {
                     panels::battle_hud_system
                         .before(crate::lab_ui_system)
                         .in_set(BattleSet::CollectIntent),
-                    (model::refresh_hud_model, feed::collect_battle_feed)
+                    (
+                        model::refresh_hud_model,
+                        fog::refresh_battle_fog,
+                        fog::apply_battle_fog,
+                        model::refresh_hud_focus,
+                        feed::collect_battle_feed,
+                    )
                         .chain()
                         .after(crate::sync_live_battle_system)
                         .in_set(BattleSet::PreparePresentation),
