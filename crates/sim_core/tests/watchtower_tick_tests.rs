@@ -14,7 +14,7 @@
 use sim_core::SimWorld;
 use sim_map::{MapFile, VisibilityState};
 use sim_types::{
-    EntityId, MoverType, PlayerCommand, PlayerId, SimVec2, Tick, TickBundle, UnitOrder,
+    EntityId, MoverType, PlayerCommand, PlayerId, PlayerSlot, SimVec2, Tick, TickBundle, UnitOrder,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -82,7 +82,7 @@ fn f2_unit_walking_onto_a_tower_captures_it_and_gains_vision() -> TestResult {
     step(&mut world, &mut tick, Vec::new());
     assert_eq!(controller(&world), None);
     assert_ne!(
-        world.vision_maps[0].visibility_at(far_cell.0, far_cell.1),
+        world.vision_maps[PlayerSlot::ALL[0]].visibility_at(far_cell.0, far_cell.1),
         VisibilityState::Visible
     );
 
@@ -103,7 +103,7 @@ fn f2_unit_walking_onto_a_tower_captures_it_and_gains_vision() -> TestResult {
     assert_eq!(controller(&world), Some(PlayerId(0)));
     step(&mut world, &mut tick, Vec::new());
     assert_eq!(
-        world.vision_maps[0].visibility_at(far_cell.0, far_cell.1),
+        world.vision_maps[PlayerSlot::ALL[0]].visibility_at(far_cell.0, far_cell.1),
         VisibilityState::Visible,
         "the tower must grant its reveal radius"
     );

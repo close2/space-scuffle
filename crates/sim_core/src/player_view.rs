@@ -37,18 +37,16 @@ impl SimWorld {
         out.clear();
         out.tick = Tick(self.current_tick);
         out.viewer = viewer;
-        let slot = usize::from(viewer.0);
-        let (Some(resources), Some(vision)) =
-            (self.player_resources.get(slot), self.vision_maps.get(slot))
-        else {
+        let Some(slot) = viewer.slot() else {
             return;
         };
+        let (resources, vision) = (&self.player_resources[slot], &self.vision_maps[slot]);
         out.status = PlayerStatusView {
             minerals: resources.minerals,
             gas: resources.gas,
             supply_used: resources.supply_used,
             supply_max: resources.supply_max,
-            defeated: self.match_state.defeated & (1 << slot) != 0,
+            defeated: self.match_state.defeated & (1 << slot.index()) != 0,
         };
         out.map_width = self.map.width();
         out.map_height = self.map.height();
@@ -195,7 +193,7 @@ impl SimWorld {
         cell_x: u32,
         cell_y: u32,
     ) -> Result<(), SiteRefusal> {
-        if usize::from(viewer.0) >= self.player_resources.len() {
+        if viewer.slot().is_none() {
             return Err(SiteRefusal::InvalidRequest);
         }
         let site = self

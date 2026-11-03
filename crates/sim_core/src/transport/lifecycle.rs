@@ -7,11 +7,13 @@
 
 use crate::production::ProductionInvariant;
 use crate::{PlayerResources, SimWorld};
-use sim_types::{CombatEventVisual, EntityId, PlayerId, SimScalar, SimVec2};
+use sim_types::{CombatEventVisual, EntityId, PlayerId, PlayerSlot, SimScalar, SimVec2};
 
 struct PreparedDeathGroup {
     economy: PlayerResources,
     owner: PlayerId,
+    /// `owner`'s slot, proven while preparing, so the commit writes without a lookup.
+    slot: PlayerSlot,
     foundation: bool,
     shatter: Option<(SimVec2, SimScalar)>,
 }
@@ -72,7 +74,7 @@ impl SimWorld {
                         // Exclusive access preserves every prepared member until commit.
                         self.entities.remove(&id);
                     }
-                    self.player_resources[usize::from(prepared.owner.0)] = prepared.economy;
+                    self.player_resources[prepared.slot] = prepared.economy;
                     if prepared.foundation {
                         self.pathfinder.recompute_clearance(&self.map);
                     }
@@ -110,10 +112,10 @@ impl SimWorld {
                 reason: "death-group root is missing",
             })?;
         let owner = source.owner;
-        let mut economy = *self
-            .player_resources
-            .get(usize::from(owner.0))
+        let slot = owner
+            .slot()
             .ok_or(ProductionInvariant::InvalidPlayer { player: owner })?;
+        let mut economy = self.player_resources[slot];
         let mut foundation = false;
         let mut root_radius = SimScalar::ZERO;
         for &(_, id) in members {
@@ -141,6 +143,7 @@ impl SimWorld {
         Ok(PreparedDeathGroup {
             economy,
             owner,
+            slot,
             foundation,
             shatter: (!source.is_loaded_in_transport()).then_some((source.position, root_radius)),
         })

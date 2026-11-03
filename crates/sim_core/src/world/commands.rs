@@ -74,8 +74,7 @@ impl SimWorld {
             self.dispatch_production(command_index, cmd);
             return;
         }
-        let player_idx = cmd.player_id.0 as usize;
-        if player_idx >= self.player_resources.len() {
+        if cmd.player_id.slot().is_none() {
             return;
         }
 

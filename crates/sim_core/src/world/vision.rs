@@ -15,13 +15,13 @@
 
 use crate::SimWorld;
 use sim_map::{watchtower_source, CellFlags, VisionSource};
-use sim_types::{EntityId, PlayerId, SimVec2, VisibilityState};
+use sim_types::{EntityId, PerPlayer, PlayerId, PlayerSlot, SimVec2, VisibilityState};
 
 /// One sight source already counted into a player's vision map.
 #[derive(Clone, Copy)]
 struct AppliedSight {
     id: EntityId,
-    owner: usize,
+    owner: PlayerSlot,
     source: VisionSource,
 }
 
@@ -40,9 +40,9 @@ pub(crate) struct VisionWorkspace {
     /// Map cell revision `counted` was cast on; `None` until the first count.
     counted_cell_revision: Option<u64>,
     /// Each vision map's recount revision when `counted` was last in step with it.
-    counted_recounts: [u64; 8],
+    counted_recounts: PerPlayer<u64>,
     /// Indices of the cells set in each player's `known_blocked_cells`.
-    known_blocked_lists: [Vec<usize>; 8],
+    known_blocked_lists: PerPlayer<Vec<usize>>,
 }
 
 impl SimWorld {
@@ -82,13 +82,16 @@ impl SimWorld {
     fn collect_sights(&self, sights: &mut Vec<AppliedSight>) {
         sights.clear();
         for entity in self.entities.values() {
-            if entity.is_loaded_in_transport() || usize::from(entity.owner.0) >= 8 {
+            if entity.is_loaded_in_transport() {
                 continue;
             }
+            let Some(owner) = entity.owner.slot() else {
+                continue;
+            };
             if let Ok(arch) = self.catalog.get(entity.unit_type_id) {
                 sights.push(AppliedSight {
                     id: entity.id,
-                    owner: usize::from(entity.owner.0),
+                    owner,
                     source: VisionSource {
                         pos: entity.position,
                         mover_type: arch.mover_type,
@@ -104,19 +107,17 @@ impl SimWorld {
         }
         // Towers take the top of the ID range, in ascending order to keep the list sorted.
         for (index, tower) in self.map.watchtowers().iter().enumerate().rev() {
-            let Some(owner) = tower.controlling_player.map(|p| usize::from(p.0)) else {
+            let Some(owner) = tower.controlling_player.and_then(PlayerId::slot) else {
                 continue;
             };
             let Ok(offset) = u32::try_from(index) else {
                 continue;
             };
-            if owner < 8 {
-                sights.push(AppliedSight {
-                    id: EntityId(u32::MAX - offset),
-                    owner,
-                    source: watchtower_source(tower),
-                });
-            }
+            sights.push(AppliedSight {
+                id: EntityId(u32::MAX - offset),
+                owner,
+                source: watchtower_source(tower),
+            });
         }
     }
 
@@ -156,8 +157,9 @@ impl SimWorld {
         self.collect_sights(&mut sights);
         let mut counted = std::mem::take(&mut self.vision.counted);
         let in_step = self.vision.counted_cell_revision == Some(self.map.cell_revision())
-            && (0..8)
-                .all(|p| self.vision_maps[p].recount_revision() == self.vision.counted_recounts[p]);
+            && PlayerSlot::ALL.iter().all(|&p| {
+                self.vision_maps[p].recount_revision() == self.vision.counted_recounts[p]
+            });
         if in_step {
             self.recast_changed_sights(&counted, &sights);
         } else {
@@ -171,7 +173,7 @@ impl SimWorld {
                 vision.end_tick_update();
             }
             self.vision.counted_cell_revision = Some(self.map.cell_revision());
-            for p in 0..8 {
+            for p in PlayerSlot::ALL {
                 self.vision.counted_recounts[p] = self.vision_maps[p].recount_revision();
             }
         }
@@ -220,13 +222,13 @@ impl SimWorld {
     fn update_known_structures(&mut self) {
         let width = self.map.width() as usize;
         let total_cells = width * self.map.height() as usize;
-        let mut active_players = [false; 8];
+        let mut active_players = PerPlayer::<bool>::default();
         for ent in self.entities.values() {
-            if let Some(active) = active_players.get_mut(usize::from(ent.owner.0)) {
+            if let Some(active) = active_players.get_mut(ent.owner) {
                 *active = true;
             }
         }
-        for (p, &is_active) in active_players.iter().enumerate() {
+        for (p, &is_active) in active_players.enumerate() {
             if !is_active {
                 continue;
             }

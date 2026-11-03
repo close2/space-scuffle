@@ -171,7 +171,7 @@ impl SimWorld {
         let site = self.site_of(structure_type, cell_x, cell_y)?;
         let resources = self
             .player_resources
-            .get(usize::from(player.0))
+            .get(player)
             .ok_or(ProductionInvariant::InvalidPlayer { player })?;
         let arch = self
             .catalog
@@ -209,7 +209,7 @@ impl SimWorld {
         knowledge: Knowledge,
     ) -> Result<(), BuildRejection> {
         let width = self.map.width() as usize;
-        let memory = self.known_blocked_cells.get(usize::from(player.0));
+        let memory = self.known_blocked_cells.get(player);
         let remembered = |cell_x: u32, cell_y: u32| {
             let index = cell_y as usize * width + cell_x as usize;
             memory.is_some_and(|cells| cells.get(index).copied().unwrap_or(false))
@@ -346,8 +346,7 @@ impl SimWorld {
         player: PlayerId,
         recipients: &[EntityId],
     ) -> Result<GameCommandReceipt, GameCommandError> {
-        self.validate_selection(player, recipients)?;
-        let slot = usize::from(player.0);
+        let slot = self.validate_selection(player, recipients)?;
         let mut economy = self.player_resources[slot];
         let mut refund = (0_u32, 0_u32);
         let share = |paid: u32| {
@@ -639,7 +638,12 @@ impl SimWorld {
             return;
         };
         let (shields, provided) = (arch.max_shields, arch.supply_provided);
-        let slot = usize::from(entity.owner.0);
+        let Some(slot) = entity.owner.slot() else {
+            self.report_production_failure(ProductionInvariant::InvalidPlayer {
+                player: entity.owner,
+            });
+            return;
+        };
         let mut economy = self.player_resources[slot];
         let Some(total) = economy.supply_provided_total.checked_add(provided) else {
             self.report_production_failure(ProductionInvariant::Arithmetic {

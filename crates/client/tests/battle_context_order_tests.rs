@@ -167,7 +167,12 @@ fn set_focus(harness: &mut Harness, focused: bool) {
 }
 
 fn minerals(harness: &Harness) -> u32 {
-    harness.world().player_resources[usize::from(LOCAL_PLAYER.0)].minerals
+    harness
+        .world()
+        .player_resources
+        .get(LOCAL_PLAYER)
+        .expect("invariant: LOCAL_PLAYER has a player slot")
+        .minerals
 }
 
 /// Selects a worker with a clear mineral in view, and returns both.
@@ -422,7 +427,12 @@ fn a_worker_with_cargo_returns_it_on_right_click_at_a_depot() {
 /// Returns the worker, the structure and the map point at the middle of a free site.
 fn ready_to_place(harness: &mut Harness) -> (EntityId, UnitTypeId, Vec2) {
     let worker = workers(harness)[0];
-    harness.world_mut().player_resources[usize::from(LOCAL_PLAYER.0)].minerals = RICH;
+    harness
+        .world_mut()
+        .player_resources
+        .get_mut(LOCAL_PLAYER)
+        .expect("invariant: LOCAL_PLAYER has a player slot")
+        .minerals = RICH;
     let structure = harness
         .world()
         .catalog

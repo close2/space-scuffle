@@ -605,7 +605,7 @@ fn order_subject<'w>(
 fn validate(world: &SimWorld, command: &PlayerCommand) -> Result<(), SubmissionError> {
     accepts_orders(world, command.player_id)?;
     supported(&command.order)?;
-    if usize::from(command.player_id.0) >= world.player_resources.len() {
+    if command.player_id.slot().is_none() {
         return Err(SubmissionError::InvalidPlayer(command.player_id));
     }
     if command.entities.is_empty() {
