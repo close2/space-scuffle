@@ -19,8 +19,15 @@
 //!   an error, never a zero.
 //! - The combat window starts at the first frame with a combat event and ends before the first
 //!   frame whose tick is `combat_window_ticks` or more later.
+//! - Format version 2 (`WP5b`) names the display path of every run; a version-1 report, which
+//!   cannot say where it presented, is refused on load.
+//! - GPU pass timings, when present, are sorted by path; their sum counts only passes that are
+//!   not nested inside another recorded pass, and it covers instrumented passes only
+//!   ([`GPU_PASSES_NOTE`]).
 
+use super::display::DisplayPath;
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 /// One measured frame.
@@ -48,7 +55,7 @@ pub struct FrameSample {
 }
 
 /// Where and how a run was made.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunEnvironment {
     /// Output of `git rev-parse HEAD` in the tool's source tree, or why it is unavailable.
     pub commit: String,
@@ -66,9 +73,66 @@ pub struct RunEnvironment {
     pub resolution: (u32, u32),
     /// Present mode of the primary window.
     pub present_mode: String,
-    /// `MESA_VK_WSI_DEBUG`, `VK_ICD_FILENAMES` and `WGPU_BACKEND` as the process saw them.
+    /// The display path the run declared, checked against the environment before it started.
+    pub display_path: DisplayPath,
+    /// `MESA_VK_WSI_DEBUG`, `VK_ICD_FILENAMES`, `WGPU_BACKEND`, `DISPLAY` and `WAYLAND_DISPLAY`
+    /// as the process saw them (`"unset"` when unset).
     pub graphics_environment: Vec<(String, String)>,
 }
+
+/// What the Markdown summary says of GPU pass timings, every time it prints them.
+pub const GPU_PASSES_NOTE: &str = "instrumented GPU passes only; the smog volume, egui, \
+                                   post-processing and present are not timed";
+
+/// Mean GPU time of one pass Bevy instruments with timestamp queries, over the measured window.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GpuPassTiming {
+    /// Bevy's diagnostic path, such as `render/main_opaque_pass_3d/elapsed_gpu`.
+    pub path: String,
+    /// Distinct readings taken in the window.
+    pub samples: u32,
+    /// Mean of those readings, in milliseconds.
+    pub mean_ms: f64,
+    /// Largest reading, in milliseconds.
+    pub max_ms: f64,
+}
+
+impl GpuPassTiming {
+    /// The span this timing belongs to: its path without the trailing `/elapsed_gpu`.
+    fn span(&self) -> &str {
+        self.path
+            .strip_suffix("/elapsed_gpu")
+            .unwrap_or(self.path.as_str())
+    }
+
+    /// Whether this pass is a span inside another pass of `passes`, so that adding it would
+    /// count its time twice: either its path lies below the other's, or it is one of Bevy's
+    /// [`DETACHED_SPANS`] and its container was recorded.
+    fn is_nested_in(&self, passes: &[Self]) -> bool {
+        let span = self.span();
+        passes.iter().any(|outer| {
+            let below = span
+                .strip_prefix(outer.span())
+                .is_some_and(|rest| rest.starts_with('/'));
+            let detached = DETACHED_SPANS
+                .iter()
+                .any(|&(prefix, container)| span.starts_with(prefix) && outer.span() == container);
+            below || detached
+        })
+    }
+}
+
+/// Render spans whose GPU work lies inside another span although their path is not below it:
+/// `(prefix of the inner span, the containing span)`.
+///
+/// Bevy 0.15's shadow node (`bevy_pbr::render::light::ShadowPassNode`) opens the time span
+/// `shadows` on its command encoder, then records each light's pass, such as `shadow pass
+/// directional light 0 cascade 2`, on a command buffer of its own, built on another thread. The
+/// recorder nests a span only under a span open on the same thread, so the cascade's path is
+/// `render/shadow pass …`, not `render/shadows/shadow pass …`. Its command buffers are submitted
+/// between the two timestamps of `shadows`, so its time is part of that span's. The first run on
+/// the RX 580 (2026-11-03) confirmed it: `shadows` 0.511 ms, its cascades 0.369 ms together.
+pub const DETACHED_SPANS: [(&str, &str); 1] = [("render/shadow pass ", "render/shadows")];
 
 /// Nearest-rank percentiles of the frame interval, in milliseconds.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -137,12 +201,25 @@ pub struct FrameBudgetReport {
     pub environment: RunEnvironment,
     /// Statistics.
     pub summary: ReportSummary,
+    /// Per-pass GPU timings of a `--render-diagnostics` run, sorted by path; `None` otherwise.
+    pub gpu_passes: Option<Vec<GpuPassTiming>>,
+    /// Sum of the means of the passes not nested in another pass, in milliseconds; `None`
+    /// without GPU timings. Instrumented passes only ([`GPU_PASSES_NOTE`]).
+    pub gpu_pass_mean_sum_ms: Option<f64>,
     /// Every measured frame, in order.
     pub frames: Vec<FrameSample>,
 }
 
-/// The report schema version this build writes and reads.
-pub const REPORT_FORMAT_VERSION: u32 = 1;
+/// The report schema version this build writes and reads. Version 2 added the display path
+/// and the GPU pass timings (plan `WP5b`).
+pub const REPORT_FORMAT_VERSION: u32 = 2;
+
+/// The first field of any report, read before the rest so an old version is refused by its
+/// number rather than by a parse error about a field it lacks.
+#[derive(Deserialize)]
+struct VersionProbe {
+    format_version: u32,
+}
 
 /// Why statistics or a report could not be produced.
 #[derive(Debug, thiserror::Error)]
@@ -273,6 +350,8 @@ pub struct ReportInputs {
     pub combat_window_ticks: u32,
     /// Where and how the run was made.
     pub environment: RunEnvironment,
+    /// Per-pass GPU timings, for a `--render-diagnostics` run.
+    pub gpu_passes: Option<Vec<GpuPassTiming>>,
 }
 
 impl FrameBudgetReport {
@@ -286,6 +365,17 @@ impl FrameBudgetReport {
         let combat = window
             .map(|(start, end)| FrameStatistics::of(&frames[start..end]))
             .transpose()?;
+        let gpu_passes = inputs.gpu_passes.map(|mut passes| {
+            passes.sort_by(|left, right| left.path.cmp(&right.path));
+            passes
+        });
+        let gpu_pass_mean_sum_ms = gpu_passes.as_deref().map(|passes| {
+            passes
+                .iter()
+                .filter(|pass| !pass.is_nested_in(passes))
+                .map(|pass| pass.mean_ms)
+                .sum()
+        });
         Ok(Self {
             format_version: REPORT_FORMAT_VERSION,
             scenario: inputs.scenario,
@@ -299,6 +389,8 @@ impl FrameBudgetReport {
                 combat,
                 first_combat_tick: window.map(|(start, _)| frames[start].tick),
             },
+            gpu_passes,
+            gpu_pass_mean_sum_ms,
             frames,
         })
     }
@@ -324,14 +416,15 @@ impl FrameBudgetReport {
             path: path.to_owned(),
             source,
         })?;
-        let report: Self = ron::from_str(&text).map_err(|source| ReportError::Parse {
+        let parse_error = |source| ReportError::Parse {
             path: path.to_owned(),
             source,
-        })?;
-        if report.format_version != REPORT_FORMAT_VERSION {
-            return Err(ReportError::Version(report.format_version));
+        };
+        let probe: VersionProbe = ron::from_str(&text).map_err(parse_error)?;
+        if probe.format_version != REPORT_FORMAT_VERSION {
+            return Err(ReportError::Version(probe.format_version));
         }
-        Ok(report)
+        ron::from_str(&text).map_err(parse_error)
     }
 
     /// A Markdown summary of the run: environment, then one table row per window.
@@ -341,6 +434,7 @@ impl FrameBudgetReport {
         let mut text = format!(
             "## Frame budget: scenario {} ({} units)\n\n\
              - Commit: `{}`\n- Adapter: {} ({})\n- Resolution: {}x{}, present mode {}\n\
+             - Display path: `{}` ({})\n- Graphics environment: {}\n\
              - CPUs: {}; load before: {}; load after: {}\n\
              - Warm-up: {} frames; window: {}\n\n\
              | Window | Frames | Ticks | Interval p50 | p95 | p99 | max | Update p50 | p95 | \
@@ -353,6 +447,9 @@ impl FrameBudgetReport {
             environment.resolution.0,
             environment.resolution.1,
             environment.present_mode,
+            environment.display_path,
+            environment.display_path.description(),
+            graphics_line(&environment.graphics_environment),
             environment.cpus,
             environment.load_before.trim(),
             environment.load_after.trim(),
@@ -366,8 +463,46 @@ impl FrameBudgetReport {
             }
             _ => text.push_str("\nNo combat event was measured.\n"),
         }
+        if let (Some(passes), Some(sum)) = (&self.gpu_passes, self.gpu_pass_mean_sum_ms) {
+            text.push_str(&gpu_table(passes, sum));
+        }
         text
     }
+}
+
+/// `NAME=value` pairs of the recorded graphics environment, comma-separated.
+fn graphics_line(environment: &[(String, String)]) -> String {
+    environment
+        .iter()
+        .map(|(name, value)| format!("`{name}={value}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The Markdown table of GPU pass timings and their sum, with [`GPU_PASSES_NOTE`].
+fn gpu_table(passes: &[GpuPassTiming], sum_ms: f64) -> String {
+    let mut text = format!(
+        "\n### GPU passes ({GPU_PASSES_NOTE})\n\n| Pass | Samples | Mean ms | Max ms |\n\
+         |---|---:|---:|---:|\n"
+    );
+    for pass in passes {
+        let nested = if pass.is_nested_in(passes) {
+            " (nested)"
+        } else {
+            ""
+        };
+        // Writing into a String cannot fail.
+        let _ = writeln!(
+            text,
+            "| {}{nested} | {} | {:.3} | {:.3} |",
+            pass.path, pass.samples, pass.mean_ms, pass.max_ms
+        );
+    }
+    let _ = writeln!(
+        text,
+        "\nSum of the means of the passes not nested in another: {sum_ms:.3} ms ({GPU_PASSES_NOTE})."
+    );
+    text
 }
 
 /// One Markdown table row of `statistics`, times in milliseconds.
@@ -402,6 +537,29 @@ mod tests {
             live_units: 10,
             units_in_view: 10,
             combat_events,
+        }
+    }
+
+    fn inputs() -> ReportInputs {
+        ReportInputs {
+            scenario: "0".into(),
+            expected_units: 0,
+            warmup_frames: 0,
+            window: "2 frames".into(),
+            combat_window_ticks: 3,
+            environment: RunEnvironment {
+                commit: "abc".into(),
+                adapter: "test adapter".into(),
+                driver: "test driver".into(),
+                cpus: 16,
+                load_before: "1.00 1.00 1.00 1/100 1".into(),
+                load_after: "1.00 1.00 1.00 1/100 1".into(),
+                resolution: (1280, 720),
+                present_mode: "AutoNoVsync".into(),
+                display_path: DisplayPath::XvfbSoftwarePresent,
+                graphics_environment: vec![("DISPLAY".into(), ":99".into())],
+            },
+            gpu_passes: None,
         }
     }
 
@@ -475,7 +633,7 @@ mod tests {
                 warmup_frames: 180,
                 window: "10 frames".into(),
                 combat_window_ticks: 3,
-                environment: RunEnvironment::default(),
+                ..inputs()
             },
             frames,
         )?;
@@ -493,6 +651,114 @@ mod tests {
         report.save(&path)?;
         assert_eq!(FrameBudgetReport::load(&path)?, report);
         assert!(report.markdown().contains("| whole | 10 | 10 |"));
+        assert!(report
+            .markdown()
+            .contains("- Display path: `xvfb-software-present`"));
+        assert!(!report.markdown().contains(GPU_PASSES_NOTE));
+        Ok(())
+    }
+
+    fn pass(path: &str, mean_ms: f64) -> GpuPassTiming {
+        GpuPassTiming {
+            path: path.into(),
+            samples: 4,
+            mean_ms,
+            max_ms: mean_ms * 2.0,
+        }
+    }
+
+    #[test]
+    fn a_report_with_gpu_passes_round_trips_at_version_2() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let frames: Vec<FrameSample> = (0..4).map(|index| sample(index, index, 0)).collect();
+        let mut inputs = inputs();
+        inputs.environment.display_path = DisplayPath::KwinVirtual;
+        inputs.gpu_passes = Some(vec![
+            pass("render/shadows/elapsed_gpu", 0.5),
+            pass("render/main_opaque_pass_3d/elapsed_gpu", 2.0),
+            pass("render/shadows/cascade_2/elapsed_gpu", 0.25),
+            pass(
+                "render/shadow pass directional light 0 cascade 1/elapsed_gpu",
+                0.125,
+            ),
+        ]);
+        let report = FrameBudgetReport::new(inputs, frames)?;
+        assert_eq!(report.format_version, 2);
+        let paths: Vec<&str> = report
+            .gpu_passes
+            .iter()
+            .flatten()
+            .map(|pass| pass.path.as_str())
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "render/main_opaque_pass_3d/elapsed_gpu",
+                "render/shadow pass directional light 0 cascade 1/elapsed_gpu",
+                "render/shadows/cascade_2/elapsed_gpu",
+                "render/shadows/elapsed_gpu",
+            ],
+            "passes are sorted by path"
+        );
+        // Neither a span below the shadow pass's path nor a cascade Bevy records on its own
+        // command buffer (DETACHED_SPANS) is added a second time.
+        assert_eq!(report.gpu_pass_mean_sum_ms, Some(2.5));
+
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("report.ron");
+        report.save(&path)?;
+        assert_eq!(FrameBudgetReport::load(&path)?, report);
+        let markdown = report.markdown();
+        assert!(
+            markdown.contains("- Display path: `kwin-virtual`"),
+            "{markdown}"
+        );
+        assert!(markdown.contains(GPU_PASSES_NOTE), "{markdown}");
+        assert!(
+            markdown.contains("| render/main_opaque_pass_3d/elapsed_gpu | 4 | 2.000 | 4.000 |"),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("| render/shadows/cascade_2/elapsed_gpu (nested) |"),
+            "{markdown}"
+        );
+        assert!(markdown.contains("2.500 ms"), "{markdown}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_detached_span_counts_when_its_container_is_missing() -> Result<(), ReportError> {
+        let frames: Vec<FrameSample> = (0..2).map(|index| sample(index, index, 0)).collect();
+        let mut inputs = inputs();
+        inputs.gpu_passes = Some(vec![
+            pass("render/main_opaque_pass_3d/elapsed_gpu", 2.0),
+            pass(
+                "render/shadow pass directional light 0 cascade 1/elapsed_gpu",
+                0.125,
+            ),
+        ]);
+        let report = FrameBudgetReport::new(inputs, frames)?;
+        assert_eq!(report.gpu_pass_mean_sum_ms, Some(2.125));
+        Ok(())
+    }
+
+    #[test]
+    fn a_version_1_report_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+        let frames: Vec<FrameSample> = (0..2).map(|index| sample(index, index, 0)).collect();
+        let report = FrameBudgetReport::new(inputs(), frames)?;
+        let text = ron::ser::to_string_pretty(&report, ron::ser::PrettyConfig::new())?;
+        // WP5's reports had version 1 and no display path or GPU passes.
+        let version_1 = text
+            .replace("format_version: 2", "format_version: 1")
+            .lines()
+            .filter(|line| !line.contains("display_path") && !line.contains("gpu_pass"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("version-1.ron");
+        std::fs::write(&path, version_1)?;
+        let result = FrameBudgetReport::load(&path);
+        assert!(matches!(result, Err(ReportError::Version(1))), "{result:?}");
         Ok(())
     }
 }
