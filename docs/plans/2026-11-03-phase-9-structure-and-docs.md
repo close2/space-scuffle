@@ -1334,6 +1334,9 @@ Relative links only. It states what exists, not what was once hoped for; intent 
   `width.div_ceil(CHUNK_DUAL_CELLS)` chunk columns (and rows from `height`), but the dual grid is `(width+1)×(height+1)`.
   When a side is a multiple of 16, its last dual column or row is never meshed. `mesher_golden_tests.rs` covers all
   `(w+1).div_ceil(16)` chunks, so the fix will show up as a deliberate change to the spawn layout, not to the goldens.
+- **Found by WP2, a library panic for a later bugfix plan:** `MapDocument::encode` (`crates/sim_map/src/map_format.rs`)
+  indexes out of bounds when `cells.len() != width * height`, instead of returning a typed error (charter §1.1). The
+  decode corpus in `validation_golden_tests.rs` skips such documents, so the fix needs its own failing test first.
 
 ## 10. Decisions for the owner
 
