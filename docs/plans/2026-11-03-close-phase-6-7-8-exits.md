@@ -10,6 +10,13 @@ development server while this plan was written; their commands and logs are name
 for the quoted symbol. A claim about runtime behaviour that could not be confirmed is marked **verify**, and the first
 test of its package confirms or refutes it.
 
+**Amendment (2026-11-03, after WP5 merged at `90075ab`):** WP5's runs on the RX 580 went through Xvfb with Mesa's
+software presentation (`MESA_VK_WSI_DEBUG=sw`). Probes (§5.3) show that this path costs about 100 ms per presented
+1280×720 frame on this VM, whatever is drawn, so it measured the VM's display path and not the game. A hardware
+present path is already installed: a headless KWin compositor (`kwin_wayland --virtual --xwayland`). D-4's
+presentation, GPU-time and command paragraphs, WP6, the risks and §7 are rewritten for it, and a small tool change,
+WP5b, comes before WP6. Q0019 asks the owner whether this path is acceptable as the reference.
+
 **Out of scope:** step 8.5 (B-1, D7), real media for the required set. It needs paid Veo generation with the
 owner's approval for each run, and the media scope is still open as [Q0001](../questions/open/0001-media-scope.md).
 It stays blocked on the owner. Phase 8 therefore cannot fully exit through this plan (§2.3).
@@ -22,7 +29,7 @@ It stays blocked on the owner. Phase 8 therefore cannot fully exit through this 
 |---|---|---|---|
 | 6 | No per-frame heap allocation or asset churn in sync systems, proved by test | **Partly met** | WP2 (asset churn, retained buffers, every sync system), WP3 (allocation count, external, no `unsafe`) |
 | 6 | One owner per concern | **Partly met**: the code is done, no test proves it | WP4 (writer table and ordering tests) |
-| 6 | Frame budget measured at 200 and 400 units | **Not met** | WP5 (measuring tool), WP6 (measurement on the RX 580, recorded) |
+| 6 | Frame budget measured at 200 and 400 units | **Not met** | WP5 (measuring tool), WP5b (display path and attribution options), WP6 (measurement on the RX 580 through headless KWin, recorded) |
 | 7 | Edit, save, playtest, return and reopen is covered by an automated App test | **Met** | WP1 records it |
 | 8 | Strict audit passes for the agreed set | **Not met, blocked on the owner** (8.5, Q0001) | Nothing in this plan |
 | 8 | A failed download cannot enter the cache | **Met** | WP1 records it |
@@ -346,6 +353,16 @@ The measurement must be reproducible, run on the RX 580, and change nothing in t
 - **Window and presentation:** 1280×720, the client's default. `PresentMode::AutoNoVsync` is set on the primary
   window after the App is built, so the frame interval reflects work, not the display. Production settings
   otherwise: smog, HUD, fog and effects as the player gets them.
+- **Display path (amended, §5.3):** the server has no monitor. Xvfb has no DRI3, so radv can present into it only
+  with `MESA_VK_WSI_DEBUG=sw`, which copies every frame from VRAM through the CPU into the X server. That costs
+  about 100 ms per 1280×720 frame on this VM, and the cost scales with pixels, not with what is drawn (§5.3). It is
+  not a measure of the game. The path of record is a headless KWin (`kwin_wayland --virtual --xwayland`, package
+  `kwin-wayland` 6.3.6, already installed). The client is an X11 client of KWin's Xwayland and presents through
+  DRI3 with radv's normal WSI. The frame stays on the GPU, and KWin composites it with OpenGL on the same RX 580
+  into a 1280×720 virtual output. Bevy is built without winit's `wayland` feature, so the client needs Xwayland: a
+  native Wayland run fails with "DISPLAY is not set". The report names the path it ran on (WP5b), and a run whose
+  environment contradicts its declared path is refused. No offscreen mode is added: it would leave out the window
+  surface and the egui pass, which are part of what the player waits for, and the KWin path presents for real.
 - **Timing:** `std::time::Instant` (allowed outside the simulation crates). Per frame, the recorder writes into a
   vector preallocated for the whole window (no allocation while measuring):
   - frame interval (wall time between consecutive `First` schedules): what the player sees;
@@ -354,9 +371,13 @@ The measurement must be reproducible, run on the RX 580, and change nothing in t
     executed that frame;
   - live units, units in view, combat events that frame, and the simulation tick.
 
-  GPU time is not measured: wgpu timestamp queries need an optional device feature and a separate readback, beyond
-  this plan. Bevy renders in a pipelined thread, so the frame interval already includes a GPU-bound frame as a long
-  interval.
+  GPU time is not part of the figures of record. Bevy renders in a pipelined thread, so the frame interval already
+  includes a GPU-bound frame as a long interval. To tell a CPU-bound frame from a GPU-bound one, WP5b adds two
+  options used only in separate attribution runs: `--resolution` (a quarter of the pixels changes a GPU-bound frame
+  and leaves a CPU-bound one), and `--render-diagnostics`, which adds Bevy's `RenderDiagnosticsPlugin` and reports
+  the mean GPU time of each pass Bevy instruments with timestamp queries. That covers the prepass, shadows and the
+  main opaque and transparent passes, **verify** the list on the first run. It does not cover the smog volume,
+  egui, post-processing or present, and the report says so.
 - **Warm-up:** measurement starts on the first frame after the battle's media and map presentation are ready (the
   conditions `frame_limit_system` checks) plus 180 frames, so pipeline compilation and first-use uploads are excluded.
   It then runs for 1,500 simulation ticks (60 s of game time), which covers the approach and the whole engagement at
@@ -370,10 +391,9 @@ The measurement must be reproducible, run on the RX 580, and change nothing in t
   statistic. A run is "loaded" when its starting one-minute load average exceeds 8 (half the cores). At least 3
   unloaded runs are required per scenario. If the server will not give them within the session, the median of all
   runs is recorded, marked as loaded and with the load stated. Unrecorded measurements do not exist.
-- **GPU discipline (charter §7):** build first, outside the lock. Then one run per locked command:
-  `WGPU_BACKEND=vulkan VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json MESA_VK_WSI_DEBUG=sw with-gpu-lock
-  xvfb-run -a -s "-screen 0 1280x720x24" <release frame_budget> --scenario 400 --out <dir>/run-NN.ron`. A run takes
-  about 90 to 150 s, inside the default 600 s lock timeout. The lock is released between runs.
+- **GPU discipline (charter §7):** build first, outside the lock. Then one run per locked command, the compositor
+  and the tool inside the same lock, because KWin renders on the RX 580 too (the exact command is in WP6). A run
+  takes about 70 s, inside the default 600 s lock timeout. The lock is released between runs.
 - **What gets recorded where:** raw reports under `~/scratch/frame-budget/<date>/` (not committed). One evidence
   file, `docs/evidence/<date>-frame-budget.md`, with the exact commands, environment, the per-run table and the
   medians. `DESIGN.md` §5 "Frame budget" gets a three-row table (0, 200, 400) with frame-interval p50, p95, p99 and
@@ -404,12 +424,14 @@ only §3.3's tag. Charter §6 is not touched (Q0003).
 | WP3 | External allocation count under valgrind | Phase 6 exit 1 (layer 3) | M (1 day, after its feasibility step) | none | A |
 | WP4 | Writer table and ordering tests | Phase 6 exit 2; Phase 9 §9 ordering gaps | S-M (1 day) | none | A |
 | WP5 | `frame_budget` tool and its CI smoke test | Phase 6 exit 3 (tool) | M (1 to 2 days) | none | A |
-| WP6 | Measure on the RX 580; record; Phase 6 exit paragraph | Phase 6 exit 3 (record) and the Phase 6 record | S (half a day of agent time, 1 to 2 h of locked GPU in single runs) | WP2, WP3, WP4, WP5; WP7 for its note | B |
+| WP5b | Display path, resolution and GPU pass timings in `frame_budget` (amendment) | Makes WP6's figures attributable and honestly labelled | S (half a day) | WP5 | A (late) |
+| WP6 | Measure on the RX 580 through headless KWin; record; Phase 6 exit paragraph | Phase 6 exit 3 (record) and the Phase 6 record | S (half a day of agent time, about 40 min of locked GPU in single runs) | WP2, WP3, WP4, WP5, WP5b; WP7 for its note | B |
 | WP7 | Throughput residual and the handover figures | §2.5 items 2 and 3 | S (half a day) | none | A |
 
 **Parallelism.** Group A runs in parallel: WP1 to WP5 and WP7 have disjoint files (each WP's "Files" list).
 At most three gates at once (charter §7, Phase 9 experience): start WP2, WP4, WP5 first, then WP3, WP7, WP1.
-Group B (WP6) starts when all of group A is merged and CI on `main` is green.
+Group B (WP6) starts when all of group A, including WP5b, is merged and CI on `main` is green. WP5b was added by
+the amendment after WP5 merged; it touches only WP5's files.
 
 Each package works in its own worktree with `CARGO_TARGET_DIR=/home/spacescuffle/scratch/cargo-target/exits-wpN`,
 checks `df -h / ~/scratch` first, and removes its target directory after merge. Common gate before each commit:
@@ -676,36 +698,169 @@ the harness's 120 s child limit, lower the frames, not the unit count.
 
 ---
 
-### WP6: Measure on the RX 580 and record
+### WP5b: Display path, resolution and GPU pass timings in `frame_budget`
+
+Added by the amendment (§5.3). The tool measured correctly; what it lacked was a way to say *where* it presented,
+and a way to attribute a frame to the CPU or the GPU. Without the first, a report from Xvfb's software present path
+and one from a hardware path look the same. That is how WP5's 109 ms baseline nearly became the Phase 6 figure.
+
+**Files (owned):** new `crates/client_diagnostics/src/frame_budget/display.rs`;
+`crates/client_diagnostics/src/frame_budget/mod.rs`, `recorder.rs`, `report.rs`;
+`crates/client_diagnostics/src/bin/frame_budget.rs` (the usage line of its `//!` only);
+`crates/client_diagnostics/tests/frame_budget_tests.rs`.
+
+**Design**
+
+1. **`--display-path <kwin-virtual|xvfb-software-present|desktop>`, required.** A `clap::ValueEnum`
+   `DisplayPath` in `display.rs`, with a one-line description of each path for the report. A pure function
+   `check_display_path(path, lookup: impl Fn(&str) -> Option<String>) -> Result<(), DisplayPathError>` checks the
+   declaration against the environment before anything else runs (before the fixture is built):
+   - `kwin-virtual`: `WAYLAND_DISPLAY` and `DISPLAY` are set (the client reaches KWin through its Xwayland), and
+     `MESA_VK_WSI_DEBUG` is unset or does not contain `sw`;
+   - `xvfb-software-present`: `DISPLAY` is set and `WAYLAND_DISPLAY` is not. This covers both radv with
+     `MESA_VK_WSI_DEBUG=sw` and `lavapipe`, where every present is a CPU copy anyway (CI);
+   - `desktop`: `DISPLAY` or `WAYLAND_DISPLAY` is set, and `MESA_VK_WSI_DEBUG` does not contain `sw`. This is for
+     an owner who runs the tool on a real monitor (Q0019 option 2).
+
+   The check cannot prove that a Wayland server is a headless KWin rather than a desktop. It catches the mistakes
+   that matter: a software present labelled as hardware, and a missing display. A mismatch is
+   `FrameBudgetError::DisplayPath(DisplayPathError)`, naming the variable at fault. The declared path goes into a
+   new field `RunEnvironment::display_path` and into the Markdown summary as its own line. `graphics_environment`
+   also records `DISPLAY` and `WAYLAND_DISPLAY`. The report's `format_version` becomes 2; `load` refuses version 1
+   with a typed error (the only version-1 reports are WP5's scratch files).
+2. **`--resolution <W>x<H>`, default `1280x720`.** A `Resolution` type with `FromStr`: two integers from 320 to
+   7680 joined by `x`, anything else a typed parse error. `configure_window` sets it instead of the hard-coded size.
+   The report already records the window's physical size. The frustum check is unchanged: at the default's 16:9
+   aspect the view is the same, and another aspect that loses units fails the run, which is correct.
+3. **`--render-diagnostics`, off by default.** When set, `run` adds `bevy::render::diagnostic::RenderDiagnosticsPlugin`
+   before the App runs. In the measured window the recorder reads, each frame, every diagnostic in Bevy's
+   `DiagnosticsStore` whose path starts with `render/` and ends with `/elapsed_gpu`, and adds its latest measurement
+   to a per-pass accumulator (sum, count, max) only when the measurement's time is newer than the last one taken.
+   GPU timings arrive a few frames late, after a readback, so this avoids counting one twice. The report gains
+   `gpu_passes: Option<Vec<GpuPassTiming>>` (path, samples, mean ms, max ms) and the sum of the pass means, which the
+   Markdown summary prints as "instrumented GPU passes only; the smog volume, egui, post-processing and present are
+   not timed". If no `elapsed_gpu` diagnostic appeared by the end of the warm-up, the run fails with
+   `RecordingError::NoGpuTimestamps`: the adapter lacks `TIMESTAMP_QUERY`, and an empty table would read as zero GPU
+   time. Runs with this option are attribution runs, never figures of record, because timestamp queries and the
+   diagnostics readback add work, and because a pass first seen during measurement allocates its path once.
+
+**Tests (first)**
+
+- Unit, `display.rs`, a table over each path and environment: `kwin-virtual` with both variables accepted, with
+  `MESA_VK_WSI_DEBUG=sw` refused, without `WAYLAND_DISPLAY` refused; `xvfb-software-present` with `WAYLAND_DISPLAY`
+  set refused, with only `DISPLAY` accepted (with and without `sw`); `desktop` with neither variable refused, with
+  `sw` refused. Each refusal names its variable.
+- Unit, `mod.rs`: `Resolution` parses `1280x720` and `640x360`; refuses `0x720`, `1280`, `1280x720x2`, `8000x720`,
+  `axb`.
+- Unit, `recorder.rs`: the GPU-pass accumulator ignores a measurement whose time is not newer than the last taken,
+  and gives the right mean and max over a known sequence.
+- Unit, `report.rs`: a report with GPU passes round-trips at format version 2, its Markdown contains the display-path
+  line and the GPU table with the "instrumented passes only" note; a version-1 report is refused.
+- Integration, no GPU: `a_contradicting_display_path_is_refused_before_anything_is_written`. Run the debug binary
+  (`CARGO_BIN_EXE_frame_budget`) with `--display-path kwin-virtual`, `WAYLAND_DISPLAY` removed and `DISPLAY` set to a dummy value.
+  It must exit non-zero, name `WAYLAND_DISPLAY` on stderr, and leave the work directory empty. It exits before any
+  renderer exists, so C21 does not apply; check C21 still passes.
+- The smoke test (`frame_budget_smoke_run_writes_a_valid_report`) passes `--display-path xvfb-software-present`,
+  removes `WAYLAND_DISPLAY` from the child's environment (**verify** that `GpuCommand` exposes `env_remove`; if it
+  does not, add nothing to the harness and assert instead that the variable is unset in the test's own process),
+  and asserts that the report's `display_path` is `xvfb-software-present` and that `DISPLAY` is recorded.
+
+**Red runs.** Before `display.rs` exists, the unit tests do not compile. Then make `check_display_path` ignore
+`MESA_VK_WSI_DEBUG`: the `kwin-virtual` with `sw` case passes and its test fails. Make the accumulator take every
+reading: the double-count test fails. Run the updated smoke test against the old binary (before the flag exists):
+clap refuses `--display-path` and the test fails. Revert each.
+
+**Gate.** Common gate, plus one locked RX 580 run of the 0 scenario through KWin with `--render-diagnostics
+--measure-frames 300` (the command of WP6 step 4). Paste its GPU table into the report to the orchestrator; it
+settles the **verify** on the list of instrumented passes.
+
+---
+
+### WP6: Measure on the RX 580 through headless KWin and record
 
 **Files (owned):** new `docs/evidence/<date>-frame-budget.md`; `DESIGN.md` §5 ("Frame budget"); the Phase 6 section
 of `docs/plans/2026-11-01-codebase-remediation.md` (exit paragraph only); this plan's row in `docs/plans/README.md`.
 
+**What is recorded, and how it is labelled**
+
+| Table | Display path | Runs | Purpose |
+|---|---|---|---|
+| Figures of record | `kwin-virtual`, 1280×720, no diagnostics | 15, interleaved (D-4) | The Phase 6 frame budget at 0, 200 and 400 units |
+| Attribution | `kwin-virtual` | 400 at 640×360; 0 and 400 with `--render-diagnostics`; one 400 run under `perf` | CPU-bound or GPU-bound, and where the CPU time goes |
+| This VM's Xvfb path | `xvfb-software-present`, radv with `MESA_VK_WSI_DEBUG=sw` | one 0 and one 400 | Explains WP5's figures and why they are not the budget |
+
+Only the first table goes into `DESIGN.md` and the Phase 6 exit paragraph. The other two stay in the evidence file,
+each under a heading that says what it is not.
+
+**The locked command (one run).** Let `FB=<release frame_budget>` and `W=~/scratch/frame-budget/<date>`:
+
+```bash
+WGPU_BACKEND=vulkan VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json \
+with-gpu-lock taskset -c 32-47 kwin_wayland --virtual --xwayland --no-lockscreen --no-global-shortcuts \
+  --width 1280 --height 720 --socket frame-budget-NN \
+  --exit-with-session "$FB --display-path kwin-virtual --work-dir $W/work --scenario 400 --out $W/run-NN.ron"
+```
+
+What the planning probes found about it (§5.3):
+
+- `--exit-with-session` takes one string, which KWin splits on whitespace, so no path in it may contain a space.
+  Arguments given to KWin after `--` are not passed through intact (a probe's `--wsi wayland` was lost).
+- **KWin exits 0 even when the session fails.** A run succeeded only if `run-NN.ron` exists (the tool never writes a
+  partial report) and the log has no `frame_budget failed`. Check both after every run.
+- KWin prints warnings about missing QML modules, decoration plugins and xkb keycodes. They are harmless; keep them
+  in the log, do not filter the log that is kept.
+- `XDG_RUNTIME_DIR` must be set, as it is in a normal login. Use a new `--socket` name per run.
+- KWin composites on the RX 580 itself, which is why it runs inside the same lock as the tool.
+
 **Steps**
 
-1. `git pull`; read `docs/questions/open/` (Q0011 and Q0015 may be answered; follow their answers).
-2. Build outside the lock: `cargo build --release -p client_diagnostics --bin frame_budget --locked`.
-3. Prepare the root once: run the tool's fixture step (`--scenario 0 --measure-frames 1` on `lavapipe` is enough,
-   no lock).
-4. Fifteen locked runs, one command each, in the interleaved order of D-4, with the exact command of D-4. Before
-   each run, append `date -u`, `cat /proc/loadavg` and `nproc` to `~/scratch/logs/frame_budget_<date>.log`. Never
-   wrap more than one run in one lock. If a run is loaded (one-minute load above 8), still keep it. Add runs at the
-   end until each scenario has three unloaded runs, or stop after 30 runs and record what there is.
-5. Also save one screenshot of the 400 scenario at the middle of the combat window (`--screenshot-at-tick`, if WP5
-   provides it; otherwise a separate `battle_capture` run). Look at it: units visible, smog behind units (C-7).
-   Commit it as `docs/evidence/<date>-frame-budget-400.jpg` (under 300 KB), because the handover lists "smog in a
-   live battle was not visually confirmed".
-6. Write the evidence file: commit, Mesa version, adapter, resolution, present mode, `MESA_VK_WSI_DEBUG=sw` and what it
-   costs, the per-run table, the medians, the combat-window medians, the lock waits, the load per run, and C-17's
-   visible effect if any (combat-window p99 against march-window p99).
-7. Replace the "Frame budget" paragraph in `DESIGN.md` §5 with the three-row table and the reference lines (Q0015).
-   Add one sentence from WP7's result to the throughput paragraph.
-8. When CI on `main` is green with WP2 to WP5 merged, add the Phase 6 exit paragraph:
-   **"Exit status (<date>): met; CI green on `main` at `<sha>` (run <id>)."** It names the tests of WP2 to WP4 and the
-   evidence file, quotes the 200 and 400 medians, and states what the allocation proof covers: WP3's scope, or
-   "asset churn and retained buffers only, Q0011" if step 1 of WP3 stopped. Set this plan's row to `Done`.
+1. `git pull`; read `docs/questions/open/` (Q0011, Q0015, Q0018 and Q0019 may be answered; follow their answers).
+   If Q0019 chose option 2, ask the owner for the desktop runs in chat and do the rest meanwhile.
+2. Build outside the lock: `cargo build --release -p client_diagnostics --bin frame_budget --locked`. Record
+   `kwin_wayland --version` and `dpkg -s mesa-vulkan-drivers | grep Version`.
+3. Prepare the root once, without the GPU: `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json xvfb-run -a -s
+   "-screen 0 1280x720x24" $FB --display-path xvfb-software-present --work-dir $W/work --scenario 0
+   --warmup-frames 1 --measure-frames 1 --out $W/prep.ron`.
+4. **Figures of record.** Fifteen locked runs with the command above, one per lock, in the interleaved order of
+   D-4. Before each run, append `date -u`, `cat /proc/loadavg` and `nproc` to `~/scratch/logs/frame_budget_<date>.log`,
+   and take the lock wait as the gap between a `date -u +%T.%N` written just before the command and the first
+   timestamped line of the run's log (`with-gpu-lock` prints nothing itself). Load rules as in D-4: keep a loaded run, add runs until each scenario has three unloaded ones, stop at 30 runs.
+5. **Attribution runs**, one lock each:
+   - 400 with `--resolution 640x360` (KWin's `--width 640 --height 360` too). If its p50 is within 10 % of the
+     1280×720 median, the frame is not bound by GPU fill. Say which;
+   - 0 and 400 with `--render-diagnostics`: the per-pass GPU table and its sum, labelled "instrumented passes only";
+   - one 400 run under `perf`: put `perf record -F 997 -o $W/perf-400.data --` in front of `$FB` inside the
+     `--exit-with-session` string (`perf_event_paranoid` is 1 here, so no privilege is needed). Report
+     `perf report --no-children --sort comm,sym` top 15 and convert the largest client symbols to milliseconds per
+     frame: samples ÷ 997 ÷ frames rendered in the run (measured plus warm-up). The run's own frame figures are not
+     used, because `perf` slows it by about 8 %.
+   If one client system costs more than a quarter of the 400 scenario's main-update p50, record it in the evidence
+   as a new finding (**[R]**, a later plan's work) with its cost per frame. The planning probe found the smog
+   solver, `client::smog::fluid::SmogGrid3d::step`, at about 8.5 ms of a 14 ms update; no optimisation here.
+6. **This VM's Xvfb path:** one 0 run and one 400 run with the old command,
+   `WGPU_BACKEND=vulkan VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json MESA_VK_WSI_DEBUG=sw with-gpu-lock
+   taskset -c 32-47 xvfb-run -a -s "-screen 0 1280x720x24" $FB --display-path xvfb-software-present ...`, under the
+   heading "Xvfb with software present (this VM's fallback path; not the game's frame time)". Note the alternation
+   of short frames and frames of 180 ms or more, which is the copy of each presented image (§5.3).
+7. Save one screenshot of the 400 scenario at the middle of the combat window (`--screenshot-at-tick`, if WP5
+   provides it; otherwise a separate `battle_capture` run under the same KWin command). Look at it: units visible,
+   smog behind units (C-7). Commit it as `docs/evidence/<date>-frame-budget-400.jpg` (under 300 KB), because the
+   handover lists "smog in a live battle was not visually confirmed".
+8. Write the evidence file: commit, Mesa and KWin versions, adapter, resolution, present mode requested
+   (`AutoNoVsync`), the display path and why (D-4, §5.3), the exact commands, the per-run table with load and lock
+   wait, the medians, the combat-window medians, C-17's visible effect if any (combat-window p99 against
+   march-window p99), and the two other tables of step 5 and 6 under their headings.
+9. Replace the "Frame budget" paragraph in `DESIGN.md` §5 with the three-row table of the figures of record, the
+   reference lines (Q0015), one line naming the display path ("RX 580 through a headless KWin compositor,
+   hardware present, 1280×720, vsync off; no monitor"), and one sentence on attribution: CPU-bound or not, and the
+   largest client cost from step 5. Add one sentence from WP7's result to the throughput paragraph.
+10. When CI on `main` is green with WP2 to WP5b merged, add the Phase 6 exit paragraph:
+    **"Exit status (<date>): met; CI green on `main` at `<sha>` (run <id>)."** It names the tests of WP2 to WP4 and
+    the evidence file, quotes the 200 and 400 medians with their display path, and states what the allocation proof
+    covers: WP3's scope, or "asset churn and retained buffers only, Q0011" if step 1 of WP3 stopped. Set this plan's
+    row to `Done`.
 
-**Red run.** Not applicable. The measurement is checked by its own refusal paths, tested in WP5.
+**Red run.** Not applicable. The measurement is checked by its own refusal paths, tested in WP5 and WP5b.
 
 **Gate.** Common gate (C17 checks the new links in `DESIGN.md`).
 
@@ -777,6 +932,62 @@ Findings that shape WP3:
    synchroniser. The probe cannot tell them apart. So WP3 measures a **baseline** too (below), and attributes the
    difference with DHAT before asserting anything.
 
+### 5.3 Display-path probes for WP6 (amendment)
+
+Run 2026-11-03 19:00 to 19:30 UTC on the RX 580 (radv, Mesa 25.0.7), each command in its own `with-gpu-lock`,
+pinned to CPUs 32 to 47, one-minute load 1.4 to 3.8. The `frame_budget` binary was a release build of `main` at
+`90075ab`. For the resolution and diagnostics rows a temporary patch to `frame_budget/mod.rs` (reverted, never
+committed) read the window size from an environment variable and added `RenderDiagnosticsPlugin` with
+`LogDiagnosticsPlugin`. Logs: `~/scratch/logs/planwp6_*`; reports and the `perf` data under `~/scratch/planwp6/`.
+They are scratch files that may be cleaned at any time, so the tables below are the record.
+
+**Presentation alone, `vkcube` (a spinning cube; immediate present unless stated):**
+
+| Display path | Size | Frames | Wall time | Per frame |
+|---|---|---:|---:|---:|
+| Xvfb, `MESA_VK_WSI_DEBUG=sw` | 1280×720 | 300 | 32.7 s | about 105 ms |
+| Xvfb, `MESA_VK_WSI_DEBUG=sw` | 640×360 | 300 | 6.9 s | about 20 ms |
+| Xvfb, no `sw` | 1280×720 | none | fails: "No DRI3 support detected - required for presentation" | |
+| headless KWin, native Wayland WSI | 1280×720 | 20,000 | 2.8 s | 0.14 ms |
+| headless KWin, through its Xwayland (X11 WSI) | 1280×720 | 20,000 | 6.7 s | 0.33 ms |
+| headless KWin, Xwayland, FIFO | 1280×720 | 300 | 5.0 s | 16.8 ms (the virtual output's 60 Hz) |
+
+The software present path costs about 100 ms per 1280×720 frame and scales with the pixel count, so it is the CPU
+copy of each image out of VRAM into the X server. KWin's log shows OpenGL compositing on the RX 580 (radeonsi), and
+the client's frames reach it without a CPU copy.
+
+**`frame_budget`, release, 1280×720, `AutoNoVsync`, frame interval and main update in ms:**
+
+| Run | Display path | Frames | p50 | p95 | p99 | max | Update p50 | Simulation p50 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| 0 units, 300 frames | Xvfb, `sw` | 300 | 25.5 | 182.7 | 275.7 | 283.8 | 13.0 | 1.57 |
+| 0 units, WP5's run (load 15 to 31) | Xvfb, `sw` | 120 | 109.0 | 357.8 | 404.2 | 714.9 | 16.2 | 4.90 |
+| 400 units, WP5's full run | Xvfb, `sw` | 584 | 133.5 | 279.5 | 311.8 | 573.0 | 18.2 | 5.32 |
+| 0 units, full window | KWin | 4,938 | 12.3 | 15.2 | 16.4 | 26.2 | 10.8 | 0.07 |
+| 200 units, full window | KWin | 3,868 | 15.6 | 19.0 | 20.5 | 48.1 | 14.0 | 0.09 |
+| 400 units, full window | KWin | 3,692 | 16.0 | 21.3 | 23.6 | 68.1 | 14.0 | 0.10 |
+| 400 units, combat window of that run | KWin | 1,820 | 16.1 | 22.4 | 24.1 | 28.8 | 13.6 | 0.11 |
+| 400 units at 640×360 | KWin | 3,785 | 15.8 | 20.1 | 22.3 | 68.8 | 13.7 | 0.10 |
+| 400 units with render diagnostics | KWin | 3,641 | 16.3 | 21.4 | 23.7 | 71.6 | 14.0 | 0.11 |
+| 400 units under `perf record -F 997` | KWin | 3,411 | 17.3 | 22.8 | 25.7 | 74.1 | 15.1 | 0.13 |
+
+These are single runs at low load, not the figures of record; WP6 measures those. What they establish:
+
+1. **Xvfb's software present path measures the VM, not the game.** On that path the frame interval alternates
+   between about 17 ms and 180 to 290 ms: every other frame waits for the copy of the previous image. The median
+   then depends on load: 25 ms at load 2, 109 ms at load 15 to 31 (WP5), with nothing on the field.
+2. **Through KWin the client is CPU-bound in the main world.** At 400 units the main update takes 14.0 of the
+   16.0 ms frame. A quarter of the pixels changes the median by 1 % (15.8 ms). The GPU passes Bevy instruments add
+   up to about 3.2 ms per frame at 400 units: main opaque 2.18, shadows 0.56 (cascade 2: 0.39), main transparent
+   0.21, prepass 0.20. The smog volume, egui, post-processing and present are not instrumented.
+3. **The smog solver is the largest single cost, and it does not depend on the unit count.** In the `perf` run,
+   `client::smog::fluid::SmogGrid3d::step` took 20.6 % of all cycles (30,549 of 179,451 samples, on a compute-pool
+   thread). That is about 30.6 s of CPU over about 3,600 rendered frames, about 8.5 ms per frame. It explains most
+   of the 0-unit baseline's 10.8 ms update. The simulation itself is small: at 25 ticks per second most frames run
+   no tick, and the p95 is 3.2 ms at 400 units.
+4. **Bevy's default features leave out winit's `wayland` backend.** A native Wayland run fails with "DISPLAY is not
+   set; note: enable the wayland feature"; through KWin's Xwayland it works.
+
 ---
 
 ## 6. Risks
@@ -786,7 +997,9 @@ Findings that shape WP3:
 | Valgrind counts differ between identical runs (threads, hash seeds, lazy statics) | Single-threaded executor; two runs per F; WP3 step 1 stops cleanly and the claim stays Review |
 | Valgrind is too slow on CI | WP3 step 5: own job reusing the debug build; the paused-frame window keeps F small |
 | The shared GPU or server load makes frame figures noisy | Interleaved runs, load recorded per run, medians, minimum of three unloaded runs, load stated when not achieved |
-| Xvfb with software presentation inflates frame times | The 0-unit baseline is measured the same way; the evidence states the path; Q0015 option 3 |
+| Xvfb with software presentation inflates frame times | Measured (§5.3): about 100 ms per frame, so it is not used for the figures of record. WP6 measures through headless KWin; the report names its display path and refuses a contradicting environment (WP5b); Q0019 |
+| KWin exits 0 when the measured session fails | WP6 checks for the report file and for `frame_budget failed` in the log after every run |
+| A headless compositor differs from a player's desktop | The difference left is compositing at 60 Hz on the same GPU and no scan-out; Q0019 offers a desktop run with `--display-path desktop` |
 | 200 units per side do not fit the spawn ring | WP5's no-GPU integration test finds it first; the start cells are data |
 | The writer table lists systems whose access is wider than their real writes (`ResMut` taken but rarely written) | The table documents access, which is what Bevy enforces; a wide access is itself worth a reviewer's look |
 | The smoke run at 400 units is too slow on `lavapipe` within the harness's child limit | Lower `--measure-frames`, never the unit count |
@@ -798,6 +1011,10 @@ Findings that shape WP3:
 
 - [Q0015](../questions/open/0015-client-frame-time-target.md): the frame-time target. Default: measure and publish
   only.
+- [Q0018](../questions/open/0018-frame-budget-army-layout.md): the army layout of the scenarios. Default (a), eight
+  players on a circle.
+- [Q0019](../questions/open/0019-frame-budget-display-path.md): whether a headless KWin compositor on the RX 580 is
+  acceptable as the display path of record. Default: yes, labelled as such.
 - [Q0011](../questions/open/0011-allocation-counter-unsafe.md) stays open. This plan follows its default and adds an
   external count that needs no `unsafe` (D-2). The owner may still choose option 1 or 2, which would replace WP3's
   method, not its test's assertions.
