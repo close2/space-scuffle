@@ -217,6 +217,63 @@ fn submit_never_steps_and_prepared_bundle_preserves_order_and_queue_flag() -> Te
 }
 
 #[test]
+fn an_immediate_refusal_outlives_a_later_submission() -> TestResult {
+    let (world, mut queue, id, owner) = fixture()?;
+    assert_eq!(queue.latest_refusal(), None);
+
+    queue.reject(&SubmissionError::NoDestination);
+    assert_eq!(
+        queue.latest_refusal(),
+        Some((1, &SubmissionError::NoDestination))
+    );
+    assert_eq!(
+        queue.status(),
+        "Order rejected: there is no walkable ground there"
+    );
+
+    queue.submit(&world, command(id, owner, UnitOrder::HoldPosition, false))?;
+    assert_eq!(queue.status(), "1 order queued");
+    assert_eq!(
+        queue.latest_refusal(),
+        Some((1, &SubmissionError::NoDestination)),
+        "routine progress must not hide a refusal"
+    );
+
+    queue.reject(&SubmissionError::NoDestination);
+    assert_eq!(
+        queue.latest_refusal(),
+        Some((2, &SubmissionError::NoDestination)),
+        "a repeated refusal is a new one"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_revalidation_failure_is_reported_per_player_and_not_as_a_refusal() -> TestResult {
+    let (mut world, mut queue, id, owner) = fixture()?;
+    queue.submit(&world, command(id, owner, UnitOrder::HoldPosition, false))?;
+    world.match_state.result = MatchResult::Draw { tick: Tick(0) };
+
+    let (mut input, mut sequences, mut rejected) = (bundle(), Vec::new(), Vec::new());
+    queue.prepare_tick(&world, &mut input, &mut sequences, &mut rejected)?;
+
+    assert_eq!(rejected.len(), 1);
+    assert_eq!(rejected[0].player, owner);
+    assert_eq!(queue.status(), "Order rejected: the match is over");
+    assert_eq!(queue.latest_refusal(), None);
+    Ok(())
+}
+
+#[test]
+fn a_new_session_forgets_its_refusals() -> TestResult {
+    let (_, mut queue, _, _) = fixture()?;
+    queue.reject(&SubmissionError::NoDestination);
+    queue.activate(SessionGeneration::FIRST.next()?)?;
+    assert_eq!(queue.latest_refusal(), None);
+    Ok(())
+}
+
+#[test]
 fn dead_or_foreign_captured_actor_is_rejected_without_substitution() -> TestResult {
     for foreign in [false, true] {
         let (mut world, mut queue, id, owner) = fixture()?;

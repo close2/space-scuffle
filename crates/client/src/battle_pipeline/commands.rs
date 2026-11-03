@@ -133,6 +133,9 @@ pub struct BattleCommandQueue {
     next_sequence: u64,
     pending: VecDeque<PendingCommand>,
     status: String,
+    /// How many submissions [`Self::reject`] has recorded this session.
+    refusals: u64,
+    latest_refusal: Option<SubmissionError>,
 }
 
 impl BattleCommandQueue {
@@ -146,6 +149,8 @@ impl BattleCommandQueue {
         self.generation = Some(generation);
         self.pending.clear();
         self.status.clear();
+        self.refusals = 0;
+        self.latest_refusal = None;
         Ok(())
     }
 
@@ -176,12 +181,26 @@ impl BattleCommandQueue {
 
     /// Records an immediate UI/controller rejection without changing the simulation.
     pub fn reject(&mut self, error: &SubmissionError) {
+        self.write_rejection_status(error);
+        self.refusals = self.refusals.saturating_add(1);
+        self.latest_refusal = Some(error.clone());
+    }
+
+    /// The latest refusal of [`Self::reject`], with a serial that changes on each one.
+    ///
+    /// [`Self::status`] cannot tell a consumer this: it also reports routine progress, and a
+    /// later submission overwrites it. Revalidation failures are not included, because they are
+    /// reported per player as [`RejectedSubmission`] records.
+    #[must_use]
+    pub fn latest_refusal(&self) -> Option<(u64, &SubmissionError)> {
+        self.latest_refusal
+            .as_ref()
+            .map(|error| (self.refusals, error))
+    }
+
+    fn write_rejection_status(&mut self, error: &SubmissionError) {
         self.status.clear();
-        let _ = write!(
-            self.status,
-            "Order rejected: {}",
-            super::status::submission_reason(error)
-        );
+        super::status::write_submission_rejection(&mut self.status, error);
     }
 
     /// Captures a complete command in FIFO order without advancing the world.
@@ -331,7 +350,7 @@ impl BattleCommandQueue {
                 Err(SubmissionError::StaleGeneration)
             };
             if let Err(reason) = result {
-                self.reject(&reason);
+                self.write_rejection_status(&reason);
                 rejected.push(RejectedSubmission {
                     generation: pending.generation,
                     sequence: pending.sequence,

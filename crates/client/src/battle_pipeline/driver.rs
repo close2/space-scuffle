@@ -35,6 +35,12 @@ impl AdmissionOutcome {
             Self::Game(value) => (value.tick, value.command_index, value.player),
         }
     }
+
+    /// The player who issued the command this outcome answers.
+    #[must_use]
+    pub fn player(&self) -> sim_types::PlayerId {
+        self.identity().2
+    }
 }
 
 /// Authoritative outcome tied to the exact local submission and committed world.

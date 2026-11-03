@@ -24,6 +24,11 @@ pub(super) fn write_order_count(output: &mut String, count: usize, action: &str)
     let _ = write!(output, "{count} order{suffix} {action}");
 }
 
+/// Appends the sentence for an order the client refused, whether at once or on its tick.
+pub fn write_submission_rejection(output: &mut String, error: &SubmissionError) {
+    let _ = write!(output, "Order rejected: {}", submission_reason(error));
+}
+
 /// Returns a player-facing cause without exposing retained diagnostic identities.
 pub(super) fn submission_reason(error: &SubmissionError) -> &'static str {
     match error {
@@ -266,7 +271,7 @@ pub fn write_task_event(output: &mut String, kind: &TaskEventKind) {
 }
 
 /// Appends the admission result; callers clear cached output before replacement.
-pub(super) fn write_outcome(output: &mut String, outcome: &AdmissionOutcome) {
+pub fn write_outcome(output: &mut String, outcome: &AdmissionOutcome) {
     match outcome {
         AdmissionOutcome::Movement(outcome) => match &outcome.result {
             Ok(receipt) => {
