@@ -18,6 +18,8 @@
 //! - At most [`FEED_LINES`] lines exist, and a new line replaces the oldest.
 //! - Each piece of evidence is reported once. The session lists hold the evidence of the latest
 //!   ticks, so they are read only when the tick has changed.
+//! - A run of equal refusals from one tick's revalidation is one line, so the end of a match does
+//!   not flood the feed. Separate refusals of the player's own gestures stay separate lines.
 //! - Nothing of another player reaches a line.
 //! - Accepted orders are not reported: a working order needs no message.
 
@@ -129,9 +131,13 @@ impl BattleFeed {
             return;
         }
         self.seen_tick = tick;
+        let mut previous = None;
         for rejected in session.rejected.iter().filter(|r| r.player == viewer) {
-            let line = self.begin_line(FeedTone::Refusal, now);
-            status::write_submission_rejection(line, &rejected.reason);
+            if previous != Some(&rejected.reason) {
+                let line = self.begin_line(FeedTone::Refusal, now);
+                status::write_submission_rejection(line, &rejected.reason);
+            }
+            previous = Some(&rejected.reason);
         }
         for notice in session
             .notices
