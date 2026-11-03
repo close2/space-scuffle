@@ -1351,6 +1351,12 @@ Relative links only. It states what exists, not what was once hoped for; intent 
   `step_bouncing_kinematics` (`crates/client/src/smog/kinematics.rs`) never adds its contacts to the returned
   `peer_bounces` count, so it reports 0 every step; each bubble's own counter is correct.
   `kinematics_all_pairs_fallback_golden` pins today's value, so the fix changes that golden deliberately.
+- **Found after WP7, a host dependence in the goldens:** the WP7 smog goldens hashed `f32` results of the host's
+  `libm`, so glibc 2.39 on CI failed five of them on `atan2f` alone. Fixed by
+  [`2026-11-03-host-independent-smog-goldens.md`](2026-11-03-host-independent-smog-goldens.md): the kinematics
+  goldens no longer hash any `libm` result, and the fluid, startup, noise and system goldens name the `libm`
+  functions they depend on, with a canary. Making those host-independent changes smog output, so it is
+  [Q0014](../questions/open/0014-host-independent-smog-math.md), after Phase 9.
 
 ## 10. Decisions for the owner
 

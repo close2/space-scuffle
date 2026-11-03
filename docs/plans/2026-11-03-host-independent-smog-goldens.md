@@ -264,6 +264,54 @@ runner image, macOS or Windows could fail them, and the canary would show why. O
 - Recommendation: (b), as a separate plan after Phase 9, which allows no behaviour change.
 - **Default until answered:** (a), with the canary.
 
+## Implementation record (2026-11-03)
+
+Implemented as written, tests only, with these differences:
+
+- **Question number.** Q0012 and Q0013 were taken by other work in flight, so the question is
+  [Q0014](../questions/open/0014-host-independent-smog-math.md). Read Q0014 wherever this plan says Q0012.
+- **Showcase relations use the spawn state, not `initial_bouncing_bubbles`.** `setup_smog_volume_system` spawns the
+  showcase from `prewarm_smog_field`, which steps the initial bubbles 26 times at 1/30 s, so the spawn heading and
+  aim are `atan2f` of the pre-warmed velocity, not the initial heading. `check_showcase_headings` therefore checks:
+  unstepped, heading bits equal aim bits equal `atan2f` of the bubble's velocity, and the rotation is
+  `Quat::IDENTITY`; stepped, aim bits equal the spawn aim recorded after the startup frame, heading equals `atan2f` of
+  the velocity, and the rotation equals `Quat::from_rotation_y(-heading)`. It also asserts every showcase bubble moves
+  faster than `1e-4` horizontally (the relation's previous-heading branch would compare against a production value
+  read back through `to_euler`), that the instance velocity equals the bubble's, and that the material uniform keeps
+  the spawn heading as heading and aim, because the hash zeroes those two uniform fields.
+- **All four noise-image fields moved.** Bytes, descriptor, sampler and usage of the noise image are hashed by
+  `smog_noise_texture_golden` alone; the startup golden hashes the density and velocity images and the material.
+- **`fluid_mixed_sources_golden` and `fluid_crowd_golden` use `crowd_lattice(.., table)`.** Their constants did not
+  change, as the plan requires.
+
+Constants: every new constant printed identically at `9dbf715` (this file and `support/smog_crowd_trig.rs` copied in
+unchanged, compiled without edits) and on `main` at `3f57fec`. The fluid constants are unchanged. The trig table
+equals this host's trig exactly (largest gap 0 ulp).
+
+Perturbation matrix (shim, appendix A), failing tests per perturbed function:
+
+| Perturbed | Failing |
+|---|---|
+| none | none |
+| all | fluid showcase, mixed, crowd; startup; noise; visual lab; swarm; live battle; canary (9 of 15) |
+| `atan2f`, `asinf`, `cosf`, `sincosf` | none |
+| `sinf` | fluid mixed, fluid crowd, canary |
+| `expf` | fluid showcase, mixed, crowd; startup; visual lab; swarm; live battle; canary |
+| `powf` | startup; noise; visual lab; swarm; live battle; canary |
+
+The four kinematics goldens, `crowd_generator_matches_lattice` and `crowd_trig_table_matches_host` pass under every
+row. Each class-L test fails only under functions its doc comment names (the noise, swarm and live-battle goldens
+absorb a one-ulp `sinf` or `cosf` change through `u8` quantisation or colour clamping). `nm -D --undefined-only`
+lists `asinf`, `atan2f`, `cosf`, `sincosf`, `sinf` (`GLIBC_2.2.5`), `expf` and `powf` (`GLIBC_2.27`) as dynamic
+imports of the test binary.
+
+Second target: `cargo test -p client --test smog_golden_tests --target wasm32-wasip1 --no-run` was tried once and
+does not build: `winit` 0.30.13 stops with "The platform you're compiling for is not supported by winit". No
+cross-target result exists; CI (glibc 2.39) remains the second host.
+
+Mutation red runs: all six failed the named tests. The heading-sync mutation also fails the startup, swarm and
+live-battle goldens through the unstepped showcase relation, because the pre-warm syncs headings too.
+
 ## Appendix A: perturbation shim
 
 A built copy is at `~/scratch/smoggold_shim/smoggold_perturb.so` (source beside it). Build it with `gcc -O2 -shared -fPIC -fno-builtin -o ~/scratch/smoggold_perturb.so smoggold_perturb.c -ldl -lm`
