@@ -97,9 +97,9 @@ Because this codebase serves as a teaching example for large-scale architecture:
   - Mechanics (e.g., stim/overclock, harvesting, detectors) must be queried via optional capability components on `UnitArchetype` (`Option<OverclockSpec>`, `Option<HarvesterSpec>`), never by branching on specific `UnitTypeId`s.
 - **Dynamic Asset Loading & Zero Per-Frame Allocations:**
   - The client and asset baker discover flipbooks and catalog entries at run time.
-  - Battle and preview synchronization systems allocate nothing in steady state and use no O(N²) search. [Review;
-    CI checks only that retained buffers are reused, in `battle_hud_tests.rs` and `battle_result_tests.rs`; a
-    counting-allocator test awaits the owner's answer to `docs/questions/open/0011-allocation-counter-unsafe.md`]
+  - Battle and preview synchronization systems allocate nothing in steady state and use no O(N²) search. [CI:
+    `sync_allocation_count_tests.rs` (counted by valgrind for the live battle sync), `sync_steady_state_tests.rs`
+    (assets, entities, retained buffers); Review for the rest]
 
 ---
 
