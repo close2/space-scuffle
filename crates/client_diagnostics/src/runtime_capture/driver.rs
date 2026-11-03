@@ -12,14 +12,17 @@ use super::{
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use bevy::time::TimeUpdateStrategy;
-use client::runtime_battle::{BattleSceneRoot, MapPresentation};
-use client::{BubbleInstance, LabPreviewBubble, LabState, LabTab, LiveBattleBubble, RtsCamera};
+use client::{BubbleInstance, LabState, LabTab, LiveBattleBubble, RtsCamera};
 use sim_types::{EntityId, SimScalar, SimVec2};
 use std::{
     collections::BTreeMap,
     path::PathBuf,
     time::{Duration, Instant},
 };
+
+mod verify;
+
+use verify::verify_frame;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Stage {
@@ -310,125 +313,14 @@ pub(super) fn control(world: &mut World) {
     });
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "a single ordered sequence that shares its local state"
-)]
+/// One control step: applies a newly entered checkpoint, keeps gameplay frozen while
+/// waiting, and holds the camera on the settling focus.
 fn control_inner(world: &mut World, session: &mut Session) -> Result<(), CaptureError> {
     if matches!(session.stage, Stage::Complete | Stage::Failed) {
         return Ok(());
     }
-    if session.stage == Stage::Apply {
-        freeze(world);
-        session.settled = 0;
-        session.focus = None;
-        session.subject = None;
-        session.combat_proofs.clear();
-        session.deadline = Instant::now();
-        let goal = session.goal();
-        if goal == Goal::RampEntry {
-            session.ramp_generation = world
-                .resource::<client::battle_pipeline::session::BattleSession>()
-                .commands
-                .generation()
-                .map(client::battle_pipeline::commands::SessionGeneration::value);
-        }
-        match goal {
-            Goal::NeutralWatchtower
-            | Goal::Swarm
-            | Goal::EffectHitscan
-            | Goal::EffectProjectile
-            | Goal::EffectLaser
-            | Goal::EffectLightning
-            | Goal::EffectLightningMiddle
-            | Goal::EffectLightningLate
-            | Goal::EffectMelee
-            | Goal::EffectShatter => {
-                session.focus = session
-                    .ownership
-                    .as_mut()
-                    .ok_or_else(|| failure("ownership profile state missing"))?
-                    .apply(world, goal.ownership_view(), goal.effect_elapsed())?;
-                session.stage = Stage::Settle;
-            }
-            Goal::CargoBefore | Goal::CargoLoaded | Goal::CargoUnloaded => {
-                let mut pipeline =
-                    world.resource_mut::<client::battle_pipeline::session::BattleSession>();
-                let simulation = pipeline
-                    .world_mut()
-                    .ok_or_else(|| failure("transport simulation missing"))?;
-                if goal == Goal::CargoBefore {
-                    let spec = session
-                        .script
-                        .transport
-                        .as_ref()
-                        .ok_or_else(|| failure("transport script specification missing"))?;
-                    session.transport =
-                        Some(super::transport::TransportState::select(simulation, spec)?);
-                } else {
-                    session
-                        .transport
-                        .as_mut()
-                        .ok_or_else(|| failure("transport selection missing"))?
-                        .apply(simulation, goal)?;
-                }
-                session.subject = Some(
-                    session
-                        .transport
-                        .as_ref()
-                        .ok_or_else(|| failure("transport selection missing"))?
-                        .carrier(),
-                );
-                session.focus = Some(Vec2::from_array(session.script.overview_focus));
-                session.start_tick = simulation.current_tick;
-                session.last_tick = simulation.current_tick;
-                if goal == Goal::CargoBefore {
-                    session.stage = Stage::Settle;
-                } else {
-                    world.resource_mut::<LabState>().battle_paused = false;
-                    *world.resource_mut::<TimeUpdateStrategy>() =
-                        TimeUpdateStrategy::ManualDuration(Duration::from_millis(40));
-                    session.stage = Stage::Advancing;
-                    return Ok(());
-                }
-            }
-            Goal::Overview | Goal::Reset => {
-                session.focus = Some(Vec2::from_array(session.script.overview_focus));
-                if goal == Goal::Reset {
-                    world.resource_mut::<LabState>().battle_reset_requested = true;
-                }
-                session.stage = Stage::Settle;
-            }
-            Goal::Lab => {
-                session.saved_camera = Some(camera(world)?.0);
-                session.saved_checksum = world
-                    .resource::<client::battle_pipeline::session::BattleSession>()
-                    .world()
-                    .map(sim_core::SimWorld::compute_checksum);
-                world.resource_mut::<LabState>().current_tab = LabTab::VisualLab;
-                session.stage = Stage::Settle;
-            }
-            Goal::Return => {
-                world.resource_mut::<LabState>().current_tab = LabTab::LiveBattle;
-                session.stage = Stage::Settle;
-            }
-            Goal::RampEntry | Goal::RampExit | Goal::Combat => {
-                let pipeline = world.resource::<client::battle_pipeline::session::BattleSession>();
-                let simulation = pipeline
-                    .world()
-                    .ok_or_else(|| failure("battle disappeared"))?;
-                session.start_tick = simulation.current_tick;
-                session.last_tick = simulation.current_tick;
-                update_prior(simulation, &mut session.prior)?;
-                world.resource_mut::<LabState>().battle_paused = false;
-                *world.resource_mut::<TimeUpdateStrategy>() =
-                    TimeUpdateStrategy::ManualDuration(Duration::from_millis(40));
-                session.stage = Stage::Advancing;
-                // TimeUpdateStrategy applies next frame; no step is expected yet.
-                session.start_tick = simulation_tick(world)?;
-                return Ok(());
-            }
-        }
+    if session.stage == Stage::Apply && apply_checkpoint(world, session)? == Applied::Advancing {
+        return Ok(());
     }
     if matches!(
         session.stage,
@@ -436,6 +328,149 @@ fn control_inner(world: &mut World, session: &mut Session) -> Result<(), Capture
     ) {
         freeze(world);
     }
+    settle_camera(world, session)
+}
+
+/// What applying a checkpoint left the driver doing.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Applied {
+    /// The checkpoint waits for its frame to settle under frozen gameplay.
+    Settling,
+    /// Gameplay was resumed so the simulation can advance to the checkpoint's condition.
+    Advancing,
+}
+
+/// Freezes gameplay, clears the previous checkpoint's per-goal state, and performs the
+/// production action of the current goal.
+fn apply_checkpoint(world: &mut World, session: &mut Session) -> Result<Applied, CaptureError> {
+    freeze(world);
+    session.settled = 0;
+    session.focus = None;
+    session.subject = None;
+    session.combat_proofs.clear();
+    session.deadline = Instant::now();
+    let goal = session.goal();
+    if goal == Goal::RampEntry {
+        session.ramp_generation = world
+            .resource::<client::battle_pipeline::session::BattleSession>()
+            .commands
+            .generation()
+            .map(client::battle_pipeline::commands::SessionGeneration::value);
+    }
+    match goal {
+        Goal::NeutralWatchtower
+        | Goal::Swarm
+        | Goal::EffectHitscan
+        | Goal::EffectProjectile
+        | Goal::EffectLaser
+        | Goal::EffectLightning
+        | Goal::EffectLightningMiddle
+        | Goal::EffectLightningLate
+        | Goal::EffectMelee
+        | Goal::EffectShatter => {
+            session.focus = session
+                .ownership
+                .as_mut()
+                .ok_or_else(|| failure("ownership profile state missing"))?
+                .apply(world, goal.ownership_view(), goal.effect_elapsed())?;
+            session.stage = Stage::Settle;
+        }
+        Goal::CargoBefore | Goal::CargoLoaded | Goal::CargoUnloaded => {
+            return apply_cargo(world, session, goal);
+        }
+        Goal::Overview | Goal::Reset => {
+            session.focus = Some(Vec2::from_array(session.script.overview_focus));
+            if goal == Goal::Reset {
+                world.resource_mut::<LabState>().battle_reset_requested = true;
+            }
+            session.stage = Stage::Settle;
+        }
+        Goal::Lab => {
+            session.saved_camera = Some(camera(world)?.0);
+            session.saved_checksum = world
+                .resource::<client::battle_pipeline::session::BattleSession>()
+                .world()
+                .map(sim_core::SimWorld::compute_checksum);
+            world.resource_mut::<LabState>().current_tab = LabTab::VisualLab;
+            session.stage = Stage::Settle;
+        }
+        Goal::Return => {
+            world.resource_mut::<LabState>().current_tab = LabTab::LiveBattle;
+            session.stage = Stage::Settle;
+        }
+        Goal::RampEntry | Goal::RampExit | Goal::Combat => {
+            let pipeline = world.resource::<client::battle_pipeline::session::BattleSession>();
+            let simulation = pipeline
+                .world()
+                .ok_or_else(|| failure("battle disappeared"))?;
+            session.start_tick = simulation.current_tick;
+            session.last_tick = simulation.current_tick;
+            update_prior(simulation, &mut session.prior)?;
+            resume(world, session);
+            // TimeUpdateStrategy applies next frame; no step is expected yet.
+            session.start_tick = simulation_tick(world)?;
+            return Ok(Applied::Advancing);
+        }
+    }
+    Ok(Applied::Settling)
+}
+
+/// Selects the transport participants (before) or performs the real typed load or unload
+/// transaction, then frames the fixed overview. The before checkpoint settles; a
+/// transaction resumes gameplay so its tick is published.
+fn apply_cargo(
+    world: &mut World,
+    session: &mut Session,
+    goal: Goal,
+) -> Result<Applied, CaptureError> {
+    let mut pipeline = world.resource_mut::<client::battle_pipeline::session::BattleSession>();
+    let simulation = pipeline
+        .world_mut()
+        .ok_or_else(|| failure("transport simulation missing"))?;
+    if goal == Goal::CargoBefore {
+        let spec = session
+            .script
+            .transport
+            .as_ref()
+            .ok_or_else(|| failure("transport script specification missing"))?;
+        session.transport = Some(super::transport::TransportState::select(simulation, spec)?);
+    } else {
+        session
+            .transport
+            .as_mut()
+            .ok_or_else(|| failure("transport selection missing"))?
+            .apply(simulation, goal)?;
+    }
+    session.subject = Some(
+        session
+            .transport
+            .as_ref()
+            .ok_or_else(|| failure("transport selection missing"))?
+            .carrier(),
+    );
+    session.focus = Some(Vec2::from_array(session.script.overview_focus));
+    session.start_tick = simulation.current_tick;
+    session.last_tick = simulation.current_tick;
+    if goal == Goal::CargoBefore {
+        session.stage = Stage::Settle;
+        Ok(Applied::Settling)
+    } else {
+        resume(world, session);
+        Ok(Applied::Advancing)
+    }
+}
+
+/// Unpauses the battle with a fixed 40 ms virtual frame step and enters `Advancing`.
+fn resume(world: &mut World, session: &mut Session) {
+    world.resource_mut::<LabState>().battle_paused = false;
+    *world.resource_mut::<TimeUpdateStrategy>() =
+        TimeUpdateStrategy::ManualDuration(Duration::from_millis(40));
+    session.stage = Stage::Advancing;
+}
+
+/// While settling, lets an ownership goal refine its focus, then points the production
+/// camera at the focus from the checkpoint's distance in world units.
+fn settle_camera(world: &mut World, session: &mut Session) -> Result<(), CaptureError> {
     if session.stage == Stage::Settle && session.goal().is_ownership() {
         let view = session.goal().ownership_view();
         if let Some(focus) = session
@@ -507,18 +542,47 @@ pub(super) fn observe(world: &mut World) {
     });
 }
 
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "capture coordinates are bounded by the window size and frame budget"
-)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "a single ordered sequence that shares its local state"
-)]
+/// One observation step: checks every failure source and the wait budgets, then advances
+/// the stage that is waiting on this frame.
 fn observe_inner(world: &mut World, session: &mut Session) -> Result<(), CaptureError> {
     if matches!(session.stage, Stage::Complete | Stage::Failed) {
         return Ok(());
     }
+    observe_failures(world, session)?;
+    session.frames += 1;
+    check_wait_budgets(world, session)?;
+    if world.resource::<PipelineEvidence>().failed() {
+        return Err(failure("production GPU pipeline failed"));
+    }
+    let lab = world.resource::<LabState>();
+    if let Some(error) = &lab.battle_failure {
+        return Err(failure(error.clone()));
+    }
+    let Some(simulation) = world
+        .resource::<client::battle_pipeline::session::BattleSession>()
+        .world()
+    else {
+        return Ok(());
+    };
+    if !simulation.diagnostics().is_empty() {
+        return Err(failure(format!(
+            "simulation diagnostics: {:?}",
+            simulation.diagnostics()
+        )));
+    }
+    match session.stage {
+        Stage::AuditDrain => finish_audit(world, session),
+        Stage::Loading => observe_loading(simulation, session),
+        Stage::Advancing => observe_advancing(world, session),
+        Stage::Settle => observe_settle(world, session),
+        Stage::Apply | Stage::Readback | Stage::Complete | Stage::Failed => Ok(()),
+    }
+}
+
+/// Surfaces failures reported by the shell audit, media loading, the transport and player
+/// presentation, records ownership effects, and requires a frozen frame to stay frozen while
+/// its screenshot or audit is pending.
+fn observe_failures(world: &mut World, session: &mut Session) -> Result<(), CaptureError> {
     if let Some(audit) = world.get_resource::<crate::shell_order_audit::AuditBridge>() {
         audit.failure()?;
     }
@@ -557,7 +621,12 @@ fn observe_inner(world: &mut World, session: &mut Session) -> Result<(), Capture
                 .verify(&super::ownership::Fingerprint::capture(world)?)?;
         }
     }
-    session.frames += 1;
+    Ok(())
+}
+
+/// Fails once the rendered-frame budget, the per-checkpoint wall deadline or the whole-run
+/// wall deadline (seconds per checkpoint times the checkpoint count) is exceeded.
+fn check_wait_budgets(world: &World, session: &Session) -> Result<(), CaptureError> {
     if session.frames > session.script.max_frames
         || session.deadline.elapsed().as_secs() > session.script.timeout_seconds
         || session.run_started.elapsed().as_secs()
@@ -570,132 +639,131 @@ fn observe_inner(world: &mut World, session: &mut Session) -> Result<(), Capture
             simulation_tick(world)
         )));
     }
-    if world.resource::<PipelineEvidence>().failed() {
-        return Err(failure("production GPU pipeline failed"));
+    Ok(())
+}
+
+/// During rendering warmup the simulation must still be at tick 0 and the overview focus
+/// inside the map; the loaded state is then recorded as the scenario baseline.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "capture coordinates are bounded by the window size and frame budget"
+)]
+fn observe_loading(
+    simulation: &sim_core::SimWorld,
+    session: &mut Session,
+) -> Result<(), CaptureError> {
+    if simulation.current_tick != 0 {
+        return Err(failure(
+            "startup advanced simulation during rendering warmup",
+        ));
     }
-    let lab = world.resource::<LabState>();
-    if let Some(error) = &lab.battle_failure {
-        return Err(failure(error.clone()));
+    if session.script.overview_focus[0] >= simulation.map.width() as f32 - 0.5
+        || session.script.overview_focus[1] >= simulation.map.height() as f32 - 0.5
+    {
+        return Err(failure("overview focus is outside the selected map"));
     }
-    let Some(simulation) = world
-        .resource::<client::battle_pipeline::session::BattleSession>()
-        .world()
-    else {
+    session.initial_entities = simulation.entities.clone();
+    session.initial_checksum = Some(simulation.compute_checksum());
+    session.stage = Stage::Apply;
+    Ok(())
+}
+
+/// Follows the simulation one tick at a time until the goal's condition selects a subject,
+/// then freezes and settles on it; fails if a tick is skipped or the tick budget runs out.
+fn observe_advancing(world: &mut World, session: &mut Session) -> Result<(), CaptureError> {
+    let tick = simulation_tick(world)?;
+    if tick == session.last_tick {
         return Ok(());
-    };
-    if !simulation.diagnostics().is_empty() {
+    } // first frame after enabling manual time
+    if tick != session.last_tick + 1 {
         return Err(failure(format!(
-            "simulation diagnostics: {:?}",
-            simulation.diagnostics()
+            "capture tick skipped: {} -> {tick}",
+            session.last_tick
         )));
     }
-    if session.stage == Stage::AuditDrain {
-        return finish_audit(world, session);
+    session.last_tick = tick;
+    let selected = if session.goal().is_transport() {
+        Some(
+            session
+                .transport
+                .as_ref()
+                .ok_or_else(|| failure("transport selection missing"))?
+                .carrier(),
+        )
+    } else if session.goal() == Goal::Combat {
+        correlated_combat(world, session)?
+    } else {
+        let simulation = world
+            .resource::<client::battle_pipeline::session::BattleSession>()
+            .world()
+            .ok_or_else(|| failure("battle disappeared"))?;
+        condition(simulation, session)?
+    };
+    update_prior(
+        world
+            .resource::<client::battle_pipeline::session::BattleSession>()
+            .world()
+            .ok_or_else(|| failure("battle disappeared"))?,
+        &mut session.prior,
+    )?;
+    if let Some(id) = selected {
+        session.subject = Some(id);
+        if !session.goal().is_transport() {
+            session.focus = Some(render_position(world, id)?);
+        }
+        session.settled = 0;
+        session.stage = Stage::Settle;
+        freeze(world);
+    } else if tick - session.start_tick >= session.script.checkpoints[session.index].max_ticks {
+        return Err(failure(format!(
+            "{:?} condition did not occur within tick budget",
+            session.goal()
+        )));
     }
-    if session.stage == Stage::Loading {
-        if simulation.current_tick != 0 {
-            return Err(failure(
-                "startup advanced simulation during rendering warmup",
-            ));
-        }
-        if session.script.overview_focus[0] >= simulation.map.width() as f32 - 0.5
-            || session.script.overview_focus[1] >= simulation.map.height() as f32 - 0.5
-        {
-            return Err(failure("overview focus is outside the selected map"));
-        }
-        session.initial_entities = simulation.entities.clone();
-        session.initial_checksum = Some(simulation.compute_checksum());
-        session.stage = Stage::Apply;
+    Ok(())
+}
+
+/// Once the frame has settled, verifies it and requests the screenshot readback, arming the
+/// shell audit first at the Swarm checkpoint.
+fn observe_settle(world: &mut World, session: &mut Session) -> Result<(), CaptureError> {
+    let sample_ready = if let super::ownership::View::Effect(kind) = session.goal().ownership_view()
+    {
+        session
+            .ownership
+            .as_ref()
+            .ok_or_else(|| failure("effect state missing"))?
+            .sample_ready(world, kind)?
+    } else {
+        true
+    };
+    if !session.settled_for_verification(sample_ready) {
         return Ok(());
     }
-    if session.stage == Stage::Advancing {
-        let tick = simulation.current_tick;
-        if tick == session.last_tick {
-            return Ok(());
-        } // first frame after enabling manual time
-        if tick != session.last_tick + 1 {
-            return Err(failure(format!(
-                "capture tick skipped: {} -> {tick}",
-                session.last_tick
-            )));
-        }
-        session.last_tick = tick;
-        let selected = if session.goal().is_transport() {
-            Some(
-                session
-                    .transport
-                    .as_ref()
-                    .ok_or_else(|| failure("transport selection missing"))?
-                    .carrier(),
-            )
-        } else if session.goal() == Goal::Combat {
-            correlated_combat(world, session)?
-        } else {
-            condition(simulation, session)?
-        };
-        update_prior(
+    if let Some(record) = verify_frame(world, session)? {
+        let audit = if session.goal() == Goal::Swarm {
             world
-                .resource::<client::battle_pipeline::session::BattleSession>()
-                .world()
-                .ok_or_else(|| failure("battle disappeared"))?,
-            &mut session.prior,
-        )?;
-        if let Some(id) = selected {
-            session.subject = Some(id);
-            if !session.goal().is_transport() {
-                session.focus = Some(render_position(world, id)?);
+                .get_resource::<crate::shell_order_audit::AuditBridge>()
+                .cloned()
+        } else {
+            None
+        };
+        let nonce = if let Some(audit) = &audit {
+            if !audit.ready()? {
+                return Ok(());
             }
-            session.settled = 0;
-            session.stage = Stage::Settle;
-            freeze(world);
-        } else if tick - session.start_tick >= session.script.checkpoints[session.index].max_ticks {
-            return Err(failure(format!(
-                "{:?} condition did not occur within tick budget",
-                session.goal()
-            )));
+            Some(audit.arm()?)
+        } else {
+            None
+        };
+        let entity = world
+            .spawn(Screenshot::primary_window())
+            .observe(readback)
+            .id();
+        if let (Some(audit), Some(nonce)) = (audit, nonce) {
+            audit.bind(nonce, entity)?;
         }
-        return Ok(());
-    }
-    if session.stage == Stage::Settle {
-        let sample_ready =
-            if let super::ownership::View::Effect(kind) = session.goal().ownership_view() {
-                session
-                    .ownership
-                    .as_ref()
-                    .ok_or_else(|| failure("effect state missing"))?
-                    .sample_ready(world, kind)?
-            } else {
-                true
-            };
-        if !session.settled_for_verification(sample_ready) {
-            return Ok(());
-        }
-        if let Some(record) = verify_frame(world, session)? {
-            let audit = if session.goal() == Goal::Swarm {
-                world
-                    .get_resource::<crate::shell_order_audit::AuditBridge>()
-                    .cloned()
-            } else {
-                None
-            };
-            let nonce = if let Some(audit) = &audit {
-                if !audit.ready()? {
-                    return Ok(());
-                }
-                Some(audit.arm()?)
-            } else {
-                None
-            };
-            let entity = world
-                .spawn(Screenshot::primary_window())
-                .observe(readback)
-                .id();
-            if let (Some(audit), Some(nonce)) = (audit, nonce) {
-                audit.bind(nonce, entity)?;
-            }
-            session.pending = Some((entity, record));
-            session.stage = Stage::Readback;
-        }
+        session.pending = Some((entity, record));
+        session.stage = Stage::Readback;
     }
     Ok(())
 }
@@ -971,410 +1039,6 @@ fn displayed_contact(
             (proof.victim_position, proof.victim_owner),
             (proof.source_position, proof.source_owner),
         )
-}
-
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "capture coordinates are bounded by the window size and frame budget"
-)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "a single ordered sequence that shares its local state"
-)]
-fn verify_frame(world: &mut World, session: &mut Session) -> Result<Option<Record>, CaptureError> {
-    let goal = session.goal();
-    let pipeline = world.resource::<client::battle_pipeline::session::BattleSession>();
-    let simulation = pipeline
-        .world()
-        .ok_or_else(|| failure("battle missing during capture"))?;
-    let tick = simulation.current_tick;
-    let checksum = simulation.compute_checksum();
-    let entities = simulation
-        .entities
-        .values()
-        .filter(|actor| actor.is_alive() && !actor.is_loaded_in_transport())
-        .count();
-    if matches!(goal, Goal::Overview | Goal::Reset)
-        && (tick != 0
-            || Some(checksum) != session.initial_checksum
-            || simulation.entities != session.initial_entities)
-    {
-        return Err(failure(
-            "initial/reset logical state differs from the loaded scenario",
-        ));
-    }
-    if matches!(goal, Goal::Lab | Goal::Return) && Some(checksum) != session.saved_checksum {
-        return Err(failure("tab transition changed paused battle state"));
-    }
-    let pipeline = world.resource::<client::battle_pipeline::session::BattleSession>();
-    if pipeline.frames.presented().tick.0 != tick {
-        return Err(failure(
-            "paused capture pose does not identify the current authoritative tick",
-        ));
-    }
-    let lab_goal = goal.is_preview();
-    let expected_tab = if goal == Goal::Swarm {
-        LabTab::SwarmStressTest
-    } else if lab_goal {
-        LabTab::VisualLab
-    } else {
-        LabTab::LiveBattle
-    };
-    if world.resource::<LabState>().current_tab != expected_tab {
-        return Err(failure("production tab transition did not occur"));
-    }
-    let map = world.resource::<client::terrain::TerrainState>();
-    if map.map.cells() != simulation.map.cells() {
-        return Err(failure("render terrain differs from simulation map"));
-    }
-    let (camera_state, transform) = camera(world)?;
-    let expected = if goal == Goal::Lab {
-        RtsCamera::hero_framing()
-    } else if goal == Goal::Return {
-        session
-            .saved_camera
-            .clone()
-            .ok_or_else(|| failure("no saved battle camera"))?
-    } else {
-        let mut expected = camera_state.clone();
-        expected.target = session
-            .focus
-            .ok_or_else(|| failure("capture focus missing"))?;
-        expected.distance = session.script.checkpoints[session.index].distance;
-        expected
-    };
-    if camera_state.target.distance(expected.target) > 0.001
-        || (camera_state.distance - expected.distance).abs() > 0.001
-    {
-        return Err(failure(format!(
-            "camera action had no expected effect: {:?} at {}, expected {:?} at {}",
-            camera_state.target, camera_state.distance, expected.target, expected.distance
-        )));
-    }
-    if transform
-        .translation
-        .distance(camera_state.compute_transform().translation)
-        > 0.001
-    {
-        return Err(failure("camera transform did not propagate"));
-    }
-    let roots = world
-        .query_filtered::<&Visibility, With<BattleSceneRoot>>()
-        .iter(world)
-        .copied()
-        .collect::<Vec<_>>();
-    if roots.len() != 1 || (roots[0] == Visibility::Hidden) != lab_goal {
-        return Err(failure(
-            "battle root visibility/count is wrong after lifecycle action",
-        ));
-    }
-    let images = world.resource::<Assets<Image>>();
-    let presentation = world.resource::<MapPresentation>();
-    if !presentation
-        .sprite_images
-        .iter()
-        .all(|image| images.contains(image))
-    {
-        return Ok(None);
-    }
-    let terrain_handle = world.resource::<client::terrain::TerrainMaterialHandle>();
-    let materials = world.resource::<Assets<client::terrain::TerrainMaterial>>();
-    let Some(terrain) = materials.get(&terrain_handle.0) else {
-        return Ok(None);
-    };
-    if [
-        &terrain.extension.albedo,
-        &terrain.extension.normal,
-        &terrain.extension.orm,
-        &terrain.extension.splat,
-        &terrain.extension.overlay,
-    ]
-    .iter()
-    .any(|image| !images.contains(*image))
-    {
-        return Ok(None);
-    }
-    if !world
-        .query::<&bevy_egui::EguiRenderOutput>()
-        .iter(world)
-        .any(|output| !output.paint_jobs.is_empty())
-    {
-        return Ok(None);
-    }
-    let light_count = world
-        .query_filtered::<Entity, Or<(With<DirectionalLight>, With<PointLight>, With<SpotLight>)>>()
-        .iter(world)
-        .count();
-    if goal == Goal::Reset
-        && session
-            .records
-            .first()
-            .is_some_and(|initial| initial.lights != light_count)
-    {
-        return Err(failure(
-            "reset changed the number of production scene lights",
-        ));
-    }
-    let live_ids = world
-        .query::<&LiveBattleBubble>()
-        .iter(world)
-        .map(|live| live.entity_id)
-        .collect::<Vec<_>>();
-    let live_set = live_ids
-        .iter()
-        .copied()
-        .collect::<std::collections::BTreeSet<_>>();
-    if live_ids.len() != live_set.len() || live_ids.len() != if lab_goal { 0 } else { entities } {
-        return Err(failure(
-            "tab/reset left duplicate, missing, or stale battle bubbles",
-        ));
-    }
-    if matches!(goal, Goal::Overview | Goal::Reset)
-        && live_set.iter().ne(session.initial_entities.keys())
-    {
-        return Err(failure(
-            "reset render roster differs from initial scenario IDs",
-        ));
-    }
-    let effects = world
-        .query_filtered::<Entity, With<MeshMaterial3d<client::vfx::CombatFxMaterial>>>()
-        .iter(world)
-        .count();
-    if matches!(goal, Goal::Overview | Goal::Reset) && effects != 0 {
-        return Err(failure("initial/reset scene contains stale combat effects"));
-    }
-    let mut visible = 0;
-    let mut projected = Vec::new();
-    let mut subject_pixel = None;
-    let mut source_pixel = None;
-    let mut visible_owners = std::collections::BTreeSet::new();
-    let mut bubble_query = world.query::<(
-        &BubbleInstance,
-        &MeshMaterial3d<client::BubbleDomeMaterial>,
-        &GlobalTransform,
-        &ViewVisibility,
-        Option<&LiveBattleBubble>,
-        Option<&LabPreviewBubble>,
-        Option<&client::SwarmBubble>,
-    )>();
-    let mut camera_query = world.query_filtered::<(&Camera, &GlobalTransform), With<Camera3d>>();
-    let (view, view_transform) = camera_query
-        .get_single(world)
-        .map_err(|e| failure(e.to_string()))?;
-    for (bubble, material_handle, global, visibility, battle, lab_bubble, swarm) in
-        bubble_query.iter(world)
-    {
-        let expected_instance = if goal == Goal::Swarm {
-            swarm.is_some()
-        } else if lab_goal {
-            lab_bubble.is_some()
-        } else {
-            battle.is_some()
-        };
-        if !visibility.get() || !expected_instance {
-            continue;
-        }
-        let registry = world.resource::<client::FlipbookRegistry>();
-        let Some(texture) = registry.textures_by_id.get(&bubble.0.unit_type) else {
-            return Err(failure(format!(
-                "visible archetype {:?} has no real flipbook; fallback rejected",
-                bubble.0.unit_type
-            )));
-        };
-        if !world.resource::<Assets<Image>>().contains(texture)
-            || !registry.manifests_by_id.contains_key(&bubble.0.unit_type)
-        {
-            return Err(failure("visible flipbook image/metadata missing"));
-        }
-        let archetype = world
-            .resource::<client::CatalogResource>()
-            .0
-            .get(bubble.0.unit_type)
-            .map_err(|error| failure(error.to_string()))?;
-        let metadata = registry
-            .manifests_by_id
-            .get(&bubble.0.unit_type)
-            .ok_or_else(|| failure("visible media metadata disappeared"))?;
-        let image = world
-            .resource::<Assets<Image>>()
-            .get(texture)
-            .ok_or_else(|| failure("visible media image disappeared"))?;
-        let material = world
-            .resource::<Assets<client::BubbleDomeMaterial>>()
-            .get(&material_handle.0)
-            .ok_or_else(|| failure("visible bubble material is missing"))?;
-        session.media.validate(
-            &session.root,
-            super::media::MediaBinding {
-                unit_type: bubble.0.unit_type,
-                slug: &archetype.slug,
-                registered_texture: texture,
-                material_texture: material
-                    .video_texture
-                    .as_ref()
-                    .ok_or_else(|| failure("visible bubble material has no image binding"))?,
-                metadata,
-                image,
-            },
-        )?;
-        let Some(window_point) =
-            client::input_policy::world_to_window(view, view_transform, global.translation())
-        else {
-            continue;
-        };
-        let coordinates = client::input_policy::ViewportCoordinates::from_camera(view)
-            .ok_or_else(|| failure("capture camera viewport coordinates unavailable"))?;
-        let pixel = coordinates.physical_from_window(window_point);
-        projected.push((battle.map(|b| b.entity_id.0), pixel));
-        let [x, y, w, h] = session.script.gameplay_region;
-        let [width, height] = session.script.resolution;
-        if pixel.x >= x * width as f32
-            && pixel.x <= (x + w) * width as f32
-            && pixel.y >= y * height as f32
-            && pixel.y <= (y + h) * height as f32
-        {
-            visible += 1;
-            visible_owners.insert(bubble.0.owner.0);
-            if battle.is_some_and(|b| Some(b.entity_id) == session.subject) {
-                subject_pixel = Some(pixel.to_array());
-            }
-            if battle.is_some_and(|b| Some(b.entity_id) == session.combat_source) {
-                source_pixel = Some(pixel.to_array());
-            }
-        }
-    }
-    if (visible == 0 && goal != Goal::NeutralWatchtower)
-        || session.subject.is_some() && subject_pixel.is_none()
-    {
-        return Err(failure(format!(
-            "intended subjects are not visible in gameplay image region; visible={visible}, subject={:?}, projected={projected:?}", session.subject
-        )));
-    }
-    if goal == Goal::Combat && (visible_owners.len() < 2 || source_pixel.is_none()) {
-        return Err(failure("combat view does not contain opposing sides"));
-    }
-    let required_mask = if matches!(goal.ownership_view(), super::ownership::View::Effect(_)) {
-        2 | 4
-    } else if lab_goal {
-        2
-    } else if goal == Goal::Combat {
-        1 | 2 | 4
-    } else {
-        1 | 2
-    };
-    let evidence = world.resource::<PipelineEvidence>();
-    if !evidence.ready(required_mask) {
-        return Ok(None);
-    }
-    let counts = evidence.counts();
-    if goal == Goal::Combat {
-        let effect_visible = world
-            .query_filtered::<&ViewVisibility, With<MeshMaterial3d<client::vfx::CombatFxMaterial>>>(
-            )
-            .iter(world)
-            .any(|visibility| visibility.get());
-        if !effect_visible {
-            return Err(failure(
-                "damage occurred but produced combat effect is not visible",
-            ));
-        }
-    }
-    let ownership = if let Some(ownership) = &mut session.ownership {
-        let Some(proof) = ownership.verify(
-            world,
-            goal.ownership_view(),
-            session.script.gameplay_region,
-            session.script.resolution,
-        )?
-        else {
-            return Ok(None);
-        };
-        if goal == Goal::Combat {
-            ownership.remember_combat();
-        }
-        Some(proof)
-    } else {
-        None
-    };
-    let transport = if let Some(transport) = &mut session.transport {
-        Some(transport.verify(
-            world,
-            goal,
-            &projected,
-            session.script.gameplay_region,
-            session.script.resolution,
-            (
-                camera_state.target.to_array(),
-                camera_state.distance,
-                transform.translation.to_array(),
-            ),
-        )?)
-    } else {
-        None
-    };
-    Ok(Some(Record {
-        shell_audit: None,
-        shell_fixture: if goal == Goal::Swarm {
-            session
-                .script
-                .shell_audit
-                .as_ref()
-                .and_then(|audit| audit.fixture.clone())
-        } else {
-            None
-        },
-        name: session.script.checkpoints[session.index].name.clone(),
-        goal,
-        tick,
-        presented_tick: world
-            .resource::<client::battle_pipeline::session::BattleSession>()
-            .frames
-            .presented()
-            .tick
-            .0,
-        session_generation: world
-            .resource::<client::battle_pipeline::session::BattleSession>()
-            .commands
-            .generation()
-            .ok_or_else(|| failure("capture has no committed session"))?
-            .value(),
-        command_outcomes: world
-            .resource::<client::battle_pipeline::session::BattleSession>()
-            .outcome_count,
-        combat_tick: session.combat_tick,
-        combat_generation: session.combat_generation,
-        ramp_generation: session.ramp_generation,
-        checksum,
-        virtual_seconds: world.resource::<Time>().elapsed_secs_f64(),
-        camera_target: camera_state.target.to_array(),
-        camera_distance: camera_state.distance,
-        camera_translation: transform.translation.to_array(),
-        subject: session.subject.map(|id| id.0),
-        subject_pixel,
-        ramp_entry_level: session.entry_level,
-        ramp_exit_level: session.exit_level,
-        ramp_trace: session.ramp_trace.clone(),
-        combat_source: session.combat_source.map(|id| id.0),
-        entities,
-        lights: light_count,
-        combat_effects: effects,
-        source_pixel,
-        visible_units: visible,
-        scene_roots: roots.len(),
-        terrain_chunks: world
-            .resource::<client::terrain::TerrainChunks>()
-            .chunks
-            .len(),
-        required_shader_mask: required_mask,
-        ready_pipeline_counts: counts,
-        image: session.out.join(format!(
-            "{}.png",
-            session.script.checkpoints[session.index].name
-        )),
-        pixels: None,
-        transport,
-        ownership,
-    }))
 }
 
 fn validate_callback_token(
