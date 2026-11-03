@@ -10,8 +10,8 @@ use sim_core::{ActiveHazardZone, SimWorld, UnitCatalog, UpgradeCatalog, WeaponPh
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AnimState, CombatEventVisual, EntityId,
-    MoverType, PlayerCommand, PlayerId, ShapeKind, SimScalar, SimVec2, Tick, TickBundle,
-    UnitModeSpec, UnitOrder, UnitTypeId, VisibilityState,
+    MoverType, PlayerCommand, PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, Tick,
+    TickBundle, UnitModeSpec, UnitOrder, UnitTypeId, VisibilityState,
 };
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -318,7 +318,7 @@ fn cargo_has_no_vision_hazard_presence_or_snapshot_but_returns_at_exact_endpoint
     let carrier = f.spawn(0, 24, 24)?;
     f.world.update_vision();
     assert_eq!(
-        f.world.vision_maps[0].visibility_at(4, 4),
+        f.world.vision_maps[PlayerSlot::ALL[0]].visibility_at(4, 4),
         VisibilityState::Visible
     );
     f.world.try_load_unit_into_transport(passenger, carrier)?;
@@ -336,10 +336,10 @@ fn cargo_has_no_vision_hazard_presence_or_snapshot_but_returns_at_exact_endpoint
     });
     f.tick(vec![]);
     assert_ne!(
-        f.world.vision_maps[0].visibility_at(4, 4),
+        f.world.vision_maps[PlayerSlot::ALL[0]].visibility_at(4, 4),
         VisibilityState::Visible
     );
-    assert!(!f.world.vision_maps[0].is_detected(4, 4));
+    assert!(!f.world.vision_maps[PlayerSlot::ALL[0]].is_detected(4, 4));
     assert_eq!(f.world.entities[&passenger].hp, SimScalar::from_num(100));
     let snapshot = f.world.build_render_snapshot();
     assert!(!snapshot.bubbles.iter().any(|b| b.entity_id == passenger));
@@ -366,7 +366,10 @@ fn carrier_death_releases_cumulative_supply_and_jobs_once_in_id_order() -> TestR
         .try_queue_production(PlayerId(0), &[carrier], f.kind)?;
     f.world.try_load_unit_into_transport(low, carrier)?;
     f.world.try_load_unit_into_transport(high, carrier)?;
-    assert_eq!(f.world.player_resources[0].supply_provided_total, 320);
+    assert_eq!(
+        f.world.player_resources[PlayerSlot::ALL[0]].supply_provided_total,
+        320
+    );
     f.world.entities.get_mut(&carrier).ok_or("carrier")?.hp = SimScalar::ZERO;
     f.world.entities.get_mut(&low).ok_or("passenger")?.hp = SimScalar::ZERO;
     assert!(
@@ -377,9 +380,12 @@ fn carrier_death_releases_cumulative_supply_and_jobs_once_in_id_order() -> TestR
         f.world.entities.keys().copied().collect::<Vec<_>>(),
         [survivor]
     );
-    assert_eq!(f.world.player_resources[0].supply_used, 2);
-    assert_eq!(f.world.player_resources[0].supply_provided_total, 80);
-    assert_eq!(f.world.player_resources[0].supply_max, 80);
+    assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]].supply_used, 2);
+    assert_eq!(
+        f.world.player_resources[PlayerSlot::ALL[0]].supply_provided_total,
+        80
+    );
+    assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]].supply_max, 80);
     f.world.validate_supply_ledger()?;
     assert_eq!(f.world.pending_events.len(), 1);
     assert!(
@@ -650,8 +656,11 @@ fn local_foundation_failure_keeps_live_cargo_and_allows_unrelated_group_reap() -
     *f.world.map.cell_mut(20, 20)? = original_cell;
     f.world.reap_dead_and_emit_shatter();
     assert_eq!(f.world.entities, std::collections::BTreeMap::new());
-    assert_eq!(f.world.player_resources[0].supply_used, 0);
-    assert_eq!(f.world.player_resources[0].supply_provided_total, 0);
+    assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]].supply_used, 0);
+    assert_eq!(
+        f.world.player_resources[PlayerSlot::ALL[0]].supply_provided_total,
+        0
+    );
     assert_eq!(f.world.pending_events.len(), 2);
     f.world.validate_supply_ledger()?;
     Ok(())

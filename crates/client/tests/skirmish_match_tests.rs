@@ -447,7 +447,11 @@ fn stage_construction(
     staging.phase = match staging.phase {
         StagePhase::Fund => {
             let world = session.world_mut().expect("a ready session has a world");
-            world.player_resources[usize::from(LOCAL_PLAYER.0)].minerals += STAGED_MINERALS;
+            world
+                .player_resources
+                .get_mut(LOCAL_PLAYER)
+                .expect("invariant: LOCAL_PLAYER has a player slot")
+                .minerals += STAGED_MINERALS;
             lab.battle_paused = false;
             StagePhase::FundPublishing { since: tick }
         }

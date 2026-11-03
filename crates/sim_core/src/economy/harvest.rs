@@ -70,7 +70,7 @@ impl SimWorld {
     /// Whether `player` sees `cell` at this moment.
     fn sees_cell(&self, player: PlayerId, cell: (u32, u32)) -> bool {
         self.vision_maps
-            .get(usize::from(player.0))
+            .get(player)
             .is_some_and(|vision| vision.visibility_at(cell.0, cell.1) == VisibilityState::Visible)
     }
 
@@ -328,7 +328,10 @@ impl SimWorld {
         let Some(cargo) = actor.cargo else {
             return false;
         };
-        let resources = &mut self.player_resources[usize::from(owner.0)];
+        let Some(resources) = self.player_resources.get_mut(owner) else {
+            self.report_production_failure(ProductionInvariant::InvalidPlayer { player: owner });
+            return false;
+        };
         let reserve = match cargo.kind {
             ResourceKind::Mineral => &mut resources.minerals,
             ResourceKind::Gas => &mut resources.gas,

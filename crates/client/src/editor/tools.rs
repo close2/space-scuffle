@@ -621,7 +621,7 @@ pub enum EntityToolKind {
     Watchtower,
     /// Player starting base location with specific slot index and resolved footprint.
     StartLocation {
-        /// Player slot `0..MAX_PLAYER_SLOTS`.
+        /// Player slot `0..sim_types::MAX_PLAYERS`.
         slot: u8,
         /// Town hall footprint dimensions in cells `(width, height)`.
         footprint: (u8, u8),

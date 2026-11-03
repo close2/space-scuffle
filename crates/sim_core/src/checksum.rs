@@ -102,7 +102,7 @@ pub fn compute_simulation_checksum(world: &SimWorld) -> u64 {
     world.map.watchtowers().encode(&mut encoder);
 
     "vision".encode(&mut encoder);
-    encoder.length(world.vision_maps.len());
+    encoder.length(world.vision_maps.as_slice().len());
     for vision in &world.vision_maps {
         vision.width().encode(&mut encoder);
         vision.height().encode(&mut encoder);

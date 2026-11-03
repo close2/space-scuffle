@@ -33,8 +33,8 @@ use crate::transport::TransportAdmissionError;
 use crate::{Entity, SimWorld, UnitArchetype};
 use sim_map::{CellFlags, PlacedStructure};
 use sim_types::{
-    AnimState, EntityId, PlayerCommand, PlayerId, ResourceNodeId, SimScalar, SimVec2, Tick,
-    UnitOrder,
+    AnimState, EntityId, PlayerCommand, PlayerId, PlayerSlot, ResourceNodeId, SimScalar, SimVec2,
+    Tick, UnitOrder,
 };
 use thiserror::Error;
 
@@ -376,14 +376,16 @@ impl SimWorld {
     }
 
     /// Refuses a selection unless every member exists, is alive, is owned and is in the world.
+    ///
+    /// Returns the player's slot, proven here, for callers that then touch per-player state.
     pub(crate) fn validate_selection(
         &self,
         player: PlayerId,
         recipients: &[EntityId],
-    ) -> Result<(), GameCommandError> {
-        if usize::from(player.0) >= self.player_resources.len() {
+    ) -> Result<PlayerSlot, GameCommandError> {
+        let Some(slot) = player.slot() else {
             return Err(GameCommandError::InvalidPlayer(player));
-        }
+        };
         if recipients.is_empty() {
             return Err(GameCommandError::EmptySelection);
         }
@@ -402,7 +404,7 @@ impl SimWorld {
                 return Err(GameCommandError::LoadedRecipient(id));
             }
         }
-        Ok(())
+        Ok(slot)
     }
 
     /// The selected unit nearest `site` whose archetype `capable` accepts; lowest ID on a tie.

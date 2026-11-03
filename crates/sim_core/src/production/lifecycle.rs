@@ -157,13 +157,13 @@ impl SimWorld {
         else {
             return Ok(None);
         };
-        let slot = usize::from(entity.owner.0);
-        let resources =
-            self.player_resources
-                .get(slot)
-                .ok_or(ProductionInvariant::InvalidPlayer {
-                    player: entity.owner,
-                })?;
+        let slot = entity
+            .owner
+            .slot()
+            .ok_or(ProductionInvariant::InvalidPlayer {
+                player: entity.owner,
+            })?;
+        let resources = &self.player_resources[slot];
         let overflow = ProductionInvariant::Arithmetic {
             operation: "cancelled job refund",
         };

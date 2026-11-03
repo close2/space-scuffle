@@ -14,7 +14,8 @@ use sim_core::production::{ProductionAdmissionError, ProductionItem};
 use sim_core::SimWorld;
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
-    EntityId, PlayerCommand, PlayerId, SimScalar, Tick, TickBundle, UnitOrder, UnitTypeId,
+    EntityId, PlayerCommand, PlayerId, PlayerSlot, SimScalar, Tick, TickBundle, UnitOrder,
+    UnitTypeId,
 };
 use std::error::Error;
 
@@ -40,8 +41,8 @@ fn fixture() -> Result<Fixture, Box<dyn Error>> {
     world.spawn_structure(structure(&world, "foundry_core_dome")?, ME, 2, 2)?;
     let lab = world.spawn_structure(structure(&world, "assembly_bay_dome")?, ME, 12, 2)?;
     world.spawn_structure(structure(&world, "tech_module_pod")?, ME, 18, 2)?;
-    world.player_resources[0].minerals = 1000;
-    world.player_resources[0].gas = 500;
+    world.player_resources[PlayerSlot::ALL[0]].minerals = 1000;
+    world.player_resources[PlayerSlot::ALL[0]].gas = 500;
     let def = world
         .upgrade_catalog
         .get_by_slug("overclock_stim")
@@ -97,7 +98,7 @@ impl Fixture {
     }
 
     fn has_stim(&self) -> bool {
-        self.world.player_upgrades[0]
+        self.world.player_upgrades[PlayerSlot::ALL[0]]
             .completed_upgrade_slugs
             .contains("overclock_stim")
     }
@@ -106,15 +107,21 @@ impl Fixture {
 #[test]
 fn research_costs_its_price_and_takes_its_time() -> TestResult {
     let mut f = fixture()?;
-    let bank = f.world.player_resources[0];
+    let bank = f.world.player_resources[PlayerSlot::ALL[0]];
     let supply = bank.supply_used;
     f.research(f.stim)?;
     assert_eq!(
-        f.world.player_resources[0].minerals,
+        f.world.player_resources[PlayerSlot::ALL[0]].minerals,
         bank.minerals - f.stim_price.0
     );
-    assert_eq!(f.world.player_resources[0].gas, bank.gas - f.stim_price.1);
-    assert_eq!(f.world.player_resources[0].supply_used, supply);
+    assert_eq!(
+        f.world.player_resources[PlayerSlot::ALL[0]].gas,
+        bank.gas - f.stim_price.1
+    );
+    assert_eq!(
+        f.world.player_resources[PlayerSlot::ALL[0]].supply_used,
+        supply
+    );
     let job = f.world.entities[&f.lab].production_queue[0];
     assert_eq!(job.item, ProductionItem::Research(f.stim));
 
@@ -135,12 +142,12 @@ fn research_is_idempotent() -> TestResult {
         Err(ProductionAdmissionError::UpgradeAlreadyQueued(f.stim))
     );
     f.idle(f.stim_ticks);
-    let bank = f.world.player_resources[0];
+    let bank = f.world.player_resources[PlayerSlot::ALL[0]];
     assert_eq!(
         f.research(f.stim),
         Err(ProductionAdmissionError::UpgradeAlreadyResearched(f.stim))
     );
-    assert_eq!(f.world.player_resources[0], bank);
+    assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]], bank);
     Ok(())
 }
 
@@ -152,18 +159,18 @@ fn research_is_refused_without_its_requirements() -> TestResult {
         Err(ProductionAdmissionError::UnknownUpgrade(9_999))
     );
 
-    f.world.player_resources[0].gas = 0;
+    f.world.player_resources[PlayerSlot::ALL[0]].gas = 0;
     assert!(matches!(
         f.research(f.stim),
         Err(ProductionAdmissionError::Gas { available: 0, .. })
     ));
-    f.world.player_resources[0].gas = 500;
-    f.world.player_resources[0].minerals = 0;
+    f.world.player_resources[PlayerSlot::ALL[0]].gas = 500;
+    f.world.player_resources[PlayerSlot::ALL[0]].minerals = 0;
     assert!(matches!(
         f.research(f.stim),
         Err(ProductionAdmissionError::Minerals { available: 0, .. })
     ));
-    f.world.player_resources[0].minerals = 1000;
+    f.world.player_resources[PlayerSlot::ALL[0]].minerals = 1000;
 
     // Wrong structure: the hall researches nothing.
     let hall = f
@@ -260,7 +267,7 @@ fn research_applies_no_effect_twice_with_two_labs() -> TestResult {
 #[test]
 fn cancelling_research_refunds_it_and_it_can_run_again() -> TestResult {
     let mut f = fixture()?;
-    let bank = f.world.player_resources[0];
+    let bank = f.world.player_resources[PlayerSlot::ALL[0]];
     let lab = f.lab;
     f.research(f.stim)?;
     f.idle(100);
@@ -272,7 +279,7 @@ fn cancelling_research_refunds_it_and_it_can_run_again() -> TestResult {
             gas: f.stim_price.1,
         })
     );
-    assert_eq!(f.world.player_resources[0], bank);
+    assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]], bank);
     assert!(f.world.entities[&lab].production_queue.is_empty());
     f.research(f.stim)?;
     assert_eq!(
@@ -289,12 +296,12 @@ fn cancelling_training_refunds_payment_and_supply() -> TestResult {
     let lab = f.lab;
     let soldier = structure(&f.world, "pulse_bot")?;
     let price = f.world.catalog.get(soldier)?.clone();
-    let bank = f.world.player_resources[0];
+    let bank = f.world.player_resources[PlayerSlot::ALL[0]];
     f.order(vec![lab], UnitOrder::Produce { unit_type: soldier });
     f.order(vec![lab], UnitOrder::Produce { unit_type: soldier });
     assert_eq!(f.world.entities[&lab].production_queue.len(), 2);
     assert_eq!(
-        f.world.player_resources[0].supply_used,
+        f.world.player_resources[PlayerSlot::ALL[0]].supply_used,
         bank.supply_used + 2 * price.supply_cost
     );
     f.idle(10);
@@ -310,7 +317,7 @@ fn cancelling_training_refunds_payment_and_supply() -> TestResult {
     );
 
     f.order(vec![lab], UnitOrder::CancelProduction { job_index: 0 });
-    assert_eq!(f.world.player_resources[0], bank);
+    assert_eq!(f.world.player_resources[PlayerSlot::ALL[0]], bank);
     f.world.validate_supply_ledger()?;
     f.idle(price.build_time_ticks + 2);
     assert_eq!(

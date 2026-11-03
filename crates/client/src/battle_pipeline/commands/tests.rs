@@ -4,7 +4,7 @@
 use super::*;
 use sim_core::production::{ProductionItem, ProductionJob};
 use sim_map::{CliffLevel, GameMap, MapCell};
-use sim_types::{MatchResult, MoverType, ResourceNodeId, ShapeKind, SimVec2};
+use sim_types::{MatchResult, MoverType, PlayerSlot, ResourceNodeId, ShapeKind, SimVec2};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -63,8 +63,8 @@ fn type_where(
 fn role_fixture() -> Result<(SimWorld, BattleCommandQueue), Box<dyn std::error::Error>> {
     let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
     let mut world = SimWorld::new(map, 7);
-    world.player_resources[0].minerals = 10_000;
-    world.player_resources[0].gas = 10_000;
+    world.player_resources[PlayerSlot::ALL[0]].minerals = 10_000;
+    world.player_resources[PlayerSlot::ALL[0]].gas = 10_000;
     let mut queue = BattleCommandQueue::default();
     queue.activate(SessionGeneration::FIRST)?;
     Ok((world, queue))
@@ -542,8 +542,9 @@ fn target_availability_matches_simulation_at_submission_and_execution() -> TestR
         .get_mut(&target)
         .ok_or("target absent")?
         .is_cloaked = true;
+    let owner_slot = owner.slot().ok_or("owner has no player slot")?;
     for detector in [false, true] {
-        let vision = &mut world.vision_maps[usize::from(owner.0)];
+        let vision = &mut world.vision_maps[owner_slot];
         vision.begin_tick_update();
         vision.apply_vision_source(
             &world.map,
@@ -566,8 +567,8 @@ fn target_availability_matches_simulation_at_submission_and_execution() -> TestR
             assert_eq!(submitted, Err(SubmissionError::InvalidTarget(target)));
         }
     }
-    world.vision_maps[usize::from(owner.0)].begin_tick_update();
-    world.vision_maps[usize::from(owner.0)].end_tick_update();
+    world.vision_maps[owner_slot].begin_tick_update();
+    world.vision_maps[owner_slot].end_tick_update();
     let mut input = bundle();
     let mut sequences = Vec::new();
     let mut rejected = Vec::new();

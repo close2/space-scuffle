@@ -12,8 +12,8 @@ use sim_core::economy::{GameCommandError, GameCommandReceipt, TaskEventKind};
 use sim_core::{Cargo, SimWorld};
 use sim_map::{CliffLevel, GameMap, MapCell, ResourceKind, ResourceNode};
 use sim_types::{
-    EntityId, HarvesterSpec, PlayerCommand, PlayerId, ResourceNodeId, SimScalar, SimVec2, Tick,
-    TickBundle, UnitOrder, UnitTypeId,
+    EntityId, HarvesterSpec, PlayerCommand, PlayerId, PlayerSlot, ResourceNodeId, SimScalar,
+    SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId,
 };
 use std::error::Error;
 
@@ -68,8 +68,8 @@ fn fixture(mineral: u32) -> Result<Fixture, Box<dyn Error>> {
     let hall_type = depot(&world)?;
     let hall = world.spawn_structure(hall_type, ME, 2, 2)?;
     let worker = world.spawn_unit(worker_type, ME, at(10, 4))?;
-    world.player_resources[0].minerals = 0;
-    world.player_resources[0].gas = 0;
+    world.player_resources[PlayerSlot::ALL[0]].minerals = 0;
+    world.player_resources[PlayerSlot::ALL[0]].gas = 0;
     Ok(Fixture {
         world,
         worker,
@@ -115,7 +115,7 @@ impl Fixture {
     }
 
     fn minerals(&self) -> u32 {
-        self.world.player_resources[0].minerals
+        self.world.player_resources[PlayerSlot::ALL[0]].minerals
     }
 
     fn remaining(&self, node: ResourceNodeId) -> u32 {
@@ -378,7 +378,9 @@ fn gas_needs_a_completed_extractor_of_ones_own() -> TestResult {
     let own = f.world.spawn_structure(extractor, ME, 19, 19)?;
     f.order(vec![worker], UnitOrder::Harvest { target: GAS });
     assert!(f.world.game_command_outcomes()[0].result.is_ok());
-    f.until(3000, |f| f.world.player_resources[0].gas > 0)?;
+    f.until(3000, |f| {
+        f.world.player_resources[PlayerSlot::ALL[0]].gas > 0
+    })?;
     assert_eq!(f.minerals(), 0);
 
     // A lost extractor stops the work.

@@ -13,7 +13,10 @@ mod research;
 
 use crate::upgrades::UpgradeId;
 use crate::{Entity, PlayerResources, SimWorld, SpatialHashGrid, UnitArchetype, SPATIAL_CELL_SIZE};
-use sim_types::{EntityId, OptionLock, PlayerId, ShapeKind, SimScalar, SimVec2, Tick, UnitTypeId};
+use sim_types::{
+    EntityId, OptionLock, PerPlayer, PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, Tick,
+    UnitTypeId,
+};
 use thiserror::Error;
 
 /// Standard effective supply limit; provider totals retain values above this cap.
@@ -237,11 +240,17 @@ impl ProductionWorkspace {
     }
 }
 
+/// An admitted job: its receipt, the owner's slot (proven during admission) and the economy
+/// after payment, committed together by `commit_job`.
+type AdmittedJob = (ProductionReceipt, PlayerSlot, PlayerResources);
+
 pub(crate) struct PreparedSpawn {
     pub entity: Entity,
     pub entity_shape: ShapeKind,
     pub radius: SimScalar,
     next_id: u32,
+    /// The owner's slot, proven while preparing, so the commit writes without a lookup.
+    slot: PlayerSlot,
     economy: PlayerResources,
 }
 
@@ -252,15 +261,14 @@ impl SimWorld {
     /// # Errors
     /// Returns typed player, ledger or arithmetic corruption.
     pub fn validate_supply_ledger(&self) -> Result<(), ProductionInvariant> {
-        let mut used = [0_u64; 8];
-        let mut provided = [0_u64; 8];
+        let mut used = PerPlayer::<u64>::default();
+        let mut provided = PerPlayer::<u64>::default();
         for entity in self.entities.values() {
-            let index = usize::from(entity.owner.0);
-            if index >= used.len() {
+            let Some(index) = entity.owner.slot() else {
                 return Err(ProductionInvariant::InvalidPlayer {
                     player: entity.owner,
                 });
-            }
+            };
             used[index] = used[index]
                 .checked_add(u64::from(entity.captured_supply_used))
                 .ok_or(ProductionInvariant::Arithmetic {
@@ -285,14 +293,12 @@ impl SimWorld {
                     })?;
             }
         }
-        for (index, resources) in self.player_resources.iter().enumerate() {
-            if used[index] != u64::from(resources.supply_used)
-                || provided[index] != u64::from(resources.supply_provided_total)
+        for (slot, resources) in self.player_resources.enumerate() {
+            if used[slot] != u64::from(resources.supply_used)
+                || provided[slot] != u64::from(resources.supply_provided_total)
                 || resources.supply_max != resources.supply_provided_total.min(STANDARD_SUPPLY_CAP)
             {
-                return Err(ProductionInvariant::LedgerMismatch {
-                    player: PlayerId(u8::try_from(index).unwrap_or(u8::MAX)),
-                });
+                return Err(ProductionInvariant::LedgerMismatch { player: slot.id() });
             }
         }
         Ok(())
@@ -305,9 +311,10 @@ impl SimWorld {
         pos: SimVec2,
         reserved: u32,
     ) -> Result<PreparedSpawn, ProductionInvariant> {
-        let Some(resources) = self.player_resources.get(usize::from(owner.0)) else {
+        let Some(slot) = owner.slot() else {
             return Err(ProductionInvariant::InvalidPlayer { player: owner });
         };
+        let resources = &self.player_resources[slot];
         let id = EntityId(self.next_entity_id);
         let arch =
             self.catalog
@@ -323,7 +330,7 @@ impl SimWorld {
         if self.entities.contains_key(&id) || self.map.structures().contains_key(&id) {
             return Err(ProductionInvariant::IdCollision { entity: id });
         }
-        let hp_delta = self.player_upgrades[usize::from(owner.0)]
+        let hp_delta = self.player_upgrades[slot]
             .unit_stat_modifiers
             .get(&arch.slug)
             .map_or(SimScalar::ZERO, |m| m.max_hp_delta);
@@ -365,13 +372,14 @@ impl SimWorld {
             entity_shape: arch.shape,
             radius: arch.collision_radius,
             next_id,
+            slot,
             economy,
         })
     }
 
     pub(crate) fn commit_spawn(&mut self, prepared: PreparedSpawn) -> EntityId {
         let id = prepared.entity.id;
-        self.player_resources[usize::from(prepared.entity.owner.0)] = prepared.economy;
+        self.player_resources[prepared.slot] = prepared.economy;
         self.next_entity_id = prepared.next_id;
         self.entities.insert(id, prepared.entity);
         id
@@ -404,7 +412,7 @@ impl SimWorld {
         product: UnitTypeId,
     ) -> Result<ProductionReceipt, ProductionAdmissionError> {
         let admitted = self.prepare_admission(player, recipients, product);
-        self.commit_job(player, admitted)
+        self.commit_job(admitted)
     }
 
     fn prepare_admission(
@@ -412,10 +420,11 @@ impl SimWorld {
         player: PlayerId,
         recipients: &[EntityId],
         product: UnitTypeId,
-    ) -> Result<(ProductionReceipt, PlayerResources), ProductionAdmissionError> {
-        let Some(resources) = self.player_resources.get(usize::from(player.0)) else {
+    ) -> Result<AdmittedJob, ProductionAdmissionError> {
+        let Some(slot) = player.slot() else {
             return Err(ProductionAdmissionError::InvalidPlayer(player));
         };
+        let resources = &self.player_resources[slot];
         let arch = self
             .catalog
             .get(product)
@@ -469,7 +478,7 @@ impl SimWorld {
             return Err(ProductionAdmissionError::MissingPrerequisite(missing));
         }
         let economy = Self::charge_job(resources, &job)?;
-        Ok((ProductionReceipt { producer, job }, economy))
+        Ok((ProductionReceipt { producer, job }, slot, economy))
     }
 
     /// Validates every selected recipient and returns the first completed one `permits` accepts.
@@ -624,11 +633,10 @@ impl SimWorld {
     /// Commits an admitted job and its payment together.
     fn commit_job(
         &mut self,
-        player: PlayerId,
-        admitted: Result<(ProductionReceipt, PlayerResources), ProductionAdmissionError>,
+        admitted: Result<AdmittedJob, ProductionAdmissionError>,
     ) -> Result<ProductionReceipt, ProductionAdmissionError> {
         match admitted {
-            Ok((receipt, economy)) => {
+            Ok((receipt, slot, economy)) => {
                 // Exclusive world access preserves the validated recipient through commit.
                 let Some(producer) = self.entities.get_mut(&receipt.producer) else {
                     let error = ProductionInvariant::EntityState {
@@ -639,7 +647,7 @@ impl SimWorld {
                     return Err(error.into());
                 };
                 producer.production_queue.push_back(receipt.job);
-                self.player_resources[usize::from(player.0)] = economy;
+                self.player_resources[slot] = economy;
                 Ok(receipt)
             }
             Err(error) => {

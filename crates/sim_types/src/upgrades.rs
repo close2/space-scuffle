@@ -174,10 +174,19 @@ pub struct PlayerUpgradeState {
 }
 
 impl PlayerUpgradeState {
-    /// Creates an empty upgrade state.
+    /// Creates an empty upgrade state: no levels, no research, no modifiers.
+    ///
+    /// `const`, so a `static` empty state can stand in for owners without a player slot.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub const fn new() -> Self {
+        Self {
+            weapon_levels: BTreeMap::new(),
+            armor_levels: BTreeMap::new(),
+            shield_level: 0,
+            completed_upgrade_slugs: BTreeSet::new(),
+            unit_stat_modifiers: BTreeMap::new(),
+            unlocked_abilities: BTreeMap::new(),
+        }
     }
 
     /// Atomically applies effects and completed research identity.

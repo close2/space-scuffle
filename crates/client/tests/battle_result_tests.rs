@@ -48,7 +48,8 @@ use client::input_policy::{InputOwnership, UiGeometry};
 use client::runtime_battle::{BattleDefinition, BattleInitialOrder, SKIRMISH_SCENARIO};
 use client::{ClientMode, LabState};
 use sim_types::{
-    EntityId, MatchResult, PlayerId, SimScalar, Tick, UnitOrder, UnitTypeId, VisibilityState,
+    EntityId, MatchResult, PlayerId, PlayerSlot, SimScalar, Tick, UnitOrder, UnitTypeId,
+    VisibilityState,
 };
 
 #[allow(
@@ -544,7 +545,7 @@ fn tap_slot(harness: &mut Harness, wanted: impl Fn(&CardAction) -> bool) {
 
 /// Queues one job at the local base through its card, and leaves the base selected.
 fn train_at_base(harness: &mut Harness) -> EntityId {
-    harness.world_mut().player_resources[0].minerals += 1_000;
+    harness.world_mut().player_resources[PlayerSlot::ALL[0]].minerals += 1_000;
     let base = harness.local_structure();
     let at = harness.simulated_position(base);
     harness.look_at(at);
@@ -655,7 +656,7 @@ fn play_again_starts_a_new_match_with_clean_state() {
     let base = train_at_base(&mut harness);
     show_ghost(&mut harness, crew[0]);
     assert_eq!(model(&harness).selected_facts().len(), 1);
-    harness.world_mut().player_resources[0].minerals += 77;
+    harness.world_mut().player_resources[PlayerSlot::ALL[0]].minerals += 77;
     refuse(&mut harness, &SubmissionError::NoDestination);
     end_match(&mut harness, &[ENEMY]);
     assert_eq!(feed_lines(&harness).len(), 1, "the refusal is shown");

@@ -13,10 +13,11 @@
 //!   malformed upgrade cannot hold a queue forever or swallow the payment.
 
 use super::{
-    ProductionAdmissionError, ProductionInvariant, ProductionItem, ProductionJob, ProductionReceipt,
+    AdmittedJob, ProductionAdmissionError, ProductionInvariant, ProductionItem, ProductionJob,
+    ProductionReceipt,
 };
 use crate::upgrades::{UpgradeDef, UpgradeId};
-use crate::{PlayerResources, SimWorld};
+use crate::SimWorld;
 use sim_types::{EntityId, OptionLock, PlayerId, PlayerUpgradeState, UnitTypeId, UpgradeEffect};
 
 /// Whether `def` is a tier whose preceding tier `state` has not finished.
@@ -69,7 +70,7 @@ impl SimWorld {
         upgrade: UpgradeId,
     ) -> Result<ProductionReceipt, ProductionAdmissionError> {
         let admitted = self.prepare_research(player, recipients, upgrade);
-        self.commit_job(player, admitted)
+        self.commit_job(admitted)
     }
 
     /// Whether `upgrade` waits in any queue of `player`, across all structures.
@@ -92,7 +93,7 @@ impl SimWorld {
         def: &UpgradeDef,
         completed: &[UnitTypeId],
     ) -> Option<OptionLock> {
-        let state = self.player_upgrades.get(usize::from(player.0))?;
+        let state = self.player_upgrades.get(player)?;
         if state.completed_upgrade_slugs.contains(&def.slug) {
             return Some(OptionLock::Researched);
         }
@@ -110,10 +111,11 @@ impl SimWorld {
         player: PlayerId,
         recipients: &[EntityId],
         upgrade: UpgradeId,
-    ) -> Result<(ProductionReceipt, PlayerResources), ProductionAdmissionError> {
-        let Some(resources) = self.player_resources.get(usize::from(player.0)) else {
+    ) -> Result<AdmittedJob, ProductionAdmissionError> {
+        let Some(slot) = player.slot() else {
             return Err(ProductionAdmissionError::InvalidPlayer(player));
         };
+        let resources = &self.player_resources[slot];
         let def = self
             .upgrade_catalog
             .get_by_id(upgrade)
@@ -123,7 +125,7 @@ impl SimWorld {
                 Ok(source.researches_upgrades.contains(&def.slug))
             })?
             .ok_or(ProductionAdmissionError::NoEligibleResearcher(upgrade))?;
-        let state = &self.player_upgrades[usize::from(player.0)];
+        let state = &self.player_upgrades[slot];
         if state.completed_upgrade_slugs.contains(&def.slug) {
             return Err(ProductionAdmissionError::UpgradeAlreadyResearched(upgrade));
         }
@@ -162,7 +164,7 @@ impl SimWorld {
             return Err(ProductionAdmissionError::MissingPrerequisite(missing));
         }
         let economy = Self::charge_job(resources, &job)?;
-        Ok((ProductionReceipt { producer, job }, economy))
+        Ok((ProductionReceipt { producer, job }, slot, economy))
     }
 
     /// Applies a finished research job, or refunds it with a diagnostic if it cannot apply.

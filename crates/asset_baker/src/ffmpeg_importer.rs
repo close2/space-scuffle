@@ -13,11 +13,7 @@
 //! - **No invented actions:** a manifest lists only actions that a source clip was supplied
 //!   for, so [`crate::media::require_action`] can report the rest as missing.
 
-#![allow(
-    clippy::cast_possible_truncation,
-    clippy::doc_markdown,
-    clippy::too_many_lines
-)]
+#![allow(clippy::cast_possible_truncation, clippy::doc_markdown)]
 
 use crate::error::BakerError;
 use crate::manifest::{ActionSlice, FlipbookAtlasMeta, FlipbookLayout};
@@ -493,91 +489,32 @@ pub fn bake_multi_action_videos_with_states<P: AsRef<Path>>(
 
     for (state, video_path_ref) in clips {
         let video_path = video_path_ref.as_ref();
-        if !video_path.exists() {
-            return Err(BakerError::Io {
-                path: video_path.to_path_buf(),
-                source: std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!(
-                        "Source video clip does not exist at {}",
-                        video_path.display()
-                    ),
-                ),
-            });
-        }
-
-        let temp_dir = tempfile::tempdir().map_err(|source| BakerError::Io {
-            path: PathBuf::from("tempdir"),
-            source,
-        })?;
-
-        let frame_paths =
-            extract_clip_frames(&ffmpeg_path, video_path, frame_size, fps, temp_dir.path())?;
+        let (temp_dir, frame_paths) = probe_clip(&ffmpeg_path, video_path, frame_size, fps)?;
 
         // PERFORMANCE RATIONALE:
         // Why: WebGPU limits 2D texture dimensions to 16384 pixels.
         // What: We keep max_frames_per_clip = (16384 / frame_size) / K frames, sampled across each clip.
         // Trade-off: Guarantees total strip height <= 16384 px across any number of action clips,
         // at the cost of temporal resolution in clips that exceed their share.
-        let frame_paths = fit_clip_to_budget(
+        let frames = sample_frames(
             frame_paths,
             max_frames_per_clip,
             &format!("{unit_name} {state:?}"),
             fps,
-        );
+        )?;
+        drop(temp_dir);
 
-        let clip_frame_count = frame_paths.len() as u32;
-        let (looping, hold_last_frame) = match state {
-            AnimState::Attack => (false, false),
-            AnimState::Die | AnimState::Constructing => (false, true),
-            AnimState::Idle | AnimState::Walk | AnimState::Cast => (true, false),
-        };
-
+        let clip_frame_count = frames.len() as u32;
         actions.insert(
             *state,
-            ActionSlice {
-                start_frame: current_frame_offset,
-                frame_count: clip_frame_count,
-                looping,
-                hold_last_frame,
-            },
+            pack_action(*state, current_frame_offset, clip_frame_count),
         );
-
-        for path in &frame_paths {
-            let frame_img = image::open(path)
-                .map_err(|source| BakerError::ImageProcessing {
-                    path: path.clone(),
-                    source,
-                })?
-                .to_rgba8();
-            all_frames.push(frame_img);
-        }
-
+        all_frames.extend(frames);
         current_frame_offset = current_frame_offset.saturating_add(clip_frame_count);
     }
 
     let total_frames = all_frames.len() as u32;
-
-    let strip_height = frame_size.saturating_mul(total_frames);
-
-    // PERFORMANCE RATIONALE:
-    // Why: Standard WebGPU hardware drivers mandate max_texture_dimension_2d <= 16384 pixels.
-    // What: We validate that the total height of the vertically stacked strip does not exceed 16384.
-    // Trade-off: Guarantees 100% portable GPU texture allocation across all platforms.
-    if strip_height > 16384 {
-        return Err(BakerError::ValidationFailed {
-            name: unit_name.to_string(),
-            reason: format!(
-                "Total strip height ({strip_height} px for {total_frames} frames at {frame_size}x{frame_size}) exceeds WebGPU 2D texture limit of 16384 px"
-            ),
-        });
-    }
-
-    let mut packed_strip = RgbaImage::new(frame_size, strip_height);
-    for (i, frame_img) in all_frames.iter().enumerate() {
-        let y_offset = (i as u32).saturating_mul(frame_size);
-        image::imageops::overlay(&mut packed_strip, frame_img, 0, i64::from(y_offset));
-    }
+    let packed_strip = pack_strip(unit_name, &all_frames, frame_size)?;
 
     std::fs::create_dir_all(output_dir).map_err(|source| BakerError::Io {
         path: output_dir.to_path_buf(),
@@ -603,6 +540,121 @@ pub fn bake_multi_action_videos_with_states<P: AsRef<Path>>(
 
     meta.save_to_ron(&output_meta_path)?;
     Ok(meta)
+}
+
+/// Checks that one action clip exists and decodes it into square PNG frames.
+///
+/// Returns the temporary directory that owns the decoded frames together with their paths in
+/// temporal order; the frames are deleted when the directory is dropped.
+///
+/// # Errors
+/// Returns [`BakerError::Io`] for a missing clip or temporary directory, and any error of
+/// `extract_clip_frames`.
+fn probe_clip(
+    ffmpeg_path: &Path,
+    video_path: &Path,
+    frame_size: u32,
+    fps: u32,
+) -> Result<(tempfile::TempDir, Vec<PathBuf>), BakerError> {
+    if !video_path.exists() {
+        return Err(BakerError::Io {
+            path: video_path.to_path_buf(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!(
+                    "Source video clip does not exist at {}",
+                    video_path.display()
+                ),
+            ),
+        });
+    }
+
+    let temp_dir = tempfile::tempdir().map_err(|source| BakerError::Io {
+        path: PathBuf::from("tempdir"),
+        source,
+    })?;
+
+    let frame_paths =
+        extract_clip_frames(ffmpeg_path, video_path, frame_size, fps, temp_dir.path())?;
+    Ok((temp_dir, frame_paths))
+}
+
+/// Fits a decoded clip to its per-action frame budget and loads the kept frames as RGBA.
+///
+/// `label` names the clip in the budget note printed by `fit_clip_to_budget`.
+///
+/// # Errors
+/// Returns [`BakerError::ImageProcessing`] if a decoded frame cannot be read.
+fn sample_frames(
+    frame_paths: Vec<PathBuf>,
+    budget: usize,
+    label: &str,
+    fps: u32,
+) -> Result<Vec<RgbaImage>, BakerError> {
+    fit_clip_to_budget(frame_paths, budget, label, fps)
+        .iter()
+        .map(|path| {
+            image::open(path)
+                .map(|frame| frame.to_rgba8())
+                .map_err(|source| BakerError::ImageProcessing {
+                    path: path.clone(),
+                    source,
+                })
+        })
+        .collect()
+}
+
+/// Describes where one action's frames sit in the strip and how they play back.
+///
+/// `start_frame` is the action's first frame index in the strip and `frame_count` its length,
+/// both in frames. Attacks play once, deaths and construction hold their last frame, and every
+/// other state loops.
+fn pack_action(state: AnimState, start_frame: u32, frame_count: u32) -> ActionSlice {
+    let (looping, hold_last_frame) = match state {
+        AnimState::Attack => (false, false),
+        AnimState::Die | AnimState::Constructing => (false, true),
+        AnimState::Idle | AnimState::Walk | AnimState::Cast => (true, false),
+    };
+    ActionSlice {
+        start_frame,
+        frame_count,
+        looping,
+        hold_last_frame,
+    }
+}
+
+/// Stacks square frames of `frame_size` pixels into one vertical strip, top to bottom.
+///
+/// # Errors
+/// Returns [`BakerError::ValidationFailed`] naming `unit_name` if the strip would be taller than
+/// the WebGPU 2D texture limit.
+fn pack_strip(
+    unit_name: &str,
+    frames: &[RgbaImage],
+    frame_size: u32,
+) -> Result<RgbaImage, BakerError> {
+    let total_frames = frames.len() as u32;
+    let strip_height = frame_size.saturating_mul(total_frames);
+
+    // PERFORMANCE RATIONALE:
+    // Why: Standard WebGPU hardware drivers mandate max_texture_dimension_2d <= 16384 pixels.
+    // What: We validate that the total height of the vertically stacked strip does not exceed 16384.
+    // Trade-off: Guarantees 100% portable GPU texture allocation across all platforms.
+    if strip_height > 16384 {
+        return Err(BakerError::ValidationFailed {
+            name: unit_name.to_string(),
+            reason: format!(
+                "Total strip height ({strip_height} px for {total_frames} frames at {frame_size}x{frame_size}) exceeds WebGPU 2D texture limit of 16384 px"
+            ),
+        });
+    }
+
+    let mut packed_strip = RgbaImage::new(frame_size, strip_height);
+    for (i, frame_img) in frames.iter().enumerate() {
+        let y_offset = (i as u32).saturating_mul(frame_size);
+        image::imageops::overlay(&mut packed_strip, frame_img, 0, i64::from(y_offset));
+    }
+    Ok(packed_strip)
 }
 
 #[cfg(test)]
