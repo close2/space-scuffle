@@ -3,8 +3,10 @@
 //! # Architectural Charter
 //! In accordance with `AGENTS.md` and
 //! `docs/06-factions-and-video-style-guide.md`,
-//! this module provides an automated client for generating authentic 3D unit animation
-//! clips (`Idle`, `Walk`, `Attack`) using Google's Veo video generation models.
+//! this module is the transport for generating authentic unit and structure animation clips
+//! with Google's Veo models: it starts, polls and downloads one operation at a time, classifies
+//! finished operations, and checks a key for free (`veo-preflight`). Which clips a run pays for,
+//! and in what order, is decided by `veo_plan` and carried out by `veo_run`.
 //!
 //! # Dual-API Support (Gemini API & Vertex AI Express Mode)
 //! - **Vertex AI Express Mode (`AQ.` prefix):** Uses the Vertex AI endpoints with API key
@@ -21,36 +23,29 @@
 //! - It is sent only over HTTPS and only to [`TRUSTED_API_HOSTS`].
 //! - curl never follows redirects itself. Each redirect hop is validated here and fetched
 //!   without the key, even if a hop returns to a trusted host.
-//! - `Debug` output redacts it, and error text that came from the network is scrubbed of it.
+//! - `Debug` output redacts it, and every text that came from the network is passed through
+//!   [`VeoClient::redact`] before it reaches an error, a log, a clip record or the ledger.
 //!
 //! # Paid Work Is Never Lost or Repeated
 //! Each generation costs real money, so failures are handled to protect it:
 //! - A video reaches its destination only by an atomic rename, after `ffprobe` has read every
 //!   packet of it. An HTTP error page or a truncated download therefore cannot enter the
-//!   cache, and the cache is validated the same way before it is reused.
-//! - An operation name is recorded in `<unit>_<state>.operation.json` before polling starts,
-//!   and a rerun resumes it instead of paying again. The record is removed only once the clip
-//!   is installed or the API reports that the operation failed.
+//!   clips directory.
 //! - Every request has a timeout. Polling and downloads retry transient faults a bounded
 //!   number of times. `:predictLongRunning` is retried only if the request cannot have started
-//!   work, because any other retry could pay twice.
-//!
-//! # WebGPU Texture Dimensions & Invariants
-//! Generated `.mp4` video clips are downloaded into `assets/videos/<unit>_<state>.mp4`
-//! and then transcoded via [`crate::ffmpeg_importer::bake_multi_action_videos_with_states`]
-//! into vertical strip PNGs where total height is guaranteed:
-//! `strip_height = total_frames * frame_size <= 16384` px.
+//!   work, because any other retry could pay twice, and never after a quota refusal
+//!   ([`BakerError::VeoQuotaExhausted`]), which ends the run.
+//! - A reported operation error is returned as a finished [`VeoOperation`] with its `error`,
+//!   so that the caller can record its code; the ledger (`ledger`) keeps each operation name,
+//!   and a rerun resumes it instead of paying again.
 
 #![allow(clippy::cast_possible_truncation, clippy::doc_markdown)]
 
 use crate::error::BakerError;
-use crate::ffmpeg_importer::{
-    bake_multi_action_videos_with_states, probe_video, DEFAULT_FFPROBE_PATH,
-};
-use crate::manifest::FlipbookAtlasMeta;
+use crate::ffmpeg_importer::{probe_video, DEFAULT_FFPROBE_PATH};
+use crate::ledger::{ApiMode, OperationOutcome};
 use base64::prelude::*;
 use serde::{Deserialize, Serialize};
-use sim_types::enums::AnimState;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -99,6 +94,9 @@ const CURL_EXIT_HTTP_ERROR: i32 = 22;
 
 /// Number of response-body bytes kept in an error message.
 const ERROR_BODY_LIMIT: usize = 2048;
+
+/// Characters of a quota refusal's message kept in the ledger.
+const QUOTA_REASON_LIMIT: usize = 200;
 
 /// Replacement text for the API key in diagnostics.
 const REDACTED: &str = "[REDACTED]";
@@ -261,18 +259,6 @@ struct CurlResponse {
     redirect_url: String,
 }
 
-/// A generation that was paid for and has not yet been installed as a clip.
-///
-/// Stored as `<unit>_<state>.operation.json` beside the clip. See the module docs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PendingOperation {
-    /// Resource name of the long-running operation.
-    pub operation_name: String,
-    /// Model that the operation was started with, which Vertex AI polling needs.
-    pub model: String,
-}
-
 /// Whether a retry might succeed, assuming that repeating the request is harmless.
 fn is_transient(error: &BakerError) -> bool {
     match error {
@@ -295,58 +281,6 @@ fn request_started_no_work(error: &BakerError) -> bool {
         // Host lookup and connection failures happen before any request bytes are sent.
         BakerError::CurlExecutionFailed { code, .. } => matches!(code, Some(5..=7)),
         _ => false,
-    }
-}
-
-/// File name stem for an animation state.
-fn state_slug(state: AnimState) -> &'static str {
-    match state {
-        AnimState::Idle => "idle",
-        AnimState::Walk => "walk",
-        AnimState::Attack => "attack",
-        AnimState::Constructing => "constructing",
-        AnimState::Cast => "cast",
-        AnimState::Die => "die",
-    }
-}
-
-/// Reads an operation record. An unreadable record is an error rather than `None`, because
-/// `None` means "start a new paid generation".
-fn load_pending(path: &Path) -> Result<Option<PendingOperation>, BakerError> {
-    match std::fs::read(path) {
-        Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(source) => Err(BakerError::Io {
-            path: path.to_path_buf(),
-            source,
-        }),
-    }
-}
-
-/// Atomically writes an operation record.
-fn save_pending(path: &Path, record: &PendingOperation) -> Result<(), BakerError> {
-    let not_recorded = |source| BakerError::OperationNotRecorded {
-        operation: record.operation_name.clone(),
-        path: path.to_path_buf(),
-        source,
-    };
-    let parent = path.parent().unwrap_or(Path::new("."));
-    let file = tempfile::NamedTempFile::new_in(parent).map_err(not_recorded)?;
-    let json = serde_json::to_vec_pretty(record)?;
-    std::fs::write(file.path(), json).map_err(not_recorded)?;
-    file.persist(path)
-        .map_err(|error| not_recorded(error.error))?;
-    Ok(())
-}
-
-/// Removes an operation record that may already be absent.
-fn clear_pending(path: &Path) -> Result<(), BakerError> {
-    match std::fs::remove_file(path) {
-        Err(source) if source.kind() != std::io::ErrorKind::NotFound => Err(BakerError::Io {
-            path: path.to_path_buf(),
-            source,
-        }),
-        Ok(()) | Err(_) => Ok(()),
     }
 }
 
@@ -471,8 +405,32 @@ impl VeoClient {
         self.credentials.api_key.starts_with(VERTEX_KEY_PREFIX)
     }
 
-    /// Replaces every occurrence of the API key in text that came from the network or curl.
-    fn redact(&self, text: &str) -> String {
+    /// The API the key selects.
+    #[must_use]
+    pub fn mode(&self) -> ApiMode {
+        if self.is_vertex_ai() {
+            ApiMode::VertexExpress
+        } else {
+            ApiMode::GeminiApi
+        }
+    }
+
+    /// The generation parameters every request sends.
+    #[must_use]
+    pub fn parameters(&self) -> VeoParameters {
+        VeoParameters::default()
+    }
+
+    /// The ffprobe executable used to validate downloads.
+    #[must_use]
+    pub fn ffprobe_path(&self) -> &Path {
+        &self.ffprobe_path
+    }
+
+    /// Replaces every occurrence of the API key in `text`. Every text that came from the
+    /// network or from curl passes through here before it reaches an error, a log or the ledger.
+    #[must_use]
+    pub fn redact(&self, text: &str) -> String {
         if self.credentials.api_key.is_empty() {
             text.to_string()
         } else {
@@ -797,6 +755,7 @@ impl VeoClient {
 
         let resp_json = self.with_retries(request_started_no_work, || {
             self.api_request(&url, Some(&json_body), API_REQUEST_TIMEOUT)
+                .map_err(as_quota_refusal)
         })?;
 
         if let Some(err_val) = resp_json.get("error") {
@@ -894,17 +853,16 @@ impl VeoClient {
         operation_name: &str,
         json: serde_json::Value,
     ) -> Result<VeoOperation, BakerError> {
-        if let Some(err_val) = json.get("error") {
-            let msg = err_val
-                .get("message")
-                .and_then(|m| m.as_str())
-                .unwrap_or("Unknown operation error");
-            return Err(BakerError::VeoOperationFailed {
-                operation: operation_name.to_string(),
-                message: self.redact(msg),
-            });
+        let mut operation: VeoOperation = serde_json::from_value(json)?;
+        if let Some(error) = &mut operation.error {
+            // A reported error is the operation's terminal result, whatever `done` says.
+            error.message = self.redact(&error.message);
+            operation.done = true;
+            if operation.name.is_empty() {
+                operation.name = operation_name.to_string();
+            }
         }
-        Ok(serde_json::from_value(json)?)
+        Ok(operation)
     }
 
     /// Extracts video content from a completed [`VeoOperation`] and writes it to disk.
@@ -998,172 +956,225 @@ impl VeoClient {
         }
 
         Err(BakerError::VeoApiError {
-            message: format!("Could not find video bytes or URI in operation response: {resp_val}"),
+            message: self.redact(&format!(
+                "Could not find video bytes or URI in operation response: {resp_val}"
+            )),
         })
     }
 
-    /// End-to-end generation and baking pipeline for a single unit.
+    /// Classifies a finished operation for the ledger (plan D-3, D-4).
     ///
-    /// Generates videos for `Idle`, `Walk`, and `Attack`, polls for completion,
-    /// saves each `.mp4`, and compiles them into a vertical strip PNG and `.flipbook.ron`.
-    /// An interrupted run can be repeated: valid clips are reused and recorded operations are
-    /// resumed, see the module docs. `catalog` is the unit catalog loaded at run time, and
-    /// `dirs` names the keyframe, video-cache and output directories.
+    /// Inline bytes win over a URI, an HTTPS URI over a `gs://` one; a response with neither
+    /// and a filtered count is `Filtered`. Every text that came from the service is redacted.
+    #[must_use]
+    pub fn classify_operation(&self, operation: &VeoOperation) -> OperationOutcome {
+        if let Some(error) = &operation.error {
+            return OperationOutcome::Failed {
+                code: error.code,
+                message: self.redact(&error.message),
+            };
+        }
+        let Some(response) = &operation.response else {
+            return OperationOutcome::Failed {
+                code: None,
+                message: "the finished operation carried no response".to_string(),
+            };
+        };
+        if find_base64_video(response).is_some() {
+            return OperationOutcome::VideoInline;
+        }
+        if let Some(uri) = find_video_uri(response) {
+            let uri = self.redact(without_query(&uri));
+            return if uri.starts_with("gs://") {
+                OperationOutcome::GcsUri { uri }
+            } else {
+                OperationOutcome::VideoUri { uri }
+            };
+        }
+        let filtered = response
+            .get("raiMediaFilteredCount")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        if filtered > 0 {
+            let reasons = response.get("raiMediaFilteredReasons").map_or_else(
+                || format!("{filtered} result(s) filtered"),
+                ToString::to_string,
+            );
+            return OperationOutcome::Filtered {
+                reason: self.redact(&reasons),
+            };
+        }
+        OperationOutcome::Failed {
+            code: None,
+            message: "the finished operation returned no video".to_string(),
+        }
+    }
+
+    /// The operation as JSON for the clip record, with inline video bytes replaced by their
+    /// length and every string redacted.
+    #[must_use]
+    pub fn operation_record(&self, operation: &VeoOperation) -> serde_json::Value {
+        let mut value = serde_json::json!({
+            "name": operation.name,
+            "done": operation.done,
+            "response": operation.response,
+            "error": operation.error,
+        });
+        strip_record(&mut value, &|text| self.redact(text));
+        value
+    }
+
+    /// The model resource URL: the free resource the preflight reads (plan D-5).
     ///
     /// # Errors
-    /// Returns [`BakerError::UnknownArchetype`] before any API call or filesystem change if
-    /// `unit_name` is not an exact slug of `catalog`. Returns [`BakerError::CachedVideoInvalid`] if
-    /// a cached clip is invalid. It is neither reused nor replaced, because replacing it would
-    /// silently spend money. Otherwise returns [`BakerError`] on API, download, or FFmpeg
-    /// transcoding errors.
-    pub fn generate_and_bake_unit(
-        &self,
-        catalog: &sim_core::UnitCatalog,
-        unit_name: &str,
-        dirs: &UnitMediaDirs<'_>,
-        frame_size: u32,
-        fps: u32,
-    ) -> Result<FlipbookAtlasMeta, BakerError> {
-        validate_catalog_slug(catalog, unit_name)?;
+    /// [`BakerError::ProjectIdMissing`] for a Vertex AI key without a project.
+    pub fn build_model_url(&self) -> Result<String, BakerError> {
+        if self.is_vertex_ai() {
+            self.vertex_model_url()
+        } else {
+            Ok(format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}",
+                self.model
+            ))
+        }
+    }
 
-        std::fs::create_dir_all(dirs.videos).map_err(|source| BakerError::Io {
-            path: dirs.videos.to_path_buf(),
+    /// One authenticated, free GET of the model resource on the generation transport.
+    ///
+    /// A refusal (4xx, 5xx) is a report, not an error, so that its status can be shown.
+    ///
+    /// # Errors
+    /// [`BakerError::ProjectIdMissing`], or a transport failure ([`BakerError::Io`],
+    /// [`BakerError::CurlExecutionFailed`], [`BakerError::InvalidApiKey`]).
+    pub fn preflight(&self) -> Result<PreflightReport, BakerError> {
+        let url = self.build_model_url()?;
+        ensure_trusted_host(&url)?;
+        let response_file = tempfile::NamedTempFile::new().map_err(|source| BakerError::Io {
+            path: std::env::temp_dir(),
             source,
         })?;
-
-        let mut clips: Vec<(AnimState, PathBuf)> = Vec::new();
-        for state in [AnimState::Idle, AnimState::Walk, AnimState::Attack] {
-            let clip = self.obtain_clip(catalog, unit_name, state, dirs)?;
-            clips.push((state, clip));
-        }
-
-        println!("==> Stitching clips for {unit_name} into multi-action flipbook atlas...");
-        bake_multi_action_videos_with_states(unit_name, &clips, dirs.output, frame_size, fps)
-    }
-
-    /// Returns the path of a valid clip, reusing the cache or a recorded operation if possible.
-    fn obtain_clip(
-        &self,
-        catalog: &sim_core::UnitCatalog,
-        unit_name: &str,
-        state: AnimState,
-        dirs: &UnitMediaDirs<'_>,
-    ) -> Result<PathBuf, BakerError> {
-        let state_str = state_slug(state);
-        let mp4_path = dirs.videos.join(format!("{unit_name}_{state_str}.mp4"));
-        let record_path = dirs
-            .videos
-            .join(format!("{unit_name}_{state_str}.operation.json"));
-
-        if mp4_path.exists() {
-            probe_video(&self.ffprobe_path, &mp4_path).map_err(|error| match error {
-                BakerError::VideoValidationFailed { reason, .. } => {
-                    BakerError::CachedVideoInvalid {
-                        path: mp4_path.clone(),
-                        reason,
-                    }
-                }
-                other => other,
-            })?;
-            println!(
-                "    ==> Reusing existing valid video: {}",
-                mp4_path.display()
-            );
-            clear_pending(&record_path)?;
-            return Ok(mp4_path);
-        }
-
-        let result = match load_pending(&record_path)? {
-            Some(record) => {
-                println!(
-                    "    Resuming recorded operation '{}'...",
-                    record.operation_name
-                );
-                self.clone()
-                    .with_model(&record.model)
-                    .poll_operation(&record.operation_name)
+        let (http_status, error_status) = match self.run_curl(&CurlRequest {
+            url: &url,
+            post_body: None,
+            authenticated: true,
+            output: response_file.path(),
+            max_time: API_REQUEST_TIMEOUT,
+        }) {
+            Ok(response) => (response.status, None),
+            Err(BakerError::VeoHttpStatus { status, body }) => {
+                (status, google_error(&body).and_then(|e| e.status))
             }
-            None => self.start_operation(catalog, unit_name, state, dirs.keyframes, &record_path),
-        }
-        .and_then(|completed| {
-            println!("    Saving generated video to {}...", mp4_path.display());
-            self.save_operation_video(&completed, &mp4_path)
-        });
-
-        match result {
-            Ok(()) => {
-                clear_pending(&record_path)?;
-                Ok(mp4_path)
-            }
-            Err(error @ BakerError::VeoOperationFailed { .. }) => {
-                // The operation can never succeed, so a rerun must be free to start a new one.
-                clear_pending(&record_path)?;
-                Err(error)
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    /// Starts a paid generation, records it, and waits for it to finish.
-    fn start_operation(
-        &self,
-        catalog: &sim_core::UnitCatalog,
-        unit_name: &str,
-        state: AnimState,
-        keyframes_dir: &Path,
-        record_path: &Path,
-    ) -> Result<VeoOperation, BakerError> {
-        let state_str = state_slug(state);
-
-        // Check if keyframe exists for this specific state or fallback
-        let keyframe_path = keyframes_dir.join(format!("{unit_name}_{state_str}.jpg"));
-        let active_keyframe = keyframes_dir.join(format!("{unit_name}_active.jpg"));
-        let idle_keyframe = keyframes_dir.join(format!("{unit_name}_idle.jpg"));
-
-        let ref_keyframe = if keyframe_path.exists() {
-            Some(keyframe_path.as_path())
-        } else if state == AnimState::Attack && active_keyframe.exists() {
-            Some(active_keyframe.as_path())
-        } else if idle_keyframe.exists() {
-            Some(idle_keyframe.as_path())
-        } else {
-            None
+            Err(other) => return Err(other),
         };
-
-        let prompt = build_action_prompt(catalog, unit_name, state)?;
-
-        println!("==> Initiating Veo video generation for {unit_name} [{state:?}]...");
-        let op = self.initiate_generation(&prompt, ref_keyframe)?;
-
-        if !op.name.is_empty() {
-            save_pending(
-                record_path,
-                &PendingOperation {
-                    operation_name: op.name.clone(),
-                    model: self.model.clone(),
-                },
-            )?;
-        }
-
-        if op.done {
-            Ok(op)
-        } else {
-            println!("    Polling operation '{}' until completion...", op.name);
-            self.poll_operation(&op.name)
-        }
+        Ok(PreflightReport {
+            mode: self.mode(),
+            model: self.model.clone(),
+            http_status,
+            error_status,
+        })
     }
 }
 
-/// The directories one unit's Veo pipeline reads from and writes to.
-#[derive(Clone, Copy, Debug)]
-pub struct UnitMediaDirs<'a> {
-    /// Reference keyframe images, named `<slug>_<state>.jpg`, `<slug>_active.jpg` or
-    /// `<slug>_idle.jpg`.
-    pub keyframes: &'a Path,
-    /// Cache of downloaded `.mp4` clips and pending-operation records; created if missing.
-    pub videos: &'a Path,
-    /// Destination of the baked `.png` strip and `.flipbook.ron` manifest.
-    pub output: &'a Path,
+/// Replaces inline video bytes in an operation record by their length and redacts strings.
+fn strip_record(value: &mut serde_json::Value, redact: &dyn Fn(&str) -> String) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map.iter_mut() {
+                if key == "bytesBase64Encoded" {
+                    let length = child.as_str().map_or(0, str::len);
+                    *child = serde_json::Value::String(format!(
+                        "<{length} base64 characters, saved as the clip>"
+                    ));
+                } else {
+                    strip_record(child, redact);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                strip_record(item, redact);
+            }
+        }
+        serde_json::Value::String(text) => *text = redact(text),
+        _ => {}
+    }
+}
+
+/// The result of [`VeoClient::preflight`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreflightReport {
+    /// The API the key selects.
+    pub mode: ApiMode,
+    /// The model read.
+    pub model: String,
+    /// HTTP status of the GET.
+    pub http_status: u16,
+    /// The `status` field of a Google error body, such as `PERMISSION_DENIED`.
+    pub error_status: Option<String>,
+}
+
+impl PreflightReport {
+    /// Whether the key could read the model resource.
+    #[must_use]
+    pub fn model_visible(&self) -> bool {
+        (200..300).contains(&self.http_status)
+    }
+}
+
+/// The parts of a Google API error body this pipeline acts on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GoogleError {
+    status: Option<String>,
+    message: String,
+    reason: Option<String>,
+}
+
+/// Parses `{"error": {"status", "message", "details": [{"reason"}]}}` from an error body.
+fn google_error(body: &str) -> Option<GoogleError> {
+    let json: serde_json::Value = serde_json::from_str(body).ok()?;
+    let error = json.get("error")?;
+    let text = |value: Option<&serde_json::Value>| {
+        value
+            .and_then(serde_json::Value::as_str)
+            .map(ToString::to_string)
+    };
+    let reason = error
+        .get("details")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|details| details.iter().find_map(|d| text(d.get("reason"))));
+    Some(GoogleError {
+        status: text(error.get("status")),
+        message: text(error.get("message")).unwrap_or_default(),
+        reason,
+    })
+}
+
+/// Turns a 429 whose body reports an exhausted quota into [`BakerError::VeoQuotaExhausted`].
+///
+/// Google reports quota exhaustion as HTTP 429 with `status: RESOURCE_EXHAUSTED`, also for
+/// per-minute request limits; any of those ends the run, because waiting costs nothing. A 429
+/// without that status or the word "quota" stays an ordinary, retryable 429.
+fn as_quota_refusal(error: BakerError) -> BakerError {
+    let BakerError::VeoHttpStatus { status: 429, body } = &error else {
+        return error;
+    };
+    let parsed = google_error(body);
+    let exhausted = parsed.as_ref().is_some_and(|e| {
+        e.status.as_deref() == Some("RESOURCE_EXHAUSTED")
+            || e.message.to_lowercase().contains("quota")
+    }) || body.to_lowercase().contains("quota");
+    if !exhausted {
+        return error;
+    }
+    let (status, reason) = parsed.map_or((None, None), |e| {
+        let message: String = e.message.chars().take(QUOTA_REASON_LIMIT).collect();
+        (e.status, e.reason.or(Some(message)))
+    });
+    BakerError::VeoQuotaExhausted {
+        http_status: 429,
+        status,
+        reason,
+    }
 }
 
 /// Looks up the catalog entry whose slug is exactly `slug`.
@@ -1202,41 +1213,6 @@ pub fn validate_catalog_slug(
         }
     })?;
     Ok(())
-}
-
-/// Constructs a descriptive action prompt adhering to Space Scuffle's stylized art direction.
-///
-/// `unit_name` must be an exact slug of `catalog`, the unit catalog loaded at run time. There is
-/// no generic prompt for unknown units, because money must not be spent on a clip that no
-/// catalog unit can use.
-///
-/// # Errors
-/// Returns [`BakerError::UnknownArchetype`] if `unit_name` is not an exact catalog slug.
-pub fn build_action_prompt(
-    catalog: &sim_core::UnitCatalog,
-    unit_name: &str,
-    state: AnimState,
-) -> Result<String, BakerError> {
-    let base_style = "Stylized hand-painted 3D character, Arcane and StarCraft II cinematic portrait aesthetic, dark slate-indigo radial studio backdrop (#0B101B), dramatic 3/4 isometric front hero framing, glowing cyan/amber energy cores, bold proportions.";
-
-    let arch = exact_catalog_archetype(unit_name, catalog)?;
-
-    let action_desc = match state {
-        AnimState::Idle => "Idle animation: steady rhythmic breathing movement, subtle weapon glow pulse, head and radar scanning smoothly in place.",
-        AnimState::Walk => "Walk animation: dynamic forward stride, rhythmic mechanical bobbing, ground dust kick-up at feet, leaning into movement.",
-        AnimState::Attack => "Attack animation: sharp weapon recoil, intense bright muzzle flash and projectile emission filling the right side of frame, followed by fluid spring recovery.",
-        AnimState::Constructing => "Constructing animation: progressive holographic wireframe build-up from ground to top with active seam welding sparks.",
-        AnimState::Die => "Death animation: dramatic armor fracture, glowing internal reactor blowout with flying mechanical debris dissolving into smoke.",
-        AnimState::Cast => "Active tactical combat animation.",
-    };
-
-    if let Some(prompt) = arch.veo_prompt(state) {
-        return Ok(format!("{prompt} {action_desc} {base_style}"));
-    }
-    Ok(format!(
-        "{}: {} {action_desc} {base_style}",
-        arch.display_name, arch.lore_description
-    ))
 }
 
 /// Recursively searches a JSON value for base64 encoded video content.

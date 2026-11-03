@@ -106,12 +106,14 @@ fn the_library_discovers_a_unit_added_to_the_catalog_files() -> Result<(), Box<d
             .map(|a| a.display_name.as_str()),
         Some(added.display_name.as_str())
     );
+    let style = asset_baker::MediaStyle::load(&shipped_assets())?;
     let prompt = asset_baker::build_action_prompt(
         &catalogs.units,
+        &style,
         &added.slug,
         sim_types::enums::AnimState::Idle,
     )?;
-    assert_ne!(prompt, "");
+    assert!(prompt.text.contains(&added.display_name) || prompt.authored);
 
     let shipped = sim_fixtures::shipped_catalogs().units;
     assert!(!default_unit_archetypes(&shipped).contains(&added.slug));

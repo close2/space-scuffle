@@ -15,6 +15,13 @@
 //! - [`manifest`]: Structural layout and slice metadata via [`FlipbookAtlasMeta`].
 //! - [`ffmpeg_importer`]: Transcoding, center-cropping, scaling, and strip packing via external FFmpeg.
 //! - [`veo_client`]: Strongly-typed Google Gemini and Vertex AI Veo Video Generation client.
+//! - [`prompts`]: Veo prompts composed from data (`media_style.ron`) and validated before spend.
+//! - [`veo_plan`]: Which clips a Veo run reuses, resumes or pays for: exactly the actions the
+//!   simulation publishes, Idle first.
+//! - [`veo_run`]: Executes a plan under the spending rules, writing every event to the ledger.
+//! - [`ledger`]: The append-only JSON-lines record of every paid request.
+//! - [`budget`]: Per-run and rolling-window caps from `media/veo_budget.ron`.
+//! - [`clip_review`]: Keyframes, contact sheets, review verdicts, installation and import.
 //! - [`procedural_generator`]: Pure-Rust sprite synthesizers that produce test fixtures only.
 
 #![forbid(unsafe_code)]
@@ -22,15 +29,21 @@
 #![allow(clippy::doc_markdown)]
 
 pub mod assets_root;
+pub mod budget;
+pub mod clip_review;
 pub mod error;
 pub mod ffmpeg_importer;
+pub mod ledger;
 pub mod manifest;
 pub mod media;
 pub mod media_audit;
 pub mod procedural_generator;
+pub mod prompts;
 pub mod terrain_texture;
 pub mod terrain_theme;
 pub mod veo_client;
+pub mod veo_plan;
+pub mod veo_run;
 
 pub use assets_root::{load_catalogs, resolve_assets_root};
 pub use error::BakerError;
@@ -43,6 +56,7 @@ pub use procedural_generator::{
     ensure_outside_runtime_assets, generate_procedural_atlas, generate_procedural_dome_atlas,
     generate_procedural_unit_atlas, write_procedural_atlas, ProceduralAtlasOutput,
 };
+pub use prompts::{build_action_prompt, MediaStyle};
 pub use terrain_texture::{
     bake_theme, derive_height, derive_normal, derive_orm, find_horizontal_min_cut,
     find_vertical_min_cut, linear_to_srgb, linear_to_srgb_image, load_and_resize, make_tileable,
@@ -58,10 +72,12 @@ pub use terrain_theme::{
     LAYER_INDEX_GRASS, LAYER_INDEX_METAL_PLATE, MAX_THEME_TEXTURE_SIZE, MIN_THEME_TEXTURE_SIZE,
 };
 pub use veo_client::{
-    build_action_prompt, resolve_credentials, resolve_credentials_from, validate_catalog_slug,
-    UnitMediaDirs, VeoClient, VeoCredentials, VeoGenerateRequest, VeoGenerateVideoResponse,
-    VeoImageInput, VeoInstance, VeoOperation, VeoParameters, VeoVideoOutput, DEFAULT_VEO_MODEL,
+    resolve_credentials, resolve_credentials_from, validate_catalog_slug, VeoClient,
+    VeoCredentials, VeoGenerateRequest, VeoGenerateVideoResponse, VeoImageInput, VeoInstance,
+    VeoOperation, VeoParameters, VeoVideoOutput, DEFAULT_VEO_MODEL,
 };
+pub use veo_plan::{plan_run, RunPlan, VeoDirs};
+pub use veo_run::{execute_plan, RunContext, RunSummary};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

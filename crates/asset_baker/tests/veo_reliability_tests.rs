@@ -7,11 +7,16 @@
 #![cfg(unix)]
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
+use asset_baker::ledger::{new_run_id, Ledger, LedgerError, LedgerHistory};
 use asset_baker::veo_client::{VeoClient, VeoCredentials, VeoOperation};
-use asset_baker::{BakerError, UnitMediaDirs};
+use asset_baker::veo_plan::ClipAction;
+use asset_baker::{
+    execute_plan, plan_run, BakerError, MediaStyle, RunContext, RunPlan, RunSummary, VeoDirs,
+};
 use base64::prelude::*;
 use common::{CurlShim, FakeServer, Reply};
 use serde_json::json;
+use sim_types::enums::AnimState;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -38,6 +43,49 @@ fn client(shim: &CurlShim) -> VeoClient {
     .with_curl_path(shim.path())
     .with_poll_interval(Duration::from_millis(1))
     .with_retry_policy(3, Duration::from_millis(1))
+}
+
+/// The keyframe, video and clip directories of a run under `root`.
+fn dirs(root: &Path) -> VeoDirs {
+    VeoDirs {
+        keyframes: root.join("keyframes"),
+        videos: root.join("videos"),
+        clips: root.join("clips"),
+    }
+}
+
+/// Plans `unit`'s published clips under `root` with the shipped media style.
+fn plan(root: &Path, unit: &str, history: &LedgerHistory) -> Result<RunPlan, BakerError> {
+    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let style = MediaStyle::load(&assets)?;
+    plan_run(
+        &catalog(),
+        &style,
+        &[unit.to_string()],
+        None,
+        &dirs(root),
+        history,
+    )
+}
+
+/// Plans and executes a run for `unit` under `root`, with the ledger at `root/ledger.jsonl`.
+fn run_unit(client: &VeoClient, root: &Path, unit: &str) -> Result<RunSummary, BakerError> {
+    let ledger_path = root.join("ledger.jsonl");
+    let history = LedgerHistory::load(&ledger_path)?;
+    let plan = plan(root, unit, &history)?;
+    let mut ledger = Ledger::open(&ledger_path, new_run_id())?;
+    let mut out = Vec::new();
+    execute_plan(
+        &plan,
+        RunContext {
+            client,
+            ledger: &mut ledger,
+            history: &history,
+            dirs: &dirs(root),
+            max_generations: 12,
+            out: &mut out,
+        },
+    )
 }
 
 fn uri_operation() -> VeoOperation {
@@ -199,17 +247,7 @@ fn b3_poisoned_cache_entry_is_refused_without_spending_money() {
     // Larger than the old 1000-byte heuristic, which accepted any such file.
     std::fs::write(&poisoned, HTML_ERROR.repeat(50)).expect("poison cache");
 
-    let result = client(&shim).generate_and_bake_unit(
-        &catalog(),
-        CATALOG_UNIT,
-        &UnitMediaDirs {
-            keyframes: &dir.path().join("keyframes"),
-            videos: &videos,
-            output: &dir.path().join("out"),
-        },
-        64,
-        5,
-    );
+    let result = run_unit(&client(&shim), dir.path(), CATALOG_UNIT);
 
     match result {
         Err(BakerError::CachedVideoInvalid { path, .. }) => assert_eq!(path, poisoned),
@@ -403,49 +441,35 @@ fn b4_an_interrupted_run_resumes_the_paid_operation_instead_of_paying_again() {
     });
     let shim = CurlShim::new(&server);
     let dir = tempfile::tempdir().expect("tempdir");
-    let videos = dir.path().join("videos");
-    let run = |client: &VeoClient| {
-        client.generate_and_bake_unit(
-            &catalog(),
-            CATALOG_UNIT,
-            &UnitMediaDirs {
-                keyframes: &dir.path().join("keyframes"),
-                videos: &videos,
-                output: &dir.path().join("out"),
-            },
-            64,
-            5,
-        )
-    };
 
-    let first = run(&client(&shim));
+    let first = run_unit(&client(&shim), dir.path(), CATALOG_UNIT);
     assert!(
         matches!(first, Err(BakerError::VeoTransientExhausted { .. })),
         "{first:?}"
     );
     assert_eq!(count_initiates(&server), 1);
-    let record = videos.join(format!("{CATALOG_UNIT}_idle.operation.json"));
-    assert!(record.is_file(), "operation name must be persisted");
+    let pending = LedgerHistory::load(&dir.path().join("ledger.jsonl"))
+        .expect("ledger")
+        .clip(CATALOG_UNIT, AnimState::Idle)
+        .and_then(|clip| clip.pending.clone());
+    assert!(
+        pending.is_some(),
+        "the operation name must be in the ledger"
+    );
 
     outage.store(false, Ordering::SeqCst);
-    let meta = run(&client(&shim)).expect("second run completes");
+    let summary = run_unit(&client(&shim), dir.path(), CATALOG_UNIT).expect("second run");
 
-    assert_eq!(meta.name, CATALOG_UNIT);
     assert_eq!(
-        count_initiates(&server),
-        3,
-        "idle must resume; only walk and attack are new"
+        summary.started, 2,
+        "idle resumes; only walk and attack are new"
     );
-    assert!(
-        !directory_entries(&videos)
-            .iter()
-            .any(|name| name.ends_with(".operation.json")),
-        "finished operations must not stay on record"
-    );
+    assert_eq!(summary.downloaded, 3);
+    assert_eq!(count_initiates(&server), 3);
 }
 
 #[test]
-fn b4_a_failed_download_keeps_the_record_so_the_result_is_not_paid_for_twice() {
+fn b4_a_failed_download_keeps_the_operation_so_the_result_is_not_paid_for_twice() {
     let bytes = fixture_bytes();
     let outage = Arc::new(AtomicBool::new(true));
     let server_outage = Arc::clone(&outage);
@@ -458,31 +482,17 @@ fn b4_a_failed_download_keeps_the_record_so_the_result_is_not_paid_for_twice() {
     });
     let shim = CurlShim::new(&server);
     let dir = tempfile::tempdir().expect("tempdir");
-    let videos = dir.path().join("videos");
-    let run = |client: &VeoClient| {
-        client.generate_and_bake_unit(
-            &catalog(),
-            CATALOG_UNIT,
-            &UnitMediaDirs {
-                keyframes: &dir.path().join("keyframes"),
-                videos: &videos,
-                output: &dir.path().join("out"),
-            },
-            64,
-            5,
-        )
-    };
 
-    assert!(run(&client(&shim)).is_err());
+    assert!(run_unit(&client(&shim), dir.path(), CATALOG_UNIT).is_err());
     assert_eq!(count_initiates(&server), 1);
 
     outage.store(false, Ordering::SeqCst);
-    run(&client(&shim)).expect("second run completes");
+    run_unit(&client(&shim), dir.path(), CATALOG_UNIT).expect("second run completes");
     assert_eq!(count_initiates(&server), 3);
 }
 
 #[test]
-fn b4_a_terminally_failed_operation_clears_its_record() {
+fn b4_a_terminally_failed_operation_is_recorded_and_never_regenerated_silently() {
     let server = FakeServer::start(|request, _| {
         if request.path.contains(":predictLongRunning") {
             Reply::json(r#"{"name":"operations/doomed"}"#)
@@ -494,65 +504,49 @@ fn b4_a_terminally_failed_operation_clears_its_record() {
     });
     let shim = CurlShim::new(&server);
     let dir = tempfile::tempdir().expect("tempdir");
-    let videos = dir.path().join("videos");
 
-    let result = client(&shim).generate_and_bake_unit(
-        &catalog(),
-        CATALOG_UNIT,
-        &UnitMediaDirs {
-            keyframes: &dir.path().join("keyframes"),
-            videos: &videos,
-            output: &dir.path().join("out"),
-        },
-        64,
-        5,
-    );
+    let result = run_unit(&client(&shim), dir.path(), CATALOG_UNIT);
 
     match result {
-        Err(BakerError::VeoOperationFailed { operation, message }) => {
-            assert_eq!(operation, "operations/doomed");
-            assert!(message.contains("model refused"));
+        Err(BakerError::VeoRunStopped { reason }) => {
+            assert!(reason.contains("model refused"), "{reason}");
         }
-        other => panic!("expected VeoOperationFailed, got {other:?}"),
+        other => panic!("expected VeoRunStopped, got {other:?}"),
     }
-    assert_eq!(directory_entries(&videos), Vec::<String>::new());
+    assert_eq!(count_initiates(&server), 1);
+    let history = LedgerHistory::load(&dir.path().join("ledger.jsonl")).expect("ledger");
+    let plan = plan(dir.path(), CATALOG_UNIT, &history).expect("plan");
+    assert_eq!(
+        plan.clips[0].action,
+        ClipAction::Generate { regeneration: true }
+    );
+    assert!(dir
+        .path()
+        .join("clips")
+        .join(CATALOG_UNIT)
+        .join("idle")
+        .join("doomed.json")
+        .is_file());
 }
 
 #[test]
-fn b4_an_unreadable_record_stops_the_run_instead_of_paying_again() {
-    let server = FakeServer::start(|_, _| Reply::status(500, "must not be called"));
-    let shim = CurlShim::new(&server);
+fn b4_an_unreadable_ledger_stops_the_run_instead_of_paying_again() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let videos = dir.path().join("videos");
-    std::fs::create_dir_all(&videos).expect("videos dir");
-    std::fs::write(
-        videos.join(format!("{CATALOG_UNIT}_idle.operation.json")),
-        "not json",
-    )
-    .expect("corrupt record");
+    std::fs::write(dir.path().join("ledger.jsonl"), "{\"event\":\"unknown\"}\n")
+        .expect("corrupt ledger");
 
-    let result = client(&shim).generate_and_bake_unit(
-        &catalog(),
-        CATALOG_UNIT,
-        &UnitMediaDirs {
-            keyframes: &dir.path().join("keyframes"),
-            videos: &videos,
-            output: &dir.path().join("out"),
-        },
-        64,
-        5,
+    let result = LedgerHistory::load(&dir.path().join("ledger.jsonl"));
+
+    assert!(
+        matches!(result, Err(LedgerError::Malformed { line: 1, .. })),
+        "{result:?}"
     );
-
-    assert!(result.is_err());
-    assert!(server.requests().is_empty(), "no API call may be made");
 }
 
 #[test]
 fn b9_only_exact_catalog_slugs_can_spend_money_or_touch_the_filesystem() {
-    let server = FakeServer::start(|_, _| Reply::status(500, "must not be called"));
-    let shim = CurlShim::new(&server);
     let dir = tempfile::tempdir().expect("tempdir");
-    let videos = dir.path().join("videos");
+    let history = LedgerHistory::default();
 
     for unit in [
         "fictional_unit",
@@ -565,24 +559,12 @@ fn b9_only_exact_catalog_slugs_can_spend_money_or_touch_the_filesystem() {
         "pulse_bot/../../escaped",
         "/etc/escaped",
     ] {
-        let result = client(&shim).generate_and_bake_unit(
-            &catalog(),
-            unit,
-            &UnitMediaDirs {
-                keyframes: &dir.path().join("keyframes"),
-                videos: &videos,
-                output: &dir.path().join("out"),
-            },
-            64,
-            5,
-        );
-
+        let result = plan(dir.path(), unit, &history);
         assert!(
             matches!(result, Err(BakerError::UnknownArchetype { .. })),
             "{unit:?}: {result:?}"
         );
     }
 
-    assert!(server.requests().is_empty(), "no API call may be made");
-    assert!(!videos.exists(), "no directory may be created");
+    assert_eq!(directory_entries(dir.path()), Vec::<String>::new());
 }

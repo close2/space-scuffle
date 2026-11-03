@@ -45,8 +45,13 @@ Cargo's.
 - **`sim_core`** — the deterministic tick (`SimWorld`): commands, economy, production and research,
   construction, transport, abilities, vision, targeting, movement, collision and push, weapons, the match result,
   the checksum and the catalogs.
-- **`asset_baker`** — turns Veo videos into flipbook atlases through ffmpeg, bakes terrain textures, and audits
-  media. It reads the unit catalog from `sim_core` to know which archetypes need media.
+- **`asset_baker`** — generates Veo clips under spending caps, turns them into flipbook atlases through ffmpeg,
+  bakes terrain textures, and audits media. It reads the unit catalog from `sim_core` to know which archetypes
+  need media and which actions each publishes. A paid run goes `validate-prompts`, `generate-veo --dry-run`
+  (both free, no credential read), `veo-preflight` (one free authenticated GET), `generate-veo --max-generations N
+  --ledger docs/evidence/veo/ledger.jsonl --clips-dir ~/scratch/veo/clips`, `review`, `install-clip`, then
+  `bake-unit-videos`; prompts and the house style are data (`assets/catalog/media_style.ron`), the caps are
+  `assets/media/veo_budget.ron`, and exit code 3 means a quota refusal ended the run.
 - **`client`** — the Bevy game: renderer, bubble and dome shaders, smog fog presentation, HUD and command card,
   selection and input, result screen, the Visual Lab, and the map editor.
 - **`client_diagnostics`** — capture, audit and probe tools built on the client; nothing in the game depends on
@@ -124,7 +129,7 @@ Status is `Working` (built, tested, in the shipped game), `Partial` (built but l
 | Result screen | Working | Victory and defeat screen | `crates/client/tests/battle_result_tests.rs`, [`docs/evidence/2026-11-03-result-window-victory.md`](docs/evidence/2026-11-03-result-window-victory.md) | none known |
 | Whole skirmish | Working | A skirmish won headless through input events alone | `crates/client/tests/skirmish_match_tests.rs` | none known |
 | Map editor | Working | Paint, place, save, playtest and return; a load requested by the UI applies in the same frame | `crates/client/tests/editor_app_tests.rs` (including `document_load_applies_after_the_editor_ui_requests_it`), `crates/client/tests/editor_core_tests.rs` | none known |
-| Asset baker | Working | Veo download, ffmpeg import, flipbook atlases, terrain textures, media audit | `crates/asset_baker/tests/bake_integrity_tests.rs`, `crates/asset_baker/tests/ffmpeg_tests.rs` | none known |
+| Asset baker | Working | Veo generation of exactly the published actions with prompts from data, a request ledger, per-run and rolling caps, a quota stop, a free preflight, keyframe chaining, review and install; ffmpeg import, flipbook atlases, terrain textures, media audit | `crates/asset_baker/tests/veo_cli_tests.rs`, `crates/asset_baker/tests/bake_integrity_tests.rs`, `crates/asset_baker/tests/ffmpeg_tests.rs` | The Veo pipeline has made no live request since these changes (plan 2026-11-04 WP3 pilot) |
 | Media coverage | Partial | Real media for part of the roster; missing media fails loudly | `crates/client/tests/runtime_media_tests.rs` | Paid generation awaits the owner (Q0001) |
 | Terrain anisotropy on old lavapipe | Partial | Terrain sampling validated on `radv`; a test override for old lavapipe | `crates/client/tests/gpu_validation_tests.rs` | Override kept until this server's Mesa is 25.1 or later (Debian 13 ships 25.0.7), then deleted (Q0009) |
 | Networking | Not built | Nothing; intent is deterministic lockstep | none | all |
