@@ -6,7 +6,7 @@
 use super::{
     model::{
         AssociationKind, AuditConfig, AuditError, EpochEvidence, MaterialSource, PhaseEntry,
-        ViewEvidence,
+        SourceFrame, SourceItem, ViewEvidence,
     },
     AuditBridge, Extracted,
 };
@@ -101,10 +101,8 @@ fn observe_inner(world: &mut World, sorted: bool, bridge: &AuditBridge) -> Resul
     bridge.lock()?.collector.complete(actual)
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "a single ordered sequence that shares its local state"
-)]
+/// Collects one epoch's evidence: each populated transparent view with its matrices,
+/// lighting and every queued phase item. Readiness is false while any `pending` entry remains.
 fn gather(world: &World, config: &AuditConfig) -> Result<EpochEvidence, AuditError> {
     let extracted = world.resource::<Extracted>();
     let source = extracted
@@ -145,134 +143,14 @@ fn gather(world: &World, config: &AuditConfig) -> Result<EpochEvidence, AuditErr
             AuditError::Source("populated phase lacks actual visible pairs".into())
         })?;
         let pairs = super::association::VisiblePairs::new(visible, config.max_items)?;
-        let mut items = Vec::with_capacity(phase.items.len());
-        let mut logical = std::collections::BTreeSet::new();
-        for (ordinal, item) in phase.items.iter().enumerate() {
-            if !item.distance.is_finite() {
-                return Err(AuditError::Source("nonfinite phase depth".into()));
-            }
-            let main_entity = item.entity.1.id().to_bits();
-            let association = source
-                .items
-                .binary_search_by_key(&main_entity, |source| source.main_entity)
-                .ok()
-                .map(|index| &source.items[index]);
-            let material = association.map_or(
-                MaterialSource::Unsupported {
-                    reason: "phase item has no supported visible mesh source",
-                },
-                |source| source.material.clone(),
-            );
-            if let Some(identity) = association.and_then(|source| source.logical.as_ref()) {
-                if !logical.insert(identity.clone()) {
-                    return Err(AuditError::Source(
-                        "duplicate shell identity across view".into(),
-                    ));
-                }
-            }
-            let published = published(cache, item.pipeline);
-            match published.map(|entry| &entry.state) {
-                Some(CachedPipelineState::Ok(_)) => {}
-                None
-                | Some(
-                    CachedPipelineState::Queued
-                    | CachedPipelineState::Creating(_)
-                    | CachedPipelineState::Err(
-                        PipelineCacheError::ShaderNotLoaded(_)
-                        | PipelineCacheError::ShaderImportNotYetAvailable,
-                    ),
-                ) => pending.push(format!("pipeline {:?}", item.pipeline)),
-                Some(CachedPipelineState::Err(error)) => {
-                    return Err(AuditError::Source(format!(
-                        "terminal pipeline error: {error:?}"
-                    )))
-                }
-            }
-            if matches!(material, MaterialSource::Shell { .. }) {
-                let instances =
-                    world.resource::<RenderMaterialInstances<client::BubbleDomeMaterial>>();
-                let prepared =
-                    world.resource::<RenderAssets<PreparedMaterial<client::BubbleDomeMaterial>>>();
-                if instances
-                    .get(&item.entity.1)
-                    .is_none_or(|id| prepared.get(*id).is_none())
-                {
-                    pending.push(format!("prepared shell {main_entity}"));
-                }
-                if association
-                    .and_then(|source| source.logical.as_ref())
-                    .is_none()
-                {
-                    return Err(AuditError::Source(
-                        "queued shell lacks logical identity".into(),
-                    ));
-                }
-            }
-            if matches!(material, MaterialSource::Standard { .. })
-                && !prepared_material::<StandardMaterial>(world, item.entity.1)
-            {
-                pending.push(format!("prepared standard {main_entity}"));
-            }
-            let render_association = pairs.inspect(
-                world,
-                item.entity.0,
-                item.entity.1,
-                item.draw_function,
-                &material,
-            )?;
-            if matches!(render_association.kind, AssociationKind::Pending) {
-                pending.push(format!("actual draw registration {main_entity}"));
-            }
-            items.push(PhaseEntry {
-                ordinal,
-                render_entity: item.entity.0.to_bits(),
-                association: render_association,
-                main_entity,
-                logical: association.and_then(|source| source.logical.clone()),
-                distance_bits: item.distance.to_bits(),
-                pipeline: format!("{:?}", item.pipeline),
-                pipeline_description: format!("{:?}", published.map(|entry| &entry.descriptor)),
-                draw_function: format!("{:?}", item.draw_function),
-                material,
-                mesh: association.map(|source| source.mesh.clone()),
-                batch_range: [item.batch_range.start, item.batch_range.end],
-                extra_index: format!("{:?}", item.extra_index),
-            });
-        }
-        let mut lighting = vec![
-            format!(
-                "uniform_offset={:?}",
-                world
-                    .get::<bevy::pbr::ViewLightsUniformOffset>(*entity)
-                    .map(|offset| offset.offset)
-            ),
-            format!(
-                "uniform_buffer={:?}",
-                world
-                    .get_resource::<bevy::pbr::LightMeta>()
-                    .and_then(|meta| meta.view_gpu_lights.buffer())
-                    .map(bevy::render::render_resource::Buffer::id)
-            ),
-        ];
-        lighting.push(format!(
-            "view_layers={:?}; selected_local_lights={:?}",
-            world.get::<bevy::render::view::RenderLayers>(*entity),
-            world
-                .get::<bevy::pbr::ViewLightEntities>(*entity)
-                .map(|lights| &lights.lights)
-        ));
-        for light_entity in world.iter_entities() {
-            if let Some(light) = light_entity.get::<bevy::pbr::ExtractedDirectionalLight>() {
-                lighting.push(format!("directional {:?}: color={:?}; lux={}; matrix={:?}; layers={:?}; shadows={}; depth_bias={}; normal_bias={}; cascades={:?}", light_entity.id(), light.color.to_f32_array().map(f32::to_bits), light.illuminance.to_bits(), light.transform.compute_matrix().to_cols_array().map(f32::to_bits), light.render_layers, light.shadows_enabled, light.shadow_depth_bias.to_bits(), light.shadow_normal_bias.to_bits(), light.cascade_shadow_config));
-            }
-        }
-        lighting.sort();
-        if world
-            .get::<bevy::pbr::ViewLightsUniformOffset>(*entity)
-            .is_none()
-        {
-            pending.push("actual prepared view-light offset unavailable".into());
-        }
+        let context = ItemContext {
+            world,
+            cache,
+            source: &source,
+            pairs: &pairs,
+        };
+        let items = queued_items(&context, &phase.items, &mut pending)?;
+        let lighting = view_lighting(world, *entity, &mut pending);
         views.push(ViewEvidence {
             render_entity: entity.to_bits(),
             main_entity: main.id().to_bits(),
@@ -305,6 +183,189 @@ fn gather(world: &World, config: &AuditConfig) -> Result<EpochEvidence, AuditErr
         ready: pending.is_empty(),
         pending,
     })
+}
+
+/// What every phase item of one view is checked against.
+struct ItemContext<'a> {
+    /// The render world.
+    world: &'a World,
+    /// The renderer's pipeline cache.
+    cache: &'a PipelineCache,
+    /// The main-world source table extracted for this epoch.
+    source: &'a SourceFrame,
+    /// The view's actual visible render/main mesh pairs.
+    pairs: &'a super::association::VisiblePairs,
+}
+
+/// Records every queued item of one view in phase order. A shell identity may appear at most
+/// once per view; unpublished pipelines, unprepared materials and unregistered draws are
+/// pushed onto `pending`.
+fn queued_items(
+    context: &ItemContext<'_>,
+    items: &[Transparent3d],
+    pending: &mut Vec<String>,
+) -> Result<Vec<PhaseEntry>, AuditError> {
+    let mut entries = Vec::with_capacity(items.len());
+    let mut logical = std::collections::BTreeSet::new();
+    for (ordinal, item) in items.iter().enumerate() {
+        if !item.distance.is_finite() {
+            return Err(AuditError::Source("nonfinite phase depth".into()));
+        }
+        let main_entity = item.entity.1.id().to_bits();
+        let association = context
+            .source
+            .items
+            .binary_search_by_key(&main_entity, |source| source.main_entity)
+            .ok()
+            .map(|index| &context.source.items[index]);
+        let material = association.map_or(
+            MaterialSource::Unsupported {
+                reason: "phase item has no supported visible mesh source",
+            },
+            |source| source.material.clone(),
+        );
+        if let Some(identity) = association.and_then(|source| source.logical.as_ref()) {
+            if !logical.insert(identity.clone()) {
+                return Err(AuditError::Source(
+                    "duplicate shell identity across view".into(),
+                ));
+            }
+        }
+        let published = published(context.cache, item.pipeline);
+        check_pipeline(published, item.pipeline, pending)?;
+        check_prepared_material(context.world, item, association, &material, pending)?;
+        let render_association = context.pairs.inspect(
+            context.world,
+            item.entity.0,
+            item.entity.1,
+            item.draw_function,
+            &material,
+        )?;
+        if matches!(render_association.kind, AssociationKind::Pending) {
+            pending.push(format!("actual draw registration {main_entity}"));
+        }
+        entries.push(PhaseEntry {
+            ordinal,
+            render_entity: item.entity.0.to_bits(),
+            association: render_association,
+            main_entity,
+            logical: association.and_then(|source| source.logical.clone()),
+            distance_bits: item.distance.to_bits(),
+            pipeline: format!("{:?}", item.pipeline),
+            pipeline_description: format!("{:?}", published.map(|entry| &entry.descriptor)),
+            draw_function: format!("{:?}", item.draw_function),
+            material,
+            mesh: association.map(|source| source.mesh.clone()),
+            batch_range: [item.batch_range.start, item.batch_range.end],
+            extra_index: format!("{:?}", item.extra_index),
+        });
+    }
+    Ok(entries)
+}
+
+/// A compiled pipeline is ready; one not yet published, queued, compiling or waiting for a
+/// shader is pending; any other pipeline error is terminal.
+fn check_pipeline(
+    published: Option<&CachedPipeline>,
+    id: CachedRenderPipelineId,
+    pending: &mut Vec<String>,
+) -> Result<(), AuditError> {
+    match published.map(|entry| &entry.state) {
+        Some(CachedPipelineState::Ok(_)) => {}
+        None
+        | Some(
+            CachedPipelineState::Queued
+            | CachedPipelineState::Creating(_)
+            | CachedPipelineState::Err(
+                PipelineCacheError::ShaderNotLoaded(_)
+                | PipelineCacheError::ShaderImportNotYetAvailable,
+            ),
+        ) => pending.push(format!("pipeline {id:?}")),
+        Some(CachedPipelineState::Err(error)) => {
+            return Err(AuditError::Source(format!(
+                "terminal pipeline error: {error:?}"
+            )))
+        }
+    }
+    Ok(())
+}
+
+/// Shell and standard materials must be prepared for the item's main entity, or the item is
+/// pending. A queued shell must also have a logical identity in the source table.
+fn check_prepared_material(
+    world: &World,
+    item: &Transparent3d,
+    association: Option<&SourceItem>,
+    material: &MaterialSource,
+    pending: &mut Vec<String>,
+) -> Result<(), AuditError> {
+    let main_entity = item.entity.1.id().to_bits();
+    if matches!(material, MaterialSource::Shell { .. }) {
+        let instances = world.resource::<RenderMaterialInstances<client::BubbleDomeMaterial>>();
+        let prepared =
+            world.resource::<RenderAssets<PreparedMaterial<client::BubbleDomeMaterial>>>();
+        if instances
+            .get(&item.entity.1)
+            .is_none_or(|id| prepared.get(*id).is_none())
+        {
+            pending.push(format!("prepared shell {main_entity}"));
+        }
+        if association
+            .and_then(|source| source.logical.as_ref())
+            .is_none()
+        {
+            return Err(AuditError::Source(
+                "queued shell lacks logical identity".into(),
+            ));
+        }
+    }
+    if matches!(material, MaterialSource::Standard { .. })
+        && !prepared_material::<StandardMaterial>(world, item.entity.1)
+    {
+        pending.push(format!("prepared standard {main_entity}"));
+    }
+    Ok(())
+}
+
+/// The sorted lighting description of one view: its light uniform offset and buffer, render
+/// layers, selected local lights and every extracted directional light, as bit patterns.
+/// A view without a prepared light offset is pushed onto `pending`.
+fn view_lighting(world: &World, entity: Entity, pending: &mut Vec<String>) -> Vec<String> {
+    let mut lighting = vec![
+        format!(
+            "uniform_offset={:?}",
+            world
+                .get::<bevy::pbr::ViewLightsUniformOffset>(entity)
+                .map(|offset| offset.offset)
+        ),
+        format!(
+            "uniform_buffer={:?}",
+            world
+                .get_resource::<bevy::pbr::LightMeta>()
+                .and_then(|meta| meta.view_gpu_lights.buffer())
+                .map(bevy::render::render_resource::Buffer::id)
+        ),
+    ];
+    lighting.push(format!(
+        "view_layers={:?}; selected_local_lights={:?}",
+        world.get::<bevy::render::view::RenderLayers>(entity),
+        world
+            .get::<bevy::pbr::ViewLightEntities>(entity)
+            .map(|lights| &lights.lights)
+    ));
+    for light_entity in world.iter_entities() {
+        if let Some(light) = light_entity.get::<bevy::pbr::ExtractedDirectionalLight>() {
+            lighting.push(format!("directional {:?}: color={:?}; lux={}; matrix={:?}; layers={:?}; shadows={}; depth_bias={}; normal_bias={}; cascades={:?}", light_entity.id(), light.color.to_f32_array().map(f32::to_bits), light.illuminance.to_bits(), light.transform.compute_matrix().to_cols_array().map(f32::to_bits), light.render_layers, light.shadows_enabled, light.shadow_depth_bias.to_bits(), light.shadow_normal_bias.to_bits(), light.cascade_shadow_config));
+        }
+    }
+    lighting.sort();
+    if world
+        .get::<bevy::pbr::ViewLightsUniformOffset>(entity)
+        .is_none()
+    {
+        pending.push("actual prepared view-light offset unavailable".into());
+    }
+    lighting
 }
 
 fn prepared_material<M: Material>(world: &World, entity: MainEntity) -> bool {

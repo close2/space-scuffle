@@ -10,10 +10,9 @@ use bevy::render::view::ViewVisibility;
 use client::{BubbleDomeMaterial, BubbleInstance, LabPreviewBubble, LiveBattleBubble, SwarmBubble};
 
 /// Captures actual visible Swarm and background CPU sources, or None outside that scene.
-#[expect(
-    clippy::too_many_lines,
-    reason = "a single ordered sequence that shares its local state"
-)]
+///
+/// Evidence is gathered in a fixed order: the frame header, every visible mesh with its
+/// material and assets, then the lights and cameras of the scene environment.
 pub(super) fn capture(
     world: &mut World,
     assets: &mut super::assets::Inventory,
@@ -25,8 +24,24 @@ pub(super) fn capture(
     {
         return Ok(None);
     }
+    let mut frame = frame_header(world)?;
+    let images = inventory_meshes(world, assets, limit, &mut frame)?;
+    for image in images {
+        frame.assets.push(assets.image(world, &image, limit)?);
+    }
+    frame.assets.extend(assets.shaders(world, limit)?);
+    frame.assets.sort_unstable();
+    frame.assets.dedup();
+    frame.items.sort_by_key(|item| item.main_entity);
+    record_environment(world, &mut frame);
+    Ok(Some(frame))
+}
+
+/// Starts a source frame with the virtual clock, clear colour, ambient light, the number of
+/// instantiated Swarm shells and the controlled fixture, if one is declared.
+fn frame_header(world: &mut World) -> Result<SourceFrame, AuditError> {
     let time = world.resource::<Time>();
-    let mut frame = SourceFrame {
+    Ok(SourceFrame {
         elapsed_nanos: u64::try_from(time.elapsed().as_nanos())
             .map_err(|_| AuditError::Exhausted)?,
         wrapped_time_bits: time.elapsed_secs_wrapped().to_bits(),
@@ -46,7 +61,37 @@ pub(super) fn capture(
         fixture: world
             .get_resource::<super::fixture::ControlledFixture>()
             .map(|fixture| format!("controlled two-shell experiment: {:?}", fixture.0)),
-    };
+    })
+}
+
+/// Which shell scenes one bubble entity is tagged as belonging to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ShellDomain {
+    VisualLab,
+    Swarm,
+    Battle,
+    Smog,
+}
+
+/// The tags of one mesh, one flag per [`ShellDomain`].
+#[derive(Clone, Copy)]
+struct ShellTags([bool; 4]);
+
+impl ShellTags {
+    /// Whether the mesh carries the tag of `domain`.
+    const fn has(self, domain: ShellDomain) -> bool {
+        self.0[domain as usize]
+    }
+}
+
+/// Inventories every visible mesh into `frame.items`, with its mesh asset, and returns the
+/// material images still to be inventoried. Unsupported cases become frame limitations.
+fn inventory_meshes(
+    world: &mut World,
+    assets: &mut super::assets::Inventory,
+    limit: usize,
+    frame: &mut SourceFrame,
+) -> Result<Vec<Handle<Image>>, AuditError> {
     let mut query = world.query::<(
         Entity,
         &GlobalTransform,
@@ -93,24 +138,7 @@ pub(super) fn capture(
                 "nonfinite transform {entity:?}"
             )));
         }
-        let bounds = bounds
-            .map(|bounds| {
-                if !bounds.center.is_finite()
-                    || !bounds.half_extents.is_finite()
-                    || bounds.half_extents.cmplt(bevy::math::Vec3A::ZERO).any()
-                {
-                    return Err(AuditError::Source(format!("invalid bounds {entity:?}")));
-                }
-                Ok([
-                    bounds.center.x.to_bits(),
-                    bounds.center.y.to_bits(),
-                    bounds.center.z.to_bits(),
-                    bounds.half_extents.x.to_bits(),
-                    bounds.half_extents.y.to_bits(),
-                    bounds.half_extents.z.to_bits(),
-                ])
-            })
-            .transpose()?;
+        let bounds = bounds_bits(entity, bounds)?;
         if bounds.is_none() {
             frame
                 .limitations
@@ -119,100 +147,31 @@ pub(super) fn capture(
         if shell.is_some() && standard.is_some() {
             frame.limitations.push(format!("multiple material associations on visible mesh {entity:?}; adapter precedence cannot establish all draw sources"));
         }
-        let logical = if let Some(instance) = instance {
-            let domains = [
-                lab.is_some(),
-                swarm.is_some(),
-                live.is_some(),
-                smog.is_some(),
-            ];
-            if domains.into_iter().filter(|flag| *flag).count() != 1 {
-                return Err(AuditError::Source(format!(
-                    "ambiguous shell domain {entity:?}"
-                )));
-            }
-            let identity = LogicalIdentity {
-                domain: if swarm.is_some() {
-                    "Swarm"
-                } else if lab.is_some() {
-                    "VisualLab"
-                } else if smog.is_some() {
-                    "Smog"
-                } else {
-                    "Battle"
-                },
-                entity: instance.0.entity_id.0,
-                generation: 0,
-            };
-            if live.is_some() {
-                frame.limitations.push("live battle shell unexpectedly visible in Swarm audit; committed generation unresolved".into());
-            }
-            if !identities.insert(identity.clone()) {
-                return Err(AuditError::Source(
-                    "duplicate visible logical identity".into(),
-                ));
-            }
-            Some(identity)
-        } else {
-            None
-        };
+        let domains = ShellTags([
+            lab.is_some(),
+            swarm.is_some(),
+            live.is_some(),
+            smog.is_some(),
+        ]);
+        let logical = logical_identity(entity, instance, domains, frame, &mut identities)?;
         frame.assets.push(assets.mesh(world, &mesh.0, limit)?);
-        let material = if let Some(shell) = shell {
-            let material = world
-                .resource::<Assets<BubbleDomeMaterial>>()
-                .get(&shell.0)
-                .ok_or_else(|| AuditError::NotReady(format!("shell material {entity:?}")))?;
-            if world.contains_resource::<super::fixture::ControlledFixture>() && swarm.is_some() {
-                let instance = instance
-                    .ok_or_else(|| AuditError::Source("controlled shell snapshot absent".into()))?;
-                super::fixture::validate_centers(
-                    matrix.transform_point3(Vec3::ZERO),
-                    instance.0.world_pos,
-                    material.uniform.world_pos,
-                )?;
-            }
-            if let Some(image) = &material.video_texture {
-                images.push(image.clone());
-            } else {
-                return Err(AuditError::Source(
-                    "actual shell has no video texture".into(),
-                ));
-            }
-            MaterialSource::Shell {
-                id: format!("{:?}", shell.0.id()),
-                uniform: bytemuck::bytes_of(&material.uniform).to_vec(),
-                image: format!("{:?}", material.video_texture.as_ref().map(Handle::id)),
-            }
-        } else if let Some(standard) = standard {
-            let material = world
-                .resource::<Assets<StandardMaterial>>()
-                .get(&standard.0)
-                .ok_or_else(|| AuditError::NotReady(format!("standard material {entity:?}")))?;
-            for image in [
-                &material.base_color_texture,
-                &material.emissive_texture,
-                &material.metallic_roughness_texture,
-                &material.normal_map_texture,
-                &material.occlusion_texture,
-                &material.depth_map,
-            ]
-            .into_iter()
-            .flatten()
-            {
-                images.push(image.clone());
-            }
-            MaterialSource::Standard {
-                id: format!("{:?}", standard.0.id()),
-                description: format!("{material:?}"),
-            }
-        } else {
+        let material = material_source(
+            world,
+            entity,
+            matrix,
+            instance,
+            domains.has(ShellDomain::Swarm),
+            (shell, standard),
+            &mut images,
+        )?
+        .unwrap_or_else(|| {
             frame.limitations.push(format!(
                 "visible material adapter unsupported for {entity:?}"
             ));
             MaterialSource::Unsupported {
                 reason: "no shell or standard material association",
             }
-        };
+        });
         frame.items.push(SourceItem {
             main_entity: entity.to_bits(),
             logical,
@@ -223,13 +182,148 @@ pub(super) fn capture(
             material,
         });
     }
-    for image in images {
-        frame.assets.push(assets.image(world, &image, limit)?);
+    Ok(images)
+}
+
+/// The bit patterns of a finite, non-negative axis-aligned box (center XYZ, then half
+/// extents XYZ, in local mesh units), or None for a mesh without bounds.
+fn bounds_bits(entity: Entity, bounds: Option<&Aabb>) -> Result<Option<[u32; 6]>, AuditError> {
+    bounds
+        .map(|bounds| {
+            if !bounds.center.is_finite()
+                || !bounds.half_extents.is_finite()
+                || bounds.half_extents.cmplt(bevy::math::Vec3A::ZERO).any()
+            {
+                return Err(AuditError::Source(format!("invalid bounds {entity:?}")));
+            }
+            Ok([
+                bounds.center.x.to_bits(),
+                bounds.center.y.to_bits(),
+                bounds.center.z.to_bits(),
+                bounds.half_extents.x.to_bits(),
+                bounds.half_extents.y.to_bits(),
+                bounds.half_extents.z.to_bits(),
+            ])
+        })
+        .transpose()
+}
+
+/// The logical shell identity of a bubble mesh, or None for a mesh with no bubble instance.
+///
+/// A bubble must belong to exactly one shell domain, and no identity may repeat within the
+/// frame (`identities` holds those already seen).
+fn logical_identity(
+    entity: Entity,
+    instance: Option<&BubbleInstance>,
+    domains: ShellTags,
+    frame: &mut SourceFrame,
+    identities: &mut std::collections::BTreeSet<LogicalIdentity>,
+) -> Result<Option<LogicalIdentity>, AuditError> {
+    let Some(instance) = instance else {
+        return Ok(None);
+    };
+    if domains.0.into_iter().filter(|flag| *flag).count() != 1 {
+        return Err(AuditError::Source(format!(
+            "ambiguous shell domain {entity:?}"
+        )));
     }
-    frame.assets.extend(assets.shaders(world, limit)?);
-    frame.assets.sort_unstable();
-    frame.assets.dedup();
-    frame.items.sort_by_key(|item| item.main_entity);
+    let identity = LogicalIdentity {
+        domain: if domains.has(ShellDomain::Swarm) {
+            "Swarm"
+        } else if domains.has(ShellDomain::VisualLab) {
+            "VisualLab"
+        } else if domains.has(ShellDomain::Smog) {
+            "Smog"
+        } else {
+            "Battle"
+        },
+        entity: instance.0.entity_id.0,
+        generation: 0,
+    };
+    if domains.has(ShellDomain::Battle) {
+        frame.limitations.push("live battle shell unexpectedly visible in Swarm audit; committed generation unresolved".into());
+    }
+    if !identities.insert(identity.clone()) {
+        return Err(AuditError::Source(
+            "duplicate visible logical identity".into(),
+        ));
+    }
+    Ok(Some(identity))
+}
+
+/// Describes the material of one visible mesh and queues its images onto `images`, or
+/// returns None for a mesh with neither a shell nor a standard material.
+///
+/// A shell takes precedence over a standard material. Under the controlled fixture, a Swarm
+/// shell's transform, snapshot and uniform centers must agree.
+fn material_source(
+    world: &World,
+    entity: Entity,
+    matrix: Mat4,
+    instance: Option<&BubbleInstance>,
+    swarm: bool,
+    (shell, standard): (
+        Option<&MeshMaterial3d<BubbleDomeMaterial>>,
+        Option<&MeshMaterial3d<StandardMaterial>>,
+    ),
+    images: &mut Vec<Handle<Image>>,
+) -> Result<Option<MaterialSource>, AuditError> {
+    if let Some(shell) = shell {
+        let material = world
+            .resource::<Assets<BubbleDomeMaterial>>()
+            .get(&shell.0)
+            .ok_or_else(|| AuditError::NotReady(format!("shell material {entity:?}")))?;
+        if world.contains_resource::<super::fixture::ControlledFixture>() && swarm {
+            let instance = instance
+                .ok_or_else(|| AuditError::Source("controlled shell snapshot absent".into()))?;
+            super::fixture::validate_centers(
+                matrix.transform_point3(Vec3::ZERO),
+                instance.0.world_pos,
+                material.uniform.world_pos,
+            )?;
+        }
+        if let Some(image) = &material.video_texture {
+            images.push(image.clone());
+        } else {
+            return Err(AuditError::Source(
+                "actual shell has no video texture".into(),
+            ));
+        }
+        Ok(Some(MaterialSource::Shell {
+            id: format!("{:?}", shell.0.id()),
+            uniform: bytemuck::bytes_of(&material.uniform).to_vec(),
+            image: format!("{:?}", material.video_texture.as_ref().map(Handle::id)),
+        }))
+    } else if let Some(standard) = standard {
+        let material = world
+            .resource::<Assets<StandardMaterial>>()
+            .get(&standard.0)
+            .ok_or_else(|| AuditError::NotReady(format!("standard material {entity:?}")))?;
+        for image in [
+            &material.base_color_texture,
+            &material.emissive_texture,
+            &material.metallic_roughness_texture,
+            &material.normal_map_texture,
+            &material.occlusion_texture,
+            &material.depth_map,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            images.push(image.clone());
+        }
+        Ok(Some(MaterialSource::Standard {
+            id: format!("{:?}", standard.0.id()),
+            description: format!("{material:?}"),
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Appends directional lights, active camera settings, point lights and spot lights to the
+/// frame environment, then sorts it so query order cannot change the evidence.
+fn record_environment(world: &mut World, frame: &mut SourceFrame) {
     let mut lights = world.query::<(
         Entity,
         &GlobalTransform,
@@ -278,5 +372,4 @@ pub(super) fn capture(
         ));
     }
     frame.environment.sort();
-    Ok(Some(frame))
 }
