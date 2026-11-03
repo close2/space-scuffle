@@ -16,3 +16,12 @@ keep the walking and rewrite the repro's expectation.
 ## Answer
 
 Owner (2026-11-03): Agree (keep the walking to the nearest reachable point and rewrite the repro's expectation).
+
+## Resolution
+
+2026-11-03, commit `ab53c32`. Units keep walking to the nearest reachable point. The scratch repro crate no longer
+exists, so its expectation was rewritten in the remediation plan's Appendix A: r09 now expects every unit to have no
+order left after 900 ticks, on the near side of the wall, within 6 cells of the nearest reachable point. The check
+that runs is `unreachable_order_reports_retargets_and_terminates` in
+`crates/sim_core/tests/movement_contact_tests.rs`, which already asserted this. `DESIGN.md` §4 cites the owner's
+choice.

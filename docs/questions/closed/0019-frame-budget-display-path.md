@@ -40,3 +40,10 @@ explain the earlier numbers. The frame-time target itself is a separate question
 ## Answer
 
 Owner (2026-11-03): Agreed (Option 1: headless KWin compositor on the RX 580 is the reference display path).
+
+## Resolution
+
+2026-11-03. Option 1 is the default that was already followed; nothing to change. The headless KWin compositor on
+the RX 580 is the reference display path of the published frame budget (commit `25b8cf3`). Commit `ab53c32` rewords
+`DESIGN.md` §5 and `docs/evidence/2026-11-03-frame-budget.md` to cite the owner's choice, and the evidence's link to
+this file now points at `closed/`.

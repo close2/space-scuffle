@@ -12,8 +12,8 @@ There are three tables, and only the first is the frame budget:
    say where the time goes. They are not the frame budget.
 3. **Xvfb with software present**: this VM's fallback path. It is not the game's frame time.
 
-No pass or fail line applies. Q0015's default is to measure and publish against the 60 and 30 frames per second
-reference lines (16.7 ms and 33.3 ms).
+No pass or fail line applies. The owner chose (Q0015) to measure and publish against the 60 and 30 frames per
+second reference lines (16.7 ms and 33.3 ms).
 
 ## Conclusions
 
@@ -60,13 +60,13 @@ reference lines (16.7 ms and 33.3 ms).
   present, frames stay on the GPU and KWin composites them on the same GPU; no monitor". The server has no monitor.
   Xvfb has no DRI3, so radv can present into it only by copying each frame through the CPU
   (`MESA_VK_WSI_DEBUG=sw`), which costs about 100 ms per 1280×720 frame on this VM (plan §5.3, table 3 below). KWin's
-  Xwayland gives radv its normal DRI3 present. This is the path of record by
-  [Q0019](../questions/open/0019-frame-budget-display-path.md)'s default. Every report records the path, and the
+  Xwayland gives radv its normal DRI3 present. This is the path of record, as the owner chose in
+  [Q0019](../questions/closed/0019-frame-budget-display-path.md). Every report records the path, and the
   tool refuses an environment that contradicts it (WP5b).
 - **Scenarios:** the eight-player arena of `crates/client_diagnostics/data/frame_budget.ron`, as
-  [Q0018](../questions/open/0018-frame-budget-army-layout.md)'s default (a) describes: a flat 128×128 map, eight
-  town halls on a circle, 0, 25 or 50 units per player (0, 200 or 400 in all), each player attack-moving to the
-  opposite start. Warm-up is 180 frames after media and map presentation are ready. Measurement covers 1,500
+  option (a) of [Q0018](../questions/open/0018-frame-budget-army-layout.md), chosen by the owner, describes: a
+  flat 128×128 map, eight town halls on a circle, 0, 25 or 50 units per player (0, 200 or 400 in all), each
+  player attack-moving to the opposite start. Warm-up is 180 frames after media and map presentation are ready. Measurement covers 1,500
   simulation ticks (60 s of game time). The combat window runs from the first frame with a combat event for 750
   ticks.
 - **Frustum check:** on every measured frame of every run, 100 % of the live units were inside the camera's view

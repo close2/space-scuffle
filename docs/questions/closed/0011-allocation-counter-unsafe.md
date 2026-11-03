@@ -64,3 +64,9 @@ identical runs, because Bevy builds schedule graphs with `std`'s random `RandomS
 call stack instead of using memcheck's `total heap usage`.
 
 The owner can still choose option 1 or 2. Either would replace how the test counts, not what it asserts.
+
+## Resolution
+
+2026-11-03. Already done: the `valgrind --tool=dhat` test `crates/client/tests/sync_allocation_count_tests.rs`
+stays, and charter §3.3 tags the steady-state allocation claim as checked by CI (commit `75aca59`). No crate needs
+`unsafe`; options 1 and 2 are not taken.

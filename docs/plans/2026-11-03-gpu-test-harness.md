@@ -32,7 +32,7 @@ exists, sets `VK_ICD_FILENAMES` to it, `WGPU_ADAPTER_NAME=llvmpipe` and `LIBGL_A
 plain `std::process::Command`, and each caller runs it itself.
 
 `allow_for_hex_tiling_driver_defect` sets `SPACE_SCUFFLE_TERRAIN_MAX_ANISOTROPY=1` whenever the installed `lavapipe`
-is older than Mesa 25.1 ([Q0009](../questions/open/0009-terrain-anisotropy-test-override.md)). It asks
+is older than Mesa 25.1 ([Q0009](../questions/closed/0009-terrain-anisotropy-test-override.md)). It asks
 `vulkaninfo` about the `lavapipe` manifest whatever driver the child will really use. Once a child runs on `radv`,
 that check would wrongly lower anisotropy, because this server's `lavapipe` is 25.0.7.
 
@@ -438,7 +438,7 @@ in that case the fix is the test's, not the threshold's, and it gets its own not
 - `.github/workflows/ci.yml`: `SPACE_SCUFFLE_GPU_TEST_DRIVER: lavapipe` in the workflow `env`. The comment above
   `timeout-minutes` keeps "300 s limit" and adds "on lavapipe".
 - AGENTS.md section 7: replace the bullet named in section 8. Do not touch section 6.
-- `docs/questions/open/0009-terrain-anisotropy-test-override.md`: the update paragraph of D7.
+- `docs/questions/closed/0009-terrain-anisotropy-test-override.md`: the update paragraph of D7.
 - `terrain_tests.rs` module doc ("executes under virtual GPU (xvfb + lavapipe)") and the other doc comments that
   say `lavapipe` where they now mean "the test GPU".
 - `client::terrain::theme_gpu`'s doc of the override: it is applied only on `lavapipe` before Mesa 25.1, never on
