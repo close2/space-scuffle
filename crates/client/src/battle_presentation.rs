@@ -74,13 +74,13 @@ pub struct BattlePresentation {
 }
 
 /// Refreshes cached metadata after session changes and counts after actual ticks.
+///
+/// A new session generation resets the participants ([`BattlePresentation::reset_players`]);
+/// a new tick recounts every living entity ([`BattlePresentation::recount`]) and then rewrites
+/// only the labels whose count changed ([`BattlePresentation::relabel`]).
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
-)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "a single ordered sequence that shares its local state"
 )]
 pub fn refresh_battle_presentation(
     session: Res<'_, crate::battle_pipeline::session::BattleSession>,
@@ -95,12 +95,31 @@ pub fn refresh_battle_presentation(
         return;
     };
     if presentation.generation != Some(generation) {
-        presentation
-            .map_title
-            .clone_from(&session.metadata.map_title);
-        presentation.players.clear();
-        for player in &session.metadata.players {
-            presentation.players.push(PlayerPresentation {
+        presentation.reset_players(&session.metadata, generation);
+    }
+    if presentation.last_tick == Some(world.current_tick) {
+        return;
+    }
+    if let Err(message) = presentation.recount(world) {
+        reject(&mut lab, &mut exit, message);
+        return;
+    }
+    presentation.relabel();
+    presentation.last_tick = Some(world.current_tick);
+}
+
+impl BattlePresentation {
+    /// Replaces the participants with the committed session's, with empty rosters, and
+    /// defaults the controlled and target owners to the first two participants.
+    fn reset_players(
+        &mut self,
+        metadata: &crate::battle_pipeline::session::CommittedBattleMetadata,
+        generation: crate::battle_pipeline::commands::SessionGeneration,
+    ) {
+        self.map_title.clone_from(&metadata.map_title);
+        self.players.clear();
+        for player in &metadata.players {
+            self.players.push(PlayerPresentation {
                 owner: player.owner,
                 label: player.label.clone(),
                 color: player.color,
@@ -110,92 +129,100 @@ pub fn refresh_battle_presentation(
                 overclock: 0,
             });
         }
-        presentation.controlled = presentation.players.first().map(|player| player.owner);
-        presentation.target = presentation.players.get(1).map(|player| player.owner);
-        presentation.last_tick = None;
-        presentation.generation = Some(generation);
+        self.controlled = self.players.first().map(|player| player.owner);
+        self.target = self.players.get(1).map(|player| player.owner);
+        self.last_tick = None;
+        self.generation = Some(generation);
     }
-    if presentation.last_tick == Some(world.current_tick) {
-        return;
+
+    /// Recounts every participant's roster and capability totals from the living entities of
+    /// `world`. A newly seen archetype gets a roster entry; earlier entries keep their storage.
+    ///
+    /// # Errors
+    /// A message naming the broken invariant if a living non-neutral entity's owner is not a
+    /// participant, or its archetype is not in the world's catalog. Counts are partial then.
+    fn recount(&mut self, world: &sim_core::world::SimWorld) -> Result<(), &'static str> {
+        for player in &mut self.players {
+            player.mobile = 0;
+            player.armed = 0;
+            player.overclock = 0;
+            for entry in &mut player.roster {
+                entry.previous_count = entry.count;
+                entry.count = 0;
+            }
+        }
+        for entity in world.entities.values().filter(|entity| entity.is_alive()) {
+            let Ok(player_index) = self
+                .players
+                .binary_search_by_key(&entity.owner, |player| player.owner)
+            else {
+                if entity.owner == PlayerId::NEUTRAL {
+                    continue;
+                }
+                return Err("Battle entity owner is absent from the loaded scenario");
+            };
+            let Ok(archetype) = world.catalog.get(entity.unit_type_id) else {
+                return Err("Battle entity archetype is absent from the loaded catalog");
+            };
+            let player = &mut self.players[player_index];
+            let index = player.roster_index(entity.unit_type_id, &archetype.display_name);
+            player.roster[index].count += 1;
+            if entity.is_completed && !entity.is_loaded_in_transport() && !entity.is_immobile {
+                player.mobile += 1;
+                player.armed += usize::from(
+                    archetype.weapon.is_some()
+                        || archetype.ground_weapon.is_some()
+                        || archetype.air_weapon.is_some(),
+                );
+                player.overclock += usize::from(crate::battle_pipeline::commands::can_overclock(
+                    world, entity, archetype,
+                ));
+            }
+        }
+        Ok(())
     }
-    for player in &mut presentation.players {
-        player.mobile = 0;
-        player.armed = 0;
-        player.overclock = 0;
-        for entry in &mut player.roster {
-            entry.previous_count = entry.count;
-            entry.count = 0;
+
+    /// Rewrites the label of every roster entry whose count changed since the last recount.
+    fn relabel(&mut self) {
+        // PERFORMANCE RATIONALE:
+        // Why: Paused or unchanged roster labels should not allocate every UI frame.
+        // What: Recount only after ticks and rewrite retained strings only on changes.
+        // Trade-off: Previously seen zero-count entries retain modest per-session storage.
+        for player in &mut self.players {
+            for entry in &mut player.roster {
+                if entry.count != entry.previous_count {
+                    entry.label.clear();
+                    let _ = write!(entry.label, "{} × {}", entry.count, entry.name);
+                }
+            }
         }
     }
-    for entity in world.entities.values().filter(|entity| entity.is_alive()) {
-        let Ok(player_index) = presentation
-            .players
-            .binary_search_by_key(&entity.owner, |player| player.owner)
-        else {
-            if entity.owner == PlayerId::NEUTRAL {
-                continue;
-            }
-            reject(
-                &mut lab,
-                &mut exit,
-                "Battle entity owner is absent from the loaded scenario",
-            );
-            return;
-        };
-        let Ok(archetype) = world.catalog.get(entity.unit_type_id) else {
-            reject(
-                &mut lab,
-                &mut exit,
-                "Battle entity archetype is absent from the loaded catalog",
-            );
-            return;
-        };
-        let player = &mut presentation.players[player_index];
-        let index = match player
+}
+
+impl PlayerPresentation {
+    /// Index of `unit_type`'s roster entry, inserting an empty one in sorted position if this
+    /// participant has never had that archetype. `display_name` is the catalog name.
+    fn roster_index(&mut self, unit_type: UnitTypeId, display_name: &str) -> usize {
+        match self
             .roster
-            .binary_search_by_key(&entity.unit_type_id, |entry| entry.unit_type)
+            .binary_search_by_key(&unit_type, |entry| entry.unit_type)
         {
             Ok(index) => index,
             Err(index) => {
-                player.roster.insert(
+                self.roster.insert(
                     index,
                     RosterEntry {
-                        unit_type: entity.unit_type_id,
-                        name: archetype.display_name.clone(),
-                        label: String::with_capacity(archetype.display_name.len() + 24),
+                        unit_type,
+                        name: display_name.to_owned(),
+                        label: String::with_capacity(display_name.len() + 24),
                         count: 0,
                         previous_count: usize::MAX,
                     },
                 );
                 index
             }
-        };
-        player.roster[index].count += 1;
-        if entity.is_completed && !entity.is_loaded_in_transport() && !entity.is_immobile {
-            player.mobile += 1;
-            player.armed += usize::from(
-                archetype.weapon.is_some()
-                    || archetype.ground_weapon.is_some()
-                    || archetype.air_weapon.is_some(),
-            );
-            player.overclock += usize::from(crate::battle_pipeline::commands::can_overclock(
-                world, entity, archetype,
-            ));
         }
     }
-    // PERFORMANCE RATIONALE:
-    // Why: Paused or unchanged roster labels should not allocate every UI frame.
-    // What: Recount only after ticks and rewrite retained strings only on changes.
-    // Trade-off: Previously seen zero-count entries retain modest per-session storage.
-    for player in &mut presentation.players {
-        for entry in &mut player.roster {
-            if entry.count != entry.previous_count {
-                entry.label.clear();
-                let _ = write!(entry.label, "{} × {}", entry.count, entry.name);
-            }
-        }
-    }
-    presentation.last_tick = Some(world.current_tick);
 }
 
 fn reject(lab: &mut crate::LabState, exit: &mut EventWriter<'_, AppExit>, message: &str) {
@@ -203,4 +230,64 @@ fn reject(lab: &mut crate::LabState, exit: &mut EventWriter<'_, AppExit>, messag
     lab.battle_failure = Some(message.to_owned());
     lab.battle_paused = true;
     exit.send(AppExit::error());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A participant whose roster holds the given `(type, name)` archetypes, never yet counted.
+    fn player(archetypes: &[(u16, &str)]) -> PlayerPresentation {
+        let mut player = PlayerPresentation {
+            owner: PlayerId(0),
+            label: String::new(),
+            color: egui::Color32::WHITE,
+            roster: Vec::new(),
+            mobile: 0,
+            armed: 0,
+            overclock: 0,
+        };
+        for (unit_type, name) in archetypes {
+            player.roster_index(UnitTypeId(*unit_type), name);
+        }
+        player
+    }
+
+    #[test]
+    fn roster_entries_stay_sorted_by_type_and_are_reused() {
+        let mut player = player(&[(7, "Seventh"), (2, "Second")]);
+        assert_eq!(player.roster_index(UnitTypeId(7), "Seventh"), 1);
+        assert_eq!(player.roster.len(), 2);
+        let types: Vec<_> = player.roster.iter().map(|entry| entry.unit_type).collect();
+        assert_eq!(types, [UnitTypeId(2), UnitTypeId(7)]);
+    }
+
+    #[test]
+    fn relabel_writes_new_and_changed_counts_only() {
+        let mut presentation = BattlePresentation {
+            players: vec![player(&[(1, "Alpha"), (2, "Beta")])],
+            ..BattlePresentation::default()
+        };
+        presentation.players[0].roster[0].count = 3;
+        presentation.relabel();
+        let labels: Vec<_> = presentation.players[0]
+            .roster
+            .iter()
+            .map(|entry| entry.label.as_str())
+            .collect();
+        assert_eq!(labels, ["3 × Alpha", "0 × Beta"]);
+
+        for entry in &mut presentation.players[0].roster {
+            entry.previous_count = entry.count;
+            entry.label.push_str(" (kept)");
+        }
+        presentation.players[0].roster[1].count = 4;
+        presentation.relabel();
+        let labels: Vec<_> = presentation.players[0]
+            .roster
+            .iter()
+            .map(|entry| entry.label.as_str())
+            .collect();
+        assert_eq!(labels, ["3 × Alpha (kept)", "4 × Beta"]);
+    }
 }
