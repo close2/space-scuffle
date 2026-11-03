@@ -22,9 +22,10 @@ use sim_core::scenario::{build_world_with_catalogs, ScenarioManifest, StartLoado
 use sim_core::{SimWorld, UnitCatalog, UpgradeCatalog};
 use sim_map::MapFile;
 use sim_types::{
-    EntityId, MatchResult, PlayerCommand, PlayerId, RenderSnapshot, ResourceKind, ResourceNodeId,
-    SimScalar, SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId,
+    AnimState, EntityId, MatchResult, PlayerCommand, PlayerId, RenderSnapshot, ResourceKind,
+    ResourceNodeId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder, UnitTypeId,
 };
+use std::collections::BTreeSet;
 use std::error::Error;
 
 const SCENARIO: &str = include_str!("../../../assets/scenarios/skirmish.ron");
@@ -387,6 +388,8 @@ struct Played {
     world: SimWorld,
     last: RenderSnapshot,
     checksums: Vec<u64>,
+    /// Every `(identity, animation state)` any snapshot of the match showed.
+    published: BTreeSet<(UnitTypeId, AnimState)>,
 }
 
 /// Plays one tick of the script and holds the world to the rules of this test.
@@ -445,8 +448,14 @@ fn play(seed: u64) -> Result<Played, String> {
     let mut script = Script::new(&world, false).map_err(|e| e.to_string())?;
     let mut last = RenderSnapshot::default();
     let mut checksums = Vec::new();
+    let mut published = BTreeSet::new();
     while !world.match_state.result.is_over() {
         advance(&mut world, &mut script, &mut last)?;
+        published.extend(
+            last.bubbles
+                .iter()
+                .map(|bubble| (bubble.unit_type, bubble.anim_state)),
+        );
         if world.current_tick.is_multiple_of(250) {
             checksums.push(world.last_checksum());
         }
@@ -456,7 +465,33 @@ fn play(seed: u64) -> Result<Played, String> {
         world,
         last,
         checksums,
+        published,
     })
+}
+
+/// Holds every published `(identity, state)` to `UnitCatalog::publishable_actions`, and makes
+/// sure the match showed every state a player's media must cover.
+fn assert_published_within_the_rule(played: &Played) -> Result<(), Box<dyn Error>> {
+    let catalog = &played.world.catalog;
+    for &(unit_type, state) in &played.published {
+        let archetype = catalog.get(unit_type)?;
+        assert!(
+            catalog.publishable_actions(archetype).contains(state),
+            "{} published {state:?}, which the rule leaves out",
+            archetype.slug
+        );
+    }
+    let states: BTreeSet<AnimState> = played.published.iter().map(|&(_, state)| state).collect();
+    for state in [
+        AnimState::Constructing,
+        AnimState::Idle,
+        AnimState::Walk,
+        AnimState::Attack,
+        AnimState::Cast,
+    ] {
+        assert!(states.contains(&state), "the match never showed {state:?}");
+    }
+    Ok(())
 }
 
 /// Plays each seed twice, in parallel, since one match takes half a minute in a debug build.
@@ -492,6 +527,7 @@ fn one_side_gathers_builds_trains_and_destroys_the_other() -> Result<(), Box<dyn
             first.checksums, second.checksums,
             "same seed and commands must give the same match"
         );
+        assert_published_within_the_rule(first)?;
         let world = &first.world;
         let MatchResult::Victory { winner, tick } = world.match_state.result else {
             return Err(format!("no victory: {:?}", world.match_state.result).into());

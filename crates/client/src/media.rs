@@ -20,7 +20,7 @@ use bevy::{
         },
     },
 };
-use sim_core::UnitCatalog;
+use sim_core::{ActionSet, UnitCatalog};
 use sim_types::{AnimState, UnitTypeId};
 use std::{
     collections::BTreeMap,
@@ -102,6 +102,9 @@ struct Admitted {
 struct Entry {
     audit: MediaAuditRecord,
     admission: Result<Admitted, Arc<MediaLoadError>>,
+    /// Actions the simulation can publish for this identity, from
+    /// [`UnitCatalog::publishable_actions`]. Empty for the concept control.
+    publishable: ActionSet,
 }
 
 /// Persistent availability, provenance evidence and first fatal presentation error.
@@ -181,17 +184,25 @@ impl ClientMediaStatus {
     /// Whether every action the simulation can publish for `unit_type` is admitted.
     ///
     /// The tick driver refuses a snapshot action by action, so an identity is presentable only
-    /// if no action of it could stop the match. Performs no I/O.
+    /// if no action of it could stop the match. Which actions those are is the simulation's
+    /// rule, [`UnitCatalog::publishable_actions`], evaluated once at load: a structure is never
+    /// asked for a walk, so media without one does not disable it. Performs no I/O.
     ///
     /// # Errors
-    /// Returns the first failure of [`Self::require`], in [`AnimState::ALL`] order.
+    /// Returns [`ClientMediaError::UnknownIdentity`] for an identity outside the catalog, or the
+    /// first failure of [`Self::require`] in [`AnimState::ALL`] order.
     pub fn presentable(
         &self,
         registry: &FlipbookRegistry,
         unit_type: UnitTypeId,
     ) -> Result<(), ClientMediaError> {
-        AnimState::ALL
-            .into_iter()
+        let entry = self
+            .entries
+            .get(&unit_type)
+            .ok_or(ClientMediaError::UnknownIdentity { unit_type })?;
+        entry
+            .publishable
+            .iter()
             .try_for_each(|action| self.require(registry, unit_type, action))
     }
 
@@ -273,7 +284,7 @@ pub(crate) fn load_registry(
     let mut entries = BTreeMap::new();
     for archetype in catalog.archetypes() {
         let media = load_unit_media(directory, &archetype.slug, limits);
-        let entry = register(
+        let mut entry = register(
             directory,
             &archetype.slug,
             Some(archetype.unit_type_id),
@@ -282,6 +293,7 @@ pub(crate) fn load_registry(
             images,
             &mut registry,
         );
+        entry.publishable = catalog.publishable_actions(archetype);
         entries.insert(archetype.unit_type_id, entry);
     }
     let loaded = entries
@@ -322,6 +334,7 @@ fn register(
             return Entry {
                 audit: MediaAuditRecord::failed(slug, &error),
                 admission: Err(Arc::new(error)),
+                publishable: ActionSet::EMPTY,
             }
         }
     };
@@ -370,6 +383,7 @@ fn register(
             metadata_path: directory.join(format!("{slug}.flipbook.ron")),
             texture,
         }),
+        publishable: ActionSet::EMPTY,
     }
 }
 
