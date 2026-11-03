@@ -3,6 +3,8 @@
 //! Owns tick phase 5. Each actor prepares one [`MotionProposal`] from a tick-start snapshot of
 //! its neighbours, and scalar pose edits and route or order edits commit together after all
 //! fallible work. Earlier successful actors stay committed when a later actor is diagnosed.
+//! Preparation runs in named stages over one [`MotionDraft`]: route upkeep, the arrival
+//! decision, the progress check and the step, with a range check first for pursuit.
 //!
 //! # The rules of an order's life
 //! - A route is checked when something may have invalidated it, not every tick: on a spaced
@@ -31,8 +33,8 @@ use super::tuning::{
     WAYPOINT_HANDOFF_MARGIN,
 };
 use super::{
-    MotionPolicy, MovementInvariant, MovementLayer, MovementMathError, RouteOutcome,
-    RouteOutcomeKind,
+    MotionPolicy, MovementInvariant, MovementLayer, MovementMathError, MovementWorkspace,
+    RouteOutcome, RouteOutcomeKind,
 };
 use crate::entity::{Entity, MovementMemory};
 use crate::steering::{
@@ -44,6 +46,7 @@ use sim_map::{
     MapError, PathRequestWithVision, PathResult, Pathfinder, PlayerVisionMap, SimMap, UnitClearance,
 };
 use sim_types::{AnimState, AttackOrigin, EntityId, SimAngle, SimScalar, SimVec2, Tick, UnitOrder};
+use std::ops::ControlFlow;
 
 /// An actor validated for this tick, with the rates it moves at.
 #[derive(Clone, Copy)]
@@ -706,17 +709,17 @@ impl SimWorld {
                 .is_multiple_of(ROUTE_CHECK_PERIOD)
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one order's route, arrival and step decisions share the prepared proposal"
-    )]
+    /// Prepares one actor's motion for this tick: a committed proposal, or a pursuit or cast to
+    /// run after every walking actor has been prepared.
+    ///
+    /// Walking runs in stages over one [`MotionDraft`]: route upkeep, the arrival decision, the
+    /// progress check and the step. A stage that settles the order ends the walk early.
     fn prepare_actor_motion(
         &mut self,
         entry: MotionEntry,
     ) -> Result<MotionAction, MovementInvariant> {
         let id = entry.id;
         let policy = entry.policy;
-        let speed = entry.speed;
         let actor = self
             .entities
             .get(&id)
@@ -724,11 +727,62 @@ impl SimWorld {
                 entity: id,
                 reason: "validated actor disappeared",
             })?;
-        let mut proposal = MotionProposal::new(actor, policy);
+        let proposal = MotionProposal::new(actor, policy);
+        let (proposal, target) = match self.walking_goal(id, actor, proposal)? {
+            ControlFlow::Continue(walk) => walk,
+            ControlFlow::Break(action) => return Ok(action),
+        };
+        if !policy.contains(&self.map, target) {
+            return Err(MovementInvariant::InvalidState {
+                entity: id,
+                reason: "active movement order is outside the current full-radius domain",
+            });
+        }
+        let owner = usize::from(actor.owner.0);
+        // Fresh knowledge of the map cannot wait out a cooldown: the route may lead into a wall.
+        let map_news = self.movement.recheck_routes[owner];
+        let cooled_down = proposal.memory.repath_cooldown == 0 || map_news;
+        let check_route = self.route_check_due(id, owner);
+        let knowledge = self
+            .vision_aware_pathfinding
+            .then_some((&self.vision_maps[owner], &self.known_blocked_cells[owner]));
+        let mut draft = MotionDraft {
+            entry,
+            actor,
+            proposal,
+            goal: target,
+            request: route_request(actor, policy, target, knowledge),
+            tick: Tick(self.current_tick),
+            ground: policy.layer == MovementLayer::Ground,
+            cooled_down,
+        };
+        let mut scene = MotionScene {
+            map: &self.map,
+            pathfinder: &mut self.pathfinder,
+            movement: &mut self.movement,
+            current_tick: self.current_tick,
+        };
+        let mut neighbours = std::mem::take(&mut scene.movement.neighbours);
+        let walked = draft.walk(&mut scene, &mut neighbours, check_route, map_news);
+        scene.movement.neighbours = neighbours;
+        walked?;
+        Ok(MotionAction::Commit(draft.proposal))
+    }
+
+    /// Settles an actor that does not walk this tick, or finds the point its order walks to.
+    ///
+    /// Breaks with the finished action for a unit that holds, winds up a fixed weapon, pursues,
+    /// casts or has nothing to do. Continues with the proposal and the goal in world units.
+    fn walking_goal(
+        &self,
+        id: EntityId,
+        actor: &Entity,
+        mut proposal: MotionProposal,
+    ) -> Result<ControlFlow<MotionAction, (MotionProposal, SimVec2)>, MovementInvariant> {
         if actor.is_on_hold() || actor.is_immobile || actor.channeling_remaining_ticks > 0 {
             proposal.clear_route = false;
             proposal.velocity = SimVec2::ZERO;
-            return Ok(MotionAction::Commit(proposal));
+            return Ok(ControlFlow::Break(MotionAction::Commit(proposal)));
         }
         let arch = self
             .catalog
@@ -742,228 +796,43 @@ impl SimWorld {
             .is_some_and(|w| w.has_turret);
         if matches!(actor.weapon_phase, WeaponPhase::Windup { .. }) && !has_turret {
             proposal.velocity = SimVec2::ZERO;
-            return Ok(MotionAction::Commit(proposal));
+            return Ok(ControlFlow::Break(MotionAction::Commit(proposal)));
         }
-        let mut target = match actor.order_queue.front() {
+        let target = match actor.order_queue.front() {
             Some(UnitOrder::Move { target } | UnitOrder::AttackMove { target }) => *target,
             Some(_) if actor.has_task_order() && actor.task.goal.is_some() => {
                 actor.task.goal.unwrap_or(actor.position)
             }
             Some(UnitOrder::AttackTarget { target, origin }) => {
-                return Ok(MotionAction::Pursue(*target, *origin))
+                return Ok(ControlFlow::Break(MotionAction::Pursue(*target, *origin)))
             }
             Some(UnitOrder::CastAbility {
                 ability_index,
                 target_pos,
                 target_entity,
             }) => {
-                return Ok(MotionAction::Cast((
+                return Ok(ControlFlow::Break(MotionAction::Cast((
                     id,
                     *ability_index,
                     *target_pos,
                     *target_entity,
-                )))
+                ))))
             }
             _ => {
                 proposal.velocity = SimVec2::ZERO;
                 if proposal.anim == AnimState::Walk {
                     proposal.anim = AnimState::Idle;
                 }
-                return Ok(MotionAction::Commit(proposal));
+                return Ok(ControlFlow::Break(MotionAction::Commit(proposal)));
             }
         };
-        if !policy.contains(&self.map, target) {
-            return Err(MovementInvariant::InvalidState {
-                entity: id,
-                reason: "active movement order is outside the current full-radius domain",
-            });
-        }
-        let owner = usize::from(actor.owner.0);
-        let tick = Tick(self.current_tick);
-        let ground = policy.layer == MovementLayer::Ground;
-        // Fresh knowledge of the map cannot wait out a cooldown: the route may lead into a wall.
-        let map_news = self.movement.recheck_routes[owner];
-        let cooled_down = proposal.memory.repath_cooldown == 0 || map_news;
-        let check_route = self.route_check_due(id, owner);
-        let knowledge = self
-            .vision_aware_pathfinding
-            .then_some((&self.vision_maps[owner], &self.known_blocked_cells[owner]));
-        let request = route_request(actor, policy, target, knowledge);
-        if ground
-            && cooled_down
-            && check_route
-            && !proposal.route(actor).is_empty()
-            && !route_is_usable(
-                &self.map,
-                &self.pathfinder,
-                &request,
-                policy,
-                actor.position,
-                proposal.route(actor),
-            )
-        {
-            proposal.drop_route();
-        }
-        if proposal.route(actor).is_empty() {
-            if distance(actor.position, target).map_err(|e| arithmetic(id, e))? <= speed
-                && policy.permits_segment(&self.map, actor.position, target)
-            {
-                proposal.position = target;
-                proposal.finish(target);
-                return Ok(MotionAction::Commit(proposal));
-            }
-            if ground && cooled_down {
-                proposal.memory.repath_cooldown = REPATH_COOLDOWN_TICKS;
-                self.movement.path_searches += 1;
-                let search = search_route(
-                    &mut self.pathfinder,
-                    &self.map,
-                    &request,
-                    &mut self.movement.reach_cache,
-                    self.current_tick,
-                    actor.owner.0,
-                );
-                let path = match search {
-                    RouteSearch::Found(path) => path,
-                    RouteSearch::Retargeted(reachable, path) => {
-                        self.movement.route_outcomes.push(RouteOutcome {
-                            tick,
-                            entity: id,
-                            kind: RouteOutcomeKind::Retargeted {
-                                requested: target,
-                                reachable,
-                            },
-                        });
-                        target = reachable;
-                        proposal.retarget = Some(reachable);
-                        path
-                    }
-                    RouteSearch::Blocked => {
-                        self.movement.route_outcomes.push(RouteOutcome {
-                            tick,
-                            entity: id,
-                            kind: RouteOutcomeKind::Unreachable,
-                        });
-                        proposal.finish(target);
-                        return Ok(MotionAction::Commit(proposal));
-                    }
-                };
-                proposal
-                    .adopt_route(actor.position, path.waypoints)
-                    .map_err(|e| arithmetic(id, e))?;
-            }
-        }
-        let layer = policy.layer.index();
-        let mut neighbours = std::mem::take(&mut self.movement.neighbours);
-        gather_neighbours(
-            &NeighbourIndex {
-                grid: &self.movement.grids[layer],
-                obstacles: &self.movement.obstacles[layer],
-                largest_radius: self.movement.largest_radius[layer],
-            },
-            &self.map,
-            entry,
-            actor.position,
-            &mut neighbours,
-        );
-        let context = StepContext {
-            map: &self.map,
-            policy,
-            speed,
-            body: ContactBody {
-                id,
-                owner: actor.owner,
-                push_priority: entry.push_priority,
-                pos: actor.position,
-                radius: policy.radius,
-            },
-            neighbours: &neighbours,
-        };
-        drop_passed_waypoints(&context, &self.pathfinder, &request, actor, &mut proposal)
-            .map_err(|e| arithmetic(id, e))?;
-        let on_last_leg = proposal.route(actor).len() <= 1;
-        if on_last_leg
-            && check_cluster_arrival_with(
-                Some(id),
-                actor.position,
-                policy.radius,
-                target,
-                &neighbours,
-                |witness| {
-                    witness.owner == actor.owner
-                        && (!ground || on_connected_ground(&self.map, witness.pos, target))
-                },
-            )
-            .map_err(|e| arithmetic(id, e))?
-        {
-            proposal.finish(target);
-            self.movement.neighbours = neighbours;
-            return Ok(MotionAction::Commit(proposal));
-        }
-        if let Some(route) =
-            sidestep_occupied_corner(&context, &self.pathfinder, &request, proposal.route(actor))
-                .map_err(|e| arithmetic(id, e))?
-        {
-            proposal.replace_route(route);
-        }
-        let next = proposal.route(actor).first().copied().unwrap_or(target);
-        let gap = distance(actor.position, next).map_err(|e| arithmetic(id, e))?;
-        if speed > SimScalar::ZERO {
-            if map_news {
-                proposal.memory.progress_best = None;
-            }
-            let route = proposal.route(actor);
-            let mut memory = proposal.memory;
-            let stalled = note_progress(&mut memory, actor.position, route, target)
-                .map_err(|e| arithmetic(id, e))?;
-            proposal.memory = memory;
-            let stuck_at_goal =
-                on_last_leg && stalled >= STALL_REPATH_TICKS && gap <= STALL_ARRIVAL_REACH;
-            if stalled >= STALL_ABANDON_TICKS || stuck_at_goal {
-                if !stuck_at_goal {
-                    self.movement.route_outcomes.push(RouteOutcome {
-                        tick,
-                        entity: id,
-                        kind: RouteOutcomeKind::NoProgress,
-                    });
-                }
-                proposal.finish(target);
-                self.movement.neighbours = neighbours;
-                return Ok(MotionAction::Commit(proposal));
-            }
-            if ground && cooled_down && stalled > 0 && stalled.is_multiple_of(STALL_REPATH_TICKS) {
-                proposal.drop_route();
-            }
-        }
-        let refused =
-            step_toward(&context, &mut proposal, next, gap, None).map_err(|e| arithmetic(id, e))?;
-        if refused
-            && ground
-            && cooled_down
-            && !proposal.route(actor).is_empty()
-            && !policy.permits_segment(&self.map, actor.position, next)
-        {
-            proposal.drop_route();
-        }
-        if proposal.position == next && proposal.route(actor).first() == Some(&next) {
-            proposal.remove_prefix += 1;
-        }
-        if proposal.route(actor).is_empty()
-            && proposal.position == next
-            && distance(next, target).map_err(|e| arithmetic(id, e))? <= speed
-            && policy.permits_segment(&self.map, next, target)
-        {
-            proposal.position = target;
-            proposal.finish(target);
-        }
-        self.movement.neighbours = neighbours;
-        Ok(MotionAction::Commit(proposal))
+        Ok(ControlFlow::Continue((proposal, target)))
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "range check, route upkeep and step share one prepared proposal"
-    )]
+    /// Prepares one pursuer's motion toward `target_id`: aim when in range, otherwise chase.
+    ///
+    /// The range check runs first and needs the whole world. The chase then runs in stages over a
+    /// [`MotionDraft`], like walking, with the target's position as the goal.
     fn prepare_pursuit(
         &mut self,
         entry: MotionEntry,
@@ -991,6 +860,54 @@ impl SimWorld {
                 entity: target_id,
                 reason: "available target disappeared",
             })?;
+        let Some(pursuit) = self.pursuit_band(entry, actor, target, target_id, origin)? else {
+            proposal.discard_order();
+            return Ok(proposal);
+        };
+        if pursuit.aim_if_in_range(id, actor, target.position, &mut proposal)? {
+            return Ok(proposal);
+        }
+
+        let goal = target.position;
+        let owner = usize::from(actor.owner.0);
+        let knowledge = self
+            .vision_aware_pathfinding
+            .then_some((&self.vision_maps[owner], &self.known_blocked_cells[owner]));
+        let mut draft = MotionDraft {
+            entry,
+            actor,
+            goal,
+            request: route_request(actor, policy, goal, knowledge),
+            tick: Tick(self.current_tick),
+            ground: policy.layer == MovementLayer::Ground,
+            cooled_down: proposal.memory.repath_cooldown == 0,
+            proposal,
+        };
+        let mut scene = MotionScene {
+            map: &self.map,
+            pathfinder: &mut self.pathfinder,
+            movement: &mut self.movement,
+            current_tick: self.current_tick,
+        };
+        let mut neighbours = std::mem::take(&mut scene.movement.neighbours);
+        let chased = draft.chase(&mut scene, &mut neighbours, &pursuit);
+        scene.movement.neighbours = neighbours;
+        chased?;
+        Ok(draft.proposal)
+    }
+
+    /// The range band `actor` attacks `target` from, or `None` when it has no weapon against it.
+    ///
+    /// Range is measured between body centres, so both radii are added to the weapon's reach.
+    fn pursuit_band(
+        &self,
+        entry: MotionEntry,
+        actor: &Entity,
+        target: &Entity,
+        target_id: EntityId,
+        origin: AttackOrigin,
+    ) -> Result<Option<Pursuit>, MovementInvariant> {
+        let id = entry.id;
         let target_policy = MotionPolicy::resolve(&self.catalog, &self.map, target)?;
         let arch = self
             .catalog
@@ -1007,8 +924,7 @@ impl SimWorld {
                 .then_some(actor.siege_weapon.as_ref())
                 .flatten(),
         ) else {
-            proposal.discard_order();
-            return Ok(proposal);
+            return Ok(None);
         };
         let delta = self.player_upgrades[usize::from(actor.owner.0)]
             .unit_stat_modifiers
@@ -1021,156 +937,532 @@ impl SimWorld {
         if max < SimScalar::ZERO || weapon.min_range < SimScalar::ZERO {
             return Err(arithmetic(id, MovementMathError::InvalidDistance));
         }
-        let radii = i128::from(policy.radius.raw()) + i128::from(target_policy.radius.raw());
+        let radii = i128::from(entry.policy.radius.raw()) + i128::from(target_policy.radius.raw());
         let max = i128::from(max.raw()) + radii;
         let min = if weapon.min_range > SimScalar::ZERO {
             i128::from(weapon.min_range.raw()) + radii
         } else {
             0
         };
+        Ok(Some(Pursuit {
+            target: target_id,
+            origin,
+            target_moving: target.velocity != SimVec2::ZERO,
+            has_turret: weapon.has_turret,
+            max,
+            min,
+            scan_range: arch.scan_range,
+        }))
+    }
+}
+
+/// One chase's fixed facts: whom, why, and from how far the pursuer may fire.
+struct Pursuit {
+    target: EntityId,
+    origin: AttackOrigin,
+    /// Whether the target moved last tick, which voids the pursuer's stall evidence.
+    target_moving: bool,
+    /// Whether the weapon aims a turret rather than the whole body.
+    has_turret: bool,
+    /// Furthest centre separation the weapon reaches, in raw fixed-point units.
+    max: i128,
+    /// Nearest centre separation the weapon reaches, in raw fixed-point units; 0 when unbounded.
+    min: i128,
+    /// The pursuer's scan range in world units, which sizes the leash of an automatic chase.
+    scan_range: SimScalar,
+}
+
+impl Pursuit {
+    /// Stops and aims at `goal` when `actor` stands within the band, and reports whether it did.
+    fn aim_if_in_range(
+        &self,
+        id: EntityId,
+        actor: &Entity,
+        goal: SimVec2,
+        proposal: &mut MotionProposal,
+    ) -> Result<bool, MovementInvariant> {
         let separation = i128::from(
-            distance(actor.position, target.position)
+            distance(actor.position, goal)
                 .map_err(|e| arithmetic(id, e))?
                 .raw(),
         );
-        if separation <= max && separation >= min {
-            proposal.velocity = SimVec2::ZERO;
-            let aim = direction(target.position, actor.position).map_err(|e| arithmetic(id, e))?;
-            let angle = SimAngle::atan2(aim.y, aim.x);
-            if weapon.has_turret {
-                proposal.turret_angle = angle;
-            } else {
-                proposal.heading = angle;
-            }
-            proposal.anim = if matches!(
-                actor.weapon_phase,
-                WeaponPhase::Windup { .. } | WeaponPhase::Backswing { .. }
-            ) {
-                AnimState::Attack
-            } else {
-                AnimState::Idle
-            };
-            return Ok(proposal);
+        if separation > self.max || separation < self.min {
+            return Ok(false);
         }
+        proposal.velocity = SimVec2::ZERO;
+        let aim = direction(goal, actor.position).map_err(|e| arithmetic(id, e))?;
+        let angle = SimAngle::atan2(aim.y, aim.x);
+        if self.has_turret {
+            proposal.turret_angle = angle;
+        } else {
+            proposal.heading = angle;
+        }
+        proposal.anim = if matches!(
+            actor.weapon_phase,
+            WeaponPhase::Windup { .. } | WeaponPhase::Backswing { .. }
+        ) {
+            AnimState::Attack
+        } else {
+            AnimState::Idle
+        };
+        Ok(true)
+    }
+}
 
-        let goal = target.position;
-        let ground = policy.layer == MovementLayer::Ground;
-        let cooled_down = proposal.memory.repath_cooldown == 0;
-        let owner = usize::from(actor.owner.0);
-        let knowledge = self
-            .vision_aware_pathfinding
-            .then_some((&self.vision_maps[owner], &self.known_blocked_cells[owner]));
-        let request = route_request(actor, policy, goal, knowledge);
-        let stale = proposal
-            .route(actor)
-            .last()
-            .is_some_and(|&end| !within_distance(end, goal, i128::from(PURSUIT_ROUTE_DRIFT.raw())));
-        if ground && cooled_down && stale {
-            proposal.drop_route();
-        }
-        let layer = policy.layer.index();
-        let mut neighbours = std::mem::take(&mut self.movement.neighbours);
+/// Whether a motion stage settled the order (`Break`) or the next stage should run (`Continue`).
+type Stage = ControlFlow<()>;
+
+/// The parts of the world a motion stage reads or changes, borrowed apart from the entity table.
+struct MotionScene<'a> {
+    map: &'a SimMap,
+    pathfinder: &'a mut Pathfinder,
+    movement: &'a mut MovementWorkspace,
+    current_tick: u32,
+}
+
+impl MotionScene<'_> {
+    /// Collects the tick-start bodies near `position` on `entry`'s layer into `out`.
+    fn gather_neighbours(
+        &self,
+        entry: MotionEntry,
+        position: SimVec2,
+        out: &mut Vec<SteeringObstacle>,
+    ) {
+        let layer = entry.policy.layer.index();
         gather_neighbours(
             &NeighbourIndex {
                 grid: &self.movement.grids[layer],
                 obstacles: &self.movement.obstacles[layer],
                 largest_radius: self.movement.largest_radius[layer],
             },
-            &self.map,
+            self.map,
             entry,
-            actor.position,
-            &mut neighbours,
+            position,
+            out,
         );
-        let context = StepContext {
-            map: &self.map,
-            policy,
-            speed: entry.speed,
+    }
+}
+
+/// One actor's motion while it is prepared: who moves, toward what, and the edits decided so far.
+///
+/// The actor is read as it stood at the start of the tick; every stage writes only `proposal`,
+/// which [`MotionProposal::commit`] applies after all fallible work. Stage order is part of the
+/// simulation's rules: a checked operation that fails first decides the reported error.
+struct MotionDraft<'a> {
+    entry: MotionEntry,
+    actor: &'a Entity,
+    proposal: MotionProposal,
+    /// Where the unit is headed this tick, in world units. A retarget replaces it.
+    goal: SimVec2,
+    /// The route query toward the goal the order named, seen through the owner's knowledge.
+    request: PathRequestWithVision<'a>,
+    tick: Tick,
+    ground: bool,
+    /// Whether a route search may run this tick.
+    cooled_down: bool,
+}
+
+impl MotionDraft<'_> {
+    fn fault(&self) -> impl Fn(MovementMathError) -> MovementInvariant {
+        let id = self.entry.id;
+        move |source| arithmetic(id, source)
+    }
+
+    /// What the step toward a waypoint reads, over this tick's `neighbours`.
+    fn step_context<'n>(
+        &self,
+        map: &'n SimMap,
+        neighbours: &'n [SteeringObstacle],
+    ) -> StepContext<'n> {
+        StepContext {
+            map,
+            policy: self.entry.policy,
+            speed: self.entry.speed,
             body: ContactBody {
-                id,
-                owner: actor.owner,
-                push_priority: entry.push_priority,
-                pos: actor.position,
-                radius: policy.radius,
+                id: self.entry.id,
+                owner: self.actor.owner,
+                push_priority: self.entry.push_priority,
+                pos: self.actor.position,
+                radius: self.entry.policy.radius,
             },
-            neighbours: &neighbours,
+            neighbours,
+        }
+    }
+
+    /// Walks a move order: route upkeep, the arrival decision, the progress check, the step.
+    fn walk(
+        &mut self,
+        scene: &mut MotionScene<'_>,
+        neighbours: &mut Vec<SteeringObstacle>,
+        check_route: bool,
+        map_news: bool,
+    ) -> Result<(), MovementInvariant> {
+        if self.upkeep_route(scene, check_route)?.is_break() {
+            return Ok(());
+        }
+        scene.gather_neighbours(self.entry, self.actor.position, neighbours);
+        let context = self.step_context(scene.map, neighbours);
+        let on_last_leg = match self.decide_arrival(&context, scene.pathfinder)? {
+            ControlFlow::Continue(on_last_leg) => on_last_leg,
+            ControlFlow::Break(()) => return Ok(()),
         };
-        drop_passed_waypoints(&context, &self.pathfinder, &request, actor, &mut proposal)
-            .map_err(|e| arithmetic(id, e))?;
-        if let Some(route) =
-            sidestep_occupied_corner(&context, &self.pathfinder, &request, proposal.route(actor))
-                .map_err(|e| arithmetic(id, e))?
+        let (next, gap) = self.next_waypoint(&context, scene.pathfinder)?;
+        let routes = &mut scene.movement.route_outcomes;
+        if self
+            .check_progress(routes, on_last_leg, gap, map_news)?
+            .is_break()
         {
-            proposal.replace_route(route);
+            return Ok(());
         }
-        let next = proposal.route(actor).first().copied().unwrap_or(goal);
-        let gap = distance(actor.position, next).map_err(|e| arithmetic(id, e))?;
-        let tick = Tick(self.current_tick);
-        let abandoned = |outcomes: &mut Vec<RouteOutcome>, proposal: &mut MotionProposal| {
-            outcomes.push(RouteOutcome {
-                tick,
-                entity: id,
-                kind: RouteOutcomeKind::PursuitAbandoned { target: target_id },
-            });
-            proposal.abandon_target(target_id);
+        self.propose_step(&context, next, gap)
+    }
+
+    /// Route upkeep: drops a stored route that no longer works, finishes a unit already within
+    /// one step of its goal, and searches a new route when the unit has none.
+    fn upkeep_route(
+        &mut self,
+        scene: &mut MotionScene<'_>,
+        check_route: bool,
+    ) -> Result<Stage, MovementInvariant> {
+        let (id, policy, actor) = (self.entry.id, self.entry.policy, self.actor);
+        if self.ground
+            && self.cooled_down
+            && check_route
+            && !self.proposal.route(actor).is_empty()
+            && !route_is_usable(
+                scene.map,
+                scene.pathfinder,
+                &self.request,
+                policy,
+                actor.position,
+                self.proposal.route(actor),
+            )
+        {
+            self.proposal.drop_route();
+        }
+        if !self.proposal.route(actor).is_empty() {
+            return Ok(Stage::Continue(()));
+        }
+        if distance(actor.position, self.goal).map_err(self.fault())? <= self.entry.speed
+            && policy.permits_segment(scene.map, actor.position, self.goal)
+        {
+            self.proposal.position = self.goal;
+            self.proposal.finish(self.goal);
+            return Ok(Stage::Break(()));
+        }
+        if !(self.ground && self.cooled_down) {
+            return Ok(Stage::Continue(()));
+        }
+        self.proposal.memory.repath_cooldown = REPATH_COOLDOWN_TICKS;
+        scene.movement.path_searches += 1;
+        let search = search_route(
+            scene.pathfinder,
+            scene.map,
+            &self.request,
+            &mut scene.movement.reach_cache,
+            scene.current_tick,
+            actor.owner.0,
+        );
+        let path = match search {
+            RouteSearch::Found(path) => path,
+            RouteSearch::Retargeted(reachable, path) => {
+                scene.movement.route_outcomes.push(RouteOutcome {
+                    tick: self.tick,
+                    entity: id,
+                    kind: RouteOutcomeKind::Retargeted {
+                        requested: self.goal,
+                        reachable,
+                    },
+                });
+                self.goal = reachable;
+                self.proposal.retarget = Some(reachable);
+                path
+            }
+            RouteSearch::Blocked => {
+                scene.movement.route_outcomes.push(RouteOutcome {
+                    tick: self.tick,
+                    entity: id,
+                    kind: RouteOutcomeKind::Unreachable,
+                });
+                self.proposal.finish(self.goal);
+                return Ok(Stage::Break(()));
+            }
         };
-        if entry.speed > SimScalar::ZERO {
-            if target.velocity != SimVec2::ZERO {
+        self.proposal
+            .adopt_route(actor.position, path.waypoints)
+            .map_err(self.fault())?;
+        Ok(Stage::Continue(()))
+    }
+
+    /// Arrival decision: passes waypoints already done with, then finishes a unit on its last leg
+    /// that touches a friendly body already settled on the same goal.
+    ///
+    /// Continues with whether the unit is on its last leg.
+    fn decide_arrival(
+        &mut self,
+        context: &StepContext<'_>,
+        pathfinder: &Pathfinder,
+    ) -> Result<ControlFlow<(), bool>, MovementInvariant> {
+        let (id, actor, goal, ground) = (self.entry.id, self.actor, self.goal, self.ground);
+        drop_passed_waypoints(
+            context,
+            pathfinder,
+            &self.request,
+            actor,
+            &mut self.proposal,
+        )
+        .map_err(self.fault())?;
+        let on_last_leg = self.proposal.route(actor).len() <= 1;
+        if on_last_leg
+            && check_cluster_arrival_with(
+                Some(id),
+                actor.position,
+                self.entry.policy.radius,
+                goal,
+                context.neighbours,
+                |witness| {
+                    witness.owner == actor.owner
+                        && (!ground || on_connected_ground(context.map, witness.pos, goal))
+                },
+            )
+            .map_err(self.fault())?
+        {
+            self.proposal.finish(goal);
+            return Ok(ControlFlow::Break(()));
+        }
+        Ok(ControlFlow::Continue(on_last_leg))
+    }
+
+    /// Steps around a body parked on the next corner, and returns the point to step toward and
+    /// its distance from the unit in world units.
+    fn next_waypoint(
+        &mut self,
+        context: &StepContext<'_>,
+        pathfinder: &Pathfinder,
+    ) -> Result<(SimVec2, SimScalar), MovementInvariant> {
+        let actor = self.actor;
+        if let Some(route) = sidestep_occupied_corner(
+            context,
+            pathfinder,
+            &self.request,
+            self.proposal.route(actor),
+        )
+        .map_err(self.fault())?
+        {
+            self.proposal.replace_route(route);
+        }
+        let next = self
+            .proposal
+            .route(actor)
+            .first()
+            .copied()
+            .unwrap_or(self.goal);
+        let gap = distance(actor.position, next).map_err(self.fault())?;
+        Ok((next, gap))
+    }
+
+    /// Progress check: gives the order up when the unit has stopped gaining ground, finishes it
+    /// when the unit is stuck within reach of its goal, and drops the route on a stall to repath.
+    fn check_progress(
+        &mut self,
+        outcomes: &mut Vec<RouteOutcome>,
+        on_last_leg: bool,
+        gap: SimScalar,
+        map_news: bool,
+    ) -> Result<Stage, MovementInvariant> {
+        if self.entry.speed > SimScalar::ZERO {
+            if map_news {
+                self.proposal.memory.progress_best = None;
+            }
+            let route = self.proposal.route(self.actor);
+            let mut memory = self.proposal.memory;
+            let stalled = note_progress(&mut memory, self.actor.position, route, self.goal)
+                .map_err(self.fault())?;
+            self.proposal.memory = memory;
+            let stuck_at_goal =
+                on_last_leg && stalled >= STALL_REPATH_TICKS && gap <= STALL_ARRIVAL_REACH;
+            if stalled >= STALL_ABANDON_TICKS || stuck_at_goal {
+                if !stuck_at_goal {
+                    outcomes.push(RouteOutcome {
+                        tick: self.tick,
+                        entity: self.entry.id,
+                        kind: RouteOutcomeKind::NoProgress,
+                    });
+                }
+                self.proposal.finish(self.goal);
+                return Ok(Stage::Break(()));
+            }
+            if self.ground
+                && self.cooled_down
+                && stalled > 0
+                && stalled.is_multiple_of(STALL_REPATH_TICKS)
+            {
+                self.proposal.drop_route();
+            }
+        }
+        Ok(Stage::Continue(()))
+    }
+
+    /// The step: moves toward `next`, `gap` world units away, drops a route terrain refused,
+    /// and finishes a unit whose step also reaches the goal.
+    fn propose_step(
+        &mut self,
+        context: &StepContext<'_>,
+        next: SimVec2,
+        gap: SimScalar,
+    ) -> Result<(), MovementInvariant> {
+        let (policy, actor, map) = (self.entry.policy, self.actor, context.map);
+        let refused =
+            step_toward(context, &mut self.proposal, next, gap, None).map_err(self.fault())?;
+        if refused
+            && self.ground
+            && self.cooled_down
+            && !self.proposal.route(actor).is_empty()
+            && !policy.permits_segment(map, actor.position, next)
+        {
+            self.proposal.drop_route();
+        }
+        self.pass_reached_waypoint(next);
+        if self.proposal.route(actor).is_empty()
+            && self.proposal.position == next
+            && distance(next, self.goal).map_err(self.fault())? <= self.entry.speed
+            && policy.permits_segment(map, next, self.goal)
+        {
+            self.proposal.position = self.goal;
+            self.proposal.finish(self.goal);
+        }
+        Ok(())
+    }
+
+    /// Consumes the route's first point when this tick's step lands exactly on it.
+    fn pass_reached_waypoint(&mut self, next: SimVec2) {
+        if self.proposal.position == next && self.proposal.route(self.actor).first() == Some(&next)
+        {
+            self.proposal.remove_prefix += 1;
+        }
+    }
+
+    /// Chases `pursuit`'s target: route upkeep, waypoint handling, the stall check, the step and,
+    /// when terrain refused the step, a fresh route within the leash.
+    fn chase(
+        &mut self,
+        scene: &mut MotionScene<'_>,
+        neighbours: &mut Vec<SteeringObstacle>,
+        pursuit: &Pursuit,
+    ) -> Result<(), MovementInvariant> {
+        let stale = self.proposal.route(self.actor).last().is_some_and(|&end| {
+            !within_distance(end, self.goal, i128::from(PURSUIT_ROUTE_DRIFT.raw()))
+        });
+        if self.ground && self.cooled_down && stale {
+            self.proposal.drop_route();
+        }
+        scene.gather_neighbours(self.entry, self.actor.position, neighbours);
+        let context = self.step_context(scene.map, neighbours);
+        drop_passed_waypoints(
+            &context,
+            scene.pathfinder,
+            &self.request,
+            self.actor,
+            &mut self.proposal,
+        )
+        .map_err(self.fault())?;
+        let (next, gap) = self.next_waypoint(&context, scene.pathfinder)?;
+        let routes = &mut scene.movement.route_outcomes;
+        if self.check_pursuit_progress(routes, pursuit)?.is_break() {
+            return Ok(());
+        }
+        let refused = step_toward(
+            &context,
+            &mut self.proposal,
+            next,
+            gap,
+            Some(pursuit.target),
+        )
+        .map_err(self.fault())?;
+        self.pass_reached_waypoint(next);
+        if refused && self.ground && self.cooled_down {
+            self.reroute_pursuit(scene, pursuit)?;
+        }
+        Ok(())
+    }
+
+    /// Progress check for a chase: gives the target up when the pursuer stopped gaining ground.
+    fn check_pursuit_progress(
+        &mut self,
+        outcomes: &mut Vec<RouteOutcome>,
+        pursuit: &Pursuit,
+    ) -> Result<Stage, MovementInvariant> {
+        if self.entry.speed > SimScalar::ZERO {
+            if pursuit.target_moving {
                 // A moving goal says nothing about whether this unit is stuck.
-                proposal.memory.progress_best = None;
+                self.proposal.memory.progress_best = None;
             }
-            let route = proposal.route(actor);
-            let mut memory = proposal.memory;
-            let stalled = note_progress(&mut memory, actor.position, route, goal)
-                .map_err(|e| arithmetic(id, e))?;
-            proposal.memory = memory;
+            let route = self.proposal.route(self.actor);
+            let mut memory = self.proposal.memory;
+            let stalled = note_progress(&mut memory, self.actor.position, route, self.goal)
+                .map_err(self.fault())?;
+            self.proposal.memory = memory;
             if stalled >= STALL_ABANDON_TICKS {
-                abandoned(&mut self.movement.route_outcomes, &mut proposal);
-                self.movement.neighbours = neighbours;
-                return Ok(proposal);
+                self.abandon_pursuit(outcomes, pursuit.target);
+                return Ok(Stage::Break(()));
             }
         }
-        let refused = step_toward(&context, &mut proposal, next, gap, Some(target_id))
-            .map_err(|e| arithmetic(id, e))?;
-        if proposal.position == next && proposal.route(actor).first() == Some(&next) {
-            proposal.remove_prefix += 1;
-        }
-        if refused && ground && cooled_down {
-            proposal.memory.repath_cooldown = REPATH_COOLDOWN_TICKS;
-            self.movement.path_searches += 1;
-            let search = search_route(
-                &mut self.pathfinder,
-                &self.map,
-                &request,
-                &mut self.movement.reach_cache,
-                self.current_tick,
-                actor.owner.0,
-            );
-            let path = match search {
-                RouteSearch::Found(path) => Some(path),
-                RouteSearch::Retargeted(reachable, path) => {
-                    within_distance(reachable, goal, max).then_some(path)
-                }
-                RouteSearch::Blocked => None,
-            };
-            let leash = arch
-                .scan_range
-                .checked_mul(PURSUIT_LEASH_SCAN_RANGES)
-                .unwrap_or(SimScalar::MAX);
-            match path {
-                Some(path) if origin == AttackOrigin::Explicit || path.total_length <= leash => {
-                    if actor.current_funnel_waypoints.is_empty() {
-                        // Leaving the straight line for a detour lengthens the way on purpose.
-                        proposal.memory.progress_best = None;
-                    }
-                    proposal
-                        .adopt_route(actor.position, path.waypoints)
-                        .map_err(|e| arithmetic(id, e))?;
-                }
-                _ => abandoned(&mut self.movement.route_outcomes, &mut proposal),
+        Ok(Stage::Continue(()))
+    }
+
+    /// Searches a new route after terrain refused a chasing step, and gives the target up when
+    /// no route reaches firing range, or an automatic chase's route outruns its leash.
+    fn reroute_pursuit(
+        &mut self,
+        scene: &mut MotionScene<'_>,
+        pursuit: &Pursuit,
+    ) -> Result<(), MovementInvariant> {
+        self.proposal.memory.repath_cooldown = REPATH_COOLDOWN_TICKS;
+        scene.movement.path_searches += 1;
+        let search = search_route(
+            scene.pathfinder,
+            scene.map,
+            &self.request,
+            &mut scene.movement.reach_cache,
+            scene.current_tick,
+            self.actor.owner.0,
+        );
+        let path = match search {
+            RouteSearch::Found(path) => Some(path),
+            RouteSearch::Retargeted(reachable, path) => {
+                within_distance(reachable, self.goal, pursuit.max).then_some(path)
             }
+            RouteSearch::Blocked => None,
+        };
+        let leash = pursuit
+            .scan_range
+            .checked_mul(PURSUIT_LEASH_SCAN_RANGES)
+            .unwrap_or(SimScalar::MAX);
+        match path {
+            Some(path)
+                if pursuit.origin == AttackOrigin::Explicit || path.total_length <= leash =>
+            {
+                if self.actor.current_funnel_waypoints.is_empty() {
+                    // Leaving the straight line for a detour lengthens the way on purpose.
+                    self.proposal.memory.progress_best = None;
+                }
+                self.proposal
+                    .adopt_route(self.actor.position, path.waypoints)
+                    .map_err(self.fault())?;
+            }
+            _ => self.abandon_pursuit(&mut scene.movement.route_outcomes, pursuit.target),
         }
-        self.movement.neighbours = neighbours;
-        Ok(proposal)
+        Ok(())
+    }
+
+    /// Reports the chase of `target` as abandoned and leaves that target alone for a while.
+    fn abandon_pursuit(&mut self, outcomes: &mut Vec<RouteOutcome>, target: EntityId) {
+        outcomes.push(RouteOutcome {
+            tick: self.tick,
+            entity: self.entry.id,
+            kind: RouteOutcomeKind::PursuitAbandoned { target },
+        });
+        self.proposal.abandon_target(target);
     }
 }
 
