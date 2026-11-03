@@ -105,7 +105,7 @@ Status is `Working` (built, tested, in the shipped game), `Partial` (built but l
 | Tick and checksum | Working | The phase pipeline of §3; versioned checksum over persistent state and RNG | `crates/sim_core/tests/checksum_state_tests.rs` | none known |
 | Cross-platform determinism | Working | Golden replay on three native targets and wasm32 in CI | `crates/sim_core/tests/golden_replay_tests.rs` | The replay does not pin every phase order (two swaps pass it; Phase 9 blueprint §9) |
 | Combat | Working | Weapon timing with turn, damage point, cancelable backswing and cooldown; turrets; shields and armour; splash; projectiles | `crates/sim_core/tests/stutter_step_tests.rs`, `crates/sim_core/tests/combat_correctness_tests.rs`, `crates/sim_core/tests/damage_and_shields_tests.rs` | Changed outcomes await the owner (Q0007) |
-| Movement and pathfinding | Working | Grid clearance field, A* corridor and funnel, steering, push priority and Hold Position | `crates/sim_map/tests/funnel_tests.rs`, `crates/sim_map/tests/clearance_field_tests.rs`, `crates/sim_core/tests/push_priority_tests.rs` | A move to an unreachable point walks to the nearest reachable one (Q0006, r09) |
+| Movement and pathfinding | Working | Grid clearance field, A* corridor and funnel, steering, push priority and Hold Position | `crates/sim_map/tests/funnel_tests.rs`, `crates/sim_map/tests/clearance_field_tests.rs`, `crates/sim_core/tests/push_priority_tests.rs` | A move to an unreachable point walks to the nearest reachable one, by the owner's choice (Q0006) |
 | Terrain, cliffs and ramps | Working | Cliff levels, ramps, the map format and its validation, and the client's terrain mesher | `crates/sim_map/tests/ramp_traversal_tests.rs`, `crates/sim_map/tests/validation_tests.rs`, `crates/client/tests/mesher_golden_tests.rs` | `MapDocument::encode` panics on a document whose cell count does not match its size; the client leaves the last dual column or row unmeshed when a map side is a multiple of 16 (Phase 9 blueprint §9) |
 | Simulation vision and watchtowers | Working | Per-player vision with high ground, air reveal and watchtowers | `crates/sim_map/tests/vision_tests.rs`, `crates/sim_core/tests/watchtower_tick_tests.rs` | none known |
 | Economy and gas | Partial | Harvesting and income for minerals and gas | `crates/sim_core/tests/harvest_income_tests.rs` | Gas is disabled in the shipped game for want of media (Q0001) |
@@ -113,7 +113,7 @@ Status is `Working` (built, tested, in the shipped game), `Partial` (built but l
 | Production and research | Partial | Production and research queues, cancel and refund | `crates/sim_core/tests/production_transactions_tests.rs`, `crates/sim_core/tests/research_transaction_tests.rs` | Research is disabled in the shipped game (Q0001) |
 | Transport | Partial | Load and unload orders with ownership checks | `crates/sim_core/tests/transport_ownership_tests.rs`, `crates/sim_core/tests/load_orders_tests.rs` | Disabled in the shipped game (Q0001) |
 | Abilities and hazard zones | Working | Data-defined abilities, modes and hazard zones | `crates/sim_core/tests/spells_and_abilities_tests.rs` | none known |
-| Match result | Working | Victory and defeat from the game rules | `crates/sim_core/tests/match_result_tests.rs` | Rules await the owner (Q0008) |
+| Match result | Working | Victory and defeat from the game rules | `crates/sim_core/tests/match_result_tests.rs` | Rules accepted by the owner (Q0008); where the spec is silent, they follow StarCraft II (charter §8) |
 | `PlayerView` | Working | Per-player knowledge for the HUD and admission | `crates/sim_core/tests/player_view_tests.rs` | none known |
 | Catalog data | Working | Factions, units, structures, upgrades, start loadouts and scenarios read at run time | `crates/sim_core/tests/runtime_catalog_tests.rs`, `crates/sim_core/tests/faction_catalog_tests.rs` | Data choices await the owner (Q0007) |
 | Bubble and dome rendering | Working | Instanced bubbles and domes with optics, dome fill and validated shaders | `crates/client/tests/gpu_validation_tests.rs`, `crates/client/tests/bubble_optics_tests.rs`, `crates/client/tests/dome_fill_tests.rs` | none known |
@@ -126,7 +126,7 @@ Status is `Working` (built, tested, in the shipped game), `Partial` (built but l
 | Map editor | Working | Paint, place, save, playtest and return; a load requested by the UI applies in the same frame | `crates/client/tests/editor_app_tests.rs` (including `document_load_applies_after_the_editor_ui_requests_it`), `crates/client/tests/editor_core_tests.rs` | none known |
 | Asset baker | Working | Veo download, ffmpeg import, flipbook atlases, terrain textures, media audit | `crates/asset_baker/tests/bake_integrity_tests.rs`, `crates/asset_baker/tests/ffmpeg_tests.rs` | none known |
 | Media coverage | Partial | Real media for part of the roster; missing media fails loudly | `crates/client/tests/runtime_media_tests.rs` | Paid generation awaits the owner (Q0001) |
-| Terrain anisotropy on old lavapipe | Partial | Terrain sampling validated on `radv`; a test override for old lavapipe | `crates/client/tests/gpu_validation_tests.rs` | Override kept until the owner decides (Q0009) |
+| Terrain anisotropy on old lavapipe | Partial | Terrain sampling validated on `radv`; a test override for old lavapipe | `crates/client/tests/gpu_validation_tests.rs` | Override kept until this server's Mesa is 25.1 or later (Debian 13 ships 25.0.7), then deleted (Q0009) |
 | Networking | Not built | Nothing; intent is deterministic lockstep | none | all |
 | Replays | Partial | The golden replay fixture only | `crates/sim_core/tests/golden_replay_tests.rs` | No recording of real matches |
 | Bot API | Not built | Nothing | none | all |
@@ -160,9 +160,9 @@ layout (branch prediction), not a regression in the simulation
 ([`docs/evidence/2026-11-03-throughput-history.md`](docs/evidence/2026-11-03-throughput-history.md)).
 
 **Frame budget.** `frame_budget` (`crates/client_diagnostics`) runs the real client on a flat 128×128 arena where
-eight players attack-move across a circle with 0, 25 or 50 units each (Q0018's default). It measures 1,500 ticks
+eight players attack-move across a circle with 0, 25 or 50 units each (Q0018, option (a), chosen by the owner). It measures 1,500 ticks
 (60 s of game time) after a warm-up. Measured on 2026-11-03 at `c918aa9` on the RX 580 through a headless KWin
-compositor, with hardware present, 1280×720 and vsync off, and no monitor (Q0019's default). Release build, 16
+compositor, with hardware present, 1280×720 and vsync off, and no monitor (the owner's choice, Q0019). Release build, 16
 dedicated cores, load average 1.6 to 3.9 (one run of the 0 scenario at 8.5). Each figure is the median of five
 interleaved runs, in ms:
 

@@ -1001,7 +1001,7 @@ changes, an ID was assigned out of order: fix the data, not the fixture.
 (`TICKS_PER_SECOND`) and the simulation-crate sites of the literal 25, the six `PERFORMANCE RATIONALE` outliers
 (`asset_baker/src/terrain_texture.rs:56,218`, `client/src/bubble_shader.rs:27`, `smog/mod.rs:715`,
 `terrain/mesher.rs:1183`, `terrain/mod.rs:168`; **verify** each, some may be prose), `docs/plans/2026-11-01-codebase-remediation.md`,
-new `docs/questions/open/0010-charter-claims.md`, `workspace_checks/tests/charter.rs`.
+new `docs/questions/closed/0010-phase-9-charter-claims.md`, `workspace_checks/tests/charter.rs`.
 
 **Steps**
 
@@ -1026,7 +1026,7 @@ new `docs/questions/open/0010-charter-claims.md`, `workspace_checks/tests/charte
      constant; add it to C1's expected graph as a dev edge).
    - **C20** every backticked repository path in `AGENTS.md` exists.
 5. Rewrite `DESIGN.md` per §7 below.
-6. Apply the charter text of §6 below. Create `docs/questions/open/0010-charter-claims.md` (Blocking: no; Default:
+6. Apply the charter text of §6 below. Create `docs/questions/closed/0010-phase-9-charter-claims.md` (Blocking: no; Default:
    the text as committed) listing D-1, D-4, D-5, D-6, D-9 and the §3.2 rewording, so the owner can object.
 7. Update the remediation plan: Phase 9 table gets a Status column like Phase 5's, with commits; mark S-20, F-13,
    Q-9, Q-10, Q-12 fixed; add an "Exit status" paragraph; mark the 2026-10-26 F-05, F-07 and F-08 closed in
@@ -1363,7 +1363,7 @@ Relative links only. It states what exists, not what was once hoped for; intent 
 
 ## 10. Decisions for the owner
 
-All are recorded in `docs/questions/open/0010-charter-claims.md` by WP13, with "as committed" as the default. The ones
+All are recorded in `docs/questions/closed/0010-phase-9-charter-claims.md` by WP13, with "as committed" as the default. The ones
 most likely to draw an objection:
 
 1. **D-1:** threshold 100 and tests exempt. A stricter threshold is one number in `clippy.toml`, but triples the work.

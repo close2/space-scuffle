@@ -37,3 +37,10 @@ that the measurement tool still runs and that its scenario is valid.
 ## Answer
 
 Owner (2026-11-03): Start with option 1 (measure and publish only, reported against the 60 and 30 FPS lines).
+
+## Resolution
+
+2026-11-03. Option 1 is the default that was already followed; nothing to change. The figures are published against
+the 60 and 30 frames per second lines with no pass or fail (`DESIGN.md` §5,
+`docs/evidence/2026-11-03-frame-budget.md`, commit `25b8cf3`). Commit `ab53c32` rewords the evidence to cite the
+owner's choice instead of the default.

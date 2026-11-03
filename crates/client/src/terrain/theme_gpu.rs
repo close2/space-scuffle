@@ -39,7 +39,9 @@ pub const TERRAIN_MAX_ANISOTROPY: u16 = 16;
 ///
 /// The GPU test harness (`crates/client/tests/support/gpu_run.rs`) sets it only for a child on
 /// `lavapipe` before Mesa 25.1, never for one on `radv`, which renders the production sampler
-/// (Q0009, `docs/plans/2026-11-03-gpu-test-harness.md` decision D7).
+/// (Q0009, `docs/plans/2026-11-03-gpu-test-harness.md` decision D7). The owner chose to delete this
+/// override, and the harness code that sets it, once the development server's Mesa is 25.1 or later; it
+/// runs 25.0.7 today.
 pub const TERRAIN_ANISOTROPY_OVERRIDE_ENV: &str = "SPACE_SCUFFLE_TERRAIN_MAX_ANISOTROPY";
 
 /// GPU texture resources created from a terrain theme.

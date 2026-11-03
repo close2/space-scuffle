@@ -202,7 +202,7 @@ file does not compile against `9dbf715`, stop and report; do not adapt the old c
    startup/noise split, and the three new tests. Update the module doc: replace "every `f32` is hashed by its raw
    bits" with the two classes, the per-test `libm` list, and how the constants were recorded.
 3. Record at `9dbf715` and confirm on main (above).
-4. File `docs/questions/open/0012-host-independent-smog-math.md` (below).
+4. File `docs/questions/open/0014-host-independent-smog-math.md` (below).
 5. Record what this plan found in the Phase 9 plan's findings list and in this plan's index row.
 
 No production code changes.
