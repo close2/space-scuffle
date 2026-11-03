@@ -36,16 +36,16 @@ use client::battle_hud::model::HudModel;
 use client::battle_pipeline::fog::BattleFog;
 use client::battle_pipeline::session::BattleSession;
 use client::battle_presentation::{BattlePresentation, PlayerPresentation};
-use client::runtime_battle::SKIRMISH_SCENARIO;
+use client::runtime_battle::{MapObject, MapPresentation, SKIRMISH_SCENARIO};
 use client::scene_controller::RenderEntityMap;
 use client::smog::SmogStats;
 use client::vfx::{
     BeamVisualComponent, CombatVisualEvent, MeleeSlashComponent, ProjectileVisual, ShatterShard,
 };
-use client::ClientMode;
+use client::{ClientMode, LabState};
 use sim_types::{
-    AttackOrigin, CombatEventVisual, EntityId, PlayerCommand, PlayerId, SimScalar, UnitOrder,
-    UnitTypeId,
+    AttackOrigin, CombatEventVisual, EntityId, PlayerCommand, PlayerId, ResourceKind,
+    ResourceNodeId, SimScalar, UnitOrder, UnitTypeId,
 };
 
 #[allow(
@@ -70,6 +70,9 @@ const WALK_FRAMES: usize = 3_000;
 
 /// More than a soldier's sight, in world units, so its spawn shows nothing of the target.
 const OUT_OF_SIGHT: f32 = 14.0;
+
+/// Nodes closer together than this, in world units, are one mineral line.
+const MINERAL_LINE_REACH: f32 = 4.0;
 
 /// Boots the skirmish and runs the first ticks, because vision is first computed by a tick.
 fn skirmish() -> Harness {
@@ -652,6 +655,170 @@ fn each_kind_of_event_is_judged_where_it_lands() {
     assert_eq!(deliver(&mut harness, &all), landing_in_sight);
 }
 
+// --- Resource nodes (G-23) -------------------------------------------------------------------------
+
+/// The mineral nearest home that the player cannot see, and every unseen mineral beside it.
+///
+/// Billboards of one mineral line overlap on screen, so a click cannot tell them apart, and
+/// the tests exhaust a whole line. The first entry is the nearest.
+fn unseen_mineral_line(harness: &Harness) -> Vec<ResourceNodeId> {
+    let world = harness.world();
+    let view = &model(harness).view;
+    let origin = home(harness);
+    let position =
+        |node: &sim_map::ResourceNode| Vec2::new(node.pos.x.to_f32(), node.pos.y.to_f32());
+    let unseen: Vec<(ResourceNodeId, Vec2)> = (0_u32..)
+        .zip(world.map.resources())
+        .filter(|(index, node)| {
+            node.kind == ResourceKind::Mineral
+                && view.visible_nodes.iter().all(|seen| seen.id.0 != *index)
+        })
+        .map(|(index, node)| (ResourceNodeId(index), position(node)))
+        .collect();
+    let (nearest, at) = *unseen
+        .iter()
+        .min_by(|a, b| a.1.distance(origin).total_cmp(&b.1.distance(origin)))
+        .expect("the map has minerals beyond the start");
+    let mut line = vec![nearest];
+    line.extend(
+        unseen
+            .iter()
+            .filter(|(id, position)| *id != nearest && position.distance(at) < MINERAL_LINE_REACH)
+            .map(|(id, _)| *id),
+    );
+    line
+}
+
+/// Whether Bevy would draw the billboard of `node`.
+fn billboard_drawn(harness: &mut Harness, node: ResourceNodeId) -> bool {
+    let world = harness.app.world_mut();
+    world
+        .query::<(&MapObject, &InheritedVisibility)>()
+        .iter(world)
+        .find(|(object, _)| object.index() == node.0 as usize)
+        .expect("every node has a billboard")
+        .1
+        .get()
+}
+
+fn billboard_position(harness: &Harness, node: ResourceNodeId) -> Vec3 {
+    harness.app.world().resource::<MapPresentation>().objects[node.0 as usize].position
+}
+
+fn exhaust(harness: &mut Harness, nodes: &[ResourceNodeId]) {
+    for node in nodes {
+        harness.world_mut().map.resources_mut()[node.0 as usize].remaining = 0;
+    }
+    run_ticks(harness, 2);
+}
+
+/// Brings sight over `node` by standing a soldier beside it.
+fn watch(harness: &mut Harness, node: ResourceNodeId) {
+    let position = billboard_position(harness, node);
+    let place = harness.open_ground(Vec2::new(position.x, position.z), 4.0);
+    spawn_soldier(harness, LOCAL_PLAYER, place);
+    run_ticks(harness, 2);
+}
+
+#[test]
+fn a_node_exhausted_out_of_sight_stays_on_screen_until_seen() {
+    let mut harness = skirmish();
+    let line = unseen_mineral_line(&harness);
+    exhaust(&mut harness, &line);
+    assert!(
+        billboard_drawn(&mut harness, line[0]),
+        "the far node must look as it was last seen"
+    );
+
+    watch(&mut harness, line[0]);
+    assert!(
+        !billboard_drawn(&mut harness, line[0]),
+        "now it has been seen"
+    );
+}
+
+#[test]
+fn a_hidden_exhausted_node_stays_pickable_and_the_worker_finds_out_on_arrival() {
+    let mut harness = skirmish();
+    let worker = mobile(&harness, LOCAL_PLAYER)[0];
+    let line = unseen_mineral_line(&harness);
+    let node = line[0];
+    exhaust(&mut harness, &line);
+
+    harness.look_at(home(&harness));
+    harness.select(worker);
+    assert_eq!(harness.selection().ids(), [worker]);
+    let billboard = billboard_position(&harness, node);
+    let node_at = Vec2::new(billboard.x, billboard.z);
+    let start = harness.simulated_position(worker).distance(node_at);
+    harness.look_at(node_at);
+    let on_screen = harness.screen_position(billboard);
+    harness.click(MouseButton::Right, on_screen);
+
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    let UnitOrder::Harvest { target } = orders[0].order else {
+        panic!(
+            "the billboard on screen must take the order: {:?}",
+            orders[0].order
+        );
+    };
+    assert!(line.contains(&target), "{target:?} is not in {line:?}");
+
+    // The admission of WP1 lets the order stand, so the worker goes and looks.
+    run_ticks(&mut harness, 2);
+    assert_eq!(
+        harness.world().entities[&worker].order_queue.front(),
+        Some(&UnitOrder::Harvest { target }),
+        "the worker must not be redirected before it has seen the node"
+    );
+    assert!(billboard_drawn(&mut harness, target));
+    run_until(&mut harness, "the worker sees the node", |harness| {
+        !billboard_drawn(harness, target)
+    });
+    let walked_to = harness.simulated_position(worker).distance(node_at);
+    assert!(
+        walked_to < start - 4.0,
+        "the worker walked from {start} to {walked_to}, and only then was the node known"
+    );
+
+    // A node seen empty offers nothing, whatever stands around it.
+    run_until(&mut harness, "the whole line is seen", |harness| {
+        line.iter().all(|node| !billboard_drawn(harness, *node))
+    });
+    harness.look_at(node_at);
+    let at_ground = harness.screen_position(billboard);
+    harness.click(MouseButton::Right, at_ground);
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert!(
+        matches!(orders[0].order, UnitOrder::Move { .. }),
+        "{:?}",
+        orders[0].order
+    );
+}
+
+#[test]
+fn a_battle_reset_forgets_what_the_last_one_saw() {
+    let mut harness = skirmish();
+    let line = unseen_mineral_line(&harness);
+    exhaust(&mut harness, &line);
+    watch(&mut harness, line[0]);
+    assert!(!billboard_drawn(&mut harness, line[0]));
+
+    harness
+        .app
+        .world_mut()
+        .resource_mut::<LabState>()
+        .battle_reset_requested = true;
+    harness.step(4);
+    assert!(
+        billboard_drawn(&mut harness, line[0]),
+        "a new map, a new node"
+    );
+    assert_eq!(harness.world().current_tick, 0);
+}
+
 // --- No allocation on the per-frame path (charter 3.3) -------------------------------------------
 
 #[test]
@@ -675,4 +842,45 @@ fn the_fog_rewrites_only_on_a_tick_and_reuses_its_buffers() {
     let (buffers, ticking) = fog(&harness);
     assert_eq!(buffers, warmed, "a tick reuses every buffer");
     assert_eq!(ticking, refills + 100, "one refill for each tick");
+}
+
+// --- The Sandbox profile must not move -------------------------------------------------------------
+
+#[test]
+fn the_sandbox_profile_still_draws_everything() {
+    let mut harness = recording(sandbox_skirmish());
+    assert!(harness.app.world().get_resource::<BattleFog>().is_none());
+    for foe in mobile(&harness, ENEMY) {
+        assert!(drawn(&harness, foe), "the developer view shows every unit");
+    }
+
+    let foe = mobile(&harness, ENEMY)[0];
+    let at = harness.simulated_position(foe);
+    harness.look_at(at);
+    harness.select(foe);
+    assert_eq!(harness.selection().inspected(), Some(foe));
+
+    let far = harness.open_ground(at, 5.0);
+    fight_at(&mut harness, far);
+    assert!(
+        !delivered(&harness).events.is_empty(),
+        "combat anywhere is delivered"
+    );
+
+    let node = ResourceNodeId(
+        harness
+            .world()
+            .map
+            .resources()
+            .iter()
+            .rposition(|node| node.kind == ResourceKind::Mineral)
+            .and_then(|index| u32::try_from(index).ok())
+            .expect("the map has minerals"),
+    );
+    assert!(billboard_drawn(&mut harness, node));
+    exhaust(&mut harness, &[node]);
+    assert!(
+        !billboard_drawn(&mut harness, node),
+        "the developer view shows the truth, wherever it is"
+    );
 }

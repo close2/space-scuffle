@@ -7,6 +7,7 @@
 use crate::lab_stage::LabStageMarker;
 
 use super::BattleDefinition;
+use crate::battle_pipeline::fog::BattleFog;
 use crate::camera::RtsCamera;
 use crate::scene_controller::{LiveBattleBubble, RenderEntityMap};
 use crate::terrain::{spawn_terrain_owned, TerrainMaterial};
@@ -43,12 +44,21 @@ pub struct MapObject {
     index: usize,
 }
 
+impl MapObject {
+    /// Position of this billboard's record in [`MapPresentation::objects`].
+    #[must_use]
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+}
+
 /// Immutable-to-consumers presentation record for a resource or observation tower.
 #[derive(Debug, Clone)]
 pub struct MapObjectSnapshot {
     /// Ground-anchored center in Bevy world coordinates, in world units.
     pub position: Vec3,
-    /// Whether this object remains present in the simulation.
+    /// Whether this object is shown and can be picked: present in the simulation or, under fog,
+    /// present when the viewer last saw it.
     pub visible: bool,
     /// Watchtower owner, or None for neutral towers and natural resources.
     pub owner: Option<PlayerId>,
@@ -363,13 +373,22 @@ fn spawn_map_object(
 }
 
 /// Applies the session's published map state and updates billboards.
+///
+/// Under `fog`, nodes show what the viewer last saw instead of the truth, so a node mined out of
+/// sight stays on screen, and stays pickable, until someone goes and looks. Watchtowers need no
+/// such memory, because nothing changes their owner during a battle.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
 )]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each Bevy system parameter is a separate declared data dependency"
+)]
 pub fn update_map_presentation(
     mut presentation: Option<ResMut<'_, MapPresentation>>,
     session: Res<'_, crate::battle_pipeline::session::BattleSession>,
+    fog: Option<Res<'_, BattleFog>>,
     mut owners: crate::player_presentation::PresentationContext<'_>,
     mut exit: EventWriter<'_, AppExit>,
     mut materials: ResMut<'_, Assets<StandardMaterial>>,
@@ -379,12 +398,15 @@ pub fn update_map_presentation(
     let (Some(published), Some(presentation)) = (session.published(), presentation.as_mut()) else {
         return;
     };
-    if presentation.tick != Some(published.tick) {
-        for (record, present) in presentation
-            .objects
-            .iter_mut()
-            .zip(&published.resources_present)
-        {
+    // A fog written after this tick was copied is news even though the tick is not.
+    let fog_changed = fog.as_ref().is_some_and(DetectChanges::is_changed);
+    if presentation.tick != Some(published.tick) || fog_changed {
+        let nodes = fog
+            .as_ref()
+            .map_or(published.resources_present.as_slice(), |fog| {
+                fog.node_present()
+            });
+        for (record, present) in presentation.objects.iter_mut().zip(nodes) {
             record.visible = *present;
         }
         for (record, owner) in presentation
