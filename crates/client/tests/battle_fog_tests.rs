@@ -32,7 +32,10 @@
 )]
 
 use bevy::prelude::*;
+use client::battle_hud::card::CommandCard;
 use client::battle_hud::model::HudModel;
+use client::battle_hud::result::ResultScreen;
+use client::battle_hud::HudGeometry;
 use client::battle_pipeline::fog::BattleFog;
 use client::battle_pipeline::session::BattleSession;
 use client::battle_presentation::{BattlePresentation, PlayerPresentation};
@@ -438,6 +441,11 @@ fn an_inspected_enemy_that_leaves_vision_leaves_the_panel() {
     assert_eq!(harness.selection().inspected(), None);
     assert_eq!(model(&harness).focus, None);
     assert_eq!(model(&harness).selection_groups().len(), 0);
+    let card = harness.app.world().resource::<CommandCard>();
+    assert!(
+        card.slots.iter().chain(&card.fixed).all(Option::is_none),
+        "the card offers nothing for an enemy the fog took away"
+    );
 }
 
 #[test]
@@ -817,6 +825,79 @@ fn a_battle_reset_forgets_what_the_last_one_saw() {
         "a new map, a new node"
     );
     assert_eq!(harness.world().current_tick, 0);
+}
+
+// --- The end of a match ------------------------------------------------------------------------
+
+/// Destroys every structure of `owner`, which ends the match, and waits for the verdict.
+fn lose(harness: &mut Harness) {
+    for unit in harness.world_mut().entities.values_mut() {
+        if unit.owner == LOCAL_PLAYER && unit.is_immobile {
+            unit.hp = SimScalar::ZERO;
+        }
+    }
+    run_until(harness, "the verdict shows", |harness| {
+        harness
+            .app
+            .world()
+            .resource::<ResultScreen>()
+            .verdict()
+            .is_some()
+    });
+    harness.step(2);
+}
+
+#[test]
+fn a_defeat_shows_no_enemy() {
+    let mut harness = skirmish();
+    lose(&mut harness);
+    for foe in mobile(&harness, ENEMY) {
+        assert_nothing_of_it_is_drawn(&harness, foe);
+    }
+    run_ticks(&mut harness, 25);
+    for foe in mobile(&harness, ENEMY) {
+        assert_nothing_of_it_is_drawn(&harness, foe);
+    }
+}
+
+#[test]
+fn play_again_starts_with_a_fresh_memory_and_the_enemy_still_hidden() {
+    let mut harness = skirmish();
+    let line = unseen_mineral_line(&harness);
+    exhaust(&mut harness, &line);
+    watch(&mut harness, line[0]);
+    assert!(!billboard_drawn(&mut harness, line[0]));
+    let generation = {
+        let session = harness.app.world().resource::<BattleSession>();
+        session.commands.generation()
+    };
+
+    lose(&mut harness);
+    let button = harness
+        .app
+        .world()
+        .resource::<HudGeometry>()
+        .play_again
+        .expect("the result window offers another match");
+    harness.click(
+        MouseButton::Left,
+        Vec2::new(button.center().x, button.center().y),
+    );
+    harness.step(2);
+
+    let session = harness.app.world().resource::<BattleSession>();
+    assert_ne!(session.commands.generation(), generation, "a new session");
+    assert!(
+        billboard_drawn(&mut harness, line[0]),
+        "a new map, a new node"
+    );
+    run_ticks(&mut harness, 2);
+    assert!(billboard_drawn(&mut harness, line[0]));
+    let fog = harness.app.world().resource::<BattleFog>();
+    assert!(fog.node_present().iter().all(|present| *present));
+    for foe in mobile(&harness, ENEMY) {
+        assert_nothing_of_it_is_drawn(&harness, foe);
+    }
 }
 
 // --- No allocation on the per-frame path (charter 3.3) -------------------------------------------
