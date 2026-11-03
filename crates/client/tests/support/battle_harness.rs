@@ -522,9 +522,13 @@ pub fn fixture_root(identities: &[&str]) -> tempfile::TempDir {
     let textures = directory.path().join("textures");
     let catalog = sim_core::UnitCatalog::default_catalog();
     for identity in identities {
-        let mut atlas =
-            asset_baker::generate_procedural_atlas(identity, Some(FIXTURE_FRAME_SIZE), None)
-                .expect("a catalog identity");
+        let mut atlas = asset_baker::generate_procedural_atlas(
+            &catalog,
+            identity,
+            Some(FIXTURE_FRAME_SIZE),
+            None,
+        )
+        .expect("a catalog identity");
         // The media gate asks for each action the simulation can publish for this identity, and
         // the procedural generator draws neither Cast nor Constructing for a mobile unit. Only
         // those gaps are filled, so a dome keeps its media without a walk, as real art may.

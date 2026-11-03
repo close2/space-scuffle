@@ -217,4 +217,32 @@ pub enum BakerError {
     /// An error occurred during JSON serialization or deserialization.
     #[error("JSON error: {0}")]
     JsonError(#[from] serde_json::Error),
+
+    /// A directory given as the asset bundle does not hold the rule catalogs.
+    #[error("'{path}' is not an asset bundle: it has no '{marker}'")]
+    NotAnAssetBundle {
+        /// The directory that was given or searched.
+        path: PathBuf,
+        /// The file every asset bundle contains, relative to its root.
+        marker: &'static str,
+    },
+
+    /// No asset bundle was found by the automatic search and none was given.
+    #[error("no asset bundle found; pass --assets <dir> or set SPACE_SCUFFLE_ASSETS. Searched {searched:?}")]
+    AssetBundleNotFound {
+        /// Every candidate directory inspected, in search order.
+        searched: Vec<PathBuf>,
+    },
+
+    /// The current directory, where the automatic search starts, could not be determined.
+    #[error("cannot determine the current directory to search for the asset bundle: {source}")]
+    CurrentDirectory {
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// The rule catalogs in the asset bundle could not be loaded.
+    #[error(transparent)]
+    Catalog(#[from] sim_core::catalog::CatalogLoadError),
 }

@@ -29,3 +29,5 @@ blake3 = "1.8.7"
 
 [dev-dependencies]
 tempfile = "3.17"
+# The shipped catalogs, embedded for tests only; the baker loads them from disk.
+sim_fixtures.workspace = true

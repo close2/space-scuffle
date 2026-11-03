@@ -354,6 +354,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sim_core",
+ "sim_fixtures",
  "sim_types",
  "tempfile",
  "thiserror 2.0.21",

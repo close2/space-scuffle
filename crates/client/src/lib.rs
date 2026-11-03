@@ -141,7 +141,6 @@ pub fn resolve_assets_dir() -> PathBuf {
 use bevy::prelude::*;
 use bevy_egui::EguiPlugin;
 use core::mem::size_of;
-use sim_core::world::SimWorld;
 use sim_types::commands::TickBundle;
 use sim_types::ids::Tick;
 
@@ -658,18 +657,36 @@ fn assemble_graphical_app(
 // Trade-off: Headless CI mode does not execute actual GPU rasterization passes.
 /// Runs a deterministic 60-frame headless Bevy schedule to verify state sync and math in CI.
 ///
+/// Every stage reads the shipped data from the resolved asset root at run time: the default
+/// battle scenario (`scenarios/default_battle.ron`), its map, loadouts and rule catalogs.
+///
 /// # Errors
-/// Returns an error string if simulation stepping, camera invariants, or uniform packing fail.
-#[expect(
-    clippy::too_many_lines,
-    reason = "a single ordered sequence that shares its local state"
-)]
+/// Returns an error string if the assets cannot be loaded, or if simulation stepping, camera
+/// invariants, or uniform packing fail.
 pub fn run_headless_check() -> Result<(), String> {
-    // 1. Initialize Headless Simulation World
-    let mut world = SimWorld::new_default_battle_sandbox();
-    let palette_root = ResolvedAssetsRoot::resolve().map_err(|error| error.to_string())?;
+    let root = ResolvedAssetsRoot::resolve().map_err(|error| error.to_string())?;
+    headless_simulation_check(&root)?;
+    headless_camera_check()?;
+    let mut app = headless_battle_app(root)?;
+    for _ in 0..60 {
+        app.update();
+        if let Some(error) = &app.world().resource::<LabState>().battle_failure {
+            return Err(error.clone());
+        }
+    }
+    Ok(())
+}
+
+/// Stages 1 and 2 of [`run_headless_check`]: builds the default battle scenario from disk and
+/// steps it 60 ticks, checking the tick counter and the GPU uniform of every bubble.
+fn headless_simulation_check(root: &ResolvedAssetsRoot) -> Result<(), String> {
+    let mut world = sim_core::scenario::load_scenario_world(
+        root.as_path(),
+        std::path::Path::new(runtime_battle::DEFAULT_BATTLE_SCENARIO),
+    )
+    .map_err(|error| error.to_string())?;
     let palette = player_presentation::PlayerPalette::load(
-        palette_root.as_path(),
+        root.as_path(),
         world
             .catalog
             .archetypes()
@@ -677,12 +694,10 @@ pub fn run_headless_check() -> Result<(), String> {
             .count(),
     )
     .map_err(|error| error.to_string())?;
-    let initial_entities_count = world.entities.len();
-    if initial_entities_count == 0 {
-        return Err("Battle sandbox initialized with 0 entities".to_string());
+    if world.entities.is_empty() {
+        return Err("Default battle scenario initialized with 0 entities".to_string());
     }
 
-    // 2. Advance 60 Deterministic Simulation Frames
     for tick in 0..60 {
         let bundle = TickBundle {
             tick: Tick(world.current_tick),
@@ -716,8 +731,12 @@ pub fn run_headless_check() -> Result<(), String> {
             }
         }
     }
+    Ok(())
+}
 
-    // 3. Verify Camera Controller Invariants
+/// Stage 3 of [`run_headless_check`]: the camera controller keeps its distance bounds and its eye
+/// above the ground plane after a pan and a zoom.
+fn headless_camera_check() -> Result<(), String> {
     let mut cam = RtsCamera::default();
     cam.pan(Vec2::new(1.0, 0.0), 0.04);
     cam.zoom(-2.0);
@@ -728,12 +747,22 @@ pub fn run_headless_check() -> Result<(), String> {
     if tf.translation.y <= 0.0 {
         return Err("Camera eye elevation must be above ground plane".to_string());
     }
+    Ok(())
+}
 
-    // 4. Step Full Production Bevy App Schedule for 60 Frames
+/// Stage 4 of [`run_headless_check`]: a `MinimalPlugins` app with the production battle
+/// resources and systems, holding the default battle loaded from `root`.
+fn headless_battle_app(root: ResolvedAssetsRoot) -> Result<App, String> {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
+    insert_headless_resources(&mut app)?;
+    insert_headless_battle(&mut app, root)?;
+    add_headless_systems(&mut app);
+    Ok(app)
+}
 
-    // Initialize asset storages & event channels required by systems
+/// Asset storages, event channels and UI state the production systems read.
+fn insert_headless_resources(app: &mut App) -> Result<(), String> {
     app.init_resource::<Assets<Mesh>>();
     app.init_resource::<Assets<StandardMaterial>>();
     app.init_resource::<Assets<Image>>();
@@ -760,8 +789,12 @@ pub fn run_headless_check() -> Result<(), String> {
     app.init_resource::<input_policy::InputOwnership>();
     app.init_resource::<camera_drag::CameraDragState>();
     app.add_event::<bevy::window::WindowEvent>();
+    Ok(())
+}
 
-    let root = ResolvedAssetsRoot::resolve().map_err(|error| error.to_string())?;
+/// Loads the default battle from `root` and inserts its session, palette and catalog, with
+/// the Live Battle tab open.
+fn insert_headless_battle(app: &mut App, root: ResolvedAssetsRoot) -> Result<(), String> {
     let definition = runtime_battle::BattleDefinition::load(
         root.as_path(),
         std::path::Path::new(runtime_battle::DEFAULT_BATTLE_SCENARIO),
@@ -782,12 +815,15 @@ pub fn run_headless_check() -> Result<(), String> {
     )
     .map_err(|error| error.to_string())?;
     app.insert_resource(session.with_world(world));
-    let lab_state = LabState {
+    app.insert_resource(LabState {
         current_tab: LabTab::LiveBattle,
         ..default()
-    };
-    app.insert_resource(lab_state);
+    });
+    Ok(())
+}
 
+/// The production Startup and Update systems the headless check exercises.
+fn add_headless_systems(app: &mut App) {
     // Add all production Startup systems
     app.add_systems(
         Startup,
@@ -827,13 +863,4 @@ pub fn run_headless_check() -> Result<(), String> {
                 .chain(),
         ),
     );
-
-    for _ in 0..60 {
-        app.update();
-        if let Some(error) = &app.world().resource::<LabState>().battle_failure {
-            return Err(error.clone());
-        }
-    }
-
-    Ok(())
 }

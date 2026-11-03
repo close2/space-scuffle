@@ -9,6 +9,8 @@
 //! manifests.
 //!
 //! # Core Subsystems
+//! - [`assets_root`]: Chooses the asset bundle and loads its rule catalogs at run time; no
+//!   catalog is compiled into the baker, so adding a unit needs no rebuild (charter §3.3).
 //! - [`error`]: Strongly-typed error domain via [`BakerError`].
 //! - [`manifest`]: Structural layout and slice metadata via [`FlipbookAtlasMeta`].
 //! - [`ffmpeg_importer`]: Transcoding, center-cropping, scaling, and strip packing via external FFmpeg.
@@ -19,6 +21,7 @@
 #![warn(missing_docs)]
 #![allow(clippy::doc_markdown)]
 
+pub mod assets_root;
 pub mod error;
 pub mod ffmpeg_importer;
 pub mod manifest;
@@ -29,6 +32,7 @@ pub mod terrain_texture;
 pub mod terrain_theme;
 pub mod veo_client;
 
+pub use assets_root::{load_catalogs, resolve_assets_root};
 pub use error::BakerError;
 pub use ffmpeg_importer::{
     bake_multi_action_videos, bake_multi_action_videos_with_states, extract_and_pack_video,
@@ -55,42 +59,31 @@ pub use terrain_theme::{
 };
 pub use veo_client::{
     build_action_prompt, resolve_credentials, resolve_credentials_from, validate_catalog_slug,
-    VeoClient, VeoCredentials, VeoGenerateRequest, VeoGenerateVideoResponse, VeoImageInput,
-    VeoInstance, VeoOperation, VeoParameters, VeoVideoOutput, DEFAULT_VEO_MODEL,
+    UnitMediaDirs, VeoClient, VeoCredentials, VeoGenerateRequest, VeoGenerateVideoResponse,
+    VeoImageInput, VeoInstance, VeoOperation, VeoParameters, VeoVideoOutput, DEFAULT_VEO_MODEL,
 };
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// Returns all mobile unit archetype slugs discovered dynamically from the catalog.
+/// Returns the slugs of every mobile unit archetype in `catalog`, in catalog order.
 #[must_use]
-pub fn default_unit_archetypes() -> Vec<String> {
-    sim_core::UnitCatalog::default()
+pub fn default_unit_archetypes(catalog: &sim_core::UnitCatalog) -> Vec<String> {
+    catalog
         .archetypes()
         .filter(|a| !matches!(a.shape, sim_types::enums::ShapeKind::BuildingDome { .. }))
         .map(|a| a.slug.clone())
         .collect()
 }
 
-/// Returns all building dome archetype slugs discovered dynamically from the catalog.
+/// Returns the slugs of every building dome archetype in `catalog`, in catalog order.
 #[must_use]
-pub fn default_dome_archetypes() -> Vec<String> {
-    sim_core::UnitCatalog::default()
+pub fn default_dome_archetypes(catalog: &sim_core::UnitCatalog) -> Vec<String> {
+    catalog
         .archetypes()
         .filter(|a| matches!(a.shape, sim_types::enums::ShapeKind::BuildingDome { .. }))
         .map(|a| a.slug.clone())
         .collect()
-}
-
-/// Locates the concept video path across workspace execution contexts.
-#[must_use]
-pub fn find_concept_video() -> Option<PathBuf> {
-    let candidates = [
-        PathBuf::from("tmp/gemini_generated_video_de659ff9.mp4"),
-        PathBuf::from("../tmp/gemini_generated_video_de659ff9.mp4"),
-        PathBuf::from("../../tmp/gemini_generated_video_de659ff9.mp4"),
-    ];
-    candidates.into_iter().find(|candidate| candidate.exists())
 }
 
 /// Locates the AI keyframes directory across workspace execution contexts.
@@ -114,6 +107,7 @@ pub fn find_keyframes_dir() -> Option<PathBuf> {
 /// their `.png` image strips and `.flipbook.ron` manifests into the target directory.
 ///
 /// # Arguments
+/// - `catalog`: The unit catalog whose archetypes are synthesised, loaded at run time.
 /// - `output_dir`: Directory for the fixtures, which must be outside any runtime asset bundle.
 ///
 /// # Errors
@@ -121,6 +115,7 @@ pub fn find_keyframes_dir() -> Option<PathBuf> {
 /// [`BakerError::Io`] if directory creation or file writing fails,
 /// or [`BakerError::ValidationFailed`] if any atlas fails invariant checks.
 pub fn generate_all_procedural_atlases(
+    catalog: &sim_core::UnitCatalog,
     output_dir: &Path,
 ) -> Result<Vec<FlipbookAtlasMeta>, BakerError> {
     ensure_outside_runtime_assets(output_dir)?;
@@ -128,15 +123,15 @@ pub fn generate_all_procedural_atlases(
     let mut generated_metas = Vec::new();
 
     // 1. Generate Mobile Units (192x192, 15 FPS)
-    for unit_name in default_unit_archetypes() {
-        let output = generate_procedural_unit_atlas(&unit_name, 192, 15)?;
+    for unit_name in default_unit_archetypes(catalog) {
+        let output = generate_procedural_unit_atlas(catalog, &unit_name, 192, 15)?;
         write_procedural_atlas(&output, output_dir)?;
         generated_metas.push(output.meta);
     }
 
     // 2. Generate Building Domes (256x256, 15 FPS)
-    for dome_name in default_dome_archetypes() {
-        let output = generate_procedural_dome_atlas(&dome_name, 256, 15)?;
+    for dome_name in default_dome_archetypes(catalog) {
+        let output = generate_procedural_dome_atlas(catalog, &dome_name, 256, 15)?;
         write_procedural_atlas(&output, output_dir)?;
         generated_metas.push(output.meta);
     }
