@@ -339,7 +339,7 @@ pub fn step_bouncing_kinematics(
         resolve_contacts_all_pairs(states, bounds);
         // The all-pairs fallback has never added its contacts to the step count; the per-bubble
         // `peer_bounces` counters still record them. Kept as is because Phase 9 changes no
-        // behaviour; recorded in section 9 of the Phase 9 blueprint.
+        // behaviour; `kinematics_all_pairs_fallback_golden` pins it until a bugfix changes it.
         0
     };
 
