@@ -49,6 +49,27 @@ pub struct BattleFog {
 }
 
 impl BattleFog {
+    /// Every growable buffer this fog retains, as `(name, address, capacity in elements)`.
+    ///
+    /// Evidence for the steady-state tests that a refill reuses storage. Not part of the fog's
+    /// interface.
+    #[doc(hidden)]
+    pub fn retained_buffers(&self) -> impl Iterator<Item = (&'static str, usize, usize)> + '_ {
+        [
+            (
+                "fog.visible",
+                self.visible.as_ptr().addr(),
+                self.visible.capacity(),
+            ),
+            (
+                "fog.node_present",
+                self.node_present.as_ptr().addr(),
+                self.node_present.capacity(),
+            ),
+        ]
+        .into_iter()
+    }
+
     /// The player whose knowledge this is, if a battle is presented to one.
     #[must_use]
     pub const fn viewer(&self) -> Option<PlayerId> {

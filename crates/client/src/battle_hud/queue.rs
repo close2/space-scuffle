@@ -73,6 +73,34 @@ impl QueuePanel {
         &self.lines[..self.line_count]
     }
 
+    /// Every growable buffer this panel retains, as `(name, address, capacity in elements)`.
+    ///
+    /// Evidence for the steady-state tests that a refresh reuses storage. Not part of the HUD's
+    /// interface.
+    #[doc(hidden)]
+    pub fn retained_buffers(&self) -> impl Iterator<Item = (&'static str, usize, usize)> + '_ {
+        [
+            (
+                "queue.overflow",
+                self.overflow.as_ptr().addr(),
+                self.overflow.capacity(),
+            ),
+            (
+                "queue.lines",
+                self.lines.as_ptr().addr(),
+                self.lines.capacity(),
+            ),
+        ]
+        .into_iter()
+        .chain(self.lines.iter().map(|line| {
+            (
+                "queue.lines.text",
+                line.text.as_ptr().addr(),
+                line.text.capacity(),
+            )
+        }))
+    }
+
     fn clear_rows(&mut self) {
         self.structure = None;
         self.rows = [None; QUEUE_ROWS];
