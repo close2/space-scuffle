@@ -15,3 +15,10 @@ drop the model names. Agents will not rewrite §6 without your say.
 ## Answer
 
 Owner (2026-11-03): I agree with recommendation. Naming models did not work as I wished.
+
+## Resolution
+
+2026-11-03, commit `ab53c32`. `AGENTS.md` §6 no longer names `pro`, `inherit` or `flash`. It keeps both stages: a
+planning agent writes the blueprint in `docs/plans/` first, and implementation agents follow the approved blueprint
+strictly. A new item 3 says the charter names no model or tool for either stage. The remediation plan's decision D8
+records the approval.

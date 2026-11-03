@@ -19,3 +19,9 @@ One agent chose these rules while building the simulation. They shape how the ga
 ## Answer
 
 Owner (2026-11-03): Keep as committed. Whenever the spec is silent make an internet search how sc2 does it.
+
+## Resolution
+
+2026-11-03, commit `ab53c32`. The rules stay as committed. The standing rule is now in charter §8 (`AGENTS.md`): where
+the specification is silent on a game rule, search how StarCraft II does it, follow that, and cite the source in
+the plan. `DESIGN.md` §4 (match result) no longer lists the rules as awaiting the owner.

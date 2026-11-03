@@ -51,3 +51,7 @@ Say "no" to any numbered item and the text goes back to what it said before Phas
 ## Answer
 
 Owner (2026-11-03): Agreed (all numbered items approved as committed).
+
+## Resolution
+
+2026-11-03. Nothing to change: every numbered item stays as committed in `0336642` and the Phase 9 packages.

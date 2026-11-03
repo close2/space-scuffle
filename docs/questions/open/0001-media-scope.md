@@ -24,3 +24,11 @@ Details: `docs/plans/2026-11-02-phase-5-playable-client.md` §2.6 and §7.
 ## Answer
 
 Owner (2026-11-03): Option B. Veo should be part of my ultra plan. So use it. (I think I have weekly limits and it would be a shame to waste them).
+
+## Effect of the answer
+
+2026-11-03. Option B is approved: paid Veo generation for `plasma_siphon_dome`, `tech_module_pod`,
+`machining_plant_dome`, `aerospace_hangar_dome` and `repair_shuttle` may run on the owner's plan. The default of no
+paid Veo run no longer applies. Remediation step 8.5 is unblocked, and a plan for the generation run is being
+written. This question stays open until that media is baked and gas, research and transport are enabled in the
+shipped game; the temporary procedural fixtures of Q0002 item 3 are then replaced by real art.

@@ -42,3 +42,10 @@ run of the five terrain tests here time out.
 ## Answer
 
 Owner (2026-11-03): Agreed (keep the override until the server's Mesa is 25.1 or later and then delete it).
+
+## Resolution
+
+2026-11-03, commit `ab53c32`. The override stays. The server runs Debian 13 with Mesa 25.0.7, so nothing is deleted yet.
+`DESIGN.md` §4 (terrain anisotropy row) and the rustdoc of `TERRAIN_ANISOTROPY_OVERRIDE_ENV` in
+`crates/client/src/terrain/theme_gpu.rs` now say that the override, and the harness code that sets it
+(`crates/client/tests/support/gpu_run.rs`), are to be deleted once the server's Mesa is 25.1 or later.
