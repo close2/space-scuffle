@@ -15,7 +15,7 @@ use crate::CatalogResource;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
-use sim_core::catalog::UnitCatalog;
+use sim_core::catalog::{UnitArchetype, UnitCatalog};
 use sim_types::commands::UnitOrder;
 use sim_types::enums::{AnimState, AttributeFlags, Faction};
 use sim_types::ids::PlayerId;
@@ -268,10 +268,6 @@ impl Default for LabState {
     clippy::too_many_arguments,
     reason = "each Bevy system parameter is a separate declared data dependency"
 )]
-#[expect(
-    clippy::too_many_lines,
-    reason = "a single ordered sequence that shares its local state"
-)]
 pub fn lab_ui_system(
     palette: Res<'_, crate::player_presentation::PlayerPalette>,
     owner_status: Res<'_, crate::player_presentation::PresentationStatus>,
@@ -341,80 +337,38 @@ pub fn lab_ui_system(
         .resizable(false)
         .show(&ctx, |ui| {
             ui.heading("Space Scuffle");
-            ui.horizontal_wrapped(|ui| {
-                for (tab, label, target) in [
-                    (
-                        LabTab::VisualLab,
-                        "Visual Lab",
-                        crate::input_policy::UiTarget::Lab,
-                    ),
-                    (
-                        LabTab::LiveBattle,
-                        "Live Battle",
-                        crate::input_policy::UiTarget::Battle,
-                    ),
-                    (
-                        LabTab::SwarmStressTest,
-                        "Swarm",
-                        crate::input_policy::UiTarget::Swarm,
-                    ),
-                ] {
-                    let response = ui.selectable_value(&mut lab_state.current_tab, tab, label);
-                    geometry.record(target, &response, ui.clip_rect());
-                }
-            });
+            render_tab_bar(ui, &mut lab_state, &mut geometry);
             ui.separator();
-            if let Some(message) = media
-                .as_ref()
-                .and_then(|status| status.failure_text())
-                .or(owner_status.failure_text())
-                .or(lab_state.battle_failure.as_deref())
-            {
-                egui::ScrollArea::vertical()
-                    .id_salt("presentation_failure")
-                    .max_height(96.0)
-                    .show(ui, |ui| {
-                        ui.colored_label(egui::Color32::LIGHT_RED, message);
-                    });
-                ui.separator();
-            }
-            let media_failed = media.as_ref().and_then(|status| status.failure()).is_some()
-                || owner_status.failure_text().is_some();
-            let simulation_failed = lab_state.battle_failure.is_some();
-            // A new world can recover a simulation failure. A missing or invalid
-            // media bundle cannot be repaired by resetting simulation state.
-            if simulation_failed && !media_failed {
-                let reset = ui.button("Reset failed battle");
-                geometry.record(crate::input_policy::UiTarget::Reset, &reset, ui.clip_rect());
-                if reset.clicked() {
-                    lab_state.battle_reset_requested = true;
-                }
-            }
+            let controls_blocked = render_failure_banner(
+                ui,
+                media.as_deref(),
+                &owner_status,
+                &mut lab_state,
+                &mut geometry,
+            );
             egui::ScrollArea::vertical()
                 .id_salt("inspector_controls")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    ui.add_enabled_ui(!media_failed && !simulation_failed, |ui| {
-                        match lab_state.current_tab {
-                            LabTab::VisualLab => render_visual_lab_tab(
-                                ui,
-                                &mut lab_state,
-                                &mut combat_events,
-                                &catalog,
-                                &mut geometry,
-                                palette.effect(),
-                            ),
-                            LabTab::LiveBattle => render_live_battle_tab(
-                                ui,
-                                &mut lab_state,
-                                &mut presentation,
-                                &mut geometry,
-                                &mut session,
-                                &battle_selection,
-                            ),
-                            LabTab::SwarmStressTest => {
-                                render_swarm_tab(ui, &mut lab_state, &diagnostics);
-                            }
+                    ui.add_enabled_ui(!controls_blocked, |ui| match lab_state.current_tab {
+                        LabTab::VisualLab => render_visual_lab_tab(
+                            ui,
+                            &mut lab_state,
+                            &mut combat_events,
+                            &catalog,
+                            &mut geometry,
+                            palette.effect(),
+                        ),
+                        LabTab::LiveBattle => render_live_battle_tab(
+                            ui,
+                            &mut lab_state,
+                            &mut presentation,
+                            &mut geometry,
+                            &mut session,
+                            &battle_selection,
+                        ),
+                        LabTab::SwarmStressTest => {
+                            render_swarm_tab(ui, &mut lab_state, &diagnostics);
                         }
                     });
                     if let Some(media) = &media {
@@ -427,6 +381,78 @@ pub fn lab_ui_system(
         });
     geometry.inspector = Some(panel.response.rect);
     geometry.world = Some(ctx.available_rect());
+}
+
+/// Draws the inspector's tab selector and records each tab button as a pointer target.
+fn render_tab_bar(
+    ui: &mut egui::Ui,
+    lab_state: &mut LabState,
+    geometry: &mut crate::input_policy::UiGeometry,
+) {
+    ui.horizontal_wrapped(|ui| {
+        for (tab, label, target) in [
+            (
+                LabTab::VisualLab,
+                "Visual Lab",
+                crate::input_policy::UiTarget::Lab,
+            ),
+            (
+                LabTab::LiveBattle,
+                "Live Battle",
+                crate::input_policy::UiTarget::Battle,
+            ),
+            (
+                LabTab::SwarmStressTest,
+                "Swarm",
+                crate::input_policy::UiTarget::Swarm,
+            ),
+        ] {
+            let response = ui.selectable_value(&mut lab_state.current_tab, tab, label);
+            geometry.record(target, &response, ui.clip_rect());
+        }
+    });
+}
+
+/// Shows the first media, ownership or simulation failure, and offers a reset when only the
+/// simulation failed.
+///
+/// Returns `true` when the inspector controls must be disabled: a media or ownership failure
+/// cannot be repaired by resetting simulation state, and a failed simulation must be reset first.
+fn render_failure_banner(
+    ui: &mut egui::Ui,
+    media: Option<&crate::media::ClientMediaStatus>,
+    owner_status: &crate::player_presentation::PresentationStatus,
+    lab_state: &mut LabState,
+    geometry: &mut crate::input_policy::UiGeometry,
+) -> bool {
+    if let Some(message) = media
+        .and_then(crate::media::ClientMediaStatus::failure_text)
+        .or(owner_status.failure_text())
+        .or(lab_state.battle_failure.as_deref())
+    {
+        egui::ScrollArea::vertical()
+            .id_salt("presentation_failure")
+            .max_height(96.0)
+            .show(ui, |ui| {
+                ui.colored_label(egui::Color32::LIGHT_RED, message);
+            });
+        ui.separator();
+    }
+    let media_failed = media
+        .and_then(crate::media::ClientMediaStatus::failure)
+        .is_some()
+        || owner_status.failure_text().is_some();
+    let simulation_failed = lab_state.battle_failure.is_some();
+    // A new world can recover a simulation failure. A missing or invalid
+    // media bundle cannot be repaired by resetting simulation state.
+    if simulation_failed && !media_failed {
+        let reset = ui.button("Reset failed battle");
+        geometry.record(crate::input_policy::UiTarget::Reset, &reset, ui.clip_rect());
+        if reset.clicked() {
+            lab_state.battle_reset_requested = true;
+        }
+    }
+    media_failed || simulation_failed
 }
 
 /// Binds the inspector identity to the actual selected showcase entity.
@@ -459,10 +485,7 @@ pub fn sync_selected_actor_identity(
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "a single ordered sequence that shares its local state"
-)]
+/// Draws the Visual Lab tab, one section after another, separated by rules.
 fn render_visual_lab_tab(
     ui: &mut egui::Ui,
     state: &mut LabState,
@@ -471,14 +494,33 @@ fn render_visual_lab_tab(
     geometry: &mut crate::input_policy::UiGeometry,
     effect_owner: PlayerId,
 ) {
+    render_smog_section(ui, state);
+    ui.separator();
+    render_selected_actor_section(ui, state, catalog);
+    ui.separator();
+    render_damage_section(ui, state, geometry);
+    ui.separator();
+    render_orientation_section(ui, state);
+    ui.separator();
+    render_action_state_section(ui, state);
+    ui.separator();
+    render_visual_subsystems_section(ui, state);
+    ui.separator();
+    render_vfx_trigger_section(ui, state, events, effect_owner);
+}
+
+/// Smog field and wall-bouncing showcase controls.
+fn render_smog_section(ui: &mut egui::Ui, state: &mut LabState) {
     ui.heading("3D Smog & 10 Bouncing Bubbles");
     ui.checkbox(&mut state.opt_smog_volume, "3D Volumetric Smog Field");
     ui.checkbox(&mut state.smog_bouncing_active, "10-Bubble Wall Bouncing");
     ui.add(egui::Slider::new(&mut state.smog_emission_rate, 0.0..=5.0).text("Emission Rate"));
     ui.add(egui::Slider::new(&mut state.smog_wake_influence, 0.0..=5.0).text("Wake Influence"));
     ui.label(format!("Active Smog Bubbles: {}", state.smog_bubble_count));
+}
 
-    ui.separator();
+/// Name of the inspected actor and the concept-video override.
+fn render_selected_actor_section(ui: &mut egui::Ui, state: &mut LabState, catalog: &UnitCatalog) {
     ui.heading("Selected actor");
     if let Some(actor) = catalog.get_by_slug(&state.archetype_name) {
         ui.strong(&actor.display_name);
@@ -490,8 +532,14 @@ fn render_visual_lab_tab(
         &mut state.use_concept_video,
         "Force Concept Video (240 frames)",
     );
+}
 
-    ui.separator();
+/// Health, shield and construction sliders, with the damage stage the health ratio selects.
+fn render_damage_section(
+    ui: &mut egui::Ui,
+    state: &mut LabState,
+    geometry: &mut crate::input_policy::UiGeometry,
+) {
     ui.heading("Diegetic Damage & Status");
     ui.horizontal_wrapped(|ui| {
         ui.add(
@@ -527,8 +575,10 @@ fn render_visual_lab_tab(
 
     ui.add(egui::Slider::new(&mut state.shield_ratio, 0.0..=1.0).text("Shield Energy"));
     ui.add(egui::Slider::new(&mut state.build_progress, 0.0..=1.0).text("Construction Progress"));
+}
 
-    ui.separator();
+/// Hull facing, turret aim (both in degrees) and translation speed (world units per second).
+fn render_orientation_section(ui: &mut egui::Ui, state: &mut LabState) {
     ui.heading("Orientation & Turret Tracking");
     ui.add(
         egui::Slider::new(&mut state.heading_angle_deg, -180.0..=180.0)
@@ -538,8 +588,10 @@ fn render_visual_lab_tab(
         egui::Slider::new(&mut state.aim_angle_deg, -180.0..=180.0).text("Turret Aim (Focal Lens)"),
     );
     ui.add(egui::Slider::new(&mut state.speed, 0.0..=8.0).text("Translation Speed"));
+}
 
-    ui.separator();
+/// Animation state selector and the cloak and stim toggles.
+fn render_action_state_section(ui: &mut egui::Ui, state: &mut LabState) {
     ui.heading("Action State");
     ui.horizontal_wrapped(|ui| {
         ui.selectable_value(&mut state.anim_state, AnimState::Idle, "Idle");
@@ -553,8 +605,10 @@ fn render_visual_lab_tab(
         ui.checkbox(&mut state.cloaked, "Cloaked (Refraction)");
         ui.checkbox(&mut state.speed_boosted, "Stimpack (Boost Rim)");
     });
+}
 
-    ui.separator();
+/// Toggles for each modular bubble shader sub-system.
+fn render_visual_subsystems_section(ui: &mut egui::Ui, state: &mut LabState) {
     ui.heading("Modular Visual Sub-Systems (V2 / V4 / V5 / V6)");
     ui.checkbox(&mut state.opt_glare, "Glass Glare & Specular Reflection");
     ui.checkbox(&mut state.opt_fresnel, "Iridescent Fresnel Rim");
@@ -573,8 +627,15 @@ fn render_visual_lab_tab(
         &mut state.opt_selection_brackets,
         "SDF Selection Reticle & Overhead Bar",
     );
+}
 
-    ui.separator();
+/// Hit-flash surges and one button per [`LabVfxTrigger`], sent as owned by `effect_owner`.
+fn render_vfx_trigger_section(
+    ui: &mut egui::Ui,
+    state: &mut LabState,
+    events: &mut EventWriter<'_, CombatVisualEvent>,
+    effect_owner: PlayerId,
+) {
     ui.heading("Combat VFX Triggers");
     ui.horizontal_wrapped(|ui| {
         if ui.button("Shield Ripple Surge").clicked() {
@@ -596,10 +657,7 @@ fn render_visual_lab_tab(
     });
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "a single ordered sequence that shares its local state"
-)]
+/// Draws the Live Battle tab: roster, playback, orders, reset and diagnostics, in that order.
 fn render_live_battle_tab(
     ui: &mut egui::Ui,
     state: &mut LabState,
@@ -611,6 +669,43 @@ fn render_live_battle_tab(
     if !session.is_ready() {
         ui.disable();
     }
+    render_battle_roster(ui, presentation, session);
+    ui.separator();
+    render_battle_playback(ui, state, geometry);
+    ui.separator();
+    ui.heading("Orders");
+    match (selection.inspected(), selection.ids().len()) {
+        (Some(_), _) => ui.label("Selected: one unit of another player"),
+        (None, 1) => ui.label("Selected: 1 unit"),
+        (None, count) => ui.label(format!("Selected: {count} units")),
+    };
+    ui.small(crate::input_bindings::BATTLE_CONTROLS_HELP);
+    render_participant_pickers(ui, presentation);
+    render_battle_order_buttons(ui, state, presentation, session);
+    ui.separator();
+    let reset = ui.button("Reset battle");
+    geometry.record(crate::input_policy::UiTarget::Reset, &reset, ui.clip_rect());
+    if reset.clicked() {
+        state.battle_reset_requested = true;
+    }
+    ui.label(session.commands.status());
+    ui.label(&session.outcome_status);
+    ui.collapsing("Diagnostics", |ui| {
+        ui.label(&state.last_checksum_hex);
+        let clock = session.clock.diagnostics();
+        ui.label(format!(
+            "Scheduling time discarded: {:.3}s total",
+            clock.discarded_total.as_secs_f64()
+        ));
+    });
+}
+
+/// Map title, each participant's live roster, and the published tick.
+fn render_battle_roster(
+    ui: &mut egui::Ui,
+    presentation: &crate::battle_presentation::BattlePresentation,
+    session: &crate::battle_pipeline::session::BattleSession,
+) {
     ui.heading(&presentation.map_title);
     for player in &presentation.players {
         ui.colored_label(player.color, &player.label);
@@ -629,7 +724,14 @@ fn render_live_battle_tab(
     } else {
         ui.label("Preparing the selected battle…");
     }
-    ui.separator();
+}
+
+/// Pause toggle and the simulation speed multiplier.
+fn render_battle_playback(
+    ui: &mut egui::Ui,
+    state: &mut LabState,
+    geometry: &mut crate::input_policy::UiGeometry,
+) {
     ui.horizontal_wrapped(|ui| {
         let pause = ui.button(if state.battle_paused {
             "Resume"
@@ -642,14 +744,16 @@ fn render_live_battle_tab(
         }
         ui.add(egui::Slider::new(&mut state.simulation_speed, 1..=4).text("Speed"));
     });
-    ui.separator();
-    ui.heading("Orders");
-    match (selection.inspected(), selection.ids().len()) {
-        (Some(_), _) => ui.label("Selected: one unit of another player"),
-        (None, 1) => ui.label("Selected: 1 unit"),
-        (None, count) => ui.label(format!("Selected: {count} units")),
-    };
-    ui.small(crate::input_bindings::BATTLE_CONTROLS_HELP);
+}
+
+/// Chooses the controlled participant and the destination participant.
+///
+/// The destination is never the controlled participant: when they coincide, it moves to the
+/// first other participant.
+fn render_participant_pickers(
+    ui: &mut egui::Ui,
+    presentation: &mut crate::battle_presentation::BattlePresentation,
+) {
     let selected_name = presentation
         .players
         .iter()
@@ -697,6 +801,16 @@ fn render_live_battle_tab(
                 }
             }
         });
+}
+
+/// Roster-wide orders for the controlled participant: attack the destination's base, return to
+/// its own base, hold, and overclock when any unit can.
+fn render_battle_order_buttons(
+    ui: &mut egui::Ui,
+    state: &LabState,
+    presentation: &crate::battle_presentation::BattlePresentation,
+    session: &mut crate::battle_pipeline::session::BattleSession,
+) {
     if let Some(player) = presentation
         .players
         .iter()
@@ -736,22 +850,6 @@ fn render_live_battle_tab(
             }
         });
     }
-    ui.separator();
-    let reset = ui.button("Reset battle");
-    geometry.record(crate::input_policy::UiTarget::Reset, &reset, ui.clip_rect());
-    if reset.clicked() {
-        state.battle_reset_requested = true;
-    }
-    ui.label(session.commands.status());
-    ui.label(&session.outcome_status);
-    ui.collapsing("Diagnostics", |ui| {
-        ui.label(&state.last_checksum_hex);
-        let clock = session.clock.diagnostics();
-        ui.label(format!(
-            "Scheduling time discarded: {:.3}s total",
-            clock.discarded_total.as_secs_f64()
-        ));
-    });
 }
 
 fn issue_sandbox_command(
@@ -798,16 +896,6 @@ fn render_swarm_tab(ui: &mut egui::Ui, state: &mut LabState, diagnostics: &Diagn
 }
 
 /// Renders the `StarCraft` II style bottom-center unit portrait, faction lore, vitals, and weapon HUD.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    clippy::cast_sign_loss,
-    reason = "presentation values are bounded by frame, atlas and window sizes"
-)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "a single ordered sequence that shares its local state"
-)]
 fn render_selected_unit_hud(
     ctx: &egui::Context,
     contexts: &mut EguiContexts<'_, '_>,
@@ -832,178 +920,217 @@ fn render_selected_unit_hud(
         .resizable(false)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
-                // Left 200x200 live animated video portrait
-                let (portrait_handle, meta) = if lab_state.use_concept_video {
-                    (
-                        registry.get_portrait_by_name("concept_video"),
-                        registry.get_meta_by_name("concept_video"),
-                    )
-                } else if let Some(arch) = arch {
-                    (
-                        registry.get_portrait_by_id(arch.unit_type_id),
-                        registry.get_meta(arch.unit_type_id),
-                    )
-                } else {
-                    (None, None)
-                };
-
-                ui.allocate_ui_with_layout(
-                    egui::vec2(200.0, 200.0),
-                    egui::Layout::top_down(egui::Align::Center),
-                    |ui| {
-                        if let Some(handle) = portrait_handle {
-                            let tex_id = contexts.add_image(handle.clone());
-                            let total_frames = meta.map_or(8, |m| m.total_frames).max(1);
-                            let anim_progress = (ui.input(|i| i.time) * 1.5).fract() as f32;
-                            let frame_idx =
-                                (anim_progress * total_frames as f32) as u32 % total_frames;
-                            let v0 = frame_idx as f32 / total_frames as f32;
-                            let v1 = (frame_idx + 1) as f32 / total_frames as f32;
-
-                            ui.add(
-                                egui::Image::new(egui::load::SizedTexture::new(
-                                    tex_id,
-                                    egui::vec2(200.0, 200.0),
-                                ))
-                                .uv(egui::Rect::from_min_max(
-                                    egui::pos2(0.0, v0),
-                                    egui::pos2(1.0, v1),
-                                )),
-                            );
-                        } else {
-                            ui.colored_label(
-                                egui::Color32::LIGHT_RED,
-                                "Portrait unavailable. See the media diagnostic.",
-                            );
-                        }
-                    },
-                );
+                render_unit_portrait(ui, contexts, lab_state, registry, arch);
 
                 ui.add_space(14.0);
 
                 // Right unit lore, faction badge, live vitals, weapon stats, and quick-select buttons
                 ui.vertical(|ui| {
                     if let Some(arch) = arch {
-                        let (faction_name, faction_color) = match arch.faction {
-                            Faction::AutomatonDirectorate => (
-                                "Automaton Directorate",
-                                egui::Color32::from_rgb(60, 150, 255),
-                            ),
-                            Faction::CosmicEnclave => {
-                                ("Cosmic Enclave", egui::Color32::from_rgb(50, 230, 230))
-                            }
-                            Faction::SylvanSwarm => {
-                                ("Sylvan Swarm", egui::Color32::from_rgb(255, 120, 40))
-                            }
-                        };
-
-                        ui.horizontal_wrapped(|ui| {
-                            ui.colored_label(faction_color, format!("[ {faction_name} ]"));
-                            ui.strong(format!("{} — {}", arch.display_name, arch.name));
-
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    let hp_val =
-                                        (arch.max_hp.to_f32() * lab_state.hp_ratio).round();
-                                    let max_hp = arch.max_hp.to_f32();
-                                    ui.colored_label(
-                                        egui::Color32::from_rgb(80, 240, 100),
-                                        format!("HP: {hp_val:.0} / {max_hp:.0}"),
-                                    );
-
-                                    if arch.max_shields.to_f32() > 0.0 {
-                                        let shield_val = (arch.max_shields.to_f32()
-                                            * lab_state.shield_ratio)
-                                            .round();
-                                        let max_shield = arch.max_shields.to_f32();
-                                        ui.colored_label(
-                                            egui::Color32::from_rgb(50, 200, 255),
-                                            format!("Shield: {shield_val:.0} / {max_shield:.0}"),
-                                        );
-                                    } else {
-                                        ui.colored_label(egui::Color32::GRAY, "Shield: --");
-                                    }
-                                },
-                            );
-                        });
-
-                        // Role and classification badges
-                        ui.horizontal_wrapped(|ui| {
-                            let role_str = if arch.lore_description.is_empty() {
-                                "Tactical Combatant"
-                            } else {
-                                arch.lore_description.as_str()
-                            };
-                            ui.label(format!("Role: {role_str}"));
-                            ui.label("| Tags:");
-                            if arch.attributes.contains(AttributeFlags::LIGHT) {
-                                ui.colored_label(egui::Color32::LIGHT_BLUE, "[ LIGHT ]");
-                            }
-                            if arch.attributes.contains(AttributeFlags::ARMORED) {
-                                ui.colored_label(egui::Color32::GOLD, "[ ARMORED ]");
-                            }
-                            if arch.attributes.contains(AttributeFlags::BIOLOGICAL) {
-                                ui.colored_label(egui::Color32::GREEN, "[ BIOLOGICAL ]");
-                            }
-                            if arch.attributes.contains(AttributeFlags::MECHANICAL) {
-                                ui.colored_label(egui::Color32::LIGHT_GRAY, "[ MECHANICAL ]");
-                            }
-                            if arch.attributes.contains(AttributeFlags::STRUCTURE) {
-                                ui.colored_label(egui::Color32::KHAKI, "[ STRUCTURE ]");
-                            }
-                        });
-
+                        render_unit_identity_row(ui, lab_state, arch);
+                        render_unit_role_row(ui, arch);
                         ui.separator();
-
-                        // Weapon specs and combat vitals
-                        if let Some(ref weapon) = arch.weapon {
-                            ui.horizontal_wrapped(|ui| {
-                                ui.label(format!("Weapon: {}", weapon.name));
-                                ui.label(format!("Damage: {:.1}", weapon.base_damage.to_f32()));
-                                ui.label(format!("Range: {:.1} u", weapon.max_range.to_f32()));
-                                ui.label(format!(
-                                    "Period: {:.2}s ({} ticks)",
-                                    f32::from(weapon.period_ticks)
-                                        * crate::battle_pipeline::clock::SIM_TICK_PERIOD
-                                            .as_secs_f32(),
-                                    weapon.period_ticks
-                                ));
-                                ui.label(format!("Push Priority: {}", arch.push_priority));
-                            });
-                        } else {
-                            let label = if arch.attributes.contains(AttributeFlags::STRUCTURE) {
-                                "Structure: Heavy Armor Matrix | Construction Nexus"
-                            } else {
-                                "Unarmed Tactical Unit"
-                            };
-                            ui.label(label);
-                        }
-
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(format!("Mover: {:?}", arch.mover_type));
-                            ui.label(format!("Life Armor: {:.0}", arch.life_armor.to_f32()));
-                            ui.label(format!("Shield Armor: {:.0}", arch.shield_armor.to_f32()));
-                            ui.label(format!("Aim Angle: {:.1}°", lab_state.aim_angle_deg));
-                            ui.label(format!("Speed: {:.2} u/s", lab_state.speed));
-                        });
-
+                        render_unit_combat_rows(ui, lab_state, arch);
                         ui.separator();
-
-                        // Quick-Select Hero Showcase Lineup Buttons
-                        ui.horizontal_wrapped(|ui| {
-                            ui.strong("Hero Showcase Lineup:");
-                            for (idx, hero_arch) in lineup.archetypes(catalog).enumerate() {
-                                let label = format!("{}. {}", idx + 1, hero_arch.display_name);
-                                if ui.selectable_label(active_hero_idx == idx, label).clicked() {
-                                    lab_state.selected_hero_index = idx;
-                                    selection_state.selected_hero_index = Some(idx);
-                                    lab_state.archetype_name.clone_from(&hero_arch.slug);
-                                }
-                            }
-                        });
+                        render_lineup_buttons(
+                            ui,
+                            lab_state,
+                            selection_state,
+                            catalog,
+                            lineup,
+                            active_hero_idx,
+                        );
                     }
                 });
             });
         });
+}
+
+/// Draws the 200×200 animated video portrait: the concept video when forced, otherwise the
+/// selected archetype's portrait flipbook, cycling at 1.5 loops per second.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "presentation values are bounded by frame, atlas and window sizes"
+)]
+fn render_unit_portrait(
+    ui: &mut egui::Ui,
+    contexts: &mut EguiContexts<'_, '_>,
+    lab_state: &LabState,
+    registry: &FlipbookRegistry,
+    arch: Option<&UnitArchetype>,
+) {
+    let (portrait_handle, meta) = if lab_state.use_concept_video {
+        (
+            registry.get_portrait_by_name("concept_video"),
+            registry.get_meta_by_name("concept_video"),
+        )
+    } else if let Some(arch) = arch {
+        (
+            registry.get_portrait_by_id(arch.unit_type_id),
+            registry.get_meta(arch.unit_type_id),
+        )
+    } else {
+        (None, None)
+    };
+
+    ui.allocate_ui_with_layout(
+        egui::vec2(200.0, 200.0),
+        egui::Layout::top_down(egui::Align::Center),
+        |ui| {
+            if let Some(handle) = portrait_handle {
+                let tex_id = contexts.add_image(handle.clone());
+                let total_frames = meta.map_or(8, |m| m.total_frames).max(1);
+                let anim_progress = (ui.input(|i| i.time) * 1.5).fract() as f32;
+                let frame_idx = (anim_progress * total_frames as f32) as u32 % total_frames;
+                let v0 = frame_idx as f32 / total_frames as f32;
+                let v1 = (frame_idx + 1) as f32 / total_frames as f32;
+
+                ui.add(
+                    egui::Image::new(egui::load::SizedTexture::new(
+                        tex_id,
+                        egui::vec2(200.0, 200.0),
+                    ))
+                    .uv(egui::Rect::from_min_max(
+                        egui::pos2(0.0, v0),
+                        egui::pos2(1.0, v1),
+                    )),
+                );
+            } else {
+                ui.colored_label(
+                    egui::Color32::LIGHT_RED,
+                    "Portrait unavailable. See the media diagnostic.",
+                );
+            }
+        },
+    );
+}
+
+/// The faction badge of `arch`: its display name and its sRGB badge colour.
+fn faction_badge(arch: &UnitArchetype) -> (&'static str, egui::Color32) {
+    match arch.faction {
+        Faction::AutomatonDirectorate => (
+            "Automaton Directorate",
+            egui::Color32::from_rgb(60, 150, 255),
+        ),
+        Faction::CosmicEnclave => ("Cosmic Enclave", egui::Color32::from_rgb(50, 230, 230)),
+        Faction::SylvanSwarm => ("Sylvan Swarm", egui::Color32::from_rgb(255, 120, 40)),
+    }
+}
+
+/// Faction badge and names on the left; health and shields, scaled by the lab's ratios, on the
+/// right.
+fn render_unit_identity_row(ui: &mut egui::Ui, lab_state: &LabState, arch: &UnitArchetype) {
+    let (faction_name, faction_color) = faction_badge(arch);
+
+    ui.horizontal_wrapped(|ui| {
+        ui.colored_label(faction_color, format!("[ {faction_name} ]"));
+        ui.strong(format!("{} — {}", arch.display_name, arch.name));
+
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let hp_val = (arch.max_hp.to_f32() * lab_state.hp_ratio).round();
+            let max_hp = arch.max_hp.to_f32();
+            ui.colored_label(
+                egui::Color32::from_rgb(80, 240, 100),
+                format!("HP: {hp_val:.0} / {max_hp:.0}"),
+            );
+
+            if arch.max_shields.to_f32() > 0.0 {
+                let shield_val = (arch.max_shields.to_f32() * lab_state.shield_ratio).round();
+                let max_shield = arch.max_shields.to_f32();
+                ui.colored_label(
+                    egui::Color32::from_rgb(50, 200, 255),
+                    format!("Shield: {shield_val:.0} / {max_shield:.0}"),
+                );
+            } else {
+                ui.colored_label(egui::Color32::GRAY, "Shield: --");
+            }
+        });
+    });
+}
+
+/// Role text and one badge per attribute flag the archetype carries.
+fn render_unit_role_row(ui: &mut egui::Ui, arch: &UnitArchetype) {
+    ui.horizontal_wrapped(|ui| {
+        let role_str = if arch.lore_description.is_empty() {
+            "Tactical Combatant"
+        } else {
+            arch.lore_description.as_str()
+        };
+        ui.label(format!("Role: {role_str}"));
+        ui.label("| Tags:");
+        if arch.attributes.contains(AttributeFlags::LIGHT) {
+            ui.colored_label(egui::Color32::LIGHT_BLUE, "[ LIGHT ]");
+        }
+        if arch.attributes.contains(AttributeFlags::ARMORED) {
+            ui.colored_label(egui::Color32::GOLD, "[ ARMORED ]");
+        }
+        if arch.attributes.contains(AttributeFlags::BIOLOGICAL) {
+            ui.colored_label(egui::Color32::GREEN, "[ BIOLOGICAL ]");
+        }
+        if arch.attributes.contains(AttributeFlags::MECHANICAL) {
+            ui.colored_label(egui::Color32::LIGHT_GRAY, "[ MECHANICAL ]");
+        }
+        if arch.attributes.contains(AttributeFlags::STRUCTURE) {
+            ui.colored_label(egui::Color32::KHAKI, "[ STRUCTURE ]");
+        }
+    });
+}
+
+/// Weapon envelope (damage, range in world units, period in seconds and ticks) and the mobility
+/// and armour row.
+fn render_unit_combat_rows(ui: &mut egui::Ui, lab_state: &LabState, arch: &UnitArchetype) {
+    if let Some(ref weapon) = arch.weapon {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(format!("Weapon: {}", weapon.name));
+            ui.label(format!("Damage: {:.1}", weapon.base_damage.to_f32()));
+            ui.label(format!("Range: {:.1} u", weapon.max_range.to_f32()));
+            ui.label(format!(
+                "Period: {:.2}s ({} ticks)",
+                f32::from(weapon.period_ticks)
+                    * crate::battle_pipeline::clock::SIM_TICK_PERIOD.as_secs_f32(),
+                weapon.period_ticks
+            ));
+            ui.label(format!("Push Priority: {}", arch.push_priority));
+        });
+    } else {
+        let label = if arch.attributes.contains(AttributeFlags::STRUCTURE) {
+            "Structure: Heavy Armor Matrix | Construction Nexus"
+        } else {
+            "Unarmed Tactical Unit"
+        };
+        ui.label(label);
+    }
+
+    ui.horizontal_wrapped(|ui| {
+        ui.label(format!("Mover: {:?}", arch.mover_type));
+        ui.label(format!("Life Armor: {:.0}", arch.life_armor.to_f32()));
+        ui.label(format!("Shield Armor: {:.0}", arch.shield_armor.to_f32()));
+        ui.label(format!("Aim Angle: {:.1}°", lab_state.aim_angle_deg));
+        ui.label(format!("Speed: {:.2} u/s", lab_state.speed));
+    });
+}
+
+/// Quick-select buttons for the hero showcase lineup; a click selects that lineup index in both
+/// the lab state and the selection state.
+fn render_lineup_buttons(
+    ui: &mut egui::Ui,
+    lab_state: &mut LabState,
+    selection_state: &mut SelectionState,
+    catalog: &UnitCatalog,
+    lineup: &crate::scene_controller::ShowcaseLineup,
+    active_hero_idx: usize,
+) {
+    ui.horizontal_wrapped(|ui| {
+        ui.strong("Hero Showcase Lineup:");
+        for (idx, hero_arch) in lineup.archetypes(catalog).enumerate() {
+            let label = format!("{}. {}", idx + 1, hero_arch.display_name);
+            if ui.selectable_label(active_hero_idx == idx, label).clicked() {
+                lab_state.selected_hero_index = idx;
+                selection_state.selected_hero_index = Some(idx);
+                lab_state.archetype_name.clone_from(&hero_arch.slug);
+            }
+        }
+    });
 }
