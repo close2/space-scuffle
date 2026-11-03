@@ -14,6 +14,8 @@
 //!   energy, cooldowns and the entity untouched.
 //! - Hazard IDs come from `next_hazard_id` and are never reused within a world.
 
+use crate::catalog::UnitArchetype;
+use crate::entity::{Entity, PreparedOverclock};
 use crate::movement::{DisplacementAdmissionError, MovementInvariant, MovementMathError};
 use crate::SimWorld;
 use sim_types::{AbilityEffectSpec, EntityId, PlayerId, SimScalar, SimVec2};
@@ -41,6 +43,46 @@ pub struct ActiveHazardZone {
     pub damage_per_interval: SimScalar,
     /// If true, friendly entities also suffer damage.
     pub targets_friendly: bool,
+}
+
+/// Everything an admitted cast will write, computed without mutation.
+struct PreparedCast {
+    /// Index of the cast ability in the caster's archetype.
+    ability_index: u8,
+    /// The caster's energy after paying the cost.
+    energy: SimScalar,
+    /// Cooldown, in 25 Hz ticks, the ability enters.
+    cooldown_ticks: u16,
+    /// The prepared buff of an overclock effect; `None` for every other effect.
+    overclock: Option<PreparedOverclock>,
+    /// The effect to apply.
+    effect: AbilityEffectSpec,
+    /// The caster's owner, who owns any hazard zone the cast opens.
+    owner: PlayerId,
+}
+
+/// The verdict of an ability effect's own admission checks.
+enum EffectAdmission {
+    /// The cast is refused without payment.
+    Refused,
+    /// The cast may proceed, with the prepared buff of an overclock effect (`None` otherwise).
+    Admitted(Option<PreparedOverclock>),
+}
+
+/// The authored parameters of one hazard zone, as a storm ability states them.
+struct HazardSpec {
+    /// Radius of effect in world units.
+    radius: SimScalar,
+    /// Ticks before the first damage pulse.
+    delay_ticks: u16,
+    /// Lifetime in ticks.
+    duration_ticks: u16,
+    /// Ticks between damage pulses.
+    interval_ticks: u16,
+    /// Damage of each pulse.
+    damage_per_interval: SimScalar,
+    /// Whether the owner's own entities are also damaged.
+    friendly_fire: bool,
 }
 
 impl SimWorld {
@@ -128,10 +170,6 @@ impl SimWorld {
     ///
     /// Validates energy cost, cooldowns, range, terrain pathability, and channeling.
     /// Returns `true` if cast successfully; `false` otherwise.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "split in plan steps 3.1 and 9.1, which own this file's structure"
-    )]
     pub(crate) fn try_execute_ability_prevalidated(
         &mut self,
         entity_id: EntityId,
@@ -139,14 +177,29 @@ impl SimWorld {
         target_pos: Option<SimVec2>,
         target_entity: Option<EntityId>,
     ) -> Result<bool, MovementInvariant> {
-        let _ = target_entity;
+        let Some(cast) = self.admit_cast(entity_id, ability_index, target_pos)? else {
+            return Ok(false);
+        };
+        Ok(self.commit_cast(entity_id, cast, target_pos, target_entity))
+    }
+
+    /// Runs every check of a cast, in order, without mutation.
+    ///
+    /// Returns `Ok(None)` for an ordinary refusal (dead, carried, channeling, unknown or locked
+    /// ability, cooldown, energy, range or placement) and an error for malformed authored data.
+    fn admit_cast(
+        &self,
+        entity_id: EntityId,
+        ability_index: u8,
+        target_pos: Option<SimVec2>,
+    ) -> Result<Option<PreparedCast>, MovementInvariant> {
         let entity = match self.entities.get(&entity_id) {
             Some(e) if e.is_alive() => e,
-            _ => return Ok(false),
+            _ => return Ok(None),
         };
 
         if entity.is_loaded_in_transport() || entity.channeling_remaining_ticks > 0 {
-            return Ok(false);
+            return Ok(None);
         }
 
         let arch = self
@@ -155,15 +208,15 @@ impl SimWorld {
             .map_err(|_| MovementInvariant::MissingArchetype(entity_id))?;
 
         let Some(ability) = arch.abilities.get(ability_index as usize) else {
-            return Ok(false);
+            return Ok(None);
         };
         if !self.is_ability_unlocked(arch, entity.owner, &ability.name) {
-            return Ok(false);
+            return Ok(None);
         }
 
         if let Some(&cd) = entity.ability_cooldowns.get(ability_index as usize) {
             if cd > 0 {
-                return Ok(false);
+                return Ok(None);
             }
         }
 
@@ -182,7 +235,7 @@ impl SimWorld {
             });
         }
         if entity.energy < ability.energy_cost {
-            return Ok(false);
+            return Ok(None);
         }
 
         if ability.cast_range > SimScalar::ZERO {
@@ -192,7 +245,7 @@ impl SimWorld {
                     pos,
                     i128::from(ability.cast_range.raw()),
                 ) {
-                    return Ok(false);
+                    return Ok(None);
                 }
             }
         }
@@ -201,12 +254,42 @@ impl SimWorld {
             .energy
             .checked_sub(ability.energy_cost)
             .ok_or_else(|| admission(crate::entity::EntityAdmissionError::PaymentOverflow))?;
-        let mut prepared_overclock = None;
         // Validate every fallible payment/rate/placement before any commit.
-        match &ability.effect {
+        let EffectAdmission::Admitted(overclock) =
+            self.admit_effect(entity_id, entity, arch, &ability.effect, target_pos)?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(PreparedCast {
+            ability_index,
+            energy: prepared_energy,
+            cooldown_ticks: ability.cooldown_ticks,
+            overclock,
+            effect: ability.effect.clone(),
+            owner: entity.owner,
+        }))
+    }
+
+    /// Checks the effect-specific conditions of a cast without mutation.
+    ///
+    /// Refusals are ordinary outcomes; errors report malformed authored data.
+    fn admit_effect(
+        &self,
+        entity_id: EntityId,
+        entity: &Entity,
+        arch: &UnitArchetype,
+        effect: &AbilityEffectSpec,
+        target_pos: Option<SimVec2>,
+    ) -> Result<EffectAdmission, MovementInvariant> {
+        let admission = |source| MovementInvariant::Admission {
+            entity: entity_id,
+            source,
+        };
+        let mut prepared_overclock = None;
+        match effect {
             AbilityEffectSpec::Overclock(spec) => {
                 let Some(prepared) = entity.prepare_overclock(*spec).map_err(admission)? else {
-                    return Ok(false);
+                    return Ok(EffectAdmission::Refused);
                 };
                 self.effective_max_speed(arch, entity.owner)
                     .and_then(|base| {
@@ -225,7 +308,7 @@ impl SimWorld {
             | AbilityEffectSpec::SwitchMode { .. } => {}
             AbilityEffectSpec::BlinkTeleport { max_range, .. } => {
                 let Some(dest) = target_pos else {
-                    return Ok(false);
+                    return Ok(EffectAdmission::Refused);
                 };
                 if *max_range < SimScalar::ZERO {
                     return Err(MovementInvariant::Arithmetic {
@@ -239,7 +322,7 @@ impl SimWorld {
                     dest,
                     i128::from(max_range.raw()),
                 ) {
-                    return Ok(false);
+                    return Ok(EffectAdmission::Refused);
                 }
                 if let Err(error) =
                     self.validate_displacement_destination_prevalidated(entity_id, dest)
@@ -247,30 +330,52 @@ impl SimWorld {
                     if let DisplacementAdmissionError::Invariant(source) = error {
                         return Err(source);
                     }
-                    return Ok(false);
+                    return Ok(EffectAdmission::Refused);
                 }
             }
             AbilityEffectSpec::PsionicStormAoE { .. } => {
                 if target_pos.is_none() {
-                    return Ok(false);
+                    return Ok(EffectAdmission::Refused);
                 }
             }
         }
+        Ok(EffectAdmission::Admitted(prepared_overclock))
+    }
 
+    /// Commits an admitted cast: payment and cooldown, then the effect.
+    ///
+    /// Returns `false`, with nothing written, only if the caster or its archetype vanished
+    /// since admission, which cannot happen while admission and commit run back to back.
+    fn commit_cast(
+        &mut self,
+        entity_id: EntityId,
+        cast: PreparedCast,
+        target_pos: Option<SimVec2>,
+        target_entity: Option<EntityId>,
+    ) -> bool {
         // All placement/ability preparation precedes even cooldown bookkeeping.
         let Some(entity) = self.entities.get_mut(&entity_id) else {
-            return Ok(false);
+            return false;
         };
-        if let Some(prepared) = prepared_overclock {
+        let Ok(arch) = self.catalog.get(entity.unit_type_id) else {
+            return false;
+        };
+        let PreparedCast {
+            ability_index,
+            energy,
+            cooldown_ticks,
+            overclock,
+            effect,
+            owner,
+        } = cast;
+        if let Some(prepared) = overclock {
             entity.commit_overclock(prepared);
         }
-        entity.energy = prepared_energy;
+        entity.energy = energy;
         if (ability_index as usize) < entity.ability_cooldowns.len() {
-            entity.ability_cooldowns[ability_index as usize] = ability.cooldown_ticks;
+            entity.ability_cooldowns[ability_index as usize] = cooldown_ticks;
         }
 
-        let effect = ability.effect.clone();
-        let entity_owner = entity.owner;
         match effect {
             AbilityEffectSpec::Overclock(_) => {
                 // The prepared buff committed atomically with resources above.
@@ -316,20 +421,15 @@ impl SimWorld {
                 friendly_fire,
             } => {
                 if let Some(pos) = target_pos {
-                    let h_id = self.next_hazard_id;
-                    self.next_hazard_id = self.next_hazard_id.wrapping_add(1);
-                    self.active_hazards.push(ActiveHazardZone {
-                        id: h_id,
-                        owner: entity_owner,
-                        center: pos,
+                    let spec = HazardSpec {
                         radius,
                         delay_ticks,
-                        remaining_ticks: duration_ticks,
+                        duration_ticks,
                         interval_ticks,
-                        ticks_until_next_interval: delay_ticks,
                         damage_per_interval,
-                        targets_friendly: friendly_fire,
-                    });
+                        friendly_fire,
+                    };
+                    self.spawn_hazard_zone(owner, pos, &spec);
                 }
             }
             AbilityEffectSpec::CloakToggle { is_burrow, .. } => {
@@ -345,6 +445,24 @@ impl SimWorld {
             }
         }
 
-        Ok(true)
+        true
+    }
+
+    /// Opens a hazard zone of `spec` owned by `owner` at `center`, taking the next hazard ID.
+    fn spawn_hazard_zone(&mut self, owner: PlayerId, center: SimVec2, spec: &HazardSpec) {
+        let h_id = self.next_hazard_id;
+        self.next_hazard_id = self.next_hazard_id.wrapping_add(1);
+        self.active_hazards.push(ActiveHazardZone {
+            id: h_id,
+            owner,
+            center,
+            radius: spec.radius,
+            delay_ticks: spec.delay_ticks,
+            remaining_ticks: spec.duration_ticks,
+            interval_ticks: spec.interval_ticks,
+            ticks_until_next_interval: spec.delay_ticks,
+            damage_per_interval: spec.damage_per_interval,
+            targets_friendly: spec.friendly_fire,
+        });
     }
 }
