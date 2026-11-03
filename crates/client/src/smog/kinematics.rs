@@ -315,17 +315,6 @@ pub fn initial_bouncing_bubbles(
 /// # Errors
 /// Returns [`SmogError::InvalidDeltaTime`] if `dt < 0.0` or non-finite.
 /// Returns [`SmogError::InvalidBounds`] if `bounds` is invalid.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_precision_loss,
-    clippy::cast_sign_loss,
-    reason = "fluid grid indices and counts stay far below the range of f32 and i32"
-)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "a single ordered sequence that shares its local state"
-)]
 pub fn step_bouncing_kinematics(
     states: &mut [BouncingBubbleState],
     bounds: &SmogArenaBounds,
@@ -340,10 +329,35 @@ pub fn step_bouncing_kinematics(
         return Ok((0, 0));
     }
 
-    let mut step_wall_bounces = 0u64;
-    let mut step_peer_bounces = 0u64;
-
     // 1. Position Integration & Elastic Wall Reflection (All 6 faces)
+    let step_wall_bounces = integrate_and_reflect(states, bounds, dt);
+
+    // 2. Spatial Hash Grid Pairwise Elastic Sphere-Sphere Impulse Resolution
+    let step_peer_bounces = if states.len() <= MAX_BOUNCING_BUBBLES {
+        resolve_contacts_spatial_grid(states, bounds)
+    } else {
+        resolve_contacts_all_pairs(states, bounds);
+        // The all-pairs fallback has never added its contacts to the step count; the per-bubble
+        // `peer_bounces` counters still record them. Kept as is because Phase 9 changes no
+        // behaviour; recorded in section 9 of the Phase 9 blueprint.
+        0
+    };
+
+    // 3. Heading Angle Synchronization
+    sync_headings(states);
+
+    Ok((step_wall_bounces, step_peer_bounces))
+}
+
+/// Stage 1: advances every bubble by `dt` seconds and reflects it off the six arena walls.
+///
+/// A bubble with no vertical velocity is pinned to the floor. Returns the number of reflections.
+fn integrate_and_reflect(
+    states: &mut [BouncingBubbleState],
+    bounds: &SmogArenaBounds,
+    dt: f32,
+) -> u64 {
+    let mut step_wall_bounces = 0u64;
     for state in states.iter_mut() {
         if state.velocity.y.abs() < 1e-4 {
             state.velocity.y = 0.0;
@@ -354,211 +368,211 @@ pub fn step_bouncing_kinematics(
         state.position.x += state.velocity.x * dt;
         state.position.z += state.velocity.z * dt;
 
-        // Check and reflect across X, Y, Z boundaries
-        for axis in 0..3 {
-            let p = state.position[axis];
-            let v = state.velocity[axis];
-            let min_bound = bounds.min[axis] + state.radius;
-            let max_bound = bounds.max[axis] - state.radius;
-
-            if p < min_bound && v < 0.0 {
-                state.position[axis] = min_bound + (min_bound - p);
-                state.velocity[axis] = -v;
-                state.wall_bounces += 1;
-                step_wall_bounces += 1;
-            } else if p > max_bound && v > 0.0 {
-                state.position[axis] = max_bound - (p - max_bound);
-                state.velocity[axis] = -v;
-                state.wall_bounces += 1;
-                step_wall_bounces += 1;
-            }
-
-            // Guaranteed numerical clamp
-            state.position[axis] = state.position[axis].clamp(min_bound, max_bound);
-        }
+        step_wall_bounces += reflect_off_walls(state, bounds);
     }
+    step_wall_bounces
+}
 
-    // 2. Spatial Hash Grid Pairwise Elastic Sphere-Sphere Impulse Resolution
+/// Reflects one bubble across each X, Y and Z wall it has crossed while moving toward it, then
+/// clamps it inside. Returns the number of reflections, `0..=3`.
+fn reflect_off_walls(state: &mut BouncingBubbleState, bounds: &SmogArenaBounds) -> u64 {
+    let mut wall_bounces = 0u64;
+    // Check and reflect across X, Y, Z boundaries
+    for axis in 0..3 {
+        let p = state.position[axis];
+        let v = state.velocity[axis];
+        let min_bound = bounds.min[axis] + state.radius;
+        let max_bound = bounds.max[axis] - state.radius;
+
+        if p < min_bound && v < 0.0 {
+            state.position[axis] = min_bound + (min_bound - p);
+            state.velocity[axis] = -v;
+            state.wall_bounces += 1;
+            wall_bounces += 1;
+        } else if p > max_bound && v > 0.0 {
+            state.position[axis] = max_bound - (p - max_bound);
+            state.velocity[axis] = -v;
+            state.wall_bounces += 1;
+            wall_bounces += 1;
+        }
+
+        // Guaranteed numerical clamp
+        state.position[axis] = state.position[axis].clamp(min_bound, max_bound);
+    }
+    wall_bounces
+}
+
+/// Fractional spatial-hash cell coordinates `(x, z)` of a world position, each in
+/// `[0, SPATIAL_GRID_DIM)`. `extent` is the arena's `(x, z)` size in world units.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+)]
+fn spatial_cell_coords(position: Vec3, bounds: &SmogArenaBounds, extent: Vec2) -> (f32, f32) {
+    let u_x = ((position.x - bounds.min.x) / extent.x).clamp(0.0, 0.9999);
+    let u_z = ((position.z - bounds.min.z) / extent.y).clamp(0.0, 0.9999);
+    (u_x * SPATIAL_GRID_DIM as f32, u_z * SPATIAL_GRID_DIM as f32)
+}
+
+/// Stage 2 for up to [`MAX_BOUNCING_BUBBLES`]: resolves contacts between bubbles in neighbouring
+/// cells of a 16x16 grid over the XZ plane. Each pair `i < j` is tested once, in order of `i`,
+/// then of neighbour cell, then of the cell's bucket list. Returns the number of collisions.
+///
+/// Buckets are filled from positions before any contact moves a bubble, so a bubble pushed into
+/// another cell is still found through its old cell during this step.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    reason = "fluid grid indices and counts stay far below the range of f32 and i32"
+)]
+fn resolve_contacts_spatial_grid(
+    states: &mut [BouncingBubbleState],
+    bounds: &SmogArenaBounds,
+) -> u64 {
     // PERFORMANCE RATIONALE:
     // Why: In a 400-unit simulation, naive O(N^2) pairwise collision tests perform 79,800 tests/frame.
     // What: We partition the XZ arena plane into a 16x16 spatial hash grid using stack-allocated flat arrays.
     // Trade-off: Uses 512 + 256 words of stack space in exchange for O(N) local 3x3 neighborhood queries
     // and zero heap allocations during the kinematics tick.
     let n = states.len();
-    if n <= MAX_BOUNCING_BUBBLES {
-        let mut head = [-1i32; SPATIAL_CELL_COUNT];
-        let mut next = [-1i32; MAX_BOUNCING_BUBBLES];
+    let mut step_peer_bounces = 0u64;
+    let mut head = [-1i32; SPATIAL_CELL_COUNT];
+    let mut next = [-1i32; MAX_BOUNCING_BUBBLES];
 
-        let extent_x = (bounds.max.x - bounds.min.x).max(1e-4);
-        let extent_z = (bounds.max.z - bounds.min.z).max(1e-4);
+    let extent_x = (bounds.max.x - bounds.min.x).max(1e-4);
+    let extent_z = (bounds.max.z - bounds.min.z).max(1e-4);
+    let extent = Vec2::new(extent_x, extent_z);
 
-        for (idx, state) in states.iter().enumerate() {
-            let u_x = ((state.position.x - bounds.min.x) / extent_x).clamp(0.0, 0.9999);
-            let u_z = ((state.position.z - bounds.min.z) / extent_z).clamp(0.0, 0.9999);
-            let cx = (u_x * SPATIAL_GRID_DIM as f32) as usize;
-            let cz = (u_z * SPATIAL_GRID_DIM as f32) as usize;
-            let cell = cz * SPATIAL_GRID_DIM + cx;
-            next[idx] = head[cell];
-            head[cell] = idx as i32;
-        }
+    for (idx, state) in states.iter().enumerate() {
+        let (gx, gz) = spatial_cell_coords(state.position, bounds, extent);
+        let cx = gx as usize;
+        let cz = gz as usize;
+        let cell = cz * SPATIAL_GRID_DIM + cx;
+        next[idx] = head[cell];
+        head[cell] = idx as i32;
+    }
 
-        for i in 0..n {
-            let u_x = ((states[i].position.x - bounds.min.x) / extent_x).clamp(0.0, 0.9999);
-            let u_z = ((states[i].position.z - bounds.min.z) / extent_z).clamp(0.0, 0.9999);
-            let cx = (u_x * SPATIAL_GRID_DIM as f32) as i32;
-            let cz = (u_z * SPATIAL_GRID_DIM as f32) as i32;
+    for i in 0..n {
+        let (gx, gz) = spatial_cell_coords(states[i].position, bounds, extent);
+        let cx = gx as i32;
+        let cz = gz as i32;
 
-            for dz in -1..=1 {
-                let nz = cz + dz;
-                if nz < 0 || nz >= SPATIAL_GRID_DIM as i32 {
+        for dz in -1..=1 {
+            let nz = cz + dz;
+            if nz < 0 || nz >= SPATIAL_GRID_DIM as i32 {
+                continue;
+            }
+            for dx in -1..=1 {
+                let nx = cx + dx;
+                if nx < 0 || nx >= SPATIAL_GRID_DIM as i32 {
                     continue;
                 }
-                for dx in -1..=1 {
-                    let nx = cx + dx;
-                    if nx < 0 || nx >= SPATIAL_GRID_DIM as i32 {
+                let cell = (nz as usize) * SPATIAL_GRID_DIM + (nx as usize);
+                let mut curr = head[cell];
+                while curr >= 0 {
+                    let j = curr as usize;
+                    curr = next[j];
+                    if j <= i {
                         continue;
                     }
-                    let cell = (nz as usize) * SPATIAL_GRID_DIM + (nx as usize);
-                    let mut curr = head[cell];
-                    while curr >= 0 {
-                        let j = curr as usize;
-                        curr = next[j];
-                        if j <= i {
-                            continue;
-                        }
-
-                        let pos_i = states[i].position;
-                        let pos_j = states[j].position;
-                        let r_i = states[i].radius;
-                        let r_j = states[j].radius;
-
-                        let is_planar =
-                            states[i].velocity.y.abs() < 1e-4 && states[j].velocity.y.abs() < 1e-4;
-                        let delta = if is_planar {
-                            Vec3::new(pos_j.x - pos_i.x, 0.0, pos_j.z - pos_i.z)
-                        } else {
-                            pos_j - pos_i
-                        };
-                        let dist_sq = delta.length_squared();
-                        let min_dist = r_i + r_j;
-
-                        if dist_sq < min_dist * min_dist && dist_sq > 1e-8 {
-                            let dist = dist_sq.sqrt();
-                            let normal = delta / dist;
-                            let overlap = min_dist - dist;
-
-                            let m_i = r_i.powi(3);
-                            let m_j = r_j.powi(3);
-                            let total_m = m_i + m_j;
-
-                            states[i].position -= normal * (overlap * (m_j / total_m));
-                            states[j].position += normal * (overlap * (m_i / total_m));
-
-                            if is_planar {
-                                states[i].position.y = bounds.min.y + states[i].radius;
-                                states[j].position.y = bounds.min.y + states[j].radius;
-                            }
-
-                            for axis in 0..3 {
-                                states[i].position[axis] = states[i].position[axis].clamp(
-                                    bounds.min[axis] + states[i].radius,
-                                    bounds.max[axis] - states[i].radius,
-                                );
-                                states[j].position[axis] = states[j].position[axis].clamp(
-                                    bounds.min[axis] + states[j].radius,
-                                    bounds.max[axis] - states[j].radius,
-                                );
-                            }
-
-                            let vel_i = states[i].velocity;
-                            let vel_j = states[j].velocity;
-                            let v_rel = (vel_j - vel_i).dot(normal);
-
-                            if v_rel < 0.0 {
-                                let impulse = -2.0 * v_rel / (1.0 / m_i + 1.0 / m_j);
-                                states[i].velocity -= normal * (impulse / m_i);
-                                states[j].velocity += normal * (impulse / m_j);
-                                if is_planar {
-                                    states[i].velocity.y = 0.0;
-                                    states[j].velocity.y = 0.0;
-                                }
-                                states[i].peer_bounces += 1;
-                                states[j].peer_bounces += 1;
-                                step_peer_bounces += 1;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        // Fallback for n > MAX_BOUNCING_BUBBLES
-        for i in 0..n {
-            for j in (i + 1)..n {
-                let pos_i = states[i].position;
-                let pos_j = states[j].position;
-                let r_i = states[i].radius;
-                let r_j = states[j].radius;
-
-                let is_planar =
-                    states[i].velocity.y.abs() < 1e-4 && states[j].velocity.y.abs() < 1e-4;
-                let delta = if is_planar {
-                    Vec3::new(pos_j.x - pos_i.x, 0.0, pos_j.z - pos_i.z)
-                } else {
-                    pos_j - pos_i
-                };
-                let dist_sq = delta.length_squared();
-                let min_dist = r_i + r_j;
-
-                if dist_sq < min_dist * min_dist && dist_sq > 1e-8 {
-                    let dist = dist_sq.sqrt();
-                    let normal = delta / dist;
-                    let overlap = min_dist - dist;
-
-                    let m_i = r_i.powi(3);
-                    let m_j = r_j.powi(3);
-                    let total_m = m_i + m_j;
-
-                    states[i].position -= normal * (overlap * (m_j / total_m));
-                    states[j].position += normal * (overlap * (m_i / total_m));
-
-                    if is_planar {
-                        states[i].position.y = bounds.min.y + states[i].radius;
-                        states[j].position.y = bounds.min.y + states[j].radius;
-                    }
-
-                    for axis in 0..3 {
-                        states[i].position[axis] = states[i].position[axis].clamp(
-                            bounds.min[axis] + states[i].radius,
-                            bounds.max[axis] - states[i].radius,
-                        );
-                        states[j].position[axis] = states[j].position[axis].clamp(
-                            bounds.min[axis] + states[j].radius,
-                            bounds.max[axis] - states[j].radius,
-                        );
-                    }
-
-                    let vel_i = states[i].velocity;
-                    let vel_j = states[j].velocity;
-                    let v_rel = (vel_j - vel_i).dot(normal);
-
-                    if v_rel < 0.0 {
-                        let impulse = -2.0 * v_rel / (1.0 / m_i + 1.0 / m_j);
-                        states[i].velocity -= normal * (impulse / m_i);
-                        states[j].velocity += normal * (impulse / m_j);
-                        if is_planar {
-                            states[i].velocity.y = 0.0;
-                            states[j].velocity.y = 0.0;
-                        }
-                        states[i].peer_bounces += 1;
-                        states[j].peer_bounces += 1;
+                    if resolve_contact(states, i, j, bounds) {
+                        step_peer_bounces += 1;
                     }
                 }
             }
         }
     }
+    step_peer_bounces
+}
 
-    // 3. Heading Angle Synchronization
+/// Stage 2 beyond [`MAX_BOUNCING_BUBBLES`]: resolves every pair `i < j` in index order.
+fn resolve_contacts_all_pairs(states: &mut [BouncingBubbleState], bounds: &SmogArenaBounds) {
+    let n = states.len();
+    for i in 0..n {
+        for j in (i + 1)..n {
+            resolve_contact(states, i, j, bounds);
+        }
+    }
+}
+
+/// Separates two overlapping bubbles by mass (volume, `r^3`) and, if they approach, exchanges an
+/// elastic impulse along the contact normal. Two floor-bound bubbles collide in the XZ plane and
+/// stay on the floor. Returns `true` when an impulse was exchanged (a counted collision).
+fn resolve_contact(
+    states: &mut [BouncingBubbleState],
+    i: usize,
+    j: usize,
+    bounds: &SmogArenaBounds,
+) -> bool {
+    let pos_i = states[i].position;
+    let pos_j = states[j].position;
+    let r_i = states[i].radius;
+    let r_j = states[j].radius;
+
+    let is_planar = states[i].velocity.y.abs() < 1e-4 && states[j].velocity.y.abs() < 1e-4;
+    let delta = if is_planar {
+        Vec3::new(pos_j.x - pos_i.x, 0.0, pos_j.z - pos_i.z)
+    } else {
+        pos_j - pos_i
+    };
+    let dist_sq = delta.length_squared();
+    let min_dist = r_i + r_j;
+
+    let overlapping = dist_sq < min_dist * min_dist && dist_sq > 1e-8;
+    if !overlapping {
+        return false;
+    }
+    let dist = dist_sq.sqrt();
+    let normal = delta / dist;
+    let overlap = min_dist - dist;
+
+    let m_i = r_i.powi(3);
+    let m_j = r_j.powi(3);
+    let total_m = m_i + m_j;
+
+    states[i].position -= normal * (overlap * (m_j / total_m));
+    states[j].position += normal * (overlap * (m_i / total_m));
+
+    if is_planar {
+        states[i].position.y = bounds.min.y + states[i].radius;
+        states[j].position.y = bounds.min.y + states[j].radius;
+    }
+
+    for axis in 0..3 {
+        states[i].position[axis] = states[i].position[axis].clamp(
+            bounds.min[axis] + states[i].radius,
+            bounds.max[axis] - states[i].radius,
+        );
+        states[j].position[axis] = states[j].position[axis].clamp(
+            bounds.min[axis] + states[j].radius,
+            bounds.max[axis] - states[j].radius,
+        );
+    }
+
+    let vel_i = states[i].velocity;
+    let vel_j = states[j].velocity;
+    let v_rel = (vel_j - vel_i).dot(normal);
+
+    if v_rel < 0.0 {
+        let impulse = -2.0 * v_rel / (1.0 / m_i + 1.0 / m_j);
+        states[i].velocity -= normal * (impulse / m_i);
+        states[j].velocity += normal * (impulse / m_j);
+        if is_planar {
+            states[i].velocity.y = 0.0;
+            states[j].velocity.y = 0.0;
+        }
+        states[i].peer_bounces += 1;
+        states[j].peer_bounces += 1;
+        true
+    } else {
+        false
+    }
+}
+
+/// Stage 3: sets each bubble's heading from its horizontal velocity, keeping the old heading when
+/// the bubble barely moves horizontally.
+fn sync_headings(states: &mut [BouncingBubbleState]) {
     for state in states.iter_mut() {
         let speed_xz =
             (state.velocity.x * state.velocity.x + state.velocity.z * state.velocity.z).sqrt();
@@ -566,8 +580,6 @@ pub fn step_bouncing_kinematics(
             state.heading_angle_rad = state.velocity.z.atan2(state.velocity.x);
         }
     }
-
-    Ok((step_wall_bounces, step_peer_bounces))
 }
 
 #[cfg(test)]
