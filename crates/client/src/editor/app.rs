@@ -143,15 +143,65 @@ pub struct MapEditorPlugin {
 }
 
 impl Plugin for MapEditorPlugin {
+    /// Registers the editor in six ordered steps: resources, verification state, startup
+    /// systems, editing systems, playtest systems, and the render-app pipeline check.
+    ///
+    /// Each step keeps the registration order and every `.after`, `.chain`, `.in_set` and
+    /// `.run_if` constraint it had when the steps were one function.
     #[expect(
         clippy::cast_precision_loss,
         reason = "map cell coordinates stay far below the range of f32 and i32"
     )]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "a single ordered sequence that shares its local state"
-    )]
     fn build(&self, app: &mut App) {
+        let document = &self.startup.document.doc;
+        let map_w = document.width;
+        let map_h = document.height;
+        let automated = self.max_frames.is_some() || self.verify_render.is_some();
+        let playtest_focus = document.start_locations.first().map_or_else(
+            || Vec2::new(map_w as f32, map_h as f32) * 0.5,
+            |start| {
+                Vec2::new(
+                    start.cell.0 as f32 + f32::from(start.footprint.0) * 0.5,
+                    start.cell.1 as f32 + f32::from(start.footprint.1) * 0.5,
+                )
+            },
+        );
+
+        // 1. Register Core Resources
+        self.register_core_resources(app);
+
+        // A failed playtest stays on its HUD, because exiting here would skip the unsaved prompt.
+        if !automated {
+            app.init_resource::<RetainBattleFailure>();
+        }
+
+        // 2. Verification Mode Synchronization
+        let pipeline_sync = PipelineSync::default();
+        if let Some(ref verify_dir) = self.verify_render {
+            app.insert_resource(pipeline_sync.clone());
+            app.insert_resource(VerifyRenderState::new(verify_dir.clone(), playtest_focus));
+        }
+
+        // 3 and 4. Startup, global and editing systems
+        add_editing_systems(app, self.verify_render.is_some());
+
+        // 5. Register Playtesting Systems, in the game client's stage order
+        add_playtest_systems(app);
+
+        // 6. Hook RenderApp for PipelineCache error checking in verify mode
+        if self.verify_render.is_some() {
+            if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+                render_app.insert_resource(pipeline_sync);
+                render_app.add_systems(Render, check_render_pipelines);
+            }
+        }
+    }
+}
+
+impl MapEditorPlugin {
+    /// Inserts the startup catalogs, document and every editor, playtest and presentation
+    /// resource, the editor events, and the terrain, optics and material plugins.
+    fn register_core_resources(&self, app: &mut App) {
         let EditorStartup {
             assets_root,
             themes,
@@ -164,17 +214,6 @@ impl Plugin for MapEditorPlugin {
         let map_w = document.doc.width;
         let map_h = document.doc.height;
         let automated = self.max_frames.is_some() || self.verify_render.is_some();
-        let playtest_focus = document.doc.start_locations.first().map_or_else(
-            || Vec2::new(map_w as f32, map_h as f32) * 0.5,
-            |start| {
-                Vec2::new(
-                    start.cell.0 as f32 + f32::from(start.footprint.0) * 0.5,
-                    start.cell.1 as f32 + f32::from(start.footprint.1) * 0.5,
-                )
-            },
-        );
-
-        // 1. Register Core Resources
         app.init_state::<EditorPhase>()
             .insert_resource(MapsDirectory(assets_root.as_path().join("maps")))
             .insert_resource(assets_root)
@@ -215,116 +254,103 @@ impl Plugin for MapEditorPlugin {
             .add_plugins(MaterialPlugin::<BubbleDomeMaterial>::default())
             .add_plugins(MaterialPlugin::<SelectionRingMaterial>::default())
             .add_plugins(MaterialPlugin::<CombatFxMaterial>::default());
+    }
+}
 
-        // A failed playtest stays on its HUD, because exiting here would skip the unsaved prompt.
-        if !automated {
-            app.init_resource::<RetainBattleFailure>();
-        }
+/// Registers the startup systems, the systems that run in every phase, and either the
+/// render-verification systems (`verify_render`) or the interactive editor UI.
+fn add_editing_systems(app: &mut App, verify_render: bool) {
+    // 3. Register Startup Systems
+    app.add_systems(
+        Startup,
+        (
+            setup_bubble_assets_system,
+            setup_indicator_assets_system,
+            setup_vfx_assets_system,
+            setup_marker_assets,
+            setup_editor_scene,
+        ),
+    );
 
-        // 2. Verification Mode Synchronization
-        let pipeline_sync = PipelineSync::default();
-        if let Some(ref verify_dir) = self.verify_render {
-            app.insert_resource(pipeline_sync.clone());
-            app.insert_resource(VerifyRenderState::new(verify_dir.clone(), playtest_focus));
-        }
+    // 4. Register Global & Editing Systems
+    app.add_systems(
+        Update,
+        (
+            frame_limit_system,
+            editor_window_close_system,
+            apply_document_load_system.after(editor_ui_system),
+            editor_camera_system,
+            update_marker_billboards_system,
+            sync_marker_entities_system,
+            editor_los_system.run_if(in_state(EditorPhase::Editing)),
+        ),
+    );
 
-        // 3. Register Startup Systems
-        app.add_systems(
-            Startup,
-            (
-                setup_bubble_assets_system,
-                setup_indicator_assets_system,
-                setup_vfx_assets_system,
-                setup_marker_assets,
-                setup_editor_scene,
-            ),
-        );
-
-        // 4. Register Global & Editing Systems
+    if verify_render {
         app.add_systems(
             Update,
             (
-                frame_limit_system,
-                editor_window_close_system,
-                apply_document_load_system.after(editor_ui_system),
-                editor_camera_system,
-                update_marker_billboards_system,
-                sync_marker_entities_system,
-                editor_los_system.run_if(in_state(EditorPhase::Editing)),
+                keep_window_surface_in_use,
+                update_render_verification_system.run_if(in_state(EditorPhase::Editing)),
+                update_playtest_verification_system.run_if(in_state(EditorPhase::Playtesting)),
             ),
         );
-
-        if self.verify_render.is_some() {
-            app.add_systems(
-                Update,
-                (
-                    keep_window_surface_in_use,
-                    update_render_verification_system.run_if(in_state(EditorPhase::Editing)),
-                    update_playtest_verification_system.run_if(in_state(EditorPhase::Playtesting)),
-                ),
-            );
-        } else {
-            app.add_systems(
-                Update,
-                editor_ui_system.run_if(in_state(EditorPhase::Editing)),
-            );
-        }
-
-        // 5. Register Playtesting Systems, in the game client's stage order
-        app.add_systems(OnExit(EditorPhase::Playtesting), teardown_playtest_system);
-
-        app.configure_sets(
+    } else {
+        app.add_systems(
             Update,
+            editor_ui_system.run_if(in_state(EditorPhase::Editing)),
+        );
+    }
+}
+
+/// Registers playtest teardown and the playtest systems inside the game client's
+/// [`BattleSet`] stages, which run only while [`EditorPhase::Playtesting`].
+fn add_playtest_systems(app: &mut App) {
+    app.add_systems(OnExit(EditorPhase::Playtesting), teardown_playtest_system);
+
+    app.configure_sets(
+        Update,
+        (
+            BattleSet::CollectIntent,
+            BattleSet::AdvanceTicks,
+            BattleSet::PreparePresentation,
+            BattleSet::Present,
+        )
+            .chain()
+            .run_if(in_state(EditorPhase::Playtesting)),
+    );
+
+    app.add_systems(
+        Update,
+        (
             (
-                BattleSet::CollectIntent,
-                BattleSet::AdvanceTicks,
-                BattleSet::PreparePresentation,
-                BattleSet::Present,
+                playtest_exit_system,
+                playtest_input_system,
+                playtest_hud_system,
+            )
+                .in_set(BattleSet::CollectIntent),
+            advance_battle_ticks.in_set(BattleSet::AdvanceTicks),
+            (sync_live_battle_system, apply_deferred)
+                .chain()
+                .in_set(BattleSet::PreparePresentation),
+            (
+                sync_playtest_status_system,
+                publish_combat_events,
+                process_combat_events_system,
+                update_indicators_system,
             )
                 .chain()
-                .run_if(in_state(EditorPhase::Playtesting)),
-        );
-
-        app.add_systems(
-            Update,
+                .in_set(BattleSet::Present),
             (
-                (
-                    playtest_exit_system,
-                    playtest_input_system,
-                    playtest_hud_system,
-                )
-                    .in_set(BattleSet::CollectIntent),
-                advance_battle_ticks.in_set(BattleSet::AdvanceTicks),
-                (sync_live_battle_system, apply_deferred)
-                    .chain()
-                    .in_set(BattleSet::PreparePresentation),
-                (
-                    sync_playtest_status_system,
-                    publish_combat_events,
-                    process_combat_events_system,
-                    update_indicators_system,
-                )
-                    .chain()
-                    .in_set(BattleSet::Present),
-                (
-                    update_projectiles_system,
-                    update_beams_system,
-                    update_melee_slashes_system,
-                    update_shatter_system,
-                )
-                    .after(process_combat_events_system)
-                    .in_set(BattleSet::Present),
-            ),
-        );
-
-        // 6. Hook RenderApp for PipelineCache error checking in verify mode
-        if self.verify_render.is_some() {
-            if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-                render_app.insert_resource(pipeline_sync);
-                render_app.add_systems(Render, check_render_pipelines);
-            }
-        }
-    }
+                update_projectiles_system,
+                update_beams_system,
+                update_melee_slashes_system,
+                update_shatter_system,
+            )
+                .after(process_combat_events_system)
+                .in_set(BattleSet::Present),
+        ),
+    );
 }
 
 #[expect(

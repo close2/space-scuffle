@@ -289,10 +289,12 @@ pub struct ClientAppPlugin {
 }
 
 impl Plugin for ClientAppPlugin {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "a single ordered sequence that shares its local state"
-    )]
+    /// Registers the client in a fixed order: scene plugins, resources, material and feature
+    /// plugins, the battle pipeline, presentation, then combat effects and the inspector.
+    ///
+    /// Each step is one helper, called in the order the registrations were always made, so
+    /// every `.before`, `.after`, `.chain` and `.in_set` constraint and every insertion order is
+    /// unchanged.
     fn build(&self, app: &mut App) {
         let initial_tab = match self.mode {
             ClientMode::VisualLab | ClientMode::HeadlessCheck => LabTab::VisualLab,
@@ -315,77 +317,114 @@ impl Plugin for ClientAppPlugin {
             battle_presentation::BattleProfile::Sandbox
         };
 
-        app.add_plugins((
-            terrain::TerrainPlugin,
-            runtime_battle::SceneEnvironmentPlugin,
-            render_compatibility::RenderCompatibilityPlugin,
-            runtime_battle::BattleRenderVerificationPlugin,
-        ))
-        .init_resource::<CatalogResource>()
-        .insert_resource(media::MediaFailurePolicy::new(self.max_frames.is_some()))
-        .init_resource::<RenderEntityMap>()
-        .insert_resource(lab_state)
-        .init_resource::<SelectionState>()
-        .init_resource::<player_presentation::PresentationStatus>()
-        .insert_resource(battle_profile)
-        .init_resource::<battle_presentation::BattlePresentation>()
-        .init_resource::<battle_pipeline::session::BattleSession>()
-        .init_resource::<input_policy::UiGeometry>()
-        .insert_resource(input_policy::InputOwnership::interactive())
-        .init_resource::<camera_drag::CameraDragState>()
-        .insert_resource(FrameLimit {
-            max_frames: self.max_frames,
-            current_frame: 0,
-            screenshot_out: self.screenshot_out.clone(),
-            screenshot_pending: false,
-        })
-        .add_event::<CombatVisualEvent>()
-        .add_plugins(MaterialPlugin::<BubbleDomeMaterial>::default())
+        add_scene_plugins(app);
+        self.insert_client_resources(app, lab_state, battle_profile);
+        add_material_and_feature_plugins(app);
+        add_battle_pipeline_systems(app);
+        add_presentation_systems(app);
+        add_combat_effect_and_inspector_systems(app);
+    }
+}
+
+impl ClientAppPlugin {
+    /// Inserts every client resource and the combat visual event, in registration order.
+    fn insert_client_resources(
+        &self,
+        app: &mut App,
+        lab_state: LabState,
+        battle_profile: battle_presentation::BattleProfile,
+    ) {
+        app.init_resource::<CatalogResource>()
+            .insert_resource(media::MediaFailurePolicy::new(self.max_frames.is_some()))
+            .init_resource::<RenderEntityMap>()
+            .insert_resource(lab_state)
+            .init_resource::<SelectionState>()
+            .init_resource::<player_presentation::PresentationStatus>()
+            .insert_resource(battle_profile)
+            .init_resource::<battle_presentation::BattlePresentation>()
+            .init_resource::<battle_pipeline::session::BattleSession>()
+            .init_resource::<input_policy::UiGeometry>()
+            .insert_resource(input_policy::InputOwnership::interactive())
+            .init_resource::<camera_drag::CameraDragState>()
+            .insert_resource(FrameLimit {
+                max_frames: self.max_frames,
+                current_frame: 0,
+                screenshot_out: self.screenshot_out.clone(),
+                screenshot_pending: false,
+            })
+            .add_event::<CombatVisualEvent>();
+    }
+}
+
+/// Terrain, scene environment, render compatibility and battle render verification.
+fn add_scene_plugins(app: &mut App) {
+    app.add_plugins((
+        terrain::TerrainPlugin,
+        runtime_battle::SceneEnvironmentPlugin,
+        render_compatibility::RenderCompatibilityPlugin,
+        runtime_battle::BattleRenderVerificationPlugin,
+    ));
+}
+
+/// Bubble, selection ring, combat effect and smog materials, then the smog, battle input and
+/// battle HUD feature plugins.
+fn add_material_and_feature_plugins(app: &mut App) {
+    app.add_plugins(MaterialPlugin::<BubbleDomeMaterial>::default())
         .add_plugins(MaterialPlugin::<SelectionRingMaterial>::default())
         .add_plugins(bubble_optics::BubbleOpticsPlugin)
         .add_plugins(MaterialPlugin::<CombatFxMaterial>::default())
         .add_plugins(MaterialPlugin::<SmogVolumeMaterial>::default())
         .add_plugins(SmogPlugin)
         .add_plugins(battle_input::BattleInputPlugin)
-        .add_plugins(battle_hud::BattleHudPlugin)
-        .configure_sets(
-            Update,
-            (
-                battle_pipeline::BattleSet::ExternalControl,
-                battle_pipeline::BattleSet::CollectIntent,
-                battle_pipeline::BattleSet::CommitSession,
-                battle_pipeline::BattleSet::AdvanceTicks,
-                battle_pipeline::BattleSet::PreparePresentation,
-                battle_pipeline::BattleSet::Present,
-            )
-                .chain(),
+        .add_plugins(battle_hud::BattleHudPlugin);
+}
+
+/// Chains the [`battle_pipeline::BattleSet`] stages and registers the systems that commit the
+/// session, advance ticks and prepare presentation inside them.
+fn add_battle_pipeline_systems(app: &mut App) {
+    app.configure_sets(
+        Update,
+        (
+            battle_pipeline::BattleSet::ExternalControl,
+            battle_pipeline::BattleSet::CollectIntent,
+            battle_pipeline::BattleSet::CommitSession,
+            battle_pipeline::BattleSet::AdvanceTicks,
+            battle_pipeline::BattleSet::PreparePresentation,
+            battle_pipeline::BattleSet::Present,
         )
-        .add_systems(
-            Update,
-            (
-                runtime_battle::sync_scene_camera,
-                runtime_battle::manage_battle_scene,
-                apply_deferred,
-            )
-                .chain()
-                .in_set(battle_pipeline::BattleSet::CommitSession),
+            .chain(),
+    )
+    .add_systems(
+        Update,
+        (
+            runtime_battle::sync_scene_camera,
+            runtime_battle::manage_battle_scene,
+            apply_deferred,
         )
-        .add_systems(
-            Update,
-            battle_pipeline::driver::advance_battle_ticks
-                .in_set(battle_pipeline::BattleSet::AdvanceTicks),
+            .chain()
+            .in_set(battle_pipeline::BattleSet::CommitSession),
+    )
+    .add_systems(
+        Update,
+        battle_pipeline::driver::advance_battle_ticks
+            .in_set(battle_pipeline::BattleSet::AdvanceTicks),
+    )
+    .add_systems(
+        Update,
+        (
+            battle_presentation::refresh_battle_presentation,
+            sync_live_battle_system,
+            apply_deferred,
         )
-        .add_systems(
-            Update,
-            (
-                battle_presentation::refresh_battle_presentation,
-                sync_live_battle_system,
-                apply_deferred,
-            )
-                .chain()
-                .in_set(battle_pipeline::BattleSet::PreparePresentation),
-        )
-        .add_systems(PostUpdate, runtime_battle::update_map_presentation)
+            .chain()
+            .in_set(battle_pipeline::BattleSet::PreparePresentation),
+    );
+}
+
+/// Map presentation, input ownership around the inspector, picking, startup assets and the
+/// per-frame presentation systems.
+fn add_presentation_systems(app: &mut App) {
+    app.add_systems(PostUpdate, runtime_battle::update_map_presentation)
         .add_systems(
             Update,
             (
@@ -423,22 +462,25 @@ impl Plugin for ClientAppPlugin {
                 frame_limit_system,
             )
                 .in_set(battle_pipeline::BattleSet::Present),
-        )
-        .add_systems(
-            Update,
-            (
-                (
-                    battle_pipeline::driver::publish_combat_events,
-                    process_combat_events_system,
-                )
-                    .chain()
-                    .in_set(battle_pipeline::BattleSet::Present),
-                sync_lab_preview_system.in_set(battle_pipeline::BattleSet::PreparePresentation),
-                sync_swarm_stress_system.in_set(battle_pipeline::BattleSet::PreparePresentation),
-                lab_ui_system.in_set(battle_pipeline::BattleSet::CollectIntent),
-            ),
         );
-    }
+}
+
+/// Combat event publication and effects, the lab preview and swarm sync, and the inspector.
+fn add_combat_effect_and_inspector_systems(app: &mut App) {
+    app.add_systems(
+        Update,
+        (
+            (
+                battle_pipeline::driver::publish_combat_events,
+                process_combat_events_system,
+            )
+                .chain()
+                .in_set(battle_pipeline::BattleSet::Present),
+            sync_lab_preview_system.in_set(battle_pipeline::BattleSet::PreparePresentation),
+            sync_swarm_stress_system.in_set(battle_pipeline::BattleSet::PreparePresentation),
+            lab_ui_system.in_set(battle_pipeline::BattleSet::CollectIntent),
+        ),
+    );
 }
 
 /// Spawns the RTS perspective camera, defaulting to close-up hero framing in Visual Lab mode.
