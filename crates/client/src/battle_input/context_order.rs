@@ -1,9 +1,9 @@
 //! Decides what a right click means, from what is under the pointer and what is selected.
 //!
 //! # Responsibility
-//! Owns the precedence of the right click, and nothing else: [`context_order`] takes a resolved
-//! [`PointerTarget`] and answers with an order. Picking belongs to
-//! [`BattleView`](super::BattleView), and submission to the battle queue.
+//! Owns the precedence of the right click, and nothing else: [`resolve_target`] chooses among what
+//! lies under the pointer, and [`context_order`] answers a resolved [`PointerTarget`] with an order.
+//! Picking belongs to [`BattleView`](super::BattleView), and submission to the battle queue.
 //!
 //! # How it fits
 //! Every row asks [`any_recipient`], the rule the queue itself admits members by, so a target
@@ -35,6 +35,42 @@ pub enum PointerTarget {
     Node(ResourceNodeId, Vec3),
     /// Open ground under the pointer. Neutral units count as ground.
     Ground(Vec3),
+}
+
+/// Chooses what a right click means when the pointer ray hit both a unit and a node.
+///
+/// `unit` and `node` are what picking found, if anything, and a unit wins, so a dome over a gas
+/// node stays a dome. The one exception keeps mineral lines workable: where `selection` can harvest
+/// the node, a mobile friend standing in the way does not count, or a worker would walk to the spot
+/// instead of mining. An enemy is never passed over, and neither is a friendly structure, which
+/// has orders of its own: a foundation to resume, a dropoff for cargo, an extractor to work.
+#[must_use]
+pub fn resolve_target(
+    world: &SimWorld,
+    owner: PlayerId,
+    selection: &[EntityId],
+    unit: Option<PointerTarget>,
+    node: Option<PointerTarget>,
+) -> Option<PointerTarget> {
+    match (unit, node) {
+        (Some(PointerTarget::Friendly(friend, _)), Some(PointerTarget::Node(target, _)))
+            if is_mobile(world, friend)
+                && any_recipient(world, owner, selection, &UnitOrder::Harvest { target }) =>
+        {
+            node
+        }
+        (Some(_), _) => unit,
+        (None, _) => node,
+    }
+}
+
+/// Whether `id` is a unit rather than a structure.
+fn is_mobile(world: &SimWorld, id: EntityId) -> bool {
+    world
+        .entities
+        .get(&id)
+        .and_then(|entity| world.catalog.get(entity.unit_type_id).ok())
+        .is_some_and(|archetype| !archetype.is_immobile_by_default())
 }
 
 /// The order a right click on `target` means for `selection`, first match wins.
@@ -416,6 +452,69 @@ mod tests {
             }),
             "an unfinished extractor gives no gas"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_node_outranks_a_mobile_friend_for_a_selection_that_can_harvest_it() -> TestResult {
+        let mut world = flat_world()?;
+        let unit = worker(&mut world, 0)?;
+        let other = soldier(&mut world, 1)?;
+        let friend = Some(PointerTarget::Friendly(other, POINT));
+        let node = Some(PointerTarget::Node(ResourceNodeId(1), POINT));
+
+        assert_eq!(resolve_target(&world, ME, &[unit], friend, node), node);
+        assert_eq!(
+            resolve_target(&world, ME, &[other], friend, node),
+            friend,
+            "a selection that cannot harvest gets nothing from the node"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_node_never_outranks_an_enemy() -> TestResult {
+        let mut world = flat_world()?;
+        let unit = worker(&mut world, 0)?;
+        let enemy_type = type_where(&world, |a| !is_dome(a))?;
+        let enemy = world.spawn_unit(
+            enemy_type,
+            THEM,
+            SimVec2::new(SimScalar::from_i32(30), SimScalar::from_i32(30)),
+        )?;
+        let target = Some(PointerTarget::Enemy(enemy, POINT));
+        let node = Some(PointerTarget::Node(ResourceNodeId(1), POINT));
+
+        assert_eq!(resolve_target(&world, ME, &[unit], target, node), target);
+        Ok(())
+    }
+
+    #[test]
+    fn a_node_never_outranks_a_friendly_structure() -> TestResult {
+        let mut world = flat_world()?;
+        let unit = worker(&mut world, 0)?;
+        let foundation = structure_where(&mut world, unit, EXTRACTOR_CORNER, |a| {
+            a.capabilities.is_gas_extractor
+        })?;
+        unfinish(&mut world, foundation)?;
+        let target = Some(PointerTarget::Friendly(foundation, POINT));
+        let node = Some(PointerTarget::Node(ResourceNodeId(0), POINT));
+
+        assert_eq!(
+            resolve_target(&world, ME, &[unit], target, node),
+            target,
+            "an unfinished extractor over its node must stay resumable"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn with_nothing_to_choose_between_what_was_hit_stands() -> TestResult {
+        let mut world = flat_world()?;
+        let unit = worker(&mut world, 0)?;
+        let node = Some(PointerTarget::Node(ResourceNodeId(1), POINT));
+        assert_eq!(resolve_target(&world, ME, &[unit], None, node), node);
+        assert_eq!(resolve_target(&world, ME, &[unit], None, None), None);
         Ok(())
     }
 

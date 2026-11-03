@@ -56,7 +56,7 @@ use crate::selection::ray_sphere_intersect;
 use crate::terrain::{pick_terrain, TerrainState};
 
 use command_mode::{orders_open, CommandMode};
-use context_order::{context_order, PointerTarget};
+use context_order::{context_order, resolve_target, PointerTarget};
 use gesture::{GestureOutcome, SelectionGesture};
 use order_marker::OrderMarkers;
 
@@ -130,6 +130,12 @@ pub struct BattleView<'w, 's> {
     bubbles: BubbleQuery<'w, 's>,
 }
 
+/// Whether a battle is on screen and its controls may act.
+#[must_use]
+pub fn controls_open(lab: &LabState, session: &BattleSession) -> bool {
+    lab.current_tab == LabTab::LiveBattle && session.is_ready() && lab.battle_failure.is_none()
+}
+
 /// A unit under the pointer.
 #[derive(Debug, Clone, Copy)]
 struct PickedUnit {
@@ -142,13 +148,21 @@ struct PickedUnit {
 impl BattleView<'_, '_> {
     /// Whether a battle is on screen and its controls may act.
     fn is_open(&self, session: &BattleSession) -> bool {
-        self.lab.current_tab == LabTab::LiveBattle
-            && session.is_ready()
-            && self.lab.battle_failure.is_none()
+        controls_open(&self.lab, session)
+    }
+
+    /// The local player, if one is bound.
+    pub(crate) fn owner(&self) -> Option<PlayerId> {
+        self.presentation.controlled
+    }
+
+    /// Whether the pointer is over the world rather than a panel.
+    pub(crate) fn pointer_owned(&self) -> bool {
+        self.ownership.pointer
     }
 
     /// Returns the camera's view ray through `cursor`, a window position.
-    fn ray(&self, cursor: Vec2) -> Option<Ray3d> {
+    pub(crate) fn ray(&self, cursor: Vec2) -> Option<Ray3d> {
         let (camera, transform) = self.cameras.get_single().ok()?;
         let viewport = ViewportCoordinates::from_camera(camera)?.viewport_from_window(cursor)?;
         camera.viewport_to_world(transform, viewport).ok()
@@ -157,7 +171,7 @@ impl BattleView<'_, '_> {
     /// Returns the cursor clamped to the world viewport, in window coordinates.
     ///
     /// A drag that crosses a panel keeps following the pointer along the viewport's edge.
-    fn cursor_in_viewport(&self) -> Option<Vec2> {
+    pub(crate) fn cursor_in_viewport(&self) -> Option<Vec2> {
         let cursor = self.windows.get_single().ok()?.cursor_position()?;
         let (camera, _) = self.cameras.get_single().ok()?;
         let rect = ViewportCoordinates::from_camera(camera)?.logical_rect;
@@ -250,7 +264,7 @@ impl BattleView<'_, '_> {
     }
 
     /// Returns the terrain point under `ray`, in Bevy world space.
-    fn ground_point(&self, ray: Ray3d) -> Option<Vec3> {
+    pub(crate) fn ground_point(&self, ray: Ray3d) -> Option<Vec3> {
         let terrain = self.terrain.as_ref()?;
         let hit = pick_terrain(&terrain.map, ray.origin, *ray.direction)?;
         Some(hit.point)
@@ -258,28 +272,29 @@ impl BattleView<'_, '_> {
 
     /// Resolves what a right click along `ray` landed on, or `None` if it found nothing at all.
     ///
-    /// Units come first, so a dome over a gas node wins. Neutral units count as ground.
+    /// [`resolve_target`] chooses between a unit and a node. Neutral units count as ground.
     fn pointer_target(
         &self,
         world: &SimWorld,
         owner: PlayerId,
+        selection: &[EntityId],
         ray: Ray3d,
     ) -> Option<PointerTarget> {
         let ground = self.ground_point(ray);
         let unit = self
             .pick_unit(world, owner, ray)
-            .filter(|unit| unit.owner != PlayerId::NEUTRAL);
-        if let Some(unit) = unit {
-            return Some(if unit.owner == owner {
-                PointerTarget::Friendly(unit.id, ground.unwrap_or(unit.ground))
-            } else {
-                PointerTarget::Enemy(unit.id, unit.ground)
+            .filter(|unit| unit.owner != PlayerId::NEUTRAL)
+            .map(|unit| {
+                if unit.owner == owner {
+                    PointerTarget::Friendly(unit.id, ground.unwrap_or(unit.ground))
+                } else {
+                    PointerTarget::Enemy(unit.id, unit.ground)
+                }
             });
-        }
-        if let Some((node, center)) = self.pick_node(world, ray) {
-            return Some(PointerTarget::Node(node, ground.unwrap_or(center)));
-        }
-        ground.map(PointerTarget::Ground)
+        let node = self
+            .pick_node(world, ray)
+            .map(|(node, center)| PointerTarget::Node(node, ground.unwrap_or(center)));
+        resolve_target(world, owner, selection, unit, node).or(ground.map(PointerTarget::Ground))
     }
 
     /// Returns the local player's units inside `area`, a rectangle in window coordinates.
@@ -519,7 +534,7 @@ fn issue_pointer_order(
         queue.reject(&SubmissionError::NotReady);
         return;
     };
-    let Some(target) = view.pointer_target(world, owner, ray) else {
+    let Some(target) = view.pointer_target(world, owner, selection.ids(), ray) else {
         queue.reject(&SubmissionError::NoDestination);
         return;
     };

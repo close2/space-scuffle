@@ -135,7 +135,8 @@ pub fn orders_open(world: &SimWorld) -> bool {
 }
 
 /// The sides of `structure`'s footprint in cells, or `None` for a non-structure.
-const fn footprint(structure: &UnitArchetype) -> Option<(u32, u32)> {
+#[must_use]
+pub const fn footprint(structure: &UnitArchetype) -> Option<(u32, u32)> {
     match structure.shape {
         ShapeKind::BuildingDome {
             footprint_w,
@@ -208,7 +209,8 @@ fn nearest_gas_cell(world: &SimWorld, cell: (u32, u32)) -> Option<(u32, u32)> {
 }
 
 /// The Bevy world point on the ground at the middle of a site with minimum corner `cell`.
-fn site_center(world: &SimWorld, structure: &UnitArchetype, cell: (u32, u32)) -> Option<Vec3> {
+#[must_use]
+pub fn site_center(world: &SimWorld, structure: &UnitArchetype, cell: (u32, u32)) -> Option<Vec3> {
     let (width, height) = footprint(structure)?;
     let center = SimVec2::new(
         SimScalar::from_num(cell.0) + SimScalar::from_num(width) * SimScalar::HALF,

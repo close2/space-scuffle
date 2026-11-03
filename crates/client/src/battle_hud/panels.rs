@@ -8,8 +8,11 @@
 //! # How it fits
 //! Runs before [`lab_ui_system`](crate::lab_ui_system), which measures the room the panels leave.
 //! That room becomes the camera viewport and the world's hit test, as [`battle_hud`](super)
-//! explains. The feed is the one floating surface. It takes no input, so a click on it lands in
-//! the world beneath.
+//! explains. The feed and the note on a refused site float too, but they take no input, so a
+//! click on them lands in the world beneath. The one floating surface that takes clicks is the
+//! [`result`](super::result) window, which draws itself.
+//!
+//! A click is recorded in [`HudIntent`], and [`actions`](super::actions) carries it out.
 //!
 //! # Invariants
 //! - No panel is resizable, so the world rectangle changes only with the window.
@@ -18,10 +21,16 @@
 
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
+use sim_types::{EntityId, UnitOrder};
 
+use super::actions::HudIntent;
+use super::card::{CardAction, CardSlot, CommandCard, SlotText};
 use super::feed::{BattleFeed, FeedTone};
 use super::model::{FocusedUnit, HudModel};
+use super::placement::PlacementPreview;
+use super::queue::{item_label, QueuePanel};
 use super::HudGeometry;
+use crate::battle_input::command_mode::CommandMode;
 use crate::battle_pipeline::session::BattleSession;
 use crate::lab_ui::LabState;
 use crate::media::ClientMediaStatus;
@@ -54,6 +63,24 @@ const FEED_MARGIN: f32 = 8.0;
 /// Height of a health or shield bar, in egui points.
 const BAR_HEIGHT: f32 = 10.0;
 
+/// Width of a queue row's button, in egui points.
+const QUEUE_ROW_WIDTH: f32 = 170.0;
+
+/// Width of the button cancelling a foundation, in egui points.
+const CANCEL_BUTTON_WIDTH: f32 = 120.0;
+
+/// Positions on one row of the command card.
+const CARD_COLUMNS: usize = 5;
+
+/// Rows of the command card, counting the row of Stop and Hold.
+const CARD_ROWS: usize = 4;
+
+/// Gap between two command card buttons, in egui points.
+const CARD_GAP: f32 = 2.0;
+
+/// Gap between the top of the world and the note on a refused site, in egui points.
+const SITE_NOTE_MARGIN: f32 = 12.0;
+
 const HEALTH_COLOR: egui::Color32 = egui::Color32::from_rgb(70, 190, 90);
 const SHIELD_COLOR: egui::Color32 = egui::Color32::from_rgb(80, 150, 230);
 const REFUSAL_COLOR: egui::Color32 = egui::Color32::from_rgb(255, 140, 120);
@@ -82,8 +109,13 @@ pub fn battle_hud_system(
     mut contexts: EguiContexts<'_, '_>,
     mut lab: ResMut<'_, LabState>,
     mut geometry: ResMut<'_, HudGeometry>,
+    mut intent: ResMut<'_, HudIntent>,
     model: Res<'_, HudModel>,
     feed: Res<'_, BattleFeed>,
+    card: Res<'_, CommandCard>,
+    queue: Res<'_, QueuePanel>,
+    preview: Res<'_, PlacementPreview>,
+    mode: Res<'_, CommandMode>,
     session: Res<'_, BattleSession>,
     media: Option<Res<'_, ClientMediaStatus>>,
     owner_status: Res<'_, PresentationStatus>,
@@ -115,12 +147,25 @@ pub fn battle_hud_system(
     if model.viewer.is_some() {
         let enabled = session.is_ready() && !failed;
         draw_resource_bar(ctx, &model, &mut lab, enabled, &mut geometry);
-        draw_command_panel(ctx, &model, &mut geometry);
+        let surfaces = CommandSurfaces {
+            model: &model,
+            card: &card,
+            queue: &queue,
+            mode: *mode,
+            cancelling: queue
+                .structure
+                .is_some_and(|structure| cancel_pending(&session, structure)),
+        };
+        draw_command_panel(ctx, &surfaces, &mut intent, &mut geometry);
         draw_feed(ctx, &feed, &mut geometry);
+        if let Some(reason) = preview.refusal() {
+            draw_site_note(ctx, reason, &mut geometry);
+        }
     }
 }
 
-fn visible(response: &egui::Response, clip: egui::Rect) -> Option<egui::Rect> {
+/// The part of `response` inside `clip`, or `None` if nothing of it shows.
+pub(super) fn visible(response: &egui::Response, clip: egui::Rect) -> Option<egui::Rect> {
     let rect = response.rect.intersect(clip);
     rect.is_positive().then_some(rect)
 }
@@ -210,8 +255,32 @@ fn draw_speed_controls(ui: &mut egui::Ui, lab: &mut LabState, geometry: &mut Hud
     }
 }
 
+/// Whether a `CancelProduction` for `structure` still waits for its tick.
+///
+/// While paused, a second click would address a job index the first has yet to shift.
+fn cancel_pending(session: &BattleSession, structure: EntityId) -> bool {
+    session.commands.pending_commands().any(|(_, command)| {
+        matches!(command.order, UnitOrder::CancelProduction { .. })
+            && command.entities.contains(&structure)
+    })
+}
+
+/// What the command panel draws.
+struct CommandSurfaces<'a> {
+    model: &'a HudModel,
+    card: &'a CommandCard,
+    queue: &'a QueuePanel,
+    mode: CommandMode,
+    cancelling: bool,
+}
+
 /// Draws the three columns of the command panel: selection, queue and card.
-fn draw_command_panel(ctx: &egui::Context, model: &HudModel, geometry: &mut HudGeometry) {
+fn draw_command_panel(
+    ctx: &egui::Context,
+    surfaces: &CommandSurfaces<'_>,
+    intent: &mut HudIntent,
+    geometry: &mut HudGeometry,
+) {
     let panel = egui::TopBottomPanel::bottom("battle_command")
         .exact_height(COMMAND_PANEL_HEIGHT)
         .resizable(false)
@@ -220,10 +289,134 @@ fn draw_command_panel(ctx: &egui::Context, model: &HudModel, geometry: &mut HudG
                 geometry.selection_column = Some(selection.max_rect());
                 geometry.queue_column = Some(queue.max_rect());
                 geometry.card_column = Some(card.max_rect());
-                draw_selection(selection, model);
+                draw_selection(selection, surfaces.model);
+                draw_queue(queue, surfaces, intent, geometry);
+                draw_card(card, surfaces, intent, geometry);
             });
         });
     geometry.bottom = Some(panel.response.rect);
+}
+
+/// Draws what the selected structures are making, or how far a foundation has come.
+fn draw_queue(
+    ui: &mut egui::Ui,
+    surfaces: &CommandSurfaces<'_>,
+    intent: &mut HudIntent,
+    geometry: &mut HudGeometry,
+) {
+    let panel = surfaces.queue;
+    if let Some(progress) = panel.foundation {
+        ui.add(
+            egui::ProgressBar::new(progress)
+                .desired_height(BAR_HEIGHT)
+                .show_percentage(),
+        );
+        let cancel = ui
+            .add(egui::Button::new("Cancel build").min_size(egui::vec2(CANCEL_BUTTON_WIDTH, 0.0)));
+        geometry.queue_cancel = visible(&cancel, ui.clip_rect());
+        if cancel.clicked() {
+            intent.action = Some(CardAction::Order(UnitOrder::CancelConstruction));
+        }
+        return;
+    }
+    for line in panel.lines() {
+        ui.label(line.text.as_str());
+    }
+    let Some(structure) = panel.structure else {
+        return;
+    };
+    for (position, row) in panel.rows.iter().enumerate() {
+        let Some(row) = row else {
+            continue;
+        };
+        ui.horizontal(|ui| {
+            let button = egui::Button::new(item_label(surfaces.model, row.item))
+                .truncate()
+                .min_size(egui::vec2(QUEUE_ROW_WIDTH, 0.0));
+            let click = ui.add_enabled(!surfaces.cancelling, button);
+            geometry.queue[position] = visible(&click, ui.clip_rect());
+            if click.clicked() {
+                intent.cancel_job = Some((structure, row.job_index));
+            }
+            let mut bar = egui::ProgressBar::new(row.progress);
+            if position == 0 && panel.exit_blocked {
+                bar = bar.text("Exit blocked");
+            }
+            ui.add(bar);
+        });
+    }
+    if !panel.overflow.is_empty() {
+        ui.small(panel.overflow.as_str());
+    }
+}
+
+/// One button of the card, in `rect`. Returns what clicking it does.
+fn draw_slot(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    slot: &CardSlot,
+    text: &SlotText,
+    mode: CommandMode,
+) -> (egui::Response, Option<CardAction>) {
+    let button = egui::Button::new(text.caption.as_str())
+        .truncate()
+        .selected(slot.action == CardAction::Mode(mode))
+        .min_size(rect.size());
+    let mut response = ui
+        .add_enabled_ui(slot.enabled, |ui| ui.put(rect, button))
+        .inner;
+    if !text.tooltip.is_empty() {
+        response = response
+            .on_hover_text(text.tooltip.as_str())
+            .on_disabled_hover_text(text.tooltip.as_str());
+    }
+    let action = response.clicked().then(|| slot.action.clone());
+    (response, action)
+}
+
+/// Draws the card as a grid: three rows of positions, then Stop and Hold.
+fn draw_card(
+    ui: &mut egui::Ui,
+    surfaces: &CommandSurfaces<'_>,
+    intent: &mut HudIntent,
+    geometry: &mut HudGeometry,
+) {
+    let area = ui.max_rect();
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "both counts are small constants"
+    )]
+    let cell = egui::vec2(
+        area.width() / CARD_COLUMNS as f32,
+        area.height() / CARD_ROWS as f32,
+    );
+    let rect_of = |position: usize| {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a grid position is a small number"
+        )]
+        let corner = egui::vec2(
+            (position % CARD_COLUMNS) as f32 * cell.x,
+            (position / CARD_COLUMNS) as f32 * cell.y,
+        );
+        egui::Rect::from_min_size(area.min + corner, cell - egui::Vec2::splat(CARD_GAP))
+    };
+    let (card, mode) = (surfaces.card, surfaces.mode);
+    for (position, (slot, text)) in card.slots.iter().zip(&card.text).enumerate() {
+        if let Some(slot) = slot {
+            let (response, action) = draw_slot(ui, rect_of(position), slot, text, mode);
+            geometry.card[position] = visible(&response, ui.clip_rect());
+            intent.action = action.or(intent.action.take());
+        }
+    }
+    let fixed_row = CARD_COLUMNS * (CARD_ROWS - 1);
+    for (position, (slot, text)) in card.fixed.iter().zip(&card.fixed_text).enumerate() {
+        if let Some(slot) = slot {
+            let (response, action) = draw_slot(ui, rect_of(fixed_row + position), slot, text, mode);
+            geometry.card_fixed[position] = visible(&response, ui.clip_rect());
+            intent.action = action.or(intent.action.take());
+        }
+    }
 }
 
 /// Draws what is selected: one unit with its bars, or several as names and counts.
@@ -265,6 +458,22 @@ const fn tone_color(tone: FeedTone) -> egui::Color32 {
         FeedTone::Notice => NOTICE_COLOR,
         FeedTone::Milestone => MILESTONE_COLOR,
     }
+}
+
+/// Says why the site under the pointer is refused, on an area that takes no input.
+fn draw_site_note(ctx: &egui::Context, reason: &str, geometry: &mut HudGeometry) {
+    let world = ctx.available_rect();
+    let area = egui::Area::new(egui::Id::new("battle_site_note"))
+        .pivot(egui::Align2::CENTER_TOP)
+        .fixed_pos(world.center_top() + egui::vec2(0.0, SITE_NOTE_MARGIN))
+        .interactable(false)
+        .show(ctx, |ui| {
+            ui.add(
+                egui::Label::new(egui::RichText::new(reason).color(REFUSAL_COLOR))
+                    .selectable(false),
+            );
+        });
+    geometry.site_note = Some(area.response.rect);
 }
 
 /// Draws the live feed lines at the bottom left of the world, on an area that takes no input.

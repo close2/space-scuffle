@@ -98,6 +98,9 @@ pub enum SubmissionError {
     /// The site cannot take the structure, by what the player knows. No entity is named.
     #[error("the site was refused: {0:?}")]
     SiteRefused(SiteRefusal),
+    /// A key pressed a disabled command card entry. Holds the sentence its tooltip shows.
+    #[error("the card entry is locked: {0}")]
+    CardLocked(String),
 }
 
 impl SubmissionError {

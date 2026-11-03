@@ -27,7 +27,11 @@ pub(super) fn write_order_count(output: &mut String, count: usize, action: &str)
 
 /// Appends the sentence for an order the client refused, whether at once or on its tick.
 pub fn write_submission_rejection(output: &mut String, error: &SubmissionError) {
-    let _ = write!(output, "Order rejected: {}", submission_reason(error));
+    let reason = match error {
+        SubmissionError::CardLocked(reason) => reason.as_str(),
+        other => submission_reason(other),
+    };
+    let _ = write!(output, "Order rejected: {reason}");
 }
 
 /// Returns a player-facing cause without exposing retained diagnostic identities.
@@ -38,7 +42,9 @@ pub(super) fn submission_reason(error: &SubmissionError) -> &'static str {
             "the battle cannot process another order"
         }
         SubmissionError::StaleGeneration => "the battle was replaced",
-        SubmissionError::UnsupportedOrder => "this order is unavailable",
+        SubmissionError::UnsupportedOrder | SubmissionError::CardLocked(_) => {
+            "this order is unavailable"
+        }
         SubmissionError::InvalidPlayer(_) => "this player is unavailable",
         SubmissionError::EmptySelection => "select units that can perform this order",
         SubmissionError::MissingRecipient(_) => "a selected unit no longer exists",

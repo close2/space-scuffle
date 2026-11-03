@@ -63,6 +63,17 @@ pub const COMMAND_CARD_KEYS: [KeyCode; COMMAND_CARD_SLOTS] = [
     KeyCode::KeyN,
 ];
 
+/// The letter of each [`COMMAND_CARD_KEYS`] entry, as a button shows it.
+pub const COMMAND_CARD_KEY_LABELS: [&str; COMMAND_CARD_SLOTS] = [
+    "Q", "E", "R", "T", "Y", "F", "G", "J", "K", "L", "Z", "C", "V", "B", "N",
+];
+
+/// The letter of [`STOP_KEY`], as a button shows it.
+pub const STOP_KEY_LABEL: &str = "X";
+
+/// The letter of [`HOLD_POSITION_KEY`], as a button shows it.
+pub const HOLD_POSITION_KEY_LABEL: &str = "H";
+
 /// Number of control groups, one per entry of [`CONTROL_GROUP_KEYS`].
 pub const CONTROL_GROUP_COUNT: usize = 10;
 
@@ -146,6 +157,20 @@ mod tests {
                 !reserved.contains(key),
                 "{key:?} is a card key and reserved"
             );
+        }
+    }
+
+    #[test]
+    fn every_key_label_names_its_key() {
+        let keys = COMMAND_CARD_KEYS
+            .iter()
+            .zip(COMMAND_CARD_KEY_LABELS)
+            .chain([
+                (&STOP_KEY, STOP_KEY_LABEL),
+                (&HOLD_POSITION_KEY, HOLD_POSITION_KEY_LABEL),
+            ]);
+        for (key, label) in keys {
+            assert_eq!(format!("{key:?}"), format!("Key{label}"));
         }
     }
 

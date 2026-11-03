@@ -9,8 +9,8 @@
 //! The per-row rules of the right click live in `battle_input::context_order` and the site
 //! arithmetic in `battle_input::command_mode`, both tested there without Bevy. This file proves
 //! that the pointer reaches those rules: that a billboard on the screen resolves to its node, that
-//! the resulting order earns income, and that a mode owns the left button until it ends. Nothing
-//! enters a mode yet, as the command card comes later, so tests set `CommandMode` directly.
+//! the resulting order earns income, and that a mode owns the left button until it ends. Entering
+//! a mode from the card belongs to `battle_card_tests.rs`, so tests here set `CommandMode` directly.
 //!
 //! # Limits
 //! Shares the limits of `support/battle_harness.rs`: no window and no renderer. An order whose
@@ -61,6 +61,12 @@ const STRUCTURE: &str = "assembly_bay_dome";
 
 /// Minimum corner of open plateau in the skirmish, clear of the home player's nodes.
 const SITE_CORNER: u32 = 2;
+
+/// Height above the ground, in world units, of the middle of a blocker's bubble.
+const BLOCKER_HEIGHT: f32 = 0.7;
+
+/// The opposing player of the skirmish.
+const ENEMY: sim_types::PlayerId = sim_types::PlayerId(1);
 
 /// More minerals than any test can spend.
 const RICH: u32 = 100_000;
@@ -194,7 +200,102 @@ fn soldier_beside(harness: &mut Harness, worker: EntityId) -> EntityId {
     soldier
 }
 
+/// Spawns a unit of `owner` standing in front of `node`'s billboard, and returns it with the
+/// window position of that billboard.
+fn blocker_in_front_of(
+    harness: &mut Harness,
+    node: ResourceNodeId,
+    owner: sim_types::PlayerId,
+) -> (EntityId, Vec2) {
+    // The sight line from the camera to the billboard, where it passes at a unit's height.
+    let billboard =
+        harness.app.world().resource::<MapPresentation>().objects[node.0 as usize].position;
+    let world = harness.app.world_mut();
+    let eye = world
+        .query_filtered::<&GlobalTransform, With<client::RtsCamera>>()
+        .single(world)
+        .translation();
+    let node_at = node_position(harness, node);
+    let ground = harness
+        .world()
+        .map
+        .terrain_altitude_scalar(battle_harness::sim_position(node_at))
+        .to_f32();
+    let height = ground + BLOCKER_HEIGHT;
+    let on_sight_line = eye.lerp(billboard, (eye.y - height) / (eye.y - billboard.y));
+    let world = harness.world_mut();
+    let unit_type = world
+        .catalog
+        .id_by_slug("pulse_bot")
+        .expect("the catalog ships this unit");
+    let position = sim_types::SimVec2::new(
+        SimScalar::from_num(on_sight_line.x),
+        SimScalar::from_num(on_sight_line.z),
+    );
+    let blocker = world
+        .spawn_unit(unit_type, owner, position)
+        .expect("open ground beside a node");
+    harness.resume();
+    harness.step(3);
+    harness.pause();
+    let billboard = node_on_screen(harness, node);
+    (blocker, billboard)
+}
+
 // --- Right click on a node ---------------------------------------------------------------------
+
+#[test]
+fn a_friendly_unit_in_front_of_a_mineral_does_not_turn_harvest_into_move() {
+    let mut harness = skirmish();
+    let (worker, node) = worker_and_mineral(&mut harness);
+    let (blocker, billboard) = blocker_in_front_of(&mut harness, node, LOCAL_PLAYER);
+
+    // Control: the pointer really is on the blocker, as a left click there selects it.
+    harness.click(MouseButton::Left, billboard);
+    assert_eq!(harness.selection().ids(), [blocker]);
+    harness.select(worker);
+    assert_eq!(harness.selection().ids(), [worker]);
+
+    harness.click(MouseButton::Right, billboard);
+
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert_eq!(orders[0].entities, [worker]);
+    assert_eq!(orders[0].order, UnitOrder::Harvest { target: node });
+}
+
+#[test]
+fn a_soldier_right_clicking_a_mineral_behind_a_friend_still_moves() {
+    let mut harness = skirmish();
+    let (worker, node) = worker_and_mineral(&mut harness);
+    let soldier = soldier_beside(&mut harness, worker);
+    let (_, billboard) = blocker_in_front_of(&mut harness, node, LOCAL_PLAYER);
+    harness.select(soldier);
+
+    harness.click(MouseButton::Right, billboard);
+
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert!(
+        matches!(orders[0].order, UnitOrder::Move { .. }),
+        "{:?}",
+        orders[0].order
+    );
+}
+
+#[test]
+fn an_enemy_in_front_of_a_mineral_is_attacked_rather_than_harvested_past() {
+    let mut harness = skirmish();
+    let (worker, node) = worker_and_mineral(&mut harness);
+    let (enemy, billboard) = blocker_in_front_of(&mut harness, node, ENEMY);
+
+    harness.click(MouseButton::Right, billboard);
+
+    let orders = pending(&harness);
+    assert_eq!(orders.len(), 1, "status: {}", harness.status());
+    assert_eq!(orders[0].entities, [worker]);
+    assert_eq!(orders[0].order, UnitOrder::attack(enemy));
+}
 
 #[test]
 fn right_click_on_a_mineral_sends_a_worker_to_harvest_and_income_rises() {
