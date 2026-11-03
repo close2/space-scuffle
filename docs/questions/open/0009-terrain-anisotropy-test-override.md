@@ -2,7 +2,7 @@
 
 - **Asked:** 2026-11-02
 - **Blocking:** no
-- **Default until answered:** keep the override, which applies only to lavapipe older than Mesa 25.1
+- **Default until answered:** keep the override; on this server GPU tests run on `radv`, which never applies it
 
 ## Question
 
@@ -29,5 +29,14 @@ The options:
    would then need the GPU lock, which AGENTS.md section 7 deliberately avoids.
 
 I recommend option 2 when the server is next upgraded, and option 1 until then.
+
+**Update 2026-11-03.** Following the owner's instruction to use the GPU, option 3 is now the default
+(`docs/plans/2026-11-03-gpu-test-harness.md`, decision D7). On this server every GPU test child runs on the RX 580
+through `radv`, under one GPU lock per child, and `radv` renders hex-tiled ground at the production anisotropy of 16
+in all five terrain-drawing tests. The harness applies the override only to a child on `lavapipe` before Mesa 25.1,
+so its only remaining consumer is a forced `SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe` run on this server, used to
+reproduce CI. CI runs Mesa 25.2.8 and never applies it. The remaining choice is: keep the override until the
+server's Mesa is 25.1 or later and then delete it (recommended), or delete it now, which makes a forced-`lavapipe`
+run of the five terrain tests here time out.
 
 ## Answer
