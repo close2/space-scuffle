@@ -8,8 +8,8 @@ use bevy::{
     prelude::*,
 };
 use client::vfx::{
-    BeamVisualComponent, CombatEffectOwner, CombatFxMaterial, MeleeSlashComponent,
-    ProjectileVisual, ShatterShard,
+    BeamVisualComponent, CombatEffectOwner, CombatFxInstance, CombatFxMaterial,
+    MeleeSlashComponent, ProjectileVisual, ShatterShard,
 };
 use serde::{Deserialize, Serialize};
 
@@ -60,6 +60,7 @@ type ActualEffect = (
     Entity,
     Option<&'static CombatEffectOwner>,
     &'static MeshMaterial3d<CombatFxMaterial>,
+    &'static CombatFxInstance,
     Option<&'static BeamVisualComponent>,
     Option<&'static ProjectileVisual>,
     Option<&'static MeleeSlashComponent>,
@@ -70,7 +71,6 @@ type ActualEffect = (
 #[derive(SystemParam)]
 pub(in crate::runtime_capture) struct ReadbackEvidence<'w, 's> {
     time: Res<'w, Time>,
-    materials: Res<'w, Assets<CombatFxMaterial>>,
     effects: Query<'w, 's, ActualEffect>,
 }
 
@@ -78,37 +78,35 @@ impl ReadbackEvidence<'_, '_> {
     /// Copies actual relevant effects, sorted by entity identity for stable equality.
     pub(in crate::runtime_capture) fn capture(&self) -> Result<Fingerprint, CaptureError> {
         let mut effects = Vec::new();
-        for (entity, owner, handle, beam, projectile, melee, shard) in &self.effects {
+        for (entity, owner, handle, instance, beam, projectile, melee, shard) in &self.effects {
             let owner = owner.ok_or_else(|| failure("readback effect owner missing"))?;
-            let material = self
-                .materials
-                .get(&handle.0)
-                .ok_or_else(|| failure("readback effect material missing"))?;
+            // The live shader data is the effect's instance; its pooled material only names it.
+            let shader = &instance.uniform;
             let timer = beam
                 .map(|value| &value.lifetime)
                 .or_else(|| projectile.map(|value| &value.lifetime))
                 .or_else(|| melee.map(|value| &value.lifetime))
                 .or_else(|| shard.map(|value| &value.lifetime))
                 .ok_or_else(|| failure("readback effect timer missing"))?;
-            if !material.uniform.age.is_finite()
-                || !material.uniform.seed.is_finite()
-                || !material.uniform.aspect.is_finite()
-                || !material.uniform.primary_color.is_finite()
-                || material.uniform.age.to_bits() != timer.fraction().to_bits()
+            if !shader.age.is_finite()
+                || !shader.seed.is_finite()
+                || !shader.aspect.is_finite()
+                || !shader.primary_color.is_finite()
+                || shader.age.to_bits() != timer.fraction().to_bits()
             {
                 return Err(failure(
-                    "readback material is nonfinite or its age differs from actual timer",
+                    "readback shader data is nonfinite or its age differs from actual timer",
                 ));
             }
             effects.push(EffectFingerprint {
                 entity: entity.to_bits(),
                 material: format!("{:?}", handle.0.id()),
                 owner: owner.0 .0,
-                seed_bits: material.uniform.seed.to_bits(),
-                shader_age_bits: material.uniform.age.to_bits(),
-                shader_kind: material.uniform.fx_kind,
-                color_bits: material.uniform.primary_color.to_array().map(f32::to_bits),
-                aspect_bits: material.uniform.aspect.to_bits(),
+                seed_bits: shader.seed.to_bits(),
+                shader_age_bits: shader.age.to_bits(),
+                shader_kind: shader.fx_kind,
+                color_bits: shader.primary_color.to_array().map(f32::to_bits),
+                aspect_bits: shader.aspect.to_bits(),
                 elapsed_ns: nanoseconds(timer.elapsed())?,
                 duration_ns: nanoseconds(timer.duration())?,
             });

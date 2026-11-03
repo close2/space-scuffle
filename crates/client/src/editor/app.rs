@@ -72,8 +72,8 @@ use crate::selection::SelectionState;
 use crate::terrain::{TerrainPlugin, TerrainState};
 use crate::vfx::{
     process_combat_events_system, setup_vfx_assets_system, update_beams_system,
-    update_melee_slashes_system, update_projectiles_system, update_shatter_system,
-    CombatFxMaterial, CombatVisualEvent,
+    update_melee_slashes_system, update_projectiles_system, update_shatter_system, CombatFxPlugin,
+    CombatVisualEvent,
 };
 use crate::{frame_limit_system, CatalogResource, FrameLimit};
 
@@ -254,7 +254,7 @@ impl MapEditorPlugin {
             .add_plugins(BubbleOpticsPlugin)
             .add_plugins(MaterialPlugin::<BubbleDomeMaterial>::default())
             .add_plugins(MaterialPlugin::<SelectionRingMaterial>::default())
-            .add_plugins(MaterialPlugin::<CombatFxMaterial>::default());
+            .add_plugins(CombatFxPlugin);
     }
 }
 
