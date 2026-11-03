@@ -17,6 +17,12 @@
 //! into everything after it. A frame of the shipped map takes seconds on the software renderer,
 //! so the child does only what it must.
 //!
+//! # Evidence
+//! With `SPACE_SCUFFLE_RESULT_GRAB` naming a file and `SPACE_SCUFFLE_SHOW_WINDOW=1` mapping the
+//! window, the child also grabs the X display with `xwd` once the window has settled, before it
+//! presses `Exit`. That grab is the pixel evidence of the result window in `docs/evidence/`,
+//! because Bevy's own screenshots show egui flat. The gate does not set either variable.
+//!
 //! # Invariants
 //! The child reports before it presses, and only the button can end it: nothing else in the child
 //! exits, its frame limit is out of reach, and if the press fails the GPU run's deadline fails the
@@ -54,6 +60,10 @@ const CHILD_OUT_VAR: &str = "SPACE_SCUFFLE_RESULT_CHILD_OUT";
 const CHILD_TEST: &str = "windowed_result_child";
 /// Frame cap that makes the media policy strict. The GPU run's own deadline ends a stuck child.
 const CHILD_FRAME_LIMIT: u64 = 100_000;
+/// Environment variable naming the XWD file the child grabs the display into, if any.
+const GRAB_VAR: &str = "SPACE_SCUFFLE_RESULT_GRAB";
+/// Frames presented after the window settles and before the grab, so the display holds it.
+const GRAB_FRAMES: u32 = 3;
 /// The other player of the shipped skirmish, whose base the child razes.
 const ENEMY: PlayerId = PlayerId(1);
 
@@ -157,6 +167,7 @@ fn write_report(screen: &ResultScreen, hud: &HudGeometry, ui: &UiGeometry) {
 fn drive_to_exit(
     mut stage: ResMut<'_, Stage>,
     mut previous: Local<'_, Option<Rect>>,
+    mut grab_wait: Local<'_, u32>,
     mut session: ResMut<'_, BattleSession>,
     screen: Res<'_, ResultScreen>,
     hud: Res<'_, HudGeometry>,
@@ -188,6 +199,18 @@ fn drive_to_exit(
                 *previous = hud.exit;
                 return;
             };
+            if let Some(path) = std::env::var_os(GRAB_VAR) {
+                if *grab_wait < GRAB_FRAMES {
+                    *grab_wait += 1;
+                    return;
+                }
+                let status = std::process::Command::new("xwd")
+                    .args(["-root", "-silent", "-out"])
+                    .arg(&path)
+                    .status()
+                    .expect("xwd runs on the virtual display");
+                assert!(status.success(), "xwd failed: {status:?}");
+            }
             write_report(&screen, &hud, &ui);
             let position = Vec2::new(exit.center().x, exit.center().y);
             window.set_cursor_position(Some(position));
