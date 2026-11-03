@@ -9,12 +9,19 @@
     clippy::cast_sign_loss
 )]
 
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/arena.rs"]
+mod arena;
+
 use sim_map::{CliffLevel, GameMap, MapCell, RampDir, RampProfile, CLIFF_LEVEL_HEIGHT};
 use sim_types::{SimScalar, SimVec2};
 
 #[test]
 fn multi_cell_north_ramp_is_monotonic() {
-    let map = GameMap::default_arena();
+    let map = arena::default_arena();
     let x = SimScalar::from_num(31.5);
 
     let mut prev_alt = SimScalar::ZERO;
@@ -50,7 +57,7 @@ fn multi_cell_north_ramp_is_monotonic() {
 
 #[test]
 fn ramp_profile_indices() {
-    let map = GameMap::default_arena();
+    let map = arena::default_arena();
     for (expected_idx, y) in (30..=33).enumerate() {
         let profile = map.ramp_profile(31, y).expect("cell (31, y) is a ramp");
         assert_eq!(

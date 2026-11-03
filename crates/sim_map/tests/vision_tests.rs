@@ -8,12 +8,19 @@
     clippy::doc_markdown
 )]
 
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/arena.rs"]
+mod arena;
+
 use sim_map::{CellFlags, CliffLevel, GameMap, MapCell, PlayerVisionMap, VisionSource};
 use sim_types::{MoverType, PlayerId, SimScalar, SimVec2, VisibilityState};
 
 #[test]
 fn test_low_ground_vs_high_ground_occlusion() {
-    let arena = GameMap::default_arena();
+    let arena = arena::default_arena();
     let mut vision = PlayerVisionMap::new(arena.width(), arena.height());
 
     let player1 = PlayerId(1);
@@ -54,7 +61,7 @@ fn test_low_ground_vs_high_ground_occlusion() {
 
 #[test]
 fn test_air_spotter_high_ground_reveal() {
-    let arena = GameMap::default_arena();
+    let arena = arena::default_arena();
     let mut vision = PlayerVisionMap::new(arena.width(), arena.height());
 
     // Initially low ground observer only
@@ -143,7 +150,7 @@ fn test_los_blocker_smoke_vent() {
 
 #[test]
 fn test_watchtower_capture_and_vision() {
-    let mut arena = GameMap::default_arena();
+    let mut arena = arena::default_arena();
     let mut vision_p1 = PlayerVisionMap::new(arena.width(), arena.height());
     let mut vision_p2 = PlayerVisionMap::new(arena.width(), arena.height());
 
