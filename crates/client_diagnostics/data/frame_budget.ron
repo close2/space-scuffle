@@ -1,0 +1,65 @@
+// Frame-budget measurement specification, read at run time by the `frame_budget` tool
+// (crates/client_diagnostics/src/frame_budget). Plan: docs/plans/2026-11-03-close-phase-6-7-8-exits.md,
+// decision D-4 and work package WP5.
+//
+// The tool copies the real assets root into a work directory and writes into that copy a flat map,
+// one start loadout per scenario and one scenario file per entry of `scenarios`. Nothing here is
+// shipped to players and nothing in the repository's `assets/` changes.
+//
+// Why eight players: the production scenario path places a player's units on rings 1 to 3 around
+// its 5x5 town hall, which hold 96 cells, so one player cannot field 100 or 200 units. Every
+// scenario therefore uses the same eight players on a circle, each attack-moving to the start
+// opposite its own, and differs only in units per player: 0, 25 and 50 (0, 200 and 400 units).
+// See docs/questions/open/0018-frame-budget-army-layout.md.
+(
+    format_version: 1,
+    // The shipped loadout whose unit mix is scaled to `units_per_player`, with largest-remainder
+    // rounding. Its town hall and starting bank are kept.
+    source_loadout: "battle_automaton",
+    seed: 1592639215,
+    map: (
+        file: "maps/frame_budget_arena.scmap.ron",
+        title: "Frame Budget Arena",
+        description: "Flat measurement arena for the frame_budget tool; generated, never shipped.",
+        width: 128,
+        height: 128,
+        theme: "orbital_foundry",
+        start_footprint: (5, 5),
+    ),
+    // Start cells are the top-left cells of the footprints, on a circle of radius 22 to 23 cells
+    // around (64.5, 64.5). Neighbouring starts are 16 cells apart (Chebyshev), the map minimum.
+    players: [
+        (slot: 0, start_cell: (84, 62), target_slot: 4),
+        (slot: 1, start_cell: (78, 78), target_slot: 5),
+        (slot: 2, start_cell: (62, 84), target_slot: 6),
+        (slot: 3, start_cell: (46, 78), target_slot: 7),
+        (slot: 4, start_cell: (40, 62), target_slot: 0),
+        (slot: 5, start_cell: (46, 46), target_slot: 1),
+        (slot: 6, start_cell: (62, 40), target_slot: 2),
+        (slot: 7, start_cell: (78, 46), target_slot: 3),
+    ],
+    // The 0 scenario keeps the eight town halls and fields no unit: the baseline of map, smog,
+    // HUD and presentation with nothing moving.
+    scenarios: [
+        (name: "0", units_per_player: 0),
+        (name: "200", units_per_player: 25),
+        (name: "400", units_per_player: 50),
+    ],
+    // A fixed pose over the arena, in world units (one unit is one grid cell; `target` is the
+    // ground point (x, z) the camera looks at). The far side of a 58-degree view reaches further
+    // than the near side, so the target sits 8 cells toward the camera from the arena's centre.
+    // Every unit of every army stays inside the 1280x720 view from this pose.
+    camera: (target: (64.5, 72.5), distance: 75.0),
+    // Frames rendered after the battle's media, map presentation and GPU pipelines are ready and
+    // before measurement starts, with the battle paused, so pipeline compilation and first-use
+    // uploads are excluded.
+    warmup_frames: 180,
+    // Simulation ticks measured (1,500 ticks are 60 s of game time at 25 ticks per second).
+    measure_ticks: 1500,
+    // Ticks of the combat window, from the first frame with a combat event.
+    combat_window_ticks: 750,
+    // Smallest share of live units that must be inside the view on every measured frame.
+    min_in_view_fraction: 0.95,
+    // Rows preallocated for the measured window; a longer window fails rather than allocate.
+    max_recorded_frames: 200000,
+)
