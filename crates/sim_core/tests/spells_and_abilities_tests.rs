@@ -422,7 +422,7 @@ fn test_psionic_storm_hazard_zone_aoe_and_non_stacking() {
         energy_cost: SimScalar::ZERO,
         cooldown_ticks: 50,
         cast_range: SimScalar::from_num(10),
-        effect: AbilityEffectSpec::PsionicStormAoE {
+        effect: AbilityEffectSpec::SpawnHazardZone {
             radius: SimScalar::from_num(3),
             delay_ticks: 0,
             duration_ticks: 60,

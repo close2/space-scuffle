@@ -182,9 +182,8 @@ pub enum AbilityEffectSpec {
         /// Cooldown ticks incurred on cast.
         cooldown_ticks: u16,
     },
-    /// Periodic area-of-effect damage hazard zone (Psionic Storm).
-    #[serde(alias = "SpawnHazardZone")]
-    PsionicStormAoE {
+    /// Spawns a periodic area-of-effect damage hazard zone at the target point.
+    SpawnHazardZone {
         /// Circular radius of effect.
         radius: SimScalar,
         /// Initial detonation delay in ticks before first damage application.

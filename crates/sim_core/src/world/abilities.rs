@@ -335,7 +335,7 @@ impl SimWorld {
                     return Ok(EffectAdmission::Refused);
                 }
             }
-            AbilityEffectSpec::PsionicStormAoE { .. } => {
+            AbilityEffectSpec::SpawnHazardZone { .. } => {
                 if target_pos.is_none() {
                     return Ok(EffectAdmission::Refused);
                 }
@@ -414,7 +414,7 @@ impl SimWorld {
                     entity.current_funnel_waypoints.clear();
                 }
             }
-            AbilityEffectSpec::PsionicStormAoE {
+            AbilityEffectSpec::SpawnHazardZone {
                 radius,
                 delay_ticks,
                 duration_ticks,
