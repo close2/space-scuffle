@@ -130,6 +130,44 @@ impl HudModel {
         self.selection_changes
     }
 
+    /// Every growable buffer this model retains, as `(name, address, capacity in elements)`.
+    ///
+    /// Evidence for the steady-state tests that a refresh reuses storage: the list is the same on
+    /// every frame that does not grow a buffer. Not part of the HUD's interface.
+    #[doc(hidden)]
+    pub fn retained_buffers(&self) -> impl Iterator<Item = (&'static str, usize, usize)> + '_ {
+        // Strings and vectors alike: the name, where the storage starts, and how much it holds.
+        macro_rules! buffer {
+            ($name:literal, $storage:expr) => {
+                ($name, $storage.as_ptr().addr(), $storage.capacity())
+            };
+        }
+        let view = &self.view;
+        [
+            buffer!("hud.resource_line", self.resource_line),
+            buffer!("hud.clock_line", self.clock_line),
+            buffer!("hud.view.visibility", view.visibility),
+            buffer!("hud.view.queues", view.queues),
+            buffer!("hud.view.jobs", view.jobs),
+            buffer!("hud.view.carriers", view.carriers),
+            buffer!("hud.view.laden", view.laden),
+            buffer!("hud.view.completed_types", view.completed_types),
+            buffer!("hud.view.options", view.options),
+            buffer!("hud.view.overclock_ready", view.overclock_ready),
+            buffer!("hud.view.visible_nodes", view.visible_nodes),
+            buffer!("hud.last_selection", self.last_selection),
+            buffer!("hud.groups", self.groups),
+            buffer!("hud.selected_types", self.selected_types),
+            buffer!("hud.facts", self.facts),
+        ]
+        .into_iter()
+        .chain(
+            self.groups
+                .iter()
+                .map(|group| buffer!("hud.groups.label", group.label)),
+        )
+    }
+
     /// Whether the summary still describes `selection`.
     fn selection_is_current(&self, selection: &BattleSelection) -> bool {
         selection.ids() == self.last_selection && selection.inspected() == self.last_inspected
