@@ -362,6 +362,30 @@ of media, per `docs/questions/open/0001-media-scope.md`. Plan and evidence:
 **Exit:** no per-frame heap allocation or asset churn in sync systems, proved by test; one owner per concern;
 frame budget measured at 200 and 400 units.
 
+**Exit status (2026-11-03): met; CI green on `main` at `c918aa9` (run 41711531706, all six jobs).** No asset churn
+and no per-frame allocation in sync systems: `crates/client/tests/sync_steady_state_tests.rs` (`6cc3ec6`) runs the
+real client App over steady frames of the live battle, the skirmish HUD and the swarm. It proves that no asset of
+any type the client registers is created, modified or removed, apart from the C-5 rule for units that turn, that
+no entity is spawned or despawned, and that every retained buffer of the sync systems keeps its address and
+capacity. `crates/client/tests/sync_allocation_count_tests.rs` (`77a9db6`) counts heap allocations from outside the
+process under valgrind's DHAT, with no `unsafe` code (Q0011's default). It finds none per frame in the live battle
+synchroniser (`advance_battle_ticks`, `sync_live_battle_system`, `publish_combat_events`) on paused frames, beyond a
+baseline app without those systems, and a planted allocation is counted exactly. The count covers that
+synchroniser; the other sync systems are covered by the asset-churn and retained-buffer proof. One owner per concern:
+`crates/client/tests/system_ownership_tests.rs` (`88ca528`) compares every system that can write a declared concern
+with a table of its owners, and `input_ownership_is_sampled_after_the_inspector_draws` with
+`editor_app_tests.rs::document_load_applies_after_the_editor_ui_requests_it` pin the two orderings that make no
+schedule cycle when reversed. Frame budget: `frame_budget` (`crates/client_diagnostics`, `b925db3`, `af1023d`)
+measured the real client on the RX 580 through a headless KWin compositor, with hardware present, 1280×720, vsync
+off and no monitor (Q0019's default). Median of five runs, frame interval p50, p95 and p99: 15.6, 19.0 and 20.6 ms at
+200 units, 16.3, 20.9 and 23.6 ms at 400 units (12.3, 15.2 and 16.6 ms with no units). The figures are published
+against the 16.7 and 33.3 ms reference lines, with no target, as Q0015's default says; Q0015 stays open. Evidence:
+`docs/evidence/2026-11-03-frame-budget.md`. Left for later plans, recorded there: the smog solver costs about 8.2 ms
+of every frame at any unit count (C-18, new); C-17's per-effect materials are measured, about 0.44 ms per frame on
+average on the main threads plus longer frame intervals in heavy combat frames, and stay open; and the 400-unit
+screenshot shows no smog, so C-7 is still proved on the swarm scene only. Plan:
+`docs/plans/2026-11-03-close-phase-6-7-8-exits.md`.
+
 ### Phase 7: Editor hardening (M, parallel)
 
 | Step | Finding | Action | Status |
