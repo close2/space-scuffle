@@ -29,7 +29,7 @@ fn arena() -> Result<SimWorld, Box<dyn std::error::Error>> {
     )?
     .decode()?
     .to_game_map()?;
-    Ok(SimWorld::new(map, 11))
+    Ok(sim_fixtures::world(map, 11))
 }
 
 fn spawn(

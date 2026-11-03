@@ -15,7 +15,6 @@
     clippy::too_many_lines
 )]
 
-use sim_core::SimWorld;
 use sim_map::{CellFlags, CliffLevel, GameMap, MapCell};
 use sim_types::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttributeFlags, OverclockSpec, PlayerId,
@@ -38,7 +37,7 @@ fn test_overclock_stim_hp_cost_and_stat_multipliers() {
     let height = 32;
     let map = GameMap::new(width, height, MapCell::default_ground(CliffLevel(0)))
         .expect("invariant: valid map");
-    let mut world = SimWorld::new(map, 0x1111);
+    let mut world = sim_fixtures::world(map, 0x1111);
 
     let player_blue = PlayerId(0);
     let pulse_bot_id = world.catalog.id_by_slug("pulse_bot").expect("pulse_bot");
@@ -136,7 +135,7 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
     let height = 32;
     let map = GameMap::new(width, height, MapCell::default_ground(CliffLevel(0)))
         .expect("invariant: valid map");
-    let mut world = SimWorld::new(map, 0x2222);
+    let mut world = sim_fixtures::world(map, 0x2222);
 
     let player_blue = PlayerId(0);
     let player_red = PlayerId(1);
@@ -315,7 +314,7 @@ fn test_blink_teleport_across_cliff_chasm() {
 
     let map = GameMap::from_cells(width, height, cells, Vec::new(), Vec::new())
         .expect("invariant: valid map");
-    let mut world = SimWorld::new(map, 0x3333);
+    let mut world = sim_fixtures::world(map, 0x3333);
 
     let player_blue = PlayerId(0);
     let crawler_id = world.catalog.id_by_slug("pulse_bot").expect("pulse_bot");
@@ -382,7 +381,7 @@ fn test_psionic_storm_hazard_zone_aoe_and_non_stacking() {
     let height = 32;
     let map = GameMap::new(width, height, MapCell::default_ground(CliffLevel(0)))
         .expect("invariant: valid map");
-    let mut world = SimWorld::new(map, 0x4444);
+    let mut world = sim_fixtures::world(map, 0x4444);
 
     let player_blue = PlayerId(0);
     let player_red = PlayerId(1);
@@ -485,7 +484,7 @@ fn test_cloak_invisibility_and_detector_reveal() {
     let height = 32;
     let map = GameMap::new(width, height, MapCell::default_ground(CliffLevel(0)))
         .expect("invariant: valid map");
-    let mut world = SimWorld::new(map, 0x5555);
+    let mut world = sim_fixtures::world(map, 0x5555);
 
     let player_blue = PlayerId(0);
     let player_red = PlayerId(1);

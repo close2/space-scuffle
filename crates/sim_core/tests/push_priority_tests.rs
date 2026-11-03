@@ -13,7 +13,7 @@
     clippy::too_many_lines
 )]
 
-use sim_core::{compute_push_displacement, PushEntityParams, SimWorld};
+use sim_core::{compute_push_displacement, PushEntityParams};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
     EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
@@ -23,7 +23,7 @@ use sim_types::{
 fn test_idle_friendly_displaced_laterally() {
     let default_cell = MapCell::default_ground(CliffLevel(0));
     let map = GameMap::new(64, 64, default_cell).expect("valid map");
-    let mut world = SimWorld::new(map, 0x1111_2222);
+    let mut world = sim_fixtures::world(map, 0x1111_2222);
 
     let player = PlayerId(0);
     let pulse_bot_id = world
@@ -75,7 +75,7 @@ fn test_idle_friendly_displaced_laterally() {
 fn test_hold_position_friendly_hard_blocks() {
     let default_cell = MapCell::default_ground(CliffLevel(0));
     let map = GameMap::new(64, 64, default_cell).expect("valid map");
-    let mut world = SimWorld::new(map, 0x3333_4444);
+    let mut world = sim_fixtures::world(map, 0x3333_4444);
 
     let player = PlayerId(0);
     let pulse_bot_id = world
@@ -136,7 +136,7 @@ fn test_hold_position_friendly_hard_blocks() {
 fn test_enemy_unit_hard_collision_reciprocal() {
     let default_cell = MapCell::default_ground(CliffLevel(0));
     let map = GameMap::new(64, 64, default_cell).expect("valid map");
-    let mut world = SimWorld::new(map, 0x5555_6666);
+    let mut world = sim_fixtures::world(map, 0x5555_6666);
 
     let blue = PlayerId(0);
     let red = PlayerId(1);

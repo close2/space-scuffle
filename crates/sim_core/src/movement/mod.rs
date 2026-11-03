@@ -537,7 +537,7 @@ mod tests {
             32,
             sim_map::MapCell::default_ground(sim_map::CliffLevel(0)),
         )?;
-        let mut world = SimWorld::new(map, 45);
+        let mut world = crate::test_support::world(map, 45);
         let ground = world
             .catalog
             .archetypes()

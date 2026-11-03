@@ -11,7 +11,7 @@
     clippy::too_many_lines
 )]
 
-use sim_core::{SimWorld, WeaponPhase};
+use sim_core::WeaponPhase;
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{PlayerId, PlayerSlot, SimScalar, SimVec2, Tick, TickBundle, VisibilityState};
 
@@ -31,7 +31,7 @@ fn test_high_ground_combat_occlusion_and_spotter_reveal() {
     let map = GameMap::from_cells(width, height, cells, Vec::new(), Vec::new())
         .expect("invariant: valid map");
 
-    let mut world = SimWorld::new(map, 0xC001_D00D);
+    let mut world = sim_fixtures::world(map, 0xC001_D00D);
 
     let player_blue = PlayerId(0);
     let player_red = PlayerId(1);

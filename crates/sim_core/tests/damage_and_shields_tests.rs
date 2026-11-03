@@ -17,8 +17,8 @@
 )]
 
 use sim_core::{
-    calculate_hit_damage, calculate_splash_damage, SplashSpec, UnitArchetype, UnitCatalog,
-    WeaponSpec, MIN_DAMAGE_CLAMP,
+    calculate_hit_damage, calculate_splash_damage, SplashSpec, UnitArchetype, WeaponSpec,
+    MIN_DAMAGE_CLAMP,
 };
 use sim_types::{
     ArchetypeCapabilities, AttributeFlags, Faction, MoverType, ShapeKind, SilhouetteClass,
@@ -185,7 +185,7 @@ fn test_attribute_bonus_damage() {
 
 #[test]
 fn test_multi_hit_zealot_armor_reduction() {
-    let catalog = UnitCatalog::new_starter_roster();
+    let catalog = sim_fixtures::shipped_catalogs().units;
     let zealot = catalog
         .get_by_slug("psi_grey")
         .expect("Psi-Blade Grey exists");
@@ -301,13 +301,12 @@ fn test_circular_splash_falloff() {
 
 #[test]
 fn test_shield_regeneration_250_tick_delay() {
-    use sim_core::SimWorld;
     use sim_map::{CliffLevel, GameMap, MapCell};
     use sim_types::PlayerId;
 
     let default_cell = MapCell::default_ground(CliffLevel(0));
     let map = GameMap::new(64, 64, default_cell).expect("invariant: valid map");
-    let mut world = SimWorld::new(map, 0x5555_AAAA);
+    let mut world = sim_fixtures::world(map, 0x5555_AAAA);
 
     let psi_grey_id = world
         .catalog
@@ -361,13 +360,12 @@ fn test_shield_regeneration_250_tick_delay() {
 /// while friendly_fire == false splash protects nearby allied units from harm.
 #[test]
 fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
-    use sim_core::SimWorld;
     use sim_map::{CliffLevel, GameMap, MapCell};
     use sim_types::{PlayerId, UnitOrder};
 
     let default_cell = MapCell::default_ground(CliffLevel(0));
     let map = GameMap::new(64, 64, default_cell).expect("invariant: valid map");
-    let mut world = SimWorld::new(map, 0x9999);
+    let mut world = sim_fixtures::world(map, 0x9999);
 
     let player_blue = PlayerId(0);
     let player_red = PlayerId(1);

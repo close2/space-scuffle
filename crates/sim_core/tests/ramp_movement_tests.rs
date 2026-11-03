@@ -60,7 +60,7 @@ fn loaded_world() -> Result<(SimWorld, EntityId), Box<dyn std::error::Error>> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../assets/maps/default_arena.scmap.ron");
     let map = MapFile::load(&path)?.decode()?.to_game_map()?;
-    let mut world = SimWorld::new(map, 417);
+    let mut world = sim_fixtures::world(map, 417);
     let archetype = world
         .catalog
         .archetypes()
@@ -134,7 +134,7 @@ fn arrival_snaps_cannot_cross_a_ramp_side_wall() -> TestResult {
             }
         }
     }
-    let mut world = SimWorld::new(map, 418);
+    let mut world = sim_fixtures::world(map, 418);
     world.vision_aware_pathfinding = false;
     let archetype = world
         .catalog

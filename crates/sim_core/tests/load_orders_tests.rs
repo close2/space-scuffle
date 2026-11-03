@@ -35,7 +35,7 @@ struct Fixture {
 
 fn fixture() -> Result<Fixture, Box<dyn Error>> {
     let map = GameMap::new(40, 40, MapCell::default_ground(CliffLevel(0)))?;
-    let mut world = SimWorld::new(map, 31);
+    let mut world = sim_fixtures::world(map, 31);
     let (carrier_type, capacity) = world
         .catalog
         .archetypes()

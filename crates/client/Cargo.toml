@@ -37,6 +37,8 @@ bytemuck = { version = "1.25", features = ["derive"] }
 thiserror.workspace = true
 
 [dev-dependencies]
+# The shipped catalogs and worlds, embedded for tests only; production loads them from disk.
+sim_fixtures.workspace = true
 naga = { version = "23.1.0", features = ["wgsl-in"] }
 # Same composer and feature set as bevy_render, so tests resolve `#import` exactly as production does.
 naga_oil = { version = "0.16.0", default-features = false, features = ["test_shader"] }

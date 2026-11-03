@@ -114,18 +114,6 @@ impl UpgradeCatalog {
         Self::from_ron_str(&content)
     }
 
-    /// Creates the default upgrade catalog using the compile-time embedded `assets/catalog/upgrades.ron`.
-    ///
-    /// # Panics
-    /// Panics if the compile-time embedded RON contains syntax errors.
-    #[must_use]
-    #[allow(clippy::expect_used)]
-    pub fn default_catalog() -> Self {
-        const EMBEDDED_UPGRADES: &str = include_str!("../../../assets/catalog/upgrades.ron");
-        Self::from_ron_str(EMBEDDED_UPGRADES)
-            .expect("invariant: embedded assets/catalog/upgrades.ron must be syntactically valid")
-    }
-
     /// Looks up an upgrade by its integer [`UpgradeId`].
     #[must_use]
     pub fn get_by_id(&self, id: UpgradeId) -> Option<&UpgradeDef> {

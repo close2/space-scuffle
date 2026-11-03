@@ -13,7 +13,7 @@
     clippy::too_many_lines
 )]
 
-use sim_core::{SimWorld, UnitArchetype, UnitCatalog};
+use sim_core::UnitArchetype;
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
     AnimState, ArchetypeCapabilities, AttributeFlags, EntityId, Faction, MoverType, PlayerCommand,
@@ -38,7 +38,7 @@ fn test_attack_move_wave_engages_and_resumes_destination() {
     let height = 32;
     let map = GameMap::new(width, height, MapCell::default_ground(CliffLevel(0)))
         .expect("invariant: valid map");
-    let mut world = SimWorld::new(map, 0xACE);
+    let mut world = sim_fixtures::world(map, 0xACE);
 
     let player_blue = PlayerId(0);
     let player_red = PlayerId(1);
@@ -128,7 +128,7 @@ fn test_threat_priority_combatants_before_passive_structures() {
     let height = 32;
     let map = GameMap::new(width, height, MapCell::default_ground(CliffLevel(0)))
         .expect("invariant: valid map");
-    let mut world = SimWorld::new(map, 0xF00D);
+    let mut world = sim_fixtures::world(map, 0xF00D);
 
     let player_blue = PlayerId(0);
     let player_red = PlayerId(1);
@@ -345,7 +345,8 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
 /// units East along the intended corridor with zero errant detours, while Blue structures remain immobile.
 #[test]
 fn test_default_battle_sandbox_attack_move_no_errant_unit_path() {
-    let mut world = SimWorld::new_default_battle_sandbox();
+    let mut world =
+        sim_fixtures::default_battle_sandbox().expect("invariant: the default sandbox builds");
     let player_blue = PlayerId(0);
     let target = SimVec2::new(SimScalar::from_num(45), SimScalar::from_num(32));
 
@@ -448,7 +449,8 @@ fn test_default_battle_sandbox_attack_move_no_errant_unit_path() {
 /// acquiring targets (including Armored units) and retaliating when fired upon.
 #[test]
 fn test_default_battle_sandbox_red_zealots_charge_and_retaliate_against_blue() {
-    let mut world = SimWorld::new_default_battle_sandbox();
+    let mut world =
+        sim_fixtures::default_battle_sandbox().expect("invariant: the default sandbox builds");
 
     // Order all Blue mobile units to AttackMove East towards (50.0, 32.0)
     let march_target = SimVec2::new(SimScalar::from_num(50), SimScalar::from_num(32));
@@ -552,7 +554,7 @@ fn test_projectile_speed_and_cargo_pickup_disjoint() {
     let height = 32;
     let map = GameMap::new(width, height, MapCell::default_ground(CliffLevel(0)))
         .expect("invariant: valid map");
-    let mut world = SimWorld::new(map, 0xD15);
+    let mut world = sim_fixtures::world(map, 0xD15);
 
     let rhino_id = world
         .catalog
@@ -650,7 +652,7 @@ fn test_projectile_speed_and_cargo_pickup_disjoint() {
 /// Test: All weapons in the unit and structure catalog can target both Light and Armored attributes.
 #[test]
 fn test_all_catalog_weapons_can_target_armored_and_light_units() {
-    let catalog = UnitCatalog::default();
+    let catalog = sim_fixtures::shipped_catalogs().units;
     for arch in catalog.archetypes() {
         if let Some(ref weapon) = arch.weapon {
             assert!(
@@ -677,7 +679,7 @@ fn test_move_command_units_fan_out_and_surround_target_point() {
     let height = 64;
     let map = GameMap::new(width, height, MapCell::default_ground(CliffLevel(0)))
         .expect("invariant: valid map");
-    let mut world = SimWorld::new(map, 0xFA00);
+    let mut world = sim_fixtures::world(map, 0xFA00);
 
     let pulse_id = world.catalog.id_by_slug("pulse_bot").expect("pulse_bot");
     let target_pos = SimVec2::new(SimScalar::from_num(30), SimScalar::from_num(30));

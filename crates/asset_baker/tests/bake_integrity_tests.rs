@@ -17,6 +17,16 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Command;
 
+/// The shipped unit catalog; the baker itself loads it from disk at run time.
+fn catalog() -> sim_core::UnitCatalog {
+    sim_fixtures::shipped_catalogs().units
+}
+
+/// The shipped asset bundle, passed to the CLI explicitly.
+fn shipped_assets() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")
+}
+
 mod common;
 
 /// Mean red-channel value of one frame of a vertical strip.
@@ -193,17 +203,20 @@ fn fake_runtime_bundle(root: &Path) -> std::path::PathBuf {
 }
 
 fn baker() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_asset_baker"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_asset_baker"));
+    command.arg("--assets").arg(shipped_assets());
+    command
 }
 
 #[test]
 fn b8_procedural_names_must_be_exact_catalog_slugs() {
-    let unit = asset_baker::default_unit_archetypes()
+    let catalog = catalog();
+    let unit = asset_baker::default_unit_archetypes(&catalog)
         .into_iter()
         .next()
         .expect("catalog has units");
     assert_eq!(
-        generate_procedural_atlas(&unit, None, None)
+        generate_procedural_atlas(&catalog, &unit, None, None)
             .expect("exact slug")
             .meta
             .name,
@@ -220,7 +233,7 @@ fn b8_procedural_names_must_be_exact_catalog_slugs() {
     ] {
         assert!(
             matches!(
-                generate_procedural_atlas(near_match, None, None),
+                generate_procedural_atlas(&catalog, near_match, None, None),
                 Err(BakerError::UnknownArchetype { .. })
             ),
             "{near_match:?} must not resolve to some other unit's art"
@@ -232,7 +245,7 @@ fn b8_procedural_names_must_be_exact_catalog_slugs() {
 fn b8_cli_refuses_to_write_into_a_runtime_bundle() {
     let dir = tempfile::tempdir().expect("tempdir");
     let bundle = fake_runtime_bundle(dir.path());
-    let unit = &asset_baker::default_unit_archetypes()[0];
+    let unit = &asset_baker::default_unit_archetypes(&catalog())[0];
 
     let output = baker()
         .current_dir(dir.path())
@@ -256,7 +269,7 @@ fn b8_cli_refuses_to_write_into_a_runtime_bundle() {
 fn b8_cli_has_no_default_output_directory() {
     let dir = tempfile::tempdir().expect("tempdir");
     let bundle = fake_runtime_bundle(dir.path());
-    let unit = &asset_baker::default_unit_archetypes()[0];
+    let unit = &asset_baker::default_unit_archetypes(&catalog())[0];
 
     // The working directory holds a fake bundle, in case the old default is ever restored.
     let output = baker()
@@ -283,7 +296,7 @@ fn b8_cli_has_no_default_output_directory() {
 fn b8_cli_writes_fixture_output_outside_a_bundle() {
     let dir = tempfile::tempdir().expect("tempdir");
     let output_dir = dir.path().join("fixtures");
-    let unit = &asset_baker::default_unit_archetypes()[0];
+    let unit = &asset_baker::default_unit_archetypes(&catalog())[0];
 
     let output = baker()
         .current_dir(dir.path())
@@ -306,7 +319,8 @@ fn b8_library_refuses_to_write_into_a_runtime_bundle() {
     let dir = tempfile::tempdir().expect("tempdir");
     let bundle = fake_runtime_bundle(dir.path());
 
-    let result = generate_all_procedural_atlases(&bundle.join("textures/new_subdirectory"));
+    let result =
+        generate_all_procedural_atlases(&catalog(), &bundle.join("textures/new_subdirectory"));
 
     assert!(
         matches!(result, Err(BakerError::RuntimePathRefused { .. })),

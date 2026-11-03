@@ -264,7 +264,7 @@ mod tests {
             ],
             Vec::new(),
         )?;
-        Ok(SimWorld::new(map, 13))
+        Ok(sim_fixtures::world(map, 13))
     }
 
     fn dome_where(

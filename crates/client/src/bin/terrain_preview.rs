@@ -4,7 +4,8 @@
 //! In accordance with Plan 21 §5.7b (`docs/plans/21b-plan-map-editor.md`),
 //! this binary boots a real windowed Bevy application (1600x900), instantiates the production
 //! shared terrain renderer ([`client::terrain`]), loads `showcase_canyon.scmap.ron` under the
-//! `orbital_foundry` theme, and captures screenshots from four canonical camera poses:
+//! theme named by `--theme` (default: the first entry of `catalog/terrain_themes.ron`), and
+//! captures screenshots from four canonical camera poses:
 //! 1. `overview`: Full 64x64 battlefield overview (target (32, 32), distance 70).
 //! 2. `p0_base`: Player 0 high plateau base with 45° staircase edges and ramp D (target (12, 12), distance 28).
 //! 3. `mesa`: Two-level wall rows 35..=37, ramp G, and guard rails (target (32, 30), distance 24).
@@ -12,16 +13,13 @@
 //!
 //! # Failure Modes & Exit Codes
 //! - Exit `0`: All four screenshots successfully written to disk.
-//! - Exit `1`: Any pipeline shader compilation failure (`CachedPipelineState::Err`).
+//! - Exit `1`: Any pipeline shader compilation failure (`CachedPipelineState::Err`), or a
+//!   [`PreviewError`] before the window opens (output directory, map or theme), returned from
+//!   `main` with its message.
 //! - Exit `2`: Timeout exceeding 600 rendered frames before completing all captures.
+//! - Exit `3`: The terrain hierarchy could not be spawned; the typed error is printed.
 
-#![expect(
-    clippy::expect_used,
-    clippy::panic,
-    reason = "a preview tool fails loudly on its fixed fixture instead of recovering"
-)]
-
-use asset_baker::TerrainThemeCatalog;
+use asset_baker::{TerrainTheme, TerrainThemeCatalog, TerrainThemeError};
 use bevy::app::AppExit;
 use bevy::prelude::*;
 use bevy::render::render_resource::{CachedPipelineState, PipelineCache};
@@ -31,15 +29,48 @@ use bevy::window::PresentMode;
 use clap::Parser;
 use client::resolve_assets_dir;
 use client::terrain::{spawn_terrain, TerrainChunks, TerrainPlugin};
-use sim_map::map_format::MapFile;
+use sim_map::map_format::{MapFile, MapFormatError};
+use sim_map::GameMap;
 use std::fs;
 use std::num::NonZeroU8;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 const EXIT_CODE_PIPELINE_ERROR: NonZeroU8 = NonZeroU8::MIN;
 const EXIT_CODE_TIMEOUT: NonZeroU8 = NonZeroU8::MIN.saturating_add(1);
+const EXIT_CODE_SPAWN_FAILED: NonZeroU8 = NonZeroU8::MIN.saturating_add(2);
+
+/// Map previewed, relative to the assets root.
+const PREVIEW_MAP: &str = "maps/showcase_canyon.scmap.ron";
+
+/// Why the preview could not start.
+#[derive(Debug, thiserror::Error)]
+enum PreviewError {
+    /// The screenshot directory could not be created.
+    #[error("cannot create the screenshot directory {path:?}: {source}")]
+    OutputDirectory {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// The preview map could not be loaded, decoded or converted.
+    #[error("cannot load the preview map {path:?}: {source}")]
+    Map {
+        path: PathBuf,
+        #[source]
+        source: MapFormatError,
+    },
+    /// The terrain theme catalog could not be loaded.
+    #[error(transparent)]
+    Themes(#[from] TerrainThemeError),
+    /// The theme catalog lists no theme to default to.
+    #[error("the terrain theme catalog {0:?} lists no theme")]
+    NoTheme(PathBuf),
+    /// `--theme` names no theme of the catalog.
+    #[error("no terrain theme {slug:?} in {catalog:?}")]
+    UnknownTheme { slug: String, catalog: PathBuf },
+}
 
 /// CLI command line options for `terrain_preview`.
 #[derive(Parser, Debug)]
@@ -48,6 +79,60 @@ struct CliArgs {
     /// Directory where the four output screenshot PNGs will be saved.
     #[arg(long)]
     out: PathBuf,
+
+    /// Slug of the terrain theme to render (default: the first theme of the catalog).
+    #[arg(long)]
+    theme: Option<String>,
+}
+
+/// The map and theme the preview renders, loaded before the app starts.
+#[derive(Resource)]
+struct PreviewScene {
+    assets_dir: PathBuf,
+    map: GameMap,
+    theme: TerrainTheme,
+}
+
+impl PreviewScene {
+    /// Loads the preview map and the theme `slug` (or the catalog's first) from `assets_dir`.
+    fn load(assets_dir: PathBuf, slug: Option<&str>) -> Result<Self, PreviewError> {
+        let map_path = assets_dir.join(PREVIEW_MAP);
+        let map = MapFile::load(&map_path)
+            .and_then(|file| file.decode())
+            .and_then(|doc| doc.to_game_map())
+            .map_err(|source| PreviewError::Map {
+                path: map_path,
+                source,
+            })?;
+        let themes_path = assets_dir.join("catalog/terrain_themes.ron");
+        let catalog = TerrainThemeCatalog::load(&themes_path)?;
+        let theme = match slug {
+            Some(slug) => catalog
+                .get(slug)
+                .ok_or_else(|| PreviewError::UnknownTheme {
+                    slug: slug.to_string(),
+                    catalog: themes_path.clone(),
+                })?,
+            None => catalog
+                .themes
+                .first()
+                .ok_or_else(|| PreviewError::NoTheme(themes_path.clone()))?,
+        }
+        .clone();
+        Ok(Self {
+            assets_dir,
+            map,
+            theme,
+        })
+    }
+}
+
+/// Creates `path` and its parents.
+fn create_output_directory(path: &Path) -> Result<(), PreviewError> {
+    fs::create_dir_all(path).map_err(|source| PreviewError::OutputDirectory {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 /// Camera pose specification.
@@ -123,9 +208,10 @@ struct PreviewState {
 #[derive(Component)]
 struct PreviewCamera;
 
-fn main() -> AppExit {
+fn main() -> Result<AppExit, PreviewError> {
     let args = CliArgs::parse();
-    fs::create_dir_all(&args.out).expect("failed to create output screenshot directory");
+    create_output_directory(&args.out)?;
+    let scene = PreviewScene::load(resolve_assets_dir(), args.theme.as_deref())?;
 
     let pipeline_sync = PipelineSync {
         has_pending: Arc::new(AtomicBool::new(true)),
@@ -150,6 +236,7 @@ fn main() -> AppExit {
         client::render_compatibility::RenderCompatibilityPlugin,
     ))
     .insert_resource(pipeline_sync.clone())
+    .insert_resource(scene)
     .insert_resource(PreviewState {
         out_dir: args.out,
         current_pose_idx: 0,
@@ -164,51 +251,39 @@ fn main() -> AppExit {
     render_app.insert_resource(pipeline_sync);
     render_app.add_systems(Render, check_render_pipelines);
 
-    client::render_compatibility::run_render_app(&mut app)
+    Ok(client::render_compatibility::run_render_app(&mut app))
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
 fn setup_preview_scene(
     mut commands: Commands<'_, '_>,
     mut meshes: ResMut<'_, Assets<Mesh>>,
     mut terrain_materials: ResMut<'_, Assets<client::terrain::TerrainMaterial>>,
     mut std_materials: ResMut<'_, Assets<StandardMaterial>>,
     mut images: ResMut<'_, Assets<Image>>,
+    scene: Res<'_, PreviewScene>,
+    mut exit_events: EventWriter<'_, AppExit>,
 ) {
-    let assets_dir = resolve_assets_dir();
-
-    // 1. Load showcase_canyon map
-    let map_path = assets_dir.join("maps/showcase_canyon.scmap.ron");
-    let map_file = MapFile::load(&map_path)
-        .unwrap_or_else(|e| panic!("failed to load {}: {e}", map_path.display()));
-    let doc = map_file
-        .decode()
-        .unwrap_or_else(|e| panic!("failed to decode {}: {e}", map_path.display()));
-    let game_map = doc
-        .to_game_map()
-        .unwrap_or_else(|e| panic!("failed to build GameMap from {}: {e}", map_path.display()));
-
-    // 2. Load orbital_foundry theme
-    let themes_path = assets_dir.join("catalog/terrain_themes.ron");
-    let catalog = TerrainThemeCatalog::load(&themes_path)
-        .unwrap_or_else(|e| panic!("failed to load {}: {e}", themes_path.display()));
-    let theme = catalog
-        .get("orbital_foundry")
-        .expect("orbital_foundry theme must exist in catalog");
-
-    // 3. Spawn terrain hierarchy, lighting, and void backdrop
-    spawn_terrain(
+    // Spawn terrain hierarchy, lighting, and void backdrop
+    if let Err(error) = spawn_terrain(
         &mut commands,
         &mut meshes,
         &mut terrain_materials,
         &mut std_materials,
         &mut images,
-        theme,
-        game_map,
-        &assets_dir,
-    )
-    .expect("failed to spawn terrain hierarchy");
+        &scene.theme,
+        scene.map.clone(),
+        &scene.assets_dir,
+    ) {
+        eprintln!("CRITICAL: cannot spawn the terrain hierarchy: {error}; exiting code 3");
+        exit_events.send(AppExit::Error(EXIT_CODE_SPAWN_FAILED));
+        return;
+    }
 
-    // 4. Spawn 3D camera configured for first pose
+    // Spawn 3D camera configured for first pose
     let initial_transform = compute_pose_transform(&POSES[0]);
     commands.spawn((Camera3d::default(), initial_transform, PreviewCamera));
 }

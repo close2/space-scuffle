@@ -16,7 +16,7 @@
 //! - The check is containment: observed states are a subset of the rule's states. The rule may
 //!   over-approximate, and a separate assertion makes sure the run is not vacuous.
 
-use sim_core::{SimWorld, UnitCatalog};
+use sim_core::UnitCatalog;
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
     AnimState, PlayerCommand, PlayerId, RenderSnapshot, ShapeKind, SimScalar, SimVec2, Tick,
@@ -82,7 +82,7 @@ fn assert_allowed(
 #[test]
 fn every_archetype_fighting_and_casting_publishes_only_what_the_rule_allows() -> TestResult {
     let map = GameMap::new(MAP_SIZE, MAP_SIZE, MapCell::default_ground(CliffLevel(0)))?;
-    let mut world = SimWorld::new(map, 11);
+    let mut world = sim_fixtures::world(map, 11);
     let catalog = world.catalog.clone();
     let sides = [(PlayerId(0), 30), (PlayerId(1), 66)];
     let mut armies: [Vec<sim_types::EntityId>; 2] = [Vec::new(), Vec::new()];

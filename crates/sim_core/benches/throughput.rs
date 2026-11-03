@@ -16,16 +16,20 @@
 //! - The reported figure is the median of the configured repeats, which is less
 //!   sensitive to other work on the host than the mean.
 //! - The unit identity is read from the data file; no archetype is named in Rust.
+//! - The rule catalogs are loaded from disk at run time, as the game loads them: from
+//!   `$SPACE_SCUFFLE_ASSETS/catalog` when that is set, else from the repository's `assets/catalog`.
 //!
 //! Run with `cargo bench -p sim_core --bench throughput`.
 
 use serde::Deserialize;
+use sim_core::catalog::RuntimeCatalogs;
 use sim_core::SimWorld;
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
     EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
 };
 use std::error::Error;
+use std::path::PathBuf;
 use std::time::Instant;
 
 /// Scenario table embedded at compile time so the benchmark has no runtime path.
@@ -90,9 +94,19 @@ fn attack_move(player: u8, entities: Vec<EntityId>, target: SimVec2) -> PlayerCo
     }
 }
 
-/// Builds a battle-ready world, returning it with the next tick to execute.
+/// The catalog directory of the asset bundle: `$SPACE_SCUFFLE_ASSETS/catalog`, else the
+/// repository's `assets/catalog`.
+fn catalog_directory() -> PathBuf {
+    std::env::var_os("SPACE_SCUFFLE_ASSETS").map_or_else(
+        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog"),
+        |assets| PathBuf::from(assets).join("catalog"),
+    )
+}
+
+/// Builds a battle-ready world with `catalogs`, returning it with the next tick to execute.
 fn build_world(
     config: &BenchmarkConfig,
+    catalogs: &RuntimeCatalogs,
     scenario: Scenario,
 ) -> Result<(SimWorld, u32), Box<dyn Error>> {
     let map = GameMap::new(
@@ -100,7 +114,12 @@ fn build_world(
         scenario.map_cells,
         MapCell::default_ground(CliffLevel(0)),
     )?;
-    let mut world = SimWorld::new(map, config.seed);
+    let mut world = SimWorld::with_catalogs(
+        map,
+        config.seed,
+        catalogs.units.clone(),
+        catalogs.upgrades.clone(),
+    );
     let unit_type = world
         .catalog
         .id_by_slug(&config.unit_slug)
@@ -138,8 +157,12 @@ fn build_world(
     clippy::disallowed_methods,
     reason = "the benchmark times the simulation from outside; the clock never enters simulation state"
 )]
-fn measure(config: &BenchmarkConfig, scenario: Scenario) -> Result<f64, Box<dyn Error>> {
-    let (mut world, mut tick) = build_world(config, scenario)?;
+fn measure(
+    config: &BenchmarkConfig,
+    catalogs: &RuntimeCatalogs,
+    scenario: Scenario,
+) -> Result<f64, Box<dyn Error>> {
+    let (mut world, mut tick) = build_world(config, catalogs, scenario)?;
     let started = Instant::now();
     for _ in 0..config.ticks {
         step_with(&mut world, &mut tick, Vec::new());
@@ -149,12 +172,13 @@ fn measure(config: &BenchmarkConfig, scenario: Scenario) -> Result<f64, Box<dyn 
 
 fn main() -> Result<(), Box<dyn Error>> {
     let config: BenchmarkConfig = ron::from_str(SCENARIO_TABLE)?;
+    let catalogs = RuntimeCatalogs::load_from_directory(catalog_directory())?;
     println!("| Map | Units | Ticks/s (median of {}) |", config.repeats);
     println!("|---|---:|---:|");
     for scenario in &config.scenarios {
         let mut samples = Vec::with_capacity(config.repeats);
         for _ in 0..config.repeats {
-            samples.push(measure(&config, *scenario)?);
+            samples.push(measure(&config, &catalogs, *scenario)?);
         }
         samples.sort_by(f64::total_cmp);
         let median = samples

@@ -21,7 +21,6 @@
 
 mod abilities;
 mod commands;
-mod sandbox;
 mod snapshot;
 mod upgrade_stats;
 mod upkeep;
@@ -147,19 +146,6 @@ pub struct SimWorld {
 }
 
 impl SimWorld {
-    /// Constructs a world using the embedded compatibility catalogs and deterministic seed.
-    ///
-    /// Normal external-asset startup uses [`Self::with_catalogs`] instead.
-    #[must_use]
-    pub fn new(map: SimMap, seed: u64) -> Self {
-        Self::with_catalogs(
-            map,
-            seed,
-            UnitCatalog::new_starter_roster(),
-            UpgradeCatalog::default_catalog(),
-        )
-    }
-
     /// Constructs a world on `map` using the supplied rule catalogs and RNG seed.
     ///
     /// Takes ownership of already loaded catalogs without reading files or replacing

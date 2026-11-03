@@ -63,3 +63,34 @@ pub use weapon_timing::{
     AttackRate, InvalidAttackRate, InvalidBuffAttackRate, SimulationDiagnostic,
 };
 pub use world::{ActiveHazardZone, PlayerResources, SimWorld};
+
+/// The shipped catalogs, embedded for this crate's own unit tests only.
+///
+/// Production code loads catalogs from disk (charter §3.3). Other crates' tests use the
+/// `sim_fixtures` crate, which this crate's unit tests cannot depend on without linking a
+/// second copy of `sim_core`.
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+pub(crate) mod test_support {
+    use crate::catalog::RuntimeCatalogs;
+    use crate::{SimWorld, UnitCatalog, UpgradeCatalog};
+
+    /// The shipped unit, structure and upgrade catalogs.
+    pub(crate) fn shipped_catalogs() -> RuntimeCatalogs {
+        let units = UnitCatalog::from_ron_str_bundle(
+            include_str!("../../../assets/catalog/units.ron"),
+            include_str!("../../../assets/catalog/structures.ron"),
+        )
+        .expect("invariant: the shipped units.ron and structures.ron are valid");
+        let upgrades =
+            UpgradeCatalog::from_ron_str(include_str!("../../../assets/catalog/upgrades.ron"))
+                .expect("invariant: the shipped upgrades.ron is valid");
+        RuntimeCatalogs { units, upgrades }
+    }
+
+    /// A world on `map` with the shipped catalogs.
+    pub(crate) fn world(map: sim_map::SimMap, seed: u64) -> SimWorld {
+        let catalogs = shipped_catalogs();
+        SimWorld::with_catalogs(map, seed, catalogs.units, catalogs.upgrades)
+    }
+}

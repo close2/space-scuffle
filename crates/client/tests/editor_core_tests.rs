@@ -37,7 +37,6 @@ use client::editor::ui::{
     UnsavedChangesModalState, UnsavedChoice, UnsavedOutcome,
 };
 use client::terrain::TerrainState;
-use sim_core::catalog::UnitCatalog;
 use sim_core::scenario::StartLoadoutCatalog;
 use sim_map::grid::{
     CellFlags, CliffLevel, RampDir, ResourceKind, TerrainKind, MAX_RAMP_RUN_CELLS,
@@ -849,7 +848,7 @@ fn test_start_footprint_catalog_resolution() {
     let loadouts_path = client::resolve_assets_dir().join("catalog/start_loadouts.ron");
     let loadouts =
         StartLoadoutCatalog::load(&loadouts_path).expect("start_loadouts.ron must exist");
-    let unit_catalog = UnitCatalog::default();
+    let unit_catalog = sim_fixtures::shipped_catalogs().units;
 
     // Query standard_automaton: town hall must have 5x5 footprint
     let fp = resolve_start_footprint("standard_automaton", &loadouts, &unit_catalog)

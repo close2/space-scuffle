@@ -7,7 +7,7 @@ use client::battle_pipeline::{commands::SessionGeneration, session::CommittedBat
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 fn session() -> Result<(sim_core::SimWorld, BattleSession), Box<dyn std::error::Error>> {
-    let mut world = sim_core::SimWorld::new_default_battle_sandbox();
+    let mut world = sim_fixtures::default_battle_sandbox()?;
     let mut session = BattleSession::prepare(
         SessionGeneration::FIRST,
         &mut world,
@@ -75,7 +75,7 @@ fn generation_change_clears_old_receipt_even_if_entity_ids_are_reused() -> TestR
     let mut trace = app.world_mut().resource_mut::<Trace>();
     observe_identity(&mut trace, &session);
     trace.last_outcome = Some((5, 10, 0, 0, true));
-    let mut world = sim_core::SimWorld::new_default_battle_sandbox();
+    let mut world = sim_fixtures::default_battle_sandbox()?;
     let replacement = BattleSession::prepare(
         SessionGeneration::FIRST.next()?,
         &mut world,

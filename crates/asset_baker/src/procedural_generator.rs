@@ -139,21 +139,24 @@ pub fn write_procedural_atlas(
 /// Mobile units use 8 frames per animation state (`Idle`, `Walk`, `Attack`, `Die`).
 /// Default resolution is 192x192 at 15 FPS.
 ///
+/// `catalog` is the unit catalog loaded at run time; the archetype is looked up there by its
+/// exact slug.
+///
 /// # Errors
 /// Returns [`BakerError::UnknownArchetype`] if the archetype is not a recognized mobile unit,
 /// or [`BakerError::ValidationFailed`] if metadata invariants fail.
 pub fn generate_procedural_unit_atlas(
+    catalog: &UnitCatalog,
     unit_name: &str,
     frame_size: u32,
     fps: u32,
 ) -> Result<ProceduralAtlasOutput, BakerError> {
-    let catalog = UnitCatalog::default();
-    let arch = exact_catalog_archetype(unit_name, &catalog)?;
+    let arch = exact_catalog_archetype(unit_name, catalog)?;
 
     if matches!(arch.shape, ShapeKind::BuildingDome { .. }) {
         return Err(BakerError::UnknownArchetype {
             name: unit_name.to_string(),
-            valid: crate::default_unit_archetypes(),
+            valid: crate::default_unit_archetypes(catalog),
         });
     }
 
@@ -207,21 +210,24 @@ pub fn generate_procedural_unit_atlas(
 /// Building domes use 12 frames per animation state.
 /// Default resolution is 256x256 at 15 FPS.
 ///
+/// `catalog` is the unit catalog loaded at run time; the archetype is looked up there by its
+/// exact slug.
+///
 /// # Errors
 /// Returns [`BakerError::UnknownArchetype`] if the archetype is not a recognized building dome,
 /// or [`BakerError::ValidationFailed`] if metadata invariants fail.
 pub fn generate_procedural_dome_atlas(
+    catalog: &UnitCatalog,
     dome_name: &str,
     frame_size: u32,
     fps: u32,
 ) -> Result<ProceduralAtlasOutput, BakerError> {
-    let catalog = UnitCatalog::default();
-    let arch = exact_catalog_archetype(dome_name, &catalog)?;
+    let arch = exact_catalog_archetype(dome_name, catalog)?;
 
     if !matches!(arch.shape, ShapeKind::BuildingDome { .. }) {
         return Err(BakerError::UnknownArchetype {
             name: dome_name.to_string(),
-            valid: crate::default_dome_archetypes(),
+            valid: crate::default_dome_archetypes(catalog),
         });
     }
 
@@ -284,25 +290,28 @@ pub fn generate_procedural_dome_atlas(
 /// - Mobile units: 192x192 @ 15 FPS
 /// - Building domes: 256x256 @ 15 FPS
 ///
+/// `catalog` is the unit catalog loaded at run time; the archetype is looked up there by its
+/// exact slug.
+///
 /// # Errors
 /// Returns [`BakerError::UnknownArchetype`] if the archetype is not recognized,
 /// or [`BakerError::ValidationFailed`] if metadata invariants fail.
 pub fn generate_procedural_atlas(
+    catalog: &UnitCatalog,
     archetype: &str,
     frame_size: Option<u32>,
     fps: Option<u32>,
 ) -> Result<ProceduralAtlasOutput, BakerError> {
-    let catalog = UnitCatalog::default();
-    let arch = exact_catalog_archetype(archetype, &catalog)?;
+    let arch = exact_catalog_archetype(archetype, catalog)?;
 
     if matches!(arch.shape, ShapeKind::BuildingDome { .. }) {
         let size = frame_size.unwrap_or(256);
         let rate = fps.unwrap_or(15);
-        generate_procedural_dome_atlas(archetype, size, rate)
+        generate_procedural_dome_atlas(catalog, archetype, size, rate)
     } else {
         let size = frame_size.unwrap_or(192);
         let rate = fps.unwrap_or(15);
-        generate_procedural_unit_atlas(archetype, size, rate)
+        generate_procedural_unit_atlas(catalog, archetype, size, rate)
     }
 }
 

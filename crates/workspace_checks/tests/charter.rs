@@ -19,7 +19,8 @@
 
 use std::error::Error;
 use workspace_checks::{
-    cargo_metadata, engine_free_simulation, float_ratchet, module_docs, no_mutable_statics,
+    cargo_metadata, engine_free_simulation, expect_messages_state_invariants, float_ratchet,
+    module_docs, no_discarded_results_in_simulation, no_embedded_assets, no_mutable_statics,
     no_work_markers, notebook_references, plan_index, render, repo_root, simulation_clippy_config,
     tracked_files, typed_library_errors, Finding, FloatAllowance, SIMULATION_CRATES,
 };
@@ -104,6 +105,12 @@ fn c04_every_rust_file_begins_with_module_docs() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn c06_production_code_embeds_no_shipped_data() -> Result<(), Box<dyn Error>> {
+    assert_clean("C6", &no_embedded_assets(&repo_root())?);
+    Ok(())
+}
+
+#[test]
 fn c07_floats_in_simulation_crates_only_at_listed_boundaries() -> Result<(), Box<dyn Error>> {
     assert_clean("C7", &float_ratchet(&repo_root(), FLOAT_ALLOWLIST)?);
     Ok(())
@@ -112,6 +119,18 @@ fn c07_floats_in_simulation_crates_only_at_listed_boundaries() -> Result<(), Box
 #[test]
 fn c09_simulation_clippy_config_bans_hashed_collections_and_clocks() -> Result<(), Box<dyn Error>> {
     assert_clean("C9", &simulation_clippy_config(&repo_root())?);
+    Ok(())
+}
+
+#[test]
+fn c10_expect_messages_state_an_invariant() -> Result<(), Box<dyn Error>> {
+    assert_clean("C10", &expect_messages_state_invariants(&repo_root())?);
+    Ok(())
+}
+
+#[test]
+fn c12_simulation_crates_discard_no_results() -> Result<(), Box<dyn Error>> {
+    assert_clean("C12", &no_discarded_results_in_simulation(&repo_root())?);
     Ok(())
 }
 

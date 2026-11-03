@@ -1011,51 +1011,53 @@ impl VeoClient {
     /// Generates videos for `Idle`, `Walk`, and `Attack`, polls for completion,
     /// saves each `.mp4`, and compiles them into a vertical strip PNG and `.flipbook.ron`.
     /// An interrupted run can be repeated: valid clips are reused and recorded operations are
-    /// resumed, see the module docs.
+    /// resumed, see the module docs. `catalog` is the unit catalog loaded at run time, and
+    /// `dirs` names the keyframe, video-cache and output directories.
     ///
     /// # Errors
     /// Returns [`BakerError::UnknownArchetype`] before any API call or filesystem change if
-    /// `unit_name` is not an exact catalog slug. Returns [`BakerError::CachedVideoInvalid`] if
+    /// `unit_name` is not an exact slug of `catalog`. Returns [`BakerError::CachedVideoInvalid`] if
     /// a cached clip is invalid. It is neither reused nor replaced, because replacing it would
     /// silently spend money. Otherwise returns [`BakerError`] on API, download, or FFmpeg
     /// transcoding errors.
     pub fn generate_and_bake_unit(
         &self,
+        catalog: &sim_core::UnitCatalog,
         unit_name: &str,
-        keyframes_dir: &Path,
-        videos_dir: &Path,
-        output_dir: &Path,
+        dirs: &UnitMediaDirs<'_>,
         frame_size: u32,
         fps: u32,
     ) -> Result<FlipbookAtlasMeta, BakerError> {
-        validate_catalog_slug(unit_name)?;
+        validate_catalog_slug(catalog, unit_name)?;
 
-        std::fs::create_dir_all(videos_dir).map_err(|source| BakerError::Io {
-            path: videos_dir.to_path_buf(),
+        std::fs::create_dir_all(dirs.videos).map_err(|source| BakerError::Io {
+            path: dirs.videos.to_path_buf(),
             source,
         })?;
 
         let mut clips: Vec<(AnimState, PathBuf)> = Vec::new();
         for state in [AnimState::Idle, AnimState::Walk, AnimState::Attack] {
-            let clip = self.obtain_clip(unit_name, state, keyframes_dir, videos_dir)?;
+            let clip = self.obtain_clip(catalog, unit_name, state, dirs)?;
             clips.push((state, clip));
         }
 
         println!("==> Stitching clips for {unit_name} into multi-action flipbook atlas...");
-        bake_multi_action_videos_with_states(unit_name, &clips, output_dir, frame_size, fps)
+        bake_multi_action_videos_with_states(unit_name, &clips, dirs.output, frame_size, fps)
     }
 
     /// Returns the path of a valid clip, reusing the cache or a recorded operation if possible.
     fn obtain_clip(
         &self,
+        catalog: &sim_core::UnitCatalog,
         unit_name: &str,
         state: AnimState,
-        keyframes_dir: &Path,
-        videos_dir: &Path,
+        dirs: &UnitMediaDirs<'_>,
     ) -> Result<PathBuf, BakerError> {
         let state_str = state_slug(state);
-        let mp4_path = videos_dir.join(format!("{unit_name}_{state_str}.mp4"));
-        let record_path = videos_dir.join(format!("{unit_name}_{state_str}.operation.json"));
+        let mp4_path = dirs.videos.join(format!("{unit_name}_{state_str}.mp4"));
+        let record_path = dirs
+            .videos
+            .join(format!("{unit_name}_{state_str}.operation.json"));
 
         if mp4_path.exists() {
             probe_video(&self.ffprobe_path, &mp4_path).map_err(|error| match error {
@@ -1085,7 +1087,7 @@ impl VeoClient {
                     .with_model(&record.model)
                     .poll_operation(&record.operation_name)
             }
-            None => self.start_operation(unit_name, state, keyframes_dir, &record_path),
+            None => self.start_operation(catalog, unit_name, state, dirs.keyframes, &record_path),
         }
         .and_then(|completed| {
             println!("    Saving generated video to {}...", mp4_path.display());
@@ -1109,6 +1111,7 @@ impl VeoClient {
     /// Starts a paid generation, records it, and waits for it to finish.
     fn start_operation(
         &self,
+        catalog: &sim_core::UnitCatalog,
         unit_name: &str,
         state: AnimState,
         keyframes_dir: &Path,
@@ -1131,7 +1134,7 @@ impl VeoClient {
             None
         };
 
-        let prompt = build_action_prompt(unit_name, state)?;
+        let prompt = build_action_prompt(catalog, unit_name, state)?;
 
         println!("==> Initiating Veo video generation for {unit_name} [{state:?}]...");
         let op = self.initiate_generation(&prompt, ref_keyframe)?;
@@ -1155,6 +1158,18 @@ impl VeoClient {
     }
 }
 
+/// The directories one unit's Veo pipeline reads from and writes to.
+#[derive(Clone, Copy, Debug)]
+pub struct UnitMediaDirs<'a> {
+    /// Reference keyframe images, named `<slug>_<state>.jpg`, `<slug>_active.jpg` or
+    /// `<slug>_idle.jpg`.
+    pub keyframes: &'a Path,
+    /// Cache of downloaded `.mp4` clips and pending-operation records; created if missing.
+    pub videos: &'a Path,
+    /// Destination of the baked `.png` strip and `.flipbook.ron` manifest.
+    pub output: &'a Path,
+}
+
 /// Looks up the catalog entry whose slug is exactly `slug`.
 ///
 /// Matching is deliberately exact, including case. A slug selects paid generation and names
@@ -1172,13 +1187,18 @@ pub(crate) fn exact_catalog_archetype<'a>(
         })
 }
 
-/// Checks that `slug` exactly names a catalog unit and is safe to use in a file name.
+/// Checks that `slug` exactly names a unit of `catalog` and is safe to use in a file name.
+///
+/// `catalog` is the unit catalog loaded at run time (see [`crate::load_catalogs`]).
 ///
 /// # Errors
 /// Returns [`BakerError::UnknownArchetype`] if `slug` is not an exact catalog slug, or
 /// [`BakerError::ValidationFailed`] if a catalog slug cannot name a portable file.
-pub fn validate_catalog_slug(slug: &str) -> Result<(), BakerError> {
-    exact_catalog_archetype(slug, &sim_core::UnitCatalog::default())?;
+pub fn validate_catalog_slug(
+    catalog: &sim_core::UnitCatalog,
+    slug: &str,
+) -> Result<(), BakerError> {
+    exact_catalog_archetype(slug, catalog)?;
     crate::media::media_paths(Path::new(""), slug).map_err(|error| {
         BakerError::ValidationFailed {
             name: slug.to_string(),
@@ -1190,16 +1210,20 @@ pub fn validate_catalog_slug(slug: &str) -> Result<(), BakerError> {
 
 /// Constructs a descriptive action prompt adhering to Space Scuffle's stylized art direction.
 ///
-/// `unit_name` must be an exact catalog slug. There is no generic prompt for unknown units,
-/// because money must not be spent on a clip that no catalog unit can use.
+/// `unit_name` must be an exact slug of `catalog`, the unit catalog loaded at run time. There is
+/// no generic prompt for unknown units, because money must not be spent on a clip that no
+/// catalog unit can use.
 ///
 /// # Errors
 /// Returns [`BakerError::UnknownArchetype`] if `unit_name` is not an exact catalog slug.
-pub fn build_action_prompt(unit_name: &str, state: AnimState) -> Result<String, BakerError> {
+pub fn build_action_prompt(
+    catalog: &sim_core::UnitCatalog,
+    unit_name: &str,
+    state: AnimState,
+) -> Result<String, BakerError> {
     let base_style = "Stylized hand-painted 3D character, Arcane and StarCraft II cinematic portrait aesthetic, dark slate-indigo radial studio backdrop (#0B101B), dramatic 3/4 isometric front hero framing, glowing cyan/amber energy cores, bold proportions.";
 
-    let catalog = sim_core::UnitCatalog::default();
-    let arch = exact_catalog_archetype(unit_name, &catalog)?;
+    let arch = exact_catalog_archetype(unit_name, catalog)?;
 
     let action_desc = match state {
         AnimState::Idle => "Idle animation: steady rhythmic breathing movement, subtle weapon glow pulse, head and radar scanning smoothly in place.",

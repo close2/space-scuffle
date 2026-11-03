@@ -19,6 +19,11 @@ use asset_baker::{
 use sim_types::enums::AnimState;
 use std::path::Path;
 
+/// The shipped unit catalog; the baker itself loads it from disk at run time.
+fn catalog() -> sim_core::UnitCatalog {
+    sim_fixtures::shipped_catalogs().units
+}
+
 mod common;
 
 #[test]
@@ -275,17 +280,19 @@ fn test_veo_client_endpoint_routing() {
 
 #[test]
 fn test_action_prompts_conformity() {
-    let pulse_bot_idle = build_action_prompt("pulse_bot", AnimState::Idle).expect("catalog slug");
+    let pulse_bot_idle =
+        build_action_prompt(&catalog(), "pulse_bot", AnimState::Idle).expect("catalog slug");
     assert!(pulse_bot_idle.contains("Pulse Bot"));
     assert!(pulse_bot_idle.contains("Idle animation"));
     assert!(pulse_bot_idle.contains("#0B101B"));
 
-    let psi_grey_attack = build_action_prompt("psi_grey", AnimState::Attack).expect("catalog slug");
+    let psi_grey_attack =
+        build_action_prompt(&catalog(), "psi_grey", AnimState::Attack).expect("catalog slug");
     assert!(psi_grey_attack.contains("Psi-Blade Grey"));
     assert!(psi_grey_attack.contains("Attack animation"));
 
     let rhino_beetle_walk =
-        build_action_prompt("rhino_beetle", AnimState::Walk).expect("catalog slug");
+        build_action_prompt(&catalog(), "rhino_beetle", AnimState::Walk).expect("catalog slug");
     assert!(rhino_beetle_walk.contains("Rhino-Beetle"));
     assert!(rhino_beetle_walk.contains("Walk animation"));
 }
@@ -487,7 +494,7 @@ fn b9_prompts_exist_only_for_exact_catalog_slugs() {
     ] {
         assert!(
             matches!(
-                build_action_prompt(unit, AnimState::Idle),
+                build_action_prompt(&catalog(), unit, AnimState::Idle),
                 Err(BakerError::UnknownArchetype { .. })
             ),
             "{unit:?} must not receive a prompt"
