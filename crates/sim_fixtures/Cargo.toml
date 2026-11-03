@@ -1,0 +1,20 @@
+[package]
+name = "sim_fixtures"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Test-only Space Scuffle worlds and catalogs built from the shipped data, embedded at compile time"
+publish = false
+
+[lints]
+workspace = true
+
+# Only ever a dev-dependency: production code loads the catalogs from disk at run time
+# (charter §3.3), so this crate is the one place the shipped data is compiled in.
+[dependencies]
+sim_types.workspace = true
+sim_map.workspace = true
+sim_core.workspace = true
+thiserror.workspace = true

@@ -9,6 +9,7 @@ members = [
     "crates/client",
     "crates/client_diagnostics",
     "crates/workspace_checks",
+    "crates/sim_fixtures",
 ]
 
 [workspace.package]
@@ -85,6 +86,8 @@ sim_map = { path = "crates/sim_map" }
 sim_core = { path = "crates/sim_core" }
 asset_baker = { path = "crates/asset_baker" }
 client = { path = "crates/client" }
+# Test-only: worlds and catalogs from the shipped data, embedded. Never a normal dependency.
+sim_fixtures = { path = "crates/sim_fixtures" }
 
 # Reviewed Vulkan compiler corrections; provenance and regression commands live in third_party/README.md.
 [patch.crates-io]

@@ -5008,6 +5008,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sim_fixtures"
+version = "0.1.0"
+dependencies = [
+ "sim_core",
+ "sim_map",
+ "sim_types",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "sim_map"
 version = "0.1.0"
 dependencies = [
