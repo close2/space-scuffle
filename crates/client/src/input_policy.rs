@@ -3,6 +3,11 @@
 //! The production UI finishes its current pass before ownership is sampled. Camera
 //! and selection share this decision; missing focus/context denies interaction.
 //! Logical egui rectangles convert once to clamped physical camera coordinates.
+//!
+//! A surface protects the world in one of two ways. A panel reserves space, so the pointer over
+//! it is outside the world rectangle. A floating surface takes no space, so the pointer test asks
+//! egui whether an interactable area lies under the pointer, which also holds on the frame of a
+//! press. An area that takes no input is not an obstacle, and clicks pass through it.
 
 use bevy::prelude::*;
 use bevy::render::camera::Viewport;
@@ -157,7 +162,8 @@ pub fn sample_input_ownership(
             let point = cursor * window.scale_factor() / context.pixels_per_point();
             rect.contains(egui::pos2(point.x, point.y))
         });
-    ownership.pointer = inside && !context.wants_pointer_input();
+    // `wants_pointer_input` alone is false on a press that no widget claimed, even over an area.
+    ownership.pointer = inside && !context.wants_pointer_input() && !context.is_pointer_over_area();
 }
 
 /// Converts egui points to a nonempty physical viewport inside the window.

@@ -291,9 +291,10 @@ pub fn lab_ui_system(
     battle: (
         ResMut<'_, crate::battle_pipeline::session::BattleSession>,
         Res<'_, crate::battle_selection::BattleSelection>,
+        Res<'_, crate::battle_presentation::BattleProfile>,
     ),
 ) {
-    let (mut session, battle_selection) = battle;
+    let (mut session, battle_selection, profile) = battle;
     lineup.refresh(&catalog.0, catalog.is_changed());
 
     let Some(ctx) = contexts.try_ctx_mut().cloned() else {
@@ -305,6 +306,16 @@ pub fn lab_ui_system(
         }
         return;
     };
+
+    // The HUD replaced the inspector. It ran first, so what is available excludes its bars, and
+    // that is what the camera and the pointer are given.
+    if *profile == crate::battle_presentation::BattleProfile::Player {
+        geometry.targets.fill(None);
+        geometry.pixels_per_point = ctx.pixels_per_point();
+        geometry.inspector = None;
+        geometry.world = Some(ctx.available_rect());
+        return;
+    }
 
     // Render SC2-Style Bottom-Center Selected Unit Video Portrait & Status HUD
     if lab_state.current_tab == LabTab::VisualLab

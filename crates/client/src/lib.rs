@@ -16,6 +16,7 @@
 //! # Core Subsystems
 //! - [`camera`]: `StarCraft` II style RTS camera with 58° pitch, WASD pan, scroll zoom, and hotkey bookmarks.
 //! - [`battle_input`]: Live battle selection, box drag, right-click orders and control groups.
+//! - [`battle_hud`]: The player's resource bar, command panel and message feed.
 //! - [`lab_stage`]: Flat stage and lights for the map-less Lab and Swarm scenes.
 //! - [`bubble_shader`]: Custom `BubbleDomeMaterial` and GPU uniform packing for unit spheres and domes.
 //! - [`indicators`]: Ground selection rings, equatorial facing chevron, attack focal lens, and collar meshes.
@@ -26,6 +27,7 @@
 #![warn(missing_docs)]
 
 pub mod assets;
+pub mod battle_hud;
 pub mod battle_input;
 pub mod battle_pipeline;
 pub mod battle_presentation;
@@ -164,6 +166,18 @@ pub enum ClientMode {
     SwarmStressTest,
     /// Run 60 frames in headless CI mode and exit cleanly with code 0.
     HeadlessCheck,
+}
+
+/// Title of the primary window in `mode`.
+#[must_use]
+pub const fn window_title(mode: ClientMode) -> &'static str {
+    match mode {
+        ClientMode::Skirmish => "Space Scuffle",
+        ClientMode::VisualLab
+        | ClientMode::LiveBattle
+        | ClientMode::SwarmStressTest
+        | ClientMode::HeadlessCheck => "Space Scuffle — Bubble & Dome Visual Lab",
+    }
 }
 
 /// Maximum frame limit before exiting the application cleanly.
@@ -333,6 +347,7 @@ impl Plugin for ClientAppPlugin {
         .add_plugins(MaterialPlugin::<SmogVolumeMaterial>::default())
         .add_plugins(SmogPlugin)
         .add_plugins(battle_input::BattleInputPlugin)
+        .add_plugins(battle_hud::BattleHudPlugin)
         .configure_sets(
             Update,
             (
@@ -548,7 +563,7 @@ pub fn build_graphical_app_with_options(
                 })
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                        title: "Space Scuffle — Bubble & Dome Visual Lab".to_string(),
+                        title: window_title(mode).to_string(),
                         resolution: (1280.0_f32, 720.0_f32).into(),
                         visible: is_visible,
                         ..default()
