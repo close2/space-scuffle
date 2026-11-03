@@ -8,7 +8,8 @@
 //!
 //! # How it fits
 //! The crate is a development tool (`publish = false`) and depends on no other workspace crate,
-//! so it reads the simulation and client crates as text and the dependency graph through Cargo.
+//! so it reads the simulation and client crates as text, the dependency graph through Cargo,
+//! and the list of tracked files through Git.
 //! `cargo test --workspace`, the gate every agent runs and CI's `check-and-test` job runs, executes
 //! its tests; no extra CI step is needed. Check IDs (`C2`, `C3`, ...) are the ones used in the
 //! Phase 9 blueprint (`docs/plans/2026-11-03-phase-9-structure-and-docs.md`) and in the charter.
@@ -23,6 +24,7 @@
 //!   `assets` link would otherwise pull the whole media tree into every scan.
 
 mod checks;
+mod docs;
 mod metadata;
 mod source;
 
@@ -30,6 +32,10 @@ pub use checks::{float_ratchet, FLOAT_RATCHET_MESSAGE};
 pub use checks::{
     module_docs, no_mutable_statics, no_work_markers, simulation_clippy_config,
     typed_library_errors, FloatAllowance, LIBRARY_CRATES, SIMULATION_CRATES,
+};
+pub use docs::{
+    notebook_references, plan_id, plan_index, tracked_files, EVIDENCE_RETENTION_LINE,
+    LEGACY_PLAN_IDS, PLAN_STATUSES,
 };
 pub use metadata::{cargo_metadata, engine_free_simulation, FORBIDDEN_SIMULATION_DEPENDENCIES};
 pub use source::{blank_comments_and_literals, code_text, rust_files, strip_test_items, Scope};
@@ -75,6 +81,17 @@ pub enum CheckError {
     /// The metadata JSON lacks a field this crate relies on.
     #[error("`cargo metadata` output lacks {0}")]
     MetadataShape(&'static str),
+    /// The `git ls-files` process could not be started.
+    #[error("cannot run `git ls-files`: {0}")]
+    GitSpawn(#[source] std::io::Error),
+    /// `git ls-files` ran but exited unsuccessfully.
+    #[error("`git ls-files` failed with {status}: {stderr}")]
+    GitFailed {
+        /// The exit status Git reported.
+        status: std::process::ExitStatus,
+        /// Git's standard error, which names the cause.
+        stderr: String,
+    },
 }
 
 /// One violation of a charter rule, located in the repository.
