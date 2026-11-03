@@ -8,6 +8,7 @@ members = [
     "crates/asset_baker",
     "crates/client",
     "crates/client_diagnostics",
+    "crates/workspace_checks",
 ]
 
 [workspace.package]

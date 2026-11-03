@@ -1,0 +1,21 @@
+[package]
+name = "workspace_checks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Executable checks of the Space Scuffle engineering charter (AGENTS.md), run by cargo test"
+publish = false
+
+[lints]
+workspace = true
+
+# This crate depends on no other workspace crate: it reads sources and `cargo metadata`
+# as text, so a broken simulation crate cannot hide a charter violation by failing to build.
+[dependencies]
+serde_json = "1.0"
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3.17"
