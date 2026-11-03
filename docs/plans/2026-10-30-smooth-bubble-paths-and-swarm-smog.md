@@ -14,26 +14,26 @@ The user observed three issues during interactive exploration and battlefield si
    - All bubbles across `VisualLab`, `LiveBattle`, and `SwarmStressTest` should default to `emission_rate = 5.0` and `wake_influence = 3.4` without hidden per-tab multipliers.
 2. **200-Unit Swarm Stress Test (`LabTab::SwarmStressTest`) Shows Zero Mist:**
    - Navigating to the 200-unit Swarm tab shows no mist for two compounding reasons:
-     1. `LabState::default().swarm_active` is initialized to `false` ([`crates/client/src/lab_ui.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/lab_ui.rs#L165)), so switching to the `Swarm` tab in the interactive client spawns 0 bubbles unless `--swarm` was passed on the CLI or the user manually clicks `"Spawn 200-Bubble Swarm"`.
-     2. Even when the 200 `SwarmBubble` entities are active, `update_smog_field_system` ([`crates/client/src/smog/mod.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/smog/mod.rs#L675-L718)) only distinguishes `if current_tab == LabTab::VisualLab` vs. `else` (which assumes `LiveBattle`). In `SwarmStressTest`:
-        - The 200 `SwarmBubble` entities are spawned at `x ∈ [6.0, 26.0]`, `y = 0.5` (`ground_z = 0.0`, `radius = 0.45`), and `z ∈ [10.0, 20.8]` ([`crates/client/src/scene_controller.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/scene_controller.rs#L783-L798)).
+     1. `LabState::default().swarm_active` is initialized to `false` ([`crates/client/src/lab_ui.rs`](../../crates/client/src/lab_ui.rs#L165)), so switching to the `Swarm` tab in the interactive client spawns 0 bubbles unless `--swarm` was passed on the CLI or the user manually clicks `"Spawn 200-Bubble Swarm"`.
+     2. Even when the 200 `SwarmBubble` entities are active, `update_smog_field_system` ([`crates/client/src/smog/mod.rs`](../../crates/client/src/smog/mod.rs#L675-L718)) only distinguishes `if current_tab == LabTab::VisualLab` vs. `else` (which assumes `LiveBattle`). In `SwarmStressTest`:
+        - The 200 `SwarmBubble` entities are spawned at `x ∈ [6.0, 26.0]`, `y = 0.5` (`ground_z = 0.0`, `radius = 0.45`), and `z ∈ [10.0, 20.8]` ([`crates/client/src/scene_controller.rs`](../../crates/client/src/scene_controller.rs#L783-L798)).
         - Because `SwarmBubble` has `ground_z = 0.0 <= 0.1` and `RtsCamera::default()` has `look_at_y = 1.2` (`cam_ground_y = 0.0 <= 0.1`), `update_smog_field_system` falls back to `ground_y = 3.0_f32` (`target_min.y = 3.0, target_max.y = 5.8`) and centers Z around `RtsCamera::default().target.y = 32.0` (`target_min.z = 21.0, target_max.z = 43.0`).
-        - Meanwhile, `SwarmBubble` has `is_live_battle_unit == false`, so its source position remains at `y = 0.5` and `z ∈ [10.0, 20.8]`—**100% outside** the 3D fluid volume `(2.0..30.0, 3.0..5.8, 21.0..43.0)`! Every single one of the 200 bubbles is culled by the AABB check at [`crates/client/src/smog/mod.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/smog/mod.rs#L801-L805), yielding `active_source_count == 0` and `total_density == 0.0`.
+        - Meanwhile, `SwarmBubble` has `is_live_battle_unit == false`, so its source position remains at `y = 0.5` and `z ∈ [10.0, 20.8]`—**100% outside** the 3D fluid volume `(2.0..30.0, 3.0..5.8, 21.0..43.0)`! Every single one of the 200 bubbles is culled by the AABB check at [`crates/client/src/smog/mod.rs`](../../crates/client/src/smog/mod.rs#L801-L805), yielding `active_source_count == 0` and `total_density == 0.0`.
 3. **Bubble Paths in the Battlefield Simulation Are Not Smooth (Frequent Small Adjustments / Micro-Swerves):**
    - Tracing individual bubble trajectories across `showcase_canyon.scmap.ron` (`default_battle.ron`) reveals four distinct deterministic simulation mechanisms that inject high-frequency angular adjustments, sawtooth oscillations, and staircase waypoints into unit locomotion:
-     - **Mechanism 3A (`compute_unified_local_steering` in [`crates/sim_core/src/steering.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/steering.rs#L161-L223)):**
+     - **Mechanism 3A (`compute_unified_local_steering` in [`crates/sim_core/src/steering.rs`](../../crates/sim_core/src/steering.rs#L161-L223)):**
        1. *Co-moving squadmates treated as static walls:* `SteeringObstacle` already carries `pub velocity: SimVec2`, yet `compute_unified_local_steering` ignores `obs.velocity`. In `LiveBattle`, 8 squadmates per side march in the same direction (`dot(obs.velocity, goal_dir) > 0`). Whenever a squadmate ahead or alongside is within `r_1 + r_2 + 0.35 = 1.10 m`, the trailing bubble swerves $40.4^\circ$ away from a teammate that is already moving forward at the same speed.
        2. *Binary $40.4^\circ$ step-function swerve:* Entering `threshold = r_1 + r_2 + lookahead` jumps steering discontinuously from `goal_dir` ($0^\circ$) to `normalize(goal_dir + 0.85 * tangent)` ($40.36^\circ$). One tick later, stepping $0.01\text{ m}$ outside `threshold` snaps $-40.36^\circ$ back to `goal_dir`, creating a tick-by-tick sawtooth (`0° -> 40.4° -> 0° -> 40.4°`).
        3. *Single `closest_blocker` left-right flip-flopping:* Only a single `closest_blocker` is tracked. When walking between two neighbors on the left and right at similar distances, `closest_blocker` alternates between them on consecutive ticks, snapping steering $+40.4^\circ$ right on tick $t$ and $-40.4^\circ$ left on tick $t+1$.
        4. *Lateral corridor over-triggering & `0.05` deadzone sign flip:* `within_distance` triggers avoidance even when `|lat| >= r_1 + r_2` (where straight-line travel along `goal_dir` already misses `obs`), and the `0.05` cross-product deadzone (`line 205`) flips the tangent sign when `cross` crosses $+0.05$.
-     - **Mechanism 3B (Co-Moving Wedge Push Fighting Locomotion in [`crates/sim_core/src/steering.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/steering.rs#L491-L521)):**
+     - **Mechanism 3B (Co-Moving Wedge Push Fighting Locomotion in [`crates/sim_core/src/steering.rs`](../../crates/sim_core/src/steering.rs#L491-L521)):**
        - In `checked_dynamic_push`, when two co-moving friendly units overlap (`a_moving && b_moving`), lines 499–517 take `move_dir` solely from `a.vel` and apply a discontinuous `0.25 * perp` wedge whenever `|dot(separation, move_dir)| > 0.5`. At the end of tick $t$, `resolve_spatial_overlap_pushes` nudges `actor.position` sideways/diagonally; on tick $t+1$, `prepare_actor_motion` steers back toward the waypoint while `checked_dynamic_push` wedges it out again, producing a 2-tick positional micro-sawtooth.
-     - **Mechanism 3C (`offset_corner_waypoint` Places Ramp Portal Corners on Integer Grid Lines in [`crates/sim_map/src/pathfinding.rs`](file:///home/cl/projects/space-scuffle/crates/sim_map/src/pathfinding.rs#L1146-L1182)):**
+     - **Mechanism 3C (`offset_corner_waypoint` Places Ramp Portal Corners on Integer Grid Lines in [`crates/sim_map/src/pathfinding.rs`](../../crates/sim_map/src/pathfinding.rs#L1146-L1182)):**
        - At a ramp portal corner such as `(35, 52)` (Ramp 1 bottom-south corner) or `(29, 12)` (Ramp 2 bottom-north corner), two cells in the $2\times 2$ vertex quad fail orthogonal connectivity (`q10=(35,51)` and `q11=(35,52)` at `(35,52)`; `q00=(28,11)` and `q01=(28,12)` at `(29,12)`).
        - Because their `away_y` offsets are `+1` and `-1`, `dir_y` sums to **`0`**!
        - At `(29, 12)` (Ramp 2, `y = 8..=11`), `offset_corner_waypoint` returns `(29.425, 12.0)`. Because `world_to_cell` uses `.floor()`, `y = 12.0` maps to row `y = 12` (**outside the ramp** in the cliff wall row `y = 12` instead of row `y = 11` inside the ramp)!
        - Consequently, `waypoints.windows(2).all(|pair| self.segment_is_passable(...))` (`pathfinding.rs` line 639) **rejects the smooth string-pulled funnel path** across Ramp 2 and falls back to `smooth_connected_corridor` (staircase cell-center waypoints), forcing units to make discrete $45^\circ$ / $90^\circ$ cell-to-cell adjustments!
-     - **Mechanism 3D (Per-Tick Full-Chain `segment_is_passable` Route Wiping in [`crates/sim_core/src/movement/locomotion.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/movement/locomotion.rs#L314-L371)):**
+     - **Mechanism 3D (Per-Tick Full-Chain `segment_is_passable` Route Wiping in [`crates/sim_core/src/movement/locomotion.rs`](../../crates/sim_core/src/movement/locomotion.rs#L314-L371)):**
        - In `prepare_actor_motion`, `actor.current_funnel_waypoints.iter().all(|&point| self.pathfinder.segment_is_passable(&self.map, &req, previous, point))` re-validates every segment of the remaining route on every tick, and if `actor.position` is nudged by $0.05\text{ m}$ near a ramp corner so that the chord `(actor.position, first_wp)` grazes an integer grid boundary, lines 323–325 wipe `actor.current_funnel_waypoints` (`proposal.clear_route = true`) and re-run A* from scratch on every tick.
 
 ---
@@ -42,13 +42,13 @@ The user observed three issues during interactive exploration and battlefield si
 
 ### 2.1 Part 1: Default `emission_rate = 5.0` and `wake_influence = 3.4` for All Bubbles
 
-1. **`SmogConfig::default()` in [`crates/client/src/smog/mod.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/smog/mod.rs#L94-L108):**
+1. **`SmogConfig::default()` in [`crates/client/src/smog/mod.rs`](../../crates/client/src/smog/mod.rs#L94-L108):**
    - Update `emission_rate: 4.4` $\rightarrow$ `emission_rate: 5.0`.
    - Update `wake_influence: 4.2` $\rightarrow$ `wake_influence: 3.4`.
-2. **`LabState::default()` in [`crates/client/src/lab_ui.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/lab_ui.rs#L169-L170):**
+2. **`LabState::default()` in [`crates/client/src/lab_ui.rs`](../../crates/client/src/lab_ui.rs#L169-L170):**
    - Update `smog_emission_rate: 4.4` $\rightarrow$ `smog_emission_rate: 5.0`.
    - Update `smog_wake_influence: 4.2` $\rightarrow$ `smog_wake_influence: 3.4`.
-3. **Uniform Bubble Source Strengths in `update_smog_field_system` ([`crates/client/src/smog/mod.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/smog/mod.rs#L810-L814)):**
+3. **Uniform Bubble Source Strengths in `update_smog_field_system` ([`crates/client/src/smog/mod.rs`](../../crates/client/src/smog/mod.rs#L810-L814)):**
    - Replace the per-tab multiplier:
      ```rust
      let (emission_strength, influence_strength) = (1.0_f32, 1.0_f32);
@@ -59,10 +59,10 @@ The user observed three issues during interactive exploration and battlefield si
 
 ### 2.2 Part 2: Enabling & Aligning the 3D Smog Field in the 200-Unit Swarm Stress Test (`LabTab::SwarmStressTest`)
 
-1. **Default `swarm_active: true` in `LabState::default()` ([`crates/client/src/lab_ui.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/lab_ui.rs#L165)):**
+1. **Default `swarm_active: true` in `LabState::default()` ([`crates/client/src/lab_ui.rs`](../../crates/client/src/lab_ui.rs#L165)):**
    - Set `swarm_active: true` in `LabState::default()`.
-   - Because `sync_swarm_stress_system` ([`crates/client/src/scene_controller.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/scene_controller.rs#L650)) guards spawning behind `if lab_state.current_tab != LabTab::SwarmStressTest || !lab_state.swarm_active`, setting `swarm_active: true` has zero cost in `VisualLab` or `LiveBattle`, and guarantees that clicking the `"3. 200-Unit Swarm"` tab immediately spawns and animates the 200-bubble swarm.
-2. **Explicit `LabTab::SwarmStressTest` Volume Bounds & Pre-Warm in `update_smog_field_system` ([`crates/client/src/smog/mod.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/smog/mod.rs#L675-L855)):**
+   - Because `sync_swarm_stress_system` ([`crates/client/src/scene_controller.rs`](../../crates/client/src/scene_controller.rs#L650)) guards spawning behind `if lab_state.current_tab != LabTab::SwarmStressTest || !lab_state.swarm_active`, setting `swarm_active: true` has zero cost in `VisualLab` or `LiveBattle`, and guarantees that clicking the `"3. 200-Unit Swarm"` tab immediately spawns and animates the 200-bubble swarm.
+2. **Explicit `LabTab::SwarmStressTest` Volume Bounds & Pre-Warm in `update_smog_field_system` ([`crates/client/src/smog/mod.rs`](../../crates/client/src/smog/mod.rs#L675-L855)):**
    - In `sync_swarm_stress_system` (`scene_controller.rs` lines 783–798 & 863–877), the 200 `SwarmBubble` entities oscillate horizontally across `x ∈ [6.0, 26.0]`, sit at height `y = 0.5` (`radius = 0.45`), and occupy 10 rows across `z ∈ [10.0, 20.8]` (centroid `(16.0, 0.5, 15.4)`).
    - In `update_smog_field_system`, match explicitly on `current_tab`:
      ```rust
@@ -77,7 +77,7 @@ The user observed three issues during interactive exploration and battlefield si
      ```
    - With `target_min = (4.0, 0.0, 7.0)` and `target_max = (28.0, 2.8, 24.0)` ($24\text{ m} \times 2.8\text{ m} \times 17\text{ m}$), all 200 `SwarmBubble` entities (`x ∈ [6.0, 26.0], y = 0.5, z ∈ [10.0, 20.8]`) lie well inside the 3D fluid grid with a $\ge 2.0\text{ m}$ margin on all sides for wake advection and vortex shedding.
    - Extend the first-frame 15-substep trajectory pre-warm (`needs_prewarm` at `smog/mod.rs` line 774) from `current_tab == crate::LabTab::LiveBattle` to `matches!(current_tab, crate::LabTab::LiveBattle | crate::LabTab::SwarmStressTest)` so that switching to `SwarmStressTest` (or running a 1-frame capture) immediately shows developed mist wakes behind all 200 moving bubbles.
-3. **Auto-Frame Camera When Switching to `LabTab::SwarmStressTest` ([`crates/client/src/scene_controller.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/scene_controller.rs#L649-L780)):**
+3. **Auto-Frame Camera When Switching to `LabTab::SwarmStressTest` ([`crates/client/src/scene_controller.rs`](../../crates/client/src/scene_controller.rs#L649-L780)):**
    - When `sync_swarm_stress_system` spawns the interactive 200-bubble swarm (`controlled_fixture.is_none()`), also frame `RtsCamera` (if present) onto the swarm center `target = Vec2::new(16.0, 15.4)`, `look_at_y = 0.5`, `distance = 22.0` so that switching from `VisualLab` or `LiveBattle` to `SwarmStressTest` centers the 200 bubbles and their 3D smog volume directly in the camera frustum.
    - Also attach `crate::mist::MistMotion { conveyor_velocity: None, enabled: false }` in the `controlled_fixture.is_none()` spawn branch so `MistWakePlugin` does not allocate legacy 2D ribbon slots for the 200 smog-driven bubbles (while keeping `controlled_fixture.is_some()` untouched for `shell_order_audit` tests).
 
@@ -87,7 +87,7 @@ The user observed three issues during interactive exploration and battlefield si
 
 #### 2.3.1 Mechanism 3A Fix: Smooth, Co-Moving-Aware, Multi-Blocker Local Avoidance (`crates/sim_core/src/steering.rs`)
 
-In [`compute_unified_local_steering`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/steering.rs#L161-L223):
+In [`compute_unified_local_steering`](../../crates/sim_core/src/steering.rs#L161-L223):
 
 1. **Preserve Exact Fixed-Point Validation & Extreme-Coordinate Invariants:**
    - First, iterate over `obstacles` to validate `if obs.radius <= SimScalar::ZERO { return Err(SimCoreError::NonPositiveRadius { radius: obs.radius }); }` for all obstacles before any filtering.
@@ -124,14 +124,14 @@ In [`compute_unified_local_steering`](file:///home/cl/projects/space-scuffle/cra
 
 #### 2.3.2 Mechanism 3B Fix: Smooth Radial Separation for Co-Moving Friendly Pairs (`crates/sim_core/src/steering.rs`)
 
-In [`checked_dynamic_push`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/steering.rs#L491-L521):
+In [`checked_dynamic_push`](../../crates/sim_core/src/steering.rs#L491-L521):
 - Currently, whenever `a_moving || b_moving` and `a.priority == b.priority`, `checked_dynamic_push` adds a discontinuous `0.25 * perp` wedge whenever `|dot(separation, move_dir)| > 0.5`.
 - When **both** units are moving (`a_moving && b_moving`) in the same general direction (`checked_dot(a.vel, b.vel)? > SimScalar::ZERO`), they are co-moving squadmates rather than a moving unit trying to wedge around a stationary blocker. Applying a sideways/axial wedge in `resolve_spatial_overlap_pushes` fights their forward velocity on every tick.
 - **Fix:** Apply the `0.25 * perp` wedge only when **one unit is moving and the other is stationary** (`a_moving != b_moving`) or when the two moving units are moving in **opposing directions** (`checked_dot(a.vel, b.vel)? <= SimScalar::ZERO`). When both units are co-moving (`a_moving && b_moving && checked_dot(a.vel, b.vel)? > SimScalar::ZERO`), use pure smooth radial separation (`correction = checked_vec_scale(separation, half)?`).
 
 #### 2.3.3 Mechanism 3C Fix: Ramp-Portal Interior Offset in `offset_corner_waypoint` (`crates/sim_map/src/pathfinding.rs`)
 
-In [`offset_corner_waypoint`](file:///home/cl/projects/space-scuffle/crates/sim_map/src/pathfinding.rs#L1146-L1182):
+In [`offset_corner_waypoint`](../../crates/sim_map/src/pathfinding.rs#L1146-L1182):
 - Consider any interior grid vertex `(vx, vy)` where `blocked_count == 0` (all four quad cells `q00=(vx-1, vy-1)`, `q10=(vx, vy-1)`, `q01=(vx-1, vy)`, `q11=(vx, vy)` are passable by footprint) and `!map.terrain_step_is_connected(q00, q11)` (there is a cliff edge or ramp boundary meeting at `(vx, vy)`).
 - Each cell `c` in the $2\times 2$ quad has two orthogonal neighbors in the quad (`orth_neighbors(c)`), and an interior direction `(into_x, into_y)` from `(vx, vy)` into `c`'s interior:
   - `q00 = (vx - 1, vy - 1)` $\rightarrow$ `into = (-1, -1)`, `orth = [q10, q01]`
@@ -160,7 +160,7 @@ In [`offset_corner_waypoint`](file:///home/cl/projects/space-scuffle/crates/sim_
 
 #### 2.3.4 Mechanism 3D Fix: Stable Route Retention During Local Avoidance (`crates/sim_core/src/movement/locomotion.rs`)
 
-In [`prepare_actor_motion`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/movement/locomotion.rs#L314-L371):
+In [`prepare_actor_motion`](../../crates/sim_core/src/movement/locomotion.rs#L314-L371):
 - Currently, lines 314–326 check:
   ```rust
   let current_route_valid = !actor.current_funnel_waypoints.is_empty()
@@ -185,7 +185,7 @@ In [`prepare_actor_motion`](file:///home/cl/projects/space-scuffle/crates/sim_co
 
 ### Step 1: Update Default Smog Parameters (`5.0` / `3.4`) and `SwarmStressTest` Volume Bounds (`crates/client`)
 
-1. **[`crates/client/src/smog/mod.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/smog/mod.rs):**
+1. **[`crates/client/src/smog/mod.rs`](../../crates/client/src/smog/mod.rs):**
    - In `SmogConfig::default()` (lines 94–108), set:
      - `emission_rate: 5.0`
      - `wake_influence: 3.4`
@@ -210,19 +210,19 @@ In [`prepare_actor_motion`](file:///home/cl/projects/space-scuffle/crates/sim_co
      ```
    - In `update_smog_field_system` (lines 810–814), unify `(emission_strength, influence_strength)` to `(1.0, 1.0)` for all bubbles so that `emission_rate = 5.0` and `wake_influence = 3.4` apply uniformly across all tabs.
 
-2. **[`crates/client/src/lab_ui.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/lab_ui.rs):**
+2. **[`crates/client/src/lab_ui.rs`](../../crates/client/src/lab_ui.rs):**
    - In `LabState::default()` (lines 165–170), set:
      - `swarm_active: true`
      - `smog_emission_rate: 5.0`
      - `smog_wake_influence: 3.4`
 
-3. **[`crates/client/src/scene_controller.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/scene_controller.rs):**
+3. **[`crates/client/src/scene_controller.rs`](../../crates/client/src/scene_controller.rs):**
    - In `sync_swarm_stress_system` (around line 640–840), add `mut camera_query: Query<&mut crate::camera::RtsCamera>` (or include it in the system parameters without conflicting with existing queries) so that when the interactive 200-bubble swarm is spawned (`controlled_fixture.is_none()`), `cam.target = Vec2::new(16.0, 15.4)`, `cam.look_at_y = 0.5`, and `cam.distance = 22.0` frame the 200 bubbles and their smog wakes directly in the viewport.
    - In the `controlled_fixture.is_none()` spawn loop (lines 800–832), insert `crate::mist::MistMotion { conveyor_velocity: None, enabled: false }` alongside `SwarmBubble` so `MistWakePlugin` does not allocate legacy 2D ribbon slots for the 200 smog-driven bubbles.
 
 ### Step 2: Fix Ramp Portal Corner Offsets in `offset_corner_waypoint` (`crates/sim_map/src/pathfinding.rs`)
 
-1. **[`crates/sim_map/src/pathfinding.rs`](file:///home/cl/projects/space-scuffle/crates/sim_map/src/pathfinding.rs):**
+1. **[`crates/sim_map/src/pathfinding.rs`](../../crates/sim_map/src/pathfinding.rs):**
    - In `offset_corner_waypoint` (lines 1149–1173), when `blocked_count == 0 && vx > 0 && vy > 0 && !map.terrain_step_is_connected(q00, q11)`:
      - Check the four quad cells and their orthogonal quad neighbors:
        ```rust
@@ -274,7 +274,7 @@ In [`prepare_actor_motion`](file:///home/cl/projects/space-scuffle/crates/sim_co
 
 ### Step 3: Smooth Local Steering, Co-Moving Separation, and Route Retention (`crates/sim_core`)
 
-1. **[`crates/sim_core/src/steering.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/steering.rs):**
+1. **[`crates/sim_core/src/steering.rs`](../../crates/sim_core/src/steering.rs):**
    - In `compute_unified_local_steering` (lines 161–223):
      - Keep all radius and input validations (`unit_radius <= 0`, `obs.radius <= 0`).
      - Keep `lookahead = 0.35`, `combined = unit_radius + obs.radius`, `threshold = combined + lookahead`, `within_distance(unit_pos, obs.pos, threshold)`, and `forward > 0`.
@@ -295,7 +295,7 @@ In [`prepare_actor_motion`](file:///home/cl/projects/space-scuffle/crates/sim_co
      - Check `let co_moving = a_moving && b_moving && checked_dot(a.vel, b.vel)? > SimScalar::ZERO;`.
      - When `co_moving` is `true`, use smooth radial separation (`correction = checked_vec_scale(separation, half)?`) without the discontinuous `|cos θ| > 0.5` wedge jump.
 
-2. **[`crates/sim_core/src/movement/locomotion.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/movement/locomotion.rs):**
+2. **[`crates/sim_core/src/movement/locomotion.rs`](../../crates/sim_core/src/movement/locomotion.rs):**
    - In `prepare_actor_motion` (lines 314–371):
      - Validate the active route without needlessly wiping it when a unit makes a small local-avoidance offset:
        - If `self.config.vision_aware_pathfinding` is `true`, preserve the per-segment `segment_is_passable` check so newly revealed fog-of-war blockers trigger immediate re-pathing.
@@ -328,7 +328,7 @@ In [`prepare_actor_motion`](file:///home/cl/projects/space-scuffle/crates/sim_co
 
 ### 5.1 Restore Clean `locomotion.rs` State from `task-756`
 
-In [`crates/sim_core/src/movement/locomotion.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/movement/locomotion.rs):
+In [`crates/sim_core/src/movement/locomotion.rs`](../../crates/sim_core/src/movement/locomotion.rs):
 
 1. **Imports (lines 5–7):** Remove the unused `checked_vec_sub` import:
    ```rust
@@ -393,7 +393,7 @@ In [`crates/sim_core/src/movement/locomotion.rs`](file:///home/cl/projects/space
 
 ### 5.2 Clean Up Debug Output & Finalize `collision_and_immobility_tests.rs`
 
-In [`crates/sim_core/tests/collision_and_immobility_tests.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/tests/collision_and_immobility_tests.rs):
+In [`crates/sim_core/tests/collision_and_immobility_tests.rs`](../../crates/sim_core/tests/collision_and_immobility_tests.rs):
 
 1. Remove the temporary `if tick % 25 == 0 { println!(...); }` block in `test_live_battle_10_unit_squad_ramp_traversal` (lines 653–656).
 2. Remove the temporary `prev_wps` and `println!` debug blocks in `test_live_battle_scenario_dual_ramp_traversal` (lines 845, 848–853, 868–874).

@@ -1,7 +1,7 @@
 //! Editor interactive tools: brush footprints, paint operations, ramp inference, and entity editing.
 //!
 //! # Architectural Charter
-//! In accordance with Implementation Plan 21 §6.4 and [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md),
+//! In accordance with Implementation Plan 21 §6.4 and `AGENTS.md`,
 //! this module encapsulates all pure editing tool logic, geometric footprints, ramp landing validation,
 //! and entity selection/erasure routines.
 //!

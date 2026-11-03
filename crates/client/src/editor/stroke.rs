@@ -1,7 +1,7 @@
 //! Active drag-stroke recorder with single-touch generation stamping.
 //!
 //! # Architectural Charter
-//! In accordance with Implementation Plan 21 §6.3 and [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md),
+//! In accordance with Implementation Plan 21 §6.3 and `AGENTS.md`,
 //! this module provides the [`StrokeRecorder`] for interactive brush painting, ensuring each cell
 //! is touched at most once per drag stroke with live feedback and zero per-frame allocations.
 //!

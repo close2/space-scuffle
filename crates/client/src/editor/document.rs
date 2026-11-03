@@ -1,7 +1,7 @@
 //! In-memory editor document state, dirty tracking, and simulation sync.
 //!
 //! # Architectural Charter
-//! In accordance with Implementation Plan 21 §6.1 and [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md),
+//! In accordance with Implementation Plan 21 §6.1 and `AGENTS.md`,
 //! `EditorDocument` is the authoritative ECS resource representing the editable map document in the client.
 //!
 //! # Invariants Maintained

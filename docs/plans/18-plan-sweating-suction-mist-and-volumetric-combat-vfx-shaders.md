@@ -3,10 +3,10 @@
 **Document Status:** Architectural Blueprint (Stage 1)  
 **Author:** Principal Visual Effects & Simulation Physics Architect  
 **Target Crates:** `crates/client`, `crates/sim_core`, `assets/shaders`  
-**Binding Standards:** [`AGENTS.md`](file:///home/cl/projects/space-scuffle/AGENTS.md) (Textbook-Grade Engineering, Zero Placeholders, Strict Invariants)  
+**Binding Standards:** [`AGENTS.md`](../../AGENTS.md) (Textbook-Grade Engineering, Zero Placeholders, Strict Invariants)  
 **Reference Artworks:**
-- [`Gemini_Generated_Image_12da9g12da9g12da.jpg`](file:///home/cl/projects/space-scuffle/tmp/Gemini_Generated_Image_12da9g12da9g12da.jpg) — High-energy laser beams, iridescent aerodynamic mist wakes, trailing particle streams.
-- [`damaged bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg`](file:///home/cl/projects/space-scuffle/tmp/damaged bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg) — Bubble under fire, shield ripple arcs, impact plasma starbursts, crystalline glass shatter explosion.
+- `Gemini_Generated_Image_12da9g12da9g12da.jpg` (an untracked file in `tmp/`, not in the repository) — High-energy laser beams, iridescent aerodynamic mist wakes, trailing particle streams.
+- `damaged bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg` (an untracked file in `tmp/`, not in the repository) — Bubble under fire, shield ripple arcs, impact plasma starbursts, crystalline glass shatter explosion.
 
 ---
 
@@ -31,7 +31,7 @@ To elevate Space Scuffle to textbook-grade AAA fidelity matching the reference c
 
 ### 1.2 Forensic Analysis: Why Current Mist Wake Looks Like "Pushing Mist Away"
 
-A forensic inspection of [`crates/client/src/vfx.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/vfx.rs), [`crates/client/src/scene_controller.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/scene_controller.rs), and [`crates/sim_core/src/world.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/world.rs) identified three interrelated mathematical and kinematic causes for the unnatural "thrusting / pushing away" appearance:
+A forensic inspection of [`crates/client/src/vfx.rs`](../../crates/client/src/vfx.rs), [`crates/client/src/scene_controller.rs`](../../crates/client/src/scene_controller.rs), and [`crates/sim_core/src/world.rs`](../../crates/sim_core/src/world.rs) identified three interrelated mathematical and kinematic causes for the unnatural "thrusting / pushing away" appearance:
 
 ```
 CURRENT (FLAWED) ROCKET EXHAUST MODEL:
@@ -91,7 +91,7 @@ This created a severe velocity-scaling mismatch between the Visual Lab (where `l
 
 ### 1.3 Forensic Analysis: Why Fight Animations Look "Horribly Primitive"
 
-Comparing the current implementation in `crates/client/src/vfx.rs` against the reference images ([`Gemini_Generated_Image_12da9g12da9g12da.jpg`](file:///home/cl/projects/space-scuffle/tmp/Gemini_Generated_Image_12da9g12da9g12da.jpg) and [`damaged bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg`](file:///home/cl/projects/space-scuffle/tmp/damaged bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg)) demonstrates why the battle looks rudimentary:
+Comparing the current implementation in `crates/client/src/vfx.rs` against the reference images (`Gemini_Generated_Image_12da9g12da9g12da.jpg` (an untracked file in `tmp/`, not in the repository) and `damaged bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg` (an untracked file in `tmp/`, not in the repository)) demonstrates why the battle looks rudimentary:
 
 1. **Hitscan & Laser Beams (`tracer_mesh` & `beam_mesh`):**
    - **Current:** Spawns a 3D solid unlit cylinder (`Cylinder::new(0.03, 1.0)` or `Cylinder::new(0.05, 1.0)`) with a flat `StandardMaterial` color (`blue_beam_mat` / `red_beam_mat`).
@@ -111,7 +111,7 @@ Comparing the current implementation in `crates/client/src/vfx.rs` against the r
 4. **Death Shatter & Explosions (`shard_mesh`):**
    - **Current:** Spawns 16 identical rectangular bricks (`Cuboid::new(0.15, 0.30, 0.08)`) with standard PBR material.
    - **Why It Looks Primitive:** There is no central detonation flash or shockwave. Rectangular boxes tumbling outward do not evoke shattering glass or bursting soap bubbles.
-   - **Reference Art Standard:** (Right side of [`damaged bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg`](file:///home/cl/projects/space-scuffle/tmp/damaged bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg)): A blinding golden-white core starburst with radial rays, an expanding refractive vapor ring, and sharp triangular/wedge-shaped crystalline shards scattering outward with glowing iridescent refraction.
+   - **Reference Art Standard:** (Right side of `damaged bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg` (an untracked file in `tmp/`, not in the repository)): A blinding golden-white core starburst with radial rays, an expanding refractive vapor ring, and sharp triangular/wedge-shaped crystalline shards scattering outward with glowing iridescent refraction.
 
 ---
 

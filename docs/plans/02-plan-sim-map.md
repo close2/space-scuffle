@@ -4,7 +4,7 @@
 > **Crate:** `crates/sim_map`  
 > **Author:** Lead Pathfinding & Map Systems Architect  
 > **Target Execution Agent:** Implementation Sub-Agent B (`sim_map` Engineer)  
-> **Standards Compliance:** Strict adherence to [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md), [03-sc2-mechanics-reference.md](file:///home/cl/projects/space-scuffle/docs/03-sc2-mechanics-reference.md), [04-pathfinding-networking-bot-api.md](file:///home/cl/projects/space-scuffle/docs/04-pathfinding-networking-bot-api.md), and [05-parallel-implementation-plans.md](file:///home/cl/projects/space-scuffle/docs/05-parallel-implementation-plans.md).
+> **Standards Compliance:** Strict adherence to [AGENTS.md](../../AGENTS.md), [03-sc2-mechanics-reference.md](../03-sc2-mechanics-reference.md), [04-pathfinding-networking-bot-api.md](../04-pathfinding-networking-bot-api.md), and [05-parallel-implementation-plans.md](../05-parallel-implementation-plans.md).
 
 ---
 

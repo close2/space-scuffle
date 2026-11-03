@@ -1,7 +1,7 @@
 //! Render verification pipeline and automated camera pose screenshot capture.
 //!
 //! # Architectural Charter
-//! In accordance with Implementation Plan 21 §7.7 and [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md),
+//! In accordance with Implementation Plan 21 §7.7 and `AGENTS.md`,
 //! this module provides the automated headless/virtual GPU verification mode `--verify-render <out_dir>`.
 //!
 //! # Invariants Maintained

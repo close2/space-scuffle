@@ -3,7 +3,7 @@
 > **Document Version:** 2.0.0  
 > **Status:** Approved Architectural Blueprint & Implementation Specification  
 > **Target Crates:** `crates/asset_baker`, `crates/sim_types`, `crates/sim_core`, `crates/client`, `assets/shaders/`  
-> **Charter Compliance:** Strictly adheres to [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md), [02-bubble-visual-design.md](file:///home/cl/projects/space-scuffle/docs/02-bubble-visual-design.md), and [06-factions-and-video-style-guide.md](file:///home/cl/projects/space-scuffle/docs/06-factions-and-video-style-guide.md).
+> **Charter Compliance:** Strictly adheres to [AGENTS.md](../../AGENTS.md), [02-bubble-visual-design.md](../02-bubble-visual-design.md), and [06-factions-and-video-style-guide.md](../06-factions-and-video-style-guide.md).
 
 ---
 

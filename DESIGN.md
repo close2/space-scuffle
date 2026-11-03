@@ -1,11 +1,11 @@
 # Space Scuffle — Game Design & Technical Architecture
 
 ## Documentation Index
-- **[01 — Engine & Tech Stack Evaluation](file:///home/cl/projects/space-scuffle/docs/01-engine-evaluation.md):** Detailed comparison of existing RTS engines (Recoil/Spring, OpenRA), Godot 4 + Rust, Bevy + Rust, and custom `wgpu`, plus solutions for the 4 major technical traps (cross-platform floating-point desyncs, VRAM explosion, transparent bubble sorting, and pathing gridlock).
-- **[02 — Bubble Visual Design & Readability](file:///home/cl/projects/space-scuffle/docs/02-bubble-visual-design.md):** How unit bubbles and building hemisphere domes communicate movement, facing/turn rate, attack direction, team, unit class silhouette, and progressive damage/shattering.
-- **[03 — StarCraft II Mechanics Reference](file:///home/cl/projects/space-scuffle/docs/03-sc2-mechanics-reference.md):** Complete unit data model, damage formulas, weapon timings (`DamagePoint`, `Backswing`, `Cooldown`), movement physics, high-ground vision rules, and SC2 limitations to keep vs. remove.
-- **[04 — Pathfinding, Lockstep Networking, Bot API & Map Editor](file:///home/cl/projects/space-scuffle/docs/04-pathfinding-networking-bot-api.md):** CDT NavMesh + Funnel + Boid steering, Deterministic Lockstep over Relay Server, headless/real-time Bot API, Tiled/in-engine Map Editor, and the Parallel Track A / Track B roadmap.
-- **[05 — Parallel Implementation Plans (Sub-Agent Blueprints)](file:///home/cl/projects/space-scuffle/docs/05-parallel-implementation-plans.md):** Concrete Cargo workspace structure, shared `sim_types` contract, and task-by-task blueprints for the 4 parallel sub-agent workstreams.
+- **[01 — Engine & Tech Stack Evaluation](docs/01-engine-evaluation.md):** Detailed comparison of existing RTS engines (Recoil/Spring, OpenRA), Godot 4 + Rust, Bevy + Rust, and custom `wgpu`, plus solutions for the 4 major technical traps (cross-platform floating-point desyncs, VRAM explosion, transparent bubble sorting, and pathing gridlock).
+- **[02 — Bubble Visual Design & Readability](docs/02-bubble-visual-design.md):** How unit bubbles and building hemisphere domes communicate movement, facing/turn rate, attack direction, team, unit class silhouette, and progressive damage/shattering.
+- **[03 — StarCraft II Mechanics Reference](docs/03-sc2-mechanics-reference.md):** Complete unit data model, damage formulas, weapon timings (`DamagePoint`, `Backswing`, `Cooldown`), movement physics, high-ground vision rules, and SC2 limitations to keep vs. remove.
+- **[04 — Pathfinding, Lockstep Networking, Bot API & Map Editor](docs/04-pathfinding-networking-bot-api.md):** CDT NavMesh + Funnel + Boid steering, Deterministic Lockstep over Relay Server, headless/real-time Bot API, Tiled/in-engine Map Editor, and the Parallel Track A / Track B roadmap.
+- **[05 — Parallel Implementation Plans (Sub-Agent Blueprints)](docs/05-parallel-implementation-plans.md):** Concrete Cargo workspace structure, shared `sim_types` contract, and task-by-task blueprints for the 4 parallel sub-agent workstreams.
 
 ---
 

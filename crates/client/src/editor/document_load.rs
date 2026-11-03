@@ -1,7 +1,7 @@
 //! Replacing the open map document and everything derived from it.
 //!
 //! # Architectural Charter
-//! In accordance with Implementation Plan 21 §7.2 and [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md),
+//! In accordance with Implementation Plan 21 §7.2 and `AGENTS.md`,
 //! this module owns the single path that swaps the active document. File > Open and File > New
 //! both end here, so chunks, GPU field textures, undo history, the stroke recorder and the LOS
 //! buffer can never disagree about the map's dimensions.

@@ -2,11 +2,11 @@
 
 **Document Status:** Architectural Blueprint (Stage 1)  
 **Author:** Principal Graphics & Volumetric Shader Architect (`pro` model)  
-**Target Crates:** [`assets/shaders/bubble_dome.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/bubble_dome.wgsl), [`assets/shaders/mist_wake.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/mist_wake.wgsl)  
-**Binding Standards:** [`AGENTS.md`](file:///home/cl/projects/space-scuffle/AGENTS.md) (Textbook-Grade Engineering, Zero Placeholders, Strict Invariants)  
+**Target Crates:** [`assets/shaders/bubble_dome.wgsl`](../../assets/shaders/bubble_dome.wgsl), `assets/shaders/mist_wake.wgsl` (since removed from the repository)  
+**Binding Standards:** [`AGENTS.md`](../../AGENTS.md) (Textbook-Grade Engineering, Zero Placeholders, Strict Invariants)  
 **Visual Artifacts Under Diagnosis:**
-- [User Screenshot 1: Corner Elliptical Stretching `media_1793033681696_4347f33a.png`](file:///home/cl/.gemini/antigravity/brain/28ee1670-e5dd-4945-94d2-278c6b003750/.user_uploaded/media_1793033681696_4347f33a.png)
-- [User Screenshot 2: Center Round Bubbles & Brief Overlap `media_1793033848500_8d4ae0e7.png`](file:///home/cl/.gemini/antigravity/brain/28ee1670-e5dd-4945-94d2-278c6b003750/.user_uploaded/media_1793033848500_8d4ae0e7.png)
+- User Screenshot 1: Corner Elliptical Stretching `media_1793033681696_4347f33a.png`, `media_1793033681696_4347f33a.png` (on the development notebook; not retained)
+- User Screenshot 2: Center Round Bubbles & Brief Overlap `media_1793033848500_8d4ae0e7.png`, `media_1793033848500_8d4ae0e7.png` (on the development notebook; not retained)
 
 ---
 
@@ -63,7 +63,7 @@ In 3D computer graphics under a standard planar perspective projection matrix (`
 Because Bevy rasterizes the physical 3D mesh triangles of `bevy_render::mesh::Sphere`, the rasterizer produces fragments covering the entire oblique elliptical footprint on the monitor. Even if the internal shader calculations are spherical, the *outer contour of pixels drawn by the GPU* is an ellipse!
 
 ### 2.2 Why Characters Inside Corner Bubbles Tilt Diagonally
-In [`assets/shaders/bubble_dome.wgsl:82-84`](file:///home/cl/projects/space-scuffle/assets/shaders/bubble_dome.wgsl#L82-L84):
+In [`assets/shaders/bubble_dome.wgsl:82-84`](../../assets/shaders/bubble_dome.wgsl#L82-L84):
 ```wgsl
 let sphere_center = in.world_position.xyz - normal * bubble.radius;
 let cam_forward = normalize(sphere_center - view.world_position);
@@ -129,7 +129,7 @@ For grounded building hemisphere domes (`bubble.shape_kind == 1u`), they must re
 
 ## 4. StarCraft II Unit Push & Overlap Validation
 
-In Screenshot 2 ([`media_1793033848500_8d4ae0e7.png`](file:///home/cl/.gemini/antigravity/brain/28ee1670-e5dd-4945-94d2-278c6b003750/.user_uploaded/media_1793033848500_8d4ae0e7.png)), the user observed:
+In Screenshot 2 (`media_1793033848500_8d4ae0e7.png` (on the development notebook; not retained)), the user observed:
 > *"I have noticed that for short periods units occupy the same space (see second screenshot).*  
 > *If this is the same behavior as in sc2, that's fine. The 2 units are then pushed aside."*
 
@@ -155,7 +155,7 @@ Therefore, the brief overlap during convergence followed by smooth separation ob
 
 The user requested: *"The mist is \*much\* better. Please make it a little bit stronger, but otherwise we can keep it for now."*
 
-In [`assets/shaders/mist_wake.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/mist_wake.wgsl):
+In `assets/shaders/mist_wake.wgsl` (since removed from the repository):
 1. **Wisp Density & Body:**
    Widen the wisp threshold in line 86 from `smoothstep(0.30, 0.82, ...)` to:
    ```wgsl
@@ -180,7 +180,7 @@ In [`assets/shaders/mist_wake.wgsl`](file:///home/cl/projects/space-scuffle/asse
 
 ### 6.1 `assets/shaders/bubble_dome.wgsl` (Fragment Basis & Clipping)
 
-Replace lines 76–105 of [`assets/shaders/bubble_dome.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/bubble_dome.wgsl) with:
+Replace lines 76–105 of [`assets/shaders/bubble_dome.wgsl`](../../assets/shaders/bubble_dome.wgsl) with:
 
 ```wgsl
 @fragment
@@ -254,7 +254,7 @@ Replace `cam_right` / `cam_up` / `cam_forward` references with `screen_right` / 
 
 ### 6.2 `assets/shaders/mist_wake.wgsl` (Enhanced Density & Vibrancy)
 
-In [`assets/shaders/mist_wake.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/mist_wake.wgsl):
+In `assets/shaders/mist_wake.wgsl` (since removed from the repository):
 
 ```wgsl
     // 2. Wisp Structure with slightly broader volume
@@ -286,6 +286,6 @@ In [`assets/shaders/mist_wake.wgsl`](file:///home/cl/projects/space-scuffle/asse
 
 | Step | Target File | Action | Key Verification |
 |---|---|---|---|
-| **Step 1** | [`assets/shaders/bubble_dome.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/bubble_dome.wgsl) | Implement screen-space disk projection, clip `screen_r2 > 1.0` for mobile units, use `screen_right`/`screen_up` for lens UV and studio specular. | Mobile units in viewport corners are 100% circular with zero character tilt. |
-| **Step 2** | [`assets/shaders/mist_wake.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/mist_wake.wgsl) | Apply wisp structure broadening, `spectral_color *= 1.35`, and alpha density boost ($0.28 \to 0.44$, max $0.46$). | Mist is noticeably richer, denser, and more vibrant without blowing out. |
+| **Step 1** | [`assets/shaders/bubble_dome.wgsl`](../../assets/shaders/bubble_dome.wgsl) | Implement screen-space disk projection, clip `screen_r2 > 1.0` for mobile units, use `screen_right`/`screen_up` for lens UV and studio specular. | Mobile units in viewport corners are 100% circular with zero character tilt. |
+| **Step 2** | `assets/shaders/mist_wake.wgsl` (since removed from the repository) | Apply wisp structure broadening, `spectral_color *= 1.35`, and alpha density boost ($0.28 \to 0.44$, max $0.46$). | Mist is noticeably richer, denser, and more vibrant without blowing out. |
 | **Step 3** | Quality Gates & Compilation | Run `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`. | All automated tests pass cleanly with zero warnings. |

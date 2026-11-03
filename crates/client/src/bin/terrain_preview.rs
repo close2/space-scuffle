@@ -1,7 +1,7 @@
 //! Standalone terrain preview & real render verification binary.
 //!
 //! # Architectural Responsibilities
-//! In accordance with [Plan 21 §5.7b](file:///home/cl/projects/space-scuffle/docs/plans/21-plan-map-editor.md),
+//! In accordance with Plan 21 §5.7b (`docs/plans/21b-plan-map-editor.md`),
 //! this binary boots a real windowed Bevy application (1600x900), instantiates the production
 //! shared terrain renderer ([`client::terrain`]), loads `showcase_canyon.scmap.ron` under the
 //! `orbital_foundry` theme, and captures screenshots from four canonical camera poses:

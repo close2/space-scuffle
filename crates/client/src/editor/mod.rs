@@ -1,7 +1,7 @@
 //! Pure-logic map editor core subsystem and interactive Bevy application.
 //!
 //! # Architectural Charter
-//! In accordance with Implementation Plan 21 §6, §7 and [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md),
+//! In accordance with Implementation Plan 21 §6, §7 and `AGENTS.md`,
 //! this module provides the pure-logic domain model, command history, stroke recording,
 //! symmetry transformations, holographic markers, egui UI, and live playtest execution for the
 //! Space Scuffle map editor.

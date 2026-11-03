@@ -1,7 +1,7 @@
 //! Line-of-sight (LOS) Fog of War interactive preview subsystem.
 //!
 //! # Architectural Charter
-//! In accordance with Implementation Plan 21 §7.5 and [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md),
+//! In accordance with Implementation Plan 21 §7.5 and `AGENTS.md`,
 //! this module provides dynamic line-of-sight previewing from the currently hovered cursor cell.
 //!
 //! # Invariants Maintained

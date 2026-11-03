@@ -1,7 +1,7 @@
 //! Application wiring, state transitions, and plugin assembly for the map editor.
 //!
 //! # Architectural Charter
-//! In accordance with Implementation Plan 21 §7.1 and [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md),
+//! In accordance with Implementation Plan 21 §7.1 and `AGENTS.md`,
 //! this module provides the primary [`MapEditorPlugin`] assembling all sub-plugins, schedules,
 //! resources, and systems required to run the standalone map editor and its render verification mode.
 //!

@@ -1,7 +1,7 @@
 //! Map symmetry transformations for cells, ramps, rectangles, and entities.
 //!
 //! # Architectural Charter
-//! In accordance with Implementation Plan 21 §6.4 and [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md),
+//! In accordance with Implementation Plan 21 §6.4 and `AGENTS.md`,
 //! this module provides mathematical mirror and 180° rotation operations for all authorable map elements.
 //!
 //! # Invariants Maintained
