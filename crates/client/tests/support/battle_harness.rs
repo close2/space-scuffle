@@ -524,7 +524,7 @@ pub fn fixture_root(identities: &[&str]) -> tempfile::TempDir {
         let mut atlas =
             asset_baker::generate_procedural_atlas(identity, Some(FIXTURE_FRAME_SIZE), None)
                 .expect("a catalog identity");
-        // The media gate asks for every action, and a procedural dome authors no Walk or Attack.
+        // The media gate asks for every action, and a procedural dome never authors Walk.
         let idle = atlas.meta.actions[&AnimState::Idle];
         for action in AnimState::ALL {
             atlas.meta.actions.entry(action).or_insert(idle);
