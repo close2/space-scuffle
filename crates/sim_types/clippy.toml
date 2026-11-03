@@ -1,0 +1,19 @@
+# Clippy configuration for a simulation crate (charter §3.1, Phase 9 decision D-8).
+#
+# Clippy reads only the nearest clippy.toml, so this file replaces the workspace
+# root's: it repeats the root threshold, which must stay identical everywhere.
+too-many-lines-threshold = 100
+
+# Simulation state must be bit-identical on every platform. The std hashed collections
+# iterate in a per-process random order, and clocks differ between runs and hosts.
+# These bans also cover this crate's tests and benches; a timing harness that measures
+# the simulation states its exemption with `#[expect(clippy::disallowed_methods, reason)]`.
+# Checked by crates/workspace_checks/tests/charter.rs (C9).
+disallowed-types = [
+    { path = "std::collections::HashMap", reason = "iteration order is randomised per process; use BTreeMap or a sorted Vec (charter §3.1)" },
+    { path = "std::collections::HashSet", reason = "iteration order is randomised per process; use BTreeSet or a sorted Vec (charter §3.1)" },
+]
+disallowed-methods = [
+    { path = "std::time::Instant::now", reason = "the simulation advances by ticks, never by wall-clock time (charter §3.1)" },
+    { path = "std::time::SystemTime::now", reason = "the simulation advances by ticks, never by wall-clock time (charter §3.1)" },
+]

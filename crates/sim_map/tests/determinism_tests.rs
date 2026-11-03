@@ -115,6 +115,10 @@ fn test_cross_platform_determinism_checksum() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "wall-clock timing measures the pathfinder and vision code; it never enters simulation state"
+)]
 fn test_performance_quality_gate() {
     let arena = GameMap::default_arena();
     let mut pathfinder = Pathfinder::new(&arena);

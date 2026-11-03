@@ -134,6 +134,10 @@ fn build_world(
 }
 
 /// Measures one repeat, returning ticks per second.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the benchmark times the simulation from outside; the clock never enters simulation state"
+)]
 fn measure(config: &BenchmarkConfig, scenario: Scenario) -> Result<f64, Box<dyn Error>> {
     let (mut world, mut tick) = build_world(config, scenario)?;
     let started = Instant::now();
