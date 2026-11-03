@@ -38,3 +38,5 @@ explain the earlier numbers. The frame-time target itself is a separate question
 [Q0015](0015-client-frame-time-target.md).
 
 ## Answer
+
+Owner (2026-11-03): Agreed (Option 1: headless KWin compositor on the RX 580 is the reference display path).

@@ -36,6 +36,7 @@ The options:
 
 ## Answer
 
+Owner (2026-11-03): Valgrind sounds good (keep the `valgrind --tool=dhat` test in `crates/client/tests/sync_allocation_count_tests.rs` and tag the charter §3.3 claim as CI-checked).
 
 ## Note from an agent
 

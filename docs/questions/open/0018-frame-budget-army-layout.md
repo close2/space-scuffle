@@ -37,3 +37,4 @@ after that plan lands.
 
 ## Answer
 
+Owner (2026-11-03): Option a for now (eight players on a circle for 0, 200 and 400 units), option b as todo (allow the scenario builder to continue placing units on rings 4+ for two-army battles).

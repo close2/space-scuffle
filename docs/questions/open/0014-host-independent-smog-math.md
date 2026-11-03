@@ -34,3 +34,4 @@ Recommendation: (b), as a separate plan after Phase 9, because Phase 9 allows no
 
 ## Answer
 
+Owner (2026-11-03): Agreed (option b: route client smog math through the `libm` crate as a separate plan after Phase 9) unless this becomes a performance problem. I do not mind if visuals are marginally different depending on the platform, but I think that using libm simplifies tests.

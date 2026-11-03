@@ -18,3 +18,4 @@ One agent chose these rules while building the simulation. They shape how the ga
 
 ## Answer
 
+Owner (2026-11-03): Keep as committed. Whenever the spec is silent make an internet search how sc2 does it.

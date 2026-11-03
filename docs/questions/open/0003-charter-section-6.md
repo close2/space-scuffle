@@ -14,3 +14,4 @@ drop the model names. Agents will not rewrite §6 without your say.
 
 ## Answer
 
+Owner (2026-11-03): I agree with recommendation. Naming models did not work as I wished.

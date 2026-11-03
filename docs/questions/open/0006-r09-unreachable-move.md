@@ -15,3 +15,4 @@ keep the walking and rewrite the repro's expectation.
 
 ## Answer
 
+Owner (2026-11-03): Agree (keep the walking to the nearest reachable point and rewrite the repro's expectation).

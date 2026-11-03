@@ -27,3 +27,4 @@ linker to zlib-compress the DWARF sections, which brings `target/` to about 9 to
 
 ## Answer
 
+Owner (2026-11-03): Agree with agent's recommendation (keep `-Wl,--compress-debug-sections=zlib` in `.cargo/config.toml`; keep the 33 client test binaries separate unless the disk guard trips again).

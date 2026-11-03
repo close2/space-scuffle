@@ -23,3 +23,4 @@ Details: `docs/plans/2026-11-02-phase-5-playable-client.md` §2.6 and §7.
 
 ## Answer
 
+Owner (2026-11-03): Option B. Veo should be part of my ultra plan. So use it. (I think I have weekly limits and it would be a shame to waste them).

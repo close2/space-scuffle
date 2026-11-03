@@ -14,3 +14,4 @@ The recommendation is to decide this after CI has been green for a while.
 
 ## Answer
 
+Owner (2026-11-03): CI is not required on the main branch. We should regularly take a look and fix if we notice that it is red. But it is no longer a requirement!

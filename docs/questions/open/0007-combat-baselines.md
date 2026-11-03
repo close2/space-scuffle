@@ -17,3 +17,4 @@ These were changed during Phase 3, and nothing was tuned to reach them.
 
 ## Answer
 
+Owner (2026-11-03): Keep all five as committed. I do however want an "investigation" why internet says that Zealots should win, and why we have 6-13 of 24 marines surviving. This is a big difference.

@@ -40,3 +40,5 @@ server's Mesa is 25.1 or later and then delete it (recommended), or delete it no
 run of the five terrain tests here time out.
 
 ## Answer
+
+Owner (2026-11-03): Agreed (keep the override until the server's Mesa is 25.1 or later and then delete it).

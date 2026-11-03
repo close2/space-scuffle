@@ -36,3 +36,4 @@ that the measurement tool still runs and that its scenario is valid.
 
 ## Answer
 
+Owner (2026-11-03): Start with option 1 (measure and publish only, reported against the 60 and 30 FPS lines).
