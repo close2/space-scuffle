@@ -198,6 +198,13 @@ impl SimWorld {
         result
     }
 
+    /// Compatibility adapter for typed loading. Ordinary rejection returns false;
+    /// corruption emits diagnostic evidence. Prefer `try_load_unit_into_transport`.
+    pub fn load_unit_into_transport(&mut self, unit_id: EntityId, transport_id: EntityId) -> bool {
+        self.try_load_unit_into_transport(unit_id, transport_id)
+            .is_ok()
+    }
+
     fn load_transport_prevalidated(
         &mut self,
         passenger: EntityId,
@@ -277,6 +284,12 @@ impl SimWorld {
             .and_then(|()| self.unload_transport_prevalidated(passenger, destination));
         self.report_transport_result(&result);
         result
+    }
+
+    /// Unloads a unit from a transport craft at the specified landing position.
+    pub fn unload_unit_from_transport(&mut self, unit_id: EntityId, unload_pos: SimVec2) -> bool {
+        self.try_unload_unit_from_transport(unit_id, unload_pos)
+            .is_ok()
     }
 
     fn unload_transport_prevalidated(
