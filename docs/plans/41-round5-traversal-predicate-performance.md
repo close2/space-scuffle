@@ -1,5 +1,7 @@
 # Round 5: preserve legal traversal while removing repeated predicate work
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: approved; stage1 implemented and targeted verification passed. Stage2 deferred because the measured stage1 result supplies headroom. Coordinated full-workspace acceptance remains pending other ongoing round changes. This narrow gate repair precedes36 native input work.
 
 ## Goal and evidence

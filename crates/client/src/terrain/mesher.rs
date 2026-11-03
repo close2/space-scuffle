@@ -847,16 +847,17 @@ fn push_quad_oriented(
 
 /// Generates a chunk mesh for chunk `(chunk_x, chunk_y)` into the provided scratchpad.
 ///
+/// The chunk covers dual cells `[chunk * CHUNK_DUAL_CELLS, (chunk + 1) * CHUNK_DUAL_CELLS)` on
+/// each axis (clamped to the `(width + 1) x (height + 1)` dual grid) and the simulation cells of
+/// the same index range (clamped to the map). Geometry is emitted in two ordered sections, and the
+/// order is part of the output contract (index order, and so the mesh bytes, depend on it):
+///
+/// 1. `emit_dual_cell` for every dual cell, row by row: cliff plateaus, cliff walls and the
+///    low floor of each dual cell.
+/// 2. `emit_ramp_cell` for every ramp cell, row by row: the ramp surface, its side walls and
+///    its guard rails.
+///
 /// Returns statistical metrics [`MeshStats`] for test verification.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    reason = "map cell coordinates stay far below the range of f32 and i32"
-)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "a single ordered sequence that shares its local state"
-)]
 pub fn build_chunk_mesh(
     map: &GameMap,
     chunk_x: u32,
@@ -869,360 +870,14 @@ pub fn build_chunk_mesh(
     let width = map.width();
     let height = map.height();
 
+    // 1. Dual grid marching squares
     let dual_x_start = chunk_x * CHUNK_DUAL_CELLS;
     let dual_x_end = ((chunk_x + 1) * CHUNK_DUAL_CELLS).min(width + 1);
     let dual_y_start = chunk_y * CHUNK_DUAL_CELLS;
     let dual_y_end = ((chunk_y + 1) * CHUNK_DUAL_CELLS).min(height + 1);
-
-    // 1. Dual grid marching squares
     for dj in dual_y_start..dual_y_end {
-        let dj_i = i32::try_from(dj).unwrap_or(0);
         for di in dual_x_start..dual_x_end {
-            let di_i = i32::try_from(di).unwrap_or(0);
-            let c_bl = (di_i - 1, dj_i - 1);
-            let c_br = (di_i, dj_i - 1);
-            let c_tr = (di_i, dj_i);
-            let c_tl = (di_i - 1, dj_i);
-
-            let l_bl = corner_marching_level(map, c_bl.0, c_bl.1, 1.0, 1.0);
-            let l_br = corner_marching_level(map, c_br.0, c_br.1, 0.0, 1.0);
-            let l_tr = corner_marching_level(map, c_tr.0, c_tr.1, 0.0, 0.0);
-            let l_tl = corner_marching_level(map, c_tl.0, c_tl.1, 1.0, 0.0);
-
-            let lo = l_bl.min(l_br).min(l_tr).min(l_tl);
-            let hi = l_bl.max(l_br).max(l_tr).max(l_tl);
-
-            let center_x = di as f32;
-            let center_z = dj as f32;
-
-            // Geometry coordinates of corners and midpoints
-            let p_bl = Vec2::new(center_x - 0.5, center_z - 0.5);
-            let p_br = Vec2::new(center_x + 0.5, center_z - 0.5);
-            let p_tr = Vec2::new(center_x + 0.5, center_z + 0.5);
-            let p_tl = Vec2::new(center_x - 0.5, center_z + 0.5);
-
-            let p_b = Vec2::new(center_x, center_z - 0.5);
-            let p_r = Vec2::new(center_x + 0.5, center_z);
-            let p_t = Vec2::new(center_x, center_z + 0.5);
-            let p_l = Vec2::new(center_x - 0.5, center_z);
-
-            // Ramp suppression flags for the 4 edges
-            let supp_b = is_ramp_connected(map, c_bl, c_br);
-            let supp_r = is_ramp_connected(map, c_br, c_tr);
-            let supp_t = is_ramp_connected(map, c_tl, c_tr);
-            let supp_l = is_ramp_connected(map, c_bl, c_tl);
-
-            let corner_coord = |c: DualCorner| match c {
-                DualCorner::BottomLeft => p_bl,
-                DualCorner::BottomRight => p_br,
-                DualCorner::TopRight => p_tr,
-                DualCorner::TopLeft => p_tl,
-            };
-
-            let midpoint_suppressed = |m: EdgeMidpoint| match m {
-                EdgeMidpoint::Bottom => supp_b,
-                EdgeMidpoint::Right => supp_r,
-                EdgeMidpoint::Top => supp_t,
-                EdgeMidpoint::Left => supp_l,
-            };
-
-            let midpoint_coord = |m: EdgeMidpoint| match m {
-                EdgeMidpoint::Bottom => p_b,
-                EdgeMidpoint::Right => p_r,
-                EdgeMidpoint::Top => p_t,
-                EdgeMidpoint::Left => p_l,
-            };
-
-            // Edge outward axis unit vector d = unit(B - A)
-            let midpoint_d = |m: EdgeMidpoint, t: i32| match m {
-                EdgeMidpoint::Bottom => {
-                    if l_bl >= t {
-                        Vec2::new(1.0, 0.0)
-                    } else {
-                        Vec2::new(-1.0, 0.0)
-                    }
-                }
-                EdgeMidpoint::Right => {
-                    if l_br >= t {
-                        Vec2::new(0.0, 1.0)
-                    } else {
-                        Vec2::new(0.0, -1.0)
-                    }
-                }
-                EdgeMidpoint::Top => {
-                    if l_tl >= t {
-                        Vec2::new(1.0, 0.0)
-                    } else {
-                        Vec2::new(-1.0, 0.0)
-                    }
-                }
-                EdgeMidpoint::Left => {
-                    if l_bl >= t {
-                        Vec2::new(0.0, 1.0)
-                    } else {
-                        Vec2::new(0.0, -1.0)
-                    }
-                }
-            };
-
-            let midpoint_levels = |m: EdgeMidpoint, t: i32| match m {
-                EdgeMidpoint::Bottom => {
-                    if l_bl >= t {
-                        (l_bl, l_br)
-                    } else {
-                        (l_br, l_bl)
-                    }
-                }
-                EdgeMidpoint::Right => {
-                    if l_br >= t {
-                        (l_br, l_tr)
-                    } else {
-                        (l_tr, l_br)
-                    }
-                }
-                EdgeMidpoint::Top => {
-                    if l_tl >= t {
-                        (l_tl, l_tr)
-                    } else {
-                        (l_tr, l_tl)
-                    }
-                }
-                EdgeMidpoint::Left => {
-                    if l_bl >= t {
-                        (l_bl, l_tl)
-                    } else {
-                        (l_tl, l_bl)
-                    }
-                }
-            };
-
-            let case_for_t = |curr_t: i32| -> usize {
-                let mut idx = 0;
-                if l_bl >= curr_t {
-                    idx |= 1;
-                }
-                if l_br >= curr_t {
-                    idx |= 2;
-                }
-                if l_tr >= curr_t {
-                    idx |= 4;
-                }
-                if l_tl >= curr_t {
-                    idx |= 8;
-                }
-                idx
-            };
-
-            // Evaluate threshold runs for t in (lo + 1)..=hi
-            if hi > lo {
-                let mut t = lo + 1;
-                while t <= hi {
-                    let curr_case = case_for_t(t);
-                    let ta = t;
-                    let mut tb = t;
-                    while tb < hi && case_for_t(tb + 1) == curr_case {
-                        tb += 1;
-                    }
-
-                    if curr_case != 0 && curr_case != 15 {
-                        let mcase = &MARCHING_CASES[curr_case];
-
-                        // Emit region polygon as floor at H(tb)
-                        let floor_y = cliff_level_height(tb);
-                        let mut poly_verts = Vec::with_capacity(mcase.region.len());
-
-                        for &vref in mcase.region {
-                            let final_pos = match vref {
-                                DualVertexRef::Corner(c) => corner_coord(c),
-                                DualVertexRef::Midpoint(m) => {
-                                    let (la, _) = midpoint_levels(m, tb);
-                                    let rim_present = la == tb && !midpoint_suppressed(m);
-                                    let base_coord = midpoint_coord(m);
-                                    if rim_present {
-                                        let d = midpoint_d(m, tb);
-                                        base_coord - d * RIM_WIDTH
-                                    } else {
-                                        base_coord
-                                    }
-                                }
-                            };
-
-                            let ao = compute_floor_ao(map, final_pos.x, floor_y, final_pos.y);
-                            poly_verts.push((final_pos, ao));
-                        }
-
-                        // Triangulate convex region polygon
-                        if poly_verts.len() >= 3 {
-                            let base_idx = scratch.positions.len() as u32;
-                            for (pos2, ao) in &poly_verts {
-                                scratch.positions.push([pos2.x, floor_y, pos2.y]);
-                                scratch.normals.push([0.0, 1.0, 0.0]);
-                                scratch.uv0.push([pos2.x, pos2.y]);
-                                scratch.uv1.push([*ao, 0.0]);
-                            }
-                            stats.floor_vertices += poly_verts.len();
-
-                            for k in 1..poly_verts.len() - 1 {
-                                scratch.indices.push(base_idx);
-                                scratch.indices.push(base_idx + (k + 1) as u32);
-                                scratch.indices.push(base_idx + k as u32);
-                                stats.floor_indices += 3;
-                            }
-                        }
-
-                        // Emit contour wall segments
-                        for &seg in mcase.segments {
-                            // Check ramp suppression: if both endpoints are suppressed, omit wall
-                            if midpoint_suppressed(seg.start) && midpoint_suppressed(seg.end) {
-                                continue;
-                            }
-
-                            let p0 = midpoint_coord(seg.start);
-                            let d0 = midpoint_d(seg.start, tb);
-                            let (la0, lb0) = midpoint_levels(seg.start, tb);
-                            let prof0 = generate_wall_profile(
-                                p0,
-                                d0,
-                                la0,
-                                lb0,
-                                ta,
-                                tb,
-                                midpoint_suppressed(seg.start),
-                            );
-
-                            let p1 = midpoint_coord(seg.end);
-                            let d1 = midpoint_d(seg.end, tb);
-                            let (la1, lb1) = midpoint_levels(seg.end, tb);
-                            let prof1 = generate_wall_profile(
-                                p1,
-                                d1,
-                                la1,
-                                lb1,
-                                ta,
-                                tb,
-                                midpoint_suppressed(seg.end),
-                            );
-
-                            // Collect descending unique row heights
-                            let mut heights: Vec<f32> =
-                                Vec::with_capacity(prof0.len() + prof1.len());
-                            for r in &prof0 {
-                                if !heights.iter().any(|&h| (h - r.y).abs() < 1e-4) {
-                                    heights.push(r.y);
-                                }
-                            }
-                            for r in &prof1 {
-                                if !heights.iter().any(|&h| (h - r.y).abs() < 1e-4) {
-                                    heights.push(r.y);
-                                }
-                            }
-                            heights.sort_by(|a, b| {
-                                b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)
-                            });
-
-                            if heights.len() >= 2 {
-                                stats.wall_segments += 1;
-                                let strip_base = scratch.positions.len() as u32;
-
-                                for &y_row in &heights {
-                                    let r0 = sample_profile_at_height(&prof0, y_row);
-                                    let r1 = sample_profile_at_height(&prof1, y_row);
-
-                                    scratch.positions.push([r0.xz.x, r0.y, r0.xz.y]);
-                                    scratch
-                                        .normals
-                                        .push([r0.normal.x, r0.normal.y, r0.normal.z]);
-                                    scratch.uv0.push([r0.xz.x, r0.xz.y]);
-                                    scratch.uv1.push([r0.ao, 0.0]);
-
-                                    scratch.positions.push([r1.xz.x, r1.y, r1.xz.y]);
-                                    scratch
-                                        .normals
-                                        .push([r1.normal.x, r1.normal.y, r1.normal.z]);
-                                    scratch.uv0.push([r1.xz.x, r1.xz.y]);
-                                    scratch.uv1.push([r1.ao, 0.0]);
-
-                                    stats.wall_vertices += 2;
-                                }
-
-                                for k in 0..heights.len() - 1 {
-                                    let v0 = strip_base + (k * 2) as u32;
-                                    let v1 = strip_base + (k * 2 + 1) as u32;
-                                    let v2 = strip_base + ((k + 1) * 2 + 1) as u32;
-                                    let v3 = strip_base + ((k + 1) * 2) as u32;
-
-                                    let p0 = Vec3::from(scratch.positions[v0 as usize]);
-                                    let p1 = Vec3::from(scratch.positions[v1 as usize]);
-                                    let p2 = Vec3::from(scratch.positions[v2 as usize]);
-                                    let p3 = Vec3::from(scratch.positions[v3 as usize]);
-
-                                    let cross1 = (p1 - p0).cross(p2 - p0);
-                                    if cross1.length_squared() > 1e-10 {
-                                        scratch.indices.push(v0);
-                                        scratch.indices.push(v1);
-                                        scratch.indices.push(v2);
-                                        stats.wall_indices += 3;
-                                    }
-
-                                    let cross2 = (p2 - p0).cross(p3 - p0);
-                                    if cross2.length_squared() > 1e-10 {
-                                        scratch.indices.push(v0);
-                                        scratch.indices.push(v2);
-                                        scratch.indices.push(v3);
-                                        stats.wall_indices += 3;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    t = tb + 1;
-                }
-            }
-
-            // PERFORMANCE RATIONALE:
-            // For flat dual cells (hi == lo), emit the full cell quad. When a cliff is present (hi > lo),
-            // the low region polygon (cases 1..14) matching the threshold run is emitted at H(lo) to avoid
-            // hidden overdraw under the higher cliff plateau and guarantee watertight chunk boundaries.
-            if lo >= 0 {
-                let floor_y = cliff_level_height(lo);
-                let low_case = if hi > lo {
-                    (!case_for_t(lo + 1)) & 0x0F
-                } else {
-                    15
-                };
-
-                if low_case != 0 {
-                    let mcase = &MARCHING_CASES[low_case];
-                    let mut poly_verts = Vec::with_capacity(mcase.region.len());
-                    for &vref in mcase.region {
-                        let pos2 = match vref {
-                            DualVertexRef::Corner(c) => corner_coord(c),
-                            DualVertexRef::Midpoint(m) => midpoint_coord(m),
-                        };
-                        let ao = compute_floor_ao(map, pos2.x, floor_y, pos2.y);
-                        poly_verts.push((pos2, ao));
-                    }
-
-                    if poly_verts.len() >= 3 {
-                        let base_idx = scratch.positions.len() as u32;
-                        for (pos2, ao) in &poly_verts {
-                            scratch.positions.push([pos2.x, floor_y, pos2.y]);
-                            scratch.normals.push([0.0, 1.0, 0.0]);
-                            scratch.uv0.push([pos2.x, pos2.y]);
-                            scratch.uv1.push([*ao, 0.0]);
-                        }
-                        stats.floor_vertices += poly_verts.len();
-
-                        for k in 1..poly_verts.len() - 1 {
-                            scratch.indices.push(base_idx);
-                            scratch.indices.push(base_idx + (k + 1) as u32);
-                            scratch.indices.push(base_idx + k as u32);
-                            stats.floor_indices += 3;
-                        }
-                    }
-                }
-            }
+            emit_dual_cell(map, di, dj, scratch, &mut stats);
         }
     }
 
@@ -1231,250 +886,663 @@ pub fn build_chunk_mesh(
     let cell_x_end = ((chunk_x + 1) * CHUNK_DUAL_CELLS).min(width);
     let cell_y_start = chunk_y * CHUNK_DUAL_CELLS;
     let cell_y_end = ((chunk_y + 1) * CHUNK_DUAL_CELLS).min(height);
-
     for cy in cell_y_start..cell_y_end {
         for cx in cell_x_start..cell_x_end {
             if let Some(profile) = map.ramp_profile(cx, cy) {
-                // Authoritative simulation surface altitudes at the 4 cell corners
-                let h_bl = profile.height_at(SimScalar::ZERO, SimScalar::ZERO).to_f32();
-                let h_br = profile.height_at(SimScalar::ONE, SimScalar::ZERO).to_f32();
-                let h_tr = profile.height_at(SimScalar::ONE, SimScalar::ONE).to_f32();
-                let h_tl = profile.height_at(SimScalar::ZERO, SimScalar::ONE).to_f32();
-
-                let p_bl = Vec3::new(cx as f32, h_bl, cy as f32);
-                let p_br = Vec3::new(cx as f32 + 1.0, h_br, cy as f32);
-                let p_tr = Vec3::new(cx as f32 + 1.0, h_tr, cy as f32 + 1.0);
-                let p_tl = Vec3::new(cx as f32, h_tl, cy as f32 + 1.0);
-
-                let norm = ((p_tl - p_bl).cross(p_br - p_bl)).normalize();
-
-                let ao_bl = compute_floor_ao(map, p_bl.x, h_bl, p_bl.z);
-                let ao_br = compute_floor_ao(map, p_br.x, h_br, p_br.z);
-                let ao_tr = compute_floor_ao(map, p_tr.x, h_tr, p_tr.z);
-                let ao_tl = compute_floor_ao(map, p_tl.x, h_tl, p_tl.z);
-
-                let base_idx = scratch.positions.len() as u32;
-                scratch.positions.push([p_bl.x, p_bl.y, p_bl.z]);
-                scratch.normals.push([norm.x, norm.y, norm.z]);
-                scratch.uv0.push([p_bl.x, p_bl.z]);
-                scratch.uv1.push([ao_bl, 0.0]);
-
-                scratch.positions.push([p_br.x, p_br.y, p_br.z]);
-                scratch.normals.push([norm.x, norm.y, norm.z]);
-                scratch.uv0.push([p_br.x, p_br.z]);
-                scratch.uv1.push([ao_br, 0.0]);
-
-                scratch.positions.push([p_tr.x, p_tr.y, p_tr.z]);
-                scratch.normals.push([norm.x, norm.y, norm.z]);
-                scratch.uv0.push([p_tr.x, p_tr.z]);
-                scratch.uv1.push([ao_tr, 0.0]);
-
-                scratch.positions.push([p_tl.x, p_tl.y, p_tl.z]);
-                scratch.normals.push([norm.x, norm.y, norm.z]);
-                scratch.uv0.push([p_tl.x, p_tl.z]);
-                scratch.uv1.push([ao_tl, 0.0]);
-
-                scratch.indices.push(base_idx);
-                scratch.indices.push(base_idx + 2);
-                scratch.indices.push(base_idx + 1);
-
-                scratch.indices.push(base_idx);
-                scratch.indices.push(base_idx + 3);
-                scratch.indices.push(base_idx + 2);
-
-                stats.ramp_vertices += 4;
-
-                // Ramp side edges: perpendicular to the run's direction
-                // Side edges are parallel to dir
-                let (side1, side2) = match profile.dir {
-                    RampDir::North | RampDir::South => (
-                        // West edge (p_bl -> p_tl) facing -X
-                        (
-                            p_bl,
-                            p_tl,
-                            (-1, 0),
-                            Vec3::new(-1.0, 0.0, 0.0),
-                            Vec3::new(1.0, 0.0, 0.0),
-                        ),
-                        // East edge (p_br -> p_tr) facing +X
-                        (
-                            p_br,
-                            p_tr,
-                            (1, 0),
-                            Vec3::new(1.0, 0.0, 0.0),
-                            Vec3::new(-1.0, 0.0, 0.0),
-                        ),
-                    ),
-                    RampDir::East | RampDir::West => (
-                        // South edge (p_bl -> p_br) facing -Z
-                        (
-                            p_bl,
-                            p_br,
-                            (0, -1),
-                            Vec3::new(0.0, 0.0, -1.0),
-                            Vec3::new(0.0, 0.0, 1.0),
-                        ),
-                        // North edge (p_tl -> p_tr) facing +Z
-                        (
-                            p_tl,
-                            p_tr,
-                            (0, 1),
-                            Vec3::new(0.0, 0.0, 1.0),
-                            Vec3::new(0.0, 0.0, -1.0),
-                        ),
-                    ),
-                    _ => continue,
-                };
-
-                let Ok(cx_i) = i32::try_from(cx) else {
-                    continue;
-                };
-                let Ok(cy_i) = i32::try_from(cy) else {
-                    continue;
-                };
-                for (v_start, v_end, n_offset, perp_dir, inward_dir) in [side1, side2] {
-                    let n_cell = (cx_i + n_offset.0, cy_i + n_offset.1);
-                    let n_class = surface_class(map, n_cell.0, n_cell.1);
-
-                    // Check if neighbour is a parallel ramp in the same run
-                    let neighbour_same_run = match n_class {
-                        SurfaceClass::Ramp(n_prof) => {
-                            n_prof.dir == profile.dir
-                                && n_prof.low_level == profile.low_level
-                                && n_prof.index == profile.index
-                        }
-                        _ => false,
-                    };
-
-                    if !neighbour_same_run {
-                        let neighbour_h = match n_class {
-                            SurfaceClass::Void => ABYSS_WALL_BOTTOM_Y,
-                            SurfaceClass::Plateau(lvl) => cliff_level_height(lvl),
-                            SurfaceClass::Ramp(n_prof) => {
-                                n_prof.height_at(SimScalar::HALF, SimScalar::HALF).to_f32()
-                            }
-                        };
-
-                        // (a) Side wall down to neighbour if neighbour is lower
-                        if v_start.y > neighbour_h || v_end.y > neighbour_h {
-                            let wall_base = scratch.positions.len() as u32;
-                            let bot_start =
-                                Vec3::new(v_start.x, neighbour_h.min(v_start.y), v_start.z);
-                            let bot_end = Vec3::new(v_end.x, neighbour_h.min(v_end.y), v_end.z);
-
-                            scratch.positions.push([v_start.x, v_start.y, v_start.z]);
-                            scratch.normals.push([perp_dir.x, 0.0, perp_dir.z]);
-                            scratch.uv0.push([v_start.x, v_start.z]);
-                            scratch.uv1.push([1.0, 0.0]);
-
-                            scratch.positions.push([v_end.x, v_end.y, v_end.z]);
-                            scratch.normals.push([perp_dir.x, 0.0, perp_dir.z]);
-                            scratch.uv0.push([v_end.x, v_end.z]);
-                            scratch.uv1.push([1.0, 0.0]);
-
-                            scratch.positions.push([bot_end.x, bot_end.y, bot_end.z]);
-                            scratch.normals.push([perp_dir.x, 0.0, perp_dir.z]);
-                            scratch.uv0.push([bot_end.x, bot_end.z]);
-                            scratch.uv1.push([WALL_FOOT_AO, 0.0]);
-
-                            scratch
-                                .positions
-                                .push([bot_start.x, bot_start.y, bot_start.z]);
-                            scratch.normals.push([perp_dir.x, 0.0, perp_dir.z]);
-                            scratch.uv0.push([bot_start.x, bot_start.z]);
-                            scratch.uv1.push([WALL_FOOT_AO, 0.0]);
-
-                            // Orient wall triangles outward, emitting only non-degenerate triangles
-                            stats.wall_indices += push_quad_oriented(
-                                &scratch.positions,
-                                &mut scratch.indices,
-                                wall_base,
-                                perp_dir,
-                            );
-
-                            stats.wall_vertices += 4;
-                        }
-
-                        // (b) Guard rail riding on the ramp edge
-                        let rail_base = scratch.positions.len() as u32;
-                        let in_offset = inward_dir * RAIL_WIDTH;
-                        let up_offset = Vec3::Y * RAIL_HEIGHT;
-
-                        let p0 = v_start;
-                        let p1 = v_end;
-                        let p0_in = v_start + in_offset;
-                        let p1_in = v_end + in_offset;
-
-                        let t0 = p0 + up_offset;
-                        let t1 = p1 + up_offset;
-                        let t0_in = p0_in + up_offset;
-                        let t1_in = p1_in + up_offset;
-
-                        // Top face: flagged emissive with uv1.y = 1.0
-                        scratch.positions.push([t0.x, t0.y, t0.z]);
-                        scratch.normals.push([0.0, 1.0, 0.0]);
-                        scratch.uv0.push([t0.x, t0.z]);
-                        scratch.uv1.push([1.0, 1.0]);
-
-                        scratch.positions.push([t1.x, t1.y, t1.z]);
-                        scratch.normals.push([0.0, 1.0, 0.0]);
-                        scratch.uv0.push([t1.x, t1.z]);
-                        scratch.uv1.push([1.0, 1.0]);
-
-                        scratch.positions.push([t1_in.x, t1_in.y, t1_in.z]);
-                        scratch.normals.push([0.0, 1.0, 0.0]);
-                        scratch.uv0.push([t1_in.x, t1_in.z]);
-                        scratch.uv1.push([1.0, 1.0]);
-
-                        scratch.positions.push([t0_in.x, t0_in.y, t0_in.z]);
-                        scratch.normals.push([0.0, 1.0, 0.0]);
-                        scratch.uv0.push([t0_in.x, t0_in.z]);
-                        scratch.uv1.push([1.0, 1.0]);
-
-                        push_quad_oriented(
-                            &scratch.positions,
-                            &mut scratch.indices,
-                            rail_base,
-                            Vec3::Y,
-                        );
-
-                        // Outer side face: facing perp_dir
-                        let out_base = scratch.positions.len() as u32;
-                        scratch.positions.push([t0.x, t0.y, t0.z]);
-                        scratch.normals.push([perp_dir.x, 0.0, perp_dir.z]);
-                        scratch.uv0.push([t0.x, t0.z]);
-                        scratch.uv1.push([1.0, 0.0]);
-
-                        scratch.positions.push([p0.x, p0.y, p0.z]);
-                        scratch.normals.push([perp_dir.x, 0.0, perp_dir.z]);
-                        scratch.uv0.push([p0.x, p0.z]);
-                        scratch.uv1.push([1.0, 0.0]);
-
-                        scratch.positions.push([p1.x, p1.y, p1.z]);
-                        scratch.normals.push([perp_dir.x, 0.0, perp_dir.z]);
-                        scratch.uv0.push([p1.x, p1.z]);
-                        scratch.uv1.push([1.0, 0.0]);
-
-                        scratch.positions.push([t1.x, t1.y, t1.z]);
-                        scratch.normals.push([perp_dir.x, 0.0, perp_dir.z]);
-                        scratch.uv0.push([t1.x, t1.z]);
-                        scratch.uv1.push([1.0, 0.0]);
-
-                        push_quad_oriented(
-                            &scratch.positions,
-                            &mut scratch.indices,
-                            out_base,
-                            perp_dir,
-                        );
-
-                        stats.rail_vertices += 8;
-                    }
-                }
+                emit_ramp_cell(map, cx, cy, profile, scratch, &mut stats);
             }
         }
     }
 
     stats
+}
+
+/// Marching levels, geometry and ramp suppression of one dual cell.
+///
+/// Dual cell `(di, dj)` is centred on the shared corner of simulation cells
+/// `(di - 1, dj - 1)` (bottom-left), `(di, dj - 1)` (bottom-right), `(di, dj)` (top-right) and
+/// `(di - 1, dj)` (top-left). Positions are world XZ in world units.
+#[derive(Debug, Clone, Copy)]
+struct DualCell {
+    /// Marching level of the bottom-left, bottom-right, top-right and top-left corner cells.
+    l_bl: i32,
+    l_br: i32,
+    l_tr: i32,
+    l_tl: i32,
+    /// Lowest and highest of the four corner levels.
+    lo: i32,
+    hi: i32,
+    /// Corner positions.
+    p_bl: Vec2,
+    p_br: Vec2,
+    p_tr: Vec2,
+    p_tl: Vec2,
+    /// Edge midpoint positions.
+    p_b: Vec2,
+    p_r: Vec2,
+    p_t: Vec2,
+    p_l: Vec2,
+    /// Whether each edge, in bottom, right, top, left order, joins two ramp-connected cells,
+    /// which suppresses walls and rims there.
+    suppressed: [bool; 4],
+}
+
+/// Samples the four corner cells of dual cell `(di, dj)` and lays out its geometry.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "map cell coordinates stay far below the range of f32 and i32"
+)]
+fn dual_cell_corners(map: &GameMap, di: u32, dj: u32) -> DualCell {
+    let dj_i = i32::try_from(dj).unwrap_or(0);
+    let di_i = i32::try_from(di).unwrap_or(0);
+    let c_bl = (di_i - 1, dj_i - 1);
+    let c_br = (di_i, dj_i - 1);
+    let c_tr = (di_i, dj_i);
+    let c_tl = (di_i - 1, dj_i);
+
+    let l_bl = corner_marching_level(map, c_bl.0, c_bl.1, 1.0, 1.0);
+    let l_br = corner_marching_level(map, c_br.0, c_br.1, 0.0, 1.0);
+    let l_tr = corner_marching_level(map, c_tr.0, c_tr.1, 0.0, 0.0);
+    let l_tl = corner_marching_level(map, c_tl.0, c_tl.1, 1.0, 0.0);
+
+    let center_x = di as f32;
+    let center_z = dj as f32;
+
+    DualCell {
+        l_bl,
+        l_br,
+        l_tr,
+        l_tl,
+        lo: l_bl.min(l_br).min(l_tr).min(l_tl),
+        hi: l_bl.max(l_br).max(l_tr).max(l_tl),
+        p_bl: Vec2::new(center_x - 0.5, center_z - 0.5),
+        p_br: Vec2::new(center_x + 0.5, center_z - 0.5),
+        p_tr: Vec2::new(center_x + 0.5, center_z + 0.5),
+        p_tl: Vec2::new(center_x - 0.5, center_z + 0.5),
+        p_b: Vec2::new(center_x, center_z - 0.5),
+        p_r: Vec2::new(center_x + 0.5, center_z),
+        p_t: Vec2::new(center_x, center_z + 0.5),
+        p_l: Vec2::new(center_x - 0.5, center_z),
+        suppressed: [
+            is_ramp_connected(map, c_bl, c_br),
+            is_ramp_connected(map, c_br, c_tr),
+            is_ramp_connected(map, c_tl, c_tr),
+            is_ramp_connected(map, c_bl, c_tl),
+        ],
+    }
+}
+
+impl DualCell {
+    fn corner_coord(&self, c: DualCorner) -> Vec2 {
+        match c {
+            DualCorner::BottomLeft => self.p_bl,
+            DualCorner::BottomRight => self.p_br,
+            DualCorner::TopRight => self.p_tr,
+            DualCorner::TopLeft => self.p_tl,
+        }
+    }
+
+    fn midpoint_suppressed(&self, m: EdgeMidpoint) -> bool {
+        match m {
+            EdgeMidpoint::Bottom => self.suppressed[0],
+            EdgeMidpoint::Right => self.suppressed[1],
+            EdgeMidpoint::Top => self.suppressed[2],
+            EdgeMidpoint::Left => self.suppressed[3],
+        }
+    }
+
+    fn midpoint_coord(&self, m: EdgeMidpoint) -> Vec2 {
+        match m {
+            EdgeMidpoint::Bottom => self.p_b,
+            EdgeMidpoint::Right => self.p_r,
+            EdgeMidpoint::Top => self.p_t,
+            EdgeMidpoint::Left => self.p_l,
+        }
+    }
+
+    /// Edge outward axis unit vector `d = unit(B - A)` at threshold `t`, pointing from the high
+    /// side `A` of the edge to its low side `B`.
+    fn midpoint_d(&self, m: EdgeMidpoint, t: i32) -> Vec2 {
+        match m {
+            EdgeMidpoint::Bottom => {
+                if self.l_bl >= t {
+                    Vec2::new(1.0, 0.0)
+                } else {
+                    Vec2::new(-1.0, 0.0)
+                }
+            }
+            EdgeMidpoint::Right => {
+                if self.l_br >= t {
+                    Vec2::new(0.0, 1.0)
+                } else {
+                    Vec2::new(0.0, -1.0)
+                }
+            }
+            EdgeMidpoint::Top => {
+                if self.l_tl >= t {
+                    Vec2::new(1.0, 0.0)
+                } else {
+                    Vec2::new(-1.0, 0.0)
+                }
+            }
+            EdgeMidpoint::Left => {
+                if self.l_bl >= t {
+                    Vec2::new(0.0, 1.0)
+                } else {
+                    Vec2::new(0.0, -1.0)
+                }
+            }
+        }
+    }
+
+    /// Levels `(a, b)` of the two corners of an edge at threshold `t`: `a` on the high side.
+    fn midpoint_levels(&self, m: EdgeMidpoint, t: i32) -> (i32, i32) {
+        let (first, second) = match m {
+            EdgeMidpoint::Bottom => (self.l_bl, self.l_br),
+            EdgeMidpoint::Right => (self.l_br, self.l_tr),
+            EdgeMidpoint::Top => (self.l_tl, self.l_tr),
+            EdgeMidpoint::Left => (self.l_bl, self.l_tl),
+        };
+        if first >= t {
+            (first, second)
+        } else {
+            (second, first)
+        }
+    }
+
+    /// Marching squares case index at threshold `t` (bit set where the corner level is `>= t`).
+    fn case_for_t(&self, t: i32) -> usize {
+        let mut idx = 0;
+        if self.l_bl >= t {
+            idx |= 1;
+        }
+        if self.l_br >= t {
+            idx |= 2;
+        }
+        if self.l_tr >= t {
+            idx |= 4;
+        }
+        if self.l_tl >= t {
+            idx |= 8;
+        }
+        idx
+    }
+}
+
+/// Section 1 of [`build_chunk_mesh`] for one dual cell: for every run of thresholds that share
+/// a marching case, the raised plateau polygon at the run's top level and its cliff walls; then
+/// the low floor polygon at the cell's lowest level.
+fn emit_dual_cell(
+    map: &GameMap,
+    di: u32,
+    dj: u32,
+    scratch: &mut MesherScratch,
+    stats: &mut MeshStats,
+) {
+    let cell = dual_cell_corners(map, di, dj);
+    let (lo, hi) = (cell.lo, cell.hi);
+
+    // Evaluate threshold runs for t in (lo + 1)..=hi
+    if hi > lo {
+        let mut t = lo + 1;
+        while t <= hi {
+            let curr_case = cell.case_for_t(t);
+            let ta = t;
+            let mut tb = t;
+            while tb < hi && cell.case_for_t(tb + 1) == curr_case {
+                tb += 1;
+            }
+
+            if curr_case != 0 && curr_case != 15 {
+                let mcase = &MARCHING_CASES[curr_case];
+
+                // Emit region polygon as floor at H(tb), contour vertices inset by the rim
+                emit_floor_polygon(
+                    map,
+                    mcase.region,
+                    cliff_level_height(tb),
+                    scratch,
+                    stats,
+                    |vref| match vref {
+                        DualVertexRef::Corner(c) => cell.corner_coord(c),
+                        DualVertexRef::Midpoint(m) => {
+                            let (la, _) = cell.midpoint_levels(m, tb);
+                            let rim_present = la == tb && !cell.midpoint_suppressed(m);
+                            let base_coord = cell.midpoint_coord(m);
+                            if rim_present {
+                                let d = cell.midpoint_d(m, tb);
+                                base_coord - d * RIM_WIDTH
+                            } else {
+                                base_coord
+                            }
+                        }
+                    },
+                );
+
+                emit_cliff_walls(&cell, mcase.segments, ta, tb, scratch, stats);
+            }
+
+            t = tb + 1;
+        }
+    }
+
+    // PERFORMANCE RATIONALE:
+    // For flat dual cells (hi == lo), emit the full cell quad. When a cliff is present (hi > lo),
+    // the low region polygon (cases 1..14) matching the threshold run is emitted at H(lo) to avoid
+    // hidden overdraw under the higher cliff plateau and guarantee watertight chunk boundaries.
+    if lo >= 0 {
+        let low_case = if hi > lo {
+            (!cell.case_for_t(lo + 1)) & 0x0F
+        } else {
+            15
+        };
+
+        if low_case != 0 {
+            let region = MARCHING_CASES[low_case].region;
+            emit_floor_polygon(
+                map,
+                region,
+                cliff_level_height(lo),
+                scratch,
+                stats,
+                |vref| match vref {
+                    DualVertexRef::Corner(c) => cell.corner_coord(c),
+                    DualVertexRef::Midpoint(m) => cell.midpoint_coord(m),
+                },
+            );
+        }
+    }
+}
+
+/// Emits a convex, CCW (seen from +Y) floor polygon at altitude `floor_y` as an upward-facing
+/// triangle fan, with per-vertex ambient occlusion. `position` maps each region vertex to world
+/// XZ. Polygons with fewer than three vertices emit nothing.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "a chunk holds far fewer than u32::MAX vertices"
+)]
+fn emit_floor_polygon(
+    map: &GameMap,
+    region: &[DualVertexRef],
+    floor_y: f32,
+    scratch: &mut MesherScratch,
+    stats: &mut MeshStats,
+    position: impl Fn(DualVertexRef) -> Vec2,
+) {
+    if region.len() < 3 {
+        return;
+    }
+    let base_idx = scratch.positions.len() as u32;
+    for &vref in region {
+        let pos2 = position(vref);
+        let ao = compute_floor_ao(map, pos2.x, floor_y, pos2.y);
+        scratch.positions.push([pos2.x, floor_y, pos2.y]);
+        scratch.normals.push([0.0, 1.0, 0.0]);
+        scratch.uv0.push([pos2.x, pos2.y]);
+        scratch.uv1.push([ao, 0.0]);
+    }
+    stats.floor_vertices += region.len();
+
+    for k in 1..region.len() - 1 {
+        scratch.indices.push(base_idx);
+        scratch.indices.push(base_idx + (k + 1) as u32);
+        scratch.indices.push(base_idx + k as u32);
+        stats.floor_indices += 3;
+    }
+}
+
+/// Emits the cliff walls of one threshold run `ta..=tb` of a dual cell: one quad strip per contour
+/// segment, from the wall profiles at the segment's two edge midpoints. A segment whose two ends
+/// are both ramp-suppressed has no wall.
+fn emit_cliff_walls(
+    cell: &DualCell,
+    segments: &[ContourSegment],
+    ta: i32,
+    tb: i32,
+    scratch: &mut MesherScratch,
+    stats: &mut MeshStats,
+) {
+    for &seg in segments {
+        // Check ramp suppression: if both endpoints are suppressed, omit wall
+        if cell.midpoint_suppressed(seg.start) && cell.midpoint_suppressed(seg.end) {
+            continue;
+        }
+
+        let profile_at = |m: EdgeMidpoint| {
+            let (la, lb) = cell.midpoint_levels(m, tb);
+            generate_wall_profile(
+                cell.midpoint_coord(m),
+                cell.midpoint_d(m, tb),
+                la,
+                lb,
+                ta,
+                tb,
+                cell.midpoint_suppressed(m),
+            )
+        };
+        let prof0 = profile_at(seg.start);
+        let prof1 = profile_at(seg.end);
+        emit_wall_strip(&prof0, &prof1, scratch, stats);
+    }
+}
+
+/// Emits a wall quad strip between two wall profiles, with one vertex pair per distinct row height
+/// of either profile (heights within `1e-4` merge), top to bottom. Degenerate triangles are
+/// dropped. A strip needs at least two distinct heights.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "a chunk holds far fewer than u32::MAX vertices"
+)]
+fn emit_wall_strip(
+    prof0: &[WallProfileRow],
+    prof1: &[WallProfileRow],
+    scratch: &mut MesherScratch,
+    stats: &mut MeshStats,
+) {
+    // Collect descending unique row heights
+    let mut heights: Vec<f32> = Vec::with_capacity(prof0.len() + prof1.len());
+    for r in prof0.iter().chain(prof1) {
+        if !heights.iter().any(|&h| (h - r.y).abs() < 1e-4) {
+            heights.push(r.y);
+        }
+    }
+    heights.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+
+    if heights.len() < 2 {
+        return;
+    }
+    stats.wall_segments += 1;
+    let strip_base = scratch.positions.len() as u32;
+
+    for &y_row in &heights {
+        for row in [
+            sample_profile_at_height(prof0, y_row),
+            sample_profile_at_height(prof1, y_row),
+        ] {
+            scratch.positions.push([row.xz.x, row.y, row.xz.y]);
+            scratch
+                .normals
+                .push([row.normal.x, row.normal.y, row.normal.z]);
+            scratch.uv0.push([row.xz.x, row.xz.y]);
+            scratch.uv1.push([row.ao, 0.0]);
+        }
+        stats.wall_vertices += 2;
+    }
+
+    for k in 0..heights.len() - 1 {
+        let v0 = strip_base + (k * 2) as u32;
+        let v1 = strip_base + (k * 2 + 1) as u32;
+        let v2 = strip_base + ((k + 1) * 2 + 1) as u32;
+        let v3 = strip_base + ((k + 1) * 2) as u32;
+
+        let p0 = Vec3::from(scratch.positions[v0 as usize]);
+        let p1 = Vec3::from(scratch.positions[v1 as usize]);
+        let p2 = Vec3::from(scratch.positions[v2 as usize]);
+        let p3 = Vec3::from(scratch.positions[v3 as usize]);
+
+        let cross1 = (p1 - p0).cross(p2 - p0);
+        if cross1.length_squared() > 1e-10 {
+            scratch.indices.push(v0);
+            scratch.indices.push(v1);
+            scratch.indices.push(v2);
+            stats.wall_indices += 3;
+        }
+
+        let cross2 = (p2 - p0).cross(p3 - p0);
+        if cross2.length_squared() > 1e-10 {
+            scratch.indices.push(v0);
+            scratch.indices.push(v2);
+            scratch.indices.push(v3);
+            stats.wall_indices += 3;
+        }
+    }
+}
+
+/// One side edge of a ramp cell, parallel to the ramp's run direction.
+#[derive(Debug, Clone, Copy)]
+struct RampSide {
+    /// Edge start on the ramp surface (world space).
+    start: Vec3,
+    /// Edge end on the ramp surface (world space).
+    end: Vec3,
+    /// Cell offset `(dx, dy)` of the neighbour across this edge.
+    neighbour_offset: (i32, i32),
+    /// Unit vector pointing out of the ramp across this edge.
+    outward: Vec3,
+    /// Unit vector pointing into the ramp across this edge.
+    inward: Vec3,
+}
+
+/// Section 2 of [`build_chunk_mesh`] for one ramp cell `(cx, cy)`: the sloped surface quad, then,
+/// for each side edge not shared with the same ramp run, a side wall down to a lower neighbour and
+/// a guard rail. Diagonal ramps get only the surface.
+fn emit_ramp_cell(
+    map: &GameMap,
+    cx: u32,
+    cy: u32,
+    profile: RampProfile,
+    scratch: &mut MesherScratch,
+    stats: &mut MeshStats,
+) {
+    let [p_bl, p_br, p_tr, p_tl] = emit_ramp_surface(map, cx, cy, profile, scratch, stats);
+
+    // Ramp side edges: perpendicular to the run's direction
+    // Side edges are parallel to dir
+    let (side1, side2) = match profile.dir {
+        RampDir::North | RampDir::South => (
+            // West edge (p_bl -> p_tl) facing -X
+            RampSide {
+                start: p_bl,
+                end: p_tl,
+                neighbour_offset: (-1, 0),
+                outward: Vec3::new(-1.0, 0.0, 0.0),
+                inward: Vec3::new(1.0, 0.0, 0.0),
+            },
+            // East edge (p_br -> p_tr) facing +X
+            RampSide {
+                start: p_br,
+                end: p_tr,
+                neighbour_offset: (1, 0),
+                outward: Vec3::new(1.0, 0.0, 0.0),
+                inward: Vec3::new(-1.0, 0.0, 0.0),
+            },
+        ),
+        RampDir::East | RampDir::West => (
+            // South edge (p_bl -> p_br) facing -Z
+            RampSide {
+                start: p_bl,
+                end: p_br,
+                neighbour_offset: (0, -1),
+                outward: Vec3::new(0.0, 0.0, -1.0),
+                inward: Vec3::new(0.0, 0.0, 1.0),
+            },
+            // North edge (p_tl -> p_tr) facing +Z
+            RampSide {
+                start: p_tl,
+                end: p_tr,
+                neighbour_offset: (0, 1),
+                outward: Vec3::new(0.0, 0.0, 1.0),
+                inward: Vec3::new(0.0, 0.0, -1.0),
+            },
+        ),
+        _ => return,
+    };
+
+    let Ok(cx_i) = i32::try_from(cx) else {
+        return;
+    };
+    let Ok(cy_i) = i32::try_from(cy) else {
+        return;
+    };
+    for side in [side1, side2] {
+        let n_cell = (
+            cx_i + side.neighbour_offset.0,
+            cy_i + side.neighbour_offset.1,
+        );
+        let n_class = surface_class(map, n_cell.0, n_cell.1);
+
+        // Check if neighbour is a parallel ramp in the same run
+        let neighbour_same_run = match n_class {
+            SurfaceClass::Ramp(n_prof) => {
+                n_prof.dir == profile.dir
+                    && n_prof.low_level == profile.low_level
+                    && n_prof.index == profile.index
+            }
+            _ => false,
+        };
+        if neighbour_same_run {
+            continue;
+        }
+
+        let neighbour_h = match n_class {
+            SurfaceClass::Void => ABYSS_WALL_BOTTOM_Y,
+            SurfaceClass::Plateau(lvl) => cliff_level_height(lvl),
+            SurfaceClass::Ramp(n_prof) => {
+                n_prof.height_at(SimScalar::HALF, SimScalar::HALF).to_f32()
+            }
+        };
+
+        // (a) Side wall down to neighbour if neighbour is lower
+        if side.start.y > neighbour_h || side.end.y > neighbour_h {
+            emit_ramp_side_wall(&side, neighbour_h, scratch, stats);
+        }
+
+        // (b) Guard rail riding on the ramp edge
+        emit_guard_rail(&side, scratch, stats);
+    }
+}
+
+/// Emits the sloped surface quad of ramp cell `(cx, cy)` at the simulation's authoritative corner
+/// altitudes, and returns its corners `[bottom-left, bottom-right, top-right, top-left]` in world
+/// space.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "map cell coordinates and chunk vertex counts stay far below the range of f32 and u32"
+)]
+fn emit_ramp_surface(
+    map: &GameMap,
+    cx: u32,
+    cy: u32,
+    profile: RampProfile,
+    scratch: &mut MesherScratch,
+    stats: &mut MeshStats,
+) -> [Vec3; 4] {
+    // Authoritative simulation surface altitudes at the 4 cell corners
+    let h_bl = profile.height_at(SimScalar::ZERO, SimScalar::ZERO).to_f32();
+    let h_br = profile.height_at(SimScalar::ONE, SimScalar::ZERO).to_f32();
+    let h_tr = profile.height_at(SimScalar::ONE, SimScalar::ONE).to_f32();
+    let h_tl = profile.height_at(SimScalar::ZERO, SimScalar::ONE).to_f32();
+
+    let p_bl = Vec3::new(cx as f32, h_bl, cy as f32);
+    let p_br = Vec3::new(cx as f32 + 1.0, h_br, cy as f32);
+    let p_tr = Vec3::new(cx as f32 + 1.0, h_tr, cy as f32 + 1.0);
+    let p_tl = Vec3::new(cx as f32, h_tl, cy as f32 + 1.0);
+
+    let norm = ((p_tl - p_bl).cross(p_br - p_bl)).normalize();
+
+    let corners = [p_bl, p_br, p_tr, p_tl];
+    let base_idx = scratch.positions.len() as u32;
+    for p in corners {
+        let ao = compute_floor_ao(map, p.x, p.y, p.z);
+        scratch.positions.push([p.x, p.y, p.z]);
+        scratch.normals.push([norm.x, norm.y, norm.z]);
+        scratch.uv0.push([p.x, p.z]);
+        scratch.uv1.push([ao, 0.0]);
+    }
+
+    scratch.indices.push(base_idx);
+    scratch.indices.push(base_idx + 2);
+    scratch.indices.push(base_idx + 1);
+
+    scratch.indices.push(base_idx);
+    scratch.indices.push(base_idx + 3);
+    scratch.indices.push(base_idx + 2);
+
+    stats.ramp_vertices += 4;
+    corners
+}
+
+/// Pushes one vertex with a horizontal normal `outward` (its Y component is dropped).
+fn push_side_vertex(scratch: &mut MesherScratch, p: Vec3, outward: Vec3, ao: f32, emissive: f32) {
+    scratch.positions.push([p.x, p.y, p.z]);
+    scratch.normals.push([outward.x, 0.0, outward.z]);
+    scratch.uv0.push([p.x, p.z]);
+    scratch.uv1.push([ao, emissive]);
+}
+
+/// Emits the vertical wall below a ramp side edge, down to the neighbour's altitude
+/// `neighbour_h` (never above the edge itself), facing out of the ramp.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "a chunk holds far fewer than u32::MAX vertices"
+)]
+fn emit_ramp_side_wall(
+    side: &RampSide,
+    neighbour_h: f32,
+    scratch: &mut MesherScratch,
+    stats: &mut MeshStats,
+) {
+    let (v_start, v_end, perp_dir) = (side.start, side.end, side.outward);
+    let wall_base = scratch.positions.len() as u32;
+    let bot_start = Vec3::new(v_start.x, neighbour_h.min(v_start.y), v_start.z);
+    let bot_end = Vec3::new(v_end.x, neighbour_h.min(v_end.y), v_end.z);
+
+    push_side_vertex(scratch, v_start, perp_dir, 1.0, 0.0);
+    push_side_vertex(scratch, v_end, perp_dir, 1.0, 0.0);
+    push_side_vertex(scratch, bot_end, perp_dir, WALL_FOOT_AO, 0.0);
+    push_side_vertex(scratch, bot_start, perp_dir, WALL_FOOT_AO, 0.0);
+
+    // Orient wall triangles outward, emitting only non-degenerate triangles
+    stats.wall_indices += push_quad_oriented(
+        &scratch.positions,
+        &mut scratch.indices,
+        wall_base,
+        perp_dir,
+    );
+
+    stats.wall_vertices += 4;
+}
+
+/// Emits a guard rail riding on a ramp side edge: an emissive top face (`uv1.y = 1`) inset by
+/// [`RAIL_WIDTH`] toward the ramp at [`RAIL_HEIGHT`] above the edge, and an outer side face.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "a chunk holds far fewer than u32::MAX vertices"
+)]
+fn emit_guard_rail(side: &RampSide, scratch: &mut MesherScratch, stats: &mut MeshStats) {
+    let (v_start, v_end, perp_dir) = (side.start, side.end, side.outward);
+    let rail_base = scratch.positions.len() as u32;
+    let in_offset = side.inward * RAIL_WIDTH;
+    let up_offset = Vec3::Y * RAIL_HEIGHT;
+
+    let p0 = v_start;
+    let p1 = v_end;
+    let p0_in = v_start + in_offset;
+    let p1_in = v_end + in_offset;
+
+    let t0 = p0 + up_offset;
+    let t1 = p1 + up_offset;
+    let t0_in = p0_in + up_offset;
+    let t1_in = p1_in + up_offset;
+
+    // Top face: flagged emissive with uv1.y = 1.0
+    for p in [t0, t1, t1_in, t0_in] {
+        scratch.positions.push([p.x, p.y, p.z]);
+        scratch.normals.push([0.0, 1.0, 0.0]);
+        scratch.uv0.push([p.x, p.z]);
+        scratch.uv1.push([1.0, 1.0]);
+    }
+    push_quad_oriented(&scratch.positions, &mut scratch.indices, rail_base, Vec3::Y);
+
+    // Outer side face: facing perp_dir
+    let out_base = scratch.positions.len() as u32;
+    for p in [t0, p0, p1, t1] {
+        push_side_vertex(scratch, p, perp_dir, 1.0, 0.0);
+    }
+    push_quad_oriented(&scratch.positions, &mut scratch.indices, out_base, perp_dir);
+
+    stats.rail_vertices += 8;
 }
 
 /// Updates a Bevy [`Mesh`] in place using data buffered inside [`MesherScratch`].

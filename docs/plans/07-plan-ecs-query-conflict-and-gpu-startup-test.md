@@ -3,7 +3,7 @@
 > **Document Version:** 1.0.0  
 > **Status:** Approved Architectural Blueprint & Implementation Specification  
 > **Target Crates:** `crates/client`, `crates/client/tests/`  
-> **Charter Compliance:** Strictly adheres to [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md) Section 1 (Zero Placeholders & Silent Failures), Section 2 (Architecture Documentation), Section 3 (Simulation Boundary), Section 4 (Testing Standards), and Section 6 (Mandatory Two-Stage Sub-Agent Workflow).
+> **Charter Compliance:** Strictly adheres to [AGENTS.md](../../AGENTS.md) Section 1 (Zero Placeholders & Silent Failures), Section 2 (Architecture Documentation), Section 3 (Simulation Boundary), Section 4 (Testing Standards), and Section 6 (Mandatory Two-Stage Sub-Agent Workflow).
 
 ---
 
@@ -17,8 +17,8 @@ error[B0001]: Query<(&mut bevy_transform::components::transform::Transform, &mut
 
 ### The Root Cause of CI Blindness
 The automated test suite (`cargo test --workspace`) and the headless CI flag (`cargo run -p client -- --headless-check`) failed to catch this fatal regression because:
-1. `run_headless_check()` in [lib.rs](file:///home/cl/projects/space-scuffle/crates/client/src/lib.rs#L317-L323) stepped a standalone `App::new().add_plugins(MinimalPlugins)` schedule for 60 frames without registering the actual production client systems (`update_indicators_system`, `vfx`, `bubble_shader`, `selection`, etc.).
-2. None of the integration tests in [round2_visual_tests.rs](file:///home/cl/projects/space-scuffle/crates/client/tests/round2_visual_tests.rs) or [headless_tests.rs](file:///home/cl/projects/space-scuffle/crates/client/tests/headless_tests.rs) registered `update_indicators_system` in a stepped Bevy schedule.
+1. `run_headless_check()` in [lib.rs](../../crates/client/src/lib.rs#L317-L323) stepped a standalone `App::new().add_plugins(MinimalPlugins)` schedule for 60 frames without registering the actual production client systems (`update_indicators_system`, `vfx`, `bubble_shader`, `selection`, etc.).
+2. None of the integration tests in [round2_visual_tests.rs](../../crates/client/tests/round2_visual_tests.rs) or [headless_tests.rs](../../crates/client/tests/headless_tests.rs) registered `update_indicators_system` in a stepped Bevy schedule.
 3. Bevy validates query parameter conflicts (`B0001`) and resource conflicts (`B0002`) dynamically when initializing system schedules at runtime (`app.update()` or `app.run()`), meaning `cargo check` and non-scheduling unit tests pass even when systems have fatal ECS parameter collisions.
 
 ### Key Architectural Objectives of Plan 07
@@ -82,7 +82,7 @@ In Bevy ECS, a system is invalid if two or more parameters request conflicting a
 
 ### 1.2 Breakdown of Existing Conflicting Queries in `update_indicators_system`
 
-In [crates/client/src/indicators.rs](file:///home/cl/projects/space-scuffle/crates/client/src/indicators.rs#L374-L432):
+In [crates/client/src/indicators.rs](../../crates/client/src/indicators.rs#L374-L432):
 
 | Query Parameter | Mutable Components | Filters Present | Conflict Partners |
 |---|---|---|---|
@@ -98,7 +98,7 @@ Because `hp_bar_query` had zero `Without<...>` filters, Bevy considered an entit
 
 ### 1.3 Hierarchy Bug: Grandchildren vs. Direct Children
 
-In `attach_bubble_indicators` ([indicators.rs lines 321–349](file:///home/cl/projects/space-scuffle/crates/client/src/indicators.rs#L321-L349)):
+In `attach_bubble_indicators` ([indicators.rs lines 321–349](../../crates/client/src/indicators.rs#L321-L349)):
 ```rust
 // Bubble Entity (parent)
 //   ├── FacingChevronMarker (child)
@@ -266,7 +266,7 @@ pub use vfx::update_mist_wake_system as update_vfx_system;
 
 ### 3.3 Adding `test_bevy_ecs_schedule_all_systems_no_conflicts` in `round2_visual_tests.rs`
 
-Add a regression test in [crates/client/tests/round2_visual_tests.rs](file:///home/cl/projects/space-scuffle/crates/client/tests/round2_visual_tests.rs):
+Add a regression test in [crates/client/tests/round2_visual_tests.rs](../../crates/client/tests/round2_visual_tests.rs):
 
 ```rust
 #[test]
@@ -515,10 +515,10 @@ This verifies that:
 
 | File Path | Nature of Edits | Responsibility Owned |
 |---|---|---|
-| [crates/client/src/indicators.rs](file:///home/cl/projects/space-scuffle/crates/client/src/indicators.rs) | Edit | Replace conflicting query signatures with triangular disjoint filters; add `children_query` for grandchild traversal. |
-| [crates/client/src/lib.rs](file:///home/cl/projects/space-scuffle/crates/client/src/lib.rs) | Edit | Update `run_headless_check()`, add `FrameLimit` and `frame_limit_system`, update `ClientAppPlugin` and `run_app`, export `spawn_camera_system`. |
-| [crates/client/src/main.rs](file:///home/cl/projects/space-scuffle/crates/client/src/main.rs) | Edit | Add `--max-frames <N>` to `CliArgs` and forward to `run_app`. |
-| [crates/client/tests/round2_visual_tests.rs](file:///home/cl/projects/space-scuffle/crates/client/tests/round2_visual_tests.rs) | Edit | Add `test_bevy_ecs_schedule_all_systems_no_conflicts` and `test_real_gpu_startup_and_frame_limit_30`. |
+| [crates/client/src/indicators.rs](../../crates/client/src/indicators.rs) | Edit | Replace conflicting query signatures with triangular disjoint filters; add `children_query` for grandchild traversal. |
+| [crates/client/src/lib.rs](../../crates/client/src/lib.rs) | Edit | Update `run_headless_check()`, add `FrameLimit` and `frame_limit_system`, update `ClientAppPlugin` and `run_app`, export `spawn_camera_system`. |
+| [crates/client/src/main.rs](../../crates/client/src/main.rs) | Edit | Add `--max-frames <N>` to `CliArgs` and forward to `run_app`. |
+| [crates/client/tests/round2_visual_tests.rs](../../crates/client/tests/round2_visual_tests.rs) | Edit | Add `test_bevy_ecs_schedule_all_systems_no_conflicts` and `test_real_gpu_startup_and_frame_limit_30`. |
 
 ### 5.2 Exact Code Modifications for Implementation Agent
 

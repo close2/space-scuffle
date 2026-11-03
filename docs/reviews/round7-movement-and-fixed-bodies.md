@@ -1,5 +1,7 @@
 # Round7 movement layers and fixed-body verification
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status:45/49 focused tests, corrected complete sim_core regression, strict sim_core+sim_map all-target Clippy and scoped formatting pass. Owned product source is stable. Plan45, narrow49, the single checked dynamic-core API migration and coincident fixed-body clarification are approved. No full-workspace acceptance for this source revision is claimed. The preceding round7 workspace gate accepted43 before these changes.
 
 ## Implemented behavior

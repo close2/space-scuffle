@@ -1,5 +1,7 @@
 # Round46 scene environment lifecycle verification
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Blueprint: `docs/plans/46-round6-scene-environment-lifecycle.md`. Scope is game scene globals and actual light hierarchy visibility; no editor, mist shader, style or authored media changes.
 
 ## Implemented behavior

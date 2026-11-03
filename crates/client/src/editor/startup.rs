@@ -1,7 +1,7 @@
 //! Fallible map editor startup: catalogs, palette and the initial document.
 //!
 //! # Architectural Charter
-//! In accordance with [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md) §1.1, this
+//! In accordance with `AGENTS.md` §1.1, this
 //! module owns everything the editor must read from disk before a window exists. The binary loads
 //! an [`EditorStartup`] first and reports a [`EditorStartupError`] on standard error; the
 //! [`MapEditorPlugin`](crate::editor::MapEditorPlugin) then receives only validated data.

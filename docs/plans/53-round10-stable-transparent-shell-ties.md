@@ -1,5 +1,7 @@
 # Round 10: diagnose and stabilize exact-depth shell ordering
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: Stage A is implemented, with focused CPU/actual-GPU checks and two preserved
 native matrices complete. Integrated acceptance awaits the coordinated round11
 workspace gate. Stage B production correction remains held for explicit root

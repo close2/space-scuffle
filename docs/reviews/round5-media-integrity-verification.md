@@ -1,5 +1,7 @@
 # Round 5 media integrity verification
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Scope: approved plan39 stage one: truthful read-only audit, retired unsafe single-concept roster baker, exact CPU/GPU registration, and typed production admission. Existing image/video files are unchanged. Declared source baking, immutable video staging and provenance publishing remain a separately staged follow-up; this implementation does not invent historical provenance.
 
 ## Implemented contract

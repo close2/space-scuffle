@@ -1,5 +1,7 @@
 # Round 5: Truthful media baking, provenance and exact runtime loading
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: orchestrator approved; stage-one audit, unsafe batch removal and exact runtime loading implemented, verification in progress. The orchestrator released implementation after the shared gate exposed a separately tracked pathfinding performance failure; that gate is not accepted. Broader declared baking follows as a separate stage. Preserve all art files. No external generation, credential inspection or editor work.
 
 ## Goal and non-goals

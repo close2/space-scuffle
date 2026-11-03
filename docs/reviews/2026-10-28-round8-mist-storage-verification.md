@@ -1,5 +1,7 @@
 # Persistent mist storage verification checkpoint
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Plan35's bounded storage implementation, corrected-order visual equivalence and resource-lifecycle contract are accepted by the orchestrator, subject to the next integrated workspace gate. The actual reset capture, 39-image aligned matrix and twelve matched release runs are complete. The earlier coordinated round8 gate passed before the reset-fixture addition; its isolated focused tests, strict client all-target Clippy and exact workspace formatting also pass. Whole-frame16.67ms p95 and mist art remain failed; this is not a60Hz or visual-quality acceptance.
 
 ## Implemented contract

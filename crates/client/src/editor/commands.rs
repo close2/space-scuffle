@@ -1,7 +1,7 @@
 //! Command pattern, edit history, and change tracking for the map editor.
 //!
 //! # Architectural Charter
-//! In accordance with Implementation Plan 21 §6.2 and [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md),
+//! In accordance with Implementation Plan 21 §6.2 and `AGENTS.md`,
 //! this module provides the pure-logic undo/redo command system, delta tracking, and change set calculation.
 //!
 //! # Invariants Maintained

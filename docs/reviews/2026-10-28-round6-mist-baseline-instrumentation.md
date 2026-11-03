@@ -1,5 +1,7 @@
 # Round 6 — Mist baseline measurement preparation
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Plan 35's first stage instruments the existing dynamic-mesh implementation. The GPU-storage replacement has not started, and the measured baseline below does not satisfy the frame-time target. Existing mist art remains rejected.
 
 The actual capture fixture now supports `--case crowd --benchmark-emitters 0|100|400 --benchmark-seconds 10`. Every case keeps 400 moving real catalog actors, their actual authored collision radii, the shipped terrain, the fitted camera and the same graphics settings. Bounded circular trajectories keep the scene inside the camera throughout a wall-time measurement. The fixture validates actor and active-wake bounds against the actual camera before saving each screenshot. The requested `--fps` controls virtual trajectory time only.

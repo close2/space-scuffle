@@ -1,5 +1,7 @@
 # Phase 9 Blueprint: Structure and Documentation
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Finishes Phase 9 of `docs/plans/2026-11-01-codebase-remediation.md` (steps 9.1 to 9.6).
 
 **Exit criterion:** the charter describes the code as it is, and every claim in it is checked by CI.
@@ -1328,6 +1330,13 @@ Relative links only. It states what exists, not what was once hoped for; intent 
 - The 197 `#[expect]` cast attributes noted in the handover; a later lint ratchet.
 - Frame-budget measurement (remediation Phase 6 exit), media generation (step 8.5, Q0001), r09 (Q0006).
 - Any change to charter §6.
+- **Found by WP4, a behaviour change for a later bugfix plan:** `crates/client/src/terrain/mod.rs` builds
+  `width.div_ceil(CHUNK_DUAL_CELLS)` chunk columns (and rows from `height`), but the dual grid is `(width+1)×(height+1)`.
+  When a side is a multiple of 16, its last dual column or row is never meshed. `mesher_golden_tests.rs` covers all
+  `(w+1).div_ceil(16)` chunks, so the fix will show up as a deliberate change to the spawn layout, not to the goldens.
+- **Found by WP2, a library panic for a later bugfix plan:** `MapDocument::encode` (`crates/sim_map/src/map_format.rs`)
+  indexes out of bounds when `cells.len() != width * height`, instead of returning a typed error (charter §1.1). The
+  decode corpus in `validation_golden_tests.rs` skips such documents, so the fix needs its own failing test first.
 
 ## 10. Decisions for the owner
 

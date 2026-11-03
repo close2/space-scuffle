@@ -3,7 +3,7 @@
 > **Document Version:** 1.0.0  
 > **Status:** Approved Architectural Blueprint & Specification (Stage 1)  
 > **Target Crates & Paths:** `crates/sim_types`, `crates/sim_map`, `crates/sim_core`, `assets/catalog/units.ron`, `crates/sim_core/tests/`  
-> **Charter Compliance:** Strictly adheres to [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md) Section 1 (Zero Placeholders & Silent Failures), Section 2 (Pedagogical Quality & Module Docs), Section 3 (Strict Determinism & Zero Hardcoded Creatures), Section 4 (Testing Standards), and Section 6 (Two-Stage Sub-Agent Workflow).
+> **Charter Compliance:** Strictly adheres to [AGENTS.md](../../AGENTS.md) Section 1 (Zero Placeholders & Silent Failures), Section 2 (Pedagogical Quality & Module Docs), Section 3 (Strict Determinism & Zero Hardcoded Creatures), Section 4 (Testing Standards), and Section 6 (Two-Stage Sub-Agent Workflow).
 
 ---
 
@@ -19,15 +19,15 @@
 
 ### 1.2 Core Architectural Principles & Charter Invariants
 1. **100% Platform-Independent Determinism:**
-   - All simulation state mutations, targeting evaluations, damage calculations, and pathing decisions use fixed-point arithmetic ([`SimScalar`](file:///home/cl/projects/space-scuffle/crates/sim_types/src/math.rs#L18-L22), [`SimVec2`](file:///home/cl/projects/space-scuffle/crates/sim_types/src/math.rs#L340-L345), [`SimAngle`](file:///home/cl/projects/space-scuffle/crates/sim_types/src/math.rs#L734-L740)).
+   - All simulation state mutations, targeting evaluations, damage calculations, and pathing decisions use fixed-point arithmetic ([`SimScalar`](../../crates/sim_types/src/math.rs#L18-L22), [`SimVec2`](../../crates/sim_types/src/math.rs#L340-L345), [`SimAngle`](../../crates/sim_types/src/math.rs#L734-L740)).
    - No `f32` or `f64` in simulation logic.
    - Deterministic collections only (`BTreeMap`, sorted `Vec`); no non-deterministic hash iteration.
-   - Seeded deterministic PRNG ([`ChaCha8Rng`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/world.rs#L69)) for any stochastic behavior.
+   - Seeded deterministic PRNG ([`ChaCha8Rng`](../../crates/sim_core/src/world.rs#L69)) for any stochastic behavior.
 2. **Zero Hardcoded Creature / Building Identifiers in Rust:**
-   - All unit capabilities, weapon statistics, and ability profiles reside in declarative catalog data ([`assets/catalog/units.ron`](file:///home/cl/projects/space-scuffle/assets/catalog/units.ron)).
+   - All unit capabilities, weapon statistics, and ability profiles reside in declarative catalog data ([`assets/catalog/units.ron`](../../assets/catalog/units.ron)).
    - Mechanics are capability-driven (`Option<OverclockSpec>`, `Option<BlinkSpec>`, `Option<SiegeModeSpec>`, etc.), never branching on `unit_type_id == 2` or unit names.
 3. **Zero Per-Tick Heap Allocations:**
-   - Hot per-tick simulation phases (targeting, collision resolution, weapon cycles, pathfinding) utilize pre-allocated flat scratch buffers on [`SimWorld`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/world.rs#L98-L101) and [`PathfinderBuffers`](file:///home/cl/projects/space-scuffle/crates/sim_map/src/pathfinding.rs#L91-L101).
+   - Hot per-tick simulation phases (targeting, collision resolution, weapon cycles, pathfinding) utilize pre-allocated flat scratch buffers on [`SimWorld`](../../crates/sim_core/src/world.rs#L98-L101) and [`PathfinderBuffers`](../../crates/sim_map/src/pathfinding.rs#L91-L101).
 4. **Complete Headless Decoupling:**
    - The entire simulation runs without any windowing, GPU device, or audio context, capable of executing at 10,000+ ticks/second in automated CI test suites.
 
@@ -84,7 +84,7 @@ pub struct PathRequestWithVision<'a> {
 }
 ```
 
-Add methods to [`Pathfinder`](file:///home/cl/projects/space-scuffle/crates/sim_map/src/pathfinding.rs#L173-L180):
+Add methods to [`Pathfinder`](../../crates/sim_map/src/pathfinding.rs#L173-L180):
 ```rust
 impl Pathfinder {
     /// Computes a smooth shortest path taking player vision and fog-of-war into account.
@@ -121,7 +121,7 @@ To support remembered vs. actual obstacle states:
      - `air_weapon: Option<WeaponSpec>`
      - `weapon: Option<WeaponSpec>` (backward-compatible serde alias/default for primary weapon).
 2. **The Colossus / `CliffWalker` Dual-Targeting Rule:**
-   - In StarCraft II, the Colossus ([`MoverType::CliffWalker`](file:///home/cl/projects/space-scuffle/crates/sim_types/src/enums.rs#L112)) steps over cliffs and towers over the battlefield.
+   - In StarCraft II, the Colossus ([`MoverType::CliffWalker`](../../crates/sim_types/src/enums.rs#L112)) steps over cliffs and towers over the battlefield.
    - **Crucial Rule:** `CliffWalker` units can be attacked by **both** ground weapons and anti-air weapons (e.g. Corruptors, Vikings, and Missile Turrets can attack it, as can Marines and Marauders)!
    - When an attacker with **both** ground and air weapons targets a `CliffWalker`, it evaluates both weapons and selects whichever weapon yields higher DPS:
      $$\text{DPS Metric} = \frac{\text{base\_damage} \times \text{attacks\_count} \times 1000}{\text{period\_ticks}}$$
@@ -265,7 +265,7 @@ impl Entity {
 ```
 
 #### `crates/sim_core/src/steering.rs`
-Refine [`compute_push_displacement`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/steering.rs#L155-L227):
+Refine [`compute_push_displacement`](../../crates/sim_core/src/steering.rs#L155-L227):
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PushEntityParams {

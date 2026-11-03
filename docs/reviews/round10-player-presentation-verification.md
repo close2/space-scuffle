@@ -1,5 +1,7 @@
 # Round10 ownership presentation verification
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: implementation and focused CPU verification in progress. Native image
 acceptance and the coordinated workspace gate are pending; this is not an artistic
 approval of existing creature media, mist or terrain.

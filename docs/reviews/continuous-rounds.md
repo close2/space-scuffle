@@ -1,5 +1,7 @@
 # Continuous implementation and verification rounds
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 ## Operating constraints
 
 - Continue until the user requests a stop; never infer completion from one passing round.

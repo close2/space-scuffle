@@ -1,7 +1,7 @@
 //! Interactive playtest mode inside the map editor.
 //!
 //! # Architectural Charter
-//! In accordance with Implementation Plan 21 §7.6 and [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md),
+//! In accordance with Implementation Plan 21 §7.6 and `AGENTS.md`,
 //! this module provides the in-editor playtesting environment. It builds a deterministic
 //! [`SimWorld`] from the active [`MapDocument`] and the authored rule catalogs, then hands it to
 //! the same production pipeline the game client uses: [`BattleSession`] owns the command queue,

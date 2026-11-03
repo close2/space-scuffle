@@ -29,7 +29,7 @@ This blueprint resolves the root causes of the `LiveBattle` unit-stuck/vibration
 
 ### 2.1 Root Cause A: Final-Leg Cluster Arrival & Multi-Ring Squad Settlement
 
-In [`crates/sim_core/src/movement/locomotion.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/movement/locomotion.rs#L328-L387), `prepare_actor_motion` currently executes:
+In [`crates/sim_core/src/movement/locomotion.rs`](../../crates/sim_core/src/movement/locomotion.rs#L328-L387), `prepare_actor_motion` currently executes:
 
 ```rust
 if proposal.route(actor).is_empty() {
@@ -67,7 +67,7 @@ if proposal.route(actor).is_empty() {
 When a Ground squad is ordered to move across a ramp or around an obstacle to `target`, `find_path_with_vision` returns `route = [w_0, w_1, ..., target]`, where the last element is `target`. Once the squad clears the ramp, `proposal.route(actor)` is `[target]` (length `1`).
 - The first unit to reach `distance(actor.position, target) <= speed` increments `proposal.remove_prefix += 1` (line 380), making its `proposal.route(actor)` empty, and finishes on line 386.
 - Every other unit in the squad ($2\dots N$) is blocked by the settled first unit at distance $d \ge r_1 + r_2 \ge 0.90\text{ m} \gg \text{speed}$. Thus `distance(actor.position, next) <= speed` is `false`, `proposal.route(actor)` remains `[target]` (length `1`), and `if proposal.route(actor).is_empty()` is **never entered**.
-- Furthermore, in [`crates/sim_core/src/steering.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/steering.rs#L295-L304), `check_cluster_arrival_with` checks:
+- Furthermore, in [`crates/sim_core/src/steering.rs`](../../crates/sim_core/src/steering.rs#L295-L304), `check_cluster_arrival_with` checks:
   $$\lVert \mathbf{p}_{\text{obs}} - \mathbf{p}_{\text{target}} \rVert \le (r_{\text{unit}} + r_{\text{obs}}) + 1.5\text{ m}$$
   For a squad of 8–12 units (including Rhino Beetles with $r = 0.75\text{ m}$ and Marines with $r = 0.45\text{ m}$), 2nd-ring settled witnesses stand at $1.8\text{--}2.5\text{ m}$ from $\mathbf{p}_{\text{target}}$, so 3rd-ring arrivals need the witness-to-target cluster radius to be $(r_{\text{unit}} + r_{\text{obs}}) + 2.5\text{ m}$ (while keeping the neighbor touch margin at `SimScalar::from_f32_lossy(0.15)` so all existing boundary tests in `checked_movement_tests.rs` remain bit-for-bit preserved).
 
@@ -80,7 +80,7 @@ When a Ground squad is ordered to move across a ramp or around an obstacle to `t
 
 ### 2.2 Root Cause B: Intermediate Funnel Waypoint Corner-Rounding & String-Pulling
 
-In [`crates/sim_core/src/movement/locomotion.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/movement/locomotion.rs#L378-L382):
+In [`crates/sim_core/src/movement/locomotion.rs`](../../crates/sim_core/src/movement/locomotion.rs#L378-L382):
 ```rust
 if let Some(&next) = proposal.route(actor).first() {
     if distance(actor.position, next).map_err(|e| arithmetic(id, e))? <= speed {
@@ -102,7 +102,7 @@ This prevents units from ever turning backward to touch an intermediate ramp/cor
 
 ### 2.3 Root Cause C: Terrain-Aware Pathfinding in `prepare_pursuit`
 
-In [`crates/sim_core/src/movement/locomotion.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/movement/locomotion.rs#L489-L520), `prepare_pursuit` currently steers out-of-range `AttackTarget` units straight toward `target.position`:
+In [`crates/sim_core/src/movement/locomotion.rs`](../../crates/sim_core/src/movement/locomotion.rs#L489-L520), `prepare_pursuit` currently steers out-of-range `AttackTarget` units straight toward `target.position`:
 ```rust
 let direction = compute_unified_local_steering(
     id,
@@ -127,7 +127,7 @@ When a Ground unit has an `AttackTarget` order against an enemy on a different c
 ### 2.4 Root Cause D: Eliminating the `0.05` Push Deadzone Sign-Flip, Adding Radial+Lateral Separation, and Protecting Engaged Combat Anchors
 
 #### 2.4.1 Why the `0.05` Deadzone in `checked_dynamic_push` Causes High-Frequency Vibration
-In [`crates/sim_core/src/steering.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/steering.rs#L448-L501), `checked_dynamic_push` determines the sign of `perp` using:
+In [`crates/sim_core/src/steering.rs`](../../crates/sim_core/src/steering.rs#L448-L501), `checked_dynamic_push` determines the sign of `perp` using:
 ```rust
 let dot = checked_dot(checked_vec_neg(delta)?, perp)?;
 if dot.raw().unsigned_abs() < SimScalar::from_f32_lossy(0.05).raw() as u64 {
@@ -175,7 +175,7 @@ When a moving friendly unit $a$ pushes a stationary friendly unit $b$, pure perp
   2. The stationary ally yields both laterally (`0.85 * perp`, so `d_b.y != 0`) and radially outward ahead of the mover (`0.5 * outward`), ensuring strictly positive center-to-center separation every tick.
 
 #### 2.4.3 Protecting Stationary Engaged Combat Units from Friendly Shoving (`world.rs` lines 2201–2271)
-In [`crates/sim_core/src/world.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/world.rs#L2201-L2271):
+In [`crates/sim_core/src/world.rs`](../../crates/sim_core/src/world.rs#L2201-L2271):
 1. Broaden `is_engaged_a` and `is_engaged_b` so that **any** stationary unit (`velocity == SimVec2::ZERO`) with `current_target.is_some()` (including `Idle` or `Patrol` units that auto-acquired a target and are between shots in `WeaponPhase::Cooldown` or `Ready`) is recognized as engaged in combat:
    ```rust
    let is_engaged_a = matches!(
@@ -490,7 +490,7 @@ Add comprehensive unit and integration tests verifying every fixed invariant:
 
 ### 5.1 Scenario Context & Exact Geometry in `LiveBattle` (`showcase_canyon.scmap.ron`)
 
-In the second tab of the Visual Lab (`LabTab::LiveBattle`, [`crates/client/src/lab_ui.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/lab_ui.rs#L653-L735)), clicking **Attack destination** issues `UnitOrder::AttackMove { target }` to the player's combat squad toward the opponent's base (`(53.0, 53.0)` for Player 0 or `(6.0, 6.0)` for Player 1):
+In the second tab of the Visual Lab (`LabTab::LiveBattle`, [`crates/client/src/lab_ui.rs`](../../crates/client/src/lab_ui.rs#L653-L735)), clicking **Attack destination** issues `UnitOrder::AttackMove { target }` to the player's combat squad toward the opponent's base (`(53.0, 53.0)` for Player 0 or `(6.0, 6.0)` for Player 1):
 - **Squad Loadout (`assets/scenarios/default_battle.ron` & `assets/catalog/start_loadouts.ron`):**
   - 8 `pulse_bot` (`collision_radius = 0.375`, `UnitClearance::Small`, `move_speed = 4.0`)
   - 2 `rhino_beetle` (`collision_radius = 0.5625`, `UnitClearance::Medium`, `move_speed = 3.5`)
@@ -523,7 +523,7 @@ In the second tab of the Visual Lab (`LabTab::LiveBattle`, [`crates/client/src/l
 
 #### Root Cause 5B — `prepare_slide` Unconditionally Prefers `X` Over `Y`, Trapping Units in an Infinite Horizontal Ping-Pong at the Ramp Corner (`crates/sim_core/src/movement/locomotion.rs` lines 525–555)
 
-Look at `prepare_slide` in [`crates/sim_core/src/movement/locomotion.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/movement/locomotion.rs#L525-L555):
+Look at `prepare_slide` in [`crates/sim_core/src/movement/locomotion.rs`](../../crates/sim_core/src/movement/locomotion.rs#L525-L555):
 ```rust
 let next = add(actor.position, velocity).map_err(|e| arithmetic(id, e))?;
 if policy.permits_segment(&self.map, actor.position, next) {

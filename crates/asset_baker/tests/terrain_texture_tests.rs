@@ -2,7 +2,7 @@
 //!
 //! # Architectural Charter
 //! In accordance with `AGENTS.md` and
-//! Section 4.3 of `docs/plans/21-plan-map-editor.md` (v3.1), these tests mathematically verify:
+//! Section 4.3 of `docs/plans/21b-plan-map-editor.md` (v3.1), these tests mathematically verify:
 //! - Separable two-pass Burt-Adelson Laplacian pyramid multiband blending for tileability.
 //! - Wrap seam quantification metric (`seam_score`).
 //! - Height field derivation and dynamic range normalization.

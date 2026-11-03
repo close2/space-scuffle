@@ -1,5 +1,7 @@
 # Actual renderer review — mist and runtime battle
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 ## Evidence
 
 The reference remains `tmp/Gemini_Generated_Image_12da9g12da9g12da.jpg`. It was re-opened alongside actual game output. Its important qualities are readable translucent shells, narrow controlled highlights, layered directional wakes, restrained terrain contrast, and a coherent visual hierarchy. Matching its exact style is not required.

@@ -2,7 +2,7 @@
 //!
 //! # Architectural Charter
 //! In accordance with `AGENTS.md` and
-//! Section 4.3 of `docs/plans/21-plan-map-editor.md`, this test suite validates that real,
+//! Section 4.3 of `docs/plans/21b-plan-map-editor.md`, this test suite validates that real,
 //! production-grade terrain assets exist at the exact runtime paths expected by the client,
 //! maintain valid texture dimensions, and satisfy strict wrap-around seam continuity metrics.
 //!

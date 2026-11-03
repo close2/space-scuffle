@@ -1,5 +1,7 @@
 # Round 55 — Explicit presentation motion discontinuities
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: advisory architecture only; implementation is **not released**. Root review and final CPU3 successful isolated-cast evidence are prerequisites. Round52 product files remain frozen. This plan changes no mist field, reduction tolerance, sampling budget, movement mechanic, authored ability definition or map-editor behavior.
 
 ## Problem and current evidence

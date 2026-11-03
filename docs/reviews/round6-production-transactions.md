@@ -1,5 +1,7 @@
 # Round 6 production transaction verification
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Scope: approved plan43, including the dead-at-entry phase2 guard and living-producer recheck after hazards. No editor/assets changes and no plan45 movement implementation. Build remains the recorded free/immediate construction defect; this work is mobile training, setup-spawn atomicity and supply lifecycle, not full SC2 construction or exact SC2 queue behavior.
 
 ## Implemented transaction boundary

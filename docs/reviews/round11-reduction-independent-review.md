@@ -1,5 +1,7 @@
 # Round 11 independent CPU reduction review
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Scope: read-only review of `mist/reduction.rs` and its mathematical unit tests against the CPU3 section and rounding/support amendments in [Plan44](../plans/44-round6-volume-mist-art-direction.md). This review did not edit product sources or run Cargo, a native client, a shader or GPU work. Round52 sources remain frozen. The admission runner and complete legal-motion matrix were still in progress and are not reviewed or accepted here.
 
 ## Concrete findings

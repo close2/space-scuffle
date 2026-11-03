@@ -1,5 +1,7 @@
 # Round 1 implementation and verification — serialization and runtime assets
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 ## Exact scalar persistence (plan 23)
 
 Implemented `q32.32:v1:<signed raw i64>` string output for human-readable Serde and raw `i64` output for binary formats. Existing integer/decimal catalog input remains supported through checked conversions. Non-finite and overflowing numbers, malformed/unknown tagged strings, and empty/overlong scalar tuples return deserialization errors. New writes require the updated reader; old numeric RON remains readable.

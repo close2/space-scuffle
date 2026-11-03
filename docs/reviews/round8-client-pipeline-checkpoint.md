@@ -1,5 +1,7 @@
 # Round 8: client pipeline foundations checkpoint
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: focused verification passed; production migration and coordinated workspace gate remain pending. This is a coherent stage-one checkpoint under approved blueprint38, not completion of the gameplay pipeline goal. No editor sources were changed.
 
 ## Implemented boundary

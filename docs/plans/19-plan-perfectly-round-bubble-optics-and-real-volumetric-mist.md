@@ -2,11 +2,11 @@
 
 **Document Status:** Architectural Blueprint (Stage 1)  
 **Author:** Principal Graphics & Volumetric Shader Architect (`pro` model)  
-**Target Crates:** [`assets/shaders/bubble_dome.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/bubble_dome.wgsl), [`assets/shaders/mist_wake.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/mist_wake.wgsl), [`crates/client/src/vfx.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/vfx.rs), [`crates/client/src/scene_controller.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/scene_controller.rs)  
-**Binding Standards:** [`AGENTS.md`](file:///home/cl/projects/space-scuffle/AGENTS.md) (Textbook-Grade Engineering, Zero Placeholders, Strict Invariants)  
+**Target Crates:** [`assets/shaders/bubble_dome.wgsl`](../../assets/shaders/bubble_dome.wgsl), `assets/shaders/mist_wake.wgsl` (since removed from the repository), [`crates/client/src/vfx.rs`](../../crates/client/src/vfx.rs), [`crates/client/src/scene_controller.rs`](../../crates/client/src/scene_controller.rs)  
+**Binding Standards:** [`AGENTS.md`](../../AGENTS.md) (Textbook-Grade Engineering, Zero Placeholders, Strict Invariants)  
 **Visual Artifacts Under Diagnosis:**
-- [User Feedback Screenshot `media_1793022250145_2edb635a.png`](file:///home/cl/.gemini/antigravity/brain/28ee1670-e5dd-4945-94d2-278c6b003750/.user_uploaded/media_1793022250145_2edb635a.png)
-- [Target Visual Benchmark `Gemini_Generated_Image_12da9g12da9g12da.jpg`](file:///home/cl/projects/space-scuffle/tmp/Gemini_Generated_Image_12da9g12da9g12da.jpg)
+- User Feedback Screenshot `media_1793022250145_2edb635a.png`, `media_1793022250145_2edb635a.png` (on the development notebook; not retained)
+- Target Visual Benchmark `Gemini_Generated_Image_12da9g12da9g12da.jpg`, `Gemini_Generated_Image_12da9g12da9g12da.jpg` (an untracked file in `tmp/`, not in the repository)
 
 ---
 
@@ -16,7 +16,7 @@
 > *"the mist looks now much more natural, but it's still only a start. Please investigate how to make real mist.*  
 > *I have also noticed, that the bubbles don't always look round (see screenshot)."*
 
-A pixel-level and mathematical forensic analysis of the user screenshot ([`media_1793022250145_2edb635a.png`](file:///home/cl/.gemini/antigravity/brain/28ee1670-e5dd-4945-94d2-278c6b003750/.user_uploaded/media_1793022250145_2edb635a.png)) reveals that every single defect reported is rooted in specific mathematical formulations inside [`assets/shaders/bubble_dome.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/bubble_dome.wgsl), [`assets/shaders/mist_wake.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/mist_wake.wgsl), and [`crates/client/src/vfx.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/vfx.rs).
+A pixel-level and mathematical forensic analysis of the user screenshot (`media_1793022250145_2edb635a.png` (on the development notebook; not retained)) reveals that every single defect reported is rooted in specific mathematical formulations inside [`assets/shaders/bubble_dome.wgsl`](../../assets/shaders/bubble_dome.wgsl), `assets/shaders/mist_wake.wgsl` (since removed from the repository), and [`crates/client/src/vfx.rs`](../../crates/client/src/vfx.rs).
 
 ```
 +---------------------------------------------------------------------------------------------------+
@@ -50,7 +50,7 @@ A pixel-level and mathematical forensic analysis of the user screenshot ([`media
 ## 2. Root Cause Analysis: Bubble Non-Roundness & Optical Corrections
 
 ### 2.1 Culprit 1A: The Meridian Facing Stripe Destroys the Sphere Silhouette
-In [`assets/shaders/bubble_dome.wgsl:160-178`](file:///home/cl/projects/space-scuffle/assets/shaders/bubble_dome.wgsl#L160-L178):
+In [`assets/shaders/bubble_dome.wgsl:160-178`](../../assets/shaders/bubble_dome.wgsl#L160-L178):
 ```wgsl
 let horiz_normal = normalize(vec3<f32>(normal.x, 0.0001, normal.z));
 let forward_align = dot(horiz_normal, heading_dir);
@@ -84,7 +84,7 @@ Because this accent exists *entirely within* the outer circular annulus, it rein
 ---
 
 ### 2.2 Culprit 1B: Perspective Anamorphosis & Camera Basis vs. Normal Silhouette
-In [`assets/shaders/bubble_dome.wgsl:81-88`](file:///home/cl/projects/space-scuffle/assets/shaders/bubble_dome.wgsl#L81-L88):
+In [`assets/shaders/bubble_dome.wgsl:81-88`](../../assets/shaders/bubble_dome.wgsl#L81-L88):
 ```wgsl
 let cam_forward = normalize(in.world_position.xyz - view.world_position);
 let cam_right = normalize(cross(vec3<f32>(0.0, 1.0, 0.0), cam_forward));
@@ -124,7 +124,7 @@ let disk = disk_dir * r;
 ---
 
 ### 2.3 Culprit 1C: Specular Glare Blob Obscuring the Unit's Chest
-In [`assets/shaders/bubble_dome.wgsl:149-158`](file:///home/cl/projects/space-scuffle/assets/shaders/bubble_dome.wgsl#L149-L158):
+In [`assets/shaders/bubble_dome.wgsl:149-158`](../../assets/shaders/bubble_dome.wgsl#L149-L158):
 ```wgsl
 let l1 = normalize(vec3<f32>(-0.6, 0.8, 0.4));
 let L1 = normalize(view_dir + l1);
@@ -133,7 +133,7 @@ let glare1 = pow(max(dot(normal, L1), 0.0), 48.0) * 1.35;
 Because the light direction $l_1 = (-0.6, 0.8, 0.4)$ and view direction $\vec{V} \approx (0, 0.85, 0.53)$ are nearly aligned, the half-vector $\vec{L}_1$ points almost directly toward the front pole of the sphere ($r \approx 0.25$). This paints an opaque, $1.35 \times$ HDR white spotlight over the character's chest in all three units in the screenshot.
 
 #### Architectural Solution: Studio Crescent Rim Highlights
-In physical glass and crystal spheres ([`Gemini_Generated_Image_12da9g12da9g12da.jpg`](file:///home/cl/projects/space-scuffle/tmp/Gemini_Generated_Image_12da9g12da9g12da.jpg)), studio reflections appear as sleek **crescents near the curved glass rim**, while the central aperture ($r < 0.65$) remains 100% crystal clear:
+In physical glass and crystal spheres (`Gemini_Generated_Image_12da9g12da9g12da.jpg` (an untracked file in `tmp/`, not in the repository)), studio reflections appear as sleek **crescents near the curved glass rim**, while the central aperture ($r < 0.65$) remains 100% crystal clear:
 1. **Upper-Left Key Crescent:** High overhead key light angled from top-left, modulated by outer rim mask $\text{smoothstep}(0.68, 0.88, r) \times (1.0 - \text{smoothstep}(0.94, 0.99, r))$.
 2. **Lower-Right Soft Bounce:** Subtle ground reflection near $r \in [0.78, 0.94]$.
 3. **Central Clearance Guarantee:** Modulate all specular highlights by $\text{smoothstep}(0.65, 0.85, r)$ so that for $r < 0.65$, specular is mathematically $0.0$, guaranteeing an unobstructed view of the character video.
@@ -143,7 +143,7 @@ In physical glass and crystal spheres ([`Gemini_Generated_Image_12da9g12da9g12da
 ## 3. Root Cause Analysis: Fake Mist vs. Real Volumetric Mist
 
 ### 3.1 Culprit 2A: The Stationary `seed_val` Freezing Bug
-In [`crates/client/src/vfx.rs:389-404`](file:///home/cl/projects/space-scuffle/crates/client/src/vfx.rs#L389-L404):
+In [`crates/client/src/vfx.rs:389-404`](../../crates/client/src/vfx.rs#L389-L404):
 ```rust
 let seed_val = ((bubble_pos.x * 13.7 + bubble_pos.z * 37.1) * 10.0).fract().abs();
 for i in 0..2 {
@@ -156,7 +156,7 @@ for i in 0..2 {
 
 #### The Bug
 When a unit is stationary ($speed \le 0.0005$), `bubble_pos` is constant. Therefore `seed_val`, `phi`, `theta`, and `spawn_pos` are **identical constants on every single frame**!
-In the screenshot [`media_1793022250145_2edb635a.png`](file:///home/cl/.gemini/antigravity/brain/28ee1670-e5dd-4945-94d2-278c6b003750/.user_uploaded/media_1793022250145_2edb635a.png), all three bubbles display the exact same two striped lumps sticking out of the upper-left of each sphere at 10 o'clock and 11 o'clock.
+In the screenshot `media_1793022250145_2edb635a.png` (on the development notebook; not retained), all three bubbles display the exact same two striped lumps sticking out of the upper-left of each sphere at 10 o'clock and 11 o'clock.
 
 #### Architectural Solution
 1. Introduce a monotonically advancing emission seed salt using an atomic counter (`static EMIT_COUNTER: AtomicU32`) combined with the golden ratio hash:
@@ -167,7 +167,7 @@ In the screenshot [`media_1793022250145_2edb635a.png`](file:///home/cl/.gemini/a
 ---
 
 ### 3.2 Culprit 2B: Artificial Parallel Stripes & Circle Grid
-In [`assets/shaders/mist_wake.wgsl:96-117`](file:///home/cl/projects/space-scuffle/assets/shaders/mist_wake.wgsl#L96-L117):
+In `assets/shaders/mist_wake.wgsl:96-117` (`assets/shaders/mist_wake.wgsl`, since removed from the repository):
 ```wgsl
 let streak_coord = vec2<f32>(along_trail * 1.5 - globals.time * 3.0, across_trail * 12.0);
 let streaks = pow(noise2d(streak_coord), 2.2) * smoothstep(0.1, 0.8, taper);
@@ -183,7 +183,7 @@ let b_grid = fract(vec2<f32>(along_trail * 3.0, across_trail * 4.0) + ...) - 0.5
 
 ## 4. Architectural Design: Real Volumetric Curl-Warped Mist Pipeline
 
-To produce the ethereal, silky, multicolored mist wakes seen in the benchmark artwork ([`Gemini_Generated_Image_12da9g12da9g12da.jpg`](file:///home/cl/projects/space-scuffle/tmp/Gemini_Generated_Image_12da9g12da9g12da.jpg)), we specify a textbook-grade **Curl-Warped Volumetric Mist Engine**:
+To produce the ethereal, silky, multicolored mist wakes seen in the benchmark artwork (`Gemini_Generated_Image_12da9g12da9g12da.jpg` (an untracked file in `tmp/`, not in the repository)), we specify a textbook-grade **Curl-Warped Volumetric Mist Engine**:
 
 ```
 +---------------------------------------------------------------------------------------------------+
@@ -230,9 +230,9 @@ To produce the ethereal, silky, multicolored mist wakes seen in the benchmark ar
 
 ## 5. Exact WGSL & Rust Code Specifications
 
-### 5.1 Bubble Dome Shader Specification: [`assets/shaders/bubble_dome.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/bubble_dome.wgsl)
+### 5.1 Bubble Dome Shader Specification: [`assets/shaders/bubble_dome.wgsl`](../../assets/shaders/bubble_dome.wgsl)
 
-The complete revised fragment shader for [`assets/shaders/bubble_dome.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/bubble_dome.wgsl):
+The complete revised fragment shader for [`assets/shaders/bubble_dome.wgsl`](../../assets/shaders/bubble_dome.wgsl):
 
 ```wgsl
 // assets/shaders/bubble_dome.wgsl
@@ -480,9 +480,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
 ---
 
-### 5.2 Mist Wake Shader Specification: [`assets/shaders/mist_wake.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/mist_wake.wgsl)
+### 5.2 Mist Wake Shader Specification: `assets/shaders/mist_wake.wgsl` (since removed from the repository)
 
-The complete revised fragment shader for [`assets/shaders/mist_wake.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/mist_wake.wgsl):
+The complete revised fragment shader for `assets/shaders/mist_wake.wgsl` (since removed from the repository):
 
 ```wgsl
 // assets/shaders/mist_wake.wgsl
@@ -653,9 +653,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
 ---
 
-### 5.3 Rust Kinematics Specification: [`crates/client/src/vfx.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/vfx.rs)
+### 5.3 Rust Kinematics Specification: [`crates/client/src/vfx.rs`](../../crates/client/src/vfx.rs)
 
-The revised `emit_mist_wake` function in [`crates/client/src/vfx.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/vfx.rs):
+The revised `emit_mist_wake` function in [`crates/client/src/vfx.rs`](../../crates/client/src/vfx.rs):
 
 ```rust
 // In crates/client/src/vfx.rs
@@ -780,7 +780,7 @@ pub fn emit_mist_wake(
 }
 ```
 
-And in [`crates/client/src/vfx.rs:71-74`](file:///home/cl/projects/space-scuffle/crates/client/src/vfx.rs#L71-L74), update `depth_bias` for `MistWakeMaterial`:
+And in [`crates/client/src/vfx.rs:71-74`](../../crates/client/src/vfx.rs#L71-L74), update `depth_bias` for `MistWakeMaterial`:
 ```rust
 impl Material for MistWakeMaterial {
     fn fragment_shader() -> ShaderRef {
@@ -799,9 +799,9 @@ impl Material for MistWakeMaterial {
 
 ---
 
-### 5.4 Scene Controller Continuous Emission: [`crates/client/src/scene_controller.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/scene_controller.rs)
+### 5.4 Scene Controller Continuous Emission: [`crates/client/src/scene_controller.rs`](../../crates/client/src/scene_controller.rs)
 
-In [`crates/client/src/scene_controller.rs:423-447`](file:///home/cl/projects/space-scuffle/crates/client/src/scene_controller.rs#L423-L447) and [`579-598`](file:///home/cl/projects/space-scuffle/crates/client/src/scene_controller.rs#L579-L598):
+In [`crates/client/src/scene_controller.rs:423-447`](../../crates/client/src/scene_controller.rs#L423-L447) and [`579-598`](../../crates/client/src/scene_controller.rs#L579-L598):
 When a unit is moving, emit mist **every frame** (`% 1 == 0`) so that there are never discrete stepped gaps along the trailing wake ribbon:
 ```rust
 let is_moving = lab_state.speed > 0.05;
@@ -825,14 +825,14 @@ let throttled = if moving {
 
 ## 6. Implementation Roadmap & Stage 2 Execution Plan
 
-In adherence to Section 6 of [`AGENTS.md`](file:///home/cl/projects/space-scuffle/AGENTS.md), this architectural plan serves as the binding blueprint for Stage 2 implementation:
+In adherence to Section 6 of [`AGENTS.md`](../../AGENTS.md), this architectural plan serves as the binding blueprint for Stage 2 implementation:
 
 | Step | Target File | Action | Key Verification |
 |---|---|---|---|
-| **Step 1** | [`assets/shaders/bubble_dome.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/bubble_dome.wgsl) | Replace fragment shader with perspective-correct horizon math ($r = \sqrt{1 - NdotV^2}$), true camera view-plane basis, studio crescent rim reflections, and rim-confined facing accent. Remove interior white arch (`meridian_stripe`). | $r = 1.0$ at all silhouette points; center glass $r < 0.65$ has zero specular blob. |
-| **Step 2** | [`assets/shaders/mist_wake.wgsl`](file:///home/cl/projects/space-scuffle/assets/shaders/mist_wake.wgsl) | Replace shader with Rotational FBM (`mat2x2(0.8, -0.6, 0.6, 0.8)`), curl-noise erosion, non-circular silhouettes, velocity-sheared streaks, stochastic droplets, and luminous additive HDR output ($2.2 \times \text{color} \times \alpha$). | Zero parallel stripes, zero grid dots, zero button disc boundaries. |
-| **Step 3** | [`crates/client/src/vfx.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/vfx.rs) | Replace static `seed_val` with atomic counter + golden ratio hash. Spawn 360-degree soft vapor veils when stationary ($2.2R \to 2.8R$). Update moving wake with $0.28\text{s}$ suction inward, scale contraction ($2.0R \to 1.1R$), and set `depth_bias: -45.0`. | Stationary bubbles sweat uniformly in all directions; moving wakes neck smoothly behind the sphere. |
-| **Step 4** | [`crates/client/src/scene_controller.rs`](file:///home/cl/projects/space-scuffle/crates/client/src/scene_controller.rs) | Update emission throttling: moving units emit every frame for gapless wakes; stationary units emit every 8 frames. | Continuous, silky ribbon wake trailing behind moving units without stepped gaps. |
+| **Step 1** | [`assets/shaders/bubble_dome.wgsl`](../../assets/shaders/bubble_dome.wgsl) | Replace fragment shader with perspective-correct horizon math ($r = \sqrt{1 - NdotV^2}$), true camera view-plane basis, studio crescent rim reflections, and rim-confined facing accent. Remove interior white arch (`meridian_stripe`). | $r = 1.0$ at all silhouette points; center glass $r < 0.65$ has zero specular blob. |
+| **Step 2** | `assets/shaders/mist_wake.wgsl` (since removed from the repository) | Replace shader with Rotational FBM (`mat2x2(0.8, -0.6, 0.6, 0.8)`), curl-noise erosion, non-circular silhouettes, velocity-sheared streaks, stochastic droplets, and luminous additive HDR output ($2.2 \times \text{color} \times \alpha$). | Zero parallel stripes, zero grid dots, zero button disc boundaries. |
+| **Step 3** | [`crates/client/src/vfx.rs`](../../crates/client/src/vfx.rs) | Replace static `seed_val` with atomic counter + golden ratio hash. Spawn 360-degree soft vapor veils when stationary ($2.2R \to 2.8R$). Update moving wake with $0.28\text{s}$ suction inward, scale contraction ($2.0R \to 1.1R$), and set `depth_bias: -45.0`. | Stationary bubbles sweat uniformly in all directions; moving wakes neck smoothly behind the sphere. |
+| **Step 4** | [`crates/client/src/scene_controller.rs`](../../crates/client/src/scene_controller.rs) | Update emission throttling: moving units emit every frame for gapless wakes; stationary units emit every 8 frames. | Continuous, silky ribbon wake trailing behind moving units without stepped gaps. |
 | **Step 5** | Verification & Quality Gates | Run full workspace test suite: `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`. | All tests pass, zero warnings, clean formatting. |
 
 ---

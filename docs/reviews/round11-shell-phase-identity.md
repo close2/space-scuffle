@@ -1,5 +1,7 @@
 # Round 11: render proxy identity and shell audit equivalence
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: independent read-only review and proposed diagnostic amendment to [Plan53](../plans/53-round10-stable-transparent-shell-ties.md). No product changes, builds, native launches or changes to the declared twelve-run matrix. This does not authorize StageB ordering changes. All original reports and failed/inconclusive results remain intact.
 
 ## Finding and actual artifact evidence

@@ -3,9 +3,9 @@
 In *Space Scuffle*, the **Bubble** is the primary gameplay actor. Because players must make split-second micro decisions while looking at 10 to 200 bubbles on screen, every visual element of the bubble must serve a clear functional purpose while maintaining the stylized, non-photorealistic look of *StarCraft II* and *League of Legends*.
 
 Reference concept renders in repository:
-- [Normal Combat Bubbles](file:///home/cl/projects/space-scuffle/tmp/Gemini_Generated_Image_12da9g12da9g12da.jpg)
-- [Damaged & Shattering Bubbles](file:///home/cl/projects/space-scuffle/tmp/damaged%20bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg)
-- [Concept Video](file:///home/cl/projects/space-scuffle/tmp/gemini_generated_video_de659ff9.mp4)
+- Normal Combat Bubbles, `Gemini_Generated_Image_12da9g12da9g12da.jpg` (an untracked file in `tmp/`, not in the repository)
+- Damaged & Shattering Bubbles, `damaged bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg` (an untracked file in `tmp/`, not in the repository)
+- Concept Video, `gemini_generated_video_de659ff9.mp4` (an untracked file in `tmp/`, not in the repository)
 
 ---
 
@@ -27,7 +27,7 @@ flowchart TD
 
 ### 2.1 Movement Direction
 - **Primary Indicator — Trailing Mist & Wake:**
-  - As seen in [Gemini_Generated_Image_12da9g12da9g12da.jpg](file:///home/cl/projects/space-scuffle/tmp/Gemini_Generated_Image_12da9g12da9g12da.jpg), moving bubbles emit a soft, luminescent vapor/bubble-mist trail opposite to their velocity vector.
+  - As seen in Gemini_Generated_Image_12da9g12da9g12da.jpg (an untracked file in `tmp/`, not in the repository), moving bubbles emit a soft, luminescent vapor/bubble-mist trail opposite to their velocity vector.
   - **Speed Scaling:** Trail length and particle turbulence scale directly with current speed:
     - *Stationary:* Zero trail; subtle ambient hover bobbing.
     - *Normal Walk:* Soft translucent mist wake (~1.5x bubble radius long).
@@ -63,7 +63,7 @@ Here are **4 complementary mechanisms** (used together based on weapon type):
    - **Continuous Beams / Channels (e.g., Void Ray, Sentry, Laser Turret):** As directly illustrated in both concept images, a sustained laser beam or crackling lightning arc connects the attacker's Focal Lens to the surface of the target bubble.
    - **Melee Attacks (e.g., Zealot, Zergling):** The attacker's bubble lunges slightly forward (`20%` of its radius during `DamagePoint`) and projects a sharp crescent slash wave / shockwave spike across the contact boundary into the target bubble.
 3. **Target Impact Ripple (Who is Being Hit):**
-   - When a bubble takes a hit, the hemisphere facing the attacker flashes with a directional **Shield Ripple** (if shields > 0) or **Red/Orange Impact Flare** (as seen on the left-center bubble in [damaged bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg](file:///home/cl/projects/space-scuffle/tmp/damaged%20bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg)), immediately telling the player *which direction damage is coming from*.
+   - When a bubble takes a hit, the hemisphere facing the attacker flashes with a directional **Shield Ripple** (if shields > 0) or **Red/Orange Impact Flare** (as seen on the left-center bubble in damaged bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg (an untracked file in `tmp/`, not in the repository)), immediately telling the player *which direction damage is coming from*.
 
 ---
 
@@ -97,7 +97,7 @@ If every unit is just a smooth round ball of the same size, an army of Marines, 
 ---
 
 ### 2.6 Current Action, Damage & Status Effects
-As shown in [damaged bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg](file:///home/cl/projects/space-scuffle/tmp/damaged%20bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg), the bubble surface itself acts as a diegetic health & status display (supplemented by optional overhead health bars):
+As shown in damaged bubbles-Gemini_Generated_Image_mqt7trmqt7trmqt7.jpg (an untracked file in `tmp/`, not in the repository), the bubble surface itself acts as a diegetic health & status display (supplemented by optional overhead health bars):
 
 | State | Visual Representation on Bubble |
 | :--- | :--- |

@@ -406,12 +406,12 @@ To execute the 100-Zergling tests without spatial jamming or overcrowding:
 
 | File | Target Modifications | Key Architectural Invariant |
 | :--- | :--- | :--- |
-| [`crates/sim_types/src/weapon.rs`](file:///home/cl/projects/space-scuffle/crates/sim_types/src/weapon.rs) | Add `#[serde(default)] pub suicide_on_attack: bool` to `WeaponSpec`. | Default `false` preserves serialization and existing weapons. |
-| [`crates/sim_core/src/catalog.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/catalog.rs) | Add `suicide_on_attack` to `WeaponSpecDef` and propagate in `convert_weapon`. | Clean RON parsing of suicide weapons. |
-| [`crates/sim_core/src/world.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/src/world.rs) | In `step_weapons_and_projectiles`, if `weapon.suicide_on_attack`, set attacker's `hp` and `shields` to zero. | Banelings cleanly detonate and die upon attacking. |
-| [`assets/catalog/units.ron`](file:///home/cl/projects/space-scuffle/assets/catalog/units.ron) | 1. Calibrate `rhino_beetle` to true Roach stats (145 HP, 16 dmg, range 4.0, 75/25 cost).<br>2. Set `suicide_on_attack: true` on `volatile_tick`.<br>3. Add thermal splash to `tripod_annihilator`.<br>4. Add flame splash to `napalm_wheeler`. | Matches SC2 LotV Patch 5.0.14 benchmarks bit-for-bit. |
-| [`crates/sim_core/tests/sc2_battle_benchmarks_tests.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/tests/sc2_battle_benchmarks_tests.rs) | Update tests 3 and 4 to use `shock_golem` for Marauder. | Preserves 100% of existing benchmark test passes. |
-| [`crates/sim_core/tests/sc2_who_wins_matchup_matrix_tests.rs`](file:///home/cl/projects/space-scuffle/crates/sim_core/tests/sc2_who_wins_matchup_matrix_tests.rs) | **New File:** Implement all 28 test suites (covering 35+ sub-battles). | Rigorous headless validation of the entire SC2 combat matrix. |
+| [`crates/sim_types/src/weapon.rs`](../../crates/sim_types/src/weapon.rs) | Add `#[serde(default)] pub suicide_on_attack: bool` to `WeaponSpec`. | Default `false` preserves serialization and existing weapons. |
+| [`crates/sim_core/src/catalog.rs`](../../crates/sim_core/src/catalog.rs) | Add `suicide_on_attack` to `WeaponSpecDef` and propagate in `convert_weapon`. | Clean RON parsing of suicide weapons. |
+| [`crates/sim_core/src/world.rs`](../../crates/sim_core/src/world.rs) | In `step_weapons_and_projectiles`, if `weapon.suicide_on_attack`, set attacker's `hp` and `shields` to zero. | Banelings cleanly detonate and die upon attacking. |
+| [`assets/catalog/units.ron`](../../assets/catalog/units.ron) | 1. Calibrate `rhino_beetle` to true Roach stats (145 HP, 16 dmg, range 4.0, 75/25 cost).<br>2. Set `suicide_on_attack: true` on `volatile_tick`.<br>3. Add thermal splash to `tripod_annihilator`.<br>4. Add flame splash to `napalm_wheeler`. | Matches SC2 LotV Patch 5.0.14 benchmarks bit-for-bit. |
+| [`crates/sim_core/tests/sc2_battle_benchmarks_tests.rs`](../../crates/sim_core/tests/sc2_battle_benchmarks_tests.rs) | Update tests 3 and 4 to use `shock_golem` for Marauder. | Preserves 100% of existing benchmark test passes. |
+| [`crates/sim_core/tests/sc2_who_wins_matchup_matrix_tests.rs`](../../crates/sim_core/tests/sc2_who_wins_matchup_matrix_tests.rs) | **New File:** Implement all 28 test suites (covering 35+ sub-battles). | Rigorous headless validation of the entire SC2 combat matrix. |
 
 ---
 

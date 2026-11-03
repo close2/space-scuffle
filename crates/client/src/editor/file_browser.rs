@@ -1,7 +1,7 @@
 //! File browser modal dialog for opening and saving map documents.
 //!
 //! # Architectural Charter
-//! In accordance with Implementation Plan 21 §7.3 and [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md),
+//! In accordance with Implementation Plan 21 §7.3 and `AGENTS.md`,
 //! this module provides the modal file selection dialog for loading and saving `.scmap.ron` files
 //! within `assets/maps/`.
 //!

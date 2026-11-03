@@ -2,7 +2,7 @@
 
 Status: read-only architecture review during the round10 source freeze. No product edits, compilation, timing or native execution were performed. Plan52 remains approved but held. This review does not release Stage3 or change its numerical budgets.
 
-Reviewed sources: [plan44](44-round6-volume-mist-art-direction.md), `mist/emission.rs`, `mist/mod.rs`, `mist/gpu.rs`, `battle_pipeline/{clock,driver,timeline,session}.rs`, `scene_controller.rs`, `movement/locomotion.rs`, and the existing actual Blink transaction tests. Findings were discussed directly with the44 owner. Mathematical examples below are specification counterexamples, not executed legal-gameplay traces or visual evidence.
+Reviewed sources: [plan44](../plans/44-round6-volume-mist-art-direction.md), `mist/emission.rs`, `mist/mod.rs`, `mist/gpu.rs`, `battle_pipeline/{clock,driver,timeline,session}.rs`, `scene_controller.rs`, `movement/locomotion.rs`, and the existing actual Blink transaction tests. Findings were discussed directly with the44 owner. Mathematical examples below are specification counterexamples, not executed legal-gameplay traces or visual evidence.
 
 ## 1. Position/time tolerances do not bound density loss
 

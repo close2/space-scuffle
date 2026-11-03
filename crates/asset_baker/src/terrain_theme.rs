@@ -2,7 +2,7 @@
 //!
 //! # Architectural Charter
 //! In accordance with `AGENTS.md` and
-//! Section 4.1 of `docs/plans/21-plan-map-editor.md`, `terrain_theme` provides the declarative
+//! Section 4.1 of `docs/plans/21b-plan-map-editor.md`, `terrain_theme` provides the declarative
 //! schema for map visual themes. It specifies the 4 primary surface texture layers
 //! (grass, metal plate, dirt, cliff), the space void/backdrop, UV tiling densities, and
 //! PBR scene lighting parameters.

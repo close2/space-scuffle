@@ -1,7 +1,7 @@
 //! Holographic marker rendering and document reconciliation for map entities.
 //!
 //! # Architectural Charter
-//! In accordance with Implementation Plan 21 §7.4 and [AGENTS.md](file:///home/cl/projects/space-scuffle/AGENTS.md),
+//! In accordance with Implementation Plan 21 §7.4 and `AGENTS.md`,
 //! this module renders map entities (resources, watchtowers, and start locations) as additive
 //! holographic projections with cylindrical yaw-only camera billboarding and flat decal quads.
 //!

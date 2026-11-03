@@ -1,5 +1,7 @@
 # Round 10 — Actual view-bound mist lighting verification
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Goal: bind mist shading to the renderer's actual directional lights for each view, preserving visible color, illuminance, world direction, visibility/layer eligibility and retained geometry. This is a correctness prerequisite for the separately planned volume; it is not art acceptance.
 
 ## Independent GPU oracle
