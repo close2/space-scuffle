@@ -123,3 +123,36 @@ pub fn scenario_world(
         catalogs.upgrades,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sim_map::{CliffLevel, GameMap, MapCell};
+
+    #[test]
+    fn shipped_catalogs_resolve_every_slug_back_to_its_archetype() {
+        let catalogs = shipped_catalogs();
+        let mut count = 0_usize;
+        for archetype in catalogs.units.archetypes() {
+            count += 1;
+            assert_eq!(
+                catalogs.units.id_by_slug(&archetype.slug),
+                Some(archetype.unit_type_id),
+                "slug {} must resolve to its own archetype",
+                archetype.slug
+            );
+        }
+        assert!(count > 0, "the shipped catalog defines no archetype");
+    }
+
+    #[test]
+    fn world_starts_empty_at_tick_zero_with_the_requested_seed(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let map = GameMap::new(16, 16, MapCell::default_ground(CliffLevel(0)))?;
+        let built = world(map, 42);
+        assert!(built.entities.is_empty(), "a fixture world spawns nothing");
+        assert_eq!(built.current_tick, 0);
+        assert_eq!(built.rng_seed, 42);
+        Ok(())
+    }
+}

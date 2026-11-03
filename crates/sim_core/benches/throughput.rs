@@ -6,20 +6,25 @@
 //! table row per scenario so results can be pasted into plans and compared over time.
 //!
 //! # How it fits
-//! The charter claims a throughput target that nothing else in the repository measures.
-//! This target is the measurement. It deliberately drives the public API only: real
-//! catalog, real map, real `PlayerCommand`s, with no phase skipped.
+//! Charter §3.1 requires every scenario to run at least in real time, and `DESIGN.md` §5
+//! publishes the measured figures. This target is the measurement. It deliberately drives the
+//! public API only: real catalog, real map, real `PlayerCommand`s, with no phase skipped. CI's
+//! `throughput` job runs it with `--floor 25` and appends the table to the job summary.
 //!
 //! # Invariants
-//! - Wall-clock time is reported and never asserted, so a shared or slow host cannot
-//!   fail a build. The binary fails only if a scenario cannot be constructed.
+//! - Without `--floor`, wall-clock time is reported and never asserted. With
+//!   `--floor <ticks per second>`, the binary prints the whole table first and then exits
+//!   non-zero naming every scenario whose median is below the floor. The floor CI uses is the
+//!   simulation's own tick rate (`sim_types::TICKS_PER_SECOND`): below it a match cannot run in
+//!   real time, which no host speed excuses, and it leaves a wide margin for slow runners.
+//! - The binary also fails if a scenario cannot be constructed or an argument is not understood.
 //! - The reported figure is the median of the configured repeats, which is less
 //!   sensitive to other work on the host than the mean.
 //! - The unit identity is read from the data file; no archetype is named in Rust.
 //! - The rule catalogs are loaded from disk at run time, as the game loads them: from
 //!   `$SPACE_SCUFFLE_ASSETS/catalog` when that is set, else from the repository's `assets/catalog`.
 //!
-//! Run with `cargo bench -p sim_core --bench throughput`.
+//! Run with `cargo bench -p sim_core --bench throughput [-- --floor <ticks per second>]`.
 
 use serde::Deserialize;
 use sim_core::catalog::RuntimeCatalogs;
@@ -170,11 +175,38 @@ fn measure(
     Ok(f64::from(config.ticks) / started.elapsed().as_secs_f64())
 }
 
+/// The minimum median ticks per second from `--floor <n>`, if given.
+///
+/// Cargo passes `--bench` to every benchmark binary; it is accepted and ignored. Any other
+/// argument is an error, so a mistyped floor can never pass as no floor.
+fn floor_from_args(args: impl IntoIterator<Item = String>) -> Result<Option<f64>, Box<dyn Error>> {
+    let mut floor = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--bench" => {}
+            "--floor" => {
+                let value = args
+                    .next()
+                    .ok_or("--floor needs a number of ticks per second")?;
+                let ticks: u32 = value.parse().map_err(|_| {
+                    format!("--floor {value}: not a whole number of ticks per second")
+                })?;
+                floor = Some(f64::from(ticks));
+            }
+            other => return Err(format!("unknown argument `{other}`; expected --floor <n>").into()),
+        }
+    }
+    Ok(floor)
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
+    let floor = floor_from_args(std::env::args().skip(1))?;
     let config: BenchmarkConfig = ron::from_str(SCENARIO_TABLE)?;
     let catalogs = RuntimeCatalogs::load_from_directory(catalog_directory())?;
     println!("| Map | Units | Ticks/s (median of {}) |", config.repeats);
     println!("|---|---:|---:|");
+    let mut below = Vec::new();
     for scenario in &config.scenarios {
         let mut samples = Vec::with_capacity(config.repeats);
         for _ in 0..config.repeats {
@@ -188,6 +220,23 @@ fn main() -> Result<(), Box<dyn Error>> {
             "| {0}x{0} | {1} | {median:.0} |",
             scenario.map_cells, scenario.units
         );
+        if floor.is_some_and(|floor| *median < floor) {
+            below.push(format!(
+                "{0}x{0} with {1} units at {median:.0} ticks/s",
+                scenario.map_cells, scenario.units
+            ));
+        }
     }
-    Ok(())
+    match floor {
+        None => Ok(()),
+        Some(floor) if below.is_empty() => {
+            println!("\nEvery scenario meets the floor of {floor:.0} ticks/s.");
+            Ok(())
+        }
+        Some(floor) => Err(format!(
+            "below the floor of {floor:.0} ticks/s (charter §3.1): {}",
+            below.join("; ")
+        )
+        .into()),
+    }
 }

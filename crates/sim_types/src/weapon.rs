@@ -43,7 +43,7 @@ pub enum ProjectileTargetLossBehavior {
 }
 
 /// Default in-flight missile lifetime timeout in ticks (125 ticks = 5.0 seconds at 25 Hz).
-pub const DEFAULT_PROJECTILE_LIFETIME_TICKS: u16 = 125;
+pub const DEFAULT_PROJECTILE_LIFETIME_TICKS: u16 = 5 * crate::TICKS_PER_SECOND;
 
 /// Returns the default projectile flight timeout in simulation ticks (125 ticks = 5.0s at 25 Hz).
 #[must_use]

@@ -165,3 +165,27 @@ jobs:
         run: cargo test -p sim_core --test golden_replay_tests --target wasm32-wasip1 --locked --release
         env:
           CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
+
+  # Charter §3.1: every benchmark scenario runs at least in real time. The floor is the
+  # simulation's tick rate (sim_types::TICKS_PER_SECOND = 25); the table goes to the job summary
+  # so each run publishes its figures. The benchmark needs only the simulation crates, so this
+  # job installs no system packages and builds no client.
+  throughput:
+    name: Throughput floor (release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.99.0
+
+      - name: Rust Cargo Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Benchmark the tick against the real-time floor
+        run: |
+          set -o pipefail
+          cargo bench -p sim_core --bench throughput --locked -- --floor 25 | tee -a "$GITHUB_STEP_SUMMARY"

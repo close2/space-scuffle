@@ -1127,9 +1127,12 @@ fn emit_dual_cell(
     }
 
     // PERFORMANCE RATIONALE:
-    // For flat dual cells (hi == lo), emit the full cell quad. When a cliff is present (hi > lo),
-    // the low region polygon (cases 1..14) matching the threshold run is emitted at H(lo) to avoid
-    // hidden overdraw under the higher cliff plateau and guarantee watertight chunk boundaries.
+    // Why: Emitting a full floor quad at every level of a cliff cell would draw low ground hidden
+    // under the higher plateau, overdraw that grows with the number of cliff cells on screen.
+    // What: A flat dual cell (hi == lo) emits its full quad; a cliff cell (hi > lo) emits only the
+    // low-region polygon (marching cases 1..14) for the threshold run, at H(lo).
+    // Trade-off: A case lookup per cliff cell instead of one quad, in exchange for no hidden
+    // fragments and watertight chunk boundaries.
     if lo >= 0 {
         let low_case = if hi > lo {
             (!cell.case_for_t(lo + 1)) & 0x0F

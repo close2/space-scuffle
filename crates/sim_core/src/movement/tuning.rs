@@ -8,7 +8,7 @@
 //! - Values are exact Q32.32 rationals fixed at compile time. Nothing here goes through a float,
 //!   so the tick loop cannot pick up platform-dependent rounding from these constants.
 
-use sim_types::SimScalar;
+use sim_types::{SimScalar, TICKS_PER_SECOND};
 
 /// Exact `numerator / denominator` in Q32.32, rounded toward zero.
 const fn ratio(numerator: i64, denominator: i64) -> SimScalar {
@@ -41,9 +41,9 @@ pub(crate) const ARRIVAL_WITNESS_REACH: SimScalar = ratio(3, 2);
 /// Route length a unit must gain to count as progress.
 pub(crate) const STALL_PROGRESS: SimScalar = ratio(1, 10);
 /// Ticks without progress before a unit rebuilds its route, one second.
-pub(crate) const STALL_REPATH_TICKS: u16 = 25;
+pub(crate) const STALL_REPATH_TICKS: u16 = TICKS_PER_SECOND;
 /// Ticks without progress before a unit gives its order up, ten seconds.
-pub(crate) const STALL_ABANDON_TICKS: u16 = 250;
+pub(crate) const STALL_ABANDON_TICKS: u16 = 10 * TICKS_PER_SECOND;
 /// Distance from the destination inside which a stalled unit on its last leg counts as arrived.
 pub(crate) const STALL_ARRIVAL_REACH: SimScalar = SimScalar::from_raw(3 << 32);
 
@@ -56,7 +56,7 @@ pub(crate) const PURSUIT_ROUTE_DRIFT: SimScalar = SimScalar::from_raw(2 << 32);
 /// Routes to an automatically chosen target may be this many times the unit's scan range.
 pub(crate) const PURSUIT_LEASH_SCAN_RANGES: SimScalar = SimScalar::from_raw(2 << 32);
 /// Ticks a unit ignores a target it gave up on, two seconds.
-pub(crate) const ABANDONED_TARGET_TICKS: u16 = 50;
+pub(crate) const ABANDONED_TARGET_TICKS: u16 = 2 * TICKS_PER_SECOND;
 
 /// Waypoints are dropped once a unit is this far from them, beyond two of its radii, provided the
 /// next waypoint is already in clear view: another unit may be parked on the waypoint.

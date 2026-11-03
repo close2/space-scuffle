@@ -86,7 +86,8 @@ fn upkeep_entity(entity: &mut Entity, catalog: &UnitCatalog) {
         if let Some(ref mode_name) = entity.active_mode {
             if let Some(mode) = arch.get_mode(mode_name) {
                 if mode.energy_cost_per_second > SimScalar::ZERO {
-                    let drain_per_tick = mode.energy_cost_per_second / SimScalar::from_i32(25);
+                    let drain_per_tick = mode.energy_cost_per_second
+                        / SimScalar::from_i32(i32::from(sim_types::TICKS_PER_SECOND));
                     if entity.energy < drain_per_tick {
                         entity.energy = SimScalar::ZERO;
                         entity.leave_mode(arch);

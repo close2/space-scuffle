@@ -1,8 +1,9 @@
 //! The charter's checkable claims, run against this repository.
 //!
 //! # Responsibility
-//! One `#[test]` per check, named after its ID (`c02_...`, `c03_...`); C18 and C19 judge the
-//! documentation (plan index, notebook paths) rather than code. Each runs the check from
+//! One `#[test]` per check, named after its ID (`c01_...`, `c02_...`); C1 and C15 to C20 judge
+//! the documentation (the charter's own statements, `DESIGN.md`, the plan index, notebook
+//! paths) rather than code. Each runs the check from
 //! the `workspace_checks` library on the repository root and fails with every finding, one
 //! `path:line: message` per line, so a single run shows all the work to do.
 //!
@@ -19,11 +20,13 @@
 
 use std::error::Error;
 use workspace_checks::{
-    cargo_metadata, engine_free_simulation, expect_messages_state_invariants, float_ratchet,
+    cargo_metadata, charter_graph, charter_paths_exist, ci_runs_the_gate, design_doc,
+    engine_free_simulation, expect_messages_state_invariants, float_ratchet, function_length_limit,
     in_process_render_devices, module_docs, no_catalog_identities_in_code,
     no_discarded_results_in_simulation, no_embedded_assets, no_mutable_statics, no_work_markers,
-    notebook_references, plan_index, render, repo_root, simulation_clippy_config, tracked_files,
-    typed_library_errors, Finding, FloatAllowance, SIMULATION_CRATES,
+    notebook_references, performance_rationale_format, plan_index, render, repo_root,
+    simulation_clippy_config, test_subjects, tracked_files, typed_library_errors, Finding,
+    FloatAllowance, SIMULATION_CRATES,
 };
 
 /// Fails with every finding of `check`, or passes when there are none.
@@ -58,7 +61,7 @@ const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
     },
     FloatAllowance {
         path: "crates/sim_core/src/catalog.rs",
-        count: 46,
+        count: 47,
         reason: "authoring: catalog RON fields are decimal and converted to fixed-point at load",
     },
     FloatAllowance {
@@ -68,7 +71,7 @@ const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
     },
     FloatAllowance {
         path: "crates/sim_core/src/combat_resolution.rs",
-        count: 2,
+        count: 3,
         reason: "a decimal constant converted once with `SimScalar::from_num`, and the \
                  presentation-only flight time of a projectile visual event",
     },
@@ -78,6 +81,13 @@ const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
         reason: "presentation: progress and hit-flash ratios written into `RenderSnapshot`",
     },
 ];
+
+#[test]
+fn c01_charter_graph_equals_the_cargo_graph() -> Result<(), Box<dyn Error>> {
+    let metadata = cargo_metadata(true)?;
+    assert_clean("C1", &charter_graph(&repo_root(), &metadata)?);
+    Ok(())
+}
 
 #[test]
 fn c02_simulation_crates_have_no_engine_gpu_window_or_audio_dependency(
@@ -119,6 +129,12 @@ fn c07_floats_in_simulation_crates_only_at_listed_boundaries() -> Result<(), Box
 }
 
 #[test]
+fn c08_no_production_function_length_suppression_and_one_threshold() -> Result<(), Box<dyn Error>> {
+    assert_clean("C8", &function_length_limit(&repo_root())?);
+    Ok(())
+}
+
+#[test]
 fn c09_simulation_clippy_config_bans_hashed_collections_and_clocks() -> Result<(), Box<dyn Error>> {
     assert_clean("C9", &simulation_clippy_config(&repo_root())?);
     Ok(())
@@ -127,6 +143,12 @@ fn c09_simulation_clippy_config_bans_hashed_collections_and_clocks() -> Result<(
 #[test]
 fn c10_expect_messages_state_an_invariant() -> Result<(), Box<dyn Error>> {
     assert_clean("C10", &expect_messages_state_invariants(&repo_root())?);
+    Ok(())
+}
+
+#[test]
+fn c11_performance_rationale_blocks_give_why_what_and_trade_off() -> Result<(), Box<dyn Error>> {
+    assert_clean("C11", &performance_rationale_format(&repo_root())?);
     Ok(())
 }
 
@@ -149,6 +171,27 @@ fn c14_library_crates_return_typed_errors() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn c15_charter_test_subjects_exist_and_every_crate_has_tests() -> Result<(), Box<dyn Error>> {
+    assert_clean("C15", &test_subjects(&repo_root())?);
+    Ok(())
+}
+
+#[test]
+fn c16_ci_runs_every_gate_command() -> Result<(), Box<dyn Error>> {
+    assert_clean("C16", &ci_runs_the_gate(&repo_root())?);
+    Ok(())
+}
+
+#[test]
+fn c17_design_doc_links_evidence_and_tick_rate_match_the_repository() -> Result<(), Box<dyn Error>>
+{
+    let root = repo_root();
+    let rate = u32::from(sim_types::TICKS_PER_SECOND);
+    assert_clean("C17", &design_doc(&root, &tracked_files(&root)?, rate)?);
+    Ok(())
+}
+
+#[test]
 fn c18_every_plan_has_one_index_row_with_a_known_status() -> Result<(), Box<dyn Error>> {
     assert_clean("C18", &plan_index(&repo_root())?);
     Ok(())
@@ -158,6 +201,13 @@ fn c18_every_plan_has_one_index_row_with_a_known_status() -> Result<(), Box<dyn 
 fn c19_no_file_urls_and_lost_tmp_evidence_is_marked() -> Result<(), Box<dyn Error>> {
     let root = repo_root();
     assert_clean("C19", &notebook_references(&root, &tracked_files(&root)?)?);
+    Ok(())
+}
+
+#[test]
+fn c20_paths_named_in_the_charter_exist() -> Result<(), Box<dyn Error>> {
+    let root = repo_root();
+    assert_clean("C20", &charter_paths_exist(&root, &tracked_files(&root)?)?);
     Ok(())
 }
 

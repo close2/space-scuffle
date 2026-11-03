@@ -31,8 +31,7 @@
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
     clippy::doc_markdown,
-    clippy::many_single_char_names,
-    clippy::too_many_lines
+    clippy::many_single_char_names
 )]
 
 use crate::error::BakerError;
