@@ -26,6 +26,11 @@ Options:
    driven through Xvfb with Mesa's software presentation path (`MESA_VK_WSI_DEBUG=sw`), because the server has no
    display. That path adds a CPU copy of every frame, so on a real desktop the figures would be somewhat better.
 
+**Update (2026-11-03):** option 3's description of Xvfb was too mild. The software present path costs about 100 ms
+per frame on this server, so the frame budget is now measured through a headless KWin compositor with hardware
+present instead. The display path is asked separately as [Q0019](0019-frame-budget-display-path.md). This question's
+default is unchanged.
+
 CI cannot check any of these targets. It has only `lavapipe`, a CPU rasteriser, on shared runners. CI checks only
 that the measurement tool still runs and that its scenario is valid.
 
