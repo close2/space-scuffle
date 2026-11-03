@@ -555,12 +555,14 @@ mod tests {
     #[test]
     fn malformed_override_is_refused_and_names_the_value() {
         for text in ["", "0", "17", "-1", "1.5", "off"] {
-            match terrain_anisotropy_clamp(Some(text)) {
-                Err(TerrainThemeError::InvalidAnisotropyOverride(value)) => {
-                    assert_eq!(value, text);
-                }
-                other => panic!("{text:?} must be refused, got {other:?}"),
-            }
+            let result = terrain_anisotropy_clamp(Some(text));
+            assert!(
+                matches!(
+                    &result,
+                    Err(TerrainThemeError::InvalidAnisotropyOverride(value)) if value == text
+                ),
+                "{text:?} must be refused by value, got {result:?}"
+            );
         }
     }
 }
