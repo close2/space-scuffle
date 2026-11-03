@@ -1,5 +1,7 @@
 # Round 11: actual transparent shell observation (Stage A)
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Stage A is an opt-in diagnostic experiment. Stage B ordering changes remain held.
 The ordinary observer-off client does not install the observer, source collector,
 packet witness or controlled fixture. No editor, shader or appearance change is

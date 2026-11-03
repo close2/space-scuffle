@@ -1,5 +1,7 @@
 # Round 11 independent transparent-shell audit review
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: bounded static review of StageA in [Plan53](../plans/53-round10-stable-transparent-shell-ties.md). No product edits, Cargo execution, native run or GPU work were performed by this reviewer. StageB ordering changes remain unapproved. This review establishes neither the historical cause of the Swarm pixel difference nor visual equivalence.
 
 ## Findings and saved corrections

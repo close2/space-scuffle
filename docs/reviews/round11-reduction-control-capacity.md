@@ -1,5 +1,7 @@
 # Round11 independent control-capacity diagnosis
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Goal: distinguish a greedy split failure from a capacity limitation on the first fully preserved legal producer window. This is a read-only offline verification experiment, not a replacement reducer, shader or policy change. The complete corpus continues unchanged.
 
 Use the first ControlBudget artifact, original f32 source positions/path values reconstructed from their round-trip decimals, original f64 births/clock, and actual preserved lifetime/policy. Select the first failing frame only if its full source is within support, avoiding any independent clipping interpretation. Exhaustively evaluate every chronological source-endpoint pair using the declared arc parameter and rounded output attributes; form a directed acyclic graph whose edges satisfy every vertex/endpoint tolerance and positive representable geometry rule. Dynamic programming computes the minimum number of source-vertex controls. Record all feasible edges and one optimal path, plus the original failing interval's independently recomputed errors.

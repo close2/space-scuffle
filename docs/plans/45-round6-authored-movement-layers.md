@@ -1,5 +1,7 @@
 # Round 6: Authored movement layers and explicit cliff-capability boundary
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: reviewed and approved for the bounded Ground/Air lifecycle, only after plan43 acceptance and source freeze. No plan45 product edits are authorized before plan43 and the current gate complete. Plan43 implementation is accepted in its bounded scope: the combined round7 workspace tests, strict Clippy and formatting passed with no source changes (`/tmp/space-scuffle-round7-workspace-results.json`). The refreshed admission/ownership amendment below still requires orchestrator review before implementation. No editor or media changes belong here.
 
 ## Verified defect and bounded goal

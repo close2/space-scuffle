@@ -1,5 +1,7 @@
 # Round 2 — Playable versioned maps with matching terrain
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: architect blueprint, awaiting orchestrator approval.
 
 ## Goal

@@ -1,5 +1,7 @@
 # Round 11 independent CPU reduction corpus audit
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 The finalized experiment is fully accounted for, and its representation admission
 **failed**. Independent read-only inspection found no missing/duplicated window,
 aggregate-count mismatch, changed preserved input, or retained checksum-provenance

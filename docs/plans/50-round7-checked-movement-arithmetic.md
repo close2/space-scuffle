@@ -1,5 +1,7 @@
 # Round7: Checked movement arithmetic and registered-foundation self-motion
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: root approved the correctness/performance staging amendment after three inconclusive timing matrices and a passing shared workspace checkpoint. Correctness implementation is authorized and in progress; performance and final50 acceptance remain held to the unchanged gates.45/49 focused tests and the complete sim_core regression pass after the documented legal-target fixture migration; this plan addresses separately recorded gaps, without retroactively calling those gaps solved. No editor, media, camera, construction or broad combat-arithmetic work belongs here.
 
 ## Reproduced failures and goal

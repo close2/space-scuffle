@@ -1,5 +1,7 @@
 # Round 10: actual-view mist lighting
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Stage2 implementation follows the approved plan44 amendment. The round9 full workspace gate passed before this work (tests649.72s, Clippy1.98s, formatting0.42s, no source changes). Stage2 bounded native verification is complete: actual fragment, retained-packet, invalid-input and production scene-return evidence passed. Source is frozen for the next integrated workspace gate; final integrated acceptance remains pending. Neither brighter ribbons nor a successful arithmetic oracle constitutes art acceptance; the volume and global frame-time goals remain open.
 
 ## Production contract

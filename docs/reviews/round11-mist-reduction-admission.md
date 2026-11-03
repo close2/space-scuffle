@@ -1,5 +1,7 @@
 # Round11 CPU mist-control admission
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 ## Current disposition
 
 The bounded CPU reducer and catalog-driven offline runner are implemented. Focused checks pass. The complete preserved release corpus finished all16,296 declared windows and correctly exited1:13,018 passed and3,278 failed. The current17-control representation is rejected for full-corpus admission; limits and fixtures were not weakened. This round does not change live simulation, presentation, emission, shaders or rendering. Control approximation cannot establish density-field, optical, performance or art acceptance. The current ribbon appearance and whole-frame budget remain unresolved.

@@ -1,5 +1,7 @@
 # Round 5 — Explicit game audio policy
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Approved plan 42 replaces non-editor graphical default-plugin construction with `GamePresentationPlugins`. This retains the real renderer and disables `AudioPlugin` before installation, so the currently unimplemented playback subsystem does not open a device. An explicit `AudioPolicy::DisabledNoPlaybackSubsystem` resource is logged once and serialized into production capture manifests and standalone mist metrics. The editor and Cargo features remain unchanged.
 
 The actual production fixture uses the shared group and asserts that `AudioPlugin` is absent and the policy resource exists. The focused declaration/artifact test also checks the serialized policy and absence of audio source assets. No dummy device, fallback sound, stderr filtering or hardware-readiness claim is introduced.

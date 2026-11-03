@@ -1,5 +1,7 @@
 # Round 6 — Readable mist volume and directional flow
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: plan 35 now has accepted bounded storage, measured comparison and actual owner-reset evidence, subject to the next integrated gate. Stage 1 output transformation is authorized and implemented for focused verification. View-light and volume implementation remain held for separate review; the quantitative volume architecture and clipped-slab coverage design are approved design constraints, not visual or performance acceptance.
 
 ## Goal and current rejection

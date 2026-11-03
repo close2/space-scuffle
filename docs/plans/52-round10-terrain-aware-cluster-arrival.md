@@ -1,5 +1,7 @@
 # Round52: Terrain-connected cluster arrival
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: approved and released for implementation after the unchanged round10c workspace gate passed (688 tests, 88 harnesses, zero failed/ignored; Clippy and formatting passed; 448 source hashes unchanged). Implementation is limited to the owned arrival helper/caller/tests. No assets, editor work or native execution.
 
 ## Goal and reproduced defect

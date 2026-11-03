@@ -1,5 +1,7 @@
 # Round 3: Lossless authored production durations
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: approved by the orchestrator; implementation stage authorized.
 
 ## Goal and demonstrated defect

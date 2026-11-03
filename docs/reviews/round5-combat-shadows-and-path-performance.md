@@ -1,5 +1,7 @@
 # Combat light shadows and traversal performance verification
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 The orchestrator inspected the real production capture at `/tmp/space-scuffle-r4-combat-shadow-after37/04-combat.png` against `/tmp/space-scuffle-r4-runtime-captures-run06/04-combat.png`. Both show tick614 and identical camera/actors. The large black rectangular tracer shadow is gone. The actual tracer remains visible; circular unit shadows and the large cliff shadow remain. This bounded visual correction is accepted. Mist ribbons, shell art, creature media and the old UI remain unaccepted independently.
 
 All seven capture checkpoints completed, the manifest records `complete: true`, and the native process exited0. Root compared303 logical manifest fields (including ticks, checksums, camera, actor and ramp evidence), all equal. Pixel analysis corroborates the visual inspection: the former card-shadow region mean rises104.67→167.34; the sampled cliff-shadow and open-terrain regions are byte-identical; the sampled unit-shadow region has mean absolute difference0.042/255. These are targeted comparison observations, not a general art score. Raw comparison is `/tmp/space-scuffle-r4-combat-shadow-comparison.json`.

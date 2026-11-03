@@ -1,5 +1,7 @@
 # Round 7: Fixed-body collision weights preserve registered foundations
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: root approved the narrow45 dependency, including fixed weights, final apply guard and registered-foundation placement rejection. This is a narrow dependency exposed by45, not a general push-priority rewrite. No editor, catalog/media asset or construction workflow changes.
 
 ## Reproduced failure

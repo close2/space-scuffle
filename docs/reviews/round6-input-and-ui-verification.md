@@ -1,5 +1,7 @@
 # Round36 input and responsive UI verification
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: source implemented and frozen for the shared gate; native interaction acceptance remains incomplete. No editor changes. Plan38 command/tick work has not started.
 
 ## Verified source behavior

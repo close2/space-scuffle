@@ -1,5 +1,7 @@
 # Round54: choose a mist field with explicit subdivision semantics
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: advisory architecture and small independent offline mathematics only. Root approved this investigation, not a product field, shader, evaluator, asset, packet layout, quadrature budget increase or renderer change.52 remains frozen pending the combined gate. This document does not edit or supersede44's approved CPU Stage3 scope. Any subsequent field implementation requires that stage's real retained-source artifacts, a reviewed model decision and explicit root release.
 
 ## Goal and existing rejection

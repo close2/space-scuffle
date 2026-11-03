@@ -1,5 +1,7 @@
 # Independent review: proposed mist field changes under exact subdivision
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: mathematical review only during the round10c source freeze. The proposed summed, segment-clamped age field is not admitted for reduction fidelity merely because the CPU reducer's control approximation is exact. No product code, build, GPU run, screenshot, legal-motion reproduction, art acceptance or performance measurement is involved. The approved Stage3 CPU reducer scope and16-segment budget are unchanged.
 
 ## Mathematical input and normalization

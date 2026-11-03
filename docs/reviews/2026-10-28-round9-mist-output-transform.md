@@ -1,5 +1,7 @@
 # Mist output transformation — Stage 1 verification
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Stage 1's bounded output contract is accepted by the orchestrator, subject to the next integrated workspace gate. The actual AMD helper and nine native capture cases passed. The existing mist art and whole-frame performance target remain rejected. Plan 35's resource and equivalence evidence is recorded separately in the round 8 storage review.
 
 The shipped fragment already has straight linear radiance and separate opacity. Its new output helper applies Bevy's view grading and tone mapping in the non-HDR path, followed by the engine's optional debanding, before multiplying RGB by opacity once. Zero alpha produces exact zero. The HDR path retains linear premultiplied radiance. Density, geometry, lighting selection, media and style are unchanged.

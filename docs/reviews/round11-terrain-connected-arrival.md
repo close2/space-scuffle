@@ -1,5 +1,7 @@
 # Round52 verification: terrain-connected cluster arrival
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: implementation and focused CPU verification complete; owned source frozen for the next coordinated workspace gate. The preceding unchanged10c gate passed before this implementation. This report does not claim the new combined workspace gate or visual acceptance. No editor, assets, renderer, map implementation, schema or authoritative field changed.
 
 ## Result and retained policy

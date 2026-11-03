@@ -1,5 +1,7 @@
 # Round 4 — Combat light-card shadows
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 ## Goal and implementation
 
 Approved plan 37 addresses the opaque rectangular shadows visible in the actual production combat checkpoint. `CombatLightEffect` now requires Bevy's `NotShadowCaster` and is attached at all six additive-card spawn sites: hitscan, projectile, beam/lightning, melee slash, central burst and shatter cards. The classification is explicit and leaves ordinary opaque geometry shadow behavior unchanged. No shader, brightness, event timing, media or camera changes belong to this fix.

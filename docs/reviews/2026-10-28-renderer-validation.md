@@ -1,5 +1,7 @@
 # Renderer validation observations
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 ## Reproduction evidence
 
 The existing `terrain_preview` was run without changing its shader or meshes. Native Vulkan produced all four screenshots in `/tmp/space-scuffle-round1-terrain-native`, but also emitted GPU validation errors. Therefore its successful exit does not prove a validation-clean renderer. The complete log is `/tmp/space-scuffle-round1-terrain-native.log`.

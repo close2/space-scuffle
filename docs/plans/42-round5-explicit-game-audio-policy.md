@@ -1,5 +1,7 @@
 # Round 5 — Explicit game audio initialization policy
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: approved by the orchestrator. Complete before plan 35 native performance measurements.
 
 ## Problem and actual source evidence

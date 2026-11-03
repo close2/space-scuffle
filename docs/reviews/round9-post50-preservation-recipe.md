@@ -1,5 +1,7 @@
 # Post50 candidate preservation recipe
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: the combined workspace gate passed all three checks with unchanged source. Root authorized source preservation; corrected script02 completed successfully and independent verification passed. Builds, fixture smoke, timing and51 product implementation remain held pending root's acceptance/release. The first preservation attempt rejected a known internal asset symlink before creating any candidate; this was a capture-tool assumption failure, not a product failure. Corrected script02 follows the exact reviewed exception below. The candidate was preserved **before any51 product edit**.
 
 The immutable baseline is `/tmp/space-scuffle-r7-pre50`. Its source-inventory SHA256 is `92387e5244704928f8ebabd425661b85fcf5b99f4f4aac47058cf7cdead67886`; final fixture02 binary is `02d7b7fbd253d97df6e8a8f65fdc293f94f34c09c1a819f759ce5dd31991583a`. Preserve its existing files unchanged. Three complete baseline matrices were inconclusive, not passing performance evidence.

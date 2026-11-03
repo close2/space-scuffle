@@ -1,5 +1,7 @@
 # Round 4: verify native input and present the selected battle truthfully
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: approved, including responsive containment amendment; implementation held until the coordinated renderer/capture workspace gate releases the source freeze.
 
 ## Goal and boundary

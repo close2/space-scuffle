@@ -1,5 +1,7 @@
 # Plan44: architecture after complete CPU admission rejection
 
+> Evidence under /tmp in this document was on the development notebook and was not retained (Q-10, 2026-11-03).
+
 Status: docs-only investigation during the round11 integrated gate. The current source and complete `full01` artifacts remain frozen. This document authorizes no implementation, new corpus run, source-history change, control-budget/tolerance relaxation or production field. The failed admission is evidence to retain, not a baseline to overwrite.
 
 ## Established result and its limits
