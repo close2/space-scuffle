@@ -69,10 +69,6 @@ pub(super) struct OwnershipState {
 
 impl OwnershipState {
     /// Records actual admitted effects, rejecting unexplained disappearance or identity changes.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "a single ordered sequence that shares its local state"
-    )]
     pub(super) fn observe(&mut self, world: &mut World, view: View) -> Result<(), CaptureError> {
         let pipeline = world.resource::<BattleSession>();
         let generation = pipeline
@@ -84,6 +80,25 @@ impl OwnershipState {
             world.resource::<client::LabState>().current_tab != client::LabTab::LiveBattle;
         let reset = self.last_generation.is_some() && generation != self.last_generation;
         let dt = world.resource::<Time>().delta_secs();
+        let present = self.record_present_effects(world, preview, generation, tick)?;
+        self.end_absent_effects(&present, reset || view == View::Reset, dt)?;
+        self.verify_retained_combat(view)?;
+        self.last_generation = generation;
+        Ok(())
+    }
+
+    /// Records every current combat-effect entity and returns their entity bits.
+    ///
+    /// A retained effect must keep its owner, material and colour; a new one must carry the
+    /// palette colour of its owner (the preview palette while `preview`), and is stamped with
+    /// the presented `tick` and, outside previews, the committed session `generation`.
+    fn record_present_effects(
+        &mut self,
+        world: &mut World,
+        preview: bool,
+        generation: Option<u64>,
+        tick: u32,
+    ) -> Result<BTreeSet<u64>, CaptureError> {
         let mut query = world.query::<(
             Entity,
             Option<&CombatEffectOwner>,
@@ -150,9 +165,21 @@ impl OwnershipState {
                 );
             }
         }
+        Ok(present)
+    }
+
+    /// Ends every recorded effect that is no longer `present`. An effect may end only through
+    /// a generation `reset` or because its remaining lifetime fits within this frame's `dt`
+    /// seconds; any other disappearance fails.
+    fn end_absent_effects(
+        &mut self,
+        present: &BTreeSet<u64>,
+        reset: bool,
+        dt: f32,
+    ) -> Result<(), CaptureError> {
         for (id, proof) in &mut self.effects {
             if proof.ended.is_none() && !present.contains(id) {
-                proof.ended = Some(if reset || view == View::Reset {
+                proof.ended = Some(if reset {
                     "generation reset"
                 } else if proof.remaining_seconds <= dt + 0.000_01 {
                     "production lifetime expired"
@@ -163,6 +190,12 @@ impl OwnershipState {
                 });
             }
         }
+        Ok(())
+    }
+
+    /// The zero-duration Lab and Return checkpoints must keep every effect that was live at
+    /// the combat checkpoint.
+    fn verify_retained_combat(&self, view: View) -> Result<(), CaptureError> {
         if matches!(view, View::Lab | View::Return) {
             for id in &self.retained_at_combat {
                 if self
@@ -176,7 +209,6 @@ impl OwnershipState {
                 }
             }
         }
-        self.last_generation = generation;
         Ok(())
     }
 
