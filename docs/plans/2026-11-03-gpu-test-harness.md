@@ -1,6 +1,6 @@
 # GPU test harness on the physical GPU, one lock per test child
 
-Date: 2026-11-03. Status: Partly done (implemented; the CI run of section 7, step 7, follows the push). Host: the shared Debian 13 VM (16 cores of an AMD EPYC 7301, load average
+Date: 2026-11-03. Status: Done (CI run 41643796170 on `main` at `b95d179` is green). Host: the shared Debian 13 VM (16 cores of an AMD EPYC 7301, load average
 about 30 during the probes), AMD Radeon RX 580 on `radv` and `lavapipe`, both Mesa 25.0.7, Vulkan validation
 layers 1.4.309. CI: GitHub `ubuntu-latest`, no GPU, `lavapipe` on Mesa 25.2.8.
 
