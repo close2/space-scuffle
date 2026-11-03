@@ -12,7 +12,7 @@ its package confirms or refutes it.
 
 **Owner decision.** [Q0001](../questions/open/0001-media-scope.md), answered 2026-11-03: "Option B. Veo should be
 part of my ultra plan. So use it. (I think I have weekly limits and it would be a shame to waste them)."
-[Q0002](../questions/open/0002-player-skirmish-defaults.md)'s answer adds that the temporary procedural fixtures for
+[Q0002](../questions/closed/0002-player-skirmish-defaults.md)'s answer adds that the temporary procedural fixtures for
 these assets are to be replaced by real art once baked, and that the agent may decide scoping if it documents it.
 
 **Secrets.** The Veo key lives in `.env` or `tmp/api-key.txt`. **No agent ever opens, prints, greps, copies or
