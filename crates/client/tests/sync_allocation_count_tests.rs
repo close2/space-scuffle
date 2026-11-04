@@ -22,15 +22,21 @@
 //! `W(LONG_FRAMES) - W(SHORT_FRAMES)`, the allocations of `LONG_FRAMES - SHORT_FRAMES` frames:
 //!
 //! - `live_sync_frames` adds the client's battle systems (`advance_battle_ticks`,
-//!   `sync_live_battle_system`, `publish_combat_events`);
+//!   `update_flipbook_clock_system`, `sync_live_battle_system`, `publish_combat_events`);
 //! - `baseline_frames` is the same app without them, so its difference is Bevy's own per-frame
 //!   work (time, events, the schedule runner, asset bookkeeping), which is reported, not asserted;
 //! - `planted_allocation_is_counted` is the full app plus one test system that allocates once per
-//!   frame: the positive control, without which a counter that sees nothing would pass.
+//!   frame: the positive control, without which a counter that sees nothing would pass;
+//! - `running_live_sync_frames` and `running_baseline_frames` are the same pair on the shipped
+//!   skirmish, resumed, so the simulation ticks and the flipbook clock advances on every other
+//!   frame. Its units stand idle, so nothing spawns, despawns or fires: a steady state that runs.
+//!   The running baseline keeps the tick driver, so the difference between the two is the
+//!   presentation systems' own work while time passes (plan `2026-11-04-battle-flipbook-animation`
+//!   WP5).
 //!
 //! **Invariants asserted.** Two runs of the live child at the same frame count report the same
 //! window count (the measurement is deterministic); the full app's difference equals the baseline's (the client's
-//! sync systems add no allocation per frame); the planted control adds exactly one allocation per
+//! sync systems add no allocation per frame), paused and running alike; the planted control adds exactly one allocation per
 //! frame; and no recorded stack reached valgrind's depth limit, so no window block can hide in a
 //! truncated stack.
 //!
@@ -51,7 +57,7 @@ use client::battle_pipeline::{
     driver::{advance_battle_ticks, publish_combat_events},
     session::{BattleSession, CommittedBattleMetadata},
 };
-use client::runtime_battle::{BattleDefinition, DEFAULT_BATTLE_SCENARIO};
+use client::runtime_battle::{BattleDefinition, DEFAULT_BATTLE_SCENARIO, SKIRMISH_SCENARIO};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -79,6 +85,10 @@ enum Variant {
     Baseline,
     /// The live synchroniser plus one planted allocation per frame.
     Planted,
+    /// The live synchroniser and battle driver on the resumed, idle skirmish.
+    RunningLive,
+    /// The battle driver alone on the resumed, idle skirmish.
+    RunningBaseline,
 }
 
 impl Variant {
@@ -88,7 +98,19 @@ impl Variant {
             Self::LiveSync => "live_sync_frames",
             Self::Baseline => "baseline_frames",
             Self::Planted => "planted_allocation_is_counted",
+            Self::RunningLive => "running_live_sync_frames",
+            Self::RunningBaseline => "running_baseline_frames",
         }
+    }
+
+    /// Whether the battle runs during the window rather than staying paused.
+    fn is_running(self) -> bool {
+        matches!(self, Self::RunningLive | Self::RunningBaseline)
+    }
+
+    /// Whether the app carries the presentation systems under test.
+    fn presents(self) -> bool {
+        !matches!(self, Self::Baseline | Self::RunningBaseline)
     }
 }
 
@@ -97,12 +119,18 @@ fn planted_allocation() {
     drop(std::hint::black_box(Vec::<u8>::with_capacity(64)));
 }
 
-/// Builds the app of `variant` on the real default battle, paused, with a fixed time step.
+/// Builds the app of `variant` with a fixed time step: on the real default battle, paused, or
+/// for a running variant on the shipped skirmish, resumed.
 fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>> {
     let root = client::ResolvedAssetsRoot::from_directory(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
     )?;
-    let definition = BattleDefinition::load(root.as_path(), DEFAULT_BATTLE_SCENARIO.as_ref())?;
+    let scenario = if variant.is_running() {
+        SKIRMISH_SCENARIO
+    } else {
+        DEFAULT_BATTLE_SCENARIO
+    };
+    let definition = BattleDefinition::load(root.as_path(), scenario.as_ref())?;
     let mut simulation = definition.instantiate()?;
     let session = BattleSession::prepare(
         SessionGeneration::FIRST,
@@ -125,6 +153,7 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     .init_asset::<client::BubbleDomeMaterial>()
     .init_asset::<client::SelectionRingMaterial>()
     .init_resource::<client::RenderEntityMap>()
+    .init_resource::<client::flipbook_clock::FlipbookClock>()
     .init_resource::<client::battle_selection::BattleSelection>()
     .insert_resource(definition.palette.clone())
     .init_resource::<client::player_presentation::PresentationStatus>()
@@ -133,7 +162,7 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     .insert_resource(session.with_world(simulation))
     .insert_resource(client::LabState {
         current_tab: client::LabTab::LiveBattle,
-        battle_paused: true,
+        battle_paused: !variant.is_running(),
         simulation_speed: 1,
         ..default()
     })
@@ -147,11 +176,15 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
             client::setup_indicator_assets_system,
         ),
     );
-    if variant != Variant::Baseline {
+    if variant == Variant::RunningBaseline {
+        app.add_systems(Update, advance_battle_ticks);
+    }
+    if variant.presents() {
         app.add_systems(
             Update,
             (
                 advance_battle_ticks,
+                client::flipbook_clock::update_flipbook_clock_system,
                 client::sync_live_battle_system,
                 publish_combat_events,
             )
@@ -184,7 +217,7 @@ fn measured_steady_frames(app: &mut App, frames: u32) {
 }
 
 /// Runs one child: returns at once without `FRAMES_ENV`, otherwise warms the app of `variant`
-/// and runs the requested number of paused frames.
+/// and runs the requested number of frames, paused or, for a running variant, ticking.
 fn run_child(variant: Variant) -> TestResult {
     let Some(frames) = std::env::var_os(FRAMES_ENV) else {
         println!(
@@ -205,7 +238,7 @@ fn run_child(variant: Variant) -> TestResult {
     if let Some(failure) = &app.world().resource::<client::LabState>().battle_failure {
         return Err(failure.clone().into());
     }
-    if variant != Variant::Baseline
+    if variant.presents()
         && app
             .world()
             .resource::<client::RenderEntityMap>()
@@ -214,15 +247,38 @@ fn run_child(variant: Variant) -> TestResult {
     {
         return Err("the live synchroniser presented nothing after warm-up".into());
     }
+    let tick = |app: &App| {
+        app.world()
+            .resource::<BattleSession>()
+            .frames
+            .current()
+            .tick
+            .0
+    };
+    let before = tick(&app);
     measured_steady_frames(&mut app, frames);
-    let tick = app
+    let after = tick(&app);
+    if !variant.is_running() {
+        if after != 0 {
+            return Err(format!("the battle must stay paused, but reached tick {after}").into());
+        }
+        return Ok(());
+    }
+    // 20 ms frames: one 40 ms tick every other frame.
+    if after - before != frames / 2 {
+        return Err(format!("the battle ran {} ticks in {frames} frames", after - before).into());
+    }
+    let busy = app
         .world()
         .resource::<BattleSession>()
         .frames
         .current()
-        .tick;
-    if tick != sim_types::ids::Tick(0) {
-        return Err(format!("the battle must stay paused, but reached tick {tick:?}").into());
+        .bubbles
+        .iter()
+        .find(|bubble| bubble.anim_state != sim_types::AnimState::Idle)
+        .map(|bubble| bubble.entity_id);
+    if let Some(id) = busy {
+        return Err(format!("the running window must stay idle, but {id:?} is not").into());
     }
     Ok(())
 }
@@ -240,6 +296,16 @@ fn baseline_frames() -> TestResult {
 #[test]
 fn planted_allocation_is_counted() -> TestResult {
     run_child(Variant::Planted)
+}
+
+#[test]
+fn running_live_sync_frames() -> TestResult {
+    run_child(Variant::RunningLive)
+}
+
+#[test]
+fn running_baseline_frames() -> TestResult {
+    run_child(Variant::RunningBaseline)
 }
 
 /// The parts of a DHAT profile (`dhatFileVersion` 2, JSON) this test reads.
@@ -435,12 +501,14 @@ impl Counts {
 
 /// Runs every variant's children and groups their counts. The live child runs twice at each frame
 /// count, to show the asserted count is deterministic; the baseline and the planted control once.
-/// Eight children fit two batches on a four-core CI runner.
+/// Twelve children fit three batches on a four-core CI runner.
 fn measure_all_variants(directory: &Path) -> Result<Vec<Counts>, String> {
     let plan = [
         (Variant::LiveSync, 2),
         (Variant::Baseline, 1),
         (Variant::Planted, 1),
+        (Variant::RunningLive, 1),
+        (Variant::RunningBaseline, 1),
     ];
     let runs: Vec<Run> = plan
         .iter()
@@ -480,21 +548,32 @@ fn measure_all_variants(directory: &Path) -> Result<Vec<Counts>, String> {
 fn steady_state_frames_allocate_nothing() -> TestResult {
     let directory = tempfile::tempdir()?;
     let counts = measure_all_variants(directory.path())?;
-    let [live, baseline, planted] = counts.as_slice() else {
+    let [live, baseline, planted, running_live, running_baseline] = counts.as_slice() else {
         return Err("invariant: measure_all_variants returns one entry per variant".into());
     };
     let report = format!(
-        "blocks allocated inside {WINDOW_FUNCTION} after {WARM_FRAMES} warm frames:\n{}\n{}\n{}",
-        live.line(),
-        baseline.line(),
-        planted.line()
+        "blocks allocated inside {WINDOW_FUNCTION} after {WARM_FRAMES} warm frames:\n{}",
+        counts
+            .iter()
+            .map(Counts::line)
+            .collect::<Vec<_>>()
+            .join("\n")
     );
     println!("{report}");
-    let (Some(live_difference), Some(baseline_difference), Some(planted_difference)) = (
+    let (
+        Some(live_difference),
+        Some(baseline_difference),
+        Some(planted_difference),
+        Some(running_live_difference),
+        Some(running_baseline_difference),
+    ) = (
         live.difference(),
         baseline.difference(),
         planted.difference(),
-    ) else {
+        running_live.difference(),
+        running_baseline.difference(),
+    )
+    else {
         return Err(format!("a variant has no run at one of the windows\n{report}").into());
     };
     let window = i128::from(LONG_FRAMES - SHORT_FRAMES);
@@ -513,6 +592,13 @@ fn steady_state_frames_allocate_nothing() -> TestResult {
         "the client's battle sync systems allocated {} times over {window} steady frames \
          beyond Bevy's own work\n{report}",
         live_difference - baseline_difference,
+    );
+    assert_eq!(
+        running_live_difference - running_baseline_difference,
+        0,
+        "the client's battle sync systems allocated {} times over {window} running frames \
+         beyond the tick driver's and Bevy's own work\n{report}",
+        running_live_difference - running_baseline_difference,
     );
     Ok(())
 }

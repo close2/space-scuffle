@@ -60,9 +60,8 @@ use client::battle_pipeline::fog::BattleFog;
 use client::battle_pipeline::session::BattleSession;
 use client::battle_presentation::BattlePresentation;
 use client::battle_selection::BattleSelection;
-use client::bubble_shader::{
-    still_frame_lanes, BubbleDomeMaterial, BubbleUniformGpu, FlipbookRegistry,
-};
+use client::bubble_shader::{BubbleDomeMaterial, BubbleUniformGpu, FlipbookRegistry};
+use client::flipbook_clock::{battle_uniform, FlipbookClock, FlipbookPhase};
 use client::indicators::SelectionRingMaterial;
 use client::player_presentation::PlayerStyle;
 use client::runtime_battle::{MapPresentation, SKIRMISH_SCENARIO};
@@ -561,45 +560,56 @@ fn queue_jobs_at_town_hall(harness: &mut Harness) -> EntityId {
 /// Bubbles of `before` whose record in `after` would draw differently, matched by entity.
 ///
 /// C-5 says a unit may only touch its material when it turns. The uniform also carries the
-/// flipbook frame, the action, the bars and the hit flashes, which change on a tick without a
+/// flipbook lanes, the action, the bars and the hit flashes, which change on a tick without a
 /// turn, so the rule this file holds the sync to is the general one: no modification unless the
-/// shader would read a different value. The packing is the production
-/// [`BubbleUniformGpu::from_instance`] with the battle's still-frame lanes, and
+/// shader would read a different value. The packing is the production [`battle_uniform`], from
+/// the presented record and the bubble's [`FlipbookPhase`] on that frame, and
 /// [`BubbleUniformGpu::renders_same_as`] ignores the one lane the shader never reads (position).
 /// Ownership and selection do not change within a window, so one fixed style stands for every
 /// owner.
-fn redrawn(before: &RenderSnapshot, after: &RenderSnapshot, registry: &FlipbookRegistry) -> u64 {
+fn redrawn(before: &Presented, after: &Presented, registry: &FlipbookRegistry) -> u64 {
     let style = PlayerStyle {
         srgb: [1.0; 3],
         linear: Vec4::ONE,
         ui: bevy_egui::egui::Color32::WHITE,
     };
-    let pack = |bubble: &BubbleRenderInstance| {
-        BubbleUniformGpu::from_instance(
+    let pack = |presented: &Presented, bubble: &BubbleRenderInstance| {
+        let phase = presented
+            .phases
+            .get(&bubble.entity_id)
+            .copied()
+            .expect("every presented record has a live bubble");
+        battle_uniform(
+            registry.get_meta(bubble.unit_type),
             bubble,
             style,
-            still_frame_lanes(registry.get_meta(bubble.unit_type), bubble.anim_state),
+            presented.snapshot.tick,
+            phase,
         )
+        .expect("the shipped media is playable")
     };
     let drawn: BTreeMap<EntityId, BubbleUniformGpu> = before
+        .snapshot
         .bubbles
         .iter()
-        .map(|bubble| (bubble.entity_id, pack(bubble)))
+        .map(|bubble| (bubble.entity_id, pack(before, bubble)))
         .collect();
     after
+        .snapshot
         .bubbles
         .iter()
         .filter(|bubble| {
             drawn
                 .get(&bubble.entity_id)
-                .is_some_and(|uniform| !uniform.renders_same_as(&pack(bubble)))
+                .is_some_and(|uniform| !uniform.renders_same_as(&pack(after, bubble)))
         })
         .count() as u64
 }
 
 /// Bubbles of `before` whose heading differs in `after`, matched by entity. Reported beside
 /// [`redrawn`] so a failure shows how much of the change is turning.
-fn turned(before: &RenderSnapshot, after: &RenderSnapshot) -> u64 {
+fn turned(before: &Presented, after: &Presented) -> u64 {
+    let (before, after) = (&before.snapshot, &after.snapshot);
     let headings: BTreeMap<EntityId, u32> = before
         .bubbles
         .iter()
@@ -633,14 +643,29 @@ fn step_counting(harness: &mut Harness, motion: &mut Motion) {
     motion.redrawn += redrawn(&before, &after, registry);
 }
 
-fn presented(harness: &Harness) -> RenderSnapshot {
-    harness
-        .app
-        .world()
-        .resource::<BattleSession>()
-        .frames
-        .presented()
-        .clone()
+/// One frame's presented snapshot and the flipbook phase each live bubble held after it.
+struct Presented {
+    snapshot: RenderSnapshot,
+    phases: BTreeMap<EntityId, FlipbookPhase>,
+}
+
+fn presented(harness: &Harness) -> Presented {
+    let world = harness.app.world();
+    let phases = world
+        .resource::<client::RenderEntityMap>()
+        .0
+        .iter()
+        .map(|(&id, &entity)| {
+            let phase = *world
+                .get::<FlipbookPhase>(entity)
+                .expect("a live bubble has a flipbook phase");
+            (id, phase)
+        })
+        .collect();
+    Presented {
+        snapshot: world.resource::<BattleSession>().frames.presented().clone(),
+        phases,
+    }
 }
 
 // --- Tests ---------------------------------------------------------------------------------------
@@ -677,6 +702,68 @@ fn paused_battle_frames_create_modify_and_remove_nothing() {
     harness.select(worker);
     settle(&mut harness, true);
     assert_paused_frames_change_nothing(&mut harness);
+}
+
+/// A resumed skirmish whose units all stand idle: the clock advances on every frame, and yet no
+/// bubble material is modified and no storage buffer is touched (plan D-2, D-3: time alone moves
+/// only the shared clock, written in place during extraction).
+#[test]
+fn running_idle_army_modifies_no_bubble_material() {
+    let mut harness = skirmish();
+    settle(&mut harness, true);
+    harness.resume();
+    harness.step(WARM_FRAMES);
+    let presented = presented(&harness);
+    let idle = |presented: &Presented| {
+        presented
+            .snapshot
+            .bubbles
+            .iter()
+            .all(|bubble| bubble.anim_state == sim_types::AnimState::Idle)
+    };
+    assert!(idle(&presented), "every unit of the skirmish starts idle");
+    let start = harness.world().current_tick;
+    let clock = harness.app.world().resource::<FlipbookClock>().now;
+    let entities = census(&harness);
+    reset(&mut harness);
+    for _ in 0..MOVING_TICKS {
+        harness.step(1);
+        assert!(idle(&self::presented(&harness)), "the army stays idle");
+    }
+    assert_eq!(
+        harness.world().current_tick,
+        start + MOVING_TICKS,
+        "one tick per frame"
+    );
+    assert_eq!(
+        harness.app.world().resource::<FlipbookClock>().now - clock,
+        MOVING_TICKS * client::flipbook_clock::CLOCK_UNITS_PER_TICK,
+        "the clock advanced with every presented tick"
+    );
+    let tally = tallies(&harness);
+    assert_eq!(
+        tally.count(
+            type_name::<Assets<BubbleDomeMaterial>>(),
+            EventKind::Modified
+        ),
+        0,
+        "bubble materials modified while the idle army animated"
+    );
+    let buffers = type_name::<Assets<ShaderStorageBuffer>>();
+    assert_eq!(
+        [
+            EventKind::Added,
+            EventKind::Modified,
+            EventKind::Removed,
+            EventKind::Unused,
+            EventKind::LoadedWithDependencies,
+        ]
+        .map(|kind| tally.count(buffers, kind)),
+        [0; 5],
+        "storage buffer events"
+    );
+    assert_eq!(tally.others(&[]), Vec::new(), "asset events");
+    assert_eq!(census(&harness), entities, "entities spawned or despawned");
 }
 
 #[test]

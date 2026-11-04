@@ -13,6 +13,9 @@
 //!   the bubble is doing (which slice, how long one cycle lasts, where the cycle starts) and never
 //!   the current time, so a material changes only when the action changes.
 //! - [`flipbook_sample`] is the Rust mirror of `flipbook_select` in `assets/shaders/bubble_dome.wgsl`.
+//! - The battle's side (WP5, D-5 and D-8): [`update_flipbook_clock_system`] is the only writer of
+//!   the clock, [`displayed_action`] says what a bubble shows, [`FlipbookPhase`] remembers since
+//!   when, and [`battle_uniform`] packs a live bubble's lanes from its presented record.
 //!
 //! # How it fits
 //! The main world sets the clock once per frame; the GPU computes each bubble's layer from the
@@ -27,15 +30,30 @@
 //!   glitches once at that wrap; this is documented, not handled.
 //! - The clock buffer asset is created once at plugin build and never modified, so no prepared
 //!   material ever holds a stale buffer (a modified `ShaderStorageBuffer` gets a new GPU buffer).
+//! - In the battle the clock is presented simulation time: a paused battle's frames leave it
+//!   unchanged, and it advances by game time at every battle speed. It depends on ticks only, so
+//!   a capture that steps one tick per frame is reproducible.
+//! - A battle bubble's lanes depend on its presented record and its [`FlipbookPhase`] only, never
+//!   on the clock: Attack and Constructing lanes come from the record alone, and a free loop's
+//!   lanes are constant while its action lasts.
 //! - The lanes constructors guarantee `count >= 1`, `period >= 1`, `offset < period` and
 //!   `period · count < 2³²`, so the arithmetic of a constructed lane never wraps except in the clock.
 
+use std::time::Duration;
+
+use asset_baker::manifest::{ActionSlice, FlipbookAtlasMeta};
 use bevy::prelude::*;
 use bevy::render::render_asset::{RenderAssetUsages, RenderAssets};
 use bevy::render::render_resource::BufferUsages;
 use bevy::render::renderer::RenderQueue;
 use bevy::render::storage::{GpuShaderStorageBuffer, ShaderStorageBuffer};
 use bevy::render::{Extract, ExtractSchedule, RenderApp};
+use sim_types::{AnimState, BubbleRenderInstance, Tick};
+
+use crate::battle_pipeline::session::BattleSession;
+use crate::bubble_shader::BubbleUniformGpu;
+use crate::lab_ui::{LabState, LabTab};
+use crate::player_presentation::PlayerStyle;
 
 /// Clock units in one simulation tick: the clock counts 1/1024 tick, 39.06 µs of game time at
 /// 25 ticks per second.
@@ -465,6 +483,272 @@ pub(crate) fn upload_flipbook_clock_system(
     *uploaded = **clock;
 }
 
+// --- The battle's clock and display rules (WP5, D-1, D-5, D-8) -----------------------------------
+
+/// Simulation ticks per second of game time (the 25 Hz contract of `battle_pipeline::clock`).
+const TICKS_PER_SECOND: u64 = 25;
+
+/// Clock units in one second of game time: 25 ticks of [`CLOCK_UNITS_PER_TICK`].
+const CLOCK_UNITS_PER_SECOND: u64 = TICKS_PER_SECOND * CLOCK_UNITS_PER_TICK as u64;
+
+/// The clock time of a presented battle instant: `tick · 1024 + ⌊fraction · 1024⌋`, wrapping.
+///
+/// `tick` is the presented record's simulation tick and `fraction` the interpolation towards the
+/// next one, in `[0, 1)` (anything else is clamped into it). The result wraps with the clock.
+#[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "1024 is exact in f32, and the sub-tick part is clamped to 0..=1023 before the \
+              conversion"
+)]
+pub fn presented_clock(tick: Tick, fraction: f32) -> u32 {
+    let units = CLOCK_UNITS_PER_TICK as f32;
+    let sub_tick = (fraction * units).floor().clamp(0.0, units - 1.0) as u32;
+    tick.0
+        .wrapping_mul(CLOCK_UNITS_PER_TICK)
+        .wrapping_add(sub_tick)
+}
+
+/// The clock time of a scene without a battle, from Bevy's elapsed time: 25 · 1024 units per
+/// second, wrapping (D-1).
+#[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "the clock keeps the low 32 bits by design: it wraps after 46.6 hours"
+)]
+pub fn elapsed_clock(elapsed: Duration) -> u32 {
+    let units = elapsed.as_nanos() * u128::from(CLOCK_UNITS_PER_SECOND) / 1_000_000_000;
+    units as u32
+}
+
+/// The single writer of [`FlipbookClock`] (D-8).
+///
+/// On the Live Battle tab the clock is the presented simulation instant
+/// ([`BattleFrameState::presented_instant`](crate::battle_pipeline::timeline::BattleFrameState::presented_instant)):
+/// it stands still while the battle is paused and runs at the battle's speed. Until the
+/// session is ready it keeps its value. On every other tab it is Bevy's elapsed time.
+///
+/// Runs in `BattleSet::PreparePresentation` after the tick driver and before
+/// `sync_live_battle_system`, so a frame's lanes and its clock describe the same instant.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Bevy passes system parameters by value"
+)]
+pub fn update_flipbook_clock_system(
+    lab: Res<'_, LabState>,
+    session: Res<'_, BattleSession>,
+    time: Res<'_, Time>,
+    mut clock: ResMut<'_, FlipbookClock>,
+) {
+    let now = if lab.current_tab == LabTab::LiveBattle {
+        if !session.is_ready() {
+            return;
+        }
+        let (tick, fraction) = session.frames.presented_instant();
+        presented_clock(tick, fraction)
+    } else {
+        elapsed_clock(time.elapsed())
+    };
+    clock.set_if_neq(FlipbookClock { now });
+}
+
+/// The displayed action of one live battle bubble, and the presented tick at which it began.
+///
+/// Inserted with the bubble and mutated in place by `sync_live_battle_system` only (D-8). Free
+/// loops (Idle, Walk, Cast) restart from their first layer at `since` (D-5); Attack and
+/// Constructing take their timing from the record and ignore `since`.
+// PERFORMANCE RATIONALE:
+// Why: Recomputing a loop's start from the record each frame is impossible (the record carries
+// no start), and inserting a component per change would queue a command and an archetype move.
+// What: The phase is spawned with the bubble and overwritten in place with `set_if_neq`, so a
+// frame on which no action changes writes nothing and flags nothing as changed.
+// Trade-off: One more component on every live bubble, eight bytes of state the snapshot lacks.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FlipbookPhase {
+    /// What the bubble shows ([`displayed_action`]).
+    pub action: AnimState,
+    /// Presented simulation tick at which `action` began to show.
+    pub since: Tick,
+}
+
+impl FlipbookPhase {
+    /// A phase that begins `action` at the presented tick `tick`.
+    #[must_use]
+    pub const fn new(action: AnimState, tick: Tick) -> Self {
+        Self {
+            action,
+            since: tick,
+        }
+    }
+
+    /// The phase after the bubble shows `action` at the presented tick `tick`: unchanged while
+    /// the action lasts, restarted at `tick` when it changes.
+    #[must_use]
+    pub fn observed(self, action: AnimState, tick: Tick) -> Self {
+        if self.action == action {
+            self
+        } else {
+            Self::new(action, tick)
+        }
+    }
+}
+
+/// What a battle bubble shows for its presented `record` (D-5).
+///
+/// `Attack` while the record publishes `Attack`, and also while it publishes `Idle` inside an
+/// attack cycle (the cooldown, and the first tick of a swing), provided the atlas has an
+/// `Attack` slice. Otherwise the published action.
+#[must_use]
+pub fn displayed_action(
+    meta: Option<&FlipbookAtlasMeta>,
+    record: &BubbleRenderInstance,
+) -> AnimState {
+    let has_attack = meta.is_some_and(|meta| meta.actions.contains_key(&AnimState::Attack));
+    match record.anim_state {
+        AnimState::Idle if has_attack && record.attack_swing.is_some() => AnimState::Attack,
+        published => published,
+    }
+}
+
+/// Clock units of one pass over `slice` of `meta`: `frame_count / fps` seconds of game time.
+///
+/// The manifest carries no per-slice duration yet (plan WP3 adds `duration_ms`), so the atlas
+/// rate is used, as D-6 says for legacy atlases. A validated manifest has `fps >= 1`; an `fps`
+/// of zero yields period 0, which [`FlipbookSpan::new`] refuses. A period beyond `u32`
+/// saturates and is then refused by the span for any slice of more than one frame.
+#[must_use]
+pub fn slice_period(meta: &FlipbookAtlasMeta, slice: &ActionSlice) -> u32 {
+    if meta.fps == 0 {
+        return 0;
+    }
+    let units = u64::from(slice.frame_count) * CLOCK_UNITS_PER_SECOND / u64::from(meta.fps);
+    u32::try_from(units).unwrap_or(u32::MAX)
+}
+
+/// The flipbook lanes of a battle bubble showing `record` at the presented tick `presented`,
+/// with its displayed action and start in `phase` (D-5).
+///
+/// | `phase.action` | lanes |
+/// |---|---|
+/// | `Attack` with a swing | a loop over the swing's period, aligned so the slice's first layer shows at the release tick |
+/// | `Constructing` | the layer `start + min(⌊progress · count⌋, count − 1)` of the build progress |
+/// | any other | the slice at its clip speed from `phase.since`: a loop, or once as the manifest says |
+/// | no atlas or no slice | layer 0 |
+///
+/// # Errors
+/// [`FlipbookLanesError`] when the slice cannot be played by the integer clock (no frames, no
+/// period, or a period too long for its frame count).
+pub fn battle_lanes(
+    meta: Option<&FlipbookAtlasMeta>,
+    record: &BubbleRenderInstance,
+    presented: Tick,
+    phase: FlipbookPhase,
+) -> Result<FlipbookLanes, FlipbookLanesError> {
+    let Some((meta, slice)) =
+        meta.and_then(|meta| meta.actions.get(&phase.action).map(|slice| (meta, slice)))
+    else {
+        return Ok(FlipbookLanes::fixed(0));
+    };
+    match (phase.action, record.attack_swing) {
+        (AnimState::Attack, Some(swing)) => {
+            let period = u32::from(swing.period_ticks).wrapping_mul(CLOCK_UNITS_PER_TICK);
+            let span = FlipbookSpan::new(slice.start_frame, slice.frame_count, period)?;
+            // The release tick R = presented − elapsed + damage point. Sustained fire at one
+            // period moves R by whole periods, so the canonical lanes stay equal from swing to
+            // swing.
+            let release = i64::from(presented.0) - i64::from(swing.elapsed_ticks)
+                + i64::from(swing.damage_point_ticks);
+            Ok(FlipbookLanes::looping(
+                span,
+                clock_at_tick(release),
+                slice.looping,
+            ))
+        }
+        (AnimState::Constructing, _) => {
+            let span = FlipbookSpan::new(slice.start_frame, slice.frame_count, 1)?;
+            Ok(FlipbookLanes::fixed(
+                span.base() + progress_step(record.build_or_queue_progress, span.count()),
+            ))
+        }
+        _ => {
+            let span = FlipbookSpan::new(
+                slice.start_frame,
+                slice.frame_count,
+                slice_period(meta, slice),
+            )?;
+            let since = clock_at_tick(i64::from(phase.since.0));
+            Ok(if slice.looping {
+                FlipbookLanes::looping(span, since, true)
+            } else {
+                FlipbookLanes::once(span, since, slice.hold_last_frame)
+            })
+        }
+    }
+}
+
+/// The clock time at the start of tick `tick`, wrapping like the clock (negative ticks wrap
+/// backwards).
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the clock keeps the low 32 bits of the tick time by design"
+)]
+const fn clock_at_tick(tick: i64) -> u32 {
+    tick.wrapping_mul(CLOCK_UNITS_PER_TICK as i64) as u32
+}
+
+/// `min(⌊progress · count⌋, count − 1)` for a published build progress, exact for the
+/// published steps of 1/65536. No progress counts as finished, as the shell's `build_progress`
+/// lane does.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "65536 is exact in f32; the progress is clamped to [0, 1] and scaled to at most 65536"
+)]
+fn progress_step(progress: Option<f32>, count: u32) -> u32 {
+    let steps = (progress.unwrap_or(1.0).clamp(0.0, 1.0) * PROGRESS_STEPS as f32).round() as u64;
+    let step = steps * u64::from(count) / u64::from(PROGRESS_STEPS);
+    u32::try_from(step).map_or(count - 1, |step| step.min(count - 1))
+}
+
+/// Steps of the published build progress: the snapshot publishes multiples of 1/65536.
+const PROGRESS_STEPS: u32 = 65_536;
+
+/// The material uniform of a live battle bubble: the record packed with its battle lanes, the
+/// displayed action in `anim_state`, and `is_attacking` held through the whole attack cycle.
+///
+/// The shader reads `anim_state` only to tell a foundation, which the displayed action keeps, and
+/// `is_attacking` for the target-lock ring. Both follow the displayed action rather than the
+/// weapon's sub-phases, so steady fire modifies no material (D-5). Selection is applied by the
+/// caller.
+///
+/// # Errors
+/// As [`battle_lanes`].
+// PERFORMANCE RATIONALE:
+// Why: A material whose uniform changes is prepared again by Bevy (a new uniform buffer and bind
+// group). The published `anim_state` and `is_attacking` flip between a swing's windup or
+// backswing and its cooldown, twice per swing for every unit in a fight.
+// What: The uniform carries the displayed action and "in an attack cycle" instead of the weapon's
+// sub-phase, and the Attack lanes are canonical (origin 0, offset of the release mod period).
+// Trade-off: The target-lock ring stays on through the cooldown (a visual choice under Q0020),
+// in exchange for no material preparation at all during sustained fire at one period.
+pub fn battle_uniform(
+    meta: Option<&FlipbookAtlasMeta>,
+    record: &BubbleRenderInstance,
+    style: PlayerStyle,
+    presented: Tick,
+    phase: FlipbookPhase,
+) -> Result<BubbleUniformGpu, FlipbookLanesError> {
+    let lanes = battle_lanes(meta, record, presented, phase)?;
+    let mut uniform = BubbleUniformGpu::from_instance(record, style, lanes);
+    uniform.anim_state = phase.action as u32;
+    uniform.is_attacking = u32::from(record.is_attacking || record.attack_swing.is_some());
+    Ok(uniform)
+}
+
 #[cfg(test)]
 #[allow(
     clippy::expect_used,
@@ -732,5 +1016,309 @@ mod tests {
             .usage
             .contains(BufferUsages::STORAGE | BufferUsages::COPY_DST));
         assert_eq!(app.world().resource::<FlipbookClock>().now, 0);
+    }
+
+    // --- The battle's display rules (WP5) --------------------------------------------------------
+
+    use asset_baker::manifest::FlipbookLayout;
+    use sim_types::{AttackSwing, EntityId, PlayerId, ShapeKind, UnitTypeId};
+    use std::collections::BTreeMap;
+
+    /// An atlas at 15 frames per second: Idle 0..10 looping, Walk 10..20 looping, Attack 20..30
+    /// played once, Constructing 30..40 held, as the shipped unit manifests are laid out.
+    fn atlas() -> FlipbookAtlasMeta {
+        let slice = |start_frame, looping, hold_last_frame| ActionSlice {
+            start_frame,
+            frame_count: 10,
+            looping,
+            hold_last_frame,
+        };
+        FlipbookAtlasMeta {
+            name: "fixture".to_owned(),
+            frame_width: 8,
+            frame_height: 8,
+            fps: 15,
+            total_frames: 40,
+            layout: FlipbookLayout::VerticalStrip,
+            actions: BTreeMap::from([
+                (AnimState::Idle, slice(0, true, false)),
+                (AnimState::Walk, slice(10, true, false)),
+                (AnimState::Attack, slice(20, false, false)),
+                (AnimState::Constructing, slice(30, false, true)),
+            ]),
+        }
+    }
+
+    fn record(anim_state: AnimState, attack_swing: Option<AttackSwing>) -> BubbleRenderInstance {
+        BubbleRenderInstance {
+            entity_id: EntityId(7),
+            shape: ShapeKind::UnitSphere,
+            silhouette: sim_types::SilhouetteClass::LightProngs,
+            unit_type: UnitTypeId(1),
+            owner: PlayerId(0),
+            world_pos: [0.0; 3],
+            ground_z: 0.0,
+            radius: 0.5,
+            velocity: [0.0; 2],
+            heading_angle_rad: 0.0,
+            aim_angle_rad: 0.0,
+            is_attacking: false,
+            weapon_visual: sim_types::WeaponVisualKind::Hitscan,
+            attack_target_pos: None,
+            anim_state,
+            attack_swing,
+            hp_ratio: 1.0,
+            shield_ratio: 1.0,
+            shield_hit_flash: 0.0,
+            hull_hit_angle_rad: 0.0,
+            hull_hit_flash: 0.0,
+            build_or_queue_progress: None,
+            selected: false,
+            cloaked: false,
+            speed_boosted: false,
+        }
+    }
+
+    fn swing(elapsed_ticks: u16) -> AttackSwing {
+        AttackSwing {
+            elapsed_ticks,
+            damage_point_ticks: 2,
+            period_ticks: 15,
+        }
+    }
+
+    /// Lanes of `record` presented at `tick`, displaying what the rules say since `since`.
+    fn lanes_at(record: &BubbleRenderInstance, tick: u32, since: u32) -> FlipbookLanes {
+        let meta = atlas();
+        let phase = FlipbookPhase::new(displayed_action(Some(&meta), record), Tick(since));
+        battle_lanes(Some(&meta), record, Tick(tick), phase)
+            .expect("invariant: the fixture's slices are playable")
+    }
+
+    #[test]
+    fn the_presented_clock_is_ticks_and_the_floored_fraction() {
+        assert_eq!(presented_clock(Tick(0), 0.0), 0);
+        assert_eq!(presented_clock(Tick(3), 0.0), 3 * 1024);
+        assert_eq!(presented_clock(Tick(3), 0.5), 3 * 1024 + 512);
+        assert_eq!(presented_clock(Tick(3), 0.999_999_9), 3 * 1024 + 1023);
+        assert_eq!(presented_clock(Tick(3), 1.0), 3 * 1024 + 1023, "clamped");
+        assert_eq!(presented_clock(Tick(3), -1.0), 3 * 1024, "clamped");
+        // The clock wraps with the tick count, as the shader's u32 does.
+        assert_eq!(presented_clock(Tick(u32::MAX), 0.0), u32::MAX - 1023);
+        assert_eq!(presented_clock(Tick(1 << 22), 0.0), 0);
+    }
+
+    #[test]
+    fn the_elapsed_clock_counts_25_ticks_a_second() {
+        assert_eq!(elapsed_clock(Duration::ZERO), 0);
+        assert_eq!(elapsed_clock(Duration::from_millis(40)), 1024);
+        assert_eq!(elapsed_clock(Duration::from_secs(1)), 25 * 1024);
+        // 2^32 units are 167 772.16 s: the clock wraps there.
+        assert_eq!(elapsed_clock(Duration::from_secs(167_773)), 21_504);
+    }
+
+    #[test]
+    fn the_cooldown_and_the_first_tick_of_a_swing_display_attack() {
+        let meta = atlas();
+        let shown = |anim, swing| displayed_action(Some(&meta), &record(anim, swing));
+        assert_eq!(shown(AnimState::Attack, Some(swing(1))), AnimState::Attack);
+        assert_eq!(shown(AnimState::Idle, Some(swing(0))), AnimState::Attack);
+        assert_eq!(shown(AnimState::Idle, Some(swing(9))), AnimState::Attack);
+        assert_eq!(shown(AnimState::Idle, None), AnimState::Idle);
+        // A stutter step walks, even in cooldown.
+        assert_eq!(shown(AnimState::Walk, Some(swing(9))), AnimState::Walk);
+        assert_eq!(
+            shown(AnimState::Constructing, None),
+            AnimState::Constructing
+        );
+        // Without an Attack slice the cooldown stays Idle.
+        let mut no_attack = atlas();
+        no_attack.actions.remove(&AnimState::Attack);
+        assert_eq!(
+            displayed_action(Some(&no_attack), &record(AnimState::Idle, Some(swing(9)))),
+            AnimState::Idle
+        );
+        assert_eq!(
+            displayed_action(None, &record(AnimState::Idle, Some(swing(9)))),
+            AnimState::Idle
+        );
+    }
+
+    #[test]
+    fn the_release_tick_shows_the_attack_slice_first_layer() {
+        // A swing that began at tick 100 releases at 102 and lasts 15 ticks.
+        let mut lanes = None;
+        for elapsed in 0..15u16 {
+            let tick = 100 + u32::from(elapsed);
+            let anim = if elapsed <= 6 {
+                AnimState::Attack
+            } else {
+                AnimState::Idle
+            };
+            let at = lanes_at(&record(anim, Some(swing(elapsed))), tick, 0);
+            assert_eq!(*lanes.get_or_insert(at), at, "constant through the cycle");
+            let layer = flipbook_layer(tick * 1024, &at);
+            match elapsed {
+                2 => assert_eq!(layer, 20, "release"),
+                1 => assert_eq!(layer, 29, "the tick before shows the last layer"),
+                _ => assert!((20..30).contains(&layer)),
+            }
+        }
+        let lanes = lanes.expect("invariant: the loop above ran");
+        assert_eq!(lanes.period, 15 * 1024);
+        assert_eq!(
+            lanes.mode,
+            FlipbookMode::Loop as u32,
+            "the slice is not a loop: no blend"
+        );
+        // The next swing at the same period gives the same lanes: no material changes.
+        let next = lanes_at(&record(AnimState::Idle, Some(swing(0))), 115, 0);
+        assert_eq!(next, lanes);
+        // A swing at another phase moves the offset so its own release shows layer 20.
+        let late = lanes_at(&record(AnimState::Attack, Some(swing(2))), 119, 0);
+        assert_eq!(flipbook_layer(119 * 1024, &late), 20);
+        assert_ne!(late, lanes);
+    }
+
+    #[test]
+    fn free_loops_start_at_their_first_layer_and_play_at_the_atlas_rate() {
+        let walk = record(AnimState::Walk, None);
+        let lanes = lanes_at(&walk, 500, 480);
+        // 10 frames at 15 frames per second: 2/3 s, 50/3 ticks.
+        assert_eq!(lanes.period, 10 * 25 * 1024 / 15);
+        assert_eq!(lanes.mode, FlipbookMode::Loop as u32 | ANIM_BLEND_BIT);
+        assert_eq!(
+            flipbook_layer(480 * 1024, &lanes),
+            10,
+            "first layer at since"
+        );
+        assert_eq!(flipbook_layer(481 * 1024, &lanes), 10);
+        assert_eq!(flipbook_layer(482 * 1024, &lanes), 11);
+        // The lanes do not depend on the presented tick, only on since.
+        assert_eq!(lanes_at(&walk, 900, 480), lanes);
+        // A one-shot slice plays once from since.
+        let mut once = atlas();
+        if let Some(walk) = once.actions.get_mut(&AnimState::Walk) {
+            walk.looping = false;
+            walk.hold_last_frame = true;
+        }
+        let phase = FlipbookPhase::new(AnimState::Walk, Tick(480));
+        let lanes =
+            battle_lanes(Some(&once), &walk, Tick(500), phase).expect("invariant: playable");
+        assert_eq!(
+            lanes,
+            FlipbookLanes::once(
+                FlipbookSpan::new(10, 10, 10 * 25 * 1024 / 15).expect("invariant: valid"),
+                480 * 1024,
+                true,
+            )
+        );
+    }
+
+    #[test]
+    fn a_foundation_shows_the_layer_of_its_build_progress() {
+        let mut foundation = record(AnimState::Constructing, None);
+        for (progress, layer) in [
+            (0.0, 30),
+            (0.099_99, 30),
+            (0.1, 31),
+            (0.5, 35),
+            (0.999_984_74, 39),
+            (1.0, 39),
+        ] {
+            foundation.build_or_queue_progress = Some(progress);
+            assert_eq!(
+                lanes_at(&foundation, 10, 0),
+                FlipbookLanes::fixed(layer),
+                "progress {progress}"
+            );
+        }
+        // Every published step k/65536 lands on ⌊k · 10 / 65536⌋ exactly.
+        for k in [6553_u16, 6554, 13_107, 65_535] {
+            foundation.build_or_queue_progress = Some(f32::from(k) / 65_536.0);
+            assert_eq!(
+                lanes_at(&foundation, 10, 0).base,
+                30 + u32::from(k) * 10 / 65_536,
+                "step {k}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_action_without_a_slice_shows_layer_zero() {
+        let cast = record(AnimState::Cast, None);
+        assert_eq!(lanes_at(&cast, 10, 0), FlipbookLanes::fixed(0));
+        let phase = FlipbookPhase::new(AnimState::Idle, Tick(0));
+        assert_eq!(
+            battle_lanes(None, &record(AnimState::Idle, None), Tick(5), phase),
+            Ok(FlipbookLanes::fixed(0))
+        );
+    }
+
+    #[test]
+    fn an_unplayable_slice_is_a_typed_error() {
+        let mut meta = atlas();
+        meta.fps = 0;
+        let idle = record(AnimState::Idle, None);
+        let phase = FlipbookPhase::new(AnimState::Idle, Tick(0));
+        assert_eq!(
+            battle_lanes(Some(&meta), &idle, Tick(0), phase),
+            Err(FlipbookLanesError::ZeroPeriod)
+        );
+        let mut meta = atlas();
+        meta.fps = 1;
+        if let Some(idle) = meta.actions.get_mut(&AnimState::Idle) {
+            idle.frame_count = 2000;
+        }
+        assert!(matches!(
+            battle_lanes(Some(&meta), &idle, Tick(0), phase),
+            Err(FlipbookLanesError::TooLong { count: 2000, .. })
+        ));
+        let attack = record(
+            AnimState::Attack,
+            Some(AttackSwing {
+                elapsed_ticks: 0,
+                damage_point_ticks: 0,
+                period_ticks: 0,
+            }),
+        );
+        let phase = FlipbookPhase::new(AnimState::Attack, Tick(0));
+        assert_eq!(
+            battle_lanes(Some(&atlas()), &attack, Tick(0), phase),
+            Err(FlipbookLanesError::ZeroPeriod)
+        );
+    }
+
+    #[test]
+    fn a_phase_restarts_only_when_the_action_changes() {
+        let phase = FlipbookPhase::new(AnimState::Idle, Tick(4));
+        assert_eq!(phase.observed(AnimState::Idle, Tick(90)), phase);
+        assert_eq!(
+            phase.observed(AnimState::Walk, Tick(90)),
+            FlipbookPhase::new(AnimState::Walk, Tick(90))
+        );
+    }
+
+    #[test]
+    fn the_battle_uniform_holds_the_attack_through_the_cycle() {
+        let meta = atlas();
+        let style = PlayerStyle {
+            srgb: [1.0; 3],
+            linear: Vec4::ONE,
+            ui: bevy_egui::egui::Color32::WHITE,
+        };
+        let pack = |anim, elapsed: u16, is_attacking, tick: u32| {
+            let mut bubble = record(anim, Some(swing(elapsed)));
+            bubble.is_attacking = is_attacking;
+            let phase = FlipbookPhase::new(displayed_action(Some(&meta), &bubble), Tick(0));
+            battle_uniform(Some(&meta), &bubble, style, Tick(tick), phase)
+                .expect("invariant: playable")
+        };
+        // Windup, then cooldown: the weapon's sub-phases change no lane the shader reads.
+        let windup = pack(AnimState::Attack, 1, true, 101);
+        let cooldown = pack(AnimState::Idle, 9, false, 109);
+        assert!(windup.renders_same_as(&cooldown));
+        assert_eq!(windup.anim_state, AnimState::Attack as u32);
+        assert_eq!(windup.is_attacking, 1);
     }
 }

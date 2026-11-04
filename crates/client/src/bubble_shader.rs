@@ -214,8 +214,9 @@ pub fn sync_bubble_material(
 ///
 /// With `meta`, the action's slice is used: a looping slice wraps, a one-shot holds its last
 /// frame, and an action without a slice shows layer 0. Without `meta`, the legacy layout of
-/// eight frames per action is assumed. The battle shows every record's first frame
-/// ([`still_frame_lanes`]); the Lab preview passes its own elapsed-time progress.
+/// eight frames per action is assumed. The Lab preview passes its own elapsed-time progress;
+/// the battle does not use this function, it plays slices on the flipbook clock
+/// ([`battle_uniform`](crate::flipbook_clock::battle_uniform)).
 #[must_use]
 #[expect(
     clippy::cast_possible_truncation,
@@ -251,8 +252,8 @@ pub fn frame_index_at(
     }
 }
 
-/// Lanes that hold the first frame of `anim_state`'s slice, the picture a record showed before
-/// the battle had a flipbook clock (see [`frame_index_at`] at progress 0).
+/// Lanes that hold the first frame of `anim_state`'s slice (see [`frame_index_at`] at progress 0),
+/// the picture the swarm preview shows.
 #[must_use]
 pub fn still_frame_lanes(meta: Option<&FlipbookAtlasMeta>, anim_state: AnimState) -> FlipbookLanes {
     FlipbookLanes::fixed(frame_index_at(meta, anim_state, 0.0))
