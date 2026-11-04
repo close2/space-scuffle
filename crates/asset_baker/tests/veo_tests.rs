@@ -9,9 +9,9 @@
 
 use asset_baker::prompts::{build_action_prompt, MediaStyle};
 use asset_baker::veo_client::{
-    parse_key_from_api_txt, parse_key_from_env_content, parse_project_from_api_txt,
-    parse_project_from_env_content, resolve_credentials_from, VeoClient, VeoCredentials,
-    VeoGenerateRequest, VeoImageInput, VeoInstance, VeoParameters,
+    encode_image, parse_key_from_api_txt, parse_key_from_env_content, parse_project_from_api_txt,
+    parse_project_from_env_content, resolve_credentials_from, GenerationImages, VeoClient,
+    VeoCredentials, VeoGenerateRequest, VeoImageInput, VeoInstance, VeoParameters,
 };
 use asset_baker::{
     bake_custom_video, bake_multi_action_videos, bake_multi_action_videos_with_states, BakerError,
@@ -209,6 +209,7 @@ fn test_veo_text_to_video_payload_construction() {
         instances: vec![VeoInstance {
             prompt: prompt.to_string(),
             image: None,
+            last_frame: None,
         }],
         parameters: Some(VeoParameters::default()),
     };
@@ -233,6 +234,7 @@ fn test_veo_image_to_video_payload_construction() {
                 bytes_base64_encoded: fake_b64.to_string(),
                 mime_type: "image/png".to_string(),
             }),
+            last_frame: None,
         }],
         parameters: Some(VeoParameters {
             aspect_ratio: Some("16:9".to_string()),
@@ -251,6 +253,110 @@ fn test_veo_image_to_video_payload_construction() {
     );
     assert_eq!(json_val["instances"][0]["image"]["mimeType"], "image/png");
     assert_eq!(json_val["parameters"]["durationSeconds"], 8);
+}
+
+#[test]
+fn loops_an_end_frame_is_sent_as_last_frame_beside_the_start_frame() {
+    let picture = VeoImageInput {
+        bytes_base64_encoded: "cGlu".to_string(),
+        mime_type: "image/png".to_string(),
+    };
+    let req = VeoGenerateRequest {
+        instances: vec![VeoInstance {
+            prompt: "a loop".to_string(),
+            image: Some(picture.clone()),
+            last_frame: Some(picture),
+        }],
+        parameters: Some(VeoParameters::default()),
+    };
+
+    let json = serde_json::to_value(&req).expect("Serialization failed");
+
+    let instance = &json["instances"][0];
+    assert_eq!(instance["image"], instance["lastFrame"]);
+    assert_eq!(instance["lastFrame"]["bytesBase64Encoded"], "cGlu");
+    assert_eq!(instance["lastFrame"]["mimeType"], "image/png");
+    assert!(instance.get("last_frame").is_none(), "{instance}");
+}
+
+/// A client whose curl does not exist: any request it tried to send would fail with an I/O
+/// error, so a typed refusal proves that nothing was sent.
+fn offline_client(api_key: &str) -> VeoClient {
+    VeoClient::with_credentials(VeoCredentials {
+        api_key: api_key.to_string(),
+        project_id: Some("fixture-project".to_string()),
+    })
+    .with_curl_path(Path::new("/nonexistent/curl-must-not-run"))
+}
+
+#[test]
+fn loops_end_frames_are_refused_without_a_start_frame_or_outside_vertex() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let pin = dir.path().join("pin.png");
+    image::RgbImage::new(16, 9).save(&pin).expect("png");
+
+    let without_start = offline_client(FAKE_VERTEX_KEY).initiate_generation(
+        "prompt",
+        GenerationImages {
+            start: None,
+            end: Some(&pin),
+        },
+    );
+    assert!(
+        matches!(without_start, Err(BakerError::LastFrameWithoutStart)),
+        "{without_start:?}"
+    );
+
+    let gemini = offline_client(FAKE_GEMINI_KEY).initiate_generation(
+        "prompt",
+        GenerationImages {
+            start: Some(&pin),
+            end: Some(&pin),
+        },
+    );
+    assert!(
+        matches!(gemini, Err(BakerError::LastFrameNeedsVertex { .. })),
+        "{gemini:?}"
+    );
+}
+
+#[test]
+fn loops_the_mime_type_is_read_from_the_bytes_and_other_formats_are_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let png_named_jpg = dir.path().join("picture.jpg");
+    image::RgbImage::new(16, 9)
+        .save_with_format(&png_named_jpg, image::ImageFormat::Png)
+        .expect("png");
+    let jpeg_named_png = dir.path().join("picture.png");
+    image::RgbImage::new(16, 9)
+        .save_with_format(&jpeg_named_png, image::ImageFormat::Jpeg)
+        .expect("jpeg");
+    let gif = dir.path().join("picture.gif");
+    std::fs::write(&gif, b"GIF89a\x01\x00\x01\x00").expect("gif");
+
+    assert_eq!(
+        encode_image(&png_named_jpg).expect("png").mime_type,
+        "image/png"
+    );
+    assert_eq!(
+        encode_image(&jpeg_named_png).expect("jpeg").mime_type,
+        "image/jpeg"
+    );
+    assert!(matches!(
+        encode_image(&gif),
+        Err(BakerError::UnsupportedImageFormat { .. })
+    ));
+    let refused = offline_client(FAKE_VERTEX_KEY).initiate_generation(
+        "prompt",
+        GenerationImages {
+            start: Some(&gif),
+            end: None,
+        },
+    );
+    assert!(
+        matches!(refused, Err(BakerError::UnsupportedImageFormat { .. })),
+        "{refused:?}"
+    );
 }
 
 #[test]

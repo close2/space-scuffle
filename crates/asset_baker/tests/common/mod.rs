@@ -55,6 +55,51 @@ pub fn fixture_clip() -> PathBuf {
     clip
 }
 
+/// The bytes of a 16:9 clip of 1280×720 at 24 fps and 4 s, the shape Veo returns, made by the
+/// real FFmpeg on first use and kept for the life of the test process.
+///
+/// It fades linearly from black (frame 0) to white (the last frame), so a test can tell which
+/// moment of the clip a chained keyframe came from: frame 0 is black. Its frames satisfy the
+/// pin rules (16:9, at least 1280×720), so a run can chain a pinned state from it. It is made
+/// at test time, as `ffmpeg_tests.rs` makes its fixtures, so no large binary is committed.
+///
+/// # Panics
+/// Panics if FFmpeg is missing or fails: video tests must not be skipped.
+#[must_use]
+pub fn wide_fixture_bytes() -> Vec<u8> {
+    static BYTES: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    BYTES
+        .get_or_init(|| {
+            assert!(
+                Path::new("/usr/bin/ffmpeg").is_file(),
+                "/usr/bin/ffmpeg is missing: video tests cannot run and must not be skipped"
+            );
+            let dir = tempfile::tempdir().expect("fixture tempdir");
+            let clip = dir.path().join("wide_fade_4s.mp4");
+            let output = std::process::Command::new("/usr/bin/ffmpeg")
+                .args(["-v", "error", "-f", "lavfi", "-i"])
+                .arg("color=c=white:s=1280x720:r=24:d=4,fade=t=in:st=0:d=4,format=yuv420p")
+                .args([
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "ultrafast",
+                    "-pix_fmt",
+                    "yuv420p",
+                ])
+                .arg(&clip)
+                .output()
+                .expect("run ffmpeg");
+            assert!(
+                output.status.success(),
+                "ffmpeg could not make the wide fixture: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            std::fs::read(&clip).expect("read wide fixture")
+        })
+        .clone()
+}
+
 /// One HTTP request as received by [`FakeServer`].
 #[derive(Debug, Clone)]
 pub struct ReceivedRequest {

@@ -6,7 +6,9 @@
 //! for it ([`sim_core::UnitCatalog::publishable_actions`]), Idle first, and decides per clip
 //! whether to reuse an installed clip, resume a recorded operation, leave a download awaiting
 //! review, or generate (a first attempt or a regeneration). It composes each clip's prompt,
-//! resolves its keyframe, and reports every prompt problem of the clips it would pay for.
+//! resolves its start picture, decides from the loop policy whether the request also pins the
+//! clip's last frame to that picture (`lastFrame`, plan `2026-11-04-veo-seamless-loops.md`,
+//! D-2), and reports every prompt and picture problem of the clips it would pay for.
 //!
 //! # How it fits
 //! `generate-veo` builds a [`RunPlan`] from the catalog, the media style and the ledger's
@@ -19,13 +21,17 @@
 //!   error rather than a silent skip.
 //! - Within an identity, Idle comes first, so that its clip exists before the other states
 //!   chain their keyframe from it.
+//! - All states of an identity start from one picture (D-3 of the loops plan): a state without
+//!   its own authored keyframe uses the identity's Idle pin, or else the Idle clip's first frame.
+//! - A pinned state without any picture is planned as text-to-video without `lastFrame`; the
+//!   printed plan says that the clip seeds the identity's pin.
 //! - Planning reads files and the ledger but writes nothing and makes no request.
 
 use crate::error::BakerError;
 use crate::ledger::LedgerHistory;
 use crate::prompts::{
-    build_action_prompt, check_keyframe, check_prompt, ComposedPrompt, KeyframeSource, MediaStyle,
-    PromptIssue, PromptProblem,
+    build_action_prompt, check_keyframe, check_pin, check_prompt, ComposedPrompt, KeyframeSource,
+    MediaStyle, PromptIssue, PromptProblem,
 };
 use sim_types::enums::AnimState;
 use std::collections::BTreeMap;
@@ -124,8 +130,10 @@ pub struct PlannedClip {
     pub action: ClipAction,
     /// The composed prompt.
     pub prompt: ComposedPrompt,
-    /// Where its keyframe comes from.
+    /// Where its keyframe (start picture) comes from.
     pub keyframe: KeyframeSource,
+    /// Whether the loop policy pins the clip's last frame to its start picture.
+    pub pin_end: bool,
 }
 
 impl PlannedClip {
@@ -133,6 +141,13 @@ impl PlannedClip {
     #[must_use]
     pub fn is_paid(&self) -> bool {
         matches!(self.action, ClipAction::Generate { .. })
+    }
+
+    /// Whether the start request sends the start picture also as the end frame (`lastFrame`):
+    /// the state is pinned and has a start picture.
+    #[must_use]
+    pub fn sends_last_frame(&self) -> bool {
+        self.pin_end && self.keyframe != KeyframeSource::None
     }
 }
 
@@ -162,13 +177,32 @@ impl RunPlan {
             .collect()
     }
 
-    /// Every prompt and keyframe problem of the clips the run would pay for.
+    /// `<slug> <state>` of every paid clip whose request sends an end frame (`lastFrame`).
+    #[must_use]
+    pub fn pinned_clips(&self) -> Vec<String> {
+        self.clips
+            .iter()
+            .filter(|clip| clip.is_paid() && clip.sends_last_frame())
+            .map(|clip| format!("{} {}", clip.slug, state_slug(clip.state)))
+            .collect()
+    }
+
+    /// Every prompt and picture problem of the clips the run would pay for. A picture that
+    /// would pin a clip's last frame must also pass the pin rules ([`check_pin`]); a picture
+    /// chained from an Idle clip is checked when the run extracts it.
     #[must_use]
     pub fn problems(&self, style: &MediaStyle) -> Vec<PromptProblem> {
         let mut problems = Vec::new();
         for clip in self.clips.iter().filter(|clip| clip.is_paid()) {
             let mut issues = check_prompt(style, &clip.prompt);
-            issues.extend(check_keyframe(&clip.keyframe));
+            match check_keyframe(&clip.keyframe) {
+                Some(issue) => issues.push(issue),
+                None => {
+                    if let Some(path) = clip.keyframe.file().filter(|_| clip.pin_end) {
+                        issues.extend(check_pin(path));
+                    }
+                }
+            }
             if clip.keyframe == KeyframeSource::ChainedFromIdle && !self.idle_will_exist(&clip.slug)
             {
                 issues.push(PromptIssue::NoIdleToChain);
@@ -191,8 +225,9 @@ impl RunPlan {
                 .any(|clip| clip.slug == slug && clip.state == AnimState::Idle)
     }
 
-    /// Writes the plan: one `clip <slug> <state>: <action>` line per clip, the keyframe and
-    /// prompt of each paid clip, and the total.
+    /// Writes the plan: one `clip <slug> <state>: <action>` line per clip; for each paid clip
+    /// its start picture, its end frame (`same as start` or `none`), a note when a pinned clip
+    /// has no picture yet and so seeds one, and its prompt; then the total.
     ///
     /// # Errors
     /// Errors of `out`.
@@ -210,7 +245,16 @@ impl RunPlan {
             };
             writeln!(out, "clip {} {state}: {action}", clip.slug)?;
             if clip.is_paid() {
-                writeln!(out, "    keyframe: {}", clip.keyframe)?;
+                writeln!(out, "    start: {}", clip.keyframe)?;
+                let end = if clip.sends_last_frame() {
+                    "same as start"
+                } else {
+                    "none"
+                };
+                writeln!(out, "    end: {end}")?;
+                if clip.pin_end && clip.keyframe == KeyframeSource::None {
+                    writeln!(out, "    loop: no start picture yet, this clip seeds one")?;
+                }
                 writeln!(out, "    prompt: {}", clip.prompt.text)?;
             }
         }
@@ -261,10 +305,28 @@ pub fn published_states(
 /// The authored keyframe of `slug`'s `state`, or the default for the state.
 ///
 /// A file `<slug>_<state>.jpg` (or `.png`) is used if it exists, and for Attack also
-/// `<slug>_active.jpg`. Otherwise Idle is text-to-video and every other state chains from the
-/// Idle clip (D-7).
+/// `<slug>_active.jpg`. Otherwise Idle is text-to-video, and every other state shares the
+/// identity's picture (loops plan D-3): the authored Idle picture if it passes the pin rules
+/// ([`KeyframeSource::IdlePin`]), else the Idle clip's first frame
+/// ([`KeyframeSource::ChainedFromIdle`]). A square legacy Idle picture is therefore never the
+/// start of another state.
 #[must_use]
 pub fn resolve_keyframe(keyframes_dir: &Path, slug: &str, state: AnimState) -> KeyframeSource {
+    if let Some(path) = authored_keyframe(keyframes_dir, slug, state) {
+        return KeyframeSource::File(path);
+    }
+    if state == AnimState::Idle {
+        return KeyframeSource::None;
+    }
+    match authored_keyframe(keyframes_dir, slug, AnimState::Idle) {
+        Some(pin) if check_pin(&pin).is_none() => KeyframeSource::IdlePin(pin),
+        _ => KeyframeSource::ChainedFromIdle,
+    }
+}
+
+/// The first existing authored keyframe file of `slug`'s `state`: `<slug>_<state>.jpg`, then
+/// `.png`, and for Attack also `<slug>_active.jpg`.
+fn authored_keyframe(keyframes_dir: &Path, slug: &str, state: AnimState) -> Option<PathBuf> {
     let stem = state_slug(state);
     let mut candidates = vec![
         keyframes_dir.join(format!("{slug}_{stem}.jpg")),
@@ -273,11 +335,7 @@ pub fn resolve_keyframe(keyframes_dir: &Path, slug: &str, state: AnimState) -> K
     if state == AnimState::Attack {
         candidates.push(keyframes_dir.join(format!("{slug}_active.jpg")));
     }
-    match candidates.into_iter().find(|path| path.exists()) {
-        Some(path) => KeyframeSource::File(path),
-        None if state == AnimState::Idle => KeyframeSource::None,
-        None => KeyframeSource::ChainedFromIdle,
-    }
+    candidates.into_iter().find(|path| path.exists())
 }
 
 /// Decides the action of one clip from the installed files and the ledger.
@@ -344,6 +402,7 @@ pub fn plan_run(
                 action: clip_action(dirs, history, slug, state),
                 prompt: build_action_prompt(catalog, style, slug, state)?,
                 keyframe: resolve_keyframe(&dirs.keyframes, slug, state),
+                pin_end: style.loops.pins_end(slug, state),
             });
         }
     }
@@ -361,6 +420,28 @@ mod tests {
             assert_eq!(parse_state(state_slug(state)), Ok(state));
         }
         assert!(parse_state("Idle").is_err());
+    }
+
+    #[test]
+    fn other_states_share_a_valid_idle_pin_but_not_a_square_idle_picture() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let idle = dir.path().join("subject_idle.png");
+        image::RgbImage::new(1024, 1024)
+            .save(&idle)
+            .expect("square");
+        assert_eq!(
+            resolve_keyframe(dir.path(), "subject", AnimState::Walk),
+            KeyframeSource::ChainedFromIdle
+        );
+        image::RgbImage::new(1280, 720).save(&idle).expect("pin");
+        assert_eq!(
+            resolve_keyframe(dir.path(), "subject", AnimState::Walk),
+            KeyframeSource::IdlePin(idle.clone())
+        );
+        assert_eq!(
+            resolve_keyframe(dir.path(), "subject", AnimState::Idle),
+            KeyframeSource::File(idle)
+        );
     }
 
     #[test]

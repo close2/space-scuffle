@@ -27,6 +27,7 @@ fn started(request_id: &str, state: AnimState) -> LedgerEvent {
         prompt_sha256: "0".repeat(64),
         prompt: "a prompt".to_string(),
         keyframe_sha256: None,
+        last_frame_sha256: None,
         parameters: VeoParameters::default(),
     }
 }
@@ -118,6 +119,66 @@ fn every_event_round_trips_in_order() {
     let text = std::fs::read_to_string(&path).expect("text");
     assert_eq!(text.lines().count(), 7, "one line per event");
     assert!(text.contains(r#""state":"idle""#), "{text}");
+}
+
+#[test]
+fn a_last_frame_hash_is_written_only_when_an_end_frame_was_sent() {
+    let pinned = LedgerEvent::RequestStarted {
+        request_id: "r/1".to_string(),
+        slug: SLUG.to_string(),
+        state: AnimState::Idle,
+        model: "fixture-model".to_string(),
+        mode: ApiMode::VertexExpress,
+        prompt_sha256: "0".repeat(64),
+        prompt: "a prompt".to_string(),
+        keyframe_sha256: Some("a".repeat(64)),
+        last_frame_sha256: Some("a".repeat(64)),
+        parameters: VeoParameters::default(),
+    };
+    let (_dir, path) = ledger_with(vec![pinned.clone(), started("r/2", AnimState::Attack)]);
+
+    let records = read_ledger(&path).expect("read");
+
+    assert_eq!(records[0].event, pinned);
+    let text = std::fs::read_to_string(&path).expect("text");
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[0].contains(&format!(r#""last_frame_sha256":"{}""#, "a".repeat(64))));
+    assert!(
+        !lines[1].contains("last_frame_sha256"),
+        "an absent end frame writes no field: {}",
+        lines[1]
+    );
+}
+
+#[test]
+fn every_committed_ledger_line_still_parses_and_round_trips_unchanged() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/evidence/veo/ledger.jsonl");
+    let text = std::fs::read_to_string(&path).expect("committed ledger");
+    let records = read_ledger(&path).expect("every committed line parses");
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    assert_eq!(records.len(), lines.len());
+    assert_ne!(records.len(), 0, "the committed ledger has lines");
+    for (record, line) in records.iter().zip(lines) {
+        if let LedgerEvent::RequestStarted {
+            last_frame_sha256, ..
+        } = &record.event
+        {
+            assert_eq!(
+                *last_frame_sha256, None,
+                "no committed request sent an end frame"
+            );
+        }
+        let original: serde_json::Value = serde_json::from_str(line).expect("JSON");
+        let written = serde_json::to_value(record).expect("encode");
+        assert_eq!(
+            written, original,
+            "a committed line must keep its exact record"
+        );
+    }
 }
 
 #[test]
