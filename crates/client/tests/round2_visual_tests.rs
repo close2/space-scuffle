@@ -403,47 +403,39 @@ fn test_starter_manifests_multi_action_offsets_and_bounds() {
         );
         assert_eq!(img.height(), meta.total_frames * 512);
 
-        // Verify distinct non-overlapping offsets for Idle, Walk, and Attack
-        let idle = meta
-            .actions
-            .get(&sim_types::enums::AnimState::Idle)
-            .expect("Idle slice");
-        let walk = meta
-            .actions
-            .get(&sim_types::enums::AnimState::Walk)
-            .expect("Walk slice");
-        let attack = meta
-            .actions
-            .get(&sim_types::enums::AnimState::Attack)
-            .expect("Attack slice");
-
-        assert_eq!(idle.start_frame, 0, "{name} Idle must start at frame 0");
-        assert_eq!(
-            walk.start_frame,
-            idle.start_frame + idle.frame_count,
-            "{name} Walk must start immediately after Idle"
-        );
-        assert_eq!(
-            attack.start_frame,
-            walk.start_frame + walk.frame_count,
-            "{name} Attack must start immediately after Walk"
-        );
-        assert!(idle.frame_count > 0);
-        assert!(walk.frame_count > 0);
-        assert!(attack.frame_count > 0);
-
-        // Verify all 6 AnimState variants are mapped
-        for state in [
-            sim_types::enums::AnimState::Constructing,
-            sim_types::enums::AnimState::Idle,
-            sim_types::enums::AnimState::Walk,
-            sim_types::enums::AnimState::Attack,
-            sim_types::enums::AnimState::Cast,
-            sim_types::enums::AnimState::Die,
-        ] {
+        // Every action the simulation can publish for the starter has its own slice. Actions it
+        // never publishes need none: a fallback mapping onto another action's frames is what the
+        // provenance audit refuses (plan 2026-11-04-phase-8-5-veo-media.md, D-6).
+        let published = catalog.publishable_actions(arch);
+        for state in published.iter() {
+            let slice = meta
+                .actions
+                .get(&state)
+                .unwrap_or_else(|| panic!("{name} manifest must contain published {state:?}"));
+            assert!(slice.frame_count > 0, "{name} {state:?} must hold frames");
             assert!(
-                meta.actions.contains_key(&state),
-                "{name} manifest must contain fallback mapping for {state:?}"
+                slice.start_frame + slice.frame_count <= meta.total_frames,
+                "{name} {state:?} must lie inside the strip"
+            );
+        }
+
+        // A mobile, armed starter keeps Idle, Walk and Attack in strip order, back to back.
+        if published.contains(sim_types::enums::AnimState::Walk)
+            && published.contains(sim_types::enums::AnimState::Attack)
+        {
+            let idle = meta.actions[&sim_types::enums::AnimState::Idle];
+            let walk = meta.actions[&sim_types::enums::AnimState::Walk];
+            let attack = meta.actions[&sim_types::enums::AnimState::Attack];
+            assert_eq!(idle.start_frame, 0, "{name} Idle must start at frame 0");
+            assert_eq!(
+                walk.start_frame,
+                idle.start_frame + idle.frame_count,
+                "{name} Walk must start immediately after Idle"
+            );
+            assert_eq!(
+                attack.start_frame,
+                walk.start_frame + walk.frame_count,
+                "{name} Attack must start immediately after Walk"
             );
         }
     }
