@@ -16,9 +16,14 @@
 
     // One description per animation state, placed between the identity's prompt and the style.
     actions: (
-        constructing: "Constructing animation: progressive holographic wireframe build-up from ground to top with active seam welding sparks.",
-        idle: "Idle animation: steady rhythmic breathing movement, subtle weapon glow pulse, head and radar scanning smoothly in place.",
-        walk: "Walk animation: dynamic forward stride, rhythmic mechanical bobbing, ground dust kick-up at feet, leaning into movement.",
+        // Constructing is generated from the finished Idle frame (keyframe chaining), so it
+        // shows work in progress on that shape rather than a build-up from nothing, and it ends
+        // close to its first frame, where the Idle clip takes over.
+        constructing: "Constructing animation: construction work in progress over the whole structure, holographic wireframe scaffolding shimmering around it with active seam welding sparks. Locked-off static camera, no zoom or pan. The structure keeps its shape and position, and the last frame matches the first.",
+        // Idle and Walk loop in the game, so they ask for a fixed camera and an end pose equal to
+        // the start pose (owner, Q0026: jumps when a loop restarts are distracting).
+        idle: "Idle animation: steady rhythmic breathing movement, subtle weapon glow pulse, head and radar scanning smoothly in place. Locked-off static camera, no zoom or pan. Seamless loop: the last frame matches the first.",
+        walk: "Walk animation: dynamic forward stride, rhythmic mechanical bobbing, ground dust kick-up at feet, leaning into movement. The subject moves in place and stays centred; locked-off static camera, static backdrop. Seamless loop: the last frame matches the first.",
         attack: "Attack animation: sharp weapon recoil, intense bright muzzle flash and projectile emission filling the right side of frame, followed by fluid spring recovery.",
         cast: "Cast animation: focused work in place, tool arms reaching toward a target just outside the frame, a steady bright welding arc or extraction beam with showering sparks, body holding still.",
         die: "Death animation: dramatic armor fracture, glowing internal reactor blowout with flying mechanical debris dissolving into smoke.",
