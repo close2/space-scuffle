@@ -1,8 +1,9 @@
 //! # Authoritative StarCraft II (LotV) Combat Benchmark Tests
 //!
 //! Verifies:
-//! 1. 1 Zealot vs 1 Marine at point-blank: Front-swing damage point pause (4 ticks),
-//!    distinct swing rhythm (22-tick period), and exact 3-hit kill (>= 48 ticks).
+//! 1. 1 Zealot vs 1 Marine at point-blank: the first swing lands the weapon's damage point
+//!    after it starts, swings repeat every period (both read from the catalog), and the third
+//!    swing kills.
 //! 2. Equal-cost 1 Zealot (100 minerals) vs 2 Marines (100 minerals) at distance 5.0:
 //!    Zealot closes distance and defeats both Marines surviving with 60..90 HP.
 //!    Against 4 Marines (200 minerals), Marines defeat the Zealot.
@@ -50,9 +51,11 @@ fn create_test_world() -> SimWorld {
 }
 
 /// Test 1: 1 Zealot vs 1 Marine at Point-Blank Range.
-/// Verifies front-swing windup pause (4 ticks), 22-tick swing period, and 3-hit kill.
+/// Verifies that each swing lands its damage point after it starts, that swings repeat every
+/// period (both read from the catalog, so the test pins the cadence rule rather than the
+/// zealot's current values), and the 3-hit kill.
 #[test]
-fn test_1v1_zealot_vs_marine_melee_pause_and_three_hit_kill() {
+fn test_1v1_zealot_vs_marine_swing_cadence_and_three_hit_kill() {
     let mut world = create_test_world();
     let player_blue = PlayerId(0);
     let player_red = PlayerId(1);
@@ -99,6 +102,21 @@ fn test_1v1_zealot_vs_marine_melee_pause_and_three_hit_kill() {
     );
     let zealot_shields = world.entities.get(&zealot_id).unwrap().shields;
 
+    // The marine starts inside the zealot's band, so the first swing starts on tick 0, lands
+    // after the weapon's damage point, and the next ones follow every period. Both values are
+    // read from the catalog (plan 2026-11-04-combat-sc2-alignment D-1 item 5).
+    let zealot_weapon = world
+        .catalog
+        .get(zealot_type)
+        .expect("psi_grey archetype")
+        .weapon
+        .clone()
+        .expect("psi_grey has a weapon");
+    let first = u32::from(zealot_weapon.damage_point_ticks);
+    let period = u32::from(zealot_weapon.period_ticks);
+    let second = first + period;
+    let third = second + period;
+
     // Step tick by tick and monitor exact Marine HP
     let mut kill_tick = None;
     for tick in 0..100 {
@@ -108,46 +126,46 @@ fn test_1v1_zealot_vs_marine_melee_pause_and_three_hit_kill() {
         let marine_hp = marine_opt.map_or(SimScalar::ZERO, |m| m.hp);
         let is_alive = marine_opt.is_some_and(sim_core::Entity::is_alive);
 
-        if tick < 4 {
-            // Zealot is winding up (damage_point_ticks = 4)
+        if tick < first {
+            // Zealot is winding up (its damage point)
             assert_eq!(
                 marine_hp,
                 SimScalar::from_num(45),
-                "Marine must not take damage before tick 4 (windup phase)"
+                "Marine must not take damage before tick {first} (windup phase)"
             );
-        } else if tick == 4 {
-            // First swing lands on tick 4: 16 damage (45 -> 29)
+        } else if tick == first {
+            // First swing lands: 16 damage (45 -> 29)
             assert_eq!(
                 marine_hp,
                 SimScalar::from_num(29),
-                "First swing must land on tick 4 dealing 16 damage (45 -> 29)"
+                "First swing must land on tick {first} dealing 16 damage (45 -> 29)"
             );
-        } else if (5..26).contains(&tick) {
+        } else if tick < second {
             // Backswing & cooldown: Marine stays at 29 HP
             assert_eq!(
                 marine_hp,
                 SimScalar::from_num(29),
-                "Marine must remain at 29 HP between ticks 5 and 25"
+                "Marine must remain at 29 HP after tick {first} and before tick {second}"
             );
-        } else if tick == 26 {
-            // Second swing lands on tick 26 (4 + 22 = 26): 16 damage (29 -> 13)
+        } else if tick == second {
+            // Second swing lands one period later: 16 damage (29 -> 13)
             assert_eq!(
                 marine_hp,
                 SimScalar::from_num(13),
-                "Second swing must land on tick 26 dealing 16 damage (29 -> 13)"
+                "Second swing must land on tick {second} dealing 16 damage (29 -> 13)"
             );
-        } else if (27..48).contains(&tick) {
+        } else if tick < third {
             // Cooldown: Marine stays at 13 HP
             assert_eq!(
                 marine_hp,
                 SimScalar::from_num(13),
-                "Marine must remain at 13 HP between ticks 27 and 47"
+                "Marine must remain at 13 HP after tick {second} and before tick {third}"
             );
-        } else if tick == 48 {
-            // Third swing lands on tick 48 (26 + 22 = 48): Marine dies!
+        } else if tick == third {
+            // Third swing lands one period later: Marine dies!
             assert!(
                 !is_alive || marine_hp <= SimScalar::ZERO,
-                "Third swing must kill Marine on tick 48"
+                "Third swing must kill Marine on tick {third}"
             );
             kill_tick = Some(tick);
             break;
@@ -168,8 +186,8 @@ fn test_1v1_zealot_vs_marine_melee_pause_and_three_hit_kill() {
 
     assert_eq!(
         kill_tick,
-        Some(48),
-        "Marine must die exactly on tick 48 (total >= 48 ticks)"
+        Some(third),
+        "Marine must die exactly on the third swing, tick {third}"
     );
 }
 
