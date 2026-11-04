@@ -1685,6 +1685,21 @@ fn d7_review_writes_contact_sheets_and_records_a_rejection() {
     let (small_w, _) = image::image_dimensions(&small).expect("evidence sheet");
     assert!(full_w >= 8 * 16, "eight frames side by side: {full_w}");
     assert!(small_w <= 1024);
+    // Idle loops, so review also prints its loop-check (loops plan D-6) and writes its sheets.
+    let printed = stdout(&made);
+    for needle in [
+        format!("loop-check {unit} idle:"),
+        "  raw:".to_string(),
+        "  repaired:".to_string(),
+        "  verdict:".to_string(),
+    ] {
+        assert!(printed.contains(&needle), "missing {needle:?}:\n{printed}");
+    }
+    for suffix in ["repaired", "seam"] {
+        let name = format!("{unit}_idle_{suffix}.png");
+        assert!(sheets.join(&name).is_file(), "{name}");
+        assert!(evidence.join(&name).is_file(), "{name}");
+    }
 
     let rejected = review(&[
         "--reject",
