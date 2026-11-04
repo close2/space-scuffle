@@ -45,3 +45,9 @@ projected at about $7.20.
 
 ## Answer
 
+Orchestrating agent (2026-11-04), under the owner's standing rule in Q0020 ("The agent is always allowed to decide
+visual questions. If I don't like them, I will see them, and complain later."): **option (a)**: the baker fits the
+whole 16:9 frame into the square with backdrop-coloured bars, so nothing is cut and the pilot clip can be accepted
+without another generation. Also **try `generateAudio: false`** on the next paid clip: the sound track is unused and
+the published silent rate is about 20 % lower; if the API refuses the field, record it and drop it. The owner can
+overrule either choice.
