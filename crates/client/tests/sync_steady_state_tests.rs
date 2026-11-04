@@ -60,7 +60,9 @@ use client::battle_pipeline::fog::BattleFog;
 use client::battle_pipeline::session::BattleSession;
 use client::battle_presentation::BattlePresentation;
 use client::battle_selection::BattleSelection;
-use client::bubble_shader::{BubbleDomeMaterial, BubbleUniformGpu, FlipbookRegistry};
+use client::bubble_shader::{
+    still_frame_lanes, BubbleDomeMaterial, BubbleUniformGpu, FlipbookRegistry,
+};
 use client::indicators::SelectionRingMaterial;
 use client::player_presentation::PlayerStyle;
 use client::runtime_battle::{MapPresentation, SKIRMISH_SCENARIO};
@@ -562,9 +564,10 @@ fn queue_jobs_at_town_hall(harness: &mut Harness) -> EntityId {
 /// flipbook frame, the action, the bars and the hit flashes, which change on a tick without a
 /// turn, so the rule this file holds the sync to is the general one: no modification unless the
 /// shader would read a different value. The packing is the production
-/// [`BubbleUniformGpu::from_instance`], and [`BubbleUniformGpu::renders_same_as`] ignores the lanes
-/// the shader never reads (position and animation progress). Ownership and selection do not
-/// change within a window, so one fixed style stands for every owner.
+/// [`BubbleUniformGpu::from_instance`] with the battle's still-frame lanes, and
+/// [`BubbleUniformGpu::renders_same_as`] ignores the one lane the shader never reads (position).
+/// Ownership and selection do not change within a window, so one fixed style stands for every
+/// owner.
 fn redrawn(before: &RenderSnapshot, after: &RenderSnapshot, registry: &FlipbookRegistry) -> u64 {
     let style = PlayerStyle {
         srgb: [1.0; 3],
@@ -572,7 +575,11 @@ fn redrawn(before: &RenderSnapshot, after: &RenderSnapshot, registry: &FlipbookR
         ui: bevy_egui::egui::Color32::WHITE,
     };
     let pack = |bubble: &BubbleRenderInstance| {
-        BubbleUniformGpu::from_instance(bubble, registry.get_meta(bubble.unit_type), style)
+        BubbleUniformGpu::from_instance(
+            bubble,
+            style,
+            still_frame_lanes(registry.get_meta(bubble.unit_type), bubble.anim_state),
+        )
     };
     let drawn: BTreeMap<EntityId, BubbleUniformGpu> = before
         .bubbles

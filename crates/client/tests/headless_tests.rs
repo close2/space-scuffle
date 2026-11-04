@@ -1,7 +1,7 @@
 //! Automated headless integration tests for the Space Scuffle client crate.
 //!
 //! # Invariants Verified
-//! - Uniform memory packing is strictly 160 bytes and 16-byte aligned.
+//! - Uniform memory packing is strictly 176 bytes and 16-byte aligned.
 //! - RTS Camera perspective pitch is 58°, distance clamps to [3.0, 48.0], and bookmarks round-trip.
 //! - Visual Lab state transitions properly reflect health thresholds (cracks < 75%, glitch < 35%).
 //! - Headless 60-frame simulation synchronization steps deterministically without panics.
@@ -61,7 +61,7 @@ fn test_camera_invariants() {
 #[test]
 fn test_bubble_uniform_packing() -> Result<(), Box<dyn std::error::Error>> {
     // Assert struct size matches WGSL BubbleUniform layout exactly
-    assert_eq!(size_of::<BubbleUniformGpu>(), 160);
+    assert_eq!(size_of::<BubbleUniformGpu>(), 176);
     assert_eq!(align_of::<BubbleUniformGpu>(), 16);
 
     let instance = BubbleRenderInstance {
@@ -98,8 +98,8 @@ fn test_bubble_uniform_packing() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let gpu_uniform = BubbleUniformGpu::from_instance(
         &instance,
-        None,
         definition.palette.resolve(instance.owner)?,
+        client::bubble_shader::still_frame_lanes(None, instance.anim_state),
     );
 
     assert_eq!(gpu_uniform.shape_kind, 0); // UnitSphere
@@ -114,6 +114,18 @@ fn test_bubble_uniform_packing() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(gpu_uniform.radius, 0.75);
     assert_eq!(gpu_uniform.world_pos, Vec3::new(10.0, 1.5, 20.0));
     assert_eq!(gpu_uniform.hp_ratio, 0.65);
+
+    // The flipbook lanes are packed verbatim and read back unchanged.
+    let span = client::flipbook_clock::FlipbookSpan::new(24, 10, 4096)?;
+    let lanes = client::flipbook_clock::FlipbookLanes::looping(span, 1000, true);
+    let packed = BubbleUniformGpu::from_instance(
+        &instance,
+        definition.palette.resolve(instance.owner)?,
+        lanes,
+    );
+    assert_eq!(packed.flipbook_lanes(), lanes);
+    assert_eq!((packed.frame_base, packed.frame_count), (24, 10));
+    assert_eq!(packed.anim_period, 4096);
     Ok(())
 }
 

@@ -5,8 +5,14 @@
 //! and manages the `BubbleDomeMaterial` shader pipeline. It translates vertical strip flipbooks
 //! into high-performance `Texture2DArray` assets and samples active frames with zero heap allocations.
 //!
+//! The flipbook layer is chosen on the GPU from the shared [`FlipbookClock`](crate::flipbook_clock)
+//! and the bubble's [`FlipbookLanes`], which change only when the bubble's action changes, so time
+//! alone never modifies a material.
+//!
 //! # Invariants
-//! - `BubbleUniformGpu` memory layout is strictly 160 bytes and 16-byte aligned matching `bubble_dome.wgsl`.
+//! - `BubbleUniformGpu` memory layout is strictly 176 bytes and 16-byte aligned matching `bubble_dome.wgsl`.
+//! - Every `BubbleDomeMaterial` binds the shared clock buffer at binding 3: [`BubbleDomeMaterial::new`]
+//!   is the only constructor, and [`BubbleDomeMaterialPlugin`] registers the material with its clock.
 //! - Mobile units and building domes share one full UV sphere mesh. A dome is placed with its centre
 //!   on the ground, so its lower half lies below the terrain and only the upper half is seen.
 //! - Missing or malformed media is retained as typed unavailable status; no texture is substituted.
@@ -14,10 +20,13 @@
 use asset_baker::manifest::FlipbookAtlasMeta;
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderRef};
+use bevy::render::storage::ShaderStorageBuffer;
 use sim_types::enums::{AnimState, ShapeKind};
 use sim_types::ids::UnitTypeId;
 use sim_types::snapshot::BubbleRenderInstance;
 use std::collections::BTreeMap;
+
+use crate::flipbook_clock::{FlipbookClockPlugin, FlipbookLanes, FLIPBOOK_CLOCK_BUFFER};
 
 /// ECS Component wrapping authoritative [`BubbleRenderInstance`] snapshot data.
 #[derive(Component, Clone, Debug, Deref, DerefMut)]
@@ -43,6 +52,10 @@ pub const FLAG_SPEED_BOOSTED: u32 = 1 << 7;
 pub const FLAG_FACING_STRIPE: u32 = 1 << 8;
 /// Feature bitflag: Attack target-lock aperture ring on sphere.
 pub const FLAG_ATTACK_APERTURE: u32 = 1 << 9;
+/// Feature bitflag: Blend consecutive flipbook layers of a loop by the sub-frame time
+/// (plan D-6). A bubble blends only when its `anim_mode` also carries
+/// [`ANIM_BLEND_BIT`](crate::flipbook_clock::ANIM_BLEND_BIT).
+pub const FLAG_FRAME_BLEND: u32 = 1 << 10;
 
 /// Default active optical features.
 pub const DEFAULT_FEATURE_FLAGS: u32 = FLAG_GLARE
@@ -51,7 +64,8 @@ pub const DEFAULT_FEATURE_FLAGS: u32 = FLAG_GLARE
     | FLAG_CRACKS
     | FLAG_CRT_GLITCH
     | FLAG_FACING_STRIPE
-    | FLAG_ATTACK_APERTURE;
+    | FLAG_ATTACK_APERTURE
+    | FLAG_FRAME_BLEND;
 
 mod gpu_layout {
     //! Holds one `ShaderType` struct, so the lint expectation below covers nothing else.
@@ -66,8 +80,9 @@ mod gpu_layout {
     /// GPU uniform buffer struct matching `struct BubbleUniform` in `bubble_dome.wgsl`.
     // PERFORMANCE RATIONALE:
     // Why: WebGPU uniform buffers require strict 16-byte alignment and explicit std140 padding.
-    // What: Fields are strictly ordered: vec4 (16B), vec3+f32 (16B), 4x u32/f32 (16B) chunks, totaling exactly 160 bytes.
-    // Modular optical feature toggles are packed into `feature_flags: u32` bitmask with four additional optical vec4 lanes after the original 96 bytes.
+    // What: Fields are strictly ordered: vec4 (16B), vec3+f32 (16B), 4x u32/f32 (16B) chunks, totaling exactly 176 bytes.
+    // Modular optical feature toggles are packed into `feature_flags: u32` bitmask with four additional optical vec4 lanes after the original 96 bytes,
+    // and the flipbook lanes that do not fit the earlier rows fill the last 16-byte row.
     // Trade-off: Manual struct layout in exchange for zero runtime padding overhead and zero shader misalignment faults.
     #[repr(C)]
     #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable, ShaderType)]
@@ -88,8 +103,9 @@ mod gpu_layout {
         pub is_attacking: u32,
         /// High-level animation action state index.
         pub anim_state: u32,
-        /// Normalized animation progress [0.0, 1.0].
-        pub anim_progress: f32,
+        /// Flipbook clock time at which the bubble's elapsed animation time is zero, in clock
+        /// units of 1/1024 tick (`FlipbookLanes::origin`).
+        pub anim_origin: u32,
         /// Health ratio [0.0, 1.0] (cracks appear < 0.75, critical glitch < 0.35).
         pub hp_ratio: f32,
         /// Shield energy ratio [0.0, 1.0].
@@ -109,8 +125,9 @@ mod gpu_layout {
         pub cloaked: u32,
         /// Modular feature bitflags bitmask (glare, fresnel, inner warp, cracks, scanlines).
         pub feature_flags: u32,
-        /// Exact active frame index in the `Texture2DArray`.
-        pub frame_index: u32,
+        /// First `Texture2DArray` layer of the playing slice, or the layer shown in fixed mode
+        /// (`FlipbookLanes::base`).
+        pub frame_base: u32,
         /// Media exposure stops, dielectric reflectance, Fresnel power, reflection strength.
         pub optics_media: Vec4,
         /// Glare roughness/strength, hit strength, hull hit angular width in radians.
@@ -119,6 +136,14 @@ mod gpu_layout {
         pub optics_signals: Vec4,
         /// Direction toward the main light in world space; W is normalized illuminance.
         pub optics_light: Vec4,
+        /// Clock units of one pass over the slice (`FlipbookLanes::period`).
+        pub anim_period: u32,
+        /// Layers in the slice (`FlipbookLanes::count`).
+        pub frame_count: u32,
+        /// Flipbook mode in bits 0 and 1, blend request in bit 2 (`FlipbookLanes::mode`).
+        pub anim_mode: u32,
+        /// Loop phase offset in clock units (`FlipbookLanes::offset`).
+        pub anim_offset: u32,
     }
 }
 pub use gpu_layout::BubbleUniformGpu;
@@ -134,7 +159,7 @@ impl Default for BubbleUniformGpu {
             aim_angle_rad: 0.0,
             is_attacking: 0,
             anim_state: 1, // Idle
-            anim_progress: 0.0,
+            anim_origin: 0,
             hp_ratio: 1.0,
             shield_ratio: 1.0,
             shield_hit_flash: 0.0,
@@ -144,11 +169,15 @@ impl Default for BubbleUniformGpu {
             selected: 0,
             cloaked: 0,
             feature_flags: DEFAULT_FEATURE_FLAGS,
-            frame_index: 0,
+            frame_base: 0,
             optics_media: crate::bubble_optics::BubbleOptics::default().uniform_lanes()[0],
             optics_glare: crate::bubble_optics::BubbleOptics::default().uniform_lanes()[1],
             optics_signals: crate::bubble_optics::BubbleOptics::default().uniform_lanes()[2],
             optics_light: Vec4::new(0.0, 1.0, 0.0, 0.0),
+            anim_period: 0,
+            frame_count: 0,
+            anim_mode: 0,
+            anim_offset: 0,
         }
     }
 }
@@ -185,8 +214,8 @@ pub fn sync_bubble_material(
 ///
 /// With `meta`, the action's slice is used: a looping slice wraps, a one-shot holds its last
 /// frame, and an action without a slice shows layer 0. Without `meta`, the legacy layout of
-/// eight frames per action is assumed. The battle packs every record at progress 0
-/// ([`BubbleUniformGpu::from_instance`]); the Lab preview passes its own elapsed-time progress.
+/// eight frames per action is assumed. The battle shows every record's first frame
+/// ([`still_frame_lanes`]); the Lab preview passes its own elapsed-time progress.
 #[must_use]
 #[expect(
     clippy::cast_possible_truncation,
@@ -222,16 +251,22 @@ pub fn frame_index_at(
     }
 }
 
+/// Lanes that hold the first frame of `anim_state`'s slice, the picture a record showed before
+/// the battle had a flipbook clock (see [`frame_index_at`] at progress 0).
+#[must_use]
+pub fn still_frame_lanes(meta: Option<&FlipbookAtlasMeta>, anim_state: AnimState) -> FlipbookLanes {
+    FlipbookLanes::fixed(frame_index_at(meta, anim_state, 0.0))
+}
+
 impl BubbleUniformGpu {
     /// Returns a copy of `snapshot` that keeps this uniform's optics lanes and CPU-only fields.
     ///
-    /// Optics lanes belong to `bubble_optics`. `world_pos` and `anim_progress` are never read by
-    /// `bubble_dome.wgsl`, because the mesh transform places the bubble and `frame_index` selects
-    /// the frame, so a change in only those fields would not alter one pixel.
+    /// Optics lanes belong to `bubble_optics`. `world_pos` is never read by `bubble_dome.wgsl`,
+    /// because the mesh transform places the bubble, so a change in it alone would not alter one
+    /// pixel. Every flipbook lane is read by the shader, so each is compared.
     fn normalized_to(&self, snapshot: &Self) -> Self {
         Self {
             world_pos: self.world_pos,
-            anim_progress: self.anim_progress,
             optics_media: self.optics_media,
             optics_glare: self.optics_glare,
             optics_signals: self.optics_signals,
@@ -250,17 +285,44 @@ impl BubbleUniformGpu {
     pub fn apply_snapshot(&mut self, snapshot: &Self) {
         *self = Self {
             world_pos: snapshot.world_pos,
-            anim_progress: snapshot.anim_progress,
             ..self.normalized_to(snapshot)
         };
     }
 
-    /// Packs a snapshot and optional metadata using an already resolved linear ownership style.
+    /// The flipbook lanes this uniform carries.
+    #[must_use]
+    pub const fn flipbook_lanes(&self) -> FlipbookLanes {
+        FlipbookLanes {
+            origin: self.anim_origin,
+            base: self.frame_base,
+            period: self.anim_period,
+            count: self.frame_count,
+            mode: self.anim_mode,
+            offset: self.anim_offset,
+        }
+    }
+
+    /// Returns this uniform with its flipbook lanes set to `lanes`.
+    #[must_use]
+    pub const fn with_flipbook_lanes(mut self, lanes: FlipbookLanes) -> Self {
+        self.anim_origin = lanes.origin;
+        self.frame_base = lanes.base;
+        self.anim_period = lanes.period;
+        self.frame_count = lanes.count;
+        self.anim_mode = lanes.mode;
+        self.anim_offset = lanes.offset;
+        self
+    }
+
+    /// Packs a snapshot record with an already resolved linear ownership style and the
+    /// flipbook lanes chosen for it.
+    ///
+    /// The record carries no animation phase; `lanes` say which atlas layers the clock plays.
     #[must_use]
     pub fn from_instance(
         instance: &BubbleRenderInstance,
-        meta: Option<&FlipbookAtlasMeta>,
         style: crate::player_presentation::PlayerStyle,
+        lanes: FlipbookLanes,
     ) -> Self {
         let team_color = style.linear;
 
@@ -268,10 +330,6 @@ impl BubbleUniformGpu {
             ShapeKind::UnitSphere => 0,
             ShapeKind::BuildingDome { .. } => 1,
         };
-
-        // The snapshot carries no animation phase (its attack cycle is the integer
-        // `attack_swing`, read by the flipbook clock), so a record shows its slice's first frame.
-        let frame_index = frame_index_at(meta, instance.anim_state, 0.0);
 
         Self {
             team_color,
@@ -307,9 +365,9 @@ impl BubbleUniformGpu {
                 }
                 flags
             },
-            frame_index,
             ..Self::default()
         }
+        .with_flipbook_lanes(lanes)
     }
 }
 
@@ -330,6 +388,8 @@ impl BubbleUniformGpu {
 }
 
 /// Custom Bevy 3D material implementing the Bubble & Dome WGSL pipeline.
+///
+/// Build it with [`BubbleDomeMaterial::new`], which binds the shared flipbook clock.
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 pub struct BubbleDomeMaterial {
     /// Primary per-bubble parameter uniform.
@@ -339,8 +399,40 @@ pub struct BubbleDomeMaterial {
     #[texture(1, dimension = "2d_array")]
     #[sampler(2)]
     pub video_texture: Option<Handle<Image>>,
+    /// The shared flipbook clock buffer, always [`FLIPBOOK_CLOCK_BUFFER`].
+    #[storage(3, read_only, visibility(fragment))]
+    pub flipbook_clock: Handle<ShaderStorageBuffer>,
     /// Transparency blend mode.
     pub alpha_mode: AlphaMode,
+}
+
+impl BubbleDomeMaterial {
+    /// A blended bubble material showing `video_texture` with `uniform`, bound to the shared
+    /// flipbook clock.
+    #[must_use]
+    pub fn new(uniform: BubbleUniformGpu, video_texture: Option<Handle<Image>>) -> Self {
+        Self {
+            uniform,
+            video_texture,
+            flipbook_clock: FLIPBOOK_CLOCK_BUFFER,
+            alpha_mode: AlphaMode::Blend,
+        }
+    }
+}
+
+/// Registers [`BubbleDomeMaterial`] together with the flipbook clock it binds.
+///
+/// Every app that draws bubbles adds this plugin instead of the bare `MaterialPlugin`, so the
+/// clock buffer exists whenever a bubble material is prepared.
+pub struct BubbleDomeMaterialPlugin;
+
+impl Plugin for BubbleDomeMaterialPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins((
+            MaterialPlugin::<BubbleDomeMaterial>::default(),
+            FlipbookClockPlugin,
+        ));
+    }
 }
 
 impl Material for BubbleDomeMaterial {

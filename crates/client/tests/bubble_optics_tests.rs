@@ -30,13 +30,18 @@ fn shipped_style_and_exact_uniform_offsets_match() -> Result<(), Box<dyn std::er
             uniform.optics_signals
         ]
     );
-    assert_eq!(size_of::<BubbleUniformGpu>(), 160);
+    assert_eq!(size_of::<BubbleUniformGpu>(), 176);
     assert_eq!(align_of::<BubbleUniformGpu>(), 16);
-    assert_eq!(offset_of!(BubbleUniformGpu, frame_index), 92);
+    assert_eq!(offset_of!(BubbleUniformGpu, anim_origin), 52);
+    assert_eq!(offset_of!(BubbleUniformGpu, frame_base), 92);
     assert_eq!(offset_of!(BubbleUniformGpu, optics_media), 96);
     assert_eq!(offset_of!(BubbleUniformGpu, optics_glare), 112);
     assert_eq!(offset_of!(BubbleUniformGpu, optics_signals), 128);
     assert_eq!(offset_of!(BubbleUniformGpu, optics_light), 144);
+    assert_eq!(offset_of!(BubbleUniformGpu, anim_period), 160);
+    assert_eq!(offset_of!(BubbleUniformGpu, frame_count), 164);
+    assert_eq!(offset_of!(BubbleUniformGpu, anim_mode), 168);
+    assert_eq!(offset_of!(BubbleUniformGpu, anim_offset), 172);
     Ok(())
 }
 
@@ -79,7 +84,7 @@ fn replace_snapshot(
 ) {
     if let Some(material) = materials.get_mut(&target.0) {
         material.uniform = BubbleUniformGpu {
-            frame_index: 7,
+            frame_base: 7,
             selected: 1,
             shield_hit_flash: 0.5,
             ..default()
@@ -98,11 +103,8 @@ fn production_schedule_reapplies_authored_lanes_after_snapshot_replacement(
         .add_plugins(BubbleOpticsPlugin)
         .add_systems(Update, replace_snapshot);
     let texture = Handle::<Image>::weak_from_u128(32);
-    let make_material = || BubbleDomeMaterial {
-        uniform: BubbleUniformGpu::default(),
-        video_texture: Some(texture.clone()),
-        alpha_mode: AlphaMode::Blend,
-    };
+    let make_material =
+        || BubbleDomeMaterial::new(BubbleUniformGpu::default(), Some(texture.clone()));
     let handle = app
         .world_mut()
         .resource_mut::<Assets<BubbleDomeMaterial>>()
@@ -124,7 +126,7 @@ fn production_schedule_reapplies_authored_lanes_after_snapshot_replacement(
         assert_eq!(materials.len(), 2);
         let first = materials.get(&handle).ok_or("first material lost")?;
         assert_eq!(first.uniform.optics_media.x, -0.5);
-        assert_eq!(first.uniform.frame_index, 7);
+        assert_eq!(first.uniform.frame_base, 7);
         assert_eq!(first.uniform.selected, 1);
         assert_eq!(first.uniform.shield_hit_flash, 0.5);
         assert_eq!(first.video_texture.as_ref(), Some(&texture));
@@ -155,11 +157,7 @@ fn unchanged_shared_materials_emit_no_spurious_asset_changes(
     let handle = app
         .world_mut()
         .resource_mut::<Assets<BubbleDomeMaterial>>()
-        .add(BubbleDomeMaterial {
-            uniform: BubbleUniformGpu::default(),
-            video_texture: None,
-            alpha_mode: AlphaMode::Blend,
-        });
+        .add(BubbleDomeMaterial::new(BubbleUniformGpu::default(), None));
     app.world_mut().spawn(MeshMaterial3d(handle.clone()));
     app.world_mut().spawn(MeshMaterial3d(handle.clone()));
     app.update();
@@ -216,11 +214,7 @@ fn parented_directional_light_uses_propagated_world_orientation(
     let handle = app
         .world_mut()
         .resource_mut::<Assets<BubbleDomeMaterial>>()
-        .add(BubbleDomeMaterial {
-            uniform: BubbleUniformGpu::default(),
-            video_texture: None,
-            alpha_mode: AlphaMode::Blend,
-        });
+        .add(BubbleDomeMaterial::new(BubbleUniformGpu::default(), None));
     app.world_mut().spawn(MeshMaterial3d(handle.clone()));
     // A hidden brighter light and a visible light on another render layer must not
     // replace the light that actually illuminates this layer-zero shell.
@@ -288,7 +282,7 @@ fn shipped_wgsl_uniform_member_offsets_match_rust_layout() -> Result<(), Box<dyn
         aim_angle_rad,
         is_attacking,
         anim_state,
-        anim_progress,
+        anim_origin,
         hp_ratio,
         shield_ratio,
         shield_hit_flash,
@@ -298,11 +292,15 @@ fn shipped_wgsl_uniform_member_offsets_match_rust_layout() -> Result<(), Box<dyn
         selected,
         cloaked,
         feature_flags,
-        frame_index,
+        frame_base,
         optics_media,
         optics_glare,
         optics_signals,
-        optics_light
+        optics_light,
+        anim_period,
+        frame_count,
+        anim_mode,
+        anim_offset
     ];
     assert_eq!(*span as usize, size_of::<BubbleUniformGpu>());
     assert_eq!(members.len(), expected.len());
