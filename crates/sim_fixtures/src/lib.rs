@@ -4,7 +4,8 @@
 //! Gives tests, benches of other crates and diagnostics tests the worlds and catalogs that the
 //! simulation used to construct from data compiled into `sim_core`: the shipped faction, unit,
 //! structure and upgrade catalogs, the shipped start loadouts, a world on any map with those catalogs, a
-//! scenario world, and the fixed battle sandbox. The files under `assets/catalog/` are embedded
+//! scenario world, the fixed battle sandbox, the "who wins" matchup matrix ([`matchup`]) and the
+//! battle trace tool of the battle 33 investigation ([`trace`]). The files under `assets/catalog/` are embedded
 //! with `include_str!`, so the golden replay runs under wasmtime without filesystem access.
 //!
 //! # How it fits
@@ -25,7 +26,9 @@
     reason = "test support: a broken shipped catalog must fail the calling test loudly"
 )]
 
+pub mod matchup;
 mod sandbox;
+pub mod trace;
 
 pub use sandbox::{default_battle_sandbox, default_battle_sandbox_on, SandboxError};
 
