@@ -26,6 +26,8 @@
 //!   traces researches one.
 //! - Health lost by a unit that died is its whole health at the end of the previous tick:
 //!   damage beyond that (overkill) is not health lost and is not counted.
+//! - A living unit released a shot in a tick exactly when its weapon cooldown rose
+//!   ([`swing::infer`]), whatever phases the release passed through.
 //! - A unit that died in the tick it released is counted as releasing when its swing was at its
 //!   last wind-up tick and its target within reach (see `count_releases_of_the_fallen`).
 //! - Wasted shots are counted for instant weapons only (hitscan and melee). A projectile lands
@@ -123,6 +125,9 @@ pub struct UnitSample {
     pub shields: SimScalar,
     /// Weapon phase after the tick.
     pub phase: WeaponPhase,
+    /// Ticks left on the weapon's cooldown after the tick (`Entity::weapon_cooldown_remaining`).
+    /// It rises only when a shot is released, which is how [`swing::infer`] detects releases.
+    pub cooldown: u16,
     /// The enemy it is attacking: the target of its front attack order, otherwise its
     /// `current_target`.
     pub target: Option<EntityId>,
@@ -357,6 +362,7 @@ impl BattleTrace {
             hp: entity.hp,
             shields: entity.shields,
             phase: entity.weapon_phase.clone(),
+            cooldown: entity.weapon_cooldown_remaining,
             target,
             activity,
         })
@@ -375,12 +381,14 @@ impl BattleTrace {
         side: &mut TeamTick,
         releases: &mut Vec<(EntityId, EntityId)>,
     ) -> Result<(), TraceError> {
-        let (cancelled, started) = match infer(&before.phase, &after.phase) {
+        let (cancelled, started) = match infer(before, after) {
             SwingEvent::Idle | SwingEvent::WindingUp => (None, false),
             SwingEvent::Started { .. } => (None, true),
             SwingEvent::Released { target } => {
                 side.shots_released += 1;
-                releases.push((after.id, target));
+                if let Some(target) = target {
+                    releases.push((after.id, target));
+                }
                 (None, false)
             }
             SwingEvent::Cancelled { target } => (Some(target), false),
@@ -415,6 +423,11 @@ impl BattleTrace {
     /// is inferred: a swing at its last wind-up tick (`remaining <= 1`) whose bound target was in
     /// the band plus the release slop, measured from the unit's previous position (it stands still
     /// while winding up) to the target's latest position.
+    ///
+    /// This is the one release still read from a phase, because a dead unit publishes no
+    /// cooldown. A swing that would start and release in the tick its unit dies (damage point 0
+    /// after plan `2026-11-04-combat-sc2-alignment` D-3) left no wind-up behind and is not
+    /// counted; the living units' releases come from the cooldown ([`swing::infer`]).
     fn count_releases_of_the_fallen(
         &self,
         world: &SimWorld,
