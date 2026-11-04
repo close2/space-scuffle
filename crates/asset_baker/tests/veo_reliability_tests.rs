@@ -8,7 +8,7 @@
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
 use asset_baker::ledger::{new_run_id, Ledger, LedgerError, LedgerHistory};
-use asset_baker::veo_client::{VeoClient, VeoCredentials, VeoOperation};
+use asset_baker::veo_client::{GenerationImages, VeoClient, VeoCredentials, VeoOperation};
 use asset_baker::veo_plan::ClipAction;
 use asset_baker::{
     execute_plan, plan_run, BakerError, MediaStyle, RunContext, RunPlan, RunSummary, VeoDirs,
@@ -54,10 +54,18 @@ fn dirs(root: &Path) -> VeoDirs {
     }
 }
 
-/// Plans `unit`'s published clips under `root` with the shipped media style.
+/// Plans `unit`'s published clips under `root` with the shipped media style, with no state
+/// pinned to its start picture.
+///
+/// These tests drive the transport through the Gemini API's paths, where an end frame
+/// (`lastFrame`) is refused before any request; pinned requests and that refusal are proven in
+/// `veo_cli_tests.rs`. Unpinning keeps these tests about polling, downloads and resumption.
 fn plan(root: &Path, unit: &str, history: &LedgerHistory) -> Result<RunPlan, BakerError> {
     let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
-    let style = MediaStyle::load(&assets)?;
+    let mut style = MediaStyle::load(&assets)?;
+    for spec in style.loops.states.values_mut() {
+        spec.pin_end = false;
+    }
     plan_run(
         &catalog(),
         &style,
@@ -357,7 +365,7 @@ fn b4_initiate_retries_only_when_the_request_cannot_have_started_work() {
     });
     let shim = CurlShim::new(&server);
     let operation = client(&shim)
-        .initiate_generation("prompt", None)
+        .initiate_generation("prompt", GenerationImages::none())
         .expect("429 means no work was started");
     assert_eq!(operation.name, "operations/op1");
     assert_eq!(server.requests().len(), 2);
@@ -366,7 +374,7 @@ fn b4_initiate_retries_only_when_the_request_cannot_have_started_work() {
     // A 500 may have started a paid generation, so a retry could pay twice.
     let server = FakeServer::start(|_, _| Reply::status(500, "ambiguous"));
     let shim = CurlShim::new(&server);
-    let result = client(&shim).initiate_generation("prompt", None);
+    let result = client(&shim).initiate_generation("prompt", GenerationImages::none());
     assert!(
         matches!(result, Err(BakerError::VeoHttpStatus { status: 500, .. })),
         "{result:?}"

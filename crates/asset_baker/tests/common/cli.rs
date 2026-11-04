@@ -7,7 +7,10 @@
 //!
 //! # Invariants
 //! - Identities are chosen from the shipped catalog by capability, never by name.
-//! - The fake key is obviously fake and long enough that any leaked fragment is detectable.
+//! - The fake keys are obviously fake and long enough that any leaked fragment is detectable.
+//! - A generation run uses Vertex AI by default ([`RunDirs::new`]), as production does: only
+//!   Vertex accepts an end frame (`lastFrame`), which the shipped loop policy pins for every
+//!   looping state. [`RunDirs::gemini`] selects the Gemini API.
 
 use super::{CurlShim, FakeServer, Reply};
 use sim_types::enums::AnimState;
@@ -16,6 +19,13 @@ use std::process::{Command, Output};
 
 /// A fake Gemini API key. It must never appear in a ledger, a log or a clip record.
 pub const FAKE_KEY: &str = "AIzaFAKE-wp1-leak-probe-7f3c9e21b4d6a8f0-not-a-credential";
+
+/// A fake Vertex AI Express key (`AQ.` prefix). It must never appear in a ledger, a log or a
+/// clip record.
+pub const FAKE_VERTEX_KEY: &str = "AQ.FAKE-loops-leak-probe-3b8e0d5a9c71f246-not-a-credential";
+
+/// The project a fake Vertex key is paired with.
+pub const FAKE_PROJECT: &str = "fixture-project-000";
 
 /// The shipped asset bundle (catalogs, media style and budget data).
 #[must_use]
@@ -61,6 +71,20 @@ pub fn fake_credentials(root: &Path) -> PathBuf {
     inner
 }
 
+/// Writes `inner/.env` holding [`FAKE_VERTEX_KEY`] and [`FAKE_PROJECT`] under `root` and
+/// returns `inner`.
+#[must_use]
+pub fn fake_vertex_credentials(root: &Path) -> PathBuf {
+    let inner = root.join("vertex-credentials").join("inner");
+    std::fs::create_dir_all(&inner).expect("credentials dir");
+    std::fs::write(
+        inner.join(".env"),
+        format!("GOOGLE_API_KEY={FAKE_VERTEX_KEY}\nGOOGLE_CLOUD_PROJECT={FAKE_PROJECT}\n"),
+    )
+    .expect("env");
+    inner
+}
+
 /// A credentials directory whose `.env` is a directory, so any attempt to read it fails.
 ///
 /// A run that succeeds with this directory provably read no credential file.
@@ -83,16 +107,39 @@ pub fn text(output: &Output) -> String {
     )
 }
 
-/// Asserts that no 12-character window of [`FAKE_KEY`] occurs in `haystack`.
+/// Asserts that no 12-character window of [`FAKE_KEY`] or [`FAKE_VERTEX_KEY`] occurs in
+/// `haystack`.
 pub fn assert_no_key(haystack: &str, what: &str) {
-    let key: Vec<char> = FAKE_KEY.chars().collect();
-    for window in key.windows(12) {
-        let fragment: String = window.iter().collect();
-        assert!(
-            !haystack.contains(&fragment),
-            "a fragment of the API key ({fragment}) leaked into {what}:\n{haystack}"
-        );
+    for key in [FAKE_KEY, FAKE_VERTEX_KEY] {
+        let key: Vec<char> = key.chars().collect();
+        for window in key.windows(12) {
+            let fragment: String = window.iter().collect();
+            assert!(
+                !haystack.contains(&fragment),
+                "a fragment of the API key ({fragment}) leaked into {what}:\n{haystack}"
+            );
+        }
     }
+}
+
+/// Writes a `width`×`height` PNG with a diagonal gradient to `path` and returns its bytes.
+/// A 1280×720 picture passes the pin rules; other sizes test them.
+pub fn write_picture(path: &Path, width: u32, height: u32) -> Vec<u8> {
+    let image = image::RgbImage::from_fn(width, height, |x, y| {
+        let level = |v: u32, span: u32| u8::try_from(v * 255 / span.max(1)).unwrap_or(u8::MAX);
+        image::Rgb([level(x, width), level(y, height), 96])
+    });
+    image
+        .save_with_format(path, image::ImageFormat::Png)
+        .expect("write picture");
+    std::fs::read(path).expect("read picture")
+}
+
+/// The `instances[0]` object of a start request's JSON body.
+#[must_use]
+pub fn instance_of(body: &[u8]) -> serde_json::Value {
+    let json: serde_json::Value = serde_json::from_slice(body).expect("JSON body");
+    json["instances"][0].clone()
 }
 
 /// The first catalog identity whose published actions are exactly `wanted`, in any order,
@@ -166,7 +213,8 @@ pub fn inline_done(name: &str, clip: &[u8]) -> String {
 }
 
 /// A healthy fake API: each start names `operations/<state>-op`, which finishes at the first
-/// poll with the fixture clip inline.
+/// poll with `clip` inline. A Gemini poll names the operation in its path, a Vertex poll
+/// (`:fetchPredictOperation`) in its body.
 pub fn healthy(clip: Vec<u8>) -> impl Fn(&super::ReceivedRequest, usize) -> Reply + Send {
     move |request, _| {
         if request.path.contains(":predictLongRunning") {
@@ -175,15 +223,21 @@ pub fn healthy(clip: Vec<u8>) -> impl Fn(&super::ReceivedRequest, usize) -> Repl
                 state_of_body(&request.body)
             ))
         } else {
-            let name = request
-                .path
-                .rsplit('/')
-                .next()
-                .unwrap_or("unknown")
-                .to_string();
-            Reply::json(&inline_done(&format!("operations/{name}"), &clip))
+            Reply::json(&inline_done(&polled_operation(request), &clip))
         }
     }
+}
+
+/// The operation a poll asks about, as `operations/<name>`: from `operationName` in a Vertex
+/// body, else from the last segment of a Gemini path.
+#[must_use]
+pub fn polled_operation(request: &super::ReceivedRequest) -> String {
+    let from_body = serde_json::from_slice::<serde_json::Value>(&request.body)
+        .ok()
+        .and_then(|json| json["operationName"].as_str().map(ToString::to_string));
+    let full = from_body.unwrap_or_else(|| request.path.clone());
+    let name = full.rsplit('/').next().unwrap_or("unknown");
+    format!("operations/{name}")
 }
 
 /// Paths of one fake generation run.
@@ -203,11 +257,22 @@ pub struct RunDirs {
 }
 
 impl RunDirs {
-    /// Creates a fresh set of directories with the fake key.
+    /// Creates a fresh set of directories with the fake Vertex AI key, the mode production
+    /// uses.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_credentials(fake_vertex_credentials)
+    }
+
+    /// Creates a fresh set of directories with the fake Gemini API key.
+    #[must_use]
+    pub fn gemini() -> Self {
+        Self::with_credentials(fake_credentials)
+    }
+
+    fn with_credentials(write: fn(&Path) -> PathBuf) -> Self {
         let root = tempfile::tempdir().expect("tempdir");
-        let credentials = fake_credentials(root.path());
+        let credentials = write(root.path());
         let keyframes = root.path().join("keyframes");
         let videos = root.path().join("videos");
         std::fs::create_dir_all(&keyframes).expect("keyframes dir");

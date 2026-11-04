@@ -183,7 +183,7 @@ fn with_overrides(overrides: String) -> impl Fn(String) -> String {
             style.contains("overrides: {},"),
             "the shipped style lists no override"
         );
-        style.replace("overrides: {},", &format!("overrides: {overrides},"))
+        style.replacen("overrides: {},", &format!("overrides: {overrides},"), 1)
     }
 }
 

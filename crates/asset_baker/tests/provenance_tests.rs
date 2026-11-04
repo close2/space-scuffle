@@ -14,14 +14,16 @@ mod common;
 use asset_baker::ledger::{
     read_ledger_numbered, sha256_hex, LedgerEvent, LedgerRecord, NumberedRecord,
 };
+use asset_baker::loop_metrics::SeamRepair;
 use asset_baker::media_audit::{
     audit_media, AuditInputs, MediaAuditError, MediaAuditRecord, MediaAuditReport, MediaAuditStatus,
 };
 use asset_baker::provenance::{
-    bake_with_provenance, provenance_path, BakeClip, BakeParameters, ClipOrigin, MediaProvenance,
-    ProvenanceError, RequiredIdentity, RequiredSet, StateProvenance, Tier, UnverifiedReason,
-    PROVENANCE_FORMAT_VERSION,
+    bake_with_provenance, bake_with_provenance_and_seams, provenance_path, BakeClip,
+    BakeParameters, ClipOrigin, FrameSampling, MediaProvenance, ProvenanceError, RequiredIdentity,
+    RequiredSet, SeamRecord, StateProvenance, Tier, UnverifiedReason, PROVENANCE_FORMAT_VERSION,
 };
+use asset_baker::BakerError;
 use asset_baker::{ActionSlice, BakeFraming, FlipbookAtlasMeta, FlipbookLayout, FrameSpec};
 use common::cli::{baker, identity_with_actions, shipped_assets, text};
 use sim_types::AnimState;
@@ -178,6 +180,7 @@ impl Fixture {
                         frame_count: slice.frame_count,
                         origin: self.origins[state].clone(),
                         bar_rgb: None,
+                        seam: None,
                     },
                 )
             })
@@ -457,6 +460,7 @@ fn veo_origin(line: usize) -> ClipOrigin {
         operation: "operations/fixture-1".into(),
         prompt_sha256: sha256_hex(b"prompt"),
         keyframe_sha256: None,
+        last_frame_sha256: None,
         ledger_line: line,
     }
 }
@@ -587,6 +591,96 @@ fn a_clip_rejected_in_review_is_named() {
             }
         )
     });
+}
+
+/// The `request_started` and `operation_named` records of the request that produced
+/// `operation`, with the end frame it sent.
+fn started_request(
+    fixture: &Fixture,
+    state: AnimState,
+    operation: &str,
+    last_frame_sha256: Option<String>,
+) -> [LedgerRecord; 2] {
+    let stamp = |event| LedgerRecord {
+        time_utc: "2026-11-04T00:00:00Z".into(),
+        unix_seconds: 1_793_750_400,
+        run_id: "fixture-run".into(),
+        event,
+    };
+    [
+        stamp(LedgerEvent::RequestStarted {
+            request_id: "fixture-run/1".into(),
+            slug: fixture.slug.clone(),
+            state,
+            model: "veo-test-model".into(),
+            mode: asset_baker::ledger::ApiMode::VertexExpress,
+            prompt_sha256: sha256_hex(b"prompt"),
+            prompt: "prompt".into(),
+            keyframe_sha256: last_frame_sha256.clone(),
+            last_frame_sha256,
+            parameters: asset_baker::VeoParameters::default(),
+        }),
+        stamp(LedgerEvent::OperationNamed {
+            request_id: "fixture-run/1".into(),
+            slug: fixture.slug.clone(),
+            state,
+            model: "veo-test-model".into(),
+            operation: operation.into(),
+        }),
+    ]
+}
+
+#[test]
+fn an_end_frame_that_differs_from_its_request_is_named() {
+    let pin = sha256_hex(b"pin");
+    for (recorded, requested, verified) in [
+        (Some(pin.clone()), Some(pin.clone()), true),
+        (None, None, true),
+        (Some(pin.clone()), None, false),
+        (None, Some(pin.clone()), false),
+    ] {
+        let mut fixture = Fixture::new(&combat_identity(&catalog()));
+        let ClipOrigin::Veo {
+            model,
+            operation,
+            prompt_sha256,
+            ledger_line,
+            ..
+        } = veo_origin(3)
+        else {
+            panic!("built as a Veo origin")
+        };
+        fixture.origins.insert(
+            AnimState::Walk,
+            ClipOrigin::Veo {
+                model,
+                operation,
+                prompt_sha256,
+                keyframe_sha256: recorded.clone(),
+                last_frame_sha256: recorded.clone(),
+                ledger_line,
+            },
+        );
+        fixture.seal();
+        let [started, named] =
+            started_request(&fixture, AnimState::Walk, "operations/fixture-1", requested);
+        let line = downloaded(&fixture, AnimState::Walk, "operations/fixture-1");
+        let ledger = write_ledger(fixture.root.path(), &[started, named, line]);
+        let entry = fixture.entry(&fixture.audit(&fixture.required(), Some(&ledger)));
+        if verified {
+            assert_eq!(entry.status, MediaAuditStatus::Verified, "{entry:?}");
+        } else {
+            assert_unverified(&entry, |reason| {
+                matches!(
+                    reason,
+                    UnverifiedReason::LastFrameMismatch {
+                        state: AnimState::Walk,
+                        ..
+                    }
+                )
+            });
+        }
+    }
 }
 
 // --- Strict audit over the required set -------------------------------------------------------
@@ -753,6 +847,189 @@ fn a_bake_refuses_a_clip_outside_the_videos_directory() {
         Err(ProvenanceError::ClipOutsideVideos { .. })
     ));
     assert!(!textures.join(format!("{slug}.png")).exists());
+}
+
+// --- Seam repair records (plan `docs/plans/2026-11-04-veo-seamless-loops.md`, D-4) ------------
+
+/// The default treatment of a looping state in `media_style.ron`.
+const REPAIR: SeamRepair = SeamRepair {
+    scale_lock: true,
+    crossfade_frames: 2,
+};
+
+/// Bakes the fixture identity with a 6 % push-in as Idle and distinct fixture clips for the rest.
+fn bake_with_a_repaired_idle(
+    root: &Path,
+    slug: &str,
+    seams: &BTreeMap<AnimState, SeamRepair>,
+) -> Result<MediaProvenance, ProvenanceError> {
+    let videos = root.join("videos");
+    std::fs::create_dir_all(&videos).unwrap();
+    let ramp = common::loop_clip::steady_ramp(31, 0.06);
+    let idle = common::loop_clip::zoom_clip(&videos, &format!("{slug}_idle.mkv"), 160, &ramp);
+    let filters = ["", "negate", "lutrgb=r=0"];
+    let clips: Vec<BakeClip> = STATES
+        .iter()
+        .zip(filters)
+        .map(|(state, filter)| BakeClip {
+            state: *state,
+            path: if *state == AnimState::Idle {
+                idle.clone()
+            } else {
+                variant_clip(&videos, &format!("{slug}_{state:?}.mp4"), filter)
+            },
+            origin: ClipOrigin::LegacyVeo {
+                commit: LEGACY_COMMIT.into(),
+            },
+        })
+        .collect();
+    let spec = FrameSpec {
+        size: 64,
+        fps: 15,
+        framing: BakeFraming::CenterCrop,
+    };
+    bake_with_provenance_and_seams(slug, &clips, &videos, &root.join("textures"), spec, seams)
+}
+
+#[test]
+fn a_repaired_state_records_its_seam_and_the_audit_still_verifies() {
+    let catalog = catalog();
+    let slug = combat_identity(&catalog);
+    let root = tempfile::tempdir().unwrap();
+    let seams = BTreeMap::from([(AnimState::Idle, REPAIR)]);
+    let provenance = bake_with_a_repaired_idle(root.path(), &slug, &seams).expect("bake");
+    let idle = provenance.states[&AnimState::Idle].seam.expect("Idle seam");
+    assert_eq!(idle.sampling, FrameSampling::Loop);
+    assert_eq!(idle.crossfade_frames, 2);
+    assert!(idle.scale_permille.abs_diff(57) <= 5, "{idle:?}");
+    assert!(provenance.states[&AnimState::Walk].seam.is_none());
+    assert!(provenance.states[&AnimState::Attack].seam.is_none());
+
+    let path = provenance_path(&root.path().join("textures"), &slug).unwrap();
+    assert_eq!(MediaProvenance::load(&path).unwrap(), provenance);
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        text.matches("seam:").count(),
+        1,
+        "only Idle names a seam:\n{text}"
+    );
+
+    let required = RequiredSet::new(vec![RequiredIdentity {
+        slug: slug.clone(),
+        tier: Tier::Required,
+    }]);
+    let report = audit_media(
+        root.path(),
+        &catalog,
+        &AuditInputs {
+            required: &required,
+            ledger: None,
+        },
+    );
+    let entry = report.entries.iter().find(|e| e.slug == slug).unwrap();
+    assert_eq!(entry.status, MediaAuditStatus::Verified, "{entry:?}");
+}
+
+#[test]
+fn a_seam_on_a_state_that_does_not_loop_is_refused() {
+    let catalog = catalog();
+    let slug = combat_identity(&catalog);
+    let root = tempfile::tempdir().unwrap();
+    let seams = BTreeMap::from([(AnimState::Attack, REPAIR)]);
+    let refused = bake_with_a_repaired_idle(root.path(), &slug, &seams);
+    assert!(
+        matches!(
+            refused,
+            Err(ProvenanceError::Bake(BakerError::ValidationFailed { .. }))
+        ),
+        "{refused:?}"
+    );
+    assert!(!root.path().join(format!("textures/{slug}.png")).exists());
+}
+
+#[test]
+fn bake_unit_videos_repairs_the_states_the_shipped_loop_policy_names() {
+    let catalog = catalog();
+    let slug = combat_identity(&catalog);
+    let style = asset_baker::MediaStyle::load_for_catalog(&shipped_assets(), &catalog).unwrap();
+    let idle_seam = style
+        .loops
+        .spec_for(&slug, AnimState::Idle)
+        .and_then(|spec| spec.seam)
+        .expect("the shipped policy repairs Idle");
+    assert!(
+        style
+            .loops
+            .spec_for(&slug, AnimState::Attack)
+            .and_then(|spec| spec.seam)
+            .is_none(),
+        "Attack does not loop"
+    );
+
+    let root = tempfile::tempdir().unwrap();
+    let videos = root.path().join("videos");
+    std::fs::create_dir_all(&videos).unwrap();
+    let ramp = common::loop_clip::steady_ramp(31, 0.06);
+    let idle = common::loop_clip::zoom_clip(&videos, &format!("{slug}_idle.mkv"), 160, &ramp);
+    let attack = variant_clip(&videos, &format!("{slug}_attack.mp4"), "negate");
+    let textures = root.path().join("textures");
+    let output = baker()
+        .args(["bake-unit-videos", "--unit", &slug, "--idle"])
+        .arg(&idle)
+        .arg("--attack")
+        .arg(&attack)
+        .arg("--videos-dir")
+        .arg(&videos)
+        .arg("--output-dir")
+        .arg(&textures)
+        .args(["--legacy-veo", &format!("idle={LEGACY_COMMIT}")])
+        .args(["--legacy-veo", &format!("attack={LEGACY_COMMIT}")])
+        .args(["--size", "64", "--fps", "15"])
+        .output()
+        .expect("run baker");
+    assert!(output.status.success(), "{}", text(&output));
+    let record = MediaProvenance::load(&provenance_path(&textures, &slug).unwrap()).unwrap();
+    let seam = record.states[&AnimState::Idle].seam.expect("Idle repaired");
+    assert_eq!(seam.sampling, FrameSampling::Loop);
+    assert_eq!(seam.crossfade_frames, idle_seam.crossfade_frames);
+    if idle_seam.scale_lock {
+        assert!(seam.scale_permille.abs_diff(57) <= 5, "{seam:?}");
+    }
+    assert!(record.states[&AnimState::Attack].seam.is_none());
+    assert!(text(&output).contains("seam repair"), "{}", text(&output));
+}
+
+#[test]
+fn a_record_written_before_seam_repair_existed_still_loads() {
+    let record = StateProvenance {
+        clip: "x_idle.mp4".into(),
+        clip_sha256: "0".repeat(64),
+        start_frame: 0,
+        frame_count: 8,
+        origin: ClipOrigin::LegacyVeo {
+            commit: LEGACY_COMMIT.into(),
+        },
+        bar_rgb: None,
+        seam: None,
+    };
+    let text = ron::to_string(&record).unwrap();
+    assert!(
+        !text.contains("seam"),
+        "no seam is written when none was done: {text}"
+    );
+    let loaded: StateProvenance = ron::from_str(&text).unwrap();
+    assert_eq!(loaded, record);
+
+    let repaired = StateProvenance {
+        seam: Some(SeamRecord {
+            sampling: FrameSampling::Loop,
+            scale_permille: 61,
+            crossfade_frames: 2,
+        }),
+        ..record
+    };
+    let text = ron::to_string(&repaired).unwrap();
+    assert_eq!(ron::from_str::<StateProvenance>(&text).unwrap(), repaired);
 }
 
 // --- The shipped bundle -------------------------------------------------------------------

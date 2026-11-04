@@ -15,6 +15,8 @@
 //! - [`manifest`]: Structural layout and slice metadata via [`FlipbookAtlasMeta`].
 //! - [`ffmpeg_importer`]: Transcoding, framing (centre crop or letterbox), scaling, and strip
 //!   packing via external FFmpeg.
+//! - [`loop_metrics`]: Loop continuity of looping states: SSIM, the camera zoom estimator, the
+//!   line fit, and the seam repair (scale lock and cross-fade) the bake runs on them.
 //! - [`framing`]: The framing policy per render shape (`media_style.ron`), the bar colour
 //!   measured from each clip's border, the edge feather and the square composer.
 //! - [`veo_client`]: Strongly-typed Google Gemini and Vertex AI Veo Video Generation client.
@@ -41,6 +43,7 @@ pub mod error;
 pub mod ffmpeg_importer;
 pub mod framing;
 pub mod ledger;
+pub mod loop_metrics;
 pub mod manifest;
 pub mod media;
 pub mod media_audit;

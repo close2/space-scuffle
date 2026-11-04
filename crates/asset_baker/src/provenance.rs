@@ -4,8 +4,9 @@
 //! # Responsibility
 //! - **Format.** [`MediaProvenance`] is `assets/textures/<slug>.provenance.ron`: for each baked
 //!   state, the clip under `assets/videos`, its SHA-256, its frame range in the atlas and its
-//!   [`ClipOrigin`] and the bar colour of a letterboxed clip; the bake parameters, including
-//!   the framing; and the SHA-256 of the atlas PNG and its manifest.
+//!   [`ClipOrigin`], the bar colour of a letterboxed clip and the [`SeamRecord`] of a repaired
+//!   looping state; the bake parameters, including the framing; and the SHA-256 of the atlas
+//!   PNG and its manifest.
 //! - **Writing.** [`bake_with_provenance`] bakes clips into an atlas and writes the record in
 //!   the same step, so a baked atlas never lacks one. [`veo_origin_from_ledger`] finds the
 //!   ledger line that downloaded a clip, which is how a paid clip's origin is known.
@@ -27,15 +28,19 @@
 //! - A clip is named by its file name within the videos directory, never by a path, so a
 //!   record cannot point outside the bundle.
 //! - `LegacyVeo` is real Veo output whose request was not recorded; it says so instead of
-//!   inventing an operation. `Veo` cites the ledger line that downloaded the clip.
+//!   inventing an operation. `Veo` cites the ledger line that downloaded the clip, and its end
+//!   frame (`last_frame_sha256`, plan `2026-11-04-veo-seamless-loops.md` D-4) must equal the
+//!   one the request's `request_started` line recorded.
 //! - Written files end every line in `\n` on every host.
-//! - Fields added after format version 1 (`framing`, `bar_rgb`) are defaulted, so every
-//!   version 1 file still loads and says truthfully what it was: a centre crop without bars.
+//! - Fields added after format version 1 (`framing`, `bar_rgb`, `seam`) are defaulted, so
+//!   every version 1 file still loads and says truthfully what it was: a centre crop without
+//!   bars or seam repair. `seam` is written only when a repair was done.
 
 use crate::error::BakerError;
-use crate::ffmpeg_importer::FrameSpec;
+use crate::ffmpeg_importer::{bake_repaired_action_videos, FrameSpec};
 use crate::framing::BakeFraming;
 use crate::ledger::{sha256_hex, LedgerEvent, LedgerRecord, NumberedRecord};
+use crate::loop_metrics::SeamRepair;
 use crate::manifest::FlipbookAtlasMeta;
 use crate::media::{media_paths, LoadedUnitMedia};
 use ron::ser::PrettyConfig;
@@ -58,8 +63,9 @@ pub const REQUIRED_SET_FILE: &str = "media/required_set.ron";
 /// The FFmpeg executable the baker runs (the same one `ffmpeg_importer` uses).
 const FFMPEG_PATH: &str = "/usr/bin/ffmpeg";
 
-/// Largest strip height in pixels, as in `ffmpeg_importer`; used to record the frame budget.
-const MAX_STRIP_HEIGHT: u32 = 16_384;
+/// Largest strip height in pixels, the limit `ffmpeg_importer` bakes to; used to record the
+/// frame budget.
+const MAX_STRIP_HEIGHT: u32 = crate::prompts::MAX_ATLAS_STRIP_HEIGHT;
 
 /// Failures to read, write or produce provenance records and the required set.
 #[derive(Debug, thiserror::Error)]
@@ -151,6 +157,11 @@ pub enum ClipOrigin {
         prompt_sha256: String,
         /// SHA-256 of the keyframe image sent, if any.
         keyframe_sha256: Option<String>,
+        /// SHA-256 of the end frame sent as `lastFrame`, if any, as the request's ledger line
+        /// records it; the strict audit checks the two agree. Absent in records written before
+        /// end frames existed.
+        #[serde(default)]
+        last_frame_sha256: Option<String>,
         /// One-based line of the ledger's `downloaded` record of this clip.
         ledger_line: usize,
     },
@@ -180,6 +191,38 @@ pub struct StateProvenance {
     /// records written before letterboxing existed.
     #[serde(default)]
     pub bar_rgb: Option<[u8; 3]>,
+    /// The seam repair done on this state's frames (plan
+    /// `docs/plans/2026-11-04-veo-seamless-loops.md`, D-4 and D-5); `None` for a state baked
+    /// without one. Absent in records written before seam repair existed, and not written when
+    /// `None`, so such records keep their exact text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seam: Option<SeamRecord>,
+}
+
+/// How a state's kept frames were chosen from its decoded clip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FrameSampling {
+    /// Evenly from the first frame to the last, both kept
+    /// (`ffmpeg_importer::evenly_spaced_indices`): every state without a seam repair.
+    Span,
+    /// Evenly over one loop period, the final frame left out so that every step, the wrap from
+    /// the last kept frame back to the first included, has the same length
+    /// (`ffmpeg_importer::evenly_spaced_loop_indices`).
+    Loop,
+}
+
+/// What the seam repair did to one looping state's kept frames (D-4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SeamRecord {
+    /// How the kept frames were chosen.
+    pub sampling: FrameSampling,
+    /// The scale lock's enlargement of the most enlarged kept frame (the first, for a camera
+    /// push-in), in per mille; 0 when no scale lock was asked for or the zoom was under the
+    /// lock's 0.5 % threshold.
+    pub scale_permille: u32,
+    /// How many of the last kept frames were blended toward frame 0.
+    pub crossfade_frames: u8,
 }
 
 /// How the atlas was baked.
@@ -284,6 +327,8 @@ pub struct BakeClip {
 /// frames per second and the framing, which the record keeps with each clip's bar colour.
 /// Nothing is written if a clip is refused.
 ///
+/// No state gets a seam repair; [`bake_with_provenance_and_seams`] is the same bake with one.
+///
 /// # Errors
 /// [`ProvenanceError::ClipOutsideVideos`], [`ProvenanceError::DuplicateState`], any baking
 /// error, [`ProvenanceError::FfmpegVersion`] or an I/O error.
@@ -294,14 +339,37 @@ pub fn bake_with_provenance(
     output_dir: &Path,
     spec: FrameSpec,
 ) -> Result<MediaProvenance, ProvenanceError> {
+    bake_with_provenance_and_seams(slug, clips, videos_dir, output_dir, spec, &BTreeMap::new())
+}
+
+/// [`bake_with_provenance`], with the seam repair `seams` names for each looping state (plan
+/// `docs/plans/2026-11-04-veo-seamless-loops.md`, D-5); the record keeps what each repair did
+/// ([`SeamRecord`]). A state `seams` does not name is baked exactly as without it; an entry
+/// for a state no clip shows is ignored.
+///
+/// # Errors
+/// As [`bake_with_provenance`], and [`BakerError::SeamRepairRefused`] or
+/// [`BakerError::ValidationFailed`] (a seam on a state that does not loop) through
+/// [`ProvenanceError::Bake`].
+pub fn bake_with_provenance_and_seams(
+    slug: &str,
+    clips: &[BakeClip],
+    videos_dir: &Path,
+    output_dir: &Path,
+    spec: FrameSpec,
+    seams: &BTreeMap<AnimState, SeamRepair>,
+) -> Result<MediaProvenance, ProvenanceError> {
     let names = clip_names(clips, videos_dir)?;
     let ffmpeg_version = ffmpeg_version(Path::new(FFMPEG_PATH))?;
     let pairs: Vec<(AnimState, &Path)> = clips
         .iter()
         .map(|clip| (clip.state, clip.path.as_path()))
         .collect();
-    let crate::FramedBake { meta, bar_rgb } =
-        crate::bake_framed_action_videos(slug, &pairs, output_dir, spec)?;
+    let crate::FramedBake {
+        meta,
+        bar_rgb,
+        seam,
+    } = bake_repaired_action_videos(slug, &pairs, output_dir, spec, seams)?;
     let frame_size = spec.size;
     let (png, manifest) =
         media_paths(output_dir, slug).map_err(|_| ProvenanceError::InvalidSlug {
@@ -325,6 +393,7 @@ pub fn bake_with_provenance(
                 frame_count: slice.frame_count,
                 origin: clip.origin.clone(),
                 bar_rgb: bar_rgb.get(&clip.state).copied().flatten(),
+                seam: seam.get(&clip.state).copied().flatten(),
             },
         );
     }
@@ -415,8 +484,8 @@ pub fn ffmpeg_version(ffmpeg: &Path) -> Result<String, ProvenanceError> {
 }
 
 /// The origin of a clip with SHA-256 `clip_sha256` that the ledger downloaded for `slug`'s
-/// `state`: the last such `downloaded` line, with the model and prompt of the request whose
-/// operation produced it. `None` if the ledger never downloaded these bytes for that clip.
+/// `state`: the last such `downloaded` line, with the model, prompt and pictures of the request
+/// whose operation produced it. `None` if the ledger never downloaded these bytes for that clip.
 #[must_use]
 pub fn veo_origin_from_ledger(
     ledger: &[NumberedRecord],
@@ -440,6 +509,27 @@ pub fn veo_origin_from_ledger(
                 }
                 _ => None,
             })?;
+    match started_request(ledger, &operation)? {
+        LedgerEvent::RequestStarted {
+            model,
+            prompt_sha256,
+            keyframe_sha256,
+            last_frame_sha256,
+            ..
+        } => Some(ClipOrigin::Veo {
+            model: model.clone(),
+            operation,
+            prompt_sha256: prompt_sha256.clone(),
+            keyframe_sha256: keyframe_sha256.clone(),
+            last_frame_sha256: last_frame_sha256.clone(),
+            ledger_line: line,
+        }),
+        _ => None,
+    }
+}
+
+/// The `request_started` event of the request whose operation the ledger named `operation`.
+fn started_request<'a>(ledger: &'a [NumberedRecord], operation: &str) -> Option<&'a LedgerEvent> {
     let request_id = ledger
         .iter()
         .find_map(|numbered| match &numbered.record.event {
@@ -447,27 +537,12 @@ pub fn veo_origin_from_ledger(
                 operation: named,
                 request_id,
                 ..
-            } if *named == operation => Some(request_id.clone()),
+            } if named == operation => Some(request_id.as_str()),
             _ => None,
         })?;
-    ledger
-        .iter()
-        .find_map(|numbered| match &numbered.record.event {
-            LedgerEvent::RequestStarted {
-                request_id: started,
-                model,
-                prompt_sha256,
-                keyframe_sha256,
-                ..
-            } if *started == request_id => Some(ClipOrigin::Veo {
-                model: model.clone(),
-                operation: operation.clone(),
-                prompt_sha256: prompt_sha256.clone(),
-                keyframe_sha256: keyframe_sha256.clone(),
-                ledger_line: line,
-            }),
-            _ => None,
-        })
+    ledger.iter().map(|numbered| &numbered.record.event).find(
+        |event| matches!(event, LedgerEvent::RequestStarted { request_id: started, .. } if started == request_id),
+    )
 }
 
 // --- The required set ------------------------------------------------------------------------
@@ -696,6 +771,16 @@ pub enum UnverifiedReason {
         /// The state.
         state: AnimState,
     },
+    /// A `Veo` origin's end frame (`last_frame_sha256`) differs from the one the request's
+    /// `request_started` line recorded.
+    LastFrameMismatch {
+        /// The state.
+        state: AnimState,
+        /// The provenance record's value.
+        recorded: Option<String>,
+        /// The ledger's value, `None` also when the request's line was not found.
+        requested: Option<String>,
+    },
 }
 
 impl std::fmt::Display for UnverifiedReason {
@@ -755,6 +840,14 @@ impl std::fmt::Display for UnverifiedReason {
             Self::RejectedInReview { state } => {
                 write!(f, "{state:?}: the clip was rejected in review")
             }
+            Self::LastFrameMismatch {
+                state,
+                recorded,
+                requested,
+            } => write!(
+                f,
+                "{state:?}: the recorded end frame {recorded:?} differs from the request's {requested:?}"
+            ),
         }
     }
 }
@@ -1015,6 +1108,7 @@ fn check_origin(
         }
         ClipOrigin::Veo {
             operation,
+            last_frame_sha256,
             ledger_line,
             ..
         } => {
@@ -1036,6 +1130,19 @@ fn check_origin(
                         reasons.push(mismatch(problem));
                     }
                 }
+            }
+            let requested = match started_request(ledger, operation) {
+                Some(LedgerEvent::RequestStarted {
+                    last_frame_sha256, ..
+                }) => last_frame_sha256.clone(),
+                _ => None,
+            };
+            if requested != *last_frame_sha256 {
+                reasons.push(UnverifiedReason::LastFrameMismatch {
+                    state,
+                    recorded: last_frame_sha256.clone(),
+                    requested,
+                });
             }
             if ledger.iter().any(|numbered| {
                 matches!(&numbered.record.event, LedgerEvent::RejectedInReview {
@@ -1108,10 +1215,16 @@ mod tests {
                         model: "m".into(),
                         operation: "o".into(),
                         prompt_sha256: "d".repeat(64),
-                        keyframe_sha256: None,
+                        keyframe_sha256: Some("e".repeat(64)),
+                        last_frame_sha256: Some("e".repeat(64)),
                         ledger_line: 3,
                     },
                     bar_rgb: Some([44, 48, 74]),
+                    seam: Some(SeamRecord {
+                        sampling: FrameSampling::Loop,
+                        scale_permille: 61,
+                        crossfade_frames: 2,
+                    }),
                 },
             )]),
         };
@@ -1133,6 +1246,7 @@ mod tests {
                 commit: String::new(),
             },
             bar_rgb: None,
+            seam: None,
         };
         let mut reasons = Vec::new();
         check_clip(AnimState::Idle, &record, Path::new("."), &mut reasons);

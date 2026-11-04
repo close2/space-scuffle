@@ -147,3 +147,85 @@ measurements at `961517c` against the baseline above: the whole matrix on 20 see
 baseline `matrix.csv` (all 1000 rows), and battle 33's 68-seed `seeds.csv` is byte-identical. This is the tool's
 "no change" proof that WP1 asked for (plan D-1, item 2); WP1's own section may cite it.
 
+## 2. WP2: a damage point of 0 releases on the tick its swing starts (Q0036, D-3)
+
+**Commit.** The rule commit of WP2 on `main` at `36943e1` (WP0 and WP1 merged). `combat.rs` now has one release
+routine (`release_swing`), called by `step_windup` when the wind-up ends and by `start_swing` at once when the
+damage point is 0; `step_ready_weapon`, `step_rotating_weapon` and `step_backswing` return whether they released.
+A damage-point-0 swing never shows a `Windup`, so `period_ticks` is the attack cycle for every weapon. Before, such a
+weapon held `Windup { remaining: 0 }` for one tick and fired every `period + 1` ticks. Answers the cadence part of
+Q0036 ("clean up the quirk if appropriate"). Outputs under `~/scratch/combat_wp2/after/` on the development server.
+
+**Who is affected.** The six shipped identities with a damage point of 0 (plan §2.2), each now one tick faster per
+cycle, at its authored period:
+
+| Identity | Weapon | Period (cycle now) | Cycle before | In matrix battles |
+|---|---|---|---|---|
+| `napalm_wheeler` (hellion) | Napalm Emitter | 45 | 46 | 9a, 9b, 10 |
+| `tripod_annihilator` (colossus) | Thermal Lance Sweep | 27 | 28 | 12a, 12b, 12c, 26, 35 |
+| `prismatic_saucer` (void ray) | Prismatic Beam (both) | 9 | 10 | 17, 18 |
+| `flying_saucer` | Disruptor Beam (both) | 20 | 21 | none (orders golden) |
+| `sky_bastion` | Concord Cannon | 28 | 29 | none |
+| `prism_weaver` | Disruption Beam | 18 | 19 | none |
+
+### 2.1 Whole matrix, 20 seeds
+
+Compared with the state after WP1 (§1.4, bit-identical to the baseline of §1.1). **7 battles moved, exactly the
+plan's list (§5.1); no battle changed its winner; expectation failures 0 on the seeds of record and 2 over all
+seeds**, battle 33's seeds 1 and 6 as in the baseline. No entry of `matchup_matrix.ron` needed re-recording: every
+moved battle stays inside its expectation on every seed.
+
+| Battle | Seeds moved | Survivors blue – red, before → after | End tick, before → after | Lead hull, before → after |
+|---|---|---|---|---|
+| 9a_hellion_vs_4_lings | 20 | 1.00 – 0.00 → same | 94.0 → 91.0 | blue 23.80 → 27.80 |
+| 10_2_hellions_vs_8_lings | 20 | 2.00 – 0.00 → same | 57.2 → 55.0 | blue 69.80 → 70.00 |
+| 12a_colossus_vs_6_marines | 20 | 1.00 – 0.00 → same | 81.8 → 78.0 | blue 243.70 → 243.80 |
+| 12b_colossus_vs_3_marauders | 20 | 0.00 – 3.00 → **0.00 – 2.00** | 164.0 → 164.0 | red 72.80 (20) → 67.53 (19) |
+| 17_void_ray_vs_muta | 20 | 1.00 – 0.00 → same | 202.0 → 181.0 | blue 150.00 → 150.00 |
+| 18_void_ray_vs_corruptor | 20 | 1.00 – 0.00 → same | 252.0 → 226.0 | blue 90.00 → 110.00 |
+| 26_100_lings_vs_6_colossi | 20 | 0.00 – 6.00 → same | 120.0 → 114.8 | red 250.00 → 250.00 |
+
+- **12b** keeps its expectation `red: (1, 999)`: the colossus now kills one marauder before it falls, on every seed
+  (survivors 2 on all 20; the first marauder dies on seed 10). The plan's probe predicted this (3 → 2, still
+  passing).
+- **Not moved although a damage-point-0 unit fights:** 9b (traced on the seeds of record: the hellion releases 4
+  shots before it dies at tick 148, and the end tick and the roach's life are the same before and after) and 12c
+  and 35 (traced:
+  the colossi release no shot at all against the vikings). Their rows are bit-identical.
+- The figures agree with the plan's probe (§5.1, "Cadence fix" column, period − 1 proxy) to within one or two ticks
+  of end tick (9a 92 → 91, 10 52 → 55, 12a 79 → 78, 17 182 → 181, 18 227 → 226, 26 116 → 114.8); the proxy kept the
+  one-tick wind-up, so it fired one tick later on the first swing.
+
+### 2.2 Battle 33, 68 seeds
+
+**Bit-identical** to §1.2: `seeds.csv` and all 68 `seed_<n>_ticks.csv` files are byte-identical to the post-WP1 run
+(no damage-point-0 unit fights in it). Marine wins / zealot wins / unresolved 61 / 6 / 1, marine survivors 7.41
+(3.34), K over the first 5 s 4.25 (0.40), seeds of record 8–0, 6–0, 9–0, 13–0, all unchanged.
+
+### 2.3 Golden replays
+
+- **`golden_replay.ron`: unchanged** (no unit in it has a damage point of 0).
+- **`golden_replay_orders.ron`: re-recorded.** Its `blue_spotter` (`flying_saucer`, period 20, damage point 0) shoots
+  at the zealots on the ledge. A throwaway observer that logs every rise of the spotter's cooldown (not committed)
+  showed releases at ticks 122, 143, 164, … (every 21) before and 121, 141, 161, … (every 20) after, the last at 290
+  before and 281 after. The first differing checkpoint is **13 (ticks 121 to 130)**; checkpoints 13 to 31 changed,
+  and from checkpoint 32 (ticks 311 to 320) on the checksums are identical to the old list again: the ledge fight is
+  over and the spotter's cooldown has run out in both runs, so no state the cadence touched remains. Both phase-order
+  situations the fixture exists for (same-tick reveal, mid-route repath) are still found by the test.
+- Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`, as CI) all reproduce both fixtures.
+
+### 2.4 The trace after this rule
+
+- **Releases** are read from the cooldown (§ "How to reproduce"), so a swing that starts and releases in one tick is
+  counted, whatever phase it came from.
+- **Starts.** A damage-point-0 swing publishes no wind-up, so the trace inferred no start for it and
+  `swings_started` would have read 0 for such units (WP4 makes the zealot one). A separate commit of WP2 adds
+  `SwingEvent::StartedAndReleased`: a release whose previous phase was not a wind-up started its swing in the same
+  tick, and counts as both. Test first (`a_swing_that_starts_and_releases_in_one_tick_counts_as_started`, red with 0
+  starts against 4 releases). A whole-matrix rerun with that tool, compared with §2.1's `matrix.csv`, is
+  bit-identical: the change affects counts only.
+- **Remaining limit, documented and not handled.** A unit that dies in the tick its damage-point-0 swing starts and
+  releases left no wind-up behind and publishes no cooldown, so that one shot is not counted
+  (`BattleTrace::count_releases_of_the_fallen`). Inferring it would need the weapon's target choice and firing arc
+  re-derived from the previous samples, which the trace does not mirror. It affects only the trace's counts, never
+  an outcome, and only shots fired on a unit's last tick.

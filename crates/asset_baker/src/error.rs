@@ -265,6 +265,41 @@ pub enum BakerError {
         slug: String,
     },
 
+    /// The loop policy of `media_style.ron` overrides an identity the catalog does not hold
+    /// exactly.
+    #[error("invalid data file '{path}': the loop override '{slug}' is not a catalog identity")]
+    UnknownLoopOverride {
+        /// The media style file.
+        path: PathBuf,
+        /// The unknown slug.
+        slug: String,
+    },
+
+    /// A start request would send an end frame (`lastFrame`) without a start frame (`image`).
+    /// The service documents the end frame only together with a start frame, so nothing is
+    /// sent.
+    #[error(
+        "a request with an end frame (lastFrame) needs a start frame (image); nothing was sent"
+    )]
+    LastFrameWithoutStart,
+
+    /// A run would send an end frame (`lastFrame`) with a key that selects the Gemini API, where
+    /// the `-001` models do not exist and the inline form is undocumented. Nothing was sent.
+    #[error("pinning a clip's last frame (lastFrame) needs Vertex AI (a key starting with `AQ.`); the key selects the Gemini API, so nothing was sent. Pinned clips: {clips:?}")]
+    LastFrameNeedsVertex {
+        /// `<slug> <state>` of each clip that would send `lastFrame`; empty when one request
+        /// was refused on its own.
+        clips: Vec<String>,
+    },
+
+    /// An image to send is neither PNG nor JPEG by its contents, the only formats the service
+    /// accepts. Nothing was sent.
+    #[error("'{path}' is neither PNG nor JPEG by its contents; nothing was sent")]
+    UnsupportedImageFormat {
+        /// The image.
+        path: PathBuf,
+    },
+
     /// A state was requested that the identity can never publish, so media for it is useless.
     #[error("'{slug}' does not publish the {state} action; it publishes {published:?}")]
     StateNotPublished {
@@ -380,6 +415,21 @@ pub enum BakerError {
     #[error("invalid argument: {reason}")]
     InvalidArgument {
         /// What is wrong.
+        reason: String,
+    },
+
+    /// The seam repair's scale lock does not explain a looping clip's motion as a steady camera
+    /// zoom (plan `docs/plans/2026-11-04-veo-seamless-loops.md`, D-5), so the clip cannot be
+    /// repaired and review must reject it.
+    #[error("seam repair refused for {clip}: {reason} (fitted growth {growth_percent:.2} %, largest departure from the fitted line {residual_percent:.2} %); reject the clip in review")]
+    SeamRepairRefused {
+        /// The clip, as the bake names it (identity and state).
+        clip: String,
+        /// Fitted change of scale from the first kept frame to the last, in percent.
+        growth_percent: f64,
+        /// Largest difference between a frame's measured scale and the fitted line, in percent.
+        residual_percent: f64,
+        /// Which limit the clip broke.
         reason: String,
     },
 }
