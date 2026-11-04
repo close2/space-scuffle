@@ -272,3 +272,176 @@ Per-run load:
 
 Logs (per-round tables with p95): `~/scratch/logs/open_wp7_bench_{a,b}_c{1,8}_r{1..5}.log` and
 `open_wp7_bench_index.log` (scratch; may be cleaned, so the tables here are the record).
+
+## 6. WP8: bit-exact refactor II (brick sparsity)
+
+WP8 of the plan changes `crates/client/src/smog/fluid.rs`, adds `crates/client/src/smog/bricks.rs`, makes the two
+upload buffers private (`density_bytes()`, `velocity_bytes()`, and `#[doc(hidden)] retained_byte_buffers()` for
+`sync_steady_state_tests.rs`), and updates their readers (`smog/mod.rs`, `smog/gpu_upload.rs`,
+`smog_golden_tests.rs`). Commits `7fdbb54` (bricks), `370907f` (two test gaps closed) and `ab12883` (linear runs).
+
+### What was built
+
+The grid is cut into 8 × 4 × 8 bricks (12 × 3 × 9 = 324). Per brick the solver keeps the flags of the plan's D-2:
+velocity at rest and scalars at rest (one set per slab, swapped with the slabs), occupancy (`!(density < 1e-6)` or
+`!(glow < 1e-6)` possible; also one set per slab), vorticity at rest, the largest `|u|` per axis written by the
+velocity advection, and the largest vorticity magnitude written by the curl. Per 8-voxel packing segment it keeps
+whether the density alpha bytes are 0 and whether the velocity bytes are `(128, 128, 128, 0)`. The rules are the
+plan's, pass by pass:
+
+| Pass | Rule as built |
+|---|---|
+| Injection | After each source, every brick its voxel box touches loses its velocity and scalar rest flags and is marked occupied |
+| Curl | A brick whose velocity, and its face neighbours' velocity, is at rest has a curl of `+0.0`: skipped if its vorticity flag is set, else its interior voxels are filled with `+0.0`. Otherwise computed; the flag is whether all written bits are 0 |
+| Confinement force | A brick whose largest written magnitude is below `1e-4` (a NaN counts as `+inf`) is skipped; every other brick loses its velocity rest flag |
+| Velocity advection | A brick whose velocity is at rest is skipped if its scratch flag is set, else filled with `+0.0`; otherwise computed, recording the largest `|u|` per axis |
+| Density advection | A brick with no occupied brick within `ceil((max |u| + |buoyancy|) dt / cell) + 2` voxels per axis is skipped if its scratch flag is set, else filled with density 0, glow 0 and the tail tint; otherwise computed |
+| Packing | Rows in linear order; a segment is skipped when its brick's scalars, velocity and vorticity are at rest and both of its byte flags are set |
+| `new`, `clear`, `set_bounds`, `set_bounds_quantized` | Rescan every flag of the fields and the scratch slabs from the slabs and bytes |
+
+The per-voxel code of a computed brick is the dense code, moved into per-voxel and per-row functions with the same
+expressions. Each pass first decides per brick (skip, fill or compute). It then walks maximal runs of one decision
+in the dense solver's linear voxel order. A second loop folds what each computed run wrote into its bricks' flags;
+the "Benchmark" section below explains why.
+
+### Tests
+
+- **`bricks.rs` unit tests:** voxel-to-brick round trip for every voxel; face neighbours clipped at the grid's
+  faces; the box query against a brute-force reference (boxes inside, partly outside, wholly outside, and empty);
+  the reach formula; segments and runs in linear order.
+- **`sparse_solver_matches_dense_solver_bit_for_bit`** (`fluid.rs`). A `cfg(test)` switch, `force_dense`, makes
+  every skip query answer "compute", and makes packing walk the plain linear order. Two grids run a 600-step script,
+  one sparse and one dense. After every step the test compares, bit for bit: all 20 slabs (fields and scratch slabs,
+  tint included), both byte buffers, the metrics and the bounds. The script covers:
+  - sources that appear, move at 11 world units per second, and stop;
+  - 40 sources, then 13;
+  - buoyancy +0.45, −0.45 and 0, and dissipation 0 and default;
+  - `dt` cycling 1/240, 1/144, 1/60, 1/30, 0.07, 1/60, 0 and 1/90 s;
+  - three quantized shifts (one of them along y), a full clear, a small `set_bounds`, and a shift wider than the
+    grid.
+- **`brick_flags_keep_their_promises_after_every_step`.** After every step of the same script, every flag that
+  promises rest holds bit for bit, and every brick flagged unoccupied is empty. The test also requires each kind of
+  flag to fire at least once.
+- **`smog_resting_on_a_brick_face_matches_dense_solver`.** Smog rests on a brick's lower face, with zero velocity
+  and buoyancy and power-of-two cells. A back-trace then lands exactly on a voxel centre, and its weight-zero upper
+  corner is the smog in the next brick. This is the only case where the reach margin decides the result (see the
+  red runs).
+- **`advection_passes_write_every_scratch_voxel` (WP7).** It now rescans the flags after poisoning the scratch
+  slabs, so the flags describe the slabs. Its precondition becomes "every scratch voxel holds this step's value".
+
+### Goldens
+
+All 19 tests of `smog_golden_tests.rs` pass unchanged at every WP8 commit, among them the eleven fluid and system
+goldens and both `libm` canaries. No constant changed.
+
+### Mutation red runs
+
+Each mutation was applied to the final code. The `fluid.rs` unit tests and `smog_golden_tests.rs` were run, and the
+file was restored (logs `~/scratch/logs/open_wp8_red_*.log`):
+
+| Mutation | Unit tests that fail | Goldens that fail |
+|---|---|---|
+| The plan's: reach margin `+ 2` → `+ 0` | `smog_resting_on_a_brick_face_matches_dense_solver` ("step 0: tint_r[23358] differs: sparse 0.28, dense 0.58800006") | none |
+| The plan's: injection sets the velocity flag to rest instead of clearing it | the flag invariant test ("step 0: brick 112, voxel (39, 3, 28): velocity scratch"), the differential test, `test_bubble_moving_through_existing_smog_influence` | 11 |
+| The plan's: packing walks the grid in another order (y-major rows) | the differential test ("step 0: metrics") | 10 |
+| Curl skips on the brick's own flag, ignoring its face neighbours | the differential test | 10 |
+| The confinement force keeps the velocity flags of the bricks it changes | the flag invariant test, the differential test | 10 |
+| A quantized shift does not rescan the flags | the flag invariant test (step 100, scalar scratch), the differential test ("step 101: tint_r[0] differs: sparse 0.6, dense 0.28") | none: the tint hole of §1 |
+
+Two of the plan's expectations did not hold on the first implementation, and `370907f` strengthened the tests:
+
+- **The reach mutation passed the scripted differential test and every golden**, including
+  `fluid_fast_sources_golden`. The margin matters only where a back-trace lands exactly on a voxel centre next to a
+  brick that holds smog, and no scripted step reached that case. The face test above builds it.
+- **The packing mutation failed ten goldens but not the differential test**, because the dense reference shared
+  the sparse walk. The reference now packs in plain linear order.
+
+### Benchmark
+
+Two release bench binaries were built in the same target directory (`~/scratch/cargo-target/open-wp8`): arm A from
+`155aab7` (main, WP7's solver), arm B from this branch's final solver (the sources of `ab12883`). Five rounds ran
+on 2026-11-04 from 14:15 to 14:26 UTC:
+
+- Each round ran `--contend 1`, then `--contend 8`.
+- Within each, the two arms ran back to back: A first in odd rounds, B first in even ones.
+- Every run was pinned with `taskset -c 32-47`.
+- The machine-wide one-minute load was 9.8 to 21.2.
+- CPUs 32 to 47 were 0.8 to 76 % busy in the 5 s before a run, with other users' work. The table at the end of
+  this section gives the figures per run.
+
+Medians over the five rounds of each row's mean and p50, ms per step:
+
+| Scenario | Sources | `--contend 1` A mean / p50 | B mean / p50 | p50 change | `--contend 8` A mean / p50 | B mean / p50 | p50 change |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `empty` | 0 | 2.17 / 2.12 | 0.13 / 0.12 | −94 % | 3.14 / 2.94 | 0.15 / 0.12 | −96 % |
+| `showcase` | 10 | 6.01 / 6.13 | 7.03 / 7.21 | **+18 %** | 6.43 / 6.52 | 7.84 / 7.75 | **+19 %** |
+| `crowd_48` | 48 | 4.20 / 4.01 | 4.36 / 4.33 | +8 % | 4.81 / 4.40 | 4.70 / 4.33 | −2 % |
+| `battle_240` | 240 | 4.10 / 4.16 | 3.80 / 3.72 | −11 % | 4.47 / 4.39 | 4.01 / 3.87 | −12 % |
+| `after_fight`, fight (0 to 30 s) | 240 | 4.04 / 3.97 | 3.72 / 3.71 | −7 % | 4.47 / 4.29 | 4.09 / 3.92 | −9 % |
+| `after_fight`, after (30 to 60 s) | 0 | 4.26 / 4.44 | 3.74 / 3.17 | −29 % | 5.00 / 5.03 | 3.79 / 3.22 | −36 % |
+
+What it shows:
+
+1. **An idle field is now almost free.** It costs 0.12 ms against 2.1 to 2.9 ms: 18 to 25 times faster.
+2. **After a fight the saving is partial** (−29 to −36 %). The velocity left by the wakes never reaches exact zero
+   (plan §2.1), so most bricks of the battle window keep computing. The p95 of this row (5.9 ms) is far above its
+   p50 (3.2 ms), because the first seconds after the fight still compute nearly everything. WP9's quiescence
+   targets this row.
+3. **A field that is active everywhere gains little, or loses.**
+   - `battle_240` sweeps 240 sources over the whole window, so no brick rests: −11 %.
+   - The Visual Lab `showcase` (ten large sources in a small volume, confinement on) is **18 % slower** than the
+     dense solver. Nothing is skipped there, and the per-brick bookkeeping (decisions, folds, row re-flagging) costs
+     about 1.1 ms.
+
+**Stop rule (plan, WP8 step 5).**
+
+- `empty` is 18 times faster; the rule asks for 5. Met.
+- `battle_240` is 1.12 times faster; the rule asks for 1.3. **Not met**, so WP8 stops and reports before WP9.
+
+The plan's §2.1 expected that, at 400 units, only bricks near wakes are visited. In this benchmark's `battle_240`
+the wakes cover the window, and because velocities never return to zero they keep covering it. Q0048 asks the owner
+how to go on.
+
+**How the walk was chosen.** The first implementation (`7fdbb54`) walked the grid brick by brick. Its three-round
+A/B used the same method (12:33 to 12:38 UTC, logs `~/scratch/logs/open_wp8_bench_v1/`) and measured `empty` −96 %,
+`battle_240` −6 % and `showcase` +35 % (+53 % contended). `perf` showed two causes:
+
+- the curl loop, the one loop LLVM vectorizes (`sqrtps`), had become scalar;
+- a brick walk touches about 80 pages per brick across the slabs.
+
+Walking runs of one decision in linear order (`ab12883`) restored the vectorized curl and the dense memory order,
+and brought `showcase` to +18 %. An instrumented build (per-pass timers, not committed) put the remaining
+`showcase` excess in three passes: confinement (about +28 %), packing (about +44 %) and velocity advection (about
++8 %).
+
+Per-run load:
+
+| Round | `--contend` | Arm | Started (UTC) | Load (1 min) | CPUs 32-47 busy before | during |
+|---|---:|---|---|---:|---:|---:|
+| 1 | 1 | A | 14:15:34 | 19.6 | 30.7 % | 34.8 % |
+| 1 | 1 | B | 14:16:05 | 15.0 | 23.6 % | 34.4 % |
+| 1 | 8 | A | 14:16:32 | 11.3 | 14.6 % | 72.2 % |
+| 1 | 8 | B | 14:17:03 | 12.3 | 13.3 % | 84.2 % |
+| 2 | 1 | B | 14:17:34 | 18.0 | 41.4 % | 37.1 % |
+| 2 | 1 | A | 14:18:02 | 13.4 | 32.1 % | 31.1 % |
+| 2 | 8 | B | 14:18:31 | 9.8 | 14.6 % | 64.6 % |
+| 2 | 8 | A | 14:19:00 | 11.0 | 0.8 % | 56.3 % |
+| 3 | 1 | A | 14:19:34 | 11.9 | 14.7 % | 62.8 % |
+| 3 | 1 | B | 14:20:09 | 21.2 | 17.9 % | 25.3 % |
+| 3 | 8 | A | 14:20:36 | 15.4 | 31.4 % | 86.5 % |
+| 3 | 8 | B | 14:21:11 | 19.8 | 41.9 % | 78.1 % |
+| 4 | 1 | B | 14:21:44 | 21.0 | 27.5 % | 18.5 % |
+| 4 | 1 | A | 14:22:13 | 16.9 | 11.8 % | 24.2 % |
+| 4 | 8 | B | 14:22:43 | 15.0 | 12.3 % | 58.6 % |
+| 4 | 8 | A | 14:23:12 | 15.0 | 2.0 % | 72.2 % |
+| 5 | 1 | A | 14:23:48 | 17.9 | 41.9 % | 33.0 % |
+| 5 | 1 | B | 14:24:18 | 17.9 | 33.5 % | 48.0 % |
+| 5 | 8 | A | 14:24:47 | 17.1 | 62.3 % | 93.5 % |
+| 5 | 8 | B | 14:25:24 | 19.0 | 75.8 % | 99.9 % |
+
+Round 5's contended runs overlapped other work on CPUs 32 to 47: B's `showcase` and `after_fight` rows took 2 to 3
+times as long as in its other rounds. The medians keep those runs out of the result.
+
+Logs: `~/scratch/logs/open_wp8_bench_{a,b}_c{1,8}_r{1..5}.log` and `open_wp8_bench_index.log`; the first
+implementation's are in `open_wp8_bench_v1/`. They are on scratch and may be cleaned, so the tables here are the
+record.
