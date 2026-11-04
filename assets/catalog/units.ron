@@ -260,7 +260,7 @@
             shape: UnitSphere,
             silhouette: MeleeSpikes,
             mover_type: Ground,
-            attributes: (bits: 17),
+            attributes: (bits: 5),
             max_hp: 100.0,
             max_shields: 50.0,
             max_energy: 0.0,

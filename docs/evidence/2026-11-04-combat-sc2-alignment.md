@@ -409,3 +409,38 @@ the real zealot strikes earlier on contact, on every swing.
   their reach, so no zealot strike lands in either run and all 60 checksums are identical. Both phase-order
   situations are still found by the test.
 - Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`, as CI) reproduce both fixtures.
+
+## 4. WP5: the zealot's attributes (Q0040)
+
+**Commit.** The data commit of WP5 on `main` at `be5a476` (WP0, WP1, WP2 and WP4 merged). `psi_grey` is tagged
+**Light, Biological** (`attributes: (bits: 5)`) instead of Light, Psionic (`bits: 17`), as in the StarCraft II
+5.0.14 game data and Liquipedia (battle 33 investigation §1.5), the owner's choice (Q0040, option 2, following
+Q0008). Outputs under `~/scratch/combat_wp56/` on the development server (`base/` the state at `be5a476`, whose
+`matrix.csv` is byte-identical to WP4's §3.1 output; `wp5/` the committed state).
+
+**Inertness, checked before the edit (plan WP5 step 1).**
+
+- **Rules.** No code in `sim_core`, `sim_map` or `sim_types` reads `BIOLOGICAL` or `PSIONIC` for a unit. The only
+  reads of a unit's attributes in the simulation are the Armored and Light damage bonuses (`combat.rs`), the
+  Structure check of the threat priority (`compute_threat_priority` in `combat.rs`), and
+  `target_flags.intersects(attributes)` in target acquisition and combat resolution (`target_acquisition.rs`,
+  `combat_resolution.rs`). `catalog.rs` sets `PSIONIC` only on structures. `sim_fixtures` reads Light and Armored
+  only. The client's Visual Lab (`lab_ui.rs`) displays the Biological tag, which is presentation.
+- **Data.** Every weapon in `units.ron` and `structures.ron` has `target_flags: (bits: 255)`, so the intersection is
+  non-empty for any unit with an attribute, and the zealot keeps Light; no catalog file has an ability or bonus
+  that filters on attributes.
+- **State.** Attributes are catalog data, not entity state, so the checksum does not hash them.
+
+**Measured.**
+
+- **Whole matrix, 20 seeds: bit-identical** to the state before (all 1000 rows of `matrix.csv`), with the tool built
+  on the committed catalog and, before the edit, with a scratch catalog carrying only this change. Expectation
+  failures stay 0 on the seeds of record and 6 over all seeds (battle 33, as in §3.1).
+- **Battle 33, 68 seeds: bit-identical** to §3.2: `seeds.csv` and all 68 `seed_<n>_ticks.csv` files are
+  byte-identical. Marine wins / zealot wins / unresolved 30 / 24 / 14, marine survivors 3.09 (3.01), K over the
+  first 5 s 4.18 (0.32), seeds of record 0–3, 6–0, 3–1, 4–0, all unchanged.
+- **Golden replays: both unchanged.** `golden_replay.ron` and `golden_replay_orders.ron` pass as recorded in debug,
+  release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`, as CI).
+
+The tag starts to matter only when an ability filters on Biological or Psionic units, as several StarCraft II
+abilities do; none exists in the catalog today.
