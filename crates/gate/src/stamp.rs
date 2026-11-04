@@ -58,6 +58,11 @@ pub struct Stamp {
     pub targets: Vec<StampTarget>,
     /// The catalog commands run.
     pub commands: Vec<String>,
+    /// Targets that failed and then passed on an immediate rerun in an earlier attempt of this
+    /// run, which was therefore repeated (blueprint §3.5). Stamps written before this field
+    /// existed read as none.
+    #[serde(default)]
+    pub flakes: Vec<String>,
 }
 
 /// The tree and commit of a clean working tree: what a stamp may name.
@@ -204,6 +209,7 @@ mod tests {
                 passed: true,
             }],
             commands: vec!["golden-replay-release".into()],
+            flakes: vec!["client/x_tests".into()],
         }
     }
 
@@ -220,6 +226,17 @@ mod tests {
         assert_eq!(Stamp::read(dir.path(), "abc123", Tier::Full)?, None);
         assert_eq!(Stamp::read_all(dir.path())?, vec![stamp]);
         assert_eq!(Stamp::read_all(&dir.path().join("missing"))?, Vec::new());
+        Ok(())
+    }
+
+    #[test]
+    fn a_stamp_without_flakes_reads_as_none() -> Result<(), GateError> {
+        let mut stamp = sample();
+        stamp.flakes.clear();
+        let text = stamp.to_ron()?;
+        let old = text.replace("flakes: [],", "");
+        assert!(!old.contains("flakes"), "{old}");
+        assert_eq!(Stamp::from_ron(&old, Path::new("old.ron"))?, stamp);
         Ok(())
     }
 

@@ -13,12 +13,14 @@
 //! - An error is printed and exits 2; it is never reported as a green run.
 
 use gate::{
-    class_report, parse_args, render_selection, run_tier, select, stamp_dir, Command, Context,
-    GateError, Stamp,
+    class_report, failing_targets, parse_args, parse_test_log, render_log_timings,
+    render_selection, repeated_flakes, run_tier, select, stamp_dir, suspect_report, Command,
+    Context, GateError, Stamp, TargetId, FLAKE_LIMIT,
 };
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::ExitCode;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Prints the selection of `explain` and runs nothing.
 fn explain(
@@ -34,8 +36,29 @@ fn explain(
     Ok(())
 }
 
-/// Prints the class report from the stamps.
-fn timings(options: &gate::RunOptions) -> Result<(), GateError> {
+/// Reads a `cargo test` log.
+fn read_log(path: &Path) -> Result<String, GateError> {
+    std::fs::read_to_string(path).map_err(|source| GateError::Io {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Prints the class and flake report from the stamps, or the Markdown report of one log.
+fn timings(
+    cwd: &Path,
+    from_log: Option<&Path>,
+    options: &gate::RunOptions,
+) -> Result<(), GateError> {
+    if let Some(log) = from_log {
+        let context = Context::load(cwd)?;
+        let binaries = parse_test_log(&read_log(log)?);
+        print!(
+            "{}",
+            render_log_timings(&binaries, &context.workspace, &context.catalog)
+        );
+        return Ok(());
+    }
     let dir = stamp_dir(options)?;
     let stamps = Stamp::read_all(&dir)?;
     let findings = class_report(&stamps);
@@ -44,6 +67,15 @@ fn timings(options: &gate::RunOptions) -> Result<(), GateError> {
         stamps.len(),
         dir.display()
     );
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    for flake in repeated_flakes(&stamps, now) {
+        println!(
+            "  {:<48} flaked {} times in 7 days (limit {FLAKE_LIMIT}): a bug to fix, not to rerun",
+            flake.target, flake.count
+        );
+    }
     if findings.is_empty() {
         println!("Every class agrees with its recorded times.");
     }
@@ -56,6 +88,42 @@ fn timings(options: &gate::RunOptions) -> Result<(), GateError> {
             finding.runs
         );
     }
+    Ok(())
+}
+
+/// Prints the red rule's suspect list for the named targets and those a log reports failing.
+fn suspects(
+    cwd: &Path,
+    targets: &[String],
+    from_log: Option<&Path>,
+    options: &gate::RunOptions,
+) -> Result<(), GateError> {
+    let context = Context::load(cwd)?;
+    let known: Vec<TargetId> = context
+        .workspace
+        .test_targets()
+        .map(|target| target.id.clone())
+        .collect();
+    let mut failing = BTreeSet::new();
+    for name in targets {
+        let id = known
+            .iter()
+            .find(|id| id.to_string() == *name)
+            .ok_or_else(|| GateError::Usage(format!("`{name}` is not a test target")))?;
+        failing.insert(id.clone());
+    }
+    if let Some(log) = from_log {
+        failing.extend(failing_targets(&read_log(log)?, &context.workspace));
+    }
+    if failing.is_empty() {
+        println!("cargo gate suspects: no failing target named or found in the log.");
+        return Ok(());
+    }
+    let stamps = Stamp::read_all(&stamp_dir(options)?)?;
+    print!(
+        "{}",
+        suspect_report(&context, &failing, options.base.as_deref(), &stamps)?
+    );
     Ok(())
 }
 
@@ -72,7 +140,14 @@ fn run(args: &[String]) -> Result<bool, GateError> {
             tier,
             options,
         } => explain(&cwd, spec.as_deref(), *tier, &options.main_ref).map(|()| true),
-        Command::Timings { options } => timings(options).map(|()| true),
+        Command::Timings { from_log, options } => {
+            timings(&cwd, from_log.as_deref(), options).map(|()| true)
+        }
+        Command::Suspects {
+            targets,
+            from_log,
+            options,
+        } => suspects(&cwd, targets, from_log.as_deref(), options).map(|()| true),
         Command::Run { .. } | Command::Merge { .. } => {
             let report = run_tier(&command, &cwd)?;
             print!("{}", report.render());

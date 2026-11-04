@@ -7,7 +7,7 @@
 //! # How it fits
 //! The selection (`select.rs`) decides per tier which targets run; the runner (`runner.rs`)
 //! decides per tier which fixed steps run (fmt, clippy, doc tests, catalog commands). The charter
-//! check C16 is planned to read this enum as text (blueprint §9.2), so its variants stay one per
+//! check C16 reads this enum as text (blueprint §9.2), so its variants stay one per
 //! line with their lower-case names in [`Tier::name`].
 //!
 //! # Invariants

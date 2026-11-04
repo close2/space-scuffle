@@ -114,6 +114,7 @@ mod tests {
             finished_unix_s: 0,
             targets: Vec::new(),
             commands: Vec::new(),
+            flakes: Vec::new(),
         }
     }
 

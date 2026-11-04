@@ -201,6 +201,41 @@ impl Git {
             .map(str::to_string)
             .collect())
     }
+
+    /// The first-parent history of `head` back to `exclude` (or the `limit` newest commits when
+    /// `exclude` is `None`), newest first, as `(hash, subject)`. On `main` these are its merges
+    /// and direct commits: the changes the red rule (blueprint §3.5) can suspect.
+    ///
+    /// # Errors
+    /// As [`capture`], when a revision is unknown.
+    pub fn first_parent_history(
+        &self,
+        exclude: Option<&str>,
+        head: &str,
+        limit: usize,
+    ) -> Result<Vec<(String, String)>, GateError> {
+        let range = exclude.map_or_else(|| head.to_string(), |base| format!("{base}..{head}"));
+        let count = format!("--max-count={limit}");
+        let text = self.git(&["log", "--first-parent", &count, "--format=%H%x09%s", &range])?;
+        Ok(text
+            .lines()
+            .filter_map(|line| line.split_once('\t'))
+            .map(|(hash, subject)| (hash.to_string(), subject.to_string()))
+            .collect())
+    }
+
+    /// Whether commit `ancestor` is reachable from `descendant` (a commit is its own ancestor).
+    ///
+    /// # Errors
+    /// As [`capture`], for an unknown revision; a commit that is simply not an ancestor is
+    /// `Ok(false)`.
+    pub fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool, GateError> {
+        match self.git(&["merge-base", "--is-ancestor", ancestor, descendant]) {
+            Ok(_) => Ok(true),
+            Err(GateError::CommandFailed { status, .. }) if status.code() == Some(1) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -221,6 +256,49 @@ mod tests {
             ChangeSpec::parse("..x"),
             ChangeSpec::Since("..x".to_string())
         );
+    }
+
+    #[test]
+    fn first_parent_history_and_ancestry_follow_the_commits() -> Result<(), GateError> {
+        let dir = tempfile::tempdir().map_err(|source| GateError::Io {
+            path: "tempdir".into(),
+            source,
+        })?;
+        let root = dir.path();
+        let git = |args: &[&str]| capture("git", args, root);
+        git(&["init", "--quiet"])?;
+        for subject in ["one", "two", "three"] {
+            git(&[
+                "-c",
+                "user.name=gate",
+                "-c",
+                "user.email=gate@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                subject,
+            ])?;
+        }
+        let repo = Git::discover(root)?;
+        let first = repo.commit("HEAD~2")?;
+        let subjects = |history: Vec<(String, String)>| -> Vec<String> {
+            history.into_iter().map(|(_, subject)| subject).collect()
+        };
+        assert_eq!(
+            subjects(repo.first_parent_history(None, "HEAD", 2)?),
+            ["three", "two"]
+        );
+        assert_eq!(
+            subjects(repo.first_parent_history(Some(&first), "HEAD", 10)?),
+            ["three", "two"]
+        );
+        assert!(repo.is_ancestor(&first, "HEAD")?);
+        assert!(!repo.is_ancestor("HEAD", &first)?);
+        assert!(repo.is_ancestor("no-such-ref", "HEAD").is_err());
+        Ok(())
     }
 
     #[test]
