@@ -71,7 +71,11 @@ pub enum WeaponPhase {
         remaining_ticks: u16,
     },
     /// Damage has been applied; unit is executing the post-shot backswing animation.
-    /// Can be interrupted and cancelled by a Move command without DPS loss.
+    ///
+    /// A lock on orders, not a gate on the weapon: the cooldown runs in parallel, and once it
+    /// has run out the weapon acts as if `Ready`, so a new swing (or turning towards the
+    /// target) ends the backswing early. With nothing to attack it runs to its end. A `Move` or
+    /// `Stop` cancels it into `Cooldown` without DPS loss (stutter-step).
     Backswing {
         /// Target entity handle.
         target_id: EntityId,

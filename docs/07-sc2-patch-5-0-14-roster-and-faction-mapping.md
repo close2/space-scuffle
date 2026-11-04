@@ -93,10 +93,17 @@ Every weapon system operates on an authoritative four-phase state machine:
    ┌───┴───────────────────────────────┐
    ▼                                   ▼
 [Backswing Animation]          [Weapon Cooldown Timer]
-(Cancelable by Move Order!)    (Runs in background for period_ticks)
+(Cancelable by Move Order!)    (Runs in background: period_ticks - damage_point_ticks)
    │                                   │
-   └───────────► Ready to Move ◄───────┘
+   ▼                                   ▼
+Ends early when the cooldown   Cooldown over: the next attack starts,
+has run out and a new swing    even inside the backswing
+starts; else runs to its end
 ```
+- **Backswing Rule:** The backswing locks out new orders but never delays the next attack. When the cooldown runs
+  out during a backswing, the next swing starts on that tick and ends the backswing; with nothing to attack, the
+  backswing runs to its end. So the attack cycle is `period_ticks` whatever `backswing_ticks` is (Q0038, plan
+  `2026-11-04-combat-sc2-alignment` D-2).
 - **Stutter-Step Principle:** Issuing a `Move` order immediately at `damage_point_ticks + 1` cancels `backswing_ticks`, allowing high-skill players to kite slower enemies while the internal cooldown ticks down in the background.
 
 ---

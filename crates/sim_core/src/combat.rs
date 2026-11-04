@@ -576,19 +576,52 @@ pub fn step_entity_weapon(
             remaining_ticks,
         } => step_windup(entity, weapon, target_opt, target_id, remaining_ticks),
         WeaponPhase::Backswing {
-            ref mut remaining_ticks,
-            ..
+            target_id,
+            remaining_ticks,
         } => {
-            *remaining_ticks = remaining_ticks.saturating_sub(1);
-            if *remaining_ticks == 0 {
-                entity.weapon_phase = if entity.weapon_cooldown_remaining == 0 {
-                    WeaponPhase::Ready
-                } else {
-                    WeaponPhase::Cooldown
-                };
-            }
+            step_backswing(entity, weapon, target_opt, target_id, remaining_ticks);
             false
         }
         WeaponPhase::Cooldown => false,
     }
+}
+
+/// Steps a backswing: a lock on orders that never delays the next attack.
+///
+/// The backswing loses one tick. While the cooldown runs, it is only the follow-through of the
+/// last shot: it ends in `Cooldown`, or carries on. Once the cooldown has run out, the weapon
+/// steps exactly as a `Ready` weapon would this tick. If that starts a swing or turns the
+/// weapon towards `target_opt`, the backswing has ended; if nothing starts (no target, or the
+/// target is out of the engagement band), the backswing runs on to its end as before, so the
+/// unit stays anchored and presented as attacking for its full follow-through.
+///
+/// This matches `StarCraft` II, where the cooldown runs from the start of the attack in
+/// parallel with the backswing, so the next attack is never delayed by it (plan
+/// `2026-11-04-combat-sc2-alignment` D-2, Q0038). `bound` is the target of the swing whose
+/// follow-through this is; `remaining_ticks` is the backswing left before this tick.
+fn step_backswing(
+    entity: &mut Entity,
+    weapon: &WeaponSpec,
+    target_opt: Option<WeaponTarget>,
+    bound: EntityId,
+    remaining_ticks: u16,
+) {
+    let remaining_ticks = remaining_ticks.saturating_sub(1);
+    if entity.weapon_cooldown_remaining == 0 {
+        if let Some(target) = target_opt {
+            entity.weapon_phase = WeaponPhase::Ready;
+            step_ready_weapon(entity, weapon, target);
+            if entity.weapon_phase != WeaponPhase::Ready {
+                return;
+            }
+        }
+    }
+    entity.weapon_phase = match (remaining_ticks, entity.weapon_cooldown_remaining) {
+        (0, 0) => WeaponPhase::Ready,
+        (0, _) => WeaponPhase::Cooldown,
+        (remaining_ticks, _) => WeaponPhase::Backswing {
+            target_id: bound,
+            remaining_ticks,
+        },
+    };
 }
