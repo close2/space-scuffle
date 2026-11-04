@@ -831,3 +831,46 @@ D-9). Doc 08's `overclock_stim` row said "for 178 ticks (7.1s)" and now says 268
   250-tick Overclock. A `UseStim` player command never reaches it (`world/commands.rs` routes it to `apply_stim`,
   which uses the catalog's Overclock and the unlock); only tests that call `Entity::issue_order` directly do. It is
   outside this data step and is reported for a later clean-up.
+
+## 8. WP15: the Overclock moves to the Marauder analogue (Q0045 3b)
+
+**Commit.** The data commit of WP15, after WP8 (§7). The 20-life Overclock leaves `rhino_beetle` (the Roach, which
+has no Stimpack in StarCraft II) and `shock_golem` (the Marauder) gets its own, the owner's answer 3(b) to Q0045
+(plan D-9). Each value was checked against the 5.0.14 game data (`liberty` layer; no later layer overrides any of
+them):
+
+| Field | `rhino_beetle` before → after | `shock_golem` before → after | Reference (`StimpackMarauder`) |
+|---|---|---|---|
+| `capabilities.overclock` | 20 life, 250 ticks, ×1.5, ×1.5 → **None** | None → **20 life, 268 ticks, ×1.5, ×1.5** | life cost 20 (AbilData:988), Duration 15 Normal s = 267.9 ticks (BehaviorData:604), MoveSpeedMultiplier and AttackSpeedMultiplier 1.5 (BehaviorData:605) |
+| `overclock_stim` effects (`upgrades.ron`) | unlocks `pulse_bot` | **also unlocks `shock_golem`** | one research for both: the `Stimpack` and `StimpackMarauder` commands share `Requirements="UseStimpack"` (AbilData:1236 and :994) |
+
+Doc 07's `shock_golem` row now names the Overclock (the `rhino_beetle` row never did). Doc 08's `overclock_stim` row
+already named `pulse_bot` and `shock_golem` (line 175) and needed no change. Outputs under `~/scratch/combat_wp7/wp15/`
+on the development server.
+
+**Tests first (plan WP15 steps 1 and 2).** No test stims `rhino_beetle` or asserts its overclock-readiness: the
+tests that name it use it as a target or a body (`combat_correctness_tests.rs`, `spells_and_abilities_tests.rs`,
+`determinism_lockstep_tests.rs`, which stims entities 1 to 16, its marines), and the client's battle HUD and card
+tests read the archetype or use `pulse_bot`. One client test relied on `rhino_beetle` without naming it:
+`battle_pipeline::commands::tests::stim_goes_only_to_units_whose_overclock_is_unlocked` (G-8) needed a shipped
+archetype whose Overclock no research unlocks, and `rhino_beetle` was the only one. It was restated test-only in the
+commit before this one (it now gives the locked archetype's Overclock to an armed archetype no upgrade names) and
+passes before and after. The new test
+`combat_correctness_tests.rs::overclock_research_stims_the_marauder_analogue_and_not_the_roach_analogue` sits beside
+S-11's unlock test: after `overclock_stim`, a `UseStim` to a `shock_golem` and a `rhino_beetle` stims the golem
+(life minus the catalog cost, one Overclock buff for the catalog duration) and leaves the beetle untouched. Before
+the data edit it failed with `the Marauder analogue carries the Overclock`; after it, it passes.
+
+**Measured.**
+
+- **Whole matrix, 20 seeds: bit-identical** to the state after WP8 (all 1000 rows of `matrix.csv`). Expectation
+  failures stay 0 on the seeds of record and 7 over all seeds.
+- **Battle 33, 68 seeds: bit-identical** to §6.2 and §7 (all output files byte-identical).
+- **`golden_replay.ron`: re-recorded at every checkpoint (1 to 20), as plan Amendment 3 expects.** The replay
+  completes `overclock_stim` for player 0 before tick 1, and each player's `unlocked_abilities` map is hashed
+  (`PlayerUpgradeState` in `checksum/encoding.rs`), so the new `shock_golem` entry changes every checksum. **No
+  behaviour changed:** with only the `units.ron` part of this commit (the `upgrades.ron` line left out), both golden
+  fixtures pass as recorded for WP8, on this branch as on the pre-WP7 probe of 2026-11-04. The replay's
+  `rhino_beetle` squad is never ordered to stim.
+- **`golden_replay_orders.ron`: unchanged** (it researches nothing).
+- Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`) reproduce both fixtures.

@@ -343,6 +343,10 @@
                     target_slug: "pulse_bot",
                     ability_slug: "overclock",
                 ),
+                UnlockAbility(
+                    target_slug: "shock_golem",
+                    ability_slug: "overclock",
+                ),
             ],
         ),
         (

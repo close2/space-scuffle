@@ -233,12 +233,7 @@
             )),
             is_detector: false,
             capabilities: (
-                overclock: Some((
-                    hp_cost: 20.0,
-                    duration_ticks: 250,
-                    speed_multiplier: 1.5,
-                    attack_rate_multiplier: 1.5,
-                )),
+                overclock: None,
                 harvester: None,
                 is_resource_dropoff: false,
             ),
@@ -588,7 +583,12 @@
             )),
             is_detector: false,
             capabilities: (
-                overclock: None,
+                overclock: Some((
+                    hp_cost: 20.0,
+                    duration_ticks: 268,
+                    speed_multiplier: 1.5,
+                    attack_rate_multiplier: 1.5,
+                )),
                 harvester: None,
                 is_resource_dropoff: false,
             ),

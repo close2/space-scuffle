@@ -15,6 +15,10 @@
 // ticks (was 250). Its remaining ticks are world state, so checkpoints 6 and 7 (ticks 251 to 350)
 // changed; from checkpoint 8 on the checksums are those of WP7 again: no unit carries the
 // Overclock by tick 400 (the stimmed marines have died), so the longer stim changed nothing else.
+// Re-recorded for WP15 (Q0045 3b): "overclock_stim" now also unlocks the Overclock of
+// shock_golem. The research is completed before tick 1 and each player's unlocked abilities are
+// hashed, so every checkpoint changed; no unit's behaviour did (with the units.ron part of the
+// change alone, every checkpoint stays as recorded for WP8).
 (
     checksum_schema: 9,
     seed: 0x5EED_0F_5CAFF1E,
@@ -42,25 +46,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xe79584232a675ca2,
-        0xa47736b1ccdc4fff,
-        0x5b2cfb479717135f,
-        0x8104530ece6dec0b,
-        0xd8dfb12e211a71e3,
-        0xa6a0c5ddb2456048,
-        0x9b323c50fe17d2ec,
-        0x8d30eb6962696166,
-        0x556a1b01d1e35959,
-        0xb14533f8d364016b,
-        0xdaf46159efb25233,
-        0x80d48c5816653226,
-        0xb482901c09133ecb,
-        0x01347c9f8a3f8cbc,
-        0x839ea2b3550fa205,
-        0x51c1c96133ab6d1c,
-        0xff1c99c33130c0f3,
-        0x87a7806b68849ee8,
-        0x4f4368e3981ff009,
-        0x4f3c601019e7f6cf,
+        0xd492aa2786613500,
+        0x51fb62cf94a3c017,
+        0x35c1493d2ee485dd,
+        0x29d28653cc098807,
+        0xa4d56f1b2fd382a7,
+        0x3f40a0113250a3bb,
+        0x1645cce602fcf98f,
+        0x1258a3fd47e1f711,
+        0x699485dda01506b2,
+        0x6592748f240d9f54,
+        0x47480c9f024fe3e4,
+        0xdba390836cb8c7fd,
+        0x8610c1fcc297eae3,
+        0xbcabc08270e832a5,
+        0x9499a2cd13137ab1,
+        0xcbab9098c96d46bd,
+        0xc55d87c1a7431b93,
+        0xa9f1934df19ef1b8,
+        0x53d592996e9226b2,
+        0xfa3821728e53a165,
     ],
 )
