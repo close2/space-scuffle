@@ -151,9 +151,13 @@
         // repair_shuttle Idle (batch 1, 2026-11-04): its hover bob already loops (raw wrap as
         // high as the median step), and a cross-fade blends two bob positions into a double
         // image at the restart, so this clip keeps the scale lock and no cross-fade.
+        // repair_shuttle Walk: pinned at both ends, its raw frames already loop; the hover bob
+        // moves the hull up and down, which the scale lock reads as an uneven zoom and refuses.
+        // There is no camera zoom to undo, so Walk keeps loop sampling only.
         overrides: {
             "repair_shuttle": {
                 Idle: (pin_end: true, seam: Some((scale_lock: true, crossfade_frames: 0))),
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
             },
         },
     ),
