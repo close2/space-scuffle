@@ -7,7 +7,8 @@
 //!   windows). [`ZoomReference::estimate`] finds the camera zoom and shift that map one frame
 //!   onto a reference frame ([`ZoomEstimate`]). [`fit_line`] fits a straight line by least
 //!   squares. These are shared by the bake's repair and by the review's `loop-check`.
-//! - **Repair.** [`SeamSpec`] is one state's treatment. [`plan_scale_lock`] measures every
+//! - **Repair.** [`SeamRepair`] (from `media_style.ron`'s `loops`, read by `prompts`) is one
+//!   state's treatment. [`plan_scale_lock`] measures every
 //!   kept frame against the first, fits the zoom as a straight line in `ln(magnification)` and
 //!   decides whether to lock it, leave it, or refuse the clip; [`apply_scale_lock`] enlarges
 //!   every frame to the framing of the most zoomed-in one with sub-pixel bilinear sampling;
@@ -43,9 +44,9 @@
 //!   frames give the same bytes on the same platform.
 
 use crate::error::BakerError;
+pub use crate::prompts::{SeamRepair, MAX_CROSSFADE_FRAMES};
 use crate::terrain_texture::{linear_to_srgb, srgb_to_linear};
 use image::RgbaImage;
-use serde::{Deserialize, Serialize};
 
 /// A fitted zoom smaller than this over the kept frames (0.5 %) is left alone.
 pub const SCALE_LOCK_MIN_GROWTH: f64 = 0.005;
@@ -58,9 +59,6 @@ pub const SCALE_LOCK_MAX_GROWTH: f64 = 0.12;
 /// line (0.5 % of scale). A larger one means the subject moves or changes in a way a zoom does
 /// not explain.
 pub const SCALE_LOCK_MAX_RESIDUAL: f64 = 0.005;
-
-/// Most frames a cross-fade may blend toward frame 0.
-pub const MAX_CROSSFADE_FRAMES: u8 = 4;
 
 /// Smallest scale `1 / magnification` the zoom search tries.
 pub const ZOOM_SCALE_MIN: f64 = 0.85;
@@ -105,21 +103,6 @@ const STEP_TOLERANCE_MAGNIFICATION: f64 = 1e-5;
 
 /// Offset part of the refinement's stopping rule, in pixels of the level.
 const STEP_TOLERANCE_PIXELS: f64 = 0.01;
-
-/// One looping state's seam treatment, as `media_style.ron` states it in `loops` (D-1).
-///
-/// The fields and their names are those of the data file's `seam: Some((scale_lock: …,
-/// crossfade_frames: …))`, so this type can read that entry directly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SeamSpec {
-    /// Undo a steady camera zoom by enlarging every frame to the framing of the most
-    /// zoomed-in one ([`plan_scale_lock`]).
-    pub scale_lock: bool,
-    /// How many of the last kept frames are blended toward frame 0 ([`crossfade_into_first`]);
-    /// 0 for none, at most [`MAX_CROSSFADE_FRAMES`].
-    pub crossfade_frames: u8,
-}
 
 // --- Luminance planes ----------------------------------------------------------------------
 
@@ -1007,18 +990,22 @@ pub fn crossfade_weight(j: usize, n: usize) -> f64 {
 /// `(1 - w) · itself + w · frame 0` with `w` = [`crossfade_weight`]`(j, n)`, per colour channel,
 /// converted from and back to sRGB bytes. Frame 0, the other frames and alpha are unchanged.
 ///
+/// The share of the state's frame budget a cross-fade may take (a quarter) is a rule of the
+/// data, checked when `media_style.ron` loads (`prompts::LoopPolicy::check`); a clip shorter
+/// than its budget keeps that length.
+///
 /// # Errors
-/// [`BakerError::ValidationFailed`] if `n` exceeds [`MAX_CROSSFADE_FRAMES`] or a quarter of the
-/// frames, or the frames differ in size.
+/// [`BakerError::ValidationFailed`] if `n` exceeds [`MAX_CROSSFADE_FRAMES`], if it would reach
+/// frame 0 (`n` at least the number of frames), or if the frames differ in size.
 pub fn crossfade_into_first(frames: &mut [RgbaImage], n: usize) -> Result<(), BakerError> {
     if n == 0 {
         return Ok(());
     }
-    if n > usize::from(MAX_CROSSFADE_FRAMES) || 4 * n > frames.len() {
+    if n > usize::from(MAX_CROSSFADE_FRAMES) || n >= frames.len() {
         return Err(BakerError::ValidationFailed {
             name: "cross-fade".into(),
             reason: format!(
-                "{n} cross-fade frames of {} kept: at most {MAX_CROSSFADE_FRAMES}, and at most a quarter of the frames",
+                "{n} cross-fade frames of {} kept: at most {MAX_CROSSFADE_FRAMES}, and fewer than the frames kept",
                 frames.len()
             ),
         });

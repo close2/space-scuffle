@@ -110,7 +110,7 @@ fn test_concept_video_bake_smoke() {
 mod seam {
     use super::common::loop_clip::{encode_clip, pattern_frame, steady_ramp, zoom_clip};
     use asset_baker::ffmpeg_importer::{decode_framed_clip, decode_repaired_clip, FrameSpec};
-    use asset_baker::loop_metrics::{estimate_zoom, SeamSpec};
+    use asset_baker::loop_metrics::{estimate_zoom, SeamRepair};
     use asset_baker::provenance::FrameSampling;
     use asset_baker::{BakeFraming, BakerError};
     use image::RgbaImage;
@@ -125,7 +125,7 @@ mod seam {
         framing: BakeFraming::CenterCrop,
     };
 
-    const REPAIR: SeamSpec = SeamSpec {
+    const REPAIR: SeamRepair = SeamRepair {
         scale_lock: true,
         crossfade_frames: 2,
     };
@@ -166,7 +166,7 @@ mod seam {
     fn the_unrepaired_ramp_grows_beyond_the_review_limit() {
         let dir = tempfile::tempdir().unwrap();
         let clip = zoom_clip(dir.path(), "ramp.mkv", 320, &steady_ramp(31, 0.06));
-        let raw = SeamSpec {
+        let raw = SeamRepair {
             scale_lock: false,
             crossfade_frames: 0,
         };

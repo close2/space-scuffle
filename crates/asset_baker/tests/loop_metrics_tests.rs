@@ -196,7 +196,6 @@ fn the_cross_fade_weights_of_two_frames_are_a_third_and_two_thirds() {
 fn the_cross_fade_blends_the_last_frames_toward_frame_zero_in_linear_light() {
     let black = RgbaImage::from_pixel(8, 8, Rgba([0, 0, 0, 255]));
     let white = RgbaImage::from_pixel(8, 8, Rgba([255, 255, 255, 255]));
-    // Eight frames: two of them is a quarter, the most a cross-fade may take.
     let mut frames = vec![black.clone()];
     frames.extend(std::iter::repeat_n(white.clone(), 7));
     crossfade_into_first(&mut frames, 2).unwrap();
@@ -220,11 +219,12 @@ fn a_cross_fade_longer_than_allowed_is_refused() {
         crossfade_into_first(&mut many, too_long),
         Err(BakerError::ValidationFailed { .. })
     ));
-    let mut few = vec![frame; 7];
+    let mut few = vec![frame; 3];
     assert!(
-        crossfade_into_first(&mut few, 2).is_err(),
-        "two of seven frames is more than a quarter"
+        crossfade_into_first(&mut few, 3).is_err(),
+        "a fade over every frame would blend frame 0"
     );
+    assert!(crossfade_into_first(&mut few, 2).is_ok());
     let mut none: Vec<RgbaImage> = Vec::new();
     assert!(crossfade_into_first(&mut none, 0).is_ok());
 }

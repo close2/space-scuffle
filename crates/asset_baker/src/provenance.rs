@@ -40,7 +40,7 @@ use crate::error::BakerError;
 use crate::ffmpeg_importer::{bake_repaired_action_videos, FrameSpec};
 use crate::framing::BakeFraming;
 use crate::ledger::{sha256_hex, LedgerEvent, LedgerRecord, NumberedRecord};
-use crate::loop_metrics::SeamSpec;
+use crate::loop_metrics::SeamRepair;
 use crate::manifest::FlipbookAtlasMeta;
 use crate::media::{media_paths, LoadedUnitMedia};
 use ron::ser::PrettyConfig;
@@ -63,8 +63,9 @@ pub const REQUIRED_SET_FILE: &str = "media/required_set.ron";
 /// The FFmpeg executable the baker runs (the same one `ffmpeg_importer` uses).
 const FFMPEG_PATH: &str = "/usr/bin/ffmpeg";
 
-/// Largest strip height in pixels, as in `ffmpeg_importer`; used to record the frame budget.
-const MAX_STRIP_HEIGHT: u32 = 16_384;
+/// Largest strip height in pixels, the limit `ffmpeg_importer` bakes to; used to record the
+/// frame budget.
+const MAX_STRIP_HEIGHT: u32 = crate::prompts::MAX_ATLAS_STRIP_HEIGHT;
 
 /// Failures to read, write or produce provenance records and the required set.
 #[derive(Debug, thiserror::Error)]
@@ -356,7 +357,7 @@ pub fn bake_with_provenance_and_seams(
     videos_dir: &Path,
     output_dir: &Path,
     spec: FrameSpec,
-    seams: &BTreeMap<AnimState, SeamSpec>,
+    seams: &BTreeMap<AnimState, SeamRepair>,
 ) -> Result<MediaProvenance, ProvenanceError> {
     let names = clip_names(clips, videos_dir)?;
     let ffmpeg_version = ffmpeg_version(Path::new(FFMPEG_PATH))?;

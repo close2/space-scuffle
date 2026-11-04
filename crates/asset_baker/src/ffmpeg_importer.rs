@@ -33,9 +33,10 @@
 use crate::error::BakerError;
 use crate::framing::{frame_to_square, BakeFraming, FramedFrames};
 use crate::loop_metrics::{
-    apply_scale_lock, crossfade_into_first, downsample_half, plan_scale_lock, SeamSpec,
+    apply_scale_lock, crossfade_into_first, downsample_half, plan_scale_lock, SeamRepair,
 };
 use crate::manifest::{ActionSlice, FlipbookAtlasMeta, FlipbookLayout};
+use crate::prompts::{atlas_loops, MAX_ATLAS_STRIP_HEIGHT};
 use crate::provenance::{FrameSampling, SeamRecord};
 use image::RgbaImage;
 use sim_types::enums::AnimState;
@@ -43,8 +44,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Maximum texture dimension in pixels that WebGPU guarantees.
-const MAX_STRIP_HEIGHT: u32 = 16384;
+/// Maximum texture dimension in pixels that WebGPU guarantees: the one limit the loop policy's
+/// frame budget and the provenance record also use.
+const MAX_STRIP_HEIGHT: u32 = MAX_ATLAS_STRIP_HEIGHT;
 
 /// Default location of the `ffprobe` executable.
 pub const DEFAULT_FFPROBE_PATH: &str = "/usr/bin/ffprobe";
@@ -581,7 +583,7 @@ pub fn bake_repaired_action_videos<P: AsRef<Path>>(
     clips: &[(AnimState, P)],
     output_dir: &Path,
     spec: FrameSpec,
-    seams: &BTreeMap<AnimState, SeamSpec>,
+    seams: &BTreeMap<AnimState, SeamRepair>,
 ) -> Result<FramedBake, BakerError> {
     let (output_png_path, output_meta_path) = atlas_output_paths(output_dir, unit_name)?;
     let ffmpeg_path = PathBuf::from("/usr/bin/ffmpeg");
@@ -594,10 +596,7 @@ pub fn bake_repaired_action_videos<P: AsRef<Path>>(
             reason: "No action clips provided for multi-action baking".into(),
         });
     }
-    if let Some(state) = seams
-        .keys()
-        .find(|state| !pack_action(**state, 0, 0).looping)
-    {
+    if let Some(state) = seams.keys().find(|state| !atlas_loops(**state)) {
         return Err(BakerError::ValidationFailed {
             name: unit_name.to_string(),
             reason: format!("{state:?} does not loop, so it cannot have a seam repair"),
@@ -740,7 +739,7 @@ pub fn decode_repaired_clip(
     spec: FrameSpec,
     budget: usize,
     label: &str,
-    seam: Option<SeamSpec>,
+    seam: Option<SeamRepair>,
 ) -> Result<RepairedClip, BakerError> {
     let Some(seam) = seam else {
         return Ok(RepairedClip {
@@ -765,9 +764,12 @@ pub fn decode_repaired_clip(
         (kept, 0)
     };
     crossfade_into_first(&mut frames, usize::from(seam.crossfade_frames)).map_err(|error| {
-        BakerError::ValidationFailed {
-            name: label.to_string(),
-            reason: error.to_string(),
+        match error {
+            BakerError::ValidationFailed { reason, .. } => BakerError::ValidationFailed {
+                name: label.to_string(),
+                reason,
+            },
+            other => other,
         }
     })?;
     Ok(RepairedClip {
@@ -854,19 +856,15 @@ fn load_frames(paths: &[PathBuf]) -> Result<Vec<RgbaImage>, BakerError> {
 /// Describes where one action's frames sit in the strip and how they play back.
 ///
 /// `start_frame` is the action's first frame index in the strip and `frame_count` its length,
-/// both in frames. Attacks play once, deaths and construction hold their last frame, and every
-/// other state loops.
+/// both in frames. Which states loop is [`atlas_loops`], the one classification the loop policy
+/// (`media_style.ron`) is also checked against; deaths and construction hold their last frame,
+/// and attacks play once.
 fn pack_action(state: AnimState, start_frame: u32, frame_count: u32) -> ActionSlice {
-    let (looping, hold_last_frame) = match state {
-        AnimState::Attack => (false, false),
-        AnimState::Die | AnimState::Constructing => (false, true),
-        AnimState::Idle | AnimState::Walk | AnimState::Cast => (true, false),
-    };
     ActionSlice {
         start_frame,
         frame_count,
-        looping,
-        hold_last_frame,
+        looping: atlas_loops(state),
+        hold_last_frame: matches!(state, AnimState::Die | AnimState::Constructing),
     }
 }
 
@@ -887,11 +885,11 @@ fn pack_strip(
     // Why: Standard WebGPU hardware drivers mandate max_texture_dimension_2d <= 16384 pixels.
     // What: We validate that the total height of the vertically stacked strip does not exceed 16384.
     // Trade-off: Guarantees 100% portable GPU texture allocation across all platforms.
-    if strip_height > 16384 {
+    if strip_height > MAX_STRIP_HEIGHT {
         return Err(BakerError::ValidationFailed {
             name: unit_name.to_string(),
             reason: format!(
-                "Total strip height ({strip_height} px for {total_frames} frames at {frame_size}x{frame_size}) exceeds WebGPU 2D texture limit of 16384 px"
+                "Total strip height ({strip_height} px for {total_frames} frames at {frame_size}x{frame_size}) exceeds WebGPU 2D texture limit of {MAX_STRIP_HEIGHT} px"
             ),
         });
     }

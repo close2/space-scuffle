@@ -14,7 +14,7 @@ mod common;
 use asset_baker::ledger::{
     read_ledger_numbered, sha256_hex, LedgerEvent, LedgerRecord, NumberedRecord,
 };
-use asset_baker::loop_metrics::SeamSpec;
+use asset_baker::loop_metrics::SeamRepair;
 use asset_baker::media_audit::{
     audit_media, AuditInputs, MediaAuditError, MediaAuditRecord, MediaAuditReport, MediaAuditStatus,
 };
@@ -852,7 +852,7 @@ fn a_bake_refuses_a_clip_outside_the_videos_directory() {
 // --- Seam repair records (plan `docs/plans/2026-11-04-veo-seamless-loops.md`, D-4) ------------
 
 /// The default treatment of a looping state in `media_style.ron`.
-const REPAIR: SeamSpec = SeamSpec {
+const REPAIR: SeamRepair = SeamRepair {
     scale_lock: true,
     crossfade_frames: 2,
 };
@@ -861,7 +861,7 @@ const REPAIR: SeamSpec = SeamSpec {
 fn bake_with_a_repaired_idle(
     root: &Path,
     slug: &str,
-    seams: &BTreeMap<AnimState, SeamSpec>,
+    seams: &BTreeMap<AnimState, SeamRepair>,
 ) -> Result<MediaProvenance, ProvenanceError> {
     let videos = root.join("videos");
     std::fs::create_dir_all(&videos).unwrap();
@@ -945,6 +945,58 @@ fn a_seam_on_a_state_that_does_not_loop_is_refused() {
         "{refused:?}"
     );
     assert!(!root.path().join(format!("textures/{slug}.png")).exists());
+}
+
+#[test]
+fn bake_unit_videos_repairs_the_states_the_shipped_loop_policy_names() {
+    let catalog = catalog();
+    let slug = combat_identity(&catalog);
+    let style = asset_baker::MediaStyle::load_for_catalog(&shipped_assets(), &catalog).unwrap();
+    let idle_seam = style
+        .loops
+        .spec_for(&slug, AnimState::Idle)
+        .and_then(|spec| spec.seam)
+        .expect("the shipped policy repairs Idle");
+    assert!(
+        style
+            .loops
+            .spec_for(&slug, AnimState::Attack)
+            .and_then(|spec| spec.seam)
+            .is_none(),
+        "Attack does not loop"
+    );
+
+    let root = tempfile::tempdir().unwrap();
+    let videos = root.path().join("videos");
+    std::fs::create_dir_all(&videos).unwrap();
+    let ramp = common::loop_clip::steady_ramp(31, 0.06);
+    let idle = common::loop_clip::zoom_clip(&videos, &format!("{slug}_idle.mkv"), 160, &ramp);
+    let attack = variant_clip(&videos, &format!("{slug}_attack.mp4"), "negate");
+    let textures = root.path().join("textures");
+    let output = baker()
+        .args(["bake-unit-videos", "--unit", &slug, "--idle"])
+        .arg(&idle)
+        .arg("--attack")
+        .arg(&attack)
+        .arg("--videos-dir")
+        .arg(&videos)
+        .arg("--output-dir")
+        .arg(&textures)
+        .args(["--legacy-veo", &format!("idle={LEGACY_COMMIT}")])
+        .args(["--legacy-veo", &format!("attack={LEGACY_COMMIT}")])
+        .args(["--size", "64", "--fps", "15"])
+        .output()
+        .expect("run baker");
+    assert!(output.status.success(), "{}", text(&output));
+    let record = MediaProvenance::load(&provenance_path(&textures, &slug).unwrap()).unwrap();
+    let seam = record.states[&AnimState::Idle].seam.expect("Idle repaired");
+    assert_eq!(seam.sampling, FrameSampling::Loop);
+    assert_eq!(seam.crossfade_frames, idle_seam.crossfade_frames);
+    if idle_seam.scale_lock {
+        assert!(seam.scale_permille.abs_diff(57) <= 5, "{seam:?}");
+    }
+    assert!(record.states[&AnimState::Attack].seam.is_none());
+    assert!(text(&output).contains("seam repair"), "{}", text(&output));
 }
 
 #[test]

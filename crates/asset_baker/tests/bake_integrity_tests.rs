@@ -416,7 +416,7 @@ fn strip_frames(strip: &image::RgbaImage, slice: &ActionSlice) -> Vec<image::Rgb
 #[test]
 fn states_without_a_seam_bake_byte_for_byte_as_before() {
     use asset_baker::ffmpeg_importer::bake_repaired_action_videos;
-    use asset_baker::loop_metrics::SeamSpec;
+    use asset_baker::loop_metrics::SeamRepair;
     use asset_baker::{BakeFraming, FrameSpec};
 
     let clip = common::fixture_clip();
@@ -436,7 +436,7 @@ fn states_without_a_seam_bake_byte_for_byte_as_before() {
     let before = frames_as_baked_before_seam_repair(&clip, 16);
     let seams = std::collections::BTreeMap::from([(
         AnimState::Idle,
-        SeamSpec {
+        SeamRepair {
             scale_lock: false,
             crossfade_frames: 2,
         },
