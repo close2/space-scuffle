@@ -23,7 +23,10 @@
 //!   `Windup { target, remaining = damage point }`; each tick a wind-up with `remaining >= 2`
 //!   becomes `Windup { target, remaining − 1 }`; a wind-up that neither continued nor released
 //!   was cancelled, and if the next phase is again a wind-up a new swing started in the same tick.
-//!   A backswing the next swing cuts short (D-2) is therefore a start, like any other.
+//!   A backswing the next swing cuts short (D-2) is therefore a start, like any other. A release
+//!   whose previous phase was not a wind-up started its swing in the same tick (damage point 0,
+//!   D-3: such a swing never publishes a wind-up), so it is a start as well as a release
+//!   ([`SwingEvent::StartedAndReleased`]).
 //!
 //! # Invariants
 //! - Exactly one [`SwingEvent`] per call; a cancelled swing that restarts in the same tick is
@@ -55,10 +58,17 @@ pub enum SwingEvent {
     },
     /// The swing in progress continued its wind-up.
     WindingUp,
-    /// A shot was released at `target`.
+    /// The swing in progress (wound up in an earlier tick) released a shot at `target`.
     Released {
         /// The target of the shot: the swing's bound target, otherwise the unit's attack target;
         /// `None` if neither is known.
+        target: Option<EntityId>,
+    },
+    /// A swing started and released a shot at `target` in the same tick: a damage point of 0
+    /// (plan `2026-11-04-combat-sc2-alignment` D-3), so no wind-up was ever published. It counts
+    /// as both a start and a release.
+    StartedAndReleased {
+        /// The target of the shot, found as for [`SwingEvent::Released`].
         target: Option<EntityId>,
     },
     /// The swing against `target` ended without a shot.
@@ -104,7 +114,13 @@ pub fn infer(before: &UnitSample, after: &UnitSample) -> SwingEvent {
             .or(in_backswing)
             .or(after.target)
             .or(before.target);
-        return SwingEvent::Released { target };
+        // Only a wind-up carries a swing across ticks; a release out of any other phase started
+        // its swing in this tick.
+        return if bound.is_some() {
+            SwingEvent::Released { target }
+        } else {
+            SwingEvent::StartedAndReleased { target }
+        };
     }
     let Some((bound, remaining_ticks)) = bound else {
         return match after.phase {
@@ -137,6 +153,8 @@ mod tests {
     const B: EntityId = EntityId(9);
 
     const RELEASED_AT_A: SwingEvent = SwingEvent::Released { target: Some(A) };
+    const STARTED_AND_RELEASED_AT_A: SwingEvent =
+        SwingEvent::StartedAndReleased { target: Some(A) };
 
     fn windup(target_id: EntityId, remaining_ticks: u16) -> WeaponPhase {
         WeaponPhase::Windup {
@@ -251,15 +269,23 @@ mod tests {
 
     #[test]
     fn a_swing_that_starts_and_releases_in_one_tick_is_counted() {
-        // Damage point 0 after the cadence fix (plan D-3): no wind-up is ever published.
-        assert_eq!(
-            event((WeaponPhase::Ready, 0), (WeaponPhase::Cooldown, 21)),
-            RELEASED_AT_A
-        );
-        assert_eq!(
-            event((WeaponPhase::Ready, 0), (backswing(A), 21)),
-            RELEASED_AT_A
-        );
+        // Damage point 0 after the cadence fix (plan D-3): no wind-up is ever published, so the
+        // release is also the swing's start.
+        for before in [
+            WeaponPhase::Ready,
+            WeaponPhase::RotatingToTarget { target_id: A },
+        ] {
+            assert_eq!(
+                event((before.clone(), 0), (WeaponPhase::Cooldown, 21)),
+                STARTED_AND_RELEASED_AT_A,
+                "{before:?}"
+            );
+            assert_eq!(
+                event((before.clone(), 0), (backswing(A), 21)),
+                STARTED_AND_RELEASED_AT_A,
+                "{before:?}"
+            );
+        }
     }
 
     #[test]
@@ -272,10 +298,10 @@ mod tests {
     }
 
     #[test]
-    fn a_backswing_cut_short_by_an_immediate_release_is_a_release() {
+    fn a_backswing_cut_short_by_an_immediate_release_is_a_start_and_a_release() {
         assert_eq!(
             event((backswing(A), 1), (backswing(B), 10)),
-            SwingEvent::Released { target: Some(B) }
+            SwingEvent::StartedAndReleased { target: Some(B) }
         );
     }
 
@@ -289,14 +315,14 @@ mod tests {
         // Without a wind-up or a backswing, the attack target is the one known.
         let mut before = at(WeaponPhase::Ready, 0);
         let mut after = at(WeaponPhase::Cooldown, 9);
-        assert_eq!(infer(&before, &after), RELEASED_AT_A);
+        assert_eq!(infer(&before, &after), STARTED_AND_RELEASED_AT_A);
         // The shot killed its target, so after the tick the unit has none: the earlier one counts.
         after.target = None;
-        assert_eq!(infer(&before, &after), RELEASED_AT_A);
+        assert_eq!(infer(&before, &after), STARTED_AND_RELEASED_AT_A);
         before.target = None;
         assert_eq!(
             infer(&before, &after),
-            SwingEvent::Released { target: None }
+            SwingEvent::StartedAndReleased { target: None }
         );
     }
 
