@@ -1,0 +1,57 @@
+(
+    format_version: 1,
+    name: "repair_shuttle",
+    atlas_sha256: "11c357f66c574beddadfd4b4d8cae3accc6fae51a8c6c88a53043116c0877afb",
+    manifest_sha256: "3a255a6a0677dd85f1745ff6f02dc0e3e814f62e3ba44b4a0900118a93165279",
+    bake: (
+        frame_size: 512,
+        fps: 15,
+        max_frames_per_state: 16,
+        ffmpeg_version: "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+        framing: Letterbox(
+            feather_permille: 30,
+        ),
+    ),
+    states: {
+        Idle: (
+            clip: "repair_shuttle_idle.mp4",
+            clip_sha256: "e92c666d3c129c44cf03da079923430a5420b0b9f3e76d2a998908225230f05e",
+            start_frame: 0,
+            frame_count: 16,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/62f8d6c9-9c5d-4581-b236-51fa7c23dd15",
+                prompt_sha256: "8671f0509ada030a7fa9f67ef4c6e77189348c686761d4debddbc9a0b0b56daf",
+                keyframe_sha256: None,
+                last_frame_sha256: None,
+                ledger_line: 55,
+            ),
+            bar_rgb: Some((37, 46, 63)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 0,
+            )),
+        ),
+        Walk: (
+            clip: "repair_shuttle_walk.mp4",
+            clip_sha256: "59fdfb53f5a9a25c8b48f1e54afe955fc043ad07b3f26dcfdd7a9e8937496d15",
+            start_frame: 16,
+            frame_count: 16,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/4f7a8944-ff7b-4792-981d-55f9e217b738",
+                prompt_sha256: "411938c8d5e492268db80f281e51edfb4b14ed55584a9de836474f661b0e512b",
+                keyframe_sha256: Some("ee2bfa96b3fa9094e1405a7579f98544058f8708e1335cdbd584978246052b5d"),
+                last_frame_sha256: Some("ee2bfa96b3fa9094e1405a7579f98544058f8708e1335cdbd584978246052b5d"),
+                ledger_line: 94,
+            ),
+            bar_rgb: Some((35, 45, 63)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 0,
+            )),
+        ),
+    },
+)

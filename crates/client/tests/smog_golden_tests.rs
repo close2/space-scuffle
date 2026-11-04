@@ -81,6 +81,13 @@
 //!   deliberate change: velocities of at most `1e-3` world units per second become exactly zero
 //!   (plan D-3, owner answer Q0020). The four kinematics goldens, the noise golden and both
 //!   `libm` canaries are unchanged by it, and every golden keeps its class.
+//! - Veo batch 1 (plan `2026-11-04-veo-structure-action-text` WP3) re-recorded the four system
+//!   goldens (glibc 2.41, `x86_64`) because it ships five new atlases in `assets/textures`
+//!   (`plasma_siphon_dome`, `tech_module_pod`, `machining_plant_dome`, `aerospace_hangar_dome`,
+//!   `repair_shuttle`), and the production app these goldens run reads the real asset root, so
+//!   bubbles of those identities now bind their atlases. With those five atlases moved out of
+//!   `assets/textures`, all four reproduced their previous values, so no smog code or output
+//!   changed. The fluid, kinematics and noise goldens and both `libm` canaries are unchanged.
 //! - A golden may only change together with a deliberate, documented change in smog output.
 
 #![allow(
@@ -1197,11 +1204,11 @@ fn require_smog_activity(app: &App) -> usize {
     stats.active_bubbles
 }
 
-const GOLDEN_SYSTEMS_STARTUP: u64 = 0xdc52_4ec7_f496_22d1;
+const GOLDEN_SYSTEMS_STARTUP: u64 = 0xe44a_7065_aeb2_6b5b;
 const GOLDEN_SYSTEMS_NOISE: u64 = 0x1fe2_2cc0_e03e_f783;
-const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0x4174_0f4e_bdad_29c9;
-const GOLDEN_SYSTEMS_SWARM: u64 = 0xecc6_5d0a_0949_f693;
-const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0x5527_286e_5980_202b;
+const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0x5cce_e205_d998_eecf;
+const GOLDEN_SYSTEMS_SWARM: u64 = 0x8f88_3a86_5df7_c20f;
+const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0x6b53_5fb7_4f80_972f;
 
 /// The headless Visual Lab app after its startup frame (the clock's first update has `dt = 0`).
 fn startup_app() -> Result<App, Box<dyn std::error::Error>> {
