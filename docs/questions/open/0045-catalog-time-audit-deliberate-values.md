@@ -64,3 +64,4 @@ The audit you asked for in Q0039 (option 3) compared every time and speed value 
 
 ## Answer
 
+Owner (2026-11-04): For all answers: try to close in on SC2 behavior. We will create our own units later, but for now SC2 behavior is much easier to test and debug. Specifically: 1(b) (adopt SC2 reference turn rates), 2(b) (worker backswing 9 ticks), 3(b) (move 20-life Overclock from `rhino_beetle` to `shock_golem` with 268-tick duration), and 4(b) (align `flying_saucer` to its SC2 counterpart, the Phoenix per doc 07, and audit it like the others).
