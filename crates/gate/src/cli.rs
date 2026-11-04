@@ -25,7 +25,13 @@ usage:
   cargo gate package              required once before hand-back; writes a stamp
   cargo gate merge <branch>       orchestrator, on main after `git merge --no-ff <branch>`
   cargo gate full                 the complete suite and the golden replays; writes a stamp
-  cargo gate timings              targets whose recorded time contradicts their class
+  cargo gate timings [--from-log <file>]
+                                  targets whose recorded time contradicts their class and
+                                  repeated flakes; with --from-log, the Markdown report of one
+                                  `cargo test` log (CI's job summary)
+  cargo gate suspects [<target>...] [--from-log <file>] [--base <rev>]
+                                  the red rule's suspect list for failing targets, named or read
+                                  from a `cargo test` log (a red CI run)
 
 options:
   --base <rev>        compare with this revision (default: `git merge-base HEAD <main>`)
@@ -33,7 +39,8 @@ options:
   --jobs <n>          concurrent test executables (default 1; GPU targets get their own lane)
   --log-dir <dir>     logs (default ~/scratch/logs/gate/<tree-hash>/)
   --stamp-dir <dir>   stamps (default ~/scratch/gate-stamps/)
-  --no-run            select and build only";
+  --no-run            select and build only
+  --from-log <file>   timings and suspects only: read a `cargo test` log";
 
 /// Options shared by the commands.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -91,9 +98,20 @@ pub enum Command {
         /// Shared options.
         options: RunOptions,
     },
-    /// Print the class report from the stamps.
+    /// Print the class and flake report from the stamps, or the report of one log.
     Timings {
+        /// A `cargo test` log to report on instead of the stamps.
+        from_log: Option<PathBuf>,
         /// Shared options.
+        options: RunOptions,
+    },
+    /// Print the red rule's suspect list (blueprint §3.5).
+    Suspects {
+        /// Failing targets named on the command line (`crate/test_name`, `crate/lib`).
+        targets: Vec<String>,
+        /// A `cargo test` log whose failing targets are added.
+        from_log: Option<PathBuf>,
+        /// Shared options; `--base` starts the search instead of the last green full stamp.
         options: RunOptions,
     },
 }
@@ -109,6 +127,7 @@ pub fn parse_args(args: &[String]) -> Result<Command, GateError> {
         .ok_or_else(|| usage("no command given".to_string()))?;
     let mut options = RunOptions::default();
     let mut tier = Tier::Package;
+    let mut from_log = None;
     let mut positional = Vec::new();
     let mut iter = rest.iter();
     while let Some(arg) = iter.next() {
@@ -129,6 +148,7 @@ pub fn parse_args(args: &[String]) -> Result<Command, GateError> {
             "--log-dir" => options.log_dir = Some(PathBuf::from(value("--log-dir")?)),
             "--stamp-dir" => options.stamp_dir = Some(PathBuf::from(value("--stamp-dir")?)),
             "--no-run" => options.no_run = true,
+            "--from-log" => from_log = Some(PathBuf::from(value("--from-log")?)),
             "--tier" => {
                 let text = value("--tier")?;
                 tier = Tier::parse(&text)
@@ -153,6 +173,11 @@ pub fn parse_args(args: &[String]) -> Result<Command, GateError> {
             Ok(())
         }
     };
+    if from_log.is_some() && !matches!(word.as_str(), "timings" | "suspects") {
+        return Err(usage(format!(
+            "--from-log belongs to timings and suspects, not {word}"
+        )));
+    }
     match word.as_str() {
         "explain" => {
             extra(1)?;
@@ -172,7 +197,19 @@ pub fn parse_args(args: &[String]) -> Result<Command, GateError> {
         }
         "timings" => {
             extra(0)?;
-            Ok(Command::Timings { options })
+            Ok(Command::Timings { from_log, options })
+        }
+        "suspects" => {
+            if positional.is_empty() && from_log.is_none() {
+                return Err(usage(
+                    "suspects needs failing targets or --from-log <file>".to_string(),
+                ));
+            }
+            Ok(Command::Suspects {
+                targets: positional,
+                from_log,
+                options,
+            })
         }
         other => {
             extra(0)?;
@@ -255,6 +292,33 @@ mod tests {
     }
 
     #[test]
+    fn timings_and_suspects_read_logs() -> Result<(), GateError> {
+        assert_eq!(
+            parse("timings --from-log ci.log")?,
+            Command::Timings {
+                from_log: Some(PathBuf::from("ci.log")),
+                options: RunOptions::default(),
+            }
+        );
+        assert_eq!(
+            parse("suspects client/lib sim_core/a_tests --base abc")?,
+            Command::Suspects {
+                targets: vec!["client/lib".into(), "sim_core/a_tests".into()],
+                from_log: None,
+                options: RunOptions {
+                    base: Some("abc".into()),
+                    ..RunOptions::default()
+                },
+            }
+        );
+        assert!(matches!(
+            parse("suspects --from-log ci.log")?,
+            Command::Suspects { targets, from_log: Some(_), .. } if targets.is_empty()
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn mistakes_are_usage_errors() {
         for line in [
             "",
@@ -266,6 +330,10 @@ mod tests {
             "explain a b",
             "explain --tier merge",
             "merge",
+            "suspects",
+            "package --from-log x.log",
+            "timings --from-log",
+            "timings extra",
         ] {
             assert!(
                 matches!(parse(line), Err(GateError::Usage(_))),

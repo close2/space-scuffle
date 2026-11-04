@@ -125,11 +125,23 @@ Code without tests is considered incomplete.
 | `workspace_checks` | The charter checks of §9 | `charter.rs` |
 | `gate` | Selection, globs, scheduling, stamps, catalog consistency | `selection_tests.rs`, `suite_catalog_tests.rs` |
 
-3. **Quality Gate Before Completing Any Task:** [CI: C16]
-   - Every agent must run and pass:
-     - `cargo test --workspace --locked`
-     - `cargo clippy --workspace --all-targets --locked -- -D warnings`
+3. **Quality gates.** [CI: C16, C22] Tests are selected by `cargo gate`, from the catalog
+   `crates/gate/suites.ron`, in four tiers:
+   - `cargo gate quick`: optional, while working: fmt, clippy on the changed crates, their fast tests.
+   - `cargo gate package`: required once, after merging `main`, before an implementation agent's final commit.
+     Clippy on the whole workspace, `workspace_checks`, every test of the changed crates (GPU and valgrind tests
+     when the change touches their triggers), the tests the catalog's path rules and downstream contracts select,
+     and the golden replays in release and on `wasm32-wasip1` for simulation changes. Its stamp goes in the
+     hand-back.
+   - `cargo gate merge <branch>`: the orchestrator, for each merge to `main`.
+   - `cargo gate full`: the full gate, on `main` before every push that contains a crate change, and on CI. Push
+     only a commit with a green full stamp. When it is red, fix forward or revert within an hour, and add the
+     missing catalog rule.
+   - **Full gate** (what `cargo gate full` and CI run):
      - `cargo fmt --all -- --check`
+     - `cargo clippy --workspace --all-targets --locked -- -D warnings`
+     - `cargo test --workspace --locked`
+   - Docs-only changes: `cargo gate package` runs fmt and `workspace_checks` only.
 
 ---
 
@@ -258,9 +270,10 @@ the statement as a rule for reviewers.
 | C13 | No mutable statics |
 | C14 | Library crates return typed errors |
 | C15 | §4 test subjects exist; every crate has unit and integration tests |
-| C16 | CI runs the §4.3 gate |
+| C16 | CI runs the §4.3 full gate; every `cargo gate` tier §4 names exists |
 | C17 | `DESIGN.md` links and evidence resolve; its tick rate matches the code |
 | C18 | `docs/plans/README.md` indexes every plan once |
 | C19 | No `file:///` links; lost `/tmp` evidence is marked |
 | C20 | Paths named in this charter exist |
 | C21 | No test builds a render device in its own process; GPU tests go through the harness of §7 |
+| C22 | `crates/gate/suites.ron` names existing targets, classes every GPU and valgrind test, and covers every tracked path (in `crates/gate/tests/suite_catalog_tests.rs`) |

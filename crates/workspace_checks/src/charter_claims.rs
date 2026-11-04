@@ -4,8 +4,10 @@
 //! These checks read `AGENTS.md` and compare what it says with the repository. C15 holds charter
 //! §4 to its table of test subjects: every named test file exists and holds tests, every
 //! workspace crate has unit and integration tests, and the crates that promise property tests
-//! have them. C16 holds §4.3 to CI: each gate command it lists runs in
-//! `.github/workflows/ci.yml`. C20 holds every repository path the charter names to existence.
+//! have them. C16 holds §4.3 to CI and to the gate tool: each command of its **Full gate** list
+//! runs in `.github/workflows/ci.yml`, each `cargo gate <tier>` names a tier `crates/gate`
+//! defines, and no other `cargo` command appears in §4 unchecked. C20 holds every repository
+//! path the charter names to existence.
 //!
 //! # How it fits
 //! The rest of the checks judge code against rules; these three judge the charter's statements of
@@ -14,7 +16,10 @@
 //! # Invariants
 //! - Every check reads the charter's current text; nothing about the table, the commands or the
 //!   paths is repeated here, except which crates promise property tests.
-//! - Commands match modulo `--locked`, which pins the lock file and changes nothing else.
+//! - Commands match modulo `--locked`, which pins the lock file and changes nothing else, and
+//!   modulo what a CI step does with the output after the command (a pipe or a redirection).
+//! - The tier names are read from the `Tier` enum's source as text, like every other source this
+//!   crate reads, so `workspace_checks` keeps no dependency on the `gate` crate (charter §5).
 //! - C20 resolves paths through Git's list of tracked files, so a file that exists only in one
 //!   checkout cannot satisfy it.
 
@@ -29,6 +34,12 @@ const CHARTER: &str = "AGENTS.md";
 
 /// The CI workflow C16 reads, relative to the repository root.
 pub const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
+
+/// The source of the gate tiers C16 reads, relative to the repository root.
+pub const TIER_SOURCE: &str = "crates/gate/src/tier.rs";
+
+/// The text that opens the list of commands CI must run in charter §4.3 (C16).
+const FULL_GATE_MARKER: &str = "- **Full gate**";
 
 /// Crates whose integration tests charter §4 promises include property tests (C15).
 pub const PROPERTY_TESTED_CRATES: [&str; 2] = ["sim_types", "sim_map"];
@@ -205,53 +216,126 @@ fn any_contains(files: &[PathBuf], needle: &str) -> bool {
         .any(|path| fs::read_to_string(path).is_ok_and(|text| text.contains(needle)))
 }
 
-/// Check C16: every gate command charter §4 lists (an inline code span starting with `cargo `)
-/// is run verbatim, modulo `--locked`, by a step of [`CI_WORKFLOW`].
+/// Check C16: charter §4's `cargo` commands are each accounted for.
+///
+/// - Every code span starting with `cargo ` in the list under the line that starts with
+///   `- **Full gate**` is run, modulo `--locked`, by a step of [`CI_WORKFLOW`]; a CI step may
+///   pipe or redirect the command's output.
+/// - Every other span of the form `cargo gate <word> …` names a tier of the `Tier` enum in
+///   [`TIER_SOURCE`]; a bare `cargo gate` names the tool and is accepted.
+/// - Any other `cargo` span in §4 is a finding, so no gate command appears without a check.
 ///
 /// # Errors
-/// [`CheckError::Io`] if the charter or the workflow cannot be read.
+/// [`CheckError::Io`] if the charter, the workflow or the tier source cannot be read.
 pub fn ci_runs_the_gate(root: &Path) -> Result<Vec<Finding>, CheckError> {
     let (path, text) = charter_text(root)?;
     let workflow = read(&root.join(CI_WORKFLOW))?;
+    let tiers = tier_names(&read(&root.join(TIER_SOURCE))?);
     let ci_commands: Vec<Vec<&str>> = workflow
         .lines()
         .map(|line| {
             let line = line.trim_start().trim_start_matches("- ").trim_start();
-            command_words(line.strip_prefix("run:").unwrap_or(line))
+            shell_command_words(line.strip_prefix("run:").unwrap_or(line))
         })
         .collect();
     let all = markdown::lines(&text);
+    let section = markdown::section(&all, "4");
+    let lines: Vec<&MarkdownLine<'_>> = section.iter().filter(|line| !line.fenced).collect();
+    let full_list = full_gate_lines(&lines);
     let mut findings = Vec::new();
-    let mut gate = 0;
-    for line in markdown::section(&all, "4")
-        .iter()
-        .filter(|line| !line.fenced)
-    {
+    let mut report = |line: usize, message: String| {
+        findings.push(Finding::new(root, &path, line, message));
+    };
+    let mut full_commands = 0;
+    for line in &lines {
         for span in markdown::code_spans(line.text) {
             if !span.starts_with("cargo ") {
                 continue;
             }
-            gate += 1;
             let wanted = command_words(span);
-            if !ci_commands.contains(&wanted) {
-                findings.push(Finding::new(
-                    root,
-                    &path,
+            if full_list.contains(&line.number) {
+                full_commands += 1;
+                if !ci_commands.contains(&wanted) {
+                    report(
+                        line.number,
+                        format!(
+                            "full gate command `{span}` is not run by {CI_WORKFLOW} (charter §4.3)"
+                        ),
+                    );
+                }
+            } else if wanted == ["cargo", "gate"] {
+                // The tool itself, named in prose: no command to check.
+            } else if let ["cargo", "gate", tier, ..] = wanted.as_slice() {
+                if !tiers.iter().any(|name| name == tier) {
+                    report(
+                        line.number,
+                        format!(
+                            "`{span}` names no tier of {TIER_SOURCE} (tiers: {}) (charter §4.3)",
+                            tiers.join(", ")
+                        ),
+                    );
+                }
+            } else {
+                report(
                     line.number,
-                    format!("gate command `{span}` is not run by {CI_WORKFLOW} (charter §4.3)"),
-                ));
+                    format!(
+                        "`{span}` is neither in the Full gate list nor a `cargo gate <tier>` \
+                         (charter §4.3)"
+                    ),
+                );
             }
         }
     }
-    if gate == 0 {
-        findings.push(Finding::new(
-            root,
-            &path,
+    if full_commands == 0 {
+        report(
             1,
-            "§4 lists no gate command (`cargo ...`)",
-        ));
+            format!("§4 has no `{FULL_GATE_MARKER}` list of `cargo` commands (charter §4.3)"),
+        );
     }
     Ok(findings)
+}
+
+/// The line numbers of the items nested under the `- **Full gate**` line of `lines`: every
+/// following non-blank line indented deeper than it, up to the first that is not.
+fn full_gate_lines(lines: &[&MarkdownLine<'_>]) -> Vec<usize> {
+    let indent = |text: &str| text.len() - text.trim_start().len();
+    let Some(start) = lines
+        .iter()
+        .position(|line| line.text.trim_start().starts_with(FULL_GATE_MARKER))
+    else {
+        return Vec::new();
+    };
+    let depth = indent(lines[start].text);
+    lines[start + 1..]
+        .iter()
+        .filter(|line| !line.text.trim().is_empty())
+        .take_while(|line| indent(line.text) > depth)
+        .map(|line| line.number)
+        .collect()
+}
+
+/// The lower-case names of the variants of `pub enum Tier` in `source`: one identifier per
+/// line between the enum's braces, doc comments skipped.
+fn tier_names(source: &str) -> Vec<String> {
+    source
+        .lines()
+        .skip_while(|line| !line.trim_start().starts_with("pub enum Tier"))
+        .skip(1)
+        .take_while(|line| line.trim() != "}")
+        .filter_map(|line| line.trim().strip_suffix(','))
+        .filter(|name| !name.is_empty() && name.chars().all(char::is_alphanumeric))
+        .map(str::to_lowercase)
+        .collect()
+}
+
+/// The words of a CI step's command up to a pipe, a list operator or a redirection, without
+/// `--locked`: `cargo test --locked 2>&1 | tee log` is `cargo test`.
+fn shell_command_words(command: &str) -> Vec<&str> {
+    command
+        .split_whitespace()
+        .take_while(|word| !matches!(*word, "|" | "||" | "&&" | ";") && !word.contains('>'))
+        .filter(|word| *word != "--locked")
+        .collect()
 }
 
 /// The whitespace-separated words of `command`, without `--locked`.
@@ -347,7 +431,13 @@ mod tests {
     const CHARTER_4: &str =
         "# C\n\n## 4. Testing\n\n| Crate | Subject | Test files |\n|---|---|---|\n\
          | `sim_types` | math | `a_tests.rs`, `gone.rs` |\n| `tool` | t | `t.rs` |\n\n\
-         3. Gate: `cargo test --workspace` and `cargo fmt --all -- --check`\n\n## 5. Next\n";
+         3. Gates by `cargo gate`: `cargo gate package`, then `cargo gate merge <branch>`.\n\
+         \x20  - **Full gate** (CI):\n\
+         \x20    - `cargo test --workspace`\n\
+         \x20    - `cargo fmt --all -- --check`\n\
+         \x20  - Docs: `cargo gate package`.\n\n## 5. Next\n";
+
+    const TIERS: &str = "//! t\npub enum Tier {\n    /// Cheap.\n    Quick,\n    Package,\n    Merge,\n    Full,\n}\n";
 
     #[test]
     fn c15_reports_missing_files_rows_unit_and_property_tests() -> Result<(), Box<dyn Error>> {
@@ -388,20 +478,84 @@ mod tests {
     #[test]
     fn c16_matches_commands_modulo_locked_and_reports_a_missing_one() -> Result<(), Box<dyn Error>>
     {
-        let workflow = "jobs:\n  a:\n    steps:\n      - run: cargo test --workspace --locked\n\
+        let workflow = "jobs:\n  a:\n    steps:\n      - run: cargo test --workspace --locked \
+                        2>&1 | tee \"$RUNNER_TEMP/t.log\"\n\
                         \x20     - name: x\n        run: cargo fmt --all -- --check\n";
-        let repo = tree(&[("AGENTS.md", CHARTER_4), (CI_WORKFLOW, workflow)])?;
+        let repo = tree(&[
+            ("AGENTS.md", CHARTER_4),
+            (CI_WORKFLOW, workflow),
+            (TIER_SOURCE, TIERS),
+        ])?;
         assert_eq!(ci_runs_the_gate(repo.path())?, Vec::new());
         let without_fmt = "      - run: cargo test --workspace --locked\n";
-        let repo = tree(&[("AGENTS.md", CHARTER_4), (CI_WORKFLOW, without_fmt)])?;
+        let repo = tree(&[
+            ("AGENTS.md", CHARTER_4),
+            (CI_WORKFLOW, without_fmt),
+            (TIER_SOURCE, TIERS),
+        ])?;
         assert_eq!(
             messages(&ci_runs_the_gate(repo.path())?),
             [
-                "AGENTS.md:10: gate command `cargo fmt --all -- --check` is not run by \
+                "AGENTS.md:13: full gate command `cargo fmt --all -- --check` is not run by \
               .github/workflows/ci.yml (charter §4.3)"
             ]
         );
         Ok(())
+    }
+
+    #[test]
+    fn c16_reports_unknown_tiers_stray_commands_and_a_missing_full_list(
+    ) -> Result<(), Box<dyn Error>> {
+        let workflow =
+            "      - run: cargo test --workspace\n      - run: cargo fmt --all -- --check\n";
+        let charter = CHARTER_4.replace(
+            "`cargo gate package`, then",
+            "`cargo gate everything`, `cargo build`, then",
+        );
+        let repo = tree(&[
+            ("AGENTS.md", charter.as_str()),
+            (CI_WORKFLOW, workflow),
+            (TIER_SOURCE, TIERS),
+        ])?;
+        assert_eq!(
+            messages(&ci_runs_the_gate(repo.path())?),
+            [
+                "AGENTS.md:10: `cargo build` is neither in the Full gate list nor a \
+                 `cargo gate <tier>` (charter §4.3)",
+                "AGENTS.md:10: `cargo gate everything` names no tier of crates/gate/src/tier.rs \
+                 (tiers: quick, package, merge, full) (charter §4.3)",
+            ]
+        );
+        let no_list = CHARTER_4.replace("- **Full gate** (CI):", "- CI:");
+        let repo = tree(&[
+            ("AGENTS.md", no_list.as_str()),
+            (CI_WORKFLOW, workflow),
+            (TIER_SOURCE, TIERS),
+        ])?;
+        let found = messages(&ci_runs_the_gate(repo.path())?);
+        assert!(
+            found
+                .iter()
+                .any(|line| line.contains("§4 has no `- **Full gate**` list")),
+            "{found:#?}"
+        );
+        assert!(
+            found
+                .iter()
+                .any(|line| line.contains("`cargo test --workspace` is neither")),
+            "without the list its commands are stray: {found:#?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tier_names_are_the_enum_variants_in_lower_case() {
+        assert_eq!(tier_names(TIERS), ["quick", "package", "merge", "full"]);
+        assert_eq!(tier_names("pub struct Nothing;"), Vec::<String>::new());
+        assert_eq!(
+            shell_command_words("cargo test --locked 2>&1 | tee x"),
+            ["cargo", "test"]
+        );
     }
 
     #[test]

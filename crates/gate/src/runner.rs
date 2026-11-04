@@ -5,7 +5,11 @@
 //! the targets' sources ([`Context`]), computes the change and the selection, prints the
 //! selection, runs the steps the tier requires in order, prints the result table, and writes a
 //! [`Stamp`] when a stamping tier passes on a clean tree. It also implements the `merge` tier's
-//! use of a branch's stamp (blueprint §3.4).
+//! use of a branch's stamp (blueprint §3.4), the flake rule (every failed target is rerun once at
+//! once; one that then passes is flaky, not green, and a `full` run red only by flakes is
+//! repeated once, recording them in its stamp: blueprint §3.5), and the report's notes: the time
+//! saved against the last `full` stamp (blueprint §8) and, for a red `full` run, the red rule's
+//! suspect list (`suspects.rs`).
 //!
 //! # How it fits
 //! `src/main.rs` calls [`run_tier`]; everything that spawns a process lives in `execute.rs`,
@@ -17,18 +21,21 @@
 //! - A tier refuses to run in an agent worktree without `CARGO_TARGET_DIR` (charter §7).
 //! - Only a green `package`, `merge` or `full` run on a clean working tree writes a stamp; a
 //!   dirty tree is reported, not stamped.
+//! - A flaky target never makes a run green; only the one repeat of a `full` run can.
 
 use crate::catalog::SuiteCatalog;
 use crate::changes::{cargo_program, ChangeSpec, Git};
 use crate::cli::{Command, RunOptions};
-use crate::execute::{build_targets, run_logged, run_targets, Outcome, TargetResult};
+use crate::execute::{build_targets, mark_flakes, run_logged, run_targets, Outcome, TargetResult};
 use crate::explain::render_selection;
 use crate::merge::{changed_crates, choose_stamp, overlapping_crates, BranchCommit};
 use crate::schedule::{Job, Scheduler};
 use crate::select::{select, ClippyScope, Inputs, Reason, Selected, Selection};
 use crate::sources::SourceIndex;
 use crate::stamp::{Stamp, StampTarget, StampTree};
+use crate::suspects::suspect_report;
 use crate::tier::Tier;
+use crate::timings::time_saved;
 use crate::workspace::{TargetId, Workspace};
 use crate::GateError;
 use std::collections::{BTreeMap, BTreeSet};
@@ -128,6 +135,8 @@ pub struct RunReport {
     pub targets: Vec<TargetResult>,
     /// The stamp written, or why none was.
     pub stamp: Result<PathBuf, String>,
+    /// Lines printed after the stamp: the time saved, flake findings, the red rule's suspects.
+    pub notes: Vec<String>,
 }
 
 impl RunReport {
@@ -157,11 +166,7 @@ impl RunReport {
         let mut targets = self.targets.clone();
         targets.sort_by(|a, b| a.target.cmp(&b.target));
         for result in &targets {
-            let verdict = match result.outcome {
-                Outcome::Passed => "PASS",
-                Outcome::Failed { .. } => "FAIL",
-                Outcome::Error(_) => "ERROR",
-            };
+            let verdict = result.outcome.verdict();
             let cpu = result.cpu.map_or_else(
                 || "    -   ".to_string(),
                 |c| format!("{:>8.1}", c.as_secs_f64()),
@@ -191,7 +196,45 @@ impl RunReport {
                 let _ = writeln!(out, "No stamp: {why}");
             }
         }
+        for note in &self.notes {
+            let _ = writeln!(out, "{note}");
+        }
         out
+    }
+
+    /// The targets that failed and then passed on their immediate rerun, by name.
+    #[must_use]
+    pub fn flaky_targets(&self) -> Vec<String> {
+        let mut flaky: Vec<String> = self
+            .targets
+            .iter()
+            .filter(|result| matches!(result.outcome, Outcome::Flaky { .. }))
+            .map(|result| result.target.to_string())
+            .collect();
+        flaky.sort();
+        flaky
+    }
+
+    /// Whether the run is red only because of flaky targets: every step passed and every
+    /// target passed or was flaky, with at least one flaky.
+    #[must_use]
+    pub fn red_only_by_flakes(&self) -> bool {
+        self.steps.iter().all(|step| step.passed)
+            && !self.flaky_targets().is_empty()
+            && self
+                .targets
+                .iter()
+                .all(|target| matches!(target.outcome, Outcome::Passed | Outcome::Flaky { .. }))
+    }
+
+    /// The targets that did not pass (failed, errored or flaky).
+    #[must_use]
+    pub fn failing_targets(&self) -> BTreeSet<TargetId> {
+        self.targets
+            .iter()
+            .filter(|result| result.outcome != Outcome::Passed)
+            .map(|result| result.target.clone())
+            .collect()
     }
 
     /// The failing steps and targets with their logs.
@@ -211,6 +254,18 @@ impl RunReport {
                 }
                 Outcome::Error(why) => {
                     let _ = writeln!(out, "\nERROR {}: {why}", result.target);
+                }
+                Outcome::Flaky { tests } => {
+                    let _ = writeln!(
+                        out,
+                        "\nFLAKY {}: failed, then passed on an immediate rerun; not green \
+                         ({}; rerun log in rerun/)",
+                        result.target,
+                        result.log.display()
+                    );
+                    for test in tests {
+                        let _ = writeln!(out, "    {test}");
+                    }
                 }
             }
         }
@@ -272,16 +327,82 @@ pub fn run_tier(command: &Command, cwd: &Path) -> Result<RunReport, GateError> {
             };
             let selection = select(*tier, context.inputs(), &changed)?;
             println!("{}", render_selection(&selection, &what));
-            execute(&context, &selection, options)
+            let mut report = execute(&context, &selection, options, &[])?;
+            if *tier == Tier::Full && report.red_only_by_flakes() {
+                let flakes = report.flaky_targets();
+                println!(
+                    "full: red only by flaky target(s) {}; repeating the full run once \
+                     (blueprint §3.5)",
+                    flakes.join(", ")
+                );
+                report = execute(&context, &selection, options, &flakes)?;
+                report.notes.push(format!(
+                    "The first attempt was red only by flakes ({}); this repeat records them in \
+                     its stamp.",
+                    flakes.join(", ")
+                ));
+            }
+            annotate(&context, &mut report, options)?;
+            Ok(report)
         }
         Command::Merge { branch, options } => {
             let selection = merge_selection(&context, branch, options)?;
-            execute(&context, &selection, options)
+            let mut report = execute(&context, &selection, options, &[])?;
+            annotate(&context, &mut report, options)?;
+            Ok(report)
         }
-        Command::Explain { .. } | Command::Timings { .. } => Err(GateError::Usage(
-            "explain and timings run nothing".to_string(),
-        )),
+        Command::Explain { .. } | Command::Timings { .. } | Command::Suspects { .. } => Err(
+            GateError::Usage("explain, timings and suspects run nothing".to_string()),
+        ),
     }
+}
+
+/// Adds the report's notes: flake findings, the time saved against the last `full` stamp (for
+/// selective tiers), and for a red `full` run the red rule's suspect list (blueprint §3.5, §8).
+///
+/// # Errors
+/// Git, catalog and selection errors while computing the suspects.
+fn annotate(
+    context: &Context,
+    report: &mut RunReport,
+    options: &RunOptions,
+) -> Result<(), GateError> {
+    let flaky = report.flaky_targets();
+    if !flaky.is_empty() {
+        report.notes.push(format!(
+            "Flaky: {}. A flake is not green: record a finding; two flakes of one target in a \
+             week are a bug to fix, not to rerun (blueprint §3.5).",
+            flaky.join(", ")
+        ));
+    }
+    let stamps = stamp_dir(options).and_then(|dir| Stamp::read_all(&dir));
+    let stamps = match stamps {
+        Ok(stamps) => stamps,
+        Err(error) => {
+            report.notes.push(format!(
+                "Time saved and suspects: stamps unreadable: {error}"
+            ));
+            Vec::new()
+        }
+    };
+    let run_ms = report
+        .targets
+        .iter()
+        .map(|target| u64::try_from(target.wall.as_millis()).unwrap_or(u64::MAX))
+        .sum();
+    if let Some(line) = time_saved(report.tier, &stamps, run_ms) {
+        report.notes.push(line);
+    }
+    let failing = report.failing_targets();
+    if report.tier == Tier::Full && !failing.is_empty() {
+        report.notes.push(suspect_report(
+            context,
+            &failing,
+            options.base.as_deref(),
+            &stamps,
+        )?);
+    }
+    Ok(())
 }
 
 /// The selection of the `merge` tier for `branch`, merged as the current `HEAD`.
@@ -441,11 +562,13 @@ fn clippy_args(scope: &ClippyScope) -> Option<Vec<String>> {
     Some(args)
 }
 
-/// Runs the selection's steps and tests, then stamps a green run.
+/// Runs the selection's steps and tests, then stamps a green run; `flakes` are the flaky
+/// targets of an earlier attempt of the same run, recorded in the stamp.
 fn execute(
     context: &Context,
     selection: &Selection,
     options: &RunOptions,
+    flakes: &[String],
 ) -> Result<RunReport, GateError> {
     let root = context.git.root();
     let tree = context.git.tree("HEAD")?;
@@ -465,6 +588,7 @@ fn execute(
         steps: Vec::new(),
         targets: Vec::new(),
         stamp: Err("the run is not green".to_string()),
+        notes: Vec::new(),
     };
     let cargo = cargo_program();
     let none = BTreeMap::new();
@@ -494,7 +618,7 @@ fn execute(
         run_tests(context, selection, options, &log_dir, &mut report)?;
     }
     if report.passed() {
-        report.stamp = stamp_run(context, selection, options, &report);
+        report.stamp = stamp_run(context, selection, options, &report, flakes);
     }
     Ok(report)
 }
@@ -547,7 +671,51 @@ fn run_tests(
         log_dir,
         total,
     );
+    rerun_failures(context, &executables, log_dir, report)?;
     run_extras(context, selection, log_dir, report)
+}
+
+/// Reruns every failed target once, at once and alone, and marks those that pass as flaky
+/// (blueprint §3.5). Rerun logs go to `<log dir>/rerun/`, beside the first run's.
+///
+/// # Errors
+/// [`GateError::Io`] if the rerun log directory cannot be created.
+fn rerun_failures(
+    context: &Context,
+    executables: &BTreeMap<TargetId, PathBuf>,
+    log_dir: &Path,
+    report: &mut RunReport,
+) -> Result<(), GateError> {
+    let failed: Vec<Job> = report
+        .targets
+        .iter()
+        .filter(|result| matches!(result.outcome, Outcome::Failed { .. }))
+        .map(|result| Job {
+            target: result.target.clone(),
+            class: result.class,
+            expected: result.wall,
+        })
+        .collect();
+    if failed.is_empty() {
+        return Ok(());
+    }
+    let rerun_dir = log_dir.join("rerun");
+    std::fs::create_dir_all(&rerun_dir).map_err(|source| GateError::Io {
+        path: rerun_dir.clone(),
+        source,
+    })?;
+    let total = failed.len();
+    println!("rerunning {total} failed target(s) once, to tell a flake from a failure");
+    let reruns = run_targets(
+        context.git.root(),
+        &context.workspace,
+        Scheduler::new(1, failed),
+        executables,
+        &rerun_dir,
+        total,
+    );
+    mark_flakes(&mut report.targets, &reruns);
+    Ok(())
 }
 
 /// Doc tests of the selected libraries, then the selected catalog commands.
@@ -624,6 +792,7 @@ fn stamp_run(
     selection: &Selection,
     options: &RunOptions,
     report: &RunReport,
+    flakes: &[String],
 ) -> Result<PathBuf, String> {
     if selection.tier == Tier::Quick {
         return Err("the quick tier writes no stamp".to_string());
@@ -660,6 +829,7 @@ fn stamp_run(
             })
             .collect(),
         commands: selection.commands.keys().cloned().collect(),
+        flakes: flakes.to_vec(),
     };
     let dir = stamp_dir(options).map_err(|error| error.to_string())?;
     stamp.write(&dir).map_err(|error| error.to_string())
@@ -720,13 +890,30 @@ mod tests {
                 log: PathBuf::from("core__lib.log"),
             }],
             stamp: Err("the run is not green".into()),
+            notes: vec!["Time saved: 1.0 min".into()],
         };
         assert!(!report.passed());
         let text = report.render();
         assert!(text.contains("FAILED core/lib: core__lib.log"));
         assert!(text.contains("    a::b"));
         assert!(text.contains("RED"));
+        assert!(text.ends_with("Time saved: 1.0 min\n"), "{text}");
+        assert!(!report.red_only_by_flakes());
+        assert_eq!(
+            report.failing_targets(),
+            BTreeSet::from([TargetId::lib("core")])
+        );
+        report.targets[0].outcome = Outcome::Flaky {
+            tests: vec!["a::b".into()],
+        };
+        assert!(!report.passed(), "a flake is not green");
+        assert!(report.red_only_by_flakes());
+        assert_eq!(report.flaky_targets(), ["core/lib"]);
+        assert!(report
+            .render()
+            .contains("FLAKY core/lib: failed, then passed"));
         report.targets[0].outcome = Outcome::Passed;
         assert!(report.passed());
+        assert!(!report.red_only_by_flakes());
     }
 }

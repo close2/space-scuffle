@@ -1,6 +1,6 @@
 # Tiered test gates: run what a change can break, run everything on a schedule
 
-Date: 2026-11-04. Status: Proposed (blueprint only). Host: the shared Debian 13 VM, 16 pinned cores of an AMD
+Date: 2026-11-04. Status: Active, WP1 to WP5 implemented (§11). Host: the shared Debian 13 VM, 16 pinned cores of an AMD
 EPYC 7301, AMD Radeon RX 580 on `radv`; other agents were building and testing at the same time, as they always
 are. Charter sections touched: §4.3 (rewritten), §5 (one new crate), §9 (C16 changed, C22 added). §6 is not
 touched.
@@ -588,6 +588,41 @@ No file of the change reaches that code; a rule for it would add a headless batt
 package for nothing. Two corrections to §2.5 from the logs: `combat_wp4_probe_tests` failed three `sim_core`
 binaries and `sim_fixtures/trace_tests`, and `p9-wp12-gate1` also failed `client/runtime_battle_tests` and
 `sim_core/scenario_tests`; all are selected.
+
+### 11.2 WP5: the tiers in the charter
+
+What WP5 added, and where it departs from the text above:
+
+- **Charter.** §4.3 is the text of §9.1, with one change: its last bullet reads "Docs-only changes:
+  `cargo gate package` runs fmt and `workspace_checks` only" instead of naming `cargo test --locked -p
+  workspace_checks`. The new C16 (§9.2) makes every `cargo` span outside the Full gate list a finding unless it is
+  a `cargo gate <tier>`, and that command is neither; the `package` tier selects exactly fmt and the two
+  `workspace_checks` targets for a docs-only change (§11.1: 14 of the 45 merges). §9 has C16 reworded and the C22
+  row; §6, §7 and §8 are unchanged.
+- **C16** (`crates/workspace_checks/src/charter_claims.rs`) checks the Full gate list against `ci.yml`, every
+  `cargo gate <tier>` against the variants of `pub enum Tier` in `crates/gate/src/tier.rs` (read as text), and
+  reports any other `cargo` span. Two additions the plan did not spell out: a bare `cargo gate` (the tool named in
+  prose) is accepted, and a CI step's command matches up to a pipe or redirection, so the test step can keep its
+  log.
+- **CI.** The test step runs `cargo test --workspace --locked 2>&1 | tee "$RUNNER_TEMP/cargo-test.log"` under
+  `shell: bash` (pipefail, so a red run stays red); a new step, `if: always()` and `continue-on-error: true`,
+  appends `cargo gate timings --from-log` to the job summary: totals per class, every binary by time, and the
+  classes this one run contradicts. CI still runs nothing selected (D2).
+- **Flakes** (§3.5). Every tier reruns each failed target once, at once and alone (logs in `rerun/`). A target
+  that passes then is `FLAKY`: not green, with a note to record a finding. A `full` run red only by flakes is
+  repeated once, and the repeat's stamp records them (`flakes`); `cargo gate timings` lists every target with two
+  flakes in seven days. The whole-run repeat is limited to `full`, as §3.5 says; a red-by-flake `package` run is
+  rerun by its agent.
+- **Red rule** (§3.5, step 1). A red `full` run prints, per failing target, the first-parent changes of `main`
+  since the last green `full` stamp that is an ancestor of `HEAD` (else the 50 newest) whose `package` selection
+  includes it, newest first; a target no change selects is marked as a catalog miss or a flake. For a red CI run,
+  `cargo gate suspects --from-log <log>` (or with target names, `--base <rev>` to choose the start) prints the
+  same list from the CI log. This command is not in the plan's §5.2; the red rule needs it for CI.
+- **Time saved** (§8). `quick`, `package` and `merge` print the test run time saved against the newest `full`
+  stamp, or say that there is none yet.
+- **Not done here:** WP5's own gate was to be the complete suite (§10); it ran `cargo gate package` instead, at
+  the orchestrator's instruction, with the package tier run by hand because a change to `crates/gate/**` selects
+  the complete suite (see the hand-back).
 
 ## 12. Decisions and scope
 

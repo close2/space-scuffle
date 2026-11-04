@@ -4,7 +4,8 @@
 //! Runs one command with its output in a log file ([`run_logged`]); builds exactly the selected
 //! test targets and reads their executables from Cargo's JSON messages ([`build_targets`]); runs
 //! those executables on the lanes of a [`Scheduler`] the way `cargo test` starts them
-//! ([`run_targets`]), measuring wall and CPU time.
+//! ([`run_targets`]), measuring wall and CPU time; and judges a failed target's immediate rerun
+//! ([`mark_flakes`]).
 //!
 //! # How it fits
 //! `runner.rs` decides what to run per tier; this module is the only place that spawns Cargo or
@@ -45,6 +46,24 @@ pub enum Outcome {
     },
     /// The executable could not be started or was not built.
     Error(String),
+    /// It failed, then passed when rerun at once (blueprint §3.5): not green, and a finding.
+    Flaky {
+        /// The tests that failed in the first run.
+        tests: Vec<String>,
+    },
+}
+
+impl Outcome {
+    /// The verdict word of result tables: `PASS`, `FAIL`, `ERROR` or `FLAKY`.
+    #[must_use]
+    pub fn verdict(&self) -> &'static str {
+        match self {
+            Self::Passed => "PASS",
+            Self::Failed { .. } => "FAIL",
+            Self::Error(_) => "ERROR",
+            Self::Flaky { .. } => "FLAKY",
+        }
+    }
 }
 
 /// One test executable's result.
@@ -457,13 +476,28 @@ fn not_built(job: &Job, log_dir: &Path) -> TargetResult {
     }
 }
 
+/// Applies the immediate reruns of failed targets (blueprint §3.5): a target whose first run
+/// failed and whose rerun passed becomes [`Outcome::Flaky`], keeping its first run's time and
+/// log; a target whose rerun failed too stays failed. Targets without a rerun are unchanged.
+pub fn mark_flakes(results: &mut [TargetResult], reruns: &[TargetResult]) {
+    for result in results.iter_mut() {
+        let Outcome::Failed { tests } = &result.outcome else {
+            continue;
+        };
+        let passed_again = reruns
+            .iter()
+            .any(|rerun| rerun.target == result.target && rerun.outcome == Outcome::Passed);
+        if passed_again {
+            result.outcome = Outcome::Flaky {
+                tests: tests.clone(),
+            };
+        }
+    }
+}
+
 /// One progress line: `[n/total] PASS  12.3 s  crate/target`.
 fn print_progress(result: &TargetResult, done: usize, total: usize) {
-    let verdict = match result.outcome {
-        Outcome::Passed => "PASS",
-        Outcome::Failed { .. } => "FAIL",
-        Outcome::Error(_) => "ERROR",
-    };
+    let verdict = result.outcome.verdict();
     println!(
         "[{done}/{total}] {verdict:<5} {:>7.1} s  {}",
         result.wall.as_secs_f64(),
@@ -480,6 +514,41 @@ mod tests {
     fn failed_test_names_are_read_from_the_log() {
         let log = "running 3 tests\ntest a::b ... ok\ntest a::c ... FAILED\ntest d ... FAILED\n\nfailures:\n    a::c\n";
         assert_eq!(failed_tests(log), ["a::c", "d"]);
+    }
+
+    fn result(target: &str, outcome: Outcome) -> TargetResult {
+        TargetResult {
+            target: TargetId::test("core", target),
+            class: TestClass::Fast,
+            wall: Duration::from_secs(1),
+            cpu: None,
+            outcome,
+            log: PathBuf::from(format!("{target}.log")),
+        }
+    }
+
+    #[test]
+    fn a_failure_that_passes_on_its_rerun_is_flaky_and_one_that_fails_again_is_not() {
+        let failed = || Outcome::Failed {
+            tests: vec!["t".to_string()],
+        };
+        let mut results = vec![
+            result("flaky", failed()),
+            result("broken", failed()),
+            result("green", Outcome::Passed),
+            result("missing", Outcome::Error("not built".to_string())),
+        ];
+        let reruns = vec![result("flaky", Outcome::Passed), result("broken", failed())];
+        mark_flakes(&mut results, &reruns);
+        let verdicts: Vec<&str> = results.iter().map(|r| r.outcome.verdict()).collect();
+        assert_eq!(verdicts, ["FLAKY", "FAIL", "PASS", "ERROR"]);
+        assert_eq!(
+            results[0].outcome,
+            Outcome::Flaky {
+                tests: vec!["t".to_string()]
+            }
+        );
+        assert_eq!(results[0].log, PathBuf::from("flaky.log"));
     }
 
     #[test]
