@@ -11,6 +11,10 @@
 // Re-recorded for WP6 (Q0038; marine damage point 1, backswing 13) from checkpoint 4 on, and
 // for WP7 (Q0039): "blue_infantry" (pulse_bot) now walks at 0.126 per tick (was 0.09), so every
 // checkpoint changed from checkpoint 1 (ticks 1 to 50), where the squad starts moving at tick 5.
+// Re-recorded for WP8 (Q0039): the Overclock of "blue_infantry" (stimmed at tick 260) lasts 268
+// ticks (was 250). Its remaining ticks are world state, so checkpoints 6 and 7 (ticks 251 to 350)
+// changed; from checkpoint 8 on the checksums are those of WP7 again: no unit carries the
+// Overclock by tick 400 (the stimmed marines have died), so the longer stim changed nothing else.
 (
     checksum_schema: 9,
     seed: 0x5EED_0F_5CAFF1E,
@@ -43,8 +47,8 @@
         0x5b2cfb479717135f,
         0x8104530ece6dec0b,
         0xd8dfb12e211a71e3,
-        0x2cd858e3dbcf5202,
-        0x5cb91ed9e6bb8029,
+        0xa6a0c5ddb2456048,
+        0x9b323c50fe17d2ec,
         0x8d30eb6962696166,
         0x556a1b01d1e35959,
         0xb14533f8d364016b,

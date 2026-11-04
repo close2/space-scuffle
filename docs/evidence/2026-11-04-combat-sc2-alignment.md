@@ -800,3 +800,34 @@ the_skirmish_hud_and_foundation_render_cleanly_on_a_real_window` failed on the p
 changed by 66.57 where it needed more than 3 × 23.47 (the largest change of a ring built in both shots). Rerun alone
 on the same build it passed (67.10 against 3 × 20.90). The test drives workers to raise a foundation and involves no
 `pulse_bot`; it is a margin flake unrelated to this step, reported and left unchanged.
+
+## 7. WP8: the Stimpack's duration (Q0039)
+
+**Commit.** The data commit of WP8, after WP7 (§6). `pulse_bot`'s Overclock lasts StarCraft II's Stimpack duration,
+converted from Normal to Faster time, the second of the four values of Q0039 (option 3):
+
+| Field | Before | After | Reference |
+|---|---|---|---|
+| `pulse_bot` `capabilities.overclock.duration_ticks` | 250 | **268** | `Stimpack` Duration 15 Normal s = 10.71 Faster s = 267.9 ticks (`liberty` BehaviorData:684, audit row; battle 33 investigation §1.6) |
+
+`rhino_beetle`'s 20-life Overclock is not touched; WP15 removes it and gives `shock_golem` its own at 268 (plan
+D-9). Doc 08's `overclock_stim` row said "for 178 ticks (7.1s)" and now says 268 ticks (10.7 s). Outputs under
+`~/scratch/combat_wp7/wp8/` on the development server.
+
+- **Whole matrix, 20 seeds: bit-identical** to the state after WP7 (all 1000 rows of `matrix.csv`), as the plan
+  expected: no matrix battle has a stim last past 250 ticks. Expectation failures stay 0 on the seeds of record and 7
+  over all seeds (battle 33, §6.1).
+- **Battle 33, 68 seeds: bit-identical** to §6.2 (`seeds.csv` and all 68 `seed_<n>_ticks.csv` files byte-identical;
+  nobody stims in it).
+- **`golden_replay.ron`: re-recorded**, but not where the plan expected. The plan expected changes after tick 510
+  (stim at tick 260 plus 250). The Overclock's remaining ticks are part of the hashed world state (`ActiveBuff` in
+  `checksum/encoding.rs`), so the checksum differs from the stim on: **checkpoints 6 and 7 (ticks 251 to 350)
+  changed, and only they.** From checkpoint 8 (ticks 351 to 400) on, the checksums equal WP7's again: by tick 400 no
+  unit carries the Overclock (the stimmed marines have died), so the 18 extra ticks never take effect in this replay.
+- **`golden_replay_orders.ron`: unchanged** (nobody stims in it).
+- Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`) reproduce both fixtures.
+- **Not changed:** `Entity::apply_stimpack` in `crates/sim_core/src/entity.rs`, the legacy path that an immediate
+  `UseStim` given straight to an entity (not through a `PlayerCommand`) takes, still applies a hard-coded 10-life,
+  250-tick Overclock. A `UseStim` player command never reaches it (`world/commands.rs` routes it to `apply_stim`,
+  which uses the catalog's Overclock and the unlock); only tests that call `Entity::issue_order` directly do. It is
+  outside this data step and is reported for a later clean-up.

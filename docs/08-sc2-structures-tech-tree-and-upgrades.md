@@ -172,7 +172,7 @@ flowchart TD
 | Upgrade Slug | SC2 Analogue | Researched At | Cost (M/G) | Research Ticks | Prerequisite | Target Unit & Effect |
 | :--- | :--- | :--- | :---: | :---: | :--- | :--- |
 | `combat_shield` | Combat Shield | `assembly_bay_dome` (Tech Lab) | 100 / 100 | 1975 (79s) | `tech_module_pod` | `pulse_bot`: Max HP increased by +10 (45 -> 55 HP). |
-| `overclock_stim` | Stimpack | `assembly_bay_dome` (Tech Lab) | 100 / 100 | 3025 (121s) | `tech_module_pod` | Unlocks `Overclock` on `pulse_bot` and `shock_golem`: sacrifices 10/20 HP for +50% move speed and +50% attack speed for 178 ticks (7.1s). |
+| `overclock_stim` | Stimpack | `assembly_bay_dome` (Tech Lab) | 100 / 100 | 3025 (121s) | `tech_module_pod` | Unlocks `Overclock` on `pulse_bot` and `shock_golem`: sacrifices 10/20 HP for +50% move speed and +50% attack speed for 268 ticks (10.7 s). |
 | `concussive_shells` | Concussive Shells | `assembly_bay_dome` (Tech Lab) | 50 / 50 | 1075 (43s) | `tech_module_pod` | `shock_golem`: Attacks inflict a 50-tick kinetic gravity snare slowing target move speed by 44%. |
 | `infernal_preigniter` | Infernal Pre-Igniter | `machining_plant_dome` (Tech Lab) | 100 / 100 | 1975 (79s) | `weapons_arsenal_dome` | `napalm_wheeler`: Chemical napalm deals +5 additional bonus damage vs Light targets (8+6 -> 8+11). |
 | `drilling_claws` | Drilling Claws | `machining_plant_dome` (Tech Lab) | 75 / 75 | 1975 (79s) | `weapons_arsenal_dome` | Subterranean droids burrow and rearm twice as fast (burrow duration halved from 50 to 25 ticks). |

@@ -160,7 +160,7 @@
             capabilities: (
                 overclock: Some((
                     hp_cost: 10.0,
-                    duration_ticks: 250,
+                    duration_ticks: 268,
                     speed_multiplier: 1.5,
                     attack_rate_multiplier: 1.5,
                 )),
