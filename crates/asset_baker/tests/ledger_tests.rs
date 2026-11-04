@@ -152,6 +152,9 @@ fn a_last_frame_hash_is_written_only_when_an_end_frame_was_sent() {
 
 #[test]
 fn every_committed_ledger_line_still_parses_and_round_trips_unchanged() {
+    // The first 25 lines predate `lastFrame` (seamless-loops plan WP1); the pilot of WP4 and
+    // later runs send the pin as both the start and the end picture (plan D-2).
+    const LINES_BEFORE_LAST_FRAME: usize = 25;
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../docs/evidence/veo/ledger.jsonl");
     let text = std::fs::read_to_string(&path).expect("committed ledger");
@@ -162,15 +165,28 @@ fn every_committed_ledger_line_still_parses_and_round_trips_unchanged() {
         .collect();
     assert_eq!(records.len(), lines.len());
     assert_ne!(records.len(), 0, "the committed ledger has lines");
-    for (record, line) in records.iter().zip(lines) {
+    for (index, (record, line)) in records.iter().zip(lines).enumerate() {
         if let LedgerEvent::RequestStarted {
-            last_frame_sha256, ..
+            keyframe_sha256,
+            last_frame_sha256,
+            ..
         } = &record.event
         {
-            assert_eq!(
-                *last_frame_sha256, None,
-                "no committed request sent an end frame"
-            );
+            if index < LINES_BEFORE_LAST_FRAME {
+                assert_eq!(
+                    *last_frame_sha256,
+                    None,
+                    "line {}: no request before the pin sent an end frame",
+                    index + 1
+                );
+            } else if last_frame_sha256.is_some() {
+                assert_eq!(
+                    last_frame_sha256,
+                    keyframe_sha256,
+                    "line {}: an end frame is the start picture (the pin)",
+                    index + 1
+                );
+            }
         }
         let original: serde_json::Value = serde_json::from_str(line).expect("JSON");
         let written = serde_json::to_value(record).expect("encode");
