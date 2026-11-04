@@ -94,17 +94,6 @@ pub(crate) fn brick_voxels(b: usize) -> [Range<usize>; 3] {
     ]
 }
 
-/// The voxels of brick `b` that lie at least `margin` voxels inside every face of the grid,
-/// as half-open ranges `[x, y, z]` (possibly empty). `margin = 1` is the domain of the curl
-/// loop (`1..N-1`), `margin = 2` that of the confinement force (`2..N-2`).
-#[inline]
-#[must_use]
-pub(crate) fn brick_voxels_inset(b: usize, margin: usize) -> [Range<usize>; 3] {
-    let [x, y, z] = brick_voxels(b);
-    let inset = |r: Range<usize>, n: usize| r.start.max(margin)..r.end.min(n - margin);
-    [inset(x, GRID_NX), inset(y, GRID_NY), inset(z, GRID_NZ)]
-}
-
 /// Flat indices of the face neighbours of brick `b` (at most six; fewer at the grid's faces,
 /// where the neighbour would lie outside the grid). Unused entries are `None`.
 #[must_use]
@@ -220,6 +209,151 @@ pub(crate) const fn segment_index(sx: usize, iy: usize, iz: usize) -> usize {
     sx + iy * BRICKS_X + iz * (BRICKS_X * GRID_NY)
 }
 
+/// One brick-wide piece of a grid row: the unit in which the passes walk the grid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Segment {
+    /// Flat index of the brick the segment lies in.
+    pub(crate) brick: usize,
+    /// Flat index of the segment ([`segment_index`]).
+    pub(crate) index: usize,
+    /// Voxel x range of the segment (clipped by the walk's margin).
+    pub(crate) xs: Range<usize>,
+    /// Grid row of the segment.
+    pub(crate) iy: usize,
+    /// Grid slice of the segment.
+    pub(crate) iz: usize,
+    /// Flat voxel indices of `xs` in row `(iy, iz)`: contiguous in every slab.
+    pub(crate) voxels: Range<usize>,
+}
+
+/// Segment column `sx` of row `(iy, iz)`, clipped to the voxels at least `margin` inside.
+fn segment(sx: usize, iy: usize, iz: usize, margin: usize) -> Segment {
+    let xs = (sx * BRICK_NX).max(margin)..((sx + 1) * BRICK_NX).min(GRID_NX - margin);
+    let first = xs.start + iy * GRID_NX + iz * GRID_NX * GRID_NY;
+    Segment {
+        brick: brick_of_voxel(sx * BRICK_NX, iy, iz),
+        index: segment_index(sx, iy, iz),
+        voxels: first..first + xs.len(),
+        xs,
+        iy,
+        iz,
+    }
+}
+
+/// A maximal run of consecutive segments of one grid row whose bricks share one decision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Run {
+    /// The decision shared by every brick of the run.
+    pub(crate) work: BrickWork,
+    /// Voxel x range of the run (clipped by the walk's margin).
+    pub(crate) xs: Range<usize>,
+    /// Grid row of the run.
+    pub(crate) iy: usize,
+    /// Grid slice of the run.
+    pub(crate) iz: usize,
+    /// Flat voxel indices of `xs` in row `(iy, iz)`: contiguous in every slab.
+    pub(crate) voxels: Range<usize>,
+    /// Segment columns `sx` the run covers.
+    columns: Range<usize>,
+    /// The walk's margin, to clip the run's segments.
+    margin: usize,
+}
+
+impl Run {
+    /// The run's segments, in order, each clipped by the walk's margin.
+    pub(crate) fn segments(&self) -> impl Iterator<Item = Segment> + '_ {
+        self.columns
+            .clone()
+            .map(|sx| segment(sx, self.iy, self.iz, self.margin))
+    }
+}
+
+/// The runs of every grid row at least `margin` voxels inside every face, in linear voxel
+/// order (`iz`, then `iy`, then x), where consecutive segments whose bricks share a decision
+/// in `work` form one run. `margin` must be below 4, so that every segment keeps a voxel.
+// PERFORMANCE RATIONALE:
+// Why: walking brick by brick (32 rows of 8 voxels, eight 4.6 KB z slices apart, in each of up
+// to ten slabs) defeated the hardware prefetcher, and walking segment by segment cut the dense
+// loops into pieces of 8 voxels (the curl loop, which LLVM vectorizes, lost most of its vector
+// iterations); either made a fully active field slower than the dense solver.
+// What: each pass decides per brick first, then walks maximal runs of one decision in the dense
+// solver's linear order, so a row whose bricks all compute is one loop of up to 96 voxels, as in
+// the dense solver, and an idle row is one skip.
+// Trade-off: per-brick results (maxima, flags) are folded segment by segment, in a second loop
+// over each computed run.
+pub(crate) fn runs(margin: usize, work: &[BrickWork; BRICK_COUNT]) -> Runs<'_> {
+    debug_assert!(
+        margin < BRICK_NY,
+        "invariant: a margin below 4 keeps every segment"
+    );
+    Runs {
+        work,
+        margin,
+        iy: margin,
+        iz: margin,
+        sx: 0,
+    }
+}
+
+/// Iterator of [`runs`]: the next segment column `sx` of row `(iy, iz)`.
+pub(crate) struct Runs<'a> {
+    work: &'a [BrickWork; BRICK_COUNT],
+    margin: usize,
+    iy: usize,
+    iz: usize,
+    sx: usize,
+}
+
+impl Iterator for Runs<'_> {
+    type Item = Run;
+
+    fn next(&mut self) -> Option<Run> {
+        let margin = self.margin;
+        if self.sx == BRICKS_X {
+            self.sx = 0;
+            self.iy += 1;
+            if self.iy == GRID_NY - margin {
+                self.iy = margin;
+                self.iz += 1;
+            }
+        }
+        if self.iz >= GRID_NZ - margin {
+            return None;
+        }
+        let (iy, iz) = (self.iy, self.iz);
+        let decision = |sx: usize| self.work[brick_of_voxel(sx * BRICK_NX, iy, iz)];
+        let start = self.sx;
+        let work = decision(start);
+        let mut end = start + 1;
+        while end < BRICKS_X && decision(end) == work {
+            end += 1;
+        }
+        self.sx = end;
+        let xs = (start * BRICK_NX).max(margin)..(end * BRICK_NX).min(GRID_NX - margin);
+        let first = xs.start + iy * GRID_NX + iz * GRID_NX * GRID_NY;
+        Some(Run {
+            work,
+            voxels: first..first + xs.len(),
+            xs,
+            iy,
+            iz,
+            columns: start..end,
+            margin,
+        })
+    }
+}
+
+/// What one pass does with one brick, decided before the pass walks the grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BrickWork {
+    /// The brick already holds the pass's result: leave it.
+    Skip,
+    /// The result is the rest value, which the brick does not hold yet: write it.
+    Fill,
+    /// Run the dense per-voxel code.
+    Compute,
+}
+
 /// One boolean per packing segment: whether its bytes hold the rest bytes (D-2, rule 6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SegmentFlags([bool; SEGMENT_COUNT]);
@@ -251,21 +385,6 @@ impl SegmentFlags {
 #[must_use]
 pub(crate) fn may_hold_smog(value: f32) -> bool {
     value.is_nan() || value >= 1e-6
-}
-
-/// Largest of `acc` and `|value|`, where a NaN `value` yields `+inf`: the bound must hold for any
-/// comparison the dense code makes, and every comparison with a NaN takes the "not small" side.
-#[inline]
-#[must_use]
-pub(crate) fn max_magnitude(acc: f32, value: f32) -> f32 {
-    let magnitude = value.abs();
-    if magnitude > acc {
-        magnitude
-    } else if magnitude.is_nan() {
-        f32::INFINITY
-    } else {
-        acc
-    }
 }
 
 // PERFORMANCE RATIONALE:
@@ -470,6 +589,84 @@ mod tests {
         }
     }
 
+    /// The walk visits, in increasing flat index, exactly the voxels at least `margin` inside
+    /// every face, each once, and labels each segment with its voxel's brick.
+    #[test]
+    fn segment_walk_covers_the_inset_grid_in_linear_order() {
+        for margin in 0..3 {
+            let mut visited = Vec::new();
+            for seg in segments(margin) {
+                assert_eq!(seg.voxels.len(), seg.xs.len());
+                assert_eq!(
+                    seg.index,
+                    segment_index(seg.xs.start / BRICK_NX, seg.iy, seg.iz)
+                );
+                for (ix, flat) in seg.xs.clone().zip(seg.voxels.clone()) {
+                    assert_eq!(flat, voxel_index(ix, seg.iy, seg.iz));
+                    assert_eq!(seg.brick, brick_of_voxel(ix, seg.iy, seg.iz));
+                    visited.push(flat);
+                }
+            }
+            let mut expected = Vec::new();
+            for iz in margin..GRID_NZ - margin {
+                for iy in margin..GRID_NY - margin {
+                    for ix in margin..GRID_NX - margin {
+                        expected.push(voxel_index(ix, iy, iz));
+                    }
+                }
+            }
+            assert_eq!(visited, expected, "margin {margin}");
+        }
+    }
+
+    /// The reference walk: every segment of the voxels at least `margin` inside, in linear
+    /// voxel order.
+    fn segments(margin: usize) -> impl Iterator<Item = Segment> {
+        (margin..GRID_NZ - margin).flat_map(move |iz| {
+            (margin..GRID_NY - margin)
+                .flat_map(move |iy| (0..BRICKS_X).map(move |sx| segment(sx, iy, iz, margin)))
+        })
+    }
+
+    /// Runs cover the same voxels as the segment walk, in the same order, each run's segments
+    /// share its decision, and two neighbouring runs of one row never share one.
+    #[test]
+    fn runs_merge_segments_of_one_decision() {
+        let mut work = [BrickWork::Compute; BRICK_COUNT];
+        for (b, w) in work.iter_mut().enumerate() {
+            *w = match (b * 7 + b / 5) % 4 {
+                0 | 1 => BrickWork::Compute,
+                2 => BrickWork::Skip,
+                _ => BrickWork::Fill,
+            };
+        }
+        for margin in 0..3 {
+            let mut from_runs = Vec::new();
+            let mut previous: Option<Run> = None;
+            for run in runs(margin, &work) {
+                let segs: Vec<Segment> = run.segments().collect();
+                assert_eq!(segs.first().map(|s| s.xs.start), Some(run.xs.start));
+                assert_eq!(segs.last().map(|s| s.xs.end), Some(run.xs.end));
+                for seg in &segs {
+                    assert_eq!(work[seg.brick], run.work);
+                    from_runs.extend(seg.voxels.clone());
+                }
+                assert_eq!(run.voxels.len(), run.xs.len());
+                if let Some(prev) = &previous {
+                    if (prev.iy, prev.iz) == (run.iy, run.iz) {
+                        assert_ne!(prev.work, run.work);
+                        assert_eq!(prev.xs.end, run.xs.start);
+                    }
+                }
+                previous = Some(run);
+            }
+            let from_segments: Vec<usize> = segments(margin).flat_map(|s| s.voxels).collect();
+            assert_eq!(from_runs, from_segments, "margin {margin}");
+        }
+        let all_skip = [BrickWork::Skip; BRICK_COUNT];
+        assert_eq!(runs(0, &all_skip).count(), GRID_NY * GRID_NZ);
+    }
+
     #[test]
     fn segments_follow_linear_voxel_order() {
         let mut expected = 0;
@@ -481,18 +678,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[test]
-    fn inset_ranges_match_the_curl_and_force_domains() {
-        let corner = brick_index(0, 0, 0);
-        assert_eq!(brick_voxels_inset(corner, 1), [1..8, 1..4, 1..8]);
-        assert_eq!(brick_voxels_inset(corner, 2), [2..8, 2..4, 2..8]);
-        let far = brick_index(BRICKS_X - 1, BRICKS_Y - 1, BRICKS_Z - 1);
-        assert_eq!(brick_voxels_inset(far, 1), [88..95, 8..11, 64..71]);
-        assert_eq!(brick_voxels_inset(far, 2), [88..94, 8..10, 64..70]);
-        let inner = brick_index(5, 1, 4);
-        assert_eq!(brick_voxels_inset(inner, 2), brick_voxels(inner));
     }
 
     /// Face neighbours are exactly the bricks one step away along one axis, clipped at the
@@ -597,14 +782,6 @@ mod tests {
                 "{v}"
             );
         }
-    }
-
-    #[test]
-    fn max_magnitude_sends_nan_to_infinity() {
-        assert_eq!(max_magnitude(0.0, -2.0), 2.0);
-        assert_eq!(max_magnitude(3.0, 2.0), 3.0);
-        assert_eq!(max_magnitude(3.0, f32::NAN), f32::INFINITY);
-        assert_eq!(max_magnitude(0.0, -0.0).to_bits(), 0);
     }
 
     #[test]

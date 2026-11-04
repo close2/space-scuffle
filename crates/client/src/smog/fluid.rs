@@ -14,8 +14,8 @@
 //! - **Finite arithmetic:** all fields remain finite without NaNs or infinities.
 
 use super::bricks::{
-    back_trace_reach, brick_of_voxel, brick_voxels, brick_voxels_inset, bricks_in_voxel_box,
-    max_magnitude, may_hold_smog, segment_index, BrickState, BRICKS_X, BRICK_COUNT, BRICK_NX,
+    back_trace_reach, brick_of_voxel, brick_voxels, bricks_in_voxel_box, may_hold_smog, runs,
+    segment_index, BrickState, BrickWork, Segment, BRICKS_X, BRICK_COUNT, BRICK_NX,
 };
 use super::{SmogConfig, SmogError};
 use bevy::prelude::*;
@@ -897,25 +897,7 @@ impl SmogGrid3d {
         let inv_2h = [inv_2hx, inv_2hy, inv_2hz];
 
         // Compute curl omega = grad x u
-        for b in 0..BRICK_COUNT {
-            if self.bricks.curl_at_rest(b) {
-                self.bricks.max_vort_mag[b] = 0.0;
-                if !self.bricks.vorticity_rest.get(b) {
-                    // Boundary voxels are never written by the curl loop and always hold +0.0.
-                    for row in Self::rows(brick_voxels_inset(b, 1)) {
-                        self.vorticity_x[row.clone()].fill(0.0);
-                        self.vorticity_y[row.clone()].fill(0.0);
-                        self.vorticity_z[row.clone()].fill(0.0);
-                        self.vorticity_mag[row].fill(0.0);
-                    }
-                    self.bricks.vorticity_rest.set(b, true);
-                }
-                continue;
-            }
-            let (max_mag, at_rest) = self.curl_brick(b, inv_2h);
-            self.bricks.max_vort_mag[b] = max_mag;
-            self.bricks.vorticity_rest.set(b, at_rest);
-        }
+        self.compute_curl(inv_2h);
 
         // Apply confinement force: f = eps * h * (N x omega)
         let avg_h = (self.cell_size.x + self.cell_size.y + self.cell_size.z) / 3.0;
@@ -927,79 +909,132 @@ impl SmogGrid3d {
         // What: We precompute vorticity magnitude into self.vorticity_mag during the curl pass
         // and read it directly here with simple index lookups.
         // Trade-off: Uses one pre-allocated flat f32 slab (332 KB) to save CPU cycles in the physics tick.
-        for b in 0..BRICK_COUNT {
-            if self.bricks.confinement_idle(b) {
-                continue;
+        let mut work = [BrickWork::Skip; BRICK_COUNT];
+        for (b, work) in work.iter_mut().enumerate() {
+            if !self.bricks.confinement_idle(b) {
+                *work = BrickWork::Compute;
+                // The force adds to `u`: a brick at rest can carry vorticity from its neighbours.
+                self.bricks.velocity_rest.set(b, false);
             }
-            let [xs, ys, zs] = brick_voxels_inset(b, 2);
-            for iz in zs {
-                for iy in ys.clone() {
-                    for ix in xs.clone() {
-                        self.confine_voxel(ix, iy, iz, coeff, inv_2h);
+        }
+        for run in runs(2, &work) {
+            if run.work == BrickWork::Compute {
+                for ix in run.xs {
+                    self.confine_voxel(ix, run.iy, run.iz, coeff, inv_2h);
+                }
+            }
+        }
+    }
+
+    /// The curl pass (D-2, rule 2): writes the curl of every interior voxel into the vorticity
+    /// slabs, brick by brick as decided, and records each brick's largest magnitude (`+inf` if
+    /// one is a NaN) and whether it is at rest.
+    // PERFORMANCE RATIONALE:
+    // Why: the dense curl loop is the one solver loop LLVM vectorizes (contiguous stencil loads
+    // and stores, a select around `sqrt`); folding the brick's flag and maximum into the same
+    // loop blocked that.
+    // What: each run of computed bricks is computed by `curl_row`, a loop of the dense body
+    // alone, and then reduced segment by segment by a branch-free loop over the values just
+    // written.
+    // Trade-off: the written values are read twice (from L1 or L2, at most 94 voxels a run).
+    fn compute_curl(&mut self, inv_2h: [f32; 3]) {
+        let mut work = [BrickWork::Compute; BRICK_COUNT];
+        let mut written_bits = [0_u32; BRICK_COUNT];
+        let mut saw_nan = [false; BRICK_COUNT];
+        for (b, work) in work.iter_mut().enumerate() {
+            self.bricks.max_vort_mag[b] = 0.0;
+            if self.bricks.curl_at_rest(b) {
+                *work = if self.bricks.vorticity_rest.get(b) {
+                    BrickWork::Skip
+                } else {
+                    BrickWork::Fill
+                };
+            }
+        }
+        for run in runs(1, &work) {
+            match run.work {
+                BrickWork::Skip => {}
+                BrickWork::Fill => {
+                    // Boundary voxels are never written by the curl loop and always hold +0.0.
+                    self.vorticity_x[run.voxels.clone()].fill(0.0);
+                    self.vorticity_y[run.voxels.clone()].fill(0.0);
+                    self.vorticity_z[run.voxels.clone()].fill(0.0);
+                    self.vorticity_mag[run.voxels].fill(0.0);
+                }
+                BrickWork::Compute => {
+                    self.curl_row(run.xs.clone(), run.iy, run.iz, inv_2h);
+                    for seg in run.segments() {
+                        let b = seg.brick;
+                        let mut max_mag = self.bricks.max_vort_mag[b];
+                        let mut mag_bits = 0_u32;
+                        for &mag in &self.vorticity_mag[seg.voxels.clone()] {
+                            max_mag = max_mag.max(mag);
+                            saw_nan[b] |= mag.is_nan();
+                            mag_bits |= mag.to_bits();
+                        }
+                        self.bricks.max_vort_mag[b] = max_mag;
+                        written_bits[b] |= mag_bits;
+                        // A nonzero magnitude already decides the flag; only an all-zero
+                        // segment needs its components read back.
+                        if mag_bits == 0 {
+                            for i in seg.voxels {
+                                written_bits[b] |= self.vorticity_x[i].to_bits()
+                                    | self.vorticity_y[i].to_bits()
+                                    | self.vorticity_z[i].to_bits();
+                            }
+                        }
                     }
                 }
             }
-            // The force adds to `u`: a brick at rest can carry vorticity from its neighbours.
-            self.bricks.velocity_rest.set(b, false);
         }
-    }
-
-    /// Computes the curl of every interior voxel of brick `b`. Returns the largest magnitude
-    /// written (`+inf` for a NaN) and whether every written value is `+0.0`.
-    fn curl_brick(&mut self, b: usize, inv_2h: [f32; 3]) -> (f32, bool) {
-        let [xs, ys, zs] = brick_voxels_inset(b, 1);
-        let mut max_mag = 0.0_f32;
-        let mut at_rest = true;
-        for iz in zs {
-            for iy in ys.clone() {
-                for ix in xs.clone() {
-                    let written = self.curl_voxel(ix, iy, iz, inv_2h);
-                    max_mag = max_magnitude(max_mag, written[3]);
-                    at_rest &= written.iter().all(|w| w.to_bits() == 0);
-                }
+        for b in 0..BRICK_COUNT {
+            if saw_nan[b] {
+                self.bricks.max_vort_mag[b] = f32::INFINITY;
+            }
+            if work[b] != BrickWork::Skip {
+                self.bricks.vorticity_rest.set(b, written_bits[b] == 0);
             }
         }
-        (max_mag, at_rest)
     }
 
-    /// The dense curl of one interior voxel; returns `[wx, wy, wz, magnitude]` as written.
+    /// The dense curl of the interior voxels `xs` of grid row `(iy, iz)`.
     #[inline]
-    fn curl_voxel(&mut self, ix: usize, iy: usize, iz: usize, inv_2h: [f32; 3]) -> [f32; 4] {
+    fn curl_row(&mut self, xs: Range<usize>, iy: usize, iz: usize, inv_2h: [f32; 3]) {
         let [inv_2hx, inv_2hy, inv_2hz] = inv_2h;
-        let idx = Self::index(ix, iy, iz);
+        for ix in xs {
+            let idx = Self::index(ix, iy, iz);
 
-        let duz_dy = (self.u_z[Self::index(ix, iy + 1, iz)]
-            - self.u_z[Self::index(ix, iy - 1, iz)])
-            * inv_2hy;
-        let duy_dz = (self.u_y[Self::index(ix, iy, iz + 1)]
-            - self.u_y[Self::index(ix, iy, iz - 1)])
-            * inv_2hz;
+            let duz_dy = (self.u_z[Self::index(ix, iy + 1, iz)]
+                - self.u_z[Self::index(ix, iy - 1, iz)])
+                * inv_2hy;
+            let duy_dz = (self.u_y[Self::index(ix, iy, iz + 1)]
+                - self.u_y[Self::index(ix, iy, iz - 1)])
+                * inv_2hz;
 
-        let dux_dz = (self.u_x[Self::index(ix, iy, iz + 1)]
-            - self.u_x[Self::index(ix, iy, iz - 1)])
-            * inv_2hz;
-        let duz_dx = (self.u_z[Self::index(ix + 1, iy, iz)]
-            - self.u_z[Self::index(ix - 1, iy, iz)])
-            * inv_2hx;
+            let dux_dz = (self.u_x[Self::index(ix, iy, iz + 1)]
+                - self.u_x[Self::index(ix, iy, iz - 1)])
+                * inv_2hz;
+            let duz_dx = (self.u_z[Self::index(ix + 1, iy, iz)]
+                - self.u_z[Self::index(ix - 1, iy, iz)])
+                * inv_2hx;
 
-        let duy_dx = (self.u_y[Self::index(ix + 1, iy, iz)]
-            - self.u_y[Self::index(ix - 1, iy, iz)])
-            * inv_2hx;
-        let dux_dy = (self.u_x[Self::index(ix, iy + 1, iz)]
-            - self.u_x[Self::index(ix, iy - 1, iz)])
-            * inv_2hy;
+            let duy_dx = (self.u_y[Self::index(ix + 1, iy, iz)]
+                - self.u_y[Self::index(ix - 1, iy, iz)])
+                * inv_2hx;
+            let dux_dy = (self.u_x[Self::index(ix, iy + 1, iz)]
+                - self.u_x[Self::index(ix, iy - 1, iz)])
+                * inv_2hy;
 
-        let wx = duz_dy - duy_dz;
-        let wy = dux_dz - duz_dx;
-        let wz = duy_dx - dux_dy;
+            let wx = duz_dy - duy_dz;
+            let wy = dux_dz - duz_dx;
+            let wz = duy_dx - dux_dy;
 
-        self.vorticity_x[idx] = wx;
-        self.vorticity_y[idx] = wy;
-        self.vorticity_z[idx] = wz;
-        let w_sq = wx * wx + wy * wy + wz * wz;
-        let mag = if w_sq > 1e-8 { w_sq.sqrt() } else { 0.0 };
-        self.vorticity_mag[idx] = mag;
-        [wx, wy, wz, mag]
+            self.vorticity_x[idx] = wx;
+            self.vorticity_y[idx] = wy;
+            self.vorticity_z[idx] = wz;
+            let w_sq = wx * wx + wy * wy + wz * wz;
+            self.vorticity_mag[idx] = if w_sq > 1e-8 { w_sq.sqrt() } else { 0.0 };
+        }
     }
 
     /// The dense confinement force of one voxel at least two voxels inside every face.
@@ -1051,35 +1086,38 @@ impl SmogGrid3d {
     fn advect_velocity(&mut self, damping: f32, dt: f32) {
         let decay = (-damping * dt).exp();
 
-        for b in 0..BRICK_COUNT {
+        let mut work = [BrickWork::Compute; BRICK_COUNT];
+        for (b, work) in work.iter_mut().enumerate() {
+            self.bricks.max_abs_u[b] = [0.0; 3];
             if self.bricks.velocity_source_at_rest(b) {
-                self.bricks.max_abs_u[b] = [0.0; 3];
-                if !self.bricks.velocity_rest_scratch.get(b) {
-                    for row in Self::rows(brick_voxels(b)) {
-                        self.u_x_scratch[row.clone()].fill(0.0);
-                        self.u_y_scratch[row.clone()].fill(0.0);
-                        self.u_z_scratch[row].fill(0.0);
-                    }
-                    self.bricks.velocity_rest_scratch.set(b, true);
-                }
-                continue;
+                *work = if self.bricks.velocity_rest_scratch.get(b) {
+                    BrickWork::Skip
+                } else {
+                    BrickWork::Fill
+                };
             }
-            let mut max_abs = [0.0_f32; 3];
-            let mut at_rest = true;
-            let [xs, ys, zs] = brick_voxels(b);
-            for iz in zs {
-                for iy in ys.clone() {
-                    for ix in xs.clone() {
-                        let written = self.advect_velocity_voxel(ix, iy, iz, decay, dt);
-                        for (bound, u) in max_abs.iter_mut().zip(written) {
-                            *bound = max_magnitude(*bound, u);
-                        }
-                        at_rest &= written.iter().all(|u| u.to_bits() == 0);
+            // A filled brick is at rest; a computed one stays so until it writes a nonzero bit.
+            if *work != BrickWork::Skip {
+                self.bricks.velocity_rest_scratch.set(b, true);
+            }
+        }
+        for run in runs(0, &work) {
+            match run.work {
+                BrickWork::Skip => {}
+                BrickWork::Fill => {
+                    self.u_x_scratch[run.voxels.clone()].fill(0.0);
+                    self.u_y_scratch[run.voxels.clone()].fill(0.0);
+                    self.u_z_scratch[run.voxels].fill(0.0);
+                }
+                BrickWork::Compute => {
+                    for ix in run.xs.clone() {
+                        self.advect_velocity_voxel(ix, run.iy, run.iz, decay, dt);
+                    }
+                    for seg in run.segments() {
+                        self.fold_velocity_segment(&seg);
                     }
                 }
             }
-            self.bricks.max_abs_u[b] = max_abs;
-            self.bricks.velocity_rest_scratch.set(b, at_rest);
         }
 
         // PERFORMANCE RATIONALE:
@@ -1099,16 +1137,46 @@ impl SmogGrid3d {
         self.bricks.swap_velocity();
     }
 
-    /// The dense velocity advection of one voxel; returns the three components it wrote.
+    /// Folds the velocity just written into one segment of a computed brick (in the scratch
+    /// slabs) into the brick's speed bounds and rest flag.
+    // PERFORMANCE RATIONALE:
+    // Why: folding each voxel's result into the brick's bounds inside the advection loop adds
+    // branches to the solver's busiest loop, and made fully active scenarios slower than the
+    // dense solver.
+    // What: the advection loop runs over the whole run unchanged; this second, branch-free loop
+    // reads the segment's written values back (from L1) to fold them.
+    // Trade-off: the written values are read twice.
+    fn fold_velocity_segment(&mut self, seg: &Segment) {
+        let b = seg.brick;
+        let mut max_abs = [0.0_f32; 3];
+        let mut saw_nan = false;
+        let mut written_bits = 0_u32;
+        for (axis, slab) in [&self.u_x_scratch, &self.u_y_scratch, &self.u_z_scratch]
+            .into_iter()
+            .enumerate()
+        {
+            for &u in &slab[seg.voxels.clone()] {
+                max_abs[axis] = max_abs[axis].max(u.abs());
+                saw_nan |= u.is_nan();
+                written_bits |= u.to_bits();
+            }
+        }
+        let bounds = &mut self.bricks.max_abs_u[b];
+        for (bound, max) in bounds.iter_mut().zip(max_abs) {
+            *bound = if saw_nan {
+                f32::INFINITY
+            } else {
+                bound.max(max)
+            };
+        }
+        if written_bits != 0 {
+            self.bricks.velocity_rest_scratch.set(b, false);
+        }
+    }
+
+    /// The dense velocity advection of one voxel into the velocity scratch slabs.
     #[inline]
-    fn advect_velocity_voxel(
-        &mut self,
-        ix: usize,
-        iy: usize,
-        iz: usize,
-        decay: f32,
-        dt: f32,
-    ) -> [f32; 3] {
+    fn advect_velocity_voxel(&mut self, ix: usize, iy: usize, iz: usize, decay: f32, dt: f32) {
         // PERFORMANCE RATIONALE:
         // Why: u_x, u_y, and u_z share the exact same advective back-trace trajectory x_back = x - u(x)*dt.
         // What: We compute the back-trace grid coordinate and 8-corner trilinear weights once per voxel,
@@ -1123,7 +1191,7 @@ impl SmogGrid3d {
             self.u_x_scratch[idx] = 0.0;
             self.u_y_scratch[idx] = 0.0;
             self.u_z_scratch[idx] = 0.0;
-            return [0.0; 3];
+            return;
         }
 
         // Sparse Fast-Path (Section 10.3: zero velocity means back_pos == cur_pos, sampling zero yields zero)
@@ -1134,7 +1202,7 @@ impl SmogGrid3d {
             self.u_x_scratch[idx] = 0.0;
             self.u_y_scratch[idx] = 0.0;
             self.u_z_scratch[idx] = 0.0;
-            return [0.0; 3];
+            return;
         }
 
         let cur_pos = self.grid_to_world(ix, iy, iz);
@@ -1142,27 +1210,23 @@ impl SmogGrid3d {
         let gp = self.world_to_grid(back_pos);
         let (indices, weights) = Self::trilinear_indices_and_weights(gp);
 
-        let new_x = if is_boundary_x {
+        self.u_x_scratch[idx] = if is_boundary_x {
             0.0
         } else {
             Self::sample_indexed(&self.u_x, &indices, &weights) * decay
         };
 
-        let new_y = if is_boundary_y {
+        self.u_y_scratch[idx] = if is_boundary_y {
             0.0
         } else {
             Self::sample_indexed(&self.u_y, &indices, &weights) * decay
         };
 
-        let new_z = if is_boundary_z {
+        self.u_z_scratch[idx] = if is_boundary_z {
             0.0
         } else {
             Self::sample_indexed(&self.u_z, &indices, &weights) * decay
         };
-        self.u_x_scratch[idx] = new_x;
-        self.u_y_scratch[idx] = new_y;
-        self.u_z_scratch[idx] = new_z;
-        [new_x, new_y, new_z]
     }
 
     /// Stage 5 of [`Self::step`]: semi-Lagrangian advection of density, glow and tint along the
@@ -1189,9 +1253,9 @@ impl SmogGrid3d {
             buoyancy_vel,
             dt,
         };
-        let rest = [0.0, 0.0, c_tail.x, c_tail.y, c_tail.z];
 
-        for b in 0..BRICK_COUNT {
+        let mut work = [BrickWork::Compute; BRICK_COUNT];
+        for (b, work) in work.iter_mut().enumerate() {
             let [ux, uy, uz] = self.bricks.max_abs_u[b];
             let reach = [
                 back_trace_reach(ux, dt, self.inv_cell_size.x),
@@ -1199,36 +1263,38 @@ impl SmogGrid3d {
                 back_trace_reach(uz, dt, self.inv_cell_size.z),
             ];
             if self.bricks.scalar_sources_empty(b, reach) {
-                self.bricks.occupied_scratch.set(b, false);
-                if !self.bricks.scalar_rest_scratch.get(b) {
-                    for row in Self::rows(brick_voxels(b)) {
-                        self.density_scratch[row.clone()].fill(0.0);
-                        self.glow_scratch[row.clone()].fill(0.0);
-                        self.tint_r_scratch[row.clone()].fill(c_tail.x);
-                        self.tint_g_scratch[row.clone()].fill(c_tail.y);
-                        self.tint_b_scratch[row].fill(c_tail.z);
-                    }
-                    self.bricks.scalar_rest_scratch.set(b, true);
-                }
-                continue;
+                *work = if self.bricks.scalar_rest_scratch.get(b) {
+                    BrickWork::Skip
+                } else {
+                    BrickWork::Fill
+                };
             }
-            let mut occupied = false;
-            let mut at_rest = true;
-            let [xs, ys, zs] = brick_voxels(b);
-            for iz in zs {
-                for iy in ys.clone() {
-                    for ix in xs.clone() {
-                        let written = self.advect_scalars_voxel(ix, iy, iz, &pass);
-                        occupied |= may_hold_smog(written[0]) || may_hold_smog(written[1]);
-                        at_rest &= written
-                            .iter()
-                            .zip(rest)
-                            .all(|(w, r)| w.to_bits() == r.to_bits());
+            // A skipped or filled brick holds the rest value, so no smog; a computed one is at
+            // rest and empty until it writes otherwise.
+            self.bricks.occupied_scratch.set(b, false);
+            if *work != BrickWork::Skip {
+                self.bricks.scalar_rest_scratch.set(b, true);
+            }
+        }
+        for run in runs(0, &work) {
+            match run.work {
+                BrickWork::Skip => {}
+                BrickWork::Fill => {
+                    self.density_scratch[run.voxels.clone()].fill(0.0);
+                    self.glow_scratch[run.voxels.clone()].fill(0.0);
+                    self.tint_r_scratch[run.voxels.clone()].fill(c_tail.x);
+                    self.tint_g_scratch[run.voxels.clone()].fill(c_tail.y);
+                    self.tint_b_scratch[run.voxels].fill(c_tail.z);
+                }
+                BrickWork::Compute => {
+                    for ix in run.xs.clone() {
+                        self.advect_scalars_voxel(ix, run.iy, run.iz, &pass);
+                    }
+                    for seg in run.segments() {
+                        self.fold_scalar_segment(&seg);
                     }
                 }
             }
-            self.bricks.occupied_scratch.set(b, occupied);
-            self.bricks.scalar_rest_scratch.set(b, at_rest);
         }
 
         // PERFORMANCE RATIONALE:
@@ -1250,16 +1316,35 @@ impl SmogGrid3d {
         self.bricks.swap_scalars();
     }
 
-    /// The dense scalar advection of one voxel; returns `[density, glow, tint_r, tint_g,
-    /// tint_b]` as written into the scratch slabs.
+    /// Folds the scalars just written into one segment of a computed brick (in the scratch
+    /// slabs) into the brick's occupancy and rest flag. A second, branch-free loop, for the
+    /// reason given at [`Self::fold_velocity_segment`].
+    fn fold_scalar_segment(&mut self, seg: &Segment) {
+        let b = seg.brick;
+        let tail = SMOG_TAIL_TINT;
+        let voxels = seg.voxels.clone();
+        let mut occupied = false;
+        let mut differs = 0_u32;
+        for i in voxels {
+            occupied |=
+                may_hold_smog(self.density_scratch[i]) || may_hold_smog(self.glow_scratch[i]);
+            differs |= self.density_scratch[i].to_bits()
+                | self.glow_scratch[i].to_bits()
+                | (self.tint_r_scratch[i].to_bits() ^ tail.x.to_bits())
+                | (self.tint_g_scratch[i].to_bits() ^ tail.y.to_bits())
+                | (self.tint_b_scratch[i].to_bits() ^ tail.z.to_bits());
+        }
+        if occupied {
+            self.bricks.occupied_scratch.set(b, true);
+        }
+        if differs != 0 {
+            self.bricks.scalar_rest_scratch.set(b, false);
+        }
+    }
+
+    /// The dense scalar advection of one voxel into the scalar scratch slabs.
     #[inline]
-    fn advect_scalars_voxel(
-        &mut self,
-        ix: usize,
-        iy: usize,
-        iz: usize,
-        pass: &ScalarAdvection,
-    ) -> [f32; 5] {
+    fn advect_scalars_voxel(&mut self, ix: usize, iy: usize, iz: usize, pass: &ScalarAdvection) {
         let ScalarAdvection {
             decay,
             glow_decay,
@@ -1288,7 +1373,7 @@ impl SmogGrid3d {
             && self.u_z[idx].abs() < 1e-4
         {
             self.write_scalars(idx, rest);
-            return rest;
+            return;
         }
 
         let cur_pos = self.grid_to_world(ix, iy, iz);
@@ -1304,7 +1389,7 @@ impl SmogGrid3d {
 
         if max_corner < 1e-6 {
             self.write_scalars(idx, rest);
-            return rest;
+            return;
         }
 
         let sampled_density = Self::sample_indexed(&self.density, &indices, &weights);
@@ -1341,7 +1426,6 @@ impl SmogGrid3d {
             (luma + (adv_b - luma) * 1.12).clamp(0.0, 1.0),
         ];
         self.write_scalars(idx, written);
-        written
     }
 
     /// Writes `[density, glow, tint_r, tint_g, tint_b]` into the scalar scratch slabs at `idx`.
@@ -1383,19 +1467,39 @@ impl SmogGrid3d {
             return metrics.finish(active_sources);
         }
 
+        // PERFORMANCE RATIONALE:
+        // Why: deciding, packing and re-flagging segment by segment cut the packing loop into
+        // pieces of 8 voxels, which made a fully active field pack slower than the dense loop.
+        // What: each row first decides all 12 of its segments, then packs every maximal run of
+        // segments that are not skipped in one loop, then re-flags those segments from the bytes
+        // just written.
+        // Trade-off: one fixed 12-entry array per row; the order of the `total_density` sum is
+        // the dense one, because only segments that add `+0.0` are left out.
         for iz in 0..GRID_NZ {
             for iy in 0..GRID_NY {
-                for sx in 0..BRICKS_X {
-                    let ix0 = sx * BRICK_NX;
+                let mut packed = [false; BRICKS_X];
+                for (sx, packed) in packed.iter_mut().enumerate() {
+                    let brick = brick_of_voxel(sx * BRICK_NX, iy, iz);
+                    *packed = !self
+                        .bricks
+                        .segment_at_rest(brick, segment_index(sx, iy, iz));
+                }
+                let row = Self::index(0, iy, iz);
+                let mut sx = 0;
+                while sx < BRICKS_X {
+                    let start = sx;
+                    while sx < BRICKS_X && packed[sx] == packed[start] {
+                        sx += 1;
+                    }
+                    if packed[start] {
+                        for i in row + start * BRICK_NX..row + sx * BRICK_NX {
+                            self.pack_voxel(i, &mut metrics);
+                        }
+                    }
+                }
+                for (sx, _) in packed.iter().enumerate().filter(|(_, packed)| **packed) {
+                    let (density_rest, velocity_rest) = self.segment_byte_rest(row + sx * BRICK_NX);
                     let s = segment_index(sx, iy, iz);
-                    if self.bricks.segment_at_rest(brick_of_voxel(ix0, iy, iz), s) {
-                        continue;
-                    }
-                    let first = Self::index(ix0, iy, iz);
-                    for i in first..first + BRICK_NX {
-                        self.pack_voxel(i, &mut metrics);
-                    }
-                    let (density_rest, velocity_rest) = self.segment_byte_rest(first);
                     self.bricks.density_bytes_rest.set(s, density_rest);
                     self.bricks.velocity_bytes_rest.set(s, velocity_rest);
                 }
@@ -1474,17 +1578,21 @@ impl SmogGrid3d {
     /// `(density alpha all 0, velocity quads all (128, 128, 128, 0))`.
     fn segment_byte_rest(&self, first: usize) -> (bool, bool) {
         let bytes = first * BYTES_PER_VOXEL..(first + BRICK_NX) * BYTES_PER_VOXEL;
-        let density_rest = self.rgba_density_bytes[bytes.clone()]
+        // Whole quads compared as `u32`s, without early exit, so the loops vectorize.
+        let rest_quad = u32::from_le_bytes(VELOCITY_REST_BYTES);
+        let mut alpha = 0_u32;
+        let mut velocity_differs = 0_u32;
+        let density = self.rgba_density_bytes[bytes.clone()]
             .as_chunks::<BYTES_PER_VOXEL>()
-            .0
-            .iter()
-            .all(|voxel| voxel[3] == 0);
-        let velocity_rest = self.rgba_velocity_bytes[bytes]
+            .0;
+        let velocity = self.rgba_velocity_bytes[bytes]
             .as_chunks::<BYTES_PER_VOXEL>()
-            .0
-            .iter()
-            .all(|voxel| *voxel == VELOCITY_REST_BYTES);
-        (density_rest, velocity_rest)
+            .0;
+        for (d, v) in density.iter().zip(velocity) {
+            alpha |= u32::from(d[3]);
+            velocity_differs |= u32::from_le_bytes(*v) ^ rest_quad;
+        }
+        (alpha == 0, velocity_differs == 0)
     }
 
     /// Flat index ranges of the grid rows inside the voxel box `[x, y, z]`, one per `(iy, iz)`:
