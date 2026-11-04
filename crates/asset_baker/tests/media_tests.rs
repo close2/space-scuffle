@@ -37,6 +37,7 @@ fn fixture() -> FlipbookAtlasMeta {
                 frame_count: 2,
                 looping: true,
                 hold_last_frame: false,
+                duration_ms: None,
             },
         )]),
     }

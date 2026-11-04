@@ -59,6 +59,17 @@ pub struct ActionSlice {
     pub looping: bool,
     /// If non-looping, whether the renderer holds on the final frame (e.g., Die or Constructing finish).
     pub hold_last_frame: bool,
+    /// Real play time of one pass through the slice, in milliseconds (plan
+    /// `docs/plans/2026-11-04-battle-flipbook-animation.md`, D-6), so a clip plays at the speed
+    /// it was filmed at however few of its frames the atlas keeps.
+    ///
+    /// Written by the video bake from the clip's decoded frame count at the decode rate
+    /// ([`crate::ffmpeg_importer::clip_duration_ms`]). `None` for slices with no source clip
+    /// length (procedural atlases, a still image, every manifest baked before the field
+    /// existed); the renderer then plays `frame_count / fps`. An absent value is neither read
+    /// nor written, so older manifests keep their bytes and provenance hashes. Never `Some(0)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u32>,
 }
 
 /// Authoritative flipbook atlas metadata matching `<atlas_name>.flipbook.ron`.
@@ -131,7 +142,8 @@ impl FlipbookAtlasMeta {
     /// 3. Total frame count must be strictly positive (`> 0`).
     /// 4. Every action slice must contain at least 1 frame (`frame_count > 0`).
     /// 5. Every action slice's range (`start_frame + frame_count`) must not exceed `total_frames`.
-    /// 6. If layout is `Grid`, `columns * rows` must be `>= total_frames`.
+    /// 6. An action slice's `duration_ms`, when present, must be strictly positive.
+    /// 7. If layout is `Grid`, `columns * rows` must be `>= total_frames`.
     ///
     /// # Errors
     /// Returns [`BakerError::ValidationFailed`] if any invariant is violated.
@@ -179,6 +191,14 @@ impl FlipbookAtlasMeta {
                 return Err(BakerError::ValidationFailed {
                     name: self.name.clone(),
                     reason: format!("Action state '{state:?}' has a frame count of 0"),
+                });
+            }
+            if slice.duration_ms == Some(0) {
+                return Err(BakerError::ValidationFailed {
+                    name: self.name.clone(),
+                    reason: format!(
+                        "Action state '{state:?}' has a duration of 0 ms; an unknown duration is omitted"
+                    ),
                 });
             }
             let end_frame = slice.start_frame.saturating_add(slice.frame_count);

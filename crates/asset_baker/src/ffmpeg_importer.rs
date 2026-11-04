@@ -22,9 +22,12 @@
 //!
 //! # Invariants
 //! - **Whole clips:** a clip with more frames than the GPU texture budget allows is sampled
-//!   evenly from its first to its last frame, and is never cut short. Sampled frames keep the
-//!   manifest's playback rate, so such a clip plays faster than real time. The bake reports
-//!   this on stderr, because the only way to avoid it is a smaller frame size.
+//!   evenly from its first to its last frame, and is never cut short. The bake reports this on
+//!   stderr, because the only way to keep more frames is a smaller frame size.
+//! - **Real speed:** every slice baked from a clip records the clip's real play time in
+//!   [`ActionSlice::duration_ms`] ([`clip_duration_ms`], plan
+//!   `docs/plans/2026-11-04-battle-flipbook-animation.md`, D-6), so a renderer plays a sampled
+//!   clip at the speed it was filmed at, not at `frame_count / fps`. A still image records none.
 //! - **No invented actions:** a manifest lists only actions that a source clip was supplied
 //!   for, so [`crate::media::require_action`] can report the rest as missing.
 
@@ -220,8 +223,8 @@ fn fit_clip_to_budget(frames: Vec<PathBuf>, budget: usize, label: &str, fps: u32
     }
     eprintln!(
         "    Note: '{label}' has {} frames at {fps} fps but the texture budget allows {budget}. \
-         Sampling evenly across the whole clip, which then plays up to {}x faster. \
-         Use a smaller frame size to keep more frames.",
+         Sampling evenly across the whole clip, about 1 frame in {}; the manifest keeps its real \
+         duration. Use a smaller frame size to keep more frames.",
         frames.len(),
         frames.len().div_ceil(budget.max(1))
     );
@@ -371,6 +374,7 @@ pub fn extract_and_pack_video(
     // Trade-off: Bounds temporal resolution to the hardware texture limit while guaranteeing zero
     // GPU texture allocation panics across Vulkan, Metal, DX12, and WebGPU.
     let max_frames = (MAX_STRIP_HEIGHT / config.target_size.max(1)) as usize;
+    let decoded_frames = frame_paths.len();
     let frame_paths = fit_clip_to_budget(frame_paths, max_frames, atlas_name, config.target_fps);
 
     let total_frames = frame_paths.len() as u32;
@@ -411,6 +415,8 @@ pub fn extract_and_pack_video(
         })?;
 
     // A lone clip says nothing about any other action, so no other action is claimed for it.
+    // A caller's own mapping cuts the clip into ranges whose lengths only the caller knows, so
+    // only the whole-clip Idle slice records the clip's duration.
     let mut actions = actions_mapping;
     if actions.is_empty() {
         actions.insert(
@@ -420,6 +426,12 @@ pub fn extract_and_pack_video(
                 frame_count: total_frames,
                 looping: true,
                 hold_last_frame: false,
+                duration_ms: clip_duration_ms(
+                    decoded_frames,
+                    config.target_fps,
+                    FrameSampling::Span,
+                    atlas_name,
+                )?,
             },
         );
     }
@@ -638,7 +650,10 @@ pub fn bake_repaired_action_videos<P: AsRef<Path>>(
         seam.insert(*state, repaired.seam);
         let start = all_frames.len() as u32;
         let frames = repaired.framed.frames;
-        actions.insert(*state, pack_action(*state, start, frames.len() as u32));
+        actions.insert(
+            *state,
+            pack_action(*state, start, frames.len() as u32, repaired.duration_ms),
+        );
         all_frames.extend(frames);
     }
 
@@ -721,6 +736,55 @@ pub struct RepairedClip {
     /// [`frame_to_square`] centres; the rest are bars. Equal to the square under a centre
     /// crop.
     pub content_size: (u32, u32),
+    /// Real play time of the kept frames in milliseconds ([`clip_duration_ms`]), `None` for a
+    /// clip that decodes to a single frame, such as a still image.
+    pub duration_ms: Option<u32>,
+}
+
+/// The real play time, in milliseconds, of a slice sampled from a clip that decodes to
+/// `decoded_frames` frames at `fps` frames per second (plan
+/// `docs/plans/2026-11-04-battle-flipbook-animation.md`, D-6): the value
+/// [`ActionSlice::duration_ms`] records.
+///
+/// The kept frames are spread over the clip ([`evenly_spaced_indices`] or
+/// [`evenly_spaced_loop_indices`]), so this is the time the clip itself takes, whatever the
+/// number kept:
+/// - [`FrameSampling::Span`] keeps the first and the last frame, and the last is shown for one
+///   frame time like every other, so the slice lasts `decoded_frames / fps`.
+/// - [`FrameSampling::Loop`] leaves out the final frame, which stands for the restart, so one
+///   pass lasts the loop period `(decoded_frames - 1) / fps`.
+///
+/// Both are within one decoded frame of the clip's length. The result is rounded to the
+/// nearest millisecond and is at least 1. A clip of one decoded frame (a still image) has no
+/// length to play at, and gives `None`, as does a rate of 0.
+///
+/// # Errors
+/// Returns [`BakerError::ValidationFailed`] naming `label` if the duration does not fit a
+/// `u32` of milliseconds (a clip longer than 49 days).
+pub fn clip_duration_ms(
+    decoded_frames: usize,
+    fps: u32,
+    sampling: FrameSampling,
+    label: &str,
+) -> Result<Option<u32>, BakerError> {
+    if decoded_frames <= 1 || fps == 0 {
+        return Ok(None);
+    }
+    let played_frames = match sampling {
+        FrameSampling::Span => decoded_frames,
+        FrameSampling::Loop => decoded_frames - 1,
+    };
+    let fps = u128::from(fps);
+    let rounded = (played_frames as u128 * 1000 + fps / 2) / fps;
+    u32::try_from(rounded.max(1))
+        .map(Some)
+        .map_err(|_| BakerError::ValidationFailed {
+            name: label.to_string(),
+            reason: format!(
+                "{played_frames} frames at {fps} fps last longer than {} ms",
+                u32::MAX
+            ),
+        })
 }
 
 /// [`decode_framed_clip`], with the seam repair `seam` asks for (plan
@@ -753,6 +817,8 @@ pub fn decode_repaired_clip(
     let Some(seam) = seam else {
         let filter = spec.framing.ffmpeg_filter(spec.size, spec.fps);
         let (temp_dir, frame_paths) = probe_clip(ffmpeg_path, video_path, &filter)?;
+        let duration_ms =
+            clip_duration_ms(frame_paths.len(), spec.fps, FrameSampling::Span, label)?;
         let frames = load_frames(&fit_clip_to_budget(frame_paths, budget, label, spec.fps))?;
         drop(temp_dir);
         let content_size = content_size_of(&frames, spec.size);
@@ -760,6 +826,7 @@ pub fn decode_repaired_clip(
             framed: frame_to_square(frames, spec.size, spec.framing)?,
             seam: None,
             content_size,
+            duration_ms,
         });
     };
     let filter = if seam.scale_lock {
@@ -768,6 +835,7 @@ pub fn decode_repaired_clip(
         spec.framing.ffmpeg_filter(spec.size, spec.fps)
     };
     let (temp_dir, frame_paths) = probe_clip(ffmpeg_path, video_path, &filter)?;
+    let duration_ms = clip_duration_ms(frame_paths.len(), spec.fps, FrameSampling::Loop, label)?;
     let kept = load_frames(&fit_loop_to_budget(&frame_paths, budget, label, spec.fps))?;
     drop(temp_dir);
     let (mut frames, scale_permille) = if seam.scale_lock {
@@ -790,6 +858,7 @@ pub fn decode_repaired_clip(
     let content_size = content_size_of(&frames, spec.size);
     Ok(RepairedClip {
         content_size,
+        duration_ms,
         framed: frame_to_square(frames, spec.size, spec.framing)?,
         seam: Some(SeamRecord {
             sampling: FrameSampling::Loop,
@@ -813,8 +882,8 @@ fn fit_loop_to_budget(frames: &[PathBuf], budget: usize, label: &str, fps: u32) 
     if period > budget {
         eprintln!(
             "    Note: '{label}' loops over {period} frames at {fps} fps but the texture budget allows {budget}. \
-             Sampling evenly over the whole loop, which then plays up to {}x faster. \
-             Use a smaller frame size to keep more frames.",
+             Sampling evenly over the whole loop, about 1 frame in {}; the manifest keeps its real \
+             duration. Use a smaller frame size to keep more frames.",
             period.div_ceil(budget.max(1))
         );
     }
@@ -880,15 +949,22 @@ fn load_frames(paths: &[PathBuf]) -> Result<Vec<RgbaImage>, BakerError> {
 /// Describes where one action's frames sit in the strip and how they play back.
 ///
 /// `start_frame` is the action's first frame index in the strip and `frame_count` its length,
-/// both in frames. Which states loop is [`atlas_loops`], the one classification the loop policy
+/// both in frames; `duration_ms` is the clip's real play time ([`clip_duration_ms`]). Which
+/// states loop is [`atlas_loops`], the one classification the loop policy
 /// (`media_style.ron`) is also checked against; deaths and construction hold their last frame,
 /// and attacks play once.
-fn pack_action(state: AnimState, start_frame: u32, frame_count: u32) -> ActionSlice {
+fn pack_action(
+    state: AnimState,
+    start_frame: u32,
+    frame_count: u32,
+    duration_ms: Option<u32>,
+) -> ActionSlice {
     ActionSlice {
         start_frame,
         frame_count,
         looping: atlas_loops(state),
         hold_last_frame: matches!(state, AnimState::Die | AnimState::Constructing),
+        duration_ms,
     }
 }
 
@@ -928,7 +1004,58 @@ fn pack_strip(
 
 #[cfg(test)]
 mod tests {
-    use super::evenly_spaced_indices;
+    use super::{clip_duration_ms, evenly_spaced_indices};
+    use crate::error::BakerError;
+    use crate::provenance::FrameSampling;
+
+    #[test]
+    fn a_spanned_clip_lasts_its_decoded_frames() {
+        // A 4 s clip decoded at 15 fps.
+        let ms = clip_duration_ms(60, 15, FrameSampling::Span, "probe");
+        assert!(matches!(ms, Ok(Some(4000))), "{ms:?}");
+    }
+
+    #[test]
+    fn a_looped_clip_lasts_its_loop_period() {
+        // 61 decoded frames whose final one stands for the restart: 60 frame times.
+        let ms = clip_duration_ms(61, 15, FrameSampling::Loop, "probe");
+        assert!(matches!(ms, Ok(Some(4000))), "{ms:?}");
+    }
+
+    #[test]
+    fn durations_round_to_the_nearest_millisecond_and_never_reach_zero() {
+        assert!(matches!(
+            clip_duration_ms(10, 3, FrameSampling::Span, "p"),
+            Ok(Some(3333))
+        ));
+        assert!(matches!(
+            clip_duration_ms(2, 3, FrameSampling::Span, "p"),
+            Ok(Some(667))
+        ));
+        assert!(matches!(
+            clip_duration_ms(2, 1_000_000, FrameSampling::Loop, "p"),
+            Ok(Some(1))
+        ));
+    }
+
+    #[test]
+    fn a_still_or_a_zero_rate_has_no_duration() {
+        for sampling in [FrameSampling::Span, FrameSampling::Loop] {
+            assert!(matches!(clip_duration_ms(1, 15, sampling, "p"), Ok(None)));
+            assert!(matches!(clip_duration_ms(0, 15, sampling, "p"), Ok(None)));
+            assert!(matches!(clip_duration_ms(60, 0, sampling, "p"), Ok(None)));
+        }
+    }
+
+    #[test]
+    fn a_duration_beyond_u32_milliseconds_is_refused() {
+        let frames = usize::try_from(u64::from(u32::MAX)).unwrap_or(usize::MAX);
+        let refused = clip_duration_ms(frames, 1, FrameSampling::Span, "endless");
+        assert!(
+            matches!(&refused, Err(BakerError::ValidationFailed { name, .. }) if name == "endless"),
+            "expected ValidationFailed, got {refused:?}"
+        );
+    }
 
     #[test]
     fn indices_cover_first_and_last_frame() {

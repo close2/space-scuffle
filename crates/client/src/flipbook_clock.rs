@@ -1032,6 +1032,7 @@ mod tests {
             frame_count: 10,
             looping,
             hold_last_frame,
+            duration_ms: None,
         };
         FlipbookAtlasMeta {
             name: "fixture".to_owned(),
