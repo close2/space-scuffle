@@ -4,7 +4,9 @@
 //! Proves, through the production [`client::ClientAppPlugin`], that a frame on which nothing new
 //! happens creates, modifies and removes no asset, spawns and despawns no entity, and keeps every
 //! retained buffer of the sync systems at the same address and capacity. A moving frame may only
-//! modify the bubble material of a unit whose heading changed (C-5). A frame of steady combat
+//! modify the bubble material of a unit whose heading changed (C-5); a swarm frame modifies no
+//! material at all, even while bubbles bounce (plan `2026-11-04-battle-flipbook-animation`, D-9).
+//! A frame of steady combat
 //! modifies and removes no combat effect material, and adds one only while the pool of effect
 //! slots grows (C-17).
 //!
@@ -88,8 +90,18 @@ const READY_FRAMES: usize = 600;
 /// Frames run after readiness and before a window, so first-use work is excluded.
 const WARM_FRAMES: usize = 30;
 
-/// Length of a paused or swarm window, in frames.
+/// Length of a paused window, in frames.
 const PAUSED_FRAMES: usize = 64;
+
+/// Length of the swarm window, in 40 ms frames: 13.2 s, longer than the 12 s a swarm bubble takes
+/// to cross between its walls at 1.5 world units per second, so every bubble bounces in it.
+const SWARM_FRAMES: usize = 330;
+
+/// Bubbles in the swarm.
+const SWARM_BUBBLES: usize = 200;
+
+/// Shared swarm materials: two groups, each with one material per heading.
+const SWARM_MATERIALS: usize = 4;
 
 /// Ticks of warm-up before a moving window, and the window's length, in simulation ticks.
 const WARM_TICKS: u32 = 30;
@@ -897,19 +909,55 @@ fn marching_frames_touch_only_turning_units() {
     );
 }
 
+/// Every swarm bubble's heading, by entity, and the materials the swarm draws with.
+fn swarm_state(
+    harness: &mut Harness,
+) -> (BTreeMap<Entity, u32>, BTreeSet<AssetId<BubbleDomeMaterial>>) {
+    let world = harness.app.world_mut();
+    let mut headings = BTreeMap::new();
+    let mut materials = BTreeSet::new();
+    for (entity, bubble, material) in world
+        .query_filtered::<(
+            Entity,
+            &client::BubbleInstance,
+            &MeshMaterial3d<BubbleDomeMaterial>,
+        ), With<SwarmBubble>>()
+        .iter(world)
+    {
+        headings.insert(entity, bubble.0.heading_angle_rad.to_bits());
+        materials.insert(material.0.id());
+    }
+    (headings, materials)
+}
+
+/// D-9: the swarm walks on the shared flipbook clock, so its shared materials are never rewritten
+/// for time passing, and a wall bounce swaps a bubble to its group's material for the new heading
+/// instead of rewriting the one the group shares. The window is long enough for every bubble to
+/// bounce.
+///
+/// The one modification a material may take is its first: the optics system
+/// (`bubble_optics::sync_optics`) fills the optics lanes of a material the first frame an entity
+/// draws with it, and a group's second heading is first drawn at the group's first bounce.
 #[test]
 fn swarm_stress_frames_create_modify_and_remove_nothing() {
     let mut harness = Harness::boot(ClientMode::SwarmStressTest);
     settle(&mut harness, false);
     let entities = census(&harness);
     let buffers = retained_buffers(harness.app.world());
-    harness.step(PAUSED_FRAMES);
-    let world = harness.app.world_mut();
-    let shared: BTreeSet<AssetId<BubbleDomeMaterial>> = world
-        .query_filtered::<&MeshMaterial3d<BubbleDomeMaterial>, With<SwarmBubble>>()
-        .iter(world)
-        .map(|material| material.0.id())
-        .collect();
+    let mut flips = 0_usize;
+    let (mut headings, drawn_before) = swarm_state(&mut harness);
+    let mut drawn = drawn_before.clone();
+    for _ in 0..SWARM_FRAMES {
+        harness.step(1);
+        let (next, materials) = swarm_state(&mut harness);
+        flips += next
+            .iter()
+            .filter(|(entity, heading)| headings.get(entity) != Some(heading))
+            .count();
+        headings = next;
+        drawn.extend(materials);
+    }
+    let first_drawn = drawn.difference(&drawn_before).count();
     assert!(
         harness
             .app
@@ -919,20 +967,32 @@ fn swarm_stress_frames_create_modify_and_remove_nothing() {
             > 0,
         "the swarm must be on the field"
     );
-    // The swarm animates: each frame may rewrite each shared material once, with its group's
-    // flipbook frame and heading, and nothing else.
+    assert!(
+        flips >= SWARM_BUBBLES,
+        "every bubble must bounce in the window: {flips} heading flips"
+    );
+    assert_eq!(
+        drawn.len(),
+        SWARM_MATERIALS,
+        "the swarm draws with one material per group and heading"
+    );
     let bubbles = type_name::<Assets<BubbleDomeMaterial>>();
     let tally = tallies(&harness);
+    let modified = tally.count(bubbles, EventKind::Modified);
+    eprintln!(
+        "swarm window: {SWARM_FRAMES} frames, {flips} heading flips, {} materials drawn, \
+         {first_drawn} first drawn in the window, {modified} material modifications",
+        drawn.len()
+    );
     assert_eq!(
         tally.others(&[(bubbles, EventKind::Modified)]),
         Vec::new(),
-        "asset events other than the shared swarm materials"
+        "asset events other than bubble material modifications"
     );
-    let modified = tally.count(bubbles, EventKind::Modified);
     assert!(
-        modified <= (shared.len() * PAUSED_FRAMES) as u64,
-        "{modified} bubble materials modified over {PAUSED_FRAMES} frames, {} shared",
-        shared.len()
+        modified <= first_drawn as u64,
+        "{modified} bubble materials modified over {SWARM_FRAMES} frames with {flips} heading \
+         flips; only the {first_drawn} materials first drawn in the window may take their optics"
     );
     assert_eq!(census(&harness), entities, "entities spawned or despawned");
     assert_eq!(

@@ -7,6 +7,14 @@
 //!   stays in view (C-10).
 //! - Smog never draws over a bubble, at any depth, on the real GPU (C-7).
 //! - The Construction Progress slider drives the fill of the selected dome or sphere alone (5.8).
+//! - The selected actor plays the selected state's slice at its own period on the shared flipbook
+//!   clock, from its first frame, without its material changing; the unit portrait shows the same
+//!   frame from that slice only (plan `2026-11-04-battle-flipbook-animation`, D-9).
+
+#![allow(
+    clippy::cast_precision_loss,
+    reason = "atlas layer counts are far below 2^24, exact in f32"
+)]
 
 #[allow(
     dead_code,
@@ -372,6 +380,174 @@ fn showcase_lineup_rebuilds_only_when_the_catalog_changes() -> TestResult {
         lineup.ids().as_ptr(),
         storage,
         "a rebuild reuses its storage"
+    );
+    Ok(())
+}
+
+// --- One flipbook clock for the Lab (plan 2026-11-04-battle-flipbook-animation, WP6, D-9) -------
+
+/// Lab frames last the 40 ms of one simulation tick, so the Lab clock advances 1024 units a frame.
+const LAB_FRAME: std::time::Duration = std::time::Duration::from_millis(40);
+
+/// Clock units of one [`LAB_FRAME`].
+const LAB_FRAME_UNITS: u32 = 1024;
+
+/// The Lab preview app on a manual clock, with actor `selected` in `anim_state`.
+fn timed_lab_app(selected: usize, anim_state: AnimState) -> TestResult<App> {
+    let mut app = scene_app(client::LabState {
+        selected_hero_index: selected,
+        anim_state,
+        ..default()
+    })?;
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(LAB_FRAME))
+        .add_systems(Update, client::sync_lab_preview_system);
+    Ok(app)
+}
+
+/// The first lineup slot whose shipped atlas has a looping `action` slice of more than one frame,
+/// and that atlas.
+fn lineup_slot_with(action: AnimState) -> TestResult<(usize, asset_baker::FlipbookAtlasMeta)> {
+    let root = client::ResolvedAssetsRoot::from_directory(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
+    )?;
+    let definition = BattleDefinition::load(root.as_path(), DEFAULT_BATTLE_SCENARIO.as_ref())?;
+    let catalog = &definition.catalogs.units;
+    let mut lineup = client::scene_controller::ShowcaseLineup::default();
+    lineup.refresh(catalog, true);
+    let textures = client::resolve_assets_dir().join("textures");
+    let found = lineup
+        .archetypes(catalog)
+        .take(4)
+        .enumerate()
+        .find_map(|(index, archetype)| {
+            asset_baker::FlipbookAtlasMeta::load_from_ron(
+                &textures.join(format!("{}.flipbook.ron", archetype.slug)),
+            )
+            .ok()
+            .filter(|meta| {
+                meta.actions
+                    .get(&action)
+                    .is_some_and(|slice| slice.looping && slice.frame_count > 1)
+            })
+            .map(|meta| (index, meta))
+        });
+    found.ok_or_else(|| format!("no lineup actor has a looping {action:?} slice").into())
+}
+
+/// The selected preview actor's material uniform, and the Lab clock of the current frame.
+fn selected_preview(app: &mut App, selected: usize) -> TestResult<(client::BubbleUniformGpu, u32)> {
+    let now = client::flipbook_clock::elapsed_clock(app.world().resource::<Time>().elapsed());
+    let mut heroes = app.world_mut().query::<(
+        &client::HeroLineupIndex,
+        &MeshMaterial3d<client::BubbleDomeMaterial>,
+    )>();
+    let handle = heroes
+        .iter(app.world())
+        .find(|(index, _)| index.0 == selected)
+        .map(|(_, material)| material.0.clone())
+        .ok_or("the selected actor must spawn")?;
+    let uniform = app
+        .world()
+        .resource::<Assets<client::BubbleDomeMaterial>>()
+        .get(&handle)
+        .ok_or("material lost")?
+        .uniform;
+    Ok((uniform, now))
+}
+
+/// D-9 and D-6: the selected actor plays the selected state's slice at the clip's own speed on the
+/// shared clock, with its material untouched while the state lasts, and a state change restarts
+/// the slice at its first frame (D-5).
+#[test]
+fn lab_preview_plays_the_selected_slice_on_the_shared_clock() -> TestResult {
+    let (selected, meta) = lineup_slot_with(AnimState::Walk)?;
+    let slice = meta.actions[&AnimState::Walk];
+    let mut app = timed_lab_app(selected, AnimState::Idle)?;
+    for _ in 0..5 {
+        app.update();
+    }
+    app.world_mut()
+        .resource_mut::<client::LabState>()
+        .anim_state = AnimState::Walk;
+    app.update();
+
+    let (first, now) = selected_preview(&mut app, selected)?;
+    let lanes = first.flipbook_lanes();
+    assert_eq!(
+        client::flipbook_clock::flipbook_layer(now, &lanes),
+        slice.start_frame,
+        "the Walk slice starts at its first frame when the state is selected"
+    );
+    assert_eq!(
+        lanes.period,
+        client::flipbook_clock::slice_period(&meta, &slice),
+        "the slice plays at its own period (D-6), not 0.67 s for every slice"
+    );
+    assert_eq!(lanes.count, slice.frame_count);
+
+    // Two passes over the slice, one frame at a time.
+    let frames = 2 * lanes.period.div_ceil(LAB_FRAME_UNITS) + 2;
+    let mut shown = Vec::new();
+    for _ in 0..frames {
+        app.update();
+        let (uniform, now) = selected_preview(&mut app, selected)?;
+        assert_eq!(uniform, first, "time passing modified the preview material");
+        shown.push(client::flipbook_clock::flipbook_layer(now, &lanes));
+    }
+    let expected: std::collections::BTreeSet<u32> =
+        (slice.start_frame..slice.start_frame + slice.frame_count).collect();
+    let seen: std::collections::BTreeSet<u32> = shown.iter().copied().collect();
+    assert_eq!(
+        seen, expected,
+        "every layer of the slice, and only those: {shown:?}"
+    );
+    let steps_back = shown.windows(2).filter(|pair| pair[1] < pair[0]).count();
+    assert!(
+        steps_back <= 2,
+        "the slice plays in order and wraps once per pass: {shown:?}"
+    );
+    Ok(())
+}
+
+/// D-9: the inspector portrait shows the frame the selected bubble shows, from the selected
+/// state's slice only, as rows of the portrait strip.
+#[test]
+fn lab_portrait_shows_the_selected_bubbles_frame() -> TestResult {
+    let (selected, meta) = lineup_slot_with(AnimState::Idle)?;
+    let slice = meta.actions[&AnimState::Idle];
+    let mut app = timed_lab_app(selected, AnimState::Idle)?;
+    app.update();
+    let mut seen = std::collections::BTreeSet::new();
+    let frames = 2 * client::flipbook_clock::slice_period(&meta, &slice).div_ceil(LAB_FRAME_UNITS);
+    for _ in 0..frames {
+        app.update();
+        let (uniform, now) = selected_preview(&mut app, selected)?;
+        let lanes = uniform.flipbook_lanes();
+        let portrait = client::lab_ui::portrait_frame(now, &lanes, &meta);
+        assert_eq!(
+            portrait.layer,
+            client::flipbook_clock::flipbook_layer(now, &lanes),
+            "the portrait and the bubble show one frame"
+        );
+        assert!(
+            (slice.start_frame..slice.start_frame + slice.frame_count).contains(&portrait.layer),
+            "layer {} is outside the Idle slice",
+            portrait.layer
+        );
+        let total = meta.total_frames as f32;
+        assert_eq!(
+            portrait.rows,
+            [
+                portrait.layer as f32 / total,
+                (portrait.layer + 1) as f32 / total
+            ]
+        );
+        seen.insert(portrait.layer);
+    }
+    assert_eq!(
+        seen.len(),
+        slice.frame_count as usize,
+        "the portrait plays the whole slice: {seen:?}"
     );
     Ok(())
 }
