@@ -859,7 +859,7 @@ fn check_actions(
     for (state, record) in &provenance.states {
         match meta.actions.get(state) {
             None => {
-                reasons.push(UnverifiedReason::RecordedActionMissingFromAtlas { state: *state })
+                reasons.push(UnverifiedReason::RecordedActionMissingFromAtlas { state: *state });
             }
             Some(slice)
                 if slice.start_frame != record.start_frame

@@ -4,7 +4,7 @@
 //! Most tests build a throw-away asset root: a tiny hand-written atlas, stand-in clip files (the
 //! audit only hashes clips, it never decodes them) and a provenance file sealed over them. Each
 //! test then breaks one thing and checks that the audit names it with a typed reason. One test
-//! bakes real clips with FFmpeg end to end, and the last ones audit the shipped bundle.
+//! bakes real clips with `FFmpeg` end to end, and the last ones audit the shipped bundle.
 //! Identities are chosen from the shipped catalog by what they publish, never by name.
 
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
@@ -261,7 +261,7 @@ fn an_identity_with_matching_provenance_is_verified() {
     let report = fixture.audit(&fixture.required(), None);
     let entry = fixture.entry(&report);
     assert_eq!(entry.status, MediaAuditStatus::Verified, "{entry:?}");
-    assert!(entry.unverified.is_empty());
+    assert_eq!(entry.unverified, Vec::<UnverifiedReason>::new());
     assert_eq!(entry.required_tier, Some(Tier::Required));
     assert!(report.strict_accepted);
     report.require_verified().expect("strict passes");
@@ -557,7 +557,7 @@ fn a_clip_rejected_in_review_is_named() {
     fixture.seal();
     let line = downloaded(&fixture, AnimState::Walk, "operations/fixture-1");
     let LedgerEvent::Downloaded { sha256, .. } = &line.event else {
-        unreachable!("built as a download")
+        panic!("built as a download")
     };
     let rejected = LedgerRecord {
         event: LedgerEvent::RejectedInReview {
