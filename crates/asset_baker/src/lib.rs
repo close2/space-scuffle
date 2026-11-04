@@ -22,6 +22,9 @@
 //! - [`ledger`]: The append-only JSON-lines record of every paid request.
 //! - [`budget`]: Per-run and rolling-window caps from `media/veo_budget.ron`.
 //! - [`clip_review`]: Keyframes, contact sheets, review verdicts, installation and import.
+//! - [`provenance`]: Provenance records written with each bake, the data-defined required set,
+//!   and the checks behind the audit's `Verified` status.
+//! - [`media_audit`]: The read-only audit of installed media; `--strict` over the required set.
 //! - [`procedural_generator`]: Pure-Rust sprite synthesizers that produce test fixtures only.
 
 #![forbid(unsafe_code)]
@@ -39,6 +42,7 @@ pub mod media;
 pub mod media_audit;
 pub mod procedural_generator;
 pub mod prompts;
+pub mod provenance;
 pub mod terrain_texture;
 pub mod terrain_theme;
 pub mod veo_client;

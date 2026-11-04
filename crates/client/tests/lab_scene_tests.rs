@@ -222,13 +222,32 @@ fn construction_slider_reaches_the_selected_dome_or_sphere() -> TestResult {
     let catalog = &probe.world().resource::<client::CatalogResource>().0;
     let mut lineup = client::scene_controller::ShowcaseLineup::default();
     lineup.refresh(catalog, true);
-    let shapes: Vec<bool> = lineup
+    // The Lab truthfully refuses an actor whose media has no Constructing slice (plan
+    // 2026-11-04-phase-8-5-veo-media.md, D-6: no fallback ranges), so only actors whose shipped
+    // manifest holds one are staged; at least one dome and one sphere must remain.
+    let textures = client::resolve_assets_dir().join("textures");
+    let shapes: Vec<(usize, bool)> = lineup
         .archetypes(catalog)
-        .map(|archetype| matches!(archetype.shape, ShapeKind::BuildingDome { .. }))
+        .enumerate()
+        .filter(|(_, archetype)| {
+            asset_baker::FlipbookAtlasMeta::load_from_ron(
+                &textures.join(format!("{}.flipbook.ron", archetype.slug)),
+            )
+            .is_ok_and(|meta| meta.actions.contains_key(&AnimState::Constructing))
+        })
+        .map(|(index, archetype)| {
+            (
+                index,
+                matches!(archetype.shape, ShapeKind::BuildingDome { .. }),
+            )
+        })
         .collect();
-    assert!(shapes.contains(&true) && shapes.contains(&false));
+    assert!(
+        shapes.iter().any(|(_, dome)| *dome) && shapes.iter().any(|(_, dome)| !*dome),
+        "a dome and a sphere with Constructing media are needed: {shapes:?}"
+    );
 
-    for (selected, is_dome) in shapes.into_iter().enumerate() {
+    for (selected, is_dome) in shapes {
         let mut app = scene_app(client::LabState {
             anim_state: AnimState::Constructing,
             build_progress: PROGRESS,

@@ -5,7 +5,8 @@
 
 use asset_baker::{
     media::{load_unit_media, media_paths, require_action, MediaLoadError, TextureLimits},
-    media_audit::{audit_media, MediaAuditStatus},
+    media_audit::{audit_media, AuditInputs, MediaAuditStatus},
+    provenance::{RequiredSet, REQUIRED_SET_FILE},
     ActionSlice, FlipbookAtlasMeta, FlipbookLayout,
 };
 use sim_core::catalog::RuntimeCatalogs;
@@ -50,18 +51,28 @@ fn write_meta(directory: &Path, meta: &FlipbookAtlasMeta) -> TestResult {
 }
 
 #[test]
-fn real_catalog_media_audit_is_ordered_and_explicitly_unapproved() -> TestResult {
+fn real_catalog_media_audit_is_ordered_and_strict_fails_on_the_unverified_required_set(
+) -> TestResult {
     let catalogs = RuntimeCatalogs::load_from_directory(root().join("catalog"))?;
-    let report = audit_media(&root(), &catalogs.units);
+    let required = RequiredSet::load(&root().join(REQUIRED_SET_FILE), &catalogs.units)?;
+    let report = audit_media(
+        &root(),
+        &catalogs.units,
+        &AuditInputs {
+            required: &required,
+            ledger: None,
+        },
+    );
     assert_eq!(report.entries.len(), catalogs.units.archetypes().count());
     assert!(report
         .entries
         .windows(2)
         .all(|pair| pair[0].slug < pair[1].slug));
+    // Until batches 1 and 2 land (plan WP4, WP5), required identities lack media.
     assert!(!report.strict_accepted);
     assert!(matches!(
         report.require_verified(),
-        Err(asset_baker::media_audit::MediaAuditError::Unapproved)
+        Err(asset_baker::media_audit::MediaAuditError::Unverified { identities }) if !identities.is_empty()
     ));
     let output = tempfile::tempdir()?;
     let report_path = output.path().join("audit.json");
