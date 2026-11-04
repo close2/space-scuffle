@@ -19,7 +19,8 @@
 
 use sim_core::WeaponPhase;
 use sim_fixtures::matchup::{Battle, BattleRun, Matrix, MATRIX_RON};
-use sim_fixtures::trace::cli::{run, trace_battle, TraceArgs};
+use sim_fixtures::trace::cli::{run, trace_battle, RunError, TraceArgs};
+use sim_fixtures::trace::matrix::run_matrix;
 use sim_fixtures::trace::{Activity, BattleTrace, Team};
 use sim_types::EntityId;
 use std::error::Error;
@@ -344,4 +345,147 @@ fn the_runner_writes_every_file_for_every_seed() -> TestResult {
     let end = output.results[0].summary.end_tick;
     assert_eq!(ticks.lines().count(), usize::try_from(end)? + 2);
     Ok(())
+}
+
+/// A two-battle matrix: a marine and a stalker each duel a roach, with the seeds of record
+/// `3203386110` (authored positions) and `11` (jittered).
+const TWO_BATTLES: &str = r#"(seeds: [3203386110, 11], spawn_jitter: 0.12, battles: [
+    (name: "marine_vs_roach", claim: "test", map_cells: 64, ticks: 400,
+     blue: (squads: [(unit: "pulse_bot", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0)],
+            order: AttackMove(16, 32)),
+     red: (squads: [(unit: "rhino_beetle", count: 1, columns: 1, origin: (16.0, 32.0), spacing: 1.0)],
+           order: AttackMove(10, 32)),
+     expect: (blue: (0, 0), red: (1, 1))),
+    (name: "stalker_vs_roach", claim: "test", map_cells: 64, ticks: 400,
+     blue: (squads: [(unit: "warp_strider", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0)],
+            order: AttackMove(16, 32)),
+     red: (squads: [(unit: "rhino_beetle", count: 1, columns: 1, origin: (16.0, 32.0), spacing: 1.0)],
+           order: AttackMove(10, 32)),
+     expect: (blue: (1, 1), red: (0, 0))),
+])"#;
+
+/// A fresh, empty directory under the test target directory.
+fn fresh_dir(name: &str) -> Result<std::path::PathBuf, Box<dyn Error>> {
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir)?;
+    }
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+/// The shipped catalog written to `dir`, with the first weapon period after `slug`'s entry in
+/// `units.ron` replaced by `period`.
+fn scratch_catalog(dir: &std::path::Path, slug: &str, period: u16) -> TestResult {
+    let units = sim_fixtures::UNITS_RON;
+    let entry = units
+        .find(&format!("slug: \"{slug}\""))
+        .ok_or("unit entry")?;
+    let field = entry + units[entry..].find("period_ticks: ").ok_or("period")?;
+    let value = field + "period_ticks: ".len();
+    let end = value + units[value..].find(',').ok_or("end of the period value")?;
+    let edited = format!("{}{period}{}", &units[..value], &units[end..]);
+    for (name, text) in [
+        ("factions.ron", sim_fixtures::FACTIONS_RON),
+        ("units.ron", edited.as_str()),
+        ("structures.ron", sim_fixtures::STRUCTURES_RON),
+        ("upgrades.ron", sim_fixtures::UPGRADES_RON),
+        ("start_loadouts.ron", sim_fixtures::START_LOADOUTS_RON),
+    ] {
+        std::fs::write(dir.join(name), text)?;
+    }
+    Ok(())
+}
+
+/// `matchup_trace` arguments, split on whitespace.
+fn matrix_args(text: &str) -> Result<TraceArgs, RunError> {
+    TraceArgs::parse(text.split_whitespace().map(str::to_owned))
+}
+
+#[test]
+fn the_matrix_mode_writes_every_battle_and_seed_and_compares_runs() -> TestResult {
+    let root = fresh_dir("trace_matrix_mode_test")?;
+    let fixture = root.join("fixture.ron");
+    std::fs::write(&fixture, TWO_BATTLES)?;
+    let (first, second, third) = (root.join("first"), root.join("second"), root.join("third"));
+
+    // The seeds of record plus one more, so three runs of each battle.
+    let output = run_matrix(&matrix_args(&format!(
+        "--all-battles --seeds 1 --fixture {} --out {}",
+        fixture.display(),
+        first.display()
+    ))?)?;
+    assert_eq!(output.rows.len(), 6);
+    let csv = std::fs::read_to_string(first.join("matrix.csv"))?;
+    let lines: Vec<&str> = csv.lines().collect();
+    assert_eq!(
+        lines[0],
+        "battle,seed,of_record,end_tick,blue_survivors,red_survivors,blue_lead_hull,\
+         red_lead_hull,expectation_met"
+    );
+    assert_eq!(lines.len(), 7);
+    let first_row: Vec<&str> = lines[1].split(',').collect();
+    assert_eq!(&first_row[..3], ["marine_vs_roach", "3203386110", "true"]);
+    assert!(
+        lines[3].starts_with("marine_vs_roach,1,false,"),
+        "{}",
+        lines[3]
+    );
+    // The marine dies, so its hull is empty; the roach's is printed exactly.
+    assert_eq!(first_row[6], "");
+    assert!(first_row[7].parse::<f64>()? > 0.0, "{}", first_row[7]);
+    // Each row's verdict is the shared expectation check on that row's outcome.
+    let matrix = Matrix::from_ron_str(TWO_BATTLES)?;
+    for row in &output.rows {
+        let battle = matrix.battle(&row.battle)?;
+        assert_eq!(row.expectation_met, battle.expect.holds(&row.outcome));
+    }
+    let summary = std::fs::read_to_string(first.join("matrix.md"))?;
+    assert!(summary.contains("| marine_vs_roach | 3 |"), "{summary}");
+    assert!(summary.contains("| stalker_vs_roach | 3 |"), "{summary}");
+    assert!(output.comparison.is_none());
+
+    // The same inputs again, compared with the first run: nothing moved.
+    let compare = first.join("matrix.csv");
+    let again = run_matrix(&matrix_args(&format!(
+        "--all-battles --seeds 1 --fixture {} --out {} --compare {}",
+        fixture.display(),
+        second.display(),
+        compare.display()
+    ))?)?;
+    let comparison = again.comparison.ok_or("a comparison")?;
+    assert_eq!(comparison.moved, Vec::<String>::new());
+    assert_eq!(std::fs::read_to_string(second.join("matrix.csv"))?, csv);
+    let summary = std::fs::read_to_string(second.join("matrix.md"))?;
+    assert!(summary.contains("bit-identical to"), "{summary}");
+
+    // A catalog in which the marine fires half as often moves its battle, and only that one.
+    let catalog = root.join("catalog");
+    std::fs::create_dir_all(&catalog)?;
+    scratch_catalog(&catalog, "pulse_bot", 30)?;
+    let changed = run_matrix(&matrix_args(&format!(
+        "--all-battles --seeds 1 --fixture {} --catalog-dir {} --out {} --compare {}",
+        fixture.display(),
+        catalog.display(),
+        third.display(),
+        compare.display()
+    ))?)?;
+    let comparison = changed.comparison.ok_or("a comparison")?;
+    assert_eq!(comparison.moved, vec!["marine_vs_roach".to_owned()]);
+    let summary = std::fs::read_to_string(third.join("matrix.md"))?;
+    assert!(summary.contains("## Moved"), "{summary}");
+    assert!(!summary.contains("bit-identical"), "{summary}");
+    Ok(())
+}
+
+#[test]
+fn the_matrix_mode_and_a_single_battle_are_exclusive() {
+    for bad in [
+        "--out o",
+        "--all-battles --battle b --out o",
+        "--battle b --out o --compare m.csv",
+        "--all-battles --out o --jobs 0",
+    ] {
+        assert!(matches!(matrix_args(bad), Err(RunError::Usage(_))), "{bad}");
+    }
 }

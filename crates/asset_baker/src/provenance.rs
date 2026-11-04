@@ -4,7 +4,8 @@
 //! # Responsibility
 //! - **Format.** [`MediaProvenance`] is `assets/textures/<slug>.provenance.ron`: for each baked
 //!   state, the clip under `assets/videos`, its SHA-256, its frame range in the atlas and its
-//!   [`ClipOrigin`]; the bake parameters; and the SHA-256 of the atlas PNG and its manifest.
+//!   [`ClipOrigin`] and the bar colour of a letterboxed clip; the bake parameters, including
+//!   the framing; and the SHA-256 of the atlas PNG and its manifest.
 //! - **Writing.** [`bake_with_provenance`] bakes clips into an atlas and writes the record in
 //!   the same step, so a baked atlas never lacks one. [`veo_origin_from_ledger`] finds the
 //!   ledger line that downloaded a clip, which is how a paid clip's origin is known.
@@ -28,8 +29,12 @@
 //! - `LegacyVeo` is real Veo output whose request was not recorded; it says so instead of
 //!   inventing an operation. `Veo` cites the ledger line that downloaded the clip.
 //! - Written files end every line in `\n` on every host.
+//! - Fields added after format version 1 (`framing`, `bar_rgb`) are defaulted, so every
+//!   version 1 file still loads and says truthfully what it was: a centre crop without bars.
 
 use crate::error::BakerError;
+use crate::ffmpeg_importer::FrameSpec;
+use crate::framing::BakeFraming;
 use crate::ledger::{sha256_hex, LedgerEvent, LedgerRecord, NumberedRecord};
 use crate::manifest::FlipbookAtlasMeta;
 use crate::media::{media_paths, LoadedUnitMedia};
@@ -170,6 +175,11 @@ pub struct StateProvenance {
     pub frame_count: u32,
     /// Where the clip came from.
     pub origin: ClipOrigin,
+    /// The bar colour drawn around this clip's frames, as sRGB bytes measured from the clip's
+    /// own border; `None` for a centre crop or a clip that filled the square. Absent in
+    /// records written before letterboxing existed.
+    #[serde(default)]
+    pub bar_rgb: Option<[u8; 3]>,
 }
 
 /// How the atlas was baked.
@@ -184,6 +194,10 @@ pub struct BakeParameters {
     pub max_frames_per_state: u32,
     /// First line of `ffmpeg -version`.
     pub ffmpeg_version: String,
+    /// How each clip frame was fitted into the square. Absent in records written before
+    /// letterboxing existed, which were all centre crops.
+    #[serde(default)]
+    pub framing: BakeFraming,
 }
 
 /// The provenance record of one atlas, `<slug>.provenance.ron`. See the module docs.
@@ -266,8 +280,9 @@ pub struct BakeClip {
 /// beside them, returning it.
 ///
 /// Every clip must be a file directly inside `videos_dir` (the bundle's `videos` directory),
-/// because the record names it by file name. `frame_size` is in pixels, `fps` in frames per
-/// second. Nothing is written if a clip is refused.
+/// because the record names it by file name. `spec` gives the frame side in pixels, the rate in
+/// frames per second and the framing, which the record keeps with each clip's bar colour.
+/// Nothing is written if a clip is refused.
 ///
 /// # Errors
 /// [`ProvenanceError::ClipOutsideVideos`], [`ProvenanceError::DuplicateState`], any baking
@@ -277,8 +292,7 @@ pub fn bake_with_provenance(
     clips: &[BakeClip],
     videos_dir: &Path,
     output_dir: &Path,
-    frame_size: u32,
-    fps: u32,
+    spec: FrameSpec,
 ) -> Result<MediaProvenance, ProvenanceError> {
     let names = clip_names(clips, videos_dir)?;
     let ffmpeg_version = ffmpeg_version(Path::new(FFMPEG_PATH))?;
@@ -286,8 +300,9 @@ pub fn bake_with_provenance(
         .iter()
         .map(|clip| (clip.state, clip.path.as_path()))
         .collect();
-    let meta =
-        crate::bake_multi_action_videos_with_states(slug, &pairs, output_dir, frame_size, fps)?;
+    let crate::FramedBake { meta, bar_rgb } =
+        crate::bake_framed_action_videos(slug, &pairs, output_dir, spec)?;
+    let frame_size = spec.size;
     let (png, manifest) =
         media_paths(output_dir, slug).map_err(|_| ProvenanceError::InvalidSlug {
             slug: slug.to_string(),
@@ -309,6 +324,7 @@ pub fn bake_with_provenance(
                 start_frame: slice.start_frame,
                 frame_count: slice.frame_count,
                 origin: clip.origin.clone(),
+                bar_rgb: bar_rgb.get(&clip.state).copied().flatten(),
             },
         );
     }
@@ -320,9 +336,10 @@ pub fn bake_with_provenance(
         manifest_sha256: file_sha256(&manifest)?,
         bake: BakeParameters {
             frame_size,
-            fps,
+            fps: spec.fps,
             max_frames_per_state: (MAX_STRIP_HEIGHT / frame_size.max(1) / state_count).max(1),
             ffmpeg_version,
+            framing: spec.framing,
         },
         states,
     };
@@ -1076,6 +1093,9 @@ mod tests {
                 fps: 15,
                 max_frames_per_state: 2,
                 ffmpeg_version: "ffmpeg version probe".into(),
+                framing: BakeFraming::Letterbox {
+                    feather_permille: 30,
+                },
             },
             states: BTreeMap::from([(
                 AnimState::Idle,
@@ -1091,6 +1111,7 @@ mod tests {
                         keyframe_sha256: None,
                         ledger_line: 3,
                     },
+                    bar_rgb: Some([44, 48, 74]),
                 },
             )]),
         };
@@ -1111,6 +1132,7 @@ mod tests {
             origin: ClipOrigin::LegacyVeo {
                 commit: String::new(),
             },
+            bar_rgb: None,
         };
         let mut reasons = Vec::new();
         check_clip(AnimState::Idle, &record, Path::new("."), &mut reasons);
@@ -1147,6 +1169,7 @@ mod tests {
                 fps: 1,
                 max_frames_per_state: 2,
                 ffmpeg_version: String::new(),
+                framing: BakeFraming::CenterCrop,
             },
             states: BTreeMap::new(),
         };

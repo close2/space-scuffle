@@ -9,8 +9,10 @@
 //! The fixture holds what a designer would change: who fights, where, under which orders, and
 //! how many survive. The mechanics of setting a battle up and playing it live in
 //! `sim_fixtures::matchup`, shared with the battle trace tool, so rebalancing or adding a
-//! matchup is a data edit and the trace replays exactly the battles checked here. Damage formulas are tested exactly elsewhere; this suite
-//! asks whether whole battles still come out as the game intends.
+//! matchup is a data edit and the trace replays exactly the battles checked here. The judgement
+//! itself (`Expected::holds` on an `Outcome`) lives there too, so the tool's whole-matrix mode
+//! reports exactly the failures this suite would. Damage formulas are tested exactly
+//! elsewhere; this suite asks whether whole battles still come out as the game intends.
 //!
 //! # Invariants
 //! - Units are spawned, then ordered through `TickBundle` commands, exactly as a player would.
@@ -22,26 +24,12 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
-use sim_fixtures::matchup::{Battle, BattleRun, Expected, Jitter, Matrix, MATRIX_RON};
+use sim_fixtures::matchup::{Battle, BattleRun, Jitter, Matrix, Outcome, MATRIX_RON};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 
 /// Threads playing battles, modest because the suite runs on shared machines.
 const WORKERS: usize = 4;
-
-/// What actually happened in one playthrough.
-#[derive(Debug, Clone, Copy)]
-struct Outcome {
-    blue: usize,
-    red: usize,
-    blue_lead_hp: Option<f32>,
-    red_lead_hp: Option<f32>,
-}
-
-fn lead_hp(world: &sim_core::SimWorld, units: &[sim_types::EntityId]) -> Option<f32> {
-    let lead = world.entities.get(units.first()?)?;
-    lead.is_alive().then(|| lead.hp.to_f32())
-}
 
 /// Plays `battle` to resolution or to its tick limit.
 fn play(battle: &Battle, seed: u64, spawn_jitter: f32) -> Outcome {
@@ -56,26 +44,7 @@ fn play(battle: &Battle, seed: u64, spawn_jitter: f32) -> Outcome {
             run.ticks_played()
         );
     }
-    Outcome {
-        blue: sim_fixtures::matchup::living(&run.world, &run.blue),
-        red: sim_fixtures::matchup::living(&run.world, &run.red),
-        blue_lead_hp: lead_hp(&run.world, &run.blue),
-        red_lead_hp: lead_hp(&run.world, &run.red),
-    }
-}
-
-fn within(range: Option<(f32, f32)>, value: Option<f32>) -> bool {
-    match (range, value) {
-        (Some((low, high)), Some(value)) => (low..=high).contains(&value),
-        _ => true,
-    }
-}
-
-fn holds(expected: &Expected, outcome: &Outcome) -> bool {
-    (expected.blue.0..=expected.blue.1).contains(&outcome.blue)
-        && (expected.red.0..=expected.red.1).contains(&outcome.red)
-        && within(expected.blue_lead_hp, outcome.blue_lead_hp)
-        && within(expected.red_lead_hp, outcome.red_lead_hp)
+    Outcome::of(&run)
 }
 
 /// Plays `battle` on every seed, recording each outcome that breaks the fixture.
@@ -83,7 +52,7 @@ fn check_battle(matrix: &Matrix, battle: &Battle, failures: &mut Vec<String>) {
     for (index, &seed) in matrix.seeds.iter().enumerate() {
         let jitter = if index == 0 { 0.0 } else { matrix.spawn_jitter };
         let outcome = play(battle, seed, jitter);
-        if !holds(&battle.expect, &outcome) {
+        if !battle.expect.holds(&outcome) {
             failures.push(format!(
                 "{} seed {seed}: {outcome:?}, expected {:?}. Claim: {}",
                 battle.name, battle.expect, battle.claim

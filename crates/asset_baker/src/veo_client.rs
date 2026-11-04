@@ -5,7 +5,8 @@
 //! `docs/06-factions-and-video-style-guide.md`,
 //! this module is the transport for generating authentic unit and structure animation clips
 //! with Google's Veo models: it starts, polls and downloads one operation at a time, classifies
-//! finished operations, and checks a key for free (`veo-preflight`). Which clips a run pays for,
+//! finished operations, and checks a key for free (`veo-preflight`). The generation parameters
+//! every start request sends are data, [`VeoRequestSettings`] in `assets/media/veo_request.ron`. Which clips a run pays for,
 //! and in what order, is decided by `veo_plan` and carried out by `veo_run`.
 //!
 //! # Dual-API Support (Gemini API & Vertex AI Express Mode)
@@ -125,7 +126,9 @@ pub struct VeoInstance {
     pub image: Option<VeoImageInput>,
 }
 
-/// Configuration parameters for Veo generation.
+/// Configuration parameters for Veo generation, as sent in the start request's `parameters`
+/// object and recorded in the ledger's `request_started` line. A `None` field is not sent, and
+/// a field missing from an older ledger line reads as `None`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VeoParameters {
     /// Aspect ratio of generated video (typically `"1:1"` or `"16:9"`).
@@ -137,15 +140,134 @@ pub struct VeoParameters {
     /// Number of candidate videos to sample (typically 1).
     #[serde(rename = "sampleCount", skip_serializing_if = "Option::is_none")]
     pub sample_count: Option<u32>,
+    /// Whether the service also generates a sound track (`generateAudio`). `None` sends no
+    /// field, and the service then generates sound; `Some(false)` asks for a silent clip,
+    /// which is billed at a lower rate.
+    #[serde(rename = "generateAudio", skip_serializing_if = "Option::is_none")]
+    pub generate_audio: Option<bool>,
+    /// What the model should keep out of the clip (`negativePrompt`), as plain words separated
+    /// by commas. `None` sends no field. Vertex documents it in the `parameters` object of
+    /// `:predictLongRunning` for the Veo models, with no model restriction.
+    #[serde(
+        rename = "negativePrompt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub negative_prompt: Option<String>,
 }
 
 impl Default for VeoParameters {
+    /// The parameters of the pilot request (2026-11-04): 16:9, 4 s, one sample, and no
+    /// `generateAudio` field. A paid run sends [`VeoRequestSettings::parameters`] instead.
     fn default() -> Self {
         Self {
             aspect_ratio: Some("16:9".to_string()),
             duration_seconds: Some(4),
             sample_count: Some(1),
+            generate_audio: None,
+            negative_prompt: None,
         }
+    }
+}
+
+/// The request settings file's path relative to the asset root.
+pub const VEO_REQUEST_FILE: &str = "media/veo_request.ron";
+
+/// The Veo generation parameters every paid start request sends: `media/veo_request.ron`.
+///
+/// They are data, not a flag, so that a change (such as dropping `generate_audio` if the
+/// service refuses it, or what `negative_prompt` keeps out of every clip) is one reviewed edit
+/// that every later run follows.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VeoRequestSettings {
+    /// Aspect ratio of the generated video, such as `"16:9"`.
+    pub aspect_ratio: String,
+    /// Length of the generated video, in seconds.
+    pub duration_seconds: u32,
+    /// Videos generated per request. Must be 1: the budget counts one clip per request and the
+    /// run downloads one video per operation.
+    pub sample_count: u32,
+    /// `Some(false)` asks for a silent clip, `Some(true)` for sound; `None` sends no field.
+    pub generate_audio: Option<bool>,
+    /// Content every clip must avoid, sent as `negativePrompt`; `None` (or absent) sends no
+    /// field. A present value must not be blank.
+    #[serde(default)]
+    pub negative_prompt: Option<String>,
+}
+
+impl VeoRequestSettings {
+    /// Reads and checks the settings file at `path`.
+    ///
+    /// # Errors
+    /// [`BakerError::Io`] if it cannot be read, or [`BakerError::DataFile`] if it is not valid
+    /// RON of this shape, names an empty aspect ratio, a zero duration, or a sample count
+    /// other than 1.
+    pub fn load(path: &Path) -> Result<Self, BakerError> {
+        let text = std::fs::read_to_string(path).map_err(|source| BakerError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let invalid = |reason: String| BakerError::DataFile {
+            path: path.to_path_buf(),
+            reason,
+        };
+        let settings: Self = ron::from_str(&text).map_err(|error| invalid(error.to_string()))?;
+        if settings.aspect_ratio.trim().is_empty() {
+            return Err(invalid("aspect_ratio is empty".into()));
+        }
+        if settings.duration_seconds == 0 {
+            return Err(invalid("duration_seconds is 0".into()));
+        }
+        if settings
+            .negative_prompt
+            .as_deref()
+            .is_some_and(|text| text.trim().is_empty())
+        {
+            return Err(invalid("negative_prompt is blank".into()));
+        }
+        if settings.sample_count != 1 {
+            return Err(invalid(format!(
+                "sample_count is {}; the budget and the run handle exactly 1 video per request",
+                settings.sample_count
+            )));
+        }
+        Ok(settings)
+    }
+
+    /// The parameters object these settings send.
+    #[must_use]
+    pub fn parameters(&self) -> VeoParameters {
+        VeoParameters {
+            aspect_ratio: Some(self.aspect_ratio.clone()),
+            duration_seconds: Some(self.duration_seconds),
+            sample_count: Some(self.sample_count),
+            generate_audio: self.generate_audio,
+            negative_prompt: self.negative_prompt.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for VeoParameters {
+    /// One line naming every field sent, in the API's spelling, for logs and dry runs.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut fields = Vec::new();
+        if let Some(value) = &self.aspect_ratio {
+            fields.push(format!("aspectRatio {value}"));
+        }
+        if let Some(value) = self.duration_seconds {
+            fields.push(format!("durationSeconds {value}"));
+        }
+        if let Some(value) = self.sample_count {
+            fields.push(format!("sampleCount {value}"));
+        }
+        if let Some(value) = self.generate_audio {
+            fields.push(format!("generateAudio {value}"));
+        }
+        if let Some(value) = &self.negative_prompt {
+            fields.push(format!("negativePrompt {value:?}"));
+        }
+        f.write_str(&fields.join(", "))
     }
 }
 
@@ -323,6 +445,7 @@ fn ensure_trusted_host(url: &str) -> Result<(), BakerError> {
 pub struct VeoClient {
     credentials: VeoCredentials,
     model: String,
+    parameters: VeoParameters,
     curl_path: PathBuf,
     ffprobe_path: PathBuf,
     poll_interval: Duration,
@@ -347,6 +470,7 @@ impl VeoClient {
         Self {
             credentials,
             model: DEFAULT_VEO_MODEL.to_string(),
+            parameters: VeoParameters::default(),
             curl_path: PathBuf::from("/usr/bin/curl"),
             ffprobe_path: PathBuf::from(DEFAULT_FFPROBE_PATH),
             poll_interval: Duration::from_secs(DEFAULT_POLL_INTERVAL_SECS),
@@ -360,6 +484,15 @@ impl VeoClient {
     #[must_use]
     pub fn with_model(mut self, model: &str) -> Self {
         self.model = model.to_string();
+        self
+    }
+
+    /// Sets the generation parameters every start request sends, normally
+    /// [`VeoRequestSettings::parameters`] of the bundle's `media/veo_request.ron`. Without
+    /// this call the client sends [`VeoParameters::default`].
+    #[must_use]
+    pub fn with_parameters(mut self, parameters: VeoParameters) -> Self {
+        self.parameters = parameters;
         self
     }
 
@@ -415,10 +548,10 @@ impl VeoClient {
         }
     }
 
-    /// The generation parameters every request sends.
+    /// The generation parameters every start request sends (see [`Self::with_parameters`]).
     #[must_use]
     pub fn parameters(&self) -> VeoParameters {
-        VeoParameters::default()
+        self.parameters.clone()
     }
 
     /// The ffprobe executable used to validate downloads.
@@ -747,7 +880,7 @@ impl VeoClient {
                 prompt: prompt.to_string(),
                 image: image_input,
             }],
-            parameters: Some(VeoParameters::default()),
+            parameters: Some(self.parameters()),
         };
 
         let json_body = serde_json::to_string(&request_body)?;

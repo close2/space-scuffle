@@ -1,14 +1,17 @@
 //! The battle trace runner: command-line arguments, the seed list, and writing the outputs.
 //!
 //! # Responsibility
-//! Parses the arguments of `crates/sim_core/examples/matchup_trace.rs`, plays the selected matrix
-//! battle on each selected seed with [`BattleRun`], traces every tick with [`BattleTrace`], and
-//! writes per seed `seed_<n>_ticks.csv`, `seed_<n>_units.csv` and `seed_<n>.md`, plus
-//! `seeds.csv` and `summary.md` for all seeds, into `<out>/<battle>/`.
+//! Parses the arguments of `crates/sim_core/examples/matchup_trace.rs`. In battle mode
+//! (`--battle <name>`) it plays the selected matrix battle on each selected seed with
+//! [`BattleRun`], traces every tick with [`BattleTrace`], and writes per seed
+//! `seed_<n>_ticks.csv`, `seed_<n>_units.csv` and `seed_<n>.md`, plus `seeds.csv` and
+//! `summary.md` for all seeds, into `<out>/<battle>/`. Whole-matrix mode (`--all-battles`) is
+//! [`super::matrix`]; this module parses its flags and provides the shared catalog, fixture and
+//! file helpers.
 //!
 //! # How it fits
-//! The example is a thin `main` around [`TraceArgs::parse`] and [`run`], so the whole runner is
-//! tested here. It reads the matrix fixture (the shipped one by default, or `--fixture <file>`)
+//! The example is a thin `main` around [`TraceArgs::parse`], [`run`] and
+//! [`super::matrix::run_matrix`], so the whole runner is tested here. It reads the matrix fixture (the shipped one by default, or `--fixture <file>`)
 //! and the catalog (the shipped one by default, or `--catalog-dir <dir>`), so it names no unit in
 //! Rust (charter §3.3): counterfactuals are scratch catalogs and scratch fixtures.
 //!
@@ -17,6 +20,8 @@
 //!   same jitter rule), so a seed of record reproduces the matrix result.
 //! - A simulation diagnostic during a traced battle is an error, as it is in the matrix test.
 //! - Seeds are distinct and played in the order listed.
+//! - Exactly one of `--battle` and `--all-battles` is given; `--compare` and `--jobs` belong to
+//!   the whole-matrix mode.
 
 use super::report::{
     aggregate_markdown, run_markdown, seeds_csv, ticks_csv, units_csv, SeedResult,
@@ -29,13 +34,25 @@ use std::path::{Path, PathBuf};
 /// The usage text printed on an argument error.
 pub const USAGE: &str = "usage: matchup_trace --battle <name> --out <dir> [--seed <n>]... \
 [--seeds <count>] [--catalog-dir <dir>] [--fixture <file>] [--no-unit-csv]
-  --seed <n>         trace world seed n (repeatable)
-  --seeds <count>    trace the fixture's seeds of record plus the first <count> positive
+       matchup_trace --all-battles --out <dir> [--seed <n>]... [--seeds <count>] \
+[--catalog-dir <dir>] [--fixture <file>] [--compare <matrix.csv>] [--jobs <n>]
+  --battle <name>    trace one battle tick by tick into <dir>/<name>/
+  --all-battles      play every battle of the fixture and write <dir>/matrix.csv and
+                     <dir>/matrix.md (outcomes only, no per-tick files)
+  --seed <n>         play world seed n (repeatable)
+  --seeds <count>    play the fixture's seeds of record plus the first <count> positive
                      integers that are not seeds of record
-  (neither)          trace the fixture's seeds of record
+  (neither)          play the fixture's seeds of record
   --catalog-dir      catalog directory to load instead of the shipped catalog
   --fixture          matchup matrix file to read instead of the shipped one
-  --no-unit-csv      skip the per-unit CSV files";
+  --no-unit-csv      skip the per-unit CSV files (battle mode)
+  --compare <file>   matrix.csv of an earlier --all-battles run: report the battles whose
+                     rows differ, or that nothing moved
+  --jobs <n>         battles played at once in --all-battles mode (default 4)";
+
+/// Battles played at once in whole-matrix mode when `--jobs` is not given; modest because the
+/// tool runs on shared machines.
+pub const DEFAULT_JOBS: usize = 4;
 
 /// Why a trace run failed.
 #[derive(Debug, thiserror::Error)]
@@ -62,6 +79,27 @@ pub enum RunError {
         /// The diagnostics, formatted.
         diagnostics: String,
     },
+    /// A battle of the whole-matrix mode failed.
+    #[error("battle {battle}, seed {seed}: {source}")]
+    Battle {
+        /// The battle's name.
+        battle: String,
+        /// The seed being played.
+        seed: u64,
+        /// What went wrong.
+        #[source]
+        source: Box<RunError>,
+    },
+    /// A `matrix.csv` (to write or to compare with) is not in the tool's format.
+    #[error("{path}: line {line}: {reason}")]
+    Csv {
+        /// The file (the output path when writing).
+        path: PathBuf,
+        /// The 1-based line number.
+        line: usize,
+        /// What is wrong with it.
+        reason: String,
+    },
     /// A file could not be read or written.
     #[error("{path}: {source}")]
     Io {
@@ -76,9 +114,12 @@ pub enum RunError {
 /// The parsed command line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TraceArgs {
-    /// Name of the matrix battle.
-    pub battle: String,
-    /// Output directory; files go to `<out>/<battle>/`.
+    /// Name of the matrix battle to trace (battle mode); `None` in whole-matrix mode.
+    pub battle: Option<String>,
+    /// Whether to play every battle of the fixture (whole-matrix mode).
+    pub all_battles: bool,
+    /// Output directory: files go to `<out>/<battle>/` in battle mode, `<out>/` in whole-matrix
+    /// mode.
     pub out: PathBuf,
     /// Seeds given with `--seed`.
     pub seeds: Vec<u64>,
@@ -90,25 +131,34 @@ pub struct TraceArgs {
     pub fixture: Option<PathBuf>,
     /// Whether to write the per-unit CSV files.
     pub unit_csv: bool,
+    /// An earlier `matrix.csv` to compare the whole-matrix run with.
+    pub compare: Option<PathBuf>,
+    /// Battles played at once in whole-matrix mode; at least 1.
+    pub jobs: usize,
 }
 
 impl TraceArgs {
     /// Parses the arguments after the program name.
     ///
     /// # Errors
-    /// [`RunError::Usage`] for an unknown flag, a missing or malformed value, or a missing
-    /// `--battle` or `--out`.
+    /// [`RunError::Usage`] for an unknown flag, a missing or malformed value, a missing
+    /// `--out`, not exactly one of `--battle` and `--all-battles`, `--compare` or `--jobs`
+    /// outside whole-matrix mode, or `--jobs 0`.
     pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Self, RunError> {
         let mut args = args.into_iter();
-        let (mut battle, mut out) = (None, None);
+        let mut out = None;
+        let mut jobs = None;
         let mut parsed = Self {
-            battle: String::new(),
+            battle: None,
+            all_battles: false,
             out: PathBuf::new(),
             seeds: Vec::new(),
             extra_seeds: None,
             catalog_dir: None,
             fixture: None,
             unit_csv: true,
+            compare: None,
+            jobs: DEFAULT_JOBS,
         };
         while let Some(flag) = args.next() {
             let mut value = || {
@@ -116,7 +166,10 @@ impl TraceArgs {
                     .ok_or_else(|| RunError::Usage(format!("{flag} needs a value")))
             };
             match flag.as_str() {
-                "--battle" => battle = Some(value()?),
+                "--battle" => parsed.battle = Some(value()?),
+                "--all-battles" => parsed.all_battles = true,
+                "--compare" => parsed.compare = Some(PathBuf::from(value()?)),
+                "--jobs" => jobs = Some(parse_number(&flag, &value()?)?),
                 "--out" => out = Some(PathBuf::from(value()?)),
                 "--seed" => parsed.seeds.push(parse_number(&flag, &value()?)?),
                 "--seeds" => parsed.extra_seeds = Some(parse_number(&flag, &value()?)?),
@@ -126,8 +179,31 @@ impl TraceArgs {
                 _ => return Err(RunError::Usage(format!("unknown argument {flag}"))),
             }
         }
-        parsed.battle = battle.ok_or_else(|| RunError::Usage("--battle is required".into()))?;
         parsed.out = out.ok_or_else(|| RunError::Usage("--out is required".into()))?;
+        match (&parsed.battle, parsed.all_battles) {
+            (None, false) => {
+                return Err(RunError::Usage(
+                    "--battle <name> or --all-battles is required".into(),
+                ))
+            }
+            (Some(_), true) => {
+                return Err(RunError::Usage(
+                    "--battle and --all-battles exclude each other".into(),
+                ))
+            }
+            (Some(_), false) if parsed.compare.is_some() || jobs.is_some() => {
+                return Err(RunError::Usage(
+                    "--compare and --jobs need --all-battles".into(),
+                ))
+            }
+            _ => {}
+        }
+        if let Some(jobs) = jobs {
+            parsed.jobs = usize::try_from(jobs)
+                .ok()
+                .filter(|&jobs| jobs > 0)
+                .ok_or_else(|| RunError::Usage(format!("--jobs needs 1 or more, got {jobs}")))?;
+        }
         Ok(parsed)
     }
 
@@ -169,26 +245,58 @@ pub struct RunOutput {
     pub results: Vec<SeedResult>,
 }
 
-/// Plays and traces the battle of `args` on every selected seed and writes the outputs.
+/// The matchup matrix `args` names: `--fixture`, or the shipped one.
 ///
 /// # Errors
-/// Every [`RunError`].
-pub fn run(args: &TraceArgs) -> Result<RunOutput, RunError> {
+/// [`RunError::Io`] if the file cannot be read, [`RunError::Matchup`] if it does not parse.
+pub fn load_matrix(args: &TraceArgs) -> Result<Matrix, RunError> {
     let fixture_text = match &args.fixture {
         Some(path) => read(path)?,
         None => MATRIX_RON.to_owned(),
     };
-    let matrix = Matrix::from_ron_str(&fixture_text)?;
-    let battle = matrix.battle(&args.battle)?;
-    let catalogs = match &args.catalog_dir {
+    Ok(Matrix::from_ron_str(&fixture_text)?)
+}
+
+/// The catalogs `args` names: `--catalog-dir`, or the shipped ones.
+///
+/// # Errors
+/// [`RunError::Catalog`] if the directory does not load.
+pub fn load_catalogs(args: &TraceArgs) -> Result<RuntimeCatalogs, RunError> {
+    Ok(match &args.catalog_dir {
         Some(dir) => RuntimeCatalogs::load_from_directory(dir)?,
         None => crate::shipped_catalogs(),
-    };
+    })
+}
+
+/// A line naming the catalog and the fixture `args` played, for the reports.
+#[must_use]
+pub fn source_line(args: &TraceArgs) -> String {
+    format!(
+        "Catalog: {}. Fixture: {}.",
+        args.catalog_dir
+            .as_ref()
+            .map_or_else(|| "shipped".to_owned(), |d| d.display().to_string()),
+        args.fixture.as_ref().map_or_else(
+            || "shipped matchup matrix".to_owned(),
+            |f| f.display().to_string()
+        ),
+    )
+}
+
+/// Plays and traces the battle of `args` on every selected seed and writes the outputs.
+///
+/// # Errors
+/// Every [`RunError`]; [`RunError::Usage`] if `args` selects no single battle.
+pub fn run(args: &TraceArgs) -> Result<RunOutput, RunError> {
+    let name = args
+        .battle
+        .as_deref()
+        .ok_or_else(|| RunError::Usage("battle mode needs --battle <name>".into()))?;
+    let matrix = load_matrix(args)?;
+    let battle = matrix.battle(name)?;
+    let catalogs = load_catalogs(args)?;
     let directory = args.out.join(&battle.name);
-    std::fs::create_dir_all(&directory).map_err(|source| RunError::Io {
-        path: directory.clone(),
-        source,
-    })?;
+    create_dir(&directory)?;
     let mut results = Vec::new();
     for seed in args.seed_list(&matrix.seeds) {
         let jitter = matrix.jitter_for(seed);
@@ -213,15 +321,9 @@ pub fn run(args: &TraceArgs) -> Result<RunOutput, RunError> {
         });
     }
     let source = format!(
-        "Claim: {}\n\nCatalog: {}. Fixture: {}. Seeds: {}.",
+        "Claim: {}\n\n{} Seeds: {}.",
         battle.claim,
-        args.catalog_dir
-            .as_ref()
-            .map_or_else(|| "shipped".to_owned(), |d| d.display().to_string()),
-        args.fixture.as_ref().map_or_else(
-            || "shipped matchup matrix".to_owned(),
-            |f| f.display().to_string()
-        ),
+        source_line(args),
         results.len()
     );
     write(&directory.join("seeds.csv"), &seeds_csv(&results))?;
@@ -265,14 +367,33 @@ fn path_with_suffix(stem: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-fn read(path: &Path) -> Result<String, RunError> {
+/// Creates `directory` and its parents.
+///
+/// # Errors
+/// [`RunError::Io`] if it cannot be created.
+pub fn create_dir(directory: &Path) -> Result<(), RunError> {
+    std::fs::create_dir_all(directory).map_err(|source| RunError::Io {
+        path: directory.to_owned(),
+        source,
+    })
+}
+
+/// The text of the file at `path`.
+///
+/// # Errors
+/// [`RunError::Io`] if it cannot be read.
+pub fn read(path: &Path) -> Result<String, RunError> {
     std::fs::read_to_string(path).map_err(|source| RunError::Io {
         path: path.to_owned(),
         source,
     })
 }
 
-fn write(path: &Path, text: &str) -> Result<(), RunError> {
+/// Writes `text` to the file at `path`.
+///
+/// # Errors
+/// [`RunError::Io`] if it cannot be written.
+pub fn write(path: &Path, text: &str) -> Result<(), RunError> {
     std::fs::write(path, text).map_err(|source| RunError::Io {
         path: path.to_owned(),
         source,
@@ -293,13 +414,20 @@ mod tests {
             "--battle b --out o --seed 5 --seed 6 --seeds 3 --catalog-dir c --fixture f \
              --no-unit-csv",
         )?;
-        assert_eq!(parsed.battle, "b");
+        assert_eq!(parsed.battle.as_deref(), Some("b"));
+        assert!(!parsed.all_battles);
+        assert_eq!(parsed.jobs, DEFAULT_JOBS);
         assert_eq!(parsed.out, PathBuf::from("o"));
         assert_eq!(parsed.seeds, vec![5, 6]);
         assert_eq!(parsed.extra_seeds, Some(3));
         assert_eq!(parsed.catalog_dir, Some(PathBuf::from("c")));
         assert_eq!(parsed.fixture, Some(PathBuf::from("f")));
         assert!(!parsed.unit_csv);
+        let matrix = args("--all-battles --out o --compare m.csv --jobs 8")?;
+        assert_eq!(matrix.battle, None);
+        assert!(matrix.all_battles);
+        assert_eq!(matrix.compare, Some(PathBuf::from("m.csv")));
+        assert_eq!(matrix.jobs, 8);
         Ok(())
     }
 
@@ -311,6 +439,10 @@ mod tests {
             "--out o",
             "--battle b --out o --seed x",
             "--battle b --out o --frobnicate",
+            "--battle b --all-battles --out o",
+            "--battle b --out o --jobs 2",
+            "--all-battles --out o --jobs 0",
+            "--all-battles --out o --jobs x",
         ] {
             assert!(matches!(args(bad), Err(RunError::Usage(_))), "{bad}");
         }

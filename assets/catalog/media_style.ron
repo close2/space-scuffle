@@ -11,14 +11,21 @@
 // reads any credential, for every clip a run would pay for.
 (
     // Ends every prompt. It describes the look in plain words and names no game, studio, show
-    // or franchise (see `deny_list`).
-    style: "Stylized hand-painted 3D character, painterly sci-fi cinematic portrait aesthetic with crisp rim lighting, dark slate-indigo radial studio backdrop (#0B101B), dramatic 3/4 isometric front hero framing, glowing cyan/amber energy cores, bold proportions.",
+    // or franchise (see `deny_list`). It avoids "cinematic", "hero framing" and "portrait",
+    // which invited camera moves, and asks for a plain backdrop: "radial studio backdrop" gave
+    // radiating stripes, which the owner rejected (2026-11-04).
+    style: "Stylized hand-painted 3D character, painterly sci-fi aesthetic with crisp rim lighting, plain flat uniform dark slate-indigo studio backdrop (#0B101B) with no pattern, no rays, no stripes and no gradient, 3/4 isometric front view, glowing cyan/amber energy cores, bold proportions.",
 
     // One description per animation state, placed between the identity's prompt and the style.
     actions: (
-        constructing: "Constructing animation: progressive holographic wireframe build-up from ground to top with active seam welding sparks.",
-        idle: "Idle animation: steady rhythmic breathing movement, subtle weapon glow pulse, head and radar scanning smoothly in place.",
-        walk: "Walk animation: dynamic forward stride, rhythmic mechanical bobbing, ground dust kick-up at feet, leaning into movement.",
+        // Constructing is generated from the finished Idle frame (keyframe chaining), so it
+        // shows work in progress on that shape rather than a build-up from nothing, and it ends
+        // close to its first frame, where the Idle clip takes over.
+        constructing: "Constructing animation, one static tripod shot: the camera never moves, zooms or pans. Construction work in progress over the whole structure, holographic wireframe scaffolding shimmering around it with active seam welding sparks. The structure keeps its shape, size and place in frame, and the last frame matches the first.",
+        // Idle and Walk loop in the game, so they ask for a fixed camera and an end pose equal to
+        // the start pose (owner, Q0026: jumps when a loop restarts are distracting).
+        idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size and place in frame from start to end. Steady rhythmic breathing movement, subtle weapon glow pulse, head and radar scanning smoothly in place. Seamless loop: the last frame matches the first.",
+        walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the subject moves in place, keeping the same size and place in frame. Dynamic forward stride, rhythmic mechanical bobbing, ground dust kick-up at feet, leaning into movement. Seamless loop: the last frame matches the first.",
         attack: "Attack animation: sharp weapon recoil, intense bright muzzle flash and projectile emission filling the right side of frame, followed by fluid spring recovery.",
         cast: "Cast animation: focused work in place, tool arms reaching toward a target just outside the frame, a steady bright welding arc or extraction beam with showering sparks, body holding still.",
         die: "Death animation: dramatic armor fracture, glowing internal reactor blowout with flying mechanical debris dissolving into smoke.",
@@ -53,4 +60,20 @@
     // Text that marks an unfinished prompt. A marker made of letters matches as a whole word
     // ignoring case; any other marker matches anywhere.
     placeholder_markers: ["TODO", "TBD", "FIXME", "XXX", "lorem", "ipsum", "placeholder", "{", "}"],
+
+    // How `asset_baker` fits a clip (Veo returns 16:9) into the square game frame, chosen by
+    // the identity's render shape (docs/plans/2026-11-04-veo-letterbox-bake.md, D-1 to D-3).
+    // - CenterCrop: cut the centred square; a wide subject loses its sides.
+    // - Letterbox(feather_permille: N): keep the whole frame, scaled to fit, with opaque bars in
+    //   the colour measured from the clip's own border; the content's outermost N/1000 of the
+    //   frame side blends into the bars (0 leaves a hard edge).
+    framing: (
+        // Units are taller than wide and centred, so the crop keeps them whole and large.
+        unit_sphere: CenterCrop,
+        // Structures are wide and Veo fills the 16:9 width with them; a crop cuts their base.
+        building_dome: Letterbox(feather_permille: 30),
+        // Exact catalog slug -> framing, for one identity whose clip needs the other treatment
+        // (for example a wide flying unit). A slug that is not in the catalog is refused.
+        overrides: {},
+    ),
 )

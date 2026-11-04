@@ -45,9 +45,30 @@ projected at about $7.20.
 
 ## Answer
 
-Orchestrating agent (2026-11-04), under the owner's standing rule in Q0020 ("The agent is always allowed to decide
-visual questions. If I don't like them, I will see them, and complain later."): **option (a)**: the baker fits the
-whole 16:9 frame into the square with backdrop-coloured bars, so nothing is cut and the pilot clip can be accepted
-without another generation. Also **try `generateAudio: false`** on the next paid clip: the sound track is unused and
-the published silent rate is about 20 % lower; if the API refuses the field, record it and drop it. The owner can
-overrule either choice.
+Owner (2026-11-04): Up to the agent's judgement on framing. I have verified that I have 260€ credit expiring 2027-01-24. The agent is free to use up to 200€ and should not hesitate to request another video if a video doesn't fulfill requirements. I do think that having sound is not a bad idea as we might want to play it when clicking on a unit (adding it later would be more difficult) — so keep audio generation enabled (do NOT set `generateAudio: false`, overruling the provisional note below). I did notice that jumps in videos (when a video starts from the beginning) are distracting: the AI should try to generate videos where start and end position are at least similar.
+
+*(Earlier provisional note by orchestrating agent: chose option (a) for framing — fit the whole 16:9 frame into the square with backdrop-coloured bars; the `generateAudio: false` part of that provisional note is overruled by the owner's answer above.)*
+
+## Resolution
+
+2026-11-04, by WP1 and WP2 of
+[`docs/plans/2026-11-04-veo-letterbox-bake.md`](../../plans/2026-11-04-veo-letterbox-bake.md). No Veo request was
+made.
+
+- **Framing (agent's judgement, option (a)).** WP1 (`c7c4fc2`, `6cc02fb`, merged in `3474357`): structures are
+  letterboxed, the whole 16:9 frame fitted into the square, with bars in a colour measured from the clip's own
+  border (not the prompt's `#0B101B`) and a 30 per mille feather; units keep the centre crop. The policy is data in
+  `assets/catalog/media_style.ron`. WP2 (`a9301f9`): the pilot clip, re-reviewed on the framed sheet
+  [`docs/evidence/veo/review/plasma_siphon_dome_idle_framed.png`](../../evidence/veo/review/plasma_siphon_dome_idle_framed.png),
+  passes the plan's written criteria and is installed as `assets/videos/plasma_siphon_dome_idle.mp4`. A scratch
+  bake shown in the real client on the RX 580 has the whole dome inside the bubble and no visible stripe at the
+  bars ([in-game crop](../../evidence/veo/review/plasma_siphon_dome_idle_in_game.png)). Evidence:
+  [`docs/evidence/veo/2026-11-04-pilot.md`](../../evidence/veo/2026-11-04-pilot.md), "Acceptance after the
+  letterbox change".
+- **Sound kept, as the owner asked.** In the WP2 commit that closes this question, `assets/media/veo_request.ron`
+  sets `generate_audio: None`: no `generateAudio` field is sent, as in the pilot, whose clip has a sound track.
+  `generateAudio: false` is not sent. The shipped-settings test asserts this.
+- **Budget.** The 200 EUR allowance is recorded in Q0024 and Q0026 and in the Veo plan's WP4 amendment.
+- **Loop continuity.** Carried into the Veo plan's WP4 (amended) and the review (Q0026): the pilot Idle clip has a
+  slow camera push-in, so its loop restarts with a zoom jump of about 5 to 8 %. WP4 first decides whether to
+  regenerate it with a locked-off camera, and checks every clip's first and last frames.
