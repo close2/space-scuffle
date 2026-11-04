@@ -31,3 +31,7 @@ Either way, the agent pauses before the expansion batches, as you asked in Q0024
 
 ## Answer
 
+Owner (2026-11-04, in chat, copied by the orchestrating agent): "we have a lot of credits. rescuing clips is good,
+but don't hesitate to use the credits (they will expire in 2 months anyway) if you think you should get a better
+result." Read as: raise the weekly cap (option: 60 per rolling 7 days, 12 per run unchanged) and prefer quality over
+saving generations, within the 200 EUR budget of Q0024.
