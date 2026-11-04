@@ -42,9 +42,4 @@ Spending so far: 5 generations, $2.00 at list price (1 pilot and 4 WP4 regenerat
 
 ## Answer
 
-Orchestrating agent (2026-11-04), under the owner's standing rule in Q0020 (the agent decides visual questions; the
-owner may overrule): **option (a) first** — send the same picture as start and end frame with Veo 3.1's `lastFrame`
-(start picture: frame 0 of `0dbd7948`, which has the plain backdrop), after a plan amendment and a fake-server test;
-verify on the first live clip that inline end-frame bytes are accepted. **Fallback (b)**, if `lastFrame` is refused or
-still leaves a visible jump: the baker plays looping states forward then backward (ping-pong), which is seamless by
-construction and costs no generation. Non-looping states (Constructing, Cast, Death) are unaffected.
+Owner (2026-11-04): Ratify Option (a) as primary (pin `lastFrame` to the start frame in Veo 3.1 Fast, seeded from frame 0 of `0dbd7948`). For any residual drift at the loop boundary or as fallback if `lastFrame` is unsupported, prefer combining scale normalization (Option c) and/or a short cross-fade of the last few frames back into frame 0 in `asset_baker` over ping-pong playback (Option b) for clips with directional motion such as rising steam/vapour (so steam does not run backwards half the time).
