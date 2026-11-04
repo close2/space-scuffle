@@ -384,16 +384,22 @@ impl BattleTrace {
         side: &mut TeamTick,
         releases: &mut Vec<(EntityId, EntityId)>,
     ) -> Result<(), TraceError> {
-        let (cancelled, started) = match infer(before, after) {
-            SwingEvent::Idle | SwingEvent::WindingUp => (None, false),
-            SwingEvent::Started { .. } => (None, true),
-            SwingEvent::Released { target } => {
-                side.shots_released += 1;
-                if let Some(target) = target {
-                    releases.push((after.id, target));
-                }
-                (None, false)
+        let event = infer(before, after);
+        let released = match event {
+            SwingEvent::Released { target } | SwingEvent::StartedAndReleased { target } => {
+                Some(target)
             }
+            _ => None,
+        };
+        if let Some(target) = released {
+            side.shots_released += 1;
+            if let Some(target) = target {
+                releases.push((after.id, target));
+            }
+        }
+        let (cancelled, started) = match event {
+            SwingEvent::Idle | SwingEvent::WindingUp | SwingEvent::Released { .. } => (None, false),
+            SwingEvent::Started { .. } | SwingEvent::StartedAndReleased { .. } => (None, true),
             SwingEvent::Cancelled { target } => (Some(target), false),
             SwingEvent::CancelledAndRestarted { cancelled, .. } => (Some(cancelled), true),
         };

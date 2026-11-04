@@ -130,6 +130,39 @@ fn a_melee_unit_makes_contact_and_swings_on_the_ticks_the_catalog_predicts() -> 
     Ok(())
 }
 
+/// The first shipped unit whose weapon has a damage point of 0, read from the catalog.
+fn damage_point_zero_unit() -> Result<String, Box<dyn Error>> {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let slug = catalogs
+        .units
+        .archetypes()
+        .find(|arch| {
+            arch.weapon
+                .as_ref()
+                .is_some_and(|weapon| weapon.damage_point_ticks == 0)
+        })
+        .map(|arch| arch.slug.clone());
+    slug.ok_or_else(|| "no shipped unit has a damage point of 0".into())
+}
+
+/// A swing with damage point 0 starts and releases in one tick (plan
+/// `2026-11-04-combat-sc2-alignment` D-3) and never shows a wind-up; the trace still counts its
+/// start, so every release of such a unit is also a swing started.
+#[test]
+fn a_swing_that_starts_and_releases_in_one_tick_counts_as_started() -> TestResult {
+    let unit = damage_point_zero_unit()?;
+    let battle = scripted(&squad(RANGED, 15.0, 32.0), &squad(&unit, 11.0, 32.0))?;
+    let trace = trace_battle(&battle, sim_fixtures::shipped_catalogs(), 1, 0.0)?;
+    let red = &trace.summary().totals[1];
+    assert!(red.shots_released > 0, "{unit} must fire");
+    assert_eq!(red.cancelled(), 0, "{unit} has no wind-up to cancel");
+    assert_eq!(
+        red.swings_started, red.shots_released,
+        "every swing of {unit} starts and releases in one tick"
+    );
+    Ok(())
+}
+
 /// A traced battle, its target (blue's first unit), red's units, and red's weapon phases per tick.
 type Watched = (
     BattleTrace,
