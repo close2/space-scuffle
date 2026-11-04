@@ -3,9 +3,16 @@
 This is the evidence file of [the battle 33 investigation plan](../plans/2026-11-04-zealot-marine-investigation.md),
 which answers the owner's request in [Q0007](../questions/open/0007-combat-baselines.md): find out why published
 StarCraft II sources say zealots win this fight, and why our battle 33 leaves 6 to 13 of 24 marines alive. The plan's
-D-5 gives this file seven sections. **Sections 1 (WP1, reference research), 2 and 3 (WP2, comparison and analytic
-model, with WP3's measured contact in §3.5), 4 (WP3, trace findings) and 5 (WP4, experiments) are written so far.**
-WP5 adds sections 6 and 7. This file changes no catalog value, combat rule or expected result.
+D-5 gives this file seven sections: 1 (WP1, reference research), 2 and 3 (WP2, comparison and analytic model, with
+WP3's measured contact in §3.5), 4 (WP3, trace findings), 5 (WP4, experiments), and 6 and 7 (WP5, ranked causes and
+proposed changes). This file changes no catalog value, combat rule or expected result.
+
+**The answer in short** (§6.1). The published "zealots win" claims assume small numbers, Charge or a surround; the
+one no-Charge test near battle 33's size is a marine win with 40 % alive. Our 6 to 13 survivors come from how many
+zealots strike at once: about 4.25, held there by the solid-body contact rules of commit `d4109e2` and the zealots'
+3-deep block, against the 5 the zealots need. The catalog's differences from StarCraft II are real and together
+favour the marines by about 2.7 survivors, but they do not decide the winner. Each proposed change is an owner
+question, Q0035 to Q0041 (§7), and each defaults to no change.
 
 ## 1. Reference: what StarCraft II does (WP1)
 
@@ -644,7 +651,7 @@ cargo run --release -p sim_core --example matchup_trace -- \
 **The recorded outcome does not hold on every seed.** The matrix expects `blue: (4, 16), red: (0, 0)` on its four
 seeds, and those four pass. On the 64 further seeds it fails 7 times: 6 zealot wins and 1 timeout (seed 19, 3 marines
 against 1 zealot). With the same ±0.12 jitter, battle 33 is about a 90 % marine win, not a certain one. This plan does not change
-the expectation (Q0007 keeps the baselines); WP5 reports it to the owner.
+the expectation (Q0007 keeps the baselines); WP5 reports it to the owner in Q0041 (§7).
 
 ### 4.3 Battle 33: what happens, and what does not
 
@@ -1026,7 +1033,7 @@ marine's reference backswing needs that rule looked at first.
   ranges. It moves the battle from a 90 % to about a 70 % marine win, but on its own it does not make the zealots
   the favourites.
 
-WP5 ranks these causes and writes the questions.
+§6 ranks these causes, and §7 lists the owner questions.
 
 ### 5.9 Deviations from the plan
 
@@ -1049,3 +1056,98 @@ WP5 ranks these causes and writes the questions.
   - the O1 setup on both catalogs.
 - **Matrix control on 20 seeds**, the four of record plus 16, not 68, for all 50 battles. Lead-unit hull was checked
   by hand only where health moved.
+
+## 6. Ranked causes (WP5)
+
+Written 2026-11-04 against `main` at `db22ac2`. Every number is from §3 to §5; nothing new was run.
+
+### 6.1 The answer to Q0007
+
+**Why published sources say zealots win.** The claims behind it (§1.10) hold under at least one of four conditions:
+small numbers, Charge, marines without a buffer, or a zealot surround. Plan 21a's expectation ("a close, brutal
+fight", zealots win) cites no source or test. No published test of battle 33's setup was found. The closest one
+without Charge, 50 marines against 25 zealots with no upgrades and no micro (O1, §1.9), is a marine win with 40 %
+alive. The sources also agree that marines gain as numbers grow. So "zealots win" is right for 1 against 2 or 3
+against 6, which our battles 25a and the benchmarks reproduce on every seed (§4.4), and it is not established for 12
+against 24 without Charge.
+
+**Why 6 to 13 of 24 marines survive.** The outcome is set by K, the number of zealots striking at once (§3.4, §3.5).
+The zealots need K of 5 or more for the whole fight; they get about 4.25 in the first 5 s of contact, and at most 6 to
+7 on any tick. The capped model at K = 4 predicts 7.0 marine survivors; the 68 seeds give 7.41 (SD 3.34, range 0 to
+14). The four seeds of record (8, 6, 9 and 13) are a sample of that spread. K is low for two reasons: the rules of
+`d4109e2` keep hostile bodies from overlapping, and the zealots start in a 3-deep block, so the rear ones walk round
+the marine block while the front ones die (§4.3, finding 4).
+
+**Is our result too favourable to the marines?** Somewhat, probably. With every reference value the marines still
+win about 70 % of seeds, with 4.71 alive (20 %) on average (§5.3). At O1's size our marines keep 59 % (55 % with the
+reference data) against O1's 40 % (§5.4). O1 is a single anecdotal test from 2011, so this is a hint, not a measured
+error. The "big difference" the owner saw is mostly the expectation's source: plan 21a's claim, not the published
+tests.
+
+### 6.2 Causes, ranked by effect
+
+Effect is the paired difference Δ in marine survivors over 68 seeds, mean (SE), from the shipped state to the
+alternative named; a negative Δ means our current state favours the marines by that much. K is the mean number of
+zealots in contact over the first 5 s (baseline 4.25).
+
+| Rank | Cause | Ours → alternative | Δ marine survivors (SE) | K | Winner changes? | Source |
+|---|---|---|---|---|---|---|
+| 1 | **Contact rules of `d4109e2`** (hostile bodies never overlap; flanking; arrival rules) | `d4109e2` → its parent `b10e9ca` | **−7.37** (0.41) | 5.40 | yes: zealots win 67 of 68 | §5.2 |
+| 2 | **Battle setup: zealots in a 3 × 4 block** (a property of the test, not a deviation from StarCraft II) | block → one line of 12 | **−6.78** (0.44) | 5.37 | yes: zealots win 51 of 68 | §5.4 |
+| 3 | Scan range 9 for both units | 9 / 9 → 5.5 / 5 (reference) | −3.12 (0.59) | 4.45 | no: marines 37, zealots 11, 20 unresolved; 44 / 24 at 1500 ticks | §5.3, §5.6 |
+| 4 | Zealot damage point 4 (a cancellable wind-up) | 4 → 0, same cadence (period 21) | −2.82 (0.33) | 4.28 | no: 42 / 10 / 16; 49 / 19 at 1500 ticks | §5.3 |
+| 5 | Zealot period 22 | 22 → 21 (reference 21.43) | −1.79 (0.25) | 4.24 | no: 49 / 9 / 10 | §5.3 |
+| 6 | Marine speed 0.09 per tick (an unconverted Normal-time value) | 0.09 → 0.126 | −0.69 (0.44) | 4.27 | no | §5.3 |
+| 7 | Zealot range 0.3 (favours the **zealots**) | 0.3 → 0.1 | +0.82 (0.42) | 4.16 | no | §5.3 |
+| — | All reference data together (rows 3 to 7 and the inert ones) | shipped → all reference | −2.71 (0.61) | 4.28 | no: 45 / 17 / 6; 49 / 19 at 1500 ticks | §5.3, §5.6 |
+
+**Ruled out as material** (measured): cancelled zealot swings (1.44 per battle) and zealot overkill (0.28); marines
+pushed out of a swing (0); zealot target switching (4.0 per battle); zealots standing blocked (0.3 zealot-seconds);
+marine overkill (3.4 % of shots) (§4.3). **Exactly inert** in battle 33 (identical on all 68 seeds): separation radius,
+zealot attributes, shield regeneration rate, push priority. **Within noise:** marine damage point and backswing
+(+0.09, SE 0.39), zealot backswing (−0.12, SE 0.12) (§5.3).
+
+**Not measured**, because no catalog field expresses them: the 5-tick gap between the zealot's two strikes (WP2
+expects it to favour the marines slightly), the shield-regeneration delay (250 ticks in `sim_core`, reference
+178.6; WP2 expects no effect here), and the engine's random firing delay (§2.3, §5.3).
+
+**Reading.** Ranks 1 and 2 act on K and decide the winner. Ranks 3 to 7 change what each contact is worth; together
+they move the mean by about 2.7 survivors and do not change the favourite. The two levers that decide battle 33 are
+therefore a rule set and a test setup, not catalog data.
+
+## 7. Proposed changes and owner questions (WP5)
+
+Q0007 keeps the baselines, so every question below defaults to **no change**. A proposal the owner accepts gets its
+own blueprint; this plan writes none. Closely related values share a question.
+
+The **matrix-wide effect** of the data proposals comes from WP4's control (§5.7), which played all 50 battles on the
+all-reference catalog (rows 3 to 7 together, plus marine damage point and backswing and the inert values), on 20
+seeds. Only battles 23a, 32, 33 (counts) and 25b (lead-unit hull) moved; only 33 and 25b fail. A single change was not
+played over the whole matrix on its own (deviation, §7.2); the questions say which of the four battles each change
+can reach.
+
+### 7.1 The questions
+
+| Question | Proposal | Effect on battle 33 | Elsewhere in the matrix |
+|---|---|---|---|
+| [Q0035](../questions/open/0035-melee-contact-rules.md) | Research how StarCraft II packs melee attackers against solid enemies, then revisit the contact rules of `d4109e2` | Rank 1: the old rules gave −7.37 and a zealot win | Every melee battle; not measured |
+| [Q0036](../questions/open/0036-zealot-weapon-timing.md) | Zealot weapon to the reference: damage point 0, cadence 21 or 22 ticks, range 0.1, backswing 9; optionally the two strikes 5 ticks apart (code) | Ranks 4, 5 and 7: −2.82 to −4.96 together with the cadence; range +0.82 | 23a (2.10 → 2.00 zealots alive, passes); 25b hull 32 (passes) |
+| [Q0037](../questions/open/0037-scan-ranges.md) | Scan ranges by StarCraft II's rule (weapon range + 0.5, at least 5) | Rank 3: −3.12 | Catalog-wide rule, 42 units: not measured |
+| [Q0038](../questions/open/0038-marine-backswing-gate.md) | Marine damage point 1 and backswing 13, after changing the rule that lets a backswing delay the next attack | +0.09 (none) | 25b fails (zealot hull 62, expected 5 to 45) unless the rule changes first |
+| [Q0039](../questions/open/0039-normal-time-values.md) | Convert the values left in Normal time: marine speed, shield regeneration rate and delay, Stimpack duration; audit the rest of the catalog | Rank 6: −0.69; the rest 0 or not run | Marine speed and regeneration rate were in the control; the delay and the audit are not measured |
+| [Q0040](../questions/open/0040-zealot-attributes.md) | Zealot attributes Light, Biological instead of Light, Psionic | 0 (inert) | None: no rule reads either flag |
+| [Q0041](../questions/open/0041-battle-33-expectation-under-jitter.md) | Say in the fixture that battle 33 is about a 90 % marine win under jitter | none (documentation) | none |
+
+**Found but not proposed.** The separation radius (0.45 and 0.6 against 0.375) is read by no `sim_core` system
+(§2.3), so changing it does nothing. Push priority (20 and 25 against 10) orders friendly contact only and is the
+roster's documented choice (doc 07). Doc 07 disagrees with the catalog on three values (§2.6); the questions above
+cover all three.
+
+### 7.2 Deviations from the plan
+
+- **Matrix effect per proposal.** D-5 item 7 asks for the matrix effect of each proposal on its own scratch catalog.
+  WP4 played the whole matrix once, on the all-reference catalog (§5.7), and traced 25b's failure to the marine
+  backswing alone. The questions quote that control and name the battles a change can reach; no new runs were made.
+- **Grouping.** Plan §6 says one question per proposed change. Values that only make sense together (the zealot's
+  weapon timing; the Normal-time conversions) share one question, each with its own options. Seven questions cover
+  every proposed value and the expectation.
