@@ -13,6 +13,13 @@
 //! `media_style.ron`; the single-clip bakes and [`bake_multi_action_videos_with_states`] keep
 //! the centre crop.
 //!
+//! # Seam repair
+//! A looping state can be given a seam repair ([`decode_repaired_clip`], plan
+//! `docs/plans/2026-11-04-veo-seamless-loops.md`, D-5): its frames are sampled over one loop
+//! period, a steady camera zoom is locked out, and its last frames are blended into its first.
+//! [`bake_repaired_action_videos`] takes the repair of each state; every other entry point bakes
+//! without one, and a state without one bakes exactly as before the repair existed.
+//!
 //! # Invariants
 //! - **Whole clips:** a clip with more frames than the GPU texture budget allows is sampled
 //!   evenly from its first to its last frame, and is never cut short. Sampled frames keep the
@@ -25,15 +32,21 @@
 
 use crate::error::BakerError;
 use crate::framing::{frame_to_square, BakeFraming, FramedFrames};
+use crate::loop_metrics::{
+    apply_scale_lock, crossfade_into_first, downsample_half, plan_scale_lock, SeamRepair,
+};
 use crate::manifest::{ActionSlice, FlipbookAtlasMeta, FlipbookLayout};
+use crate::prompts::{atlas_loops, MAX_ATLAS_STRIP_HEIGHT};
+use crate::provenance::{FrameSampling, SeamRecord};
 use image::RgbaImage;
 use sim_types::enums::AnimState;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Maximum texture dimension in pixels that WebGPU guarantees.
-const MAX_STRIP_HEIGHT: u32 = 16384;
+/// Maximum texture dimension in pixels that WebGPU guarantees: the one limit the loop policy's
+/// frame budget and the provenance record also use.
+const MAX_STRIP_HEIGHT: u32 = MAX_ATLAS_STRIP_HEIGHT;
 
 /// Default location of the `ffprobe` executable.
 pub const DEFAULT_FFPROBE_PATH: &str = "/usr/bin/ffprobe";
@@ -173,6 +186,31 @@ pub fn evenly_spaced_indices(available: usize, wanted: usize) -> Vec<usize> {
     (0..wanted)
         .map(|step| step * (available - 1) / (wanted - 1))
         .collect()
+}
+
+/// Chooses at most `wanted` frame indices spread evenly over one loop of a clip of `available`
+/// frames (plan `docs/plans/2026-11-04-veo-seamless-loops.md`, D-5).
+///
+/// A looping state plays its last kept frame and then its first again, so the clip's final
+/// frame stands for the restart (for a clip pinned to end on its start picture it shows the
+/// same picture as frame 0). It is therefore left out, and index `i` is
+/// `i · (available - 1) / wanted` for `i` in `0..wanted`: every step, the wrap from the last
+/// kept index back to `available - 1` included, is `(available - 1) / wanted` rounded down or
+/// up. When `wanted` is at least `available - 1`, every frame but the final one is returned; a
+/// one-frame clip returns that frame.
+#[must_use]
+pub fn evenly_spaced_loop_indices(available: usize, wanted: usize) -> Vec<usize> {
+    if available == 0 || wanted == 0 {
+        return Vec::new();
+    }
+    let period = available - 1;
+    if period == 0 {
+        return vec![0];
+    }
+    if wanted >= period {
+        return (0..period).collect();
+    }
+    (0..wanted).map(|step| step * period / wanted).collect()
 }
 
 /// Reduces a clip's frames to `budget`, keeping its whole duration. See the module docs.
@@ -495,7 +533,7 @@ pub struct FrameSpec {
     pub framing: BakeFraming,
 }
 
-/// The result of [`bake_framed_action_videos`].
+/// The result of [`bake_framed_action_videos`] and [`bake_repaired_action_videos`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct FramedBake {
     /// The manifest written beside the atlas.
@@ -503,6 +541,8 @@ pub struct FramedBake {
     /// The bar colour chosen for each state's clip (sRGB bytes), `None` where no bar was drawn
     /// (a centre crop, or a clip that already fills the square).
     pub bar_rgb: BTreeMap<AnimState, Option<[u8; 3]>>,
+    /// What the seam repair did to each state's frames, `None` for a state baked without one.
+    pub seam: BTreeMap<AnimState, Option<SeamRecord>>,
 }
 
 /// Bakes the clips of explicit animation states into one vertical strip PNG and
@@ -510,7 +550,7 @@ pub struct FramedBake {
 ///
 /// Every clip is represented from start to end, and the manifest lists exactly the supplied
 /// states. Under a letterbox each clip gets one bar colour, measured over the frames it keeps.
-/// See the module docs.
+/// No state gets a seam repair; see [`bake_repaired_action_videos`] and the module docs.
 ///
 /// # Arguments
 /// - `unit_name`: Atlas name, the identity's catalog slug.
@@ -527,93 +567,126 @@ pub fn bake_framed_action_videos<P: AsRef<Path>>(
     output_dir: &Path,
     spec: FrameSpec,
 ) -> Result<FramedBake, BakerError> {
-    let FrameSpec {
-        size: frame_size,
-        fps,
-        ..
-    } = spec;
-    let (output_png_path, output_meta_path) = atlas_output_paths(output_dir, unit_name)?;
+    bake_repaired_action_videos(unit_name, clips, output_dir, spec, &BTreeMap::new())
+}
 
+/// [`bake_framed_action_videos`] with a seam repair for each looping state `seams` names
+/// ([`decode_repaired_clip`]); the other states bake exactly as without it, and an entry for a
+/// state no clip shows is ignored.
+///
+/// # Errors
+/// As [`bake_framed_action_videos`]; [`BakerError::ValidationFailed`] for a seam on a state
+/// that does not loop (Attack, Constructing, Die), and [`BakerError::SeamRepairRefused`] for a
+/// clip the scale lock cannot repair. Nothing is written on error.
+pub fn bake_repaired_action_videos<P: AsRef<Path>>(
+    unit_name: &str,
+    clips: &[(AnimState, P)],
+    output_dir: &Path,
+    spec: FrameSpec,
+    seams: &BTreeMap<AnimState, SeamRepair>,
+) -> Result<FramedBake, BakerError> {
+    let (output_png_path, output_meta_path) = atlas_output_paths(output_dir, unit_name)?;
     let ffmpeg_path = PathBuf::from("/usr/bin/ffmpeg");
     if !ffmpeg_path.exists() {
         return Err(BakerError::FfmpegNotFound { path: ffmpeg_path });
     }
-
     if clips.is_empty() {
         return Err(BakerError::ValidationFailed {
             name: unit_name.to_string(),
             reason: "No action clips provided for multi-action baking".into(),
         });
     }
+    if let Some(state) = seams.keys().find(|state| !atlas_loops(**state)) {
+        return Err(BakerError::ValidationFailed {
+            name: unit_name.to_string(),
+            reason: format!("{state:?} does not loop, so it cannot have a seam repair"),
+        });
+    }
 
-    let max_total_frames = MAX_STRIP_HEIGHT / frame_size.max(1);
+    let max_total_frames = MAX_STRIP_HEIGHT / spec.size.max(1);
     let k = clips.len() as u32;
     let max_frames_per_clip = (max_total_frames / k).max(1) as usize;
 
     let mut actions = BTreeMap::new();
     let mut bar_rgb = BTreeMap::new();
+    let mut seam = BTreeMap::new();
     let mut all_frames: Vec<RgbaImage> = Vec::new();
-    let mut current_frame_offset: u32 = 0;
-
     for (state, video_path_ref) in clips {
         // PERFORMANCE RATIONALE:
         // Why: WebGPU limits 2D texture dimensions to 16384 pixels.
         // What: We keep max_frames_per_clip = (16384 / frame_size) / K frames, sampled across each clip.
         // Trade-off: Guarantees total strip height <= 16384 px across any number of action clips,
         // at the cost of temporal resolution in clips that exceed their share.
-        let framed = decode_framed_clip(
+        let repaired = decode_repaired_clip(
             &ffmpeg_path,
             video_path_ref.as_ref(),
             spec,
             max_frames_per_clip,
             &format!("{unit_name} {state:?}"),
+            seams.get(state).copied(),
         )?;
-        bar_rgb.insert(*state, framed.bar_rgb);
-        let frames = framed.frames;
-
-        let clip_frame_count = frames.len() as u32;
-        actions.insert(
-            *state,
-            pack_action(*state, current_frame_offset, clip_frame_count),
-        );
+        bar_rgb.insert(*state, repaired.framed.bar_rgb);
+        seam.insert(*state, repaired.seam);
+        let start = all_frames.len() as u32;
+        let frames = repaired.framed.frames;
+        actions.insert(*state, pack_action(*state, start, frames.len() as u32));
         all_frames.extend(frames);
-        current_frame_offset = current_frame_offset.saturating_add(clip_frame_count);
     }
 
-    let total_frames = all_frames.len() as u32;
-    let packed_strip = pack_strip(unit_name, &all_frames, frame_size)?;
+    let meta = FlipbookAtlasMeta {
+        name: unit_name.to_string(),
+        frame_width: spec.size,
+        frame_height: spec.size,
+        fps: spec.fps,
+        total_frames: all_frames.len() as u32,
+        layout: FlipbookLayout::VerticalStrip,
+        actions,
+    };
+    write_atlas(
+        &meta,
+        &all_frames,
+        output_dir,
+        &output_png_path,
+        &output_meta_path,
+    )?;
+    Ok(FramedBake {
+        meta,
+        bar_rgb,
+        seam,
+    })
+}
 
+/// Packs `frames` into the strip PNG and writes it and `meta` to their paths in `output_dir`.
+///
+/// # Errors
+/// Returns [`BakerError`] if the strip is too tall or a file cannot be written.
+fn write_atlas(
+    meta: &FlipbookAtlasMeta,
+    frames: &[RgbaImage],
+    output_dir: &Path,
+    png_path: &Path,
+    meta_path: &Path,
+) -> Result<(), BakerError> {
+    let packed_strip = pack_strip(&meta.name, frames, meta.frame_width)?;
     std::fs::create_dir_all(output_dir).map_err(|source| BakerError::Io {
         path: output_dir.to_path_buf(),
         source,
     })?;
-
     packed_strip
-        .save(&output_png_path)
+        .save(png_path)
         .map_err(|source| BakerError::ImageProcessing {
-            path: output_png_path.clone(),
+            path: png_path.to_path_buf(),
             source,
         })?;
-
-    let meta = FlipbookAtlasMeta {
-        name: unit_name.to_string(),
-        frame_width: frame_size,
-        frame_height: frame_size,
-        fps,
-        total_frames,
-        layout: FlipbookLayout::VerticalStrip,
-        actions,
-    };
-
-    meta.save_to_ron(&output_meta_path)?;
-    Ok(FramedBake { meta, bar_rgb })
+    meta.save_to_ron(meta_path)
 }
 
 /// Decodes one clip at `spec.size` and `spec.fps`, keeps at most `budget` frames spread over
 /// the whole clip, and completes them to squares as `spec.framing` says.
 ///
 /// This is the one path from a clip to shipped square frames: the bake and the reviewer's
-/// framed contact sheet both use it. `label` names the clip in the budget note.
+/// framed contact sheet both use it, the bake through [`decode_repaired_clip`]. `label` names
+/// the clip in the budget note.
 ///
 /// # Errors
 /// Returns [`BakerError::Io`] for a missing clip, FFmpeg errors, image errors, and
@@ -627,9 +700,104 @@ pub fn decode_framed_clip(
 ) -> Result<FramedFrames, BakerError> {
     let filter = spec.framing.ffmpeg_filter(spec.size, spec.fps);
     let (temp_dir, frame_paths) = probe_clip(ffmpeg_path, video_path, &filter)?;
-    let frames = sample_frames(frame_paths, budget, label, spec.fps)?;
+    let frames = load_frames(&fit_clip_to_budget(frame_paths, budget, label, spec.fps))?;
     drop(temp_dir);
     frame_to_square(frames, spec.size, spec.framing)
+}
+
+/// One clip's square frames and the seam repair done on them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RepairedClip {
+    /// The square frames and bar colour, as [`decode_framed_clip`] returns them.
+    pub framed: FramedFrames,
+    /// What the repair did, `None` when no seam was asked for.
+    pub seam: Option<SeamRecord>,
+}
+
+/// [`decode_framed_clip`], with the seam repair `seam` asks for (plan
+/// `docs/plans/2026-11-04-veo-seamless-loops.md`, D-5).
+///
+/// Without a seam this is exactly [`decode_framed_clip`]. With one, on the kept frames and
+/// before they are completed to squares:
+/// 1. **Loop sampling:** the frames are chosen by [`evenly_spaced_loop_indices`].
+/// 2. **Scale lock** (if `seam.scale_lock`): the clip is decoded at twice the size
+///    ([`BakeFraming::ffmpeg_filter_supersampled`]), [`plan_scale_lock`] fits the camera zoom,
+///    [`apply_scale_lock`] enlarges every frame to the most zoomed-in framing, and
+///    [`downsample_half`] brings the frames to the frame size.
+/// 3. **Cross-fade:** the last `seam.crossfade_frames` frames are blended toward frame 0
+///    ([`crossfade_into_first`]).
+///
+/// At most `budget` frames are kept, as without a repair; when the whole clip fits the budget,
+/// its final frame is left out.
+///
+/// # Errors
+/// As [`decode_framed_clip`]; [`BakerError::SeamRepairRefused`] when the scale lock refuses
+/// the clip, and [`BakerError::ValidationFailed`] for a cross-fade longer than allowed.
+pub fn decode_repaired_clip(
+    ffmpeg_path: &Path,
+    video_path: &Path,
+    spec: FrameSpec,
+    budget: usize,
+    label: &str,
+    seam: Option<SeamRepair>,
+) -> Result<RepairedClip, BakerError> {
+    let Some(seam) = seam else {
+        return Ok(RepairedClip {
+            framed: decode_framed_clip(ffmpeg_path, video_path, spec, budget, label)?,
+            seam: None,
+        });
+    };
+    let filter = if seam.scale_lock {
+        spec.framing.ffmpeg_filter_supersampled(spec.size, spec.fps)
+    } else {
+        spec.framing.ffmpeg_filter(spec.size, spec.fps)
+    };
+    let (temp_dir, frame_paths) = probe_clip(ffmpeg_path, video_path, &filter)?;
+    let kept = load_frames(&fit_loop_to_budget(&frame_paths, budget, label, spec.fps))?;
+    drop(temp_dir);
+    let (mut frames, scale_permille) = if seam.scale_lock {
+        let plan = plan_scale_lock(&kept, label)?;
+        let locked = apply_scale_lock(&kept, &plan);
+        let frames = locked.iter().map(downsample_half).collect();
+        (frames, plan.enlargement_permille())
+    } else {
+        (kept, 0)
+    };
+    crossfade_into_first(&mut frames, usize::from(seam.crossfade_frames)).map_err(|error| {
+        match error {
+            BakerError::ValidationFailed { reason, .. } => BakerError::ValidationFailed {
+                name: label.to_string(),
+                reason,
+            },
+            other => other,
+        }
+    })?;
+    Ok(RepairedClip {
+        framed: frame_to_square(frames, spec.size, spec.framing)?,
+        seam: Some(SeamRecord {
+            sampling: FrameSampling::Loop,
+            scale_permille,
+            crossfade_frames: seam.crossfade_frames,
+        }),
+    })
+}
+
+/// Reduces a looping clip's frames to at most `budget` with [`evenly_spaced_loop_indices`],
+/// noting on stderr when frames are dropped beyond the final one.
+fn fit_loop_to_budget(frames: &[PathBuf], budget: usize, label: &str, fps: u32) -> Vec<PathBuf> {
+    let period = frames.len().saturating_sub(1);
+    if period > budget {
+        eprintln!(
+            "    Note: '{label}' loops over {period} frames at {fps} fps but the texture budget allows {budget}. \
+             Sampling evenly over the whole loop, which then plays up to {}x faster. \
+             Use a smaller frame size to keep more frames.",
+            period.div_ceil(budget.max(1))
+        );
+    }
+    evenly_spaced_loop_indices(frames.len(), budget)
+        .into_iter()
+        .filter_map(|index| frames.get(index).cloned())
+        .collect()
 }
 
 /// Checks that one action clip exists and decodes it into PNG frames through `filter`.
@@ -667,19 +835,12 @@ fn probe_clip(
     Ok((temp_dir, frame_paths))
 }
 
-/// Fits a decoded clip to its per-action frame budget and loads the kept frames as RGBA.
-///
-/// `label` names the clip in the budget note printed by `fit_clip_to_budget`.
+/// Loads the decoded frames at `paths` as RGBA, in order.
 ///
 /// # Errors
 /// Returns [`BakerError::ImageProcessing`] if a decoded frame cannot be read.
-fn sample_frames(
-    frame_paths: Vec<PathBuf>,
-    budget: usize,
-    label: &str,
-    fps: u32,
-) -> Result<Vec<RgbaImage>, BakerError> {
-    fit_clip_to_budget(frame_paths, budget, label, fps)
+fn load_frames(paths: &[PathBuf]) -> Result<Vec<RgbaImage>, BakerError> {
+    paths
         .iter()
         .map(|path| {
             image::open(path)
@@ -695,19 +856,15 @@ fn sample_frames(
 /// Describes where one action's frames sit in the strip and how they play back.
 ///
 /// `start_frame` is the action's first frame index in the strip and `frame_count` its length,
-/// both in frames. Attacks play once, deaths and construction hold their last frame, and every
-/// other state loops.
+/// both in frames. Which states loop is [`atlas_loops`], the one classification the loop policy
+/// (`media_style.ron`) is also checked against; deaths and construction hold their last frame,
+/// and attacks play once.
 fn pack_action(state: AnimState, start_frame: u32, frame_count: u32) -> ActionSlice {
-    let (looping, hold_last_frame) = match state {
-        AnimState::Attack => (false, false),
-        AnimState::Die | AnimState::Constructing => (false, true),
-        AnimState::Idle | AnimState::Walk | AnimState::Cast => (true, false),
-    };
     ActionSlice {
         start_frame,
         frame_count,
-        looping,
-        hold_last_frame,
+        looping: atlas_loops(state),
+        hold_last_frame: matches!(state, AnimState::Die | AnimState::Constructing),
     }
 }
 
@@ -728,11 +885,11 @@ fn pack_strip(
     // Why: Standard WebGPU hardware drivers mandate max_texture_dimension_2d <= 16384 pixels.
     // What: We validate that the total height of the vertically stacked strip does not exceed 16384.
     // Trade-off: Guarantees 100% portable GPU texture allocation across all platforms.
-    if strip_height > 16384 {
+    if strip_height > MAX_STRIP_HEIGHT {
         return Err(BakerError::ValidationFailed {
             name: unit_name.to_string(),
             reason: format!(
-                "Total strip height ({strip_height} px for {total_frames} frames at {frame_size}x{frame_size}) exceeds WebGPU 2D texture limit of 16384 px"
+                "Total strip height ({strip_height} px for {total_frames} frames at {frame_size}x{frame_size}) exceeds WebGPU 2D texture limit of {MAX_STRIP_HEIGHT} px"
             ),
         });
     }
