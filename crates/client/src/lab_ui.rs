@@ -7,12 +7,21 @@
 //! 2. **Live Combat Sandbox:** Deterministic 2-army battlefield stepping `sim_core::SimWorld`
 //!    at 25 Hz with `StarCraft` II unit micro (Attack-Move, Kite, Hold, Stim).
 //! 3. **200-Bubble Swarm Stress Test:** High-density collision readability and frame rate stress test.
+//!
+//! The selected unit's portrait plays the frame its preview bubble shows: the same flipbook lanes,
+//! read from the bubble's material, at the same clock time ([`portrait_frame`], plan
+//! `2026-11-04-battle-flipbook-animation`, D-9).
 
-use crate::bubble_shader::FlipbookRegistry;
+use crate::bubble_shader::{BubbleDomeMaterial, FlipbookRegistry};
+use crate::flipbook_clock::{elapsed_clock, flipbook_layer, FlipbookLanes};
+use crate::scene_controller::LabPreviewBubble;
+use crate::selection::HeroLineupIndex;
 use crate::selection::SelectionState;
 use crate::vfx::CombatVisualEvent;
 use crate::CatalogResource;
+use asset_baker::manifest::FlipbookAtlasMeta;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_egui::{egui, EguiContexts};
 use sim_core::catalog::{UnitArchetype, UnitCatalog};
@@ -177,6 +186,8 @@ pub struct LabState {
     pub opt_focal_lens: bool,
     /// Tactical double ground ring, rotating brackets, and overhead bar flag.
     pub opt_selection_brackets: bool,
+    /// Cross-fade between neighbouring flipbook frames flag (`FLAG_FRAME_BLEND`).
+    pub opt_frame_blend: bool,
     /// Active selected hero index within the 4-hero lineup (0..4).
     pub selected_hero_index: usize,
     // --- Tab 2: Live Combat Sandbox State ---
@@ -237,6 +248,7 @@ impl Default for LabState {
             opt_facing_chevron: true,
             opt_focal_lens: true,
             opt_selection_brackets: true,
+            opt_frame_blend: true,
             selected_hero_index: 0,
             battle_reset_requested: false,
             battle_failure: None,
@@ -252,6 +264,72 @@ impl Default for LabState {
             smog_wake_influence: 3.4,
             smog_bubble_count: 0,
         }
+    }
+}
+
+/// What the inspector's unit portrait reads: the flipbooks, Bevy's time for the Lab clock, and the
+/// preview actors' materials, whose lanes the portrait plays.
+#[derive(SystemParam)]
+pub struct PortraitSources<'w, 's> {
+    /// Loaded flipbooks and portrait strips.
+    pub registry: Res<'w, FlipbookRegistry>,
+    /// Bevy's time; the Lab's flipbook clock is [`elapsed_clock`] of it.
+    pub time: Res<'w, Time>,
+    /// The preview actors' materials.
+    pub materials: Res<'w, Assets<BubbleDomeMaterial>>,
+    /// The preview actors, by lineup slot.
+    pub previews: Query<
+        'w,
+        's,
+        (
+            &'static HeroLineupIndex,
+            &'static MeshMaterial3d<BubbleDomeMaterial>,
+        ),
+        With<LabPreviewBubble>,
+    >,
+}
+
+impl PortraitSources<'_, '_> {
+    /// The flipbook lanes of the preview actor in lineup slot `slot`, as its material holds them,
+    /// or `None` before the lineup has spawned.
+    fn lanes_of(&self, slot: usize) -> Option<FlipbookLanes> {
+        self.previews
+            .iter()
+            .find(|(index, _)| index.0 == slot)
+            .and_then(|(_, material)| self.materials.get(&material.0))
+            .map(|material| material.uniform.flipbook_lanes())
+    }
+}
+
+/// The frame the inspector portrait draws: an atlas layer and its rows of the portrait strip.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PortraitFrame {
+    /// Atlas layer shown, the layer the bubble with the same lanes shows at the same clock time.
+    pub layer: u32,
+    /// Top and bottom of the layer in the vertical portrait strip, as `v` texture coordinates in
+    /// `[0, 1]`.
+    pub rows: [f32; 2],
+}
+
+/// The portrait frame of a bubble with `lanes` at clock time `now` (clock units), in the portrait
+/// strip of `meta`, which holds `meta.total_frames` layers top to bottom.
+///
+/// The layer is [`flipbook_layer`], so the portrait and the bubble always agree; a layer past the
+/// strip (a corrupt manifest) is clamped to its last row.
+#[must_use]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "atlas layer counts are far below 2^24, exact in f32"
+)]
+pub fn portrait_frame(now: u32, lanes: &FlipbookLanes, meta: &FlipbookAtlasMeta) -> PortraitFrame {
+    let total = meta.total_frames.max(1);
+    let layer = flipbook_layer(now, lanes).min(total - 1);
+    PortraitFrame {
+        layer,
+        rows: [
+            layer as f32 / total as f32,
+            (layer + 1) as f32 / total as f32,
+        ],
     }
 }
 
@@ -274,7 +352,7 @@ pub fn lab_ui_system(
     mut contexts: EguiContexts<'_, '_>,
     mut lab_state: ResMut<'_, LabState>,
     mut selection_state: ResMut<'_, SelectionState>,
-    registry: Res<'_, FlipbookRegistry>,
+    portrait: PortraitSources<'_, '_>,
     catalog: Res<'_, CatalogResource>,
     mut lineup: Local<'_, crate::scene_controller::ShowcaseLineup>,
     mut combat_events: EventWriter<'_, CombatVisualEvent>,
@@ -322,7 +400,7 @@ pub fn lab_ui_system(
             &mut contexts,
             &mut lab_state,
             &mut selection_state,
-            &registry,
+            &portrait,
             &catalog,
             &lineup,
         );
@@ -461,7 +539,7 @@ fn render_failure_banner(
     reason = "Bevy passes system parameters by value"
 )]
 pub fn sync_selected_actor_identity(
-    actors: Query<'_, '_, (Entity, &crate::BubbleInstance, &crate::HeroLineupIndex)>,
+    actors: Query<'_, '_, (Entity, &crate::BubbleInstance, &HeroLineupIndex)>,
     mut selection: ResMut<'_, SelectionState>,
     catalog: Res<'_, CatalogResource>,
     mut lab: ResMut<'_, LabState>,
@@ -627,6 +705,7 @@ fn render_visual_subsystems_section(ui: &mut egui::Ui, state: &mut LabState) {
         &mut state.opt_selection_brackets,
         "SDF Selection Reticle & Overhead Bar",
     );
+    ui.checkbox(&mut state.opt_frame_blend, "Flipbook Frame Blending");
 }
 
 /// Hit-flash surges and one button per [`LabVfxTrigger`], sent as owned by `effect_owner`.
@@ -901,7 +980,7 @@ fn render_selected_unit_hud(
     contexts: &mut EguiContexts<'_, '_>,
     lab_state: &mut LabState,
     selection_state: &mut SelectionState,
-    registry: &FlipbookRegistry,
+    portrait: &PortraitSources<'_, '_>,
     catalog: &UnitCatalog,
     lineup: &crate::scene_controller::ShowcaseLineup,
 ) {
@@ -920,7 +999,7 @@ fn render_selected_unit_hud(
         .resizable(false)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
-                render_unit_portrait(ui, contexts, lab_state, registry, arch);
+                render_unit_portrait(ui, contexts, lab_state, portrait, arch, active_hero_idx);
 
                 ui.add_space(14.0);
 
@@ -947,20 +1026,20 @@ fn render_selected_unit_hud(
 }
 
 /// Draws the 200×200 animated video portrait: the concept video when forced, otherwise the
-/// selected archetype's portrait flipbook, cycling at 1.5 loops per second.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    clippy::cast_sign_loss,
-    reason = "presentation values are bounded by frame, atlas and window sizes"
-)]
+/// selected archetype's portrait flipbook, showing the frame the preview actor in lineup slot
+/// `slot` shows ([`portrait_frame`]).
+///
+/// The inspector draws before the preview is synchronised, so on the frame the Lab's state
+/// changes the portrait still plays the previous state's lanes; from the next frame on it matches.
 fn render_unit_portrait(
     ui: &mut egui::Ui,
     contexts: &mut EguiContexts<'_, '_>,
     lab_state: &LabState,
-    registry: &FlipbookRegistry,
+    portrait: &PortraitSources<'_, '_>,
     arch: Option<&UnitArchetype>,
+    slot: usize,
 ) {
+    let registry = &portrait.registry;
     let (portrait_handle, meta) = if lab_state.use_concept_video {
         (
             registry.get_portrait_by_name("concept_video"),
@@ -979,13 +1058,14 @@ fn render_unit_portrait(
         egui::vec2(200.0, 200.0),
         egui::Layout::top_down(egui::Align::Center),
         |ui| {
-            if let Some(handle) = portrait_handle {
+            if let (Some(handle), Some(meta)) = (portrait_handle, meta) {
                 let tex_id = contexts.add_image(handle.clone());
-                let total_frames = meta.map_or(8, |m| m.total_frames).max(1);
-                let anim_progress = (ui.input(|i| i.time) * 1.5).fract() as f32;
-                let frame_idx = (anim_progress * total_frames as f32) as u32 % total_frames;
-                let v0 = frame_idx as f32 / total_frames as f32;
-                let v1 = (frame_idx + 1) as f32 / total_frames as f32;
+                // The lineup spawns on the frame after the first one; nothing to draw before it.
+                let Some(lanes) = portrait.lanes_of(slot) else {
+                    return;
+                };
+                let frame = portrait_frame(elapsed_clock(portrait.time.elapsed()), &lanes, meta);
+                let [v0, v1] = frame.rows;
 
                 ui.add(
                     egui::Image::new(egui::load::SizedTexture::new(

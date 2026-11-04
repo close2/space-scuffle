@@ -4,7 +4,9 @@
 //! Proves, through the production [`client::ClientAppPlugin`], that a frame on which nothing new
 //! happens creates, modifies and removes no asset, spawns and despawns no entity, and keeps every
 //! retained buffer of the sync systems at the same address and capacity. A moving frame may only
-//! modify the bubble material of a unit whose heading changed (C-5). A frame of steady combat
+//! modify the bubble material of a unit whose heading changed (C-5); a swarm frame modifies no
+//! material at all, even while bubbles bounce (plan `2026-11-04-battle-flipbook-animation`, D-9).
+//! A frame of steady combat
 //! modifies and removes no combat effect material, and adds one only while the pool of effect
 //! slots grows (C-17).
 //!
@@ -61,6 +63,7 @@ use client::battle_pipeline::session::BattleSession;
 use client::battle_presentation::BattlePresentation;
 use client::battle_selection::BattleSelection;
 use client::bubble_shader::{BubbleDomeMaterial, BubbleUniformGpu, FlipbookRegistry};
+use client::flipbook_clock::{battle_uniform, FlipbookClock, FlipbookPhase};
 use client::indicators::SelectionRingMaterial;
 use client::player_presentation::PlayerStyle;
 use client::runtime_battle::{MapPresentation, SKIRMISH_SCENARIO};
@@ -87,8 +90,18 @@ const READY_FRAMES: usize = 600;
 /// Frames run after readiness and before a window, so first-use work is excluded.
 const WARM_FRAMES: usize = 30;
 
-/// Length of a paused or swarm window, in frames.
+/// Length of a paused window, in frames.
 const PAUSED_FRAMES: usize = 64;
+
+/// Length of the swarm window, in 40 ms frames: 13.2 s, longer than the 12 s a swarm bubble takes
+/// to cross between its walls at 1.5 world units per second, so every bubble bounces in it.
+const SWARM_FRAMES: usize = 330;
+
+/// Bubbles in the swarm.
+const SWARM_BUBBLES: usize = 200;
+
+/// Shared swarm materials: two groups, each with one material per heading.
+const SWARM_MATERIALS: usize = 4;
 
 /// Ticks of warm-up before a moving window, and the window's length, in simulation ticks.
 const WARM_TICKS: u32 = 30;
@@ -559,40 +572,56 @@ fn queue_jobs_at_town_hall(harness: &mut Harness) -> EntityId {
 /// Bubbles of `before` whose record in `after` would draw differently, matched by entity.
 ///
 /// C-5 says a unit may only touch its material when it turns. The uniform also carries the
-/// flipbook frame, the action, the bars and the hit flashes, which change on a tick without a
+/// flipbook lanes, the action, the bars and the hit flashes, which change on a tick without a
 /// turn, so the rule this file holds the sync to is the general one: no modification unless the
-/// shader would read a different value. The packing is the production
-/// [`BubbleUniformGpu::from_instance`], and [`BubbleUniformGpu::renders_same_as`] ignores the lanes
-/// the shader never reads (position and animation progress). Ownership and selection do not
-/// change within a window, so one fixed style stands for every owner.
-fn redrawn(before: &RenderSnapshot, after: &RenderSnapshot, registry: &FlipbookRegistry) -> u64 {
+/// shader would read a different value. The packing is the production [`battle_uniform`], from
+/// the presented record and the bubble's [`FlipbookPhase`] on that frame, and
+/// [`BubbleUniformGpu::renders_same_as`] ignores the one lane the shader never reads (position).
+/// Ownership and selection do not change within a window, so one fixed style stands for every
+/// owner.
+fn redrawn(before: &Presented, after: &Presented, registry: &FlipbookRegistry) -> u64 {
     let style = PlayerStyle {
         srgb: [1.0; 3],
         linear: Vec4::ONE,
         ui: bevy_egui::egui::Color32::WHITE,
     };
-    let pack = |bubble: &BubbleRenderInstance| {
-        BubbleUniformGpu::from_instance(bubble, registry.get_meta(bubble.unit_type), style)
+    let pack = |presented: &Presented, bubble: &BubbleRenderInstance| {
+        let phase = presented
+            .phases
+            .get(&bubble.entity_id)
+            .copied()
+            .expect("every presented record has a live bubble");
+        battle_uniform(
+            registry.get_meta(bubble.unit_type),
+            bubble,
+            style,
+            presented.snapshot.tick,
+            phase,
+        )
+        .expect("the shipped media is playable")
     };
     let drawn: BTreeMap<EntityId, BubbleUniformGpu> = before
+        .snapshot
         .bubbles
         .iter()
-        .map(|bubble| (bubble.entity_id, pack(bubble)))
+        .map(|bubble| (bubble.entity_id, pack(before, bubble)))
         .collect();
     after
+        .snapshot
         .bubbles
         .iter()
         .filter(|bubble| {
             drawn
                 .get(&bubble.entity_id)
-                .is_some_and(|uniform| !uniform.renders_same_as(&pack(bubble)))
+                .is_some_and(|uniform| !uniform.renders_same_as(&pack(after, bubble)))
         })
         .count() as u64
 }
 
 /// Bubbles of `before` whose heading differs in `after`, matched by entity. Reported beside
 /// [`redrawn`] so a failure shows how much of the change is turning.
-fn turned(before: &RenderSnapshot, after: &RenderSnapshot) -> u64 {
+fn turned(before: &Presented, after: &Presented) -> u64 {
+    let (before, after) = (&before.snapshot, &after.snapshot);
     let headings: BTreeMap<EntityId, u32> = before
         .bubbles
         .iter()
@@ -626,14 +655,29 @@ fn step_counting(harness: &mut Harness, motion: &mut Motion) {
     motion.redrawn += redrawn(&before, &after, registry);
 }
 
-fn presented(harness: &Harness) -> RenderSnapshot {
-    harness
-        .app
-        .world()
-        .resource::<BattleSession>()
-        .frames
-        .presented()
-        .clone()
+/// One frame's presented snapshot and the flipbook phase each live bubble held after it.
+struct Presented {
+    snapshot: RenderSnapshot,
+    phases: BTreeMap<EntityId, FlipbookPhase>,
+}
+
+fn presented(harness: &Harness) -> Presented {
+    let world = harness.app.world();
+    let phases = world
+        .resource::<client::RenderEntityMap>()
+        .0
+        .iter()
+        .map(|(&id, &entity)| {
+            let phase = *world
+                .get::<FlipbookPhase>(entity)
+                .expect("a live bubble has a flipbook phase");
+            (id, phase)
+        })
+        .collect();
+    Presented {
+        snapshot: world.resource::<BattleSession>().frames.presented().clone(),
+        phases,
+    }
 }
 
 // --- Tests ---------------------------------------------------------------------------------------
@@ -670,6 +714,68 @@ fn paused_battle_frames_create_modify_and_remove_nothing() {
     harness.select(worker);
     settle(&mut harness, true);
     assert_paused_frames_change_nothing(&mut harness);
+}
+
+/// A resumed skirmish whose units all stand idle: the clock advances on every frame, and yet no
+/// bubble material is modified and no storage buffer is touched (plan D-2, D-3: time alone moves
+/// only the shared clock, written in place during extraction).
+#[test]
+fn running_idle_army_modifies_no_bubble_material() {
+    let mut harness = skirmish();
+    settle(&mut harness, true);
+    harness.resume();
+    harness.step(WARM_FRAMES);
+    let presented = presented(&harness);
+    let idle = |presented: &Presented| {
+        presented
+            .snapshot
+            .bubbles
+            .iter()
+            .all(|bubble| bubble.anim_state == sim_types::AnimState::Idle)
+    };
+    assert!(idle(&presented), "every unit of the skirmish starts idle");
+    let start = harness.world().current_tick;
+    let clock = harness.app.world().resource::<FlipbookClock>().now;
+    let entities = census(&harness);
+    reset(&mut harness);
+    for _ in 0..MOVING_TICKS {
+        harness.step(1);
+        assert!(idle(&self::presented(&harness)), "the army stays idle");
+    }
+    assert_eq!(
+        harness.world().current_tick,
+        start + MOVING_TICKS,
+        "one tick per frame"
+    );
+    assert_eq!(
+        harness.app.world().resource::<FlipbookClock>().now - clock,
+        MOVING_TICKS * client::flipbook_clock::CLOCK_UNITS_PER_TICK,
+        "the clock advanced with every presented tick"
+    );
+    let tally = tallies(&harness);
+    assert_eq!(
+        tally.count(
+            type_name::<Assets<BubbleDomeMaterial>>(),
+            EventKind::Modified
+        ),
+        0,
+        "bubble materials modified while the idle army animated"
+    );
+    let buffers = type_name::<Assets<ShaderStorageBuffer>>();
+    assert_eq!(
+        [
+            EventKind::Added,
+            EventKind::Modified,
+            EventKind::Removed,
+            EventKind::Unused,
+            EventKind::LoadedWithDependencies,
+        ]
+        .map(|kind| tally.count(buffers, kind)),
+        [0; 5],
+        "storage buffer events"
+    );
+    assert_eq!(tally.others(&[]), Vec::new(), "asset events");
+    assert_eq!(census(&harness), entities, "entities spawned or despawned");
 }
 
 #[test]
@@ -800,19 +906,55 @@ fn marching_frames_touch_only_turning_units() {
     );
 }
 
+/// Every swarm bubble's heading, by entity, and the materials the swarm draws with.
+fn swarm_state(
+    harness: &mut Harness,
+) -> (BTreeMap<Entity, u32>, BTreeSet<AssetId<BubbleDomeMaterial>>) {
+    let world = harness.app.world_mut();
+    let mut headings = BTreeMap::new();
+    let mut materials = BTreeSet::new();
+    for (entity, bubble, material) in world
+        .query_filtered::<(
+            Entity,
+            &client::BubbleInstance,
+            &MeshMaterial3d<BubbleDomeMaterial>,
+        ), With<SwarmBubble>>()
+        .iter(world)
+    {
+        headings.insert(entity, bubble.0.heading_angle_rad.to_bits());
+        materials.insert(material.0.id());
+    }
+    (headings, materials)
+}
+
+/// D-9: the swarm walks on the shared flipbook clock, so its shared materials are never rewritten
+/// for time passing, and a wall bounce swaps a bubble to its group's material for the new heading
+/// instead of rewriting the one the group shares. The window is long enough for every bubble to
+/// bounce.
+///
+/// The one modification a material may take is its first: the optics system
+/// (`bubble_optics::sync_optics`) fills the optics lanes of a material the first frame an entity
+/// draws with it, and a group's second heading is first drawn at the group's first bounce.
 #[test]
 fn swarm_stress_frames_create_modify_and_remove_nothing() {
     let mut harness = Harness::boot(ClientMode::SwarmStressTest);
     settle(&mut harness, false);
     let entities = census(&harness);
     let buffers = retained_buffers(harness.app.world());
-    harness.step(PAUSED_FRAMES);
-    let world = harness.app.world_mut();
-    let shared: BTreeSet<AssetId<BubbleDomeMaterial>> = world
-        .query_filtered::<&MeshMaterial3d<BubbleDomeMaterial>, With<SwarmBubble>>()
-        .iter(world)
-        .map(|material| material.0.id())
-        .collect();
+    let mut flips = 0_usize;
+    let (mut headings, drawn_before) = swarm_state(&mut harness);
+    let mut drawn = drawn_before.clone();
+    for _ in 0..SWARM_FRAMES {
+        harness.step(1);
+        let (next, materials) = swarm_state(&mut harness);
+        flips += next
+            .iter()
+            .filter(|(entity, heading)| headings.get(entity) != Some(heading))
+            .count();
+        headings = next;
+        drawn.extend(materials);
+    }
+    let first_drawn = drawn.difference(&drawn_before).count();
     assert!(
         harness
             .app
@@ -822,20 +964,32 @@ fn swarm_stress_frames_create_modify_and_remove_nothing() {
             > 0,
         "the swarm must be on the field"
     );
-    // The swarm animates: each frame may rewrite each shared material once, with its group's
-    // flipbook frame and heading, and nothing else.
+    assert!(
+        flips >= SWARM_BUBBLES,
+        "every bubble must bounce in the window: {flips} heading flips"
+    );
+    assert_eq!(
+        drawn.len(),
+        SWARM_MATERIALS,
+        "the swarm draws with one material per group and heading"
+    );
     let bubbles = type_name::<Assets<BubbleDomeMaterial>>();
     let tally = tallies(&harness);
+    let modified = tally.count(bubbles, EventKind::Modified);
+    eprintln!(
+        "swarm window: {SWARM_FRAMES} frames, {flips} heading flips, {} materials drawn, \
+         {first_drawn} first drawn in the window, {modified} material modifications",
+        drawn.len()
+    );
     assert_eq!(
         tally.others(&[(bubbles, EventKind::Modified)]),
         Vec::new(),
-        "asset events other than the shared swarm materials"
+        "asset events other than bubble material modifications"
     );
-    let modified = tally.count(bubbles, EventKind::Modified);
     assert!(
-        modified <= (shared.len() * PAUSED_FRAMES) as u64,
-        "{modified} bubble materials modified over {PAUSED_FRAMES} frames, {} shared",
-        shared.len()
+        modified <= first_drawn as u64,
+        "{modified} bubble materials modified over {SWARM_FRAMES} frames with {flips} heading \
+         flips; only the {first_drawn} materials first drawn in the window may take their optics"
     );
     assert_eq!(census(&harness), entities, "entities spawned or despawned");
     assert_eq!(

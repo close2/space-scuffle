@@ -19,6 +19,7 @@
 //! - [`battle_hud`]: The player's resource bar, command panel and message feed.
 //! - [`lab_stage`]: Flat stage and lights for the map-less Lab and Swarm scenes.
 //! - [`bubble_shader`]: Custom `BubbleDomeMaterial` and GPU uniform packing for unit spheres and domes.
+//! - [`flipbook_clock`]: The shared flipbook clock, its GPU buffer and the integer frame function.
 //! - [`indicators`]: Ground selection rings, equatorial facing chevron, attack focal lens, and collar meshes.
 //! - [`vfx`]: Hitscan tracers, plasma bolts, lasers, lightning, and glass shatter.
 //! - [`lab_ui`]: Tabbed `bevy_egui` dashboard (Visual Lab, Live Combat Sandbox, Swarm Stress Test).
@@ -37,6 +38,7 @@ pub mod bubble_shader;
 pub mod camera;
 pub mod camera_drag;
 pub mod editor;
+pub mod flipbook_clock;
 pub mod indicators;
 pub mod input_bindings;
 pub mod input_policy;
@@ -370,7 +372,7 @@ fn add_scene_plugins(app: &mut App) {
 /// Bubble, selection ring, combat effect and smog materials, then the smog, battle input and
 /// battle HUD feature plugins.
 fn add_material_and_feature_plugins(app: &mut App) {
-    app.add_plugins(MaterialPlugin::<BubbleDomeMaterial>::default())
+    app.add_plugins(bubble_shader::BubbleDomeMaterialPlugin)
         .add_plugins(MaterialPlugin::<SelectionRingMaterial>::default())
         .add_plugins(bubble_optics::BubbleOpticsPlugin)
         .add_plugins(CombatFxPlugin)
@@ -414,6 +416,7 @@ fn add_battle_pipeline_systems(app: &mut App) {
         Update,
         (
             battle_presentation::refresh_battle_presentation,
+            flipbook_clock::update_flipbook_clock_system,
             sync_live_battle_system,
             apply_deferred,
         )
@@ -721,10 +724,14 @@ fn headless_simulation_check(root: &ResolvedAssetsRoot) -> Result<(), String> {
             let style = palette
                 .resolve(bubble.owner)
                 .map_err(|error| error.to_string())?;
-            let uniform = BubbleUniformGpu::from_instance(bubble, None, style);
-            if size_of::<BubbleUniformGpu>() != 160 {
+            let uniform = BubbleUniformGpu::from_instance(
+                bubble,
+                style,
+                bubble_shader::still_frame_lanes(None, bubble.anim_state),
+            );
+            if size_of::<BubbleUniformGpu>() != 176 {
                 return Err(format!(
-                    "BubbleUniformGpu size mismatch: expected 160, got {}",
+                    "BubbleUniformGpu size mismatch: expected 176, got {}",
                     size_of::<BubbleUniformGpu>()
                 ));
             }
@@ -769,6 +776,7 @@ fn insert_headless_resources(app: &mut App) -> Result<(), String> {
     app.init_resource::<Assets<StandardMaterial>>();
     app.init_resource::<Assets<Image>>();
     app.init_resource::<Assets<BubbleDomeMaterial>>();
+    app.init_resource::<flipbook_clock::FlipbookClock>();
     app.init_resource::<Assets<SelectionRingMaterial>>();
     app.init_resource::<Assets<CombatFxMaterial>>();
     app.init_resource::<CombatFxMaterialPool>();
@@ -853,6 +861,7 @@ fn add_headless_systems(app: &mut App) {
             sync_lab_preview_system,
             (
                 battle_pipeline::driver::advance_battle_ticks,
+                flipbook_clock::update_flipbook_clock_system,
                 sync_live_battle_system,
                 battle_pipeline::driver::publish_combat_events,
             )

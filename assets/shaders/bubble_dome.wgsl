@@ -6,6 +6,7 @@
 // - Zero-tilt character orientation and studio rim specular highlights
 // - Directional indicator re-engineered as a sleek rim arc confined strictly to outer Fresnel annulus [0.86, 0.98]
 // - Dynamic video texture array sampling with spherical lens magnification
+// - Flipbook layer chosen from the shared flipbook clock and per-bubble lanes, with frame blending
 // - Voronoi spiderweb glass fractures & CRT scanlines
 
 #import bevy_pbr::mesh_view_bindings::{view, globals}
@@ -23,7 +24,7 @@ struct BubbleUniform {
     aim_angle_rad: f32,
     is_attacking: u32,
     anim_state: u32,
-    anim_progress: f32,          // Normalized progress (0.0..1.0)
+    anim_origin: u32,            // Flipbook clock time of elapsed zero (offset 52)
     hp_ratio: f32,               // 1.0 = pristine, <0.75 = cracks, <0.35 = critical
     shield_ratio: f32,           // 0.0..1.0 outer sheen
     shield_hit_flash: f32,       // Decaying ripple intensity
@@ -33,16 +34,29 @@ struct BubbleUniform {
     selected: u32,
     cloaked: u32,
     feature_flags: u32,          // Bitmask controlling modular optics (offset 88)
-    frame_index: u32,            // Exact active frame in texture array (offset 92)
+    frame_base: u32,             // First layer of the slice, or the fixed layer (offset 92)
     optics_media: vec4<f32>,     // exposure stops, F0, Fresnel power, reflection strength
     optics_glare: vec4<f32>,     // roughness, glare strength, hit strength, angular width
     optics_signals: vec4<f32>,   // selection strength, alpha, facing strength, attack strength
     optics_light: vec4<f32>,     // world direction toward light, normalized illuminance
+    anim_period: u32,            // Clock units of one pass over the slice (offset 160)
+    frame_count: u32,            // Layers in the slice
+    anim_mode: u32,              // Mode in bits 0-1 (ANIM_MODE_*), blend request in bit 2
+    anim_offset: u32,            // Loop phase offset in clock units, below anim_period
+};
+
+// The shared flipbook clock (client/src/flipbook_clock.rs), written in place once per frame.
+struct FlipbookClock {
+    now: u32,                    // Presented time in 1/1024 simulation tick
+    pad0: u32,
+    pad1: u32,
+    pad2: u32,
 };
 
 @group(2) @binding(0) var<uniform> bubble: BubbleUniform;
 @group(2) @binding(1) var video_texture: texture_2d_array<f32>;
 @group(2) @binding(2) var video_sampler: sampler;
+@group(2) @binding(3) var<storage, read> flipbook_clock: FlipbookClock;
 
 // Modular Feature Bitflags
 const FLAG_CLOAKED: u32 = 1u;         // 1 << 0
@@ -55,6 +69,71 @@ const FLAG_CRT_GLITCH: u32 = 64u;     // 1 << 6: CRT scanlines & chromatic aberr
 const FLAG_SPEED_BOOSTED: u32 = 128u; // 1 << 7: Pulsing rim trailing a boosted unit
 const FLAG_FACING_STRIPE: u32 = 256u; // 1 << 8: Rim-confined facing indicator
 const FLAG_ATTACK_APERTURE: u32 = 512u;// 1 << 9: Target-lock weapon aperture
+const FLAG_FRAME_BLEND: u32 = 1024u;   // 1 << 10: Blend consecutive flipbook layers of a loop
+
+// Flipbook modes in bits 0-1 of anim_mode (client::flipbook_clock::FlipbookMode)
+const ANIM_MODE_FIXED: u32 = 0u;      // always frame_base
+const ANIM_MODE_LOOP: u32 = 1u;       // cycles frame_count layers once per anim_period
+const ANIM_MODE_ONCE_HOLD: u32 = 2u;  // plays once, then holds the last layer
+const ANIM_MODE_ONCE: u32 = 3u;       // plays once, then shows frame_base again
+const ANIM_MODE_MASK: u32 = 3u;
+const ANIM_BLEND_BIT: u32 = 4u;       // bit 2: this loop asks for frame blending
+
+// The layers a bubble shows at one clock time.
+struct FlipbookSample {
+    layer: u32,
+    next_layer: u32,          // layer blended in; equals layer when not blending
+    blend_numerator: u32,     // weight of next_layer = blend_numerator / blend_denominator
+    blend_denominator: u32,   // 0 when not blending
+};
+
+// Mirror of client::flipbook_clock::flipbook_sample, operation for operation. Every value is a
+// u32 and WGSL u32 arithmetic wraps, as the Rust mirror's wrapping operations do, so radv,
+// lavapipe and the CPU choose the same layer at every frame boundary. Floats near k/count would not.
+fn flipbook_select(
+    now: u32,
+    origin: u32,
+    base: u32,
+    period: u32,
+    count: u32,
+    mode_bits: u32,
+    offset: u32,
+) -> FlipbookSample {
+    var sample = FlipbookSample(base, base, 0u, 0u);
+    let mode = mode_bits & ANIM_MODE_MASK;
+    if (mode == ANIM_MODE_FIXED || period == 0u || count == 0u) {
+        return sample;
+    }
+    let elapsed = now - origin;
+    if (mode == ANIM_MODE_LOOP) {
+        let phase = ((elapsed % period) + offset) % period;
+        let scaled = phase * count;
+        let step = scaled / period;
+        sample.layer = base + step;
+        sample.next_layer = sample.layer;
+        if ((mode_bits & ANIM_BLEND_BIT) != 0u) {
+            sample.next_layer = base + (step + 1u) % count;
+            sample.blend_numerator = scaled % period;
+            sample.blend_denominator = period;
+        }
+        return sample;
+    }
+    if (mode != ANIM_MODE_ONCE_HOLD && elapsed >= period) {
+        return sample;
+    }
+    let clamped = min(elapsed, period - 1u);
+    sample.layer = base + clamped * count / period;
+    sample.next_layer = sample.layer;
+    return sample;
+}
+
+// One media sample of layer `layer`, with the CRT channel split by `uv_offset`.
+fn sample_media(uv: vec2<f32>, uv_offset: vec2<f32>, layer: u32) -> vec3<f32> {
+    let sample_r = textureSample(video_texture, video_sampler, uv + uv_offset, layer).r;
+    let sample_g = textureSample(video_texture, video_sampler, uv, layer).g;
+    let sample_b = textureSample(video_texture, video_sampler, uv - uv_offset, layer).b;
+    return vec3<f32>(sample_r, sample_g, sample_b);
+}
 
 // Procedural 2D hash for Voronoi glass cracks
 fn hash2(p: vec2<f32>) -> vec2<f32> {
@@ -171,12 +250,31 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    // Texture Array Sampling
-    let layer_index = i32(bubble.frame_index);
-    let sample_r = textureSample(video_texture, video_sampler, lens_uv + uv_offset, layer_index).r;
-    let sample_g = textureSample(video_texture, video_sampler, lens_uv, layer_index).g;
-    let sample_b = textureSample(video_texture, video_sampler, lens_uv - uv_offset, layer_index).b;
-    var video_color = vec3<f32>(sample_r, sample_g, sample_b) * exp2(bubble.optics_media.x) * scanline_mult * lens_mask * glass_depth_tint;
+    // Texture Array Sampling: the flipbook layer comes from the shared clock and this bubble's
+    // lanes, which change only with its action, never with time (plan D-2).
+    let flipbook = flipbook_select(
+        flipbook_clock.now,
+        bubble.anim_origin,
+        bubble.frame_base,
+        bubble.anim_period,
+        bubble.frame_count,
+        bubble.anim_mode,
+        bubble.anim_offset,
+    );
+    var media = sample_media(lens_uv, uv_offset, flipbook.layer);
+    // Frame blending (plan D-6): a loop that asks for it, on a material with the feature on, mixes
+    // in the next layer by the sub-frame time. The condition reads only the bubble uniform, so the
+    // three extra samples stay in uniform control flow and cost nothing for other bubbles.
+    let blend_frames = (bubble.feature_flags & FLAG_FRAME_BLEND) != 0u
+        && (bubble.anim_mode & ANIM_MODE_MASK) == ANIM_MODE_LOOP
+        && (bubble.anim_mode & ANIM_BLEND_BIT) != 0u
+        && bubble.anim_period != 0u
+        && bubble.frame_count != 0u;
+    if (blend_frames) {
+        let weight = f32(flipbook.blend_numerator) / f32(flipbook.blend_denominator);
+        media = mix(media, sample_media(lens_uv, uv_offset, flipbook.next_layer), weight);
+    }
+    var video_color = media * exp2(bubble.optics_media.x) * scanline_mult * lens_mask * glass_depth_tint;
 
     // Progressive Construction Scanline Fill
     if (bubble.anim_state == 0u) { // Constructing

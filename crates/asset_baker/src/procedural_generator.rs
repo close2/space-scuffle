@@ -179,6 +179,7 @@ pub fn generate_procedural_unit_atlas(
                 frame_count: frames_per_state,
                 looping: state != AnimState::Die,
                 hold_last_frame: state == AnimState::Die,
+                duration_ms: None,
             },
         );
 
@@ -258,6 +259,7 @@ pub fn generate_procedural_dome_atlas(
                 frame_count: frames_per_state,
                 looping,
                 hold_last_frame,
+                duration_ms: None,
             },
         );
 

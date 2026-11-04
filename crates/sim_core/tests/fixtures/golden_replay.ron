@@ -4,6 +4,10 @@
 // Every target (Linux, Windows, macOS ARM64, wasm32-wasip1) replays this script and must
 // reproduce `checksums` exactly. A simulation change that alters behaviour updates this
 // list in the commit that explains why. See tests/golden_replay_tests.rs.
+// Re-recorded for plan 2026-11-04-combat-sc2-alignment WP4 (Q0036): "red_psi" (psi_grey) now
+// swings with damage point 0, every 21 ticks, range 0.1, backswing 9 (was 4, 22, 0.3, 6).
+// Checkpoints 1 to 4 (ticks 1 to 200) are unchanged; from checkpoint 5 (ticks 201 to 250), the
+// first in which the zealot weapon matters, every checkpoint changed.
 (
     checksum_schema: 9,
     seed: 0x5EED_0F_5CAFF1E,
@@ -34,22 +38,22 @@
         0xdadf1445e48a13fe,
         0xefd17a4dfe28f45c,
         0x5c319da929211968,
-        0x5194db0f78345ec2,
-        0x8b723933b1e05ae2,
-        0x0f5745ac6f8ef9b8,
-        0x761b7b039dc69bc1,
-        0x2b7a7bfb57697007,
-        0xfa457e22f0a3fdd2,
-        0x3eed61c68337bdb3,
-        0xbd67864ac2471153,
-        0xd021056f09485e8d,
-        0x435fc05e0d857cbc,
-        0xdbd682a2801f4167,
-        0x73395fb9b4bd34c1,
-        0x2773ecdf3e3ba7b9,
-        0xd779898e8866db6a,
-        0x40c7b5c381aea06f,
-        0xb7ab6c8dbea4184a,
-        0x3cecf37c30026fb9,
+        0x12352d59140cc554,
+        0xcf1c9e6828478896,
+        0x1601b2fc4fac1e07,
+        0xb409b76cf6ff978b,
+        0x4dbca6578906f86a,
+        0xd79dc65a4a0ce53c,
+        0x28117c4f1bf81a18,
+        0xdd6eacb9ac17a048,
+        0x042d904cb922bd0e,
+        0x2c6c1e65453cd774,
+        0x983b77fc4fbad0c1,
+        0x50c99d141545e295,
+        0x56999097b6b8a34f,
+        0x7fcff1d974b06524,
+        0x2c306e0ca0c6541d,
+        0xd96f3786a423174e,
+        0x0b585654b7eb8375,
     ],
 )

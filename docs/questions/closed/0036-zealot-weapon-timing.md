@@ -55,3 +55,19 @@ Evidence: [`docs/evidence/2026-11-03-battle-33-investigation.md`](../../evidence
 ## Answer
 
 Owner (2026-11-04): Option 2 — update the zealot (`psi_grey`) to StarCraft II's weapon timing and range (`damage_point: 0`, `range: 0.1`, `backswing: 9`, `period: 21`), and also clean up the `damage_point = 0` `period + 1` cadence quirk in `combat.rs` if appropriate.
+
+## Resolution
+
+Carried out by plan [`2026-11-04-combat-sc2-alignment`](../../plans/2026-11-04-combat-sc2-alignment.md) (D-3, WP2,
+WP4), merged to `main` in `49177b4` (WP2) and `be5a476` (WP4):
+
+- **Cadence quirk, cleaned up** (`5c2b8e3`, WP2): a damage point of 0 now releases on the tick the swing starts, so
+  every weapon's attack cycle is its `period_ticks`. Before, such a weapon held a one-tick wind-up and fired every
+  `period + 1` ticks. The six shipped damage-point-0 identities each became one tick faster per cycle; battles 9a,
+  10, 12a, 12b, 17, 18 and 26 moved inside their expectations, and `golden_replay_orders.ron` was re-recorded.
+- **Zealot weapon** (`748f3a9`, WP4, after the test-only commit `5a798a0`): `psi_grey` takes damage point 0,
+  period 21 (now also its cycle), range 0.1 and backswing 9. Battles 7, 8, 23a, 23b, 25a, 25b and 33 moved; only
+  battle 33 needed re-recording (Q0044), and `golden_replay.ron` was re-recorded.
+
+Measurements: [`docs/evidence/2026-11-04-combat-sc2-alignment.md`](../../evidence/2026-11-04-combat-sc2-alignment.md)
+§2 and §3.

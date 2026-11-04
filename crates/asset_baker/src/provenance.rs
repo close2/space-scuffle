@@ -1263,6 +1263,7 @@ mod tests {
             frame_count,
             looping: true,
             hold_last_frame: false,
+            duration_ms: None,
         };
         let meta = |walk| FlipbookAtlasMeta {
             name: "probe".into(),

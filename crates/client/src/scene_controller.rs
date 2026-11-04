@@ -13,13 +13,23 @@
 //! - Conversion from deterministic fixed-point to GPU floats happens strictly at snapshot boundaries.
 //! - Live steady-state synchronization reuses storage; spawn/despawn and preview work have separate costs.
 //! - Components (`Transform`, `BubbleInstance`) are mutated in place without issuing `commands.insert`.
+//! - A live battle bubble's [`FlipbookPhase`] is inserted with it and changes only when its
+//!   displayed action does; its material's flipbook lanes come from the presented record and that
+//!   phase alone, so time passing modifies no material.
+//! - The Lab preview and the swarm play their flipbooks on the same clock and lanes
+//!   ([`scene_lanes`]); a preview actor's [`PreviewPhase`] changes only when its shown state
+//!   does, and a swarm bubble's material handle changes only when it bounces, so neither scene
+//!   modifies a material while time passes (plan `2026-11-04-battle-flipbook-animation`, D-9).
 
 use crate::battle_selection::BattleSelection;
 use crate::bubble_shader::{
     sync_bubble_material, BubbleDomeMaterial, BubbleInstance, BubbleSharedMeshes, BubbleUniformGpu,
     FlipbookRegistry, FLAG_ATTACK_APERTURE, FLAG_CLOAKED, FLAG_CRACKS, FLAG_CRT_GLITCH,
-    FLAG_FACING_STRIPE, FLAG_FRESNEL, FLAG_GLARE, FLAG_INNER_WARP, FLAG_SELECTED,
+    FLAG_FACING_STRIPE, FLAG_FRAME_BLEND, FLAG_FRESNEL, FLAG_GLARE, FLAG_INNER_WARP, FLAG_SELECTED,
     FLAG_SPEED_BOOSTED,
+};
+use crate::flipbook_clock::{
+    battle_uniform, displayed_action, elapsed_clock, scene_lanes, FlipbookPhase,
 };
 use crate::indicators::{attach_bubble_indicators, IndicatorAssets, SelectionRingMaterial};
 use crate::lab_ui::{LabState, LabTab};
@@ -29,7 +39,7 @@ use bevy::app::AppExit;
 use bevy::prelude::*;
 use sim_core::catalog::{UnitArchetype, UnitCatalog};
 use sim_types::enums::{AnimState, ShapeKind, WeaponVisualKind};
-use sim_types::ids::{EntityId, PlayerId, UnitTypeId};
+use sim_types::ids::{EntityId, PlayerId, Tick, UnitTypeId};
 use sim_types::snapshot::BubbleRenderInstance;
 use std::collections::BTreeMap;
 
@@ -47,6 +57,75 @@ pub struct LiveBattleBubble {
 /// Marker component for swarm stress test bubble entities.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SwarmBubble;
+
+/// The two shared materials of a swarm bubble's group, one per heading.
+///
+/// Every bubble of a group holds the same pair; a wall bounce points the bubble's
+/// `MeshMaterial3d` at the material of its new heading (D-9).
+// PERFORMANCE RATIONALE:
+// Why: One material per group must carry one heading, but a group's bubbles bounce at different
+// times. Rewriting the shared material for whichever bubble came last modified it on every frame
+// once headings were mixed, and each modification prepares the material again.
+// What: Each group has a material per heading, built once with constant flipbook lanes; a bounce
+// swaps the bubble's handle (an `Arc` count change, no allocation).
+// Trade-off: Four materials instead of two, and the bubble is re-batched on the frame it bounces.
+#[derive(Component, Debug, Clone)]
+pub struct SwarmHeadingMaterials {
+    /// Material of a bubble walking towards +X (heading 0).
+    pub eastward: Handle<BubbleDomeMaterial>,
+    /// Material of a bubble walking towards -X (heading π).
+    pub westward: Handle<BubbleDomeMaterial>,
+}
+
+impl SwarmHeadingMaterials {
+    /// The material of a bubble moving at `speed_x` world units per second along X: westward for a
+    /// negative speed, else eastward (the heading [`swarm_instance`] gives it).
+    #[must_use]
+    pub fn facing(&self, speed_x: f32) -> &Handle<BubbleDomeMaterial> {
+        if speed_x < 0.0 {
+            &self.westward
+        } else {
+            &self.eastward
+        }
+    }
+}
+
+/// The state a Lab preview actor shows, and the clock time at which it began to show.
+///
+/// Inserted with the actor and overwritten in place by `sync_lab_preview_system` only, when the
+/// shown state changes, so a free loop or a one-shot clip starts at its first frame (D-5, D-9).
+// PERFORMANCE RATIONALE:
+// Why: The lanes must not depend on the current time, or the actor's material would be prepared
+// again on every frame; but a state's clip must start where the state starts.
+// What: The start is remembered on the actor and written with `set_if_neq`, so a frame on which the
+// Lab's controls do not change writes nothing.
+// Trade-off: Eight bytes of presentation state per preview actor.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreviewPhase {
+    /// State the actor shows.
+    pub action: AnimState,
+    /// Flipbook clock time at which `action` began to show, in clock units.
+    pub since: u32,
+}
+
+impl PreviewPhase {
+    /// A phase that begins `action` at clock time `now`.
+    #[must_use]
+    pub const fn new(action: AnimState, now: u32) -> Self {
+        Self { action, since: now }
+    }
+
+    /// The phase after the actor shows `action` at clock time `now`: unchanged while the action
+    /// lasts, restarted at `now` when it changes.
+    #[must_use]
+    pub fn observed(self, action: AnimState, now: u32) -> Self {
+        if self.action == action {
+            self
+        } else {
+            Self::new(action, now)
+        }
+    }
+}
 
 /// Persistent mapping from authoritative simulation [`EntityId`] to Bevy render [`Entity`].
 ///
@@ -135,8 +214,8 @@ fn preview_placement(index: usize, is_dome: bool) -> (Vec3, f32) {
 
 /// Builds the snapshot of one preview actor. Lab controls act on the selected actor only.
 ///
-/// `pos` is in Bevy world space. The record carries no animation phase; the caller picks the
-/// preview's flipbook frame from presentation time.
+/// `pos` is in Bevy world space. The record carries no animation phase; the caller packs the
+/// preview's flipbook lanes from its [`PreviewPhase`].
 #[expect(
     clippy::cast_possible_truncation,
     reason = "presentation values are bounded by frame, atlas and window sizes"
@@ -151,11 +230,7 @@ fn preview_instance(
     is_selected: bool,
 ) -> BubbleRenderInstance {
     let selected_or = |value: f32, otherwise: f32| if is_selected { value } else { otherwise };
-    let anim_state = if is_selected {
-        lab.anim_state
-    } else {
-        AnimState::Idle
-    };
+    let anim_state = preview_action(lab, is_selected);
     BubbleRenderInstance {
         entity_id: EntityId(100 + index as u32),
         shape: archetype.shape,
@@ -185,6 +260,15 @@ fn preview_instance(
     }
 }
 
+/// The state a lineup actor shows: the Lab's selected state for the selected actor, else Idle.
+fn preview_action(lab: &LabState, is_selected: bool) -> AnimState {
+    if is_selected {
+        lab.anim_state
+    } else {
+        AnimState::Idle
+    }
+}
+
 /// Packs the Lab's optical toggles and the actor's own state into shader feature flags.
 fn preview_feature_flags(lab: &LabState, instance: &BubbleRenderInstance, selected: bool) -> u32 {
     [
@@ -195,6 +279,7 @@ fn preview_feature_flags(lab: &LabState, instance: &BubbleRenderInstance, select
         (lab.opt_crt_glitch, FLAG_CRT_GLITCH),
         (lab.opt_facing_chevron, FLAG_FACING_STRIPE),
         (lab.opt_focal_lens, FLAG_ATTACK_APERTURE),
+        (lab.opt_frame_blend, FLAG_FRAME_BLEND),
         (selected, FLAG_SELECTED),
         (instance.cloaked, FLAG_CLOAKED),
         (instance.speed_boosted, FLAG_SPEED_BOOSTED),
@@ -255,8 +340,8 @@ struct PreviewFrame<'a> {
     palette: &'a crate::player_presentation::PlayerPalette,
     /// Loaded flipbooks.
     registry: &'a FlipbookRegistry,
-    /// Presentation time in seconds, which drives the idle animation.
-    elapsed_seconds: f32,
+    /// Flipbook clock time of the frame, in clock units ([`elapsed_clock`] of Bevy's time).
+    now: u32,
 }
 
 /// One preview actor's snapshot and the GPU state derived from it.
@@ -277,16 +362,18 @@ impl PreviewFrame<'_> {
     /// Builds lineup actor `index` of `archetype`.
     ///
     /// With `allow_concept_video`, the selected actor samples the concept video when the Lab
-    /// asks for it; without, every actor samples its own flipbook.
+    /// asks for it; without, every actor samples its own flipbook. `phase` is the actor's shown
+    /// state and its start, from which its flipbook lanes are packed ([`scene_lanes`]).
     ///
     /// # Errors
     /// [`PresentationError`](crate::player_presentation::PresentationError) if the actor's
-    /// authored owner is not a preview role.
+    /// authored owner is not a preview role, or if its slice cannot be played by the clock.
     fn actor(
         &self,
         archetype: &UnitArchetype,
         index: usize,
         allow_concept_video: bool,
+        phase: PreviewPhase,
     ) -> Result<PreviewActor, crate::player_presentation::PresentationError> {
         let is_selected = index == self.lab.selected_hero_index;
         let is_dome = matches!(archetype.shape, ShapeKind::BuildingDome { .. });
@@ -313,13 +400,20 @@ impl PreviewFrame<'_> {
             is_selected,
         );
         let style = self.palette.preview_style(instance.owner)?;
-        let mut uniform = BubbleUniformGpu::from_instance(&instance, meta, style);
-        // The Lab has no battle and no snapshot phase: it plays every slice on its own
-        // elapsed time, one cycle per 0.67 s.
-        let progress = (self.elapsed_seconds * 1.5).fract();
-        uniform.frame_index =
-            crate::bubble_shader::frame_index_at(meta, instance.anim_state, progress);
-        uniform.anim_progress = progress;
+        let lanes = scene_lanes(
+            meta,
+            phase.action,
+            instance.build_or_queue_progress,
+            phase.since,
+        )
+        .map_err(
+            |source| crate::player_presentation::PresentationError::Flipbook {
+                unit_type: archetype.unit_type_id,
+                action: phase.action,
+                source,
+            },
+        )?;
+        let mut uniform = BubbleUniformGpu::from_instance(&instance, style, lanes);
         uniform.feature_flags = preview_feature_flags(self.lab, &instance, is_selected);
         Ok(PreviewActor {
             instance,
@@ -382,16 +476,17 @@ fn spawn_preview_actor(
     archetype: &UnitArchetype,
     index: usize,
 ) -> Result<(), crate::player_presentation::PresentationError> {
-    let actor = frame.actor(archetype, index, false)?;
-    let material = BubbleDomeMaterial {
-        uniform: actor.uniform,
-        video_texture: actor.texture,
-        alpha_mode: AlphaMode::Blend,
-    };
+    let phase = PreviewPhase::new(
+        preview_action(frame.lab, index == frame.lab.selected_hero_index),
+        frame.now,
+    );
+    let actor = frame.actor(archetype, index, false, phase)?;
+    let material = BubbleDomeMaterial::new(actor.uniform, actor.texture);
     let components = (
         preview_visibility(frame.lab),
         LabPreviewBubble,
         HeroLineupIndex(index),
+        phase,
     );
     let entity = assets.spawn_bubble(
         commands,
@@ -407,20 +502,41 @@ fn spawn_preview_actor(
     Ok(())
 }
 
+/// One spawned preview actor's components, as the lineup query yields them.
+struct PreviewActorComponents<'a, 'w> {
+    /// The actor's material handle.
+    material: &'a MeshMaterial3d<BubbleDomeMaterial>,
+    /// The actor's snapshot.
+    bubble: &'a mut BubbleInstance,
+    /// The actor's placement.
+    transform: &'a mut Mut<'w, Transform>,
+    /// The actor's shown state and its start.
+    phase: &'a mut Mut<'w, PreviewPhase>,
+}
+
 /// Brings spawned lineup actor `index` up to `frame` in place, without issuing any command.
 ///
+/// The actor's phase restarts when its shown state changes ([`PreviewPhase::observed`]).
+///
 /// # Errors
-/// As [`PreviewFrame::actor`]; the actor is left unchanged then.
+/// As [`PreviewFrame::actor`]; the actor is left unchanged then, except for its phase.
 fn update_preview_actor(
     frame: &PreviewFrame<'_>,
     archetype: &UnitArchetype,
     index: usize,
-    material: &MeshMaterial3d<BubbleDomeMaterial>,
-    bubble: &mut BubbleInstance,
-    transform: &mut Mut<'_, Transform>,
+    components: PreviewActorComponents<'_, '_>,
     bubble_materials: &mut Assets<BubbleDomeMaterial>,
 ) -> Result<(), crate::player_presentation::PresentationError> {
-    let actor = frame.actor(archetype, index, true)?;
+    let PreviewActorComponents {
+        material,
+        bubble,
+        transform,
+        phase,
+    } = components;
+    let action = preview_action(frame.lab, index == frame.lab.selected_hero_index);
+    let observed = phase.observed(action, frame.now);
+    phase.set_if_neq(observed);
+    let actor = frame.actor(archetype, index, true, observed)?;
     sync_bubble_material(bubble_materials, &material.0, &actor.uniform, actor.texture);
     // Writing through `Mut` flags change detection even for an equal value.
     transform.set_if_neq(
@@ -475,6 +591,7 @@ pub fn sync_lab_preview_system(
             &mut BubbleInstance,
             &mut Transform,
             &mut Visibility,
+            &mut PreviewPhase,
         ),
         With<LabPreviewBubble>,
     >,
@@ -484,7 +601,7 @@ pub fn sync_lab_preview_system(
 
     if lab_state.current_tab != LabTab::VisualLab {
         // Despawn preview bubbles when switching tabs
-        for (entity, _, _, _, _, _) in &query {
+        for (entity, _, _, _, _, _, _) in &query {
             commands.entity(entity).despawn_recursive();
             if selection_state.is_selected(entity) {
                 selection_state.deselect();
@@ -516,14 +633,14 @@ pub fn sync_lab_preview_system(
     }
 
     if hero_count < expected_heroes {
-        for (entity, _, _, _, _, _) in &query {
+        for (entity, _, _, _, _, _, _) in &query {
             commands.entity(entity).despawn_recursive();
         }
         let frame = PreviewFrame {
             lab: &lab_state,
             palette: &owners.palette,
             registry: &registry,
-            elapsed_seconds: time.elapsed_secs(),
+            now: elapsed_clock(time.elapsed()),
         };
         for (index, archetype) in lineup.archetypes(&catalog.0).take(4).enumerate() {
             let spawned = spawn_preview_actor(
@@ -549,9 +666,9 @@ pub fn sync_lab_preview_system(
         lab: &lab_state,
         palette: &owners.palette,
         registry: &registry,
-        elapsed_seconds: time.elapsed_secs(),
+        now: elapsed_clock(time.elapsed()),
     };
-    for (_, material, hero_idx, mut bubble, mut transform, mut vis) in &mut query {
+    for (_, material, hero_idx, mut bubble, mut transform, mut vis, mut phase) in &mut query {
         if *vis != target_vis {
             *vis = target_vis;
         }
@@ -566,9 +683,12 @@ pub fn sync_lab_preview_system(
             &frame,
             archetype,
             hero_idx.0,
-            material,
-            &mut bubble,
-            &mut transform,
+            PreviewActorComponents {
+                material,
+                bubble: &mut bubble,
+                transform: &mut transform,
+                phase: &mut phase,
+            },
             &mut assets.bubble_materials,
         );
         if let Err(error) = updated {
@@ -587,6 +707,7 @@ type LiveBattleQuery<'w, 's> = Query<
         &'static mut BubbleInstance,
         &'static mut Mesh3d,
         &'static MeshMaterial3d<BubbleDomeMaterial>,
+        &'static mut FlipbookPhase,
     ),
     With<LiveBattleBubble>,
 >;
@@ -598,6 +719,7 @@ type LiveBattleItem<'a> = (
     Mut<'a, BubbleInstance>,
     Mut<'a, Mesh3d>,
     &'a MeshMaterial3d<BubbleDomeMaterial>,
+    Mut<'a, FlipbookPhase>,
 );
 
 /// Shared meshes and material stores a synchronizer needs to spawn or restyle a bubble.
@@ -665,8 +787,10 @@ impl BubbleSceneAssets<'_> {
 struct LiveBubbleFrame<'a> {
     /// The published record, as the simulation produced it.
     instance: &'a BubbleRenderInstance,
-    /// Shader uniform for the record, with the selection lane applied.
+    /// Shader uniform for the record, with its battle flipbook lanes and selection applied.
     uniform: BubbleUniformGpu,
+    /// What the bubble shows and since which presented tick.
+    phase: FlipbookPhase,
     /// Flipbook atlas of the record's unit type, if one is loaded.
     texture: Option<Handle<Image>>,
     /// Whether [`BattleSelection`] holds this entity.
@@ -679,16 +803,37 @@ struct LiveBubbleFrame<'a> {
 
 impl<'a> LiveBubbleFrame<'a> {
     /// Resolves the record's flipbook, uniform and pose. Pure: touches no ECS state.
+    ///
+    /// `phase` is the bubble's [`FlipbookPhase`] before this frame (`None` for a new bubble);
+    /// the frame carries it advanced to the record's displayed action at `presented`.
+    ///
+    /// # Errors
+    /// [`PresentationError::Flipbook`](crate::player_presentation::PresentationError::Flipbook)
+    /// when the displayed slice cannot be played by the flipbook clock.
     fn new(
         instance: &'a BubbleRenderInstance,
         registry: &FlipbookRegistry,
         style: crate::player_presentation::PlayerStyle,
         selected: bool,
-    ) -> Self {
+        presented: Tick,
+        phase: Option<FlipbookPhase>,
+    ) -> Result<Self, crate::player_presentation::PresentationError> {
         let meta = registry.get_meta(instance.unit_type);
         let texture = registry.get_texture(instance.unit_type);
-        let uniform =
-            BubbleUniformGpu::from_instance(instance, meta, style).with_selection(selected);
+        let action = displayed_action(meta, instance);
+        let phase = phase.map_or_else(
+            || FlipbookPhase::new(action, presented),
+            |phase| phase.observed(action, presented),
+        );
+        let uniform = battle_uniform(meta, instance, style, presented, phase)
+            .map_err(
+                |source| crate::player_presentation::PresentationError::Flipbook {
+                    unit_type: instance.unit_type,
+                    action,
+                    source,
+                },
+            )?
+            .with_selection(selected);
         let is_dome = matches!(instance.shape, ShapeKind::BuildingDome { .. });
         let altitude_offset = if is_dome { 0.0 } else { instance.radius };
         let translation = Vec3::new(
@@ -696,14 +841,15 @@ impl<'a> LiveBubbleFrame<'a> {
             instance.world_pos[2] + altitude_offset,
             instance.world_pos[1],
         );
-        Self {
+        Ok(Self {
             instance,
             uniform,
+            phase,
             texture,
             selected,
             translation,
             is_dome,
-        }
+        })
     }
 }
 
@@ -716,7 +862,8 @@ fn update_live_instance(
     frame: LiveBubbleFrame<'_>,
     assets: &mut BubbleSceneAssets<'_>,
 ) {
-    let (_, mut transform, mut bubble, mut mesh, material) = item;
+    let (_, mut transform, mut bubble, mut mesh, material, mut phase) = item;
+    phase.set_if_neq(frame.phase);
     sync_bubble_material(
         &mut assets.bubble_materials,
         &material.0,
@@ -749,11 +896,7 @@ fn spawn_live_instance(
         selected: frame.selected,
         ..frame.instance.clone()
     };
-    let material = BubbleDomeMaterial {
-        uniform: frame.uniform,
-        video_texture: frame.texture,
-        alpha_mode: AlphaMode::Blend,
-    };
+    let material = BubbleDomeMaterial::new(frame.uniform, frame.texture);
     let marker = LiveBattleBubble {
         entity_id: instance.entity_id,
     };
@@ -762,7 +905,7 @@ fn spawn_live_instance(
         &instance,
         material,
         frame.translation,
-        marker,
+        (marker, frame.phase),
         style,
     )
 }
@@ -826,7 +969,7 @@ pub fn sync_live_battle_system(
     // Entity IDs restart with each session, so this runs before anything reads the selection.
     selection.bind_generation(session.commands.generation());
     if lab_state.current_tab != LabTab::LiveBattle {
-        for (entity, _, _, _, _) in &query {
+        for (entity, ..) in &query {
             commands.entity(entity).despawn_recursive();
         }
         render_entities.0.clear();
@@ -836,6 +979,7 @@ pub fn sync_live_battle_system(
         return;
     }
     let snapshot = session.frames.presented();
+    let presented = snapshot.tick;
 
     // Reuse existing materials and instances; spawn/despawn are separate lifecycle work.
     for instance in &snapshot.bubbles {
@@ -850,14 +994,30 @@ pub fn sync_live_battle_system(
             }
         };
         let selected = selection.contains(instance.entity_id);
-        let frame = LiveBubbleFrame::new(instance, &registry, style, selected);
-        if let Some(&entity) = render_entities.0.get(&instance.entity_id) {
-            if let Ok(item) = query.get_mut(entity) {
-                update_live_instance(item, frame, &mut assets);
-            }
-        } else {
-            let entity = spawn_live_instance(&mut commands, &mut assets, frame, style);
-            render_entities.0.insert(instance.entity_id, entity);
+        let existing = render_entities
+            .0
+            .get(&instance.entity_id)
+            .and_then(|&entity| query.get_mut(entity).ok());
+        let phase = existing.as_ref().map(|item| *item.5);
+        let frame =
+            match LiveBubbleFrame::new(instance, &registry, style, selected, presented, phase) {
+                Ok(frame) => frame,
+                Err(error) => {
+                    owners.reject(error, &mut exit_events);
+                    return;
+                }
+            };
+        if let Some(item) = existing {
+            update_live_instance(item, frame, &mut assets);
+        } else if let std::collections::btree_map::Entry::Vacant(slot) =
+            render_entities.0.entry(instance.entity_id)
+        {
+            slot.insert(spawn_live_instance(
+                &mut commands,
+                &mut assets,
+                frame,
+                style,
+            ));
         }
     }
     despawn_departed(
@@ -876,6 +1036,9 @@ pub const SWARM_MAX_X: f32 = 31.0;
 
 /// World Z of the swarm's first row. All ten rows stay on open low ground, south of the ramp.
 pub const SWARM_MIN_Z: f32 = 3.6;
+
+/// Speed of a swarm bubble along world X, in world units per second.
+const SWARM_SPEED: f32 = 1.5;
 
 /// World units between neighbouring swarm rows and columns.
 const SWARM_SPACING: f32 = 1.2;
@@ -909,12 +1072,47 @@ fn frame_swarm_camera(camera: &mut crate::camera::RtsCamera) {
     camera.distance = 26.0;
 }
 
+/// Builds one group's pair of shared materials: the walk slice on the shared clock from `since`,
+/// facing east and facing west. `instance_at(speed_x)` is the group's representative record
+/// walking at `speed_x` world units per second.
+///
+/// # Errors
+/// [`PresentationError::Flipbook`](crate::player_presentation::PresentationError::Flipbook) if
+/// the walk slice cannot be played by the flipbook clock.
+fn swarm_group_materials(
+    archetype: &UnitArchetype,
+    instance_at: impl Fn(f32) -> BubbleRenderInstance,
+    style: crate::player_presentation::PlayerStyle,
+    registry: &FlipbookRegistry,
+    since: u32,
+    bubble_materials: &mut Assets<BubbleDomeMaterial>,
+) -> Result<SwarmHeadingMaterials, crate::player_presentation::PresentationError> {
+    let meta = registry.get_meta(archetype.unit_type_id);
+    let texture = registry.get_texture(archetype.unit_type_id);
+    let lanes = scene_lanes(meta, AnimState::Walk, None, since).map_err(|source| {
+        crate::player_presentation::PresentationError::Flipbook {
+            unit_type: archetype.unit_type_id,
+            action: AnimState::Walk,
+            source,
+        }
+    })?;
+    let mut material = |speed_x: f32| {
+        let instance = instance_at(speed_x);
+        let uniform = BubbleUniformGpu::from_instance(&instance, style, lanes);
+        bubble_materials.add(BubbleDomeMaterial::new(uniform, texture.clone()))
+    };
+    Ok(SwarmHeadingMaterials {
+        eastward: material(SWARM_SPEED),
+        westward: material(-SWARM_SPEED),
+    })
+}
+
 /// Spawns the 200 swarm bubbles of `archetype`: 100 primary walking east, 100 secondary
-/// walking west.
+/// walking west. `since` is the flipbook clock time at which their walk starts, in clock units.
 ///
 /// # Errors
 /// [`PresentationError`](crate::player_presentation::PresentationError) if either authored
-/// preview owner has no style; nothing is spawned then.
+/// preview owner has no style, or if the walk slice cannot be played; nothing is spawned then.
 fn spawn_swarm(
     commands: &mut Commands<'_, '_>,
     palette: &crate::player_presentation::PlayerPalette,
@@ -922,67 +1120,65 @@ fn spawn_swarm(
     archetype: &UnitArchetype,
     shared_meshes: &BubbleSharedMeshes,
     bubble_materials: &mut Assets<BubbleDomeMaterial>,
+    since: u32,
 ) -> Result<(), crate::player_presentation::PresentationError> {
-    let meta = registry.get_meta(archetype.unit_type_id);
-    let texture = registry.get_texture(archetype.unit_type_id);
-
     // PERFORMANCE RATIONALE:
     // Why: 200 materials would recreate 200 bind groups per frame and defeat GPU batching.
-    // What: Share only 2 Handle<BubbleDomeMaterial> instances, one per 100-bubble group.
-    // Trade-off: Bubbles of one group cannot differ in any material uniform.
+    // What: Share four Handle<BubbleDomeMaterial> instances, one per group and heading
+    // ([`SwarmHeadingMaterials`]).
+    // Trade-off: Bubbles of one group and heading cannot differ in any material uniform.
     let primary_owner = palette.primary();
     let secondary_owner = palette.secondary();
     let primary_style = palette.preview_style(primary_owner)?;
     let secondary_style = palette.preview_style(secondary_owner)?;
-
-    let primary_dummy_instance =
-        swarm_instance(archetype, 1000, primary_owner, Vec2::new(8.0, 10.0), 1.5);
-    let primary_uniform =
-        BubbleUniformGpu::from_instance(&primary_dummy_instance, meta, primary_style);
-    let primary_mat = bubble_materials.add(BubbleDomeMaterial {
-        uniform: primary_uniform,
-        video_texture: texture.clone(),
-        alpha_mode: AlphaMode::Blend,
-    });
-
-    let secondary_dummy_instance = swarm_instance(
+    let primary = swarm_group_materials(
         archetype,
-        1100,
-        secondary_owner,
-        Vec2::new(24.0, 10.0),
-        -1.5,
-    );
-    let secondary_uniform =
-        BubbleUniformGpu::from_instance(&secondary_dummy_instance, meta, secondary_style);
-    let secondary_mat = bubble_materials.add(BubbleDomeMaterial {
-        uniform: secondary_uniform,
-        video_texture: texture.clone(),
-        alpha_mode: AlphaMode::Blend,
-    });
+        |speed_x| {
+            swarm_instance(
+                archetype,
+                1000,
+                primary_owner,
+                Vec2::new(8.0, 10.0),
+                speed_x,
+            )
+        },
+        primary_style,
+        registry,
+        since,
+        bubble_materials,
+    )?;
+    let secondary = swarm_group_materials(
+        archetype,
+        |speed_x| {
+            swarm_instance(
+                archetype,
+                1100,
+                secondary_owner,
+                Vec2::new(24.0, 10.0),
+                speed_x,
+            )
+        },
+        secondary_style,
+        registry,
+        since,
+        bubble_materials,
+    )?;
 
     for i in 0..200u32 {
         let primary_group = i < 100;
-        let owner = if primary_group {
-            primary_owner
+        let (owner, materials, speed_x) = if primary_group {
+            (primary_owner, &primary, SWARM_SPEED)
         } else {
-            secondary_owner
+            (secondary_owner, &secondary, -SWARM_SPEED)
         };
         let Vec2 { x, y: z } = swarm_spawn_position(i);
-
-        let speed_x = if primary_group { 1.5 } else { -1.5 };
         let instance = swarm_instance(archetype, 1000 + i, owner, Vec2::new(x, z), speed_x);
-
-        let mat = if primary_group {
-            primary_mat.clone()
-        } else {
-            secondary_mat.clone()
-        };
-
         commands.spawn((
             Mesh3d(shared_meshes.sphere_mesh.clone()),
-            MeshMaterial3d(mat),
+            MeshMaterial3d(materials.facing(speed_x).clone()),
             Transform::from_xyz(x, 0.5, z).with_scale(Vec3::splat(0.45)),
             BubbleInstance(instance),
+            materials.clone(),
             SwarmBubble,
         ));
     }
@@ -1013,65 +1209,26 @@ fn bounce_swarm_bubble(instance: &mut BubbleRenderInstance, transform: &mut Tran
     ];
 }
 
-/// Atlas frame of `anim_state` at `anim_progress` (`0.0..1.0` of one cycle), or 0 when the
-/// flipbook or the action is missing. A non-looping action holds its last frame.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    clippy::cast_sign_loss,
-    reason = "presentation values are bounded by frame, atlas and window sizes"
-)]
-fn swarm_frame_index(
-    meta: Option<&asset_baker::manifest::FlipbookAtlasMeta>,
-    anim_state: AnimState,
-    anim_progress: f32,
-) -> u32 {
-    let Some(slice) = meta.and_then(|meta| meta.actions.get(&anim_state)) else {
-        return 0;
-    };
-    if slice.frame_count == 0 {
-        slice.start_frame
-    } else if slice.looping {
-        let step = (anim_progress * slice.frame_count as f32) as u32;
-        slice.start_frame + (step % slice.frame_count)
-    } else {
-        let step = (anim_progress * slice.frame_count as f32) as u32;
-        slice.start_frame + step.min(slice.frame_count.saturating_sub(1))
-    }
-}
-
-/// Writes one group's shared material only if its colour, frame or heading differ.
-///
-/// `heading_angle_rad` is the bubble's heading in radians.
-fn refresh_swarm_material(
-    bubble_materials: &mut Assets<BubbleDomeMaterial>,
-    material: &Handle<BubbleDomeMaterial>,
-    style: crate::player_presentation::PlayerStyle,
-    frame_index: u32,
-    anim_progress: f32,
-    heading_angle_rad: f32,
-) {
-    // Checking the material first ensures that out of 200 entities sharing 2 handles,
-    // only the first entity of each group triggers get_mut; the remaining 99 check get() and skip in O(1)!
-    if let Some(mat) = bubble_materials.get(material) {
-        if mat.uniform.team_color != style.linear
-            || mat.uniform.frame_index != frame_index
-            || (mat.uniform.heading_angle_rad - heading_angle_rad).abs() > 1e-4
-        {
-            if let Some(mat_mut) = bubble_materials.get_mut(material) {
-                mat_mut.uniform.team_color = style.linear;
-                mat_mut.uniform.frame_index = frame_index;
-                mat_mut.uniform.anim_progress = anim_progress;
-                mat_mut.uniform.heading_angle_rad = heading_angle_rad;
-            }
-        }
-    }
-}
+/// The swarm bubbles, with what a frame moves and the materials a bounce chooses from.
+type SwarmQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static mut BubbleInstance,
+        &'static mut Transform,
+        &'static mut MeshMaterial3d<BubbleDomeMaterial>,
+        &'static SwarmHeadingMaterials,
+    ),
+    With<SwarmBubble>,
+>;
 
 /// Spawns and animates 200 colliding bubbles for the swarm stress test.
 ///
 /// The first active frame frames the camera and spawns the swarm ([`spawn_swarm`]); every later
-/// frame bounces each bubble ([`bounce_swarm_bubble`]) and refreshes the two shared materials.
+/// frame bounces each bubble ([`bounce_swarm_bubble`]) and, when it turns, points it at its
+/// group's material for the new heading. The walk plays on the shared flipbook clock, so time
+/// passing modifies no material (D-9).
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
@@ -1092,21 +1249,11 @@ pub fn sync_swarm_stress_system(
     shared_meshes: Res<'_, BubbleSharedMeshes>,
     mut bubble_materials: ResMut<'_, Assets<BubbleDomeMaterial>>,
     mut camera_query: Query<'_, '_, &mut crate::camera::RtsCamera>,
-    mut query: Query<
-        '_,
-        '_,
-        (
-            Entity,
-            &mut BubbleInstance,
-            &mut Transform,
-            &MeshMaterial3d<BubbleDomeMaterial>,
-        ),
-        With<SwarmBubble>,
-    >,
+    mut query: SwarmQuery<'_, '_>,
 ) {
     if lab_state.current_tab != LabTab::SwarmStressTest || !lab_state.swarm_active {
         // Despawn swarm when inactive
-        for (entity, _, _, _) in &query {
+        for (entity, _, _, _, _) in &query {
             commands.entity(entity).despawn_recursive();
         }
         lab_state.swarm_bubble_count = 0;
@@ -1141,6 +1288,7 @@ pub fn sync_swarm_stress_system(
             mobile_arch,
             &shared_meshes,
             &mut bubble_materials,
+            elapsed_clock(time.elapsed()),
         );
         if let Err(error) = spawned {
             owners.reject(error, &mut exit_events);
@@ -1148,32 +1296,16 @@ pub fn sync_swarm_stress_system(
         }
         lab_state.swarm_bubble_count = 200;
     } else {
-        // Update 200 entity transforms/velocities with map-plane bouncing,
-        // while mutating only the 2 shared BubbleDomeMaterial handles.
+        // Update 200 entity transforms and velocities with map-plane bouncing; a bubble that
+        // turned takes its group's material for the new heading, and no material is modified.
         let dt = time.delta_secs();
-        let anim_progress = (time.elapsed_secs() * 2.0).fract();
-        for (_, mut instance, mut tf, mat_handle) in &mut query {
-            let style = match owners.palette.preview_style(instance.0.owner) {
-                Ok(style) => style,
-                Err(error) => {
-                    owners.reject(error, &mut exit_events);
-                    return;
-                }
-            };
+        for (_, mut instance, mut tf, mut material, materials) in &mut query {
             bounce_swarm_bubble(&mut instance.0, &mut tf, dt);
-            let frame_index = swarm_frame_index(
-                registry.get_meta(instance.0.unit_type),
-                instance.0.anim_state,
-                anim_progress,
-            );
-            refresh_swarm_material(
-                &mut bubble_materials,
-                &mat_handle.0,
-                style,
-                frame_index,
-                anim_progress,
-                instance.0.heading_angle_rad,
-            );
+            let facing = materials.facing(instance.0.velocity[0]);
+            // Reading the handle through `Deref` leaves change detection alone.
+            if material.0.id() != facing.id() {
+                material.0 = facing.clone();
+            }
         }
     }
 }
@@ -1181,7 +1313,6 @@ pub fn sync_swarm_stress_system(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use asset_baker::manifest::{ActionSlice, FlipbookAtlasMeta, FlipbookLayout};
     use sim_types::enums::SilhouetteClass;
 
     /// A swarm walker at world X `x` moving at `speed_x` world units per second.
@@ -1246,45 +1377,43 @@ mod tests {
         assert!((instance.heading_angle_rad - std::f32::consts::PI).abs() < f32::EPSILON);
     }
 
-    /// An atlas holding one `Walk` slice of `frame_count` frames from frame 10.
-    fn atlas(frame_count: u32, looping: bool) -> FlipbookAtlasMeta {
-        FlipbookAtlasMeta {
-            name: "swarm_test_atlas".to_owned(),
-            frame_width: 64,
-            frame_height: 64,
-            fps: 12,
-            total_frames: 10 + frame_count,
-            layout: FlipbookLayout::VerticalStrip,
-            actions: BTreeMap::from([(
-                AnimState::Walk,
-                ActionSlice {
-                    start_frame: 10,
-                    frame_count,
-                    looping,
-                    hold_last_frame: !looping,
+    #[test]
+    fn a_swarm_bubble_takes_the_material_of_its_heading() {
+        let mut handles = Assets::<BubbleDomeMaterial>::default();
+        let uniform = |heading: f32| {
+            let (mut instance, _) = walker(20.0, 1.5);
+            instance.heading_angle_rad = heading;
+            BubbleUniformGpu::from_instance(
+                &instance,
+                crate::player_presentation::PlayerStyle {
+                    srgb: [0.5; 3],
+                    linear: Vec4::ONE,
+                    ui: bevy_egui::egui::Color32::GRAY,
                 },
-            )]),
-        }
+                crate::flipbook_clock::FlipbookLanes::fixed(0),
+            )
+        };
+        let materials = SwarmHeadingMaterials {
+            eastward: handles.add(BubbleDomeMaterial::new(uniform(0.0), None)),
+            westward: handles.add(BubbleDomeMaterial::new(uniform(std::f32::consts::PI), None)),
+        };
+        assert_eq!(materials.facing(1.5), &materials.eastward);
+        assert_eq!(materials.facing(0.0), &materials.eastward);
+        assert_eq!(materials.facing(-1.5), &materials.westward);
+
+        // A bounce off the east wall turns the walker west, and so its material.
+        let (mut instance, mut transform) = walker(SWARM_MAX_X - 0.1, 1.5);
+        bounce_swarm_bubble(&mut instance, &mut transform, 1.0);
+        assert_eq!(materials.facing(instance.velocity[0]), &materials.westward);
     }
 
     #[test]
-    fn swarm_frames_follow_the_walk_slice() {
-        let looping = atlas(8, true);
-        assert_eq!(swarm_frame_index(Some(&looping), AnimState::Walk, 0.0), 10);
-        assert_eq!(swarm_frame_index(Some(&looping), AnimState::Walk, 0.5), 14);
-        assert_eq!(swarm_frame_index(Some(&looping), AnimState::Walk, 0.99), 17);
-
-        let held = atlas(8, false);
-        assert_eq!(swarm_frame_index(Some(&held), AnimState::Walk, 0.99), 17);
-
-        let empty = atlas(0, true);
-        assert_eq!(swarm_frame_index(Some(&empty), AnimState::Walk, 0.5), 10);
-    }
-
-    #[test]
-    fn a_missing_atlas_or_action_shows_frame_zero() {
-        assert_eq!(swarm_frame_index(None, AnimState::Walk, 0.5), 0);
-        let looping = atlas(8, true);
-        assert_eq!(swarm_frame_index(Some(&looping), AnimState::Idle, 0.5), 0);
+    fn a_preview_phase_restarts_only_when_its_state_changes() {
+        let idle = PreviewPhase::new(AnimState::Idle, 100);
+        assert_eq!(idle.observed(AnimState::Idle, 900), idle);
+        assert_eq!(
+            idle.observed(AnimState::Walk, 900),
+            PreviewPhase::new(AnimState::Walk, 900)
+        );
     }
 }

@@ -16,8 +16,12 @@
 //! # Invariants
 //! - Scripted battles are matrix fixtures in RON, played by the same `BattleRun` as the matrix.
 //! - Expected ticks are derived from the catalog values, not copied from a run.
+//! - A test whose premise is a swing winding up plays a scratch melee archetype with a wind-up
+//!   (`WINDUP_MELEE`, added to the shipped catalog in the test), so it does not depend on
+//!   whether the shipped melee unit winds up.
 
-use sim_core::WeaponPhase;
+use sim_core::catalog::RuntimeCatalogs;
+use sim_core::{UnitCatalog, UpgradeCatalog, WeaponPhase};
 use sim_fixtures::matchup::{Battle, BattleRun, Matrix, MATRIX_RON};
 use sim_fixtures::trace::cli::{run, trace_battle, RunError, TraceArgs};
 use sim_fixtures::trace::matrix::run_matrix;
@@ -30,6 +34,87 @@ type TestResult = Result<(), Box<dyn Error>>;
 /// A melee unit and a ranged unit of the shipped catalog, as the scripted battles use them.
 const MELEE: &str = "psi_grey";
 const RANGED: &str = "pulse_bot";
+
+/// A scratch melee archetype whose swing winds up, for the tests whose premise is a swing in
+/// its wind-up. Its values are the zealot's before plan `2026-11-04-combat-sc2-alignment` WP4
+/// (damage point 4, period 22, range 0.3, backswing 6), so the hand-placed spawn positions of
+/// those tests keep their meaning whatever the shipped zealot becomes.
+const WINDUP_MELEE: &str = "trace_windup_melee";
+
+/// [`WINDUP_MELEE`] in the catalog's RON form.
+const WINDUP_MELEE_RON: &str = r#"(
+            slug: "trace_windup_melee",
+            unit_type_id: 900,
+            faction: "cosmic_enclave",
+            display_name: "Trace Wind-Up Melee",
+            lore: "Scratch archetype of trace_tests.rs.",
+            sc2_analogue: "None",
+            showcase_hero: false,
+            showcase_order: None,
+            shape: UnitSphere,
+            silhouette: MeleeSpikes,
+            mover_type: Ground,
+            attributes: (bits: 17),
+            max_hp: 100.0,
+            max_shields: 50.0,
+            max_energy: 0.0,
+            life_armor: 1.0,
+            shield_armor: 0.0,
+            hp_regen_per_tick: 0.0,
+            shield_regen_per_tick: 0.08,
+            energy_regen_per_tick: 0.0,
+            max_speed: 0.126,
+            acceleration: 0.126,
+            deceleration: 0.126,
+            turn_rate_deg: 999.0,
+            collision_radius: 0.5,
+            separation_radius: 0.6,
+            push_priority: 25,
+            sight_radius: 9.0,
+            scan_range: 9.0,
+            mineral_cost: 100,
+            gas_cost: 0,
+            supply_cost: 2,
+            supply_provided: 0,
+            build_time_ticks: 100,
+            weapon: Some((
+                name: "Wind-Up Blades",
+                visual_kind: MeleeSlash,
+                target_flags: (bits: 255),
+                min_range: 0.0,
+                max_range: 0.3,
+                firing_arc_deg: 180.0,
+                has_turret: false,
+                turret_turn_rate_deg: 0.0,
+                base_damage: 8.0,
+                bonus_armored: 0.0,
+                bonus_light: 0.0,
+                attacks_count: 2,
+                period_ticks: 22,
+                damage_point_ticks: 4,
+                backswing_ticks: 6,
+                splash: None,
+                projectile_speed: None,
+            )),
+            is_detector: false,
+            capabilities: (overclock: None),
+        ),"#;
+
+/// The shipped catalogs with [`WINDUP_MELEE`] added to the unit list.
+fn catalogs_with_windup_melee() -> Result<RuntimeCatalogs, Box<dyn Error>> {
+    let units = sim_fixtures::UNITS_RON;
+    let list_end = units.rfind(']').ok_or("end of the unit list")?;
+    let edited = format!(
+        "{}{WINDUP_MELEE_RON}\n{}",
+        &units[..list_end],
+        &units[list_end..]
+    );
+    let factions = sim_fixtures::shipped_factions();
+    let units = UnitCatalog::from_ron_str_bundle(&factions, &edited, sim_fixtures::STRUCTURES_RON)?;
+    let upgrades = UpgradeCatalog::from_ron_str(&factions, sim_fixtures::UPGRADES_RON)?;
+    units.validate_upgrade_references(&upgrades)?;
+    Ok(RuntimeCatalogs { units, upgrades })
+}
 
 /// A one-battle matrix: `blue` holds position, `red` attacks blue's first unit.
 fn scripted(blue: &str, red: &str) -> Result<Battle, Box<dyn Error>> {
@@ -172,9 +257,12 @@ type Watched = (
 );
 
 /// Plays `battle` with a trace, and returns the trace and, for each tick, the weapon phases of
-/// red's units read directly from the world.
-fn play_watching_red(battle: &Battle) -> Result<Watched, Box<dyn Error>> {
-    let mut run = BattleRun::new(battle, sim_fixtures::shipped_catalogs(), 1, 0.0)?;
+/// red's units read directly from the world. `catalogs` are the catalogs the battle is played on.
+fn play_watching_red(
+    battle: &Battle,
+    catalogs: RuntimeCatalogs,
+) -> Result<Watched, Box<dyn Error>> {
+    let mut run = BattleRun::new(battle, catalogs, 1, 0.0)?;
     let mut trace = BattleTrace::new(&run.world, &run.blue, &run.red)?;
     let mut phases = vec![Vec::new()];
     while !run.is_finished() {
@@ -198,12 +286,17 @@ fn is_winding_up_on(phase: Option<&WeaponPhase>, target: EntityId) -> bool {
 fn a_second_swing_released_on_the_tick_of_the_kill_is_wasted() -> TestResult {
     // Two melee units approach one target symmetrically, so they swing on the same ticks: 2 x 16
     // on the first, then the first in id order kills with 13 life left and the second swing hits
-    // a dead target.
+    // a dead target. The premise is two swings winding up, so the melee units are the scratch
+    // archetype with a wind-up.
     let battle = scripted(
         &squad(RANGED, 15.0, 32.0),
-        &format!("{}, {}", squad(MELEE, 10.5, 29.0), squad(MELEE, 10.5, 35.0)),
+        &format!(
+            "{}, {}",
+            squad(WINDUP_MELEE, 10.5, 29.0),
+            squad(WINDUP_MELEE, 10.5, 35.0)
+        ),
     )?;
-    let (trace, target, _red, phases) = play_watching_red(&battle)?;
+    let (trace, target, _red, phases) = play_watching_red(&battle, catalogs_with_windup_melee()?)?;
     let summary = trace.summary();
     let end = summary.end_tick;
     // Premise, read from the world: both swings were winding up on the target the tick before.
@@ -224,16 +317,17 @@ fn a_second_swing_released_on_the_tick_of_the_kill_is_wasted() -> TestResult {
 #[test]
 fn a_swing_winding_up_when_another_attacker_kills_the_target_is_cancelled() -> TestResult {
     // The second melee unit starts a little farther away, so its swings run two ticks behind:
-    // its second swing is still winding up when the first unit's second swing kills.
+    // its second swing is still winding up when the first unit's second swing kills. The test
+    // needs a melee unit with a wind-up, so both are the scratch archetype.
     let battle = scripted(
         &squad(RANGED, 15.0, 32.0),
         &format!(
             "{}, {}",
-            squad(MELEE, 10.5, 29.0),
-            squad(MELEE, 10.292, 35.139)
+            squad(WINDUP_MELEE, 10.5, 29.0),
+            squad(WINDUP_MELEE, 10.292, 35.139)
         ),
     )?;
-    let (trace, target, red, phases) = play_watching_red(&battle)?;
+    let (trace, target, red, phases) = play_watching_red(&battle, catalogs_with_windup_melee()?)?;
     let summary = trace.summary();
     let end = summary.end_tick;
     // Premise, read from the world: the late unit was winding up on the target at the kill.
@@ -245,7 +339,7 @@ fn a_swing_winding_up_when_another_attacker_kills_the_target_is_cancelled() -> T
     );
 
     // The trace stops when a side is gone, so the cancellation shows on the next tick; play it.
-    let mut run = BattleRun::new(&battle, sim_fixtures::shipped_catalogs(), 1, 0.0)?;
+    let mut run = BattleRun::new(&battle, catalogs_with_windup_melee()?, 1, 0.0)?;
     let mut extended = BattleTrace::new(&run.world, &run.blue, &run.red)?;
     while !run.is_finished() {
         assert!(run.step().is_empty(), "no diagnostics");

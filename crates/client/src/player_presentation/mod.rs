@@ -134,6 +134,17 @@ pub enum PresentationError {
         /// Actual number of showcase catalog entries.
         count: usize,
     },
+    /// A live bubble's flipbook slice cannot be played by the integer flipbook clock.
+    #[error("cannot animate {action:?} of unit type {unit_type:?}: {source}")]
+    Flipbook {
+        /// Identity whose atlas holds the slice.
+        unit_type: sim_types::UnitTypeId,
+        /// Displayed action whose slice was refused.
+        action: sim_types::AnimState,
+        /// Why the slice cannot be played.
+        #[source]
+        source: crate::flipbook_clock::FlipbookLanesError,
+    },
 }
 
 impl PlayerPalette {

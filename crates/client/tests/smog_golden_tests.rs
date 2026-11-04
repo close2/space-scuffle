@@ -71,6 +71,16 @@
 //!   `BubbleRenderInstance::anim_progress: 0.0` became `attack_swing: None` (plan
 //!   `2026-11-04-battle-flipbook-animation` WP1). With that one spelling substituted back, all
 //!   four reproduced their previous values, so no smog output changed.
+//! - The same four hash each bubble material's `BubbleUniformGpu` bytes. They were re-recorded
+//!   when that uniform grew from 160 to 176 bytes and `DEFAULT_FEATURE_FLAGS` gained
+//!   `FLAG_FRAME_BLEND` (same plan, WP4). Hashing the first 160 bytes with bit 10 of
+//!   `feature_flags` cleared, the old image (the new row is all zero for fixed lanes), all four
+//!   reproduced their previous values, so no smog output changed.
+//! - C-18 WP7 and WP8 changed no constant (bit-exact refactors). C-18 WP9 re-recorded the seven
+//!   fluid goldens and the four system goldens (glibc 2.41, `x86_64`) in one commit, for one
+//!   deliberate change: velocities of at most `1e-3` world units per second become exactly zero
+//!   (plan D-3, owner answer Q0020). The four kinematics goldens, the noise golden and both
+//!   `libm` canaries are unchanged by it, and every golden keeps its class.
 //! - A golden may only change together with a deliberate, documented change in smog output.
 
 #![allow(
@@ -388,9 +398,9 @@ fn crowd_config() -> SmogConfig {
     }
 }
 
-const GOLDEN_FLUID_SHOWCASE: u64 = 0xb42e_8fd5_0690_ef08;
-const GOLDEN_FLUID_MIXED_24: u64 = 0x2e2d_8269_5e27_898d;
-const GOLDEN_FLUID_CROWD_48: u64 = 0x6ab3_c16e_837d_e74b;
+const GOLDEN_FLUID_SHOWCASE: u64 = 0x2b35_6d55_7c4a_1810;
+const GOLDEN_FLUID_MIXED_24: u64 = 0x743d_d564_7e66_28b6;
+const GOLDEN_FLUID_CROWD_48: u64 = 0xe040_edb2_fa5b_187e;
 
 /// The showcase: ten emitting bubbles with confinement on, default configuration.
 ///
@@ -494,10 +504,10 @@ const VARIABLE_COUNT_RUN: usize = 5;
 /// Steps of the variable `dt` golden.
 const VARIABLE_STEPS: usize = 120;
 
-const GOLDEN_FLUID_WAKE_DECAY: u64 = 0x6f8f_62ab_607f_d719;
-const GOLDEN_FLUID_FAST_SOURCES: u64 = 0x7ffa_1917_b16b_ea08;
-const GOLDEN_FLUID_BOUNDS_SHIFT: u64 = 0xb677_0ad8_9bf1_a12a;
-const GOLDEN_FLUID_VARIABLE_DT: u64 = 0xf4fc_5e58_2628_330d;
+const GOLDEN_FLUID_WAKE_DECAY: u64 = 0x2ff5_8b66_774b_7a2b;
+const GOLDEN_FLUID_FAST_SOURCES: u64 = 0x5fb4_f8c6_25fd_54e2;
+const GOLDEN_FLUID_BOUNDS_SHIFT: u64 = 0xea2a_91d9_b0cc_39c0;
+const GOLDEN_FLUID_VARIABLE_DT: u64 = 0x55ae_4990_ed7a_4886;
 
 /// Fills `sources` with one showcase-mix source per state, translated by `offset` world units.
 fn fill_sources(sources: &mut Vec<BubbleSmogSource>, states: &[BouncingBubbleState], offset: Vec3) {
@@ -528,8 +538,10 @@ fn hashed_step(
 
 /// The showcase sources for [`WAKE_SOURCE_STEPS`], then no source for [`WAKE_DECAY_STEPS`]:
 /// the wake decays while nothing feeds it. Bricks return to rest here (density and glow reach
-/// exactly zero; the velocity field does not, `docs/plans/2026-11-04-open-findings-c17-c18-p9-gaps.md`
-/// §5.4), so a rest flag that is set too early, or a stale `occupied` flag, changes this hash.
+/// exactly zero; the velocity field does not everywhere within these 4 s: the quiescence of
+/// `docs/plans/2026-11-04-open-findings-c17-c18-p9-gaps.md` D-3 zeroes it about 19 s after the
+/// sources stop), so a rest flag that is set too early, or a stale `occupied` flag, changes this
+/// hash.
 ///
 /// Class L: `expf` (the velocity, density and glow decay factors at `1/60` s).
 #[test]
@@ -1185,11 +1197,11 @@ fn require_smog_activity(app: &App) -> usize {
     stats.active_bubbles
 }
 
-const GOLDEN_SYSTEMS_STARTUP: u64 = 0x1fe4_a558_384c_8b47;
+const GOLDEN_SYSTEMS_STARTUP: u64 = 0xdc52_4ec7_f496_22d1;
 const GOLDEN_SYSTEMS_NOISE: u64 = 0x1fe2_2cc0_e03e_f783;
-const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0xeba0_95a3_db3b_d625;
-const GOLDEN_SYSTEMS_SWARM: u64 = 0x86ef_7170_644c_8c2b;
-const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0x64bc_cacc_34a1_e848;
+const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0x4174_0f4e_bdad_29c9;
+const GOLDEN_SYSTEMS_SWARM: u64 = 0xecc6_5d0a_0949_f693;
+const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0x5527_286e_5980_202b;
 
 /// The headless Visual Lab app after its startup frame (the clock's first update has `dt = 0`).
 fn startup_app() -> Result<App, Box<dyn std::error::Error>> {

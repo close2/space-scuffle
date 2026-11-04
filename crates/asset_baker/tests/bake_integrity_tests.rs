@@ -456,3 +456,111 @@ fn states_without_a_seam_bake_byte_for_byte_as_before() {
     assert_ne!(strip_frames(&strip, idle), before, "Idle is loop-sampled");
     assert!(bake.seam[&AnimState::Idle].is_some());
 }
+
+// --- Clip duration in the manifest (plan `2026-11-04-battle-flipbook-animation.md`, WP3) -----
+
+/// Length of the committed fixture clip in milliseconds.
+const FIXTURE_MS: u32 = 4000;
+
+/// One frame of the fixture's own 15 fps source, in milliseconds, rounded up.
+const SOURCE_FRAME_MS: u32 = 67;
+
+fn assert_fixture_length(state: AnimState, duration_ms: Option<u32>) {
+    let duration = duration_ms.unwrap_or_else(|| panic!("{state:?} has no duration"));
+    assert!(
+        duration.abs_diff(FIXTURE_MS) <= SOURCE_FRAME_MS,
+        "{state:?} lasts {duration} ms, the clip {FIXTURE_MS} ms"
+    );
+}
+
+#[test]
+fn held_and_loop_sampled_slices_record_the_clip_length() {
+    use asset_baker::ffmpeg_importer::bake_repaired_action_videos;
+    use asset_baker::loop_metrics::SeamRepair;
+    use asset_baker::{BakeFraming, FrameSpec};
+
+    let clip = common::fixture_clip();
+    let clips = [
+        (AnimState::Idle, clip.as_path()),
+        (AnimState::Walk, clip.as_path()),
+        (AnimState::Attack, clip.as_path()),
+    ];
+    let seams = std::collections::BTreeMap::from([(
+        AnimState::Idle,
+        SeamRepair {
+            scale_lock: false,
+            crossfade_frames: 0,
+        },
+    )]);
+    // 512 px frames: 16384 / 512 / 3 = 10 frames of the 60 the fixture decodes to, the
+    // sampling of today's Veo clips, so frame_count / fps would claim 0.67 s.
+    let spec = FrameSpec {
+        size: 512,
+        fps: 15,
+        framing: BakeFraming::CenterCrop,
+    };
+    let out = tempfile::tempdir().expect("tempdir");
+    let bake =
+        bake_repaired_action_videos("timed", &clips, out.path(), spec, &seams).expect("bake");
+    assert!(
+        bake.seam[&AnimState::Idle].is_some(),
+        "Idle is loop-sampled"
+    );
+    assert!(
+        bake.seam[&AnimState::Walk].is_none(),
+        "Walk is held-sampled"
+    );
+    for (state, slice) in &bake.meta.actions {
+        assert_eq!(slice.frame_count, 10, "{state:?}");
+        assert_fixture_length(*state, slice.duration_ms);
+    }
+    let written = FlipbookAtlasMeta::load_from_ron(&out.path().join("timed.flipbook.ron"))
+        .expect("written manifest");
+    assert_eq!(written, bake.meta, "the duration is written to disk");
+}
+
+#[test]
+fn a_clip_within_budget_records_its_length_at_any_decode_rate() {
+    let clip = common::fixture_clip();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let meta = bake_multi_action_videos_with_states(
+        "subject",
+        &[(AnimState::Constructing, clip.as_path())],
+        dir.path(),
+        64,
+        5,
+    )
+    .expect("bake");
+    let slice = &meta.actions[&AnimState::Constructing];
+    assert_eq!(slice.frame_count, 20, "4 seconds at 5 fps");
+    assert_eq!(slice.duration_ms, Some(FIXTURE_MS), "20 frames at 5 fps");
+}
+
+#[test]
+fn a_single_clip_bake_records_the_clip_length() {
+    let clip = common::fixture_clip();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let meta = bake_custom_video(&clip, dir.path(), "subject", 512, 15).expect("bake");
+    assert_fixture_length(AnimState::Idle, meta.actions[&AnimState::Idle].duration_ms);
+}
+
+#[test]
+fn a_still_image_bake_records_no_duration() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let still = dir.path().join("still.png");
+    image::RgbaImage::from_pixel(96, 64, image::Rgba([90, 140, 200, 255]))
+        .save(&still)
+        .expect("still image");
+    let out = dir.path().join("out");
+    let meta = bake_multi_action_videos_with_states(
+        "still",
+        &[(AnimState::Idle, still.as_path())],
+        &out,
+        64,
+        15,
+    )
+    .expect("bake");
+    let slice = &meta.actions[&AnimState::Idle];
+    assert_eq!(slice.frame_count, 1, "a still decodes to one frame");
+    assert_eq!(slice.duration_ms, None, "a still has no length to play at");
+}
