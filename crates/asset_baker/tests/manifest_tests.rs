@@ -241,20 +241,25 @@ fn committed_manifests() -> Vec<std::path::PathBuf> {
     paths
 }
 
+/// Every committed manifest, whether it predates `duration_ms` (no field) or was baked since
+/// (a duration per slice), re-serialises to its own bytes, so loading and saving can never
+/// change the hash its provenance record holds.
 #[test]
-fn committed_manifests_without_a_duration_reserialise_byte_for_byte() {
+fn committed_manifests_reserialise_byte_for_byte() {
     let paths = committed_manifests();
     assert!(!paths.is_empty(), "no committed manifest was found");
+    let mut without_duration = 0;
     for path in paths {
         let text = std::fs::read_to_string(&path).expect("manifest text");
         let meta = FlipbookAtlasMeta::load_from_ron(&path).expect("committed manifest loads");
-        assert!(
-            meta.actions
-                .values()
-                .all(|slice| slice.duration_ms.is_none()),
-            "{} has no duration field to read",
-            path.display()
-        );
+        if meta
+            .actions
+            .values()
+            .all(|slice| slice.duration_ms.is_none())
+        {
+            assert!(!text.contains("duration_ms"), "{}", path.display());
+            without_duration += 1;
+        }
         let out = tempfile::tempdir().expect("tempdir");
         let written = out.path().join("rewritten.flipbook.ron");
         meta.save_to_ron(&written).expect("re-serialise");
@@ -266,6 +271,10 @@ fn committed_manifests_without_a_duration_reserialise_byte_for_byte() {
             path.display()
         );
     }
+    assert!(
+        without_duration > 0,
+        "the bundle still ships manifests that predate duration_ms"
+    );
 }
 
 fn timed_meta(duration_ms: Option<u32>) -> FlipbookAtlasMeta {
