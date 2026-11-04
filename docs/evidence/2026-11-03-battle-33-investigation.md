@@ -4,8 +4,8 @@ This is the evidence file of [the battle 33 investigation plan](../plans/2026-11
 which answers the owner's request in [Q0007](../questions/open/0007-combat-baselines.md): find out why published
 StarCraft II sources say zealots win this fight, and why our battle 33 leaves 6 to 13 of 24 marines alive. The plan's
 D-5 gives this file seven sections. **Sections 1 (WP1, reference research), 2 and 3 (WP2, comparison and analytic
-model, with WP3's measured contact in §3.5) and 4 (WP3, trace findings) are written so far.** WP4 and WP5 add sections
-5 to 7. This file changes no catalog value, combat rule or expected result.
+model, with WP3's measured contact in §3.5), 4 (WP3, trace findings) and 5 (WP4, experiments) are written so far.**
+WP5 adds sections 6 and 7. This file changes no catalog value, combat rule or expected result.
 
 ## 1. Reference: what StarCraft II does (WP1)
 
@@ -746,3 +746,306 @@ zealots reach the marines at once, which only the large battle tests.
   around the crowd (11.5 zealot-seconds flanking, 33.0 approaching) instead of arriving together. WP4 measures which
   of these the history (`d4109e2`) and the reference data change.
 - **New for WP5:** battle 33's recorded outcome fails on 7 of 64 jittered seeds (§4.2).
+
+## 5. Experiments (WP4)
+
+Written 2026-11-04 against `main` at `c68d5e8`. `main` moved to `51946c5` during the work without touching
+`sim_core`, `sim_types`, `sim_map`, `assets/catalog` or the matrix fixture, so every number below holds there too.
+Nothing here changed a catalog value, a rule or an expected result. Every experiment used a scratch catalog or a
+scratch fixture under `~/scratch/zm_wp4/` on the development server, or an exported tree of an old commit.
+
+### 5.1 Method
+
+- **Runs.** Each experiment changes one thing and plays battle 33 on WP3's 68 seeds (the four of record and 64
+  jittered ones, §4.1) with the trace tool, `--seeds 64 --no-unit-csv`, plus `--catalog-dir <scratch catalog>` or
+  `--fixture <scratch fixture>`. A scratch catalog is a full copy of `assets/catalog` with only the named fields of
+  `pulse_bot` or `psi_grey` edited in `units.ron`. The baseline is WP3's run, which this work reproduced bit for bit.
+- **Measures.**
+  - Wins, and unresolved battles (both sides alive at the 500-tick limit).
+  - Marine survivors: mean and SD over the 68 seeds.
+  - The **paired difference** Δ against the baseline: each seed compared with itself, given as mean and standard
+    error. It is far more sensitive than comparing two means.
+  - K over the first 5 s after the first zealot reaches its band (same definition as §3.5).
+  - Zealot swings released.
+- **The 500-tick limit leaves some fights unresolved** when a variant slows the marines' win. §5.6 replays the main
+  variants with 1500 ticks, so every fight ends.
+- **Scripts.** The catalog builder, job runner, summaries and the history runner of §5.2 are throwaways in
+  `~/scratch/zm_wp4/scripts/`. They are not committed, as the plan allows for WP2's model. Every catalog edit is
+  listed in the tables, so any run can be repeated with the committed tool.
+
+### 5.2 History: `d4109e2`'s parent against `d4109e2`
+
+The trace tool did not exist at these commits. So each commit was exported with `git archive` to
+`~/scratch/zm_wp4/trees/<commit>/` and built with its own target directory, with one scratch integration test added
+(never committed). That test copies the commit's own matrix runner (`Jitter`, `spawn_side`, `side_commands`, `play`)
+and plays battle 33 of the commit's own fixture on the same 68 seeds. Per tick it records, from public state:
+
+- units alive;
+- zealots in contact (K): a living marine within `max_range` plus both collision radii, centre to centre;
+- hostile body overlap: zealot–marine pairs closer than the sum of their collision radii.
+
+The battle setup is the same at both commits and at `main`; only the expectation and the claim differ.
+
+**Check of the runner.** At `d4109e2` it reproduces `main`'s trace exactly: the same marine survivors on all 68 seeds,
+the same mean K over the first 5 s (4.25), and 8, 6, 9 and 13 marines on the seeds of record. So battle 33 has not
+changed since `d4109e2`, and the runner measures K the way the trace tool does.
+
+| | Parent `b10e9ca` | `d4109e2` (= `main`) |
+|---|---|---|
+| Outcome on 68 seeds | **zealots win 67**, 1 unresolved | marines win 61, zealots 6, 1 unresolved |
+| Marine survivors, mean (SD) | 0.04 (0.36) | 7.41 (3.34) |
+| Zealot survivors, mean (SD) | 4.31 (1.15); histogram 1: 1, 2: 4, 3: 6, 4: 29, 5: 21, 6: 4, 7: 3 | 0.25 (0.78) |
+| Δ in marine survivors | −7.37 (SE 0.41), against `d4109e2` | — |
+| Seeds of record (marines – zealots) | 0–5, 0–5, 0–4, 0–5 | 8–0, 6–0, 9–0, 13–0 |
+| First zealot contact (tick) | 115.4 | 114.6 |
+| **K, first 5 s, mean (SD)** | **5.40 (0.30)** | **4.25 (0.40)** |
+| Largest K on any tick (median over seeds) | **8** | 6 |
+| Hostile pairs overlapping, mean per tick in the first 5 s | 0.53 | 0 |
+| Mean / deepest overlap of such a pair | 0.037 / 0.130 | 0 / 0 |
+
+Contact over time (means over the seeds still fighting):
+
+| s | Parent: marines | zealots | K | overlapping pairs | `d4109e2`: marines | zealots | K | overlapping pairs |
+|---|---|---|---|---|---|---|---|---|
+| 5 | 23.4 | 10.0 | 4.06 | 0.28 | 23.9 | 10.1 | 3.79 | 0 |
+| 6 | 21.1 | 8.9 | 5.73 | 0.69 | 22.3 | 8.8 | 4.62 | 0 |
+| 7 | 18.6 | 8.1 | **6.32** | 1.03 | 19.7 | 7.9 | 4.54 | 0 |
+| 8 | 15.9 | 7.5 | **6.37** | 0.56 | 17.8 | 7.1 | 4.63 | 0 |
+| 9 | 13.2 | 6.7 | 6.02 | 0.11 | 16.3 | 6.2 | 4.51 | 0 |
+| 10 | 10.9 | 6.0 | 5.45 | 0.01 | 14.2 | 5.1 | 3.88 | 0 |
+| 11 | 8.7 | 5.6 | 4.93 | 0.01 | 12.5 | 4.3 | 3.55 | 0 |
+| 12 | 6.5 | 5.2 | 4.33 | 0 | 11.3 | 3.6 | 3.18 | 0 |
+| 13 | 4.5 | 4.8 | 3.75 | 0 | 10.1 | 2.8 | 2.55 | 0 |
+| 14 | 3.0 | 4.5 | 3.16 | 0 | 9.1 | 2.1 | 1.90 | 0 |
+
+**Reading.**
+
+1. **`d4109e2` flipped the battle by lowering K by about one zealot**: from 5.4 to 4.25 in the first 5 s, and the
+   peak from 8 to 6. The zealots died at the same pace in both (8.9 against 8.8 alive at 6 s, 6.7 against 6.2 at 9 s).
+   What changed is how many of the living zealots were striking. That is the threshold of §3.4: with K = 5 or more the
+   zealots win, with K = 4 they lose.
+2. **"Overlapping onto the marine line" was shallow.** Before `d4109e2`, 0.5 to 1 zealot–marine pairs overlapped per
+   tick on average in the first seconds of contact. The overlap was 0.04 on average and 0.13 at most, against radii
+   that sum to 0.875. The zealots did not stand inside the marines. The overlap let one or two more zealots squeeze
+   onto the front: 8 at the peak against 6, and 6.3 against 4.6 at 7 to 8 s. That was enough to cross the threshold.
+   After `d4109e2`, no hostile pair ever overlaps.
+3. **The rule changes of `d4109e2` were not separated.** The plan allows a throwaway branch that reverts one rule at a
+   time. But `d4109e2` changes 14 files of `sim_core/src` (+2 047, −1 082 lines), and its message says "each rule
+   depends on the others to hold". Impenetrable hostile bodies, the step that "loses whatever would drive it into a
+   body that will not yield", flanking and the arrival rules are written against each other. Before `d4109e2`, hostile
+   pushes were already uncapped (`world.rs`, the `hard_pushes` accumulator), so "uncapped hostile correction" alone is
+   not the difference. Reverting a single rule would test a combination that never existed, so this was not done.
+
+### 5.3 Reference data, one value at a time
+
+Battle 33, 500 ticks, 68 seeds. Δ is the paired difference in marine survivors against the baseline, mean (SE).
+Reference values are §1's, converted to our ticks as in §2.2 and rounded to a whole tick.
+
+| Variable | Shipped → scratch value | Marine wins / zealot wins / unresolved | Marine survivors mean (SD) | Δ (SE) | K first 5 s (SD) | Zealot swings |
+|---|---|---|---|---|---|---|
+| Baseline (WP3) | — | 61 / 6 / 1 | 7.41 (3.34) | — | 4.25 (0.40) | 53.3 |
+| Marine speed | 0.09 → **0.126** (acceleration and deceleration likewise; both unused) | 58 / 4 / 6 | 6.72 (3.17) | −0.69 (0.44) | 4.27 (0.37) | 54.9 |
+| Zealot range | 0.3 → **0.1** | 66 / 0 / 2 | 8.24 (2.47) | **+0.82** (0.42) | 4.16 (0.38) | 51.0 |
+| Zealot period | 22 → **21** (damage point 4 kept: fires every 21) | 49 / 9 / 10 | 5.62 (3.52) | −1.79 (0.25) | 4.24 (0.38) | 57.9 |
+| Zealot damage point | 4 → **0**, with period 22 → **21** so it still fires every 22 (see below) | 42 / 10 / 16 | 4.59 (3.06) | **−2.82** (0.33) | 4.28 (0.35) | 60.6 |
+| Zealot damage point, period kept | 4 → 0, period 22 (fires every 23) | 55 / 2 / 11 | 6.22 (2.84) | −1.19 (0.32) | 4.31 (0.35) | 56.4 |
+| Zealot damage point and faster cadence | 4 → 0, period 20 (fires every 21) | 25 / 26 / 17 | 2.46 (2.66) | −4.96 (0.37) | 4.25 (0.32) | 66.3 |
+| Zealot backswing | 6 → 9 | 62 / 5 / 1 | 7.29 (3.26) | −0.12 (0.12) | 4.26 (0.40) | 53.3 |
+| Marine damage point and backswing | 2 / 4 → 1 / 13 (ground and air weapon) | 63 / 1 / 4 | 7.50 (2.66) | +0.09 (0.39) | 4.25 (0.38) | 52.6 |
+| Separation radius, both | 0.45 / 0.6 → 0.375 / 0.375; also tried equal to the collision radius (0.375 / 0.5) | identical to the baseline on all 68 seeds | 7.41 (3.34) | 0 | 4.25 (0.40) | 53.3 |
+| Zealot attributes | Light, Psionic → Light, Biological (`bits` 17 → 5) | identical to the baseline on all 68 seeds | 7.41 (3.34) | 0 | 4.25 (0.40) | 53.3 |
+| Zealot shield regeneration | 0.08 → 0.112 per tick | identical to the baseline on all 68 seeds | 7.41 (3.34) | 0 | 4.25 (0.40) | 53.3 |
+| Push priority, both | 20 / 25 → 10 / 10 | identical to the baseline on all 68 seeds | 7.41 (3.34) | 0 | 4.25 (0.40) | 53.3 |
+| Scan range, both | 9 / 9 → **5.5 / 5** | 37 / 11 / 20 | 4.29 (3.23) | **−3.12** (0.59) | 4.45 (0.29) | 62.0 |
+| Scan range, marine only | 9 → 5.5 | 50 / 5 / 13 | 5.78 (3.24) | −1.63 (0.52) | 4.24 (0.30) | 57.8 |
+| Scan range, zealot only | 9 → 5 | 58 / 1 / 9 | 6.35 (2.82) | −1.06 (0.55) | 4.36 (0.36) | 56.2 |
+| **All reference values** | every row above at its reference value (zealot damage point 0, period 21) | **45 / 17 / 6** | **4.71 (3.34)** | **−2.71** (0.61) | 4.28 (0.33) | 60.2 |
+| All reference, zealot every 21 ticks | as above, but zealot period 20 | 28 / 28 / 12 | 2.65 (2.76) | −4.76 (0.56) | 4.27 (0.33) | 65.9 |
+| All reference but the marine speed | marine speed stays 0.09 | 42 / 13 / 13 | 4.81 (3.38) | −2.60 (0.58) | 4.31 (0.32) | 60.3 |
+| All reference but the zealot range | zealot range stays 0.3 | 32 / 24 / 12 | 3.24 (3.20) | −4.18 (0.61) | 4.39 (0.28) | 64.8 |
+| All reference but the scan ranges | scan ranges stay 9 / 9 | 57 / 8 / 3 | 6.41 (3.64) | −1.00 (0.48) | 4.17 (0.39) | 55.9 |
+
+**A damage point of 0 fires every `period + 1` ticks: WP2's reading (§2.5) is confirmed.** On the one-zealot
+benchmark (§4.4, seed 0x4242), the marines took damage every:
+
+- 22 ticks with the shipped weapon;
+- 23 ticks with damage point 0 and period 22;
+- 22 ticks with damage point 0 and period 21;
+- 21 ticks with damage point 0 and period 20.
+
+So the experiment "damage point 0" runs with period 21. It then fires every 22 ticks, as today, and changes only the
+wind-up. The reference cadence (21.43 ticks) lies between periods 20 and 21 at damage point 0, so both are shown.
+
+**Not expressible in data, so not run:**
+
+- **The 5-tick gap between the zealot's two strikes**, and the 2.1 reach of the second (§1.5). `attacks_count`
+  applies every strike in the same tick (`combat_resolution.rs`), and no catalog field spaces them.
+- **The shield-regeneration delay** (250 ticks against 178.6), which is hard-coded in `sim_core` (§2.4). The
+  regeneration rate alone changes nothing (table), because no zealot goes 250 ticks unhit while it matters.
+- Acceleration and turn rate are parsed but have no effect in this battle (§2.3), so they were not varied.
+
+**Reading.**
+
+1. **No single data difference makes the zealots the favourites, and all of them together only partly close the
+   gap.** The all-reference catalog moves the mean from 7.41 to 4.71 marines and the zealot wins from 6 to 17 of 68.
+   The marines still win 45; on 1500 ticks (§5.6) the split is 49 to 19. K over the first 5 s stays at 4.28: the
+   reference data does not change how many zealots reach the marines, only what each contact is worth.
+2. **The zealot's wind-up and cadence are the largest data effects.**
+   - The 4-tick wind-up costs the marines 2.82 survivors (paired), although WP3 found only 1.4 swings cancelled per
+     battle (§4.3). The wind-up also delays the first strike of every new engagement by 4 ticks (3 more than damage
+     point 0, which still waits one tick), and it holds the zealot still.
+   - Each tick of period moves the result by about 1.6 to 2.1 marines. With damage point 4, period 22 → 21 gives
+     −1.79. With damage point 0, cadence 23 → 22 → 21 gives −1.19, −2.82 and −4.96.
+   - Battle 33 sits on a steep slope: a 5 % change in the zealot's rate of fire moves the mean by about a quarter.
+3. **The scan range is the third, and its mechanism is not isolated.** The reference scan ranges (5.5 and 5) cost the
+   marines 3.12 survivors: 1.63 from the marine's alone and 1.06 from the zealot's alone. K rises only from 4.25 to
+   4.45. Meanwhile zealot swings rise from 53.3 to 62.0, marine target switches fall from 0.90 to 0 per battle, and
+   zealot pushes in contact rise from 40.8 to 50.8 unit-ticks. The likely reading is a change in which zealots the
+   marines focus, but the trace does not show it directly. WP5 should treat it as a measured effect with an open
+   mechanism.
+4. **Marine speed hardly matters** (−0.69, SE 0.44), as WP2 predicted. Without kiting it only moves the meeting 11
+   ticks earlier. **Zealot range 0.1 favours the marines** (+0.82), also as predicted: fewer zealots fit on the ring
+   (§3.4). In the all-reference set, keeping range 0.3 instead costs the marines 1.5 more survivors.
+5. **Four flagged differences are exactly inert in battle 33.** Separation radius, zealot attributes, shield
+   regeneration rate and push priority give results identical to the baseline on all 68 seeds, as §2 predicted from the
+   code. The marine's damage point and backswing (1 / 13) change single seeds but not the mean (+0.09, SE 0.39).
+
+### 5.4 Formation and setup
+
+The scratch fixture `~/scratch/zm_wp4/zm_wp4_formations.ron` holds battle 33 with one setup change each, on the
+shipped catalog unless stated. Its control battle, a verbatim copy of battle 33, reproduces the baseline on every
+seed.
+
+| Setup change | Marine wins / zealot wins / unresolved | Marine survivors mean (SD) | Δ (SE) | K first 5 s (SD) | Largest K (median) | Zealot swings |
+|---|---|---|---|---|---|---|
+| Baseline: zealots in a 3 × 4 block, marines 4 × 6 at 0.8, fronts 22.6 apart | 61 / 6 / 1 | 7.41 (3.34) | — | 4.25 (0.40) | 6 | 53.3 |
+| **Zealots in one line of 12** facing the marines (spacing 1.2, front at x 45, centred like the block) | **4 / 51 / 13** | **0.63 (1.29)** | **−6.78** (0.44) | **5.37** (0.36) | 7 | 71.0 |
+| The same line, all-reference catalog | 0 / 63 / 5 | 0.12 (0.47) | −7.29 (0.40) | 5.32 (0.35) | 7 | 72.2 |
+| Marines spaced 1.2 instead of 0.8 (front kept at x 22.4, centre at y 46) | 54 / 8 / 6 | 6.44 (3.53) | −0.97 (0.48) | 4.31 (0.39) | 6 | 55.4 |
+| Start distance halved: fronts 11.3 apart, each side moved 5.65 closer | 58 / 5 / 5 | 5.85 (3.16) | −1.56 (0.49) | 4.46 (0.37) | 6 | 57.3 |
+| **O1's setup** (§1.9): 50 marines (5 × 10 at 0.8) against 25 zealots (5 × 5 at 1.2), 1000 ticks | 68 / 0 / 0 | **29.34 of 50** (1.96), 59 % | — | 5.49 (0.29) | 8 | 68.3 |
+| O1's setup, all-reference catalog | 68 / 0 / 0 | 27.69 of 50 (1.99), 55 % | — | 5.37 (0.30) | 8 | 73.3 |
+
+**Reading.**
+
+1. **Formation decides battle 33 more than any data value.** Putting the same 12 zealots in a line instead of a
+   3-deep block raises K from 4.25 to 5.37. That turns a 90 % marine win into a 75 % zealot win (−6.78 marines), more
+   than twice the all-reference effect. It is the same mechanism as the history: about one more zealot in contact.
+2. **Marine spread and start distance move the result by one to one and a half marines**, through a slightly higher K
+   (4.31 and 4.46). Neither changes the winner.
+3. **At O1's size our marines do better than the one observed test.** O1 reports 20 of 50 marines alive (40 %). We get
+   29.3 (59 %), or 27.7 (55 %) with the reference data. K here is 5.5, below the 7 that §3.4's square-root scaling
+   assumed, so our front grows more slowly with army size than that estimate. O1 is a single anecdotal test (§1.9), so
+   this is a hint, not a measured error.
+
+### 5.5 Rules measured by trace only (plan item 4)
+
+In every 24-against-12 variant of §5.3 and §5.4:
+
+- **No zealot swing was cancelled because its target left the band.** All cancellations are "target gone".
+- **Zealots spend 0.2 to 0.4 zealot-seconds blocked** per battle, against 10.4 to 12.6 flanking.
+
+So, as in WP3, no variant has zealots robbed of swings by pushed targets or stuck behind each other. The limit is
+where the zealots stand when the front is full, and the formation sets that.
+
+### 5.6 Fought to the end: 1500 ticks
+
+The same battle with only the tick limit raised to 1500 (scratch fixture), so no fight is unresolved.
+
+| Catalog | Marine wins / zealot wins | Marine survivors mean (SD) |
+|---|---|---|
+| Shipped | 62 / 6 (seed 19 becomes a marine win) | 7.41 (3.34) |
+| Marine speed 0.126 | 59 / 9 | 6.62 (3.35) |
+| Zealot period 21 | 56 / 12 | 5.51 (3.65) |
+| Zealot damage point 0, period 21 | 49 / 19 | 4.35 (3.30) |
+| Zealot damage point 0, period 22 | 59 / 9 | 6.00 (3.21) |
+| Scan ranges 5.5 / 5 | 44 / 24 | 3.94 (3.55) |
+| All reference | 49 / 19 | 4.65 (3.39) |
+| All reference, zealot every 21 ticks | 35 / 33 | 2.50 (2.84) |
+
+The unresolved battles of §5.3 split between the sides much as the resolved ones do, and the ranking of the variants
+is unchanged. Even with every reference value and the faster of the two reference cadences, the zealots win only
+about half the seeds.
+
+### 5.7 Control: the whole matrix on the all-reference catalog
+
+All 50 battles of the shipped matrix were played on the four seeds of record plus 16 jittered seeds, once with the
+shipped catalog and once with the all-reference catalog of §5.3. Survivor ranges were checked against each battle's
+`expect`. Lead-unit hull was checked by hand for the battles whose health moved.
+
+- **47 battles keep their survivor counts** (identical means over the 20 seeds). Most contain neither unit. Those
+  that do (5a to 5c, 7, 8, 11a, 12a, 15, 16a, 16b, 21, 23b, 25a) change at most the remaining health, or the end tick
+  by a few ticks, and keep their expectation.
+- **Three battles change their survivor counts:**
+
+| Battle | Expectation | Shipped, seeds of record (blue – red) | All reference, seeds of record | Seeds failing the expectation, of 4 / of 20 |
+|---|---|---|---|---|
+| 23a zealot vs 6 lings | blue 0, red 1 or more | red 2 on all four | red 2 on all four (mean over 20 seeds 2.10 → 2.00) | 0 → 0 / 0 → 0 |
+| 32 30 marines vs 15 banelings | blue 0 to 15 | 0–1, 2–0, 1–0, 0–0 | 3–0, 2–0, 0–0, 0–0 | 0 → 0 / 0 → 0 |
+| **33 24 marines vs 12 zealots** | blue 4 to 16, red 0 | 8–0, 6–0, 9–0, 13–0 | **3–1, 1–1, 3–1, 9–0** | **0 → 3 / 2 → 6** |
+
+- **One more battle fails on its lead-unit hull.** Battle **25b** (2 upgraded, stimmed marines against 1 zealot)
+  expects the zealot to end with 5 to 45 hull. With the all-reference catalog it ends with **62** on all four seeds,
+  instead of 22.
+  - **The cause is the marine's backswing of 13.** On the first seed of record, marine damage point and backswing
+    1 / 13 alone give 62. Marine speed, zealot range, zealot backswing, shield regeneration and push priority leave 22.
+    Zealot damage point 0 or the reference scan ranges give 32, still inside the range.
+  - **The marines fire 16 shots instead of 24.** In `step_entity_weapon` (`combat.rs`) a weapon leaves its
+    `Backswing` phase only when the backswing ends. So a backswing longer than the cooldown lengthens the period.
+    Unstimmed (period 15, cooldown 14 after a damage point of 1), a 13-tick backswing fits. Stimmed (period 10), it
+    does not.
+  - **StarCraft II does not work this way.** There the backswing is a lock on new orders, not a gate on the next
+    attack (§1.8, Damage Point), and stimmed marines fire every 0.41 s. Whether the game also scales the backswing by
+    the attack-speed multiplier is **not found**.
+  - So this failure is a rule interaction exposed by the reference value, not evidence about 25b's outcome.
+
+**Reading.** The all-reference catalog costs little in the rest of the matrix. Of 50 battles it breaks only two:
+battle 33 (3 of 4 seeds of record) and battle 25b (through the backswing gate above). Any proposal that adopts the
+marine's reference backswing needs that rule looked at first.
+
+### 5.8 What the experiments say about the cause
+
+| Experiment | Effect on marine survivors (paired Δ) | K first 5 s | What it says |
+|---|---|---|---|
+| History: before `d4109e2` | −7.37 (zealots win 67 of 68) | 5.40 against 4.25 | The flip came from contact rules that let about one more zealot reach the front, not from data |
+| Zealots in a line | −6.78 (zealots win 51) | 5.37 | The same lever as the history, set by the formation instead of the rules |
+| All reference data | −2.71 (marines still win 45) | 4.28 | The data differences are real but secondary: they change what a contact is worth, not how many contacts there are |
+| Zealot damage point 0 (same cadence) | −2.82 | 4.28 | The largest single data effect: the 4-tick wind-up delays every new engagement |
+| Zealot period 21 | −1.79 | 4.24 | Battle 33 is very sensitive to the zealot's rate of fire |
+| Scan ranges 5.5 / 5 | −3.12 | 4.45 | Large, with the mechanism not isolated |
+| Zealot range 0.1 | +0.82 | 4.16 | Favours the marines, as predicted |
+| Marine speed 0.126 | −0.69 | 4.27 | Small, as predicted without kiting |
+| Separation, attributes, shield regeneration, push priority | 0 | 4.25 | Inert, as predicted from the code |
+| O1's setup (50 against 25) | 59 % alive, against O1's 40 % | 5.49 | Our rules favour the marines somewhat more than the one observed large test |
+
+**In short:** K, the number of zealots striking at once, decides battle 33.
+
+- The rules of `d4109e2` hold K near 4, below the 5 the zealots need.
+- The battle's 3-deep zealot block keeps K low too. A line formation lifts it past the threshold.
+- The reference data makes each contact worth more to the zealots: no wind-up, a faster cadence, shorter scan
+  ranges. It moves the battle from a 90 % to about a 70 % marine win, but on its own it does not make the zealots
+  the favourites.
+
+WP5 ranks these causes and writes the questions.
+
+### 5.9 Deviations from the plan
+
+- **History runner.** The trace tool postdates `d4109e2`. So the history used a scratch integration test that copies
+  each commit's own matrix runner and measures K and overlap from public state (§5.2), not the full trace. Its K
+  matches the tool's exactly at `d4109e2`.
+- **History trees.** They were exported with `git archive` under `~/scratch/zm_wp4/trees/`, not created with
+  `git worktree add`. `1349c67` was not built: `d4109e2`'s parent already shows the zealot win, and `d4109e2` is the
+  commit that flipped it.
+- **No per-rule revert of `d4109e2`** (§5.2, reading 3).
+- **Rounding of reference cadences.** Reference times are rounded to whole ticks: zealot period 21 (21.43), zealot
+  backswing 9 (8.93), marine damage point 1 (0.89) and marine backswing 13 (13.39). The zealot's damage point 0 runs
+  with period 21 so that its cadence stays 22 (§5.3), and both neighbouring cadences are reported.
+- **Extra variants** not in the plan's list:
+  - scan range, which WP2 asked WP4 to measure;
+  - push priority;
+  - the damage-point cadence pair;
+  - three "all reference but one" catalogs;
+  - a 1500-tick replay;
+  - the O1 setup on both catalogs.
+- **Matrix control on 20 seeds**, the four of record plus 16, not 68, for all 50 battles. Lead-unit hull was checked
+  by hand only where health moved.
