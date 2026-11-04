@@ -41,3 +41,4 @@ Options:
 
 ## Answer
 
+Owner (2026-11-04): Option (a) — spend one generation on the pilot (`plasma_siphon_dome` idle).

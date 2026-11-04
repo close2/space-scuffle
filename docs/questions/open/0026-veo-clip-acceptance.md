@@ -24,3 +24,4 @@ its reference to a commercial game's name. Say if you want the look described di
 
 ## Answer
 
+Owner (2026-11-04): Option (a) — the agent accepts or rejects each clip against the written criteria and commits a contact sheet under `docs/evidence/veo/review/`; the owner can reject any clip later to be regenerated in the next batch.

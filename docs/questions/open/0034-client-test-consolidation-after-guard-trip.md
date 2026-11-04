@@ -35,3 +35,4 @@ consolidate. If you meant the trigger literally, answer "consolidate" and it wil
 
 ## Answer
 
+Owner (2026-11-04): Option A only for now (free preinstalled runner software before the build; keep client integration tests as separate binaries).

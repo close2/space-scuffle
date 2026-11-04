@@ -37,3 +37,4 @@ Evidence: [`docs/evidence/2026-11-03-battle-33-investigation.md`](../../evidence
 
 ## Answer
 
+Owner (2026-11-04): Option 2 (change the rule in `sim_core` first so backswing locks orders without delaying the next attack, then adopt the StarCraft II marine values `damage_point: 1` and `backswing: 13`).

@@ -20,3 +20,4 @@ whole Automaton faction gets media. Rejected clips stay on `~/scratch` and are n
 
 ## Answer
 
+Owner (2026-11-04): Agreed with agent's recommendation — Option (a): commit the required set's clips and atlases as plain git files, and ask again before the expansion batches.

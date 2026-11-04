@@ -51,3 +51,4 @@ Evidence: [`docs/evidence/2026-11-03-battle-33-investigation.md`](../../evidence
 
 ## Answer
 
+Owner (2026-11-04): Option 1 (no change to the contact rules for now), but documented/todo for future investigation.

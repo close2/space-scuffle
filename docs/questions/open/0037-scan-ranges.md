@@ -39,3 +39,4 @@ Evidence: [`docs/evidence/2026-11-03-battle-33-investigation.md`](../../evidence
 
 ## Answer
 
+Owner (2026-11-04): Option 3 (a plan that applies StarCraft II's scan-range rule across the catalog and measures the whole matrix before changing values), but low priority.

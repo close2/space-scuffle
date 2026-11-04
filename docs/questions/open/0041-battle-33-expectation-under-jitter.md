@@ -40,3 +40,4 @@ Evidence: [`docs/evidence/2026-11-03-battle-33-investigation.md`](../../evidence
 
 ## Answer
 
+Owner (2026-11-04): Option 2 (document in the fixture's claim/comment that the outcome is about a 90% marine win under jitter, with a pointer to the evidence).

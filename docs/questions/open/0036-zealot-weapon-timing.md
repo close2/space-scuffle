@@ -54,3 +54,4 @@ Evidence: [`docs/evidence/2026-11-03-battle-33-investigation.md`](../../evidence
 
 ## Answer
 
+Owner (2026-11-04): Option 2 — update the zealot (`psi_grey`) to StarCraft II's weapon timing and range (`damage_point: 0`, `range: 0.1`, `backswing: 9`, `period: 21`), and also clean up the `damage_point = 0` `period + 1` cadence quirk in `combat.rs` if appropriate.

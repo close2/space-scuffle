@@ -40,3 +40,4 @@ Options:
 
 ## Answer
 
+Owner (2026-11-04): Option 1 (yes, set smog velocities <= 0.001 to zero and re-record the goldens). The agent is always allowed to decide visual questions. If I don't like them, I will see them, and complain later.

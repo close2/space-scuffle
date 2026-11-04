@@ -19,6 +19,9 @@ These were changed during Phase 3, and nothing was tuned to reach them.
 
 Owner (2026-11-03): Keep all five as committed. I do however want an "investigation" why internet says that Zealots should win, and why we have 6-13 of 24 marines surviving. This is a big difference.
 
+
+Owner (2026-11-04): Investigation read and follow-up questions Q0035–Q0041 answered; Q0007 may now be closed.
+
 ## Effect of the answer
 
 2026-11-03. All five items stay as committed; nothing is reverted. The owner asked for an investigation of battle
