@@ -286,6 +286,32 @@ fn read_request(stream: &mut TcpStream) -> Option<ReceivedRequest> {
 /// while its write descriptor is open, so shim tests never run concurrently.
 static SHIM_LOCK: Mutex<()> = Mutex::new(());
 
+/// Longest wait for [`SHIM_LOCK`]. A shim test takes seconds; a wait this long means a test
+/// holds two shims at once (a self-deadlock that would also block every other shim test), so
+/// the waiting test fails instead of hanging the whole binary.
+const SHIM_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// Takes [`SHIM_LOCK`], waiting at most [`SHIM_LOCK_TIMEOUT`].
+///
+/// # Panics
+/// When the lock is not free in time.
+fn lock_shims() -> MutexGuard<'static, ()> {
+    let deadline = std::time::Instant::now() + SHIM_LOCK_TIMEOUT;
+    loop {
+        match SHIM_LOCK.try_lock() {
+            Ok(guard) => return guard,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => return poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "no CurlShim became free within {SHIM_LOCK_TIMEOUT:?}: does a test hold two shims at once?"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+    }
+}
+
 /// A `curl` stand-in that records its invocation and delegates to the real `/usr/bin/curl`.
 ///
 /// Every `https://host/path` argument is rewritten to `http://127.0.0.1:port/host/path`, so
@@ -311,9 +337,7 @@ impl CurlShim {
     /// Installs a shim that targets `server`.
     #[must_use]
     pub fn new(server: &FakeServer) -> Self {
-        let serial = SHIM_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let serial = lock_shims();
         let dir = tempfile::tempdir().expect("shim tempdir");
         let path = dir.path().join("curl");
         let script = format!(

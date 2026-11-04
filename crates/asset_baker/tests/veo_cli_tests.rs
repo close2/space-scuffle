@@ -1414,6 +1414,148 @@ fn loops_a_refused_last_frame_is_recorded_ends_the_run_and_is_not_retried() {
     );
 }
 
+// --- Actions per drawing kind, negative terms and the seed ------------------------------------
+// Plan `2026-11-04-veo-structure-action-text.md`, WP1 (D-2 and D-3).
+
+/// The shipped global negative text and the shipped `building_dome` negative terms.
+fn shipped_negatives() -> (String, String) {
+    let request = asset_baker::VeoRequestSettings::load(
+        &shipped_assets().join(asset_baker::VEO_REQUEST_FILE),
+    )
+    .expect("shipped request settings");
+    let style = asset_baker::MediaStyle::load(&shipped_assets()).expect("shipped style");
+    (
+        request.negative_prompt.expect("a global negative text"),
+        style
+            .actions
+            .building_dome
+            .negative_terms
+            .expect("dome negative terms"),
+    )
+}
+
+#[test]
+fn actions_a_structure_sends_its_kinds_negative_terms_and_a_unit_the_global_text_only() {
+    let catalog = shipped_catalog();
+    let dome = authored_structure(&catalog);
+    let unit = combat_unit(&catalog);
+    let (global, terms) = shipped_negatives();
+    let server = FakeServer::start(healthy(fixture_bytes()));
+    let shim = CurlShim::new(&server);
+    let dirs = RunDirs::new();
+
+    let output = dirs.generate(
+        &shim,
+        &[&dome, &unit],
+        &["--states", "idle", "--max-generations", "2"],
+    );
+
+    assert!(output.status.success(), "{}", text(&output));
+    let sent = sent_parameters(&server);
+    assert_eq!(sent.len(), 2);
+    assert_eq!(
+        sent[0]["negativePrompt"],
+        json!(format!("{global}, {terms}"))
+    );
+    assert_eq!(sent[1]["negativePrompt"], json!(global));
+    assert_eq!(recorded_parameters(&dirs), sent);
+    let slugs: Vec<Value> = dirs
+        .ledger_lines()
+        .into_iter()
+        .filter(|line| line["event"] == "request_started")
+        .map(|line| line["slug"].clone())
+        .collect();
+    assert_eq!(slugs, [json!(dome), json!(unit)]);
+}
+
+#[test]
+fn actions_a_seed_is_sent_and_recorded_and_without_the_flag_no_seed_field_exists() {
+    let unit = combat_unit(&shipped_catalog());
+    let server = FakeServer::start(healthy(fixture_bytes()));
+    let shim = CurlShim::new(&server);
+    let dirs = RunDirs::new();
+    let seeded = dirs.generate(
+        &shim,
+        &[&unit],
+        &["--states", "idle", "--max-generations", "1", "--seed", "7"],
+    );
+    assert!(seeded.status.success(), "{}", text(&seeded));
+    let sent = sent_parameters(&server);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0]["seed"], json!(7), "{}", sent[0]);
+    assert_eq!(recorded_parameters(&dirs), sent);
+    // One shim at a time: `generated` installs its own, and shims are serialised.
+    drop(shim);
+
+    let (unseeded_dirs, unseeded_server, _shim, unseeded) = generated(&unit, "idle");
+    assert!(unseeded.status.success(), "{}", text(&unseeded));
+    let sent = sent_parameters(&unseeded_server);
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0].get("seed").is_none(), "{}", sent[0]);
+    assert!(
+        recorded_parameters(&unseeded_dirs)[0].get("seed").is_none(),
+        "no seed field is recorded"
+    );
+
+    let ledger = shipped_assets().join("../docs/evidence/veo/ledger.jsonl");
+    let records = asset_baker::ledger::read_ledger_numbered(&ledger).expect("committed ledger");
+    assert_ne!(records.len(), 0, "the committed ledger has lines");
+}
+
+#[test]
+fn actions_a_gemini_run_with_a_seed_is_refused_before_any_request() {
+    let unit = combat_unit(&shipped_catalog());
+    let server = silent_server();
+    let shim = CurlShim::new(&server);
+    let dirs = RunDirs::gemini();
+
+    let output = dirs.generate(
+        &shim,
+        &[&unit],
+        &["--states", "idle", "--max-generations", "1", "--seed", "3"],
+    );
+
+    assert!(!output.status.success(), "{}", text(&output));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("seed"), "{}", text(&output));
+    assert!(stderr.contains("Vertex AI"), "{}", text(&output));
+    assert!(server.requests().is_empty(), "no request may be made");
+    assert!(dirs.ledger_events().is_empty(), "nothing may be recorded");
+}
+
+#[test]
+fn actions_the_dry_run_prints_the_action_source_the_negative_text_and_the_seed() {
+    let catalog = shipped_catalog();
+    let dome = authored_structure(&catalog);
+    let unit = combat_unit(&catalog);
+    let (global, terms) = shipped_negatives();
+    let server = silent_server();
+    let shim = CurlShim::new(&server);
+    let dirs = RunDirs::new();
+
+    let seeded = dirs.generate(
+        &shim,
+        &[&dome],
+        &["--states", "idle", "--seed", "1", "--dry-run"],
+    );
+    assert!(seeded.status.success(), "{}", text(&seeded));
+    let out = stdout(&seeded);
+    assert!(out.contains("    action: building_dome Idle\n"), "{out}");
+    assert!(
+        out.contains(&format!("    negative: {global}, {terms}\n")),
+        "{out}"
+    );
+    assert!(out.contains("    seed: 1\n"), "{out}");
+
+    let unseeded = dirs.generate(&shim, &[&unit], &["--states", "idle", "--dry-run"]);
+    assert!(unseeded.status.success(), "{}", text(&unseeded));
+    let out = stdout(&unseeded);
+    assert!(out.contains("    action: unit_sphere Idle\n"), "{out}");
+    assert!(out.contains(&format!("    negative: {global}\n")), "{out}");
+    assert!(out.contains("    seed: none (service picks)\n"), "{out}");
+    assert!(server.requests().is_empty(), "a dry run makes no request");
+}
+
 // --- D-5: free preflight ---------------------------------------------------------------------
 
 fn preflight(shim: &CurlShim, credentials: &Path) -> std::process::Output {

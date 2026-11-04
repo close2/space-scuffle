@@ -206,6 +206,12 @@ pub struct VeoParameters {
         skip_serializing_if = "Option::is_none"
     )]
     pub negative_prompt: Option<String>,
+    /// The sample seed (`seed`, 0 to 4294967295), set by `generate-veo --seed` for every
+    /// request of a run. Vertex documents it in `parameters`: the same seed with otherwise
+    /// unchanged parameters guides the model to the same video. `None` sends no field and the
+    /// service picks one; a ledger line written before the field existed reads as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u32>,
 }
 
 impl Default for VeoParameters {
@@ -218,6 +224,7 @@ impl Default for VeoParameters {
             sample_count: Some(1),
             generate_audio: None,
             negative_prompt: None,
+            seed: None,
         }
     }
 }
@@ -296,6 +303,7 @@ impl VeoRequestSettings {
             sample_count: Some(self.sample_count),
             generate_audio: self.generate_audio,
             negative_prompt: self.negative_prompt.clone(),
+            seed: None,
         }
     }
 }
@@ -318,6 +326,9 @@ impl std::fmt::Display for VeoParameters {
         }
         if let Some(value) = &self.negative_prompt {
             fields.push(format!("negativePrompt {value:?}"));
+        }
+        if let Some(value) = self.seed {
+            fields.push(format!("seed {value}"));
         }
         f.write_str(&fields.join(", "))
     }
@@ -914,6 +925,25 @@ impl VeoClient {
         prompt: &str,
         images: GenerationImages<'_>,
     ) -> Result<VeoOperation, BakerError> {
+        self.initiate_generation_with(prompt, images, &self.parameters)
+    }
+
+    /// As [`Self::initiate_generation`], sending `parameters` instead of the client's own: a
+    /// run sends each clip's parameters, whose negative prompt depends on the identity's
+    /// drawing kind (plan `2026-11-04-veo-structure-action-text.md`, D-2).
+    ///
+    /// # Errors
+    /// As [`Self::initiate_generation`], and [`BakerError::SeedNeedsVertex`] before anything is
+    /// sent when `parameters` carries a seed and the key selects the Gemini API.
+    pub fn initiate_generation_with(
+        &self,
+        prompt: &str,
+        images: GenerationImages<'_>,
+        parameters: &VeoParameters,
+    ) -> Result<VeoOperation, BakerError> {
+        if parameters.seed.is_some() && !self.is_vertex_ai() {
+            return Err(BakerError::SeedNeedsVertex);
+        }
         if images.end.is_some() {
             if images.start.is_none() {
                 return Err(BakerError::LastFrameWithoutStart);
@@ -931,7 +961,7 @@ impl VeoClient {
                 image: image_input,
                 last_frame,
             }],
-            parameters: Some(self.parameters()),
+            parameters: Some(parameters.clone()),
         };
 
         let json_body = serde_json::to_string(&request_body)?;

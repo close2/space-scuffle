@@ -8,7 +8,9 @@
 //! review, or generate (a first attempt or a regeneration). It composes each clip's prompt,
 //! resolves its start picture, decides from the loop policy whether the request also pins the
 //! clip's last frame to that picture (`lastFrame`, plan `2026-11-04-veo-seamless-loops.md`,
-//! D-2), and reports every prompt and picture problem of the clips it would pay for.
+//! D-2), composes its negative prompt from the request's global text and its drawing kind's
+//! terms (plan `2026-11-04-veo-structure-action-text.md`, D-2), and reports every prompt,
+//! negative prompt and picture problem of the clips it would pay for.
 //!
 //! # How it fits
 //! `generate-veo` builds a [`RunPlan`] from the catalog, the media style and the ledger's
@@ -26,13 +28,18 @@
 //! - A pinned state without any picture is planned as text-to-video without `lastFrame`; the
 //!   printed plan says that the clip seeds the identity's pin.
 //! - Planning reads files and the ledger but writes nothing and makes no request.
+//! - The plan holds the parameters every request sends ([`RunPlan::parameters_for`]): the
+//!   run-wide ones (including a `--seed`) with the clip's own negative prompt, so the dry run
+//!   prints and the ledger records exactly what is sent.
 
 use crate::error::BakerError;
 use crate::ledger::LedgerHistory;
 use crate::prompts::{
-    build_action_prompt, check_keyframe, check_pin, check_prompt, ComposedPrompt, KeyframeSource,
-    MediaStyle, PromptIssue, PromptProblem,
+    build_action_prompt, check_keyframe, check_negative_prompt, check_pin, check_prompt,
+    compose_negative_prompt, ActionSource, ComposedPrompt, KeyframeSource, MediaStyle, PromptIssue,
+    PromptProblem,
 };
+use crate::veo_client::VeoParameters;
 use sim_types::enums::AnimState;
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -134,6 +141,11 @@ pub struct PlannedClip {
     pub keyframe: KeyframeSource,
     /// Whether the loop policy pins the clip's last frame to its start picture.
     pub pin_end: bool,
+    /// Where the clip's action text came from: its drawing kind or its override.
+    pub action_source: ActionSource,
+    /// The negative prompt the clip sends: the global text of `media/veo_request.ron`, then
+    /// `", "`, then its drawing kind's terms; `None` sends no field.
+    pub negative_prompt: Option<String>,
 }
 
 impl PlannedClip {
@@ -158,9 +170,21 @@ pub struct RunPlan {
     pub clips: Vec<PlannedClip>,
     /// The Idle clip each identity can chain keyframes from before the run starts.
     pub existing_idle: BTreeMap<String, PathBuf>,
+    /// The parameters every request of the run sends (`media/veo_request.ron` and the run's
+    /// `--seed`), before each clip's own negative prompt replaces the global one.
+    pub parameters: VeoParameters,
 }
 
 impl RunPlan {
+    /// The parameters `clip`'s start request sends: the run's, with the clip's negative prompt.
+    #[must_use]
+    pub fn parameters_for(&self, clip: &PlannedClip) -> VeoParameters {
+        VeoParameters {
+            negative_prompt: clip.negative_prompt.clone(),
+            ..self.parameters.clone()
+        }
+    }
+
     /// Generations the run would start.
     #[must_use]
     pub fn generations(&self) -> u32 {
@@ -187,14 +211,19 @@ impl RunPlan {
             .collect()
     }
 
-    /// Every prompt and picture problem of the clips the run would pay for. A picture that
-    /// would pin a clip's last frame must also pass the pin rules ([`check_pin`]); a picture
-    /// chained from an Idle clip is checked when the run extracts it.
+    /// Every prompt, negative prompt and picture problem of the clips the run would pay for. A
+    /// negative prompt follows the deny list and placeholder markers of a prompt
+    /// ([`check_negative_prompt`]). A picture that would pin a clip's last frame must also pass
+    /// the pin rules ([`check_pin`]); a picture chained from an Idle clip is checked when the
+    /// run extracts it.
     #[must_use]
     pub fn problems(&self, style: &MediaStyle) -> Vec<PromptProblem> {
         let mut problems = Vec::new();
         for clip in self.clips.iter().filter(|clip| clip.is_paid()) {
             let mut issues = check_prompt(style, &clip.prompt);
+            if let Some(negative) = &clip.negative_prompt {
+                issues.extend(check_negative_prompt(style, negative));
+            }
             match check_keyframe(&clip.keyframe) {
                 Some(issue) => issues.push(issue),
                 None => {
@@ -227,7 +256,9 @@ impl RunPlan {
 
     /// Writes the plan: one `clip <slug> <state>: <action>` line per clip; for each paid clip
     /// its start picture, its end frame (`same as start` or `none`), a note when a pinned clip
-    /// has no picture yet and so seeds one, and its prompt; then the total.
+    /// has no picture yet and so seeds one, the source of its action text
+    /// (`action: building_dome Idle` or `action: override Idle`), its negative prompt, its seed
+    /// (`seed: none (service picks)` without `--seed`) and its prompt; then the total.
     ///
     /// # Errors
     /// Errors of `out`.
@@ -254,6 +285,15 @@ impl RunPlan {
                 writeln!(out, "    end: {end}")?;
                 if clip.pin_end && clip.keyframe == KeyframeSource::None {
                     writeln!(out, "    loop: no start picture yet, this clip seeds one")?;
+                }
+                writeln!(out, "    action: {} {:?}", clip.action_source, clip.state)?;
+                match &clip.negative_prompt {
+                    Some(negative) => writeln!(out, "    negative: {negative}")?,
+                    None => writeln!(out, "    negative: none")?,
+                }
+                match self.parameters.seed {
+                    Some(seed) => writeln!(out, "    seed: {seed}")?,
+                    None => writeln!(out, "    seed: none (service picks)")?,
                 }
                 writeln!(out, "    prompt: {}", clip.prompt.text)?;
             }
@@ -372,37 +412,51 @@ fn clip_action(
     }
 }
 
-/// Plans a run over `slugs`. See the module docs.
+/// Plans a run over `slugs`, whose requests send `parameters` (the run-wide parameters, with
+/// the global negative prompt) with each clip's own negative prompt. See the module docs.
 ///
 /// # Errors
 /// [`BakerError::UnknownArchetype`] or [`BakerError::StateNotPublished`] before anything is
-/// read from disk for the offending identity, or [`BakerError::ValidationFailed`] for a slug
-/// that cannot name a portable file.
+/// read from disk for the offending identity, [`BakerError::ValidationFailed`] for a slug
+/// that cannot name a portable file, or [`BakerError::MissingActionText`] for a state the
+/// style has no action text for.
 pub fn plan_run(
     catalog: &sim_core::UnitCatalog,
     style: &MediaStyle,
+    parameters: &VeoParameters,
     slugs: &[String],
     filter: Option<&[AnimState]>,
     dirs: &VeoDirs,
     history: &LedgerHistory,
 ) -> Result<RunPlan, BakerError> {
-    let mut plan = RunPlan::default();
+    let mut plan = RunPlan {
+        parameters: parameters.clone(),
+        ..RunPlan::default()
+    };
     for slug in slugs {
         crate::veo_client::validate_catalog_slug(catalog, slug)?;
         let states = published_states(catalog, slug, filter)?;
+        let shape = crate::veo_client::exact_catalog_archetype(slug, catalog)?.shape;
         if let ClipAction::Reuse(path) | ClipAction::AwaitingReview(path) =
             clip_action(dirs, history, slug, AnimState::Idle)
         {
             plan.existing_idle.insert(slug.clone(), path);
         }
         for state in states {
+            let action = style.actions.require(slug, &shape, state)?;
+            let prompt = build_action_prompt(catalog, style, slug, state)?;
             plan.clips.push(PlannedClip {
                 slug: slug.clone(),
                 state,
                 action: clip_action(dirs, history, slug, state),
-                prompt: build_action_prompt(catalog, style, slug, state)?,
+                prompt,
                 keyframe: resolve_keyframe(&dirs.keyframes, slug, state),
                 pin_end: style.loops.pins_end(slug, state),
+                action_source: action.source,
+                negative_prompt: compose_negative_prompt(
+                    parameters.negative_prompt.as_deref(),
+                    action.negative_terms,
+                ),
             });
         }
     }

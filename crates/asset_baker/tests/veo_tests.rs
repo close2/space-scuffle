@@ -242,6 +242,7 @@ fn test_veo_image_to_video_payload_construction() {
             sample_count: Some(1),
             generate_audio: None,
             negative_prompt: None,
+            seed: None,
         }),
     };
 

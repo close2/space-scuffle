@@ -3,9 +3,11 @@
 //
 // `asset_baker` alone reads this file; the simulation and the client never do. A Veo prompt is
 // composed as: the identity's authored `veo_prompts[State]` (units.ron, structures.ron), then
-// the action description for that state below, then the style sentence. Editing this file
-// changes every future prompt and needs no rebuild (charter §3.3). Clips that already exist are
-// not regenerated for a change here.
+// the action text below for that state and the identity's drawing kind (`unit_sphere` or
+// `building_dome`, or the identity's override), then the style sentence. A clip's negative
+// prompt is the global one of `media/veo_request.ron` plus its kind's `negative_terms`.
+// Editing this file changes every future prompt and needs no rebuild (charter §3.3). Clips
+// that already exist are not regenerated for a change here.
 //
 // The rules below are checked by `asset_baker validate-prompts`, and by `generate-veo` before it
 // reads any credential, for every clip a run would pay for.
@@ -16,19 +18,51 @@
     // radiating stripes, which the owner rejected (2026-11-04).
     style: "Stylized hand-painted 3D character, painterly sci-fi aesthetic with crisp rim lighting, plain flat uniform dark slate-indigo studio backdrop (#0B101B) with no pattern, no rays, no stripes and no gradient, 3/4 isometric front view, glowing cyan/amber energy cores, bold proportions.",
 
-    // One description per animation state, placed between the identity's prompt and the style.
+    // Action text per drawing kind, placed between the identity's prompt and the style
+    // (docs/plans/2026-11-04-veo-structure-action-text.md, D-1 and D-2). It mirrors `framing`:
+    // `unit_sphere` for mobile units, `building_dome` for structures, then per-identity
+    // overrides. Every state an identity publishes needs a text for its kind or an override,
+    // and every text is checked like a prompt (deny list, placeholder markers).
+    // - texts: one text per animation state.
+    // - negative_terms: plain nouns appended, after ", ", to the global `negative_prompt` of
+    //   `media/veo_request.ron` for every clip of the kind. `None` adds nothing.
     actions: (
-        // Constructing is generated from the finished Idle frame (keyframe chaining), so it
-        // shows work in progress on that shape rather than a build-up from nothing, and it ends
-        // close to its first frame, where the Idle clip takes over.
-        constructing: "Constructing animation, one static tripod shot: the camera never moves, zooms or pans. Construction work in progress over the whole structure, holographic wireframe scaffolding shimmering around it with active seam welding sparks. The structure keeps its shape, size and place in frame, and the last frame matches the first.",
-        // Idle and Walk loop in the game, so they ask for a fixed camera and an end pose equal to
-        // the start pose (owner, Q0026: jumps when a loop restarts are distracting).
-        idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size and place in frame from start to end. Steady rhythmic breathing movement, subtle weapon glow pulse, head and radar scanning smoothly in place. Seamless loop: the last frame matches the first.",
-        walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the subject moves in place, keeping the same size and place in frame. Dynamic forward stride, rhythmic mechanical bobbing, ground dust kick-up at feet, leaning into movement. Seamless loop: the last frame matches the first.",
-        attack: "Attack animation: sharp weapon recoil, intense bright muzzle flash and projectile emission filling the right side of frame, followed by fluid spring recovery.",
-        cast: "Cast animation: focused work in place, tool arms reaching toward a target just outside the frame, a steady bright welding arc or extraction beam with showering sparks, body holding still.",
-        die: "Death animation: dramatic armor fracture, glowing internal reactor blowout with flying mechanical debris dissolving into smoke.",
+        // Mobile units. The texts are unchanged since before the split (a golden list of the
+        // unit prompts' SHA-256 guards that). Idle and Walk loop in the game, so they ask for
+        // a fixed camera and an end pose equal to the start pose (owner, Q0026: jumps when a
+        // loop restarts are distracting). Constructing is kept in case a unit ever publishes
+        // it; it shows work in progress on the finished shape (keyframe chaining).
+        unit_sphere: (
+            texts: {
+                Constructing: "Constructing animation, one static tripod shot: the camera never moves, zooms or pans. Construction work in progress over the whole structure, holographic wireframe scaffolding shimmering around it with active seam welding sparks. The structure keeps its shape, size and place in frame, and the last frame matches the first.",
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size and place in frame from start to end. Steady rhythmic breathing movement, subtle weapon glow pulse, head and radar scanning smoothly in place. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the subject moves in place, keeping the same size and place in frame. Dynamic forward stride, rhythmic mechanical bobbing, ground dust kick-up at feet, leaning into movement. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation: sharp weapon recoil, intense bright muzzle flash and projectile emission filling the right side of frame, followed by fluid spring recovery.",
+                Cast: "Cast animation: focused work in place, tool arms reaching toward a target just outside the frame, a steady bright welding arc or extraction beam with showering sparks, body holding still.",
+                Die: "Death animation: dramatic armor fracture, glowing internal reactor blowout with flying mechanical debris dissolving into smoke.",
+            },
+            // "Breathing" is asked for above, so it cannot be a negative term for units.
+            negative_terms: None,
+        ),
+        // Structures. Idle is a completely still building: fixed geometry, small ambient
+        // effects only, no moving parts, no breathing or pulsing of the shape, and a locked
+        // camera. The unit Idle text ("breathing", "radar scanning", "glow pulse") gave a
+        // breathing camera and a changing antenna on the siphon pilot (batch-1 evidence).
+        // Constructing shows the build-up on the finished shape with no camera motion, and its
+        // effects fade so that its last frame equals the clean Idle pin (loops plan D-3).
+        building_dome: (
+            texts: {
+                Constructing: "Constructing animation, one locked-off static shot: the camera never moves, zooms or drifts. The finished building keeps its final shape, size and place in frame throughout while construction plays over it: holographic wireframe scaffolding shimmering around it and welding sparks along its seams, fading away toward the end. The last frame matches the first.",
+                Idle: "Idle animation, one locked-off static shot: the camera never moves, zooms or drifts. A completely still building, fixed rigid geometry, no moving parts: shell, roof, antenna and pipes keep the same shape, size and place throughout. Only small ambient effects move: a steady glow, gentle vapour rising, small lights flickering. Seamless loop: the last frame matches the first.",
+            },
+            // Not in the global list: units ask for breathing. "Flickering geometry" is left
+            // out, because a negative "flickering" may suppress the lights Idle asks for.
+            negative_terms: Some("breathing motion, pulsing size, swelling, shrinking, moving parts, rotating parts, antenna changing shape"),
+        ),
+        // Exact catalog slug -> state -> text, for one identity whose clip needs other wording.
+        // An override keeps its kind's negative terms. A slug that is not in the catalog, or a
+        // state the identity does not publish, is refused.
+        overrides: {},
     ),
 
     // Longest composed prompt accepted, in characters. The model's own limit is not published
