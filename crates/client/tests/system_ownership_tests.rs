@@ -50,6 +50,7 @@ use client::battle_pipeline::fog::BattleFog;
 use client::battle_pipeline::session::BattleSession;
 use client::battle_selection::BattleSelection;
 use client::bubble_shader::BubbleDomeMaterial;
+use client::flipbook_clock::{FlipbookClock, FlipbookPhase};
 use client::input_policy::InputOwnership;
 use client::runtime_battle::SKIRMISH_SCENARIO;
 use client::smog::fluid::SmogGrid3d;
@@ -143,6 +144,22 @@ const CONCERNS: &[Concern] = &[
             "Update: client::scene_controller::sync_lab_preview_system",
             "Update: client::scene_controller::sync_live_battle_system",
             "Update: client::scene_controller::sync_swarm_stress_system",
+        ],
+    },
+    Concern {
+        name: "Flipbook clock",
+        store: Store::Resource(Components::resource_id::<FlipbookClock>),
+        // The presented battle instant, or Bevy's time outside the battle (plan D-8).
+        writers: &["Update: client::flipbook_clock::update_flipbook_clock_system"],
+    },
+    Concern {
+        name: "Flipbook phases",
+        store: Store::Component(Components::component_id::<FlipbookPhase>),
+        writers: &[
+            // Bevy's animation system may write any component of an animated entity.
+            "PostUpdate: bevy_animation::animate_targets",
+            // Restarts a live bubble's free loop when its displayed action changes.
+            "Update: client::scene_controller::sync_live_battle_system",
         ],
     },
     Concern {

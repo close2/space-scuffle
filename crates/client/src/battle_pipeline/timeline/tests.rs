@@ -303,3 +303,29 @@ fn newly_committed_events_wait_until_the_first_published_pose() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn the_presented_instant_is_the_shown_tick_and_its_interpolation_fraction() -> TestResult {
+    let (mut state, mut world) = fixture()?;
+    assert_eq!(state.presented_instant(), (Tick(0), 0.0), "before any pose");
+    state.present(1.0)?;
+    assert_eq!(state.presented_instant(), (Tick(0), 0.0));
+    world.current_tick += 1;
+    world.write_render_snapshot(state.begin_tick()?);
+    state.finish_tick()?;
+    state.present(0.25)?;
+    assert_eq!(state.presented_instant(), (Tick(0), 0.25), "between ticks");
+    state.present(0.0)?;
+    assert_eq!(state.presented_instant(), (Tick(0), 0.0));
+    state.present(1.0)?;
+    assert_eq!(
+        state.presented_instant(),
+        (Tick(1), 0.0),
+        "the current tick exactly"
+    );
+    // A pause holds the current tick exactly, whatever fraction a frame asks for.
+    state.hold_exact();
+    state.present(0.5)?;
+    assert_eq!(state.presented_instant(), (Tick(1), 0.0));
+    Ok(())
+}

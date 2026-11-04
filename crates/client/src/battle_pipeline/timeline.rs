@@ -77,6 +77,9 @@ pub struct BattleFrameState {
     previous_valid: bool,
     phase: PublicationPhase,
     presented_valid: bool,
+    /// Interpolation fraction of the presented pose towards the tick after `presented.tick`:
+    /// the `alpha` of the last [`Self::present`], or 0 when the current tick is shown exactly.
+    presented_fraction: f32,
     hold_current: bool,
     pending_events: VecDeque<PresentedCombatEvent>,
 }
@@ -103,6 +106,7 @@ impl BattleFrameState {
         self.previous_valid = false;
         self.phase = PublicationPhase::Initializing;
         self.presented_valid = false;
+        self.presented_fraction = 0.0;
         self.current.tick = Tick(0);
         self.current.checksum = 0;
         self.hold_current = true;
@@ -234,6 +238,7 @@ impl BattleFrameState {
         self.presented.combat_events.clear();
         self.presented_valid = true;
         if self.hold_current || !self.previous_valid || alpha >= 1.0 {
+            self.presented_fraction = 0.0;
             self.presented.tick = self.current.tick;
             self.presented.checksum = self.current.checksum;
             self.presented.copy_match_status_from(&self.current);
@@ -242,6 +247,7 @@ impl BattleFrameState {
                 .extend(self.current.bubbles.iter().cloned());
             return Ok(());
         }
+        self.presented_fraction = alpha;
         self.presented.tick = self.previous.tick;
         self.presented.checksum = self.previous.checksum;
         self.presented.copy_match_status_from(&self.previous);
@@ -264,6 +270,17 @@ impl BattleFrameState {
             self.presented.bubbles.push(record);
         }
         Ok(())
+    }
+
+    /// The presented simulation instant: the presented record's tick and the fraction, in
+    /// `[0, 1)`, of the way towards the next tick that positions were interpolated by.
+    ///
+    /// The flipbook clock is built from it (plan `2026-11-04-battle-flipbook-animation` D-1), so
+    /// it advances with presented simulation time only: it stands still while paused and runs
+    /// at the battle's speed. Before the first presentation it is `(Tick(0), 0.0)`.
+    #[must_use]
+    pub fn presented_instant(&self) -> (Tick, f32) {
+        (self.presented.tick, self.presented_fraction)
     }
 
     /// Removes the next event eligible for the displayed tick, preserving original order.

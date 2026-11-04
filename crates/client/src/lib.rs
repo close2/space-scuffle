@@ -416,6 +416,7 @@ fn add_battle_pipeline_systems(app: &mut App) {
         Update,
         (
             battle_presentation::refresh_battle_presentation,
+            flipbook_clock::update_flipbook_clock_system,
             sync_live_battle_system,
             apply_deferred,
         )
@@ -775,6 +776,7 @@ fn insert_headless_resources(app: &mut App) -> Result<(), String> {
     app.init_resource::<Assets<StandardMaterial>>();
     app.init_resource::<Assets<Image>>();
     app.init_resource::<Assets<BubbleDomeMaterial>>();
+    app.init_resource::<flipbook_clock::FlipbookClock>();
     app.init_resource::<Assets<SelectionRingMaterial>>();
     app.init_resource::<Assets<CombatFxMaterial>>();
     app.init_resource::<CombatFxMaterialPool>();
@@ -859,6 +861,7 @@ fn add_headless_systems(app: &mut App) {
             sync_lab_preview_system,
             (
                 battle_pipeline::driver::advance_battle_ticks,
+                flipbook_clock::update_flipbook_clock_system,
                 sync_live_battle_system,
                 battle_pipeline::driver::publish_combat_events,
             )

@@ -13,6 +13,9 @@
 //! - Conversion from deterministic fixed-point to GPU floats happens strictly at snapshot boundaries.
 //! - Live steady-state synchronization reuses storage; spawn/despawn and preview work have separate costs.
 //! - Components (`Transform`, `BubbleInstance`) are mutated in place without issuing `commands.insert`.
+//! - A live battle bubble's [`FlipbookPhase`] is inserted with it and changes only when its
+//!   displayed action does; its material's flipbook lanes come from the presented record and that
+//!   phase alone, so time passing modifies no material.
 
 use crate::battle_selection::BattleSelection;
 use crate::bubble_shader::{
@@ -21,7 +24,7 @@ use crate::bubble_shader::{
     FLAG_FACING_STRIPE, FLAG_FRESNEL, FLAG_GLARE, FLAG_INNER_WARP, FLAG_SELECTED,
     FLAG_SPEED_BOOSTED,
 };
-use crate::flipbook_clock::FlipbookLanes;
+use crate::flipbook_clock::{battle_uniform, displayed_action, FlipbookLanes, FlipbookPhase};
 use crate::indicators::{attach_bubble_indicators, IndicatorAssets, SelectionRingMaterial};
 use crate::lab_ui::{LabState, LabTab};
 use crate::selection::{HeroLineupIndex, SelectionState};
@@ -30,7 +33,7 @@ use bevy::app::AppExit;
 use bevy::prelude::*;
 use sim_core::catalog::{UnitArchetype, UnitCatalog};
 use sim_types::enums::{AnimState, ShapeKind, WeaponVisualKind};
-use sim_types::ids::{EntityId, PlayerId, UnitTypeId};
+use sim_types::ids::{EntityId, PlayerId, Tick, UnitTypeId};
 use sim_types::snapshot::BubbleRenderInstance;
 use std::collections::BTreeMap;
 
@@ -589,6 +592,7 @@ type LiveBattleQuery<'w, 's> = Query<
         &'static mut BubbleInstance,
         &'static mut Mesh3d,
         &'static MeshMaterial3d<BubbleDomeMaterial>,
+        &'static mut FlipbookPhase,
     ),
     With<LiveBattleBubble>,
 >;
@@ -600,6 +604,7 @@ type LiveBattleItem<'a> = (
     Mut<'a, BubbleInstance>,
     Mut<'a, Mesh3d>,
     &'a MeshMaterial3d<BubbleDomeMaterial>,
+    Mut<'a, FlipbookPhase>,
 );
 
 /// Shared meshes and material stores a synchronizer needs to spawn or restyle a bubble.
@@ -667,8 +672,10 @@ impl BubbleSceneAssets<'_> {
 struct LiveBubbleFrame<'a> {
     /// The published record, as the simulation produced it.
     instance: &'a BubbleRenderInstance,
-    /// Shader uniform for the record, with the selection lane applied.
+    /// Shader uniform for the record, with its battle flipbook lanes and selection applied.
     uniform: BubbleUniformGpu,
+    /// What the bubble shows and since which presented tick.
+    phase: FlipbookPhase,
     /// Flipbook atlas of the record's unit type, if one is loaded.
     texture: Option<Handle<Image>>,
     /// Whether [`BattleSelection`] holds this entity.
@@ -681,20 +688,37 @@ struct LiveBubbleFrame<'a> {
 
 impl<'a> LiveBubbleFrame<'a> {
     /// Resolves the record's flipbook, uniform and pose. Pure: touches no ECS state.
+    ///
+    /// `phase` is the bubble's [`FlipbookPhase`] before this frame (`None` for a new bubble);
+    /// the frame carries it advanced to the record's displayed action at `presented`.
+    ///
+    /// # Errors
+    /// [`PresentationError::Flipbook`](crate::player_presentation::PresentationError::Flipbook)
+    /// when the displayed slice cannot be played by the flipbook clock.
     fn new(
         instance: &'a BubbleRenderInstance,
         registry: &FlipbookRegistry,
         style: crate::player_presentation::PlayerStyle,
         selected: bool,
-    ) -> Self {
+        presented: Tick,
+        phase: Option<FlipbookPhase>,
+    ) -> Result<Self, crate::player_presentation::PresentationError> {
         let meta = registry.get_meta(instance.unit_type);
         let texture = registry.get_texture(instance.unit_type);
-        let uniform = BubbleUniformGpu::from_instance(
-            instance,
-            style,
-            crate::bubble_shader::still_frame_lanes(meta, instance.anim_state),
-        )
-        .with_selection(selected);
+        let action = displayed_action(meta, instance);
+        let phase = phase.map_or_else(
+            || FlipbookPhase::new(action, presented),
+            |phase| phase.observed(action, presented),
+        );
+        let uniform = battle_uniform(meta, instance, style, presented, phase)
+            .map_err(
+                |source| crate::player_presentation::PresentationError::Flipbook {
+                    unit_type: instance.unit_type,
+                    action,
+                    source,
+                },
+            )?
+            .with_selection(selected);
         let is_dome = matches!(instance.shape, ShapeKind::BuildingDome { .. });
         let altitude_offset = if is_dome { 0.0 } else { instance.radius };
         let translation = Vec3::new(
@@ -702,14 +726,15 @@ impl<'a> LiveBubbleFrame<'a> {
             instance.world_pos[2] + altitude_offset,
             instance.world_pos[1],
         );
-        Self {
+        Ok(Self {
             instance,
             uniform,
+            phase,
             texture,
             selected,
             translation,
             is_dome,
-        }
+        })
     }
 }
 
@@ -722,7 +747,8 @@ fn update_live_instance(
     frame: LiveBubbleFrame<'_>,
     assets: &mut BubbleSceneAssets<'_>,
 ) {
-    let (_, mut transform, mut bubble, mut mesh, material) = item;
+    let (_, mut transform, mut bubble, mut mesh, material, mut phase) = item;
+    phase.set_if_neq(frame.phase);
     sync_bubble_material(
         &mut assets.bubble_materials,
         &material.0,
@@ -764,7 +790,7 @@ fn spawn_live_instance(
         &instance,
         material,
         frame.translation,
-        marker,
+        (marker, frame.phase),
         style,
     )
 }
@@ -828,7 +854,7 @@ pub fn sync_live_battle_system(
     // Entity IDs restart with each session, so this runs before anything reads the selection.
     selection.bind_generation(session.commands.generation());
     if lab_state.current_tab != LabTab::LiveBattle {
-        for (entity, _, _, _, _) in &query {
+        for (entity, ..) in &query {
             commands.entity(entity).despawn_recursive();
         }
         render_entities.0.clear();
@@ -838,6 +864,7 @@ pub fn sync_live_battle_system(
         return;
     }
     let snapshot = session.frames.presented();
+    let presented = snapshot.tick;
 
     // Reuse existing materials and instances; spawn/despawn are separate lifecycle work.
     for instance in &snapshot.bubbles {
@@ -852,14 +879,30 @@ pub fn sync_live_battle_system(
             }
         };
         let selected = selection.contains(instance.entity_id);
-        let frame = LiveBubbleFrame::new(instance, &registry, style, selected);
-        if let Some(&entity) = render_entities.0.get(&instance.entity_id) {
-            if let Ok(item) = query.get_mut(entity) {
-                update_live_instance(item, frame, &mut assets);
-            }
-        } else {
-            let entity = spawn_live_instance(&mut commands, &mut assets, frame, style);
-            render_entities.0.insert(instance.entity_id, entity);
+        let existing = render_entities
+            .0
+            .get(&instance.entity_id)
+            .and_then(|&entity| query.get_mut(entity).ok());
+        let phase = existing.as_ref().map(|item| *item.5);
+        let frame =
+            match LiveBubbleFrame::new(instance, &registry, style, selected, presented, phase) {
+                Ok(frame) => frame,
+                Err(error) => {
+                    owners.reject(error, &mut exit_events);
+                    return;
+                }
+            };
+        if let Some(item) = existing {
+            update_live_instance(item, frame, &mut assets);
+        } else if let std::collections::btree_map::Entry::Vacant(slot) =
+            render_entities.0.entry(instance.entity_id)
+        {
+            slot.insert(spawn_live_instance(
+                &mut commands,
+                &mut assets,
+                frame,
+                style,
+            ));
         }
     }
     despawn_departed(
