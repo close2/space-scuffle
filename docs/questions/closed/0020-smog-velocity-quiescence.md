@@ -41,3 +41,18 @@ Options:
 ## Answer
 
 Owner (2026-11-04): Option 1 (yes, set smog velocities <= 0.001 to zero and re-record the goldens). The agent is always allowed to decide visual questions. If I don't like them, I will see them, and complain later.
+
+## Resolution
+
+2026-11-04. Done as option 1 in commit `3f3ab76` (WP9 of the plan). A smog voxel whose speed is at most 0.001 world
+units per second now gets exactly zero velocity (`SMOG_QUIESCENT_SPEED_SQ` in `crates/client/src/smog/fluid.rs`). The
+same constant is now the packing pass's "at rest" speed. The same commit re-recorded eleven smog test hashes and
+says why: the seven named in the question and the four added by WP6. The semantic smog tests pass unchanged, and a
+new unit test shows the field reaching exact rest 30 s after the last source.
+
+The measured effect, in [`docs/evidence/2026-11-04-c18-smog-solver.md`](../../evidence/2026-11-04-c18-smog-solver.md) §7:
+
+- After a fight the solver costs 0.14 ms per step at the median, against 3.34 ms before this change.
+- On the frame-budget path the solver costs 0.3 ms per frame at 0 units (5.0 at the plan's base).
+- At 400 units it still costs 6.1 ms per frame (7.8 at the base), so the plan's trigger for a lower smog rate or a
+  worker thread fired. That is left to a later plan.

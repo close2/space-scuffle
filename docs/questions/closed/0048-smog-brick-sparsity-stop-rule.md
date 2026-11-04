@@ -48,3 +48,17 @@ Options:
 ## Answer
 
 Owner (2026-11-04): Option (a) — merge WP8 and go on to WP9.
+
+## Resolution
+
+2026-11-04. Option (a) was carried out. WP8 was merged (`e935e0a`), and WP9 (quiescence, Q0020) followed in
+`3f3ab76`. WP9 re-measured the showcase in a three-way benchmark: dense solver, WP8 and WP9, five interleaved rounds
+([`docs/evidence/2026-11-04-c18-smog-solver.md`](../../evidence/2026-11-04-c18-smog-solver.md) §7).
+
+- **WP8.** The 18 % showcase regression reproduced: WP8 is 16 to 17 % slower than the dense solver at the median.
+- **WP9.** The showcase is back at the dense solver's cost: 6.03 against 6.26 ms per step at the median
+  uncontended, and 6.37 against 6.35 ms contended.
+
+The regression no longer matters, so no follow-up finding was recorded. The after-fight case, which the stop rule
+was about, fell from 3.34 to 0.14 ms per step at the median. On the game's frame-budget path at 400 units, the
+frame interval fell from 16.75 to 12.03 ms at the median and from 36.30 to 20.92 ms at p95, against the plan's base.
