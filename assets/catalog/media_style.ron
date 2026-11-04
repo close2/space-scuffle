@@ -62,7 +62,17 @@
         // Exact catalog slug -> state -> text, for one identity whose clip needs other wording.
         // An override keeps its kind's negative terms. A slug that is not in the catalog, or a
         // state the identity does not publish, is refused.
-        overrides: {},
+        //
+        // repair_shuttle (batch 1, 2026-11-04): an unarmed aircraft. The unit Idle text asks for
+        // a weapon glow and a scanning head, and the unit Walk text for a stride and dust at the
+        // feet, none of which it has. Both of its looping states start and end on its hovering
+        // Idle pin, so they keep that pose and show motion through the thrusters.
+        overrides: {
+            "repair_shuttle": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size and place in frame from start to end. The aircraft hovers in place with a gentle steady bob, thrusters glowing, nanite emitters shimmering softly. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the aircraft flies in place, keeping the same size, pose and place in frame. Thrusters flare in steady bursts, exhaust streams backward, a slight rhythmic bob, no ground contact. Seamless loop: the last frame matches the first.",
+            },
+        },
     ),
 
     // Longest composed prompt accepted, in characters. The model's own limit is not published

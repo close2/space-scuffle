@@ -178,7 +178,7 @@
             abilities: [],
             veo_prompts: {
                 "Idle": "Plasma Siphon Dome: a single squat armored dome refinery capping a geothermal vent, ribbed slate-steel shell with glowing magenta plasma pipes and a vent stack, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. Plasma glows steadily in the pipes and a thin wisp of vapour rises from the stack.",
-                "Constructing": "Plasma Siphon Dome: a single dome refinery being assembled over a geothermal vent, ribbed slate-steel shell plates locking into place around glowing magenta plasma pipes, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+                "Constructing": "Plasma Siphon Dome: a single squat armored dome refinery capping a geothermal vent, ribbed slate-steel shell with glowing magenta plasma pipes and a vent stack, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
             },
         ),
         (
@@ -385,8 +385,8 @@
             air_weapon: None,
             abilities: [],
             veo_prompts: {
-                "Idle": "Machining Plant Dome: a single wide armored factory dome with a heavy vehicle bay door, gantry crane arms and amber forge vents, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. Forge vents glow and dim slowly and the gantry arms shift in place.",
-                "Constructing": "Machining Plant Dome: a single wide factory dome being assembled, slate-steel plates and a heavy vehicle bay door locking into place around a glowing amber forge core, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+                "Idle": "Machining Plant Dome: a single wide armored factory dome with a heavy vehicle bay door, gantry crane arms and amber forge vents, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The forge vents glow steadily and a faint heat shimmer rises from them.",
+                "Constructing": "Machining Plant Dome: a single wide armored factory dome with a heavy vehicle bay door, gantry crane arms and amber forge vents, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
             },
         ),
         (
@@ -448,8 +448,8 @@
             air_weapon: None,
             abilities: [],
             veo_prompts: {
-                "Idle": "Aerospace Hangar Dome: a single tall armored hangar dome with a split launch roof, a landing pad ring and cyan runway lights, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no aircraft. Runway lights chase around the pad and the roof seams glow softly.",
-                "Constructing": "Aerospace Hangar Dome: a single tall hangar dome being assembled, slate-steel roof segments and a landing pad ring locking into place around glowing cyan runway lights, one stationary building centred in frame and fully visible with empty space around it, no characters, no aircraft.",
+                "Idle": "Aerospace Hangar Dome: a single tall armored hangar dome with a closed split launch roof, a landing pad ring and cyan runway lights, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no aircraft. The runway lights blink softly around the pad and the roof seams glow steadily.",
+                "Constructing": "Aerospace Hangar Dome: a single tall armored hangar dome with a closed split launch roof, a landing pad ring and cyan runway lights, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no aircraft.",
             },
         ),
         (
@@ -545,8 +545,8 @@
             air_weapon: None,
             abilities: [],
             veo_prompts: {
-                "Idle": "Tech Module Pod: a single small armored annex pod with a capsule body, a rotating sensor dish and banks of glowing cyan data conduits, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The dish turns slowly and the conduits pulse.",
-                "Constructing": "Tech Module Pod: a single small capsule annex pod being assembled, slate-steel panels and a sensor dish locking into place around glowing cyan data conduits, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+                "Idle": "Tech Module Pod: a single small armored annex pod with a capsule body, a fixed sensor dish and banks of glowing cyan data conduits, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The conduits glow steadily and small status lights flicker.",
+                "Constructing": "Tech Module Pod: a single small armored annex pod with a capsule body, a fixed sensor dish and banks of glowing cyan data conduits, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
             },
         ),
         (

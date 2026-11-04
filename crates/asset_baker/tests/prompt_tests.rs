@@ -441,19 +441,34 @@ fn identity_part(archetype: &sim_core::UnitArchetype, state: AnimState) -> Strin
     )
 }
 
-/// Replaces the action policy's `overrides: {}` (the first one after `actions: (`) with
-/// `overrides`.
+/// Replaces the action policy's `overrides` map (the first one after `actions: (`), whatever
+/// the shipped data holds in it, with `overrides`.
 fn with_action_overrides(text: &str, overrides: &str) -> String {
     let start = text.find("    actions: (").expect("the actions section");
     let at = start
         + text[start..]
-            .find("overrides: {}")
+            .find("overrides: {")
             .expect("the action overrides");
-    format!(
-        "{}overrides: {overrides}{}",
-        &text[..at],
-        &text[at + "overrides: {}".len()..]
-    )
+    let open = at + "overrides: ".len();
+    // The map ends at the brace that balances its opening one. The shipped texts hold no
+    // brace (the placeholder markers forbid them), so counting braces is exact here.
+    let mut depth = 0_usize;
+    let mut close = None;
+    for (offset, byte) in text.as_bytes()[open..].iter().enumerate() {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(open + offset + 1);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close.expect("the action overrides map is closed");
+    format!("{}overrides: {overrides}{}", &text[..at], &text[close..])
 }
 
 #[test]
