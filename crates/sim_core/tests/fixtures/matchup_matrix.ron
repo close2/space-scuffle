@@ -908,6 +908,14 @@
         ),
         expect: (blue: (0, 15), red: (0, 999)),
     ),
+    // Battle 33 is about a 90 % marine win under the matrix's spawn jitter, not a certain one
+    // (Q0041). On 68 seeds (the four of record plus 64 jittered ones, jitter 0.12) the marines
+    // win 61, the zealots win 6 (seeds 1, 6, 28, 50, 58, 63, with 2 or 3 zealots left) and 1 is
+    // unresolved at 500 ticks (seed 19: 3 marines against 1 zealot); marine survivors average
+    // 7.41 (SD 3.34, range 0 to 14). The seeds of record are among the marine wins (8, 6, 9 and
+    // 13 marines left). What varies is how many zealots reach the marines at once. Evidence:
+    // docs/evidence/2026-11-03-battle-33-investigation.md §4.2, re-measured in
+    // docs/evidence/2026-11-04-combat-sc2-alignment.md §1.
     (
         name: "33_24_marines_vs_12_zealots",
         claim: "A close, brutal fight: solid bodies give marines the edge over zealots they do not kite",
