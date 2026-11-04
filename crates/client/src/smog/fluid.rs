@@ -1372,6 +1372,17 @@ impl SmogGrid3d {
             max_vorticity_sq: 0.0,
         };
 
+        // The dense reference of the differential test walks the plain linear order, so a sparse
+        // walk that reordered the `total_density` sum would differ from it.
+        #[cfg(test)]
+        if self.bricks.dense() {
+            for i in 0..TOTAL_VOXELS {
+                self.pack_voxel(i, &mut metrics);
+            }
+            self.rescan_brick_flags();
+            return metrics.finish(active_sources);
+        }
+
         for iz in 0..GRID_NZ {
             for iy in 0..GRID_NY {
                 for sx in 0..BRICKS_X {
@@ -1391,13 +1402,7 @@ impl SmogGrid3d {
             }
         }
 
-        SmogStepMetrics {
-            total_density: metrics.total_density,
-            peak_density: metrics.peak_density,
-            max_speed: metrics.max_speed_sq.sqrt(),
-            max_vorticity: metrics.max_vorticity_sq.sqrt(),
-            active_sources,
-        }
+        metrics.finish(active_sources)
     }
 
     /// The dense packing of voxel `i`: writes both byte quads and folds the voxel into `metrics`.
@@ -1586,6 +1591,19 @@ struct PackMetrics {
     peak_density: f32,
     max_speed_sq: f32,
     max_vorticity_sq: f32,
+}
+
+impl PackMetrics {
+    /// The step's metrics: speeds and vorticities as magnitudes.
+    fn finish(&self, active_sources: usize) -> SmogStepMetrics {
+        SmogStepMetrics {
+            total_density: self.total_density,
+            peak_density: self.peak_density,
+            max_speed: self.max_speed_sq.sqrt(),
+            max_vorticity: self.max_vorticity_sq.sqrt(),
+            active_sources,
+        }
+    }
 }
 
 /// Per-source quantities shared by every voxel a bubble touches during one injection pass.
@@ -2262,6 +2280,41 @@ mod tests {
         )
     }
 
+    /// Asserts that `sparse` and `dense` hold the same bits in every slab (tint and scratch slabs
+    /// included), both byte buffers, the bounds and the step's `metrics` (sparse first).
+    fn assert_bit_identical(
+        k: usize,
+        sparse: &SmogGrid3d,
+        dense: &SmogGrid3d,
+        metrics: &[SmogStepMetrics],
+    ) {
+        for ((name, a), (_, b)) in named_slabs(sparse).into_iter().zip(named_slabs(dense)) {
+            if let Some(i) = (0..TOTAL_VOXELS).find(|&i| a[i].to_bits() != b[i].to_bits()) {
+                assert_eq!(
+                    a[i].to_bits(),
+                    b[i].to_bits(),
+                    "step {k}: {name}[{i}] differs: sparse {}, dense {}",
+                    a[i],
+                    b[i]
+                );
+            }
+        }
+        assert!(
+            sparse.rgba_density_bytes == dense.rgba_density_bytes,
+            "step {k}: density bytes"
+        );
+        assert!(
+            sparse.rgba_velocity_bytes == dense.rgba_velocity_bytes,
+            "step {k}: velocity bytes"
+        );
+        assert_eq!(
+            metric_bits(&metrics[0]),
+            metric_bits(&metrics[1]),
+            "step {k}: metrics"
+        );
+        assert_eq!(sparse.bounds_min(), dense.bounds_min(), "step {k}: bounds");
+    }
+
     /// The sparse solver equals the dense one bit for bit on every slab (tint included, which
     /// the goldens never hash directly), both byte buffers and the metrics, after every step of
     /// a script that hits every write path: sources appearing, moving fast and stopping, more
@@ -2275,38 +2328,54 @@ mod tests {
         let mut grids = [sparse, dense];
         let mut skipped_somewhere = false;
         run_script(&mut grids, |k, grids, metrics| {
-            let (sparse, dense) = (&grids[0], &grids[1]);
-            for ((name, a), (_, b)) in named_slabs(sparse).into_iter().zip(named_slabs(dense)) {
-                if let Some(i) = (0..TOTAL_VOXELS).find(|&i| a[i].to_bits() != b[i].to_bits()) {
-                    assert_eq!(
-                        a[i].to_bits(),
-                        b[i].to_bits(),
-                        "step {k}: {name}[{i}] differs: sparse {}, dense {}",
-                        a[i],
-                        b[i]
-                    );
-                }
-            }
-            assert!(
-                sparse.rgba_density_bytes == dense.rgba_density_bytes,
-                "step {k}: density bytes"
-            );
-            assert!(
-                sparse.rgba_velocity_bytes == dense.rgba_velocity_bytes,
-                "step {k}: velocity bytes"
-            );
-            assert_eq!(
-                metric_bits(&metrics[0]),
-                metric_bits(&metrics[1]),
-                "step {k}: metrics"
-            );
-            assert_eq!(sparse.bounds_min(), dense.bounds_min(), "step {k}: bounds");
+            let sparse = &grids[0];
+            assert_bit_identical(k, sparse, &grids[1], metrics);
             skipped_somewhere |= (0..BRICK_COUNT).any(|b| sparse.bricks.velocity_rest.get(b));
         })?;
         assert!(
             skipped_somewhere,
             "the script must leave some brick at rest"
         );
+        Ok(())
+    }
+
+    /// The corner case of the reach margin (D-2, rule 5): smog at rest on the lower face of a
+    /// brick, with zero velocity and zero buoyancy. The voxels just below it fail the dense
+    /// dormant test (the voxel above holds smog), and their back-trace lands exactly on their own
+    /// centre, so the trilinear upper corner (weight zero) is the smog above: the dense code
+    /// computes them and rewrites their tint, though their reach without the margin is zero.
+    /// The grid's cells are powers of two, so the back-trace lands on the centre exactly.
+    #[test]
+    fn smog_resting_on_a_brick_face_matches_dense_solver() -> Result<(), SmogError> {
+        let exact = |dense: bool| -> Result<SmogGrid3d, SmogError> {
+            let mut grid = SmogGrid3d::new(Vec3::ZERO, Vec3::new(12.0, 3.0, 9.0))?;
+            grid.bricks.force_dense = dense;
+            for iz in 20..40 {
+                for iy in 4..8 {
+                    for ix in 30..60 {
+                        let i = SmogGrid3d::index(ix, iy, iz);
+                        grid.density[i] = 0.5;
+                        grid.tint_r[i] = 0.9;
+                    }
+                }
+            }
+            // Direct slab writes bypass the brick bookkeeping; rescan as every whole-grid write does.
+            grid.rescan_brick_flags();
+            Ok(grid)
+        };
+        let mut grids = [exact(false)?, exact(true)?];
+        for k in 0..12 {
+            let config = SmogConfig {
+                buoyancy: 0.0,
+                dissipation_rate: if k < 6 { 0.0 } else { 0.5 },
+                ..SmogConfig::default()
+            };
+            let metrics = [
+                grids[0].step(&[], &config, 1.0 / 60.0)?,
+                grids[1].step(&[], &config, 1.0 / 60.0)?,
+            ];
+            assert_bit_identical(k, &grids[0], &grids[1], &metrics);
+        }
         Ok(())
     }
 

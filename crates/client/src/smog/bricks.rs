@@ -23,7 +23,8 @@
 //! - **No allocation after construction.** Every set is a fixed array; [`BrickState`] is boxed
 //!   once by the grid's constructor.
 //! - Under `cfg(test)`, `force_dense` makes every skip query answer "compute", which turns the
-//!   sparse solver into the dense one through the same per-voxel code (the differential test).
+//!   sparse solver into the dense one through the same per-voxel code, and makes packing walk the
+//!   plain linear voxel order (the reference of the differential test in `fluid.rs`).
 
 use super::fluid::{GRID_NX, GRID_NY, GRID_NZ};
 use std::ops::{Range, RangeInclusive};
