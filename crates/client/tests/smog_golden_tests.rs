@@ -186,8 +186,8 @@ impl Fnv64 {
                 }
             }
         }
-        self.bytes(&grid.rgba_density_bytes);
-        self.bytes(&grid.rgba_velocity_bytes);
+        self.bytes(grid.density_bytes());
+        self.bytes(grid.velocity_bytes());
     }
 
     /// Hashes an image's bytes, descriptor, sampler and usage.

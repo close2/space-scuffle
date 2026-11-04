@@ -9,6 +9,8 @@
 //! - [`FramingPolicy`] is the `framing` section of `assets/catalog/media_style.ron`: the
 //!   treatment per render shape (`UnitSphere`, `BuildingDome`) and per-identity overrides. It is
 //!   data, so which identities are letterboxed needs no code change (charter §3.3).
+//! - [`BakeFraming::ffmpeg_filter_supersampled`] decodes a looping state at twice the size for
+//!   the seam repair's scale lock (plan `docs/plans/2026-11-04-veo-seamless-loops.md`, D-5).
 //! - [`measure_bar_rgb`] picks one bar colour per clip from the clip's own border, and
 //!   [`frame_to_square`] composes every kept frame onto the square canvas with that colour and a
 //!   linear feather.
@@ -53,6 +55,10 @@ pub const MAX_FEATHER_PERMILLE: u32 = 500;
 /// 512×288 frame.
 pub const BAND_DIVISOR: u32 = 64;
 
+/// Factor by which a state with a scale lock is decoded larger than its frame size, so the
+/// lock's sub-pixel enlargement keeps detail ([`BakeFraming::ffmpeg_filter_supersampled`]).
+pub const SUPERSAMPLE: u32 = 2;
+
 /// How a clip frame is fitted into the square game frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum BakeFraming {
@@ -84,6 +90,27 @@ impl BakeFraming {
             }
             Self::Letterbox { .. } => format!(
                 "scale={frame_size}:{frame_size}:force_original_aspect_ratio=decrease,fps={fps}"
+            ),
+        }
+    }
+
+    /// The FFmpeg filter that decodes a clip at [`SUPERSAMPLE`] times `frame_size` for the seam
+    /// repair's scale lock (plan `docs/plans/2026-11-04-veo-seamless-loops.md`, D-5), at `fps`
+    /// frames per second.
+    ///
+    /// The frames have the shape [`BakeFraming::ffmpeg_filter`] gives, at twice the size: a
+    /// `2·frame_size` square for `CenterCrop`, or for `Letterbox` the whole frame fitted inside
+    /// it with both sides even, so a 2:1 box filter (`loop_metrics::downsample_half`) brings
+    /// them to the frame size exactly.
+    #[must_use]
+    pub fn ffmpeg_filter_supersampled(self, frame_size: u32, fps: u32) -> String {
+        let side = frame_size.saturating_mul(SUPERSAMPLE);
+        match self {
+            Self::CenterCrop => {
+                format!("crop=min(iw\\,ih):min(iw\\,ih),scale={side}:{side},fps={fps}")
+            }
+            Self::Letterbox { .. } => format!(
+                "scale={side}:{side}:force_original_aspect_ratio=decrease:force_divisible_by={SUPERSAMPLE},fps={fps}"
             ),
         }
     }
@@ -428,6 +455,21 @@ mod tests {
             }
             .ffmpeg_filter(512, 15),
             "scale=512:512:force_original_aspect_ratio=decrease,fps=15"
+        );
+    }
+
+    #[test]
+    fn the_supersampled_filter_decodes_at_twice_the_size() {
+        assert_eq!(
+            BakeFraming::CenterCrop.ffmpeg_filter_supersampled(512, 15),
+            "crop=min(iw\\,ih):min(iw\\,ih),scale=1024:1024,fps=15"
+        );
+        assert_eq!(
+            BakeFraming::Letterbox {
+                feather_permille: 30
+            }
+            .ffmpeg_filter_supersampled(512, 15),
+            "scale=1024:1024:force_original_aspect_ratio=decrease:force_divisible_by=2,fps=15"
         );
     }
 

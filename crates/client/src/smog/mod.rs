@@ -17,6 +17,7 @@
 //! Startup and step failures are typed [`SmogError`] values reported through the media failure path.
 //! Nothing here substitutes another unit's media, a placeholder texture or an invented identity.
 
+mod bricks;
 pub mod fluid;
 pub mod gpu_upload;
 pub mod kinematics;
@@ -280,8 +281,8 @@ pub fn setup_smog_volume_system(
     };
 
     // 2. Initialize persistent 3D textures with pre-warmed data
-    let density_image = images.add(smog_field_image(grid.rgba_density_bytes.clone()));
-    let velocity_image = images.add(smog_field_image(grid.rgba_velocity_bytes.clone()));
+    let density_image = images.add(smog_field_image(grid.density_bytes().to_vec()));
+    let velocity_image = images.add(smog_field_image(grid.velocity_bytes().to_vec()));
 
     // 3. Generate pre-baked tileable 32x32x32 3D wispy noise texture
     let noise_image = images.add(smog_noise_image());

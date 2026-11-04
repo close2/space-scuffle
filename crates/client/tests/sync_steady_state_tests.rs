@@ -347,11 +347,7 @@ fn retained_buffers(world: &World) -> Vec<Buffer> {
         found.push(vector("map.sprite_images", &map.sprite_images));
     }
     let smog = world.resource::<SmogGrid3d>();
-    found.push(vector("smog.rgba_density_bytes", &smog.rgba_density_bytes));
-    found.push(vector(
-        "smog.rgba_velocity_bytes",
-        &smog.rgba_velocity_bytes,
-    ));
+    found.extend(smog.retained_byte_buffers());
     if let Some(scratch) = world.get_resource::<MesherScratch>() {
         found.push(vector("mesher.positions", &scratch.positions));
         found.push(vector("mesher.normals", &scratch.normals));

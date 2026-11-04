@@ -379,3 +379,80 @@ fn b8_a_directory_merely_named_assets_is_allowed() {
 
     ensure_outside_runtime_assets(&not_a_bundle).expect("no bundle marker here");
 }
+
+// --- Seam repair leaves other states alone (plan `2026-11-04-veo-seamless-loops.md`, WP2) ----
+
+/// The frames the bake kept for a 256 px centre crop before seam repair existed, rebuilt here
+/// from `FFmpeg`'s output with the filter and sampling of that bake: the literal crop filter, and
+/// `budget` frames spread from the first to the last.
+fn frames_as_baked_before_seam_repair(clip: &Path, budget: usize) -> Vec<image::RgbaImage> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let status = Command::new("/usr/bin/ffmpeg")
+        .args(["-v", "error", "-y", "-i"])
+        .arg(clip)
+        .args(["-vf", "crop=min(iw\\,ih):min(iw\\,ih),scale=256:256,fps=15"])
+        .arg(dir.path().join("frame_%05d.png"))
+        .status()
+        .expect("ffmpeg runs");
+    assert!(status.success());
+    let mut paths: Vec<_> = std::fs::read_dir(dir.path())
+        .expect("frames")
+        .map(|entry| entry.expect("entry").path())
+        .collect();
+    paths.sort();
+    assert!(paths.len() > budget, "the fixture must be sampled");
+    (0..budget)
+        .map(|i| i * (paths.len() - 1) / (budget - 1))
+        .map(|index| image::open(&paths[index]).expect("frame").to_rgba8())
+        .collect()
+}
+
+fn strip_frames(strip: &image::RgbaImage, slice: &ActionSlice) -> Vec<image::RgbaImage> {
+    (slice.start_frame..slice.start_frame + slice.frame_count)
+        .map(|frame| image::imageops::crop_imm(strip, 0, frame * 256, 256, 256).to_image())
+        .collect()
+}
+
+#[test]
+fn states_without_a_seam_bake_byte_for_byte_as_before() {
+    use asset_baker::ffmpeg_importer::bake_repaired_action_videos;
+    use asset_baker::loop_metrics::SeamRepair;
+    use asset_baker::{BakeFraming, FrameSpec};
+
+    let clip = common::fixture_clip();
+    let states = [
+        AnimState::Idle,
+        AnimState::Walk,
+        AnimState::Attack,
+        AnimState::Die,
+    ];
+    let clips: Vec<(AnimState, &Path)> = states.iter().map(|s| (*s, clip.as_path())).collect();
+    let spec = FrameSpec {
+        size: 256,
+        fps: 15,
+        framing: BakeFraming::CenterCrop,
+    };
+    // 16384 px / 256 px / 4 states: 16 frames each, sampled from the fixture's 60.
+    let before = frames_as_baked_before_seam_repair(&clip, 16);
+    let seams = std::collections::BTreeMap::from([(
+        AnimState::Idle,
+        SeamRepair {
+            scale_lock: false,
+            crossfade_frames: 2,
+        },
+    )]);
+    let out = tempfile::tempdir().expect("tempdir");
+    let bake = bake_repaired_action_videos("seam_neighbours", &clips, out.path(), spec, &seams)
+        .expect("bake");
+    let strip = image::open(out.path().join("seam_neighbours.png"))
+        .expect("atlas")
+        .to_rgba8();
+    for state in [AnimState::Walk, AnimState::Attack, AnimState::Die] {
+        let slice = &bake.meta.actions[&state];
+        assert_eq!(strip_frames(&strip, slice), before, "{state:?} changed");
+        assert!(bake.seam[&state].is_none());
+    }
+    let idle = &bake.meta.actions[&AnimState::Idle];
+    assert_ne!(strip_frames(&strip, idle), before, "Idle is loop-sampled");
+    assert!(bake.seam[&AnimState::Idle].is_some());
+}
