@@ -9,6 +9,10 @@ proposed change. **No catalog value, combat rule or expected outcome changes in 
 date its work starts) against `main` at `9e693cf`. Line numbers drift; search for the quoted symbol. Claims that
 could not be confirmed while planning are marked **verify**.
 
+**Outcome (2026-11-04):** done. WP1 to WP5 are written up in
+[`docs/evidence/2026-11-03-battle-33-investigation.md`](../evidence/2026-11-03-battle-33-investigation.md); its §6
+ranks the causes and §7 lists the owner questions Q0035 to Q0041, each defaulting to no change.
+
 **Owner decisions.** [Q0007](../questions/open/0007-combat-baselines.md), answered 2026-11-03: "Keep all five as
 committed. I do however want an 'investigation' why internet says that Zealots should win, and why we have 6-13 of 24
 marines surviving. This is a big difference." [Q0008](../questions/closed/0008-game-rules.md): "Whenever the spec is
