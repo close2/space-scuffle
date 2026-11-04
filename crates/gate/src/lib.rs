@@ -34,6 +34,8 @@ mod schedule;
 mod select;
 mod sources;
 mod stamp;
+mod suspects;
+mod test_log;
 mod tier;
 mod timings;
 mod workspace;
@@ -43,7 +45,7 @@ pub use catalog::{
 };
 pub use changes::{capture, ChangeSpec, Git};
 pub use cli::{parse_args, Command, RunOptions, USAGE};
-pub use execute::{build_invocations, failed_tests, Outcome, TargetResult};
+pub use execute::{build_invocations, failed_tests, mark_flakes, Outcome, TargetResult};
 pub use explain::render_selection;
 pub use glob::Glob;
 pub use merge::{changed_crates, choose_stamp, overlapping_crates, BranchCommit};
@@ -56,8 +58,18 @@ pub use sources::{
     blank, invokes_valgrind, mentions_path_root, uses_gpu_harness, Blanking, SourceIndex,
 };
 pub use stamp::{Stamp, StampTarget, StampTree};
+pub use suspects::{
+    changes_since, last_green_full, render_suspects, suspect_report, suspects_for, Change,
+    HISTORY_LIMIT,
+};
+pub use test_log::{
+    failing_targets, parse_test_log, render_log_timings, resolve_targets, LoggedBinary,
+};
 pub use tier::Tier;
-pub use timings::{class_report, ClassFinding};
+pub use timings::{
+    class_report, repeated_flakes, time_saved, ClassFinding, FlakeFinding, FLAKE_LIMIT,
+    FLAKE_WINDOW_S,
+};
 pub use workspace::{DependencyKind, Package, Target, TargetId, TargetKind, Workspace};
 
 use std::path::PathBuf;

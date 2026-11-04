@@ -123,8 +123,20 @@ jobs:
           fi
           echo "Disk budget: ${avail_gib} GiB free, ${need_gib} GiB required"
 
+      # The log feeds the timing summary below (docs/plans/2026-11-04-tiered-test-gates.md §9.3).
+      # `shell: bash` runs the step with pipefail, so a red test run still fails it.
       - name: Run all workspace unit & integration tests (including xvfb + llvmpipe GPU tests)
-        run: cargo test --workspace --locked
+        shell: bash
+        run: cargo test --workspace --locked 2>&1 | tee "$RUNNER_TEMP/cargo-test.log"
+
+      # A report only: the job's result never depends on the gate's catalog (plan §9.3, D2).
+      - name: Test timing summary
+        if: always()
+        continue-on-error: true
+        run: |
+          if [ -f "$RUNNER_TEMP/cargo-test.log" ]; then
+            cargo gate timings --from-log "$RUNNER_TEMP/cargo-test.log" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Test binaries carry compressed debug info
         run: |
