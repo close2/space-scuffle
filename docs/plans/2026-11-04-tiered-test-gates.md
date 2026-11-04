@@ -562,7 +562,32 @@ Each WP has its tests written first and seen to fail where it adds behaviour, pe
 
 ## 11. Results
 
-To be filled by WP4 and WP7.
+WP7 adds its week of use here.
+
+### 11.1 WP4: the historical replay
+
+Evidence: [`docs/evidence/2026-11-04-tiered-gates-replay.md`](../evidence/2026-11-04-tiered-gates-replay.md), with
+the table of every merge. `cargo gate explain m^1..m` for the 45 most recent first-parent merges of `main` at
+`a151620`, plus Phase 9 WP12 (`56f243f`) for the two red runs of §2.5 that belong to it, compared with every
+failing target in the logs of each package (red-first tests and mutation checks included, not only the complete
+runs):
+
+| Quantity | Value |
+|---|---|
+| Merges replayed | 45 + 1 |
+| `package` selection: subset / docs only / complete suite | 26 (26 to 132 of 156 targets, median 60) / 14 / 5 |
+| Failing targets in the packages' logs | 65 |
+| Of them in the seven red complete runs of §2.5 | 15, all selected |
+| Not selected | 1: `client/battle_input_tests` in Veo loops WP2 (`79f53f5`, `asset_baker` only) |
+| Catalog misses | 0 |
+| Rules added | none |
+
+The one unselected failure is a flake, not a miss: Bevy's embedded tonemapping look-up table failed to
+decompress (`AccLogTooBig`) once in 1,288 logs, and the same binary passed in the package's next two complete runs.
+No file of the change reaches that code; a rule for it would add a headless battle driver to every `asset_baker`
+package for nothing. Two corrections to §2.5 from the logs: `combat_wp4_probe_tests` failed three `sim_core`
+binaries and `sim_fixtures/trace_tests`, and `p9-wp12-gate1` also failed `client/runtime_battle_tests` and
+`sim_core/scenario_tests`; all are selected.
 
 ## 12. Decisions and scope
 
