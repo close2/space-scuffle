@@ -151,6 +151,46 @@ fn a_last_frame_hash_is_written_only_when_an_end_frame_was_sent() {
 }
 
 #[test]
+fn a_seed_and_a_per_clip_negative_text_round_trip_and_an_absent_seed_writes_no_field() {
+    // Plan `2026-11-04-veo-structure-action-text.md`, D-2 and D-3: the ledger records the
+    // parameters each request sent, so a seeded attempt can be told from an unseeded one.
+    let seeded = VeoParameters {
+        seed: Some(4_294_967_295),
+        negative_prompt: Some("text, watermark, breathing motion".to_string()),
+        ..VeoParameters::default()
+    };
+    let started_with = |parameters: VeoParameters| LedgerEvent::RequestStarted {
+        request_id: "r1".to_string(),
+        slug: SLUG.to_string(),
+        state: AnimState::Idle,
+        model: "fixture-model".to_string(),
+        mode: ApiMode::VertexExpress,
+        prompt_sha256: "0".repeat(64),
+        prompt: "a prompt".to_string(),
+        keyframe_sha256: None,
+        last_frame_sha256: None,
+        parameters,
+    };
+    let (_dir, path) = ledger_with(vec![
+        started_with(seeded.clone()),
+        started_with(VeoParameters::default()),
+    ]);
+    let text = std::fs::read_to_string(&path).expect("ledger");
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[0].contains("\"seed\":4294967295"), "{}", lines[0]);
+    assert!(!lines[1].contains("seed"), "{}", lines[1]);
+    let records = read_ledger(&path).expect("parses");
+    let parameters: Vec<&VeoParameters> = records
+        .iter()
+        .filter_map(|record| match &record.event {
+            LedgerEvent::RequestStarted { parameters, .. } => Some(parameters),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(parameters, [&seeded, &VeoParameters::default()]);
+}
+
+#[test]
 fn every_committed_ledger_line_still_parses_and_round_trips_unchanged() {
     // The first 25 lines predate `lastFrame` (seamless-loops plan WP1); the pilot of WP4 and
     // later runs send the pin as both the start and the end picture (plan D-2).

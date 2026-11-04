@@ -69,6 +69,7 @@ fn plan(root: &Path, unit: &str, history: &LedgerHistory) -> Result<RunPlan, Bak
     plan_run(
         &catalog(),
         &style,
+        &asset_baker::VeoParameters::default(),
         &[unit.to_string()],
         None,
         &dirs(root),
