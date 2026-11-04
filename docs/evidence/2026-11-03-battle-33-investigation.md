@@ -1135,7 +1135,7 @@ can reach.
 | [Q0037](../questions/open/0037-scan-ranges.md) | Scan ranges by StarCraft II's rule (weapon range + 0.5, at least 5) | Rank 3: −3.12 | Catalog-wide rule, 42 units: not measured |
 | [Q0038](../questions/open/0038-marine-backswing-gate.md) | Marine damage point 1 and backswing 13, after changing the rule that lets a backswing delay the next attack | +0.09 (none) | 25b fails (zealot hull 62, expected 5 to 45) unless the rule changes first |
 | [Q0039](../questions/open/0039-normal-time-values.md) | Convert the values left in Normal time: marine speed, shield regeneration rate and delay, Stimpack duration; audit the rest of the catalog | Rank 6: −0.69; the rest 0 or not run | Marine speed and regeneration rate were in the control; the delay and the audit are not measured |
-| [Q0040](../questions/open/0040-zealot-attributes.md) | Zealot attributes Light, Biological instead of Light, Psionic | 0 (inert) | None: no rule reads either flag |
+| [Q0040](../questions/closed/0040-zealot-attributes.md) | Zealot attributes Light, Biological instead of Light, Psionic | 0 (inert) | None: no rule reads either flag |
 | [Q0041](../questions/open/0041-battle-33-expectation-under-jitter.md) | Say in the fixture that battle 33 is about a 90 % marine win under jitter | none (documentation) | none |
 
 **Found but not proposed.** The separation radius (0.45 and 0.6 against 0.375) is read by no `sim_core` system

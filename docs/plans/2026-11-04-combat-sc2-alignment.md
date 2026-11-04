@@ -35,7 +35,7 @@ What changed:
 | [Q0037](../questions/open/0037-scan-ranges.md) scan ranges | Option 3, low priority: a plan for StarCraft II's rule across the catalog, mechanism and whole matrix first | WP14 (last) |
 | [Q0038](../questions/open/0038-marine-backswing-gate.md) backswing | Option 2: change the rule first, then marine `damage_point: 1`, `backswing: 13` | D-2, WP1, WP6 |
 | [Q0039](../questions/open/0039-normal-time-values.md) Normal-time values | Option 3: convert the four values and audit every time and speed value, with a whole-matrix measurement | D-4, D-5, WP3, WP7 to WP12 |
-| [Q0040](../questions/open/0040-zealot-attributes.md) zealot attributes | Option 2: `Light, Biological` | WP5 |
+| [Q0040](../questions/closed/0040-zealot-attributes.md) zealot attributes | Option 2: `Light, Biological` | WP5 |
 | [Q0041](../questions/open/0041-battle-33-expectation-under-jitter.md) battle 33 under jitter | Option 2: document the ≈90 % marine win in the fixture, with a pointer to the evidence | WP0 step 5 |
 | [Q0007](../questions/open/0007-combat-baselines.md) combat baselines | "Q0007 may now be closed" | WP13 step 1 |
 | [Q0044](../questions/closed/0044-battle-33-expectation-after-alignment.md) battle 33 after the corrections | Option 1: re-record to the seeds of record and document the distribution; "Having a close battle isn't a bad thing" | D-6, every WP that moves battle 33, WP13 step 3 |
