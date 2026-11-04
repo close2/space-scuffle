@@ -7,6 +7,9 @@
 //!   states, so that they show the same design.
 //! - [`contact_sheet`]: eight frames of a clip side by side, full size for the reviewer and a
 //!   copy at most [`EVIDENCE_SHEET_MAX_WIDTH`] pixels wide for the committed evidence.
+//! - [`framed_sheet`]: the same eight moments as the square game frames that ship, built by the
+//!   bake's own decode and framing path (`ffmpeg_importer::decode_framed_clip`) with the
+//!   identity's framing from `media_style.ron`, so the review judges exactly what ships.
 //! - [`reject_clip`]: records a reviewer's rejection in the ledger.
 //! - [`install_clip`]: copies an accepted clip into `assets/videos`, refusing any clip the
 //!   ledger did not record as downloaded or that was rejected.
@@ -23,7 +26,9 @@
 //!   clip unless asked to.
 
 use crate::error::BakerError;
-use crate::ffmpeg_importer::{probe_video, VideoProbe};
+use crate::ffmpeg_importer::{
+    decode_framed_clip, evenly_spaced_indices, probe_video, FrameSpec, VideoProbe,
+};
 use crate::ledger::{sha256_file, Ledger, LedgerEvent, LedgerHistory};
 use crate::veo_plan::{state_slug, VeoDirs};
 use sim_types::enums::AnimState;
@@ -175,6 +180,12 @@ pub fn contact_sheet(
         ],
     )?;
     let sheet = require_image(full, "the contact sheet")?;
+    save_evidence_copy(sheet, small)?;
+    Ok(probe)
+}
+
+/// Saves `sheet` to `small`, downscaled to at most [`EVIDENCE_SHEET_MAX_WIDTH`] pixels wide.
+fn save_evidence_copy(sheet: image::DynamicImage, small: &Path) -> Result<(), BakerError> {
     let copy = if sheet.width() > EVIDENCE_SHEET_MAX_WIDTH {
         let height = u64::from(sheet.height()) * u64::from(EVIDENCE_SHEET_MAX_WIDTH)
             / u64::from(sheet.width());
@@ -191,8 +202,53 @@ pub fn contact_sheet(
         .map_err(|source| BakerError::ImageProcessing {
             path: small.to_path_buf(),
             source,
+        })
+}
+
+/// Writes the framed contact sheet of `clip`: [`CONTACT_SHEET_FRAMES`] square frames, evenly
+/// spaced over the clip, decoded and framed exactly as `bake-unit-videos` does with `spec`, and
+/// tiled in one row. The full sheet goes to `full` and a copy at most
+/// [`EVIDENCE_SHEET_MAX_WIDTH`] pixels wide to `small`. Returns the bar colour chosen, if any.
+///
+/// The bar colour is measured over every frame decoded at `spec.fps`, as a bake of the clip
+/// alone would; a bake that shares the strip with other states keeps fewer frames, so its
+/// colour can differ by a unit or two.
+///
+/// # Errors
+/// Validation, FFmpeg and image errors.
+pub fn framed_sheet(
+    ffmpeg: &Path,
+    clip: &Path,
+    spec: FrameSpec,
+    full: &Path,
+    small: &Path,
+) -> Result<Option<[u8; 3]>, BakerError> {
+    let framed = decode_framed_clip(ffmpeg, clip, spec, usize::MAX, "framed review")?;
+    let picks = evenly_spaced_indices(framed.frames.len(), CONTACT_SHEET_FRAMES as usize);
+    let tiles = u32::try_from(picks.len()).unwrap_or(CONTACT_SHEET_FRAMES);
+    let mut sheet = image::RgbaImage::new(spec.size.saturating_mul(tiles.max(1)), spec.size);
+    for (column, index) in (0_u32..).zip(&picks) {
+        if let Some(frame) = framed.frames.get(*index) {
+            let x = i64::from(column.saturating_mul(spec.size));
+            image::imageops::replace(&mut sheet, frame, x, 0);
+        }
+    }
+    for path in [full, small] {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| BakerError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+    }
+    sheet
+        .save(full)
+        .map_err(|source| BakerError::ImageProcessing {
+            path: full.to_path_buf(),
+            source,
         })?;
-    Ok(probe)
+    save_evidence_copy(image::DynamicImage::ImageRgba8(sheet), small)?;
+    Ok(framed.bar_rgb)
 }
 
 /// The clip a reviewer looks at for `slug`'s `state`: the download awaiting review, else the

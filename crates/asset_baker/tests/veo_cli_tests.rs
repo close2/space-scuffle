@@ -857,6 +857,135 @@ fn d4_a_corrupt_ledger_stops_the_run_before_any_request() {
     assert!(server.requests().is_empty());
 }
 
+// --- Request parameters in data (letterbox plan `2026-11-04-veo-letterbox-bake.md`, D-6) ------
+
+/// Copies the shipped catalogs and media data into a temporary bundle, with the request
+/// settings replaced by `settings`.
+fn bundle_with_request(settings: &str) -> tempfile::TempDir {
+    let bundle = bundle_with_style(|style| style);
+    std::fs::write(bundle.path().join("media/veo_request.ron"), settings).expect("settings");
+    bundle
+}
+
+/// The `parameters` object of every start request the server received.
+fn sent_parameters(server: &FakeServer) -> Vec<Value> {
+    server
+        .requests()
+        .iter()
+        .filter(|request| request.path.contains(":predictLongRunning"))
+        .map(|request| {
+            let body: Value = serde_json::from_slice(&request.body).expect("start body is JSON");
+            body["parameters"].clone()
+        })
+        .collect()
+}
+
+/// The `parameters` of every `request_started` line of the run's ledger.
+fn recorded_parameters(dirs: &RunDirs) -> Vec<Value> {
+    dirs.ledger_lines()
+        .iter()
+        .filter(|line| line["event"] == "request_started")
+        .map(|line| line["parameters"].clone())
+        .collect()
+}
+
+#[test]
+fn d6_the_shipped_settings_keep_sound_and_send_no_generate_audio_key() {
+    // The owner keeps sound (Q0043): the shipped data sends no `generateAudio` field, as the
+    // pilot did, and the service then generates a sound track.
+    let unit = combat_unit(&shipped_catalog());
+    let (dirs, server, _shim, output) = generated(&unit, "idle");
+    assert!(output.status.success(), "{}", text(&output));
+    let sent = sent_parameters(&server);
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0].get("generateAudio").is_none(), "{}", sent[0]);
+    assert_eq!(sent[0]["aspectRatio"], "16:9");
+    assert_eq!(sent[0]["durationSeconds"], 4);
+    assert_eq!(recorded_parameters(&dirs), sent);
+    assert!(
+        !stdout(&output).contains("generateAudio"),
+        "{}",
+        text(&output)
+    );
+}
+
+#[test]
+fn d6_generate_audio_false_in_data_is_sent_and_the_ledger_records_it() {
+    let unit = combat_unit(&shipped_catalog());
+    let bundle = bundle_with_request(
+        "(aspect_ratio: \"16:9\", duration_seconds: 4, sample_count: 1, generate_audio: Some(false))",
+    );
+    let server = FakeServer::start(healthy(fixture_bytes()));
+    let shim = CurlShim::new(&server);
+    let dirs = RunDirs::new();
+    let output = dirs.generate_in(
+        bundle.path(),
+        &shim,
+        &[&unit],
+        &["--states", "idle", "--max-generations", "1"],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    let sent = sent_parameters(&server);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0]["generateAudio"], json!(false), "{}", sent[0]);
+    assert_eq!(recorded_parameters(&dirs), sent);
+    assert!(
+        stdout(&output).contains("generateAudio false"),
+        "{}",
+        text(&output)
+    );
+}
+
+#[test]
+fn d6_malformed_request_settings_fail_before_any_credential_is_read() {
+    let unit = combat_unit(&shipped_catalog());
+    let cases = [
+        "(aspect_ratio: \"16:9\", duration_seconds: 4)",
+        "(aspect_ratio: \"16:9\", duration_seconds: 4, sample_count: 2, generate_audio: None)",
+        "(aspect_ratio: \"16:9\", duration_seconds: 4, sample_count: 1, generate_audio: None, extra: 1)",
+    ];
+    for settings in cases {
+        let bundle = bundle_with_request(settings);
+        let server = silent_server();
+        let shim = CurlShim::new(&server);
+        let dirs = RunDirs::new();
+        // Trap the credentials: a `.env` that is a directory cannot be read, so a run that
+        // read credentials first would fail with that I/O error instead.
+        std::fs::remove_file(dirs.credentials.join(".env")).expect("remove key file");
+        std::fs::create_dir_all(dirs.credentials.join(".env")).expect("trap .env");
+        let output = dirs.generate_in(
+            bundle.path(),
+            &shim,
+            &[&unit],
+            &["--states", "idle", "--max-generations", "1"],
+        );
+        assert!(!output.status.success(), "{settings}: {}", text(&output));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("invalid data file") && stderr.contains("veo_request.ron"),
+            "{settings}: {}",
+            text(&output)
+        );
+        assert!(server.requests().is_empty());
+        assert!(!dirs.ledger.exists(), "nothing may be recorded");
+    }
+}
+
+#[test]
+fn d6_the_committed_ledger_still_parses_and_its_pilot_sent_no_audio_field() {
+    let ledger = shipped_assets().join("../docs/evidence/veo/ledger.jsonl");
+    let records = asset_baker::ledger::read_ledger_numbered(&ledger).expect("committed ledger");
+    let started: Vec<&asset_baker::VeoParameters> = records
+        .iter()
+        .filter_map(|numbered| match &numbered.record.event {
+            asset_baker::ledger::LedgerEvent::RequestStarted { parameters, .. } => Some(parameters),
+            _ => None,
+        })
+        .collect();
+    assert!(!started.is_empty(), "the pilot's request is recorded");
+    assert!(started.iter().all(|p| p.generate_audio.is_none()));
+}
+
 // --- D-5: free preflight ---------------------------------------------------------------------
 
 fn preflight(shim: &CurlShim, credentials: &Path) -> std::process::Output {
