@@ -53,4 +53,20 @@
     // Text that marks an unfinished prompt. A marker made of letters matches as a whole word
     // ignoring case; any other marker matches anywhere.
     placeholder_markers: ["TODO", "TBD", "FIXME", "XXX", "lorem", "ipsum", "placeholder", "{", "}"],
+
+    // How `asset_baker` fits a clip (Veo returns 16:9) into the square game frame, chosen by
+    // the identity's render shape (docs/plans/2026-11-04-veo-letterbox-bake.md, D-1 to D-3).
+    // - CenterCrop: cut the centred square; a wide subject loses its sides.
+    // - Letterbox(feather_permille: N): keep the whole frame, scaled to fit, with opaque bars in
+    //   the colour measured from the clip's own border; the content's outermost N/1000 of the
+    //   frame side blends into the bars (0 leaves a hard edge).
+    framing: (
+        // Units are taller than wide and centred, so the crop keeps them whole and large.
+        unit_sphere: CenterCrop,
+        // Structures are wide and Veo fills the 16:9 width with them; a crop cuts their base.
+        building_dome: Letterbox(feather_permille: 30),
+        // Exact catalog slug -> framing, for one identity whose clip needs the other treatment
+        // (for example a wide flying unit). A slug that is not in the catalog is refused.
+        overrides: {},
+    ),
 )

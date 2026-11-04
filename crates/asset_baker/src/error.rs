@@ -255,6 +255,16 @@ pub enum BakerError {
         reason: String,
     },
 
+    /// The framing policy of `media_style.ron` overrides an identity the catalog does not
+    /// hold exactly.
+    #[error("invalid data file '{path}': the framing override '{slug}' is not a catalog identity")]
+    UnknownFramingOverride {
+        /// The media style file.
+        path: PathBuf,
+        /// The unknown slug.
+        slug: String,
+    },
+
     /// A state was requested that the identity can never publish, so media for it is useless.
     #[error("'{slug}' does not publish the {state} action; it publishes {published:?}")]
     StateNotPublished {
