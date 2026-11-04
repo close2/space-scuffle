@@ -23,7 +23,7 @@
 #![allow(clippy::expect_used, clippy::panic, clippy::cast_precision_loss)]
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::input::mouse::MouseButtonInput;
@@ -45,16 +45,13 @@ use client::scene_controller::LiveBattleBubble;
 use client::{LabState, ResolvedAssetsRoot, RtsCamera};
 use sim_core::SimWorld;
 use sim_map::CellFlags;
-use sim_types::{AnimState, EntityId, PlayerId, SimScalar, SimVec2};
+use sim_types::{EntityId, PlayerId, SimScalar, SimVec2};
 
 /// Owner of the armies driven by these tests: the scenario's first participant.
 pub const LOCAL_PLAYER: PlayerId = PlayerId(0);
 
 /// Camera distance that fits a starting army on screen, in world units.
 const OVERVIEW_DISTANCE: f32 = 26.0;
-
-/// Side of a fixture atlas frame in pixels: nothing renders it, so it stays small.
-const FIXTURE_FRAME_SIZE: u32 = 64;
 
 /// A production client with no window or renderer, driven by real input events.
 pub struct Harness {
@@ -473,97 +470,6 @@ impl Harness {
         );
         bubble
     }
-}
-
-/// Directories of the assets root a battle reads, beside the textures.
-const FIXTURE_DIRECTORIES: [&str; 4] = ["catalog", "maps", "scenarios", "shaders"];
-
-/// Copies every file beneath `from` to `to`. Text can be edited in the copy.
-fn copy_tree(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("fixture directory");
-    for entry in std::fs::read_dir(from).expect("assets directory") {
-        let entry = entry.expect("assets entry");
-        let target = to.join(entry.file_name());
-        if entry.file_type().expect("assets entry type").is_dir() {
-            copy_tree(&entry.path(), &target);
-        } else {
-            std::fs::copy(entry.path(), target).expect("fixture file");
-        }
-    }
-}
-
-/// Mirrors the real textures beneath `from` into `to`, without overwriting anything there.
-///
-/// PERFORMANCE RATIONALE:
-/// Why: The textures come to over 200 MiB, and three tests each need a root of their own.
-/// What: Hard links, with a copy across file systems.
-/// Trade-off: A link shares its bytes with the shipped file, so a fixture must never rewrite one.
-/// [`copy_tree`] gives the editable text its own bytes for that reason.
-fn link_tree(from: &Path, to: &Path) {
-    std::fs::create_dir_all(to).expect("fixture directory");
-    for entry in std::fs::read_dir(from).expect("assets directory") {
-        let entry = entry.expect("assets entry");
-        let target = to.join(entry.file_name());
-        if entry.file_type().expect("assets entry type").is_dir() {
-            link_tree(&entry.path(), &target);
-        } else if std::fs::hard_link(entry.path(), &target).is_err() {
-            std::fs::copy(entry.path(), target).expect("fixture file");
-        }
-    }
-}
-
-/// A temporary assets root: the real files plus procedural atlases for `identities` (D-9).
-///
-/// The atlases are written first, while the directory is not yet a bundle, because
-/// `write_procedural_atlas` refuses a runtime bundle. This is the only place a test makes one, and
-/// nothing is written outside the temporary directory.
-pub fn fixture_root(identities: &[&str]) -> tempfile::TempDir {
-    let directory = tempfile::tempdir().expect("temporary directory");
-    let textures = directory.path().join("textures");
-    let catalog = sim_fixtures::shipped_catalogs().units;
-    for identity in identities {
-        let mut atlas = asset_baker::generate_procedural_atlas(
-            &catalog,
-            identity,
-            Some(FIXTURE_FRAME_SIZE),
-            None,
-        )
-        .expect("a catalog identity");
-        // The media gate asks for each action the simulation can publish for this identity, and
-        // the procedural generator draws neither Cast nor Constructing for a mobile unit. Only
-        // those gaps are filled, so a dome keeps its media without a walk, as real art may.
-        let archetype = catalog.get_by_slug(identity).expect("a catalog identity");
-        let idle = atlas.meta.actions[&AnimState::Idle];
-        for action in catalog.publishable_actions(archetype).iter() {
-            atlas.meta.actions.entry(action).or_insert(idle);
-        }
-        asset_baker::write_procedural_atlas(&atlas, &textures).expect("a temporary directory");
-    }
-    link_tree(&assets().join("textures"), &textures);
-    for name in FIXTURE_DIRECTORIES {
-        copy_tree(&assets().join(name), &directory.path().join(name));
-    }
-    directory
-}
-
-/// Every file beneath `assets/textures`, with its size and modification time, sorted.
-pub fn shipped_textures() -> Vec<(PathBuf, u64, SystemTime)> {
-    fn visit(directory: &Path, found: &mut Vec<(PathBuf, u64, SystemTime)>) {
-        for entry in std::fs::read_dir(directory).expect("assets directory") {
-            let entry = entry.expect("assets entry");
-            let metadata = entry.metadata().expect("assets metadata");
-            if metadata.is_dir() {
-                visit(&entry.path(), found);
-            } else {
-                let modified = metadata.modified().expect("a modification time");
-                found.push((entry.path(), metadata.len(), modified));
-            }
-        }
-    }
-    let mut found = Vec::new();
-    visit(&assets().join("textures"), &mut found);
-    found.sort();
-    found
 }
 
 pub fn sim_position(position: Vec2) -> SimVec2 {
