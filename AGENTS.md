@@ -123,6 +123,7 @@ Code without tests is considered incomplete.
 | `client_diagnostics` | Capture pipeline and one-way dependency on `client` | `runtime_capture_tests.rs`, `dependency_direction_tests.rs` |
 | `sim_fixtures` | The embedded catalogs equal the shipped files; the battle sandbox is built whole | `fixture_tests.rs` |
 | `workspace_checks` | The charter checks of §9 | `charter.rs` |
+| `gate` | Selection, globs, scheduling, stamps, catalog consistency | `selection_tests.rs`, `suite_catalog_tests.rs` |
 
 3. **Quality Gate Before Completing Any Task:** [CI: C16]
    - Every agent must run and pass:
@@ -147,6 +148,7 @@ flowchart TD
     CD["crates/client_diagnostics<br/>(capture, audit and probe tools)"]
     FX["crates/sim_fixtures<br/>(test-only shipped-data fixtures)"]
     WC["crates/workspace_checks<br/>(charter checks)"]
+    GT["crates/gate<br/>(tiered test gates)"]
 
     ST --> SM
     ST --> SC
@@ -175,6 +177,8 @@ flowchart TD
 `asset_baker` depends on `sim_core` for the unit catalog it discovers archetypes from. `sim_fixtures` embeds the
 shipped catalogs for tests only; `sim_core` uses it in its integration tests, and its own unit tests embed the same
 files through `sim_core::test_support`, because a dev-dependency cycle would link a second copy of `sim_core`.
+`gate` depends on no workspace crate: it reads `cargo metadata`, Git and the sources as data, so a broken crate
+cannot break the tool that selects its tests.
 
 ---
 

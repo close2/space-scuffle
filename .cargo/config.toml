@@ -14,3 +14,9 @@
 #   RUSTFLAGS replaces it. CI's "Test binaries carry compressed debug info" step fails if that happens.
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-Wl,--compress-debug-sections=zlib"]
+
+# `cargo gate <tier>` runs the tiered test gates of docs/plans/2026-11-04-tiered-test-gates.md: the tool in
+# crates/gate selects the tests a change can break from crates/gate/suites.ron. `cargo gate explain` prints the
+# selection and runs nothing.
+[alias]
+gate = "run --quiet --locked --package gate --"
