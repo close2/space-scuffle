@@ -466,8 +466,13 @@ const SHIFT_PHASE_STEPS: [usize; 3] = [40, 40, 20];
 const SHIFT_SMALL_VOXELS: [i32; 3] = [3, 0, -2];
 
 /// Second window shift of the bounds shift golden, in voxels along x: more than the grid's
-/// width, so `set_bounds_quantized` takes its clearing path.
-const SHIFT_LARGE_VOXELS_X: i32 = GRID_NX as i32 + 4;
+/// width (96 voxels, checked below), so `set_bounds_quantized` takes its clearing path.
+const SHIFT_LARGE_VOXELS_X: u16 = 100;
+
+const _: () = assert!(
+    SHIFT_LARGE_VOXELS_X as usize >= GRID_NX,
+    "the large shift must be at least the grid width"
+);
 
 /// The variable `dt` golden's cycle of steps, in seconds: three display rates, the pre-warm
 /// step, a step above the solver's 0.05 s clamp, and a paused frame (`dt = 0`, a no-op).
@@ -616,7 +621,7 @@ fn fluid_bounds_shift_golden() -> Result<(), SmogError> {
             SHIFT_SMALL_VOXELS[1] as f32 * cell.y,
             SHIFT_SMALL_VOXELS[2] as f32 * cell.z,
         ),
-        Vec3::new(SHIFT_LARGE_VOXELS_X as f32 * cell.x, 0.0, 0.0),
+        Vec3::new(f32::from(SHIFT_LARGE_VOXELS_X) * cell.x, 0.0, 0.0),
     ];
     let mut sources = Vec::with_capacity(states.len());
     let mut h = Fnv64::new();

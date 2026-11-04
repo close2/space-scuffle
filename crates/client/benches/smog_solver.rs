@@ -239,7 +239,7 @@ fn marching_rows(count: usize) -> Vec<BubbleSmogSource> {
         .map(|index| {
             let row = index / BATTLE_ROW_LENGTH;
             let column = index % BATTLE_ROW_LENGTH;
-            let direction = if row % 2 == 0 { 1.0 } else { -1.0 };
+            let direction = if row.is_multiple_of(2) { 1.0 } else { -1.0 };
             let x = (BATTLE_ROW_SPACING * (row as f32 + 0.5)).rem_euclid(width);
             BubbleSmogSource {
                 position: Vec3::new(
