@@ -65,7 +65,7 @@ space-scuffle/
          pub aim_angle_rad: f32,         // drives Attack Aperture / Focal Lens position on rim
          pub is_attacking: bool,
          pub anim_state: AnimState,
-         pub anim_progress: f32,         // 0.0..1.0 or frame index
+         pub attack_swing: Option<AttackSwing>, // replaced anim_progress; the client's flipbook clock picks the frame
          pub hp_ratio: f32,              // 1.0 = pristine, <0.75 = minor cracks, <0.35 = heavy cracks + CRT glitch
          pub shield_ratio: f32,          // 0.0..1.0 outer energy sheen
          pub shield_hit_flash: f32,      // 0.0..1.0 decaying ripple intensity

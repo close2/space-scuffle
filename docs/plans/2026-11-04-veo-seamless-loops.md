@@ -380,7 +380,13 @@ Runs Veo plan WP4 as amended there, with these changes:
 | Pin rules reject the committed square keyframes | Intended; a seed clip makes a 16:9 pin (§6 counts them) |
 | The measure passes a visible jump | Calibration in WP3 on the five rejected clips before any spend; the visual first/last check stays |
 
-**F-1 (finding, not fixed here).** The simulation never advances `anim_progress` (`sim_core/src/entity.rs`
+**F-1 (finding; fixed by plan `2026-11-04-battle-flipbook-animation`).** Fixed on `main` by that plan's WP1
+(`9d5884c`, `AttackSwing` in the snapshot), WP4 (`4bd48cf`, the GPU flipbook clock), WP5 (`ec04bf4`, the battle
+plays its flipbooks on the presented simulation clock), WP3 (`1940231`, per-slice `duration_ms`) and WP6
+(`d5779f7`, Lab, swarm and portrait on the same clock); measured in
+[`docs/evidence/2026-11-04-battle-flipbook-animation.md`](../evidence/2026-11-04-battle-flipbook-animation.md).
+`sim_core`'s dead `Entity::anim_progress` is removed by that plan's WP2, which waits for a lane B slot. The text
+below is the finding as recorded. The simulation never advances `anim_progress` (`sim_core/src/entity.rs`
 initialises it to zero and no system writes it; `world/snapshot.rs` copies it), so in the battle view every bubble
 shows the first frame of its state's slice. Only the Visual Lab (`(elapsed · 1.5).fract()`) and the swarm preview
 (`(elapsed · 2.0).fract()`) animate flipbooks, at fixed periods that ignore the manifest's `fps`. Loop seams are
