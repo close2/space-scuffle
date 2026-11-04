@@ -1,0 +1,110 @@
+// Golden lockstep replay that pins two phase orders of `SimWorld::step_into` (Phase 9 §9 gap 4).
+//
+// The broad replay (golden_replay.ron) stays green when either of these orders is swapped:
+//   1. `update_vision` before `acquire_targets`: a unit acquires a target on the very tick a
+//      spotter reveals it, not one tick later;
+//   2. route upkeep before the arrival decision (`MotionDraft::walk`): a unit whose route was
+//      dropped mid-order is routed again before its arrival is judged, so an empty route is not
+//      mistaken for a last leg.
+// This script makes each swap change the world checksum within ten ticks of the situation, and
+// records a checksum every 10 ticks so a divergence is reported close to where it starts.
+// Recorded on 2026-11-04 against unmodified simulation code; under the vision swap it diverges
+// at checkpoint 6 (ticks 61 to 70), under the upkeep swap at checkpoint 25 (ticks 251 to 260).
+//
+// Scenario, on the shipped default arena. In world coordinates (map rows are stored north
+// first): low ground at y < 30, an abyss band at y = 30..33 crossed only by the ramp at
+// x = 30..33, high ground at y >= 34.
+//   - "red_ledge" holds position on the high-ground lip, five world units above "blue_line" on
+//     the low ground. The cliff hides it from blue, so blue cannot fire.
+//   - "blue_spotter", an air unit, flies in over the abyss. On the tick its sight reaches the
+//     ledge (tick 64), "blue_line" acquires (same-tick reveal and acquisition) and shoots the
+//     ledge down.
+//   - "blue_column" and "blue_armor" (twenty bodies, two sizes) are sent to one point just past
+//     the top of the ramp, jam in the four-cell choke, and units at the foot of the ramp stall
+//     and drop their routes while friends ahead already stand on the goal (the first, at tick
+//     252). The group then moves on across the plateau and back down through the same choke.
+// tests/golden_replay_tests.rs checks from the replay that both situations still occur.
+(
+    checksum_schema: 9,
+    seed: 0x0DE5_0F_0D3125,
+    total_ticks: 600,
+    checkpoint_interval: 10,
+    squads: [
+        (name: "blue_line", player: 0, slug: "pulse_bot", count: 6, origin: (10, 29), columns: 6),
+        (name: "blue_spotter", player: 0, slug: "flying_saucer", count: 1, origin: (2, 18), columns: 1),
+        (name: "blue_column", player: 0, slug: "pulse_bot", count: 16, origin: (36, 16), columns: 8),
+        (name: "blue_armor", player: 0, slug: "rhino_beetle", count: 4, origin: (36, 13), columns: 4),
+        (name: "red_ledge", player: 1, slug: "psi_grey", count: 4, origin: (11, 34), columns: 4),
+    ],
+    research: [],
+    structures: [],
+    orders: [
+        (tick: 0, squads: ["red_ledge"], order: HoldPosition),
+        (tick: 10, squads: ["blue_spotter"], order: Move(12, 32)),
+        (tick: 20, squads: ["blue_column", "blue_armor"], order: Move(32, 37)),
+        (tick: 330, squads: ["blue_column", "blue_armor"], order: Move(36, 44)),
+        (tick: 420, squads: ["blue_column", "blue_armor"], order: Move(40, 22)),
+    ],
+    checksums: [
+        0xfbd88fa0bd625a77,
+        0x40b9beec54e597d2,
+        0x29d9fbd949dfcd60,
+        0x0655098b2a4a28ea,
+        0x28d07bd873a5002c,
+        0x498d19d85e9f9249,
+        0x061f87e8d58bdf77,
+        0x5ddc3ec396e93ab4,
+        0x7b1eea7d2a762be5,
+        0xac26941e6518e294,
+        0x6d372a61a576d8ee,
+        0xa2410a4e00c8ba7e,
+        0xfac38ddba47f135f,
+        0x79a4aabe109e9825,
+        0xdbea8aa3af28919f,
+        0x87f0580738271033,
+        0x409d4d3c3a8147fd,
+        0xb6af82e6ac39ee5c,
+        0x8a66278774603a06,
+        0x0c5984123313adbb,
+        0x77e99c403a7df6c8,
+        0x8a6f843295d31e07,
+        0x0abb8011519bbadb,
+        0x5fde0118a46aa1e7,
+        0x5e9dbec33ccfb09b,
+        0xaa2110bef1460717,
+        0xe1f5c86baf874c5d,
+        0x30d03000311b7fcf,
+        0xa8f998bda0c46b14,
+        0x0877a16125bd3f66,
+        0xe8cd2fa564c610b9,
+        0x618eaf1a36038004,
+        0xf88d2877ab41ab1b,
+        0x45efd7d39f4be8f6,
+        0x7189e17e24c76322,
+        0x4f6d767a24b646da,
+        0xa8d56881b096f37a,
+        0xd0588b372a397d00,
+        0x07e5b9cd283706ae,
+        0x704c04e7facbac7d,
+        0x63205aa295864df0,
+        0x30051b796fb86560,
+        0xb36ceb3ea3291c75,
+        0x0fd8b22515472e07,
+        0x6bdfeb856327eb5b,
+        0xe37a8192344e2fce,
+        0x849f6b4061af368d,
+        0x41bdcff3031d0499,
+        0x28676c07293734b3,
+        0x4e9335a0a5c64339,
+        0x69110be264224568,
+        0x68d3d1399082f8f4,
+        0x75c91b5f1ecab72f,
+        0x586e5f1d06b5ece7,
+        0x2742704e9629c049,
+        0x46e3e60124e555df,
+        0x6164f165e358d01c,
+        0x5fc0f463b7ced7de,
+        0x155e2eeb0a334795,
+        0xb55d64443c39ea93,
+    ],
+)
