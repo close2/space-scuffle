@@ -21,6 +21,7 @@ use crate::bubble_shader::{
     FLAG_FACING_STRIPE, FLAG_FRESNEL, FLAG_GLARE, FLAG_INNER_WARP, FLAG_SELECTED,
     FLAG_SPEED_BOOSTED,
 };
+use crate::flipbook_clock::FlipbookLanes;
 use crate::indicators::{attach_bubble_indicators, IndicatorAssets, SelectionRingMaterial};
 use crate::lab_ui::{LabState, LabTab};
 use crate::selection::{HeroLineupIndex, SelectionState};
@@ -313,13 +314,18 @@ impl PreviewFrame<'_> {
             is_selected,
         );
         let style = self.palette.preview_style(instance.owner)?;
-        let mut uniform = BubbleUniformGpu::from_instance(&instance, meta, style);
         // The Lab has no battle and no snapshot phase: it plays every slice on its own
         // elapsed time, one cycle per 0.67 s.
         let progress = (self.elapsed_seconds * 1.5).fract();
-        uniform.frame_index =
-            crate::bubble_shader::frame_index_at(meta, instance.anim_state, progress);
-        uniform.anim_progress = progress;
+        let mut uniform = BubbleUniformGpu::from_instance(
+            &instance,
+            style,
+            FlipbookLanes::fixed(crate::bubble_shader::frame_index_at(
+                meta,
+                instance.anim_state,
+                progress,
+            )),
+        );
         uniform.feature_flags = preview_feature_flags(self.lab, &instance, is_selected);
         Ok(PreviewActor {
             instance,
@@ -383,11 +389,7 @@ fn spawn_preview_actor(
     index: usize,
 ) -> Result<(), crate::player_presentation::PresentationError> {
     let actor = frame.actor(archetype, index, false)?;
-    let material = BubbleDomeMaterial {
-        uniform: actor.uniform,
-        video_texture: actor.texture,
-        alpha_mode: AlphaMode::Blend,
-    };
+    let material = BubbleDomeMaterial::new(actor.uniform, actor.texture);
     let components = (
         preview_visibility(frame.lab),
         LabPreviewBubble,
@@ -687,8 +689,12 @@ impl<'a> LiveBubbleFrame<'a> {
     ) -> Self {
         let meta = registry.get_meta(instance.unit_type);
         let texture = registry.get_texture(instance.unit_type);
-        let uniform =
-            BubbleUniformGpu::from_instance(instance, meta, style).with_selection(selected);
+        let uniform = BubbleUniformGpu::from_instance(
+            instance,
+            style,
+            crate::bubble_shader::still_frame_lanes(meta, instance.anim_state),
+        )
+        .with_selection(selected);
         let is_dome = matches!(instance.shape, ShapeKind::BuildingDome { .. });
         let altitude_offset = if is_dome { 0.0 } else { instance.radius };
         let translation = Vec3::new(
@@ -749,11 +755,7 @@ fn spawn_live_instance(
         selected: frame.selected,
         ..frame.instance.clone()
     };
-    let material = BubbleDomeMaterial {
-        uniform: frame.uniform,
-        video_texture: frame.texture,
-        alpha_mode: AlphaMode::Blend,
-    };
+    let material = BubbleDomeMaterial::new(frame.uniform, frame.texture);
     let marker = LiveBattleBubble {
         entity_id: instance.entity_id,
     };
@@ -937,13 +939,13 @@ fn spawn_swarm(
 
     let primary_dummy_instance =
         swarm_instance(archetype, 1000, primary_owner, Vec2::new(8.0, 10.0), 1.5);
-    let primary_uniform =
-        BubbleUniformGpu::from_instance(&primary_dummy_instance, meta, primary_style);
-    let primary_mat = bubble_materials.add(BubbleDomeMaterial {
-        uniform: primary_uniform,
-        video_texture: texture.clone(),
-        alpha_mode: AlphaMode::Blend,
-    });
+    let primary_uniform = BubbleUniformGpu::from_instance(
+        &primary_dummy_instance,
+        primary_style,
+        crate::bubble_shader::still_frame_lanes(meta, primary_dummy_instance.anim_state),
+    );
+    let primary_mat =
+        bubble_materials.add(BubbleDomeMaterial::new(primary_uniform, texture.clone()));
 
     let secondary_dummy_instance = swarm_instance(
         archetype,
@@ -952,13 +954,13 @@ fn spawn_swarm(
         Vec2::new(24.0, 10.0),
         -1.5,
     );
-    let secondary_uniform =
-        BubbleUniformGpu::from_instance(&secondary_dummy_instance, meta, secondary_style);
-    let secondary_mat = bubble_materials.add(BubbleDomeMaterial {
-        uniform: secondary_uniform,
-        video_texture: texture.clone(),
-        alpha_mode: AlphaMode::Blend,
-    });
+    let secondary_uniform = BubbleUniformGpu::from_instance(
+        &secondary_dummy_instance,
+        secondary_style,
+        crate::bubble_shader::still_frame_lanes(meta, secondary_dummy_instance.anim_state),
+    );
+    let secondary_mat =
+        bubble_materials.add(BubbleDomeMaterial::new(secondary_uniform, texture.clone()));
 
     for i in 0..200u32 {
         let primary_group = i < 100;
@@ -1048,20 +1050,18 @@ fn refresh_swarm_material(
     material: &Handle<BubbleDomeMaterial>,
     style: crate::player_presentation::PlayerStyle,
     frame_index: u32,
-    anim_progress: f32,
     heading_angle_rad: f32,
 ) {
     // Checking the material first ensures that out of 200 entities sharing 2 handles,
     // only the first entity of each group triggers get_mut; the remaining 99 check get() and skip in O(1)!
     if let Some(mat) = bubble_materials.get(material) {
         if mat.uniform.team_color != style.linear
-            || mat.uniform.frame_index != frame_index
+            || mat.uniform.frame_base != frame_index
             || (mat.uniform.heading_angle_rad - heading_angle_rad).abs() > 1e-4
         {
             if let Some(mat_mut) = bubble_materials.get_mut(material) {
                 mat_mut.uniform.team_color = style.linear;
-                mat_mut.uniform.frame_index = frame_index;
-                mat_mut.uniform.anim_progress = anim_progress;
+                mat_mut.uniform.frame_base = frame_index;
                 mat_mut.uniform.heading_angle_rad = heading_angle_rad;
             }
         }
@@ -1171,7 +1171,6 @@ pub fn sync_swarm_stress_system(
                 &mat_handle.0,
                 style,
                 frame_index,
-                anim_progress,
                 instance.0.heading_angle_rad,
             );
         }

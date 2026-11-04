@@ -333,13 +333,12 @@ pub fn setup_smog_volume_system(
         let meta = registry.get_meta(unit_type_id);
 
         let render_instance = showcase_render_instance(i, state, owner, unit_type_id);
-        let bubble_uniform =
-            BubbleUniformGpu::from_instance(&render_instance, meta, showcase_style(i));
-        let bubble_mat = bubble_materials.add(BubbleDomeMaterial {
-            uniform: bubble_uniform,
-            video_texture: texture,
-            alpha_mode: AlphaMode::Blend,
-        });
+        let bubble_uniform = BubbleUniformGpu::from_instance(
+            &render_instance,
+            showcase_style(i),
+            crate::bubble_shader::still_frame_lanes(meta, render_instance.anim_state),
+        );
+        let bubble_mat = bubble_materials.add(BubbleDomeMaterial::new(bubble_uniform, texture));
 
         commands.spawn((
             BouncingSmogBubble {

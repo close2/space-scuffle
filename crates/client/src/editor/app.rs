@@ -33,7 +33,7 @@ use crate::battle_pipeline::session::BattleSession;
 use crate::battle_pipeline::BattleSet;
 use crate::battle_selection::BattleSelection;
 use crate::bubble_optics::BubbleOpticsPlugin;
-use crate::bubble_shader::{setup_bubble_assets_system, BubbleDomeMaterial};
+use crate::bubble_shader::{setup_bubble_assets_system, BubbleDomeMaterialPlugin};
 use crate::camera::RtsCamera;
 use crate::editor::camera::{editor_camera_system, EditorCameraFocus};
 use crate::editor::commands::History;
@@ -252,7 +252,7 @@ impl MapEditorPlugin {
             .add_event::<LoadDocumentRequest>()
             .add_plugins(TerrainPlugin)
             .add_plugins(BubbleOpticsPlugin)
-            .add_plugins(MaterialPlugin::<BubbleDomeMaterial>::default())
+            .add_plugins(BubbleDomeMaterialPlugin)
             .add_plugins(MaterialPlugin::<SelectionRingMaterial>::default())
             .add_plugins(CombatFxPlugin);
     }

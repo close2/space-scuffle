@@ -64,7 +64,11 @@ fn simulation_sparse_owners_and_labels_match_shell_identity() -> TestResult {
             .ok_or("snapshot identity")?;
         assert_eq!(bubble.owner, owner);
         let style = definition.palette.resolve(owner)?;
-        let uniform = BubbleUniformGpu::from_instance(bubble, None, style);
+        let uniform = BubbleUniformGpu::from_instance(
+            bubble,
+            style,
+            client::bubble_shader::still_frame_lanes(None, bubble.anim_state),
+        );
         assert_eq!(uniform.team_color, style.linear);
     }
     for participant in CommittedBattleMetadata::from_definition(&definition)?.players {
