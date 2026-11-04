@@ -1,0 +1,41 @@
+(
+    format_version: 1,
+    name: "pulse_bot",
+    atlas_sha256: "5e92b7c63cb3a066a66ab8b9fa2cf4dced3eca882922ecfb97c0d336abb4f93c",
+    manifest_sha256: "6e9ffa06bc07d4319ec0eb23ddcb368ed94d46e29b516af42e832a4f89f1406d",
+    bake: (
+        frame_size: 512,
+        fps: 15,
+        max_frames_per_state: 10,
+        ffmpeg_version: "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    ),
+    states: {
+        Idle: (
+            clip: "pulse_bot_idle.mp4",
+            clip_sha256: "e145269543b78e0b7b678cb607138638f2cb9f659d13c8745c9be2c0329dbcee",
+            start_frame: 0,
+            frame_count: 10,
+            origin: LegacyVeo(
+                commit: "3d9a9c4428803292e470bb339454c892566dd44f",
+            ),
+        ),
+        Walk: (
+            clip: "pulse_bot_walk.mp4",
+            clip_sha256: "d1917e40ea15265cd4314d015f45feefc73681434d6721aba0f9d4553a8da781",
+            start_frame: 10,
+            frame_count: 10,
+            origin: LegacyVeo(
+                commit: "3d9a9c4428803292e470bb339454c892566dd44f",
+            ),
+        ),
+        Attack: (
+            clip: "pulse_bot_attack.mp4",
+            clip_sha256: "fb9a35c6198071403c9c96f5435c49b823222f6074ce3db224524fd8fbedf2e9",
+            start_frame: 20,
+            frame_count: 10,
+            origin: LegacyVeo(
+                commit: "3d9a9c4428803292e470bb339454c892566dd44f",
+            ),
+        ),
+    },
+)

@@ -7,13 +7,10 @@
     catalog_units: [
         "assembly_bay_dome",
         "capacitor_dome",
-        "flying_saucer",
         "foundry_core_dome",
         "psi_grey",
         "pulse_bot",
-        "railgun_crawler",
         "rhino_beetle",
-        "tesla_sentinel_dome",
         "welder_drone",
     ],
     non_catalog: [

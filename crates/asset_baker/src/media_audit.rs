@@ -1,16 +1,34 @@
-//! Read-only, stable-order audit of exact catalog media and content duplication.
+//! Read-only, stable-order audit of exact catalog media, its provenance and content duplication.
 //!
-//! Structural availability and artistic provenance are separate. Existing own-file
-//! art is preserved and marked unapproved; no historical source identity is guessed
-//! from a filename. This first migration stage deliberately cannot certify legacy
-//! media, and strict audit remains failing until a reviewed provenance publisher exists.
+//! # Responsibility
+//! For every catalog identity, admits its own atlas pair with the exact loader and classifies
+//! it: missing, malformed, a byte copy of the concept atlas, verified, or legacy (unverified,
+//! with every reason). `Verified` means the provenance record (`provenance`) matches the
+//! committed atlas, manifest and clips, every published action has its own frame range from its
+//! own clip, no range repeats a concept frame, and every paid clip has its ledger line
+//! (plan `docs/plans/2026-11-04-phase-8-5-veo-media.md`, D-6).
+//!
+//! # How it fits
+//! `asset_baker audit-media` writes the report and, with `--strict`, fails unless every
+//! identity of the data-defined required set (`media/required_set.ron`) is `Verified`.
+//! Identities outside the set are reported, never failed. The client builds the same records
+//! without provenance checks ([`MediaAuditRecord::loaded`]) for its own diagnostics.
+//!
+//! # Invariants
+//! - Structural availability and provenance are separate; no status claims artistic approval.
+//! - Nothing is rewritten, re-baked or guessed from a file name; FFmpeg is never run.
+//! - Entries are sorted by slug; every reason is kept.
 
+use crate::ledger::NumberedRecord;
 use crate::media::{load_unit_media, LoadedUnitMedia, MediaLoadError};
+use crate::provenance::{
+    frame_hashes, verify_provenance, RequiredSet, Tier, UnverifiedReason, VerifyContext,
+};
 use serde::Serialize;
 use sim_core::UnitCatalog;
 use sim_types::AnimState;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io::Write,
     path::{Path, PathBuf},
 };
@@ -36,14 +54,19 @@ pub enum MediaAuditError {
         #[source]
         source: serde_json::Error,
     },
-    /// The bundle still contains missing or unverified media.
-    #[error("strict media audit failed: installed media lacks verified provenance or required own files")]
-    Unapproved,
+    /// Identities of the required set are not verified.
+    #[error("strict media audit failed: {} required identit{} not verified: {}", identities.len(), if identities.len() == 1 { "y is" } else { "ies are" }, identities.join("; "))]
+    Unverified {
+        /// One `<slug> (<status>): <reasons>` line per unverified required identity.
+        identities: Vec<String>,
+    },
 }
 
 /// Explicit audit result; no variant claims artistic approval.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum MediaAuditStatus {
+    /// Own files match a provenance record that passed every check (see the module docs).
+    Verified,
     /// Own files are structurally valid but lack verified build provenance.
     LegacyUnverified,
     /// Own PNG bytes exactly duplicate the explicitly named concept atlas.
@@ -75,11 +98,16 @@ pub struct MediaAuditRecord {
     pub actions: Vec<AnimState>,
     /// Groups of action names sharing the same frame range, for review.
     pub shared_action_ranges: Vec<Vec<AnimState>>,
+    /// Why a loaded identity is not `Verified`; empty when it is, or when provenance was not
+    /// checked (client diagnostics, missing or malformed media, concept copies).
+    pub unverified: Vec<UnverifiedReason>,
+    /// The identity's tier in the required set, if the set lists it.
+    pub required_tier: Option<Tier>,
 }
 
 impl MediaAuditRecord {
-    /// Builds evidence from bytes admitted by the exact loader; `concept_digest`
-    /// is supplied only from successfully read explicit concept PNG bytes.
+    /// Builds evidence from bytes admitted by the exact loader, without provenance checks;
+    /// `concept_digest` is supplied only from successfully read explicit concept PNG bytes.
     #[must_use]
     pub fn loaded(slug: &str, media: &LoadedUnitMedia, concept_digest: Option<&str>) -> Self {
         let mut ranges: BTreeMap<(u32, u32), Vec<AnimState>> = BTreeMap::new();
@@ -106,6 +134,8 @@ impl MediaAuditRecord {
                 .into_values()
                 .filter(|range| range.len() > 1)
                 .collect(),
+            unverified: Vec::new(),
+            required_tier: None,
         }
     }
 
@@ -127,7 +157,32 @@ impl MediaAuditRecord {
             alpha_range: None,
             actions: Vec::new(),
             shared_action_ranges: Vec::new(),
+            unverified: Vec::new(),
+            required_tier: None,
         }
+    }
+
+    /// Applies provenance verification: `Verified` when `reasons` is empty, otherwise legacy
+    /// with the reasons. A concept copy keeps its status.
+    #[must_use]
+    pub fn with_verification(mut self, reasons: Vec<UnverifiedReason>) -> Self {
+        if self.status == MediaAuditStatus::LegacyUnverified && reasons.is_empty() {
+            self.status = MediaAuditStatus::Verified;
+        }
+        self.unverified = reasons;
+        self
+    }
+
+    /// One line naming the identity, its status and why it is not verified.
+    #[must_use]
+    pub fn summary(&self) -> String {
+        let mut line = format!("{} ({:?})", self.slug, self.status);
+        if !self.unverified.is_empty() {
+            let reasons: Vec<String> = self.unverified.iter().map(ToString::to_string).collect();
+            line.push_str(": ");
+            line.push_str(&reasons.join(", "));
+        }
+        line
     }
 }
 
@@ -136,11 +191,12 @@ impl MediaAuditRecord {
 pub struct MediaAuditReport {
     /// Version of this report's machine-readable schema.
     pub format_version: u32,
-    /// Digest algorithm used for all content identity fields.
+    /// Digest algorithm of `png_digest` and `metadata_digest`; provenance uses SHA-256.
     pub digest_algorithm: &'static str,
-    /// Whether every entry has verified provenance and required media.
-    /// Legacy reports remain false; hashes alone never establish approval.
+    /// Whether every identity of the required set is `Verified`.
     pub strict_accepted: bool,
+    /// Whether a ledger was supplied to check `Veo` origins.
+    pub ledger_supplied: bool,
     /// Failure to load the explicit concept asset, retained rather than hidden.
     pub concept_failure: Option<String>,
     /// Stable slug-ordered outcomes for every catalog entry.
@@ -173,38 +229,86 @@ impl MediaAuditReport {
         file.sync_all().map_err(io_error)
     }
 
-    /// Requires verified media/provenance; legacy structural validity is insufficient.
+    /// The entries of the required set that are not `Verified`, in slug order.
+    pub fn unverified_required(&self) -> impl Iterator<Item = &MediaAuditRecord> {
+        self.entries.iter().filter(|entry| {
+            entry.required_tier.is_some() && entry.status != MediaAuditStatus::Verified
+        })
+    }
+
+    /// Requires every identity of the required set to be `Verified`.
     ///
     /// # Errors
-    /// Returns [`MediaAuditError::Unapproved`] for an unaccepted report.
+    /// Returns [`MediaAuditError::Unverified`] naming each one that is not, with its reasons.
     pub fn require_verified(&self) -> Result<(), MediaAuditError> {
-        if self.strict_accepted {
+        let identities: Vec<String> = self
+            .unverified_required()
+            .map(MediaAuditRecord::summary)
+            .collect();
+        if self.strict_accepted && identities.is_empty() {
             Ok(())
         } else {
-            Err(MediaAuditError::Unapproved)
+            Err(MediaAuditError::Unverified { identities })
         }
     }
 }
 
-/// Audits `assets_root/textures` against the supplied external catalog.
+/// What the audit checks the bundle against.
+#[derive(Debug, Clone, Copy)]
+pub struct AuditInputs<'a> {
+    /// The identities `--strict` requires, already checked against the catalog.
+    pub required: &'a RequiredSet,
+    /// The ledger, needed to verify `Veo` origins; without it they are reported unverified.
+    pub ledger: Option<&'a [NumberedRecord]>,
+}
+
+/// Audits `assets_root/textures` (and the clips in `assets_root/videos`) against the catalog.
 ///
-/// Reads actual bytes once per pair, retains per-entry errors, and never rewrites
-/// assets or invokes FFmpeg. The optional concept pair is inspected explicitly;
-/// its failure is evidence, not permission to substitute another asset.
+/// Reads actual bytes, retains per-entry errors, and never rewrites assets or invokes FFmpeg.
+/// The optional concept pair is inspected explicitly; its failure is evidence, not permission
+/// to substitute another asset.
 #[must_use]
-pub fn audit_media(assets_root: &Path, catalog: &UnitCatalog) -> MediaAuditReport {
+pub fn audit_media(
+    assets_root: &Path,
+    catalog: &UnitCatalog,
+    inputs: &AuditInputs<'_>,
+) -> MediaAuditReport {
     let textures = assets_root.join("textures");
+    let videos = assets_root.join("videos");
     let concept = load_unit_media(&textures, "concept_video", None);
     let concept_failure = concept.as_ref().err().map(ToString::to_string);
     let concept_digest = concept.as_ref().ok().map(|media| media.png_digest.as_str());
+    let concept_frames: BTreeSet<[u8; 32]> = concept
+        .as_ref()
+        .map(|media| frame_hashes(media).into_iter().collect())
+        .unwrap_or_default();
     let mut entries: Vec<_> = catalog
         .archetypes()
-        .map(
-            |archetype| match load_unit_media(&textures, &archetype.slug, None) {
-                Ok(media) => MediaAuditRecord::loaded(&archetype.slug, &media, concept_digest),
-                Err(error) => MediaAuditRecord::failed(&archetype.slug, &error),
-            },
-        )
+        .map(|archetype| {
+            let slug = archetype.slug.as_str();
+            let mut record = match load_unit_media(&textures, slug, None) {
+                Ok(media) => {
+                    let published: Vec<AnimState> =
+                        catalog.publishable_actions(archetype).iter().collect();
+                    let context = VerifyContext {
+                        textures_dir: &textures,
+                        videos_dir: &videos,
+                        published: &published,
+                        ledger: inputs.ledger,
+                        concept_frames: &concept_frames,
+                    };
+                    let record = MediaAuditRecord::loaded(slug, &media, concept_digest);
+                    if record.status == MediaAuditStatus::KnownConceptDuplicate {
+                        record
+                    } else {
+                        record.with_verification(verify_provenance(slug, &media, &context))
+                    }
+                }
+                Err(error) => MediaAuditRecord::failed(slug, &error),
+            };
+            record.required_tier = inputs.required.tier_of(slug);
+            record
+        })
         .collect();
     entries.sort_by(|left, right| left.slug.cmp(&right.slug));
     let mut duplicates: BTreeMap<&str, Vec<String>> = BTreeMap::new();
@@ -221,10 +325,17 @@ pub fn audit_media(assets_root: &Path, catalog: &UnitCatalog) -> MediaAuditRepor
         .filter(|group| group.len() > 1)
         .collect();
     duplicate_groups.sort();
+    let strict_accepted = !inputs.required.identities.is_empty()
+        && inputs.required.identities.iter().all(|identity| {
+            entries
+                .iter()
+                .any(|e| e.slug == identity.slug && e.status == MediaAuditStatus::Verified)
+        });
     MediaAuditReport {
-        format_version: 1,
+        format_version: 2,
         digest_algorithm: "BLAKE3-256 lowercase hex",
-        strict_accepted: false,
+        strict_accepted,
+        ledger_supplied: inputs.ledger.is_some(),
         concept_failure,
         entries,
         duplicate_groups,

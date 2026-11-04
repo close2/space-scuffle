@@ -15,7 +15,8 @@
 //! `validate-prompts` and `generate-veo --dry-run` (free, no credential read), `veo-preflight`
 //! (one free authenticated GET), `generate-veo --max-generations N` (downloads to
 //! `--clips-dir`, every request in `--ledger`), `review` (contact sheets, `--reject`),
-//! `install-clip`, then `bake-unit-videos`.
+//! `install-clip`, then `bake-unit-videos` (which writes `<slug>.provenance.ron` beside the
+//! atlas), then `audit-media --strict --ledger <ledger>`.
 //!
 //! # Invariants
 //! - The catalog is read once per run, from disk; nothing is compiled in.
@@ -36,11 +37,14 @@ use asset_baker::budget::{check_spend, BudgetConfig, SpendRequest, BUDGET_FILE};
 use asset_baker::clip_review::{self, DEFAULT_FFMPEG_PATH};
 use asset_baker::ffmpeg_importer::DEFAULT_FFPROBE_PATH;
 use asset_baker::ledger::{self, Ledger, LedgerHistory};
+use asset_baker::media_audit::MediaAuditStatus;
+use asset_baker::provenance;
 use asset_baker::veo_plan::{parse_state, published_states, state_slug, VeoDirs};
 use asset_baker::{BakerError, MediaStyle, RunContext, VeoClient};
 use clap::{Args, Parser, Subcommand};
 use sim_core::UnitCatalog;
 use sim_types::enums::AnimState;
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -146,17 +150,7 @@ struct GenerateArgs {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Audits exact installed media without baking or changing assets.
-    AuditMedia {
-        /// External catalog directory loaded at command invocation (default: `<assets>/catalog`).
-        #[arg(long)]
-        catalog_dir: Option<PathBuf>,
-        /// Machine-readable JSON report destination (existing files are refused).
-        #[arg(long)]
-        report: PathBuf,
-        /// Exit nonzero when provenance or required assets remain unapproved.
-        #[arg(long)]
-        strict: bool,
-    },
+    AuditMedia(AuditArgs),
     /// Retired unsafe roster-copy command; fails without reading or writing assets.
     GenerateDefaults {
         /// Target output directory for baked PNG strips and .flipbook.ron manifests.
@@ -304,6 +298,20 @@ enum Commands {
         #[arg(short, long, default_value = "assets/textures")]
         output_dir: PathBuf,
 
+        /// Directory of installed clips; every clip must be a file directly inside it, because
+        /// the provenance record names clips by file name.
+        #[arg(long, default_value = "assets/videos")]
+        videos_dir: PathBuf,
+
+        /// Ledger in which to find the `downloaded` line of each clip this pipeline generated.
+        #[arg(long)]
+        ledger: Option<PathBuf>,
+
+        /// `STATE=COMMIT`: the state's clip was committed by the original Veo work in COMMIT and
+        /// has no ledger record (provenance origin `LegacyVeo`). Repeat per state.
+        #[arg(long = "legacy-veo", value_name = "STATE=COMMIT")]
+        legacy_veo: Vec<String>,
+
         /// Target square frame dimension in pixels.
         #[arg(short, long, default_value_t = 512)]
         size: u32,
@@ -396,11 +404,7 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> RunResult {
     let assets = cli.assets.as_deref();
     match cli.command {
-        Commands::AuditMedia {
-            catalog_dir,
-            report,
-            strict,
-        } => run_audit_media(assets, catalog_dir, &report, strict),
+        Commands::AuditMedia(args) => run_audit_media(assets, args),
         Commands::GenerateDefaults { .. } => Err(BakerError::ExplicitSourcesRequired.into()),
         Commands::GenerateVeo(args) => run_generate_veo(assets, &args),
         Commands::ValidatePrompts {
@@ -451,6 +455,9 @@ fn run(cli: Cli) -> RunResult {
             constructing,
             cast,
             output_dir,
+            videos_dir,
+            ledger,
+            legacy_veo,
             size,
             fps,
         } => {
@@ -461,7 +468,15 @@ fn run(cli: Cli) -> RunResult {
                 (AnimState::Attack, attack),
                 (AnimState::Cast, cast),
             ];
-            run_bake_unit_videos(assets, &unit, clips, &output_dir, size, fps)
+            let target = BakeTarget {
+                output_dir,
+                videos_dir,
+                ledger,
+                legacy_veo,
+                size,
+                fps,
+            };
+            run_bake_unit_videos(assets, &unit, clips, &target)
         }
         Commands::BakeVideo {
             input,
@@ -488,26 +503,68 @@ fn load_unit_catalog(assets: Option<&Path>) -> Result<UnitCatalog, BakerError> {
     Ok(asset_baker::load_catalogs(&root)?.units)
 }
 
-/// `audit-media`: reports the installed media of every catalog unit.
-fn run_audit_media(
-    assets: Option<&Path>,
+/// Arguments of `audit-media`.
+#[derive(Args, Debug)]
+struct AuditArgs {
+    /// External catalog directory loaded at command invocation (default: `<assets>/catalog`).
+    #[arg(long)]
     catalog_dir: Option<PathBuf>,
-    report: &Path,
+    /// Machine-readable JSON report destination (existing files are refused).
+    #[arg(long)]
+    report: PathBuf,
+    /// Exit nonzero unless every identity of the required set is `Verified`.
+    #[arg(long)]
     strict: bool,
-) -> RunResult {
+    /// Required set (default: `<assets>/media/required_set.ron`).
+    #[arg(long)]
+    required_set: Option<PathBuf>,
+    /// The Veo ledger, needed to verify clips generated by this pipeline (e.g.
+    /// `docs/evidence/veo/ledger.jsonl`). Without it such clips are reported unverified.
+    #[arg(long)]
+    ledger: Option<PathBuf>,
+}
+
+/// `audit-media`: reports the installed media of every catalog unit and, with `--strict`,
+/// fails unless every identity of the required set is `Verified`.
+fn run_audit_media(assets: Option<&Path>, args: AuditArgs) -> RunResult {
     let root = asset_baker::resolve_assets_root(assets)?;
-    let catalog_dir = catalog_dir.unwrap_or_else(|| root.join("catalog"));
+    let catalog_dir = args.catalog_dir.unwrap_or_else(|| root.join("catalog"));
     let catalogs = sim_core::catalog::RuntimeCatalogs::load_from_directory(catalog_dir)?;
-    let audit = asset_baker::media_audit::audit_media(&root, &catalogs.units);
-    audit.write_json(report)?;
-    for entry in &audit.entries {
-        println!("{}: {:?}", entry.slug, entry.status);
-    }
-    println!(
-        "Report: {}. Structural media availability is not artistic approval.",
-        report.display()
+    let required_path = args
+        .required_set
+        .unwrap_or_else(|| root.join(provenance::REQUIRED_SET_FILE));
+    let required = provenance::RequiredSet::load(&required_path, &catalogs.units)?;
+    let ledger = match &args.ledger {
+        Some(path) => Some(ledger::read_ledger_numbered(path)?),
+        None => None,
+    };
+    let audit = asset_baker::media_audit::audit_media(
+        &root,
+        &catalogs.units,
+        &asset_baker::media_audit::AuditInputs {
+            required: &required,
+            ledger: ledger.as_deref(),
+        },
     );
-    if strict {
+    audit.write_json(&args.report)?;
+    for entry in &audit.entries {
+        let tier = entry
+            .required_tier
+            .map_or(String::new(), |tier| format!(" [{tier:?}]"));
+        println!("{}{tier}", entry.summary());
+    }
+    let verified = audit
+        .entries
+        .iter()
+        .filter(|e| e.required_tier.is_some() && e.status == MediaAuditStatus::Verified)
+        .count();
+    println!(
+        "Required set {}: {verified} of {} verified. Report: {}. Verified provenance is not artistic approval.",
+        required_path.display(),
+        required.identities.len(),
+        args.report.display()
+    );
+    if args.strict {
         audit.require_verified()?;
     }
     Ok(())
@@ -890,15 +947,24 @@ fn run_install_clip(
     Ok(())
 }
 
-/// `bake-unit-videos`: packs the given clips into one atlas, refusing states the identity
-/// does not publish and naming the published states that are missing.
+/// Where and how `bake-unit-videos` bakes, and how it learns each clip's origin.
+struct BakeTarget {
+    output_dir: PathBuf,
+    videos_dir: PathBuf,
+    ledger: Option<PathBuf>,
+    legacy_veo: Vec<String>,
+    size: u32,
+    fps: u32,
+}
+
+/// `bake-unit-videos`: packs the given clips into one atlas with its provenance record,
+/// refusing states the identity does not publish and naming the published states that are
+/// missing.
 fn run_bake_unit_videos(
     assets: Option<&Path>,
     unit: &str,
     clips: [(AnimState, Option<PathBuf>); 5],
-    output_dir: &Path,
-    size: u32,
-    fps: u32,
+    target: &BakeTarget,
 ) -> RunResult {
     let clips: Vec<(AnimState, PathBuf)> = clips
         .into_iter()
@@ -922,19 +988,89 @@ fn run_bake_unit_videos(
             "Warning: '{unit}' also publishes {missing:?}; the game shows \"No approved media\" until they are baked."
         );
     }
+    let clips = clip_origins(unit, clips, target)?;
     println!(
         "==> Baking {} action video clips for unit '{}' into {:?}...",
         clips.len(),
         unit,
-        output_dir
+        target.output_dir
     );
-    let meta =
-        asset_baker::bake_multi_action_videos_with_states(unit, &clips, output_dir, size, fps)?;
+    let record = provenance::bake_with_provenance(
+        unit,
+        &clips,
+        &target.videos_dir,
+        &target.output_dir,
+        target.size,
+        target.fps,
+    )?;
     println!(
-        "    Successfully generated multi-action atlas '{}' ({} frames at {}x{} @ {} fps).",
-        meta.name, meta.total_frames, meta.frame_width, meta.frame_height, meta.fps
+        "    Successfully generated multi-action atlas '{}' ({} states at {}x{} @ {} fps) with its provenance record.",
+        record.name,
+        record.states.len(),
+        record.bake.frame_size,
+        record.bake.frame_size,
+        record.bake.fps
     );
     Ok(())
+}
+
+/// Parses `--legacy-veo STATE=COMMIT` values.
+fn legacy_origins(values: &[String]) -> Result<BTreeMap<AnimState, String>, Box<dyn Error>> {
+    let mut legacy = BTreeMap::new();
+    for entry in values {
+        let (state, commit) = entry
+            .split_once('=')
+            .ok_or_else(|| format!("--legacy-veo '{entry}' is not STATE=COMMIT"))?;
+        if legacy
+            .insert(parse_state(state)?, commit.to_string())
+            .is_some()
+        {
+            return Err(format!("--legacy-veo names {state} twice").into());
+        }
+    }
+    Ok(legacy)
+}
+
+/// The origin of each clip: `--legacy-veo` for the states it names, otherwise the ledger's
+/// `downloaded` line of the clip's bytes. A clip with neither is refused before baking.
+fn clip_origins(
+    unit: &str,
+    clips: Vec<(AnimState, PathBuf)>,
+    target: &BakeTarget,
+) -> Result<Vec<provenance::BakeClip>, Box<dyn Error>> {
+    let mut legacy = legacy_origins(&target.legacy_veo)?;
+    let records = match &target.ledger {
+        Some(path) => ledger::read_ledger_numbered(path)?,
+        None => Vec::new(),
+    };
+    let mut baked = Vec::with_capacity(clips.len());
+    for (state, path) in clips {
+        let origin = if let Some(commit) = legacy.remove(&state) {
+            provenance::ClipOrigin::LegacyVeo { commit }
+        } else {
+            let sha256 = ledger::sha256_file(&path)?;
+            provenance::veo_origin_from_ledger(&records, unit, state, &sha256).ok_or_else(|| {
+                format!(
+                    "{unit} {}: '{}' has no `downloaded` line in the ledger and no --legacy-veo origin; its provenance is unknown",
+                    state_slug(state),
+                    path.display()
+                )
+            })?
+        };
+        baked.push(provenance::BakeClip {
+            state,
+            path,
+            origin,
+        });
+    }
+    if let Some(state) = legacy.keys().next() {
+        return Err(format!(
+            "--legacy-veo names {}, for which no clip was given",
+            state_slug(*state)
+        )
+        .into());
+    }
+    Ok(baked)
 }
 
 /// `bake-video`: bakes one video file into a flipbook atlas.

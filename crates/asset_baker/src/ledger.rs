@@ -381,12 +381,34 @@ impl Ledger {
     }
 }
 
+/// One ledger record with the one-based line number it was read from.
+///
+/// Provenance files cite the `downloaded` line of a clip by this number (plan D-6).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NumberedRecord {
+    /// One-based line number in the ledger file.
+    pub line: usize,
+    /// The record on that line.
+    pub record: LedgerRecord,
+}
+
 /// Reads every record of the ledger at `path`; a missing file is an empty ledger.
 ///
 /// # Errors
 /// [`LedgerError::Io`] if the file exists but cannot be read, or [`LedgerError::Malformed`]
 /// naming the first line that is not a record. Blank lines are skipped.
 pub fn read_ledger(path: &Path) -> Result<Vec<LedgerRecord>, LedgerError> {
+    Ok(read_ledger_numbered(path)?
+        .into_iter()
+        .map(|numbered| numbered.record)
+        .collect())
+}
+
+/// Reads every record of the ledger at `path` with its line number, as [`read_ledger`].
+///
+/// # Errors
+/// As [`read_ledger`].
+pub fn read_ledger_numbered(path: &Path) -> Result<Vec<NumberedRecord>, LedgerError> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -401,11 +423,16 @@ pub fn read_ledger(path: &Path) -> Result<Vec<LedgerRecord>, LedgerError> {
         .enumerate()
         .filter(|(_, line)| !line.trim().is_empty())
         .map(|(index, line)| {
-            serde_json::from_str(line).map_err(|source| LedgerError::Malformed {
-                path: path.to_path_buf(),
-                line: index + 1,
-                source,
-            })
+            serde_json::from_str(line)
+                .map(|record| NumberedRecord {
+                    line: index + 1,
+                    record,
+                })
+                .map_err(|source| LedgerError::Malformed {
+                    path: path.to_path_buf(),
+                    line: index + 1,
+                    source,
+                })
         })
         .collect()
 }
