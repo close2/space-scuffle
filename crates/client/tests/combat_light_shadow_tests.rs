@@ -58,12 +58,13 @@ fn combat_events(owner: PlayerId) -> [CombatEventVisual; 6] {
 fn assert_light_cards(world: &mut World) -> Result<(), &'static str> {
     let mut query = world.query::<(
         &MeshMaterial3d<CombatFxMaterial>,
+        &client::vfx::CombatFxInstance,
         Has<CombatLightEffect>,
         Has<NotShadowCaster>,
     )>();
     let materials = world.resource::<Assets<CombatFxMaterial>>();
     let mut kinds = [0; 6];
-    for (handle, classified, shadowless) in query.iter(world) {
+    for (handle, instance, classified, shadowless) in query.iter(world) {
         assert!(
             classified,
             "combat card is missing its light classification"
@@ -73,7 +74,7 @@ fn assert_light_cards(world: &mut World) -> Result<(), &'static str> {
             .get(&handle.0)
             .ok_or("production combat card references a missing material")?;
         assert_eq!(material.alpha_mode(), AlphaMode::Add);
-        kinds[material.uniform.fx_kind as usize] += 1;
+        kinds[instance.uniform.fx_kind as usize] += 1;
     }
     // Laser, hitscan, lightning, slash, projectile, central burst + 16 shards.
     assert_eq!(kinds, [1, 1, 1, 1, 1, 17]);
@@ -98,6 +99,7 @@ fn every_production_light_card_remains_shadowless_through_update(
         .init_resource::<Assets<Mesh>>()
         .init_resource::<Assets<StandardMaterial>>()
         .init_resource::<Assets<CombatFxMaterial>>()
+        .init_resource::<client::vfx::CombatFxMaterialPool>()
         .add_event::<CombatVisualEvent>()
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO))
         .add_systems(Startup, setup_vfx_assets_system)
@@ -160,6 +162,7 @@ fn card_app() -> Result<(App, Vec3, PlayerId), Box<dyn std::error::Error>> {
         .init_resource::<Assets<Mesh>>()
         .init_resource::<Assets<StandardMaterial>>()
         .init_resource::<Assets<CombatFxMaterial>>()
+        .init_resource::<client::vfx::CombatFxMaterialPool>()
         .add_event::<CombatVisualEvent>()
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(1)))
         .add_systems(Startup, setup_vfx_assets_system)
@@ -246,16 +249,11 @@ fn melee_slash_applies_its_angle_once_and_keeps_the_card_facing_up(
             }));
         app.update();
         let world = app.world_mut();
-        let (transform, material) = world
-            .query_filtered::<(&Transform, &MeshMaterial3d<CombatFxMaterial>), With<client::vfx::MeleeSlashComponent>>()
+        let (transform, instance) = world
+            .query_filtered::<(&Transform, &client::vfx::CombatFxInstance), With<client::vfx::MeleeSlashComponent>>()
             .single(world);
         let rotation = transform.rotation;
-        let handle = material.0.clone();
-        let uniform = world
-            .resource::<Assets<CombatFxMaterial>>()
-            .get(&handle)
-            .ok_or("slash material")?
-            .uniform;
+        let uniform = instance.uniform;
         assert_eq!(uniform.primary_color.w, angle_rad);
         assert!((rotation * Vec3::Z).y > 0.5, "card must face upward");
         rotations.push(rotation);

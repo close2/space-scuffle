@@ -675,6 +675,7 @@ fn test_bevy_ecs_schedule_all_systems_no_conflicts() -> Result<(), Box<dyn std::
     app.init_resource::<Assets<client::bubble_shader::BubbleDomeMaterial>>();
     app.init_resource::<Assets<SelectionRingMaterial>>();
     app.init_resource::<Assets<CombatFxMaterial>>();
+    app.init_resource::<client::vfx::CombatFxMaterialPool>();
     app.init_resource::<ButtonInput<KeyCode>>();
     app.init_resource::<ButtonInput<MouseButton>>();
     app.add_event::<bevy::input::mouse::MouseMotion>();
@@ -848,6 +849,7 @@ fn test_all_combat_vfx_entities_despawn_after_lifetime() -> Result<(), Box<dyn s
     app.init_resource::<Assets<Mesh>>();
     app.init_resource::<Assets<StandardMaterial>>();
     app.init_resource::<Assets<CombatFxMaterial>>();
+    app.init_resource::<client::vfx::CombatFxMaterialPool>();
     app.add_event::<client::vfx::CombatVisualEvent>();
 
     // Add Startup and Update systems

@@ -7,10 +7,27 @@
 //! - **Continuous Beams & Lightning:** Continuous lasers and crackling jagged lightning arcs.
 //! - **Melee Crescent Slashes:** Psi-blade sweep arcs across contact boundaries.
 //! - **Death Glass Shatter:** 16 refractive glass shards violently exploding outward with physics momentum.
+//!
+//! # Materials are pooled slots (finding C-17)
+//! Every effect draws with a [`CombatFxMaterial`] taken from the [`CombatFxMaterialPool`] and
+//! returned when the effect's entity is despawned. The effect's shader data is its
+//! [`CombatFxInstance`] component: the spawners fill it, the update systems age it, and
+//! `gpu_upload` copies it into the slot's GPU buffer during extraction. No system here modifies a
+//! material asset, so steady combat creates, modifies and removes none.
+//!
+//! # Invariants
+//! - An effect's live shader state is its [`CombatFxInstance`], never its material asset.
+//! - Every effect entity gets its material from the pool, through [`EffectMaterials::effect`].
+
+mod gpu_upload;
+mod pool;
+
+pub use pool::{CombatFxInstance, CombatFxMaterialPool};
 
 use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderRef};
+use bevy::render::{ExtractSchedule, RenderApp};
 use sim_types::snapshot::CombatEventVisual;
 
 mod gpu_layout {
@@ -64,11 +81,51 @@ impl Default for CombatFxUniformGpu {
 }
 
 /// Custom Bevy 3D material implementing the procedural volumetric combat VFX shader.
+///
+/// Each asset is a pooled slot (see [`CombatFxMaterialPool`]), shared over time by many effects.
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
 pub struct CombatFxMaterial {
-    /// GPU uniform buffer for combat VFX.
+    /// Initial contents of the slot's GPU uniform buffer, written when the pool creates the slot.
+    ///
+    /// It is not the live state of any effect: the render world overwrites the buffer with the
+    /// [`CombatFxInstance`] of whichever effect holds the slot. Read that component instead.
     #[uniform(0)]
     pub uniform: CombatFxUniformGpu,
+}
+
+/// Registers the combat effect material, its slot pool and the render-world upload of each
+/// effect's [`CombatFxInstance`].
+pub struct CombatFxPlugin;
+
+impl Plugin for CombatFxPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(MaterialPlugin::<CombatFxMaterial>::default())
+            .init_resource::<CombatFxMaterialPool>();
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.add_systems(
+                ExtractSchedule,
+                gpu_upload::upload_combat_fx_uniforms_system,
+            );
+        }
+    }
+}
+
+/// Mutable access to the effect slot pool and the material store it creates slots in.
+pub struct EffectMaterials<'a> {
+    /// Pool the effect's slot is taken from.
+    pub pool: &'a mut CombatFxMaterialPool,
+    /// Store a new slot is added to.
+    pub assets: &'a mut Assets<CombatFxMaterial>,
+}
+
+impl EffectMaterials<'_> {
+    /// The components that give a new effect a pooled slot and its live shader data, `uniform`.
+    pub fn effect(
+        &mut self,
+        uniform: CombatFxUniformGpu,
+    ) -> (CombatFxInstance, MeshMaterial3d<CombatFxMaterial>) {
+        self.pool.effect(self.assets, uniform)
+    }
 }
 
 impl Material for CombatFxMaterial {
@@ -119,8 +176,6 @@ pub struct ProjectileVisual {
     pub velocity: Vec3,
     /// Lifetime timer.
     pub lifetime: Timer,
-    /// Procedural combat VFX material instance handle.
-    pub material_handle: Handle<CombatFxMaterial>,
 }
 
 /// Component for sustained continuous laser or lightning beams.
@@ -134,8 +189,6 @@ pub struct BeamVisualComponent {
     pub is_lightning: bool,
     /// Remaining duration timer.
     pub lifetime: Timer,
-    /// Procedural combat VFX material instance handle.
-    pub material_handle: Handle<CombatFxMaterial>,
 }
 
 /// Component for melee crescent slash arcs.
@@ -145,8 +198,6 @@ pub struct MeleeSlashComponent {
     pub lifetime: Timer,
     /// Target sweep radius.
     pub radius: f32,
-    /// Procedural combat VFX material instance handle.
-    pub material_handle: Handle<CombatFxMaterial>,
 }
 
 /// Component for exploding death glass shards.
@@ -158,8 +209,6 @@ pub struct ShatterShard {
     pub angular_velocity: Vec3,
     /// Lifespan timer.
     pub lifetime: Timer,
-    /// Procedural combat VFX material instance handle.
-    pub material_handle: Handle<CombatFxMaterial>,
 }
 
 /// Shared mesh and material assets for combat VFX.
@@ -207,7 +256,7 @@ pub fn setup_vfx_assets_system(
 pub fn spawn_death_shatter(
     commands: &mut Commands<'_, '_>,
     assets: &VfxSharedAssets,
-    combat_fx_materials: &mut Assets<CombatFxMaterial>,
+    materials: &mut EffectMaterials<'_>,
     origin: Vec3,
     radius: f32,
     style: crate::player_presentation::PlayerStyle,
@@ -216,28 +265,26 @@ pub fn spawn_death_shatter(
     let team_hdr = style.linear.truncate().extend(0.0);
 
     // 1. Central Detonation Starburst + Refractive Shockwave Ring (Mode 5)
-    let starburst_mat = combat_fx_materials.add(CombatFxMaterial {
-        uniform: CombatFxUniformGpu {
-            primary_color: team_hdr,
-            age: 0.0,
-            fx_kind: 5,
-            seed: (origin.x * 17.3 + origin.z * 31.7).fract().abs(),
-            aspect: 1.0,
-        },
+    let (starburst, starburst_material) = materials.effect(CombatFxUniformGpu {
+        primary_color: team_hdr,
+        age: 0.0,
+        fx_kind: 5,
+        seed: (origin.x * 17.3 + origin.z * 31.7).fract().abs(),
+        aspect: 1.0,
     });
 
     commands.spawn((
         CombatLightEffect,
         CombatEffectOwner(owner),
         Mesh3d(assets.shard_mesh.clone()),
-        MeshMaterial3d(starburst_mat.clone()),
+        starburst,
+        starburst_material,
         Transform::from_translation(origin).with_scale(Vec3::splat(radius * 3.2)),
         BeamVisualComponent {
             from: origin,
             to: origin,
             is_lightning: false,
             lifetime: Timer::from_seconds(0.65, TimerMode::Once),
-            material_handle: starburst_mat,
         },
     ));
 
@@ -252,28 +299,26 @@ pub fn spawn_death_shatter(
         )
         .normalize();
 
-        let shard_mat = combat_fx_materials.add(CombatFxMaterial {
-            uniform: CombatFxUniformGpu {
-                primary_color: team_hdr,
-                age: 0.0,
-                fx_kind: 5,
-                seed: (phi * 7.1 + theta * 13.3).fract().abs(),
-                aspect: 1.0,
-            },
+        let (shard, shard_material) = materials.effect(CombatFxUniformGpu {
+            primary_color: team_hdr,
+            age: 0.0,
+            fx_kind: 5,
+            seed: (phi * 7.1 + theta * 13.3).fract().abs(),
+            aspect: 1.0,
         });
 
         commands.spawn((
             CombatLightEffect,
             CombatEffectOwner(owner),
             Mesh3d(assets.shard_mesh.clone()),
-            MeshMaterial3d(shard_mat.clone()),
+            shard,
+            shard_material,
             Transform::from_translation(origin + dir * (radius * 0.4))
                 .with_scale(Vec3::splat(radius.clamp(0.5, 2.0))),
             ShatterShard {
                 velocity: dir * (radius * 7.0 + 3.0),
                 angular_velocity: Vec3::new(phi * 4.0, theta * 3.0, 2.5),
                 lifetime: Timer::from_seconds(0.75, TimerMode::Once),
-                material_handle: shard_mat,
             },
         ));
     }
@@ -297,7 +342,7 @@ pub fn projectile_card_rotation(velocity: Vec3, position: Vec3, camera_position:
     Quat::from_mat3(&Mat3::from_cols(tail, face.cross(tail), face))
 }
 
-/// Updates in-flight projectiles with lifetime aging, material uniform updates, and velocity alignment.
+/// Updates in-flight projectiles with lifetime aging, shader age updates, and velocity alignment.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
@@ -306,8 +351,16 @@ pub fn update_projectiles_system(
     mut commands: Commands<'_, '_>,
     time: Res<'_, Time>,
     camera_query: Query<'_, '_, &Transform, (With<Camera3d>, Without<ProjectileVisual>)>,
-    mut fx_materials: ResMut<'_, Assets<CombatFxMaterial>>,
-    mut query: Query<'_, '_, (Entity, &mut Transform, &mut ProjectileVisual)>,
+    mut query: Query<
+        '_,
+        '_,
+        (
+            Entity,
+            &mut Transform,
+            &mut ProjectileVisual,
+            &mut CombatFxInstance,
+        ),
+    >,
 ) {
     let dt = time.delta_secs();
     let (cam_rotation, cam_pos) = camera_query
@@ -316,16 +369,13 @@ pub fn update_projectiles_system(
             (t.rotation, t.translation)
         });
 
-    for (entity, mut transform, mut proj) in &mut query {
+    for (entity, mut transform, mut proj, mut instance) in &mut query {
         proj.lifetime.tick(time.delta());
         if proj.lifetime.finished() {
             commands.entity(entity).despawn();
         } else {
             transform.translation += proj.velocity * dt;
-            let progress = proj.lifetime.fraction();
-            if let Some(mat) = fx_materials.get_mut(&proj.material_handle) {
-                mat.uniform.age = progress;
-            }
+            CombatFxInstance::set_age(&mut instance, proj.lifetime.fraction());
 
             if proj.velocity.length_squared() > 0.01 {
                 transform.rotation =
@@ -346,21 +396,26 @@ pub fn update_beams_system(
     mut commands: Commands<'_, '_>,
     time: Res<'_, Time>,
     camera_query: Query<'_, '_, &Transform, (With<Camera3d>, Without<BeamVisualComponent>)>,
-    mut fx_materials: ResMut<'_, Assets<CombatFxMaterial>>,
-    mut query: Query<'_, '_, (Entity, &mut Transform, &mut BeamVisualComponent)>,
+    mut query: Query<
+        '_,
+        '_,
+        (
+            Entity,
+            &mut Transform,
+            &mut BeamVisualComponent,
+            &mut CombatFxInstance,
+        ),
+    >,
 ) {
     let cam_pos = camera_query
         .get_single()
         .map_or(Vec3::Y * 20.0, |t| t.translation);
-    for (entity, mut transform, mut beam) in &mut query {
+    for (entity, mut transform, mut beam, mut instance) in &mut query {
         beam.lifetime.tick(time.delta());
         if beam.lifetime.finished() {
             commands.entity(entity).despawn();
         } else {
-            let progress = beam.lifetime.fraction();
-            if let Some(mat) = fx_materials.get_mut(&beam.material_handle) {
-                mat.uniform.age = progress;
-            }
+            CombatFxInstance::set_age(&mut instance, beam.lifetime.fraction());
 
             let delta = beam.to - beam.from;
             let length = delta.length();
@@ -384,18 +439,24 @@ pub fn update_beams_system(
 pub fn update_melee_slashes_system(
     mut commands: Commands<'_, '_>,
     time: Res<'_, Time>,
-    mut fx_materials: ResMut<'_, Assets<CombatFxMaterial>>,
-    mut query: Query<'_, '_, (Entity, &mut Transform, &mut MeleeSlashComponent)>,
+    mut query: Query<
+        '_,
+        '_,
+        (
+            Entity,
+            &mut Transform,
+            &mut MeleeSlashComponent,
+            &mut CombatFxInstance,
+        ),
+    >,
 ) {
-    for (entity, mut transform, mut slash) in &mut query {
+    for (entity, mut transform, mut slash, mut instance) in &mut query {
         slash.lifetime.tick(time.delta());
         if slash.lifetime.finished() {
             commands.entity(entity).despawn();
         } else {
             let progress = slash.lifetime.fraction();
-            if let Some(mat) = fx_materials.get_mut(&slash.material_handle) {
-                mat.uniform.age = progress;
-            }
+            CombatFxInstance::set_age(&mut instance, progress);
             let expansion = 1.0 + progress * 0.35;
             transform.scale = Vec3::splat(slash.radius * 2.6 * expansion);
         }
@@ -411,8 +472,16 @@ pub fn update_shatter_system(
     mut commands: Commands<'_, '_>,
     time: Res<'_, Time>,
     camera_query: Query<'_, '_, &Transform, (With<Camera3d>, Without<ShatterShard>)>,
-    mut fx_materials: ResMut<'_, Assets<CombatFxMaterial>>,
-    mut query: Query<'_, '_, (Entity, &mut Transform, &mut ShatterShard)>,
+    mut query: Query<
+        '_,
+        '_,
+        (
+            Entity,
+            &mut Transform,
+            &mut ShatterShard,
+            &mut CombatFxInstance,
+        ),
+    >,
 ) {
     let dt = time.delta_secs();
     let gravity = Vec3::new(0.0, -18.0, 0.0);
@@ -420,15 +489,12 @@ pub fn update_shatter_system(
         .get_single()
         .map_or(Quat::IDENTITY, |t| t.rotation);
 
-    for (entity, mut transform, mut shard) in &mut query {
+    for (entity, mut transform, mut shard, mut instance) in &mut query {
         shard.lifetime.tick(time.delta());
         if shard.lifetime.finished() {
             commands.entity(entity).despawn();
         } else {
-            let progress = shard.lifetime.fraction();
-            if let Some(mat) = fx_materials.get_mut(&shard.material_handle) {
-                mat.uniform.age = progress;
-            }
+            CombatFxInstance::set_age(&mut instance, shard.lifetime.fraction());
 
             if shard.velocity == Vec3::ZERO {
                 transform.rotation = cam_rotation;
@@ -492,8 +558,8 @@ struct CombatEffectSpawner<'a, 'w, 's> {
     commands: &'a mut Commands<'w, 's>,
     /// Shared effect meshes.
     assets: &'a VfxSharedAssets,
-    /// Store that receives one new material per effect.
-    materials: &'a mut Assets<CombatFxMaterial>,
+    /// Pool that lends each effect a material slot.
+    materials: EffectMaterials<'a>,
     /// Camera position in world space, which ribbons and projectile cards face.
     camera_position: Vec3,
 }
@@ -542,7 +608,7 @@ impl CombatEffectSpawner<'_, '_, '_> {
             } => spawn_death_shatter(
                 self.commands,
                 self.assets,
-                self.materials,
+                &mut self.materials,
                 world_point(pos),
                 *radius,
                 style,
@@ -563,20 +629,19 @@ impl CombatEffectSpawner<'_, '_, '_> {
             return;
         };
         let team_hdr = style.linear.truncate().extend(0.0);
-        let mat = self.materials.add(CombatFxMaterial {
-            uniform: CombatFxUniformGpu {
-                primary_color: team_hdr,
-                age: 0.0,
-                fx_kind: 1, // Mode 1: Supersonic Hitscan / Railgun Tracer Bolt
-                seed: (p1.x * 13.1 + p2.z * 19.7).fract().abs(),
-                aspect: ribbon.length / 0.55,
-            },
+        let (instance, material) = self.materials.effect(CombatFxUniformGpu {
+            primary_color: team_hdr,
+            age: 0.0,
+            fx_kind: 1, // Mode 1: Supersonic Hitscan / Railgun Tracer Bolt
+            seed: (p1.x * 13.1 + p2.z * 19.7).fract().abs(),
+            aspect: ribbon.length / 0.55,
         });
         self.commands.spawn((
             CombatLightEffect,
             CombatEffectOwner(owner),
             Mesh3d(self.assets.tracer_mesh.clone()),
-            MeshMaterial3d(mat.clone()),
+            instance,
+            material,
             Transform::from_translation(ribbon.center)
                 .with_rotation(ribbon.rotation)
                 .with_scale(Vec3::new(0.55, ribbon.length, 1.0)),
@@ -585,7 +650,6 @@ impl CombatEffectSpawner<'_, '_, '_> {
                 to: p2,
                 is_lightning: false,
                 lifetime: Timer::from_seconds(0.12, TimerMode::Once),
-                material_handle: mat,
             },
         ));
     }
@@ -601,14 +665,12 @@ impl CombatEffectSpawner<'_, '_, '_> {
         owner: sim_types::PlayerId,
     ) {
         let team_hdr = style.linear.truncate().extend(0.0);
-        let mat = self.materials.add(CombatFxMaterial {
-            uniform: CombatFxUniformGpu {
-                primary_color: team_hdr,
-                age: 0.0,
-                fx_kind: 4, // Mode 4: Plasma projectile
-                seed: (p.x * 29.3 + p.z * 41.7).fract().abs(),
-                aspect: 1.0,
-            },
+        let (instance, material) = self.materials.effect(CombatFxUniformGpu {
+            primary_color: team_hdr,
+            age: 0.0,
+            fx_kind: 4, // Mode 4: Plasma projectile
+            seed: (p.x * 29.3 + p.z * 41.7).fract().abs(),
+            aspect: 1.0,
         });
         let rot = if v.length_squared() > 0.01 {
             projectile_card_rotation(v, p, self.camera_position)
@@ -619,14 +681,14 @@ impl CombatEffectSpawner<'_, '_, '_> {
             CombatLightEffect,
             CombatEffectOwner(owner),
             Mesh3d(self.assets.projectile_mesh.clone()),
-            MeshMaterial3d(mat.clone()),
+            instance,
+            material,
             Transform::from_translation(p)
                 .with_rotation(rot)
                 .with_scale(Vec3::splat(1.1)),
             ProjectileVisual {
                 velocity: v,
                 lifetime: Timer::from_seconds(lifetime, TimerMode::Once),
-                material_handle: mat,
             },
         ));
     }
@@ -647,20 +709,19 @@ impl CombatEffectSpawner<'_, '_, '_> {
         let fx_kind = if is_lightning { 2 } else { 0 };
         let width = if is_lightning { 0.95 } else { 0.65 };
         let duration = if is_lightning { 0.18 } else { 0.25 };
-        let mat = self.materials.add(CombatFxMaterial {
-            uniform: CombatFxUniformGpu {
-                primary_color: team_hdr,
-                age: 0.0,
-                fx_kind,
-                seed: (p1.x * 37.7 + p2.z * 53.1).fract().abs(),
-                aspect: ribbon.length / width,
-            },
+        let (instance, material) = self.materials.effect(CombatFxUniformGpu {
+            primary_color: team_hdr,
+            age: 0.0,
+            fx_kind,
+            seed: (p1.x * 37.7 + p2.z * 53.1).fract().abs(),
+            aspect: ribbon.length / width,
         });
         self.commands.spawn((
             CombatLightEffect,
             CombatEffectOwner(owner),
             Mesh3d(self.assets.beam_mesh.clone()),
-            MeshMaterial3d(mat.clone()),
+            instance,
+            material,
             Transform::from_translation(ribbon.center)
                 .with_rotation(ribbon.rotation)
                 .with_scale(Vec3::new(width, ribbon.length, 1.0)),
@@ -669,7 +730,6 @@ impl CombatEffectSpawner<'_, '_, '_> {
                 to: p2,
                 is_lightning,
                 lifetime: Timer::from_seconds(duration, TimerMode::Once),
-                material_handle: mat,
             },
         ));
     }
@@ -687,14 +747,12 @@ impl CombatEffectSpawner<'_, '_, '_> {
         let p = Vec3::new(pos[0], pos[2] + 0.35, pos[1]);
         let mut team_hdr = style.linear.truncate().extend(0.0);
         team_hdr.w = angle_rad;
-        let mat = self.materials.add(CombatFxMaterial {
-            uniform: CombatFxUniformGpu {
-                primary_color: team_hdr,
-                age: 0.0,
-                fx_kind: 3, // Mode 3: Sweeping Crescent Psi-Blade Melee Slash
-                seed: (pos[0] * 19.3 + pos[1] * 23.7).fract().abs(),
-                aspect: 1.0,
-            },
+        let (instance, material) = self.materials.effect(CombatFxUniformGpu {
+            primary_color: team_hdr,
+            age: 0.0,
+            fx_kind: 3, // Mode 3: Sweeping Crescent Psi-Blade Melee Slash
+            seed: (pos[0] * 19.3 + pos[1] * 23.7).fract().abs(),
+            aspect: 1.0,
         });
         // The shader sweeps the crescent by `primary_color.w`; rotating the card as well
         // would apply the angle twice and turn it edge-on at quarter turns.
@@ -703,14 +761,14 @@ impl CombatEffectSpawner<'_, '_, '_> {
             CombatLightEffect,
             CombatEffectOwner(owner),
             Mesh3d(self.assets.melee_slash_mesh.clone()),
-            MeshMaterial3d(mat.clone()),
+            instance,
+            material,
             Transform::from_translation(p)
                 .with_rotation(rot)
                 .with_scale(Vec3::splat(radius * 2.6)),
             MeleeSlashComponent {
                 lifetime: Timer::from_seconds(0.20, TimerMode::Once),
                 radius,
-                material_handle: mat,
             },
         ));
     }
@@ -738,6 +796,7 @@ pub fn process_combat_events_system(
     vfx_assets: Res<'_, VfxSharedAssets>,
     camera_query: Query<'_, '_, &Transform, With<Camera3d>>,
     mut fx_materials: ResMut<'_, Assets<CombatFxMaterial>>,
+    mut fx_pool: ResMut<'_, CombatFxMaterialPool>,
 ) {
     let camera_position = camera_query
         .get_single()
@@ -745,7 +804,10 @@ pub fn process_combat_events_system(
     let mut spawner = CombatEffectSpawner {
         commands: &mut commands,
         assets: &vfx_assets,
-        materials: &mut fx_materials,
+        materials: EffectMaterials {
+            pool: &mut fx_pool,
+            assets: &mut fx_materials,
+        },
         camera_position,
     };
 

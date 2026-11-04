@@ -82,8 +82,8 @@ pub use smog::{
 pub use vfx::{
     process_combat_events_system, setup_vfx_assets_system, spawn_death_shatter,
     update_beams_system, update_melee_slashes_system, update_projectiles_system,
-    update_shatter_system, CombatFxMaterial, CombatFxUniformGpu, CombatVisualEvent,
-    VfxSharedAssets,
+    update_shatter_system, CombatFxInstance, CombatFxMaterial, CombatFxMaterialPool,
+    CombatFxPlugin, CombatFxUniformGpu, CombatVisualEvent, VfxSharedAssets,
 };
 
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
@@ -373,7 +373,7 @@ fn add_material_and_feature_plugins(app: &mut App) {
     app.add_plugins(MaterialPlugin::<BubbleDomeMaterial>::default())
         .add_plugins(MaterialPlugin::<SelectionRingMaterial>::default())
         .add_plugins(bubble_optics::BubbleOpticsPlugin)
-        .add_plugins(MaterialPlugin::<CombatFxMaterial>::default())
+        .add_plugins(CombatFxPlugin)
         .add_plugins(MaterialPlugin::<SmogVolumeMaterial>::default())
         .add_plugins(SmogPlugin)
         .add_plugins(battle_input::BattleInputPlugin)
@@ -771,6 +771,7 @@ fn insert_headless_resources(app: &mut App) -> Result<(), String> {
     app.init_resource::<Assets<BubbleDomeMaterial>>();
     app.init_resource::<Assets<SelectionRingMaterial>>();
     app.init_resource::<Assets<CombatFxMaterial>>();
+    app.init_resource::<CombatFxMaterialPool>();
     app.init_resource::<Assets<SmogVolumeMaterial>>();
     app.init_resource::<SmogConfig>();
     app.init_resource::<SmogStats>();
