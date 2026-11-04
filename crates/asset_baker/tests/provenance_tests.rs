@@ -239,6 +239,7 @@ fn slice(start_frame: u32, frame_count: u32) -> ActionSlice {
         frame_count,
         looping: true,
         hold_last_frame: false,
+        duration_ms: None,
     }
 }
 
