@@ -12,8 +12,11 @@
 //! 2. **Authoritative Altitude Consistency:** 2,000 deterministic sample points across
 //!    `showcase_canyon` exhibit vertical ray hit heights equal to `GameMap::terrain_altitude_at`
 //!    within 1e-4 tolerance.
-//! 3. **Watertight Chunk Boundaries:** Vertex positions along shared chunk seam planes
-//!    are bit-identical across chunk meshes.
+//! 3. **Complete Chunk Coverage & Watertight Chunk Boundaries:** The spawned chunks partition
+//!    the whole `(width + 1) x (height + 1)` dual grid with no gap and no overlap. Vertex
+//!    positions along shared chunk seam planes are bit-identical across chunk meshes; on the
+//!    seam next to an edge-only chunk (a map side that is a multiple of 16), the cliff-wall
+//!    vertices are bit-identical and both sides carry the same floor altitudes.
 //! 4. **Winding Order & Unit Normals:** Every triangle exhibits consistent CCW winding
 //!    (positive geometric normal dot vertex normal), area >= 1e-8, and unit length normals (|len - 1.0| < 1e-5).
 //! 5. **Incremental Rebuild Bit-Identity:** Rebuilding only dirty chunks after an edit
@@ -55,6 +58,8 @@ use std::path::{Path, PathBuf};
 #[path = "support/gpu_run.rs"]
 mod gpu_run;
 
+use asset_baker::terrain_theme::TerrainThemeCatalog;
+use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 use client::resolve_assets_dir;
 use client::terrain::fields::{create_overlay_image, create_splat_image};
@@ -63,6 +68,7 @@ use client::terrain::picking::pick_terrain;
 use client::terrain::theme_gpu::{
     downsample_albedo_linear, downsample_normal_renormalized, generate_mip_chain,
 };
+use client::terrain::{cliff_level_height, spawn_terrain, TerrainChunks, TerrainMaterial};
 use sim_map::grid::{CellFlags, CliffLevel, GameMap, MapCell, TerrainKind};
 use sim_map::map_format::MapFile;
 use sim_types::{SimScalar, SimVec2};
@@ -183,8 +189,8 @@ fn vertical_ray_triangle_intersect(px: f32, pz: f32, v0: Vec3, v1: Vec3, v2: Vec
 #[test]
 fn test_surface_heights_match_simulation() {
     let map = load_test_map("showcase_canyon.scmap.ron");
-    let chunk_cols = map.width().div_ceil(CHUNK_DUAL_CELLS);
-    let chunk_rows = map.height().div_ceil(CHUNK_DUAL_CELLS);
+    let chunk_cols = (map.width() + 1).div_ceil(CHUNK_DUAL_CELLS);
+    let chunk_rows = (map.height() + 1).div_ceil(CHUNK_DUAL_CELLS);
 
     // Build all chunk meshes
     let mut chunk_meshes = Vec::new();
@@ -266,8 +272,8 @@ fn test_surface_heights_match_simulation() {
 
         let di = (px + 0.5).floor() as u32;
         let dj = (pz + 0.5).floor() as u32;
-        let base_cx = (di / CHUNK_DUAL_CELLS).min(chunk_cols - 1);
-        let base_cy = (dj / CHUNK_DUAL_CELLS).min(chunk_rows - 1);
+        let base_cx = di / CHUNK_DUAL_CELLS;
+        let base_cy = dj / CHUNK_DUAL_CELLS;
 
         // Vertical ray down: find highest triangle intersection across base chunk and neighbors
         let mut max_hit_y = -f32::INFINITY;
@@ -307,11 +313,63 @@ fn test_surface_heights_match_simulation() {
 // 3. Chunk Borders Are Watertight
 // -----------------------------------------------------------------------------
 
+/// The vertices of `mesh` that lie on the seam plane `axis == seam`, as `[y, along]` bit pairs,
+/// sorted; `axis` is 0 for a plane of constant X and 2 for a plane of constant Z.
+fn seam_vertices(mesh: &MesherScratch, axis: usize, seam: f32) -> Vec<[u32; 2]> {
+    let along = 2 - axis;
+    let mut verts: Vec<[u32; 2]> = mesh
+        .positions
+        .iter()
+        .filter(|p| (p[axis] - seam).abs() < 1e-4)
+        .map(|p| [p[1].to_bits(), p[along].to_bits()])
+        .collect();
+    verts.sort_unstable();
+    verts
+}
+
+/// Whether `y_bits` is the altitude of a cliff level's floor (or of the abyss wall bottom).
+fn is_floor_height(y_bits: u32) -> bool {
+    (-1..=4).any(|level| cliff_level_height(level).to_bits() == y_bits)
+}
+
+/// Checks the seam between the chunk that holds the map's last interior dual column (or row)
+/// and the chunk that holds only the edge dual column (or row) beyond it.
+///
+/// An edge dual cell straddles the map border, so two of its corners are off the map and read as
+/// void (level -1): the mesher decomposes it into threshold runs from the void upwards, and its
+/// lower floor runs extend under the higher plateau, where an interior dual cell emits only the
+/// visible low region. Dual columns 0 and 1 meet the same way inside chunk 0. So the floor
+/// vertices on this seam need not match one for one; what must match is every cliff-wall vertex
+/// (bit for bit, so walls meet without a step) and the set of floor altitudes on each side.
+fn assert_edge_seam_meets(a: &[[u32; 2]], b: &[[u32; 2]], label: &str) {
+    assert!(
+        !a.is_empty() && !b.is_empty(),
+        "{label}: both chunks must have geometry on the seam"
+    );
+    let walls = |v: &[[u32; 2]]| -> Vec<[u32; 2]> {
+        v.iter()
+            .copied()
+            .filter(|p| !is_floor_height(p[0]))
+            .collect()
+    };
+    let floors = |v: &[[u32; 2]]| -> Vec<u32> {
+        let mut ys: Vec<u32> = v
+            .iter()
+            .map(|p| p[0])
+            .filter(|&y| is_floor_height(y))
+            .collect();
+        ys.dedup();
+        ys
+    };
+    assert_eq!(walls(a), walls(b), "{label}: cliff-wall vertices differ");
+    assert_eq!(floors(a), floors(b), "{label}: floor altitudes differ");
+}
+
 #[test]
 fn test_chunk_borders_are_watertight() {
     let map = load_test_map("showcase_canyon.scmap.ron");
-    let chunk_cols = map.width().div_ceil(CHUNK_DUAL_CELLS);
-    let chunk_rows = map.height().div_ceil(CHUNK_DUAL_CELLS);
+    let chunk_cols = (map.width() + 1).div_ceil(CHUNK_DUAL_CELLS);
+    let chunk_rows = (map.height() + 1).div_ceil(CHUNK_DUAL_CELLS);
 
     let mut chunk_meshes = Vec::new();
     let mut scratch = MesherScratch::default();
@@ -326,30 +384,21 @@ fn test_chunk_borders_are_watertight() {
     for cy in 0..chunk_rows {
         for cx in 0..(chunk_cols - 1) {
             let seam_x = ((cx + 1) * CHUNK_DUAL_CELLS) as f32 - 0.5;
-            let mesh_a = &chunk_meshes[(cy * chunk_cols + cx) as usize];
-            let mesh_b = &chunk_meshes[(cy * chunk_cols + cx + 1) as usize];
-
-            let mut verts_a: Vec<[u32; 2]> = mesh_a
-                .positions
-                .iter()
-                .filter(|p| (p[0] - seam_x).abs() < 1e-4)
-                .map(|p| [p[1].to_bits(), p[2].to_bits()])
-                .collect();
-            let mut verts_b: Vec<[u32; 2]> = mesh_b
-                .positions
-                .iter()
-                .filter(|p| (p[0] - seam_x).abs() < 1e-4)
-                .map(|p| [p[1].to_bits(), p[2].to_bits()])
-                .collect();
-
-            verts_a.sort_unstable();
-            verts_b.sort_unstable();
-            assert_eq!(
-                verts_a, verts_b,
-                "horizontal chunk seam at X={seam_x} between ({cx},{cy}) and ({},{}) is not watertight",
-                cx + 1,
-                cy
+            let verts_a = seam_vertices(&chunk_meshes[(cy * chunk_cols + cx) as usize], 0, seam_x);
+            let verts_b = seam_vertices(
+                &chunk_meshes[(cy * chunk_cols + cx + 1) as usize],
+                0,
+                seam_x,
             );
+            let label = format!(
+                "horizontal chunk seam at X={seam_x} between ({cx},{cy}) and ({},{cy})",
+                cx + 1
+            );
+            if (cx + 1) * CHUNK_DUAL_CELLS == map.width() {
+                assert_edge_seam_meets(&verts_a, &verts_b, &label);
+            } else {
+                assert_eq!(verts_a, verts_b, "{label} is not watertight");
+            }
         }
     }
 
@@ -357,30 +406,21 @@ fn test_chunk_borders_are_watertight() {
     for cy in 0..(chunk_rows - 1) {
         for cx in 0..chunk_cols {
             let seam_z = ((cy + 1) * CHUNK_DUAL_CELLS) as f32 - 0.5;
-            let mesh_a = &chunk_meshes[(cy * chunk_cols + cx) as usize];
-            let mesh_b = &chunk_meshes[((cy + 1) * chunk_cols + cx) as usize];
-
-            let mut verts_a: Vec<[u32; 2]> = mesh_a
-                .positions
-                .iter()
-                .filter(|p| (p[2] - seam_z).abs() < 1e-4)
-                .map(|p| [p[0].to_bits(), p[1].to_bits()])
-                .collect();
-            let mut verts_b: Vec<[u32; 2]> = mesh_b
-                .positions
-                .iter()
-                .filter(|p| (p[2] - seam_z).abs() < 1e-4)
-                .map(|p| [p[0].to_bits(), p[1].to_bits()])
-                .collect();
-
-            verts_a.sort_unstable();
-            verts_b.sort_unstable();
-
-            assert_eq!(
-                verts_a, verts_b,
-                "vertical chunk seam at Z={seam_z} between ({cx},{cy}) and ({cx},{}) is not watertight",
+            let verts_a = seam_vertices(&chunk_meshes[(cy * chunk_cols + cx) as usize], 2, seam_z);
+            let verts_b = seam_vertices(
+                &chunk_meshes[((cy + 1) * chunk_cols + cx) as usize],
+                2,
+                seam_z,
+            );
+            let label = format!(
+                "vertical chunk seam at Z={seam_z} between ({cx},{cy}) and ({cx},{})",
                 cy + 1
             );
+            if (cy + 1) * CHUNK_DUAL_CELLS == map.height() {
+                assert_edge_seam_meets(&verts_a, &verts_b, &label);
+            } else {
+                assert_eq!(verts_a, verts_b, "{label} is not watertight");
+            }
         }
     }
 }
@@ -392,8 +432,8 @@ fn test_chunk_borders_are_watertight() {
 #[test]
 fn test_indices_in_range_and_winding_consistent() {
     let map = load_test_map("showcase_canyon.scmap.ron");
-    let chunk_cols = map.width().div_ceil(CHUNK_DUAL_CELLS);
-    let chunk_rows = map.height().div_ceil(CHUNK_DUAL_CELLS);
+    let chunk_cols = (map.width() + 1).div_ceil(CHUNK_DUAL_CELLS);
+    let chunk_rows = (map.height() + 1).div_ceil(CHUNK_DUAL_CELLS);
 
     let mut scratch = MesherScratch::default();
     for cy in 0..chunk_rows {
@@ -452,8 +492,8 @@ fn test_indices_in_range_and_winding_consistent() {
 #[test]
 fn test_normals_are_unit_length() {
     let map = load_test_map("showcase_canyon.scmap.ron");
-    let chunk_cols = map.width().div_ceil(CHUNK_DUAL_CELLS);
-    let chunk_rows = map.height().div_ceil(CHUNK_DUAL_CELLS);
+    let chunk_cols = (map.width() + 1).div_ceil(CHUNK_DUAL_CELLS);
+    let chunk_rows = (map.height() + 1).div_ceil(CHUNK_DUAL_CELLS);
 
     let mut scratch = MesherScratch::default();
     for cy in 0..chunk_rows {
@@ -477,8 +517,8 @@ fn test_normals_are_unit_length() {
 #[test]
 fn test_incremental_rebuild_equals_full_rebuild() {
     let map = load_test_map("showcase_canyon.scmap.ron");
-    let chunk_cols = map.width().div_ceil(CHUNK_DUAL_CELLS);
-    let chunk_rows = map.height().div_ceil(CHUNK_DUAL_CELLS);
+    let chunk_cols = (map.width() + 1).div_ceil(CHUNK_DUAL_CELLS);
+    let chunk_rows = (map.height() + 1).div_ceil(CHUNK_DUAL_CELLS);
 
     // 1. Full build on original map
     let mut initial_chunks = Vec::new();
@@ -511,9 +551,9 @@ fn test_incremental_rebuild_equals_full_rebuild() {
     let max_dual_y = (22u32 + 3).min(edited_map.height());
 
     let min_dirty_cx = min_dual_x / CHUNK_DUAL_CELLS;
-    let max_dirty_cx = (max_dual_x / CHUNK_DUAL_CELLS).min(chunk_cols - 1);
+    let max_dirty_cx = max_dual_x / CHUNK_DUAL_CELLS;
     let min_dirty_cy = min_dual_y / CHUNK_DUAL_CELLS;
-    let max_dirty_cy = (max_dual_y / CHUNK_DUAL_CELLS).min(chunk_rows - 1);
+    let max_dirty_cy = max_dual_y / CHUNK_DUAL_CELLS;
 
     // Incrementally rebuild only the dirty chunks
     let mut incremental_chunks = initial_chunks;
@@ -636,8 +676,8 @@ fn test_ramp_surface_continuous_with_landings() {
         "default_arena must contain ramp cells"
     );
 
-    let chunk_cols = map.width().div_ceil(CHUNK_DUAL_CELLS);
-    let chunk_rows = map.height().div_ceil(CHUNK_DUAL_CELLS);
+    let chunk_cols = (map.width() + 1).div_ceil(CHUNK_DUAL_CELLS);
+    let chunk_rows = (map.height() + 1).div_ceil(CHUNK_DUAL_CELLS);
 
     let low_landing_h = 3.0f32;
     let high_landing_h = 6.0f32;
@@ -702,6 +742,112 @@ fn test_ramp_surface_continuous_with_landings() {
         found_high_boundary,
         "must verify ramp high landing boundary vertices"
     );
+}
+
+// -----------------------------------------------------------------------------
+// 8b. Spawned Chunks Cover Every Dual Cell (Phase 9 §9 gap 2)
+// -----------------------------------------------------------------------------
+
+/// Spawns `map` through the production [`spawn_terrain`] path into `world`, with the first
+/// shipped terrain theme and the real asset directory.
+fn spawn_through_production_path(world: &mut World, map: GameMap) {
+    let assets_dir = resolve_assets_dir();
+    let catalog_path = assets_dir.join("catalog/terrain_themes.ron");
+    let catalog = TerrainThemeCatalog::load(&catalog_path)
+        .unwrap_or_else(|e| panic!("failed to load {}: {e}", catalog_path.display()));
+    let theme = catalog
+        .themes
+        .into_iter()
+        .next()
+        .expect("the shipped theme catalog lists at least one theme");
+    let spawned = world.run_system_once(
+        move |mut commands: Commands<'_, '_>,
+              mut meshes: ResMut<'_, Assets<Mesh>>,
+              mut materials: ResMut<'_, Assets<TerrainMaterial>>,
+              mut std_materials: ResMut<'_, Assets<StandardMaterial>>,
+              mut images: ResMut<'_, Assets<Image>>| {
+            spawn_terrain(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                &mut std_materials,
+                &mut images,
+                &theme,
+                map.clone(),
+                &assets_dir,
+            )
+        },
+    );
+    spawned
+        .expect("the spawn system runs")
+        .expect("the shipped theme spawns the terrain");
+}
+
+#[test]
+fn spawned_chunks_cover_every_dual_cell() {
+    let flat = MapCell {
+        terrain_kind: TerrainKind::MetalPlate,
+        cliff_level: CliffLevel(1),
+        flags: CellFlags::BUILDABLE | CellFlags::GROUND_PATHABLE,
+        ramp: None,
+        occupying_structure: None,
+    };
+    let mut world = World::new();
+    world.init_resource::<Assets<Mesh>>();
+    world.init_resource::<Assets<TerrainMaterial>>();
+    world.init_resource::<Assets<StandardMaterial>>();
+    world.init_resource::<Assets<Image>>();
+
+    for (width, height) in [(64_u32, 64_u32), (48, 32), (17, 17), (16, 33)] {
+        let map = GameMap::new(width, height, flat.clone()).expect("GameMap::new");
+        spawn_through_production_path(&mut world, map);
+
+        let chunks = world.resource::<TerrainChunks>();
+        assert_eq!(
+            chunks.chunks.len() as u32,
+            chunks.cols * chunks.rows,
+            "{width}x{height}: one chunk entry per grid slot"
+        );
+
+        // The dual grid has (width + 1) x (height + 1) cells; count how often each is meshed.
+        let dual_w = (width + 1) as usize;
+        let dual_h = (height + 1) as usize;
+        let mut coverage = vec![0_u32; dual_w * dual_h];
+        for chunk in &chunks.chunks {
+            let x_start = chunk.chunk_x * CHUNK_DUAL_CELLS;
+            let x_end = ((chunk.chunk_x + 1) * CHUNK_DUAL_CELLS).min(width + 1);
+            let y_start = chunk.chunk_y * CHUNK_DUAL_CELLS;
+            let y_end = ((chunk.chunk_y + 1) * CHUNK_DUAL_CELLS).min(height + 1);
+            assert!(
+                x_start < x_end && y_start < y_end,
+                "{width}x{height}: chunk ({}, {}) covers no dual cell",
+                chunk.chunk_x,
+                chunk.chunk_y
+            );
+            for dj in y_start..y_end {
+                for di in x_start..x_end {
+                    coverage[dj as usize * dual_w + di as usize] += 1;
+                }
+            }
+            let meshes = world.resource::<Assets<Mesh>>();
+            let mesh = meshes.get(&chunk.mesh).expect("chunk mesh asset exists");
+            assert!(
+                mesh.count_vertices() > 0,
+                "{width}x{height}: chunk ({}, {}) was spawned without geometry",
+                chunk.chunk_x,
+                chunk.chunk_y
+            );
+        }
+        for dj in 0..dual_h {
+            for di in 0..dual_w {
+                let count = coverage[dj * dual_w + di];
+                assert_eq!(
+                    count, 1,
+                    "{width}x{height}: dual cell ({di}, {dj}) is meshed by {count} chunks, expected exactly 1"
+                );
+            }
+        }
+    }
 }
 
 // -----------------------------------------------------------------------------
