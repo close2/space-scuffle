@@ -30,3 +30,5 @@ Please say:
 ## Answer
 
 Owner (2026-11-04): Everything estimated in total below $15 is fine. (I think I have credit, if not, paying is fine for me. Target $15. Try really hard to stay below $50). If internet says that I should have free weekly quota, try to stay below it. Keep the 12/run and 25/week cap for the 19 required clips (~$11.40 estimated if billed at Fast API rates), and pause/check before starting the 49 expansion clips so we stay within the $15 target.
+
+Owner update (2026-11-04, via Q0043): I have verified that I have 260€ credit expiring 2027-01-24. The agent is free to use up to 200€ (including expansion batches and re-generations) and should not hesitate to request another video if a video doesn't fulfill requirements. Keep audio enabled.
