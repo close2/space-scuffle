@@ -199,7 +199,7 @@ On CI, after the push:
 
 | Symptom | Meaning | Action |
 |---|---|---|
-| "Disk budget" fails with `::error title=Disk budget::N GiB free ...` | The runner began with too little space, or the restored cache and clippy took more than expected | Read the two `df` reports. If the image shrank, add option E (free preinstalled software) as a step before the cache restore, and record the numbers here |
+| "Disk budget" fails with `::error title=Disk budget::N GiB free ...` | The runner began with too little space, or the restored cache and clippy took more than expected | Read the two `df` reports. If the image shrank, add option E (free preinstalled software) as a step before the cache restore, and record the numbers here. The guard tripped on the 72 GiB AWS runner class in November 2026; option E is now the step "Free preinstalled runner software", see [`2026-11-04-ci-disk-guard-tripped.md`](2026-11-04-ci-disk-guard-tripped.md) |
 | "Test binaries carry compressed debug info" fails | `RUSTFLAGS` or a changed config is overriding `.cargo/config.toml`; disk use is back at 20 GiB | Remove the override, or put the flag back into it |
 | SIGBUS from `rust-lld` again, with "Disk report after the test build" showing `/` at 100 % | The test binaries have outgrown even the compressed budget | Take up option F (§7) |
 | SIGBUS with plenty of free space in the after-build report | The disk hypothesis is refuted for that run | Open a new investigation: memory, or a linker bug; capture `dmesg` and retry with `-j2` |
@@ -271,3 +271,12 @@ failed only on the smog goldens and showed the same figures):
 hit the SIGBUS at `87fd289`; GitHub's runner disk varies, which is why the guard checks free space at run time rather
 than assuming a size. With compression the test build used 13 GiB of `target/`, so even the earlier small runner
 (about 14 GB free) now has room.
+
+Runner classes, from the job logs of the last 40 runs as of 2026-11-04
+([`2026-11-04-ci-disk-guard-tripped.md`](2026-11-04-ci-disk-guard-tripped.md) §2). The "about 14 GB" runner above
+was the AWS class; its free space later fell below the guard's 12 GiB:
+
+| Runner class | Jobs | Root device | Size | Used before the build | Free at the guard | Result |
+|---|---|---|---|---|---|---|
+| Azure (eastus, eastus2, centralus, westus, westus2, westus3, southcentralus, westcentralus, northcentralus) | 37 | `/dev/root` | 145 GiB | 64 to 67 GiB | 77 to 80 GiB | Passed the disk guard every time |
+| AWS `us-west-2` | 3 | `/dev/mapper/cow-root` | 72 GiB | 66 GiB | 5.4 to 5.9 GiB | Failed every time |

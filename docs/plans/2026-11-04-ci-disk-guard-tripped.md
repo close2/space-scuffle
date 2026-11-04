@@ -1,6 +1,6 @@
 # CI disk guard tripped: free preinstalled runner software before the build
 
-Date: 2026-11-04. Status: Proposed. Scope: `.github/workflows/ci.yml`, job `check-and-test`, and §8 of
+Date: 2026-11-04. Status: Active. Scope: `.github/workflows/ci.yml`, job `check-and-test`, and §8 of
 [`2026-11-03-ci-disk-budget.md`](2026-11-03-ci-disk-budget.md). No Rust source, no Cargo configuration, no test
 layout changes. Owner question: [Q0034](../questions/open/0034-client-test-consolidation-after-guard-trip.md).
 
@@ -243,4 +243,28 @@ Until an AWS run has passed, the status is `Partly done`, with the Azure figures
 
 ## 8. Results
 
-Empty until the implementation runs.
+### 8.1 Local (2026-11-04, implementation)
+
+The step of §4 is in `ci.yml` word for word, with the guard's `::error` message extended as §4 asks. The workflow
+parses with `yaml.safe_load`. `cargo fmt --all -- --check` and `cargo test --locked -p workspace_checks` pass.
+
+Dry run (§5 step 1). The step's `run:` text was extracted from the parsed workflow, its path list replaced with
+`~/scratch/cidisk2_free/present` (holding a 1 GiB `fallocate` file) and `~/scratch/cidisk2_free/absent`, its `df`
+calls pointed at `~/scratch` (a separate filesystem from `/` on the development VM), and `sudo` defined as
+`sudo() { "$@"; }`. The implementation agent's sandbox refuses to execute a multi-line shell script, so it checked each
+part of the script as a plain command:
+
+- `test -e` on the absent path is false, so the step prints `absent` and continues.
+- An unmatched glob such as `/usr/local/julia*` stays literal in bash, so it too prints `absent` (the VM has no
+  Julia, and `ls -d /usr/local/julia*` finds nothing).
+- `rm -rf` of a directory holding a file inside a `chmod 555` subdirectory exits 1 (`Permission denied`), which
+  ends the step under GitHub's default `bash -e`.
+- `/sys/class/dmi/id/sys_vendor` reads `QEMU` on the development VM, without network access.
+- `df --output=avail -k` read 1,349,846,684 KiB before `rm -rf` of the directory holding the 1 GiB file and
+  1,350,895,268 KiB after: 1,048,584 KiB, so the step's line reads `freed 1024 MiB`. A first attempt with
+  seconds between the readings showed a negative delta, because other users write to the shared `~/scratch`
+  disk; on a runner the step runs alone, so its per-path deltas are clean.
+
+### 8.2 CI
+
+Pending: the first green run after the push (§6 step 1) and the next AWS run (§6 step 2).

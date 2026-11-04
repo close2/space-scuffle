@@ -28,6 +28,43 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # GitHub serves this job on two runner classes with the same image: Azure, 145 GiB root, and AWS
+      # us-west-2, 72 GiB root (/dev/mapper/cow-root). Both use about 66 GiB before our build, which leaves
+      # the AWS class about 6 GiB, and the test build writes about 8 GiB
+      # (docs/plans/2026-11-04-ci-disk-guard-tripped.md). Delete preinstalled software this job never uses.
+      # It runs on every runner, so every run measures what each path frees. A missing path is skipped.
+      - name: Free preinstalled runner software
+        run: |
+          avail_mib() { echo $(( $(df --output=avail -k / | tail -1) / 1024 )); }
+          echo "Runner class: $(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || echo unknown)," \
+            "image ${ImageOS:-unknown} ${ImageVersion:-unknown}," \
+            "root $(df --output=source,size -h / | tail -1 | tr -s ' ')"
+          df -h /
+          start=$(avail_mib)
+          for path in \
+              /usr/local/lib/android \
+              /usr/share/dotnet \
+              /usr/local/.ghcup \
+              /opt/ghc \
+              /opt/hostedtoolcache/CodeQL \
+              /usr/share/swift \
+              /usr/local/julia* \
+              /usr/share/miniconda \
+              /usr/local/share/powershell \
+              /usr/local/share/chromium \
+              /opt/microsoft \
+              /opt/google; do
+            if [ ! -e "$path" ]; then
+              echo "absent   $path"
+              continue
+            fi
+            before=$(avail_mib)
+            sudo rm -rf "$path"
+            echo "freed $(( $(avail_mib) - before )) MiB  $path"
+          done
+          echo "Freed in total: $(( ($(avail_mib) - start) / 1024 )) GiB"
+          df -h /
+
       # valgrind: crates/client/tests/sync_allocation_count_tests.rs counts the live battle sync's
       # steady-state heap allocations from outside the process with it (charter §3.3, Q0011). The
       # test fails, never skips, without it. It runs eight children of about 2 minutes each under
@@ -81,7 +118,7 @@ jobs:
           need_gib=12
           avail_gib=$(( $(df --output=avail -k "$GITHUB_WORKSPACE" | tail -1) / 1024 / 1024 ))
           if [ "$avail_gib" -lt "$need_gib" ]; then
-            echo "::error title=Disk budget::${avail_gib} GiB free under $GITHUB_WORKSPACE; the test build needs ${need_gib} GiB (docs/plans/2026-11-03-ci-disk-budget.md)"
+            echo "::error title=Disk budget::${avail_gib} GiB free under $GITHUB_WORKSPACE; the test build needs ${need_gib} GiB; runner $(cat /sys/class/dmi/id/sys_vendor 2>/dev/null) (docs/plans/2026-11-04-ci-disk-guard-tripped.md)"
             exit 1
           fi
           echo "Disk budget: ${avail_gib} GiB free, ${need_gib} GiB required"
