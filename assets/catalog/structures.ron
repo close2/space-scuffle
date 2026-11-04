@@ -545,8 +545,8 @@
             air_weapon: None,
             abilities: [],
             veo_prompts: {
-                "Idle": "Tech Module Pod: a single small armored annex pod with a capsule body, a fixed sensor dish and banks of glowing cyan data conduits, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The conduits glow steadily and small status lights flicker.",
-                "Constructing": "Tech Module Pod: a single small armored annex pod with a capsule body, a fixed sensor dish and banks of glowing cyan data conduits, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+                "Idle": "Tech Module Pod: a single small free-standing armored capsule pod on four short feet, a flat sensor panel bolted to its roof, glowing cyan data conduits along its sides, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The conduits glow steadily and small status lights flicker.",
+                "Constructing": "Tech Module Pod: a single small free-standing armored capsule pod on four short feet, a flat sensor panel bolted to its roof, glowing cyan data conduits along its sides, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
             },
         ),
         (

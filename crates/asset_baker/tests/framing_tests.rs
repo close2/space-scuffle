@@ -420,8 +420,21 @@ fn an_override_naming_no_catalog_identity_is_a_typed_load_error() {
 fn the_shipped_policy_letterboxes_structures_and_crops_units() {
     let catalog = shipped_catalog();
     let style = MediaStyle::load_for_catalog(&shipped_assets(), &catalog).expect("style loads");
-    assert!(style.framing.overrides.is_empty());
     assert_eq!(style.framing.unit_sphere, BakeFraming::CenterCrop);
+    // Overrides are per identity (a wide flying unit may be letterboxed); every unit without
+    // one is cropped.
+    for unit in catalog
+        .archetypes()
+        .filter(|archetype| archetype.shape == ShapeKind::UnitSphere)
+        .filter(|archetype| !style.framing.overrides.contains_key(&archetype.slug))
+    {
+        assert_eq!(
+            style.framing.framing_for(&unit.slug, &unit.shape),
+            BakeFraming::CenterCrop,
+            "{}",
+            unit.slug
+        );
+    }
     assert!(matches!(
         style.framing.building_dome,
         BakeFraming::Letterbox { .. }
