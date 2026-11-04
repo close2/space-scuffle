@@ -42,3 +42,12 @@ Options:
 ## Answer
 
 Owner (2026-11-04): Option (a) — spend one generation on the pilot (`plasma_siphon_dome` idle).
+
+## Resolution
+
+2026-11-04: option (a) carried out. One generation was spent on the pilot (`plasma_siphon_dome` idle). Google
+accepted the request with the same key, and the clip (4 s, 1280×720, 96 frames) came back inline 32 s later. So
+Vertex AI Express keys can generate even though they cannot read the model description: the preflight's 404 was
+reason 1, not a bad key. Ledger lines 1 to 4 of `docs/evidence/veo/ledger.jsonl`; details and cost ($0.40 at list
+price) in [`docs/evidence/veo/2026-11-04-pilot.md`](../../evidence/veo/2026-11-04-pilot.md). The pilot's review
+raised a new question about framing, [Q0043](../open/0043-veo-square-crop.md), which now holds batch 1.
