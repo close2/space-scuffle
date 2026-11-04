@@ -12,6 +12,10 @@
 //! - **Strict boundary containment:** velocity wall normal components vanish on all 6 faces (`$\mathbf{u} \cdot \hat{\mathbf{n}} = 0$`).
 //! - **Non-negative density:** `$\rho(\mathbf{x}) \ge 0$` across all voxels at all times.
 //! - **Finite arithmetic:** all fields remain finite without NaNs or infinities.
+//! - **Sparse but bit-exact:** every pass skips the 8 × 4 × 8 bricks whose result is provably
+//!   the value they already hold (rest flags in `bricks.rs`, rules D-2 of the C-18 plan); the
+//!   output is bit for bit that of the dense solver, which the `force_dense` differential test
+//!   checks on every slab.
 
 use super::bricks::{
     back_trace_reach, brick_of_voxel, brick_voxels, bricks_in_voxel_box, may_hold_smog, runs,
