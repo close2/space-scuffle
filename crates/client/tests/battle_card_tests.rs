@@ -31,6 +31,7 @@ use client::battle_hud::card::{
     CardAction, CardLabel, CardLock, CardPage, CommandCard, NO_MEDIA_TEXT,
 };
 use client::battle_hud::feed::BattleFeed;
+use client::battle_hud::model::HudModel;
 use client::battle_hud::placement::{PlacementGhost, PlacementGhostAssets, PlacementPreview};
 use client::battle_hud::queue::QueuePanel;
 use client::battle_hud::HudGeometry;
@@ -53,13 +54,10 @@ use sim_types::{
 #[path = "support/battle_harness.rs"]
 mod battle_harness;
 
-use battle_harness::{Harness, LOCAL_PLAYER};
+use battle_harness::{assets, Harness, LOCAL_PLAYER};
 
 /// A structure with shipped media whose only prerequisite is the starting base.
 const STRUCTURE: &str = "assembly_bay_dome";
-
-/// The extractor, which has no shipped media.
-const EXTRACTOR: &str = "plasma_siphon_dome";
 
 /// A unit with an overclock that must be researched.
 const OVERCLOCKED: &str = "pulse_bot";
@@ -585,14 +583,72 @@ fn the_sandbox_has_no_card_keys() {
 
 // --- Locks --------------------------------------------------------------------------------------
 
+/// Whether the shipped root holds no atlas manifest for `structure`.
+fn ships_no_atlas(harness: &Harness, structure: UnitTypeId) -> bool {
+    let slug = &harness
+        .world()
+        .catalog
+        .get(structure)
+        .expect("the worker raises catalog identities")
+        .slug;
+    !assets()
+        .join("textures")
+        .join(format!("{slug}.flipbook.ron"))
+        .exists()
+}
+
+/// Every structure the selected worker can raise, from the HUD's catalog.
+fn raised_by(harness: &Harness, worker: EntityId) -> Vec<UnitTypeId> {
+    let raiser = harness.world().entities[&worker].unit_type_id;
+    harness
+        .app
+        .world()
+        .resource::<HudModel>()
+        .catalog
+        .archetype(raiser)
+        .expect("the HUD catalog lists the worker")
+        .raises
+        .clone()
+}
+
+/// A structure the worker raises whose media the shipped root lacks.
+///
+/// Real media keeps arriving (Veo plan D-9), so the test asks the catalog and the shipped root
+/// instead of naming an identity, and fails loudly once none is left.
+fn a_structure_without_media(harness: &Harness, worker: EntityId) -> UnitTypeId {
+    raised_by(harness, worker)
+        .into_iter()
+        .find(|structure| ships_no_atlas(harness, *structure))
+        .expect("every structure the worker raises ships media: give this test a root of its own")
+}
+
 #[test]
-fn the_extractor_card_entry_is_disabled_for_want_of_media() {
+fn exactly_the_structures_without_shipped_media_are_unpresentable() {
     let mut harness = skirmish();
-    let (_, _) = worker_and_site(&mut harness);
-    let extractor = slug(&harness, EXTRACTOR);
+    let (worker, _) = worker_and_site(&mut harness);
+    let raised = raised_by(&harness, worker);
+    assert!(!raised.is_empty());
+    let model = harness.app.world().resource::<HudModel>();
+    for structure in raised {
+        let entry = model.catalog.archetype(structure).expect("a raised entry");
+        assert_eq!(
+            entry.unpresentable.is_some(),
+            ships_no_atlas(&harness, structure),
+            "{:?}: {:?}",
+            structure,
+            entry.unpresentable
+        );
+    }
+}
+
+#[test]
+fn a_card_entry_without_media_is_disabled_for_want_of_media() {
+    let mut harness = skirmish();
+    let (worker, _) = worker_and_site(&mut harness);
+    let structure = a_structure_without_media(&harness, worker);
     tap_label(&mut harness, CardLabel::Build);
 
-    let position = turn_to(&mut harness, extractor);
+    let position = turn_to(&mut harness, structure);
 
     let slot = card(&harness).slots[position].as_ref().unwrap();
     assert!(!slot.enabled);
@@ -603,18 +659,13 @@ fn the_extractor_card_entry_is_disabled_for_want_of_media() {
 #[test]
 fn a_disabled_entry_issues_nothing_and_says_why() {
     let mut harness = skirmish();
-    let (_, _) = worker_and_site(&mut harness);
+    let (worker, _) = worker_and_site(&mut harness);
+    let structure = a_structure_without_media(&harness, worker);
     tap_label(&mut harness, CardLabel::Build);
-    let position = card(&harness)
-        .slots
-        .iter()
-        .position(|slot| slot.as_ref().is_some_and(|slot| !slot.enabled))
-        .expect("the first page holds a disabled structure");
+    let position = turn_to(&mut harness, structure);
+    assert!(!card(&harness).slots[position].as_ref().unwrap().enabled);
     let reason = card(&harness).text[position].tooltip.clone();
-    assert_eq!(
-        reason, NO_MEDIA_TEXT,
-        "every locked structure lacks media today"
-    );
+    assert_eq!(reason, NO_MEDIA_TEXT);
 
     // By mouse: a disabled button takes no click, and its tooltip is the explanation.
     click_slot(&mut harness, position);
