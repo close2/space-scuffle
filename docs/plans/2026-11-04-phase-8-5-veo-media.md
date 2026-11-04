@@ -266,7 +266,15 @@ false` is accepted for the chosen model and lowers the cost (the pipeline discar
   matches its prompt, no text or watermark, no cut or morph to a different object, subject stays inside the framed
   square (letterbox for structures, crop for units, amended by `2026-11-04-veo-letterbox-bake` D-4), action
   readable at 512 px, consistent with the identity's other states. **Amended 2026-11-04 (WP4, owner's review
-  points):** loop continuity, the last frame close to the first with no camera push-in, zoom or pan (Q0026); and
+  points):** loop continuity (Q0026), **measured since 2026-11-04 by `asset_baker loop-check`** (also printed by
+  `review` for every looping state; seamless-loops plan
+  [`2026-11-04-veo-seamless-loops.md`](2026-11-04-veo-seamless-loops.md) D-6) on the frames the atlas will hold
+  after the bake's seam repair: the worst step of the cycle, the wrap included, at least the median step SSIM minus
+  0.03; no kept frame zoomed against frame 0 by more than 1.5 %; for a pinned clip, frame 0's SSIM against the pin
+  at least 0.90; and a clip the bake's scale lock refuses fails. The visual check of loop-check's seam sheet (the
+  last four frames and frame 0) stays, and decides when it sees what the numbers miss, such as the double image of
+  a cross-fade over a camera arc (loops WP3 calibration,
+  [`2026-11-04-batch-1.md`](../evidence/veo/2026-11-04-batch-1.md)); and
   **a plain, uniform backdrop with no radiating stripes, sunburst, light rays, spotlight beams or patterned
   gradient** (owner, relayed 2026-11-04). A clip that fails either is rejected. Rejected clips stay in `~/scratch/veo/clips/`
   and are recorded in the ledger. Owner taste is final: Q0026 shows the owner the pilot and

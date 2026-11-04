@@ -533,6 +533,17 @@ pub struct FrameSpec {
     pub framing: BakeFraming,
 }
 
+/// The frame budget of each state in an atlas of `frame_size`-pixel frames holding `states`
+/// states: `(MAX_ATLAS_STRIP_HEIGHT / frame_size) / states`, at least 1.
+///
+/// The bake keeps at most this many frames of each clip, and `loop-check` measures the same
+/// number, so the review judges the frames the atlas will hold.
+#[must_use]
+pub fn frames_per_state(frame_size: u32, states: usize) -> usize {
+    let total = (MAX_STRIP_HEIGHT / frame_size.max(1)) as usize;
+    (total / states.max(1)).max(1)
+}
+
 /// The result of [`bake_framed_action_videos`] and [`bake_repaired_action_videos`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct FramedBake {
@@ -603,9 +614,7 @@ pub fn bake_repaired_action_videos<P: AsRef<Path>>(
         });
     }
 
-    let max_total_frames = MAX_STRIP_HEIGHT / spec.size.max(1);
-    let k = clips.len() as u32;
-    let max_frames_per_clip = (max_total_frames / k).max(1) as usize;
+    let max_frames_per_clip = frames_per_state(spec.size, clips.len());
 
     let mut actions = BTreeMap::new();
     let mut bar_rgb = BTreeMap::new();
@@ -698,11 +707,7 @@ pub fn decode_framed_clip(
     budget: usize,
     label: &str,
 ) -> Result<FramedFrames, BakerError> {
-    let filter = spec.framing.ffmpeg_filter(spec.size, spec.fps);
-    let (temp_dir, frame_paths) = probe_clip(ffmpeg_path, video_path, &filter)?;
-    let frames = load_frames(&fit_clip_to_budget(frame_paths, budget, label, spec.fps))?;
-    drop(temp_dir);
-    frame_to_square(frames, spec.size, spec.framing)
+    decode_repaired_clip(ffmpeg_path, video_path, spec, budget, label, None).map(|clip| clip.framed)
 }
 
 /// One clip's square frames and the seam repair done on them.
@@ -712,6 +717,10 @@ pub struct RepairedClip {
     pub framed: FramedFrames,
     /// What the repair did, `None` when no seam was asked for.
     pub seam: Option<SeamRecord>,
+    /// Width and height in pixels of the clip's own pixels inside each square frame, which
+    /// [`frame_to_square`] centres; the rest are bars. Equal to the square under a centre
+    /// crop.
+    pub content_size: (u32, u32),
 }
 
 /// [`decode_framed_clip`], with the seam repair `seam` asks for (plan
@@ -742,9 +751,15 @@ pub fn decode_repaired_clip(
     seam: Option<SeamRepair>,
 ) -> Result<RepairedClip, BakerError> {
     let Some(seam) = seam else {
+        let filter = spec.framing.ffmpeg_filter(spec.size, spec.fps);
+        let (temp_dir, frame_paths) = probe_clip(ffmpeg_path, video_path, &filter)?;
+        let frames = load_frames(&fit_clip_to_budget(frame_paths, budget, label, spec.fps))?;
+        drop(temp_dir);
+        let content_size = content_size_of(&frames, spec.size);
         return Ok(RepairedClip {
-            framed: decode_framed_clip(ffmpeg_path, video_path, spec, budget, label)?,
+            framed: frame_to_square(frames, spec.size, spec.framing)?,
             seam: None,
+            content_size,
         });
     };
     let filter = if seam.scale_lock {
@@ -772,7 +787,9 @@ pub fn decode_repaired_clip(
             other => other,
         }
     })?;
+    let content_size = content_size_of(&frames, spec.size);
     Ok(RepairedClip {
+        content_size,
         framed: frame_to_square(frames, spec.size, spec.framing)?,
         seam: Some(SeamRecord {
             sampling: FrameSampling::Loop,
@@ -780,6 +797,13 @@ pub fn decode_repaired_clip(
             crossfade_frames: seam.crossfade_frames,
         }),
     })
+}
+
+/// The size of the decoded frames, or the square when there are none.
+fn content_size_of(frames: &[RgbaImage], frame_size: u32) -> (u32, u32) {
+    frames
+        .first()
+        .map_or((frame_size, frame_size), RgbaImage::dimensions)
 }
 
 /// Reduces a looping clip's frames to at most `budget` with [`evenly_spaced_loop_indices`],

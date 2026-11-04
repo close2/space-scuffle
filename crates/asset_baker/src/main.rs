@@ -14,7 +14,8 @@
 //! The paid Veo workflow (plan `docs/plans/2026-11-04-phase-8-5-veo-media.md`) is:
 //! `validate-prompts` and `generate-veo --dry-run` (free, no credential read), `veo-preflight`
 //! (one free authenticated GET), `generate-veo --max-generations N` (downloads to
-//! `--clips-dir`, every request in `--ledger`), `review` (contact sheets, `--reject`),
+//! `--clips-dir`, every request in `--ledger`), `review` (contact sheets, `--reject`, and for
+//! each looping state the numbers of `loop-check`, the measured loop continuity),
 //! `install-clip`, then `bake-unit-videos` (which writes `<slug>.provenance.ron` beside the
 //! atlas), then `audit-media --strict --ledger <ledger>`. `review` and `bake-unit-videos` fit
 //! each clip into the square game frame as the `framing` section of `media_style.ron` says for
@@ -39,13 +40,13 @@
 
 use asset_baker::budget::{check_spend, BudgetConfig, SpendRequest, BUDGET_FILE};
 use asset_baker::clip_review::{self, DEFAULT_FFMPEG_PATH};
-use asset_baker::ffmpeg_importer::{FrameSpec, DEFAULT_FFPROBE_PATH};
+use asset_baker::ffmpeg_importer::{frames_per_state, FrameSpec, DEFAULT_FFPROBE_PATH};
 use asset_baker::framing::{BakeFraming, DEFAULT_UNIT_FPS, DEFAULT_UNIT_FRAME_SIZE};
 use asset_baker::ledger::{self, Ledger, LedgerHistory};
 use asset_baker::media_audit::MediaAuditStatus;
-use asset_baker::prompts::SeamRepair;
+use asset_baker::prompts::{atlas_loops, check_pin, SeamRepair};
 use asset_baker::provenance;
-use asset_baker::veo_plan::{parse_state, published_states, state_slug, VeoDirs};
+use asset_baker::veo_plan::{parse_state, published_states, resolve_keyframe, state_slug, VeoDirs};
 use asset_baker::{BakerError, MediaStyle, RunContext, VeoClient, VeoRequestSettings};
 use clap::{Args, Parser, Subcommand};
 use sim_core::UnitCatalog;
@@ -251,6 +252,12 @@ enum Commands {
         reason: Option<String>,
     },
 
+    /// Measures the loop continuity of a looping state's clip on the frames its atlas will
+    /// hold, raw and after the seam repair (loops plan D-6). Exits 1 when the repaired frames
+    /// fail. Free: reads only local files.
+    #[command(name = "loop-check")]
+    LoopCheck(LoopCheckArgs),
+
     /// Installs a reviewed download as `<videos>/<slug>_<state>.mp4`.
     #[command(name = "install-clip")]
     InstallClip {
@@ -425,6 +432,7 @@ fn run(cli: Cli) -> RunResult {
             credentials_dir,
             curl_path,
         } => run_veo_preflight(&model, credentials_dir.as_deref(), curl_path.as_deref()),
+        Commands::LoopCheck(args) => run_loop_check(assets, &args),
         Commands::KeyframeFromClip { clip, at, output } => {
             run_keyframe_from_clip(&clip, at, &output)
         }
@@ -509,6 +517,163 @@ fn run(cli: Cli) -> RunResult {
 fn load_unit_catalog(assets: Option<&Path>) -> Result<UnitCatalog, BakerError> {
     let root = asset_baker::resolve_assets_root(assets)?;
     Ok(asset_baker::load_catalogs(&root)?.units)
+}
+
+/// Arguments of `loop-check`.
+#[derive(Args, Debug)]
+struct LoopCheckArgs {
+    /// Exact catalog slug.
+    #[arg(short, long)]
+    unit: String,
+    /// The looping state (idle, walk or cast) whose bake budget and seam repair apply.
+    #[arg(long, value_parser = parse_state)]
+    state: AnimState,
+    /// The clip to measure (a download awaiting review, or an installed clip).
+    #[arg(long)]
+    clip: PathBuf,
+    /// The picture the clip was pinned to; default: the identity's pin when the loop policy
+    /// pins the state's end and the picture passes the pin rules.
+    #[arg(long, conflicts_with = "no_pin")]
+    pin: Option<PathBuf>,
+    /// The clip was not pinned (text-to-video, or started from another picture): no start
+    /// fidelity is measured.
+    #[arg(long)]
+    no_pin: bool,
+    /// Directory of authored keyframes, where the default pin is looked up (default:
+    /// `<assets>/ai_keyframes`).
+    #[arg(long)]
+    keyframes_dir: Option<PathBuf>,
+    /// Full-size sheets of the judged frames (`<slug>_<state>_repaired.png` and `_seam.png`).
+    #[arg(long, requires = "evidence_dir")]
+    sheets_dir: Option<PathBuf>,
+    /// Downscaled copies of the sheets for the committed evidence.
+    #[arg(long, requires = "sheets_dir")]
+    evidence_dir: Option<PathBuf>,
+    /// Square frame side in pixels, as `bake-unit-videos --size`.
+    #[arg(short, long, default_value_t = DEFAULT_UNIT_FRAME_SIZE)]
+    size: u32,
+    /// Playback rate, as `bake-unit-videos --fps`.
+    #[arg(short, long, default_value_t = DEFAULT_UNIT_FPS)]
+    fps: u32,
+}
+
+/// Which picture a loop check compares the clip's frame 0 with.
+enum PinChoice {
+    /// The identity's pin, if the loop policy pins the state and the picture passes the pin
+    /// rules; looked up in this keyframes directory.
+    Policy(PathBuf),
+    /// This picture.
+    File(PathBuf),
+    /// None: the clip was not pinned.
+    Unpinned,
+}
+
+/// One looping state of one identity, measured by [`run_one_loop_check`].
+struct LoopCheckTarget<'a> {
+    catalog: &'a UnitCatalog,
+    style: &'a MediaStyle,
+    unit: &'a str,
+    state: AnimState,
+    clip: &'a Path,
+    spec: FrameSpec,
+}
+
+/// Measures one state's clip with the identity's budget, seam and pin, and prints the report.
+fn run_one_loop_check(
+    target: &LoopCheckTarget<'_>,
+    pin: &PinChoice,
+) -> Result<clip_review::LoopCheck, Box<dyn Error>> {
+    let (unit, state) = (target.unit, target.state);
+    published_states(target.catalog, unit, Some(&[state]))?;
+    if !atlas_loops(state) {
+        return Err(BakerError::InvalidArgument {
+            reason: format!(
+                "{unit} {}: the state does not loop, so it has no loop to check",
+                state_slug(state)
+            ),
+        }
+        .into());
+    }
+    let states = published_states(target.catalog, unit, None)?;
+    let pin = match pin {
+        PinChoice::Unpinned => None,
+        PinChoice::File(path) => Some(path.clone()),
+        PinChoice::Policy(keyframes) => target
+            .style
+            .loops
+            .pins_end(unit, state)
+            .then(|| resolve_keyframe(keyframes, unit, state))
+            .and_then(|source| source.file().map(Path::to_path_buf))
+            .filter(|path| check_pin(path).is_none()),
+    };
+    let label = format!("{unit} {}", state_slug(state));
+    let request = clip_review::LoopCheckRequest {
+        clip: target.clip,
+        spec: target.spec,
+        budget: frames_per_state(target.spec.size, states.len()),
+        seam: target
+            .style
+            .loops
+            .spec_for(unit, state)
+            .and_then(|spec| spec.seam),
+        pin: pin.as_deref(),
+        label: &label,
+    };
+    let check = clip_review::loop_check(Path::new(DEFAULT_FFMPEG_PATH), &request)?;
+    println!(
+        "loop-check {label}: {} ({} px {}, {} fps, budget {} frames, pin {})",
+        target.clip.display(),
+        target.spec.size,
+        target.spec.framing,
+        target.spec.fps,
+        request.budget,
+        pin.as_deref()
+            .map_or_else(|| "none".to_string(), |path| path.display().to_string())
+    );
+    println!("{}", check.render());
+    Ok(check)
+}
+
+/// `loop-check`: the D-6 measures of one clip; fails when the repaired frames fail.
+fn run_loop_check(assets: Option<&Path>, args: &LoopCheckArgs) -> RunResult {
+    let (catalog, style) = identity_style(assets, &args.unit)?;
+    let framing = framing_of(&catalog, &style, &args.unit)?;
+    let pin = match (&args.pin, args.no_pin, &args.keyframes_dir) {
+        (Some(path), _, _) => PinChoice::File(path.clone()),
+        (None, true, _) => PinChoice::Unpinned,
+        (None, false, Some(dir)) => PinChoice::Policy(dir.clone()),
+        (None, false, None) => {
+            PinChoice::Policy(asset_baker::resolve_assets_root(assets)?.join("ai_keyframes"))
+        }
+    };
+    let target = LoopCheckTarget {
+        catalog: &catalog,
+        style: &style,
+        unit: &args.unit,
+        state: args.state,
+        clip: &args.clip,
+        spec: FrameSpec {
+            size: args.size,
+            fps: args.fps,
+            framing,
+        },
+    };
+    let check = run_one_loop_check(&target, &pin)?;
+    if let (Some(sheets), Some(evidence)) = (&args.sheets_dir, &args.evidence_dir) {
+        let stem = format!("{}_{}", args.unit, state_slug(args.state));
+        let (repaired, seam) = clip_review::loop_sheets(&check, sheets, evidence, &stem)?;
+        println!("  sheets: {} and {}", repaired.display(), seam.display());
+    }
+    if check.passes() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} {} fails the loop-continuity criterion",
+            args.unit,
+            state_slug(args.state)
+        )
+        .into())
+    }
 }
 
 /// Arguments of `audit-media`.
@@ -883,12 +1048,14 @@ fn run_review(
             "review needs --sheets-dir and --evidence-dir (or --reject and --reason)".into(),
         );
     };
-    let (catalog, framing) = identity_framing(assets, target.unit)?;
+    let (catalog, style) = identity_style(assets, target.unit)?;
+    let framing = framing_of(&catalog, &style, target.unit)?;
     let spec = FrameSpec {
         size: DEFAULT_UNIT_FRAME_SIZE,
         fps: DEFAULT_UNIT_FPS,
         framing,
     };
+    let keyframes = asset_baker::resolve_assets_root(assets)?.join("ai_keyframes");
     let history = LedgerHistory::load(target.ledger)?;
     let dirs = target.dirs();
     let mut written = 0;
@@ -922,22 +1089,27 @@ fn run_review(
             sheets_dir.join(&framed_name).display(),
             bar_note(bar)
         );
+        if atlas_loops(state) {
+            let check_target = LoopCheckTarget {
+                catalog: &catalog,
+                style: &style,
+                unit: target.unit,
+                state,
+                clip: &clip,
+                spec,
+            };
+            let check = run_one_loop_check(&check_target, &PinChoice::Policy(keyframes.clone()))?;
+            let stem = format!("{}_{}", target.unit, state_slug(state));
+            let (repaired, seam) =
+                clip_review::loop_sheets(&check, &sheets_dir, &evidence_dir, &stem)?;
+            println!("  sheets: {} and {}", repaired.display(), seam.display());
+        }
         written += 1;
     }
     if written == 0 {
         return Err(format!("{} has no clip to review", target.unit).into());
     }
     Ok(())
-}
-
-/// The catalog and the framing that `media_style.ron` gives `unit`'s render shape.
-fn identity_framing(
-    assets: Option<&Path>,
-    unit: &str,
-) -> Result<(UnitCatalog, BakeFraming), Box<dyn Error>> {
-    let (catalog, style) = identity_style(assets, unit)?;
-    let framing = framing_of(&catalog, &style, unit)?;
-    Ok((catalog, framing))
 }
 
 /// The catalog and the media style, after checking that `unit` is a catalog identity.
