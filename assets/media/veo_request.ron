@@ -9,13 +9,14 @@
 //   square game frame as `catalog/media_style.ron`'s `framing` section says.
 // - `duration_seconds`: length of each clip, in seconds.
 // - `sample_count`: videos per request; must be 1 (the budget counts one clip per request).
-// - `generate_audio`: `Some(false)` asks for a silent clip, which the published price list
-//   bills at $0.08 per second instead of $0.10 with sound; the game discards sound anyway
-//   (Q0043). `None` sends no field, as the 2026-11-04 pilot did. If the service refuses the
-//   field, set `None` here and record the refusal in docs/evidence/veo/2026-11-04-api-notes.md.
+// - `generate_audio`: `None` sends no field, as the 2026-11-04 pilot did, and the service then
+//   generates a sound track (the pilot's clip has one). The owner chose to keep sound, which
+//   the game may later play when a unit is clicked (Q0043, answered 2026-11-04), so no silent
+//   clip is requested. `Some(false)` would ask for a silent clip ($0.08 per second instead of
+//   $0.10 at the published 720p rate); `Some(true)` would ask for sound explicitly.
 (
     aspect_ratio: "16:9",
     duration_seconds: 4,
     sample_count: 1,
-    generate_audio: Some(false),
+    generate_audio: None,
 )

@@ -8,7 +8,7 @@ the held pilot clip accepted and installed. That plan's WP4 (batch 1) starts onl
 No Veo request was made while planning. Line numbers drift; search for the quoted symbol. A claim that could not be
 confirmed while planning is marked **verify**, and the first step of its package confirms or refutes it.
 
-**Decision being carried out.** [Q0043](../questions/open/0043-veo-square-crop.md), answered 2026-11-04 by the
+**Decision being carried out.** [Q0043](../questions/closed/0043-veo-square-crop.md), answered 2026-11-04 by the
 orchestrating agent under the owner's standing rule in Q0020: option (a), the baker fits the whole 16:9 frame into
 the square with backdrop-coloured bars and cuts nothing; also try `generateAudio: false` on the next paid clip, and if
 the API refuses the field, record it and drop it. The owner can overrule either choice.
@@ -162,6 +162,10 @@ and say truthfully that they were cropped. `PROVENANCE_FORMAT_VERSION` stays 1: 
 fields, every v1 file stays readable, and the audit's hash checks are unaffected.
 
 ### D-6. Veo request parameters in data, with `generateAudio`
+
+**Overruled in part by the owner (Q0043's answer, 2026-11-04):** keep sound, which the game may play when a unit is
+clicked. The data mechanism below stays; WP2 set `generate_audio: None` (no field sent, as in the pilot) in
+`assets/media/veo_request.ron`, and the shipped-settings test now asserts that no `generateAudio` key is sent.
 
 New data file `assets/media/veo_request.ron` (not secret), read by `generate-veo`, and shown by `--dry-run`:
 
