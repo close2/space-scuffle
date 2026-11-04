@@ -1183,11 +1183,15 @@ fn opening_a_different_size_map_rebuilds_terrain_for_that_size() {
     );
     assert_eq!(harness.history().undo_len(), 0);
 
-    let expected_chunks = 96_u32.div_ceil(CHUNK_DUAL_CELLS) * 80_u32.div_ceil(CHUNK_DUAL_CELLS);
+    // The dual grid of a 96 x 80 map has 97 x 81 cells, so the chunk grid is 7 x 6.
+    let expected_cols = (96_u32 + 1).div_ceil(CHUNK_DUAL_CELLS);
+    let expected_rows = (80_u32 + 1).div_ceil(CHUNK_DUAL_CELLS);
+    let expected_chunks = expected_cols * expected_rows;
     let world = harness.app.world();
     let chunks = world.resource::<TerrainChunks>();
     assert_eq!(chunks.chunks.len() as u32, expected_chunks);
-    assert_eq!(chunks.cols, 96_u32.div_ceil(CHUNK_DUAL_CELLS));
+    assert_eq!(chunks.cols, expected_cols);
+    assert_eq!(chunks.rows, expected_rows);
 
     let fields = world.resource::<TerrainFieldImages>();
     let images = world.resource::<Assets<Image>>();

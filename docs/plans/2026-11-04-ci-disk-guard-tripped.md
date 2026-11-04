@@ -1,6 +1,6 @@
 # CI disk guard tripped: free preinstalled runner software before the build
 
-Date: 2026-11-04. Status: Active. Scope: `.github/workflows/ci.yml`, job `check-and-test`, and §8 of
+Date: 2026-11-04. Status: Partly done (Azure figures recorded; waiting for an AWS run). Scope: `.github/workflows/ci.yml`, job `check-and-test`, and §8 of
 [`2026-11-03-ci-disk-budget.md`](2026-11-03-ci-disk-budget.md). No Rust source, no Cargo configuration, no test
 layout changes. Owner question: [Q0034](../questions/open/0034-client-test-consolidation-after-guard-trip.md).
 
@@ -267,4 +267,27 @@ part of the script as a plain command:
 
 ### 8.2 CI
 
-Pending: the first green run after the push (§6 step 1) and the next AWS run (§6 step 2).
+**Azure run (§6 step 1):** run 41744388382 at `70c9f03`, green on all six jobs. Runner class `Microsoft Corporation`,
+image `ubuntu24 20261026.354.1`, `/dev/root 145G`. The test job took 42.6 min (baseline 35–43 min).
+
+| Path | Freed |
+|---|---:|
+| `/usr/local/lib/android` | 11 290 MiB |
+| `/usr/share/dotnet` | 5 882 MiB |
+| `/usr/local/.ghcup` | 3 744 MiB |
+| `/opt/ghc` | absent |
+| `/opt/hostedtoolcache/CodeQL` | 1 370 MiB |
+| `/usr/share/swift` | 3 539 MiB |
+| `/usr/local/julia*` (`julia1.13.2`) | 1 043 MiB |
+| `/usr/share/miniconda` | 1 147 MiB |
+| `/usr/local/share/powershell` | 1 367 MiB |
+| `/usr/local/share/chromium` | 671 MiB |
+| `/opt/microsoft` | 844 MiB |
+| `/opt/google` | 445 MiB |
+| **Total** | **30 GiB** |
+
+Free space on `/`: 86 GiB before the clean-up, 116 GiB after, 108 GiB at the guard, 100 GiB after the test build.
+On the AWS class (5.4–5.9 GiB free before our build) the same image would leave about 35 GiB at the guard, about
+three times the 12 GiB threshold, if the copy-on-write store behind `cow-root` releases the space (§3.1).
+
+**AWS run (§6 step 2):** pending; it cannot be forced. Record the same figures when a job lands on `Amazon EC2`.
