@@ -62,7 +62,17 @@
         // Exact catalog slug -> state -> text, for one identity whose clip needs other wording.
         // An override keeps its kind's negative terms. A slug that is not in the catalog, or a
         // state the identity does not publish, is refused.
-        overrides: {},
+        //
+        // repair_shuttle (batch 1, 2026-11-04): an unarmed aircraft. The unit Idle text asks for
+        // a weapon glow and a scanning head, and the unit Walk text for a stride and dust at the
+        // feet, none of which it has. Both of its looping states start and end on its hovering
+        // Idle pin, so they keep that pose and show motion through the thrusters.
+        overrides: {
+            "repair_shuttle": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size and place in frame from start to end. The aircraft hovers in place with a gentle steady bob, thrusters glowing, nanite emitters shimmering softly. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the aircraft flies in place, keeping the same size, pose and place in frame. Thrusters flare in steady bursts, exhaust streams backward, a slight rhythmic bob, no ground contact. Seamless loop: the last frame matches the first.",
+            },
+        },
     ),
 
     // Longest composed prompt accepted, in characters. The model's own limit is not published
@@ -108,7 +118,13 @@
         building_dome: Letterbox(feather_permille: 30),
         // Exact catalog slug -> framing, for one identity whose clip needs the other treatment
         // (for example a wide flying unit). A slug that is not in the catalog is refused.
-        overrides: {},
+        //
+        // repair_shuttle (batch 1, 2026-11-04): a wide twin-engine aircraft seen at 3/4; its
+        // first clip (62f8d6c9) spans about 60 % of the 16:9 width, so the centre crop cut
+        // off an engine pod. Letterboxed like a structure, it stays whole.
+        overrides: {
+            "repair_shuttle": Letterbox(feather_permille: 30),
+        },
     ),
 
     // How each state is made seamless (docs/plans/2026-11-04-veo-seamless-loops.md, D-1).
@@ -131,6 +147,18 @@
         },
         // Exact catalog slug -> state -> treatment, for one identity whose clip needs another
         // one. A slug that is not in the catalog is refused (as `framing.overrides`).
-        overrides: {},
+        //
+        // repair_shuttle Idle (batch 1, 2026-11-04): its hover bob already loops (raw wrap as
+        // high as the median step), and a cross-fade blends two bob positions into a double
+        // image at the restart, so this clip keeps the scale lock and no cross-fade.
+        // repair_shuttle Walk: pinned at both ends, its raw frames already loop; the hover bob
+        // moves the hull up and down, which the scale lock reads as an uneven zoom and refuses.
+        // There is no camera zoom to undo, so Walk keeps loop sampling only.
+        overrides: {
+            "repair_shuttle": {
+                Idle: (pin_end: true, seam: Some((scale_lock: true, crossfade_frames: 0))),
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+            },
+        },
     ),
 )

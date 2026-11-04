@@ -25,6 +25,7 @@ use asset_baker::{
     bake_framed_action_videos, BakeFraming, BakerError, FrameSpec, FramedBake, MediaStyle,
 };
 use common::cli::{baker, baker_with_assets, shipped_assets, shipped_catalog, text};
+use common::style_text::with_section_overrides;
 use image::RgbaImage;
 use sim_types::enums::{AnimState, ShapeKind};
 use std::path::{Path, PathBuf};
@@ -180,16 +181,7 @@ fn bundle_with_style(edit: impl Fn(String) -> String) -> tempfile::TempDir {
 fn with_overrides(overrides: String) -> impl Fn(String) -> String {
     move |style: String| {
         // The actions and loops sections have `overrides` of their own: edit the framing one.
-        let start = style.find("    framing: (").expect("the framing section");
-        let at = start
-            + style[start..]
-                .find("overrides: {},")
-                .expect("the shipped framing lists no override");
-        format!(
-            "{}overrides: {overrides},{}",
-            &style[..at],
-            &style[at + "overrides: {},".len()..]
-        )
+        with_section_overrides(&style, "    framing: (", &overrides)
     }
 }
 
@@ -428,8 +420,21 @@ fn an_override_naming_no_catalog_identity_is_a_typed_load_error() {
 fn the_shipped_policy_letterboxes_structures_and_crops_units() {
     let catalog = shipped_catalog();
     let style = MediaStyle::load_for_catalog(&shipped_assets(), &catalog).expect("style loads");
-    assert!(style.framing.overrides.is_empty());
     assert_eq!(style.framing.unit_sphere, BakeFraming::CenterCrop);
+    // Overrides are per identity (a wide flying unit may be letterboxed); every unit without
+    // one is cropped.
+    for unit in catalog
+        .archetypes()
+        .filter(|archetype| archetype.shape == ShapeKind::UnitSphere)
+        .filter(|archetype| !style.framing.overrides.contains_key(&archetype.slug))
+    {
+        assert_eq!(
+            style.framing.framing_for(&unit.slug, &unit.shape),
+            BakeFraming::CenterCrop,
+            "{}",
+            unit.slug
+        );
+    }
     assert!(matches!(
         style.framing.building_dome,
         BakeFraming::Letterbox { .. }

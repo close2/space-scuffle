@@ -34,6 +34,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 pub mod cli;
 pub mod loop_clip;
+pub mod style_text;
 
 /// Returns the fixture clip, resolved from `CARGO_MANIFEST_DIR` so that the result does not
 /// depend on the test working directory, after asserting that the real tools it needs exist.

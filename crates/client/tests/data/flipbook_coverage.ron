@@ -5,12 +5,17 @@
 // be recorded here. Catalog units absent from `catalog_units` have no flipbook.
 (
     catalog_units: [
+        "aerospace_hangar_dome",
         "assembly_bay_dome",
         "capacitor_dome",
         "foundry_core_dome",
+        "machining_plant_dome",
+        "plasma_siphon_dome",
         "psi_grey",
         "pulse_bot",
+        "repair_shuttle",
         "rhino_beetle",
+        "tech_module_pod",
         "welder_drone",
     ],
     non_catalog: [

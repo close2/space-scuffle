@@ -19,6 +19,8 @@
 
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
+mod common;
+
 use asset_baker::ledger::LedgerHistory;
 use asset_baker::prompts::{atlas_loops, KeyframeSource, PromptIssue, MEDIA_STYLE_FILE};
 use asset_baker::prompts::{check_prompt, ActionSource, ComposedPrompt, DrawingKind};
@@ -27,6 +29,7 @@ use asset_baker::{
     build_action_prompt, plan_run, BakerError, MediaStyle, VeoDirs, VeoParameters,
     VeoRequestSettings,
 };
+use common::style_text::with_section_overrides;
 use sim_types::enums::{AnimState, ShapeKind};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -223,14 +226,9 @@ fn with_state_entry(text: &str, state: &str, entry: Option<&str>) -> String {
     format!("{}{replacement}{}", &text[..start], &text[end..])
 }
 
-/// Replaces the loop policy's (last) `overrides: {}` with `overrides`.
+/// Replaces the loop policy's `overrides` map with `overrides`.
 fn with_loop_overrides(text: &str, overrides: &str) -> String {
-    let at = text.rfind("overrides: {}").expect("the loop overrides");
-    format!(
-        "{}overrides: {overrides}{}",
-        &text[..at],
-        &text[at + "overrides: {}".len()..]
-    )
+    with_section_overrides(text, "    loops: (", overrides)
 }
 
 #[test]
@@ -441,19 +439,9 @@ fn identity_part(archetype: &sim_core::UnitArchetype, state: AnimState) -> Strin
     )
 }
 
-/// Replaces the action policy's `overrides: {}` (the first one after `actions: (`) with
-/// `overrides`.
+/// Replaces the action policy's `overrides` map with `overrides`.
 fn with_action_overrides(text: &str, overrides: &str) -> String {
-    let start = text.find("    actions: (").expect("the actions section");
-    let at = start
-        + text[start..]
-            .find("overrides: {}")
-            .expect("the action overrides");
-    format!(
-        "{}overrides: {overrides}{}",
-        &text[..at],
-        &text[at + "overrides: {}".len()..]
-    )
+    with_section_overrides(text, "    actions: (", overrides)
 }
 
 #[test]

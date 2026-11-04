@@ -1065,7 +1065,7 @@
             ),
             veo_prompts: {
                 Idle: "Repair Shuttle: a single compact armored twin-engine dropship with slate-steel hull plates, glowing green nanite healing emitters and two vectoring VTOL thrusters, hovering steady in mid-air, one aircraft in the middle of the frame and fully visible, with wide empty space on both sides, no characters, no other vehicles.",
-                Walk: "Repair Shuttle: the same compact armored twin-engine dropship in fast forward flight, nose tilted down, both VTOL thrusters flaring bright, flying in place in the middle of the frame and fully visible, with wide empty space on both sides, no characters, no other vehicles.",
+                Walk: "Repair Shuttle: the same compact armored twin-engine dropship in level forward flight, both VTOL thrusters flaring bright, flying in place in the middle of the frame and fully visible, with wide empty space on both sides, no characters, no other vehicles.",
                 Attack: "Repair Shuttle: Concentrated emerald nanite healing beam bathing allied combat android.",
             },
         ),
