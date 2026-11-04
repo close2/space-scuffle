@@ -8,7 +8,10 @@
 //! (`<clips>/<slug>/<state>/<operation>.json`) and, if it carries a video, downloaded beside it
 //! and validated. The first frame of an Idle clip is the start picture of the identity's other
 //! states when the identity has no Idle pin. A pinned clip sends its start picture also as the
-//! end frame (`lastFrame`), and the ledger records the end frame's hash.
+//! end frame (`lastFrame`), and the ledger records the end frame's hash. Each request sends its
+//! clip's own parameters ([`RunPlan::parameters_for`]: the run's, including a `--seed`, with
+//! the clip's negative prompt), and the ledger records them exactly as sent (plan
+//! `2026-11-04-veo-structure-action-text.md`, D-2 and D-3).
 //!
 //! # How it fits
 //! `generate-veo` calls [`execute_plan`] after the plan, prompt validation and budget checks
@@ -19,8 +22,9 @@
 //! - `request_started` is written before a start request is sent, so a crash cannot hide a
 //!   spend, and the run never starts more than `max_generations` requests.
 //! - A run that would send an end frame with a Gemini API key is refused before its first
-//!   request ([`BakerError::LastFrameNeedsVertex`]); a chained picture that would pin a clip is
-//!   checked against the pin rules before its request is recorded.
+//!   request ([`BakerError::LastFrameNeedsVertex`]), and so is a run with a seed
+//!   ([`BakerError::SeedNeedsVertex`]); a chained picture that would pin a clip is checked
+//!   against the pin rules before its request is recorded.
 //! - A quota refusal ends the run at once ([`BakerError::VeoQuotaExhausted`], exit code 3).
 //! - The first Cloud Storage result, the first filtered result, the first failure of a kind
 //!   the ledger has not seen, and a start request refused as invalid (HTTP 400) end the run
@@ -35,7 +39,7 @@ use crate::ledger::{
     sha256_file, Ledger, LedgerError, LedgerEvent, LedgerHistory, OperationOutcome,
 };
 use crate::prompts::{check_pin, KeyframeSource, PromptProblem};
-use crate::veo_client::{GenerationImages, VeoClient, VeoOperation};
+use crate::veo_client::{GenerationImages, VeoClient, VeoOperation, VeoParameters};
 use crate::veo_plan::{state_slug, ClipAction, PlannedClip, RunPlan, VeoDirs};
 use sim_types::enums::AnimState;
 use std::collections::BTreeMap;
@@ -79,13 +83,18 @@ pub struct RunContext<'a> {
 ///
 /// # Errors
 /// [`BakerError::LastFrameNeedsVertex`] before any request when the client selects the Gemini
-/// API and a paid clip would send an end frame; [`BakerError::VeoQuotaExhausted`] and
+/// API and a paid clip would send an end frame; [`BakerError::SeedNeedsVertex`] before any
+/// request when the client selects the Gemini API and the run has a seed and a paid clip;
+/// [`BakerError::VeoQuotaExhausted`] and
 /// [`BakerError::VeoRunStopped`] as described above; [`BakerError::PromptsInvalid`] when a
 /// chained picture breaks the pin rules; [`BakerError::VeoRunIncomplete`] if any clip failed or
 /// was skipped; and any transport, ledger or validation error, which also ends the run (a
 /// recorded operation is then resumed by the next run).
 pub fn execute_plan(plan: &RunPlan, context: RunContext<'_>) -> Result<RunSummary, BakerError> {
     if !context.client.is_vertex_ai() {
+        if plan.parameters.seed.is_some() && plan.generations() > 0 {
+            return Err(BakerError::SeedNeedsVertex);
+        }
         let clips = plan.pinned_clips();
         if !clips.is_empty() {
             return Err(BakerError::LastFrameNeedsVertex { clips });
@@ -97,7 +106,7 @@ pub fn execute_plan(plan: &RunPlan, context: RunContext<'_>) -> Result<RunSummar
         summary: RunSummary::default(),
     };
     for clip in &plan.clips {
-        run.clip(clip)?;
+        run.clip(clip, &plan.parameters_for(clip))?;
     }
     let summary = run.summary;
     if summary.failed > 0 || summary.skipped > 0 {
@@ -132,7 +141,7 @@ impl Run<'_> {
         })
     }
 
-    fn clip(&mut self, clip: &PlannedClip) -> Result<(), BakerError> {
+    fn clip(&mut self, clip: &PlannedClip, parameters: &VeoParameters) -> Result<(), BakerError> {
         let label = format!("{} {}", clip.slug, state_slug(clip.state));
         match &clip.action {
             ClipAction::Reuse(path) => {
@@ -166,7 +175,7 @@ impl Run<'_> {
                     .poll_operation(operation)?;
                 self.finish(clip, operation, &completed)
             }
-            ClipAction::Generate { .. } => self.generate(clip),
+            ClipAction::Generate { .. } => self.generate(clip, parameters),
         }
     }
 
@@ -217,7 +226,12 @@ impl Run<'_> {
         }
     }
 
-    fn generate(&mut self, clip: &PlannedClip) -> Result<(), BakerError> {
+    /// Starts one generation of `clip` with `parameters`, the clip's own request parameters.
+    fn generate(
+        &mut self,
+        clip: &PlannedClip,
+        parameters: &VeoParameters,
+    ) -> Result<(), BakerError> {
         let label = format!("{} {}", clip.slug, state_slug(clip.state));
         if self.summary.started >= self.context.max_generations {
             return Err(BakerError::VeoRunStopped {
@@ -249,7 +263,7 @@ impl Run<'_> {
             prompt: clip.prompt.text.clone(),
             keyframe_sha256,
             last_frame_sha256,
-            parameters: client.parameters(),
+            parameters: parameters.clone(),
         })?;
         self.summary.started += 1;
         self.say(&format!(
@@ -259,7 +273,7 @@ impl Run<'_> {
             start: keyframe.as_deref(),
             end,
         };
-        let operation = self.start(clip, &request_id, images)?;
+        let operation = self.start(clip, &request_id, images, parameters)?;
         let completed = if operation.done {
             operation.clone()
         } else {
@@ -281,9 +295,11 @@ impl Run<'_> {
         clip: &PlannedClip,
         request_id: &str,
         images: GenerationImages<'_>,
+        parameters: &VeoParameters,
     ) -> Result<VeoOperation, BakerError> {
         let client = self.context.client;
-        let operation = match client.initiate_generation(&clip.prompt.text, images) {
+        let operation = match client.initiate_generation_with(&clip.prompt.text, images, parameters)
+        {
             Ok(operation) => operation,
             Err(BakerError::VeoQuotaExhausted {
                 http_status,

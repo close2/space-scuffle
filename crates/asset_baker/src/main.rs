@@ -141,6 +141,12 @@ struct GenerateArgs {
     #[arg(long)]
     dry_run: bool,
 
+    /// Sample seed sent as `parameters.seed` with every request of this run (0 to 4294967295;
+    /// Vertex AI only). The same seed with an otherwise unchanged request guides the model to
+    /// the same clip; without it the service picks one. The ledger records it.
+    #[arg(long)]
+    seed: Option<u32>,
+
     /// Record a clip fetched by hand: `--import <SLUG> <STATE> <FILE> --operation <NAME>`.
     #[arg(long, num_args = 3, value_names = ["SLUG", "STATE", "FILE"])]
     import: Option<Vec<String>>,
@@ -772,16 +778,23 @@ struct PlannedRun {
     plan: asset_baker::RunPlan,
 }
 
-/// Loads the data and the ledger and plans the run of `selection`.
+/// Loads the data (including `media/veo_request.ron`) and the ledger and plans the run of
+/// `selection`, whose requests carry `seed` when one is given.
 fn plan_selection(
     assets: Option<&Path>,
     selection: &Selection,
     clips_dir: PathBuf,
     ledger: Option<&Path>,
+    seed: Option<u32>,
 ) -> Result<PlannedRun, Box<dyn Error>> {
     let root = asset_baker::resolve_assets_root(assets)?;
     let catalog = asset_baker::load_catalogs(&root)?.units;
     let style = MediaStyle::load_for_catalog(&root, &catalog)?;
+    let request = VeoRequestSettings::load(&root.join(asset_baker::VEO_REQUEST_FILE))?;
+    let parameters = asset_baker::VeoParameters {
+        seed,
+        ..request.parameters()
+    };
     let units = veo_units(&catalog, selection)?;
     let history = match ledger {
         Some(path) => LedgerHistory::load(path)?,
@@ -793,7 +806,15 @@ fn plan_selection(
         clips: clips_dir,
     };
     let filter = (!selection.states.is_empty()).then_some(selection.states.as_slice());
-    let plan = asset_baker::plan_run(&catalog, &style, &units, filter, &dirs, &history)?;
+    let plan = asset_baker::plan_run(
+        &catalog,
+        &style,
+        &parameters,
+        &units,
+        filter,
+        &dirs,
+        &history,
+    )?;
     Ok(PlannedRun {
         style,
         root,
@@ -803,7 +824,9 @@ fn plan_selection(
     })
 }
 
-/// `validate-prompts`: refuses while any clip a run would pay for has a prompt problem.
+/// `validate-prompts`: refuses while any clip a run would pay for has a prompt or negative
+/// prompt problem. Every action text of every kind and override is checked when the media
+/// style loads. Reads no credential.
 fn run_validate_prompts(
     assets: Option<&Path>,
     selection: &Selection,
@@ -811,7 +834,7 @@ fn run_validate_prompts(
     clips_dir: Option<PathBuf>,
 ) -> RunResult {
     let clips_dir = clips_dir.unwrap_or_else(|| PathBuf::from("clips"));
-    let planned = plan_selection(assets, selection, clips_dir, ledger)?;
+    let planned = plan_selection(assets, selection, clips_dir, ledger, None)?;
     let problems = planned.plan.problems(&planned.style);
     if !problems.is_empty() {
         return Err(BakerError::PromptsInvalid { problems }.into());
@@ -833,16 +856,15 @@ fn run_generate_veo(assets: Option<&Path>, args: &GenerateArgs) -> RunResult {
         &args.selection,
         args.clips_dir.clone(),
         Some(&args.ledger),
+        args.seed,
     )?;
     let mut stdout = std::io::stdout().lock();
     println!("==> Veo plan (model {}):", args.model);
     planned.plan.print(&mut stdout)?;
-    let request_file = planned.root.join(asset_baker::VEO_REQUEST_FILE);
-    let request = VeoRequestSettings::load(&request_file)?;
     println!(
-        "Request parameters ({}): {}",
-        request_file.display(),
-        request.parameters()
+        "Request parameters ({} and --seed; each clip sends its own negativePrompt): {}",
+        planned.root.join(asset_baker::VEO_REQUEST_FILE).display(),
+        planned.plan.parameters
     );
     let regenerations = planned.plan.regenerations();
     if !args.dry_run && !regenerations.is_empty() && !args.allow_regeneration {
@@ -879,16 +901,15 @@ fn run_generate_veo(assets: Option<&Path>, args: &GenerateArgs) -> RunResult {
             used_in_window: used,
         },
     )?;
-    execute(&planned, args, needed, &request, &mut stdout)
+    execute(&planned, args, needed, &mut stdout)
 }
 
-/// Resolves credentials, opens the ledger and runs the plan, sending `request`'s parameters
-/// with each of at most `needed` generations.
+/// Resolves credentials, opens the ledger and runs the plan, sending each clip's parameters
+/// ([`asset_baker::RunPlan::parameters_for`]) with each of at most `needed` generations.
 fn execute(
     planned: &PlannedRun,
     args: &GenerateArgs,
     needed: u32,
-    request: &VeoRequestSettings,
     out: &mut dyn std::io::Write,
 ) -> RunResult {
     let client = veo_client(
@@ -896,7 +917,7 @@ fn execute(
         args.credentials_dir.as_deref(),
         args.curl_path.as_deref(),
     )?
-    .with_parameters(request.parameters());
+    .with_parameters(planned.plan.parameters.clone());
     println!(
         "==> Veo run: {needed} generation(s) at most, {} with model {}.",
         client.mode().label(),

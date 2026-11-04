@@ -275,6 +275,36 @@ pub enum BakerError {
         slug: String,
     },
 
+    /// The action policy of `media_style.ron` overrides an identity the catalog does not hold
+    /// exactly (plan `2026-11-04-veo-structure-action-text.md`, D-1).
+    #[error("invalid data file '{path}': the action override '{slug}' is not a catalog identity")]
+    UnknownActionOverride {
+        /// The media style file.
+        path: PathBuf,
+        /// The unknown slug.
+        slug: String,
+    },
+
+    /// An identity publishes a state for which the action policy has no text: neither its
+    /// drawing kind nor an override of it (plan `2026-11-04-veo-structure-action-text.md`,
+    /// D-1).
+    #[error("invalid data file '{path}': actions.{kind} has no {state} text, which '{slug}' publishes (add it to actions.{kind}.texts or to actions.overrides)")]
+    MissingActionText {
+        /// The media style file.
+        path: PathBuf,
+        /// The drawing kind's field name (`unit_sphere`, `building_dome`).
+        kind: String,
+        /// The state, as the data file spells it (`Idle`).
+        state: String,
+        /// The first identity, in catalog order, that needs the text.
+        slug: String,
+    },
+
+    /// A run asked for a `seed` with a Gemini API key. The seed is checked only for Vertex AI
+    /// (plan `2026-11-04-veo-structure-action-text.md`, §2.3), so nothing was sent.
+    #[error("--seed needs Vertex AI (a key starting with `AQ.`); the key selects the Gemini API, where the seed is unchecked, so nothing was sent")]
+    SeedNeedsVertex,
+
     /// A start request would send an end frame (`lastFrame`) without a start frame (`image`).
     /// The service documents the end frame only together with a start frame, so nothing is
     /// sent.

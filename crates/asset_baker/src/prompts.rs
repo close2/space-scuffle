@@ -2,11 +2,14 @@
 //! `2026-11-04-phase-8-5-veo-media.md`, decision D-2).
 //!
 //! # Responsibility
-//! Loads the house style (`assets/catalog/media_style.ron`), including its framing policy
+//! Loads the house style (`assets/catalog/media_style.ron`), including its action policy
+//! ([`ActionPolicy`], plan `2026-11-04-veo-structure-action-text.md`, D-1), its framing policy
 //! ([`crate::framing::FramingPolicy`]) and its loop policy ([`LoopPolicy`], plan
 //! `2026-11-04-veo-seamless-loops.md`, D-1), composes the prompt of one clip
-//! from the identity's authored `veo_prompts` entry, the action description and the style
-//! sentence, and checks a composed prompt and its keyframe against the rules in that file.
+//! from the identity's authored `veo_prompts` entry, the action text of its drawing kind (or
+//! its override) and the style sentence, composes its negative prompt
+//! ([`compose_negative_prompt`]), and checks a composed prompt, its negative prompt and its
+//! keyframe against the rules in that file.
 //! A picture that also pins a clip's last frame (`lastFrame`) must pass the pin rules
 //! ([`check_pin`]: PNG or JPEG, 16:9 within 1 %, at least 1280×720, at most 20 MB).
 //!
@@ -19,14 +22,15 @@
 //! - A clip without an authored prompt still gets a composed prompt (from the display name and
 //!   lore) so that a dry run can show it, but it is marked unauthored and refused for a paid run.
 //! - Every problem of every clip is reported at once, so one edit pass can fix them all.
-//! - The loop policy names no identity in Rust (charter §3.3): which states pin their last frame
-//!   and which get a seam repair is data, checked against the catalog at load.
+//! - The action and loop policies name no identity in Rust (charter §3.3): the wording per
+//!   drawing kind, which states pin their last frame and which get a seam repair are data,
+//!   checked against the catalog at load, and every state an identity publishes has a text.
 //! - A keyframe's format is read from its first bytes, never from its file name.
 
 use crate::error::BakerError;
 use crate::framing::{FramingPolicy, DEFAULT_UNIT_FRAME_SIZE};
 use serde::{Deserialize, Serialize};
-use sim_types::enums::AnimState;
+use sim_types::enums::{AnimState, ShapeKind};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -221,36 +225,250 @@ impl LoopPolicy {
     }
 }
 
-/// One description per animation state, placed between an identity's prompt and the style.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ActionDescriptions {
-    /// `Constructing`: a structure being raised.
-    pub constructing: String,
-    /// `Idle`: the ambient loop.
-    pub idle: String,
-    /// `Walk`: locomotion.
-    pub walk: String,
-    /// `Attack`: a weapon cycle.
-    pub attack: String,
-    /// `Cast`: harvesting or building in place.
-    pub cast: String,
-    /// `Die`: destruction.
-    pub die: String,
+/// How an identity is drawn, which chooses its action texts (plan
+/// `2026-11-04-veo-structure-action-text.md`, D-1). It mirrors the two render shapes of
+/// [`ShapeKind`] without their footprint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrawingKind {
+    /// A mobile unit, drawn as a `UnitSphere`.
+    UnitSphere,
+    /// A structure, drawn as a `BuildingDome`.
+    BuildingDome,
 }
 
-impl ActionDescriptions {
-    /// The description of `state`.
+impl DrawingKind {
+    /// The kind of an identity rendered as `shape`.
     #[must_use]
-    pub fn get(&self, state: AnimState) -> &str {
-        match state {
-            AnimState::Constructing => &self.constructing,
-            AnimState::Idle => &self.idle,
-            AnimState::Walk => &self.walk,
-            AnimState::Attack => &self.attack,
-            AnimState::Cast => &self.cast,
-            AnimState::Die => &self.die,
+    pub fn of(shape: &ShapeKind) -> Self {
+        match shape {
+            ShapeKind::UnitSphere => Self::UnitSphere,
+            ShapeKind::BuildingDome { .. } => Self::BuildingDome,
         }
+    }
+
+    /// The field name of this kind in `media_style.ron` (`unit_sphere`, `building_dome`).
+    #[must_use]
+    pub fn field_name(self) -> &'static str {
+        match self {
+            Self::UnitSphere => "unit_sphere",
+            Self::BuildingDome => "building_dome",
+        }
+    }
+}
+
+impl fmt::Display for DrawingKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.field_name())
+    }
+}
+
+/// The action texts of one drawing kind: one text per animation state, placed between an
+/// identity's prompt and the style, and what every clip of the kind must also avoid.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KindActions {
+    /// Text per state. Every state an identity of this kind publishes needs one, unless an
+    /// override gives that identity its own.
+    pub texts: BTreeMap<AnimState, String>,
+    /// Plain nouns appended (after `", "`) to the global negative prompt of
+    /// `media/veo_request.ron` for every clip of this kind; `None` adds nothing.
+    #[serde(default)]
+    pub negative_terms: Option<String>,
+}
+
+/// Where an action text came from, which the dry run prints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionSource {
+    /// The text of the identity's drawing kind.
+    Kind(DrawingKind),
+    /// The identity's own override.
+    Override,
+}
+
+impl fmt::Display for ActionSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Kind(kind) => kind.fmt(f),
+            Self::Override => f.write_str("override"),
+        }
+    }
+}
+
+/// The action text of one identity's state, with its source and its kind's negative terms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActionText<'a> {
+    /// The text placed between the identity's prompt and the style.
+    pub text: &'a str,
+    /// The kind's text or the identity's override.
+    pub source: ActionSource,
+    /// The negative terms of the identity's drawing kind; an override does not change them.
+    pub negative_terms: Option<&'a str>,
+}
+
+/// The `actions` section of `media_style.ron`: action text per drawing kind, and per-identity
+/// overrides (plan `2026-11-04-veo-structure-action-text.md`, D-1). It mirrors
+/// [`FramingPolicy`] and names no identity in Rust (charter §3.3).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActionPolicy {
+    /// Texts of identities drawn as a `UnitSphere` (mobile units).
+    pub unit_sphere: KindActions,
+    /// Texts of identities drawn as a `BuildingDome` (structures).
+    pub building_dome: KindActions,
+    /// Exact catalog slug to state to text, for one identity whose clip needs other wording.
+    /// A state the override does not name keeps its kind's text.
+    #[serde(default)]
+    pub overrides: BTreeMap<String, BTreeMap<AnimState, String>>,
+}
+
+impl ActionPolicy {
+    /// The texts of `kind`.
+    #[must_use]
+    pub fn kind(&self, kind: DrawingKind) -> &KindActions {
+        match kind {
+            DrawingKind::UnitSphere => &self.unit_sphere,
+            DrawingKind::BuildingDome => &self.building_dome,
+        }
+    }
+
+    /// The action text of `slug`'s `state`, where `slug` is drawn as `shape`: its override if
+    /// the policy names one, else its kind's text, else `None`.
+    #[must_use]
+    pub fn text_for(
+        &self,
+        slug: &str,
+        shape: &ShapeKind,
+        state: AnimState,
+    ) -> Option<ActionText<'_>> {
+        let kind = DrawingKind::of(shape);
+        let actions = self.kind(kind);
+        let negative_terms = actions.negative_terms.as_deref();
+        if let Some(text) = self
+            .overrides
+            .get(slug)
+            .and_then(|states| states.get(&state))
+        {
+            return Some(ActionText {
+                text,
+                source: ActionSource::Override,
+                negative_terms,
+            });
+        }
+        actions.texts.get(&state).map(|text| ActionText {
+            text,
+            source: ActionSource::Kind(kind),
+            negative_terms,
+        })
+    }
+
+    /// As [`Self::text_for`], for a state that must have a text.
+    ///
+    /// # Errors
+    /// [`BakerError::MissingActionText`] (naming [`MEDIA_STYLE_FILE`]) when neither the kind
+    /// nor an override has a text for `state`. A style loaded with
+    /// [`MediaStyle::load_for_catalog`] has one for every published state.
+    pub fn require(
+        &self,
+        slug: &str,
+        shape: &ShapeKind,
+        state: AnimState,
+    ) -> Result<ActionText<'_>, BakerError> {
+        self.text_for(slug, shape, state)
+            .ok_or_else(|| BakerError::MissingActionText {
+                path: PathBuf::from(MEDIA_STYLE_FILE),
+                kind: DrawingKind::of(shape).to_string(),
+                state: format!("{state:?}"),
+                slug: slug.to_string(),
+            })
+    }
+
+    /// Every text of the policy with the place it is written, such as `building_dome Idle` or
+    /// `overrides <slug> Idle`, in file order: unit texts, structure texts, then overrides.
+    pub fn texts(&self) -> impl Iterator<Item = (String, &str)> {
+        let kinds = [DrawingKind::UnitSphere, DrawingKind::BuildingDome]
+            .into_iter()
+            .flat_map(move |kind| {
+                self.kind(kind)
+                    .texts
+                    .iter()
+                    .map(move |(state, text)| (format!("{kind} {state:?}"), text.as_str()))
+            });
+        let overrides = self.overrides.iter().flat_map(|(slug, states)| {
+            states
+                .iter()
+                .map(move |(state, text)| (format!("overrides {slug} {state:?}"), text.as_str()))
+        });
+        kinds.chain(overrides)
+    }
+
+    /// Checks the policy loaded from `path` against `catalog`.
+    ///
+    /// # Errors
+    /// [`BakerError::UnknownActionOverride`] for an override whose slug the catalog does not
+    /// hold exactly; [`BakerError::DataFile`] for an override of a state its identity does not
+    /// publish, or for a blank text or blank negative terms; and
+    /// [`BakerError::MissingActionText`] for the first identity, in catalog order, that
+    /// publishes a state for which neither its kind nor an override has a text.
+    pub fn check(&self, catalog: &sim_core::UnitCatalog, path: &Path) -> Result<(), BakerError> {
+        let invalid = |reason: String| BakerError::DataFile {
+            path: path.to_path_buf(),
+            reason,
+        };
+        for (slug, states) in &self.overrides {
+            let Some(archetype) = catalog.get_by_slug(slug).filter(|a| a.slug == *slug) else {
+                return Err(BakerError::UnknownActionOverride {
+                    path: path.to_path_buf(),
+                    slug: slug.clone(),
+                });
+            };
+            let published = catalog.publishable_actions(archetype);
+            if let Some(state) = states.keys().find(|state| !published.contains(**state)) {
+                return Err(invalid(format!(
+                    "actions.overrides {slug} {state:?}: '{slug}' does not publish {state:?}"
+                )));
+            }
+        }
+        if let Some((place, _)) = self.texts().find(|(_, text)| text.trim().is_empty()) {
+            return Err(invalid(format!("actions {place} is blank")));
+        }
+        for kind in [DrawingKind::UnitSphere, DrawingKind::BuildingDome] {
+            if self
+                .kind(kind)
+                .negative_terms
+                .as_deref()
+                .is_some_and(|terms| terms.trim().is_empty())
+            {
+                return Err(invalid(format!("actions {kind} negative_terms is blank")));
+            }
+        }
+        for archetype in catalog.archetypes() {
+            for state in catalog.publishable_actions(archetype).iter() {
+                if self
+                    .text_for(&archetype.slug, &archetype.shape, state)
+                    .is_none()
+                {
+                    return Err(BakerError::MissingActionText {
+                        path: path.to_path_buf(),
+                        kind: DrawingKind::of(&archetype.shape).to_string(),
+                        state: format!("{state:?}"),
+                        slug: archetype.slug.clone(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The negative prompt of one clip: the global text, then `", "`, then its kind's terms
+/// (plan `2026-11-04-veo-structure-action-text.md`, D-2). Either part alone is used as it is;
+/// with neither, no negative prompt is sent.
+#[must_use]
+pub fn compose_negative_prompt(global: Option<&str>, kind_terms: Option<&str>) -> Option<String> {
+    match (global, kind_terms) {
+        (Some(global), Some(terms)) => Some(format!("{global}, {terms}")),
+        (Some(text), None) | (None, Some(text)) => Some(text.to_string()),
+        (None, None) => None,
     }
 }
 
@@ -260,8 +478,8 @@ impl ActionDescriptions {
 pub struct MediaStyle {
     /// Sentence that ends every prompt.
     pub style: String,
-    /// Per-state action descriptions.
-    pub actions: ActionDescriptions,
+    /// Action text per drawing kind and per-identity overrides.
+    pub actions: ActionPolicy,
     /// Longest composed prompt accepted, in characters (Unicode scalar values).
     pub max_prompt_chars: usize,
     /// Real names a prompt must not contain, matched as whole words ignoring case.
@@ -280,10 +498,12 @@ impl MediaStyle {
     /// this.
     ///
     /// # Errors
-    /// As [`Self::load`], [`BakerError::UnknownFramingOverride`] or
-    /// [`BakerError::UnknownLoopOverride`] for an override that names no catalog identity, or
-    /// [`BakerError::DataFile`] for an out-of-range feather or an invalid loop treatment (see
-    /// [`LoopPolicy::check`]).
+    /// As [`Self::load`]; [`BakerError::UnknownFramingOverride`],
+    /// [`BakerError::UnknownActionOverride`] or [`BakerError::UnknownLoopOverride`] for an
+    /// override that names no catalog identity; [`BakerError::MissingActionText`] for a
+    /// published state without an action text; or [`BakerError::DataFile`] for an out-of-range
+    /// feather, an invalid action override (see [`ActionPolicy::check`]) or an invalid loop
+    /// treatment (see [`LoopPolicy::check`]).
     pub fn load_for_catalog(
         assets_root: &Path,
         catalog: &sim_core::UnitCatalog,
@@ -291,6 +511,7 @@ impl MediaStyle {
         let style = Self::load(assets_root)?;
         let path = assets_root.join(MEDIA_STYLE_FILE);
         style.framing.check(catalog, &path)?;
+        style.actions.check(catalog, &path)?;
         style.loops.check(catalog, &path)?;
         Ok(style)
     }
@@ -328,8 +549,13 @@ pub struct ComposedPrompt {
 /// `slug` must be an exact slug of `catalog`, the catalog loaded at run time: no generic prompt
 /// exists for an unknown identity, because money must not be spent on a clip nothing can use.
 ///
+/// The action text is chosen by the identity's drawing kind, or its override
+/// ([`ActionPolicy::text_for`]); composition order and spacing are the same for every kind.
+///
 /// # Errors
-/// [`BakerError::UnknownArchetype`] if `slug` is not an exact catalog slug.
+/// [`BakerError::UnknownArchetype`] if `slug` is not an exact catalog slug, or
+/// [`BakerError::MissingActionText`] if the style has no text for the state (a style loaded
+/// with [`MediaStyle::load_for_catalog`] has one for every published state).
 pub fn build_action_prompt(
     catalog: &sim_core::UnitCatalog,
     style: &MediaStyle,
@@ -337,7 +563,7 @@ pub fn build_action_prompt(
     state: AnimState,
 ) -> Result<ComposedPrompt, BakerError> {
     let archetype = crate::veo_client::exact_catalog_archetype(slug, catalog)?;
-    let action = style.actions.get(state);
+    let action = style.actions.require(slug, &archetype.shape, state)?.text;
     Ok(match archetype.veo_prompt(state) {
         Some(prompt) => ComposedPrompt {
             text: format!("{prompt} {action} {}", style.style),
@@ -437,6 +663,16 @@ pub enum PromptIssue {
     },
     /// The keyframe is chained from an Idle clip that neither exists nor is in the run.
     NoIdleToChain,
+    /// The clip's negative prompt contains a placeholder marker.
+    NegativePlaceholder {
+        /// The marker found.
+        marker: String,
+    },
+    /// The clip's negative prompt names a denied term.
+    NegativeDenied {
+        /// The term found.
+        term: String,
+    },
 }
 
 impl fmt::Display for PromptIssue {
@@ -466,6 +702,12 @@ impl fmt::Display for PromptIssue {
             Self::NoIdleToChain => f.write_str(
                 "its keyframe is chained from the Idle clip, which neither exists nor is in this run",
             ),
+            Self::NegativePlaceholder { marker } => {
+                write!(f, "negative prompt contains placeholder text '{marker}'")
+            }
+            Self::NegativeDenied { term } => {
+                write!(f, "negative prompt names the denied term '{term}'")
+            }
         }
     }
 }
@@ -531,6 +773,25 @@ pub fn check_prompt(style: &MediaStyle, prompt: &ComposedPrompt) -> Vec<PromptIs
         }
     }
     issues
+}
+
+/// Every issue of a clip's composed negative prompt under `style`'s rules: the same deny list
+/// and placeholder markers as a prompt (plan `2026-11-04-veo-structure-action-text.md`, D-2).
+#[must_use]
+pub fn check_negative_prompt(style: &MediaStyle, negative: &str) -> Vec<PromptIssue> {
+    let markers = style
+        .placeholder_markers
+        .iter()
+        .filter(|marker| contains_marker(negative, marker))
+        .map(|marker| PromptIssue::NegativePlaceholder {
+            marker: marker.clone(),
+        });
+    let denied = style
+        .deny_list
+        .iter()
+        .filter(|term| contains_term(negative, term))
+        .map(|term| PromptIssue::NegativeDenied { term: term.clone() });
+    markers.chain(denied).collect()
 }
 
 /// The format of an image the service accepts, read from its first bytes.
@@ -775,13 +1036,79 @@ mod tests {
         let rules = style();
         let sentence = authored(&rules.style);
         assert_eq!(check_prompt(&rules, &sentence), Vec::new());
-        for state in AnimState::ALL {
-            assert_eq!(
-                check_prompt(&rules, &authored(rules.actions.get(state))),
-                Vec::new(),
-                "{state:?}"
-            );
+        for (place, text) in rules.actions.texts() {
+            assert_eq!(check_prompt(&rules, &authored(text)), Vec::new(), "{place}");
         }
+    }
+
+    #[test]
+    fn negative_prompts_join_the_global_text_and_the_kind_terms() {
+        assert_eq!(
+            compose_negative_prompt(Some("text, watermark"), Some("swelling")),
+            Some("text, watermark, swelling".to_string())
+        );
+        assert_eq!(
+            compose_negative_prompt(Some("text"), None),
+            Some("text".to_string())
+        );
+        assert_eq!(
+            compose_negative_prompt(None, Some("swelling")),
+            Some("swelling".to_string())
+        );
+        assert_eq!(compose_negative_prompt(None, None), None);
+        let rules = style();
+        assert_eq!(check_negative_prompt(&rules, "text, watermark"), Vec::new());
+        assert_eq!(
+            check_negative_prompt(&rules, "Zerg look, {x}"),
+            vec![
+                PromptIssue::NegativePlaceholder {
+                    marker: "{".to_string()
+                },
+                PromptIssue::NegativePlaceholder {
+                    marker: "}".to_string()
+                },
+                PromptIssue::NegativeDenied {
+                    term: "Zerg".to_string()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_override_wins_over_the_kind_and_keeps_the_kind_terms() {
+        let mut policy = style().actions;
+        let dome = ShapeKind::BuildingDome {
+            footprint_w: 2,
+            footprint_h: 2,
+        };
+        policy.overrides.insert(
+            "one".to_string(),
+            BTreeMap::from([(AnimState::Idle, "own text".to_string())]),
+        );
+        let own = policy
+            .text_for("one", &dome, AnimState::Idle)
+            .expect("override");
+        assert_eq!(own.text, "own text");
+        assert_eq!(own.source, ActionSource::Override);
+        assert_eq!(
+            own.negative_terms,
+            policy.building_dome.negative_terms.as_deref()
+        );
+        let other = policy
+            .text_for("two", &dome, AnimState::Idle)
+            .expect("kind text");
+        assert_eq!(other.source, ActionSource::Kind(DrawingKind::BuildingDome));
+        assert_eq!(
+            policy
+                .text_for("one", &ShapeKind::UnitSphere, AnimState::Die)
+                .map(|text| text.source),
+            Some(ActionSource::Kind(DrawingKind::UnitSphere))
+        );
+        assert_eq!(
+            policy.text_for("two", &dome, AnimState::Attack),
+            None,
+            "no dome text for a state no structure publishes"
+        );
     }
 
     #[test]

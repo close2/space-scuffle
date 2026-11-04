@@ -16,12 +16,18 @@
 //   $0.10 at the published 720p rate); `Some(true)` would ask for sound explicitly.
 // - `negative_prompt`: what every clip must avoid, sent as `negativePrompt` (Vertex documents
 //   it in `parameters` for the Veo models). The owner rejected the radiating stripes behind
-//   the subject (2026-11-04), and looping clips need a camera that does not move (Q0026).
-//   `None` sends no field.
+//   the subject (2026-11-04), and looping clips need a camera that does not move (Q0026). No
+//   identity may change shape, so morphing is excluded for every clip. Each clip sends this
+//   text, then ", ", then its drawing kind's `negative_terms` from
+//   `catalog/media_style.ron` (structures add breathing and pulsing size, which units cannot
+//   exclude because their Idle text asks for breathing). `None` sends no field.
+//
+// `generate-veo --seed N` adds `seed` to every request of that run (Vertex AI only); it is a
+// run argument, not data, because it picks one sample of a fixed request.
 (
     aspect_ratio: "16:9",
     duration_seconds: 4,
     sample_count: 1,
     generate_audio: None,
-    negative_prompt: Some("radiating stripes, sunburst, light rays, god rays, rays of light, stripes, spotlight beams, patterned background, gradient background, vignette, camera movement, zoom, dolly, push-in, pan, text, watermark"),
+    negative_prompt: Some("radiating stripes, sunburst, light rays, god rays, rays of light, stripes, spotlight beams, patterned background, gradient background, vignette, camera movement, zoom, dolly, push-in, pan, text, watermark, morphing, shape-shifting geometry"),
 )

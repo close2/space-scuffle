@@ -177,7 +177,7 @@
             air_weapon: None,
             abilities: [],
             veo_prompts: {
-                "Idle": "Plasma Siphon Dome: a single squat armored dome refinery capping a geothermal vent, ribbed slate-steel shell with glowing magenta plasma pipes and a vent stack, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. Plasma pulses slowly through the pipes and a thin wisp of vapour rises from the stack.",
+                "Idle": "Plasma Siphon Dome: a single squat armored dome refinery capping a geothermal vent, ribbed slate-steel shell with glowing magenta plasma pipes and a vent stack, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. Plasma glows steadily in the pipes and a thin wisp of vapour rises from the stack.",
                 "Constructing": "Plasma Siphon Dome: a single dome refinery being assembled over a geothermal vent, ribbed slate-steel shell plates locking into place around glowing magenta plasma pipes, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
             },
         ),
