@@ -16,6 +16,9 @@
 //! - The battle's side (WP5, D-5 and D-8): [`update_flipbook_clock_system`] is the only writer of
 //!   the clock, [`displayed_action`] says what a bubble shows, [`FlipbookPhase`] remembers since
 //!   when, and [`battle_uniform`] packs a live bubble's lanes from its presented record.
+//! - The scenes without a battle (WP6, D-9): [`scene_lanes`] packs the lanes of the Lab preview,
+//!   the inspector portrait and the swarm, on the same clock, which those scenes read as
+//!   [`elapsed_clock`] of Bevy's time.
 //!
 //! # How it fits
 //! The main world sets the clock once per frame; the GPU computes each bubble's layer from the
@@ -666,26 +669,86 @@ pub fn battle_lanes(
                 slice.looping,
             ))
         }
-        (AnimState::Constructing, _) => {
-            let span = FlipbookSpan::new(slice.start_frame, slice.frame_count, 1)?;
-            Ok(FlipbookLanes::fixed(
-                span.base() + progress_step(record.build_or_queue_progress, span.count()),
-            ))
-        }
-        _ => {
+        (AnimState::Constructing, _) => construction_lanes(slice, record.build_or_queue_progress),
+        _ => clip_lanes(meta, slice, clock_at_tick(i64::from(phase.since.0))),
+    }
+}
+
+/// The flipbook lanes of a bubble in a scene without a battle: the Lab preview, the inspector
+/// portrait and the swarm (D-9).
+///
+/// `action` is the state the bubble shows, `build_progress` the Lab's construction progress in
+/// `[0, 1]` (`None` counts as finished), and `since` the clock time at which `action` began to show,
+/// in clock units ([`elapsed_clock`] of Bevy's time in these scenes).
+///
+/// | `action` | lanes |
+/// |---|---|
+/// | `Attack` | a loop over the slice at its clip speed from `since`: a sustained swing, as the battle's Attack is a loop |
+/// | `Constructing` | the layer of `build_progress`, as in the battle |
+/// | any other | the slice at its clip speed from `since`: a loop, or once as the manifest says |
+/// | no atlas or no slice | layer 0 |
+///
+/// # Errors
+/// [`FlipbookLanesError`] when the slice cannot be played by the integer clock.
+pub fn scene_lanes(
+    meta: Option<&FlipbookAtlasMeta>,
+    action: AnimState,
+    build_progress: Option<f32>,
+    since: u32,
+) -> Result<FlipbookLanes, FlipbookLanesError> {
+    let Some((meta, slice)) =
+        meta.and_then(|meta| meta.actions.get(&action).map(|slice| (meta, slice)))
+    else {
+        return Ok(FlipbookLanes::fixed(0));
+    };
+    match action {
+        AnimState::Attack => {
             let span = FlipbookSpan::new(
                 slice.start_frame,
                 slice.frame_count,
                 slice_period(meta, slice),
             )?;
-            let since = clock_at_tick(i64::from(phase.since.0));
-            Ok(if slice.looping {
-                FlipbookLanes::looping(span, since, true)
-            } else {
-                FlipbookLanes::once(span, since, slice.hold_last_frame)
-            })
+            Ok(FlipbookLanes::looping(span, since, slice.looping))
         }
+        AnimState::Constructing => construction_lanes(slice, build_progress),
+        _ => clip_lanes(meta, slice, since),
     }
+}
+
+/// Lanes that hold the layer of `progress` in a Constructing `slice` (D-5).
+///
+/// # Errors
+/// [`FlipbookLanesError::NoFrames`] for a slice without frames.
+fn construction_lanes(
+    slice: &ActionSlice,
+    progress: Option<f32>,
+) -> Result<FlipbookLanes, FlipbookLanesError> {
+    let span = FlipbookSpan::new(slice.start_frame, slice.frame_count, 1)?;
+    Ok(FlipbookLanes::fixed(
+        span.base() + progress_step(progress, span.count()),
+    ))
+}
+
+/// Lanes that play `slice` of `meta` at its clip speed from clock time `since`: a loop with frame
+/// blending, or once as the manifest says (D-5, D-6).
+///
+/// # Errors
+/// As [`FlipbookSpan::new`].
+fn clip_lanes(
+    meta: &FlipbookAtlasMeta,
+    slice: &ActionSlice,
+    since: u32,
+) -> Result<FlipbookLanes, FlipbookLanesError> {
+    let span = FlipbookSpan::new(
+        slice.start_frame,
+        slice.frame_count,
+        slice_period(meta, slice),
+    )?;
+    Ok(if slice.looping {
+        FlipbookLanes::looping(span, since, true)
+    } else {
+        FlipbookLanes::once(span, since, slice.hold_last_frame)
+    })
 }
 
 /// The clock time at the start of tick `tick`, wrapping like the clock (negative ticks wrap
@@ -1253,6 +1316,60 @@ mod tests {
             battle_lanes(None, &record(AnimState::Idle, None), Tick(5), phase),
             Ok(FlipbookLanes::fixed(0))
         );
+    }
+
+    /// Lanes of the fixture atlas in a scene without a battle.
+    fn scene_at(action: AnimState, progress: Option<f32>, since: u32) -> FlipbookLanes {
+        scene_lanes(Some(&atlas()), action, progress, since)
+            .expect("invariant: the fixture's slices are playable")
+    }
+
+    #[test]
+    fn scene_loops_start_at_their_first_layer_and_match_the_battle() {
+        let since = 480 * 1024 + 37;
+        let walk = scene_at(AnimState::Walk, None, since);
+        assert_eq!(walk.period, 10 * 25 * 1024 / 15, "the clip's own speed");
+        assert_eq!(flipbook_layer(since, &walk), 10, "first layer at since");
+        assert_eq!(flipbook_layer(since + walk.period - 1, &walk), 19);
+        assert_eq!(flipbook_layer(since + walk.period, &walk), 10, "loops");
+        // The battle's free loop with the same start gives the same lanes.
+        assert_eq!(
+            scene_at(AnimState::Walk, None, 480 * 1024),
+            lanes_at(&record(AnimState::Walk, None), 500, 480)
+        );
+    }
+
+    #[test]
+    fn a_scene_attack_is_a_sustained_loop_without_blending_for_a_one_shot_clip() {
+        // The fixture's Attack slice plays once in the manifest; with no swing to time it, the
+        // scene loops it at the clip's speed, as the battle loops its Attack.
+        let since = 1_000;
+        let attack = scene_at(AnimState::Attack, None, since);
+        assert_eq!(attack.mode, FlipbookMode::Loop as u32, "no blend bit");
+        assert_eq!(flipbook_layer(since, &attack), 20);
+        assert_eq!(flipbook_layer(since + attack.period, &attack), 20);
+        assert_eq!(flipbook_layer(since + attack.period - 1, &attack), 29);
+    }
+
+    #[test]
+    fn a_scene_foundation_and_a_missing_slice_match_the_battle() {
+        assert_eq!(
+            scene_at(AnimState::Constructing, Some(0.5), 77),
+            FlipbookLanes::fixed(35)
+        );
+        assert_eq!(
+            scene_at(AnimState::Constructing, None, 77),
+            FlipbookLanes::fixed(39),
+            "no progress counts as finished"
+        );
+        assert_eq!(scene_at(AnimState::Cast, None, 77), FlipbookLanes::fixed(0));
+        assert_eq!(
+            scene_lanes(None, AnimState::Idle, None, 77),
+            Ok(FlipbookLanes::fixed(0))
+        );
+        let mut meta = atlas();
+        meta.fps = 0;
+        assert!(scene_lanes(Some(&meta), AnimState::Idle, None, 0).is_err());
     }
 
     #[test]

@@ -214,9 +214,10 @@ pub fn sync_bubble_material(
 ///
 /// With `meta`, the action's slice is used: a looping slice wraps, a one-shot holds its last
 /// frame, and an action without a slice shows layer 0. Without `meta`, the legacy layout of
-/// eight frames per action is assumed. The Lab preview passes its own elapsed-time progress;
-/// the battle does not use this function, it plays slices on the flipbook clock
-/// ([`battle_uniform`](crate::flipbook_clock::battle_uniform)).
+/// eight frames per action is assumed. Only still pictures use it ([`still_frame_lanes`]); every
+/// animated bubble plays its slice on the flipbook clock
+/// ([`battle_uniform`](crate::flipbook_clock::battle_uniform),
+/// [`scene_lanes`](crate::flipbook_clock::scene_lanes)).
 #[must_use]
 #[expect(
     clippy::cast_possible_truncation,
