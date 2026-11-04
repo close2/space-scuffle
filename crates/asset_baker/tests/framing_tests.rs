@@ -24,8 +24,8 @@ use asset_baker::provenance::{provenance_path, MediaProvenance};
 use asset_baker::{
     bake_framed_action_videos, BakeFraming, BakerError, FrameSpec, FramedBake, MediaStyle,
 };
-use common::style_text::with_section_overrides;
 use common::cli::{baker, baker_with_assets, shipped_assets, shipped_catalog, text};
+use common::style_text::with_section_overrides;
 use image::RgbaImage;
 use sim_types::enums::{AnimState, ShapeKind};
 use std::path::{Path, PathBuf};

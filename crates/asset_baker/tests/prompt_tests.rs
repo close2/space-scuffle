@@ -22,7 +22,6 @@
 mod common;
 
 use asset_baker::ledger::LedgerHistory;
-use common::style_text::with_section_overrides;
 use asset_baker::prompts::{atlas_loops, KeyframeSource, PromptIssue, MEDIA_STYLE_FILE};
 use asset_baker::prompts::{check_prompt, ActionSource, ComposedPrompt, DrawingKind};
 use asset_baker::veo_plan::{published_states, ClipAction};
@@ -30,6 +29,7 @@ use asset_baker::{
     build_action_prompt, plan_run, BakerError, MediaStyle, VeoDirs, VeoParameters,
     VeoRequestSettings,
 };
+use common::style_text::with_section_overrides;
 use sim_types::enums::{AnimState, ShapeKind};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
