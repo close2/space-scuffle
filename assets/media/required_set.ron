@@ -1,0 +1,30 @@
+// assets/media/required_set.ron
+// The identities `asset_baker audit-media --strict` requires to be `Verified` (plan
+// docs/plans/2026-11-04-phase-8-5-veo-media.md, decision D-6).
+//
+// Not code: adding an identity needs no rebuild. Every slug must be an exact catalog identity
+// and appear once; the baker refuses the file otherwise.
+//
+// - `Required`: the Phase 8 exit. Every identity a player can field or build in the skirmish's
+//   economy, gas, research and transport paths (plan §2.4, batches 1 and 2, plus the combat
+//   unit that already has real clips).
+// - `Expansion`: added by the expansion batches (WP6) once their media is baked; strict
+//   requires them too from then on.
+(
+    format_version: 1,
+    identities: [
+        // Batch 1 (WP3, WP4): gas, research and transport.
+        (slug: "plasma_siphon_dome", tier: Required),
+        (slug: "tech_module_pod", tier: Required),
+        (slug: "machining_plant_dome", tier: Required),
+        (slug: "aerospace_hangar_dome", tier: Required),
+        (slug: "repair_shuttle", tier: Required),
+        // Batch 2 (WP5): the mineral path and the town hall's Constructing state.
+        (slug: "welder_drone", tier: Required),
+        (slug: "capacitor_dome", tier: Required),
+        (slug: "assembly_bay_dome", tier: Required),
+        (slug: "foundry_core_dome", tier: Required),
+        // Real clips committed by the original Veo work; re-baked with provenance in WP2.
+        (slug: "pulse_bot", tier: Required),
+    ],
+)
