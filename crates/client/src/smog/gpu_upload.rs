@@ -88,8 +88,8 @@ pub(crate) fn upload_smog_frame_system(
         return;
     };
 
-    write_grid_texture(&queue, &density.texture, &grid.rgba_density_bytes);
-    write_grid_texture(&queue, &velocity.texture, &grid.rgba_velocity_bytes);
+    write_grid_texture(&queue, &density.texture, grid.density_bytes());
+    write_grid_texture(&queue, &velocity.texture, grid.velocity_bytes());
     queue.write_buffer(uniform_buffer, 0, bytemuck::bytes_of(&frame.uniform));
 
     *uploaded_generation = frame.generation;

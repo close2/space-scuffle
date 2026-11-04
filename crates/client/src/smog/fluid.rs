@@ -13,8 +13,13 @@
 //! - **Non-negative density:** `$\rho(\mathbf{x}) \ge 0$` across all voxels at all times.
 //! - **Finite arithmetic:** all fields remain finite without NaNs or infinities.
 
+use super::bricks::{
+    back_trace_reach, brick_of_voxel, brick_voxels, brick_voxels_inset, bricks_in_voxel_box,
+    max_magnitude, may_hold_smog, segment_index, BrickState, BRICKS_X, BRICK_COUNT, BRICK_NX,
+};
 use super::{SmogConfig, SmogError};
 use bevy::prelude::*;
+use std::ops::Range;
 
 /// Number of grid voxels along the world X axis.
 pub const GRID_NX: usize = 96;
@@ -29,6 +34,16 @@ pub const TOTAL_VOXELS: usize = GRID_NX * GRID_NY * GRID_NZ;
 pub const SMOG_DENSITY_MAX: f32 = 4.0;
 /// Velocity normalization ceiling for 8-bit texture packing (`$\pm 5.0$` world units/s).
 pub const SMOG_PACK_VELOCITY_MAX: f32 = 5.0;
+
+/// Linear RGB tint that density advection writes into every voxel it leaves empty, and that
+/// [`SmogGrid3d::clear`] fills: the rest value of the tint slabs.
+const SMOG_TAIL_TINT: Vec3 = Vec3::new(0.28, 0.46, 0.68);
+
+/// Bytes of one voxel in either upload buffer (`Rgba8Unorm`).
+const BYTES_PER_VOXEL: usize = 4;
+
+/// The velocity upload bytes of a voxel at rest: zero velocity, zero glow.
+const VELOCITY_REST_BYTES: [u8; BYTES_PER_VOXEL] = [128, 128, 128, 0];
 /// External bubble state presented to the 3D fluid solver for emission and obstacle influence.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct BubbleSmogSource {
@@ -67,9 +82,10 @@ pub struct SmogStepMetrics {
 // What: All fluid state (velocity u_x, u_y, u_z, density rho, glow, RGB chromatic tint r, g, b, vorticity)
 // and ping-pong scratch buffers are pre-allocated once in flat Box<[f32]> slabs; the advection passes
 // swap each field with its scratch slab instead of copying it back (see `advect_velocity`).
-// Zero allocations occur during the per-frame `step()` call.
-// Trade-off: ~7.3 MB of f32 slabs (22 x 331,776 bytes) plus 0.66 MB of upload bytes retained in the
-// `SmogGrid3d` resource.
+// Zero allocations occur during the per-frame `step()` call. The brick flags of the sparse solver
+// (`bricks.rs`) are one fixed-size box, also allocated once.
+// Trade-off: ~6.3 MB of f32 slabs (19 x 331,776 bytes) plus 0.66 MB of upload bytes and 28 KB of
+// brick flags retained in the `SmogGrid3d` resource.
 /// 3D Eulerian fluid solver with pre-allocated flat slabs.
 #[derive(Resource)]
 pub struct SmogGrid3d {
@@ -104,10 +120,15 @@ pub struct SmogGrid3d {
     vorticity_z: Box<[f32]>,
     vorticity_mag: Box<[f32]>,
 
+    // Private: the packing pass skips segments whose bytes its flags say are already written
+    // (`bricks.rs`), which holds only while no one else writes them.
     /// Pre-allocated RGBA8 byte buffer for uploading the 3D density + tint texture.
-    pub rgba_density_bytes: Vec<u8>,
+    rgba_density_bytes: Vec<u8>,
     /// Pre-allocated RGBA8 byte buffer for uploading the 3D velocity + vorticity texture.
-    pub rgba_velocity_bytes: Vec<u8>,
+    rgba_velocity_bytes: Vec<u8>,
+
+    /// Per-brick rest flags of the sparse solver, kept true to the slabs on every write path.
+    bricks: Box<BrickState>,
 }
 
 impl SmogGrid3d {
@@ -152,10 +173,10 @@ impl SmogGrid3d {
             tint_b[i] = 0.80;
         }
 
-        let rgba_density_bytes = vec![0u8; TOTAL_VOXELS * 4];
-        let rgba_velocity_bytes = vec![128u8; TOTAL_VOXELS * 4];
+        let rgba_density_bytes = vec![0u8; TOTAL_VOXELS * BYTES_PER_VOXEL];
+        let rgba_velocity_bytes = vec![128u8; TOTAL_VOXELS * BYTES_PER_VOXEL];
 
-        Ok(Self {
+        let mut grid = Self {
             bounds_min,
             bounds_max,
             cell_size,
@@ -182,7 +203,49 @@ impl SmogGrid3d {
             vorticity_mag: make_slab(),
             rgba_density_bytes,
             rgba_velocity_bytes,
-        })
+            bricks: BrickState::unknown(),
+        };
+        grid.rescan_brick_flags();
+        Ok(grid)
+    }
+
+    /// The RGBA8 bytes of the 3D density texture, `TOTAL_VOXELS * 4` long in voxel order
+    /// (x fastest): tint in RGB, density over [`SMOG_DENSITY_MAX`] in alpha. Written by
+    /// [`Self::step`].
+    #[inline]
+    #[must_use]
+    pub fn density_bytes(&self) -> &[u8] {
+        &self.rgba_density_bytes
+    }
+
+    /// The RGBA8 bytes of the 3D velocity texture, `TOTAL_VOXELS * 4` long in voxel order:
+    /// velocity mapped from `[-SMOG_PACK_VELOCITY_MAX, SMOG_PACK_VELOCITY_MAX]` to bytes in RGB,
+    /// glow plus vorticity in alpha. Written by [`Self::step`].
+    #[inline]
+    #[must_use]
+    pub fn velocity_bytes(&self) -> &[u8] {
+        &self.rgba_velocity_bytes
+    }
+
+    /// The two upload buffers as `(name, address, capacity in bytes)`.
+    ///
+    /// Evidence for the steady-state tests that stepping reuses storage: the list never changes
+    /// after construction. Not part of the solver's interface.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn retained_byte_buffers(&self) -> [(&'static str, usize, usize); 2] {
+        [
+            (
+                "smog.rgba_density_bytes",
+                self.rgba_density_bytes.as_ptr().addr(),
+                self.rgba_density_bytes.capacity(),
+            ),
+            (
+                "smog.rgba_velocity_bytes",
+                self.rgba_velocity_bytes.as_ptr().addr(),
+                self.rgba_velocity_bytes.capacity(),
+            ),
+        ]
     }
 
     /// Converts a continuous world-space coordinate into floating-point grid index coordinates `$[0, N-1]^3$`.
@@ -259,6 +322,10 @@ impl SmogGrid3d {
         );
         if shift > 0.5 {
             self.clear();
+        } else {
+            // No slab changed, so the flags still hold; the rescan keeps rule 7 of D-2 literal
+            // (every bounds change recomputes the flags) at the cost of one scan, rare.
+            self.rescan_brick_flags();
         }
     }
 
@@ -363,6 +430,8 @@ impl SmogGrid3d {
                 }
             }
         }
+        // The fields moved and the scratch slabs now hold the old fields: every flag is stale.
+        self.rescan_brick_flags();
     }
 
     /// Computes the flat 1D buffer index for a discrete voxel coordinate `(ix, iy, iz)`.
@@ -502,12 +571,13 @@ impl SmogGrid3d {
         self.vorticity_z.fill(0.0);
         self.vorticity_mag.fill(0.0);
         for i in 0..TOTAL_VOXELS {
-            self.tint_r[i] = 0.28;
-            self.tint_g[i] = 0.46;
-            self.tint_b[i] = 0.68;
+            self.tint_r[i] = SMOG_TAIL_TINT.x;
+            self.tint_g[i] = SMOG_TAIL_TINT.y;
+            self.tint_b[i] = SMOG_TAIL_TINT.z;
         }
         self.rgba_density_bytes.fill(0);
         self.rgba_velocity_bytes.fill(128);
+        self.rescan_brick_flags();
     }
 
     /// Executes one full 3D Navier-Stokes step with bubble smog generation and bubble-through-smog influence.
@@ -628,6 +698,16 @@ impl SmogGrid3d {
                 }
             }
         }
+        // D-2 rule 1: the box may have written velocity, density, glow and tint anywhere in it,
+        // so its bricks lose their rest promises and may hold smog. (Conservative: a box that
+        // wrote nothing still clears them.)
+        let touched = bricks_in_voxel_box(
+            [ix_min, iy_min, iz_min].map(usize::cast_signed),
+            [ix_max, iy_max, iz_max].map(usize::cast_signed),
+        );
+        self.bricks.velocity_rest.set_in(&touched, false);
+        self.bricks.scalar_rest.set_in(&touched, false);
+        self.bricks.occupied.set_in(&touched, true);
     }
 
     /// The voxel's offset from the source, or `None` outside the source's spherical reach.
@@ -799,6 +879,13 @@ impl SmogGrid3d {
         }
     }
 
+    /// Stage 2 of [`Self::step`]: computes the curl of the velocity into the vorticity slabs,
+    /// then adds the confinement force `eps * h * (N x omega)` to the velocity.
+    ///
+    /// Sparse rules (D-2, rules 2 and 3): a brick whose velocity, and that of its six face
+    /// neighbours, is at rest has a curl of exactly `+0.0`, because every central difference is
+    /// `+0.0 - +0.0`; the force loop skips a brick whose largest vorticity magnitude is below the
+    /// `1e-4` threshold at which the dense loop skips each voxel.
     fn apply_vorticity_confinement(&mut self, confinement_strength: f32, dt: f32) {
         if confinement_strength <= 0.0 {
             return;
@@ -807,45 +894,27 @@ impl SmogGrid3d {
         let inv_2hx = 0.5 * self.inv_cell_size.x;
         let inv_2hy = 0.5 * self.inv_cell_size.y;
         let inv_2hz = 0.5 * self.inv_cell_size.z;
+        let inv_2h = [inv_2hx, inv_2hy, inv_2hz];
 
         // Compute curl omega = grad x u
-        for iz in 1..(GRID_NZ - 1) {
-            for iy in 1..(GRID_NY - 1) {
-                for ix in 1..(GRID_NX - 1) {
-                    let idx = Self::index(ix, iy, iz);
-
-                    let duz_dy = (self.u_z[Self::index(ix, iy + 1, iz)]
-                        - self.u_z[Self::index(ix, iy - 1, iz)])
-                        * inv_2hy;
-                    let duy_dz = (self.u_y[Self::index(ix, iy, iz + 1)]
-                        - self.u_y[Self::index(ix, iy, iz - 1)])
-                        * inv_2hz;
-
-                    let dux_dz = (self.u_x[Self::index(ix, iy, iz + 1)]
-                        - self.u_x[Self::index(ix, iy, iz - 1)])
-                        * inv_2hz;
-                    let duz_dx = (self.u_z[Self::index(ix + 1, iy, iz)]
-                        - self.u_z[Self::index(ix - 1, iy, iz)])
-                        * inv_2hx;
-
-                    let duy_dx = (self.u_y[Self::index(ix + 1, iy, iz)]
-                        - self.u_y[Self::index(ix - 1, iy, iz)])
-                        * inv_2hx;
-                    let dux_dy = (self.u_x[Self::index(ix, iy + 1, iz)]
-                        - self.u_x[Self::index(ix, iy - 1, iz)])
-                        * inv_2hy;
-
-                    let wx = duz_dy - duy_dz;
-                    let wy = dux_dz - duz_dx;
-                    let wz = duy_dx - dux_dy;
-
-                    self.vorticity_x[idx] = wx;
-                    self.vorticity_y[idx] = wy;
-                    self.vorticity_z[idx] = wz;
-                    let w_sq = wx * wx + wy * wy + wz * wz;
-                    self.vorticity_mag[idx] = if w_sq > 1e-8 { w_sq.sqrt() } else { 0.0 };
+        for b in 0..BRICK_COUNT {
+            if self.bricks.curl_at_rest(b) {
+                self.bricks.max_vort_mag[b] = 0.0;
+                if !self.bricks.vorticity_rest.get(b) {
+                    // Boundary voxels are never written by the curl loop and always hold +0.0.
+                    for row in Self::rows(brick_voxels_inset(b, 1)) {
+                        self.vorticity_x[row.clone()].fill(0.0);
+                        self.vorticity_y[row.clone()].fill(0.0);
+                        self.vorticity_z[row.clone()].fill(0.0);
+                        self.vorticity_mag[row].fill(0.0);
+                    }
+                    self.bricks.vorticity_rest.set(b, true);
                 }
+                continue;
             }
+            let (max_mag, at_rest) = self.curl_brick(b, inv_2h);
+            self.bricks.max_vort_mag[b] = max_mag;
+            self.bricks.vorticity_rest.set(b, at_rest);
         }
 
         // Apply confinement force: f = eps * h * (N x omega)
@@ -858,107 +927,159 @@ impl SmogGrid3d {
         // What: We precompute vorticity magnitude into self.vorticity_mag during the curl pass
         // and read it directly here with simple index lookups.
         // Trade-off: Uses one pre-allocated flat f32 slab (332 KB) to save CPU cycles in the physics tick.
-        for iz in 2..(GRID_NZ - 2) {
-            for iy in 2..(GRID_NY - 2) {
-                for ix in 2..(GRID_NX - 2) {
-                    let idx = Self::index(ix, iy, iz);
-
-                    // Sparse Fast-Path (Section 10.3: skip near-zero vorticity cells before gradient math)
-                    if self.vorticity_mag[idx] < 1e-4 {
-                        continue;
+        for b in 0..BRICK_COUNT {
+            if self.bricks.confinement_idle(b) {
+                continue;
+            }
+            let [xs, ys, zs] = brick_voxels_inset(b, 2);
+            for iz in zs {
+                for iy in ys.clone() {
+                    for ix in xs.clone() {
+                        self.confine_voxel(ix, iy, iz, coeff, inv_2h);
                     }
-
-                    let dmag_dx = (self.vorticity_mag[Self::index(ix + 1, iy, iz)]
-                        - self.vorticity_mag[Self::index(ix - 1, iy, iz)])
-                        * inv_2hx;
-                    let dmag_dy = (self.vorticity_mag[Self::index(ix, iy + 1, iz)]
-                        - self.vorticity_mag[Self::index(ix, iy - 1, iz)])
-                        * inv_2hy;
-                    let dmag_dz = (self.vorticity_mag[Self::index(ix, iy, iz + 1)]
-                        - self.vorticity_mag[Self::index(ix, iy, iz - 1)])
-                        * inv_2hz;
-
-                    let grad_mag =
-                        (dmag_dx * dmag_dx + dmag_dy * dmag_dy + dmag_dz * dmag_dz).sqrt() + 1e-5;
-                    let nx = dmag_dx / grad_mag;
-                    let ny = dmag_dy / grad_mag;
-                    let nz = dmag_dz / grad_mag;
-
-                    let wx = self.vorticity_x[idx];
-                    let wy = self.vorticity_y[idx];
-                    let wz = self.vorticity_z[idx];
-
-                    // N x omega
-                    let fx = ny * wz - nz * wy;
-                    let fy = nz * wx - nx * wz;
-                    let fz = nx * wy - ny * wx;
-
-                    self.u_x[idx] += coeff * fx;
-                    self.u_y[idx] += coeff * fy;
-                    self.u_z[idx] += coeff * fz;
                 }
             }
+            // The force adds to `u`: a brick at rest can carry vorticity from its neighbours.
+            self.bricks.velocity_rest.set(b, false);
         }
     }
 
+    /// Computes the curl of every interior voxel of brick `b`. Returns the largest magnitude
+    /// written (`+inf` for a NaN) and whether every written value is `+0.0`.
+    fn curl_brick(&mut self, b: usize, inv_2h: [f32; 3]) -> (f32, bool) {
+        let [xs, ys, zs] = brick_voxels_inset(b, 1);
+        let mut max_mag = 0.0_f32;
+        let mut at_rest = true;
+        for iz in zs {
+            for iy in ys.clone() {
+                for ix in xs.clone() {
+                    let written = self.curl_voxel(ix, iy, iz, inv_2h);
+                    max_mag = max_magnitude(max_mag, written[3]);
+                    at_rest &= written.iter().all(|w| w.to_bits() == 0);
+                }
+            }
+        }
+        (max_mag, at_rest)
+    }
+
+    /// The dense curl of one interior voxel; returns `[wx, wy, wz, magnitude]` as written.
+    #[inline]
+    fn curl_voxel(&mut self, ix: usize, iy: usize, iz: usize, inv_2h: [f32; 3]) -> [f32; 4] {
+        let [inv_2hx, inv_2hy, inv_2hz] = inv_2h;
+        let idx = Self::index(ix, iy, iz);
+
+        let duz_dy = (self.u_z[Self::index(ix, iy + 1, iz)]
+            - self.u_z[Self::index(ix, iy - 1, iz)])
+            * inv_2hy;
+        let duy_dz = (self.u_y[Self::index(ix, iy, iz + 1)]
+            - self.u_y[Self::index(ix, iy, iz - 1)])
+            * inv_2hz;
+
+        let dux_dz = (self.u_x[Self::index(ix, iy, iz + 1)]
+            - self.u_x[Self::index(ix, iy, iz - 1)])
+            * inv_2hz;
+        let duz_dx = (self.u_z[Self::index(ix + 1, iy, iz)]
+            - self.u_z[Self::index(ix - 1, iy, iz)])
+            * inv_2hx;
+
+        let duy_dx = (self.u_y[Self::index(ix + 1, iy, iz)]
+            - self.u_y[Self::index(ix - 1, iy, iz)])
+            * inv_2hx;
+        let dux_dy = (self.u_x[Self::index(ix, iy + 1, iz)]
+            - self.u_x[Self::index(ix, iy - 1, iz)])
+            * inv_2hy;
+
+        let wx = duz_dy - duy_dz;
+        let wy = dux_dz - duz_dx;
+        let wz = duy_dx - dux_dy;
+
+        self.vorticity_x[idx] = wx;
+        self.vorticity_y[idx] = wy;
+        self.vorticity_z[idx] = wz;
+        let w_sq = wx * wx + wy * wy + wz * wz;
+        let mag = if w_sq > 1e-8 { w_sq.sqrt() } else { 0.0 };
+        self.vorticity_mag[idx] = mag;
+        [wx, wy, wz, mag]
+    }
+
+    /// The dense confinement force of one voxel at least two voxels inside every face.
+    #[inline]
+    fn confine_voxel(&mut self, ix: usize, iy: usize, iz: usize, coeff: f32, inv_2h: [f32; 3]) {
+        let [inv_2hx, inv_2hy, inv_2hz] = inv_2h;
+        let idx = Self::index(ix, iy, iz);
+
+        // Sparse Fast-Path (Section 10.3: skip near-zero vorticity cells before gradient math)
+        if self.vorticity_mag[idx] < 1e-4 {
+            return;
+        }
+
+        let dmag_dx = (self.vorticity_mag[Self::index(ix + 1, iy, iz)]
+            - self.vorticity_mag[Self::index(ix - 1, iy, iz)])
+            * inv_2hx;
+        let dmag_dy = (self.vorticity_mag[Self::index(ix, iy + 1, iz)]
+            - self.vorticity_mag[Self::index(ix, iy - 1, iz)])
+            * inv_2hy;
+        let dmag_dz = (self.vorticity_mag[Self::index(ix, iy, iz + 1)]
+            - self.vorticity_mag[Self::index(ix, iy, iz - 1)])
+            * inv_2hz;
+
+        let grad_mag = (dmag_dx * dmag_dx + dmag_dy * dmag_dy + dmag_dz * dmag_dz).sqrt() + 1e-5;
+        let nx = dmag_dx / grad_mag;
+        let ny = dmag_dy / grad_mag;
+        let nz = dmag_dz / grad_mag;
+
+        let wx = self.vorticity_x[idx];
+        let wy = self.vorticity_y[idx];
+        let wz = self.vorticity_z[idx];
+
+        // N x omega
+        let fx = ny * wz - nz * wy;
+        let fy = nz * wx - nx * wz;
+        let fz = nx * wy - ny * wx;
+
+        self.u_x[idx] += coeff * fx;
+        self.u_y[idx] += coeff * fy;
+        self.u_z[idx] += coeff * fz;
+    }
+
+    /// Stage 3 of [`Self::step`]: semi-Lagrangian self-advection of the velocity, with
+    /// exponential damping and zero normal velocity on the walls.
+    ///
+    /// Sparse rule (D-2, rule 4): in a brick whose velocity is at rest every voxel takes the
+    /// dense fast path (or the corner exit), both of which write `+0.0`, so the brick's result is
+    /// at rest; it is skipped when the scratch slab already holds that, else filled.
     fn advect_velocity(&mut self, damping: f32, dt: f32) {
         let decay = (-damping * dt).exp();
 
-        // PERFORMANCE RATIONALE:
-        // Why: u_x, u_y, and u_z share the exact same advective back-trace trajectory x_back = x - u(x)*dt.
-        // What: We compute the back-trace grid coordinate and 8-corner trilinear weights once per voxel,
-        // reusing them across all 3 velocity components instead of 3 independent transforms and weightings.
-        // Trade-off: None; strictly eliminates 2/3 of the trilinear math in velocity advection.
-        for iz in 0..GRID_NZ {
-            let is_boundary_z = iz == 0 || iz == GRID_NZ - 1;
-            for iy in 0..GRID_NY {
-                let is_boundary_y = iy == 0 || iy == GRID_NY - 1;
-                for ix in 0..GRID_NX {
-                    let is_boundary_x = ix == 0 || ix == GRID_NX - 1;
-                    let idx = Self::index(ix, iy, iz);
-
-                    if is_boundary_x && is_boundary_y && is_boundary_z {
-                        self.u_x_scratch[idx] = 0.0;
-                        self.u_y_scratch[idx] = 0.0;
-                        self.u_z_scratch[idx] = 0.0;
-                        continue;
+        for b in 0..BRICK_COUNT {
+            if self.bricks.velocity_source_at_rest(b) {
+                self.bricks.max_abs_u[b] = [0.0; 3];
+                if !self.bricks.velocity_rest_scratch.get(b) {
+                    for row in Self::rows(brick_voxels(b)) {
+                        self.u_x_scratch[row.clone()].fill(0.0);
+                        self.u_y_scratch[row.clone()].fill(0.0);
+                        self.u_z_scratch[row].fill(0.0);
                     }
-
-                    // Sparse Fast-Path (Section 10.3: zero velocity means back_pos == cur_pos, sampling zero yields zero)
-                    let ux = self.u_x[idx];
-                    let uy = self.u_y[idx];
-                    let uz = self.u_z[idx];
-                    if ux == 0.0 && uy == 0.0 && uz == 0.0 {
-                        self.u_x_scratch[idx] = 0.0;
-                        self.u_y_scratch[idx] = 0.0;
-                        self.u_z_scratch[idx] = 0.0;
-                        continue;
+                    self.bricks.velocity_rest_scratch.set(b, true);
+                }
+                continue;
+            }
+            let mut max_abs = [0.0_f32; 3];
+            let mut at_rest = true;
+            let [xs, ys, zs] = brick_voxels(b);
+            for iz in zs {
+                for iy in ys.clone() {
+                    for ix in xs.clone() {
+                        let written = self.advect_velocity_voxel(ix, iy, iz, decay, dt);
+                        for (bound, u) in max_abs.iter_mut().zip(written) {
+                            *bound = max_magnitude(*bound, u);
+                        }
+                        at_rest &= written.iter().all(|u| u.to_bits() == 0);
                     }
-
-                    let cur_pos = self.grid_to_world(ix, iy, iz);
-                    let back_pos = cur_pos - Vec3::new(ux, uy, uz) * dt;
-                    let gp = self.world_to_grid(back_pos);
-                    let (indices, weights) = Self::trilinear_indices_and_weights(gp);
-
-                    self.u_x_scratch[idx] = if is_boundary_x {
-                        0.0
-                    } else {
-                        Self::sample_indexed(&self.u_x, &indices, &weights) * decay
-                    };
-
-                    self.u_y_scratch[idx] = if is_boundary_y {
-                        0.0
-                    } else {
-                        Self::sample_indexed(&self.u_y, &indices, &weights) * decay
-                    };
-
-                    self.u_z_scratch[idx] = if is_boundary_z {
-                        0.0
-                    } else {
-                        Self::sample_indexed(&self.u_z, &indices, &weights) * decay
-                    };
                 }
             }
+            self.bricks.max_abs_u[b] = max_abs;
+            self.bricks.velocity_rest_scratch.set(b, at_rest);
         }
 
         // PERFORMANCE RATIONALE:
@@ -966,200 +1087,505 @@ impl SmogGrid3d {
         // 331,776 bytes read and written), and the solver is bound by memory traffic when the
         // machine is busy (C-18; `memmove` took 1.9 ms per frame in the `perf` run).
         // What: the fields and their scratch slabs exchange their boxes (`std::mem::swap`, a
-        // pointer swap); after it the scratch slabs hold the previous step's field, which no pass
-        // reads before overwriting it.
-        // Trade-off: correct only because the loop above writes every voxel of all three scratch
-        // slabs (it covers `0..N` on every axis, and each branch writes all three components);
-        // `advection_passes_write_every_scratch_voxel` pins that coverage.
+        // pointer swap), and their brick flags with them; after it the scratch slabs hold the
+        // previous step's field, which no pass reads before overwriting it.
+        // Trade-off: correct only because the loop above leaves every voxel of all three scratch
+        // slabs holding this step's value: it writes every voxel of a computed brick (each branch
+        // writes all three components), and a skipped brick already holds +0.0, as its scratch
+        // flag promises; `advection_passes_write_every_scratch_voxel` pins that coverage.
         std::mem::swap(&mut self.u_x, &mut self.u_x_scratch);
         std::mem::swap(&mut self.u_y, &mut self.u_y_scratch);
         std::mem::swap(&mut self.u_z, &mut self.u_z_scratch);
+        self.bricks.swap_velocity();
     }
 
+    /// The dense velocity advection of one voxel; returns the three components it wrote.
+    #[inline]
+    fn advect_velocity_voxel(
+        &mut self,
+        ix: usize,
+        iy: usize,
+        iz: usize,
+        decay: f32,
+        dt: f32,
+    ) -> [f32; 3] {
+        // PERFORMANCE RATIONALE:
+        // Why: u_x, u_y, and u_z share the exact same advective back-trace trajectory x_back = x - u(x)*dt.
+        // What: We compute the back-trace grid coordinate and 8-corner trilinear weights once per voxel,
+        // reusing them across all 3 velocity components instead of 3 independent transforms and weightings.
+        // Trade-off: None; strictly eliminates 2/3 of the trilinear math in velocity advection.
+        let is_boundary_z = iz == 0 || iz == GRID_NZ - 1;
+        let is_boundary_y = iy == 0 || iy == GRID_NY - 1;
+        let is_boundary_x = ix == 0 || ix == GRID_NX - 1;
+        let idx = Self::index(ix, iy, iz);
+
+        if is_boundary_x && is_boundary_y && is_boundary_z {
+            self.u_x_scratch[idx] = 0.0;
+            self.u_y_scratch[idx] = 0.0;
+            self.u_z_scratch[idx] = 0.0;
+            return [0.0; 3];
+        }
+
+        // Sparse Fast-Path (Section 10.3: zero velocity means back_pos == cur_pos, sampling zero yields zero)
+        let ux = self.u_x[idx];
+        let uy = self.u_y[idx];
+        let uz = self.u_z[idx];
+        if ux == 0.0 && uy == 0.0 && uz == 0.0 {
+            self.u_x_scratch[idx] = 0.0;
+            self.u_y_scratch[idx] = 0.0;
+            self.u_z_scratch[idx] = 0.0;
+            return [0.0; 3];
+        }
+
+        let cur_pos = self.grid_to_world(ix, iy, iz);
+        let back_pos = cur_pos - Vec3::new(ux, uy, uz) * dt;
+        let gp = self.world_to_grid(back_pos);
+        let (indices, weights) = Self::trilinear_indices_and_weights(gp);
+
+        let new_x = if is_boundary_x {
+            0.0
+        } else {
+            Self::sample_indexed(&self.u_x, &indices, &weights) * decay
+        };
+
+        let new_y = if is_boundary_y {
+            0.0
+        } else {
+            Self::sample_indexed(&self.u_y, &indices, &weights) * decay
+        };
+
+        let new_z = if is_boundary_z {
+            0.0
+        } else {
+            Self::sample_indexed(&self.u_z, &indices, &weights) * decay
+        };
+        self.u_x_scratch[idx] = new_x;
+        self.u_y_scratch[idx] = new_y;
+        self.u_z_scratch[idx] = new_z;
+        [new_x, new_y, new_z]
+    }
+
+    /// Stage 5 of [`Self::step`]: semi-Lagrangian advection of density, glow and tint along the
+    /// velocity plus buoyancy, with dissipation and the haze floor.
+    ///
+    /// Sparse rule (D-2, rule 5): a voxel's back-trace corners lie within
+    /// `ceil(|u + buoyancy| * dt / cell) + 2` voxels of it on each axis (one voxel for the upper
+    /// trilinear corner, one for the rounding of `world_to_grid`; clamping to the grid only moves
+    /// a sample inward). When no brick within that reach of a brick may hold density or glow of
+    /// `1e-6` or more, every voxel of the brick takes the dense dormant path or the
+    /// `max_corner < 1e-6` exit, both of which write the rest value; the brick is skipped when
+    /// the scratch slabs already hold that, else filled.
     fn advect_density_and_tint(&mut self, buoyancy: f32, dissipation: f32, dt: f32) {
         let decay = (-dissipation * dt).exp();
         let lambda_glow = (1.8 * dissipation).max(1.65);
         let glow_decay = (-lambda_glow * dt).exp();
-        let c_tail = Vec3::new(0.28, 0.46, 0.68);
+        let c_tail = SMOG_TAIL_TINT;
         let buoyancy_vel = Vec3::new(0.0, buoyancy, 0.0);
+        let pass = ScalarAdvection {
+            decay,
+            glow_decay,
+            dissipation,
+            c_tail,
+            buoyancy_vel,
+            dt,
+        };
+        let rest = [0.0, 0.0, c_tail.x, c_tail.y, c_tail.z];
 
-        // PERFORMANCE RATIONALE:
-        // Why: Density, luminescent glow, and RGB chromatic tint (5 scalar slabs) are advected along the same trajectory.
-        // What: We compute the 8-corner indices and trilinear weights once per voxel and evaluate all 5 slabs in a fused pass.
-        // Additionally, we early-out when all 8 corners have zero density and zero glow, skipping 5 trilinear inner products.
-        // Trade-off: None; reduces per-voxel arithmetic by ~75% across the 82,944 grid voxels.
-        for iz in 0..GRID_NZ {
-            for iy in 0..GRID_NY {
-                let iy_up = (iy + 1).min(GRID_NY - 1);
-                let iy_dn = iy.saturating_sub(1);
-                for ix in 0..GRID_NX {
-                    let idx = Self::index(ix, iy, iz);
-
-                    // Sparse Fast-Path (Section 10.3: skip dormant, non-moving cells before world-to-grid math)
-                    if self.density[idx] < 1e-6
-                        && self.glow[idx] < 1e-6
-                        && self.density[Self::index(ix, iy_up, iz)] < 1e-6
-                        && self.density[Self::index(ix, iy_dn, iz)] < 1e-6
-                        && self.u_x[idx].abs() < 1e-4
-                        && self.u_y[idx].abs() < 1e-4
-                        && self.u_z[idx].abs() < 1e-4
-                    {
-                        self.density_scratch[idx] = 0.0;
-                        self.glow_scratch[idx] = 0.0;
-                        self.tint_r_scratch[idx] = c_tail.x;
-                        self.tint_g_scratch[idx] = c_tail.y;
-                        self.tint_b_scratch[idx] = c_tail.z;
-                        continue;
+        for b in 0..BRICK_COUNT {
+            let [ux, uy, uz] = self.bricks.max_abs_u[b];
+            let reach = [
+                back_trace_reach(ux, dt, self.inv_cell_size.x),
+                back_trace_reach(uy + buoyancy.abs(), dt, self.inv_cell_size.y),
+                back_trace_reach(uz, dt, self.inv_cell_size.z),
+            ];
+            if self.bricks.scalar_sources_empty(b, reach) {
+                self.bricks.occupied_scratch.set(b, false);
+                if !self.bricks.scalar_rest_scratch.get(b) {
+                    for row in Self::rows(brick_voxels(b)) {
+                        self.density_scratch[row.clone()].fill(0.0);
+                        self.glow_scratch[row.clone()].fill(0.0);
+                        self.tint_r_scratch[row.clone()].fill(c_tail.x);
+                        self.tint_g_scratch[row.clone()].fill(c_tail.y);
+                        self.tint_b_scratch[row].fill(c_tail.z);
                     }
-
-                    let cur_pos = self.grid_to_world(ix, iy, iz);
-                    let eff_vel =
-                        Vec3::new(self.u_x[idx], self.u_y[idx], self.u_z[idx]) + buoyancy_vel;
-                    let back_pos = cur_pos - eff_vel * dt;
-                    let gp = self.world_to_grid(back_pos);
-
-                    let (indices, weights) = Self::trilinear_indices_and_weights(gp);
-
-                    let max_corner = indices.iter().fold(0.0_f32, |acc, &k| {
-                        acc.max(self.density[k]).max(self.glow[k])
-                    });
-
-                    if max_corner < 1e-6 {
-                        self.density_scratch[idx] = 0.0;
-                        self.glow_scratch[idx] = 0.0;
-                        self.tint_r_scratch[idx] = c_tail.x;
-                        self.tint_g_scratch[idx] = c_tail.y;
-                        self.tint_b_scratch[idx] = c_tail.z;
-                        continue;
+                    self.bricks.scalar_rest_scratch.set(b, true);
+                }
+                continue;
+            }
+            let mut occupied = false;
+            let mut at_rest = true;
+            let [xs, ys, zs] = brick_voxels(b);
+            for iz in zs {
+                for iy in ys.clone() {
+                    for ix in xs.clone() {
+                        let written = self.advect_scalars_voxel(ix, iy, iz, &pass);
+                        occupied |= may_hold_smog(written[0]) || may_hold_smog(written[1]);
+                        at_rest &= written
+                            .iter()
+                            .zip(rest)
+                            .all(|(w, r)| w.to_bits() == r.to_bits());
                     }
-
-                    let sampled_density = Self::sample_indexed(&self.density, &indices, &weights);
-                    // Clean Haze Floor Subtraction (Section 10.5 & 11.5: evaporates background haze cleanly to 0.0 while preserving longer slipstream tails)
-                    let floor_decay = if dissipation > 0.0 { 0.018 * dt } else { 0.0 };
-                    self.density_scratch[idx] =
-                        (sampled_density * decay - floor_decay).clamp(0.0, SMOG_DENSITY_MAX);
-
-                    let sampled_glow = Self::sample_indexed(&self.glow, &indices, &weights);
-                    self.glow_scratch[idx] = (sampled_glow * glow_decay).clamp(0.0, 1.0);
-
-                    // Density-weighted trilinear color advection: avoids unweighted blending with empty ambient voxels
-                    let mut color_w_sum = 0.0_f32;
-                    let mut adv_r = 0.0_f32;
-                    let mut adv_g = 0.0_f32;
-                    let mut adv_b = 0.0_f32;
-                    for k in 0..8 {
-                        let cw = weights[k] * (self.density[indices[k]] + 1e-5);
-                        color_w_sum += cw;
-                        adv_r += self.tint_r[indices[k]] * cw;
-                        adv_g += self.tint_g[indices[k]] * cw;
-                        adv_b += self.tint_b[indices[k]] * cw;
-                    }
-                    let inv_cw = 1.0 / color_w_sum.max(1e-8);
-                    adv_r *= inv_cw;
-                    adv_g *= inv_cw;
-                    adv_b *= inv_cw;
-
-                    let luma = (adv_r + adv_g + adv_b) * (1.0 / 3.0);
-                    self.tint_r_scratch[idx] = (luma + (adv_r - luma) * 1.12).clamp(0.0, 1.0);
-                    self.tint_g_scratch[idx] = (luma + (adv_g - luma) * 1.12).clamp(0.0, 1.0);
-                    self.tint_b_scratch[idx] = (luma + (adv_b - luma) * 1.12).clamp(0.0, 1.0);
                 }
             }
+            self.bricks.occupied_scratch.set(b, occupied);
+            self.bricks.scalar_rest_scratch.set(b, at_rest);
         }
 
         // PERFORMANCE RATIONALE:
         // Why: copying the five scratch slabs back moves 1.66 MB per step (5 x 331,776 bytes read
         // and written) through a solver that is bound by memory traffic under load (C-18).
-        // What: each field exchanges its box with its scratch slab (`std::mem::swap`); the scratch
-        // slabs then hold the previous step's values, which no pass reads before overwriting them
-        // (`set_bounds_quantized` copies the fields into them first).
-        // Trade-off: correct only because the loop above writes every voxel of all five scratch
-        // slabs (it covers `0..N` on every axis, and each of its three exits writes all five);
-        // `advection_passes_write_every_scratch_voxel` pins that coverage.
+        // What: each field exchanges its box with its scratch slab (`std::mem::swap`), and the
+        // scalar brick flags with them; the scratch slabs then hold the previous step's values,
+        // which no pass reads before overwriting them (`set_bounds_quantized` copies the fields
+        // into them first).
+        // Trade-off: correct only because the loop above leaves every voxel of all five scratch
+        // slabs holding this step's value: it writes every voxel of a computed brick (each of the
+        // three exits writes all five), and a skipped brick already holds the rest value, as its
+        // scratch flag promises; `advection_passes_write_every_scratch_voxel` pins that coverage.
         std::mem::swap(&mut self.density, &mut self.density_scratch);
         std::mem::swap(&mut self.glow, &mut self.glow_scratch);
         std::mem::swap(&mut self.tint_r, &mut self.tint_r_scratch);
         std::mem::swap(&mut self.tint_g, &mut self.tint_g_scratch);
         std::mem::swap(&mut self.tint_b, &mut self.tint_b_scratch);
+        self.bricks.swap_scalars();
     }
 
+    /// The dense scalar advection of one voxel; returns `[density, glow, tint_r, tint_g,
+    /// tint_b]` as written into the scratch slabs.
+    #[inline]
+    fn advect_scalars_voxel(
+        &mut self,
+        ix: usize,
+        iy: usize,
+        iz: usize,
+        pass: &ScalarAdvection,
+    ) -> [f32; 5] {
+        let ScalarAdvection {
+            decay,
+            glow_decay,
+            dissipation,
+            c_tail,
+            buoyancy_vel,
+            dt,
+        } = *pass;
+        // PERFORMANCE RATIONALE:
+        // Why: Density, luminescent glow, and RGB chromatic tint (5 scalar slabs) are advected along the same trajectory.
+        // What: We compute the 8-corner indices and trilinear weights once per voxel and evaluate all 5 slabs in a fused pass.
+        // Additionally, we early-out when all 8 corners have zero density and zero glow, skipping 5 trilinear inner products.
+        // Trade-off: None; reduces per-voxel arithmetic by ~75% across the 82,944 grid voxels.
+        let iy_up = (iy + 1).min(GRID_NY - 1);
+        let iy_dn = iy.saturating_sub(1);
+        let idx = Self::index(ix, iy, iz);
+        let rest = [0.0, 0.0, c_tail.x, c_tail.y, c_tail.z];
+
+        // Sparse Fast-Path (Section 10.3: skip dormant, non-moving cells before world-to-grid math)
+        if self.density[idx] < 1e-6
+            && self.glow[idx] < 1e-6
+            && self.density[Self::index(ix, iy_up, iz)] < 1e-6
+            && self.density[Self::index(ix, iy_dn, iz)] < 1e-6
+            && self.u_x[idx].abs() < 1e-4
+            && self.u_y[idx].abs() < 1e-4
+            && self.u_z[idx].abs() < 1e-4
+        {
+            self.write_scalars(idx, rest);
+            return rest;
+        }
+
+        let cur_pos = self.grid_to_world(ix, iy, iz);
+        let eff_vel = Vec3::new(self.u_x[idx], self.u_y[idx], self.u_z[idx]) + buoyancy_vel;
+        let back_pos = cur_pos - eff_vel * dt;
+        let gp = self.world_to_grid(back_pos);
+
+        let (indices, weights) = Self::trilinear_indices_and_weights(gp);
+
+        let max_corner = indices.iter().fold(0.0_f32, |acc, &k| {
+            acc.max(self.density[k]).max(self.glow[k])
+        });
+
+        if max_corner < 1e-6 {
+            self.write_scalars(idx, rest);
+            return rest;
+        }
+
+        let sampled_density = Self::sample_indexed(&self.density, &indices, &weights);
+        // Clean Haze Floor Subtraction (Section 10.5 & 11.5: evaporates background haze cleanly to 0.0 while preserving longer slipstream tails)
+        let floor_decay = if dissipation > 0.0 { 0.018 * dt } else { 0.0 };
+        let new_density = (sampled_density * decay - floor_decay).clamp(0.0, SMOG_DENSITY_MAX);
+
+        let sampled_glow = Self::sample_indexed(&self.glow, &indices, &weights);
+        let new_glow = (sampled_glow * glow_decay).clamp(0.0, 1.0);
+
+        // Density-weighted trilinear color advection: avoids unweighted blending with empty ambient voxels
+        let mut color_w_sum = 0.0_f32;
+        let mut adv_r = 0.0_f32;
+        let mut adv_g = 0.0_f32;
+        let mut adv_b = 0.0_f32;
+        for k in 0..8 {
+            let cw = weights[k] * (self.density[indices[k]] + 1e-5);
+            color_w_sum += cw;
+            adv_r += self.tint_r[indices[k]] * cw;
+            adv_g += self.tint_g[indices[k]] * cw;
+            adv_b += self.tint_b[indices[k]] * cw;
+        }
+        let inv_cw = 1.0 / color_w_sum.max(1e-8);
+        adv_r *= inv_cw;
+        adv_g *= inv_cw;
+        adv_b *= inv_cw;
+
+        let luma = (adv_r + adv_g + adv_b) * (1.0 / 3.0);
+        let written = [
+            new_density,
+            new_glow,
+            (luma + (adv_r - luma) * 1.12).clamp(0.0, 1.0),
+            (luma + (adv_g - luma) * 1.12).clamp(0.0, 1.0),
+            (luma + (adv_b - luma) * 1.12).clamp(0.0, 1.0),
+        ];
+        self.write_scalars(idx, written);
+        written
+    }
+
+    /// Writes `[density, glow, tint_r, tint_g, tint_b]` into the scalar scratch slabs at `idx`.
+    #[inline]
+    fn write_scalars(&mut self, idx: usize, values: [f32; 5]) {
+        let [density, glow, r, g, b] = values;
+        self.density_scratch[idx] = density;
+        self.glow_scratch[idx] = glow;
+        self.tint_r_scratch[idx] = r;
+        self.tint_g_scratch[idx] = g;
+        self.tint_b_scratch[idx] = b;
+    }
+
+    /// Stage 6 of [`Self::step`]: packs density, tint, velocity, glow and vorticity into the two
+    /// RGBA8 upload buffers and accumulates the step's metrics.
+    ///
+    /// Sparse rule (D-2, rule 6): the walk keeps the linear voxel order, because `total_density`
+    /// is a sequential `f32` sum: `iz`, `iy`, then the 12 eight-voxel segments of the row. A
+    /// segment is skipped when its brick's scalars, velocity and vorticity are at rest and both
+    /// of its byte flags say its bytes are the rest bytes: each of its voxels would add `+0.0` to
+    /// `total_density` (no change to the bits of a sum that starts at `+0.0`), raise no maximum
+    /// (strict `>` against values of at least `0`), and write the bytes it already holds.
+    fn pack_textures_and_compute_metrics(&mut self, active_sources: usize) -> SmogStepMetrics {
+        let mut metrics = PackMetrics {
+            total_density: 0.0,
+            peak_density: 0.0,
+            max_speed_sq: 0.0,
+            max_vorticity_sq: 0.0,
+        };
+
+        for iz in 0..GRID_NZ {
+            for iy in 0..GRID_NY {
+                for sx in 0..BRICKS_X {
+                    let ix0 = sx * BRICK_NX;
+                    let s = segment_index(sx, iy, iz);
+                    if self.bricks.segment_at_rest(brick_of_voxel(ix0, iy, iz), s) {
+                        continue;
+                    }
+                    let first = Self::index(ix0, iy, iz);
+                    for i in first..first + BRICK_NX {
+                        self.pack_voxel(i, &mut metrics);
+                    }
+                    let (density_rest, velocity_rest) = self.segment_byte_rest(first);
+                    self.bricks.density_bytes_rest.set(s, density_rest);
+                    self.bricks.velocity_bytes_rest.set(s, velocity_rest);
+                }
+            }
+        }
+
+        SmogStepMetrics {
+            total_density: metrics.total_density,
+            peak_density: metrics.peak_density,
+            max_speed: metrics.max_speed_sq.sqrt(),
+            max_vorticity: metrics.max_vorticity_sq.sqrt(),
+            active_sources,
+        }
+    }
+
+    /// The dense packing of voxel `i`: writes both byte quads and folds the voxel into `metrics`.
+    #[inline]
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
         reason = "fluid grid indices and counts stay far below the range of f32 and i32"
     )]
-    fn pack_textures_and_compute_metrics(&mut self, active_sources: usize) -> SmogStepMetrics {
-        let mut total_density = 0.0_f32;
-        let mut peak_density = 0.0_f32;
-        let mut max_speed_sq = 0.0_f32;
-        let mut max_vorticity_sq = 0.0_f32;
-
+    fn pack_voxel(&mut self, i: usize, metrics: &mut PackMetrics) {
         let inv_v_max_2 = 1.0 / (2.0 * SMOG_PACK_VELOCITY_MAX);
 
-        for i in 0..TOTAL_VOXELS {
-            let rho = self.density[i];
-            total_density += rho;
-            if rho > peak_density {
-                peak_density = rho;
-            }
-
-            let byte_idx = i * 4;
-            if rho <= 1e-5 {
-                self.rgba_density_bytes[byte_idx + 3] = 0;
-            } else {
-                let r_byte = (self.tint_r[i] * 255.0).clamp(0.0, 255.0) as u8;
-                let g_byte = (self.tint_g[i] * 255.0).clamp(0.0, 255.0) as u8;
-                let b_byte = (self.tint_b[i] * 255.0).clamp(0.0, 255.0) as u8;
-                let a_byte = ((rho / SMOG_DENSITY_MAX) * 255.0).clamp(0.0, 255.0) as u8;
-
-                self.rgba_density_bytes[byte_idx] = r_byte;
-                self.rgba_density_bytes[byte_idx + 1] = g_byte;
-                self.rgba_density_bytes[byte_idx + 2] = b_byte;
-                self.rgba_density_bytes[byte_idx + 3] = a_byte;
-            }
-
-            // Pack Velocity + Vorticity Magnitude / Glow -> rgba_velocity_bytes
-            let vx = self.u_x[i];
-            let vy = self.u_y[i];
-            let vz = self.u_z[i];
-            let speed_sq = vx * vx + vy * vy + vz * vz;
-            if speed_sq > max_speed_sq {
-                max_speed_sq = speed_sq;
-            }
-
-            let vort_mag = self.vorticity_mag[i];
-            let vort_sq = vort_mag * vort_mag;
-            if vort_sq > max_vorticity_sq {
-                max_vorticity_sq = vort_sq;
-            }
-
-            if speed_sq <= 1e-6 && vort_sq <= 1e-6 && self.glow[i] <= 1e-5 {
-                self.rgba_velocity_bytes[byte_idx] = 128;
-                self.rgba_velocity_bytes[byte_idx + 1] = 128;
-                self.rgba_velocity_bytes[byte_idx + 2] = 128;
-                self.rgba_velocity_bytes[byte_idx + 3] = 0;
-            } else {
-                let vx_byte = ((vx * inv_v_max_2 + 0.5) * 255.0).clamp(0.0, 255.0) as u8;
-                let vy_byte = ((vy * inv_v_max_2 + 0.5) * 255.0).clamp(0.0, 255.0) as u8;
-                let vz_byte = ((vz * inv_v_max_2 + 0.5) * 255.0).clamp(0.0, 255.0) as u8;
-                let combined_glow = (self.glow[i] + 0.035 * vort_mag).clamp(0.0, 1.0);
-                let glow_byte = (combined_glow * 255.0).clamp(0.0, 255.0) as u8;
-
-                self.rgba_velocity_bytes[byte_idx] = vx_byte;
-                self.rgba_velocity_bytes[byte_idx + 1] = vy_byte;
-                self.rgba_velocity_bytes[byte_idx + 2] = vz_byte;
-                self.rgba_velocity_bytes[byte_idx + 3] = glow_byte;
-            }
+        let rho = self.density[i];
+        metrics.total_density += rho;
+        if rho > metrics.peak_density {
+            metrics.peak_density = rho;
         }
 
-        SmogStepMetrics {
-            total_density,
-            peak_density,
-            max_speed: max_speed_sq.sqrt(),
-            max_vorticity: max_vorticity_sq.sqrt(),
-            active_sources,
+        let byte_idx = i * 4;
+        if rho <= 1e-5 {
+            self.rgba_density_bytes[byte_idx + 3] = 0;
+        } else {
+            let r_byte = (self.tint_r[i] * 255.0).clamp(0.0, 255.0) as u8;
+            let g_byte = (self.tint_g[i] * 255.0).clamp(0.0, 255.0) as u8;
+            let b_byte = (self.tint_b[i] * 255.0).clamp(0.0, 255.0) as u8;
+            let a_byte = ((rho / SMOG_DENSITY_MAX) * 255.0).clamp(0.0, 255.0) as u8;
+
+            self.rgba_density_bytes[byte_idx] = r_byte;
+            self.rgba_density_bytes[byte_idx + 1] = g_byte;
+            self.rgba_density_bytes[byte_idx + 2] = b_byte;
+            self.rgba_density_bytes[byte_idx + 3] = a_byte;
+        }
+
+        // Pack Velocity + Vorticity Magnitude / Glow -> rgba_velocity_bytes
+        let vx = self.u_x[i];
+        let vy = self.u_y[i];
+        let vz = self.u_z[i];
+        let speed_sq = vx * vx + vy * vy + vz * vz;
+        if speed_sq > metrics.max_speed_sq {
+            metrics.max_speed_sq = speed_sq;
+        }
+
+        let vort_mag = self.vorticity_mag[i];
+        let vort_sq = vort_mag * vort_mag;
+        if vort_sq > metrics.max_vorticity_sq {
+            metrics.max_vorticity_sq = vort_sq;
+        }
+
+        if speed_sq <= 1e-6 && vort_sq <= 1e-6 && self.glow[i] <= 1e-5 {
+            self.rgba_velocity_bytes[byte_idx] = 128;
+            self.rgba_velocity_bytes[byte_idx + 1] = 128;
+            self.rgba_velocity_bytes[byte_idx + 2] = 128;
+            self.rgba_velocity_bytes[byte_idx + 3] = 0;
+        } else {
+            let vx_byte = ((vx * inv_v_max_2 + 0.5) * 255.0).clamp(0.0, 255.0) as u8;
+            let vy_byte = ((vy * inv_v_max_2 + 0.5) * 255.0).clamp(0.0, 255.0) as u8;
+            let vz_byte = ((vz * inv_v_max_2 + 0.5) * 255.0).clamp(0.0, 255.0) as u8;
+            let combined_glow = (self.glow[i] + 0.035 * vort_mag).clamp(0.0, 1.0);
+            let glow_byte = (combined_glow * 255.0).clamp(0.0, 255.0) as u8;
+
+            self.rgba_velocity_bytes[byte_idx] = vx_byte;
+            self.rgba_velocity_bytes[byte_idx + 1] = vy_byte;
+            self.rgba_velocity_bytes[byte_idx + 2] = vz_byte;
+            self.rgba_velocity_bytes[byte_idx + 3] = glow_byte;
         }
     }
+
+    /// Whether the packing segment starting at voxel `first` holds the rest bytes:
+    /// `(density alpha all 0, velocity quads all (128, 128, 128, 0))`.
+    fn segment_byte_rest(&self, first: usize) -> (bool, bool) {
+        let bytes = first * BYTES_PER_VOXEL..(first + BRICK_NX) * BYTES_PER_VOXEL;
+        let density_rest = self.rgba_density_bytes[bytes.clone()]
+            .as_chunks::<BYTES_PER_VOXEL>()
+            .0
+            .iter()
+            .all(|voxel| voxel[3] == 0);
+        let velocity_rest = self.rgba_velocity_bytes[bytes]
+            .as_chunks::<BYTES_PER_VOXEL>()
+            .0
+            .iter()
+            .all(|voxel| *voxel == VELOCITY_REST_BYTES);
+        (density_rest, velocity_rest)
+    }
+
+    /// Flat index ranges of the grid rows inside the voxel box `[x, y, z]`, one per `(iy, iz)`:
+    /// each is contiguous in every slab, so a brick is filled or scanned row by row.
+    fn rows(ranges: [Range<usize>; 3]) -> impl Iterator<Item = Range<usize>> {
+        let [xs, ys, zs] = ranges;
+        zs.flat_map(move |iz| {
+            let xs = xs.clone();
+            ys.clone().map(move |iy| {
+                let start = Self::index(xs.start, iy, iz);
+                start..start + xs.len()
+            })
+        })
+    }
+
+    /// Whether every voxel of brick `b` in `slab` holds exactly the bits of `value`.
+    fn brick_holds(slab: &[f32], b: usize, value: f32) -> bool {
+        Self::rows(brick_voxels(b))
+            .all(|row| slab[row].iter().all(|v| v.to_bits() == value.to_bits()))
+    }
+
+    /// Whether some voxel of brick `b` has `!(density < 1e-6)` or `!(glow < 1e-6)` (a NaN
+    /// counts as occupied).
+    fn brick_occupied(density: &[f32], glow: &[f32], b: usize) -> bool {
+        Self::rows(brick_voxels(b)).any(|row| {
+            density[row.clone()].iter().any(|&d| may_hold_smog(d))
+                || glow[row].iter().any(|&g| may_hold_smog(g))
+        })
+    }
+
+    /// D-2, rule 7: recomputes every brick and segment flag from the slabs and byte buffers,
+    /// for the fields and the scratch slabs alike. A full scan, run only after a whole-grid
+    /// write (`new`, `clear`, a bounds change) has made the incremental bookkeeping stale.
+    fn rescan_brick_flags(&mut self) {
+        let tail = SMOG_TAIL_TINT;
+        for b in 0..BRICK_COUNT {
+            let holds = |slab: &[f32], value: f32| Self::brick_holds(slab, b, value);
+            let velocity_rest =
+                holds(&self.u_x, 0.0) && holds(&self.u_y, 0.0) && holds(&self.u_z, 0.0);
+            let velocity_rest_scratch = holds(&self.u_x_scratch, 0.0)
+                && holds(&self.u_y_scratch, 0.0)
+                && holds(&self.u_z_scratch, 0.0);
+            let scalar_rest = holds(&self.density, 0.0)
+                && holds(&self.glow, 0.0)
+                && holds(&self.tint_r, tail.x)
+                && holds(&self.tint_g, tail.y)
+                && holds(&self.tint_b, tail.z);
+            let scalar_rest_scratch = holds(&self.density_scratch, 0.0)
+                && holds(&self.glow_scratch, 0.0)
+                && holds(&self.tint_r_scratch, tail.x)
+                && holds(&self.tint_g_scratch, tail.y)
+                && holds(&self.tint_b_scratch, tail.z);
+            let occupied = Self::brick_occupied(&self.density, &self.glow, b);
+            let occupied_scratch =
+                Self::brick_occupied(&self.density_scratch, &self.glow_scratch, b);
+            let vorticity_rest = holds(&self.vorticity_x, 0.0)
+                && holds(&self.vorticity_y, 0.0)
+                && holds(&self.vorticity_z, 0.0)
+                && holds(&self.vorticity_mag, 0.0);
+
+            let state = &mut self.bricks;
+            state.velocity_rest.set(b, velocity_rest);
+            state.velocity_rest_scratch.set(b, velocity_rest_scratch);
+            state.scalar_rest.set(b, scalar_rest);
+            state.scalar_rest_scratch.set(b, scalar_rest_scratch);
+            state.occupied.set(b, occupied);
+            state.occupied_scratch.set(b, occupied_scratch);
+            state.vorticity_rest.set(b, vorticity_rest);
+        }
+        for iz in 0..GRID_NZ {
+            for iy in 0..GRID_NY {
+                for sx in 0..BRICKS_X {
+                    let (density_rest, velocity_rest) =
+                        self.segment_byte_rest(Self::index(sx * BRICK_NX, iy, iz));
+                    let s = segment_index(sx, iy, iz);
+                    self.bricks.density_bytes_rest.set(s, density_rest);
+                    self.bricks.velocity_bytes_rest.set(s, velocity_rest);
+                }
+            }
+        }
+    }
+}
+
+/// Per-step constants of the scalar advection pass, shared by every voxel.
+#[derive(Clone, Copy)]
+struct ScalarAdvection {
+    /// Density decay factor `exp(-dissipation * dt)`.
+    decay: f32,
+    /// Glow decay factor `exp(-max(1.8 dissipation, 1.65) dt)`.
+    glow_decay: f32,
+    /// Dissipation rate, per second; the haze floor applies only when it is positive.
+    dissipation: f32,
+    /// Tint written into voxels left empty.
+    c_tail: Vec3,
+    /// Buoyancy velocity added to the fluid velocity, world units per second.
+    buoyancy_vel: Vec3,
+    /// Clamped step, seconds.
+    dt: f32,
+}
+
+/// Running metrics of the packing pass, folded voxel by voxel in linear order.
+struct PackMetrics {
+    total_density: f32,
+    peak_density: f32,
+    max_speed_sq: f32,
+    max_vorticity_sq: f32,
 }
 
 /// Per-source quantities shared by every voxel a bubble touches during one injection pass.
@@ -1346,6 +1772,7 @@ fn emission_weight(frame: &SourceFrame<'_>, voxel: &VoxelOffset) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use super::super::bricks::SEGMENT_COUNT;
     use super::*;
 
     #[test]
@@ -1444,9 +1871,11 @@ mod tests {
     }
 
     /// The precondition of the ping-pong swaps in `advect_velocity` and
-    /// `advect_density_and_tint`: each pass writes every voxel of every scratch slab it swaps
-    /// in, so no stale value from an earlier step can surface in a field. The scratch slabs are
-    /// filled with a sentinel before each pass; after the swap the fields must hold none of it.
+    /// `advect_density_and_tint`: each pass leaves every voxel of every scratch slab it swaps
+    /// in holding this step's value, so no stale value from an earlier step can surface in a
+    /// field. The scratch slabs are filled with a sentinel before each pass (and the brick flags
+    /// rescanned, so they describe the poisoned slabs, as they would any other content); after
+    /// the swap the fields must hold none of it.
     #[test]
     fn advection_passes_write_every_scratch_voxel() -> Result<(), SmogError> {
         let mut grid = SmogGrid3d::new(Vec3::new(-6.5, 0.0, -4.5), Vec3::new(6.5, 4.0, 4.5))?;
@@ -1479,6 +1908,7 @@ mod tests {
         let face = SmogGrid3d::index(GRID_NX - 1, 5, 30);
         grid.u_x[corner] = 0.5;
         grid.u_z[face] = -0.5;
+        grid.rescan_brick_flags();
         let moving = grid.u_x.iter().filter(|v| **v != 0.0).count();
         assert!(
             moving > 0 && moving < TOTAL_VOXELS,
@@ -1497,6 +1927,7 @@ mod tests {
         ] {
             poison(slab);
         }
+        grid.rescan_brick_flags();
         grid.advect_velocity(config.velocity_damping, 1.0 / 60.0);
         assert_unpoisoned("u_x", &grid.u_x);
         assert_unpoisoned("u_y", &grid.u_y);
@@ -1511,6 +1942,7 @@ mod tests {
         ] {
             poison(slab);
         }
+        grid.rescan_brick_flags();
         grid.advect_density_and_tint(config.buoyancy, config.dissipation_rate, 1.0 / 60.0);
         assert_unpoisoned("density", &grid.density);
         assert_unpoisoned("glow", &grid.glow);
@@ -1604,6 +2036,8 @@ mod tests {
                 }
             }
         }
+        // Direct slab writes bypass the brick bookkeeping; rescan as every whole-grid write does.
+        grid.rescan_brick_flags();
 
         let pre_core_density = grid.sample_density_trilinear(center);
         assert!(
@@ -1655,6 +2089,319 @@ mod tests {
             "Vorticity behind moving bubble wake must be strictly non-zero (got {wake_vort})"
         );
 
+        Ok(())
+    }
+
+    // ---- Brick sparsity (C-18 WP8): differential and flag invariant tests ----
+
+    /// Steps of the scripted sequence both brick tests run.
+    const SCRIPT_STEPS: usize = 600;
+
+    /// Frame times the script cycles through, seconds: from 1/240 s to 0.07 s (above the solver's
+    /// 0.05 s clamp), and a zero step, which returns before touching the grid.
+    const SCRIPT_DTS: [f32; 8] = [
+        1.0 / 240.0,
+        1.0 / 144.0,
+        1.0 / 60.0,
+        1.0 / 30.0,
+        0.07,
+        1.0 / 60.0,
+        0.0,
+        1.0 / 90.0,
+    ];
+
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "script step and source counts are small"
+    )]
+    fn script_source(k: usize, i: usize, speed: f32, emission: f32) -> BubbleSmogSource {
+        let phase = i as f32 * 0.73 + k as f32 * 0.05;
+        // Orbits of different radii around the grid's centre, at heights near the floor.
+        let radius = 1.0 + (i % 5) as f32 * 0.9;
+        let position = Vec3::new(
+            radius * phase.cos(),
+            0.4 + (i % 3) as f32 * 0.6,
+            radius * 0.7 * phase.sin(),
+        );
+        let heading = Vec3::new(-phase.sin(), 0.0, 0.7 * phase.cos()).normalize_or_zero();
+        BubbleSmogSource {
+            position,
+            velocity: heading * speed,
+            radius: 0.35 + (i % 4) as f32 * 0.1,
+            team_color: Vec3::new(0.2 + (i % 3) as f32 * 0.3, 0.8, 0.4),
+            emission_strength: emission,
+            influence_strength: 1.0 + (i % 2) as f32,
+        }
+    }
+
+    /// The sources of script step `k`: sources appear, move fast, stop; more than 32, then
+    /// fewer; stationary sources and a source with no emission.
+    fn script_sources(k: usize, sources: &mut Vec<BubbleSmogSource>) {
+        sources.clear();
+        match k {
+            0..120 => {
+                sources.extend((0..6).map(|i| script_source(k, i, 2.5, 2.0)));
+                if k >= 30 {
+                    // Fast sources: a back-trace of several voxels per step.
+                    sources.extend((6..10).map(|i| script_source(k, i, 11.0, 1.5)));
+                }
+            }
+            180..260 => sources.extend((0..40).map(|i| script_source(k, i, 3.0, 1.0))),
+            260..330 => {
+                sources.extend((0..10).map(|i| script_source(k, i, 1.5, 1.5)));
+                sources.extend((10..12).map(|i| script_source(k, i, 0.0, 1.5)));
+                sources.push(script_source(k, 12, 4.0, 0.0));
+            }
+            400..SCRIPT_STEPS => sources.extend((0..8).map(|i| script_source(k, i, 6.0, 2.5))),
+            _ => {}
+        }
+    }
+
+    /// The configuration of script step `k`: buoyancy up, down and zero; dissipation zero and
+    /// positive.
+    fn script_config(k: usize) -> SmogConfig {
+        let defaults = SmogConfig::default();
+        SmogConfig {
+            buoyancy: match k {
+                0..200 => 0.45,
+                200..400 => -0.45,
+                _ => 0.0,
+            },
+            dissipation_rate: if (260..400).contains(&k) {
+                0.0
+            } else {
+                defaults.dissipation_rate
+            },
+            ..defaults
+        }
+    }
+
+    /// Bounds changes before script step `k`: two quantized shifts (one along y), a full
+    /// clear, a small `set_bounds` that keeps the field, and a shift wider than the grid.
+    #[expect(clippy::cast_precision_loss, reason = "voxel counts are small")]
+    fn script_bounds(k: usize, grid: &mut SmogGrid3d) {
+        let cell = (grid.bounds_max() - grid.bounds_min())
+            / Vec3::new(GRID_NX as f32, GRID_NY as f32, GRID_NZ as f32);
+        let extent = grid.bounds_max() - grid.bounds_min();
+        let shift_by = |grid: &mut SmogGrid3d, voxels: Vec3| {
+            let new_min = grid.bounds_min() + voxels * cell;
+            grid.set_bounds_quantized(new_min, new_min + extent);
+        };
+        match k {
+            100 | 200 => shift_by(grid, Vec3::new(3.0, 0.0, -2.0)),
+            300 => shift_by(grid, Vec3::new(-4.0, 1.0, 5.0)),
+            360 => grid.clear(),
+            450 => {
+                let delta = Vec3::new(0.2, 0.0, 0.1);
+                grid.set_bounds(grid.bounds_min() + delta, grid.bounds_max() + delta);
+            }
+            520 => shift_by(grid, Vec3::new(100.0, 0.0, 0.0)),
+            _ => {}
+        }
+    }
+
+    /// Runs the script on `grids`, calling `check(step, grids, metrics)` after every step.
+    fn run_script(
+        grids: &mut [SmogGrid3d],
+        mut check: impl FnMut(usize, &[SmogGrid3d], &[SmogStepMetrics]),
+    ) -> Result<(), SmogError> {
+        let mut sources = Vec::new();
+        let mut metrics = Vec::with_capacity(grids.len());
+        for k in 0..SCRIPT_STEPS {
+            script_sources(k, &mut sources);
+            let config = script_config(k);
+            metrics.clear();
+            for grid in grids.iter_mut() {
+                script_bounds(k, grid);
+                metrics.push(grid.step(&sources, &config, SCRIPT_DTS[k % SCRIPT_DTS.len()])?);
+            }
+            check(k, grids, &metrics);
+        }
+        Ok(())
+    }
+
+    fn script_grid() -> Result<SmogGrid3d, SmogError> {
+        SmogGrid3d::new(Vec3::new(-6.5, 0.0, -4.5), Vec3::new(6.5, 4.0, 4.5))
+    }
+
+    /// Every `f32` slab of the grid, fields and scratch slabs, by name.
+    fn named_slabs(grid: &SmogGrid3d) -> [(&'static str, &[f32]); 20] {
+        [
+            ("u_x", &grid.u_x),
+            ("u_y", &grid.u_y),
+            ("u_z", &grid.u_z),
+            ("u_x_scratch", &grid.u_x_scratch),
+            ("u_y_scratch", &grid.u_y_scratch),
+            ("u_z_scratch", &grid.u_z_scratch),
+            ("density", &grid.density),
+            ("density_scratch", &grid.density_scratch),
+            ("glow", &grid.glow),
+            ("glow_scratch", &grid.glow_scratch),
+            ("tint_r", &grid.tint_r),
+            ("tint_g", &grid.tint_g),
+            ("tint_b", &grid.tint_b),
+            ("tint_r_scratch", &grid.tint_r_scratch),
+            ("tint_g_scratch", &grid.tint_g_scratch),
+            ("tint_b_scratch", &grid.tint_b_scratch),
+            ("vorticity_x", &grid.vorticity_x),
+            ("vorticity_y", &grid.vorticity_y),
+            ("vorticity_z", &grid.vorticity_z),
+            ("vorticity_mag", &grid.vorticity_mag),
+        ]
+    }
+
+    fn metric_bits(m: &SmogStepMetrics) -> ([u32; 4], usize) {
+        (
+            [
+                m.total_density.to_bits(),
+                m.peak_density.to_bits(),
+                m.max_speed.to_bits(),
+                m.max_vorticity.to_bits(),
+            ],
+            m.active_sources,
+        )
+    }
+
+    /// The sparse solver equals the dense one bit for bit on every slab (tint included, which
+    /// the goldens never hash directly), both byte buffers and the metrics, after every step of
+    /// a script that hits every write path: sources appearing, moving fast and stopping, more
+    /// than 32 sources then fewer, buoyancy up and down, dissipation zero and positive, `dt`
+    /// from 1/240 s to 0.07 s, quantized bounds shifts, a full clear and a clearing shift.
+    #[test]
+    fn sparse_solver_matches_dense_solver_bit_for_bit() -> Result<(), SmogError> {
+        let sparse = script_grid()?;
+        let mut dense = script_grid()?;
+        dense.bricks.force_dense = true;
+        let mut grids = [sparse, dense];
+        let mut skipped_somewhere = false;
+        run_script(&mut grids, |k, grids, metrics| {
+            let (sparse, dense) = (&grids[0], &grids[1]);
+            for ((name, a), (_, b)) in named_slabs(sparse).into_iter().zip(named_slabs(dense)) {
+                if let Some(i) = (0..TOTAL_VOXELS).find(|&i| a[i].to_bits() != b[i].to_bits()) {
+                    assert_eq!(
+                        a[i].to_bits(),
+                        b[i].to_bits(),
+                        "step {k}: {name}[{i}] differs: sparse {}, dense {}",
+                        a[i],
+                        b[i]
+                    );
+                }
+            }
+            assert!(
+                sparse.rgba_density_bytes == dense.rgba_density_bytes,
+                "step {k}: density bytes"
+            );
+            assert!(
+                sparse.rgba_velocity_bytes == dense.rgba_velocity_bytes,
+                "step {k}: velocity bytes"
+            );
+            assert_eq!(
+                metric_bits(&metrics[0]),
+                metric_bits(&metrics[1]),
+                "step {k}: metrics"
+            );
+            assert_eq!(sparse.bounds_min(), dense.bounds_min(), "step {k}: bounds");
+            skipped_somewhere |= (0..BRICK_COUNT).any(|b| sparse.bricks.velocity_rest.get(b));
+        })?;
+        assert!(
+            skipped_somewhere,
+            "the script must leave some brick at rest"
+        );
+        Ok(())
+    }
+
+    /// Asserts every promise of the grid's flags: a brick or segment flagged at rest holds the
+    /// rest value bit for bit, and a brick flagged unoccupied holds no density or glow of
+    /// `1e-6` or more.
+    fn assert_flags_hold(k: usize, grid: &SmogGrid3d) {
+        let state = &grid.bricks;
+        let tail = [SMOG_TAIL_TINT.x, SMOG_TAIL_TINT.y, SMOG_TAIL_TINT.z].map(f32::to_bits);
+        for b in 0..BRICK_COUNT {
+            let [xs, ys, zs] = brick_voxels(b);
+            for iz in zs {
+                for iy in ys.clone() {
+                    for ix in xs.clone() {
+                        let i = SmogGrid3d::index(ix, iy, iz);
+                        let zero = |slabs: [&[f32]; 3]| slabs.iter().all(|s| s[i].to_bits() == 0);
+                        let scalars_rest = |d: &[f32], g: &[f32], t: [&[f32]; 3]| {
+                            d[i].to_bits() == 0
+                                && g[i].to_bits() == 0
+                                && t.iter().zip(tail).all(|(s, want)| s[i].to_bits() == want)
+                        };
+                        let unoccupied = |d: &[f32], g: &[f32]| d[i] < 1e-6 && g[i] < 1e-6;
+                        let at = format!("step {k}: brick {b}, voxel ({ix}, {iy}, {iz})");
+                        if state.velocity_rest.get(b) {
+                            assert!(zero([&grid.u_x, &grid.u_y, &grid.u_z]), "{at}: velocity");
+                        }
+                        if state.velocity_rest_scratch.get(b) {
+                            let s = [&*grid.u_x_scratch, &grid.u_y_scratch, &grid.u_z_scratch];
+                            assert!(zero(s), "{at}: velocity scratch");
+                        }
+                        if state.scalar_rest.get(b) {
+                            let t = [&*grid.tint_r, &grid.tint_g, &grid.tint_b];
+                            assert!(scalars_rest(&grid.density, &grid.glow, t), "{at}: scalars");
+                        }
+                        if state.scalar_rest_scratch.get(b) {
+                            let t = [
+                                &*grid.tint_r_scratch,
+                                &grid.tint_g_scratch,
+                                &grid.tint_b_scratch,
+                            ];
+                            let ok = scalars_rest(&grid.density_scratch, &grid.glow_scratch, t);
+                            assert!(ok, "{at}: scalars scratch");
+                        }
+                        if !state.occupied.get(b) {
+                            assert!(unoccupied(&grid.density, &grid.glow), "{at}: occupied");
+                        }
+                        if !state.occupied_scratch.get(b) {
+                            let ok = unoccupied(&grid.density_scratch, &grid.glow_scratch);
+                            assert!(ok, "{at}: occupied scratch");
+                        }
+                        if state.vorticity_rest.get(b) {
+                            let v = [&*grid.vorticity_x, &grid.vorticity_y, &grid.vorticity_z];
+                            let ok = zero(v) && grid.vorticity_mag[i].to_bits() == 0;
+                            assert!(ok, "{at}: vorticity");
+                        }
+                        let s = segment_index(ix / BRICK_NX, iy, iz);
+                        let bytes = i * BYTES_PER_VOXEL..(i + 1) * BYTES_PER_VOXEL;
+                        if state.density_bytes_rest.get(s) {
+                            assert_eq!(
+                                grid.rgba_density_bytes[bytes.clone()][3],
+                                0,
+                                "{at}: density bytes"
+                            );
+                        }
+                        if state.velocity_bytes_rest.get(s) {
+                            let quad = &grid.rgba_velocity_bytes[bytes];
+                            assert_eq!(quad, VELOCITY_REST_BYTES, "{at}: velocity bytes");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// After every step of the script, every flag of the sparse grid keeps its promise, bit for
+    /// bit, and the sparse rules actually fire (some brick of every kind is flagged at rest).
+    #[test]
+    fn brick_flags_keep_their_promises_after_every_step() -> Result<(), SmogError> {
+        let mut grids = [script_grid()?];
+        assert_flags_hold(0, &grids[0]);
+        let mut fired = [false; 4];
+        run_script(&mut grids, |k, grids, _| {
+            let grid = &grids[0];
+            assert_flags_hold(k, grid);
+            let state = &grid.bricks;
+            fired[0] |= (0..BRICK_COUNT).any(|b| state.velocity_rest.get(b));
+            fired[1] |= (0..BRICK_COUNT).any(|b| state.scalar_rest.get(b));
+            fired[2] |= (0..BRICK_COUNT).any(|b| state.vorticity_rest.get(b));
+            fired[3] |= (0..SEGMENT_COUNT)
+                .any(|s| state.density_bytes_rest.get(s) && state.velocity_bytes_rest.get(s));
+        })?;
+        assert_eq!(
+            fired, [true; 4],
+            "velocity, scalar, vorticity and byte flags all fire"
+        );
         Ok(())
     }
 }
