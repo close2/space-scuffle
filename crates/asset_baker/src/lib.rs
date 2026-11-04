@@ -13,7 +13,10 @@
 //!   catalog is compiled into the baker, so adding a unit needs no rebuild (charter §3.3).
 //! - [`error`]: Strongly-typed error domain via [`BakerError`].
 //! - [`manifest`]: Structural layout and slice metadata via [`FlipbookAtlasMeta`].
-//! - [`ffmpeg_importer`]: Transcoding, center-cropping, scaling, and strip packing via external FFmpeg.
+//! - [`ffmpeg_importer`]: Transcoding, framing (centre crop or letterbox), scaling, and strip
+//!   packing via external FFmpeg.
+//! - [`framing`]: The framing policy per render shape (`media_style.ron`), the bar colour
+//!   measured from each clip's border, the edge feather and the square composer.
 //! - [`veo_client`]: Strongly-typed Google Gemini and Vertex AI Veo Video Generation client.
 //! - [`prompts`]: Veo prompts composed from data (`media_style.ron`) and validated before spend.
 //! - [`veo_plan`]: Which clips a Veo run reuses, resumes or pays for: exactly the actions the
@@ -36,6 +39,7 @@ pub mod budget;
 pub mod clip_review;
 pub mod error;
 pub mod ffmpeg_importer;
+pub mod framing;
 pub mod ledger;
 pub mod manifest;
 pub mod media;
@@ -52,9 +56,10 @@ pub mod veo_run;
 pub use assets_root::{load_catalogs, resolve_assets_root};
 pub use error::BakerError;
 pub use ffmpeg_importer::{
-    bake_multi_action_videos, bake_multi_action_videos_with_states, extract_and_pack_video,
-    probe_video, FfmpegExtractConfig, VideoProbe,
+    bake_framed_action_videos, bake_multi_action_videos, bake_multi_action_videos_with_states,
+    extract_and_pack_video, probe_video, FfmpegExtractConfig, FrameSpec, FramedBake, VideoProbe,
 };
+pub use framing::{BakeFraming, FramingPolicy};
 pub use manifest::{ActionSlice, FlipbookAtlasMeta, FlipbookLayout};
 pub use procedural_generator::{
     ensure_outside_runtime_assets, generate_procedural_atlas, generate_procedural_dome_atlas,
@@ -78,7 +83,8 @@ pub use terrain_theme::{
 pub use veo_client::{
     resolve_credentials, resolve_credentials_from, validate_catalog_slug, VeoClient,
     VeoCredentials, VeoGenerateRequest, VeoGenerateVideoResponse, VeoImageInput, VeoInstance,
-    VeoOperation, VeoParameters, VeoVideoOutput, DEFAULT_VEO_MODEL,
+    VeoOperation, VeoParameters, VeoRequestSettings, VeoVideoOutput, DEFAULT_VEO_MODEL,
+    VEO_REQUEST_FILE,
 };
 pub use veo_plan::{plan_run, RunPlan, VeoDirs};
 pub use veo_run::{execute_plan, RunContext, RunSummary};
@@ -178,7 +184,8 @@ pub fn bake_starter_units_from_real_video(
 
 /// Bakes the standard Space Scuffle concept video into a Texture2DArray vertical strip and RON manifest.
 ///
-/// Uses default production settings: 256x256 resolution, 24 FPS temporal downsampling,
+/// Uses default production settings: a centre crop ([`BakeFraming::CenterCrop`]) at 256x256
+/// resolution, 24 FPS temporal downsampling,
 /// and maps the entire video sequence to [`sim_types::enums::AnimState::Idle`], the only
 /// action listed in the manifest.
 ///
@@ -207,7 +214,9 @@ pub fn bake_concept_video(
     )
 }
 
-/// Bakes an arbitrary user video into a vertical strip PNG and `.flipbook.ron` manifest.
+/// Bakes an arbitrary user video into a vertical strip PNG and `.flipbook.ron` manifest, with
+/// a centre crop ([`BakeFraming::CenterCrop`]); identity bakes choose their framing from data
+/// through `bake-unit-videos` instead.
 ///
 /// # Arguments
 /// - `video_path`: Input video file on disk.

@@ -225,7 +225,19 @@ impl RunDirs {
     /// `generate-veo` for `units` with every directory set, the shim as curl, and `extra` args.
     #[must_use]
     pub fn generate(&self, shim: &CurlShim, units: &[&str], extra: &[&str]) -> Output {
-        let mut command = baker();
+        self.generate_in(&shipped_assets(), shim, units, extra)
+    }
+
+    /// As [`Self::generate`], with the asset bundle `bundle` instead of the shipped one.
+    #[must_use]
+    pub fn generate_in(
+        &self,
+        bundle: &Path,
+        shim: &CurlShim,
+        units: &[&str],
+        extra: &[&str],
+    ) -> Output {
+        let mut command = baker_with_assets(bundle);
         command.arg("generate-veo");
         for unit in units {
             command.args(["--unit", unit]);
