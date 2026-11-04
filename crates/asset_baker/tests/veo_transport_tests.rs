@@ -6,7 +6,7 @@
 #![cfg(unix)]
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
-use asset_baker::veo_client::{VeoClient, VeoCredentials, VeoOperation};
+use asset_baker::veo_client::{GenerationImages, VeoClient, VeoCredentials, VeoOperation};
 use asset_baker::BakerError;
 use common::{CurlShim, FakeServer, Reply};
 use serde_json::json;
@@ -94,7 +94,7 @@ fn b2_key_is_never_in_argv_for_any_gemini_request() {
     let client = client(GEMINI_KEY, &shim);
 
     let operation = client
-        .initiate_generation("prompt", None)
+        .initiate_generation("prompt", GenerationImages::none())
         .expect("initiate");
     client.poll_operation(&operation.name).expect("poll");
     let dir = tempfile::tempdir().expect("tempdir");
@@ -135,7 +135,7 @@ fn b2_key_is_never_in_argv_for_any_vertex_request() {
     let client = client(VERTEX_KEY, &shim);
 
     let operation = client
-        .initiate_generation("prompt", None)
+        .initiate_generation("prompt", GenerationImages::none())
         .expect("initiate");
     client.poll_operation(&operation.name).expect("poll");
 
@@ -156,7 +156,7 @@ fn b2_request_body_reaches_the_server_unchanged() {
     let shim = CurlShim::new(&server);
 
     client(GEMINI_KEY, &shim)
-        .initiate_generation("a prompt with \"quotes\"", None)
+        .initiate_generation("a prompt with \"quotes\"", GenerationImages::none())
         .expect("initiate");
 
     let requests = server.requests();
@@ -170,7 +170,7 @@ fn b2_curlrc_cannot_reenable_redirects() {
     let shim = CurlShim::new(&server);
 
     client(GEMINI_KEY, &shim)
-        .initiate_generation("prompt", None)
+        .initiate_generation("prompt", GenerationImages::none())
         .expect("initiate");
 
     assert_eq!(
@@ -302,12 +302,12 @@ fn b2_a_key_with_config_syntax_cannot_inject_curl_options() {
 
     let quoted = r#"key"with\quote"#;
     client(quoted, &shim)
-        .initiate_generation("prompt", None)
+        .initiate_generation("prompt", GenerationImages::none())
         .expect("quoting must keep a printable key intact");
     assert!(server.requests()[0].header_contains(&format!("x-goog-api-key: {quoted}")));
 
     let injected = "key\"\nurl = \"https://evil.example.test/";
-    let result = client(injected, &shim).initiate_generation("prompt", None);
+    let result = client(injected, &shim).initiate_generation("prompt", GenerationImages::none());
     assert!(
         matches!(result, Err(BakerError::InvalidApiKey)),
         "expected InvalidApiKey, got {result:?}"
@@ -355,7 +355,7 @@ fn b2_api_error_text_never_contains_the_key() {
     let shim = CurlShim::new(&server);
 
     let error = client(GEMINI_KEY, &shim)
-        .initiate_generation("prompt", None)
+        .initiate_generation("prompt", GenerationImages::none())
         .expect_err("API error");
 
     assert!(!error.to_string().contains(GEMINI_KEY), "{error}");
@@ -370,6 +370,6 @@ fn b2_missing_curl_is_a_typed_error() {
     })
     .with_curl_path(Path::new("/nonexistent/curl"));
 
-    let result = client.initiate_generation("prompt", None);
+    let result = client.initiate_generation("prompt", GenerationImages::none());
     assert!(matches!(result, Err(BakerError::Io { .. })), "{result:?}");
 }

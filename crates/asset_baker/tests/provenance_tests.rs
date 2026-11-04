@@ -457,6 +457,7 @@ fn veo_origin(line: usize) -> ClipOrigin {
         operation: "operations/fixture-1".into(),
         prompt_sha256: sha256_hex(b"prompt"),
         keyframe_sha256: None,
+        last_frame_sha256: None,
         ledger_line: line,
     }
 }
@@ -587,6 +588,96 @@ fn a_clip_rejected_in_review_is_named() {
             }
         )
     });
+}
+
+/// The `request_started` and `operation_named` records of the request that produced
+/// `operation`, with the end frame it sent.
+fn started_request(
+    fixture: &Fixture,
+    state: AnimState,
+    operation: &str,
+    last_frame_sha256: Option<String>,
+) -> [LedgerRecord; 2] {
+    let stamp = |event| LedgerRecord {
+        time_utc: "2026-11-04T00:00:00Z".into(),
+        unix_seconds: 1_793_750_400,
+        run_id: "fixture-run".into(),
+        event,
+    };
+    [
+        stamp(LedgerEvent::RequestStarted {
+            request_id: "fixture-run/1".into(),
+            slug: fixture.slug.clone(),
+            state,
+            model: "veo-test-model".into(),
+            mode: asset_baker::ledger::ApiMode::VertexExpress,
+            prompt_sha256: sha256_hex(b"prompt"),
+            prompt: "prompt".into(),
+            keyframe_sha256: last_frame_sha256.clone(),
+            last_frame_sha256,
+            parameters: asset_baker::VeoParameters::default(),
+        }),
+        stamp(LedgerEvent::OperationNamed {
+            request_id: "fixture-run/1".into(),
+            slug: fixture.slug.clone(),
+            state,
+            model: "veo-test-model".into(),
+            operation: operation.into(),
+        }),
+    ]
+}
+
+#[test]
+fn an_end_frame_that_differs_from_its_request_is_named() {
+    let pin = sha256_hex(b"pin");
+    for (recorded, requested, verified) in [
+        (Some(pin.clone()), Some(pin.clone()), true),
+        (None, None, true),
+        (Some(pin.clone()), None, false),
+        (None, Some(pin.clone()), false),
+    ] {
+        let mut fixture = Fixture::new(&combat_identity(&catalog()));
+        let ClipOrigin::Veo {
+            model,
+            operation,
+            prompt_sha256,
+            ledger_line,
+            ..
+        } = veo_origin(3)
+        else {
+            panic!("built as a Veo origin")
+        };
+        fixture.origins.insert(
+            AnimState::Walk,
+            ClipOrigin::Veo {
+                model,
+                operation,
+                prompt_sha256,
+                keyframe_sha256: recorded.clone(),
+                last_frame_sha256: recorded.clone(),
+                ledger_line,
+            },
+        );
+        fixture.seal();
+        let [started, named] =
+            started_request(&fixture, AnimState::Walk, "operations/fixture-1", requested);
+        let line = downloaded(&fixture, AnimState::Walk, "operations/fixture-1");
+        let ledger = write_ledger(fixture.root.path(), &[started, named, line]);
+        let entry = fixture.entry(&fixture.audit(&fixture.required(), Some(&ledger)));
+        if verified {
+            assert_eq!(entry.status, MediaAuditStatus::Verified, "{entry:?}");
+        } else {
+            assert_unverified(&entry, |reason| {
+                matches!(
+                    reason,
+                    UnverifiedReason::LastFrameMismatch {
+                        state: AnimState::Walk,
+                        ..
+                    }
+                )
+            });
+        }
+    }
 }
 
 // --- Strict audit over the required set -------------------------------------------------------

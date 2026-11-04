@@ -27,7 +27,9 @@
 //! - A clip is named by its file name within the videos directory, never by a path, so a
 //!   record cannot point outside the bundle.
 //! - `LegacyVeo` is real Veo output whose request was not recorded; it says so instead of
-//!   inventing an operation. `Veo` cites the ledger line that downloaded the clip.
+//!   inventing an operation. `Veo` cites the ledger line that downloaded the clip, and its end
+//!   frame (`last_frame_sha256`, plan `2026-11-04-veo-seamless-loops.md` D-4) must equal the
+//!   one the request's `request_started` line recorded.
 //! - Written files end every line in `\n` on every host.
 //! - Fields added after format version 1 (`framing`, `bar_rgb`) are defaulted, so every
 //!   version 1 file still loads and says truthfully what it was: a centre crop without bars.
@@ -151,6 +153,11 @@ pub enum ClipOrigin {
         prompt_sha256: String,
         /// SHA-256 of the keyframe image sent, if any.
         keyframe_sha256: Option<String>,
+        /// SHA-256 of the end frame sent as `lastFrame`, if any, as the request's ledger line
+        /// records it; the strict audit checks the two agree. Absent in records written before
+        /// end frames existed.
+        #[serde(default)]
+        last_frame_sha256: Option<String>,
         /// One-based line of the ledger's `downloaded` record of this clip.
         ledger_line: usize,
     },
@@ -415,8 +422,8 @@ pub fn ffmpeg_version(ffmpeg: &Path) -> Result<String, ProvenanceError> {
 }
 
 /// The origin of a clip with SHA-256 `clip_sha256` that the ledger downloaded for `slug`'s
-/// `state`: the last such `downloaded` line, with the model and prompt of the request whose
-/// operation produced it. `None` if the ledger never downloaded these bytes for that clip.
+/// `state`: the last such `downloaded` line, with the model, prompt and pictures of the request
+/// whose operation produced it. `None` if the ledger never downloaded these bytes for that clip.
 #[must_use]
 pub fn veo_origin_from_ledger(
     ledger: &[NumberedRecord],
@@ -440,6 +447,27 @@ pub fn veo_origin_from_ledger(
                 }
                 _ => None,
             })?;
+    match started_request(ledger, &operation)? {
+        LedgerEvent::RequestStarted {
+            model,
+            prompt_sha256,
+            keyframe_sha256,
+            last_frame_sha256,
+            ..
+        } => Some(ClipOrigin::Veo {
+            model: model.clone(),
+            operation,
+            prompt_sha256: prompt_sha256.clone(),
+            keyframe_sha256: keyframe_sha256.clone(),
+            last_frame_sha256: last_frame_sha256.clone(),
+            ledger_line: line,
+        }),
+        _ => None,
+    }
+}
+
+/// The `request_started` event of the request whose operation the ledger named `operation`.
+fn started_request<'a>(ledger: &'a [NumberedRecord], operation: &str) -> Option<&'a LedgerEvent> {
     let request_id = ledger
         .iter()
         .find_map(|numbered| match &numbered.record.event {
@@ -447,27 +475,12 @@ pub fn veo_origin_from_ledger(
                 operation: named,
                 request_id,
                 ..
-            } if *named == operation => Some(request_id.clone()),
+            } if named == operation => Some(request_id.as_str()),
             _ => None,
         })?;
-    ledger
-        .iter()
-        .find_map(|numbered| match &numbered.record.event {
-            LedgerEvent::RequestStarted {
-                request_id: started,
-                model,
-                prompt_sha256,
-                keyframe_sha256,
-                ..
-            } if *started == request_id => Some(ClipOrigin::Veo {
-                model: model.clone(),
-                operation: operation.clone(),
-                prompt_sha256: prompt_sha256.clone(),
-                keyframe_sha256: keyframe_sha256.clone(),
-                ledger_line: line,
-            }),
-            _ => None,
-        })
+    ledger.iter().map(|numbered| &numbered.record.event).find(
+        |event| matches!(event, LedgerEvent::RequestStarted { request_id: started, .. } if started == request_id),
+    )
 }
 
 // --- The required set ------------------------------------------------------------------------
@@ -696,6 +709,16 @@ pub enum UnverifiedReason {
         /// The state.
         state: AnimState,
     },
+    /// A `Veo` origin's end frame (`last_frame_sha256`) differs from the one the request's
+    /// `request_started` line recorded.
+    LastFrameMismatch {
+        /// The state.
+        state: AnimState,
+        /// The provenance record's value.
+        recorded: Option<String>,
+        /// The ledger's value, `None` also when the request's line was not found.
+        requested: Option<String>,
+    },
 }
 
 impl std::fmt::Display for UnverifiedReason {
@@ -755,6 +778,14 @@ impl std::fmt::Display for UnverifiedReason {
             Self::RejectedInReview { state } => {
                 write!(f, "{state:?}: the clip was rejected in review")
             }
+            Self::LastFrameMismatch {
+                state,
+                recorded,
+                requested,
+            } => write!(
+                f,
+                "{state:?}: the recorded end frame {recorded:?} differs from the request's {requested:?}"
+            ),
         }
     }
 }
@@ -1015,6 +1046,7 @@ fn check_origin(
         }
         ClipOrigin::Veo {
             operation,
+            last_frame_sha256,
             ledger_line,
             ..
         } => {
@@ -1036,6 +1068,19 @@ fn check_origin(
                         reasons.push(mismatch(problem));
                     }
                 }
+            }
+            let requested = match started_request(ledger, operation) {
+                Some(LedgerEvent::RequestStarted {
+                    last_frame_sha256, ..
+                }) => last_frame_sha256.clone(),
+                _ => None,
+            };
+            if requested != *last_frame_sha256 {
+                reasons.push(UnverifiedReason::LastFrameMismatch {
+                    state,
+                    recorded: last_frame_sha256.clone(),
+                    requested,
+                });
             }
             if ledger.iter().any(|numbered| {
                 matches!(&numbered.record.event, LedgerEvent::RejectedInReview {
@@ -1108,7 +1153,8 @@ mod tests {
                         model: "m".into(),
                         operation: "o".into(),
                         prompt_sha256: "d".repeat(64),
-                        keyframe_sha256: None,
+                        keyframe_sha256: Some("e".repeat(64)),
+                        last_frame_sha256: Some("e".repeat(64)),
                         ledger_line: 3,
                     },
                     bar_rgb: Some([44, 48, 74]),

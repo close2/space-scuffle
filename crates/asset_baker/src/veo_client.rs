@@ -9,6 +9,13 @@
 //! every start request sends are data, [`VeoRequestSettings`] in `assets/media/veo_request.ron`. Which clips a run pays for,
 //! and in what order, is decided by `veo_plan` and carried out by `veo_run`.
 //!
+//! # Start and End Frames
+//! A start request carries up to two pictures inline ([`GenerationImages`]): the start frame as
+//! `instances[0].image` and the end frame as `instances[0].lastFrame`, Veo 3.1's
+//! first-and-last-frame mode (plan `2026-11-04-veo-seamless-loops.md`, D-2). Each picture's
+//! MIME type is read from its bytes, and only PNG and JPEG are sent. An end frame is sent only
+//! with a start frame and only to Vertex AI; anything else is refused before a request exists.
+//!
 //! # Dual-API Support (Gemini API & Vertex AI Express Mode)
 //! - **Vertex AI Express Mode (`AQ.` prefix):** Uses the Vertex AI endpoints with API key
 //!   authentication (`projects/{project}/locations/us-central1/publishers/google/models/{model}`).
@@ -121,9 +128,54 @@ pub struct VeoImageInput {
 pub struct VeoInstance {
     /// Text prompt describing character motion, visual aesthetics, and lighting.
     pub prompt: String,
-    /// Optional reference keyframe image for Image-to-Video generation.
+    /// Optional start frame (reference keyframe) for image-to-video generation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<VeoImageInput>,
+    /// Optional end frame (`lastFrame`): the clip must end on this picture. Sent only with a
+    /// start frame and only to Vertex AI (first-and-last-frame mode of Veo 3.1,
+    /// `docs/evidence/veo/2026-11-04-api-notes.md`).
+    #[serde(rename = "lastFrame", default, skip_serializing_if = "Option::is_none")]
+    pub last_frame: Option<VeoImageInput>,
+}
+
+/// The pictures of one start request: the start frame (`image`) and the end frame
+/// (`lastFrame`). Both `None` is text-to-video. A pinned loop passes the same file as both.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GenerationImages<'a> {
+    /// The start frame, sent as `instances[0].image`.
+    pub start: Option<&'a Path>,
+    /// The end frame, sent as `instances[0].lastFrame`; refused without a start frame.
+    pub end: Option<&'a Path>,
+}
+
+impl GenerationImages<'_> {
+    /// No picture: text-to-video.
+    #[must_use]
+    pub fn none() -> Self {
+        Self::default()
+    }
+}
+
+/// Reads the image at `path` and encodes it for a request, with the MIME type its first bytes
+/// show (never its file name).
+///
+/// # Errors
+/// [`BakerError::Io`] if it cannot be read, or [`BakerError::UnsupportedImageFormat`] if it is
+/// neither PNG nor JPEG.
+pub fn encode_image(path: &Path) -> Result<VeoImageInput, BakerError> {
+    let bytes = std::fs::read(path).map_err(|source| BakerError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let format = crate::prompts::ImageFormat::sniff(&bytes).ok_or_else(|| {
+        BakerError::UnsupportedImageFormat {
+            path: path.to_path_buf(),
+        }
+    })?;
+    Ok(VeoImageInput {
+        bytes_base64_encoded: BASE64_STANDARD.encode(&bytes),
+        mime_type: format.mime_type().to_string(),
+    })
 }
 
 /// Configuration parameters for Veo generation, as sent in the start request's `parameters`
@@ -844,41 +896,40 @@ impl VeoClient {
     ///
     /// # Arguments
     /// - `prompt`: Descriptive prompt detailing the action and character visual styling.
-    /// - `reference_image`: Optional file path to a reference image keyframe.
+    /// - `images`: the start frame (`image`) and the end frame (`lastFrame`), both optional
+    ///   (see [`GenerationImages`]). Each is sent inline with the MIME type its bytes show.
     ///
     /// # Errors
-    /// Returns [`BakerError::VeoApiError`] on HTTP failure or non-success API responses,
-    /// [`BakerError::Io`] on filesystem read failures, [`BakerError::CurlExecutionFailed`]
-    /// on curl execution failures, or [`BakerError::ProjectIdMissing`] for a Vertex AI key
-    /// without a project.
+    /// Before anything is sent: [`BakerError::LastFrameWithoutStart`] for an end frame without
+    /// a start frame, [`BakerError::LastFrameNeedsVertex`] for an end frame with a Gemini API
+    /// key, [`BakerError::Io`] if a picture cannot be read, and
+    /// [`BakerError::UnsupportedImageFormat`] for a picture that is neither PNG nor JPEG.
+    /// After sending: [`BakerError::VeoHttpStatus`] for a refused request (for example HTTP
+    /// 400 `INVALID_ARGUMENT`), [`BakerError::VeoQuotaExhausted`] for a quota refusal,
+    /// [`BakerError::VeoApiError`] for an error in a success response,
+    /// [`BakerError::CurlExecutionFailed`] on curl execution failures, or
+    /// [`BakerError::ProjectIdMissing`] for a Vertex AI key without a project.
     pub fn initiate_generation(
         &self,
         prompt: &str,
-        reference_image: Option<&Path>,
+        images: GenerationImages<'_>,
     ) -> Result<VeoOperation, BakerError> {
-        let image_input = if let Some(img_path) = reference_image {
-            let bytes = std::fs::read(img_path).map_err(|source| BakerError::Io {
-                path: img_path.to_path_buf(),
-                source,
-            })?;
-            let b64 = BASE64_STANDARD.encode(&bytes);
-            let mime = if img_path.extension().is_some_and(|ext| ext == "png") {
-                "image/png".to_string()
-            } else {
-                "image/jpeg".to_string()
-            };
-            Some(VeoImageInput {
-                bytes_base64_encoded: b64,
-                mime_type: mime,
-            })
-        } else {
-            None
-        };
+        if images.end.is_some() {
+            if images.start.is_none() {
+                return Err(BakerError::LastFrameWithoutStart);
+            }
+            if !self.is_vertex_ai() {
+                return Err(BakerError::LastFrameNeedsVertex { clips: Vec::new() });
+            }
+        }
+        let image_input = images.start.map(encode_image).transpose()?;
+        let last_frame = images.end.map(encode_image).transpose()?;
 
         let request_body = VeoGenerateRequest {
             instances: vec![VeoInstance {
                 prompt: prompt.to_string(),
                 image: image_input,
+                last_frame,
             }],
             parameters: Some(self.parameters()),
         };
