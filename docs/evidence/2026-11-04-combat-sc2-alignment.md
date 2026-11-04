@@ -140,3 +140,10 @@ The baseline reproduces the investigation exactly, with the new release inferenc
 Not touched by WP0: no simulation code or catalog value changed, and `cargo test --workspace` passes both
 `golden_replay.ron` and `golden_replay_orders.ron` unchanged.
 
+### 1.4 Check after merging WP1
+
+WP1 (the backswing rule, `b2beb83`) reached `main` before WP0, so WP0's branch merged it and re-ran both
+measurements at `961517c` against the baseline above: the whole matrix on 20 seeds reported **bit-identical** to the
+baseline `matrix.csv` (all 1000 rows), and battle 33's 68-seed `seeds.csv` is byte-identical. This is the tool's
+"no change" proof that WP1 asked for (plan D-1, item 2); WP1's own section may cite it.
+
