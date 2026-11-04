@@ -17,7 +17,9 @@
 //! [`crate::matchup::BattleRun`] and feeds each tick to a trace ([`cli`]). The simulation is not
 //! changed: what it does not publish (releases, cancellations, wasted shots) is inferred from
 //! consecutive states, and every inference is unit-tested here and on scripted battles in
-//! `crates/sim_fixtures/tests/trace_tests.rs`.
+//! `crates/sim_fixtures/tests/trace_tests.rs`. Its whole-matrix mode ([`matrix`], plan
+//! `2026-11-04-combat-sc2-alignment` WP0) plays every battle without a trace and tabulates the
+//! outcomes, so each step of that plan can be compared with the previous one.
 //!
 //! # Invariants
 //! - The trace only reads the world; recording a battle does not change its outcome.
@@ -35,6 +37,7 @@
 
 pub mod activity;
 pub mod cli;
+pub mod matrix;
 pub mod report;
 pub mod summary;
 pub mod swing;
