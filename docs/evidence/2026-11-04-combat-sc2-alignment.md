@@ -229,3 +229,183 @@ moved battle stays inside its expectation on every seed.
   (`BattleTrace::count_releases_of_the_fallen`). Inferring it would need the weapon's target choice and firing arc
   re-derived from the previous samples, which the trace does not mirror. It affects only the trace's counts, never
   an outcome, and only shots fired on a unit's last tick.
+
+## 3. WP4: the zealot's weapon (Q0036)
+
+**Commit.** The data commit of WP4 on the WP4 branch, on `main` at `49177b4` (WP0, WP1 and WP2 merged), after the
+test-only commit `5a798a0` (D-1 item 5). `psi_grey`'s weapon takes StarCraft II's values, as the owner chose
+(Q0036, option 2), from the 5.0.14 game data cited in the battle 33 investigation §1.5:
+
+| Field | Before | After | Reference |
+|---|---|---|---|
+| `damage_point_ticks` | 4 | **0** | 0 (`liberty` WeaponData:150) |
+| `period_ticks` | 22 | **21** | 1.2 Normal s = 0.857 Faster s = 21.43 ticks, nearest whole tick (D-3) |
+| `max_range` | 0.3 | **0.1** | 0.1 (WeaponData) |
+| `backswing_ticks` | 6 | **9** | 0.5 Normal s = 8.93 ticks (`core` default) |
+
+With WP2's rule a damage point of 0 releases on the tick the swing starts, so the zealot's cycle is its period, 21
+ticks (it was 22). Doc 07's roster row now gives range 0.1 (it said 0.2; period 21 already). The attributes
+(Q0040) are WP5's and are not part of this step. Outputs under `~/scratch/combat_wp4/` on the development server
+(`before/` is the state at `49177b4`, byte-identical to WP2's §2.1 `matrix.csv`; `after/` the committed state;
+`field/` the scratch catalogs).
+
+### 3.1 Whole matrix, 20 seeds
+
+Compared with the state after WP2 (§2.1). **7 battles moved, exactly the plan's list (§5.1, WP4 step 5): 7, 8,
+23a, 23b, 25a, 25b and 33. No other battle moved. No battle except 33 changed its winner on any seed**, and none of
+the six others needed its expectation changed. Expectation failures: 0 on the seeds of record after battle 33's
+re-recording (§3.2), 6 over all 20 seeds, all battle 33 (seeds 1, 5, 6, 12, 16: marine wins with 7 to 9 left,
+above the new range; seed 13: a zealot win with 4 left). Before WP4 it was 0 and 2 (battle 33, seeds 1 and 6).
+
+| Battle | Seeds moved | Survivors blue – red, before → after | End tick, before → after | Lead hull, before → after |
+|---|---|---|---|---|
+| 7_zealot_vs_roach | 20 | 1.00 – 0.00 → same | 253.3 → 240.9 | blue 12.00 → 12.00 |
+| 8_zealot_vs_stalker | 20 | 1.00 – 0.00 → same | 253.8 → 241.5 | blue 51.00 → 57.00 |
+| 23a_zealot_vs_6_lings | 19 | 0.00 – 2.10 → 0.00 – 2.00 | 266.2 → 269.2 | — |
+| 23b_upgraded_zealot_vs_6_lings | 20 | 1.00 – 0.00 → same | 259.7 → 245.6 | blue 53.20 → 60.00 |
+| 25a_2_marines_vs_zealot | 20 | 0.00 – 1.00 → same | 152.9 → 145.6 | red 61.75 → 62.00 |
+| 25b_upgraded_marines_vs_zealot | 20 | 0.00 – 1.00 → same | 148.9 → 141.4 | red 23.50 → 32.00 (range 5 to 45) |
+| 33_24_marines_vs_12_zealots | 20 | 7.65 – 0.20 → **3.80 – 1.05** | 421.1 → 457.5 | blue 38.60 (15) → 34.33 (3) |
+
+- The zealot kills sooner everywhere it fights: its first strike lands on contact instead of 4 ticks later, and it
+  strikes every 21 ticks instead of 22. Battles 7, 8, 23b, 25a and 25b end 7 to 14 ticks sooner with the same
+  winner; the zealot keeps more life in 8 and 23b, and in 25b ends with 32 (all 20 seeds), inside its `red_lead_hp`
+  range of 5 to 45. In 23a the zealot still loses, now always to 2 zerglings: on seeds 10 and 12 it kills
+  a fourth before it falls (3 left before), and on the other seeds only the end tick moves (19 seeds' rows differ);
+  inside `red: (1, 999)`.
+- The plan's probe (§5.1, "Zealot weapon + attributes + regeneration rate") agrees on every battle but 33 to within
+  1.5 ticks of end tick (7 242 → 240.9, 8 242 → 241.5, 23b 247 → 245.6, 25a 147 → 145.6, 25b 142 → 141.4); the
+  probe kept a one-tick wind-up (§3.4).
+- **Benchmarks** (`sc2_battle_benchmarks_tests.rs`, read with a throwaway print, not committed): test 2 (zealot
+  against 2 marines) leaves the zealot 67 life (was 62; range 60 to 95); test 3 (against a marauder) 73 (was 73),
+  over 198 ticks (was 209; at least 160); test 5 (four zerglings in turn) 52 life and shields (was 52; range 35 to
+  80); six zerglings still win. Test 1 now reads the timing from the catalog (commit `5a798a0`): the swings land on
+  ticks 0, 21 and 42.
+
+The whole matrix after this step (means over the 20 seeds; lead hull as in §1.1):
+
+| Battle | Seeds | Blue wins | Red wins | Unresolved | Both gone | Survivors blue – red | End tick | Blue lead hull | Red lead hull | Failures of record | Failures, all seeds |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1a_stalker_vs_roach | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 281.0 | 5.00 (20) | — | 0 | 0 |
+| 1b_stalker_vs_2_roaches | 20 | 0 | 20 | 0 | 0 | 0.00 – 2.00 | 159.8 | — | 106.75 (20) | 0 | 0 |
+| 2a_immortal_vs_roach | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 61.0 | 200.00 (20) | — | 0 | 0 |
+| 2b_immortal_vs_2_roaches | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 145.0 | 174.00 (20) | — | 0 | 0 |
+| 3_immortal_vs_tank | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 89.0 | 200.00 (20) | — | 0 | 0 |
+| 4_marauder_vs_roach | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 190.1 | 20.00 (20) | — | 0 | 0 |
+| 5a_hydra_vs_marine | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 52.0 | 66.98 (20) | — | 0 | 0 |
+| 5b_hydra_vs_2_marines | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 112.0 | 20.18 (20) | — | 0 | 0 |
+| 5c_hydra_vs_3_marines | 20 | 0 | 20 | 0 | 0 | 0.00 – 2.00 | 78.0 | — | 40.33 (18) | 0 | 0 |
+| 6a_roach_vs_hydra | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 149.7 | 35.00 (20) | — | 0 | 0 |
+| 6b_2_roaches_vs_hydra | 20 | 20 | 0 | 0 | 0 | 2.00 – 0.00 | 65.9 | 118.60 (20) | — | 0 | 0 |
+| 6c_roach_vs_2_hydras | 20 | 0 | 20 | 0 | 0 | 0.00 – 2.00 | 96.3 | — | 61.98 (20) | 0 | 0 |
+| 7_zealot_vs_roach | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 240.9 | 12.00 (20) | — | 0 | 0 |
+| 8_zealot_vs_stalker | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 241.5 | 57.00 (20) | — | 0 | 0 |
+| 9a_hellion_vs_4_lings | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 91.0 | 27.80 (20) | — | 0 | 0 |
+| 9b_hellion_vs_roach | 20 | 0 | 20 | 0 | 0 | 0.00 – 1.00 | 148.0 | — | 117.00 (20) | 0 | 0 |
+| 10_2_hellions_vs_8_lings | 20 | 20 | 0 | 0 | 0 | 2.00 – 0.00 | 55.0 | 70.00 (20) | — | 0 | 0 |
+| 11a_2_banelings_vs_5_marines | 20 | 0 | 9 | 0 | 11 | 0.00 – 2.25 | 9.2 | — | 10.00 (9) | 0 | 0 |
+| 11b_2_banelings_vs_marauder | 20 | 0 | 20 | 0 | 0 | 0.00 – 1.00 | 9.1 | — | 95.00 (20) | 0 | 0 |
+| 12a_colossus_vs_6_marines | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 78.0 | 243.80 (20) | — | 0 | 0 |
+| 12b_colossus_vs_3_marauders | 20 | 0 | 20 | 0 | 0 | 0.00 – 2.00 | 164.0 | — | 67.53 (19) | 0 | 0 |
+| 12c_viking_vs_colossus | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 474.0 | 125.00 (20) | — | 0 | 0 |
+| 13_storm_vs_held_lings | 20 | 0 | 0 | 0 | 20 | 0.00 – 0.00 | 70.0 | — | — | 0 | 0 |
+| 14_thor_vs_ultralisk | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 187.0 | 37.00 (20) | — | 0 | 0 |
+| 15_plated_ultralisk_vs_8_marines | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 111.0 | 424.06 (20) | — | 0 | 0 |
+| 16a_muta_vs_marine | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 115.0 | 74.24 (20) | — | 0 | 0 |
+| 16b_muta_vs_2_marines | 20 | 0 | 20 | 0 | 0 | 0.00 – 1.00 | 183.0 | — | 27.00 (11) | 0 | 0 |
+| 17_void_ray_vs_muta | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 181.0 | 150.00 (20) | — | 0 | 0 |
+| 18_void_ray_vs_corruptor | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 226.0 | 110.00 (20) | — | 0 | 0 |
+| 19_viking_vs_brood_lord | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 293.0 | 125.00 (20) | — | 0 | 0 |
+| 20_brood_lord_vs_roach | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 142.2 | 225.00 (20) | — | 0 | 0 |
+| 21_lurker_vs_6_marines | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 99.2 | 82.92 (20) | — | 0 | 0 |
+| 22a_reaper_vs_2_workers | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 102.0 | 40.63 (20) | — | 0 | 0 |
+| 22b_reaper_vs_stalker | 20 | 0 | 20 | 0 | 0 | 0.00 – 1.00 | 178.0 | — | 80.00 (20) | 0 | 0 |
+| 23a_zealot_vs_6_lings | 20 | 0 | 20 | 0 | 0 | 0.00 – 2.00 | 269.2 | — | — | 0 | 0 |
+| 23b_upgraded_zealot_vs_6_lings | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 245.6 | 60.00 (20) | — | 0 | 0 |
+| 24a_roach_vs_5_lings | 20 | 0 | 20 | 0 | 0 | 0.00 – 2.00 | 296.6 | — | — | 0 | 0 |
+| 24b_upgraded_roach_vs_5_lings | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 255.6 | 85.00 (20) | — | 0 | 0 |
+| 25a_2_marines_vs_zealot | 20 | 0 | 20 | 0 | 0 | 0.00 – 1.00 | 145.6 | — | 62.00 (20) | 0 | 0 |
+| 25b_upgraded_marines_vs_zealot | 20 | 0 | 20 | 0 | 0 | 0.00 – 1.00 | 141.4 | — | 32.00 (20) | 0 | 0 |
+| 26_100_lings_vs_6_colossi | 20 | 0 | 20 | 0 | 0 | 0.00 – 6.00 | 114.8 | — | 250.00 (20) | 0 | 0 |
+| 27_100_lings_vs_8_ultralisks | 20 | 0 | 20 | 0 | 0 | 0.00 – 8.00 | 203.1 | — | 432.59 (20) | 0 | 0 |
+| 28_100_lings_vs_10_immortals | 20 | 20 | 0 | 0 | 0 | 27.30 – 0.00 | 670.5 | 35.00 (3) | — | 0 | 0 |
+| 29_100_lings_vs_12_stalkers | 20 | 20 | 0 | 0 | 0 | 71.50 – 0.00 | 440.4 | 34.41 (18) | — | 0 | 0 |
+| 30_20_roaches_vs_10_immortals | 20 | 0 | 20 | 0 | 0 | 0.00 – 9.95 | 263.9 | — | 128.58 (19) | 0 | 0 |
+| 31_15_marauders_vs_15_stalkers | 20 | 15 | 5 | 0 | 0 | 2.65 – 0.70 | 661.3 | 88.17 (6) | — | 0 | 0 |
+| 32_30_marines_vs_15_banelings | 20 | 7 | 9 | 0 | 4 | 0.85 – 0.80 | 53.5 | 10.00 (6) | — | 0 | 0 |
+| 33_24_marines_vs_12_zealots | 20 | 9 | 4 | 7 | 0 | 3.80 – 1.05 | 457.5 | 34.33 (3) | — | 0 | 6 |
+| 34_20_hydras_vs_12_mutas | 20 | 20 | 0 | 0 | 0 | 19.10 – 0.00 | 192.6 | 90.00 (20) | — | 0 | 0 |
+| 35_12_vikings_vs_6_colossi | 20 | 19 | 0 | 1 | 0 | 12.00 – 0.05 | 309.2 | 125.00 (20) | — | 0 | 0 |
+
+### 3.2 Battle 33, 68 seeds, and its re-recorded expectation
+
+| Measure | Before (§2.2) | After WP4 |
+|---|---|---|
+| Marine wins / zealot wins / unresolved at 500 ticks | 61 / 6 / 1 | **30 / 24 / 14** |
+| Zealots left in their wins | 2 or 3 | 2 to 5 |
+| Unresolved | seed 19, 3 – 1 | 14 seeds, 1 to 4 marines against 1 or 2 zealots |
+| Marine survivors, mean (SD), median, range | 7.41 (3.34), 8, 0 to 14 | **3.09** (3.01), 3, 0 to 9 |
+| Zealot survivors, mean, range | 0.25, 0 to 3 | 1.24, 0 to 5 |
+| End tick, mean (SD), range | 420.4 (36.6), 351 to 500 | 458.1 (34.4), 386 to 500 |
+| K over the first 5 s, mean (SD), range | 4.25 (0.40), 3.23 to 4.97 | 4.18 (0.32), 3.45 to 4.74 |
+| Seeds of record 3203386110, 11, 22, 33 (marines – zealots) | 8–0, 6–0, 9–0, 13–0 | **0–3**, 6–0, **3–1**, 4–0 |
+
+Zealot wins after WP4 (seed: zealots left): 3203386110: 3, 8: 2, 10: 3, 13: 4, 18: 2, 19: 2, 20: 2, 24: 2, 28: 3,
+34: 4, 39: 4, 40: 2, 42: 4, 43: 2, 44: 2, 45: 2, 46: 2, 48: 2, 50: 4, 51: 3, 57: 2, 58: 5, 60: 3, 63: 2.
+
+- **The expectation `blue: (4, 16), red: (0, 0)` fails on two seeds of record** (3203386110, a zealot win with 3
+  left, and 22, unresolved at 3 – 1), as the plan foresaw (D-6, "one or two"). Per Q0044 (option 1) it is
+  re-recorded to the smallest ranges that hold on the four seeds of record: **`blue: (0, 6), red: (0, 3)`**. The
+  claim now reads "A close fight: unkited zealots and marines trade evenly, either side may win narrowly", and the
+  RON comment above the battle (Q0041's) states this distribution and points here. Seeds and setup are unchanged.
+- **What the range admits and rejects.** On the 20 matrix seeds it holds on 14 and fails on 6: five clear marine
+  wins (7 to 9 left) and one zealot win with 4 left. So it fails if either side wins clearly, as Q0044 option 1 said.
+- **Why the battle closes.** K, the zealots in contact over the first 5 s, hardly moves (4.25 → 4.18): as many
+  zealots reach the marines as before. Each of them deals more: its first strike lands on contact instead of 4
+  ticks later (a wind-up the marines' fire could cancel by killing it), and it strikes every 21 ticks instead of 22.
+  The per-field runs (§3.3) show the damage point is the large part.
+
+### 3.3 Each field alone (D-5 item 5)
+
+Each value applied alone to a scratch copy of the pre-WP4 catalog (`matchup_trace --catalog-dir`), against the
+pre-WP4 state. "Moved" counts battles whose rows differ on the 20 matrix seeds.
+
+| Scratch catalog | Matrix battles moved | Battle 33, 20 seeds: survivors, failures of record / all (old expectation) | Battle 33, 68 seeds: marine wins / zealot wins / unresolved | Marine survivors, mean (SD) | Seeds of record |
+|---|---|---|---|---|---|
+| Before WP4 | — | 7.65 – 0.20, 0 / 2 | 61 / 6 / 1 | 7.41 (3.34) | 8–0, 6–0, 9–0, 13–0 |
+| Damage point 0 | the 7 of §3.1 | 4.75 – 0.65, 3 / 8 | 35 / 17 / 16 | 3.82 (3.10) | 3–1, 0–3, 3–1, 4–0 |
+| Period 21 | the 7 of §3.1 | 6.15 – 0.40, 0 / 3 | 49 / 9 / 10 | 5.62 (3.52) | 7–0, 6–0, 5–0, 11–0 |
+| Range 0.1 | the 7 of §3.1; **battle 7 fails** (see below) | 8.45 – 0.00, 0 / 0 | 66 / 0 / 2 | 8.24 (2.47) | 8–0, 11–0, 7–0, 10–0 |
+| Backswing 9 | 33 only (4 seeds) | 7.90 – 0.10, 0 / 1 | 62 / 5 / 1 | 7.29 (3.26) | 8–0, 6–0, 9–0, 13–0 |
+| All four (= the commit) | the 7 of §3.1 | 3.80 – 1.05, 2 / 12 | 30 / 24 / 14 | 3.09 (3.01) | 0–3, 6–0, 3–1, 4–0 |
+
+- The damage point is the large step (−3.59 marine survivors on 68 seeds), then the period (−1.79); the shorter
+  range favours the marines (+0.83: fewer zealots fit round a marine), and the backswing is noise (−0.12). The
+  investigation measured −2.82, −1.79, +0.82 and −0.12 for the same four (its §5.3, damage point 0 then still with
+  the one-tick wait of the old rule): the period, range and backswing agree, and the damage point now weighs more
+  because the strike lands on the contact tick (D-3).
+- **Range 0.1 alone breaks battle 7** (zealot against roach): with the old 4-tick wind-up and the shorter reach,
+  zealot and roach kill each other on the same tick on 8 of 20 seeds (both gone at tick 255) and the roach wins on 4,
+  failing on 3 seeds of record. This is a property of that intermediate catalog only: with all four values (the
+  commit) battle 7 is a zealot win on all 20 seeds, 12 ticks sooner than before.
+
+### 3.4 Why battle 33 is closer than the plan's probe
+
+The plan's probe (§5.2) predicted 38 / 13 / 17 and 4.07 marine survivors for the zealot's changes; the commit gives
+30 / 24 / 14 and 3.09. The probe could not run WP2's rule and approximated the zealot as damage point 0 with period
+20 on the old code, which held a one-tick wind-up before each strike (plan §5, "both proxies differ from the real
+fixes by the one-tick wind-up"). That proxy is the same as damage point **1**, period 21 on today's code. A scratch
+catalog with exactly that (damage point 1, period 21, range 0.1, backswing 9) reproduces the probe to the seed:
+**38 / 13 / 17, 4.07 (3.15), seeds of record 3–0, 6–0, 3–1, 7–0**. So the whole difference is the one tick by which
+the real zealot strikes earlier on contact, on every swing.
+
+### 3.5 Golden replays
+
+- **`golden_replay.ron`: re-recorded.** Its 12 `red_psi` zealots fight the marines. Checkpoints 1 to 4 (ticks 1 to
+  200) are unchanged; the first differing checkpoint is **5 (ticks 201 to 250)**, and every later checkpoint (5 to
+  20) changed.
+- **`golden_replay_orders.ron`: unchanged**, against the plan's expectation (§1, WP4: "both golden replays"). Its
+  four `red_ledge` zealots hold position on the high-ground lip and are shot down from below; no enemy comes within
+  their reach, so no zealot strike lands in either run and all 60 checksums are identical. Both phase-order
+  situations are still found by the test.
+- Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`, as CI) reproduce both fixtures.
