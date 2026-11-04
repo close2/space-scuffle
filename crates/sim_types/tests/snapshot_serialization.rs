@@ -9,8 +9,8 @@
 )]
 
 use sim_types::{
-    AnimState, BubbleRenderInstance, CombatEventVisual, EntityId, PlayerId, RenderSnapshot,
-    ShapeKind, SilhouetteClass, Tick, UnitTypeId, WeaponVisualKind,
+    AnimState, AttackSwing, BubbleRenderInstance, CombatEventVisual, EntityId, PlayerId,
+    RenderSnapshot, ShapeKind, SilhouetteClass, Tick, UnitTypeId, WeaponVisualKind,
 };
 
 #[test]
@@ -61,7 +61,11 @@ fn test_render_snapshot_full_serialization() {
                 None
             },
             anim_state,
-            anim_progress: (i as f32) * 0.1,
+            attack_swing: (i % 2 == 0).then_some(AttackSwing {
+                elapsed_ticks: i as u16,
+                damage_point_ticks: 2,
+                period_ticks: 15,
+            }),
             hp_ratio: 1.0 - (i as f32) * 0.08,
             shield_ratio: if i % 2 == 0 { 0.8 } else { 0.0 },
             shield_hit_flash: if i == 2 { 0.75 } else { 0.0 },
@@ -94,7 +98,7 @@ fn test_render_snapshot_full_serialization() {
         weapon_visual: WeaponVisualKind::None,
         attack_target_pos: None,
         anim_state: AnimState::Idle,
-        anim_progress: 0.0,
+        attack_swing: None,
         hp_ratio: 1.0,
         shield_ratio: 1.0,
         shield_hit_flash: 0.0,
@@ -125,7 +129,7 @@ fn test_render_snapshot_full_serialization() {
         weapon_visual: WeaponVisualKind::None,
         attack_target_pos: None,
         anim_state: AnimState::Idle,
-        anim_progress: 0.0,
+        attack_swing: None,
         hp_ratio: 0.45,
         shield_ratio: 0.0,
         shield_hit_flash: 0.0,
@@ -255,4 +259,69 @@ fn every_event_preserves_sparse_and_neutral_owner_and_rejects_legacy_team_keys(
         }
     }
     Ok(())
+}
+
+/// The attack cycle travels as three integers, and the float `anim_progress` lane it replaced
+/// (plan `2026-11-04-battle-flipbook-animation` D-7) is no longer accepted.
+#[test]
+fn attack_swing_round_trips_and_the_float_progress_lane_is_gone() {
+    let swing = AttackSwing {
+        elapsed_ticks: 3,
+        damage_point_ticks: 2,
+        period_ticks: u16::MAX,
+    };
+    let text = ron::to_string(&swing).expect("invariant: valid swing serialization");
+    assert_eq!(
+        text,
+        "(elapsed_ticks:3,damage_point_ticks:2,period_ticks:65535)"
+    );
+    let decoded: AttackSwing = ron::from_str(&text).expect("invariant: freshly serialized swing");
+    assert_eq!(decoded, swing);
+    assert!(
+        ron::from_str::<AttackSwing>(
+            "(elapsed_ticks:3,damage_point_ticks:2,period_ticks:15,phase:0.5)"
+        )
+        .is_err(),
+        "an unknown swing field is rejected"
+    );
+
+    let mut bubble = BubbleRenderInstance {
+        entity_id: EntityId(1),
+        shape: ShapeKind::UnitSphere,
+        silhouette: SilhouetteClass::LightProngs,
+        unit_type: UnitTypeId(1),
+        owner: PlayerId(0),
+        world_pos: [0.0; 3],
+        ground_z: 0.0,
+        radius: 0.5,
+        velocity: [0.0; 2],
+        heading_angle_rad: 0.0,
+        aim_angle_rad: 0.0,
+        is_attacking: true,
+        weapon_visual: WeaponVisualKind::Hitscan,
+        attack_target_pos: None,
+        anim_state: AnimState::Attack,
+        attack_swing: Some(swing),
+        hp_ratio: 1.0,
+        shield_ratio: 0.0,
+        shield_hit_flash: 0.0,
+        hull_hit_angle_rad: 0.0,
+        hull_hit_flash: 0.0,
+        build_or_queue_progress: None,
+        selected: false,
+        cloaked: false,
+        speed_boosted: false,
+    };
+    for attack_swing in [Some(swing), None] {
+        bubble.attack_swing = attack_swing;
+        let text = ron::to_string(&bubble).expect("invariant: valid bubble serialization");
+        let decoded: BubbleRenderInstance =
+            ron::from_str(&text).expect("invariant: freshly serialized bubble is valid");
+        assert_eq!(decoded, bubble);
+        let legacy = text.replace("attack_swing:", "anim_progress:0.0,attack_swing:");
+        assert!(
+            ron::from_str::<BubbleRenderInstance>(&legacy).is_err(),
+            "a record carrying the removed anim_progress lane is rejected"
+        );
+    }
 }

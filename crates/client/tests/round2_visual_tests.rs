@@ -549,7 +549,7 @@ fn test_ground_unit_altitude_never_spawns_air_tether() -> Result<(), Box<dyn std
                     weapon_visual: WeaponVisualKind::Hitscan,
                     attack_target_pos: None,
                     anim_state: sim_types::enums::AnimState::Idle,
-                    anim_progress: 0.0,
+                    attack_swing: None,
                     hp_ratio: 1.0,
                     shield_ratio: 1.0,
                     shield_hit_flash: 0.0,
