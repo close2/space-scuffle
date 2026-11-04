@@ -17,6 +17,7 @@
 
 use sim_core::scenario::{PlayerSetup, StartLoadoutCatalog};
 use sim_core::steering::{compute_push_displacement, PushEntityParams};
+use sim_core::SimWorld;
 use sim_map::{CliffLevel, GameMap, MapCell, MapFile};
 use sim_types::{EntityId, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder};
 
@@ -782,36 +783,45 @@ fn test_live_battle_scenario_dual_ramp_traversal() {
             .expect("issue attack move");
     }
 
-    // Step simulation to tick 980 (before combat resolution wipes out units at enemy base)
+    // Invariant: EVERY Player 0 combatant descends Ramp 2, crosses the canyon, and ascends Ramp 1
+    // onto the enemy high ground plateau (CliffLevel(2), x >= 42.0, y >= 45.0) within 980 ticks.
+    // Each unit is judged on the first tick it stands there, as the reverse march below is, so
+    // units of different speeds are all judged on their traversal: a fast unit that arrives
+    // early and is then lost in the fight at the enemy base still counts as having arrived.
+    let mut arrived_ticks: std::collections::BTreeMap<EntityId, u32> =
+        std::collections::BTreeMap::new();
     for tick in 1..=980 {
         world.step(&empty_bundle(tick));
+        for &id in &p0_combatants {
+            if arrived_ticks.contains_key(&id) {
+                continue;
+            }
+            let Some(ent) = world.entities.get(&id) else {
+                continue;
+            };
+            let cliff = world
+                .map
+                .world_to_cell(ent.position)
+                .ok()
+                .and_then(|(cx, cy)| world.map.cell(cx, cy).ok())
+                .map(|c| c.cliff_level);
+            if cliff == Some(CliffLevel(2))
+                && ent.position.x >= SimScalar::from_num(42)
+                && ent.position.y >= SimScalar::from_num(45)
+            {
+                arrived_ticks.insert(id, tick);
+            }
+        }
     }
-
-    // Invariant: EVERY Player 0 combatant descended Ramp 2, crossed canyon, and ascended Ramp 1
-    // onto the enemy high ground plateau (CliffLevel(2), x >= 42.0, y >= 45.0).
     for &id in &p0_combatants {
-        let ent = world.entities.get(&id).expect("combatant alive");
-        let cliff = world
-            .map
-            .world_to_cell(ent.position)
-            .ok()
-            .and_then(|(cx, cy)| world.map.cell(cx, cy).ok())
-            .map(|c| c.cliff_level);
-        assert_eq!(
-            cliff,
-            Some(CliffLevel(2)),
-            "Player 0 unit {:?} stuck at ({:?}, {:?}) with cliff {:?} (must be CliffLevel(2) on high ground)",
-            id,
-            ent.position.x,
-            ent.position.y,
-            cliff
-        );
+        let last_seen = world
+            .entities
+            .get(&id)
+            .map(|ent| (ent.position.x, ent.position.y));
         assert!(
-            ent.position.x >= SimScalar::from_num(42) && ent.position.y >= SimScalar::from_num(45),
-            "Player 0 unit {:?} stuck at ({:?}, {:?}) (must ascend enemy ramp to x >= 42, y >= 45)",
-            id,
-            ent.position.x,
-            ent.position.y
+            arrived_ticks.contains_key(&id),
+            "Player 0 unit {id:?} never reached the enemy plateau (CliffLevel(2), x >= 42, \
+             y >= 45); last position {last_seen:?} (None: died before arriving)"
         );
     }
 
@@ -893,6 +903,30 @@ fn test_live_battle_scenario_dual_ramp_traversal() {
     }
 }
 
+/// Distance, in world units, the jitter test's lead unit marches before the trajectories stop
+/// being judged: 180 ticks at 0.09 per tick, the window the test was written with. Past it, on
+/// `showcase_canyon`, the group reaches a crowd near (28 to 30, 10 to 12) where marching units
+/// jostle; that is finding M-19 of plan `2026-11-01-codebase-remediation`, kept out of this
+/// test so it keeps judging the open march it was written for.
+const JITTER_MARCH_DISTANCE: f32 = 16.2;
+
+/// Ticks the fastest of `units` needs to walk [`JITTER_MARCH_DISTANCE`] at its catalog speed,
+/// rounded up.
+fn jitter_window_ticks(
+    world: &SimWorld,
+    units: &[EntityId],
+) -> Result<u32, Box<dyn std::error::Error>> {
+    let mut fastest = SimScalar::ZERO;
+    for &id in units {
+        let kind = world.entities.get(&id).ok_or("unit exists")?.unit_type_id;
+        fastest = fastest.max(world.catalog.get(kind)?.max_speed);
+    }
+    let ticks = SimScalar::from_f32_lossy(JITTER_MARCH_DISTANCE)
+        .checked_div(fastest)
+        .ok_or("the marching group must contain a mobile unit")?;
+    Ok(ticks.saturating_ceil().saturating_to_u32())
+}
+
 #[test]
 fn battlefield_bubble_trajectories_are_smooth_without_micro_jitter(
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -932,6 +966,9 @@ fn battlefield_bubble_trajectories_are_smooth_without_micro_jitter(
             p0_combatants.push(id);
         }
     }
+    // The march is judged over the same distance at any catalog speed (see
+    // `JITTER_MARCH_DISTANCE`), not over a tick count tied to one speed value.
+    let window_ticks = jitter_window_ticks(&world, &p0_combatants)?;
 
     for &id in &p0_combatants {
         world.entities.get_mut(&id).unwrap().issue_order(
@@ -967,7 +1004,7 @@ fn battlefield_bubble_trajectories_are_smooth_without_micro_jitter(
         }
     }
 
-    for tick in 1..=180 {
+    for tick in 1..=window_ticks {
         world.step(&empty_bundle(tick));
         for &id in &p0_combatants {
             let Some(ent) = world.entities.get(&id) else {

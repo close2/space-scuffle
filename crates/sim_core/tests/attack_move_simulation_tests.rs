@@ -671,6 +671,24 @@ fn test_all_catalog_weapons_can_target_armored_and_light_units() {
     }
 }
 
+/// Distance, in world units, the fan-out squad walks before it is judged: 80 ticks at 0.09 per
+/// tick, the budget the test was written with.
+const MARCH_DISTANCE: f32 = 7.2;
+
+/// Ticks a unit moving at `max_speed` world units per tick needs to walk [`MARCH_DISTANCE`],
+/// rounded up.
+fn march_ticks_for(max_speed: SimScalar) -> u32 {
+    assert!(
+        max_speed > SimScalar::ZERO,
+        "the marching unit must be mobile"
+    );
+    SimScalar::from_f32_lossy(MARCH_DISTANCE)
+        .checked_div(max_speed)
+        .expect("invariant: max_speed is positive, asserted on the line above")
+        .saturating_ceil()
+        .saturating_to_u32()
+}
+
 /// Test: Units commanded via Move advance towards destination, fan out laterally around
 /// blocking center obstacles via unified local steering, and settle without overlapping or gridlocking.
 #[test]
@@ -709,8 +727,10 @@ fn test_move_command_units_fan_out_and_surround_target_point() {
         squad.push(id);
     }
 
-    // Step 80 ticks
-    for tick in 1..=80 {
+    // March for the time the squad needs to walk MARCH_DISTANCE at its catalog speed, so the
+    // test checks the fan-out geometry and not a timing tied to one speed value.
+    let march_ticks = march_ticks_for(world.catalog.get(pulse_id).unwrap().max_speed);
+    for tick in 1..=march_ticks {
         world.step(&empty_bundle(tick));
     }
 

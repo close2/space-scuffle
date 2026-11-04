@@ -741,6 +741,50 @@ fn s11_unlock_gates_overclock_until_researched() {
     assert_eq!(arena.world.entities[&unit].active_buffs.len(), 1);
 }
 
+/// Q0045 3b (combat alignment WP15): the Stimpack research unlocks the Overclock of the
+/// Marauder analogue, which pays its catalog life cost and carries the buff for the catalog
+/// duration; the Roach analogue has no Stimpack and does not stim.
+#[test]
+fn overclock_research_stims_the_marauder_analogue_and_not_the_roach_analogue() {
+    let mut arena = Arena::new(32);
+    let golem = arena.spawn("shock_golem", BLUE, 10.0, 10.0);
+    let beetle = arena.spawn("rhino_beetle", BLUE, 14.0, 10.0);
+    let golem_type = arena.world.entities[&golem].unit_type_id;
+    let spec = arena
+        .world
+        .catalog
+        .get(golem_type)
+        .unwrap()
+        .overclock
+        .expect("the Marauder analogue carries the Overclock");
+    arena
+        .world
+        .research_upgrade(BLUE, "overclock_stim")
+        .unwrap();
+    let golem_life = arena.world.entities[&golem].hp;
+    let beetle_life = arena.world.entities[&beetle].hp;
+    arena.order(BLUE, &[golem, beetle], UnitOrder::UseStim);
+
+    let stimmed = &arena.world.entities[&golem];
+    assert_eq!(golem_life - stimmed.hp, spec.hp_cost);
+    let [buff] = stimmed.active_buffs.as_slice() else {
+        panic!("one Overclock buff: {:?}", stimmed.active_buffs);
+    };
+    // The buff is applied during the ordering tick and counts that tick down once.
+    assert_eq!(
+        u32::from(buff.remaining_ticks) + 1,
+        u32::from(spec.duration_ticks)
+    );
+    assert_eq!(buff.speed_multiplier, spec.speed_multiplier);
+
+    let unstimmed = &arena.world.entities[&beetle];
+    assert!(
+        unstimmed.active_buffs.is_empty(),
+        "the Roach analogue has no Stimpack"
+    );
+    assert_eq!(unstimmed.hp, beetle_life);
+}
+
 /// S-11: an ability named by an unlock stays locked until researched too.
 #[test]
 fn s11_unlock_gates_abilities_by_name() {
