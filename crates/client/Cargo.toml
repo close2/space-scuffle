@@ -19,6 +19,11 @@ path = "src/bin/map_editor.rs"
 name = "terrain_preview"
 path = "src/bin/terrain_preview.rs"
 
+# Release micro-benchmark of the smog solver (C-18); run with `cargo bench -p client --bench smog_solver`.
+[[bench]]
+name = "smog_solver"
+harness = false
+
 [lints]
 workspace = true
 

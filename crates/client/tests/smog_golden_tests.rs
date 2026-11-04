@@ -43,6 +43,12 @@
 //! - Fluid: the 10-bubble showcase (vorticity confinement on), a 24-source mix and a 48-source
 //!   crowd (confinement off, crowd wake radius) with non-emitting, stationary and slow sources,
 //!   nonzero buoyancy and zero dissipation.
+//! - Fluid, C-18 characterisation (plan `docs/plans/2026-11-04-open-findings-c17-c18-p9-gaps.md`,
+//!   WP6): a wake that decays after its sources stop ([`fluid_wake_decay_golden`]), sources at 8
+//!   to 12 world units per second at the 0.05 s clamp ([`fluid_fast_sources_golden`]), a
+//!   quantized window shift followed by a clearing shift ([`fluid_bounds_shift_golden`]), and a
+//!   cycle of `dt` against a source count that switches confinement on and off
+//!   ([`fluid_variable_dt_golden`]). They pin the cases the brick-sparsity refactor can get wrong.
 //! - Kinematics: the 10-bubble showcase, a non-planar set, the 400-bubble spatial-hash path and the
 //!   600-bubble all-pairs fallback beyond [`client::smog::MAX_BOUNCING_BUBBLES`].
 //! - Crowd inputs: [`crowd_lattice`] is the generator's crowd branch with its trig supplied by the
@@ -56,7 +62,10 @@
 //! - The fluid constants were recorded on `main` at `9dbf715`, before any WP7 edit, and did not
 //!   change when this file moved to the two classes.
 //! - Every other constant was recorded by running this file, unchanged, against `9dbf715` and then
-//!   confirmed unchanged on `main` at `3f57fec` (glibc 2.41, `x86_64`).
+//!   confirmed unchanged on `main` at `3f57fec` (glibc 2.41, `x86_64`), except those below.
+//! - The four C-18 characterisation goldens and [`GOLDEN_LIBM_CANARY_C18`] were recorded on
+//!   `main` at `db22ac2` (glibc 2.41, `x86_64`), whose `smog/fluid.rs` is that of `e85f79f`, the
+//!   C-18 plan's base: the unmodified solver, before any C-18 refactor.
 //! - A golden may only change together with a deliberate, documented change in smog output.
 
 #![allow(
@@ -422,6 +431,257 @@ fn fluid_crowd_golden() -> Result<(), SmogError> {
     assert_eq!(
         hash, GOLDEN_FLUID_CROWD_48,
         "fluid crowd golden: {hash:#018x}"
+    );
+    Ok(())
+}
+
+// C-18 characterisation goldens (WP6 of `docs/plans/2026-11-04-open-findings-c17-c18-p9-gaps.md`).
+// They pin the cases where per-brick rest flags can go wrong (sources that stop, back-traces that
+// cross bricks, a grid that shifts or clears, and `dt` and confinement that change from step to
+// step), recorded on the unmodified solver before any C-18 refactor.
+
+/// Steps with the showcase sources before they stop, in the wake decay golden.
+const WAKE_SOURCE_STEPS: usize = 60;
+
+/// Steps without any source after the showcase sources stop, in the wake decay golden.
+const WAKE_DECAY_STEPS: usize = 240;
+
+/// Sources in the fast sources golden: below the 32-source limit, so confinement runs.
+const FAST_SOURCE_COUNT: usize = 20;
+
+/// Slowest source speed of the fast sources golden, in world units per second; source `i` moves
+/// at this speed plus `i % 5` world units per second, so 8 to 12.
+const FAST_SOURCE_MIN_SPEED: f32 = 8.0;
+
+/// Step of the fast sources golden, in seconds: the solver's own clamp, the longest back-trace
+/// a step can take.
+const FAST_DT: f32 = 0.05;
+
+/// The bounds shift golden's phases: steps before the first shift, between the shifts, and after
+/// the second.
+const SHIFT_PHASE_STEPS: [usize; 3] = [40, 40, 20];
+
+/// First window shift of the bounds shift golden, in voxels: an overlapping shift that moves
+/// the field inside its slabs.
+const SHIFT_SMALL_VOXELS: [i32; 3] = [3, 0, -2];
+
+/// Second window shift of the bounds shift golden, in voxels along x: more than the grid's
+/// width (96 voxels, checked below), so `set_bounds_quantized` takes its clearing path.
+const SHIFT_LARGE_VOXELS_X: u16 = 100;
+
+const _: () = assert!(
+    SHIFT_LARGE_VOXELS_X as usize >= GRID_NX,
+    "the large shift must be at least the grid width"
+);
+
+/// The variable `dt` golden's cycle of steps, in seconds: three display rates, the pre-warm
+/// step, a step above the solver's 0.05 s clamp, and a paused frame (`dt = 0`, a no-op).
+const VARIABLE_DTS: [f32; 6] = [1.0 / 240.0, 1.0 / 144.0, 1.0 / 60.0, 1.0 / 30.0, 0.07, 0.0];
+
+/// The variable `dt` golden's source counts: 30 (confinement runs) and 40 (above the 32-source
+/// limit, so confinement is skipped and the vorticity slabs keep their previous contents).
+const VARIABLE_SOURCE_COUNTS: [usize; 2] = [30, 40];
+
+/// Steps per source count in the variable `dt` golden. Five is coprime with the six-step `dt`
+/// cycle, so every `dt` meets both source counts.
+const VARIABLE_COUNT_RUN: usize = 5;
+
+/// Steps of the variable `dt` golden.
+const VARIABLE_STEPS: usize = 120;
+
+const GOLDEN_FLUID_WAKE_DECAY: u64 = 0x6f8f_62ab_607f_d719;
+const GOLDEN_FLUID_FAST_SOURCES: u64 = 0x7ffa_1917_b16b_ea08;
+const GOLDEN_FLUID_BOUNDS_SHIFT: u64 = 0xb677_0ad8_9bf1_a12a;
+const GOLDEN_FLUID_VARIABLE_DT: u64 = 0xf4fc_5e58_2628_330d;
+
+/// Fills `sources` with one showcase-mix source per state, translated by `offset` world units.
+fn fill_sources(sources: &mut Vec<BubbleSmogSource>, states: &[BouncingBubbleState], offset: Vec3) {
+    sources.clear();
+    sources.extend(states.iter().enumerate().map(|(index, state)| {
+        let mut source = source_for(index, state, SourceMix::Showcase);
+        source.position += offset;
+        source
+    }));
+}
+
+/// Steps `grid` once and hashes the metrics, and the whole field when `checkpoint` is set.
+fn hashed_step(
+    grid: &mut SmogGrid3d,
+    sources: &[BubbleSmogSource],
+    config: &SmogConfig,
+    dt: f32,
+    checkpoint: bool,
+    h: &mut Fnv64,
+) -> Result<(), SmogError> {
+    let metrics = grid.step(sources, config, dt)?;
+    h.metrics(&metrics);
+    if checkpoint {
+        h.grid(grid);
+    }
+    Ok(())
+}
+
+/// The showcase sources for [`WAKE_SOURCE_STEPS`], then no source for [`WAKE_DECAY_STEPS`]:
+/// the wake decays while nothing feeds it. Bricks return to rest here (density and glow reach
+/// exactly zero; the velocity field does not, `docs/plans/2026-11-04-open-findings-c17-c18-p9-gaps.md`
+/// §5.4), so a rest flag that is set too early, or a stale `occupied` flag, changes this hash.
+///
+/// Class L: `expf` (the velocity, density and glow decay factors at `1/60` s).
+#[test]
+fn fluid_wake_decay_golden() -> Result<(), SmogError> {
+    let config = SmogConfig::default();
+    let mut states = initial_bouncing_bubbles(&config.bounds)?.to_vec();
+    let mut grid = SmogGrid3d::new(LAB_VOLUME_MIN, LAB_VOLUME_MAX)?;
+    let mut sources = Vec::with_capacity(states.len());
+    let mut h = Fnv64::new();
+    for step in 1..=WAKE_SOURCE_STEPS + WAKE_DECAY_STEPS {
+        if step <= WAKE_SOURCE_STEPS {
+            step_bouncing_kinematics(&mut states, &config.bounds, STEP_DT)?;
+            fill_sources(&mut sources, &states, Vec3::ZERO);
+        } else {
+            sources.clear();
+        }
+        let checkpoint = step % FIELD_CHECKPOINT == 0;
+        hashed_step(&mut grid, &sources, &config, STEP_DT, checkpoint, &mut h)?;
+    }
+    let hash = h.finish();
+    assert_eq!(
+        hash, GOLDEN_FLUID_WAKE_DECAY,
+        "fluid wake decay golden: {hash:#018x}"
+    );
+    Ok(())
+}
+
+/// Twenty sources at 8 to 12 world units per second, stepped at the 0.05 s clamp, so a
+/// semi-Lagrangian back-trace reaches more than two voxels on the finest axis (the fluid peaks at
+/// about 6.3 world units per second, 2.5 voxels of z per step) and so crosses brick boundaries
+/// (a brick is 8 × 4 × 8 voxels in the C-18 plan's D-2). A reach that is too short changes this
+/// hash.
+///
+/// Class L: `expf` (decay factors at `0.05` s) and `sinf` (`bubble_team_color` for indices 10 and
+/// up). The crowd comes from the recorded trig table; its speeds are rescaled with `sqrt`, which
+/// is correctly rounded on every host.
+#[test]
+fn fluid_fast_sources_golden() -> Result<(), SmogError> {
+    let config = SmogConfig::default();
+    let mut states = crowd_lattice(FAST_SOURCE_COUNT, &config.bounds, table_trig);
+    for (i, state) in states.iter_mut().enumerate() {
+        let speed = FAST_SOURCE_MIN_SPEED + (i % 5) as f32;
+        state.velocity *= speed / state.velocity.length();
+    }
+    let mut grid = SmogGrid3d::new(LAB_VOLUME_MIN, LAB_VOLUME_MAX)?;
+    let mut sources = Vec::with_capacity(states.len());
+    let mut h = Fnv64::new();
+    let mut peak_speed = 0.0_f32;
+    for step in 1..=FLUID_STEPS {
+        step_bouncing_kinematics(&mut states, &config.bounds, FAST_DT)?;
+        fill_sources(&mut sources, &states, Vec3::ZERO);
+        let metrics = grid.step(&sources, &config, FAST_DT)?;
+        peak_speed = peak_speed.max(metrics.max_speed);
+        h.metrics(&metrics);
+        if step % FIELD_CHECKPOINT == 0 {
+            h.grid(&grid);
+        }
+    }
+    // The scenario's purpose: the fluid moves fast enough that one back-trace spans more than
+    // two voxels on the finest axis.
+    let finest_cell = (LAB_VOLUME_MAX - LAB_VOLUME_MIN)
+        / Vec3::new(GRID_NX as f32, GRID_NY as f32, GRID_NZ as f32);
+    let reach_voxels = peak_speed * FAST_DT / finest_cell.min_element();
+    println!("fast sources: peak fluid speed {peak_speed}, back-trace reach {reach_voxels} voxels");
+    assert!(
+        reach_voxels > 2.0,
+        "fast sources must back-trace more than two voxels, reached {reach_voxels}"
+    );
+    let hash = h.finish();
+    assert_eq!(
+        hash, GOLDEN_FLUID_FAST_SOURCES,
+        "fluid fast sources golden: {hash:#018x}"
+    );
+    Ok(())
+}
+
+/// The showcase sources for 40 steps; the window shifted by (+3, 0, −2) voxels with
+/// `set_bounds_quantized` (the field moves inside its slabs and the exposed voxels are
+/// re-initialised); 40 steps; a shift wider than the grid (the clearing path); 20 steps. The
+/// sources move with the window. The field is hashed at the usual checkpoints, at the end of
+/// each phase and right after each shift.
+///
+/// Class L: `expf` (decay factors at `1/60` s).
+#[test]
+fn fluid_bounds_shift_golden() -> Result<(), SmogError> {
+    let config = SmogConfig::default();
+    let mut states = initial_bouncing_bubbles(&config.bounds)?.to_vec();
+    let mut grid = SmogGrid3d::new(LAB_VOLUME_MIN, LAB_VOLUME_MAX)?;
+    let extent = LAB_VOLUME_MAX - LAB_VOLUME_MIN;
+    let cell = extent / Vec3::new(GRID_NX as f32, GRID_NY as f32, GRID_NZ as f32);
+    let shifts = [
+        Vec3::new(
+            SHIFT_SMALL_VOXELS[0] as f32 * cell.x,
+            SHIFT_SMALL_VOXELS[1] as f32 * cell.y,
+            SHIFT_SMALL_VOXELS[2] as f32 * cell.z,
+        ),
+        Vec3::new(f32::from(SHIFT_LARGE_VOXELS_X) * cell.x, 0.0, 0.0),
+    ];
+    let mut sources = Vec::with_capacity(states.len());
+    let mut h = Fnv64::new();
+    let mut step = 0;
+    for (phase, &phase_steps) in SHIFT_PHASE_STEPS.iter().enumerate() {
+        if phase > 0 {
+            let before = grid.bounds_min();
+            let new_min = before + shifts[phase - 1];
+            grid.set_bounds_quantized(new_min, new_min + extent);
+            assert_ne!(
+                grid.bounds_min(),
+                before,
+                "shift {phase} must move the window"
+            );
+            h.grid(&grid);
+        }
+        let offset = grid.bounds_min() - LAB_VOLUME_MIN;
+        for phase_step in 1..=phase_steps {
+            step += 1;
+            step_bouncing_kinematics(&mut states, &config.bounds, STEP_DT)?;
+            fill_sources(&mut sources, &states, offset);
+            let checkpoint = step % FIELD_CHECKPOINT == 0 || phase_step == phase_steps;
+            hashed_step(&mut grid, &sources, &config, STEP_DT, checkpoint, &mut h)?;
+        }
+    }
+    let hash = h.finish();
+    assert_eq!(
+        hash, GOLDEN_FLUID_BOUNDS_SHIFT,
+        "fluid bounds shift golden: {hash:#018x}"
+    );
+    Ok(())
+}
+
+/// A fixed cycle of `dt` ([`VARIABLE_DTS`]: 1/240, 1/144, 1/60, 1/30, 0.07 and 0 s) against a
+/// source count alternating 30 and 40 every [`VARIABLE_COUNT_RUN`] steps, so confinement switches
+/// on and off and the stale vorticity of the last confined step is packed while it is off.
+///
+/// Class L: `expf` (decay factors at each nonzero `dt`, 0.07 clamped to 0.05) and `sinf`
+/// (`bubble_team_color` for indices 10 and up). The crowd comes from the recorded trig table.
+#[test]
+fn fluid_variable_dt_golden() -> Result<(), SmogError> {
+    let config = SmogConfig::default();
+    let max_count = VARIABLE_SOURCE_COUNTS[1];
+    let mut states = crowd_lattice(max_count, &config.bounds, table_trig);
+    let mut grid = SmogGrid3d::new(LAB_VOLUME_MIN, LAB_VOLUME_MAX)?;
+    let mut sources = Vec::with_capacity(max_count);
+    let mut h = Fnv64::new();
+    for step in 0..VARIABLE_STEPS {
+        let dt = VARIABLE_DTS[step % VARIABLE_DTS.len()];
+        let count =
+            VARIABLE_SOURCE_COUNTS[(step / VARIABLE_COUNT_RUN) % VARIABLE_SOURCE_COUNTS.len()];
+        step_bouncing_kinematics(&mut states, &config.bounds, dt)?;
+        fill_sources(&mut sources, &states[..count], Vec3::ZERO);
+        let checkpoint = (step + 1) % FIELD_CHECKPOINT == 0;
+        hashed_step(&mut grid, &sources, &config, dt, checkpoint, &mut h)?;
+    }
+    let hash = h.finish();
+    assert_eq!(
+        hash, GOLDEN_FLUID_VARIABLE_DT,
+        "fluid variable dt golden: {hash:#018x}"
     );
     Ok(())
 }
@@ -1138,13 +1398,20 @@ fn smog_live_battle_systems_golden() -> Result<(), Box<dyn std::error::Error>> {
 /// `x86_64`).
 const GOLDEN_LIBM_CANARY: u64 = 0xd3dc_9154_746f_1272;
 
+/// The canary's recorded hash of the `expf` decay factors the C-18 characterisation goldens add
+/// (glibc 2.41, `x86_64`): the steps of [`VARIABLE_DTS`] and [`FAST_DT`] that
+/// [`GOLDEN_LIBM_CANARY`] does not already cover. Kept separate so that constant stays as it was
+/// recorded.
+const GOLDEN_LIBM_CANARY_C18: u64 = 0x98d9_3224_8b8e_11df;
+
 /// Pins the exact production `libm` results the class-L goldens consume, so a host whose `libm`
 /// differs from the recording host fails here with a message that says so.
 ///
 /// It hashes the bits of: the fluid's three `expf` decay factors, written exactly as in
 /// `fluid.rs`, for the default and crowd configurations (the system goldens' effective
 /// configuration changes only emission and wake, not the decay rates) at the golden step, the
-/// manual clock's step and the pre-warm step; `bubble_team_color` (`sinf`) for every index a
+/// manual clock's step and the pre-warm step (and, in the separate [`GOLDEN_LIBM_CANARY_C18`],
+/// at the C-18 goldens' other steps: 1/240, 1/144 and 0.05 s); `bubble_team_color` (`sinf`) for every index a
 /// class-L golden uses beyond the palette; and `Color::to_linear` (`powf`) of the ten showcase
 /// palette colours. The noise texel's calls are too many to list; [`smog_noise_texture_golden`]
 /// covers them.
@@ -1177,6 +1444,22 @@ fn smog_golden_libm_canary() {
         h.f32(linear.alpha);
     }
     let hash = h.finish();
+    let mut c18 = Fnv64::new();
+    for c in [SmogConfig::default(), crowd_config()] {
+        for dt in [VARIABLE_DTS[0], VARIABLE_DTS[1], FAST_DT] {
+            c18.f32((-c.velocity_damping * dt).exp());
+            c18.f32((-c.dissipation_rate * dt).exp());
+            c18.f32((-(1.8 * c.dissipation_rate).max(1.65) * dt).exp());
+        }
+    }
+    let c18_hash = c18.finish();
+    assert_eq!(
+        c18_hash, GOLDEN_LIBM_CANARY_C18,
+        "libm canary (C-18 steps) {c18_hash:#018x}: this host's expf differs from the recording \
+         host (glibc 2.41, x86_64), so the C-18 characterisation goldens are not comparable on \
+         this host. The fix is owner question \
+         docs/questions/open/0014-host-independent-smog-math.md, not re-recording the goldens."
+    );
     assert_eq!(
         hash, GOLDEN_LIBM_CANARY,
         "libm canary {hash:#018x}: this host's libm (expf, sinf or powf) differs from the \
