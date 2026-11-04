@@ -8,6 +8,9 @@
 // swings with damage point 0, every 21 ticks, range 0.1, backswing 9 (was 4, 22, 0.3, 6).
 // Checkpoints 1 to 4 (ticks 1 to 200) are unchanged; from checkpoint 5 (ticks 201 to 250), the
 // first in which the zealot weapon matters, every checkpoint changed.
+// Re-recorded for WP6 (Q0038; marine damage point 1, backswing 13) from checkpoint 4 on, and
+// for WP7 (Q0039): "blue_infantry" (pulse_bot) now walks at 0.126 per tick (was 0.09), so every
+// checkpoint changed from checkpoint 1 (ticks 1 to 50), where the squad starts moving at tick 5.
 (
     checksum_schema: 9,
     seed: 0x5EED_0F_5CAFF1E,
@@ -35,25 +38,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xdadf1445e48a13fe,
-        0xefd17a4dfe28f45c,
-        0x5c319da929211968,
-        0x12352d59140cc554,
-        0xcf1c9e6828478896,
-        0x1601b2fc4fac1e07,
-        0xb409b76cf6ff978b,
-        0x4dbca6578906f86a,
-        0xd79dc65a4a0ce53c,
-        0x28117c4f1bf81a18,
-        0xdd6eacb9ac17a048,
-        0x042d904cb922bd0e,
-        0x2c6c1e65453cd774,
-        0x983b77fc4fbad0c1,
-        0x50c99d141545e295,
-        0x56999097b6b8a34f,
-        0x7fcff1d974b06524,
-        0x2c306e0ca0c6541d,
-        0xd96f3786a423174e,
-        0x0b585654b7eb8375,
+        0xe79584232a675ca2,
+        0xa47736b1ccdc4fff,
+        0x5b2cfb479717135f,
+        0x8104530ece6dec0b,
+        0xd8dfb12e211a71e3,
+        0x2cd858e3dbcf5202,
+        0x5cb91ed9e6bb8029,
+        0x8d30eb6962696166,
+        0x556a1b01d1e35959,
+        0xb14533f8d364016b,
+        0xdaf46159efb25233,
+        0x80d48c5816653226,
+        0xb482901c09133ecb,
+        0x01347c9f8a3f8cbc,
+        0x839ea2b3550fa205,
+        0x51c1c96133ab6d1c,
+        0xff1c99c33130c0f3,
+        0x87a7806b68849ee8,
+        0x4f4368e3981ff009,
+        0x4f3c601019e7f6cf,
     ],
 )

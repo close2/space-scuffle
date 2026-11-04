@@ -617,3 +617,186 @@ column (only battle 33's `expectation met` column differs, by the re-recording).
   again: the ledge fight is over and no state the marine's timing touched remains. Both phase-order situations the
   fixture exists for are still found by the test.
 - Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`, as CI) reproduce both fixtures.
+
+## 6. WP7: the marine's speed (Q0039)
+
+**Commit.** The data commit of WP7, on `main` at `95456b3` (WP0 to WP6 merged; the commits after `317dcc3` change
+no simulation code or catalog data, and the tool built there reproduces §5's `matrix.csv` byte for byte).
+`pulse_bot` walks at StarCraft II's speed, converted from Normal to Faster time, one of the four values of the
+owner's answer to Q0039 (option 3):
+
+| Field | Before | After | Reference |
+|---|---|---|---|
+| `max_speed` | 0.09 | **0.126** | 2.25 Normal = 3.15 Faster per s = 0.126 per tick (`liberty` UnitData:4821; audit row, battle 33 investigation §1.5) |
+| `acceleration`, `deceleration` | 0.09 | **0.126** | the catalog's convention (they copy `max_speed`); parsed and unused by the simulation (audit class E) |
+
+Doc 07's roster row already says 0.1260. Outputs under `~/scratch/combat_wp7/` on the development server (`base/`
+the state before, `wp7/` the edit, `wp7c/` the committed state with battle 33 re-recorded).
+
+### 6.1 Whole matrix, 20 seeds
+
+Compared with the state after WP6 (§5.1). **5 battles moved: 12a, 21, 25a, 32 and 33.** The plan expected 5c, 12a,
+16b, 21, 32 and 33 (WP7 step 2), from a probe that combined WP6 and WP7: **5c and 16b did not move here** (they
+moved with WP6's damage point, §5.1), and **25a moved although the plan did not list it** (accepted by the
+orchestrator as the same cause; see below). **No winner changed except in battles 32 and 33, and none but 33 needed
+its expectation changed.** Expectation failures: 0 on the seeds of record after battle 33's re-recording (§6.2), 7
+over all 20 seeds, all battle 33. After WP6 it was 0 and 3.
+
+| Battle | Seeds moved | Survivors blue – red, before → after | End tick, before → after | Lead hull, before → after |
+|---|---|---|---|---|
+| 12a_colossus_vs_6_marines | 9 | 1.00 – 0.00 → same | 78.0 → 80.7 | blue 243.80 → 238.15 |
+| 21_lurker_vs_6_marines | 18 | 1.00 – 0.00 → same | 99.2 → 106.4 | blue 82.94 → 71.59 |
+| 25a_2_marines_vs_zealot | 11 | 0.00 – 1.00 → same | 145.6 → 145.1 | red 62.00 → 62.00 |
+| 32_30_marines_vs_15_banelings | 6 | 1.10 – 0.80 → 0.90 – 0.90 | 52.9 → 52.8 | blue 18.75 (4) → 18.75 (4) |
+| 33_24_marines_vs_12_zealots | 20 | 4.35 – 0.85 → **4.50 – 0.60** | 449.5 → 440.8 | blue 39.00 (8) → 36.27 (11) |
+
+- **The marines close the distance sooner.** Against the colossus (12a) and the lurker (21), which outrange them, the
+  marines spend fewer ticks walking under fire, so they deal more damage before they fall: the colossus ends with
+  5.65 less life on average (9 seeds moved; on 2 the fight lasts one colossus cycle longer), the lurker with 11.35
+  less (18 seeds; on 3 the fight lasts one or two lurker cycles longer, on 1 one shorter). The winner and the survivor counts are
+  unchanged.
+- **Battle 25a** (two marines against a zealot): on 11 of the 20 seeds the fight ends one tick sooner (146 → 145 on
+  10 seeds, 145 → 144 on one). The zealot wins on every seed and ends with 62 life, as before; the expectation
+  holds. The faster marines meet the zealot a tick earlier. **Battle 25b does not move** (its rows are identical):
+  its marines are stimmed and the fight is decided at contact.
+- **Battle 32** (30 marines against 15 banelings) is a coin flip by design (`blue: (0, 15), red: (0, 999)`): on 6
+  seeds the outcome changes (seed 1 both gone → marine win, 12 marine win → baneling win, 8 marine win → both gone,
+  3 baneling win → both gone; on seeds 9 and 22 only the counts or the end tick change), so blue wins 5 → 4,
+  baneling wins stay 9 and both gone 6 → 7.
+- **Battle 33** changes winner on 10 of the 20 seeds, both ways; §6.2 has the distribution.
+
+The whole matrix after this step (means over the 20 seeds; lead hull as in §1.1):
+
+| Battle | Seeds | Blue wins | Red wins | Unresolved | Both gone | Survivors blue – red | End tick | Blue lead hull | Red lead hull | Failures of record | Failures, all seeds |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1a_stalker_vs_roach | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 281.0 | 5.00 (20) | — | 0 | 0 |
+| 1b_stalker_vs_2_roaches | 20 | 0 | 20 | 0 | 0 | 0.00 – 2.00 | 159.8 | — | 106.75 (20) | 0 | 0 |
+| 2a_immortal_vs_roach | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 61.0 | 200.00 (20) | — | 0 | 0 |
+| 2b_immortal_vs_2_roaches | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 145.0 | 174.00 (20) | — | 0 | 0 |
+| 3_immortal_vs_tank | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 89.0 | 200.00 (20) | — | 0 | 0 |
+| 4_marauder_vs_roach | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 190.1 | 20.00 (20) | — | 0 | 0 |
+| 5a_hydra_vs_marine | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 52.0 | 67.00 (20) | — | 0 | 0 |
+| 5b_hydra_vs_2_marines | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 112.0 | 20.20 (20) | — | 0 | 0 |
+| 5c_hydra_vs_3_marines | 20 | 0 | 20 | 0 | 0 | 0.00 – 2.00 | 77.0 | — | 40.33 (18) | 0 | 0 |
+| 6a_roach_vs_hydra | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 149.7 | 35.00 (20) | — | 0 | 0 |
+| 6b_2_roaches_vs_hydra | 20 | 20 | 0 | 0 | 0 | 2.00 – 0.00 | 65.9 | 118.60 (20) | — | 0 | 0 |
+| 6c_roach_vs_2_hydras | 20 | 0 | 20 | 0 | 0 | 0.00 – 2.00 | 96.3 | — | 61.98 (20) | 0 | 0 |
+| 7_zealot_vs_roach | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 240.9 | 12.00 (20) | — | 0 | 0 |
+| 8_zealot_vs_stalker | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 241.5 | 57.00 (20) | — | 0 | 0 |
+| 9a_hellion_vs_4_lings | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 91.0 | 27.80 (20) | — | 0 | 0 |
+| 9b_hellion_vs_roach | 20 | 0 | 20 | 0 | 0 | 0.00 – 1.00 | 148.0 | — | 117.00 (20) | 0 | 0 |
+| 10_2_hellions_vs_8_lings | 20 | 20 | 0 | 0 | 0 | 2.00 – 0.00 | 55.0 | 70.00 (20) | — | 0 | 0 |
+| 11a_2_banelings_vs_5_marines | 20 | 0 | 9 | 0 | 11 | 0.00 – 2.25 | 9.1 | — | 10.00 (9) | 0 | 0 |
+| 11b_2_banelings_vs_marauder | 20 | 0 | 20 | 0 | 0 | 0.00 – 1.00 | 9.1 | — | 95.00 (20) | 0 | 0 |
+| 12a_colossus_vs_6_marines | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 80.7 | 238.15 (20) | — | 0 | 0 |
+| 12b_colossus_vs_3_marauders | 20 | 0 | 20 | 0 | 0 | 0.00 – 2.00 | 164.0 | — | 67.53 (19) | 0 | 0 |
+| 12c_viking_vs_colossus | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 474.0 | 125.00 (20) | — | 0 | 0 |
+| 13_storm_vs_held_lings | 20 | 0 | 0 | 0 | 20 | 0.00 – 0.00 | 70.0 | — | — | 0 | 0 |
+| 14_thor_vs_ultralisk | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 187.0 | 37.00 (20) | — | 0 | 0 |
+| 15_plated_ultralisk_vs_8_marines | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 111.0 | 415.28 (20) | — | 0 | 0 |
+| 16a_muta_vs_marine | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 115.0 | 74.26 (20) | — | 0 | 0 |
+| 16b_muta_vs_2_marines | 20 | 0 | 20 | 0 | 0 | 0.00 – 1.00 | 182.0 | — | 27.00 (11) | 0 | 0 |
+| 17_void_ray_vs_muta | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 181.0 | 150.00 (20) | — | 0 | 0 |
+| 18_void_ray_vs_corruptor | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 226.0 | 110.00 (20) | — | 0 | 0 |
+| 19_viking_vs_brood_lord | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 293.0 | 125.00 (20) | — | 0 | 0 |
+| 20_brood_lord_vs_roach | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 142.2 | 225.00 (20) | — | 0 | 0 |
+| 21_lurker_vs_6_marines | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 106.4 | 71.59 (20) | — | 0 | 0 |
+| 22a_reaper_vs_2_workers | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 102.0 | 40.63 (20) | — | 0 | 0 |
+| 22b_reaper_vs_stalker | 20 | 0 | 20 | 0 | 0 | 0.00 – 1.00 | 178.0 | — | 80.00 (20) | 0 | 0 |
+| 23a_zealot_vs_6_lings | 20 | 0 | 20 | 0 | 0 | 0.00 – 2.00 | 269.2 | — | — | 0 | 0 |
+| 23b_upgraded_zealot_vs_6_lings | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 245.6 | 60.00 (20) | — | 0 | 0 |
+| 24a_roach_vs_5_lings | 20 | 0 | 20 | 0 | 0 | 0.00 – 2.00 | 296.6 | — | — | 0 | 0 |
+| 24b_upgraded_roach_vs_5_lings | 20 | 20 | 0 | 0 | 0 | 1.00 – 0.00 | 255.6 | 85.00 (20) | — | 0 | 0 |
+| 25a_2_marines_vs_zealot | 20 | 0 | 20 | 0 | 0 | 0.00 – 1.00 | 145.1 | — | 62.00 (20) | 0 | 0 |
+| 25b_upgraded_marines_vs_zealot | 20 | 0 | 20 | 0 | 0 | 0.00 – 1.00 | 141.4 | — | 32.00 (20) | 0 | 0 |
+| 26_100_lings_vs_6_colossi | 20 | 0 | 20 | 0 | 0 | 0.00 – 6.00 | 114.8 | — | 250.00 (20) | 0 | 0 |
+| 27_100_lings_vs_8_ultralisks | 20 | 0 | 20 | 0 | 0 | 0.00 – 8.00 | 203.1 | — | 432.59 (20) | 0 | 0 |
+| 28_100_lings_vs_10_immortals | 20 | 20 | 0 | 0 | 0 | 27.30 – 0.00 | 670.5 | 35.00 (3) | — | 0 | 0 |
+| 29_100_lings_vs_12_stalkers | 20 | 20 | 0 | 0 | 0 | 71.50 – 0.00 | 440.4 | 34.41 (18) | — | 0 | 0 |
+| 30_20_roaches_vs_10_immortals | 20 | 0 | 20 | 0 | 0 | 0.00 – 9.95 | 263.9 | — | 128.58 (19) | 0 | 0 |
+| 31_15_marauders_vs_15_stalkers | 20 | 15 | 5 | 0 | 0 | 2.65 – 0.70 | 661.3 | 88.17 (6) | — | 0 | 0 |
+| 32_30_marines_vs_15_banelings | 20 | 4 | 9 | 0 | 7 | 0.90 – 0.90 | 52.8 | 18.75 (4) | — | 0 | 0 |
+| 33_24_marines_vs_12_zealots | 20 | 15 | 4 | 1 | 0 | 4.50 – 0.60 | 440.8 | 36.27 (11) | — | 0 | 7 |
+| 34_20_hydras_vs_12_mutas | 20 | 20 | 0 | 0 | 0 | 19.10 – 0.00 | 192.6 | 90.00 (20) | — | 0 | 0 |
+| 35_12_vikings_vs_6_colossi | 20 | 19 | 0 | 1 | 0 | 12.00 – 0.05 | 309.2 | 125.00 (20) | — | 0 | 0 |
+
+### 6.2 Battle 33, 68 seeds, and its re-recorded expectation
+
+| Measure | Before (§5.2) | After WP7 |
+|---|---|---|
+| Marine wins / zealot wins / unresolved at 500 ticks | 44 / 12 / 12 | **42 / 18 / 8** |
+| Zealots left in their wins | 2 to 5 | 2 to 4 |
+| Unresolved | 12 seeds, 1 to 3 marines against 1 or 2 zealots | 8 seeds, 1 to 3 marines against 1 or 2 zealots |
+| Marine survivors, mean (SD), median, range | 4.56 (3.18), 4.5, 0 to 11 | **4.03** (3.26), 4, 0 to 11 |
+| Zealot survivors, mean, range | 0.74, 0 to 5 | 0.84, 0 to 4 |
+| End tick, mean (SD), range | 448.8 (37.7), 368 to 500 | 441.2 (39.2), 370 to 500 |
+| K over the first 5 s, mean (SD), range | 4.17 (0.32), 3.26 to 4.75 | 4.16 (0.32), 3.34 to 4.90 |
+| First contact, marines / zealots (mean tick) | 77.6 / 116.4 | 66.6 / 105.4 |
+| Seeds of record 3203386110, 11, 22, 33 (marines – zealots) | 7–0, 7–0, 0–3, 6–0 | 7–0, **3–0**, **9–0**, 6–0 |
+
+Zealot wins after WP7 (seed: zealots left): 6: 3, 8: 2, 10: 4, 14: 2, 19: 3, 30: 2, 34: 3, 35: 2, 36: 4, 37: 2,
+41: 2, 42: 3, 45: 4, 46: 2, 47: 3, 60: 2, 66: 2, 67: 2.
+
+- **The expectation `blue: (0, 7), red: (0, 3)` fails on seed 22** (a marine win with 9 left). Per Q0044 (option 1,
+  plan D-6) it is re-recorded to the smallest ranges that hold on the four seeds of record: **`blue: (0, 9), red:
+  (0, 0)`**. All four seeds of record are marine wins now, so the range admits only marine wins of up to 9 on them.
+  The claim ("A close fight: … either side may win narrowly") is unchanged: on 68 seeds the zealots win 18. The RON
+  comment above the battle states this distribution and points here. Seeds and setup are unchanged. On the 20 matrix
+  seeds the new range holds on 13 and fails on 7 (zealot wins on seeds 6, 8, 10 and 14, the unresolved seed 3, and
+  marine wins with 10 and 11 left on seeds 5 and 13).
+- **Paired over the 68 seeds**, marine survivors change by −0.53 (SE 0.45), zealot survivors by +0.10 (SE 0.19), and
+  the end tick by −7.6 (SE 5.0): within noise of no change in the mean, while the outcome of single seeds moves a
+  lot. Both sides meet 11 ticks sooner (marines' first contact −11.01, SE 0.03); the marines release 1.1 fewer shots
+  (SE 2.4) and the zealots swing 0.9 more times (SE 1.1). The marines walk into the zealots instead of waiting
+  for them, so contact starts sooner.
+
+### 6.3 Golden replays
+
+- **`golden_replay.ron`: re-recorded.** Its 16 `blue_infantry` marines start moving at tick 5, so every checkpoint
+  (1 to 20) changed, from **checkpoint 1 (ticks 1 to 50)**.
+- **`golden_replay_orders.ron`: re-recorded.** Checkpoints 1 and 2 (ticks 1 to 20) are unchanged; from **checkpoint
+  3 (ticks 21 to 30)**, the first after the marines' move order at tick 20, all 58 later checkpoints changed. Both
+  phase-order situations the fixture exists for are still found by the test. The fixture's header notes that the
+  ticks named in its scenario text are from the first recording.
+- Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`, as CI) reproduce both fixtures.
+
+### 6.4 Tests restated before this step, and finding M-19
+
+Three movement tests measured a march over a tick count that only made sense at 0.09; they failed at 0.126 and
+were restated test-only in the commit before this one (plan D-1 item 5), each green on both catalogs:
+`test_move_command_units_fan_out_and_surround_target_point` (march 7.2 world units instead of 80 ticks; at 0.126
+the spread was 2.30 < 3), `test_live_battle_scenario_dual_ramp_traversal` (each unit judged on its first tick on the
+enemy plateau, as the reverse march already was; at 0.126 marines arrived early and were lost there by tick 980), and
+`battlefield_bubble_trajectories_are_smooth_without_micro_jitter` (window of 16.2 world units for the fastest
+combatant instead of 180 ticks; thresholds unchanged). A fourth, in the client, was restated in its own test-only
+commit for the same reason: `sync_steady_state_tests::combat_frames_reuse_effect_materials` required 100 combat
+events in one window placed 120 frames after first contact; at 0.126 that window falls into a lull between two waves
+(77 events; 170 in the next window), so the test now takes the first of up to four consecutive windows that holds
+100 events and applies the material rules to every window it judges (160 events in the first window on the old
+catalog).
+
+The last one hid a real defect, recorded as **M-19** in
+[`2026-11-01-codebase-remediation`](../plans/2026-11-01-codebase-remediation.md) §4.2: on `showcase_canyon` with
+loadout `battle_automaton` (seed 1592639215, Player 0's 8 `pulse_bot` and 2 `rhino_beetle` attack-moving to (52.5,
+52.5)), the marines jostle in a crowd near (28 to 30, 10 to 12), reversing heading by 8° to 175° on consecutive ticks
+at speeds of 0.01 to 0.09. **It is not a mixed-speed effect:** with every combatant at 0.09 (the catalog before this
+step) it happens too, from tick 216, just past the test's old 180-tick window; at 0.126 the group reaches the crowd
+at tick 152. A per-tick trace at 0.126 over ticks 1 to 180 showed 16 marine zig-zags (entities 5 to 9, ticks 152 to
+170) and one `rhino_beetle` zig-zag (entity 13, tick 179). Reproduction: set `JITTER_MARCH_DISTANCE` in
+`crates/sim_core/tests/collision_and_immobility_tests.rs` to `36.0` (400 ticks at 0.09) and run
+
+```bash
+cargo test --locked -p sim_core --test collision_and_immobility_tests battlefield
+```
+
+which fails with `Units must have zero sign-reversing velocity zig-zag oscillations (> 8 deg) while marching (got
+40)` on the catalog before this step (zig-zags in ticks 216 to 287, all `pulse_bot`) and `(got 20)` on this step's
+catalog (window 286 ticks). The finding is open, for a later movement plan.
+
+### 6.5 Gate note: a GPU test near its threshold
+
+In this step's first `cargo test --workspace` run, `client` `skirmish_match_tests::
+the_skirmish_hud_and_foundation_render_cleanly_on_a_real_window` failed on the physical GPU (radv): a crossed ring
+changed by 66.57 where it needed more than 3 × 23.47 (the largest change of a ring built in both shots). Rerun alone
+on the same build it passed (67.10 against 3 × 20.90). The test drives workers to raise a foundation and involves no
+`pulse_bot`; it is a margin flake unrelated to this step, reported and left unchanged.
