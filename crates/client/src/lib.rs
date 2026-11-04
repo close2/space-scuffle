@@ -19,6 +19,7 @@
 //! - [`battle_hud`]: The player's resource bar, command panel and message feed.
 //! - [`lab_stage`]: Flat stage and lights for the map-less Lab and Swarm scenes.
 //! - [`bubble_shader`]: Custom `BubbleDomeMaterial` and GPU uniform packing for unit spheres and domes.
+//! - [`flipbook_clock`]: The shared flipbook clock, its GPU buffer and the integer frame function.
 //! - [`indicators`]: Ground selection rings, equatorial facing chevron, attack focal lens, and collar meshes.
 //! - [`vfx`]: Hitscan tracers, plasma bolts, lasers, lightning, and glass shatter.
 //! - [`lab_ui`]: Tabbed `bevy_egui` dashboard (Visual Lab, Live Combat Sandbox, Swarm Stress Test).
@@ -37,6 +38,7 @@ pub mod bubble_shader;
 pub mod camera;
 pub mod camera_drag;
 pub mod editor;
+pub mod flipbook_clock;
 pub mod indicators;
 pub mod input_bindings;
 pub mod input_policy;
@@ -370,7 +372,7 @@ fn add_scene_plugins(app: &mut App) {
 /// Bubble, selection ring, combat effect and smog materials, then the smog, battle input and
 /// battle HUD feature plugins.
 fn add_material_and_feature_plugins(app: &mut App) {
-    app.add_plugins(MaterialPlugin::<BubbleDomeMaterial>::default())
+    app.add_plugins(bubble_shader::BubbleDomeMaterialPlugin)
         .add_plugins(MaterialPlugin::<SelectionRingMaterial>::default())
         .add_plugins(bubble_optics::BubbleOpticsPlugin)
         .add_plugins(CombatFxPlugin)
@@ -721,10 +723,14 @@ fn headless_simulation_check(root: &ResolvedAssetsRoot) -> Result<(), String> {
             let style = palette
                 .resolve(bubble.owner)
                 .map_err(|error| error.to_string())?;
-            let uniform = BubbleUniformGpu::from_instance(bubble, None, style);
-            if size_of::<BubbleUniformGpu>() != 160 {
+            let uniform = BubbleUniformGpu::from_instance(
+                bubble,
+                style,
+                bubble_shader::still_frame_lanes(None, bubble.anim_state),
+            );
+            if size_of::<BubbleUniformGpu>() != 176 {
                 return Err(format!(
-                    "BubbleUniformGpu size mismatch: expected 160, got {}",
+                    "BubbleUniformGpu size mismatch: expected 176, got {}",
                     size_of::<BubbleUniformGpu>()
                 ));
             }

@@ -71,6 +71,11 @@
 //!   `BubbleRenderInstance::anim_progress: 0.0` became `attack_swing: None` (plan
 //!   `2026-11-04-battle-flipbook-animation` WP1). With that one spelling substituted back, all
 //!   four reproduced their previous values, so no smog output changed.
+//! - The same four hash each bubble material's `BubbleUniformGpu` bytes. They were re-recorded
+//!   when that uniform grew from 160 to 176 bytes and `DEFAULT_FEATURE_FLAGS` gained
+//!   `FLAG_FRAME_BLEND` (same plan, WP4). Hashing the first 160 bytes with bit 10 of
+//!   `feature_flags` cleared, the old image (the new row is all zero for fixed lanes), all four
+//!   reproduced their previous values, so no smog output changed.
 //! - A golden may only change together with a deliberate, documented change in smog output.
 
 #![allow(
@@ -1185,11 +1190,11 @@ fn require_smog_activity(app: &App) -> usize {
     stats.active_bubbles
 }
 
-const GOLDEN_SYSTEMS_STARTUP: u64 = 0x1fe4_a558_384c_8b47;
+const GOLDEN_SYSTEMS_STARTUP: u64 = 0x5690_15a8_6873_e107;
 const GOLDEN_SYSTEMS_NOISE: u64 = 0x1fe2_2cc0_e03e_f783;
-const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0xeba0_95a3_db3b_d625;
-const GOLDEN_SYSTEMS_SWARM: u64 = 0x86ef_7170_644c_8c2b;
-const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0x64bc_cacc_34a1_e848;
+const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0xe585_490b_a96b_dced;
+const GOLDEN_SYSTEMS_SWARM: u64 = 0x8d70_5277_8a52_19e3;
+const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0x5e7e_6426_b5ee_e540;
 
 /// The headless Visual Lab app after its startup frame (the clock's first update has `dt = 0`).
 fn startup_app() -> Result<App, Box<dyn std::error::Error>> {

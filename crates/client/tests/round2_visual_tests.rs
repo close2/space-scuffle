@@ -4,7 +4,7 @@
 //! - Every file in `assets/shaders` composes with its real Bevy imports and passes strict naga
 //!   validation under each shader-def variant the mesh pipeline can request.
 //! - Module IR of shipped shaders matches the Rust uniform layouts, bindings and feature flags.
-//! - `BubbleUniformGpu` memory layout is strictly 160 bytes and 16-byte aligned.
+//! - `BubbleUniformGpu` memory layout is strictly 176 bytes and 16-byte aligned.
 //! - The catalog units with flipbooks are exactly the audited set, each 512 wide and within the
 //!   WebGPU 16384 height limit.
 //! - Ray-sphere selection math passes direct hit, tangent, and miss scenarios.
@@ -37,8 +37,8 @@ use asset_baker::FlipbookAtlasMeta;
 use bevy::prelude::*;
 use client::bubble_shader::{
     BubbleUniformGpu, DEFAULT_FEATURE_FLAGS, FLAG_ATTACK_APERTURE, FLAG_CLOAKED, FLAG_CRACKS,
-    FLAG_CRT_GLITCH, FLAG_FACING_STRIPE, FLAG_FRESNEL, FLAG_GLARE, FLAG_INNER_WARP, FLAG_SELECTED,
-    FLAG_SPEED_BOOSTED,
+    FLAG_CRT_GLITCH, FLAG_FACING_STRIPE, FLAG_FRAME_BLEND, FLAG_FRESNEL, FLAG_GLARE,
+    FLAG_INNER_WARP, FLAG_SELECTED, FLAG_SPEED_BOOSTED,
 };
 use client::camera::RtsCamera;
 use client::indicators::{
@@ -62,7 +62,7 @@ use std::fs;
 use std::mem::{align_of, size_of};
 
 /// Every Rust feature flag with the WGSL constant that must mirror it.
-const BUBBLE_FLAGS: [(&str, u32); 10] = [
+const BUBBLE_FLAGS: [(&str, u32); 11] = [
     ("FLAG_CLOAKED", FLAG_CLOAKED),
     ("FLAG_SELECTED", FLAG_SELECTED),
     ("FLAG_GLARE", FLAG_GLARE),
@@ -73,6 +73,7 @@ const BUBBLE_FLAGS: [(&str, u32); 10] = [
     ("FLAG_SPEED_BOOSTED", FLAG_SPEED_BOOSTED),
     ("FLAG_FACING_STRIPE", FLAG_FACING_STRIPE),
     ("FLAG_ATTACK_APERTURE", FLAG_ATTACK_APERTURE),
+    ("FLAG_FRAME_BLEND", FLAG_FRAME_BLEND),
 ];
 
 /// Discovers every shipped `.wgsl` file, so a new shader cannot escape validation.
@@ -205,8 +206,8 @@ fn test_shader_wgsl_syntax_and_uniform_alignment() {
         "fragment must derive its basis from view.world_from_view"
     );
 
-    // Verify memory layout exactly equals 160 bytes and 16-byte alignment
-    assert_eq!(size_of::<BubbleUniformGpu>(), 160);
+    // Verify memory layout exactly equals 176 bytes and 16-byte alignment
+    assert_eq!(size_of::<BubbleUniformGpu>(), 176);
     assert_eq!(align_of::<BubbleUniformGpu>(), 16);
 }
 
@@ -227,22 +228,23 @@ fn test_bubble_feature_flags_all_drive_the_fragment_shader() {
     );
 }
 
-/// `BubbleUniformGpu::renders_same_as` ignores these two fields because no pixel depends on them.
-/// If the shader starts reading one, that comparison would hide real changes.
+/// `BubbleUniformGpu::renders_same_as` ignores this field because no pixel depends on it.
+/// If the shader starts reading it, that comparison would hide real changes.
 #[test]
 fn test_bubble_fragment_does_not_read_cpu_only_uniform_fields() {
     let shader = production_module("bubble_dome.wgsl");
     let fragment = shader.entry_point(ShaderStage::Fragment, "fragment");
-    for field in ["world_pos", "anim_progress"] {
+    assert!(
+        !shader.reads_global_member(fragment, "world_pos"),
+        "bubble_dome.wgsl reads world_pos; include it in BubbleUniformGpu::renders_same_as"
+    );
+    // The flipbook lanes are compared by `renders_same_as` because the fragment reads them.
+    for field in ["anim_origin", "anim_period", "frame_count"] {
         assert!(
-            !shader.reads_global_member(fragment, field),
-            "bubble_dome.wgsl reads {field}; include it in BubbleUniformGpu::renders_same_as"
+            shader.reads_global_member(fragment, field),
+            "the fragment must read {field}, which renders_same_as compares"
         );
     }
-    assert!(
-        shader.reads_global_member(fragment, "frame_index"),
-        "the probe must see fields the fragment does read"
-    );
 }
 
 #[test]
@@ -647,6 +649,7 @@ fn test_feature_flags_bitmask_operations() {
     assert_ne!(flags & FLAG_CRT_GLITCH, 0);
     assert_ne!(flags & FLAG_FACING_STRIPE, 0);
     assert_ne!(flags & FLAG_ATTACK_APERTURE, 0);
+    assert_ne!(flags & FLAG_FRAME_BLEND, 0);
     assert_ne!(flags & FLAG_SELECTED, 0);
     assert_ne!(flags & FLAG_CLOAKED, 0);
     assert_ne!(flags & FLAG_SPEED_BOOSTED, 0);

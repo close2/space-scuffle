@@ -39,7 +39,7 @@ use bevy::prelude::*;
 use bevy::render::mesh::VertexAttributeValues;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use client::bubble_shader::{
-    sync_bubble_material, BubbleSharedMeshes, BubbleUniformGpu, FlipbookRegistry,
+    still_frame_lanes, sync_bubble_material, BubbleSharedMeshes, BubbleUniformGpu, FlipbookRegistry,
 };
 use client::player_presentation::PlayerPalette;
 use client::runtime_battle::{BattleDefinition, BattleRenderStatus, DEFAULT_BATTLE_SCENARIO};
@@ -262,11 +262,10 @@ fn spawn_subjects(
     };
     for subject in &SUBJECTS {
         let archetype = presentable(&catalog, &registry, subject.dome);
-        let material = materials.add(BubbleDomeMaterial {
-            uniform: BubbleUniformGpu::default(),
-            video_texture: registry.get_texture(archetype.unit_type_id),
-            alpha_mode: AlphaMode::Blend,
-        });
+        let material = materials.add(BubbleDomeMaterial::new(
+            BubbleUniformGpu::default(),
+            registry.get_texture(archetype.unit_type_id),
+        ));
         let mesh = if subject.dome {
             shared.dome_mesh.clone()
         } else {
@@ -297,27 +296,17 @@ fn shot_uniform(
     let style = palette
         .preview_style(instance.owner)
         .expect("invariant: player 0 is in the shipped palette");
-    let frame = BubbleUniformGpu::from_instance(
+    // Every shot holds the first shot's media frame.
+    let frame = still_frame_lanes(meta, SHOTS[0].1);
+    BubbleUniformGpu::from_instance(
         &BubbleRenderInstance {
-            anim_state: SHOTS[0].1,
+            anim_state: state,
+            build_or_queue_progress: Some(progress),
             ..instance.clone()
         },
-        meta,
         style,
+        frame,
     )
-    .frame_index;
-    BubbleUniformGpu {
-        frame_index: frame,
-        ..BubbleUniformGpu::from_instance(
-            &BubbleRenderInstance {
-                anim_state: state,
-                build_or_queue_progress: Some(progress),
-                ..instance.clone()
-            },
-            meta,
-            style,
-        )
-    }
 }
 
 /// Writes each shot's uniforms, waits for the renderer, and requests one screenshot per shot.
@@ -572,14 +561,23 @@ fn only_a_constructing_dome_uses_its_progress() -> TestResult {
         ..producing.clone()
     };
 
-    let packed = BubbleUniformGpu::from_instance(&producing, None, style);
+    let packed = BubbleUniformGpu::from_instance(
+        &producing,
+        style,
+        still_frame_lanes(None, producing.anim_state),
+    );
     assert_ne!(packed.anim_state, 0, "a producing dome must skip the fill");
 
-    let packed = BubbleUniformGpu::from_instance(&raising, None, style);
+    let packed = BubbleUniformGpu::from_instance(
+        &raising,
+        style,
+        still_frame_lanes(None, raising.anim_state),
+    );
     assert_eq!(packed.anim_state, 0, "a foundation must enter the fill");
     assert_eq!(packed.build_progress, 0.3);
 
-    let packed = BubbleUniformGpu::from_instance(&idle, None, style);
+    let packed =
+        BubbleUniformGpu::from_instance(&idle, style, still_frame_lanes(None, idle.anim_state));
     assert_eq!(packed.build_progress, 1.0, "no job leaves nothing to fill");
     Ok(())
 }
