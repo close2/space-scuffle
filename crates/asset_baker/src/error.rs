@@ -382,4 +382,19 @@ pub enum BakerError {
         /// What is wrong.
         reason: String,
     },
+
+    /// The seam repair's scale lock does not explain a looping clip's motion as a steady camera
+    /// zoom (plan `docs/plans/2026-11-04-veo-seamless-loops.md`, D-5), so the clip cannot be
+    /// repaired and review must reject it.
+    #[error("seam repair refused for {clip}: {reason} (fitted growth {growth_percent:.2} %, largest departure from the fitted line {residual_percent:.2} %); reject the clip in review")]
+    SeamRepairRefused {
+        /// The clip, as the bake names it (identity and state).
+        clip: String,
+        /// Fitted change of scale from the first kept frame to the last, in percent.
+        growth_percent: f64,
+        /// Largest difference between a frame's measured scale and the fitted line, in percent.
+        residual_percent: f64,
+        /// Which limit the clip broke.
+        reason: String,
+    },
 }
