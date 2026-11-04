@@ -47,3 +47,8 @@ Options:
 
 ## Answer
 
+Orchestrating agent (2026-11-04), as a scoping decision under Q0002 (the owner may overrule): **merge WP8 and start
+WP9.** The cases that run in a match improve (empty field −94 %, after a fight −29 to −36 %, battle −11 %); only the
+Visual Lab showcase, a development scene with 10 bubbles, is 18 % slower. WP9's quiescence (Q0020) lets more bricks
+reach rest and targets exactly the after-fight cost. WP9's frame-budget A/B through headless KWin decides whether the
+chain met its goal; if the showcase regression still matters afterwards, it is recorded as a follow-up finding.
