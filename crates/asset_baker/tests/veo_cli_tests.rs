@@ -600,7 +600,13 @@ fn d4_the_rolling_seven_day_budget_refuses_an_over_budget_run() {
     let recent: Vec<String> = (0..23).map(|i| started_line(1, i)).collect();
     std::fs::write(&dirs.ledger, recent.join("\n") + "\n").expect("ledger");
 
-    let refused = dirs.generate(&shim, &[&unit], &["--max-generations", "3"]);
+    // The window budget is given explicitly, so the test does not depend on the shipped
+    // `veo_budget.ron` (its values are checked by the `budget` unit tests).
+    let refused = dirs.generate(
+        &shim,
+        &[&unit],
+        &["--max-generations", "3", "--weekly-budget", "25"],
+    );
     assert!(!refused.status.success(), "{}", text(&refused));
     assert!(
         String::from_utf8_lossy(&refused.stderr).contains("23 of 25"),
@@ -612,7 +618,11 @@ fn d4_the_rolling_seven_day_budget_refuses_an_over_budget_run() {
     // Lines older than the window do not count.
     let old: Vec<String> = (0..23).map(|i| started_line(8, i)).collect();
     std::fs::write(&dirs.ledger, old.join("\n") + "\n").expect("ledger");
-    let allowed = dirs.generate(&shim, &[&unit], &["--max-generations", "3"]);
+    let allowed = dirs.generate(
+        &shim,
+        &[&unit],
+        &["--max-generations", "3", "--weekly-budget", "25"],
+    );
     assert!(allowed.status.success(), "{}", text(&allowed));
     assert_eq!(starts(&server), 3);
 }
