@@ -24,6 +24,7 @@ use asset_baker::provenance::{provenance_path, MediaProvenance};
 use asset_baker::{
     bake_framed_action_videos, BakeFraming, BakerError, FrameSpec, FramedBake, MediaStyle,
 };
+use common::style_text::with_section_overrides;
 use common::cli::{baker, baker_with_assets, shipped_assets, shipped_catalog, text};
 use image::RgbaImage;
 use sim_types::enums::{AnimState, ShapeKind};
@@ -180,16 +181,7 @@ fn bundle_with_style(edit: impl Fn(String) -> String) -> tempfile::TempDir {
 fn with_overrides(overrides: String) -> impl Fn(String) -> String {
     move |style: String| {
         // The actions and loops sections have `overrides` of their own: edit the framing one.
-        let start = style.find("    framing: (").expect("the framing section");
-        let at = start
-            + style[start..]
-                .find("overrides: {},")
-                .expect("the shipped framing lists no override");
-        format!(
-            "{}overrides: {overrides},{}",
-            &style[..at],
-            &style[at + "overrides: {},".len()..]
-        )
+        with_section_overrides(&style, "    framing: (", &overrides)
     }
 }
 

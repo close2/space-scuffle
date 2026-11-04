@@ -35,6 +35,7 @@ use common::cli::{
     identity_with_actions, inline_done, instance_of, shipped_assets, shipped_catalog, starts,
     state_of_body, text, trapped_credentials, write_picture, RunDirs, FAKE_KEY, FAKE_VERTEX_KEY,
 };
+use common::style_text::with_section_overrides;
 use common::{CurlShim, FakeServer, Reply};
 use serde_json::{json, Value};
 use sim_types::enums::AnimState;
@@ -1160,11 +1161,10 @@ fn loops_an_override_that_unpins_idle_sends_no_end_frame() {
     let catalog = shipped_catalog();
     let unit = combat_unit(&catalog);
     let bundle = bundle_with_style(|style| {
-        let at = style.rfind("overrides: {}").expect("the loop overrides");
-        format!(
-            "{}overrides: {{ \"{unit}\": {{ Idle: (pin_end: false, seam: None) }} }}{}",
-            &style[..at],
-            &style[at + "overrides: {}".len()..]
+        with_section_overrides(
+            &style,
+            "    loops: (",
+            &format!("{{ \"{unit}\": {{ Idle: (pin_end: false, seam: None) }} }}"),
         )
     });
     let (dirs, server, _shim, output) = loop_run(bundle.path(), &unit, "idle", |d| {
