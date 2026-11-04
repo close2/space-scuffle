@@ -5,7 +5,12 @@
 //! exactly the published actions are generated (D-1), prompts are validated before credentials
 //! are read (D-2), every request is written to the ledger and the key never is (D-3), the caps
 //! and the quota stop hold (D-4), the free preflight (D-5), and keyframe chaining, review and
-//! installation (D-7).
+//! installation (D-7). The loops section proves plan `2026-11-04-veo-seamless-loops.md` (WP1):
+//! a pinned state sends its start picture also as `lastFrame`, the pin rules, the shared
+//! picture of an identity's states, and the refusals that cost nothing.
+//!
+//! Runs use Vertex AI ([`RunDirs::new`]), the mode production uses, and a 16:9 fixture clip
+//! ([`common::wide_fixture_bytes`]) whose first frame is a valid pin.
 //!
 //! # How it fits
 //! The binary runs with the real curl behind [`common::CurlShim`], aimed at a loopback
@@ -27,8 +32,8 @@
 use base64::prelude::*;
 use common::cli::{
     another_combat_unit, assert_no_key, baker, baker_with_assets, combat_unit, healthy,
-    identity_with_actions, inline_done, shipped_assets, shipped_catalog, starts, state_of_body,
-    text, trapped_credentials, RunDirs, FAKE_KEY,
+    identity_with_actions, inline_done, instance_of, shipped_assets, shipped_catalog, starts,
+    state_of_body, text, trapped_credentials, write_picture, RunDirs, FAKE_KEY, FAKE_VERTEX_KEY,
 };
 use common::{CurlShim, FakeServer, Reply};
 use serde_json::{json, Value};
@@ -37,8 +42,9 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
+/// The clip the fake service returns: 16:9 at 1280×720, black at frame 0.
 fn fixture_bytes() -> Vec<u8> {
-    std::fs::read(common::fixture_clip()).expect("read fixture clip")
+    common::wide_fixture_bytes()
 }
 
 /// A server that must not be called.
@@ -52,6 +58,17 @@ fn structure(catalog: &sim_core::UnitCatalog) -> String {
         catalog,
         &[AnimState::Idle, AnimState::Constructing],
         false,
+        |_| true,
+    )
+}
+
+/// A structure some builder raises, with authored Idle and Constructing prompts, so that a
+/// paid Constructing run passes prompt validation.
+fn authored_structure(catalog: &sim_core::UnitCatalog) -> String {
+    identity_with_actions(
+        catalog,
+        &[AnimState::Idle, AnimState::Constructing],
+        true,
         |_| true,
     )
 }
@@ -436,7 +453,7 @@ fn d3_every_event_is_recorded_in_order_and_the_key_never_is() {
         .as_str()
         .expect("prompt")
         .contains("Idle animation"));
-    assert_eq!(started["mode"], "gemini_api");
+    assert_eq!(started["mode"], "vertex_express");
     assert_eq!(lines[2]["outcome"]["kind"], "video_inline");
     let downloaded = &lines[3];
     assert_eq!(
@@ -447,7 +464,10 @@ fn d3_every_event_is_recorded_in_order_and_the_key_never_is() {
     assert!(Path::new(downloaded["path"].as_str().expect("path")).is_file());
 
     // The key was used, and appears nowhere it could be read back.
-    assert!(shim.stdin().contains(FAKE_KEY), "the run must authenticate");
+    assert!(
+        shim.stdin().contains(FAKE_VERTEX_KEY),
+        "the run must authenticate"
+    );
     assert_no_key(
         &std::fs::read_to_string(&dirs.ledger).expect("ledger"),
         "the ledger",
@@ -473,7 +493,7 @@ fn d3_the_key_never_leaks_from_a_failing_run_either() {
             Reply::json(r#"{"name":"operations/doomed"}"#)
         } else {
             Reply::json(&format!(
-                r#"{{"name":"operations/doomed","done":true,"error":{{"code":13,"message":"bad key {FAKE_KEY}"}}}}"#
+                r#"{{"name":"operations/doomed","done":true,"error":{{"code":13,"message":"bad key {FAKE_VERTEX_KEY}"}}}}"#
             ))
         }
     });
@@ -796,7 +816,7 @@ fn d4_an_interrupted_run_resumes_the_recorded_operation_instead_of_paying_again(
     let healthy = healthy(fixture_bytes());
     let server = FakeServer::start(move |request, index| {
         let down = server_outage.load(std::sync::atomic::Ordering::SeqCst);
-        if down && request.path.contains("/operations/") {
+        if down && !request.path.contains(":predictLongRunning") {
             Reply::status(404, "operation lookup failed")
         } else {
             healthy(request, index)
@@ -1037,6 +1057,353 @@ fn d6_the_committed_ledger_still_parses_and_its_pilot_sent_no_audio_field() {
     assert!(started.iter().all(|p| p.generate_audio.is_none()));
 }
 
+// --- Loops: lastFrame, pin rules, one picture per identity ------------------------------------
+// Plan `2026-11-04-veo-seamless-loops.md`, WP1 (D-1 to D-4).
+
+/// Every start request the fake service received, as (state, `instances[0]`).
+fn started_instances(server: &FakeServer) -> Vec<(&'static str, Value)> {
+    server
+        .requests()
+        .iter()
+        .filter(|request| request.path.contains(":predictLongRunning"))
+        .map(|request| (state_of_body(&request.body), instance_of(&request.body)))
+        .collect()
+}
+
+/// A healthy Vertex run of `unit`'s `states` with `bundle`'s data, after `prepare` wrote its
+/// files (keyframes, installed clips) into the run's directories.
+fn loop_run(
+    bundle: &Path,
+    unit: &str,
+    states: &str,
+    prepare: impl FnOnce(&RunDirs),
+) -> (RunDirs, FakeServer, CurlShim, std::process::Output) {
+    let server = FakeServer::start(healthy(fixture_bytes()));
+    let shim = CurlShim::new(&server);
+    let dirs = RunDirs::new();
+    prepare(&dirs);
+    let output = dirs.generate_in(
+        bundle,
+        &shim,
+        &[unit],
+        &["--states", states, "--max-generations", "3"],
+    );
+    (dirs, server, shim, output)
+}
+
+/// The `request_started` ledger line of `state`.
+fn request_started_line(dirs: &RunDirs, state: &str) -> Value {
+    dirs.ledger_lines()
+        .into_iter()
+        .find(|line| line["event"] == "request_started" && line["state"] == state)
+        .unwrap_or_else(|| panic!("no request_started line for {state}"))
+}
+
+/// The width and height of the picture a request carried as `field` (`image`, `lastFrame`).
+fn picture_size(instance: &Value, field: &str) -> (u32, u32) {
+    let encoded = instance[field]["bytesBase64Encoded"]
+        .as_str()
+        .expect("a picture");
+    let bytes = BASE64_STANDARD.decode(encoded).expect("base64 picture");
+    let image = image::load_from_memory(&bytes).expect("decodable picture");
+    (image.width(), image.height())
+}
+
+#[test]
+fn loops_a_pinned_idle_sends_its_picture_as_start_and_end_and_attack_sends_no_end() {
+    let catalog = shipped_catalog();
+    let unit = combat_unit(&catalog);
+    let mut pin = Vec::new();
+    let (dirs, server, _shim, output) = loop_run(&shipped_assets(), &unit, "idle,attack", |d| {
+        pin = write_picture(&d.keyframes.join(format!("{unit}_idle.png")), 1280, 720);
+    });
+    assert!(output.status.success(), "{}", text(&output));
+
+    let started = started_instances(&server);
+    let states: Vec<&str> = started.iter().map(|(state, _)| *state).collect();
+    assert_eq!(states, ["idle", "attack"]);
+    let encoded = BASE64_STANDARD.encode(&pin);
+    let (_, idle) = &started[0];
+    assert_eq!(idle["image"]["bytesBase64Encoded"], encoded.as_str());
+    assert_eq!(idle["lastFrame"]["bytesBase64Encoded"], encoded.as_str());
+    assert_eq!(idle["image"]["mimeType"], "image/png");
+    assert_eq!(idle["lastFrame"]["mimeType"], "image/png");
+    // Attack is not pinned; it starts from the identity's Idle pin (D-3).
+    let (_, attack) = &started[1];
+    assert_eq!(attack["image"]["bytesBase64Encoded"], encoded.as_str());
+    assert!(attack.get("lastFrame").is_none(), "{attack}");
+
+    let sha = asset_baker::ledger::sha256_hex(&pin);
+    let idle_line = request_started_line(&dirs, "idle");
+    assert_eq!(idle_line["keyframe_sha256"], sha.as_str());
+    assert_eq!(idle_line["last_frame_sha256"], sha.as_str());
+    let attack_line = request_started_line(&dirs, "attack");
+    assert_eq!(attack_line["keyframe_sha256"], sha.as_str());
+    assert!(
+        attack_line.get("last_frame_sha256").is_none(),
+        "{attack_line}"
+    );
+}
+
+#[test]
+fn loops_an_override_that_unpins_idle_sends_no_end_frame() {
+    let catalog = shipped_catalog();
+    let unit = combat_unit(&catalog);
+    let bundle = bundle_with_style(|style| {
+        let at = style.rfind("overrides: {}").expect("the loop overrides");
+        format!(
+            "{}overrides: {{ \"{unit}\": {{ Idle: (pin_end: false, seam: None) }} }}{}",
+            &style[..at],
+            &style[at + "overrides: {}".len()..]
+        )
+    });
+    let (dirs, server, _shim, output) = loop_run(bundle.path(), &unit, "idle", |d| {
+        write_picture(&d.keyframes.join(format!("{unit}_idle.png")), 1280, 720);
+    });
+    assert!(output.status.success(), "{}", text(&output));
+
+    let started = started_instances(&server);
+    assert_eq!(started.len(), 1);
+    let (_, idle) = &started[0];
+    assert!(idle.get("image").is_some(), "{idle}");
+    assert!(idle.get("lastFrame").is_none(), "{idle}");
+    assert!(request_started_line(&dirs, "idle")
+        .get("last_frame_sha256")
+        .is_none());
+}
+
+#[test]
+fn loops_the_mime_type_comes_from_the_bytes_and_a_gif_is_refused_before_any_request() {
+    let catalog = shipped_catalog();
+    let unit = combat_unit(&catalog);
+    let (_dirs, server, shim, output) = loop_run(&shipped_assets(), &unit, "idle", |d| {
+        let png = write_picture(&d.keyframes.join("scratch.png"), 1280, 720);
+        std::fs::write(d.keyframes.join(format!("{unit}_idle.jpg")), png).expect("misnamed");
+    });
+    assert!(output.status.success(), "{}", text(&output));
+    let (_, idle) = &started_instances(&server)[0];
+    assert_eq!(idle["image"]["mimeType"], "image/png");
+    assert_eq!(idle["lastFrame"]["mimeType"], "image/png");
+    // Shim tests are serialised by a lock the shim holds: release it before the next one.
+    drop(shim);
+
+    let server = silent_server();
+    let shim = CurlShim::new(&server);
+    let dirs = RunDirs::new();
+    std::fs::write(dirs.keyframes.join(format!("{unit}_idle.png")), GIF_1X1).expect("gif");
+    let refused = dirs.generate(
+        &shim,
+        &[&unit],
+        &["--states", "idle", "--max-generations", "1"],
+    );
+    assert!(!refused.status.success(), "{}", text(&refused));
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains("neither PNG nor JPEG"),
+        "{}",
+        text(&refused)
+    );
+    assert!(server.requests().is_empty(), "no request may be made");
+    assert!(dirs.ledger_events().is_empty(), "nothing may be recorded");
+}
+
+/// A `GIF89a` image of 1×1 pixel: a real image in a format the service does not accept.
+const GIF_1X1: &[u8] = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;";
+
+/// Writes a `width`×`height` pin to `path`, padded past the service's 20 MB when `oversized`.
+/// Decoders stop at a PNG's end chunk, so the padded file is still a valid picture.
+fn write_pin(path: &Path, width: u32, height: u32, oversized: bool) {
+    let mut bytes = write_picture(path, width, height);
+    if oversized {
+        bytes.resize(20 * 1000 * 1000 + 1, 0);
+        std::fs::write(path, bytes).expect("oversized pin");
+    }
+}
+
+#[test]
+fn loops_validate_prompts_refuses_a_square_a_four_by_three_and_an_oversized_pin() {
+    let catalog = shipped_catalog();
+    let unit = combat_unit(&catalog);
+    let cases = [
+        ("1024x1024 is not 16:9", 1024, 1024, false),
+        ("1280x960 is not 16:9", 1280, 960, false),
+        ("bytes is more than", 1280, 720, true),
+    ];
+    for (expected, width, height, oversized) in cases {
+        let keyframes = tempfile::tempdir().expect("tempdir");
+        write_pin(
+            &keyframes.path().join(format!("{unit}_idle.png")),
+            width,
+            height,
+            oversized,
+        );
+        let report = validation_errors(&shipped_assets(), &unit, keyframes.path());
+        assert!(report.contains("cannot pin"), "{report}");
+        assert!(report.contains(expected), "{report}");
+        assert!(report.contains(&format!("{unit}_idle.png")), "{report}");
+    }
+    // The square legacy keyframe is named as such.
+    let keyframes = tempfile::tempdir().expect("tempdir");
+    write_pin(
+        &keyframes.path().join(format!("{unit}_idle.png")),
+        1024,
+        1024,
+        false,
+    );
+    let report = validation_errors(&shipped_assets(), &unit, keyframes.path());
+    assert!(report.contains("square legacy keyframe"), "{report}");
+}
+
+#[test]
+fn loops_a_pinned_idle_without_a_picture_is_text_to_video_and_seeds_a_pin() {
+    let catalog = shipped_catalog();
+    let unit = combat_unit(&catalog);
+    let dirs = RunDirs::new();
+    let server = silent_server();
+    let shim = CurlShim::new(&server);
+
+    let seeding = dirs.generate(&shim, &[&unit], &["--states", "idle", "--dry-run"]);
+    assert!(seeding.status.success(), "{}", text(&seeding));
+    let out = stdout(&seeding);
+    assert!(out.contains("start: none (text to video)"), "{out}");
+    assert!(out.contains("end: none"), "{out}");
+    assert!(
+        out.contains("loop: no start picture yet, this clip seeds one"),
+        "{out}"
+    );
+
+    let pin = dirs.keyframes.join(format!("{unit}_idle.png"));
+    write_picture(&pin, 1280, 720);
+    let pinned = dirs.generate(&shim, &[&unit], &["--states", "idle,attack", "--dry-run"]);
+    assert!(pinned.status.success(), "{}", text(&pinned));
+    let out = stdout(&pinned);
+    assert!(out.contains(&format!("start: {}", pin.display())), "{out}");
+    assert!(out.contains("end: same as start"), "{out}");
+    assert!(!out.contains("seeds one"), "{out}");
+    let attack = out
+        .split(&format!("clip {unit} attack"))
+        .nth(1)
+        .expect("the attack clip");
+    assert!(attack.contains("end: none"), "{out}");
+    assert!(server.requests().is_empty());
+}
+
+#[test]
+fn loops_walk_and_constructing_start_and_end_on_the_identitys_idle_pin() {
+    let catalog = shipped_catalog();
+    for (unit, state) in [
+        (combat_unit(&catalog), "walk"),
+        (authored_structure(&catalog), "constructing"),
+    ] {
+        let mut pin = Vec::new();
+        let (_dirs, server, _shim, output) = loop_run(&shipped_assets(), &unit, state, |d| {
+            pin = write_picture(&d.keyframes.join(format!("{unit}_idle.png")), 1280, 720);
+        });
+        assert!(output.status.success(), "{unit}: {}", text(&output));
+        let started = started_instances(&server);
+        assert_eq!(started.len(), 1, "{unit}");
+        let (_, instance) = &started[0];
+        let encoded = BASE64_STANDARD.encode(&pin);
+        assert_eq!(instance["image"]["bytesBase64Encoded"], encoded.as_str());
+        assert_eq!(
+            instance["lastFrame"]["bytesBase64Encoded"],
+            encoded.as_str()
+        );
+    }
+}
+
+#[test]
+fn loops_without_a_pin_chained_states_use_the_idle_clips_first_frame_not_a_square_picture() {
+    let catalog = shipped_catalog();
+    let unit = authored_structure(&catalog);
+    let (_dirs, server, _shim, output) = loop_run(&shipped_assets(), &unit, "constructing", |d| {
+        // A square legacy Idle picture, which is not a valid pin, and an installed Idle clip.
+        write_picture(&d.keyframes.join(format!("{unit}_idle.png")), 1024, 1024);
+        std::fs::write(d.videos.join(format!("{unit}_idle.mp4")), fixture_bytes())
+            .expect("idle clip");
+    });
+    assert!(output.status.success(), "{}", text(&output));
+
+    let started = started_instances(&server);
+    assert_eq!(started.len(), 1);
+    let (_, instance) = &started[0];
+    assert_eq!(picture_size(instance, "image"), (1280, 720));
+    assert_eq!(
+        instance["image"]["bytesBase64Encoded"],
+        instance["lastFrame"]["bytesBase64Encoded"]
+    );
+    let request = server
+        .requests()
+        .into_iter()
+        .find(|request| request.path.contains(":predictLongRunning"))
+        .expect("the start request");
+    let luma = request_image_luma(&request.body).expect("a picture");
+    assert!(luma < 8.0, "not the Idle clip's first frame: {luma}");
+}
+
+#[test]
+fn loops_a_gemini_run_that_would_send_last_frame_is_refused_before_any_request() {
+    let catalog = shipped_catalog();
+    let unit = combat_unit(&catalog);
+    let server = silent_server();
+    let shim = CurlShim::new(&server);
+    let dirs = RunDirs::gemini();
+    write_picture(&dirs.keyframes.join(format!("{unit}_idle.png")), 1280, 720);
+
+    let output = dirs.generate(
+        &shim,
+        &[&unit],
+        &["--states", "idle", "--max-generations", "1"],
+    );
+
+    assert!(!output.status.success(), "{}", text(&output));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("needs Vertex AI"), "{}", text(&output));
+    assert!(
+        stderr.contains(&format!("{unit} idle")),
+        "{}",
+        text(&output)
+    );
+    assert!(server.requests().is_empty(), "no request may be made");
+    assert!(dirs.ledger_events().is_empty(), "nothing may be recorded");
+}
+
+#[test]
+fn loops_a_refused_last_frame_is_recorded_ends_the_run_and_is_not_retried() {
+    let catalog = shipped_catalog();
+    let unit = combat_unit(&catalog);
+    let server = FakeServer::start(|request, _| {
+        if request.path.contains(":predictLongRunning") {
+            Reply::status(
+                400,
+                r#"{"error":{"code":400,"message":"lastFrame: inline bytesBase64Encoded is not supported for this model, use gcsUri","status":"INVALID_ARGUMENT"}}"#,
+            )
+        } else {
+            Reply::status(500, "no operation exists")
+        }
+    });
+    let shim = CurlShim::new(&server);
+    let dirs = RunDirs::new();
+    write_picture(&dirs.keyframes.join(format!("{unit}_idle.png")), 1280, 720);
+
+    let output = dirs.generate(&shim, &[&unit], &["--max-generations", "3"]);
+
+    assert_eq!(output.status.code(), Some(4), "{}", text(&output));
+    assert_eq!(starts(&server), 1, "a refused start is not retried");
+    assert_eq!(server.requests().len(), 1, "nothing is polled");
+    assert_eq!(dirs.ledger_events(), ["request_started", "start_failed"]);
+    let failed = dirs.ledger_lines().pop().expect("last line");
+    let error = failed["error"].as_str().expect("error text");
+    assert!(error.contains("INVALID_ARGUMENT"), "{error}");
+    assert!(error.contains("lastFrame"), "{error}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not retried"), "{}", text(&output));
+    assert_no_key(
+        &std::fs::read_to_string(&dirs.ledger).expect("ledger"),
+        "the ledger",
+    );
+}
+
 // --- D-5: free preflight ---------------------------------------------------------------------
 
 fn preflight(shim: &CurlShim, credentials: &Path) -> std::process::Output {
@@ -1118,7 +1485,7 @@ fn request_image_luma(body: &[u8]) -> Option<f64> {
 }
 
 #[test]
-fn d7_idle_is_generated_first_and_its_frame_at_one_second_seeds_the_other_states() {
+fn d7_idle_is_generated_first_and_its_first_frame_seeds_the_other_states() {
     let catalog = shipped_catalog();
     let unit = combat_unit(&catalog);
     let (_dirs, server, _shim, output) = generated(&unit, "attack,walk,idle");
@@ -1137,12 +1504,10 @@ fn d7_idle_is_generated_first_and_its_frame_at_one_second_seeds_the_other_states
         "idle is text-to-video"
     );
     for request in &started[1..] {
-        // The fixture's luma rises from 16 to 235 over 4 s, about 64 in full range at 1.0 s.
+        // The fixture fades in from black: its first frame (0 s) is black, its frame at 1 s
+        // about a quarter of white (luma about 64).
         let luma = request_image_luma(&request.body).expect("chained keyframe");
-        assert!(
-            (48.0..=80.0).contains(&luma),
-            "frame is not from 1.0 s: {luma}"
-        );
+        assert!(luma < 8.0, "frame is not the first frame: {luma}");
     }
 }
 

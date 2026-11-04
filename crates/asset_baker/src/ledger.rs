@@ -179,6 +179,11 @@ pub enum LedgerEvent {
         prompt: String,
         /// SHA-256 of the keyframe image sent, if any.
         keyframe_sha256: Option<String>,
+        /// SHA-256 of the end frame sent as `lastFrame`, if any. A pinned loop sends its start
+        /// picture again, so this equals `keyframe_sha256`. Absent from lines written before
+        /// end frames existed, and not written when no end frame was sent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_frame_sha256: Option<String>,
         /// The generation parameters sent.
         parameters: VeoParameters,
     },

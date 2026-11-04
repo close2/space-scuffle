@@ -3,8 +3,8 @@
 //!
 //! # Responsibility
 //! - [`extract_keyframe`]: one frame of a clip at a given time, as a PNG. The run uses the
-//!   Idle clip's frame at [`CHAIN_KEYFRAME_TIME`] as the image input of the identity's other
-//!   states, so that they show the same design.
+//!   Idle clip's frame at [`CHAIN_KEYFRAME_TIME`] (its first frame) as the image input of the
+//!   identity's other states, so that they show the same design.
 //! - [`contact_sheet`]: eight frames of a clip side by side, full size for the reviewer and a
 //!   copy at most [`EVIDENCE_SHEET_MAX_WIDTH`] pixels wide for the committed evidence.
 //! - [`framed_sheet`]: the same eight moments as the square game frames that ship, built by the
@@ -39,8 +39,11 @@ use std::time::Duration;
 /// The FFmpeg executable the pipeline uses.
 pub const DEFAULT_FFMPEG_PATH: &str = "/usr/bin/ffmpeg";
 
-/// Time of the Idle frame that seeds the other states' keyframes.
-pub const CHAIN_KEYFRAME_TIME: Duration = Duration::from_secs(1);
+/// Time of the Idle frame that seeds the other states' keyframes: the first frame (plan
+/// `2026-11-04-veo-seamless-loops.md`, D-3). It is the picture the Idle loop restarts on, so a
+/// state pinned to it (Constructing) ends exactly where Idle begins; and it is a 16:9 frame of
+/// a real clip, so it passes the pin rules.
+pub const CHAIN_KEYFRAME_TIME: Duration = Duration::ZERO;
 
 /// Frames per contact sheet.
 pub const CONTACT_SHEET_FRAMES: u32 = 8;

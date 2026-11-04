@@ -76,4 +76,27 @@
         // (for example a wide flying unit). A slug that is not in the catalog is refused.
         overrides: {},
     ),
+
+    // How each state is made seamless (docs/plans/2026-11-04-veo-seamless-loops.md, D-1).
+    // Every state the atlas loops (Idle, Walk, Cast) needs an entry; a state the atlas does not
+    // loop may only set `pin_end`.
+    // - pin_end: the start request sends the state's start picture also as `lastFrame`, so the
+    //   clip must end on the picture it starts from. Vertex AI only; the picture must be PNG or
+    //   JPEG, 16:9 within 1 %, at least 1280x720 and at most 20 MB.
+    // - seam: repair done by the baker on the kept frames, in this order: scale lock (undo a
+    //   steady camera zoom), then a cross-fade of the last N frames back into frame 0. N is at
+    //   most 4 and at most a quarter of the frames the atlas keeps per state.
+    loops: (
+        states: {
+            Idle: (pin_end: true, seam: Some((scale_lock: true, crossfade_frames: 2))),
+            Walk: (pin_end: true, seam: Some((scale_lock: true, crossfade_frames: 2))),
+            Cast: (pin_end: true, seam: Some((scale_lock: true, crossfade_frames: 2))),
+            // Held on its last frame, not looped: pinned so that it ends on the picture Idle
+            // starts from, and the switch to Idle on completion is seamless (D-3).
+            Constructing: (pin_end: true, seam: None),
+        },
+        // Exact catalog slug -> state -> treatment, for one identity whose clip needs another
+        // one. A slug that is not in the catalog is refused (as `framing.overrides`).
+        overrides: {},
+    ),
 )

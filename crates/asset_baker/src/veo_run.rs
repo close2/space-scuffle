@@ -1,11 +1,14 @@
 //! Executes a planned Veo run under the spending rules (plan
-//! `2026-11-04-phase-8-5-veo-media.md`, decisions D-3, D-4, D-5 and D-7).
+//! `2026-11-04-phase-8-5-veo-media.md`, decisions D-3, D-4, D-5 and D-7, amended by
+//! `2026-11-04-veo-seamless-loops.md`, D-2 to D-4).
 //!
 //! # Responsibility
 //! Walks a [`RunPlan`] in order: validates reused clips, resumes recorded operations, and starts
 //! new generations, writing every event to the [`Ledger`]. Each finished operation is recorded
 //! (`<clips>/<slug>/<state>/<operation>.json`) and, if it carries a video, downloaded beside it
-//! and validated. Idle clips seed the keyframe of the identity's other states.
+//! and validated. The first frame of an Idle clip is the start picture of the identity's other
+//! states when the identity has no Idle pin. A pinned clip sends its start picture also as the
+//! end frame (`lastFrame`), and the ledger records the end frame's hash.
 //!
 //! # How it fits
 //! `generate-veo` calls [`execute_plan`] after the plan, prompt validation and budget checks
@@ -15,10 +18,14 @@
 //! # Invariants
 //! - `request_started` is written before a start request is sent, so a crash cannot hide a
 //!   spend, and the run never starts more than `max_generations` requests.
+//! - A run that would send an end frame with a Gemini API key is refused before its first
+//!   request ([`BakerError::LastFrameNeedsVertex`]); a chained picture that would pin a clip is
+//!   checked against the pin rules before its request is recorded.
 //! - A quota refusal ends the run at once ([`BakerError::VeoQuotaExhausted`], exit code 3).
-//! - The first Cloud Storage result, the first filtered result and the first failure of a kind
-//!   the ledger has not seen end the run after recording it ([`BakerError::VeoRunStopped`],
-//!   exit code 4), so a systematic problem costs one generation, not a batch.
+//! - The first Cloud Storage result, the first filtered result, the first failure of a kind
+//!   the ledger has not seen, and a start request refused as invalid (HTTP 400) end the run
+//!   after recording it ([`BakerError::VeoRunStopped`], exit code 4), so a systematic problem
+//!   costs at most one generation, not a batch.
 //! - A failed or filtered clip is never regenerated automatically.
 
 use crate::clip_review::{extract_keyframe, CHAIN_KEYFRAME_TIME, DEFAULT_FFMPEG_PATH};
@@ -27,13 +34,17 @@ use crate::ffmpeg_importer::probe_video;
 use crate::ledger::{
     sha256_file, Ledger, LedgerError, LedgerEvent, LedgerHistory, OperationOutcome,
 };
-use crate::prompts::KeyframeSource;
-use crate::veo_client::{VeoClient, VeoOperation};
+use crate::prompts::{check_pin, KeyframeSource, PromptProblem};
+use crate::veo_client::{GenerationImages, VeoClient, VeoOperation};
 use crate::veo_plan::{state_slug, ClipAction, PlannedClip, RunPlan, VeoDirs};
 use sim_types::enums::AnimState;
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+
+/// File name, inside `<clips>/<slug>/`, of the Idle clip's first frame extracted as the start
+/// picture of the identity's other states.
+pub const CHAINED_FRAME_FILE: &str = "idle-first-frame.png";
 
 /// What a run did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -67,11 +78,19 @@ pub struct RunContext<'a> {
 /// Runs `plan`. See the module docs for the rules.
 ///
 /// # Errors
-/// [`BakerError::VeoQuotaExhausted`] and [`BakerError::VeoRunStopped`] as described above,
-/// [`BakerError::VeoRunIncomplete`] if any clip failed or was skipped, and any transport,
-/// ledger or validation error, which also ends the run (a recorded operation is then resumed
-/// by the next run).
+/// [`BakerError::LastFrameNeedsVertex`] before any request when the client selects the Gemini
+/// API and a paid clip would send an end frame; [`BakerError::VeoQuotaExhausted`] and
+/// [`BakerError::VeoRunStopped`] as described above; [`BakerError::PromptsInvalid`] when a
+/// chained picture breaks the pin rules; [`BakerError::VeoRunIncomplete`] if any clip failed or
+/// was skipped; and any transport, ledger or validation error, which also ends the run (a
+/// recorded operation is then resumed by the next run).
 pub fn execute_plan(plan: &RunPlan, context: RunContext<'_>) -> Result<RunSummary, BakerError> {
+    if !context.client.is_vertex_ai() {
+        let clips = plan.pinned_clips();
+        if !clips.is_empty() {
+            return Err(BakerError::LastFrameNeedsVertex { clips });
+        }
+    }
     let mut run = Run {
         context,
         idle_clips: plan.existing_idle.clone(),
@@ -151,11 +170,15 @@ impl Run<'_> {
         }
     }
 
-    /// The keyframe image to send with `clip`.
+    /// The start picture to send with `clip`. A chained picture is the Idle clip's first frame
+    /// (`CHAIN_KEYFRAME_TIME`), extracted now and, for a pinned clip, checked against the pin
+    /// rules before anything is recorded or sent.
     fn keyframe(&mut self, clip: &PlannedClip) -> Result<Keyframe, BakerError> {
         match &clip.keyframe {
             KeyframeSource::None => Ok(Keyframe::Send(None)),
-            KeyframeSource::File(path) => Ok(Keyframe::Send(Some(path.clone()))),
+            KeyframeSource::File(path) | KeyframeSource::IdlePin(path) => {
+                Ok(Keyframe::Send(Some(path.clone())))
+            }
             KeyframeSource::ChainedFromIdle => {
                 let Some(idle) = self.idle_clips.get(&clip.slug).cloned() else {
                     return Ok(Keyframe::NoIdleClip);
@@ -165,7 +188,7 @@ impl Run<'_> {
                     .dirs
                     .clips
                     .join(&clip.slug)
-                    .join("idle-keyframe-1s.png");
+                    .join(CHAINED_FRAME_FILE);
                 if let Some(parent) = frame.parent() {
                     std::fs::create_dir_all(parent).map_err(|source| BakerError::Io {
                         path: parent.to_path_buf(),
@@ -178,6 +201,17 @@ impl Run<'_> {
                     CHAIN_KEYFRAME_TIME,
                     &frame,
                 )?;
+                if clip.pin_end {
+                    if let Some(issue) = check_pin(&frame) {
+                        return Err(BakerError::PromptsInvalid {
+                            problems: vec![PromptProblem {
+                                slug: clip.slug.clone(),
+                                state: clip.state,
+                                issue,
+                            }],
+                        });
+                    }
+                }
                 Ok(Keyframe::Send(Some(frame)))
             }
         }
@@ -199,7 +233,10 @@ impl Run<'_> {
                 "==> {label}: skipped, no Idle clip to chain its keyframe from"
             ));
         };
+        // A pinned clip ends on the picture it starts from (loops plan D-2).
+        let end = keyframe.as_deref().filter(|_| clip.pin_end);
         let keyframe_sha256 = keyframe.as_deref().map(sha256_file).transpose()?;
+        let last_frame_sha256 = end.and(keyframe_sha256.clone());
         let client = self.context.client;
         let request_id = self.context.ledger.next_request_id();
         self.context.ledger.append(LedgerEvent::RequestStarted {
@@ -211,13 +248,18 @@ impl Run<'_> {
             prompt_sha256: crate::ledger::sha256_hex(clip.prompt.text.as_bytes()),
             prompt: clip.prompt.text.clone(),
             keyframe_sha256,
+            last_frame_sha256,
             parameters: client.parameters(),
         })?;
         self.summary.started += 1;
         self.say(&format!(
             "==> {label}: starting a generation ({request_id})"
         ))?;
-        let operation = self.start(clip, &request_id, keyframe.as_deref())?;
+        let images = GenerationImages {
+            start: keyframe.as_deref(),
+            end,
+        };
+        let operation = self.start(clip, &request_id, images)?;
         let completed = if operation.done {
             operation.clone()
         } else {
@@ -228,14 +270,20 @@ impl Run<'_> {
     }
 
     /// Sends the start request and records its outcome.
+    ///
+    /// A request the service refuses as invalid (HTTP 400, such as `INVALID_ARGUMENT` for an
+    /// end frame it does not accept) started no operation and is not billed. It is recorded as
+    /// `start_failed`, as every start failure is, and ends the run as a result that needs a
+    /// person ([`BakerError::VeoRunStopped`]); it is never retried, because the same request
+    /// would be refused again.
     fn start(
         &mut self,
         clip: &PlannedClip,
         request_id: &str,
-        keyframe: Option<&Path>,
+        images: GenerationImages<'_>,
     ) -> Result<VeoOperation, BakerError> {
         let client = self.context.client;
-        let operation = match client.initiate_generation(&clip.prompt.text, keyframe) {
+        let operation = match client.initiate_generation(&clip.prompt.text, images) {
             Ok(operation) => operation,
             Err(BakerError::VeoQuotaExhausted {
                 http_status,
@@ -257,12 +305,27 @@ impl Run<'_> {
                 });
             }
             Err(error) => {
+                let message = client.redact(&error.to_string());
                 self.context.ledger.append(LedgerEvent::StartFailed {
                     request_id: request_id.to_string(),
                     slug: clip.slug.clone(),
                     state: clip.state,
-                    error: client.redact(&error.to_string()),
+                    error: message.clone(),
                 })?;
+                if matches!(error, BakerError::VeoHttpStatus { status: 400, .. }) {
+                    let end = if images.end.is_some() {
+                        "with an end frame (lastFrame)"
+                    } else {
+                        "without an end frame"
+                    };
+                    return Err(BakerError::VeoRunStopped {
+                        reason: format!(
+                            "{} {}: the service refused the start request {end} as invalid; it started no operation and is not billed. It is recorded as start_failed and not retried: {message}",
+                            clip.slug,
+                            state_slug(clip.state)
+                        ),
+                    });
+                }
                 return Err(error);
             }
         };
