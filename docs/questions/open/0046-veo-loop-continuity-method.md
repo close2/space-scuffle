@@ -42,3 +42,9 @@ Spending so far: 5 generations, $2.00 at list price (1 pilot and 4 WP4 regenerat
 
 ## Answer
 
+Orchestrating agent (2026-11-04), under the owner's standing rule in Q0020 (the agent decides visual questions; the
+owner may overrule): **option (a) first** — send the same picture as start and end frame with Veo 3.1's `lastFrame`
+(start picture: frame 0 of `0dbd7948`, which has the plain backdrop), after a plan amendment and a fake-server test;
+verify on the first live clip that inline end-frame bytes are accepted. **Fallback (b)**, if `lastFrame` is refused or
+still leaves a visible jump: the baker plays looping states forward then backward (ping-pong), which is seamless by
+construction and costs no generation. Non-looping states (Constructing, Cast, Death) are unaffected.
