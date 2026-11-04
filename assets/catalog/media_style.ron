@@ -11,8 +11,10 @@
 // reads any credential, for every clip a run would pay for.
 (
     // Ends every prompt. It describes the look in plain words and names no game, studio, show
-    // or franchise (see `deny_list`). It avoids "cinematic", which invited camera moves.
-    style: "Stylized hand-painted 3D character, painterly sci-fi portrait aesthetic with crisp rim lighting, dark slate-indigo radial studio backdrop (#0B101B), dramatic 3/4 isometric front hero framing, glowing cyan/amber energy cores, bold proportions.",
+    // or franchise (see `deny_list`). It avoids "cinematic", "hero framing" and "portrait",
+    // which invited camera moves, and asks for a plain backdrop: "radial studio backdrop" gave
+    // radiating stripes, which the owner rejected (2026-11-04).
+    style: "Stylized hand-painted 3D character, painterly sci-fi aesthetic with crisp rim lighting, plain flat uniform dark slate-indigo studio backdrop (#0B101B) with no pattern, no rays, no stripes and no gradient, 3/4 isometric front view, glowing cyan/amber energy cores, bold proportions.",
 
     // One description per animation state, placed between the identity's prompt and the style.
     actions: (

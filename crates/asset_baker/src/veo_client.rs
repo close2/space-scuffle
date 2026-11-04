@@ -145,6 +145,15 @@ pub struct VeoParameters {
     /// which is billed at a lower rate.
     #[serde(rename = "generateAudio", skip_serializing_if = "Option::is_none")]
     pub generate_audio: Option<bool>,
+    /// What the model should keep out of the clip (`negativePrompt`), as plain words separated
+    /// by commas. `None` sends no field. Vertex documents it in the `parameters` object of
+    /// `:predictLongRunning` for the Veo models, with no model restriction.
+    #[serde(
+        rename = "negativePrompt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub negative_prompt: Option<String>,
 }
 
 impl Default for VeoParameters {
@@ -156,6 +165,7 @@ impl Default for VeoParameters {
             duration_seconds: Some(4),
             sample_count: Some(1),
             generate_audio: None,
+            negative_prompt: None,
         }
     }
 }
@@ -166,7 +176,8 @@ pub const VEO_REQUEST_FILE: &str = "media/veo_request.ron";
 /// The Veo generation parameters every paid start request sends: `media/veo_request.ron`.
 ///
 /// They are data, not a flag, so that a change (such as dropping `generate_audio` if the
-/// service refuses it) is one reviewed edit that every later run follows.
+/// service refuses it, or what `negative_prompt` keeps out of every clip) is one reviewed edit
+/// that every later run follows.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VeoRequestSettings {
@@ -179,6 +190,10 @@ pub struct VeoRequestSettings {
     pub sample_count: u32,
     /// `Some(false)` asks for a silent clip, `Some(true)` for sound; `None` sends no field.
     pub generate_audio: Option<bool>,
+    /// Content every clip must avoid, sent as `negativePrompt`; `None` (or absent) sends no
+    /// field. A present value must not be blank.
+    #[serde(default)]
+    pub negative_prompt: Option<String>,
 }
 
 impl VeoRequestSettings {
@@ -204,6 +219,13 @@ impl VeoRequestSettings {
         if settings.duration_seconds == 0 {
             return Err(invalid("duration_seconds is 0".into()));
         }
+        if settings
+            .negative_prompt
+            .as_deref()
+            .is_some_and(|text| text.trim().is_empty())
+        {
+            return Err(invalid("negative_prompt is blank".into()));
+        }
         if settings.sample_count != 1 {
             return Err(invalid(format!(
                 "sample_count is {}; the budget and the run handle exactly 1 video per request",
@@ -221,6 +243,7 @@ impl VeoRequestSettings {
             duration_seconds: Some(self.duration_seconds),
             sample_count: Some(self.sample_count),
             generate_audio: self.generate_audio,
+            negative_prompt: self.negative_prompt.clone(),
         }
     }
 }
@@ -240,6 +263,9 @@ impl std::fmt::Display for VeoParameters {
         }
         if let Some(value) = self.generate_audio {
             fields.push(format!("generateAudio {value}"));
+        }
+        if let Some(value) = &self.negative_prompt {
+            fields.push(format!("negativePrompt {value:?}"));
         }
         f.write_str(&fields.join(", "))
     }

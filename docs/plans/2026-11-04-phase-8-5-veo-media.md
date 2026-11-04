@@ -265,7 +265,10 @@ false` is accepted for the chosen model and lowers the cost (the pipeline discar
   looks at it (an image read) and records `accept` or `reject` with a reason against written criteria: one subject,
   matches its prompt, no text or watermark, no cut or morph to a different object, subject stays inside the framed
   square (letterbox for structures, crop for units, amended by `2026-11-04-veo-letterbox-bake` D-4), action
-  readable at 512 px, consistent with the identity's other states. Rejected clips stay in `~/scratch/veo/clips/`
+  readable at 512 px, consistent with the identity's other states. **Amended 2026-11-04 (WP4, owner's review
+  points):** loop continuity, the last frame close to the first with no camera push-in, zoom or pan (Q0026); and
+  **a plain, uniform backdrop with no radiating stripes, sunburst, light rays, spotlight beams or patterned
+  gradient** (owner, relayed 2026-11-04). A clip that fails either is rejected. Rejected clips stay in `~/scratch/veo/clips/`
   and are recorded in the ledger. Owner taste is final: Q0026 shows the owner the pilot and
   batch 1 sheets.
 
