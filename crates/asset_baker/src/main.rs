@@ -1,18 +1,28 @@
 //! Command-line interface for the Space Scuffle asset baker.
 //!
 //! # Responsibility
-//! Parses the command line and runs one subcommand: generate authentic video-backed flipbook
-//! atlases with Google Veo, transcode multi-action videos with FFmpeg, audit installed media,
-//! bake terrain themes, or synthesize procedural atlases for use as test fixtures.
+//! Parses the command line and runs one subcommand: plan, validate, check and run paid Veo
+//! generations; review, install and import their clips; transcode multi-action videos with
+//! FFmpeg; audit installed media; bake terrain themes; or synthesize procedural atlases for
+//! use as test fixtures.
 //!
 //! # How it fits
 //! Each subcommand is one `run_*` function over the `asset_baker` library. Every command that
 //! needs the unit catalog loads it from the asset bundle at run time (`--assets <dir>`, else the
 //! search in [`asset_baker::resolve_assets_root`]), so editing `units.ron` needs no rebuild.
 //!
+//! The paid Veo workflow (plan `docs/plans/2026-11-04-phase-8-5-veo-media.md`) is:
+//! `validate-prompts` and `generate-veo --dry-run` (free, no credential read), `veo-preflight`
+//! (one free authenticated GET), `generate-veo --max-generations N` (downloads to
+//! `--clips-dir`, every request in `--ledger`), `review` (contact sheets, `--reject`),
+//! `install-clip`, then `bake-unit-videos`.
+//!
 //! # Invariants
 //! - The catalog is read once per run, from disk; nothing is compiled in.
-//! - A failure is returned from `main` and ends the process with a nonzero status.
+//! - `generate-veo` validates its plan, prompts and budget before it reads any credential.
+//! - Exit status: 0 on success; 3 when Veo refused a request for quota (wait, do not retry);
+//!   4 when a run stopped on a result that needs a person (Cloud Storage URI, filtered, new
+//!   failure kind); 2 for a usage error; 1 for any other failure.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -22,11 +32,18 @@
     clippy::unnecessary_debug_formatting
 )]
 
-use clap::{Parser, Subcommand};
+use asset_baker::budget::{check_spend, BudgetConfig, SpendRequest, BUDGET_FILE};
+use asset_baker::clip_review::{self, DEFAULT_FFMPEG_PATH};
+use asset_baker::ffmpeg_importer::DEFAULT_FFPROBE_PATH;
+use asset_baker::ledger::{self, Ledger, LedgerHistory};
+use asset_baker::veo_plan::{parse_state, published_states, state_slug, VeoDirs};
+use asset_baker::{BakerError, MediaStyle, RunContext, VeoClient};
+use clap::{Args, Parser, Subcommand};
 use sim_core::UnitCatalog;
 use sim_types::enums::AnimState;
 use std::error::Error;
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
 #[derive(Parser, Debug)]
 #[command(name = "asset_baker")]
@@ -41,6 +58,89 @@ struct Cli {
 
     #[command(subcommand)]
     command: Commands,
+}
+
+/// Which identities and states a Veo command works on, and where their files are.
+#[derive(Args, Debug)]
+struct Selection {
+    /// Exact catalog slug; repeat for several identities. Near matches are refused.
+    #[arg(short, long = "unit")]
+    units: Vec<String>,
+
+    /// Every showcase hero in the catalog.
+    #[arg(long)]
+    all_starters: bool,
+
+    /// Only these published states, comma-separated (e.g. `idle,constructing`). A state the
+    /// identity does not publish is refused.
+    #[arg(long, value_delimiter = ',', value_parser = parse_state)]
+    states: Vec<AnimState>,
+
+    /// Directory of authored keyframes (`<slug>_<state>.jpg`).
+    #[arg(long, default_value = "assets/ai_keyframes")]
+    keyframes_dir: PathBuf,
+
+    /// Directory of installed clips (`<slug>_<state>.mp4`).
+    #[arg(long, default_value = "assets/videos")]
+    videos_dir: PathBuf,
+}
+
+/// Arguments of `generate-veo`.
+#[derive(Args, Debug)]
+struct GenerateArgs {
+    #[command(flatten)]
+    selection: Selection,
+
+    /// Directory for downloads awaiting review, `<slug>/<state>/<operation>.mp4` (outside the
+    /// repository, e.g. `~/scratch/veo/clips`).
+    #[arg(long)]
+    clips_dir: PathBuf,
+
+    /// The append-only ledger of every request (e.g. `docs/evidence/veo/ledger.jsonl`).
+    #[arg(long)]
+    ledger: PathBuf,
+
+    /// Model identifier.
+    #[arg(short, long, default_value = asset_baker::DEFAULT_VEO_MODEL)]
+    model: String,
+
+    /// Most generations this run may start, retries included. Required for a paid run.
+    #[arg(long)]
+    max_generations: Option<u32>,
+
+    /// Generations allowed in the rolling window (default: `weekly_generations` in the budget
+    /// file).
+    #[arg(long)]
+    weekly_budget: Option<u32>,
+
+    /// Budget file (default: `<assets>/media/veo_budget.ron`).
+    #[arg(long)]
+    budget_file: Option<PathBuf>,
+
+    /// Allow clips whose earlier attempts produced no usable clip to be generated again.
+    #[arg(long)]
+    allow_regeneration: bool,
+
+    /// Directory whose `.env` or `tmp/api-key.txt` (or its parent's) holds the key (default:
+    /// the current directory). The key is read by this process only and never printed.
+    #[arg(long)]
+    credentials_dir: Option<PathBuf>,
+
+    /// Print the plan and check prompts and budget, without reading credentials or spending.
+    #[arg(long)]
+    dry_run: bool,
+
+    /// Record a clip fetched by hand: `--import <SLUG> <STATE> <FILE> --operation <NAME>`.
+    #[arg(long, num_args = 3, value_names = ["SLUG", "STATE", "FILE"])]
+    import: Option<Vec<String>>,
+
+    /// The recorded operation that produced an imported clip.
+    #[arg(long)]
+    operation: Option<String>,
+
+    /// curl executable (tests point it at a loopback shim).
+    #[arg(long, hide = true)]
+    curl_path: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -80,64 +180,125 @@ enum Commands {
         fps: u32,
     },
 
-    /// Generates genuine 3D animation videos using Google Veo video generation models.
+    /// Generates the published actions' clips with Google Veo into the clips directory.
     #[command(name = "generate-veo")]
-    GenerateVeo {
-        /// Exact unit slug from the catalog. Near matches are refused.
-        #[arg(short, long)]
-        unit: Option<String>,
+    GenerateVeo(Box<GenerateArgs>),
 
-        /// Flag to generate every showcase hero in the catalog.
+    /// Checks the prompts and keyframes of every clip a run would pay for. Free.
+    #[command(name = "validate-prompts")]
+    ValidatePrompts {
+        #[command(flatten)]
+        selection: Selection,
+        /// Ledger to read, so that clips awaiting review or resumable are not checked.
         #[arg(long)]
-        all_starters: bool,
-
-        /// Model identifier (default: "veo-3.1-fast-generate-001", or "veo-3.1-generate-001").
-        #[arg(short, long, default_value = "veo-3.1-fast-generate-001")]
-        model: String,
-
-        /// Directory containing reference AI keyframe images.
-        #[arg(long, default_value = "assets/ai_keyframes")]
-        keyframes_dir: PathBuf,
-
-        /// Output directory for downloaded raw .mp4 videos.
-        #[arg(long, default_value = "assets/videos")]
-        videos_dir: PathBuf,
-
-        /// Target output directory for final baked PNG strips and .flipbook.ron manifests.
-        #[arg(short, long, default_value = "assets/textures")]
-        output_dir: PathBuf,
-
-        /// Target square frame dimension in pixels (default: 512).
-        #[arg(short, long, default_value_t = 512)]
-        size: u32,
-
-        /// Playback framerate (default: 15).
-        #[arg(short, long, default_value_t = 15)]
-        fps: u32,
-
-        /// Print generation prompts and configuration without executing API calls.
+        ledger: Option<PathBuf>,
+        /// Directory of downloads (only used to find clips the ledger recorded).
         #[arg(long)]
-        dry_run: bool,
+        clips_dir: Option<PathBuf>,
     },
 
-    /// Bakes multiple action video clips (Idle, Walk, Attack) for a single unit into a combined atlas.
+    /// One free, authenticated GET of the model resource; prints mode, status and visibility.
+    #[command(name = "veo-preflight")]
+    VeoPreflight {
+        /// Model identifier.
+        #[arg(short, long, default_value = asset_baker::DEFAULT_VEO_MODEL)]
+        model: String,
+        /// Directory whose `.env` or `tmp/api-key.txt` (or its parent's) holds the key.
+        #[arg(long)]
+        credentials_dir: Option<PathBuf>,
+        /// curl executable (tests point it at a loopback shim).
+        #[arg(long, hide = true)]
+        curl_path: Option<PathBuf>,
+    },
+
+    /// Writes the frame of a clip at a given time as a PNG.
+    #[command(name = "keyframe-from-clip")]
+    KeyframeFromClip {
+        /// Source clip.
+        #[arg(long)]
+        clip: PathBuf,
+        /// Time of the frame, in seconds.
+        #[arg(long, default_value_t = 1.0)]
+        at: f64,
+        /// Destination PNG.
+        #[arg(long)]
+        output: PathBuf,
+    },
+
+    /// Writes contact sheets of an identity's clips, or records a rejection with `--reject`.
+    Review {
+        /// Exact catalog slug.
+        #[arg(short, long)]
+        unit: String,
+        /// Directory of installed clips.
+        #[arg(long, default_value = "assets/videos")]
+        videos_dir: PathBuf,
+        /// The ledger.
+        #[arg(long)]
+        ledger: PathBuf,
+        /// Full-size sheets (e.g. `~/scratch/veo/review`).
+        #[arg(long)]
+        sheets_dir: Option<PathBuf>,
+        /// Downscaled sheets for the committed evidence (e.g. `docs/evidence/veo/review`).
+        #[arg(long)]
+        evidence_dir: Option<PathBuf>,
+        /// Reject the download of this state awaiting review.
+        #[arg(long, value_parser = parse_state, requires = "reason")]
+        reject: Option<AnimState>,
+        /// Why it is rejected, against the written review criteria.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+
+    /// Installs a reviewed download as `<videos>/<slug>_<state>.mp4`.
+    #[command(name = "install-clip")]
+    InstallClip {
+        /// Exact catalog slug.
+        #[arg(short, long)]
+        unit: String,
+        /// Animation state.
+        #[arg(long, value_parser = parse_state)]
+        state: AnimState,
+        /// The downloaded clip.
+        #[arg(long)]
+        clip: PathBuf,
+        /// The ledger that recorded the download.
+        #[arg(long)]
+        ledger: PathBuf,
+        /// Directory of installed clips.
+        #[arg(long, default_value = "assets/videos")]
+        videos_dir: PathBuf,
+        /// Replace an installed clip.
+        #[arg(long)]
+        replace: bool,
+    },
+
+    /// Bakes an identity's action clips into one atlas; only states it publishes are accepted.
     #[command(name = "bake-unit-videos")]
     BakeUnitVideos {
-        /// Archetype name (e.g. "marine", "zealot", "marauder").
+        /// Exact catalog slug.
         #[arg(short, long)]
         unit: String,
 
-        /// Path to Idle animation MP4 video clip.
+        /// Idle clip.
         #[arg(long)]
         idle: Option<PathBuf>,
 
-        /// Path to Walk animation MP4 video clip.
+        /// Walk clip.
         #[arg(long)]
         walk: Option<PathBuf>,
 
-        /// Path to Attack animation MP4 video clip.
+        /// Attack clip.
         #[arg(long)]
         attack: Option<PathBuf>,
+
+        /// Constructing clip.
+        #[arg(long)]
+        constructing: Option<PathBuf>,
+
+        /// Cast clip.
+        #[arg(long)]
+        cast: Option<PathBuf>,
 
         /// Target output directory for generated assets.
         #[arg(short, long, default_value = "assets/textures")]
@@ -211,8 +372,28 @@ enum Commands {
 /// Result of a subcommand; any error ends the process with a nonzero status.
 type RunResult = Result<(), Box<dyn Error>>;
 
-fn main() -> RunResult {
+/// Exit status when Veo refused a request for quota.
+const EXIT_QUOTA: u8 = 3;
+
+/// Exit status when a run stopped on a result that needs a person.
+const EXIT_STOPPED: u8 = 4;
+
+fn main() -> ExitCode {
     let cli = Cli::parse();
+    match run(cli) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("Error: {error}");
+            match error.downcast_ref::<BakerError>() {
+                Some(BakerError::VeoQuotaExhausted { .. }) => ExitCode::from(EXIT_QUOTA),
+                Some(BakerError::VeoRunStopped { .. }) => ExitCode::from(EXIT_STOPPED),
+                _ => ExitCode::FAILURE,
+            }
+        }
+    }
+}
+
+fn run(cli: Cli) -> RunResult {
     let assets = cli.assets.as_deref();
     match cli.command {
         Commands::AuditMedia {
@@ -220,38 +401,68 @@ fn main() -> RunResult {
             report,
             strict,
         } => run_audit_media(assets, catalog_dir, &report, strict),
-        Commands::GenerateDefaults { .. } => {
-            Err(asset_baker::BakerError::ExplicitSourcesRequired.into())
-        }
-        Commands::GenerateVeo {
-            unit,
-            all_starters,
+        Commands::GenerateDefaults { .. } => Err(BakerError::ExplicitSourcesRequired.into()),
+        Commands::GenerateVeo(args) => run_generate_veo(assets, &args),
+        Commands::ValidatePrompts {
+            selection,
+            ledger,
+            clips_dir,
+        } => run_validate_prompts(assets, &selection, ledger.as_deref(), clips_dir),
+        Commands::VeoPreflight {
             model,
-            keyframes_dir,
-            videos_dir,
-            output_dir,
-            size,
-            fps,
-            dry_run,
-        } => {
-            let catalog = load_unit_catalog(assets)?;
-            let units = veo_units(&catalog, unit, all_starters)?;
-            let dirs = asset_baker::UnitMediaDirs {
-                keyframes: &keyframes_dir,
-                videos: &videos_dir,
-                output: &output_dir,
-            };
-            run_generate_veo(&catalog, &units, &model, &dirs, size, fps, dry_run)
+            credentials_dir,
+            curl_path,
+        } => run_veo_preflight(&model, credentials_dir.as_deref(), curl_path.as_deref()),
+        Commands::KeyframeFromClip { clip, at, output } => {
+            run_keyframe_from_clip(&clip, at, &output)
         }
+        Commands::Review {
+            unit,
+            videos_dir,
+            ledger,
+            sheets_dir,
+            evidence_dir,
+            reject,
+            reason,
+        } => {
+            let target = ReviewTarget {
+                unit: &unit,
+                videos_dir,
+                ledger: &ledger,
+            };
+            match (reject, reason) {
+                (Some(state), Some(reason)) => run_reject(assets, &target, state, &reason),
+                _ => run_review(assets, &target, sheets_dir, evidence_dir),
+            }
+        }
+        Commands::InstallClip {
+            unit,
+            state,
+            clip,
+            ledger,
+            videos_dir,
+            replace,
+        } => run_install_clip(assets, (&unit, state), &clip, &ledger, videos_dir, replace),
         Commands::BakeUnitVideos {
             unit,
             idle,
             walk,
             attack,
+            constructing,
+            cast,
             output_dir,
             size,
             fps,
-        } => run_bake_unit_videos(&unit, [idle, walk, attack], &output_dir, size, fps),
+        } => {
+            let clips = [
+                (AnimState::Idle, idle),
+                (AnimState::Constructing, constructing),
+                (AnimState::Walk, walk),
+                (AnimState::Attack, attack),
+                (AnimState::Cast, cast),
+            ];
+            run_bake_unit_videos(assets, &unit, clips, &output_dir, size, fps)
+        }
         Commands::BakeVideo {
             input,
             output_dir,
@@ -272,7 +483,7 @@ fn main() -> RunResult {
 }
 
 /// Loads the unit catalog from the asset bundle chosen by `--assets` or the search.
-fn load_unit_catalog(assets: Option<&Path>) -> Result<UnitCatalog, asset_baker::BakerError> {
+fn load_unit_catalog(assets: Option<&Path>) -> Result<UnitCatalog, BakerError> {
     let root = asset_baker::resolve_assets_root(assets)?;
     Ok(asset_baker::load_catalogs(&root)?.units)
 }
@@ -302,26 +513,19 @@ fn run_audit_media(
     Ok(())
 }
 
-/// The units `generate-veo` works on: every showcase hero, or the one named, each checked
+/// The identities a Veo command works on: every showcase hero, or those named, each checked
 /// against the catalog before credentials are read or anything is spent.
-fn veo_units(
-    catalog: &UnitCatalog,
-    unit: Option<String>,
-    all_starters: bool,
-) -> Result<Vec<String>, Box<dyn Error>> {
-    let units: Vec<String> = if all_starters {
+fn veo_units(catalog: &UnitCatalog, selection: &Selection) -> Result<Vec<String>, Box<dyn Error>> {
+    let units: Vec<String> = if selection.all_starters {
         catalog
             .archetypes()
             .filter(|a| a.showcase_hero)
             .map(|a| a.slug.clone())
             .collect()
-    } else if let Some(unit) = unit {
-        vec![unit]
+    } else if selection.units.is_empty() {
+        return Err("either `--unit <slug>` or `--all-starters` must be given".into());
     } else {
-        return Err(
-            "Either `--unit <name>` or `--all-starters` must be specified for Veo generation."
-                .into(),
-        );
+        selection.units.clone()
     };
     for unit in &units {
         asset_baker::validate_catalog_slug(catalog, unit)?;
@@ -329,106 +533,395 @@ fn veo_units(
     Ok(units)
 }
 
-/// `generate-veo --dry-run`: prints each unit's prompts and keyframes without any API call.
-fn print_veo_plan(catalog: &UnitCatalog, units: &[String], keyframes_dir: &Path) -> RunResult {
-    for u in units {
-        println!("\n--- [DRY RUN] Plan for unit: {} ---", u);
-        for state in [AnimState::Idle, AnimState::Walk, AnimState::Attack] {
-            let prompt = asset_baker::build_action_prompt(catalog, u, state)?;
-            let state_str = match state {
-                AnimState::Idle => "idle",
-                AnimState::Walk => "walk",
-                AnimState::Attack => "attack",
-                AnimState::Constructing => "constructing",
-                AnimState::Cast => "cast",
-                AnimState::Die => "die",
-            };
-            let keyframe_path = keyframes_dir.join(format!("{u}_{state_str}.jpg"));
-            let active_keyframe = keyframes_dir.join(format!("{u}_active.jpg"));
-            let idle_keyframe = keyframes_dir.join(format!("{u}_idle.jpg"));
-
-            let resolved_keyframe = if keyframe_path.exists() {
-                Some(keyframe_path)
-            } else if state == AnimState::Attack && active_keyframe.exists() {
-                Some(active_keyframe)
-            } else if idle_keyframe.exists() {
-                Some(idle_keyframe)
-            } else {
-                None
-            };
-            println!("Action: {:?}", state);
-            println!("Keyframe: {:?}", resolved_keyframe);
-            println!("Prompt: {}", prompt);
-        }
-    }
-    Ok(())
+/// The catalog, media style and plan of a Veo command.
+struct PlannedRun {
+    style: MediaStyle,
+    root: PathBuf,
+    history: LedgerHistory,
+    dirs: VeoDirs,
+    plan: asset_baker::RunPlan,
 }
 
-/// `generate-veo`: generates and bakes each unit's clips with the Veo API, or with `dry_run`
-/// prints the plan. Credentials are resolved first in both cases. `size` is the frame edge in
-/// pixels and `fps` the playback rate.
-fn run_generate_veo(
-    catalog: &UnitCatalog,
-    units: &[String],
-    model: &str,
-    dirs: &asset_baker::UnitMediaDirs<'_>,
-    size: u32,
-    fps: u32,
-    dry_run: bool,
-) -> RunResult {
-    let client = match asset_baker::veo_client::VeoClient::new_auto() {
-        Ok(c) => c.with_model(model),
-        Err(e) => {
-            eprintln!("Error resolving Veo API credentials: {e}");
-            return Err(Box::new(e));
-        }
+/// Loads the data and the ledger and plans the run of `selection`.
+fn plan_selection(
+    assets: Option<&Path>,
+    selection: &Selection,
+    clips_dir: PathBuf,
+    ledger: Option<&Path>,
+) -> Result<PlannedRun, Box<dyn Error>> {
+    let root = asset_baker::resolve_assets_root(assets)?;
+    let catalog = asset_baker::load_catalogs(&root)?.units;
+    let style = MediaStyle::load(&root)?;
+    let units = veo_units(&catalog, selection)?;
+    let history = match ledger {
+        Some(path) => LedgerHistory::load(path)?,
+        None => LedgerHistory::default(),
     };
+    let dirs = VeoDirs {
+        keyframes: selection.keyframes_dir.clone(),
+        videos: selection.videos_dir.clone(),
+        clips: clips_dir,
+    };
+    let filter = (!selection.states.is_empty()).then_some(selection.states.as_slice());
+    let plan = asset_baker::plan_run(&catalog, &style, &units, filter, &dirs, &history)?;
+    Ok(PlannedRun {
+        style,
+        root,
+        history,
+        dirs,
+        plan,
+    })
+}
 
-    println!(
-        "==> Google Veo Video Generation Pipeline (Model: {}, Mode: {})",
-        client.model(),
-        if client.is_vertex_ai() {
-            "Vertex AI Express"
-        } else {
-            "Gemini API"
-        }
-    );
-
-    if dry_run {
-        return print_veo_plan(catalog, units, dirs.keyframes);
+/// `validate-prompts`: refuses while any clip a run would pay for has a prompt problem.
+fn run_validate_prompts(
+    assets: Option<&Path>,
+    selection: &Selection,
+    ledger: Option<&Path>,
+    clips_dir: Option<PathBuf>,
+) -> RunResult {
+    let clips_dir = clips_dir.unwrap_or_else(|| PathBuf::from("clips"));
+    let planned = plan_selection(assets, selection, clips_dir, ledger)?;
+    let problems = planned.plan.problems(&planned.style);
+    if !problems.is_empty() {
+        return Err(BakerError::PromptsInvalid { problems }.into());
     }
-    for u in units {
-        println!("\n==> Processing unit '{}' via Veo API...", u);
-        let meta = client.generate_and_bake_unit(catalog, u, dirs, size, fps)?;
-        println!(
-            "    Successfully baked '{}' ({} frames at {}x{} @ {} fps).",
-            meta.name, meta.total_frames, meta.frame_width, meta.frame_height, meta.fps
+    println!(
+        "Prompts valid for {} clip(s) to generate.",
+        planned.plan.generations()
+    );
+    Ok(())
+}
+
+/// `generate-veo`: plans, checks and (unless a dry run) executes a paid run, or imports a clip.
+fn run_generate_veo(assets: Option<&Path>, args: &GenerateArgs) -> RunResult {
+    if let Some(import) = &args.import {
+        return run_import(assets, args, import);
+    }
+    let planned = plan_selection(
+        assets,
+        &args.selection,
+        args.clips_dir.clone(),
+        Some(&args.ledger),
+    )?;
+    let mut stdout = std::io::stdout().lock();
+    println!("==> Veo plan (model {}):", args.model);
+    planned.plan.print(&mut stdout)?;
+    let regenerations = planned.plan.regenerations();
+    if !args.dry_run && !regenerations.is_empty() && !args.allow_regeneration {
+        return Err(BakerError::RegenerationNotAllowed {
+            clips: regenerations,
+        }
+        .into());
+    }
+    let problems = planned.plan.problems(&planned.style);
+    if !problems.is_empty() {
+        return Err(BakerError::PromptsInvalid { problems }.into());
+    }
+    let budget_file = args
+        .budget_file
+        .clone()
+        .unwrap_or_else(|| planned.root.join(BUDGET_FILE));
+    let config = BudgetConfig::load(&budget_file)?;
+    let window_budget = args.weekly_budget.unwrap_or(config.weekly_generations);
+    let used = config.used_in_window(&planned.history, ledger::now_unix_seconds());
+    println!(
+        "Budget: {used} of {window_budget} generations used in the last {} days.",
+        config.window_days
+    );
+    if args.dry_run {
+        return Ok(());
+    }
+    let needed = planned.plan.generations();
+    check_spend(
+        &config,
+        SpendRequest {
+            needed,
+            max_generations: args.max_generations,
+            window_budget,
+            used_in_window: used,
+        },
+    )?;
+    execute(&planned, args, needed, &mut stdout)
+}
+
+/// Resolves credentials, opens the ledger and runs the plan.
+fn execute(
+    planned: &PlannedRun,
+    args: &GenerateArgs,
+    needed: u32,
+    out: &mut dyn std::io::Write,
+) -> RunResult {
+    let client = veo_client(
+        &args.model,
+        args.credentials_dir.as_deref(),
+        args.curl_path.as_deref(),
+    )?;
+    println!(
+        "==> Veo run: {needed} generation(s) at most, {} with model {}.",
+        client.mode().label(),
+        client.model()
+    );
+    let mut ledger = Ledger::open(&args.ledger, ledger::new_run_id())?;
+    let summary = asset_baker::execute_plan(
+        &planned.plan,
+        RunContext {
+            client: &client,
+            ledger: &mut ledger,
+            history: &planned.history,
+            dirs: &planned.dirs,
+            max_generations: args.max_generations.unwrap_or(needed),
+            out,
+        },
+    )?;
+    println!(
+        "==> Done: {} started, {} downloaded. Review with `asset_baker review` before installing.",
+        summary.started, summary.downloaded
+    );
+    Ok(())
+}
+
+/// Resolves the key from the environment or `credentials_dir` and builds a client.
+fn veo_client(
+    model: &str,
+    credentials_dir: Option<&Path>,
+    curl_path: Option<&Path>,
+) -> Result<VeoClient, BakerError> {
+    let search_root = match credentials_dir {
+        Some(dir) => dir.to_path_buf(),
+        None => std::env::current_dir().map_err(|source| BakerError::Io {
+            path: PathBuf::from("."),
+            source,
+        })?,
+    };
+    let credentials =
+        asset_baker::resolve_credentials_from(|name| std::env::var(name).ok(), &search_root)?;
+    let client = VeoClient::with_credentials(credentials).with_model(model);
+    Ok(match curl_path {
+        Some(path) => client.with_curl_path(path),
+        None => client,
+    })
+}
+
+/// `generate-veo --import`: records a clip fetched by hand against its recorded operation.
+fn run_import(assets: Option<&Path>, args: &GenerateArgs, import: &[String]) -> RunResult {
+    let [slug, state, file] = import else {
+        return Err("--import takes <SLUG> <STATE> <FILE>".into());
+    };
+    let operation = args
+        .operation
+        .as_deref()
+        .ok_or(BakerError::ImportNeedsOperation)?;
+    let state = parse_state(state)?;
+    let catalog = load_unit_catalog(assets)?;
+    asset_baker::validate_catalog_slug(&catalog, slug)?;
+    published_states(&catalog, slug, Some(&[state]))?;
+    let history = LedgerHistory::load(&args.ledger)?;
+    let dirs = VeoDirs {
+        keyframes: args.selection.keyframes_dir.clone(),
+        videos: args.selection.videos_dir.clone(),
+        clips: args.clips_dir.clone(),
+    };
+    let mut ledger = Ledger::open(&args.ledger, ledger::new_run_id())?;
+    let target = clip_review::import_clip(
+        Path::new(DEFAULT_FFPROBE_PATH),
+        &history,
+        &mut ledger,
+        &dirs,
+        (slug, state),
+        Path::new(file),
+        operation,
+    )?;
+    println!(
+        "Imported {} for {slug} {}; review it before installing.",
+        target.display(),
+        state_slug(state)
+    );
+    Ok(())
+}
+
+/// `veo-preflight`: one free authenticated GET; prints the mode, status and visibility only.
+fn run_veo_preflight(
+    model: &str,
+    credentials_dir: Option<&Path>,
+    curl_path: Option<&Path>,
+) -> RunResult {
+    let client = veo_client(model, credentials_dir, curl_path)?;
+    let report = client.preflight()?;
+    println!("Mode: {}", report.mode.label());
+    println!("Model: {}", report.model);
+    println!("HTTP status: {}", report.http_status);
+    if let Some(status) = &report.error_status {
+        println!("Error status: {status}");
+    }
+    let visible = report.model_visible();
+    println!("Model visible: {}", if visible { "yes" } else { "no" });
+    if visible {
+        Ok(())
+    } else {
+        Err(format!(
+            "the key cannot read model '{model}' (HTTP {})",
+            report.http_status
+        )
+        .into())
+    }
+}
+
+/// `keyframe-from-clip`: the frame of a clip at `at` seconds.
+fn run_keyframe_from_clip(clip: &Path, at: f64, output: &Path) -> RunResult {
+    let at = std::time::Duration::try_from_secs_f64(at).map_err(|error| {
+        BakerError::InvalidArgument {
+            reason: format!("--at {at}: {error}"),
+        }
+    })?;
+    clip_review::extract_keyframe(Path::new(DEFAULT_FFMPEG_PATH), clip, at, output)?;
+    println!("Wrote {}", output.display());
+    Ok(())
+}
+
+/// The identity and files a `review` works on.
+struct ReviewTarget<'a> {
+    unit: &'a str,
+    videos_dir: PathBuf,
+    ledger: &'a Path,
+}
+
+impl ReviewTarget<'_> {
+    fn dirs(&self) -> VeoDirs {
+        VeoDirs {
+            keyframes: PathBuf::new(),
+            videos: self.videos_dir.clone(),
+            clips: PathBuf::new(),
+        }
+    }
+}
+
+/// `review`: contact sheets of each published state's clip awaiting review, else installed.
+fn run_review(
+    assets: Option<&Path>,
+    target: &ReviewTarget<'_>,
+    sheets_dir: Option<PathBuf>,
+    evidence_dir: Option<PathBuf>,
+) -> RunResult {
+    let (Some(sheets_dir), Some(evidence_dir)) = (sheets_dir, evidence_dir) else {
+        return Err(
+            "review needs --sheets-dir and --evidence-dir (or --reject and --reason)".into(),
         );
+    };
+    let catalog = load_unit_catalog(assets)?;
+    let history = LedgerHistory::load(target.ledger)?;
+    let dirs = target.dirs();
+    let mut written = 0;
+    for state in published_states(&catalog, target.unit, None)? {
+        let Some(clip) = clip_review::review_target(&history, &dirs, target.unit, state) else {
+            println!("{} {}: no clip to review", target.unit, state_slug(state));
+            continue;
+        };
+        let name = format!("{}_{}.png", target.unit, state_slug(state));
+        clip_review::contact_sheet(
+            Path::new(DEFAULT_FFMPEG_PATH),
+            Path::new(DEFAULT_FFPROBE_PATH),
+            &clip,
+            &sheets_dir.join(&name),
+            &evidence_dir.join(&name),
+        )?;
+        println!(
+            "{} {}: {} -> {}",
+            target.unit,
+            state_slug(state),
+            clip.display(),
+            sheets_dir.join(&name).display()
+        );
+        written += 1;
+    }
+    if written == 0 {
+        return Err(format!("{} has no clip to review", target.unit).into());
     }
     Ok(())
 }
 
-/// `bake-unit-videos`: packs the given idle, walk and attack clips into one atlas.
+/// `review --reject`: records the rejection of a download awaiting review.
+fn run_reject(
+    assets: Option<&Path>,
+    target: &ReviewTarget<'_>,
+    state: AnimState,
+    reason: &str,
+) -> RunResult {
+    let catalog = load_unit_catalog(assets)?;
+    published_states(&catalog, target.unit, Some(&[state]))?;
+    let history = LedgerHistory::load(target.ledger)?;
+    let mut ledger = Ledger::open(target.ledger, ledger::new_run_id())?;
+    let sha256 = clip_review::reject_clip(&history, &mut ledger, target.unit, state, reason)?;
+    println!(
+        "Rejected {} {} ({sha256}); the next run may regenerate it with --allow-regeneration.",
+        target.unit,
+        state_slug(state)
+    );
+    Ok(())
+}
+
+/// `install-clip`: installs a reviewed download.
+fn run_install_clip(
+    assets: Option<&Path>,
+    (unit, state): (&str, AnimState),
+    clip: &Path,
+    ledger: &Path,
+    videos_dir: PathBuf,
+    replace: bool,
+) -> RunResult {
+    let catalog = load_unit_catalog(assets)?;
+    published_states(&catalog, unit, Some(&[state]))?;
+    let history = LedgerHistory::load(ledger)?;
+    let dirs = VeoDirs {
+        keyframes: PathBuf::new(),
+        videos: videos_dir,
+        clips: PathBuf::new(),
+    };
+    let target = clip_review::install_clip(
+        Path::new(DEFAULT_FFPROBE_PATH),
+        &history,
+        &dirs,
+        unit,
+        state,
+        clip,
+        replace,
+    )?;
+    println!("Installed {}", target.display());
+    Ok(())
+}
+
+/// `bake-unit-videos`: packs the given clips into one atlas, refusing states the identity
+/// does not publish and naming the published states that are missing.
 fn run_bake_unit_videos(
+    assets: Option<&Path>,
     unit: &str,
-    [idle, walk, attack]: [Option<PathBuf>; 3],
+    clips: [(AnimState, Option<PathBuf>); 5],
     output_dir: &Path,
     size: u32,
     fps: u32,
 ) -> RunResult {
-    let clips: Vec<(AnimState, PathBuf)> = [
-        (AnimState::Idle, idle),
-        (AnimState::Walk, walk),
-        (AnimState::Attack, attack),
-    ]
-    .into_iter()
-    .filter_map(|(state, path)| path.map(|p| (state, p)))
-    .collect();
-
+    let clips: Vec<(AnimState, PathBuf)> = clips
+        .into_iter()
+        .filter_map(|(state, path)| path.map(|p| (state, p)))
+        .collect();
     if clips.is_empty() {
-        return Err("At least one of `--idle`, `--walk`, or `--attack` must be provided.".into());
+        return Err(
+            "at least one clip (--idle, --walk, --attack, --constructing, --cast) is needed".into(),
+        );
     }
-
+    let catalog = load_unit_catalog(assets)?;
+    let given: Vec<AnimState> = clips.iter().map(|(state, _)| *state).collect();
+    published_states(&catalog, unit, Some(&given))?;
+    let missing: Vec<&str> = published_states(&catalog, unit, None)?
+        .into_iter()
+        .filter(|state| !given.contains(state))
+        .map(state_slug)
+        .collect();
+    if !missing.is_empty() {
+        eprintln!(
+            "Warning: '{unit}' also publishes {missing:?}; the game shows \"No approved media\" until they are baked."
+        );
+    }
     println!(
         "==> Baking {} action video clips for unit '{}' into {:?}...",
         clips.len(),

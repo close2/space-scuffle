@@ -32,6 +32,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+pub mod cli;
+
 /// Returns the fixture clip, resolved from `CARGO_MANIFEST_DIR` so that the result does not
 /// depend on the test working directory, after asserting that the real tools it needs exist.
 ///

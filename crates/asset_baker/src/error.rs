@@ -161,8 +161,8 @@ pub enum BakerError {
         message: String,
     },
 
-    /// A paid operation was started, but its name could not be saved for resuming.
-    #[error("Veo operation '{operation}' was started but could not be recorded at '{path}': {source}. Record the name by hand, because rerunning would pay for a new generation")]
+    /// A paid operation was started, but its name could not be written to the ledger.
+    #[error("Veo operation '{operation}' was started but could not be recorded in the ledger '{path}': {source}. Record the name by hand, because rerunning would pay for a new generation")]
     OperationNotRecorded {
         /// Resource name of the operation.
         operation: String,
@@ -245,4 +245,131 @@ pub enum BakerError {
     /// The rule catalogs in the asset bundle could not be loaded.
     #[error(transparent)]
     Catalog(#[from] sim_core::catalog::CatalogLoadError),
+
+    /// A data file of the asset bundle (media style, budget) is not valid.
+    #[error("invalid data file '{path}': {reason}")]
+    DataFile {
+        /// The file.
+        path: PathBuf,
+        /// What is wrong.
+        reason: String,
+    },
+
+    /// A state was requested that the identity can never publish, so media for it is useless.
+    #[error("'{slug}' does not publish the {state} action; it publishes {published:?}")]
+    StateNotPublished {
+        /// Catalog slug.
+        slug: String,
+        /// The requested state.
+        state: String,
+        /// The states it publishes.
+        published: Vec<String>,
+    },
+
+    /// Prompts or keyframes of clips a run would pay for are not acceptable.
+    #[error("prompt validation failed; nothing was spent:{}", crate::prompts::render_problems(.problems))]
+    PromptsInvalid {
+        /// Every problem found.
+        problems: Vec<crate::prompts::PromptProblem>,
+    },
+
+    /// A spending limit refused the run.
+    #[error(transparent)]
+    Budget(#[from] crate::budget::BudgetError),
+
+    /// The ledger could not be read or written.
+    #[error(transparent)]
+    Ledger(#[from] crate::ledger::LedgerError),
+
+    /// The service refused a start request for quota. Nothing was spent; the run ended.
+    #[error("Veo refused the request for quota (HTTP {http_status}, status {status:?}, reason {reason:?}); the run stopped and nothing more was started. Wait for the quota window before rerunning")]
+    VeoQuotaExhausted {
+        /// HTTP status of the refusal.
+        http_status: u16,
+        /// The error's `status` field.
+        status: Option<String>,
+        /// The error's reason or message.
+        reason: Option<String>,
+    },
+
+    /// The run met a result that needs a person's attention and stopped after recording it.
+    #[error("the Veo run stopped: {reason}")]
+    VeoRunStopped {
+        /// What happened.
+        reason: String,
+    },
+
+    /// The run finished, but some clips failed or were skipped.
+    #[error(
+        "the Veo run finished with {failed} failed and {skipped} skipped clip(s); see the ledger"
+    )]
+    VeoRunIncomplete {
+        /// Clips whose operation failed with an already-known failure kind.
+        failed: u32,
+        /// Clips skipped because their Idle clip was not available to chain from.
+        skipped: u32,
+    },
+
+    /// The run would regenerate clips without the explicit flag.
+    #[error("the run would regenerate {clips:?}, whose earlier attempts produced no usable clip; record the reason (review --reject, or the failure in the ledger) and pass --allow-regeneration")]
+    RegenerationNotAllowed {
+        /// `<slug> <state>` of each regeneration.
+        clips: Vec<String>,
+    },
+
+    /// A clip offered for installation is not one the ledger recorded as downloaded.
+    #[error("'{path}' has no `downloaded` line for {slug} {state} in the ledger; only a clip the pipeline downloaded or imported can be installed")]
+    ClipNotInLedger {
+        /// The clip.
+        path: PathBuf,
+        /// Catalog slug.
+        slug: String,
+        /// Animation state.
+        state: String,
+    },
+
+    /// A clip offered for installation was rejected in review.
+    #[error("'{path}' was rejected in review and cannot be installed")]
+    ClipRejected {
+        /// The clip.
+        path: PathBuf,
+    },
+
+    /// An installed clip would be replaced without `--replace`.
+    #[error("'{path}' is already installed; pass --replace to replace it")]
+    ClipAlreadyInstalled {
+        /// The installed clip.
+        path: PathBuf,
+    },
+
+    /// An imported clip names an operation the ledger never recorded for that clip.
+    #[error("the ledger names no operation '{operation}' for {slug} {state}; an imported clip must come from a recorded operation")]
+    OperationNotInLedger {
+        /// The operation given.
+        operation: String,
+        /// Catalog slug.
+        slug: String,
+        /// Animation state.
+        state: String,
+    },
+
+    /// `--import` was given without the operation that produced the clip.
+    #[error("--import needs --operation <name>: the recorded operation that produced the clip")]
+    ImportNeedsOperation,
+
+    /// A review action found no clip.
+    #[error("{slug} {state} has no clip awaiting review")]
+    NothingToReview {
+        /// Catalog slug.
+        slug: String,
+        /// Animation state.
+        state: String,
+    },
+
+    /// A command-line value is not acceptable.
+    #[error("invalid argument: {reason}")]
+    InvalidArgument {
+        /// What is wrong.
+        reason: String,
+    },
 }

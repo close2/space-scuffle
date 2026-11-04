@@ -1,0 +1,56 @@
+// assets/catalog/media_style.ron
+// House style and prompt rules for generated unit and structure media (Veo clips).
+//
+// `asset_baker` alone reads this file; the simulation and the client never do. A Veo prompt is
+// composed as: the identity's authored `veo_prompts[State]` (units.ron, structures.ron), then
+// the action description for that state below, then the style sentence. Editing this file
+// changes every future prompt and needs no rebuild (charter §3.3). Clips that already exist are
+// not regenerated for a change here.
+//
+// The rules below are checked by `asset_baker validate-prompts`, and by `generate-veo` before it
+// reads any credential, for every clip a run would pay for.
+(
+    // Ends every prompt. It describes the look in plain words and names no game, studio, show
+    // or franchise (see `deny_list`).
+    style: "Stylized hand-painted 3D character, painterly sci-fi cinematic portrait aesthetic with crisp rim lighting, dark slate-indigo radial studio backdrop (#0B101B), dramatic 3/4 isometric front hero framing, glowing cyan/amber energy cores, bold proportions.",
+
+    // One description per animation state, placed between the identity's prompt and the style.
+    actions: (
+        constructing: "Constructing animation: progressive holographic wireframe build-up from ground to top with active seam welding sparks.",
+        idle: "Idle animation: steady rhythmic breathing movement, subtle weapon glow pulse, head and radar scanning smoothly in place.",
+        walk: "Walk animation: dynamic forward stride, rhythmic mechanical bobbing, ground dust kick-up at feet, leaning into movement.",
+        attack: "Attack animation: sharp weapon recoil, intense bright muzzle flash and projectile emission filling the right side of frame, followed by fluid spring recovery.",
+        cast: "Cast animation: focused work in place, tool arms reaching toward a target just outside the frame, a steady bright welding arc or extraction beam with showering sparks, body holding still.",
+        die: "Death animation: dramatic armor fracture, glowing internal reactor blowout with flying mechanical debris dissolving into smoke.",
+    ),
+
+    // Longest composed prompt accepted, in characters. The model's own limit is not published
+    // for veo-3.1-*-001 (docs/evidence/veo/2026-11-04-api-notes.md); this keeps prompts short.
+    max_prompt_chars: 1024,
+
+    // Names of real games, studios, shows and franchises a prompt must not contain. Matched as
+    // whole words or phrases, ignoring case.
+    deny_list: [
+        "StarCraft",
+        "Blizzard",
+        "Arcane",
+        "Riot Games",
+        "League of Legends",
+        "Warcraft",
+        "Warhammer",
+        "Zerg",
+        "Protoss",
+        "Terran",
+        "Star Wars",
+        "Marvel",
+        "Disney",
+        "Pixar",
+        "Gundam",
+        "Transformers",
+        "Nintendo",
+    ],
+
+    // Text that marks an unfinished prompt. A marker made of letters matches as a whole word
+    // ignoring case; any other marker matches anywhere.
+    placeholder_markers: ["TODO", "TBD", "FIXME", "XXX", "lorem", "ipsum", "placeholder", "{", "}"],
+)

@@ -1,0 +1,16 @@
+// assets/media/veo_budget.ron
+// Spending limits for paid Veo generations, read by `asset_baker generate-veo`.
+//
+// Not a secret. The values are the defaults of owner question Q0024
+// (docs/questions/open/0024-veo-billing-and-weekly-cap.md) until it is answered.
+//
+// - `max_generations_per_run`: the largest `--max-generations` a single invocation accepts.
+// - `weekly_generations`: generations allowed in any rolling window, summed from the ledger's
+//   `request_started` lines (a start the service refused for quota costs nothing and is not
+//   counted). `--weekly-budget` overrides it for one run.
+// - `window_days`: length of the rolling window, in days of 86,400 seconds.
+(
+    max_generations_per_run: 12,
+    weekly_generations: 25,
+    window_days: 7,
+)
