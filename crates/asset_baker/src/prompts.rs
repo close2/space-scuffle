@@ -2,7 +2,8 @@
 //! `2026-11-04-phase-8-5-veo-media.md`, decision D-2).
 //!
 //! # Responsibility
-//! Loads the house style (`assets/catalog/media_style.ron`), composes the prompt of one clip
+//! Loads the house style (`assets/catalog/media_style.ron`), including its framing policy
+//! ([`crate::framing::FramingPolicy`]), composes the prompt of one clip
 //! from the identity's authored `veo_prompts` entry, the action description and the style
 //! sentence, and checks a composed prompt and its keyframe against the rules in that file.
 //!
@@ -17,6 +18,7 @@
 //! - Every problem of every clip is reported at once, so one edit pass can fix them all.
 
 use crate::error::BakerError;
+use crate::framing::FramingPolicy;
 use serde::Deserialize;
 use sim_types::enums::AnimState;
 use std::fmt;
@@ -72,10 +74,30 @@ pub struct MediaStyle {
     pub deny_list: Vec<String>,
     /// Text that marks an unfinished prompt (see [`contains_marker`]).
     pub placeholder_markers: Vec<String>,
+    /// How clips are fitted into the square game frame, per render shape and per identity.
+    pub framing: FramingPolicy,
 }
 
 impl MediaStyle {
-    /// Loads `media_style.ron` from the asset bundle at `assets_root`.
+    /// Loads `media_style.ron` from the asset bundle at `assets_root` and checks its framing
+    /// policy against `catalog`, the catalog loaded at run time. Every command uses this.
+    ///
+    /// # Errors
+    /// As [`Self::load`], [`BakerError::UnknownFramingOverride`] for an override that names no
+    /// catalog identity, or [`BakerError::DataFile`] for an out-of-range feather.
+    pub fn load_for_catalog(
+        assets_root: &Path,
+        catalog: &sim_core::UnitCatalog,
+    ) -> Result<Self, BakerError> {
+        let style = Self::load(assets_root)?;
+        style
+            .framing
+            .check(catalog, &assets_root.join(MEDIA_STYLE_FILE))?;
+        Ok(style)
+    }
+
+    /// Loads `media_style.ron` from the asset bundle at `assets_root`, without checking the
+    /// framing overrides against a catalog (see [`Self::load_for_catalog`]).
     ///
     /// # Errors
     /// [`BakerError::DataFile`] if it cannot be read or parsed.

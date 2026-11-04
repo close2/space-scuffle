@@ -238,6 +238,7 @@ fn test_veo_image_to_video_payload_construction() {
             aspect_ratio: Some("16:9".to_string()),
             duration_seconds: Some(8),
             sample_count: Some(1),
+            generate_audio: None,
         }),
     };
 

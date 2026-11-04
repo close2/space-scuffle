@@ -22,7 +22,7 @@ use asset_baker::provenance::{
     ProvenanceError, RequiredIdentity, RequiredSet, StateProvenance, Tier, UnverifiedReason,
     PROVENANCE_FORMAT_VERSION,
 };
-use asset_baker::{ActionSlice, FlipbookAtlasMeta, FlipbookLayout};
+use asset_baker::{ActionSlice, BakeFraming, FlipbookAtlasMeta, FlipbookLayout, FrameSpec};
 use common::cli::{baker, identity_with_actions, shipped_assets, text};
 use sim_types::AnimState;
 use std::collections::BTreeMap;
@@ -36,6 +36,13 @@ const STATES: [AnimState; 3] = [AnimState::Idle, AnimState::Walk, AnimState::Att
 
 /// Side of one square fixture frame, in pixels.
 const FRAME: u32 = 2;
+
+/// A centre-cropped bake at 32 px and 5 fps, as every bake was before letterboxing existed.
+const CROP_32_AT_5: FrameSpec = FrameSpec {
+    size: 32,
+    fps: 5,
+    framing: BakeFraming::CenterCrop,
+};
 
 fn catalog() -> sim_core::UnitCatalog {
     sim_fixtures::shipped_catalogs().units
@@ -170,6 +177,7 @@ impl Fixture {
                         start_frame: slice.start_frame,
                         frame_count: slice.frame_count,
                         origin: self.origins[state].clone(),
+                        bar_rgb: None,
                     },
                 )
             })
@@ -184,6 +192,7 @@ impl Fixture {
                 fps: 15,
                 max_frames_per_state: 1,
                 ffmpeg_version: "ffmpeg version fixture".into(),
+                framing: BakeFraming::CenterCrop,
             },
             states,
         };
@@ -697,10 +706,15 @@ fn a_bake_writes_provenance_that_the_audit_verifies() {
         })
         .collect();
     let textures = root.path().join("textures");
-    let provenance =
-        bake_with_provenance(&slug, &clips, &videos, &textures, 32, 5).expect("bake succeeds");
+    let provenance = bake_with_provenance(&slug, &clips, &videos, &textures, CROP_32_AT_5)
+        .expect("bake succeeds");
     assert_eq!(provenance.states.len(), 3);
     assert!(provenance.bake.ffmpeg_version.starts_with("ffmpeg version"));
+    assert_eq!(provenance.bake.framing, BakeFraming::CenterCrop);
+    assert!(provenance
+        .states
+        .values()
+        .all(|state| state.bar_rgb.is_none()));
     assert!(provenance_path(&textures, &slug).unwrap().is_file());
 
     let required = RequiredSet::new(vec![RequiredIdentity {
@@ -735,7 +749,7 @@ fn a_bake_refuses_a_clip_outside_the_videos_directory() {
     }];
     let textures = root.path().join("textures");
     assert!(matches!(
-        bake_with_provenance(&slug, &clips, &videos, &textures, 32, 5),
+        bake_with_provenance(&slug, &clips, &videos, &textures, CROP_32_AT_5),
         Err(ProvenanceError::ClipOutsideVideos { .. })
     ));
     assert!(!textures.join(format!("{slug}.png")).exists());
@@ -794,6 +808,33 @@ fn every_shipped_provenance_file_verifies() {
         .entries
         .iter()
         .any(|entry| entry.status == MediaAuditStatus::Verified));
+}
+
+/// Every committed provenance record predates letterboxing: none names a framing or a bar
+/// colour, and each loads as a centre crop without bars (plan
+/// `2026-11-04-veo-letterbox-bake.md`, D-5).
+#[test]
+fn committed_records_without_framing_load_as_centre_crops() {
+    let textures = shipped_assets().join("textures");
+    let mut records = 0;
+    for entry in std::fs::read_dir(&textures).unwrap() {
+        let path = entry.unwrap().path();
+        if !path.to_string_lossy().ends_with(".provenance.ron") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.contains("framing") && !text.contains("bar_rgb"),
+            "{}",
+            path.display()
+        );
+        let record = MediaProvenance::load(&path).expect("a version 1 record loads");
+        assert_eq!(record.format_version, PROVENANCE_FORMAT_VERSION);
+        assert_eq!(record.bake.framing, BakeFraming::CenterCrop);
+        assert!(record.states.values().all(|state| state.bar_rgb.is_none()));
+        records += 1;
+    }
+    assert!(records > 0, "the bundle has committed provenance records");
 }
 
 #[test]

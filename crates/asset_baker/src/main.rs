@@ -16,7 +16,10 @@
 //! (one free authenticated GET), `generate-veo --max-generations N` (downloads to
 //! `--clips-dir`, every request in `--ledger`), `review` (contact sheets, `--reject`),
 //! `install-clip`, then `bake-unit-videos` (which writes `<slug>.provenance.ron` beside the
-//! atlas), then `audit-media --strict --ledger <ledger>`.
+//! atlas), then `audit-media --strict --ledger <ledger>`. `review` and `bake-unit-videos` fit
+//! each clip into the square game frame as the `framing` section of `media_style.ron` says for
+//! the identity's render shape; `generate-veo` sends the parameters of
+//! `media/veo_request.ron`.
 //!
 //! # Invariants
 //! - The catalog is read once per run, from disk; nothing is compiled in.
@@ -35,12 +38,13 @@
 
 use asset_baker::budget::{check_spend, BudgetConfig, SpendRequest, BUDGET_FILE};
 use asset_baker::clip_review::{self, DEFAULT_FFMPEG_PATH};
-use asset_baker::ffmpeg_importer::DEFAULT_FFPROBE_PATH;
+use asset_baker::ffmpeg_importer::{FrameSpec, DEFAULT_FFPROBE_PATH};
+use asset_baker::framing::{BakeFraming, DEFAULT_UNIT_FPS, DEFAULT_UNIT_FRAME_SIZE};
 use asset_baker::ledger::{self, Ledger, LedgerHistory};
 use asset_baker::media_audit::MediaAuditStatus;
 use asset_baker::provenance;
 use asset_baker::veo_plan::{parse_state, published_states, state_slug, VeoDirs};
-use asset_baker::{BakerError, MediaStyle, RunContext, VeoClient};
+use asset_baker::{BakerError, MediaStyle, RunContext, VeoClient, VeoRequestSettings};
 use clap::{Args, Parser, Subcommand};
 use sim_core::UnitCatalog;
 use sim_types::enums::AnimState;
@@ -219,7 +223,8 @@ enum Commands {
         output: PathBuf,
     },
 
-    /// Writes contact sheets of an identity's clips, or records a rejection with `--reject`.
+    /// Writes contact sheets of an identity's clips (full 16:9 frames, and the framed squares
+    /// that ship as `<slug>_<state>_framed.png`), or records a rejection with `--reject`.
     Review {
         /// Exact catalog slug.
         #[arg(short, long)]
@@ -313,15 +318,15 @@ enum Commands {
         legacy_veo: Vec<String>,
 
         /// Target square frame dimension in pixels.
-        #[arg(short, long, default_value_t = 512)]
+        #[arg(short, long, default_value_t = DEFAULT_UNIT_FRAME_SIZE)]
         size: u32,
 
         /// Playback framerate.
-        #[arg(short, long, default_value_t = 15)]
+        #[arg(short, long, default_value_t = DEFAULT_UNIT_FPS)]
         fps: u32,
     },
 
-    /// Bakes a single video file into a flipbook atlas using FFmpeg.
+    /// Bakes a single video file into a flipbook atlas using FFmpeg (centre crop).
     BakeVideo {
         /// Source video file path.
         #[arg(short, long)]
@@ -608,7 +613,7 @@ fn plan_selection(
 ) -> Result<PlannedRun, Box<dyn Error>> {
     let root = asset_baker::resolve_assets_root(assets)?;
     let catalog = asset_baker::load_catalogs(&root)?.units;
-    let style = MediaStyle::load(&root)?;
+    let style = MediaStyle::load_for_catalog(&root, &catalog)?;
     let units = veo_units(&catalog, selection)?;
     let history = match ledger {
         Some(path) => LedgerHistory::load(path)?,
@@ -664,6 +669,13 @@ fn run_generate_veo(assets: Option<&Path>, args: &GenerateArgs) -> RunResult {
     let mut stdout = std::io::stdout().lock();
     println!("==> Veo plan (model {}):", args.model);
     planned.plan.print(&mut stdout)?;
+    let request_file = planned.root.join(asset_baker::VEO_REQUEST_FILE);
+    let request = VeoRequestSettings::load(&request_file)?;
+    println!(
+        "Request parameters ({}): {}",
+        request_file.display(),
+        request.parameters()
+    );
     let regenerations = planned.plan.regenerations();
     if !args.dry_run && !regenerations.is_empty() && !args.allow_regeneration {
         return Err(BakerError::RegenerationNotAllowed {
@@ -699,21 +711,24 @@ fn run_generate_veo(assets: Option<&Path>, args: &GenerateArgs) -> RunResult {
             used_in_window: used,
         },
     )?;
-    execute(&planned, args, needed, &mut stdout)
+    execute(&planned, args, needed, &request, &mut stdout)
 }
 
-/// Resolves credentials, opens the ledger and runs the plan.
+/// Resolves credentials, opens the ledger and runs the plan, sending `request`'s parameters
+/// with each of at most `needed` generations.
 fn execute(
     planned: &PlannedRun,
     args: &GenerateArgs,
     needed: u32,
+    request: &VeoRequestSettings,
     out: &mut dyn std::io::Write,
 ) -> RunResult {
     let client = veo_client(
         &args.model,
         args.credentials_dir.as_deref(),
         args.curl_path.as_deref(),
-    )?;
+    )?
+    .with_parameters(request.parameters());
     println!(
         "==> Veo run: {needed} generation(s) at most, {} with model {}.",
         client.mode().label(),
@@ -865,7 +880,12 @@ fn run_review(
             "review needs --sheets-dir and --evidence-dir (or --reject and --reason)".into(),
         );
     };
-    let catalog = load_unit_catalog(assets)?;
+    let (catalog, framing) = identity_framing(assets, target.unit)?;
+    let spec = FrameSpec {
+        size: DEFAULT_UNIT_FRAME_SIZE,
+        fps: DEFAULT_UNIT_FPS,
+        framing,
+    };
     let history = LedgerHistory::load(target.ledger)?;
     let dirs = target.dirs();
     let mut written = 0;
@@ -882,12 +902,22 @@ fn run_review(
             &sheets_dir.join(&name),
             &evidence_dir.join(&name),
         )?;
+        let framed_name = format!("{}_{}_framed.png", target.unit, state_slug(state));
+        let bar = clip_review::framed_sheet(
+            Path::new(DEFAULT_FFMPEG_PATH),
+            &clip,
+            spec,
+            &sheets_dir.join(&framed_name),
+            &evidence_dir.join(&framed_name),
+        )?;
         println!(
-            "{} {}: {} -> {}",
+            "{} {}: {} -> {} and {} ({framing}{})",
             target.unit,
             state_slug(state),
             clip.display(),
-            sheets_dir.join(&name).display()
+            sheets_dir.join(&name).display(),
+            sheets_dir.join(&framed_name).display(),
+            bar_note(bar)
         );
         written += 1;
     }
@@ -895,6 +925,30 @@ fn run_review(
         return Err(format!("{} has no clip to review", target.unit).into());
     }
     Ok(())
+}
+
+/// The catalog and the framing that `media_style.ron` gives `unit`'s render shape.
+fn identity_framing(
+    assets: Option<&Path>,
+    unit: &str,
+) -> Result<(UnitCatalog, BakeFraming), Box<dyn Error>> {
+    let root = asset_baker::resolve_assets_root(assets)?;
+    let catalog = asset_baker::load_catalogs(&root)?.units;
+    asset_baker::validate_catalog_slug(&catalog, unit)?;
+    let style = MediaStyle::load_for_catalog(&root, &catalog)?;
+    let shape = catalog
+        .get_by_slug(unit)
+        .map(|archetype| archetype.shape)
+        .ok_or_else(|| format!("'{unit}' is not a catalog identity"))?;
+    let framing = style.framing.framing_for(unit, &shape);
+    Ok((catalog, framing))
+}
+
+/// `, bars #rrggbb` for a measured bar colour, else nothing.
+fn bar_note(bar: Option<[u8; 3]>) -> String {
+    bar.map_or(String::new(), |[r, g, b]| {
+        format!(", bars #{r:02x}{g:02x}{b:02x}")
+    })
 }
 
 /// `review --reject`: records the rejection of a download awaiting review.
@@ -975,7 +1029,7 @@ fn run_bake_unit_videos(
             "at least one clip (--idle, --walk, --attack, --constructing, --cast) is needed".into(),
         );
     }
-    let catalog = load_unit_catalog(assets)?;
+    let (catalog, framing) = identity_framing(assets, unit)?;
     let given: Vec<AnimState> = clips.iter().map(|(state, _)| *state).collect();
     published_states(&catalog, unit, Some(&given))?;
     let missing: Vec<&str> = published_states(&catalog, unit, None)?
@@ -990,18 +1044,22 @@ fn run_bake_unit_videos(
     }
     let clips = clip_origins(unit, clips, target)?;
     println!(
-        "==> Baking {} action video clips for unit '{}' into {:?}...",
+        "==> Baking {} action video clips for unit '{}' into {:?} ({framing})...",
         clips.len(),
         unit,
         target.output_dir
     );
+    let spec = FrameSpec {
+        size: target.size,
+        fps: target.fps,
+        framing,
+    };
     let record = provenance::bake_with_provenance(
         unit,
         &clips,
         &target.videos_dir,
         &target.output_dir,
-        target.size,
-        target.fps,
+        spec,
     )?;
     println!(
         "    Successfully generated multi-action atlas '{}' ({} states at {}x{} @ {} fps) with its provenance record.",
@@ -1011,6 +1069,12 @@ fn run_bake_unit_videos(
         record.bake.frame_size,
         record.bake.fps
     );
+    for (state, entry) in &record.states {
+        if let Some(bar) = entry.bar_rgb {
+            let [r, g, b] = bar;
+            println!("    {}: bars #{r:02x}{g:02x}{b:02x}", state_slug(*state));
+        }
+    }
     Ok(())
 }
 

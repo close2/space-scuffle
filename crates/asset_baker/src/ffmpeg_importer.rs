@@ -5,6 +5,14 @@
 //! which are then composited into single vertical strip PNGs accompanied by `.flipbook.ron`
 //! manifests.
 //!
+//! # Framing
+//! A clip frame becomes a square in one of two ways ([`crate::framing::BakeFraming`]): a
+//! centre crop, done by FFmpeg alone, or a letterbox, where FFmpeg scales the whole frame to fit
+//! and [`crate::framing::frame_to_square`] adds bars of the clip's measured border colour.
+//! Identity bakes ([`bake_framed_action_videos`]) take the framing chosen from
+//! `media_style.ron`; the single-clip bakes and [`bake_multi_action_videos_with_states`] keep
+//! the centre crop.
+//!
 //! # Invariants
 //! - **Whole clips:** a clip with more frames than the GPU texture budget allows is sampled
 //!   evenly from its first to its last frame, and is never cut short. Sampled frames keep the
@@ -16,6 +24,7 @@
 #![allow(clippy::cast_possible_truncation, clippy::doc_markdown)]
 
 use crate::error::BakerError;
+use crate::framing::{frame_to_square, BakeFraming, FramedFrames};
 use crate::manifest::{ActionSlice, FlipbookAtlasMeta, FlipbookLayout};
 use image::RgbaImage;
 use sim_types::enums::AnimState;
@@ -126,12 +135,14 @@ pub fn probe_video(ffprobe_path: &Path, video_path: &Path) -> Result<VideoProbe,
     })
 }
 
-/// Configuration parameters for FFmpeg video extraction and scaling.
+/// Configuration parameters for FFmpeg extraction and scaling of a single clip
+/// ([`extract_and_pack_video`]), which always takes the centred square of the clip
+/// ([`BakeFraming::CenterCrop`]).
 #[derive(Debug, Clone)]
 pub struct FfmpegExtractConfig {
     /// Path to the FFmpeg executable binary.
     pub ffmpeg_path: PathBuf,
-    /// Target width and height in pixels for the square cropped frames (e.g. 192 or 256).
+    /// Target width and height in pixels for the square centre-cropped frames (e.g. 192 or 256).
     pub target_size: u32,
     /// Target playback framerate (e.g. 15 or 24 FPS) for temporal downsampling.
     pub target_fps: u32,
@@ -182,12 +193,12 @@ fn fit_clip_to_budget(frames: Vec<PathBuf>, budget: usize, label: &str, fps: u32
         .collect()
 }
 
-/// Decodes a whole clip into square PNG frames in `frames_dir`, sorted in temporal order.
+/// Decodes a whole clip into PNG frames in `frames_dir` through `filter` (one of
+/// [`BakeFraming::ffmpeg_filter`]), sorted in temporal order.
 fn extract_clip_frames(
     ffmpeg_path: &Path,
     video_path: &Path,
-    frame_size: u32,
-    fps: u32,
+    filter: &str,
     frames_dir: &Path,
 ) -> Result<Vec<PathBuf>, BakerError> {
     let frame_pattern = frames_dir.join("frame_%05d.png");
@@ -195,20 +206,19 @@ fn extract_clip_frames(
     // PERFORMANCE RATIONALE:
     // Why: Runtime software or hardware decoding of 50+ concurrent MP4 video streams inside 3D unit
     // bubbles saturates GPU video decoders and causes massive framerate stuttering.
-    // What: We pre-decode video offline using FFmpeg's hardware-accelerated SIMD decoders, applying
-    // `crop=min(iw\,ih):min(iw\,ih)` to center-crop arbitrary aspect ratios to a 1:1 square, bilinear
-    // scaling to power-of-two dimensions (e.g., 256x256), and clean temporal downsampling (e.g., 24 -> 15 FPS).
+    // What: We pre-decode video offline using FFmpeg's SIMD decoders, applying the framing's filter:
+    // either `crop=min(iw\,ih):min(iw\,ih)` to centre-crop arbitrary aspect ratios to a 1:1 square,
+    // or `force_original_aspect_ratio=decrease` to fit the whole frame inside the square for a
+    // letterbox; then scaling to the frame size (e.g., 512x512 or 512x288) and clean temporal
+    // downsampling (e.g., 24 -> 15 FPS). The letterbox square is completed in Rust afterwards.
     // Trade-off: Higher disk storage footprint (~20-50MB per baked strip) in exchange for O(1) texture
     // array slice sampling with zero runtime decoding overhead.
-    let filter =
-        format!("crop=min(iw\\,ih):min(iw\\,ih),scale={frame_size}:{frame_size},fps={fps}");
-
     let output = Command::new(ffmpeg_path)
         .arg("-y")
         .arg("-i")
         .arg(video_path)
         .arg("-vf")
-        .arg(&filter)
+        .arg(filter)
         .arg(&frame_pattern)
         .output()
         .map_err(|source| BakerError::Io {
@@ -261,7 +271,8 @@ pub fn atlas_output_paths(
     })
 }
 
-/// Extracts frames from a video file, center-crops to a 1:1 square, scales, and packs into a PNG vertical strip.
+/// Extracts frames from a video file, centre-crops them to a 1:1 square
+/// ([`BakeFraming::CenterCrop`]), scales, and packs them into a PNG vertical strip.
 ///
 /// # Arguments
 /// - `video_path`: Source video file (`.mp4`, `.webm`, etc.) on disk.
@@ -311,8 +322,7 @@ pub fn extract_and_pack_video(
     let frame_paths = extract_clip_frames(
         &config.ffmpeg_path,
         video_path,
-        config.target_size,
-        config.target_fps,
+        &BakeFraming::CenterCrop.ffmpeg_filter(config.target_size, config.target_fps),
         temp_dir.path(),
     )?;
 
@@ -443,10 +453,11 @@ pub fn bake_multi_action_videos<P: AsRef<Path>>(
 }
 
 /// Bakes multiple video clips corresponding to explicit animation states into a single
-/// vertical strip PNG and `.flipbook.ron` manifest.
+/// vertical strip PNG and `.flipbook.ron` manifest, centre-cropping every frame
+/// ([`BakeFraming::CenterCrop`]).
 ///
 /// Every clip is represented from start to end, and the manifest lists exactly the supplied
-/// states. See the module docs.
+/// states. See the module docs and [`bake_framed_action_videos`], which this calls.
 ///
 /// # Arguments
 /// - `unit_name`: Semantic archetype name (e.g., `"marine"`, `"zealot"`).
@@ -465,6 +476,62 @@ pub fn bake_multi_action_videos_with_states<P: AsRef<Path>>(
     frame_size: u32,
     fps: u32,
 ) -> Result<FlipbookAtlasMeta, BakerError> {
+    let spec = FrameSpec {
+        size: frame_size,
+        fps,
+        framing: BakeFraming::CenterCrop,
+    };
+    bake_framed_action_videos(unit_name, clips, output_dir, spec).map(|bake| bake.meta)
+}
+
+/// The frame geometry of an identity bake: square side, rate and framing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameSpec {
+    /// Side of each square frame, in pixels (e.g., 256 or 512).
+    pub size: u32,
+    /// Playback rate after temporal downsampling, in frames per second.
+    pub fps: u32,
+    /// How each clip frame is fitted into the square.
+    pub framing: BakeFraming,
+}
+
+/// The result of [`bake_framed_action_videos`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct FramedBake {
+    /// The manifest written beside the atlas.
+    pub meta: FlipbookAtlasMeta,
+    /// The bar colour chosen for each state's clip (sRGB bytes), `None` where no bar was drawn
+    /// (a centre crop, or a clip that already fills the square).
+    pub bar_rgb: BTreeMap<AnimState, Option<[u8; 3]>>,
+}
+
+/// Bakes the clips of explicit animation states into one vertical strip PNG and
+/// `.flipbook.ron` manifest, fitting each frame into the square as `spec.framing` says.
+///
+/// Every clip is represented from start to end, and the manifest lists exactly the supplied
+/// states. Under a letterbox each clip gets one bar colour, measured over the frames it keeps.
+/// See the module docs.
+///
+/// # Arguments
+/// - `unit_name`: Atlas name, the identity's catalog slug.
+/// - `clips`: Pairs of [`AnimState`] and source video path.
+/// - `output_dir`: Directory where `<unit_name>.png` and `<unit_name>.flipbook.ron` will be created.
+/// - `spec`: Frame side in pixels, rate in frames per second, and framing.
+///
+/// # Errors
+/// Returns [`BakerError`] if FFmpeg execution fails, image files cannot be read or written,
+/// or validation invariants are violated.
+pub fn bake_framed_action_videos<P: AsRef<Path>>(
+    unit_name: &str,
+    clips: &[(AnimState, P)],
+    output_dir: &Path,
+    spec: FrameSpec,
+) -> Result<FramedBake, BakerError> {
+    let FrameSpec {
+        size: frame_size,
+        fps,
+        ..
+    } = spec;
     let (output_png_path, output_meta_path) = atlas_output_paths(output_dir, unit_name)?;
 
     let ffmpeg_path = PathBuf::from("/usr/bin/ffmpeg");
@@ -484,25 +551,25 @@ pub fn bake_multi_action_videos_with_states<P: AsRef<Path>>(
     let max_frames_per_clip = (max_total_frames / k).max(1) as usize;
 
     let mut actions = BTreeMap::new();
+    let mut bar_rgb = BTreeMap::new();
     let mut all_frames: Vec<RgbaImage> = Vec::new();
     let mut current_frame_offset: u32 = 0;
 
     for (state, video_path_ref) in clips {
-        let video_path = video_path_ref.as_ref();
-        let (temp_dir, frame_paths) = probe_clip(&ffmpeg_path, video_path, frame_size, fps)?;
-
         // PERFORMANCE RATIONALE:
         // Why: WebGPU limits 2D texture dimensions to 16384 pixels.
         // What: We keep max_frames_per_clip = (16384 / frame_size) / K frames, sampled across each clip.
         // Trade-off: Guarantees total strip height <= 16384 px across any number of action clips,
         // at the cost of temporal resolution in clips that exceed their share.
-        let frames = sample_frames(
-            frame_paths,
+        let framed = decode_framed_clip(
+            &ffmpeg_path,
+            video_path_ref.as_ref(),
+            spec,
             max_frames_per_clip,
             &format!("{unit_name} {state:?}"),
-            fps,
         )?;
-        drop(temp_dir);
+        bar_rgb.insert(*state, framed.bar_rgb);
+        let frames = framed.frames;
 
         let clip_frame_count = frames.len() as u32;
         actions.insert(
@@ -539,10 +606,33 @@ pub fn bake_multi_action_videos_with_states<P: AsRef<Path>>(
     };
 
     meta.save_to_ron(&output_meta_path)?;
-    Ok(meta)
+    Ok(FramedBake { meta, bar_rgb })
 }
 
-/// Checks that one action clip exists and decodes it into square PNG frames.
+/// Decodes one clip at `spec.size` and `spec.fps`, keeps at most `budget` frames spread over
+/// the whole clip, and completes them to squares as `spec.framing` says.
+///
+/// This is the one path from a clip to shipped square frames: the bake and the reviewer's
+/// framed contact sheet both use it. `label` names the clip in the budget note.
+///
+/// # Errors
+/// Returns [`BakerError::Io`] for a missing clip, FFmpeg errors, image errors, and
+/// [`BakerError::ValidationFailed`] for frames that cannot be framed.
+pub fn decode_framed_clip(
+    ffmpeg_path: &Path,
+    video_path: &Path,
+    spec: FrameSpec,
+    budget: usize,
+    label: &str,
+) -> Result<FramedFrames, BakerError> {
+    let filter = spec.framing.ffmpeg_filter(spec.size, spec.fps);
+    let (temp_dir, frame_paths) = probe_clip(ffmpeg_path, video_path, &filter)?;
+    let frames = sample_frames(frame_paths, budget, label, spec.fps)?;
+    drop(temp_dir);
+    frame_to_square(frames, spec.size, spec.framing)
+}
+
+/// Checks that one action clip exists and decodes it into PNG frames through `filter`.
 ///
 /// Returns the temporary directory that owns the decoded frames together with their paths in
 /// temporal order; the frames are deleted when the directory is dropped.
@@ -553,8 +643,7 @@ pub fn bake_multi_action_videos_with_states<P: AsRef<Path>>(
 fn probe_clip(
     ffmpeg_path: &Path,
     video_path: &Path,
-    frame_size: u32,
-    fps: u32,
+    filter: &str,
 ) -> Result<(tempfile::TempDir, Vec<PathBuf>), BakerError> {
     if !video_path.exists() {
         return Err(BakerError::Io {
@@ -574,8 +663,7 @@ fn probe_clip(
         source,
     })?;
 
-    let frame_paths =
-        extract_clip_frames(ffmpeg_path, video_path, frame_size, fps, temp_dir.path())?;
+    let frame_paths = extract_clip_frames(ffmpeg_path, video_path, filter, temp_dir.path())?;
     Ok((temp_dir, frame_paths))
 }
 
