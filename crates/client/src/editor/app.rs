@@ -331,7 +331,11 @@ fn add_playtest_systems(app: &mut App) {
             )
                 .in_set(BattleSet::CollectIntent),
             advance_battle_ticks.in_set(BattleSet::AdvanceTicks),
-            (sync_live_battle_system, apply_deferred)
+            (
+                crate::flipbook_clock::update_flipbook_clock_system,
+                sync_live_battle_system,
+                apply_deferred,
+            )
                 .chain()
                 .in_set(BattleSet::PreparePresentation),
             (
