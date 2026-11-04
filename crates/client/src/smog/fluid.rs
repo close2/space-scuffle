@@ -16,6 +16,9 @@
 //!   the value they already hold (rest flags in `bricks.rs`, rules D-2 of the C-18 plan); the
 //!   output is bit for bit that of the dense solver, which the `force_dense` differential test
 //!   checks on every slab.
+//! - **Quiescence:** a voxel whose advected speed is at most `1e-3` world units per second holds
+//!   exactly `+0.0` velocity (`SMOG_QUIESCENT_SPEED_SQ`), so a wake decays to exact rest about
+//!   20 s after its last source and the sparse paths fire again.
 
 use super::bricks::{
     back_trace_reach, brick_of_voxel, brick_voxels, bricks_in_voxel_box, may_hold_smog, runs,
@@ -45,6 +48,13 @@ const SMOG_TAIL_TINT: Vec3 = Vec3::new(0.28, 0.46, 0.68);
 
 /// Bytes of one voxel in either upload buffer (`Rgba8Unorm`).
 const BYTES_PER_VOXEL: usize = 4;
+
+/// Squared fluid speed, in (world units per second)², at or below which a voxel is at rest: the
+/// velocity advection writes exactly `+0.0` to all three components of such a voxel, and the
+/// packing pass writes the rest velocity bytes for it (when its vorticity and glow are small
+/// too). A speed of `1e-3` world units per second; every |v| at or below it packs to the same
+/// velocity byte as `v = 0` (C-18 plan D-3, owner answer Q0020).
+const SMOG_QUIESCENT_SPEED_SQ: f32 = 1e-6;
 
 /// The velocity upload bytes of a voxel at rest: zero velocity, zero glow.
 const VELOCITY_REST_BYTES: [u8; BYTES_PER_VOXEL] = [128, 128, 128, 0];
@@ -1214,23 +1224,40 @@ impl SmogGrid3d {
         let gp = self.world_to_grid(back_pos);
         let (indices, weights) = Self::trilinear_indices_and_weights(gp);
 
-        self.u_x_scratch[idx] = if is_boundary_x {
+        let new_x = if is_boundary_x {
             0.0
         } else {
             Self::sample_indexed(&self.u_x, &indices, &weights) * decay
         };
-
-        self.u_y_scratch[idx] = if is_boundary_y {
+        let new_y = if is_boundary_y {
             0.0
         } else {
             Self::sample_indexed(&self.u_y, &indices, &weights) * decay
         };
-
-        self.u_z_scratch[idx] = if is_boundary_z {
+        let new_z = if is_boundary_z {
             0.0
         } else {
             Self::sample_indexed(&self.u_z, &indices, &weights) * decay
         };
+
+        // PERFORMANCE RATIONALE:
+        // Why: damping never makes a velocity zero, so without this no sparse path (the
+        // `ux == 0.0` exit above, the brick skips of `bricks.rs`) fires again after the first
+        // wake, and a field after a fight keeps the cost of the fight (C-18).
+        // What: a voxel whose new speed is at most 1e-3 world units per second (squared speed at
+        // most `SMOG_QUIESCENT_SPEED_SQ`) gets exactly `+0.0` in all three components.
+        // Trade-off: a deliberate output change (plan D-3, owner answer Q0020) below the packing
+        // threshold: such a |v| packs to the byte of v = 0 and moves a back-trace by at most
+        // 5e-5 world units, so other bytes differ by at most one 8-bit step in rare voxels.
+        let quiescent = new_x * new_x + new_y * new_y + new_z * new_z <= SMOG_QUIESCENT_SPEED_SQ;
+        let (new_x, new_y, new_z) = if quiescent {
+            (0.0, 0.0, 0.0)
+        } else {
+            (new_x, new_y, new_z)
+        };
+        self.u_x_scratch[idx] = new_x;
+        self.u_y_scratch[idx] = new_y;
+        self.u_z_scratch[idx] = new_z;
     }
 
     /// Stage 5 of [`Self::step`]: semi-Lagrangian advection of density, glow and tint along the
@@ -1559,7 +1586,7 @@ impl SmogGrid3d {
             metrics.max_vorticity_sq = vort_sq;
         }
 
-        if speed_sq <= 1e-6 && vort_sq <= 1e-6 && self.glow[i] <= 1e-5 {
+        if speed_sq <= SMOG_QUIESCENT_SPEED_SQ && vort_sq <= 1e-6 && self.glow[i] <= 1e-5 {
             self.rgba_velocity_bytes[byte_idx] = 128;
             self.rgba_velocity_bytes[byte_idx + 1] = 128;
             self.rgba_velocity_bytes[byte_idx + 2] = 128;
@@ -2583,6 +2610,70 @@ mod tests {
             fired, [true; 4],
             "velocity, scalar, vorticity and byte flags all fire"
         );
+        Ok(())
+    }
+
+    // ---- Quiescence (C-18 WP9, D-3) ----
+
+    /// Steps with the showcase sources before they stop, at `1/60` s.
+    const QUIESCENCE_SOURCE_STEPS: usize = 60;
+
+    /// Steps without any source after the sources stop, at `1/60` s: 30 s, beyond the about
+    /// 19 s the default damping needs to bring a wake from 2 to `1e-3` world units per second.
+    const QUIESCENCE_REST_STEPS: usize = 1_800;
+
+    /// After the showcase wake has had 30 s without a source, every velocity component of every
+    /// voxel is exactly `+0.0` (D-3), and every brick's velocity and vorticity flags say so, so
+    /// the sparse passes skip the whole grid again.
+    #[test]
+    fn velocity_returns_to_exact_rest_after_sources_stop() -> Result<(), SmogError> {
+        use super::super::kinematics::{
+            bubble_team_color, initial_bouncing_bubbles, step_bouncing_kinematics,
+        };
+        use super::super::{LAB_VOLUME_MAX, LAB_VOLUME_MIN};
+
+        let config = SmogConfig::default();
+        let dt = 1.0 / 60.0;
+        let mut states = initial_bouncing_bubbles(&config.bounds)?;
+        let mut grid = SmogGrid3d::new(LAB_VOLUME_MIN, LAB_VOLUME_MAX)?;
+        let mut sources = Vec::with_capacity(states.len());
+        for _ in 0..QUIESCENCE_SOURCE_STEPS {
+            step_bouncing_kinematics(&mut states, &config.bounds, dt)?;
+            sources.clear();
+            sources.extend(states.iter().enumerate().map(|(i, s)| BubbleSmogSource {
+                position: s.position,
+                velocity: s.velocity,
+                radius: s.radius,
+                team_color: bubble_team_color(i),
+                emission_strength: 1.0,
+                influence_strength: 1.0,
+            }));
+            grid.step(&sources, &config, dt)?;
+        }
+        let moving = |grid: &SmogGrid3d| {
+            [&grid.u_x, &grid.u_y, &grid.u_z]
+                .iter()
+                .map(|slab| slab.iter().filter(|u| u.to_bits() != 0).count())
+                .sum::<usize>()
+        };
+        assert!(moving(&grid) > 0, "the showcase sources stir the field");
+        for _ in 0..QUIESCENCE_REST_STEPS {
+            grid.step(&[], &config, dt)?;
+        }
+        assert_eq!(
+            moving(&grid),
+            0,
+            "velocity components that are not exactly +0.0 after 30 s at rest"
+        );
+        let state = &grid.bricks;
+        for b in 0..BRICK_COUNT {
+            assert!(state.velocity_rest.get(b), "brick {b}: velocity flag");
+            assert!(
+                state.velocity_rest_scratch.get(b),
+                "brick {b}: velocity scratch flag"
+            );
+            assert!(state.vorticity_rest.get(b), "brick {b}: vorticity flag");
+        }
         Ok(())
     }
 }
