@@ -140,8 +140,9 @@ pub struct VeoParameters {
     /// Number of candidate videos to sample (typically 1).
     #[serde(rename = "sampleCount", skip_serializing_if = "Option::is_none")]
     pub sample_count: Option<u32>,
-    /// Whether the service also generates a sound track (`generateAudio`). The game discards
-    /// sound, and a silent clip is billed at a lower rate.
+    /// Whether the service also generates a sound track (`generateAudio`). `None` sends no
+    /// field, and the service then generates sound; `Some(false)` asks for a silent clip,
+    /// which is billed at a lower rate.
     #[serde(rename = "generateAudio", skip_serializing_if = "Option::is_none")]
     pub generate_audio: Option<bool>,
 }
