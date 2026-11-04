@@ -62,12 +62,14 @@ pub struct SmogStepMetrics {
 }
 
 // PERFORMANCE RATIONALE:
-// Why: 49,152 voxels per frame advected, projected, and packed into 3D textures.
+// Why: 82,944 voxels per frame advected, confined, and packed into 3D textures.
 // Re-allocating dynamic Vecs or hash maps per frame would cause 100+ allocations/frame and GC pressure.
-// What: All fluid state (velocity u_x, u_y, u_z, density rho, glow, RGB chromatic tint r, g, b, pressure p, divergence div)
-// and ping-pong scratch buffers are pre-allocated once in flat Box<[f32]> slabs.
+// What: All fluid state (velocity u_x, u_y, u_z, density rho, glow, RGB chromatic tint r, g, b, vorticity)
+// and ping-pong scratch buffers are pre-allocated once in flat Box<[f32]> slabs; the advection passes
+// swap each field with its scratch slab instead of copying it back (see `advect_velocity`).
 // Zero allocations occur during the per-frame `step()` call.
-// Trade-off: ~5 MB resident memory retained in the `SmogGrid3d` resource.
+// Trade-off: ~7.3 MB of f32 slabs (22 x 331,776 bytes) plus 0.66 MB of upload bytes retained in the
+// `SmogGrid3d` resource.
 /// 3D Eulerian fluid solver with pre-allocated flat slabs.
 #[derive(Resource)]
 pub struct SmogGrid3d {
@@ -95,10 +97,6 @@ pub struct SmogGrid3d {
     tint_r_scratch: Box<[f32]>,
     tint_g_scratch: Box<[f32]>,
     tint_b_scratch: Box<[f32]>,
-
-    // Pressure projection fields
-    pressure: Box<[f32]>,
-    divergence: Box<[f32]>,
 
     // Vorticity confinement fields
     vorticity_x: Box<[f32]>,
@@ -178,8 +176,6 @@ impl SmogGrid3d {
             tint_r_scratch: make_slab(),
             tint_g_scratch: make_slab(),
             tint_b_scratch: make_slab(),
-            pressure: make_slab(),
-            divergence: make_slab(),
             vorticity_x: make_slab(),
             vorticity_y: make_slab(),
             vorticity_z: make_slab(),
@@ -423,9 +419,30 @@ impl SmogGrid3d {
         let gy = gp.y.clamp(0.0, (GRID_NY - 1) as f32);
         let gz = gp.z.clamp(0.0, (GRID_NZ - 1) as f32);
 
-        let x0 = gx.floor() as usize;
-        let y0 = gy.floor() as usize;
-        let z0 = gz.floor() as usize;
+        // PERFORMANCE RATIONALE:
+        // Why: `f32::floor` is a call to `libm`'s `floorf` on the `x86_64` baseline (no SSE4.1
+        // `roundss`), made three times per back-traced voxel; the C-18 `perf` run attributed
+        // 0.45 ms per frame to it.
+        // What: a truncating `as usize` cast replaces `floor() as usize`. The operands are clamped
+        // to `[0, N-1]` just above, and for a non-negative `f32` (including `-0.0`) or a NaN,
+        // truncation and floor yield the same `usize` (a NaN casts to 0 either way).
+        // Trade-off: the equivalence rests on the clamp above; the debug assertions guard it, and
+        // a negative operand would truncate toward zero where `floor` rounds down.
+        debug_assert!(
+            gx >= 0.0 || gx.is_nan(),
+            "invariant: gx clamped to [0, NX-1]"
+        );
+        debug_assert!(
+            gy >= 0.0 || gy.is_nan(),
+            "invariant: gy clamped to [0, NY-1]"
+        );
+        debug_assert!(
+            gz >= 0.0 || gz.is_nan(),
+            "invariant: gz clamped to [0, NZ-1]"
+        );
+        let x0 = gx as usize;
+        let y0 = gy as usize;
+        let z0 = gz as usize;
 
         let x1 = (x0 + 1).min(GRID_NX - 1);
         let y1 = (y0 + 1).min(GRID_NY - 1);
@@ -480,8 +497,6 @@ impl SmogGrid3d {
         self.u_z.fill(0.0);
         self.density.fill(0.0);
         self.glow.fill(0.0);
-        self.pressure.fill(0.0);
-        self.divergence.fill(0.0);
         self.vorticity_x.fill(0.0);
         self.vorticity_y.fill(0.0);
         self.vorticity_z.fill(0.0);
@@ -839,10 +854,10 @@ impl SmogGrid3d {
 
         // PERFORMANCE RATIONALE:
         // Why: Evaluating (wx*wx + wy*wy + wz*wz).sqrt() 6 times per voxel inside the gradient loop
-        // would perform ~295,000 redundant square root operations per frame at 49,152 voxels.
+        // would perform ~500,000 redundant square root operations per frame at 82,944 voxels.
         // What: We precompute vorticity magnitude into self.vorticity_mag during the curl pass
         // and read it directly here with simple index lookups.
-        // Trade-off: Uses one pre-allocated flat f32 slab (196 KB) to save CPU cycles in the physics tick.
+        // Trade-off: Uses one pre-allocated flat f32 slab (332 KB) to save CPU cycles in the physics tick.
         for iz in 2..(GRID_NZ - 2) {
             for iy in 2..(GRID_NY - 2) {
                 for ix in 2..(GRID_NX - 2) {
@@ -946,9 +961,19 @@ impl SmogGrid3d {
             }
         }
 
-        self.u_x.copy_from_slice(&self.u_x_scratch);
-        self.u_y.copy_from_slice(&self.u_y_scratch);
-        self.u_z.copy_from_slice(&self.u_z_scratch);
+        // PERFORMANCE RATIONALE:
+        // Why: copying the three scratch slabs back into the fields moves 1 MB per step (3 x
+        // 331,776 bytes read and written), and the solver is bound by memory traffic when the
+        // machine is busy (C-18; `memmove` took 1.9 ms per frame in the `perf` run).
+        // What: the fields and their scratch slabs exchange their boxes (`std::mem::swap`, a
+        // pointer swap); after it the scratch slabs hold the previous step's field, which no pass
+        // reads before overwriting it.
+        // Trade-off: correct only because the loop above writes every voxel of all three scratch
+        // slabs (it covers `0..N` on every axis, and each branch writes all three components);
+        // `advection_passes_write_every_scratch_voxel` pins that coverage.
+        std::mem::swap(&mut self.u_x, &mut self.u_x_scratch);
+        std::mem::swap(&mut self.u_y, &mut self.u_y_scratch);
+        std::mem::swap(&mut self.u_z, &mut self.u_z_scratch);
     }
 
     fn advect_density_and_tint(&mut self, buoyancy: f32, dissipation: f32, dt: f32) {
@@ -962,7 +987,7 @@ impl SmogGrid3d {
         // Why: Density, luminescent glow, and RGB chromatic tint (5 scalar slabs) are advected along the same trajectory.
         // What: We compute the 8-corner indices and trilinear weights once per voxel and evaluate all 5 slabs in a fused pass.
         // Additionally, we early-out when all 8 corners have zero density and zero glow, skipping 5 trilinear inner products.
-        // Trade-off: None; reduces per-voxel arithmetic by ~75% across the 49,152 grid voxels.
+        // Trade-off: None; reduces per-voxel arithmetic by ~75% across the 82,944 grid voxels.
         for iz in 0..GRID_NZ {
             for iy in 0..GRID_NY {
                 let iy_up = (iy + 1).min(GRID_NY - 1);
@@ -1042,11 +1067,20 @@ impl SmogGrid3d {
             }
         }
 
-        self.density.copy_from_slice(&self.density_scratch);
-        self.glow.copy_from_slice(&self.glow_scratch);
-        self.tint_r.copy_from_slice(&self.tint_r_scratch);
-        self.tint_g.copy_from_slice(&self.tint_g_scratch);
-        self.tint_b.copy_from_slice(&self.tint_b_scratch);
+        // PERFORMANCE RATIONALE:
+        // Why: copying the five scratch slabs back moves 1.66 MB per step (5 x 331,776 bytes read
+        // and written) through a solver that is bound by memory traffic under load (C-18).
+        // What: each field exchanges its box with its scratch slab (`std::mem::swap`); the scratch
+        // slabs then hold the previous step's values, which no pass reads before overwriting them
+        // (`set_bounds_quantized` copies the fields into them first).
+        // Trade-off: correct only because the loop above writes every voxel of all five scratch
+        // slabs (it covers `0..N` on every axis, and each of its three exits writes all five);
+        // `advection_passes_write_every_scratch_voxel` pins that coverage.
+        std::mem::swap(&mut self.density, &mut self.density_scratch);
+        std::mem::swap(&mut self.glow, &mut self.glow_scratch);
+        std::mem::swap(&mut self.tint_r, &mut self.tint_r_scratch);
+        std::mem::swap(&mut self.tint_g, &mut self.tint_g_scratch);
+        std::mem::swap(&mut self.tint_b, &mut self.tint_b_scratch);
     }
 
     #[expect(
@@ -1389,6 +1423,155 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    /// Bit pattern no solver pass produces: a NaN with a recognisable payload.
+    const SCRATCH_SENTINEL: u32 = 0x7fc0_dead;
+
+    fn poison(slab: &mut [f32]) {
+        slab.fill(f32::from_bits(SCRATCH_SENTINEL));
+    }
+
+    fn assert_unpoisoned(name: &str, slab: &[f32]) {
+        let stale = slab
+            .iter()
+            .filter(|v| v.to_bits() == SCRATCH_SENTINEL)
+            .count();
+        assert_eq!(
+            stale, 0,
+            "{name}: {stale} voxels were not written by the pass"
+        );
+    }
+
+    /// The precondition of the ping-pong swaps in `advect_velocity` and
+    /// `advect_density_and_tint`: each pass writes every voxel of every scratch slab it swaps
+    /// in, so no stale value from an earlier step can surface in a field. The scratch slabs are
+    /// filled with a sentinel before each pass; after the swap the fields must hold none of it.
+    #[test]
+    fn advection_passes_write_every_scratch_voxel() -> Result<(), SmogError> {
+        let mut grid = SmogGrid3d::new(Vec3::new(-6.5, 0.0, -4.5), Vec3::new(6.5, 4.0, 4.5))?;
+        let config = SmogConfig::default();
+        // A moving and a resting source, so the field holds moving smog, still smog, moving
+        // clear fluid and fluid at exact rest: every branch of both passes is taken.
+        let sources = [
+            BubbleSmogSource {
+                position: Vec3::new(-2.0, 0.6, 0.0),
+                velocity: Vec3::new(2.5, 0.0, 1.0),
+                radius: 0.55,
+                team_color: Vec3::new(0.2, 0.8, 0.4),
+                emission_strength: 2.0,
+                influence_strength: 1.0,
+            },
+            BubbleSmogSource {
+                position: Vec3::new(3.0, 0.6, 2.0),
+                velocity: Vec3::ZERO,
+                radius: 0.6,
+                team_color: Vec3::new(0.9, 0.3, 0.2),
+                emission_strength: 1.5,
+                influence_strength: 1.0,
+            },
+        ];
+        for _ in 0..20 {
+            grid.step(&sources, &config, 1.0 / 60.0)?;
+        }
+        // Velocity at a grid corner and on a boundary face exercises the boundary branches.
+        let corner = SmogGrid3d::index(0, 0, 0);
+        let face = SmogGrid3d::index(GRID_NX - 1, 5, 30);
+        grid.u_x[corner] = 0.5;
+        grid.u_z[face] = -0.5;
+        let moving = grid.u_x.iter().filter(|v| **v != 0.0).count();
+        assert!(
+            moving > 0 && moving < TOTAL_VOXELS,
+            "both velocity branches taken"
+        );
+        let smoky = grid.density.iter().filter(|v| **v > 1e-6).count();
+        assert!(
+            smoky > 0 && smoky < TOTAL_VOXELS,
+            "both density branches taken"
+        );
+
+        for slab in [
+            &mut grid.u_x_scratch,
+            &mut grid.u_y_scratch,
+            &mut grid.u_z_scratch,
+        ] {
+            poison(slab);
+        }
+        grid.advect_velocity(config.velocity_damping, 1.0 / 60.0);
+        assert_unpoisoned("u_x", &grid.u_x);
+        assert_unpoisoned("u_y", &grid.u_y);
+        assert_unpoisoned("u_z", &grid.u_z);
+
+        for slab in [
+            &mut grid.density_scratch,
+            &mut grid.glow_scratch,
+            &mut grid.tint_r_scratch,
+            &mut grid.tint_g_scratch,
+            &mut grid.tint_b_scratch,
+        ] {
+            poison(slab);
+        }
+        grid.advect_density_and_tint(config.buoyancy, config.dissipation_rate, 1.0 / 60.0);
+        assert_unpoisoned("density", &grid.density);
+        assert_unpoisoned("glow", &grid.glow);
+        assert_unpoisoned("tint_r", &grid.tint_r);
+        assert_unpoisoned("tint_g", &grid.tint_g);
+        assert_unpoisoned("tint_b", &grid.tint_b);
+        Ok(())
+    }
+
+    /// Reference for the truncating cast: the original `floor()` form.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::cast_sign_loss,
+        reason = "mirrors trilinear_indices_and_weights"
+    )]
+    fn floor_index(g: f32, n: usize) -> usize {
+        g.clamp(0.0, (n - 1) as f32).floor() as usize
+    }
+
+    /// The truncating cast in `trilinear_indices_and_weights` selects the same corner as the
+    /// `floor()` it replaced for every operand class: negative, `-0.0`, NaN, infinite, just
+    /// below and above an integer, and beyond the far edge.
+    #[test]
+    fn truncating_cast_matches_floor_on_clamped_operands() {
+        let probes = [
+            -1.0e9,
+            -3.5,
+            -f32::MIN_POSITIVE,
+            -0.0,
+            0.0,
+            f32::MIN_POSITIVE,
+            0.999_999_94,
+            1.0,
+            5.5,
+            10.999_999,
+            11.0,
+            70.5,
+            71.0,
+            94.999_99,
+            95.0,
+            1.0e9,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+        ];
+        for &px in &probes {
+            for &(py, pz) in &[(px, px), (0.25, 70.75), (10.5, -0.0)] {
+                let gp = Vec3::new(px, py, pz);
+                let (indices, weights) = SmogGrid3d::trilinear_indices_and_weights(gp);
+                let expected = SmogGrid3d::index(
+                    floor_index(px, GRID_NX),
+                    floor_index(py, GRID_NY),
+                    floor_index(pz, GRID_NZ),
+                );
+                assert_eq!(indices[0], expected, "corner of {gp:?}");
+                if !px.is_nan() && !py.is_nan() && !pz.is_nan() {
+                    assert!(weights.iter().all(|w| w.is_finite()), "weights of {gp:?}");
+                }
+            }
+        }
     }
 
     #[test]
