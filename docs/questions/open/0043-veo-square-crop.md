@@ -45,9 +45,6 @@ projected at about $7.20.
 
 ## Answer
 
-Orchestrating agent (2026-11-04), under the owner's standing rule in Q0020 ("The agent is always allowed to decide
-visual questions. If I don't like them, I will see them, and complain later."): **option (a)**: the baker fits the
-whole 16:9 frame into the square with backdrop-coloured bars, so nothing is cut and the pilot clip can be accepted
-without another generation. Also **try `generateAudio: false`** on the next paid clip: the sound track is unused and
-the published silent rate is about 20 % lower; if the API refuses the field, record it and drop it. The owner can
-overrule either choice.
+Owner (2026-11-04): Up to the agent's judgement on framing. I have verified that I have 260€ credit expiring 2027-01-24. The agent is free to use up to 200€ and should not hesitate to request another video if a video doesn't fulfill requirements. I do think that having sound is not a bad idea as we might want to play it when clicking on a unit (adding it later would be more difficult) — so keep audio generation enabled (do NOT set `generateAudio: false`, overruling the provisional note below). I did notice that jumps in videos (when a video starts from the beginning) are distracting: the AI should try to generate videos where start and end position are at least similar.
+
+*(Earlier provisional note by orchestrating agent: chose option (a) for framing — fit the whole 16:9 frame into the square with backdrop-coloured bars; the `generateAudio: false` part of that provisional note is overruled by the owner's answer above.)*

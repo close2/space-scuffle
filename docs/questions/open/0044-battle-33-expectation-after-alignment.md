@@ -47,3 +47,4 @@ Evidence: the plan's §5 (planning probe) and
 
 ## Answer
 
+Owner (2026-11-04): Option 1 (re-record to the seeds of record and document the distribution). Having a close battle isn't a bad thing.
