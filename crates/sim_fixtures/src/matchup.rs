@@ -19,6 +19,8 @@
 //!   each spawn point with [`Jitter`]; the first seed plays the authored positions unchanged.
 //! - A setup that cannot be built whole (unknown unit or upgrade, a spawn off the map) is an
 //!   error, never a battle with pieces silently missing.
+//! - A battle is judged in one place, [`Expected::holds`] on an [`Outcome`], so the matrix test
+//!   and the trace tool's matrix mode cannot disagree about which runs meet the fixture.
 
 use serde::Deserialize;
 use sim_core::catalog::RuntimeCatalogs;
@@ -212,6 +214,62 @@ pub struct Expected {
     /// Inclusive hull range of red's first unit, when it survives.
     #[serde(default)]
     pub red_lead_hp: Option<(f32, f32)>,
+}
+
+impl Expected {
+    /// Whether `outcome` meets this expectation: both survivor counts inside their ranges, and
+    /// each side's lead hull inside its range when both the range and a living lead unit exist.
+    ///
+    /// The one judgement of a battle, shared by the matrix test and the trace tool's matrix
+    /// mode, so the tool reports exactly the failures the test would.
+    #[must_use]
+    pub fn holds(&self, outcome: &Outcome) -> bool {
+        (self.blue.0..=self.blue.1).contains(&outcome.blue)
+            && (self.red.0..=self.red.1).contains(&outcome.red)
+            && within(self.blue_lead_hp, outcome.blue_lead_hull)
+            && within(self.red_lead_hp, outcome.red_lead_hull)
+    }
+}
+
+/// Whether `value` lies in the inclusive `range`; true when either is absent (no range recorded,
+/// or the lead unit died).
+fn within(range: Option<(f32, f32)>, value: Option<SimScalar>) -> bool {
+    match (range, value) {
+        (Some((low, high)), Some(value)) => (low..=high).contains(&value.to_f32()),
+        _ => true,
+    }
+}
+
+/// What one playthrough of a battle came to, read where [`BattleRun`] stopped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Outcome {
+    /// Living blue units.
+    pub blue: usize,
+    /// Living red units.
+    pub red: usize,
+    /// Life of blue's first unit, in hit points (shields not included); `None` once it died.
+    pub blue_lead_hull: Option<SimScalar>,
+    /// Life of red's first unit, in hit points (shields not included); `None` once it died.
+    pub red_lead_hull: Option<SimScalar>,
+}
+
+impl Outcome {
+    /// The outcome of `run` as it stands (normally once [`BattleRun::is_finished`]).
+    #[must_use]
+    pub fn of(run: &BattleRun) -> Self {
+        Self {
+            blue: living(&run.world, &run.blue),
+            red: living(&run.world, &run.red),
+            blue_lead_hull: lead_hull(&run.world, &run.blue),
+            red_lead_hull: lead_hull(&run.world, &run.red),
+        }
+    }
+}
+
+/// Life of the first of `units`, if it exists and is alive.
+fn lead_hull(world: &SimWorld, units: &[EntityId]) -> Option<SimScalar> {
+    let lead = world.entities.get(units.first()?)?;
+    lead.is_alive().then_some(lead.hp)
 }
 
 /// Deterministic spawn nudges for one seed, drawn from a small xorshift generator.
@@ -482,6 +540,33 @@ mod tests {
         let a = first.next_nudge();
         assert!(a.abs() <= 0.12);
         assert!((a - second.next_nudge()).abs() > f32::EPSILON);
+    }
+
+    fn outcome(blue: usize, red: usize, blue_lead: Option<f32>) -> Outcome {
+        Outcome {
+            blue,
+            red,
+            blue_lead_hull: blue_lead.map(SimScalar::from_f32_lossy),
+            red_lead_hull: None,
+        }
+    }
+
+    #[test]
+    fn an_expectation_holds_inside_its_ranges_and_ignores_a_dead_lead() {
+        let expected = Expected {
+            blue: (1, 2),
+            red: (0, 0),
+            blue_lead_hp: Some((10.0, 20.0)),
+            red_lead_hp: Some((1.0, 2.0)),
+        };
+        assert!(expected.holds(&outcome(1, 0, Some(10.0))));
+        assert!(expected.holds(&outcome(2, 0, Some(20.0))));
+        // A dead lead unit has no hull to judge; the survivor counts still apply.
+        assert!(expected.holds(&outcome(2, 0, None)));
+        assert!(!expected.holds(&outcome(3, 0, Some(15.0))));
+        assert!(!expected.holds(&outcome(1, 1, Some(15.0))));
+        assert!(!expected.holds(&outcome(1, 0, Some(9.5))));
+        assert!(!expected.holds(&outcome(1, 0, Some(20.5))));
     }
 
     #[test]
