@@ -30,3 +30,12 @@ Evidence: [`docs/evidence/2026-11-03-battle-33-investigation.md`](../../evidence
 ## Answer
 
 Owner (2026-11-04): Option 2 (`Light, Biological` as in StarCraft II, following Q0008).
+
+## Resolution
+
+Option 2, carried out by plan [`2026-11-04-combat-sc2-alignment`](../../plans/2026-11-04-combat-sc2-alignment.md)
+WP5 in commit `4b74ecf`: `psi_grey` is tagged Light, Biological (`attributes: (bits: 5)`, was Light, Psionic,
+`bits: 17`). As this question said, it changes nothing today: no simulation rule reads Biological or Psionic for a
+unit, the whole matchup matrix on 20 seeds and battle 33 on 68 seeds are bit-identical, and both golden replays pass
+unchanged ([`docs/evidence/2026-11-04-combat-sc2-alignment.md`](../../evidence/2026-11-04-combat-sc2-alignment.md)
+§4). The tag will decide how future attribute-filtered abilities treat the zealot.

@@ -31,17 +31,17 @@ What changed:
 | Question | Answer | Where in this plan |
 |---|---|---|
 | [Q0035](../questions/open/0035-melee-contact-rules.md) contact rules | Option 1: no change now; record a follow-up for future investigation | WP13 step 1, §8 F-1 |
-| [Q0036](../questions/open/0036-zealot-weapon-timing.md) zealot weapon | Option 2: `damage_point: 0`, `range: 0.1`, `backswing: 9`, `period: 21`; clean up the "damage point 0 fires every period + 1" quirk if appropriate | D-3, WP2, WP4 |
+| [Q0036](../questions/closed/0036-zealot-weapon-timing.md) zealot weapon | Option 2: `damage_point: 0`, `range: 0.1`, `backswing: 9`, `period: 21`; clean up the "damage point 0 fires every period + 1" quirk if appropriate | D-3, WP2, WP4 |
 | [Q0037](../questions/open/0037-scan-ranges.md) scan ranges | Option 3, low priority: a plan for StarCraft II's rule across the catalog, mechanism and whole matrix first | WP14 (last) |
-| [Q0038](../questions/open/0038-marine-backswing-gate.md) backswing | Option 2: change the rule first, then marine `damage_point: 1`, `backswing: 13` | D-2, WP1, WP6 |
+| [Q0038](../questions/closed/0038-marine-backswing-gate.md) backswing | Option 2: change the rule first, then marine `damage_point: 1`, `backswing: 13` | D-2, WP1, WP6 |
 | [Q0039](../questions/open/0039-normal-time-values.md) Normal-time values | Option 3: convert the four values and audit every time and speed value, with a whole-matrix measurement | D-4, D-5, WP3, WP7 to WP12 |
-| [Q0040](../questions/open/0040-zealot-attributes.md) zealot attributes | Option 2: `Light, Biological` | WP5 |
+| [Q0040](../questions/closed/0040-zealot-attributes.md) zealot attributes | Option 2: `Light, Biological` | WP5 |
 | [Q0041](../questions/open/0041-battle-33-expectation-under-jitter.md) battle 33 under jitter | Option 2: document the ≈90 % marine win in the fixture, with a pointer to the evidence | WP0 step 5 |
 | [Q0007](../questions/open/0007-combat-baselines.md) combat baselines | "Q0007 may now be closed" | WP13 step 1 |
-| [Q0044](../questions/open/0044-battle-33-expectation-after-alignment.md) battle 33 after the corrections | Option 1: re-record to the seeds of record and document the distribution; "Having a close battle isn't a bad thing" | D-6, every WP that moves battle 33, WP13 step 3 |
+| [Q0044](../questions/closed/0044-battle-33-expectation-after-alignment.md) battle 33 after the corrections | Option 1: re-record to the seeds of record and document the distribution; "Having a close battle isn't a bad thing" | D-6, every WP that moves battle 33, WP13 step 3 |
 | [Q0045](../questions/open/0045-catalog-time-audit-deliberate-values.md) the audit's deliberate values | "Try to close in on SC2 behavior": 1(b) reference hull turn rates; 2(b) worker backswing 9; 3(b) the 20-life Overclock moves from `rhino_beetle` to `shock_golem`, 268 ticks; 4(b) `flying_saucer` becomes the Phoenix and is audited | D-7, D-8, D-9, D-10, WP12, WP15, WP16, WP17 |
 
-Questions filed by this plan: [Q0044](../questions/open/0044-battle-33-expectation-after-alignment.md) (answered
+Questions filed by this plan: [Q0044](../questions/closed/0044-battle-33-expectation-after-alignment.md) (answered
 above) and, through WP3, [Q0045](../questions/open/0045-catalog-time-audit-deliberate-values.md) (answered above).
 Amendment 1 files no new question. WP17 may file one, under the conditions it states.
 

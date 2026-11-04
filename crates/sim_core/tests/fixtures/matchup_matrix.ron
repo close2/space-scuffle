@@ -910,16 +910,17 @@
     ),
     // Battle 33 is a close fight under the matrix's spawn jitter (Q0041, Q0044). With the
     // zealot's StarCraft II weapon (damage point 0, every 21 ticks, range 0.1, backswing 9;
-    // plan 2026-11-04-combat-sc2-alignment WP4), on 68 seeds (the four of record plus 64
-    // jittered ones, jitter 0.12) the marines win 30, the zealots win 24 (with 2 to 5 zealots
-    // left) and 14 are unresolved at 500 ticks (1 to 4 marines against 1 or 2 zealots); marine
-    // survivors average 3.09 (SD 3.01, range 0 to 9). Before WP4 it was a marine win on 61 of
-    // the 68 (7.41 survivors). The expectation is the smallest ranges that hold on the seeds of
-    // record (Q0044, option 1): 0-3, 6-0, 3-1 and 4-0 (marines - zealots left), so it admits a
-    // narrow win of either side and fails if either wins clearly. What varies is how many
-    // zealots reach the marines at once. Evidence: docs/evidence/2026-11-04-combat-sc2-alignment.md
-    // §3 (and §1 for the earlier figures, from docs/evidence/2026-11-03-battle-33-investigation.md
-    // §4.2).
+    // plan 2026-11-04-combat-sc2-alignment WP4) and the marine's (damage point 1, backswing 13;
+    // WP6), on 68 seeds (the four of record plus 64 jittered ones, jitter 0.12) the marines
+    // win 44, the zealots win 12 (with 2 to 5 zealots left) and 12 are unresolved at 500 ticks
+    // (1 to 3 marines against 1 or 2 zealots); marine survivors average 4.56 (SD 3.18, range 0
+    // to 11). After WP4 alone it was 30 / 24 / 14 (3.09 survivors), and before WP4 a marine
+    // win on 61 of the 68 (7.41 survivors). The expectation is the smallest ranges that hold
+    // on the seeds of record (Q0044, option 1): 7-0, 7-0, 0-3 and 6-0 (marines - zealots
+    // left), so it admits a narrow win of either side and fails if either wins clearly. What
+    // varies is how many zealots reach the marines at once. Evidence:
+    // docs/evidence/2026-11-04-combat-sc2-alignment.md §5 (§3 for WP4, and §1 for the earlier
+    // figures, from docs/evidence/2026-11-03-battle-33-investigation.md §4.2).
     (
         name: "33_24_marines_vs_12_zealots",
         claim: "A close fight: unkited zealots and marines trade evenly, either side may win narrowly",
@@ -937,7 +938,7 @@
             ],
             order: AttackMove(20, 48),
         ),
-        expect: (blue: (0, 6), red: (0, 3)),
+        expect: (blue: (0, 7), red: (0, 3)),
     ),
     (
         name: "34_20_hydras_vs_12_mutas",
