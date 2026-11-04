@@ -937,12 +937,63 @@ fn d6_generate_audio_false_in_data_is_sent_and_the_ledger_records_it() {
 }
 
 #[test]
+fn d6_a_negative_prompt_in_data_is_sent_and_the_ledger_records_it() {
+    // Owner (2026-11-04): clips must not show radiating stripes behind the subject. Vertex
+    // documents `negativePrompt` in the `parameters` object of `:predictLongRunning`.
+    let unit = combat_unit(&shipped_catalog());
+    let bundle = bundle_with_request(
+        "(aspect_ratio: \"16:9\", duration_seconds: 4, sample_count: 1, generate_audio: None, negative_prompt: Some(\"radiating stripes, sunburst\"))",
+    );
+    let server = FakeServer::start(healthy(fixture_bytes()));
+    let shim = CurlShim::new(&server);
+    let dirs = RunDirs::new();
+    let output = dirs.generate_in(
+        bundle.path(),
+        &shim,
+        &[&unit],
+        &["--states", "idle", "--max-generations", "1"],
+    );
+    assert!(output.status.success(), "{}", text(&output));
+    let sent = sent_parameters(&server);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(
+        sent[0]["negativePrompt"],
+        json!("radiating stripes, sunburst"),
+        "{}",
+        sent[0]
+    );
+    assert_eq!(recorded_parameters(&dirs), sent);
+    assert!(
+        stdout(&output).contains("negativePrompt \"radiating stripes, sunburst\""),
+        "{}",
+        text(&output)
+    );
+}
+
+#[test]
+fn d6_the_shipped_settings_send_a_negative_prompt_against_rayed_backdrops() {
+    let unit = combat_unit(&shipped_catalog());
+    let (dirs, server, _shim, output) = generated(&unit, "idle");
+    assert!(output.status.success(), "{}", text(&output));
+    let sent = sent_parameters(&server);
+    assert_eq!(sent.len(), 1);
+    let negative = sent[0]["negativePrompt"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no negativePrompt: {}", sent[0]));
+    for term in ["radiating stripes", "sunburst", "light rays"] {
+        assert!(negative.contains(term), "{term} missing from {negative}");
+    }
+    assert_eq!(recorded_parameters(&dirs), sent);
+}
+
+#[test]
 fn d6_malformed_request_settings_fail_before_any_credential_is_read() {
     let unit = combat_unit(&shipped_catalog());
     let cases = [
         "(aspect_ratio: \"16:9\", duration_seconds: 4)",
         "(aspect_ratio: \"16:9\", duration_seconds: 4, sample_count: 2, generate_audio: None)",
         "(aspect_ratio: \"16:9\", duration_seconds: 4, sample_count: 1, generate_audio: None, extra: 1)",
+        "(aspect_ratio: \"16:9\", duration_seconds: 4, sample_count: 1, generate_audio: None, negative_prompt: Some(\" \"))",
     ];
     for settings in cases {
         let bundle = bundle_with_request(settings);

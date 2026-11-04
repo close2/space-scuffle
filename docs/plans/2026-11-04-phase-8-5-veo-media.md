@@ -265,7 +265,10 @@ false` is accepted for the chosen model and lowers the cost (the pipeline discar
   looks at it (an image read) and records `accept` or `reject` with a reason against written criteria: one subject,
   matches its prompt, no text or watermark, no cut or morph to a different object, subject stays inside the framed
   square (letterbox for structures, crop for units, amended by `2026-11-04-veo-letterbox-bake` D-4), action
-  readable at 512 px, consistent with the identity's other states. Rejected clips stay in `~/scratch/veo/clips/`
+  readable at 512 px, consistent with the identity's other states. **Amended 2026-11-04 (WP4, owner's review
+  points):** loop continuity, the last frame close to the first with no camera push-in, zoom or pan (Q0026); and
+  **a plain, uniform backdrop with no radiating stripes, sunburst, light rays, spotlight beams or patterned
+  gradient** (owner, relayed 2026-11-04). A clip that fails either is rejected. Rejected clips stay in `~/scratch/veo/clips/`
   and are recorded in the ledger. Owner taste is final: Q0026 shows the owner the pilot and
   batch 1 sheets.
 
@@ -436,6 +439,15 @@ pilot's Idle clip, installed by letterbox WP2, has a slow camera push-in, so its
 about 5 to 8 % in scale (pilot evidence, "Acceptance after the letterbox change"). Before generating its Constructing
 clip, decide whether to regenerate `plasma_siphon_dome` Idle with a prompt asking for a locked-off camera (one
 generation, `install-clip --replace`); the Constructing keyframe chains from whichever Idle clip is installed.
+
+**Amended a third time 2026-11-04 (Q0046):** WP4 stopped after five `plasma_siphon_dome` Idle clips, all rejected
+for a camera push-in of 7 to 10 % that no prompt wording removed
+([`2026-11-04-batch-1.md`](../evidence/veo/2026-11-04-batch-1.md)); the pilot's clip is uninstalled. WP4 now
+depends on WP1 to WP4 of [`2026-11-04-veo-seamless-loops.md`](2026-11-04-veo-seamless-loops.md) (looping clips sent
+with the same picture as `image` and `lastFrame`, a seam repair in the bake, the `loop-check` measure, and a
+one-clip pilot) and is carried out as that plan's WP5, which also applies the held test patch for D-9. The
+`plasma_siphon_dome` Idle comes from that pilot, so step 1 below generates nine clips plus the seed clips that plan
+counts (§6), and the keyframe chaining of D-7 follows its D-3.
 
 1. `generate-veo` for the five identities with `--max-generations 9` (the pilot's Idle is reused). Review every
    clip (D-7); regenerate rejected ones within the retry allowance.
