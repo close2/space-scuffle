@@ -181,6 +181,47 @@ pub fn sync_bubble_material(
     true
 }
 
+/// Atlas layer that shows `anim_state` at `progress` (`0.0..1.0` of one cycle of its slice).
+///
+/// With `meta`, the action's slice is used: a looping slice wraps, a one-shot holds its last
+/// frame, and an action without a slice shows layer 0. Without `meta`, the legacy layout of
+/// eight frames per action is assumed. The battle packs every record at progress 0
+/// ([`BubbleUniformGpu::from_instance`]); the Lab preview passes its own elapsed-time progress.
+#[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "presentation values are bounded by frame, atlas and window sizes"
+)]
+pub fn frame_index_at(
+    meta: Option<&FlipbookAtlasMeta>,
+    anim_state: AnimState,
+    progress: f32,
+) -> u32 {
+    let Some(meta) = meta else {
+        let state_offset = match anim_state {
+            AnimState::Constructing => 0,
+            AnimState::Idle => 8,
+            AnimState::Walk => 16,
+            AnimState::Attack | AnimState::Cast => 24,
+            AnimState::Die => 32,
+        };
+        return state_offset + ((progress * 8.0) as u32 % 8);
+    };
+    let Some(slice) = meta.actions.get(&anim_state) else {
+        return 0;
+    };
+    let step = (progress * slice.frame_count as f32) as u32;
+    if slice.frame_count == 0 {
+        slice.start_frame
+    } else if slice.looping {
+        slice.start_frame + (step % slice.frame_count)
+    } else {
+        slice.start_frame + step.min(slice.frame_count.saturating_sub(1))
+    }
+}
+
 impl BubbleUniformGpu {
     /// Returns a copy of `snapshot` that keeps this uniform's optics lanes and CPU-only fields.
     ///
@@ -216,12 +257,6 @@ impl BubbleUniformGpu {
 
     /// Packs a snapshot and optional metadata using an already resolved linear ownership style.
     #[must_use]
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_precision_loss,
-        clippy::cast_sign_loss,
-        reason = "presentation values are bounded by frame, atlas and window sizes"
-    )]
     pub fn from_instance(
         instance: &BubbleRenderInstance,
         meta: Option<&FlipbookAtlasMeta>,
@@ -234,31 +269,9 @@ impl BubbleUniformGpu {
             ShapeKind::BuildingDome { .. } => 1,
         };
 
-        let frame_index = if let Some(meta) = meta {
-            if let Some(slice) = meta.actions.get(&instance.anim_state) {
-                if slice.frame_count == 0 {
-                    slice.start_frame
-                } else if slice.looping {
-                    let step = (instance.anim_progress * slice.frame_count as f32) as u32;
-                    slice.start_frame + (step % slice.frame_count)
-                } else {
-                    let step = (instance.anim_progress * slice.frame_count as f32) as u32;
-                    slice.start_frame + step.min(slice.frame_count.saturating_sub(1))
-                }
-            } else {
-                0
-            }
-        } else {
-            // Default 8-frame slicing per AnimState
-            let state_offset = match instance.anim_state {
-                AnimState::Constructing => 0,
-                AnimState::Idle => 8,
-                AnimState::Walk => 16,
-                AnimState::Attack | AnimState::Cast => 24,
-                AnimState::Die => 32,
-            };
-            state_offset + ((instance.anim_progress * 8.0) as u32 % 8)
-        };
+        // The snapshot carries no animation phase (its attack cycle is the integer
+        // `attack_swing`, read by the flipbook clock), so a record shows its slice's first frame.
+        let frame_index = frame_index_at(meta, instance.anim_state, 0.0);
 
         Self {
             team_color,
@@ -273,7 +286,6 @@ impl BubbleUniformGpu {
             aim_angle_rad: instance.aim_angle_rad,
             is_attacking: u32::from(instance.is_attacking),
             anim_state: instance.anim_state as u32,
-            anim_progress: instance.anim_progress,
             hp_ratio: instance.hp_ratio,
             shield_ratio: instance.shield_ratio,
             shield_hit_flash: instance.shield_hit_flash,

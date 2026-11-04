@@ -51,7 +51,7 @@ const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
     },
     FloatAllowance {
         path: "crates/sim_types/src/snapshot.rs",
-        count: 28,
+        count: 27,
         reason: "presentation: `RenderSnapshot` is the documented fixed-point to GPU boundary",
     },
     FloatAllowance {

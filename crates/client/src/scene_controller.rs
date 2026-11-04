@@ -135,14 +135,11 @@ fn preview_placement(index: usize, is_dome: bool) -> (Vec3, f32) {
 
 /// Builds the snapshot of one preview actor. Lab controls act on the selected actor only.
 ///
-/// `elapsed_seconds` is presentation time, and `pos` is in Bevy world space.
+/// `pos` is in Bevy world space. The record carries no animation phase; the caller picks the
+/// preview's flipbook frame from presentation time.
 #[expect(
     clippy::cast_possible_truncation,
     reason = "presentation values are bounded by frame, atlas and window sizes"
-)]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "explicit inputs keep this helper free of hidden state"
 )]
 fn preview_instance(
     lab: &LabState,
@@ -152,7 +149,6 @@ fn preview_instance(
     pos: Vec3,
     radius: f32,
     is_selected: bool,
-    elapsed_seconds: f32,
 ) -> BubbleRenderInstance {
     let selected_or = |value: f32, otherwise: f32| if is_selected { value } else { otherwise };
     let anim_state = if is_selected {
@@ -176,7 +172,7 @@ fn preview_instance(
         weapon_visual: WeaponVisualKind::Hitscan,
         attack_target_pos: None,
         anim_state,
-        anim_progress: (elapsed_seconds * 1.5).fract(),
+        attack_swing: None,
         hp_ratio: selected_or(lab.hp_ratio, 1.0),
         shield_ratio: selected_or(lab.shield_ratio, 1.0),
         shield_hit_flash: selected_or(lab.shield_hit_flash, 0.0),
@@ -238,7 +234,7 @@ fn swarm_instance(
         weapon_visual: WeaponVisualKind::Hitscan,
         attack_target_pos: None,
         anim_state: AnimState::Walk,
-        anim_progress: 0.0,
+        attack_swing: None,
         hp_ratio: 1.0,
         shield_ratio: 1.0,
         shield_hit_flash: 0.0,
@@ -315,10 +311,15 @@ impl PreviewFrame<'_> {
             translation,
             radius,
             is_selected,
-            self.elapsed_seconds,
         );
         let style = self.palette.preview_style(instance.owner)?;
         let mut uniform = BubbleUniformGpu::from_instance(&instance, meta, style);
+        // The Lab has no battle and no snapshot phase: it plays every slice on its own
+        // elapsed time, one cycle per 0.67 s.
+        let progress = (self.elapsed_seconds * 1.5).fract();
+        uniform.frame_index =
+            crate::bubble_shader::frame_index_at(meta, instance.anim_state, progress);
+        uniform.anim_progress = progress;
         uniform.feature_flags = preview_feature_flags(self.lab, &instance, is_selected);
         Ok(PreviewActor {
             instance,
@@ -1201,7 +1202,7 @@ mod tests {
             weapon_visual: WeaponVisualKind::Hitscan,
             attack_target_pos: None,
             anim_state: AnimState::Walk,
-            anim_progress: 0.0,
+            attack_swing: None,
             hp_ratio: 1.0,
             shield_ratio: 1.0,
             shield_hit_flash: 0.0,
