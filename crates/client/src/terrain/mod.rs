@@ -7,6 +7,8 @@
 //!
 //! # Invariants
 //! - Visual cliff walls align strictly with simulation cell boundaries via dual-grid marching squares.
+//! - The spawned chunks partition the whole `(width + 1) x (height + 1)` dual grid: every dual cell,
+//!   including the last column and row on the map's +x and +y edges, is meshed by exactly one chunk.
 //! - Renders with zero per-frame heap allocations during steady-state terrain updates.
 //! - Rebuilt chunk entities immediately update their [`Aabb`] to prevent frustum culling errors.
 //! - Unwalkable abyss drops fade into the void backdrop according to theme settings.
@@ -125,9 +127,11 @@ pub struct ChunkEntry {
 pub struct TerrainChunks {
     /// Spatial grid chunks in row-major order.
     pub chunks: Vec<ChunkEntry>,
-    /// Number of chunk columns.
+    /// Number of chunk columns: `(width + 1).div_ceil(CHUNK_DUAL_CELLS)`, enough to cover all
+    /// `width + 1` dual-grid columns.
     pub cols: u32,
-    /// Number of chunk rows.
+    /// Number of chunk rows: `(height + 1).div_ceil(CHUNK_DUAL_CELLS)`, enough to cover all
+    /// `height + 1` dual-grid rows.
     pub rows: u32,
 }
 
@@ -366,9 +370,13 @@ pub fn spawn_terrain_owned(
         extension,
     });
 
-    // 5. Build and spawn all terrain spatial chunks
-    let cols = width.div_ceil(CHUNK_DUAL_CELLS);
-    let rows = height.div_ceil(CHUNK_DUAL_CELLS);
+    // 5. Build and spawn all terrain spatial chunks. The dual grid has `width + 1` columns and
+    // `height + 1` rows (dual cell `i` straddles cells `i - 1` and `i`), so the chunk grid is
+    // sized from those counts: on a side that is a multiple of `CHUNK_DUAL_CELLS` the last chunk
+    // holds only the final dual column or row, and `build_chunk_mesh` clips its cell range to
+    // nothing.
+    let cols = (width + 1).div_ceil(CHUNK_DUAL_CELLS);
+    let rows = (height + 1).div_ceil(CHUNK_DUAL_CELLS);
 
     let mut scratch = MesherScratch::default();
     let mut chunk_entries = Vec::with_capacity((cols * rows) as usize);
