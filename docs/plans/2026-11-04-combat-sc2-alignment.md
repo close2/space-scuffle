@@ -531,8 +531,12 @@ proved bit-identical; d to g each have one cause and are measured.
     research for the Marauder, mirror that instead and say so in the commit).
 - **The duration is 268 at once.** WP8 converts only `pulse_bot`'s Overclock, and WP15 creates `shock_golem`'s
   already converted, so no value is converted on an identity that loses it.
-- **Expected results.** None. No fixture stims either identity (§2.4), and the capability is not hashed (the checksum
-  encodes the `UseStim` order, not the archetype). WP15 proves it with the tool and both goldens. Tests that assert
+- **Expected results.** No behaviour change: no fixture stims either identity (§2.4). **Amendment 3 (2026-11-04,
+  orchestrator, after WP15's probe):** the checksum does hash each player's `unlocked_abilities` map
+  (`checksum/encoding.rs`, `PlayerUpgradeState`), and `golden_replay.ron` researches `overclock_stim` before tick 1, so
+  the new `UnlockAbility(shock_golem, overclock)` line changes every checkpoint of `golden_replay.ron` (the `units.ron`
+  part alone changes nothing). WP15 therefore re-records `golden_replay.ron` in its data commit with that reason;
+  `golden_replay_orders.ron` and the whole matrix must stay bit-identical, which WP15 proves with the tool. Tests that assert
   which archetypes are overclock-ready (`player_view_tests.rs`, `full_match_tests.rs`, the client's battle HUD tests)
   are checked; any that names `rhino_beetle` as a stimmer is restated first, test-only (D-1 item 5).
 
