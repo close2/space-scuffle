@@ -179,3 +179,96 @@ Times in ms; stage figures are means over the run. The 400 run averaged 29 smog 
 |---:|---:|---:|---:|---:|---:|---:|---:|
 | 0 | 8.64 (after the build) | 5,121 | 11.70 | 15.01 | 10.44 | 5.66 | 8.48 |
 | 400 | 3.85 | 3,794 | 15.53 | 19.78 | 13.25 | 7.26 | 11.50 |
+
+## 5. WP7: bit-exact refactors I (ping-pong slabs, truncating cast, dead slabs)
+
+WP7 of the plan changes `crates/client/src/smog/fluid.rs` only, in the commit `perf(smog): C-18 WP7 bit-exact
+refactors I` on top of `35ced86`:
+
+1. **Ping-pong slabs.** `advect_velocity` and `advect_density_and_tint` exchange each field with its scratch slab
+   (`std::mem::swap`) instead of copying the scratch slabs back: eight `copy_from_slice` of 331,776 bytes per step
+   (2.65 MB read and written) are gone. The precondition, that each pass writes every voxel of every scratch slab
+   it swaps, is pinned by the unit test `advection_passes_write_every_scratch_voxel`, which fills the scratch slabs
+   with a NaN sentinel before each pass and requires none of it in the fields afterwards.
+2. **Truncating cast.** `trilinear_indices_and_weights` casts its clamped operands with `as usize` instead of
+   `floor() as usize`, so the `floorf` call (the `x86_64` baseline has no SSE4.1 `roundss`) is gone. The unit test
+   `truncating_cast_matches_floor_on_clamped_operands` pins the equivalence for negative, `-0.0`, NaN, infinite,
+   near-integer and out-of-range operands.
+3. **Dead slabs.** `pressure` and `divergence` (allocated and cleared, never read) are removed: 0.66 MB less, two
+   fewer `fill` per `clear`. The stale 49,152-voxel figures in the touched rationale blocks now read 82,944.
+
+Each divergence carries a `PERFORMANCE RATIONALE` block (Why, What, Trade-off).
+
+### Goldens
+
+All 19 tests of `smog_golden_tests.rs` pass unchanged, among them the eleven fluid and system goldens (the three
+earlier fluid goldens, the four of §1 and the four system goldens) and both `libm` canaries. No constant changed.
+
+Mutation red runs (each applied to the WP7 file, the tests run, the file restored; logs
+`~/scratch/logs/open_wp7_red_*.log`):
+
+| Mutation | Fails |
+|---|---|
+| The plan's red run: `gx as usize` → `gx.round() as usize` | the eleven fluid and system goldens |
+| A non-bit-exact reordering: `sample_indexed` sums its eight corners in reverse order | the eleven fluid and system goldens |
+| The dormant fast path of `advect_density_and_tint` stops writing `tint_b_scratch` | `advection_passes_write_every_scratch_voxel` ("tint_b: 81387 voxels were not written by the pass"); no golden, which is the tint hole of §1 and why the unit test exists |
+
+### Benchmark, before and after
+
+Two release bench binaries built in the same target directory: arm A from `35ced86` (WP6's solver, equal to
+`e85f79f`'s), arm B from the WP7 commit. Five rounds on 2026-11-04 from 10:18 to 10:31 UTC, each round running
+`--contend 1` then `--contend 8`, and within each the two arms back to back, A first in odd rounds and B first in
+even ones; every run pinned with `taskset -c 32-47`. The machine-wide one-minute load stood between 124 and 256
+throughout (another user's work outside CPUs 32 to 47); the share of time CPUs 32 to 47 were busy is recorded per
+run below, in the 5 s before it (other work) and during it (other work plus the benchmark's own `K` threads).
+
+Medians over the five rounds of each row's mean and p50, ms per step:
+
+| Scenario | Sources | `--contend 1` A mean / p50 | B mean / p50 | p50 change | `--contend 8` A mean / p50 | B mean / p50 | p50 change |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `empty` | 0 | 3.12 / 2.69 | 2.25 / 2.12 | −21 % | 4.02 / 3.94 | 2.92 / 2.51 | −36 % |
+| `showcase` | 10 | 8.69 / 8.22 | 6.18 / 6.17 | −25 % | 7.83 / 7.84 | 6.91 / 6.51 | −17 % |
+| `crowd_48` | 48 | 4.99 / 4.53 | 4.24 / 4.06 | −10 % | 5.12 / 4.91 | 4.51 / 4.18 | −15 % |
+| `battle_240` | 240 | 4.97 / 4.62 | 4.26 / 4.01 | −13 % | 5.56 / 5.09 | 4.38 / 4.15 | −18 % |
+| `after_fight`, fight (0 to 30 s) | 240 | 5.30 / 4.70 | 4.49 / 4.17 | −11 % | 5.54 / 5.08 | 4.64 / 4.12 | −19 % |
+| `after_fight`, after (30 to 60 s) | 0 | 6.08 / 6.05 | 4.70 / 4.71 | −22 % | 7.05 / 6.88 | 5.31 / 5.15 | −25 % |
+
+What it shows:
+
+1. **Every scenario is faster in both columns**, by 10 to 25 % uncontended and 15 to 36 % contended, the range
+   the plan's standalone probe measured for options A and B (§5.1 and §5.2 of the plan: 10 to 16 % alone, 13 to
+   32 % contended). As there, the saving is largest under contention and on the fields whose cost is whole-grid
+   memory traffic (`empty`, `after_fight` after).
+2. **The after-fight excess remains.** `after_fight`'s second half still costs 2.6 ms (p50) more than `empty`
+   uncontended: the copies are gone, but velocities that never reach exact zero still defeat the sparse fast
+   paths. WP8 (bricks) and WP9 (quiescence) address it.
+3. Arm A's medians here sit close to or above WP6's baseline of §2 (the machine was more loaded this time), which is
+   why the comparison is read only between interleaved arms of the same session.
+
+Per-run load:
+
+| Round | `--contend` | Arm | Started (UTC) | Load (1 min) | CPUs 32-47 busy before | during |
+|---|---:|---|---|---:|---:|---:|
+| 1 | 1 | A | 10:18:39 | 220.5 | 8.5 % | 36.4 % |
+| 1 | 1 | B | 10:19:15 | 221.7 | 79.4 % | 25.6 % |
+| 1 | 8 | A | 10:19:47 | 255.5 | 9.2 % | 61.9 % |
+| 1 | 8 | B | 10:20:37 | 229.6 | 9.3 % | 62.5 % |
+| 2 | 1 | B | 10:21:10 | 224.0 | 7.7 % | 53.0 % |
+| 2 | 1 | A | 10:21:44 | 250.0 | 83.4 % | 52.7 % |
+| 2 | 8 | B | 10:22:30 | 241.3 | 60.5 % | 62.2 % |
+| 2 | 8 | A | 10:23:04 | 230.4 | 8.0 % | 63.1 % |
+| 3 | 1 | A | 10:23:44 | 202.7 | 9.3 % | 16.1 % |
+| 3 | 1 | B | 10:24:29 | 186.4 | 9.4 % | 15.1 % |
+| 3 | 8 | A | 10:25:02 | 198.6 | 6.6 % | 62.6 % |
+| 3 | 8 | B | 10:25:44 | 201.1 | 58.1 % | 80.6 % |
+| 4 | 1 | B | 10:26:31 | 213.6 | 54.7 % | 34.5 % |
+| 4 | 1 | A | 10:27:02 | 147.6 | 20.3 % | 56.5 % |
+| 4 | 8 | B | 10:27:39 | 124.3 | 50.0 % | 78.1 % |
+| 4 | 8 | A | 10:28:26 | 143.1 | 25.6 % | 71.6 % |
+| 5 | 1 | A | 10:29:05 | 170.2 | 16.2 % | 23.0 % |
+| 5 | 1 | B | 10:29:45 | 175.3 | 7.4 % | 14.6 % |
+| 5 | 8 | A | 10:30:18 | 174.9 | 7.1 % | 60.8 % |
+| 5 | 8 | B | 10:31:03 | 189.8 | 15.4 % | 61.3 % |
+
+Logs (per-round tables with p95): `~/scratch/logs/open_wp7_bench_{a,b}_c{1,8}_r{1..5}.log` and
+`open_wp7_bench_index.log` (scratch; may be cleaned, so the tables here are the record).
