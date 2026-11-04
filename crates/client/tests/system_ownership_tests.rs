@@ -53,6 +53,7 @@ use client::bubble_shader::BubbleDomeMaterial;
 use client::flipbook_clock::{FlipbookClock, FlipbookPhase};
 use client::input_policy::InputOwnership;
 use client::runtime_battle::SKIRMISH_SCENARIO;
+use client::scene_controller::PreviewPhase;
 use client::smog::fluid::SmogGrid3d;
 use client::smog::SmogGpuFrame;
 use client::terrain::TerrainChunks;
@@ -160,6 +161,16 @@ const CONCERNS: &[Concern] = &[
             "PostUpdate: bevy_animation::animate_targets",
             // Restarts a live bubble's free loop when its displayed action changes.
             "Update: client::scene_controller::sync_live_battle_system",
+        ],
+    },
+    Concern {
+        name: "Lab flipbook phases",
+        store: Store::Component(Components::component_id::<PreviewPhase>),
+        writers: &[
+            // Bevy's animation system may write any component of an animated entity.
+            "PostUpdate: bevy_animation::animate_targets",
+            // Restarts a preview actor's clip when the Lab's shown state changes (plan D-9).
+            "Update: client::scene_controller::sync_lab_preview_system",
         ],
     },
     Concern {
