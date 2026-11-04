@@ -18,6 +18,12 @@ are not committed: a standalone copy of `fluid.rs`, and a release build of `e85f
 smog systems. Line numbers drift; search for the quoted symbol. A claim about runtime behaviour that could not be
 confirmed is marked **verify**, and the first test of its package confirms or refutes it.
 
+**Outcome (2026-11-04, WP11):** WP1 to WP10 are merged on `main`. C-17 is fixed (WP3). C-18 is partly fixed: the
+idle and after-fight solver costs are fixed by WP7 to WP9, but a 400-unit fight still costs about 6 ms of solver per
+frame, above D-1's 2 ms trigger, so options F and G go to a later plan (§8). The four Phase 9 §9 gaps are fixed
+(WP1, WP2, WP4, WP5). Q0020 and Q0048 are closed. Records: the remediation plan's §4.4, `DESIGN.md`, the Phase 9
+blueprint's §9 and the plan index.
+
 **Out of scope:** step 8.5 (B-1, D7), now planned in `2026-11-04-phase-8-5-veo-media` (Q0001 answered); Q0014
 (host-independent smog math), answered (b) and planned in `2026-11-04-libm-smog-math`, which runs after WP9 (§4);
 everything listed in §8.
@@ -472,7 +478,7 @@ are the measure of record.
 | `docs/plans/2026-11-01-codebase-remediation.md` §4.1, §4.2, §4.3, §4.7 and Phases 0 to 4 | WP10 |
 | `docs/plans/2026-11-01-codebase-remediation.md` §4.4 (C-17, C-18), Phase 6 and 9 notes; `DESIGN.md`; Phase 9 blueprint §9; `docs/plans/README.md` (this plan's row) | WP11 |
 | new evidence files `docs/evidence/2026-11-*-c17-*.md`, `…-c18-*.md` | WP3 (C-17), WP6 and WP9 (C-18) |
-| `docs/questions/open/0020-smog-velocity-quiescence.md` | this plan (filed); WP9 reads it before its re-record commit |
+| `docs/questions/closed/0020-smog-velocity-quiescence.md` (filed in `open/`; closed by WP9 in `ffa0ea8`) | this plan (filed); WP9 reads it before its re-record commit |
 
 ---
 
@@ -966,10 +972,16 @@ why, and D-3 is the fix.
 ## 8. Out of scope
 
 - Options F and G of D-1 (lower fixed smog rate, worker thread), unless WP9's trigger fires; then a later plan.
+  **The trigger fired** (WP9, `docs/evidence/2026-11-04-c18-smog-solver.md` §7, "D-1's trigger: fired"): at 400
+  units the solver still costs about 6.1 ms per frame, above 2.0 ms. C-18 is recorded as partly fixed, and F and G
+  are a follow-up for a later plan, which chooses between them.
 - A custom instanced pipeline for combat effects (D-4 option b).
 - The frame-budget figures of record in `DESIGN.md` §5 (five interleaved runs per scenario): WP9's A/B runs are
   attribution. A full re-measurement of record is a separate task.
 - Exit paragraphs for remediation Phases 0 to 4 (WP10 reports whether they are needed).
+  **WP10's result** (`42ef5bf`, merged `f81b5a0`): every audited row of §4.1, §4.2, §4.3 and §4.7 was marked
+  Fixed with its commit; none was found open or refuted, so no row is carried to a later plan. The exit paragraphs
+  were not written: each needs a CI run per phase, which remains a separate decision.
 - Step 8.5 (Q0001; plan `2026-11-04-phase-8-5-veo-media`), Q0014 (b) (plan `2026-11-04-libm-smog-math`, after WP9), the remediation plan's §6 items, the single slow first-tick frame, and C-7 in a live
   battle (§2.4).
 - Any change to charter §6.

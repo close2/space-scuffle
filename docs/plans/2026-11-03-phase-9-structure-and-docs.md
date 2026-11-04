@@ -1337,15 +1337,21 @@ Relative links only. It states what exists, not what was once hoped for; intent 
   `width.div_ceil(CHUNK_DUAL_CELLS)` chunk columns (and rows from `height`), but the dual grid is `(width+1)×(height+1)`.
   When a side is a multiple of 16, its last dual column or row is never meshed. `mesher_golden_tests.rs` covers all
   `(w+1).div_ceil(16)` chunks, so the fix will show up as a deliberate change to the spawn layout, not to the goldens.
+  Resolved by [`2026-11-04-open-findings-c17-c18-p9-gaps`](2026-11-04-open-findings-c17-c18-p9-gaps.md) WP4
+  (`94130d5`, merged `51946c5`).
 - **Found by WP2, a library panic for a later bugfix plan:** `MapDocument::encode` (`crates/sim_map/src/map_format.rs`)
   indexes out of bounds when `cells.len() != width * height`, instead of returning a typed error (charter §1.1). The
   decode corpus in `validation_golden_tests.rs` skips such documents, so the fix needs its own failing test first.
+  Resolved by [`2026-11-04-open-findings-c17-c18-p9-gaps`](2026-11-04-open-findings-c17-c18-p9-gaps.md) WP2
+  (`f53f73b`, merged `2210b31`).
 - **Found by WP1, a test gap:** swapping `update_vision` and `acquire_targets` in `step_into` leaves the golden replay
   (`crates/sim_core/tests/fixtures/golden_replay.ron`) passing; three behaviour tests catch it instead. The replay's
   scenario never acquires a target whose visibility changes on the same tick, so it does not pin the phase order.
   WP3 found a second case: swapping route upkeep and the arrival decision in `MotionDraft::walk` also leaves the
   replay passing (three movement tests catch it). A replay scenario with mid-route arrivals and same-tick reveals
   would pin both.
+  Resolved by [`2026-11-04-open-findings-c17-c18-p9-gaps`](2026-11-04-open-findings-c17-c18-p9-gaps.md) WP5
+  (`c271226`, merged `62d9f83`).
 - **Found by WP6, a test gap that constrains WP13:** no test pins client system order where reversing it makes no
   schedule cycle. `sample_input_ownership.before(lab_ui_system)` and the editor's
   `apply_document_load_system.before(editor_ui_system)` both pass every client test. WP13 must not claim CI checks
@@ -1354,6 +1360,8 @@ Relative links only. It states what exists, not what was once hoped for; intent 
   `step_bouncing_kinematics` (`crates/client/src/smog/kinematics.rs`) never adds its contacts to the returned
   `peer_bounces` count, so it reports 0 every step; each bubble's own counter is correct.
   `kinematics_all_pairs_fallback_golden` pins today's value, so the fix changes that golden deliberately.
+  Resolved by [`2026-11-04-open-findings-c17-c18-p9-gaps`](2026-11-04-open-findings-c17-c18-p9-gaps.md) WP1
+  (`9987863`, merged `9e693cf`).
 - **Found after WP7, a host dependence in the goldens:** the WP7 smog goldens hashed `f32` results of the host's
   `libm`, so glibc 2.39 on CI failed five of them on `atan2f` alone. Fixed by
   [`2026-11-03-host-independent-smog-goldens.md`](2026-11-03-host-independent-smog-goldens.md): the kinematics
