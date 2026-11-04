@@ -491,6 +491,9 @@ pub(crate) fn upload_flipbook_clock_system(
 /// Simulation ticks per second of game time (the 25 Hz contract of `battle_pipeline::clock`).
 const TICKS_PER_SECOND: u64 = 25;
 
+/// Milliseconds of game time in one simulation tick (1000 / 25).
+const MILLISECONDS_PER_TICK: u64 = 1000 / TICKS_PER_SECOND;
+
 /// Clock units in one second of game time: 25 ticks of [`CLOCK_UNITS_PER_TICK`].
 const CLOCK_UNITS_PER_SECOND: u64 = TICKS_PER_SECOND * CLOCK_UNITS_PER_TICK as u64;
 
@@ -615,18 +618,23 @@ pub fn displayed_action(
     }
 }
 
-/// Clock units of one pass over `slice` of `meta`: `frame_count / fps` seconds of game time.
+/// Clock units of one pass over `slice` of `meta` (D-6).
 ///
-/// The manifest carries no per-slice duration yet (plan WP3 adds `duration_ms`), so the atlas
-/// rate is used, as D-6 says for legacy atlases. A validated manifest has `fps >= 1`; an `fps`
-/// of zero yields period 0, which [`FlipbookSpan::new`] refuses. A period beyond `u32`
-/// saturates and is then refused by the span for any slice of more than one frame.
+/// The slice's own play time `duration_ms` when the manifest states it (plan WP3: the source
+/// clip's length), converted as `duration_ms · 1024 / 40`, one tick being 40 ms of game time;
+/// else `frame_count / fps` seconds at the atlas rate, as for legacy atlases. A validated manifest
+/// has `fps >= 1` and a positive `duration_ms`; an `fps` of zero without a duration yields period
+/// 0, which [`FlipbookSpan::new`] refuses. A period beyond `u32` saturates and is then refused by
+/// the span for any slice of more than one frame.
 #[must_use]
 pub fn slice_period(meta: &FlipbookAtlasMeta, slice: &ActionSlice) -> u32 {
-    if meta.fps == 0 {
+    let units = if let Some(duration_ms) = slice.duration_ms {
+        u64::from(duration_ms) * u64::from(CLOCK_UNITS_PER_TICK) / MILLISECONDS_PER_TICK
+    } else if meta.fps == 0 {
         return 0;
-    }
-    let units = u64::from(slice.frame_count) * CLOCK_UNITS_PER_SECOND / u64::from(meta.fps);
+    } else {
+        u64::from(slice.frame_count) * CLOCK_UNITS_PER_SECOND / u64::from(meta.fps)
+    };
     u32::try_from(units).unwrap_or(u32::MAX)
 }
 
@@ -1317,6 +1325,59 @@ mod tests {
             battle_lanes(None, &record(AnimState::Idle, None), Tick(5), phase),
             Ok(FlipbookLanes::fixed(0))
         );
+    }
+
+    /// D-6: a slice whose manifest states its play time lasts that long, whatever the atlas rate.
+    #[test]
+    fn a_slice_with_a_duration_lasts_its_duration_of_presented_time() {
+        let mut meta = atlas();
+        let walk = meta
+            .actions
+            .get_mut(&AnimState::Walk)
+            .expect("invariant: the fixture has a Walk slice");
+        walk.duration_ms = Some(4_000);
+        let slice = *walk;
+        // 4000 ms is 100 ticks of 40 ms: 102 400 clock units.
+        assert_eq!(slice_period(&meta, &slice), 4_000 * 1024 / 40);
+        let since = 480;
+        let lanes = lanes_at_with(&meta, &record(AnimState::Walk, None), 500, since);
+        let start = since * 1024;
+        assert_eq!(flipbook_layer(start, &lanes), 10, "first layer at since");
+        // Ten frames over 4000 ms: frame k shows from k · 400 ms, 10 ticks per frame.
+        assert_eq!(flipbook_layer(start + 10 * 1024 - 1, &lanes), 10);
+        assert_eq!(flipbook_layer(start + 10 * 1024, &lanes), 11);
+        assert_eq!(
+            flipbook_layer(start + 100 * 1024 - 1, &lanes),
+            19,
+            "last frame at 3999 ms"
+        );
+        assert_eq!(
+            flipbook_layer(start + 100 * 1024, &lanes),
+            10,
+            "loops after 4000 ms"
+        );
+        // Without a duration the atlas rate is used: 10 frames at 15 fps.
+        meta.actions
+            .get_mut(&AnimState::Walk)
+            .expect("invariant: the fixture has a Walk slice")
+            .duration_ms = None;
+        assert_eq!(
+            slice_period(&meta, &meta.actions[&AnimState::Walk]),
+            10 * 25 * 1024 / 15
+        );
+    }
+
+    /// Lanes of `record` in atlas `meta` presented at `tick`, displaying what the rules say since
+    /// `since`.
+    fn lanes_at_with(
+        meta: &FlipbookAtlasMeta,
+        record: &BubbleRenderInstance,
+        tick: u32,
+        since: u32,
+    ) -> FlipbookLanes {
+        let phase = FlipbookPhase::new(displayed_action(Some(meta), record), Tick(since));
+        battle_lanes(Some(meta), record, Tick(tick), phase)
+            .expect("invariant: the fixture's slices are playable")
     }
 
     /// Lanes of the fixture atlas in a scene without a battle.
