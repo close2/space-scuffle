@@ -971,7 +971,9 @@ fn arming_is_any_weapon_slot() -> TestResult {
 
 /// G-8: in a mixed selection, only units whose overclock is unlocked receive it. One overclock
 /// type needs research and another does not, so the order is admitted, and before this rule the
-/// locked units received it and silently did nothing.
+/// locked units received it and silently did nothing. The shipped catalog need not have an
+/// overclock that no research unlocks, so the test gives one to an armed type that no upgrade
+/// names.
 #[test]
 fn stim_goes_only_to_units_whose_overclock_is_unlocked() -> TestResult {
     let (mut world, mut queue) = role_fixture()?;
@@ -984,8 +986,9 @@ fn stim_goes_only_to_units_whose_overclock_is_unlocked() -> TestResult {
         !is_dome(a) && a.overclock.is_some() && locks(&world, a)
     })?;
     let free_type = type_where(&world, |a| {
-        !is_dome(a) && a.overclock.is_some() && !locks(&world, a)
+        !is_dome(a) && a.weapon.is_some() && a.overclock.is_none() && !locks(&world, a)
     })?;
+    world.catalog.get_mut(free_type)?.overclock = world.catalog.get(locked_type)?.overclock;
     let locked = unit_where(&mut world, 0, |a| a.unit_type_id == locked_type)?;
     let free = unit_where(&mut world, 1, |a| a.unit_type_id == free_type)?;
 
