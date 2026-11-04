@@ -104,6 +104,9 @@ const COMBAT_FRAMES: usize = 240;
 /// Fewest combat events the effect window must hold to show steady combat.
 const MIN_COMBAT_EVENTS: u64 = 100;
 
+/// Most consecutive effect windows judged while looking for one with steady combat.
+const MAX_COMBAT_WINDOWS: usize = 4;
+
 /// A marching window shorter than this does not show steady movement.
 const MIN_MARCH_TICKS: u32 = 50;
 
@@ -953,6 +956,11 @@ fn pool_created(harness: &Harness) -> u64 {
 /// Every effect writes its shader data into its own component and the render world copies it into
 /// the slot's existing GPU buffer, so the window may add materials only while the pool grows, and
 /// must modify and remove none.
+///
+/// The battle's pace follows the catalog (unit speeds decide when each wave meets), so the test
+/// does not assume steady combat at a fixed frame: it judges consecutive windows of
+/// [`COMBAT_FRAMES`] after the warm-up, every one of them for the material rules, until one holds
+/// at least [`MIN_COMBAT_EVENTS`] combat events, and checks slot reuse on that one.
 #[test]
 fn combat_frames_reuse_effect_materials() {
     let mut harness = Harness::battle();
@@ -967,40 +975,44 @@ fn combat_frames_reuse_effect_materials() {
         );
     }
     harness.step(COMBAT_WARM_FRAMES);
-    reset(&mut harness);
-    let created_before = pool_created(&harness);
-    harness.step(COMBAT_FRAMES);
-    let grown = pool_created(&harness) - created_before;
-    let tally = tallies(&harness);
-    let materials = type_name::<Assets<CombatFxMaterial>>();
-    let added = tally.count(materials, EventKind::Added);
-    eprintln!(
-        "combat window: {} combat events, {} effects spawned, {added} materials added, pool grew by \
-         {grown}",
-        tally.combat_events, tally.effects_spawned
-    );
-    assert!(
-        tally.combat_events >= MIN_COMBAT_EVENTS,
-        "the window must hold steady combat: {} combat events",
-        tally.combat_events
-    );
-    assert_eq!(
-        tally.count(materials, EventKind::Modified),
-        0,
-        "effect materials modified"
-    );
-    assert_eq!(
-        tally.count(materials, EventKind::Removed),
-        0,
-        "effect materials removed"
-    );
-    assert!(
-        added <= grown,
-        "{added} effect materials added while the pool created {grown}"
-    );
-    assert!(
-        added < tally.effects_spawned,
-        "{added} effect materials added for {} effects spawned: slots are not reused",
-        tally.effects_spawned
+    for window in 1..=MAX_COMBAT_WINDOWS {
+        reset(&mut harness);
+        let created_before = pool_created(&harness);
+        harness.step(COMBAT_FRAMES);
+        let grown = pool_created(&harness) - created_before;
+        let tally = tallies(&harness);
+        let materials = type_name::<Assets<CombatFxMaterial>>();
+        let added = tally.count(materials, EventKind::Added);
+        eprintln!(
+            "combat window {window}: {} combat events, {} effects spawned, {added} materials \
+             added, pool grew by {grown}",
+            tally.combat_events, tally.effects_spawned
+        );
+        assert_eq!(
+            tally.count(materials, EventKind::Modified),
+            0,
+            "effect materials modified"
+        );
+        assert_eq!(
+            tally.count(materials, EventKind::Removed),
+            0,
+            "effect materials removed"
+        );
+        assert!(
+            added <= grown,
+            "{added} effect materials added while the pool created {grown}"
+        );
+        if tally.combat_events >= MIN_COMBAT_EVENTS {
+            assert!(
+                added < tally.effects_spawned,
+                "{added} effect materials added for {} effects spawned: slots are not reused",
+                tally.effects_spawned
+            );
+            return;
+        }
+    }
+    panic!(
+        "no window of {COMBAT_FRAMES} frames in the first {MAX_COMBAT_WINDOWS} held steady combat \
+         ({MIN_COMBAT_EVENTS} combat events)"
     );
 }
