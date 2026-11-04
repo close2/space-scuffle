@@ -14,9 +14,14 @@
 //   the game may later play when a unit is clicked (Q0043, answered 2026-11-04), so no silent
 //   clip is requested. `Some(false)` would ask for a silent clip ($0.08 per second instead of
 //   $0.10 at the published 720p rate); `Some(true)` would ask for sound explicitly.
+// - `negative_prompt`: what every clip must avoid, sent as `negativePrompt` (Vertex documents
+//   it in `parameters` for the Veo models). The owner rejected the radiating stripes behind
+//   the subject (2026-11-04), and looping clips need a camera that does not move (Q0026).
+//   `None` sends no field.
 (
     aspect_ratio: "16:9",
     duration_seconds: 4,
     sample_count: 1,
     generate_audio: None,
+    negative_prompt: Some("radiating stripes, sunburst, light rays, god rays, rays of light, stripes, spotlight beams, patterned background, gradient background, vignette, camera movement, zoom, dolly, push-in, pan, text, watermark"),
 )
