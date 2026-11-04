@@ -177,8 +177,8 @@ Severity is impact on someone using the game or relying on the charter.
 | C-14 | Med | [A] | Camera snaps on cliffs; projectile cards go edge-on; melee rotated twice. **Fixed** in `ab5ef61` (6.5) | `camera.rs:233`, `vfx.rs:318`, `:611` |
 | C-15 | Med | [A] | Per-frame allocation and asset churn; `LabState` owns the authoritative world. **Fixed** in `257824d`, `52620f6` and `00eff7c` (6.6). Proved by test: asset churn, entities and retained buffers in `6cc3ec6` (`sync_steady_state_tests.rs`); allocations per steady frame counted under valgrind DHAT in `77a9db6` (`sync_allocation_count_tests.rs`); one owner per concern in `88ca528` (`system_ownership_tests.rs`) | `scene_controller.rs:106`, `lab_ui.rs:98` |
 | C-16 | Med | [A] | Parallel implementations: `arena_render` vs `terrain/`, `bubble_shader` vs `bubble_optics`, and dead markers. **Fixed** in `8392b40`, `07f7014` and `64fd330` (6.6); the writer table of `88ca528` keeps one writer per concern | `lib.rs:27` |
-| C-17 | Med | **[V]** | Every combat effect creates its own `CombatFxMaterial` asset: one per tracer, projectile, beam and slash. In a 400-unit fight that is hundreds of material creations and removals a second, each with its own uniform buffer and bind group. It is event-driven, so outside the steady-state claim of Phase 6, but it is the most likely asset cost at 400 units. Found while planning the Phase 6 exit (`docs/plans/2026-11-03-close-phase-6-7-8-exits.md` §2.4); WP6 of that plan measures it; no fix is planned yet | `vfx.rs` `hitscan_tracer`, `projectile`, `beam`, `melee_slash` |
-| C-18 | Med | **[R]** | The smog solver costs about 8.2 ms of CPU on every frame, whatever the unit count: 19.7 % of all cycles in a 400-unit `perf` run and most of the 0-unit baseline's 10.8 ms main-world update. It is the largest single client cost. Found by WP6 of `docs/plans/2026-11-03-close-phase-6-7-8-exits.md`; evidence `docs/evidence/2026-11-03-frame-budget.md`; for a later plan | `client::smog::fluid::SmogGrid3d::step` |
+| C-17 | Med | **[V]** | Every combat effect creates its own `CombatFxMaterial` asset: one per tracer, projectile, beam and slash. In a 400-unit fight that is hundreds of material creations and removals a second, each with its own uniform buffer and bind group. It is event-driven, so outside the steady-state claim of Phase 6, but it is the most likely asset cost at 400 units. Found while planning the Phase 6 exit (`docs/plans/2026-11-03-close-phase-6-7-8-exits.md` §2.4); WP6 of that plan measures it. **Fixed** in `690be35` (merged `63dcc15`; open-findings WP3): pooled material slots, the per-effect data in a `CombatFxInstance` component written to the slot's buffer in the render world; test `sync_steady_state_tests.rs::combat_frames_reuse_effect_materials` (a 240-frame combat window spawns 173 effects and adds no material). In heavy combat frames on the RX 580 the frame interval's median falls from 20.4 to 16.8 ms and its p95 from 27.0 to 20.2 ms; evidence `docs/evidence/2026-11-03-c17-combat-fx-pool.md` | `vfx.rs` `hitscan_tracer`, `projectile`, `beam`, `melee_slash` |
+| C-18 | Med | **[R]** | The smog solver costs about 8.2 ms of CPU on every frame, whatever the unit count: 19.7 % of all cycles in a 400-unit `perf` run and most of the 0-unit baseline's 10.8 ms main-world update. It is the largest single client cost. Found by WP6 of `docs/plans/2026-11-03-close-phase-6-7-8-exits.md`; evidence `docs/evidence/2026-11-03-frame-budget.md`. **Partly fixed** by open-findings WP6 to WP9: baseline goldens and benchmark `fd7048c` (merged `35ced86`), bit-exact refactors `93a89a3` (merged `155aab7`) and brick sparsity `7fdbb54`, `ab12883` (merged `e935e0a`), then quiescence `3f3ab76` (merged `1629c00`; Q0020). The idle and after-fight costs are fixed: solver per frame at 0 units 5.0 → 0.3 ms, and after a fight the field comes to rest. What remains: a 400-unit fight still costs about 6.1 ms of solver per frame (7.8 ms at the base), above D-1's 2.0 ms trigger, so options F (lower fixed smog rate) and G (worker thread) are reopened for a later plan. Frame interval at 400 units on the RX 580: p50 16.75 → 12.03 ms, p95 36.30 → 20.92 ms. Evidence `docs/evidence/2026-11-04-c18-smog-solver.md` §7 and §8 | `client::smog::fluid::SmogGrid3d::step` |
 
 ### 4.5 Map editor
 
@@ -388,6 +388,9 @@ average on the main threads plus longer frame intervals in heavy combat frames, 
 screenshot shows no smog, so C-7 is still proved on the swarm scene only. Plan:
 `docs/plans/2026-11-03-close-phase-6-7-8-exits.md`.
 
+**Later (2026-11-04):** C-17 fixed and C-18 partly fixed by `docs/plans/2026-11-04-open-findings-c17-c18-p9-gaps.md`
+(see their rows in §4.4).
+
 ### Phase 7: Editor hardening (M, parallel)
 
 | Step | Finding | Action | Status |
@@ -461,6 +464,11 @@ and when a performance divergence is justified. Charter §6 is unchanged (Q0003)
 charter change in Q0010. Gaps found during the phase and left for later plans are listed in §9 of
 `docs/plans/2026-11-03-phase-9-structure-and-docs.md` and in `DESIGN.md` §4. Plan:
 `docs/plans/2026-11-03-phase-9-structure-and-docs.md`.
+
+**Later (2026-11-04):** the four gaps of the Phase 9 blueprint's §9 that were left for bugfix plans
+(`MapDocument::encode` panics, the last dual column and row unmeshed, peer bounces reported as 0 above 512 bubbles,
+two phase orders not pinned by the golden replay) are fixed by
+`docs/plans/2026-11-04-open-findings-c17-c18-p9-gaps.md` WP2, WP4, WP1 and WP5.
 
 ---
 

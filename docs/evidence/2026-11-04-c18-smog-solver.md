@@ -445,3 +445,269 @@ times as long as in its other rounds. The medians keep those runs out of the res
 Logs: `~/scratch/logs/open_wp8_bench_{a,b}_c{1,8}_r{1..5}.log` and `open_wp8_bench_index.log`; the first
 implementation's are in `open_wp8_bench_v1/`. They are on scratch and may be cleaned, so the tables here are the
 record.
+
+## 7. WP9: quiescence, re-recorded goldens and the A/B measurement
+
+WP9 of the plan changes `crates/client/src/smog/fluid.rs` and `crates/client/tests/smog_golden_tests.rs` in one
+commit, `3f3ab76` (`perf(smog): C-18 WP9 quiescence; smog goldens re-recorded`), on top of `main` at `4bd48cf`.
+The owner answered Q0020 with option 1, so the plan's step 1 does not skip anything.
+
+### The change (plan D-3)
+
+After `advect_velocity` computes a voxel's three new components, a voxel with
+`ux * ux + uy * uy + uz * uz <= SMOG_QUIESCENT_SPEED_SQ` gets exactly `+0.0` in all three. The constant is `1e-6`, a
+speed of at most `1e-3` world units per second. It also replaces the `1e-6` speed literal in
+`pack_textures_and_compute_metrics`, so the two uses cannot drift apart. The vorticity and glow literals of that test
+are unchanged. Both arms of WP8's differential test call the same voxel function, so quiescence applies to the
+sparse and the dense solver alike.
+
+### Tests
+
+- **New: `velocity_returns_to_exact_rest_after_sources_stop`** (`fluid.rs`). The showcase sources run for 60 steps
+  at 1/60 s, then no source for 1,800 steps (30 s). The test asserts that every velocity component of every voxel is
+  exactly `+0.0`, and that every brick's velocity, velocity scratch and vorticity flags are at rest.
+  - Red at WP8 (`main` at `5d307ca`): 84,723 velocity components are still nonzero.
+  - Red with a threshold of `1e-4` world units per second (`SMOG_QUIESCENT_SPEED_SQ = 1e-8`) instead of `1e-3`:
+    15 nonzero components remain after 30 s.
+  - Green with `1e-3`.
+- **Unchanged and passing:** the 25 semantic tests of `smog_bouncing_bubbles_tests.rs`, the eight earlier unit
+  tests of `fluid.rs` (among them `sparse_solver_matches_dense_solver_bit_for_bit`,
+  `brick_flags_keep_their_promises_after_every_step` and `smog_resting_on_a_brick_face_matches_dense_solver`), and
+  the 21 other smog unit tests (bricks, kinematics, material). The plan's stop rule (a semantic test that fails
+  would mean the change is visible) did not fire.
+
+### Goldens
+
+The commit re-records eleven constants: the seven fluid and system goldens named by D-3, and all four of WP6's
+characterisation goldens, which change too. Each of the eleven failed with the new code before the re-record
+(log `open_wp9_golden_new_code.log`). Under the `1e-8` threshold all eleven hash to a third value, different from
+both columns below (log `open_wp9_red_threshold.log`). Recorded on glibc 2.41, `x86_64`; every golden stays class
+L, because the change adds no `libm` call.
+
+| Constant | Old | New |
+|---|---|---|
+| `GOLDEN_FLUID_SHOWCASE` | `0xb42e_8fd5_0690_ef08` | `0x2b35_6d55_7c4a_1810` |
+| `GOLDEN_FLUID_MIXED_24` | `0x2e2d_8269_5e27_898d` | `0x743d_d564_7e66_28b6` |
+| `GOLDEN_FLUID_CROWD_48` | `0x6ab3_c16e_837d_e74b` | `0xe040_edb2_fa5b_187e` |
+| `GOLDEN_FLUID_WAKE_DECAY` | `0x6f8f_62ab_607f_d719` | `0x2ff5_8b66_774b_7a2b` |
+| `GOLDEN_FLUID_FAST_SOURCES` | `0x7ffa_1917_b16b_ea08` | `0x5fb4_f8c6_25fd_54e2` |
+| `GOLDEN_FLUID_BOUNDS_SHIFT` | `0xb677_0ad8_9bf1_a12a` | `0xea2a_91d9_b0cc_39c0` |
+| `GOLDEN_FLUID_VARIABLE_DT` | `0xf4fc_5e58_2628_330d` | `0x55ae_4990_ed7a_4886` |
+| `GOLDEN_SYSTEMS_STARTUP` | `0x5690_15a8_6873_e107` | `0xdc52_4ec7_f496_22d1` |
+| `GOLDEN_SYSTEMS_VISUAL_LAB` | `0xe585_490b_a96b_dced` | `0x4174_0f4e_bdad_29c9` |
+| `GOLDEN_SYSTEMS_SWARM` | `0x8d70_5277_8a52_19e3` | `0xecc6_5d0a_0949_f693` |
+| `GOLDEN_SYSTEMS_LIVE_BATTLE` | `0x5e7e_6426_b5ee_e540` | `0x5527_286e_5980_202b` |
+
+The old values of the four system goldens are those of `main` at `4bd48cf`. Animation WP1 (a renamed field in the
+hashed `Debug` text) and animation WP4 (a 176-byte bubble uniform) re-recorded them there, with no change to the
+smog output. WP9 was rebased onto both before its own re-record, so quiescence is the only cause of every change
+in the table.
+
+Checked unchanged: the four kinematics goldens, `GOLDEN_SYSTEMS_NOISE`, `GOLDEN_LIBM_CANARY` and
+`GOLDEN_LIBM_CANARY_C18`.
+
+### Benchmark at the final commit
+
+Three release bench binaries were built in one target directory (`~/scratch/cargo-target/open-wp9-rel`):
+
+- WP7 from `155aab7` (the dense solver);
+- WP8 from `5d307ca` (bricks);
+- WP9 from the WP9 commit (bricks and quiescence; its solver is that of `3f3ab76`).
+
+Five rounds ran on 2026-11-04, with the same method as §5 and §6. Each round ran `--contend 1`, then
+`--contend 8`. Within each, the three arms ran back to back in a rotating order. Every run was pinned with
+`taskset -c 32-47`. Rounds 1 to 3 ran from 17:17 to 17:26 UTC and rounds 4 and 5 from 17:50 to 17:59 UTC, after the
+frame-budget runs.
+
+Medians over the five rounds of each row's mean, p50 and p95, ms per step, `--contend 1`:
+
+| Scenario | Sources | WP7 mean / p50 / p95 | WP8 | WP9 | WP9 vs WP8 (p50) | WP9 vs WP7 (p50) |
+|---|---:|---|---|---|---:|---:|
+| `empty` | 0 | 2.31 / 2.22 / 3.53 | 0.25 / 0.12 / 0.20 | 0.14 / 0.12 / 0.15 | +3 % | −94 % |
+| `showcase` | 10 | 6.80 / 6.26 / 10.90 | 7.42 / 7.26 / 10.26 | 6.48 / 6.03 / 9.27 | −17 % | −4 % |
+| `crowd_48` | 48 | 4.37 / 4.16 / 8.01 | 4.38 / 4.35 / 4.78 | 5.00 / 4.33 / 8.61 | −1 % | +4 % |
+| `battle_240` | 240 | 4.71 / 4.23 / 8.26 | 3.93 / 3.74 / 4.98 | 3.76 / 3.77 / 4.01 | +1 % | −11 % |
+| `after_fight`, fight (0 to 30 s) | 240 | 4.37 / 4.17 / 7.17 | 3.92 / 3.73 / 5.07 | 3.90 / 3.79 / 4.01 | +2 % | −9 % |
+| `after_fight`, after (30 to 60 s) | 0 | 4.82 / 4.49 / 8.79 | 4.10 / 3.34 / 6.95 | 1.38 / 0.14 / 4.07 | −96 % | −97 % |
+
+Other users' work kept CPUs 32 to 47 between 97 and 100 % busy before every run of rounds 4 and 5. The contended
+rows are therefore read from rounds 1 to 3 only (medians of three, `--contend 8`):
+
+| Scenario | WP7 mean / p50 / p95 | WP8 | WP9 | WP9 vs WP8 (p50) | WP9 vs WP7 (p50) |
+|---|---|---|---|---:|---:|
+| `empty` | 3.58 / 3.05 / 10.00 | 0.24 / 0.12 / 0.19 | 0.22 / 0.15 / 0.21 | +28 % | −95 % |
+| `showcase` | 6.21 / 6.35 / 6.92 | 7.70 / 7.57 / 11.55 | 7.14 / 6.37 / 13.57 | −16 % | +0 % |
+| `crowd_48` | 4.26 / 4.09 / 4.55 | 4.80 / 4.33 / 7.06 | 4.50 / 4.38 / 5.09 | +1 % | +7 % |
+| `battle_240` | 4.26 / 4.16 / 4.53 | 3.81 / 3.81 / 4.02 | 3.98 / 3.94 / 4.43 | +4 % | −5 % |
+| `after_fight`, fight | 4.29 / 4.08 / 5.14 | 4.12 / 3.77 / 6.36 | 4.74 / 3.97 / 8.18 | +5 % | −3 % |
+| `after_fight`, after | 4.45 / 4.60 / 5.74 | 4.79 / 3.42 / 7.52 | 1.47 / 0.24 / 4.36 | −93 % | −95 % |
+
+What it shows:
+
+1. **The after-fight field is now nearly as cheap as an empty one.** At the median it costs 0.14 ms against 3.34 ms
+   at WP8 and 4.49 ms at WP7 (−96 and −97 %). The mean (1.38 ms) and the p95 (4.07 ms) carry the first 19 s or
+   so after the fight, while the wake still decays above `1e-3` world units per second. This is the row WP9 was
+   for.
+2. **The empty field and the fights are unchanged against WP8**, within ±5 % at the median. Quiescence does not
+   help a field that sources keep stirring.
+3. **The Visual Lab showcase regression of WP8 is gone at the median.** WP8 is again 16 to 17 % slower than the
+   dense solver here, reproducing §6's +18 %. WP9 brings `showcase` back to the dense solver's cost: −4 %
+   uncontended and +0 % contended at p50, and a lower p95 uncontended. The likely cause is that the fringes of the
+   showcase volume now come to rest, so their bricks are skipped and pay back the bookkeeping. **No follow-up
+   finding is recorded.** Q0048's condition, "if the showcase regression still matters afterwards", is not met.
+
+Per-run load: the one-minute load average, and the share of time CPUs 32 to 47 were busy in the 5 s before the run
+and during it. The second figure includes the benchmark's own threads.
+
+| Round | `--contend` | Arm | Started (UTC) | Load (1 min) | CPUs 32-47 busy before | during |
+|---|---:|---|---|---:|---:|---:|
+| 1 | 1 | WP7 | 17:17:05 | 11.15 | 59.0 % | 87.7 % |
+| 1 | 1 | WP8 | 17:17:36 | 13.54 | 98.9 % | 93.3 % |
+| 1 | 1 | WP9 | 17:18:05 | 14.62 | 100.0 % | 93.3 % |
+| 1 | 8 | WP7 | 17:18:28 | 15.02 | 87.0 % | 99.1 % |
+| 1 | 8 | WP8 | 17:19:03 | 16.81 | 61.5 % | 93.8 % |
+| 1 | 8 | WP9 | 17:19:32 | 16.60 | 64.3 % | 99.6 % |
+| 2 | 1 | WP9 | 17:19:59 | 16.51 | 37.6 % | 21.2 % |
+| 2 | 1 | WP8 | 17:20:22 | 12.34 | 58.1 % | 66.2 % |
+| 2 | 1 | WP7 | 17:20:49 | 12.02 | 62.6 % | 67.4 % |
+| 2 | 8 | WP9 | 17:21:21 | 13.61 | 61.1 % | 88.4 % |
+| 2 | 8 | WP8 | 17:21:48 | 16.68 | 32.7 % | 78.7 % |
+| 2 | 8 | WP7 | 17:22:19 | 17.68 | 54.3 % | 96.3 % |
+| 3 | 1 | WP8 | 17:22:54 | 18.78 | 17.6 % | 18.7 % |
+| 3 | 1 | WP9 | 17:23:24 | 18.51 | 11.3 % | 33.6 % |
+| 3 | 1 | WP7 | 17:23:51 | 16.81 | 61.4 % | 56.4 % |
+| 3 | 8 | WP8 | 17:24:26 | 18.66 | 19.5 % | 92.5 % |
+| 3 | 8 | WP9 | 17:25:02 | 24.31 | 40.5 % | 80.7 % |
+| 3 | 8 | WP7 | 17:25:31 | 21.50 | 65.0 % | 81.9 % |
+| 4 | 1 | WP7 | 17:50:03 | 22.42 | 99.5 % | 96.1 % |
+| 4 | 1 | WP9 | 17:50:51 | 25.11 | 80.8 % | 65.3 % |
+| 4 | 1 | WP8 | 17:51:16 | 22.50 | 66.7 % | 63.5 % |
+| 4 | 8 | WP7 | 17:51:45 | 20.08 | 60.4 % | 99.4 % |
+| 4 | 8 | WP9 | 17:52:34 | 25.06 | 99.0 % | 100.0 % |
+| 4 | 8 | WP8 | 17:53:24 | 33.00 | 99.7 % | 99.7 % |
+| 5 | 1 | WP9 | 17:54:15 | 31.02 | 97.5 % | 98.5 % |
+| 5 | 1 | WP7 | 17:54:42 | 28.58 | 97.9 % | 99.2 % |
+| 5 | 1 | WP8 | 17:55:28 | 42.34 | 98.9 % | 99.6 % |
+| 5 | 8 | WP9 | 17:56:14 | 51.37 | 99.3 % | 99.9 % |
+| 5 | 8 | WP7 | 17:57:08 | 60.01 | 99.8 % | 99.9 % |
+| 5 | 8 | WP8 | 17:58:33 | 52.56 | 99.7 % | 97.3 % |
+
+Logs: `~/scratch/logs/open_wp9_bench_w{7,8,9}_c{1,8}_r{1..5}.log` and `open_wp9_bench_index.log` (scratch; may be
+cleaned, so the tables here are the record).
+
+### Frame-budget A/B (plan D-6), the measure of record for the C-18 chain
+
+The two arms:
+
+- **Arm A** is the plan's base, `e85f79f`. It is the release `frame_budget` of `~/scratch/cargo-target/planbase`,
+  as in §3, with `--spec` and `--source-assets` pointing at the `git archive` export `~/scratch/open_wp6_base`.
+- **Arm B** is the WP9 commit on top of `main` at `9d5884c`: WP3's pooled combat effects (C-17) and WP7 to WP9 of
+  C-18. It was built from a `git archive` export as `d9f2044`. Its solver (`fluid.rs`, `bricks.rs`) is that of
+  `3f3ab76`, apart from a rewording of the new `PERFORMANCE RATIONALE` block. After the runs, `main` gained combat
+  WP4 (`be5a476`, a weapon rebalance in `sim_core`) and animation WP4 (`4bd48cf`, the GPU flipbook clock and a
+  176-byte bubble uniform). The solver did not change, but the final commit's battle and bubble rendering differ
+  slightly from arm B's, so arm B measures C-17 and C-18 on `9d5884c`.
+
+Each arm's fixture root was prepared once on `lavapipe` without the lock. Then 16 runs, each one `with-gpu-lock`
+holding KWin and the tool, exactly D-6's command:
+
+- headless KWin 6.3.6 (`--virtual`, 1280×720) on the RX 580 (RADV POLARIS10, Mesa 25.0.7);
+- `taskset -c 32-47`, `--display-path kwin-virtual`;
+- about 10 s between runs.
+
+The first 12 runs interleave A and B, 0 and 400 units, three pairs each. Then one `perf record -F 997` run per arm
+at 400 units, as D-6 asks, and one per arm at 0 units, which the plan does not ask for, to give the solver's cost
+at 0 units. Every report exists and no log contains `frame_budget failed`. The lock never waited more than 10 s.
+
+The shared machine never fell below D-6's load threshold of 8 during the session, so every run is "loaded" by
+that rule, and repeating loaded runs would not have produced unloaded ones. The per-run table gives the load. Run
+10 (B, 0 units) overlapped a machine-wide load spike, to 118 at its end: its p95 is 161 ms and it rendered half the
+frames of the other B runs at 0 units. It is kept, as the protocol says, and it is the reason B's p95 and p99 at 0
+units are no better than A's.
+
+Medians over the three interleaved runs of each arm and scenario, in ms. The combat window is the report's: 750
+ticks from the first combat event. The after-combat window covers the frames past it, up to the end of the
+1,500-tick measurement; it was computed from the report's per-frame records with the tool's nearest-rank
+percentiles.
+
+| Arm | Units | Frame interval p50 | p95 | p99 | Main update p50 | Combat p50 | Combat p95 | Combat update p50 | After-combat p50 | After-combat p95 | After-combat update p50 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| A (`e85f79f`) | 0 | 13.38 | 25.93 | 33.75 | 11.47 | | | | | | |
+| B (WP9) | 0 | 12.60 | 26.49 | 35.72 | 9.36 | | | | | | |
+| A (`e85f79f`) | 400 | 16.75 | 36.30 | 53.57 | 14.97 | 21.20 | 39.58 | 15.64 | 17.77 | 37.57 | 15.48 |
+| B (WP9) | 400 | **12.03** | **20.92** | **27.24** | **9.82** | 12.09 | 23.76 | 10.04 | 12.01 | 15.82 | 10.17 |
+
+At 400 units, B's frame interval is 28 % shorter at the median and 42 % shorter at p95. Its main update is 34 %
+shorter. After the fight, the base stayed close to its combat cost (p50 17.77 against 21.20 ms, p95 37.57
+against 39.58 ms). B's after-combat window costs no more than its fight (p50 12.01, p95 15.82 ms). At 0 units, B's main update is 18 % shorter at the median. The cleaner pair 05/06 shows the size of
+the change better: 5.08 against 10.24 ms. The frame-interval medians at 0 units are mixed, because run 10 was
+disturbed.
+
+Per run: the one-minute load before the run, and the share of time CPUs 32 to 47 were busy in the 5 s before it.
+The lock wait is the time from the request to the lock being held.
+
+| Run | Arm | Units | `perf` | Started (UTC) | Load | CPUs 32-47 busy before | Lock wait (s) | Rendered frames | p50 | p95 | p99 | Update p50 | Combat p50 / p95 / update p50 | After-combat p50 / p95 / update p50 |
+|---|---|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
+| 01 | A | 0 | no | 17:26:10 | 16.12 | 41.1 % | 8.2 | 3,645 | 15.44 | 25.93 | 33.75 | 13.05 | | |
+| 02 | B | 0 | no | 17:27:50 | 32.27 | 42.5 % | 5.5 | 4,212 | 12.60 | 26.49 | 35.72 | 9.36 | | |
+| 03 | A | 400 | no | 17:29:29 | 35.10 | 59.2 % | 0.0 | 3,098 | 16.75 | 36.30 | 53.57 | 14.97 | 22.80 / 47.22 / 19.63 | 15.11 / 21.68 / 13.51 |
+| 04 | B | 400 | no | 17:30:59 | 28.67 | 23.7 % | 0.0 | 3,631 | 14.37 | 29.14 | 43.84 | 11.67 | 18.57 / 38.10 / 14.13 | 12.57 / 20.70 / 10.49 |
+| 05 | B | 0 | no | 17:32:23 | 20.02 | 8.9 % | 0.0 | 6,799 | 7.80 | 15.27 | 27.91 | 5.08 | | |
+| 06 | A | 0 | no | 17:33:44 | 16.73 | 16.4 % | 10.0 | 4,964 | 11.82 | 16.51 | 20.42 | 10.24 | | |
+| 07 | B | 400 | no | 17:35:17 | 12.42 | 18.6 % | 0.0 | 4,826 | 12.03 | 16.35 | 21.77 | 9.82 | 12.03 / 16.62 / 9.34 | 12.01 / 15.82 / 10.17 |
+| 08 | A | 400 | no | 17:36:39 | 11.60 | 20.3 % | 0.0 | 3,200 | 16.66 | 34.73 | 43.31 | 13.83 | 16.01 / 23.89 / 13.06 | 17.77 / 37.57 / 15.48 |
+| 09 | A | 0 | no | 17:38:03 | 12.84 | 17.7 % | 0.0 | 3,629 | 13.38 | 33.95 | 51.31 | 11.47 | | |
+| 10 | B | 0 | no | 17:39:26 | 38.56 | 56.9 % | 0.0 | 1,765 | 15.68 | 160.75 | 334.22 | 11.69 | | |
+| 11 | A | 400 | no | 17:41:04 | 98.88 | 58.9 % | 0.0 | 2,594 | 20.51 | 41.21 | 59.89 | 16.45 | 21.20 / 39.58 / 15.64 | 19.82 / 45.17 / 17.32 |
+| 12 | B | 400 | no | 17:42:27 | 35.41 | 14.2 % | 0.0 | 5,050 | 10.66 | 20.92 | 27.24 | 9.06 | 12.09 / 23.76 / 10.04 | 9.92 / 13.22 / 8.50 |
+| 13 | A | 400 | yes | 17:43:49 | 18.26 | 9.5 % | 0.0 | 3,575 | 16.32 | 21.64 | 24.91 | 14.19 | 17.27 / 22.74 / 14.28 | 15.77 / 19.67 / 14.13 |
+| 14 | B | 400 | yes | 17:45:13 | 10.03 | 13.9 % | 0.0 | 4,244 | 13.03 | 21.09 | 28.33 | 10.84 | 15.50 / 23.88 / 12.08 | 12.14 / 15.07 / 10.37 |
+| 15 | A | 0 | yes | 17:47:11 | 15.55 | 84.7 % | 0.0 | 3,145 | 16.08 | 35.46 | 57.15 | 13.86 | | |
+| 16 | B | 0 | yes | 17:48:40 | 21.63 | 55.5 % | 0.0 | 5,940 | 8.30 | 24.02 | 36.04 | 5.89 | | |
+
+The `perf` runs' own frame figures are not used for the comparison, because `perf` slows a run.
+
+### `SmogGrid3d::step` per frame (`perf`)
+
+`perf report --no-children --sort sym -n`. Milliseconds per frame are samples ÷ 997 ÷ rendered frames (measured
+plus the 180 warm-up frames). The solver figure adds the `bricks.rs` symbols that were not inlined into `step`
+(`Runs::next`, `BrickFlags::any_in`, `curl_at_rest`, `scalar_sources_empty`) to `step`'s self time.
+
+| Run | Arm | Units | Rendered frames | Solver samples | **Solver ms per frame** | `memmove` ms per frame | `floorf` ms per frame |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 15 | A | 0 | 3,325 | 16,575 | **5.00** | 1.60 | 0.00 |
+| 16 | B | 0 | 6,120 | 1,955 | **0.32** | 0.79 | 0.00 |
+| 13 | A | 400 | 3,755 | 29,190 | **7.80** | 1.87 | 0.43 |
+| 14 | B | 400 | 4,424 | 26,863 | **6.07** | 0.97 | 0.00 |
+
+Run 13 reproduces §3's 7.54 ms at the base. At 0 units the solver now costs a sixteenth of the base. At 400 units
+it costs 22 % less per frame. The fight keeps sources moving across the whole battle window, so few bricks rest,
+which matches `battle_240` in the benchmark.
+
+### D-1's trigger: fired
+
+At 400 units on the frame-budget path, the solver still costs **6.1 ms per frame**, above D-1's threshold of
+2.0 ms. By the plan's rule this is a remaining part of C-18. Options F (a lower fixed smog rate with an accumulator)
+and G (stepping on a worker thread) are reopened for a later plan, which chooses between them. This plan implements
+neither.
+
+- **WP9 records it here.** D-1 also asks WP9 to record it in the remediation plan, but D-7 gives that file's C-18
+  row to WP11, and WP9 touches only its own files. So WP11 is to mark C-18 **Partly fixed**: the idle and
+  after-fight costs are fixed, and the 400-unit fight cost remains, at 6.1 ms per frame against 7.8 at the base.
+- **The figures.** At 0 units: 5.0 → 0.3 ms per frame. At 400 units: 7.8 → 6.1 ms per frame. Frame interval at
+  400 units: p50 16.75 → 12.03 ms and p95 36.30 → 20.92 ms (medians of three interleaved runs).
+
+Reports, logs and `perf` data: `~/scratch/open_wp9_ab/{a,b}/` and `~/scratch/logs/open_wp9_fb_*.log`, with the
+index `open_wp9_fb_index.log` (scratch; may be cleaned, so the tables here are the record).
+
+## 8. Status of C-18
+
+| Step | What | Output | Commit |
+|---|---|---|---|
+| WP6 | Characterisation goldens, benchmark, attribution | Unchanged | `35ced86` (merge) |
+| WP7 | Ping-pong slabs, truncating cast, dead slabs | Bit-exact | `155aab7` (merge) |
+| WP8 | Brick sparsity | Bit-exact | `e935e0a` (merge) |
+| WP9 | Quiescence at `1e-3` world units per second | Deliberate (D-3, Q0020); 11 goldens re-recorded | `3f3ab76` |
+
+An idle field and a field after a fight now cost almost nothing. A 400-unit fight still costs about 6 ms of solver
+per frame, which D-1 leaves to a later plan (options F or G).

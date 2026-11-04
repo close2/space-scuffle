@@ -108,10 +108,10 @@ Status is `Working` (built, tested, in the shipped game), `Partial` (built but l
 |---|---|---|---|---|
 | Fixed-point math | Working | `SimScalar`, `SimVec2`, `SimAngle`, table trigonometry, checked overflow | `crates/sim_types/tests/math_identities.rs`, `crates/sim_types/tests/math_properties.rs` | none known |
 | Tick and checksum | Working | The phase pipeline of §3; versioned checksum over persistent state and RNG | `crates/sim_core/tests/checksum_state_tests.rs` | none known |
-| Cross-platform determinism | Working | Golden replay on three native targets and wasm32 in CI | `crates/sim_core/tests/golden_replay_tests.rs` | The replay does not pin every phase order (two swaps pass it; Phase 9 blueprint §9) |
+| Cross-platform determinism | Working | Golden replay on three native targets and wasm32 in CI; a second fixture pins vision before acquisition and route upkeep before arrival (`c271226`) | `crates/sim_core/tests/golden_replay_tests.rs` (`golden_replay_orders_reproduces_every_checkpoint`) | none known |
 | Combat | Working | Weapon timing with turn, damage point, cancelable backswing and cooldown; turrets; shields and armour; splash; projectiles | `crates/sim_core/tests/stutter_step_tests.rs`, `crates/sim_core/tests/combat_correctness_tests.rs`, `crates/sim_core/tests/damage_and_shields_tests.rs` | Changed outcomes await the owner (Q0007); battle 33 investigated in [`docs/evidence/2026-11-03-battle-33-investigation.md`](docs/evidence/2026-11-03-battle-33-investigation.md), changes proposed in Q0035 to Q0041 |
 | Movement and pathfinding | Working | Grid clearance field, A* corridor and funnel, steering, push priority and Hold Position | `crates/sim_map/tests/funnel_tests.rs`, `crates/sim_map/tests/clearance_field_tests.rs`, `crates/sim_core/tests/push_priority_tests.rs` | A move to an unreachable point walks to the nearest reachable one, by the owner's choice (Q0006) |
-| Terrain, cliffs and ramps | Working | Cliff levels, ramps, the map format and its validation, and the client's terrain mesher | `crates/sim_map/tests/ramp_traversal_tests.rs`, `crates/sim_map/tests/validation_tests.rs`, `crates/client/tests/mesher_golden_tests.rs` | `MapDocument::encode` panics on a document whose cell count does not match its size; the client leaves the last dual column or row unmeshed when a map side is a multiple of 16 (Phase 9 blueprint §9) |
+| Terrain, cliffs and ramps | Working | Cliff levels, ramps, the map format and its validation, and the client's terrain mesher; `MapDocument::encode` returns a typed error (`f53f73b`, tests `encode_rejects_*`); the terrain chunks cover the last dual column and row (`94130d5`, test `spawned_chunks_cover_every_dual_cell`) | `crates/sim_map/tests/ramp_traversal_tests.rs`, `crates/sim_map/tests/validation_tests.rs`, `crates/sim_map/tests/map_format_tests.rs`, `crates/client/tests/mesher_golden_tests.rs`, `crates/client/tests/terrain_tests.rs` | none known |
 | Simulation vision and watchtowers | Working | Per-player vision with high ground, air reveal and watchtowers | `crates/sim_map/tests/vision_tests.rs`, `crates/sim_core/tests/watchtower_tick_tests.rs` | none known |
 | Economy and gas | Partial | Harvesting and income for minerals and gas | `crates/sim_core/tests/harvest_income_tests.rs` | Gas is disabled in the shipped game for want of media (Q0001) |
 | Construction | Working | Transactional build admission and a construction lifecycle | `crates/sim_core/tests/construction_lifecycle_tests.rs` | none known |
@@ -122,7 +122,7 @@ Status is `Working` (built, tested, in the shipped game), `Partial` (built but l
 | `PlayerView` | Working | Per-player knowledge for the HUD and admission | `crates/sim_core/tests/player_view_tests.rs` | none known |
 | Catalog data | Working | Factions, units, structures, upgrades, start loadouts and scenarios read at run time | `crates/sim_core/tests/runtime_catalog_tests.rs`, `crates/sim_core/tests/faction_catalog_tests.rs` | Data choices await the owner (Q0007) |
 | Bubble and dome rendering | Working | Instanced bubbles and domes with optics, dome fill and validated shaders | `crates/client/tests/gpu_validation_tests.rs`, `crates/client/tests/bubble_optics_tests.rs`, `crates/client/tests/dome_fill_tests.rs` | none known |
-| Smog fog presentation | Working | Smog field driven by the player's vision | `crates/client/tests/smog_golden_tests.rs`, `crates/client/tests/battle_fog_tests.rs` | Golden hashes name the host `libm` functions they use (Q0014); above 512 bubbles the reported peer-bounce count is 0 (Phase 9 blueprint §9) |
+| Smog fog presentation | Working | Smog field driven by the player's vision; the all-pairs kinematics fallback above 512 bubbles reports its peer bounces (`9987863`, unit test `all_pairs_fallback_reports_its_contacts`, `kinematics_all_pairs_fallback_golden`) | `crates/client/tests/smog_golden_tests.rs`, `crates/client/tests/battle_fog_tests.rs` | Golden hashes name the host `libm` functions they use (Q0014); the solver costs about 6 ms per frame during a 400-unit fight (C-18, partly fixed; §5) |
 | Runtime mist | Removed | Deleted in `0f31027` (remediation decision D2) | none | none |
 | HUD and command card | Working | Resources, selection card, command card and production queue | `crates/client/tests/battle_hud_tests.rs`, `crates/client/tests/battle_card_tests.rs` | none known |
 | Selection and input | Working | Selection, box select, control groups, right-click orders; one declared writer per client concern; input ownership sampled after the inspector draws | `crates/client/tests/battle_input_tests.rs`, `crates/client/tests/battle_context_order_tests.rs`, `crates/client/tests/system_ownership_tests.rs` | none known |
@@ -133,7 +133,7 @@ Status is `Working` (built, tested, in the shipped game), `Partial` (built but l
 | Media coverage | Partial | Real media for part of the roster; missing media fails loudly | `crates/client/tests/runtime_media_tests.rs` | Paid generation awaits the owner (Q0001) |
 | Terrain anisotropy on old lavapipe | Partial | Terrain sampling validated on `radv`; a test override for old lavapipe | `crates/client/tests/gpu_validation_tests.rs` | Override kept until this server's Mesa is 25.1 or later (Debian 13 ships 25.0.7), then deleted (Q0009) |
 | Networking | Not built | Nothing; intent is deterministic lockstep | none | all |
-| Replays | Partial | The golden replay fixture only | `crates/sim_core/tests/golden_replay_tests.rs` | No recording of real matches |
+| Replays | Partial | The two golden replay fixtures only | `crates/sim_core/tests/golden_replay_tests.rs` | No recording of real matches |
 | Bot API | Not built | Nothing | none | all |
 
 ---
@@ -179,10 +179,21 @@ interleaved runs, in ms:
 
 Reference lines (Q0015, no pass or fail): 16.7 ms is 60 frames per second, 33.3 ms is 30. The maximum at 200 and
 400 units is the single frame of the first tick. The client is CPU-bound in the main world: a quarter of the pixels
-changes the 400 median by 3 %, and the GPU passes Bevy times add up to 3.6 ms. Its largest cost is the smog solver,
-about 8.2 ms of every frame at any unit count (finding C-18). Commands, every run, the attribution runs and why
-Xvfb's figures are not the game's are in
+changes the 400 median by 3 %, and the GPU passes Bevy times add up to 3.6 ms. Commands, every run, the attribution
+runs and why Xvfb's figures are not the game's are in
 [`docs/evidence/2026-11-03-frame-budget.md`](docs/evidence/2026-11-03-frame-budget.md).
+
+**Since that measurement.** The table above is the figure of record at `c918aa9`; it has not been re-measured with
+the five-run protocol. At `c918aa9` the largest cost was the smog solver, about 8.2 ms of every frame at any unit
+count (finding C-18). Plan `2026-11-04-open-findings-c17-c18-p9-gaps` pooled the combat-effect materials (C-17,
+`690be35`) and made the solver skip resting bricks and bring a still field to rest (C-18, WP7 to WP9, last
+`3f3ab76`). An A/B against the plan's base `e85f79f`, on the RX 580 through headless KWin, medians of three
+interleaved runs at 400 units: frame interval p50 16.75 → 12.03 ms, p95 36.30 → 20.92 ms, main update p50
+14.97 → 9.82 ms. The solver's own cost per frame (`perf`) fell from 5.0 to 0.3 ms at 0 units and from 7.8 to 6.1 ms
+at 400 units. The 400-unit fight cost stays above the plan's 2 ms trigger, so C-18 is partly fixed and a lower
+fixed smog rate or a worker thread is left for a later plan. These runs are attribution, not figures of record:
+[`docs/evidence/2026-11-04-c18-smog-solver.md`](docs/evidence/2026-11-04-c18-smog-solver.md) §7 and §8, and
+[`docs/evidence/2026-11-03-c17-combat-fx-pool.md`](docs/evidence/2026-11-03-c17-combat-fx-pool.md).
 
 ---
 
