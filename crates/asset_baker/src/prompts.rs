@@ -54,9 +54,10 @@ pub const MIN_PIN_SIZE: (u32, u32) = (1280, 720);
 pub const PIN_ASPECT_TOLERANCE_PERMILLE: u64 = 10;
 
 /// Whether the atlas plays `state` as a loop. Idle, Walk and Cast loop; Attack plays once;
-/// Constructing and Die hold their last frame. This is the classification the bake writes into
-/// each manifest's `ActionSlice::looping` (`ffmpeg_importer`); an integration test bakes every
-/// state and compares the two, so they cannot drift apart.
+/// Constructing and Die hold their last frame. The bake (`ffmpeg_importer`) calls this to write
+/// each manifest's `ActionSlice::looping` and to refuse a seam repair on a state that does not
+/// loop, so it is the one source of that classification; an integration test bakes every state
+/// and compares the two.
 #[must_use]
 pub const fn atlas_loops(state: AnimState) -> bool {
     match state {

@@ -18,8 +18,9 @@
 //! `install-clip`, then `bake-unit-videos` (which writes `<slug>.provenance.ron` beside the
 //! atlas), then `audit-media --strict --ledger <ledger>`. `review` and `bake-unit-videos` fit
 //! each clip into the square game frame as the `framing` section of `media_style.ron` says for
-//! the identity's render shape; `generate-veo` sends the parameters of
-//! `media/veo_request.ron`.
+//! the identity's render shape, and `bake-unit-videos` repairs the loop seam of each state the
+//! `loops` section gives a `seam` (plan `docs/plans/2026-11-04-veo-seamless-loops.md`, D-5);
+//! `generate-veo` sends the parameters of `media/veo_request.ron`.
 //!
 //! # Invariants
 //! - The catalog is read once per run, from disk; nothing is compiled in.
@@ -42,6 +43,7 @@ use asset_baker::ffmpeg_importer::{FrameSpec, DEFAULT_FFPROBE_PATH};
 use asset_baker::framing::{BakeFraming, DEFAULT_UNIT_FPS, DEFAULT_UNIT_FRAME_SIZE};
 use asset_baker::ledger::{self, Ledger, LedgerHistory};
 use asset_baker::media_audit::MediaAuditStatus;
+use asset_baker::prompts::SeamRepair;
 use asset_baker::provenance;
 use asset_baker::veo_plan::{parse_state, published_states, state_slug, VeoDirs};
 use asset_baker::{BakerError, MediaStyle, RunContext, VeoClient, VeoRequestSettings};
@@ -273,6 +275,7 @@ enum Commands {
     },
 
     /// Bakes an identity's action clips into one atlas; only states it publishes are accepted.
+    /// Looping states get the seam repair `media_style.ron`'s `loops` section gives them.
     #[command(name = "bake-unit-videos")]
     BakeUnitVideos {
         /// Exact catalog slug.
@@ -932,16 +935,50 @@ fn identity_framing(
     assets: Option<&Path>,
     unit: &str,
 ) -> Result<(UnitCatalog, BakeFraming), Box<dyn Error>> {
+    let (catalog, style) = identity_style(assets, unit)?;
+    let framing = framing_of(&catalog, &style, unit)?;
+    Ok((catalog, framing))
+}
+
+/// The catalog and the media style, after checking that `unit` is a catalog identity.
+fn identity_style(
+    assets: Option<&Path>,
+    unit: &str,
+) -> Result<(UnitCatalog, MediaStyle), Box<dyn Error>> {
     let root = asset_baker::resolve_assets_root(assets)?;
     let catalog = asset_baker::load_catalogs(&root)?.units;
     asset_baker::validate_catalog_slug(&catalog, unit)?;
     let style = MediaStyle::load_for_catalog(&root, &catalog)?;
+    Ok((catalog, style))
+}
+
+/// The framing `style` gives `unit`'s render shape.
+fn framing_of(
+    catalog: &UnitCatalog,
+    style: &MediaStyle,
+    unit: &str,
+) -> Result<BakeFraming, Box<dyn Error>> {
     let shape = catalog
         .get_by_slug(unit)
         .map(|archetype| archetype.shape)
         .ok_or_else(|| format!("'{unit}' is not a catalog identity"))?;
-    let framing = style.framing.framing_for(unit, &shape);
-    Ok((catalog, framing))
+    Ok(style.framing.framing_for(unit, &shape))
+}
+
+/// The seam repair `style`'s loop policy gives each of `states` of `unit` (loops plan, D-1 and
+/// D-5); states without one are absent.
+fn seam_repairs(
+    style: &MediaStyle,
+    unit: &str,
+    states: &[AnimState],
+) -> BTreeMap<AnimState, SeamRepair> {
+    states
+        .iter()
+        .filter_map(|state| {
+            let seam = style.loops.spec_for(unit, *state)?.seam?;
+            Some((*state, seam))
+        })
+        .collect()
 }
 
 /// `, bars #rrggbb` for a measured bar colour, else nothing.
@@ -1029,8 +1066,10 @@ fn run_bake_unit_videos(
             "at least one clip (--idle, --walk, --attack, --constructing, --cast) is needed".into(),
         );
     }
-    let (catalog, framing) = identity_framing(assets, unit)?;
+    let (catalog, style) = identity_style(assets, unit)?;
+    let framing = framing_of(&catalog, &style, unit)?;
     let given: Vec<AnimState> = clips.iter().map(|(state, _)| *state).collect();
+    let seams = seam_repairs(&style, unit, &given);
     published_states(&catalog, unit, Some(&given))?;
     let missing: Vec<&str> = published_states(&catalog, unit, None)?
         .into_iter()
@@ -1054,12 +1093,13 @@ fn run_bake_unit_videos(
         fps: target.fps,
         framing,
     };
-    let record = provenance::bake_with_provenance(
+    let record = provenance::bake_with_provenance_and_seams(
         unit,
         &clips,
         &target.videos_dir,
         &target.output_dir,
         spec,
+        &seams,
     )?;
     println!(
         "    Successfully generated multi-action atlas '{}' ({} states at {}x{} @ {} fps) with its provenance record.",
@@ -1070,6 +1110,14 @@ fn run_bake_unit_videos(
         record.bake.fps
     );
     for (state, entry) in &record.states {
+        if let Some(seam) = entry.seam {
+            println!(
+                "    {}: seam repair, loop sampling, scale lock {} per mille, cross-fade {} frames",
+                state_slug(*state),
+                seam.scale_permille,
+                seam.crossfade_frames
+            );
+        }
         if let Some(bar) = entry.bar_rgb {
             let [r, g, b] = bar;
             println!("    {}: bars #{r:02x}{g:02x}{b:02x}", state_slug(*state));
