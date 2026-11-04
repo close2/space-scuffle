@@ -81,7 +81,10 @@ paced by the weekly limit (D-4).
   without paying, any stop on a quota error.
 - **Baking** (`ffmpeg_importer.rs`): `/usr/bin/ffmpeg`, square crop, scale, resample the whole clip; a vertical
   strip at most 16,384 px tall, so with 512 px frames and K states each state gets `32 / K` frames; output
-  `<out>/<slug>.png` and `<slug>.flipbook.ron`; frames stay opaque. No provenance is written.
+  `<out>/<slug>.png` and `<slug>.flipbook.ron`; frames stay opaque. No provenance is written. **Amended
+  2026-11-04** ([`2026-11-04-veo-letterbox-bake.md`](2026-11-04-veo-letterbox-bake.md), Q0043): the framing is a
+  data policy by render shape; structures are letterboxed with a bar colour measured from the clip, units keep the
+  centre crop.
 
 ### 2.2 What the game requires
 
@@ -260,9 +263,10 @@ false` is accepted for the chosen model and lowers the cost (the pipeline discar
 - **Review.** `asset_baker review <slug>` writes a contact sheet (ffmpeg `tile`, 8 frames per clip) to
   `~/scratch/veo/review/` and a downscaled copy (at most 1,024 px wide) to `docs/evidence/veo/review/`. The agent
   looks at it (an image read) and records `accept` or `reject` with a reason against written criteria: one subject,
-  matches its prompt, no text or watermark, no cut or morph to a different object, subject stays inside the square
-  crop, action readable at 512 px, consistent with the identity's other states. Rejected clips stay in
-  `~/scratch/veo/clips/` and are recorded in the ledger. Owner taste is final: Q0026 shows the owner the pilot and
+  matches its prompt, no text or watermark, no cut or morph to a different object, subject stays inside the framed
+  square (letterbox for structures, crop for units, amended by `2026-11-04-veo-letterbox-bake` D-4), action
+  readable at 512 px, consistent with the identity's other states. Rejected clips stay in `~/scratch/veo/clips/`
+  and are recorded in the ledger. Owner taste is final: Q0026 shows the owner the pilot and
   batch 1 sheets.
 
 ### D-8. Where the files live
@@ -414,6 +418,14 @@ log is safe to read: the tool prints no secret (WP1's test proves it).
    the pilot once more (counts as a retry).
 
 ### WP4: Batch 1 (9 generations, at most 3 retries)
+
+**Amended 2026-11-04:** WP4 starts only after WP2 of
+[`2026-11-04-veo-letterbox-bake.md`](2026-11-04-veo-letterbox-bake.md) is merged: the letterbox bake exists, the
+pilot's Idle clip is accepted and installed, and `assets/media/veo_request.ron` sends `generateAudio: false`. WP4's
+first clip is the first live request with that field; if Vertex refuses it, record the refusal, set `generate_audio:
+None` and rerun (that plan's D-6). Cost record before WP4: 1 generation, $0.40 at list price, of the owner's $15
+target (Q0024). Batch 1 then costs $2.88 (silent, $0.32 a clip) or $3.60 ($0.40 a clip) at list price; record the
+running total in the batch evidence.
 
 1. `generate-veo` for the five identities with `--max-generations 9` (the pilot's Idle is reused). Review every
    clip (D-7); regenerate rejected ones within the retry allowance.
