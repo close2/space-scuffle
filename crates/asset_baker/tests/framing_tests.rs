@@ -142,8 +142,8 @@ fn centred_box_clip(dir: &Path, name: &str, width: u32, height: u32) -> PathBuf 
     let output = dir.join(name);
     let [r, g, b] = BACKDROP;
     let source = format!("color=c=0x{r:02X}{g:02X}{b:02X}:s={width}x{height}:r=8:d=1");
-    let (x, y) = (width / 2 - 8, height / 2 - 8);
-    let filter = format!("drawbox=x={x}:y={y}:w=16:h=16:color=0x00FF00:t=fill,format=yuv420p");
+    let (left, top) = (width / 2 - 8, height / 2 - 8);
+    let filter = format!("drawbox=x={left}:y={top}:w=16:h=16:color=0x00FF00:t=fill,format=yuv420p");
     let status = std::process::Command::new("/usr/bin/ffmpeg")
         .args([
             "-v", "error", "-y", "-f", "lavfi", "-i", &source, "-vf", &filter,
@@ -282,7 +282,7 @@ fn a_tall_clip_is_pillarboxed_with_bars_left_and_right() {
 /// colour `inner` everywhere else.
 fn banded_frame(edge: [u8; 3], inner: [u8; 3]) -> RgbaImage {
     RgbaImage::from_fn(512, 288, |_, y| {
-        let [r, g, b] = if !(4..284).contains(&y) { edge } else { inner };
+        let [r, g, b] = if (4..284).contains(&y) { inner } else { edge };
         image::Rgba([r, g, b, 255])
     })
 }
