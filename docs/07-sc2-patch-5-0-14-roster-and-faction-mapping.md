@@ -104,6 +104,10 @@ starts; else runs to its end
   out during a backswing, the next swing starts on that tick and ends the backswing; with nothing to attack, the
   backswing runs to its end. So the attack cycle is `period_ticks` whatever `backswing_ticks` is (Q0038, plan
   `2026-11-04-combat-sc2-alignment` D-2).
+- **Damage Point 0:** The shot lands on the tick the attack starts; there is no wind-up phase to hold the unit or to
+  cancel. A swing starts on tick T and releases on T + `damage_point_ticks`, and the cooldown it charges is
+  `period_ticks - damage_point_ticks`, so the attack cycle is `period_ticks` for every damage point, 0 included
+  (Q0036, plan `2026-11-04-combat-sc2-alignment` D-3).
 - **Stutter-Step Principle:** Issuing a `Move` order immediately at `damage_point_ticks + 1` cancels `backswing_ticks`, allowing high-skill players to kite slower enemies while the internal cooldown ticks down in the background.
 
 ---
