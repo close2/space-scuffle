@@ -168,7 +168,6 @@ fn every_public_entity_field_changes_the_world_checksum() {
             is_mineral_walking => true,
             is_holding_position => true,
             current_anim => AnimState::Attack,
-            anim_progress => SimScalar::ONE,
             last_hit_angle => SimAngle::PI,
             shield_hit_flash_ticks => 7,
             hull_hit_flash_ticks => 7,
