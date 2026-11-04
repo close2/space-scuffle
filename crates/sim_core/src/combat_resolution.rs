@@ -17,17 +17,18 @@
 //!    impacts apply in descending launch-list order. Both orders are deterministic.
 //! 3. No shot changes another entity's position, owner or lifecycle link during this phase.
 
-use crate::catalog::{SplashSpec, WeaponSpec};
+use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
 use crate::combat::{
     calculate_hit_damage_upgraded, calculate_splash_damage_upgraded, shares_combat_plane,
     step_entity_weapon, DamageResolution, WeaponTarget,
 };
-use crate::entity::{ActiveProjectile, WeaponPhase};
-use crate::weapon_timing::{resolve_attack_period, SimulationDiagnostic};
+use crate::entity::{ActiveProjectile, Entity, WeaponPhase};
+use crate::weapon_timing::{resolve_attack_period, AttackRate, SimulationDiagnostic};
 use crate::world::SimWorld;
 use sim_types::{
-    CombatEventVisual, EntityId, MoverType, PlayerId, ProjectileTargetLossBehavior, SimAngle,
-    SimScalar, SimVec2, Tick, UnitOrder, UnitTypeId, WeaponVisualKind,
+    CombatEventVisual, EntityId, MoverType, PerPlayer, PlayerId, PlayerUpgradeState,
+    ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, Tick, UnitOrder, UnitTypeId,
+    WeaponVisualKind,
 };
 
 /// Lowest impact distance used for flight timing, so a point-blank launch still takes a tick.
@@ -110,6 +111,39 @@ impl CombatWorkspace {
             .binary_search_by_key(&id, |entry| entry.0)
             .ok()
             .map(|index| self.snapshots[index].1)
+    }
+}
+
+/// A weapon as it acts this tick: its catalog (or siege) spec with the range and the attack
+/// period that upgrades and attack-rate buffs resolve to.
+///
+/// Produced only by [`SimWorld::resolved_weapon`], which both the combat phase and the render
+/// snapshot call, so the cycle combat runs and the cycle the snapshot publishes cannot differ.
+// PERFORMANCE RATIONALE:
+// Why: The render snapshot reads the period of every swinging entity each tick, and a cloned
+// `WeaponSpec` allocates (its `name` is a `String`).
+// What: Borrow the spec and carry the two resolved values beside it; only combat, which hands
+// an owned spec to the state machine and to a prepared shot, clones it (`to_spec`), as before.
+// Trade-off: Two fields that shadow the spec's own, read through this type rather than the spec.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ResolvedWeapon<'a> {
+    /// The authored weapon: siege override, ground, generic or air spec.
+    pub(crate) spec: &'a WeaponSpec,
+    /// Maximum range after the owner's range upgrades, in world units.
+    pub(crate) max_range: SimScalar,
+    /// Attack period after cooldown upgrades and attack-rate buffs, in ticks; at least 1.
+    pub(crate) period_ticks: u16,
+}
+
+impl ResolvedWeapon<'_> {
+    /// The spec with the resolved range and period written in, as the weapon state machine and
+    /// a prepared shot take it.
+    pub(crate) fn to_spec(self) -> WeaponSpec {
+        WeaponSpec {
+            max_range: self.max_range,
+            period_ticks: self.period_ticks,
+            ..self.spec.clone()
+        }
     }
 }
 
@@ -212,10 +246,14 @@ impl SimWorld {
             let target_snapshot = target_opt_id.and_then(|tid| combat.snapshot(tid));
             let target_mover = target_snapshot.map_or(MoverType::Ground, |t| t.mover);
 
-            let Some(mut weapon) = arch
-                .weapon_against(target_mover, entity.active_siege_weapon())
-                .cloned()
-            else {
+            let Some(weapon) = Self::resolved_weapon(
+                &self.player_upgrades,
+                entity,
+                arch,
+                target_mover,
+                attack_mult,
+            )
+            .map(ResolvedWeapon::to_spec) else {
                 // A target that vanished mid-swing may leave no weapon to resolve here.
                 if matches!(entity.weapon_phase, WeaponPhase::Windup { .. }) {
                     entity.weapon_phase = WeaponPhase::Ready;
@@ -240,18 +278,6 @@ impl SimWorld {
                 })
             });
 
-            weapon.max_range = Self::effective_range_from_upgrades(
-                &self.player_upgrades,
-                &weapon,
-                &arch.slug,
-                entity.owner,
-            );
-            let delta = Self::upgrades_of(&self.player_upgrades, entity.owner)
-                .unit_stat_modifiers
-                .get(&arch.slug)
-                .map_or(0, |modifiers| modifiers.attack_cooldown_delta);
-            weapon.period_ticks = resolve_attack_period(weapon.period_ticks, delta, attack_mult);
-
             if step_entity_weapon(entity, &weapon, target_info) {
                 if let Some(target) = target_info {
                     combat.shots.push(PreparedShot {
@@ -265,6 +291,35 @@ impl SimWorld {
                 }
             }
         }
+    }
+
+    /// The weapon `entity` (of archetype `arch`) uses against a target on `target_mover`'s
+    /// plane, with range and period resolved for its owner's upgrades and `attack_rate`
+    /// (the entity's combined buff rate, [`Entity::attack_rate_multiplier`]).
+    ///
+    /// The one place a weapon's acting range and period are decided: the combat phase and the
+    /// render snapshot both call it (plan `2026-11-04-battle-flipbook-animation` D-7). Takes the
+    /// upgrade array rather than `&self` so callers holding `entities` mutably can use it.
+    /// Returns `None` when the archetype has no weapon against that plane.
+    pub(crate) fn resolved_weapon<'a>(
+        upgrades: &PerPlayer<PlayerUpgradeState>,
+        entity: &'a Entity,
+        arch: &'a UnitArchetype,
+        target_mover: MoverType,
+        attack_rate: AttackRate,
+    ) -> Option<ResolvedWeapon<'a>> {
+        let spec = arch.weapon_against(target_mover, entity.active_siege_weapon())?;
+        let max_range =
+            Self::effective_range_from_upgrades(upgrades, spec, &arch.slug, entity.owner);
+        let delta = Self::upgrades_of(upgrades, entity.owner)
+            .unit_stat_modifiers
+            .get(&arch.slug)
+            .map_or(0, |modifiers| modifiers.attack_cooldown_delta);
+        Some(ResolvedWeapon {
+            spec,
+            max_range,
+            period_ticks: resolve_attack_period(spec.period_ticks, delta, attack_rate),
+        })
     }
 
     /// Launches or instantly resolves one discharged shot.

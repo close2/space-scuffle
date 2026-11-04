@@ -66,6 +66,11 @@
 //! - The four C-18 characterisation goldens and [`GOLDEN_LIBM_CANARY_C18`] were recorded on
 //!   `main` at `db22ac2` (glibc 2.41, `x86_64`), whose `smog/fluid.rs` is that of `e85f79f`, the
 //!   C-18 plan's base: the unmodified solver, before any C-18 refactor.
+//! - The startup, Visual Lab, swarm and live battle system goldens hash each bubble record's
+//!   `Debug` text, which names its fields. They were re-recorded when
+//!   `BubbleRenderInstance::anim_progress: 0.0` became `attack_swing: None` (plan
+//!   `2026-11-04-battle-flipbook-animation` WP1). With that one spelling substituted back, all
+//!   four reproduced their previous values, so no smog output changed.
 //! - A golden may only change together with a deliberate, documented change in smog output.
 
 #![allow(
@@ -936,7 +941,7 @@ fn battle_unit(entity_id: u32, pos: Vec3, velocity: [f32; 2]) -> client::BubbleI
         weapon_visual: sim_types::enums::WeaponVisualKind::Hitscan,
         attack_target_pos: None,
         anim_state: sim_types::enums::AnimState::Walk,
-        anim_progress: 0.0,
+        attack_swing: None,
         hp_ratio: 1.0,
         shield_ratio: 1.0,
         shield_hit_flash: 0.0,
@@ -1180,11 +1185,11 @@ fn require_smog_activity(app: &App) -> usize {
     stats.active_bubbles
 }
 
-const GOLDEN_SYSTEMS_STARTUP: u64 = 0xab37_4d13_4f79_14a3;
+const GOLDEN_SYSTEMS_STARTUP: u64 = 0x1fe4_a558_384c_8b47;
 const GOLDEN_SYSTEMS_NOISE: u64 = 0x1fe2_2cc0_e03e_f783;
-const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0x8ebb_0c5c_3ade_e97d;
-const GOLDEN_SYSTEMS_SWARM: u64 = 0xe2c6_74a7_9745_ed93;
-const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0x62be_ff3d_0b7e_e248;
+const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0xeba0_95a3_db3b_d625;
+const GOLDEN_SYSTEMS_SWARM: u64 = 0x86ef_7170_644c_8c2b;
+const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0x64bc_cacc_34a1_e848;
 
 /// The headless Visual Lab app after its startup frame (the clock's first update has `dt = 0`).
 fn startup_app() -> Result<App, Box<dyn std::error::Error>> {

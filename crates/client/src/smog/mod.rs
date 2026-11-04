@@ -559,7 +559,7 @@ fn showcase_render_instance(
         weapon_visual: sim_types::enums::WeaponVisualKind::Hitscan,
         attack_target_pos: None,
         anim_state: AnimState::Walk,
-        anim_progress: 0.0,
+        attack_swing: None,
         hp_ratio: 1.0,
         shield_ratio: 1.0,
         shield_hit_flash: 0.0,

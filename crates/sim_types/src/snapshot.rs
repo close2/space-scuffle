@@ -39,8 +39,10 @@ pub struct BubbleRenderInstance {
     pub attack_target_pos: Option<[f32; 3]>,
     /// High-level animation cycle to display on the internal video core.
     pub anim_state: AnimState,
-    /// Normalized animation progress [0.0, 1.0] within the current loop.
-    pub anim_progress: f32,
+    /// The attack cycle this entity is in, from the start of its current swing until its weapon
+    /// is ready again; `None` while no swing is under way. Published whatever `anim_state` says,
+    /// so a client can keep timing an attack clip through the cooldown part of the cycle.
+    pub attack_swing: Option<AttackSwing>,
     /// Health ratio (0.0..=1.0) driving spiderweb glass cracks and CRT glitch shader.
     pub hp_ratio: f32,
     /// Shield energy ratio (0.0..=1.0) driving outer energy sheen.
@@ -63,6 +65,28 @@ pub struct BubbleRenderInstance {
     pub cloaked: bool,
     /// Stim/speed boost flag (intensifies wake particle emission).
     pub speed_boosted: bool,
+}
+
+/// Where an entity stands in one attack cycle, in whole simulation ticks (25 Hz).
+///
+/// A cycle runs from the tick a swing's wind-up starts to the earliest tick the next swing can
+/// start. It is derived from the weapon state machine, not stored: the simulation keeps no
+/// presentation state for it (plan `2026-11-04-battle-flipbook-animation` D-7).
+///
+/// # Invariants
+/// - `elapsed_ticks < period_ticks`, and `period_ticks >= 1`.
+/// - The shot is released on the tick where `elapsed_ticks == damage_point_ticks` (on the
+///   swing's first tick for a damage point of 0).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttackSwing {
+    /// Ticks since the swing began: 0 on the tick its wind-up started.
+    pub elapsed_ticks: u16,
+    /// Ticks from the swing's start to the release of its shot (the resolved damage point).
+    pub damage_point_ticks: u16,
+    /// Ticks from one swing's start to the earliest next swing (the resolved attack period,
+    /// after upgrades and attack-rate buffs).
+    pub period_ticks: u16,
 }
 
 /// Instantaneous transient visual combat event (tracers, beams, slashes, explosions).
@@ -331,7 +355,11 @@ mod tests {
             weapon_visual: WeaponVisualKind::Hitscan,
             attack_target_pos: None,
             anim_state: AnimState::Idle,
-            anim_progress: 0.0,
+            attack_swing: Some(AttackSwing {
+                elapsed_ticks: 4,
+                damage_point_ticks: 2,
+                period_ticks: 15,
+            }),
             hp_ratio: 1.0,
             shield_ratio: 1.0,
             shield_hit_flash: 0.0,

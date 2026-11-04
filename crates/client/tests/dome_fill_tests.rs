@@ -214,7 +214,7 @@ fn template_instance(archetype: &UnitArchetype, subject: &Subject) -> BubbleRend
         weapon_visual: WeaponVisualKind::Hitscan,
         attack_target_pos: None,
         anim_state: AnimState::Idle,
-        anim_progress: 0.5,
+        attack_swing: None,
         hp_ratio: 1.0,
         shield_ratio: 1.0,
         shield_hit_flash: 0.0,

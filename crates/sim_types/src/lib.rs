@@ -51,8 +51,8 @@ pub use player_view::{
     QueuedJobView, SiteRefusal, StructureQueueView, VisibleNodeView,
 };
 pub use snapshot::{
-    BubbleRenderInstance, CombatEventVisual, MatchResult, PlayerStatusView, RenderSnapshot,
-    ResourceNodeView,
+    AttackSwing, BubbleRenderInstance, CombatEventVisual, MatchResult, PlayerStatusView,
+    RenderSnapshot, ResourceNodeView,
 };
 pub use upgrades::{
     PlayerUpgradeState, UnitStatDeltas, UpgradeApplicationError, UpgradeEffect, UpgradeStat,
