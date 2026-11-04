@@ -64,6 +64,9 @@ pub enum WeaponPhase {
         target_id: EntityId,
     },
     /// `DamagePoint` wind-up in progress. Moving before completion cancels the attack without damage.
+    ///
+    /// A weapon with a damage point of 0 never enters this phase: its swing releases on the tick
+    /// it starts (plan `2026-11-04-combat-sc2-alignment` D-3).
     Windup {
         /// Target entity handle.
         target_id: EntityId,

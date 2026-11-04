@@ -4,13 +4,15 @@
 //! Pins the rule of plan `2026-11-04-combat-sc2-alignment` D-2 (Q0038): a backswing is a lock
 //! on orders, not a gate on the weapon. When the cooldown runs out during a backswing, the
 //! weapon acts as a ready weapon would; a new swing ends the backswing, and with nothing to
-//! attack the backswing runs on to its end. It also pins the catalog rule that a weapon's period
-//! is longer than its damage point.
+//! attack the backswing runs on to its end. It pins D-3 (Q0036): a damage point of 0 releases on
+//! the tick its swing starts, so `period_ticks` is the attack cycle for every damage point. It
+//! also pins the catalog rule that a weapon's period is longer than its damage point.
 //!
 //! # How it fits
-//! `sim_core::combat::step_entity_weapon` runs once per unit per tick. These tests drive it
+//! `sim_core::combat::step_entity_weapon` runs once per unit per tick. Most tests drive it
 //! through the public world API (`SimWorld::step`) and read which ticks a shot lands on, so
-//! they see exactly what a battle sees.
+//! they see exactly what a battle sees. The tests of a single call (does the call that starts a
+//! swing also release it) call `step_entity_weapon` directly on a copy of the spawned shooter.
 //!
 //! # Invariants
 //! Every archetype here is a scratch archetype written in this file (a stationary shooter and
@@ -18,7 +20,10 @@
 //! break these tests. Ticks are simulation ticks (25 per Faster second).
 
 use sim_core::catalog::UnitCatalog;
-use sim_core::{SimCoreError, SimWorld, WeaponPhase};
+use sim_core::{
+    is_within_firing_arc, step_entity_weapon, Entity, SimCoreError, SimWorld, WeaponPhase,
+    WeaponSpec, WeaponTarget,
+};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
     EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
@@ -86,9 +91,23 @@ fn unit_ron(slug: &str, id: u16, max_hp: f32, weapon: &str, overclock: &str) -> 
     )
 }
 
+/// The RON of a hull-mounted weapon that may fire in every direction.
+const OPEN_MOUNT: &str = "firing_arc_deg: 360.0, has_turret: false, turret_turn_rate_deg: 0.0";
+
 /// The scratch catalog: a shooter with `timings` and an optional overclock, and a target with
 /// `target_hp` hit points. The shooter deals 10 damage per shot from up to 6 world units.
 fn catalog_ron(timings: Timings, target_hp: f32, overclock: Option<f32>) -> String {
+    catalog_ron_with_mount(timings, OPEN_MOUNT, target_hp, overclock)
+}
+
+/// As [`catalog_ron`], with `mount` the RON of the weapon's `firing_arc_deg`, `has_turret` and
+/// `turret_turn_rate_deg` fields.
+fn catalog_ron_with_mount(
+    timings: Timings,
+    mount: &str,
+    target_hp: f32,
+    overclock: Option<f32>,
+) -> String {
     let Timings {
         period,
         damage_point,
@@ -101,9 +120,7 @@ fn catalog_ron(timings: Timings, target_hp: f32, overclock: Option<f32>) -> Stri
             target_flags: (bits: 255),
             min_range: 0.0,
             max_range: 6.0,
-            firing_arc_deg: 360.0,
-            has_turret: false,
-            turret_turn_rate_deg: 0.0,
+            {mount},
             base_damage: 10.0,
             bonus_armored: 0.0,
             bonus_light: 0.0,
@@ -145,17 +162,12 @@ impl Bench {
         target_hp: f32,
         stim: Option<f32>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
-        let mut world = sim_fixtures::world(map, 11);
-        world.catalog = UnitCatalog::from_ron_str(
-            &sim_fixtures::shipped_factions(),
-            &catalog_ron(timings, target_hp, stim),
-        )?;
+        let Self {
+            mut world,
+            shooter,
+            target,
+        } = Self::spawned(&catalog_ron(timings, target_hp, stim), 13)?;
         let shooter_type = world.catalog.id_by_slug(SHOOTER).ok_or("shooter")?;
-        let target_type = world.catalog.id_by_slug(TARGET).ok_or("target")?;
-        let at = |x: i32| SimVec2::new(SimScalar::from_i32(x), SimScalar::from_i32(16));
-        let shooter = world.spawn_unit(shooter_type, PlayerId(0), at(10))?;
-        let target = world.spawn_unit(target_type, PlayerId(1), at(13))?;
         if stim.is_some() {
             let spec = world
                 .catalog
@@ -184,6 +196,63 @@ impl Bench {
             shooter,
             target,
         })
+    }
+
+    /// The shooter at x = 10 and the target at x = `target_x` (both at y = 16, world units) of
+    /// a flat map with the scratch catalog `catalog`. No tick has run and no order is given.
+    fn spawned(catalog: &str, target_x: i32) -> Result<Self, Box<dyn std::error::Error>> {
+        let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = sim_fixtures::world(map, 11);
+        world.catalog = UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), catalog)?;
+        let shooter_type = world.catalog.id_by_slug(SHOOTER).ok_or("shooter")?;
+        let target_type = world.catalog.id_by_slug(TARGET).ok_or("target")?;
+        let at = |x: i32| SimVec2::new(SimScalar::from_i32(x), SimScalar::from_i32(16));
+        let shooter = world.spawn_unit(shooter_type, PlayerId(0), at(10))?;
+        let target = world.spawn_unit(target_type, PlayerId(1), at(target_x))?;
+        Ok(Self {
+            world,
+            shooter,
+            target,
+        })
+    }
+
+    /// A copy of the spawned shooter, its weapon, and the target as the combat phase would
+    /// pass it, for calling `step_entity_weapon` directly.
+    fn direct(&self) -> Result<(Entity, WeaponSpec, WeaponTarget), Box<dyn std::error::Error>> {
+        let shooter = self
+            .world
+            .entities
+            .get(&self.shooter)
+            .ok_or("shooter missing")?
+            .clone();
+        let target = self
+            .world
+            .entities
+            .get(&self.target)
+            .ok_or("target missing")?;
+        let weapon = self
+            .world
+            .catalog
+            .get(shooter.unit_type_id)?
+            .weapon
+            .clone()
+            .ok_or("the scratch shooter has a weapon")?;
+        let target_radius = self
+            .world
+            .catalog
+            .get(target.unit_type_id)?
+            .collision_radius;
+        let shooter_radius = self
+            .world
+            .catalog
+            .get(shooter.unit_type_id)?
+            .collision_radius;
+        let weapon_target = WeaponTarget {
+            id: self.target,
+            position: target.position,
+            combined_radius: target_radius + shooter_radius,
+        };
+        Ok((shooter, weapon, weapon_target))
     }
 
     /// The target's remaining hit points, or zero once it is gone.
@@ -383,5 +452,184 @@ fn a_period_not_longer_than_the_damage_point_is_rejected() -> TestResult {
             None,
         ),
     )?;
+    Ok(())
+}
+
+/// A damage point of 0 with a backswing shorter than the cooldown: the zealot's timings after
+/// plan `2026-11-04-combat-sc2-alignment` WP4 (period 21, damage point 0, backswing 9).
+const DAMAGE_POINT_ZERO: Timings = Timings {
+    period: 21,
+    damage_point: 0,
+    backswing: 9,
+};
+
+/// Whether `phase` is a wind-up, which a damage point of 0 never shows (D-3).
+const fn is_windup(phase: &WeaponPhase) -> bool {
+    matches!(phase, WeaponPhase::Windup { .. })
+}
+
+#[test]
+fn damage_point_zero_fires_every_period() -> TestResult {
+    assert_cadence(DAMAGE_POINT_ZERO, None, 21)
+}
+
+#[test]
+fn damage_point_zero_releases_on_the_tick_its_swing_starts() -> TestResult {
+    // One call: the call that starts the swing releases it and charges the full cooldown.
+    let bench = Bench::spawned(&catalog_ron(DAMAGE_POINT_ZERO, 10_000.0, None), 13)?;
+    let (mut shooter, weapon, target) = bench.direct()?;
+    assert!(
+        step_entity_weapon(&mut shooter, &weapon, Some(target)),
+        "the first call with the target in band and aligned must release, phase {:?}",
+        shooter.weapon_phase
+    );
+    assert_eq!(
+        shooter.weapon_phase,
+        WeaponPhase::Backswing {
+            target_id: bench.target,
+            remaining_ticks: 9,
+        }
+    );
+    assert_eq!(shooter.weapon_cooldown_remaining, 21);
+
+    // In the world: the shot lands on the tick the attack order is given, and no tick ever
+    // shows a wind-up.
+    let mut bench = Bench::new(DAMAGE_POINT_ZERO, 10_000.0, None)?;
+    assert_eq!(
+        bench.target_hp(),
+        SimScalar::from_i32(9_990),
+        "the shot must land on tick 0"
+    );
+    for _ in 0..100 {
+        bench.step();
+        assert!(!is_windup(&bench.phase()?), "{:?}", bench.phase()?);
+    }
+    Ok(())
+}
+
+#[test]
+fn damage_point_zero_after_turning_releases_on_the_tick_it_is_aligned() -> TestResult {
+    // A turret at 10 degrees per tick with a 15 degree half arc, its target straight behind.
+    let mount = "firing_arc_deg: 15.0, has_turret: true, turret_turn_rate_deg: 10.0";
+    let catalog = catalog_ron_with_mount(DAMAGE_POINT_ZERO, mount, 10_000.0, None);
+    let bench = Bench::spawned(&catalog, 7)?;
+    let (mut shooter, weapon, target) = bench.direct()?;
+    let mut first_aligned = None;
+    let mut first_release = None;
+    for call in 1..=40_u32 {
+        let released = step_entity_weapon(&mut shooter, &weapon, Some(target));
+        assert!(!is_windup(&shooter.weapon_phase), "call {call}");
+        let aligned = is_within_firing_arc(
+            shooter.turret_angle,
+            shooter.position,
+            target.position,
+            weapon.firing_arc,
+        );
+        if aligned && first_aligned.is_none() {
+            first_aligned = Some(call);
+        }
+        if released && first_release.is_none() {
+            first_release = Some(call);
+        }
+    }
+    assert!(
+        first_aligned.is_some_and(|call| call > 1),
+        "the turret must need several calls to align, aligned on {first_aligned:?}"
+    );
+    assert_eq!(
+        first_release, first_aligned,
+        "the swing must release on the call that aligns it"
+    );
+    Ok(())
+}
+
+#[test]
+fn damage_point_zero_out_of_a_backswing_releases_at_once() -> TestResult {
+    let timings = Timings {
+        period: 21,
+        damage_point: 0,
+        backswing: 30,
+    };
+    let mut bench = Bench::new(timings, 10_000.0, None)?;
+    let target = bench.target;
+    let mut releases = Vec::new();
+    for _ in 0..120 {
+        let before = bench.phase()?;
+        let tick = bench.world.current_tick;
+        let landed = bench.step();
+        let after = bench.phase()?;
+        assert!(!is_windup(&after), "tick {tick}: {after:?}");
+        if landed {
+            assert!(
+                matches!(before, WeaponPhase::Backswing { .. }),
+                "tick {tick}: the release must come straight out of the backswing, was {before:?}"
+            );
+            assert_eq!(
+                after,
+                WeaponPhase::Backswing {
+                    target_id: target,
+                    remaining_ticks: 30,
+                },
+                "tick {tick}"
+            );
+            releases.push(tick);
+        }
+    }
+    assert!(releases.len() >= 4, "too few releases: {releases:?}");
+    assert!(
+        gaps(&releases).iter().all(|&gap| gap == 21),
+        "must release every 21 ticks, released on {releases:?}"
+    );
+    Ok(())
+}
+
+/// Guard: a damage point of 1 is untouched by D-3, tick by tick.
+#[test]
+fn damage_point_one_is_unchanged() -> TestResult {
+    let timings = Timings {
+        period: 21,
+        damage_point: 1,
+        backswing: 9,
+    };
+    let mut bench = Bench::new(timings, 10_000.0, None)?;
+    let target = bench.target;
+    let windup = WeaponPhase::Windup {
+        target_id: target,
+        remaining_ticks: 1,
+    };
+    let backswing = |remaining_ticks| WeaponPhase::Backswing {
+        target_id: target,
+        remaining_ticks,
+    };
+    // Tick 0 started the swing: Windup 1. Then one full cycle of 21 ticks and the next release.
+    let mut expected = vec![(backswing(9), true)];
+    expected.extend((1..9).rev().map(|remaining| (backswing(remaining), false)));
+    expected.extend((0..11).map(|_| (WeaponPhase::Cooldown, false)));
+    expected.extend([(windup.clone(), false), (backswing(9), true)]);
+    assert_eq!(bench.phase()?, windup);
+    for (tick, (phase, released)) in expected.into_iter().enumerate() {
+        let landed = bench.step();
+        assert_eq!(
+            (bench.phase()?, landed),
+            (phase, released),
+            "tick {} of the sequence",
+            tick + 1
+        );
+    }
+    Ok(())
+}
+
+/// Guard: a wind-up with nothing left to wait for releases on its next step. The rule never
+/// creates one after D-3; this pins the defensive path that would still release it.
+#[test]
+fn a_windup_with_no_ticks_left_releases_on_its_next_step() -> TestResult {
+    let bench = Bench::spawned(&catalog_ron(DAMAGE_POINT_ZERO, 10_000.0, None), 13)?;
+    let (mut shooter, weapon, target) = bench.direct()?;
+    shooter.weapon_phase = WeaponPhase::Windup {
+        target_id: bench.target,
+        remaining_ticks: 0,
+    };
+    assert!(step_entity_weapon(&mut shooter, &weapon, Some(target)));
+    assert_eq!(shooter.weapon_cooldown_remaining, 21);
     Ok(())
 }

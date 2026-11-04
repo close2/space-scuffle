@@ -430,11 +430,57 @@ fn in_engagement_band(
     distance <= weapon.max_range + combined_radius + slop && distance >= closest
 }
 
-/// Steps a ready weapon: starts the swing if aimed, or begins rotating.
-fn step_ready_weapon(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget) {
+/// Releases the swing against `target`. Returns true when the shot discharges.
+///
+/// The release is the one place a shot leaves the weapon: a target that left the engagement band
+/// plus [`RELEASE_RANGE_SLOP`] cancels the swing (phase `Ready`, no cooldown charged); otherwise
+/// the cooldown is charged with `period − damage point`, so that the cycle from the start of
+/// the swing to the start of the next one is `period_ticks`, and the phase becomes `Backswing`
+/// (or `Cooldown` for a weapon without one).
+fn release_swing(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget) -> bool {
+    let distance = entity.position.distance(target.position);
+    if !in_engagement_band(distance, weapon, target.combined_radius, RELEASE_RANGE_SLOP) {
+        entity.weapon_phase = WeaponPhase::Ready;
+        return false;
+    }
+    entity.weapon_cooldown_remaining = weapon
+        .period_ticks
+        .saturating_sub(weapon.damage_point_ticks);
+    entity.weapon_phase = if weapon.backswing_ticks > 0 {
+        WeaponPhase::Backswing {
+            target_id: target.id,
+            remaining_ticks: weapon.backswing_ticks,
+        }
+    } else {
+        WeaponPhase::Cooldown
+    };
+    true
+}
+
+/// Starts a swing against `target`. Returns true when the shot discharges in this call.
+///
+/// A damage point of 0 means the damage lands on the tick the attack starts, as in `StarCraft`
+/// II, so such a swing releases at once and never shows a `Windup` (plan
+/// `2026-11-04-combat-sc2-alignment` D-3, Q0036). Any other swing winds up for
+/// `damage_point_ticks` ticks and releases in [`step_windup`]. Either way the release falls
+/// `damage_point_ticks` after the start, which is what keeps the cycle at `period_ticks`.
+fn start_swing(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget) -> bool {
+    if weapon.damage_point_ticks == 0 {
+        return release_swing(entity, weapon, target);
+    }
+    entity.weapon_phase = WeaponPhase::Windup {
+        target_id: target.id,
+        remaining_ticks: weapon.damage_point_ticks,
+    };
+    false
+}
+
+/// Steps a ready weapon: starts the swing if aimed, or begins rotating. Returns true when the
+/// shot discharges in this call (a swing with damage point 0, [`start_swing`]).
+fn step_ready_weapon(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget) -> bool {
     let distance = entity.position.distance(target.position);
     if !in_engagement_band(distance, weapon, target.combined_radius, SimScalar::ZERO) {
-        return;
+        return false;
     }
     let delta = target.position - entity.position;
     let target_angle = SimAngle::atan2(delta.y, delta.x);
@@ -447,12 +493,9 @@ fn step_ready_weapon(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTar
         }
         // CRITICAL COOLDOWN GUARD:
         // An entity may align with a target while its weapon is on cooldown,
-        // but MUST NOT start Windup until cooldown has fully elapsed!
+        // but MUST NOT start a swing until cooldown has fully elapsed!
         if entity.weapon_cooldown_remaining == 0 {
-            entity.weapon_phase = WeaponPhase::Windup {
-                target_id: target.id,
-                remaining_ticks: weapon.damage_point_ticks,
-            };
+            return start_swing(entity, weapon, target);
         }
     } else {
         entity.weapon_phase = WeaponPhase::RotatingToTarget {
@@ -460,35 +503,38 @@ fn step_ready_weapon(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTar
         };
         slew_towards(entity, weapon, target_angle);
     }
+    false
 }
 
 /// Steps a rotating weapon until it is aligned, or returns it to ready if the target left.
-fn step_rotating_weapon(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget) {
+/// Returns true when the shot discharges in this call (a swing with damage point 0 that starts
+/// on the call it is aligned, [`start_swing`]).
+fn step_rotating_weapon(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget) -> bool {
     let distance = entity.position.distance(target.position);
     if !in_engagement_band(distance, weapon, target.combined_radius, SimScalar::ZERO) {
         entity.weapon_phase = WeaponPhase::Ready;
-        return;
+        return false;
     }
     let delta = target.position - entity.position;
     slew_towards(entity, weapon, SimAngle::atan2(delta.y, delta.x));
     let aim = weapon_aim(entity, weapon);
     if is_within_firing_arc(aim, entity.position, target.position, weapon.firing_arc) {
-        entity.weapon_phase = if entity.weapon_cooldown_remaining == 0 {
-            WeaponPhase::Windup {
-                target_id: target.id,
-                remaining_ticks: weapon.damage_point_ticks,
-            }
-        } else {
-            // Aligned, but still cooling down: transition back to Ready to await cooldown expiry
-            WeaponPhase::Ready
-        };
+        if entity.weapon_cooldown_remaining == 0 {
+            return start_swing(entity, weapon, target);
+        }
+        // Aligned, but still cooling down: transition back to Ready to await cooldown expiry
+        entity.weapon_phase = WeaponPhase::Ready;
     }
+    false
 }
 
 /// Steps a swing bound to `bound`. Returns true when the shot discharges.
 ///
 /// `target_opt` must be `bound` or absent. A swing without its target, or whose target left
-/// the engagement band, is cancelled: no shot, and no cooldown is charged.
+/// the engagement band, is cancelled: no shot, and no cooldown is charged. A wind-up releases
+/// on the step that brings `remaining_ticks` to 0 ([`release_swing`]). The rule never creates
+/// a `Windup` with 0 ticks left (a damage point of 0 releases in [`start_swing`]); one set
+/// from outside still releases on its next step.
 fn step_windup(
     entity: &mut Entity,
     weapon: &WeaponSpec,
@@ -513,24 +559,7 @@ fn step_windup(
         };
         return false;
     }
-    let distance = entity.position.distance(target.position);
-    if !in_engagement_band(distance, weapon, target.combined_radius, RELEASE_RANGE_SLOP) {
-        entity.weapon_phase = WeaponPhase::Ready;
-        return false;
-    }
-
-    entity.weapon_cooldown_remaining = weapon
-        .period_ticks
-        .saturating_sub(weapon.damage_point_ticks);
-    entity.weapon_phase = if weapon.backswing_ticks > 0 {
-        WeaponPhase::Backswing {
-            target_id: bound,
-            remaining_ticks: weapon.backswing_ticks,
-        }
-    } else {
-        WeaponPhase::Cooldown
-    };
-    true
+    release_swing(entity, weapon, target)
 }
 
 /// Advances the weapon state machine for an entity for a single tick.
@@ -538,6 +567,10 @@ fn step_windup(
 /// `target_opt` is the available enemy this weapon should work against; during a swing the
 /// caller passes the swing's bound target. Returns true when a shot discharges this tick.
 /// A carried actor returns false without changing any field, including cooldown.
+///
+/// The attack cycle is `weapon.period_ticks` for every damage point: a swing that starts on
+/// tick T releases on T + `damage_point_ticks` (on T itself for a damage point of 0) and charges
+/// `period − damage point` ticks of cooldown, so the next swing can start on T + `period_ticks`.
 pub fn step_entity_weapon(
     entity: &mut Entity,
     weapon: &WeaponSpec,
@@ -558,18 +591,15 @@ pub fn step_entity_weapon(
 
     match entity.weapon_phase {
         WeaponPhase::Ready => {
-            if let Some(target) = target_opt {
-                step_ready_weapon(entity, weapon, target);
-            }
-            false
+            target_opt.is_some_and(|target| step_ready_weapon(entity, weapon, target))
         }
         WeaponPhase::RotatingToTarget { .. } => {
             if let Some(target) = target_opt {
-                step_rotating_weapon(entity, weapon, target);
+                step_rotating_weapon(entity, weapon, target)
             } else {
                 entity.weapon_phase = WeaponPhase::Ready;
+                false
             }
-            false
         }
         WeaponPhase::Windup {
             target_id,
@@ -578,10 +608,7 @@ pub fn step_entity_weapon(
         WeaponPhase::Backswing {
             target_id,
             remaining_ticks,
-        } => {
-            step_backswing(entity, weapon, target_opt, target_id, remaining_ticks);
-            false
-        }
+        } => step_backswing(entity, weapon, target_opt, target_id, remaining_ticks),
         WeaponPhase::Cooldown => false,
     }
 }
@@ -598,21 +625,23 @@ pub fn step_entity_weapon(
 /// This matches `StarCraft` II, where the cooldown runs from the start of the attack in
 /// parallel with the backswing, so the next attack is never delayed by it (plan
 /// `2026-11-04-combat-sc2-alignment` D-2, Q0038). `bound` is the target of the swing whose
-/// follow-through this is; `remaining_ticks` is the backswing left before this tick.
+/// follow-through this is; `remaining_ticks` is the backswing left before this tick. Returns
+/// true when the shot discharges in this call: a swing with damage point 0 that starts out of
+/// the backswing releases at once (D-3).
 fn step_backswing(
     entity: &mut Entity,
     weapon: &WeaponSpec,
     target_opt: Option<WeaponTarget>,
     bound: EntityId,
     remaining_ticks: u16,
-) {
+) -> bool {
     let remaining_ticks = remaining_ticks.saturating_sub(1);
     if entity.weapon_cooldown_remaining == 0 {
         if let Some(target) = target_opt {
             entity.weapon_phase = WeaponPhase::Ready;
-            step_ready_weapon(entity, weapon, target);
+            let released = step_ready_weapon(entity, weapon, target);
             if entity.weapon_phase != WeaponPhase::Ready {
-                return;
+                return released;
             }
         }
     }
@@ -624,4 +653,5 @@ fn step_backswing(
             remaining_ticks,
         },
     };
+    false
 }

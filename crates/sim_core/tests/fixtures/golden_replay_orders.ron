@@ -10,6 +10,11 @@
 // records a checksum every 10 ticks so a divergence is reported close to where it starts.
 // Recorded on 2026-11-04 against unmodified simulation code; under the vision swap it diverges
 // at checkpoint 6 (ticks 61 to 70), under the upkeep swap at checkpoint 25 (ticks 251 to 260).
+// Re-recorded for plan 2026-11-04-combat-sc2-alignment WP2 (Q0036, D-3): "blue_spotter" has a
+// damage point of 0 and now fires every 20 ticks, its period, from tick 121 instead of every
+// 21 from tick 122, so checkpoints 13 to 31 (ticks 121 to 310) changed; the rest did not.
+// The swap checkpoints above were measured on the first recording and not re-measured; the
+// spotter's shots touch neither situation, and the test still finds both in the replay.
 //
 // Scenario, on the shipped default arena. In world coordinates (map rows are stored north
 // first): low ground at y < 30, an abyss band at y = 30..33 crossed only by the ramp at
@@ -58,25 +63,25 @@
         0xac26941e6518e294,
         0x6d372a61a576d8ee,
         0xa2410a4e00c8ba7e,
-        0xfac38ddba47f135f,
-        0x79a4aabe109e9825,
-        0xdbea8aa3af28919f,
-        0x87f0580738271033,
-        0x409d4d3c3a8147fd,
-        0xb6af82e6ac39ee5c,
-        0x8a66278774603a06,
-        0x0c5984123313adbb,
-        0x77e99c403a7df6c8,
-        0x8a6f843295d31e07,
-        0x0abb8011519bbadb,
-        0x5fde0118a46aa1e7,
-        0x5e9dbec33ccfb09b,
-        0xaa2110bef1460717,
-        0xe1f5c86baf874c5d,
-        0x30d03000311b7fcf,
-        0xa8f998bda0c46b14,
-        0x0877a16125bd3f66,
-        0xe8cd2fa564c610b9,
+        0xb6f8fa779db707b0,
+        0xd583c5d423290896,
+        0xee522ef80982b7a1,
+        0x309fa7730df78232,
+        0x7f9a18f7a4d679ce,
+        0x97ec13285a879be2,
+        0x0a5db4867511c967,
+        0x50d128785d08768f,
+        0x8a7262870e0fb889,
+        0xd10fee892d6b395f,
+        0x4c605866c8b6ee0b,
+        0xb931a7124fae59cc,
+        0x66d0f3cae021a00e,
+        0x68fa6947dad5d8e6,
+        0xc241478724cc83b0,
+        0xfb6b07fa3920cd53,
+        0xb3210ed7e24d9d79,
+        0x7a3763a44c14a81e,
+        0x11e7048f7460fb0f,
         0x618eaf1a36038004,
         0xf88d2877ab41ab1b,
         0x45efd7d39f4be8f6,
