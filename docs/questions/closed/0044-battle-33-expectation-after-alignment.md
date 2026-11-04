@@ -48,3 +48,17 @@ Evidence: the plan's §5 (planning probe) and
 ## Answer
 
 Owner (2026-11-04): Option 1 (re-record to the seeds of record and document the distribution). Having a close battle isn't a bad thing.
+
+## Resolution
+
+Option 1, as plan [`2026-11-04-combat-sc2-alignment`](../../plans/2026-11-04-combat-sc2-alignment.md) D-6 states it.
+The first re-recording is WP4's data commit `748f3a9` (merged in `be5a476`): with the zealot's StarCraft II weapon,
+battle 33 on 68 seeds became 30 marine wins, 24 zealot wins and 14 unresolved (marine survivors 3.09, SD 3.01), and
+its expectation became the smallest ranges that hold on the four seeds of record, `blue: (0, 6), red: (0, 3)`. The
+claim now describes a close fight, and the RON comment above the battle in `matchup_matrix.ron` states the
+distribution and points to the evidence (§3.2 of
+[`docs/evidence/2026-11-04-combat-sc2-alignment.md`](../../evidence/2026-11-04-combat-sc2-alignment.md)). Seeds and
+setup did not change, and no distribution test was added.
+
+Every later commit of the plan that moves battle 33 (WP6, WP7, WP11, WP12, WP17, WP14) applies the same rule:
+re-record if the seeds of record leave the range, and update the comment's distribution in any case.
