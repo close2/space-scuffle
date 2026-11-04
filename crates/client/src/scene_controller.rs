@@ -1261,6 +1261,7 @@ mod tests {
                     frame_count,
                     looping,
                     hold_last_frame: !looping,
+                    duration_ms: None,
                 },
             )]),
         }
