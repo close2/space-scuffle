@@ -256,6 +256,36 @@ impl UnitArchetypeDef {
 }
 
 impl WeaponSpecDef {
+    /// Checks the attack cycle: at least one strike, at least one tick, and a period longer
+    /// than the damage point.
+    fn validate_cadence(&self, definition: &str, prefix: &str) -> SimResult<()> {
+        if self.attacks_count == 0 {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.attacks_count"),
+                "a weapon must strike at least once per attack cycle",
+            ));
+        }
+        if self.period_ticks == 0 {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.period_ticks"),
+                "an attack cycle must last at least one tick",
+            ));
+        }
+        // The cooldown a release charges is `period - damage point`. Without at least one tick
+        // of it the weapon would have no cooldown to speak of, and a release could not be told
+        // from the weapon's state (the cooldown rises only at a release).
+        if self.period_ticks <= self.damage_point_ticks {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.period_ticks"),
+                "must be longer than damage_point_ticks",
+            ));
+        }
+        Ok(())
+    }
+
     fn validate(&self, definition: &str, prefix: &str) -> SimResult<()> {
         for (field, value) in [
             ("min_range", self.min_range),
@@ -282,20 +312,7 @@ impl WeaponSpecDef {
                 "must not exceed max_range",
             ));
         }
-        if self.attacks_count == 0 {
-            return Err(invalid(
-                definition,
-                &format!("{prefix}.attacks_count"),
-                "a weapon must strike at least once per attack cycle",
-            ));
-        }
-        if self.period_ticks == 0 {
-            return Err(invalid(
-                definition,
-                &format!("{prefix}.period_ticks"),
-                "an attack cycle must last at least one tick",
-            ));
-        }
+        self.validate_cadence(definition, prefix)?;
         angle(
             definition,
             &format!("{prefix}.firing_arc_deg"),

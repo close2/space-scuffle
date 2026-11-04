@@ -35,7 +35,7 @@ flowchart LR
 
 1. **Weapon Cooldown (Period):** Total time before the weapon can fire again (e.g., `0.61s` for a Marine).
 2. **Damage Point (Wind-up):** Time unit must stand still after aiming before the shot actually fires (e.g., `0.05s` for Marine, `0.167s` for Roach). If the player orders a `Move` *before* `DamagePoint` finishes, the shot is aborted!
-3. **Backswing:** The post-shot animation duration. **Crucially:** A player can issue a `Move` command immediately after `DamagePoint` completes to **cancel the Backswing** and move while the weapon cooldown ticks down in the background. This is what makes **stutter-step micro (kiting)** possible!
+3. **Backswing:** The post-shot animation duration. **Crucially:** A player can issue a `Move` command immediately after `DamagePoint` completes to **cancel the Backswing** and move while the weapon cooldown ticks down in the background. This is what makes **stutter-step micro (kiting)** possible! The backswing locks out new orders but never delays the next attack: the cooldown runs from the start of the attack, and when it ends the next attack starts, during the backswing if need be (stimmed Marines fire every 0.41 s although their backswing is 0.54 s). In our simulation (`combat.rs`, `step_backswing`) a weapon whose cooldown has run out during its backswing acts as a ready weapon; a new swing ends the backswing, and with nothing to attack the backswing runs to its end.
 4. **Random Delay (`-0.06s` to `+0.06s` in SC2):** SC2 adds a tiny deterministic pseudo-random offset to cooldowns so 20 Marines firing at once quickly desynchronize into a continuous rattle rather than firing in robotic unison forever.
 
 ### 1.4 Movement, Physics & Collision
