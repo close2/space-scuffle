@@ -410,8 +410,9 @@ free weekly quota. Five are used until 2026-11-11 10:01Z, so 20 remain: batch 1 
 15) then waits until batch 1's own starts leave the window, about 2026-11-12, and the expansion batches (about 49
 clips plus seeds) would take three more weeks. The owner's later answer (Q0024, via Q0043) is a 200 EUR allowance on
 paid credit, which is about 500 clips at list price, so a weekly cap of 25 no longer protects anything the owner
-asked for. **Q0047** asks whether to raise it to 60 per 7 days (12 per run unchanged). The default keeps 25 and lets
-batch 2 wait; this plan does not change the file.
+asked for. **Q0047** asked whether to raise it to 60 per 7 days (12 per run unchanged). The owner answered yes on
+2026-11-04 (prefer quality over saving generations, within 200 EUR), and `veo_budget.ron` now allows 60 per rolling
+7 days, so batches 1 and 2 both fit this week.
 
 ---
 

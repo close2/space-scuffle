@@ -35,3 +35,10 @@ Owner (2026-11-04, in chat, copied by the orchestrating agent): "we have a lot o
 but don't hesitate to use the credits (they will expire in 2 months anyway) if you think you should get a better
 result." Read as: raise the weekly cap (option: 60 per rolling 7 days, 12 per run unchanged) and prefer quality over
 saving generations, within the 200 EUR budget of Q0024.
+
+## Resolution
+
+Applied on 2026-11-04 in commit `3023c47`: `assets/media/veo_budget.ron` now sets `weekly_generations: 60` (rolling
+7 days, `window_days: 7`), and `max_generations_per_run` stays 12. The asset baker's shipped-budget unit test expects
+these values, and the seamless-loops plan §6 records the change. Every run keeps its per-run cap, the stop rules and
+a ledger line per request. Agents prefer a regeneration to accepting a mediocre clip, within the 200 EUR of Q0024.

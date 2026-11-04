@@ -223,12 +223,17 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_budget_file_loads_with_the_q0024_defaults() {
+    fn the_shipped_budget_file_loads_with_the_owner_limits() {
+        // Q0024 set 12 per run; Q0047 raised the rolling 7-day cap from 25 to 60.
+        let shipped = BudgetConfig {
+            weekly_generations: 60,
+            ..CONFIG
+        };
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../assets")
             .join(BUDGET_FILE);
         let config = BudgetConfig::load(&path).expect("shipped budget loads");
-        assert_eq!(config, CONFIG);
+        assert_eq!(config, shipped);
         assert_eq!(config.window_seconds(), 7 * 86_400);
     }
 }
