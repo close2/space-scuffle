@@ -627,7 +627,7 @@ fn exactly_the_structures_without_shipped_media_are_unpresentable() {
     let mut harness = skirmish();
     let (worker, _) = worker_and_site(&mut harness);
     let raised = raised_by(&harness, worker);
-    assert!(!raised.is_empty());
+    assert_ne!(raised.len(), 0, "the worker raises no structure");
     let model = harness.app.world().resource::<HudModel>();
     for structure in raised {
         let entry = model.catalog.archetype(structure).expect("a raised entry");
