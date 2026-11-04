@@ -890,27 +890,30 @@ fn recorded_parameters(dirs: &RunDirs) -> Vec<Value> {
 }
 
 #[test]
-fn d6_the_shipped_settings_send_generate_audio_false_and_the_ledger_records_it() {
+fn d6_the_shipped_settings_keep_sound_and_send_no_generate_audio_key() {
+    // The owner keeps sound (Q0043): the shipped data sends no `generateAudio` field, as the
+    // pilot did, and the service then generates a sound track.
     let unit = combat_unit(&shipped_catalog());
     let (dirs, server, _shim, output) = generated(&unit, "idle");
     assert!(output.status.success(), "{}", text(&output));
     let sent = sent_parameters(&server);
     assert_eq!(sent.len(), 1);
-    assert_eq!(sent[0]["generateAudio"], json!(false), "{}", sent[0]);
+    assert!(sent[0].get("generateAudio").is_none(), "{}", sent[0]);
     assert_eq!(sent[0]["aspectRatio"], "16:9");
+    assert_eq!(sent[0]["durationSeconds"], 4);
     assert_eq!(recorded_parameters(&dirs), sent);
     assert!(
-        stdout(&output).contains("generateAudio false"),
+        !stdout(&output).contains("generateAudio"),
         "{}",
         text(&output)
     );
 }
 
 #[test]
-fn d6_generate_audio_none_sends_no_such_key() {
+fn d6_generate_audio_false_in_data_is_sent_and_the_ledger_records_it() {
     let unit = combat_unit(&shipped_catalog());
     let bundle = bundle_with_request(
-        "(aspect_ratio: \"16:9\", duration_seconds: 4, sample_count: 1, generate_audio: None)",
+        "(aspect_ratio: \"16:9\", duration_seconds: 4, sample_count: 1, generate_audio: Some(false))",
     );
     let server = FakeServer::start(healthy(fixture_bytes()));
     let shim = CurlShim::new(&server);
@@ -924,9 +927,13 @@ fn d6_generate_audio_none_sends_no_such_key() {
     assert!(output.status.success(), "{}", text(&output));
     let sent = sent_parameters(&server);
     assert_eq!(sent.len(), 1);
-    assert!(sent[0].get("generateAudio").is_none(), "{}", sent[0]);
-    assert_eq!(sent[0]["durationSeconds"], 4);
+    assert_eq!(sent[0]["generateAudio"], json!(false), "{}", sent[0]);
     assert_eq!(recorded_parameters(&dirs), sent);
+    assert!(
+        stdout(&output).contains("generateAudio false"),
+        "{}",
+        text(&output)
+    );
 }
 
 #[test]

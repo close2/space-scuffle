@@ -25,3 +25,5 @@ its reference to a commercial game's name. Say if you want the look described di
 ## Answer
 
 Owner (2026-11-04): Option (a) — the agent accepts or rejects each clip against the written criteria and commits a contact sheet under `docs/evidence/veo/review/`; the owner can reject any clip later to be regenerated in the next batch.
+
+Owner update (2026-11-04, via Q0043): The agent is free to use up to 200€ of the 260€ credit (expiring 2027-01-24) and should not hesitate to request another video if a video doesn't fulfill requirements. Keep sound enabled (we may play it when clicking on a unit). Also, jumps when a looping video restarts from the beginning are distracting — try to generate videos where the start and end position are at least similar (and check loop continuity during review).
