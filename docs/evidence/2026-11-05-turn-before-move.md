@@ -81,3 +81,42 @@ No shipped archetype sets the flag. Outputs under `~/scratch/turn_before_move/wp
 
 As plan D-7 says: the gate and the short-step heading request are reached only through `Some(HullGate)`, which
 exists only for flagged archetypes, and no state or checksum field was added.
+
+## 3. WP2: tests that would break for another reason
+
+**Probe.** `assets/catalog/units.ron` with WP3's three flags (uncommitted), then `cargo test -p sim_core -p
+sim_fixtures -p asset_baker --no-fail-fast` (log `~/scratch/logs/turn_before_move_wp2_probe.log`). The only failure
+was `golden_replay_tests::golden_replay_reproduces_every_checkpoint`, which diverged at the third checkpoint (ticks
+101 to 150) as plan D-7 expects; every other test, the matchup-matrix expectations included, passed. No test
+spawns a shipped flagged identity and depends on instant translation for a reason that is not its subject, so WP2
+makes no commit.
+
+## 4. WP3: the three flags
+
+**Change.** `turn_before_move: true` on `railgun_crawler` (Siege Tank, `liberty` UnitData:5084), `colossus_mech`
+(Thor, :5217) and `stag_behemoth` (Ultralisk, :8033); hull rate 20.16° per tick, so a reversal is 8 ticks in place
+and a step on the 9th. Outputs under `~/scratch/turn_before_move/wp3/`.
+
+- **Whole matrix, 20 seeds:** against §2, exactly one battle moved, `27_100_lings_vs_8_ultralisks`, on all 20
+  seeds: end tick 221.5 → 220.0, red lead life 421.19 → 416.07, red side life at the end 3709.6 → 3708.0; red
+  (ultralisks) wins every seed before and after, 8 survivors; `red: (6, 999)` holds. Expectation failures stay 0 on
+  the seeds of record and 2 over all seeds (battle 33's). No battle's winner changed on any seed.
+- **Battle 33, 68 seeds: bit-identical** to §2 (no flagged identity).
+- **Battle 3:** every output file identical: the tank never translates (it stands in range from the first tick).
+- **Battle 14:** every output file identical: the thor and the ultralisk spawn facing each other and walk straight
+  at each other, then fight in place; no step ever lies beyond one tick's turn.
+- **Battle 15:** matrix row identical (end tick 116.0, ultralisk life 413.2, win on every seed); the trace moved:
+  the ultralisk turns in place between targets, 4.60 `blocked` ticks per seed (0 before), longest run 2, and its
+  mean fraction of ticks in contact falls from 0.786 to 0.747. Its end tick, survivors and life are unchanged on
+  every seed.
+- **Battle 27:** `blocked` ticks per ultralisk 0.51 → 32.08 (exactly-still `blocked` ticks, position unchanged from
+  the tick before: 0.33 → 27.76); longest `blocked` run 4 → 14 (seed 15, unit 102). Pure turning in place lasts at
+  most 8 ticks at this rate, so the longer runs combine a turn with crowding or a change of step direction while
+  chasing zerglings (risk R-2); none reaches the stop rule's 25 ticks.
+- **Golden replays.** `golden_replay.ron` first differs at checkpoint 3 (ticks 101 to 150); checkpoints 1 and 2 are
+  unchanged and every later one changed. Traced tick by tick (positions, headings and velocities of the three
+  `red_siege` tanks, ticks 115 to 150, with and without the flags): ordered at tick 120 to an attack-move about 104°
+  from their spawn facing, the tanks stand with zero velocity on ticks 121 to 125, turning 3 670 units per tick
+  (heading 0 → 61 866 → 58 196 → 54 526 → 50 856 → 47 186), take their first step on tick 126 facing it exactly,
+  and from then walk the positions they walked before, five ticks later. Re-recorded on Linux; reproduced in debug,
+  release and `wasm32-wasip1`. `golden_replay_orders.ron` and the sandbox checksum unchanged.

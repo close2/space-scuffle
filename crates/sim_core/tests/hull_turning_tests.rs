@@ -21,7 +21,8 @@
 //!
 //! # Invariants
 //! Every archetype is a scratch archetype written in this file, never a shipped identity, so a
-//! rebalance of the shipped catalog cannot break these tests. Angles are `SimAngle` binary
+//! rebalance of the shipped catalog cannot break these tests. The one shipped-data test finds
+//! its archetypes by property (`turn_before_move`), never by name. Angles are `SimAngle` binary
 //! angles: 65 536 units per turn, counter-clockwise from +x in the world frame. Rates are
 //! authored in degrees per tick and read back from the catalog in binary units per tick.
 
@@ -638,5 +639,56 @@ fn a_turn_before_move_unit_on_hold_position_turns_to_fire_and_never_moves() -> T
         }
     }
     assert!(first_swing.is_some(), "the held unit turns and fires");
+    Ok(())
+}
+
+#[test]
+fn shipped_turn_before_move_units_turn_in_place_on_a_reversal() -> TestResult {
+    // Every shipped archetype with the flag, found by property: spawned facing +x and sent due
+    // west, it stands for ceil(32 768 / rate) - 1 ticks and steps on the next.
+    let catalog = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    )
+    .catalog;
+    let flagged: Vec<_> = catalog
+        .archetypes()
+        .filter(|archetype| archetype.turn_before_move)
+        .map(|archetype| (archetype.slug.clone(), archetype.unit_type_id))
+        .collect();
+    assert!(!flagged.is_empty(), "the shipped catalog flags no unit");
+    for (slug, unit_type) in flagged {
+        let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
+        let mut world = sim_fixtures::world(map, 7);
+        let rate = u32::from(world.catalog.get(unit_type)?.turn_rate.raw());
+        let in_place = u32::from(SimAngle::DEG_180.raw()).div_ceil(rate) - 1;
+        let start = point(40, 32);
+        let unit = world.spawn_unit(unit_type, PlayerId(0), start)?;
+        for tick in 0..=in_place {
+            let commands = if tick == 0 {
+                vec![PlayerCommand {
+                    player_id: PlayerId(0),
+                    entities: vec![unit],
+                    order: UnitOrder::Move {
+                        target: point(4, 32),
+                    },
+                    queue: false,
+                }]
+            } else {
+                Vec::new()
+            };
+            world.step(&TickBundle {
+                tick: Tick(tick),
+                commands,
+                state_checksum: None,
+            });
+            let position = world.entities.get(&unit).ok_or("unit")?.position;
+            if tick < in_place {
+                assert_eq!(position, start, "{slug} tick {}", tick + 1);
+            } else {
+                assert!(position.x < start.x, "{slug} steps on tick {}", tick + 1);
+            }
+        }
+    }
     Ok(())
 }

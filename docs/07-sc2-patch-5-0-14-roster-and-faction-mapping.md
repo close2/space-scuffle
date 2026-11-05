@@ -60,11 +60,12 @@ $$v_{\text{tick}} = \frac{v_{\text{SC2}}}{25} = v_{\text{SC2}} \times 0.04$$
 The game data state turn rates in Normal-speed degrees per second (`TurningRate` on a unit, `YawRate` on a turret). The catalog stores both rates in **degrees per tick** (`turn_rate_deg_per_tick`, `turret_turn_rate_deg_per_tick`), and binary angles [`SimAngle`] divide a full circle into $65536$ units ($1^\circ \approx 182.044$ binary units):
 $$\omega_{\text{tick}} = \frac{\omega_{\text{Normal}} \times 1.4}{25}\ \text{deg/tick}, \qquad \text{SimAngle} = \left\lfloor \frac{\omega_{\text{tick}} \times 65536}{360} + 0.5 \right\rfloor$$
 - Both rates are validated to $0 < \omega_{\text{tick}} \le 180$; a weapon without a turret authors a turret rate of exactly 0 and turns with the hull. 180° per tick is half a turn and reaches any facing in one tick.
-- A hull turns at most its rate in one tick, whichever system turns it (moving, facing its goal, or aiming a hull-mounted weapon); a hull-mounted weapon fires only once the hull faces the target within the weapon's arc. Movement is not gated by facing (Q0050).
+- A hull turns at most its rate in one tick, whichever system turns it (moving, facing its goal, or aiming a hull-mounted weapon); a hull-mounted weapon fires only once the hull faces the target within the weapon's arc. Movement is not gated by facing, except for units flagged `turn_before_move` (Q0050, below).
 - **Most units (`999.8437` Normal °/s):** $55.99^\circ/\text{tick} \implies 10193$ binary units/tick, 4 ticks for a half turn.
 - **Mutalisk, Banshee, Liberator, Phoenix (`1499.9414`):** $84.00^\circ/\text{tick} \implies 15292$, 3 ticks.
 - **Engine default (`720`; Hellion, Immortal, Colossus, Observer, Warp Prism, Carrier, Brood Lord):** $40.32^\circ/\text{tick} \implies 7340$, 5 ticks.
 - **Siege Tank, Thor, Ultralisk (`360`):** $20.16^\circ/\text{tick} \implies 3670$, 9 ticks.
+  These three also set `TurnBeforeMove` (`turn_before_move: true`): a step further from the heading than one tick's turn is preceded by turning in place, so a reversal takes 9 ticks before the first step.
 - **Turrets:** Siege Tank $40.32^\circ$ (sieged $20.16^\circ$), Missile Turret and Photon Cannon $40.32^\circ$, Spine and Spore Crawler $20.16^\circ$, Planetary Fortress $5.04^\circ$ per tick.
 - Sources and the per-unit table: [`docs/evidence/2026-11-04-catalog-time-audit.md`](evidence/2026-11-04-catalog-time-audit.md) §10.
 
