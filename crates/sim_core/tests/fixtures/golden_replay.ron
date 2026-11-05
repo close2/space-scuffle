@@ -72,6 +72,10 @@
 // at 40.32 degrees per tick (was 21.6). Turret angles are hashed, so checkpoint 4 (ticks 151 to
 // 200) changed. No behaviour did: the tank's arc is unrestricted, and with turret angles left
 // out of the checksum every checkpoint of both fixtures equals that of the turreted-arc commit.
+// Re-recorded for WP17 commit f (Q0045 1b): every hull turns at its StarCraft II rate (55.99
+// degrees per tick for "blue_infantry", "blue_armor" and "red_psi", 20.16 for "red_siege"; was
+// instant). Checkpoint 2 (ticks 51 to 100, the first moves) and every checkpoint from
+// checkpoint 4 (ticks 151 to 200) changed.
 (
     checksum_schema: 10,
     seed: 0x5EED_0F_5CAFF1E,
@@ -100,24 +104,24 @@
     ],
     checksums: [
         0xd3213317d91b8691,
-        0x9a0f00bdb78caef0,
+        0x839f47ca0ba8f2b3,
         0x9c03130587ecfe87,
-        0x2648b2f05d2f8ee9,
-        0xe645a7d0b66c574b,
-        0x2e05ffa91e59ef4d,
-        0x482475b5f60565bb,
-        0x073e49634771b631,
-        0xc5f79fad6348eafc,
-        0xf6f0851a6d65d876,
-        0xb02318749d277703,
-        0x6c3b70cc0b77f5ce,
-        0x3e0cd459d5d1b724,
-        0xd45d97d38e2c83c4,
-        0x43c4b00e6fbb9d51,
-        0x1e000dedb1d02c55,
-        0x8600cebcd4a8b386,
-        0xe5d924a0da9bed17,
-        0x1d05e3d49fcc6d06,
-        0x8aedb2b132a2bbd7,
+        0x76519f44eb3912b7,
+        0xe92247ecd52cd20d,
+        0xe592df0c773733ff,
+        0x16fc1ba2c5713d8b,
+        0x121030f995aee6fe,
+        0x8b6a248eed771ade,
+        0x6e7baceb516fc3b8,
+        0x20c08379aa07cd2f,
+        0xc23147b2eb303667,
+        0xda14aa3954023e59,
+        0x0d4934e0b5595ebc,
+        0xea6eea42f3ef2ce2,
+        0x79c48dcc1a13cb1e,
+        0xa139fd2afc8f098f,
+        0x56ce7cafa4843e71,
+        0x29a51e83b2832223,
+        0xd4d7ba1101a68e51,
     ],
 )

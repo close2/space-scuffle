@@ -1768,3 +1768,64 @@ unresolved), marine survivors 4.03 (SD 3.26).
   angles (hashed) now turn at 40.32° per tick. No behaviour changed: with `turret_angle` left out of the encoding,
   every checkpoint of both fixtures equals the turreted-arc commit's. `golden_replay_orders.ron` unchanged. Debug,
   release and `wasm32-wasip1` reproduce both.
+
+### 14.7 Commit f: the 42 hull rates
+
+- **Change** (audit §10.1; degrees per tick, binary units per tick in brackets): 28 units 180 → 55.99 (10 193);
+  `sky_bastion`, `cloak_gunship`, `sonic_bat` and `flying_saucer` (the Phoenix) 180 → 84.00 (15 292);
+  `napalm_wheeler`, `void_goliath`, `tripod_annihilator`, `stealth_eye_orb`, `phase_prism_saucer`,
+  `mothership_carrier` and `spore_matriarch` 180 → 40.32 (7 340); `railgun_crawler`, `colossus_mech` and
+  `stag_behemoth` 180 → 20.16 (3 670). Half a turn takes 3, 4, 5 and 9 ticks.
+- **Test restated first** (the commit before): `sc2_battle_benchmarks_tests::test_1v1_zealot_vs_marine_swing_cadence_and_three_hit_kill`
+  spawned both units at heading 0 with the marine due north, so the zealot first turned 90°; both now spawn facing
+  each other. A probe of `cargo gate quick` with these rates found no other test outside the goldens and the
+  matrix expectation that depended on instant turning.
+- **Each class alone** (scratch catalogs, whole matrix on 20 seeds against commit e; battle 33 on 68 seeds):
+
+  | Class | Battles moved | Winner changes | Battle 33 (marine wins / zealot wins / unresolved, survivors) |
+  |---|---|---|---|
+  | 84.00 | none: bit-identical | — | 43 / 16 / 9, 4.38, unchanged |
+  | 55.99 | 6: 28, 29, 32, 33, 34, 35 | 32 (1 seed), 33 (9 seeds), 35 (1 seed) | 39 / 20 / 9, 3.87 |
+  | 40.32 | 2: 28, 30 | none | unchanged |
+  | 20.16 | 1: 27 | none | unchanged |
+  | all 42 | 8 (the union) | as 55.99 | 39 / 20 / 9, 3.87 |
+
+  The 84.00 class moves nothing: no matrix battle depends on a Mutalisk, Banshee, Liberator or Phoenix turning
+  faster than 3 ticks per half turn. The effect is the 55.99 class, the common infantry and zerglings, whose fights
+  now include turning to each new target.
+- **Whole matrix, 20 seeds**, against commit e: 8 battles moved; no expectation fails except battle 33 before its
+  re-recording (after it: 0 on the seeds of record, 2 over all seeds, both battle 33's).
+
+| Battle | Seeds moved | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|
+| 27_100_lings_vs_8_ultralisks | 20 | 0.00 – 8.00, same | 213.2 → 221.5 | — / 427.67 → 421.19 |
+| 28_100_lings_vs_10_immortals | 20 | 25.95 → 26.15 – 0.00 | 687.0 → 688.4 | 35.00 (3) → 35.00 (1) / — |
+| 29_100_lings_vs_12_stalkers | 17 | 69.20 → 68.50 – 0.00 | 449.0 → 451.9 | 35.00 (16) → 34.27 (15) / — |
+| 30_20_roaches_vs_10_immortals | 17 | 0.00 – 10.00, same | 237.0 → 239.7 | — / 147.90 → 146.95 |
+| 32_30_marines_vs_15_banelings | 1 | 1.45 – 0.95 → 1.45 – 0.90 | 50.0, same | 27.50 (4), same / — |
+| 33_24_marines_vs_12_zealots | 18 | 4.75 – 0.75 → 3.55 – 1.20 | 429.6 → 442.2 | 39.67 (9) → 38.60 (5) / — |
+| 34_20_hydras_vs_12_mutas | 11 | 19.45 → 19.30 – 0.00 | 183.3 → 184.4 | 90.00, same / — |
+| 35_12_vikings_vs_6_colossi | 13 | 12.00 – 0.05 → 12.00 – 0.00 | 309.2 → 280.4 | 125.00, same / — |
+
+  - **The slow turners.** The Ultralisk analogue (27, 20.16° per tick) takes 9 ticks to turn about: the zerglings'
+    fight lasts 8 ticks longer and the lead ultralisk loses 6.5 more life. The Immortal analogue (28, 30, 40.32)
+    turns in 5: its fights end 1 to 3 ticks later.
+  - **The 55.99 class.** Zerglings (28, 29), hydralisks (34) and marines (32, 33) turn to each new target: fights end
+    1 to 13 ticks later, and in battle 29 the stalkers kill 0.7 more zerglings on average.
+  - **Battle 35** (12 vikings against 6 colossi) ends 29 ticks sooner and the colossi no longer survive past the tick
+    limit on the first seed of record (unresolved → viking win; the expectation, a viking win, holds on all seeds):
+    the colossus analogue (`tripod_annihilator`, 40.32° per tick) is no longer instantly facing each viking.
+  - **Winner changes.** Battle 32's first seed of record goes from a baneling win with 1 baneling left to both sides
+    gone (its expectation holds); battle 35's as above; battle 33 below. No battle changes its winner over its seeds
+    as a whole: battle 33 stays a marine win on most seeds (39 of 68), and its expectation was written for a close
+    fight (Q0044). The stop rule of plan WP17 step 8 ("if a battle flips its winner, stop") was read that way; the
+    flips on single seeds are listed here for review.
+- **Battle 33, 68 seeds:** 39 / 20 / 9 (marine wins / zealot wins / unresolved; was 43 / 16 / 9), marine survivors
+  3.87 (SD 3.43; was 4.38, SD 3.39), zealot survivors 1.01 (SD 1.37). Seeds of record (marines – zealots): 0-3 (the
+  first seed of record, a zealot win; was 7-0), 2-0 (was 1-1), 1-2 unresolved (was 9-0), 9-0 (was 6-0). Re-recorded
+  per D-6 to `blue: (0, 9), red: (0, 3)` (was `blue: (1, 9), red: (0, 1)`), comment rewritten. Both sides turn at
+  55.99° per tick; this measurement does not separate which side's turning costs it more, and the plan's expectation
+  of a small effect (§5.2) did not hold: the marines lose 0.51 survivors on average.
+- **Golden replays re-recorded.** `golden_replay.ron`: checkpoint 2 (ticks 51 to 100, the first moves) and every
+  checkpoint from 4 (ticks 151 to 200). `golden_replay_orders.ron`: from checkpoint 5 (ticks 41 to 50), most
+  checkpoints. Debug, release and `wasm32-wasip1` reproduce both.
