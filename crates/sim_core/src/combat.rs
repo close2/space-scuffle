@@ -397,13 +397,15 @@ pub struct WeaponTarget {
     pub combined_radius: SimScalar,
 }
 
-/// Rotates the weapon mount towards `angle` by at most one tick of turret travel.
+/// Rotates the weapon mount towards `angle`: a turret by at most its own rate, a hull-mounted
+/// weapon by turning the hull within what is left of this tick's hull budget
+/// ([`Entity::turn_hull_towards`]).
 fn slew_towards(entity: &mut Entity, weapon: &WeaponSpec, angle: SimAngle) {
-    let step = weapon.turret_turn_rate.raw();
     if weapon.has_turret {
+        let step = weapon.turret_turn_rate.raw();
         entity.turret_angle = entity.turret_angle.rotate_towards(angle, step);
     } else {
-        entity.heading = entity.heading.rotate_towards(angle, step);
+        entity.turn_hull_towards(angle);
     }
 }
 

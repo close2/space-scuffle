@@ -1630,3 +1630,218 @@ doc 07 or doc 08 cell states a projectile speed.
   units waiting out their cooldown at a contact ring are jostled once per weapon cycle.
 - The final matrix equals the all-corrections measurement of the audit's §7 in every battle except 22a and 22b, the
   two reaper battles that only the deferred R1 moves.
+
+## 14. WP17: hull turning at StarCraft II rates (Q0045 1b)
+
+Plan D-8 and WP17. Angles in the simulation are `SimAngle` binary angles: 65 536 units per turn, counter-clockwise
+from +x in the world frame; rates are authored in degrees per tick and loaded as binary units per tick
+(round(degrees × 65 536 ÷ 360), halves up). The research is the audit's §10
+([`2026-11-04-catalog-time-audit.md`](2026-11-04-catalog-time-audit.md)); the decisions it led to are plan D-8 item 7.
+The baseline is the state after WP12 (`~/scratch/combat_wp17/base/`): 1000 runs, expectation failures 0 on the seeds
+of record and 7 over all seeds (all battle 33's); battle 33 on 68 seeds 42 / 18 / 8 (marine wins / zealot wins /
+unresolved), marine survivors 4.03 (SD 3.26).
+
+### 14.1 Commit a: the unit and range of both rates
+
+- **Change.** `turn_rate_deg` → `turn_rate_deg_per_tick` and `turret_turn_rate_deg` →
+  `turret_turn_rate_deg_per_tick`, without a default, so a catalog with an old name fails to load naming the new
+  one. Both rates are degrees per tick, validated to `0 < rate ≤ 180` (a turret rate exactly 0 on a weapon without a
+  turret), with typed errors instead of the former silent clamp. Both use one conversion, rounded instead of the hull
+  rate's truncation to whole degrees. The turret branch that read values above 360 as degrees per second is gone.
+- **Data, rewritten to the same behaviour.** Hull 999, 360 and 280 → 180 (42 units; 180 reaches any facing in one
+  tick, as the clamp did). Structure turrets 360 → 180 (6 weapons): raw 65 535 (the saturating cast of 360°) →
+  32 768; both turn any facing in one tick. The three unit turrets keep 21.6 (3 932 units, unchanged).
+- **Measurement.** Matrix bit-identical to the baseline; battle 33 bit-identical; both golden replays unchanged in
+  debug, release and `wasm32-wasip1` (no structure turret's `WeaponSpec` is hashed in either replay: no structure
+  fires a projectile there).
+
+### 14.2 Commit b: one hull rotation per tick
+
+- **Change.** `Entity::turn_hull_towards` turns the heading by at most the tick's `hull_turn_budget` (binary units),
+  which `SimWorld::step_movement_and_steering` sets to the archetype's `turn_rate` before any system turns a hull.
+  The three hull writers of plan §2.5 call it: the motion commit (facing the velocity), `aim_if_in_range` (facing the
+  goal, through the same commit) and `slew_towards` for a hull-mounted weapon, which no longer reads the weapon's
+  turret rate. The movement phase spends first, the weapon phase gets the rest. The budget is left out of the
+  checksum (`fields!(Entity { … } unhashed { hull_turn_budget })`): it is reset before its first read every tick.
+  Plan D-8 item 7: `aim_if_in_range` also snapped a turret to its goal; it no longer writes the turret, so the
+  weapon phase alone turns a turret, at its rate.
+- **Tests first** (`hull_turning_tests.rs`, scratch archetypes): on the old rule 5 of 7 failed (the swing of a unit
+  facing away started on tick 2, not 9; one tick turned 32 768 units where the rate allows 3 670, 7 340 or a turret's
+  1 820); the 180° guard and the determinism test passed. All 7 pass with the rule.
+- **Measurement.** Matrix bit-identical to commit a; battle 33 bit-identical. Every shipped hull rate is 180° per
+  tick, so the budget never binds.
+- **`golden_replay.ron` re-recorded:** checkpoints 4 to 6 and 9 (ticks 151 to 300 and 401 to 450) changed, because
+  the turret angles of its three `railgun_crawler`s (21.6° per tick) now turn at their rate instead of snapping in the
+  movement phase, and turret angles are hashed. No behaviour changed: with `turret_angle` left out of the encoding in
+  both, every checkpoint of both fixtures on this commit equals commit a's. The siege tank's arc is unrestricted, so
+  its turret's angle never gated a shot. `golden_replay_orders.ron` unchanged. Debug, release and `wasm32-wasip1`
+  reproduce both.
+
+### 14.3 Commit c: matrix battles spawn facing each other
+
+- **Change.** `SimWorld::spawn_unit_facing(unit_type, owner, pos, heading)` (heading a binary angle,
+  counter-clockwise from +x, world frame; hull and turret both start there); `spawn_unit` calls it with heading 0.
+  `sim_fixtures::matchup` spawns every unit of a two-sided battle facing the centre of the other side's authored
+  grid (before jitter, `side_centre`). The golden replays keep heading 0 (plan D-8 item 5).
+- **Test first:** `a_two_group_battle_spawns_each_group_facing_the_others_centre` and
+  `a_side_centre_is_the_mean_of_its_grid_points` (`sim_fixtures::matchup`), red until `side_centre` existed.
+- **Measurement.** Matrix bit-identical to commit b in outcomes (every hull still turns 180° per tick); battle 33
+  bit-identical; both golden replays unchanged in debug, release and `wasm32-wasip1`.
+
+### 14.4 Commit d, hull-mounted arcs: not latent, measured
+
+- **Change.** 40 hull-mounted weapons take the reference tolerance `Arc` ÷ 2 + `ArcSlop` (audit §10.3): 11.25° for
+  36, 39.99° for the Void Ray analogue's two (`ArcSlop` 39.9902), 45° for the Mutalisk analogue's two (`ArcSlop` 45).
+  Before: 15° for 27, 180° (every direction) for 10 (the melee units, the workers and the Queen's ground weapon),
+  360° for 3. Firing half angles now round to the nearest binary unit like the rates (11.25° = 2 048 units; 15° =
+  2 731, was 2 730 truncated); the six weapons whose mount differs keep their arcs (plan D-8 item 7). Test first:
+  `firing_half_angles_round_to_the_nearest_binary_unit` (`catalog.rs`). Three arc tests were restated first, in the
+  commit before (they named `flak_array_dome`'s 360, a weapon at exactly 15° and the text `firing_arc_deg: 360.0`).
+- **Not latent, against the plan.** D-8 item 6 expected the hull arcs to change nothing while every hull turns 180°
+  per tick. They do change results, for two reasons that the plan did not see:
+  1. A weapon that is `Ready` and not aligned enters `RotatingToTarget` and turns, but starts its swing only on the
+     next tick, even when one tick's turn aligned it (`step_ready_weapon` slews without checking again;
+     `step_rotating_weapon` slews and checks). A melee unit with the old 180° arc never needed to face its target;
+     now each new target outside 11.25° costs it at least that tick. This is finding **M-22** (remediation plan
+     §4.2): it delays every target switch by one tick beyond the turn itself.
+  2. The hull budget is shared (commit b): a unit that turned to face its velocity in the movement phase has less
+     than 180° left for the weapon phase in the same tick.
+
+  The cause of every move is still this commit's one change (the arc values); it is measured and re-recorded here.
+- **Whole matrix, 20 seeds**, against commit c: 18 battles moved; no winner changed except in battle 31 (a close
+  fight with mixed winners) and battle 33 (one seed of record).
+
+| Battle | Seeds moved | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|
+| 6b_2_roaches_vs_hydra | 3 | 2.00 – 0.00, same | 80.0 → 80.2 | 112.57 → 112.58 / — |
+| 9a_hellion_vs_4_lings | 7 | 1.00 – 0.00, same | 95.0, same | 23.80 → 25.40 / — |
+| 10_2_hellions_vs_8_lings | 1 | 2.00 – 0.00, same | 61.2, same | 70.00 → 70.40 / — |
+| 11a_2_banelings_vs_5_marines | 3 | 0.00 – 2.25, same | 8.1 → 8.2 | — / 10.00, same |
+| 11b_2_banelings_vs_marauder | 9 | 0.00 – 1.00, same | 8.0 → 8.4 | — / 95.00, same |
+| 22a_reaper_vs_2_workers | 5 | 1.00 – 0.00, same | 101.0, same | 46.24 → 46.22 / — |
+| 23a_zealot_vs_6_lings | 20 | 0.00 – 2.00, same | 271.3 → 275.0 | — |
+| 24a_roach_vs_5_lings | 20 | 0.00 – 3.00, same | 288.5 → 289.8 | — |
+| 24b_upgraded_roach_vs_5_lings | 6 | 1.00 – 0.00, same | 328.0, same | 25.42 → 26.62 / — |
+| 26_100_lings_vs_6_colossi | 1 | 0.00 – 6.00, same | 116.1 → 116.0 | — / 250.00, same |
+| 27_100_lings_vs_8_ultralisks | 20 | 0.00 – 8.00, same | 212.0 → 213.2 | — / 425.25 → 427.67 |
+| 28_100_lings_vs_10_immortals | 20 | 27.00 → 25.95 – 0.00 | 683.4 → 687.0 | 30.66 (4) → 35.00 (3) / — |
+| 29_100_lings_vs_12_stalkers | 20 | 69.10 → 69.20 – 0.00 | 444.9 → 449.0 | 31.49 (14) → 35.00 (16) / — |
+| 30_20_roaches_vs_10_immortals | 1 | 0.00 – 10.00, same | 236.9 → 237.0 | — / 147.15 → 147.90 |
+| 31_15_marauders_vs_15_stalkers | 15 | 1.80 – 1.90 → 1.85 – 1.45 | 666.9 → 669.4 | 80.80 (5) → 57.00 (4) / — |
+| 32_30_marines_vs_15_banelings | 1 | 1.45 – 0.95, same | 49.9 → 50.0 | 27.50, same / — |
+| 33_24_marines_vs_12_zealots | 15 | 4.50 – 0.60 → 4.75 – 0.75 | 440.8 → 429.6 | 36.27 (11) → 39.67 (9) / — |
+| 34_20_hydras_vs_12_mutas | 4 | 19.40 → 19.45 – 0.00 | 183.7 → 183.3 | 90.00, same / — |
+
+  - The zerglings (23a, 24a, 24b, 26 to 29) and the zealot now turn to each new target before they strike: their
+    fights last 1 to 4 ticks longer, and in 28 the immortals kill one more zergling on average.
+  - The banelings (11a, 11b) turn before they burst, a fraction of a tick later on average.
+  - Battle 31 stays a close fight with both winners (its expectation holds on every seed).
+- **Battle 33, 68 seeds:** 43 / 16 / 9 (marine wins / zealot wins / unresolved; was 42 / 18 / 8), marine survivors
+  4.38 (SD 3.39; was 4.03, SD 3.26). Seeds of record 7-0, 1-1, 9-0, 6-0 (marines – zealots; seed 11 was 3-0 and is
+  now unresolved). Re-recorded per D-6 to the smallest ranges that hold on them, `blue: (1, 9), red: (0, 1)`, and its
+  comment rewritten with this distribution.
+- **`golden_replay.ron` re-recorded** from checkpoint 4 (ticks 151 to 200, the first fight): its marines, roaches and
+  zealots fire within 11.25° (were 15°, 15° and 180°). `golden_replay_orders.ron` unchanged. Debug, release and
+  `wasm32-wasip1` reproduce both.
+
+### 14.5 Commit d, turreted arcs
+
+- **Change.** 7 turreted weapons take `Arc` ÷ 2 + `ArcSlop` (audit §10.3): `railgun_crawler`'s Siege Mode override
+  (`CrucioShockCannon`, no `Arc`) 360 → 11.25°; `planetary_bulwark_dome` (`TwinIbiksCannon`, `Arc` 90, `liberty`
+  WeaponData:138) 360 → 56.25°; `flak_array_dome`, `tesla_sentinel_dome` (ground and air), `thorn_lasher_dome` and
+  `spore_spire_dome` 360 → 11.25°. The unsieged tank's `90mmCannons` keeps 360 (`Arc` 360, class A).
+- **Measurement.** Matrix bit-identical to the hull-arc commit (no matrix battle sieges a tank or has a structure);
+  battle 33 bit-identical; both golden replays unchanged in debug, release and `wasm32-wasip1` (their tanks never
+  siege, and no structure fires).
+
+### 14.6 Commit e: turret rates (audit group W8)
+
+- **Change** (degrees per tick, audit §10.4): `railgun_crawler`'s turret 21.6 → 40.32 (`SiegeTank`, `YawRate` 720
+  through `FreeRotate`) and its Siege Mode turret 21.6 → 20.16 (`SiegeTankSieged`, 360, `liberty` TurretData:82);
+  `planetary_bulwark_dome` 180 → 5.04 (90, `liberty` TurretData:89); `flak_array_dome` and `tesla_sentinel_dome`
+  (ground and air) 180 → 40.32; `thorn_lasher_dome` and `spore_spire_dome` 180 → 20.16 (360, `liberty`
+  TurretData:62, :70). `colossus_mech`'s air turret keeps 21.6 (no counterpart turret).
+- **Measurement.** Matrix bit-identical to the turreted-arc commit, against the plan's expectation that battles with
+  `railgun_crawler` would move: the unsieged tank's arc is unrestricted (`Arc` 360, class A), so its turret angle
+  never gates a shot, and no matrix battle sieges a tank or has a structure. Battle 33 bit-identical.
+- **`golden_replay.ron` re-recorded:** only checkpoint 4 (ticks 151 to 200) changed, because its three tanks' turret
+  angles (hashed) now turn at 40.32° per tick. No behaviour changed: with `turret_angle` left out of the encoding,
+  every checkpoint of both fixtures equals the turreted-arc commit's. `golden_replay_orders.ron` unchanged. Debug,
+  release and `wasm32-wasip1` reproduce both.
+
+### 14.7 Commit f: the 42 hull rates
+
+- **Change** (audit §10.1; degrees per tick, binary units per tick in brackets): 28 units 180 → 55.99 (10 193);
+  `sky_bastion`, `cloak_gunship`, `sonic_bat` and `flying_saucer` (the Phoenix) 180 → 84.00 (15 292);
+  `napalm_wheeler`, `void_goliath`, `tripod_annihilator`, `stealth_eye_orb`, `phase_prism_saucer`,
+  `mothership_carrier` and `spore_matriarch` 180 → 40.32 (7 340); `railgun_crawler`, `colossus_mech` and
+  `stag_behemoth` 180 → 20.16 (3 670). Half a turn takes 3, 4, 5 and 9 ticks.
+- **Test restated first** (the commit before): `sc2_battle_benchmarks_tests::test_1v1_zealot_vs_marine_swing_cadence_and_three_hit_kill`
+  spawned both units at heading 0 with the marine due north, so the zealot first turned 90°; both now spawn facing
+  each other. A probe of `cargo gate quick` with these rates found no other test outside the goldens and the
+  matrix expectation that depended on instant turning.
+- **Each class alone** (scratch catalogs, whole matrix on 20 seeds against commit e; battle 33 on 68 seeds):
+
+  | Class | Battles moved | Winner changes | Battle 33 (marine wins / zealot wins / unresolved, survivors) |
+  |---|---|---|---|
+  | 84.00 | none: bit-identical | — | 43 / 16 / 9, 4.38, unchanged |
+  | 55.99 | 6: 28, 29, 32, 33, 34, 35 | 32 (1 seed), 33 (9 seeds), 35 (1 seed) | 39 / 20 / 9, 3.87 |
+  | 40.32 | 2: 28, 30 | none | unchanged |
+  | 20.16 | 1: 27 | none | unchanged |
+  | all 42 | 8 (the union) | as 55.99 | 39 / 20 / 9, 3.87 |
+
+  The 84.00 class moves nothing: no matrix battle depends on a Mutalisk, Banshee, Liberator or Phoenix turning
+  faster than 3 ticks per half turn. The effect is the 55.99 class, the common infantry and zerglings, whose fights
+  now include turning to each new target.
+- **Whole matrix, 20 seeds**, against commit e: 8 battles moved; no expectation fails except battle 33 before its
+  re-recording (after it: 0 on the seeds of record, 2 over all seeds, both battle 33's).
+
+| Battle | Seeds moved | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|
+| 27_100_lings_vs_8_ultralisks | 20 | 0.00 – 8.00, same | 213.2 → 221.5 | — / 427.67 → 421.19 |
+| 28_100_lings_vs_10_immortals | 20 | 25.95 → 26.15 – 0.00 | 687.0 → 688.4 | 35.00 (3) → 35.00 (1) / — |
+| 29_100_lings_vs_12_stalkers | 17 | 69.20 → 68.50 – 0.00 | 449.0 → 451.9 | 35.00 (16) → 34.27 (15) / — |
+| 30_20_roaches_vs_10_immortals | 17 | 0.00 – 10.00, same | 237.0 → 239.7 | — / 147.90 → 146.95 |
+| 32_30_marines_vs_15_banelings | 1 | 1.45 – 0.95 → 1.45 – 0.90 | 50.0, same | 27.50 (4), same / — |
+| 33_24_marines_vs_12_zealots | 18 | 4.75 – 0.75 → 3.55 – 1.20 | 429.6 → 442.2 | 39.67 (9) → 38.60 (5) / — |
+| 34_20_hydras_vs_12_mutas | 11 | 19.45 → 19.30 – 0.00 | 183.3 → 184.4 | 90.00, same / — |
+| 35_12_vikings_vs_6_colossi | 13 | 12.00 – 0.05 → 12.00 – 0.00 | 309.2 → 280.4 | 125.00, same / — |
+
+  - **The slow turners.** The Ultralisk analogue (27, 20.16° per tick) takes 9 ticks to turn about: the zerglings'
+    fight lasts 8 ticks longer and the lead ultralisk loses 6.5 more life. The Immortal analogue (28, 30, 40.32)
+    turns in 5: its fights end 1 to 3 ticks later.
+  - **The 55.99 class.** Zerglings (28, 29), hydralisks (34) and marines (32, 33) turn to each new target: fights end
+    1 to 13 ticks later, and in battle 29 the stalkers kill 0.7 more zerglings on average.
+  - **Battle 35** (12 vikings against 6 colossi) ends 29 ticks sooner and the colossi no longer survive past the tick
+    limit on the first seed of record (unresolved → viking win; the expectation, a viking win, holds on all seeds):
+    the colossus analogue (`tripod_annihilator`, 40.32° per tick) is no longer instantly facing each viking.
+  - **Winner changes.** Battle 32's first seed of record goes from a baneling win with 1 baneling left to both sides
+    gone (its expectation holds); battle 35's as above; battle 33 below. No battle changes its winner over its seeds
+    as a whole: battle 33 stays a marine win on most seeds (39 of 68), and its expectation was written for a close
+    fight (Q0044). The stop rule of plan WP17 step 8 ("if a battle flips its winner, stop") was read that way; the
+    flips on single seeds are listed here for review.
+- **Battle 33, 68 seeds:** 39 / 20 / 9 (marine wins / zealot wins / unresolved; was 43 / 16 / 9), marine survivors
+  3.87 (SD 3.43; was 4.38, SD 3.39), zealot survivors 1.01 (SD 1.37). Seeds of record (marines – zealots): 0-3 (the
+  first seed of record, a zealot win; was 7-0), 2-0 (was 1-1), 1-2 unresolved (was 9-0), 9-0 (was 6-0). Re-recorded
+  per D-6 to `blue: (0, 9), red: (0, 3)` (was `blue: (1, 9), red: (0, 1)`), comment rewritten. Both sides turn at
+  55.99° per tick; this measurement does not separate which side's turning costs it more, and the plan's expectation
+  of a small effect (§5.2) did not hold: the marines lose 0.51 survivors on average.
+- **Golden replays re-recorded.** `golden_replay.ron`: checkpoint 2 (ticks 51 to 100, the first moves) and every
+  checkpoint from 4 (ticks 151 to 200). `golden_replay_orders.ron`: from checkpoint 5 (ticks 41 to 50), most
+  checkpoints. Debug, release and `wasm32-wasip1` reproduce both.
+
+### 14.8 WP17 summary
+
+- **Applied:** the field unit and range (commit a), one hull rotation per tick and the turret turned only by the
+  weapon phase (b), matrix spawn facing (c), 47 firing arcs (d: 40 hull-mounted, 7 turreted), the 8 turret rates of
+  group W8 (e) and the 42 hull rates (f). Doc 07 §2.3 and `DESIGN.md` describe the per-tick rates.
+- **Not applied, recorded** (plan D-8 item 7, follow-up F-8): turn-before-move (no tolerance in the data;
+  [Q0050](../questions/open/0050-turn-before-move.md), default no gating, so commit g was not made);
+  `StationaryTurningRate`; the acquisition arc `Arc` ÷ 2; the six weapons whose mount differs.
+- **Against the plan's expectations:** the hull-mounted arcs were not latent (§14.4, finding M-22); the turret rates
+  moved no matrix battle (§14.6); the hull rates moved 8 battles, not "potentially every battle" (§14.7).
+- **Expectations re-recorded:** battle 33 only, twice (§14.4, §14.7). **Golden replays:** `golden_replay.ron` in
+  b, d, e and f (b and e: turret angles only, proved); `golden_replay_orders.ron` in f.
+- **Tests restated** first, test-only: three arc tests of `weapon_catalog_rules_tests.rs` (before d) and
+  `sc2_battle_benchmarks_tests::test_1v1_zealot_vs_marine_swing_cadence_and_three_hit_kill` (before f).
+- **Finding:** M-22, a ready weapon that is not aligned swings one tick late.

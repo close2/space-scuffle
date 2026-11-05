@@ -215,7 +215,10 @@ pub struct Entity {
     /// During the tick, the velocity movement intends; afterward, the displacement this unit
     /// actually achieved. A unit pressing against a wall therefore reads as stationary.
     pub velocity: SimVec2,
-    /// Hull facing angle.
+    /// Hull facing: a binary angle (65 536 units per turn), counter-clockwise from +x in the
+    /// world frame. Set at spawn (`SimWorld::spawn_unit_facing`) and afterwards changed only
+    /// through [`Self::turn_hull_towards`], so it turns at most the archetype's `turn_rate` per
+    /// tick.
     pub heading: SimAngle,
     /// Independent turret aim angle.
     pub turret_angle: SimAngle,
@@ -297,9 +300,30 @@ pub struct Entity {
     pub(crate) transport_carrier: Option<EntityId>,
     /// Invulnerability flag (e.g. Stasis field, Phase Shift, Recall, Divine Shield).
     pub is_invulnerable: bool,
+    /// Hull rotation still allowed this tick, in binary angle units.
+    ///
+    /// Set to the archetype's `turn_rate` at the start of every movement phase
+    /// (`SimWorld::step_movement_and_steering`) and spent by [`Self::turn_hull_towards`], so the
+    /// movement phase and the weapon phase together turn the hull at most `turn_rate` per tick.
+    /// It is reset before its first read in every tick and so carries no state from one tick
+    /// to the next; for that reason it is left out of the state checksum.
+    pub hull_turn_budget: u16,
 }
 
 impl Entity {
+    /// Turns the hull towards `desired` by at most this tick's remaining budget, spends the
+    /// rotation used, and returns the new heading.
+    ///
+    /// The turn takes the shorter way round; a facing within the budget is reached exactly.
+    /// Both angles are binary angles in the world frame.
+    pub fn turn_hull_towards(&mut self, desired: SimAngle) -> SimAngle {
+        let before = self.heading;
+        self.heading = before.rotate_towards(desired, self.hull_turn_budget);
+        let used = before.diff(self.heading).unsigned_abs();
+        self.hull_turn_budget = self.hull_turn_budget.saturating_sub(used);
+        self.heading
+    }
+
     /// Returns true if this entity cannot be pushed aside by friendly units.
     #[must_use]
     #[inline]
@@ -370,6 +394,7 @@ impl Entity {
             is_completed: true,
             transport_carrier: None,
             is_invulnerable: false,
+            hull_turn_budget: archetype.turn_rate.raw(),
         }
     }
 

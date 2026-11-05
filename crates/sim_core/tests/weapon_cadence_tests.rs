@@ -73,7 +73,7 @@ fn unit_ron(slug: &str, id: u16, max_hp: f32, weapon: &str, overclock: &str) -> 
             max_speed: 0.0,
             acceleration: 0.0,
             deceleration: 0.0,
-            turn_rate_deg: 999.0,
+            turn_rate_deg_per_tick: 180.0,
             collision_radius: 0.5,
             separation_radius: 0.5,
             push_priority: 20,
@@ -92,7 +92,8 @@ fn unit_ron(slug: &str, id: u16, max_hp: f32, weapon: &str, overclock: &str) -> 
 }
 
 /// The RON of a hull-mounted weapon that may fire in every direction.
-const OPEN_MOUNT: &str = "firing_arc_deg: 360.0, has_turret: false, turret_turn_rate_deg: 0.0";
+const OPEN_MOUNT: &str =
+    "firing_arc_deg: 360.0, has_turret: false, turret_turn_rate_deg_per_tick: 0.0";
 
 /// The scratch catalog: a shooter with `timings` and an optional overclock, and a target with
 /// `target_hp` hit points. The shooter deals 10 damage per shot from up to 6 world units.
@@ -101,7 +102,7 @@ fn catalog_ron(timings: Timings, target_hp: f32, overclock: Option<f32>) -> Stri
 }
 
 /// As [`catalog_ron`], with `mount` the RON of the weapon's `firing_arc_deg`, `has_turret` and
-/// `turret_turn_rate_deg` fields.
+/// `turret_turn_rate_deg_per_tick` fields.
 fn catalog_ron_with_mount(
     timings: Timings,
     mount: &str,
@@ -510,7 +511,7 @@ fn damage_point_zero_releases_on_the_tick_its_swing_starts() -> TestResult {
 #[test]
 fn damage_point_zero_after_turning_releases_on_the_tick_it_is_aligned() -> TestResult {
     // A turret at 10 degrees per tick with a 15 degree half arc, its target straight behind.
-    let mount = "firing_arc_deg: 15.0, has_turret: true, turret_turn_rate_deg: 10.0";
+    let mount = "firing_arc_deg: 15.0, has_turret: true, turret_turn_rate_deg_per_tick: 10.0";
     let catalog = catalog_ron_with_mount(DAMAGE_POINT_ZERO, mount, 10_000.0, None);
     let bench = Bench::spawned(&catalog, 7)?;
     let (mut shooter, weapon, target) = bench.direct()?;

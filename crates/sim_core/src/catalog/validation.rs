@@ -84,6 +84,23 @@ fn angle(definition: &str, field: &str, value: f32) -> SimResult<()> {
     Ok(())
 }
 
+/// Checks an angular rate in degrees per tick: finite, above 0 and at most 180.
+///
+/// 180 degrees per tick is half a turn, which reaches any facing in one tick (no two facings
+/// are further apart), so a larger rate would mean nothing more. A rate of 0 would never
+/// turn at all. Values outside the range are rejected rather than clamped.
+fn rate_per_tick(definition: &str, field: &str, value: f32) -> SimResult<()> {
+    angle(definition, field, value)?;
+    if value <= 0.0 || value > 180.0 {
+        return Err(invalid(
+            definition,
+            field,
+            "must lie in 0 < degrees per tick <= 180",
+        ));
+    }
+    Ok(())
+}
+
 /// Requires `shield_regen_delay_ticks` exactly when the archetype has shields: a shielded
 /// archetype without it would never know when to regenerate, and an unshielded one with it
 /// carries a value nothing reads. `has_shields` is `max_shields > 0` as authored.
@@ -220,7 +237,8 @@ impl UnitArchetypeDef {
             nonnegative(&self.slug, field, f64::from(value))?;
         }
         sight(&self.slug, "sight_radius", f64::from(self.sight_radius))?;
-        angle(&self.slug, "turn_rate_deg", self.turn_rate_deg)?;
+        let hull_rate = self.turn_rate_deg_per_tick;
+        rate_per_tick(&self.slug, "turn_rate_deg_per_tick", hull_rate)?;
         shield_regen_delay(
             &self.slug,
             self.max_shields > 0.0,
@@ -310,6 +328,24 @@ impl WeaponSpecDef {
         Ok(())
     }
 
+    /// Checks the turret rate: a turreted weapon turns at a rate in `0 < rate <= 180` degrees
+    /// per tick; a hull-mounted weapon turns with the hull and authors exactly 0.
+    fn validate_turret(&self, definition: &str, prefix: &str) -> SimResult<()> {
+        let field = format!("{prefix}.turret_turn_rate_deg_per_tick");
+        if self.has_turret {
+            return rate_per_tick(definition, &field, self.turret_turn_rate_deg_per_tick);
+        }
+        angle(definition, &field, self.turret_turn_rate_deg_per_tick)?;
+        if self.turret_turn_rate_deg_per_tick != 0.0 {
+            return Err(invalid(
+                definition,
+                &field,
+                "must be 0 on a weapon without a turret, which turns with the hull",
+            ));
+        }
+        Ok(())
+    }
+
     fn validate(&self, definition: &str, prefix: &str) -> SimResult<()> {
         for (field, value) in [
             ("min_range", self.min_range),
@@ -349,11 +385,7 @@ impl WeaponSpecDef {
                 "must lie in 0..=360 degrees",
             ));
         }
-        angle(
-            definition,
-            &format!("{prefix}.turret_turn_rate_deg"),
-            self.turret_turn_rate_deg,
-        )?;
+        self.validate_turret(definition, prefix)?;
         if let Some(speed) = self.projectile_speed {
             positive(definition, &format!("{prefix}.projectile_speed"), speed)?;
             if self.max_projectile_lifetime_ticks == 0 {
@@ -519,7 +551,7 @@ impl StructureArchetypeDef {
 
 #[cfg(test)]
 mod tests {
-    use super::{angle, scalar, validate_slug};
+    use super::{angle, rate_per_tick, scalar, validate_slug};
 
     #[test]
     fn authored_overclock_rates_reject_invalid_values_in_every_ability_location(
@@ -664,11 +696,97 @@ mod tests {
     }
 
     #[test]
-    fn angles_preserve_finite_legacy_rates_but_reject_nonfinite_values() {
-        assert!(angle("fixture", "rate", 999.0).is_ok());
-        assert!(angle("fixture", "rate", 0.0).is_ok());
-        assert!(angle("fixture", "rate", f32::NAN).is_err());
-        assert!(angle("fixture", "rate", f32::INFINITY).is_err());
+    fn angles_must_be_finite() {
+        assert!(angle("fixture", "arc", 0.0).is_ok());
+        assert!(angle("fixture", "arc", 360.0).is_ok());
+        assert!(angle("fixture", "arc", f32::NAN).is_err());
+        assert!(angle("fixture", "arc", f32::INFINITY).is_err());
+    }
+
+    /// The field a typed invalid-value error names, or `None` for any other result.
+    fn rejected_field(result: &crate::error::SimResult<()>) -> Option<&str> {
+        match result {
+            Err(crate::error::SimCoreError::CatalogInvalidValue { field, .. }) => Some(field),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn rates_per_tick_lie_above_zero_and_at_most_half_a_turn() {
+        for valid in [0.01_f32, 20.16, 55.99, 84.0, 180.0] {
+            assert!(rate_per_tick("fixture", "rate", valid).is_ok(), "{valid}");
+        }
+        for invalid in [0.0_f32, -1.0, 180.5, 360.0, 999.0, f32::NAN, f32::INFINITY] {
+            assert_eq!(
+                rejected_field(&rate_per_tick("fixture", "rate", invalid)),
+                Some("rate"),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_unit_rejects_a_hull_rate_outside_the_range_naming_the_field(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::CatalogFile;
+        let units = include_str!("../../../../assets/catalog/units.ron");
+        for (rate, valid) in [
+            (0.0_f32, false),
+            (180.5, false),
+            (55.99, true),
+            (180.0, true),
+        ] {
+            let mut file: CatalogFile = ron::from_str(units)?;
+            let unit = file.units.first_mut().ok_or("unit catalog empty")?;
+            unit.turn_rate_deg_per_tick = rate;
+            let result = unit.validate();
+            if valid {
+                assert!(result.is_ok(), "{rate}: {result:?}");
+            } else {
+                assert_eq!(
+                    rejected_field(&result),
+                    Some("turn_rate_deg_per_tick"),
+                    "{rate}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_turret_rate_is_authored_exactly_on_turreted_weapons(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::CatalogFile;
+        let units = include_str!("../../../../assets/catalog/units.ron");
+        let cases = [
+            (false, 10.0_f32, false),
+            (false, 0.0, true),
+            (true, 0.0, false),
+            (true, 180.5, false),
+            (true, 40.32, true),
+        ];
+        for (has_turret, rate, valid) in cases {
+            let mut file: CatalogFile = ron::from_str(units)?;
+            let unit = file
+                .units
+                .iter_mut()
+                .find(|unit| unit.weapon.is_some())
+                .ok_or("real catalog has no weapon")?;
+            let weapon = unit.weapon.as_mut().ok_or("weapon missing")?;
+            weapon.has_turret = has_turret;
+            weapon.turret_turn_rate_deg_per_tick = rate;
+            let result = unit.validate();
+            if valid {
+                assert!(result.is_ok(), "{has_turret} {rate}: {result:?}");
+            } else {
+                assert_eq!(
+                    rejected_field(&result),
+                    Some("weapon.turret_turn_rate_deg_per_tick"),
+                    "{has_turret} {rate}"
+                );
+            }
+        }
+        Ok(())
     }
 
     #[test]
