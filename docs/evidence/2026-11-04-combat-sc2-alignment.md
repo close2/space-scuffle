@@ -874,3 +874,96 @@ the data edit it failed with `the Marauder analogue carries the Overclock`; afte
   `rhino_beetle` squad is never ordered to stim.
 - **`golden_replay_orders.ron`: unchanged** (it researches nothing).
 - Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`) reproduce both fixtures.
+
+## 9. WP9: the shield-regeneration delay comes from the catalog (D-4)
+
+**Commit.** The code commit of WP9, on `main` at `ab2042c` (WP15 and flipbook WP2 merged). The delay that
+`world/upkeep.rs` hard-coded as 250 ticks is now the per-archetype field `shield_regen_delay_ticks: Option<u16>`
+of `units.ron` and `structures.ron`, carried into `UnitArchetype`. Validation (`catalog/validation.rs`, typed
+`CatalogInvalidValue` naming the field) requires it exactly when `max_shields > 0`. All 29 shielded archetypes (14
+units, 15 structures) carry `Some(250)`, today's value; WP11 converts it. A new entity's
+`ticks_since_last_damage` starts at `u16::MAX` ("never damaged", ready for any authored delay) instead of the
+literal 250. Outputs under `~/scratch/combat_wp9/` on the development server (`base/` the state before, `wp9/` this
+commit).
+
+**Tests first.** Two validation unit tests (a shielded unit or structure without the field, an unshielded one with
+it, each rejected with the field named) and an integration test in `damage_and_shields_tests.rs` (a scratch
+archetype with delay 10 regenerates on the 10th tick after damage and not before) were written first. Before the
+field existed they did not compile; with the field added but `upkeep_entity` still reading 250, the scratch test
+failed with `Shields must begin regenerating on tick 10 after the damage`. The former
+`test_shield_regeneration_250_tick_delay` now reads the delay from the archetype
+(`test_shield_regeneration_waits_for_the_catalog_delay`).
+
+**Spawn counter.** The plan preferred keeping the checksums if possible (D-4). Spawning with the archetype's own
+delay would keep them for shielded units only; an unshielded archetype has no delay, and any value chosen for it
+would be a new magic number, so the plan's `u16::MAX` was used.
+
+**Measured.**
+
+- **Whole matrix, 20 seeds: bit-identical** to the state before (all 1000 rows of `matrix.csv`; the state before
+  is itself byte-identical to WP15's, §8). Expectation failures stay 0 on the seeds of record and 7 over all seeds.
+- **Battle 33, 68 seeds: bit-identical** (all output files byte-identical).
+- **Both golden replays: re-recorded at every checkpoint** (`golden_replay.ron` 1 to 20, `golden_replay_orders.ron`
+  1 to 60; the first differing checkpoint is the first), only through the hashed spawn counter: with this commit's
+  spawn value set back to 250 and everything else kept, both fixtures pass as recorded before it.
+- Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`) reproduce both fixtures.
+- **`sim_fixtures` `DEFAULT_SANDBOX_CHECKSUM` (`fixture_tests.rs`): re-recorded** for the same reason: with the spawn
+  value set back to 250 the test computes the old checksum again.
+
+## 10. WP10: the shield-regeneration rate (Q0039)
+
+**Commit.** The data commit of WP10, after WP9 (§9). Every shielded archetype regenerates shields at StarCraft II's
+rate converted from Normal to Faster time, the third of the four values of Q0039 (option 3):
+
+| Field | Before | After | Reference |
+|---|---|---|---|
+| `shield_regen_per_tick`, all 29 shielded archetypes (14 units in `units.ron`, 15 structures in `structures.ron`) | 0.08 | **0.112** | `ShieldRegenRate 2` Normal per s = 2.8 Faster per s = 0.112 per tick; every one confirmed by the audit, per identity with its source line ([`2026-11-04-catalog-time-audit.md`](2026-11-04-catalog-time-audit.md) §1 item 3 and group WP10 in §4; for example `psi_grey` `liberty` UnitData:3176) |
+
+No shielded archetype differed from `ShieldRegenRate 2` (audit §1 item 3), so none is left to WP12. Doc 03 §1.1
+already says 2.8 per second; doc 07 gives no regeneration rate. Outputs under `~/scratch/combat_wp9/wp10/`.
+
+- **Whole matrix, 20 seeds: bit-identical** to the state after WP9 (all 1000 rows of `matrix.csv`: outcome, end
+  tick, lead-unit life). Expectation failures stay 0 on the seeds of record and 7 over all seeds (battle 33).
+- **Where shields do regenerate in the matrix.** `matrix.csv` does not record shields, so every battle was also traced
+  on the same 20 seeds (`--battle`, per-tick `*_health_regained`; the sum script `regen_sum.py` is a throwaway beside
+  the outputs). Shields regenerate in two battles only, and more with this step: **31** (15 marauders against 15
+  stalkers; red regains 24.64 → 34.50 over the same 308 ticks, seeds 8 and 14) and **35** (12 vikings against 6
+  colossi; red 36.24 → 50.74 over the same 453 ticks, seed of record 3203386110, which ends unresolved). In neither
+  does a survivor count, end tick or lead-unit life move. Every other
+  regained life in the matrix is Zerg or Reaper life regeneration and is identical.
+- **Battle 33, 68 seeds: bit-identical** to §6.2 (all output files byte-identical; 42 / 18 / 8, marine survivors
+  4.03, SD 3.26; seeds of record 7–0, 3–0, 9–0, 6–0), as the investigation found for the zealot's rate alone. The
+  battle 33 comment in `matchup_matrix.ron` is unchanged.
+- **`golden_replay.ron`: re-recorded from checkpoint 13** (ticks 601 to 650): checkpoints 1 to 12 are unchanged, and
+  13 to 20 changed, from the first checkpoint in which a damaged `red_psi` zealot has gone 250 ticks unhit.
+- **`golden_replay_orders.ron`: unchanged**: its shielded units (`flying_saucer`, `psi_grey`) never regenerate
+  shields in its 600 ticks.
+- Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`) reproduce both fixtures.
+
+## 11. WP11: the shield-regeneration delay (Q0039)
+
+**Commit.** The data commit of WP11, after WP10 (§10). Shields start regenerating after StarCraft II's delay,
+converted from Normal to Faster time, the last of the four values of Q0039 (option 3):
+
+| Field | Before | After | Reference |
+|---|---|---|---|
+| `shield_regen_delay_ticks`, all 29 shielded archetypes (14 units, 15 structures) | 250 | **179** | `ShieldRegenDelay 10` Normal s = 7.14 Faster s = 178.57 ticks, rounded halves up (`liberty` UnitData:3166 for the zealot, battle 33 investigation §1.5; every shielded archetype confirmed by the audit, §1 item 3) |
+
+The spawn counter starts at `u16::MAX` since WP9, so this value changes no spawned state. Doc 03 §1.1 already
+states the delay in game seconds (10). Outputs under `~/scratch/combat_wp9/wp11/` and `regen_wp11/`.
+
+- **Whole matrix, 20 seeds: bit-identical** to the state after WP10 (all 1000 rows of `matrix.csv`). The plan
+  expected that long Protoss fights such as battles 28 and 29 might move: they do not: their immortals and stalkers
+  regenerate no shields on any seed, before or after. Expectation failures stay 0 on
+  the seeds of record and 7 over all seeds (battle 33).
+- **Where shields regenerate** (per-tick traces as in §10): battle **31** now regenerates on 7 seeds instead of 2 (2,
+  4, 8, 11, 14, 15, 22; red regains 34.50 → 65.97 over 589 ticks instead of 308) and battle **35** on its seed of
+  record for 524 ticks instead of 453 (50.74 → 58.69). No survivor count, end tick or lead-unit life moves. No other
+  battle regenerates shields.
+- **Battle 33, 68 seeds: bit-identical** to §6.2 (all output files byte-identical; no zealot regenerates any shield
+  on any of the 68 seeds, before or after: `red_health_regained` is 0 throughout). Its comment in
+  `matchup_matrix.ron` is unchanged (D-6 applies to commits that move it).
+- **`golden_replay.ron`: re-recorded from checkpoint 12** (ticks 551 to 600): checkpoints 1 to 11 are unchanged, and
+  12 to 20 changed, where the damaged `red_psi` zealot of §10 now starts regenerating 71 ticks sooner.
+- **`golden_replay_orders.ron`: unchanged.**
+- Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`) reproduce both fixtures.

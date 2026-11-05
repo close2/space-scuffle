@@ -84,6 +84,25 @@ fn angle(definition: &str, field: &str, value: f32) -> SimResult<()> {
     Ok(())
 }
 
+/// Requires `shield_regen_delay_ticks` exactly when the archetype has shields: a shielded
+/// archetype without it would never know when to regenerate, and an unshielded one with it
+/// carries a value nothing reads. `has_shields` is `max_shields > 0` as authored.
+fn shield_regen_delay(definition: &str, has_shields: bool, delay: Option<u16>) -> SimResult<()> {
+    match (has_shields, delay) {
+        (true, None) => Err(invalid(
+            definition,
+            "shield_regen_delay_ticks",
+            "must be set when max_shields is positive",
+        )),
+        (false, Some(_)) => Err(invalid(
+            definition,
+            "shield_regen_delay_ticks",
+            "must be absent when max_shields is zero",
+        )),
+        _ => Ok(()),
+    }
+}
+
 fn positive_rate(definition: &str, field: &str, rate: SimScalar) -> SimResult<()> {
     AttackRate::new(rate).map_err(|_| {
         invalid(
@@ -202,6 +221,11 @@ impl UnitArchetypeDef {
         }
         sight(&self.slug, "sight_radius", f64::from(self.sight_radius))?;
         angle(&self.slug, "turn_rate_deg", self.turn_rate_deg)?;
+        shield_regen_delay(
+            &self.slug,
+            self.max_shields > 0.0,
+            self.shield_regen_delay_ticks,
+        )?;
         for (name, weapon) in [
             ("weapon", &self.weapon),
             ("ground_weapon", &self.ground_weapon),
@@ -473,6 +497,11 @@ impl StructureArchetypeDef {
             nonnegative(&self.slug, field, value)?;
         }
         sight(&self.slug, "sight_radius", self.sight_radius)?;
+        shield_regen_delay(
+            &self.slug,
+            self.max_shields > 0.0,
+            self.shield_regen_delay_ticks,
+        )?;
         if self.max_hp <= 0.0 {
             return Err(invalid(&self.slug, "max_hp", "must be strictly positive"));
         }
@@ -550,6 +579,71 @@ mod tests {
             structure.abilities.push(ability);
             assert!(structure.validate().is_err());
         }
+        Ok(())
+    }
+
+    /// Asserts that `result` is the typed invalid-value error naming the delay field.
+    fn assert_rejects_delay(result: &crate::error::SimResult<()>, case: &str) {
+        let field = match result {
+            Err(crate::error::SimCoreError::CatalogInvalidValue { field, .. }) => Some(field),
+            _ => None,
+        };
+        assert_eq!(
+            field.map(String::as_str),
+            Some("shield_regen_delay_ticks"),
+            "{case}: expected a typed delay error, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn a_unit_has_a_shield_regeneration_delay_exactly_when_it_has_shields(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::CatalogFile;
+        let units = include_str!("../../../../assets/catalog/units.ron");
+        let mut file: CatalogFile = ron::from_str(units)?;
+        for unit in &file.units {
+            unit.validate()?;
+        }
+        let shielded = file
+            .units
+            .iter_mut()
+            .find(|unit| unit.max_shields > 0.0)
+            .ok_or("real catalog has no shielded unit")?;
+        shielded.shield_regen_delay_ticks = None;
+        assert_rejects_delay(&shielded.validate(), "shielded unit without a delay");
+        let unshielded = file
+            .units
+            .iter_mut()
+            .find(|unit| unit.max_shields == 0.0)
+            .ok_or("real catalog has no unshielded unit")?;
+        unshielded.shield_regen_delay_ticks = Some(10);
+        assert_rejects_delay(&unshielded.validate(), "unshielded unit with a delay");
+        Ok(())
+    }
+
+    #[test]
+    fn a_structure_has_a_shield_regeneration_delay_exactly_when_it_has_shields(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::StructureCatalogFile;
+        let structures = include_str!("../../../../assets/catalog/structures.ron");
+        let mut file: StructureCatalogFile = ron::from_str(structures)?;
+        for structure in &file.structures {
+            structure.validate()?;
+        }
+        let shielded = file
+            .structures
+            .iter_mut()
+            .find(|structure| structure.max_shields > 0.0)
+            .ok_or("real catalog has no shielded structure")?;
+        shielded.shield_regen_delay_ticks = None;
+        assert_rejects_delay(&shielded.validate(), "shielded structure without a delay");
+        let unshielded = file
+            .structures
+            .iter_mut()
+            .find(|structure| structure.max_shields == 0.0)
+            .ok_or("real catalog has no unshielded structure")?;
+        unshielded.shield_regen_delay_ticks = Some(10);
+        assert_rejects_delay(&unshielded.validate(), "unshielded structure with a delay");
         Ok(())
     }
 

@@ -91,8 +91,16 @@ pub struct UnitArchetype {
     pub shield_armor: SimScalar,
     /// Passive health regeneration per tick.
     pub hp_regen_per_tick: SimScalar,
-    /// Passive shield regeneration per tick (active after 250 ticks without taking damage).
+    /// Passive shield regeneration per tick, active once [`Self::shield_regen_delay_ticks`]
+    /// ticks have passed without taking damage.
     pub shield_regen_per_tick: SimScalar,
+    /// Ticks (25 per Faster second) without taking damage before shields start regenerating,
+    /// counted from the tick of the last damage (`Entity::ticks_since_last_damage`).
+    ///
+    /// `Some` exactly when the archetype has shields (`max_shields > 0`); catalog validation
+    /// enforces this for authored data. `None` means the archetype never regenerates shields.
+    /// `StarCraft` II stores this per unit as `ShieldRegenDelay`.
+    pub shield_regen_delay_ticks: Option<u16>,
     /// Passive energy regeneration per tick.
     pub energy_regen_per_tick: SimScalar,
     /// Maximum linear translation speed per tick.
@@ -831,6 +839,10 @@ struct UnitArchetypeDef {
     shield_armor: f32,
     hp_regen_per_tick: f32,
     shield_regen_per_tick: f32,
+    /// Ticks without damage before shields regenerate; required exactly when `max_shields > 0`
+    /// (checked by validation, which names the field when it is missing).
+    #[serde(default)]
+    shield_regen_delay_ticks: Option<u16>,
     energy_regen_per_tick: f32,
     max_speed: f32,
     acceleration: f32,
@@ -1055,6 +1067,7 @@ impl UnitArchetypeDef {
             shield_armor: SimScalar::from_f32_lossy(self.shield_armor),
             hp_regen_per_tick: SimScalar::from_f32_lossy(self.hp_regen_per_tick),
             shield_regen_per_tick: SimScalar::from_f32_lossy(self.shield_regen_per_tick),
+            shield_regen_delay_ticks: self.shield_regen_delay_ticks,
             energy_regen_per_tick: SimScalar::from_f32_lossy(self.energy_regen_per_tick),
             max_speed: SimScalar::from_f32_lossy(self.max_speed),
             acceleration: SimScalar::from_f32_lossy(self.acceleration),
@@ -1124,6 +1137,9 @@ struct StructureArchetypeDef {
     /// Shield points regenerated per tick once the out-of-combat delay has elapsed.
     #[serde(default)]
     pub shield_regen_per_tick: f64,
+    /// Ticks without damage before shields regenerate; required exactly when `max_shields > 0`.
+    #[serde(default)]
+    pub shield_regen_delay_ticks: Option<u16>,
     /// Hull life armor.
     pub life_armor: f64,
     /// Shield armor.
@@ -1230,6 +1246,7 @@ impl StructureArchetypeDef {
             shield_armor: SimScalar::from_num(self.shield_armor),
             hp_regen_per_tick: SimScalar::from_num(self.hp_regen_per_tick),
             shield_regen_per_tick: SimScalar::from_num(self.shield_regen_per_tick),
+            shield_regen_delay_ticks: self.shield_regen_delay_ticks,
             energy_regen_per_tick: SimScalar::ZERO,
             max_speed: SimScalar::ZERO,
             acceleration: SimScalar::ZERO,

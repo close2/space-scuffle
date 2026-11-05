@@ -62,6 +62,7 @@ const WINDUP_MELEE_RON: &str = r#"(
             shield_armor: 0.0,
             hp_regen_per_tick: 0.0,
             shield_regen_per_tick: 0.08,
+            shield_regen_delay_ticks: Some(250),
             energy_regen_per_tick: 0.0,
             max_speed: 0.126,
             acceleration: 0.126,

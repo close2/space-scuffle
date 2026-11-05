@@ -23,7 +23,9 @@ use std::path::PathBuf;
 /// `SimWorld::new_default_battle_sandbox` before Phase 9 WP10 moved it here. Re-recorded for
 /// checksum schema 10 (plan 2026-11-04-battle-flipbook-animation WP2), which stopped encoding
 /// each entity's constant-zero `anim_progress`; the spawned state itself did not change.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 12_219_114_459_225_123_979;
+/// Re-recorded for plan 2026-11-04-combat-sc2-alignment WP9: a new entity's hashed
+/// `ticks_since_last_damage` starts at `u16::MAX` instead of 250; nothing else changed.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 13_512_067_113_893_542_543;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

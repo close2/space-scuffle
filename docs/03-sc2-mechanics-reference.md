@@ -12,7 +12,7 @@ In SC2, every unit is defined by data tables (`Unit`, `Weapon`, `Turret`, `Mover
 | Property | SC2 Behavior | Engine Representation |
 | :--- | :--- | :--- |
 | **Life (HP)** | Base health (`MaxHP`). Some factions/units regenerate passively (e.g., Zerg at `0.38 HP/sec`), others require repair/healing. | `hp_current`, `hp_max`, `hp_regen_per_tick` |
-| **Shields** | Absorbs damage before HP. Regenerates rapidly (e.g., `2.8 HP/sec`) **only after `10 seconds` without taking damage**. | `shields_current`, `shields_max`, `shields_regen_per_tick`, `ticks_since_last_damage` |
+| **Shields** | Absorbs damage before HP. Regenerates rapidly (e.g., `2.8 HP/sec`) **only after `10 seconds` without taking damage**. | `shields_current`, `shields_max`, `shields_regen_per_tick`, `shield_regen_delay_ticks`, `ticks_since_last_damage` |
 | **Energy** | Mana pool for active/autocast abilities (`Max 200`, starts at `50` or `75`, regens at `~0.7875/sec`). | `energy_current`, `energy_max`, `energy_regen_per_tick` |
 
 ### 1.2 Armor, Attributes & Damage Formula
