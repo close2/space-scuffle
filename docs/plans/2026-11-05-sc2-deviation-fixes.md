@@ -757,11 +757,11 @@ requires.
 | B-4 | Siege Mode: one transformation time, no random part | (i) | WP11 |
 | B-5 | Whether damage point and backswing hold an automatically attacking unit | (i) | WP16 research |
 | B-6 | Release range slop 0.5 for every weapon | (i) | WP9 |
-| B-7 | Threat criterion | (i) | WP4 |
-| B-8 | Attack target priority as hard-coded categories | (i) | WP4 |
-| B-9 | Closest-target switching with an invented margin | (i) | WP4 |
-| B-10 | No primary-weapon criterion | (i) | WP4 |
-| B-11 | No per-unit tie-break | (i) | WP4 |
+| B-7 | Threat criterion | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.3, §4.4) |
+| B-8 | Attack target priority as hard-coded categories | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.5) |
+| B-9 | Closest-target switching with an invented margin | (i) | WP4. The sourced rule was measured and not committed: it flips battle 33's winner over its seeds ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.6); held for the orchestrator |
+| B-10 | No primary-weapon criterion | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.7) |
+| B-11 | No per-unit tie-break | (i) | WP4, after B-9 (the tie-break acts only once the previous target is lost); researched in [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.1 |
 | B-12 | Scan ranges | (i) | combat alignment WP14, after WP4 |
 | B-13 | Call-for-help radius, flee distance, leash, abandoned-target time | (i) | WP16 research; how idle units answer an attack is unit behaviour |
 | B-14 | Bonus damage only against Armored and Light | (i) | WP6 |
@@ -826,7 +826,7 @@ requires.
 | B-73 | Doc 07 claims mechanics we lack | Fixed | WP0: each cell names its bug ID; the mechanics stay open as B-14, B-18 to B-22, B-26, B-42 and B-69 |
 | B-74 | Code comments claim exact parity | (i) | WP7, WP8a |
 | B-75 | Doc 03 "Turn Rate & Stationary Turn Rate" | Fixed | True since B-31 was fixed; no edit needed |
-| B-76 | Hard-coded threat categories | (i) | WP4 |
+| B-76 | Hard-coded threat categories | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.3, §4.5) |
 | B-77 | Hard-coded Concussive slow | (i) | WP13d |
 | B-78 | Storm evacuation margin | (i) | WP18 |
 
@@ -879,3 +879,23 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
   commit d sets the reference value for the three structures with energy (Orbital Command, Nexus, Shield Battery).
 - **Matrix effect:** only WP1 moved results (19 battles, no battle's winner over its seeds); battle 33's expectation
   held and only its comment's distribution changed.
+
+## Amendment 4 (WP4, 2026-11-05): target selection, partly landed
+
+Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.
+
+- **Fixed:** B-7 (threat: a weapon that can hit me, `AlwaysThreatens`, and the workers' `Defensive` acquire level),
+  B-8 and B-76 (per-archetype `attack_target_priority` from `AttackTargetPriority`), B-10 (the primary weapon).
+- **Stopped: B-9.** The retention rule moved battle 33's winner over its seeds (68 seeds: 37 / 20 / 11 → 20 / 35 /
+  13). Per the stop rule it is not committed; the patch and the numbers are in evidence §4.6. B-11 waits for it,
+  because its tie-break acts only after the previous target is lost. Its research is done (§4.1): the data put
+  `ByAngle` on the Thor and Ultralisk weapons and `ByDistanceFromTarget` only on the Colossus; Liquipedia's Immortal
+  and unsieged Siege Tank are not in the 5.0.14 data, so they keep the closest target.
+- **Rank of a challenger.** WP4 step 3 said a kept target gives way to a higher (1)–(2) candidate. The source says
+  "according to the first 3 criteria", so `TargetPriorityKey::rank` includes the primary weapon (B-10).
+- **New field beyond step 2:** `acquire_level` (`DefaultAcquireLevel`), because the source's threat criterion
+  excludes defensive units unless they attack-move.
+- **New, found: B-80** (class (i)): a defensive unit (a worker) acquires targets automatically while idle; in
+  `StarCraft` II it acquires only while attack-moving (Liquipedia "Automatic Targeting", Notes). Open; it belongs
+  with B-9 and B-11 in the rest of WP4.
+- **Matrix effect:** only B-7's rule moved results (battle 35, no winner change).

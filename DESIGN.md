@@ -157,10 +157,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-4 | Siege Mode has one transformation time and no random part | WP11 |
 | B-5 | Whether damage point and backswing hold an automatically attacking unit (not yet sourced) | WP16 |
 | B-6 | Release range slop 0.5 for every weapon | WP9 |
-| B-7 | Threat criterion is "armed with an attack order", not "can return fire" | WP4 |
-| B-8 | Attack target priority is a hard-coded category, not per-unit data | WP4 |
 | B-9 | Retargeting uses the closest target with an invented margin | WP4 |
-| B-10 | No primary-weapon criterion in targeting | WP4 |
 | B-11 | No per-unit targeting tie-break | WP4 |
 | B-12 | Scan ranges | combat alignment WP14 |
 | B-13 | Call-for-help radius, flee distance, leash and abandoned-target time are unsourced | WP16 |
@@ -213,9 +210,9 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-69 | Missing abilities and spells | WP18 |
 | B-70 | No Graviton Beam | WP18 |
 | B-74 | Code comments claim exact parity for spillover and splash | WP7, WP8a |
-| B-76 | Hard-coded threat categories | WP4 |
 | B-77 | Hard-coded Concussive slow | WP13d |
 | B-78 | Hard-coded storm evacuation margin | WP18 |
+| B-80 | A worker acquires targets automatically while idle, not only while attack-moving | WP4 |
 
 ---
 
