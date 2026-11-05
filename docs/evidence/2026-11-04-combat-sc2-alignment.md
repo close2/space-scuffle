@@ -1211,3 +1211,16 @@ value) are corrected.
 spawn the Brood Lord; its speed moves no outcome, end tick or lead-unit life there), battle 33 bit-identical,
 both golden replays unchanged in debug, release and `wasm32-wasip1`. Doc 07's five speed cells and doc 08's
 Gravitic Boosters row (which restated the Observer's old base speed) are corrected.
+
+### 13.11 R1: the reaper's life regeneration (deferred)
+
+**Deferred on D-7's third ground: the reference needs a mechanism we do not model.** `jet_jumper`'s
+`hp_regen_per_tick` 0.08 is the Reaper's `LifeRegenRate` 2 per Normal s (`void` UnitData:1476) copied in Normal
+time; converted it is 0.112. But the game regenerates the Reaper's life only after 10 Normal s (179 ticks) without
+damage (`LifeRegenDelay`, `void` UnitData:1475), and our life regeneration runs on every tick (only shields wait,
+since WP9). The audit's row already noted "not modelled". The whole-matrix measurement of all groups (audit §7,
+left out one group at a time) shows the consequence: with 0.112 applied always, `22b_reaper_vs_stalker` ends
+unresolved on all 20 seeds, the reaper out-healing the stalker in combat, which it never does in the game. The rate
+alone would move the catalog away from StarCraft II's behaviour, not towards it, so it waits for the delay.
+[Q0049](../questions/open/0049-reaper-life-regeneration-delay.md) asks the owner whether to add a per-archetype
+life-regeneration delay (the default keeps 0.08 and the deferral). No catalog value, test or golden changes here.
