@@ -63,6 +63,20 @@ fn structure(catalog: &sim_core::UnitCatalog) -> String {
     )
 }
 
+/// A structure some builder raises with no authored prompt for either of its states, so that
+/// prompt validation refuses it (the display-name fallback is refused for a paid run).
+fn unauthored_structure(catalog: &sim_core::UnitCatalog) -> String {
+    identity_with_actions(
+        catalog,
+        &[AnimState::Idle, AnimState::Constructing],
+        false,
+        |archetype| {
+            archetype.veo_prompt(AnimState::Idle).is_none()
+                && archetype.veo_prompt(AnimState::Constructing).is_none()
+        },
+    )
+}
+
 /// A structure some builder raises, with authored Idle and Constructing prompts, so that a
 /// paid Constructing run passes prompt validation.
 fn authored_structure(catalog: &sim_core::UnitCatalog) -> String {
@@ -290,7 +304,7 @@ fn d1_bake_unit_videos_refuses_a_state_the_identity_does_not_publish() {
 #[test]
 fn d2_a_missing_prompt_is_refused_before_credentials_are_read() {
     let catalog = shipped_catalog();
-    let slug = structure(&catalog);
+    let slug = unauthored_structure(&catalog);
     let dirs = RunDirs::new();
     let trap = trapped_credentials(dirs.root.path());
     let server = silent_server();

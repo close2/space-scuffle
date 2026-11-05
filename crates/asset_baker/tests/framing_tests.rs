@@ -128,13 +128,19 @@ fn a_structure_bake_keeps_the_edges_a_centre_crop_loses() {
 
 // --- Helpers for the tests below --------------------------------------------------------------
 
-/// The first catalog identity with a `UnitSphere` shape.
+/// The first catalog identity with a `UnitSphere` shape and no framing override in the shipped
+/// `media_style.ron`, so that it takes the unit treatment (the centre crop). Identities with an
+/// override (a wide flying unit, a worker holding a tool out to one side) are skipped.
 fn unit_slug() -> String {
-    shipped_catalog()
+    let catalog = shipped_catalog();
+    let style = MediaStyle::load_for_catalog(&shipped_assets(), &catalog).expect("style loads");
+    let slug = catalog
         .archetypes()
-        .find(|archetype| archetype.shape == ShapeKind::UnitSphere)
+        .filter(|archetype| archetype.shape == ShapeKind::UnitSphere)
+        .find(|archetype| !style.framing.overrides.contains_key(&archetype.slug))
         .map(|archetype| archetype.slug.clone())
-        .expect("the shipped catalog has a unit")
+        .expect("the shipped catalog has a unit without a framing override");
+    slug
 }
 
 /// Writes a `width`×`height`, 1 s, 8 fps `yuv420p` clip of the plain backdrop with a 16 px
