@@ -889,38 +889,37 @@ struct UnitArchetypeDef {
     modes: Vec<UnitModeSpecDef>,
 }
 
-/// Converts an authored angular rate in degrees per tick to binary angle units per tick.
+/// Converts authored degrees in `0..=180` to binary angle units (65 536 per turn).
 ///
-/// Binary units = round(degrees × 65 536 ÷ 360), halves up, so a rate authored with two
-/// decimals keeps its precision (55.99° per tick is 10 193 units, 20.16° is 3 670). Hull and
-/// turret rates share this conversion. Validation has already bounded the value to
-/// `0 < degrees <= 180`, so the result lies in `1..=32768` and 180 is exactly half a turn.
-fn angle_per_tick(degrees: f32) -> SimAngle {
+/// Binary units = round(degrees × 65 536 ÷ 360), halves up, so a value authored with two
+/// decimals keeps its precision (55.99° is 10 193 units, 20.16° is 3 670, 11.25° is 2 048).
+/// Hull and turret rates (degrees per tick) and firing half angles share this conversion.
+/// Callers pass values validation has bounded to `0..=180`, so the result lies in
+/// `0..=32768` and 180 is exactly half a turn.
+fn binary_angle(degrees: f32) -> SimAngle {
     let units = (f64::from(degrees) * 65_536.0 / 360.0).round();
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        reason = "validated to 0 < degrees <= 180, so the rounded value lies in 0..=32768"
+        reason = "validated to 0 <= degrees <= 180, so the rounded value lies in 0..=32768"
     )]
     SimAngle::from_raw(units as u16)
 }
 
 impl UnitArchetypeDef {
-    /// Converts an authored firing arc in degrees to the maximum aim deviation in binary angle.
+    /// Converts an authored firing arc, a half angle in degrees, to the maximum aim deviation in
+    /// binary angle units.
     ///
     /// `is_within_firing_arc` compares the shortest angular difference, which never exceeds 180
     /// degrees, so any arc of 180 degrees or more is unrestricted. Binary angles wrap at 360
-    /// degrees, so an authored 360 must not pass through `from_degrees`, which would map it to
-    /// an arc of zero: the strictest possible value rather than the most permissive.
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "validated finite and below 180 here, and arcs are authored in whole degrees"
-    )]
+    /// degrees, so an authored 360 must not wrap to an arc of zero: the strictest possible value
+    /// rather than the most permissive. Smaller arcs round to the nearest binary unit
+    /// ([`binary_angle`]), so the reference's 11.25° stays exact.
     fn firing_half_angle(degrees: f32) -> SimAngle {
         if degrees >= 180.0 {
             SimAngle::DEG_180
         } else {
-            SimAngle::from_degrees(degrees as i32)
+            binary_angle(degrees)
         }
     }
 
@@ -945,7 +944,7 @@ impl UnitArchetypeDef {
             has_turret: w.has_turret,
             // A hull-mounted weapon turns with the hull; its rate is never read for turning.
             turret_turn_rate: if w.has_turret {
-                angle_per_tick(w.turret_turn_rate_deg_per_tick)
+                binary_angle(w.turret_turn_rate_deg_per_tick)
             } else {
                 SimAngle::PI
             },
@@ -974,7 +973,7 @@ impl UnitArchetypeDef {
 
     /// The authored hull turn rate (`turn_rate_deg_per_tick`) in binary angle units per tick.
     fn turn_rate(&self) -> SimAngle {
-        angle_per_tick(self.turn_rate_deg_per_tick)
+        binary_angle(self.turn_rate_deg_per_tick)
     }
 
     /// The capability bundle, abilities and modes of this definition.
@@ -1288,6 +1287,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn firing_half_angles_round_to_the_nearest_binary_unit() {
+        for (degrees, units) in [
+            (0.0_f32, 0_u16),
+            (11.25, 2_048),
+            (15.0, 2_731),
+            (39.99, 7_280),
+            (45.0, 8_192),
+            (56.25, 10_240),
+            (180.0, 32_768),
+            (360.0, 32_768),
+        ] {
+            assert_eq!(
+                UnitArchetypeDef::firing_half_angle(degrees).raw(),
+                units,
+                "{degrees}"
+            );
+        }
+    }
+
+    #[test]
     fn rates_per_tick_round_to_the_nearest_binary_unit() {
         for (degrees, units) in [
             (84.0_f32, 15_292_u16),
@@ -1297,7 +1316,7 @@ mod tests {
             (5.04, 918),
             (180.0, 32_768),
         ] {
-            assert_eq!(angle_per_tick(degrees).raw(), units, "{degrees}");
+            assert_eq!(binary_angle(degrees).raw(), units, "{degrees}");
         }
     }
 

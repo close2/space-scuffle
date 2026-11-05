@@ -1687,3 +1687,59 @@ unresolved), marine survivors 4.03 (SD 3.26).
   `a_side_centre_is_the_mean_of_its_grid_points` (`sim_fixtures::matchup`), red until `side_centre` existed.
 - **Measurement.** Matrix bit-identical to commit b in outcomes (every hull still turns 180° per tick); battle 33
   bit-identical; both golden replays unchanged in debug, release and `wasm32-wasip1`.
+
+### 14.4 Commit d, hull-mounted arcs: not latent, measured
+
+- **Change.** 40 hull-mounted weapons take the reference tolerance `Arc` ÷ 2 + `ArcSlop` (audit §10.3): 11.25° for
+  36, 39.99° for the Void Ray analogue's two (`ArcSlop` 39.9902), 45° for the Mutalisk analogue's two (`ArcSlop` 45).
+  Before: 15° for 27, 180° (every direction) for 10 (the melee units, the workers and the Queen's ground weapon),
+  360° for 3. Firing half angles now round to the nearest binary unit like the rates (11.25° = 2 048 units; 15° =
+  2 731, was 2 730 truncated); the six weapons whose mount differs keep their arcs (plan D-8 item 7). Test first:
+  `firing_half_angles_round_to_the_nearest_binary_unit` (`catalog.rs`). Three arc tests were restated first, in the
+  commit before (they named `flak_array_dome`'s 360, a weapon at exactly 15° and the text `firing_arc_deg: 360.0`).
+- **Not latent, against the plan.** D-8 item 6 expected the hull arcs to change nothing while every hull turns 180°
+  per tick. They do change results, for two reasons that the plan did not see:
+  1. A weapon that is `Ready` and not aligned enters `RotatingToTarget` and turns, but starts its swing only on the
+     next tick, even when one tick's turn aligned it (`step_ready_weapon` slews without checking again;
+     `step_rotating_weapon` slews and checks). A melee unit with the old 180° arc never needed to face its target;
+     now each new target outside 11.25° costs it at least that tick. This is finding **M-22** (remediation plan
+     §4.2): it delays every target switch by one tick beyond the turn itself.
+  2. The hull budget is shared (commit b): a unit that turned to face its velocity in the movement phase has less
+     than 180° left for the weapon phase in the same tick.
+
+  The cause of every move is still this commit's one change (the arc values); it is measured and re-recorded here.
+- **Whole matrix, 20 seeds**, against commit c: 18 battles moved; no winner changed except in battle 31 (a close
+  fight with mixed winners) and battle 33 (one seed of record).
+
+| Battle | Seeds moved | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|
+| 6b_2_roaches_vs_hydra | 3 | 2.00 – 0.00, same | 80.0 → 80.2 | 112.57 → 112.58 / — |
+| 9a_hellion_vs_4_lings | 7 | 1.00 – 0.00, same | 95.0, same | 23.80 → 25.40 / — |
+| 10_2_hellions_vs_8_lings | 1 | 2.00 – 0.00, same | 61.2, same | 70.00 → 70.40 / — |
+| 11a_2_banelings_vs_5_marines | 3 | 0.00 – 2.25, same | 8.1 → 8.2 | — / 10.00, same |
+| 11b_2_banelings_vs_marauder | 9 | 0.00 – 1.00, same | 8.0 → 8.4 | — / 95.00, same |
+| 22a_reaper_vs_2_workers | 5 | 1.00 – 0.00, same | 101.0, same | 46.24 → 46.22 / — |
+| 23a_zealot_vs_6_lings | 20 | 0.00 – 2.00, same | 271.3 → 275.0 | — |
+| 24a_roach_vs_5_lings | 20 | 0.00 – 3.00, same | 288.5 → 289.8 | — |
+| 24b_upgraded_roach_vs_5_lings | 6 | 1.00 – 0.00, same | 328.0, same | 25.42 → 26.62 / — |
+| 26_100_lings_vs_6_colossi | 1 | 0.00 – 6.00, same | 116.1 → 116.0 | — / 250.00, same |
+| 27_100_lings_vs_8_ultralisks | 20 | 0.00 – 8.00, same | 212.0 → 213.2 | — / 425.25 → 427.67 |
+| 28_100_lings_vs_10_immortals | 20 | 27.00 → 25.95 – 0.00 | 683.4 → 687.0 | 30.66 (4) → 35.00 (3) / — |
+| 29_100_lings_vs_12_stalkers | 20 | 69.10 → 69.20 – 0.00 | 444.9 → 449.0 | 31.49 (14) → 35.00 (16) / — |
+| 30_20_roaches_vs_10_immortals | 1 | 0.00 – 10.00, same | 236.9 → 237.0 | — / 147.15 → 147.90 |
+| 31_15_marauders_vs_15_stalkers | 15 | 1.80 – 1.90 → 1.85 – 1.45 | 666.9 → 669.4 | 80.80 (5) → 57.00 (4) / — |
+| 32_30_marines_vs_15_banelings | 1 | 1.45 – 0.95, same | 49.9 → 50.0 | 27.50, same / — |
+| 33_24_marines_vs_12_zealots | 15 | 4.50 – 0.60 → 4.75 – 0.75 | 440.8 → 429.6 | 36.27 (11) → 39.67 (9) / — |
+| 34_20_hydras_vs_12_mutas | 4 | 19.40 → 19.45 – 0.00 | 183.7 → 183.3 | 90.00, same / — |
+
+  - The zerglings (23a, 24a, 24b, 26 to 29) and the zealot now turn to each new target before they strike: their
+    fights last 1 to 4 ticks longer, and in 28 the immortals kill one more zergling on average.
+  - The banelings (11a, 11b) turn before they burst, a fraction of a tick later on average.
+  - Battle 31 stays a close fight with both winners (its expectation holds on every seed).
+- **Battle 33, 68 seeds:** 43 / 16 / 9 (marine wins / zealot wins / unresolved; was 42 / 18 / 8), marine survivors
+  4.38 (SD 3.39; was 4.03, SD 3.26). Seeds of record 7-0, 1-1, 9-0, 6-0 (marines – zealots; seed 11 was 3-0 and is
+  now unresolved). Re-recorded per D-6 to the smallest ranges that hold on them, `blue: (1, 9), red: (0, 1)`, and its
+  comment rewritten with this distribution.
+- **`golden_replay.ron` re-recorded** from checkpoint 4 (ticks 151 to 200, the first fight): its marines, roaches and
+  zealots fire within 11.25° (were 15°, 15° and 180°). `golden_replay_orders.ron` unchanged. Debug, release and
+  `wasm32-wasip1` reproduce both.
