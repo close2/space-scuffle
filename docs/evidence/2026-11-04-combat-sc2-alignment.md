@@ -1303,3 +1303,74 @@ Planetary Fortress is in no battle.
 when its `railgun_crawler` squad first fights); `golden_replay_orders.ron` unchanged. Debug, release and
 `wasm32-wasip1` reproduce both fixtures. Doc 07's Siege Tank weapon cell (18 → 19 ticks) and doc 08's Planetary
 Fortress row (period 50 → 36 ticks) are corrected.
+
+### 13.14 W2: weapon periods that differed by more than rounding
+
+| Identity | Field | Before | After | Source (Normal s ÷ 1.4 × 25) |
+|---|---|---|---|---|
+| `welder_drone`, `grav_harvester`, `nectar_worker` (workers) | `weapon.period_ticks` | 19, 15, 15 | **27** | 1.5, `liberty` WeaponData:200, :147, :354 |
+| `rhino_beetle` (Roach) | `weapon.period_ticks` | 28 | **36** | 2, `liberty` WeaponData:345 |
+| `shock_golem` (Marauder) | `weapon.period_ticks` | 26 | **27** | 1.5, `liberty` WeaponData:249 |
+| `colossus_mech` (Thor) | `air_weapon.period_ticks` | 36 | **23** | 1.28, `voidmulti` WeaponData:129 |
+| `sky_bastion` (Liberator) | `ground_weapon` / `air_weapon`, `weapon` | 28 / 25, 25 | **29 / 32, 32** | 1.6, `void` WeaponData:339; 1.8, :327 |
+| `warp_strider` (Stalker) | `weapon`, `air_weapon` | 34 | **33** | 1.87, `voidmulti` WeaponData:201 |
+| `void_goliath` (Immortal) | `weapon.period_ticks` | 28 | **29** | 1.6, `voidmulti` WeaponData:208 |
+| `volatile_tick` (Baneling) | `weapon.period_ticks` | 10 | **15** | 0.833, `liberty` WeaponData:468 |
+| `mortar_stag` (Ravager) | `weapon.period_ticks` | 28 | **29** | 1.6, `voidmulti` WeaponData:214 |
+
+**Test restated first.** `collision_and_immobility_tests.rs::test_converging_units_respect_speed_cap_and_do_not_vibrate`
+uses the catalog's first mobile melee archetype, `welder_drone`, and allowed 2 direction reversals per unit in 120
+ticks. Every unit already reversed twice: once its swing no longer anchors it, the crowd at the contact ring pushes it
+in by about 0.08 and it steps back by about 0.015 on the next tick, once per weapon cycle (identical traces up to tick
+32 before and after). With the SCV's longer cooldown entity 6 does it a third time at tick 40. That jostle is a
+movement defect, recorded as **finding M-21** (remediation plan §4.2, beside M-19). The test now judges vibration up
+to each unit's first strike, the convergence it was written for, with the same threshold; the speed cap over 120
+ticks and the damage check are unchanged. It passes before and after.
+
+**Whole matrix, 20 seeds.** Compared with the state after W1 (re-recorded): **21 battles moved; winners changed only
+in battle 31 (4 seeds), within its expectation; no expectation failed** (0 on the seeds of record; 7 over all seeds,
+battle 33's, unchanged).
+
+| Battle | Seeds moved | Survivors blue – red, before → after | End tick, before → after | Lead hull, before → after |
+|---|---|---|---|---|
+| 1a_stalker_vs_roach | 20 | 1.00 – 0.00, same | 281.0 → 273.0 | blue 5.00 → 35.00 |
+| 1b_stalker_vs_2_roaches | 20 | 0.00 – 2.00, same | 156.6 → 196.6 | red 107.77 → 100.39 |
+| 2a_immortal_vs_roach | 20 | 1.00 – 0.00, same | 61.0 → 63.0 | blue 200.00, same |
+| 2b_immortal_vs_2_roaches | 20 | 1.00 – 0.00, same | 145.0 → 150.0 | blue 174.00 → 200.00 |
+| 3_immortal_vs_tank | 20 | 1.00 – 0.00, same | 89.0 → 92.0 | blue 176.00, same |
+| 4_marauder_vs_roach | 20 | 1.00 – 0.00, same | 190.1 → 197.1 | blue 20.00 → 35.00 |
+| 6a_roach_vs_hydra | 20 | 1.00 – 0.00, same | 149.5 → 189.5 | blue 37.20 → 4.81 |
+| 6b_2_roaches_vs_hydra | 20 | 2.00 – 0.00, same | 65.8 → 81.8 | blue 119.06 → 112.58 |
+| 6c_roach_vs_2_hydras | 9 | 0.00 – 2.00, same | 96.2, same | red 61.80 → 69.00 |
+| 7_zealot_vs_roach | 20 | 1.00 – 0.00, same | 240.9, same | blue 12.00 → 42.00 |
+| 8_zealot_vs_stalker | 10 | 1.00 – 0.00, same | 241.5, same | blue 57.00 → 51.00 |
+| 9b_hellion_vs_roach | 20 | 0.00 – 1.00, same | 148.0 → 188.0 | red 119.25 → 112.86 |
+| 12b_colossus_vs_3_marauders | 20 | 0.00 – 2.00, same | 164.0 → 170.0 | red 67.53, same |
+| 22a_reaper_vs_2_workers | 20 | 1.00 – 0.00, same | 102.0, same | blue 37.24 → 46.24 |
+| 22b_reaper_vs_stalker | 20 | 0.00 – 1.00, same | 178.0 → 173.0 | red 80.00, same |
+| 24a_roach_vs_5_lings | 20 | 0.00 – 2.00 → 0.00 – 3.00 | 305.4 → 285.4 | — |
+| 24b_upgraded_roach_vs_5_lings | 20 | 1.00 – 0.00, same | 255.8 → 327.9 | blue 85.93 → 23.03 |
+| 28_100_lings_vs_10_immortals | 20 | 27.30 – 0.00 → 30.10 – 0.00 | 670.5 → 660.4 | blue 35.00 (3) → — |
+| 29_100_lings_vs_12_stalkers | 20 | 71.50 – 0.00 → 69.70 – 0.00 | 440.4 → 442.3 | blue 34.38 → 33.09 |
+| 30_20_roaches_vs_10_immortals | 20 | 0.00 – 10.00, same | 248.3 → 255.1 | red 113.80 → 132.15 |
+| 31_15_marauders_vs_15_stalkers | 20 | 2.65 – 0.70 → 1.70 – 1.35 | 661.3 → 700.2 | blue 88.17 (6) → 69.75 (4) |
+
+- **The Roach fires 22 % less often** (28 → 36 ticks; 1a, 1b, 2a, 2b, 4, 6a to 6c, 7, 9b, 24a, 24b, 30): its
+  opponents keep more life (the stalker of 1a 5 → 35, the marauder of 4 20 → 35, the zealot of 7 12 → 42, the
+  immortal of 2b 174 → 200, the immortals of 30 more), and fights the roaches win take longer and cost them more
+  (1b, 6a, 6b, 9b, 24b: the roach of 24b ends at 23 instead of 86, of 6a at 4.8 instead of 37). In 24a one more
+  zergling survives on average.
+- **The Stalker fires a tick sooner** (34 → 33; 1a, 8, 22b, 29, 31): 22b ends 5 ticks sooner, the zealot of 8 keeps
+  6 less life, the zerglings of 29 lose 1.8 more.
+- **The Immortal fires a tick later** (28 → 29; 2a, 2b, 3, 28, 30): fights end later by 2 to 7 ticks; in 28 the
+  zerglings keep 2.8 more alive.
+- **The Marauder fires a tick later** (26 → 27; 4, 12b, 31): battle 31 (15 marauders against 15 stalkers, with the
+  Stalker a tick faster) tips further to the stalkers: 4 of 20 seeds change from a marauder win to a stalker win
+  (survivors 2.65 – 0.70 → 1.70 – 1.35); its expectation, written as a close fight, holds on every seed.
+- **The workers swing every 27 ticks** (22a): the reaper keeps 9 more life against two SCVs.
+- The Thor's air period, the Liberator's, the Baneling's (it dies on its first attack) and the Ravager's move no
+  matrix battle.
+
+**Battle 33, 68 seeds: bit-identical.** **`golden_replay.ron` re-recorded from checkpoint 4** (ticks 151 to 200, the
+`rhino_beetle` squad's first fight); `golden_replay_orders.ron` unchanged. Debug, release and `wasm32-wasip1`
+reproduce both fixtures. Doc 07's period cells for the eleven identities are corrected (the Roach's already said 36).
