@@ -1466,3 +1466,40 @@ tick the swing starts, D-3):
 **Battle 33, 68 seeds: bit-identical.** **`golden_replay.ron` re-recorded from checkpoint 4** (ticks 151 to 200, the
 `rhino_beetle` squad's first fight; the Roach's damage point is 3); `golden_replay_orders.ron` unchanged. Debug,
 release and `wasm32-wasip1` reproduce both. No doc 07 or doc 08 cell states a damage point.
+
+### 13.17 W5: backswings that were never sourced
+
+48 values on 35 identities (the audit's group W5, each with its source line): most weapons go to the `CWeapon`
+default 0.5 Normal s = **9 ticks** (`core` WeaponData:18), from 1 to 5; those whose weapon sets its own value follow
+it: **0** for the Marauder (`shock_golem`), **13** for the Reaper, the Hellion and the Void Ray (0.75 s), **10** for
+the Hydralisk (0.5607 s), **21** for the Ghost (1.167 s) and **24** for the Dark Templar (1.333 s). After WP1 a
+backswing never delays the next attack: it locks out new orders and anchors the unit until it ends or a new swing
+starts. One commit for the group (one cause; the measurement is small enough to explain per identity).
+
+**Whole matrix, 20 seeds.** Compared with the state after W4: **7 battles moved, no expectation failed** (0 on the
+seeds of record; 7 over all seeds, battle 33's, unchanged); winners changed only in battle 31 (4 seeds, 2 each way).
+
+| Battle | Seeds moved | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|
+| 10_2_hellions_vs_8_lings | 1 | 2.00 – 0.00, same | 59.0 → 61.2 | 70.00 (20) / —, same |
+| 27_100_lings_vs_8_ultralisks | 15 | 0.00 – 8.00, same | 210.9 → 212.0 | — / 423.59 (20) → — / 425.25 (20) |
+| 28_100_lings_vs_10_immortals | 20 | 30.45 – 0.00 → 30.05 – 0.00 | 666.1 → 662.7 | 30.05 (4) / — → 17.93 (2) / — |
+| 29_100_lings_vs_12_stalkers | 20 | 69.50 – 0.00 → 69.90 – 0.00 | 445.9 → 447.6 | 31.90 (20) / — → 30.82 (17) / — |
+| 30_20_roaches_vs_10_immortals | 2 | 0.00 – 10.00, same | 259.4 → 258.6 | — / 133.10 (20) → — / 134.60 (20) |
+| 31_15_marauders_vs_15_stalkers | 15 | 2.65 – 0.75 → 2.95 – 0.55 | 680.5 → 682.6 | 68.90 (10) / — → 62.67 (9) / — |
+| 34_20_hydras_vs_12_mutas | 1 | 19.05 – 0.00, same | 195.3 → 195.1 | 90.00 (20) / —, same |
+
+- **Crowds** (27, 28, 29, zerglings against ultralisks, immortals and stalkers, every one now anchored 9 ticks after
+  each strike instead of 2 to 4): 28 ends with 30.05 zerglings instead of 30.45, 29 with 69.90 instead of 69.50, the
+  ultralisks of 27 with 1.66 more life; winners do not move.
+- **Battle 31** (15 marauders against 15 stalkers): the Marauder's backswing goes to 0 and the Stalker's to 9; the
+  marauders win 2 more seeds and lose 2 (survivors 2.65 – 0.75 → 2.95 – 0.55), within the close-fight expectation.
+- **Single seeds** in 10 (hellion backswing 2 → 13: the hellions stand a little longer after a shot), 30 and 34;
+  winners and survivors do not move.
+
+Most weapons keep their outcome: after WP1 the backswing only matters where an anchored unit's position or its
+lock on new orders changes who reaches whom.
+
+**Battle 33, 68 seeds: bit-identical.** **`golden_replay.ron` re-recorded from checkpoint 4** (ticks 151 to 200,
+its `rhino_beetle` and `railgun_crawler` squads' first fights); `golden_replay_orders.ron` unchanged. Debug, release
+and `wasm32-wasip1` reproduce both. No doc 07 or doc 08 cell states a backswing.

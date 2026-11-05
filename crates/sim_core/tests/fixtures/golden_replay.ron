@@ -53,6 +53,9 @@
 // Re-recorded for WP12 group W4: "blue_armor" (rhino_beetle) releases 3 ticks into its swing (was
 // 2; the CWeapon default 0.167 Normal s). Checkpoints 1 to 3 are unchanged; from checkpoint 4
 // (ticks 151 to 200), its first fight, every checkpoint changed.
+// Re-recorded for WP12 group W5: "blue_armor" (rhino_beetle) and "red_siege" (railgun_crawler)
+// have the CWeapon default backswing of 9 ticks (was 4). Checkpoints 1 to 3 are unchanged; from
+// checkpoint 4 (ticks 151 to 200), their first fights, every checkpoint changed.
 (
     checksum_schema: 10,
     seed: 0x5EED_0F_5CAFF1E,
@@ -83,22 +86,22 @@
         0xd3213317d91b8691,
         0x9a0f00bdb78caef0,
         0x9c03130587ecfe87,
-        0x98d279a73dc80d78,
-        0x8cbac0ed70db9ffe,
-        0x2a1be15a054877ba,
-        0x2573d267a981f28e,
-        0xddaac3e668d65a34,
-        0xcf4679f506ae1c1d,
-        0x00fceda20b0e01a0,
-        0x2cca910777dbb1f0,
-        0xbe76cb1b7a57503c,
-        0x82d95ba8c3a7277b,
-        0xbcc94ca8a8c86bb5,
-        0x2b31b707e6e29d24,
-        0x41e85a1824c23ce9,
-        0xaf79c8a476f9e6df,
-        0x959829c740672dcb,
-        0x082a000fb4b398ef,
-        0x08793389543ce72b,
+        0x221c4e0d5e453353,
+        0x38fde69c63fd797e,
+        0xf08e5df99b006301,
+        0x1ae2758ab6b3db8c,
+        0x3ea158ca82e4dd84,
+        0xa3ed6cf66f5dfc3f,
+        0xaa7351ecc6deba42,
+        0x0a14990d666e1a53,
+        0x956a6f847b6d4d64,
+        0xedf8e9c7e0827973,
+        0x26c46ed8b9fe2255,
+        0x797c25aaf05c4e4b,
+        0x4f0f8a8a421cbe6c,
+        0xa6b94d5cef37db26,
+        0xd45ea4b710720e2f,
+        0xe5d701bcbbdd7354,
+        0x866d31dde4b91b58,
     ],
 )
