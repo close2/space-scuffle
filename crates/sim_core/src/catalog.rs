@@ -231,6 +231,20 @@ impl UnitArchetype {
         self.modes.iter().find(|m| m.mode_name == name)
     }
 
+    /// Whether this archetype's primary weapon ([`Self::primary_weapon`]) can be used against a
+    /// target of locomotion `target_mover` (criterion 3 of `StarCraft` II's automatic
+    /// targeting). Always `true` for [`PrimaryWeapon::Either`], which never separates
+    /// candidates. An air weapon reaches air units and cliff walkers; a ground weapon every
+    /// mover but air units.
+    #[must_use]
+    pub fn primary_weapon_reaches(&self, target_mover: MoverType) -> bool {
+        match self.primary_weapon {
+            PrimaryWeapon::Either => true,
+            PrimaryWeapon::Air => matches!(target_mover, MoverType::Air | MoverType::CliffWalker),
+            PrimaryWeapon::Ground => target_mover != MoverType::Air,
+        }
+    }
+
     /// Selects the optimal weapon against a target with specified locomotion and optional siege stance weapon.
     ///
     /// Against [`MoverType::CliffWalker`] (e.g., Colossus), the target can be hit by both ground and air

@@ -6,7 +6,7 @@
 //! ## Invariants Maintained
 //! 1. All calculations use deterministic fixed-point math with zero floating-point operations.
 //! 2. Target ranking is strictly deterministic: `(threat DESC, attack target priority DESC,
-//!    dist ASC, id ASC)`.
+//!    primary weapon DESC, dist ASC, id ASC)`.
 //! 3. Minimum damage is clamped to 0.5 HP for non-zero attacks.
 //! 4. Shield and life regeneration wait for the archetype's catalog delays
 //!    (`shield_regen_delay_ticks`, `hp_regen_delay_ticks`) after sustaining damage; any damage,
@@ -299,14 +299,17 @@ pub fn calculate_splash_damage(
 /// Targeting"):
 /// 1. `threat` (a threat first; see [`is_threat_to`])
 /// 2. `attack_target_priority` (higher first; `CUnit` `AttackTargetPriority`)
-/// 3. `distance_sq` (closer first)
-/// 4. `entity_id` (lower first). Not a game rule: it only decides exact ties, deterministically.
+/// 3. `primary` (a target for the unit's primary weapon first; `CUnit` `WeaponArray` order)
+/// 4. `distance_sq` (closer first)
+/// 5. `entity_id` (lower first). Not a game rule: it only decides exact ties, deterministically.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TargetPriorityKey {
     /// Whether the candidate threatens the unit choosing.
     pub threat: bool,
     /// The candidate archetype's attack target priority.
     pub attack_target_priority: u8,
+    /// Whether the unit's primary weapon can be used against the candidate.
+    pub primary: bool,
     /// Squared distance to target.
     pub distance_sq: SimScalar,
     /// Entity ID tie-breaker.
@@ -314,11 +317,13 @@ pub struct TargetPriorityKey {
 }
 
 impl TargetPriorityKey {
-    /// The criteria that let a candidate displace a target the unit keeps: threat, then attack
-    /// target priority. A candidate replaces a kept target only if this is strictly greater.
+    /// The criteria that let a candidate displace a target the unit keeps: threat, attack
+    /// target priority, then the primary weapon (Liquipedia "Automatic Targeting": "a more
+    /// important target (according to the first 3 criteria)"). A candidate replaces a kept
+    /// target only if this is strictly greater.
     #[must_use]
-    pub const fn rank(&self) -> (bool, u8) {
-        (self.threat, self.attack_target_priority)
+    pub const fn rank(&self) -> (bool, u8, bool) {
+        (self.threat, self.attack_target_priority, self.primary)
     }
 }
 

@@ -413,7 +413,7 @@ impl SimWorld {
     // Why: The neighbourhood scan is the costliest step of this phase, and in a battle nearly
     // every unit is under an automatic attack.
     // What: A unit already engaging an in-reach threat of the catalog's highest attack target
-    // priority (`top_priority`) skips the scan, because nothing can outrank it and an in-reach
+    // priority (`top_priority`), for its primary weapon, skips the scan, because nothing can outrank it and an in-reach
     // target is never traded for an equal.
     // Trade-off: One pass over the catalog per tick and one threat test per engaged unit, for
     // far fewer scans.
@@ -448,6 +448,7 @@ impl SimWorld {
                 .get(target.unit_type_id)
                 .is_ok_and(|target_arch| {
                     target_arch.attack_target_priority >= top_priority
+                        && arch.primary_weapon_reaches(target_arch.mover_type)
                         && is_threat_to(target_arch, target, arch)
                 })
         });
@@ -546,6 +547,7 @@ impl SimWorld {
             let key = TargetPriorityKey {
                 threat: is_threat_to(target_arch, neighbor, arch),
                 attack_target_priority: target_arch.attack_target_priority,
+                primary: arch.primary_weapon_reaches(target_arch.mover_type),
                 distance_sq: entity.position.distance_sq(neighbor.position),
                 entity_id: neighbor_id,
             };

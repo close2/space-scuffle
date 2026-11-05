@@ -58,6 +58,8 @@ struct Scratch<'a> {
     mover: &'a str,
     /// `attack_target_priority`.
     priority: u8,
+    /// `primary_weapon` in RON (`Either`, `Ground` or `Air`).
+    primary: &'a str,
     /// Extra authored targeting fields, for example `always_a_threat: true,`.
     extra: &'a str,
     /// The `ground_weapon` slot in RON.
@@ -73,6 +75,7 @@ impl Scratch<'_> {
             slug,
             mover: "Ground",
             priority: 20,
+            primary: "Either",
             extra: "",
             ground: "None",
             air: "None",
@@ -122,7 +125,7 @@ impl Scratch<'_> {
             sight_radius: 12.0,
             scan_range: 12.0,
             attack_target_priority: {priority},
-            primary_weapon: Either,
+            primary_weapon: {primary},
             acquire_tie_break: Closest,
             {extra}
             mineral_cost: 50,
@@ -137,6 +140,7 @@ impl Scratch<'_> {
             slug = self.slug,
             mover = self.mover,
             priority = self.priority,
+            primary = self.primary,
             extra = self.extra,
             ground = self.ground,
             air = self.air,
@@ -303,5 +307,52 @@ fn b7_a_defensive_enemy_threatens_only_while_attack_moving() -> TestResult {
         Some(worker),
         "an attack-moving worker"
     );
+    Ok(())
+}
+
+/// B-10: of two threats of equal priority, a unit whose primary weapon is its air weapon takes
+/// the air one, although the ground one is closer.
+#[test]
+fn b10_a_unit_prefers_a_target_for_its_primary_weapon() -> TestResult {
+    let mut world = world_with(&[
+        Scratch {
+            air: RIFLE,
+            primary: "Air",
+            ..Scratch::gunner(CHOOSER)
+        },
+        Scratch::gunner("ground_gunner"),
+        Scratch {
+            mover: "Air",
+            ..Scratch::gunner("air_gunner")
+        },
+    ])?;
+    let chooser = spawn(&mut world, CHOOSER, 0, 10, 16)?;
+    spawn(&mut world, "ground_gunner", 1, 14, 16)?;
+    let flyer = spawn(&mut world, "air_gunner", 1, 10, 22)?;
+    step(&mut world, 0, None);
+    assert_eq!(acquired(&world, chooser), Some(flyer));
+    Ok(())
+}
+
+/// B-10: threat outranks the primary weapon: an unarmed air enemy gives way to a ground threat.
+#[test]
+fn b10_threat_outranks_the_primary_weapon() -> TestResult {
+    let mut world = world_with(&[
+        Scratch {
+            air: RIFLE,
+            primary: "Air",
+            ..Scratch::gunner(CHOOSER)
+        },
+        Scratch::gunner("ground_gunner"),
+        Scratch {
+            mover: "Air",
+            ..Scratch::unarmed("air_drone")
+        },
+    ])?;
+    let chooser = spawn(&mut world, CHOOSER, 0, 10, 16)?;
+    let gunner = spawn(&mut world, "ground_gunner", 1, 10, 22)?;
+    spawn(&mut world, "air_drone", 1, 14, 16)?;
+    step(&mut world, 0, None);
+    assert_eq!(acquired(&world, chooser), Some(gunner));
     Ok(())
 }
