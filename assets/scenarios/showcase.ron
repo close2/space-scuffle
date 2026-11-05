@@ -1,0 +1,19 @@
+// The battle of the CI showcase video (assets/captures/showcase.ron).
+//
+// A copy of default_battle.ron in its own file, so the video does not move when tests change the
+// default battle: both slots field the battle loadout and attack-move to each other's base.
+// Every identity of the loadout has admitted media (crates/client_diagnostics/tests/
+// showcase_storyboard_tests.rs, the_showcase_scenario_fields_only_media_backed_identities).
+(
+    format_version: 1,
+    map: "maps/showcase_canyon.scmap.ron",
+    seed: 1592639215,
+    players: [
+        (player_slot: 0, loadout_slug: "battle_automaton"),
+        (player_slot: 1, loadout_slug: "battle_automaton"),
+    ],
+    initial_orders: [
+        AttackMoveToStart(player_slot: 0, target_player_slot: 1),
+        AttackMoveToStart(player_slot: 1, target_player_slot: 0),
+    ],
+)

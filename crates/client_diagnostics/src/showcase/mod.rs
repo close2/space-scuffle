@@ -1,0 +1,118 @@
+//! The showcase video: a storyboarded tour of a real battle, rendered by the production client.
+//!
+//! # Responsibility
+//! This module owns the `showcase` tool (plan `docs/plans/2026-11-05-ci-showcase-video.md`):
+//! - [`storyboard`]: the schema and validation of `assets/captures/showcase.ron`;
+//! - [`cards`]: title and status cards generated from `DESIGN.md` and the plan index;
+//! - [`pose`]: camera moves and the deterministic follow spring.
+//!
+//! # How it fits
+//! The tool builds the shipped client through `client::build_graphical_app`, like the capture and
+//! frame-budget tools, and attaches itself through ordinary plugins and schedule sets. It never
+//! changes the simulation: it issues no `PlayerCommand` and edits no entity (charter §3.2).
+//!
+//! # Invariants
+//! - The video is engine output end to end; ffmpeg only cuts, scales and encodes (charter §1.2).
+//! - Every failure is a typed [`ShowcaseError`] and a non-zero exit; nothing is published from a
+//!   failed run.
+
+pub mod cards;
+pub mod pose;
+pub mod storyboard;
+
+use std::path::{Path, PathBuf};
+
+/// The storyboard the tool renders by default, relative to the assets root.
+pub const DEFAULT_STORYBOARD: &str = "captures/showcase.ron";
+
+/// Failure of any showcase step.
+#[derive(Debug, thiserror::Error)]
+pub enum ShowcaseError {
+    /// A file or directory could not be read or written.
+    #[error("showcase I/O at {path}: {source}")]
+    Io {
+        /// The path involved.
+        path: PathBuf,
+        /// The filesystem error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A storyboard or manifest is not valid RON for its schema.
+    #[error("cannot parse {path}: {source}")]
+    Parse {
+        /// The file.
+        path: PathBuf,
+        /// The parser's diagnostic.
+        #[source]
+        source: ron::error::SpannedError,
+    },
+    /// The storyboard breaks a rule of plan decision D-4.
+    #[error("invalid storyboard {path}: {fault}")]
+    InvalidStoryboard {
+        /// The storyboard.
+        path: PathBuf,
+        /// The first fault found.
+        fault: storyboard::StoryboardFault,
+    },
+    /// A card could not be generated from the repository's documents.
+    #[error("cannot build the showcase cards from {source_file}: {reason}")]
+    Cards {
+        /// The document that lacks a section, table or row.
+        source_file: PathBuf,
+        /// What is missing or malformed.
+        reason: String,
+    },
+    /// The unit catalog could not be read.
+    #[error(transparent)]
+    Catalog(#[from] sim_core::catalog::CatalogLoadError),
+    /// The assets root could not be resolved.
+    #[error(transparent)]
+    Assets(#[from] client::AssetsDirError),
+}
+
+/// A storyboard that passed validation, with the cards built from the same repository.
+#[derive(Debug, Clone)]
+pub struct ValidatedStoryboard {
+    /// The storyboard file.
+    pub path: PathBuf,
+    /// Its contents.
+    pub storyboard: storyboard::Storyboard,
+    /// The cards from `DESIGN.md` and the plan index.
+    pub cards: cards::RepositoryCards,
+}
+
+impl ValidatedStoryboard {
+    /// Loads `storyboard` (relative to `assets`), builds the cards from `repository`, reads the unit
+    /// catalog from `assets/catalog`, and validates the storyboard against all three.
+    ///
+    /// # Errors
+    /// Any read, parse, card or catalog error, or [`ShowcaseError::InvalidStoryboard`].
+    pub fn load(
+        assets: &Path,
+        repository: &Path,
+        storyboard: &Path,
+    ) -> Result<Self, ShowcaseError> {
+        let path = assets.join(storyboard);
+        let parsed = storyboard::Storyboard::load(&path)?;
+        let cards = cards::RepositoryCards::load(repository)?;
+        let catalogs =
+            sim_core::catalog::RuntimeCatalogs::load_from_directory(assets.join("catalog"))?;
+        let textures = assets.join("textures");
+        let context = storyboard::ValidationContext {
+            subsystems: &cards.subsystems,
+            catalog: &catalogs.units,
+            textures: &textures,
+        };
+        parsed
+            .validate(&context)
+            .map_err(|fault| ShowcaseError::InvalidStoryboard {
+                path: path.clone(),
+                fault,
+            })?;
+        Ok(Self {
+            path,
+            storyboard: parsed,
+            cards,
+        })
+    }
+}
