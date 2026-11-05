@@ -425,8 +425,38 @@ fn driver_selection_matrix() {
 
 /// R2: a child run through `GpuCommand` sees its lock held, and the lock is free once `run`
 /// returns. The child asks real `flock(1)`, so this is the protocol `with-gpu-lock` speaks.
+///
+/// The check runs in a single-threaded re-execution of this binary, [`lock_release_child`].
+/// In this process, other test threads spawn children concurrently, and a child spawned while the
+/// guard is open inherits a duplicate of its descriptor until that child calls `exec`, which
+/// closes it (`O_CLOEXEC`). An `flock -n` made in that window finds the lock held, although the
+/// harness has already released it. A process with no other spawning thread removes the window,
+/// so the assertion stays exact: free at once, not eventually.
 #[test]
 fn a_child_holds_the_gpu_lock_only_while_it_runs() -> Result<(), Box<dyn std::error::Error>> {
+    let output = Command::new(std::env::current_exe()?)
+        .args([
+            "--ignored",
+            "--exact",
+            "--nocapture",
+            "--test-threads=1",
+            "lock_release_child",
+        ])
+        .output()?;
+    let log = gpu_run::captured_log(&output);
+    assert!(
+        output.status.success(),
+        "the single-threaded lock release child failed:\n{}",
+        gpu_run::tail(&log)
+    );
+    assert!(log.contains("1 passed"), "the child test must run:\n{log}");
+    Ok(())
+}
+
+/// The child of [`a_child_holds_the_gpu_lock_only_while_it_runs`], run alone in its own process.
+#[test]
+#[ignore = "launched by a_child_holds_the_gpu_lock_only_while_it_runs with one test thread"]
+fn lock_release_child() -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
     let lock = directory.path().join("gpu.lock");
     let out = directory.path().join("out");
