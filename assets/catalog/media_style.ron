@@ -169,9 +169,19 @@
         // welder_drone (batch 2, 2026-11-05): a wide worker seen at 3/4 with its welding torch
         // held out to one side; its first clip (d020071b) spans about 68 % of the 16:9 width,
         // so the centre crop cut off the torch. Letterboxed like the shuttle, it stays whole.
+        //
+        // railgun_crawler, shock_golem, jet_jumper, specter_android (batch 3, 2026-11-05): seen
+        // at 3/4 with their weapons held out to the side (the tank's long barrels, the golem's
+        // arm cannons, the hound's two pistols, the android's long rifle), each spans about 60
+        // to 65 % of the 16:9 width and sits left of centre in its first clips (97931437,
+        // c6ddca3c), so the centre crop cut off a weapon. Letterboxed, they stay whole.
         overrides: {
             "repair_shuttle": Letterbox(feather_permille: 30),
             "welder_drone": Letterbox(feather_permille: 30),
+            "railgun_crawler": Letterbox(feather_permille: 30),
+            "shock_golem": Letterbox(feather_permille: 30),
+            "jet_jumper": Letterbox(feather_permille: 30),
+            "specter_android": Letterbox(feather_permille: 30),
         },
     ),
 

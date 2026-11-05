@@ -716,7 +716,7 @@
                 is_resource_dropoff: false,
             ),
             veo_prompts: {
-                Idle: "Null-Wave Android: Sleek graphite sniper android with glowing crimson optical sensors, a compact cloaking emitter pack on its back and a long null rifle.",
+                Idle: "Null-Wave Android: Sleek graphite sniper android with glowing crimson optical sensors, a compact cloaking emitter pack on its back and a long null rifle, seen whole from head to feet with empty space around it.",
                 Walk: "Null-Wave Android: Silent predatory stalk with the rifle cradled ready.",
                 Attack: "Null-Wave Android: High-powered precision hypervelocity beam discharge with vapor trail.",
             },
