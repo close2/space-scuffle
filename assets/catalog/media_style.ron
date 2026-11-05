@@ -219,7 +219,26 @@
         // welder_drone Walk: pinned at both ends to the Idle frame 0; the default cross-fade of 2
         // of 8 frames shows a double image of the whole robot at the restart (the bob moves the
         // body by a few per cent of the frame), so it keeps loop sampling only, as the shuttle.
+        //
+        // railgun_crawler, shock_golem, jet_jumper, specter_android Attack (batch 3, 2026-11-05):
+        // a one-shot that the game follows with Idle. Unpinned, the first Attack clips of the
+        // golem (deab733a) and the hound (dfae7358) fired well and then lowered their weapons,
+        // ending in a pose the Idle does not start from, so the switch back would snap. Their
+        // Attack is pinned at its end to the Idle picture, as Constructing is (D-3), and is
+        // still not looped.
         overrides: {
+            "railgun_crawler": {
+                Attack: (pin_end: true, seam: None),
+            },
+            "shock_golem": {
+                Attack: (pin_end: true, seam: None),
+            },
+            "jet_jumper": {
+                Attack: (pin_end: true, seam: None),
+            },
+            "specter_android": {
+                Attack: (pin_end: true, seam: None),
+            },
             "welder_drone": {
                 Idle: (pin_end: true, seam: Some((scale_lock: true, crossfade_frames: 0))),
                 Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
