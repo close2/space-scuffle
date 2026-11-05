@@ -1367,7 +1367,7 @@ Relative links only. It states what exists, not what was once hoped for; intent 
   [`2026-11-03-host-independent-smog-goldens.md`](2026-11-03-host-independent-smog-goldens.md): the kinematics
   goldens no longer hash any `libm` result, and the fluid, startup, noise and system goldens name the `libm`
   functions they depend on, with a canary. Making those host-independent changes smog output, so it is
-  [Q0014](../questions/open/0014-host-independent-smog-math.md), after Phase 9.
+  [Q0014](../questions/closed/0014-host-independent-smog-math.md), after Phase 9.
 
 ## 10. Decisions for the owner
 
