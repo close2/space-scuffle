@@ -63,6 +63,11 @@ pub struct Stamp {
     /// existed read as none.
     #[serde(default)]
     pub flakes: Vec<String>,
+    /// Steps whose first attempt crashed the compiler and that passed on their one retry on a
+    /// cleared incremental cache (blueprint Amendment 1, D5). Stamps written before this field
+    /// existed read as none.
+    #[serde(default)]
+    pub retries: Vec<String>,
 }
 
 /// The tree and commit of a clean working tree: what a stamp may name.
@@ -210,6 +215,7 @@ mod tests {
             }],
             commands: vec!["golden-replay-release".into()],
             flakes: vec!["client/x_tests".into()],
+            retries: vec!["clippy".into()],
         }
     }
 
@@ -230,12 +236,14 @@ mod tests {
     }
 
     #[test]
-    fn a_stamp_without_flakes_reads_as_none() -> Result<(), GateError> {
+    fn a_stamp_without_flakes_or_retries_reads_as_none() -> Result<(), GateError> {
         let mut stamp = sample();
         stamp.flakes.clear();
+        stamp.retries.clear();
         let text = stamp.to_ron()?;
-        let old = text.replace("flakes: [],", "");
+        let old = text.replace("flakes: [],", "").replace("retries: [],", "");
         assert!(!old.contains("flakes"), "{old}");
+        assert!(!old.contains("retries"), "{old}");
         assert_eq!(Stamp::from_ron(&old, Path::new("old.ron"))?, stamp);
         Ok(())
     }

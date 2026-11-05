@@ -23,7 +23,7 @@ use crate::GateError;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// What kind of test executable a target produces.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -134,6 +134,9 @@ pub struct Package {
 pub struct Workspace {
     /// The crates, keyed by package name.
     pub packages: BTreeMap<String, Package>,
+    /// Cargo's target directory (`target_directory` of `cargo metadata`), where the compiler
+    /// crash retry finds the incremental caches it clears; empty when unknown.
+    pub target_directory: PathBuf,
 }
 
 /// `path` relative to `root`, with `/` separators.
@@ -199,7 +202,12 @@ impl Workspace {
             .iter()
             .filter_map(|package| package["name"].as_str())
             .collect();
-        let mut workspace = Self::default();
+        let mut workspace = Self {
+            target_directory: metadata["target_directory"]
+                .as_str()
+                .map_or_else(|| root.join("target"), PathBuf::from),
+            ..Self::default()
+        };
         for package in packages {
             let name = package["name"]
                 .as_str()
@@ -382,6 +390,19 @@ mod tests {
         assert_eq!(core.targets[0].src_path, "crates/core/src/lib.rs");
         assert_eq!(core.targets[1].id.to_string(), "core/it_tests");
         assert!(!core.dependencies.contains_key("serde"));
+        Ok(())
+    }
+
+    #[test]
+    fn the_target_directory_comes_from_metadata_else_the_default() -> Result<(), GateError> {
+        assert_eq!(graph()?.target_directory, Path::new("/r/target"));
+        let mut with = metadata(&[("lonely", &[])]);
+        with["target_directory"] = json!("/scratch/cargo-target/wt");
+        let workspace = Workspace::from_metadata(Path::new("/r"), &with)?;
+        assert_eq!(
+            workspace.target_directory,
+            Path::new("/scratch/cargo-target/wt")
+        );
         Ok(())
     }
 
