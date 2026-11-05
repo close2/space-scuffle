@@ -123,8 +123,8 @@
             air_weapon: None,
             abilities: [],
             veo_prompts: {
-                "Idle": "Planetary Bulwark Dome: a massive fortified command dome, broad octagonal base, sloped armor, two long cannon barrels fixed rigidly in its crown, pointing forward, casting no shadow, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The cannon vents glow steadily and heat vapour rises gently.",
-                "Constructing": "Planetary Bulwark Dome: a massive fortified command dome, broad octagonal base, sloped armor, two long cannon barrels fixed rigidly in its crown, pointing forward, casting no shadow, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+                "Idle": "Planetary Bulwark Dome: a single massive fortified command dome with a broad octagonal base and sloped armor, two long heavy cannon barrels mounted side by side on its top, aimed forward, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The cannon vents glow steadily and heat vapour rises gently.",
+                "Constructing": "Planetary Bulwark Dome: a single massive fortified command dome with a broad octagonal base and sloped armor, two long heavy cannon barrels mounted side by side on its top, aimed forward, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
             },
         ),
         (
@@ -325,8 +325,8 @@
             air_weapon: None,
             abilities: [],
             veo_prompts: {
-                "Idle": "Radar Beacon Dome: a small armored sensor dome with a short round base, a broad flat sensor array built into the front of its shell, a short antenna stub on its crown, cyan light bands, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The sensor array glows steadily and small signal lights blink.",
-                "Constructing": "Radar Beacon Dome: a small armored sensor dome with a short round base, a broad flat sensor array built into the front of its shell, a short antenna stub on its crown, cyan light bands, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+                "Idle": "Radar Beacon Dome: a small armored sensor dome with a short round base, its front face a large glowing cyan grid screen set flush into the armor, a short antenna stub on top, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The grid screen glows steadily and small signal lights blink.",
+                "Constructing": "Radar Beacon Dome: a small armored sensor dome with a short round base, its front face a large glowing cyan grid screen set flush into the armor, a short antenna stub on top, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
             },
         ),
         (
