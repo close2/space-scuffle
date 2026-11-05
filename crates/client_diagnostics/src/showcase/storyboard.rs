@@ -32,8 +32,11 @@ pub const MAX_SCENE_FRAMES: u32 = 3_000;
 /// Most frames of all takes together, counting each scene at its maximum length.
 pub const MAX_TOTAL_FRAMES: u32 = 4_000;
 
-/// Smallest and largest side of the rendered frame, in pixels.
-pub const RESOLUTION_RANGE: std::ops::RangeInclusive<u32> = 320..=4_096;
+/// Allowed frame width in pixels.
+pub const WIDTH_RANGE: std::ops::RangeInclusive<u32> = 320..=4_096;
+
+/// Allowed frame height in pixels: 180 is the height of a 320-pixel-wide 16:9 frame.
+pub const HEIGHT_RANGE: std::ops::RangeInclusive<u32> = 180..=4_096;
 
 /// Allowed camera pitch, in degrees above the horizontal.
 pub const PITCH_RANGE_DEG: std::ops::RangeInclusive<f32> = 15.0..=85.0;
@@ -331,8 +334,8 @@ pub enum StoryboardFault {
     /// The schema version is not [`FORMAT_VERSION`].
     #[error("format_version {0} is not 1")]
     Version(u32),
-    /// A side is outside [`RESOLUTION_RANGE`] or odd.
-    #[error("resolution {0}x{1} must be even and within 320..=4096")]
+    /// A side is outside [`WIDTH_RANGE`] or [`HEIGHT_RANGE`], or odd.
+    #[error("resolution {0}x{1} must be even, 320..=4096 wide and 180..=4096 high")]
     Resolution(u32, u32),
     /// The frame rate differs from the tick rate.
     #[error("frame_rate {0} must equal the simulation tick rate")]
@@ -486,8 +489,8 @@ impl Storyboard {
             return Err(StoryboardFault::Version(self.format_version));
         }
         let (width, height) = self.resolution;
-        if !RESOLUTION_RANGE.contains(&width)
-            || !RESOLUTION_RANGE.contains(&height)
+        if !WIDTH_RANGE.contains(&width)
+            || !HEIGHT_RANGE.contains(&height)
             || width % 2 != 0
             || height % 2 != 0
         {

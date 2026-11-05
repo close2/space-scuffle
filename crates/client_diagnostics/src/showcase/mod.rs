@@ -4,7 +4,9 @@
 //! This module owns the `showcase` tool (plan `docs/plans/2026-11-05-ci-showcase-video.md`):
 //! - [`storyboard`]: the schema and validation of `assets/captures/showcase.ron`;
 //! - [`cards`]: title and status cards generated from `DESIGN.md` and the plan index;
-//! - [`pose`]: camera moves and the deterministic follow spring.
+//! - [`pose`]: camera moves and the deterministic follow spring;
+//! - [`director`], [`overlay`], [`recorder`] and [`take`]: one take rendered by the production
+//!   client at a fixed 40 ms step into a lossless mezzanine and its manifest.
 //!
 //! # How it fits
 //! The tool builds the shipped client through `client::build_graphical_app`, like the capture and
@@ -17,8 +19,12 @@
 //!   failed run.
 
 pub mod cards;
+pub mod director;
+pub mod overlay;
 pub mod pose;
+pub mod recorder;
 pub mod storyboard;
+pub mod take;
 
 use std::path::{Path, PathBuf};
 
@@ -68,6 +74,21 @@ pub enum ShowcaseError {
     /// The assets root could not be resolved.
     #[error(transparent)]
     Assets(#[from] client::AssetsDirError),
+    /// The production client could not start.
+    #[error(transparent)]
+    Startup(#[from] client::ClientStartupError),
+    /// A required external program is not on `PATH`.
+    #[error("`{0}` is required on PATH and could not be run")]
+    MissingTool(&'static str),
+    /// The storyboard has no take of that name, or the take's mode is reserved.
+    #[error("the storyboard has no renderable take `{0}`")]
+    UnknownTake(String),
+    /// The mezzanine encoder failed.
+    #[error(transparent)]
+    Mezzanine(#[from] recorder::MezzanineError),
+    /// A take failed while rendering; its manifest says why.
+    #[error("take failed: {0}")]
+    Take(String),
 }
 
 /// A storyboard that passed validation, with the cards built from the same repository.

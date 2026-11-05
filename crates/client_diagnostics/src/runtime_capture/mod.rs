@@ -9,9 +9,9 @@ mod config;
 mod driver;
 mod media;
 mod ownership;
-mod pipelines;
+pub(crate) mod pipelines;
 mod transport;
-mod ui_attachment;
+pub(crate) mod ui_attachment;
 
 pub use config::{
     CaptureError, CaptureOptions, CaptureScript, Checkpoint, Goal, TransportCaptureSpec,
@@ -138,15 +138,31 @@ fn isolate_ui_input(
     mut session: ResMut<'_, driver::Session>,
     time: Res<'_, Time>,
 ) {
-    for (mut input, mut context) in &mut inputs {
+    let startup = session.ui_startup_seconds();
+    if let Some(settled) = isolate_egui_inputs(&mut inputs, time.elapsed_secs_f64(), startup) {
+        session.ui_settled = settled;
+    }
+}
+
+/// Clears every egui input event and modifier and gives egui a deterministic clock.
+///
+/// UI fade-in must settle while authoritative and visual world time remain zero. The separate
+/// `startup` clock (seconds) advances by deterministic 40 ms frames, then freezes at twice the
+/// configured egui animation duration; egui's time is `elapsed` plus that clock. Returns whether
+/// the fade-in has settled, or `None` when there is no egui context. Shared by the capture and the
+/// showcase tools.
+pub(crate) fn isolate_egui_inputs(
+    inputs: &mut Query<'_, '_, (&mut bevy_egui::EguiInput, &mut bevy_egui::EguiContext)>,
+    elapsed: f64,
+    startup: f64,
+) -> Option<bool> {
+    let mut settled = None;
+    for (mut input, mut context) in inputs.iter_mut() {
         input.0.events.clear();
         input.0.modifiers = bevy_egui::egui::Modifiers::default();
-        // UI fade-in must settle while authoritative/visual world time remains
-        // zero. Its separate startup clock advances by deterministic 40 ms frames,
-        // then freezes at twice the real configured egui animation duration.
         let settling = f64::from(context.get_mut().style().animation_time) * 2.0;
-        let startup = session.ui_startup_seconds();
-        session.ui_settled = startup >= settling;
-        input.0.time = Some(time.elapsed_secs_f64() + startup.min(settling));
+        settled = Some(startup >= settling);
+        input.0.time = Some(elapsed + startup.min(settling));
     }
+    settled
 }

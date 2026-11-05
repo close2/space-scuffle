@@ -14,7 +14,7 @@ use bevy::render::view::{ExtractedWindows, ViewTarget};
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
 )]
-pub(super) fn align_ui_attachment(
+pub(crate) fn align_ui_attachment(
     cameras: Query<'_, '_, (&ExtractedCamera, &ViewTarget)>,
     mut windows: ResMut<'_, ExtractedWindows>,
     evidence: Res<'_, PipelineEvidence>,

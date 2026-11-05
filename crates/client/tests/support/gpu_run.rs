@@ -151,12 +151,6 @@ pub const KILL_GRACE_SECS: u32 = 10;
 /// Terrain sampler override read by `client::terrain::theme_gpu`.
 const TERRAIN_ANISOTROPY_OVERRIDE_ENV: &str = "SPACE_SCUFFLE_TERRAIN_MAX_ANISOTROPY";
 
-/// First Mesa release, as `(major, minor)`, whose llvmpipe bounds anisotropic sampling.
-///
-/// The bounded algorithm from the Vulkan specification is absent from the 25.0.0 source of
-/// `lp_bld_sample_soa.c` and present in 25.1.0.
-const FIRST_BOUNDED_ANISOTROPY_MESA: (u32, u32) = (25, 1);
-
 /// Exit status of GNU `timeout` when the deadline expired.
 const TIMEOUT_EXIT_CODE: i32 = 124;
 
@@ -936,7 +930,8 @@ fn quoted_field(record: &str, key: &str) -> Option<String> {
 /// The terrain anisotropy override a child on `driver` needs, given the installed `lavapipe`
 /// release `(major, minor)`. A pure function.
 ///
-/// `radv` never needs it. `lavapipe` needs `"1"` before [`FIRST_BOUNDED_ANISOTROPY_MESA`]; an
+/// `radv` never needs it. `lavapipe` needs `"1"` before Mesa 25.1
+/// ([`client::render_compatibility::FIRST_BOUNDED_ANISOTROPY_MESA`]); an
 /// unknown release keeps the production sampler, so an affected driver fails by timeout rather
 /// than quietly losing coverage.
 pub fn anisotropy_override(
@@ -945,29 +940,22 @@ pub fn anisotropy_override(
 ) -> Option<&'static str> {
     match driver {
         GpuDriver::Radv => None,
-        GpuDriver::Lavapipe => lavapipe_release
-            .filter(|release| *release < FIRST_BOUNDED_ANISOTROPY_MESA)
-            .map(|_| "1"),
+        GpuDriver::Lavapipe => {
+            client::render_compatibility::lavapipe_anisotropy_override(lavapipe_release)
+        }
     }
 }
 
-/// Extracts `(major, minor)` from `vulkaninfo --summary` text with a line such as
-/// `driverInfo = Mesa 22.3.6 (LLVM 15.0.6)`, or returns `None` for any other driver.
+/// Extracts `(major, minor)` from `vulkaninfo --summary` text; the rule lives in
+/// [`client::render_compatibility::mesa_release`].
 pub fn mesa_release(summary: &str) -> Option<(u32, u32)> {
-    let line = summary.lines().find(|line| line.contains("driverInfo"))?;
-    let (_, version) = line.split_once("Mesa ")?;
-    let mut parts = version.split(['.', ' ', '-']);
-    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+    client::render_compatibility::mesa_release(summary)
 }
 
-/// Returns `true` when this Mesa release cannot finish a frame of hex-tiled terrain.
-///
-/// Before [`FIRST_BOUNDED_ANISOTROPY_MESA`], llvmpipe's anisotropic sampler ignores explicit
-/// gradients and `maxAnisotropy`. Any clamp above 1 selects that path, so a smaller window or
-/// a longer deadline does not help: measured at 64x36 the first terrain frame was still
-/// unfinished after 120 s. The measurements are in `docs/plans/2026-11-02-server-gate.md`.
+/// Returns `true` when this Mesa release cannot finish a frame of hex-tiled terrain; the rule
+/// lives in [`client::render_compatibility::driver_stalls_on_anisotropic_hex_tiling`].
 pub fn driver_stalls_on_anisotropic_hex_tiling(summary: &str) -> bool {
-    mesa_release(summary).is_some_and(|release| release < FIRST_BOUNDED_ANISOTROPY_MESA)
+    client::render_compatibility::driver_stalls_on_anisotropic_hex_tiling(summary)
 }
 
 /// Asks the `lavapipe` driver in `manifest` for its Mesa release, once per test process.

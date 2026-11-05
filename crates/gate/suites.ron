@@ -89,6 +89,14 @@ SuiteCatalog(
             "crates/client/src/{bubble_shader.rs,bubble_optics.rs,render_compatibility.rs,flipbook_clock.rs,vfx.rs,vfx/**,smog/**,terrain/**,camera.rs}",
             "crates/client/tests/support/gpu_run.rs",
         ]),
+        // The showcase smoke take renders a storyboard twice through the real renderer, HUD and
+        // smog and compares the frames byte for byte.
+        "client_diagnostics/showcase_tests": (class: Gpu, triggers: [
+            "crates/client/src/{bubble_shader.rs,bubble_optics.rs,render_compatibility.rs,flipbook_clock.rs,vfx.rs,vfx/**,smog/**,terrain/**,camera.rs,battle_hud/**}",
+            "assets/captures/showcase.ron",
+            "assets/scenarios/showcase.ron",
+            "crates/client/tests/support/gpu_run.rs",
+        ]),
         // Its `shell_order_audit::gpu_tests` start the real renderer to check the pipeline cache.
         "client_diagnostics/lib": (class: Gpu, triggers: [
             "crates/client/src/{bubble_shader.rs,render_compatibility.rs}",
@@ -148,6 +156,7 @@ SuiteCatalog(
                 "client/lab_scene_tests",
                 "client/round2_visual_tests",
                 "client/battle_card_tests",
+                "client_diagnostics/showcase_storyboard_tests",
             ],
         ),
         (
@@ -159,6 +168,7 @@ SuiteCatalog(
                 "client/skirmish_match_tests",
                 "client/battle_fog_tests",
                 "client/editor_core_tests",
+                "client_diagnostics/showcase_storyboard_tests",
             ],
         ),
         (
@@ -172,6 +182,7 @@ SuiteCatalog(
                 "client/runtime_media_tests",
                 "client/lab_scene_tests",
                 "client/terrain_tests",
+                "client_diagnostics/showcase_storyboard_tests",
             ],
         ),
         (
@@ -183,7 +194,8 @@ SuiteCatalog(
             // C15 to C20 read these files; `always` already runs the checks.
             name: "charter documents",
             paths: ["DESIGN.md", "AGENTS.md", "CLAUDE.md", "docs/plans/README.md"],
-            targets: ["workspace_checks/@fast"],
+            // The showcase cards and caption validation read DESIGN.md and the plan index.
+            targets: ["workspace_checks/@fast", "client_diagnostics/showcase_storyboard_tests"],
         ),
     ],
 
