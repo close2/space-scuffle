@@ -25,6 +25,7 @@
 mod catalog;
 mod changes;
 mod cli;
+mod crash;
 mod execute;
 mod explain;
 mod glob;
@@ -45,6 +46,9 @@ pub use catalog::{
 };
 pub use changes::{capture, ChangeSpec, Git};
 pub use cli::{parse_args, Command, RunOptions, USAGE};
+pub use crash::{
+    compiler_crashed, crash_log, incremental_dirs, run_with_crash_retry, StepRun, COMPILER_PANIC,
+};
 pub use execute::{build_invocations, failed_tests, mark_flakes, Outcome, TargetResult};
 pub use explain::render_selection;
 pub use glob::Glob;

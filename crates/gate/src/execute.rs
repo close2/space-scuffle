@@ -254,6 +254,12 @@ pub fn build_targets(
             })?;
         if let Some(stdout) = child.stdout.take() {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                // Rustc prints its crash report to stderr, which reaches the log; should a
+                // JSON message ever carry it instead, it goes to the log too, so the compiler
+                // crash retry (`crash.rs`) sees it either way.
+                if line.contains(crate::crash::COMPILER_PANIC) {
+                    let _ = writeln!(file, "{line}");
+                }
                 let Ok(message) = serde_json::from_str::<Value>(&line) else {
                     continue;
                 };

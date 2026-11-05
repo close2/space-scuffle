@@ -115,6 +115,7 @@ mod tests {
             targets: Vec::new(),
             commands: Vec::new(),
             flakes: Vec::new(),
+            retries: Vec::new(),
         }
     }
 
