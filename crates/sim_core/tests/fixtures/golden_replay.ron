@@ -50,6 +50,9 @@
 // Re-recorded for WP12 group W3: "red_siege" (railgun_crawler) releases its shot 3 ticks into
 // the swing (was 4, the Normal-time 0.167 s), in tank and siege mode. Checkpoints 1 to 3 are
 // unchanged; from checkpoint 4 (ticks 151 to 200), its first fight, every checkpoint changed.
+// Re-recorded for WP12 group W4: "blue_armor" (rhino_beetle) releases 3 ticks into its swing (was
+// 2; the CWeapon default 0.167 Normal s). Checkpoints 1 to 3 are unchanged; from checkpoint 4
+// (ticks 151 to 200), its first fight, every checkpoint changed.
 (
     checksum_schema: 10,
     seed: 0x5EED_0F_5CAFF1E,
@@ -80,22 +83,22 @@
         0xd3213317d91b8691,
         0x9a0f00bdb78caef0,
         0x9c03130587ecfe87,
-        0xba077c2dce739282,
-        0x21c357301a3e0ce6,
-        0x26b3c31dc7dc465f,
-        0x8c2312c21e21cedb,
-        0x2560637a39de4b8e,
-        0xdb1856355d9b03ef,
-        0x3a75c29872ef1841,
-        0xd9526422b1aa786b,
-        0xef5883540b80a3f6,
-        0x91c5cd45cef96b3d,
-        0x1f04100d4c338062,
-        0x591758a8f1491d75,
-        0x3a5d01778a44b709,
-        0xe37ed9cee8aeb9e5,
-        0x3d5bdac48107479c,
-        0xde2746b9a8400034,
-        0x87e04a512f523d8e,
+        0x98d279a73dc80d78,
+        0x8cbac0ed70db9ffe,
+        0x2a1be15a054877ba,
+        0x2573d267a981f28e,
+        0xddaac3e668d65a34,
+        0xcf4679f506ae1c1d,
+        0x00fceda20b0e01a0,
+        0x2cca910777dbb1f0,
+        0xbe76cb1b7a57503c,
+        0x82d95ba8c3a7277b,
+        0xbcc94ca8a8c86bb5,
+        0x2b31b707e6e29d24,
+        0x41e85a1824c23ce9,
+        0xaf79c8a476f9e6df,
+        0x959829c740672dcb,
+        0x082a000fb4b398ef,
+        0x08793389543ce72b,
     ],
 )

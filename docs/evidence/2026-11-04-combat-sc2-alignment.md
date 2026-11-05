@@ -1385,3 +1385,84 @@ life instead of 46.24, on all 20 seeds). Battle 3's tank releases each shot a ti
 lands the same five shots (bit-identical). Battle 33 bit-identical. **`golden_replay.ron` re-recorded from checkpoint 4** (ticks 151 to
 200, the `railgun_crawler` squad's first fight); `golden_replay_orders.ron` unchanged. Debug, release and
 `wasm32-wasip1` reproduce both. No doc 07 or doc 08 cell states the damage point.
+
+### 13.16 W4: damage points that were never sourced
+
+40 values on 29 identities (the audit's group W4, every one with its source line): most weapons go to the `CWeapon`
+default 0.167 Normal s = **3 ticks** (`core` WeaponData:17), from 0 to 2; those whose weapon sets its own value follow
+it: **0** for the Marauder, Reaper, Baneling, Lurker, Mutalisk (`shock_golem`, `jet_jumper`, `volatile_tick`,
+`burrow_scorpion`, `sonic_bat`; 1 before), **4** for the Hellion (`napalm_wheeler`, 0.25 s; 0 before) and the Ravager
+(`mortar_stag`, 0.2 s), **2** for the Liberator's Defender mode (`sky_bastion` ground, 0.125 s), **1** for the
+Colossus (`tripod_annihilator`, 0.0832 s; 0 before), **6** for the Dark Templar, the Ultralisk and the Spine Crawler
+(`shadow_visitor` 0.3613 s, `stag_behemoth` 0.3332 s, `thorn_lasher_dome` 0.3332 s) and **15** for the Thor's ground
+weapon (`colossus_mech`, 0.831 s; 2 before). Every new damage point is below its weapon's period, also under the
+shipped attack-speed modifiers (the trace's release inference, plan §7). One commit for the whole group: the cause is
+the same for every value, and the measurement can be explained by identity (plan WP12 step 4 allows a per-faction
+split; it was not needed).
+
+**Whole matrix, 20 seeds.** Compared with the state after W3: **37 battles moved; no expectation failed** (0 on the
+seeds of record; 7 over all seeds, battle 33's, unchanged); winners changed only in the coin-flip battles 31 (7 seeds,
+6 towards the marauders: the Marauder now releases on the tick its swing starts) and 32 (5 seeds; its expectation
+allows either side).
+
+| Battle | Seeds moved | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|
+| 1b_stalker_vs_2_roaches | 20 | 0.00 – 2.00, same | 196.6 → 197.6 | — / 100.39 (20) → — / 100.40 (20) |
+| 2a_immortal_vs_roach | 20 | 1.00 – 0.00, same | 63.0 → 65.0 | 200.00 (20) / —, same |
+| 2b_immortal_vs_2_roaches | 20 | 1.00 – 0.00, same | 150.0 → 152.0 | 200.00 (20) / —, same |
+| 3_immortal_vs_tank | 20 | 1.00 – 0.00, same | 92.0 → 94.0 | 176.00 (20) / —, same |
+| 4_marauder_vs_roach | 20 | 1.00 – 0.00, same | 197.1 → 196.1 | 35.00 (20) / —, same |
+| 5a_hydra_vs_marine | 20 | 1.00 – 0.00, same | 52.0 → 54.0 | 66.77 (20) / — → 66.80 (20) / — |
+| 5b_hydra_vs_2_marines | 20 | 1.00 – 0.00, same | 112.0 → 114.0 | 19.68 (20) / — → 19.71 (20) / — |
+| 6a_roach_vs_hydra | 20 | 1.00 – 0.00, same | 189.5 → 190.5 | 4.81 (20) / — → 4.79 (20) / — |
+| 6b_2_roaches_vs_hydra | 20 | 2.00 – 0.00, same | 81.8 → 82.8 | 112.58 (20) / — → 113.67 (20) / — |
+| 6c_roach_vs_2_hydras | 20 | 0.00 – 2.00, same | 96.2 → 98.2 | — / 69.00 (20), same |
+| 9a_hellion_vs_4_lings | 20 | 1.00 – 0.00, same | 91.0 → 95.0 | 27.80 (20) / — → 23.80 (20) / — |
+| 9b_hellion_vs_roach | 20 | 0.00 – 1.00, same | 188.0 → 189.0 | — / 112.86 (20) → — / 112.82 (20) |
+| 10_2_hellions_vs_8_lings | 20 | 2.00 – 0.00, same | 55.0 → 59.0 | 70.00 (20) / —, same |
+| 11a_2_banelings_vs_5_marines | 20 | 0.00 – 2.25, same | 9.1 → 8.1 | — / 10.00 (9), same |
+| 11b_2_banelings_vs_marauder | 20 | 0.00 – 1.00, same | 9.1 → 8.0 | — / 95.00 (20), same |
+| 12a_colossus_vs_6_marines | 20 | 1.00 – 0.00, same | 80.7 → 81.7 | 238.15 (20) / —, same |
+| 12b_colossus_vs_3_marauders | 20 | 0.00 – 2.00, same | 170.0 → 169.0 | — / 67.53 (19), same |
+| 14_thor_vs_ultralisk | 20 | 1.00 – 0.00, same | 187.0 → 200.0 | 37.00 (20) / —, same |
+| 15_plated_ultralisk_vs_8_marines | 20 | 1.00 – 0.00, same | 111.0 → 116.0 | 414.77 (20) / — → 413.25 (20) / — |
+| 16a_muta_vs_marine | 20 | 1.00 – 0.00, same | 115.0 → 114.0 | 78.33 (20) / — → 78.27 (20) / — |
+| 17_void_ray_vs_muta | 20 | 1.00 – 0.00, same | 190.0 → 193.0 | 150.00 (20) / —, same |
+| 18_void_ray_vs_corruptor | 20 | 1.00 – 0.00, same | 226.0 → 229.0 | 110.00 (20) / —, same |
+| 20_brood_lord_vs_roach | 20 | 1.00 – 0.00, same | 142.2 → 143.2 | 225.00 (20) / —, same |
+| 21_lurker_vs_6_marines | 20 | 1.00 – 0.00, same | 106.4 → 103.6 | 71.10 (20) / — → 72.81 (20) / — |
+| 22a_reaper_vs_2_workers | 20 | 1.00 – 0.00, same | 102.0 → 101.0 | 46.32 (20) / — → 46.24 (20) / — |
+| 23a_zealot_vs_6_lings | 20 | 0.00 – 2.00, same | 269.2 → 271.3 | — / —, same |
+| 23b_upgraded_zealot_vs_6_lings | 14 | 1.00 – 0.00, same | 245.6, same | 60.00 (20) / — → 62.80 (20) / — |
+| 24a_roach_vs_5_lings | 20 | 0.00 – 3.00, same | 285.4 → 286.7 | — / —, same |
+| 24b_upgraded_roach_vs_5_lings | 20 | 1.00 – 0.00, same | 327.9 → 328.8 | 23.03 (20) / — → 24.03 (20) / — |
+| 26_100_lings_vs_6_colossi | 18 | 0.00 – 6.00, same | 114.8 → 116.1 | — / 250.00 (20), same |
+| 27_100_lings_vs_8_ultralisks | 20 | 0.00 – 8.00, same | 203.1 → 210.9 | — / 432.04 (20) → — / 423.59 (20) |
+| 28_100_lings_vs_10_immortals | 20 | 30.10 – 0.00 → 30.45 – 0.00 | 660.4 → 666.1 | — / — → 30.05 (4) / — |
+| 29_100_lings_vs_12_stalkers | 19 | 69.70 – 0.00 → 69.50 – 0.00 | 442.3 → 445.9 | 33.09 (19) / — → 31.90 (20) / — |
+| 30_20_roaches_vs_10_immortals | 20 | 0.00 – 10.00, same | 255.1 → 259.4 | — / 132.15 (20) → — / 133.10 (20) |
+| 31_15_marauders_vs_15_stalkers | 20 | 1.70 – 1.35 → 2.65 – 0.75 | 700.2 → 680.5 | 69.75 (4) / — → 68.90 (10) / — |
+| 32_30_marines_vs_15_banelings | 19 | 0.90 – 0.90 → 1.45 – 0.95 | 52.8 → 49.9 | 18.75 (4) / — → 27.50 (4) / — |
+| 34_20_hydras_vs_12_mutas | 18 | 19.10 – 0.00 → 19.05 – 0.00 | 192.6 → 195.3 | 90.00 (20) / —, same |
+
+By cause (a longer wind-up holds a unit still for longer and delays its first hit; a damage point of 0 releases on the
+tick the swing starts, D-3):
+
+- **Roach 2 → 3, Immortal 1 → 3, Hydralisk 1 → 3, Zergling 2 → 3, Brood Lord 2 → 3, Void Ray 0 → 3** (1b, 2a, 2b, 3,
+  5a, 5b, 6a to 6c, 9b, 17, 18, 20, 23a, 23b, 24a, 24b, 26 to 30, 34): first hits land one to three ticks later, so
+  fights end later by 1 to 6 ticks; winners do not move, survivor means by at most 0.35 and lead-unit life by at
+  most 2.8 (the zealot of 23b, which the slower zerglings hit later).
+- **Hellion 0 → 4** (9a, 9b, 10): the hellions hold still four ticks per swing; against zerglings (9a, 10) fights end
+  4 ticks later and the hellion of 9a ends with 23.80 life instead of 27.80.
+- **Thor 2 → 15 and Ultralisk 1 → 6** (14, 15, 27): 14 now runs to its 200-tick limit (187 before) with the same
+  winner and life; the ultralisks of 15 and 27 end with 1 to 9 less life, fights 5 to 8 ticks longer.
+- **Colossus 0 → 1** (12a, 12b, 26): one tick per swing; ends move by about 1 tick.
+- **Marauder, Reaper, Baneling, Lurker, Mutalisk 1 → 0** (4, 11a, 11b, 16a, 21, 22a, 31, 32): these release a tick
+  sooner. The banelings of 11a, 11b and 32 burst a tick sooner (end tick 9.1 → 8.1); the lurker of 21 ends with 1.71
+  more life; in 31 the marauders win on 6 more seeds and lose 1 (survivors 1.70 – 1.35 → 2.65 – 0.75), within the
+  battle's close-fight expectation; in 32 (a coin flip by design) 5 seeds change between a marine win, a baneling win
+  and both gone.
+
+**Battle 33, 68 seeds: bit-identical.** **`golden_replay.ron` re-recorded from checkpoint 4** (ticks 151 to 200, the
+`rhino_beetle` squad's first fight; the Roach's damage point is 3); `golden_replay_orders.ron` unchanged. Debug,
+release and `wasm32-wasip1` reproduce both. No doc 07 or doc 08 cell states a damage point.
