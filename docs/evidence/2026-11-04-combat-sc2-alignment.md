@@ -1512,3 +1512,31 @@ other two workers already received 9 in W5. Measured: **whole matrix bit-identic
 outcome: after WP1 the backswing never delays the next swing, and anchoring them three more ticks changes nothing
 there), battle 33 bit-identical, both golden replays unchanged in debug, release and `wasm32-wasip1`. No doc 07 or
 doc 08 cell states the backswing.
+
+### 13.19 W6: the Stalker's projectile speed copied in Normal time (class B)
+
+`warp_strider` `projectile_speed` (ground and air weapon) 0.75 → **1.05**: the Stalker's missile mover `MaxSpeed`
+18.75 Normal units per s × 1.4 ÷ 25 (audit group W6 and §4); 0.75 was 18.75 ÷ 25. Its shots reach their target
+sooner.
+
+**Whole matrix, 20 seeds.** Compared with the state after D2: **5 battles moved, no expectation failed** (0 on the
+seeds of record; 7 over all seeds, battle 33's, unchanged).
+
+| Battle | Seeds moved | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|
+| 1a_stalker_vs_roach | 20 | 1.00 – 0.00, same | 273.0 → 272.0 | 35.00 (20) / —, same |
+| 1b_stalker_vs_2_roaches | 9 | 0.00 – 2.00, same | 197.6, same | — / 100.40 (20) → — / 100.41 (20) |
+| 22b_reaper_vs_stalker | 20 | 0.00 – 1.00, same | 173.0 → 172.0 | — / 80.00 (20), same |
+| 29_100_lings_vs_12_stalkers | 20 | 69.90 – 0.00 → 69.10 – 0.00 | 447.6 → 444.9 | 30.82 (17) / — → 31.49 (14) / — |
+| 31_15_marauders_vs_15_stalkers | 20 | 2.95 – 0.55 → 1.25 – 2.05 | 682.6 → 670.4 | 62.67 (9) / — → 31.50 (2) / — |
+
+- **Battle 31** (15 marauders against 15 stalkers) tips to the stalkers: their damage lands earlier in every
+  exchange, and on 11 of 20 seeds the winner changes (10 to the stalkers, 1 to the marauders; two seeds of record,
+  3203386110 and 33, among them); survivors 2.95 – 0.55 → 1.25 – 2.05. The battle's claim is that equal supply is
+  close and its expectation allows either side (`blue: (0, 15), red: (0, 15)`), so it holds on every seed; the
+  winner on the seeds of record was never part of it.
+- **1a, 1b, 22b, 29**: a tick sooner at most, or a slightly different crowd (29: 69.10 zerglings left instead of
+  69.90); winners do not move.
+
+**Battle 33, 68 seeds: bit-identical.** Both golden replays unchanged (neither spawns a stalker) in debug, release and
+`wasm32-wasip1`. No doc 07 or doc 08 cell states the projectile speed.
