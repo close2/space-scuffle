@@ -17,17 +17,18 @@
 //!    `StarCraft` II (Liquipedia "Automatic Targeting"), a unit keeps a target while it is valid
 //!    and inside weapon reach, unless a candidate of higher rank (threat, then attack target
 //!    priority) is in scan range; once the target is lost or out of reach, the unit takes the
-//!    best candidate by the whole key, the closest among equals.
+//!    best candidate by the whole key; among equals, the archetype's tie-break decides (closest,
+//!    least turning, or closest to the previous target).
 //! 4. Damage from a unit's own side never causes retaliation, flight or alerts.
 
-use crate::catalog::UnitArchetype;
-use crate::combat::{is_threat_to, TargetPriorityKey};
+use crate::catalog::{AcquireTieBreak, UnitArchetype, WeaponSpec};
+use crate::combat::{is_threat_to, weapon_aim, TargetPriorityKey};
 use crate::entity::Entity;
 use crate::weapon_timing::SimulationDiagnostic;
 use crate::world::SimWorld;
 use sim_map::{PlayerVisionMap, SimMap};
 use sim_types::{
-    AttackOrigin, EntityId, PerPlayer, PlayerId, SimScalar, SimVec2, Tick, UnitOrder,
+    AttackOrigin, EntityId, PerPlayer, PlayerId, SimAngle, SimScalar, SimVec2, Tick, UnitOrder,
     VisibilityState,
 };
 use std::collections::BTreeMap;
@@ -62,6 +63,9 @@ pub(crate) enum Acquisition {
     ReleaseHoldTarget,
     /// End an attack order an immobile unit can never carry out.
     AbandonAttack,
+    /// Record where the unit's current target stands, for the tie-break
+    /// [`AcquireTieBreak::ClosestToPrevious`].
+    RememberTarget(SimVec2),
 }
 
 /// Best candidates from one neighbourhood scan.
@@ -353,7 +357,7 @@ impl SimWorld {
                 &mut neighbors,
                 &mut candidates,
             );
-            if let Some(decision) = decision {
+            if let Some(decision) = decision.or_else(|| self.target_to_remember(entity, arch)) {
                 acquisitions.push((id, decision));
             }
         }
@@ -369,10 +373,48 @@ impl SimWorld {
                         unit.order_queue.pop_front();
                         unit.current_target = None;
                     }
+                    Acquisition::RememberTarget(position) => {
+                        unit.previous_target_position = Some(position);
+                    }
                 }
             }
         }
         self.scratch_acquisitions = acquisitions;
+    }
+
+    /// Where `entity`'s current target stands, if its archetype breaks ties by the previous
+    /// target's position and the target still exists.
+    fn target_to_remember(&self, entity: &Entity, arch: &UnitArchetype) -> Option<Acquisition> {
+        if arch.acquire_tie_break != AcquireTieBreak::ClosestToPrevious {
+            return None;
+        }
+        let target = self.entities.get(&entity.current_target?)?;
+        Some(Acquisition::RememberTarget(target.position))
+    }
+
+    /// The tie-break measure of `candidate` for `entity` (see [`TargetPriorityKey::tie_break`]),
+    /// given the weapon it would use against the candidate.
+    fn tie_break(
+        entity: &Entity,
+        arch: &UnitArchetype,
+        weapon: &WeaponSpec,
+        candidate: &Entity,
+    ) -> SimScalar {
+        let distance_sq = entity.position.distance_sq(candidate.position);
+        match arch.acquire_tie_break {
+            AcquireTieBreak::Closest => distance_sq,
+            AcquireTieBreak::LeastTurning => {
+                let delta = candidate.position - entity.position;
+                let bearing = SimAngle::atan2(delta.y, delta.x);
+                let turn = weapon_aim(entity, weapon).diff(bearing).unsigned_abs();
+                SimScalar::from_i32(i32::from(turn))
+            }
+            AcquireTieBreak::ClosestToPrevious => entity
+                .previous_target_position
+                .map_or(distance_sq, |previous| {
+                    previous.distance_sq(candidate.position)
+                }),
+        }
     }
 
     /// Classifies what acquisition may do for `entity`.
@@ -540,7 +582,7 @@ impl SimWorld {
                 threat: is_threat_to(target_arch, neighbor, arch),
                 attack_target_priority: target_arch.attack_target_priority,
                 primary: arch.primary_weapon_reaches(target_arch.mover_type),
-                distance_sq: entity.position.distance_sq(neighbor.position),
+                tie_break: Self::tie_break(entity, arch, weapon, neighbor),
                 entity_id: neighbor_id,
             };
             if Some(neighbor_id) == current {

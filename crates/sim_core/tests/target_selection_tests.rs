@@ -60,6 +60,8 @@ struct Scratch<'a> {
     priority: u8,
     /// `primary_weapon` in RON (`Either`, `Ground` or `Air`).
     primary: &'a str,
+    /// `acquire_tie_break` in RON (`Closest`, `LeastTurning` or `ClosestToPrevious`).
+    tie_break: &'a str,
     /// Extra authored targeting fields, for example `always_a_threat: true,`.
     extra: &'a str,
     /// The `ground_weapon` slot in RON.
@@ -76,6 +78,7 @@ impl Scratch<'_> {
             mover: "Ground",
             priority: 20,
             primary: "Either",
+            tie_break: "Closest",
             extra: "",
             ground: "None",
             air: "None",
@@ -126,7 +129,7 @@ impl Scratch<'_> {
             scan_range: 12.0,
             attack_target_priority: {priority},
             primary_weapon: {primary},
-            acquire_tie_break: Closest,
+            acquire_tie_break: {tie_break},
             {extra}
             mineral_cost: 50,
             gas_cost: 0,
@@ -141,6 +144,7 @@ impl Scratch<'_> {
             mover = self.mover,
             priority = self.priority,
             primary = self.primary,
+            tie_break = self.tie_break,
             extra = self.extra,
             ground = self.ground,
             air = self.air,
@@ -412,5 +416,50 @@ fn b9_a_target_out_of_range_gives_way_to_the_closest_candidate() -> TestResult {
     let closer = spawn(&mut world, "target", 1, 10, 24)?;
     step(&mut world, 1, None);
     assert_eq!(acquired(&world, chooser), Some(closer));
+    Ok(())
+}
+
+/// B-11: a unit whose tie-break is the least turning takes, of two equal candidates, the one
+/// straight ahead of its facing (+x at spawn), although the other is closer.
+#[test]
+fn b11_least_turning_takes_the_candidate_ahead() -> TestResult {
+    let mut world = world_with(&[
+        Scratch {
+            tie_break: "LeastTurning",
+            ..Scratch::gunner(CHOOSER)
+        },
+        Scratch::unarmed("target"),
+    ])?;
+    let chooser = spawn(&mut world, CHOOSER, 0, 10, 16)?;
+    spawn(&mut world, "target", 1, 10, 20)?;
+    let ahead = spawn(&mut world, "target", 1, 16, 16)?;
+    step(&mut world, 0, None);
+    assert_eq!(acquired(&world, chooser), Some(ahead));
+    Ok(())
+}
+
+/// B-11: once its target is lost, a unit whose tie-break is the previous target takes, of two
+/// equal candidates, the one closest to where that target stood, although the other is closer
+/// to the unit.
+#[test]
+fn b11_closest_to_previous_takes_the_candidate_nearest_the_lost_target() -> TestResult {
+    let mut world = world_with(&[
+        Scratch {
+            tie_break: "ClosestToPrevious",
+            ..Scratch::gunner(CHOOSER)
+        },
+        Scratch::unarmed("target"),
+    ])?;
+    let chooser = spawn(&mut world, CHOOSER, 0, 10, 16)?;
+    let first = spawn(&mut world, "target", 1, 15, 16)?;
+    step(&mut world, 0, None);
+    step(&mut world, 1, None);
+    assert_eq!(acquired(&world, chooser), Some(first));
+    // The target leaves scan range at once: lost, as if it had died.
+    teleport(&mut world, first, 40, 40)?;
+    spawn(&mut world, "target", 1, 10, 20)?;
+    let near_first = spawn(&mut world, "target", 1, 17, 19)?;
+    step(&mut world, 2, None);
+    assert_eq!(acquired(&world, chooser), Some(near_first));
     Ok(())
 }

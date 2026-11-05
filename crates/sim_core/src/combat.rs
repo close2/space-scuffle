@@ -6,7 +6,7 @@
 //! ## Invariants Maintained
 //! 1. All calculations use deterministic fixed-point math with zero floating-point operations.
 //! 2. Target ranking is strictly deterministic: `(threat DESC, attack target priority DESC,
-//!    primary weapon DESC, dist ASC, id ASC)`.
+//!    primary weapon DESC, tie-break ASC, id ASC)`.
 //! 3. Minimum damage is clamped to 0.5 HP for non-zero attacks.
 //! 4. Shield and life regeneration wait for the archetype's catalog delays
 //!    (`shield_regen_delay_ticks`, `hp_regen_delay_ticks`) after sustaining damage; any damage,
@@ -300,7 +300,9 @@ pub fn calculate_splash_damage(
 /// 1. `threat` (a threat first; see [`is_threat_to`])
 /// 2. `attack_target_priority` (higher first; `CUnit` `AttackTargetPriority`)
 /// 3. `primary` (a target for the unit's primary weapon first; `CUnit` `WeaponArray` order)
-/// 4. `distance_sq` (closer first)
+/// 4. `tie_break` (smaller first): the archetype's tie-break measure (`CWeapon`
+///    `AcquirePrioritization`, see [`crate::catalog::AcquireTieBreak`]). It decides only when the
+///    unit chooses anew; a kept target is never compared on it.
 /// 5. `entity_id` (lower first). Not a game rule: it only decides exact ties, deterministically.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TargetPriorityKey {
@@ -310,8 +312,11 @@ pub struct TargetPriorityKey {
     pub attack_target_priority: u8,
     /// Whether the unit's primary weapon can be used against the candidate.
     pub primary: bool,
-    /// Squared distance to target.
-    pub distance_sq: SimScalar,
+    /// The tie-break measure, smaller first: the squared distance to the candidate
+    /// (`Closest`), the turn of the firing facing towards it in binary angle units
+    /// (`LeastTurning`), or the squared distance from the previous target's last position to
+    /// it (`ClosestToPrevious`; the squared distance to the candidate while there is none).
+    pub tie_break: SimScalar,
     /// Entity ID tie-breaker.
     pub entity_id: EntityId,
 }
@@ -332,7 +337,7 @@ impl Ord for TargetPriorityKey {
         other
             .rank()
             .cmp(&self.rank())
-            .then_with(|| self.distance_sq.cmp(&other.distance_sq))
+            .then_with(|| self.tie_break.cmp(&other.tie_break))
             .then_with(|| self.entity_id.0.cmp(&other.entity_id.0))
     }
 }
@@ -447,8 +452,8 @@ fn slew_towards(entity: &mut Entity, weapon: &WeaponSpec, angle: SimAngle) {
     }
 }
 
-/// Current aim of the weapon mount.
-fn weapon_aim(entity: &Entity, weapon: &WeaponSpec) -> SimAngle {
+/// Current aim of the weapon mount: the turret's angle for a turreted weapon, else the hull's.
+pub(crate) fn weapon_aim(entity: &Entity, weapon: &WeaponSpec) -> SimAngle {
     if weapon.has_turret {
         entity.turret_angle
     } else {
