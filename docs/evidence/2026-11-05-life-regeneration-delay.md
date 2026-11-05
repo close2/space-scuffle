@@ -1,0 +1,96 @@
+# Life regeneration delay: measurements per step
+
+This file records the measurement of every step of plan
+[`2026-11-05-life-regeneration-delay`](../plans/2026-11-05-life-regeneration-delay.md) (D-8): the whole matchup
+matrix on 20 seeds compared with the step before, battles `22a_reaper_vs_2_workers` and `22b_reaper_vs_stalker`
+traced tick by tick on the same 20 seeds, battle 33 on 68 seeds, and the golden replays. WP1 creates it with the
+baseline (section 1) and its own section; WP2 and WP3 append theirs in the commit that makes the change.
+
+## How to reproduce
+
+The tool and its outputs are those of the combat alignment evidence,
+[How to reproduce](2026-11-04-combat-sc2-alignment.md#how-to-reproduce): `crates/sim_core/examples/matchup_trace.rs`,
+always a release build. Per step:
+
+```bash
+export CARGO_TARGET_DIR=/home/spacescuffle/scratch/cargo-target/life-regen
+cargo build --release --locked -p sim_core --example matchup_trace
+TOOL=$CARGO_TARGET_DIR/release/examples/matchup_trace
+# Whole matrix: the four seeds of record plus 16 more, 20 seeds per battle; outcomes only.
+$TOOL --all-battles --seeds 16 --jobs 8 --out ~/scratch/life_regen/<step>/matrix \
+    [--compare ~/scratch/life_regen/<previous step>/matrix/matrix.csv]
+# Battle 33: the four seeds of record plus 64 more, 68 seeds.
+$TOOL --battle 33_24_marines_vs_12_zealots --seeds 64 --no-unit-csv --out ~/scratch/life_regen/<step>/b33
+# The two reaper battles, traced tick by tick on the matrix's 20 seeds.
+$TOOL --battle 22a_reaper_vs_2_workers --seeds 16 --out ~/scratch/life_regen/<step>/b22a
+$TOOL --battle 22b_reaper_vs_stalker --seeds 16 --out ~/scratch/life_regen/<step>/b22b
+```
+
+`--seeds <n>` plays the fixture's seeds of record and then the first `n` positive integers that are not seeds of
+record, so `--seeds 16` gives 20 seeds per battle and `--seeds 64` gives battle 33's 68.
+
+- **Regained life of the reaper.** Blue is the reaper's side in both battles. From each seed's
+  `seed_<n>_ticks.csv`: the sum of `blue_health_regained` over the whole battle, the same sum over the ticks after
+  the first tick with `blue_damage_taken > 0` (life regained after the reaper was first hit), and the first tick
+  after that hit on which it regains any. `blue_health` in `seeds.csv` is the reaper's life at the end, rounded to
+  one decimal; `matrix.csv` has it exactly.
+- **Battle 33's figures** come from its `seeds.csv` (wins, survivors and their mean and SD, the seeds of record).
+- The script that computes these (`summarize.py`) is a throwaway kept beside the outputs on the development server;
+  it only sums and averages those columns.
+
+## 1. Baseline
+
+**Commit.** `main` at `b862c29` (combat alignment WP17 merged, battle 33 expectation `blue: (0, 9), red: (0, 3)`),
+measured on this plan's branch before WP1 (WP0 changes only a question file). Outputs under
+`~/scratch/life_regen/base/` on the development server.
+
+- **Whole matrix, 20 seeds:** 50 battles, 1000 runs; expectation failures 0 on the seeds of record and 2 over all
+  seeds (both battle 33's). `matrix.csv` is **byte-identical** to the last measurement of combat alignment WP17
+  (commit f, [§14.7](2026-11-04-combat-sc2-alignment.md#147-commit-f-the-42-hull-rates)), so the branch reproduces
+  `main`.
+- **Battle 33, 68 seeds:** byte-identical to WP17 commit f: 39 / 20 / 9 (marine wins / zealot wins / unresolved),
+  marine survivors 3.87 (SD 3.43), zealot survivors 1.01 (SD 1.37). Seeds of record (marines – zealots):
+  3203386110 0-3, 11 2-0, 22 1-2 (unresolved), 33 9-0.
+- **Battle 22a (reaper against 2 workers), 20 seeds:** reaper win on every seed at tick 101, the reaper's life at
+  the end 46.22 on average (of 60). It is first hit on tick 22 to 25 and regains life on the next tick or the one
+  after, and from then on every tick: 5.84 to 6.08 life regained per seed (0.08 per tick), all of it in combat.
+- **Battle 22b (reaper against a stalker), 20 seeds:** stalker win on every seed at tick 172, the stalker's life at
+  the end 80.00 (shields gone). The reaper is first hit on tick 7 and regains 0.08 life on every tick from tick 8
+  on: 12.80 per seed, all of it in combat.
+- **Golden replays:** unchanged (this is `main`).
+
+## 2. WP1: life regeneration waits for a per-archetype catalog delay, 0 everywhere (Q0049)
+
+**Commit.** The WP1 commit of the plan, on the baseline of §1. `hp_regen_delay_ticks: u16` (default 0, ticks at 25
+per Faster second) in `UnitArchetypeDef`, `StructureArchetypeDef` and `UnitArchetype`; validation rejects a
+nonzero delay on an archetype whose `hp_regen_per_tick` is zero (typed `CatalogInvalidValue` naming the field). In
+`upkeep_entity` the `ticks_since_last_damage` increment moves to the top of the vitals block, and life regenerates
+only when the counter is at least the archetype's delay (plan D-4). No shipped archetype sets the field, so every
+archetype reads 0. Outputs under `~/scratch/life_regen/wp1/`.
+
+**Tests first.** Before the field existed none of the new tests compiled. With the field added and neither the
+validation rule nor the upkeep change in place:
+
+- `catalog::validation` unit tests: `a_unit_without_life_regeneration_rejects_a_life_regeneration_delay` and
+  `a_structure_without_life_regeneration_rejects_a_life_regeneration_delay` failed (a unit and a structure without
+  life regeneration validated with a delay of 10); `an_omitted_life_regeneration_delay_reads_as_zero` passed.
+- `damage_and_shields_tests.rs`: `a_scratch_archetype_with_a_10_tick_life_delay_regenerates_from_the_10th_tick_after_damage`
+  and `shield_damage_alone_restarts_the_life_regeneration_delay` failed with `life must hold on tick 1`;
+  `life_regeneration_without_a_delay_runs_on_the_tick_after_damage` (the Zerg guard) and
+  `a_unit_never_damaged_regenerates_life_at_once` passed, as the plan expected.
+
+All seven pass with the change.
+
+**Measured.**
+
+- **Whole matrix, 20 seeds: bit-identical** to §1 (all 1000 rows of `matrix.csv`). Expectation failures stay 0 on the
+  seeds of record and 2 over all seeds (battle 33).
+- **Battles 22a and 22b: bit-identical** (every output file of both traces byte-identical to §1).
+- **Battle 33, 68 seeds: bit-identical** (every output file byte-identical to §1).
+- **Golden replays and the sandbox checksum: unchanged.** `golden_replay_tests` and `sim_fixtures`'
+  `fixture_tests` pass as recorded; `CHECKSUM_SCHEMA_VERSION` stays 10 (no new entity state, plan D-7). Release and
+  `wasm32-wasip1` are run by `cargo gate package` at the end of the plan.
+
+**Why nothing moved** (plan D-4): between the counter's old and new position the block reads only life, energy,
+the active mode and the archetype, so the shield rule sees the same counter, and with a delay of 0 the life
+condition `counter >= 0` always holds.

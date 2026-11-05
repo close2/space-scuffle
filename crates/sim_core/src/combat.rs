@@ -7,8 +7,9 @@
 //! 1. All calculations use deterministic fixed-point math with zero floating-point operations.
 //! 2. Target priority sorting is strictly deterministic: `(threat_priority DESC, dist ASC, id ASC)`.
 //! 3. Minimum damage is clamped to 0.5 HP for non-zero attacks.
-//! 4. Shield regeneration waits for the archetype's catalog delay (`shield_regen_delay_ticks`)
-//!    after sustaining damage.
+//! 4. Shield and life regeneration wait for the archetype's catalog delays
+//!    (`shield_regen_delay_ticks`, `hp_regen_delay_ticks`) after sustaining damage; any damage,
+//!    to shields or life, restarts both.
 
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
 use crate::entity::{Entity, WeaponPhase};

@@ -1,16 +1,28 @@
 //! Tick phase 2: production, per-entity timers and regeneration, and hazard zones.
 //!
 //! # Responsibility
-//! Advances production, then each living entity's channel, cooldown, buff, regeneration,
-//! mode-drain, shield-delay and hit-flash timers, then the active hazard zones (stepped by the
+//! Advances production, then each living entity's channel, cooldown, buff, damage-delay,
+//! regeneration, mode-drain and hit-flash timers, then the active hazard zones (stepped by the
 //! `abilities` module, which owns them), then completes production.
 //!
 //! # How it fits
-//! The second phase of `step_into`, after commands and before unit tasks.
+//! The second phase of `step_into`, after commands and before unit tasks. Damage (phase 9,
+//! hazards here) resets `Entity::ticks_since_last_damage` through `Entity::apply_damage`; this
+//! phase counts it up and gates life and shield regeneration on the archetype's catalog delays
+//! (`hp_regen_delay_ticks`, `shield_regen_delay_ticks`).
 //!
 //! # Invariants
 //! - Dead entities are skipped: regeneration never resurrects them before reap.
 //! - Entities are visited in `EntityId` order, so the phase is deterministic.
+//! - `ticks_since_last_damage` rises by exactly one per tick per living entity, before any
+//!   regeneration reads it, and is reset to 0 only by `Entity::apply_damage`, for damage to
+//!   shields or life.
+//! - Life regenerates on a tick if and only if that counter is at least `hp_regen_delay_ticks`:
+//!   a delay of d regenerates first on the d-th tick after the damage, and 0 means every tick.
+//! - Shields regenerate on a tick if and only if the counter is at least
+//!   `shield_regen_delay_ticks` and the entity is completed.
+//! - Regeneration never exceeds `max_hp` or `max_shields`.
+//! - A new entity's counter is `u16::MAX`, which satisfies every delay.
 
 use crate::catalog::UnitCatalog;
 use crate::entity::Entity;
@@ -40,9 +52,9 @@ impl SimWorld {
     }
 }
 
-/// Advances one living entity's channel, cooldown, buff, regeneration, mode-drain,
-/// shield-delay and hit-flash timers by one tick, in that order. Dead entities are left
-/// untouched until reap.
+/// Advances one living entity's channel, cooldown, buff, damage-delay, life and energy
+/// regeneration, mode-drain, shield regeneration and hit-flash timers by one tick, in that
+/// order. Dead entities are left untouched until reap.
 fn upkeep_entity(entity: &mut Entity, catalog: &UnitCatalog) {
     // Dead entities retain their ledger until reap; passive regeneration
     // must never resurrect them or resume their production.
@@ -77,9 +89,12 @@ fn upkeep_entity(entity: &mut Entity, catalog: &UnitCatalog) {
     }
     entity.active_buffs.retain(|b| b.remaining_ticks > 0);
 
-    // Passive Vitals & Shield delay
+    // Passive Vitals & regeneration delays: the counter rises before either delay reads it.
     if let Ok(arch) = catalog.get(entity.unit_type_id) {
-        entity.hp = (entity.hp + arch.hp_regen_per_tick).min(entity.max_hp);
+        entity.ticks_since_last_damage = entity.ticks_since_last_damage.saturating_add(1);
+        if entity.ticks_since_last_damage >= arch.hp_regen_delay_ticks {
+            entity.hp = (entity.hp + arch.hp_regen_per_tick).min(entity.max_hp);
+        }
         entity.energy = (entity.energy + arch.energy_regen_per_tick).min(arch.max_energy);
 
         // Continuous energy drain for active stance/mode
@@ -98,7 +113,6 @@ fn upkeep_entity(entity: &mut Entity, catalog: &UnitCatalog) {
             }
         }
 
-        entity.ticks_since_last_damage = entity.ticks_since_last_damage.saturating_add(1);
         let regenerates = arch
             .shield_regen_delay_ticks
             .is_some_and(|delay| entity.ticks_since_last_damage >= delay);
