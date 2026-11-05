@@ -75,7 +75,36 @@
         // and no loop clause although the atlas loops Cast and the policy pins its end, and its
         // "tool arms reaching" moves the pose away from the pin it must return to. Idle, Walk and
         // Cast start and end on the hovering Idle pin, so they keep that pose; Attack starts on it.
+        //
+        // railgun_crawler, shock_golem, jet_jumper, specter_android (batch 3, 2026-11-05): the
+        // barracks' combat units. The unit Idle text asks for "head and radar scanning", a
+        // turning part that batch 1 saw flicker and change shape; the unit Walk text asks for
+        // "ground dust kick-up at feet", and words about the ground drew a floor plane in
+        // batch 2; the unit Attack text has no camera clause and ends nowhere in particular.
+        // Their Idle and Walk start and end on the Idle pin and Attack starts on it, so each
+        // text keeps the pose, faces the weapons one way and returns to the start. The
+        // crawler is a tracked tank: no feet, a fixed turret, the tracks show the travel.
         overrides: {
+            "railgun_crawler": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the tank keeps the same size and place in frame from start to end. The tank sits still with its engine idling: thin exhaust smoke from its rear vents and blue energy glowing steadily along the rails. The turret and both barrels stay fixed. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the tank drives in place, keeping the same size, facing and place in frame. Its tracks roll steadily, the hull rocks gently on its suspension and exhaust puffs from its rear vents; the turret stays fixed. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the tank keeps its place in frame with the turret fixed. The twin rails fire once along the barrels: a sharp recoil, a bright blue electric flash at the muzzles and a bolt streaking out of frame, then the barrels settle back to their starting position.",
+            },
+            "shock_golem": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size, pose and place in frame from start to end. It stands ready in place with a slight steady weight shift, optics glowing, energy cores pulsing softly; head and weapons keep facing the same way. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the subject walks in place, keeping the same size, facing and place in frame. A steady rhythmic stride with a slight mechanical bob, weapons held ready. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps its place in frame. It fires along the line its weapons point: a sharp recoil, bright muzzle flashes and shells streaking out of frame, then it settles smoothly back to its starting pose.",
+            },
+            "jet_jumper": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size, pose and place in frame from start to end. It stands ready in place with a slight steady weight shift, optics glowing, energy cores pulsing softly; head and weapons keep facing the same way. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the subject runs in place, keeping the same size, facing and place in frame. A steady rhythmic stride with a slight mechanical bob, weapons held ready. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps its place in frame. It fires along the line its weapons point: a sharp recoil, bright muzzle flashes and projectiles streaking out of frame, then it settles smoothly back to its starting pose.",
+            },
+            "specter_android": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size, pose and place in frame from start to end. It stands ready in place with a slight steady weight shift, optics glowing, energy cores pulsing softly; head and rifle keep facing the same way. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the subject walks in place, keeping the same size, facing and place in frame. A steady rhythmic stride with a slight mechanical bob, rifle held ready. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps its place in frame. It fires once along the line its rifle points: a sharp recoil, a bright muzzle flash and a beam streaking out of frame, then it settles smoothly back to its starting pose.",
+            },
             "welder_drone": {
                 Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size and place in frame from start to end. The robot hovers in place with a gentle steady bob, its optic eye glowing, a small blue pilot flame flickering at the welding torch tip. Seamless loop: the last frame matches the first.",
                 Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the robot flies in place, keeping the same size, pose and place in frame. Its back thrusters flare in steady bursts, exhaust streams backward, a slight rhythmic bob, no ground contact. Seamless loop: the last frame matches the first.",
