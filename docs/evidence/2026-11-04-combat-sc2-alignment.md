@@ -1374,3 +1374,14 @@ battle 33's, unchanged).
 **Battle 33, 68 seeds: bit-identical.** **`golden_replay.ron` re-recorded from checkpoint 4** (ticks 151 to 200, the
 `rhino_beetle` squad's first fight); `golden_replay_orders.ron` unchanged. Debug, release and `wasm32-wasip1`
 reproduce both fixtures. Doc 07's period cells for the eleven identities are corrected (the Roach's already said 36).
+
+### 13.15 W3: the damage point copied in Normal time (class B)
+
+`damage_point_ticks` 4 → **3** on `welder_drone` (weapon) and `railgun_crawler` (tank-mode weapon and the Siege
+Mode override): the `CWeapon` default 0.167 Normal s (`core` WeaponData:17) is 2.98 ticks; 4 was 0.167 × 25, the
+"0.16 s" frontswing plan 17 took as Faster seconds. Measured: **one matrix battle moved, no winner and no expectation
+changed**: `22a_reaper_vs_2_workers` (the workers' blows land a tick sooner in each swing; the reaper ends with 46.32
+life instead of 46.24, on all 20 seeds). Battle 3's tank releases each shot a tick sooner after its swing starts but
+lands the same five shots (bit-identical). Battle 33 bit-identical. **`golden_replay.ron` re-recorded from checkpoint 4** (ticks 151 to
+200, the `railgun_crawler` squad's first fight); `golden_replay_orders.ron` unchanged. Debug, release and
+`wasm32-wasip1` reproduce both. No doc 07 or doc 08 cell states the damage point.

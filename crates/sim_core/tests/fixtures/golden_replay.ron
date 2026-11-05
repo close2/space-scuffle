@@ -47,6 +47,9 @@
 // Re-recorded for WP12 group W2: "blue_armor" (rhino_beetle) fires every 36 ticks (was 28;
 // StarCraft II's 2 Normal s). Checkpoints 1 to 3 are unchanged; from checkpoint 4 (ticks 151 to
 // 200), the first fight, every checkpoint changed.
+// Re-recorded for WP12 group W3: "red_siege" (railgun_crawler) releases its shot 3 ticks into
+// the swing (was 4, the Normal-time 0.167 s), in tank and siege mode. Checkpoints 1 to 3 are
+// unchanged; from checkpoint 4 (ticks 151 to 200), its first fight, every checkpoint changed.
 (
     checksum_schema: 10,
     seed: 0x5EED_0F_5CAFF1E,
@@ -77,22 +80,22 @@
         0xd3213317d91b8691,
         0x9a0f00bdb78caef0,
         0x9c03130587ecfe87,
-        0xc5ab927060347adc,
-        0x763f50930367a9a3,
-        0x603d4c0362afd952,
-        0xfc05f2a377c5688d,
-        0x3f1a35b4cfe04fd6,
-        0x07f154359c2feb6f,
-        0xe8b5d911b2b3102e,
-        0xa82f75e50e96dbf3,
-        0xcd5b4c8f1a5f8ada,
-        0x2580d4ebc9bc8083,
-        0xa01055aff4481c9c,
-        0x09b53361ac138765,
-        0x3980518f154958e5,
-        0x3c3b0c1e84961183,
-        0xd42fbde63cf4d68f,
-        0x335f42e47b1f9ff9,
-        0xff3f3bb872f390c4,
+        0xba077c2dce739282,
+        0x21c357301a3e0ce6,
+        0x26b3c31dc7dc465f,
+        0x8c2312c21e21cedb,
+        0x2560637a39de4b8e,
+        0xdb1856355d9b03ef,
+        0x3a75c29872ef1841,
+        0xd9526422b1aa786b,
+        0xef5883540b80a3f6,
+        0x91c5cd45cef96b3d,
+        0x1f04100d4c338062,
+        0x591758a8f1491d75,
+        0x3a5d01778a44b709,
+        0xe37ed9cee8aeb9e5,
+        0x3d5bdac48107479c,
+        0xde2746b9a8400034,
+        0x87e04a512f523d8e,
     ],
 )
