@@ -138,3 +138,32 @@ every mode. A cliff walker (the Colossus analogue) is in both planes, so an air 
 - **Not in the plan.** Without §2.2 the data change moved battle 35 on one seed (end tick 296 → 297, same outcome)
   through B-79, a second cause. The rule was therefore committed first, and this commit moves nothing the matrix
   measures. Its effect is in skirmish play: the three units no longer shoot ground units.
+
+## 3. WP3: Stimpack only from the catalog, its life rule, start energy (B-32, B-33, B-34, B-72)
+
+### 3.1 Commit a: no hard-coded Stimpack (B-32)
+
+- **Change.** `Entity::apply_stimpack` (10 life, 250 ticks, ×1.5 speed and attack rate, written in Rust) is deleted.
+  `Entity::issue_order` no longer routes an immediate `UseStim` there: it returns
+  `EntityAdmissionError::StimOutsideWorld` and changes nothing. A stim is admitted only by `SimWorld`'s command path
+  (`world/commands.rs` `apply_stim`), which reads the archetype's catalog `overclock` spec (the Marine analogue's
+  10 life and 268 ticks, `liberty` AbilData:1229, BehaviorData:680; the Marauder analogue's 20, BehaviorData:604)
+  and its research unlock.
+- **Test restated first** (test-only commit): `checked_movement_tests` reached the overclock admission through the
+  removed path; it now calls `apply_overclock` with its own scratch spec and asserts the same typed error.
+- **Test first:** `an_immediate_stim_issued_to_an_entity_outside_the_world_is_rejected` failed on the old rule
+  (`Ok(true)`: the entity stimmed with the hard-coded values) and passes now.
+- **Latent, proved.** Matrix and battle 33 bit-identical to §2.3 (37 / 20 / 11); both golden replays unchanged
+  (their `UseStim` goes through `PlayerCommand`). Nothing in the workspace called the removed path outside that test.
+
+### 3.2 U-8: the life rule (B-33), not sourced
+
+- **Data.** `Stimpack` costs `<Vital index="Life" value="10"/>` (`liberty` AbilData:1229) and `StimpackMarauder` 20
+  (AbilData:983). What the engine does when the unit's life is at or below the cost is not in the data.
+- **Liquipedia** ([Stimpack](https://liquipedia.net/starcraft2/Stimpack), wikitext, read 2026-11-05): "You can never
+  kill the unit itself by using Stimpack". It does not say whether the stim is refused or the unit is left with some
+  life. The [Marine](https://liquipedia.net/starcraft2/Marine_(Legacy_of_the_Void)) page gives only the cost.
+- **Decision** (plan D-5 item 2): not specifiable from the sources, so no rule commit. Owner question
+  [Q0053](../questions/open/0053-stimpack-at-low-life.md) proposes an in-game measurement, default "no change, bug
+  B-33 stays recorded". Today's rule (refused at 1 life or less, the unit keeps at least 1) fits the Liquipedia
+  sentence; whether it allows more than the game is what the question asks.

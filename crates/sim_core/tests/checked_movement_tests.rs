@@ -569,6 +569,22 @@ fn typed_overclock_and_refresh_preserve_order_and_existing_buff_position() -> Te
 }
 
 #[test]
+fn an_immediate_stim_issued_to_an_entity_outside_the_world_is_rejected() -> TestResult {
+    // B-32 (plan `2026-11-05-sc2-deviation-fixes` WP3): only the world knows the catalog's
+    // Overclock spec and whether its research is done, so an immediate `UseStim` given to an
+    // entity directly is refused with a typed error and changes nothing. The world's command
+    // path (`PlayerCommand`) is the one way to stim.
+    let mut f = Fixture::new(32, 32)?;
+    let id = f.spawn(f.air, point(8, 8))?;
+    let actor = f.world.entities.get_mut(&id).ok_or("actor")?;
+    let before = actor.clone();
+    let result = actor.issue_order(UnitOrder::UseStim, false);
+    assert_eq!(result, Err(EntityAdmissionError::StimOutsideWorld));
+    assert_eq!(*actor, before);
+    Ok(())
+}
+
+#[test]
 fn authored_negative_capability_and_ability_values_are_rejected_at_load() -> TestResult {
     let source = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog/units.ron"),
