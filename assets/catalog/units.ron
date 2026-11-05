@@ -208,7 +208,7 @@
             gas_cost: 25,
             supply_cost: 2,
             supply_provided: 0,
-            build_time_ticks: 750,
+            build_time_ticks: 482,
             armor_class: Some("swarm_ground_carapace"),
             weapon: Some((
                 name: "Acid Saliva",
@@ -1085,7 +1085,7 @@
             gas_cost: 150,
             supply_cost: 3,
             supply_provided: 0,
-            build_time_ticks: 850,
+            build_time_ticks: 1071,
             armor_class: Some("directorate_vehicle_plating"),
             ground_weapon: Some((
                 name: "Concord Cannon",
@@ -1497,7 +1497,7 @@
             gas_cost: 100,
             supply_cost: 2,
             supply_provided: 0,
-            build_time_ticks: 650,
+            build_time_ticks: 571,
             armor_class: Some("enclave_ground_armor"),
             weapon: Some((
                 name: "Disruption Beam",
@@ -1568,7 +1568,7 @@
             gas_cost: 25,
             supply_cost: 2,
             supply_provided: 0,
-            build_time_ticks: 675,
+            build_time_ticks: 750,
             armor_class: Some("enclave_ground_armor"),
             weapon: Some((
                 name: "Glaive Cannon",
@@ -1928,7 +1928,7 @@
             gas_cost: 75,
             supply_cost: 1,
             supply_provided: 0,
-            build_time_ticks: 525,
+            build_time_ticks: 446,
             armor_class: Some("enclave_air_armor"),
             weapon: None,
             is_detector: true,

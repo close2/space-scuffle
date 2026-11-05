@@ -335,7 +335,7 @@
             level: 1,
             mineral_cost: 100,
             gas_cost: 100,
-            research_ticks: 3025,
+            research_ticks: 2500,
             researched_at: "assembly_bay_dome",
             requires_structures: ["tech_module_pod"],
             effects: [
@@ -711,7 +711,7 @@
             level: 1,
             mineral_cost: 100,
             gas_cost: 100,
-            research_ticks: 3025,
+            research_ticks: 3214,
             researched_at: "cybernetics_conduit_dome",
             requires_structures: [],
             effects: [
@@ -730,7 +730,7 @@
             level: 2,
             mineral_cost: 150,
             gas_cost: 150,
-            research_ticks: 3625,
+            research_ticks: 3839,
             researched_at: "cybernetics_conduit_dome",
             requires_structures: ["celestial_beacon_dome"],
             effects: [
@@ -749,7 +749,7 @@
             level: 3,
             mineral_cost: 200,
             gas_cost: 200,
-            research_ticks: 4200,
+            research_ticks: 4464,
             researched_at: "cybernetics_conduit_dome",
             requires_structures: ["celestial_beacon_dome"],
             effects: [
@@ -770,7 +770,7 @@
             level: 1,
             mineral_cost: 100,
             gas_cost: 100,
-            research_ticks: 3025,
+            research_ticks: 3214,
             researched_at: "cybernetics_conduit_dome",
             requires_structures: [],
             effects: [
@@ -789,7 +789,7 @@
             level: 2,
             mineral_cost: 150,
             gas_cost: 150,
-            research_ticks: 3625,
+            research_ticks: 3839,
             researched_at: "cybernetics_conduit_dome",
             requires_structures: ["celestial_beacon_dome"],
             effects: [
@@ -808,7 +808,7 @@
             level: 3,
             mineral_cost: 200,
             gas_cost: 200,
-            research_ticks: 4200,
+            research_ticks: 4464,
             researched_at: "cybernetics_conduit_dome",
             requires_structures: ["celestial_beacon_dome"],
             effects: [
@@ -1360,7 +1360,7 @@
             level: 1,
             mineral_cost: 100,
             gas_cost: 100,
-            research_ticks: 1500,
+            research_ticks: 1964,
             researched_at: "spawning_hollow_dome",
             requires_structures: [],
             effects: [
@@ -1385,7 +1385,7 @@
             level: 1,
             mineral_cost: 200,
             gas_cost: 200,
-            research_ticks: 2150,
+            research_ticks: 2321,
             researched_at: "spawning_hollow_dome",
             requires_structures: ["primal_world_tree_dome"],
             effects: [
@@ -1435,7 +1435,7 @@
             level: 1,
             mineral_cost: 100,
             gas_cost: 100,
-            research_ticks: 1775,
+            research_ticks: 1964,
             researched_at: "carapace_mound_dome",
             requires_structures: ["canopy_grove_dome"],
             effects: [
@@ -1474,7 +1474,7 @@
             level: 1,
             mineral_cost: 100,
             gas_cost: 100,
-            research_ticks: 1775,
+            research_ticks: 1607,
             researched_at: "spine_den_dome",
             requires_structures: ["canopy_grove_dome"],
             effects: [
@@ -1499,7 +1499,7 @@
             level: 1,
             mineral_cost: 100,
             gas_cost: 100,
-            research_ticks: 1775,
+            research_ticks: 1250,
             researched_at: "spine_den_dome",
             requires_structures: ["canopy_grove_dome"],
             effects: [
@@ -1538,7 +1538,7 @@
             level: 1,
             mineral_cost: 100,
             gas_cost: 100,
-            research_ticks: 1975,
+            research_ticks: 1429,
             researched_at: "burrow_spire_dome",
             requires_structures: ["primal_world_tree_dome"],
             effects: [],
@@ -1552,7 +1552,7 @@
             level: 1,
             mineral_cost: 150,
             gas_cost: 150,
-            research_ticks: 1975,
+            research_ticks: 1429,
             researched_at: "burrow_spire_dome",
             requires_structures: ["primal_world_tree_dome"],
             effects: [

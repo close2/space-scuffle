@@ -1065,3 +1065,16 @@ Measured: whole matrix bit-identical (all 1000 rows), battle 33 bit-identical, b
 debug, release and `wasm32-wasip1` (their research is completed and their structures placed before tick 1). The doc
 07 roster and doc 08 cells that state these ticks are corrected, and doc 08 §2.1 now gives the conversion from
 Normal seconds with examples in place of the whole-second list.
+
+### 13.3 P3: production and research times that differed otherwise
+
+31 values (5 unit and 12 structure `build_time_ticks`, 14 `research_ticks`) were older patch values or unsourced
+numbers. Each is now the game data's 5.0.14 value, Normal seconds ÷ 1.4 × 25 to the nearest tick, with the source
+line in the audit (§5 group P3, §4). The largest: the Spawning Pool analogue `spawning_hollow_dome` 525 → 1161
+(65 Normal s, `liberty` AbilData:2206), the Spire and Greater Spire analogues 1075 and 900 → 1786 (100 Normal s), the
+Barracks Reactor analogue `duplicator_module_pod` 450 → 893 (50 Normal s), the Roach 750 → 482 (27 Normal s,
+`liberty` AbilData:2510), the Stimpack 3025 → 2500 (140 Normal s, `voidmulti` AbilData:48) and Grooved Spines
+1775 → 1250 (70 Normal s, `voidmulti` AbilData:528; patch 5.0.12, audit §2.2).
+
+Measured: whole matrix bit-identical (all 1000 rows), battle 33 bit-identical, both golden replays unchanged in
+debug, release and `wasm32-wasip1`. The doc 07 and doc 08 cells that state these ticks are corrected.
