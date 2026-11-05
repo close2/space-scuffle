@@ -15,7 +15,7 @@
 use sim_core::catalog::UnitCatalog;
 use sim_core::{is_within_firing_arc, SimCoreError, SimWorld, UpgradeCatalog, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
-use sim_types::{EntityId, PlayerId, SimAngle, SimScalar, SimVec2, Tick, TickBundle};
+use sim_types::{EntityId, MoverType, PlayerId, SimAngle, SimScalar, SimVec2, Tick, TickBundle};
 
 const UNITS: &str = include_str!("../../../assets/catalog/units.ron");
 const STRUCTURES: &str = include_str!("../../../assets/catalog/structures.ron");
@@ -111,7 +111,7 @@ fn s3_air_only_structure_still_shoots_air_units() -> TestResult {
         .catalog
         .archetypes()
         .find(|archetype| {
-            archetype.mover_type == sim_types::MoverType::Air && archetype.max_hp > SimScalar::ZERO
+            archetype.mover_type == MoverType::Air && archetype.max_hp > SimScalar::ZERO
         })
         .map(|archetype| archetype.slug.clone())
         .ok_or("catalog has no air unit")?;
@@ -128,6 +128,100 @@ fn s3_air_only_structure_still_shoots_air_units() -> TestResult {
             .is_none_or(|unit| unit.hp < starting_hp),
         "air-only dome must still engage air targets"
     );
+    Ok(())
+}
+
+/// `StarCraft` II 5.0.14 units whose only weapon (in the mode the catalog models) has `TargetFilters`
+/// that require `Air`: the unit's name as an archetype's `sc2_analogue` begins with it, the
+/// weapon, and where the data say so (`SC2GameData` `5444e12f13`; plan
+/// `2026-11-05-sc2-deviation-fixes` WP2, B-25 to B-27).
+const SC2_AIR_ONLY_UNITS: [(&str, &str, &str); 3] = [
+    (
+        "Viking",
+        "LanzerTorpedoes",
+        "liberty WeaponData:271, UnitData:6885",
+    ),
+    (
+        "Corruptor",
+        "ParasiteSpore",
+        "liberty WeaponData:567, UnitData:11274",
+    ),
+    // The ground weapon `LiberatorAGWeapon` belongs to the Defender Mode unit `LiberatorAG`
+    // (void UnitData:3387), which the catalog does not model yet (B-27, WP18).
+    (
+        "Liberator",
+        "LiberatorMissileLaunchers",
+        "void WeaponData:326, UnitData:3317",
+    ),
+];
+
+/// The shipped archetypes whose `StarCraft` II analogue is `unit`.
+fn archetypes_with_analogue<'a>(
+    world: &'a SimWorld,
+    unit: &'a str,
+) -> impl Iterator<Item = &'a sim_core::catalog::UnitArchetype> {
+    world.catalog.archetypes().filter(move |archetype| {
+        archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next())
+            == Some(unit)
+    })
+}
+
+#[test]
+fn b25_to_b27_units_with_an_air_only_starcraft_weapon_have_no_ground_weapon() -> TestResult {
+    let world = flat_world(16)?;
+    for (unit, weapon, source) in SC2_AIR_ONLY_UNITS {
+        let mut found = 0;
+        for archetype in archetypes_with_analogue(&world, unit) {
+            found += 1;
+            let slug = &archetype.slug;
+            for mover in [MoverType::Ground, MoverType::CliffJumper] {
+                assert!(
+                    archetype.weapon_against(mover, None).is_none(),
+                    "{slug} fires at {mover:?} units, but {unit}'s {weapon} targets air only ({source})"
+                );
+            }
+            assert!(
+                archetype.weapon_against(MoverType::Air, None).is_some(),
+                "{slug} must keep its air weapon ({unit}'s {weapon})"
+            );
+        }
+        assert_eq!(found, 1, "one shipped archetype has the analogue {unit}");
+    }
+    Ok(())
+}
+
+#[test]
+fn b25_to_b27_air_only_units_leave_a_ground_unit_unharmed() -> TestResult {
+    // A ground unit that cannot shoot back stands in range of each air-only unit for 300 ticks.
+    let probe = flat_world(16)?;
+    let ground_slug = probe
+        .catalog
+        .archetypes()
+        .find(|archetype| {
+            archetype.mover_type == MoverType::Ground
+                && archetype.max_hp > SimScalar::ZERO
+                && archetype.air_weapon.is_none()
+                && !archetype
+                    .attributes
+                    .contains(sim_types::AttributeFlags::STRUCTURE)
+        })
+        .map(|archetype| archetype.slug.clone())
+        .ok_or("catalog has a ground unit without an air weapon")?;
+    for (unit, _, _) in SC2_AIR_ONLY_UNITS {
+        let air_slug = archetypes_with_analogue(&probe, unit)
+            .next()
+            .map(|archetype| archetype.slug.clone())
+            .ok_or("an archetype with the analogue")?;
+        let mut world = flat_world(32)?;
+        spawn_unit(&mut world, &air_slug, 0, SimVec2::from_i32(10, 10))?;
+        let ground = spawn_unit(&mut world, &ground_slug, 1, SimVec2::from_i32(13, 10))?;
+        let starting_hp = world.entities.get(&ground).ok_or("unit missing")?.hp;
+        run(&mut world, 300);
+        let hp = world.entities.get(&ground).map(|entity| entity.hp);
+        assert_eq!(hp, Some(starting_hp), "{air_slug} damaged {ground_slug}");
+    }
     Ok(())
 }
 
@@ -253,6 +347,95 @@ fn s16_unit_vitals_and_geometry_must_be_usable() {
         "shield_regen_per_tick: 0.0",
         "shield_regen_per_tick: -0.5",
         "shield_regen_per_tick",
+    );
+}
+
+/// `StarCraft` II 5.0.14 `EnergyStart` of every unit and structure whose analogue has energy, as
+/// the name an archetype's `sc2_analogue` begins with, the value, and where the data set it
+/// (`SC2GameData` `5444e12f13`, `UnitData`; plan `2026-11-05-sc2-deviation-fixes` WP3, B-34).
+/// `EnergyMax` is 200 for each, 100 for the Shield Battery.
+const SC2_ENERGY_START: [(&str, f32, &str); 13] = [
+    ("Phoenix", 50.0, "liberty UnitData:3727"),
+    ("Ghost", 75.0, "voidmulti UnitData:600"),
+    ("Medivac", 50.0, "liberty UnitData:5439"),
+    ("Banshee", 50.0, "liberty UnitData:5372"),
+    ("Raven", 50.0, "liberty UnitData:5633"),
+    ("Sentry", 50.0, "liberty UnitData:11296"),
+    ("High Templar", 50.0, "liberty UnitData:3250"),
+    ("Queen", 25.0, "liberty UnitData:11414"),
+    ("Infestor", 75.0, "voidmulti UnitData:831"),
+    ("Viper", 50.0, "swarm UnitData:2334"),
+    ("Orbital Command", 50.0, "liberty UnitData:10513"),
+    ("Nexus", 50.0, "voidmulti UnitData:1096"),
+    ("Shield Battery", 50.0, "voidmulti UnitData:1563"),
+];
+
+#[test]
+fn b34_everything_with_energy_starts_with_its_starcraft_energy() -> TestResult {
+    let mut world = flat_world(64)?;
+    let mut checked = 0;
+    for (index, (unit, start, source)) in (0_u32..).zip(SC2_ENERGY_START) {
+        // Each spawns on its own 10-cell square, clear of the others' footprints.
+        let (x, y) = (4 + (index % 6) * 10, 4 + (index / 6) * 10);
+        let (slug, type_id, is_structure) = archetypes_with_analogue(&world, unit)
+            .next()
+            .map(|archetype| {
+                (
+                    archetype.slug.clone(),
+                    archetype.unit_type_id,
+                    archetype
+                        .attributes
+                        .contains(sim_types::AttributeFlags::STRUCTURE),
+                )
+            })
+            .ok_or("an archetype with the analogue")?;
+        let id = if is_structure {
+            world.spawn_structure(type_id, PlayerId(0), x, y)?
+        } else {
+            let at = SimVec2::from_i32(i32::try_from(x)?, i32::try_from(y)?);
+            spawn_unit(&mut world, &slug, 0, at)?
+        };
+        let energy = world.entities.get(&id).ok_or("spawned")?.energy;
+        assert_eq!(
+            energy,
+            SimScalar::from_num(start),
+            "{slug} ({unit}) must start with {start} energy ({source})"
+        );
+        checked += 1;
+    }
+    let with_energy = world
+        .catalog
+        .archetypes()
+        .filter(|archetype| archetype.max_energy > SimScalar::ZERO)
+        .count();
+    assert_eq!(
+        checked, with_energy,
+        "every archetype with energy is listed"
+    );
+    Ok(())
+}
+
+#[test]
+fn b34_start_energy_must_lie_between_zero_and_the_maximum() {
+    // The first caster's pool: `max_energy: 200.0` followed by its start energy. A leading 9
+    // puts any start energy from 0 to 200 above the maximum (50 reads 950).
+    assert_rejected(
+        UNITS,
+        "max_energy: 200.0,\n            start_energy: ",
+        "max_energy: 200.0,\n            start_energy: 9",
+        "start_energy",
+    );
+    assert_rejected(
+        UNITS,
+        "start_energy: 0.0",
+        "start_energy: -1.0",
+        "start_energy",
+    );
+    assert_rejected(
+        STRUCTURES,
+        "start_energy: 0.0",
+        "start_energy: 1.0",
+        "start_energy",
     );
 }
 
