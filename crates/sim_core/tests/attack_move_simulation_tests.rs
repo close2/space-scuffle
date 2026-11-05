@@ -270,6 +270,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         max_hp: SimScalar::from_num(150),
         max_shields: SimScalar::ZERO,
         max_energy: SimScalar::ZERO,
+        start_energy: SimScalar::ZERO,
         life_armor: SimScalar::ONE,
         shield_armor: SimScalar::ZERO,
         hp_regen_per_tick: SimScalar::ZERO,

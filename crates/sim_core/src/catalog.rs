@@ -89,6 +89,9 @@ pub struct UnitArchetype {
     pub max_shields: SimScalar,
     /// Maximum energy points for abilities.
     pub max_energy: SimScalar,
+    /// Energy points a new entity starts with (`StarCraft` II `EnergyStart`), at most
+    /// [`Self::max_energy`].
+    pub start_energy: SimScalar,
     /// Hull life armor value reducing non-shield damage.
     pub life_armor: SimScalar,
     /// Shield armor value reducing shield damage.
@@ -864,6 +867,9 @@ struct UnitArchetypeDef {
     max_hp: f32,
     max_shields: f32,
     max_energy: f32,
+    /// Energy a new entity starts with (`EnergyStart`), `0 ≤ start_energy ≤ max_energy`.
+    /// Required, so a catalog written before the field fails to load.
+    start_energy: f32,
     life_armor: f32,
     shield_armor: f32,
     hp_regen_per_tick: f32,
@@ -1113,6 +1119,7 @@ impl UnitArchetypeDef {
             max_hp: SimScalar::from_f32_lossy(self.max_hp),
             max_shields: SimScalar::from_f32_lossy(self.max_shields),
             max_energy: SimScalar::from_f32_lossy(self.max_energy),
+            start_energy: SimScalar::from_f32_lossy(self.start_energy),
             life_armor: SimScalar::from_f32_lossy(self.life_armor),
             shield_armor: SimScalar::from_f32_lossy(self.shield_armor),
             hp_regen_per_tick: SimScalar::from_f32_lossy(self.hp_regen_per_tick),
@@ -1184,6 +1191,9 @@ struct StructureArchetypeDef {
     pub max_shields: f64,
     /// Maximum energy points.
     pub max_energy: f64,
+    /// Energy a new structure starts with (`EnergyStart`), `0 ≤ start_energy ≤ max_energy`.
+    /// Required, so a catalog written before the field fails to load.
+    pub start_energy: f64,
     /// Hull hit points regenerated per tick.
     #[serde(default)]
     pub hp_regen_per_tick: f64,
@@ -1299,6 +1309,7 @@ impl StructureArchetypeDef {
             max_hp: SimScalar::from_num(self.max_hp),
             max_shields: SimScalar::from_num(self.max_shields),
             max_energy: SimScalar::from_num(self.max_energy),
+            start_energy: SimScalar::from_num(self.start_energy),
             life_armor: SimScalar::from_num(self.life_armor),
             shield_armor: SimScalar::from_num(self.shield_armor),
             hp_regen_per_tick: SimScalar::from_num(self.hp_regen_per_tick),

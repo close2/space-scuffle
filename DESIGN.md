@@ -152,7 +152,6 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 
 | ID | Deviation | Package |
 |---|---|---|
-| B-1 | A weapon whose turn aligns it swings one tick late (M-22) | WP1 |
 | B-2 | Every strike of a multi-strike weapon lands on the same tick | WP5 |
 | B-3 | No random firing delay | WP11 |
 | B-4 | Siege Mode has one transformation time and no random part | WP11 |
@@ -176,15 +175,11 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-22 | Carrier interceptors are one 8-strike weapon | WP18 |
 | B-23 | Storm hits structures, and idle units dodge it on their own | WP18 |
 | B-24 | Matrix battle 13's storm values | WP18 |
-| B-25 | Viking analogue shoots ground units in fighter mode | WP2 |
-| B-26 | Corruptor analogue shoots ground units | WP2 |
-| B-27 | Liberator analogue shoots ground units outside Defender Mode | WP2, WP18 |
+| B-27 | Liberator analogue has no Defender Mode, so no ground attack at all (its fighter-mode ground attack was removed by WP2) | WP18 |
 | B-28 | Six weapon mounts (turret or hull) differ | WP10 |
 | B-29 | No acquisition arc separate from the firing arc | WP10 |
 | B-30 | An idle turret keeps its last angle | WP10 |
-| B-32 | `Entity::apply_stimpack` hard-codes Stimpack around the catalog | WP3 |
-| B-33 | Stim admitted at any life above 1 | WP3 |
-| B-34 | Units with energy start at maximum | WP3 |
+| B-33 | Stim admitted at any life above 1 (the game's rule not sourced; [Q0053](docs/questions/open/0053-stimpack-at-low-life.md)) | Q0053 |
 | B-35 | No energy regeneration delay | WP15 |
 | B-36 | Unfinished structures regenerate life | WP15 |
 | B-38 | No burrowed Roach regeneration and no Tunneling Claws | WP15, WP18 |
@@ -217,7 +212,6 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-68 | 14 researchable upgrades have no effect | WP13d, WP18 |
 | B-69 | Missing abilities and spells | WP18 |
 | B-70 | No Graviton Beam | WP18 |
-| B-72 | Doc 03 states start energy the engine does not use | WP3 |
 | B-74 | Code comments claim exact parity for spillover and splash | WP7, WP8a |
 | B-76 | Hard-coded threat categories | WP4 |
 | B-77 | Hard-coded Concussive slow | WP13d |

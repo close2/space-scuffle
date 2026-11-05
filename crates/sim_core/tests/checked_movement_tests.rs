@@ -526,7 +526,7 @@ fn late_collision_pose_failure_preserves_actor_and_keeps_valid_neighbor_work() -
 }
 
 #[test]
-fn typed_legacy_stim_and_refresh_preserve_order_and_existing_buff_position() -> TestResult {
+fn typed_overclock_and_refresh_preserve_order_and_existing_buff_position() -> TestResult {
     let mut f = Fixture::new(32, 32)?;
     let id = f.spawn(f.air, point(8, 8))?;
     let actor = f.world.entities.get_mut(&id).ok_or("actor")?;
@@ -557,13 +557,29 @@ fn typed_legacy_stim_and_refresh_preserve_order_and_existing_buff_position() -> 
     actor.active_buffs[0].speed_multiplier = -SimScalar::ONE;
     let before = actor.clone();
     assert_eq!(
-        actor.issue_order(UnitOrder::UseStim, false),
+        actor.apply_overclock(overclock(SimScalar::from_num(1.5))),
         Err(EntityAdmissionError::Movement(
             MovementMathError::NegativeMultiplier { index: 0 }
         ))
     );
     assert_eq!(*actor, before);
     assert!(actor.apply_concussive_slow().is_err());
+    assert_eq!(*actor, before);
+    Ok(())
+}
+
+#[test]
+fn an_immediate_stim_issued_to_an_entity_outside_the_world_is_rejected() -> TestResult {
+    // B-32 (plan `2026-11-05-sc2-deviation-fixes` WP3): only the world knows the catalog's
+    // Overclock spec and whether its research is done, so an immediate `UseStim` given to an
+    // entity directly is refused with a typed error and changes nothing. The world's command
+    // path (`PlayerCommand`) is the one way to stim.
+    let mut f = Fixture::new(32, 32)?;
+    let id = f.spawn(f.air, point(8, 8))?;
+    let actor = f.world.entities.get_mut(&id).ok_or("actor")?;
+    let before = actor.clone();
+    let result = actor.issue_order(UnitOrder::UseStim, false);
+    assert_eq!(result, Err(EntityAdmissionError::StimOutsideWorld));
     assert_eq!(*actor, before);
     Ok(())
 }

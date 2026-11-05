@@ -13,7 +13,7 @@ In SC2, every unit is defined by data tables (`Unit`, `Weapon`, `Turret`, `Mover
 | :--- | :--- | :--- |
 | **Life (HP)** | Base health (`MaxHP`). Some factions/units regenerate passively (e.g., Zerg at `0.38 HP/sec`), others require repair/healing. The Reaper regenerates `2.8 HP/sec` **only after `10 seconds` without taking damage** (Zerg: no delay). | `hp_current`, `hp_max`, `hp_regen_per_tick`, `hp_regen_delay_ticks`, `ticks_since_last_damage` |
 | **Shields** | Absorbs damage before HP. Regenerates rapidly (e.g., `2.8 HP/sec`) **only after `10 seconds` without taking damage**. | `shields_current`, `shields_max`, `shields_regen_per_tick`, `shield_regen_delay_ticks`, `ticks_since_last_damage` |
-| **Energy** | Mana pool for active/autocast abilities (`Max 200`, starts at `50` or `75`, regens at `~0.7875/sec`). | `energy_current`, `energy_max`, `energy_regen_per_tick` |
+| **Energy** | Mana pool for active/autocast abilities (`EnergyMax 200`; `EnergyStart` per unit, `50` for most casters, `75` for the Ghost and Infestor, `25` for the Queen; regens at `~0.7875/sec`). | `energy`, `max_energy`, `start_energy` (per archetype, the unit's `EnergyStart`), `energy_regen_per_tick` |
 
 ### 1.2 Armor, Attributes & Damage Formula
 In SC2, units have **Attribute Tags** (`Light`, `Armored`, `Biological`, `Mechanical`, `Psionic`, `Massive`, `Structure`, `Heroic`).

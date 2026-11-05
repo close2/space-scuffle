@@ -862,3 +862,44 @@ fn s13_combat_planes() {
     assert!(!shares_combat_plane(Ground, Air));
     assert!(!shares_combat_plane(Air, CliffJumper));
 }
+
+/// B-79 (plan `2026-11-05-sc2-deviation-fixes`, found by WP2): a weapon's cooldown and
+/// backswing run on every tick, also for a unit armed only against air whose target is gone.
+/// They froze, because a unit without a target resolved its weapon against the ground plane,
+/// found none, and skipped its weapon step.
+#[test]
+fn b79_an_air_only_weapon_keeps_cycling_after_its_target_is_gone() {
+    use sim_types::MoverType::{Air, Ground};
+    let mut arena = Arena::new(32);
+    let slug = arena
+        .world
+        .catalog
+        .archetypes()
+        .find(|a| {
+            a.mover_type == Air
+                && a.weapon_against(Ground, None).is_none()
+                && a.weapon_against(Air, None)
+                    .is_some_and(|w| w.period_ticks > 4)
+        })
+        .map(|a| a.slug.clone())
+        .expect("the shipped catalog has a unit armed only against air");
+    let shooter = arena.spawn(&slug, BLUE, 10.0, 10.0);
+    let target = arena.spawn(&slug, RED, 13.0, 10.0);
+    arena.order(BLUE, &[shooter], attack(target));
+    for _ in 0..100 {
+        if arena.world.entities[&shooter].weapon_cooldown_remaining > 2 {
+            break;
+        }
+        arena.run(1);
+    }
+    let before = arena.world.entities[&shooter].weapon_cooldown_remaining;
+    assert!(before > 2, "{slug} never fired");
+    // Rule fixture: another source kills the target, so the shooter has none left.
+    arena.world.entities.get_mut(&target).unwrap().hp = SimScalar::ZERO;
+    arena.run(2);
+    assert_eq!(
+        arena.world.entities[&shooter].weapon_cooldown_remaining,
+        before - 2,
+        "{slug}'s cooldown must keep running without a target"
+    );
+}
