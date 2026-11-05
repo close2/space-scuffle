@@ -57,7 +57,7 @@ Cargo's.
 - **`client_diagnostics`** — capture, audit and probe tools built on the client; nothing in the game depends on
   it.
 - **`sim_fixtures`** — test-only worlds and catalogs embedded from the shipped data.
-- **`workspace_checks`** — the executable charter checks (C1 to C21).
+- **`workspace_checks`** — the executable charter checks (C1 to C21, and C23).
 - **`gate`** — `cargo gate`: selects the tests a change can break from the catalog `crates/gate/suites.ron`
   and runs them in the tiers of charter §4.3 (`quick`, `package`, `merge`, `full`), with stamps, flake reruns,
   the red rule's suspect list and the CI timing summary; its catalog check is C22. It depends on no other
@@ -126,7 +126,7 @@ Status is `Working` (built, tested, in the shipped game), `Partial` (built but l
 | `PlayerView` | Working | Per-player knowledge for the HUD and admission | `crates/sim_core/tests/player_view_tests.rs` | none known |
 | Catalog data | Working | Factions, units, structures, upgrades, start loadouts and scenarios read at run time | `crates/sim_core/tests/runtime_catalog_tests.rs`, `crates/sim_core/tests/faction_catalog_tests.rs` | Data choices await the owner (Q0007) |
 | Bubble and dome rendering | Working | Instanced bubbles and domes with optics, dome fill and validated shaders | `crates/client/tests/gpu_validation_tests.rs`, `crates/client/tests/bubble_optics_tests.rs`, `crates/client/tests/dome_fill_tests.rs` | none known |
-| Smog fog presentation | Working | Smog field driven by the player's vision; the all-pairs kinematics fallback above 512 bubbles reports its peer bounces (`9987863`, unit test `all_pairs_fallback_reports_its_contacts`, `kinematics_all_pairs_fallback_golden`) | `crates/client/tests/smog_golden_tests.rs`, `crates/client/tests/battle_fog_tests.rs` | Golden hashes name the host `libm` functions they use (Q0014); the solver costs about 6 ms per frame during a 400-unit fight (C-18, partly fixed; §5) |
+| Smog fog presentation | Working | Smog field driven by the player's vision; the all-pairs kinematics fallback above 512 bubbles reports its peer bounces (`9987863`, unit test `all_pairs_fallback_reports_its_contacts`, `kinematics_all_pairs_fallback_golden`) | `crates/client/tests/smog_golden_tests.rs`, `crates/client/tests/battle_fog_tests.rs` | Smog goldens are host-independent: every transcendental function on a smog path is the `libm` crate's (`client::smog::math`, check C23, Q0014; `docs/evidence/2026-11-05-libm-smog-math.md`); the solver costs about 6 ms per frame during a 400-unit fight (C-18, partly fixed; §5) |
 | Runtime mist | Removed | Deleted in `0f31027` (remediation decision D2) | none | none |
 | HUD and command card | Working | Resources, selection card, command card and production queue | `crates/client/tests/battle_hud_tests.rs`, `crates/client/tests/battle_card_tests.rs` | none known |
 | Selection and input | Working | Selection, box select, control groups, right-click orders; one declared writer per client concern; input ownership sampled after the inspector draws | `crates/client/tests/battle_input_tests.rs`, `crates/client/tests/battle_context_order_tests.rs`, `crates/client/tests/system_ownership_tests.rs` | none known |

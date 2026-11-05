@@ -12,6 +12,7 @@
 //! - Heading angle `$\theta_i = \operatorname{atan2}(v_{i,z}, v_{i,x})$` remains synchronized with horizontal velocity.
 //! - Pairwise elastic collision resolution conserves momentum and kinetic energy without penetration.
 
+use super::math;
 use super::SmogError;
 use bevy::prelude::*;
 
@@ -153,9 +154,9 @@ pub fn bubble_team_color(index: usize) -> Vec3 {
         let hue_shift = (index as f32 * 0.137) % 1.0;
         let tau = std::f32::consts::TAU;
         Vec3::new(
-            (0.25 + 0.65 * (hue_shift * tau).sin().abs()).clamp(0.05, 0.95),
-            (0.30 + 0.60 * ((hue_shift + 0.33) * tau).sin().abs()).clamp(0.05, 0.95),
-            (0.35 + 0.60 * ((hue_shift + 0.67) * tau).sin().abs()).clamp(0.05, 0.95),
+            (0.25 + 0.65 * math::sin(hue_shift * tau).abs()).clamp(0.05, 0.95),
+            (0.30 + 0.60 * math::sin((hue_shift + 0.33) * tau).abs()).clamp(0.05, 0.95),
+            (0.35 + 0.60 * math::sin((hue_shift + 0.67) * tau).abs()).clamp(0.05, 0.95),
         )
     }
 }
@@ -211,7 +212,7 @@ pub fn generate_bouncing_bubbles(
                     .clamp(bounds.min.z + radius, bounds.max.z - radius),
             );
             let vel = Vec3::new(vel_xz.x, 0.0, vel_xz.y);
-            let heading_angle_rad = vel.z.atan2(vel.x);
+            let heading_angle_rad = math::atan2(vel.z, vel.x);
             out.push(BouncingBubbleState {
                 index: i,
                 position: pos,
@@ -252,8 +253,8 @@ pub fn generate_bouncing_bubbles(
         let fz = (iz as f32 + 0.5) / (nz as f32).max(1.0);
 
         // Deterministic offset to break perfect grid alignment
-        let jitter_x = ((i as f32 * std::f32::consts::GOLDEN_RATIO).sin() * 0.25) * cell_size_x;
-        let jitter_z = ((i as f32 * std::f32::consts::PI).sin() * 0.25) * cell_size_z;
+        let jitter_x = (math::sin(i as f32 * std::f32::consts::GOLDEN_RATIO) * 0.25) * cell_size_x;
+        let jitter_z = (math::sin(i as f32 * std::f32::consts::PI) * 0.25) * cell_size_z;
 
         let r_i = radius + ((i % 5) as f32) * 0.01;
         let pos = Vec3::new(
@@ -266,8 +267,8 @@ pub fn generate_bouncing_bubbles(
 
         let speed = 2.2 + ((i % 7) as f32) * 0.25;
         let phi = (i as f32) * 2.399_963_1; // golden angle
-        let vel = Vec3::new(phi.cos() * speed, 0.0, phi.sin() * speed);
-        let heading_angle_rad = vel.z.atan2(vel.x);
+        let vel = Vec3::new(math::cos(phi) * speed, 0.0, math::sin(phi) * speed);
+        let heading_angle_rad = math::atan2(vel.z, vel.x);
 
         out.push(BouncingBubbleState {
             index: i,
@@ -581,7 +582,7 @@ fn sync_headings(states: &mut [BouncingBubbleState]) {
         let speed_xz =
             (state.velocity.x * state.velocity.x + state.velocity.z * state.velocity.z).sqrt();
         if speed_xz > 1e-4 {
-            state.heading_angle_rad = state.velocity.z.atan2(state.velocity.x);
+            state.heading_angle_rad = math::atan2(state.velocity.z, state.velocity.x);
         }
     }
 }
