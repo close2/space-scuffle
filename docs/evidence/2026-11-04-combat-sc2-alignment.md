@@ -1139,3 +1139,12 @@ the mining time.
 
 Measured: whole matrix and battle 33 bit-identical (no battle orders Siege Mode), both golden replays unchanged in
 debug, release and `wasm32-wasip1`. No doc 07 or doc 08 cell states the cooldown.
+
+### 13.8 R3: energy regeneration
+
+`energy_regen_per_tick` 0.056 → **0.0315** on the nine casters (`specter_android`, `repair_shuttle`,
+`cloak_gunship`, `omni_probe_drone`, `prism_weaver`, `cerebral_elder`, `hive_matron`, `mycelium_shaman`,
+`tongue_chameleon`): `EnergyRegenRate` 0.5625 Normal per s × 1.4 ÷ 25 (for example `liberty` UnitData:4989 for the
+Ghost; each source line in the audit's group R3). The Phoenix already has 0.0315 (WP16). No matrix battle or golden
+replay spawns one of the nine. Measured: whole matrix and battle 33 bit-identical, both golden replays unchanged in
+debug, release and `wasm32-wasip1`. Doc 03 §1 already gives 0.7875 per Faster second; doc 07 and doc 08 state no rate.
