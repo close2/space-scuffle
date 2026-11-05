@@ -59,6 +59,11 @@
 // Re-recorded for WP12 group W7: "blue_armor" (rhino_beetle) throws its acid at 1.05 per tick (was
 // 0.64; the Roach's missile, 18.75 Normal per s). Checkpoints 1 to 4 are unchanged; from
 // checkpoint 5 (ticks 201 to 250), every checkpoint changed.
+// Re-recorded for WP17 commit b (D-8 item 4, Q0045 1b): the movement phase no longer snaps a
+// turret to its goal; the weapon phase alone turns it, at its rate (21.6 degrees per tick for
+// "red_siege", railgun_crawler). Turret angles are hashed, so checkpoints 4 to 6 and 9 (ticks 151
+// to 300 and 401 to 450) changed. No behaviour did: with turret angles left out of the checksum,
+// every checkpoint of both fixtures equals that of commit a.
 (
     checksum_schema: 10,
     seed: 0x5EED_0F_5CAFF1E,
@@ -89,12 +94,12 @@
         0xd3213317d91b8691,
         0x9a0f00bdb78caef0,
         0x9c03130587ecfe87,
-        0x221c4e0d5e453353,
-        0x720f6d98bc0c98b1,
-        0x3f7064073da94900,
+        0x048386ca6d2a71fb,
+        0xd13da8f8a5cca4bd,
+        0xe695bb199bb5bf93,
         0x21b589ae6f19e162,
         0xd58489659d57698e,
-        0xb74d036ffa95a074,
+        0x365133016ca77ef1,
         0xcf25ca17385ccb37,
         0x06ce3d0c550801c8,
         0xf59c484b6c9dff56,

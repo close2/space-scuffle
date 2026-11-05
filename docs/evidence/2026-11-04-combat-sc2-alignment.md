@@ -1654,3 +1654,25 @@ unresolved), marine survivors 4.03 (SD 3.26).
 - **Measurement.** Matrix bit-identical to the baseline; battle 33 bit-identical; both golden replays unchanged in
   debug, release and `wasm32-wasip1` (no structure turret's `WeaponSpec` is hashed in either replay: no structure
   fires a projectile there).
+
+### 14.2 Commit b: one hull rotation per tick
+
+- **Change.** `Entity::turn_hull_towards` turns the heading by at most the tick's `hull_turn_budget` (binary units),
+  which `SimWorld::step_movement_and_steering` sets to the archetype's `turn_rate` before any system turns a hull.
+  The three hull writers of plan §2.5 call it: the motion commit (facing the velocity), `aim_if_in_range` (facing the
+  goal, through the same commit) and `slew_towards` for a hull-mounted weapon, which no longer reads the weapon's
+  turret rate. The movement phase spends first, the weapon phase gets the rest. The budget is left out of the
+  checksum (`fields!(Entity { … } unhashed { hull_turn_budget })`): it is reset before its first read every tick.
+  Plan D-8 item 7: `aim_if_in_range` also snapped a turret to its goal; it no longer writes the turret, so the
+  weapon phase alone turns a turret, at its rate.
+- **Tests first** (`hull_turning_tests.rs`, scratch archetypes): on the old rule 5 of 7 failed (the swing of a unit
+  facing away started on tick 2, not 9; one tick turned 32 768 units where the rate allows 3 670, 7 340 or a turret's
+  1 820); the 180° guard and the determinism test passed. All 7 pass with the rule.
+- **Measurement.** Matrix bit-identical to commit a; battle 33 bit-identical. Every shipped hull rate is 180° per
+  tick, so the budget never binds.
+- **`golden_replay.ron` re-recorded:** checkpoints 4 to 6 and 9 (ticks 151 to 300 and 401 to 450) changed, because
+  the turret angles of its three `railgun_crawler`s (21.6° per tick) now turn at their rate instead of snapping in the
+  movement phase, and turret angles are hashed. No behaviour changed: with `turret_angle` left out of the encoding in
+  both, every checkpoint of both fixtures on this commit equals commit a's. The siege tank's arc is unrestricted, so
+  its turret's angle never gated a shot. `golden_replay_orders.ron` unchanged. Debug, release and `wasm32-wasip1`
+  reproduce both.

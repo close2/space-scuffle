@@ -354,7 +354,25 @@ impl SimWorld {
     /// Direct phase callers must establish `validate_transport_links` beforehand;
     /// normal `step_into` establishes this precondition once for its phase sequence.
     pub fn step_movement_and_steering(&mut self) {
+        self.reset_hull_turn_budgets();
         self.advance_checked_movement();
+    }
+
+    /// Gives every entity this tick's hull rotation, its archetype's `turn_rate` (plan
+    /// `2026-11-04-combat-sc2-alignment` D-8 item 4). The movement phase spends it first and
+    /// the weapon phase gets the rest, so the hull turns at most `turn_rate` per tick.
+    // PERFORMANCE RATIONALE:
+    // Why: The budget must be in place before the first hull turn of every tick.
+    // What: One in-place pass over the entity map with one catalog lookup each; no allocation.
+    // Trade-off: An O(N log K) pass per tick (K archetypes) instead of caching the rate on the
+    // entity, which would go stale if an entity ever changed archetype.
+    fn reset_hull_turn_budgets(&mut self) {
+        for entity in self.entities.values_mut() {
+            entity.hull_turn_budget = self
+                .catalog
+                .get(entity.unit_type_id)
+                .map_or(0, |archetype| archetype.turn_rate.raw());
+        }
     }
     /// Phase 8: Reap destroyed entities and emit death shatter visuals.
     pub fn reap_dead_and_emit_shatter(&mut self) {

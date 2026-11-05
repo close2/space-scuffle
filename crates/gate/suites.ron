@@ -253,6 +253,7 @@ SuiteCatalog(
             "sim_core/golden_replay_tests",
             "sim_core/harvest_income_tests",
             "sim_core/high_ground_combat_tests",
+            "sim_core/hull_turning_tests",
             "sim_core/load_orders_tests",
             "sim_core/match_result_tests",
             "sim_core/movement_contact_tests",

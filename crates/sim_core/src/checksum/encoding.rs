@@ -227,11 +227,21 @@ impl Canonical for CellFlags {
 
 // Field order below is part of the versioned schema. Destructuring intentionally
 // has no rest pattern: adding fields must force an explicit coverage decision.
+// A field listed after `unhashed` is left out of the checksum on purpose; its declaration
+// states why that is sound.
 macro_rules! fields {
     ($ty:ident { $($field:ident),+ $(,)? }) => {
         impl Canonical for $ty {
             fn encode(&self, encoder: &mut Encoder) {
                 let Self { $($field),+ } = self;
+                $($field.encode(encoder);)+
+            }
+        }
+    };
+    ($ty:ident { $($field:ident),+ $(,)? } unhashed { $($skip:ident),+ $(,)? }) => {
+        impl Canonical for $ty {
+            fn encode(&self, encoder: &mut Encoder) {
+                let Self { $($field,)+ $($skip: _,)+ } = self;
                 $($field.encode(encoder);)+
             }
         }
@@ -310,6 +320,8 @@ fields!(Entity {
     is_completed,
     transport_carrier,
     is_invulnerable,
+} unhashed {
+    hull_turn_budget,
 });
 fields!(ActiveProjectile {
     id,
