@@ -164,9 +164,12 @@ every mode. A cliff walker (the Colossus analogue) is in both planes, so an air 
   kill the unit itself by using Stimpack". It does not say whether the stim is refused or the unit is left with some
   life. The [Marine](https://liquipedia.net/starcraft2/Marine_(Legacy_of_the_Void)) page gives only the cost.
 - **Decision** (plan D-5 item 2): not specifiable from the sources, so no rule commit. Owner question
-  [Q0053](../questions/open/0053-stimpack-at-low-life.md) proposes an in-game measurement, default "no change, bug
+  [Q0053](../questions/closed/0053-stimpack-at-low-life.md) proposes an in-game measurement, default "no change, bug
   B-33 stays recorded". Today's rule (refused at 1 life or less, the unit keeps at least 1) fits the Liquipedia
   sentence; whether it allows more than the game is what the question asks.
+- **Answered** (owner, chat, 2026-11-05): "stim can never kill a unit it therefore can't be activated with too
+  little hp". Rule (a) in `ad0dcde`: the stim is refused, changing nothing, unless life is strictly greater than the
+  cost. Matrix (1000 runs, 16 seeds) bit-identical to the commit before, both golden replays unchanged. B-33 fixed.
 
 ### 3.3 Commit c: the start energy is catalog data (B-34, latent)
 

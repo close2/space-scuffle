@@ -1024,6 +1024,49 @@ fn stim_goes_only_to_units_whose_overclock_is_unlocked() -> TestResult {
     Ok(())
 }
 
+/// Q0053 / B-33: the client offers a stim only when the simulation would admit it, so a unit
+/// whose life does not exceed the life cost is not sent `UseStim`.
+#[test]
+fn stim_is_not_offered_without_more_life_than_its_cost() -> TestResult {
+    let (mut world, _queue) = role_fixture()?;
+    let stim_type = type_where(&world, |a| !is_dome(a) && a.overclock.is_some())?;
+    let unit = unit_where(&mut world, 0, |a| a.unit_type_id == stim_type)?;
+    let archetype = world.catalog.get(stim_type)?.clone();
+    let cost = archetype.overclock.ok_or("overclock")?.hp_cost;
+    let unlock_all = |world: &mut SimWorld| -> TestResult {
+        let unlocks: Vec<String> = world
+            .upgrade_catalog
+            .upgrades()
+            .filter(|upgrade| {
+                upgrade.effects.iter().any(|effect| {
+                    matches!(effect, sim_types::UpgradeEffect::UnlockAbility { ability_slug, .. }
+                        if ability_slug == OVERCLOCK_ABILITY_SLUG)
+                })
+            })
+            .map(|upgrade| upgrade.slug.clone())
+            .collect();
+        for slug in unlocks {
+            world.research_upgrade(ME, &slug)?;
+        }
+        Ok(())
+    };
+    unlock_all(&mut world)?;
+    for (life, offered) in [
+        (cost - SimScalar::ONE, false),
+        (cost, false),
+        (cost + SimScalar::ONE, true),
+    ] {
+        world.entities.get_mut(&unit).ok_or("unit absent")?.hp = life;
+        let entity = world.entities.get(&unit).ok_or("unit absent")?;
+        assert_eq!(
+            can_overclock(&world, entity, &archetype),
+            offered,
+            "stim offered at {life:?} life"
+        );
+    }
+    Ok(())
+}
+
 /// The inspector's roster `Overclock` goes through the same rule.
 #[test]
 fn roster_stim_skips_units_whose_overclock_is_locked() -> TestResult {
