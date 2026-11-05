@@ -351,6 +351,29 @@ fn s16_unit_vitals_and_geometry_must_be_usable() {
 }
 
 #[test]
+fn b34_start_energy_must_lie_between_zero_and_the_maximum() {
+    // The first caster's pool: `max_energy: 200.0` followed by its start energy.
+    assert_rejected(
+        UNITS,
+        "max_energy: 200.0,\n            start_energy: ",
+        "max_energy: 200.0,\n            start_energy: 1",
+        "start_energy",
+    );
+    assert_rejected(
+        UNITS,
+        "start_energy: 0.0",
+        "start_energy: -1.0",
+        "start_energy",
+    );
+    assert_rejected(
+        STRUCTURES,
+        "start_energy: 0.0",
+        "start_energy: 1.0",
+        "start_energy",
+    );
+}
+
+#[test]
 fn f12_catalog_sight_beyond_vision_is_rejected_not_shortened() {
     assert_rejected(
         UNITS,

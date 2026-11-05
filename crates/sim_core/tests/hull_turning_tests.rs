@@ -87,6 +87,7 @@ fn unit_ron(
             max_hp: 10000.0,
             max_shields: 0.0,
             max_energy: 0.0,
+            start_energy: 0.0,
             life_armor: 0.0,
             shield_armor: 0.0,
             hp_regen_per_tick: 0.0,

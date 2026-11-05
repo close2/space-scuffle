@@ -167,3 +167,16 @@ every mode. A cliff walker (the Colossus analogue) is in both planes, so an air 
   [Q0053](../questions/open/0053-stimpack-at-low-life.md) proposes an in-game measurement, default "no change, bug
   B-33 stays recorded". Today's rule (refused at 1 life or less, the unit keeps at least 1) fits the Liquipedia
   sentence; whether it allows more than the game is what the question asks.
+
+### 3.3 Commit c: the start energy is catalog data (B-34, latent)
+
+- **Change.** A required `start_energy` on every unit and structure definition (`catalog.rs`), validated finite,
+  nonnegative and at most `max_energy` (`validation.rs` `start_energy`), loaded as `UnitArchetype::start_energy`;
+  `Entity` spawns with it instead of `max_energy`. Data: `start_energy` equal to `max_energy` on all 42 units and 49
+  structures, so behaviour is unchanged. A catalog without the field fails to load (plan D-6).
+- **Test restated first** (test-only commit): two `transport_ownership_tests` cast an energy ability at once on a
+  fixture unit and relied on spawning at the maximum; the fixture now fills the pool itself.
+- **Test:** `weapon_catalog_rules_tests::b34_start_energy_must_lie_between_zero_and_the_maximum` (a start above the
+  maximum and a negative start rejected, for units and structures).
+- **Latent, proved.** Matrix and battle 33 bit-identical to §3.1; both golden replays unchanged (a unit's energy is
+  hashed, and every unit still starts at its maximum).

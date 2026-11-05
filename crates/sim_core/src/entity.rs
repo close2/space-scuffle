@@ -366,7 +366,7 @@ impl Entity {
             turret_angle: SimAngle::ZERO,
             hp: archetype.max_hp,
             shields: archetype.max_shields,
-            energy: archetype.max_energy,
+            energy: archetype.start_energy,
             // Never damaged: ready to regenerate shields under any authored delay, and the
             // value the saturating counter reaches anyway.
             ticks_since_last_damage: u16::MAX,
