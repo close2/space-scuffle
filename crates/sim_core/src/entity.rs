@@ -228,9 +228,10 @@ pub struct Entity {
     pub shields: SimScalar,
     /// Current caster energy pool.
     pub energy: SimScalar,
-    /// Ticks elapsed since last sustaining damage, saturating at `u16::MAX`. Shields regenerate
-    /// once it reaches the archetype's `shield_regen_delay_ticks`. A new entity starts at
-    /// `u16::MAX` ("never damaged"), which is ready for any authored delay.
+    /// Ticks elapsed since last sustaining damage, to shields or life, saturating at
+    /// `u16::MAX`. Life regenerates once it reaches the archetype's `hp_regen_delay_ticks`, and
+    /// shields once it reaches `shield_regen_delay_ticks`. A new entity starts at `u16::MAX`
+    /// ("never damaged"), which is ready for any authored delay.
     pub ticks_since_last_damage: u16,
     /// `StarCraft` II style order queue.
     pub order_queue: VecDeque<UnitOrder>,

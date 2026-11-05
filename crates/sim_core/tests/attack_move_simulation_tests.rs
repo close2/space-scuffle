@@ -273,6 +273,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         life_armor: SimScalar::ONE,
         shield_armor: SimScalar::ZERO,
         hp_regen_per_tick: SimScalar::ZERO,
+        hp_regen_delay_ticks: 0,
         shield_regen_per_tick: SimScalar::ZERO,
         shield_regen_delay_ticks: None,
         energy_regen_per_tick: SimScalar::ZERO,

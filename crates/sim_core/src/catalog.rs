@@ -89,8 +89,16 @@ pub struct UnitArchetype {
     pub life_armor: SimScalar,
     /// Shield armor value reducing shield damage.
     pub shield_armor: SimScalar,
-    /// Passive health regeneration per tick.
+    /// Passive health regeneration per tick, active once [`Self::hp_regen_delay_ticks`] ticks
+    /// have passed without taking damage.
     pub hp_regen_per_tick: SimScalar,
+    /// Ticks (25 per Faster second) without taking damage before life starts regenerating,
+    /// counted from the tick of the last damage (`Entity::ticks_since_last_damage`). 0 means
+    /// life regenerates on every tick, as for `StarCraft` II's Zerg. `StarCraft` II stores this
+    /// per unit as `LifeRegenDelay`; only the Reaper sets it.
+    ///
+    /// Catalog validation requires 0 when [`Self::hp_regen_per_tick`] is zero.
+    pub hp_regen_delay_ticks: u16,
     /// Passive shield regeneration per tick, active once [`Self::shield_regen_delay_ticks`]
     /// ticks have passed without taking damage.
     pub shield_regen_per_tick: SimScalar,
@@ -842,6 +850,10 @@ struct UnitArchetypeDef {
     life_armor: f32,
     shield_armor: f32,
     hp_regen_per_tick: f32,
+    /// Ticks without damage before life regenerates; omitted reads as 0 (no delay), and it must
+    /// be 0 when `hp_regen_per_tick` is zero (checked by validation, which names the field).
+    #[serde(default)]
+    hp_regen_delay_ticks: u16,
     shield_regen_per_tick: f32,
     /// Ticks without damage before shields regenerate; required exactly when `max_shields > 0`
     /// (checked by validation, which names the field when it is missing).
@@ -1071,6 +1083,7 @@ impl UnitArchetypeDef {
             life_armor: SimScalar::from_f32_lossy(self.life_armor),
             shield_armor: SimScalar::from_f32_lossy(self.shield_armor),
             hp_regen_per_tick: SimScalar::from_f32_lossy(self.hp_regen_per_tick),
+            hp_regen_delay_ticks: self.hp_regen_delay_ticks,
             shield_regen_per_tick: SimScalar::from_f32_lossy(self.shield_regen_per_tick),
             shield_regen_delay_ticks: self.shield_regen_delay_ticks,
             energy_regen_per_tick: SimScalar::from_f32_lossy(self.energy_regen_per_tick),
@@ -1139,6 +1152,10 @@ struct StructureArchetypeDef {
     /// Hull hit points regenerated per tick.
     #[serde(default)]
     pub hp_regen_per_tick: f64,
+    /// Ticks without damage before life regenerates; omitted reads as 0 (no delay), and it must
+    /// be 0 when `hp_regen_per_tick` is zero.
+    #[serde(default)]
+    pub hp_regen_delay_ticks: u16,
     /// Shield points regenerated per tick once the out-of-combat delay has elapsed.
     #[serde(default)]
     pub shield_regen_per_tick: f64,
@@ -1250,6 +1267,7 @@ impl StructureArchetypeDef {
             life_armor: SimScalar::from_num(self.life_armor),
             shield_armor: SimScalar::from_num(self.shield_armor),
             hp_regen_per_tick: SimScalar::from_num(self.hp_regen_per_tick),
+            hp_regen_delay_ticks: self.hp_regen_delay_ticks,
             shield_regen_per_tick: SimScalar::from_num(self.shield_regen_per_tick),
             shield_regen_delay_ticks: self.shield_regen_delay_ticks,
             energy_regen_per_tick: SimScalar::ZERO,

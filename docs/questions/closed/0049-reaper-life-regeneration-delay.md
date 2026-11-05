@@ -2,9 +2,9 @@
 
 - **Asked:** 2026-11-05
 - **Blocking:** no
-- **Default until answered:** the Reaper analogue (`jet_jumper`) keeps its life regeneration of 0.08 per tick,
-  applied always. The audit's correction to 0.112 (group R1) is deferred, as plan
-  `2026-11-04-combat-sc2-alignment` D-7 allows for a value whose reference needs a mechanism we do not model.
+- **Default until answered:** option (b), under the standing rule Q0008 (charter §8): plan
+  [`2026-11-05-life-regeneration-delay`](../../plans/2026-11-05-life-regeneration-delay.md) adds the delay and
+  then applies R1.
 
 ## Question
 
@@ -31,3 +31,14 @@ group R1) found that `jet_jumper`'s `hp_regen_per_tick` of 0.08 is StarCraft II'
 ## Answer
 
 Owner (2026-11-05): Option (b) — add a per-archetype `hp_regen_delay_ticks` beside `shield_regen_delay_ticks` (179 for `jet_jumper`, 0 for the Zerg), then apply 0.112.
+
+## Resolution
+
+Carried out as option (b), as the owner answered above (2026-11-05) and the standing rule Q0008 (charter §8)
+already implied, by plan
+[`2026-11-05-life-regeneration-delay`](../../plans/2026-11-05-life-regeneration-delay.md): per-archetype
+`hp_regen_delay_ticks` (WP1 `72be09a`), `jet_jumper` 179 ticks (WP2 `a302eb5`), R1 0.112 (WP3 `f93ec20`);
+measurement in [`2026-11-05-life-regeneration-delay.md`](../../evidence/2026-11-05-life-regeneration-delay.md).
+Battle `22b_reaper_vs_stalker` stays a stalker win on all 20 seeds (now at tick 139 instead of 172), and
+`22a_reaper_vs_2_workers` a reaper win with the reaper at 40 life instead of about 46; nothing else moved. The owner
+may reopen this to choose (a) or (c): a delay of 0 and a rate of 0.08 restore the old behaviour.

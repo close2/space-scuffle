@@ -120,6 +120,20 @@ fn shield_regen_delay(definition: &str, has_shields: bool, delay: Option<u16>) -
     }
 }
 
+/// Requires `hp_regen_delay_ticks` to be 0 when the archetype does not regenerate life: a delay
+/// on an archetype with no life regeneration is a value nothing reads. `regenerates` is
+/// `hp_regen_per_tick > 0` as authored; any delay, 0 included, is legal when it regenerates.
+fn hp_regen_delay(definition: &str, regenerates: bool, delay: u16) -> SimResult<()> {
+    if !regenerates && delay > 0 {
+        return Err(invalid(
+            definition,
+            "hp_regen_delay_ticks",
+            "must be zero when hp_regen_per_tick is zero",
+        ));
+    }
+    Ok(())
+}
+
 fn positive_rate(definition: &str, field: &str, rate: SimScalar) -> SimResult<()> {
     AttackRate::new(rate).map_err(|_| {
         invalid(
@@ -195,6 +209,21 @@ impl UnitArchetypeDef {
         Ok(())
     }
 
+    /// Checks the life and shield regeneration delays against the authored rate and shields.
+    /// Runs after the nonnegative checks, so a negative rate is reported under its own field.
+    fn validate_regeneration_delays(&self) -> SimResult<()> {
+        hp_regen_delay(
+            &self.slug,
+            self.hp_regen_per_tick > 0.0,
+            self.hp_regen_delay_ticks,
+        )?;
+        shield_regen_delay(
+            &self.slug,
+            self.max_shields > 0.0,
+            self.shield_regen_delay_ticks,
+        )
+    }
+
     pub(super) fn validate(&self) -> SimResult<()> {
         validate_slug(&self.slug)?;
         for (field, value) in [
@@ -239,11 +268,7 @@ impl UnitArchetypeDef {
         sight(&self.slug, "sight_radius", f64::from(self.sight_radius))?;
         let hull_rate = self.turn_rate_deg_per_tick;
         rate_per_tick(&self.slug, "turn_rate_deg_per_tick", hull_rate)?;
-        shield_regen_delay(
-            &self.slug,
-            self.max_shields > 0.0,
-            self.shield_regen_delay_ticks,
-        )?;
+        self.validate_regeneration_delays()?;
         for (name, weapon) in [
             ("weapon", &self.weapon),
             ("ground_weapon", &self.ground_weapon),
@@ -487,6 +512,11 @@ impl StructureArchetypeDef {
     pub(super) fn validate(&self) -> SimResult<()> {
         validate_slug(&self.slug)?;
         nonnegative(&self.slug, "hp_regen_per_tick", self.hp_regen_per_tick)?;
+        hp_regen_delay(
+            &self.slug,
+            self.hp_regen_per_tick > 0.0,
+            self.hp_regen_delay_ticks,
+        )?;
         nonnegative(
             &self.slug,
             "shield_regen_per_tick",
@@ -614,17 +644,27 @@ mod tests {
         Ok(())
     }
 
-    /// Asserts that `result` is the typed invalid-value error naming the delay field.
-    fn assert_rejects_delay(result: &crate::error::SimResult<()>, case: &str) {
+    /// Asserts that `result` is the typed invalid-value error naming `expected_field`, one of
+    /// the two regeneration-delay fields.
+    fn assert_rejects_delay_field(
+        result: &crate::error::SimResult<()>,
+        expected_field: &str,
+        case: &str,
+    ) {
         let field = match result {
             Err(crate::error::SimCoreError::CatalogInvalidValue { field, .. }) => Some(field),
             _ => None,
         };
         assert_eq!(
             field.map(String::as_str),
-            Some("shield_regen_delay_ticks"),
+            Some(expected_field),
             "{case}: expected a typed delay error, got {result:?}"
         );
+    }
+
+    /// Asserts that `result` is the typed invalid-value error naming the shield delay field.
+    fn assert_rejects_delay(result: &crate::error::SimResult<()>, case: &str) {
+        assert_rejects_delay_field(result, "shield_regen_delay_ticks", case);
     }
 
     #[test]
@@ -676,6 +716,100 @@ mod tests {
             .ok_or("real catalog has no unshielded structure")?;
         unshielded.shield_regen_delay_ticks = Some(10);
         assert_rejects_delay(&unshielded.validate(), "unshielded structure with a delay");
+        Ok(())
+    }
+
+    #[test]
+    fn a_unit_without_life_regeneration_rejects_a_life_regeneration_delay(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::CatalogFile;
+        let units = include_str!("../../../../assets/catalog/units.ron");
+        let mut file: CatalogFile = ron::from_str(units)?;
+        for unit in &file.units {
+            unit.validate()?;
+        }
+        let static_unit = file
+            .units
+            .iter_mut()
+            .find(|unit| unit.hp_regen_per_tick == 0.0)
+            .ok_or("real catalog has no unit without life regeneration")?;
+        static_unit.hp_regen_delay_ticks = 10;
+        assert_rejects_delay_field(
+            &static_unit.validate(),
+            "hp_regen_delay_ticks",
+            "unit without life regeneration with a delay",
+        );
+        let regenerating = file
+            .units
+            .iter_mut()
+            .find(|unit| unit.hp_regen_per_tick > 0.0)
+            .ok_or("real catalog has no unit with life regeneration")?;
+        regenerating.hp_regen_delay_ticks = 10;
+        regenerating.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_structure_without_life_regeneration_rejects_a_life_regeneration_delay(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::StructureCatalogFile;
+        let structures = include_str!("../../../../assets/catalog/structures.ron");
+        let mut file: StructureCatalogFile = ron::from_str(structures)?;
+        for structure in &file.structures {
+            structure.validate()?;
+        }
+        let static_structure = file
+            .structures
+            .iter_mut()
+            .find(|structure| structure.hp_regen_per_tick == 0.0)
+            .ok_or("real catalog has no structure without life regeneration")?;
+        static_structure.hp_regen_delay_ticks = 10;
+        assert_rejects_delay_field(
+            &static_structure.validate(),
+            "hp_regen_delay_ticks",
+            "structure without life regeneration with a delay",
+        );
+        let regenerating = file
+            .structures
+            .iter_mut()
+            .find(|structure| structure.hp_regen_per_tick > 0.0)
+            .ok_or("real catalog has no structure with life regeneration")?;
+        regenerating.hp_regen_delay_ticks = 10;
+        regenerating.validate()?;
+        Ok(())
+    }
+
+    /// The shipped catalog text with every authored `hp_regen_delay_ticks` line removed, so each
+    /// archetype omits the field.
+    fn without_life_regeneration_delays(text: &str) -> String {
+        text.lines()
+            .filter(|line| !line.trim_start().starts_with("hp_regen_delay_ticks:"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn an_omitted_life_regeneration_delay_reads_as_zero() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use crate::catalog::{CatalogFile, StructureCatalogFile};
+        let units: CatalogFile = ron::from_str(&without_life_regeneration_delays(include_str!(
+            "../../../../assets/catalog/units.ron"
+        )))?;
+        assert!(!units.units.is_empty());
+        for unit in &units.units {
+            assert_eq!(unit.hp_regen_delay_ticks, 0, "unit {}", unit.slug);
+        }
+        let structures: StructureCatalogFile = ron::from_str(&without_life_regeneration_delays(
+            include_str!("../../../../assets/catalog/structures.ron"),
+        ))?;
+        assert!(!structures.structures.is_empty());
+        for structure in &structures.structures {
+            assert_eq!(
+                structure.hp_regen_delay_ticks, 0,
+                "structure {}",
+                structure.slug
+            );
+        }
         Ok(())
     }
 

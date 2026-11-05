@@ -13,7 +13,7 @@ could not be confirmed while planning are marked **verify**; expectations not ye
 
 | Question | State | Where in this plan |
 |---|---|---|
-| [Q0049](../questions/open/0049-reaper-life-regeneration-delay.md) life regeneration delay | Open; this plan carries out option (b) under the standing rule Q0008 (D-1) | WP0 (default updated), WP4 (closed) |
+| [Q0049](../questions/closed/0049-reaper-life-regeneration-delay.md) life regeneration delay | Closed by WP4; this plan carried out option (b) under the standing rule Q0008 (D-1) | WP0 (default updated), WP4 (closed) |
 | [Q0039](../questions/open/0039-normal-time-values.md) Normal-time values | Open; closed by combat alignment WP13 after WP12. Its group R1 was deferred there and is applied here | WP3; hand-off to WP13 in WP4 |
 | [Q0008](../questions/closed/) StarCraft II where the specification is silent (charter §8) | Standing rule | D-1 |
 

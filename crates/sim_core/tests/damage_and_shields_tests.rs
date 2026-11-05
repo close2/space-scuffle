@@ -6,8 +6,9 @@
 //! 3. Multi-hit armor reduction (e.g. Zealot dual attack applying armor reduction twice).
 //! 4. Minimum 0.5 HP damage clamping.
 //! 5. Circular concentric splash falloff (100% / 50% / 25%).
-//! 6. Shield regeneration waits for the archetype's catalog delay (`shield_regen_delay_ticks`)
-//!    after sustaining damage, for a shipped archetype and for a scratch one.
+//! 6. Shield and life regeneration wait for the archetype's catalog delays
+//!    (`shield_regen_delay_ticks`, `hp_regen_delay_ticks`) after sustaining damage, for a
+//!    shipped archetype and for scratch ones; any damage, to shields or life, restarts both.
 
 #![allow(
     clippy::unwrap_used,
@@ -56,6 +57,7 @@ fn dummy_target_archetype(
         life_armor,
         shield_armor,
         hp_regen_per_tick: SimScalar::ZERO,
+        hp_regen_delay_ticks: 0,
         shield_regen_per_tick: SimScalar::from_num(1),
         shield_regen_delay_ticks: Some(10),
         energy_regen_per_tick: SimScalar::ZERO,
@@ -396,6 +398,232 @@ fn a_scratch_archetype_with_a_10_tick_delay_regenerates_from_the_10th_tick_after
     world.catalog.register(scratch);
 
     assert_shields_regenerate_after_catalog_delay(&mut world, free_id, SimScalar::from_num(30));
+}
+
+/// An empty tick bundle for `tick`.
+fn empty_bundle(tick: u32) -> TickBundle {
+    TickBundle {
+        tick: Tick(tick),
+        commands: Vec::new(),
+        state_checksum: None,
+    }
+}
+
+/// A 64 × 64 flat world on the shipped catalog.
+fn flat_world(seed: u64) -> sim_core::SimWorld {
+    use sim_map::{CliffLevel, GameMap, MapCell};
+
+    let default_cell = MapCell::default_ground(CliffLevel(0));
+    let map = GameMap::new(64, 64, default_cell).expect("invariant: valid map");
+    sim_fixtures::world(map, seed)
+}
+
+/// Registers a scratch unit archetype under the first free unit type id: 100 life,
+/// regenerating 1 life per tick after `life_delay` ticks without damage. With `shields` it
+/// keeps the dummy's 50 shields (1 per tick after 10 ticks); without, it has none.
+fn register_life_regenerating_scratch(
+    world: &mut sim_core::SimWorld,
+    slug: &str,
+    life_delay: u16,
+    shields: bool,
+) -> UnitTypeId {
+    let mut scratch =
+        dummy_target_archetype(AttributeFlags::LIGHT, SimScalar::ZERO, SimScalar::ZERO);
+    let free_id = (1..=u16::MAX)
+        .map(UnitTypeId)
+        .find(|id| world.catalog.get(*id).is_err())
+        .expect("a free unit type id");
+    scratch.unit_type_id = free_id;
+    scratch.slug = slug.to_string();
+    scratch.name = slug.to_string();
+    scratch.hp_regen_per_tick = SimScalar::ONE;
+    scratch.hp_regen_delay_ticks = life_delay;
+    if !shields {
+        scratch.max_shields = SimScalar::ZERO;
+        scratch.shield_regen_per_tick = SimScalar::ZERO;
+        scratch.shield_regen_delay_ticks = None;
+    }
+    world.catalog.register(scratch);
+    free_id
+}
+
+/// Spawns one unit of `unit_type` for player 0 at (10, 10) and returns its id.
+fn spawn_one(world: &mut sim_core::SimWorld, unit_type: UnitTypeId) -> sim_types::EntityId {
+    world
+        .spawn_unit(
+            unit_type,
+            sim_types::PlayerId(0),
+            SimVec2::new(SimScalar::from_num(10), SimScalar::from_num(10)),
+        )
+        .expect("spawn unit")
+}
+
+/// Steps the world through each tick of `ticks`, asserting after each that the unit's life is
+/// still `held`.
+fn assert_life_holds(
+    world: &mut sim_core::SimWorld,
+    unit_id: sim_types::EntityId,
+    held: SimScalar,
+    ticks: std::ops::RangeInclusive<u32>,
+    why: &str,
+) {
+    for tick in ticks {
+        world.step(&empty_bundle(tick));
+        let unit = world.entities.get(&unit_id).expect("unit exists");
+        assert_eq!(unit.hp, held, "{why}: life must hold on tick {tick}");
+    }
+}
+
+/// Damages a fresh unit's life by `life_damage` through `Entity::apply_damage`, steps the
+/// world `delay - 1` empty ticks asserting that life holds, then one more and asserts that it
+/// rose by exactly the archetype's `hp_regen_per_tick`. The delay is the archetype's
+/// `hp_regen_delay_ticks`, counted in ticks (25 per Faster second) after the damage. Returns
+/// the life gained on that first regenerating tick.
+fn assert_life_regenerates_after_catalog_delay(
+    world: &mut sim_core::SimWorld,
+    unit_type: UnitTypeId,
+    life_damage: SimScalar,
+) -> SimScalar {
+    let (delay, rate) = {
+        let arch = world.catalog.get(unit_type).expect("archetype registered");
+        (arch.hp_regen_delay_ticks, arch.hp_regen_per_tick)
+    };
+    assert!(delay > 1, "the test needs at least one waiting tick");
+    assert!(rate > SimScalar::ZERO, "the archetype must regenerate life");
+    let unit_id = spawn_one(world, unit_type);
+    let damaged = {
+        let unit = world.entities.get_mut(&unit_id).expect("unit exists");
+        let before = unit.hp;
+        unit.apply_damage(SimScalar::ZERO, life_damage, SimAngle::ZERO);
+        assert_eq!(unit.hp, before - life_damage);
+        assert_eq!(unit.ticks_since_last_damage, 0);
+        unit.hp
+    };
+    assert_life_holds(
+        world,
+        unit_id,
+        damaged,
+        1..=u32::from(delay) - 1,
+        "Life must not regenerate before the catalog delay",
+    );
+    world.step(&empty_bundle(u32::from(delay)));
+    let unit = world.entities.get(&unit_id).expect("unit exists");
+    assert_eq!(
+        unit.hp,
+        damaged + rate,
+        "Life must regenerate by its rate on tick {delay} after the damage"
+    );
+    unit.hp - damaged
+}
+
+#[test]
+fn a_scratch_archetype_with_a_10_tick_life_delay_regenerates_from_the_10th_tick_after_damage() {
+    let mut world = flat_world(0x5555_AAAA);
+    let scratch = register_life_regenerating_scratch(&mut world, "scratch_life_delay", 10, false);
+    let gained =
+        assert_life_regenerates_after_catalog_delay(&mut world, scratch, SimScalar::from_num(20));
+    assert_eq!(gained, SimScalar::ONE);
+}
+
+#[test]
+fn test_life_regeneration_waits_for_the_catalog_delay() {
+    let mut world = flat_world(0x5555_AAAA);
+    // Found by property, not by slug: the shipped archetype with the longest life delay.
+    let (unit_type, delay) = world
+        .catalog
+        .archetypes()
+        .map(|arch| (arch.unit_type_id, arch.hp_regen_delay_ticks))
+        .max_by_key(|&(id, delay)| (delay, std::cmp::Reverse(id)))
+        .expect("the shipped catalog is not empty");
+    assert!(
+        delay > 0,
+        "some shipped archetype must wait before regenerating life"
+    );
+    let gained =
+        assert_life_regenerates_after_catalog_delay(&mut world, unit_type, SimScalar::from_num(20));
+    let rate = world
+        .catalog
+        .get(unit_type)
+        .expect("archetype registered")
+        .hp_regen_per_tick;
+    assert_eq!(gained, rate);
+}
+
+#[test]
+fn life_regeneration_without_a_delay_runs_on_the_tick_after_damage() {
+    let mut world = flat_world(0x5555_AAAA);
+    let scratch = register_life_regenerating_scratch(&mut world, "scratch_life_no_delay", 0, false);
+    let unit_id = spawn_one(&mut world, scratch);
+    let damaged = {
+        let unit = world.entities.get_mut(&unit_id).expect("unit exists");
+        unit.apply_damage(SimScalar::ZERO, SimScalar::from_num(20), SimAngle::ZERO);
+        unit.hp
+    };
+    world.step(&empty_bundle(1));
+    let unit = world.entities.get(&unit_id).expect("unit exists");
+    assert_eq!(
+        unit.hp,
+        damaged + SimScalar::ONE,
+        "A delay of 0 regenerates on the first tick after the damage"
+    );
+}
+
+#[test]
+fn shield_damage_alone_restarts_the_life_regeneration_delay() {
+    let mut world = flat_world(0x5555_AAAA);
+    let scratch = register_life_regenerating_scratch(&mut world, "scratch_shared_delay", 10, true);
+    let unit_id = spawn_one(&mut world, scratch);
+    let damaged = {
+        let unit = world.entities.get_mut(&unit_id).expect("unit exists");
+        unit.apply_damage(SimScalar::ZERO, SimScalar::from_num(20), SimAngle::ZERO);
+        unit.hp
+    };
+    assert_life_holds(
+        &mut world,
+        unit_id,
+        damaged,
+        1..=5,
+        "Life damage starts the delay",
+    );
+    {
+        let unit = world.entities.get_mut(&unit_id).expect("unit exists");
+        unit.apply_damage(SimScalar::from_num(10), SimScalar::ZERO, SimAngle::ZERO);
+        assert_eq!(unit.hp, damaged, "the shield hit must not touch life");
+    }
+    assert_life_holds(
+        &mut world,
+        unit_id,
+        damaged,
+        6..=14,
+        "A shield-only hit restarts the life delay",
+    );
+    world.step(&empty_bundle(15));
+    let unit = world.entities.get(&unit_id).expect("unit exists");
+    assert_eq!(
+        unit.hp,
+        damaged + SimScalar::ONE,
+        "Life must regenerate on the 10th tick after the shield hit"
+    );
+}
+
+#[test]
+fn a_unit_never_damaged_regenerates_life_at_once() {
+    let mut world = flat_world(0x5555_AAAA);
+    let scratch = register_life_regenerating_scratch(&mut world, "scratch_never_hit", 10, false);
+    let unit_id = spawn_one(&mut world, scratch);
+    let lowered = {
+        let unit = world.entities.get_mut(&unit_id).expect("unit exists");
+        assert_eq!(unit.ticks_since_last_damage, u16::MAX);
+        unit.hp -= SimScalar::from_num(20);
+        unit.hp
+    };
+    world.step(&empty_bundle(1));
+    let unit = world.entities.get(&unit_id).expect("unit exists");
+    assert_eq!(
+        unit.hp,
+        lowered + SimScalar::ONE,
+        "A unit never damaged satisfies any delay"
+    );
 }
 
 /// Test 7: Verify that splash with friendly_fire == true damages nearby allied units,
