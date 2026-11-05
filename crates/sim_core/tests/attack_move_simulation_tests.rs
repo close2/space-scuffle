@@ -281,6 +281,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         acceleration: SimScalar::from_num(0.1),
         deceleration: SimScalar::from_num(0.1),
         turn_rate: SimAngle::from_degrees(360),
+        turn_before_move: false,
         collision_radius: SimScalar::from_num(0.6),
         separation_radius: SimScalar::from_num(0.7),
         push_priority: 30,

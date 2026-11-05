@@ -6,7 +6,14 @@
 //! archetype's `turn_rate` at the start of the movement phase. So the movement phase (facing
 //! the velocity or the goal) and the weapon phase (aiming a hull-mounted weapon) together turn
 //! the hull at most `turn_rate` in one tick, a hull-mounted weapon waits for the hull, a turret
-//! turns at its own rate in the weapon phase only, and translation is never gated by facing.
+//! turns at its own rate in the weapon phase only.
+//!
+//! Translation is gated by facing only for archetypes flagged `turn_before_move` (plan
+//! `2026-11-05-turn-before-move`, Q0050): such a unit translates by its own motion on a tick only
+//! if, after that tick's hull turn, its heading equals the direction of its step. While the step
+//! lies further from its heading than one tick's turn, it turns in place and keeps its order.
+//! Collision pushes are not gated. Every other archetype moves along its path at once while its
+//! hull follows.
 //!
 //! # How it fits
 //! The tests drive the public world API (`SimWorld::step`) on a flat map and read headings,
@@ -43,10 +50,19 @@ struct Shooter {
     arc: f32,
     /// Turret rate in degrees per tick, or `None` for a hull-mounted weapon.
     turret: Option<f32>,
+    /// Whether the hull must face a step before the shooter takes it (`turn_before_move`).
+    turn_before_move: bool,
 }
 
 /// One scratch unit in the catalog's RON form.
-fn unit_ron(slug: &str, id: u16, turn_rate: f32, max_speed: f32, weapon: &str) -> String {
+fn unit_ron(
+    slug: &str,
+    id: u16,
+    turn_rate: f32,
+    max_speed: f32,
+    turn_before_move: bool,
+    weapon: &str,
+) -> String {
     format!(
         r#"(
             slug: "{slug}",
@@ -73,6 +89,7 @@ fn unit_ron(slug: &str, id: u16, turn_rate: f32, max_speed: f32, weapon: &str) -
             acceleration: {max_speed:.3},
             deceleration: {max_speed:.3},
             turn_rate_deg_per_tick: {turn_rate:.2},
+            turn_before_move: {turn_before_move},
             collision_radius: 0.5,
             separation_radius: 0.5,
             push_priority: 20,
@@ -119,8 +136,15 @@ fn catalog_ron(shooter: Shooter) -> String {
     );
     format!(
         "(units: [{}, {}])",
-        unit_ron(SHOOTER, 1, shooter.turn_rate, shooter.max_speed, &weapon),
-        unit_ron(TARGET, 2, 180.0, 0.1, "None"),
+        unit_ron(
+            SHOOTER,
+            1,
+            shooter.turn_rate,
+            shooter.max_speed,
+            shooter.turn_before_move,
+            &weapon,
+        ),
+        unit_ron(TARGET, 2, 180.0, 0.1, false, "None"),
     )
 }
 
@@ -220,6 +244,34 @@ impl Bench {
             .position)
     }
 
+    /// The shooter's velocity, world units per tick.
+    fn velocity(&self) -> Result<SimVec2, Box<dyn std::error::Error>> {
+        Ok(self
+            .world
+            .entities
+            .get(&self.shooter)
+            .ok_or("shooter")?
+            .velocity)
+    }
+
+    /// The shooter's front order, if any.
+    fn front_order(&self) -> Result<Option<UnitOrder>, Box<dyn std::error::Error>> {
+        Ok(self
+            .world
+            .entities
+            .get(&self.shooter)
+            .ok_or("shooter")?
+            .order_queue
+            .front()
+            .cloned())
+    }
+
+    /// The shooter's speed in world units per tick, as the catalog read it.
+    fn speed(&self) -> Result<SimScalar, Box<dyn std::error::Error>> {
+        let id = self.world.catalog.id_by_slug(SHOOTER).ok_or("shooter")?;
+        Ok(self.world.catalog.get(id)?.max_speed)
+    }
+
     /// The shooter's hull rate in binary units per tick, as the catalog read it.
     fn rate(&self) -> Result<u16, Box<dyn std::error::Error>> {
         let id = self.world.catalog.id_by_slug(SHOOTER).ok_or("shooter")?;
@@ -246,6 +298,7 @@ fn a_unit_facing_away_starts_its_swing_after_turning() -> TestResult {
         max_speed: 0.0,
         arc: 15.0,
         turret: None,
+        turn_before_move: false,
     };
     let mut bench = Bench::new(shooter, 7, 16)?;
     let target = bench.target;
@@ -270,6 +323,7 @@ fn a_hull_never_turns_more_than_its_rate_in_one_tick() -> TestResult {
         max_speed: 0.15,
         arc: 15.0,
         turret: None,
+        turn_before_move: false,
     };
     let mut bench = Bench::new(shooter, 4, 16)?;
     let rate = bench.rate()?;
@@ -303,6 +357,7 @@ fn a_hull_weapon_turns_at_the_hull_rate_not_a_turret_rate() -> TestResult {
         max_speed: 0.0,
         arc: 15.0,
         turret: None,
+        turn_before_move: false,
     };
     let mut bench = Bench::new(shooter, 7, 16)?;
     let target = bench.target;
@@ -322,6 +377,7 @@ fn a_turret_turns_at_its_own_rate_while_the_hull_turns_at_its_rate() -> TestResu
         max_speed: 0.15,
         arc: 15.0,
         turret: Some(10.0),
+        turn_before_move: false,
     };
     let mut bench = Bench::new(shooter, 7, 16)?;
     let target = bench.target;
@@ -361,6 +417,7 @@ fn a_moving_unit_keeps_its_path_while_its_heading_follows() -> TestResult {
         max_speed: 0.15,
         arc: 15.0,
         turret: None,
+        turn_before_move: false,
     };
     let mut bench = Bench::new(shooter, 40, 40)?;
     let west = SimVec2::new(SimScalar::from_i32(2), SimScalar::from_i32(16));
@@ -382,6 +439,7 @@ fn a_rate_of_180_turns_any_facing_in_one_tick() -> TestResult {
         max_speed: 0.0,
         arc: 15.0,
         turret: None,
+        turn_before_move: false,
     };
     let mut bench = Bench::new(shooter, 7, 16)?;
     let target = bench.target;
@@ -401,6 +459,7 @@ fn turning_is_deterministic_and_its_budget_is_not_hashed() -> TestResult {
         max_speed: 0.15,
         arc: 15.0,
         turret: None,
+        turn_before_move: false,
     };
     let mut first = Bench::new(shooter, 4, 20)?;
     let mut second = Bench::new(shooter, 4, 20)?;
@@ -416,6 +475,25 @@ fn turning_is_deterministic_and_its_budget_is_not_hashed() -> TestResult {
             "tick {tick}"
         );
     }
+    let mut pivots = [Bench::new(PIVOT, 40, 40)?, Bench::new(PIVOT, 40, 40)?];
+    for tick in 0..20_u32 {
+        for bench in &mut pivots {
+            let order = (tick == 0).then(|| {
+                (
+                    bench.shooter,
+                    UnitOrder::Move {
+                        target: point(2, 16),
+                    },
+                )
+            });
+            bench.step(order);
+        }
+        assert_eq!(
+            pivots[0].world.last_checksum(),
+            pivots[1].world.last_checksum(),
+            "flagged reversal, tick {tick}"
+        );
+    }
     let before = second.world.compute_checksum();
     let entity = second
         .world
@@ -424,5 +502,141 @@ fn turning_is_deterministic_and_its_budget_is_not_hashed() -> TestResult {
         .ok_or("shooter")?;
     entity.hull_turn_budget = entity.hull_turn_budget.wrapping_add(1);
     assert_eq!(second.world.compute_checksum(), before);
+    Ok(())
+}
+
+/// A mobile shooter with a hull weapon at 20.16° per tick that must face its steps.
+const PIVOT: Shooter = Shooter {
+    turn_rate: 20.16,
+    max_speed: 0.15,
+    arc: 15.0,
+    turret: None,
+    turn_before_move: true,
+};
+
+/// A world point from whole coordinates.
+fn point(x: i32, y: i32) -> SimVec2 {
+    SimVec2::new(SimScalar::from_i32(x), SimScalar::from_i32(y))
+}
+
+#[test]
+fn a_turn_before_move_unit_turns_in_place_on_a_reversal() -> TestResult {
+    // 180° at 3 670 units per tick: 8 ticks in place (29 360), the 9th fits the remaining 3 408.
+    let mut bench = Bench::new(PIVOT, 40, 40)?;
+    let (rate, speed, start) = (bench.rate()?, bench.speed()?, bench.position()?);
+    let west = point(2, 16);
+    let mut before = bench.heading()?;
+    for tick in 1..=8_u32 {
+        let order = (tick == 1).then_some((bench.shooter, UnitOrder::Move { target: west }));
+        bench.step(order);
+        assert_eq!(bench.position()?, start, "tick {tick} must not translate");
+        // Zero velocity makes a turning unit "still" for the contact rules (plan D-4).
+        assert_eq!(bench.velocity()?, SimVec2::ZERO, "tick {tick}");
+        assert_eq!(turned(before, bench.heading()?), rate, "tick {tick}");
+        before = bench.heading()?;
+    }
+    bench.step(None);
+    assert_eq!(bench.heading()?, facing(start, west), "tick 9 faces west");
+    assert_eq!(
+        bench.position()?,
+        start - SimVec2::new(speed, SimScalar::ZERO)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_turn_before_move_unit_does_not_stop_for_a_gentle_turn() -> TestResult {
+    // (20, 5) from the shooter is 14.04° off its heading, within one tick's 20.16°.
+    let mut bench = Bench::new(PIVOT, 40, 40)?;
+    let start = bench.position()?;
+    bench.step(Some((
+        bench.shooter,
+        UnitOrder::Move {
+            target: point(30, 21),
+        },
+    )));
+    assert_ne!(bench.position()?, start, "the first tick must translate");
+    let velocity = bench.velocity()?;
+    assert_eq!(bench.heading()?, SimAngle::atan2(velocity.y, velocity.x));
+    Ok(())
+}
+
+#[test]
+fn a_turn_before_move_unit_moves_on_the_tick_its_remaining_turn_fits() -> TestResult {
+    // (12, 7) from the shooter is 30.26° off: one tick in place, then the remaining 10.1° fits.
+    let mut bench = Bench::new(PIVOT, 40, 40)?;
+    let (rate, start) = (bench.rate()?, bench.position()?);
+    bench.step(Some((
+        bench.shooter,
+        UnitOrder::Move {
+            target: point(22, 23),
+        },
+    )));
+    assert_eq!(bench.position()?, start, "tick 1 turns in place");
+    assert_eq!(turned(SimAngle::ZERO, bench.heading()?), rate);
+    bench.step(None);
+    assert_ne!(bench.position()?, start, "tick 2 translates");
+    let velocity = bench.velocity()?;
+    assert_eq!(bench.heading()?, SimAngle::atan2(velocity.y, velocity.x));
+    Ok(())
+}
+
+#[test]
+fn a_turn_before_move_unit_turns_before_it_chases_a_target_behind_it() -> TestResult {
+    // The target stands 8 units behind, out of the 6-unit range (7 with both radii).
+    let mut bench = Bench::new(PIVOT, 2, 16)?;
+    let (rate, start, target) = (bench.rate()?, bench.position()?, bench.target);
+    let mut before = bench.heading()?;
+    for tick in 1..=8_u32 {
+        let order = (tick == 1).then(|| (bench.shooter, UnitOrder::attack(target)));
+        bench.step(order);
+        assert_eq!(bench.position()?, start, "tick {tick} must not translate");
+        assert_eq!(turned(before, bench.heading()?), rate, "tick {tick}");
+        before = bench.heading()?;
+    }
+    bench.step(None);
+    assert!(bench.position()?.x < start.x, "tick 9 closes on the target");
+    let velocity = bench.velocity()?;
+    assert_eq!(bench.heading()?, SimAngle::atan2(velocity.y, velocity.x));
+    Ok(())
+}
+
+#[test]
+fn turning_in_place_neither_finishes_nor_shortens_the_order() -> TestResult {
+    // A goal 0.1 behind lies within one step, so an unflagged unit would arrive on tick 1.
+    let mut bench = Bench::new(PIVOT, 40, 40)?;
+    let start = bench.position()?;
+    let goal = start - SimVec2::new(SimScalar::from_num(0.1), SimScalar::ZERO);
+    let order = UnitOrder::Move { target: goal };
+    let mut arrived = None;
+    for tick in 1..=12_u32 {
+        bench.step((tick == 1).then(|| (bench.shooter, order.clone())));
+        if bench.position()? == goal {
+            arrived = Some(tick);
+            assert_eq!(bench.heading()?, facing(start, goal), "it faces the goal");
+            assert_eq!(bench.front_order()?, None, "arriving ends the order");
+            break;
+        }
+        assert_eq!(bench.position()?, start, "tick {tick}");
+        assert_eq!(bench.front_order()?, Some(order.clone()), "tick {tick}");
+    }
+    assert_eq!(arrived, Some(9));
+    Ok(())
+}
+
+#[test]
+fn a_turn_before_move_unit_on_hold_position_turns_to_fire_and_never_moves() -> TestResult {
+    let mut bench = Bench::new(PIVOT, 7, 16)?;
+    let start = bench.position()?;
+    let mut first_swing = None;
+    for tick in 1..=20_u32 {
+        let order = (tick == 1).then_some((bench.shooter, UnitOrder::HoldPosition));
+        bench.step(order);
+        assert_eq!(bench.position()?, start, "tick {tick}");
+        if first_swing.is_none() && matches!(bench.phase()?, WeaponPhase::Windup { .. }) {
+            first_swing = Some(tick);
+        }
+    }
+    assert!(first_swing.is_some(), "the held unit turns and fires");
     Ok(())
 }

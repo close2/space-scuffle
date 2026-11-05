@@ -9,9 +9,12 @@
 
 use super::{StructureArchetypeDef, UnitArchetypeDef, UnitModeSpecDef, WeaponSpecDef};
 use crate::error::{SimCoreError, SimResult};
+use crate::movement::tuning::STALL_REPATH_TICKS;
 use crate::weapon_timing::AttackRate;
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
-use sim_types::{AbilityEffectSpec, AbilitySpec, ProjectileTargetLossBehavior, SimScalar};
+use sim_types::{
+    AbilityEffectSpec, AbilitySpec, ProjectileTargetLossBehavior, SimAngle, SimScalar,
+};
 
 fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
     SimCoreError::CatalogInvalidValue {
@@ -129,6 +132,42 @@ fn hp_regen_delay(definition: &str, regenerates: bool, delay: u16) -> SimResult<
             definition,
             "hp_regen_delay_ticks",
             "must be zero when hp_regen_per_tick is zero",
+        ));
+    }
+    Ok(())
+}
+
+/// Checks `turn_before_move` against the unit's speed and hull rate. Runs after the hull rate
+/// itself is validated, so `turn_rate_deg_per_tick` lies in `0 < rate <= 180`.
+///
+/// A flag on a unit that cannot move is a value nothing reads. A flagged unit gains no ground
+/// while it turns in place, so the stall counter of an order counts those ticks: a hull that
+/// needed more than `STALL_REPATH_TICKS` ticks to face a reversal would drop its route mid-turn
+/// (and at very low rates abandon the order). The ticks to the first step of a reversal are
+/// `ceil(32 768 ÷ rate)` in binary units per tick, computed with the loader's own conversion.
+fn turn_before_move(
+    definition: &str,
+    flagged: bool,
+    max_speed: f32,
+    turn_rate_deg_per_tick: f32,
+) -> SimResult<()> {
+    if !flagged {
+        return Ok(());
+    }
+    if max_speed <= 0.0 {
+        return Err(invalid(
+            definition,
+            "turn_before_move",
+            "must be false when max_speed is zero",
+        ));
+    }
+    let rate = u32::from(super::binary_angle(turn_rate_deg_per_tick).raw());
+    let half_turn = u32::from(SimAngle::DEG_180.raw());
+    if rate == 0 || half_turn.div_ceil(rate) > u32::from(STALL_REPATH_TICKS) {
+        return Err(invalid(
+            definition,
+            "turn_before_move",
+            "requires a hull rate that turns half a turn within the stall repath window (25 ticks)",
         ));
     }
     Ok(())
@@ -268,6 +307,7 @@ impl UnitArchetypeDef {
         sight(&self.slug, "sight_radius", f64::from(self.sight_radius))?;
         let hull_rate = self.turn_rate_deg_per_tick;
         rate_per_tick(&self.slug, "turn_rate_deg_per_tick", hull_rate)?;
+        turn_before_move(&self.slug, self.turn_before_move, self.max_speed, hull_rate)?;
         self.validate_regeneration_delays()?;
         for (name, weapon) in [
             ("weapon", &self.weapon),
@@ -883,6 +923,66 @@ mod tests {
                     "{rate}"
                 );
             }
+        }
+        Ok(())
+    }
+
+    /// The first shipped unit that moves, as authored.
+    fn shipped_mobile_unit() -> Result<crate::catalog::UnitArchetypeDef, Box<dyn std::error::Error>>
+    {
+        use crate::catalog::CatalogFile;
+        let units = include_str!("../../../../assets/catalog/units.ron");
+        let file: CatalogFile = ron::from_str(units)?;
+        Ok(file
+            .units
+            .into_iter()
+            .find(|unit| unit.max_speed > 0.0)
+            .ok_or("real catalog has no unit that moves")?)
+    }
+
+    #[test]
+    fn turn_before_move_is_rejected_on_a_unit_that_cannot_move(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut unit = shipped_mobile_unit()?;
+        unit.turn_before_move = true;
+        unit.validate()?;
+        unit.max_speed = 0.0;
+        assert_eq!(rejected_field(&unit.validate()), Some("turn_before_move"));
+        Ok(())
+    }
+
+    #[test]
+    fn turn_before_move_needs_a_half_turn_within_the_stall_repath_window(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 7.2° is 1 311 units: 25 ticks to face a reversal; 7.19° is 1 309 units: 26 ticks.
+        for (rate, valid) in [(7.2_f32, true), (7.19, false), (20.16, true), (180.0, true)] {
+            let mut unit = shipped_mobile_unit()?;
+            unit.turn_before_move = true;
+            unit.turn_rate_deg_per_tick = rate;
+            let result = unit.validate();
+            if valid {
+                assert!(result.is_ok(), "{rate}: {result:?}");
+            } else {
+                assert_eq!(rejected_field(&result), Some("turn_before_move"), "{rate}");
+            }
+            unit.turn_before_move = false;
+            assert!(unit.validate().is_ok(), "{rate} unflagged");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_omitted_turn_before_move_reads_as_false() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::CatalogFile;
+        let text = include_str!("../../../../assets/catalog/units.ron")
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("turn_before_move:"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let file: CatalogFile = ron::from_str(&text)?;
+        assert!(!file.units.is_empty());
+        for unit in &file.units {
+            assert!(!unit.turn_before_move, "unit {}", unit.slug);
         }
         Ok(())
     }
