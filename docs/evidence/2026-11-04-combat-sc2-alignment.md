@@ -1503,3 +1503,12 @@ lock on new orders changes who reaches whom.
 **Battle 33, 68 seeds: bit-identical.** **`golden_replay.ron` re-recorded from checkpoint 4** (ticks 151 to 200,
 its `rhino_beetle` and `railgun_crawler` squads' first fights); `golden_replay_orders.ron` unchanged. Debug, release
 and `wasm32-wasip1` reproduce both. No doc 07 or doc 08 cell states a backswing.
+
+### 13.18 D2: the worker's backswing (Q0045 2b, class D)
+
+`welder_drone` `backswing_ticks` 6 → **9**: the `CWeapon` default 0.5 Normal s (`core` WeaponData:18), 8.93 ticks.
+Plan 17 had chosen 6 for a readable animation (audit §6 item 2); the owner answered Q0045 item 2 with (b), 9. The
+other two workers already received 9 in W5. Measured: **whole matrix bit-identical** (battle 22a's two SCVs keep their
+outcome: after WP1 the backswing never delays the next swing, and anchoring them three more ticks changes nothing
+there), battle 33 bit-identical, both golden replays unchanged in debug, release and `wasm32-wasip1`. No doc 07 or
+doc 08 cell states the backswing.

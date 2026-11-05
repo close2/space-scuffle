@@ -53,7 +53,7 @@
                 attacks_count: 1,
                 period_ticks: 27,
                 damage_point_ticks: 3,
-                backswing_ticks: 6,
+                backswing_ticks: 9,
                 splash: None,
                 projectile_speed: None,
                 weapon_class: None,
