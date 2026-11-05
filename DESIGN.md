@@ -179,9 +179,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-28 | Six weapon mounts (turret or hull) differ | WP10 |
 | B-29 | No acquisition arc separate from the firing arc | WP10 |
 | B-30 | An idle turret keeps its last angle | WP10 |
-| B-32 | `Entity::apply_stimpack` hard-codes Stimpack around the catalog | WP3 |
-| B-33 | Stim admitted at any life above 1 | WP3 |
-| B-34 | Units with energy start at maximum | WP3 |
+| B-33 | Stim admitted at any life above 1 (the game's rule not sourced; [Q0053](docs/questions/open/0053-stimpack-at-low-life.md)) | Q0053 |
 | B-35 | No energy regeneration delay | WP15 |
 | B-36 | Unfinished structures regenerate life | WP15 |
 | B-38 | No burrowed Roach regeneration and no Tunneling Claws | WP15, WP18 |
@@ -214,7 +212,6 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-68 | 14 researchable upgrades have no effect | WP13d, WP18 |
 | B-69 | Missing abilities and spells | WP18 |
 | B-70 | No Graviton Beam | WP18 |
-| B-72 | Doc 03 states start energy the engine does not use | WP3 |
 | B-74 | Code comments claim exact parity for spillover and splash | WP7, WP8a |
 | B-76 | Hard-coded threat categories | WP4 |
 | B-77 | Hard-coded Concussive slow | WP13d |

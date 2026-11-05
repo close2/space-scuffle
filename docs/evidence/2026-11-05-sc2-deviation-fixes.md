@@ -180,3 +180,40 @@ every mode. A cliff walker (the Colossus analogue) is in both planes, so an air 
   maximum and a negative start rejected, for units and structures).
 - **Latent, proved.** Matrix and battle 33 bit-identical to §3.1; both golden replays unchanged (a unit's energy is
   hashed, and every unit still starts at its maximum).
+
+### 3.4 Commit d: the reference start energies (B-34, B-72)
+
+- **Research** (`EnergyStart`, `UnitData`; `EnergyMax` is 200 for each unless stated, `liberty` unless stated):
+
+| Analogue (archetype) | `EnergyStart` | Where |
+|---|---|---|
+| Phoenix (`flying_saucer`) | 50 | UnitData:3727 |
+| Ghost (`specter_android`) | 75 | `voidmulti` UnitData:600 |
+| Medivac (`repair_shuttle`) | 50 | UnitData:5439 |
+| Banshee (`cloak_gunship`) | 50 | UnitData:5372 |
+| Raven (`omni_probe_drone`) | 50 | UnitData:5633 |
+| Sentry (`prism_weaver`) | 50 | UnitData:11296 |
+| High Templar (`cerebral_elder`) | 50 | UnitData:3250 |
+| Queen (`hive_matron`) | 25 | UnitData:11414 |
+| Infestor (`mycelium_shaman`) | 75 | `voidmulti` UnitData:831 |
+| Viper (`tongue_chameleon`) | 50 | `swarm` UnitData:2334 |
+| Orbital Command (`orbital_relay_dome`) | 50 | UnitData:10513 |
+| Nexus (`citadel_nexus_dome`) | 50 | `voidmulti` UnitData:1096 |
+| Shield Battery (`harmonic_recharge_dome`), `EnergyMax` 100 | 50 | `voidmulti` UnitData:1563 |
+
+  Each value was read along the layer chain; the last layer that sets it wins (the Ghost's and the Infestor's 75 are
+  `voidmulti` overrides). These are all 13 archetypes with energy. The plan named the units; the three structures
+  are included because commit c gave structures the same field, and leaving them at their maximum would have kept
+  B-34 for them.
+- **Test first:** `weapon_catalog_rules_tests::b34_everything_with_energy_starts_with_its_starcraft_energy` (each
+  archetype found through its analogue, spawned, its energy compared; and the table must cover every archetype
+  with energy). It failed on commit c's data (`flying_saucer` started with 200; with the unit values alone,
+  `orbital_relay_dome` with 200) and passes now. The rejection case of §3.3 was restated in a test-only commit
+  before (its edit produced 150 from a start of 50, which loads).
+- **Measurement** against §3.3: whole matrix bit-identical (no matrix battle spends energy); battle 33
+  bit-identical.
+- **`golden_replay_orders.ron` re-recorded:** its `blue_spotter` (`flying_saucer`) starts with 50 energy, which is
+  hashed, so every checkpoint changed from checkpoint 1. No behaviour changed: with `energy` moved to the unhashed
+  fields of the encoding in a throwaway build, the 60 checkpoints on this commit's data equal those on commit c's.
+  `golden_replay.ron` unchanged (none of its units has energy). Debug, release and `wasm32-wasip1` reproduce both.
+- **Doc 03** §1.1 states the per-unit start and names `start_energy` (B-72).

@@ -350,6 +350,71 @@ fn s16_unit_vitals_and_geometry_must_be_usable() {
     );
 }
 
+/// `StarCraft` II 5.0.14 `EnergyStart` of every unit and structure whose analogue has energy, as
+/// the name an archetype's `sc2_analogue` begins with, the value, and where the data set it
+/// (`SC2GameData` `5444e12f13`, `UnitData`; plan `2026-11-05-sc2-deviation-fixes` WP3, B-34).
+/// `EnergyMax` is 200 for each, 100 for the Shield Battery.
+const SC2_ENERGY_START: [(&str, f32, &str); 13] = [
+    ("Phoenix", 50.0, "liberty UnitData:3727"),
+    ("Ghost", 75.0, "voidmulti UnitData:600"),
+    ("Medivac", 50.0, "liberty UnitData:5439"),
+    ("Banshee", 50.0, "liberty UnitData:5372"),
+    ("Raven", 50.0, "liberty UnitData:5633"),
+    ("Sentry", 50.0, "liberty UnitData:11296"),
+    ("High Templar", 50.0, "liberty UnitData:3250"),
+    ("Queen", 25.0, "liberty UnitData:11414"),
+    ("Infestor", 75.0, "voidmulti UnitData:831"),
+    ("Viper", 50.0, "swarm UnitData:2334"),
+    ("Orbital Command", 50.0, "liberty UnitData:10513"),
+    ("Nexus", 50.0, "voidmulti UnitData:1096"),
+    ("Shield Battery", 50.0, "voidmulti UnitData:1563"),
+];
+
+#[test]
+fn b34_everything_with_energy_starts_with_its_starcraft_energy() -> TestResult {
+    let mut world = flat_world(64)?;
+    let mut checked = 0;
+    for (index, (unit, start, source)) in (0_u32..).zip(SC2_ENERGY_START) {
+        // Each spawns on its own 10-cell square, clear of the others' footprints.
+        let (x, y) = (4 + (index % 6) * 10, 4 + (index / 6) * 10);
+        let (slug, type_id, is_structure) = archetypes_with_analogue(&world, unit)
+            .next()
+            .map(|archetype| {
+                (
+                    archetype.slug.clone(),
+                    archetype.unit_type_id,
+                    archetype
+                        .attributes
+                        .contains(sim_types::AttributeFlags::STRUCTURE),
+                )
+            })
+            .ok_or("an archetype with the analogue")?;
+        let id = if is_structure {
+            world.spawn_structure(type_id, PlayerId(0), x, y)?
+        } else {
+            let at = SimVec2::from_i32(i32::try_from(x)?, i32::try_from(y)?);
+            spawn_unit(&mut world, &slug, 0, at)?
+        };
+        let energy = world.entities.get(&id).ok_or("spawned")?.energy;
+        assert_eq!(
+            energy,
+            SimScalar::from_num(start),
+            "{slug} ({unit}) must start with {start} energy ({source})"
+        );
+        checked += 1;
+    }
+    let with_energy = world
+        .catalog
+        .archetypes()
+        .filter(|archetype| archetype.max_energy > SimScalar::ZERO)
+        .count();
+    assert_eq!(
+        checked, with_energy,
+        "every archetype with energy is listed"
+    );
+    Ok(())
+}
+
 #[test]
 fn b34_start_energy_must_lie_between_zero_and_the_maximum() {
     // The first caster's pool: `max_energy: 200.0` followed by its start energy. A leading 9

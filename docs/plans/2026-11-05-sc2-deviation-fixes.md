@@ -782,9 +782,9 @@ requires.
 | B-29 | No acquisition arc | (i) | WP10 |
 | B-30 | A turret keeps its angle when idle | (i) | WP10; it sets the delay of the first shot after idling |
 | B-31 | `StationaryTurningRate` | Fixed | turn-before-move WP5 `2522e3f`, WP6 `408d3b7` |
-| B-32 | Hard-coded Stimpack path | (i) | WP3 |
-| B-33 | Stim admitted at any life above 1 | (i) | WP3. It may allow more than the game, but whether a low-life Marine can stim changes how the unit is played, so it is not a detail |
-| B-34 | Energy starts at maximum | (i) | WP3 |
+| B-32 | Hard-coded Stimpack path | Fixed | WP3 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §3) |
+| B-33 | Stim admitted at any life above 1 | (i) | WP3. It may allow more than the game, but whether a low-life Marine can stim changes how the unit is played, so it is not a detail. WP3 could not source the game's rule (U-8): [Q0053](../questions/open/0053-stimpack-at-low-life.md), default no change |
+| B-34 | Energy starts at maximum | Fixed | WP3 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §3) |
 | B-35 | No energy regeneration delay | (i) | WP15 |
 | B-36 | Unfinished structures regenerate life | (i) | WP15 |
 | B-37 | Whether Stimpack's life cost restarts the regeneration delays | (ii) | No shipped unit can reach it: the two archetypes with an Overclock (Stimpack) spec have `hp_regen_per_tick: 0.00`, and no other ability costs life. It returns to (i) if a catalog change gives one unit both. WP15 drops it and U-9 |
@@ -822,7 +822,7 @@ requires.
 | B-69 | Missing abilities | (i) | WP18 |
 | B-70 | No Graviton Beam | (i) | WP18 |
 | B-71 | Doc 03 random delay range | Fixed | WP0, in this amendment's commit |
-| B-72 | Doc 03 start energy | (i) | WP3 |
+| B-72 | Doc 03 start energy | Fixed | WP3 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §3) |
 | B-73 | Doc 07 claims mechanics we lack | Fixed | WP0: each cell names its bug ID; the mechanics stay open as B-14, B-18 to B-22, B-26, B-42 and B-69 |
 | B-74 | Code comments claim exact parity | (i) | WP7, WP8a |
 | B-75 | Doc 03 "Turn Rate & Stationary Turn Rate" | Fixed | True since B-31 was fixed; no edit needed |
@@ -859,3 +859,23 @@ S-6 of §4 (confirmed in [Q0052](../questions/closed/0052-sanctioned-sc2-deviati
 
 **WP0 items 3, 5 and 6** are done on the same branch: the bug register in `DESIGN.md` §4, the doc fixes B-71 and B-73
 in docs 03 and 07, and the hand-off line in plan `2026-11-04-combat-sc2-alignment` WP13.
+
+## Amendment 3 (WP1 to WP3, 2026-11-05): what the implementation changed
+
+Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §1 to §3.
+
+- **Fixed:** B-1 (WP1), B-25 and B-26 (WP2), B-32 and B-34 (WP3), B-72 (WP3, doc 03). B-27 is narrowed to its mode
+  part: the Liberator analogue no longer attacks the ground at all until WP18 adds Defender Mode.
+- **New, found and fixed: B-79.** A unit armed only against air froze its weapon cooldown and backswing while it had
+  no target: the weapon step resolved its weapon against the ground plane, found none and skipped the unit. In
+  StarCraft II the cooldown runs whatever the unit does. WP2's data change exposed it (battle 35, one seed), so a rule
+  commit came first and the data commit then moved nothing the matrix measures (evidence §2.2).
+- **B-33 not sourced (U-8):** [Q0053](../questions/open/0053-stimpack-at-low-life.md), default no change; B-33 stays
+  in the register.
+- **WP2's test** finds the three archetypes through their `sc2_analogue` and checks them against the cited
+  `TargetFilters`. The catalog has no field that marks a weapon air-only, so a test "by property" (§7 WP2 item 2)
+  could only restate the data it checks.
+- **WP3 c and d** cover structures as well as units: commit c's required `start_energy` is on both definitions, and
+  commit d sets the reference value for the three structures with energy (Orbital Command, Nexus, Shield Battery).
+- **Matrix effect:** only WP1 moved results (19 battles, no battle's winner over its seeds); battle 33's expectation
+  held and only its comment's distribution changed.
