@@ -35,7 +35,10 @@
             abilities: [],
             showcase_hero: true,
             showcase_order: Some(3),
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Foundry Core Dome: a single massive armored command dome on a wide octagonal platform, a central smelting core glowing molten orange behind heavy vents, buttresses at the base, amber lights, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The core glows steadily and heat vapour rises gently.",
+                "Constructing": "Foundry Core Dome: a single massive armored command dome on a wide octagonal platform, a central smelting core glowing molten orange behind heavy vents, buttresses at the base, amber lights, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 101,
@@ -146,7 +149,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Capacitor Dome: a single low squat armored power-cell dome half sunk into the ground, ribbed slate-steel shell ringed with glowing cyan capacitor coils, a short terminal post on top, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The coils glow steadily and small charge lights flicker at the base.",
+                "Constructing": "Capacitor Dome: a single low squat armored power-cell dome half sunk into the ground, ribbed slate-steel shell ringed with glowing cyan capacitor coils, a short terminal post on top, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 103,
@@ -209,7 +215,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Assembly Bay Dome: a single wide armored fabrication dome with a closed heavy bay door, amber work lights above it, cyan glowing side vents, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The vents glow steadily and the work lights flicker softly.",
+                "Constructing": "Assembly Bay Dome: a single wide armored fabrication dome with a closed heavy bay door, amber work lights above it, cyan glowing side vents, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 104,

@@ -67,7 +67,21 @@
         // a weapon glow and a scanning head, and the unit Walk text for a stride and dust at the
         // feet, none of which it has. Both of its looping states start and end on its hovering
         // Idle pin, so they keep that pose and show motion through the thrusters.
+        //
+        // welder_drone (batch 2, 2026-11-04): a hovering worker armed with a melee welding torch.
+        // The unit Idle text asks for a weapon glow and a scanning head (a turning part), the
+        // unit Walk text for a stride and dust at the feet, and the unit Attack text for a muzzle
+        // flash and a projectile; it has none of these. The unit Cast text has no camera clause
+        // and no loop clause although the atlas loops Cast and the policy pins its end, and its
+        // "tool arms reaching" moves the pose away from the pin it must return to. Idle, Walk and
+        // Cast start and end on the hovering Idle pin, so they keep that pose; Attack starts on it.
         overrides: {
+            "welder_drone": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size and place in frame from start to end. The robot hovers in place with a gentle steady bob, its optic eye glowing, a small blue pilot flame flickering at the welding torch tip. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the robot flies in place, keeping the same size, pose and place in frame. Its back thrusters flare in steady bursts, exhaust streams backward, a slight rhythmic bob, no ground contact. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the robot keeps its place in frame. A quick close-range jab of its welding torch arm toward the right side of the frame, a burst of bright orange sparks at the tool tip, then the arm swings back to its starting pose.",
+                Cast: "Cast animation, one static tripod shot: the camera never moves, zooms or pans, and the robot hovers in place keeping the same size, pose and place in frame. Its welding torch holds a steady bright welding arc toward a point just outside the frame, with showering sparks, and its claw glows softly. Seamless loop: the last frame matches the first.",
+            },
             "repair_shuttle": {
                 Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size and place in frame from start to end. The aircraft hovers in place with a gentle steady bob, thrusters glowing, nanite emitters shimmering softly. Seamless loop: the last frame matches the first.",
                 Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the aircraft flies in place, keeping the same size, pose and place in frame. Thrusters flare in steady bursts, exhaust streams backward, a slight rhythmic bob, no ground contact. Seamless loop: the last frame matches the first.",
