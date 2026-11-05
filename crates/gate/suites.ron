@@ -202,8 +202,13 @@ SuiteCatalog(
             // C15 to C20 read these files; `always` already runs the checks.
             name: "charter documents",
             paths: ["DESIGN.md", "AGENTS.md", "CLAUDE.md", "docs/plans/README.md"],
+            targets: ["workspace_checks/@fast"],
+        ),
+        (
             // The showcase cards and caption validation read DESIGN.md and the plan index.
-            targets: ["workspace_checks/@fast", "client_diagnostics/showcase_storyboard_tests"],
+            name: "showcase cards",
+            paths: ["DESIGN.md", "docs/plans/README.md"],
+            targets: ["client_diagnostics/showcase_storyboard_tests"],
         ),
     ],
 
