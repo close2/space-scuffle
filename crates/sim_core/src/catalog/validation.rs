@@ -42,6 +42,19 @@ fn scalar(definition: &str, field: &str, value: f64) -> SimResult<()> {
     Ok(())
 }
 
+/// Rejects a start energy above the maximum: a new entity starts with at most a full pool.
+/// Both values are authored decimals, already checked finite and nonnegative.
+fn start_energy(definition: &str, start: f64, max: f64) -> SimResult<()> {
+    if start > max {
+        return Err(invalid(
+            definition,
+            "start_energy",
+            "must not exceed max_energy",
+        ));
+    }
+    Ok(())
+}
+
 fn nonnegative(definition: &str, field: &str, value: f64) -> SimResult<()> {
     scalar(definition, field, value)?;
     if value < 0.0 {
@@ -298,6 +311,7 @@ impl UnitArchetypeDef {
             ("max_hp", self.max_hp),
             ("max_shields", self.max_shields),
             ("max_energy", self.max_energy),
+            ("start_energy", self.start_energy),
             ("life_armor", self.life_armor),
             ("shield_armor", self.shield_armor),
             ("hp_regen_per_tick", self.hp_regen_per_tick),
@@ -322,6 +336,7 @@ impl UnitArchetypeDef {
         for (field, value) in [
             ("max_shields", self.max_shields),
             ("max_energy", self.max_energy),
+            ("start_energy", self.start_energy),
             ("hp_regen_per_tick", self.hp_regen_per_tick),
             ("shield_regen_per_tick", self.shield_regen_per_tick),
             ("energy_regen_per_tick", self.energy_regen_per_tick),
@@ -334,6 +349,11 @@ impl UnitArchetypeDef {
             nonnegative(&self.slug, field, f64::from(value))?;
         }
         sight(&self.slug, "sight_radius", f64::from(self.sight_radius))?;
+        start_energy(
+            &self.slug,
+            f64::from(self.start_energy),
+            f64::from(self.max_energy),
+        )?;
         self.validate_hull_turning()?;
         self.validate_regeneration_delays()?;
         for (name, weapon) in [
@@ -612,6 +632,7 @@ impl StructureArchetypeDef {
             ("max_hp", self.max_hp),
             ("max_shields", self.max_shields),
             ("max_energy", self.max_energy),
+            ("start_energy", self.start_energy),
             ("life_armor", self.life_armor),
             ("shield_armor", self.shield_armor),
             ("sight_radius", self.sight_radius),
@@ -622,10 +643,12 @@ impl StructureArchetypeDef {
             ("max_hp", self.max_hp),
             ("max_shields", self.max_shields),
             ("max_energy", self.max_energy),
+            ("start_energy", self.start_energy),
         ] {
             nonnegative(&self.slug, field, value)?;
         }
         sight(&self.slug, "sight_radius", self.sight_radius)?;
+        start_energy(&self.slug, self.start_energy, self.max_energy)?;
         shield_regen_delay(
             &self.slug,
             self.max_shields > 0.0,

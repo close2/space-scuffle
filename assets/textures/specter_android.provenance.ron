@@ -1,0 +1,72 @@
+(
+    format_version: 1,
+    name: "specter_android",
+    atlas_sha256: "74014f06762f6862dd4d7b62fbc3fe7cd8463bfb904371896ff5d9762aa2906d",
+    manifest_sha256: "7ed7a7222acde4ad75f82951452c4ff90d965ba51ca19c63046722c0be925df1",
+    bake: (
+        frame_size: 512,
+        fps: 15,
+        max_frames_per_state: 10,
+        ffmpeg_version: "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+        framing: Letterbox(
+            feather_permille: 30,
+        ),
+    ),
+    states: {
+        Idle: (
+            clip: "specter_android_idle.mp4",
+            clip_sha256: "7870d321c99476ef8f33af0669e071e3f553c1b12a28ab682caca983dae7c9bd",
+            start_frame: 0,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/f803c7ec-cecd-42eb-8e9d-2f77474376d5",
+                prompt_sha256: "830eec633d33c3f34938ea34e17681ac2f1cbb55219c1d1bdfc668551fbc9f58",
+                keyframe_sha256: Some("1c56044762ee383695905d52767f7a7754d65eb0b6fe6faae25059f15c52a3ea"),
+                last_frame_sha256: Some("1c56044762ee383695905d52767f7a7754d65eb0b6fe6faae25059f15c52a3ea"),
+                ledger_line: 321,
+            ),
+            bar_rgb: Some((42, 48, 69)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Walk: (
+            clip: "specter_android_walk.mp4",
+            clip_sha256: "a3e86841260e9dc9792b6b1b3bf9728117003a5afaa292c9d449b3c9dbbe1174",
+            start_frame: 10,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/74014f87-a9fc-4147-ba75-541a00df6130",
+                prompt_sha256: "5b6c5bccec014658a94c46f1058bab08a2c6864dceca0dbf601f55079ff21cff",
+                keyframe_sha256: Some("1c56044762ee383695905d52767f7a7754d65eb0b6fe6faae25059f15c52a3ea"),
+                last_frame_sha256: Some("1c56044762ee383695905d52767f7a7754d65eb0b6fe6faae25059f15c52a3ea"),
+                ledger_line: 325,
+            ),
+            bar_rgb: Some((42, 48, 68)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 0,
+            )),
+        ),
+        Attack: (
+            clip: "specter_android_attack.mp4",
+            clip_sha256: "2578fb80beeb535feb5f7d2bdeb6d3b980dba5a06017c5a782f73a99e9a66806",
+            start_frame: 20,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/d8682e97-cc81-47dd-ba6d-75ae55d88da7",
+                prompt_sha256: "32c2edc0e353d4cdf21b35a38d1c30e32f70b706cc6be3e75a950335e4f4a3cb",
+                keyframe_sha256: Some("1c56044762ee383695905d52767f7a7754d65eb0b6fe6faae25059f15c52a3ea"),
+                last_frame_sha256: Some("1c56044762ee383695905d52767f7a7754d65eb0b6fe6faae25059f15c52a3ea"),
+                ledger_line: 329,
+            ),
+            bar_rgb: Some((44, 48, 68)),
+        ),
+    },
+)

@@ -86,6 +86,10 @@
 // UnitData:39). It turns in place on ticks 121 to 123 (was 121 to 125), steps on tick 124 (was
 // 126), and walks the same path two ticks earlier. Checkpoints 1 and 2 are unchanged; from
 // checkpoint 3 every checkpoint changed.
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP1 (B-1, remediation M-22): a ready weapon
+// whose turn this tick brings its target inside the firing arc starts its swing on that tick (it
+// started one tick later). Checkpoints 1 to 3 are unchanged; from checkpoint 4 (ticks 151 to 200),
+// the first fight, every checkpoint changed.
 (
     checksum_schema: 10,
     seed: 0x5EED_0F_5CAFF1E,
@@ -116,22 +120,22 @@
         0xd3213317d91b8691,
         0x839f47ca0ba8f2b3,
         0xe3c6aaa116ac02c4,
-        0xac749c3c0ed2c39e,
-        0x19fc621b6e321213,
-        0x57c064f1fe54933b,
-        0x7c0075720f1e4449,
-        0x76511917ecd67025,
-        0xc0bb0fd49c1dd84a,
-        0x0806e3b873e8e3a8,
-        0x6624951c97b36729,
-        0xb6434599ed4973ce,
-        0xa82484fc4147dd38,
-        0x727c3691ad9e4f00,
-        0x7edce99ee1e40921,
-        0x73d5ba4987f48072,
-        0xa6daaa95669ab247,
-        0x9bc5e0491896ce8b,
-        0xdd7ea65cf64e759b,
-        0x106588148b2e2c7a,
+        0x9138fe57232e4351,
+        0xf51a4e06f4e4dc5d,
+        0x9f9925eb1a32736e,
+        0xb8a19f3edd8ccae0,
+        0x86e3dc0e1db0ef4f,
+        0xe6a873874b3135c5,
+        0x2f2f68ba3d4a3ad5,
+        0xaf5460a90b7ca29a,
+        0x3102e1d5614e92d0,
+        0x0e943a3cc909cd63,
+        0xae619018cd679630,
+        0x4532accfdd07d9a0,
+        0x10e88395af291c8e,
+        0xb0238106c2377e71,
+        0x92f93300afe42312,
+        0x54ace1f46de6bfcf,
+        0xd2629dae8eb6aa00,
     ],
 )
