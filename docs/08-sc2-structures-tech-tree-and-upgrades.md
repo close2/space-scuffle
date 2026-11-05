@@ -274,7 +274,7 @@ flowchart TD
 | `shadow_stride` | Shadow Stride | `void_sanctuary_dome` | 100 / 100 | 2500 (100s) | — | `shadow_visitor`: Unlocks short-range tactical phase leap (5.0 unit teleport dash, 350 tick cooldown). |
 | `psionic_storm` | Psionic Storm | `psionic_archives_dome` | 200 / 200 | 1964 (78.6s) | — | `cerebral_elder`: Unlocks `Psionic Storm` (75 energy, blanket psionic lightning dealing 80 damage over 70 ticks across 3.0 radius). |
 | `extended_thermal_lance`| Extended Thermal Lance| `robotic_assembly_bay_dome`| 150 / 150 | 2500 (100s) | — | `tripod_annihilator`: Thermal lance sweep range increased by +2.0 (7.0 -> 9.0 world units). |
-| `gravitic_boosters`| Gravitic Boosters | `robotic_assembly_bay_dome`| 100 / 100 | 1429 (57.2s) | — | `stealth_eye_orb`: Movement speed increased by +50% (0.1052 -> 0.1578 world units/tick). |
+| `gravitic_boosters`| Gravitic Boosters | `robotic_assembly_bay_dome`| 100 / 100 | 1429 (57.2s) | — | `stealth_eye_orb`: Movement speed increased by +0.0526 world units/tick (0.1129 -> 0.1655; +0.9375 Normal per s, `liberty` UpgradeData:1802). |
 | `gravitic_drive` | Gravitic Drive | `robotic_assembly_bay_dome`| 100 / 100 | 1429 (57.2s) | — | `phase_prism_saucer`: Movement speed increased by +0.049 world units/tick (+0.875 Normal per s, `liberty` UpgradeData:1823). |
 | `anion_pulse_crystals`| Anion Pulse-Crystals| `celestial_beacon_dome` | 150 / 150 | 1607 (64.3s) | — | `flying_saucer`: Emerald ray attack range increased by +2.0 (5.0 -> 7.0 world units). |
 | `flux_vanes` | Flux Vanes | `celestial_beacon_dome` | 100 / 100 | 1429 (57.2s) | — | `prismatic_saucer`: Movement speed increased by +0.0319 world units/tick (2.75 -> 3.3203 Normal per s, `voidmulti` UpgradeData:348) with rapid acceleration. |

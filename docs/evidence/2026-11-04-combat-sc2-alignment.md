@@ -1196,3 +1196,18 @@ failed** (0 on the seeds of record; the 7 over all seeds are battle 33's, unchan
 squad moves at tick 20). The phase-order test still finds both situations. Debug, release and `wasm32-wasip1`
 reproduce both fixtures. Doc 07's speed cells for the five units and §2.2's worker speed (2.81 tiles/s, the Normal
 value) are corrected.
+
+### 13.10 S2: five speeds that differed otherwise
+
+| Identity | `max_speed` before | After | Source (Normal units per s, × 1.4 ÷ 25) |
+|---|---|---|---|
+| `omni_probe_drone` (Raven) | 0.154 | **0.1652** | 2.9492, `voidmulti` UnitData:2660 |
+| `prism_weaver` (Sentry) | 0.126 | **0.14** | 2.5, `voidmulti` UnitData:1552 |
+| `cerebral_elder` (High Templar) | 0.1048 | **0.1129** | 2.0156, `voidmulti` UnitData:685 |
+| `stealth_eye_orb` (Observer) | 0.1052 | **0.1129** | 2.0156, `voidmulti` UnitData:1134 |
+| `spore_matriarch` (Brood Lord) | 0.0788 | **0.105** | 1.875, `voidmulti` UnitData:143 |
+
+`acceleration` and `deceleration` follow, as in S1. Measured: **whole matrix bit-identical** (battles 19 and 20
+spawn the Brood Lord; its speed moves no outcome, end tick or lead-unit life there), battle 33 bit-identical,
+both golden replays unchanged in debug, release and `wasm32-wasip1`. Doc 07's five speed cells and doc 08's
+Gravitic Boosters row (which restated the Observer's old base speed) are corrected.
