@@ -82,7 +82,7 @@ These change the scope of the phases below. Each has a recommendation, which the
 | D4 | How to settle the uncommitted work? | **Commit as-is in coherent units, then fix forward** | It passes the suite, and a partial commit breaks the build (`lib.rs` references untracked modules) |
 | D5 | Economy and tech: build or cut? | **Build a minimal version** (P5.5 to P5.7), or remove the orders | `Harvest`, `ReturnCargo`, research and construction do not function, which breaks charter §1.1 |
 | D6 | Are procedural flipbooks allowed? | **Test fixtures only, never at runtime paths** | §1.2 forbids stand-ins, §4 and §5 require them |
-| D7 | Required media scope? | **The units in shipped loadouts, then expand** | Only 4 of 91 catalog identities have real media; 81 have none and 6 are copies of one image |
+| D7 | Required media scope? | **The units in shipped loadouts, then expand** | Only 4 of 91 catalog identities have real media; 81 have none and 6 are copies of one image. **Decided** by the owner in [Q0001](../questions/closed/0001-media-scope.md) (option B, paid Veo); carried out by step 8.5: the required set of 10 identities (`assets/media/required_set.ron`) is verified, 12 of 91 identities have real media, none is a copy (2026-11-05, `473b977`) |
 | D8 | Charter §6 model rule | **Make it tool-neutral** | It names a Gemini model and is an uncommitted edit. This audit's agents ran on Claude, so it could not be followed literally. Approved by the owner (Q0003); §6 names no model |
 
 ---
@@ -200,7 +200,7 @@ Severity is impact on someone using the game or relying on the charter.
 
 | ID | Sev | Evidence | Defect | Where |
 |---|---|---|---|---|
-| B-1 | High | **[V]** | Six catalog units are byte-identical copies of `concept_video.png`, and players see them. Open: step 8.5, blocked on the owner (D7, Q0001) | `assets/textures/` |
+| B-1 | High | **[V]** | Six catalog units are byte-identical copies of `concept_video.png`, and players see them. **Fixed** in step 8.5: the three off the playable path removed in `7929844` (Veo WP2), the three on it (`welder_drone`, `capacitor_dome`, `assembly_bay_dome`) replaced by their own Veo atlases in `70ad1d6` (Veo batch 2, merged `473b977`); `media_tests.rs::no_shipped_texture_is_a_copy_of_the_concept_atlas` keeps it fixed | `assets/textures/` |
 | B-2 | High | [V] | API key is in curl's argv and `-L` can forward it to redirect hosts. [A] Derived `Debug` prints it. **Fixed** in `b342c77` (8.1) | `veo_client.rs:501` |
 | B-3 | High | [A] | HTTP error bodies are saved as `.mp4` and cached forever: no `--fail`, no temp file, size-only cache check. **Fixed** in `4c425c8` (8.2) | `veo_client.rs:501`, `:492` |
 | B-4 | High | [A] | Veo polling can hang and loses paid operations on transient errors. **Fixed** in `4c425c8` (8.2) | `veo_client.rs:390` |
@@ -348,7 +348,8 @@ short orders; 400-unit benchmark at least 2× Appendix A.
 skirmish headless through input events alone, with a pilot that reads only the screen, and proves the HUD, the
 placement and the dome fill on a real window under Vulkan validation. It runs as `cargo run -p client -- --skirmish`.
 Gas, research and transport are built and tested on temporary fixture roots, and disabled in the shipped game for want
-of media, per `docs/questions/open/0001-media-scope.md`. Plan and evidence:
+of media, per `docs/questions/closed/0001-media-scope.md`; they are enabled in the shipped game since Veo batch 1
+(`fb1be5b`, merged `2c5ed5e`, tests `battle_card_path_tests.rs`). Plan and evidence:
 `docs/plans/2026-11-02-phase-5-playable-client.md`, `docs/evidence/2026-11-03-result-window-victory.md`.
 
 ### Phase 6: Client performance and structure (L)
@@ -424,24 +425,37 @@ browser sends, not a click; editor egui clicks and text fields are not exercised
 | 8.2 | B-3, B-4 | `--fail-with-body`, temp file, validate with ffprobe, rename; timeouts, bounded retries, persisted operation names | Done, `4c425c8`; tests `veo_reliability_tests.rs` (`b3_*`, `b4_*`) |
 | 8.3 | B-5, B-9 | Typed error for a missing project; remove `/home/cl` paths; exact catalog slugs only | Done, `d3f70d5`; tests `veo_tests.rs` (`b5_*`, `b9_*`) and `veo_reliability_tests.rs` (`b9_*`) |
 | 8.4 | B-6, B-7, B-8 | Resample the whole clip or fail; never fabricate actions; procedural output outside runtime paths, per D6 | Done, `cf784cd`; tests `bake_integrity_tests.rs` (`b6_*`, `b7_*`, `b8_*`) |
-| 8.5 | B-1, D7 | Remove the six copied atlases; generate real media for the required set; make `audit-media --strict` pass for that set | Blocked on the owner, Q0001 |
+| 8.5 | B-1, D7 | Remove the six copied atlases; generate real media for the required set; make `audit-media --strict` pass for that set | Done, plan [`2026-11-04-phase-8-5-veo-media.md`](2026-11-04-phase-8-5-veo-media.md): WP1 `2f302d4`, WP2 `960a25f`, `e9b963a`, `7929844`, pilot `89d20ec`, batch 1 `69f0ff0` to `fb1be5b` (merged `2c5ed5e`), batch 2 `9f132d4`, `e2573de`, `70ad1d6`, `c3c3e10` (merged `473b977`); amended by the letterbox, seamless-loops and structure-action-text plans; tests `media_tests.rs` (`real_catalog_media_audit_is_ordered_and_strict_passes_only_with_the_ledger`, `no_shipped_texture_is_a_copy_of_the_concept_atlas`) |
 
 Generating media spends real money and needs the owner's approval per run.
 
 **Exit:** strict audit passes for the agreed set; a failed download cannot enter the cache.
 
-**Exit status (2026-11-03): not met.** Steps 8.1 to 8.4 are done. A failed download cannot enter the cache:
-`crates/asset_baker/tests/veo_reliability_tests.rs` checks it with `b3_http_error_body_never_becomes_a_video`,
-`b3_success_status_with_a_non_video_body_is_rejected`, `b3_truncated_video_is_rejected`,
-`b3_inline_bytes_are_validated_too`, `b3_failed_download_preserves_the_existing_file` and
-`b3_poisoned_cache_entry_is_refused_without_spending_money`, each asserting that nothing was cached, green on CI at
-`6b39cd2` (run 41665216936). The strict audit waits for step 8.5, which is blocked on the owner: there is no agreed
-set until [Q0001](../questions/open/0001-media-scope.md) is answered, and paid generation needs approval for each
-run. Two notes for whoever runs 8.5. First, Vertex authentication moved to an `x-goog-api-key` header and has never
-been tried against the live service. Second, a Vertex result delivered as `gcsUri` would be refused by the download
-allowlist in `veo_client.rs` (`generativelanguage.googleapis.com`, `us-central1-aiplatform.googleapis.com`). That
-refusal is loud and costs nothing, but it would stop the run. The first approved 8.5 run checks both. Plan:
-`docs/plans/2026-11-03-close-phase-6-7-8-exits.md` §2.3.
+**Exit status (2026-11-05): met on `main` at `473b977`; CI not yet run on it.** Both halves of the exit hold.
+
+- **Strict audit for the agreed set.** The set is `assets/media/required_set.ron`: the ten identities a player
+  fields or builds on the skirmish's mineral, gas, research and transport paths ([Q0001](../questions/closed/0001-media-scope.md),
+  option B). `asset_baker audit-media --strict --ledger docs/evidence/veo/ledger.jsonl` exits 0 and reports
+  "Required set …: 10 of 10 verified", with no identity a `KnownConceptDuplicate` (output in
+  [`2026-11-05-batch-2.md`](../evidence/veo/2026-11-05-batch-2.md), "Strict audit"). The test
+  `real_catalog_media_audit_is_ordered_and_strict_passes_only_with_the_ledger` in
+  `crates/asset_baker/tests/media_tests.rs` runs the same audit on the shipped files in `cargo test`, and
+  `no_shipped_texture_is_a_copy_of_the_concept_atlas` keeps B-1 fixed.
+- **A failed download cannot enter the cache.** Unchanged since 2026-11-03: the six `b3_*` tests of
+  `crates/asset_baker/tests/veo_reliability_tests.rs` assert that nothing is cached, green on CI at `6b39cd2`
+  (run 41665216936).
+
+Gate: `cargo gate package` stamp `c37a8885923d7a119f5ed06e21ecee4793981151.package.ron` (Veo batch 2 at `cb2672c`,
+114 targets, GPU tests and the golden replays in release and on `wasm32-wasip1` included, all green) and the merge
+stamp of `473b977`. `main` has not been pushed since `ab2042c`, so no CI run covers the batch yet; the next push of
+`main` runs it, and its run id belongs here. Spend for the whole step: 41 Veo generations, $16.40 at list price
+(Veo 3.1 Fast, 720p, with sound), inside the owner's 200 EUR (Q0024). Evidence:
+[`2026-11-04-pilot.md`](../evidence/veo/2026-11-04-pilot.md),
+[`2026-11-04-batch-1.md`](../evidence/veo/2026-11-04-batch-1.md),
+[`2026-11-05-batch-2.md`](../evidence/veo/2026-11-05-batch-2.md), ledger
+[`ledger.jsonl`](../evidence/veo/ledger.jsonl). The expansion to the rest of the Automaton faction (Veo plan WP6)
+is not part of this exit. Plans: `docs/plans/2026-11-03-close-phase-6-7-8-exits.md` §2.3,
+`docs/plans/2026-11-04-phase-8-5-veo-media.md`.
 
 ### Phase 9: Structure and documentation (M)
 

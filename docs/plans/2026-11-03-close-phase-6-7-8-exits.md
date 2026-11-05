@@ -18,7 +18,7 @@ presentation, GPU-time and command paragraphs, WP6, the risks and §7 are rewrit
 WP5b, comes before WP6. Q0019 asks the owner whether this path is acceptable as the reference.
 
 **Out of scope:** step 8.5 (B-1, D7), real media for the required set. It needs paid Veo generation with the
-owner's approval for each run, and the media scope is still open as [Q0001](../questions/open/0001-media-scope.md).
+owner's approval for each run, and the media scope is still open as [Q0001](../questions/closed/0001-media-scope.md).
 It stays blocked on the owner. Phase 8 therefore cannot fully exit through this plan (§2.3).
 
 ---
@@ -1024,4 +1024,4 @@ These are single runs at low load, not the figures of record; WP6 measures those
 - [Q0011](../questions/closed/0011-allocation-counter-unsafe.md) stays open. This plan follows its default and adds an
   external count that needs no `unsafe` (D-2). The owner may still choose option 1 or 2, which would replace WP3's
   method, not its test's assertions.
-- [Q0001](../questions/open/0001-media-scope.md) still blocks 8.5 and with it Phase 8's exit.
+- [Q0001](../questions/closed/0001-media-scope.md) still blocks 8.5 and with it Phase 8's exit.

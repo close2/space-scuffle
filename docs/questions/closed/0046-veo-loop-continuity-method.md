@@ -43,3 +43,20 @@ Spending so far: 5 generations, $2.00 at list price (1 pilot and 4 WP4 regenerat
 ## Answer
 
 Owner (2026-11-04): Ratify Option (a) as primary (pin `lastFrame` to the start frame in Veo 3.1 Fast, seeded from frame 0 of `0dbd7948`). For any residual drift at the loop boundary or as fallback if `lastFrame` is unsupported, prefer combining scale normalization (Option c) and/or a short cross-fade of the last few frames back into frame 0 in `asset_baker` over ping-pong playback (Option b) for clips with directional motion such as rising steam/vapour (so steam does not run backwards half the time).
+
+## Resolution
+
+2026-11-05. Carried out by
+[`docs/plans/2026-11-04-veo-seamless-loops.md`](../../plans/2026-11-04-veo-seamless-loops.md): option (a) as primary,
+with the owner's fallback and no ping-pong.
+
+- `lastFrame` is pinned to the start picture (WP1 `4a20fd3`, merged `b7becda`). Vertex accepted it inline, with
+  sound, in the pilot (WP4 `16c456a`, merged `b35d793`).
+- The bake repairs the seam with a scale lock and a short cross-fade into frame 0 (WP2 `464bd75`, `3668510`, merged
+  `79f53f5`), and `asset_baker loop-check` measures loop continuity (WP3 `03ecf7b`, merged `71d80a0`).
+- The push-in on buildings was then removed by per-kind action texts
+  ([`2026-11-04-veo-structure-action-text.md`](../../plans/2026-11-04-veo-structure-action-text.md), `2155890`,
+  `0ac74a4`).
+- Every looping clip of batch 1 (merged `2c5ed5e`) and batch 2 (merged `473b977`) passes `loop-check`, raw or
+  repaired. The numbers are in [`2026-11-04-batch-1.md`](../../evidence/veo/2026-11-04-batch-1.md) and
+  [`2026-11-05-batch-2.md`](../../evidence/veo/2026-11-05-batch-2.md).

@@ -9,7 +9,7 @@ passed on `main` at `7c947ad` (run 41583874524). A person plays the shipped skir
 structures from the card with a placement preview, train, group, attack-move, win or lose, and play again, under fog,
 with mouse and keyboard only. `skirmish_match_tests.rs` (`7a432f9`) proves it. **Deferred:** gas, research and
 transport are built and proven on temporary fixture roots (D-9), but disabled in the shipped game ("No approved media")
-until media exists, per `docs/questions/open/0001-media-scope.md`. Out of scope as listed in §6.
+until media exists, per `docs/questions/closed/0001-media-scope.md`. Out of scope as listed in §6.
 
 **Status of this document:** Stage 1 blueprint under charter §6. It was written by static reading only: nothing
 was compiled or run. Every `file:line` reference was read on branch `codebase-remediation` at `b263734`. Where a

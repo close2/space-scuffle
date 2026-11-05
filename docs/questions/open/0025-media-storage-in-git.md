@@ -21,3 +21,11 @@ whole Automaton faction gets media. Rejected clips stay on `~/scratch` and are n
 ## Answer
 
 Owner (2026-11-04): Agreed with agent's recommendation — Option (a): commit the required set's clips and atlases as plain git files, and ask again before the expansion batches.
+
+## Status
+
+2026-11-05 (no answer needed now). Option (a) is carried out for the required set: its clips and atlases are plain
+git files (batch 1 merged `2c5ed5e`, batch 2 merged `473b977`). The new atlases are smaller than the question
+estimated: 4.8 to 6.2 MB each instead of 9 to 18 MB, and `assets/textures` is now 156 MB on disk. The answer asks to
+ask again before the expansion batches (Veo plan WP6); that ask has not been made, because the expansion has not
+been scheduled. The question stays open until it is.
