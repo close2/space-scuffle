@@ -779,17 +779,30 @@ mod tests {
         Ok(())
     }
 
+    /// The shipped catalog text with every authored `hp_regen_delay_ticks` line removed, so each
+    /// archetype omits the field.
+    fn without_life_regeneration_delays(text: &str) -> String {
+        text.lines()
+            .filter(|line| !line.trim_start().starts_with("hp_regen_delay_ticks:"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn an_omitted_life_regeneration_delay_reads_as_zero() -> Result<(), Box<dyn std::error::Error>>
     {
         use crate::catalog::{CatalogFile, StructureCatalogFile};
-        let units: CatalogFile =
-            ron::from_str(include_str!("../../../../assets/catalog/units.ron"))?;
+        let units: CatalogFile = ron::from_str(&without_life_regeneration_delays(include_str!(
+            "../../../../assets/catalog/units.ron"
+        )))?;
+        assert!(!units.units.is_empty());
         for unit in &units.units {
             assert_eq!(unit.hp_regen_delay_ticks, 0, "unit {}", unit.slug);
         }
-        let structures: StructureCatalogFile =
-            ron::from_str(include_str!("../../../../assets/catalog/structures.ron"))?;
+        let structures: StructureCatalogFile = ron::from_str(&without_life_regeneration_delays(
+            include_str!("../../../../assets/catalog/structures.ron"),
+        ))?;
+        assert!(!structures.structures.is_empty());
         for structure in &structures.structures {
             assert_eq!(
                 structure.hp_regen_delay_ticks, 0,

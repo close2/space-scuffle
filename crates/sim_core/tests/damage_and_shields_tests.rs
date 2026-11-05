@@ -526,6 +526,30 @@ fn a_scratch_archetype_with_a_10_tick_life_delay_regenerates_from_the_10th_tick_
 }
 
 #[test]
+fn test_life_regeneration_waits_for_the_catalog_delay() {
+    let mut world = flat_world(0x5555_AAAA);
+    // Found by property, not by slug: the shipped archetype with the longest life delay.
+    let (unit_type, delay) = world
+        .catalog
+        .archetypes()
+        .map(|arch| (arch.unit_type_id, arch.hp_regen_delay_ticks))
+        .max_by_key(|&(id, delay)| (delay, std::cmp::Reverse(id)))
+        .expect("the shipped catalog is not empty");
+    assert!(
+        delay > 0,
+        "some shipped archetype must wait before regenerating life"
+    );
+    let gained =
+        assert_life_regenerates_after_catalog_delay(&mut world, unit_type, SimScalar::from_num(20));
+    let rate = world
+        .catalog
+        .get(unit_type)
+        .expect("archetype registered")
+        .hp_regen_per_tick;
+    assert_eq!(gained, rate);
+}
+
+#[test]
 fn life_regeneration_without_a_delay_runs_on_the_tick_after_damage() {
     let mut world = flat_world(0x5555_AAAA);
     let scratch = register_life_regenerating_scratch(&mut world, "scratch_life_no_delay", 0, false);

@@ -94,3 +94,50 @@ All seven pass with the change.
 **Why nothing moved** (plan D-4): between the counter's old and new position the block reads only life, energy,
 the active mode and the archetype, so the shield rule sees the same counter, and with a delay of 0 the life
 condition `counter >= 0` always holds.
+
+## 3. WP2: the Reaper analogue regenerates life only after 179 ticks without damage (Q0049)
+
+**Commit.** The WP2 commit of the plan, after WP1 (§2). One catalog value:
+
+| Field | Before | After | Reference |
+|---|---|---|---|
+| `jet_jumper` `hp_regen_delay_ticks` | 0 (omitted) | **179** | Reaper `LifeRegenDelay` 10 Normal s (`void` UnitData:1475, also `swarmmulti` UnitData:893) = 7.14 Faster s = 178.57 ticks, rounded halves up |
+
+The rate stays 0.08 per tick (2.0 per Faster second) until WP3. Doc 07 §3.1 row 4 now states the regeneration
+and its delay. Outputs under `~/scratch/life_regen/wp2/`.
+
+**Test first.** `damage_and_shields_tests::test_life_regeneration_waits_for_the_catalog_delay` finds the shipped
+archetype with the largest `hp_regen_delay_ticks` (by property, not by slug), damages its life by 20 and requires
+life to hold for `delay - 1` ticks and rise by exactly the archetype's rate on tick `delay`. Before the data edit
+it failed with `some shipped archetype must wait before regenerating life`; it passes after it (179 ticks, 0.08
+gained on tick 179).
+
+**Test restated** in the same commit: WP1's `an_omitted_life_regeneration_delay_reads_as_zero` asserted that every
+shipped archetype reads 0, true only before this commit. It now removes every authored `hp_regen_delay_ticks` line
+from the shipped text and asserts that all archetypes then read 0, which is the property its name states. It passes
+before and after the data edit.
+
+**Measured.**
+
+- **Whole matrix, 20 seeds:** against §2, exactly the two reaper battles moved, every seed of each. Expectation
+  failures stay 0 on the seeds of record and 2 over all seeds (battle 33's). No winner changes.
+
+  | Battle | Seeds moved | Survivors blue – red | End tick | Lead hull blue / red |
+  |---|---|---|---|---|
+  | 22a_reaper_vs_2_workers | 20 | 1.00 – 0.00, same | 101.0, same | 46.22 → 40.00 / — |
+  | 22b_reaper_vs_stalker | 20 | 0.00 – 1.00, same | 172.0 → 139.0 | — / 80.00, same |
+
+- **Battle 22a:** reaper win with both workers dead on all 20 seeds, as before, at tick 101. The reaper ends at
+  exactly 40.00 life on every seed (60 less the workers' 20 damage) instead of 46.08 to 46.32: it regains nothing
+  after its first hit (tick 22 to 25), where it regained 0.08 on every tick from the next tick on. The fall is
+  0.08 × 76 to 79 ticks per seed (for example seed 3203386110: first hit on tick 25, 76 ticks to 101, 6.08), mean
+  6.22, the plan's "few points". The per-tick `blue_health_regained` sum read 5.84 to 6.08 before, slightly less
+  than the life actually regained, because the column misses ticks on which a hit and a regeneration coincide; it
+  reads 0 on every tick of every seed after this commit.
+- **Battle 22b:** stalker win on all 20 seeds, as before, at tick **139** instead of 172 (33 ticks sooner, within the
+  baseline's end tick as the plan required); the stalker ends at 80.00 life, its shields gone, as before. The reaper
+  regained 12.80 life in combat before (0.08 per tick from tick 8, after its first hit on tick 7); it now regains
+  none: `blue_health_regained` is 0 on every tick of every seed.
+- **Battle 33, 68 seeds: bit-identical** to §2 (every output file byte-identical): no reaper takes part.
+- **Golden replays and the sandbox checksum: unchanged** (no golden replay spawns or trains `jet_jumper`; the sandbox
+  checksum is of the spawned state at full life, plan D-7). No expectation in `matchup_matrix.ron` moved.
