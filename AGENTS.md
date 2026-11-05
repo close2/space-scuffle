@@ -134,9 +134,14 @@ Code without tests is considered incomplete.
      and the golden replays in release and on `wasm32-wasip1` for simulation changes. Its stamp goes in the
      hand-back.
    - `cargo gate merge <branch>`: the orchestrator, for each merge to `main`.
-   - `cargo gate full`: the full gate, on `main` before every push that contains a crate change, and on CI. Push
-     only a commit with a green full stamp. When it is red, fix forward or revert within an hour, and add the
-     missing catalog rule.
+   - `cargo gate full`: the full gate, on `main` before a push that contains a crate change, and on CI. Push only a
+     commit whose tree has a green stamp. When it is red, fix forward or revert within an hour, and add the missing
+     catalog rule.
+   - **Test a tree once.** A tier passes at once, without building or running anything, when its tree already has a
+     green stamp of that tier or a stricter one; a green `package` stamp counts for `merge` and `full` when the
+     agent merged `main` right before its gate and nothing landed since (the merged tree is the tested tree). Merge
+     branches one at a time in that order, batch pushes to a few a day, and run at most one or two building agents
+     at once (owner, Q0055).
    - **Full gate** (what `cargo gate full` and CI run):
      - `cargo fmt --all -- --check`
      - `cargo clippy --workspace --all-targets --locked -- -D warnings`
@@ -196,12 +201,20 @@ cannot break the tool that selects its tests.
 
 ## 6. Mandatory Two-Stage Sub-Agent Workflow (Plan First, Implement Second)
 
-1. **Stage 1 — Architect Planning Sub-Agent:**
-   - Before any feature, refactor, or bugfix is implemented, a Planning Sub-Agent must first analyze the problem and write a complete, textbook-grade implementation blueprint in `docs/plans/`.
-   - The main orchestrator agent must **never** bypass the planning stage by editing code directly or launching an implementation sub-agent without an approved blueprint.
+1. **Stage 1 — Plan.** Every change is planned before it is implemented, at one of two levels:
+   - **A full plan** in `docs/plans/`, a complete, textbook-grade blueprint written by a planning sub-agent, is
+     required for new subsystems or mechanics, anything that moves battle outcomes or golden replays, anything that
+     changes the checksum format, and work that spans several packages.
+   - **A short note** is enough for a small, well-specified change: config and data changes the owner dictated,
+     test-only fixes, documentation, and single-cause bug fixes with an obvious test. The note is an amendment to the
+     plan the change belongs to, or a decision note in the commit message, stating what changes, why, and how it is
+     tested. The orchestrator writes it itself; no planning sub-agent is needed.
+   - The orchestrator never edits code itself and never launches an implementation sub-agent without the plan or
+     note the change requires.
 2. **Stage 2 — Implementation Sub-Agent:**
-   - Only after the detailed plan in `docs/plans/` is complete may Implementation Sub-Agents be launched to write the code and tests strictly following that blueprint.
+   - Implementation sub-agents write the code and tests strictly following the plan or note.
 3. **Tool-neutral:** the charter names no model or tool for either stage; each session uses the agents it has.
+4. **Owner rule:** the split into full plans and short notes is the owner's (chat, 2026-11-05, recorded in Q0054).
 
 ---
 
@@ -228,6 +241,11 @@ Development runs on a shared VM. Its physical **AMD Radeon RX 580** (Ellesmere, 
   for the lock and then has 120 s to finish. Where the radeon driver, a usable render node or `with-gpu-lock` is
   missing, as on CI, the harness uses `lavapipe` with no lock. `SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe` reproduces
   CI on this server, and `=radv` fails instead of falling back.
+- **Run one `cargo gate` or workspace `cargo test` at a time across all worktrees.** `cargo gate` serializes
+  itself through the gate lock (`~/scratch/gate.lock`, `crates/gate/src/gate_lock.rs`); wrap any other workspace
+  `cargo test` in `flock ~/scratch/gate.lock`. Before other heavy runs, check the `anon` line of
+  `/sys/fs/cgroup/user.slice/user-1002.slice/memory.stat` and keep it below about 36 GiB of the 44 GiB limit
+  (`memory.current` also counts reclaimable page cache).
 - **Large files go on `~/scratch`.** The root disk is small and shared. The main checkout's own `target/` may stay on it for fast linking, but every agent worktree must build with `CARGO_TARGET_DIR=/home/spacescuffle/scratch/cargo-target/<worktree-name>`, and large logs, captures and corpora belong under `~/scratch`. Remove a worktree, or at least its `target/`, once its branch is merged.
 
 ---

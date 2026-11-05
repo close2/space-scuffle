@@ -1,0 +1,72 @@
+(
+    format_version: 1,
+    name: "railgun_crawler",
+    atlas_sha256: "d5f04452d26e81b80cd15f16dbe88e818c26bfdef4a3fc2410085a5a1b75ffe1",
+    manifest_sha256: "17ae7cf41dc8e21e756a9ff31908d57c672df64e83fd2d72fcda178a96494336",
+    bake: (
+        frame_size: 512,
+        fps: 15,
+        max_frames_per_state: 10,
+        ffmpeg_version: "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+        framing: Letterbox(
+            feather_permille: 30,
+        ),
+    ),
+    states: {
+        Idle: (
+            clip: "railgun_crawler_idle.mp4",
+            clip_sha256: "1e6eeb0fdafa29d7dcdc688d36e257e973337609fbe03e10d678f803d9be4778",
+            start_frame: 0,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/8d430dda-f0e2-4fca-898d-12412b1d8e5b",
+                prompt_sha256: "eaff2da4fc27c7d16eb47b79dbf67352ff92593694ff4ac6c0ceb6fcd65ceba3",
+                keyframe_sha256: Some("b69c8f778e0dfa74faae0af2ae670ab32140b21d29aae4d310f8b1fa1a65dbc1"),
+                last_frame_sha256: Some("b69c8f778e0dfa74faae0af2ae670ab32140b21d29aae4d310f8b1fa1a65dbc1"),
+                ledger_line: 441,
+            ),
+            bar_rgb: Some((60, 66, 87)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 0,
+            )),
+        ),
+        Walk: (
+            clip: "railgun_crawler_walk.mp4",
+            clip_sha256: "405864e3b6657e703cb96ea053c549d8ba5035a1e2296819b9b0da13574ccd3b",
+            start_frame: 10,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/6c7b5798-2292-440f-9c4e-23f2be4ab9d1",
+                prompt_sha256: "f6b5708b0634c4940097e282861ccbb125967c07783cb811fc62b58ff8ac8f7d",
+                keyframe_sha256: Some("b69c8f778e0dfa74faae0af2ae670ab32140b21d29aae4d310f8b1fa1a65dbc1"),
+                last_frame_sha256: Some("b69c8f778e0dfa74faae0af2ae670ab32140b21d29aae4d310f8b1fa1a65dbc1"),
+                ledger_line: 445,
+            ),
+            bar_rgb: Some((60, 66, 87)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Attack: (
+            clip: "railgun_crawler_attack.mp4",
+            clip_sha256: "37cc2a02b42ef57e7df98f24c86efc62fb46081099bd865af1c457496abb2ad8",
+            start_frame: 20,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/483fbec5-760d-4b57-a85b-55bc6a7c9581",
+                prompt_sha256: "1a2ce4abec2df89b950b70157cbb1c00c4c94cac0fc08542e9627bf49f295add",
+                keyframe_sha256: Some("b69c8f778e0dfa74faae0af2ae670ab32140b21d29aae4d310f8b1fa1a65dbc1"),
+                last_frame_sha256: Some("b69c8f778e0dfa74faae0af2ae670ab32140b21d29aae4d310f8b1fa1a65dbc1"),
+                ledger_line: 449,
+            ),
+            bar_rgb: Some((62, 68, 88)),
+        ),
+    },
+)

@@ -310,6 +310,15 @@ pub fn failed_tests(log: &str) -> Vec<String> {
     names
 }
 
+/// The arguments a test executable gets: `--test-threads=<n>` when the catalog caps the job,
+/// else none, so libtest runs one thread per CPU as under `cargo test`.
+#[must_use]
+pub fn test_arguments(job: &Job) -> Vec<String> {
+    job.test_threads
+        .map(|threads| vec![format!("--test-threads={threads}")])
+        .unwrap_or_default()
+}
+
 /// The file name of a target's log.
 fn log_name(target: &TargetId) -> String {
     format!("{}.log", target.to_string().replace('/', "__"))
@@ -379,6 +388,7 @@ impl Launch<'_> {
         let mut command = Command::new(exe);
         clean_env(&mut command);
         command
+            .args(test_arguments(job))
             .current_dir(&dir)
             .env("CARGO", crate::changes::cargo_program())
             .env("CARGO_MANIFEST_DIR", &dir)
@@ -555,6 +565,19 @@ mod tests {
             }
         );
         assert_eq!(results[0].log, PathBuf::from("flaky.log"));
+    }
+
+    #[test]
+    fn a_capped_job_gets_its_test_thread_limit_and_others_get_nothing() {
+        let mut job = Job {
+            target: TargetId::test("app", "heavy_tests"),
+            class: TestClass::Slow,
+            expected: Duration::ZERO,
+            test_threads: Some(2),
+        };
+        assert_eq!(test_arguments(&job), ["--test-threads=2"]);
+        job.test_threads = None;
+        assert_eq!(test_arguments(&job), Vec::<String>::new());
     }
 
     #[test]

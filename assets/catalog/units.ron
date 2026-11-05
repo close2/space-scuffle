@@ -451,8 +451,8 @@
                 is_resource_dropoff: false,
             ),
             veo_prompts: {
-                Idle: "Railgun Crawler: Quad-tracked heavy siege artillery tank with independent rotating dual-railgun turret.",
-                Walk: "Railgun Crawler: Heavy caterpillar tread movement crushing terrain with dual exhaust smoke vents.",
+                Idle: "Railgun Crawler: Quad-tracked heavy siege artillery tank with a twin-railgun turret on top, both long rail barrels pointing forward, four exposed chunky tracks, smooth armored hull sides without side vents, two exhaust stacks at the rear.",
+                Walk: "Railgun Crawler: Heavy tracked advance, treads churning, smoke from its two rear stacks.",
                 Attack: "Railgun Crawler: High-velocity hypervelocity railgun discharge with blue electric discharge.",
             },
         ),
@@ -607,8 +607,8 @@
             ),
             veo_prompts: {
                 Idle: "Shock Golem: Heavy bipedal combat exoskeleton in gunmetal armor with dual arm-mounted grenade cannons.",
-                Walk: "Shock Golem: Heavy determined stride shaking dust with hydraulic knee dampening.",
-                Attack: "Shock Golem: Twin explosive launch from heavy wrist pods emitting concussive shockwaves.",
+                Walk: "Shock Golem: Heavy marching steps with hydraulic knee dampening.",
+                Attack: "Shock Golem: Twin explosive shell launch from heavy wrist pods with a concussive puff of smoke at each muzzle.",
             },
         ),
         (
@@ -682,7 +682,7 @@
             ),
             veo_prompts: {
                 Idle: "Thruster Hound: Slender bipedal scout with flaming jump jets mounted to backplate holding twin pistols.",
-                Walk: "Thruster Hound: Rapid sprinting bounding leaps boosted by short blue plasma thruster bursts.",
+                Walk: "Thruster Hound: Quick light running stride boosted by short blue plasma bursts from the jump jets.",
                 Attack: "Thruster Hound: Rapid alternating pistol discharge firing twin streams of kinetic flechettes.",
             },
         ),
@@ -755,8 +755,8 @@
                 is_resource_dropoff: false,
             ),
             veo_prompts: {
-                Idle: "Null-Wave Android: Sleek graphite sniper android with glowing crimson optical sensors and cloaking emitter.",
-                Walk: "Null-Wave Android: Silent predatory stalk leaning low with rifle cradled ready.",
+                Idle: "Null-Wave Android: Sleek graphite sniper android with glowing crimson optical sensors, a compact cloaking emitter pack on its back and a long null rifle, seen whole from head to feet with empty space around it.",
+                Walk: "Null-Wave Android: Silent predatory stalk with the rifle cradled ready.",
                 Attack: "Null-Wave Android: High-powered precision hypervelocity beam discharge with vapor trail.",
             },
         ),

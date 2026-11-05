@@ -725,11 +725,24 @@ fn d12_the_dry_run_prints_the_spend_of_the_committed_ledger_and_the_planned_cost
     let output = dirs.generate(&shim, &[&unit], &["--dry-run"]);
     assert!(output.status.success(), "{}", text(&output));
     let out = stdout(&output);
-    // 41 accepted generations at 40 cents (Veo 3.1 Fast, 720p, with sound).
-    assert!(
-        out.contains("$16.40 spent of $200.00, $183.60 remaining"),
-        "{out}"
+    // Every generation the committed ledger records was started with Veo 3.1 Fast (720p, with
+    // sound) at 40 cents. The ledger grows with every batch, so the expected spend is counted
+    // from it rather than written down.
+    let ledger = std::fs::read_to_string(&committed).expect("committed ledger");
+    let started = ledger
+        .lines()
+        .filter(|line| line.contains("\"event\":\"request_started\""))
+        .count();
+    let spent_cents = 40 * started;
+    let remaining_cents = 20_000 - spent_cents;
+    let expected = format!(
+        "${}.{:02} spent of $200.00, ${}.{:02} remaining",
+        spent_cents / 100,
+        spent_cents % 100,
+        remaining_cents / 100,
+        remaining_cents % 100
     );
+    assert!(out.contains(&expected), "{expected}\n{out}");
     assert!(out.contains("Planned cost:"), "{out}");
     assert!(server.requests().is_empty());
 }

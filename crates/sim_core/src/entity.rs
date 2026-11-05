@@ -576,7 +576,8 @@ impl Entity {
     }
 
     /// Applies authored Overclock after preparing HP and the complete ordered speed fold.
-    /// Returns false for ordinary low-HP eligibility; errors leave all fields unchanged.
+    /// Returns false, changing nothing, when life does not exceed the cost
+    /// ([`Self::can_pay_overclock`]); errors leave all fields unchanged.
     ///
     /// # Errors
     /// Rejects malformed rates/costs or unrepresentable payments/folds.
@@ -588,6 +589,18 @@ impl Entity {
         Ok(true)
     }
 
+    /// Whether this entity has enough life to pay `spec`'s life cost.
+    ///
+    /// Overclock (Stimpack) can never kill its caster, so it is admitted only when the current
+    /// life (`hp`, in hit points) is strictly greater than `spec.hp_cost`; at or below the cost
+    /// it is refused and changes nothing (owner answer to Q0053, bug B-33). The payment then
+    /// always leaves positive life. Every admission path, and the client's command filter, asks
+    /// this one predicate.
+    #[must_use]
+    pub fn can_pay_overclock(&self, spec: &OverclockSpec) -> bool {
+        self.hp > spec.hp_cost
+    }
+
     pub(crate) fn prepare_overclock(
         &self,
         spec: OverclockSpec,
@@ -597,14 +610,13 @@ impl Entity {
             return Err(EntityAdmissionError::NegativeCost);
         }
         let multiplier = self.prospective_speed_multiplier(1, spec.speed_multiplier)?;
-        if self.hp <= SimScalar::ONE {
+        if !self.can_pay_overclock(&spec) {
             return Ok(None);
         }
         let hp = self
             .hp
             .checked_sub(spec.hp_cost)
-            .ok_or(EntityAdmissionError::PaymentOverflow)?
-            .max(SimScalar::ONE);
+            .ok_or(EntityAdmissionError::PaymentOverflow)?;
         Ok(Some(PreparedOverclock {
             spec,
             hp,

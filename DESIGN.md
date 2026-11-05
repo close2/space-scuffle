@@ -174,7 +174,6 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-28 | Six weapon mounts (turret or hull) differ | WP10 |
 | B-29 | No acquisition arc separate from the firing arc | WP10 |
 | B-30 | An idle turret keeps its last angle | WP10 |
-| B-33 | Stim admitted at any life above 1 (the game's rule not sourced; [Q0053](docs/questions/open/0053-stimpack-at-low-life.md)) | Q0053 |
 | B-35 | No energy regeneration delay | WP15 |
 | B-36 | Unfinished structures regenerate life | WP15 |
 | B-38 | No burrowed Roach regeneration and no Tunneling Claws | WP15, WP18 |

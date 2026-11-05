@@ -13,7 +13,10 @@
 //! # Invariants
 //! - Setup may fund a player or spawn a unit through `world_mut`, as the harness allows. Every
 //!   order under test arrives through an input event.
-//! - No test here writes a file: this is the shipped media, as a player gets it.
+//! - No test here writes into the shipped root: the media is the shipped media, as a player gets
+//!   it. The two tests of a card entry without media boot a temporary root of links to the
+//!   shipped files with one raised structure's atlas left out, because every structure the
+//!   worker raises now ships media (Veo batch 4).
 
 #![allow(
     clippy::unwrap_used,
@@ -611,15 +614,70 @@ fn raised_by(harness: &Harness, worker: EntityId) -> Vec<UnitTypeId> {
         .clone()
 }
 
-/// A structure the worker raises whose media the shipped root lacks.
+/// The skirmish booted on a temporary root that mirrors the shipped one by symbolic links,
+/// with the atlas of the first structure the worker raises that the scenario does not start
+/// with left out, and that structure.
 ///
-/// Real media keeps arriving (Veo plan D-9), so the test asks the catalog and the shipped root
-/// instead of naming an identity, and fails loudly once none is left.
-fn a_structure_without_media(harness: &Harness, worker: EntityId) -> UnitTypeId {
-    raised_by(harness, worker)
+/// Every structure the worker raises ships media, so the test makes its own root instead of
+/// naming an identity (Veo plan D-9: the catalog and the root decide, not the test). The
+/// directory must outlive the harness. Unix only: the mirror is made of symbolic links.
+#[cfg(unix)]
+fn skirmish_with_one_structure_unshipped() -> (tempfile::TempDir, Harness, UnitTypeId) {
+    let shipped = skirmish();
+    // A structure already standing in the scenario must be presentable, or the battle stops.
+    let standing = |structure: &UnitTypeId| {
+        shipped
+            .world()
+            .entities
+            .values()
+            .any(|entity| entity.unit_type_id == *structure)
+    };
+    let structure = raised_by(&shipped, worker(&shipped))
         .into_iter()
-        .find(|structure| ships_no_atlas(harness, *structure))
-        .expect("every structure the worker raises ships media: give this test a root of its own")
+        .find(|structure| !standing(structure))
+        .expect("the worker raises a structure the scenario does not start with");
+    let slug = shipped
+        .world()
+        .catalog
+        .get(structure)
+        .expect("the worker raises catalog identities")
+        .slug
+        .clone();
+    drop(shipped);
+
+    let directory = tempfile::tempdir().expect("temporary root");
+    let textures = directory.path().join("textures");
+    std::fs::create_dir(&textures).expect("temporary textures directory");
+    for entry in std::fs::read_dir(assets()).expect("shipped root") {
+        let entry = entry.expect("shipped root entry");
+        if entry.file_name() != "textures" {
+            std::os::unix::fs::symlink(entry.path(), directory.path().join(entry.file_name()))
+                .expect("link to a shipped directory");
+        }
+    }
+    let unshipped = format!("{slug}.");
+    for entry in std::fs::read_dir(assets().join("textures")).expect("shipped textures") {
+        let entry = entry.expect("shipped texture");
+        if !entry.file_name().to_string_lossy().starts_with(&unshipped) {
+            std::os::unix::fs::symlink(entry.path(), textures.join(entry.file_name()))
+                .expect("link to a shipped texture");
+        }
+    }
+
+    let mut harness = Harness::boot_root(directory.path(), ClientMode::Skirmish, SKIRMISH_SCENARIO);
+    let position = harness.simulated_position(worker(&harness));
+    harness.look_at(position);
+    assert!(
+        harness
+            .app
+            .world()
+            .resource::<HudModel>()
+            .catalog
+            .archetype(structure)
+            .is_some_and(|entry| entry.unpresentable.is_some()),
+        "{slug} must be unpresentable without its atlas"
+    );
+    (directory, harness, structure)
 }
 
 #[test]
@@ -641,11 +699,11 @@ fn exactly_the_structures_without_shipped_media_are_unpresentable() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn a_card_entry_without_media_is_disabled_for_want_of_media() {
-    let mut harness = skirmish();
-    let (worker, _) = worker_and_site(&mut harness);
-    let structure = a_structure_without_media(&harness, worker);
+    let (_root, mut harness, structure) = skirmish_with_one_structure_unshipped();
+    worker_and_site(&mut harness);
     tap_label(&mut harness, CardLabel::Build);
 
     let position = turn_to(&mut harness, structure);
@@ -656,11 +714,11 @@ fn a_card_entry_without_media_is_disabled_for_want_of_media() {
     assert_eq!(card(&harness).text[position].tooltip, NO_MEDIA_TEXT);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_disabled_entry_issues_nothing_and_says_why() {
-    let mut harness = skirmish();
-    let (worker, _) = worker_and_site(&mut harness);
-    let structure = a_structure_without_media(&harness, worker);
+    let (_root, mut harness, structure) = skirmish_with_one_structure_unshipped();
+    worker_and_site(&mut harness);
     tap_label(&mut harness, CardLabel::Build);
     let position = turn_to(&mut harness, structure);
     assert!(!card(&harness).slots[position].as_ref().unwrap().enabled);

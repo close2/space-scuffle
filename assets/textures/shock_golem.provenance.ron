@@ -1,0 +1,72 @@
+(
+    format_version: 1,
+    name: "shock_golem",
+    atlas_sha256: "23f1a86bd5c7ce30878d1b7c9e8248f9ffc388d7a731ee4b3c7257f512d2e38b",
+    manifest_sha256: "756e686246ff786610e446c981e8d928dbe81dfb57563ac75494dadbfff505e9",
+    bake: (
+        frame_size: 512,
+        fps: 15,
+        max_frames_per_state: 10,
+        ffmpeg_version: "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+        framing: Letterbox(
+            feather_permille: 30,
+        ),
+    ),
+    states: {
+        Idle: (
+            clip: "shock_golem_idle.mp4",
+            clip_sha256: "4b7222592e27db31f73c2284ea4bff3637f8e49fb55768a77303fa15747ba1c9",
+            start_frame: 0,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/97931437-5f29-4d75-bd2a-07cc41e2cb78",
+                prompt_sha256: "945ecb298b021cb1407ae828ed95ff757361a6c5b47bc4839ed8ee15f86967bb",
+                keyframe_sha256: None,
+                last_frame_sha256: None,
+                ledger_line: 193,
+            ),
+            bar_rgb: Some((38, 41, 55)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Walk: (
+            clip: "shock_golem_walk.mp4",
+            clip_sha256: "07e878da425fed58d8a2564ee2e7dea56125506885404b13681c275257524a85",
+            start_frame: 10,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/c9924231-a62b-47a5-81d2-b18bef091197",
+                prompt_sha256: "be3d6c437bf483b1b4fd43c341edee6e8e1d7651306a1324574a7111ba17978f",
+                keyframe_sha256: Some("366756775a2ad2500fef79bf12a8f9be45632bbdf0c9d40440ceaae7671e66d1"),
+                last_frame_sha256: None,
+                ledger_line: 504,
+            ),
+            bar_rgb: Some((41, 45, 59)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 0,
+            )),
+        ),
+        Attack: (
+            clip: "shock_golem_attack.mp4",
+            clip_sha256: "d187c960e75a3303fe384b8a6fbb84c0246e1d48fb2c951ad6d09c8edf665d88",
+            start_frame: 20,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/a6aa8d98-4253-4e11-87af-9b5fede518a3",
+                prompt_sha256: "d6354aaa28a0ef27b24804fe98c31f70fd23ebfd76adc4f5ba946d071b12bc1b",
+                keyframe_sha256: Some("366756775a2ad2500fef79bf12a8f9be45632bbdf0c9d40440ceaae7671e66d1"),
+                last_frame_sha256: Some("366756775a2ad2500fef79bf12a8f9be45632bbdf0c9d40440ceaae7671e66d1"),
+                ledger_line: 271,
+            ),
+            bar_rgb: Some((41, 41, 56)),
+        ),
+    },
+)

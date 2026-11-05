@@ -1,0 +1,24 @@
+(
+    name: "covert_ops_nexus_dome",
+    frame_width: 512,
+    frame_height: 512,
+    fps: 15,
+    total_frames: 32,
+    layout: VerticalStrip,
+    actions: {
+        Constructing: (
+            start_frame: 16,
+            frame_count: 16,
+            looping: false,
+            hold_last_frame: true,
+            duration_ms: Some(4000),
+        ),
+        Idle: (
+            start_frame: 0,
+            frame_count: 16,
+            looping: true,
+            hold_last_frame: false,
+            duration_ms: Some(3933),
+        ),
+    },
+)

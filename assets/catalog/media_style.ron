@@ -27,18 +27,24 @@
     // - negative_terms: plain nouns appended, after ", ", to the global `negative_prompt` of
     //   `media/veo_request.ron` for every clip of the kind. `None` adds nothing.
     actions: (
-        // Mobile units. The texts are unchanged since before the split (a golden list of the
-        // unit prompts' SHA-256 guards that). Idle and Walk loop in the game, so they ask for
-        // a fixed camera and an end pose equal to the start pose (owner, Q0026: jumps when a
-        // loop restarts are distracting). Constructing is kept in case a unit ever publishes
-        // it; it shows work in progress on the finished shape (keyframe chaining).
+        // Mobile units. A golden list of the unit prompts' SHA-256 guards these texts. Idle and
+        // Walk loop in the game, so they ask for a fixed camera and an end pose equal to the
+        // start pose (owner, Q0026: jumps when a loop restarts are distracting). Constructing is
+        // kept in case a unit ever publishes it; it shows work in progress on the finished shape
+        // (keyframe chaining).
+        // Cast (reviewed in batch 4, 2026-11-05): the atlas loops Cast and the policy pins both
+        // ends, so the text now has the camera and loop clauses Idle and Walk have, and the
+        // body and tools hold still. The earlier "tool arms reaching toward a target" moved the
+        // pose away from the picture the clip must return to (batch 2, welder_drone, whose
+        // override this text now follows). A Cast whose effect is steady (a beam, an arc)
+        // still needs its own pin with the effect lit (batch-2 evidence).
         unit_sphere: (
             texts: {
                 Constructing: "Constructing animation, one static tripod shot: the camera never moves, zooms or pans. Construction work in progress over the whole structure, holographic wireframe scaffolding shimmering around it with active seam welding sparks. The structure keeps its shape, size and place in frame, and the last frame matches the first.",
                 Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size and place in frame from start to end. Steady rhythmic breathing movement, subtle weapon glow pulse, head and radar scanning smoothly in place. Seamless loop: the last frame matches the first.",
                 Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the subject moves in place, keeping the same size and place in frame. Dynamic forward stride, rhythmic mechanical bobbing, ground dust kick-up at feet, leaning into movement. Seamless loop: the last frame matches the first.",
                 Attack: "Attack animation: sharp weapon recoil, intense bright muzzle flash and projectile emission filling the right side of frame, followed by fluid spring recovery.",
-                Cast: "Cast animation: focused work in place, tool arms reaching toward a target just outside the frame, a steady bright welding arc or extraction beam with showering sparks, body holding still.",
+                Cast: "Cast animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size, pose and place in frame from start to end. It holds a steady bright work beam or extraction arc toward a point just outside the frame, with showering sparks, its body and tools holding still. Seamless loop: the last frame matches the first.",
                 Die: "Death animation: dramatic armor fracture, glowing internal reactor blowout with flying mechanical debris dissolving into smoke.",
             },
             // "Breathing" is asked for above, so it cannot be a negative term for units.
@@ -75,7 +81,40 @@
         // and no loop clause although the atlas loops Cast and the policy pins its end, and its
         // "tool arms reaching" moves the pose away from the pin it must return to. Idle, Walk and
         // Cast start and end on the hovering Idle pin, so they keep that pose; Attack starts on it.
+        //
+        // railgun_crawler, shock_golem, jet_jumper, specter_android (batch 3, 2026-11-05): the
+        // barracks' combat units. The unit Idle text asks for "head and radar scanning", a
+        // turning part that batch 1 saw flicker and change shape; the unit Walk text asks for
+        // "ground dust kick-up at feet", and words about the ground drew a floor plane in
+        // batch 2; the unit Attack text has no camera clause and ends nowhere in particular.
+        // Their Idle and Walk start and end on the Idle pin and Attack starts on it, so each
+        // text keeps the pose, faces the weapons one way and returns to the start. The
+        // crawler is a tracked tank: no feet, a fixed turret, the tracks show the travel.
+        // Batch 4 (2026-11-05) redesigned it from text with no side vents (its first pin's
+        // side exhaust flames flickered in five Walks) and asked its Walk for tracks running
+        // fast on a rolling road with exhaust streaming backward; the golem's Walk asks for a
+        // brisk march with high knee lifts (marking time read as a weight shift).
         overrides: {
+            "railgun_crawler": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the tank keeps the same size and place in frame from start to end. The tank sits still with its engine idling: thin exhaust smoke drifts slowly from its two rear stacks and blue energy glows steadily along the rails. The turret, both barrels and the tracks stay fixed. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the tank drives at full speed on a rolling road that holds it in place: all four tracks run fast and continuously, treads and road wheels visibly moving the whole time, while the hull keeps the same place, size and facing in frame. The hull vibrates on its suspension and exhaust smoke streams backward from its two rear stacks; the turret stays fixed. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the tank keeps its place in frame with the turret fixed. The twin rails fire once along the barrels: a sharp recoil, a bright blue electric flash at the muzzles and a bolt streaking out of frame, then the barrels settle back to their starting position.",
+            },
+            "shock_golem": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size, pose and place in frame from start to end. It stands still and steady in place, holding its fire: its body barely moves and only its lights change, optics glowing and energy cores pulsing softly; head and weapons keep facing the same way. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans. The golem marches briskly on the spot as if on a treadmill: four full steps, left, right, left, right, each knee lifting high and each foot stamping down again at an even pace from the first frame to the last, while its body keeps the same place, size and three-quarter facing in frame and never leans toward the camera. Weapons held ready; nothing else appears in the frame. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps its place in frame. It fires along the line its weapons point: a sharp recoil, bright muzzle flashes and shells streaking out of frame, then it settles smoothly back to its starting pose.",
+            },
+            "jet_jumper": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size, pose and place in frame from start to end. It stands still and steady in place, holding its fire: its body barely moves and only its lights change, optics glowing and energy cores pulsing softly; head and weapons keep facing the same way. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the subject runs on the spot as if on a treadmill: its legs step in turn while its body keeps the same place, size and three-quarter facing in frame throughout. A steady rhythmic stride with a slight mechanical bob, weapons held ready. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps its place in frame. It fires along the line its weapons point: a sharp recoil, bright muzzle flashes and projectiles streaking out of frame, then it settles smoothly back to its starting pose.",
+            },
+            "specter_android": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size, pose and place in frame from start to end. It stands still and steady in place, holding its fire: its body barely moves and only its lights change, optics glowing and energy cores pulsing softly; head and rifle keep facing the same way. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the subject marches on the spot as if on a treadmill: its legs step in turn while its body keeps the same place, size and three-quarter facing in frame throughout. A steady rhythmic stride with a slight mechanical bob, rifle held ready. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps its place in frame. It fires once along the line its rifle points: a sharp recoil, a bright muzzle flash and a beam streaking out of frame, then it settles smoothly back to its starting pose.",
+            },
             "welder_drone": {
                 Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size and place in frame from start to end. The robot hovers in place with a gentle steady bob, its optic eye glowing, a small blue pilot flame flickering at the welding torch tip. Seamless loop: the last frame matches the first.",
                 Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the robot flies in place, keeping the same size, pose and place in frame. Its back thrusters flare in steady bursts, exhaust streams backward, a slight rhythmic bob, no ground contact. Seamless loop: the last frame matches the first.",
@@ -140,9 +179,19 @@
         // welder_drone (batch 2, 2026-11-05): a wide worker seen at 3/4 with its welding torch
         // held out to one side; its first clip (d020071b) spans about 68 % of the 16:9 width,
         // so the centre crop cut off the torch. Letterboxed like the shuttle, it stays whole.
+        //
+        // railgun_crawler, shock_golem, jet_jumper, specter_android (batch 3, 2026-11-05): seen
+        // at 3/4 with their weapons held out to the side (the tank's long barrels, the golem's
+        // arm cannons, the hound's two pistols, the android's long rifle), each spans about 60
+        // to 65 % of the 16:9 width and sits left of centre in its first clips (97931437,
+        // c6ddca3c), so the centre crop cut off a weapon. Letterboxed, they stay whole.
         overrides: {
             "repair_shuttle": Letterbox(feather_permille: 30),
             "welder_drone": Letterbox(feather_permille: 30),
+            "railgun_crawler": Letterbox(feather_permille: 30),
+            "shock_golem": Letterbox(feather_permille: 30),
+            "jet_jumper": Letterbox(feather_permille: 30),
+            "specter_android": Letterbox(feather_permille: 30),
         },
     ),
 
@@ -180,7 +229,45 @@
         // welder_drone Walk: pinned at both ends to the Idle frame 0; the default cross-fade of 2
         // of 8 frames shows a double image of the whole robot at the restart (the bob moves the
         // body by a few per cent of the frame), so it keeps loop sampling only, as the shuttle.
+        //
+        // railgun_crawler, shock_golem, jet_jumper, specter_android Attack (batch 3, 2026-11-05):
+        // a one-shot that the game follows with Idle. Unpinned, the first Attack clips of the
+        // golem (deab733a) and the hound (dfae7358) fired well and then lowered their weapons,
+        // ending in a pose the Idle does not start from, so the switch back would snap. Their
+        // Attack is pinned at its end to the Idle picture, as Constructing is (D-3), and is
+        // still not looped.
+        // specter_android Walk: pinned at both ends, its raw frames already loop (74014f87: raw
+        // worst 0.800 against a threshold of 0.782); the default cross-fade of 2 of 10 frames
+        // shows a double image of the legs at the restart, as on the welder, so it keeps loop
+        // sampling only. jet_jumper Walk likewise: its raw frames loop (503ded63: raw worst 0.737
+        // against 0.724, growth 1.45 %), and the scale lock reads the hopping stride as an
+        // uneven zoom and refuses it although the camera does not move.
+        // railgun_crawler Idle: pinned at both ends, its raw frames already loop (6eedaf3a: raw
+        // wrap 0.940 above the median step 0.936, worst 0.909 against 0.906); a cross-fade of
+        // the drifting smoke raises the median step and fails it by 0.0003, so it keeps the
+        // scale lock and no cross-fade, as the shuttle and the welder. The redesigned crawler's
+        // Idle (batch 4, 8d430dda) loops raw as well (wrap 0.926, worst 0.921 against 0.904).
+        // shock_golem Walk (batch 4): pinned at both ends to the wide-stance Idle picture, eight
+        // Walks barely stepped, stepped unevenly or leaned toward the camera; the end is left
+        // free so the march can run through the clip, and loop sampling picks the loop with
+        // a short cross-fade. The scale lock is off because a stride reads as an uneven zoom.
         overrides: {
+            "railgun_crawler": {
+                Attack: (pin_end: true, seam: None),
+                Idle: (pin_end: true, seam: Some((scale_lock: true, crossfade_frames: 0))),
+            },
+            "shock_golem": {
+                Attack: (pin_end: true, seam: None),
+                Walk: (pin_end: false, seam: Some((scale_lock: false, crossfade_frames: 0))),
+            },
+            "jet_jumper": {
+                Attack: (pin_end: true, seam: None),
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+            },
+            "specter_android": {
+                Attack: (pin_end: true, seam: None),
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+            },
             "welder_drone": {
                 Idle: (pin_end: true, seam: Some((scale_lock: true, crossfade_frames: 0))),
                 Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),

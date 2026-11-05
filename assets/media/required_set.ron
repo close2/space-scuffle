@@ -26,5 +26,24 @@
         (slug: "foundry_core_dome", tier: Required),
         // Real clips committed by the original Veo work; re-baked with provenance in WP2.
         (slug: "pulse_bot", tier: Required),
+        // Expansion batch 3 (WP6, 2026-11-05): the barracks' combat units
+        // (docs/evidence/veo/2026-11-05-batch-3.md; the crawler's redesign and the golem's Walk
+        // in docs/evidence/veo/2026-11-05-batch-4.md).
+        (slug: "railgun_crawler", tier: Expansion),
+        (slug: "shock_golem", tier: Expansion),
+        (slug: "jet_jumper", tier: Expansion),
+        (slug: "specter_android", tier: Expansion),
+        // Expansion batch 4 (WP6, 2026-11-05): tech, upgrade and defence structures
+        // (docs/evidence/veo/2026-11-05-batch-4.md).
+        (slug: "mechanics_lab_dome", tier: Expansion),
+        (slug: "orbital_relay_dome", tier: Expansion),
+        (slug: "planetary_bulwark_dome", tier: Expansion),
+        (slug: "weapons_arsenal_dome", tier: Expansion),
+        (slug: "fortress_bunker_dome", tier: Expansion),
+        (slug: "flak_array_dome", tier: Expansion),
+        (slug: "radar_beacon_dome", tier: Expansion),
+        (slug: "covert_ops_nexus_dome", tier: Expansion),
+        (slug: "fusion_reactor_dome", tier: Expansion),
+        (slug: "duplicator_module_pod", tier: Expansion),
     ],
 )
