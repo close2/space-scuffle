@@ -909,3 +909,33 @@ would be a new magic number, so the plan's `u16::MAX` was used.
 - Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`) reproduce both fixtures.
 - **`sim_fixtures` `DEFAULT_SANDBOX_CHECKSUM` (`fixture_tests.rs`): re-recorded** for the same reason: with the spawn
   value set back to 250 the test computes the old checksum again.
+
+## 10. WP10: the shield-regeneration rate (Q0039)
+
+**Commit.** The data commit of WP10, after WP9 (§9). Every shielded archetype regenerates shields at StarCraft II's
+rate converted from Normal to Faster time, the third of the four values of Q0039 (option 3):
+
+| Field | Before | After | Reference |
+|---|---|---|---|
+| `shield_regen_per_tick`, all 29 shielded archetypes (14 units in `units.ron`, 15 structures in `structures.ron`) | 0.08 | **0.112** | `ShieldRegenRate 2` Normal per s = 2.8 Faster per s = 0.112 per tick; every one confirmed by the audit, per identity with its source line ([`2026-11-04-catalog-time-audit.md`](2026-11-04-catalog-time-audit.md) §1 item 3 and group WP10 in §4; for example `psi_grey` `liberty` UnitData:3176) |
+
+No shielded archetype differed from `ShieldRegenRate 2` (audit §1 item 3), so none is left to WP12. Doc 03 §1.1
+already says 2.8 per second; doc 07 gives no regeneration rate. Outputs under `~/scratch/combat_wp9/wp10/`.
+
+- **Whole matrix, 20 seeds: bit-identical** to the state after WP9 (all 1000 rows of `matrix.csv`: outcome, end
+  tick, lead-unit life). Expectation failures stay 0 on the seeds of record and 7 over all seeds (battle 33).
+- **Where shields do regenerate in the matrix.** `matrix.csv` does not record shields, so every battle was also traced
+  on the same 20 seeds (`--battle`, per-tick `*_health_regained`; the sum script `regen_sum.py` is a throwaway beside
+  the outputs). Shields regenerate in two battles only, and more with this step: **31** (15 marauders against 15
+  stalkers; red regains 24.64 → 34.50 over the same 308 ticks, seeds 8 and 14) and **35** (12 vikings against 6
+  colossi; red 36.24 → 50.74 over the same 453 ticks, seed of record 3203386110, which ends unresolved). In neither
+  does a survivor count, end tick or lead-unit life move. Every other
+  regained life in the matrix is Zerg or Reaper life regeneration and is identical.
+- **Battle 33, 68 seeds: bit-identical** to §6.2 (all output files byte-identical; 42 / 18 / 8, marine survivors
+  4.03, SD 3.26; seeds of record 7–0, 3–0, 9–0, 6–0), as the investigation found for the zealot's rate alone. The
+  battle 33 comment in `matchup_matrix.ron` is unchanged.
+- **`golden_replay.ron`: re-recorded from checkpoint 13** (ticks 601 to 650): checkpoints 1 to 12 are unchanged, and
+  13 to 20 changed, from the first checkpoint in which a damaged `red_psi` zealot has gone 250 ticks unhit.
+- **`golden_replay_orders.ron`: unchanged**: its shielded units (`flying_saucer`, `psi_grey`) never regenerate
+  shields in its 600 ticks.
+- Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`) reproduce both fixtures.

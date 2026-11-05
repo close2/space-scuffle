@@ -28,6 +28,9 @@
 // u16::MAX ("never damaged") instead of 250. That counter is hashed, so every checkpoint
 // changed. No behaviour did: with the spawn value left at 250, every checkpoint stays as
 // recorded for flipbook WP2.
+// Re-recorded for WP10 (Q0039): every shielded archetype regenerates 0.112 shields per tick (was
+// 0.08). Checkpoints 1 to 12 are unchanged; from checkpoint 13 (ticks 601 to 650), when a
+// damaged "red_psi" zealot has first gone 250 ticks unhit, every checkpoint changed.
 (
     checksum_schema: 10,
     seed: 0x5EED_0F_5CAFF1E,
@@ -67,13 +70,13 @@
         0x86ba21dfddbf4786,
         0x6735666cb4d8af73,
         0xe54bde10d0b0a040,
-        0xd2d0e731af1f1f29,
-        0x8f79aa5a23e591a2,
-        0x01d450b1b4b26011,
-        0x6c18d27c5f3c2997,
-        0x36131d085b81e91e,
-        0xdfd35c15b70d6083,
-        0x4fcf7c9bf07f9969,
-        0x67d7b2e1b7620abd,
+        0xd8ebbed63454c993,
+        0x84b7a33281a53dc2,
+        0x2e1b271fd4d2cdd6,
+        0x6c191475a795a8cb,
+        0x4b52e227fcc79cad,
+        0xbb9098b44b424076,
+        0xae37b901d4e37ddf,
+        0xc02c4e262c6d185d,
     ],
 )
