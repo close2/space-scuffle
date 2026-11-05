@@ -1148,3 +1148,51 @@ debug, release and `wasm32-wasip1`. No doc 07 or doc 08 cell states the cooldown
 Ghost; each source line in the audit's group R3). The Phoenix already has 0.0315 (WP16). No matrix battle or golden
 replay spawns one of the nine. Measured: whole matrix and battle 33 bit-identical, both golden replays unchanged in
 debug, release and `wasm32-wasip1`. Doc 03 §1 already gives 0.7875 per Faster second; doc 07 and doc 08 state no rate.
+
+### 13.9 S1: five speeds copied in Normal time (class B)
+
+| Identity | `max_speed` before | After | Source (Normal units per s, × 1.4 ÷ 25) |
+|---|---|---|---|
+| `welder_drone`, `grav_harvester`, `nectar_worker` | 0.1124 | **0.1575** | 2.8125, `liberty` UnitData:4731, :3074, :7040 |
+| `rhino_beetle` | 0.09 | **0.126** | 2.25, `liberty` UnitData:7186 |
+| `railgun_crawler` | 0.09 | **0.126** | 2.25, `liberty` UnitData:5075 |
+
+`acceleration` and `deceleration` follow `max_speed`, the catalog's convention (parsed and unused, audit class E),
+as WP7 did for the marine.
+
+**Test restated first.** `combat_correctness_tests.rs::s2_explicit_focus_fire_survives_nearby_enemy` orders a marine
+onto a far `rhino_beetle` beside a zealot and reads the order after 30 ticks. The faster Roach walked into its own
+range sooner and, with the zealot, killed the marine before the check (`no entry found for key`). The test is about
+the order surviving a nearby enemy, not about the target's speed; in the commit before this one the far target holds
+position. Same assertion and run length; it passes before and after.
+
+**Whole matrix, 20 seeds.** Compared with the state after R3: **8 battles moved, no winner changed, no expectation
+failed** (0 on the seeds of record; the 7 over all seeds are battle 33's, unchanged).
+
+| Battle | Seeds moved | Survivors blue – red, before → after | End tick, before → after | Lead hull, before → after |
+|---|---|---|---|---|
+| 1b_stalker_vs_2_roaches | 20 | 0.00 – 2.00 → same | 159.8 → 156.6 | red 106.75 → same |
+| 6a_roach_vs_hydra | 3 | 1.00 – 0.00 → same | 149.7 → 149.5 | blue 35.00 → same |
+| 6b_2_roaches_vs_hydra | 1 | 2.00 – 0.00 → same | 65.9 → 65.8 | blue 118.60 → same |
+| 6c_roach_vs_2_hydras | 2 | 0.00 – 2.00 → same | 96.3 → 96.2 | red 61.98 → same |
+| 22a_reaper_vs_2_workers | 20 | 1.00 – 0.00 → same | 102.0 → 102.0 | blue 40.63 → 37.24 |
+| 24a_roach_vs_5_lings | 11 | 0.00 – 2.00 → same | 296.6 → 295.6 | — |
+| 24b_upgraded_roach_vs_5_lings | 17 | 1.00 – 0.00 → same | 255.6 → 255.8 | blue 85.00 → 82.40 |
+| 30_20_roaches_vs_10_immortals | 20 | 0.00 – 9.95 → 0.00 – 10.00 | 263.9 → 248.3 | red 128.58 → 113.80 |
+
+- **Roach battles** (1b, 6a to 6c, 24a, 24b, 30): the roaches close the distance sooner, so fights start and end a
+  few ticks earlier; against the ranged stalker and hydras the outcome and the survivor's life do not move. In 30 the
+  fight ends 15.6 ticks sooner on average; the immortals' first unit ends with less life (128.58 → 113.80) and lives
+  on all 20 seeds (19 before), and on one seed one more immortal survives (9.95 → 10.00 mean).
+- **22a**: the workers reach the reaper sooner and land a few more blows (reaper 40.63 → 37.24 life); the reaper
+  still wins on every seed.
+- No matrix battle spawns `railgun_crawler` with room to walk before the fight decides (battle 3's tank starts in
+  range), so its speed moves nothing there.
+
+**Battle 33, 68 seeds: bit-identical.**
+
+**Golden replays re-recorded.** `golden_replay.ron` from checkpoint 1 (its `rhino_beetle` squad moves at tick 5, its
+`railgun_crawler` squad at tick 120); `golden_replay_orders.ron` from checkpoint 3 (ticks 21 to 30; its `rhino_beetle`
+squad moves at tick 20). The phase-order test still finds both situations. Debug, release and `wasm32-wasip1`
+reproduce both fixtures. Doc 07's speed cells for the five units and §2.2's worker speed (2.81 tiles/s, the Normal
+value) are corrected.

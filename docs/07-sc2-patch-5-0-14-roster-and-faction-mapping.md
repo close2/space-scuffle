@@ -51,7 +51,7 @@ $$\text{Ticks} = \left\lfloor \text{Duration}_{\text{seconds}} \times 25 + 0.5 \
 ### 2.2 Linear Velocity & Acceleration Formulas
 In SC2, movement speed is expressed in world grid tiles per second. In *Space Scuffle*, authoritative position updates accumulate displacement per tick using fixed-point [`SimScalar`]:
 $$v_{\text{tick}} = \frac{v_{\text{SC2}}}{25} = v_{\text{SC2}} \times 0.04$$
-- **Worker speed (`2.81` tiles/s):** $v_{\text{tick}} = 2.81 / 25 = 0.1124\ \text{world units/tick}$
+- **Worker speed (`2.8125` Normal = `3.94` Faster tiles/s):** $v_{\text{tick}} = 2.8125 \times 1.4 / 25 = 0.1575\ \text{world units/tick}$
 - **Standard infantry (`3.15` tiles/s):** $v_{\text{tick}} = 3.15 / 25 = 0.1260\ \text{world units/tick}$
 - **High-speed flyer / Phoenix (`5.95` tiles/s):** $v_{\text{tick}} = 5.95 / 25 = 0.2380\ \text{world units/tick}$
 - **Zergling on Creep with Speed (`6.57` tiles/s):** $v_{\text{tick}} = 6.57 / 25 = 0.2628\ \text{world units/tick}$
@@ -127,7 +127,7 @@ The Automaton Directorate deploys mass-manufactured cobalt-and-gunmetal war mach
 
 | # | Space Scuffle Unit / Dome | SC2 5.0.14 Analogue | Role, Capabilities & Lore | Vitals (HP/Shield/Armor) | Speed / Mover / Push | Mineral / Gas / Supply / Ticks | Ground Weapon (Dmg/Range/Period) | Air Weapon (Dmg/Range/Period) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 1 | **Welder Drone** (`welder_drone`) | SCV | Resource harvester and combat field-repair robot with dual plasma welding arcs. | 45 HP / 0 / 0 | 0.1124 / Ground / 10 | 50 / 0 / 1 / 304 | 5 Melee / 0.2 / 15 ticks | — |
+| 1 | **Welder Drone** (`welder_drone`) | SCV | Resource harvester and combat field-repair robot with dual plasma welding arcs. | 45 HP / 0 / 0 | 0.1575 / Ground / 10 | 50 / 0 / 1 / 304 | 5 Melee / 0.2 / 15 ticks | — |
 | 2 | **Aegis Pulse Bot** (`pulse_bot`) *(Hero)* | Marine | Mass-produced frontline android firing rapid cyan magnetic pulses. **Overclock** stim. | 45 HP / 0 / 0 | 0.1260 / Ground / 20 | 50 / 0 / 1 / 446 | 6 Hitscan / 5.0 / 15 ticks | 6 Hitscan / 5.0 / 15 ticks |
 | 3 | **Shock Golem** (`shock_golem`) | Marauder | Quad-piston armored assault mech launching concussive kinetic gravity shells that slow enemies. **Overclock** stim. | 125 HP / 0 / 1 | 0.1260 / Ground / 30 | 100 / 25 / 2 / 536 | 10 (+10 Armored) / 6.0 / 26 ticks | — |
 | 4 | **Thruster Hound** (`jet_jumper`) | Reaper | Agile scouting quad-droid with dual jump thrusters allowing cliff scaling. Combat regenerative fuel cell. | 60 HP / 0 / 0 | 0.2100 / CliffJumper / 15 | 50 / 50 / 1 / 804 | 4x2 (+5x2 Light) / 5.0 / 20 ticks | — |
@@ -154,7 +154,7 @@ The Cosmic Enclave features iconic "Roswell Grey" extraterrestrials clad in irid
 
 | # | Space Scuffle Unit / Dome | SC2 5.0.14 Analogue | Role, Capabilities & Lore | Vitals (HP/Shield/Armor) | Speed / Mover / Push | Mineral / Gas / Supply / Ticks | Ground Weapon (Dmg/Range/Period) | Air Weapon (Dmg/Range/Period) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 1 | **Levitation Drone** (`grav_harvester`) | Probe | Miniature hovering saucer projecting emerald tractor beams to harvest raw crystals and warp in domes. | 20 HP / 20 Sh / 0 | 0.1124 / Ground / 10 | 50 / 0 / 1 / 304 | 5 Melee / 0.2 / 15 ticks | — |
+| 1 | **Levitation Drone** (`grav_harvester`) | Probe | Miniature hovering saucer projecting emerald tractor beams to harvest raw crystals and warp in domes. | 20 HP / 20 Sh / 0 | 0.1575 / Ground / 10 | 50 / 0 / 1 / 304 | 5 Melee / 0.2 / 15 ticks | — |
 | 2 | **Psi-Blade Grey** (`psi_grey`) *(Hero)* | Zealot | Classic big-headed alien shock trooper wielding twin arm-mounted plasma blades. High shields & rapid twin slash. | 100 HP / 50 Sh / 1 | 0.1260 / Ground / 25 | 100 / 0 / 2 / 679 | 8x2 Melee / 0.1 / 21 ticks | — |
 | 3 | **Phase Tripod** (`warp_strider`) | Stalker | Agile three-legged alien scout-walker firing high-velocity particle disruptors with **Phase Blink** teleport. *(Build 27s in 5.0.14)*. | 100 HP / 80 Sh / 1 | 0.1652 / Ground / 25 | 125 / 50 / 2 / 679 | 13 (+5 Armored) / 6.0 / 26 ticks | 13 (+5 Armored) / 6.0 / 26 ticks |
 | 4 | **Force-Matrix Grey** (`prism_weaver`) | Sentry | Hovering psionic technician projecting impenetrable kinetic forcefields and protective guardian aura shields. | 40 HP / 40 Sh / 1 (200 En) | 0.1260 / Ground / 20 | 50 / 100 / 2 / 571 | 6 Continuous Beam / 5.0 / 18 ticks | 6 Continuous Beam / 5.0 / 18 ticks |
@@ -181,10 +181,10 @@ The Sylvan Swarm commands an army of ferocious chitinous forest beasts, horned s
 
 | # | Space Scuffle Unit / Dome | SC2 5.0.14 Analogue | Role, Capabilities & Lore | Vitals (HP/Shield/Armor) | Speed / Mover / Push | Mineral / Gas / Supply / Ticks | Ground Weapon (Dmg/Range/Period) | Air Weapon (Dmg/Range/Period) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| 1 | **Forager Ant** (`nectar_worker`) | Drone | Industrious giant iridescent ant worker. Gathers minerals and morphs its body into living bio-domes. | 40 HP / 0 / 0 | 0.1124 / Ground / 10 | 50 / 0 / 1 / 304 | 5 Melee / 0.2 / 15 ticks | — |
+| 1 | **Forager Ant** (`nectar_worker`) | Drone | Industrious giant iridescent ant worker. Gathers minerals and morphs its body into living bio-domes. | 40 HP / 0 / 0 | 0.1575 / Ground / 10 | 50 / 0 / 1 / 304 | 5 Melee / 0.2 / 15 ticks | — |
 | 2 | **Razor Mantis** (`razor_mantis`) | Zergling | Hyper-fast emerald predatory insect hatching in pairs. Swarms prey with twin razor-serrated scythe limbs. | 35 HP / 0 / 0 | 0.1652 / Ground / 15 | 50 / 0 / 1 (x2) / 429 | 5 Melee / 0.2 / 12 ticks | — |
 | 3 | **Acid-Burst Beetle** (`volatile_tick`) | Baneling | Volatile glowing tick pulsing with caustic bio-acid. Detonates in a lethal splash upon impact. | 30 HP / 0 / 0 | 0.1400 / Ground / 20 | 25 / 25 / 0 / 357 | 16 (+19 Light) Splash / 0.2 / Suicide | — |
-| 4 | **Bombardier Rhino-Beetle** (`rhino_beetle`) *(Hero)* | Roach | Heavy six-legged horned scarab with thick carapace. Lobs caustic acid balls and regenerates rapidly underground. | 145 HP / 0 / 1 | 0.1200 / Ground / 30 | 75 / 25 / 2 / 482 | 16 Projectile / 4.0 / 36 ticks | — |
+| 4 | **Bombardier Rhino-Beetle** (`rhino_beetle`) *(Hero)* | Roach | Heavy six-legged horned scarab with thick carapace. Lobs caustic acid balls and regenerates rapidly underground. | 145 HP / 0 / 1 | 0.1260 / Ground / 30 | 75 / 25 / 2 / 482 | 16 Projectile / 4.0 / 36 ticks | — |
 | 5 | **Bile-Artillery Beetle** (`mortar_stag`) | Ravager | Evolved stag beetle lobbing arcing corrosive bile mortars to shatter enemy forcefields from afar. | 120 HP / 0 / 1 | 0.1540 / Ground / 30 | 25 / 75 / 1 / 214 | 13 Projectile / 6.0 / 28 ticks | Bile Mortar (AoE 60) |
 | 6 | **Spine-Spitter Cobra** (`thorn_viper`) | Hydralisk | Slithering predatory serpent firing high-velocity toxic spines at both ground and air. **Lunge** sprint. *(Patch 5.0.14)*. | 90 HP / 0 / 0 | 0.1260 / Ground / 25 | 100 / 50 / 2 / 589 | 12 Spines / 5.0 / 15 ticks | 12 Spines / 5.0 / 15 ticks |
 | 7 | **Subterranean Ambush Scorpion** (`burrow_scorpion`) | Lurker | Massive bio-armored arachnid. Burrows deep to unleash rolling carpets of impaling seismic spikes. *(190 HP, Sight 11 in 5.0.14)*. | 190 HP / 0 / 1 | 0.1652 / Ground / 35 | 50 / 100 / 1 / 446 | 20 (+10 Armored) Wave / 8.0 / 36 ticks | — (Fires while Burrowed) |

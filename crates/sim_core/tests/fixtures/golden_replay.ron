@@ -34,6 +34,9 @@
 // Re-recorded for WP11 (Q0039): shields start regenerating 179 ticks after the last damage (was
 // 250). Checkpoints 1 to 11 are unchanged; from checkpoint 12 (ticks 551 to 600), when that
 // zealot now starts regenerating, every checkpoint changed.
+// Re-recorded for WP12 group S1 (Q0039): "blue_armor" (rhino_beetle) and "red_siege"
+// (railgun_crawler) walk at 0.126 per tick (was 0.09, the Normal-time speed). Every checkpoint
+// changed from checkpoint 1 (ticks 1 to 50), where "blue_armor" starts moving at tick 5.
 (
     checksum_schema: 10,
     seed: 0x5EED_0F_5CAFF1E,
@@ -61,25 +64,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x189f3f514ed6bdf3,
-        0xae5265abe8f6cc2d,
-        0x7a797d9486385c0b,
-        0x99d28f0a634ef0a6,
-        0xd9838987c43d8880,
-        0x8374e0c36638a19e,
-        0x1a994a20217e16ea,
-        0xa413055170eafd2c,
-        0x0c4fb0592415efab,
-        0x86ba21dfddbf4786,
-        0x6735666cb4d8af73,
-        0x22d981b2a9c97ca8,
-        0xbdc4d3b133c8ebb3,
-        0x241f389f84a3ff53,
-        0xd445ac5da980c87a,
-        0x306bbab8a2303fc6,
-        0x6b7c448cad586f37,
-        0x35a1f17879bfcf20,
-        0xa50ff022e6c5416a,
-        0xdc8a5efaf1899194,
+        0xd3213317d91b8691,
+        0x9a0f00bdb78caef0,
+        0x9c03130587ecfe87,
+        0x10c3ab5f32e10385,
+        0xc3e287fc8afab72e,
+        0x12b41b4cb02fd961,
+        0x3d2c3eb1b3b23b79,
+        0x0132a5c20e611bd9,
+        0x38db0599f1356ae1,
+        0xe7c91e25f2cbd72d,
+        0xc9b7500205574de7,
+        0x80cc83af974355dc,
+        0xc01b0149b2ed1bed,
+        0xbedb176b52c739a6,
+        0x54c34dca5241b610,
+        0x41b4b7fdfa5bcfc5,
+        0xb0e395f21747b35d,
+        0xede4d89a5fb0265b,
+        0xdbc3b5b3a5396871,
+        0x04b1554b84a7c5da,
     ],
 )
