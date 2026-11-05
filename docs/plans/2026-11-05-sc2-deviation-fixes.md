@@ -186,7 +186,7 @@ another path is given.
 | ID | Deviation | StarCraft II (source) | Ours (where) | Class | Impact | Effort | WP |
 |---|---|---|---|---|---|---|---|
 | B-32 | `Entity::apply_stimpack` hard-codes 10 life and 250 ticks; `issue_order` routes an immediate `UseStim` there, around the catalog and its unlock | Stimpack comes from the unit's ability data: Marine 10 life, 15 Normal s = 268 ticks (`liberty` AbilData:1229, BehaviorData:680); Marauder 20 life (`StimpackMarauder`, BehaviorData:604) | `entity.rs` `issue_order`, `apply_stimpack` (callers: the public `Entity::issue_order` path; the world path `world/commands.rs` `apply_stim` reads the catalog) | B-rule | 25b if it ever goes through `Entity::issue_order` (**verify**); scripts and tests | S | WP3 |
-| B-33 | Stim is admitted at any life above 1 and leaves at least 1 | The cast needs more life than its cost **(unsourced: Liquipedia's Stimpack page does not say; verify in `AbilData` `Cost/Vital` and the engine's error "not enough life")** | `entity.rs` `prepare_overclock` (`hp <= 1`, `.max(ONE)`) | B-? | 25b, skirmish | S | WP3 |
+| B-33 | Stim is admitted at any life above 1 and leaves at least 1 | The cast needs more life than its cost (owner's answer to [Q0053](../questions/closed/0053-stimpack-at-low-life.md); the sources do not say) | `entity.rs` `prepare_overclock` (`hp <= 1`, `.max(ONE)`) | Fixed (Amendment 2) | 25b, skirmish | — | `ad0dcde` |
 | B-34 | Units with energy start at maximum | `EnergyStart`, 50 for most casters, the Phoenix 50 (`liberty` UnitData:3727); others per unit (**verify** each, for example Queen and Ghost) | `entity.rs` spawn: `energy: archetype.max_energy` | B-data (new field) | no matrix battle spends energy; skirmish casters | S | WP3 |
 | B-35 | No energy regeneration delay | `EnergyRegenDelay` exists; per-unit values not checked (life-regeneration plan F-3) | none | B-? | none expected | S | WP15 |
 | B-36 | Life of unfinished structures regenerates | Not researched (life-regeneration F-4) | `world/upkeep.rs` | B-? | skirmish (Zerg) | S | WP15 |
@@ -318,7 +318,7 @@ recorded". Nothing is guessed.
 | U-5 | Does a backswing or damage point hold an automatically attacking unit in place? (combat F-2) | B-5 | WP16 |
 | U-6 | Can enemies push each other, and which radius governs unit spacing? (Q0035, combat F-1) | B-49, B-50 | WP16 |
 | U-7 | Ally alert radius, flee distance and leash, if any | B-13 | WP16 |
-| U-8 | Can a unit stim at life equal to or below the cost? | B-33 | WP3 |
+| U-8 | Can a unit stim at life equal to or below the cost? (answered: no, [Q0053](../questions/closed/0053-stimpack-at-low-life.md)) | B-33 | WP3 |
 | U-9 | Does a life-cost ability restart regeneration delays? (life-regeneration F-2) | B-37 | WP15 |
 | U-10 | Do unfinished structures regenerate life? (life-regeneration F-4) | B-36 | WP15 |
 | U-11 | Projectile lifetime; does cloaking or burrowing dodge a missile in flight? | B-53, B-54 | WP14 |
@@ -783,7 +783,7 @@ requires.
 | B-30 | A turret keeps its angle when idle | (i) | WP10; it sets the delay of the first shot after idling |
 | B-31 | `StationaryTurningRate` | Fixed | turn-before-move WP5 `2522e3f`, WP6 `408d3b7` |
 | B-32 | Hard-coded Stimpack path | Fixed | WP3 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §3) |
-| B-33 | Stim admitted at any life above 1 | (i) | WP3. It may allow more than the game, but whether a low-life Marine can stim changes how the unit is played, so it is not a detail. WP3 could not source the game's rule (U-8): [Q0053](../questions/open/0053-stimpack-at-low-life.md), default no change |
+| B-33 | Stim admitted at any life above 1 | Fixed | `ad0dcde`: the owner answered [Q0053](../questions/closed/0053-stimpack-at-low-life.md) with rule (a), so the stim is refused, changing nothing, unless life is strictly greater than its cost; matrix and both golden replays bit-identical |
 | B-34 | Energy starts at maximum | Fixed | WP3 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §3) |
 | B-35 | No energy regeneration delay | (i) | WP15 |
 | B-36 | Unfinished structures regenerate life | (i) | WP15 |
@@ -870,8 +870,9 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
   no target: the weapon step resolved its weapon against the ground plane, found none and skipped the unit. In
   StarCraft II the cooldown runs whatever the unit does. WP2's data change exposed it (battle 35, one seed), so a rule
   commit came first and the data commit then moved nothing the matrix measures (evidence §2.2).
-- **B-33 not sourced (U-8):** [Q0053](../questions/open/0053-stimpack-at-low-life.md), default no change; B-33 stays
-  in the register.
+- **B-33 not sourced (U-8):** [Q0053](../questions/closed/0053-stimpack-at-low-life.md), default no change; B-33 stays
+  in the register. *Later the same day:* the owner answered Q0053 (rule (a), the stim needs more life than it
+  costs); fixed in `ad0dcde`, matrix and goldens bit-identical, B-33 removed from the register.
 - **WP2's test** finds the three archetypes through their `sc2_analogue` and checks them against the cited
   `TargetFilters`. The catalog has no field that marks a weapon air-only, so a test "by property" (§7 WP2 item 2)
   could only restate the data it checks.

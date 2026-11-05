@@ -468,14 +468,14 @@ pub const fn is_armed(archetype: &UnitArchetype) -> bool {
 /// Whether `entity`, of `archetype`, can overclock now. The one rule admission and the
 /// inspector share.
 ///
-/// The archetype must declare an overclock that speeds its attacks, the unit must be able to pay
-/// the health it costs, and its owner must have unlocked the ability, which is the simulation's
+/// The archetype must declare an overclock that speeds its attacks, the unit must have more life
+/// than it costs ([`Entity::can_pay_overclock`], the simulation's own rule), and its owner must have unlocked the ability, which is the simulation's
 /// own test in [`SimWorld::is_ability_unlocked`]. A unit failing any of these would receive the
 /// order and silently do nothing.
 #[must_use]
 pub fn can_overclock(world: &SimWorld, entity: &Entity, archetype: &UnitArchetype) -> bool {
     archetype.overclock.is_some_and(|spec| {
-        entity.hp > SimScalar::ONE && spec.attack_rate_multiplier > SimScalar::ZERO
+        entity.can_pay_overclock(&spec) && spec.attack_rate_multiplier > SimScalar::ZERO
     }) && world.is_ability_unlocked(archetype, entity.owner, OVERCLOCK_ABILITY_SLUG)
 }
 

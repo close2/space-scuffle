@@ -134,9 +134,14 @@ Code without tests is considered incomplete.
      and the golden replays in release and on `wasm32-wasip1` for simulation changes. Its stamp goes in the
      hand-back.
    - `cargo gate merge <branch>`: the orchestrator, for each merge to `main`.
-   - `cargo gate full`: the full gate, on `main` before every push that contains a crate change, and on CI. Push
-     only a commit with a green full stamp. When it is red, fix forward or revert within an hour, and add the
-     missing catalog rule.
+   - `cargo gate full`: the full gate, on `main` before a push that contains a crate change, and on CI. Push only a
+     commit whose tree has a green stamp. When it is red, fix forward or revert within an hour, and add the missing
+     catalog rule.
+   - **Test a tree once.** A tier passes at once, without building or running anything, when its tree already has a
+     green stamp of that tier or a stricter one; a green `package` stamp counts for `merge` and `full` when the
+     agent merged `main` right before its gate and nothing landed since (the merged tree is the tested tree). Merge
+     branches one at a time in that order, batch pushes to a few a day, and run at most one or two building agents
+     at once (owner, Q0055).
    - **Full gate** (what `cargo gate full` and CI run):
      - `cargo fmt --all -- --check`
      - `cargo clippy --workspace --all-targets --locked -- -D warnings`
@@ -236,6 +241,11 @@ Development runs on a shared VM. Its physical **AMD Radeon RX 580** (Ellesmere, 
   for the lock and then has 120 s to finish. Where the radeon driver, a usable render node or `with-gpu-lock` is
   missing, as on CI, the harness uses `lavapipe` with no lock. `SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe` reproduces
   CI on this server, and `=radv` fails instead of falling back.
+- **Run one `cargo gate` or workspace `cargo test` at a time across all worktrees.** `cargo gate` serializes
+  itself through the gate lock (`~/scratch/gate.lock`, `crates/gate/src/gate_lock.rs`); wrap any other workspace
+  `cargo test` in `flock ~/scratch/gate.lock`. Before other heavy runs, check the `anon` line of
+  `/sys/fs/cgroup/user.slice/user-1002.slice/memory.stat` and keep it below about 36 GiB of the 44 GiB limit
+  (`memory.current` also counts reclaimable page cache).
 - **Large files go on `~/scratch`.** The root disk is small and shared. The main checkout's own `target/` may stay on it for fast linking, but every agent worktree must build with `CARGO_TARGET_DIR=/home/spacescuffle/scratch/cargo-target/<worktree-name>`, and large logs, captures and corpora belong under `~/scratch`. Remove a worktree, or at least its `target/`, once its branch is merged.
 
 ---

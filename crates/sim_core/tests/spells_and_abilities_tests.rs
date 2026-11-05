@@ -1,7 +1,8 @@
 //! # Integration Tests: Tactical Spells, Active Abilities & Hazard Zones
 //!
 //! Verifies:
-//! 1. Overclock (Stimpack): HP deduction, speed multiplier, cooldown, and 1 HP minimum safety clamp.
+//! 1. Overclock (Stimpack): HP deduction, speed multiplier, cooldown, and refusal unless life
+//!    exceeds the cost (Q0053).
 //! 2. Siege Mode: Transformation channeling, mobility lock, long-range splash cannon, and unsiege toggle.
 //! 3. Blink Teleport: Instant Euclidean relocation across unpathable cliff chasms and rejection of invalid terrain.
 //! 4. Psionic Storm: Continuous AoE hazard zone with strict non-stacking damage invariant.
@@ -30,7 +31,7 @@ fn empty_bundle(tick: u32) -> TickBundle {
     }
 }
 
-/// Test 10: Overclock (Stimpack) HP deduction, stat multipliers, and 1 HP minimum clamp.
+/// Test 10: Overclock (Stimpack) HP deduction, stat multipliers, and refusal at low life.
 #[test]
 fn test_overclock_stim_hp_cost_and_stat_multipliers() {
     let width = 32;
@@ -113,19 +114,101 @@ fn test_overclock_stim_hp_cost_and_stat_multipliers() {
         "Overclock buff must expire after 250 ticks"
     );
 
-    // Test safety clamp: reduce HP to 5. Casting Overclock (10 HP cost) must not kill the unit;
-    // it must clamp to at least 1 HP minimum.
+    // Q0053: a stim needs more life than it costs. At 5 life a 10-life stim is refused and
+    // changes nothing; the unit stays alive at 5.
     world.entities.get_mut(&unit_id).unwrap().hp = SimScalar::from_num(5);
     world.entities.get_mut(&unit_id).unwrap().ability_cooldowns[0] = 0; // reset cooldown
 
     let cast_low_hp = world.execute_ability(unit_id, 0, None, None);
     assert!(
-        cast_low_hp,
-        "Overclock cast with low HP must succeed without killing unit"
+        !cast_low_hp,
+        "Overclock cast with less life than its cost must be refused"
     );
     let ent_low = world.entities.get(&unit_id).unwrap();
-    assert_eq!(ent_low.hp, SimScalar::ONE, "HP must be clamped to 1 HP min");
-    assert!(ent_low.is_alive(), "Unit must remain alive");
+    assert_eq!(
+        ent_low.hp,
+        SimScalar::from_num(5),
+        "a refused stim costs no life"
+    );
+    assert_eq!(
+        ent_low.ability_cooldowns[0], 0,
+        "a refused stim starts no cooldown"
+    );
+    assert!(
+        ent_low.active_buffs.is_empty(),
+        "a refused stim adds no buff"
+    );
+}
+
+/// Q0053 / B-33: Stimpack is refused unless the unit's life is strictly greater than its life
+/// cost ("stim can never kill a unit it therefore can't be activated with too little hp").
+/// At cost - 1 and at exactly the cost the stim changes nothing (no life, no buff, no
+/// cooldown); at cost + 1 it stims and leaves the unit at 1 life.
+#[test]
+fn stim_is_refused_unless_life_exceeds_its_cost() {
+    let map =
+        GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0))).expect("invariant: valid map");
+    let mut world = sim_fixtures::world(map, 0x5353);
+    let pulse_bot_id = world.catalog.id_by_slug("pulse_bot").expect("pulse_bot");
+    let spec = OverclockSpec {
+        hp_cost: SimScalar::from_num(10),
+        duration_ticks: 250,
+        speed_multiplier: SimScalar::from_num(1.5),
+        attack_rate_multiplier: SimScalar::from_num(1.5),
+    };
+    world.catalog.get_mut(pulse_bot_id).unwrap().abilities = vec![AbilitySpec {
+        name: "Combat Overclock".to_string(),
+        target_kind: AbilityTargetKind::InstantSelf,
+        energy_cost: SimScalar::ZERO,
+        cooldown_ticks: 250,
+        cast_range: SimScalar::ZERO,
+        effect: AbilityEffectSpec::Overclock(spec),
+    }];
+
+    for (life, admitted) in [(9, false), (10, false), (11, true)] {
+        let unit_id = world
+            .spawn_unit(
+                pulse_bot_id,
+                PlayerId(0),
+                SimVec2::new(SimScalar::from_num(10), SimScalar::from_num(10)),
+            )
+            .expect("spawn unit");
+        world.entities.get_mut(&unit_id).unwrap().hp = SimScalar::from_num(life);
+        let before = world.entities.get(&unit_id).unwrap().clone();
+
+        // The entity's own API and the world's ability cast apply the same rule.
+        let mut probe = before.clone();
+        assert_eq!(
+            probe.apply_overclock(spec).expect("valid overclock spec"),
+            admitted,
+            "Entity::apply_overclock at {life} life"
+        );
+        assert_eq!(
+            world.execute_ability(unit_id, 0, None, None),
+            admitted,
+            "cast at {life} life"
+        );
+        let after = world.entities.get(&unit_id).unwrap();
+        if admitted {
+            assert_eq!(
+                after.hp,
+                SimScalar::ONE,
+                "cost + 1 life stims down to 1 life"
+            );
+            assert_eq!(after.active_buffs.len(), 1, "the stim buff is applied");
+            assert_ne!(after.ability_cooldowns[0], 0, "the cooldown starts");
+            assert_eq!(probe.hp, SimScalar::ONE);
+        } else {
+            assert_eq!(
+                after, &before,
+                "refused at {life} life: the unit is unchanged"
+            );
+            assert_eq!(
+                probe, before,
+                "refused at {life} life: apply_overclock changes nothing"
+            );
+        }
+    }
 }
 
 /// Test 11: Siege Mode transform channel, immobility lock, long-range splash, and unsiege toggle.
