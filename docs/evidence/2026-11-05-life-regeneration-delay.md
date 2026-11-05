@@ -170,3 +170,16 @@ the archetype and keeps passing. It now records the new rate: the reaper analogu
   unresolved on all 20 seeds with 0.112 and no delay) does not occur.
 - **Battle 33, 68 seeds: bit-identical** to §3.
 - **Golden replays and the sandbox checksum: unchanged.**
+
+## 5. Summary
+
+- **Applied:** the per-archetype life-regeneration delay (WP1, latent), `jet_jumper`'s 179 ticks (WP2) and the
+  audit's group R1, 0.112 per tick (WP3). Doc 03 §1.1 and doc 07 §3.1 row 4 describe both; Q0049 is closed.
+- **Moved:** battles 22a and 22b only, both in WP2, every seed, no winner and no expectation; nothing in WP1 or
+  WP3. Battle 33 is bit-identical through the whole plan (39 / 20 / 9, marine survivors 3.87), so its comment in
+  `matchup_matrix.ron` is unchanged.
+- **Golden replays and the sandbox checksum:** unchanged in every commit. `cargo gate package` on the final tree ran
+  both golden replays in debug, release and `wasm32-wasip1` and `cargo check` on `wasm32-unknown-unknown`, all
+  green.
+- **Against the plan's expectations:** none. WP2's 22a fall in lead life is 6.22 on average (the plan expected "a
+  few points"), and 22b ends 33 ticks sooner.

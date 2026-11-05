@@ -1222,8 +1222,10 @@ since WP9). The audit's row already noted "not modelled". The whole-matrix measu
 left out one group at a time) shows the consequence: with 0.112 applied always, `22b_reaper_vs_stalker` ends
 unresolved on all 20 seeds, the reaper out-healing the stalker in combat, which it never does in the game. The rate
 alone would move the catalog away from StarCraft II's behaviour, not towards it, so it waits for the delay.
-[Q0049](../questions/open/0049-reaper-life-regeneration-delay.md) asks the owner whether to add a per-archetype
+[Q0049](../questions/closed/0049-reaper-life-regeneration-delay.md) asks the owner whether to add a per-archetype
 life-regeneration delay (the default keeps 0.08 and the deferral). No catalog value, test or golden changes here.
+**Later:** R1 was applied by plan `2026-11-05-life-regeneration-delay` WP3 (`f93ec20`), after its delay (WP2,
+`a302eb5`); see [`2026-11-05-life-regeneration-delay.md`](2026-11-05-life-regeneration-delay.md).
 
 ### 13.12 R2: Zerg life regeneration
 
@@ -1609,7 +1611,9 @@ doc 07 or doc 08 cell states a projectile speed.
 - **Deferred, each on a ground of D-7:**
   - **R1** (`jet_jumper` `hp_regen_per_tick` 0.08 → 0.112): the reference needs a mechanism we do not model, a
     life-regeneration delay (§13.11; owner question
-    [Q0049](../questions/open/0049-reaper-life-regeneration-delay.md), default: keep 0.08).
+    [Q0049](../questions/closed/0049-reaper-life-regeneration-delay.md), default: keep 0.08). Applied later by plan
+    `2026-11-05-life-regeneration-delay` WP3 (`f93ec20`) after its delay (WP2, `a302eb5`); see
+    [`2026-11-05-life-regeneration-delay.md`](2026-11-05-life-regeneration-delay.md).
   - **M2, `railgun_crawler` Siege Mode `cast_ticks`** (71; the audit's 72): the **verify** failed: the morph has a
     random delay (72 to 81 ticks) and unsieging takes 63, so there is no single reference for our one field (§13.7).
 

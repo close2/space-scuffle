@@ -30,3 +30,12 @@ group R1) found that `jet_jumper`'s `hp_regen_per_tick` of 0.08 is StarCraft II'
 
 ## Answer
 
+## Resolution
+
+Carried out as option (b) under the standing rule Q0008 (charter §8), without a separate answer, by plan
+[`2026-11-05-life-regeneration-delay`](../../plans/2026-11-05-life-regeneration-delay.md): per-archetype
+`hp_regen_delay_ticks` (WP1 `72be09a`), `jet_jumper` 179 ticks (WP2 `a302eb5`), R1 0.112 (WP3 `f93ec20`);
+measurement in [`2026-11-05-life-regeneration-delay.md`](../../evidence/2026-11-05-life-regeneration-delay.md).
+Battle `22b_reaper_vs_stalker` stays a stalker win on all 20 seeds (now at tick 139 instead of 172), and
+`22a_reaper_vs_2_workers` a reaper win with the reaper at 40 life instead of about 46; nothing else moved. The owner
+may reopen this to choose (a) or (c): a delay of 0 and a rate of 0.08 restore the old behaviour.

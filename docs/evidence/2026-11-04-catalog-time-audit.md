@@ -348,7 +348,7 @@ Columns:
 | `shock_golem` | Marauder `PunisherGrenades` | `weapon/damage_point_ticks` | 1 | 0 | `liberty` WeaponData:250 | 0.00 | C | W4 |  |
 | `shock_golem` | Marauder `PunisherGrenades` | `weapon/backswing_ticks` | 4 | 0 | `liberty` WeaponData:251 | 0.00 | C | W5 |  |
 | `shock_golem` | Marauder `PunisherGrenades` | `weapon/projectile_speed` | Some(0.64) | 20 | `liberty` MoverData:666 (mover `PunisherGrenadesWeapon`, `MaxSpeed`) | 1.120 | C | W7 |  |
-| `jet_jumper` | Reaper | `hp_regen_per_tick` | 0.08 | 2 | `void` UnitData:1476 | 0.112 | B | R1 | the reference regenerates only after 10 Normal s without damage (`void` UnitData:1475); not modelled |
+| `jet_jumper` | Reaper | `hp_regen_per_tick` | 0.08 | 2 | `void` UnitData:1476 | 0.112 | B | R1 | the reference regenerates only after 10 Normal s without damage (`void` UnitData:1475); applied by plan `2026-11-05-life-regeneration-delay` WP3 (`f93ec20`) after its delay (WP2, `a302eb5`) |
 | `jet_jumper` | Reaper | `shield_regen_per_tick` | 0.00 | 0 | not set in any layer (0) | 0 | A |  |  |
 | `jet_jumper` | Reaper | `energy_regen_per_tick` | 0.000 | 0 | not set in any layer (0) | 0 | A |  |  |
 | `jet_jumper` | Reaper | `max_speed` | 0.21 | 3.75 | `void` UnitData:1480 | 0.21 | A |  |  |
@@ -1262,6 +1262,10 @@ Matrix identities: `jet_jumper`
 | Identity | Field | Ours | Reference | Class |
 |---|---|---|---|---|
 | `jet_jumper` | `hp_regen_per_tick` | 0.08 | 0.112 | B |
+
+Applied by plan [`2026-11-05-life-regeneration-delay`](../plans/2026-11-05-life-regeneration-delay.md) WP3
+(`f93ec20`) after its delay (WP2, `a302eb5`: `hp_regen_delay_ticks: 179`, `void` UnitData:1475); measurement in
+[`2026-11-05-life-regeneration-delay.md`](2026-11-05-life-regeneration-delay.md).
 
 ### R2 (32 values, 32 identities)
 
