@@ -136,8 +136,13 @@
         // repair_shuttle (batch 1, 2026-11-04): a wide twin-engine aircraft seen at 3/4; its
         // first clip (62f8d6c9) spans about 60 % of the 16:9 width, so the centre crop cut
         // off an engine pod. Letterboxed like a structure, it stays whole.
+        //
+        // welder_drone (batch 2, 2026-11-05): a wide worker seen at 3/4 with its welding torch
+        // held out to one side; its first clip (d020071b) spans about 68 % of the 16:9 width,
+        // so the centre crop cut off the torch. Letterboxed like the shuttle, it stays whole.
         overrides: {
             "repair_shuttle": Letterbox(feather_permille: 30),
+            "welder_drone": Letterbox(feather_permille: 30),
         },
     ),
 
@@ -168,7 +173,18 @@
         // repair_shuttle Walk: pinned at both ends, its raw frames already loop; the hover bob
         // moves the hull up and down, which the scale lock reads as an uneven zoom and refuses.
         // There is no camera zoom to undo, so Walk keeps loop sampling only.
+        // welder_drone Idle (batch 2, 2026-11-05): the same hover bob as the shuttle's. Its first
+        // clip (d020071b) loops raw (wrap 0.907 above the median step 0.730 of its 8 kept
+        // frames), and the default cross-fade of 2 of those 8 frames blends two bob positions
+        // and fails (worst 0.723 < 0.805), so it keeps the scale lock and no cross-fade.
+        // welder_drone Walk: pinned at both ends to the Idle frame 0; the default cross-fade of 2
+        // of 8 frames shows a double image of the whole robot at the restart (the bob moves the
+        // body by a few per cent of the frame), so it keeps loop sampling only, as the shuttle.
         overrides: {
+            "welder_drone": {
+                Idle: (pin_end: true, seam: Some((scale_lock: true, crossfade_frames: 0))),
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+            },
             "repair_shuttle": {
                 Idle: (pin_end: true, seam: Some((scale_lock: true, crossfade_frames: 0))),
                 Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
