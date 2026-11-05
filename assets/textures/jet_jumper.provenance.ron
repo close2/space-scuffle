@@ -1,0 +1,72 @@
+(
+    format_version: 1,
+    name: "jet_jumper",
+    atlas_sha256: "c39b5c1853ec0dc9e30e941bbd927856701446be22729f086a9bd3eba5594ab7",
+    manifest_sha256: "650db191ba1f6031ae5589e8eaebca3aa30104047c23e849927323d2918f6e0f",
+    bake: (
+        frame_size: 512,
+        fps: 15,
+        max_frames_per_state: 10,
+        ffmpeg_version: "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+        framing: Letterbox(
+            feather_permille: 30,
+        ),
+    ),
+    states: {
+        Idle: (
+            clip: "jet_jumper_idle.mp4",
+            clip_sha256: "8971e9c991b4c7dba38f5be8e35d9cf232f25691b8266ec452d271f66eb33319",
+            start_frame: 0,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/ff9ede39-acf8-4dc7-bc70-e5db418d9b9a",
+                prompt_sha256: "95e14d983b266a728edd632d1063c3ff0ec2e616088324c0778fe3f1af5c379a",
+                keyframe_sha256: Some("9049720ebb095bcdd855bf76947ae6c68cd86c7c8988decd8de3b8c0270a3aa4"),
+                last_frame_sha256: Some("9049720ebb095bcdd855bf76947ae6c68cd86c7c8988decd8de3b8c0270a3aa4"),
+                ledger_line: 349,
+            ),
+            bar_rgb: Some((56, 59, 79)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Walk: (
+            clip: "jet_jumper_walk.mp4",
+            clip_sha256: "c9f92f3073dfa4d4f6fe49acf427f769ea14e28228b9ee0645307cf91c830620",
+            start_frame: 10,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/503ded63-9bbe-4759-b8d0-5a2edeeacd28",
+                prompt_sha256: "727bf1c7c1accb8179cac827e8b9f2a4443b2d98e2cedac656cbc3056040847a",
+                keyframe_sha256: Some("9049720ebb095bcdd855bf76947ae6c68cd86c7c8988decd8de3b8c0270a3aa4"),
+                last_frame_sha256: Some("9049720ebb095bcdd855bf76947ae6c68cd86c7c8988decd8de3b8c0270a3aa4"),
+                ledger_line: 353,
+            ),
+            bar_rgb: Some((56, 59, 79)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 0,
+            )),
+        ),
+        Attack: (
+            clip: "jet_jumper_attack.mp4",
+            clip_sha256: "6b9d8739435c9f2d5263d59c021069cc050646bbc0c737f76b66ef288578e05d",
+            start_frame: 20,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/093ccba3-4ea2-410e-8673-2234906f4d14",
+                prompt_sha256: "781163210484433aac58043e9d7b2cd64f75d547b4729d182ab674254f77b84d",
+                keyframe_sha256: Some("9049720ebb095bcdd855bf76947ae6c68cd86c7c8988decd8de3b8c0270a3aa4"),
+                last_frame_sha256: Some("9049720ebb095bcdd855bf76947ae6c68cd86c7c8988decd8de3b8c0270a3aa4"),
+                ledger_line: 283,
+            ),
+            bar_rgb: Some((58, 59, 79)),
+        ),
+    },
+)
