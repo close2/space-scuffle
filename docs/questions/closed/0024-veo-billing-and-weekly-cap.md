@@ -44,4 +44,18 @@ spent 17 ([`2026-11-05-batch-2.md`](../../evidence/veo/2026-11-05-batch-2.md)). 
 (`docs/evidence/veo/ledger.jsonl`) holds every request. Caps in `assets/media/veo_budget.ron`: 12 per run and 60 per
 rolling 7 days (Q0047); no run hit a quota refusal. The expansion batches (Veo plan WP6, about 49 clips plus seeds
 and regenerations, about $20 to $35 at list price, depending on seeds and regenerations) have not started; they wait for the orchestrator, which checks
-in here first as the first answer asked. This question stays open as the record of the spending rule.
+in here first as the first answer asked. This question stayed open as the record of the spending rule until the
+owner's 2026-11-05 answer replaced it with the single total-spend limit below.
+
+## Resolution
+
+Carried out on 2026-11-05 by the Veo plan's Amendment 1 (D-12, WP8,
+[`2026-11-04-phase-8-5-veo-media.md`](../../plans/2026-11-04-phase-8-5-veo-media.md) §8) in commit `938a455`.
+The only limit is now the total list-price spend of every generation the service accepted, summed from the ledger:
+`assets/media/veo_budget.ron` holds `total_budget_usd_cents: 20000` ($200.00, below the 200 EUR allowance) and a
+price per generation by model id (`veo-3.1-fast-generate-001`: 40 cents). `generate-veo` refuses a run whose
+`--max-generations` would take the total above it (`BudgetError::TotalExceeded`), refuses a ledger or run model with
+no price (`BudgetError::UnpricedModel`), and prints spent and remaining dollars before and after every run. The
+per-run cap (12), the rolling 7-day cap (25, then 60 by Q0047) and `--weekly-budget` are removed; Google's quota
+refusals still stop a run (exit code 3), and the message says it is Google's limit. The committed ledger
+(`docs/evidence/veo/ledger.jsonl`) totals 41 generations, **$16.40 spent, $183.60 remaining**.
