@@ -9,7 +9,9 @@
 //! # How it fits
 //! The runner writes a stamp when a `package`, `merge` or `full` run is green. The `merge` tier
 //! looks up a branch's newest `package` stamp by tree hash, and the timing report reads every
-//! stamp for the class boundaries of blueprint §4.4. Stamps are local evidence, never committed.
+//! stamp for the class boundaries of blueprint §4.4. `merge` and `full` find, through
+//! [`Stamp::reusable`], a green stamp of the same clean tree that lets them pass without
+//! building (Amendment 3, "test a tree once"). Stamps are local evidence, never committed.
 //!
 //! # Invariants
 //! - A stamp is keyed by tree hash, not commit: two commits with the same files share it, and a
@@ -68,6 +70,50 @@ pub struct Stamp {
     /// existed read as none.
     #[serde(default)]
     pub retries: Vec<String>,
+    /// The file name of the green stamp of the same tree this run reused instead of building and
+    /// testing (blueprint Amendment 3, "test a tree once"); `None` for a run that tested. Stamps
+    /// written before this field existed read as `None`.
+    #[serde(default)]
+    pub reused: Option<String>,
+}
+
+/// A green stamp of the tree at `HEAD` that a `merge` or `full` run may stand on (blueprint
+/// Amendment 3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reuse {
+    /// The reused stamp's file.
+    pub path: PathBuf,
+    /// The reused stamp.
+    pub stamp: Stamp,
+    /// The clean `HEAD` it covers.
+    pub head: StampTree,
+}
+
+impl Reuse {
+    /// The line the tier prints: which stamp it reuses for which tree.
+    #[must_use]
+    pub fn message(&self, tier: Tier) -> String {
+        format!(
+            "cargo gate {tier}: tree {} already has a green {} stamp ({}, commit {}); reusing it, \
+             nothing is built or run (test a tree once, Q0055)",
+            self.head.tree,
+            self.stamp.tier,
+            self.path.display(),
+            self.stamp.commit
+        )
+    }
+}
+
+/// The tiers whose green stamp `tier` accepts for the same tree, in order of preference:
+/// `full` takes `full` or `package`; `merge` takes `merge`, `full` or `package`; `quick` and
+/// `package` take none, since an agent's `package` run is the test of record.
+#[must_use]
+pub fn accepted_tiers(tier: Tier) -> &'static [Tier] {
+    match tier {
+        Tier::Full => &[Tier::Full, Tier::Package],
+        Tier::Merge => &[Tier::Merge, Tier::Full, Tier::Package],
+        Tier::Quick | Tier::Package => &[],
+    }
 }
 
 /// The tree and commit of a clean working tree: what a stamp may name.
@@ -96,6 +142,44 @@ impl StampTree {
 }
 
 impl Stamp {
+    /// Whether every target the stamp records passed.
+    #[must_use]
+    pub fn is_green(&self) -> bool {
+        self.targets.iter().all(|target| target.passed)
+    }
+
+    /// The green stamp in `dir` that `tier` may reuse for the clean `HEAD` of `repo`, if any.
+    ///
+    /// A dirty working tree has no reusable stamp, because its tree hash does not name what
+    /// would be tested. A stamp of another tree or with a failed target is never reused.
+    ///
+    /// # Errors
+    /// Repository errors other than a dirty tree; [`Stamp::read`] errors for a candidate file.
+    pub fn reusable(repo: &Git, dir: &Path, tier: Tier) -> Result<Option<Reuse>, GateError> {
+        let accepted = accepted_tiers(tier);
+        if accepted.is_empty() {
+            return Ok(None);
+        }
+        let head = match StampTree::of_clean_head(repo) {
+            Ok(head) => head,
+            Err(GateError::DirtyTree(_)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        for candidate in accepted {
+            let Some(stamp) = Self::read(dir, &head.tree, *candidate)? else {
+                continue;
+            };
+            if stamp.tree == head.tree && stamp.tier == *candidate && stamp.is_green() {
+                return Ok(Some(Reuse {
+                    path: dir.join(Self::file_name(&head.tree, *candidate)),
+                    stamp,
+                    head,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
     /// The file name of the stamp for `tree` and `tier`.
     #[must_use]
     pub fn file_name(tree: &str, tier: Tier) -> String {
@@ -216,6 +300,7 @@ mod tests {
             commands: vec!["golden-replay-release".into()],
             flakes: vec!["client/x_tests".into()],
             retries: vec!["clippy".into()],
+            reused: None,
         }
     }
 
@@ -257,6 +342,115 @@ mod tests {
             Stamp::read(dir.path(), "t", Tier::Full),
             Err(GateError::StampSyntax { .. })
         ));
+        Ok(())
+    }
+
+    /// A repository in a temporary directory with one commit of `a.txt`.
+    fn repository() -> Result<(tempfile::TempDir, Git), GateError> {
+        let dir = tempfile::tempdir().map_err(io(Path::new("tempdir")))?;
+        let root = dir.path();
+        let run = |args: &[&str]| capture("git", args, root);
+        run(&["init", "--quiet"])?;
+        let file = root.join("a.txt");
+        std::fs::write(&file, "one").map_err(io(&file))?;
+        run(&["add", "a.txt"])?;
+        run(&[
+            "-c",
+            "user.name=gate",
+            "-c",
+            "user.email=gate@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "-m",
+            "one",
+        ])?;
+        let repo = Git::discover(root)?;
+        Ok((dir, repo))
+    }
+
+    /// A green stamp of `tier` for `tree`.
+    fn green(tier: Tier, tree: &str) -> Stamp {
+        Stamp {
+            tier,
+            tree: tree.to_string(),
+            ..sample()
+        }
+    }
+
+    #[test]
+    fn a_green_stamp_of_the_same_tree_is_reused_by_merge_and_full() -> Result<(), GateError> {
+        let (_repo_dir, repo) = repository()?;
+        let stamps = tempfile::tempdir().map_err(io(Path::new("tempdir")))?;
+        let tree = repo.tree("HEAD")?;
+        let path = green(Tier::Package, &tree).write(stamps.path())?;
+        for tier in [Tier::Full, Tier::Merge] {
+            let reuse = Stamp::reusable(&repo, stamps.path(), tier)?;
+            assert!(
+                reuse.is_some(),
+                "{tier} must reuse the package stamp of its tree"
+            );
+            let Some(reuse) = reuse else { continue };
+            assert_eq!(reuse.path, path);
+            assert_eq!(reuse.stamp.tier, Tier::Package);
+            assert_eq!(reuse.head.tree, tree);
+            let message = reuse.message(tier);
+            assert!(
+                message.contains(&path.display().to_string()) && message.contains(&tree),
+                "the reuse message must name the stamp and the tree: {message}"
+            );
+        }
+        let merge = green(Tier::Merge, &tree).write(stamps.path())?;
+        let reuse = Stamp::reusable(&repo, stamps.path(), Tier::Merge)?;
+        assert_eq!(reuse.map(|reuse| reuse.path), Some(merge));
+        Ok(())
+    }
+
+    #[test]
+    fn merge_reuses_a_full_stamp_but_full_does_not_reuse_a_merge_stamp() -> Result<(), GateError> {
+        let (_repo_dir, repo) = repository()?;
+        let tree = repo.tree("HEAD")?;
+        let stamps = tempfile::tempdir().map_err(io(Path::new("tempdir")))?;
+        green(Tier::Merge, &tree).write(stamps.path())?;
+        assert_eq!(Stamp::reusable(&repo, stamps.path(), Tier::Full)?, None);
+        green(Tier::Full, &tree).write(stamps.path())?;
+        let full = Stamp::reusable(&repo, stamps.path(), Tier::Full)?;
+        assert_eq!(full.map(|reuse| reuse.stamp.tier), Some(Tier::Full));
+        for tier in [Tier::Quick, Tier::Package] {
+            assert_eq!(Stamp::reusable(&repo, stamps.path(), tier)?, None, "{tier}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn another_tree_a_red_stamp_or_a_dirty_tree_is_not_reused() -> Result<(), GateError> {
+        let (repo_dir, repo) = repository()?;
+        let tree = repo.tree("HEAD")?;
+        let stamps = tempfile::tempdir().map_err(io(Path::new("tempdir")))?;
+        green(Tier::Package, "0123456789abcdef").write(stamps.path())?;
+        assert_eq!(
+            Stamp::reusable(&repo, stamps.path(), Tier::Full)?,
+            None,
+            "a stamp of another tree"
+        );
+        let mut red = green(Tier::Package, &tree);
+        red.targets[0].passed = false;
+        red.write(stamps.path())?;
+        assert_eq!(
+            Stamp::reusable(&repo, stamps.path(), Tier::Merge)?,
+            None,
+            "a red stamp"
+        );
+        green(Tier::Package, &tree).write(stamps.path())?;
+        assert!(Stamp::reusable(&repo, stamps.path(), Tier::Merge)?.is_some());
+        let file = repo_dir.path().join("a.txt");
+        std::fs::write(&file, "changed").map_err(io(&file))?;
+        assert_eq!(
+            Stamp::reusable(&repo, stamps.path(), Tier::Merge)?,
+            None,
+            "a dirty working tree"
+        );
         Ok(())
     }
 

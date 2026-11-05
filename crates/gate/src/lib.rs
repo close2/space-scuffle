@@ -63,7 +63,7 @@ pub use select::{
 pub use sources::{
     blank, invokes_valgrind, mentions_path_root, uses_gpu_harness, Blanking, SourceIndex,
 };
-pub use stamp::{Stamp, StampTarget, StampTree};
+pub use stamp::{accepted_tiers, Reuse, Stamp, StampTarget, StampTree};
 pub use suspects::{
     changes_since, last_green_full, render_suspects, suspect_report, suspects_for, Change,
     HISTORY_LIMIT,

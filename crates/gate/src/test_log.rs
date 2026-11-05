@@ -289,6 +289,7 @@ fn render_contradictions(targets: Vec<StampTarget>) -> String {
         commands: Vec::new(),
         flakes: Vec::new(),
         retries: Vec::new(),
+        reused: None,
     };
     let findings = class_report(&[run]);
     let mut out = String::from(
