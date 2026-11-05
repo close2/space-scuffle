@@ -12,7 +12,7 @@
 //! Invalid inputs are produced by editing the real shipped catalog text, so each case proves
 //! the validator rejects that one field and not a fixture that was already malformed.
 
-use sim_core::catalog::{AcquireLevel, PrimaryWeapon, UnitCatalog};
+use sim_core::catalog::{AcquireLevel, AcquireTieBreak, PrimaryWeapon, UnitCatalog};
 use sim_core::{is_within_firing_arc, SimCoreError, SimWorld, UpgradeCatalog, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{EntityId, MoverType, PlayerId, SimAngle, SimScalar, SimVec2, Tick, TickBundle};
@@ -718,6 +718,55 @@ fn b10_primary_weapons_follow_starcraft() -> TestResult {
         assert_eq!(
             archetype.primary_weapon, expected,
             "{}: primary weapon as StarCraft II's WeaponArray",
+            archetype.slug
+        );
+    }
+    Ok(())
+}
+
+/// `StarCraft` II 5.0.14 `CWeapon` `AcquirePrioritization` of the analogues this catalog models
+/// whose weapons set one (`SC2GameData` `5444e12f13`; plan `2026-11-05-sc2-deviation-fixes` WP4,
+/// B-11). Every other weapon keeps the engine default, the closest target. Liquipedia also names
+/// the Immortal and the unsieged Siege Tank as `ByDistanceFromTarget`, but their 5.0.14 weapons
+/// (`PhaseDisruptors`, `90mmCannons`) set nothing, and the data win.
+const SC2_ACQUIRE_TIE_BREAK: [(&str, AcquireTieBreak, &str); 3] = [
+    (
+        "Thor",
+        AcquireTieBreak::LeastTurning,
+        "ByAngle, liberty WeaponData:217, :230",
+    ),
+    (
+        "Ultralisk",
+        AcquireTieBreak::LeastTurning,
+        "ByAngle, liberty WeaponData:435, :445",
+    ),
+    (
+        "Colossus",
+        AcquireTieBreak::ClosestToPrevious,
+        "ByDistanceFromTarget, liberty WeaponData:498, void WeaponData:128",
+    ),
+];
+
+#[test]
+fn b11_acquire_tie_breaks_follow_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    for (unit, _, source) in SC2_ACQUIRE_TIE_BREAK {
+        assert!(
+            archetypes_with_analogue(&world, unit).next().is_some(),
+            "an archetype with the analogue {unit} ({source})"
+        );
+    }
+    for archetype in world.catalog.archetypes() {
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next());
+        let expected = SC2_ACQUIRE_TIE_BREAK
+            .iter()
+            .find(|(unit, ..)| Some(*unit) == analogue)
+            .map_or(AcquireTieBreak::Closest, |&(_, tie_break, _)| tie_break);
+        assert_eq!(
+            archetype.acquire_tie_break, expected,
+            "{}: tie-break as StarCraft II's AcquirePrioritization",
             archetype.slug
         );
     }
