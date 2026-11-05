@@ -1,4 +1,4 @@
-# Q0053: Which changes need a full plan, and which only a short note?
+# Q0054: Which changes need a full plan, and which only a short note?
 
 - **Asked:** 2026-11-05 (given by the owner in chat, without a question being filed)
 - **Blocking:** no

@@ -209,7 +209,7 @@ cannot break the tool that selects its tests.
 2. **Stage 2 — Implementation Sub-Agent:**
    - Implementation sub-agents write the code and tests strictly following the plan or note.
 3. **Tool-neutral:** the charter names no model or tool for either stage; each session uses the agents it has.
-4. **Owner rule:** the split into full plans and short notes is the owner's (chat, 2026-11-05, recorded in Q0053).
+4. **Owner rule:** the split into full plans and short notes is the owner's (chat, 2026-11-05, recorded in Q0054).
 
 ---
 
