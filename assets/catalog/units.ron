@@ -65,7 +65,7 @@
                 overclock: None,
                 harvester: Some((
                     harvest_capacity: 5,
-                    harvest_rate_ticks: 60,
+                    harvest_rate_ticks: 50,
                 )),
                 is_resource_dropoff: false,
                 can_construct: true,
@@ -1358,7 +1358,7 @@
                 overclock: None,
                 harvester: Some((
                     harvest_capacity: 5,
-                    harvest_rate_ticks: 60,
+                    harvest_rate_ticks: 50,
                 )),
                 is_resource_dropoff: false,
                 can_construct: true,
@@ -2221,7 +2221,7 @@
                 overclock: None,
                 harvester: Some((
                     harvest_capacity: 5,
-                    harvest_rate_ticks: 60,
+                    harvest_rate_ticks: 50,
                 )),
                 is_resource_dropoff: false,
                 can_construct: true,

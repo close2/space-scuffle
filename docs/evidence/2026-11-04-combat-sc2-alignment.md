@@ -1110,3 +1110,13 @@ place of percentages of speeds that were not the catalog's.
 (audit §9). No matrix battle or golden replay researches it. Measured: whole
 matrix and battle 33 bit-identical, both golden replays unchanged in debug, release and `wasm32-wasip1`. Doc 08's
 Adrenal Glands row said 12 → 7 and now says 12 → 9.
+
+### 13.6 M1: the workers' mining time
+
+`harvest_rate_ticks` 60 → **50** on the three workers (`welder_drone`, `grav_harvester`, `nectar_worker`): a worker
+occupies a mineral field for 1.99 Faster s (Liquipedia, [Resources](https://liquipedia.net/starcraft2/Resources)),
+49.75 ticks. The game data holds no mining time (`SCVHarvest`, `ProbeHarvest`, `DroneHarvest` set none; audit §8), so
+this group is sourced from the secondary source, as the audit records; it is one value, not a range, so D-7 gives no
+ground to defer it. No matrix battle and neither golden replay harvests. Measured: whole matrix and battle 33
+bit-identical, both golden replays unchanged in debug, release and `wasm32-wasip1`. No doc 07 or doc 08 cell states
+the mining time.
