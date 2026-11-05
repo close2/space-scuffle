@@ -1829,3 +1829,19 @@ unresolved), marine survivors 4.03 (SD 3.26).
 - **Golden replays re-recorded.** `golden_replay.ron`: checkpoint 2 (ticks 51 to 100, the first moves) and every
   checkpoint from 4 (ticks 151 to 200). `golden_replay_orders.ron`: from checkpoint 5 (ticks 41 to 50), most
   checkpoints. Debug, release and `wasm32-wasip1` reproduce both.
+
+### 14.8 WP17 summary
+
+- **Applied:** the field unit and range (commit a), one hull rotation per tick and the turret turned only by the
+  weapon phase (b), matrix spawn facing (c), 47 firing arcs (d: 40 hull-mounted, 7 turreted), the 8 turret rates of
+  group W8 (e) and the 42 hull rates (f). Doc 07 §2.3 and `DESIGN.md` describe the per-tick rates.
+- **Not applied, recorded** (plan D-8 item 7, follow-up F-8): turn-before-move (no tolerance in the data;
+  [Q0050](../questions/open/0050-turn-before-move.md), default no gating, so commit g was not made);
+  `StationaryTurningRate`; the acquisition arc `Arc` ÷ 2; the six weapons whose mount differs.
+- **Against the plan's expectations:** the hull-mounted arcs were not latent (§14.4, finding M-22); the turret rates
+  moved no matrix battle (§14.6); the hull rates moved 8 battles, not "potentially every battle" (§14.7).
+- **Expectations re-recorded:** battle 33 only, twice (§14.4, §14.7). **Golden replays:** `golden_replay.ron` in
+  b, d, e and f (b and e: turret angles only, proved); `golden_replay_orders.ron` in f.
+- **Tests restated** first, test-only: three arc tests of `weapon_catalog_rules_tests.rs` (before d) and
+  `sc2_battle_benchmarks_tests::test_1v1_zealot_vs_marine_swing_cadence_and_three_hit_kill` (before f).
+- **Finding:** M-22, a ready weapon that is not aligned swings one tick late.
