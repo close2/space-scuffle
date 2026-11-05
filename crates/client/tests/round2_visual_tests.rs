@@ -11,7 +11,9 @@
 //! - 4-Hero showcase entities span inside camera frustum with hero framing preset.
 //! - `StarCraft` II style 3-faction roster exhibits correct lore names, titles, and faction assignments.
 //! - The real client starts on the virtual GPU with no unlisted Vulkan validation findings.
-//! - No catalog slug appears in production Rust source.
+//!
+//! The scan for catalog slugs in production Rust that lived here is charter check C5
+//! (`workspace_checks`), which covers every case it caught (tiered gates WP6).
 
 #![allow(
     clippy::unwrap_used,
@@ -765,66 +767,6 @@ fn test_real_gpu_startup_and_frame_limit_30() {
     let mut command = gpu_run::virtual_gpu_command(client_bin);
     command.arg("--lab").arg("--max-frames").arg("30");
     command.assert_passes_validation("client --lab --max-frames 30");
-}
-
-/// Collects each use of a slug in production Rust under `dir`, returning the files scanned.
-fn scan_src_for_forbidden_slugs(
-    dir: &std::path::Path,
-    forbidden: &BTreeSet<String>,
-    hits: &mut Vec<String>,
-) -> usize {
-    let mut scanned = 0;
-    for entry in fs::read_dir(dir).expect("read_dir") {
-        let entry = entry.expect("dir entry");
-        let path = entry.path();
-        if path.is_dir() {
-            if path.file_name().is_some_and(|n| n == "target") {
-                continue;
-            }
-            scanned += scan_src_for_forbidden_slugs(&path, forbidden, hits);
-        } else if path.extension().is_some_and(|ext| ext == "rs") {
-            let path_str = path.to_string_lossy();
-            if path_str.contains("/src/") {
-                scanned += 1;
-                let content = fs::read_to_string(&path).expect("Failed to read source file");
-                for slug in forbidden {
-                    if content.contains(slug.as_str()) {
-                        hits.push(format!("{slug} in {}", path.display()));
-                    }
-                }
-            }
-        }
-    }
-    scanned
-}
-
-#[test]
-fn test_zero_hardcoded_creature_names_in_rust_src() {
-    // AGENTS.md §3.3: Strict zero creature/building identifiers or slugs in Rust source code across all crates.
-    let catalog = sim_fixtures::shipped_catalogs().units;
-    let forbidden_slugs: BTreeSet<String> = catalog.archetypes().map(|a| a.slug.clone()).collect();
-    assert_eq!(
-        forbidden_slugs.len(),
-        catalog.archetypes().count(),
-        "catalog slugs must be unique"
-    );
-    assert!(
-        forbidden_slugs.iter().all(|slug| !slug.trim().is_empty()),
-        "a blank slug would match every file"
-    );
-
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace_dir = manifest_dir.parent().unwrap().parent().unwrap();
-    let crates_dir = workspace_dir.join("crates");
-
-    let mut hits = Vec::new();
-    let scanned = scan_src_for_forbidden_slugs(&crates_dir, &forbidden_slugs, &mut hits);
-    assert!(scanned > 0, "the scan must reach production source files");
-    assert!(
-        hits.is_empty(),
-        "catalog slugs found in production source:\n{}",
-        hits.join("\n")
-    );
 }
 
 #[test]

@@ -1,6 +1,6 @@
 # Tiered test gates: run what a change can break, run everything on a schedule
 
-Date: 2026-11-04. Status: Active, WP1 to WP5 implemented (§11). Host: the shared Debian 13 VM, 16 pinned cores of an AMD
+Date: 2026-11-04. Status: Active, WP1 to WP6a implemented (§11). Host: the shared Debian 13 VM, 16 pinned cores of an AMD
 EPYC 7301, AMD Radeon RX 580 on `radv`; other agents were building and testing at the same time, as they always
 are. Charter sections touched: §4.3 (rewritten), §5 (one new crate), §9 (C16 changed, C22 added). §6 is not
 touched.
@@ -624,6 +624,92 @@ What WP5 added, and where it departs from the text above:
 - **Not done here:** WP5's own gate was to be the complete suite (§10); it ran `cargo gate package` instead, at
   the orchestrator's instruction, with the package tier run by hand because a change to `crates/gate/**` selects
   the complete suite (see the hand-back).
+
+### 11.3 WP6a: the compiler-crash retry
+
+`crates/gate/src/crash.rs` (Amendment 1, D5). Every fixed Cargo step of a tier (clippy, the test build, doc tests,
+and the catalog commands, which compile too) runs through `run_with_crash_retry`: when the step fails and its log
+contains `the compiler unexpectedly panicked`, the log is kept as `<step>.crash.log`, the incremental caches the
+step used are deleted, and the step runs once more. The caches are `debug/incremental`, plus
+`release/incremental` for `--release`, plus the same under `<triple>/` for `--target <triple>`, all under the
+target directory `cargo metadata` reports (`Workspace::target_directory`); compiled dependencies are kept. A second
+crash, or any failure without that text, is returned as it is. The result table marks the step "retried once after
+a compiler crash", a red one names the kept first log, and a green stamp lists retried steps in a new field
+`retries` (older stamps read as none). The test build's JSON output is not logged, so any stdout line carrying the
+crash text is copied into `build.log`; rustc prints its crash report to stderr, which reaches the log anyway.
+
+Tests first: `crash::tests` drive a fake step that writes its log (crash then pass: green, retried, cache gone,
+dependencies kept, first log kept; crash twice: red after exactly two attempts; a failure without the text and a
+passing step: one attempt, nothing deleted) and the cache list per profile and target. They were red against a
+stub that never retried. `runner::tests` cover the table and the stamp's list; `workspace::tests` the target
+directory from metadata.
+
+### 11.4 WP6: the cheaper suite
+
+**The duplicate slug scan.** `client/round2_visual_tests::test_zero_hardcoded_creature_names_in_rust_src` searched
+every `.rs` file under a `src/` directory of `crates/` for each **unit** slug as a plain, case-sensitive substring of
+the whole text. C5 (`workspace_checks/src/identities.rs`) compares the slugs of all five identity catalogs and the
+former enum variants, folded (case, `_`, `-` and spaces ignored), with whole identifiers and whole string
+literals of production code. On the same inputs:
+
+| Input | Duplicate | C5 before | C5 after |
+|---|---|---|---|
+| The repository at this branch | clean | clean | clean |
+| `spawn_lantern_moth`, `"assets/units/lantern_moth/idle.mp4"` (a unit slug inside a longer identifier or literal) | reported | **missed** | reported |
+| `LANTERN_MOTH_RANGE`, `StarLeagueBanner`, `"hive_dome_ready"` (other spellings, other catalogs) | missed | missed | reported |
+| `"slantern_mothy"` (the slug's letters inside other words) | reported | not reported | not reported |
+| a slug in a comment, a `#[cfg(test)]` module under `src/`, or `sim_fixtures`/`workspace_checks` sources | reported | not reported | not reported |
+| `LanternMoth`, `"Lantern Moth"`, any structure, upgrade, loadout or faction slug, a former enum variant | missed | reported | reported |
+
+The one production case only the duplicate caught, an identity inside a longer name, is now in C5: an identity of
+two or more words is also reported as a run of whole words of an identifier or literal (words split at
+non-alphanumerics and lower-to-upper case changes). A one-word identity (`charge`) stays whole-only, since it is an
+ordinary word too. The cases left only to the duplicate are ones the charter permits and C5 deliberately skips
+(comments, test code, the dev-only crates) or false matches. The new unit test
+`a_multi_word_identity_inside_a_longer_name_or_literal_is_reported` was red against the old C5; the repository has
+no finding under the extended check. The duplicate and its helper are deleted (D3 allows it). The `catalog` path
+rule still selects `client/round2_visual_tests`, because four of its other tests read the shipped unit catalog.
+
+**The skirmish threshold** (`skirmish_match_tests.rs`, the ring comparison of §2.6). The failure at load ("a built
+one by up to 24.0") came from the dome's flipbook advancing with wall time between the two shots. Battle flipbook
+WP5 (2026-11-04, after the §2.6 run's base) made the flipbook clock presented simulation time, which stops while
+the child holds the battle paused; a slow frame can add at most Bevy's 250 ms virtual-time cap (about six ticks)
+between the shots, and `lavapipe`, whose frames take seconds, always runs at that cap, so it bounds what any load
+can do. Measured on 2026-11-05 at load averages of 17 to 27: built rings changed by 0.3 and 0.4, then 1.2 and 1.4
+on radv (two runs), and 1.1 and 1.7 on lavapipe, against 60.1 to 68.8 for crossed rings (the old runs: 6.7 to 18.7
+against 68.9 to 85.0). The threshold is therefore load-independent as the code stands; no code change was needed,
+and the reason and numbers are now in the doc comment of `CROSSED_RATIO`. Logs:
+`~/scratch/logs/gates_wp6_skirmish_before_{1,2,lvp}.log`.
+
+**`opt-level = 1` for `client`.** Not adopted: the rule's run-time half is not met. Measured on
+2026-11-05 in one target directory (the dependencies are shared; only `client` and its test crates differ), with
+`--config 'profile.dev.package.client.opt-level=1'` for the candidate, runs back to back in pairs: a warm rebuild
+(`touch crates/client/src/lib.rs`, then `cargo test -p client --no-run`), then each of the ten `slow` client
+targets through `cargo test`. Another agent's builds ran on the same cores throughout; the 1-minute load average
+on 16 cores was 9 to 410.
+
+| Pair | Variant | Warm rebuild s | `slow` targets s | Of which `client/lib` | Load during the targets |
+|---|---|---|---|---|---|
+| 1 | `opt-level = 0` (today) | 125.6 | 644.8 | 181.9 | 51 to 409 |
+| 1 | `opt-level = 1` | 570.1 | 473.4 (−26.6 %) | 44.6 | 18 to 41 |
+| 2 | `opt-level = 0` | 84.2 | 556.6 | 110.5 | 9 to 22 |
+| 2 | `opt-level = 1` | 40.2 | 407.2 (−26.8 %) | 43.5 | 15 to 43 |
+| 3 | `opt-level = 0`, rebuild only | 42.8 | — | — | 88 |
+| 3 | `opt-level = 1`, rebuild only | 55.0 | — | — | 110 |
+| 4 | `opt-level = 0`, rebuild only | 94.0 | — | — | 132 |
+| 4 | `opt-level = 1`, rebuild only | 110.1 | — | — | 112 |
+
+- **Run time:** the `slow` client targets lost 26.6 % and 26.8 %, short of the 30 % the rule asks. Both pairs agree
+  although their loads leaned in opposite directions (pair 1 favoured the candidate, pair 2 the baseline), so the
+  shortfall is not an artefact of one pair; a single variant still moved by 16 % between its two runs, so a true
+  gain a little above 30 % cannot be excluded, but nothing measured reaches it. Almost all of the gain is the unit
+  tests (`client/lib`, −61 % and −75 %); the nine other targets together lost 7 % and 18 % (single targets moved between +10 % and −43 %),
+  since their time is mostly in the simulation and Bevy, which are already at `opt-level = 2`.
+- **Warm rebuild:** growth of −44, +12 and +16 s in pairs 2 to 4, within the 60 s allowed; pair 1's +444 s is an
+  outlier this measurement cannot explain (the same rebuild took 40 to 110 s in the other three pairs).
+- **Verdict:** keep `opt-level = 0` for `client`. A narrower change, optimizing only the unit tests, is not
+  possible per target in Cargo profiles and is not pursued (D4). Logs and per-target times:
+  `~/scratch/logs/gates_wp6_opt_{cold,warm,r1,r2,r3,r4}_{o0,o1}.{tsv,log}`.
 
 ## 12. Decisions and scope
 

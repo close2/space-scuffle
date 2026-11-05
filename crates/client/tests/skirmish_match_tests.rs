@@ -273,6 +273,15 @@ const CROSSED_FLOOR: f32 = 10.0;
 /// How many times the change of a crossed ring must exceed that of a ring built in both shots. On
 /// 2026-11-03 rings built in both shots changed by at most 8.7 on radv and 9.6 on lavapipe, so the
 /// smallest ratio was 8.2 and 7.4.
+///
+/// Why the ratio does not depend on machine load (tiered gates plan, §2.6 and WP6): until battle
+/// flipbook WP5 (2026-11-04) a dome's video advanced with wall time, so a loaded machine let more
+/// of it play between the shots and a built ring changed by up to 24.0. The flipbook clock is now
+/// presented simulation time, frozen while the child holds the battle paused, and a slow frame
+/// can add at most Bevy's 250 ms virtual-time cap, about six ticks, between the shots. `lavapipe`,
+/// whose frames take seconds, always runs at that cap, so it is the worst case any load can
+/// reach. On 2026-11-05, at load averages of 17 to 27 on 16 cores, built rings changed by 0.3 to
+/// 1.4 on radv and by 1.7 on lavapipe, against 60.1 or more for crossed rings: a ratio of 35.
 const CROSSED_RATIO: f32 = 3.0;
 
 /// Screen pixels of one ring of the foundation's dome.
