@@ -36,7 +36,7 @@
             gas_cost: 0,
             supply_cost: 1,
             supply_provided: 0,
-            build_time_ticks: 300,
+            build_time_ticks: 304,
             armor_class: Some("directorate_infantry_armor"),
             weapon: Some((
                 name: "Drill Slash",
@@ -111,7 +111,7 @@
             gas_cost: 0,
             supply_cost: 1,
             supply_provided: 0,
-            build_time_ticks: 450,
+            build_time_ticks: 446,
             armor_class: Some("directorate_infantry_armor"),
             weapon: Some((
                 name: "Pulse Carbine",
@@ -539,7 +539,7 @@
             gas_cost: 25,
             supply_cost: 2,
             supply_provided: 0,
-            build_time_ticks: 525,
+            build_time_ticks: 536,
             armor_class: Some("directorate_infantry_armor"),
             weapon: Some((
                 name: "Concussive Shells",
@@ -614,7 +614,7 @@
             gas_cost: 50,
             supply_cost: 1,
             supply_provided: 0,
-            build_time_ticks: 800,
+            build_time_ticks: 804,
             armor_class: Some("directorate_infantry_armor"),
             weapon: Some((
                 name: "Dual Gauss Pistols",
@@ -684,7 +684,7 @@
             gas_cost: 125,
             supply_cost: 3,
             supply_provided: 0,
-            build_time_ticks: 725,
+            build_time_ticks: 714,
             armor_class: Some("directorate_infantry_armor"),
             weapon: Some((
                 name: "Null-Sniper Rifle",
@@ -754,7 +754,7 @@
             gas_cost: 0,
             supply_cost: 2,
             supply_provided: 0,
-            build_time_ticks: 525,
+            build_time_ticks: 536,
             armor_class: Some("directorate_vehicle_plating"),
             weapon: Some((
                 name: "Napalm Emitter",
@@ -829,7 +829,7 @@
             gas_cost: 200,
             supply_cost: 6,
             supply_provided: 0,
-            build_time_ticks: 1075,
+            build_time_ticks: 1071,
             armor_class: Some("directorate_vehicle_plating"),
             ground_weapon: Some((
                 name: "Thor's Hammer",
@@ -1209,7 +1209,7 @@
             gas_cost: 100,
             supply_cost: 3,
             supply_provided: 0,
-            build_time_ticks: 1075,
+            build_time_ticks: 1071,
             armor_class: Some("directorate_vehicle_plating"),
             weapon: Some((
                 name: "Backlash Thermite Rockets",
@@ -1279,7 +1279,7 @@
             gas_cost: 150,
             supply_cost: 2,
             supply_provided: 0,
-            build_time_ticks: 850,
+            build_time_ticks: 857,
             armor_class: Some("directorate_vehicle_plating"),
             weapon: None,
             is_detector: true,
@@ -1329,7 +1329,7 @@
             gas_cost: 0,
             supply_cost: 1,
             supply_provided: 0,
-            build_time_ticks: 300,
+            build_time_ticks: 304,
             armor_class: Some("enclave_ground_armor"),
             weapon: Some((
                 name: "Particle Beam",
@@ -1404,7 +1404,7 @@
             gas_cost: 50,
             supply_cost: 2,
             supply_provided: 0,
-            build_time_ticks: 675,
+            build_time_ticks: 679,
             armor_class: Some("enclave_ground_armor"),
             weapon: Some((
                 name: "Particle Disruptor",
@@ -1639,7 +1639,7 @@
             gas_cost: 150,
             supply_cost: 2,
             supply_provided: 0,
-            build_time_ticks: 975,
+            build_time_ticks: 982,
             armor_class: Some("enclave_ground_armor"),
             weapon: Some((
                 name: "Psi-Bolt",
@@ -1710,7 +1710,7 @@
             gas_cost: 125,
             supply_cost: 2,
             supply_provided: 0,
-            build_time_ticks: 975,
+            build_time_ticks: 982,
             armor_class: Some("enclave_ground_armor"),
             weapon: Some((
                 name: "Warp Blade",
@@ -1781,7 +1781,7 @@
             gas_cost: 100,
             supply_cost: 4,
             supply_provided: 0,
-            build_time_ticks: 975,
+            build_time_ticks: 982,
             armor_class: Some("enclave_ground_armor"),
             weapon: Some((
                 name: "Phase Disruptor",
@@ -1852,7 +1852,7 @@
             gas_cost: 200,
             supply_cost: 6,
             supply_provided: 0,
-            build_time_ticks: 1350,
+            build_time_ticks: 1339,
             armor_class: Some("enclave_ground_armor"),
             weapon: Some((
                 name: "Thermal Lance Sweep",
@@ -1978,7 +1978,7 @@
             gas_cost: 0,
             supply_cost: 2,
             supply_provided: 0,
-            build_time_ticks: 900,
+            build_time_ticks: 893,
             armor_class: Some("enclave_air_armor"),
             weapon: None,
             is_detector: false,
@@ -2122,7 +2122,7 @@
             gas_cost: 250,
             supply_cost: 6,
             supply_provided: 0,
-            build_time_ticks: 1600,
+            build_time_ticks: 1607,
             armor_class: Some("enclave_air_armor"),
             weapon: Some((
                 name: "Interceptor Fleet Salvo",
@@ -2192,7 +2192,7 @@
             gas_cost: 0,
             supply_cost: 1,
             supply_provided: 0,
-            build_time_ticks: 300,
+            build_time_ticks: 304,
             armor_class: Some("swarm_ground_carapace"),
             weapon: Some((
                 name: "Mandible Bite",
@@ -2266,7 +2266,7 @@
             gas_cost: 0,
             supply_cost: 1,
             supply_provided: 0,
-            build_time_ticks: 425,
+            build_time_ticks: 429,
             armor_class: Some("swarm_ground_carapace"),
             weapon: Some((
                 name: "Scythe Slash",
@@ -2336,7 +2336,7 @@
             gas_cost: 25,
             supply_cost: 0,
             supply_provided: 0,
-            build_time_ticks: 350,
+            build_time_ticks: 357,
             armor_class: Some("swarm_ground_carapace"),
             weapon: Some((
                 name: "Volatile Burst",
@@ -2412,7 +2412,7 @@
             gas_cost: 75,
             supply_cost: 1,
             supply_provided: 0,
-            build_time_ticks: 225,
+            build_time_ticks: 214,
             armor_class: Some("swarm_ground_carapace"),
             weapon: Some((
                 name: "Corrosive Bile",
@@ -2482,7 +2482,7 @@
             gas_cost: 50,
             supply_cost: 2,
             supply_provided: 0,
-            build_time_ticks: 600,
+            build_time_ticks: 589,
             armor_class: Some("swarm_ground_carapace"),
             weapon: Some((
                 name: "Needle Spines",
@@ -2574,7 +2574,7 @@
             gas_cost: 100,
             supply_cost: 1,
             supply_provided: 0,
-            build_time_ticks: 450,
+            build_time_ticks: 446,
             armor_class: Some("swarm_ground_carapace"),
             weapon: Some((
                 name: "Subterranean Spines",
@@ -2649,7 +2649,7 @@
             gas_cost: 100,
             supply_cost: 2,
             supply_provided: 0,
-            build_time_ticks: 600,
+            build_time_ticks: 589,
             armor_class: Some("swarm_flyer_carapace"),
             weapon: Some((
                 name: "Glaive Stinger",
@@ -2741,7 +2741,7 @@
             gas_cost: 100,
             supply_cost: 2,
             supply_provided: 0,
-            build_time_ticks: 725,
+            build_time_ticks: 714,
             armor_class: Some("swarm_flyer_carapace"),
             air_weapon: Some((
                 name: "Parasitic Spores",
@@ -2833,7 +2833,7 @@
             gas_cost: 150,
             supply_cost: 2,
             supply_provided: 0,
-            build_time_ticks: 600,
+            build_time_ticks: 604,
             armor_class: Some("swarm_flyer_carapace"),
             ground_weapon: Some((
                 name: "Broodling Swarm",
@@ -2925,7 +2925,7 @@
             gas_cost: 200,
             supply_cost: 6,
             supply_provided: 0,
-            build_time_ticks: 975,
+            build_time_ticks: 982,
             armor_class: Some("swarm_ground_carapace"),
             weapon: Some((
                 name: "Kaiser Blades Cleave",
@@ -3000,7 +3000,7 @@
             gas_cost: 0,
             supply_cost: 2,
             supply_provided: 0,
-            build_time_ticks: 900,
+            build_time_ticks: 893,
             armor_class: Some("swarm_ground_carapace"),
             ground_weapon: Some((
                 name: "Matron Talons",
@@ -3114,7 +3114,7 @@
             gas_cost: 150,
             supply_cost: 2,
             supply_provided: 0,
-            build_time_ticks: 900,
+            build_time_ticks: 893,
             armor_class: Some("swarm_ground_carapace"),
             weapon: None,
             is_detector: false,
@@ -3163,7 +3163,7 @@
             gas_cost: 200,
             supply_cost: 3,
             supply_provided: 0,
-            build_time_ticks: 725,
+            build_time_ticks: 714,
             armor_class: Some("swarm_flyer_carapace"),
             weapon: None,
             is_detector: false,
@@ -3212,7 +3212,7 @@
             gas_cost: 0,
             supply_cost: 0,
             supply_provided: 8,
-            build_time_ticks: 450,
+            build_time_ticks: 446,
             armor_class: Some("swarm_flyer_carapace"),
             weapon: None,
             is_detector: false,

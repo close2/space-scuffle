@@ -1052,3 +1052,16 @@ structures before tick 1, so production and research times were expected not to 
 Measured: whole matrix bit-identical (all 1000 rows), battle 33 bit-identical, both golden replays unchanged in debug,
 release and `wasm32-wasip1`. Doc 07 rows (`psi_grey`, `railgun_crawler`) and doc 08 (the Planetary Fortress row and
 §2.1's example list) now state the new ticks.
+
+### 13.2 P2: production and research times rounded to Liquipedia's whole seconds
+
+127 values (31 unit and 34 structure `build_time_ticks`, 62 `research_ticks`) were Liquipedia's whole Faster
+seconds × 25. Each now is the game data's Normal seconds ÷ 1.4 × 25, to the nearest tick: 65 rise and 62 fall, by
+4, 7, 9 or 11 ticks (for example `pulse_bot` 450 → 446, 25 Normal s, `liberty` AbilData:1630; `foundry_core_dome`
+1775 → 1786, 100 Normal s; level 1 weapon and armour upgrades 2850 → 2857, 160 Normal s). Every value with its
+source line is in the audit's group P2 (§5) and §4.
+
+Measured: whole matrix bit-identical (all 1000 rows), battle 33 bit-identical, both golden replays unchanged in
+debug, release and `wasm32-wasip1` (their research is completed and their structures placed before tick 1). The doc
+07 roster and doc 08 cells that state these ticks are corrected, and doc 08 §2.1 now gives the conversion from
+Normal seconds with examples in place of the whole-second list.
