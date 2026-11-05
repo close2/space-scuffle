@@ -1119,7 +1119,7 @@ rate cells, `DESIGN.md` (Movement and Combat rows), the audit file (§10), evide
    and record the per-class effect. Measure the whole matrix on 20 seeds and battle 33 on 68; re-record every moved
    expectation, battle 33 per D-6, and both goldens. Expected: end ticks move in most battles by a few ticks; outcome
    counts may move in close battles and where slow turners fight. No survivor expectation is widened without the
-   measured reason (D-1 item 6). If a battle flips its winner, stop and report it before re-recording.
+   measured reason (D-1 item 6). If a battle flips its winner, stop and report it before re-recording. (Amendment 4, orchestrator 2026-11-05: "a battle flips its winner" means the battle's winner over its seeds, as WP17 read it. WP17's single-seed flips on seeds of record in battles 32, 33 and 35 (evidence §14.7) were reported and accepted: no battle's overall winner changed, battles 32 and 35 accept either side, and battle 33 is re-recorded under D-6.)
 9. **Commit g,** only if step 1 found turn-before-move and could specify it: rule (latent, `turn_before_move: bool`
    in the archetype, default false, tests first), then data (measured). Otherwise, if step 1 found it but could not
    specify it, file the owner question of D-8 item 4.
