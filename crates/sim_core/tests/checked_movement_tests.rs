@@ -526,7 +526,7 @@ fn late_collision_pose_failure_preserves_actor_and_keeps_valid_neighbor_work() -
 }
 
 #[test]
-fn typed_legacy_stim_and_refresh_preserve_order_and_existing_buff_position() -> TestResult {
+fn typed_overclock_and_refresh_preserve_order_and_existing_buff_position() -> TestResult {
     let mut f = Fixture::new(32, 32)?;
     let id = f.spawn(f.air, point(8, 8))?;
     let actor = f.world.entities.get_mut(&id).ok_or("actor")?;
@@ -557,7 +557,7 @@ fn typed_legacy_stim_and_refresh_preserve_order_and_existing_buff_position() -> 
     actor.active_buffs[0].speed_multiplier = -SimScalar::ONE;
     let before = actor.clone();
     assert_eq!(
-        actor.issue_order(UnitOrder::UseStim, false),
+        actor.apply_overclock(overclock(SimScalar::from_num(1.5))),
         Err(EntityAdmissionError::Movement(
             MovementMathError::NegativeMultiplier { index: 0 }
         ))
