@@ -269,7 +269,7 @@ runner image, macOS or Windows could fail them, and the canary would show why. O
 Implemented as written, tests only, with these differences:
 
 - **Question number.** Q0012 and Q0013 were taken by other work in flight, so the question is
-  [Q0014](../questions/open/0014-host-independent-smog-math.md). Read Q0014 wherever this plan says Q0012.
+  [Q0014](../questions/closed/0014-host-independent-smog-math.md). Read Q0014 wherever this plan says Q0012.
 - **Showcase relations use the spawn state, not `initial_bouncing_bubbles`.** `setup_smog_volume_system` spawns the
   showcase from `prewarm_smog_field`, which steps the initial bubbles 26 times at 1/30 s, so the spawn heading and
   aim are `atan2f` of the pre-warmed velocity, not the initial heading. `check_showcase_headings` therefore checks:

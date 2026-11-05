@@ -396,6 +396,11 @@ screenshot shows no smog, so C-7 is still proved on the swarm scene only. Plan:
 **Later (2026-11-04):** C-17 fixed and C-18 partly fixed by `docs/plans/2026-11-04-open-findings-c17-c18-p9-gaps.md`
 (see their rows in §4.4).
 
+**Later (2026-11-05):** the smog goldens no longer depend on the host's C math library: the smog code computes every
+exponential, sine, cosine, arctangent and power through the `libm` crate (`client::smog::math`), checked by C23
+(owner question Q0014, option b; plan `docs/plans/2026-11-04-libm-smog-math.md`). Measured cost: about 12 ms more at
+smog startup and about 0.01 ms per frame; evidence `docs/evidence/2026-11-05-libm-smog-math.md`.
+
 ### Phase 7: Editor hardening (M, parallel)
 
 | Step | Finding | Action | Status |

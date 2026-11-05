@@ -22,6 +22,7 @@ pub mod fluid;
 pub mod gpu_upload;
 pub mod kinematics;
 pub mod material;
+pub mod math;
 
 pub use fluid::{
     BubbleSmogSource, SmogGrid3d, SmogStepMetrics, GRID_NX, GRID_NY, GRID_NZ, SMOG_DENSITY_MAX,
@@ -447,22 +448,23 @@ fn smog_noise_image() -> Image {
     reason = "fluid grid indices and counts stay far below the range of f32 and i32"
 )]
 fn smog_noise_texel(wx: f32, wy: f32, wz: f32) -> [u8; 4] {
-    let s1 = (wx + wy.cos()).sin() * (wy + wz.cos()).cos() + (wz + wx.cos()).sin() * 0.5;
-    let s2 = (2.0 * wx - wy + wz.sin()).sin() * (2.0 * wz - wx).cos();
-    let s3 = (3.0 * wy + 2.0 * wz - wx).sin() * (2.0 * wx + 2.0 * wy).cos();
-    let ridge1 = (1.0 - (s1 * 0.60).abs()).clamp(0.0, 1.0).powf(1.25);
-    let ridge2 = (1.0 - (s2 * 0.75).abs()).clamp(0.0, 1.0).powf(1.35);
-    let ridge3 = (1.0 - (s3 * 0.80).abs()).clamp(0.0, 1.0).powf(1.40);
+    use math::{cos, powf, sin};
+    let s1 = sin(wx + cos(wy)) * cos(wy + cos(wz)) + sin(wz + cos(wx)) * 0.5;
+    let s2 = sin(2.0 * wx - wy + sin(wz)) * cos(2.0 * wz - wx);
+    let s3 = sin(3.0 * wy + 2.0 * wz - wx) * cos(2.0 * wx + 2.0 * wy);
+    let ridge1 = powf((1.0 - (s1 * 0.60).abs()).clamp(0.0, 1.0), 1.25);
+    let ridge2 = powf((1.0 - (s2 * 0.75).abs()).clamp(0.0, 1.0), 1.35);
+    let ridge3 = powf((1.0 - (s3 * 0.80).abs()).clamp(0.0, 1.0), 1.40);
     let r = (0.50 * ridge1 + 0.32 * ridge2 + 0.18 * ridge3).clamp(0.0, 1.0);
 
-    let g1 = (wx - wz).cos() * (2.0 * wy + wx).sin();
-    let g2 = (2.0 * wz - wy).sin() * (2.0 * wx + wz).cos();
-    let g = (0.60 * (1.0 - (g1 * 0.75).abs()).clamp(0.0, 1.0).powf(1.30)
-        + 0.40 * (1.0 - (g2 * 0.75).abs()).clamp(0.0, 1.0).powf(1.40))
+    let g1 = cos(wx - wz) * sin(2.0 * wy + wx);
+    let g2 = sin(2.0 * wz - wy) * cos(2.0 * wx + wz);
+    let g = (0.60 * powf((1.0 - (g1 * 0.75).abs()).clamp(0.0, 1.0), 1.30)
+        + 0.40 * powf((1.0 - (g2 * 0.75).abs()).clamp(0.0, 1.0), 1.40))
     .clamp(0.0, 1.0);
 
-    let b = (0.5 + 0.45 * ((wy - 2.0 * wz).sin() * (2.0 * wx + wy).cos())).clamp(0.0, 1.0);
-    let a = (0.5 + 0.45 * ((2.0 * wz - wx).cos() * (wy + 2.0 * wz).sin())).clamp(0.0, 1.0);
+    let b = (0.5 + 0.45 * (sin(wy - 2.0 * wz) * cos(2.0 * wx + wy))).clamp(0.0, 1.0);
+    let a = (0.5 + 0.45 * (cos(2.0 * wz - wx) * sin(wy + 2.0 * wz))).clamp(0.0, 1.0);
 
     [
         (r * 255.0) as u8,
@@ -519,7 +521,7 @@ fn initial_smog_uniform(initial_states: &[BouncingBubbleState]) -> SmogVolumeUni
 )]
 fn showcase_style(index: usize) -> crate::player_presentation::PlayerStyle {
     let tc = bubble_team_color(index);
-    let linear_tc = Color::srgb(tc.x, tc.y, tc.z).to_linear();
+    let linear_tc = math::srgb_to_linear(tc);
     crate::player_presentation::PlayerStyle {
         srgb: [tc.x, tc.y, tc.z],
         linear: Vec4::new(linear_tc.red, linear_tc.green, linear_tc.blue, 1.0),
@@ -693,13 +695,17 @@ pub fn sync_bouncing_smog_bubbles_system(
 
     // Harvest current states into pre-allocated scratch
     scratch.clear();
-    for (bubble, transform, _, _) in query.iter() {
+    // The heading comes from the render instance, which holds the last heading the kinematics
+    // produced (the spawn heading before the first step). Reading it back from the transform's
+    // rotation would call the host's `atan2` (`Quat::to_euler`) and would return the negated
+    // heading, because the rotation is about -heading.
+    for (bubble, transform, instance, _) in query.iter() {
         scratch.push(BouncingBubbleState {
             index: bubble.index,
             position: transform.translation,
             velocity: bubble.velocity,
             radius: bubble.radius,
-            heading_angle_rad: transform.rotation.to_euler(EulerRot::YXZ).0,
+            heading_angle_rad: instance.0.heading_angle_rad,
             wall_bounces: bubble.wall_bounces,
             peer_bounces: bubble.peer_bounces,
         });
@@ -736,7 +742,7 @@ pub fn sync_bouncing_smog_bubbles_system(
 
         if let Some(state) = state_opt {
             transform.translation = state.position;
-            transform.rotation = Quat::from_rotation_y(-state.heading_angle_rad);
+            transform.rotation = math::quat_from_rotation_y(-state.heading_angle_rad);
             bubble.velocity = state.velocity;
             bubble.wall_bounces = state.wall_bounces;
             bubble.peer_bounces = state.peer_bounces;

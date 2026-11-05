@@ -1837,6 +1837,7 @@ dependencies = [
  "bytemuck",
  "clap",
  "image",
+ "libm",
  "naga",
  "naga_oil",
  "ron",
