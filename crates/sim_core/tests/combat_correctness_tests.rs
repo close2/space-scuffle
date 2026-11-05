@@ -299,6 +299,9 @@ fn s2_explicit_focus_fire_survives_nearby_enemy() {
     let shooter = arena.spawn("pulse_bot", BLUE, 10.0, 10.0);
     arena.spawn("psi_grey", RED, 12.0, 10.0);
     let far = arena.spawn("rhino_beetle", RED, 18.0, 10.0);
+    // The far target holds its ground, so how soon the shooter dies does not depend on how
+    // fast the target walks into its own range; only the nearby enemy fights the shooter.
+    arena.order(RED, &[far], UnitOrder::HoldPosition);
     arena.run(2);
     arena.order(BLUE, &[shooter], attack(far));
     arena.run(30);
