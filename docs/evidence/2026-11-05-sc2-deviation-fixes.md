@@ -121,3 +121,20 @@ every mode. A cliff walker (the Colossus analogue) is in both planes, so an air 
   at 17 two ticks after the target died (expected 15); it passes with the rule.
 - **Measurement, on the catalog before WP2.** Whole matrix bit-identical to §1; battle 33 bit-identical
   (37 / 20 / 11). No matrix battle had an air-only unit lose its target mid-cycle before the data change.
+
+### 2.3 Data: no ground weapon on the three air-only units
+
+- **Change** (`assets/catalog/units.ron`): `weapon: None` for `vector_interceptor`, `sky_leviathan` and
+  `sky_bastion`; `sky_bastion`'s `ground_weapon` removed. Its values are listed in §2.1 for WP18, which adds Defender
+  Mode (B-27's mode part stays open in the bug register).
+- **Tests first** (`crates/sim_core/tests/weapon_catalog_rules_tests.rs`): the archetypes are found through their
+  `sc2_analogue` (the StarCraft II unit name), never by slug, and checked against the filters of §2.1.
+  `b25_to_b27_units_with_an_air_only_starcraft_weapon_have_no_ground_weapon` failed on the old data
+  (`vector_interceptor` fires at ground units) and `b25_to_b27_air_only_units_leave_a_ground_unit_unharmed` failed
+  (`vector_interceptor` killed a `welder_drone` standing 3 away). Both pass on the new data.
+- **Measurement** against §2.2: whole matrix bit-identical (battles 12c, 18, 19 and 35 have these units, against air
+  units and the cliff-walking Colossus analogue, which an air weapon still reaches); battle 33 bit-identical. Neither
+  golden replay has these units; both unchanged.
+- **Not in the plan.** Without §2.2 the data change moved battle 35 on one seed (end tick 296 → 297, same outcome)
+  through B-79, a second cause. The rule was therefore committed first, and this commit moves nothing the matrix
+  measures. Its effect is in skirmish play: the three units no longer shoot ground units.

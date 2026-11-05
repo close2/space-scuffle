@@ -775,9 +775,9 @@ requires.
 | B-22 | Interceptors as one 8-strike weapon | (i) | WP18 |
 | B-23 | Storm hits structures; idle units dodge it on their own | (i) | WP18; an automatic dodge changes how storm is played |
 | B-24 | Battle 13's storm values | (i) | WP18 |
-| B-25 | Viking analogue shoots the ground in fighter mode | (i) | WP2 |
-| B-26 | Corruptor analogue shoots the ground | (i) | WP2 |
-| B-27 | Liberator analogue shoots the ground outside Defender Mode | (i) | WP2, WP18 |
+| B-25 | Viking analogue shoots the ground in fighter mode | Fixed | WP2 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §2) |
+| B-26 | Corruptor analogue shoots the ground | Fixed | WP2 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §2) |
+| B-27 | Liberator analogue shoots the ground outside Defender Mode | (i), narrowed | The ground attack outside Defender Mode is fixed by WP2 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §2); Defender Mode itself, and with it the ground attack, stays open for WP18 |
 | B-28 | Six weapon mounts | (i) | WP10 |
 | B-29 | No acquisition arc | (i) | WP10 |
 | B-30 | A turret keeps its angle when idle | (i) | WP10; it sets the delay of the first shot after idling |

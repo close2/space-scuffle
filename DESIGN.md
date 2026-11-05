@@ -175,9 +175,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-22 | Carrier interceptors are one 8-strike weapon | WP18 |
 | B-23 | Storm hits structures, and idle units dodge it on their own | WP18 |
 | B-24 | Matrix battle 13's storm values | WP18 |
-| B-25 | Viking analogue shoots ground units in fighter mode | WP2 |
-| B-26 | Corruptor analogue shoots ground units | WP2 |
-| B-27 | Liberator analogue shoots ground units outside Defender Mode | WP2, WP18 |
+| B-27 | Liberator analogue has no Defender Mode, so no ground attack at all (its fighter-mode ground attack was removed by WP2) | WP18 |
 | B-28 | Six weapon mounts (turret or hull) differ | WP10 |
 | B-29 | No acquisition arc separate from the firing arc | WP10 |
 | B-30 | An idle turret keeps its last angle | WP10 |
