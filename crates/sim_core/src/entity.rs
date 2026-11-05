@@ -258,8 +258,6 @@ pub struct Entity {
     pub is_holding_position: bool,
     /// High-level animation state for renderer synchronization.
     pub current_anim: AnimState,
-    /// Normalized animation progress within loop.
-    pub anim_progress: SimScalar,
     /// Direction the last hull hit originated from.
     pub last_hit_angle: SimAngle,
     /// Ticks remaining on shield impact visual ripple flash.
@@ -350,7 +348,6 @@ impl Entity {
             is_mineral_walking: false,
             is_holding_position: false,
             current_anim: AnimState::Idle,
-            anim_progress: SimScalar::ZERO,
             last_hit_angle: SimAngle::ZERO,
             shield_hit_flash_ticks: 0,
             hull_hit_flash_ticks: 0,
