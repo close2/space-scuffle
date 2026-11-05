@@ -12,7 +12,7 @@
 //! Invalid inputs are produced by editing the real shipped catalog text, so each case proves
 //! the validator rejects that one field and not a fixture that was already malformed.
 
-use sim_core::catalog::{AcquireLevel, UnitCatalog};
+use sim_core::catalog::{AcquireLevel, PrimaryWeapon, UnitCatalog};
 use sim_core::{is_within_firing_arc, SimCoreError, SimWorld, UpgradeCatalog, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{EntityId, MoverType, PlayerId, SimAngle, SimScalar, SimVec2, Tick, TickBundle};
@@ -676,6 +676,48 @@ fn b8_every_archetype_has_its_starcraft_attack_target_priority() -> TestResult {
         assert_eq!(
             archetype.attack_target_priority, expected,
             "{} ({analogue:?}): AttackTargetPriority {expected} ({source})",
+            archetype.slug
+        );
+    }
+    Ok(())
+}
+
+/// `StarCraft` II 5.0.14 units this catalog models whose two weapons are distinct ground and
+/// air weapons, with the first `WeaponArray` entry (the primary) an air weapon (`SC2GameData`
+/// `5444e12f13`; plan `2026-11-05-sc2-deviation-fixes` WP4, B-10). Thor: `JavelinMissileLaunchers`
+/// (`Air` filter, `liberty` WeaponData:216) before `ThorsHammer`; Queen: `AcidSpines` (`Air`,
+/// WeaponData:104) before `Talons`. Liquipedia "Automatic Targeting" names the same primaries.
+/// Every other modelled unit has one weapon per plane from a single `StarCraft` II weapon, or
+/// none, so its primary weapon is `Either`.
+const SC2_AIR_PRIMARY: [(&str, &str); 2] = [
+    ("Thor", "liberty UnitData:5270"),
+    ("Queen", "liberty UnitData:11478"),
+];
+
+#[test]
+fn b10_primary_weapons_follow_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    for (unit, source) in SC2_AIR_PRIMARY {
+        assert!(
+            archetypes_with_analogue(&world, unit).next().is_some(),
+            "an archetype with the analogue {unit} ({source})"
+        );
+    }
+    for archetype in world.catalog.archetypes() {
+        let air_primary = SC2_AIR_PRIMARY.iter().any(|(unit, _)| {
+            archetype
+                .sc2_analogue()
+                .and_then(|analogue| analogue.split(" (").next())
+                == Some(*unit)
+        });
+        let expected = if air_primary {
+            PrimaryWeapon::Air
+        } else {
+            PrimaryWeapon::Either
+        };
+        assert_eq!(
+            archetype.primary_weapon, expected,
+            "{}: primary weapon as StarCraft II's WeaponArray",
             archetype.slug
         );
     }
