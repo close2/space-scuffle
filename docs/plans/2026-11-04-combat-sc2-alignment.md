@@ -32,7 +32,7 @@ What changed:
 |---|---|---|
 | [Q0035](../questions/open/0035-melee-contact-rules.md) contact rules | Option 1: no change now; record a follow-up for future investigation | WP13 step 1, §8 F-1 |
 | [Q0036](../questions/closed/0036-zealot-weapon-timing.md) zealot weapon | Option 2: `damage_point: 0`, `range: 0.1`, `backswing: 9`, `period: 21`; clean up the "damage point 0 fires every period + 1" quirk if appropriate | D-3, WP2, WP4 |
-| [Q0037](../questions/open/0037-scan-ranges.md) scan ranges | Option 3, low priority: a plan for StarCraft II's rule across the catalog, mechanism and whole matrix first | WP14 (last) |
+| [Q0037](../questions/closed/0037-scan-ranges.md) scan ranges | Option 3, low priority: a plan for StarCraft II's rule across the catalog, mechanism and whole matrix first | WP14 (last) |
 | [Q0038](../questions/closed/0038-marine-backswing-gate.md) backswing | Option 2: change the rule first, then marine `damage_point: 1`, `backswing: 13` | D-2, WP1, WP6 |
 | [Q0039](../questions/open/0039-normal-time-values.md) Normal-time values | Option 3: convert the four values and audit every time and speed value, with a whole-matrix measurement | D-4, D-5, WP3, WP7 to WP12 |
 | [Q0040](../questions/closed/0040-zealot-attributes.md) zealot attributes | Option 2: `Light, Biological` | WP5 |
@@ -1194,6 +1194,14 @@ ranges are measured on top of it), when the owner's priority allows. It may be s
    part as an owner question and stop.
 
 **Gate.** Common gate for code and data; documentation gate for the report.
+
+**Outcome (2026-11-05, after sc2-deviation-fixes WP4).** Steps 1 to 4 done
+([evidence](../evidence/2026-11-04-combat-sc2-alignment.md) §15, reference table in the
+[audit](../evidence/2026-11-04-catalog-time-audit.md) §11); the trace tool gained targeting measures (`b1d28e6`).
+The mechanism in battle 33 is explained (timing, not focus), but the game's measuring rule (centre or edge) is not
+sourced and decides what the values do, so no value is applied: [Q0057](../questions/open/0057-scan-range-measuring-rule.md),
+default no change; bug B-12 of plan [`2026-11-05-sc2-deviation-fixes`](2026-11-05-sc2-deviation-fixes.md) stays open
+(its Amendment 6).
 
 ---
 

@@ -40,3 +40,14 @@ Evidence: [`docs/evidence/2026-11-03-battle-33-investigation.md`](../../evidence
 ## Answer
 
 Owner (2026-11-04): Option 3 (a plan that applies StarCraft II's scan-range rule across the catalog and measures the whole matrix before changing values), but low priority.
+
+## Resolution
+
+Carried out as combat alignment WP14 (plan [`2026-11-04-combat-sc2-alignment`](../../plans/2026-11-04-combat-sc2-alignment.md)),
+after sc2-deviation-fixes WP4, on 2026-11-05: the mechanism in battle 33 (timing, not focus: a marine whose scan is
+below its weapon reach acquires a zealot only once it can already shoot it), the reference table for every armed
+identity (audit [§11](../../evidence/2026-11-04-catalog-time-audit.md)) and the whole matrix with every reference
+value (evidence [§15](../../evidence/2026-11-04-combat-sc2-alignment.md); 26 battles move under our centre rule and 15
+under an edge rule, and no battle's winner over its seeds changes). No value was applied: whether the game measures a scan range from the units' centres or edges is
+not sourced and decides what the values do. That decision is [Q0057](../open/0057-scan-range-measuring-rule.md);
+until it is answered every unit keeps its `scan_range`, and the difference stays recorded as bug B-12.

@@ -2027,3 +2027,110 @@ and mounts as they are, so that an arc is never applied to the wrong part.
   acceleration, in every layer read, so D-8's constant rate per tick matches the data.
 - `AllowedMovement` (`Moving` for the Phoenix and the Void Ray, `Slowing` for several air units and workers): firing
   while moving (plan §8 F-5).
+
+## 11. Scan ranges (WP14 research, Q0037)
+
+Added 2026-11-05 by combat alignment WP14 step 2 (plan
+[`2026-11-04-combat-sc2-alignment`](../plans/2026-11-04-combat-sc2-alignment.md) WP14; bug B-12 of plan
+[`2026-11-05-sc2-deviation-fixes`](../plans/2026-11-05-sc2-deviation-fixes.md)). Its measurements are in the
+[combat alignment evidence](2026-11-04-combat-sc2-alignment.md) §15. Same source, chain and resolver as §2.2; the
+resolver script is `~/scratch/combat_wp14/scripts/scan_ref.py` (not committed).
+
+### 11.1 The rule
+
+- **Data.** Each `CWeapon` has `MinScanRange`; the `core` default is 5 (`core` WeaponData:11), beside the default
+  `Range` 5 (`core` WeaponData:12). `voidmulti` WeaponData sets `MinScanRange` to `Range` + 0.5 on most ground
+  weapons (for example the Marine's `GuassRifle` 5.5, `voidmulti` WeaponData:108).
+- **Engine rule.** A weapon scans to `MinScanRange` or its `Range`, whichever is greater: Liquipedia
+  ([Automatic Targeting](https://liquipedia.net/starcraft2/Automatic_Targeting), wikitext, read 2026-11-05: "The
+  default Scan Range of most units is 5 or Weapon Range, whichever is greater. In Legacy of the Void, the minimum
+  scan range of most ground units was changed to Weapon Range + 0.5 (remaining at 5 for low-range units), except for
+  the Thor's High-Impact Payload Anti-Air weapon, static defence buildings, and the Siege Tank's Siege Mode weapon")
+  and the SC2Mapster editor wiki ([Data/Weapons/Legacy](https://sc2mapster.wiki.gg/wiki/Data/Weapons/Legacy),
+  "Minimum Scan Range": "If the range should be higher than this value, this field implicitly becomes equivalent to
+  the current range"). A unit scans with all its weapons, so our single per-unit `scan_range` corresponds to the
+  largest scan of its modelled weapons.
+- **How it is measured: not found.** Weapon range is measured from the attacker's edge (the editor adds the
+  attacker's radius unless the weapon sets "Use Range To Center", same wiki; battle 33 investigation §1.5), and our
+  weapon reach is edge to edge (range + both radii). No source found says whether a scan range is measured from the
+  centre or the edge, for either unit (Liquipedia Automatic Targeting and Range, the SC2Mapster wiki pages above,
+  a TeamLiquid unit-tester thread of 2011 on weapon range, web searches). Ours is centre to centre
+  (`target_acquisition.rs`, `scan_candidates`). See §11.3.
+
+### 11.2 Reference table
+
+Per identity: the counterpart's `WeaponArray` weapons (the burrowed Lurker's for `burrow_scorpion`), each with
+`Range` / `MinScanRange` and citation; the reference scan, the largest of those values; Liquipedia's rule (weapon
+range + 0.5, at least 5, for ground units; weapon range, at least 5, for air units); and ours (`units.ron`
+`scan_range`, centre to centre). The data win where the two disagree (plan "What StarCraft II means here"). The
+`swarm` `WeaponArray index="1" Link=""` entries that remove the Reaper's `D8Charge` and the Ultralisk's `Ram` are not
+applied by the resolver; neither changes a maximum.
+
+| Identity | Counterpart | Weapons: `Range` / `MinScanRange` | Reference | Liquipedia rule | Ours |
+|---|---|---|---|---|---|
+| `welder_drone` | SCV | `FusionCutter` 0.2 (`voidmulti` WeaponData:105) / 5 (`core` WeaponData:11, default) | **5** | 5 | 8 |
+| `pulse_bot` | Marine | `GuassRifle` 5 (`core` WeaponData:12, default) / 5.5 (`voidmulti` WeaponData:108) | **5.5** | 5.5 | 9 |
+| `rhino_beetle` | Roach | `RoachMelee` 0.5 (`liberty` WeaponData:93) / 5 (`core` WeaponData:11, default); `AcidSaliva` 4 (`swarm` WeaponData:167) / 5 (`core` WeaponData:11, default) | **5** | 5 | 10 |
+| `psi_grey` | Zealot | `PsiBlades` 0.1 (`liberty` WeaponData:154) / 5 (`core` WeaponData:11, default) | **5** | 5 | 9 |
+| `railgun_crawler` | SiegeTank | `90mmCannons` 7 (`liberty` WeaponData:241) / 7.5 (`voidmulti` WeaponData:4); `90mmCannonsFake` 7 (`voidmulti` WeaponData:17) / 7.5 (`voidmulti` WeaponData:16) | **7.5** | 7.5 | 11 |
+| `flying_saucer` | Phoenix | `IonCannons` 5 (`void` WeaponData:214) / 4 (`liberty` WeaponData:190) | **5** | 5 | 11 |
+| `shock_golem` | Marauder | `PunisherGrenades` 6 (`liberty` WeaponData:248) / 6.5 (`voidmulti` WeaponData:211) | **6.5** | 6.5 | 10 |
+| `jet_jumper` | Reaper | `P38ScytheGuassPistol` 5 (`void` WeaponData:90) / 5.5 (`voidmulti` WeaponData:189); `D8Charge` 5 (`core` WeaponData:12, default) / 5 (`core` WeaponData:11, default) | **5.5** | 5.5 | 9 |
+| `specter_android` | Ghost | `C10CanisterRifle` 6 (`liberty` WeaponData:577) / 6.5 (`voidmulti` WeaponData:79) | **6.5** | 6.5 | 11 |
+| `napalm_wheeler` | Hellion | `InfernalFlameThrower` 5 (`core` WeaponData:12, default) / 5.5 (`voidmulti` WeaponData:116) | **5.5** | 5.5 | 10 |
+| `colossus_mech` | Thor | `JavelinMissileLaunchers` 10 (`liberty` WeaponData:218) / 10.5 (`voidmulti` WeaponData:123); `ThorsHammer` 7 (`liberty` WeaponData:231) / 7.5 (`voidmulti` WeaponData:260) | **10.5** | 10.5 | 11 |
+| `vector_interceptor` | VikingFighter | `LanzerTorpedoes` 9 (`liberty` WeaponData:272) / 5 (`core` WeaponData:11, default) | **9** | 9 | 10 |
+| `repair_shuttle` | Medivac | no weapon | — | — | 11 |
+| `sky_bastion` | Liberator | `LiberatorMissileLaunchers` 5 (`core` WeaponData:12, default) / 5 (`core` WeaponData:11, default) | **5** | 5 | 10 |
+| `cloak_gunship` | Banshee | `BacklashRockets` 6 (`liberty` WeaponData:555) / 6 (`liberty` WeaponData:554) | **6** | 6 | 10 |
+| `omni_probe_drone` | Raven | no weapon | — | — | 11 |
+| `grav_harvester` | Probe | `ParticleBeam` 0.2 (`voidmulti` WeaponData:197) / 5 (`core` WeaponData:11, default) | **5** | 5 | 8 |
+| `warp_strider` | Stalker | `ParticleDisruptors` 6 (`liberty` WeaponData:490) / 6.5 (`voidmulti` WeaponData:200) | **6.5** | 6.5 | 10 |
+| `prism_weaver` | Sentry | `DisruptionBeam` 5 (`core` WeaponData:12, default) / 5.5 (`voidmulti` WeaponData:82) | **5.5** | 5.5 | 10 |
+| `astral_vagrant` | Adept | `Adept` 4 (`void` WeaponData:317) / 5 (`core` WeaponData:11, default) | **5** | 5 | 9 |
+| `cerebral_elder` | HighTemplar | `HighTemplarWeapon` 6 (`voidmulti` WeaponData:291) / 6.5 (`voidmulti` WeaponData:290) | **6.5** | 6.5 | 10 |
+| `shadow_visitor` | DarkTemplar | `WarpBlades` 0.1 (`liberty` WeaponData:165) / 5 (`core` WeaponData:11, default) | **5** | 5 | 9 |
+| `void_goliath` | Immortal | `PhaseDisruptors` 6 (`swarm` WeaponData:61) / 6.5 (`voidmulti` WeaponData:204) | **6.5** | 6.5 | 9 |
+| `tripod_annihilator` | Colossus | `ThermalLances` 7 (`voidmulti` WeaponData:255) / 7.5 (`voidmulti` WeaponData:253) | **7.5** | 7.5 | 10 |
+| `stealth_eye_orb` | Observer | no weapon | — | — | 11 |
+| `phase_prism_saucer` | WarpPrism | no weapon | — | — | 10 |
+| `prismatic_saucer` | VoidRay | `PrismaticBeam` 6 (`swarm` WeaponData:189) / 5 (`core` WeaponData:11, default); `VoidRaySwarm` 6 (`void` WeaponData:166) / 5 (`core` WeaponData:11, default) | **6** | 6 | 10 |
+| `mothership_carrier` | Carrier | `InterceptorLaunch` 8 (`liberty` WeaponData:605) / 5 (`core` WeaponData:11, default) | **8** | 8 | 12 |
+| `nectar_worker` | Drone | `Spines` 0.2 (`voidmulti` WeaponData:220) / 5 (`core` WeaponData:11, default) | **5** | 5 | 8 |
+| `razor_mantis` | Zergling | `Claws` 0.1 (`liberty` WeaponData:361) / 5 (`core` WeaponData:11, default) | **5** | 5 | 8 |
+| `volatile_tick` | Baneling | `VolatileBurst` 0.25 (`liberty` WeaponData:467) / 5 (`core` WeaponData:11, default); `VolatileBurstBuilding` 0.25 (`swarm` WeaponData:208) / 5 (`core` WeaponData:11, default) | **5** | 5 | 8 |
+| `mortar_stag` | Ravager | `RavagerWeapon` 6 (`void` WeaponData:143) / 6.5 (`voidmulti` WeaponData:215) | **6.5** | 6.5 | 9 |
+| `thorn_viper` | Hydralisk | `HydraliskMelee` 0.5 (`liberty` WeaponData:52) / 5 (`core` WeaponData:11, default); `NeedleSpines` 5 (`core` WeaponData:12, default) / 5.5 (`voidmulti` WeaponData:156) | **5.5** | 5.5 | 9 |
+| `burrow_scorpion` | LurkerMPBurrowed | `LurkerMP` 8 (`voidmulti` WeaponData:145) / 5 (`core` WeaponData:11, default) | **8** | 8.5 | 11 |
+| `sonic_bat` | Mutalisk | `GlaiveWurm` 3 (`liberty` WeaponData:401) / 5 (`core` WeaponData:11, default) | **5** | 5 | 11 |
+| `sky_leviathan` | Corruptor | `ParasiteSpore` 6 (`liberty` WeaponData:571) / 5 (`core` WeaponData:11, default) | **6** | 6 | 10 |
+| `spore_matriarch` | BroodLord | `BroodlingStrike` 10 (`voidmulti` WeaponData:75) / 10.5 (`voidmulti` WeaponData:76) | **10.5** | 10 | 11 |
+| `stag_behemoth` | Ultralisk | `KaiserBlades` 1 (`liberty` WeaponData:436) / 5 (`core` WeaponData:11, default); `Ram` 1 (`liberty` WeaponData:446) / 5 (`core` WeaponData:11, default) | **5** | 5 | 9 |
+| `hive_matron` | Queen | `AcidSpines` 7 (`liberty` WeaponData:105) / 8.5 (`voidmulti` WeaponData:72); `Talons` 3 (`liberty` WeaponData:480) / 5.5 (`voidmulti` WeaponData:223); `TalonsMissile` 5 (`core` WeaponData:12, default) / 5 (`core` WeaponData:11, default) | **8.5** | 7.5 | 9 |
+| `mycelium_shaman` | Infestor | no weapon | — | — | 10 |
+| `tongue_chameleon` | Viper | no weapon | — | — | 11 |
+| `amber_pollen_dome` | Overlord | no weapon | — | — | 11 |
+
+### 11.3 Findings
+
+- **Every armed unit scans further than its counterpart**, by 0.5 (`colossus_mech`, `spore_matriarch`) to 6
+  (`flying_saucer`, `sonic_bat`); our values are the sight radius or near it (8 to 12), the reference 5 to 10.5.
+- **Where the data and Liquipedia's rule differ** (the data are used): the Brood Lord's `BroodlingStrike` 10.5 (the
+  rule gives 10 for an air unit); the Queen's `AcidSpines` 8.5 (`MinScanRange` was not lowered when its range went
+  from 8 back to 7; [Queen (LotV)](https://liquipedia.net/starcraft2/Queen_(Legacy_of_the_Void)), patch notes); the
+  burrowed Lurker's `LurkerMP` 8 (no `MinScanRange`, so its `Range`; the rule gives 8.5).
+- **Not expressible as one value per unit:** the Siege Tank scans 7.5 in tank mode and 13 in Siege Mode
+  (`CrucioShockCannon` `Range` 13, `liberty` WeaponData:259, no `MinScanRange`, Liquipedia's named exception). Our
+  Siege Mode override replaces the weapon, not the scan range, so a sieged `railgun_crawler` with the tank-mode
+  reference would not acquire between 7.5 and 13. No matrix battle sieges (battle 3 is tank mode).
+- **Structures** have no `scan_range` field: `catalog.rs` gives every structure its sight radius (11 for the armed
+  ones) as scan range. The reference is the weapon's range: Planetary Fortress `TwinIbiksCannon` 6 (`liberty`
+  WeaponData:137), Photon Cannon 7 (:534), Missile Turret `LongboltMissile` 7 (:306), Spine Crawler
+  `ImpalerTentacle` 7 (:369), Spore Crawler `AcidSpew` 7 (:381); none sets `MinScanRange`. A field would be a
+  catalog change in code; it is part of B-12.
+- **The seven unarmed units** acquire nothing; their `scan_range` is read
+  only by the pursuit leash of an attack they cannot make. Unchanged.
+- **The measuring rule (§11.1) decides the values.** Under an edge rule, the marine's 5.5 against a zealot is 6.375
+  between centres; under ours it is 5.5, which is less than its weapon reach (5 + 0.375 + 0.5 = 5.875), so the
+  marine would acquire only what it can already shoot. That `MinScanRange` is set to `Range` + 0.5 suggests both
+  are measured alike, but no source says so; it is asked as Q0057.

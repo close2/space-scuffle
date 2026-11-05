@@ -470,8 +470,24 @@ fn the_runner_writes_every_file_for_every_seed() -> TestResult {
     let summary = std::fs::read_to_string(directory.join("summary.md"))?;
     assert!(summary.contains("## Outcomes"));
     assert!(summary.contains("2 seeds"));
+    assert!(summary.contains("Units on the most-targeted enemy, mean"));
     let seeds = std::fs::read_to_string(directory.join("seeds.csv"))?;
     assert_eq!(seeds.lines().count(), 3);
+    let columns: Vec<usize> = seeds.lines().map(|line| line.split(',').count()).collect();
+    assert!(
+        columns.iter().all(|&count| count == columns[0]),
+        "{columns:?}"
+    );
+    assert!(seeds
+        .lines()
+        .next()
+        .is_some_and(|header| header.contains("blue_mean_focus")));
+    // Both marines attack the one zealot: the blue focus reaches 2, the red at most 1.
+    let focus = &output.results[0].summary.focus;
+    assert_eq!(focus[0].units, 2);
+    assert_eq!(focus[0].max_focus, 2);
+    assert_eq!(focus[1].max_focus, 1);
+    assert!(focus[0].mean_first_target_tick.is_some());
     // The ticks CSV has one row per tick plus the header and tick 0.
     let ticks = std::fs::read_to_string(directory.join("seed_11_ticks.csv"))?;
     let end = output.results[0].summary.end_tick;
