@@ -141,3 +141,32 @@ before and after the data edit.
 - **Battle 33, 68 seeds: bit-identical** to §2 (every output file byte-identical): no reaper takes part.
 - **Golden replays and the sandbox checksum: unchanged** (no golden replay spawns or trains `jet_jumper`; the sandbox
   checksum is of the spawned state at full life, plan D-7). No expectation in `matchup_matrix.ron` moved.
+
+## 4. WP3: audit R1, the Reaper analogue's life regeneration rate (Q0039)
+
+**Commit.** The WP3 commit of the plan, after WP2 (§3). The catalog-time audit's deferred group R1
+([`2026-11-04-catalog-time-audit.md`](2026-11-04-catalog-time-audit.md) §5 R1; combat alignment evidence
+[§13.11](2026-11-04-combat-sc2-alignment.md#1311-r1-the-reapers-life-regeneration-deferred)), applied after its
+delay, which the audit's §7 measurement required:
+
+| Field | Before | After | Reference |
+|---|---|---|---|
+| `jet_jumper` `hp_regen_per_tick` | 0.08 | **0.112** | Reaper `LifeRegenRate` 2 per Normal s (`void` UnitData:1476, also `swarmmulti` UnitData:894) = 2.8 per Faster s = 2 × 1.4 ÷ 25 = 0.112 per tick (exact); class B, a Normal-time value copied unconverted (Q0039) |
+
+Doc 07 §3.1 row 4 now says 2.8 life per second (WP2 wrote the old 2.0). Outputs under `~/scratch/life_regen/wp3/`.
+
+**Test.** No new test (plan WP3 step 1): `test_life_regeneration_waits_for_the_catalog_delay` reads the rate from
+the archetype and keeps passing. It now records the new rate: the reaper analogue's life holds for 178 ticks after
+20 damage and rises on tick 179 by exactly its `hp_regen_per_tick`, 0.112 authored, 0.1120000034570694 after
+`SimScalar::from_f32_lossy` (the `f32` nearest 0.112, which Q32.32 holds exactly).
+
+**Measured.**
+
+- **Whole matrix, 20 seeds: bit-identical** to §3 (all 1000 rows). Expectation failures stay 0 on the seeds of record
+  and 2 over all seeds (battle 33's).
+- **Battles 22a and 22b: bit-identical** (every output file of both traces byte-identical to §3). Both end at a kill
+  well inside 179 ticks of the reaper's last hit, so the faster rate never applies: `blue_health_regained` is 0 on
+  every tick of every seed, and 22b stays a stalker win on all 20 seeds at tick 139. The audit's §7 failure (22b
+  unresolved on all 20 seeds with 0.112 and no delay) does not occur.
+- **Battle 33, 68 seeds: bit-identical** to §3.
+- **Golden replays and the sandbox checksum: unchanged.**
