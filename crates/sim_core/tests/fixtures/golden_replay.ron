@@ -23,6 +23,11 @@
 // entity's `anim_progress`, a constant zero no system wrote, is no longer encoded, so every
 // checkpoint changed. No behaviour did: the render snapshots of all 1000 ticks are byte for byte
 // those of schema 9.
+// Re-recorded for plan 2026-11-04-combat-sc2-alignment WP9 (D-4): the shield-regeneration delay
+// is read from the catalog (still 250), and a new entity's `ticks_since_last_damage` starts at
+// u16::MAX ("never damaged") instead of 250. That counter is hashed, so every checkpoint
+// changed. No behaviour did: with the spawn value left at 250, every checkpoint stays as
+// recorded for flipbook WP2.
 (
     checksum_schema: 10,
     seed: 0x5EED_0F_5CAFF1E,
@@ -50,25 +55,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xca0556c4cae1e36b,
-        0x594ac5b3a52b9b25,
-        0x8ea840c55550167c,
-        0xe3cf67a8799a4ba3,
-        0xc4012526fa0e77da,
-        0x2dc1b741d56a723b,
-        0xfe808eb2dfbf6e3b,
-        0xd1db3cc1e1a20e63,
-        0xf13171d736ac584b,
-        0x614954a62e30d25f,
-        0xb6bb9c6141a79129,
-        0xb61c623427ce8352,
-        0x231441a465c540e4,
-        0xdcbc4c09788526c8,
-        0x3a0ec532689aca2e,
-        0x0124de1b016f842b,
-        0xfe73a9c582d8d185,
-        0x2931df47284e23cf,
-        0x158b02bc75b20f3a,
-        0x045aa9443a6bdc5c,
+        0x189f3f514ed6bdf3,
+        0xae5265abe8f6cc2d,
+        0x7a797d9486385c0b,
+        0x99d28f0a634ef0a6,
+        0xd9838987c43d8880,
+        0x8374e0c36638a19e,
+        0x1a994a20217e16ea,
+        0xa413055170eafd2c,
+        0x0c4fb0592415efab,
+        0x86ba21dfddbf4786,
+        0x6735666cb4d8af73,
+        0xe54bde10d0b0a040,
+        0xd2d0e731af1f1f29,
+        0x8f79aa5a23e591a2,
+        0x01d450b1b4b26011,
+        0x6c18d27c5f3c2997,
+        0x36131d085b81e91e,
+        0xdfd35c15b70d6083,
+        0x4fcf7c9bf07f9969,
+        0x67d7b2e1b7620abd,
     ],
 )

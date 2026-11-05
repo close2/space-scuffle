@@ -225,7 +225,9 @@ pub struct Entity {
     pub shields: SimScalar,
     /// Current caster energy pool.
     pub energy: SimScalar,
-    /// Ticks elapsed since last sustaining damage (for 10s / 250-tick shield regen).
+    /// Ticks elapsed since last sustaining damage, saturating at `u16::MAX`. Shields regenerate
+    /// once it reaches the archetype's `shield_regen_delay_ticks`. A new entity starts at
+    /// `u16::MAX` ("never damaged"), which is ready for any authored delay.
     pub ticks_since_last_damage: u16,
     /// `StarCraft` II style order queue.
     pub order_queue: VecDeque<UnitOrder>,
@@ -328,7 +330,9 @@ impl Entity {
             hp: archetype.max_hp,
             shields: archetype.max_shields,
             energy: archetype.max_energy,
-            ticks_since_last_damage: 250, // Starts ready for shield regen
+            // Never damaged: ready to regenerate shields under any authored delay, and the
+            // value the saturating counter reaches anyway.
+            ticks_since_last_damage: u16::MAX,
             order_queue: VecDeque::new(),
             current_funnel_waypoints: Vec::new(),
             movement: MovementMemory {

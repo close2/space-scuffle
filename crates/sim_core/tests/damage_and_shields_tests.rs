@@ -6,7 +6,8 @@
 //! 3. Multi-hit armor reduction (e.g. Zealot dual attack applying armor reduction twice).
 //! 4. Minimum 0.5 HP damage clamping.
 //! 5. Circular concentric splash falloff (100% / 50% / 25%).
-//! 6. 10-second (250-tick) shield regeneration delay after sustaining damage.
+//! 6. Shield regeneration waits for the archetype's catalog delay (`shield_regen_delay_ticks`)
+//!    after sustaining damage, for a shipped archetype and for a scratch one.
 
 #![allow(
     clippy::unwrap_used,
@@ -56,6 +57,7 @@ fn dummy_target_archetype(
         shield_armor,
         hp_regen_per_tick: SimScalar::ZERO,
         shield_regen_per_tick: SimScalar::from_num(1),
+        shield_regen_delay_ticks: Some(10),
         energy_regen_per_tick: SimScalar::ZERO,
         max_speed: SimScalar::ZERO,
         acceleration: SimScalar::ZERO,
@@ -299,10 +301,67 @@ fn test_circular_splash_falloff() {
     assert!(res_miss.is_none());
 }
 
-#[test]
-fn test_shield_regeneration_250_tick_delay() {
-    use sim_map::{CliffLevel, GameMap, MapCell};
+/// Damages a fresh unit's shields by `damage`, steps the world `delay - 1` empty ticks
+/// asserting that the shields hold, then one more and asserts that they started regenerating.
+/// The delay is the archetype's `shield_regen_delay_ticks`, counted in ticks (25 per second)
+/// after the damage.
+fn assert_shields_regenerate_after_catalog_delay(
+    world: &mut sim_core::SimWorld,
+    unit_type: UnitTypeId,
+    damage: SimScalar,
+) {
     use sim_types::PlayerId;
+
+    let delay = world
+        .catalog
+        .get(unit_type)
+        .expect("archetype registered")
+        .shield_regen_delay_ticks
+        .expect("a shielded archetype carries a regeneration delay");
+    assert!(delay > 1, "the test needs at least one waiting tick");
+    let unit_id = world
+        .spawn_unit(
+            unit_type,
+            PlayerId(0),
+            SimVec2::new(SimScalar::from_num(10), SimScalar::from_num(10)),
+        )
+        .expect("spawn shielded unit");
+
+    let damaged = {
+        let unit = world.entities.get_mut(&unit_id).expect("unit exists");
+        let before = unit.shields;
+        unit.apply_damage(damage, SimScalar::ZERO, SimAngle::ZERO);
+        assert_eq!(unit.shields, before - damage);
+        assert_eq!(unit.ticks_since_last_damage, 0);
+        unit.shields
+    };
+
+    let empty_bundle = |tick: u32| TickBundle {
+        tick: Tick(tick),
+        commands: Vec::new(),
+        state_checksum: None,
+    };
+
+    for tick in 1..u32::from(delay) {
+        world.step(&empty_bundle(tick));
+        let unit = world.entities.get(&unit_id).expect("unit exists");
+        assert_eq!(
+            unit.shields, damaged,
+            "Shields must not regenerate before {delay} ticks without damage (tick {tick})"
+        );
+    }
+
+    world.step(&empty_bundle(u32::from(delay)));
+    let unit = world.entities.get(&unit_id).expect("unit exists");
+    assert!(
+        unit.shields > damaged,
+        "Shields must begin regenerating on tick {delay} after the damage"
+    );
+}
+
+#[test]
+fn test_shield_regeneration_waits_for_the_catalog_delay() {
+    use sim_map::{CliffLevel, GameMap, MapCell};
 
     let default_cell = MapCell::default_ground(CliffLevel(0));
     let map = GameMap::new(64, 64, default_cell).expect("invariant: valid map");
@@ -312,48 +371,31 @@ fn test_shield_regeneration_250_tick_delay() {
         .catalog
         .id_by_slug("psi_grey")
         .expect("psi_grey in catalog");
-    let zealot_id = world
-        .spawn_unit(
-            psi_grey_id,
-            PlayerId(0),
-            SimVec2::new(SimScalar::from_num(10), SimScalar::from_num(10)),
-        )
-        .expect("spawn zealot");
+    // Damage the zealot's shields from 50 down to 20.
+    assert_shields_regenerate_after_catalog_delay(&mut world, psi_grey_id, SimScalar::from_num(30));
+}
 
-    // Damage Zealot shields from 50 down to 20
-    {
-        let zealot = world.entities.get_mut(&zealot_id).expect("zealot exists");
-        zealot.apply_damage(SimScalar::from_num(30), SimScalar::ZERO, SimAngle::ZERO);
-        assert_eq!(zealot.shields, SimScalar::from_num(20));
-        assert_eq!(zealot.ticks_since_last_damage, 0);
-    }
+#[test]
+fn a_scratch_archetype_with_a_10_tick_delay_regenerates_from_the_10th_tick_after_damage() {
+    use sim_map::{CliffLevel, GameMap, MapCell};
 
-    let empty_bundle = |tick: u32| TickBundle {
-        tick: Tick(tick),
-        commands: Vec::new(),
-        state_checksum: None,
-    };
+    let default_cell = MapCell::default_ground(CliffLevel(0));
+    let map = GameMap::new(64, 64, default_cell).expect("invariant: valid map");
+    let mut world = sim_fixtures::world(map, 0x5555_AAAA);
 
-    // Step 249 ticks: shields must remain exactly 20
-    for tick in 1..=249 {
-        world.step(&empty_bundle(tick));
-        let zealot = world.entities.get(&zealot_id).expect("zealot exists");
-        assert_eq!(
-            zealot.shields,
-            SimScalar::from_num(20),
-            "Shields must not regenerate before 250 ticks without damage"
-        );
-    }
+    let mut scratch =
+        dummy_target_archetype(AttributeFlags::LIGHT, SimScalar::ZERO, SimScalar::ZERO);
+    let free_id = (1..=u16::MAX)
+        .map(UnitTypeId)
+        .find(|id| world.catalog.get(*id).is_err())
+        .expect("a free unit type id");
+    scratch.unit_type_id = free_id;
+    scratch.slug = "scratch_shield_delay".to_string();
+    scratch.name = scratch.slug.clone();
+    scratch.shield_regen_delay_ticks = Some(10);
+    world.catalog.register(scratch);
 
-    // Step tick 250: shields begin regenerating
-    world.step(&empty_bundle(250));
-    {
-        let zealot = world.entities.get(&zealot_id).expect("zealot exists");
-        assert!(
-            zealot.shields > SimScalar::from_num(20),
-            "Shields must begin regenerating at tick 250 (10.0 seconds)"
-        );
-    }
+    assert_shields_regenerate_after_catalog_delay(&mut world, free_id, SimScalar::from_num(30));
 }
 
 /// Test 7: Verify that splash with friendly_fire == true damages nearby allied units,

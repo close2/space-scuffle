@@ -274,6 +274,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         shield_armor: SimScalar::ZERO,
         hp_regen_per_tick: SimScalar::ZERO,
         shield_regen_per_tick: SimScalar::ZERO,
+        shield_regen_delay_ticks: None,
         energy_regen_per_tick: SimScalar::ZERO,
         max_speed: SimScalar::from_num(0.1),
         acceleration: SimScalar::from_num(0.1),

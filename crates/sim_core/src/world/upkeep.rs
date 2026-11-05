@@ -99,7 +99,10 @@ fn upkeep_entity(entity: &mut Entity, catalog: &UnitCatalog) {
         }
 
         entity.ticks_since_last_damage = entity.ticks_since_last_damage.saturating_add(1);
-        if entity.ticks_since_last_damage >= 250 && entity.is_completed {
+        let regenerates = arch
+            .shield_regen_delay_ticks
+            .is_some_and(|delay| entity.ticks_since_last_damage >= delay);
+        if regenerates && entity.is_completed {
             entity.shields = (entity.shields + arch.shield_regen_per_tick).min(arch.max_shields);
         }
     }

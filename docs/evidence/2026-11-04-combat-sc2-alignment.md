@@ -874,3 +874,38 @@ the data edit it failed with `the Marauder analogue carries the Overclock`; afte
   `rhino_beetle` squad is never ordered to stim.
 - **`golden_replay_orders.ron`: unchanged** (it researches nothing).
 - Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`) reproduce both fixtures.
+
+## 9. WP9: the shield-regeneration delay comes from the catalog (D-4)
+
+**Commit.** The code commit of WP9, on `main` at `ab2042c` (WP15 and flipbook WP2 merged). The delay that
+`world/upkeep.rs` hard-coded as 250 ticks is now the per-archetype field `shield_regen_delay_ticks: Option<u16>`
+of `units.ron` and `structures.ron`, carried into `UnitArchetype`. Validation (`catalog/validation.rs`, typed
+`CatalogInvalidValue` naming the field) requires it exactly when `max_shields > 0`. All 29 shielded archetypes (14
+units, 15 structures) carry `Some(250)`, today's value; WP11 converts it. A new entity's
+`ticks_since_last_damage` starts at `u16::MAX` ("never damaged", ready for any authored delay) instead of the
+literal 250. Outputs under `~/scratch/combat_wp9/` on the development server (`base/` the state before, `wp9/` this
+commit).
+
+**Tests first.** Two validation unit tests (a shielded unit or structure without the field, an unshielded one with
+it, each rejected with the field named) and an integration test in `damage_and_shields_tests.rs` (a scratch
+archetype with delay 10 regenerates on the 10th tick after damage and not before) were written first. Before the
+field existed they did not compile; with the field added but `upkeep_entity` still reading 250, the scratch test
+failed with `Shields must begin regenerating on tick 10 after the damage`. The former
+`test_shield_regeneration_250_tick_delay` now reads the delay from the archetype
+(`test_shield_regeneration_waits_for_the_catalog_delay`).
+
+**Spawn counter.** The plan preferred keeping the checksums if possible (D-4). Spawning with the archetype's own
+delay would keep them for shielded units only; an unshielded archetype has no delay, and any value chosen for it
+would be a new magic number, so the plan's `u16::MAX` was used.
+
+**Measured.**
+
+- **Whole matrix, 20 seeds: bit-identical** to the state before (all 1000 rows of `matrix.csv`; the state before
+  is itself byte-identical to WP15's, §8). Expectation failures stay 0 on the seeds of record and 7 over all seeds.
+- **Battle 33, 68 seeds: bit-identical** (all output files byte-identical).
+- **Both golden replays: re-recorded at every checkpoint** (`golden_replay.ron` 1 to 20, `golden_replay_orders.ron`
+  1 to 60; the first differing checkpoint is the first), only through the hashed spawn counter: with this commit's
+  spawn value set back to 250 and everything else kept, both fixtures pass as recorded before it.
+- Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`) reproduce both fixtures.
+- **`sim_fixtures` `DEFAULT_SANDBOX_CHECKSUM` (`fixture_tests.rs`): re-recorded** for the same reason: with the spawn
+  value set back to 250 the test computes the old checksum again.
