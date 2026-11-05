@@ -1878,13 +1878,17 @@ D-8 item 3. `TurningRate` is the unit's rate; `StationaryTurningRate` is a secon
   - `napalm_wheeler` (Hellion): 84.00° per tick stationary (`liberty` UnitData:11554) against 40.32 moving.
 
   We model one rate. WP17 applies `TurningRate` as D-8 says, and records the stationary rate as a follow-up
-  (plan §8 F-8): it needs a second field and a rule choosing between them.
+  (plan §8 F-8): it needs a second field and a rule choosing between them. Implemented by plan
+  [`2026-11-05-turn-before-move`](../plans/2026-11-05-turn-before-move.md) (Amendment 1, the owner's standing rule to
+  follow StarCraft II), WP5 `2522e3f`, WP6 `408d3b7`.
 - **`TurnBeforeMove`.** A `CUnit` flag (`FlagArray index="TurnBeforeMove"`). Among the analogues only the Siege
   Tank (`liberty` UnitData:5084), the Thor (`liberty` UnitData:5217) and the Ultralisk (`liberty` UnitData:8033) set
   it; every matrix identity other than these three leaves it off. The flag's name states the rule's direction,
   but the data hold no tolerance (how far from its path a unit may face and still move) and no source within the
   effort bound states one. The rule therefore cannot be specified and tested as D-8 item 4 requires, and WP17 files
-  [Q0050](../questions/open/0050-turn-before-move.md) with the default "no gating" (D-8 item 4).
+  [Q0050](../questions/closed/0050-turn-before-move.md) with the default "no gating" (D-8 item 4). Implemented by
+  plan [`2026-11-05-turn-before-move`](../plans/2026-11-05-turn-before-move.md) (owner tolerance: one tick's turn,
+  Q0050), WP1 `6d7a9d5`, WP3 `b7d9f50`.
 
 ### 10.3 Firing arcs (`Arc`, `ArcSlop`)
 
@@ -2013,7 +2017,9 @@ and mounts as they are, so that an arc is never applied to the wrong part.
 
 ### 10.6 Not modelled (follow-ups)
 
-- `StationaryTurningRate` (§10.2) and `TurnBeforeMove` (§10.2, Q0050).
+- `StationaryTurningRate` (§10.2) and `TurnBeforeMove` (§10.2, Q0050). Both implemented by plan
+  [`2026-11-05-turn-before-move`](../plans/2026-11-05-turn-before-move.md) (owner tolerance: one tick's turn,
+  Q0050), WP1 `6d7a9d5`, WP3 `b7d9f50`, WP5 `2522e3f`, WP6 `408d3b7`.
 - The acquisition angle `Arc` ÷ 2, tighter than the engaged tolerance (§10.3).
 - Turret limits: every turret above inherits `YawArc` 360 from `FreeRotate` (`liberty` TurretData:25), so none is
   restricted; `YawIdleRate` is part of the idle behaviour.
