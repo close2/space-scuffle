@@ -701,6 +701,7 @@ fn run_tests(
             target: id.clone(),
             class: selected.class,
             expected: expected.get(&id.to_string()).copied().unwrap_or_default(),
+            test_threads: context.catalog.test_threads_of(id),
         })
         .collect();
     let total = jobs.len();
@@ -736,6 +737,7 @@ fn rerun_failures(
             target: result.target.clone(),
             class: result.class,
             expected: result.wall,
+            test_threads: context.catalog.test_threads_of(&result.target),
         })
         .collect();
     if failed.is_empty() {

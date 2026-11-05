@@ -18,6 +18,9 @@
 //   when a rule or downstream contract names it;
 // - `rules` add targets for paths outside or across crates; `commands` add the golden replays.
 //
+// A `targets` entry may set `test_threads: Some(n)`: the gate then runs that executable with
+// `--test-threads=n` instead of libtest's one thread per CPU, to bound its peak memory.
+//
 // When `cargo gate full` or CI finds a failure that `package` did not select, the fix adds the
 // missing rule here in the same commit (blueprint section 3.5, step 4).
 SuiteCatalog(
@@ -52,15 +55,20 @@ SuiteCatalog(
     // Every target that is not `fast` (blueprint section 3.2). Unlisted targets are `fast`.
     targets: {
         // Headless but long: the client's unit tests and the battle drivers that play the
-        // shipped skirmish, whole matrices, ffmpeg.
+        // shipped skirmish, whole matrices, ffmpeg. Each test of the three battle drivers capped
+        // with `test_threads` holds a whole Bevy app, so their peak memory grows with libtest's
+        // thread count: at 16 threads (one per CPU) they reached 27, 16 and 13.6 GiB and, run by
+        // four gates at once, froze the server. Measured peak RSS at 1/2/4 threads: card 3.4/3.9/
+        // 5.4 GiB, hud 3.3/3.9/6.0 GiB, input -/-/5.1 GiB; 4 threads keeps each near 6 GiB at a
+        // quarter of the 1-thread wall time (blueprint Amendment 2, section 11.5).
         "client/lib": (class: Slow),
-        "client/battle_card_tests": (class: Slow),
+        "client/battle_card_tests": (class: Slow, test_threads: Some(4)),
         "client/battle_card_path_tests": (class: Slow),
         "client/battle_context_order_tests": (class: Slow),
         "client/battle_flipbook_tests": (class: Slow),
         "client/battle_fog_tests": (class: Slow),
-        "client/battle_hud_tests": (class: Slow),
-        "client/battle_input_tests": (class: Slow),
+        "client/battle_hud_tests": (class: Slow, test_threads: Some(4)),
+        "client/battle_input_tests": (class: Slow, test_threads: Some(4)),
         "client/battle_result_tests": (class: Slow),
         "client/sync_steady_state_tests": (class: Slow),
         "sim_core/sc2_who_wins_matchup_matrix_tests": (class: Slow),

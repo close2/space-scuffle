@@ -28,6 +28,7 @@ mod cli;
 mod crash;
 mod execute;
 mod explain;
+mod gate_lock;
 mod glob;
 mod merge;
 mod runner;
@@ -51,6 +52,7 @@ pub use crash::{
 };
 pub use execute::{build_invocations, failed_tests, mark_flakes, Outcome, TargetResult};
 pub use explain::render_selection;
+pub use gate_lock::{lock_path, waiting_message, GateLock, Holder, HELD_VAR, LOCK_PATH_VAR};
 pub use glob::Glob;
 pub use merge::{changed_crates, choose_stamp, overlapping_crates, BranchCommit};
 pub use runner::{check_target_dir, run_tier, stamp_dir, Context, RunReport, StepResult};
