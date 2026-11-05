@@ -19,7 +19,7 @@
 //! 4. Damage from a unit's own side never causes retaliation, flight or alerts.
 
 use crate::catalog::UnitArchetype;
-use crate::combat::{compute_threat_priority, TargetPriorityKey, MAX_THREAT_PRIORITY};
+use crate::combat::{is_threat_to, TargetPriorityKey};
 use crate::entity::Entity;
 use crate::weapon_timing::SimulationDiagnostic;
 use crate::world::SimWorld;
@@ -332,6 +332,12 @@ impl SimWorld {
         acquisitions.clear();
         let mut neighbors = std::mem::take(&mut self.scratch_neighbors);
         let mut candidates = std::mem::take(&mut self.scratch_targets);
+        let top_priority = self
+            .catalog
+            .archetypes()
+            .map(|archetype| archetype.attack_target_priority)
+            .max()
+            .unwrap_or(0);
         for (&id, entity) in &self.entities {
             if entity.channeling_remaining_ticks > 0
                 || entity.is_loaded_in_transport()
@@ -342,7 +348,13 @@ impl SimWorld {
             let Ok(arch) = self.catalog.get(entity.unit_type_id) else {
                 continue;
             };
-            let decision = self.decide_acquisition(entity, arch, &mut neighbors, &mut candidates);
+            let decision = self.decide_acquisition(
+                entity,
+                arch,
+                top_priority,
+                &mut neighbors,
+                &mut candidates,
+            );
             if let Some(decision) = decision {
                 acquisitions.push((id, decision));
             }
@@ -400,13 +412,16 @@ impl SimWorld {
     // PERFORMANCE RATIONALE:
     // Why: The neighbourhood scan is the costliest step of this phase, and in a battle nearly
     // every unit is under an automatic attack.
-    // What: A unit already engaging a target of the highest possible threat skips the scan,
-    // because nothing can outrank it and an in-reach target is never traded for an equal.
-    // Trade-off: One extra catalog lookup per engaged unit, for far fewer scans.
+    // What: A unit already engaging an in-reach threat of the catalog's highest attack target
+    // priority (`top_priority`) skips the scan, because nothing can outrank it and an in-reach
+    // target is never traded for an equal.
+    // Trade-off: One pass over the catalog per tick and one threat test per engaged unit, for
+    // far fewer scans.
     fn decide_acquisition(
         &self,
         entity: &Entity,
         arch: &UnitArchetype,
+        top_priority: u8,
         neighbors: &mut Vec<EntityId>,
         candidates: &mut Vec<(TargetPriorityKey, EntityId)>,
     ) -> Option<Acquisition> {
@@ -432,8 +447,8 @@ impl SimWorld {
             self.catalog
                 .get(target.unit_type_id)
                 .is_ok_and(|target_arch| {
-                    compute_threat_priority(target_arch, target.order_queue.front())
-                        >= MAX_THREAT_PRIORITY
+                    target_arch.attack_target_priority >= top_priority
+                        && is_threat_to(target_arch, target, arch)
                 })
         });
         if top_threat {
@@ -459,7 +474,7 @@ impl SimWorld {
                     .entities
                     .get(&best.entity_id)
                     .is_some_and(|enemy| self.reaches_from_here(entity, arch, enemy));
-            let keeps = best.threat_priority <= held.threat_priority
+            let keeps = best.rank() <= held.rank()
                 && !in_reach_now
                 && (reachable_current.is_some()
                     || held_distance <= best_distance + RETARGET_DISTANCE_MARGIN);
@@ -529,7 +544,8 @@ impl SimWorld {
             }
 
             let key = TargetPriorityKey {
-                threat_priority: compute_threat_priority(target_arch, neighbor.order_queue.front()),
+                threat: is_threat_to(target_arch, neighbor, arch),
+                attack_target_priority: target_arch.attack_target_priority,
                 distance_sq: entity.position.distance_sq(neighbor.position),
                 entity_id: neighbor_id,
             };
