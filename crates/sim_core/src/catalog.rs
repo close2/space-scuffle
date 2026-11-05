@@ -42,6 +42,10 @@ use std::sync::OnceLock;
 
 /// Static archetype specification defining baseline vitals, movement, capabilities, and abilities.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent authored facts about one archetype, each read by a different mechanism"
+)]
 pub struct UnitArchetype {
     /// Unique archetype identifier.
     pub unit_type_id: UnitTypeId,
@@ -122,6 +126,19 @@ pub struct UnitArchetype {
     /// have 0: they
     /// never turn their hull, and every structure weapon sits on a turret.
     pub turn_rate: SimAngle,
+    /// Whether the hull must face a step before the unit takes it. When `true`, on a tick whose
+    /// step direction lies further from the heading than the hull can turn in one moving tick
+    /// ([`Self::turn_rate`]), the unit turns in place and does not translate; once the remaining
+    /// turn fits, it faces the step exactly and takes it. Collision pushes are not gated.
+    /// `StarCraft` II stores this as the `CUnit` flag `TurnBeforeMove`. Structures have `false`.
+    #[serde(default)]
+    pub turn_before_move: bool,
+    /// Hull turn rate in binary angle units per tick on a tick the unit does not translate by its
+    /// own motion (standing, turning in place before a move, aiming while still), from the
+    /// authored `stationary_turn_rate_deg_per_tick`, which defaults to the hull rate. On a tick
+    /// the unit translates, the hull turns at [`Self::turn_rate`]. `StarCraft` II stores this
+    /// per unit as `StationaryTurningRate`. Structures have 0.
+    pub stationary_turn_rate: SimAngle,
     /// Hard circle-circle collision radius in world units.
     pub collision_radius: SimScalar,
     /// Soft Boid repulsion boundary radius in world units.
@@ -866,6 +883,15 @@ struct UnitArchetypeDef {
     /// Hull rate in degrees per tick, `0 < rate <= 180`. It has no default, so a catalog that
     /// still uses the old name `turn_rate_deg` fails to load naming this field.
     turn_rate_deg_per_tick: f32,
+    /// Whether the hull must face a step before the unit takes it (`CUnit` flag
+    /// `TurnBeforeMove`); omitted reads as `false`. Validation requires a unit that moves and a
+    /// hull rate that faces a reversal within the stall repath window.
+    #[serde(default)]
+    turn_before_move: bool,
+    /// Hull rate in degrees per tick while the unit does not translate, `0 < rate <= 180`;
+    /// omitted means equal to `turn_rate_deg_per_tick` (`StationaryTurningRate`).
+    #[serde(default)]
+    stationary_turn_rate_deg_per_tick: Option<f32>,
     collision_radius: f32,
     separation_radius: f32,
     push_priority: u8,
@@ -988,6 +1014,12 @@ impl UnitArchetypeDef {
         binary_angle(self.turn_rate_deg_per_tick)
     }
 
+    /// The authored stationary hull rate in degrees per tick: the hull rate when omitted.
+    fn stationary_turn_rate_deg_per_tick(&self) -> f32 {
+        self.stationary_turn_rate_deg_per_tick
+            .unwrap_or(self.turn_rate_deg_per_tick)
+    }
+
     /// The capability bundle, abilities and modes of this definition.
     ///
     /// Abilities and modes authored under `capabilities` take precedence over the legacy
@@ -1057,6 +1089,7 @@ impl UnitArchetypeDef {
             .map(|(state, prompt)| (format!("{state:?}"), prompt))
             .collect();
         let turn_rate = self.turn_rate();
+        let stationary_turn_rate = binary_angle(self.stationary_turn_rate_deg_per_tick());
 
         Ok(UnitArchetype {
             unit_type_id: UnitTypeId(self.unit_type_id),
@@ -1091,6 +1124,8 @@ impl UnitArchetypeDef {
             acceleration: SimScalar::from_f32_lossy(self.acceleration),
             deceleration: SimScalar::from_f32_lossy(self.deceleration),
             turn_rate,
+            turn_before_move: self.turn_before_move,
+            stationary_turn_rate,
             collision_radius: SimScalar::from_f32_lossy(self.collision_radius),
             separation_radius: SimScalar::from_f32_lossy(self.separation_radius),
             push_priority: self.push_priority,
@@ -1275,6 +1310,8 @@ impl StructureArchetypeDef {
             acceleration: SimScalar::ZERO,
             deceleration: SimScalar::ZERO,
             turn_rate: SimAngle::ZERO,
+            turn_before_move: false,
+            stationary_turn_rate: SimAngle::ZERO,
             collision_radius: radius,
             separation_radius: radius,
             push_priority: 255,

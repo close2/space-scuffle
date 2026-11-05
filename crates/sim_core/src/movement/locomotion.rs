@@ -20,6 +20,12 @@
 //! - No route search runs twice for one actor within [`REPATH_COOLDOWN_TICKS`].
 //! - Everything that decides an outcome is read from the tick-start snapshot or the map, so the
 //!   result does not depend on the order actors are processed in beyond the committed pose.
+//! - A unit whose archetype is flagged `turn_before_move` translates by its own motion on a tick
+//!   only if, after that tick's hull turn, its heading equals the direction of its step (plan
+//!   `2026-11-05-turn-before-move` D-1, Q0050). While the step lies further from its heading than
+//!   one moving tick's turn, it turns in place at its stationary rate: it keeps its order and
+//!   route, and its velocity is zero. Collision pushes are not its own motion and are not gated. Every other unit moves
+//!   along its path at once while its hull follows.
 
 use super::grid::BodyGrid;
 use super::math::{
@@ -60,6 +66,10 @@ pub(crate) struct MotionEntry {
     pub(crate) speed: SimScalar,
     /// Authored priority for friendly contact.
     pub(crate) push_priority: u8,
+    /// Hull rate in binary angle units per tick (the archetype's `turn_rate`).
+    pub(crate) turn_rate: u16,
+    /// Whether the hull must face a step before the unit takes it.
+    pub(crate) turn_before_move: bool,
 }
 
 /// The nearest reachable point last found, so a group costs one region scan, not one per unit.
@@ -172,7 +182,14 @@ impl MotionProposal {
         Ok(())
     }
 
-    fn commit(self, actor: &mut Entity) {
+    /// Applies every edit to `actor`. A unit this motion translates turns its hull at the moving
+    /// rate `turn_rate` (binary units per tick) this tick; any other keeps the stationary budget
+    /// the phase started with (plan `2026-11-05-turn-before-move` D-10). Nothing spends the
+    /// budget before this, the actor's one motion commit of the tick.
+    fn commit(self, actor: &mut Entity, turn_rate: u16) {
+        if self.position != actor.position {
+            actor.hull_turn_budget = turn_rate;
+        }
         actor.pos_at_tick_start = actor.position;
         actor.position = self.position;
         actor.velocity = self.velocity;
@@ -237,6 +254,50 @@ struct StepContext<'a> {
     speed: SimScalar,
     body: ContactBody,
     neighbours: &'a [SteeringObstacle],
+    /// The facing a `turn_before_move` unit must reach before it steps; `None` for every other
+    /// unit, whose steps are never gated by facing.
+    hull: Option<HullGate>,
+}
+
+/// What gates a `turn_before_move` unit's step: its tick-start heading and its moving hull rate.
+#[derive(Clone, Copy)]
+struct HullGate {
+    /// The hull's facing at the start of the tick.
+    heading: SimAngle,
+    /// The hull rate of a tick on which the unit translates (`turn_rate`, not the stationary
+    /// rate the tick's budget starts at), in binary angle units per tick.
+    rate: u16,
+}
+
+/// Whether a hull facing `heading` can face `direction` within `rate` binary angle units, so a
+/// `turn_before_move` unit may take a step in that direction this tick.
+///
+/// The boundary is inclusive: a remaining turn equal to the rate fits (Q0050: rotate in place
+/// only when the angle exceeds one tick's turn). A rate of half a turn (32 768) allows any step.
+fn hull_allows_step(heading: SimAngle, direction: SimAngle, rate: u16) -> bool {
+    heading.diff(direction).unsigned_abs() <= rate
+}
+
+/// Applies a `turn_before_move` unit's hull gate to the step `proposal` holds from `origin`.
+///
+/// The hull is asked to face the step's velocity. When that facing lies beyond one tick's turn,
+/// the step is voided: the unit stays at `origin` with zero velocity and turns in place, still
+/// walking. Every step-derived edit made after this reads the unmoved position and does nothing.
+fn gate_step_by_facing(hull: Option<HullGate>, origin: SimVec2, proposal: &mut MotionProposal) {
+    let Some(gate) = hull else {
+        return;
+    };
+    let step = proposal.velocity;
+    if step == SimVec2::ZERO {
+        return;
+    }
+    let direction = SimAngle::atan2(step.y, step.x);
+    proposal.heading = direction;
+    if !hull_allows_step(gate.heading, direction, gate.rate) {
+        proposal.position = origin;
+        proposal.velocity = SimVec2::ZERO;
+        proposal.anim = AnimState::Walk;
+    }
 }
 
 fn arithmetic(id: EntityId, source: MovementMathError) -> MovementInvariant {
@@ -551,6 +612,8 @@ impl SimWorld {
             policy,
             speed,
             push_priority: arch.push_priority,
+            turn_rate: arch.turn_rate.raw(),
+            turn_before_move: arch.turn_before_move,
         })
     }
 
@@ -653,7 +716,7 @@ impl SimWorld {
             match self.prepare_actor_motion(entry) {
                 Ok(MotionAction::Commit(proposal)) => {
                     if let Some(actor) = self.entities.get_mut(&entry.id) {
-                        proposal.commit(actor);
+                        proposal.commit(actor, entry.turn_rate);
                     }
                 }
                 Ok(MotionAction::Pursue(target, origin)) => {
@@ -688,7 +751,7 @@ impl SimWorld {
             match self.prepare_pursuit(entry, target, origin) {
                 Ok(proposal) => {
                     if let Some(actor) = self.entities.get_mut(&entry.id) {
-                        proposal.commit(actor);
+                        proposal.commit(actor, entry.turn_rate);
                     }
                 }
                 Err(error) => self.report_movement_invariant(error),
@@ -1097,7 +1160,38 @@ impl MotionDraft<'_> {
                 radius: self.entry.policy.radius,
             },
             neighbours,
+            hull: self.hull_gate(),
         }
+    }
+
+    /// The hull gate of a `turn_before_move` actor, read from its tick-start heading.
+    fn hull_gate(&self) -> Option<HullGate> {
+        self.entry.turn_before_move.then_some(HullGate {
+            heading: self.actor.heading,
+            rate: self.entry.turn_rate,
+        })
+    }
+
+    /// Whether this actor may move straight onto `goal` this tick. A `turn_before_move` actor
+    /// facing too far away instead turns towards it in place, still walking, and the proposal
+    /// keeps its order; the same gate as [`gate_step_by_facing`], for the snap onto a goal
+    /// within one step.
+    fn may_snap_to(&mut self, goal: SimVec2) -> Result<bool, MovementInvariant> {
+        let Some(gate) = self.hull_gate() else {
+            return Ok(true);
+        };
+        let step = checked_vec_sub(goal, self.actor.position).map_err(self.fault())?;
+        if step == SimVec2::ZERO {
+            return Ok(true);
+        }
+        let direction = SimAngle::atan2(step.y, step.x);
+        self.proposal.heading = direction;
+        if hull_allows_step(gate.heading, direction, gate.rate) {
+            return Ok(true);
+        }
+        self.proposal.velocity = SimVec2::ZERO;
+        self.proposal.anim = AnimState::Walk;
+        Ok(false)
     }
 
     /// Walks a move order: route upkeep, the arrival decision, the progress check, the step.
@@ -1157,8 +1251,10 @@ impl MotionDraft<'_> {
         if distance(actor.position, self.goal).map_err(self.fault())? <= self.entry.speed
             && policy.permits_segment(scene.map, actor.position, self.goal)
         {
-            self.proposal.position = self.goal;
-            self.proposal.finish(self.goal);
+            if self.may_snap_to(self.goal)? {
+                self.proposal.position = self.goal;
+                self.proposal.finish(self.goal);
+            }
             return Ok(Stage::Break(()));
         }
         if !(self.ground && self.cooled_down) {
@@ -1554,12 +1650,14 @@ fn step_toward(
         speed,
         body,
         neighbours,
+        hull,
     } = *context;
     let origin = body.pos;
     if gap <= speed && policy.permits_segment(map, origin, next) {
         proposal.position = next;
         proposal.velocity = checked_vec_sub(next, origin)?;
         proposal.anim = AnimState::Walk;
+        gate_step_by_facing(hull, origin, proposal);
         return Ok(false);
     }
     let heading =
@@ -1584,6 +1682,7 @@ fn step_toward(
     } else {
         proposal.velocity = SimVec2::ZERO;
     }
+    gate_step_by_facing(hull, origin, proposal);
     Ok(refused)
 }
 
@@ -1660,4 +1759,56 @@ fn keep_terrain_view(
     } else {
         velocity
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hull_allows_step;
+    use sim_types::SimAngle;
+
+    /// The shipped slow hull rate, 20.16° per tick, in binary units.
+    const RATE: u16 = 3_670;
+
+    #[test]
+    fn a_step_within_the_budget_is_allowed() {
+        let heading = SimAngle::from_raw(1_000);
+        for offset in [0, 1, RATE - 1, RATE] {
+            let left = SimAngle::from_raw(1_000 + offset);
+            let right = SimAngle::from_raw(1_000_u16.wrapping_sub(offset));
+            assert!(hull_allows_step(heading, left, RATE), "+{offset}");
+            assert!(hull_allows_step(heading, right, RATE), "-{offset}");
+        }
+    }
+
+    #[test]
+    fn a_step_beyond_the_budget_is_refused() {
+        let heading = SimAngle::ZERO;
+        assert!(!hull_allows_step(
+            heading,
+            SimAngle::from_raw(RATE + 1),
+            RATE
+        ));
+        assert!(!hull_allows_step(
+            heading,
+            SimAngle::from_raw(0_u16.wrapping_sub(RATE + 1)),
+            RATE
+        ));
+        assert!(!hull_allows_step(heading, SimAngle::DEG_180, RATE));
+    }
+
+    #[test]
+    fn a_half_turn_budget_allows_any_step() {
+        let half = SimAngle::DEG_180.raw();
+        for heading in [0_u16, 1, 16_384, 32_767, 32_768, 65_535] {
+            let heading = SimAngle::from_raw(heading);
+            // Both signs of `diff`: a half turn reads as -32 768, its neighbours as ±32 767.
+            for offset in [32_767_u16, 32_768, 32_769] {
+                let direction = SimAngle::from_raw(heading.raw().wrapping_add(offset));
+                assert!(
+                    hull_allows_step(heading, direction, half),
+                    "{heading:?} +{offset}"
+                );
+            }
+        }
+    }
 }
