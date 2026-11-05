@@ -1027,3 +1027,606 @@ part of this package: the name, lore, visual kind and Veo prompts stay; a later 
 - Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`) reproduce both fixtures.
 
 Outputs under `~/scratch/combat_wp16/` on the development server (`before/`, `after/`).
+
+## 13. WP12: the audit's corrections and the worker's backswing (Q0039, Q0045 2b)
+
+**Package.** One data commit per group of the audit's §5
+([`2026-11-04-catalog-time-audit.md`](2026-11-04-catalog-time-audit.md)), in the plan's order (WP12 step 1), each
+compared with the step before it; the first is compared with the state after WP16 (`7b91323`), whose matrix and
+battle 33 this branch reproduces byte for byte. Every value is the audit's reference (§4, with its source line):
+ticks rounded to the nearest tick, halves up; speeds and rates as the audit's reference column. The audit's §7 has the
+measurement of all groups together, made first (WP3 step 5). Outputs under `~/scratch/combat_wp12/<group>/` on the
+development server; the throwaway script that writes each group from the audit's tables is
+`~/scratch/combat_wp12/scripts/apply_group.py`. Groups 1 to 8 touch no unit a matrix battle spawns, so each was
+expected to leave the matrix and battle 33 bit-identical; the golden replays complete their research and place their
+structures before tick 1, so production and research times were expected not to reach them either.
+
+### 13.1 P1: three build times copied in Normal time (class B)
+
+| Identity | Field | Before | After | Source (Normal s) |
+|---|---|---|---|---|
+| `psi_grey` | `build_time_ticks` | 950 | **679** | 38 s, `swarm` AbilData:1068 (`GatewayTrain` Train1) |
+| `railgun_crawler` | `build_time_ticks` | 1125 | **804** | 45 s, `liberty` AbilData:1649 (`FactoryTrain` Train2) |
+| `planetary_bulwark_dome` | `build_time_ticks` | 1250 | **893** | 50 s, `liberty` AbilData:3163 (`UpgradeToPlanetaryFortress`, Stats delay) |
+
+Measured: whole matrix bit-identical (all 1000 rows), battle 33 bit-identical, both golden replays unchanged in debug,
+release and `wasm32-wasip1`. Doc 07 rows (`psi_grey`, `railgun_crawler`) and doc 08 (the Planetary Fortress row and
+§2.1's example list) now state the new ticks.
+
+### 13.2 P2: production and research times rounded to Liquipedia's whole seconds
+
+127 values (31 unit and 34 structure `build_time_ticks`, 62 `research_ticks`) were Liquipedia's whole Faster
+seconds × 25. Each now is the game data's Normal seconds ÷ 1.4 × 25, to the nearest tick: 65 rise and 62 fall, by
+4, 7, 9 or 11 ticks (for example `pulse_bot` 450 → 446, 25 Normal s, `liberty` AbilData:1630; `foundry_core_dome`
+1775 → 1786, 100 Normal s; level 1 weapon and armour upgrades 2850 → 2857, 160 Normal s). Every value with its
+source line is in the audit's group P2 (§5) and §4.
+
+Measured: whole matrix bit-identical (all 1000 rows), battle 33 bit-identical, both golden replays unchanged in
+debug, release and `wasm32-wasip1` (their research is completed and their structures placed before tick 1). The doc
+07 roster and doc 08 cells that state these ticks are corrected, and doc 08 §2.1 now gives the conversion from
+Normal seconds with examples in place of the whole-second list.
+
+### 13.3 P3: production and research times that differed otherwise
+
+31 values (5 unit and 12 structure `build_time_ticks`, 14 `research_ticks`) were older patch values or unsourced
+numbers. Each is now the game data's 5.0.14 value, Normal seconds ÷ 1.4 × 25 to the nearest tick, with the source
+line in the audit (§5 group P3, §4). The largest: the Spawning Pool analogue `spawning_hollow_dome` 525 → 1161
+(65 Normal s, `liberty` AbilData:2206), the Spire and Greater Spire analogues 1075 and 900 → 1786 (100 Normal s), the
+Barracks Reactor analogue `duplicator_module_pod` 450 → 893 (50 Normal s), the Roach 750 → 482 (27 Normal s,
+`liberty` AbilData:2510), the Stimpack 3025 → 2500 (140 Normal s, `voidmulti` AbilData:48) and Grooved Spines
+1775 → 1250 (70 Normal s, `voidmulti` AbilData:528; patch 5.0.12, audit §2.2).
+
+Measured: whole matrix bit-identical (all 1000 rows), battle 33 bit-identical, both golden replays unchanged in
+debug, release and `wasm32-wasip1`. The doc 07 and doc 08 cells that state these ticks are corrected.
+
+### 13.4 U1: upgrade speed bonuses
+
+| Upgrade | `move_speed_delta` before | After | Source (Normal units per s, × 1.4 ÷ 25) |
+|---|---|---|---|
+| `charge` | 0.038 | **0.063** | +1.125, `voidmulti` UpgradeData:69 |
+| `gravitic_drive` | 0.0496 | **0.049** | +0.875, `liberty` UpgradeData:1823 |
+| `flux_vanes` | 0.0308 | **0.0319** | 2.75 → 3.3203, `voidmulti` UpgradeData:348 and UnitData:2025 |
+| `metabolic_boost` | 0.0826 | **0.0978** | +1.746, `liberty` UpgradeData:1856 |
+| `glial_reconstitution` | 0.0400 | **0.042** | +0.75, `liberty` UpgradeData:1925 |
+| `muscular_augments` | 0.0126 | **0.0392** | +0.7 off creep, `voidmulti` UpgradeData:743 |
+| `pneumatized_carapace` | 0.0576 | **0.0691** | 0.6445 → 1.879, `void` UpgradeData:621 and `voidmulti` UnitData:1194 |
+| `anabolic_synthesis` | 0.0228 | **0.0236** | +0.421871 off creep, `voidmulti` UpgradeData:47 |
+
+No matrix battle researches any of these (the matrix applies `chitinous_plating`, `ground_weapons_1`,
+`missile_attacks_1`, `combat_shield` and `overclock_stim` only), and neither golden replay does. Measured: whole matrix
+and battle 33 bit-identical, both golden replays unchanged in debug, release and `wasm32-wasip1`. Doc 08's upgrade rows
+(and its 5.0.14 notes for Muscular Augments and Anabolic Synthesis) now state the bonus per tick with its source in
+place of percentages of speeds that were not the catalog's.
+
+**Test restated first.** `upgrades_and_tech_tree_tests.rs::test_metabolic_boost_speed` restated the old delta 0.0826
+(it failed with 0.2630 against 0.2478). The commit before this one makes it read `metabolic_boost`'s delta for
+`razor_mantis` from the shipped catalog; it passes on the catalog before and after.
+
+### 13.5 U2: Adrenal Glands
+
+`adrenal_glands` `attack_cooldown_delta` −5 → **−3**: the zergling's period 0.696 Normal s (`liberty` WeaponData:362,
+12.43 ticks, 12 in the catalog) is divided by 1.4 under two `RateMultiplier +0.2` entries (`liberty` UpgradeData:1846,
+`void` UpgradeData:886), 8.88 ticks: 9, three less than 12. Liquipedia's cooldown 0.497 with the upgrade agrees
+(audit §9). No matrix battle or golden replay researches it. Measured: whole
+matrix and battle 33 bit-identical, both golden replays unchanged in debug, release and `wasm32-wasip1`. Doc 08's
+Adrenal Glands row said 12 → 7 and now says 12 → 9.
+
+### 13.6 M1: the workers' mining time
+
+`harvest_rate_ticks` 60 → **50** on the three workers (`welder_drone`, `grav_harvester`, `nectar_worker`): a worker
+occupies a mineral field for 1.99 Faster s (Liquipedia, [Resources](https://liquipedia.net/starcraft2/Resources)),
+49.75 ticks. The game data holds no mining time (`SCVHarvest`, `ProbeHarvest`, `DroneHarvest` set none; audit §8), so
+this group is sourced from the secondary source, as the audit records; it is one value, not a range, so D-7 gives no
+ground to defer it. No matrix battle and neither golden replay harvests. Measured: whole matrix and battle 33
+bit-identical, both golden replays unchanged in debug, release and `wasm32-wasip1`. No doc 07 or doc 08 cell states
+the mining time.
+
+### 13.7 M2: Siege Mode (one value applied, one deferred)
+
+- **Applied:** `railgun_crawler`'s Siege Mode ability `cooldown_ticks` 75 → **0**. The game's `SiegeMode` morph has
+  no cooldown (`liberty` AbilData:1308 sets no `Cost/Cooldown`, and no later layer adds one). No mechanism is
+  missing: validation accepts a cooldown of 0, and a unit that is still channelling its transformation refuses
+  every cast (`world/abilities.rs`, the admission check on `channeling_remaining_ticks`), so the toggle cannot be
+  re-issued mid-transformation, as in the game.
+- **Deferred (D-7, second ground: the verification failed):** the mode's `cast_ticks` 71 stays. The audit's 72 was
+  marked **verify** (§8): it adds the morph's `Stats` delay 0.5 and duration 3.5417 Normal s. Checked against the
+  data within the effort bound, the verification fails rather than confirms: the same morph also has
+  `RandomDelayMax="0.5"` (`liberty` AbilData:1308, `InfoArray`), a random extra delay of up to 0.5 Normal s, so
+  sieging takes 72 to 81 ticks and has no single reference value; and unsieging (`Unsiege`, `liberty`
+  AbilData:1328) has no 0.5 delay at all (3.5417 Normal s, 63 ticks), while the catalog has one `cast_ticks` for
+  the mode. Liquipedia's Siege Tank page gives no figure. Which single value our one field should carry is a
+  modelling choice, not a correction; it is listed with the package's deferrals (§13 summary).
+
+Measured: whole matrix and battle 33 bit-identical (no battle orders Siege Mode), both golden replays unchanged in
+debug, release and `wasm32-wasip1`. No doc 07 or doc 08 cell states the cooldown.
+
+### 13.8 R3: energy regeneration
+
+`energy_regen_per_tick` 0.056 → **0.0315** on the nine casters (`specter_android`, `repair_shuttle`,
+`cloak_gunship`, `omni_probe_drone`, `prism_weaver`, `cerebral_elder`, `hive_matron`, `mycelium_shaman`,
+`tongue_chameleon`): `EnergyRegenRate` 0.5625 Normal per s × 1.4 ÷ 25 (for example `liberty` UnitData:4989 for the
+Ghost; each source line in the audit's group R3). The Phoenix already has 0.0315 (WP16). No matrix battle or golden
+replay spawns one of the nine. Measured: whole matrix and battle 33 bit-identical, both golden replays unchanged in
+debug, release and `wasm32-wasip1`. Doc 03 §1 already gives 0.7875 per Faster second; doc 07 and doc 08 state no rate.
+
+### 13.9 S1: five speeds copied in Normal time (class B)
+
+| Identity | `max_speed` before | After | Source (Normal units per s, × 1.4 ÷ 25) |
+|---|---|---|---|
+| `welder_drone`, `grav_harvester`, `nectar_worker` | 0.1124 | **0.1575** | 2.8125, `liberty` UnitData:4731, :3074, :7040 |
+| `rhino_beetle` | 0.09 | **0.126** | 2.25, `liberty` UnitData:7186 |
+| `railgun_crawler` | 0.09 | **0.126** | 2.25, `liberty` UnitData:5075 |
+
+`acceleration` and `deceleration` follow `max_speed`, the catalog's convention (parsed and unused, audit class E),
+as WP7 did for the marine.
+
+**Test restated first.** `combat_correctness_tests.rs::s2_explicit_focus_fire_survives_nearby_enemy` orders a marine
+onto a far `rhino_beetle` beside a zealot and reads the order after 30 ticks. The faster Roach walked into its own
+range sooner and, with the zealot, killed the marine before the check (`no entry found for key`). The test is about
+the order surviving a nearby enemy, not about the target's speed; in the commit before this one the far target holds
+position. Same assertion and run length; it passes before and after.
+
+**Whole matrix, 20 seeds.** Compared with the state after R3: **8 battles moved, no winner changed, no expectation
+failed** (0 on the seeds of record; the 7 over all seeds are battle 33's, unchanged).
+
+| Battle | Seeds moved | Survivors blue – red, before → after | End tick, before → after | Lead hull, before → after |
+|---|---|---|---|---|
+| 1b_stalker_vs_2_roaches | 20 | 0.00 – 2.00 → same | 159.8 → 156.6 | red 106.75 → same |
+| 6a_roach_vs_hydra | 3 | 1.00 – 0.00 → same | 149.7 → 149.5 | blue 35.00 → same |
+| 6b_2_roaches_vs_hydra | 1 | 2.00 – 0.00 → same | 65.9 → 65.8 | blue 118.60 → same |
+| 6c_roach_vs_2_hydras | 2 | 0.00 – 2.00 → same | 96.3 → 96.2 | red 61.98 → same |
+| 22a_reaper_vs_2_workers | 20 | 1.00 – 0.00 → same | 102.0 → 102.0 | blue 40.63 → 37.24 |
+| 24a_roach_vs_5_lings | 11 | 0.00 – 2.00 → same | 296.6 → 295.6 | — |
+| 24b_upgraded_roach_vs_5_lings | 17 | 1.00 – 0.00 → same | 255.6 → 255.8 | blue 85.00 → 82.40 |
+| 30_20_roaches_vs_10_immortals | 20 | 0.00 – 9.95 → 0.00 – 10.00 | 263.9 → 248.3 | red 128.58 → 113.80 |
+
+- **Roach battles** (1b, 6a to 6c, 24a, 24b, 30): the roaches close the distance sooner, so fights start and end a
+  few ticks earlier; against the ranged stalker and hydras the outcome and the survivor's life do not move. In 30 the
+  fight ends 15.6 ticks sooner on average; the immortals' first unit ends with less life (128.58 → 113.80) and lives
+  on all 20 seeds (19 before), and on one seed one more immortal survives (9.95 → 10.00 mean).
+- **22a**: the workers reach the reaper sooner and land a few more blows (reaper 40.63 → 37.24 life); the reaper
+  still wins on every seed.
+- No matrix battle spawns `railgun_crawler` with room to walk before the fight decides (battle 3's tank starts in
+  range), so its speed moves nothing there.
+
+**Battle 33, 68 seeds: bit-identical.**
+
+**Golden replays re-recorded.** `golden_replay.ron` from checkpoint 1 (its `rhino_beetle` squad moves at tick 5, its
+`railgun_crawler` squad at tick 120); `golden_replay_orders.ron` from checkpoint 3 (ticks 21 to 30; its `rhino_beetle`
+squad moves at tick 20). The phase-order test still finds both situations. Debug, release and `wasm32-wasip1`
+reproduce both fixtures. Doc 07's speed cells for the five units and §2.2's worker speed (2.81 tiles/s, the Normal
+value) are corrected.
+
+### 13.10 S2: five speeds that differed otherwise
+
+| Identity | `max_speed` before | After | Source (Normal units per s, × 1.4 ÷ 25) |
+|---|---|---|---|
+| `omni_probe_drone` (Raven) | 0.154 | **0.1652** | 2.9492, `voidmulti` UnitData:2660 |
+| `prism_weaver` (Sentry) | 0.126 | **0.14** | 2.5, `voidmulti` UnitData:1552 |
+| `cerebral_elder` (High Templar) | 0.1048 | **0.1129** | 2.0156, `voidmulti` UnitData:685 |
+| `stealth_eye_orb` (Observer) | 0.1052 | **0.1129** | 2.0156, `voidmulti` UnitData:1134 |
+| `spore_matriarch` (Brood Lord) | 0.0788 | **0.105** | 1.875, `voidmulti` UnitData:143 |
+
+`acceleration` and `deceleration` follow, as in S1. Measured: **whole matrix bit-identical** (battles 19 and 20
+spawn the Brood Lord; its speed moves no outcome, end tick or lead-unit life there), battle 33 bit-identical,
+both golden replays unchanged in debug, release and `wasm32-wasip1`. Doc 07's five speed cells and doc 08's
+Gravitic Boosters row (which restated the Observer's old base speed) are corrected.
+
+### 13.11 R1: the reaper's life regeneration (deferred)
+
+**Deferred on D-7's third ground: the reference needs a mechanism we do not model.** `jet_jumper`'s
+`hp_regen_per_tick` 0.08 is the Reaper's `LifeRegenRate` 2 per Normal s (`void` UnitData:1476) copied in Normal
+time; converted it is 0.112. But the game regenerates the Reaper's life only after 10 Normal s (179 ticks) without
+damage (`LifeRegenDelay`, `void` UnitData:1475), and our life regeneration runs on every tick (only shields wait,
+since WP9). The audit's row already noted "not modelled". The whole-matrix measurement of all groups (audit §7,
+left out one group at a time) shows the consequence: with 0.112 applied always, `22b_reaper_vs_stalker` ends
+unresolved on all 20 seeds, the reaper out-healing the stalker in combat, which it never does in the game. The rate
+alone would move the catalog away from StarCraft II's behaviour, not towards it, so it waits for the delay.
+[Q0049](../questions/open/0049-reaper-life-regeneration-delay.md) asks the owner whether to add a per-archetype
+life-regeneration delay (the default keeps 0.08 and the deferral). No catalog value, test or golden changes here.
+
+### 13.12 R2: Zerg life regeneration
+
+`hp_regen_per_tick` on 32 Zerg archetypes (15 units, 17 structures), each with its source line in the audit's group
+R2: **0.02 → 0.01531** for 30 of them (`LifeRegenRate` 0.2734 Normal per s × 1.4 ÷ 25; for example `void`
+UnitData:1127), **0 → 0.01531** for `rhino_beetle` (the Roach regenerates like every Zerg unit, `liberty`
+UnitData:7184; its faster burrowed regeneration is not modelled), and **0.02 → 0.056** for `sonic_bat` (the
+Mutalisk's `LifeRegenRate` 1, `void` UnitData:3094).
+
+**Whole matrix, 20 seeds.** Compared with the state after S2: **16 battles moved, no winner changed, no expectation
+failed** (0 on the seeds of record; 7 over all seeds, battle 33's, unchanged).
+
+| Battle | Seeds moved | Survivors blue – red | End tick, before → after | Lead hull, before → after |
+|---|---|---|---|---|
+| 1b_stalker_vs_2_roaches | 9 | 0.00 – 2.00, same | 156.6, same | red 106.75 → 107.77 |
+| 5a_hydra_vs_marine | 20 | 1.00 – 0.00, same | 52.0, same | blue 67.00 → 66.77 |
+| 5b_hydra_vs_2_marines | 20 | 1.00 – 0.00, same | 112.0, same | blue 20.20 → 19.68 |
+| 6a_roach_vs_hydra | 20 | 1.00 – 0.00, same | 149.5, same | blue 35.00 → 37.20 |
+| 6b_2_roaches_vs_hydra | 10 | 2.00 – 0.00, same | 65.8, same | blue 118.60 → 119.06 |
+| 6c_roach_vs_2_hydras | 9 | 0.00 – 2.00, same | 96.2, same | red 61.98 → 61.80 |
+| 9b_hellion_vs_roach | 20 | 0.00 – 1.00, same | 148.0, same | red 117.00 → 119.25 |
+| 15_plated_ultralisk_vs_8_marines | 20 | 1.00 – 0.00, same | 111.0, same | blue 415.28 → 414.77 |
+| 16a_muta_vs_marine | 20 | 1.00 – 0.00, same | 115.0, same | blue 74.26 → 78.33 |
+| 16b_muta_vs_2_marines | 20 | 0.00 – 1.00, same | 182.0 → 197.0 | red 27.00 → 18.00 |
+| 17_void_ray_vs_muta | 20 | 1.00 – 0.00, same | 181.0 → 190.0 | blue 150.00, same |
+| 21_lurker_vs_6_marines | 20 | 1.00 – 0.00, same | 106.4, same | blue 71.59 → 71.10 |
+| 24a_roach_vs_5_lings | 20 | 0.00 – 2.00, same | 295.6 → 305.4 | — |
+| 24b_upgraded_roach_vs_5_lings | 20 | 1.00 – 0.00, same | 255.8, same | blue 82.40 → 85.93 |
+| 27_100_lings_vs_8_ultralisks | 20 | 0.00 – 8.00, same | 203.1, same | red 432.59 → 432.04 |
+| 29_100_lings_vs_12_stalkers | 1 | 71.50 – 0.00, same | 440.4, same | blue 34.41 → 34.38 |
+
+- **The Roach now regenerates** (1b, 6a to 6c, 9b, 24a, 24b): a surviving roach ends with more life, and a losing one
+  lasts longer (24a: the zerglings need 9.8 more ticks on average to finish the roach).
+- **Slower Zerg regeneration elsewhere** (5a, 5b, 15, 21, 27, 29): the surviving hydralisk, ultralisk, lurker or
+  zergling ends with up to half a point less life.
+- **The Mutalisk regenerates 2.8 times faster** (16a, 16b, 17): the lone mutalisk of 16a ends with 4.07 more life; in
+  16b the mutalisk holds out 15 ticks longer against the two marines and the surviving marine ends with 9 less life;
+  the void ray of 17 needs 9 more ticks to kill the mutalisk.
+
+**Battle 33, 68 seeds: bit-identical.** **`golden_replay.ron` re-recorded** at checkpoints 6 and 8 to 11 (its
+`rhino_beetle` squad regenerates now); `golden_replay_orders.ron` unchanged. Debug,
+release and `wasm32-wasip1` reproduce both fixtures. Doc 03 already states 0.38 per Faster second; doc 07 and doc 08
+state no rate.
+
+### 13.13 W1: two weapon periods copied in Normal time (class B)
+
+| Identity | Field | Before | After | Source (Normal s ÷ 1.4 × 25) |
+|---|---|---|---|---|
+| `railgun_crawler` (Siege Tank, tank mode) | `weapon.period_ticks` | 26 | **19** | 1.04, `liberty` WeaponData:242 (18.57) |
+| `planetary_bulwark_dome` (Planetary Fortress) | `ground_weapon.period_ticks` | 50 | **36** | 2, `liberty` WeaponData:139 (35.71) |
+
+**Test restated first.** `sc2_battle_benchmarks_tests.rs::test_railgun_crawler_declarative_modes_and_siege_splash`
+asserted the period 26 and read two marines' life after 30 ticks, assuming one tank-mode shot; at 19 ticks two shots
+fit. In the commit before this one it records both lives on the tick the first shot lands (same window, same
+assertions: 45 → 30 and 45) and asserts that tank mode fires faster than the 54-tick siege cannon. It passes before
+and after.
+
+**Whole matrix, 20 seeds.** Compared with the state after R2: **1 battle moved, and its expectation was
+re-recorded.**
+
+| Battle | Seeds moved | Survivors blue – red | End tick | Blue lead hull, before → after | Failures of record / all |
+|---|---|---|---|---|---|
+| 3_immortal_vs_tank | 20 | 1.00 – 0.00, same | 89.0, same | 200.00 → **176.00** | 0 / 0 → 4 / 20 before re-recording, 0 / 0 after |
+
+The tank now lands five shots (25 each; the immortal's 100 shields take four) before the immortal kills it, so the
+fifth reaches its life: 25 − 1 armour = 24, 200 → 176 on every seed. The end tick does not move: the immortal's
+cadence decides it. In StarCraft II the immortal would keep its life: its Barrier, autocast on taking damage, absorbs
+up to 100 damage for 3 Normal s (`void` BehaviorData:97–101, `voidmulti` BehaviorData:278, cooldown 45 s in
+`voidmulti` AbilData:591). Barrier is not modelled; that is a real gap, not a property of this value, so it is
+recorded as finding **M-20** of the remediation plan (§4.2) rather than masked. The expectation of battle 3 is
+re-recorded to the measured outcome (`blue_lead_hp: (176, 176)`, the smallest range on the seeds of record; it holds
+on all 20), and its claim now says the immortal loses its shields and one shot of life because Barrier is missing.
+Expectation failures after re-recording: 0 on the seeds of record; 7 over all seeds (battle 33's, unchanged). The
+Planetary Fortress is in no battle.
+
+**Battle 33, 68 seeds: bit-identical.** **`golden_replay.ron` re-recorded from checkpoint 4** (ticks 151 to 200,
+when its `railgun_crawler` squad first fights); `golden_replay_orders.ron` unchanged. Debug, release and
+`wasm32-wasip1` reproduce both fixtures. Doc 07's Siege Tank weapon cell (18 → 19 ticks) and doc 08's Planetary
+Fortress row (period 50 → 36 ticks) are corrected.
+
+### 13.14 W2: weapon periods that differed by more than rounding
+
+| Identity | Field | Before | After | Source (Normal s ÷ 1.4 × 25) |
+|---|---|---|---|---|
+| `welder_drone`, `grav_harvester`, `nectar_worker` (workers) | `weapon.period_ticks` | 19, 15, 15 | **27** | 1.5, `liberty` WeaponData:200, :147, :354 |
+| `rhino_beetle` (Roach) | `weapon.period_ticks` | 28 | **36** | 2, `liberty` WeaponData:345 |
+| `shock_golem` (Marauder) | `weapon.period_ticks` | 26 | **27** | 1.5, `liberty` WeaponData:249 |
+| `colossus_mech` (Thor) | `air_weapon.period_ticks` | 36 | **23** | 1.28, `voidmulti` WeaponData:129 |
+| `sky_bastion` (Liberator) | `ground_weapon` / `air_weapon`, `weapon` | 28 / 25, 25 | **29 / 32, 32** | 1.6, `void` WeaponData:339; 1.8, :327 |
+| `warp_strider` (Stalker) | `weapon`, `air_weapon` | 34 | **33** | 1.87, `voidmulti` WeaponData:201 |
+| `void_goliath` (Immortal) | `weapon.period_ticks` | 28 | **29** | 1.6, `voidmulti` WeaponData:208 |
+| `volatile_tick` (Baneling) | `weapon.period_ticks` | 10 | **15** | 0.833, `liberty` WeaponData:468 |
+| `mortar_stag` (Ravager) | `weapon.period_ticks` | 28 | **29** | 1.6, `voidmulti` WeaponData:214 |
+
+**Test restated first.** `collision_and_immobility_tests.rs::test_converging_units_respect_speed_cap_and_do_not_vibrate`
+uses the catalog's first mobile melee archetype, `welder_drone`, and allowed 2 direction reversals per unit in 120
+ticks. Every unit already reversed twice: once its swing no longer anchors it, the crowd at the contact ring pushes it
+in by about 0.08 and it steps back by about 0.015 on the next tick, once per weapon cycle (identical traces up to tick
+32 before and after). With the SCV's longer cooldown entity 6 does it a third time at tick 40. That jostle is a
+movement defect, recorded as **finding M-21** (remediation plan §4.2, beside M-19). The test now judges vibration up
+to each unit's first strike, the convergence it was written for, with the same threshold; the speed cap over 120
+ticks and the damage check are unchanged. It passes before and after.
+
+**Whole matrix, 20 seeds.** Compared with the state after W1 (re-recorded): **21 battles moved; winners changed only
+in battle 31 (4 seeds), within its expectation; no expectation failed** (0 on the seeds of record; 7 over all seeds,
+battle 33's, unchanged).
+
+| Battle | Seeds moved | Survivors blue – red, before → after | End tick, before → after | Lead hull, before → after |
+|---|---|---|---|---|
+| 1a_stalker_vs_roach | 20 | 1.00 – 0.00, same | 281.0 → 273.0 | blue 5.00 → 35.00 |
+| 1b_stalker_vs_2_roaches | 20 | 0.00 – 2.00, same | 156.6 → 196.6 | red 107.77 → 100.39 |
+| 2a_immortal_vs_roach | 20 | 1.00 – 0.00, same | 61.0 → 63.0 | blue 200.00, same |
+| 2b_immortal_vs_2_roaches | 20 | 1.00 – 0.00, same | 145.0 → 150.0 | blue 174.00 → 200.00 |
+| 3_immortal_vs_tank | 20 | 1.00 – 0.00, same | 89.0 → 92.0 | blue 176.00, same |
+| 4_marauder_vs_roach | 20 | 1.00 – 0.00, same | 190.1 → 197.1 | blue 20.00 → 35.00 |
+| 6a_roach_vs_hydra | 20 | 1.00 – 0.00, same | 149.5 → 189.5 | blue 37.20 → 4.81 |
+| 6b_2_roaches_vs_hydra | 20 | 2.00 – 0.00, same | 65.8 → 81.8 | blue 119.06 → 112.58 |
+| 6c_roach_vs_2_hydras | 9 | 0.00 – 2.00, same | 96.2, same | red 61.80 → 69.00 |
+| 7_zealot_vs_roach | 20 | 1.00 – 0.00, same | 240.9, same | blue 12.00 → 42.00 |
+| 8_zealot_vs_stalker | 10 | 1.00 – 0.00, same | 241.5, same | blue 57.00 → 51.00 |
+| 9b_hellion_vs_roach | 20 | 0.00 – 1.00, same | 148.0 → 188.0 | red 119.25 → 112.86 |
+| 12b_colossus_vs_3_marauders | 20 | 0.00 – 2.00, same | 164.0 → 170.0 | red 67.53, same |
+| 22a_reaper_vs_2_workers | 20 | 1.00 – 0.00, same | 102.0, same | blue 37.24 → 46.24 |
+| 22b_reaper_vs_stalker | 20 | 0.00 – 1.00, same | 178.0 → 173.0 | red 80.00, same |
+| 24a_roach_vs_5_lings | 20 | 0.00 – 2.00 → 0.00 – 3.00 | 305.4 → 285.4 | — |
+| 24b_upgraded_roach_vs_5_lings | 20 | 1.00 – 0.00, same | 255.8 → 327.9 | blue 85.93 → 23.03 |
+| 28_100_lings_vs_10_immortals | 20 | 27.30 – 0.00 → 30.10 – 0.00 | 670.5 → 660.4 | blue 35.00 (3) → — |
+| 29_100_lings_vs_12_stalkers | 20 | 71.50 – 0.00 → 69.70 – 0.00 | 440.4 → 442.3 | blue 34.38 → 33.09 |
+| 30_20_roaches_vs_10_immortals | 20 | 0.00 – 10.00, same | 248.3 → 255.1 | red 113.80 → 132.15 |
+| 31_15_marauders_vs_15_stalkers | 20 | 2.65 – 0.70 → 1.70 – 1.35 | 661.3 → 700.2 | blue 88.17 (6) → 69.75 (4) |
+
+- **The Roach fires 22 % less often** (28 → 36 ticks; 1a, 1b, 2a, 2b, 4, 6a to 6c, 7, 9b, 24a, 24b, 30): its
+  opponents keep more life (the stalker of 1a 5 → 35, the marauder of 4 20 → 35, the zealot of 7 12 → 42, the
+  immortal of 2b 174 → 200, the immortals of 30 more), and fights the roaches win take longer and cost them more
+  (1b, 6a, 6b, 9b, 24b: the roach of 24b ends at 23 instead of 86, of 6a at 4.8 instead of 37). In 24a one more
+  zergling survives on average.
+- **The Stalker fires a tick sooner** (34 → 33; 1a, 8, 22b, 29, 31): 22b ends 5 ticks sooner, the zealot of 8 keeps
+  6 less life, the zerglings of 29 lose 1.8 more.
+- **The Immortal fires a tick later** (28 → 29; 2a, 2b, 3, 28, 30): fights end later by 2 to 7 ticks; in 28 the
+  zerglings keep 2.8 more alive.
+- **The Marauder fires a tick later** (26 → 27; 4, 12b, 31): battle 31 (15 marauders against 15 stalkers, with the
+  Stalker a tick faster) tips further to the stalkers: 4 of 20 seeds change from a marauder win to a stalker win
+  (survivors 2.65 – 0.70 → 1.70 – 1.35); its expectation, written as a close fight, holds on every seed.
+- **The workers swing every 27 ticks** (22a): the reaper keeps 9 more life against two SCVs.
+- The Thor's air period, the Liberator's, the Baneling's (it dies on its first attack) and the Ravager's move no
+  matrix battle.
+
+**Battle 33, 68 seeds: bit-identical.** **`golden_replay.ron` re-recorded from checkpoint 4** (ticks 151 to 200, the
+`rhino_beetle` squad's first fight); `golden_replay_orders.ron` unchanged. Debug, release and `wasm32-wasip1`
+reproduce both fixtures. Doc 07's period cells for the eleven identities are corrected (the Roach's already said 36).
+
+### 13.15 W3: the damage point copied in Normal time (class B)
+
+`damage_point_ticks` 4 → **3** on `welder_drone` (weapon) and `railgun_crawler` (tank-mode weapon and the Siege
+Mode override): the `CWeapon` default 0.167 Normal s (`core` WeaponData:17) is 2.98 ticks; 4 was 0.167 × 25, the
+"0.16 s" frontswing plan 17 took as Faster seconds. Measured: **one matrix battle moved, no winner and no expectation
+changed**: `22a_reaper_vs_2_workers` (the workers' blows land a tick sooner in each swing; the reaper ends with 46.32
+life instead of 46.24, on all 20 seeds). Battle 3's tank releases each shot a tick sooner after its swing starts but
+lands the same five shots (bit-identical). Battle 33 bit-identical. **`golden_replay.ron` re-recorded from checkpoint 4** (ticks 151 to
+200, the `railgun_crawler` squad's first fight); `golden_replay_orders.ron` unchanged. Debug, release and
+`wasm32-wasip1` reproduce both. No doc 07 or doc 08 cell states the damage point.
+
+### 13.16 W4: damage points that were never sourced
+
+40 values on 29 identities (the audit's group W4, every one with its source line): most weapons go to the `CWeapon`
+default 0.167 Normal s = **3 ticks** (`core` WeaponData:17), from 0 to 2; those whose weapon sets its own value follow
+it: **0** for the Marauder, Reaper, Baneling, Lurker, Mutalisk (`shock_golem`, `jet_jumper`, `volatile_tick`,
+`burrow_scorpion`, `sonic_bat`; 1 before), **4** for the Hellion (`napalm_wheeler`, 0.25 s; 0 before) and the Ravager
+(`mortar_stag`, 0.2 s), **2** for the Liberator's Defender mode (`sky_bastion` ground, 0.125 s), **1** for the
+Colossus (`tripod_annihilator`, 0.0832 s; 0 before), **6** for the Dark Templar, the Ultralisk and the Spine Crawler
+(`shadow_visitor` 0.3613 s, `stag_behemoth` 0.3332 s, `thorn_lasher_dome` 0.3332 s) and **15** for the Thor's ground
+weapon (`colossus_mech`, 0.831 s; 2 before). Every new damage point is below its weapon's period, also under the
+shipped attack-speed modifiers (the trace's release inference, plan §7). One commit for the whole group: the cause is
+the same for every value, and the measurement can be explained by identity (plan WP12 step 4 allows a per-faction
+split; it was not needed).
+
+**Whole matrix, 20 seeds.** Compared with the state after W3: **37 battles moved; no expectation failed** (0 on the
+seeds of record; 7 over all seeds, battle 33's, unchanged); winners changed only in the coin-flip battles 31 (7 seeds,
+6 towards the marauders: the Marauder now releases on the tick its swing starts) and 32 (5 seeds; its expectation
+allows either side).
+
+| Battle | Seeds moved | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|
+| 1b_stalker_vs_2_roaches | 20 | 0.00 – 2.00, same | 196.6 → 197.6 | — / 100.39 (20) → — / 100.40 (20) |
+| 2a_immortal_vs_roach | 20 | 1.00 – 0.00, same | 63.0 → 65.0 | 200.00 (20) / —, same |
+| 2b_immortal_vs_2_roaches | 20 | 1.00 – 0.00, same | 150.0 → 152.0 | 200.00 (20) / —, same |
+| 3_immortal_vs_tank | 20 | 1.00 – 0.00, same | 92.0 → 94.0 | 176.00 (20) / —, same |
+| 4_marauder_vs_roach | 20 | 1.00 – 0.00, same | 197.1 → 196.1 | 35.00 (20) / —, same |
+| 5a_hydra_vs_marine | 20 | 1.00 – 0.00, same | 52.0 → 54.0 | 66.77 (20) / — → 66.80 (20) / — |
+| 5b_hydra_vs_2_marines | 20 | 1.00 – 0.00, same | 112.0 → 114.0 | 19.68 (20) / — → 19.71 (20) / — |
+| 6a_roach_vs_hydra | 20 | 1.00 – 0.00, same | 189.5 → 190.5 | 4.81 (20) / — → 4.79 (20) / — |
+| 6b_2_roaches_vs_hydra | 20 | 2.00 – 0.00, same | 81.8 → 82.8 | 112.58 (20) / — → 113.67 (20) / — |
+| 6c_roach_vs_2_hydras | 20 | 0.00 – 2.00, same | 96.2 → 98.2 | — / 69.00 (20), same |
+| 9a_hellion_vs_4_lings | 20 | 1.00 – 0.00, same | 91.0 → 95.0 | 27.80 (20) / — → 23.80 (20) / — |
+| 9b_hellion_vs_roach | 20 | 0.00 – 1.00, same | 188.0 → 189.0 | — / 112.86 (20) → — / 112.82 (20) |
+| 10_2_hellions_vs_8_lings | 20 | 2.00 – 0.00, same | 55.0 → 59.0 | 70.00 (20) / —, same |
+| 11a_2_banelings_vs_5_marines | 20 | 0.00 – 2.25, same | 9.1 → 8.1 | — / 10.00 (9), same |
+| 11b_2_banelings_vs_marauder | 20 | 0.00 – 1.00, same | 9.1 → 8.0 | — / 95.00 (20), same |
+| 12a_colossus_vs_6_marines | 20 | 1.00 – 0.00, same | 80.7 → 81.7 | 238.15 (20) / —, same |
+| 12b_colossus_vs_3_marauders | 20 | 0.00 – 2.00, same | 170.0 → 169.0 | — / 67.53 (19), same |
+| 14_thor_vs_ultralisk | 20 | 1.00 – 0.00, same | 187.0 → 200.0 | 37.00 (20) / —, same |
+| 15_plated_ultralisk_vs_8_marines | 20 | 1.00 – 0.00, same | 111.0 → 116.0 | 414.77 (20) / — → 413.25 (20) / — |
+| 16a_muta_vs_marine | 20 | 1.00 – 0.00, same | 115.0 → 114.0 | 78.33 (20) / — → 78.27 (20) / — |
+| 17_void_ray_vs_muta | 20 | 1.00 – 0.00, same | 190.0 → 193.0 | 150.00 (20) / —, same |
+| 18_void_ray_vs_corruptor | 20 | 1.00 – 0.00, same | 226.0 → 229.0 | 110.00 (20) / —, same |
+| 20_brood_lord_vs_roach | 20 | 1.00 – 0.00, same | 142.2 → 143.2 | 225.00 (20) / —, same |
+| 21_lurker_vs_6_marines | 20 | 1.00 – 0.00, same | 106.4 → 103.6 | 71.10 (20) / — → 72.81 (20) / — |
+| 22a_reaper_vs_2_workers | 20 | 1.00 – 0.00, same | 102.0 → 101.0 | 46.32 (20) / — → 46.24 (20) / — |
+| 23a_zealot_vs_6_lings | 20 | 0.00 – 2.00, same | 269.2 → 271.3 | — / —, same |
+| 23b_upgraded_zealot_vs_6_lings | 14 | 1.00 – 0.00, same | 245.6, same | 60.00 (20) / — → 62.80 (20) / — |
+| 24a_roach_vs_5_lings | 20 | 0.00 – 3.00, same | 285.4 → 286.7 | — / —, same |
+| 24b_upgraded_roach_vs_5_lings | 20 | 1.00 – 0.00, same | 327.9 → 328.8 | 23.03 (20) / — → 24.03 (20) / — |
+| 26_100_lings_vs_6_colossi | 18 | 0.00 – 6.00, same | 114.8 → 116.1 | — / 250.00 (20), same |
+| 27_100_lings_vs_8_ultralisks | 20 | 0.00 – 8.00, same | 203.1 → 210.9 | — / 432.04 (20) → — / 423.59 (20) |
+| 28_100_lings_vs_10_immortals | 20 | 30.10 – 0.00 → 30.45 – 0.00 | 660.4 → 666.1 | — / — → 30.05 (4) / — |
+| 29_100_lings_vs_12_stalkers | 19 | 69.70 – 0.00 → 69.50 – 0.00 | 442.3 → 445.9 | 33.09 (19) / — → 31.90 (20) / — |
+| 30_20_roaches_vs_10_immortals | 20 | 0.00 – 10.00, same | 255.1 → 259.4 | — / 132.15 (20) → — / 133.10 (20) |
+| 31_15_marauders_vs_15_stalkers | 20 | 1.70 – 1.35 → 2.65 – 0.75 | 700.2 → 680.5 | 69.75 (4) / — → 68.90 (10) / — |
+| 32_30_marines_vs_15_banelings | 19 | 0.90 – 0.90 → 1.45 – 0.95 | 52.8 → 49.9 | 18.75 (4) / — → 27.50 (4) / — |
+| 34_20_hydras_vs_12_mutas | 18 | 19.10 – 0.00 → 19.05 – 0.00 | 192.6 → 195.3 | 90.00 (20) / —, same |
+
+By cause (a longer wind-up holds a unit still for longer and delays its first hit; a damage point of 0 releases on the
+tick the swing starts, D-3):
+
+- **Roach 2 → 3, Immortal 1 → 3, Hydralisk 1 → 3, Zergling 2 → 3, Brood Lord 2 → 3, Void Ray 0 → 3** (1b, 2a, 2b, 3,
+  5a, 5b, 6a to 6c, 9b, 17, 18, 20, 23a, 23b, 24a, 24b, 26 to 30, 34): first hits land one to three ticks later, so
+  fights end later by 1 to 6 ticks; winners do not move, survivor means by at most 0.35 and lead-unit life by at
+  most 2.8 (the zealot of 23b, which the slower zerglings hit later).
+- **Hellion 0 → 4** (9a, 9b, 10): the hellions hold still four ticks per swing; against zerglings (9a, 10) fights end
+  4 ticks later and the hellion of 9a ends with 23.80 life instead of 27.80.
+- **Thor 2 → 15 and Ultralisk 1 → 6** (14, 15, 27): 14 now runs to its 200-tick limit (187 before) with the same
+  winner and life; the ultralisks of 15 and 27 end with 1 to 9 less life, fights 5 to 8 ticks longer.
+- **Colossus 0 → 1** (12a, 12b, 26): one tick per swing; ends move by about 1 tick.
+- **Marauder, Reaper, Baneling, Lurker, Mutalisk 1 → 0** (4, 11a, 11b, 16a, 21, 22a, 31, 32): these release a tick
+  sooner. The banelings of 11a, 11b and 32 burst a tick sooner (end tick 9.1 → 8.1); the lurker of 21 ends with 1.71
+  more life; in 31 the marauders win on 6 more seeds and lose 1 (survivors 1.70 – 1.35 → 2.65 – 0.75), within the
+  battle's close-fight expectation; in 32 (a coin flip by design) 5 seeds change between a marine win, a baneling win
+  and both gone.
+
+**Battle 33, 68 seeds: bit-identical.** **`golden_replay.ron` re-recorded from checkpoint 4** (ticks 151 to 200, the
+`rhino_beetle` squad's first fight; the Roach's damage point is 3); `golden_replay_orders.ron` unchanged. Debug,
+release and `wasm32-wasip1` reproduce both. No doc 07 or doc 08 cell states a damage point.
+
+### 13.17 W5: backswings that were never sourced
+
+48 values on 35 identities (the audit's group W5, each with its source line): most weapons go to the `CWeapon`
+default 0.5 Normal s = **9 ticks** (`core` WeaponData:18), from 1 to 5; those whose weapon sets its own value follow
+it: **0** for the Marauder (`shock_golem`), **13** for the Reaper, the Hellion and the Void Ray (0.75 s), **10** for
+the Hydralisk (0.5607 s), **21** for the Ghost (1.167 s) and **24** for the Dark Templar (1.333 s). After WP1 a
+backswing never delays the next attack: it locks out new orders and anchors the unit until it ends or a new swing
+starts. One commit for the group (one cause; the measurement is small enough to explain per identity).
+
+**Whole matrix, 20 seeds.** Compared with the state after W4: **7 battles moved, no expectation failed** (0 on the
+seeds of record; 7 over all seeds, battle 33's, unchanged); winners changed only in battle 31 (4 seeds, 2 each way).
+
+| Battle | Seeds moved | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|
+| 10_2_hellions_vs_8_lings | 1 | 2.00 – 0.00, same | 59.0 → 61.2 | 70.00 (20) / —, same |
+| 27_100_lings_vs_8_ultralisks | 15 | 0.00 – 8.00, same | 210.9 → 212.0 | — / 423.59 (20) → — / 425.25 (20) |
+| 28_100_lings_vs_10_immortals | 20 | 30.45 – 0.00 → 30.05 – 0.00 | 666.1 → 662.7 | 30.05 (4) / — → 17.93 (2) / — |
+| 29_100_lings_vs_12_stalkers | 20 | 69.50 – 0.00 → 69.90 – 0.00 | 445.9 → 447.6 | 31.90 (20) / — → 30.82 (17) / — |
+| 30_20_roaches_vs_10_immortals | 2 | 0.00 – 10.00, same | 259.4 → 258.6 | — / 133.10 (20) → — / 134.60 (20) |
+| 31_15_marauders_vs_15_stalkers | 15 | 2.65 – 0.75 → 2.95 – 0.55 | 680.5 → 682.6 | 68.90 (10) / — → 62.67 (9) / — |
+| 34_20_hydras_vs_12_mutas | 1 | 19.05 – 0.00, same | 195.3 → 195.1 | 90.00 (20) / —, same |
+
+- **Crowds** (27, 28, 29, zerglings against ultralisks, immortals and stalkers, every one now anchored 9 ticks after
+  each strike instead of 2 to 4): 28 ends with 30.05 zerglings instead of 30.45, 29 with 69.90 instead of 69.50, the
+  ultralisks of 27 with 1.66 more life; winners do not move.
+- **Battle 31** (15 marauders against 15 stalkers): the Marauder's backswing goes to 0 and the Stalker's to 9; the
+  marauders win 2 more seeds and lose 2 (survivors 2.65 – 0.75 → 2.95 – 0.55), within the close-fight expectation.
+- **Single seeds** in 10 (hellion backswing 2 → 13: the hellions stand a little longer after a shot), 30 and 34;
+  winners and survivors do not move.
+
+Most weapons keep their outcome: after WP1 the backswing only matters where an anchored unit's position or its
+lock on new orders changes who reaches whom.
+
+**Battle 33, 68 seeds: bit-identical.** **`golden_replay.ron` re-recorded from checkpoint 4** (ticks 151 to 200,
+its `rhino_beetle` and `railgun_crawler` squads' first fights); `golden_replay_orders.ron` unchanged. Debug, release
+and `wasm32-wasip1` reproduce both. No doc 07 or doc 08 cell states a backswing.
+
+### 13.18 D2: the worker's backswing (Q0045 2b, class D)
+
+`welder_drone` `backswing_ticks` 6 → **9**: the `CWeapon` default 0.5 Normal s (`core` WeaponData:18), 8.93 ticks.
+Plan 17 had chosen 6 for a readable animation (audit §6 item 2); the owner answered Q0045 item 2 with (b), 9. The
+other two workers already received 9 in W5. Measured: **whole matrix bit-identical** (battle 22a's two SCVs keep their
+outcome: after WP1 the backswing never delays the next swing, and anchoring them three more ticks changes nothing
+there), battle 33 bit-identical, both golden replays unchanged in debug, release and `wasm32-wasip1`. No doc 07 or
+doc 08 cell states the backswing.
+
+### 13.19 W6: the Stalker's projectile speed copied in Normal time (class B)
+
+`warp_strider` `projectile_speed` (ground and air weapon) 0.75 → **1.05**: the Stalker's missile mover `MaxSpeed`
+18.75 Normal units per s × 1.4 ÷ 25 (audit group W6 and §4); 0.75 was 18.75 ÷ 25. Its shots reach their target
+sooner.
+
+**Whole matrix, 20 seeds.** Compared with the state after D2: **5 battles moved, no expectation failed** (0 on the
+seeds of record; 7 over all seeds, battle 33's, unchanged).
+
+| Battle | Seeds moved | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|
+| 1a_stalker_vs_roach | 20 | 1.00 – 0.00, same | 273.0 → 272.0 | 35.00 (20) / —, same |
+| 1b_stalker_vs_2_roaches | 9 | 0.00 – 2.00, same | 197.6, same | — / 100.40 (20) → — / 100.41 (20) |
+| 22b_reaper_vs_stalker | 20 | 0.00 – 1.00, same | 173.0 → 172.0 | — / 80.00 (20), same |
+| 29_100_lings_vs_12_stalkers | 20 | 69.90 – 0.00 → 69.10 – 0.00 | 447.6 → 444.9 | 30.82 (17) / — → 31.49 (14) / — |
+| 31_15_marauders_vs_15_stalkers | 20 | 2.95 – 0.55 → 1.25 – 2.05 | 682.6 → 670.4 | 62.67 (9) / — → 31.50 (2) / — |
+
+- **Battle 31** (15 marauders against 15 stalkers) tips to the stalkers: their damage lands earlier in every
+  exchange, and on 11 of 20 seeds the winner changes (10 to the stalkers, 1 to the marauders; two seeds of record,
+  3203386110 and 33, among them); survivors 2.95 – 0.55 → 1.25 – 2.05. The battle's claim is that equal supply is
+  close and its expectation allows either side (`blue: (0, 15), red: (0, 15)`), so it holds on every seed; the
+  winner on the seeds of record was never part of it.
+- **1a, 1b, 22b, 29**: a tick sooner at most, or a slightly different crowd (29: 69.10 zerglings left instead of
+  69.90); winners do not move.
+
+**Battle 33, 68 seeds: bit-identical.** Both golden replays unchanged (neither spawns a stalker) in debug, release and
+`wasm32-wasip1`. No doc 07 or doc 08 cell states the projectile speed.
+
+### 13.20 W7: projectile speeds that were never sourced
+
+21 values on 15 identities (the audit's group W7, each with its mover and source line): a missile's speed is its
+mover's `MaxSpeed` × 1.4 ÷ 25, and a weapon whose effect chain launches no missile is instant (`None`).
+
+| Change | Identities |
+|---|---|
+| faster missile | `rhino_beetle` 0.64 → 1.05, `shock_golem` 0.64 → 1.12, `astral_vagrant` 1.0 → 1.05, `mortar_stag` 1.0 → 1.05, `thorn_viper` 0.90 → 2.24 (ground and air), `sonic_bat` 0.50 → 1.05 (ground and air), `spore_spire_dome` 0.80 → 1.05 |
+| slower missile | `sky_leviathan` 1.2 → 1.05 (ground and air), `flak_array_dome` 0.80 → 0.56 |
+| missile becomes instant (`None`) | `jet_jumper` (weapon), `colossus_mech` (air weapon), `void_goliath` (weapon) |
+| instant becomes a missile | `sky_bastion` ground 2.24, `hive_matron` ground and `weapon` 2.24 (air 1.2 → 2.24), `tesla_sentinel_dome` ground and air 1.008 |
+
+**Tests restated first.** Two tests named values this group changes, and pass before and after since the commit
+before this one: `combat_correctness_tests.rs::s4_projectile_weapon_applies_every_strike` used the Reaper as "a
+two-strike projectile weapon" (its pistols are instant in the game) and now takes the first shipped archetype with a
+multi-strike projectile weapon without splash or bonus; `weapon_catalog_rules_tests.rs::s16_projectile_speed_must_be_positive`
+edited the text `projectile_speed: Some(0.80)` and now edits the first projectile speed a shipped structure states.
+
+**Whole matrix, 20 seeds.** Compared with the state after W6: **19 battles moved, no expectation failed** (0 on the
+seeds of record; 7 over all seeds, battle 33's, unchanged); winners changed only in battle 31 (10 seeds, both ways).
+
+| Battle | Seeds moved | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|
+| 1b_stalker_vs_2_roaches | 20 | 0.00 – 2.00, same | 197.6 → 194.9 | — / 100.41 (20) → — / 100.39 (20) |
+| 2a_immortal_vs_roach | 20 | 1.00 – 0.00, same | 65.0 → 62.0 | 200.00 (20) / —, same |
+| 2b_immortal_vs_2_roaches | 20 | 1.00 – 0.00, same | 152.0 → 149.0 | 200.00 (20) / —, same |
+| 3_immortal_vs_tank | 20 | 1.00 – 0.00, same | 94.0 → 91.0 | 176.00 (20) / —, same |
+| 4_marauder_vs_roach | 20 | 1.00 – 0.00, same | 196.1 → 193.1 | 35.00 (20) / —, same |
+| 5a_hydra_vs_marine | 20 | 1.00 – 0.00, same | 54.0 → 51.0 | 66.80 (20) / — → 66.75 (20) / — |
+| 5b_hydra_vs_2_marines | 20 | 1.00 – 0.00, same | 114.0 → 111.0 | 19.71 (20) / — → 19.67 (20) / — |
+| 6a_roach_vs_hydra | 20 | 1.00 – 0.00, same | 190.5 → 188.0 | 4.79 (20) / — → 4.80 (20) / — |
+| 6b_2_roaches_vs_hydra | 20 | 2.00 – 0.00, same | 82.8 → 80.0 | 113.67 (20) / — → 112.57 (20) / — |
+| 6c_roach_vs_2_hydras | 20 | 0.00 – 2.00, same | 98.2 → 95.5 | — / 69.00 (20), same |
+| 9b_hellion_vs_roach | 20 | 0.00 – 1.00, same | 189.0 → 187.0 | — / 112.82 (20) → — / 112.79 (20) |
+| 12b_colossus_vs_3_marauders | 20 | 0.00 – 2.00, same | 169.0 → 166.0 | — / 67.53 (19), same |
+| 16a_muta_vs_marine | 20 | 1.00 – 0.00, same | 114.0 → 111.0 | 78.27 (20) / — → 78.10 (20) / — |
+| 24a_roach_vs_5_lings | 17 | 0.00 – 3.00, same | 286.7 → 288.5 | — / —, same |
+| 24b_upgraded_roach_vs_5_lings | 17 | 1.00 – 0.00, same | 328.8 → 328.0 | 24.03 (20) / — → 25.42 (20) / — |
+| 28_100_lings_vs_10_immortals | 20 | 30.05 – 0.00 → 27.00 – 0.00 | 662.7 → 683.4 | 17.93 (2) / — → 30.66 (4) / — |
+| 30_20_roaches_vs_10_immortals | 20 | 0.00 – 10.00, same | 258.6 → 236.9 | — / 134.60 (20) → — / 147.15 (20) |
+| 31_15_marauders_vs_15_stalkers | 20 | 1.25 – 2.05 → 1.80 – 1.90 | 670.4 → 666.9 | 31.50 (2) / — → 80.80 (5) / — |
+| 34_20_hydras_vs_12_mutas | 20 | 19.05 – 0.00 → 19.40 – 0.00 | 195.1 → 183.7 | 90.00 (20) / —, same |
+
+- **Faster missiles** of the Roach, Marauder, Hydralisk and Mutalisk (1b, 2a, 2b, 4, 5a, 5b, 6a to 6c, 9b, 12b, 16a,
+  24a, 24b, 30, 34): the first hits land 2 to 3 ticks sooner, so fights end sooner by about that; winners and
+  survivors do not move except 34 (20 hydralisks against 12 mutalisks: 0.35 more hydralisks survive, the fight ends
+  11 ticks sooner) and 30 (roaches against immortals: 21.7 ticks sooner, the immortals' lead unit keeps 12.6 more
+  life).
+- **The Immortal's shot becomes instant** (2a, 2b, 3, 28, 30): fights end sooner (3: 94 → 91); in 28 (100 zerglings
+  against 10 immortals) the immortals kill faster and 3.05 fewer zerglings survive (30.05 → 27.00).
+- **Battle 31**: the Marauder's faster missile tips it back towards the marauders on 10 seeds, both ways (survivors
+  1.25 – 2.05 → 1.80 – 1.90), within its close-fight expectation.
+- The Reaper's instant pistols, the Thor's instant air weapon, and the Liberator, Queen, Corruptor (`sky_leviathan`), Spore Crawler,
+  Missile Turret and Photon Cannon speeds move no matrix battle; battles 22a and 22b keep their outcome.
+
+With this group the matrix equals the all-corrections measurement of the audit's §7 in every battle except 22a and
+22b, the two reaper battles, which differ only through the deferred R1 (§13.11). **Battle 33, 68 seeds:
+bit-identical.** **`golden_replay.ron` re-recorded from checkpoint 5** (ticks 201 to 250; its `rhino_beetle` squad's
+acid now flies at 1.05); `golden_replay_orders.ron` unchanged. Debug, release and `wasm32-wasip1` reproduce both. No
+doc 07 or doc 08 cell states a projectile speed.
+
+### 13.21 WP12 summary: what was applied, what was deferred
+
+- **Applied:** every class B and C value of the audit's groups P1, P2, P3, U1, U2, M1, R3, S1, S2, R2 and W1 to W7,
+  one of M2's two values, and the class D backswing of `welder_drone` (D2). W8 moved to WP17 (plan Amendment 1).
+- **Deferred, each on a ground of D-7:**
+  - **R1** (`jet_jumper` `hp_regen_per_tick` 0.08 → 0.112): the reference needs a mechanism we do not model, a
+    life-regeneration delay (§13.11; owner question
+    [Q0049](../questions/open/0049-reaper-life-regeneration-delay.md), default: keep 0.08).
+  - **M2, `railgun_crawler` Siege Mode `cast_ticks`** (71; the audit's 72): the **verify** failed: the morph has a
+    random delay (72 to 81 ticks) and unsieging takes 63, so there is no single reference for our one field (§13.7).
+
+  No value was deferred because it moved an expectation.
+- **Expectations re-recorded:** battle `3_immortal_vs_tank` only (W1: blue lead hull 200 → 176, claim rewritten).
+  Battle 33 is bit-identical through the whole package (no corrected value belongs to `pulse_bot` or `psi_grey`), so
+  its comment is unchanged.
+- **Golden replays re-recorded:** `golden_replay.ron` in S1, R2, W1, W2, W3, W4, W5 and W7; `golden_replay_orders.ron`
+  in S1. Each re-recording is described in the fixture's header and reproduced in debug, release and `wasm32-wasip1`.
+- **Tests restated** in a test-only commit before the data commit that needed it, each passing before and after:
+  `upgrades_and_tech_tree_tests::test_metabolic_boost_speed` (U1),
+  `combat_correctness_tests::s2_explicit_focus_fire_survives_nearby_enemy` (S1),
+  `sc2_battle_benchmarks_tests::test_railgun_crawler_declarative_modes_and_siege_splash` (W1),
+  `collision_and_immobility_tests::test_converging_units_respect_speed_cap_and_do_not_vibrate` (W2, with M-21),
+  `combat_correctness_tests::s4_projectile_weapon_applies_every_strike` and
+  `weapon_catalog_rules_tests::s16_projectile_speed_must_be_positive` (W7).
+- **Findings** (remediation plan §4.2): **M-20**, the Immortal's Barrier is not modelled (battle 3); **M-21**, melee
+  units waiting out their cooldown at a contact ring are jostled once per weapon cycle.
+- The final matrix equals the all-corrections measurement of the audit's §7 in every battle except 22a and 22b, the
+  two reaper battles that only the deferred R1 moves.

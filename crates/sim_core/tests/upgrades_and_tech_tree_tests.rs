@@ -21,6 +21,7 @@ use sim_core::world::SimWorld;
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::ids::PlayerId;
 use sim_types::math::{SimScalar, SimVec2};
+use sim_types::UpgradeEffect;
 
 fn create_test_world() -> SimWorld {
     let default_cell = MapCell::default_ground(CliffLevel(0));
@@ -233,7 +234,23 @@ fn test_metabolic_boost_speed() {
         base_speed
     );
 
-    // Research metabolic_boost (+0.0826 speed delta, exactly +50%)
+    // Research metabolic_boost: its catalog speed delta for razor_mantis adds to the base speed.
+    let boost = sim_fixtures::shipped_catalogs()
+        .upgrades
+        .get_by_slug("metabolic_boost")
+        .expect("metabolic_boost in catalog")
+        .effects
+        .iter()
+        .find_map(|effect| match effect {
+            UpgradeEffect::ModifyUnitStat {
+                target_slug,
+                move_speed_delta,
+                ..
+            } if target_slug == "razor_mantis" => Some(*move_speed_delta),
+            _ => None,
+        })
+        .expect("metabolic_boost modifies razor_mantis");
+    assert!(boost > SimScalar::ZERO, "metabolic_boost must speed up");
     world
         .research_upgrade(p3, "metabolic_boost")
         .expect("research metabolic_boost");
@@ -241,7 +258,7 @@ fn test_metabolic_boost_speed() {
     let effective_speed = world
         .effective_max_speed(mantis_arch, p3)
         .expect("valid fixture effective speed");
-    let expected_speed = base_speed + SimScalar::from_num(0.0826);
+    let expected_speed = base_speed + boost;
     assert_eq!(effective_speed, expected_speed);
 
     // Over 100 ticks, distance is 100 * effective_speed

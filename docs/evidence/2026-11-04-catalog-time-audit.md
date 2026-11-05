@@ -4,8 +4,8 @@ Work package 3 of [`docs/plans/2026-11-04-combat-sc2-alignment.md`](../plans/202
 (§D-7, WP3), answering the audit half of [Q0039](../questions/open/0039-normal-time-values.md) (owner: option 3).
 
 **Status.** Written 2026-11-04 against `main` at `0e5565a`. This file holds the research: steps 1 to 4 and 6 of WP3.
-Step 5, the whole-matrix measurement of a scratch catalog with every class B and C correction, runs after WP2 has
-merged and will be added as §7. No catalog value changes until then (Q0039: "a whole-matrix measurement before any
+Step 5, the whole-matrix measurement of a scratch catalog with every class B and C correction, is §7 (added
+2026-11-05 by WP12, before its first data commit). No catalog value changes until then (Q0039: "a whole-matrix measurement before any
 value changes").
 
 ## 1. Summary
@@ -1678,10 +1678,87 @@ fires while moving, which is not modelled (plan F-5).
 
 ## 7. Whole-matrix measurement of the corrections (WP3 step 5)
 
-Not yet run. Plan WP3 step 5 runs it after WP2 has merged. It will use a scratch catalog with every class B and C
-value of §5, groups P1 to W8 together with WP10, and the scheduled values of WP4 to WP8 at their post-WP2 state. It
-will measure the whole matrix on 20 seeds and battle 33 on 68 seeds against the state after WP2 (plan D-5). For any
-failure it reruns with groups removed one at a time.
+**Scope.** Measured on 2026-11-05 by WP12 before its first data commit, because the step had not been run (the plan
+makes WP12 depend on it). The scratch catalog is the shipped catalog after WP16 (`7b91323`) with every class B and C
+value of §5's groups P1 to W7 at its reference and the worker's backswing 9 (Q0045 2b, group D2 of plan WP12):
+357 values and 1. It leaves out what the plan's Amendment 1 leaves out: group W8 and the hull turn rates (WP17), and
+the Phoenix (WP16 has applied it; no matrix battle uses it). The values of WP4 to WP16 (zealot, marine, Stimpack,
+Overclock, shield rate and delay) are already shipped, so the comparison is against the state after WP16, not after
+WP2 as the plan wrote: that state is later and contains them, and every WP12 commit is compared with it. Tick values
+are the reference rounded to the nearest tick, halves up; speeds and rates are the reference column of §4.
+
+**How.** `matchup_trace --all-battles --seeds 16 --catalog-dir <scratch catalog> --compare <state after WP16>` and
+`--battle 33_24_marines_vs_12_zealots --seeds 64` (plan D-5); the scratch catalog is generated from §4's tables by a
+throwaway script (`apply_group.py`, beside the outputs under `~/scratch/combat_wp12/`), which also writes each WP12
+group.
+
+**Result.**
+
+- **42 of the 50 battles move; 2 fail their expectation.** No other expectation breaks on any of the 20 seeds.
+  - **3_immortal_vs_tank** fails its hull range on every seed: the immortal ends with 176 life instead of 200 (the
+    tank's shots reach its life). Left out one group at a time, the failure disappears only without **W1** (the
+    tank's period, 26 → 19 ticks, class B): at the reference rate of fire the tank fires more shots before it dies
+    than the immortal's 100 shields absorb.
+  - **22b_reaper_vs_stalker** ends unresolved on every seed at its 200-tick limit (reaper 3.62 life, stalker 80)
+    instead of a stalker win. Left out one group at a time, the failure disappears only without **R1** (the
+    reaper's life regeneration, 0.08 → 0.112 per tick, class B). §4 notes why: the game regenerates the reaper's life
+    only after 10 Normal s without damage (`void` UnitData:1475), and we regenerate it always.
+- **Winners change in 3 battles**: 22b (above); 31 (15 marauders against 15 stalkers, 8 of 20 seeds, both ways;
+  survivors 2.65 – 0.70 → 1.80 – 1.90) and 32 (30 marines against 15 banelings, 5 seeds), both within their
+  expectations.
+- **Battle 33, 68 seeds: bit-identical** (42 / 18 / 8; seeds of record 7–0, 3–0, 9–0, 6–0): no corrected value
+  belongs to `pulse_bot` or `psi_grey`.
+
+The battles that moved (means over the 20 seeds):
+
+| Battle | Seeds moved | Survivors before | after | End tick before | after | Lead hull blue / red before | after | Failures of record / all before | after |
+|---|---|---|---|---|---|---|---|---|---|
+| 1a_stalker_vs_roach | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 281.0 | 272.0 | 5.00 (20) / — | 35.00 (20) / — | 0 / 0 | 0 / 0 |
+| 1b_stalker_vs_2_roaches | 20 | 0.00 – 2.00 | 0.00 – 2.00 | 159.8 | 194.9 | — / 106.75 (20) | — / 100.39 (20) | 0 / 0 | 0 / 0 |
+| 2a_immortal_vs_roach | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 61.0 | 62.0 | 200.00 (20) / — | 200.00 (20) / — | 0 / 0 | 0 / 0 |
+| 2b_immortal_vs_2_roaches | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 145.0 | 149.0 | 174.00 (20) / — | 200.00 (20) / — | 0 / 0 | 0 / 0 |
+| 3_immortal_vs_tank | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 89.0 | 91.0 | 200.00 (20) / — | 176.00 (20) / — | 0 / 0 | 4 / 20 |
+| 4_marauder_vs_roach | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 190.1 | 193.1 | 20.00 (20) / — | 35.00 (20) / — | 0 / 0 | 0 / 0 |
+| 5a_hydra_vs_marine | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 52.0 | 51.0 | 67.00 (20) / — | 66.75 (20) / — | 0 / 0 | 0 / 0 |
+| 5b_hydra_vs_2_marines | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 112.0 | 111.0 | 20.20 (20) / — | 19.67 (20) / — | 0 / 0 | 0 / 0 |
+| 6a_roach_vs_hydra | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 149.7 | 188.0 | 35.00 (20) / — | 4.80 (20) / — | 0 / 0 | 0 / 0 |
+| 6b_2_roaches_vs_hydra | 20 | 2.00 – 0.00 | 2.00 – 0.00 | 65.9 | 80.0 | 118.60 (20) / — | 112.57 (20) / — | 0 / 0 | 0 / 0 |
+| 6c_roach_vs_2_hydras | 17 | 0.00 – 2.00 | 0.00 – 2.00 | 96.3 | 95.5 | — / 61.98 (20) | — / 69.00 (20) | 0 / 0 | 0 / 0 |
+| 7_zealot_vs_roach | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 240.9 | 240.9 | 12.00 (20) / — | 42.00 (20) / — | 0 / 0 | 0 / 0 |
+| 8_zealot_vs_stalker | 10 | 1.00 – 0.00 | 1.00 – 0.00 | 241.5 | 241.5 | 57.00 (20) / — | 51.00 (20) / — | 0 / 0 | 0 / 0 |
+| 9a_hellion_vs_4_lings | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 91.0 | 95.0 | 27.80 (20) / — | 23.80 (20) / — | 0 / 0 | 0 / 0 |
+| 9b_hellion_vs_roach | 20 | 0.00 – 1.00 | 0.00 – 1.00 | 148.0 | 187.0 | — / 117.00 (20) | — / 112.79 (20) | 0 / 0 | 0 / 0 |
+| 10_2_hellions_vs_8_lings | 20 | 2.00 – 0.00 | 2.00 – 0.00 | 55.0 | 61.2 | 70.00 (20) / — | 70.00 (20) / — | 0 / 0 | 0 / 0 |
+| 11a_2_banelings_vs_5_marines | 20 | 0.00 – 2.25 | 0.00 – 2.25 | 9.1 | 8.1 | — / 10.00 (9) | — / 10.00 (9) | 0 / 0 | 0 / 0 |
+| 11b_2_banelings_vs_marauder | 20 | 0.00 – 1.00 | 0.00 – 1.00 | 9.1 | 8.0 | — / 95.00 (20) | — / 95.00 (20) | 0 / 0 | 0 / 0 |
+| 12a_colossus_vs_6_marines | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 80.7 | 81.7 | 238.15 (20) / — | 238.15 (20) / — | 0 / 0 | 0 / 0 |
+| 12b_colossus_vs_3_marauders | 20 | 0.00 – 2.00 | 0.00 – 2.00 | 164.0 | 166.0 | — / 67.53 (19) | — / 67.53 (19) | 0 / 0 | 0 / 0 |
+| 14_thor_vs_ultralisk | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 187.0 | 200.0 | 37.00 (20) / — | 37.00 (20) / — | 0 / 0 | 0 / 0 |
+| 15_plated_ultralisk_vs_8_marines | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 111.0 | 116.0 | 415.28 (20) / — | 413.25 (20) / — | 0 / 0 | 0 / 0 |
+| 16a_muta_vs_marine | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 115.0 | 111.0 | 74.26 (20) / — | 78.10 (20) / — | 0 / 0 | 0 / 0 |
+| 16b_muta_vs_2_marines | 20 | 0.00 – 1.00 | 0.00 – 1.00 | 182.0 | 197.0 | — / 27.00 (11) | — / 18.00 (11) | 0 / 0 | 0 / 0 |
+| 17_void_ray_vs_muta | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 181.0 | 193.0 | 150.00 (20) / — | 150.00 (20) / — | 0 / 0 | 0 / 0 |
+| 18_void_ray_vs_corruptor | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 226.0 | 229.0 | 110.00 (20) / — | 110.00 (20) / — | 0 / 0 | 0 / 0 |
+| 20_brood_lord_vs_roach | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 142.2 | 143.2 | 225.00 (20) / — | 225.00 (20) / — | 0 / 0 | 0 / 0 |
+| 21_lurker_vs_6_marines | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 106.4 | 103.6 | 71.59 (20) / — | 72.81 (20) / — | 0 / 0 | 0 / 0 |
+| 22a_reaper_vs_2_workers | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 102.0 | 101.0 | 40.63 (20) / — | 48.74 (20) / — | 0 / 0 | 0 / 0 |
+| 22b_reaper_vs_stalker | 20 | 0.00 – 1.00 | 1.00 – 1.00 | 178.0 | 200.0 | — / 80.00 (20) | 3.62 (20) / 80.00 (20) | 0 / 0 | 4 / 20 |
+| 23a_zealot_vs_6_lings | 20 | 0.00 – 2.00 | 0.00 – 2.00 | 269.2 | 271.3 | — / — | — / — | 0 / 0 | 0 / 0 |
+| 23b_upgraded_zealot_vs_6_lings | 14 | 1.00 – 0.00 | 1.00 – 0.00 | 245.6 | 245.6 | 60.00 (20) / — | 62.80 (20) / — | 0 / 0 | 0 / 0 |
+| 24a_roach_vs_5_lings | 20 | 0.00 – 2.00 | 0.00 – 3.00 | 296.6 | 288.5 | — / — | — / — | 0 / 0 | 0 / 0 |
+| 24b_upgraded_roach_vs_5_lings | 20 | 1.00 – 0.00 | 1.00 – 0.00 | 255.6 | 328.0 | 85.00 (20) / — | 25.42 (20) / — | 0 / 0 | 0 / 0 |
+| 26_100_lings_vs_6_colossi | 18 | 0.00 – 6.00 | 0.00 – 6.00 | 114.8 | 116.1 | — / 250.00 (20) | — / 250.00 (20) | 0 / 0 | 0 / 0 |
+| 27_100_lings_vs_8_ultralisks | 20 | 0.00 – 8.00 | 0.00 – 8.00 | 203.1 | 212.0 | — / 432.59 (20) | — / 425.25 (20) | 0 / 0 | 0 / 0 |
+| 28_100_lings_vs_10_immortals | 20 | 27.30 – 0.00 | 27.00 – 0.00 | 670.5 | 683.4 | 35.00 (3) / — | 30.66 (4) / — | 0 / 0 | 0 / 0 |
+| 29_100_lings_vs_12_stalkers | 20 | 71.50 – 0.00 | 69.10 – 0.00 | 440.4 | 444.9 | 34.41 (18) / — | 31.49 (14) / — | 0 / 0 | 0 / 0 |
+| 30_20_roaches_vs_10_immortals | 20 | 0.00 – 9.95 | 0.00 – 10.00 | 263.9 | 236.9 | — / 128.58 (19) | — / 147.15 (20) | 0 / 0 | 0 / 0 |
+| 31_15_marauders_vs_15_stalkers | 20 | 2.65 – 0.70 | 1.80 – 1.90 | 661.3 | 666.9 | 88.17 (6) / — | 80.80 (5) / — | 0 / 0 | 0 / 0 |
+| 32_30_marines_vs_15_banelings | 19 | 0.90 – 0.90 | 1.45 – 0.95 | 52.8 | 49.9 | 18.75 (4) / — | 27.50 (4) / — | 0 / 0 | 0 / 0 |
+| 34_20_hydras_vs_12_mutas | 20 | 19.10 – 0.00 | 19.40 – 0.00 | 192.6 | 183.7 | 90.00 (20) / — | 90.00 (20) / — | 0 / 0 | 0 / 0 |
+
+**What WP12 does with it.** W1 re-records battle 3's hull range in its own commit; R1 is deferred on the plan's
+third ground (D-7: the reference needs a mechanism we do not model, a life-regeneration delay), with an owner
+question; every other group is applied and measured on its own.
 
 ## 8. Not found within the effort bound
 

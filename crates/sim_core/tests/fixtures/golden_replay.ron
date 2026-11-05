@@ -34,6 +34,31 @@
 // Re-recorded for WP11 (Q0039): shields start regenerating 179 ticks after the last damage (was
 // 250). Checkpoints 1 to 11 are unchanged; from checkpoint 12 (ticks 551 to 600), when that
 // zealot now starts regenerating, every checkpoint changed.
+// Re-recorded for WP12 group S1 (Q0039): "blue_armor" (rhino_beetle) and "red_siege"
+// (railgun_crawler) walk at 0.126 per tick (was 0.09, the Normal-time speed). Every checkpoint
+// changed from checkpoint 1 (ticks 1 to 50), where "blue_armor" starts moving at tick 5.
+// Re-recorded for WP12 group R2 (Q0039): "blue_armor" (rhino_beetle) regenerates 0.01531 life
+// per tick (was 0, the Roach's 0.2734 per Normal s). Only checkpoints 6 and 8 to 11 (ticks 251
+// to 300 and 351 to 550) changed; checkpoints 1 to 5, 7 and 12 to 20 are as before (no
+// regenerating beetle's life differs at those checkpoints).
+// Re-recorded for WP12 group W1 (Q0039): "red_siege" (railgun_crawler) fires every 19 ticks in
+// tank mode (was 26, the Normal-time period). Checkpoints 1 to 3 are unchanged; from checkpoint 4
+// (ticks 151 to 200), its first fight after the AttackMove of tick 120, every checkpoint changed.
+// Re-recorded for WP12 group W2: "blue_armor" (rhino_beetle) fires every 36 ticks (was 28;
+// StarCraft II's 2 Normal s). Checkpoints 1 to 3 are unchanged; from checkpoint 4 (ticks 151 to
+// 200), the first fight, every checkpoint changed.
+// Re-recorded for WP12 group W3: "red_siege" (railgun_crawler) releases its shot 3 ticks into
+// the swing (was 4, the Normal-time 0.167 s), in tank and siege mode. Checkpoints 1 to 3 are
+// unchanged; from checkpoint 4 (ticks 151 to 200), its first fight, every checkpoint changed.
+// Re-recorded for WP12 group W4: "blue_armor" (rhino_beetle) releases 3 ticks into its swing (was
+// 2; the CWeapon default 0.167 Normal s). Checkpoints 1 to 3 are unchanged; from checkpoint 4
+// (ticks 151 to 200), its first fight, every checkpoint changed.
+// Re-recorded for WP12 group W5: "blue_armor" (rhino_beetle) and "red_siege" (railgun_crawler)
+// have the CWeapon default backswing of 9 ticks (was 4). Checkpoints 1 to 3 are unchanged; from
+// checkpoint 4 (ticks 151 to 200), their first fights, every checkpoint changed.
+// Re-recorded for WP12 group W7: "blue_armor" (rhino_beetle) throws its acid at 1.05 per tick (was
+// 0.64; the Roach's missile, 18.75 Normal per s). Checkpoints 1 to 4 are unchanged; from
+// checkpoint 5 (ticks 201 to 250), every checkpoint changed.
 (
     checksum_schema: 10,
     seed: 0x5EED_0F_5CAFF1E,
@@ -61,25 +86,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x189f3f514ed6bdf3,
-        0xae5265abe8f6cc2d,
-        0x7a797d9486385c0b,
-        0x99d28f0a634ef0a6,
-        0xd9838987c43d8880,
-        0x8374e0c36638a19e,
-        0x1a994a20217e16ea,
-        0xa413055170eafd2c,
-        0x0c4fb0592415efab,
-        0x86ba21dfddbf4786,
-        0x6735666cb4d8af73,
-        0x22d981b2a9c97ca8,
-        0xbdc4d3b133c8ebb3,
-        0x241f389f84a3ff53,
-        0xd445ac5da980c87a,
-        0x306bbab8a2303fc6,
-        0x6b7c448cad586f37,
-        0x35a1f17879bfcf20,
-        0xa50ff022e6c5416a,
-        0xdc8a5efaf1899194,
+        0xd3213317d91b8691,
+        0x9a0f00bdb78caef0,
+        0x9c03130587ecfe87,
+        0x221c4e0d5e453353,
+        0x720f6d98bc0c98b1,
+        0x3f7064073da94900,
+        0x21b589ae6f19e162,
+        0xd58489659d57698e,
+        0xb74d036ffa95a074,
+        0xcf25ca17385ccb37,
+        0x06ce3d0c550801c8,
+        0xf59c484b6c9dff56,
+        0xeef7776b5b52c481,
+        0xed18788ee771b0f7,
+        0xfac6e887dec8df8a,
+        0x4f7d78b53375da56,
+        0x8c5832d94db08b88,
+        0xccb71a4b1ad12d1b,
+        0x206f465980833b41,
+        0xc272d37f2a910e8b,
     ],
 )
