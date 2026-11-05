@@ -42,7 +42,7 @@ use rand_chacha::ChaCha8Rng;
 use sim_map::{Pathfinder, PlayerVisionMap, SimMap};
 use sim_types::{
     CombatEventVisual, EntityId, PerPlayer, PlayerId, PlayerUpgradeState, RenderSnapshot,
-    ShapeKind, SimScalar, SimVec2, TickBundle, UnitTypeId,
+    ShapeKind, SimAngle, SimScalar, SimVec2, TickBundle, UnitTypeId,
 };
 use std::collections::BTreeMap;
 
@@ -211,7 +211,7 @@ impl SimWorld {
         world.last_checksum = world.compute_checksum();
         world
     }
-    /// Spawns a mobile unit entity at `pos`.
+    /// Spawns a mobile unit entity at `pos`, facing +x (heading 0).
     ///
     /// # Errors
     /// Returns typed catalog, owner, vitals, allocation or captured-supply failures.
@@ -222,8 +222,27 @@ impl SimWorld {
         owner: PlayerId,
         pos: SimVec2,
     ) -> SimResult<EntityId> {
+        self.spawn_unit_facing(unit_type, owner, pos, SimAngle::ZERO)
+    }
+
+    /// Spawns a mobile unit entity at `pos` with hull and turret facing `heading`.
+    ///
+    /// `heading` is a binary angle (65 536 units per turn), counter-clockwise from +x in the
+    /// world frame. Setup only: the unit appears already turned, spending no turning.
+    ///
+    /// # Errors
+    /// As [`Self::spawn_unit`].
+    pub fn spawn_unit_facing(
+        &mut self,
+        unit_type: UnitTypeId,
+        owner: PlayerId,
+        pos: SimVec2,
+        heading: SimAngle,
+    ) -> SimResult<EntityId> {
         self.validate_supply_ledger()?;
-        let prepared = self.prepare_spawn(unit_type, owner, pos, 0)?;
+        let mut prepared = self.prepare_spawn(unit_type, owner, pos, 0)?;
+        prepared.entity.heading = heading;
+        prepared.entity.turret_angle = heading;
         if matches!(prepared.entity_shape, ShapeKind::BuildingDome { .. }) {
             return Err(crate::production::ProductionInvariant::InvalidDefinition {
                 unit_type,
@@ -354,7 +373,25 @@ impl SimWorld {
     /// Direct phase callers must establish `validate_transport_links` beforehand;
     /// normal `step_into` establishes this precondition once for its phase sequence.
     pub fn step_movement_and_steering(&mut self) {
+        self.reset_hull_turn_budgets();
         self.advance_checked_movement();
+    }
+
+    /// Gives every entity this tick's hull rotation, its archetype's `turn_rate` (plan
+    /// `2026-11-04-combat-sc2-alignment` D-8 item 4). The movement phase spends it first and
+    /// the weapon phase gets the rest, so the hull turns at most `turn_rate` per tick.
+    // PERFORMANCE RATIONALE:
+    // Why: The budget must be in place before the first hull turn of every tick.
+    // What: One in-place pass over the entity map with one catalog lookup each; no allocation.
+    // Trade-off: An O(N log K) pass per tick (K archetypes) instead of caching the rate on the
+    // entity, which would go stale if an entity ever changed archetype.
+    fn reset_hull_turn_budgets(&mut self) {
+        for entity in self.entities.values_mut() {
+            entity.hull_turn_budget = self
+                .catalog
+                .get(entity.unit_type_id)
+                .map_or(0, |archetype| archetype.turn_rate.raw());
+        }
     }
     /// Phase 8: Reap destroyed entities and emit death shatter visuals.
     pub fn reap_dead_and_emit_shatter(&mut self) {

@@ -33,7 +33,7 @@
 
 use sim_core::SimWorld;
 use sim_map::{CliffLevel, GameMap, MapCell};
-use sim_types::{PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder};
+use sim_types::{PlayerId, SimAngle, SimScalar, SimVec2, Tick, TickBundle, UnitOrder};
 
 fn empty_bundle(tick: u32) -> TickBundle {
     TickBundle {
@@ -63,22 +63,26 @@ fn test_1v1_zealot_vs_marine_swing_cadence_and_three_hit_kill() {
     let zealot_type = world.catalog.id_by_slug("psi_grey").expect("psi_grey");
     let marine_type = world.catalog.id_by_slug("pulse_bot").expect("pulse_bot");
 
+    // The two face each other from the start (the marine is due north of the zealot), so the
+    // test measures the swing cadence, not how long either hull takes to turn.
     let zealot_id = world
-        .spawn_unit(
+        .spawn_unit_facing(
             zealot_type,
             player_blue,
             SimVec2::new(SimScalar::from_num(10), SimScalar::from_num(10)),
+            SimAngle::DEG_90,
         )
         .expect("spawn zealot");
 
     let marine_id = world
-        .spawn_unit(
+        .spawn_unit_facing(
             marine_type,
             player_red,
             SimVec2::new(
                 SimScalar::from_num(10),
                 SimScalar::from_num(10) + SimScalar::from_f32_lossy(0.3),
             ),
+            SimAngle::DEG_270,
         )
         .expect("spawn marine");
 

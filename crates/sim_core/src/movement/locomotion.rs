@@ -76,8 +76,8 @@ pub(super) struct ReachCache {
 struct MotionProposal {
     position: SimVec2,
     velocity: SimVec2,
+    /// The facing this motion asks for; the hull turns towards it within its rate on commit.
     heading: SimAngle,
-    turret_angle: SimAngle,
     anim: AnimState,
     clear_route: bool,
     replacement: Option<Vec<SimVec2>>,
@@ -100,7 +100,6 @@ impl MotionProposal {
             position: actor.position,
             velocity: actor.velocity,
             heading: actor.heading,
-            turret_angle: actor.turret_angle,
             anim: actor.current_anim,
             clear_route: policy.layer == MovementLayer::Air,
             replacement: None,
@@ -177,8 +176,7 @@ impl MotionProposal {
         actor.pos_at_tick_start = actor.position;
         actor.position = self.position;
         actor.velocity = self.velocity;
-        actor.heading = self.heading;
-        actor.turret_angle = self.turret_angle;
+        actor.turn_hull_towards(self.heading);
         actor.current_anim = self.anim;
         actor.movement = self.memory;
         if let Some(route) = self.replacement {
@@ -1005,11 +1003,10 @@ impl Pursuit {
         }
         proposal.velocity = SimVec2::ZERO;
         let aim = direction(goal, actor.position).map_err(|e| arithmetic(id, e))?;
-        let angle = SimAngle::atan2(aim.y, aim.x);
-        if self.has_turret {
-            proposal.turret_angle = angle;
-        } else {
-            proposal.heading = angle;
+        // A turret is turned by the weapon phase alone, at its own rate; a hull weapon asks the
+        // hull to face the goal, which it does within its rate when the proposal commits.
+        if !self.has_turret {
+            proposal.heading = SimAngle::atan2(aim.y, aim.x);
         }
         proposal.anim = if matches!(
             actor.weapon_phase,

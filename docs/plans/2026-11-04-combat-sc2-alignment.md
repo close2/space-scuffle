@@ -515,6 +515,29 @@ proved bit-identical; d to g each have one cause and are measured.
 | f | The 42 hull rates of item 3 | potentially every battle and both goldens |
 | g | Only if the research found turn-before-move: its rule (latent) and then its data, two commits | measured |
 
+**7. Decisions taken by WP17 (2026-11-05, from its research, audit §10).** Charter §8 lets the implementer narrow
+scope and fill gaps the way StarCraft II does, if written down. These are written here:
+- **Turn-before-move: not implemented; [Q0050](../questions/open/0050-turn-before-move.md) filed.** The data have
+  a `TurnBeforeMove` unit flag (Siege Tank, Thor, Ultralisk) but no tolerance, so the rule cannot be specified and
+  tested (item 4's condition). Commit g is not made; the default is no gating.
+- **`StationaryTurningRate` not applied.** The game has a second hull rate for a unit that is not moving; it differs
+  from `TurningRate` for four identities (audit §10.2). We model one rate, `TurningRate`, as item 3 says; the
+  second is follow-up F-8.
+- **Firing arcs: one tolerance, `Arc` ÷ 2 + `ArcSlop`.** `Arc` is a full angle (SC2Mapster's editor reference;
+  audit §10.3) and `ArcSlop` the extra angle an engaged weapon tolerates. Our `firing_arc_deg` is one half angle
+  for both starting and continuing; it takes the engaged tolerance, because the acquisition angle alone (0° for
+  most weapons) would make every unit stop and re-aim before each shot at a moving target, which `ArcSlop` exists
+  to prevent. The acquisition angle is follow-up F-8. Arcs are converted with item 3's rounding (11.25° = 2048
+  binary units), not truncated to whole degrees.
+- **Mounts are not changed.** Six weapons sit on a turret in the game and on the hull here, or the reverse (audit
+  §10.5). Their arcs and mounts stay as they are, so an arc is never applied to the wrong part; follow-up F-8.
+- **The turret is turned in one place.** §2.5 lists `aim_if_in_range` as a hull writer, but it also snaps
+  `turret_angle` to the goal for a turreted weapon, so "a weapon with a turret keeps turning at its own rate, as
+  today" (item 4) was not true. Commit b removes that write: the weapon phase alone turns a turret, at most its rate
+  per tick, as it already did for every other turret move. On shipped data this is latent in outcomes while every
+  turreted weapon has an unrestricted arc; `turret_angle` is hashed, so checksums may move, and commit b explains
+  any that do.
+
 ### D-9. The Overclock moves to the Marauder analogue (Q0045 3b)
 
 - **Today.** `rhino_beetle` (the Roach since plan 21a §2.1) carries an `overclock` with `hp_cost: 20.0`,
@@ -1204,5 +1227,10 @@ ranges are measured on top of it), when the owner's priority allows. It may be s
 - **F-6 (Amendment 1): turret idle behaviour and acceleration of turning.** Whether turrets return to a rest angle,
   and whether the game accelerates turning (D-8 assumes a constant rate per tick), are listed by WP17's research and
   not modelled.
+- **F-8 (WP17): turning the game models and we do not.** From audit §10: `StationaryTurningRate` (a second hull
+  rate when not moving; four identities differ), the acquisition arc `Arc` ÷ 2 beside the engaged tolerance,
+  `TurnBeforeMove` (Q0050), and the six weapons whose mount differs (Hellion, Immortal, Colossus, Lurker and Phoenix
+  turrets modelled as hull weapons; the Thor's air weapon modelled as a turret). Each needs its own rule or data
+  commit and measurement.
 - **F-7 (Amendment 1): our own units.** The owner plans original units later (Q0045). Until then every identity with
   a counterpart follows it; an original unit later will be audited as class E and needs no change to these rules.

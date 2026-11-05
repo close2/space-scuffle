@@ -13,7 +13,7 @@
 //! the validator rejects that one field and not a fixture that was already malformed.
 
 use sim_core::catalog::UnitCatalog;
-use sim_core::{is_within_firing_arc, SimCoreError, SimWorld, UpgradeCatalog};
+use sim_core::{is_within_firing_arc, SimCoreError, SimWorld, UpgradeCatalog, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{EntityId, PlayerId, SimAngle, SimScalar, SimVec2, Tick, TickBundle};
 
@@ -131,14 +131,26 @@ fn s3_air_only_structure_still_shoots_air_units() -> TestResult {
     Ok(())
 }
 
+/// Every weapon of the shipped archetypes: the ground, air and legacy single slots.
+fn shipped_weapons(world: &SimWorld) -> impl Iterator<Item = &WeaponSpec> {
+    world.catalog.archetypes().flat_map(|archetype| {
+        [
+            archetype.ground_weapon.as_ref(),
+            archetype.air_weapon.as_ref(),
+            archetype.weapon.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+    })
+}
+
 #[test]
 fn s15_authored_360_degree_arc_is_unrestricted() -> TestResult {
+    // Any shipped weapon authored at 180 degrees or more: the loader stores half a turn.
     let world = flat_world(16)?;
-    let dome = world
-        .catalog
-        .get_by_slug("flak_array_dome")
-        .ok_or("dome not in catalog")?;
-    let weapon = dome.air_weapon.as_ref().ok_or("dome has no air weapon")?;
+    let weapon = shipped_weapons(&world)
+        .find(|weapon| weapon.firing_arc == SimAngle::DEG_180)
+        .ok_or("catalog has no unrestricted weapon")?;
 
     let origin = SimVec2::from_i32(8, 8);
     for (x, y) in [(9, 8), (8, 9), (7, 8), (8, 7), (7, 7)] {
@@ -157,13 +169,11 @@ fn s15_authored_360_degree_arc_is_unrestricted() -> TestResult {
 
 #[test]
 fn s15_narrow_arcs_keep_their_authored_half_angle() -> TestResult {
+    // Any shipped weapon whose half angle is below a quarter turn refuses a target behind it.
     let world = flat_world(16)?;
-    let narrow = world
-        .catalog
-        .archetypes()
-        .filter_map(|archetype| archetype.ground_weapon.as_ref())
-        .find(|weapon| weapon.firing_arc == SimAngle::from_degrees(15))
-        .ok_or("catalog has no 15 degree weapon")?;
+    let narrow = shipped_weapons(&world)
+        .find(|weapon| weapon.firing_arc < SimAngle::from_degrees(90))
+        .ok_or("catalog has no narrow weapon")?;
     let origin = SimVec2::from_i32(8, 8);
     assert!(!is_within_firing_arc(
         SimAngle::ZERO,
@@ -199,19 +209,17 @@ fn s16_projectile_speed_must_be_positive() -> Result<(), Box<dyn std::error::Err
 }
 
 #[test]
-fn s16_weapon_ranges_and_cadence_must_be_usable() {
-    assert_rejected(
-        STRUCTURES,
-        "firing_arc_deg: 360.0",
-        "firing_arc_deg: 361.0",
-        "firing_arc_deg",
-    );
-    assert_rejected(
-        STRUCTURES,
-        "firing_arc_deg: 360.0",
-        "firing_arc_deg: -1.0",
-        "firing_arc_deg",
-    );
+fn s16_weapon_ranges_and_cadence_must_be_usable() -> Result<(), Box<dyn std::error::Error>> {
+    // The first firing arc a shipped structure states, whatever its value.
+    let structure_arc = STRUCTURES
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("firing_arc_deg: "))
+        .ok_or("a shipped structure has a weapon")?
+        .trim_end_matches(',');
+    for bad in ["firing_arc_deg: 361.0", "firing_arc_deg: -1.0"] {
+        assert_rejected(STRUCTURES, structure_arc, bad, "firing_arc_deg");
+    }
     assert_rejected(
         UNITS,
         "attacks_count: 1",
@@ -221,6 +229,7 @@ fn s16_weapon_ranges_and_cadence_must_be_usable() {
     assert_rejected(UNITS, "period_ticks: 15", "period_ticks: 0", "period_ticks");
     assert_rejected(UNITS, "min_range: 0.0", "min_range: 99.0", "min_range");
     assert_rejected(UNITS, "min_range: 0.0", "min_range: -1.0", "min_range");
+    Ok(())
 }
 
 #[test]

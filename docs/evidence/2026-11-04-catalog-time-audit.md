@@ -6,7 +6,8 @@ Work package 3 of [`docs/plans/2026-11-04-combat-sc2-alignment.md`](../plans/202
 **Status.** Written 2026-11-04 against `main` at `0e5565a`. This file holds the research: steps 1 to 4 and 6 of WP3.
 Step 5, the whole-matrix measurement of a scratch catalog with every class B and C correction, is §7 (added
 2026-11-05 by WP12, before its first data commit). No catalog value changes until then (Q0039: "a whole-matrix measurement before any
-value changes").
+value changes"). §10, turning (hull rates, turn-before-move, firing arcs, turret rates), was added on 2026-11-05 by
+WP17's research step.
 
 ## 1. Summary
 
@@ -1797,5 +1798,222 @@ Liquipedia wikitext, read 2026-11-04 with `action=raw`:
 - [Zergling (LotV)](https://liquipedia.net/starcraft2/Zergling_(Legacy_of_the_Void)), for the cooldown 0.497
   (−0.143) with Adrenal Glands, which confirms the two stacking `RateMultiplier +0.2` entries.
 
+SC2Mapster's editor reference [Data/Weapons/Legacy](https://sc2mapster.wiki.gg/wiki/Data/Weapons/Legacy), read
+2026-11-05, for the meaning of `Arc` and `ArcSlop` (§10.3; a community source).
+
 Project documents: doc 07 §2.2 and §2.3, doc 08 line 175, plan 03 §2.2, plan 16 §1.2, plan 17 §1 Bug 2 and Bug 3,
 plan 21a §2.1, and the battle 33 investigation §1 and §2.
+
+## 10. Turning (WP17 research)
+
+Added 2026-11-05 by WP17 step 1 of plan [`2026-11-04-combat-sc2-alignment`](../plans/2026-11-04-combat-sc2-alignment.md)
+(D-8, Q0045 1b), with the chain and conversion of §2.2 and §2.3. Scripts: `~/scratch/combat_wp17/research/`
+(`turning.py`, `arcs.py`, `render.py`; not committed), reading the same data as §2.4. Angles in the simulation are
+`SimAngle` binary angles: 65 536 units per turn, so binary units = round(degrees × 65 536 ÷ 360), halves up.
+
+### 10.1 Hull turn rates (`TurningRate`)
+
+Every row of §4 is confirmed, and so are the four classes of D-8 item 3. Degrees per tick = Normal °/s × 1.4 ÷ 25,
+authored with two decimals; the binary column is what the loader makes of that authored value.
+
+| Identity | Analogue | `TurningRate` (Normal °/s) | Source | Degrees per tick | Binary units per tick | `StationaryTurningRate` where it differs | `TurnBeforeMove` |
+|---|---|---|---|---|---|---|---|
+| `welder_drone` | SCV | 999.8437 | `liberty` UnitData:4806 | 55.99 | 10193 | same | no |
+| `pulse_bot` | Marine | 999.8437 | `liberty` UnitData:4825 | 55.99 | 10193 | same | no |
+| `rhino_beetle` | Roach | 999.8437 | `liberty` UnitData:7191 | 55.99 | 10193 | same | no |
+| `psi_grey` | Zealot | 999.8437 | `liberty` UnitData:3224 | 55.99 | 10193 | same | no |
+| `railgun_crawler` | SiegeTank | 360 | `liberty` UnitData:5079 | 20.16 | 3670 | 720 (`core` UnitData:39 (default `CUnit`)) = 40.32 | yes (`liberty` UnitData:5084) |
+| `flying_saucer` | Phoenix | 1499.9414 | `liberty` UnitData:3688 | 84.00 | 15292 | same | no |
+| `shock_golem` | Marauder | 999.8437 | `liberty` UnitData:11021 | 55.99 | 10193 | same | no |
+| `jet_jumper` | Reaper | 999.8437 | `liberty` UnitData:4895 | 55.99 | 10193 | same | no |
+| `specter_android` | Ghost | 999.8437 | `liberty` UnitData:5052 | 55.99 | 10193 | same | no |
+| `napalm_wheeler` | Hellion | 720 | `core` UnitData:40 (default `CUnit`) | 40.32 | 7340 | 1499.9414 (`liberty` UnitData:11554) = 84.00 | no |
+| `colossus_mech` | Thor | 360 | `liberty` UnitData:5234 | 20.16 | 3670 | 720 (`core` UnitData:39 (default `CUnit`)) = 40.32 | yes (`liberty` UnitData:5217) |
+| `vector_interceptor` | VikingFighter | 999.8437 | `liberty` UnitData:6841 | 55.99 | 10193 | same | no |
+| `repair_shuttle` | Medivac | 999.8437 | `liberty` UnitData:5446 | 55.99 | 10193 | same | no |
+| `sky_bastion` | Liberator | 1499.9414 | `void` UnitData:3299 | 84.00 | 15292 | same | no |
+| `cloak_gunship` | Banshee | 1499.9414 | `liberty` UnitData:5415 | 84.00 | 15292 | same | no |
+| `omni_probe_drone` | Raven | 999.8437 | `liberty` UnitData:5637 | 55.99 | 10193 | same | no |
+| `grav_harvester` | Probe | 999.8437 | `liberty` UnitData:3157 | 55.99 | 10193 | same | no |
+| `warp_strider` | Stalker | 999.8437 | `liberty` UnitData:3967 | 55.99 | 10193 | same | no |
+| `prism_weaver` | Sentry | 999.8437 | `liberty` UnitData:11386 | 55.99 | 10193 | same | no |
+| `astral_vagrant` | Adept | 999.8437 | `void` UnitData:3204 | 55.99 | 10193 | same | no |
+| `cerebral_elder` | HighTemplar | 999.8437 | `liberty` UnitData:3320 | 55.99 | 10193 | same | no |
+| `shadow_visitor` | DarkTemplar | 999.8437 | `liberty` UnitData:3401 | 55.99 | 10193 | same | no |
+| `void_goliath` | Immortal | 720 | `core` UnitData:40 (default `CUnit`) | 40.32 | 7340 | same | no |
+| `tripod_annihilator` | Colossus | 720 | `core` UnitData:40 (default `CUnit`) | 40.32 | 7340 | same | no |
+| `stealth_eye_orb` | Observer | 720 | `core` UnitData:40 (default `CUnit`) | 40.32 | 7340 | same | no |
+| `phase_prism_saucer` | WarpPrism | 720 | `core` UnitData:40 (default `CUnit`) | 40.32 | 7340 | same | no |
+| `prismatic_saucer` | VoidRay | 999.8437 | `liberty` UnitData:3760 | 55.99 | 10193 | same | no |
+| `mothership_carrier` | Carrier | 720 | `core` UnitData:40 (default `CUnit`) | 40.32 | 7340 | same | no |
+| `nectar_worker` | Drone | 999.8437 | `liberty` UnitData:7122 | 55.99 | 10193 | same | no |
+| `razor_mantis` | Zergling | 999.8437 | `liberty` UnitData:7557 | 55.99 | 10193 | same | no |
+| `volatile_tick` | Baneling | 999.8437 | `liberty` UnitData:9314 | 55.99 | 10193 | same | no |
+| `mortar_stag` | Ravager | 999.8437 | `liberty` UnitData:998 | 55.99 | 10193 | same | no |
+| `thorn_viper` | Hydralisk | 999.8437 | `liberty` UnitData:7679 | 55.99 | 10193 | same | no |
+| `burrow_scorpion` | LurkerMP | 999.8437 | `liberty` UnitData:717 | 55.99 | 10193 | same | no |
+| `sonic_bat` | Mutalisk | 1499.9414 | `liberty` UnitData:7821 | 84.00 | 15292 | same | no |
+| `sky_leviathan` | Corruptor | 999.8437 | `liberty` UnitData:11224 | 55.99 | 10193 | same | no |
+| `spore_matriarch` | BroodLord | 720 | `core` UnitData:40 (default `CUnit`) | 40.32 | 7340 | same | no |
+| `stag_behemoth` | Ultralisk | 360 | `liberty` UnitData:8037 | 20.16 | 3670 | 720 (`core` UnitData:39 (default `CUnit`)) = 40.32 | yes (`liberty` UnitData:8033) |
+| `hive_matron` | Queen | 999.8437 | `liberty` UnitData:11423 | 55.99 | 10193 | same | no |
+| `mycelium_shaman` | Infestor | 999.8437 | `liberty` UnitData:10065 | 55.99 | 10193 | same | no |
+| `tongue_chameleon` | Viper | 999.8437 | `swarm` UnitData:2342 | 55.99 | 10193 | same | no |
+| `amber_pollen_dome` | Overlord | 999.8437 | `liberty` UnitData:7369 | 55.99 | 10193 | same | no |
+
+Counts: 3 identities at 84.00 (and the Phoenix, 4 in all), 28 at 55.99, 7 at 40.32, 3 at 20.16: the 42 values of
+D-8 item 3. `TurningRate` is the unit's rate; `StationaryTurningRate` is a second field (§10.2).
+
+### 10.2 Two turning fields the plan did not name
+
+- **`StationaryTurningRate`.** `CUnit` has a second rate, 720 Normal °/s by default (`core` UnitData:39), beside
+  `TurningRate` (`core` UnitData:40). Its name says it is the rate of a unit that is not moving. It equals
+  `TurningRate` for 38 of the 42 identities. It differs for four:
+  - `railgun_crawler` (Siege Tank), `colossus_mech` (Thor) and `stag_behemoth` (Ultralisk): 40.32° per tick
+    stationary against 20.16 moving;
+  - `napalm_wheeler` (Hellion): 84.00° per tick stationary (`liberty` UnitData:11554) against 40.32 moving.
+
+  We model one rate. WP17 applies `TurningRate` as D-8 says, and records the stationary rate as a follow-up
+  (plan §8 F-8): it needs a second field and a rule choosing between them.
+- **`TurnBeforeMove`.** A `CUnit` flag (`FlagArray index="TurnBeforeMove"`). Among the analogues only the Siege
+  Tank (`liberty` UnitData:5084), the Thor (`liberty` UnitData:5217) and the Ultralisk (`liberty` UnitData:8033) set
+  it; every matrix identity other than these three leaves it off. The flag's name states the rule's direction,
+  but the data hold no tolerance (how far from its path a unit may face and still move) and no source within the
+  effort bound states one. The rule therefore cannot be specified and tested as D-8 item 4 requires, and WP17 files
+  [Q0050](../questions/open/0050-turn-before-move.md) with the default "no gating" (D-8 item 4).
+
+### 10.3 Firing arcs (`Arc`, `ArcSlop`)
+
+**Semantics.** `CWeapon` has `Arc` (no default in any layer, so the engine's 0) and `ArcSlop` (11.25°, `core`
+WeaponData:15). The data do not define them. SC2Mapster's editor reference
+([Data/Weapons/Legacy](https://sc2mapster.wiki.gg/wiki/Data/Weapons/Legacy), read 2026-11-05) does: `Arc` is the
+"angle that the weapon can target and acquire units without the attacking unit having to turn or losing the target.
+90 degrees means the unit can shoot 45 degrees to either side", and `ArcSlop` is the "angle determining how far
+outside the arc the target can go before losing the target". So `Arc` is a full angle centred on the facing, and
+`ArcSlop` widens it on each side once the weapon is engaged. This is a community source, not Blizzard's; it is
+the only one found within the effort bound.
+
+**Ours.** `firing_arc_deg` is read as a **half** angle (`firing_half_angle` in `catalog.rs`): 15 lets the weapon fire
+15° to either side, and 180 or more fires in every direction. We have no second angle: one tolerance decides both
+whether a swing may start and whether an engaged weapon keeps firing.
+
+**Reference in our unit.** The half angle an engaged weapon tolerates is `Arc` ÷ 2 + `ArcSlop`; the tighter
+`Arc` ÷ 2 applies only to the first acquisition. Because a fight is mostly engaged weapons, and because a tolerance
+of `Arc` ÷ 2 alone (0° for most weapons) would make every unit stop to re-aim before each shot at a moving target,
+which the game's `ArcSlop` exists to prevent, the reference value for our single field is
+**`Arc` ÷ 2 + `ArcSlop`**. The acquisition angle is a follow-up (plan §8 F-8).
+
+| Identity | Block | Ours (half angle, °) | Weapon | `Arc` | `ArcSlop` | Reference (half angle, °) | Class |
+|---|---|---|---|---|---|---|---|
+| `welder_drone` | `weapon` | 180 | `FusionCutter` | not set (0) | 11.25 | 11.25 | C |
+| `pulse_bot` | `weapon` | 15 | `GuassRifle` | not set (0) | 11.25 | 11.25 | C |
+| `pulse_bot` | `air_weapon` | 15 | `GuassRifle` | not set (0) | 11.25 | 11.25 | C |
+| `rhino_beetle` | `weapon` | 15 | `AcidSaliva` | not set (0) | 11.25 | 11.25 | C |
+| `psi_grey` | `weapon` | 180 | `PsiBlades` | not set (0) | 11.25 | 11.25 | C |
+| `railgun_crawler` | `weapon` | 360 | `90mmCannons` | 360 (`voidmulti` WeaponData:5) | 11.25 | 180 | A |
+| `railgun_crawler` | `ground_weapon_override` | 360 | `CrucioShockCannon` | not set (0) | 11.25 | 11.25 | C |
+| `shock_golem` | `weapon` | 15 | `PunisherGrenades` | not set (0) | 11.25 | 11.25 | C |
+| `jet_jumper` | `weapon` | 15 | `P38ScytheGuassPistol` | not set (0) | 11.25 | 11.25 | C |
+| `specter_android` | `weapon` | 15 | `C10CanisterRifle` | not set (0) | 11.25 | 11.25 | C |
+| `napalm_wheeler` | `weapon` | 15 | `InfernalFlameThrower` | not set (0) | 11.25 | 11.25 | E: mount differs (Hellion turret, `liberty` UnitData:11603), §10.5 |
+| `colossus_mech` | `weapon` | 15 | `ThorsHammer` | not set (0) | 11.25 | 11.25 | C |
+| `colossus_mech` | `ground_weapon` | 15 | `ThorsHammer` | not set (0) | 11.25 | 11.25 | C |
+| `colossus_mech` | `air_weapon` | 360 | `LanceMissileLaunchers` | 5.625 (`void` WeaponData:82) | 11.25 | 14.0625 | E: mount differs (hull weapon in the game, a turret here), §10.5 |
+| `vector_interceptor` | `weapon` | 15 | `LanzerTorpedoes` | not set (0) | 11.25 | 11.25 | C |
+| `vector_interceptor` | `air_weapon` | 15 | `LanzerTorpedoes` | not set (0) | 11.25 | 11.25 | C |
+| `sky_bastion` | `weapon` | 15 | `LiberatorMissileLaunchers` | not set (0) | 11.25 | 11.25 | C |
+| `sky_bastion` | `air_weapon` | 15 | `LiberatorMissileLaunchers` | not set (0) | 11.25 | 11.25 | C |
+| `sky_bastion` | `ground_weapon` | 360 | `LiberatorAGWeapon` | 360 (`void` WeaponData:337) | 11.25 | 180 | A |
+| `cloak_gunship` | `weapon` | 15 | `BacklashRockets` | not set (0) | 11.25 | 11.25 | C |
+| `grav_harvester` | `weapon` | 180 | `ParticleBeam` | not set (0) | 11.25 | 11.25 | C |
+| `warp_strider` | `weapon` | 15 | `ParticleDisruptors` | not set (0) | 11.25 | 11.25 | C |
+| `warp_strider` | `air_weapon` | 15 | `ParticleDisruptors` | not set (0) | 11.25 | 11.25 | C |
+| `prism_weaver` | `weapon` | 360 | `DisruptionBeam` | not set (0) | 11.25 | 11.25 | C |
+| `astral_vagrant` | `weapon` | 15 | `Adept` | not set (0) | 11.25 | 11.25 | C |
+| `cerebral_elder` | `weapon` | 15 | `HighTemplarWeapon` | not set (0) | 11.25 | 11.25 | C |
+| `shadow_visitor` | `weapon` | 180 | `WarpBlades` | not set (0) | 11.25 | 11.25 | C |
+| `void_goliath` | `weapon` | 15 | `PhaseDisruptors` | not set (0) | 11.25 | 11.25 | E: mount differs (Immortal turret, `liberty` UnitData:10791), §10.5 |
+| `tripod_annihilator` | `weapon` | 180 | `ThermalLances` | 90 (`liberty` WeaponData:500) | 11.25 | 56.25 | E: mount differs (Colossus turret, `liberty` UnitData:4099), §10.5 |
+| `prismatic_saucer` | `weapon` | 360 | `VoidRaySwarm` | not set (0) | 39.9902 (`void` WeaponData:168) | 39.9902 | C |
+| `prismatic_saucer` | `air_weapon` | 360 | `VoidRaySwarm` | not set (0) | 39.9902 (`void` WeaponData:168) | 39.9902 | C |
+| `nectar_worker` | `weapon` | 180 | `Spines` | not set (0) | 11.25 | 11.25 | C |
+| `razor_mantis` | `weapon` | 180 | `Claws` | not set (0) | 11.25 | 11.25 | C |
+| `volatile_tick` | `weapon` | 180 | `VolatileBurst` | not set (0) | 11.25 | 11.25 | C |
+| `mortar_stag` | `weapon` | 15 | `RavagerWeapon` | not set (0) | 11.25 | 11.25 | C |
+| `thorn_viper` | `weapon` | 15 | `NeedleSpines` | not set (0) | 11.25 | 11.25 | C |
+| `thorn_viper` | `air_weapon` | 15 | `NeedleSpines` | not set (0) | 11.25 | 11.25 | C |
+| `burrow_scorpion` | `weapon` | 15 | `LurkerMP` | not set (0) | 11.25 | 11.25 | E: mount differs (`FreeRotate` turret, `liberty` UnitData:797), §10.5 |
+| `sonic_bat` | `weapon` | 15 | `GlaiveWurm` | not set (0) | 45 (`liberty` WeaponData:403) | 45 | C |
+| `sonic_bat` | `air_weapon` | 15 | `GlaiveWurm` | not set (0) | 45 (`liberty` WeaponData:403) | 45 | C |
+| `sky_leviathan` | `weapon` | 15 | `ParasiteSpore` | not set (0) | 11.25 | 11.25 | C |
+| `sky_leviathan` | `air_weapon` | 15 | `ParasiteSpore` | not set (0) | 11.25 | 11.25 | C |
+| `spore_matriarch` | `weapon` | 15 | `BroodlingStrike` | not set (0) | 11.25 | 11.25 | C |
+| `spore_matriarch` | `ground_weapon` | 15 | `BroodlingStrike` | not set (0) | 11.25 | 11.25 | C |
+| `stag_behemoth` | `weapon` | 180 | `KaiserBlades` | not set (0) | 11.25 | 11.25 | C |
+| `hive_matron` | `weapon` | 180 | `TalonsMissile` | not set (0) | 11.25 | 11.25 | C |
+| `hive_matron` | `ground_weapon` | 180 | `TalonsMissile` | not set (0) | 11.25 | 11.25 | C |
+| `hive_matron` | `air_weapon` | 15 | `AcidSpines` | not set (0) | 11.25 | 11.25 | C |
+| `planetary_bulwark_dome` | `ground_weapon` | 360 | `TwinIbiksCannon` | 90 (`liberty` WeaponData:138) | 11.25 | 56.25 | C |
+| `flak_array_dome` | `air_weapon` | 360 | `LongboltMissile` | not set (0) | 11.25 | 11.25 | C |
+| `tesla_sentinel_dome` | `ground_weapon` | 360 | `PhotonCannon` | not set (0) | 11.25 | 11.25 | C |
+| `tesla_sentinel_dome` | `air_weapon` | 360 | `PhotonCannon` | not set (0) | 11.25 | 11.25 | C |
+| `thorn_lasher_dome` | `ground_weapon` | 360 | `ImpalerTentacle` | not set (0) | 11.25 | 11.25 | C |
+| `spore_spire_dome` | `air_weapon` | 360 | `AcidSpew` | not set (0) | 11.25 | 11.25 | C |
+| `flying_saucer` | `air_weapon` | 360 | `IonCannons` | 4.9987 (`swarm` WeaponData:179) | 0 (`swarm` WeaponData:180) | 2.49935 | E: mount differs (Phoenix turret, `swarm` UnitData:1805), §10.5 |
+| `mothership_carrier` | `weapon` | 360 | `InterceptorLaunch` | 360 (`liberty` WeaponData:606) | 11.25 | 180 | A |
+
+Counts: 56 weapon blocks; 3 class A, 47 class C (40 hull-mounted, 7 turreted: the Siege Mode override and the six
+structure turrets), 6 class E because the mount itself differs (§10.5). Defaults: `Arc` is set by no `CWeapon`
+default (`core` WeaponData:3 to :31), `ArcSlop` 11.25 by `core` WeaponData:15.
+
+The hull-mounted values are latent while hull turning is instant (every hull reaches its target facing in the
+movement phase), so WP17 applies them before the hull rates, as D-8 item 6 row d says; the turreted values are
+measured.
+
+### 10.4 Turret rates (`YawRate`, audit group W8)
+
+Group W8 of §5 is confirmed: each turret's `YawRate`, through its `parent` where the turret sets none.
+
+| Identity | Block | Ours | Turret | `YawRate` (Normal °/s) | Source | Degrees per tick | Binary units per tick |
+|---|---|---|---|---|---|---|---|
+| `railgun_crawler` | `weapon` | 21.6 | `SiegeTank` | 720 | `liberty` TurretData:26 (parent `FreeRotate`) | 40.32 | 7340 |
+| `railgun_crawler` | Siege Mode override | 21.6 | `SiegeTankSieged` | 360 | `liberty` TurretData:82 | 20.16 | 3670 |
+| `planetary_bulwark_dome` | `ground_weapon` | 360 | `PlanetaryFortress` | 90 | `liberty` TurretData:89 | 5.04 | 918 |
+| `flak_array_dome` | `air_weapon` | 360 | `MissileTurret` | 720 | `liberty` TurretData:26 (parent `FreeRotate`) | 40.32 | 7340 |
+| `tesla_sentinel_dome` | `ground_weapon`, `air_weapon` | 360 | `PhotonCannon` | 720 | `liberty` TurretData:26 (parent `FreeRotate`) | 40.32 | 7340 |
+| `thorn_lasher_dome` | `ground_weapon` | 360 | `SpineCrawler` | 360 | `liberty` TurretData:62 | 20.16 | 3670 |
+| `spore_spire_dome` | `air_weapon` | 360 | `SporeCrawler` | 360 | `liberty` TurretData:70 | 20.16 | 3670 |
+
+`colossus_mech`'s air turret (21.6) has no counterpart turret (§4, class E) and stays.
+
+**Idle return.** `CTurret` has an `Idle` behaviour (for example `ResetIfMoving` on the Phoenix's turret, `swarm`
+TurretData:32): a turret returns to a rest angle when it has no target. We do not model it; a turret keeps its last
+angle (plan §8 F-6).
+
+### 10.5 Weapons whose mount differs (listed, not changed)
+
+Six weapons sit on a turret in the game and on the hull here, or the reverse:
+
+| Identity | Ours | Game | Turret rate in the game |
+|---|---|---|---|
+| `napalm_wheeler` | hull | `Hellion` turret (`liberty` UnitData:11603) | 999.8437 Normal °/s (`liberty` TurretData:97), 55.99° per tick |
+| `void_goliath` | hull | `Immortal` turret (`liberty` UnitData:10791) | 720 (parent `FreeRotate`), 40.32° per tick |
+| `tripod_annihilator` | hull | `Colossus` turret (`liberty` UnitData:4099), `Arc` 90 | 999.8437 (`liberty` TurretData:51), 55.99° per tick |
+| `burrow_scorpion` | hull | `FreeRotate` turret (`liberty` UnitData:797) | 720, 40.32° per tick |
+| `flying_saucer` | hull | `Phoenix` turret (`swarm` UnitData:1805), `Arc` 4.9987, `ArcSlop` 0 | 539.2968 (`swarm` TurretData:33), 30.20° per tick |
+| `colossus_mech` air | turret, 21.6° per tick | hull weapon, `Arc` 5.625 (`void` WeaponData:82) | none |
+
+A mount is not a time value, and D-8 item 6 does not schedule it. Changing one is a data change (`has_turret`, the
+turret rate, the arc) with its own measurement; WP17 records them as follow-up F-8 of the plan and leaves their arcs
+and mounts as they are, so that an arc is never applied to the wrong part.
+
+### 10.6 Not modelled (follow-ups)
+
+- `StationaryTurningRate` (§10.2) and `TurnBeforeMove` (§10.2, Q0050).
+- The acquisition angle `Arc` ÷ 2, tighter than the engaged tolerance (§10.3).
+- Turret limits: every turret above inherits `YawArc` 360 from `FreeRotate` (`liberty` TurretData:25), so none is
+  restricted; `YawIdleRate` is part of the idle behaviour.
+- Turret idle return (§10.4) and turning acceleration: `CUnit` and `CTurret` hold rates only, no angular
+  acceleration, in every layer read, so D-8's constant rate per tick matches the data.
+- `AllowedMovement` (`Moving` for the Phoenix and the Void Ray, `Slowing` for several air units and workers): firing
+  while moving (plan §8 F-5).
