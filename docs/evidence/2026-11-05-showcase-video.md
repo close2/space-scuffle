@@ -22,6 +22,13 @@ through the GPU harness on `radv`: first child 25.3 s, second 19.9 s, 16 frames 
 BLAKE3 hashes identical. The first run was red: the plan's 480×270 smoke frame failed its own rule "resolution
 within 320..=4096" (height 270); the rule is now 320..=4096 wide and 180..=4096 high.
 
+## Test memory (gate rule of 2026-11-05)
+
+Peak RSS of the new fast test executables at libtest's default thread count, measured after the server freeze
+of 2026-11-05: `showcase_storyboard_tests` 2,079 MiB (7 tests, one headless Bevy app, 22.7 s),
+`showcase_encode_tests` at most the same (3 tests, ffmpeg children, 4.9 s). Far below the battle_* binaries,
+so neither gets a `test_threads` cap. `showcase_tests` runs its takes as GPU-harness children, one at a time.
+
 ## WP2: calibration (plan D-13)
 
 | Driver | Frames | Resolution | Cores | Readiness | p50 per frame | p95 | Mean | Take |
