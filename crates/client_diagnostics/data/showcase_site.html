@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Space Scuffle: showcase</title>
+<meta name="description" content="{{PITCH}}">
+<meta property="og:title" content="Space Scuffle">
+<meta property="og:description" content="{{PITCH}}">
+<meta property="og:image" content="{{POSTER}}">
+<style>
+  body { margin: 0; background: #101216; color: #e6e6e6; font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 1280px; margin: 0 auto; padding: 24px; }
+  h1 { font-weight: 300; font-size: 2.2em; margin: 0.2em 0; }
+  video { width: 100%; height: auto; background: #000; border-radius: 6px; }
+  p.pitch { color: #c8c8c8; }
+  table { border-collapse: collapse; margin-top: 1em; font-size: 0.9em; }
+  td, th { text-align: left; padding: 2px 16px 2px 0; }
+  th { color: #ffc45c; font-weight: 500; }
+  code { color: #ffc45c; }
+  a { color: #8cc8ff; }
+  footer { margin-top: 2em; color: #9a9a9a; font-size: 0.85em; }
+</style>
+</head>
+<body>
+<main>
+<h1>Space Scuffle</h1>
+<p class="pitch">{{PITCH}}</p>
+<video controls muted loop playsinline preload="metadata" poster="{{POSTER}}">
+  <source src="{{VIDEO}}" type="video/mp4">
+  <a href="{{VIDEO}}">Download the video</a>.
+</video>
+<p>A real battle, rendered frame by frame by the game's own engine on software Vulkan. Captions,
+title and status card are drawn by the engine; the status card is generated from the repository's
+<code>DESIGN.md</code> and plan index. Teaser: <a href="{{TEASER}}">{{TEASER}}</a>.
+Provenance: <a href="{{JSON}}">{{JSON}}</a>.</p>
+<table>
+<tr><th>Revision</th><td><code>{{REVISION}}</code> ({{REVISION_DATE}})</td></tr>
+<tr><th>Rendered on</th><td>{{ADAPTER}}</td></tr>
+<tr><th>Terrain anisotropy override</th><td>{{ANISOTROPY}}</td></tr>
+<tr><th>Build</th><td>{{RUN}}</td></tr>
+</table>
+<table>
+<tr><th>Scene</th><th>Frames</th><th>First tick</th></tr>
+{{SCENES}}
+</table>
+<footer>Space Scuffle, licensed MIT OR Apache-2.0.</footer>
+</main>
+</body>
+</html>

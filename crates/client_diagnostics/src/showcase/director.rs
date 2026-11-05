@@ -212,14 +212,25 @@ fn mean(points: impl Iterator<Item = Vec2>) -> Option<Vec2> {
     (count > 0).then(|| sum / count as f32)
 }
 
-/// The centroid of `player`'s living mobile units.
+/// The centroid of `player`'s army: its living, mobile, armed units. Unarmed units (builders that
+/// stay at home) are left out, so the centroid is where the fighting force is.
 #[must_use]
 pub fn army_centroid(world: &SimWorld, player: u8) -> Option<Vec2> {
     mean(
         world
             .entities
             .values()
-            .filter(|entity| entity.owner.0 == player && !entity.is_immobile && entity.is_alive())
+            .filter(|entity| {
+                let armed = world
+                    .catalog
+                    .get(entity.unit_type_id)
+                    .is_ok_and(|archetype| {
+                        archetype.weapon.is_some()
+                            || archetype.ground_weapon.is_some()
+                            || archetype.air_weapon.is_some()
+                    });
+                entity.owner.0 == player && !entity.is_immobile && entity.is_alive() && armed
+            })
             .map(|entity| Vec2::new(entity.position.x.to_f32(), entity.position.y.to_f32())),
     )
 }

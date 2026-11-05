@@ -202,7 +202,7 @@ pub enum CameraMove {
         /// Yaw swept over the scene, degrees.
         sweep_deg: f32,
     },
-    /// The centroid of a player's living mobile units.
+    /// The centroid of a player's army: its living, mobile, armed units.
     FollowArmy {
         /// Player slot.
         player: u8,

@@ -12,7 +12,9 @@
 // Tuned after the first local render (docs/evidence/2026-11-05-showcase-video.md): the two armies
 // pass each other and raid the other's base, and the viewer's base falls around tick 1,225. The
 // scenes before `closing` therefore end near tick 1,100, and `closing` is paused, so the video never
-// shows the result window. `units` comes before the armies meet, while every follow target lives.
+// shows the result window. `units` and `smog` come before the armies meet, while every follow
+// target lives and the army moves: the smog shows best in the wakes of moving bubbles. Both follow
+// one unit: the army splits around the central plateau, so its centroid can lie on empty ground.
 (
     format_version: 1,
     resolution: (1280, 720),
@@ -51,7 +53,7 @@
                     name: "units",
                     speed: Speed(1),
                     length: Frames(150),
-                    camera: FollowUnit(player: 0, unit_types: ["rhino_beetle", "pulse_bot", "welder_drone"], distance: 7.0, pitch_deg: 42.0),
+                    camera: FollowUnit(player: 0, unit_types: ["rhino_beetle", "pulse_bot", "welder_drone"], distance: 8.0, pitch_deg: 55.0),
                     overlay: Caption(
                         title: "Units",
                         body: "Each unit is a glass bubble playing a video clip of its creature, generated with Veo.",
@@ -59,10 +61,21 @@
                     ),
                 ),
                 (
+                    name: "smog",
+                    speed: Speed(1),
+                    length: Frames(125),
+                    camera: FollowUnit(player: 0, unit_types: ["pulse_bot", "rhino_beetle"], distance: 10.0, pitch_deg: 35.0),
+                    overlay: Caption(
+                        title: "Smog",
+                        body: "A volumetric smog field, stirred and carved by every bubble.",
+                        subsystems: ["Smog fog presentation"],
+                    ),
+                ),
+                (
                     name: "advance",
                     speed: Speed(4),
                     badge: Some("Fast-forward ×4"),
-                    length: UntilCombat(min: 40, max: 500),
+                    length: UntilCombat(min: 50, max: 500),
                     camera: FollowArmy(player: 0, distance: 26.0, pitch_deg: 55.0),
                     overlay: Caption(
                         title: "Fog of war",
@@ -79,17 +92,6 @@
                         title: "Combat",
                         body: "Weapons wind up, fire and recover; shields take damage before the hull; splash hits groups.",
                         subsystems: ["Combat"],
-                    ),
-                ),
-                (
-                    name: "smog",
-                    speed: Speed(1),
-                    length: Frames(175),
-                    camera: FollowCombat(distance: 9.0, pitch_deg: 30.0),
-                    overlay: Caption(
-                        title: "Smog",
-                        body: "A volumetric smog field, stirred and carved by every bubble.",
-                        subsystems: ["Smog fog presentation"],
                     ),
                 ),
                 (
@@ -111,9 +113,9 @@
         cuts: [
             (scene: "title", first: 0, frames: 75),
             (scene: "units", first: 0, frames: 75),
+            (scene: "smog", first: 0, frames: 100),
             (scene: "advance", first: 0, frames: 40, from_end: true),
             (scene: "clash", first: 0, frames: 150),
-            (scene: "smog", first: 0, frames: 100),
             (scene: "closing", first: 0, frames: 150),
         ],
     ),

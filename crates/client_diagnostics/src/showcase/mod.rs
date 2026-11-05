@@ -6,7 +6,9 @@
 //! - [`cards`]: title and status cards generated from `DESIGN.md` and the plan index;
 //! - [`pose`]: camera moves and the deterministic follow spring;
 //! - [`director`], [`overlay`], [`recorder`] and [`take`]: one take rendered by the production
-//!   client at a fixed 40 ms step into a lossless mezzanine and its manifest.
+//!   client at a fixed 40 ms step into a lossless mezzanine and its manifest;
+//! - [`encode`], [`site`] and [`render`]: the MP4, the WebP teaser, the poster, the player page
+//!   and the provenance, and the `render` command CI and developers run.
 //!
 //! # How it fits
 //! The tool builds the shipped client through `client::build_graphical_app`, like the capture and
@@ -20,9 +22,12 @@
 
 pub mod cards;
 pub mod director;
+pub mod encode;
 pub mod overlay;
 pub mod pose;
 pub mod recorder;
+pub mod render;
+pub mod site;
 pub mod storyboard;
 pub mod take;
 
@@ -86,6 +91,27 @@ pub enum ShowcaseError {
     /// The mezzanine encoder failed.
     #[error(transparent)]
     Mezzanine(#[from] recorder::MezzanineError),
+    /// An ffmpeg step of `assemble` failed, or its cut is inconsistent.
+    #[error("assembling the {step}: {reason}")]
+    Encode {
+        /// The output being made.
+        step: String,
+        /// What went wrong.
+        reason: String,
+    },
+    /// An output stays above its size budget at every rung of its ladder.
+    #[error("{output} exceeds {budget} bytes at every step: {attempts:?}")]
+    OverBudget {
+        /// The output file.
+        output: String,
+        /// The budget, bytes.
+        budget: u64,
+        /// Every attempt, in order.
+        attempts: Vec<String>,
+    },
+    /// `showcase render` could not launch or finish a take.
+    #[error("render: {0}")]
+    Render(String),
     /// A take failed while rendering; its manifest says why.
     #[error("take failed: {0}")]
     Take(String),
