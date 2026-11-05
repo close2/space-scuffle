@@ -114,8 +114,8 @@ Status is `Working` (built, tested, in the shipped game), `Partial` (built but l
 | Fixed-point math | Working | `SimScalar`, `SimVec2`, `SimAngle`, table trigonometry, checked overflow | `crates/sim_types/tests/math_identities.rs`, `crates/sim_types/tests/math_properties.rs` | none known |
 | Tick and checksum | Working | The phase pipeline of §3; versioned checksum over persistent state and RNG | `crates/sim_core/tests/checksum_state_tests.rs` | none known |
 | Cross-platform determinism | Working | Golden replay on three native targets and wasm32 in CI; a second fixture pins vision before acquisition and route upkeep before arrival (`c271226`) | `crates/sim_core/tests/golden_replay_tests.rs` (`golden_replay_orders_reproduces_every_checkpoint`) | none known |
-| Combat | Working | Weapon timing with turn, damage point, cancelable backswing and cooldown; a hull-mounted weapon waits for its hull to face the target within the weapon's StarCraft II arc; turrets turning at their rates; shields and armour; splash; projectiles | `crates/sim_core/tests/stutter_step_tests.rs`, `crates/sim_core/tests/combat_correctness_tests.rs`, `crates/sim_core/tests/damage_and_shields_tests.rs` | Changed outcomes await the owner (Q0007); battle 33 investigated in [`docs/evidence/2026-11-03-battle-33-investigation.md`](docs/evidence/2026-11-03-battle-33-investigation.md), changes proposed in Q0035 to Q0041 |
-| Movement and pathfinding | Working | Grid clearance field, A* corridor and funnel, steering, push priority and Hold Position; hulls turn at StarCraft II's per-tick rates, at most once per tick, at a stationary rate on ticks the unit does not move, and units flagged `turn_before_move` turn in place before a step their hull does not face (Q0050) | `crates/sim_map/tests/funnel_tests.rs`, `crates/sim_map/tests/clearance_field_tests.rs`, `crates/sim_core/tests/push_priority_tests.rs`, `crates/sim_core/tests/hull_turning_tests.rs` | A move to an unreachable point walks to the nearest reachable one, by the owner's choice (Q0006) |
+| Combat | Working | Weapon timing with turn, damage point, cancelable backswing and cooldown; a hull-mounted weapon waits for its hull to face the target within the weapon's StarCraft II arc; turrets turning at their rates; shields and armour; splash; projectiles | `crates/sim_core/tests/stutter_step_tests.rs`, `crates/sim_core/tests/combat_correctness_tests.rs`, `crates/sim_core/tests/damage_and_shields_tests.rs` | Changed outcomes await the owner (Q0007); battle 33 investigated in [`docs/evidence/2026-11-03-battle-33-investigation.md`](docs/evidence/2026-11-03-battle-33-investigation.md), changes proposed in Q0035 to Q0041; Differences from StarCraft II are bugs, listed in the [bug register](#known-deviations-from-starcraft-ii-bugs) below |
+| Movement and pathfinding | Working | Grid clearance field, A* corridor and funnel, steering, push priority and Hold Position; hulls turn at StarCraft II's per-tick rates, at most once per tick, at a stationary rate on ticks the unit does not move, and units flagged `turn_before_move` turn in place before a step their hull does not face (Q0050) | `crates/sim_map/tests/funnel_tests.rs`, `crates/sim_map/tests/clearance_field_tests.rs`, `crates/sim_core/tests/push_priority_tests.rs`, `crates/sim_core/tests/hull_turning_tests.rs` | A move to an unreachable point walks to the nearest reachable one, by the owner's choice (Q0006); Differences from StarCraft II are bugs, listed in the [bug register](#known-deviations-from-starcraft-ii-bugs) below |
 | Terrain, cliffs and ramps | Working | Cliff levels, ramps, the map format and its validation, and the client's terrain mesher; `MapDocument::encode` returns a typed error (`f53f73b`, tests `encode_rejects_*`); the terrain chunks cover the last dual column and row (`94130d5`, test `spawned_chunks_cover_every_dual_cell`) | `crates/sim_map/tests/ramp_traversal_tests.rs`, `crates/sim_map/tests/validation_tests.rs`, `crates/sim_map/tests/map_format_tests.rs`, `crates/client/tests/mesher_golden_tests.rs`, `crates/client/tests/terrain_tests.rs` | none known |
 | Simulation vision and watchtowers | Working | Per-player vision with high ground, air reveal and watchtowers | `crates/sim_map/tests/vision_tests.rs`, `crates/sim_core/tests/watchtower_tick_tests.rs` | none known |
 | Economy and gas | Working | Harvesting and income for minerals and gas; gas is enabled in the shipped game since its media was baked (Veo batch 1, `2c5ed5e`) | `crates/sim_core/tests/harvest_income_tests.rs`, `crates/client/tests/battle_card_path_tests.rs` (`gas_through_the_card_extractor_snap_harvest_and_income`) | none known |
@@ -140,6 +140,88 @@ Status is `Working` (built, tested, in the shipped game), `Partial` (built but l
 | Networking | Not built | Nothing; intent is deterministic lockstep | none | all |
 | Replays | Partial | The two golden replay fixtures only | `crates/sim_core/tests/golden_replay_tests.rs` | No recording of real matches |
 | Bot API | Not built | Nothing | none | all |
+
+### Known deviations from StarCraft II (bugs)
+
+Unit mechanics and values follow StarCraft II 5.0.14, and unit behaviour stays very close to it (charter §8,
+[Q0051](docs/questions/closed/0051-sc2-mechanics-standing-rule.md)). Every known difference that is still open is
+listed here by its ID in plan [`2026-11-05-sc2-deviation-fixes`](docs/plans/2026-11-05-sc2-deviation-fixes.md), which
+describes each one, cites the game data and schedules its fix. Accepted differences are not bugs and are not
+listed: the sanctioned items S-1 to S-6 ([Q0052](docs/questions/closed/0052-sanctioned-sc2-deviations.md)) and the
+detail differences of the plan's Amendment 2. Each work package removes its IDs from this list when it lands.
+
+| ID | Deviation | Package |
+|---|---|---|
+| B-1 | A weapon whose turn aligns it swings one tick late (M-22) | WP1 |
+| B-2 | Every strike of a multi-strike weapon lands on the same tick | WP5 |
+| B-3 | No random firing delay | WP11 |
+| B-4 | Siege Mode has one transformation time and no random part | WP11 |
+| B-5 | Whether damage point and backswing hold an automatically attacking unit (not yet sourced) | WP16 |
+| B-6 | Release range slop 0.5 for every weapon | WP9 |
+| B-7 | Threat criterion is "armed with an attack order", not "can return fire" | WP4 |
+| B-8 | Attack target priority is a hard-coded category, not per-unit data | WP4 |
+| B-9 | Retargeting uses the closest target with an invented margin | WP4 |
+| B-10 | No primary-weapon criterion in targeting | WP4 |
+| B-11 | No per-unit targeting tie-break | WP4 |
+| B-12 | Scan ranges | combat alignment WP14 |
+| B-13 | Call-for-help radius, flee distance, leash and abandoned-target time are unsourced | WP16 |
+| B-14 | Bonus damage only against Armored and Light | WP6 |
+| B-15 | Shield-break remainder rule unsourced | WP7 |
+| B-16 | Splash fractions fixed at 100/50/25 % | WP8a |
+| B-17 | Splash distance measured centre to centre | WP8a |
+| B-18 | Hellion, Lurker and Colossus line splash modelled as a circle | WP8b |
+| B-19 | Ultralisk cleave modelled as a circle | WP8c |
+| B-20 | Mutalisk glaive does not bounce | WP8d |
+| B-21 | Brood Lord spawns no Broodlings | WP18 |
+| B-22 | Carrier interceptors are one 8-strike weapon | WP18 |
+| B-23 | Storm hits structures, and idle units dodge it on their own | WP18 |
+| B-24 | Matrix battle 13's storm values | WP18 |
+| B-25 | Viking analogue shoots ground units in fighter mode | WP2 |
+| B-26 | Corruptor analogue shoots ground units | WP2 |
+| B-27 | Liberator analogue shoots ground units outside Defender Mode | WP2, WP18 |
+| B-28 | Six weapon mounts (turret or hull) differ | WP10 |
+| B-29 | No acquisition arc separate from the firing arc | WP10 |
+| B-30 | An idle turret keeps its last angle | WP10 |
+| B-32 | `Entity::apply_stimpack` hard-codes Stimpack around the catalog | WP3 |
+| B-33 | Stim admitted at any life above 1 | WP3 |
+| B-34 | Units with energy start at maximum | WP3 |
+| B-35 | No energy regeneration delay | WP15 |
+| B-36 | Unfinished structures regenerate life | WP15 |
+| B-38 | No burrowed Roach regeneration and no Tunneling Claws | WP15, WP18 |
+| B-39 | No acceleration or deceleration | WP12 |
+| B-41 | No Immortal Barrier (M-20) | WP13a |
+| B-42 | The Lurker analogue attacks unburrowed | WP13b |
+| B-43 | Charge is a speed bonus without the dash | WP13c |
+| B-44 | Concussive Shells have no effect | WP13d |
+| B-45 | Phoenix and Void Ray analogues cannot fire while moving | WP13e |
+| B-46 | The Viking analogue cannot land | WP18 |
+| B-47 | Non-time catalog values not audited | WP9 |
+| B-48 | Push priorities | WP16 |
+| B-49 | Which radius spaces units (`separation_radius` is unread) | WP16 |
+| B-50 | Melee attackers pack around a solid enemy by our own rule (Q0035) | WP16 |
+| B-51 | Neosteel Armor's targets | WP9 |
+| B-52 | Projectile flight times of multi-phase movers, High Templar and Spine Crawler | WP14 |
+| B-54 | A projectile fizzles when its target cloaks | WP14 |
+| B-55 | A shooter hidden by high ground or fog is never revealed to its victim | WP14 |
+| B-56 | Detection uses the sight radius | WP14 |
+| B-57 | The edge cell of a sight blocker is seen from outside | WP14 |
+| B-59 | Every queued job holds supply | WP17 |
+| B-60 | No rally points | WP17 |
+| B-61 | No mineral-patch occupancy | WP17 |
+| B-62 | One construction model for every faction | WP17 |
+| B-63 | No larva, warp-in, creep or power | WP17 |
+| B-64 | Cargo size equals supply | WP17 |
+| B-65 | Unload sets every passenger down at once and stops the carrier | WP17 |
+| B-66 | A blocked exit stalls production | WP17 |
+| B-67 | Next-patch search radius 12 is unsourced | WP17 |
+| B-68 | 14 researchable upgrades have no effect | WP13d, WP18 |
+| B-69 | Missing abilities and spells | WP18 |
+| B-70 | No Graviton Beam | WP18 |
+| B-72 | Doc 03 states start energy the engine does not use | WP3 |
+| B-74 | Code comments claim exact parity for spillover and splash | WP7, WP8a |
+| B-76 | Hard-coded threat categories | WP4 |
+| B-77 | Hard-coded Concussive slow | WP13d |
+| B-78 | Hard-coded storm evacuation margin | WP18 |
 
 ---
 
