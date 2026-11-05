@@ -31,10 +31,12 @@ use sim_types::{
 pub use sim_types::{SplashSpec, WeaponSpec};
 mod factions;
 mod runtime;
+mod targeting;
 mod validation;
 
 pub use factions::{ArmorClassDef, FactionCatalog, FactionDef, WeaponClassDef};
 pub use runtime::{CatalogLoadError, RuntimeCatalogs};
+pub use targeting::{AcquireLevel, AcquireTieBreak, PrimaryWeapon};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -152,6 +154,19 @@ pub struct UnitArchetype {
     pub sight_radius: SimScalar,
     /// Auto-acquisition threat scanning radius in world units.
     pub scan_range: SimScalar,
+    /// How attractive this archetype is as an automatic target, higher first, after threat
+    /// (`StarCraft` II `CUnit` `AttackTargetPriority`).
+    pub attack_target_priority: u8,
+    /// Whether enemies always count this archetype as a threat, armed or not (`StarCraft` II
+    /// `CUnit` flag `AlwaysThreatens`).
+    pub always_a_threat: bool,
+    /// When this archetype threatens the enemies its weapons could hit (`StarCraft` II `CUnit`
+    /// `DefaultAcquireLevel`).
+    pub acquire_level: AcquireLevel,
+    /// Which weapon slot is primary when the archetype has distinct ground and air weapons.
+    pub primary_weapon: PrimaryWeapon,
+    /// How the archetype picks among equally ranked targets after losing its previous one.
+    pub acquire_tie_break: AcquireTieBreak,
     /// Mineral resource cost.
     pub mineral_cost: u32,
     /// Vespene gas resource cost.
@@ -214,6 +229,20 @@ impl UnitArchetype {
     #[must_use]
     pub fn get_mode(&self, name: &str) -> Option<&UnitModeSpec> {
         self.modes.iter().find(|m| m.mode_name == name)
+    }
+
+    /// Whether this archetype's primary weapon ([`Self::primary_weapon`]) can be used against a
+    /// target of locomotion `target_mover` (criterion 3 of `StarCraft` II's automatic
+    /// targeting). Always `true` for [`PrimaryWeapon::Either`], which never separates
+    /// candidates. An air weapon reaches air units and cliff walkers; a ground weapon every
+    /// mover but air units.
+    #[must_use]
+    pub fn primary_weapon_reaches(&self, target_mover: MoverType) -> bool {
+        match self.primary_weapon {
+            PrimaryWeapon::Either => true,
+            PrimaryWeapon::Air => matches!(target_mover, MoverType::Air | MoverType::CliffWalker),
+            PrimaryWeapon::Ground => target_mover != MoverType::Air,
+        }
     }
 
     /// Selects the optimal weapon against a target with specified locomotion and optional siege stance weapon.
@@ -851,6 +880,10 @@ struct WeaponSpecDef {
 }
 
 #[derive(Debug, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent authored facts about one archetype, each read by a different mechanism"
+)]
 struct UnitArchetypeDef {
     slug: String,
     unit_type_id: u16,
@@ -903,6 +936,19 @@ struct UnitArchetypeDef {
     push_priority: u8,
     sight_radius: f32,
     scan_range: f32,
+    /// `AttackTargetPriority`; required, so a catalog written before the field fails to load.
+    attack_target_priority: u8,
+    /// `AlwaysThreatens`; omitted reads as `false`, the engine default (the flag is off).
+    #[serde(default)]
+    always_a_threat: bool,
+    /// `DefaultAcquireLevel`; omitted reads as `Offensive`, the engine default.
+    #[serde(default)]
+    acquire_level: AcquireLevel,
+    /// The primary weapon slot; required. Validation checks that a named slot is armed and
+    /// that the archetype has the other slot too.
+    primary_weapon: PrimaryWeapon,
+    /// `AcquirePrioritization`; required.
+    acquire_tie_break: AcquireTieBreak,
     mineral_cost: u32,
     gas_cost: u32,
     supply_cost: u32,
@@ -1138,6 +1184,11 @@ impl UnitArchetypeDef {
             push_priority: self.push_priority,
             sight_radius: SimScalar::from_f32_lossy(self.sight_radius),
             scan_range: SimScalar::from_f32_lossy(self.scan_range),
+            attack_target_priority: self.attack_target_priority,
+            always_a_threat: self.always_a_threat,
+            acquire_level: self.acquire_level,
+            primary_weapon: self.primary_weapon,
+            acquire_tie_break: self.acquire_tie_break,
             mineral_cost: self.mineral_cost,
             gas_cost: self.gas_cost,
             supply_cost: self.supply_cost,
@@ -1213,6 +1264,9 @@ struct StructureArchetypeDef {
     pub shield_armor: f64,
     /// Line-of-sight sight reveal radius.
     pub sight_radius: f64,
+    /// How attractive this structure is as an automatic target (`AttackTargetPriority`);
+    /// required, so a catalog written before the field fails to load.
+    pub attack_target_priority: u8,
     /// Supply capacity provided.
     pub supply_provided: u32,
     /// Whether this structure serves as a resource dropoff node.
@@ -1328,6 +1382,14 @@ impl StructureArchetypeDef {
             push_priority: 255,
             sight_radius: SimScalar::from_num(self.sight_radius),
             scan_range: SimScalar::from_num(self.sight_radius),
+            attack_target_priority: self.attack_target_priority,
+            // Engine defaults, not authored: `StarCraft` II 5.0.14 sets no `AlwaysThreatens`,
+            // no `Defensive` acquire level, no second weapon and no `AcquirePrioritization` on
+            // any structure this catalog models (`UnitData`, `WeaponData`).
+            always_a_threat: false,
+            acquire_level: AcquireLevel::Offensive,
+            primary_weapon: PrimaryWeapon::Either,
+            acquire_tie_break: AcquireTieBreak::Closest,
             mineral_cost: self.mineral_cost,
             gas_cost: self.gas_cost,
             supply_cost: 0,

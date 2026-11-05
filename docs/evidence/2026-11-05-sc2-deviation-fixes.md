@@ -220,3 +220,204 @@ every mode. A cliff walker (the Colossus analogue) is in both planes, so an air 
   fields of the encoding in a throwaway build, the 60 checkpoints on this commit's data equal those on commit c's.
   `golden_replay.ron` unchanged (none of its units has energy). Debug, release and `wasm32-wasip1` reproduce both.
 - **Doc 03** §1.1 states the per-unit start and names `start_energy` (B-72).
+
+## 4. WP4: target selection (B-7 to B-11, B-76)
+
+Measurements under `~/scratch/sc2dev_wp4/<step>`. The base is §3.4 (WP1 to WP3 merged with `main`): whole matrix
+bit-identical to §3.4, battle 33 37 / 20 / 11.
+
+### 4.1 Research
+
+**Rule** (Liquipedia [Automatic Targeting](https://liquipedia.net/starcraft2/Automatic_Targeting), wikitext, read
+2026-11-05). A unit considers the valid targets within its scan range and ranks them by: (1) threat, (2) attack target
+priority, (3) primary weapon, (4) only if it lost its previous target, its tie-break. "Once a target is chosen, it
+will remain the target until it ceases being a valid target …, leaves the weapon range or a higher-priority target
+enters the weapon range"; the section on criterion 4 says the unit keeps its target until "a more important target
+(according to the first 3 criteria) enters Scan Range". A threat has "a weapon that can return fire, i.e., the
+attacker is a legal target for the weapon", or the type's flag "Always a Threat to Attackers". Workers have the
+*defensive* acquire level: they acquire automatically only while attack-moving, and "are not classified as threats
+by other units".
+
+**Data** (`UnitData`, `WeaponData`, layer chain as above; resolved with the audit's layered resolver,
+`~/scratch/sc2dev_wp4/scripts/targeting.py`, not committed):
+
+| Field (`StarCraft` II) | Catalog field | Values for the modelled analogues |
+|---|---|---|
+| `CUnit` `AttackTargetPriority` | `attack_target_priority` | every unit 20 (each set in its own `CUnit`, for example Marine `liberty` UnitData:4833, SCV :4738, Medivac :5460, Overlord :7372, Viper `swarm` UnitData:2350, Adept `void` UnitData:3210); Planetary Fortress 20 (:10660), Photon Cannon 20 (:11051), Spine Crawler 20 (:8614), Missile Turret 19 (:6032), Spore Crawler 19 (:8748), Bunker 19 (:6153); every other modelled structure 11 (for example Command Center :10376, Nexus :4183, Hatchery :8207) |
+| `CUnit` flag `AlwaysThreatens` | `always_a_threat` | High Templar (`liberty` UnitData:3276), Raven (:5584), Infestor (:10080), Viper (`swarm` UnitData:2319), Lurker (`voidmulti` UnitData:971). The Medivac's flag (`liberty` :5452) is cleared in `swarm` UnitData:1704. No modelled structure |
+| `CUnit` `DefaultAcquireLevel` | `acquire_level` | `Defensive`: SCV (`liberty` UnitData:4726), Probe (:3065), Drone (:7034); every other unit the `core` default `Offensive` (`core` UnitData:31) |
+| first `CUnit` `WeaponArray` entry | `primary_weapon` | Thor: `JavelinMissileLaunchers` (UnitData:5270; `Air` filter, `liberty` WeaponData:216) before `ThorsHammer`; Queen: `AcidSpines` (UnitData:11478; `Air`, WeaponData:104) before `Talons`. Both `Air`, as Liquipedia says. Every other modelled unit has a single `StarCraft` II weapon per plane (or a second entry that is a melee or building variant on the same plane: Roach, Hydralisk, Ultralisk, Baneling, Reaper), so `Either` |
+| `CWeapon` `AcquirePrioritization` | `acquire_tie_break` | `ByAngle`: `JavelinMissileLaunchers`, `ThorsHammer` (`liberty` WeaponData:217, :230), `KaiserBlades`, `Ram` (:435, :445), and the unmodelled Battlecruiser, Hellbat and Thor high-impact weapons (:281, :293; `swarm` :137; `void` :80). `ByDistanceFromTarget`: `ThermalLances` (`liberty` :498) and `ThermalLanceAir` (`void` :128), the Colossus. No other weapon sets it; `core` WeaponData sets no default, so the engine default is the closest target |
+
+- **Liquipedia and the data disagree on two units.** The page lists the Immortal and the unsieged Siege Tank with
+  the Colossus as choosing the candidate closest to the previous target; at 5.0.14 neither `PhaseDisruptors` nor
+  `90mmCannons` sets `AcquirePrioritization`. The data win (plan, "What StarCraft II means here"): only the
+  Colossus analogue is `ClosestToPrevious`.
+- **Not reachable here.** The filled Bunker's 20 (the catalog's Bunker carries no passengers), an uprooted Spine
+  Crawler's 19 (it cannot uproot), the Widow Mine's and Interceptor's 19 and the Larva's and cocoons' 10 (not
+  modelled), and an SCV that repairs a threat inheriting its threat and priority (no repair order exists; B-69).
+- **Found: B-80.** A *defensive* unit (a worker) acquires targets automatically while idle; in `StarCraft` II it
+  does so only while attack-moving. WP4 models the acquire level's effect on threat only. Recorded in the register.
+
+### 4.2 Commit a: the targeting fields, latent
+
+- **Change.** `attack_target_priority` (required on units and structures), `always_a_threat` and `acquire_level`
+  (optional, engine defaults), `primary_weapon` and `acquire_tie_break` (required on units; structures take the
+  engine defaults, which no modelled structure overrides) in `catalog.rs`, the enums in `catalog/targeting.rs`;
+  validation requires both a ground and an air weapon for a named primary slot. Data reproduce the old categories:
+  armed 20, unarmed units 10, unarmed structures 11; `compute_threat_priority` read the unarmed category from the
+  field (no unarmed detector structure exists, so the old 15 was unreachable).
+- **Latent, proved.** Matrix (1000 runs) and battle 33 bit-identical to the base; both golden replays unchanged.
+
+### 4.3 Commit b: a threat is an enemy that can hit me (B-7, B-76)
+
+- **Rule.** `TargetPriorityKey` is (threat, attack target priority, distance, id); `combat::is_threat_to` replaces
+  `compute_threat_priority` (armed and attacking 20, armed 19). The retention rule is unchanged here.
+- **Tests first** (`target_selection_tests.rs`, scratch archetypes): `b7_an_enemy_whose_weapon_cannot_hit_me_is_no_threat`,
+  `b7_an_enemy_flagged_always_a_threat_is_a_threat_unarmed`, `b7_an_attacking_enemy_is_no_greater_threat_than_an_idle_one`
+  and `b7_a_defensive_enemy_threatens_only_while_attack_moving` all failed on the old rule (each chose the other
+  candidate) and pass.
+- **Measured** against §4.2: one battle moved; no battle's winner over its seeds changed; battle 33 bit-identical
+  (37 / 20 / 11); both golden replays unchanged.
+
+| Battle | Seeds moved | Wins blue/red | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|---|
+| 35_12_vikings_vs_6_colossi | 20 | 20/0 → 13/0 | 12.00 – 0.00 → 12.00 – 0.35 | 280.4 → 504.6 | 125.00, same / — |
+
+  The colossi cannot hit the Vikings, so none is a threat to them; the old rule had ranked a colossus holding an
+  attack-move order (20) above one that had stopped (19). On 7 seeds, 3 of them of record, one colossus now flees
+  out of the Vikings' scan range and lives to the time limit (tick 900); the mechanism is inferred from the rule,
+  not traced per unit. The expectation `red: (0, 1)` and the fixture's claim
+  ("a helpless colossus may flee out of their scan range") hold; the Vikings still lose nothing.
+
+### 4.4 B-7 data: always a threat, defensive workers
+
+- **Data** per §4.1. **Test first:** `weapon_catalog_rules_tests::b7_threat_flags_and_acquire_levels_follow_starcraft`
+  failed on the old data (`welder_drone` `Offensive`) and passes.
+- **Measured** against §4.3: matrix and battle 33 bit-identical; goldens unchanged.
+
+### 4.5 Commit c: the reference attack target priorities (B-8, B-76)
+
+- **Data** per §4.1: the seven unarmed units 10 → 20; Missile Turret and Spore Crawler analogues 20 → 19; Bunker
+  11 → 19. **Test first:** `b8_every_archetype_has_its_starcraft_attack_target_priority` failed on the old data
+  (`repair_shuttle` 10) and passes.
+- **Measured** against §4.4: matrix and battle 33 bit-identical; goldens unchanged.
+
+### 4.6 Commit d: keeping the target (B-9)
+
+- **Rule tried.** A unit keeps a valid target inside weapon reach unless a candidate in scan range outranks it;
+  once the target is out of reach or lost, it takes the best candidate by the whole key, the closest among equals.
+  `RETARGET_DISTANCE_MARGIN` (1.0) deleted. Against the old rule the only difference is a target out of reach while
+  no equal candidate is in reach: the old rule kept chasing it unless a rival was more than 1.0 closer, the new one
+  takes the closest. Liquipedia's two sentences differ on whether a challenger must enter weapon or scan range; the
+  rule used scan range, where the candidates are.
+- **Tests:** `b9_a_target_out_of_range_gives_way_to_the_closest_candidate` failed on the old rule (kept the target 9
+  away against one 8 away); the guards `b9_a_target_in_range_is_kept_against_a_closer_equal_candidate` and
+  `b9_a_target_in_range_gives_way_to_a_higher_ranked_candidate` passed before and after.
+- **Measured** against §4.5: 12 battles moved. **Battle 33's winner over its seeds flipped**: on 20 seeds 10/6 → 7/11
+  (marine / zealot wins); on 68 seeds 37 / 20 / 11 → 20 / 35 / 13, marine survivors 3.62 (SD 3.16) → 1.85 (SD 2.46),
+  zealot survivors 1.00 (SD 1.32) → 1.76 (SD 1.52), mean end tick 443.1 → 446.8. Seeds of record 0-3, 0-2, 0-2, 9-0 →
+  0-2, 3-0, 0-2, 2-1 (the expectation `blue: (0, 9), red: (0, 3)` still holds on all four; 3 failures over all 20
+  seeds, was 1). `golden_replay.ron` diverged from checkpoint 5 (ticks 201 to 250). Other battles, no winner flip:
+  31_15_marauders_vs_15_stalkers 11/9 → 16/4 (11 seed winners changed); 32_30_marines_vs_15_banelings 4/11 → 4/8;
+  28_100_lings_vs_10_immortals survivors 27.20 → 35.10, end 678.0 → 597.1; 29 68.70 → 70.80, end 448.6 → 423.2;
+  27, 30, 34, 26, 15, 11a, 10 by under 5 ticks.
+- **First stopped, then applied.** The first run stopped under the hand-off's rule ("a battle's overall winner over its
+  seeds flipping stops the step"). The orchestrator then decided to apply it (plan Amendment 5): it is StarCraft II's
+  keep-target rule with a cited source, Q0051 asks for identical unit mechanics, and plan D-4 re-records battle 33
+  rather than stopping on it. It is committed after the B-10 commits, which were bit-identical, so the figures above
+  are its effect. No battle other than 33 changed its winner over its seeds.
+- **Mechanism, traced on the seeds of record** (`matchup_trace` unit CSVs before and after the rule, compared by
+  `~/scratch/sc2dev_wp4/scripts/trace_diff.py`). On seed 11 the two runs first differ at tick 68: zealot 34, chasing
+  marine 16 5.775 away and out of reach, takes marine 20, 5.774 away, where the old rule kept chasing marine 16.
+  On seed 3203386110 the first difference is the same kind at tick 57 (zealot 34: marine 20 at 8.503 gives way to
+  marine 24 at 8.495). Over the whole fight the zealots change target while their old one still lives 22 times on
+  seed 11 and 29 times on seed 3203386110 (2 and 2 before); the marines 1 and 8 times (1 and 0 before). The
+  marines rarely switch because they fire from range and keep their in-reach target, as before. So the change is
+  the keep-target rule acting on chasing zealots, not a side effect.
+- **Battle 33 re-recorded** (orchestrator: the smallest ranges that hold on all 20 matrix seeds): `blue: (0, 8),
+  red: (0, 5)` (was `(0, 9)`, `(0, 3)`); 0 failures over all 1000 runs. The fixture comment carries the 68-seed
+  distribution.
+- **`golden_replay.ron` re-recorded.** Checkpoints 1 to 4 unchanged; from checkpoint 5 (ticks 201 to 250) every one
+  changed. Cause, from a per-tick dump of each unit's target in the replay before and after: on tick 213 the
+  "red_psi" zealot (entity 24), chasing "blue_infantry" marine 15 2.291 away, out of reach, takes marine 8, 2.284
+  away; the old rule kept marine 15. `golden_replay_orders.ron` unchanged. Debug, release and `wasm32-wasip1`
+  reproduce both.
+
+### 4.7 Commit e: the primary weapon (B-10)
+
+- **Rule** (latent on the data of §4.5). `TargetPriorityKey` gains `primary` after the attack target priority
+  (`UnitArchetype::primary_weapon_reaches`: an air primary reaches air units and cliff walkers, a ground primary every
+  mover but air units, `Either` everything), and `rank()` includes it, as the source's "first 3 criteria".
+- **Tests first:** `b10_a_unit_prefers_a_target_for_its_primary_weapon` failed on the old rule (the closer ground
+  threat over the air threat) and passes; the guard `b10_threat_outranks_the_primary_weapon` passed before and
+  after. Matrix and battle 33 bit-identical to §4.5; goldens unchanged.
+- **Data:** `Air` on the Thor and Queen analogues (§4.1). **Test first:**
+  `b10_primary_weapons_follow_starcraft` failed on the old data (`colossus_mech` `Either`) and passes. Matrix and
+  battle 33 bit-identical (battle 14's Thor meets no air candidate); goldens unchanged.
+
+### 4.8 After Amendment 5
+
+B-9 (§4.6) was committed on top of the B-10 commits (§4.7), then B-11 in three commits (§4.9, §4.10) and B-80
+(§4.11). From §4.10 on, each matrix measurement was taken from the commit itself (extracted by an archive of the
+commit into a fixed directory, under the shared heavy-run lock), so the worktree could move on while the lock was
+busy.
+
+### 4.9 Commit f: checksum schema 11, latent (B-11)
+
+- **Change.** `Entity::previous_target_position: Option<SimVec2>`, `None` at spawn and hashed;
+  `CHECKSUM_SCHEMA_VERSION` 10 → 11. The tie-break "closest to the previous target" needs the position once the
+  target is lost (a dead entity leaves the world).
+- **Latent.** Nothing writes the field in this commit, so it is `None` on every entity on every tick and only its
+  empty option tag enters the digest. Re-recorded for the schema alone: both golden replays (every checkpoint), the
+  default sandbox checksum (`sim_fixtures` `fixture_tests`) and the schema bytes of four encoding unit tests. Debug,
+  release and `wasm32-wasip1` reproduce both goldens. No matrix measurement: the matrix does not read checksums
+  and no behaviour changed.
+
+### 4.10 Commit g: the per-archetype tie-break (B-11)
+
+- **Rule** (latent on all-`Closest` data). `TargetPriorityKey::tie_break` replaces the distance: the squared
+  distance (`Closest`), the turn of the firing facing towards the candidate in binary angle units
+  (`LeastTurning`; the turret's facing for a turreted weapon, the hull's otherwise), or the squared distance from the
+  previous target's last position (`ClosestToPrevious`; the unit's own distance while it has none). It decides only
+  when a unit chooses anew, because a kept target (§4.6) is never compared on it. Acquisition records the current
+  target's position each tick on `ClosestToPrevious` units only.
+- **Tests first:** `b11_least_turning_takes_the_candidate_ahead` and
+  `b11_closest_to_previous_takes_the_candidate_nearest_the_lost_target` failed on the old rule (each took the closer
+  candidate) and pass. Matrix and battle 33 bit-identical to §4.6; goldens unchanged on every target.
+- **Data:** `LeastTurning` on the Thor and Ultralisk analogues, `ClosestToPrevious` on the Colossus analogue
+  (§4.1). **Test first:** `b11_acquire_tie_breaks_follow_starcraft` failed on the old data (`colossus_mech`
+  `Closest`) and passes. Goldens unchanged on every target (none of their units changes).
+
+  Measured against the rule commit: four battles moved, no battle's winner over its seeds changed; battle 33
+  bit-identical (20 / 35 / 13); 0 expectation failures over 1000 runs.
+
+| Battle | Seeds moved | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|
+| 12a_colossus_vs_6_marines | 6 | 1.00 – 0.00, same | 81.7 → 76.2 | 237.90 → 240.75 / — |
+| 15_plated_ultralisk_vs_8_marines | 20 | 1.00 – 0.00, same | 116.8 → 108.0 | 412.96 → 420.92 / — |
+| 26_100_lings_vs_6_colossi | 14 | 0.00 – 6.00, same | 116.3 → 107.5 | — / 250.00, same |
+| 27_100_lings_vs_8_ultralisks | 20 | 0.00 – 8.00, same | 213.2 → 273.8 | — / 417.91 → 393.99 |
+
+  The Colossi keep sweeping the cluster their last target stood in, and the lone Ultralisk turns least and kills the
+  marines sooner (12a, 15, 26). Eight Ultralisks against 100 zerglings take 61 ticks longer: each takes the zergling
+  ahead of it rather than the closest one (the mechanisms of this paragraph are inferred from the rule, not traced
+  per unit).
+
+### 4.11 Commit h: a worker acquires only while attack-moving (B-80)
+
+- **Rule.** An archetype with `acquire_level: Defensive` (the SCV, Probe and Drone analogues, §4.1) acquires no
+  target while idle or holding; attack-moving, or carrying out an attack it already has, it goes on (Liquipedia
+  "Automatic Targeting", Notes: units with a defensive acquire level "do not automatically acquire targets for their
+  weapons" unless they attack-move). Retaliation when struck and the alert of idle allies are unchanged; they are
+  B-13's (WP16).
+- **Test first:** `b80_a_defensive_unit_acquires_only_while_attack_moving` failed on the old rule (the idle scratch
+  worker took the enemy) and passes. Goldens unchanged on every target.
+
+  Measured against §4.10: matrix and battle 33 bit-identical (no matrix battle has an idle worker beside an enemy).
+
+### 4.12 What WP4 leaves open
+
+Nothing of B-7 to B-11, B-76 or B-80. The rank of a challenger follows the source's "first 3 criteria" (Amendment
+4); Liquipedia's weapon-range versus scan-range wording for a challenger is resolved to scan range (§4.6). The C7
+float counts did not move (the new fields are integers, enums and a fixed-point vector).

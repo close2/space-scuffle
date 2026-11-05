@@ -13,26 +13,25 @@
 //!    and an explicit attack ends only when it can no longer be carried out.
 //! 2. A holding or immobile unit only considers targets its weapon reaches from where it
 //!    stands, and acquisition never moves a unit off a hold order.
-//! 3. Candidates are ranked by [`TargetPriorityKey`], so the choice is deterministic. A unit that
-//!    cannot hit its automatic target takes an equal enemy it can hit from where it stands, because
-//!    bodies now block: walking on around a crowd would only lose the blows.
+//! 3. Candidates are ranked by [`TargetPriorityKey`], so the choice is deterministic. As in
+//!    `StarCraft` II (Liquipedia "Automatic Targeting"), a unit keeps a target while it is valid
+//!    and inside weapon reach, unless a candidate of higher rank (threat, then attack target
+//!    priority) is in scan range; once the target is lost or out of reach, the unit takes the
+//!    best candidate by the whole key; among equals, the archetype's tie-break decides (closest,
+//!    least turning, or closest to the previous target).
 //! 4. Damage from a unit's own side never causes retaliation, flight or alerts.
 
-use crate::catalog::UnitArchetype;
-use crate::combat::{compute_threat_priority, TargetPriorityKey, MAX_THREAT_PRIORITY};
+use crate::catalog::{AcquireLevel, AcquireTieBreak, UnitArchetype, WeaponSpec};
+use crate::combat::{is_threat_to, weapon_aim, TargetPriorityKey};
 use crate::entity::Entity;
 use crate::weapon_timing::SimulationDiagnostic;
 use crate::world::SimWorld;
 use sim_map::{PlayerVisionMap, SimMap};
 use sim_types::{
-    AttackOrigin, EntityId, PerPlayer, PlayerId, SimScalar, SimVec2, Tick, UnitOrder,
+    AttackOrigin, EntityId, PerPlayer, PlayerId, SimAngle, SimScalar, SimVec2, Tick, UnitOrder,
     VisibilityState,
 };
 use std::collections::BTreeMap;
-
-/// World units a chased target may be farther than an equally rated rival before the unit
-/// switches, so two enemies at similar distances do not make it dither between them.
-const RETARGET_DISTANCE_MARGIN: SimScalar = SimScalar::ONE;
 
 /// Radius within which a unit under attack alerts idle allies, squared, in world units.
 const CALL_FOR_HELP_RADIUS_SQ: i32 = 25;
@@ -64,15 +63,18 @@ pub(crate) enum Acquisition {
     ReleaseHoldTarget,
     /// End an attack order an immobile unit can never carry out.
     AbandonAttack,
+    /// Record where the unit's current target stands, for the tie-break
+    /// [`AcquireTieBreak::ClosestToPrevious`].
+    RememberTarget(SimVec2),
 }
 
 /// Best candidates from one neighbourhood scan.
 #[derive(Clone, Copy, Default)]
 struct ScanResult {
     /// Top-ranked candidate.
-    best: Option<(TargetPriorityKey, SimScalar)>,
+    best: Option<TargetPriorityKey>,
     /// The unit's current target, if it is still a candidate.
-    current: Option<(TargetPriorityKey, SimScalar)>,
+    current: Option<TargetPriorityKey>,
 }
 
 impl SimWorld {
@@ -332,6 +334,12 @@ impl SimWorld {
         acquisitions.clear();
         let mut neighbors = std::mem::take(&mut self.scratch_neighbors);
         let mut candidates = std::mem::take(&mut self.scratch_targets);
+        let top_priority = self
+            .catalog
+            .archetypes()
+            .map(|archetype| archetype.attack_target_priority)
+            .max()
+            .unwrap_or(0);
         for (&id, entity) in &self.entities {
             if entity.channeling_remaining_ticks > 0
                 || entity.is_loaded_in_transport()
@@ -342,8 +350,14 @@ impl SimWorld {
             let Ok(arch) = self.catalog.get(entity.unit_type_id) else {
                 continue;
             };
-            let decision = self.decide_acquisition(entity, arch, &mut neighbors, &mut candidates);
-            if let Some(decision) = decision {
+            let decision = self.decide_acquisition(
+                entity,
+                arch,
+                top_priority,
+                &mut neighbors,
+                &mut candidates,
+            );
+            if let Some(decision) = decision.or_else(|| self.target_to_remember(entity, arch)) {
                 acquisitions.push((id, decision));
             }
         }
@@ -359,10 +373,61 @@ impl SimWorld {
                         unit.order_queue.pop_front();
                         unit.current_target = None;
                     }
+                    Acquisition::RememberTarget(position) => {
+                        unit.previous_target_position = Some(position);
+                    }
                 }
             }
         }
         self.scratch_acquisitions = acquisitions;
+    }
+
+    /// Where `entity`'s current target stands, if its archetype breaks ties by the previous
+    /// target's position and the target still exists.
+    fn target_to_remember(&self, entity: &Entity, arch: &UnitArchetype) -> Option<Acquisition> {
+        if arch.acquire_tie_break != AcquireTieBreak::ClosestToPrevious {
+            return None;
+        }
+        let target = self.entities.get(&entity.current_target?)?;
+        Some(Acquisition::RememberTarget(target.position))
+    }
+
+    /// The tie-break measure of `candidate` for `entity` (see [`TargetPriorityKey::tie_break`]),
+    /// given the weapon it would use against the candidate.
+    fn tie_break(
+        entity: &Entity,
+        arch: &UnitArchetype,
+        weapon: &WeaponSpec,
+        candidate: &Entity,
+    ) -> SimScalar {
+        let distance_sq = entity.position.distance_sq(candidate.position);
+        match arch.acquire_tie_break {
+            AcquireTieBreak::Closest => distance_sq,
+            AcquireTieBreak::LeastTurning => {
+                let delta = candidate.position - entity.position;
+                let bearing = SimAngle::atan2(delta.y, delta.x);
+                let turn = weapon_aim(entity, weapon).diff(bearing).unsigned_abs();
+                SimScalar::from_i32(i32::from(turn))
+            }
+            AcquireTieBreak::ClosestToPrevious => entity
+                .previous_target_position
+                .map_or(distance_sq, |previous| {
+                    previous.distance_sq(candidate.position)
+                }),
+        }
+    }
+
+    /// Whether `entity` acquires no target on its own: an archetype with the defensive acquire
+    /// level (`StarCraft` II's workers) acquires automatically only while it attack-moves
+    /// (Liquipedia "Automatic Targeting", Notes). Idle or holding, it leaves enemies alone; an
+    /// attack it already carries out goes on.
+    fn holds_fire(entity: &Entity, arch: &UnitArchetype, engagement: Engagement) -> bool {
+        arch.acquire_level == AcquireLevel::Defensive
+            && matches!(engagement, Engagement::Seek | Engagement::Hold)
+            && !matches!(
+                entity.order_queue.front(),
+                Some(UnitOrder::AttackMove { .. })
+            )
     }
 
     /// Classifies what acquisition may do for `entity`.
@@ -400,17 +465,23 @@ impl SimWorld {
     // PERFORMANCE RATIONALE:
     // Why: The neighbourhood scan is the costliest step of this phase, and in a battle nearly
     // every unit is under an automatic attack.
-    // What: A unit already engaging a target of the highest possible threat skips the scan,
-    // because nothing can outrank it and an in-reach target is never traded for an equal.
-    // Trade-off: One extra catalog lookup per engaged unit, for far fewer scans.
+    // What: A unit already engaging an in-reach threat of the catalog's highest attack target
+    // priority (`top_priority`), for its primary weapon, skips the scan, because nothing can outrank it and an in-reach
+    // target is never traded for an equal.
+    // Trade-off: One pass over the catalog per tick and one threat test per engaged unit, for
+    // far fewer scans.
     fn decide_acquisition(
         &self,
         entity: &Entity,
         arch: &UnitArchetype,
+        top_priority: u8,
         neighbors: &mut Vec<EntityId>,
         candidates: &mut Vec<(TargetPriorityKey, EntityId)>,
     ) -> Option<Acquisition> {
         let engagement = Self::engagement_of(entity);
+        if Self::holds_fire(entity, arch, engagement) {
+            return None;
+        }
         let current = match engagement {
             Engagement::Busy => return None,
             Engagement::Seek => None,
@@ -432,8 +503,9 @@ impl SimWorld {
             self.catalog
                 .get(target.unit_type_id)
                 .is_ok_and(|target_arch| {
-                    compute_threat_priority(target_arch, target.order_queue.front())
-                        >= MAX_THREAT_PRIORITY
+                    target_arch.attack_target_priority >= top_priority
+                        && arch.primary_weapon_reaches(target_arch.mover_type)
+                        && is_threat_to(target_arch, target, arch)
                 })
         });
         if top_threat {
@@ -442,7 +514,7 @@ impl SimWorld {
 
         let stationary = entity.is_immobile || matches!(engagement, Engagement::Hold);
         let scan = self.scan_candidates(entity, arch, current, stationary, neighbors, candidates);
-        let Some((best, best_distance)) = scan.best else {
+        let Some(best) = scan.best else {
             return match engagement {
                 Engagement::Hold if current.is_some() && reachable_current.is_none() => {
                     Some(Acquisition::ReleaseHoldTarget)
@@ -453,19 +525,13 @@ impl SimWorld {
                 _ => None,
             };
         };
-        if let Some((held, held_distance)) = scan.current {
-            let in_reach_now = reachable_current.is_none()
-                && self
-                    .entities
-                    .get(&best.entity_id)
-                    .is_some_and(|enemy| self.reaches_from_here(entity, arch, enemy));
-            let keeps = best.threat_priority <= held.threat_priority
-                && !in_reach_now
-                && (reachable_current.is_some()
-                    || held_distance <= best_distance + RETARGET_DISTANCE_MARGIN);
-            if keeps {
-                return None;
-            }
+        if current == Some(best.entity_id) {
+            return None;
+        }
+        // A valid target in reach is kept unless a candidate outranks it.
+        let outranked = scan.current.is_none_or(|held| best.rank() > held.rank());
+        if reachable_current.is_some() && !outranked {
+            return None;
         }
         Some(Acquisition::Engage(best.entity_id))
     }
@@ -529,15 +595,17 @@ impl SimWorld {
             }
 
             let key = TargetPriorityKey {
-                threat_priority: compute_threat_priority(target_arch, neighbor.order_queue.front()),
-                distance_sq: entity.position.distance_sq(neighbor.position),
+                threat: is_threat_to(target_arch, neighbor, arch),
+                attack_target_priority: target_arch.attack_target_priority,
+                primary: arch.primary_weapon_reaches(target_arch.mover_type),
+                tie_break: Self::tie_break(entity, arch, weapon, neighbor),
                 entity_id: neighbor_id,
             };
             if Some(neighbor_id) == current {
-                result.current = Some((key, dist));
+                result.current = Some(key);
             }
-            if result.best.is_none_or(|(best, _)| key < best) {
-                result.best = Some((key, dist));
+            if result.best.is_none_or(|best| key < best) {
+                result.best = Some(key);
             }
         }
         result

@@ -18,6 +18,7 @@
     clippy::too_many_lines
 )]
 
+use sim_core::catalog::{AcquireLevel, AcquireTieBreak, PrimaryWeapon};
 use sim_core::{
     calculate_hit_damage, calculate_splash_damage, SplashSpec, UnitArchetype, WeaponSpec,
     MIN_DAMAGE_CLAMP,
@@ -73,6 +74,11 @@ fn dummy_target_archetype(
         push_priority: 10,
         sight_radius: SimScalar::from_num(8),
         scan_range: SimScalar::from_num(8),
+        attack_target_priority: 20,
+        always_a_threat: false,
+        acquire_level: AcquireLevel::Offensive,
+        primary_weapon: PrimaryWeapon::Either,
+        acquire_tie_break: AcquireTieBreak::Closest,
         mineral_cost: 0,
         gas_cost: 0,
         supply_cost: 0,

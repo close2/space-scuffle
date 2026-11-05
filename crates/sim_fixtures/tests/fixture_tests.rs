@@ -25,7 +25,9 @@ use std::path::PathBuf;
 /// each entity's constant-zero `anim_progress`; the spawned state itself did not change.
 /// Re-recorded for plan 2026-11-04-combat-sc2-alignment WP9: a new entity's hashed
 /// `ticks_since_last_damage` starts at `u16::MAX` instead of 250; nothing else changed.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 13_512_067_113_893_542_543;
+/// Re-recorded for checksum schema 11 (plan 2026-11-05-sc2-deviation-fixes WP4, B-11), which
+/// encodes each entity's `previous_target_position`, `None` at spawn.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 11_595_034_467_069_293_875;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

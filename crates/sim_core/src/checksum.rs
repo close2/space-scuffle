@@ -34,7 +34,9 @@ use std::collections::BTreeMap;
 /// typed resource-node harvest targets, the new orders, and the match standing.
 /// Schema 10 removes each entity's animation progress, a constant zero no system wrote: the
 /// attack phase now reaches the renderer from the weapon state machine, not stored state.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 10;
+/// Schema 11 adds where each unit's automatic target last stood, which the tie-break "closest
+/// to the previous target" reads.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 11;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.
