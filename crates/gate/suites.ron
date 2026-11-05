@@ -297,6 +297,7 @@ SuiteCatalog(
             "sim_core/snapshot_output_tests",
             "sim_core/spells_and_abilities_tests",
             "sim_core/stutter_step_tests",
+            "sim_core/target_selection_tests",
             "sim_core/turret_tracking_tests",
             "sim_core/upgrades_and_tech_tree_tests",
             "sim_core/watchtower_tick_tests",

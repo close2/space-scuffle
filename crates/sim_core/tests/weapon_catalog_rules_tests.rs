@@ -12,7 +12,7 @@
 //! Invalid inputs are produced by editing the real shipped catalog text, so each case proves
 //! the validator rejects that one field and not a fixture that was already malformed.
 
-use sim_core::catalog::UnitCatalog;
+use sim_core::catalog::{AcquireLevel, AcquireTieBreak, PrimaryWeapon, UnitCatalog};
 use sim_core::{is_within_firing_arc, SimCoreError, SimWorld, UpgradeCatalog, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{EntityId, MoverType, PlayerId, SimAngle, SimScalar, SimVec2, Tick, TickBundle};
@@ -572,5 +572,203 @@ fn s19_gas_extractor_flag_reaches_capabilities() -> TestResult {
         .filter(|a| a.capabilities.is_gas_extractor)
         .count();
     assert_eq!(extractors, 3, "one extractor per faction");
+    Ok(())
+}
+
+/// `StarCraft` II 5.0.14 units with the `CUnit` flag `AlwaysThreatens` among the analogues this
+/// catalog models, as the name an archetype's `sc2_analogue` begins with and where the data set
+/// it (`SC2GameData` `5444e12f13`, `UnitData`; plan `2026-11-05-sc2-deviation-fixes` WP4, B-7).
+/// The Medivac's flag is set in `liberty` and cleared in `swarm` (`UnitData:1704`).
+const SC2_ALWAYS_A_THREAT: [(&str, &str); 5] = [
+    ("High Templar", "liberty UnitData:3276"),
+    ("Raven", "liberty UnitData:5584"),
+    ("Lurker", "voidmulti UnitData:971"),
+    ("Infestor", "liberty UnitData:10080"),
+    ("Viper", "swarm UnitData:2319"),
+];
+
+/// The analogues whose `CUnit` `DefaultAcquireLevel` is `Defensive` (the workers); every other
+/// unit keeps the `core` default `Offensive` (`core` `UnitData:31`).
+const SC2_DEFENSIVE_ACQUIRE: [(&str, &str); 3] = [
+    ("SCV", "liberty UnitData:4726"),
+    ("Probe", "liberty UnitData:3065"),
+    ("Drone", "liberty UnitData:7034"),
+];
+
+#[test]
+fn b7_threat_flags_and_acquire_levels_follow_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    let listed = |table: &[(&str, &str)], archetype: &sim_core::catalog::UnitArchetype| {
+        table.iter().any(|(unit, _)| {
+            archetype
+                .sc2_analogue()
+                .and_then(|analogue| analogue.split(" (").next())
+                == Some(*unit)
+        })
+    };
+    for (unit, source) in SC2_ALWAYS_A_THREAT.iter().chain(&SC2_DEFENSIVE_ACQUIRE) {
+        assert!(
+            archetypes_with_analogue(&world, unit).next().is_some(),
+            "an archetype with the analogue {unit} ({source})"
+        );
+    }
+    for archetype in world.catalog.archetypes() {
+        assert_eq!(
+            archetype.always_a_threat,
+            listed(&SC2_ALWAYS_A_THREAT, archetype),
+            "{}: always_a_threat as StarCraft II's AlwaysThreatens",
+            archetype.slug
+        );
+        let defensive = listed(&SC2_DEFENSIVE_ACQUIRE, archetype);
+        assert_eq!(
+            archetype.acquire_level == AcquireLevel::Defensive,
+            defensive,
+            "{}: acquire_level as StarCraft II's DefaultAcquireLevel",
+            archetype.slug
+        );
+    }
+    Ok(())
+}
+
+/// `StarCraft` II 5.0.14 `AttackTargetPriority` of the analogues that differ from the rule
+/// "units 20, structures 11", and where the data set it (`SC2GameData` `5444e12f13`,
+/// `UnitData`; plan `2026-11-05-sc2-deviation-fixes` WP4, B-8). Every unit analogue this
+/// catalog models has 20 (Liquipedia "Automatic Targeting": all units but cocoons, larvae,
+/// unburrowed Widow Mines and Interceptors, none of which is modelled). The Bunker's 19 is the
+/// empty Bunker's: the catalog's Bunker carries no passengers, so it is never the filled
+/// Bunker of 20. The Spine Crawler's 20 is the rooted one's: the catalog's cannot uproot.
+const SC2_STRUCTURE_PRIORITY: [(&str, u8, &str); 6] = [
+    ("Planetary Fortress", 20, "liberty UnitData:10660"),
+    ("Photon Cannon", 20, "liberty UnitData:11051"),
+    ("Spine Crawler", 20, "liberty UnitData:8614"),
+    ("Missile Turret", 19, "liberty UnitData:6032"),
+    ("Spore Crawler", 19, "liberty UnitData:8748"),
+    ("Bunker", 19, "liberty UnitData:6153"),
+];
+
+#[test]
+fn b8_every_archetype_has_its_starcraft_attack_target_priority() -> TestResult {
+    let world = flat_world(16)?;
+    for (unit, _, source) in SC2_STRUCTURE_PRIORITY {
+        assert!(
+            archetypes_with_analogue(&world, unit).next().is_some(),
+            "an archetype with the analogue {unit} ({source})"
+        );
+    }
+    for archetype in world.catalog.archetypes() {
+        let is_structure = archetype
+            .attributes
+            .contains(sim_types::AttributeFlags::STRUCTURE);
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next());
+        let (expected, source) = SC2_STRUCTURE_PRIORITY
+            .iter()
+            .find(|(unit, ..)| Some(*unit) == analogue)
+            .map_or(
+                if is_structure {
+                    (11, "every other structure")
+                } else {
+                    (20, "every unit")
+                },
+                |&(_, priority, source)| (priority, source),
+            );
+        assert_eq!(
+            archetype.attack_target_priority, expected,
+            "{} ({analogue:?}): AttackTargetPriority {expected} ({source})",
+            archetype.slug
+        );
+    }
+    Ok(())
+}
+
+/// `StarCraft` II 5.0.14 units this catalog models whose two weapons are distinct ground and
+/// air weapons, with the first `WeaponArray` entry (the primary) an air weapon (`SC2GameData`
+/// `5444e12f13`; plan `2026-11-05-sc2-deviation-fixes` WP4, B-10). Thor: `JavelinMissileLaunchers`
+/// (`Air` filter, `liberty` WeaponData:216) before `ThorsHammer`; Queen: `AcidSpines` (`Air`,
+/// WeaponData:104) before `Talons`. Liquipedia "Automatic Targeting" names the same primaries.
+/// Every other modelled unit has one weapon per plane from a single `StarCraft` II weapon, or
+/// none, so its primary weapon is `Either`.
+const SC2_AIR_PRIMARY: [(&str, &str); 2] = [
+    ("Thor", "liberty UnitData:5270"),
+    ("Queen", "liberty UnitData:11478"),
+];
+
+#[test]
+fn b10_primary_weapons_follow_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    for (unit, source) in SC2_AIR_PRIMARY {
+        assert!(
+            archetypes_with_analogue(&world, unit).next().is_some(),
+            "an archetype with the analogue {unit} ({source})"
+        );
+    }
+    for archetype in world.catalog.archetypes() {
+        let air_primary = SC2_AIR_PRIMARY.iter().any(|(unit, _)| {
+            archetype
+                .sc2_analogue()
+                .and_then(|analogue| analogue.split(" (").next())
+                == Some(*unit)
+        });
+        let expected = if air_primary {
+            PrimaryWeapon::Air
+        } else {
+            PrimaryWeapon::Either
+        };
+        assert_eq!(
+            archetype.primary_weapon, expected,
+            "{}: primary weapon as StarCraft II's WeaponArray",
+            archetype.slug
+        );
+    }
+    Ok(())
+}
+
+/// `StarCraft` II 5.0.14 `CWeapon` `AcquirePrioritization` of the analogues this catalog models
+/// whose weapons set one (`SC2GameData` `5444e12f13`; plan `2026-11-05-sc2-deviation-fixes` WP4,
+/// B-11). Every other weapon keeps the engine default, the closest target. Liquipedia also names
+/// the Immortal and the unsieged Siege Tank as `ByDistanceFromTarget`, but their 5.0.14 weapons
+/// (`PhaseDisruptors`, `90mmCannons`) set nothing, and the data win.
+const SC2_ACQUIRE_TIE_BREAK: [(&str, AcquireTieBreak, &str); 3] = [
+    (
+        "Thor",
+        AcquireTieBreak::LeastTurning,
+        "ByAngle, liberty WeaponData:217, :230",
+    ),
+    (
+        "Ultralisk",
+        AcquireTieBreak::LeastTurning,
+        "ByAngle, liberty WeaponData:435, :445",
+    ),
+    (
+        "Colossus",
+        AcquireTieBreak::ClosestToPrevious,
+        "ByDistanceFromTarget, liberty WeaponData:498, void WeaponData:128",
+    ),
+];
+
+#[test]
+fn b11_acquire_tie_breaks_follow_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    for (unit, _, source) in SC2_ACQUIRE_TIE_BREAK {
+        assert!(
+            archetypes_with_analogue(&world, unit).next().is_some(),
+            "an archetype with the analogue {unit} ({source})"
+        );
+    }
+    for archetype in world.catalog.archetypes() {
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next());
+        let expected = SC2_ACQUIRE_TIE_BREAK
+            .iter()
+            .find(|(unit, ..)| Some(*unit) == analogue)
+            .map_or(AcquireTieBreak::Closest, |&(_, tie_break, _)| tie_break);
+        assert_eq!(
+            archetype.acquire_tie_break, expected,
+            "{}: tie-break as StarCraft II's AcquirePrioritization",
+            archetype.slug
+        );
+    }
     Ok(())
 }

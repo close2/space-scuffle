@@ -1,21 +1,22 @@
 //! # Combat Systems, Weapon State Machine & Damage Resolution
 //!
 //! Enforces `StarCraft` II-parity weapon state machines, angular turret tracking,
-//! target acquisition priority, exact shield spillover damage formulas, and splash falloff.
+//! target acquisition ranking, exact shield spillover damage formulas, and splash falloff.
 //!
 //! ## Invariants Maintained
 //! 1. All calculations use deterministic fixed-point math with zero floating-point operations.
-//! 2. Target priority sorting is strictly deterministic: `(threat_priority DESC, dist ASC, id ASC)`.
+//! 2. Target ranking is strictly deterministic: `(threat DESC, attack target priority DESC,
+//!    primary weapon DESC, tie-break ASC, id ASC)`.
 //! 3. Minimum damage is clamped to 0.5 HP for non-zero attacks.
 //! 4. Shield and life regeneration wait for the archetype's catalog delays
 //!    (`shield_regen_delay_ticks`, `hp_regen_delay_ticks`) after sustaining damage; any damage,
 //!    to shields or life, restarts both.
 
-use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
+use crate::catalog::{AcquireLevel, SplashSpec, UnitArchetype, WeaponSpec};
 use crate::entity::{Entity, WeaponPhase};
 use sim_types::{
-    AttributeFlags, EntityId, MoverType, PlayerUpgradeState, SimAngle, SimScalar, SimVec2,
-    UnitOrder,
+    AttackOrigin, AttributeFlags, EntityId, MoverType, PlayerUpgradeState, SimAngle, SimScalar,
+    SimVec2, UnitOrder,
 };
 
 // PERFORMANCE RATIONALE:
@@ -291,28 +292,52 @@ pub fn calculate_splash_damage(
     )
 }
 
-/// Key used to deterministically sort target acquisition candidates.
+/// Key used to deterministically sort target acquisition candidates; the smaller key is the
+/// better target.
 ///
-/// Order preference:
-/// 1. `threat_priority` (Higher is attacked first)
-/// 2. `distance_sq` (Closer is attacked first)
-/// 3. `entity_id` (Lower ID breaks ties deterministically)
+/// Order preference, as `StarCraft` II's automatic targeting (Liquipedia "Automatic
+/// Targeting"):
+/// 1. `threat` (a threat first; see [`is_threat_to`])
+/// 2. `attack_target_priority` (higher first; `CUnit` `AttackTargetPriority`)
+/// 3. `primary` (a target for the unit's primary weapon first; `CUnit` `WeaponArray` order)
+/// 4. `tie_break` (smaller first): the archetype's tie-break measure (`CWeapon`
+///    `AcquirePrioritization`, see [`crate::catalog::AcquireTieBreak`]). It decides only when the
+///    unit chooses anew; a kept target is never compared on it.
+/// 5. `entity_id` (lower first). Not a game rule: it only decides exact ties, deterministically.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TargetPriorityKey {
-    /// Threat tier value (higher attacked first).
-    pub threat_priority: u8,
-    /// Squared distance to target.
-    pub distance_sq: SimScalar,
+    /// Whether the candidate threatens the unit choosing.
+    pub threat: bool,
+    /// The candidate archetype's attack target priority.
+    pub attack_target_priority: u8,
+    /// Whether the unit's primary weapon can be used against the candidate.
+    pub primary: bool,
+    /// The tie-break measure, smaller first: the squared distance to the candidate
+    /// (`Closest`), the turn of the firing facing towards it in binary angle units
+    /// (`LeastTurning`), or the squared distance from the previous target's last position to
+    /// it (`ClosestToPrevious`; the squared distance to the candidate while there is none).
+    pub tie_break: SimScalar,
     /// Entity ID tie-breaker.
     pub entity_id: EntityId,
+}
+
+impl TargetPriorityKey {
+    /// The criteria that let a candidate displace a target the unit keeps: threat, attack
+    /// target priority, then the primary weapon (Liquipedia "Automatic Targeting": "a more
+    /// important target (according to the first 3 criteria)"). A candidate replaces a kept
+    /// target only if this is strictly greater.
+    #[must_use]
+    pub const fn rank(&self) -> (bool, u8, bool) {
+        (self.threat, self.attack_target_priority, self.primary)
+    }
 }
 
 impl Ord for TargetPriorityKey {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         other
-            .threat_priority
-            .cmp(&self.threat_priority)
-            .then_with(|| self.distance_sq.cmp(&other.distance_sq))
+            .rank()
+            .cmp(&self.rank())
+            .then_with(|| self.tie_break.cmp(&other.tie_break))
             .then_with(|| self.entity_id.0.cmp(&other.entity_id.0))
     }
 }
@@ -323,30 +348,47 @@ impl PartialOrd for TargetPriorityKey {
     }
 }
 
-/// Highest value [`compute_threat_priority`] returns: an armed unit attacking right now.
-pub const MAX_THREAT_PRIORITY: u8 = 20;
-
-/// Evaluates the threat priority level of an enemy archetype and its current order.
+/// Whether `candidate`, an entity of archetype `candidate_archetype`, threatens a unit of
+/// archetype `chooser_archetype` (criterion 1 of `StarCraft` II's automatic targeting).
+///
+/// A candidate is a threat if its archetype is flagged always a threat (`AlwaysThreatens`), or
+/// if it has a weapon for which the chooser is a legal target: a weapon against the chooser's
+/// mover type whose target flags meet the chooser's attributes. A candidate whose acquire level
+/// is [`AcquireLevel::Defensive`] (the workers') threatens only while it is attack-moving
+/// (Liquipedia "Automatic Targeting", Threats and Notes). Range and the candidate's order
+/// otherwise play no part.
 #[must_use]
-pub fn compute_threat_priority(archetype: &UnitArchetype, order: Option<&UnitOrder>) -> u8 {
-    let has_weapon = archetype.weapon.is_some()
-        || archetype.ground_weapon.is_some()
-        || archetype.air_weapon.is_some();
-    if has_weapon {
-        match order {
-            Some(UnitOrder::AttackMove { .. } | UnitOrder::AttackTarget { .. }) => {
-                MAX_THREAT_PRIORITY
-            }
-            _ => MAX_THREAT_PRIORITY - 1, // Combat unit not actively attacking
-        }
-    } else if archetype.attributes.contains(AttributeFlags::STRUCTURE) {
-        if archetype.is_detector {
-            15
-        } else {
-            11 // Passive structures / domes
-        }
-    } else {
-        10 // Worker or utility unit
+pub fn is_threat_to(
+    candidate_archetype: &UnitArchetype,
+    candidate: &Entity,
+    chooser_archetype: &UnitArchetype,
+) -> bool {
+    if candidate_archetype.always_a_threat {
+        return true;
+    }
+    if candidate_archetype.acquire_level == AcquireLevel::Defensive && !is_attack_moving(candidate)
+    {
+        return false;
+    }
+    candidate_archetype
+        .weapon_against(
+            chooser_archetype.mover_type,
+            candidate.active_siege_weapon(),
+        )
+        .is_some_and(|weapon| weapon.target_flags.intersects(chooser_archetype.attributes))
+}
+
+/// Whether `entity` carries out an attack-move: its front order is one, or it is an automatic
+/// attack that acquisition put in front of one.
+fn is_attack_moving(entity: &Entity) -> bool {
+    let mut orders = entity.order_queue.iter();
+    match orders.next() {
+        Some(UnitOrder::AttackMove { .. }) => true,
+        Some(UnitOrder::AttackTarget {
+            origin: AttackOrigin::Acquired,
+            ..
+        }) => matches!(orders.next(), Some(UnitOrder::AttackMove { .. })),
+        _ => false,
     }
 }
 
@@ -410,8 +452,8 @@ fn slew_towards(entity: &mut Entity, weapon: &WeaponSpec, angle: SimAngle) {
     }
 }
 
-/// Current aim of the weapon mount.
-fn weapon_aim(entity: &Entity, weapon: &WeaponSpec) -> SimAngle {
+/// Current aim of the weapon mount: the turret's angle for a turreted weapon, else the hull's.
+pub(crate) fn weapon_aim(entity: &Entity, weapon: &WeaponSpec) -> SimAngle {
     if weapon.has_turret {
         entity.turret_angle
     } else {
