@@ -21,6 +21,68 @@ not been measured are marked as such; no planning probe was run, because the mai
 | [Q0045](../questions/open/0045-catalog-time-audit-deliberate-values.md) item 1(b), hull turning | Open; closed by combat alignment WP13. Its turn-before-move part (WP17 commit g) is done here | §1 hand-off, WP4 |
 | [Q0008](../questions/closed/) StarCraft II where the specification is silent (charter §8) | Standing rule | D-2, D-3, D-5 |
 
+**Amendment 1 (orchestrator, 2026-11-05, against this plan's commit on `main` at `a27ce2a`).** The owner gave a
+standing rule on 2026-11-05, relayed by the orchestrator and overriding this plan where they differ: "always use the
+SC2 mechanics unless I specifically tell to deviate and mention the deviation. When you see a deviation which has not
+been explicitly mentioned as deviation, consider it a mistake or bug." Q0050's answer names `turn_rate_deg` for the
+turn in place but does not call it a deviation, so StarCraft II's rate wins. What changes:
+
+1. **The stationary rate is applied (D-6 and R-4 reversed; F-1 brought into scope).** New D-10 below and two new
+   packages, WP5 (code) and WP6 (data), run after WP3 and before WP4: WP1, WP2, WP3, WP5, WP6, WP4. One cause per
+   commit, each with its own measurement.
+2. **D-1's comparison reads the moving rate.** A tick that translates turns at the moving rate (`turn_rate`), so a
+   step is taken only when the remaining turn fits in one moving tick: `remaining <= turn_rate`. A tick that does
+   not translate turns at the stationary rate. The gate therefore carries `turn_rate`, not the tick-start budget
+   (`HullGate { heading, rate }`). Before WP6 both rates are equal and WP1's behaviour is exactly D-1's. After WP6
+   a reversal of the three flagged units takes 4 ticks in place (4 × 7 340 = 29 360; the remaining 3 408 fits in
+   3 670) and a step on the 5th tick, instead of 8 and the 9th.
+3. **D-3's validation bound becomes** `ceil(max(0, 32 768 − turn_rate) ÷ stationary_turn_rate) + 1 ≤
+   STALL_REPATH_TICKS` (the ticks to the first step of a reversal), in binary units. With equal rates this is D-3's
+   `ceil(32 768 ÷ turn_rate) ≤ 25`, so WP1's tests hold unchanged; WP5 generalises the rule.
+4. **A translation the plan's §2.2 missed.** `MotionDraft::upkeep_route` puts a unit that has no route and stands
+   within one step of its goal on the goal and finishes the order, outside `step_toward`. WP1 gates it the same way
+   for flagged units (turn in place, no finish), so invariant 1 holds on every path. This corrects the plan; it is
+   not a choice between behaviours.
+5. **Differences from StarCraft II that no source settles** are listed in the evidence file as open deviations,
+   each with what this code does: the tolerance itself (taken from the owner's answer), the facing of a short step
+   that lands on a waypoint, whether a unit turning in place counts as still for pushing and anchoring, its
+   animation, and whether pushes are gated. None is changed without a source.
+
+**D-10. The stationary turn rate (Amendment 1).** `UnitArchetypeDef` gains `stationary_turn_rate_deg_per_tick:
+Option<f32>` (`#[serde(default)]`; omitted means equal to `turn_rate_deg_per_tick`, as `CUnit` has the two fields
+default to related values and 38 of the 42 identities have them equal, audit §10.1), validated like the hull rate
+(`0 < rate ≤ 180`); `UnitArchetype` gains `stationary_turn_rate: SimAngle` (binary units per tick, through the
+loader's `binary_angle`); structures get `SimAngle::ZERO`. **Rule:** `reset_hull_turn_budgets` sets every entity's
+budget to its stationary rate; `MotionProposal::commit` sets the budget to the moving rate `turn_rate` before it
+turns the hull when the unit's own motion translates it this tick (`proposal.position != actor.position`). So the
+hull turns at the stationary rate on every tick the unit does not translate by its own motion (turning in place
+before a move, aiming a hull weapon while standing, Hold Position, idle), and at the moving rate on a tick it does;
+a collision push is not the unit's motion (D-4). Nothing spends the budget before the actor's single motion commit,
+so setting rather than capping it is exact. No new entity state; `hull_turn_budget` stays unhashed; schema stays
+10. **Values** (audit §10.1, §10.2, from the `StationaryTurningRate` field, Normal °/s × 1.4 ÷ 25):
+`railgun_crawler`, `colossus_mech`, `stag_behemoth`: 40.32 (720, `core` UnitData:39, the `CUnit` default none of
+the three overrides); `napalm_wheeler` (Hellion): 84.00 (1499.9414, `liberty` UnitData:11554). Every other identity
+omits the field.
+
+**WP5 (code, Amendment 1).** Tests first: catalog validation (stationary rate out of range rejected naming the
+field; omitted reads the hull rate; the generalised bound accepts a flagged unit whose stationary rate brings a
+slow hull within 25 ticks and rejects one that does not), and in `hull_turning_tests.rs` scratch archetypes whose
+stationary rate differs: a standing unit aiming its hull weapon turns at the stationary rate; a moving unit turns at
+the moving rate; a flagged unit on a reversal turns in place at the stationary rate and steps once the remainder
+fits in the moving rate. Implement D-10; every shipped value omitted, so the matrix, battle 33, both goldens and the
+sandbox are bit-identical (stop if not). Commit `feat(sim_core): hulls turn at a per-archetype stationary rate while
+the unit does not translate, equal to the moving rate everywhere (turn before move WP5, Amendment 1)`.
+
+**WP6 (data, Amendment 1).** Failing test first: the WP3 shipped-units test restated to the generalised count of
+ticks in place (`ceil(max(0, 32 768 − turn_rate) ÷ stationary_turn_rate)`), and a shipped-data test that every
+archetype whose stationary rate differs from its moving rate turns faster standing than moving (by property). Edit
+the four values above. Measure as WP3 against WP3's step: only battles containing the four identities may move
+(3, 9a, 9b, 10, 14, 15, 27); battle 33 bit-identical; `golden_replay.ron` from checkpoint 3 at the earliest (the
+tanks first turn their hulls after tick 120), the orders golden and the sandbox unchanged; same stop rules as WP3.
+Commit `data(catalog): the Siege Tank, Thor, Ultralisk and Hellion analogues turn at their StarCraft II stationary
+rates (turn before move WP6, Amendment 1)`, citing the sources above. WP4's documents and Q0050's resolution then
+describe both rates; F-8 of the alignment plan is closed by a pointer to this plan instead of being kept.
+
 ---
 
 ## 1. Summary
@@ -279,7 +341,7 @@ turn_rate_deg_per_tick)` called from `UnitArchetypeDef::validate` after `rate_pe
 
 The binary rate is computed with the loader's own `binary_angle`, so validation and simulation cannot disagree.
 
-### D-6. What this plan does not change: the stationary rate
+### D-6. What this plan does not change: the stationary rate (superseded by Amendment 1 and D-10)
 
 The owner's rule turns in place at `turn_rate` (20.16° per tick). The game data give these three a
 `StationaryTurningRate` of 40.32° per tick (audit §10.2), and the forum description (§2.6) suggests a unit turning
@@ -521,7 +583,7 @@ release and on `wasm32-wasip1` for this simulation change. The orchestrator runs
 | R-1: the gate changes an unflagged unit | WP1 not latent | the gate and the short-step heading request are behind `Some(gate)`; D-8 stop rule; bit-identical proof on matrix, battle 33, goldens, sandbox |
 | R-2: oscillating step directions (a flank side that toggles, steering deflection jittering around 20°) keep a flagged unit turning without stepping | a tank or ultralisk stalls in a crowd; repath or abandonment | measured: the `blocked` counts and the stop rule "more than 25 consecutive ticks without translation" (D-8); if it happens, stop and report with the trace; a fix (for example a minimum step-direction hold) is a new rule needing its own decision, not a widening |
 | R-3: residual short steps at a waypoint or the goal point far from the heading | a flagged unit pivots to cover a few hundredths of a unit | the waypoint hand-off (`drop_passed_waypoints`) drops corners before the unit reaches them; the measurement shows how often; recorded as an accepted consequence of the owner's rule (no exemption is specified) |
-| R-4: StarCraft II turns these units in place at the stationary rate (40.32°), twice ours | reversals here take up to 4 ticks longer than in the game | D-6; follow-up F-1 and alignment F-8; stated in Q0050's resolution |
+| R-4: StarCraft II turns these units in place at the stationary rate (40.32°), twice ours | reversals here take up to 4 ticks longer than in the game | superseded by Amendment 1: applied by WP5 and WP6 (D-10); formerly D-6, follow-up F-1 and alignment F-8 |
 | R-5: a turning unit counts as still and, with an attack order, as anchored for that tick | friendly traffic flows around it instead of being pushed | consistent with the existing rules (D-4); pinned by a test; visible in battle 27's measurement |
 | R-6: tests spawning shipped tanks, thors or ultralisks assumed instant translation | WP3 fails tests for a reason that is not its cause | WP2's probe and test-only restatements first |
 | R-7: a client test or the skirmish AI trains a flagged unit and pins timing | a downstream test moves | `cargo gate package` selects downstream contracts; such a test is restated in WP2 or explained in WP3 |
@@ -542,7 +604,7 @@ from checkpoint 3 with a traced cause; the orders golden and the sandbox unchang
 
 Recorded here so they can be brought back (charter §8, Q0002):
 
-- **F-1: `StationaryTurningRate`** for turning in place (D-6; alignment F-8). Would need a second rate field and a
+- **F-1: `StationaryTurningRate`** (brought into scope by Amendment 1: WP5 and WP6) for turning in place (D-6; alignment F-8). Would need a second rate field and a
   rule for which rate a tick uses; this plan's turn in place is the natural place it would apply.
 - **F-2: a step-direction hold or hysteresis** if R-2 is observed. Not specified by the owner or found in a source.
 - **F-3: turning while standing to fire.** The weapon phase's hull turns are unchanged; only translation is gated.
