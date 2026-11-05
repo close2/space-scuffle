@@ -30,3 +30,4 @@ group R1) found that `jet_jumper`'s `hp_regen_per_tick` of 0.08 is StarCraft II'
 
 ## Answer
 
+Owner (2026-11-05): Option (b) — add a per-archetype `hp_regen_delay_ticks` beside `shield_regen_delay_ticks` (179 for `jet_jumper`, 0 for the Zerg), then apply 0.112.

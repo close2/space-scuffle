@@ -34,3 +34,5 @@ turning reaches without overshoot. Under (a) these three units leave a fight up 
 when they turn around to move.
 
 ## Answer
+
+Owner (2026-11-05): Option (b) — add `turn_before_move: bool` per archetype (`true` for `railgun_crawler`, `colossus_mech`, and `stag_behemoth`), gating movement until the hull is aligned with the step direction (if the angle to the step direction exceeds one tick's `turn_rate_deg`, rotate in place this tick; once within one turn step / aligned, snap facing and translate so units turn in place on reversals without stalling on gentle path curves).
