@@ -12,7 +12,7 @@
 //! Invalid inputs are produced by editing the real shipped catalog text, so each case proves
 //! the validator rejects that one field and not a fixture that was already malformed.
 
-use sim_core::catalog::UnitCatalog;
+use sim_core::catalog::{AcquireLevel, UnitCatalog};
 use sim_core::{is_within_firing_arc, SimCoreError, SimWorld, UpgradeCatalog, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{EntityId, MoverType, PlayerId, SimAngle, SimScalar, SimVec2, Tick, TickBundle};
@@ -572,5 +572,60 @@ fn s19_gas_extractor_flag_reaches_capabilities() -> TestResult {
         .filter(|a| a.capabilities.is_gas_extractor)
         .count();
     assert_eq!(extractors, 3, "one extractor per faction");
+    Ok(())
+}
+
+/// `StarCraft` II 5.0.14 units with the `CUnit` flag `AlwaysThreatens` among the analogues this
+/// catalog models, as the name an archetype's `sc2_analogue` begins with and where the data set
+/// it (`SC2GameData` `5444e12f13`, `UnitData`; plan `2026-11-05-sc2-deviation-fixes` WP4, B-7).
+/// The Medivac's flag is set in `liberty` and cleared in `swarm` (`UnitData:1704`).
+const SC2_ALWAYS_A_THREAT: [(&str, &str); 5] = [
+    ("High Templar", "liberty UnitData:3276"),
+    ("Raven", "liberty UnitData:5584"),
+    ("Lurker", "voidmulti UnitData:971"),
+    ("Infestor", "liberty UnitData:10080"),
+    ("Viper", "swarm UnitData:2319"),
+];
+
+/// The analogues whose `CUnit` `DefaultAcquireLevel` is `Defensive` (the workers); every other
+/// unit keeps the `core` default `Offensive` (`core` `UnitData:31`).
+const SC2_DEFENSIVE_ACQUIRE: [(&str, &str); 3] = [
+    ("SCV", "liberty UnitData:4726"),
+    ("Probe", "liberty UnitData:3065"),
+    ("Drone", "liberty UnitData:7034"),
+];
+
+#[test]
+fn b7_threat_flags_and_acquire_levels_follow_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    let listed = |table: &[(&str, &str)], archetype: &sim_core::catalog::UnitArchetype| {
+        table.iter().any(|(unit, _)| {
+            archetype
+                .sc2_analogue()
+                .and_then(|analogue| analogue.split(" (").next())
+                == Some(*unit)
+        })
+    };
+    for (unit, source) in SC2_ALWAYS_A_THREAT.iter().chain(&SC2_DEFENSIVE_ACQUIRE) {
+        assert!(
+            archetypes_with_analogue(&world, unit).next().is_some(),
+            "an archetype with the analogue {unit} ({source})"
+        );
+    }
+    for archetype in world.catalog.archetypes() {
+        assert_eq!(
+            archetype.always_a_threat,
+            listed(&SC2_ALWAYS_A_THREAT, archetype),
+            "{}: always_a_threat as StarCraft II's AlwaysThreatens",
+            archetype.slug
+        );
+        let defensive = listed(&SC2_DEFENSIVE_ACQUIRE, archetype);
+        assert_eq!(
+            archetype.acquire_level == AcquireLevel::Defensive,
+            defensive,
+            "{}: acquire_level as StarCraft II's DefaultAcquireLevel",
+            archetype.slug
+        );
+    }
     Ok(())
 }
