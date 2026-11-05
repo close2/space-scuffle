@@ -713,3 +713,18 @@ Nothing here is an accepted difference. These are not scheduled by WP0 to WP15, 
 and are planned by WP16 to WP18: the movement engine (B-5, B-13, B-48 to B-50, M-19, M-21), economy and production
 (B-58 to B-67), and the ability roster (B-21 to B-24, B-46, B-68 to B-70, B-78). Presentation items (S-1, S-6) are
 not simulation mechanics.
+
+## Amendment 1 (orchestrator, 2026-11-05): the owner's refinement; WP0 items 1, 2 and 4 done
+
+- The owner refined the rule the same morning (quoted in
+  [Q0051](../questions/closed/0051-sc2-mechanics-standing-rule.md)): not a StarCraft II clone; identical unit
+  mechanics and very close behaviour first; deviations that allow more (preferably configurable) and minor detail
+  differences are fine; StarCraft II's engine bugs (units pushed through walls, as one example) need not be
+  reproduced.
+- **Effect on §3:** WP0 re-triages every B-ID into (i) *unit mechanics and values* (stays a bug, fixed by its WP),
+  (ii) *detail or "allows more"* (recorded as an accepted detail difference with its reason, not fixed unless it
+  changes how a unit plays), or (iii) *a StarCraft II engine quirk* (not reproduced). Doubtful cases stay in (i).
+  Every package keeps the order of §7; a package whose items all fall into (ii) or (iii) shrinks to a records commit.
+- **Done by the orchestrator** (docs branch `veo-budget-only`): WP0 item 1 (Q0051, closed), item 2 (charter §8, with
+  the refined wording), item 4 (Q0052, confirmed by the owner in chat and closed). WP0 keeps items 3, 5 and 6 and the
+  re-triage above.
