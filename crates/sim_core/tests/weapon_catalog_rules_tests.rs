@@ -175,8 +175,14 @@ fn s15_narrow_arcs_keep_their_authored_half_angle() -> TestResult {
 }
 
 #[test]
-fn s16_projectile_speed_must_be_positive() {
-    let structure_speed = "projectile_speed: Some(0.80)";
+fn s16_projectile_speed_must_be_positive() -> Result<(), Box<dyn std::error::Error>> {
+    // The first projectile speed a shipped structure states, whatever its value.
+    let structure_speed = STRUCTURES
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("projectile_speed: Some("))
+        .ok_or("a shipped structure fires projectiles")?
+        .trim_end_matches(',');
     for bad in [
         "projectile_speed: Some(0.0)",
         "projectile_speed: Some(-1.0)",
@@ -189,6 +195,7 @@ fn s16_projectile_speed_must_be_positive() {
         "projectile_speed: Some(1e-12)",
         "projectile_speed",
     );
+    Ok(())
 }
 
 #[test]

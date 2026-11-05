@@ -142,8 +142,27 @@ fn siege(arena: &mut Arena, tank: EntityId) {
 #[test]
 fn s4_projectile_weapon_applies_every_strike() {
     let mut arena = Arena::new(32);
-    // Dual Gauss Pistols: a two-strike projectile weapon, at 4 + 5 vs light on each strike.
-    let shooter = arena.spawn("jet_jumper", BLUE, 10.0, 10.0);
+    // The first shipped archetype whose ground weapon fires several projectile strikes with no
+    // bonus damage, so each strike deals its base damage minus the victim's armour.
+    let shooter_slug = arena
+        .world
+        .catalog
+        .archetypes()
+        .into_iter()
+        .find(|a| {
+            a.weapon.as_ref().is_some_and(|w| {
+                w.attacks_count >= 2
+                    && w.projectile_speed.is_some()
+                    && w.splash.is_none()
+                    && w.bonus_armored == SimScalar::ZERO
+                    && w.bonus_light == SimScalar::ZERO
+                    && w.max_range >= SimScalar::from_num(3)
+            })
+        })
+        .expect("the catalog has a multi-strike projectile weapon")
+        .slug
+        .clone();
+    let shooter = arena.spawn(&shooter_slug, BLUE, 10.0, 10.0);
     let victim = arena.spawn("shock_golem", RED, 13.0, 10.0);
     let unit_type = arena.world.entities[&shooter].unit_type_id;
     let weapon = arena
