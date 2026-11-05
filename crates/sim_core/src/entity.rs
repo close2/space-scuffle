@@ -281,6 +281,11 @@ pub struct Entity {
     pub hull_hit_flash_ticks: u8,
     /// Currently acquired combat target handle (used for independent turret tracking).
     pub current_target: Option<EntityId>,
+    /// Where this unit's automatic target last stood, world units, recorded by target
+    /// acquisition for an archetype whose tie-break is `AcquireTieBreak::ClosestToPrevious`, so
+    /// that once the target is lost (dead, gone, out of reach) the unit takes the candidate
+    /// closest to it. `None` until such a unit first holds a target.
+    pub previous_target_position: Option<SimVec2>,
     /// Whether the unit is completely immobile (e.g. Siege Mode, Burrowed, Channeling).
     pub is_immobile: bool,
     /// Collision unpushability flag (cannot be displaced by friendly push priority).
@@ -393,6 +398,7 @@ impl Entity {
             shield_hit_flash_ticks: 0,
             hull_hit_flash_ticks: 0,
             current_target: None,
+            previous_target_position: None,
             is_immobile: is_immobile_archetype,
             unpushable: is_immobile_archetype,
             is_sieged: false,

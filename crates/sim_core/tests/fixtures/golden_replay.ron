@@ -96,8 +96,12 @@
 // "red_psi" zealot (entity 24), chasing "blue_infantry" marine 15 2.29 away, out of reach, turns
 // to marine 8, 0.006 closer. Checkpoints 1 to 4 are unchanged; from checkpoint 5 (ticks 201 to
 // 250) every checkpoint changed.
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP4 (B-11, checksum schema 10 -> 11): each
+// entity's `previous_target_position`, where its automatic target last stood, is hashed, so every
+// checkpoint changed. No behaviour did: no rule writes the field yet, so it is `None` for every
+// entity on every tick, and the encoding only gains its empty tag.
 (
-    checksum_schema: 10,
+    checksum_schema: 11,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -123,25 +127,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xd3213317d91b8691,
-        0x839f47ca0ba8f2b3,
-        0xe3c6aaa116ac02c4,
-        0x9138fe57232e4351,
-        0x3b96be526fd4a5bb,
-        0x3dfc4ff96cd5b394,
-        0x48eb29d869bc3db9,
-        0x05e50b8a2bd6513d,
-        0x4ee735e2a645f9e3,
-        0x34151b038c0daeb9,
-        0xcfd6525cba40f915,
-        0x7c5417d94b8e2de6,
-        0xa215a6359c5f113c,
-        0x444ce1374fbbb0d2,
-        0xc9184da91c1f3357,
-        0xd054c62dd2228251,
-        0x664be510adb3dcb1,
-        0xc3241712b55c8cde,
-        0x7aeb7377b7c0192c,
-        0x194e051e87bc91c8,
+        0x3978ca1c92f81bc5,
+        0x8dd33ab038320f9c,
+        0x7bbcb1d151269093,
+        0xe47f5c1acecd94d0,
+        0x062bf381a9692041,
+        0x6f9ddfbc3f90d995,
+        0x5d77d9cd2b468c9d,
+        0xc1c3ed515cfd2d64,
+        0x2adb932c15088c01,
+        0xa7b1d5ea966ac2d2,
+        0x1ba8c81b8b9739d3,
+        0x1e2c9b62e21405b7,
+        0xb5363d09ef282c20,
+        0x304c5de5fd5aa75e,
+        0x620aa9fbc16c9359,
+        0xfe3eefff267d369e,
+        0xfe00a1ed5de1438a,
+        0x1a1ec5d7a6020d87,
+        0x8cc51d1f2fbd8408,
+        0x489c469130031056,
     ],
 )
