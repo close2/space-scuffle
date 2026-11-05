@@ -39,3 +39,16 @@ stim a hurt Marine in skirmish.
 
 ## Answer
 
+Owner (chat, 2026-11-05): "stim can never kill a unit it therefore can't be activated with too little hp"
+
+## Resolution
+
+Carried out as rule (a), option 2, in `ad0dcde`: Stimpack (Overclock) is refused unless the unit's current life is
+strictly greater than the life cost, so the Marine analogue needs more than 10 life and the Marauder analogue more
+than 20. A refused stim changes nothing: no life is paid, no buff is added and no cooldown starts. A paid stim
+always leaves positive life, so the old clamp to 1 life is gone. The rule is `Entity::can_pay_overclock`
+(`crates/sim_core/src/entity.rs`); every simulation admission path goes through `prepare_overclock`, which asks it,
+and the client's command filter (`can_overclock`) asks the same predicate, so it never sends a stim the simulation
+refuses. Tests: `stim_is_refused_unless_life_exceeds_its_cost` (`crates/sim_core/tests/spells_and_abilities_tests.rs`)
+and `stim_is_not_offered_without_more_life_than_its_cost` (client). The matrix (1000 runs, 16 seeds) and both
+golden replays are bit-identical to the commit before. Bug B-33 is fixed.
