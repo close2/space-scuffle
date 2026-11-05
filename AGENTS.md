@@ -238,8 +238,11 @@ Decisions that belong to the owner live in `docs/questions/`, one file per quest
 
 - **Scoping is the agent's call, if written down.** An agent may narrow or defer scope without asking, and records
   each such decision in its plan's decisions or out-of-scope section, so it can be brought back (Q0002).
-- **Where the specification is silent on a game rule, do what StarCraft II does.** Search how StarCraft II handles
-  it, and cite the source in the plan (Q0008).
+- **Unit mechanics follow StarCraft II.** Start from identical unit mechanics and values (patch 5.0.14) and very
+  close behaviour; cite the source in the plan. A difference the owner has not named as a deviation is a bug,
+  recorded until fixed. Deviations that allow more (preferably configurable) and minor differences in details are
+  allowed if recorded; StarCraft II's own engine bugs need not be reproduced (Q0051, which supersedes Q0008; the
+  sanctioned list is Q0052).
 
 ---
 

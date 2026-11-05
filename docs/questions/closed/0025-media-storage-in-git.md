@@ -20,6 +20,16 @@ whole Automaton faction gets media. Rejected clips stay on `~/scratch` and are n
 
 ## Answer
 
+Owner (chat, 2026-11-05, asked before the expansion as the default required): plain git files for the expansion too,
+the same as the required set.
+
+## Resolution
+
+2026-11-05. Option (a) for everything: the required set (Veo batches 1 and 2) and the expansion batches (Veo plan WP6)
+commit their clips and atlases as plain git files. No Git LFS. Closed; the owner may reopen it if repository size
+becomes a problem.
+
+
 Owner (2026-11-04): Agreed with agent's recommendation — Option (a): commit the required set's clips and atlases as plain git files, and ask again before the expansion batches.
 
 ## Status
