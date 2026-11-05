@@ -42,6 +42,10 @@ use std::sync::OnceLock;
 
 /// Static archetype specification defining baseline vitals, movement, capabilities, and abilities.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent authored facts about one archetype, each read by a different mechanism"
+)]
 pub struct UnitArchetype {
     /// Unique archetype identifier.
     pub unit_type_id: UnitTypeId,
@@ -85,6 +89,9 @@ pub struct UnitArchetype {
     pub max_shields: SimScalar,
     /// Maximum energy points for abilities.
     pub max_energy: SimScalar,
+    /// Energy points a new entity starts with (`StarCraft` II `EnergyStart`), at most
+    /// [`Self::max_energy`].
+    pub start_energy: SimScalar,
     /// Hull life armor value reducing non-shield damage.
     pub life_armor: SimScalar,
     /// Shield armor value reducing shield damage.
@@ -122,6 +129,19 @@ pub struct UnitArchetype {
     /// have 0: they
     /// never turn their hull, and every structure weapon sits on a turret.
     pub turn_rate: SimAngle,
+    /// Whether the hull must face a step before the unit takes it. When `true`, on a tick whose
+    /// step direction lies further from the heading than the hull can turn in one moving tick
+    /// ([`Self::turn_rate`]), the unit turns in place and does not translate; once the remaining
+    /// turn fits, it faces the step exactly and takes it. Collision pushes are not gated.
+    /// `StarCraft` II stores this as the `CUnit` flag `TurnBeforeMove`. Structures have `false`.
+    #[serde(default)]
+    pub turn_before_move: bool,
+    /// Hull turn rate in binary angle units per tick on a tick the unit does not translate by its
+    /// own motion (standing, turning in place before a move, aiming while still), from the
+    /// authored `stationary_turn_rate_deg_per_tick`, which defaults to the hull rate. On a tick
+    /// the unit translates, the hull turns at [`Self::turn_rate`]. `StarCraft` II stores this
+    /// per unit as `StationaryTurningRate`. Structures have 0.
+    pub stationary_turn_rate: SimAngle,
     /// Hard circle-circle collision radius in world units.
     pub collision_radius: SimScalar,
     /// Soft Boid repulsion boundary radius in world units.
@@ -847,6 +867,9 @@ struct UnitArchetypeDef {
     max_hp: f32,
     max_shields: f32,
     max_energy: f32,
+    /// Energy a new entity starts with (`EnergyStart`), `0 ≤ start_energy ≤ max_energy`.
+    /// Required, so a catalog written before the field fails to load.
+    start_energy: f32,
     life_armor: f32,
     shield_armor: f32,
     hp_regen_per_tick: f32,
@@ -866,6 +889,15 @@ struct UnitArchetypeDef {
     /// Hull rate in degrees per tick, `0 < rate <= 180`. It has no default, so a catalog that
     /// still uses the old name `turn_rate_deg` fails to load naming this field.
     turn_rate_deg_per_tick: f32,
+    /// Whether the hull must face a step before the unit takes it (`CUnit` flag
+    /// `TurnBeforeMove`); omitted reads as `false`. Validation requires a unit that moves and a
+    /// hull rate that faces a reversal within the stall repath window.
+    #[serde(default)]
+    turn_before_move: bool,
+    /// Hull rate in degrees per tick while the unit does not translate, `0 < rate <= 180`;
+    /// omitted means equal to `turn_rate_deg_per_tick` (`StationaryTurningRate`).
+    #[serde(default)]
+    stationary_turn_rate_deg_per_tick: Option<f32>,
     collision_radius: f32,
     separation_radius: f32,
     push_priority: u8,
@@ -988,6 +1020,12 @@ impl UnitArchetypeDef {
         binary_angle(self.turn_rate_deg_per_tick)
     }
 
+    /// The authored stationary hull rate in degrees per tick: the hull rate when omitted.
+    fn stationary_turn_rate_deg_per_tick(&self) -> f32 {
+        self.stationary_turn_rate_deg_per_tick
+            .unwrap_or(self.turn_rate_deg_per_tick)
+    }
+
     /// The capability bundle, abilities and modes of this definition.
     ///
     /// Abilities and modes authored under `capabilities` take precedence over the legacy
@@ -1057,6 +1095,7 @@ impl UnitArchetypeDef {
             .map(|(state, prompt)| (format!("{state:?}"), prompt))
             .collect();
         let turn_rate = self.turn_rate();
+        let stationary_turn_rate = binary_angle(self.stationary_turn_rate_deg_per_tick());
 
         Ok(UnitArchetype {
             unit_type_id: UnitTypeId(self.unit_type_id),
@@ -1080,6 +1119,7 @@ impl UnitArchetypeDef {
             max_hp: SimScalar::from_f32_lossy(self.max_hp),
             max_shields: SimScalar::from_f32_lossy(self.max_shields),
             max_energy: SimScalar::from_f32_lossy(self.max_energy),
+            start_energy: SimScalar::from_f32_lossy(self.start_energy),
             life_armor: SimScalar::from_f32_lossy(self.life_armor),
             shield_armor: SimScalar::from_f32_lossy(self.shield_armor),
             hp_regen_per_tick: SimScalar::from_f32_lossy(self.hp_regen_per_tick),
@@ -1091,6 +1131,8 @@ impl UnitArchetypeDef {
             acceleration: SimScalar::from_f32_lossy(self.acceleration),
             deceleration: SimScalar::from_f32_lossy(self.deceleration),
             turn_rate,
+            turn_before_move: self.turn_before_move,
+            stationary_turn_rate,
             collision_radius: SimScalar::from_f32_lossy(self.collision_radius),
             separation_radius: SimScalar::from_f32_lossy(self.separation_radius),
             push_priority: self.push_priority,
@@ -1149,6 +1191,9 @@ struct StructureArchetypeDef {
     pub max_shields: f64,
     /// Maximum energy points.
     pub max_energy: f64,
+    /// Energy a new structure starts with (`EnergyStart`), `0 ≤ start_energy ≤ max_energy`.
+    /// Required, so a catalog written before the field fails to load.
+    pub start_energy: f64,
     /// Hull hit points regenerated per tick.
     #[serde(default)]
     pub hp_regen_per_tick: f64,
@@ -1264,6 +1309,7 @@ impl StructureArchetypeDef {
             max_hp: SimScalar::from_num(self.max_hp),
             max_shields: SimScalar::from_num(self.max_shields),
             max_energy: SimScalar::from_num(self.max_energy),
+            start_energy: SimScalar::from_num(self.start_energy),
             life_armor: SimScalar::from_num(self.life_armor),
             shield_armor: SimScalar::from_num(self.shield_armor),
             hp_regen_per_tick: SimScalar::from_num(self.hp_regen_per_tick),
@@ -1275,6 +1321,8 @@ impl StructureArchetypeDef {
             acceleration: SimScalar::ZERO,
             deceleration: SimScalar::ZERO,
             turn_rate: SimAngle::ZERO,
+            turn_before_move: false,
+            stationary_turn_rate: SimAngle::ZERO,
             collision_radius: radius,
             separation_radius: radius,
             push_priority: 255,

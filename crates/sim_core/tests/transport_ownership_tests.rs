@@ -83,10 +83,15 @@ impl Fixture {
             weapon,
         })
     }
+    /// Spawns the fixture unit with a full energy pool, so its abilities can be cast at once.
     fn spawn(&mut self, owner: u8, x: i32, y: i32) -> TestResult<EntityId> {
-        Ok(self
+        let id = self
             .world
-            .spawn_unit(self.kind, PlayerId(owner), point(x, y))?)
+            .spawn_unit(self.kind, PlayerId(owner), point(x, y))?;
+        let max_energy = self.world.catalog.get(self.kind)?.max_energy;
+        // Rule fixture: the pool is filled directly, whatever the archetype starts with.
+        self.world.entities.get_mut(&id).ok_or("spawned")?.energy = max_energy;
+        Ok(id)
     }
     fn tick(&mut self, commands: Vec<PlayerCommand>) {
         self.world.step(&TickBundle {

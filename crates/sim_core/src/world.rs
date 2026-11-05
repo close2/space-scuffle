@@ -377,9 +377,11 @@ impl SimWorld {
         self.advance_checked_movement();
     }
 
-    /// Gives every entity this tick's hull rotation, its archetype's `turn_rate` (plan
-    /// `2026-11-04-combat-sc2-alignment` D-8 item 4). The movement phase spends it first and
-    /// the weapon phase gets the rest, so the hull turns at most `turn_rate` per tick.
+    /// Gives every entity this tick's hull rotation, its archetype's `stationary_turn_rate` (plan
+    /// `2026-11-04-combat-sc2-alignment` D-8 item 4; plan `2026-11-05-turn-before-move` D-10).
+    /// The movement phase sets it to the moving `turn_rate` for a unit its own motion translates
+    /// this tick, then spends it first; the weapon phase gets the rest. So the hull turns at most
+    /// `turn_rate` on a tick the unit moves and `stationary_turn_rate` on any other tick.
     // PERFORMANCE RATIONALE:
     // Why: The budget must be in place before the first hull turn of every tick.
     // What: One in-place pass over the entity map with one catalog lookup each; no allocation.
@@ -390,7 +392,7 @@ impl SimWorld {
             entity.hull_turn_budget = self
                 .catalog
                 .get(entity.unit_type_id)
-                .map_or(0, |archetype| archetype.turn_rate.raw());
+                .map_or(0, |archetype| archetype.stationary_turn_rate.raw());
         }
     }
     /// Phase 8: Reap destroyed entities and emit death shatter visuals.

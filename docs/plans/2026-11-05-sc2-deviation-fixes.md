@@ -179,7 +179,7 @@ another path is given.
 | B-28 | Six mounts differ: Hellion, Immortal, Colossus, Lurker and Phoenix turrets are modelled as hull weapons; the Thor's air weapon as a turret | audit §10.5 (`liberty` UnitData:11603, :10791, :4099, :797; `swarm` UnitData:1805; `void` WeaponData:82) | `units.ron` `has_turret` and rates | B-data | 9a/b, 10, 2a–3, 28, 30, 12a/b, 26, 35, 21, 14 | S each, measured | WP10 |
 | B-29 | One firing tolerance; no acquisition arc `Arc` ÷ 2 | `Arc` limits acquisition, `ArcSlop` widens it once engaged (audit §10.3, SC2Mapster editor reference) | `catalog.rs` `firing_half_angle` (one value) | B-rule | matrix-wide (small) | M | WP10 |
 | B-30 | A turret keeps its last angle when idle | `CTurret` `Idle` behaviour, for example `ResetIfMoving` (`swarm` TurretData:32; audit §10.4) | `combat.rs` turret slew | B-rule + B-data | first shot after idling; tank in goldens | S | WP10 |
-| B-31 | `StationaryTurningRate` not modelled | A second hull rate for a unit standing still; it differs for Siege Tank, Thor, Ultralisk and Hellion (audit §10.2) | one `turn_rate` | P | 14, 15, 27; 9a/b, 10 | — | turn-before-move package (in progress there) |
+| B-31 | `StationaryTurningRate` not modelled | A second hull rate for a unit standing still; it differs for Siege Tank, Thor, Ultralisk and Hellion (audit §10.2) | one `turn_rate` | Fixed (Amendment 2) | 14, 15, 27; 9a/b, 10 | — | turn-before-move WP5 `2522e3f`, WP6 `408d3b7` |
 
 ### 3.5 Vitals, energy and Stimpack
 
@@ -198,7 +198,7 @@ another path is given.
 | ID | Deviation | StarCraft II (source) | Ours (where) | Class | Impact | Effort | WP |
 |---|---|---|---|---|---|---|---|
 | B-39 | Acceleration and deceleration are parsed but unused: speed changes are instant; the catalog copies `max_speed` into both | Ground units mostly 1000 (instant); air units, Hellion and workers have finite values, for example Mutalisk 3.5, Phoenix 3.25, Medivac 2.25 Normal (audit §4 class E rows, each with its line) | `catalog.rs` loads them; no system reads them (audit §2.3) | B-miss + B-data | air battles 12c, 16a/b, 17, 18, 19, 34, 35; 9a/b, 10 | M | WP12 |
-| B-40 | Turn before move | `TurnBeforeMove` flag (audit §10.2) | — | P | 14, 15, 27 | — | turn-before-move package |
+| B-40 | Turn before move | `TurnBeforeMove` flag (audit §10.2) | — | Fixed (Amendment 2) | 14, 15, 27 | — | turn-before-move WP1 `6d7a9d5`, WP3 `b7d9f50` |
 
 ### 3.7 Unit capabilities that matrix battles use
 
@@ -266,7 +266,7 @@ plan.
 | B-72 | Energy "starts at `50` or `75`" while the engine starts at maximum | doc 03 §1.1 | correct the engine column after WP3 | WP3 |
 | B-73 | Doc 07 claims mechanics we do not have: Mutalisk "Bounce: 3, 1", Ultralisk "Cleave AoE", Brood Lord "Spawns Broodlings", Carrier "Interceptor Swarm", Colossus "Sweep", Lurker "Wave", Corruptor "Caustic Spray vs Domes" | doc 07 roster | each cell names the bug ID until its WP lands | WP0 |
 | B-74 | `combat.rs` module doc "exact shield spillover damage formulas"; `SplashSpec` "(StarCraft II standard)" | code comments | restated in WP7 and WP8a | WP7, WP8a |
-| B-75 | doc 03 §1.4 "Turn Rate & Stationary Turn Rate" implies both are modelled | doc 03 | pointer to B-31 | WP0 |
+| B-75 | doc 03 §1.4 "Turn Rate & Stationary Turn Rate" implies both are modelled | doc 03 | none: true since B-31 was fixed (Amendment 2) | — |
 
 ### 3.13 Hard-coded gameplay values with no source
 
@@ -728,3 +728,154 @@ not simulation mechanics.
 - **Done by the orchestrator** (docs branch `veo-budget-only`): WP0 item 1 (Q0051, closed), item 2 (charter §8, with
   the refined wording), item 4 (Q0052, confirmed by the owner in chat and closed). WP0 keeps items 3, 5 and 6 and the
   re-triage above.
+
+## Amendment 2 (WP0, 2026-11-05): re-triage under the refined rule
+
+Amendment 1 asked WP0 to sort every B-ID of §3 into three classes under the owner's refined rule
+([Q0051](../questions/closed/0051-sc2-mechanics-standing-rule.md)): "identical unit mechanics and very close
+behavior" first, so that experienced players feel at home and missing functionality shows.
+
+| Class | Meaning | What happens |
+|---|---|---|
+| (i) | Unit mechanics, values or behaviour, including mechanics the game has and we lack | Stays a bug, fixed by its WP, listed in the `DESIGN.md` bug register while open |
+| (ii) | A detail, or a difference that allows more than StarCraft II | Accepted detail difference, recorded here with its reason; not fixed. If it is found to change how a unit plays, it returns to (i) |
+| (iii) | A StarCraft II engine quirk | Not reproduced |
+| Fixed | No longer a deviation | Commit named |
+
+**Rule applied.** A difference a player can see in how a unit fights, moves, is produced or is countered is (i). An
+item is (ii) only if it allows more than the game, or no shipped unit can reach it, or it is a trajectory or a
+tolerance a player cannot act on. Where neither reading was clearly right, the item stayed in (i), as Amendment 1
+requires.
+
+### Result
+
+| ID | Short title | Class | Reason or WP |
+|---|---|---|---|
+| B-1 | A swing its turn aligns starts a tick late (M-22) | Fixed | WP1 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §1) |
+| B-2 | Every strike of a multi-strike weapon on one tick | (i) | WP5 |
+| B-3 | No random firing delay | (i) | WP11; it decides how volleys desynchronize, which players see |
+| B-4 | Siege Mode: one transformation time, no random part | (i) | WP11 |
+| B-5 | Whether damage point and backswing hold an automatically attacking unit | (i) | WP16 research |
+| B-6 | Release range slop 0.5 for every weapon | (i) | WP9 |
+| B-7 | Threat criterion | (i) | WP4 |
+| B-8 | Attack target priority as hard-coded categories | (i) | WP4 |
+| B-9 | Closest-target switching with an invented margin | (i) | WP4 |
+| B-10 | No primary-weapon criterion | (i) | WP4 |
+| B-11 | No per-unit tie-break | (i) | WP4 |
+| B-12 | Scan ranges | (i) | combat alignment WP14, after WP4 |
+| B-13 | Call-for-help radius, flee distance, leash, abandoned-target time | (i) | WP16 research; how idle units answer an attack is unit behaviour |
+| B-14 | Bonus damage only against Armored and Light | (i) | WP6 |
+| B-15 | Shield break remainder | (i) | WP7 |
+| B-16 | Fixed splash fractions | (i) | WP8a |
+| B-17 | Splash measured centre to centre | (i) | WP8a |
+| B-18 | Line splash modelled as a circle | (i) | WP8b |
+| B-19 | Ultralisk cleave modelled as a circle | (i) | WP8c |
+| B-20 | No glaive bounce | (i) | WP8d |
+| B-21 | No Broodlings | (i) | WP18 |
+| B-22 | Interceptors as one 8-strike weapon | (i) | WP18 |
+| B-23 | Storm hits structures; idle units dodge it on their own | (i) | WP18; an automatic dodge changes how storm is played |
+| B-24 | Battle 13's storm values | (i) | WP18 |
+| B-25 | Viking analogue shoots the ground in fighter mode | Fixed | WP2 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §2) |
+| B-26 | Corruptor analogue shoots the ground | Fixed | WP2 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §2) |
+| B-27 | Liberator analogue shoots the ground outside Defender Mode | (i), narrowed | The ground attack outside Defender Mode is fixed by WP2 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §2); Defender Mode itself, and with it the ground attack, stays open for WP18 |
+| B-28 | Six weapon mounts | (i) | WP10 |
+| B-29 | No acquisition arc | (i) | WP10 |
+| B-30 | A turret keeps its angle when idle | (i) | WP10; it sets the delay of the first shot after idling |
+| B-31 | `StationaryTurningRate` | Fixed | turn-before-move WP5 `2522e3f`, WP6 `408d3b7` |
+| B-32 | Hard-coded Stimpack path | Fixed | WP3 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §3) |
+| B-33 | Stim admitted at any life above 1 | (i) | WP3. It may allow more than the game, but whether a low-life Marine can stim changes how the unit is played, so it is not a detail. WP3 could not source the game's rule (U-8): [Q0053](../questions/open/0053-stimpack-at-low-life.md), default no change |
+| B-34 | Energy starts at maximum | Fixed | WP3 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §3) |
+| B-35 | No energy regeneration delay | (i) | WP15 |
+| B-36 | Unfinished structures regenerate life | (i) | WP15 |
+| B-37 | Whether Stimpack's life cost restarts the regeneration delays | (ii) | No shipped unit can reach it: the two archetypes with an Overclock (Stimpack) spec have `hp_regen_per_tick: 0.00`, and no other ability costs life. It returns to (i) if a catalog change gives one unit both. WP15 drops it and U-9 |
+| B-38 | No burrowed Roach regeneration, no Tunneling Claws | (i) | WP15, WP18 |
+| B-39 | No acceleration or deceleration | (i) | WP12 |
+| B-40 | Turn before move | Fixed | turn-before-move WP1 `6d7a9d5`, WP3 `b7d9f50` |
+| B-41 | No Immortal Barrier | (i) | WP13a |
+| B-42 | The Lurker attacks unburrowed | (i) | WP13b |
+| B-43 | Charge without the dash | (i) | WP13c |
+| B-44 | Concussive Shells do nothing | (i) | WP13d |
+| B-45 | No firing while moving | (i) | WP13e |
+| B-46 | The Viking cannot land | (i) | WP18 |
+| B-47 | Non-time catalog values unaudited | (i) | WP9 |
+| B-48 | Push priorities | (i) | WP16 |
+| B-49 | Which radius spaces units | (i) | WP16; how tightly armies clump is visible behaviour |
+| B-50 | Melee packing around a solid enemy | (i) | WP16 |
+| B-51 | Neosteel Armor's targets | (i) | WP9 |
+| B-52 | Projectile speeds with several phases; High Templar and Spine Crawler speeds | (i), narrowed | WP14, for each attack's flight time from release to impact, which delays its damage. The shape of the phases inside that time (a missile that drifts, then accelerates) is (ii): attack missiles home, so a player cannot act on the path |
+| B-53 | Attack projectiles fuel out after 125 ticks | (ii) | A safety bound no shipped attack reaches: the slowest projectile moves 0.56 per tick and the fastest unit 0.238 per tick, so a missile released within the longest weapon range (13) arrives in under 50 ticks. It returns to (i) if a catalog change makes it reachable. WP14 drops it and U-11's lifetime half |
+| B-54 | A projectile fizzles when its target cloaks | (i) | WP14 |
+| B-55 | A hidden shooter is never revealed to its victim | (i) | WP14 |
+| B-56 | Detection uses the sight radius | (i) | WP14 |
+| B-57 | The edge cell of a sight blocker is seen from outside | (i) | WP14. Kept: a unit at the edge of a blocker can be seen, which changes where units can hide |
+| B-58 | No production queue limit | (ii) | Allows more than the game's 5 slots, which the owner allows. WP17's plan may offer the limit as a configurable option; it is not a bug |
+| B-59 | Every queued job holds supply | (i) | WP17; it may allow less than the game |
+| B-60 | No rally points | (i) | WP17 |
+| B-61 | No mineral-patch occupancy | (i) | WP17 |
+| B-62 | One construction model for every faction | (i) | WP17 |
+| B-63 | No larva, warp-in, creep or power | (i) | WP17 |
+| B-64 | Cargo size equals supply | (i) | WP17 |
+| B-65 | Unload sets everyone down at once and stops the carrier | (i) | WP17 |
+| B-66 | A blocked exit stalls production | (i) | WP17 |
+| B-67 | Next-patch radius 12, task reach 0.75, site patience 50 ticks, boarding reach 1.0 | (i), narrowed | WP17 for the next-patch radius, which decides where workers go when a patch mines out. Task reach, site patience and boarding reach are (ii): tolerances of our own movers that decide when an order counts as arrived, with no observable game counterpart (as U-23) |
+| B-68 | 14 upgrades with no effect | (i) | WP13d, WP18 |
+| B-69 | Missing abilities | (i) | WP18 |
+| B-70 | No Graviton Beam | (i) | WP18 |
+| B-71 | Doc 03 random delay range | Fixed | WP0, in this amendment's commit |
+| B-72 | Doc 03 start energy | Fixed | WP3 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §3) |
+| B-73 | Doc 07 claims mechanics we lack | Fixed | WP0: each cell names its bug ID; the mechanics stay open as B-14, B-18 to B-22, B-26, B-42 and B-69 |
+| B-74 | Code comments claim exact parity | (i) | WP7, WP8a |
+| B-75 | Doc 03 "Turn Rate & Stationary Turn Rate" | Fixed | True since B-31 was fixed; no edit needed |
+| B-76 | Hard-coded threat categories | (i) | WP4 |
+| B-77 | Hard-coded Concussive slow | (i) | WP13d |
+| B-78 | Storm evacuation margin | (i) | WP18 |
+
+**Counts.** 78 IDs: (i) 70, two of them narrowed (B-52, B-67) and one carried by another plan (B-12); (ii) 3 (B-37,
+B-53, B-58); (iii) none; fixed 5 (B-31 and B-40 by the turn-before-move plan; B-71, B-73 and B-75 by WP0).
+
+**No (iii) item.** No B-ID asks us to reproduce a StarCraft II engine quirk: each is either a game rule we lack or a
+rule of our own. The class stays for later findings. For example, units pushed through walls are not ours to
+reproduce, and WP16's movement plan must not copy such behaviour from the game.
+
+### Effect on the work packages
+
+No package lost all its items, so none shrinks to a records commit and none is dropped. The order of §7 stands, and
+WP12's wait for the turn-before-move package is satisfied.
+
+| WP | Change |
+|---|---|
+| WP0 | Item 5 drops B-75 (already true). Done with this amendment |
+| WP14 | Shrinks: B-53 and U-11's lifetime question leave; B-52 and U-15 ask only for flight times, not the phase shape. Left: B-52 (narrowed), B-54 to B-57, U-11 (dodging), U-12 to U-15, U-17 |
+| WP15 | Shrinks: B-37 and U-9 leave. Left: B-35, B-36, B-38, U-10, U-21 |
+| WP17 | Shrinks: B-58 leaves the bug list (the plan may offer a configurable limit); U-19 keeps supply timing, blocked exits and the unload interval; B-67 keeps the next-patch radius only |
+| WP19 | The register lists open (i) items only; (ii) items stay recorded here |
+| Others | Unchanged |
+
+**Order:** WP0 (done), WP1, WP2, WP3, WP4, combat alignment WP14, WP5, WP6, WP7, WP8a to WP8e, WP9, WP10, WP11, WP12,
+WP13a to WP13e, WP14, WP15, WP16, WP17, WP18, WP19.
+
+**§9 amended.** "Nothing here is an accepted difference" now holds for (i) items. The (ii) items above, and S-1 to
+S-6 of §4 (confirmed in [Q0052](../questions/closed/0052-sanctioned-sc2-deviations.md)), are accepted differences.
+
+**WP0 items 3, 5 and 6** are done on the same branch: the bug register in `DESIGN.md` §4, the doc fixes B-71 and B-73
+in docs 03 and 07, and the hand-off line in plan `2026-11-04-combat-sc2-alignment` WP13.
+
+## Amendment 3 (WP1 to WP3, 2026-11-05): what the implementation changed
+
+Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §1 to §3.
+
+- **Fixed:** B-1 (WP1), B-25 and B-26 (WP2), B-32 and B-34 (WP3), B-72 (WP3, doc 03). B-27 is narrowed to its mode
+  part: the Liberator analogue no longer attacks the ground at all until WP18 adds Defender Mode.
+- **New, found and fixed: B-79.** A unit armed only against air froze its weapon cooldown and backswing while it had
+  no target: the weapon step resolved its weapon against the ground plane, found none and skipped the unit. In
+  StarCraft II the cooldown runs whatever the unit does. WP2's data change exposed it (battle 35, one seed), so a rule
+  commit came first and the data commit then moved nothing the matrix measures (evidence §2.2).
+- **B-33 not sourced (U-8):** [Q0053](../questions/open/0053-stimpack-at-low-life.md), default no change; B-33 stays
+  in the register.
+- **WP2's test** finds the three archetypes through their `sc2_analogue` and checks them against the cited
+  `TargetFilters`. The catalog has no field that marks a weapon air-only, so a test "by property" (§7 WP2 item 2)
+  could only restate the data it checks.
+- **WP3 c and d** cover structures as well as units: commit c's required `start_energy` is on both definitions, and
+  commit d sets the reference value for the three structures with energy (Orbital Command, Nexus, Shield Battery).
+- **Matrix effect:** only WP1 moved results (19 battles, no battle's winner over its seeds); battle 33's expectation
+  held and only its comment's distribution changed.

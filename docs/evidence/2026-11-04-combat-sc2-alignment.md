@@ -1840,8 +1840,11 @@ unresolved), marine survivors 4.03 (SD 3.26).
   weapon phase (b), matrix spawn facing (c), 47 firing arcs (d: 40 hull-mounted, 7 turreted), the 8 turret rates of
   group W8 (e) and the 42 hull rates (f). Doc 07 §2.3 and `DESIGN.md` describe the per-tick rates.
 - **Not applied, recorded** (plan D-8 item 7, follow-up F-8): turn-before-move (no tolerance in the data;
-  [Q0050](../questions/open/0050-turn-before-move.md), default no gating, so commit g was not made);
-  `StationaryTurningRate`; the acquisition arc `Arc` ÷ 2; the six weapons whose mount differs.
+  [Q0050](../questions/closed/0050-turn-before-move.md), default no gating, so commit g was not made);
+  `StationaryTurningRate`; the acquisition arc `Arc` ÷ 2; the six weapons whose mount differs. Turn-before-move
+  and `StationaryTurningRate` were later applied by plan
+  [`2026-11-05-turn-before-move`](../plans/2026-11-05-turn-before-move.md) (Q0050),
+  [evidence](2026-11-05-turn-before-move.md).
 - **Against the plan's expectations:** the hull-mounted arcs were not latent (§14.4, finding M-22); the turret rates
   moved no matrix battle (§14.6); the hull rates moved 8 battles, not "potentially every battle" (§14.7).
 - **Expectations re-recorded:** battle 33 only, twice (§14.4, §14.7). **Golden replays:** `golden_replay.ron` in

@@ -9,9 +9,12 @@
 
 use super::{StructureArchetypeDef, UnitArchetypeDef, UnitModeSpecDef, WeaponSpecDef};
 use crate::error::{SimCoreError, SimResult};
+use crate::movement::tuning::STALL_REPATH_TICKS;
 use crate::weapon_timing::AttackRate;
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
-use sim_types::{AbilityEffectSpec, AbilitySpec, ProjectileTargetLossBehavior, SimScalar};
+use sim_types::{
+    AbilityEffectSpec, AbilitySpec, ProjectileTargetLossBehavior, SimAngle, SimScalar,
+};
 
 fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
     SimCoreError::CatalogInvalidValue {
@@ -34,6 +37,19 @@ fn scalar(definition: &str, field: &str, value: f64) -> SimResult<()> {
             definition,
             field,
             "must be finite and representable in Q32.32 simulation units",
+        ));
+    }
+    Ok(())
+}
+
+/// Rejects a start energy above the maximum: a new entity starts with at most a full pool.
+/// Both values are authored decimals, already checked finite and nonnegative.
+fn start_energy(definition: &str, start: f64, max: f64) -> SimResult<()> {
+    if start > max {
+        return Err(invalid(
+            definition,
+            "start_energy",
+            "must not exceed max_energy",
         ));
     }
     Ok(())
@@ -134,6 +150,48 @@ fn hp_regen_delay(definition: &str, regenerates: bool, delay: u16) -> SimResult<
     Ok(())
 }
 
+/// Checks `turn_before_move` against the unit's speed and hull rates. Runs after both rates are
+/// validated, so each lies in `0 < degrees per tick <= 180`.
+///
+/// A flag on a unit that cannot move is a value nothing reads. A flagged unit gains no ground
+/// while it turns in place, so the stall counter of an order counts those ticks: a hull that
+/// needed more than `STALL_REPATH_TICKS` ticks to take the first step of a reversal would drop
+/// its route mid-turn (and at very low rates abandon the order). It turns in place at the
+/// stationary rate `s` until the rest of the half turn fits in one moving tick `r`, and steps on
+/// the next tick: `ceil(max(0, 32 768 − r) ÷ s) + 1` ticks, in binary units per tick computed
+/// with the loader's own conversion.
+fn turn_before_move(
+    definition: &str,
+    flagged: bool,
+    max_speed: f32,
+    turn_rate_deg_per_tick: f32,
+    stationary_turn_rate_deg_per_tick: f32,
+) -> SimResult<()> {
+    if !flagged {
+        return Ok(());
+    }
+    if max_speed <= 0.0 {
+        return Err(invalid(
+            definition,
+            "turn_before_move",
+            "must be false when max_speed is zero",
+        ));
+    }
+    let moving = u32::from(super::binary_angle(turn_rate_deg_per_tick).raw());
+    let stationary = u32::from(super::binary_angle(stationary_turn_rate_deg_per_tick).raw());
+    let half_turn = u32::from(SimAngle::DEG_180.raw());
+    let rest = half_turn.saturating_sub(moving);
+    let in_place = (stationary > 0).then(|| rest.div_ceil(stationary));
+    if in_place.is_none_or(|ticks| ticks + 1 > u32::from(STALL_REPATH_TICKS)) {
+        return Err(invalid(
+            definition,
+            "turn_before_move",
+            "requires hull rates that take the first step of a reversal within the stall repath window (25 ticks)",
+        ));
+    }
+    Ok(())
+}
+
 fn positive_rate(definition: &str, field: &str, rate: SimScalar) -> SimResult<()> {
     AttackRate::new(rate).map_err(|_| {
         invalid(
@@ -209,6 +267,29 @@ impl UnitArchetypeDef {
         Ok(())
     }
 
+    /// Checks the hull rate, the stationary hull rate when authored, and `turn_before_move`
+    /// against both. Runs after `max_speed` is checked nonnegative.
+    fn validate_hull_turning(&self) -> SimResult<()> {
+        let hull_rate = self.turn_rate_deg_per_tick;
+        rate_per_tick(&self.slug, "turn_rate_deg_per_tick", hull_rate)?;
+        let stationary_rate = self.stationary_turn_rate_deg_per_tick.unwrap_or(hull_rate);
+        if self.stationary_turn_rate_deg_per_tick.is_some() {
+            rate_per_tick(
+                &self.slug,
+                "stationary_turn_rate_deg_per_tick",
+                stationary_rate,
+            )?;
+        }
+        turn_before_move(
+            &self.slug,
+            self.turn_before_move,
+            self.max_speed,
+            hull_rate,
+            stationary_rate,
+        )?;
+        Ok(())
+    }
+
     /// Checks the life and shield regeneration delays against the authored rate and shields.
     /// Runs after the nonnegative checks, so a negative rate is reported under its own field.
     fn validate_regeneration_delays(&self) -> SimResult<()> {
@@ -230,6 +311,7 @@ impl UnitArchetypeDef {
             ("max_hp", self.max_hp),
             ("max_shields", self.max_shields),
             ("max_energy", self.max_energy),
+            ("start_energy", self.start_energy),
             ("life_armor", self.life_armor),
             ("shield_armor", self.shield_armor),
             ("hp_regen_per_tick", self.hp_regen_per_tick),
@@ -254,6 +336,7 @@ impl UnitArchetypeDef {
         for (field, value) in [
             ("max_shields", self.max_shields),
             ("max_energy", self.max_energy),
+            ("start_energy", self.start_energy),
             ("hp_regen_per_tick", self.hp_regen_per_tick),
             ("shield_regen_per_tick", self.shield_regen_per_tick),
             ("energy_regen_per_tick", self.energy_regen_per_tick),
@@ -266,8 +349,12 @@ impl UnitArchetypeDef {
             nonnegative(&self.slug, field, f64::from(value))?;
         }
         sight(&self.slug, "sight_radius", f64::from(self.sight_radius))?;
-        let hull_rate = self.turn_rate_deg_per_tick;
-        rate_per_tick(&self.slug, "turn_rate_deg_per_tick", hull_rate)?;
+        start_energy(
+            &self.slug,
+            f64::from(self.start_energy),
+            f64::from(self.max_energy),
+        )?;
+        self.validate_hull_turning()?;
         self.validate_regeneration_delays()?;
         for (name, weapon) in [
             ("weapon", &self.weapon),
@@ -545,6 +632,7 @@ impl StructureArchetypeDef {
             ("max_hp", self.max_hp),
             ("max_shields", self.max_shields),
             ("max_energy", self.max_energy),
+            ("start_energy", self.start_energy),
             ("life_armor", self.life_armor),
             ("shield_armor", self.shield_armor),
             ("sight_radius", self.sight_radius),
@@ -555,10 +643,12 @@ impl StructureArchetypeDef {
             ("max_hp", self.max_hp),
             ("max_shields", self.max_shields),
             ("max_energy", self.max_energy),
+            ("start_energy", self.start_energy),
         ] {
             nonnegative(&self.slug, field, value)?;
         }
         sight(&self.slug, "sight_radius", self.sight_radius)?;
+        start_energy(&self.slug, self.start_energy, self.max_energy)?;
         shield_regen_delay(
             &self.slug,
             self.max_shields > 0.0,
@@ -883,6 +973,144 @@ mod tests {
                     "{rate}"
                 );
             }
+        }
+        Ok(())
+    }
+
+    /// The first shipped unit that moves, as authored.
+    fn shipped_mobile_unit() -> Result<crate::catalog::UnitArchetypeDef, Box<dyn std::error::Error>>
+    {
+        use crate::catalog::CatalogFile;
+        let units = include_str!("../../../../assets/catalog/units.ron");
+        let file: CatalogFile = ron::from_str(units)?;
+        Ok(file
+            .units
+            .into_iter()
+            .find(|unit| unit.max_speed > 0.0)
+            .ok_or("real catalog has no unit that moves")?)
+    }
+
+    #[test]
+    fn turn_before_move_is_rejected_on_a_unit_that_cannot_move(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut unit = shipped_mobile_unit()?;
+        unit.turn_before_move = true;
+        unit.validate()?;
+        unit.max_speed = 0.0;
+        assert_eq!(rejected_field(&unit.validate()), Some("turn_before_move"));
+        Ok(())
+    }
+
+    #[test]
+    fn turn_before_move_needs_a_half_turn_within_the_stall_repath_window(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 7.2° is 1 311 units: 25 ticks to face a reversal; 7.19° is 1 309 units: 26 ticks.
+        for (rate, valid) in [(7.2_f32, true), (7.19, false), (20.16, true), (180.0, true)] {
+            let mut unit = shipped_mobile_unit()?;
+            unit.turn_before_move = true;
+            unit.turn_rate_deg_per_tick = rate;
+            let result = unit.validate();
+            if valid {
+                assert!(result.is_ok(), "{rate}: {result:?}");
+            } else {
+                assert_eq!(rejected_field(&result), Some("turn_before_move"), "{rate}");
+            }
+            unit.turn_before_move = false;
+            assert!(unit.validate().is_ok(), "{rate} unflagged");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_stationary_turn_rate_outside_the_range_is_rejected_naming_the_field(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        for (rate, valid) in [
+            (0.0_f32, false),
+            (180.5, false),
+            (40.32, true),
+            (180.0, true),
+        ] {
+            let mut unit = shipped_mobile_unit()?;
+            unit.stationary_turn_rate_deg_per_tick = Some(rate);
+            let result = unit.validate();
+            if valid {
+                assert!(result.is_ok(), "{rate}: {result:?}");
+            } else {
+                assert_eq!(
+                    rejected_field(&result),
+                    Some("stationary_turn_rate_deg_per_tick"),
+                    "{rate}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_omitted_stationary_turn_rate_reads_as_the_hull_rate(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::UnitCatalog;
+        let text = include_str!("../../../../assets/catalog/units.ron")
+            .lines()
+            .filter(|line| {
+                !line
+                    .trim_start()
+                    .starts_with("stationary_turn_rate_deg_per_tick:")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let factions = crate::test_support::shipped_factions();
+        let catalog = UnitCatalog::from_ron_str(&factions, &text)?;
+        let mut count = 0;
+        for unit in catalog.archetypes() {
+            assert_eq!(
+                unit.stationary_turn_rate, unit.turn_rate,
+                "unit {}",
+                unit.slug
+            );
+            count += 1;
+        }
+        assert!(count > 0);
+        Ok(())
+    }
+
+    #[test]
+    fn turn_before_move_counts_the_turn_in_place_at_the_stationary_rate(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 7° is 1 274 units: 26 ticks to the first step of a reversal at that rate alone. With
+        // a stationary rate of 20° (3 641 units), 9 ticks in place leave less than 1 274, so the
+        // first step comes on tick 10.
+        for (stationary, valid) in [(None, false), (Some(7.0_f32), false), (Some(20.0), true)] {
+            let mut unit = shipped_mobile_unit()?;
+            unit.turn_before_move = true;
+            unit.turn_rate_deg_per_tick = 7.0;
+            unit.stationary_turn_rate_deg_per_tick = stationary;
+            let result = unit.validate();
+            if valid {
+                assert!(result.is_ok(), "{stationary:?}: {result:?}");
+            } else {
+                assert_eq!(
+                    rejected_field(&result),
+                    Some("turn_before_move"),
+                    "{stationary:?}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_omitted_turn_before_move_reads_as_false() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::CatalogFile;
+        let text = include_str!("../../../../assets/catalog/units.ron")
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("turn_before_move:"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let file: CatalogFile = ron::from_str(&text)?;
+        assert!(!file.units.is_empty());
+        for unit in &file.units {
+            assert!(!unit.turn_before_move, "unit {}", unit.slug);
         }
         Ok(())
     }

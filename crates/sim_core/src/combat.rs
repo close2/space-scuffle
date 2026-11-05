@@ -479,8 +479,9 @@ fn start_swing(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget) -
     false
 }
 
-/// Steps a ready weapon: starts the swing if aimed, or begins rotating. Returns true when the
-/// shot discharges in this call (a swing with damage point 0, [`start_swing`]).
+/// Steps a ready weapon: starts the swing if aimed, or begins rotating and starts the swing on
+/// this same tick if the turn aligns it ([`slew_and_try_swing`]). Returns true when the shot
+/// discharges in this call (a swing with damage point 0, [`start_swing`]).
 fn step_ready_weapon(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget) -> bool {
     let distance = entity.position.distance(target.position);
     if !in_engagement_band(distance, weapon, target.combined_radius, SimScalar::ZERO) {
@@ -498,14 +499,38 @@ fn step_ready_weapon(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTar
         // CRITICAL COOLDOWN GUARD:
         // An entity may align with a target while its weapon is on cooldown,
         // but MUST NOT start a swing until cooldown has fully elapsed!
-        if entity.weapon_cooldown_remaining == 0 {
-            return start_swing(entity, weapon, target);
-        }
+        entity.weapon_cooldown_remaining == 0 && start_swing(entity, weapon, target)
     } else {
         entity.weapon_phase = WeaponPhase::RotatingToTarget {
             target_id: target.id,
         };
-        slew_towards(entity, weapon, target_angle);
+        slew_and_try_swing(entity, weapon, target, target_angle)
+    }
+}
+
+/// Turns the weapon mount towards `target_angle`, then starts the swing at once if that turn
+/// brought `target` inside the firing arc and the cooldown has run out.
+///
+/// This is the one place a rotating weapon checks its alignment, shared by a weapon that starts
+/// rotating this tick ([`step_ready_weapon`]) and one that was already rotating
+/// ([`step_rotating_weapon`]). `StarCraft` II turns and attacks in one motion: the swing starts
+/// on the game loop the target enters the arc (`CWeapon` `Arc`/`ArcSlop`), with no extra loop
+/// after the turn (remediation plan §4.2 M-22; plan `2026-11-05-sc2-deviation-fixes` WP1, B-1).
+/// An aligned weapon still cooling down returns to `Ready` to wait. Returns true when the shot
+/// discharges in this call (a swing with damage point 0, [`start_swing`]).
+fn slew_and_try_swing(
+    entity: &mut Entity,
+    weapon: &WeaponSpec,
+    target: WeaponTarget,
+    target_angle: SimAngle,
+) -> bool {
+    slew_towards(entity, weapon, target_angle);
+    let aim = weapon_aim(entity, weapon);
+    if is_within_firing_arc(aim, entity.position, target.position, weapon.firing_arc) {
+        if entity.weapon_cooldown_remaining == 0 {
+            return start_swing(entity, weapon, target);
+        }
+        entity.weapon_phase = WeaponPhase::Ready;
     }
     false
 }
@@ -520,16 +545,7 @@ fn step_rotating_weapon(entity: &mut Entity, weapon: &WeaponSpec, target: Weapon
         return false;
     }
     let delta = target.position - entity.position;
-    slew_towards(entity, weapon, SimAngle::atan2(delta.y, delta.x));
-    let aim = weapon_aim(entity, weapon);
-    if is_within_firing_arc(aim, entity.position, target.position, weapon.firing_arc) {
-        if entity.weapon_cooldown_remaining == 0 {
-            return start_swing(entity, weapon, target);
-        }
-        // Aligned, but still cooling down: transition back to Ready to await cooldown expiry
-        entity.weapon_phase = WeaponPhase::Ready;
-    }
-    false
+    slew_and_try_swing(entity, weapon, target, SimAngle::atan2(delta.y, delta.x))
 }
 
 /// Steps a swing bound to `bound`. Returns true when the shot discharges.

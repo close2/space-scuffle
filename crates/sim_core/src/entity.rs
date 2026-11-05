@@ -44,6 +44,13 @@ pub enum EntityAdmissionError {
     /// Prepared resource subtraction cannot be represented.
     #[error("ability resource payment cannot be represented")]
     PaymentOverflow,
+    /// An immediate `UseStim` was given to an entity directly. Only `SimWorld` knows the
+    /// archetype's Overclock spec in the catalog and whether its research is done, so a stim is
+    /// admitted only through a `PlayerCommand` (plan `2026-11-05-sc2-deviation-fixes` B-32).
+    #[error(
+        "an immediate stim needs the world's catalog and unlocks; submit it as a player command"
+    )]
+    StimOutsideWorld,
 }
 
 #[derive(Clone, Copy)]
@@ -217,8 +224,10 @@ pub struct Entity {
     pub velocity: SimVec2,
     /// Hull facing: a binary angle (65 536 units per turn), counter-clockwise from +x in the
     /// world frame. Set at spawn (`SimWorld::spawn_unit_facing`) and afterwards changed only
-    /// through [`Self::turn_hull_towards`], so it turns at most the archetype's `turn_rate` per
-    /// tick.
+    /// through [`Self::turn_hull_towards`], so it turns at most the archetype's `turn_rate` on a
+    /// tick the unit moves and its `stationary_turn_rate` on any other tick. For an archetype flagged `turn_before_move`, the movement phase holds the unit in
+    /// place while this facing is further from its step than one tick's turn, and lets it step
+    /// only on a tick that ends facing the step exactly.
     pub heading: SimAngle,
     /// Independent turret aim angle.
     pub turret_angle: SimAngle,
@@ -303,9 +312,12 @@ pub struct Entity {
     pub is_invulnerable: bool,
     /// Hull rotation still allowed this tick, in binary angle units.
     ///
-    /// Set to the archetype's `turn_rate` at the start of every movement phase
-    /// (`SimWorld::step_movement_and_steering`) and spent by [`Self::turn_hull_towards`], so the
-    /// movement phase and the weapon phase together turn the hull at most `turn_rate` per tick.
+    /// Set to the archetype's `stationary_turn_rate` at the start of every movement phase
+    /// (`SimWorld::step_movement_and_steering`), raised or lowered to its `turn_rate` when the
+    /// unit's own motion translates it that tick, and spent by [`Self::turn_hull_towards`]. So the
+    /// movement phase and the weapon phase together turn the hull at most `turn_rate` on a tick
+    /// the unit moves and `stationary_turn_rate` on any other tick. A `turn_before_move` unit
+    /// turning in place spends all of it in the movement phase.
     /// It is reset before its first read in every tick and so carries no state from one tick
     /// to the next; for that reason it is left out of the state checksum.
     pub hull_turn_budget: u16,
@@ -354,7 +366,7 @@ impl Entity {
             turret_angle: SimAngle::ZERO,
             hp: archetype.max_hp,
             shields: archetype.max_shields,
-            energy: archetype.max_energy,
+            energy: archetype.start_energy,
             // Never damaged: ready to regenerate shields under any authored delay, and the
             // value the saturating counter reaches anyway.
             ticks_since_last_damage: u16::MAX,
@@ -468,11 +480,12 @@ impl Entity {
     }
 
     /// Issues an order, or schedules it when `queue` is true.
-    /// Returns false for a loaded actor or ordinary immediate legacy-stim HP ineligibility.
-    /// An issued attack is explicit by definition, whatever origin the command claimed.
+    /// Returns false for a loaded actor. An issued attack is explicit by definition, whatever
+    /// origin the command claimed.
     ///
     /// # Errors
-    /// Returns typed malformed buff/cost evidence before changing any field.
+    /// [`EntityAdmissionError::StimOutsideWorld`] for an immediate `UseStim`, before changing any
+    /// field: a stim comes from the catalog, through `SimWorld`'s command path.
     pub fn issue_order(
         &mut self,
         mut order: UnitOrder,
@@ -485,7 +498,7 @@ impl Entity {
             *origin = AttackOrigin::Explicit;
         }
         if !queue && matches!(order, UnitOrder::UseStim) {
-            return self.apply_stimpack();
+            return Err(EntityAdmissionError::StimOutsideWorld);
         }
         self.commit_order(order, queue);
         Ok(true)
@@ -501,7 +514,7 @@ impl Entity {
         self.commit_order(order, queue);
     }
 
-    // Immediate UseStim is admitted by the public wrapper; the concrete movement
+    // An immediate UseStim is refused by the public wrapper; the concrete movement
     // helper only constructs Move/AttackMove. No fallible work follows admission.
     fn commit_order(&mut self, order: UnitOrder, queue: bool) {
         if queue {
@@ -608,19 +621,6 @@ impl Entity {
                 attack_rate_multiplier: spec.attack_rate_multiplier,
             });
         }
-    }
-
-    /// Legacy default Overclock admission; parameters retain existing gameplay values.
-    ///
-    /// # Errors
-    /// Propagates malformed buff state/payment evidence without mutation.
-    pub fn apply_stimpack(&mut self) -> Result<bool, EntityAdmissionError> {
-        self.apply_overclock(OverclockSpec {
-            hp_cost: SimScalar::from_i32(10),
-            duration_ticks: 250,
-            speed_multiplier: SimScalar::from_num(1.5),
-            attack_rate_multiplier: SimScalar::from_num(1.5),
-        })
     }
 
     /// Applies the existing half-speed75-tick debuff after checked fold preparation.

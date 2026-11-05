@@ -517,7 +517,7 @@ proved bit-identical; d to g each have one cause and are measured.
 
 **7. Decisions taken by WP17 (2026-11-05, from its research, audit §10).** Charter §8 lets the implementer narrow
 scope and fill gaps the way StarCraft II does, if written down. These are written here:
-- **Turn-before-move: not implemented; [Q0050](../questions/open/0050-turn-before-move.md) filed.** The data have
+- **Turn-before-move: not implemented; [Q0050](../questions/closed/0050-turn-before-move.md) filed.** The data have
   a `TurnBeforeMove` unit flag (Siege Tank, Thor, Ultralisk) but no tolerance, so the rule cannot be specified and
   tested (item 4's condition). Commit g is not made; the default is no gating.
 - **`StationaryTurningRate` not applied.** The game has a second hull rate for a unit that is not moving; it differs
@@ -1158,6 +1158,16 @@ Each step is its own documentation commit, made when its trigger lands. A closed
    weapon timing rule and hull turning) and Catalog data row; this plan's row in `docs/plans/README.md` (`Done` with
    commits, or `Partly done` naming WP14).
 
+**Amendment (plan `2026-11-05-sc2-deviation-fixes` WP0, 2026-11-05; owner's standing rule, Q0051).** When steps 1
+and 3 close Q0035 and Q0045, what they leave open is called a recorded bug, never "accepted" or "kept":
+- Q0035's resolution and the Combat row line of step 1 read "the contact rules of `d4109e2` stay for now; how
+  StarCraft II spaces melee attackers is recorded bug B-50 in plan `2026-11-05-sc2-deviation-fixes` (WP16)".
+- Q0045's 1(b) line adds "the remaining turning differences are recorded bugs B-28 (six mounts) and B-29
+  (acquisition arc) in plan `2026-11-05-sc2-deviation-fixes` (WP10); B-31 (`StationaryTurningRate`) is fixed by plan
+  `2026-11-05-turn-before-move` WP5 and WP6".
+- Step 5 is absorbed into that plan's WP19. The `DESIGN.md` Combat and Movement rows already point at its bug
+  register, and a rewrite of either row must keep that pointer.
+
 **Gate.** Documentation gate.
 
 ---
@@ -1227,10 +1237,12 @@ ranges are measured on top of it), when the owner's priority allows. It may be s
 - **F-6 (Amendment 1): turret idle behaviour and acceleration of turning.** Whether turrets return to a rest angle,
   and whether the game accelerates turning (D-8 assumes a constant rate per tick), are listed by WP17's research and
   not modelled.
-- **F-8 (WP17): turning the game models and we do not.** From audit §10: `StationaryTurningRate` (a second hull
-  rate when not moving; four identities differ), the acquisition arc `Arc` ÷ 2 beside the engaged tolerance,
-  `TurnBeforeMove` (Q0050), and the six weapons whose mount differs (Hellion, Immortal, Colossus, Lurker and Phoenix
+- **F-8 (WP17): turning the game models and we do not.** From audit §10: the acquisition arc `Arc` ÷ 2 beside the
+  engaged tolerance, and the six weapons whose mount differs (Hellion, Immortal, Colossus, Lurker and Phoenix
   turrets modelled as hull weapons; the Thor's air weapon modelled as a turret). Each needs its own rule or data
-  commit and measurement.
+  commit and measurement. `StationaryTurningRate` and `TurnBeforeMove` (Q0050), formerly listed here, are done by
+  plan [`2026-11-05-turn-before-move`](2026-11-05-turn-before-move.md) (WP1, WP3, WP5, WP6); turn-before-move made
+  the stationary rate observable, since these units turn in place, and the owner's standing rule of 2026-11-05
+  (follow StarCraft II unless a deviation is named) brought it in.
 - **F-7 (Amendment 1): our own units.** The owner plans original units later (Q0045). Until then every identity with
   a counterpart follows it; an original unit later will be audited as class E and needs no change to these rules.

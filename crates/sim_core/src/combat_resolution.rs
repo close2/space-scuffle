@@ -244,7 +244,8 @@ impl SimWorld {
             };
 
             let target_snapshot = target_opt_id.and_then(|tid| combat.snapshot(tid));
-            let target_mover = target_snapshot.map_or(MoverType::Ground, |t| t.mover);
+            let target_mover =
+                target_snapshot.map_or_else(|| Self::idle_weapon_plane(entity, arch), |t| t.mover);
 
             let Some(weapon) = Self::resolved_weapon(
                 &self.player_upgrades,
@@ -290,6 +291,24 @@ impl SimWorld {
                     });
                 }
             }
+        }
+    }
+
+    /// The plane whose weapon steps the cycle of `entity` while it has no target: the ground,
+    /// or the air for a unit armed only against air.
+    ///
+    /// A weapon's cooldown and backswing run on every tick whether or not the unit has a target,
+    /// as in `StarCraft` II. Resolving against the ground alone found no weapon for an air-only
+    /// unit, which then skipped its weapon step and froze its cooldown and backswing until it
+    /// next had a target (plan `2026-11-05-sc2-deviation-fixes` B-79).
+    fn idle_weapon_plane(entity: &Entity, arch: &UnitArchetype) -> MoverType {
+        if arch
+            .weapon_against(MoverType::Ground, entity.active_siege_weapon())
+            .is_some()
+        {
+            MoverType::Ground
+        } else {
+            MoverType::Air
         }
     }
 

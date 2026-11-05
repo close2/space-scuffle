@@ -76,6 +76,20 @@
 // degrees per tick for "blue_infantry", "blue_armor" and "red_psi", 20.16 for "red_siege"; was
 // instant). Checkpoint 2 (ticks 51 to 100, the first moves) and every checkpoint from
 // checkpoint 4 (ticks 151 to 200) changed.
+// Re-recorded for plan 2026-11-05-turn-before-move WP3 (Q0050): "red_siege" (railgun_crawler)
+// turns before it moves. Ordered at tick 120 to AttackMove 104 degrees from its spawn facing, each
+// tank turns in place on ticks 121 to 125 (20.16 degrees per tick) and takes its first step on
+// tick 126, then walks the path it walked before, five ticks later. Checkpoints 1 and 2 are
+// unchanged; from checkpoint 3 (ticks 101 to 150) every checkpoint changed.
+// Re-recorded for plan 2026-11-05-turn-before-move WP6 (Amendment 1): "red_siege" turns in place
+// at its StarCraft II stationary rate, 40.32 degrees per tick (StationaryTurningRate 720, `core`
+// UnitData:39). It turns in place on ticks 121 to 123 (was 121 to 125), steps on tick 124 (was
+// 126), and walks the same path two ticks earlier. Checkpoints 1 and 2 are unchanged; from
+// checkpoint 3 every checkpoint changed.
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP1 (B-1, remediation M-22): a ready weapon
+// whose turn this tick brings its target inside the firing arc starts its swing on that tick (it
+// started one tick later). Checkpoints 1 to 3 are unchanged; from checkpoint 4 (ticks 151 to 200),
+// the first fight, every checkpoint changed.
 (
     checksum_schema: 10,
     seed: 0x5EED_0F_5CAFF1E,
@@ -105,23 +119,23 @@
     checksums: [
         0xd3213317d91b8691,
         0x839f47ca0ba8f2b3,
-        0x9c03130587ecfe87,
-        0x76519f44eb3912b7,
-        0xe92247ecd52cd20d,
-        0xe592df0c773733ff,
-        0x16fc1ba2c5713d8b,
-        0x121030f995aee6fe,
-        0x8b6a248eed771ade,
-        0x6e7baceb516fc3b8,
-        0x20c08379aa07cd2f,
-        0xc23147b2eb303667,
-        0xda14aa3954023e59,
-        0x0d4934e0b5595ebc,
-        0xea6eea42f3ef2ce2,
-        0x79c48dcc1a13cb1e,
-        0xa139fd2afc8f098f,
-        0x56ce7cafa4843e71,
-        0x29a51e83b2832223,
-        0xd4d7ba1101a68e51,
+        0xe3c6aaa116ac02c4,
+        0x9138fe57232e4351,
+        0xf51a4e06f4e4dc5d,
+        0x9f9925eb1a32736e,
+        0xb8a19f3edd8ccae0,
+        0x86e3dc0e1db0ef4f,
+        0xe6a873874b3135c5,
+        0x2f2f68ba3d4a3ad5,
+        0xaf5460a90b7ca29a,
+        0x3102e1d5614e92d0,
+        0x0e943a3cc909cd63,
+        0xae619018cd679630,
+        0x4532accfdd07d9a0,
+        0x10e88395af291c8e,
+        0xb0238106c2377e71,
+        0x92f93300afe42312,
+        0x54ace1f46de6bfcf,
+        0xd2629dae8eb6aa00,
     ],
 )

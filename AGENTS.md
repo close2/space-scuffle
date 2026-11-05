@@ -196,12 +196,20 @@ cannot break the tool that selects its tests.
 
 ## 6. Mandatory Two-Stage Sub-Agent Workflow (Plan First, Implement Second)
 
-1. **Stage 1 — Architect Planning Sub-Agent:**
-   - Before any feature, refactor, or bugfix is implemented, a Planning Sub-Agent must first analyze the problem and write a complete, textbook-grade implementation blueprint in `docs/plans/`.
-   - The main orchestrator agent must **never** bypass the planning stage by editing code directly or launching an implementation sub-agent without an approved blueprint.
+1. **Stage 1 — Plan.** Every change is planned before it is implemented, at one of two levels:
+   - **A full plan** in `docs/plans/`, a complete, textbook-grade blueprint written by a planning sub-agent, is
+     required for new subsystems or mechanics, anything that moves battle outcomes or golden replays, anything that
+     changes the checksum format, and work that spans several packages.
+   - **A short note** is enough for a small, well-specified change: config and data changes the owner dictated,
+     test-only fixes, documentation, and single-cause bug fixes with an obvious test. The note is an amendment to the
+     plan the change belongs to, or a decision note in the commit message, stating what changes, why, and how it is
+     tested. The orchestrator writes it itself; no planning sub-agent is needed.
+   - The orchestrator never edits code itself and never launches an implementation sub-agent without the plan or
+     note the change requires.
 2. **Stage 2 — Implementation Sub-Agent:**
-   - Only after the detailed plan in `docs/plans/` is complete may Implementation Sub-Agents be launched to write the code and tests strictly following that blueprint.
+   - Implementation sub-agents write the code and tests strictly following the plan or note.
 3. **Tool-neutral:** the charter names no model or tool for either stage; each session uses the agents it has.
+4. **Owner rule:** the split into full plans and short notes is the owner's (chat, 2026-11-05, recorded in Q0054).
 
 ---
 
