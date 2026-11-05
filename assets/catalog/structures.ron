@@ -68,7 +68,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Orbital Relay Dome: a single massive armored command dome with a broad octagonal base, a short thick uplink mast fixed on its crown with a glowing cyan beacon, blue light strips, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The beacon glows steadily and small status lights flicker.",
+                "Constructing": "Orbital Relay Dome: a single massive armored command dome with a broad octagonal base, a short thick uplink mast fixed on its crown with a glowing cyan beacon, blue light strips, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 102,
@@ -119,7 +122,10 @@
             )),
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Planetary Bulwark Dome: a single massive fortified command dome with a broad octagonal base, sloped armor, two heavy cannon barrels built rigidly into its crown, both pointing forward, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The cannon vents glow steadily and heat vapour rises gently.",
+                "Constructing": "Planetary Bulwark Dome: a single massive fortified command dome with a broad octagonal base, sloped armor, two heavy cannon barrels built rigidly into its crown, both pointing forward, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 9,
@@ -252,7 +258,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Mechanics Lab Dome: a wide armored engineering dome with a broad round base, a glass skylight on its crown glowing amber, riveted plating, two short exhaust stacks at the back, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The skylight glows steadily and thin vapour rises from the stacks.",
+                "Constructing": "Mechanics Lab Dome: a wide armored engineering dome with a broad round base, a glass skylight on its crown glowing amber, riveted plating, two short exhaust stacks at the back, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 105,
@@ -282,7 +291,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Fortress Bunker Dome: a single low thick-walled armored pillbox with a rounded roof, narrow glowing firing slits all around it, heavy armor blocks around its base, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The firing slits glow steadily and small lights flicker.",
+                "Constructing": "Fortress Bunker Dome: a single low thick-walled armored pillbox with a rounded roof, narrow glowing firing slits all around it, heavy armor blocks around its base, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 106,
@@ -312,7 +324,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Radar Beacon Dome: a single small armored sensor tower with a short round base, a short thick mast topped by a fixed square sensor panel facing forward, cyan light bands on the mast, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The sensor panel glows steadily and small signal lights blink.",
+                "Constructing": "Radar Beacon Dome: a single small armored sensor tower with a short round base, a short thick mast topped by a fixed square sensor panel facing forward, cyan light bands on the mast, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 107,
@@ -363,7 +378,10 @@
                 bonus_upgrade_per_level: 0.0,
             )),
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Flak Array Dome: a compact armored missile turret dome with a short round base, two fixed missile pods on its sides with capped tubes pointing up, a cyan scanner eye on its front, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The scanner eye glows steadily and small status lights flicker.",
+                "Constructing": "Flak Array Dome: a compact armored missile turret dome with a short round base, two fixed missile pods on its sides with capped tubes pointing up, a cyan scanner eye on its front, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 108,
@@ -426,7 +444,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Covert Ops Nexus Dome: a single dark angular stealth dome with a broad hexagonal base, matte black and slate armor plates, narrow violet slit windows, a low fixed antenna fin on its roof, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The slit windows glow steadily and faint violet vapour rises.",
+                "Constructing": "Covert Ops Nexus Dome: a single dark angular stealth dome with a broad hexagonal base, matte black and slate armor plates, narrow violet slit windows, a low fixed antenna fin on its roof, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 110,
@@ -493,7 +514,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Weapons Arsenal Dome: a single heavy fortified armory dome with a broad square base, closed blast doors on its front, racks of large shells along its sides, amber warning lights, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The warning lights blink softly and the vents glow steadily.",
+                "Constructing": "Weapons Arsenal Dome: a single heavy fortified armory dome with a broad square base, closed blast doors on its front, racks of large shells along its sides, amber warning lights, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 112,
@@ -523,7 +547,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Fusion Reactor Dome: a round armored reactor dome with a broad round base, a plasma core glowing white-blue behind thick window slits around its middle, coolant pipes on its sides, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The plasma core glows steadily and coolant vapour rises gently.",
+                "Constructing": "Fusion Reactor Dome: a round armored reactor dome with a broad round base, a plasma core glowing white-blue behind thick window slits around its middle, coolant pipes on its sides, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
         (
             structure_type_id: 113,
@@ -586,7 +613,10 @@
             ground_weapon: None,
             air_weapon: None,
             abilities: [],
-            veo_prompts: {},
+            veo_prompts: {
+                "Idle": "Duplicator Module Pod: a single small free-standing armored annex pod on four short feet, two fixed squat reactor drums side by side on its roof with glowing amber vents, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The drum vents glow steadily and small status lights flicker.",
+                "Constructing": "Duplicator Module Pod: a single small free-standing armored annex pod on four short feet, two fixed squat reactor drums side by side on its roof with glowing amber vents, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+            },
         ),
 
         // =====================================================================
