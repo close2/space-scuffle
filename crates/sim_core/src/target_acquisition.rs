@@ -13,9 +13,11 @@
 //!    and an explicit attack ends only when it can no longer be carried out.
 //! 2. A holding or immobile unit only considers targets its weapon reaches from where it
 //!    stands, and acquisition never moves a unit off a hold order.
-//! 3. Candidates are ranked by [`TargetPriorityKey`], so the choice is deterministic. A unit that
-//!    cannot hit its automatic target takes an equal enemy it can hit from where it stands, because
-//!    bodies now block: walking on around a crowd would only lose the blows.
+//! 3. Candidates are ranked by [`TargetPriorityKey`], so the choice is deterministic. As in
+//!    `StarCraft` II (Liquipedia "Automatic Targeting"), a unit keeps a target while it is valid
+//!    and inside weapon reach, unless a candidate of higher rank (threat, then attack target
+//!    priority) is in scan range; once the target is lost or out of reach, the unit takes the
+//!    best candidate by the whole key, the closest among equals.
 //! 4. Damage from a unit's own side never causes retaliation, flight or alerts.
 
 use crate::catalog::UnitArchetype;
@@ -29,10 +31,6 @@ use sim_types::{
     VisibilityState,
 };
 use std::collections::BTreeMap;
-
-/// World units a chased target may be farther than an equally rated rival before the unit
-/// switches, so two enemies at similar distances do not make it dither between them.
-const RETARGET_DISTANCE_MARGIN: SimScalar = SimScalar::ONE;
 
 /// Radius within which a unit under attack alerts idle allies, squared, in world units.
 const CALL_FOR_HELP_RADIUS_SQ: i32 = 25;
@@ -70,9 +68,9 @@ pub(crate) enum Acquisition {
 #[derive(Clone, Copy, Default)]
 struct ScanResult {
     /// Top-ranked candidate.
-    best: Option<(TargetPriorityKey, SimScalar)>,
+    best: Option<TargetPriorityKey>,
     /// The unit's current target, if it is still a candidate.
-    current: Option<(TargetPriorityKey, SimScalar)>,
+    current: Option<TargetPriorityKey>,
 }
 
 impl SimWorld {
@@ -458,7 +456,7 @@ impl SimWorld {
 
         let stationary = entity.is_immobile || matches!(engagement, Engagement::Hold);
         let scan = self.scan_candidates(entity, arch, current, stationary, neighbors, candidates);
-        let Some((best, best_distance)) = scan.best else {
+        let Some(best) = scan.best else {
             return match engagement {
                 Engagement::Hold if current.is_some() && reachable_current.is_none() => {
                     Some(Acquisition::ReleaseHoldTarget)
@@ -469,19 +467,13 @@ impl SimWorld {
                 _ => None,
             };
         };
-        if let Some((held, held_distance)) = scan.current {
-            let in_reach_now = reachable_current.is_none()
-                && self
-                    .entities
-                    .get(&best.entity_id)
-                    .is_some_and(|enemy| self.reaches_from_here(entity, arch, enemy));
-            let keeps = best.rank() <= held.rank()
-                && !in_reach_now
-                && (reachable_current.is_some()
-                    || held_distance <= best_distance + RETARGET_DISTANCE_MARGIN);
-            if keeps {
-                return None;
-            }
+        if current == Some(best.entity_id) {
+            return None;
+        }
+        // A valid target in reach is kept unless a candidate outranks it.
+        let outranked = scan.current.is_none_or(|held| best.rank() > held.rank());
+        if reachable_current.is_some() && !outranked {
+            return None;
         }
         Some(Acquisition::Engage(best.entity_id))
     }
@@ -552,10 +544,10 @@ impl SimWorld {
                 entity_id: neighbor_id,
             };
             if Some(neighbor_id) == current {
-                result.current = Some((key, dist));
+                result.current = Some(key);
             }
-            if result.best.is_none_or(|(best, _)| key < best) {
-                result.best = Some((key, dist));
+            if result.best.is_none_or(|best| key < best) {
+                result.best = Some(key);
             }
         }
         result

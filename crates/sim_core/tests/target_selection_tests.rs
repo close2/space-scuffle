@@ -356,3 +356,61 @@ fn b10_threat_outranks_the_primary_weapon() -> TestResult {
     assert_eq!(acquired(&world, chooser), Some(gunner));
     Ok(())
 }
+
+/// Moves `unit` to (`x`, `y`) between ticks.
+fn teleport(world: &mut SimWorld, unit: EntityId, x: i32, y: i32) -> TestResult {
+    let entity = world.entities.get_mut(&unit).ok_or("teleported unit")?;
+    entity.position = SimVec2::new(SimScalar::from_i32(x), SimScalar::from_i32(y));
+    entity.pos_at_tick_start = entity.position;
+    Ok(())
+}
+
+/// B-9: a target in weapon range is kept when a closer candidate of the same rank appears.
+#[test]
+fn b9_a_target_in_range_is_kept_against_a_closer_equal_candidate() -> TestResult {
+    let mut world = world_with(&[Scratch::gunner(CHOOSER), Scratch::unarmed("target")])?;
+    let chooser = spawn(&mut world, CHOOSER, 0, 10, 16)?;
+    let first = spawn(&mut world, "target", 1, 15, 16)?;
+    step(&mut world, 0, None);
+    assert_eq!(acquired(&world, chooser), Some(first));
+    spawn(&mut world, "target", 1, 12, 16)?;
+    step(&mut world, 1, None);
+    assert_eq!(acquired(&world, chooser), Some(first));
+    Ok(())
+}
+
+/// B-9: a target in weapon range gives way to a candidate of higher rank (here a threat).
+#[test]
+fn b9_a_target_in_range_gives_way_to_a_higher_ranked_candidate() -> TestResult {
+    let mut world = world_with(&[
+        Scratch::gunner(CHOOSER),
+        Scratch::unarmed("target"),
+        Scratch::gunner("threat"),
+    ])?;
+    let chooser = spawn(&mut world, CHOOSER, 0, 10, 16)?;
+    let first = spawn(&mut world, "target", 1, 15, 16)?;
+    step(&mut world, 0, None);
+    assert_eq!(acquired(&world, chooser), Some(first));
+    let threat = spawn(&mut world, "threat", 1, 10, 26)?;
+    step(&mut world, 1, None);
+    assert_eq!(acquired(&world, chooser), Some(threat));
+    Ok(())
+}
+
+/// B-9: once its target is out of weapon range, the unit takes the closest candidate of the
+/// best rank, with no margin in favour of the old target. The old target, 9 away, gives way to
+/// one 8 away; both are beyond reach (the weapon's 6 plus both radii, 7).
+#[test]
+fn b9_a_target_out_of_range_gives_way_to_the_closest_candidate() -> TestResult {
+    let mut world = world_with(&[Scratch::gunner(CHOOSER), Scratch::unarmed("target")])?;
+    let chooser = spawn(&mut world, CHOOSER, 0, 10, 16)?;
+    let first = spawn(&mut world, "target", 1, 15, 16)?;
+    step(&mut world, 0, None);
+    assert_eq!(acquired(&world, chooser), Some(first));
+    teleport(&mut world, chooser, 10, 16)?;
+    teleport(&mut world, first, 19, 16)?;
+    let closer = spawn(&mut world, "target", 1, 10, 24)?;
+    step(&mut world, 1, None);
+    assert_eq!(acquired(&world, chooser), Some(closer));
+    Ok(())
+}

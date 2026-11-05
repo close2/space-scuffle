@@ -759,7 +759,7 @@ requires.
 | B-6 | Release range slop 0.5 for every weapon | (i) | WP9 |
 | B-7 | Threat criterion | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.3, §4.4) |
 | B-8 | Attack target priority as hard-coded categories | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.5) |
-| B-9 | Closest-target switching with an invented margin | (i) | WP4. The sourced rule was measured and not committed: it flips battle 33's winner over its seeds ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.6); held for the orchestrator |
+| B-9 | Closest-target switching with an invented margin | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.6; Amendment 5) |
 | B-10 | No primary-weapon criterion | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.7) |
 | B-11 | No per-unit tie-break | (i) | WP4, after B-9 (the tie-break acts only once the previous target is lost); researched in [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.1 |
 | B-12 | Scan ranges | (i) | combat alignment WP14, after WP4 |
@@ -899,3 +899,17 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
   `StarCraft` II it acquires only while attack-moving (Liquipedia "Automatic Targeting", Notes). Open; it belongs
   with B-9 and B-11 in the rest of WP4.
 - **Matrix effect:** only B-7's rule moved results (battle 35, no winner change).
+
+## Amendment 5 (orchestrator, 2026-11-05): B-9 is applied, battle 33 re-recorded
+
+> **Orchestrator decision on the B-9 stop:** "apply B-9. Reason: it is StarCraft II's keep-target rule with a cited
+> source, the owner's standing rule (Q0051) asks for identical unit mechanics, and the owner's Q0007 answer asked why
+> the internet says zealots should beat the marines in battle 33 — B-9 moves battle 33 toward that. Plan D-4 already
+> says battle 33 is re-recorded, not stopped; my brief's 'any battle's winner flipping stops' was stricter than the
+> plan, and this reported stop is exactly what it was for."
+
+- B-9 is committed with its tests first. Battle 33's expectation is re-recorded to the smallest ranges that hold on
+  all 20 matrix seeds, its comment states the 68-seed distribution, and `golden_replay.ron` is re-recorded with the
+  cause traced ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.6).
+- B-11 (with its checksum schema bump in a latent commit of its own) and B-80 follow, each measured. Battle 33 may
+  move again; any other battle whose winner over its seeds changes stops the step.

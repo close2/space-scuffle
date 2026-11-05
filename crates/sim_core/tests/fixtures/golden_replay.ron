@@ -90,6 +90,12 @@
 // whose turn this tick brings its target inside the firing arc starts its swing on that tick (it
 // started one tick later). Checkpoints 1 to 3 are unchanged; from checkpoint 4 (ticks 151 to 200),
 // the first fight, every checkpoint changed.
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP4 (B-9, StarCraft II's keep-target rule):
+// a unit whose automatic target is out of weapon reach takes the closest candidate of the best
+// rank; it no longer keeps chasing its target while a rival is up to 1.0 closer. On tick 213 the
+// "red_psi" zealot (entity 24), chasing "blue_infantry" marine 15 2.29 away, out of reach, turns
+// to marine 8, 0.006 closer. Checkpoints 1 to 4 are unchanged; from checkpoint 5 (ticks 201 to
+// 250) every checkpoint changed.
 (
     checksum_schema: 10,
     seed: 0x5EED_0F_5CAFF1E,
@@ -121,21 +127,21 @@
         0x839f47ca0ba8f2b3,
         0xe3c6aaa116ac02c4,
         0x9138fe57232e4351,
-        0xf51a4e06f4e4dc5d,
-        0x9f9925eb1a32736e,
-        0xb8a19f3edd8ccae0,
-        0x86e3dc0e1db0ef4f,
-        0xe6a873874b3135c5,
-        0x2f2f68ba3d4a3ad5,
-        0xaf5460a90b7ca29a,
-        0x3102e1d5614e92d0,
-        0x0e943a3cc909cd63,
-        0xae619018cd679630,
-        0x4532accfdd07d9a0,
-        0x10e88395af291c8e,
-        0xb0238106c2377e71,
-        0x92f93300afe42312,
-        0x54ace1f46de6bfcf,
-        0xd2629dae8eb6aa00,
+        0x3b96be526fd4a5bb,
+        0x3dfc4ff96cd5b394,
+        0x48eb29d869bc3db9,
+        0x05e50b8a2bd6513d,
+        0x4ee735e2a645f9e3,
+        0x34151b038c0daeb9,
+        0xcfd6525cba40f915,
+        0x7c5417d94b8e2de6,
+        0xa215a6359c5f113c,
+        0x444ce1374fbbb0d2,
+        0xc9184da91c1f3357,
+        0xd054c62dd2228251,
+        0x664be510adb3dcb1,
+        0xc3241712b55c8cde,
+        0x7aeb7377b7c0192c,
+        0x194e051e87bc91c8,
     ],
 )

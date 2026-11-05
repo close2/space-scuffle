@@ -300,7 +300,7 @@ by other units".
   (`repair_shuttle` 10) and passes.
 - **Measured** against §4.4: matrix and battle 33 bit-identical; goldens unchanged.
 
-### 4.6 B-9, keeping the target: measured, not committed (stop rule)
+### 4.6 Commit d: keeping the target (B-9)
 
 - **Rule tried.** A unit keeps a valid target inside weapon reach unless a candidate in scan range outranks it;
   once the target is out of reach or lost, it takes the best candidate by the whole key, the closest among equals.
@@ -315,16 +315,31 @@ by other units".
   (marine / zealot wins); on 68 seeds 37 / 20 / 11 → 20 / 35 / 13, marine survivors 3.62 (SD 3.16) → 1.85 (SD 2.46),
   zealot survivors 1.00 (SD 1.32) → 1.76 (SD 1.52), mean end tick 443.1 → 446.8. Seeds of record 0-3, 0-2, 0-2, 9-0 →
   0-2, 3-0, 0-2, 2-1 (the expectation `blue: (0, 9), red: (0, 3)` still holds on all four; 3 failures over all 20
-  seeds, was 1). `golden_replay.ron` diverged from checkpoint 4 (ticks to 250). Other battles, no winner flip:
+  seeds, was 1). `golden_replay.ron` diverged from checkpoint 5 (ticks 201 to 250). Other battles, no winner flip:
   31_15_marauders_vs_15_stalkers 11/9 → 16/4 (11 seed winners changed); 32_30_marines_vs_15_banelings 4/11 → 4/8;
   28_100_lings_vs_10_immortals survivors 27.20 → 35.10, end 678.0 → 597.1; 29 68.70 → 70.80, end 448.6 → 423.2;
   27, 30, 34, 26, 15, 11a, 10 by under 5 ticks.
-- **Decision.** The stop rule of the hand-off ("a battle's overall winner over its seeds flipping stops the step")
-  applies, so the rule and its tests are not committed. They are kept as
-  `~/scratch/sc2dev_wp4/b9rule/b9_rule_and_tests.patch`. B-9 stays open, and B-11 (its tie-break acts only when
-  the previous target is lost, which is B-9's rule) waits with it. The likely mechanism, not traced per unit: the
-  zealots, which chase marines out of reach, now switch to the closest marine instead of following their first
-  target up to 1.0 farther.
+- **First stopped, then applied.** The first run stopped under the hand-off's rule ("a battle's overall winner over its
+  seeds flipping stops the step"). The orchestrator then decided to apply it (plan Amendment 5): it is StarCraft II's
+  keep-target rule with a cited source, Q0051 asks for identical unit mechanics, and plan D-4 re-records battle 33
+  rather than stopping on it. It is committed after the B-10 commits, which were bit-identical, so the figures above
+  are its effect. No battle other than 33 changed its winner over its seeds.
+- **Mechanism, traced on the seeds of record** (`matchup_trace` unit CSVs before and after the rule, compared by
+  `~/scratch/sc2dev_wp4/scripts/trace_diff.py`). On seed 11 the two runs first differ at tick 68: zealot 34, chasing
+  marine 16 5.775 away and out of reach, takes marine 20, 5.774 away, where the old rule kept chasing marine 16.
+  On seed 3203386110 the first difference is the same kind at tick 57 (zealot 34: marine 20 at 8.503 gives way to
+  marine 24 at 8.495). Over the whole fight the zealots change target while their old one still lives 22 times on
+  seed 11 and 29 times on seed 3203386110 (2 and 2 before); the marines 1 and 8 times (1 and 0 before). The
+  marines rarely switch because they fire from range and keep their in-reach target, as before. So the change is
+  the keep-target rule acting on chasing zealots, not a side effect.
+- **Battle 33 re-recorded** (orchestrator: the smallest ranges that hold on all 20 matrix seeds): `blue: (0, 8),
+  red: (0, 5)` (was `(0, 9)`, `(0, 3)`); 0 failures over all 1000 runs. The fixture comment carries the 68-seed
+  distribution.
+- **`golden_replay.ron` re-recorded.** Checkpoints 1 to 4 unchanged; from checkpoint 5 (ticks 201 to 250) every one
+  changed. Cause, from a per-tick dump of each unit's target in the replay before and after: on tick 213 the
+  "red_psi" zealot (entity 24), chasing "blue_infantry" marine 15 2.291 away, out of reach, takes marine 8, 2.284
+  away; the old rule kept marine 15. `golden_replay_orders.ron` unchanged. Debug, release and `wasm32-wasip1`
+  reproduce both.
 
 ### 4.7 Commit e: the primary weapon (B-10)
 
