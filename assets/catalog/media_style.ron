@@ -86,7 +86,7 @@
         // crawler is a tracked tank: no feet, a fixed turret, the tracks show the travel.
         overrides: {
             "railgun_crawler": {
-                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the tank keeps the same size and place in frame from start to end. The tank sits still with its engine idling: thin exhaust smoke from its rear vents and blue energy glowing steadily along the rails. The turret and both barrels stay fixed. Seamless loop: the last frame matches the first.",
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the tank keeps the same size and place in frame from start to end. The tank sits still with its engine idling: thin exhaust smoke drifts slowly from its rear vents, the small side exhaust ports glow with a steady unchanging light and blue energy glows steadily along the rails. The turret and both barrels stay fixed. Seamless loop: the last frame matches the first.",
                 Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the tank drives on the spot as if on a rolling road: its tracks visibly run and its road wheels turn while the hull keeps the same place, size and facing in frame. The hull rocks gently on its suspension and exhaust puffs from its rear vents; the turret stays fixed. Seamless loop: the last frame matches the first.",
                 Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the tank keeps its place in frame with the turret fixed. The twin rails fire once along the barrels: a sharp recoil, a bright blue electric flash at the muzzles and a bolt streaking out of frame, then the barrels settle back to their starting position.",
             },
@@ -226,6 +226,10 @@
         // ending in a pose the Idle does not start from, so the switch back would snap. Their
         // Attack is pinned at its end to the Idle picture, as Constructing is (D-3), and is
         // still not looped.
+        // specter_android Walk: pinned at both ends, its raw frames already loop (74014f87: raw
+        // worst 0.800 against a threshold of 0.782); the default cross-fade of 2 of 10 frames
+        // shows a double image of the legs at the restart, as on the welder, so it keeps loop
+        // sampling only.
         overrides: {
             "railgun_crawler": {
                 Attack: (pin_end: true, seam: None),
@@ -238,6 +242,7 @@
             },
             "specter_android": {
                 Attack: (pin_end: true, seam: None),
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
             },
             "welder_drone": {
                 Idle: (pin_end: true, seam: Some((scale_lock: true, crossfade_frames: 0))),
