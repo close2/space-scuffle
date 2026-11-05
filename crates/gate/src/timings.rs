@@ -177,6 +177,7 @@ mod tests {
                 .collect(),
             commands: Vec::new(),
             flakes: Vec::new(),
+            retries: Vec::new(),
         }
     }
 

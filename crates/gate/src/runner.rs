@@ -7,7 +7,8 @@
 //! [`Stamp`] when a stamping tier passes on a clean tree. It also implements the `merge` tier's
 //! use of a branch's stamp (blueprint §3.4), the flake rule (every failed target is rerun once at
 //! once; one that then passes is flaky, not green, and a `full` run red only by flakes is
-//! repeated once, recording them in its stamp: blueprint §3.5), and the report's notes: the time
+//! repeated once, recording them in its stamp: blueprint §3.5), the compiler-crash retry of every
+//! Cargo step (`crash.rs`, Amendment 1), and the report's notes: the time
 //! saved against the last `full` stamp (blueprint §8) and, for a red `full` run, the red rule's
 //! suspect list (`suspects.rs`).
 //!
@@ -26,6 +27,7 @@
 use crate::catalog::SuiteCatalog;
 use crate::changes::{cargo_program, ChangeSpec, Git};
 use crate::cli::{Command, RunOptions};
+use crate::crash::{crash_log, incremental_dirs, run_with_crash_retry};
 use crate::execute::{build_targets, mark_flakes, run_logged, run_targets, Outcome, TargetResult};
 use crate::explain::render_selection;
 use crate::merge::{changed_crates, choose_stamp, overlapping_crates, BranchCommit};
@@ -122,6 +124,10 @@ pub struct StepResult {
     pub wall: Duration,
     /// Its log file.
     pub log: PathBuf,
+    /// Whether its first attempt crashed the compiler, so it ran a second time on a cleared
+    /// incremental cache (blueprint Amendment 1, D5); the first log is kept as
+    /// `<name>.crash.log`.
+    pub retried: bool,
 }
 
 /// The result of one tier run.
@@ -156,9 +162,14 @@ impl RunReport {
         let mut out = format!("\ncargo gate {}: results\n", self.tier);
         for step in &self.steps {
             let verdict = if step.passed { "PASS" } else { "FAIL" };
+            let retry = if step.retried {
+                " (retried once after a compiler crash)"
+            } else {
+                ""
+            };
             let _ = writeln!(
                 out,
-                "  {verdict:<5} {:>8.1} s            step {}",
+                "  {verdict:<5} {:>8.1} s            step {}{retry}",
                 step.wall.as_secs_f64(),
                 step.name
             );
@@ -237,11 +248,28 @@ impl RunReport {
             .collect()
     }
 
+    /// The names of the steps that were retried after a compiler crash, in run order.
+    #[must_use]
+    pub fn retried_steps(&self) -> Vec<String> {
+        self.steps
+            .iter()
+            .filter(|step| step.retried)
+            .map(|step| step.name.clone())
+            .collect()
+    }
+
     /// The failing steps and targets with their logs.
     fn render_failures(&self) -> String {
         let mut out = String::new();
         for step in self.steps.iter().filter(|s| !s.passed) {
             let _ = writeln!(out, "\nFAILED step {}: {}", step.name, step.log.display());
+            if step.retried {
+                let _ = writeln!(
+                    out,
+                    "    the compiler crashed, and the retry failed too; the first log is {}",
+                    crash_log(&step.log).display()
+                );
+            }
         }
         for result in &self.targets {
             match &result.outcome {
@@ -518,27 +546,35 @@ fn restamp_selection(
     Ok(selection)
 }
 
-/// Runs one fixed step and records it.
+/// Runs one fixed step in the repository root, retrying it once after a compiler crash, and
+/// records it.
 fn step(
     steps: &mut Vec<StepResult>,
     name: &str,
     program: &str,
     args: &[String],
     env: &BTreeMap<String, String>,
-    root: &Path,
+    context: &Context,
     log_dir: &Path,
 ) -> Result<bool, GateError> {
     println!("step {name}: {program} {}", args.join(" "));
     let log = log_dir.join(format!("{name}.log"));
+    let caches = incremental_dirs(&context.workspace.target_directory, args);
     let start = Instant::now();
-    let passed = run_logged(program, args, env, root, &log)?;
+    let run = run_with_crash_retry(
+        &log,
+        &caches,
+        || run_logged(program, args, env, context.git.root(), &log),
+        |passed| *passed,
+    )?;
     steps.push(StepResult {
         name: name.to_string(),
-        passed,
+        passed: run.value,
         wall: start.elapsed(),
         log,
+        retried: run.retried,
     });
-    Ok(passed)
+    Ok(run.value)
 }
 
 /// Converts string literals to owned arguments.
@@ -570,7 +606,6 @@ fn execute(
     options: &RunOptions,
     flakes: &[String],
 ) -> Result<RunReport, GateError> {
-    let root = context.git.root();
     let tree = context.git.tree("HEAD")?;
     let log_dir = match &options.log_dir {
         Some(dir) => dir.clone(),
@@ -598,7 +633,7 @@ fn execute(
         &cargo,
         &strings(&["fmt", "--all", "--", "--check"]),
         &none,
-        root,
+        context,
         &log_dir,
     )?;
     if ok {
@@ -609,7 +644,7 @@ fn execute(
                 &cargo,
                 &args,
                 &none,
-                root,
+                context,
                 &log_dir,
             )?;
         }
@@ -637,14 +672,21 @@ fn run_tests(
     let start = Instant::now();
     println!("step build: {} test target(s)", ids.len());
     let build_log = log_dir.join("build.log");
-    let built = build_targets(root, &context.workspace, &ids, whole, &build_log)?;
+    let caches = incremental_dirs(&context.workspace.target_directory, &[]);
+    let built = run_with_crash_retry(
+        &build_log,
+        &caches,
+        || build_targets(root, &context.workspace, &ids, whole, &build_log),
+        Option::is_some,
+    )?;
     report.steps.push(StepResult {
         name: "build".to_string(),
-        passed: built.is_some(),
+        passed: built.value.is_some(),
         wall: start.elapsed(),
         log: build_log,
+        retried: built.retried,
     });
-    let Some(executables) = built else {
+    let Some(executables) = built.value else {
         return Ok(());
     };
     if options.no_run {
@@ -725,7 +767,6 @@ fn run_extras(
     log_dir: &Path,
     report: &mut RunReport,
 ) -> Result<(), GateError> {
-    let root = context.git.root();
     let cargo = cargo_program();
     let none = BTreeMap::new();
     let mut doc = strings(&["test", "--locked", "--doc"]);
@@ -752,7 +793,7 @@ fn run_extras(
             &cargo,
             &doc,
             &none,
-            root,
+            context,
             log_dir,
         )?;
     }
@@ -764,7 +805,7 @@ fn run_extras(
                 &command.program,
                 &command.args,
                 &command.env,
-                root,
+                context,
                 log_dir,
             )?;
         }
@@ -830,6 +871,7 @@ fn stamp_run(
             .collect(),
         commands: selection.commands.keys().cloned().collect(),
         flakes: flakes.to_vec(),
+        retries: report.retried_steps(),
     };
     let dir = stamp_dir(options).map_err(|error| error.to_string())?;
     stamp.write(&dir).map_err(|error| error.to_string())
@@ -870,6 +912,37 @@ mod tests {
     }
 
     #[test]
+    fn a_retried_step_is_shown_in_the_table_and_named_for_the_stamp() {
+        let step = |name: &str, passed: bool, retried: bool| StepResult {
+            name: name.into(),
+            passed,
+            wall: Duration::from_secs(1),
+            log: PathBuf::from(format!("/l/{name}.log")),
+            retried,
+        };
+        let mut report = RunReport {
+            tier: Tier::Package,
+            steps: vec![step("fmt", true, false), step("clippy", true, true)],
+            targets: Vec::new(),
+            stamp: Err("the run is not green".into()),
+            notes: Vec::new(),
+        };
+        assert!(report.passed(), "a crash cured by the retry is green");
+        assert_eq!(report.retried_steps(), ["clippy"]);
+        assert!(report
+            .render()
+            .contains("step clippy (retried once after a compiler crash)"));
+        report.steps.push(step("build", false, true));
+        assert!(!report.passed(), "a second crash stays red");
+        let text = report.render();
+        assert!(text.contains("FAILED step build: /l/build.log"), "{text}");
+        assert!(
+            text.contains("the first log is /l/build.crash.log"),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn the_report_is_red_when_any_step_or_target_fails() {
         let mut report = RunReport {
             tier: Tier::Package,
@@ -878,6 +951,7 @@ mod tests {
                 passed: true,
                 wall: Duration::from_secs(1),
                 log: PathBuf::from("fmt.log"),
+                retried: false,
             }],
             targets: vec![TargetResult {
                 target: TargetId::lib("core"),

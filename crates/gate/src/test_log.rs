@@ -288,6 +288,7 @@ fn render_contradictions(targets: Vec<StampTarget>) -> String {
         targets,
         commands: Vec::new(),
         flakes: Vec::new(),
+        retries: Vec::new(),
     };
     let findings = class_report(&[run]);
     let mut out = String::from(
@@ -431,6 +432,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
                     ],
                 ),
             ]),
+            ..Workspace::default()
         };
         let binaries = parse_test_log(LOG);
         let targets = resolve_targets(&binaries, &workspace);
@@ -492,6 +494,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
                     ],
                 ),
             ]),
+            ..Workspace::default()
         };
         let log = "\
      Running unittests src/lib.rs (deps/asset_baker-01)

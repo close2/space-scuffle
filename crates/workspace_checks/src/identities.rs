@@ -16,6 +16,9 @@
 //! # Invariants
 //! - Names are compared *folded*: ASCII-lowercased with `_`, `-` and spaces removed, so
 //!   `lantern_moth`, `LanternMoth`, `LANTERN_MOTH` and `"Lantern Moth"` are the same name.
+//! - An identity of two or more words is also found inside a longer identifier or literal, as a
+//!   run of whole words (`spawn_lantern_moth`, `"units/lantern_moth/idle.mp4"`); a single-word
+//!   identity (`charge`) only whole, and never as letters inside a word (`overcharge`).
 //! - Test code (scope [`Scope::Production`] drops it), comments and the dev-only crates are
 //!   never judged; tests may read slugs from data and name them.
 //! - Blanking keeps every string delimiter and blanks escaped quotes, so the quotes left in the
@@ -65,6 +68,32 @@ pub fn folded(name: &str) -> String {
         .collect()
 }
 
+/// The words of `text`: maximal runs of ASCII letters and digits, split further where a lower-case
+/// letter or digit is followed by an upper-case one, so `spawn_LanternMoth` has the words `spawn`,
+/// `Lantern` and `Moth`.
+#[must_use]
+pub fn words(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut previous: Option<char> = None;
+    for c in text.chars() {
+        let boundary = !c.is_ascii_alphanumeric()
+            || (c.is_ascii_uppercase()
+                && previous.is_some_and(|p| p.is_ascii_lowercase() || p.is_ascii_digit()));
+        if boundary && !current.is_empty() {
+            out.push(std::mem::take(&mut current));
+        }
+        if c.is_ascii_alphanumeric() {
+            current.push(c);
+        }
+        previous = Some(c);
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
+}
+
 /// Every `slug: "..."` value in `text`, with its one-based line.
 ///
 /// A `slug` key is a whole word: `target_slug` and `ability_slug` reference identities defined
@@ -91,13 +120,26 @@ pub fn slug_fields(text: &str) -> Vec<(usize, String)> {
     slugs
 }
 
-/// What a folded name stands for: the slug and the file defining it, or a former enum variant.
-fn identity_names(root: &Path) -> Result<BTreeMap<String, String>, CheckError> {
+/// One identity C5 looks for.
+#[derive(Debug)]
+struct Identity {
+    /// What it is: the slug and the file defining it, or a former enum variant.
+    what: String,
+    /// The number of [`words`] in its spelling: an identity of two or more words is also found
+    /// as a run of words inside a longer name.
+    words: usize,
+}
+
+/// The identities by folded name.
+fn identity_names(root: &Path) -> Result<BTreeMap<String, Identity>, CheckError> {
     let mut names = BTreeMap::new();
     for variant in FORMER_IDENTITY_VARIANTS {
         names.insert(
             folded(variant),
-            format!("the former enum variant `{variant}`"),
+            Identity {
+                what: format!("the former enum variant `{variant}`"),
+                words: words(variant).len(),
+            },
         );
     }
     for file in IDENTITY_CATALOGS {
@@ -107,18 +149,56 @@ fn identity_names(root: &Path) -> Result<BTreeMap<String, String>, CheckError> {
             source,
         })?;
         for (_, slug) in slug_fields(&text) {
-            names
-                .entry(folded(&slug))
-                .or_insert_with(|| format!("the slug \"{slug}\" from {file}"));
+            names.entry(folded(&slug)).or_insert_with(|| Identity {
+                what: format!("the slug \"{slug}\" from {file}"),
+                words: words(&slug).len(),
+            });
         }
     }
     Ok(names)
 }
 
+/// The identity `spelled` names, and whether it only contains it: the whole of `spelled`
+/// folded, else a run of two or more of its [`words`] that spells an identity of two or more
+/// words (`spawn_lantern_moth`, `"assets/units/lantern_moth/idle.mp4"`). A single-word identity
+/// such as `charge` is matched only whole, since it is also an ordinary word.
+fn named_identity<'a>(
+    names: &'a BTreeMap<String, Identity>,
+    longest: usize,
+    spelled: &str,
+) -> Option<(&'a Identity, bool)> {
+    if let Some(identity) = names.get(&folded(spelled)) {
+        return Some((identity, false));
+    }
+    let lower: Vec<String> = words(spelled)
+        .iter()
+        .map(|word| word.to_ascii_lowercase())
+        .collect();
+    for start in 0..lower.len() {
+        let mut run = String::new();
+        for (count, word) in lower[start..].iter().enumerate() {
+            run.push_str(word);
+            if run.len() > longest {
+                break;
+            }
+            if count == 0 {
+                continue;
+            }
+            if let Some(identity) = names.get(&run).filter(|identity| identity.words >= 2) {
+                return Some((identity, true));
+            }
+        }
+    }
+    None
+}
+
 /// Check C5: no production identifier or string literal names a catalog identity.
 ///
 /// The identities are every `slug` in [`IDENTITY_CATALOGS`] and every name in
-/// [`FORMER_IDENTITY_VARIANTS`]; matching is on [`folded`] names. A mechanic is reached through
+/// [`FORMER_IDENTITY_VARIANTS`]; matching is on [`folded`] names, of the whole identifier or
+/// literal, or of a run of its [`words`] for an identity of two or more words (so
+/// `spawn_lantern_moth` and `"units/lantern_moth/idle.mp4"` are reported, `charge_time` is
+/// not). A mechanic is reached through
 /// a capability field or an ID resolved from data, never by naming the unit, structure, upgrade,
 /// loadout, faction or class that has it (charter §3.3).
 ///
@@ -126,6 +206,7 @@ fn identity_names(root: &Path) -> Result<BTreeMap<String, String>, CheckError> {
 /// [`CheckError::Io`] if a catalog, directory or source file cannot be read.
 pub fn no_catalog_identities_in_code(root: &Path) -> Result<Vec<Finding>, CheckError> {
     let names = identity_names(root)?;
+    let longest = names.keys().map(String::len).max().unwrap_or(0);
     let mut findings = Vec::new();
     for path in rust_files(root, Scope::Production)? {
         let original: Vec<char> = fs::read_to_string(&path)
@@ -137,14 +218,16 @@ pub fn no_catalog_identities_in_code(root: &Path) -> Result<Vec<Finding>, CheckE
             .collect();
         let code: Vec<char> = code_text(&path, Scope::Production)?.chars().collect();
         let mut report = |index: usize, spelled: &str, what: &str| {
-            if let Some(identity) = names.get(&folded(spelled)) {
+            if let Some((identity, inside)) = named_identity(&names, longest, spelled) {
+                let verb = if inside { "contains" } else { "names" };
                 findings.push(Finding::new(
                     root,
                     &path,
                     line_of(&code, index),
                     format!(
-                        "{what} `{spelled}` names {identity}; production code must reach it \
-                         through catalog data, not by name (charter §3.3)"
+                        "{what} `{spelled}` {verb} {}; production code must reach it \
+                         through catalog data, not by name (charter §3.3)",
+                        identity.what
                     ),
                 ));
             }
@@ -295,6 +378,52 @@ mod tests {
         assert!(findings[1].message.contains("`CosmicEnclave`"));
         assert!(findings[2].message.contains("units.ron"));
         Ok(())
+    }
+
+    /// The cases `client/round2_visual_tests::test_zero_hardcoded_creature_names_in_rust_src`
+    /// caught and C5 did not (tiered gates WP6): a multi-word identity as a run of words inside
+    /// a longer identifier or string literal. Single-word identities (`charge`) and words that
+    /// merely contain an identity's letters stay unreported.
+    #[test]
+    fn a_multi_word_identity_inside_a_longer_name_or_literal_is_reported(
+    ) -> Result<(), Box<dyn Error>> {
+        let dir = tree()?;
+        plant(
+            dir.path(),
+            &[(
+                "crates/client/src/inside.rs",
+                "//! x\n\
+                 fn spawn_lantern_moth() {}\n\
+                 const LANTERN_MOTH_RANGE: u32 = 3;\n\
+                 struct StarLeagueBanner;\n\
+                 const P: &str = \"assets/units/lantern_moth/idle.mp4\";\n\
+                 const Q: &str = \"hive_dome_ready\";\n\
+                 fn charge_time() {}\n\
+                 const R: &str = \"overcharge for a starleagues fan; slantern_mothy\";\n\
+                 fn field() { let kit = 1; }\n",
+            )],
+        )?;
+        let findings = no_catalog_identities_in_code(dir.path())?;
+        let lines: Vec<usize> = findings.iter().map(|f| f.line).collect();
+        assert_eq!(lines, vec![2, 3, 4, 5, 6], "{findings:?}");
+        assert!(
+            findings[0]
+                .message
+                .contains("`spawn_lantern_moth` contains"),
+            "{findings:?}"
+        );
+        assert!(findings[0].message.contains("lantern_moth"));
+        assert!(findings[2].message.contains("star_league"));
+        Ok(())
+    }
+
+    #[test]
+    fn words_split_at_separators_and_case_changes() {
+        assert_eq!(
+            words("spawn_LanternMoth-v2 assets/HIVE_DOME.png"),
+            ["spawn", "Lantern", "Moth", "v2", "assets", "HIVE", "DOME", "png"]
+        );
+        assert_eq!(words("__"), Vec::<String>::new());
     }
 
     #[test]
