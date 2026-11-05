@@ -414,7 +414,7 @@
                     name: "Siege Mode",
                     target_kind: ToggleMode,
                     energy_cost: 0.0,
-                    cooldown_ticks: 75,
+                    cooldown_ticks: 0,
                     cast_range: 0.0,
                     effect: SwitchMode(
                         mode_name: "siege_mode",

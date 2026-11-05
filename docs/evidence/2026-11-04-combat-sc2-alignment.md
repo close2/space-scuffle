@@ -1120,3 +1120,22 @@ this group is sourced from the secondary source, as the audit records; it is one
 ground to defer it. No matrix battle and neither golden replay harvests. Measured: whole matrix and battle 33
 bit-identical, both golden replays unchanged in debug, release and `wasm32-wasip1`. No doc 07 or doc 08 cell states
 the mining time.
+
+### 13.7 M2: Siege Mode (one value applied, one deferred)
+
+- **Applied:** `railgun_crawler`'s Siege Mode ability `cooldown_ticks` 75 → **0**. The game's `SiegeMode` morph has
+  no cooldown (`liberty` AbilData:1308 sets no `Cost/Cooldown`, and no later layer adds one). No mechanism is
+  missing: validation accepts a cooldown of 0, and a unit that is still channelling its transformation refuses
+  every cast (`world/abilities.rs`, the admission check on `channeling_remaining_ticks`), so the toggle cannot be
+  re-issued mid-transformation, as in the game.
+- **Deferred (D-7, second ground: the verification failed):** the mode's `cast_ticks` 71 stays. The audit's 72 was
+  marked **verify** (§8): it adds the morph's `Stats` delay 0.5 and duration 3.5417 Normal s. Checked against the
+  data within the effort bound, the verification fails rather than confirms: the same morph also has
+  `RandomDelayMax="0.5"` (`liberty` AbilData:1308, `InfoArray`), a random extra delay of up to 0.5 Normal s, so
+  sieging takes 72 to 81 ticks and has no single reference value; and unsieging (`Unsiege`, `liberty`
+  AbilData:1328) has no 0.5 delay at all (3.5417 Normal s, 63 ticks), while the catalog has one `cast_ticks` for
+  the mode. Liquipedia's Siege Tank page gives no figure. Which single value our one field should carry is a
+  modelling choice, not a correction; it is listed with the package's deferrals (§13 summary).
+
+Measured: whole matrix and battle 33 bit-identical (no battle orders Siege Mode), both golden replays unchanged in
+debug, release and `wasm32-wasip1`. No doc 07 or doc 08 cell states the cooldown.
