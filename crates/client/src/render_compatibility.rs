@@ -3,6 +3,11 @@
 //! Every acquired surface receives real attachment work before presentation,
 //! including frames whose camera or screenshot-copy pipelines are still pending.
 //! Initialization precedes camera rendering and never replaces the final scene.
+//!
+//! It also owns the one rule about old software Vulkan that more than one tool needs (Q0009):
+//! [`mesa_release`] reads the Mesa release from `vulkaninfo --summary`, and
+//! [`lavapipe_anisotropy_override`] says whether `lavapipe` of that release needs the terrain
+//! anisotropy override. The GPU test harness and the showcase tool both call them.
 
 use bevy::prelude::*;
 use bevy::render::graph::CameraDriverLabel;
@@ -181,6 +186,41 @@ pub fn finish_rendering(app: &mut App) -> Result<(), RendererShutdownError> {
     result
 }
 
+/// The first Mesa release whose `lavapipe` finishes hex-tiled terrain with anisotropic filtering.
+///
+/// Before it, llvmpipe's anisotropic sampler ignores explicit gradients and `maxAnisotropy`; any
+/// clamp above 1 selects that path, so a smaller window or a longer deadline does not help
+/// (measurements in `docs/plans/2026-11-02-server-gate.md`).
+pub const FIRST_BOUNDED_ANISOTROPY_MESA: (u32, u32) = (25, 1);
+
+/// Extracts `(major, minor)` from `vulkaninfo --summary` text with a line such as
+/// `driverInfo = Mesa 22.3.6 (LLVM 15.0.6)`, or returns `None` for any other driver.
+#[must_use]
+pub fn mesa_release(summary: &str) -> Option<(u32, u32)> {
+    let line = summary.lines().find(|line| line.contains("driverInfo"))?;
+    let (_, version) = line.split_once("Mesa ")?;
+    let mut parts = version.split(['.', ' ', '-']);
+    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+}
+
+/// The value of the terrain anisotropy override (`SPACE_SCUFFLE_TERRAIN_MAX_ANISOTROPY`) a
+/// `lavapipe` of Mesa `release` needs: `"1"` before [`FIRST_BOUNDED_ANISOTROPY_MESA`], otherwise
+/// none. An unknown release keeps the production sampler, so an affected driver fails by timeout
+/// rather than quietly losing coverage. Physical GPUs never need it.
+#[must_use]
+pub fn lavapipe_anisotropy_override(release: Option<(u32, u32)>) -> Option<&'static str> {
+    release
+        .filter(|release| *release < FIRST_BOUNDED_ANISOTROPY_MESA)
+        .map(|_| "1")
+}
+
+/// Returns `true` when this `vulkaninfo --summary` names a Mesa release that cannot finish a
+/// frame of hex-tiled terrain with anisotropic filtering.
+#[must_use]
+pub fn driver_stalls_on_anisotropic_hex_tiling(summary: &str) -> bool {
+    mesa_release(summary).is_some_and(|release| release < FIRST_BOUNDED_ANISOTROPY_MESA)
+}
+
 #[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
 struct InitializeAcquiredSurfaces;
 
@@ -228,5 +268,41 @@ impl Node for SurfaceInitializationNode {
                 });
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mesa_release_is_read_from_the_vulkaninfo_summary() {
+        let summary = "\tdeviceName         = llvmpipe (LLVM 15.0.6, 256 bits)\n\
+                       \tdriverInfo         = Mesa 22.3.6 (LLVM 15.0.6)\n";
+        assert_eq!(mesa_release(summary), Some((22, 3)));
+        assert_eq!(
+            mesa_release("driverInfo = Mesa 25.2.8-0ubuntu0.24.04.4 (LLVM 20.1.2)"),
+            Some((25, 2))
+        );
+        assert_eq!(mesa_release("driverInfo = 535.183.01"), None);
+        assert_eq!(mesa_release("no driver line"), None);
+    }
+
+    #[test]
+    fn only_lavapipe_before_the_sampler_rewrite_lowers_anisotropy() {
+        assert_eq!(lavapipe_anisotropy_override(Some((22, 3))), Some("1"));
+        assert_eq!(lavapipe_anisotropy_override(Some((25, 0))), Some("1"));
+        assert_eq!(lavapipe_anisotropy_override(Some((25, 1))), None);
+        assert_eq!(lavapipe_anisotropy_override(Some((26, 0))), None);
+        assert_eq!(lavapipe_anisotropy_override(None), None);
+        assert!(driver_stalls_on_anisotropic_hex_tiling(
+            "driverInfo = Mesa 25.0.7 (LLVM 19)"
+        ));
+        assert!(!driver_stalls_on_anisotropic_hex_tiling(
+            "driverInfo = Mesa 25.1.0 (LLVM 19)"
+        ));
+        assert!(!driver_stalls_on_anisotropic_hex_tiling(
+            "driverInfo = 535.183.01"
+        ));
     }
 }

@@ -12,14 +12,14 @@ use std::sync::{
     Arc,
 };
 
-pub(super) const SHADERS: [&str; 3] = [
+pub(crate) const SHADERS: [&str; 3] = [
     "shaders/terrain.wgsl",
     "shaders/bubble_dome.wgsl",
     "shaders/combat_fx.wgsl",
 ];
 
 #[derive(Resource, Clone)]
-pub(super) struct PipelineEvidence {
+pub(crate) struct PipelineEvidence {
     handles: [Handle<Shader>; 3],
     counts: Arc<[AtomicUsize; 3]>,
     failed: Arc<AtomicBool>,
@@ -27,7 +27,7 @@ pub(super) struct PipelineEvidence {
 }
 
 impl PipelineEvidence {
-    pub(super) fn new(server: &AssetServer) -> Self {
+    pub(crate) fn new(server: &AssetServer) -> Self {
         Self {
             handles: SHADERS.map(|path| server.load(path)),
             counts: Arc::new(std::array::from_fn(|_| AtomicUsize::new(0))),
@@ -35,18 +35,18 @@ impl PipelineEvidence {
             pending: Arc::default(),
         }
     }
-    pub(super) fn counts(&self) -> [usize; 3] {
+    pub(crate) fn counts(&self) -> [usize; 3] {
         std::array::from_fn(|index| self.counts[index].load(Ordering::Acquire))
     }
-    pub(super) fn report_failure(&self, message: &str) {
+    pub(crate) fn report_failure(&self, message: &str) {
         if !self.failed.swap(true, Ordering::AcqRel) {
             error!("Capture render integration failed: {message}");
         }
     }
-    pub(super) fn failed(&self) -> bool {
+    pub(crate) fn failed(&self) -> bool {
         self.failed.load(Ordering::Acquire)
     }
-    pub(super) fn ready(&self, mask: u8) -> bool {
+    pub(crate) fn ready(&self, mask: u8) -> bool {
         !self.failed()
             && !self.pending.load(Ordering::Acquire)
             && self
@@ -61,7 +61,7 @@ impl PipelineEvidence {
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
 )]
-pub(super) fn inspect(cache: Res<'_, PipelineCache>, evidence: Res<'_, PipelineEvidence>) {
+pub(crate) fn inspect(cache: Res<'_, PipelineCache>, evidence: Res<'_, PipelineEvidence>) {
     let mut counts = [0; 3];
     let mut pending = cache.waiting_pipelines().next().is_some();
     for pipeline in cache.pipelines() {
