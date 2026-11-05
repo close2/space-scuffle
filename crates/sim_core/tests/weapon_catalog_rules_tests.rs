@@ -352,11 +352,12 @@ fn s16_unit_vitals_and_geometry_must_be_usable() {
 
 #[test]
 fn b34_start_energy_must_lie_between_zero_and_the_maximum() {
-    // The first caster's pool: `max_energy: 200.0` followed by its start energy.
+    // The first caster's pool: `max_energy: 200.0` followed by its start energy. A leading 9
+    // puts any start energy from 0 to 200 above the maximum (50 reads 950).
     assert_rejected(
         UNITS,
         "max_energy: 200.0,\n            start_energy: ",
-        "max_energy: 200.0,\n            start_energy: 1",
+        "max_energy: 200.0,\n            start_energy: 9",
         "start_energy",
     );
     assert_rejected(
