@@ -29,7 +29,7 @@ Where the two disagree, the data win, as in the audit.
 | The standing rule above | Given in chat, 2026-11-05. WP0 records it as closed question Q0051 and in charter §8 | WP0 |
 | [Q0008](../questions/closed/) StarCraft II where the specification is silent | Superseded by the standing rule, which is stronger | WP0 |
 | [Q0035](../questions/open/0035-melee-contact-rules.md) melee contact rules | Answered "Option 1 (no change … for now), but documented/todo for future investigation" | Not a sanction; recorded bug B-50, WP16 |
-| [Q0037](../questions/open/0037-scan-ranges.md) scan ranges | Answered option 3, low priority | Combat alignment WP14; this plan moves it after WP4 here |
+| [Q0037](../questions/closed/0037-scan-ranges.md) scan ranges | Answered option 3, low priority | Combat alignment WP14; this plan moves it after WP4 here |
 | [Q0050](../questions/open/0050-turn-before-move.md) turn before move | Answered (b) with the tolerance "one tick's turn" | Sanctioned rule S-3; turn-before-move plan |
 | [Q0006](../questions/closed/) unreachable move | Owner's choice | S-4 (also matches StarCraft II) |
 | [Q0007](../questions/open/0007-combat-baselines.md) item 5, splash ignores cloak detection | "Keep all five as committed" | Matches StarCraft II, so it is not a deviation (S-2) |
@@ -150,7 +150,7 @@ another path is given.
 | B-9 | The closest target is used for switching, with an invented margin of 1.0 | "Closest target" applies "only if the unit lost its previous target". A target is kept until it is no longer valid (dies, becomes invisible, goes up a ramp), leaves weapon range, or a higher-priority target enters (Liquipedia Automatic Targeting) | `target_acquisition.rs` `RETARGET_DISTANCE_MARGIN`, `decide_acquisition` | B-rule | matrix-wide focus pattern (investigation §5.3: the strongest single effect in battle 33 was through targeting) | M | WP4 |
 | B-10 | No primary-weapon criterion | Third criterion: a unit with two weapons prefers targets for its primary weapon (Liquipedia) | none | B-rule | thor, viking, liberator, queen | S | WP4 |
 | B-11 | No per-unit tie-break for step 4 | Hellbat, Thor, Battlecruiser and Ultralisk take the target that needs the least turning. Colossus, Immortal and an unsieged Siege Tank take the target closest to their previous target (Liquipedia) | none | B-rule + B-data (flag per archetype) | 2a–3, 12a/b, 14, 15, 26–28, 30, 35 | M | WP4 |
-| B-12 | Scan range 8 to 12, centre to centre | Weapon range + 0.5, at least 5, with exceptions (Thor AA, static defence, Siege Mode) (Liquipedia; `MinScanRange` in `WeaponData`) | `units.ron` `scan_range`; `target_acquisition.rs` | P | matrix-wide | — | combat WP14, after WP4 |
+| B-12 | Scan range 8 to 12 on units, the sight radius (11) on armed structures, centre to centre | Per weapon the greater of `MinScanRange` and `Range` (Liquipedia; `WeaponData`; table in audit §11): 5 to 10.5 on units, 6 or 7 on structures, 13 in Siege Mode. Whether it is measured from the centres or the edges is **not found** ([Q0057](../questions/open/0057-scan-range-measuring-rule.md)) | `units.ron` `scan_range`; `catalog.rs` (structures); `target_acquisition.rs` | P | matrix-wide (26 or 15 battles move, combat evidence §15.3, §15.4) | — | combat WP14 researched and measured (Amendment 6); open on Q0057 |
 | B-13 | Call-for-help radius 5, flee distance 5, pursuit leash 2 × scan range, abandoned target ignored for 2 s | Not found (§5). StarCraft II has unit alert and flee behaviour, but no radius or distance is sourced **(unsourced)** | `target_acquisition.rs` `CALL_FOR_HELP_RADIUS_SQ`, `HELPLESS_FLEE_DISTANCE`; `movement/tuning.rs` `PURSUIT_LEASH_SCAN_RANGES`, `ABANDONED_TARGET_TICKS` | B-? | skirmish; matrix where units are idle (13, held units) | — | WP16 research |
 
 ### 3.3 Damage model
@@ -762,7 +762,7 @@ requires.
 | B-9 | Closest-target switching with an invented margin | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.6; Amendment 5) |
 | B-10 | No primary-weapon criterion | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.7) |
 | B-11 | No per-unit tie-break | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.9, §4.10) |
-| B-12 | Scan ranges | (i) | combat alignment WP14, after WP4 |
+| B-12 | Scan ranges | (i) | combat alignment WP14 done to its report (Amendment 6); open on Q0057 |
 | B-13 | Call-for-help radius, flee distance, leash, abandoned-target time | (i) | WP16 research; how idle units answer an attack is unit behaviour |
 | B-14 | Bonus damage only against Armored and Light | (i) | WP6 |
 | B-15 | Shield break remainder | (i) | WP7 |
@@ -917,3 +917,22 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
 - **Done after Amendment 5:** B-9 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.6), B-11 with
   checksum schema 11 (§4.9, §4.10) and B-80 (§4.11) are fixed. B-80 is limited to automatic acquisition; how an idle
   worker answers an attack (retaliation, the alert of idle allies) stays with B-13 (WP16).
+
+## Amendment 6 (combat alignment WP14, 2026-11-05): scan ranges researched and measured, B-12 stays open
+
+Evidence: [combat alignment evidence](../evidence/2026-11-04-combat-sc2-alignment.md) §15; reference table in the
+[audit](../evidence/2026-11-04-catalog-time-audit.md) §11.
+
+- **Done:** WP14 steps 1 to 3 and the report (step 4): the battle 33 mechanism, the reference table for every armed
+  identity, and the whole matrix on a scratch catalog with every reference value. The trace tool gained targeting
+  measures (`sim_fixtures::trace::focus`, commit `b1d28e6`).
+- **Not applied: B-12 stays open.** The game's value per weapon is sourced (the greater of `MinScanRange` and
+  `Range`), but how the game measures it, from the centres or from the edges, is not found, and it decides what the
+  values do: copied under our centre rule, a ranged unit scans less than its weapon reaches and acquires only what
+  it can already shoot. Filed as [Q0057](../questions/open/0057-scan-range-measuring-rule.md), default no change
+  (the brief's rule for an unsourced measuring rule).
+- **B-12 widened:** armed structures scan to their sight radius (`catalog.rs`), not a catalog field; the reference
+  is their weapon range (audit §11.3). The Siege Mode scan (13) is not expressible as one value per unit.
+- **Matrix effect if applied (scratch, 20 seeds):** 26 battles move under our centre rule, 15 under an edge rule; no
+  battle's winner over its seeds changes under either; battle 33 is §15.2's table.
+
