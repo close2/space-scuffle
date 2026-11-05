@@ -71,9 +71,10 @@
                 can_construct: true,
             ),
             veo_prompts: {
-                Idle: "Welder Drone: Compact hovering utility bot with dual plasma welding arcs and mineral collector clamps. Steady hovering idle.",
-                Walk: "Welder Drone: Rapid hovering forward propulsion with blue thruster exhaust flares and stabilizing gyros.",
-                Attack: "Welder Drone: Close-range high-voltage electric drill slash emitting bright orange sparks.",
+                Idle: "Welder Drone: a single compact hovering utility robot with chunky yellow and blue armor plates, one round glowing cyan optic eye, a plasma welding torch arm on one side and a mineral collector claw on the other, small thrusters on its back, hovering steady in mid-air, one robot in the middle of the frame and fully visible with empty space around it, no characters, no other vehicles.",
+                Walk: "Welder Drone: the same compact hovering utility robot with yellow and blue armor plates, a cyan optic eye, a welding torch arm and a collector claw, cruising forward on blue thruster exhaust, flying in place in the middle of the frame and fully visible, no characters, no other vehicles.",
+                Attack: "Welder Drone: the same compact hovering utility robot with yellow and blue armor plates, a cyan optic eye, a welding torch arm and a collector claw, striking at close range with its welding torch, a high-voltage arc crackling at the tip, in the middle of the frame and fully visible, no characters.",
+                Cast: "Welder Drone: the same compact hovering utility robot with yellow and blue armor plates, a cyan optic eye, a welding torch arm and a collector claw, at work welding in place, in the middle of the frame and fully visible, no characters, no other vehicles.",
             },
         ),
         (

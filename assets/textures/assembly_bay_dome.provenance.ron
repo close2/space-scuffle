@@ -1,0 +1,52 @@
+(
+    format_version: 1,
+    name: "assembly_bay_dome",
+    atlas_sha256: "1c15ae50e8709d623453490e2faadf2f14ca44d11733d2d0619788e91ad4016b",
+    manifest_sha256: "dfcc6dc53c3e98b37517a9cf3f58892829cc182a4d1727cdafde7b3b88b7393e",
+    bake: (
+        frame_size: 512,
+        fps: 15,
+        max_frames_per_state: 16,
+        ffmpeg_version: "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+        framing: Letterbox(
+            feather_permille: 30,
+        ),
+    ),
+    states: {
+        Constructing: (
+            clip: "assembly_bay_dome_constructing.mp4",
+            clip_sha256: "782ca84dd0ca4d70d998810c773a4f448825d65d6e2bf1413a07a5e50e67b1f0",
+            start_frame: 16,
+            frame_count: 16,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/a309a11d-e291-44bd-90c4-60628534c3fa",
+                prompt_sha256: "bcf79adf903612bb744e9fdb40471a5823aef9556f0cda9966b1c5b123e5f233",
+                keyframe_sha256: Some("ef2a797ab2c308317251158bd9b7c9d2f572536dd7909d24b8b76d014b2e3d12"),
+                last_frame_sha256: Some("ef2a797ab2c308317251158bd9b7c9d2f572536dd7909d24b8b76d014b2e3d12"),
+                ledger_line: 173,
+            ),
+            bar_rgb: Some((42, 48, 67)),
+        ),
+        Idle: (
+            clip: "assembly_bay_dome_idle.mp4",
+            clip_sha256: "e4ba227f3fd8eb5f8f96055c2d136b77c473cf6a3b3197a689a417a711d649b3",
+            start_frame: 0,
+            frame_count: 16,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/dbfe5085-f4d2-45c5-b203-2d8fb4e289d1",
+                prompt_sha256: "8a3dcbfdbb9025da5bf0d0787e896622241b162954b69f2f15ce4feb7791128b",
+                keyframe_sha256: Some("ef2a797ab2c308317251158bd9b7c9d2f572536dd7909d24b8b76d014b2e3d12"),
+                last_frame_sha256: Some("ef2a797ab2c308317251158bd9b7c9d2f572536dd7909d24b8b76d014b2e3d12"),
+                ledger_line: 137,
+            ),
+            bar_rgb: Some((41, 48, 67)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+    },
+)

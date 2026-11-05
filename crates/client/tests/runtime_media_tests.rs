@@ -277,7 +277,9 @@ fn presentable_refuses_an_identity_missing_a_single_action() -> TestResult {
 }
 
 /// D-9: media lacking an action the simulation never publishes for that identity, such as a
-/// walk for a structure, must not keep the identity off the card.
+/// walk for a structure, must not keep the identity off the card. Since Veo batch 2 every
+/// shipped structure atlas holds exactly its published actions (Idle and Constructing), so
+/// the structure's real files are booted unchanged; the test checks that they lack Walk.
 #[test]
 fn presentable_ignores_an_action_the_simulation_never_publishes() -> TestResult {
     let definition = bundle()?;
@@ -295,7 +297,26 @@ fn presentable_ignores_an_action_the_simulation_never_publishes() -> TestResult 
         "the simulation never walks {}",
         structure.slug
     );
-    let (_directory, app) = media_without(catalog, &structure.slug, AnimState::Walk)?;
+    let directory = temporary_root()?;
+    copy_media(directory.path(), &structure.slug, true)?;
+    let metadata: FlipbookAtlasMeta = ron::from_str(&std::fs::read_to_string(
+        directory
+            .path()
+            .join("textures")
+            .join(format!("{}.flipbook.ron", structure.slug)),
+    )?)?;
+    assert!(
+        !metadata.actions.contains_key(&AnimState::Walk),
+        "{}'s shipped media authors no Walk",
+        structure.slug
+    );
+    let mut app = app(
+        directory.path(),
+        catalog.clone(),
+        LabState::default(),
+        MediaFailurePolicy::default(),
+    )?;
+    app.update();
 
     let status = app.world().resource::<ClientMediaStatus>();
     let registry = app.world().resource::<FlipbookRegistry>();

@@ -88,6 +88,12 @@
 //!   bubbles of those identities now bind their atlases. With those five atlases moved out of
 //!   `assets/textures`, all four reproduced their previous values, so no smog code or output
 //!   changed. The fluid, kinematics and noise goldens and both `libm` canaries are unchanged.
+//! - Veo batch 2 (plan `2026-11-04-phase-8-5-veo-media` WP5) re-recorded the four system goldens
+//!   (glibc 2.41, `x86_64`) because it replaces four atlases in `assets/textures`
+//!   (`welder_drone`, `capacitor_dome` and `assembly_bay_dome`, which were copies of the concept
+//!   atlas, and `foundry_core_dome`). With the previous versions of those four atlases put back,
+//!   all four reproduced their previous values, so no smog code or output changed. The fluid,
+//!   kinematics and noise goldens and both `libm` canaries are unchanged.
 //! - A golden may only change together with a deliberate, documented change in smog output.
 
 #![allow(
@@ -1204,11 +1210,11 @@ fn require_smog_activity(app: &App) -> usize {
     stats.active_bubbles
 }
 
-const GOLDEN_SYSTEMS_STARTUP: u64 = 0xe44a_7065_aeb2_6b5b;
+const GOLDEN_SYSTEMS_STARTUP: u64 = 0x6cb2_9c0a_8e14_de1a;
 const GOLDEN_SYSTEMS_NOISE: u64 = 0x1fe2_2cc0_e03e_f783;
-const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0x5cce_e205_d998_eecf;
-const GOLDEN_SYSTEMS_SWARM: u64 = 0x8f88_3a86_5df7_c20f;
-const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0x6b53_5fb7_4f80_972f;
+const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0x5e77_695e_b162_2355;
+const GOLDEN_SYSTEMS_SWARM: u64 = 0xf960_f37c_4406_09b4;
+const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0xa433_becd_65c5_96f8;
 
 /// The headless Visual Lab app after its startup frame (the clock's first update has `dt = 0`).
 fn startup_app() -> Result<App, Box<dyn std::error::Error>> {
