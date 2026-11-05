@@ -13,6 +13,7 @@
     clippy::too_many_lines
 )]
 
+use sim_core::catalog::{AcquireLevel, AcquireTieBreak, PrimaryWeapon};
 use sim_core::UnitArchetype;
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
@@ -289,6 +290,11 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         push_priority: 30,
         sight_radius: SimScalar::from_num(9),
         scan_range: SimScalar::from_num(9),
+        attack_target_priority: 20,
+        always_a_threat: false,
+        acquire_level: AcquireLevel::Offensive,
+        primary_weapon: PrimaryWeapon::Either,
+        acquire_tie_break: AcquireTieBreak::Closest,
         mineral_cost: 150,
         gas_cost: 50,
         supply_cost: 2,

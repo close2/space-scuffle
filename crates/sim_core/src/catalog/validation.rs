@@ -7,7 +7,9 @@
 //! fails here, once, instead of on every peer during a match. This is safety
 //! validation, not a balance audit: odd but runnable authored values remain legal.
 
-use super::{StructureArchetypeDef, UnitArchetypeDef, UnitModeSpecDef, WeaponSpecDef};
+use super::{
+    PrimaryWeapon, StructureArchetypeDef, UnitArchetypeDef, UnitModeSpecDef, WeaponSpecDef,
+};
 use crate::error::{SimCoreError, SimResult};
 use crate::movement::tuning::STALL_REPATH_TICKS;
 use crate::weapon_timing::AttackRate;
@@ -290,6 +292,36 @@ impl UnitArchetypeDef {
         Ok(())
     }
 
+    /// Checks each authored weapon slot, then the primary weapon.
+    fn validate_weapons(&self) -> SimResult<()> {
+        for (name, weapon) in [
+            ("weapon", &self.weapon),
+            ("ground_weapon", &self.ground_weapon),
+            ("air_weapon", &self.air_weapon),
+        ] {
+            if let Some(weapon) = weapon {
+                weapon.validate(&self.slug, name)?;
+            }
+        }
+        self.validate_primary_weapon()
+    }
+
+    /// Checks that a named primary weapon is a distinct slot beside another armed one: `Ground`
+    /// and `Air` need both a ground weapon (`ground_weapon` or `weapon`) and an `air_weapon`.
+    fn validate_primary_weapon(&self) -> SimResult<()> {
+        let has_ground = self.ground_weapon.is_some() || self.weapon.is_some();
+        let has_air = self.air_weapon.is_some();
+        match self.primary_weapon {
+            PrimaryWeapon::Either => Ok(()),
+            PrimaryWeapon::Ground | PrimaryWeapon::Air if has_ground && has_air => Ok(()),
+            PrimaryWeapon::Ground | PrimaryWeapon::Air => Err(invalid(
+                &self.slug,
+                "primary_weapon",
+                "a primary weapon slot needs both a ground and an air weapon; use Either",
+            )),
+        }
+    }
+
     /// Checks the life and shield regeneration delays against the authored rate and shields.
     /// Runs after the nonnegative checks, so a negative rate is reported under its own field.
     fn validate_regeneration_delays(&self) -> SimResult<()> {
@@ -356,15 +388,7 @@ impl UnitArchetypeDef {
         )?;
         self.validate_hull_turning()?;
         self.validate_regeneration_delays()?;
-        for (name, weapon) in [
-            ("weapon", &self.weapon),
-            ("ground_weapon", &self.ground_weapon),
-            ("air_weapon", &self.air_weapon),
-        ] {
-            if let Some(weapon) = weapon {
-                weapon.validate(&self.slug, name)?;
-            }
-        }
+        self.validate_weapons()?;
         self.validate_harvester()?;
         if let Some(overclock) = &self.capabilities.overclock {
             for (field, value) in [

@@ -327,6 +327,9 @@ impl PartialOrd for TargetPriorityKey {
 pub const MAX_THREAT_PRIORITY: u8 = 20;
 
 /// Evaluates the threat priority level of an enemy archetype and its current order.
+///
+/// An armed archetype ranks [`MAX_THREAT_PRIORITY`] while attacking and one less otherwise; an
+/// unarmed one ranks at its catalog `attack_target_priority`.
 #[must_use]
 pub fn compute_threat_priority(archetype: &UnitArchetype, order: Option<&UnitOrder>) -> u8 {
     let has_weapon = archetype.weapon.is_some()
@@ -339,14 +342,8 @@ pub fn compute_threat_priority(archetype: &UnitArchetype, order: Option<&UnitOrd
             }
             _ => MAX_THREAT_PRIORITY - 1, // Combat unit not actively attacking
         }
-    } else if archetype.attributes.contains(AttributeFlags::STRUCTURE) {
-        if archetype.is_detector {
-            15
-        } else {
-            11 // Passive structures / domes
-        }
     } else {
-        10 // Worker or utility unit
+        archetype.attack_target_priority
     }
 }
 
