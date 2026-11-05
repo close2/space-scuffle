@@ -23,8 +23,8 @@
 //! - A unit whose archetype is flagged `turn_before_move` translates by its own motion on a tick
 //!   only if, after that tick's hull turn, its heading equals the direction of its step (plan
 //!   `2026-11-05-turn-before-move` D-1, Q0050). While the step lies further from its heading than
-//!   one moving tick's turn, it turns in place: it keeps its order and route, and its velocity is
-//!   zero. Collision pushes are not its own motion and are not gated. Every other unit moves
+//!   one moving tick's turn, it turns in place at its stationary rate: it keeps its order and
+//!   route, and its velocity is zero. Collision pushes are not its own motion and are not gated. Every other unit moves
 //!   along its path at once while its hull follows.
 
 use super::grid::BodyGrid;
@@ -182,7 +182,14 @@ impl MotionProposal {
         Ok(())
     }
 
-    fn commit(self, actor: &mut Entity) {
+    /// Applies every edit to `actor`. A unit this motion translates turns its hull at the moving
+    /// rate `turn_rate` (binary units per tick) this tick; any other keeps the stationary budget
+    /// the phase started with (plan `2026-11-05-turn-before-move` D-10). Nothing spends the
+    /// budget before this, the actor's one motion commit of the tick.
+    fn commit(self, actor: &mut Entity, turn_rate: u16) {
+        if self.position != actor.position {
+            actor.hull_turn_budget = turn_rate;
+        }
         actor.pos_at_tick_start = actor.position;
         actor.position = self.position;
         actor.velocity = self.velocity;
@@ -257,7 +264,8 @@ struct StepContext<'a> {
 struct HullGate {
     /// The hull's facing at the start of the tick.
     heading: SimAngle,
-    /// The hull rate of a tick on which the unit translates, in binary angle units per tick.
+    /// The hull rate of a tick on which the unit translates (`turn_rate`, not the stationary
+    /// rate the tick's budget starts at), in binary angle units per tick.
     rate: u16,
 }
 
@@ -708,7 +716,7 @@ impl SimWorld {
             match self.prepare_actor_motion(entry) {
                 Ok(MotionAction::Commit(proposal)) => {
                     if let Some(actor) = self.entities.get_mut(&entry.id) {
-                        proposal.commit(actor);
+                        proposal.commit(actor, entry.turn_rate);
                     }
                 }
                 Ok(MotionAction::Pursue(target, origin)) => {
@@ -743,7 +751,7 @@ impl SimWorld {
             match self.prepare_pursuit(entry, target, origin) {
                 Ok(proposal) => {
                     if let Some(actor) = self.entities.get_mut(&entry.id) {
-                        proposal.commit(actor);
+                        proposal.commit(actor, entry.turn_rate);
                     }
                 }
                 Err(error) => self.report_movement_invariant(error),

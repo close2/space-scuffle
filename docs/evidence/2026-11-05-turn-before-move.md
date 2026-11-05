@@ -120,3 +120,17 @@ and a step on the 9th. Outputs under `~/scratch/turn_before_move/wp3/`.
   (heading 0 → 61 866 → 58 196 → 54 526 → 50 856 → 47 186), take their first step on tick 126 facing it exactly,
   and from then walk the positions they walked before, five ticks later. Re-recorded on Linux; reproduced in debug,
   release and `wasm32-wasip1`. `golden_replay_orders.ron` and the sandbox checksum unchanged.
+
+## 5. WP5: the stationary turn rate, equal to the moving rate everywhere (Amendment 1)
+
+**Change.** `UnitArchetype::stationary_turn_rate` (authored `stationary_turn_rate_deg_per_tick`, optional, the
+hull rate when omitted, validated `0 < rate <= 180`). Every tick's hull budget now starts at the stationary rate and
+is set to the moving `turn_rate` when the unit's own motion translates it (`MotionProposal::commit`), so a hull
+turns at the stationary rate on every tick its unit does not move (D-10). The `turn_before_move` gate still
+compares against the moving rate, and its validation counts the turn in place at the stationary rate
+(`ceil(max(0, 32 768 − turn_rate) ÷ stationary_turn_rate) + 1 ≤ 25`). No shipped archetype authors the field.
+Outputs under `~/scratch/turn_before_move/wp5/`.
+
+- **Whole matrix, 20 seeds: bit-identical** to §4 (all 1000 rows of `matrix.csv`).
+- **Battle 33, 68 seeds, and battles 3, 14, 15, 27:** every output file identical to §4.
+- **Goldens:** both pass unchanged; the sandbox checksum unchanged.

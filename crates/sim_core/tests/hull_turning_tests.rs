@@ -53,6 +53,8 @@ struct Shooter {
     turret: Option<f32>,
     /// Whether the hull must face a step before the shooter takes it (`turn_before_move`).
     turn_before_move: bool,
+    /// Hull rate in degrees per tick while it does not translate, or `None` for the hull rate.
+    stationary: Option<f32>,
 }
 
 /// One scratch unit in the catalog's RON form.
@@ -62,8 +64,12 @@ fn unit_ron(
     turn_rate: f32,
     max_speed: f32,
     turn_before_move: bool,
+    stationary: Option<f32>,
     weapon: &str,
 ) -> String {
+    let stationary = stationary.map_or(String::new(), |rate| {
+        format!("stationary_turn_rate_deg_per_tick: Some({rate:.2}),")
+    });
     format!(
         r#"(
             slug: "{slug}",
@@ -91,6 +97,7 @@ fn unit_ron(
             deceleration: {max_speed:.3},
             turn_rate_deg_per_tick: {turn_rate:.2},
             turn_before_move: {turn_before_move},
+            {stationary}
             collision_radius: 0.5,
             separation_radius: 0.5,
             push_priority: 20,
@@ -143,9 +150,10 @@ fn catalog_ron(shooter: Shooter) -> String {
             shooter.turn_rate,
             shooter.max_speed,
             shooter.turn_before_move,
+            shooter.stationary,
             &weapon,
         ),
-        unit_ron(TARGET, 2, 180.0, 0.1, false, "None"),
+        unit_ron(TARGET, 2, 180.0, 0.1, false, None, "None"),
     )
 }
 
@@ -300,6 +308,7 @@ fn a_unit_facing_away_starts_its_swing_after_turning() -> TestResult {
         arc: 15.0,
         turret: None,
         turn_before_move: false,
+        stationary: None,
     };
     let mut bench = Bench::new(shooter, 7, 16)?;
     let target = bench.target;
@@ -325,6 +334,7 @@ fn a_hull_never_turns_more_than_its_rate_in_one_tick() -> TestResult {
         arc: 15.0,
         turret: None,
         turn_before_move: false,
+        stationary: None,
     };
     let mut bench = Bench::new(shooter, 4, 16)?;
     let rate = bench.rate()?;
@@ -359,6 +369,7 @@ fn a_hull_weapon_turns_at_the_hull_rate_not_a_turret_rate() -> TestResult {
         arc: 15.0,
         turret: None,
         turn_before_move: false,
+        stationary: None,
     };
     let mut bench = Bench::new(shooter, 7, 16)?;
     let target = bench.target;
@@ -379,6 +390,7 @@ fn a_turret_turns_at_its_own_rate_while_the_hull_turns_at_its_rate() -> TestResu
         arc: 15.0,
         turret: Some(10.0),
         turn_before_move: false,
+        stationary: None,
     };
     let mut bench = Bench::new(shooter, 7, 16)?;
     let target = bench.target;
@@ -419,6 +431,7 @@ fn a_moving_unit_keeps_its_path_while_its_heading_follows() -> TestResult {
         arc: 15.0,
         turret: None,
         turn_before_move: false,
+        stationary: None,
     };
     let mut bench = Bench::new(shooter, 40, 40)?;
     let west = SimVec2::new(SimScalar::from_i32(2), SimScalar::from_i32(16));
@@ -441,6 +454,7 @@ fn a_rate_of_180_turns_any_facing_in_one_tick() -> TestResult {
         arc: 15.0,
         turret: None,
         turn_before_move: false,
+        stationary: None,
     };
     let mut bench = Bench::new(shooter, 7, 16)?;
     let target = bench.target;
@@ -461,6 +475,7 @@ fn turning_is_deterministic_and_its_budget_is_not_hashed() -> TestResult {
         arc: 15.0,
         turret: None,
         turn_before_move: false,
+        stationary: None,
     };
     let mut first = Bench::new(shooter, 4, 20)?;
     let mut second = Bench::new(shooter, 4, 20)?;
@@ -513,6 +528,7 @@ const PIVOT: Shooter = Shooter {
     arc: 15.0,
     turret: None,
     turn_before_move: true,
+    stationary: None,
 };
 
 /// A world point from whole coordinates.
@@ -642,10 +658,88 @@ fn a_turn_before_move_unit_on_hold_position_turns_to_fire_and_never_moves() -> T
     Ok(())
 }
 
+/// The stationary rate of the scratch shooters below: 40.32° per tick, 7 340 binary units.
+const STATIONARY: f32 = 40.32;
+
+/// `STATIONARY` in binary units per tick.
+const STATIONARY_UNITS: u16 = 7_340;
+
+#[test]
+fn a_standing_unit_aims_its_hull_at_the_stationary_rate() -> TestResult {
+    let shooter = Shooter {
+        turn_rate: 20.16,
+        max_speed: 0.0,
+        arc: 15.0,
+        turret: None,
+        turn_before_move: false,
+        stationary: Some(STATIONARY),
+    };
+    let mut bench = Bench::new(shooter, 7, 16)?;
+    let target = bench.target;
+    bench.step(Some((bench.shooter, UnitOrder::attack(target))));
+    assert_eq!(turned(SimAngle::ZERO, bench.heading()?), STATIONARY_UNITS);
+    Ok(())
+}
+
+#[test]
+fn a_moving_unit_turns_at_the_moving_rate() -> TestResult {
+    let shooter = Shooter {
+        turn_rate: 20.16,
+        max_speed: 0.15,
+        arc: 15.0,
+        turret: None,
+        turn_before_move: false,
+        stationary: Some(STATIONARY),
+    };
+    let mut bench = Bench::new(shooter, 40, 40)?;
+    let start = bench.position()?;
+    bench.step(Some((
+        bench.shooter,
+        UnitOrder::Move {
+            target: point(2, 16),
+        },
+    )));
+    assert!(bench.position()?.x < start.x, "the unit translates");
+    assert_eq!(turned(SimAngle::ZERO, bench.heading()?), bench.rate()?);
+    Ok(())
+}
+
+#[test]
+fn a_turn_before_move_unit_turns_in_place_at_the_stationary_rate() -> TestResult {
+    // 180° at 7 340 units per tick in place: 4 ticks leave 3 408, which fits the moving 3 670.
+    let shooter = Shooter {
+        stationary: Some(STATIONARY),
+        ..PIVOT
+    };
+    let mut bench = Bench::new(shooter, 40, 40)?;
+    let (speed, start) = (bench.speed()?, bench.position()?);
+    let west = point(2, 16);
+    let mut before = bench.heading()?;
+    for tick in 1..=4_u32 {
+        let order = (tick == 1).then_some((bench.shooter, UnitOrder::Move { target: west }));
+        bench.step(order);
+        assert_eq!(bench.position()?, start, "tick {tick} must not translate");
+        assert_eq!(
+            turned(before, bench.heading()?),
+            STATIONARY_UNITS,
+            "tick {tick}"
+        );
+        before = bench.heading()?;
+    }
+    bench.step(None);
+    assert_eq!(bench.heading()?, facing(start, west), "tick 5 faces west");
+    assert_eq!(
+        bench.position()?,
+        start - SimVec2::new(speed, SimScalar::ZERO)
+    );
+    Ok(())
+}
+
 #[test]
 fn shipped_turn_before_move_units_turn_in_place_on_a_reversal() -> TestResult {
     // Every shipped archetype with the flag, found by property: spawned facing +x and sent due
-    // west, it stands for ceil(32 768 / rate) - 1 ticks and steps on the next.
+    // west, it turns in place at its stationary rate s until the rest of the half turn fits in
+    // its moving rate r, ceil((32 768 - r) / s) ticks, and steps on the next.
     let catalog = sim_fixtures::world(
         GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
         1,
@@ -660,8 +754,12 @@ fn shipped_turn_before_move_units_turn_in_place_on_a_reversal() -> TestResult {
     for (slug, unit_type) in flagged {
         let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
         let mut world = sim_fixtures::world(map, 7);
-        let rate = u32::from(world.catalog.get(unit_type)?.turn_rate.raw());
-        let in_place = u32::from(SimAngle::DEG_180.raw()).div_ceil(rate) - 1;
+        let archetype = world.catalog.get(unit_type)?;
+        let rate = u32::from(archetype.turn_rate.raw());
+        let stationary = u32::from(archetype.stationary_turn_rate.raw());
+        let in_place = u32::from(SimAngle::DEG_180.raw())
+            .saturating_sub(rate)
+            .div_ceil(stationary);
         let start = point(40, 32);
         let unit = world.spawn_unit(unit_type, PlayerId(0), start)?;
         for tick in 0..=in_place {
