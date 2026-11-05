@@ -1101,3 +1101,12 @@ place of percentages of speeds that were not the catalog's.
 **Test restated first.** `upgrades_and_tech_tree_tests.rs::test_metabolic_boost_speed` restated the old delta 0.0826
 (it failed with 0.2630 against 0.2478). The commit before this one makes it read `metabolic_boost`'s delta for
 `razor_mantis` from the shipped catalog; it passes on the catalog before and after.
+
+### 13.5 U2: Adrenal Glands
+
+`adrenal_glands` `attack_cooldown_delta` −5 → **−3**: the zergling's period 0.696 Normal s (`liberty` WeaponData:362,
+12.43 ticks, 12 in the catalog) is divided by 1.4 under two `RateMultiplier +0.2` entries (`liberty` UpgradeData:1846,
+`void` UpgradeData:886), 8.88 ticks: 9, three less than 12. Liquipedia's cooldown 0.497 with the upgrade agrees
+(audit §9). No matrix battle or golden replay researches it. Measured: whole
+matrix and battle 33 bit-identical, both golden replays unchanged in debug, release and `wasm32-wasip1`. Doc 08's
+Adrenal Glands row said 12 → 7 and now says 12 → 9.

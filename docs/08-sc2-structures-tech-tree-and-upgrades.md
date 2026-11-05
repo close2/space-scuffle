@@ -373,7 +373,7 @@ flowchart TD
 | Upgrade Slug | SC2 Analogue | Researched At | Cost (M/G) | Research Ticks | Prerequisite | Target Unit & Effect |
 | :--- | :--- | :--- | :---: | :---: | :--- | :--- |
 | `metabolic_boost` | Metabolic Boost | `spawning_hollow_dome` | 100 / 100 | 1964 (78.6s) | — | `razor_mantis`: Movement speed increased by +0.0978 world units/tick (+1.746 Normal per s, `liberty` UpgradeData:1856). |
-| `adrenal_glands` | Adrenal Glands | `spawning_hollow_dome` | 200 / 200 | 2321 (92.8s) | `primal_world_tree_dome` | `razor_mantis`: Attack period reduced by 40% (12 ticks -> 7 ticks!). |
+| `adrenal_glands` | Adrenal Glands | `spawning_hollow_dome` | 200 / 200 | 2321 (92.8s) | `primal_world_tree_dome` | `razor_mantis`: Attack period reduced by 3 ticks (12 -> 9; two `RateMultiplier +0.2` entries, `liberty` UpgradeData:1846 and `void` UpgradeData:886: 0.696 Normal s ÷ 1.4 = 12.43 ticks → 8.88). |
 | `centrifugal_hooks` | Centrifugal Hooks | `caustic_nursery_dome` | 100 / 100 | 1786 (71.4s) | `canopy_grove_dome` | `volatile_tick`: Movement speed increased by +18% (0.1400 -> 0.1652) and Max HP +5 (30 -> 35 HP). |
 | `glial_reconstitution`| Glial Reconstitution| `carapace_mound_dome` | 100 / 100 | 1964 (78.6s) | `canopy_grove_dome` | `rhino_beetle`: Movement speed increased by +0.042 world units/tick (+0.75 Normal per s, `liberty` UpgradeData:1925). |
 | `tunneling_claws` | Tunneling Claws | `carapace_mound_dome` | 100 / 100 | 1964 (78.6s) | `canopy_grove_dome` | `rhino_beetle`: Gains ability to move while burrowed (speed 0.0560); subterranean HP regen +10 HP/s. |

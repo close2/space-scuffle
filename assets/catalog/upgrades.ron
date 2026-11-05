@@ -1396,7 +1396,7 @@
                     sight_delta: 0.0,
                     weapon_range_delta: 0.0,
                     armor_delta: 0.0,
-                    attack_cooldown_delta: -5, // 12 -> 7 ticks
+                    attack_cooldown_delta: -3, // 12 -> 7 ticks
                     bonus_damage_delta: 0.0,
                 ),
             ],
