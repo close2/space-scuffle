@@ -51,7 +51,7 @@ Common standard durations:
 - **36 seconds** (Starport, Templar Archives, Infestation Pit) $= 36 \times 25 = 900\ \text{ticks}$
 - **43 seconds** (Factory, Stargate, Fleet Beacon, Spire) $= 43 \times 25 = 1075\ \text{ticks}$
 - **46 seconds** (Barracks, Armory, Twilight Council, Robotics Facility) $= 46 \times 25 = 1150\ \text{ticks}$
-- **50 seconds** (Planetary Fortress) $= 50 \times 25 = 1250\ \text{ticks}$
+- **35.71 seconds** (Planetary Fortress: 50 Normal s ÷ 1.4) $= 35.71 \times 25 = 893\ \text{ticks}$
 - **57 seconds** (Lair, Lurker Den, Hi-Sec) $= 57 \times 25 = 1425\ \text{ticks}$
 - **71 seconds** (Command Center, Nexus, Hatchery, Dark Shrine) $= 71 \times 25 = 1775\ \text{ticks}$
 - **114 seconds** (Level 1 Weapons/Armor) $= 114 \times 25 = 2850\ \text{ticks}$
@@ -131,7 +131,7 @@ flowchart TD
 | :- | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :--- | :--- |
 | 1 | **Foundry Core Dome** | `foundry_core_dome` | Command Center | 5x5 | 400 / 0 | 1775 (71s) | 1500 / 1 | Trains `welder_drone`. Resource dropoff. Supply +15. Can lift off. | — |
 | 2 | **Orbital Relay Dome** | `orbital_relay_dome` | Orbital Command | 5x5 | 150 / 0 | 625 (25s) | 1500 / 1 | Upgraded from Foundry Core. Unlocks Scanner Sweep, Supply Calldown, Mining Boost. | `assembly_bay_dome` |
-| 3 | **Planetary Bulwark Dome** | `planetary_bulwark_dome` | Planetary Fortress | 5x5 | 150 / 150 | 1250 (50s) | 1500 / 2 *(5.0.14)* | Upgraded from Foundry Core. Heavy twin Ibiks cannon: 40 dmg / range 6.0 / period 50 ticks. Cannot lift. | `weapons_arsenal_dome` |
+| 3 | **Planetary Bulwark Dome** | `planetary_bulwark_dome` | Planetary Fortress | 5x5 | 150 / 150 | 893 (35.7s) | 1500 / 2 *(5.0.14)* | Upgraded from Foundry Core. Heavy twin Ibiks cannon: 40 dmg / range 6.0 / period 50 ticks. Cannot lift. | `weapons_arsenal_dome` |
 | 4 | **Capacitor Dome** | `capacitor_dome` | Supply Depot | 2x2 | 100 / 0 | 525 (21s) | 400 / 1 | Logistics node. Supply +8. Retractable sub-terrain gate allows allied pass-through. | — |
 | 5 | **Plasma Siphon Dome** | `plasma_siphon_dome` | Refinery | 3x3 | 75 / 0 | 525 (21s) | 500 / 1 | Placed on Vespene Geyser. Allows 3 Welder Drones to harvest gas. | — |
 | 6 | **Assembly Bay Dome** | `assembly_bay_dome` | Barracks | 3x3 | 150 / 0 | 1150 (46s) | 1000 / 1 | Trains `pulse_bot`, `shock_golem`, `jet_jumper`, `specter_android`. Can lift off. | `foundry_core_dome` |

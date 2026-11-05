@@ -279,7 +279,7 @@
             gas_cost: 0,
             supply_cost: 2,
             supply_provided: 0,
-            build_time_ticks: 950,
+            build_time_ticks: 679,
             armor_class: Some("enclave_ground_armor"),
             weapon: Some((
                 name: "Psi-Blade Double Slash",
@@ -349,7 +349,7 @@
             gas_cost: 125,
             supply_cost: 3,
             supply_provided: 0,
-            build_time_ticks: 1125,
+            build_time_ticks: 804,
             armor_class: Some("directorate_vehicle_plating"),
             weapon: Some((
                 name: "Twin Heavy Railgun",

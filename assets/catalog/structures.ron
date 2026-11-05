@@ -81,7 +81,7 @@
             footprint: (5, 5),
             mineral_cost: 150,
             gas_cost: 150,
-            build_time_ticks: 1250,
+            build_time_ticks: 893,
             max_hp: 1500.0,
             max_shields: 0.0,
             max_energy: 0.0,

@@ -1027,3 +1027,28 @@ part of this package: the name, lore, visual kind and Veo prompts stay; a later 
 - Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`) reproduce both fixtures.
 
 Outputs under `~/scratch/combat_wp16/` on the development server (`before/`, `after/`).
+
+## 13. WP12: the audit's corrections and the worker's backswing (Q0039, Q0045 2b)
+
+**Package.** One data commit per group of the audit's §5
+([`2026-11-04-catalog-time-audit.md`](2026-11-04-catalog-time-audit.md)), in the plan's order (WP12 step 1), each
+compared with the step before it; the first is compared with the state after WP16 (`7b91323`), whose matrix and
+battle 33 this branch reproduces byte for byte. Every value is the audit's reference (§4, with its source line):
+ticks rounded to the nearest tick, halves up; speeds and rates as the audit's reference column. The audit's §7 has the
+measurement of all groups together, made first (WP3 step 5). Outputs under `~/scratch/combat_wp12/<group>/` on the
+development server; the throwaway script that writes each group from the audit's tables is
+`~/scratch/combat_wp12/scripts/apply_group.py`. Groups 1 to 8 touch no unit a matrix battle spawns, so each was
+expected to leave the matrix and battle 33 bit-identical; the golden replays complete their research and place their
+structures before tick 1, so production and research times were expected not to reach them either.
+
+### 13.1 P1: three build times copied in Normal time (class B)
+
+| Identity | Field | Before | After | Source (Normal s) |
+|---|---|---|---|---|
+| `psi_grey` | `build_time_ticks` | 950 | **679** | 38 s, `swarm` AbilData:1068 (`GatewayTrain` Train1) |
+| `railgun_crawler` | `build_time_ticks` | 1125 | **804** | 45 s, `liberty` AbilData:1649 (`FactoryTrain` Train2) |
+| `planetary_bulwark_dome` | `build_time_ticks` | 1250 | **893** | 50 s, `liberty` AbilData:3163 (`UpgradeToPlanetaryFortress`, Stats delay) |
+
+Measured: whole matrix bit-identical (all 1000 rows), battle 33 bit-identical, both golden replays unchanged in debug,
+release and `wasm32-wasip1`. Doc 07 rows (`psi_grey`, `railgun_crawler`) and doc 08 (the Planetary Fortress row and
+§2.1's example list) now state the new ticks.
