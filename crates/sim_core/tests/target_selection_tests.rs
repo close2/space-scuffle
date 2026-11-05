@@ -463,3 +463,33 @@ fn b11_closest_to_previous_takes_the_candidate_nearest_the_lost_target() -> Test
     assert_eq!(acquired(&world, chooser), Some(near_first));
     Ok(())
 }
+
+/// B-80: a unit with the defensive acquire level (a worker) leaves an enemy in its reach alone
+/// while idle, and attacks it while attack-moving.
+#[test]
+fn b80_a_defensive_unit_acquires_only_while_attack_moving() -> TestResult {
+    let archetypes = [
+        Scratch {
+            extra: "acquire_level: Defensive,",
+            ..Scratch::gunner(CHOOSER)
+        },
+        Scratch::unarmed("target"),
+    ];
+    let mut world = world_with(&archetypes)?;
+    let chooser = spawn(&mut world, CHOOSER, 0, 10, 16)?;
+    spawn(&mut world, "target", 1, 14, 16)?;
+    step(&mut world, 0, None);
+    assert_eq!(acquired(&world, chooser), None, "idle");
+
+    let mut world = world_with(&archetypes)?;
+    let chooser = spawn(&mut world, CHOOSER, 0, 10, 16)?;
+    let target = spawn(&mut world, "target", 1, 14, 16)?;
+    let beyond = SimVec2::new(SimScalar::from_i32(30), SimScalar::from_i32(16));
+    step(
+        &mut world,
+        0,
+        Some((chooser, UnitOrder::AttackMove { target: beyond })),
+    );
+    assert_eq!(acquired(&world, chooser), Some(target), "attack-moving");
+    Ok(())
+}

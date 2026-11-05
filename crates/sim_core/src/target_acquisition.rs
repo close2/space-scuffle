@@ -21,7 +21,7 @@
 //!    least turning, or closest to the previous target).
 //! 4. Damage from a unit's own side never causes retaliation, flight or alerts.
 
-use crate::catalog::{AcquireTieBreak, UnitArchetype, WeaponSpec};
+use crate::catalog::{AcquireLevel, AcquireTieBreak, UnitArchetype, WeaponSpec};
 use crate::combat::{is_threat_to, weapon_aim, TargetPriorityKey};
 use crate::entity::Entity;
 use crate::weapon_timing::SimulationDiagnostic;
@@ -417,6 +417,19 @@ impl SimWorld {
         }
     }
 
+    /// Whether `entity` acquires no target on its own: an archetype with the defensive acquire
+    /// level (`StarCraft` II's workers) acquires automatically only while it attack-moves
+    /// (Liquipedia "Automatic Targeting", Notes). Idle or holding, it leaves enemies alone; an
+    /// attack it already carries out goes on.
+    fn holds_fire(entity: &Entity, arch: &UnitArchetype, engagement: Engagement) -> bool {
+        arch.acquire_level == AcquireLevel::Defensive
+            && matches!(engagement, Engagement::Seek | Engagement::Hold)
+            && !matches!(
+                entity.order_queue.front(),
+                Some(UnitOrder::AttackMove { .. })
+            )
+    }
+
     /// Classifies what acquisition may do for `entity`.
     fn engagement_of(entity: &Entity) -> Engagement {
         match entity.order_queue.front() {
@@ -466,6 +479,9 @@ impl SimWorld {
         candidates: &mut Vec<(TargetPriorityKey, EntityId)>,
     ) -> Option<Acquisition> {
         let engagement = Self::engagement_of(entity);
+        if Self::holds_fire(entity, arch, engagement) {
+            return None;
+        }
         let current = match engagement {
             Engagement::Busy => return None,
             Engagement::Seek => None,
