@@ -1753,3 +1753,18 @@ unresolved), marine survivors 4.03 (SD 3.26).
 - **Measurement.** Matrix bit-identical to the hull-arc commit (no matrix battle sieges a tank or has a structure);
   battle 33 bit-identical; both golden replays unchanged in debug, release and `wasm32-wasip1` (their tanks never
   siege, and no structure fires).
+
+### 14.6 Commit e: turret rates (audit group W8)
+
+- **Change** (degrees per tick, audit §10.4): `railgun_crawler`'s turret 21.6 → 40.32 (`SiegeTank`, `YawRate` 720
+  through `FreeRotate`) and its Siege Mode turret 21.6 → 20.16 (`SiegeTankSieged`, 360, `liberty` TurretData:82);
+  `planetary_bulwark_dome` 180 → 5.04 (90, `liberty` TurretData:89); `flak_array_dome` and `tesla_sentinel_dome`
+  (ground and air) 180 → 40.32; `thorn_lasher_dome` and `spore_spire_dome` 180 → 20.16 (360, `liberty`
+  TurretData:62, :70). `colossus_mech`'s air turret keeps 21.6 (no counterpart turret).
+- **Measurement.** Matrix bit-identical to the turreted-arc commit, against the plan's expectation that battles with
+  `railgun_crawler` would move: the unsieged tank's arc is unrestricted (`Arc` 360, class A), so its turret angle
+  never gates a shot, and no matrix battle sieges a tank or has a structure. Battle 33 bit-identical.
+- **`golden_replay.ron` re-recorded:** only checkpoint 4 (ticks 151 to 200) changed, because its three tanks' turret
+  angles (hashed) now turn at 40.32° per tick. No behaviour changed: with `turret_angle` left out of the encoding,
+  every checkpoint of both fixtures equals the turreted-arc commit's. `golden_replay_orders.ron` unchanged. Debug,
+  release and `wasm32-wasip1` reproduce both.

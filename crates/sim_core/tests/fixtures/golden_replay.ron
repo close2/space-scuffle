@@ -68,6 +68,10 @@
 // II tolerance (Arc / 2 + ArcSlop: 11.25 degrees for "blue_infantry", "blue_armor" and "red_psi",
 // which fired within 15, 15 and 180). A unit whose target is outside it now turns first. Every
 // checkpoint from checkpoint 4 (ticks 151 to 200), the first fight, changed.
+// Re-recorded for WP17 commit e (audit group W8): the "red_siege" (railgun_crawler) turrets turn
+// at 40.32 degrees per tick (was 21.6). Turret angles are hashed, so checkpoint 4 (ticks 151 to
+// 200) changed. No behaviour did: the tank's arc is unrestricted, and with turret angles left
+// out of the checksum every checkpoint of both fixtures equals that of the turreted-arc commit.
 (
     checksum_schema: 10,
     seed: 0x5EED_0F_5CAFF1E,
@@ -98,7 +102,7 @@
         0xd3213317d91b8691,
         0x9a0f00bdb78caef0,
         0x9c03130587ecfe87,
-        0x212823aa1e559f89,
+        0x2648b2f05d2f8ee9,
         0xe645a7d0b66c574b,
         0x2e05ffa91e59ef4d,
         0x482475b5f60565bb,
