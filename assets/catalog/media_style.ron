@@ -90,6 +90,10 @@
         // Their Idle and Walk start and end on the Idle pin and Attack starts on it, so each
         // text keeps the pose, faces the weapons one way and returns to the start. The
         // crawler is a tracked tank: no feet, a fixed turret, the tracks show the travel.
+        // Batch 4 (2026-11-05) redesigned it from text with no side vents (its first pin's
+        // side exhaust flames flickered in five Walks) and asked its Walk for tracks running
+        // fast on a rolling road with exhaust streaming backward; the golem's Walk asks for a
+        // brisk march with high knee lifts (marking time read as a weight shift).
         overrides: {
             "railgun_crawler": {
                 Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the tank keeps the same size and place in frame from start to end. The tank sits still with its engine idling: thin exhaust smoke drifts slowly from its two rear stacks and blue energy glows steadily along the rails. The turret, both barrels and the tracks stay fixed. Seamless loop: the last frame matches the first.",
@@ -241,7 +245,12 @@
         // railgun_crawler Idle: pinned at both ends, its raw frames already loop (6eedaf3a: raw
         // wrap 0.940 above the median step 0.936, worst 0.909 against 0.906); a cross-fade of
         // the drifting smoke raises the median step and fails it by 0.0003, so it keeps the
-        // scale lock and no cross-fade, as the shuttle and the welder.
+        // scale lock and no cross-fade, as the shuttle and the welder. The redesigned crawler's
+        // Idle (batch 4, 8d430dda) loops raw as well (wrap 0.926, worst 0.921 against 0.904).
+        // shock_golem Walk (batch 4): pinned at both ends to the wide-stance Idle picture, eight
+        // Walks barely stepped, stepped unevenly or leaned toward the camera; the end is left
+        // free so the march can run through the clip, and loop sampling picks the loop with
+        // a short cross-fade. The scale lock is off because a stride reads as an uneven zoom.
         overrides: {
             "railgun_crawler": {
                 Attack: (pin_end: true, seam: None),
@@ -249,7 +258,7 @@
             },
             "shock_golem": {
                 Attack: (pin_end: true, seam: None),
-                Walk: (pin_end: false, seam: Some((scale_lock: false, crossfade_frames: 2))),
+                Walk: (pin_end: false, seam: Some((scale_lock: false, crossfade_frames: 0))),
             },
             "jet_jumper": {
                 Attack: (pin_end: true, seam: None),
