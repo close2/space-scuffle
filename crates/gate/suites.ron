@@ -59,8 +59,8 @@ SuiteCatalog(
         // with `test_threads` holds a whole Bevy app, so their peak memory grows with libtest's
         // thread count: at 16 threads (one per CPU) they reached 27, 16 and 13.6 GiB and, run by
         // four gates at once, froze the server. Measured peak RSS at 1/2/4 threads: card 3.4/3.9/
-        // 5.4 GiB, hud 3.3/3.9/6.0 GiB, input -/-/5.1 GiB; 4 threads keeps each near 6 GiB at a
-        // quarter of the 1-thread wall time (blueprint Amendment 2, section 11.5).
+        // 5.4 GiB, hud 3.3/3.9/6.0 GiB, input 4.6/4.1/5.1 GiB; 4 threads keeps each near 6 GiB in
+        // a quarter or less of the 1-thread wall time (blueprint Amendment 2).
         "client/lib": (class: Slow),
         "client/battle_card_tests": (class: Slow, test_threads: Some(4)),
         "client/battle_card_path_tests": (class: Slow),
