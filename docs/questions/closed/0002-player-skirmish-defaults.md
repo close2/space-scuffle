@@ -26,3 +26,7 @@ decision in its plan's decisions or out-of-scope section (for example "Out of sc
 `docs/plans/2026-11-02-phase-5-playable-client.md` §6, or "Decisions for the owner" in the newer plans), so it can be
 brought back into scope. Item 3 follows Q0001: once real art for gas, research and transport is baked, it replaces
 the temporary procedural fixtures for those five assets; that work belongs to the Q0001 media plan.
+
+2026-11-05. Item 3 is done for those assets: Veo batch 1 replaced the temporary procedural fixtures of the gas,
+research and transport tests with the shipped media (`fb1be5b`, merged `2c5ed5e`; `battle_card_path_tests.rs`), and
+Q0001 is closed.

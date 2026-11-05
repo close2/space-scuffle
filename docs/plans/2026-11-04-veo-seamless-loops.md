@@ -9,7 +9,7 @@ objective loop-continuity measure, and resumes that plan's WP4 (batch 1) with a 
 No Veo request was made while planning. Line numbers drift; search for the quoted symbol. A claim that could not be
 confirmed while planning is marked **verify**, and the first step of its package confirms or refutes it.
 
-**Decision being carried out.** [Q0046](../questions/open/0046-veo-loop-continuity-method.md). The orchestrating
+**Decision being carried out.** [Q0046](../questions/closed/0046-veo-loop-continuity-method.md). The orchestrating
 agent first chose option (a) with ping-pong (b) as fallback. The owner then answered (2026-11-04, `6e0cb35`): ratify
 (a) as primary, the same picture as start and end frame through `lastFrame` (start picture: frame 0 of clip
 `0dbd7948`, which has the plain backdrop); for residual drift at the loop boundary, or as the fallback if `lastFrame`

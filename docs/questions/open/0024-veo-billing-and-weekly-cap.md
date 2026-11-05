@@ -32,3 +32,14 @@ Please say:
 Owner (2026-11-04): Everything estimated in total below $15 is fine. (I think I have credit, if not, paying is fine for me. Target $15. Try really hard to stay below $50). If internet says that I should have free weekly quota, try to stay below it. Keep the 12/run and 25/week cap for the 19 required clips (~$11.40 estimated if billed at Fast API rates), and pause/check before starting the 49 expansion clips so we stay within the $15 target.
 
 Owner update (2026-11-04, via Q0043): I have verified that I have 260€ credit expiring 2027-01-24. The agent is free to use up to 200€ (including expansion batches and re-generations) and should not hesitate to request another video if a video doesn't fulfill requirements. Keep audio enabled.
+
+## Status
+
+2026-11-05 (no answer needed now). The required set is done: 41 generations since the pilot, **$16.40** at list
+price (Veo 3.1 Fast, 720p, with sound, $0.40 a clip), about 8 % of the 200 EUR allowance. Batch 1 spent 24 including
+the pilot and the loop experiments ([`2026-11-04-batch-1.md`](../../evidence/veo/2026-11-04-batch-1.md)), batch 2
+spent 17 ([`2026-11-05-batch-2.md`](../../evidence/veo/2026-11-05-batch-2.md)). The ledger
+(`docs/evidence/veo/ledger.jsonl`) holds every request. Caps in `assets/media/veo_budget.ron`: 12 per run and 60 per
+rolling 7 days (Q0047); no run hit a quota refusal. The expansion batches (Veo plan WP6, about 49 clips plus seeds
+and regenerations, about $20 to $35 at list price, depending on seeds and regenerations) have not started; they wait for the orchestrator, which checks
+in here first as the first answer asked. This question stays open as the record of the spending rule.

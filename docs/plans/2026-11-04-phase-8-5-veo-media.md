@@ -10,7 +10,7 @@ date its work starts) against `main` at `9e693cf`. No Veo request was made while
 for the quoted symbol. A claim that could not be confirmed while planning is marked **verify**, and the first step of
 its package confirms or refutes it.
 
-**Owner decision.** [Q0001](../questions/open/0001-media-scope.md), answered 2026-11-03: "Option B. Veo should be
+**Owner decision.** [Q0001](../questions/closed/0001-media-scope.md), answered 2026-11-03: "Option B. Veo should be
 part of my ultra plan. So use it. (I think I have weekly limits and it would be a shame to waste them)."
 [Q0002](../questions/closed/0002-player-skirmish-defaults.md)'s answer adds that the temporary procedural fixtures for
 these assets are to be replaced by real art once baked, and that the agent may decide scoping if it documents it.
@@ -328,6 +328,17 @@ When a batch lands, for each identity it covers:
 The style sentence's reference to a commercial game is reworded in WP1 (D-2). This changes every future prompt
 slightly; existing clips are not regenerated for it.
 
+### D-11. The two unused legacy structure clips stay (WP7, a Q0002 scoping decision)
+
+Recorded 2026-11-05. `assets/videos/foundry_core_dome_walk.mp4` and `foundry_core_dome_attack.mp4` (2.0 and 2.1 MB,
+added in `3d9a9c4` with the original Veo work) are no longer used by any atlas. Batch 2 replaced the foundry's
+Idle and baked only Idle and Constructing, and a structure publishes neither Walk nor Attack (D-1). **Decision:
+leave them.** Nothing reads them: the bake takes clips by explicit path, the client loads atlases, and the audit
+checks only the clips a provenance record names. Deleting them would not shrink the repository, because the
+blobs stay in history (Q0025). It would also turn this records package into an asset change with its own gate
+selection. **To bring it back:** remove both files in any later media batch that touches `assets/videos`; no
+code or test names them.
+
 ---
 
 ## 4. Work packages
@@ -523,3 +534,47 @@ Q0001's and Q0002's resolutions are written by whoever closes those questions, c
 - **Q0026 (new, not blocking):** who accepts the look of a clip? Default: the agent accepts against D-7's written
   criteria and links the pilot's and each batch's contact sheets in the evidence; the owner can reject any clip later,
   which queues its regeneration in the next batch.
+
+---
+
+## 7. Records after WP5 (WP7, 2026-11-05)
+
+**Status.** WP1 to WP5 are done, and so are the three amending plans
+([`2026-11-04-veo-letterbox-bake.md`](2026-11-04-veo-letterbox-bake.md),
+[`2026-11-04-veo-seamless-loops.md`](2026-11-04-veo-seamless-loops.md),
+[`2026-11-04-veo-structure-action-text.md`](2026-11-04-veo-structure-action-text.md)). The required set in
+`assets/media/required_set.ron` has 10 identities: batch 1's five, batch 2's four and `pulse_bot`. §2.4 and WP2
+counted 12, but `foundry_core_dome` was counted twice, once in batch 2 and once as a real identity. `audit-media
+--strict --ledger docs/evidence/veo/ledger.jsonl` verifies all 10
+([batch 2](../evidence/veo/2026-11-05-batch-2.md), "Strict audit"). B-1 is fixed (`7929844`, `70ad1d6`; test
+`no_shipped_texture_is_a_copy_of_the_concept_atlas`). Remediation step 8.5 is done, and Phase 8's exit is recorded
+as met at `473b977`; its CI run id is added after the next push of `main`. 12 of 91 catalog identities have real
+media. [Q0001](../questions/closed/0001-media-scope.md), [Q0026](../questions/closed/0026-veo-clip-acceptance.md)
+and [Q0046](../questions/closed/0046-veo-loop-continuity-method.md) are closed. Q0024 and Q0025 stay open with a
+status note.
+
+**Spend.** 41 generations since the pilot, the pilot included: **$16.40** at list price (Veo 3.1 Fast, 720p, with
+sound, $0.40 a clip). Batch 1, with the pilot and the loop experiments, spent 24 ($9.60); batch 2 spent 17
+($6.80). All of it is within the owner's 200 EUR (Q0024, Q0026). §1 estimated 19 clips plus at most 6 retries. The
+difference is seeds and pins (seamless-loops plan §6) and the per-clip series (structure action text plan D-4).
+
+**Deviations recorded in the batch evidence.** `foundry_core_dome` Idle was regenerated instead of kept (`LegacyVeo`
+became `Veo` provenance). The square legacy keyframes `welder_drone_idle.jpg` and `foundry_core_dome_idle.jpg` were
+removed. `welder_drone` Cast has its own pin, and `welder_drone` is letterboxed. See
+[`2026-11-05-batch-2.md`](../evidence/veo/2026-11-05-batch-2.md), "Deviations from the plan, and why".
+
+**Open follow-ups.**
+
+1. **Expansion (WP6, batches 3 to 5) is not started.** It waits for the orchestrator to schedule it. Before its
+   first spend, Q0025's answer asks for a second ask on storage, and Q0024's first answer asks to check in on
+   spending.
+2. **Unit Cast text.** The unit Cast kind text in `assets/catalog/media_style.ron` has no camera or loop clause.
+   It also asks for "tool arms reaching", which conflicts with the loop policy (Cast is looped and pinned at both
+   ends). Batch 2 used a `welder_drone` override. `grav_harvester` (Enclave) and `nectar_worker` (Swarm) also
+   publish Cast. They are outside this plan's scope, but whichever plan brings them in must review their Cast
+   text, or the kind text itself, before generating. A Cast that shows a steady effect needs its own pin (batch 2).
+3. **Legacy clips.** `foundry_core_dome_walk.mp4` and `_attack.mp4` are kept, unused (D-11).
+4. **`psi_grey` and `rhino_beetle`** (Enclave and Swarm) keep legacy atlases without provenance
+   (`LegacyUnverified`). They are outside the required set and this plan's scope.
+5. **CI.** No CI run covers batch 2 yet (`main` was last pushed at `ab2042c`). The run id of the next push of
+   `main` goes in the remediation plan's Phase 8 exit status.
