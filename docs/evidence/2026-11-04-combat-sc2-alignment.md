@@ -1224,3 +1224,46 @@ unresolved on all 20 seeds, the reaper out-healing the stalker in combat, which 
 alone would move the catalog away from StarCraft II's behaviour, not towards it, so it waits for the delay.
 [Q0049](../questions/open/0049-reaper-life-regeneration-delay.md) asks the owner whether to add a per-archetype
 life-regeneration delay (the default keeps 0.08 and the deferral). No catalog value, test or golden changes here.
+
+### 13.12 R2: Zerg life regeneration
+
+`hp_regen_per_tick` on 32 Zerg archetypes (15 units, 17 structures), each with its source line in the audit's group
+R2: **0.02 → 0.01531** for 30 of them (`LifeRegenRate` 0.2734 Normal per s × 1.4 ÷ 25; for example `void`
+UnitData:1127), **0 → 0.01531** for `rhino_beetle` (the Roach regenerates like every Zerg unit, `liberty`
+UnitData:7184; its faster burrowed regeneration is not modelled), and **0.02 → 0.056** for `sonic_bat` (the
+Mutalisk's `LifeRegenRate` 1, `void` UnitData:3094).
+
+**Whole matrix, 20 seeds.** Compared with the state after S2: **16 battles moved, no winner changed, no expectation
+failed** (0 on the seeds of record; 7 over all seeds, battle 33's, unchanged).
+
+| Battle | Seeds moved | Survivors blue – red | End tick, before → after | Lead hull, before → after |
+|---|---|---|---|---|
+| 1b_stalker_vs_2_roaches | 9 | 0.00 – 2.00, same | 156.6, same | red 106.75 → 107.77 |
+| 5a_hydra_vs_marine | 20 | 1.00 – 0.00, same | 52.0, same | blue 67.00 → 66.77 |
+| 5b_hydra_vs_2_marines | 20 | 1.00 – 0.00, same | 112.0, same | blue 20.20 → 19.68 |
+| 6a_roach_vs_hydra | 20 | 1.00 – 0.00, same | 149.5, same | blue 35.00 → 37.20 |
+| 6b_2_roaches_vs_hydra | 10 | 2.00 – 0.00, same | 65.8, same | blue 118.60 → 119.06 |
+| 6c_roach_vs_2_hydras | 9 | 0.00 – 2.00, same | 96.2, same | red 61.98 → 61.80 |
+| 9b_hellion_vs_roach | 20 | 0.00 – 1.00, same | 148.0, same | red 117.00 → 119.25 |
+| 15_plated_ultralisk_vs_8_marines | 20 | 1.00 – 0.00, same | 111.0, same | blue 415.28 → 414.77 |
+| 16a_muta_vs_marine | 20 | 1.00 – 0.00, same | 115.0, same | blue 74.26 → 78.33 |
+| 16b_muta_vs_2_marines | 20 | 0.00 – 1.00, same | 182.0 → 197.0 | red 27.00 → 18.00 |
+| 17_void_ray_vs_muta | 20 | 1.00 – 0.00, same | 181.0 → 190.0 | blue 150.00, same |
+| 21_lurker_vs_6_marines | 20 | 1.00 – 0.00, same | 106.4, same | blue 71.59 → 71.10 |
+| 24a_roach_vs_5_lings | 20 | 0.00 – 2.00, same | 295.6 → 305.4 | — |
+| 24b_upgraded_roach_vs_5_lings | 20 | 1.00 – 0.00, same | 255.8, same | blue 82.40 → 85.93 |
+| 27_100_lings_vs_8_ultralisks | 20 | 0.00 – 8.00, same | 203.1, same | red 432.59 → 432.04 |
+| 29_100_lings_vs_12_stalkers | 1 | 71.50 – 0.00, same | 440.4, same | blue 34.41 → 34.38 |
+
+- **The Roach now regenerates** (1b, 6a to 6c, 9b, 24a, 24b): a surviving roach ends with more life, and a losing one
+  lasts longer (24a: the zerglings need 9.8 more ticks on average to finish the roach).
+- **Slower Zerg regeneration elsewhere** (5a, 5b, 15, 21, 27, 29): the surviving hydralisk, ultralisk, lurker or
+  zergling ends with up to half a point less life.
+- **The Mutalisk regenerates 2.8 times faster** (16a, 16b, 17): the lone mutalisk of 16a ends with 4.07 more life; in
+  16b the mutalisk holds out 15 ticks longer against the two marines and the surviving marine ends with 9 less life;
+  the void ray of 17 needs 9 more ticks to kill the mutalisk.
+
+**Battle 33, 68 seeds: bit-identical.** **`golden_replay.ron` re-recorded** at checkpoints 6 and 8 to 11 (its
+`rhino_beetle` squad regenerates now); `golden_replay_orders.ron` unchanged. Debug,
+release and `wasm32-wasip1` reproduce both fixtures. Doc 03 already states 0.38 per Faster second; doc 07 and doc 08
+state no rate.

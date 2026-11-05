@@ -37,6 +37,10 @@
 // Re-recorded for WP12 group S1 (Q0039): "blue_armor" (rhino_beetle) and "red_siege"
 // (railgun_crawler) walk at 0.126 per tick (was 0.09, the Normal-time speed). Every checkpoint
 // changed from checkpoint 1 (ticks 1 to 50), where "blue_armor" starts moving at tick 5.
+// Re-recorded for WP12 group R2 (Q0039): "blue_armor" (rhino_beetle) regenerates 0.01531 life
+// per tick (was 0, the Roach's 0.2734 per Normal s). Only checkpoints 6 and 8 to 11 (ticks 251
+// to 300 and 351 to 550) changed; checkpoints 1 to 5, 7 and 12 to 20 are as before (no
+// regenerating beetle's life differs at those checkpoints).
 (
     checksum_schema: 10,
     seed: 0x5EED_0F_5CAFF1E,
@@ -69,12 +73,12 @@
         0x9c03130587ecfe87,
         0x10c3ab5f32e10385,
         0xc3e287fc8afab72e,
-        0x12b41b4cb02fd961,
+        0x9eeedcba9003dcd8,
         0x3d2c3eb1b3b23b79,
-        0x0132a5c20e611bd9,
-        0x38db0599f1356ae1,
-        0xe7c91e25f2cbd72d,
-        0xc9b7500205574de7,
+        0x015eb76101ed6b51,
+        0x734ba40a12bc031c,
+        0xf74308fbcd95b953,
+        0x79f0b51da748890e,
         0x80cc83af974355dc,
         0xc01b0149b2ed1bed,
         0xbedb176b52c739a6,
