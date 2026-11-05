@@ -24,6 +24,7 @@ use super::bricks::{
     back_trace_reach, brick_of_voxel, brick_voxels, bricks_in_voxel_box, may_hold_smog, runs,
     segment_index, BrickState, BrickWork, Segment, BRICKS_X, BRICK_COUNT, BRICK_NX,
 };
+use super::math;
 use super::{SmogConfig, SmogError};
 use bevy::prelude::*;
 use std::ops::Range;
@@ -1098,7 +1099,7 @@ impl SmogGrid3d {
     /// dense fast path (or the corner exit), both of which write `+0.0`, so the brick's result is
     /// at rest; it is skipped when the scratch slab already holds that, else filled.
     fn advect_velocity(&mut self, damping: f32, dt: f32) {
-        let decay = (-damping * dt).exp();
+        let decay = math::exp(-damping * dt);
 
         let mut work = [BrickWork::Compute; BRICK_COUNT];
         for (b, work) in work.iter_mut().enumerate() {
@@ -1271,9 +1272,9 @@ impl SmogGrid3d {
     /// `max_corner < 1e-6` exit, both of which write the rest value; the brick is skipped when
     /// the scratch slabs already hold that, else filled.
     fn advect_density_and_tint(&mut self, buoyancy: f32, dissipation: f32, dt: f32) {
-        let decay = (-dissipation * dt).exp();
+        let decay = math::exp(-dissipation * dt);
         let lambda_glow = (1.8 * dissipation).max(1.65);
-        let glow_decay = (-lambda_glow * dt).exp();
+        let glow_decay = math::exp(-lambda_glow * dt);
         let c_tail = SMOG_TAIL_TINT;
         let buoyancy_vel = Vec3::new(0.0, buoyancy, 0.0);
         let pass = ScalarAdvection {

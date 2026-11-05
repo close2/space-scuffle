@@ -277,3 +277,4 @@ the statement as a rule for reviewers.
 | C20 | Paths named in this charter exist |
 | C21 | No test builds a render device in its own process; GPU tests go through the harness of §7 |
 | C22 | `crates/gate/suites.ron` names existing targets, classes every GPU and valgrind test, and covers every tracked path (in `crates/gate/tests/suite_catalog_tests.rs`) |
+| C23 | Smog production code calls no host transcendental function outside `crates/client/src/smog/math.rs` |

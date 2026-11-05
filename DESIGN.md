@@ -57,7 +57,7 @@ Cargo's.
 - **`client_diagnostics`** — capture, audit and probe tools built on the client; nothing in the game depends on
   it.
 - **`sim_fixtures`** — test-only worlds and catalogs embedded from the shipped data.
-- **`workspace_checks`** — the executable charter checks (C1 to C21).
+- **`workspace_checks`** — the executable charter checks (C1 to C21, and C23).
 - **`gate`** — `cargo gate`: selects the tests a change can break from the catalog `crates/gate/suites.ron`
   and runs them in the tiers of charter §4.3 (`quick`, `package`, `merge`, `full`), with stamps, flake reruns,
   the red rule's suspect list and the CI timing summary; its catalog check is C22. It depends on no other
