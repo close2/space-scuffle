@@ -32,8 +32,8 @@ This catalog incorporates every specific structure and upgrade adjustment finali
 - **Zerg / Sylvan Swarm:**
   - **Hatchery (`ancient_tree_dome`):** Mineral cost reduced to `275` minerals (from `300`).
   - **Hydralisk Den (`spine_den_dome`):** New upgrade **Nanomuscular Swell** (`100/100`, `64s` (90 Normal s) = `1607 ticks`, requires Hive) unlocking **Lunge** (+100% movement speed for `0.71s` = `18 ticks`).
-  - **Hydralisk Muscular Augments (`muscular_augments`):** Creep speed bonus tuned to `0.74` tiles/s.
-  - **Ultralisk Anabolic Synthesis (`anabolic_synthesis`):** Off-creep speed bonus tuned to `0.57` tiles/s.
+  - **Hydralisk Muscular Augments (`muscular_augments`):** Off-creep speed bonus +0.7 Normal (0.98 Faster) per s, `0.0392` world units/tick.
+  - **Ultralisk Anabolic Synthesis (`anabolic_synthesis`):** Off-creep speed bonus +0.421871 Normal (0.59 Faster) per s, `0.0236` world units/tick.
 
 ---
 
@@ -268,16 +268,16 @@ flowchart TD
 | Upgrade Slug | SC2 Analogue | Researched At | Cost (M/G) | Research Ticks | Prerequisite | Target Unit & Effect |
 | :--- | :--- | :--- | :---: | :---: | :--- | :--- |
 | `warp_gate_tech` | Warp Gate | `cybernetics_conduit_dome`| 50 / 50 | 2500 (100s) | — | Transforms all `warp_gate_dome`s into Warp Gates, enabling instantaneous orbital deployment anywhere inside power matrix. |
-| `charge` | Charge | `templar_conclave_dome` | 100 / 100 | 2500 (100s) | — | `psi_grey`: Movement speed increased by +0.038 world units/tick; intercepts fleeing targets with a 0.275 speed charge rush (10s cd). |
+| `charge` | Charge | `templar_conclave_dome` | 100 / 100 | 2500 (100s) | — | `psi_grey`: Movement speed increased by +0.063 world units/tick (+1.125 Normal per s, `voidmulti` UpgradeData:69); intercepts fleeing targets with a 0.275 speed charge rush (10s cd). |
 | `phase_blink` | Blink | `templar_conclave_dome` | 150 / 150 | 3036 (121.4s) | — | `warp_strider`: Unlocks `Phase Blink` ability (instantly teleports up to 8.0 units toward cursor, 175 tick cooldown). |
 | `resonating_glaives` | Resonating Glaives| `templar_conclave_dome` | 100 / 100 | 2500 (100s) | — | `astral_vagrant`: Attack weapon period reduced from 40 ticks to 28 ticks (+43% attack rate). |
 | `shadow_stride` | Shadow Stride | `void_sanctuary_dome` | 100 / 100 | 2500 (100s) | — | `shadow_visitor`: Unlocks short-range tactical phase leap (5.0 unit teleport dash, 350 tick cooldown). |
 | `psionic_storm` | Psionic Storm | `psionic_archives_dome` | 200 / 200 | 1964 (78.6s) | — | `cerebral_elder`: Unlocks `Psionic Storm` (75 energy, blanket psionic lightning dealing 80 damage over 70 ticks across 3.0 radius). |
 | `extended_thermal_lance`| Extended Thermal Lance| `robotic_assembly_bay_dome`| 150 / 150 | 2500 (100s) | — | `tripod_annihilator`: Thermal lance sweep range increased by +2.0 (7.0 -> 9.0 world units). |
 | `gravitic_boosters`| Gravitic Boosters | `robotic_assembly_bay_dome`| 100 / 100 | 1429 (57.2s) | — | `stealth_eye_orb`: Movement speed increased by +50% (0.1052 -> 0.1578 world units/tick). |
-| `gravitic_drive` | Gravitic Drive | `robotic_assembly_bay_dome`| 100 / 100 | 1429 (57.2s) | — | `phase_prism_saucer`: Movement speed increased by +30% (0.1652 -> 0.2148 world units/tick). |
+| `gravitic_drive` | Gravitic Drive | `robotic_assembly_bay_dome`| 100 / 100 | 1429 (57.2s) | — | `phase_prism_saucer`: Movement speed increased by +0.049 world units/tick (+0.875 Normal per s, `liberty` UpgradeData:1823). |
 | `anion_pulse_crystals`| Anion Pulse-Crystals| `celestial_beacon_dome` | 150 / 150 | 1607 (64.3s) | — | `flying_saucer`: Emerald ray attack range increased by +2.0 (5.0 -> 7.0 world units). |
-| `flux_vanes` | Flux Vanes | `celestial_beacon_dome` | 100 / 100 | 1429 (57.2s) | — | `prismatic_saucer`: Movement speed increased by +20% (0.1540 -> 0.1848 world units/tick) with rapid acceleration. |
+| `flux_vanes` | Flux Vanes | `celestial_beacon_dome` | 100 / 100 | 1429 (57.2s) | — | `prismatic_saucer`: Movement speed increased by +0.0319 world units/tick (2.75 -> 3.3203 Normal per s, `voidmulti` UpgradeData:348) with rapid acceleration. |
 
 ---
 
@@ -372,19 +372,19 @@ flowchart TD
 
 | Upgrade Slug | SC2 Analogue | Researched At | Cost (M/G) | Research Ticks | Prerequisite | Target Unit & Effect |
 | :--- | :--- | :--- | :---: | :---: | :--- | :--- |
-| `metabolic_boost` | Metabolic Boost | `spawning_hollow_dome` | 100 / 100 | 1964 (78.6s) | — | `razor_mantis`: Movement speed increased by +50% (0.1652 -> 0.2478 world units/tick). |
+| `metabolic_boost` | Metabolic Boost | `spawning_hollow_dome` | 100 / 100 | 1964 (78.6s) | — | `razor_mantis`: Movement speed increased by +0.0978 world units/tick (+1.746 Normal per s, `liberty` UpgradeData:1856). |
 | `adrenal_glands` | Adrenal Glands | `spawning_hollow_dome` | 200 / 200 | 2321 (92.8s) | `primal_world_tree_dome` | `razor_mantis`: Attack period reduced by 40% (12 ticks -> 7 ticks!). |
 | `centrifugal_hooks` | Centrifugal Hooks | `caustic_nursery_dome` | 100 / 100 | 1786 (71.4s) | `canopy_grove_dome` | `volatile_tick`: Movement speed increased by +18% (0.1400 -> 0.1652) and Max HP +5 (30 -> 35 HP). |
-| `glial_reconstitution`| Glial Reconstitution| `carapace_mound_dome` | 100 / 100 | 1964 (78.6s) | `canopy_grove_dome` | `rhino_beetle`: Movement speed increased by +33% (0.1200 -> 0.1600 world units/tick). |
+| `glial_reconstitution`| Glial Reconstitution| `carapace_mound_dome` | 100 / 100 | 1964 (78.6s) | `canopy_grove_dome` | `rhino_beetle`: Movement speed increased by +0.042 world units/tick (+0.75 Normal per s, `liberty` UpgradeData:1925). |
 | `tunneling_claws` | Tunneling Claws | `carapace_mound_dome` | 100 / 100 | 1964 (78.6s) | `canopy_grove_dome` | `rhino_beetle`: Gains ability to move while burrowed (speed 0.0560); subterranean HP regen +10 HP/s. |
-| `muscular_augments` | Muscular Augments | `spine_den_dome` | 100 / 100 | 1607 (64.3s) | `canopy_grove_dome` | `thorn_viper`: Movement speed off creep increased by +10% (0.1260 -> 0.1386) *(creep bonus 0.74 in 5.0.14)*. |
+| `muscular_augments` | Muscular Augments | `spine_den_dome` | 100 / 100 | 1607 (64.3s) | `canopy_grove_dome` | `thorn_viper`: Movement speed off creep increased by +0.0392 world units/tick (+0.7 Normal per s, `voidmulti` UpgradeData:743). |
 | `grooved_spines` | Grooved Spines | `spine_den_dome` | 100 / 100 | 1250 (50s) | `canopy_grove_dome` | `thorn_viper`: Spine attack range increased by +1.0 (5.0 -> 6.0 world units). |
 | `nanomuscular_swell`| Nanomuscular Swell| `spine_den_dome` | 100 / 100 | 1607 (64.3s) | `primal_world_tree_dome` *(5.0.14)* | `thorn_viper`: Unlocks **Lunge** ability (+100% movement speed sprint for 0.71s = 18 ticks) *(5.0.14)*. |
 | `adaptive_talons` | Adaptive Talons | `burrow_spire_dome` | 100 / 100 | 1429 (57.2s) | `primal_world_tree_dome` | `burrow_scorpion`: Burrow duration reduced from 50 ticks to 27 ticks (1.07s). |
 | `seismic_spines` | Seismic Spines | `burrow_spire_dome` | 150 / 150 | 1429 (57.2s) | `primal_world_tree_dome` | `burrow_scorpion`: Subterranean impaling spike attack range increased by +2.0 (8.0 -> 10.0 world units). |
-| `pneumatized_carapace`| Pneumatized Carapace| `ancient_tree_dome` | 100 / 100 | 1071 (42.8s) | `canopy_grove_dome` | `amber_pollen_dome` (Overlord): Movement speed increased by +160% (0.0360 -> 0.0936 world units/tick). |
+| `pneumatized_carapace`| Pneumatized Carapace| `ancient_tree_dome` | 100 / 100 | 1071 (42.8s) | `canopy_grove_dome` | `amber_pollen_dome` (Overlord): Movement speed increased by +0.0691 world units/tick (0.6445 -> 1.879 Normal per s, `void` UpgradeData:621). |
 | `chitinous_plating` | Chitinous Plating | `behemoth_den_dome` | 150 / 150 | 1964 (78.6s) | `primal_world_tree_dome` | `stag_behemoth`: Base armor increased by +2 (2 -> 4 Life Armor). |
-| `anabolic_synthesis`| Anabolic Synthesis | `behemoth_den_dome` | 150 / 150 | 1071 (42.8s) | `primal_world_tree_dome` *(5.0.14)* | `stag_behemoth`: Off-creep movement speed increased by +14% (0.1652 -> 0.1880) *(calibrated for 5.0.14)*. |
+| `anabolic_synthesis`| Anabolic Synthesis | `behemoth_den_dome` | 150 / 150 | 1071 (42.8s) | `primal_world_tree_dome` *(5.0.14)* | `stag_behemoth`: Off-creep movement speed increased by +0.0236 world units/tick (+0.421871 Normal per s, `voidmulti` UpgradeData:47). |
 | `microbial_shroud` | Microbial Shroud | `infestation_nursery_dome`| 150 / 150 | 1964 (78.6s) | — | `mycelium_shaman`: Unlocks `Microbial Shroud` (100 en, reduces incoming ranged damage by 50% for 11s, lingers 3.6s) *(5.0.14)*. |
 | `neural_parasite` | Neural Parasite | `infestation_nursery_dome`| 150 / 150 | 1964 (78.6s) | — | `mycelium_shaman`: Unlocks `Neural Parasite` (100 en, mind-controls target non-massive enemy entity up to 9.0 range). |
 

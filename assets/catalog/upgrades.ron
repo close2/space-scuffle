@@ -850,7 +850,7 @@
                 ModifyUnitStat(
                     target_slug: "psi_grey",
                     max_hp_delta: 0.0,
-                    move_speed_delta: 0.038,
+                    move_speed_delta: 0.063,
                     sight_delta: 0.0,
                     weapon_range_delta: 0.0,
                     armor_delta: 0.0,
@@ -992,7 +992,7 @@
                 ModifyUnitStat(
                     target_slug: "phase_prism_saucer",
                     max_hp_delta: 0.0,
-                    move_speed_delta: 0.0496,
+                    move_speed_delta: 0.049,
                     sight_delta: 0.0,
                     weapon_range_delta: 0.0,
                     armor_delta: 0.0,
@@ -1042,7 +1042,7 @@
                 ModifyUnitStat(
                     target_slug: "prismatic_saucer",
                     max_hp_delta: 0.0,
-                    move_speed_delta: 0.0308,
+                    move_speed_delta: 0.0319,
                     sight_delta: 0.0,
                     weapon_range_delta: 0.0,
                     armor_delta: 0.0,
@@ -1367,7 +1367,7 @@
                 ModifyUnitStat(
                     target_slug: "razor_mantis",
                     max_hp_delta: 0.0,
-                    move_speed_delta: 0.0826, // 0.1652 -> 0.2478
+                    move_speed_delta: 0.0978, // 0.1652 -> 0.2478
                     sight_delta: 0.0,
                     weapon_range_delta: 0.0,
                     armor_delta: 0.0,
@@ -1442,7 +1442,7 @@
                 ModifyUnitStat(
                     target_slug: "rhino_beetle",
                     max_hp_delta: 0.0,
-                    move_speed_delta: 0.0400,
+                    move_speed_delta: 0.042,
                     sight_delta: 0.0,
                     weapon_range_delta: 0.0,
                     armor_delta: 0.0,
@@ -1481,7 +1481,7 @@
                 ModifyUnitStat(
                     target_slug: "thorn_viper",
                     max_hp_delta: 0.0,
-                    move_speed_delta: 0.0126,
+                    move_speed_delta: 0.0392,
                     sight_delta: 0.0,
                     weapon_range_delta: 0.0,
                     armor_delta: 0.0,
@@ -1584,7 +1584,7 @@
                 ModifyUnitStat(
                     target_slug: "amber_pollen_dome",
                     max_hp_delta: 0.0,
-                    move_speed_delta: 0.0576,
+                    move_speed_delta: 0.0691,
                     sight_delta: 0.0,
                     weapon_range_delta: 0.0,
                     armor_delta: 0.0,
@@ -1634,7 +1634,7 @@
                 ModifyUnitStat(
                     target_slug: "stag_behemoth",
                     max_hp_delta: 0.0,
-                    move_speed_delta: 0.0228,
+                    move_speed_delta: 0.0236,
                     sight_delta: 0.0,
                     weapon_range_delta: 0.0,
                     armor_delta: 0.0,

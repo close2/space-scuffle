@@ -1078,3 +1078,26 @@ Barracks Reactor analogue `duplicator_module_pod` 450 → 893 (50 Normal s), the
 
 Measured: whole matrix bit-identical (all 1000 rows), battle 33 bit-identical, both golden replays unchanged in
 debug, release and `wasm32-wasip1`. The doc 07 and doc 08 cells that state these ticks are corrected.
+
+### 13.4 U1: upgrade speed bonuses
+
+| Upgrade | `move_speed_delta` before | After | Source (Normal units per s, × 1.4 ÷ 25) |
+|---|---|---|---|
+| `charge` | 0.038 | **0.063** | +1.125, `voidmulti` UpgradeData:69 |
+| `gravitic_drive` | 0.0496 | **0.049** | +0.875, `liberty` UpgradeData:1823 |
+| `flux_vanes` | 0.0308 | **0.0319** | 2.75 → 3.3203, `voidmulti` UpgradeData:348 and UnitData:2025 |
+| `metabolic_boost` | 0.0826 | **0.0978** | +1.746, `liberty` UpgradeData:1856 |
+| `glial_reconstitution` | 0.0400 | **0.042** | +0.75, `liberty` UpgradeData:1925 |
+| `muscular_augments` | 0.0126 | **0.0392** | +0.7 off creep, `voidmulti` UpgradeData:743 |
+| `pneumatized_carapace` | 0.0576 | **0.0691** | 0.6445 → 1.879, `void` UpgradeData:621 and `voidmulti` UnitData:1194 |
+| `anabolic_synthesis` | 0.0228 | **0.0236** | +0.421871 off creep, `voidmulti` UpgradeData:47 |
+
+No matrix battle researches any of these (the matrix applies `chitinous_plating`, `ground_weapons_1`,
+`missile_attacks_1`, `combat_shield` and `overclock_stim` only), and neither golden replay does. Measured: whole matrix
+and battle 33 bit-identical, both golden replays unchanged in debug, release and `wasm32-wasip1`. Doc 08's upgrade rows
+(and its 5.0.14 notes for Muscular Augments and Anabolic Synthesis) now state the bonus per tick with its source in
+place of percentages of speeds that were not the catalog's.
+
+**Test restated first.** `upgrades_and_tech_tree_tests.rs::test_metabolic_boost_speed` restated the old delta 0.0826
+(it failed with 0.2630 against 0.2478). The commit before this one makes it read `metabolic_boost`'s delta for
+`razor_mantis` from the shipped catalog; it passes on the catalog before and after.
