@@ -629,3 +629,55 @@ fn b7_threat_flags_and_acquire_levels_follow_starcraft() -> TestResult {
     }
     Ok(())
 }
+
+/// `StarCraft` II 5.0.14 `AttackTargetPriority` of the analogues that differ from the rule
+/// "units 20, structures 11", and where the data set it (`SC2GameData` `5444e12f13`,
+/// `UnitData`; plan `2026-11-05-sc2-deviation-fixes` WP4, B-8). Every unit analogue this
+/// catalog models has 20 (Liquipedia "Automatic Targeting": all units but cocoons, larvae,
+/// unburrowed Widow Mines and Interceptors, none of which is modelled). The Bunker's 19 is the
+/// empty Bunker's: the catalog's Bunker carries no passengers, so it is never the filled
+/// Bunker of 20. The Spine Crawler's 20 is the rooted one's: the catalog's cannot uproot.
+const SC2_STRUCTURE_PRIORITY: [(&str, u8, &str); 6] = [
+    ("Planetary Fortress", 20, "liberty UnitData:10660"),
+    ("Photon Cannon", 20, "liberty UnitData:11051"),
+    ("Spine Crawler", 20, "liberty UnitData:8614"),
+    ("Missile Turret", 19, "liberty UnitData:6032"),
+    ("Spore Crawler", 19, "liberty UnitData:8748"),
+    ("Bunker", 19, "liberty UnitData:6153"),
+];
+
+#[test]
+fn b8_every_archetype_has_its_starcraft_attack_target_priority() -> TestResult {
+    let world = flat_world(16)?;
+    for (unit, _, source) in SC2_STRUCTURE_PRIORITY {
+        assert!(
+            archetypes_with_analogue(&world, unit).next().is_some(),
+            "an archetype with the analogue {unit} ({source})"
+        );
+    }
+    for archetype in world.catalog.archetypes() {
+        let is_structure = archetype
+            .attributes
+            .contains(sim_types::AttributeFlags::STRUCTURE);
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next());
+        let (expected, source) = SC2_STRUCTURE_PRIORITY
+            .iter()
+            .find(|(unit, ..)| Some(*unit) == analogue)
+            .map_or(
+                if is_structure {
+                    (11, "every other structure")
+                } else {
+                    (20, "every unit")
+                },
+                |&(_, priority, source)| (priority, source),
+            );
+        assert_eq!(
+            archetype.attack_target_priority, expected,
+            "{} ({analogue:?}): AttackTargetPriority {expected} ({source})",
+            archetype.slug
+        );
+    }
+    Ok(())
+}
