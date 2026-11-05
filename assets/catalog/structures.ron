@@ -123,8 +123,8 @@
             air_weapon: None,
             abilities: [],
             veo_prompts: {
-                "Idle": "Planetary Bulwark Dome: a single massive fortified command dome with a broad octagonal base, sloped armor, two heavy cannon barrels built rigidly into its crown, both pointing forward, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The cannon vents glow steadily and heat vapour rises gently.",
-                "Constructing": "Planetary Bulwark Dome: a single massive fortified command dome with a broad octagonal base, sloped armor, two heavy cannon barrels built rigidly into its crown, both pointing forward, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+                "Idle": "Planetary Bulwark Dome: a massive fortified command dome, broad octagonal base, sloped armor, two long cannon barrels fixed rigidly in its crown, pointing forward, casting no shadow, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The cannon vents glow steadily and heat vapour rises gently.",
+                "Constructing": "Planetary Bulwark Dome: a massive fortified command dome, broad octagonal base, sloped armor, two long cannon barrels fixed rigidly in its crown, pointing forward, casting no shadow, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
             },
         ),
         (
@@ -292,8 +292,8 @@
             air_weapon: None,
             abilities: [],
             veo_prompts: {
-                "Idle": "Fortress Bunker Dome: a single low thick-walled armored pillbox with a rounded roof, narrow glowing firing slits all around it, heavy armor blocks around its base, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The firing slits glow steadily and small lights flicker.",
-                "Constructing": "Fortress Bunker Dome: a single low thick-walled armored pillbox with a rounded roof, narrow glowing firing slits all around it, heavy armor blocks around its base, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+                "Idle": "Fortress Bunker Dome: a low wide armored bunker dome with a thick rounded shell and a flat top, narrow glowing firing slits all around it, a heavy armored rim as its base, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The firing slits glow steadily and small lights flicker.",
+                "Constructing": "Fortress Bunker Dome: a low wide armored bunker dome with a thick rounded shell and a flat top, narrow glowing firing slits all around it, a heavy armored rim as its base, slate-steel plating, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
             },
         ),
         (
@@ -325,8 +325,8 @@
             air_weapon: None,
             abilities: [],
             veo_prompts: {
-                "Idle": "Radar Beacon Dome: a single small armored sensor tower with a short round base, a short thick mast topped by a fixed square sensor panel facing forward, cyan light bands on the mast, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The sensor panel glows steadily and small signal lights blink.",
-                "Constructing": "Radar Beacon Dome: a single small armored sensor tower with a short round base, a short thick mast topped by a fixed square sensor panel facing forward, cyan light bands on the mast, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+                "Idle": "Radar Beacon Dome: a small armored sensor dome with a short round base, a broad flat sensor array built into the front of its shell, a short antenna stub on its crown, cyan light bands, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The sensor array glows steadily and small signal lights blink.",
+                "Constructing": "Radar Beacon Dome: a small armored sensor dome with a short round base, a broad flat sensor array built into the front of its shell, a short antenna stub on its crown, cyan light bands, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
             },
         ),
         (
@@ -445,8 +445,8 @@
             air_weapon: None,
             abilities: [],
             veo_prompts: {
-                "Idle": "Covert Ops Nexus Dome: a single dark angular stealth dome with a broad hexagonal base, matte black and slate armor plates, narrow violet slit windows, a low fixed antenna fin on its roof, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The slit windows glow steadily and faint violet vapour rises.",
-                "Constructing": "Covert Ops Nexus Dome: a single dark angular stealth dome with a broad hexagonal base, matte black and slate armor plates, narrow violet slit windows, a low fixed antenna fin on its roof, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+                "Idle": "Covert Ops Nexus Dome: a dark angular stealth dome with a broad hexagonal base, matte black armor plates, narrow violet slit windows, a low fixed antenna fin on its roof, casting no shadow, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The slit windows glow steadily and faint violet vapour rises.",
+                "Constructing": "Covert Ops Nexus Dome: a dark angular stealth dome with a broad hexagonal base, matte black armor plates, narrow violet slit windows, a low fixed antenna fin on its roof, casting no shadow, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
             },
         ),
         (
@@ -614,8 +614,8 @@
             air_weapon: None,
             abilities: [],
             veo_prompts: {
-                "Idle": "Duplicator Module Pod: a single small free-standing armored annex pod on four short feet, two fixed squat reactor drums side by side on its roof with glowing amber vents, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The drum vents glow steadily and small status lights flicker.",
-                "Constructing": "Duplicator Module Pod: a single small free-standing armored annex pod on four short feet, two fixed squat reactor drums side by side on its roof with glowing amber vents, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
+                "Idle": "Duplicator Module Pod: a single small squat armored annex pod with a rounded armored base, two fixed squat reactor drums lying side by side on its roof with glowing amber vents, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles. The drum vents glow steadily and small status lights flicker.",
+                "Constructing": "Duplicator Module Pod: a single small squat armored annex pod with a rounded armored base, two fixed squat reactor drums lying side by side on its roof with glowing amber vents, one stationary building centred in frame and fully visible with empty space around it, no characters, no vehicles.",
             },
         ),
 

@@ -243,6 +243,7 @@
             },
             "shock_golem": {
                 Attack: (pin_end: true, seam: None),
+                Walk: (pin_end: false, seam: Some((scale_lock: false, crossfade_frames: 2))),
             },
             "jet_jumper": {
                 Attack: (pin_end: true, seam: None),
