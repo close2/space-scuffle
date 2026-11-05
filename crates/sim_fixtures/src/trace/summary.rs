@@ -4,12 +4,13 @@
 //! Reduces the records to the numbers the battle 33 investigation reports (plan D-2): survivors
 //! and remaining health, the first tick each side had a unit in contact, how many units of each
 //! side were in contact per tick (mean, maximum, the fraction of the living, and the histogram),
-//! unit-seconds per [`Activity`], the totals of every counter, and a one-second table.
+//! unit-seconds per [`Activity`], the totals of every counter, a one-second table, and each
+//! side's targeting measures ([`super::focus`]).
 //!
 //! # How it fits
 //! [`BattleTrace::summary`] builds a [`BattleSummary`]; [`super::report`] formats it. Nothing
-//! here reads the world, so every measure is a pure function of the records and is tested on
-//! hand-made records.
+//! here reads the world, so every measure is a pure function of the per-tick and per-unit
+//! records and is tested on hand-made records.
 //!
 //! # Invariants
 //! - The contact window starts at the first tick on which any unit of either side is in
@@ -19,7 +20,8 @@
 //! - Seconds are 25 ticks (`sim_types::TICKS_PER_SECOND`, Faster game seconds): second `s`
 //!   covers ticks `25 (s - 1) + 1` to `25 s`; the last second may be shorter.
 
-use super::{Activity, BattleTrace, TeamTick, TickRecord};
+use super::focus::{focus_stats, FocusStats};
+use super::{Activity, BattleTrace, Team, TeamTick, TickRecord, UnitRow};
 use sim_types::TICKS_PER_SECOND;
 
 /// One side's contact measures over the contact window.
@@ -129,19 +131,25 @@ pub struct BattleSummary {
     pub totals: [TeamTotals; 2],
     /// One row per second.
     pub seconds: Vec<SecondRow>,
+    /// Targeting measures per side ([`super::focus`]).
+    pub focus: [FocusStats; 2],
 }
 
 impl BattleSummary {
     /// Derives the summary of `trace`.
     #[must_use]
     pub fn from_trace(trace: &BattleTrace) -> Self {
-        Self::from_records(trace.initial_units(), trace.ticks())
+        Self::from_records(trace.initial_units(), trace.ticks(), trace.unit_rows())
     }
 
-    /// Derives the summary of the per-tick `records` of a battle that started with
-    /// `initial_units` per side.
+    /// Derives the summary of the per-tick `records` and per-unit `units` samples of a battle
+    /// that started with `initial_units` per side.
     #[must_use]
-    pub fn from_records(initial_units: [u32; 2], records: &[TickRecord]) -> Self {
+    pub fn from_records(
+        initial_units: [u32; 2],
+        records: &[TickRecord],
+        units: &[UnitRow],
+    ) -> Self {
         let side = |i: usize| {
             let first = records.first().map(|r| r.teams[i]);
             let last = records.last().map(|r| r.teams[i]);
@@ -172,6 +180,7 @@ impl BattleSummary {
             unit_seconds: [0, 1].map(|i| unit_seconds(events, i)),
             totals: [0, 1].map(|i| totals(events, i)),
             seconds: seconds(events),
+            focus: Team::BOTH.map(|team| focus_stats(units, team)),
         }
     }
 }
@@ -287,7 +296,7 @@ mod tests {
             record(3, [4, 2], [2, 2]),
             record(4, [4, 1], [1, 1]),
         ];
-        let summary = BattleSummary::from_records([4, 2], &records);
+        let summary = BattleSummary::from_records([4, 2], &records, &[]);
         assert_eq!(summary.first_engaged_tick, [Some(3), Some(2)]);
         let red = &summary.contact[1];
         assert_eq!(red.window_ticks, 3);
@@ -307,7 +316,7 @@ mod tests {
     #[test]
     fn a_battle_without_contact_has_an_empty_window() {
         let records = [record(0, [1, 1], [0, 0]), record(1, [1, 1], [0, 0])];
-        let summary = BattleSummary::from_records([1, 1], &records);
+        let summary = BattleSummary::from_records([1, 1], &records, &[]);
         assert_eq!(summary.first_engaged_tick, [None, None]);
         assert_eq!(summary.contact[1], ContactStats::default());
     }
@@ -322,7 +331,7 @@ mod tests {
             records.push(next);
         }
         records[0].teams[1].shots_released = 99;
-        let summary = BattleSummary::from_records([1, 1], &records);
+        let summary = BattleSummary::from_records([1, 1], &records, &[]);
         assert!((summary.unit_seconds[0][Activity::Engaged.index()] - 2.0).abs() < 1e-12);
         assert!((summary.unit_seconds[1][Activity::Idle.index()] - 2.0).abs() < 1e-12);
         assert_eq!(summary.totals[1].shots_released, 50);
@@ -338,7 +347,7 @@ mod tests {
             next.teams[0].damage_taken = 1.0;
             records.push(next);
         }
-        let summary = BattleSummary::from_records([3, 3], &records);
+        let summary = BattleSummary::from_records([3, 3], &records, &[]);
         assert_eq!(summary.seconds.len(), 2);
         let first = &summary.seconds[0];
         assert_eq!(first.second, 1);
