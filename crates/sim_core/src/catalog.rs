@@ -109,7 +109,10 @@ pub struct UnitArchetype {
     pub acceleration: SimScalar,
     /// Deceleration braking decrease per tick.
     pub deceleration: SimScalar,
-    /// Hull angular tracking speed per tick.
+    /// Hull turn rate in binary angle units per tick (65 536 units per turn), from the authored
+    /// `turn_rate_deg_per_tick`. Half a turn (32 768) reaches any facing in one tick. Structures
+    /// have 0: they
+    /// never turn their hull, and every structure weapon sits on a turret.
     pub turn_rate: SimAngle,
     /// Hard circle-circle collision radius in world units.
     pub collision_radius: SimScalar,
@@ -794,7 +797,8 @@ struct WeaponSpecDef {
     max_range: f32,
     firing_arc_deg: f32,
     has_turret: bool,
-    turret_turn_rate_deg: f32,
+    /// Turret rate in degrees per tick: `0 < rate <= 180` on a turreted weapon, 0 otherwise.
+    turret_turn_rate_deg_per_tick: f32,
     base_damage: f32,
     bonus_armored: f32,
     bonus_light: f32,
@@ -847,7 +851,9 @@ struct UnitArchetypeDef {
     max_speed: f32,
     acceleration: f32,
     deceleration: f32,
-    turn_rate_deg: f32,
+    /// Hull rate in degrees per tick, `0 < rate <= 180`. It has no default, so a catalog that
+    /// still uses the old name `turn_rate_deg` fails to load naming this field.
+    turn_rate_deg_per_tick: f32,
     collision_radius: f32,
     separation_radius: f32,
     push_priority: u8,
@@ -881,6 +887,22 @@ struct UnitArchetypeDef {
     armor_class: Option<String>,
     #[serde(default)]
     modes: Vec<UnitModeSpecDef>,
+}
+
+/// Converts an authored angular rate in degrees per tick to binary angle units per tick.
+///
+/// Binary units = round(degrees × 65 536 ÷ 360), halves up, so a rate authored with two
+/// decimals keeps its precision (55.99° per tick is 10 193 units, 20.16° is 3 670). Hull and
+/// turret rates share this conversion. Validation has already bounded the value to
+/// `0 < degrees <= 180`, so the result lies in `1..=32768` and 180 is exactly half a turn.
+fn angle_per_tick(degrees: f32) -> SimAngle {
+    let units = (f64::from(degrees) * 65_536.0 / 360.0).round();
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "validated to 0 < degrees <= 180, so the rounded value lies in 0..=32768"
+    )]
+    SimAngle::from_raw(units as u16)
 }
 
 impl UnitArchetypeDef {
@@ -921,18 +943,11 @@ impl UnitArchetypeDef {
             max_range: SimScalar::from_f32_lossy(w.max_range),
             firing_arc: Self::firing_half_angle(w.firing_arc_deg),
             has_turret: w.has_turret,
-            turret_turn_rate: {
-                if !w.has_turret && w.turret_turn_rate_deg <= 0.0 {
-                    SimAngle::PI
-                } else {
-                    let deg = if w.turret_turn_rate_deg > 360.0 {
-                        f64::from(w.turret_turn_rate_deg) / f64::from(sim_types::TICKS_PER_SECOND)
-                    } else {
-                        f64::from(w.turret_turn_rate_deg)
-                    };
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    SimAngle::from_raw(((deg * 65536.0) / 360.0).round() as u16)
-                }
+            // A hull-mounted weapon turns with the hull; its rate is never read for turning.
+            turret_turn_rate: if w.has_turret {
+                angle_per_tick(w.turret_turn_rate_deg_per_tick)
+            } else {
+                SimAngle::PI
             },
             base_damage: SimScalar::from_f32_lossy(w.base_damage),
             bonus_armored: SimScalar::from_f32_lossy(w.bonus_armored),
@@ -957,18 +972,9 @@ impl UnitArchetypeDef {
         })
     }
 
-    /// The authored hull turn rate (`turn_rate_deg`, degrees per tick) clamped to `0..=180`.
+    /// The authored hull turn rate (`turn_rate_deg_per_tick`) in binary angle units per tick.
     fn turn_rate(&self) -> SimAngle {
-        let deg = self.turn_rate_deg.clamp(0.0, 180.0);
-        if deg >= 180.0 {
-            SimAngle::PI
-        } else {
-            #[expect(
-                clippy::cast_possible_truncation,
-                reason = "clamped to 0..180 above, and rates are authored in whole degrees"
-            )]
-            SimAngle::from_degrees(deg as i32)
-        }
+        angle_per_tick(self.turn_rate_deg_per_tick)
     }
 
     /// The capability bundle, abilities and modes of this definition.
@@ -1280,6 +1286,59 @@ impl StructureArchetypeDef {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rates_per_tick_round_to_the_nearest_binary_unit() {
+        for (degrees, units) in [
+            (84.0_f32, 15_292_u16),
+            (55.99, 10_193),
+            (40.32, 7_340),
+            (20.16, 3_670),
+            (5.04, 918),
+            (180.0, 32_768),
+        ] {
+            assert_eq!(angle_per_tick(degrees).raw(), units, "{degrees}");
+        }
+    }
+
+    #[test]
+    fn the_loader_reads_hull_and_turret_rates_in_degrees_per_tick() {
+        let units = include_str!("../../../assets/catalog/units.ron");
+        let mut file: CatalogFile = ron::from_str(units).expect("invariant: shipped units parse");
+        let unit = file
+            .units
+            .iter_mut()
+            .find(|unit| unit.weapon.as_ref().is_some_and(|w| w.has_turret))
+            .expect("invariant: the shipped catalog has a turreted weapon");
+        unit.turn_rate_deg_per_tick = 55.99;
+        let weapon = unit.weapon.as_mut().expect("invariant: found above");
+        weapon.turret_turn_rate_deg_per_tick = 20.16;
+        assert_eq!(unit.turn_rate().raw(), 10_193);
+        let weapon = unit.weapon.take().expect("invariant: found above");
+        let converted =
+            UnitArchetypeDef::convert_weapon(weapon, &crate::test_support::shipped_factions(), "x")
+                .expect("invariant: shipped weapon classes resolve");
+        assert_eq!(converted.turret_turn_rate.raw(), 3_670);
+    }
+
+    #[test]
+    fn a_catalog_with_the_old_rate_names_fails_naming_the_new_ones() {
+        let units = include_str!("../../../assets/catalog/units.ron");
+        let factions = crate::test_support::shipped_factions();
+        for (new, old) in [
+            (" turn_rate_deg_per_tick:", " turn_rate_deg:"),
+            (" turret_turn_rate_deg_per_tick:", " turret_turn_rate_deg:"),
+        ] {
+            let legacy = units.replace(new, old);
+            let error = UnitCatalog::from_ron_str(&factions, &legacy)
+                .expect_err("invariant: a renamed field cannot load")
+                .to_string();
+            assert!(
+                error.contains(new.trim().trim_end_matches(':')),
+                "{old}: {error}"
+            );
+        }
+    }
 
     #[test]
     fn test_starter_roster_completeness_and_factions() {

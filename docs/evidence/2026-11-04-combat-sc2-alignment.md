@@ -1630,3 +1630,27 @@ doc 07 or doc 08 cell states a projectile speed.
   units waiting out their cooldown at a contact ring are jostled once per weapon cycle.
 - The final matrix equals the all-corrections measurement of the audit's §7 in every battle except 22a and 22b, the
   two reaper battles that only the deferred R1 moves.
+
+## 14. WP17: hull turning at StarCraft II rates (Q0045 1b)
+
+Plan D-8 and WP17. Angles in the simulation are `SimAngle` binary angles: 65 536 units per turn, counter-clockwise
+from +x in the world frame; rates are authored in degrees per tick and loaded as binary units per tick
+(round(degrees × 65 536 ÷ 360), halves up). The research is the audit's §10
+([`2026-11-04-catalog-time-audit.md`](2026-11-04-catalog-time-audit.md)); the decisions it led to are plan D-8 item 7.
+The baseline is the state after WP12 (`~/scratch/combat_wp17/base/`): 1000 runs, expectation failures 0 on the seeds
+of record and 7 over all seeds (all battle 33's); battle 33 on 68 seeds 42 / 18 / 8 (marine wins / zealot wins /
+unresolved), marine survivors 4.03 (SD 3.26).
+
+### 14.1 Commit a: the unit and range of both rates
+
+- **Change.** `turn_rate_deg` → `turn_rate_deg_per_tick` and `turret_turn_rate_deg` →
+  `turret_turn_rate_deg_per_tick`, without a default, so a catalog with an old name fails to load naming the new
+  one. Both rates are degrees per tick, validated to `0 < rate ≤ 180` (a turret rate exactly 0 on a weapon without a
+  turret), with typed errors instead of the former silent clamp. Both use one conversion, rounded instead of the hull
+  rate's truncation to whole degrees. The turret branch that read values above 360 as degrees per second is gone.
+- **Data, rewritten to the same behaviour.** Hull 999, 360 and 280 → 180 (42 units; 180 reaches any facing in one
+  tick, as the clamp did). Structure turrets 360 → 180 (6 weapons): raw 65 535 (the saturating cast of 360°) →
+  32 768; both turn any facing in one tick. The three unit turrets keep 21.6 (3 932 units, unchanged).
+- **Measurement.** Matrix bit-identical to the baseline; battle 33 bit-identical; both golden replays unchanged in
+  debug, release and `wasm32-wasip1` (no structure turret's `WeaponSpec` is hashed in either replay: no structure
+  fires a projectile there).

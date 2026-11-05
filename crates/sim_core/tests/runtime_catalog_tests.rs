@@ -329,7 +329,7 @@ fn invalid_numbers_fail_before_fixed_point_conversion_with_file_context() -> Tes
         ("base_damage", "NaN"),
         ("inner_radius", "inf"),
         ("hp_cost", "NaN"),
-        ("turn_rate_deg", "NaN"),
+        ("turn_rate_deg_per_tick", "NaN"),
         ("firing_arc_deg", "inf"),
         ("projectile_speed", "Some(inf)"),
     ] {
