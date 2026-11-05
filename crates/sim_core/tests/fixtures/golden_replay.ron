@@ -81,6 +81,11 @@
 // tank turns in place on ticks 121 to 125 (20.16 degrees per tick) and takes its first step on
 // tick 126, then walks the path it walked before, five ticks later. Checkpoints 1 and 2 are
 // unchanged; from checkpoint 3 (ticks 101 to 150) every checkpoint changed.
+// Re-recorded for plan 2026-11-05-turn-before-move WP6 (Amendment 1): "red_siege" turns in place
+// at its StarCraft II stationary rate, 40.32 degrees per tick (StationaryTurningRate 720, `core`
+// UnitData:39). It turns in place on ticks 121 to 123 (was 121 to 125), steps on tick 124 (was
+// 126), and walks the same path two ticks earlier. Checkpoints 1 and 2 are unchanged; from
+// checkpoint 3 every checkpoint changed.
 (
     checksum_schema: 10,
     seed: 0x5EED_0F_5CAFF1E,
@@ -110,23 +115,23 @@
     checksums: [
         0xd3213317d91b8691,
         0x839f47ca0ba8f2b3,
-        0x0dad7ca033b6fb7a,
-        0x53f5927aecdc48a1,
-        0x074adce2b7ca3b18,
-        0xefb12a97af51e494,
-        0x3181c0c1fd7a70da,
-        0x6dbc2abf4449c217,
-        0x0890c07d437640fa,
-        0x75caa9cede28d811,
-        0xadb9ff24dd044ca2,
-        0x15242c70a9404010,
-        0xea9f3897fb75e25e,
-        0x64b308cc406d0d38,
-        0x86f425cbf144cd62,
-        0x3a1714a89ea86469,
-        0x34898f30858a5c95,
-        0x1efc831f9a891ede,
-        0x0cc4a331e862aca2,
-        0xb09ca5c86935b77a,
+        0xe3c6aaa116ac02c4,
+        0xac749c3c0ed2c39e,
+        0x19fc621b6e321213,
+        0x57c064f1fe54933b,
+        0x7c0075720f1e4449,
+        0x76511917ecd67025,
+        0xc0bb0fd49c1dd84a,
+        0x0806e3b873e8e3a8,
+        0x6624951c97b36729,
+        0xb6434599ed4973ce,
+        0xa82484fc4147dd38,
+        0x727c3691ad9e4f00,
+        0x7edce99ee1e40921,
+        0x73d5ba4987f48072,
+        0xa6daaa95669ab247,
+        0x9bc5e0491896ce8b,
+        0xdd7ea65cf64e759b,
+        0x106588148b2e2c7a,
     ],
 )

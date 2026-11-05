@@ -790,3 +790,36 @@ fn shipped_turn_before_move_units_turn_in_place_on_a_reversal() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+fn shipped_units_with_a_stationary_rate_turn_faster_standing_than_moving() -> TestResult {
+    // Found by property: every shipped archetype whose stationary rate differs from its moving
+    // rate. The game gives every such analogue a faster stationary rate (audit §10.2).
+    let catalog = sim_fixtures::world(
+        GameMap::new(8, 8, MapCell::default_ground(CliffLevel(0)))?,
+        1,
+    )
+    .catalog;
+    let differing: Vec<_> = catalog
+        .archetypes()
+        .filter(|archetype| archetype.stationary_turn_rate != archetype.turn_rate)
+        .map(|archetype| {
+            (
+                archetype.slug.clone(),
+                archetype.turn_rate.raw(),
+                archetype.stationary_turn_rate.raw(),
+            )
+        })
+        .collect();
+    assert!(
+        !differing.is_empty(),
+        "no shipped unit has a stationary rate of its own"
+    );
+    for (slug, moving, stationary) in differing {
+        assert!(
+            stationary > moving,
+            "{slug}: stationary {stationary} against moving {moving}"
+        );
+    }
+    Ok(())
+}

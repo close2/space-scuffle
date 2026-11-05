@@ -65,7 +65,8 @@ $$\omega_{\text{tick}} = \frac{\omega_{\text{Normal}} \times 1.4}{25}\ \text{deg
 - **Mutalisk, Banshee, Liberator, Phoenix (`1499.9414`):** $84.00^\circ/\text{tick} \implies 15292$, 3 ticks.
 - **Engine default (`720`; Hellion, Immortal, Colossus, Observer, Warp Prism, Carrier, Brood Lord):** $40.32^\circ/\text{tick} \implies 7340$, 5 ticks.
 - **Siege Tank, Thor, Ultralisk (`360`):** $20.16^\circ/\text{tick} \implies 3670$, 9 ticks.
-  These three also set `TurnBeforeMove` (`turn_before_move: true`): a step further from the heading than one tick's turn is preceded by turning in place, so a reversal takes 9 ticks before the first step.
+  These three also set `TurnBeforeMove` (`turn_before_move: true`): a step further from the heading than one moving tick's turn is preceded by turning in place at the stationary rate, so a reversal is 4 ticks in place and a step on the 5th.
+- **Stationary rate** (`StationaryTurningRate`, `stationary_turn_rate_deg_per_tick`): on a tick its unit does not move by its own motion (standing, aiming, turning in place), a hull turns at this rate instead. It defaults to the hull rate and differs for four units: Siege Tank, Thor and Ultralisk $40.32^\circ$ (`720`, the `CUnit` default), Hellion $84.00^\circ$ (`1499.9414`).
 - **Turrets:** Siege Tank $40.32^\circ$ (sieged $20.16^\circ$), Missile Turret and Photon Cannon $40.32^\circ$, Spine and Spore Crawler $20.16^\circ$, Planetary Fortress $5.04^\circ$ per tick.
 - Sources and the per-unit table: [`docs/evidence/2026-11-04-catalog-time-audit.md`](evidence/2026-11-04-catalog-time-audit.md) §10.
 
