@@ -20,8 +20,10 @@ use std::error::Error;
 use std::path::PathBuf;
 
 /// Checksum of the default sandbox's spawned state, recorded from
-/// `SimWorld::new_default_battle_sandbox` before Phase 9 WP10 moved it here.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 2_420_571_548_553_850_683;
+/// `SimWorld::new_default_battle_sandbox` before Phase 9 WP10 moved it here. Re-recorded for
+/// checksum schema 10 (plan 2026-11-04-battle-flipbook-animation WP2), which stopped encoding
+/// each entity's constant-zero `anim_progress`; the spawned state itself did not change.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 12_219_114_459_225_123_979;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

@@ -1,10 +1,10 @@
 # Blueprint: Battle Flipbook Animation, a Presentation Clock for Unit and Structure Flipbooks (finding F-1)
 
 **Status of this document:** Stage 1 blueprint under charter §6, written on 2026-11-04 against `main` at `9a1e940`.
-**Implementation status (2026-11-04):** WP1 (`9d5884c`), WP4 (`4bd48cf`), WP5 (`ec04bf4`), WP3 (`1940231`) and
-WP6 (`d5779f7`) are merged. WP7's measurement is in
-[`docs/evidence/2026-11-04-battle-flipbook-animation.md`](../evidence/2026-11-04-battle-flipbook-animation.md). WP2
-waits for its lane B slot. The text below is the blueprint as approved. Line numbers drift; search for the quoted symbol. A claim that could not be confirmed while
+**Implementation status (2026-11-04):** complete. WP1 (`9d5884c`), WP4 (`4bd48cf`), WP5 (`ec04bf4`), WP3
+(`1940231`), WP6 (`d5779f7`) and WP2 (`6f0e13d`, checksum schema 10, goldens re-recorded with no behaviour change:
+render snapshots and the whole battle matrix bit-identical) are merged. WP7's measurement is in
+[`docs/evidence/2026-11-04-battle-flipbook-animation.md`](../evidence/2026-11-04-battle-flipbook-animation.md). The text below is the blueprint as approved. Line numbers drift; search for the quoted symbol. A claim that could not be confirmed while
 planning is marked **verify**, and the first step of its package confirms or refutes it.
 
 **Finding being fixed.** F-1 of [`2026-11-04-veo-seamless-loops.md`](2026-11-04-veo-seamless-loops.md) §5: the

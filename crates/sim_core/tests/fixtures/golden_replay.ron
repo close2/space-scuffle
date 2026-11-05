@@ -19,8 +19,12 @@
 // shock_golem. The research is completed before tick 1 and each player's unlocked abilities are
 // hashed, so every checkpoint changed; no unit's behaviour did (with the units.ron part of the
 // change alone, every checkpoint stays as recorded for WP8).
+// Re-recorded for plan 2026-11-04-battle-flipbook-animation WP2 (checksum schema 9 -> 10): each
+// entity's `anim_progress`, a constant zero no system wrote, is no longer encoded, so every
+// checkpoint changed. No behaviour did: the render snapshots of all 1000 ticks are byte for byte
+// those of schema 9.
 (
-    checksum_schema: 9,
+    checksum_schema: 10,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -46,25 +50,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xd492aa2786613500,
-        0x51fb62cf94a3c017,
-        0x35c1493d2ee485dd,
-        0x29d28653cc098807,
-        0xa4d56f1b2fd382a7,
-        0x3f40a0113250a3bb,
-        0x1645cce602fcf98f,
-        0x1258a3fd47e1f711,
-        0x699485dda01506b2,
-        0x6592748f240d9f54,
-        0x47480c9f024fe3e4,
-        0xdba390836cb8c7fd,
-        0x8610c1fcc297eae3,
-        0xbcabc08270e832a5,
-        0x9499a2cd13137ab1,
-        0xcbab9098c96d46bd,
-        0xc55d87c1a7431b93,
-        0xa9f1934df19ef1b8,
-        0x53d592996e9226b2,
-        0xfa3821728e53a165,
+        0xca0556c4cae1e36b,
+        0x594ac5b3a52b9b25,
+        0x8ea840c55550167c,
+        0xe3cf67a8799a4ba3,
+        0xc4012526fa0e77da,
+        0x2dc1b741d56a723b,
+        0xfe808eb2dfbf6e3b,
+        0xd1db3cc1e1a20e63,
+        0xf13171d736ac584b,
+        0x614954a62e30d25f,
+        0xb6bb9c6141a79129,
+        0xb61c623427ce8352,
+        0x231441a465c540e4,
+        0xdcbc4c09788526c8,
+        0x3a0ec532689aca2e,
+        0x0124de1b016f842b,
+        0xfe73a9c582d8d185,
+        0x2931df47284e23cf,
+        0x158b02bc75b20f3a,
+        0x045aa9443a6bdc5c,
     ],
 )
