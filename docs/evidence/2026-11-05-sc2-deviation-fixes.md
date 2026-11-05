@@ -82,3 +82,42 @@ evidence §14.7: turn before move moved no matrix battle that this measurement s
 - **Golden replays.** `golden_replay.ron` re-recorded: checkpoints 1 to 3 unchanged; from checkpoint 4 (ticks 151
   to 200, the first fight) every checkpoint changed. `golden_replay_orders.ron` unchanged. Debug, release and
   `wasm32-wasip1` reproduce both.
+
+## 2. WP2: air-only weapons do not fire at the ground (B-25, B-26, B-27 part)
+
+### 2.1 Research
+
+| Unit (analogue) | Its weapon in the modelled mode | `TargetFilters` | Where |
+|---|---|---|---|
+| Viking (`vector_interceptor`), fighter mode | `LanzerTorpedoes` | `Air,Visible;Missile,Stasis,Dead,Hidden,Invulnerable` | `liberty` WeaponData:271; the unit's `WeaponArray` `liberty` UnitData:6885 |
+| Corruptor (`sky_leviathan`) | `ParasiteSpore` | `Air,Visible;…` | `liberty` WeaponData:567; UnitData:11274 |
+| Liberator (`sky_bastion`), fighter mode | `LiberatorMissileLaunchers` | `Air,Visible;…` | `void` WeaponData:326; UnitData:3317 |
+| Liberator in Defender Mode (`LiberatorAG`, a separate unit the morph `LiberatorMorphtoAG` turns it into) | `LiberatorAGWeapon` | `Ground,Visible;Structure,…` | `void` WeaponData:335; UnitData:3387 |
+
+`voidmulti` overrides only `DamagePoint` of `LanzerTorpedoes` and `ParasiteSpore` and the range of
+`LiberatorAGWeapon` (`voidmulti` WeaponData:133, :191, :136); no later layer changes a filter. The Viking reaches the
+ground only as `VikingAssault`, whose weapon is `TwinGatlingCannon` (`liberty` UnitData:6814): Assault Mode, bug B-46.
+
+**Catalog.** A unit's ground weapon is `ground_weapon`, or else the legacy `weapon` slot
+(`UnitArchetypeDef::into_archetype`); `air_weapon` is its air weapon. The three archetypes carried their air weapon
+in `weapon` as well, so it fired at ground units; `sky_bastion` also had a `ground_weapon` (Defender Mode's,
+75 damage, range 9, period 29 ticks, damage point 2, backswing 9, projectile speed 2.24, `LaserBeam`) active in
+every mode. A cliff walker (the Colossus analogue) is in both planes, so an air weapon still reaches it
+(`weapon_against`, `CliffWalker`).
+
+### 2.2 B-79, found here: an air-only weapon froze while it had no target
+
+- **Finding.** The data change alone moved battle 35 on one seed (seed 13: end tick 296 → 297). The per-unit trace
+  showed why: a Viking whose target died during its backswing kept `remaining_ticks` 4 for every following tick.
+  `advance_weapon_cycles` (`combat_resolution.rs`) resolves the weapon of a unit with no target against the ground
+  plane. A unit with no ground weapon found none and skipped its weapon step, so its cooldown and backswing stood
+  still until it next had a target. In StarCraft II a cooldown runs from the start of the attack whatever the unit
+  does (combat alignment D-2), so this is a rule bug, not a consequence of the data. The Phoenix analogue
+  (`flying_saucer`, air weapon only) and the air-only defence structures already had it.
+- **Rule commit, before the data.** A unit with no target resolves its weapon against the ground plane if it has a
+  ground weapon, else against the air (`idle_weapon_plane`).
+- **Test first:** `combat_correctness_tests::b79_an_air_only_weapon_keeps_cycling_after_its_target_is_gone` (an
+  archetype found by property: air mover, an air weapon and no ground weapon). On the old rule the cooldown stood
+  at 17 two ticks after the target died (expected 15); it passes with the rule.
+- **Measurement, on the catalog before WP2.** Whole matrix bit-identical to §1; battle 33 bit-identical
+  (37 / 20 / 11). No matrix battle had an air-only unit lose its target mid-cycle before the data change.
