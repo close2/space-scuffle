@@ -16,6 +16,7 @@
 //! - A target the catalog does not list is [`TestClass::Fast`].
 //! - Keys of `targets` name single targets, never a `@class` group.
 //! - Unknown fields are rejected, so a misspelt key cannot silently select nothing.
+//! - A `test_threads` cap is at least 1.
 
 use crate::glob::Glob;
 use crate::workspace::{TargetId, TargetKind, Workspace};
@@ -145,13 +146,18 @@ impl fmt::Display for TargetRef {
     }
 }
 
-/// A target that is not `fast`: its class and the extra paths that trigger it.
+/// A target that is not `fast`: its class, the extra paths that trigger it, and its test
+/// thread cap.
 #[derive(Clone, Debug)]
 pub struct TargetEntry {
     /// The target's class.
     pub class: TestClass,
     /// Paths whose change selects this target, beyond its own source files.
     pub triggers: Vec<Glob>,
+    /// The most libtest threads the gate runs it with (`--test-threads`), or `None` for
+    /// libtest's default of one per CPU. Bounds the peak memory of a binary whose tests each
+    /// hold a whole Bevy app (blueprint Amendment 2).
+    pub test_threads: Option<u32>,
 }
 
 /// A path rule: a change under `paths` selects `targets` and the `fast`/`slow` targets of
@@ -226,6 +232,8 @@ struct RawEntry {
     class: TestClass,
     #[serde(default)]
     triggers: Vec<String>,
+    #[serde(default)]
+    test_threads: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -279,9 +287,15 @@ impl SuiteCatalog {
                     "`targets` key `{key}` must name one target, not a class"
                 )));
             };
+            if entry.test_threads == Some(0) {
+                return Err(GateError::Catalog(format!(
+                    "`{key}`: test_threads must be at least 1"
+                )));
+            }
             let entry = TargetEntry {
                 class: entry.class,
                 triggers: globs(&entry.triggers)?,
+                test_threads: entry.test_threads,
             };
             targets.insert(id, entry);
         }
@@ -347,6 +361,14 @@ impl SuiteCatalog {
             .map_or(TestClass::Fast, |entry| entry.class)
     }
 
+    /// The `--test-threads` cap of `target`, or `None` for libtest's default.
+    #[must_use]
+    pub fn test_threads_of(&self, target: &TargetId) -> Option<u32> {
+        self.targets
+            .get(target)
+            .and_then(|entry| entry.test_threads)
+    }
+
     /// The targets `reference` names in `workspace`, in target order.
     ///
     /// # Errors
@@ -392,6 +414,7 @@ mod tests {
         targets: {
             "app/gpu_tests": (class: Gpu, triggers: ["crates/app/src/render/**"]),
             "app/lib": (class: Slow),
+            "app/heavy_tests": (class: Slow, test_threads: Some(2)),
         },
         rules: [(name: "shaders", paths: ["assets/shaders/**"], targets: ["app/@gpu"])],
         downstream: {"core": ["app/headless_tests"]},
@@ -411,6 +434,12 @@ mod tests {
             TestClass::Fast
         );
         assert_eq!(catalog.commands[0].env["A"], "b");
+        assert_eq!(
+            catalog.test_threads_of(&TargetId::test("app", "heavy_tests")),
+            Some(2)
+        );
+        assert_eq!(catalog.test_threads_of(&lib), None);
+        assert_eq!(catalog.test_threads_of(&TargetId::test("app", "x")), None);
         Ok(())
     }
 
@@ -441,6 +470,11 @@ mod tests {
         assert!(matches!(
             SuiteCatalog::parse(&typo, Path::new("s")),
             Err(GateError::CatalogSyntax { .. })
+        ));
+        let no_threads = SAMPLE.replace("test_threads: Some(2)", "test_threads: Some(0)");
+        assert!(matches!(
+            SuiteCatalog::parse(&no_threads, Path::new("s")),
+            Err(GateError::Catalog(_))
         ));
         let group_key = SAMPLE.replace("\"app/lib\"", "\"app/@slow\"");
         assert!(matches!(

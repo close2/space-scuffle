@@ -34,6 +34,8 @@ pub struct Job {
     pub class: TestClass,
     /// Its wall time in the last stamp, or zero when unknown.
     pub expected: Duration,
+    /// Its `--test-threads` cap from the catalog, or `None` for libtest's default.
+    pub test_threads: Option<u32>,
 }
 
 /// Where a started job runs.
@@ -146,6 +148,7 @@ mod tests {
             target: TargetId::test("c", name),
             class,
             expected: Duration::from_secs(seconds),
+            test_threads: None,
         }
     }
 

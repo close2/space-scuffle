@@ -1,6 +1,6 @@
 # Tiered test gates: run what a change can break, run everything on a schedule
 
-Date: 2026-11-04. Status: Active, WP1 to WP6a implemented (§11). Host: the shared Debian 13 VM, 16 pinned cores of an AMD
+Date: 2026-11-04. Status: Active, WP1 to WP6a implemented (§11); Amendments 2 and 3 implemented. Host: the shared Debian 13 VM, 16 pinned cores of an AMD
 EPYC 7301, AMD Radeon RX 580 on `radv`; other agents were building and testing at the same time, as they always
 are. Charter sections touched: §4.3 (rewritten), §5 (one new crate), §9 (C16 changed, C22 added). §6 is not
 touched.
@@ -725,6 +725,56 @@ on 16 cores was 9 to 410.
   `debug/incremental` and rerunning was green each time. WP6a automates exactly that one retry; it does not turn
   incremental compilation off, because the warm rebuild is what keeps `quick` and `package` fast.
 
+## Amendment 2 (orchestrator, 2026-11-05): one gate at a time, and capped test threads
+
+**Cause.** On 2026-11-05 four `cargo gate` runs in four target directories ran at once. The client's headless battle
+drivers, whose every test holds a whole Bevy app, ran with libtest's default of one thread per CPU (16) and reached
+27 GiB (`battle_card_tests`), 16 GiB (`battle_hud_tests`) and 13.6 GiB (`battle_input_tests`) of RSS. The user's
+cgroup (`user-1002.slice`, `memory.high` 44 GiB, no swap) went over its limit, the kernel throttled the whole
+slice and the server froze. GPU children then overran their 120 s run limit only as a symptom; the limit stays.
+
+**Decision.**
+
+- **The gate lock.** `cargo gate quick|package|merge|full` take an exclusive `flock(2)` on `~/scratch/gate.lock`
+  (`SPACE_SCUFFLE_GATE_LOCK` overrides the path) before their first step and hold it until they end
+  (`crates/gate/src/gate_lock.rs`). A waiting gate prints one line naming the holder: the holder writes its PID,
+  tier, worktree and start time into the file once it has the lock, and clears them before it releases it; a holder
+  without a record (`flock(1)`) is named from `/proc/locks`. `explain`, `timings` and `suspects` never lock. A gate
+  that holds the lock sets `SPACE_SCUFFLE_GATE_LOCK_HELD` to the lock's path for every process it starts, so a
+  nested `cargo gate` does not wait for its parent; and a gate whose ancestor holds the lock (`flock
+  ~/scratch/gate.lock cargo gate package`) runs inside that hold instead of deadlocking. The kernel releases the
+  lock when the holder dies, so a crash leaves no stale lock.
+- **Capped test threads.** A `targets` entry of `suites.ron` may set `test_threads: Some(n)`; the gate runs that
+  executable with `--test-threads=n`. The three battle drivers above get 4, from the measurement below. Other
+  `slow` client binaries keep libtest's default until a measurement shows they need a cap. `cargo test
+  --workspace` (CI, and the full suite outside the gate) is unchanged; on this server it is wrapped in `flock
+  ~/scratch/gate.lock` (charter §7).
+- **Charter §7** gains one bullet: one `cargo gate` or workspace `cargo test` at a time across all worktrees, the
+  gate serializing itself through the lock, and a check of the slice's `anon` memory (`memory.stat`, below about
+  36 GiB of the 44 GiB limit; `memory.current` also counts reclaimable page cache) before other heavy runs.
+
+**Measurement.** Debug build of `aba9fa8`, one executable at a time under the gate lock, peak RSS read as `VmHWM`
+from `/proc/<pid>/status` every 0.2 s, on the shared 16-core VM with other agents' work running. Logs:
+`~/scratch/logs/gpu-child-budget/` (`results.txt` and one log per run).
+
+| Binary (tests) | 1 thread | 2 threads | 4 threads | 16 threads (incident) |
+|---|---|---|---|---|
+| `battle_card_tests` (28) | 3.4 GiB, 435 s | 3.9 GiB, 200 s | 5.4 GiB, 100 s | 27 GiB |
+| `battle_hud_tests` (33) | 3.3 GiB, 449 s | 3.9 GiB, 221 s | 6.0 GiB, 113 s | 16 GiB |
+| `battle_input_tests` (35) | 4.6 GiB, 712 s | 4.1 GiB, 326 s | 5.1 GiB, 124 s | 13.6 GiB |
+
+Four threads keep each binary near 6 GiB, so a gate (which runs one executable at a time with the default
+`--jobs 1`) stays far below the slice limit, at a quarter or less of the one-thread wall time. The 16-thread figures
+are the incident's, not re-measured.
+
+**Tests.** `gate_lock.rs` unit tests: the holder record round-trips; the waiting message names a recorded holder or
+the `/proc/locks` process; a free lock is taken at once and the record is cleared on release; two holders
+serialize and the second names the first; the marker skips the lock only for the same file; `/proc/locks` and
+`/proc/<pid>/stat` lines parse. `tests/gate_lock_tests.rs`, through the real binary: a tier waits for a holder in
+another process tree, prints the line naming it, and proceeds on release; a nested gate under the marker, a gate
+under `flock` on the lock and a gate whose parent process holds the lock do not wait; `explain` never locks.
+`catalog.rs` and `execute.rs` unit tests cover `test_threads` parsing, the rejection of 0, and the argument.
+
 ## Amendment 3 (orchestrator, 2026-11-05): test a tree once (owner, Q0055)
 
 - `cargo gate merge` and `cargo gate full` first look for a green stamp whose recorded tree equals `HEAD^{tree}`
@@ -735,3 +785,12 @@ on 16 cores was 9 to 410.
 - Tests first: a stamp for the same tree is reused; a stamp for another tree, a red stamp, or a dirty working tree
   is not; the reuse message names the stamp. CI is unchanged and still runs the complete suite on every push.
 
+- Implemented (2026-11-05): `Stamp::reusable` in `crates/gate/src/stamp.rs` finds the stamp (`full` prefers `full`
+  over `package`; `merge` prefers `merge`, then `full`, then `package`) and requires a clean tree, the same tree hash
+  and every recorded target passed; `run_tier` checks it after loading the repository and before any step. A reused
+  run prints `cargo gate <tier>: tree <hash> already has a green <tier> stamp (<path>, commit <hash>); reusing it,
+  nothing is built or run`, and writes its own stamp with no targets and `reused: Some("<file name>")`; when the
+  reused stamp is the tier's own (a second `full` on a tree with a green `full`), that stamp is kept as it is.
+  `--no-run` never reuses. Unit tests in `stamp.rs`: reuse of a same-tree stamp by `merge` and `full`, the
+  accepted tiers per tier, and no reuse for another tree, a red stamp or a dirty working tree; the message names
+  the stamp and the tree.

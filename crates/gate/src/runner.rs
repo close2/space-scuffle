@@ -10,7 +10,8 @@
 //! repeated once, recording them in its stamp: blueprint §3.5), the compiler-crash retry of every
 //! Cargo step (`crash.rs`, Amendment 1), and the report's notes: the time
 //! saved against the last `full` stamp (blueprint §8) and, for a red `full` run, the red rule's
-//! suspect list (`suspects.rs`).
+//! suspect list (`suspects.rs`). Before building, `merge` and `full` reuse a green stamp of the
+//! same clean tree when one exists (Amendment 3, "test a tree once").
 //!
 //! # How it fits
 //! `src/main.rs` calls [`run_tier`]; everything that spawns a process lives in `execute.rs`,
@@ -23,6 +24,8 @@
 //! - Only a green `package`, `merge` or `full` run on a clean working tree writes a stamp; a
 //!   dirty tree is reported, not stamped.
 //! - A flaky target never makes a run green; only the one repeat of a `full` run can.
+//! - A reused run builds and runs nothing, and its stamp names the stamp it stands on; it is
+//!   only ever for the exact tree that stamp recorded, on a clean working tree.
 
 use crate::catalog::SuiteCatalog;
 use crate::changes::{cargo_program, ChangeSpec, Git};
@@ -34,7 +37,7 @@ use crate::merge::{changed_crates, choose_stamp, overlapping_crates, BranchCommi
 use crate::schedule::{Job, Scheduler};
 use crate::select::{select, ClippyScope, Inputs, Reason, Selected, Selection};
 use crate::sources::SourceIndex;
-use crate::stamp::{Stamp, StampTarget, StampTree};
+use crate::stamp::{Reuse, Stamp, StampTarget, StampTree};
 use crate::suspects::suspect_report;
 use crate::tier::Tier;
 use crate::timings::time_saved;
@@ -346,6 +349,9 @@ pub fn stamp_dir(options: &RunOptions) -> Result<PathBuf, GateError> {
 pub fn run_tier(command: &Command, cwd: &Path) -> Result<RunReport, GateError> {
     let context = Context::load(cwd)?;
     check_target_dir(context.git.root())?;
+    if let Some(report) = reuse_green_stamp(&context, command)? {
+        return Ok(report);
+    }
     match command {
         Command::Run { tier, options } => {
             let (changed, what) = if *tier == Tier::Full {
@@ -383,6 +389,86 @@ pub fn run_tier(command: &Command, cwd: &Path) -> Result<RunReport, GateError> {
             GateError::Usage("explain, timings and suspects run nothing".to_string()),
         ),
     }
+}
+
+/// For `merge` and `full`: when the clean `HEAD` tree already has a green stamp the tier accepts
+/// ([`Stamp::reusable`]), prints which one, writes this tier's stamp naming it, and returns a
+/// green report that ran nothing. `None` means the tier runs as before.
+///
+/// # Errors
+/// Repository and stamp-directory errors.
+fn reuse_green_stamp(context: &Context, command: &Command) -> Result<Option<RunReport>, GateError> {
+    let (tier, options) = match command {
+        Command::Run { tier, options } => (*tier, options),
+        Command::Merge { options, .. } => (Tier::Merge, options),
+        Command::Explain { .. } | Command::Timings { .. } | Command::Suspects { .. } => {
+            return Ok(None)
+        }
+    };
+    if options.no_run {
+        return Ok(None);
+    }
+    let dir = stamp_dir(options)?;
+    let Some(reuse) = Stamp::reusable(&context.git, &dir, tier)? else {
+        return Ok(None);
+    };
+    let message = reuse.message(tier);
+    println!("{message}");
+    Ok(Some(RunReport {
+        tier,
+        steps: Vec::new(),
+        targets: Vec::new(),
+        stamp: write_reuse_stamp(context, &reuse, tier, options, &dir),
+        notes: vec![message],
+    }))
+}
+
+/// Writes `tier`'s stamp for a run that reused `reuse`: no targets or commands, and the reused
+/// stamp's file name in [`Stamp::reused`]. When the reused stamp is this tier's own, it already
+/// is this tier's stamp of the tree and is kept as it is.
+fn write_reuse_stamp(
+    context: &Context,
+    reuse: &Reuse,
+    tier: Tier,
+    options: &RunOptions,
+    dir: &Path,
+) -> Result<PathBuf, String> {
+    if reuse.stamp.tier == tier {
+        return Ok(reuse.path.clone());
+    }
+    let reused = reuse
+        .path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned());
+    let stamp = Stamp {
+        tier,
+        tree: reuse.head.tree.clone(),
+        commit: reuse.head.commit.clone(),
+        base: context.git.merge_base("HEAD", &options.main_ref).ok(),
+        host: host_name(),
+        finished_unix_s: unix_now(),
+        targets: Vec::new(),
+        commands: Vec::new(),
+        flakes: Vec::new(),
+        retries: Vec::new(),
+        reused,
+    };
+    stamp.write(dir).map_err(|error| error.to_string())
+}
+
+/// This machine's name, for stamps.
+fn host_name() -> String {
+    std::fs::read_to_string("/etc/hostname")
+        .map(|text| text.trim().to_string())
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+/// Seconds since the Unix epoch; zero on a clock before 1970.
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 /// Adds the report's notes: flake findings, the time saved against the last `full` stamp (for
@@ -701,6 +787,7 @@ fn run_tests(
             target: id.clone(),
             class: selected.class,
             expected: expected.get(&id.to_string()).copied().unwrap_or_default(),
+            test_threads: context.catalog.test_threads_of(id),
         })
         .collect();
     let total = jobs.len();
@@ -736,6 +823,7 @@ fn rerun_failures(
             target: result.target.clone(),
             class: result.class,
             expected: result.wall,
+            test_threads: context.catalog.test_threads_of(&result.target),
         })
         .collect();
     if failed.is_empty() {
@@ -843,13 +931,8 @@ fn stamp_run(
     }
     let tree = StampTree::of_clean_head(&context.git).map_err(|error| error.to_string())?;
     let base = context.git.merge_base("HEAD", &options.main_ref).ok();
-    let host = std::fs::read_to_string("/etc/hostname")
-        .map(|text| text.trim().to_string())
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "unknown".to_string());
-    let finished_unix_s = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
+    let host = host_name();
+    let finished_unix_s = unix_now();
     let millis = |d: Duration| u64::try_from(d.as_millis()).unwrap_or(u64::MAX);
     let stamp = Stamp {
         tier: selection.tier,
@@ -872,6 +955,7 @@ fn stamp_run(
         commands: selection.commands.keys().cloned().collect(),
         flakes: flakes.to_vec(),
         retries: report.retried_steps(),
+        reused: None,
     };
     let dir = stamp_dir(options).map_err(|error| error.to_string())?;
     stamp.write(&dir).map_err(|error| error.to_string())

@@ -241,6 +241,11 @@ Development runs on a shared VM. Its physical **AMD Radeon RX 580** (Ellesmere, 
   for the lock and then has 120 s to finish. Where the radeon driver, a usable render node or `with-gpu-lock` is
   missing, as on CI, the harness uses `lavapipe` with no lock. `SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe` reproduces
   CI on this server, and `=radv` fails instead of falling back.
+- **Run one `cargo gate` or workspace `cargo test` at a time across all worktrees.** `cargo gate` serializes
+  itself through the gate lock (`~/scratch/gate.lock`, `crates/gate/src/gate_lock.rs`); wrap any other workspace
+  `cargo test` in `flock ~/scratch/gate.lock`. Before other heavy runs, check the `anon` line of
+  `/sys/fs/cgroup/user.slice/user-1002.slice/memory.stat` and keep it below about 36 GiB of the 44 GiB limit
+  (`memory.current` also counts reclaimable page cache).
 - **Large files go on `~/scratch`.** The root disk is small and shared. The main checkout's own `target/` may stay on it for fast linking, but every agent worktree must build with `CARGO_TARGET_DIR=/home/spacescuffle/scratch/cargo-target/<worktree-name>`, and large logs, captures and corpora belong under `~/scratch`. Remove a worktree, or at least its `target/`, once its branch is merged.
 
 ---

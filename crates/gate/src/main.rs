@@ -11,11 +11,13 @@
 //!
 //! # Invariants
 //! - An error is printed and exits 2; it is never reported as a green run.
+//! - `quick`, `package`, `full` and `merge` hold the gate lock (`src/gate_lock.rs`) from before
+//!   their first step until they end; `explain`, `timings` and `suspects` never take it.
 
 use gate::{
-    class_report, failing_targets, parse_args, parse_test_log, render_log_timings,
+    class_report, failing_targets, lock_path, parse_args, parse_test_log, render_log_timings,
     render_selection, repeated_flakes, run_tier, select, stamp_dir, suspect_report, Command,
-    Context, GateError, Stamp, TargetId, FLAKE_LIMIT,
+    Context, GateError, GateLock, Holder, Stamp, TargetId, FLAKE_LIMIT, HELD_VAR,
 };
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -127,6 +129,23 @@ fn suspects(
     Ok(())
 }
 
+/// Takes the gate lock for `what` (a tier, or `merge <branch>`) run in `cwd`, then marks this
+/// process's environment so that every process it starts, a nested `cargo gate` included, knows
+/// the lock is held (`src/gate_lock.rs`, [`HELD_VAR`]).
+fn take_gate_lock(what: &str, cwd: &Path) -> Result<GateLock, GateError> {
+    let path = lock_path()?;
+    let marker = std::env::var_os(HELD_VAR);
+    let lock = GateLock::acquire(
+        &path,
+        marker.as_deref(),
+        &Holder::this_process(what, cwd),
+        |message| eprintln!("{message}"),
+    )?;
+    // Set while this process is still single-threaded: the gate starts its lanes later.
+    std::env::set_var(HELD_VAR, lock.path());
+    Ok(lock)
+}
+
 /// Runs the command; `Ok(true)` is green.
 fn run(args: &[String]) -> Result<bool, GateError> {
     let command = parse_args(args)?;
@@ -148,7 +167,14 @@ fn run(args: &[String]) -> Result<bool, GateError> {
             from_log,
             options,
         } => suspects(&cwd, targets, from_log.as_deref(), options).map(|()| true),
-        Command::Run { .. } | Command::Merge { .. } => {
+        Command::Run { tier, .. } => {
+            let _lock = take_gate_lock(tier.name(), &cwd)?;
+            let report = run_tier(&command, &cwd)?;
+            print!("{}", report.render());
+            Ok(report.passed())
+        }
+        Command::Merge { branch, .. } => {
+            let _lock = take_gate_lock(&format!("merge {branch}"), &cwd)?;
             let report = run_tier(&command, &cwd)?;
             print!("{}", report.render());
             Ok(report.passed())

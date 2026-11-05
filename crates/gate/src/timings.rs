@@ -178,6 +178,7 @@ mod tests {
             commands: Vec::new(),
             flakes: Vec::new(),
             retries: Vec::new(),
+            reused: None,
         }
     }
 
