@@ -111,7 +111,7 @@ fn s3_air_only_structure_still_shoots_air_units() -> TestResult {
         .catalog
         .archetypes()
         .find(|archetype| {
-            archetype.mover_type == sim_types::MoverType::Air && archetype.max_hp > SimScalar::ZERO
+            archetype.mover_type == MoverType::Air && archetype.max_hp > SimScalar::ZERO
         })
         .map(|archetype| archetype.slug.clone())
         .ok_or("catalog has no air unit")?;
@@ -131,9 +131,9 @@ fn s3_air_only_structure_still_shoots_air_units() -> TestResult {
     Ok(())
 }
 
-/// StarCraft II 5.0.14 units whose only weapon (in the mode the catalog models) has `TargetFilters`
+/// `StarCraft` II 5.0.14 units whose only weapon (in the mode the catalog models) has `TargetFilters`
 /// that require `Air`: the unit's name as an archetype's `sc2_analogue` begins with it, the
-/// weapon, and where the data say so (SC2GameData `5444e12f13`; plan
+/// weapon, and where the data say so (`SC2GameData` `5444e12f13`; plan
 /// `2026-11-05-sc2-deviation-fixes` WP2, B-25 to B-27).
 const SC2_AIR_ONLY_UNITS: [(&str, &str, &str); 3] = [
     (
@@ -155,7 +155,7 @@ const SC2_AIR_ONLY_UNITS: [(&str, &str, &str); 3] = [
     ),
 ];
 
-/// The shipped archetypes whose StarCraft II analogue is `unit`.
+/// The shipped archetypes whose `StarCraft` II analogue is `unit`.
 fn archetypes_with_analogue<'a>(
     world: &'a SimWorld,
     unit: &'a str,
