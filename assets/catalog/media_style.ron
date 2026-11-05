@@ -87,12 +87,12 @@
         overrides: {
             "railgun_crawler": {
                 Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the tank keeps the same size and place in frame from start to end. The tank sits still with its engine idling: thin exhaust smoke drifts slowly from its rear vents, the small side exhaust ports glow with a steady unchanging light and blue energy glows steadily along the rails. The turret and both barrels stay fixed. Seamless loop: the last frame matches the first.",
-                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the tank drives on the spot as if on a rolling road: its tracks visibly run and its road wheels turn while the hull keeps the same place, size and facing in frame. The hull rocks gently on its suspension and exhaust puffs from its rear vents; the turret stays fixed. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the tank drives on the spot as if on a rolling road: its tracks visibly run and its road wheels turn while the hull keeps the same place, size and facing in frame. The hull rocks gently on its suspension, thin smoke drifts from its rear vents and the small side exhaust ports glow with a steady unchanging light; the turret stays fixed. Seamless loop: the last frame matches the first.",
                 Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the tank keeps its place in frame with the turret fixed. The twin rails fire once along the barrels: a sharp recoil, a bright blue electric flash at the muzzles and a bolt streaking out of frame, then the barrels settle back to their starting position.",
             },
             "shock_golem": {
                 Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size, pose and place in frame from start to end. It stands still and steady in place, holding its fire: its body barely moves and only its lights change, optics glowing and energy cores pulsing softly; head and weapons keep facing the same way. Seamless loop: the last frame matches the first.",
-                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the subject marches on the spot as if on a treadmill: its legs step in turn while its body keeps the same place, size and three-quarter facing in frame throughout. A steady rhythmic stride with a slight mechanical bob, weapons held ready. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans. The golem stomps on the spot: it lifts one heavy foot and sets it down in the same place, then the other, at an even pace through the whole clip, while its body keeps the same place, size and three-quarter facing in frame. Weapons held ready. Seamless loop: the last frame matches the first.",
                 Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps its place in frame. It fires along the line its weapons point: a sharp recoil, bright muzzle flashes and shells streaking out of frame, then it settles smoothly back to its starting pose.",
             },
             "jet_jumper": {
@@ -229,16 +229,24 @@
         // specter_android Walk: pinned at both ends, its raw frames already loop (74014f87: raw
         // worst 0.800 against a threshold of 0.782); the default cross-fade of 2 of 10 frames
         // shows a double image of the legs at the restart, as on the welder, so it keeps loop
-        // sampling only.
+        // sampling only. jet_jumper Walk likewise: its raw frames loop (503ded63: raw worst 0.737
+        // against 0.724, growth 1.45 %), and the scale lock reads the hopping stride as an
+        // uneven zoom and refuses it although the camera does not move.
+        // railgun_crawler Idle: pinned at both ends, its raw frames already loop (6eedaf3a: raw
+        // wrap 0.940 above the median step 0.936, worst 0.909 against 0.906); a cross-fade of
+        // the drifting smoke raises the median step and fails it by 0.0003, so it keeps the
+        // scale lock and no cross-fade, as the shuttle and the welder.
         overrides: {
             "railgun_crawler": {
                 Attack: (pin_end: true, seam: None),
+                Idle: (pin_end: true, seam: Some((scale_lock: true, crossfade_frames: 0))),
             },
             "shock_golem": {
                 Attack: (pin_end: true, seam: None),
             },
             "jet_jumper": {
                 Attack: (pin_end: true, seam: None),
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
             },
             "specter_android": {
                 Attack: (pin_end: true, seam: None),
