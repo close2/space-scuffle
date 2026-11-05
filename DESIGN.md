@@ -152,7 +152,6 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 
 | ID | Deviation | Package |
 |---|---|---|
-| B-1 | A weapon whose turn aligns it swings one tick late (M-22) | WP1 |
 | B-2 | Every strike of a multi-strike weapon lands on the same tick | WP5 |
 | B-3 | No random firing delay | WP11 |
 | B-4 | Siege Mode has one transformation time and no random part | WP11 |

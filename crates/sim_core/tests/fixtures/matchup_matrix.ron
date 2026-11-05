@@ -917,15 +917,18 @@
     // zealot's StarCraft II weapon (damage point 0, every 21 ticks, range 0.1, backswing 9;
     // plan 2026-11-04-combat-sc2-alignment WP4), the marine's (damage point 1, backswing 13;
     // WP6; speed 0.126 per tick, WP7), StarCraft II firing arcs (WP17 commit d: both fire within
-    // 11.25 degrees of their facing) and hull turning (WP17 commit f: both turn 55.99 degrees per
-    // tick, where they turned instantly), on 68 seeds (the four of record plus 64 jittered ones,
-    // jitter 0.12) the marines win 39, the zealots win 20 and 9 are unresolved at 500 ticks;
-    // marine survivors average 3.87 (SD 3.43, range 0 to 10). After the arcs it was 43 / 16 / 9
-    // (4.38), before WP17 42 / 18 / 8 (4.03), after WP4 alone 30 / 24 / 14 (3.09), and before
-    // WP4 a marine win on 61 of the 68 (7.41). The expectation is the smallest ranges that hold
-    // on the seeds of record (Q0044, option 1): 0-3 (a zealot win), 2-0, 1-2 (unresolved) and
-    // 9-0 (marines - zealots left); a seed of record outside them is re-recorded by the commit
-    // that causes it. What varies is how many zealots reach the marines at once. Evidence:
+    // 11.25 degrees of their facing), hull turning (WP17 commit f: both turn 55.99 degrees per
+    // tick, where they turned instantly) and a swing that starts on the tick its turn aligns it
+    // (plan 2026-11-05-sc2-deviation-fixes WP1, M-22), on 68 seeds (the four of record plus 64
+    // jittered ones, jitter 0.12) the marines win 37, the zealots win 20 and 11 are unresolved at
+    // 500 ticks; marine survivors average 3.62 (SD 3.16, range 0 to 10). Before WP1 it was
+    // 39 / 20 / 9 (3.87), after the arcs 43 / 16 / 9 (4.38), before WP17 42 / 18 / 8 (4.03),
+    // after combat alignment WP4 alone 30 / 24 / 14 (3.09), and before that WP4 a marine win on
+    // 61 of the 68 (7.41). The expectation is the smallest ranges that hold on the seeds of
+    // record (Q0044, option 1): 0-3, 0-2, 0-2 (three zealot wins) and 9-0 (marines - zealots
+    // left); a seed of record outside them is re-recorded by the commit that causes it. What
+    // varies is how many zealots reach the marines at once. Evidence:
+    // docs/evidence/2026-11-05-sc2-deviation-fixes.md §1 (for WP1), and
     // docs/evidence/2026-11-04-combat-sc2-alignment.md §14.7 (§14.4 for the arcs, §6, §5 and §3
     // for WP7, WP6 and WP4, and §1 for the earlier figures, from
     // docs/evidence/2026-11-03-battle-33-investigation.md §4.2).

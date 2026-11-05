@@ -823,3 +823,72 @@ fn shipped_units_with_a_stationary_rate_turn_faster_standing_than_moving() -> Te
     }
     Ok(())
 }
+
+/// The tick (counted from 1, the tick of the attack order) on which the shooter first starts a
+/// swing against the target at (`target_x`, `target_y`), within 20 ticks.
+fn first_swing_tick(
+    shooter: Shooter,
+    target_x: i32,
+    target_y: i32,
+) -> Result<Option<u32>, Box<dyn std::error::Error>> {
+    let mut bench = Bench::new(shooter, target_x, target_y)?;
+    let target = bench.target;
+    for tick in 1..=20_u32 {
+        let order = (tick == 1).then(|| (bench.shooter, UnitOrder::attack(target)));
+        bench.step(order);
+        if matches!(bench.phase()?, WeaponPhase::Windup { .. }) {
+            return Ok(Some(tick));
+        }
+    }
+    Ok(None)
+}
+
+#[test]
+fn a_turn_that_aligns_the_weapon_starts_the_swing_on_that_tick() -> TestResult {
+    // M-22 (plan `2026-11-05-sc2-deviation-fixes` WP1, B-1): the target stands 36.87° off the
+    // hull (at (14, 19) from (10, 16)); one tick's turn of 55.99° brings it inside the 11.25°
+    // arc, so the swing starts on that same tick, as StarCraft II turns and attacks in one
+    // motion.
+    let shooter = Shooter {
+        turn_rate: 55.99,
+        max_speed: 0.0,
+        arc: 11.25,
+        turret: None,
+        turn_before_move: false,
+        stationary: None,
+    };
+    assert_eq!(first_swing_tick(shooter, 14, 19)?, Some(1));
+    Ok(())
+}
+
+#[test]
+fn a_turn_that_does_not_align_waits() -> TestResult {
+    // Guard: the target stands 126.87° off (at (7, 20)). After one tick's turn of 55.99° it is
+    // 70.88° off and after two 14.89°, both outside the 11.25° arc; the third turn aligns.
+    let shooter = Shooter {
+        turn_rate: 55.99,
+        max_speed: 0.0,
+        arc: 11.25,
+        turret: None,
+        turn_before_move: false,
+        stationary: None,
+    };
+    assert_eq!(first_swing_tick(shooter, 7, 20)?, Some(3));
+    Ok(())
+}
+
+#[test]
+fn a_turret_turn_that_aligns_the_weapon_starts_the_swing_on_that_tick() -> TestResult {
+    // The same rule for a turret: the target stands 14.04° off (at (14, 17)); one tick's turret
+    // turn of 10° leaves 4.04°, inside the 5° arc, so the swing starts on that tick.
+    let shooter = Shooter {
+        turn_rate: 55.99,
+        max_speed: 0.0,
+        arc: 5.0,
+        turret: Some(10.0),
+        turn_before_move: false,
+        stationary: None,
+    };
+    assert_eq!(first_swing_tick(shooter, 14, 17)?, Some(1));
+    Ok(())
+}

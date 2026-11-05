@@ -751,7 +751,7 @@ requires.
 
 | ID | Short title | Class | Reason or WP |
 |---|---|---|---|
-| B-1 | A swing its turn aligns starts a tick late (M-22) | (i) | WP1 |
+| B-1 | A swing its turn aligns starts a tick late (M-22) | Fixed | WP1 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §1) |
 | B-2 | Every strike of a multi-strike weapon on one tick | (i) | WP5 |
 | B-3 | No random firing delay | (i) | WP11; it decides how volleys desynchronize, which players see |
 | B-4 | Siege Mode: one transformation time, no random part | (i) | WP11 |
