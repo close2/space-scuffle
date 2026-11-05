@@ -33,6 +33,8 @@ Owner (2026-11-04): Everything estimated in total below $15 is fine. (I think I 
 
 Owner update (2026-11-04, via Q0043): I have verified that I have 260€ credit expiring 2027-01-24. The agent is free to use up to 200€ (including expansion batches and re-generations) and should not hesitate to request another video if a video doesn't fulfill requirements. Keep audio enabled.
 
+Owner update (chat, 2026-11-05): "the only bro limit you need to take into account are the 200$. no weekly, round or batch limit (unless it's a limit dictated by Google)". Carried out by the Veo plan's Amendment 1 / WP8 (total spend ≤ $200.00 from the ledger; no per-run or weekly caps).
+
 ## Status
 
 2026-11-05 (no answer needed now). The required set is done: 41 generations since the pilot, **$16.40** at list

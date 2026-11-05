@@ -491,7 +491,7 @@ counts (§6), and the keyframe chaining of D-7 follows its D-3.
 ### WP6: Expansion batches 3 to 5
 
 One batch per session, in §2.4's order (3, 4, 5); within a batch, identities in the listed order, so a quota stop
-leaves the most valuable ones done. Each batch: prompts, validation, dry run, generate within the rolling budget,
+leaves the most valuable ones done. Each batch: prompts, validation, dry run, generate within the total budget (Amendment 1),
 review, install, bake, provenance, add the identities to `required_set.ron` under tier `expansion`, flip any test
 that named them as lacking media, evidence file. A quota stop ends the session; the next session resumes with the
 same command (the ledger and operation records make it idempotent). The order may be revised by the owner at any
@@ -578,3 +578,42 @@ removed. `welder_drone` Cast has its own pin, and `welder_drone` is letterboxed.
    (`LegacyUnverified`). They are outside the required set and this plan's scope.
 5. **CI.** No CI run covers batch 2 yet (`main` was last pushed at `ab2042c`). The run id of the next push of
    `main` goes in the remediation plan's Phase 8 exit status.
+
+## 8. Amendment 1 (orchestrator, 2026-11-05): the only limit is total spend
+
+**Owner (chat, 2026-11-05):** "the only bro limit you need to take into account are the 200$. no weekly, round or
+batch limit (unless it's a limit dictated by Google)". This replaces the per-run cap (Q0024's 12) and the rolling
+7-day cap (Q0024's 25, Q0047's 60). It is recorded in Q0024's Answer.
+
+### D-12. Budget rule
+
+- **One limit:** the total list-price cost of every generation the service accepted, summed from the ledger
+  (`request_started` lines; a start refused for quota costs nothing, as today), plus the cost of the generations a run
+  is about to start, must not exceed **$200.00**. The owner's earlier allowance was 200 EUR; dollars are the smaller
+  amount, so the cap is stated in US cents: `total_budget_usd_cents: 20000`.
+- **Price per generation** is data, not code: a table in `assets/media/veo_budget.ron` keyed by model id (today
+  `veo-3.1-fast-generate-001`: 40 cents for a 4 s 720p clip with sound, the list price the batch evidence uses). A
+  `request_started` line whose model has no price is an error (typed), never a free generation.
+- **No run, batch or window cap of our own.** `max_generations_per_run`, `weekly_generations`, `window_days`,
+  `--weekly-budget` and the `AboveRunCap` / `WindowExceeded` errors are removed. `--max-generations` stays required:
+  it is the run's stated intent (what the dry run prints and the ledger records), not a limit, and a run still
+  stops when it reaches it.
+- **Google's limits:** quota and rate-limit responses keep their current handling (backoff, then a clean stop that
+  the next run resumes); the stop message says it is Google's limit.
+- **Reporting:** every run prints spent / remaining in dollars before and after, and the dry run prints the cost of
+  the planned generations.
+
+### WP8: Total-spend budget (code + data; no spend)
+
+1. Tests first in `crates/asset_baker/src/budget.rs` and `crates/asset_baker/tests/veo_cli_tests.rs`: a run that
+   would cross $200.00 by one generation is refused with a typed `BudgetError::TotalExceeded { spent_cents,
+   needed_cents, budget_cents }`; exactly reaching it is allowed; 13 or more generations in one run and more than 60
+   in seven days are allowed; an unpriced model in the ledger is a typed error; the shipped budget file loads with
+   20000 cents and the price table.
+2. Replace `BudgetConfig`'s fields, the ledger summation (`used_in_window` becomes the total spent in cents), the
+   `generate-veo` arguments and messages, the budget file and its comment, and the docs that state the old caps
+   (this plan's §2/D-sections that name 12 or 60, `docs/evidence/veo/*` only where they state a current rule).
+3. Gate: `cargo gate package` once after merging main.
+4. Close Q0024 with a Resolution naming the commit (`git mv` to `closed/`).
+
+WP6 (expansion) may start after WP8 merges. Q0025 (storage of the expansion media) is unaffected by this amendment.
