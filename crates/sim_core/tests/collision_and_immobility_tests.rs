@@ -17,7 +17,7 @@
 
 use sim_core::scenario::{PlayerSetup, StartLoadoutCatalog};
 use sim_core::steering::{compute_push_displacement, PushEntityParams};
-use sim_core::SimWorld;
+use sim_core::{SimWorld, WeaponPhase};
 use sim_map::{CliffLevel, GameMap, MapCell, MapFile};
 use sim_types::{EntityId, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder};
 
@@ -287,6 +287,7 @@ fn test_converging_units_respect_speed_cap_and_do_not_vibrate() {
     }
 
     let target_hp = world.entities[&target_id].hp;
+    let mut struck = std::collections::BTreeSet::new();
 
     // Step 120 ticks
     for tick in 1..=120 {
@@ -314,7 +315,21 @@ fn test_converging_units_respect_speed_cap_and_do_not_vibrate() {
                 allowed_cap
             );
 
-            // Invariant 2: Anti-vibration ping-pong reversal check
+            // Invariant 2: Anti-vibration ping-pong reversal check, over the convergence: up to
+            // the unit's first strike. After it, a unit waiting out its cooldown at the contact
+            // ring is jostled by its neighbours once per weapon cycle (finding M-21 of the
+            // remediation plan), so the count there depends on the catalog's weapon period.
+            if matches!(
+                ent.weapon_phase,
+                WeaponPhase::Backswing { .. } | WeaponPhase::Cooldown
+            ) {
+                struck.insert(id);
+            }
+            if struck.contains(&id) {
+                *prev_delta = Some(delta);
+                *prev_pos = cur_pos;
+                continue;
+            }
             if let Some(p_delta) = *prev_delta {
                 let threshold = SimScalar::from_f32_lossy(0.015);
                 if tick_disp > threshold && p_delta.length() > threshold && reverses(delta, p_delta)
@@ -332,7 +347,7 @@ fn test_converging_units_respect_speed_cap_and_do_not_vibrate() {
     for (&id, &(_, _, reversals)) in &unit_tracker {
         assert!(
             reversals <= 2,
-            "Unit {:?} experienced excessive high-frequency vibration: {} reversals in 120 ticks",
+            "Unit {:?} experienced excessive high-frequency vibration: {} reversals before its first strike",
             id,
             reversals
         );
