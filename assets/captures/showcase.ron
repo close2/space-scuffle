@@ -1,0 +1,123 @@
+// Storyboard of the CI showcase video (plan docs/plans/2026-11-05-ci-showcase-video.md, D-4 and §4).
+//
+// Read at run time by `showcase take` and `showcase assemble` (crates/client_diagnostics). Positions
+// are map-plane world units (x, z), one unit per grid cell; angles are degrees; lengths are frames
+// at 25 fps, one simulation tick per frame at 1x. The director sets only the camera, the battle
+// speed and the overlay: the scenario's own attack-move orders drive the battle.
+//
+// Length rule (plan D-13): the render step on the CI runner must stay within 40 minutes. If the
+// measured median frame time c makes 1,600 * c + 120 s exceed that, lower `resolution` to
+// (960, 540) first, then shorten `clash`, `smog` and `closing`, and record why in the evidence file.
+//
+// Tuned after the first local render (docs/evidence/2026-11-05-showcase-video.md): the two armies
+// pass each other and raid the other's base, and the viewer's base falls around tick 1,225. The
+// scenes before `closing` therefore end near tick 1,100, and `closing` is paused, so the video never
+// shows the result window. `units` and `smog` come before the armies meet, while every follow
+// target lives and the army moves: the smog shows best in the wakes of moving bubbles. Both follow
+// one unit: the army splits around the central plateau, so its centroid can lie on empty ground.
+(
+    format_version: 1,
+    resolution: (1280, 720),
+    frame_rate: 25,
+    takes: [
+        (
+            name: "battle",
+            mode: Skirmish,
+            scenario: "scenarios/showcase.ron",
+            readiness_timeout_seconds: 900,
+            scenes: [
+                (
+                    name: "title",
+                    speed: Paused,
+                    length: Frames(125),
+                    camera: Orbit(center: At((32.0, 32.0)), distance: 46.0, pitch_deg: 62.0, start_deg: -10.0, sweep_deg: 20.0),
+                    overlay: TitleCard,
+                ),
+                (
+                    name: "terrain",
+                    speed: Speed(2),
+                    badge: Some("Fast-forward ×2"),
+                    length: Frames(150),
+                    camera: Path(keys: [
+                        (frame: 0, focus: (12.0, 14.0), distance: 30.0, pitch_deg: 58.0),
+                        (frame: 75, focus: (33.0, 13.0), distance: 25.0, pitch_deg: 52.0),
+                        (frame: 149, focus: (31.0, 27.0), distance: 22.0, pitch_deg: 48.0),
+                    ]),
+                    overlay: Caption(
+                        title: "High ground and ramps",
+                        body: "Units below a cliff cannot see up it; ramps are the way up.",
+                        subsystems: ["Terrain, cliffs and ramps", "Simulation vision and watchtowers"],
+                    ),
+                ),
+                (
+                    name: "units",
+                    speed: Speed(1),
+                    length: Frames(150),
+                    camera: FollowUnit(player: 0, unit_types: ["rhino_beetle", "pulse_bot", "welder_drone"], distance: 8.0, pitch_deg: 55.0),
+                    overlay: Caption(
+                        title: "Units",
+                        body: "Each unit is a glass bubble playing a video clip of its creature, generated with Veo.",
+                        subsystems: ["Bubble and dome rendering", "Media coverage"],
+                    ),
+                ),
+                (
+                    name: "smog",
+                    speed: Speed(1),
+                    length: Frames(125),
+                    camera: FollowUnit(player: 0, unit_types: ["pulse_bot", "rhino_beetle"], distance: 10.0, pitch_deg: 35.0),
+                    overlay: Caption(
+                        title: "Smog",
+                        body: "A volumetric smog field, stirred and carved by every bubble.",
+                        subsystems: ["Smog fog presentation"],
+                    ),
+                ),
+                (
+                    name: "advance",
+                    speed: Speed(4),
+                    badge: Some("Fast-forward ×4"),
+                    length: UntilCombat(min: 50, max: 500),
+                    camera: FollowArmy(player: 0, distance: 26.0, pitch_deg: 55.0),
+                    overlay: Caption(
+                        title: "Fog of war",
+                        body: "You see only what your units see: the enemy appears when it comes into sight.",
+                        subsystems: ["Simulation vision and watchtowers", "Movement and pathfinding"],
+                    ),
+                ),
+                (
+                    name: "clash",
+                    speed: Speed(1),
+                    length: Frames(300),
+                    camera: FollowCombat(distance: 16.0, pitch_deg: 52.0),
+                    overlay: Caption(
+                        title: "Combat",
+                        body: "Weapons wind up, fire and recover; shields take damage before the hull; splash hits groups.",
+                        subsystems: ["Combat"],
+                    ),
+                ),
+                (
+                    name: "closing",
+                    speed: Paused,
+                    length: Frames(200),
+                    camera: Orbit(center: Current, distance: 40.0, pitch_deg: 60.0, start_deg: 0.0, sweep_deg: 20.0),
+                    overlay: StatusCard,
+                ),
+            ],
+        ),
+    ],
+    video: (crf: 23, max_kbit_per_second: 2500, max_bytes: 26214400),
+    teaser: (
+        frame_step: 2,
+        widths: [800, 640],
+        qualities: [60, 50, 40],
+        max_bytes: 4718592,
+        cuts: [
+            (scene: "title", first: 0, frames: 75),
+            (scene: "units", first: 0, frames: 75),
+            (scene: "smog", first: 0, frames: 100),
+            (scene: "advance", first: 0, frames: 40, from_end: true),
+            (scene: "clash", first: 0, frames: 150),
+            (scene: "closing", first: 0, frames: 150),
+        ],
+    ),
+    poster: (scene: "clash", frame: 50),
+)

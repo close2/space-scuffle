@@ -1864,6 +1864,8 @@ dependencies = [
  "image",
  "ron",
  "serde",
+ "serde_json",
+ "sha2",
  "sim_core",
  "sim_fixtures",
  "sim_map",
