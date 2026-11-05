@@ -1743,3 +1743,13 @@ unresolved), marine survivors 4.03 (SD 3.26).
 - **`golden_replay.ron` re-recorded** from checkpoint 4 (ticks 151 to 200, the first fight): its marines, roaches and
   zealots fire within 11.25° (were 15°, 15° and 180°). `golden_replay_orders.ron` unchanged. Debug, release and
   `wasm32-wasip1` reproduce both.
+
+### 14.5 Commit d, turreted arcs
+
+- **Change.** 7 turreted weapons take `Arc` ÷ 2 + `ArcSlop` (audit §10.3): `railgun_crawler`'s Siege Mode override
+  (`CrucioShockCannon`, no `Arc`) 360 → 11.25°; `planetary_bulwark_dome` (`TwinIbiksCannon`, `Arc` 90, `liberty`
+  WeaponData:138) 360 → 56.25°; `flak_array_dome`, `tesla_sentinel_dome` (ground and air), `thorn_lasher_dome` and
+  `spore_spire_dome` 360 → 11.25°. The unsieged tank's `90mmCannons` keeps 360 (`Arc` 360, class A).
+- **Measurement.** Matrix bit-identical to the hull-arc commit (no matrix battle sieges a tank or has a structure);
+  battle 33 bit-identical; both golden replays unchanged in debug, release and `wasm32-wasip1` (their tanks never
+  siege, and no structure fires).
