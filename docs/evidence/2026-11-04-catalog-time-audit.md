@@ -319,22 +319,22 @@ Columns:
 | `railgun_crawler` | SiegeTank `CrucioShockCannon` | `modes/backswing_ticks` | 4 | 0.5 | `core` WeaponData:18 (default `CWeapon`) | 8.93 | C | W5 |  |
 | `railgun_crawler` | SiegeTank `CrucioShockCannon` | `modes/projectile_speed` | None | instant | no launch-missile effect under `CrucioShockCannonSwitch` (`swarm` WeaponData:170) | None | A |  |  |
 | `railgun_crawler` | SiegeTank | `abilities/cooldown_ticks` | 75 | none | `liberty` AbilData:1308 (`SiegeMode`): no `Cost/Cooldown` | 0 | C | M2 | the reference has no cooldown on Siege Mode; the morph itself locks the tank |
-| `flying_saucer` | — | `hp_regen_per_tick` | 0.00 | — | — | — | E |  | analogue unclear: catalog says Viking / Scout, doc 07 says Phoenix, cost and weapon match neither |
-| `flying_saucer` | Phoenix? | `shield_regen_per_tick` | 0.08 | 2 | every shielded unit in the data sets `ShieldRegenRate 2` | 0.112 | B | WP10 | changed by WP10 (Q0039); analogue unclear (catalog: Viking / Scout; doc 07: Phoenix); shield rate is 2 for every candidate |
-| `flying_saucer` | — | `energy_regen_per_tick` | 0.000 | — | — | — | E |  | analogue unclear: catalog says Viking / Scout, doc 07 says Phoenix, cost and weapon match neither |
-| `flying_saucer` | — | `max_speed` | 0.15 | — | — | — | E |  | analogue unclear: catalog says Viking / Scout, doc 07 says Phoenix, cost and weapon match neither |
-| `flying_saucer` | — | `acceleration` | 0.15 | — | — | — | E |  | analogue unclear: catalog says Viking / Scout, doc 07 says Phoenix, cost and weapon match neither |
-| `flying_saucer` | — | `deceleration` | 0.15 | — | — | — | E |  | analogue unclear: catalog says Viking / Scout, doc 07 says Phoenix, cost and weapon match neither |
-| `flying_saucer` | — | `turn_rate_deg` | 999.0 | — | — | — | E |  | analogue unclear: catalog says Viking / Scout, doc 07 says Phoenix, cost and weapon match neither |
-| `flying_saucer` | — | `build_time_ticks` | 850 | — | — | — | E |  | analogue unclear: catalog says Viking / Scout, doc 07 says Phoenix, cost and weapon match neither |
-| `flying_saucer` | — | `weapon/period_ticks` | 20 | — | — | — | E |  | analogue unclear: catalog says Viking / Scout, doc 07 says Phoenix, cost and weapon match neither |
-| `flying_saucer` | — | `weapon/damage_point_ticks` | 0 | — | — | — | E |  | analogue unclear: catalog says Viking / Scout, doc 07 says Phoenix, cost and weapon match neither |
-| `flying_saucer` | — | `weapon/backswing_ticks` | 2 | — | — | — | E |  | analogue unclear: catalog says Viking / Scout, doc 07 says Phoenix, cost and weapon match neither |
-| `flying_saucer` | — | `weapon/projectile_speed` | None | — | — | — | E |  | analogue unclear: catalog says Viking / Scout, doc 07 says Phoenix, cost and weapon match neither |
-| `flying_saucer` | — | `air_weapon/period_ticks` | 20 | — | — | — | E |  | analogue unclear: catalog says Viking / Scout, doc 07 says Phoenix, cost and weapon match neither |
-| `flying_saucer` | — | `air_weapon/damage_point_ticks` | 0 | — | — | — | E |  | analogue unclear: catalog says Viking / Scout, doc 07 says Phoenix, cost and weapon match neither |
-| `flying_saucer` | — | `air_weapon/backswing_ticks` | 2 | — | — | — | E |  | analogue unclear: catalog says Viking / Scout, doc 07 says Phoenix, cost and weapon match neither |
-| `flying_saucer` | — | `air_weapon/projectile_speed` | None | — | — | — | E |  | analogue unclear: catalog says Viking / Scout, doc 07 says Phoenix, cost and weapon match neither |
+| `flying_saucer` | Phoenix | `hp_regen_per_tick` | 0.00 | 0 | not set in any layer (0) | 0 | A |  | audited against the Phoenix by WP16 (Q0045 4b, §6.1) |
+| `flying_saucer` | Phoenix | `shield_regen_per_tick` | 0.08 | 2 | `liberty` UnitData:3682 | 0.112 | B | WP10 | changed by WP10 (Q0039); WP16 confirms the Phoenix as its counterpart |
+| `flying_saucer` | Phoenix | `energy_regen_per_tick` | 0.000 | 0.5625 | `liberty` UnitData:3729 | 0.0315 | C | WP16 | set by WP16, with `max_energy` 200 (`liberty` UnitData:3728) |
+| `flying_saucer` | Phoenix | `max_speed` | 0.15 | 4.25 | `liberty` UnitData:3685 | 0.238 | C | WP16 | set by WP16 |
+| `flying_saucer` | Phoenix | `acceleration` | 0.15 | 3.25 | `liberty` UnitData:3686 | — | E |  | parsed, unused by the simulation (speed changes are instant); the catalog copies max_speed (0.238 since WP16) |
+| `flying_saucer` | Phoenix | `deceleration` | 0.15 | not set | not set | — | E |  | parsed, unused by the simulation (speed changes are instant); the catalog copies max_speed (0.238 since WP16) |
+| `flying_saucer` | Phoenix | `turn_rate_deg` | 999.0 | 1499.9414 | `liberty` UnitData:3688 | 84.0 deg/tick | D | WP17 | ours is read as degrees per tick, so 999 = instant (catalog.rs `turn_rate`); WP17 commit f sets it with the other 41 |
+| `flying_saucer` | Phoenix | `build_time_ticks` | 850 | 35 | `swarm` AbilData:1164 (`StargateTrain` Train1) | 625.0 | C | WP16 | set by WP16 |
+| `flying_saucer` | — | `weapon/period_ticks` | 20 | — | the Phoenix has no ground weapon (`IonCannons` `TargetFilters` Air, `liberty` WeaponData:189) | — | E |  | removed by WP16 (`weapon: None`) |
+| `flying_saucer` | — | `weapon/damage_point_ticks` | 0 | — | as above | — | E |  | removed by WP16 |
+| `flying_saucer` | — | `weapon/backswing_ticks` | 2 | — | as above | — | E |  | removed by WP16 |
+| `flying_saucer` | — | `weapon/projectile_speed` | None | — | as above | — | E |  | removed by WP16 |
+| `flying_saucer` | Phoenix `IonCannons` | `air_weapon/period_ticks` | 20 | 1.1 | `swarm` WeaponData:176 | 19.64 | A |  |  |
+| `flying_saucer` | Phoenix `IonCannons` | `air_weapon/damage_point_ticks` | 0 | 0.167 | `core` WeaponData:17 (default `CWeapon`) | 2.98 | C | WP16 | set by WP16 |
+| `flying_saucer` | Phoenix `IonCannons` | `air_weapon/backswing_ticks` | 2 | 0.5 | `core` WeaponData:18 (default `CWeapon`) | 8.93 | C | WP16 | set by WP16 |
+| `flying_saucer` | Phoenix `IonCannons` | `air_weapon/projectile_speed` | None | — | mover `IonCannonsWeapon` has 3 motion phases [(Throw, Speed 6, MaxSpeed 6), (Throw, outro), (Guidance, Acceleration 60, MaxSpeed 40)] (`liberty` MoverData:446) | — | E |  | no single speed (thrown or accelerating missile); stays None |
 | `shock_golem` | Marauder | `hp_regen_per_tick` | 0.00 | 0 | not set in any layer (0) | 0 | A |  |  |
 | `shock_golem` | Marauder | `shield_regen_per_tick` | 0.00 | 0 | not set in any layer (0) | 0 | A |  |  |
 | `shock_golem` | Marauder | `energy_regen_per_tick` | 0.000 | 0 | not set in any layer (0) | 0 | A |  |  |
@@ -1626,6 +1626,55 @@ All of these are in [Q0045](../questions/open/0045-catalog-time-audit-deliberate
 
    Its weapon period of 20 and its shield rate would match the Phoenix. Only its shield regeneration is audited
    (class B, WP10), because every candidate counterpart has the same rate.
+
+   **Answered (Q0045 4b):** the Phoenix is its counterpart. WP16 re-audited its rows (§4) and changed the catalog;
+   see §6.1.
+
+### 6.1 Phoenix (Q0045 4b)
+
+The owner answered item 4 with option (b): `flying_saucer` becomes the Phoenix (plan D-10, WP16). Its rows in §4 are
+re-audited against the Phoenix with the chain of §2.2. The table below adds the values D-10 names that are not time or
+speed values. Liquipedia's [Phoenix (Legacy of the Void)](https://liquipedia.net/starcraft2/Phoenix_(Legacy_of_the_Void))
+infobox (wikitext read 2026-11-05) agrees with every figure: 150/100, 2 supply, 25 s, 120/60, armour 0, Light and
+Mechanical, speed 5.95, sight 10, energy 50/200, Ion Cannons 5 (+1) ×2, +5 against Light, cooldown 0.79, range 5 (+2),
+air only.
+
+| Field | Before WP16 | Editor (Normal) | Source | After WP16 | Class before |
+|---|---|---|---|---|---|
+| `sc2_analogue` | "Viking / Scout …" | `Phoenix` | doc 07 row 12; Q0045 4(b) | "Phoenix (…)" | — |
+| `mineral_cost`, `gas_cost` | 125, 75 | 150, 100 | `liberty` UnitData:3734, :3735 | 150, 100 | C |
+| `supply_cost` | 2 | `Food -2` | `liberty` UnitData:3690 | 2 | A |
+| `build_time_ticks` | 850 | 35 s | `swarm` AbilData:1164 (`StargateTrain` Train1) | 625 | C |
+| `max_hp`, `max_shields` | 120, 60 | 120, 60 | `liberty` UnitData:3678, :3681 | unchanged | A |
+| `life_armor` | 0 | not set in any layer (engine default 0) | Liquipedia: 0 | unchanged | A |
+| `attributes` | Light, Psionic (`bits: 17`) | Light, Mechanical | `liberty` UnitData:3723, :3724 | `bits: 9` | C |
+| `max_energy`, `energy_regen_per_tick` | 0, 0.000 | 200, 0.5625 per s | `liberty` UnitData:3728, :3729 | 200, 0.0315 | C |
+| `max_speed` (`acceleration`, `deceleration` copy it) | 0.15 | 4.25 | `liberty` UnitData:3685 | 0.238 | C |
+| `sight_radius` | 11 | 10 | `liberty` UnitData:3708 | 10 | C |
+| `turn_rate_deg` | 999 | 1499.9414 °/s | `liberty` UnitData:3688 | unchanged; 84.0° per tick in WP17 commit f | D |
+| `weapon` (ground) | 10 (+4 light), range 6, period 20 | none: `IonCannons` targets `Air` only | `liberty` WeaponData:189 (`TargetFilters`) | `None` | C |
+| `air_weapon` damage, light bonus | 10, +4 | 5, +5 per missile | `liberty` EffectData:1985, :1986 (`IonCannonsU`) | 5, +5 | C |
+| `air_weapon.attacks_count` | 1 | 2 (`PeriodCount 2`, one left and one right missile) | `liberty` EffectData:1961 | 2 | C |
+| `air_weapon.max_range` | 6 | 5 | `void` WeaponData:214 | 5 (7 with `anion_pulse_crystals`, +2, `void` UpgradeData:449) | C |
+| `air_weapon.period_ticks` | 20 | 1.1 s | `swarm` WeaponData:176 | 20 (19.64) | A |
+| `air_weapon.damage_point_ticks` | 0 | 0.167 s | `core` WeaponData:17 (default) | 3 (2.98) | C |
+| `air_weapon.backswing_ticks` | 2 | 0.5 s | `core` WeaponData:18 (default) | 9 (8.93) | C |
+| `air_weapon.projectile_speed` | None | three-phase missile | `liberty` MoverData:446 | None | E |
+| `air_weapon.upgrade_bonus_per_level` | 1 | +1 per missile per level | `swarm` UpgradeData:167–168, :180–181, :193–194 (`ProtossAirWeaponsLevel1` to 3) | 1 | A |
+| `air_weapon.bonus_upgrade_per_level` | 1 | 0: no level raises the light bonus | same lines | 0 | C |
+
+**Kept, as for every unit (D-10):** radii, `scan_range` (11; WP14), `push_priority` (15; doc 07 row 12 says 20, a difference
+left as found, because D-10 keeps push priority out of scope), name, visual kind and
+`target_flags` (255, as every shipped weapon: the weapon slot, not the flags, decides ground or air). Energy starts at
+its maximum, as for every unit with energy; the game starts the Phoenix at 50 (`liberty` UnitData:3727). Nothing spends
+it: Graviton Beam is not modelled (plan F-5).
+
+**For WP17.** `TurningRate` 1499.9414 Normal °/s (`liberty` UnitData:3688) = 84.0° per tick, the 1499.9414 class of
+D-8 item 3. The Phoenix's weapon also has a turret (`swarm` UnitData:1805, `Turret="Phoenix"`; `swarm`
+TurretData:31, `YawRate` 539.2968 Normal °/s = 30.20° per tick) and an arc of 4.9987° with `ArcSlop` 0 (`swarm`
+WeaponData:179, :180). Ours is a hull weapon with `firing_arc_deg` 360. Both belong to WP17's research (arcs, item d;
+turret rates, item e) and are not changed here. `AllowedMovement` is `Moving` (`swarm` WeaponData:181): the Phoenix
+fires while moving, which is not modelled (plan F-5).
 
 ## 7. Whole-matrix measurement of the corrections (WP3 step 5)
 

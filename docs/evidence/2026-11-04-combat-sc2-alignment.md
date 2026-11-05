@@ -967,3 +967,63 @@ states the delay in game seconds (10). Outputs under `~/scratch/combat_wp9/wp11/
   12 to 20 changed, where the damaged `red_psi` zealot of §10 now starts regenerating 71 ticks sooner.
 - **`golden_replay_orders.ron`: unchanged.**
 - Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`) reproduce both fixtures.
+
+## 12. WP16: `flying_saucer` becomes the Phoenix (Q0045 4b)
+
+**Commit.** The data commit of WP16, after WP11 (§11). The owner's answer 4(b) to Q0045 makes the Phoenix the
+counterpart of `flying_saucer` (plan D-10). Its audit against the Phoenix (plan WP16 step 1), with the chain, a
+citation for each value and the class each had before, is in
+[`2026-11-04-catalog-time-audit.md`](2026-11-04-catalog-time-audit.md) §6.1 and its rows in §4. What changed:
+
+| Field | Before | After | Reference (5.0.14 game data) |
+|---|---|---|---|
+| `sc2_analogue` | "Viking / Scout (…)" | "Phoenix (…)" | doc 07 row 12 |
+| `mineral_cost` / `gas_cost` | 125 / 75 | **150 / 100** | `liberty` UnitData:3734, :3735 |
+| `build_time_ticks` | 850 | **625** | 35 Normal s (`swarm` AbilData:1164) = 25 Faster s |
+| `attributes` | Light, Psionic (17) | **Light, Mechanical (9)** | `liberty` UnitData:3723, :3724 |
+| `max_energy` / `energy_regen_per_tick` | 0 / 0.000 | **200 / 0.0315** | `liberty` UnitData:3728, :3729 (0.5625 Normal per s) |
+| `max_speed`, `acceleration`, `deceleration` | 0.15 | **0.238** | `Speed` 4.25 Normal (`liberty` UnitData:3685) = 5.95 Faster |
+| `sight_radius` | 11 | **10** | `liberty` UnitData:3708 |
+| `weapon` (ground) | 10 (+4 light), range 6 | **None** | `IonCannons` targets air only (`liberty` WeaponData:189) |
+| `air_weapon`: damage, light bonus, strikes | 10, +4, 1 | **5, +5, 2** | `liberty` EffectData:1985, :1986, :1961 |
+| `air_weapon.max_range` | 6 | **5** | `void` WeaponData:214 |
+| `air_weapon.damage_point_ticks` / `backswing_ticks` | 0 / 2 | **3 / 9** | `CWeapon` defaults 0.167 / 0.5 Normal s (`core` WeaponData:17, :18) |
+| `air_weapon.bonus_upgrade_per_level` | 1 | **0** | the air weapon upgrades raise only `Amount` (`swarm` UpgradeData:167–194) |
+
+Unchanged and matching: life 120, shields 60, armour 0, supply 2, period 20 (1.1 Normal s = 19.64 ticks),
+`upgrade_bonus_per_level` 1, the shield values of WP10 and WP11, and `anion_pulse_crystals` (+2 range). Unchanged by
+the plan's scope: `turn_rate_deg` (999 here; WP17 sets 84.0° per tick), the weapon's turret and arc (WP17), radii,
+`scan_range` (WP14) and `push_priority`. Projectile speed stays `None` (three-phase missile, class E). Not modelled
+(plan F-5): Graviton Beam and firing while moving. Doc 07 row 12 now gives the weapon's timings and names what is not
+modelled; doc 08's Air Weapons row no longer claims a light-bonus upgrade for it. No Phoenix look or media change is
+part of this package: the name, lore, visual kind and Veo prompts stay; a later media pass may revisit them.
+
+**Users checked first (plan WP16 step 2).**
+
+- **`golden_replay_orders.ron`.** A throwaway observer (not committed) of the replay logged the spotter's shots, its
+  position and the phase-order evidence. Before: the spotter flies at 0.15 from tick 10, reaches its goal at tick 120,
+  and fires **9 shots at the `psi_grey` zealots on the ledge** (ticks 121 to 281, every 20). The same-tick reveal and
+  acquisition (6 acquisitions) happens at loop tick 63. After: it flies at 0.238, arrives at tick 80, fires **no shot**
+  (no ground weapon), and the reveal and acquisition happen at loop tick 44. The mid-route repaths are at the same
+  ticks in both runs, and 27 entities survive at tick 600 in both.
+- **`high_ground_combat_tests.rs`** uses the saucer as an air spotter spawned on the marine, 2 cells from the tile it
+  must reveal: sight 10 still covers it, and the test never relies on its weapon. It passes unchanged.
+- **Client and other tests.** No client test or fixture names `flying_saucer` (`crates/client/tests/data/`
+  included); `sc2_analogue` is read by no Rust code. The tests that pick "the first air archetype" from the catalog
+  strip its weapons or need only an air body. The common gate covers them. No test was restated.
+
+**Measured.**
+
+- **Whole matrix, 20 seeds: bit-identical** to the state after WP11 (all 1000 rows of `matrix.csv`; no battle uses
+  `flying_saucer`). The pre-change run was itself bit-identical to WP11's recorded `matrix.csv`. Expectation failures
+  stay 0 on the seeds of record and 7 over all seeds (battle 33).
+- **Battle 33, 68 seeds: bit-identical** (all output files byte-identical): 42 / 18 / 8, marine survivors 4.03
+  (SD 3.26); seeds of record 7–0, 3–0, 9–0, 6–0.
+- **`golden_replay.ron`: unchanged** (it spawns no `flying_saucer`).
+- **`golden_replay_orders.ron`: re-recorded at every checkpoint (1 to 60).** Checkpoint 1 (ticks 1 to 10, before
+  the spotter moves) changes because the spotter's energy (200, was 0) is hashed from spawn; from tick 10 its speed,
+  then the earlier reveal and the absent shots change the rest. Both phase-order situations are still found by the
+  test.
+- Debug, release and `wasm32-wasip1` (release, under `/usr/local/bin/wasmtime`) reproduce both fixtures.
+
+Outputs under `~/scratch/combat_wp16/` on the development server (`before/`, `after/`).

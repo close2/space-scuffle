@@ -256,7 +256,7 @@ flowchart TD
 | `plasma_shields_1` | Plasma Shields 1 | `crystalline_forge_dome` | 1 | 150 / 150 | 3025 (121s) | — | ALL Cosmic Enclave units and domes +1 Shield Armor |
 | `plasma_shields_2` | Plasma Shields 2 | `crystalline_forge_dome` | 2 | 200 / 200 | 3625 (145s) | `templar_conclave_dome` | ALL Cosmic Enclave units and domes +1 Shield Armor |
 | `plasma_shields_3` | Plasma Shields 3 | `crystalline_forge_dome` | 3 | 250 / 250 | 4200 (168s) | `templar_conclave_dome` | ALL Cosmic Enclave units and domes +1 Shield Armor |
-| `air_weapons_1` | Air Weapons 1 | `cybernetics_conduit_dome`| 1 | 100 / 100 | 3025 (121s) | — | `flying_saucer` +1x2 (+1x2 Light), `prismatic_saucer` +1 (+1 Armored), `mothership_carrier` +1x2 per interceptor |
+| `air_weapons_1` | Air Weapons 1 | `cybernetics_conduit_dome`| 1 | 100 / 100 | 3025 (121s) | — | `flying_saucer` +1x2, `prismatic_saucer` +1 (+1 Armored), `mothership_carrier` +1x2 per interceptor |
 | `air_weapons_2` | Air Weapons 2 | `cybernetics_conduit_dome`| 2 | 150 / 150 | 3625 (145s) | `celestial_beacon_dome` | Same per-level scaling |
 | `air_weapons_3` | Air Weapons 3 | `cybernetics_conduit_dome`| 3 | 200 / 200 | 4200 (168s) | `celestial_beacon_dome` | Same per-level scaling |
 | `air_armor_1` | Air Armor 1 | `cybernetics_conduit_dome`| 1 | 100 / 100 | 3025 (121s) | — | All flying units +1 Life Armor |
