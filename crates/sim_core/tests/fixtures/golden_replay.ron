@@ -56,6 +56,9 @@
 // Re-recorded for WP12 group W5: "blue_armor" (rhino_beetle) and "red_siege" (railgun_crawler)
 // have the CWeapon default backswing of 9 ticks (was 4). Checkpoints 1 to 3 are unchanged; from
 // checkpoint 4 (ticks 151 to 200), their first fights, every checkpoint changed.
+// Re-recorded for WP12 group W7: "blue_armor" (rhino_beetle) throws its acid at 1.05 per tick (was
+// 0.64; the Roach's missile, 18.75 Normal per s). Checkpoints 1 to 4 are unchanged; from
+// checkpoint 5 (ticks 201 to 250), every checkpoint changed.
 (
     checksum_schema: 10,
     seed: 0x5EED_0F_5CAFF1E,
@@ -87,21 +90,21 @@
         0x9a0f00bdb78caef0,
         0x9c03130587ecfe87,
         0x221c4e0d5e453353,
-        0x38fde69c63fd797e,
-        0xf08e5df99b006301,
-        0x1ae2758ab6b3db8c,
-        0x3ea158ca82e4dd84,
-        0xa3ed6cf66f5dfc3f,
-        0xaa7351ecc6deba42,
-        0x0a14990d666e1a53,
-        0x956a6f847b6d4d64,
-        0xedf8e9c7e0827973,
-        0x26c46ed8b9fe2255,
-        0x797c25aaf05c4e4b,
-        0x4f0f8a8a421cbe6c,
-        0xa6b94d5cef37db26,
-        0xd45ea4b710720e2f,
-        0xe5d701bcbbdd7354,
-        0x866d31dde4b91b58,
+        0x720f6d98bc0c98b1,
+        0x3f7064073da94900,
+        0x21b589ae6f19e162,
+        0xd58489659d57698e,
+        0xb74d036ffa95a074,
+        0xcf25ca17385ccb37,
+        0x06ce3d0c550801c8,
+        0xf59c484b6c9dff56,
+        0xeef7776b5b52c481,
+        0xed18788ee771b0f7,
+        0xfac6e887dec8df8a,
+        0x4f7d78b53375da56,
+        0x8c5832d94db08b88,
+        0xccb71a4b1ad12d1b,
+        0x206f465980833b41,
+        0xc272d37f2a910e8b,
     ],
 )

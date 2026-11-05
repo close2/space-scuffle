@@ -1540,3 +1540,93 @@ seeds of record; 7 over all seeds, battle 33's, unchanged).
 
 **Battle 33, 68 seeds: bit-identical.** Both golden replays unchanged (neither spawns a stalker) in debug, release and
 `wasm32-wasip1`. No doc 07 or doc 08 cell states the projectile speed.
+
+### 13.20 W7: projectile speeds that were never sourced
+
+21 values on 15 identities (the audit's group W7, each with its mover and source line): a missile's speed is its
+mover's `MaxSpeed` × 1.4 ÷ 25, and a weapon whose effect chain launches no missile is instant (`None`).
+
+| Change | Identities |
+|---|---|
+| faster missile | `rhino_beetle` 0.64 → 1.05, `shock_golem` 0.64 → 1.12, `astral_vagrant` 1.0 → 1.05, `mortar_stag` 1.0 → 1.05, `thorn_viper` 0.90 → 2.24 (ground and air), `sonic_bat` 0.50 → 1.05 (ground and air), `spore_spire_dome` 0.80 → 1.05 |
+| slower missile | `sky_leviathan` 1.2 → 1.05 (ground and air), `flak_array_dome` 0.80 → 0.56 |
+| missile becomes instant (`None`) | `jet_jumper` (weapon), `colossus_mech` (air weapon), `void_goliath` (weapon) |
+| instant becomes a missile | `sky_bastion` ground 2.24, `hive_matron` ground and `weapon` 2.24 (air 1.2 → 2.24), `tesla_sentinel_dome` ground and air 1.008 |
+
+**Tests restated first.** Two tests named values this group changes, and pass before and after since the commit
+before this one: `combat_correctness_tests.rs::s4_projectile_weapon_applies_every_strike` used the Reaper as "a
+two-strike projectile weapon" (its pistols are instant in the game) and now takes the first shipped archetype with a
+multi-strike projectile weapon without splash or bonus; `weapon_catalog_rules_tests.rs::s16_projectile_speed_must_be_positive`
+edited the text `projectile_speed: Some(0.80)` and now edits the first projectile speed a shipped structure states.
+
+**Whole matrix, 20 seeds.** Compared with the state after W6: **19 battles moved, no expectation failed** (0 on the
+seeds of record; 7 over all seeds, battle 33's, unchanged); winners changed only in battle 31 (10 seeds, both ways).
+
+| Battle | Seeds moved | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|
+| 1b_stalker_vs_2_roaches | 20 | 0.00 – 2.00, same | 197.6 → 194.9 | — / 100.41 (20) → — / 100.39 (20) |
+| 2a_immortal_vs_roach | 20 | 1.00 – 0.00, same | 65.0 → 62.0 | 200.00 (20) / —, same |
+| 2b_immortal_vs_2_roaches | 20 | 1.00 – 0.00, same | 152.0 → 149.0 | 200.00 (20) / —, same |
+| 3_immortal_vs_tank | 20 | 1.00 – 0.00, same | 94.0 → 91.0 | 176.00 (20) / —, same |
+| 4_marauder_vs_roach | 20 | 1.00 – 0.00, same | 196.1 → 193.1 | 35.00 (20) / —, same |
+| 5a_hydra_vs_marine | 20 | 1.00 – 0.00, same | 54.0 → 51.0 | 66.80 (20) / — → 66.75 (20) / — |
+| 5b_hydra_vs_2_marines | 20 | 1.00 – 0.00, same | 114.0 → 111.0 | 19.71 (20) / — → 19.67 (20) / — |
+| 6a_roach_vs_hydra | 20 | 1.00 – 0.00, same | 190.5 → 188.0 | 4.79 (20) / — → 4.80 (20) / — |
+| 6b_2_roaches_vs_hydra | 20 | 2.00 – 0.00, same | 82.8 → 80.0 | 113.67 (20) / — → 112.57 (20) / — |
+| 6c_roach_vs_2_hydras | 20 | 0.00 – 2.00, same | 98.2 → 95.5 | — / 69.00 (20), same |
+| 9b_hellion_vs_roach | 20 | 0.00 – 1.00, same | 189.0 → 187.0 | — / 112.82 (20) → — / 112.79 (20) |
+| 12b_colossus_vs_3_marauders | 20 | 0.00 – 2.00, same | 169.0 → 166.0 | — / 67.53 (19), same |
+| 16a_muta_vs_marine | 20 | 1.00 – 0.00, same | 114.0 → 111.0 | 78.27 (20) / — → 78.10 (20) / — |
+| 24a_roach_vs_5_lings | 17 | 0.00 – 3.00, same | 286.7 → 288.5 | — / —, same |
+| 24b_upgraded_roach_vs_5_lings | 17 | 1.00 – 0.00, same | 328.8 → 328.0 | 24.03 (20) / — → 25.42 (20) / — |
+| 28_100_lings_vs_10_immortals | 20 | 30.05 – 0.00 → 27.00 – 0.00 | 662.7 → 683.4 | 17.93 (2) / — → 30.66 (4) / — |
+| 30_20_roaches_vs_10_immortals | 20 | 0.00 – 10.00, same | 258.6 → 236.9 | — / 134.60 (20) → — / 147.15 (20) |
+| 31_15_marauders_vs_15_stalkers | 20 | 1.25 – 2.05 → 1.80 – 1.90 | 670.4 → 666.9 | 31.50 (2) / — → 80.80 (5) / — |
+| 34_20_hydras_vs_12_mutas | 20 | 19.05 – 0.00 → 19.40 – 0.00 | 195.1 → 183.7 | 90.00 (20) / —, same |
+
+- **Faster missiles** of the Roach, Marauder, Hydralisk and Mutalisk (1b, 2a, 2b, 4, 5a, 5b, 6a to 6c, 9b, 12b, 16a,
+  24a, 24b, 30, 34): the first hits land 2 to 3 ticks sooner, so fights end sooner by about that; winners and
+  survivors do not move except 34 (20 hydralisks against 12 mutalisks: 0.35 more hydralisks survive, the fight ends
+  11 ticks sooner) and 30 (roaches against immortals: 21.7 ticks sooner, the immortals' lead unit keeps 12.6 more
+  life).
+- **The Immortal's shot becomes instant** (2a, 2b, 3, 28, 30): fights end sooner (3: 94 → 91); in 28 (100 zerglings
+  against 10 immortals) the immortals kill faster and 3.05 fewer zerglings survive (30.05 → 27.00).
+- **Battle 31**: the Marauder's faster missile tips it back towards the marauders on 10 seeds, both ways (survivors
+  1.25 – 2.05 → 1.80 – 1.90), within its close-fight expectation.
+- The Reaper's instant pistols, the Thor's instant air weapon, and the Liberator, Queen, Corruptor (`sky_leviathan`), Spore Crawler,
+  Missile Turret and Photon Cannon speeds move no matrix battle; battles 22a and 22b keep their outcome.
+
+With this group the matrix equals the all-corrections measurement of the audit's §7 in every battle except 22a and
+22b, the two reaper battles, which differ only through the deferred R1 (§13.11). **Battle 33, 68 seeds:
+bit-identical.** **`golden_replay.ron` re-recorded from checkpoint 5** (ticks 201 to 250; its `rhino_beetle` squad's
+acid now flies at 1.05); `golden_replay_orders.ron` unchanged. Debug, release and `wasm32-wasip1` reproduce both. No
+doc 07 or doc 08 cell states a projectile speed.
+
+### 13.21 WP12 summary: what was applied, what was deferred
+
+- **Applied:** every class B and C value of the audit's groups P1, P2, P3, U1, U2, M1, R3, S1, S2, R2 and W1 to W7,
+  one of M2's two values, and the class D backswing of `welder_drone` (D2). W8 moved to WP17 (plan Amendment 1).
+- **Deferred, each on a ground of D-7:**
+  - **R1** (`jet_jumper` `hp_regen_per_tick` 0.08 → 0.112): the reference needs a mechanism we do not model, a
+    life-regeneration delay (§13.11; owner question
+    [Q0049](../questions/open/0049-reaper-life-regeneration-delay.md), default: keep 0.08).
+  - **M2, `railgun_crawler` Siege Mode `cast_ticks`** (71; the audit's 72): the **verify** failed: the morph has a
+    random delay (72 to 81 ticks) and unsieging takes 63, so there is no single reference for our one field (§13.7).
+
+  No value was deferred because it moved an expectation.
+- **Expectations re-recorded:** battle `3_immortal_vs_tank` only (W1: blue lead hull 200 → 176, claim rewritten).
+  Battle 33 is bit-identical through the whole package (no corrected value belongs to `pulse_bot` or `psi_grey`), so
+  its comment is unchanged.
+- **Golden replays re-recorded:** `golden_replay.ron` in S1, R2, W1, W2, W3, W4, W5 and W7; `golden_replay_orders.ron`
+  in S1. Each re-recording is described in the fixture's header and reproduced in debug, release and `wasm32-wasip1`.
+- **Tests restated** in a test-only commit before the data commit that needed it, each passing before and after:
+  `upgrades_and_tech_tree_tests::test_metabolic_boost_speed` (U1),
+  `combat_correctness_tests::s2_explicit_focus_fire_survives_nearby_enemy` (S1),
+  `sc2_battle_benchmarks_tests::test_railgun_crawler_declarative_modes_and_siege_splash` (W1),
+  `collision_and_immobility_tests::test_converging_units_respect_speed_cap_and_do_not_vibrate` (W2, with M-21),
+  `combat_correctness_tests::s4_projectile_weapon_applies_every_strike` and
+  `weapon_catalog_rules_tests::s16_projectile_speed_must_be_positive` (W7).
+- **Findings** (remediation plan §4.2): **M-20**, the Immortal's Barrier is not modelled (battle 3); **M-21**, melee
+  units waiting out their cooldown at a contact ring are jostled once per weapon cycle.
+- The final matrix equals the all-corrections measurement of the audit's §7 in every battle except 22a and 22b, the
+  two reaper battles that only the deferred R1 moves.
