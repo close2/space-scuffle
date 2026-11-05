@@ -2,9 +2,9 @@
 
 - **Asked:** 2026-11-05
 - **Blocking:** no
-- **Default until answered:** the Reaper analogue (`jet_jumper`) keeps its life regeneration of 0.08 per tick,
-  applied always. The audit's correction to 0.112 (group R1) is deferred, as plan
-  `2026-11-04-combat-sc2-alignment` D-7 allows for a value whose reference needs a mechanism we do not model.
+- **Default until answered:** option (b), under the standing rule Q0008 (charter §8): plan
+  [`2026-11-05-life-regeneration-delay`](../../plans/2026-11-05-life-regeneration-delay.md) adds the delay and
+  then applies R1.
 
 ## Question
 
