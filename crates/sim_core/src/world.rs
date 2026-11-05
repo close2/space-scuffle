@@ -42,7 +42,7 @@ use rand_chacha::ChaCha8Rng;
 use sim_map::{Pathfinder, PlayerVisionMap, SimMap};
 use sim_types::{
     CombatEventVisual, EntityId, PerPlayer, PlayerId, PlayerUpgradeState, RenderSnapshot,
-    ShapeKind, SimScalar, SimVec2, TickBundle, UnitTypeId,
+    ShapeKind, SimAngle, SimScalar, SimVec2, TickBundle, UnitTypeId,
 };
 use std::collections::BTreeMap;
 
@@ -211,7 +211,7 @@ impl SimWorld {
         world.last_checksum = world.compute_checksum();
         world
     }
-    /// Spawns a mobile unit entity at `pos`.
+    /// Spawns a mobile unit entity at `pos`, facing +x (heading 0).
     ///
     /// # Errors
     /// Returns typed catalog, owner, vitals, allocation or captured-supply failures.
@@ -222,8 +222,27 @@ impl SimWorld {
         owner: PlayerId,
         pos: SimVec2,
     ) -> SimResult<EntityId> {
+        self.spawn_unit_facing(unit_type, owner, pos, SimAngle::ZERO)
+    }
+
+    /// Spawns a mobile unit entity at `pos` with hull and turret facing `heading`.
+    ///
+    /// `heading` is a binary angle (65 536 units per turn), counter-clockwise from +x in the
+    /// world frame. Setup only: the unit appears already turned, spending no turning.
+    ///
+    /// # Errors
+    /// As [`Self::spawn_unit`].
+    pub fn spawn_unit_facing(
+        &mut self,
+        unit_type: UnitTypeId,
+        owner: PlayerId,
+        pos: SimVec2,
+        heading: SimAngle,
+    ) -> SimResult<EntityId> {
         self.validate_supply_ledger()?;
-        let prepared = self.prepare_spawn(unit_type, owner, pos, 0)?;
+        let mut prepared = self.prepare_spawn(unit_type, owner, pos, 0)?;
+        prepared.entity.heading = heading;
+        prepared.entity.turret_angle = heading;
         if matches!(prepared.entity_shape, ShapeKind::BuildingDome { .. }) {
             return Err(crate::production::ProductionInvariant::InvalidDefinition {
                 unit_type,

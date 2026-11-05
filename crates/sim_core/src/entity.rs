@@ -216,8 +216,9 @@ pub struct Entity {
     /// actually achieved. A unit pressing against a wall therefore reads as stationary.
     pub velocity: SimVec2,
     /// Hull facing: a binary angle (65 536 units per turn), counter-clockwise from +x in the
-    /// world frame. Changed only through [`Self::turn_hull_towards`], so it turns at most the
-    /// archetype's `turn_rate` per tick.
+    /// world frame. Set at spawn (`SimWorld::spawn_unit_facing`) and afterwards changed only
+    /// through [`Self::turn_hull_towards`], so it turns at most the archetype's `turn_rate` per
+    /// tick.
     pub heading: SimAngle,
     /// Independent turret aim angle.
     pub turret_angle: SimAngle,

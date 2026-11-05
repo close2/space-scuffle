@@ -27,7 +27,7 @@ use sim_core::catalog::RuntimeCatalogs;
 use sim_core::{ActiveHazardZone, SimCoreError, SimWorld};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
-    EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
+    EntityId, PlayerCommand, PlayerId, SimAngle, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
 };
 
 /// The shipped matchup matrix, `crates/sim_core/tests/fixtures/matchup_matrix.ron`.
@@ -309,8 +309,44 @@ pub fn point(x: f32, y: f32) -> SimVec2 {
     SimVec2::new(SimScalar::from_f32_lossy(x), SimScalar::from_f32_lossy(y))
 }
 
+/// The centre of `side`'s squads as authored: the mean of every unit's grid point, before
+/// jitter, in world units. `None` for a side without units.
+#[must_use]
+pub fn side_centre(side: &Side) -> Option<SimVec2> {
+    let (mut sum_x, mut sum_y, mut count) = (0.0_f64, 0.0_f64, 0_u32);
+    for squad in &side.squads {
+        for index in 0..squad.count {
+            let (row, column) = (index / squad.columns, index % squad.columns);
+            sum_x += f64::from(squad.origin.0) + f64::from(column) * f64::from(squad.spacing);
+            sum_y += f64::from(squad.origin.1) + f64::from(row) * f64::from(squad.spacing);
+            count += 1;
+        }
+    }
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "fixture coordinates are small world positions, well within f32"
+    )]
+    (count > 0).then(|| {
+        point(
+            (sum_x / f64::from(count)) as f32,
+            (sum_y / f64::from(count)) as f32,
+        )
+    })
+}
+
+/// The facing from `from` towards `towards`: a binary angle, counter-clockwise from +x in the
+/// world frame. Heading 0 when there is nothing to face or the two points coincide.
+fn facing(from: SimVec2, towards: Option<SimVec2>) -> SimAngle {
+    towards.map_or(SimAngle::ZERO, |to| {
+        let delta = to - from;
+        SimAngle::atan2(delta.y, delta.x)
+    })
+}
+
 /// Completes `side`'s research for `owner`, then spawns its squads row by row, nudged by
-/// `jitter`. Returns the spawned entities in spawn order.
+/// `jitter`, each unit facing `enemy_centre` (plan `2026-11-04-combat-sc2-alignment` D-8 item
+/// 5: with finite hull turning, a side that spawned facing away would start late, an artefact
+/// of the fixture). Returns the spawned entities in spawn order.
 ///
 /// # Errors
 /// [`MatchupError::Research`], [`MatchupError::UnknownUnit`] or [`MatchupError::Spawn`].
@@ -318,6 +354,7 @@ pub fn spawn_side(
     world: &mut SimWorld,
     owner: PlayerId,
     side: &Side,
+    enemy_centre: Option<SimVec2>,
     jitter: &mut Jitter,
 ) -> Result<Vec<EntityId>, MatchupError> {
     for upgrade in &side.research {
@@ -344,8 +381,9 @@ pub fn spawn_side(
                 squad.origin.0 + column as f32 * squad.spacing + jitter.next_nudge(),
                 squad.origin.1 + row as f32 * squad.spacing + jitter.next_nudge(),
             );
+            let heading = facing(position, enemy_centre);
             let unit = world
-                .spawn_unit(unit_type, owner, position)
+                .spawn_unit_facing(unit_type, owner, position, heading)
                 .map_err(|source| MatchupError::Spawn {
                     unit: squad.unit.clone(),
                     source,
@@ -454,8 +492,9 @@ impl BattleRun {
         )?;
         let mut world = SimWorld::with_catalogs(map, seed, catalogs.units, catalogs.upgrades);
         let mut nudges = Jitter::new(seed, jitter);
-        let blue = spawn_side(&mut world, BLUE, &battle.blue, &mut nudges)?;
-        let red = spawn_side(&mut world, RED, &battle.red, &mut nudges)?;
+        let (blue_centre, red_centre) = (side_centre(&battle.blue), side_centre(&battle.red));
+        let blue = spawn_side(&mut world, BLUE, &battle.blue, red_centre, &mut nudges)?;
+        let red = spawn_side(&mut world, RED, &battle.red, blue_centre, &mut nudges)?;
         // Rule fixture: no shipped unit casts a hazard, so the storm is placed directly.
         if let Some(hazard) = &battle.hazard {
             place_hazard(&mut world, hazard);
@@ -567,6 +606,52 @@ mod tests {
         assert!(!expected.holds(&outcome(1, 1, Some(15.0))));
         assert!(!expected.holds(&outcome(1, 0, Some(9.5))));
         assert!(!expected.holds(&outcome(1, 0, Some(20.5))));
+    }
+
+    /// A side of one squad of `count` units in one row from `origin`, 2 world units apart.
+    fn row(origin: (f32, f32), count: u32) -> Side {
+        Side {
+            squads: vec![Squad {
+                unit: "pulse_bot".to_owned(),
+                count,
+                columns: count,
+                origin,
+                spacing: 2.0,
+            }],
+            order: SideOrder::None,
+            research: Vec::new(),
+            stim: false,
+        }
+    }
+
+    #[test]
+    fn a_side_centre_is_the_mean_of_its_grid_points() {
+        assert_eq!(side_centre(&row((10.0, 20.0), 3)), Some(point(12.0, 20.0)));
+        assert_eq!(side_centre(&row((10.0, 20.0), 0)), None);
+    }
+
+    #[test]
+    fn a_two_group_battle_spawns_each_group_facing_the_others_centre(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let matrix = Matrix::from_ron_str(MATRIX_RON)?;
+        let mut battle = matrix.battle("33_24_marines_vs_12_zealots")?.clone();
+        // Blue west of red, and red north-east of blue: neither faces +x by accident.
+        battle.blue = row((10.0, 10.0), 3);
+        battle.red = row((20.0, 30.0), 2);
+        let run = BattleRun::new(&battle, crate::shipped_catalogs(), 1, 0.0)?;
+        for (units, enemy) in [
+            (&run.blue, point(21.0, 30.0)),
+            (&run.red, point(12.0, 10.0)),
+        ] {
+            for id in units {
+                let unit = run.world.entities.get(id).ok_or("unit missing")?;
+                let delta = enemy - unit.position;
+                let towards = SimAngle::atan2(delta.y, delta.x);
+                assert_eq!(unit.heading, towards, "unit {id:?}");
+                assert_ne!(unit.heading, SimAngle::ZERO, "unit {id:?}");
+            }
+        }
+        Ok(())
     }
 
     #[test]

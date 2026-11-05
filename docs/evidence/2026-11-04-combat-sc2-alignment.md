@@ -1676,3 +1676,14 @@ unresolved), marine survivors 4.03 (SD 3.26).
   both, every checkpoint of both fixtures on this commit equals commit a's. The siege tank's arc is unrestricted, so
   its turret's angle never gated a shot. `golden_replay_orders.ron` unchanged. Debug, release and `wasm32-wasip1`
   reproduce both.
+
+### 14.3 Commit c: matrix battles spawn facing each other
+
+- **Change.** `SimWorld::spawn_unit_facing(unit_type, owner, pos, heading)` (heading a binary angle,
+  counter-clockwise from +x, world frame; hull and turret both start there); `spawn_unit` calls it with heading 0.
+  `sim_fixtures::matchup` spawns every unit of a two-sided battle facing the centre of the other side's authored
+  grid (before jitter, `side_centre`). The golden replays keep heading 0 (plan D-8 item 5).
+- **Test first:** `a_two_group_battle_spawns_each_group_facing_the_others_centre` and
+  `a_side_centre_is_the_mean_of_its_grid_points` (`sim_fixtures::matchup`), red until `side_centre` existed.
+- **Measurement.** Matrix bit-identical to commit b in outcomes (every hull still turns 180° per tick); battle 33
+  bit-identical; both golden replays unchanged in debug, release and `wasm32-wasip1`.
