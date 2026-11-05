@@ -435,8 +435,8 @@
                 is_resource_dropoff: false,
             ),
             veo_prompts: {
-                Idle: "Railgun Crawler: Quad-tracked heavy siege artillery tank with a twin-railgun turret on top, both long rail barrels pointing forward.",
-                Walk: "Railgun Crawler: Heavy tracked advance with dual exhaust smoke vents.",
+                Idle: "Railgun Crawler: Quad-tracked heavy siege artillery tank with a twin-railgun turret on top, both long rail barrels pointing forward, four exposed chunky tracks, smooth armored hull sides without side vents, two exhaust stacks at the rear.",
+                Walk: "Railgun Crawler: Heavy tracked advance, treads churning, smoke from its two rear stacks.",
                 Attack: "Railgun Crawler: High-velocity hypervelocity railgun discharge with blue electric discharge.",
             },
         ),
@@ -585,7 +585,7 @@
             ),
             veo_prompts: {
                 Idle: "Shock Golem: Heavy bipedal combat exoskeleton in gunmetal armor with dual arm-mounted grenade cannons.",
-                Walk: "Shock Golem: Heavy determined stride with hydraulic knee dampening.",
+                Walk: "Shock Golem: Heavy marching steps with hydraulic knee dampening.",
                 Attack: "Shock Golem: Twin explosive shell launch from heavy wrist pods with a concussive puff of smoke at each muzzle.",
             },
         ),
