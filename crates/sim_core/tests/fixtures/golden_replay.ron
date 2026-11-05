@@ -41,6 +41,9 @@
 // per tick (was 0, the Roach's 0.2734 per Normal s). Only checkpoints 6 and 8 to 11 (ticks 251
 // to 300 and 351 to 550) changed; checkpoints 1 to 5, 7 and 12 to 20 are as before (no
 // regenerating beetle's life differs at those checkpoints).
+// Re-recorded for WP12 group W1 (Q0039): "red_siege" (railgun_crawler) fires every 19 ticks in
+// tank mode (was 26, the Normal-time period). Checkpoints 1 to 3 are unchanged; from checkpoint 4
+// (ticks 151 to 200), its first fight after the AttackMove of tick 120, every checkpoint changed.
 (
     checksum_schema: 10,
     seed: 0x5EED_0F_5CAFF1E,
@@ -71,22 +74,22 @@
         0xd3213317d91b8691,
         0x9a0f00bdb78caef0,
         0x9c03130587ecfe87,
-        0x10c3ab5f32e10385,
-        0xc3e287fc8afab72e,
-        0x9eeedcba9003dcd8,
-        0x3d2c3eb1b3b23b79,
-        0x015eb76101ed6b51,
-        0x734ba40a12bc031c,
-        0xf74308fbcd95b953,
-        0x79f0b51da748890e,
-        0x80cc83af974355dc,
-        0xc01b0149b2ed1bed,
-        0xbedb176b52c739a6,
-        0x54c34dca5241b610,
-        0x41b4b7fdfa5bcfc5,
-        0xb0e395f21747b35d,
-        0xede4d89a5fb0265b,
-        0xdbc3b5b3a5396871,
-        0x04b1554b84a7c5da,
+        0xe8beb2c874fd47f7,
+        0x9d9a16e8a06a2047,
+        0xbe62372d5b72bdc6,
+        0x7e166dd040f532c2,
+        0xecc700932e91b3c7,
+        0x9b752664da254878,
+        0x59e665be7b50f639,
+        0x96dafcfbdfc3f8f9,
+        0x98213134a41bc23c,
+        0x49758c2f2a152278,
+        0x38b42df12607e4bc,
+        0xdbe07288f60c7065,
+        0xb80ea029439502b3,
+        0xec7b84a21061fb08,
+        0x4093a04784b70dff,
+        0xcb470bb97e1293b3,
+        0xfeb890eda53dd740,
     ],
 )

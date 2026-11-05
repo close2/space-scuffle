@@ -131,7 +131,7 @@ flowchart TD
 | :- | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :--- | :--- |
 | 1 | **Foundry Core Dome** | `foundry_core_dome` | Command Center | 5x5 | 400 / 0 | 1786 (71.4s) | 1500 / 1 | Trains `welder_drone`. Resource dropoff. Supply +15. Can lift off. | — |
 | 2 | **Orbital Relay Dome** | `orbital_relay_dome` | Orbital Command | 5x5 | 150 / 0 | 625 (25s) | 1500 / 1 | Upgraded from Foundry Core. Unlocks Scanner Sweep, Supply Calldown, Mining Boost. | `assembly_bay_dome` |
-| 3 | **Planetary Bulwark Dome** | `planetary_bulwark_dome` | Planetary Fortress | 5x5 | 150 / 150 | 893 (35.7s) | 1500 / 2 *(5.0.14)* | Upgraded from Foundry Core. Heavy twin Ibiks cannon: 40 dmg / range 6.0 / period 50 ticks. Cannot lift. | `weapons_arsenal_dome` |
+| 3 | **Planetary Bulwark Dome** | `planetary_bulwark_dome` | Planetary Fortress | 5x5 | 150 / 150 | 893 (35.7s) | 1500 / 2 *(5.0.14)* | Upgraded from Foundry Core. Heavy twin Ibiks cannon: 40 dmg / range 6.0 / period 36 ticks. Cannot lift. | `weapons_arsenal_dome` |
 | 4 | **Capacitor Dome** | `capacitor_dome` | Supply Depot | 2x2 | 100 / 0 | 536 (21.4s) | 400 / 1 | Logistics node. Supply +8. Retractable sub-terrain gate allows allied pass-through. | — |
 | 5 | **Plasma Siphon Dome** | `plasma_siphon_dome` | Refinery | 3x3 | 75 / 0 | 536 (21.4s) | 500 / 1 | Placed on Vespene Geyser. Allows 3 Welder Drones to harvest gas. | — |
 | 6 | **Assembly Bay Dome** | `assembly_bay_dome` | Barracks | 3x3 | 150 / 0 | 1161 (46.4s) | 1000 / 1 | Trains `pulse_bot`, `shock_golem`, `jet_jumper`, `specter_android`. Can lift off. | `foundry_core_dome` |

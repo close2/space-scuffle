@@ -108,7 +108,7 @@
                 bonus_armored: 0.0,
                 bonus_light: 0.0,
                 attacks_count: 1,
-                period_ticks: 50,
+                period_ticks: 36,
                 damage_point_ticks: 3,
                 backswing_ticks: 5,
                 splash: None,

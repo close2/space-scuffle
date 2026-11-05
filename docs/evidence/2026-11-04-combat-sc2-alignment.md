@@ -1267,3 +1267,39 @@ failed** (0 on the seeds of record; 7 over all seeds, battle 33's, unchanged).
 `rhino_beetle` squad regenerates now); `golden_replay_orders.ron` unchanged. Debug,
 release and `wasm32-wasip1` reproduce both fixtures. Doc 03 already states 0.38 per Faster second; doc 07 and doc 08
 state no rate.
+
+### 13.13 W1: two weapon periods copied in Normal time (class B)
+
+| Identity | Field | Before | After | Source (Normal s ÷ 1.4 × 25) |
+|---|---|---|---|---|
+| `railgun_crawler` (Siege Tank, tank mode) | `weapon.period_ticks` | 26 | **19** | 1.04, `liberty` WeaponData:242 (18.57) |
+| `planetary_bulwark_dome` (Planetary Fortress) | `ground_weapon.period_ticks` | 50 | **36** | 2, `liberty` WeaponData:139 (35.71) |
+
+**Test restated first.** `sc2_battle_benchmarks_tests.rs::test_railgun_crawler_declarative_modes_and_siege_splash`
+asserted the period 26 and read two marines' life after 30 ticks, assuming one tank-mode shot; at 19 ticks two shots
+fit. In the commit before this one it records both lives on the tick the first shot lands (same window, same
+assertions: 45 → 30 and 45) and asserts that tank mode fires faster than the 54-tick siege cannon. It passes before
+and after.
+
+**Whole matrix, 20 seeds.** Compared with the state after R2: **1 battle moved, and its expectation was
+re-recorded.**
+
+| Battle | Seeds moved | Survivors blue – red | End tick | Blue lead hull, before → after | Failures of record / all |
+|---|---|---|---|---|---|
+| 3_immortal_vs_tank | 20 | 1.00 – 0.00, same | 89.0, same | 200.00 → **176.00** | 0 / 0 → 4 / 20 before re-recording, 0 / 0 after |
+
+The tank now lands five shots (25 each; the immortal's 100 shields take four) before the immortal kills it, so the
+fifth reaches its life: 25 − 1 armour = 24, 200 → 176 on every seed. The end tick does not move: the immortal's
+cadence decides it. In StarCraft II the immortal would keep its life: its Barrier, autocast on taking damage, absorbs
+up to 100 damage for 3 Normal s (`void` BehaviorData:97–101, `voidmulti` BehaviorData:278, cooldown 45 s in
+`voidmulti` AbilData:591). Barrier is not modelled; that is a real gap, not a property of this value, so it is
+recorded as finding **M-20** of the remediation plan (§4.2) rather than masked. The expectation of battle 3 is
+re-recorded to the measured outcome (`blue_lead_hp: (176, 176)`, the smallest range on the seeds of record; it holds
+on all 20), and its claim now says the immortal loses its shields and one shot of life because Barrier is missing.
+Expectation failures after re-recording: 0 on the seeds of record; 7 over all seeds (battle 33's, unchanged). The
+Planetary Fortress is in no battle.
+
+**Battle 33, 68 seeds: bit-identical.** **`golden_replay.ron` re-recorded from checkpoint 4** (ticks 151 to 200,
+when its `railgun_crawler` squad first fights); `golden_replay_orders.ron` unchanged. Debug, release and
+`wasm32-wasip1` reproduce both fixtures. Doc 07's Siege Tank weapon cell (18 → 19 ticks) and doc 08's Planetary
+Fortress row (period 50 → 36 ticks) are corrected.
