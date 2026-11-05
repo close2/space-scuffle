@@ -4,13 +4,13 @@
 //! # Responsibility
 //! Records each event of a generation run as one JSON object per line, and reads a ledger back
 //! into a [`LedgerHistory`]: what each clip's last request achieved, which operations can be
-//! resumed, which downloads await review, which failure kinds were seen, and how many
-//! generations were started in a time window.
+//! resumed, which downloads await review, which failure kinds were seen, and which model each
+//! paid start used.
 //!
 //! # How it fits
 //! `generate-veo` writes `request_started` before it starts a paid request, so a crash cannot
 //! hide a spend. The plan (`veo_plan`) reads the history to decide which clips to reuse, resume,
-//! leave for review or generate; the budget check (`budget`) sums its starts; `install-clip`
+//! leave for review or generate; the budget check (`budget`) prices its paid starts; `install-clip`
 //! accepts only a clip the ledger says was downloaded. The plan commits the ledger to the
 //! repository (`docs/evidence/veo/ledger.jsonl`): operation names are not secrets.
 //!
@@ -30,7 +30,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// Seconds in one day, for ledger time windows.
+/// Seconds in one day, for UTC date formatting.
 pub const SECONDS_PER_DAY: u64 = 86_400;
 
 /// Failures to read or write the ledger.
@@ -487,8 +487,8 @@ pub struct ClipHistory {
 pub struct LedgerHistory {
     clips: BTreeMap<(String, AnimState), ClipHistory>,
     failure_kinds: BTreeSet<String>,
-    /// `(unix seconds, request id)` of every start request.
-    starts: Vec<(u64, String)>,
+    /// `(request id, model)` of every start request, in ledger order.
+    starts: Vec<(String, String)>,
     quota_refused: BTreeSet<String>,
 }
 
@@ -515,9 +515,11 @@ impl LedgerHistory {
         let (slug, state) = record.event.clip();
         let clip = self.clips.entry((slug.to_string(), state)).or_default();
         match &record.event {
-            LedgerEvent::RequestStarted { request_id, .. } => {
+            LedgerEvent::RequestStarted {
+                request_id, model, ..
+            } => {
                 clip.paid_attempts += 1;
-                self.starts.push((record.unix_seconds, request_id.clone()));
+                self.starts.push((request_id.clone(), model.clone()));
             }
             LedgerEvent::OperationNamed {
                 operation, model, ..
@@ -584,16 +586,14 @@ impl LedgerHistory {
         self.failure_kinds.contains(kind)
     }
 
-    /// Generations started at or after `since_unix_seconds`, excluding starts the service
-    /// refused for quota (those cost nothing).
-    #[must_use]
-    pub fn generations_since(&self, since_unix_seconds: u64) -> u32 {
-        let count = self
-            .starts
+    /// The model of every start that may have cost a generation, in ledger order: every
+    /// `request_started` line except those the service refused for quota (those cost nothing).
+    /// A start that failed ambiguously counts, because it may have started paid work.
+    pub fn paid_start_models(&self) -> impl Iterator<Item = &str> {
+        self.starts
             .iter()
-            .filter(|(time, id)| *time >= since_unix_seconds && !self.quota_refused.contains(id))
-            .count();
-        u32::try_from(count).unwrap_or(u32::MAX)
+            .filter(|(id, _)| !self.quota_refused.contains(id))
+            .map(|(_, model)| model.as_str())
     }
 }
 

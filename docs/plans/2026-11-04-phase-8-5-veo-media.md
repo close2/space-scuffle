@@ -36,7 +36,7 @@ download path (D-5).
 | WP3 | Preflight and a one-clip pilot | 1 | S (half a day, mostly waiting) | WP1, WP2 |
 | WP4 | Batch 1: the five Phase 5 identities; replace the Q0002 fixtures | 9 (plus at most 3 retries) | M (1 to 2 days) | WP3 accepted |
 | WP5 | Batch 2: the mineral path (B-1 replacements) and the town hall's missing state; strict audit passes; Phase 8 exit | 9 (plus at most 3 retries) | M (1 to 2 days) | WP4 |
-| WP6 | Expansion batches 3 to 5: the rest of the Automaton faction, by value, within the weekly limit | about 49 (plus at most 5 retries per batch) | M per batch | WP5 |
+| WP6 | Expansion batches 3 to 5: the rest of the Automaton faction, by value, within the total budget (D-12) | about 49 (plus at most 5 retries per batch) | M per batch | WP5 |
 | WP7 | Records | No | S | WP5 (and again after each WP6 batch) |
 
 **Generation count.** The required set (WP3 to WP5) needs **19 clips**: 1 pilot plus 9 in batch 1 (the pilot's clip
@@ -45,7 +45,7 @@ is one of batch 1's ten) and 9 in batch 2, plus at most 6 retries. The whole Aut
 
 **Order and parallelism.** WP1 and WP2 run in parallel (two worktrees; they own different files, D-9). WP3 to WP5 are
 strictly sequential and each ends with a review before the next spends anything. WP6 runs one batch per session,
-paced by the weekly limit (D-4).
+within the total budget (D-12; Amendment 1 removed the weekly limit).
 
 ---
 
@@ -196,17 +196,19 @@ not secrets, and the budget check (D-4) and the provenance records (D-6) read it
 
 ### D-4. Budget: hard caps, quota stops, no blind retries
 
-The owner believes the allowance is a weekly limit. A refused request (quota) costs nothing; a generated clip that
-cannot be used costs a generation. So:
+A refused request (quota) costs nothing; a generated clip that cannot be used costs a generation. So (as amended by
+D-12, §8: the only limit of our own is the total spend):
 
 - **`--max-generations N` is required** for any non-dry run. The tool counts the clips it would start (D-1) and
-  refuses if the run needs more than N. It never starts more than N in one invocation, retries included.
-- **Rolling budget.** `--weekly-budget M` (default from `assets/media/veo_budget.ron`, a non-secret data file;
-  initial value from Q0024's default): the tool sums `request_started` lines of the last 7 days in the ledger and
-  refuses a run that would exceed M.
+  refuses if the run needs more than N. It never starts more than N in one invocation, retries included. N is the
+  run's stated intent, not a cap: there is no per-run maximum.
+- **Total budget** (D-12, replacing the rolling weekly budget of WP1): the tool prices every accepted
+  `request_started` line of the ledger from `assets/media/veo_budget.ron` (a non-secret data file) and refuses a run
+  whose N generations would take the total above `total_budget_usd_cents` ($200.00).
 - **Quota stop.** The first start request refused with HTTP 429 and an error `status` of `RESOURCE_EXHAUSTED` (or a
   message naming a quota) ends the whole run: the tool writes `quota_refused`, starts nothing more, and exits with a
-  distinct exit code (3) so the agent knows to wait for the next window instead of retrying. The existing transient
+  distinct exit code (3), saying it is Google's limit, so the agent knows to wait for Google's quota instead of
+  retrying. The existing transient
   429 backoff stays for polling only; for a start request, the first 429 that is a quota refusal is final.
 - **No automatic regeneration.** A filtered or failed operation is recorded and the run moves to the next clip.
   Regenerating a clip is a separate invocation after a human-readable reason is written (D-7).
@@ -380,8 +382,9 @@ log is safe to read: the tool prints no secret (WP1's test proves it).
    - `validate-prompts` rejects a missing prompt, the fallback, an over-long prompt, a placeholder, a deny-listed
      term, a missing keyframe; spends nothing (the fake server sees no request);
    - ledger: every event of a fake run is written, in order; a fake key never appears in ledger, stdout or stderr;
-   - budget: `--max-generations` missing is an error; a run needing N+1 is refused before any request; the rolling
-     7-day sum from a fixture ledger refuses an over-budget run;
+   - budget: `--max-generations` missing is an error; a run needing N+1 is refused before any request; the total
+     spend from a fixture ledger refuses an over-budget run (D-12; WP1 tested a rolling 7-day sum, which WP8
+     replaced);
    - quota stop: the fake server answers the second start with 429 `RESOURCE_EXHAUSTED`; exactly one generation is
      recorded, `quota_refused` is written, exit code 3;
    - stop on `gcsUri`, on `filtered`, on a new failure kind: the run ends after recording, the operation response is
@@ -513,22 +516,22 @@ Q0001's and Q0002's resolutions are written by whoever closes those questions, c
 | The key fails live (header never tried) | Free preflight (D-5) before the pilot |
 | Results come back as `gcsUri` | Pilot is one generation; the run stops; ledger keeps the URI; `--import` path |
 | A structure is generated with Walk/Attack and still shows "No approved media" | D-1, tested in WP1 |
-| Weekly limit wasted on failures | Prompt validation and dry run first; caps; quota stop; stop on the unexpected; no automatic regeneration (D-4) |
+| Budget wasted on failures | Prompt validation and dry run first; the total budget (D-12); quota stop; stop on the unexpected; no automatic regeneration (D-4) |
 | States of one identity look like different objects | Keyframe chaining (D-7) |
 | The key leaks into a log or the ledger | Typed ledger events; a test with a fake key over a whole fake run; agents never read key files |
 | The look is not what the owner wants | Q0026 with the pilot's sheet; style is data, so a change is a data edit |
 | Content filter refuses a prompt | Deny list; one filtered result stops the run; prompt reworded before a retry |
 | Repository growth | D-8 estimate; Q0025 |
 | ffmpeg version changes an atlas on rebake | Provenance records the ffmpeg version; the audit verifies hashes of committed files, not a rebake |
-| Weekly allowance is actually per-second billing on a cloud account | Q0024 asks; caps bound the spend either way |
+| Weekly allowance is actually per-second billing on a cloud account | Q0024 answered: paid credit; the total budget bounds the spend (D-12) |
 
 ---
 
 ## 6. Decisions for the owner
 
-- **Q0024 (new, not blocking):** how is the key billed, and what weekly cap should agents keep? Default: treat it as
-  a weekly allowance of unknown size: at most 12 generations per invocation, at most 25 per rolling 7 days, and stop
-  at the first quota refusal.
+- **Q0024 (closed):** how is the key billed, and what weekly cap should agents keep? The planning default was 12
+  generations per invocation and 25 per rolling 7 days; the owner's final answer (2026-11-05) is a single limit of
+  $200.00 total spend and no weekly, run or batch cap (D-12, §8).
 - **Q0025 (new, not blocking):** commit generated media as plain git blobs or move media to Git LFS? Default: plain
   blobs for the required set (about 160 MB); ask again before batch 3.
 - **Q0026 (new, not blocking):** who accepts the look of a clip? Default: the agent accepts against D-7's written
