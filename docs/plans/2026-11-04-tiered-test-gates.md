@@ -724,3 +724,14 @@ on 16 cores was 9 to 410.
   during clippy), in `main-merge` and `main-full` target directories that consecutive gates share. Clearing
   `debug/incremental` and rerunning was green each time. WP6a automates exactly that one retry; it does not turn
   incremental compilation off, because the warm rebuild is what keeps `quick` and `package` fast.
+
+## Amendment 3 (orchestrator, 2026-11-05): test a tree once (owner, Q0055)
+
+- `cargo gate merge` and `cargo gate full` first look for a green stamp whose recorded tree equals `HEAD^{tree}`
+  (clean working tree only). `full` accepts a green `full` stamp or a green `package` stamp of the same tree; `merge`
+  accepts any green `package`, `merge` or `full` stamp of the same tree. If one exists, the tier prints which stamp
+  it reuses and exits green without building, and writes its own stamp that names the reused one. Otherwise it runs
+  as before. `quick` and `package` are unchanged (an agent's package run is the test of record).
+- Tests first: a stamp for the same tree is reused; a stamp for another tree, a red stamp, or a dirty working tree
+  is not; the reuse message names the stamp. CI is unchanged and still runs the complete suite on every push.
+

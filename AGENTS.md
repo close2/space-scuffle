@@ -134,9 +134,14 @@ Code without tests is considered incomplete.
      and the golden replays in release and on `wasm32-wasip1` for simulation changes. Its stamp goes in the
      hand-back.
    - `cargo gate merge <branch>`: the orchestrator, for each merge to `main`.
-   - `cargo gate full`: the full gate, on `main` before every push that contains a crate change, and on CI. Push
-     only a commit with a green full stamp. When it is red, fix forward or revert within an hour, and add the
-     missing catalog rule.
+   - `cargo gate full`: the full gate, on `main` before a push that contains a crate change, and on CI. Push only a
+     commit whose tree has a green stamp. When it is red, fix forward or revert within an hour, and add the missing
+     catalog rule.
+   - **Test a tree once.** A tier passes at once, without building or running anything, when its tree already has a
+     green stamp of that tier or a stricter one; a green `package` stamp counts for `merge` and `full` when the
+     agent merged `main` right before its gate and nothing landed since (the merged tree is the tested tree). Merge
+     branches one at a time in that order, batch pushes to a few a day, and run at most one or two building agents
+     at once (owner, Q0055).
    - **Full gate** (what `cargo gate full` and CI run):
      - `cargo fmt --all -- --check`
      - `cargo clippy --workspace --all-targets --locked -- -D warnings`
