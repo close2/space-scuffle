@@ -556,6 +556,7 @@ parses the `cargo test` output), so CI shows the same class report as the VM. No
 | WP4 | Historical replay: for each of the 45 merges since 2026-11-03 and the 7 red runs of §2.5, `cargo gate explain <merge>^1..<merge>` must select every target that failed in that package's logged runs; record the table in this plan's §11 and fix the rules until it passes | WP3 | `cargo gate package` + complete suite once |
 | WP5 | Tiers `quick`, `package`, `merge`; stamps; red-rule suspect list; charter §4.3 text (§9.1), C16 change and C22 row (§9.2); `.cargo/config.toml` alias; CI timing summary | WP2, WP3, WP4 | complete suite (the last package gated the old way) |
 | WP6 | Cheaper suite: `opt-level = 1` measurement for `client` with its acceptance rule; the duplicate slug scan in `round2_visual_tests` versus C5; the load-sensitive threshold at `skirmish_match_tests.rs:347` (§2.6) | WP5 | `cargo gate package` |
+| WP6a | Compiler-crash retry (Amendment 1, D5): when a build or clippy step's log contains `the compiler unexpectedly panicked`, the runner deletes that target directory's `debug/incremental` (and `release/incremental` for release steps), reruns the step once, and records the retry in the result table and the stamp; a second crash stays red. Unit test with a fake step | WP5 | `cargo gate package` |
 | WP7 | One week of use: compare catalog misses, `full` red runs and gate time per package against §7; adjust the `fast` boundary and the default jobs; record in §11 | WP5 | — |
 
 Each WP has its tests written first and seen to fail where it adds behaviour, per §4.
@@ -632,3 +633,8 @@ What WP5 added, and where it departs from the text above:
 - **D3. No test is removed or ignored for speed.** WP6 removes the slug scan only if it duplicates C5.
 - **D4. Not in scope:** consolidating client test binaries (Q0013, Q0034); `cargo-nextest` (§6.1); sharing one
   target directory between agents; making individual slow tests faster beyond WP6.
+- **D5. Amendment 1 (orchestrator, 2026-11-05): compiler crashes are retried once.** On 2026-11-04/05 three gate runs
+  went red only because rustc 1.99 panicked on a corrupted incremental cache (`try_mark_green`; `attrs_for_def`
+  during clippy), in `main-merge` and `main-full` target directories that consecutive gates share. Clearing
+  `debug/incremental` and rerunning was green each time. WP6a automates exactly that one retry; it does not turn
+  incremental compilation off, because the warm rebuild is what keeps `quick` and `package` fast.
