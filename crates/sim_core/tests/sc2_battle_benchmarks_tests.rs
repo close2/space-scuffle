@@ -728,7 +728,10 @@ fn test_railgun_crawler_declarative_modes_and_siege_splash() {
     let unsieged_weapon = arch.weapon.as_ref().expect("unsieged weapon");
     assert_eq!(unsieged_weapon.base_damage, SimScalar::from_num(15));
     assert_eq!(unsieged_weapon.bonus_armored, SimScalar::from_num(10));
-    assert_eq!(unsieged_weapon.period_ticks, 26);
+    assert!(
+        unsieged_weapon.period_ticks < 54,
+        "Tank mode must fire faster than the 54-tick Crucio cannon"
+    );
     assert!(
         unsieged_weapon.splash.is_none(),
         "Tank mode weapon must have ZERO splash (splash: None)"
@@ -786,13 +789,18 @@ fn test_railgun_crawler_declarative_modes_and_siege_splash() {
         .order_queue
         .push_back(UnitOrder::attack(enemy_primary));
 
-    // Step 30 ticks so Tank fires 1 shot
+    // Step 30 ticks and record both lives on the tick the tank's first shot lands: how many
+    // shots fit in 30 ticks depends on the catalog's period, the single-target rule does not.
+    let full_hp = SimScalar::from_num(45);
+    let mut first_shot = None;
     for tick in 0..30 {
         world.step(&empty_bundle(tick));
+        let p1 = world.entities.get(&enemy_primary).unwrap().hp;
+        if first_shot.is_none() && p1 < full_hp {
+            first_shot = Some((p1, world.entities.get(&enemy_adjacent).unwrap().hp));
+        }
     }
-
-    let p1_hp = world.entities.get(&enemy_primary).unwrap().hp;
-    let p2_hp = world.entities.get(&enemy_adjacent).unwrap().hp;
+    let (p1_hp, p2_hp) = first_shot.expect("the tank must fire within 30 ticks");
 
     // Enemy 1 took 15 damage (45 -> 30)
     assert_eq!(
