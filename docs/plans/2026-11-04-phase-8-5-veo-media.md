@@ -36,7 +36,7 @@ download path (D-5).
 | WP3 | Preflight and a one-clip pilot | 1 | S (half a day, mostly waiting) | WP1, WP2 |
 | WP4 | Batch 1: the five Phase 5 identities; replace the Q0002 fixtures | 9 (plus at most 3 retries) | M (1 to 2 days) | WP3 accepted |
 | WP5 | Batch 2: the mineral path (B-1 replacements) and the town hall's missing state; strict audit passes; Phase 8 exit | 9 (plus at most 3 retries) | M (1 to 2 days) | WP4 |
-| WP6 | Expansion batches 3 to 5: the rest of the Automaton faction, by value, within the weekly limit | about 49 (plus at most 5 retries per batch) | M per batch | WP5 |
+| WP6 | Expansion batches 3 to 5: the rest of the Automaton faction, by value, within the total budget (D-12) | about 49 (plus at most 5 retries per batch) | M per batch | WP5 |
 | WP7 | Records | No | S | WP5 (and again after each WP6 batch) |
 
 **Generation count.** The required set (WP3 to WP5) needs **19 clips**: 1 pilot plus 9 in batch 1 (the pilot's clip
@@ -45,7 +45,7 @@ is one of batch 1's ten) and 9 in batch 2, plus at most 6 retries. The whole Aut
 
 **Order and parallelism.** WP1 and WP2 run in parallel (two worktrees; they own different files, D-9). WP3 to WP5 are
 strictly sequential and each ends with a review before the next spends anything. WP6 runs one batch per session,
-paced by the weekly limit (D-4).
+within the total budget (D-12; Amendment 1 removed the weekly limit).
 
 ---
 
@@ -196,17 +196,19 @@ not secrets, and the budget check (D-4) and the provenance records (D-6) read it
 
 ### D-4. Budget: hard caps, quota stops, no blind retries
 
-The owner believes the allowance is a weekly limit. A refused request (quota) costs nothing; a generated clip that
-cannot be used costs a generation. So:
+A refused request (quota) costs nothing; a generated clip that cannot be used costs a generation. So (as amended by
+D-12, §8: the only limit of our own is the total spend):
 
 - **`--max-generations N` is required** for any non-dry run. The tool counts the clips it would start (D-1) and
-  refuses if the run needs more than N. It never starts more than N in one invocation, retries included.
-- **Rolling budget.** `--weekly-budget M` (default from `assets/media/veo_budget.ron`, a non-secret data file;
-  initial value from Q0024's default): the tool sums `request_started` lines of the last 7 days in the ledger and
-  refuses a run that would exceed M.
+  refuses if the run needs more than N. It never starts more than N in one invocation, retries included. N is the
+  run's stated intent, not a cap: there is no per-run maximum.
+- **Total budget** (D-12, replacing the rolling weekly budget of WP1): the tool prices every accepted
+  `request_started` line of the ledger from `assets/media/veo_budget.ron` (a non-secret data file) and refuses a run
+  whose N generations would take the total above `total_budget_usd_cents` ($200.00).
 - **Quota stop.** The first start request refused with HTTP 429 and an error `status` of `RESOURCE_EXHAUSTED` (or a
   message naming a quota) ends the whole run: the tool writes `quota_refused`, starts nothing more, and exits with a
-  distinct exit code (3) so the agent knows to wait for the next window instead of retrying. The existing transient
+  distinct exit code (3), saying it is Google's limit, so the agent knows to wait for Google's quota instead of
+  retrying. The existing transient
   429 backoff stays for polling only; for a start request, the first 429 that is a quota refusal is final.
 - **No automatic regeneration.** A filtered or failed operation is recorded and the run moves to the next clip.
   Regenerating a clip is a separate invocation after a human-readable reason is written (D-7).
@@ -380,8 +382,9 @@ log is safe to read: the tool prints no secret (WP1's test proves it).
    - `validate-prompts` rejects a missing prompt, the fallback, an over-long prompt, a placeholder, a deny-listed
      term, a missing keyframe; spends nothing (the fake server sees no request);
    - ledger: every event of a fake run is written, in order; a fake key never appears in ledger, stdout or stderr;
-   - budget: `--max-generations` missing is an error; a run needing N+1 is refused before any request; the rolling
-     7-day sum from a fixture ledger refuses an over-budget run;
+   - budget: `--max-generations` missing is an error; a run needing N+1 is refused before any request; the total
+     spend from a fixture ledger refuses an over-budget run (D-12; WP1 tested a rolling 7-day sum, which WP8
+     replaced);
    - quota stop: the fake server answers the second start with 429 `RESOURCE_EXHAUSTED`; exactly one generation is
      recorded, `quota_refused` is written, exit code 3;
    - stop on `gcsUri`, on `filtered`, on a new failure kind: the run ends after recording, the operation response is
@@ -491,7 +494,7 @@ counts (§6), and the keyframe chaining of D-7 follows its D-3.
 ### WP6: Expansion batches 3 to 5
 
 One batch per session, in §2.4's order (3, 4, 5); within a batch, identities in the listed order, so a quota stop
-leaves the most valuable ones done. Each batch: prompts, validation, dry run, generate within the rolling budget,
+leaves the most valuable ones done. Each batch: prompts, validation, dry run, generate within the total budget (Amendment 1),
 review, install, bake, provenance, add the identities to `required_set.ron` under tier `expansion`, flip any test
 that named them as lacking media, evidence file. A quota stop ends the session; the next session resumes with the
 same command (the ledger and operation records make it idempotent). The order may be revised by the owner at any
@@ -513,22 +516,22 @@ Q0001's and Q0002's resolutions are written by whoever closes those questions, c
 | The key fails live (header never tried) | Free preflight (D-5) before the pilot |
 | Results come back as `gcsUri` | Pilot is one generation; the run stops; ledger keeps the URI; `--import` path |
 | A structure is generated with Walk/Attack and still shows "No approved media" | D-1, tested in WP1 |
-| Weekly limit wasted on failures | Prompt validation and dry run first; caps; quota stop; stop on the unexpected; no automatic regeneration (D-4) |
+| Budget wasted on failures | Prompt validation and dry run first; the total budget (D-12); quota stop; stop on the unexpected; no automatic regeneration (D-4) |
 | States of one identity look like different objects | Keyframe chaining (D-7) |
 | The key leaks into a log or the ledger | Typed ledger events; a test with a fake key over a whole fake run; agents never read key files |
 | The look is not what the owner wants | Q0026 with the pilot's sheet; style is data, so a change is a data edit |
 | Content filter refuses a prompt | Deny list; one filtered result stops the run; prompt reworded before a retry |
 | Repository growth | D-8 estimate; Q0025 |
 | ffmpeg version changes an atlas on rebake | Provenance records the ffmpeg version; the audit verifies hashes of committed files, not a rebake |
-| Weekly allowance is actually per-second billing on a cloud account | Q0024 asks; caps bound the spend either way |
+| Weekly allowance is actually per-second billing on a cloud account | Q0024 answered: paid credit; the total budget bounds the spend (D-12) |
 
 ---
 
 ## 6. Decisions for the owner
 
-- **Q0024 (new, not blocking):** how is the key billed, and what weekly cap should agents keep? Default: treat it as
-  a weekly allowance of unknown size: at most 12 generations per invocation, at most 25 per rolling 7 days, and stop
-  at the first quota refusal.
+- **Q0024 (closed):** how is the key billed, and what weekly cap should agents keep? The planning default was 12
+  generations per invocation and 25 per rolling 7 days; the owner's final answer (2026-11-05) is a single limit of
+  $200.00 total spend and no weekly, run or batch cap (D-12, §8).
 - **Q0025 (new, not blocking):** commit generated media as plain git blobs or move media to Git LFS? Default: plain
   blobs for the required set (about 160 MB); ask again before batch 3.
 - **Q0026 (new, not blocking):** who accepts the look of a clip? Default: the agent accepts against D-7's written
@@ -578,3 +581,42 @@ removed. `welder_drone` Cast has its own pin, and `welder_drone` is letterboxed.
    (`LegacyUnverified`). They are outside the required set and this plan's scope.
 5. **CI.** No CI run covers batch 2 yet (`main` was last pushed at `ab2042c`). The run id of the next push of
    `main` goes in the remediation plan's Phase 8 exit status.
+
+## 8. Amendment 1 (orchestrator, 2026-11-05): the only limit is total spend
+
+**Owner (chat, 2026-11-05):** "the only bro limit you need to take into account are the 200$. no weekly, round or
+batch limit (unless it's a limit dictated by Google)". This replaces the per-run cap (Q0024's 12) and the rolling
+7-day cap (Q0024's 25, Q0047's 60). It is recorded in Q0024's Answer.
+
+### D-12. Budget rule
+
+- **One limit:** the total list-price cost of every generation the service accepted, summed from the ledger
+  (`request_started` lines; a start refused for quota costs nothing, as today), plus the cost of the generations a run
+  is about to start, must not exceed **$200.00**. The owner's earlier allowance was 200 EUR; dollars are the smaller
+  amount, so the cap is stated in US cents: `total_budget_usd_cents: 20000`.
+- **Price per generation** is data, not code: a table in `assets/media/veo_budget.ron` keyed by model id (today
+  `veo-3.1-fast-generate-001`: 40 cents for a 4 s 720p clip with sound, the list price the batch evidence uses). A
+  `request_started` line whose model has no price is an error (typed), never a free generation.
+- **No run, batch or window cap of our own.** `max_generations_per_run`, `weekly_generations`, `window_days`,
+  `--weekly-budget` and the `AboveRunCap` / `WindowExceeded` errors are removed. `--max-generations` stays required:
+  it is the run's stated intent (what the dry run prints and the ledger records), not a limit, and a run still
+  stops when it reaches it.
+- **Google's limits:** quota and rate-limit responses keep their current handling (backoff, then a clean stop that
+  the next run resumes); the stop message says it is Google's limit.
+- **Reporting:** every run prints spent / remaining in dollars before and after, and the dry run prints the cost of
+  the planned generations.
+
+### WP8: Total-spend budget (code + data; no spend)
+
+1. Tests first in `crates/asset_baker/src/budget.rs` and `crates/asset_baker/tests/veo_cli_tests.rs`: a run that
+   would cross $200.00 by one generation is refused with a typed `BudgetError::TotalExceeded { spent_cents,
+   needed_cents, budget_cents }`; exactly reaching it is allowed; 13 or more generations in one run and more than 60
+   in seven days are allowed; an unpriced model in the ledger is a typed error; the shipped budget file loads with
+   20000 cents and the price table.
+2. Replace `BudgetConfig`'s fields, the ledger summation (`used_in_window` becomes the total spent in cents), the
+   `generate-veo` arguments and messages, the budget file and its comment, and the docs that state the old caps
+   (this plan's §2/D-sections that name 12 or 60, `docs/evidence/veo/*` only where they state a current rule).
+3. Gate: `cargo gate package` once after merging main.
+4. Close Q0024 with a Resolution naming the commit (`git mv` to `closed/`).
+
+WP6 (expansion) may start after WP8 merges. Q0025 (storage of the expansion media) is unaffected by this amendment.

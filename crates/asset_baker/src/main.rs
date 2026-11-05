@@ -38,7 +38,7 @@
     clippy::unnecessary_debug_formatting
 )]
 
-use asset_baker::budget::{check_spend, BudgetConfig, SpendRequest, BUDGET_FILE};
+use asset_baker::budget::{check_spend, format_usd, BudgetConfig, SpendRequest, BUDGET_FILE};
 use asset_baker::clip_review::{self, DEFAULT_FFMPEG_PATH};
 use asset_baker::ffmpeg_importer::{frames_per_state, FrameSpec, DEFAULT_FFPROBE_PATH};
 use asset_baker::framing::{BakeFraming, DEFAULT_UNIT_FPS, DEFAULT_UNIT_FRAME_SIZE};
@@ -115,16 +115,13 @@ struct GenerateArgs {
     #[arg(short, long, default_value = asset_baker::DEFAULT_VEO_MODEL)]
     model: String,
 
-    /// Most generations this run may start, retries included. Required for a paid run.
+    /// Most generations this run may start, retries included. Required for a paid run: the
+    /// run's stated intent, charged in full against the total budget before it starts.
     #[arg(long)]
     max_generations: Option<u32>,
 
-    /// Generations allowed in the rolling window (default: `weekly_generations` in the budget
-    /// file).
-    #[arg(long)]
-    weekly_budget: Option<u32>,
-
-    /// Budget file (default: `<assets>/media/veo_budget.ron`).
+    /// Budget file: total budget and price per generation (default:
+    /// `<assets>/media/veo_budget.ron`).
     #[arg(long)]
     budget_file: Option<PathBuf>,
 
@@ -882,26 +879,36 @@ fn run_generate_veo(assets: Option<&Path>, args: &GenerateArgs) -> RunResult {
         .clone()
         .unwrap_or_else(|| planned.root.join(BUDGET_FILE));
     let config = BudgetConfig::load(&budget_file)?;
-    let window_budget = args.weekly_budget.unwrap_or(config.weekly_generations);
-    let used = config.used_in_window(&planned.history, ledger::now_unix_seconds());
+    let spent_cents = config.spent_cents(&planned.history)?;
+    let price_cents = config.price_cents(&args.model)?;
+    let needed = planned.plan.generations();
+    println!("Budget: {}.", config.spend_line(spent_cents));
     println!(
-        "Budget: {used} of {window_budget} generations used in the last {} days.",
-        config.window_days
+        "Planned cost: {needed} generation(s) at {} = {}.",
+        format_usd(price_cents),
+        format_usd(u64::from(needed).saturating_mul(price_cents))
     );
     if args.dry_run {
         return Ok(());
     }
-    let needed = planned.plan.generations();
     check_spend(
         &config,
         SpendRequest {
             needed,
             max_generations: args.max_generations,
-            window_budget,
-            used_in_window: used,
+            spent_cents,
+            price_cents,
         },
     )?;
-    execute(&planned, args, needed, &mut stdout)
+    let result = execute(&planned, args, needed, &mut stdout);
+    let after = LedgerHistory::load(&args.ledger)
+        .map_err(BakerError::from)
+        .and_then(|history| config.spent_cents(&history).map_err(BakerError::from));
+    match after {
+        Ok(spent) => println!("Budget after the run: {}.", config.spend_line(spent)),
+        Err(error) => eprintln!("cannot total the spend after the run: {error}"),
+    }
+    result
 }
 
 /// Resolves credentials, opens the ledger and runs the plan, sending each clip's parameters

@@ -25,7 +25,7 @@
 //!   simulation publishes, Idle first.
 //! - [`veo_run`]: Executes a plan under the spending rules, writing every event to the ledger.
 //! - [`ledger`]: The append-only JSON-lines record of every paid request.
-//! - [`budget`]: Per-run and rolling-window caps from `media/veo_budget.ron`.
+//! - [`budget`]: The total-spend budget and per-model prices from `media/veo_budget.ron`.
 //! - [`clip_review`]: Keyframes, contact sheets, review verdicts, installation and import.
 //! - [`provenance`]: Provenance records written with each bake, the data-defined required set,
 //!   and the checks behind the audit's `Verified` status.

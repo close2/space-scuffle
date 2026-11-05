@@ -1,18 +1,23 @@
 // assets/media/veo_budget.ron
-// Spending limits for paid Veo generations, read by `asset_baker generate-veo`.
+// The total-spend budget for paid Veo generations, read by `asset_baker generate-veo`.
 //
-// Not a secret. `max_generations_per_run` comes from owner question Q0024
-// (docs/questions/open/0024-veo-billing-and-weekly-cap.md). `weekly_generations` was raised from
-// 25 to 60 by the owner's answer to Q0047 (docs/questions/closed/0047-veo-weekly-cap-after-credit.md):
-// the budget is paid credit (200 EUR allowed), so quality is preferred over saving generations.
+// Not a secret. The owner's rule (chat, 2026-11-05, recorded in
+// docs/questions/closed/0024-veo-billing-and-weekly-cap.md and the Veo plan's D-12): "the only
+// bro limit you need to take into account are the 200$. no weekly, round or batch limit (unless
+// it's a limit dictated by Google)". There is no per-run or rolling-window cap; Google's quota refusals
+// stop a run, and the next run resumes.
 //
-// - `max_generations_per_run`: the largest `--max-generations` a single invocation accepts.
-// - `weekly_generations`: generations allowed in any rolling window, summed from the ledger's
-//   `request_started` lines (a start the service refused for quota costs nothing and is not
-//   counted). `--weekly-budget` overrides it for one run.
-// - `window_days`: length of the rolling window, in days of 86,400 seconds.
+// - `total_budget_usd_cents`: the most every generation the service accepted may cost together,
+//   at list price, in US cents. Spend is summed from the ledger's `request_started` lines (a
+//   start the service refused for quota costs nothing); a run is charged its whole
+//   `--max-generations` before it starts. $200.00 is below the owner's 200 EUR allowance.
+// - `price_per_generation_usd_cents`: the list price of one generation, in US cents, per model
+//   id. A ledger line or a run whose model is missing here is refused, never counted as free.
+//   `veo-3.1-fast-generate-001`: one 4 s 720p clip with sound at $0.10 a second (the rate the
+//   batch evidence in docs/evidence/veo/ uses).
 (
-    max_generations_per_run: 12,
-    weekly_generations: 60,
-    window_days: 7,
+    total_budget_usd_cents: 20000,
+    price_per_generation_usd_cents: {
+        "veo-3.1-fast-generate-001": 40,
+    },
 )

@@ -314,7 +314,7 @@ fn a_rejection_clears_the_download_and_counts_as_unusable() {
 }
 
 #[test]
-fn the_window_counts_paid_starts_only() {
+fn only_paid_starts_are_listed_with_their_model() {
     let (_dir, path) = ledger_with(vec![
         started("r/1", AnimState::Idle),
         started("r/2", AnimState::Walk),
@@ -330,14 +330,9 @@ fn the_window_counts_paid_starts_only() {
     let history = LedgerHistory::load(&path).expect("history");
 
     assert_eq!(
-        history.generations_since(0),
-        1,
+        history.paid_start_models().collect::<Vec<_>>(),
+        ["fixture-model"],
         "a quota refusal costs nothing"
-    );
-    assert_eq!(
-        history.generations_since(u64::MAX),
-        0,
-        "nothing in a future window"
     );
     assert_eq!(
         history
