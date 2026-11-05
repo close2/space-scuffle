@@ -353,7 +353,68 @@ by other units".
   `b10_primary_weapons_follow_starcraft` failed on the old data (`colossus_mech` `Either`) and passes. Matrix and
   battle 33 bit-identical (battle 14's Thor meets no air candidate); goldens unchanged.
 
-### 4.8 What WP4 leaves open
+### 4.8 After Amendment 5
 
-B-9 (§4.6, stopped), B-11 (after B-9) and B-80 (§4.1). No golden replay was re-recorded and no matrix expectation
-changed in WP4; the C7 float counts did not move (the new fields are integers and enums).
+B-9 (§4.6) was committed on top of the B-10 commits (§4.7), then B-11 in three commits (§4.9, §4.10) and B-80
+(§4.11). From §4.10 on, each matrix measurement was taken from the commit itself (extracted by an archive of the
+commit into a fixed directory, under the shared heavy-run lock), so the worktree could move on while the lock was
+busy.
+
+### 4.9 Commit f: checksum schema 11, latent (B-11)
+
+- **Change.** `Entity::previous_target_position: Option<SimVec2>`, `None` at spawn and hashed;
+  `CHECKSUM_SCHEMA_VERSION` 10 → 11. The tie-break "closest to the previous target" needs the position once the
+  target is lost (a dead entity leaves the world).
+- **Latent.** Nothing writes the field in this commit, so it is `None` on every entity on every tick and only its
+  empty option tag enters the digest. Re-recorded for the schema alone: both golden replays (every checkpoint), the
+  default sandbox checksum (`sim_fixtures` `fixture_tests`) and the schema bytes of four encoding unit tests. Debug,
+  release and `wasm32-wasip1` reproduce both goldens. No matrix measurement: the matrix does not read checksums
+  and no behaviour changed.
+
+### 4.10 Commit g: the per-archetype tie-break (B-11)
+
+- **Rule** (latent on all-`Closest` data). `TargetPriorityKey::tie_break` replaces the distance: the squared
+  distance (`Closest`), the turn of the firing facing towards the candidate in binary angle units
+  (`LeastTurning`; the turret's facing for a turreted weapon, the hull's otherwise), or the squared distance from the
+  previous target's last position (`ClosestToPrevious`; the unit's own distance while it has none). It decides only
+  when a unit chooses anew, because a kept target (§4.6) is never compared on it. Acquisition records the current
+  target's position each tick on `ClosestToPrevious` units only.
+- **Tests first:** `b11_least_turning_takes_the_candidate_ahead` and
+  `b11_closest_to_previous_takes_the_candidate_nearest_the_lost_target` failed on the old rule (each took the closer
+  candidate) and pass. Matrix and battle 33 bit-identical to §4.6; goldens unchanged on every target.
+- **Data:** `LeastTurning` on the Thor and Ultralisk analogues, `ClosestToPrevious` on the Colossus analogue
+  (§4.1). **Test first:** `b11_acquire_tie_breaks_follow_starcraft` failed on the old data (`colossus_mech`
+  `Closest`) and passes. Goldens unchanged on every target (none of their units changes).
+
+  Measured against the rule commit: four battles moved, no battle's winner over its seeds changed; battle 33
+  bit-identical (20 / 35 / 13); 0 expectation failures over 1000 runs.
+
+| Battle | Seeds moved | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|
+| 12a_colossus_vs_6_marines | 6 | 1.00 – 0.00, same | 81.7 → 76.2 | 237.90 → 240.75 / — |
+| 15_plated_ultralisk_vs_8_marines | 20 | 1.00 – 0.00, same | 116.8 → 108.0 | 412.96 → 420.92 / — |
+| 26_100_lings_vs_6_colossi | 14 | 0.00 – 6.00, same | 116.3 → 107.5 | — / 250.00, same |
+| 27_100_lings_vs_8_ultralisks | 20 | 0.00 – 8.00, same | 213.2 → 273.8 | — / 417.91 → 393.99 |
+
+  The Colossi keep sweeping the cluster their last target stood in, and the lone Ultralisk turns least and kills the
+  marines sooner (12a, 15, 26). Eight Ultralisks against 100 zerglings take 61 ticks longer: each takes the zergling
+  ahead of it rather than the closest one (the mechanisms of this paragraph are inferred from the rule, not traced
+  per unit).
+
+### 4.11 Commit h: a worker acquires only while attack-moving (B-80)
+
+- **Rule.** An archetype with `acquire_level: Defensive` (the SCV, Probe and Drone analogues, §4.1) acquires no
+  target while idle or holding; attack-moving, or carrying out an attack it already has, it goes on (Liquipedia
+  "Automatic Targeting", Notes: units with a defensive acquire level "do not automatically acquire targets for their
+  weapons" unless they attack-move). Retaliation when struck and the alert of idle allies are unchanged; they are
+  B-13's (WP16).
+- **Test first:** `b80_a_defensive_unit_acquires_only_while_attack_moving` failed on the old rule (the idle scratch
+  worker took the enemy) and passes. Goldens unchanged on every target.
+
+  Measured against §4.10: matrix and battle 33 bit-identical (no matrix battle has an idle worker beside an enemy).
+
+### 4.12 What WP4 leaves open
+
+Nothing of B-7 to B-11, B-76 or B-80. The rank of a challenger follows the source's "first 3 criteria" (Amendment
+4); Liquipedia's weapon-range versus scan-range wording for a challenger is resolved to scan range (§4.6). The C7
+float counts did not move (the new fields are integers, enums and a fixed-point vector).

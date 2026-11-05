@@ -761,7 +761,7 @@ requires.
 | B-8 | Attack target priority as hard-coded categories | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.5) |
 | B-9 | Closest-target switching with an invented margin | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.6; Amendment 5) |
 | B-10 | No primary-weapon criterion | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.7) |
-| B-11 | No per-unit tie-break | (i) | WP4, after B-9 (the tie-break acts only once the previous target is lost); researched in [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.1 |
+| B-11 | No per-unit tie-break | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.9, §4.10) |
 | B-12 | Scan ranges | (i) | combat alignment WP14, after WP4 |
 | B-13 | Call-for-help radius, flee distance, leash, abandoned-target time | (i) | WP16 research; how idle units answer an attack is unit behaviour |
 | B-14 | Bonus damage only against Armored and Light | (i) | WP6 |
@@ -913,3 +913,6 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
   cause traced ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.6).
 - B-11 (with its checksum schema bump in a latent commit of its own) and B-80 follow, each measured. Battle 33 may
   move again; any other battle whose winner over its seeds changes stops the step.
+- **Done after Amendment 5:** B-9 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.6), B-11 with
+  checksum schema 11 (§4.9, §4.10) and B-80 (§4.11) are fixed. B-80 is limited to automatic acquisition; how an idle
+  worker answers an attack (retaliation, the alert of idle allies) stays with B-13 (WP16).
