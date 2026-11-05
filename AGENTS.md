@@ -238,8 +238,11 @@ Decisions that belong to the owner live in `docs/questions/`, one file per quest
 
 - **Scoping is the agent's call, if written down.** An agent may narrow or defer scope without asking, and records
   each such decision in its plan's decisions or out-of-scope section, so it can be brought back (Q0002).
-- **Where the specification is silent on a game rule, do what StarCraft II does.** Search how StarCraft II handles
-  it, and cite the source in the plan (Q0008).
+- **Unit mechanics follow StarCraft II.** Start from identical unit mechanics and values (patch 5.0.14) and very
+  close behaviour; cite the source in the plan. A difference the owner has not named as a deviation is a bug,
+  recorded until fixed. Deviations that allow more (preferably configurable) and minor differences in details are
+  allowed if recorded; StarCraft II's own engine bugs need not be reproduced (Q0051, which supersedes Q0008; the
+  sanctioned list is Q0052).
 
 ---
 
@@ -277,3 +280,4 @@ the statement as a rule for reviewers.
 | C20 | Paths named in this charter exist |
 | C21 | No test builds a render device in its own process; GPU tests go through the harness of §7 |
 | C22 | `crates/gate/suites.ron` names existing targets, classes every GPU and valgrind test, and covers every tracked path (in `crates/gate/tests/suite_catalog_tests.rs`) |
+| C23 | Smog production code calls no host transcendental function outside `crates/client/src/smog/math.rs` |

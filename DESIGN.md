@@ -45,19 +45,20 @@ Cargo's.
 - **`sim_core`** — the deterministic tick (`SimWorld`): commands, economy, production and research,
   construction, transport, abilities, vision, targeting, movement, collision and push, weapons, the match result,
   the checksum and the catalogs.
-- **`asset_baker`** — generates Veo clips under spending caps, turns them into flipbook atlases through ffmpeg,
+- **`asset_baker`** — generates Veo clips within a total-spend budget, turns them into flipbook atlases through ffmpeg,
   bakes terrain textures, and audits media. It reads the unit catalog from `sim_core` to know which archetypes
   need media and which actions each publishes. A paid run goes `validate-prompts`, `generate-veo --dry-run`
   (both free, no credential read), `veo-preflight` (one free authenticated GET), `generate-veo --max-generations N
   --ledger docs/evidence/veo/ledger.jsonl --clips-dir ~/scratch/veo/clips`, `review`, `install-clip`, then
-  `bake-unit-videos`; prompts and the house style are data (`assets/catalog/media_style.ron`), the caps are
-  `assets/media/veo_budget.ron`, and exit code 3 means a quota refusal ended the run.
+  `bake-unit-videos`; prompts and the house style are data (`assets/catalog/media_style.ron`), the total budget
+  and the price per generation are `assets/media/veo_budget.ron` (every run prints spent and remaining dollars), and
+  exit code 3 means a Google quota refusal ended the run.
 - **`client`** — the Bevy game: renderer, bubble and dome shaders, smog fog presentation, HUD and command card,
   selection and input, result screen, the Visual Lab, and the map editor.
 - **`client_diagnostics`** — capture, audit and probe tools built on the client; nothing in the game depends on
   it.
 - **`sim_fixtures`** — test-only worlds and catalogs embedded from the shipped data.
-- **`workspace_checks`** — the executable charter checks (C1 to C21).
+- **`workspace_checks`** — the executable charter checks (C1 to C21, and C23).
 - **`gate`** — `cargo gate`: selects the tests a change can break from the catalog `crates/gate/suites.ron`
   and runs them in the tiers of charter §4.3 (`quick`, `package`, `merge`, `full`), with stamps, flake reruns,
   the red rule's suspect list and the CI timing summary; its catalog check is C22. It depends on no other
@@ -126,14 +127,14 @@ Status is `Working` (built, tested, in the shipped game), `Partial` (built but l
 | `PlayerView` | Working | Per-player knowledge for the HUD and admission | `crates/sim_core/tests/player_view_tests.rs` | none known |
 | Catalog data | Working | Factions, units, structures, upgrades, start loadouts and scenarios read at run time | `crates/sim_core/tests/runtime_catalog_tests.rs`, `crates/sim_core/tests/faction_catalog_tests.rs` | Data choices await the owner (Q0007) |
 | Bubble and dome rendering | Working | Instanced bubbles and domes with optics, dome fill and validated shaders | `crates/client/tests/gpu_validation_tests.rs`, `crates/client/tests/bubble_optics_tests.rs`, `crates/client/tests/dome_fill_tests.rs` | none known |
-| Smog fog presentation | Working | Smog field driven by the player's vision; the all-pairs kinematics fallback above 512 bubbles reports its peer bounces (`9987863`, unit test `all_pairs_fallback_reports_its_contacts`, `kinematics_all_pairs_fallback_golden`) | `crates/client/tests/smog_golden_tests.rs`, `crates/client/tests/battle_fog_tests.rs` | Golden hashes name the host `libm` functions they use (Q0014); the solver costs about 6 ms per frame during a 400-unit fight (C-18, partly fixed; §5) |
+| Smog fog presentation | Working | Smog field driven by the player's vision; the all-pairs kinematics fallback above 512 bubbles reports its peer bounces (`9987863`, unit test `all_pairs_fallback_reports_its_contacts`, `kinematics_all_pairs_fallback_golden`) | `crates/client/tests/smog_golden_tests.rs`, `crates/client/tests/battle_fog_tests.rs` | Smog goldens are host-independent: every transcendental function on a smog path is the `libm` crate's (`client::smog::math`, check C23, Q0014; `docs/evidence/2026-11-05-libm-smog-math.md`); the solver costs about 6 ms per frame during a 400-unit fight (C-18, partly fixed; §5) |
 | Runtime mist | Removed | Deleted in `0f31027` (remediation decision D2) | none | none |
 | HUD and command card | Working | Resources, selection card, command card and production queue | `crates/client/tests/battle_hud_tests.rs`, `crates/client/tests/battle_card_tests.rs` | none known |
 | Selection and input | Working | Selection, box select, control groups, right-click orders; one declared writer per client concern; input ownership sampled after the inspector draws | `crates/client/tests/battle_input_tests.rs`, `crates/client/tests/battle_context_order_tests.rs`, `crates/client/tests/system_ownership_tests.rs` | none known |
 | Result screen | Working | Victory and defeat screen | `crates/client/tests/battle_result_tests.rs`, [`docs/evidence/2026-11-03-result-window-victory.md`](docs/evidence/2026-11-03-result-window-victory.md) | none known |
 | Whole skirmish | Working | A skirmish won headless through input events alone | `crates/client/tests/skirmish_match_tests.rs` | none known |
 | Map editor | Working | Paint, place, save, playtest and return; a load requested by the UI applies in the same frame | `crates/client/tests/editor_app_tests.rs` (including `document_load_applies_after_the_editor_ui_requests_it`), `crates/client/tests/editor_core_tests.rs` | none known |
-| Asset baker | Working | Veo generation of exactly the published actions with prompts from data, a request ledger, per-run and rolling caps, a quota stop, a free preflight, keyframe chaining, review and install; ffmpeg import, flipbook atlases, terrain textures, media audit | `crates/asset_baker/tests/veo_cli_tests.rs`, `crates/asset_baker/tests/bake_integrity_tests.rs`, `crates/asset_baker/tests/ffmpeg_tests.rs` | none known; used live for 41 generations ($16.40 at list price) with loop pinning (`lastFrame`), seam repair, `loop-check`, letterboxing and provenance ([batch 1](docs/evidence/veo/2026-11-04-batch-1.md), [batch 2](docs/evidence/veo/2026-11-05-batch-2.md)) |
+| Asset baker | Working | Veo generation of exactly the published actions with prompts from data, a request ledger, a total-spend budget, a quota stop, a free preflight, keyframe chaining, review and install; ffmpeg import, flipbook atlases, terrain textures, media audit | `crates/asset_baker/tests/veo_cli_tests.rs`, `crates/asset_baker/tests/bake_integrity_tests.rs`, `crates/asset_baker/tests/ffmpeg_tests.rs` | none known; used live for 41 generations ($16.40 at list price) with loop pinning (`lastFrame`), seam repair, `loop-check`, letterboxing and provenance ([batch 1](docs/evidence/veo/2026-11-04-batch-1.md), [batch 2](docs/evidence/veo/2026-11-05-batch-2.md)) |
 | Media coverage | Partial | Real Veo media for 12 of 91 catalog identities; the required set of 10 (`assets/media/required_set.ron`: the skirmish's mineral, gas, research and transport paths) passes `audit-media --strict` with provenance and the request ledger (remediation step 8.5, B-1 fixed, `473b977`); no atlas is a copy of `concept_video.png`; missing media fails loudly | `crates/client/tests/runtime_media_tests.rs`, `crates/asset_baker/tests/media_tests.rs`, [`docs/evidence/veo/2026-11-05-batch-2.md`](docs/evidence/veo/2026-11-05-batch-2.md) | The other 79 identities have none: the rest of the Automaton faction waits for the Veo plan's WP6, the Enclave and Swarm are out of scope; `psi_grey` and `rhino_beetle` keep legacy atlases without provenance |
 | Terrain anisotropy on old lavapipe | Partial | Terrain sampling validated on `radv`; a test override for old lavapipe | `crates/client/tests/gpu_validation_tests.rs` | Override kept until this server's Mesa is 25.1 or later (Debian 13 ships 25.0.7), then deleted (Q0009) |
 | Networking | Not built | Nothing; intent is deterministic lockstep | none | all |

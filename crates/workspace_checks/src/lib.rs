@@ -35,6 +35,7 @@ mod identities;
 mod markdown;
 mod metadata;
 mod production_rules;
+mod smog_math;
 mod source;
 
 pub use charter_claims::{
@@ -67,6 +68,9 @@ pub use metadata::{cargo_metadata, engine_free_simulation, FORBIDDEN_SIMULATION_
 pub use production_rules::{
     expect_messages_state_invariants, no_discarded_results_in_simulation, no_embedded_assets,
     INVARIANT_PREFIX,
+};
+pub use smog_math::{
+    host_math_in_smog, HOST_MATH_ENTRY_POINTS, HOST_MATH_METHODS, SMOG_DIR, SMOG_MATH_FILE,
 };
 pub use source::{blank_comments_and_literals, code_text, rust_files, strip_test_items, Scope};
 

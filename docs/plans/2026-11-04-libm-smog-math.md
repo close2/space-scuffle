@@ -10,7 +10,7 @@ date its work starts) against `main` at `9e693cf` (open-findings WP1 merged). Li
 quoted symbol. A claim about runtime behaviour that could not be confirmed while planning is marked **verify**, and
 the first step of its package confirms or refutes it.
 
-**Owner decision.** [Q0014](../questions/open/0014-host-independent-smog-math.md), answered 2026-11-03: "Agreed
+**Owner decision.** [Q0014](../questions/closed/0014-host-independent-smog-math.md), answered 2026-11-03: "Agreed
 (option b: route client smog math through the `libm` crate as a separate plan after Phase 9) unless this becomes a
 performance problem. I do not mind if visuals are marginally different depending on the platform, but I think that
 using libm simplifies tests." Phase 9 is done (`docs/plans/README.md`).

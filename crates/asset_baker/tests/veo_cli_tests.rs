@@ -3,11 +3,12 @@
 //! # Responsibility
 //! Proves the spending rules of plan `2026-11-04-phase-8-5-veo-media.md` (WP1) end to end:
 //! exactly the published actions are generated (D-1), prompts are validated before credentials
-//! are read (D-2), every request is written to the ledger and the key never is (D-3), the caps
-//! and the quota stop hold (D-4), the free preflight (D-5), and keyframe chaining, review and
-//! installation (D-7). The loops section proves plan `2026-11-04-veo-seamless-loops.md` (WP1):
-//! a pinned state sends its start picture also as `lastFrame`, the pin rules, the shared
-//! picture of an identity's states, and the refusals that cost nothing.
+//! are read (D-2), every request is written to the ledger and the key never is (D-3), the total
+//! spend budget (D-12) and the quota stop hold (D-4), the free preflight (D-5), and keyframe
+//! chaining, review and installation (D-7). The loops section proves plan
+//! `2026-11-04-veo-seamless-loops.md` (WP1): a pinned state sends its start picture also as
+//! `lastFrame`, the pin rules, the shared picture of an identity's states, and the refusals that
+//! cost nothing.
 //!
 //! Runs use Vertex AI ([`RunDirs::new`]), the mode production uses, and a 16:9 fixture clip
 //! ([`common::wide_fixture_bytes`]) whose first frame is a valid pin.
@@ -527,7 +528,7 @@ fn d3_the_key_never_leaks_from_a_failing_run_either() {
     assert_no_key(&dirs.clip_records(), "the clip records");
 }
 
-// --- D-4: caps, rolling budget, quota stop, stop on the unexpected ---------------------------
+// --- D-4 and D-12: total budget, quota stop, stop on the unexpected ----------------------------
 
 #[test]
 fn d4_max_generations_is_required_for_a_paid_run() {
@@ -549,7 +550,7 @@ fn d4_max_generations_is_required_for_a_paid_run() {
 }
 
 #[test]
-fn d4_a_run_needing_more_than_its_cap_is_refused_before_any_request() {
+fn d4_a_run_needing_more_than_its_max_generations_is_refused_before_any_request() {
     let catalog = shipped_catalog();
     let unit = combat_unit(&catalog);
     let server = silent_server();
@@ -564,24 +565,15 @@ fn d4_a_run_needing_more_than_its_cap_is_refused_before_any_request() {
         text(&over)
     );
 
-    let above_data_cap = dirs.generate(&shim, &[&unit], &["--max-generations", "13"]);
-    assert!(
-        !above_data_cap.status.success(),
-        "{}",
-        text(&above_data_cap)
-    );
-    assert!(
-        String::from_utf8_lossy(&above_data_cap.stderr).contains("12"),
-        "{}",
-        text(&above_data_cap)
-    );
-
     assert!(server.requests().is_empty());
     assert!(!dirs.ledger.exists());
 }
 
-/// A fixture `request_started` ledger line, `age_days` old.
-fn started_line(age_days: u64, index: usize) -> String {
+/// The model every run of these tests uses (the binary's default), priced in the shipped budget.
+const RUN_MODEL: &str = "veo-3.1-fast-generate-001";
+
+/// A fixture `request_started` ledger line for `model`, `age_days` old.
+fn started_line(age_days: u64, index: usize, model: &str) -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
@@ -594,7 +586,7 @@ fn started_line(age_days: u64, index: usize) -> String {
         "request_id": format!("fixture/{index}"),
         "slug": "fixture_identity",
         "state": "idle",
-        "model": "fixture-model",
+        "model": model,
         "mode": "gemini_api",
         "prompt_sha256": "0".repeat(64),
         "prompt": "fixture prompt",
@@ -604,42 +596,142 @@ fn started_line(age_days: u64, index: usize) -> String {
     .to_string()
 }
 
+/// Writes a ledger of `count` starts of `model`, each `age_days` old.
+fn write_starts(dirs: &RunDirs, count: usize, age_days: u64, model: &str) {
+    std::fs::create_dir_all(dirs.ledger.parent().expect("parent")).expect("evidence dir");
+    let lines: Vec<String> = (0..count)
+        .map(|i| started_line(age_days, i, model))
+        .collect();
+    std::fs::write(&dirs.ledger, lines.join("\n") + "\n").expect("ledger");
+}
+
+/// A budget file of `total_cents` in which the run model costs 40 cents a generation.
+fn small_budget(dirs: &RunDirs, total_cents: u64) -> PathBuf {
+    let path = dirs.root.path().join("veo_budget.ron");
+    std::fs::write(
+        &path,
+        format!(
+            "(total_budget_usd_cents: {total_cents}, price_per_generation_usd_cents: {{\"{RUN_MODEL}\": 40}})"
+        ),
+    )
+    .expect("budget file");
+    path
+}
+
 #[test]
-fn d4_the_rolling_seven_day_budget_refuses_an_over_budget_run() {
+fn d12_a_run_that_would_cross_the_total_budget_by_one_generation_is_refused() {
     let catalog = shipped_catalog();
     let unit = combat_unit(&catalog);
     let server = FakeServer::start(healthy(fixture_bytes()));
     let shim = CurlShim::new(&server);
     let dirs = RunDirs::new();
-    std::fs::create_dir_all(dirs.ledger.parent().expect("parent")).expect("evidence dir");
-    let recent: Vec<String> = (0..23).map(|i| started_line(1, i)).collect();
-    std::fs::write(&dirs.ledger, recent.join("\n") + "\n").expect("ledger");
+    // $2.00 in total; 3 earlier generations ($1.20) plus this run's 3 ($1.20) is $2.40.
+    let budget = small_budget(&dirs, 200);
+    let budget_arg = budget.to_str().expect("utf-8 path");
+    write_starts(&dirs, 3, 400, RUN_MODEL);
 
-    // The window budget is given explicitly, so the test does not depend on the shipped
-    // `veo_budget.ron` (its values are checked by the `budget` unit tests).
     let refused = dirs.generate(
         &shim,
         &[&unit],
-        &["--max-generations", "3", "--weekly-budget", "25"],
+        &["--max-generations", "3", "--budget-file", budget_arg],
     );
     assert!(!refused.status.success(), "{}", text(&refused));
+    let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("23 of 25"),
+        stderr.contains("$1.20 spent")
+            && stderr.contains("needs $1.20")
+            && stderr.contains("$2.00"),
         "{}",
         text(&refused)
     );
     assert!(server.requests().is_empty());
 
-    // Lines older than the window do not count.
-    let old: Vec<String> = (0..23).map(|i| started_line(8, i)).collect();
-    std::fs::write(&dirs.ledger, old.join("\n") + "\n").expect("ledger");
+    // Two earlier generations: the run reaches exactly $2.00, which is allowed. Starts from
+    // over a year ago count: there is no time window.
+    write_starts(&dirs, 2, 400, RUN_MODEL);
     let allowed = dirs.generate(
+        &shim,
+        &[&unit],
+        &["--max-generations", "3", "--budget-file", budget_arg],
+    );
+    assert!(allowed.status.success(), "{}", text(&allowed));
+    assert_eq!(starts(&server), 3);
+    let out = stdout(&allowed);
+    assert!(
+        out.contains("$0.80 spent of $2.00, $1.20 remaining"),
+        "spent before the run: {out}"
+    );
+    assert!(
+        out.contains("$2.00 spent of $2.00, $0.00 remaining"),
+        "spent after the run: {out}"
+    );
+}
+
+#[test]
+fn d12_there_is_no_run_or_weekly_cap() {
+    let catalog = shipped_catalog();
+    let unit = combat_unit(&catalog);
+    let server = FakeServer::start(healthy(fixture_bytes()));
+    let shim = CurlShim::new(&server);
+    let dirs = RunDirs::new();
+    // 61 generations in the last day, and a run allowed 13: both above the old caps.
+    write_starts(&dirs, 61, 1, RUN_MODEL);
+
+    let output = dirs.generate(&shim, &[&unit], &["--max-generations", "13"]);
+    assert!(output.status.success(), "{}", text(&output));
+    assert_eq!(starts(&server), 3);
+
+    let removed = dirs.generate(
         &shim,
         &[&unit],
         &["--max-generations", "3", "--weekly-budget", "25"],
     );
-    assert!(allowed.status.success(), "{}", text(&allowed));
-    assert_eq!(starts(&server), 3);
+    assert!(
+        !removed.status.success(),
+        "--weekly-budget no longer exists"
+    );
+}
+
+#[test]
+fn d12_an_unpriced_model_in_the_ledger_is_refused_before_any_request() {
+    let catalog = shipped_catalog();
+    let unit = combat_unit(&catalog);
+    let server = silent_server();
+    let shim = CurlShim::new(&server);
+    let dirs = RunDirs::new();
+    write_starts(&dirs, 1, 1, "fixture-unpriced-model");
+
+    let output = dirs.generate(&shim, &[&unit], &["--max-generations", "3"]);
+    assert!(!output.status.success(), "{}", text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("fixture-unpriced-model"),
+        "{}",
+        text(&output)
+    );
+    assert!(server.requests().is_empty());
+}
+
+#[test]
+fn d12_the_dry_run_prints_the_spend_of_the_committed_ledger_and_the_planned_cost() {
+    let catalog = shipped_catalog();
+    let unit = combat_unit(&catalog);
+    let server = silent_server();
+    let shim = CurlShim::new(&server);
+    let dirs = RunDirs::new();
+    std::fs::create_dir_all(dirs.ledger.parent().expect("parent")).expect("evidence dir");
+    let committed = shipped_assets().join("../docs/evidence/veo/ledger.jsonl");
+    std::fs::copy(&committed, &dirs.ledger).expect("copy of the committed ledger");
+
+    let output = dirs.generate(&shim, &[&unit], &["--dry-run"]);
+    assert!(output.status.success(), "{}", text(&output));
+    let out = stdout(&output);
+    // 41 accepted generations at 40 cents (Veo 3.1 Fast, 720p, with sound).
+    assert!(
+        out.contains("$16.40 spent of $200.00, $183.60 remaining"),
+        "{out}"
+    );
+    assert!(out.contains("Planned cost:"), "{out}");
+    assert!(server.requests().is_empty());
 }
 
 #[test]
@@ -661,6 +753,11 @@ fn d4_the_first_quota_refusal_ends_the_run_with_exit_code_3() {
     let output = dirs.generate(&shim, &[&unit], &["--max-generations", "3"]);
 
     assert_eq!(output.status.code(), Some(3), "{}", text(&output));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Google's limit"),
+        "the stop names whose limit it is: {}",
+        text(&output)
+    );
     assert_eq!(starts(&server), 2, "the refused start is not retried");
     let events = dirs.ledger_events();
     assert_eq!(

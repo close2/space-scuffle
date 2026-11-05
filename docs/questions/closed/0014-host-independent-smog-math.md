@@ -42,3 +42,24 @@ Owner (2026-11-03): Agreed (option b: route client smog math through the `libm` 
 crate so every smog golden becomes host-independent, unless that turns out to cost noticeable performance.
 Platform-dependent visuals are acceptable to the owner. Until that plan lands, default (a) and
 `smog_golden_libm_canary` stay in place. This question stays open until then.
+
+## Resolution
+
+2026-11-05. Option (b) is carried out by plan `docs/plans/2026-11-04-libm-smog-math.md`, without a performance
+problem.
+
+- WP2, commit `a8cbfaa`: every exponential, sine, cosine, arctangent and power on a smog path goes through
+  `client::smog::math`, a wrapper over the pure-Rust `libm` crate 0.2.16 (already locked; a direct dependency of
+  `client` now). The fluid decay factors, `bubble_team_color`, the crowd generator, the headings, the noise texel, the
+  showcase colours' sRGB-to-linear conversion and the showcase rotation are routed; the showcase heading readback
+  through `Quat::to_euler` is gone. Workspace check C23 keeps smog production code off the host's functions.
+- Scope, decided under Q0002's answer and recorded in the plan (D-2): the change is smog-local. `bevy_math`'s `libm`
+  feature was not enabled, so the rest of the client and Bevy keep the host's library.
+- Every smog golden is host-independent: with every host `libm` result moved by one ulp (an `LD_PRELOAD`
+  interposer), all 17 pass. The two golden classes, the recorded crowd trig table and `smog_golden_libm_canary` are
+  retired; `smog_libm_crate_canary` reports a `libm` crate version that changes the results. The fluid and noise
+  goldens did not change; eight kinematics and system goldens were re-recorded (headings and rotations are now
+  hashed; a few values differ from glibc's by one ulp).
+- Cost (WP3): smog startup about 12 ms longer (the noise texture's `powf`); per frame about 0.01 ms by `perf`; the
+  400-unit frame budget on the RX 580 shows no difference beyond the shared machine's noise. The plan's stop rule did
+  not fire. Evidence: `docs/evidence/2026-11-05-libm-smog-math.md`.

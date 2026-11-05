@@ -348,7 +348,7 @@ pub enum BakerError {
         problems: Vec<crate::prompts::PromptProblem>,
     },
 
-    /// A spending limit refused the run.
+    /// The total-spend budget refused the run.
     #[error(transparent)]
     Budget(#[from] crate::budget::BudgetError),
 
@@ -356,8 +356,9 @@ pub enum BakerError {
     #[error(transparent)]
     Ledger(#[from] crate::ledger::LedgerError),
 
-    /// The service refused a start request for quota. Nothing was spent; the run ended.
-    #[error("Veo refused the request for quota (HTTP {http_status}, status {status:?}, reason {reason:?}); the run stopped and nothing more was started. Wait for the quota window before rerunning")]
+    /// The service refused a start request for quota: Google's limit, not this project's
+    /// budget. Nothing was spent; the run ended.
+    #[error("Veo refused the request for quota (HTTP {http_status}, status {status:?}, reason {reason:?}). This is Google's limit, not the project budget; the run stopped and nothing more was started. Rerun once Google's quota allows; the next run resumes")]
     VeoQuotaExhausted {
         /// HTTP status of the refusal.
         http_status: u16,

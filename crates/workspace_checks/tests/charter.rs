@@ -22,7 +22,7 @@ use std::error::Error;
 use workspace_checks::{
     cargo_metadata, charter_graph, charter_paths_exist, ci_runs_the_gate, design_doc,
     engine_free_simulation, expect_messages_state_invariants, float_ratchet, function_length_limit,
-    in_process_render_devices, module_docs, no_catalog_identities_in_code,
+    host_math_in_smog, in_process_render_devices, module_docs, no_catalog_identities_in_code,
     no_discarded_results_in_simulation, no_embedded_assets, no_mutable_statics, no_work_markers,
     notebook_references, performance_rationale_format, plan_index, render, repo_root,
     simulation_clippy_config, test_subjects, tracked_files, typed_library_errors, Finding,
@@ -214,5 +214,11 @@ fn c20_paths_named_in_the_charter_exist() -> Result<(), Box<dyn Error>> {
 #[test]
 fn c21_no_test_builds_a_render_device_in_its_own_process() -> Result<(), Box<dyn Error>> {
     assert_clean("C21", &in_process_render_devices(&repo_root())?);
+    Ok(())
+}
+
+#[test]
+fn c23_smog_code_calls_no_host_transcendental_function() -> Result<(), Box<dyn Error>> {
+    assert_clean("C23", &host_math_in_smog(&repo_root())?);
     Ok(())
 }

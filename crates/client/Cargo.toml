@@ -24,6 +24,12 @@ path = "src/bin/terrain_preview.rs"
 name = "smog_solver"
 harness = false
 
+# Informational cost of the smog's `libm` crate math against the host's, and the smog startup
+# system's wall time (Q0014); run with `cargo bench -p client --bench smog_math`.
+[[bench]]
+name = "smog_math"
+harness = false
+
 [lints]
 workspace = true
 
@@ -40,6 +46,9 @@ serde.workspace = true
 image.workspace = true
 bytemuck = { version = "1.25", features = ["derive"] }
 thiserror.workspace = true
+# Pure-Rust math with the same bits on every target, for the smog presentation (Q0014,
+# `src/smog/math.rs`). Already locked through bevy's dependencies; nothing new is downloaded.
+libm = "0.2.16"
 
 [dev-dependencies]
 # The shipped catalogs and worlds, embedded for tests only; production loads them from disk.
