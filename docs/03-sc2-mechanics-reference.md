@@ -43,6 +43,7 @@ flowchart LR
 | :--- | :--- | :--- |
 | **Speed, Acceleration & Deceleration** | Many SC2 ground units have near-instant acceleration (`1000`), while air units (Mutalisks, Phoenixes, Banshees) have lower acceleration/deceleration, allowing momentum/magic-box micro. | Gives distinct weight and control feel to infantry vs. vehicles vs. aircraft. |
 | **Turn Rate & Stationary Turn Rate** | Degrees per second a unit can rotate. | Governs how fast units switch targets or kite. |
+| **Turn Before Move** | A flagged unit (Siege Tank, Thor, Ultralisk) turns in place, at its stationary rate, until its next step lies within one tick's turn, then faces it and moves | Heavy units pivot before reversing instead of sliding backwards |
 | **Radius & Inner Radius** | `Radius` for unit-vs-unit collision; `InnerRadius` for building-vs-unit tight squeezing. | Enables small units to slip between diagonal buildings while large units get blocked (wall-offs!). |
 | **Push Priority** | Integer priority. When a friendly unit with a move order collides with an idle friendly unit (not on `Hold Position`), the idle unit temporarily yields and slides aside. | Prevents friendly armies from gridlocking themselves in bases. |
 | **Mover Plane** | `Ground`, `Air`, `CliffJumper` (Reaper jumps up/down cliffs), `CliffWalker` (Colossus steps across cliffs and can be hit by both AA and Ground weapons!). | Core tactical diversity. |

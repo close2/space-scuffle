@@ -36,3 +36,16 @@ when they turn around to move.
 ## Answer
 
 Owner (2026-11-05): Option (b) — add `turn_before_move: bool` per archetype (`true` for `railgun_crawler`, `colossus_mech`, and `stag_behemoth`), gating movement until the hull is aligned with the step direction (if the angle to the step direction exceeds one tick's `turn_rate_deg`, rotate in place this tick; once within one turn step / aligned, snap facing and translate so units turn in place on reversals without stalling on gentle path curves).
+
+## Resolution
+
+Carried out as option (b) with the owner's tolerance (turn in place while the step lies further than one tick's
+turn; then face it and move) by plan [`2026-11-05-turn-before-move`](../../plans/2026-11-05-turn-before-move.md):
+`turn_before_move` and the step gate (WP1 `6d7a9d5`), the three flags on `railgun_crawler`, `colossus_mech` and
+`stag_behemoth` (WP3 `b7d9f50`). Under the owner's standing rule of 2026-11-05 (follow StarCraft II unless a
+deviation is named; plan Amendment 1), the turn in place runs at the game's `StationaryTurningRate`, not at
+`turn_rate_deg_per_tick`: the per-archetype stationary rate (WP5 `2522e3f`) and its four values (WP6 `408d3b7`), so
+a reversal of these three units is 4 ticks in place and a step on the 5th. The tolerance stays one moving tick's
+turn, as answered. Measurement and the differences from the game that no source settles:
+[`docs/evidence/2026-11-05-turn-before-move.md`](../../evidence/2026-11-05-turn-before-move.md). Setting the three
+flags to `false` restores the old behaviour.

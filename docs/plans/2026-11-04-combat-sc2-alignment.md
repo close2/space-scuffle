@@ -517,7 +517,7 @@ proved bit-identical; d to g each have one cause and are measured.
 
 **7. Decisions taken by WP17 (2026-11-05, from its research, audit §10).** Charter §8 lets the implementer narrow
 scope and fill gaps the way StarCraft II does, if written down. These are written here:
-- **Turn-before-move: not implemented; [Q0050](../questions/open/0050-turn-before-move.md) filed.** The data have
+- **Turn-before-move: not implemented; [Q0050](../questions/closed/0050-turn-before-move.md) filed.** The data have
   a `TurnBeforeMove` unit flag (Siege Tank, Thor, Ultralisk) but no tolerance, so the rule cannot be specified and
   tested (item 4's condition). Commit g is not made; the default is no gating.
 - **`StationaryTurningRate` not applied.** The game has a second hull rate for a unit that is not moving; it differs
@@ -1227,10 +1227,12 @@ ranges are measured on top of it), when the owner's priority allows. It may be s
 - **F-6 (Amendment 1): turret idle behaviour and acceleration of turning.** Whether turrets return to a rest angle,
   and whether the game accelerates turning (D-8 assumes a constant rate per tick), are listed by WP17's research and
   not modelled.
-- **F-8 (WP17): turning the game models and we do not.** From audit §10: `StationaryTurningRate` (a second hull
-  rate when not moving; four identities differ), the acquisition arc `Arc` ÷ 2 beside the engaged tolerance,
-  `TurnBeforeMove` (Q0050), and the six weapons whose mount differs (Hellion, Immortal, Colossus, Lurker and Phoenix
+- **F-8 (WP17): turning the game models and we do not.** From audit §10: the acquisition arc `Arc` ÷ 2 beside the
+  engaged tolerance, and the six weapons whose mount differs (Hellion, Immortal, Colossus, Lurker and Phoenix
   turrets modelled as hull weapons; the Thor's air weapon modelled as a turret). Each needs its own rule or data
-  commit and measurement.
+  commit and measurement. `StationaryTurningRate` and `TurnBeforeMove` (Q0050), formerly listed here, are done by
+  plan [`2026-11-05-turn-before-move`](2026-11-05-turn-before-move.md) (WP1, WP3, WP5, WP6); turn-before-move made
+  the stationary rate observable, since these units turn in place, and the owner's standing rule of 2026-11-05
+  (follow StarCraft II unless a deviation is named) brought it in.
 - **F-7 (Amendment 1): our own units.** The owner plans original units later (Q0045). Until then every identity with
   a counterpart follows it; an original unit later will be audited as class E and needs no change to these rules.

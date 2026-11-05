@@ -17,7 +17,7 @@ not been measured are marked as such; no planning probe was run, because the mai
 
 | Question | State | Where in this plan |
 |---|---|---|
-| [Q0050](../questions/open/0050-turn-before-move.md) turn before move | Answered 2026-11-05: option (b), tolerance "within one tick's turn"; closed by WP4 | D-1 to D-4, WP4 |
+| [Q0050](../questions/closed/0050-turn-before-move.md) turn before move | Answered 2026-11-05: option (b), tolerance "within one tick's turn"; closed by WP4 (done) | D-1 to D-4, WP4 |
 | [Q0045](../questions/open/0045-catalog-time-audit-deliberate-values.md) item 1(b), hull turning | Open; closed by combat alignment WP13. Its turn-before-move part (WP17 commit g) is done here | §1 hand-off, WP4 |
 | [Q0008](../questions/closed/) StarCraft II where the specification is silent (charter §8) | Standing rule | D-2, D-3, D-5 |
 
@@ -422,7 +422,7 @@ record); the flagged units' `blocked` counts in 14, 15, 27; goldens (first diffe
 
 | Document | Change | WP |
 |---|---|---|
-| `docs/questions/open/0050-turn-before-move.md` | `## Resolution` (WP4 step 3), then `git mv` to `closed/`. Nothing under `## Answer` is edited. | WP4 |
+| `docs/questions/closed/0050-turn-before-move.md` | `## Resolution` (WP4 step 3), then `git mv` to `closed/`. Nothing under `## Answer` is edited. | WP4 |
 | `docs/03-sc2-mechanics-reference.md` §1.4 | New row after "Turn Rate & Stationary Turn Rate": **Turn Before Move** — "A flagged unit (Siege Tank, Thor, Ultralisk) turns in place until its next step lies within one tick's turn, then faces it and moves" — why: "Heavy units pivot before reversing instead of sliding backwards" | WP4 |
 | `docs/07-sc2-patch-5-0-14-roster-and-faction-mapping.md` §2.3 | After the "Siege Tank, Thor, Ultralisk (`360`)" bullet: "These three also set `TurnBeforeMove` (`turn_before_move: true`): a step further from the heading than one tick's turn is preceded by turning in place, so a reversal takes 9 ticks before the first step." | WP3 |
 | `DESIGN.md` §4, Movement and pathfinding row | Status text: "…; hulls turn at StarCraft II's per-tick rates, at most once per tick, and units flagged `turn_before_move` turn in place before a step their hull does not face (Q0050)". Tests column unchanged (`hull_turning_tests.rs`, `push_priority_tests.rs` already listed). | WP4 |
