@@ -159,7 +159,6 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-5 | Whether damage point and backswing hold an automatically attacking unit (not yet sourced) | WP16 |
 | B-6 | Release range slop 0.5 for every weapon | WP9 |
 | B-13 | Call-for-help radius, flee distance, leash and abandoned-target time are unsourced | WP16 |
-| B-14 | The Reaper's Light bonus (5) where 5.0.14 has none; applying it changes battle 22a's winner, so it waits for a decision | WP6 (stopped) |
 | B-15 | Shield-break remainder rule unsourced | WP7 |
 | B-16 | Splash fractions fixed at 100/50/25 % | WP8a |
 | B-17 | Splash distance measured centre to centre | WP8a |

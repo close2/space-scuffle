@@ -764,7 +764,7 @@ requires.
 | B-11 | No per-unit tie-break | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.9, §4.10) |
 | B-12 | Scan ranges | Fixed | combat alignment WP14 Amendment 7 ([evidence](../evidence/2026-11-04-combat-sc2-alignment.md) §16; Q0057; this plan's Amendment 7) |
 | B-13 | Call-for-help radius, flee distance, leash, abandoned-target time | (i) | WP16 research; how idle units answer an attack is unit behaviour |
-| B-14 | Bonus damage only against Armored and Light | Fixed, narrowed | WP6 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §6); open only the Reaper's Light 5, which 5.0.14 sets to 0: stopped, battle 22a's winner changes (Amendment 9) |
+| B-14 | Bonus damage only against Armored and Light | Fixed | WP6 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §6; the Reaper's value by Amendment 10) |
 | B-15 | Shield break remainder | (i) | WP7 |
 | B-16 | Fixed splash fractions | (i) | WP8a |
 | B-17 | Splash measured centre to centre | (i) | WP8a |
@@ -995,3 +995,19 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
   `VolatileBurstU2` (80, +5 a level, ignoring armour): recorded as **B-82** (class (i), WP9).
 - **Rebased.** WP5 and WP6 were first built on `d1876fa` and rebased onto `9df767e` (the scan ranges, Amendment 7);
   every number in evidence §5 and §6 is measured on the rebased commits.
+
+## Amendment 10 (orchestrator, 2026-11-06): the Reaper's Light bonus is applied
+
+> **Orchestrator decision on the WP6 b3 stop:** "first resolve the Reaper's Light bonus through the whole 5.0.14
+> chain the audit uses (core → liberty → swarm → void → voidmulti, and the balancemulti/libertymulti/swarmmulti
+> layers if the resolver includes them) — not just `void` EffectData:1499 — and cite the final layer and line. If
+> the resolved 5.0.14 value is 0: apply it (owner's standing rule Q0051: identical unit mechanics), re-record battle
+> 22a with a rewritten claim that states what the battle now shows (and why its winner changed), and trace the
+> change to named units; this is a sanctioned expectation change, not a stop. If a later layer restores +5: keep
+> Light 5, cite that layer, and B-14 is fully fixed. Either way add the Reaper row to the test table."
+
+- **Resolved: 0.** `liberty` EffectData:1817 sets Light 5, `void` EffectData:1499 sets it to 0, and `voidmulti`
+  EffectData:346 does not touch it; `swarmmulti` EffectData:389 also says 0 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §6.4).
+- **Applied** with the Reaper row in the test table, which now covers every armed analogue. Battle 22a is
+  re-recorded (the Reaper kills one of two workers in its 200 ticks instead of both) with a rewritten claim. **B-14
+  is fixed** and leaves the `DESIGN.md` register.
