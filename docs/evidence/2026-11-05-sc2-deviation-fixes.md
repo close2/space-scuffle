@@ -534,3 +534,12 @@ appends it (the same Banshee edit). Times are Normal seconds; ticks = Normal s �
 - **Golden replay** re-recorded: from checkpoint 5 (ticks 201 to 250), the first in which a "red_psi" (`psi_grey`)
   zealot swings, every checkpoint changed; `golden_replay_orders` is unchanged (its zealots release no swing). Debug,
   release and `wasm32-wasip1` reproduce.
+
+### 5.4 Commits b2 to b5: the other spaced weapons (B-2)
+
+Each commit sets the cited spacing (§5.1) and first adds its row to `b2_strike_spacing_follows_starcraft`, which
+failed on the old data (the archetype's weapon `(0, None)`) and passes. Each is measured against the one before.
+
+- **b2, Thor ground** (`colossus_mech` "Thor's Hammer", both of its ground slots): 7 ticks. One battle moved, no
+  winner: `14_thor_vs_ultralisk` (20 seeds), the Thor still wins every seed but ends 7 ticks later (200.0 → 207.0)
+  with 4.00 life left instead of 37.00, its killing blow now a second shot. Battle 33 bit-identical.

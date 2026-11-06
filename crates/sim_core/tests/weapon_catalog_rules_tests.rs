@@ -780,12 +780,15 @@ fn b11_acquire_tie_breaks_follow_starcraft() -> TestResult {
 /// `CValidatorLocationCompareRange` on a later strike. Every weapon of every other archetype lands
 /// its strikes together: the Phoenix's two missiles leave on one loop and the Colossus' two
 /// strikes expire together; the Carrier's and the Brood Lord's attacks are B-22 and B-21.
-const SC2_STRIKE_SPACING: [(&str, u16, Option<f32>, &str); 1] = [(
-    "Zealot",
-    5,
-    Some(2.1),
-    "PsiBladesBurst 0, 0.28: liberty EffectData:1919; ZealotAttackDamageMaxRange: voidmulti ValidatorData:867",
-)];
+const SC2_STRIKE_SPACING: [(&str, u16, Option<f32>, &str); 2] = [
+    (
+        "Zealot",
+        5,
+        Some(2.1),
+        "PsiBladesBurst 0, 0.28: liberty EffectData:1919; ZealotAttackDamageMaxRange: voidmulti ValidatorData:867",
+    ),
+    ("Thor", 7, None, "ThorsHammer 0, 0.375: liberty EffectData:2242"),
+];
 
 #[test]
 fn b2_strike_spacing_follows_starcraft() -> TestResult {
