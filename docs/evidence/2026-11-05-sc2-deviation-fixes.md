@@ -548,3 +548,6 @@ failed on the old data (the archetype's weapon `(0, None)`) and passes. Each is 
   seeds, blue wins 16 → 12 of 20 (seeds of record 0 and 22, and seeds 7 and 9, go from a Viking win to a fight
   unresolved at the tick limit; no seed goes to the Colossi), Colossus survivors 0.20 → 0.40, mean end tick
   403.8 → 546.5. Battle 33 bit-identical.
+- **b4, Reaper** (`jet_jumper`): 2 ticks, within 7. Matrix and battle 33 bit-identical: in `22a` the Reaper kills
+  each 40-life worker with its fifth pistol shot, a first shot (9 a shot against Light), and in `22b` it dies to the
+  Stalker either way; neither battle records the Stalker's shields.
