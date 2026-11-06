@@ -123,8 +123,12 @@
 // both on the swing's tick). Checkpoints 1 to 4 are unchanged; from checkpoint 5 (ticks 201 to
 // 250), the first in which a zealot swings, every checkpoint changed. golden_replay_orders is
 // unchanged: its "red_ledge" zealots swing at nothing before its last checkpoint.
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP6 (B-14, checksum schema 12 -> 13): each
+// weapon's Armored and Light bonuses are replaced by its bonus against every attribute, encoded
+// as eight values, so every checkpoint changed. No behaviour did: with the bonuses encoded as the
+// two former fields at schema 12, both fixtures reproduce as recorded for WP5.
 (
-    checksum_schema: 12,
+    checksum_schema: 13,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -150,25 +154,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xdd845a70aac34444,
-        0xa27c87ec5671ef0a,
-        0x7fc21f933c14217b,
-        0x561c8b7849dd1b24,
-        0xce3325c00dedddc3,
-        0x8797e3e1cf3003eb,
-        0x462f535341a80cbc,
-        0x6c407c9cb4bf3ed8,
-        0x010c7b1d178c0965,
-        0xf8585484f0c34b6e,
-        0x614567c216e8e91b,
-        0xeb5e0d3d23f17db2,
-        0x401e1182aca827a6,
-        0x45a26e83f317d18b,
-        0x5797ccaabe84f5b0,
-        0xc10b851222e16358,
-        0x45459b4e8a315bb2,
-        0x565658c614a90a57,
-        0x4cdb94a64208b9be,
-        0x41024b147821c8d7,
+        0x20f5baf8dd79fee6,
+        0x536c636fdc4c92f2,
+        0x7695d1d443882caf,
+        0x813baa1dd87bb5b7,
+        0x4cf7e24e4e0fb607,
+        0x71761b3ce7ded66f,
+        0x975d4bd5c40f6f67,
+        0x75ee6729bf3d2b38,
+        0x72e5085e1cb5af82,
+        0xb0fb8a0d936c6470,
+        0x2e071810804b0860,
+        0x33fefcddb21ec831,
+        0x797e30bc7ec0dc33,
+        0xe3283d9c1e65d32e,
+        0xe179d945cd3e18f1,
+        0xda2b7bff8a897817,
+        0xe457c18328f5dc77,
+        0x77bc8abec90bd3f9,
+        0xc8287ef8fce46494,
+        0x6e0fd25f5c9af468,
     ],
 )

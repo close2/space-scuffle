@@ -29,7 +29,9 @@ use std::path::PathBuf;
 /// encodes each entity's `previous_target_position`, `None` at spawn.
 /// Re-recorded for checksum schema 12 (plan 2026-11-05-sc2-deviation-fixes WP5, B-2), which
 /// encodes each weapon's strike spacing and each entity's `pending_strikes`, `None` at spawn.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 3_155_764_589_598_049_891;
+/// Re-recorded for checksum schema 13 (WP6, B-14), which encodes each weapon's bonus against
+/// every attribute in place of its Armored and Light bonuses.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 1_186_221_632_453_401_007;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

@@ -590,3 +590,22 @@ shipped data.
   values.
 - **Found in passing, not attribute bonuses (B-47, WP9).** The Spore Crawler's base damage is 20 at 5.0.14
   (`voidmulti` EffectData:871), the catalog's 15; the High Templar analogue has a weapon, the High Templar none.
+
+### 6.2 Commit a: a bonus against any attribute, latent
+
+- **Rule.** `WeaponSpec::attribute_bonuses` (`sim_types::AttributeBonuses`, one value per `Attribute`, Light to
+  Heroic) replaces `bonus_armored` and `bonus_light`; a strike adds the bonus of every attribute its target has,
+  each with `bonus_upgrade_per_level` a level (§6.1). The catalog field `attribute_bonuses: [(Attribute, bonus)]` is
+  required, so a catalog written with the old fields fails to load instead of losing its bonuses; validation
+  rejects a negative bonus and an attribute listed twice. The Siege Mode ability's weapon is boxed
+  (`AbilityEffectSpec::SiegeModeToggle`), because the larger `WeaponSpec` made that variant far larger than the
+  others (`clippy::large_enum_variant`).
+- **Tests first.** `attribute_bonus_tests.rs` (scratch archetypes; a Massive bonus, two bonuses on a target with
+  both, no bonus, and the validation including a stale weapon with the old fields) failed on the old code (the
+  catalog required `bonus_armored`), and `b14_each_applying_attribute_bonus_gains_its_upgrade`
+  (`damage_and_shields_tests.rs`, Light 5 and Armored 3 at level 2 against a Light and Armored target) failed with
+  20 for 22: the old rule added the per-level bonus once. All pass.
+- **Latent.** Every weapon's data is rewritten to the same bonuses. Checksum schema 12 → 13 (eight encoded values
+  for two): both golden replays, the default sandbox checksum and four encodings' schema bytes re-recorded; with the
+  bonuses encoded as the two former fields at schema 12, both goldens reproduce as recorded for WP5 (release).
+  Matrix and battle 33 bit-identical to §5.4.
