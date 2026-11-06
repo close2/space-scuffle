@@ -551,3 +551,10 @@ failed on the old data (the archetype's weapon `(0, None)`) and passes. Each is 
 - **b4, Reaper** (`jet_jumper`): 2 ticks, within 7. Matrix and battle 33 bit-identical: in `22a` the Reaper kills
   each 40-life worker with its fifth pistol shot, a first shot (9 a shot against Light), and in `22b` it dies to the
   Stalker either way; neither battle records the Stalker's shields.
+- **b5, units no matrix battle spawns**: Banshee (`cloak_gunship`) 3 ticks within 15, Liberator (`sky_bastion`)
+  1 tick, Missile Turret (`flak_array_dome`) 2 ticks within 15, Queen (`hive_matron`, both ground slots) 5 ticks
+  within 5. Matrix and battle 33 bit-identical; goldens unchanged. Test restated for the cause: S-4
+  (`combat_correctness_tests.rs`) takes the first shipped multi-strike missile weapon, now the Banshee's, and
+  expects its second missile one interval after the first.
+- **Goldens.** Only b1 moves them (no other spaced weapon is in either fixture); debug, release and
+  `wasm32-wasip1` reproduce after b1 and after b5.

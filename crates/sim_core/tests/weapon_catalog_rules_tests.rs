@@ -780,7 +780,7 @@ fn b11_acquire_tie_breaks_follow_starcraft() -> TestResult {
 /// `CValidatorLocationCompareRange` on a later strike. Every weapon of every other archetype lands
 /// its strikes together: the Phoenix's two missiles leave on one loop and the Colossus' two
 /// strikes expire together; the Carrier's and the Brood Lord's attacks are B-22 and B-21.
-const SC2_STRIKE_SPACING: [(&str, u16, Option<f32>, &str); 4] = [
+const SC2_STRIKE_SPACING: [(&str, u16, Option<f32>, &str); 8] = [
     (
         "Zealot",
         5,
@@ -790,6 +790,10 @@ const SC2_STRIKE_SPACING: [(&str, u16, Option<f32>, &str); 4] = [
     ("Thor", 7, None, "ThorsHammer 0, 0.375: liberty EffectData:2242"),
     ("Viking", 4, Some(15.0), "LanzerTorpedoes 0, 0.21: liberty EffectData:1698; RangeCheckLE15 on each missile: liberty EffectData:1707, ValidatorData:1956"),
     ("Reaper", 2, Some(7.0), "P38ScytheGuassPistolBurst 0, 0.122: liberty EffectData:1803; ReaperAttackDamageMaxRange: voidmulti ValidatorData:877"),
+    ("Banshee", 3, Some(15.0), "BacklashRockets 0, 0.15: liberty EffectData:2550, voidmulti EffectData:36; RangeCheckLE15 on each missile: liberty EffectData:2558"),
+    ("Liberator", 1, None, "LiberatorMissileBurstPersistent 0.05 repeated: void EffectData:2942"),
+    ("Missile Turret", 2, Some(15.0), "LongboltMissile 0, 0.1: liberty EffectData:1779; RangeCheckLE15 on each missile: liberty EffectData:1789"),
+    ("Queen", 5, Some(5.0), "TalonsMissileBurst 0, 0.3: swarm EffectData:3038; QueenTalonsAGAttackDamageMaxRange: voidmulti EffectData:649, ValidatorData:872"),
 ];
 
 #[test]
