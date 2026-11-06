@@ -21,7 +21,8 @@
 //!    least turning, or closest to the previous target).
 //! 4. Damage from a unit's own side never causes retaliation, flight or alerts.
 //! 5. Scan range, like weapon reach, is measured between the two units' edges: the centre
-//!    distance minus both collision radii (`StarCraft` II `MinScanRange`, Q0057).
+//!    distance minus both collision radii (`StarCraft` II `MinScanRange`, Q0057). A weapon
+//!    scans at least to its own effective range.
 
 use crate::catalog::{AcquireLevel, AcquireTieBreak, UnitArchetype, WeaponSpec};
 use crate::combat::{is_threat_to, weapon_aim, TargetPriorityKey};
@@ -567,13 +568,32 @@ impl SimWorld {
         Some(Acquisition::Engage(best.entity_id))
     }
 
+    /// The farthest `entity` scans beyond both edges against any candidate, in world units: its
+    /// archetype's scan range, or the effective range (upgrades included) of its longest weapon,
+    /// the siege weapon while sieged, when that is greater.
+    fn scan_extent(&self, entity: &Entity, arch: &UnitArchetype) -> SimScalar {
+        [
+            arch.ground_weapon.as_ref(),
+            arch.air_weapon.as_ref(),
+            arch.weapon.as_ref(),
+            entity.active_siege_weapon(),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|weapon| self.effective_weapon_range(weapon, &arch.slug, entity.owner))
+        .fold(arch.scan_range, SimScalar::max)
+    }
+
     /// Ranks every enemy `entity` could attack, returning the best and the current target.
     ///
     /// An enemy is a candidate when its edge lies within the scan range of `entity`'s edge: the
     /// centre distance minus both collision radii, as weapon reach is measured (`StarCraft` II
-    /// `MinScanRange`, Q0057). The catalog's largest collision radius in `scope` bounds how far
-    /// beyond that range a candidate's centre can lie. With `scope.stationary` set, only enemies
-    /// inside weapon reach qualify.
+    /// `MinScanRange`, Q0057). The scan range against a candidate is the archetype's, or the
+    /// effective range of the weapon `entity` would use against it when that is greater: in
+    /// `StarCraft` II a weapon scans to its `MinScanRange` or its `Range`, whichever is greater
+    /// (audit §11.1), so a sieged unit scans as far as its siege weapon reaches. The catalog's
+    /// largest collision radius in `scope` bounds how far beyond that range a candidate's centre
+    /// can lie. With `scope.stationary` set, only enemies inside weapon reach qualify.
     fn scan_candidates(
         &self,
         entity: &Entity,
@@ -586,7 +606,7 @@ impl SimWorld {
         // The ranking key ends in the entity ID, so visiting order cannot change the winner.
         self.spatial_hash.query_radius_unordered(
             entity.position,
-            arch.scan_range + arch.collision_radius + scope.largest_radius,
+            self.scan_extent(entity, arch) + arch.collision_radius + scope.largest_radius,
             neighbors,
         );
         candidates.clear();
@@ -613,15 +633,18 @@ impl SimWorld {
             let Ok(target_arch) = self.catalog.get(neighbor.unit_type_id) else {
                 continue;
             };
-            let radii = arch.collision_radius + target_arch.collision_radius;
-            if dist > arch.scan_range + radii {
-                continue;
-            }
             let Some(weapon) =
                 arch.weapon_against(target_arch.mover_type, entity.active_siege_weapon())
             else {
                 continue;
             };
+            let radii = arch.collision_radius + target_arch.collision_radius;
+            let scan_range =
+                arch.scan_range
+                    .max(self.effective_weapon_range(weapon, &arch.slug, entity.owner));
+            if dist > scan_range + radii {
+                continue;
+            }
             if !weapon.target_flags.intersects(target_arch.attributes) {
                 continue;
             }

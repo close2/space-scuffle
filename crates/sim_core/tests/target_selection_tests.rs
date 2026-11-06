@@ -554,3 +554,49 @@ fn b12_a_large_enemy_is_scanned_from_its_edge() -> TestResult {
     assert_eq!(acquired(&world, chooser), Some(hulk));
     Ok(())
 }
+
+/// B-12 (audit §11.1): a weapon scans at least to its own range. A gunner scanning 3 acquires
+/// an enemy 6 beyond both edges, inside its weapon's range of 6, as `StarCraft` II's
+/// `MinScanRange` "implicitly becomes equivalent to the current range" when the range is higher.
+#[test]
+fn b12_a_weapon_scans_at_least_to_its_range() -> TestResult {
+    let mut world = world_with(&[
+        Scratch {
+            scan: "3.0",
+            ..Scratch::gunner(CHOOSER)
+        },
+        Scratch::unarmed("target"),
+    ])?;
+    let chooser = spawn(&mut world, CHOOSER, 0, 10, 16)?;
+    let target = spawn(&mut world, "target", 1, 17, 16)?;
+    step(&mut world, 0, None);
+    assert_eq!(acquired(&world, chooser), Some(target));
+    Ok(())
+}
+
+/// B-12 (audit §11.3): a sieged unit scans to its siege weapon's range. The tank-mode scan of 7
+/// is the unit's value; sieged, with a weapon of range 13, it acquires an enemy 13 beyond both
+/// edges (`StarCraft` II's Siege Mode `CrucioShockCannon`, range 13, no `MinScanRange`).
+#[test]
+fn b12_a_sieged_unit_scans_to_its_siege_weapon_range() -> TestResult {
+    let mut world = world_with(&[scanner(), Scratch::unarmed("target")])?;
+    let chooser = spawn(&mut world, CHOOSER, 0, 10, 16)?;
+    let target = spawn(&mut world, "target", 1, 24, 16)?;
+    // An unarmed ally beside the target reveals it: it lies beyond the tank's sight of 12.
+    spawn(&mut world, "target", 0, 24, 19)?;
+    let unit_type = world.catalog.id_by_slug(CHOOSER).ok_or(CHOOSER)?;
+    let mut cannon = world
+        .catalog
+        .get(unit_type)?
+        .ground_weapon
+        .clone()
+        .ok_or("the scanner has a ground weapon")?;
+    cannon.max_range = SimScalar::from_i32(13);
+    let tank = world.entities.get_mut(&chooser).ok_or("tank")?;
+    tank.is_sieged = true;
+    tank.is_immobile = true;
+    tank.siege_weapon = Some(cannon);
+    step(&mut world, 0, None);
+    assert_eq!(acquired(&world, chooser), Some(target));
+    Ok(())
+}
