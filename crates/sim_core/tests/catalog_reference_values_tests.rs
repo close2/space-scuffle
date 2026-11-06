@@ -19,6 +19,7 @@
 
 use sim_core::catalog::UnitArchetype;
 use sim_core::WeaponSpec;
+use sim_types::upgrades::UpgradeEffect;
 use sim_types::{AttributeFlags, SimScalar};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -989,4 +990,90 @@ fn b47_structure_weapon_damage_follows_starcraft() -> TestResult {
         |_| true,
         |w| f(w.base_damage),
     )
+}
+
+/// Structures whose life armour Neosteel Armor raises by 2 (`TerranBuildingArmor`, `liberty`
+/// UpgradeData:842-898, every modelled Terran structure; B-51). The same upgrade adds 2 cargo slots
+/// to the Bunker and 5 to the Command Center (`voidmulti` UpgradeData:265-268), which wait for
+/// structure cargo (B-64, WP17).
+const SC2_NEOSTEEL_ARMOR_TARGETS: [&str; 17] = [
+    "Command Center",
+    "Orbital Command",
+    "Planetary Fortress",
+    "Supply Depot",
+    "Refinery",
+    "Barracks",
+    "Engineering Bay",
+    "Bunker",
+    "Sensor Tower",
+    "Missile Turret",
+    "Factory",
+    "Ghost Academy",
+    "Starport",
+    "Armory",
+    "Fusion Core",
+    "Tech Lab",
+    "Reactor",
+];
+
+/// The `(target slug, armour delta, range delta)` of every `ModifyUnitStat` effect of `slug`.
+fn stat_effects(slug: &str) -> Result<Vec<(String, f32, f32)>, Box<dyn std::error::Error>> {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let upgrade = catalogs
+        .upgrades
+        .upgrades()
+        .find(|upgrade| upgrade.slug == slug)
+        .ok_or(format!("upgrade {slug}"))?;
+    Ok(upgrade
+        .effects
+        .iter()
+        .filter_map(|effect| match effect {
+            UpgradeEffect::ModifyUnitStat {
+                target_slug,
+                armor_delta,
+                weapon_range_delta,
+                ..
+            } => Some((target_slug.clone(), f(*armor_delta), f(*weapon_range_delta))),
+            _ => None,
+        })
+        .collect())
+}
+
+#[test]
+fn b51_neosteel_armor_raises_every_terran_structure() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let effects = stat_effects("neosteel_armor")?;
+    for unit in SC2_NEOSTEEL_ARMOR_TARGETS {
+        let archetype = catalogs
+            .units
+            .archetypes()
+            .find(|archetype| analogue(archetype) == unit)
+            .ok_or(format!("an archetype with the analogue {unit}"))?;
+        assert!(
+            effects.iter().any(|(target, armor, range)| {
+                *target == archetype.slug && (armor - 2.0).abs() < 0.001 && range.abs() < 0.001
+            }),
+            "Neosteel Armor gives {} ({unit}) +2 armour (liberty UpgradeData:842-898)",
+            archetype.slug
+        );
+    }
+    assert_eq!(
+        effects.len(),
+        SC2_NEOSTEEL_ARMOR_TARGETS.len(),
+        "no other target"
+    );
+    Ok(())
+}
+
+/// Advanced Ballistics adds range only to the Liberator's Defender Mode weapon and its zone
+/// (`LiberatorAGRangeUpgrade`, `voidmulti` UpgradeData:154-155), which the catalog does not model
+/// (B-27, WP18): it must not lengthen the anti-air weapon (B-87).
+#[test]
+fn b87_advanced_ballistics_leaves_the_anti_air_range() -> TestResult {
+    let effects = stat_effects("advanced_ballistics")?;
+    assert!(
+        effects.iter().all(|(_, _, range)| range.abs() < 0.001),
+        "Advanced Ballistics lengthens no modelled weapon: {effects:?}"
+    );
+    Ok(())
 }
