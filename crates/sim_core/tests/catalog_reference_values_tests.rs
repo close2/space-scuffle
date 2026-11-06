@@ -335,3 +335,63 @@ fn b47_structure_vitals_follow_starcraft() -> TestResult {
         |a| [f(a.max_hp), f(a.max_shields), f(a.life_armor)],
     )
 }
+
+/// Structure sight (`CUnit` `Sight`). The Sensor Tower's radar is not modelled (B-69).
+const SC2_STRUCTURE_SIGHT: [(&str, [f32; 1], &str); 49] = [
+    ("Command Center", [11.0], "liberty UnitData:10410"),
+    ("Orbital Command", [11.0], "liberty UnitData:10556"),
+    ("Planetary Fortress", [11.0], "liberty UnitData:10694"),
+    ("Supply Depot", [9.0], "liberty UnitData:5691"),
+    ("Refinery", [9.0], "liberty UnitData:5804"),
+    ("Barracks", [9.0], "liberty UnitData:5866"),
+    ("Engineering Bay", [9.0], "liberty UnitData:5998"),
+    ("Bunker", [10.0], "liberty UnitData:6184"),
+    ("Sensor Tower", [12.0], "liberty UnitData:9480"),
+    ("Missile Turret", [11.0], "liberty UnitData:6062"),
+    ("Factory", [9.0], "liberty UnitData:6266"),
+    ("Ghost Academy", [9.0], "liberty UnitData:9801"),
+    ("Starport", [9.0], "liberty UnitData:6399"),
+    ("Armory", [9.0], "liberty UnitData:6534"),
+    ("Fusion Core", [9.0], "liberty UnitData:10943"),
+    ("Tech Lab", [9.0], "liberty UnitData:6672"),
+    ("Reactor", [9.0], "liberty UnitData:472"),
+    ("Nexus", [11.0], "liberty UnitData:4217"),
+    ("Pylon", [10.0], "voidmulti UnitData:1300"),
+    ("Assimilator", [9.0], "liberty UnitData:4149"),
+    ("Gateway", [9.0], "liberty UnitData:4421"),
+    ("Forge", [9.0], "liberty UnitData:4563"),
+    ("Photon Cannon", [11.0], "liberty UnitData:11081"),
+    ("Shield Battery", [9.0], "liberty UnitData:1599"),
+    ("Cybernetics Core", [9.0], "liberty UnitData:10844"),
+    ("Twilight Council", [9.0], "liberty UnitData:4631"),
+    ("Stargate", [9.0], "liberty UnitData:9667"),
+    ("Robotics Facility", [9.0], "liberty UnitData:9593"),
+    ("Templar Archives", [9.0], "liberty UnitData:4694"),
+    ("Dark Shrine", [9.0], "liberty UnitData:9537"),
+    ("Robotics Bay", [9.0], "liberty UnitData:9864"),
+    ("Fleet Beacon", [9.0], "liberty UnitData:9735"),
+    ("Hatchery", [12.0], "voidmulti UnitData:649"),
+    ("Lair", [12.0], "voidmulti UnitData:932"),
+    ("Hive", [12.0], "liberty UnitData:8404"),
+    ("Extractor", [9.0], "liberty UnitData:8177"),
+    ("Spawning Pool", [9.0], "liberty UnitData:8914"),
+    ("Evolution Chamber", [9.0], "liberty UnitData:8472"),
+    ("Spine Crawler", [11.0], "liberty UnitData:8650"),
+    ("Spore Crawler", [11.0], "liberty UnitData:8782"),
+    ("Roach Warren", [9.0], "liberty UnitData:11793"),
+    ("Baneling Nest", [9.0], "liberty UnitData:9994"),
+    ("Hydralisk Den", [9.0], "liberty UnitData:8977"),
+    ("Lurker Den", [9.0], "liberty UnitData:660"),
+    ("Spire", [9.0], "liberty UnitData:9039"),
+    ("Greater Spire", [9.0], "liberty UnitData:9110"),
+    ("Infestation Pit", [9.0], "liberty UnitData:2063"),
+    ("Nydus Network", [9.0], "liberty UnitData:9928"),
+    ("Ultralisk Cavern", [9.0], "liberty UnitData:9243"),
+];
+
+#[test]
+fn b47_structure_sight_follows_starcraft() -> TestResult {
+    check_table("sight", true, &SC2_STRUCTURE_SIGHT, &[], |a| {
+        [f(a.sight_radius)]
+    })
+}
