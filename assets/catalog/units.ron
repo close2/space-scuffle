@@ -1149,11 +1149,7 @@
                 damage_point_ticks: 3,
                 backswing_ticks: 9,
                 splash: Some((
-                    zones: [
-                        (radius: 0.5, fraction: 1.0),
-                        (radius: 1.0, fraction: 0.5),
-                        (radius: 1.5, fraction: 0.25),
-                    ],
+                    zones: [(radius: 1.5, fraction: 1.0)],
                     friendly_fire: false,
                 )),
                 projectile_speed: Some(1.2),
