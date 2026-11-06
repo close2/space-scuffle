@@ -40,3 +40,30 @@ Evidence: [`docs/evidence/2026-11-03-battle-33-investigation.md`](../../evidence
 ## Answer
 
 Owner (2026-11-04): Option 3 (convert these four Normal-time values to Faster-based ticks and audit every time and speed value in the catalog against the 5.0.14 game data, with a whole-matrix measurement).
+
+## Resolution
+
+Option 3, carried out by plan [`2026-11-04-combat-sc2-alignment`](../../plans/2026-11-04-combat-sc2-alignment.md)
+(D-4, D-5, D-7, WP3 and WP7 to WP12):
+
+- **The four values:** marine speed 0.126 per tick (WP7 `d898744`) and Stimpack 268 ticks (WP8 `fb043b8`), merged in
+  `6ef8fe9`; the shield-regeneration delay moved into the catalog (WP9 `5129c76`), then the regeneration rate 0.112
+  per tick (WP10 `106a156`) and the delay 179 ticks (WP11 `39debbf`) on every shielded archetype, merged in
+  `905e98b`.
+- **The audit:** every time and speed value of the catalog against the 5.0.14 game data, in
+  [`docs/evidence/2026-11-04-catalog-time-audit.md`](../../evidence/2026-11-04-catalog-time-audit.md) (WP3 research
+  `92838ba`, merged in `b9f51ae`; the whole-matrix measurement of every correction, WP3 step 5 `2746a52`). The values
+  a project document had chosen on purpose went to the owner as [Q0045](0045-catalog-time-audit-deliberate-values.md).
+- **The corrections:** WP12's twenty groups, one commit each (production and research times P1 to P3, upgrade
+  speeds U1 and U2, mining M1, Siege Mode cooldown M2, energy and Zerg life regeneration R2 and R3, speeds S1 and S2,
+  weapon periods, damage points, backswings and projectile speeds W1 to W7), merged in `0f4e7fc`; the turret rates
+  W8 with WP17 (`6148c4f`, merged in `8960a3e`); the Reaper analogue's life regeneration R1 by plan
+  [`2026-11-05-life-regeneration-delay`](../../plans/2026-11-05-life-regeneration-delay.md) (`f93ec20`, merged in
+  `a27ce2a`; [Q0049](0049-reaper-life-regeneration-delay.md)).
+
+What the audit could not apply as one value, the Siege Mode transformation time (M2 deferred: a random delay and a
+different Unsiege time), is recorded bug B-4 in plan
+[`2026-11-05-sc2-deviation-fixes`](../../plans/2026-11-05-sc2-deviation-fixes.md) (WP11). Measurements:
+[`docs/evidence/2026-11-04-combat-sc2-alignment.md`](../../evidence/2026-11-04-combat-sc2-alignment.md).
+
+Closed.

@@ -52,3 +52,14 @@ Evidence: [`docs/evidence/2026-11-03-battle-33-investigation.md`](../../evidence
 ## Answer
 
 Owner (2026-11-04): Option 1 (no change to the contact rules for now), but documented/todo for future investigation.
+
+## Resolution
+
+2026-11-06, combat alignment WP13 step 1 ([plan](../../plans/2026-11-04-combat-sc2-alignment.md), with the wording of
+its amendment from plan `2026-11-05-sc2-deviation-fixes` WP0). Option 1: nothing in the game changed. The contact
+rules of `d4109e2` stay for now; how StarCraft II spaces melee attackers is recorded bug B-50 in plan
+[`2026-11-05-sc2-deviation-fixes`](../../plans/2026-11-05-sc2-deviation-fixes.md) (WP16, with open question U-6 on
+which radius governs and whether enemies push each other). It is a deferral, not a sanctioned deviation. The
+follow-up is F-1 in §8 of the combat alignment plan, and `DESIGN.md` §4's Combat row names B-50.
+
+Closed.

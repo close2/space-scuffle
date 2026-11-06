@@ -18,7 +18,7 @@ not been measured are marked as such; no planning probe was run, because the mai
 | Question | State | Where in this plan |
 |---|---|---|
 | [Q0050](../questions/closed/0050-turn-before-move.md) turn before move | Answered 2026-11-05: option (b), tolerance "within one tick's turn"; closed by WP4 (done) | D-1 to D-4, WP4 |
-| [Q0045](../questions/open/0045-catalog-time-audit-deliberate-values.md) item 1(b), hull turning | Open; closed by combat alignment WP13. Its turn-before-move part (WP17 commit g) is done here | §1 hand-off, WP4 |
+| [Q0045](../questions/closed/0045-catalog-time-audit-deliberate-values.md) item 1(b), hull turning | Open; closed by combat alignment WP13. Its turn-before-move part (WP17 commit g) is done here | §1 hand-off, WP4 |
 | [Q0008](../questions/closed/) StarCraft II where the specification is silent (charter §8) | Standing rule | D-2, D-3, D-5 |
 
 **Amendment 1 (orchestrator, 2026-11-05, against this plan's commit on `main` at `a27ce2a`).** The owner gave a

@@ -13,7 +13,7 @@ could not be confirmed while planning are marked **verify**.
 [`docs/evidence/2026-11-03-battle-33-investigation.md`](../evidence/2026-11-03-battle-33-investigation.md); its §6
 ranks the causes and §7 lists the owner questions Q0035 to Q0041, each defaulting to no change.
 
-**Owner decisions.** [Q0007](../questions/open/0007-combat-baselines.md), answered 2026-11-03: "Keep all five as
+**Owner decisions.** [Q0007](../questions/closed/0007-combat-baselines.md), answered 2026-11-03: "Keep all five as
 committed. I do however want an 'investigation' why internet says that Zealots should win, and why we have 6-13 of 24
 marines surviving. This is a big difference." [Q0008](../questions/closed/0008-game-rules.md): "Whenever the spec is
 silent make an internet search how sc2 does it."

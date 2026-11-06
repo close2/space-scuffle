@@ -1,7 +1,7 @@
 # Catalog time audit: every time and speed value against StarCraft II 5.0.14 (Q0039)
 
 Work package 3 of [`docs/plans/2026-11-04-combat-sc2-alignment.md`](../plans/2026-11-04-combat-sc2-alignment.md)
-(§D-7, WP3), answering the audit half of [Q0039](../questions/open/0039-normal-time-values.md) (owner: option 3).
+(§D-7, WP3), answering the audit half of [Q0039](../questions/closed/0039-normal-time-values.md) (owner: option 3).
 
 **Status.** Written 2026-11-04 against `main` at `0e5565a`. This file holds the research: steps 1 to 4 and 6 of WP3.
 Step 5, the whole-matrix measurement of a scratch catalog with every class B and C correction, is §7 (added
@@ -75,7 +75,7 @@ WP17's research step.
    (999.84 Normal °/s) for most units, 40° per tick for those on the engine default of 720 Normal °/s (for
    example the Immortal, Colossus, Carrier and Brood Lord), and 20° per tick for the Siege Tank, Thor and
    Ultralisk. Plan 17 also chose `welder_drone`'s 6-tick backswing for a readable animation. All are collected in
-   [Q0045](../questions/open/0045-catalog-time-audit-deliberate-values.md), default no change.
+   [Q0045](../questions/closed/0045-catalog-time-audit-deliberate-values.md), default no change.
 8. **Not found.** Four projectile speeds have no constant-speed mover in the data (§8):
    - High Templar;
    - Spine Crawler;
@@ -1601,7 +1601,7 @@ Matrix identities: `prismatic_saucer`, `psi_grey`, `tripod_annihilator`, `void_g
 
 ## 6. Deliberate values (class D) and other findings for the owner
 
-All of these are in [Q0045](../questions/open/0045-catalog-time-audit-deliberate-values.md). Its default is no change.
+All of these are in [Q0045](../questions/closed/0045-catalog-time-audit-deliberate-values.md). Its default is no change.
 
 1. **Hull turn rates (41 values, every unit except `flying_saucer`).**
    - Doc 07 §2.3 lines 62 to 64 call 999 "near-instant" and say it "overflows to full 360° instant alignment per
