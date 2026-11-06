@@ -106,6 +106,12 @@
 // "red_psi" zealot 22 (psi_grey, radius 0.5) 9.74 between centres, 8.87 between edges; under the
 // centre rule it walked on. Checkpoints 1 and 2 are unchanged; from checkpoint 3 (ticks 101 to
 // 150) every checkpoint changed.
+// Re-recorded for WP14 Amendment 7 step 2 (Q0057, B-12): every armed unit scans to its
+// StarCraft II reference (audit §11.2), "blue_infantry" (pulse_bot) 5.5 (was 9), "blue_armor"
+// (rhino_beetle) 5 (was 10), "red_psi" (psi_grey) 5 (was 9), "red_siege" (railgun_crawler) 7.5
+// (was 11), edge to edge. On tick 149 marine 16 no longer acquires zealot 22, 8.87 beyond both
+// edges; it acquires it on tick 164. Checkpoints 1 and 2 are unchanged; from checkpoint 3 (ticks
+// 101 to 150) every checkpoint changed.
 (
     checksum_schema: 11,
     seed: 0x5EED_0F_5CAFF1E,
@@ -135,23 +141,23 @@
     checksums: [
         0x3978ca1c92f81bc5,
         0x8dd33ab038320f9c,
-        0x855fb05914d42023,
-        0x0228cad779fae22e,
-        0x5c3fcd6ea12595f2,
-        0x66d04ee27d2468ea,
-        0x798282b15bf71756,
-        0x3f29ef65954b9d81,
-        0xe13cd50f445435e1,
-        0xd5fbffb4c2c67c29,
-        0x4f355a49ecf145de,
-        0xd203bbca6b27c851,
-        0xca8354e29c60e0b2,
-        0x687a167149d5dff7,
-        0xba9c3cacdcbbe797,
-        0xe1701be554a340a4,
-        0xac42ce04efff4770,
-        0x97b4d5bb495587d3,
-        0x0b1183e38cb29889,
-        0x49b507a2f0aada1e,
+        0x7bbcb1d151269093,
+        0xd26fc1e4f8b96e3a,
+        0xd654238c49aa67dc,
+        0x1ae820f062c25c78,
+        0x574783437289f23e,
+        0x26989b6a757682ff,
+        0x06d83523b3ce7355,
+        0x1e3ebd1eb7043ad3,
+        0x20e281b3ad395bd2,
+        0xca3efe964b647e3c,
+        0xf5e315b9ff043fc8,
+        0xfc5269f70a0e2830,
+        0x3543984612f6b78a,
+        0xe47f352421740783,
+        0x2838b00f61f1db23,
+        0x729f4d65f3c05473,
+        0xeff37485e11200e4,
+        0x37e710fa96fe5e5d,
     ],
 )
