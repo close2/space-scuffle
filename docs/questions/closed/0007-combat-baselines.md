@@ -47,3 +47,16 @@ Each proposed change is its own question, all defaulting to no change: Q0035 (co
 timing), Q0037 (scan ranges), Q0038 (marine backswing and the backswing rule), Q0039 (values left in Normal time),
 Q0040 (zealot attributes) and Q0041 (battle 33's expectation fails on 7 of 64 jittered seeds). This question stays
 open for the owner to close once those are read.
+
+## Resolution
+
+2026-11-06, combat alignment WP13 step 1, as the owner allowed on 2026-11-04. All five items stayed as committed. The
+investigation the owner asked for is done (plan
+[`2026-11-04-zealot-marine-investigation`](../../plans/2026-11-04-zealot-marine-investigation.md), findings in
+[`docs/evidence/2026-11-03-battle-33-investigation.md`](../../evidence/2026-11-03-battle-33-investigation.md) §6), and
+its follow-ups Q0035 to Q0041 are answered and closed. Plan
+[`2026-11-04-combat-sc2-alignment`](../../plans/2026-11-04-combat-sc2-alignment.md) carried them out; under it and
+plan [`2026-11-05-sc2-deviation-fixes`](../../plans/2026-11-05-sc2-deviation-fixes.md) battle 33 is no longer a clear
+marine win but a close fight that favours the zealots (Q0041's resolution has the current figures).
+
+Closed.
