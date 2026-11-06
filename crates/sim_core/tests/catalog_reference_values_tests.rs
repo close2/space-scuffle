@@ -1077,3 +1077,156 @@ fn b87_advanced_ballistics_leaves_the_anti_air_range() -> TestResult {
     );
     Ok(())
 }
+
+/// Unit attributes as `AttributeFlags` bits (`CUnit` `Attributes`, every layer; the citation is the
+/// unit's element). Attributes the catalog does not model (Robotic, Hover, Summoned) are not listed.
+const SC2_UNIT_ATTRIBUTES: [(&str, [f32; 1], &str); 41] = [
+    (
+        "SCV",
+        [13.0],
+        "Light+Biological+Mechanical, liberty UnitData:4722",
+    ),
+    ("Marine", [5.0], "Light+Biological, liberty UnitData:4814"),
+    ("Roach", [6.0], "Armored+Biological, liberty UnitData:7178"),
+    ("Zealot", [5.0], "Light+Biological, liberty UnitData:3166"),
+    (
+        "Siege Tank",
+        [10.0],
+        "Armored+Mechanical, liberty UnitData:5066",
+    ),
+    (
+        "Marauder",
+        [6.0],
+        "Armored+Biological, liberty UnitData:10960",
+    ),
+    ("Reaper", [5.0], "Light+Biological, liberty UnitData:4884"),
+    ("Ghost", [20.0], "Biological+Psionic, liberty UnitData:4980"),
+    ("Hellion", [9.0], "Light+Mechanical, liberty UnitData:11544"),
+    (
+        "Thor",
+        [42.0],
+        "Armored+Mechanical+Massive, liberty UnitData:5201",
+    ),
+    (
+        "Viking",
+        [10.0],
+        "Armored+Mechanical, liberty UnitData:6828",
+    ),
+    (
+        "Medivac",
+        [10.0],
+        "Armored+Mechanical, liberty UnitData:5431",
+    ),
+    (
+        "Liberator",
+        [10.0],
+        "Armored+Mechanical, void UnitData:3278",
+    ),
+    ("Banshee", [9.0], "Light+Mechanical, liberty UnitData:5365"),
+    ("Raven", [9.0], "Light+Mechanical, liberty UnitData:5569"),
+    ("Probe", [9.0], "Light+Mechanical, liberty UnitData:3061"),
+    (
+        "Stalker",
+        [10.0],
+        "Armored+Mechanical, liberty UnitData:3951",
+    ),
+    (
+        "Sentry",
+        [24.0],
+        "Mechanical+Psionic, liberty UnitData:11288; Light 0 voidmulti UnitData:1553",
+    ),
+    ("Adept", [5.0], "Light+Biological, void UnitData:3176"),
+    (
+        "High Templar",
+        [21.0],
+        "Light+Biological+Psionic, liberty UnitData:3243",
+    ),
+    (
+        "Dark Templar",
+        [21.0],
+        "Light+Biological+Psionic, liberty UnitData:3341",
+    ),
+    (
+        "Immortal",
+        [10.0],
+        "Armored+Mechanical, liberty UnitData:10726",
+    ),
+    (
+        "Colossus",
+        [42.0],
+        "Armored+Mechanical+Massive, liberty UnitData:4029",
+    ),
+    ("Observer", [9.0], "Light+Mechanical, liberty UnitData:3410"),
+    (
+        "Warp Prism",
+        [26.0],
+        "Armored+Mechanical+Psionic, liberty UnitData:3812",
+    ),
+    (
+        "Void Ray",
+        [10.0],
+        "Armored+Mechanical, liberty UnitData:3745",
+    ),
+    (
+        "Carrier / Mothership",
+        [42.0],
+        "Armored+Mechanical+Massive, liberty UnitData:3469",
+    ),
+    ("Drone", [5.0], "Light+Biological, liberty UnitData:7030"),
+    ("Zergling", [5.0], "Light+Biological, liberty UnitData:7544"),
+    ("Baneling", [4.0], "Biological, liberty UnitData:9301"),
+    ("Ravager", [4.0], "Biological, liberty UnitData:976"),
+    (
+        "Hydralisk",
+        [5.0],
+        "Light+Biological, liberty UnitData:7665",
+    ),
+    ("Lurker", [6.0], "Armored+Biological, liberty UnitData:690"),
+    ("Mutalisk", [5.0], "Light+Biological, liberty UnitData:7783"),
+    (
+        "Corruptor",
+        [6.0],
+        "Armored+Biological, liberty UnitData:11212",
+    ),
+    (
+        "Brood Lord",
+        [38.0],
+        "Armored+Biological+Massive, liberty UnitData:11102",
+    ),
+    (
+        "Ultralisk",
+        [38.0],
+        "Armored+Biological+Massive, liberty UnitData:8004",
+    ),
+    (
+        "Queen",
+        [20.0],
+        "Biological+Psionic, liberty UnitData:11405",
+    ),
+    (
+        "Infestor",
+        [22.0],
+        "Armored+Biological+Psionic, liberty UnitData:10049",
+    ),
+    (
+        "Viper",
+        [22.0],
+        "Armored+Biological+Psionic, swarm UnitData:2313",
+    ),
+    (
+        "Overlord",
+        [6.0],
+        "Armored+Biological, liberty UnitData:7354",
+    ),
+];
+
+#[test]
+fn b47_unit_attributes_follow_starcraft() -> TestResult {
+    check_table(
+        "attributes",
+        false,
+        &SC2_UNIT_ATTRIBUTES,
+        &["Phoenix"],
+        |a| [f32::from(a.attributes.bits())],
+    )
+}
