@@ -142,6 +142,11 @@ is a loud error (`crates/client_diagnostics/src/showcase/process_group.rs`, unit
 unchanged (shared, root-owned; the owner decides). After r6, `find /proc -path '/proc/*/fd/*' -lname
 /run/lock/gpu.lock` showed no process, and no `Xvfb` or `ffmpeg` of ours was left.
 
+Render r7 (`fc49f83`, with the process groups) confirmed it on the real path: during the take, `flock` (the
+exec'd `with-gpu-lock`) led its own group and `xvfb-run` and `Xvfb` were members of it; after the render the
+same `find` showed no holder and no `Xvfb` of ours was left. r7: 1,100 frames in 153 s (p50 155 ms, p95 304
+ms), MP4 9,617,809 B, teaser quality 60 5,125,796 B (over), quality 50 4,301,222 B (kept).
+
 ### The workflow (WP4) and publication (WP5)
 
 `.github/workflows/showcase.yml` was validated locally by a YAML parse and by running its `jq` summary filters
