@@ -904,3 +904,86 @@ option 3 substituted for a probe (a unit is reached when any part of it is in a 
 
 **Held** (plan D-4, a non-33 winner flip stops): the three data commits and the per-strike rule, until the
 orchestrator decides. B-18 stays in the register; the rule of §9.2 is ready for the data.
+
+## 10. WP9: the non-time catalog audit (B-47, B-51, B-82)
+
+### 10.1 Research (B-47)
+
+**What was audited.** Every non-time field of `units.ron`, `structures.ron` and `upgrades.ron` for every identity
+with an analogue (the identity map of the time audit, [audit](2026-11-04-catalog-time-audit.md) §2.1): life,
+shields, energy, life and shield armour, attributes, sight, collision radius, mineral and gas cost, supply cost and
+supply provided; per weapon the range, minimum range, damage of each damage effect its effect chain reaches, damage
+per upgrade level, target filters and `RangeSlop`; per upgrade its research cost, amount and targets. Push priority
+and `InnerRadius` (B-48, B-49, WP16) and cargo size (B-64, WP17) were read and listed, not classified. Fields that
+earlier packages audited are not repeated: times and speeds (time audit), attack target priority, threat flags and
+tie-breaks (§4.1), strikes and their spacing (§5.1), attribute bonuses (§6.1), splash zones (§8.1), start energy
+(§3.4), scan ranges (time audit §11).
+
+**Method.** As the time audit (§2.2 there): SC2GameData at `5444e12f13`, layer chain `core → liberty → swarm →
+void → voidmulti`, a later layer overriding an earlier one, an unset value taken from the `parent` element and then
+the class default. Weapon damage follows each weapon's effect chain (`CEffectSet`, `CEffectLaunchMissile`,
+`CEffectCreatePersistent`, `CEffectSwitch`, `CEffectEnumArea`) to every `CEffectDamage` it reaches. Damage per
+upgrade level is read from the merged `EffectArray` of each `…Level1` upgrade, with indexed overrides applied in
+layer order: `voidmulti` rewrites several slots by index, for example `ThermalLancesMU` +2 → +1
+(`voidmulti` UpgradeData:481), `KaiserBladesDamage` +2 → +3 (`void` UpgradeData:624) and
+`LanceMissileLaunchersDamage` +3 (`voidmulti` UpgradeData:309). Research costs are the research ability's
+`InfoArray` `Resource` entries. Scripts: `~/scratch/sc2dev_wp9/scripts/` (`audit_nt.py`, `upg.py`, `classify.py`;
+not committed, as the time audit's); rows in `~/scratch/sc2dev_wp9/final_base.tsv`.
+
+**Reading rules.**
+- A Zerg structure's `CostResource` includes the Drone (50): the Spawning Pool's 250 (`liberty` UnitData:8930)
+  is a build cost of 200. Ours is the build cost; class A.
+- Morphs (Orbital Command, Planetary Fortress, Lair, Hive, Greater Spire, Baneling, Ravager, Lurker, Brood Lord)
+  carry the morph's increment as their cost and supply, and the Zergling analogue is one Zergling at the pair's
+  price. That is right only under a morph and pair model, which we lack (B-63): a Baneling trained from its nest for
+  25 minerals and no supply is cheaper than the game's 75 and half a supply. Recorded as **B-85** (class (i), WP17,
+  with the morph model); no value changes here.
+- The Queen's and the Roach's ground attack is two weapons in the game (`Talons` 0–3 and `TalonsMissile` 3–5,
+  `liberty` WeaponData:480, `swarm` WeaponData:235; `RoachMelee` 0–0.5 and `AcidSaliva` 0.6–4, `liberty`
+  WeaponData:93, :346) with the same damage and period: one weapon from 0 here, class A.
+- Target filters: every catalog weapon targets every attribute (`bits: 255`); the game's filters on these weapons
+  name only planes and states (`Ground`/`Air`, `Visible`; excluded `Missile`, `Stasis`, `Dead`, `Hidden`,
+  `Invulnerable`), which WP2 audited. Class A.
+
+**Counts** (one row per value; "other" are the listed-only rows: B-6 49, push priority and inner radius 82, cargo 41):
+
+| File | A | C | D (B-85) | E | B-20 / B-82 | Total classified |
+|---|---|---|---|---|---|---|
+| `units.ron` | 651 | 43 | 13 | 8 | 8 / 9 | 732 |
+| `structures.ron` | 499 | 63 | 7 | 0 | 0 | 569 |
+| `upgrades.ron` | 134 | 30 | 0 | 0 | 0 | 164 |
+
+Class E: `flying_saucer` (no single analogue), the Carrier / Mothership composite's vitals (350 / 350 are the
+Mothership's, the Carrier's are 300 / 150, `liberty` UnitData:3474, :3478; its weapon abstracts the interceptors,
+B-22), and the Brood Lord's damage, which the game deals through Broodlings (B-21).
+
+**Mismatches (class C), by field kind.** Every reference below is the 5.0.14 value; the change groups of §10.2
+onward follow this order (no matrix identity first).
+
+| Group | Field kind | Values | Matrix identities |
+|---|---|---|---|
+| g1 | Structure life, shields, armour: Ghost Academy 850 → 1250 (`liberty` UnitData:9763), Starport 1000 → 1300 (:6361), Fusion Core 850 → 750 (:10907), Assimilator 450 / 450 → 300 / 300 (`voidmulti` UnitData:50, :52), Forge 500 / 500 → 400 / 400 (`swarm` UnitData:1613, :1615), Cybernetics Core 500 / 500 → 550 / 550 (`liberty` :10807, :10811), Stargate 500 / 500 → 600 / 600 (:9630, :9634), Fleet Beacon 750 / 750 → 500 / 500 (:9698, :9702), Pylon armour 0 → 1 (:4325), Photon Cannon armour 0 → 1 (:11045) | 15 | none |
+| g2 | Structure sight: Sensor Tower 22 → 12 (`liberty` UnitData:9480; its radar is not modelled, B-69), Factory 10 → 9, Starport 10 → 9, Tech Lab 7 → 9, Reactor 7 → 9, Pylon 9 → 10 (`voidmulti` UnitData:1300), Stargate 10 → 9, Fleet Beacon 10 → 9, Hatchery 11 → 12 (`voidmulti` :649), Lair 11 → 12 (`voidmulti` :932), Spire 10 → 9, Greater Spire 10 → 9 | 12 | none |
+| g3 | Costs: Armory gas 100 → 50 (`voidmulti` UnitData:2100), Dark Shrine 100 / 100 → 150 / 150 (`void` UnitData:1914), Liberator gas 150 → 125 (`voidmulti` UnitData:468), Ultralisk 300 → 275 (`voidmulti` UnitData:1940); research costs of 15 upgrades (Vehicle and Ship Plating 100 / 175 / 250, Protoss Air Weapons and Air Armor levels 2 and 3 175 / 250, Zerg Ground Carapace levels 2 and 3 200 / 250, Flyer Attacks levels 2 and 3 175 / 250, Flyer Carapace 100 / 175 / 250, Grooved Spines 75 / 75; `voidmulti` AbilData and `liberty` AbilData, cited per row in the test) | 36 | costs decide no battle |
+| g4 | Spore Crawler damage 15 → 20 (`SporeCrawlerU`, `voidmulti` EffectData:871) | 1 | none |
+| g5 | Upgrade targets: Neosteel Armor (B-51) and Advanced Ballistics (B-86), §10.6 | 2 upgrades | none |
+| g6 | Observer shields 20 → 30 (`voidmulti` UnitData:1137) | 1 | none |
+| g7 | Attributes: SCV + Biological (`liberty` UnitData:4799), Sentry − Light (`voidmulti` UnitData:1553), Infestor + Armored (`liberty` UnitData:10113) | 3 | SCV (22a) |
+| g8 | Ravager damage 13 → 16 (`RavagerWeaponDamage`, `void` EffectData:1603) and +1 → +2 a level (`void` UpgradeData:517) | 2 | none |
+| g9 | Unit life and armour: Viking 125 → 135 (`voidmulti` UnitData:2000), Hellion armour 1 → 0 (no layer sets it; doc 07 says 0), Thor armour 2 → 1 (`liberty` UnitData:5208) | 3 | Viking, Hellion, Thor |
+| g10 | Unit sight: Dark Templar 9 → 8 (`liberty` UnitData:3376), Roach 10 → 9 (:7210), Brood Lord 11 → 12 (:11132) | 3 | Roach, Brood Lord |
+| g11 | Weapon range: Dark Templar and Zergling 0.2 → 0.1 (`liberty` WeaponData:165, :361), Thor anti-air 10 → 11 (`voidmulti` WeaponData:130) | 3 | Zergling, Thor |
+| g12 | Collision radius (`CUnit` `Radius`) of 26 units, for example Siege Tank 0.75 → 0.875 (`liberty` UnitData:5094), Stalker 0.5 → 0.625 (:3973), Roach 0.5625 → 0.5 (class default, `core` UnitData:41) | 26 | 14 of them |
+| rule | Structure attributes are derived in `catalog.rs` (Psionic for a shielded structure, Mechanical otherwise); the game gives Protoss structures Armored and Structure only and Zerg structures Armored, Biological and Structure (for example Nexus `liberty` UnitData:4166, Hatchery :8193). Recorded as **B-87** | 33 | none |
+
+**Not deviations.**
+- **The High Templar has a weapon at 5.0.14** (`voidmulti` UnitData:683 adds `HighTemplarWeapon`, `voidmulti`
+  WeaponData:284: range 6, period 1.754); §6.1's note that it has none read the `liberty` layer only. The analogue's
+  weapon stands; its values are class A.
+- Damage per upgrade level, after the indexed merge: every catalog value matches, except the Ravager's (g8) and the
+  Baneling's structure effect (B-82).
+
+**B-6, read and not applied.** `RangeSlop` is 1 by default (`core` WeaponData:13) and 0, 1.25 or 2 on nine weapons
+(for example 0 on the Hydralisk's and the Lurker's, `liberty` WeaponData:372, :505; 2 on the Siege Mode cannon,
+:402). Ours is one constant, 0.5. Applying it is a rule (a per-weapon field) with its own latent commit and a
+matrix-wide measurement; it is not part of this package's data groups and stays in the register.
