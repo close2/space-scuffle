@@ -1,0 +1,72 @@
+(
+    format_version: 1,
+    name: "cloak_gunship",
+    atlas_sha256: "75c782b3c3655a88142b28d4e359327f6551be021d5f3885a2dbb44d34dc4b5e",
+    manifest_sha256: "01ff4633e4ffb97a9a7dbf9f1b3cbaa01d2b2e791497e8f6dcad27753ffc9c4f",
+    bake: (
+        frame_size: 512,
+        fps: 15,
+        max_frames_per_state: 10,
+        ffmpeg_version: "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+        framing: Letterbox(
+            feather_permille: 30,
+        ),
+    ),
+    states: {
+        Idle: (
+            clip: "cloak_gunship_idle.mp4",
+            clip_sha256: "c46c3ad30a28c4d0133bef3c90640f38ef8d80f93ee5f3967c60ad34b7fa54aa",
+            start_frame: 0,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/ccc6f7a4-7924-4e94-854a-fee20070c00a",
+                prompt_sha256: "015f91b46fd0862f49a6811836f248e4e58cf64c7c765d782cad0bbaea47ef3c",
+                keyframe_sha256: Some("844292f4341ea0baf327b863107cb54220ddfb1f634b835dad09828ce9dcb63a"),
+                last_frame_sha256: Some("844292f4341ea0baf327b863107cb54220ddfb1f634b835dad09828ce9dcb63a"),
+                ledger_line: 681,
+            ),
+            bar_rgb: Some((52, 66, 84)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Walk: (
+            clip: "cloak_gunship_walk.mp4",
+            clip_sha256: "6a8ed02e0caa2a5c0b07da1991b01e9b04d57beb3d60eb73a8526f5fed7832e5",
+            start_frame: 10,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/cae726b1-1c37-4819-8f2e-f0b1035907e0",
+                prompt_sha256: "aa52656f620d911c0d64ee187dff6d71403b9dba57536eec2800a10b026e9ada",
+                keyframe_sha256: Some("844292f4341ea0baf327b863107cb54220ddfb1f634b835dad09828ce9dcb63a"),
+                last_frame_sha256: Some("844292f4341ea0baf327b863107cb54220ddfb1f634b835dad09828ce9dcb63a"),
+                ledger_line: 799,
+            ),
+            bar_rgb: Some((52, 66, 84)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Attack: (
+            clip: "cloak_gunship_attack.mp4",
+            clip_sha256: "d1fb04993dbd0c185b2d7a96ec9bcd675a0e98e0c8a0b1d2023612fe1d4eadbe",
+            start_frame: 20,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/1f66958f-e7d1-4ada-a2f0-d46bdd6a2d8c",
+                prompt_sha256: "831b1bb882d6939bf0820c47e193712e85c41af913f022d1f6a6f14b50d90398",
+                keyframe_sha256: Some("844292f4341ea0baf327b863107cb54220ddfb1f634b835dad09828ce9dcb63a"),
+                last_frame_sha256: Some("844292f4341ea0baf327b863107cb54220ddfb1f634b835dad09828ce9dcb63a"),
+                ledger_line: 724,
+            ),
+            bar_rgb: Some((54, 68, 84)),
+        ),
+    },
+)
