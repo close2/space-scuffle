@@ -54,3 +54,20 @@ already inside its weapon reach, about 17 ticks later than today, and the marine
 ## Answer
 
 Owner (2026-11-06): Option 2 — measure scan range edge to edge (scan distance minus both radii, matching how weapon range is measured and why SC2 sets `MinScanRange = Range + 0.5`), apply the audited SC2 reference scan ranges across the catalog, and re-record the moved battles.
+
+## Resolution
+
+2026-11-06, combat alignment WP14 Amendment 7 ([plan](../../plans/2026-11-04-combat-sc2-alignment.md); evidence
+[§16](../../evidence/2026-11-04-combat-sc2-alignment.md)). Bug B-12 is fixed:
+
+- `950b2bd`: scan range is measured edge to edge (centre distance minus both radii), values unchanged; 10 matrix
+  battles moved, no winner changed; `golden_replay.ron` re-recorded.
+- `74d5491`: a weapon scans at least to its own effective range (the engine's "`MinScanRange` or `Range`, whichever
+  is greater"), so a sieged tank scans 13 and an upgraded range scans to the upgrade; bit-identical.
+- `8f77ddc`: every armed unit's `scan_range` to the reference of the audit's §11.2; 15 battles moved, no winner
+  changed; battle 33's expectation re-recorded to `blue: (0, 10), red: (0, 5)` (68 seeds: 21 / 37 / 10); both
+  goldens re-recorded.
+- `0a75c26`: armed structures read `scan_range` from `structures.ron` (6 or 7, was their sight radius 11);
+  bit-identical.
+
+Closed.

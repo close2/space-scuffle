@@ -1199,12 +1199,12 @@ ranges are measured on top of it), when the owner's priority allows. It may be s
 ([evidence](../evidence/2026-11-04-combat-sc2-alignment.md) §15, reference table in the
 [audit](../evidence/2026-11-04-catalog-time-audit.md) §11); the trace tool gained targeting measures (`b1d28e6`).
 The mechanism in battle 33 is explained (timing, not focus), but the game's measuring rule (centre or edge) is not
-sourced and decides what the values do, so no value is applied: [Q0057](../questions/open/0057-scan-range-measuring-rule.md),
+sourced and decides what the values do, so no value is applied: [Q0057](../questions/closed/0057-scan-range-measuring-rule.md),
 default no change; bug B-12 of plan [`2026-11-05-sc2-deviation-fixes`](2026-11-05-sc2-deviation-fixes.md) stays open
 (its Amendment 6).
 
 **Amendment 7 (orchestrator, 2026-11-06): Q0057 answered — edge rule, then reference values.** The owner answered
-[Q0057](../questions/open/0057-scan-range-measuring-rule.md):
+[Q0057](../questions/closed/0057-scan-range-measuring-rule.md):
 
 > "Option 2 — measure scan range edge to edge (scan distance minus both radii, matching how weapon range is measured
 > and why SC2 sets `MinScanRange = Range + 0.5`), apply the audited SC2 reference scan ranges across the catalog,
@@ -1241,6 +1241,13 @@ distribution in the comment). Goldens are re-recorded only in the commit that mo
 named units, and reproduced in debug, release and `wasm32-wasip1`. Then Q0057 is resolved and closed, B-12 is marked
 fixed in the deviation plan's Amendment 2 table and the `DESIGN.md` register, and the design documents' scan-range
 cells are updated.
+
+**Outcome of Amendment 7 (2026-11-06).** Done ([evidence](../evidence/2026-11-04-combat-sc2-alignment.md) §16):
+`950b2bd` (edge rule; 10 battles moved), `74d5491` (step 3a, bit-identical), `8f77ddc` (unit values; 15 battles
+moved, battle 33 re-recorded to `blue: (0, 10), red: (0, 5)`, both goldens re-recorded) and `0a75c26` (step 3b,
+bit-identical). Step 3a was committed before the unit values, because the values alone leave a sieged tank blind
+between 7.5 and 13 and fail a workspace test. No battle's winner over its seeds changed. Q0057 is closed and B-12 is
+fixed.
 
 ---
 
