@@ -1058,11 +1058,14 @@ fn b16_splash_zones_must_be_usable() {
     );
 }
 
+/// One row of [`SC2_SPLASH_ZONES`]: the analogue, its `(radius, fraction)` zones and the source.
+type SplashRow = (&'static str, &'static [(f32, f32)], &'static str);
+
 /// `StarCraft` II 5.0.14 `CEffectDamage` `AreaArray` of the circular splash weapons this catalog
 /// models: `(analogue, [(radius, fraction)], source)` (plan `2026-11-05-sc2-deviation-fixes`
-/// WP8a, B-16; evidence §8.1). The Hellion, Lurker, Colossus and Ultralisk areas are lines and an
-/// arc in the game, so their zones belong with their shapes (B-18, B-19; WP8b, WP8c).
-const SC2_SPLASH_ZONES: [(&str, &[(f32, f32)], &str); 3] = [
+/// package 8a, B-16; evidence §8.1). The Hellion, Lurker, Colossus and Ultralisk areas are lines and an
+/// arc in the game, so their zones belong with their shapes (B-18, B-19; packages 8b, 8c).
+const SC2_SPLASH_ZONES: [SplashRow; 3] = [
     (
         "Siege Tank",
         &[(0.4687, 1.0), (0.7812, 0.5), (1.25, 0.25)],
