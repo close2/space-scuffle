@@ -1,7 +1,8 @@
 //! # Combat Systems, Weapon State Machine & Damage Resolution
 //!
 //! Enforces `StarCraft` II-parity weapon state machines, angular turret tracking,
-//! target acquisition ranking, exact shield spillover damage formulas, and splash falloff.
+//! target acquisition ranking, shield spillover (B-15: the shield-mitigated remainder, then life
+//! armour), and splash falloff.
 //!
 //! ## Invariants Maintained
 //! 1. All calculations use deterministic fixed-point math with zero floating-point operations.
@@ -99,7 +100,29 @@ pub fn calculate_hit_damage_upgraded(
     )
 }
 
+/// The target's life armour: base `life_armor`, plus its armour-class upgrade level, plus its
+/// per-unit stat modifier.
+fn effective_life_armor(
+    target_archetype: &UnitArchetype,
+    target_upgrades: &PlayerUpgradeState,
+) -> SimScalar {
+    let armor_lvl = target_archetype
+        .armor_class
+        .and_then(|ac| target_upgrades.armor_levels.get(&ac).copied())
+        .unwrap_or(0);
+    let stat_armor = target_upgrades
+        .unit_stat_modifiers
+        .get(&target_archetype.slug)
+        .map_or(SimScalar::ZERO, |m| m.armor_delta);
+    target_archetype.life_armor + SimScalar::from_i32(i32::from(armor_lvl)) + stat_armor
+}
+
 /// Applies shield armor, spillover, life armor and the minimum-damage clamp to `raw_damage`.
+///
+/// A strike against standing shields is first reduced by shield armour (at least 0.5). If that
+/// exceeds the shields, the shields take what they have and the rest of the *shield-mitigated*
+/// damage, less life armour, reaches life (B-15; Liquipedia "Damage Calculation", "Total
+/// Damage"). The 0.5 minimum on that life part is kept pending Q0062.
 fn mitigate_strike(
     raw_damage: SimScalar,
     target_archetype: &UnitArchetype,
@@ -108,60 +131,21 @@ fn mitigate_strike(
     target_hp: SimScalar,
 ) -> DamageResolution {
     let half = MIN_DAMAGE_CLAMP;
+    let life_armor = effective_life_armor(target_archetype, target_upgrades);
 
-    let mut applied_shield_damage = SimScalar::ZERO;
-    let mut applied_life_damage = SimScalar::ZERO;
-
-    if target_shields > SimScalar::ZERO {
-        // Shield mitigation: base shield armor + shield_level upgrade
+    let (applied_shield_damage, applied_life_damage) = if target_shields > SimScalar::ZERO {
         let effective_shield_armor = target_archetype.shield_armor
             + SimScalar::from_i32(i32::from(target_upgrades.shield_level));
         let shield_mitigated = (raw_damage - effective_shield_armor).max(half);
-
         if shield_mitigated <= target_shields {
-            // Full damage absorbed by shields
-            applied_shield_damage = shield_mitigated;
+            (shield_mitigated, SimScalar::ZERO)
         } else {
-            // Shield broken: absorb remaining shields, spillover unmitigated portion into HP
-            applied_shield_damage = target_shields;
-
-            // SC2 unmitigated spillover ratio
-            let absorbed_ratio = target_shields / shield_mitigated;
-            let leftover_raw = raw_damage * (SimScalar::ONE - absorbed_ratio);
-
-            let armor_lvl = target_archetype
-                .armor_class
-                .and_then(|ac| target_upgrades.armor_levels.get(&ac).copied())
-                .unwrap_or(0);
-
-            let stat_armor = target_upgrades
-                .unit_stat_modifiers
-                .get(&target_archetype.slug)
-                .map_or(SimScalar::ZERO, |m| m.armor_delta);
-
-            let effective_life_armor = target_archetype.life_armor
-                + SimScalar::from_i32(i32::from(armor_lvl))
-                + stat_armor;
-
-            applied_life_damage = (leftover_raw - effective_life_armor).max(half);
+            let remainder = shield_mitigated - target_shields;
+            (target_shields, (remainder - life_armor).max(half))
         }
     } else {
-        // Direct HP damage mitigated by target's effective life armor
-        let armor_lvl = target_archetype
-            .armor_class
-            .and_then(|ac| target_upgrades.armor_levels.get(&ac).copied())
-            .unwrap_or(0);
-
-        let stat_armor = target_upgrades
-            .unit_stat_modifiers
-            .get(&target_archetype.slug)
-            .map_or(SimScalar::ZERO, |m| m.armor_delta);
-
-        let effective_life_armor =
-            target_archetype.life_armor + SimScalar::from_i32(i32::from(armor_lvl)) + stat_armor;
-
-        applied_life_damage = (raw_damage - effective_life_armor).max(half);
-    }
+        (SimScalar::ZERO, (raw_damage - life_armor).max(half))
+    };
 
     let remaining_hp = target_hp - applied_life_damage;
     DamageResolution {
@@ -176,7 +160,8 @@ fn mitigate_strike(
 /// Implements `StarCraft` II armor mitigation and shield spillover with default (unupgraded) player state:
 /// 1. Computes raw damage including the weapon's bonus against each attribute the target has.
 /// 2. If target has active shields, mitigates by `target.shield_armor` (clamped to 0.5 minimum).
-/// 3. If damage exceeds remaining shields, remaining raw damage spills over into HP, mitigated by `target.life_armor`.
+/// 3. If that exceeds the remaining shields, the shield-mitigated damage minus the shields spills
+///    over into HP, mitigated by `target.life_armor` (clamped to 0.5 minimum; B-15, Q0062).
 /// 4. If shields were already 0, raw damage is mitigated directly by `target.life_armor` (clamped to 0.5 minimum).
 #[must_use]
 pub fn calculate_hit_damage(

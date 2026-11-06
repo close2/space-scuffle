@@ -1,7 +1,8 @@
 //! # Integration Test: SC2 Damage Math, Shields & 10s Regen Delay
 //!
 //! Verifies:
-//! 1. Exact SC2 shield absorption, shield armor mitigation, and unmitigated HP spillover.
+//! 1. Shield absorption, shield armor mitigation, and the shield-break remainder reaching life
+//!    (B-15: shield-mitigated damage minus the shields, then life armour).
 //! 2. Attribute bonus damage against Armored and Light targets.
 //! 3. Multi-hit armor reduction (e.g. Zealot dual attack applying armor reduction twice).
 //! 4. Minimum 0.5 HP damage clamping.
@@ -133,33 +134,74 @@ fn dummy_weapon_spec(
     }
 }
 
+/// B-15: when a strike breaks the shields, the part that reaches life is the shield-mitigated
+/// damage minus the shields it took, then minus life armour (Liquipedia "Damage Calculation",
+/// "Total Damage" step, read 2026-11-06). Its worked example without Corruption, Hardened Shield
+/// and Guardian Shield: a +2 Marauder against an Armored Immortal with +1 shields, 4 armour and
+/// 2 shields deals 10 + 10 + 4 = 24; 24 - 1 = 23 inflicted; the shields take 2, life 23 - 2 - 4.
 #[test]
-fn test_sc2_shield_spillover_exact_formula() {
-    // Target with 20 Shields (ShieldArmor = 1) and 100 HP (LifeArmor = 2)
+fn b15_shield_break_sends_the_mitigated_remainder_to_life() {
+    let arch = dummy_target_archetype(
+        AttributeFlags::ARMORED,
+        SimScalar::from_num(4),
+        SimScalar::from_num(1),
+    );
+    let weapon = dummy_weapon_spec(SimScalar::from_num(24), SimScalar::ZERO, SimScalar::ZERO);
+    let res = calculate_hit_damage(
+        &weapon,
+        &arch,
+        SimScalar::from_num(2),
+        SimScalar::from_num(200),
+    );
+    assert_eq!(res.shield_damage, SimScalar::from_num(2));
+    assert_eq!(
+        res.life_damage,
+        SimScalar::from_num(17),
+        "24 - 1 shield armour - 2 shields - 4 life armour"
+    );
+    assert!(!res.killed);
+}
+
+/// B-15 with the original test's numbers: 30 raw against shield armour 1, 20 shields and life
+/// armour 2 leaves 30 - 1 - 20 - 2 = 7 for life (the old raw-proportional rule gave
+/// 30 x 9 / 29 - 2, about 7.31).
+#[test]
+fn b15_shield_break_remainder_is_not_raw_proportional() {
     let arch = dummy_target_archetype(
         AttributeFlags::LIGHT | AttributeFlags::BIOLOGICAL,
         SimScalar::from_num(2),
         SimScalar::from_num(1),
     );
-    let target_shields = SimScalar::from_num(20);
-    let target_hp = SimScalar::from_num(100);
-
-    // Strike with 30 raw damage
     let weapon = dummy_weapon_spec(SimScalar::from_num(30), SimScalar::ZERO, SimScalar::ZERO);
-    let res = calculate_hit_damage(&weapon, &arch, target_shields, target_hp);
-
-    // 1. Shield portion: 30 - 1 = 29 mitigated damage
-    // 2. Shields absorb full 20 shields
+    let res = calculate_hit_damage(
+        &weapon,
+        &arch,
+        SimScalar::from_num(20),
+        SimScalar::from_num(100),
+    );
     assert_eq!(res.shield_damage, SimScalar::from_num(20));
+    assert_eq!(res.life_damage, SimScalar::from_num(7));
+}
 
-    // 3. Absorbed ratio = 20 / 29
-    // Leftover raw = 30 * (1 - 20/29) = 30 * 9 / 29 = 270 / 29
-    let leftover_raw = SimScalar::from_num(30)
-        * (SimScalar::ONE - SimScalar::from_num(20) / SimScalar::from_num(29));
-    let expected_life = (leftover_raw - SimScalar::from_num(2)).max(MIN_DAMAGE_CLAMP);
-
-    assert_eq!(res.life_damage, expected_life);
-    assert!(!res.killed);
+/// B-15, the part left open as Q0062: a shield-breaking remainder smaller than life armour
+/// still deals the 0.5 minimum to life (unchanged; no source states whether the floor applies
+/// to the life part).
+#[test]
+fn b15_shield_break_remainder_below_life_armour_keeps_the_minimum() {
+    let arch = dummy_target_archetype(
+        AttributeFlags::ARMORED,
+        SimScalar::from_num(2),
+        SimScalar::ZERO,
+    );
+    let weapon = dummy_weapon_spec(SimScalar::from_num(10), SimScalar::ZERO, SimScalar::ZERO);
+    let res = calculate_hit_damage(
+        &weapon,
+        &arch,
+        SimScalar::from_num(9),
+        SimScalar::from_num(100),
+    );
+    assert_eq!(res.shield_damage, SimScalar::from_num(9));
+    assert_eq!(res.life_damage, MIN_DAMAGE_CLAMP);
 }
 
 #[test]
