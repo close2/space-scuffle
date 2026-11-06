@@ -153,7 +153,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 
 | ID | Deviation | Package |
 |---|---|---|
-| B-2 | Every strike of a multi-strike weapon lands on the same tick | WP5 |
+| B-2 | Whether an order between the strikes of a multi-strike attack cancels the later strikes (not yet sourced, [Q0058](docs/questions/open/0058-channeled-burst-interruption.md)); the spacing itself is fixed | Q0058 |
 | B-3 | No random firing delay | WP11 |
 | B-4 | Siege Mode has one transformation time and no random part | WP11 |
 | B-5 | Whether damage point and backswing hold an automatically attacking unit (not yet sourced) | WP16 |
@@ -209,6 +209,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-74 | Code comments claim exact parity for spillover and splash | WP7, WP8a |
 | B-77 | Hard-coded Concussive slow | WP13d |
 | B-78 | Hard-coded storm evacuation margin | WP18 |
+| B-81 | The Liberator's first missile and the Colossus' strikes land on the release tick; the game delays them 1 and 7 ticks | WP5 follow-up, WP8b |
 
 ---
 

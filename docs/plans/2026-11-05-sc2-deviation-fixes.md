@@ -752,7 +752,7 @@ requires.
 | ID | Short title | Class | Reason or WP |
 |---|---|---|---|
 | B-1 | A swing its turn aligns starts a tick late (M-22) | Fixed | WP1 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §1) |
-| B-2 | Every strike of a multi-strike weapon on one tick | (i) | WP5 |
+| B-2 | Every strike of a multi-strike weapon on one tick | Fixed, narrowed | WP5 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §5); open only whether an order between the strikes ends a `Channeled` burst ([Q0058](../questions/open/0058-channeled-burst-interruption.md)) |
 | B-3 | No random firing delay | (i) | WP11; it decides how volleys desynchronize, which players see |
 | B-4 | Siege Mode: one transformation time, no random part | (i) | WP11 |
 | B-5 | Whether damage point and backswing hold an automatically attacking unit | (i) | WP16 research |
@@ -829,6 +829,7 @@ requires.
 | B-76 | Hard-coded threat categories | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.3, §4.5) |
 | B-77 | Hard-coded Concussive slow | (i) | WP13d |
 | B-78 | Storm evacuation margin | (i) | WP18 |
+| B-81 | A first strike the effect chain delays (Liberator 1 tick, Colossus 7) lands on the release tick | (i) | WP5 follow-up; the Colossus part with B-18 (WP8b). Found in WP5 (Amendment 8) |
 
 **Counts.** 78 IDs: (i) 70, two of them narrowed (B-52, B-67) and one carried by another plan (B-12); (ii) 3 (B-37,
 B-53, B-58); (iii) none; fixed 5 (B-31 and B-40 by the turn-before-move plan; B-71, B-73 and B-75 by WP0).
@@ -936,7 +937,6 @@ Evidence: [combat alignment evidence](../evidence/2026-11-04-combat-sc2-alignmen
 - **Matrix effect if applied (scratch, 20 seeds):** 26 battles move under our centre rule, 15 under an edge rule; no
   battle's winner over its seeds changes under either; battle 33 is §15.2's table.
 
-
 ## Amendment 7 (combat alignment WP14 Amendment 7, 2026-11-06): B-12 fixed
 
 The owner answered [Q0057](../questions/closed/0057-scan-range-measuring-rule.md) with option 2: scan range measured
@@ -953,3 +953,27 @@ edge to edge, the audited StarCraft II values across the catalog, the moved batt
 
 No battle's winner over its seeds changed in any step. B-12 is fixed and leaves the `DESIGN.md` register; the
 pursuit leash, which is a multiple of the scan range, stays with B-13.
+
+## Amendment 8 (WP5, 2026-11-06): multi-strike timing landed
+
+Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §5.
+
+- **Fixed: B-2**, narrowed. `strike_interval_ticks` (required) and `followup_max_distance` per weapon; the strikes
+  after the first wait in `Entity::pending_strikes` (checksum schema 12, in the latent commit a). The data follow
+  each weapon's `CEffectCreatePersistent` and validators (§5.1): Zealot 5 ticks within 2.1, Thor ground 7, Viking 4
+  within 15, Reaper 2 within 7, Banshee 3 within 15, Liberator 1, Missile Turret 2 within 15, Queen 5 within 5; the
+  Phoenix's and the Colossus' strikes land together. Open: whether an order between the strikes ends a `Channeled`
+  burst, filed as [Q0058](../questions/open/0058-channeled-burst-interruption.md) (default no change).
+- **Plan WP5 item 2 as built:** a later strike is also dropped when its target has left the weapon's plane (the
+  data's `MultipleHitGroundOnlyAttackTargetFilter`), a projectile weapon launches one missile per strike, and a
+  strike with splash splashes. The plan's "0.2 Normal s" for the Zealot is 0.28 Normal s (0.2 Faster s), 5 ticks
+  as the plan says.
+- **New, found: B-81** (class (i)). The effect chain delays the first strike of two weapons, which land on the
+  release tick here: the Liberator's first missile 0.05 Normal s (1 tick), and both of the Colossus' strikes on its
+  target 0.375 Normal s (7 ticks, the sweep's `ExpireDelay`). The Colossus part belongs with B-18 (WP8b).
+- **Battle 33 re-recorded** (D-4): on top of the scan ranges (Amendment 7), the Zealot's spaced blade moves it from
+  21 / 37 / 10 to 54 / 7 / 7 on 68 seeds (marines / zealots / unresolved); expectation `blue: (0, 13), red: (0, 3)`. The mechanism is the delay alone (the
+  2.1 condition decides no blade): every second blade lands 5 ticks later, so each marine kill takes 5 ticks
+  longer. No other battle's winner over its seeds changed (battles 7, 8, 14, 19, 23b, 25a, 25b, 35 moved; 35's
+  blue wins went 16 → 12 of 20 with the Viking's spaced torpedoes, the rest unresolved).
+- **Register:** B-2 narrowed to Q0058's part; B-81 added.
