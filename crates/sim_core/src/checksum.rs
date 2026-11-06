@@ -40,7 +40,9 @@ use std::collections::BTreeMap;
 /// strikes and each projectile's strike count: the strikes of one attack land on separate ticks.
 /// Schema 13 replaces each weapon's Armored and Light bonuses with its bonus against every
 /// attribute, eight values in `Attribute::ALL` order.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 13;
+/// Schema 14 replaces each splash's three fixed radii with its list of zones, each a radius and
+/// the fraction of the strike it deals.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 14;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

@@ -59,7 +59,7 @@ pub use upgrades::{
 };
 pub use weapon::{
     default_projectile_lifetime_ticks, Attribute, AttributeBonuses, ProjectileTargetLossBehavior,
-    SplashSpec, WeaponSpec, DEFAULT_PROJECTILE_LIFETIME_TICKS,
+    SplashSpec, SplashZone, WeaponSpec, DEFAULT_PROJECTILE_LIFETIME_TICKS,
 };
 
 /// Simulation ticks per second of game time: the one fixed tick rate of every match (25 Hz,

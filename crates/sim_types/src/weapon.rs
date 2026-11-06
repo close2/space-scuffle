@@ -111,18 +111,57 @@ impl AttributeBonuses {
     }
 }
 
-/// Concentric circular splash falloff parameters (`StarCraft` II standard).
+/// One zone of an area weapon: one entry of `StarCraft` II's `CEffectDamage` `AreaArray`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SplashZone {
+    /// The zone's reach in world units, measured from the impact point to the struck unit's
+    /// centre (`AreaArray` `Radius`).
+    pub radius: SimScalar,
+    /// The share of the strike's damage a unit in this zone takes, `0 < fraction <= 1`
+    /// (`AreaArray` `Fraction`).
+    pub fraction: SimScalar,
+}
+
+/// Circular area damage around an impact point: a list of zones with their own radii and
+/// fractions, read per weapon from the catalog.
+///
+/// What this models of `StarCraft` II, and what it does not: the zones and fractions are the
+/// weapon's `AreaArray` (bug B-16 fixed). Distance is measured centre to centre, where the
+/// game's area searches may reach a unit's edge (`SearchFlags` `OffsetByUnitRadius`; bug B-17,
+/// owner question Q0063), and every area is a full circle, where some of the game's are lines
+/// or arcs (bugs B-18 and B-19). See the `DESIGN.md` bug register.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SplashSpec {
-    /// 100% full damage radius from impact center.
-    pub inner_radius: SimScalar,
-    /// 50% half damage radius from impact center.
-    pub middle_radius: SimScalar,
-    /// 25% quarter damage radius from impact center.
-    pub outer_radius: SimScalar,
+    /// The zones, radii strictly increasing; a unit takes the fraction of the innermost zone
+    /// that reaches it, and nothing beyond the last.
+    pub zones: Vec<SplashZone>,
     /// If true, splash affects allied units as well.
     #[serde(default)]
     pub friendly_fire: bool,
+}
+
+impl SplashSpec {
+    /// The fraction of the strike a unit `distance` world units from the impact point takes:
+    /// the innermost zone whose radius reaches it (a zone includes its edge), or `None` beyond
+    /// the last zone.
+    #[must_use]
+    pub fn fraction_at(&self, distance: SimScalar) -> Option<SimScalar> {
+        self.zones
+            .iter()
+            .find(|zone| distance <= zone.radius)
+            .map(|zone| zone.fraction)
+    }
+
+    /// The largest radius of any zone in world units, zero for a splash with no zone: no unit
+    /// farther than this from the impact point is struck.
+    #[must_use]
+    pub fn reach(&self) -> SimScalar {
+        self.zones
+            .iter()
+            .map(|zone| zone.radius)
+            .max()
+            .unwrap_or(SimScalar::ZERO)
+    }
 }
 
 /// Behavior of an in-flight homing projectile when its intended target entity becomes unavailable
@@ -226,7 +265,7 @@ pub struct WeaponSpec {
 
 #[cfg(test)]
 mod tests {
-    use super::{Attribute, AttributeBonuses, AttributeFlags, SimScalar};
+    use super::{Attribute, AttributeBonuses, AttributeFlags, SimScalar, SplashSpec, SplashZone};
 
     #[test]
     fn every_attribute_has_its_own_flag_in_declaration_order() {
@@ -264,5 +303,31 @@ mod tests {
                 .count(),
             0
         );
+    }
+
+    #[test]
+    fn splash_fraction_is_the_innermost_reaching_zones() {
+        let zone = |radius: i32, quarters: i32| SplashZone {
+            radius: SimScalar::from_i32(radius),
+            fraction: SimScalar::from_i32(quarters) / SimScalar::from_i32(4),
+        };
+        let splash = SplashSpec {
+            zones: vec![zone(1, 4), zone(3, 1)],
+            friendly_fire: false,
+        };
+        assert_eq!(splash.fraction_at(SimScalar::ZERO), Some(SimScalar::ONE));
+        assert_eq!(splash.fraction_at(SimScalar::ONE), Some(SimScalar::ONE));
+        assert_eq!(
+            splash.fraction_at(SimScalar::from_i32(2)),
+            Some(SimScalar::from_i32(1) / SimScalar::from_i32(4))
+        );
+        assert_eq!(splash.fraction_at(SimScalar::from_i32(4)), None);
+        assert_eq!(splash.reach(), SimScalar::from_i32(3));
+        let empty = SplashSpec {
+            zones: Vec::new(),
+            friendly_fire: false,
+        };
+        assert_eq!(empty.fraction_at(SimScalar::ZERO), None);
+        assert_eq!(empty.reach(), SimScalar::ZERO);
     }
 }

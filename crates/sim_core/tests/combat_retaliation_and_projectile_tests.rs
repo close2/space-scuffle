@@ -527,9 +527,20 @@ fn test_ballistic_impact_last_known_position_splash() {
 
     // Ballistic weapon with ImpactLastKnownPosition and outer splash radius 2.0
     let splash = SplashSpec {
-        inner_radius: SimScalar::ONE,
-        middle_radius: SimScalar::from_f32_lossy(1.5),
-        outer_radius: SimScalar::from_num(2),
+        zones: vec![
+            sim_types::SplashZone {
+                radius: SimScalar::ONE,
+                fraction: SimScalar::ONE,
+            },
+            sim_types::SplashZone {
+                radius: SimScalar::from_f32_lossy(1.5),
+                fraction: SimScalar::HALF,
+            },
+            sim_types::SplashZone {
+                radius: SimScalar::from_num(2),
+                fraction: SimScalar::from_num(0.25),
+            },
+        ],
         friendly_fire: false,
     };
     let weapon = custom_projectile_weapon(

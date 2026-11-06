@@ -31,7 +31,9 @@ use std::path::PathBuf;
 /// encodes each weapon's strike spacing and each entity's `pending_strikes`, `None` at spawn.
 /// Re-recorded for checksum schema 13 (WP6, B-14), which encodes each weapon's bonus against
 /// every attribute in place of its Armored and Light bonuses.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 1_186_221_632_453_401_007;
+/// Re-recorded for checksum schema 14 (work package 8a, B-16), which encodes each splash as its
+/// list of zones in place of three fixed radii.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 8_180_004_792_197_994_088;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

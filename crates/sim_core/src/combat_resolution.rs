@@ -641,6 +641,7 @@ impl SimWorld {
         let mut splash_hits = std::mem::take(&mut self.combat.splash_hits);
         splash_hits.clear();
         let attacker_upgrades = Self::upgrades_of(&self.player_upgrades, source.owner);
+        let reach = splash.reach();
         for (&other_id, other) in &self.entities {
             if Some(other_id) == primary
                 || Some(other_id) == source.attacker
@@ -650,7 +651,7 @@ impl SimWorld {
                 continue;
             }
             let distance = hit.position.distance(other.position);
-            if distance > splash.outer_radius {
+            if distance > reach {
                 continue;
             }
             let Ok(other_arch) = self.catalog.get(other.unit_type_id) else {

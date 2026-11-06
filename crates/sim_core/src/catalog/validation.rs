@@ -8,7 +8,8 @@
 //! validation, not a balance audit: odd but runnable authored values remain legal.
 
 use super::{
-    PrimaryWeapon, StructureArchetypeDef, UnitArchetypeDef, UnitModeSpecDef, WeaponSpecDef,
+    PrimaryWeapon, SplashSpecDef, StructureArchetypeDef, UnitArchetypeDef, UnitModeSpecDef,
+    WeaponSpecDef,
 };
 use crate::error::{SimCoreError, SimResult};
 use crate::movement::tuning::STALL_REPATH_TICKS;
@@ -623,24 +624,43 @@ impl WeaponSpecDef {
             }
         }
         if let Some(splash) = &self.splash {
-            for (field, value) in [
-                ("inner_radius", splash.inner_radius),
-                ("middle_radius", splash.middle_radius),
-                ("outer_radius", splash.outer_radius),
-            ] {
-                nonnegative(
-                    definition,
-                    &format!("{prefix}.splash.{field}"),
-                    f64::from(value),
-                )?;
-            }
-            if splash.inner_radius > splash.middle_radius
-                || splash.middle_radius > splash.outer_radius
-            {
+            splash.validate(definition, &format!("{prefix}.splash"))?;
+        }
+        Ok(())
+    }
+}
+
+impl SplashSpecDef {
+    /// Checks the zones: at least one; each radius finite and nonnegative and larger than the
+    /// one before; each fraction in `0 < fraction <= 1`, the share of a strike a zone can deal.
+    fn validate(&self, definition: &str, prefix: &str) -> SimResult<()> {
+        if self.zones.is_empty() {
+            return Err(invalid(
+                definition,
+                &format!("{prefix}.zones"),
+                "a splash needs at least one zone",
+            ));
+        }
+        for (index, zone) in self.zones.iter().enumerate() {
+            let field = format!("{prefix}.zones[{index}]");
+            nonnegative(
+                definition,
+                &format!("{field}.radius"),
+                f64::from(zone.radius),
+            )?;
+            if index > 0 && zone.radius <= self.zones[index - 1].radius {
                 return Err(invalid(
                     definition,
-                    &format!("{prefix}.splash.middle_radius"),
-                    "splash radii must not decrease from inner to outer",
+                    &format!("{field}.radius"),
+                    "splash zone radii must increase from one zone to the next",
+                ));
+            }
+            positive(definition, &format!("{field}.fraction"), zone.fraction)?;
+            if zone.fraction > 1.0 {
+                return Err(invalid(
+                    definition,
+                    &format!("{field}.fraction"),
+                    "a splash zone deals at most the whole strike",
                 ));
             }
         }

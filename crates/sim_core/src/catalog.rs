@@ -28,7 +28,7 @@ use sim_types::{
     OverclockSpec, ProjectileTargetLossBehavior, ShapeKind, SilhouetteClass, SimAngle, SimScalar,
     UnitModeSpec, UnitTypeId, UpgradeEffect, WeaponVisualKind,
 };
-pub use sim_types::{SplashSpec, WeaponSpec};
+pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod factions;
 mod runtime;
 mod targeting;
@@ -838,11 +838,18 @@ impl UnitModeSpecDef {
 
 #[derive(Debug, Deserialize)]
 struct SplashSpecDef {
-    inner_radius: f32,
-    middle_radius: f32,
-    outer_radius: f32,
+    /// The weapon's `AreaArray`: required, so a catalog written with the former three fixed
+    /// radii fails to load.
+    zones: Vec<SplashZoneDef>,
     #[serde(default)]
     friendly_fire: bool,
+}
+
+/// One authored splash zone: a radius in world units and the fraction of the strike it deals.
+#[derive(Debug, Deserialize)]
+struct SplashZoneDef {
+    radius: f32,
+    fraction: f32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1061,9 +1068,14 @@ impl UnitArchetypeDef {
             damage_point_ticks: w.damage_point_ticks,
             backswing_ticks: w.backswing_ticks,
             splash: w.splash.map(|s| SplashSpec {
-                inner_radius: SimScalar::from_f32_lossy(s.inner_radius),
-                middle_radius: SimScalar::from_f32_lossy(s.middle_radius),
-                outer_radius: SimScalar::from_f32_lossy(s.outer_radius),
+                zones: s
+                    .zones
+                    .iter()
+                    .map(|zone| SplashZone {
+                        radius: SimScalar::from_f32_lossy(zone.radius),
+                        fraction: SimScalar::from_f32_lossy(zone.fraction),
+                    })
+                    .collect(),
                 friendly_fire: s.friendly_fire,
             }),
             projectile_speed: w.projectile_speed.map(SimScalar::from_f32_lossy),

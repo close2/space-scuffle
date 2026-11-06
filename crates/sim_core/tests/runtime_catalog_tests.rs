@@ -81,14 +81,16 @@ fn replace_first_field(source: &str, field: &str, replacement: &str) -> String {
                 match character {
                     '"' => quoted = true,
                     '(' | '[' | '{' => depth += 1,
+                    // A field value ends at its comma, or at the close of the struct holding
+                    // it when it is the last field and written without a trailing comma.
+                    ',' | ')' | ']' | '}' if depth == 0 => return Some(start + offset),
                     ')' | ']' | '}' => depth -= 1,
-                    ',' if depth == 0 => return Some(start + offset),
                     _ => {}
                 }
             }
             None
         })
-        .expect("fixture field has a terminating comma");
+        .expect("fixture field has a terminating comma or closing bracket");
     format!("{} {replacement}{}", &source[..start], &source[end..])
 }
 
@@ -327,7 +329,7 @@ fn invalid_numbers_fail_before_fixed_point_conversion_with_file_context() -> Tes
         ("max_hp", "2147483648.0"),
         ("max_hp", "-2147483904.0"),
         ("base_damage", "NaN"),
-        ("inner_radius", "inf"),
+        ("fraction", "inf"),
         ("hp_cost", "NaN"),
         ("turn_rate_deg_per_tick", "NaN"),
         ("firing_arc_deg", "inf"),

@@ -1029,3 +1029,31 @@ fn b14_attribute_bonuses_follow_starcraft() -> TestResult {
     }
     Ok(())
 }
+
+/// B-16: a splash is a list of zones (`CEffectDamage` `AreaArray`), each a radius and the
+/// fraction of the strike it deals. Load rejects a splash with no zone, a fraction outside
+/// `0 < fraction <= 1`, and radii that do not grow from one zone to the next.
+#[test]
+fn b16_splash_zones_must_be_usable() {
+    let tank_inner = "(radius: 0.4687, fraction: 1.0)";
+    for bad in [
+        "(radius: 0.4687, fraction: 0.0)",
+        "(radius: 0.4687, fraction: 1.5)",
+        "(radius: 0.4687, fraction: -0.5)",
+    ] {
+        assert_rejected(UNITS, tank_inner, bad, "fraction");
+    }
+    assert_rejected(UNITS, tank_inner, "(radius: -1.0, fraction: 1.0)", "radius");
+    assert_rejected(
+        UNITS,
+        "(radius: 0.7812, fraction: 0.5)",
+        "(radius: 0.4687, fraction: 0.5)",
+        "radius",
+    );
+    assert_rejected(
+        UNITS,
+        "zones: [(radius: 2.2, fraction: 1.0)]",
+        "zones: []",
+        "zones",
+    );
+}

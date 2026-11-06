@@ -6,7 +6,7 @@
 //! 2. Attribute bonus damage against Armored and Light targets.
 //! 3. Multi-hit armor reduction (e.g. Zealot dual attack applying armor reduction twice).
 //! 4. Minimum 0.5 HP damage clamping.
-//! 5. Circular concentric splash falloff (100% / 50% / 25%).
+//! 5. Circular splash zones, each with its own radius and fraction (B-16).
 //! 6. Shield and life regeneration wait for the archetype's catalog delays
 //!    (`shield_regen_delay_ticks`, `hp_regen_delay_ticks`) after sustaining damage, for a
 //!    shipped archetype and for scratch ones; any damage, to shields or life, restarts both.
@@ -306,9 +306,20 @@ fn test_minimum_damage_clamp() {
 fn test_circular_splash_falloff() {
     let weapon = dummy_weapon_spec(SimScalar::from_num(40), SimScalar::ZERO, SimScalar::ZERO);
     let splash = SplashSpec {
-        inner_radius: SimScalar::from_num(1),
-        middle_radius: SimScalar::from_num(2),
-        outer_radius: SimScalar::from_num(3),
+        zones: vec![
+            sim_types::SplashZone {
+                radius: SimScalar::from_num(1),
+                fraction: SimScalar::ONE,
+            },
+            sim_types::SplashZone {
+                radius: SimScalar::from_num(2),
+                fraction: SimScalar::HALF,
+            },
+            sim_types::SplashZone {
+                radius: SimScalar::from_num(3),
+                fraction: SimScalar::from_num(0.25),
+            },
+        ],
         friendly_fire: false,
     };
     let target = dummy_target_archetype(AttributeFlags::LIGHT, SimScalar::ZERO, SimScalar::ZERO);
@@ -346,7 +357,7 @@ fn test_circular_splash_falloff() {
     );
     assert_eq!(res_outer.expect("hit").life_damage, SimScalar::from_num(10));
 
-    // Miss: > outer_radius (None)
+    // Miss: beyond the last zone (None)
     let res_miss = calculate_splash_damage(
         &weapon,
         &splash,
@@ -716,9 +727,20 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
         damage_point_ticks: 1,
         backswing_ticks: 2,
         splash: Some(SplashSpec {
-            inner_radius: SimScalar::ONE,
-            middle_radius: SimScalar::from_num(1.5),
-            outer_radius: SimScalar::from_num(2.0),
+            zones: vec![
+                sim_types::SplashZone {
+                    radius: SimScalar::ONE,
+                    fraction: SimScalar::ONE,
+                },
+                sim_types::SplashZone {
+                    radius: SimScalar::from_num(1.5),
+                    fraction: SimScalar::HALF,
+                },
+                sim_types::SplashZone {
+                    radius: SimScalar::from_num(2.0),
+                    fraction: SimScalar::from_num(0.25),
+                },
+            ],
             friendly_fire: true,
         }),
         projectile_speed: None,
@@ -734,9 +756,20 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
     let enemy_only_weapon = WeaponSpec {
         name: "Disruptor Shell (Enemy Only)".to_string(),
         splash: Some(SplashSpec {
-            inner_radius: SimScalar::ONE,
-            middle_radius: SimScalar::from_num(1.5),
-            outer_radius: SimScalar::from_num(2.0),
+            zones: vec![
+                sim_types::SplashZone {
+                    radius: SimScalar::ONE,
+                    fraction: SimScalar::ONE,
+                },
+                sim_types::SplashZone {
+                    radius: SimScalar::from_num(1.5),
+                    fraction: SimScalar::HALF,
+                },
+                sim_types::SplashZone {
+                    radius: SimScalar::from_num(2.0),
+                    fraction: SimScalar::from_num(0.25),
+                },
+            ],
             friendly_fire: false,
         }),
         ..friendly_fire_weapon.clone()
@@ -892,9 +925,20 @@ fn s13_splash_falloff_scales_stat_bonus_damage() {
     let weapon = dummy_weapon_spec(SimScalar::from_num(20), SimScalar::ZERO, SimScalar::ZERO);
     let target = dummy_target_archetype(AttributeFlags::empty(), SimScalar::ZERO, SimScalar::ZERO);
     let splash = SplashSpec {
-        inner_radius: SimScalar::ONE,
-        middle_radius: SimScalar::from_num(2),
-        outer_radius: SimScalar::from_num(4),
+        zones: vec![
+            sim_types::SplashZone {
+                radius: SimScalar::ONE,
+                fraction: SimScalar::ONE,
+            },
+            sim_types::SplashZone {
+                radius: SimScalar::from_num(2),
+                fraction: SimScalar::HALF,
+            },
+            sim_types::SplashZone {
+                radius: SimScalar::from_num(4),
+                fraction: SimScalar::from_num(0.25),
+            },
+        ],
         friendly_fire: false,
     };
     let mut attacker = PlayerUpgradeState::default();
@@ -995,4 +1039,77 @@ fn b14_each_applying_attribute_bonus_gains_its_upgrade() {
     )
     .life_damage;
     assert_eq!(damage, SimScalar::from_num(22), "10 + (3 + 2) + (5 + 2)");
+}
+
+/// B-16: every zone of an area weapon deals its own fraction of the strike, as each entry of
+/// `StarCraft` II's `CEffectDamage` `AreaArray` carries a `Radius` and a `Fraction`; the
+/// fractions are data, not a fixed 100 / 50 / 25 %. The innermost zone that reaches the unit
+/// decides.
+#[test]
+fn b16_each_splash_zone_deals_its_own_fraction() {
+    let weapon = dummy_weapon_spec(SimScalar::from_num(40), SimScalar::ZERO, SimScalar::ZERO);
+    let target = dummy_target_archetype(AttributeFlags::LIGHT, SimScalar::ZERO, SimScalar::ZERO);
+    let splash = SplashSpec {
+        zones: vec![
+            sim_types::SplashZone {
+                radius: SimScalar::ONE,
+                fraction: SimScalar::ONE,
+            },
+            sim_types::SplashZone {
+                radius: SimScalar::from_num(2),
+                fraction: SimScalar::from_num(0.75),
+            },
+        ],
+        friendly_fire: false,
+    };
+    let at = |distance: f32| {
+        calculate_splash_damage(
+            &weapon,
+            &splash,
+            SimScalar::from_f32_lossy(distance),
+            &target,
+            SimScalar::ZERO,
+            SimScalar::from_num(100),
+        )
+        .map(|resolution| resolution.life_damage)
+    };
+    assert_eq!(at(0.5), Some(SimScalar::from_num(40)), "inner zone: 100 %");
+    assert_eq!(
+        at(1.0),
+        Some(SimScalar::from_num(40)),
+        "a zone's edge is inside it"
+    );
+    assert_eq!(
+        at(1.5),
+        Some(SimScalar::from_num(30)),
+        "second zone: its 75 %"
+    );
+    assert_eq!(at(2.0), Some(SimScalar::from_num(30)));
+    assert_eq!(at(2.5), None, "beyond the last zone");
+}
+
+/// B-16: an area weapon with one zone deals its whole fraction to its edge, as the
+/// Liberator's anti-air splash does (`AreaArray Radius="1.5" Fraction="1"`, `void`
+/// EffectData:2938); three fixed tiers could not express it.
+#[test]
+fn b16_a_single_zone_deals_full_damage_to_its_edge() {
+    let weapon = dummy_weapon_spec(SimScalar::from_num(5), SimScalar::ZERO, SimScalar::ZERO);
+    let target = dummy_target_archetype(AttributeFlags::LIGHT, SimScalar::ZERO, SimScalar::ZERO);
+    let splash = SplashSpec {
+        zones: vec![sim_types::SplashZone {
+            radius: SimScalar::from_num(1.5),
+            fraction: SimScalar::ONE,
+        }],
+        friendly_fire: false,
+    };
+    let life_damage = calculate_splash_damage(
+        &weapon,
+        &splash,
+        SimScalar::from_num(1.4),
+        &target,
+        SimScalar::ZERO,
+        SimScalar::from_num(100),
+    )
+    .map(|resolution| resolution.life_damage);
+    assert_eq!(life_damage, Some(SimScalar::from_num(5)));
 }

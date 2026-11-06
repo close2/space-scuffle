@@ -685,9 +685,20 @@ fn all_three_splash_routes_ignore_cargo_at_dormant_pickup_coordinates() -> TestR
         weapon.suicide_on_attack = false;
         weapon.max_range = SimScalar::from_num(20);
         weapon.splash = Some(sim_types::SplashSpec {
-            inner_radius: SimScalar::from_num(2),
-            middle_radius: SimScalar::from_num(3),
-            outer_radius: SimScalar::from_num(4),
+            zones: vec![
+                sim_types::SplashZone {
+                    radius: SimScalar::from_num(2),
+                    fraction: SimScalar::ONE,
+                },
+                sim_types::SplashZone {
+                    radius: SimScalar::from_num(3),
+                    fraction: SimScalar::HALF,
+                },
+                sim_types::SplashZone {
+                    radius: SimScalar::from_num(4),
+                    fraction: SimScalar::from_num(0.25),
+                },
+            ],
             friendly_fire: true,
         });
         if route == 0 {

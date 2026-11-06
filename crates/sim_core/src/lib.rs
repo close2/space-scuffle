@@ -39,7 +39,7 @@ pub mod upgrades;
 pub mod weapon_timing;
 pub mod world;
 
-pub use catalog::{SplashSpec, UnitArchetype, UnitCatalog, WeaponSpec};
+pub use catalog::{SplashSpec, SplashZone, UnitArchetype, UnitCatalog, WeaponSpec};
 pub use checksum::compute_world_checksum;
 pub use combat::{
     calculate_hit_damage, calculate_hit_damage_upgraded, calculate_splash_damage,
