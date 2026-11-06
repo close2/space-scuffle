@@ -29,3 +29,19 @@ it.
 ## Answer
 
 Owner (2026-11-06): Option 2 — updated `/usr/local/bin/with-gpu-lock` in `ansible/agents.yml` and applied to the VM so the lock file descriptor (FD 200) is closed in the spawned command (`200>&-`) and each acquisition, timeout, and release (with UTC timestamp, user, PID, exit code, duration in ms, and command) is logged to `/run/lock/gpu-lock.log`.
+
+## Resolution
+
+2026-11-06. Option 2, applied by the owner on the VM through `ansible/agents.yml` (outside this repository).
+`/usr/local/bin/with-gpu-lock` now takes the lock on descriptor 200 in its own shell, runs the command with that
+descriptor closed (`"$@" 200>&-`) instead of `exec flock … "$@"`, and releases the lock when the command exits. A
+process the command leaves behind therefore cannot hold `/run/lock/gpu.lock`. Each acquisition, timeout and release
+is logged to `/run/lock/gpu-lock.log` (UTC time, user, PID, command; on release also the exit code and the duration
+in milliseconds), so lock waits can be answered from data.
+
+Our side, kept as well: each showcase take's child leads its own process group, which is killed whole and reaped
+when the take ends (`fc49f83`, confirmed on `radv` by render r7 in `7126e40`, merged in `4633471`); the gate lock
+tests do the same for the lock holder (`d8c0e06`). Charter `AGENTS.md` §7 states the new behaviour of
+`with-gpu-lock`.
+
+Closed.
