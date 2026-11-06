@@ -28,11 +28,11 @@ Where the two disagree, the data win, as in the audit.
 |---|---|---|
 | The standing rule above | Given in chat, 2026-11-05. WP0 records it as closed question Q0051 and in charter §8 | WP0 |
 | [Q0008](../questions/closed/) StarCraft II where the specification is silent | Superseded by the standing rule, which is stronger | WP0 |
-| [Q0035](../questions/open/0035-melee-contact-rules.md) melee contact rules | Answered "Option 1 (no change … for now), but documented/todo for future investigation" | Not a sanction; recorded bug B-50, WP16 |
+| [Q0035](../questions/closed/0035-melee-contact-rules.md) melee contact rules | Answered "Option 1 (no change … for now), but documented/todo for future investigation" | Not a sanction; recorded bug B-50, WP16 |
 | [Q0037](../questions/closed/0037-scan-ranges.md) scan ranges | Answered option 3, low priority | Combat alignment WP14; this plan moves it after WP4 here |
 | [Q0050](../questions/open/0050-turn-before-move.md) turn before move | Answered (b) with the tolerance "one tick's turn" | Sanctioned rule S-3; turn-before-move plan |
 | [Q0006](../questions/closed/) unreachable move | Owner's choice | S-4 (also matches StarCraft II) |
-| [Q0007](../questions/open/0007-combat-baselines.md) item 5, splash ignores cloak detection | "Keep all five as committed" | Matches StarCraft II, so it is not a deviation (S-2) |
+| [Q0007](../questions/closed/0007-combat-baselines.md) item 5, splash ignores cloak detection | "Keep all five as committed" | Matches StarCraft II, so it is not a deviation (S-2) |
 | Q0052 (new, filed by WP0) | The sanctioned list S-1 to S-6, with default "treat as listed" | WP0 |
 | Later questions | Each research step that cannot find the game's rule files one, with a default | §5, each WP |
 

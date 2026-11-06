@@ -1,7 +1,7 @@
 # Battle 33 investigation: marines against zealots (Q0007)
 
 This is the evidence file of [the battle 33 investigation plan](../plans/2026-11-04-zealot-marine-investigation.md),
-which answers the owner's request in [Q0007](../questions/open/0007-combat-baselines.md): find out why published
+which answers the owner's request in [Q0007](../questions/closed/0007-combat-baselines.md): find out why published
 StarCraft II sources say zealots win this fight, and why our battle 33 leaves 6 to 13 of 24 marines alive. The plan's
 D-5 gives this file seven sections: 1 (WP1, reference research), 2 and 3 (WP2, comparison and analytic model, with
 WP3's measured contact in §3.5), 4 (WP3, trace findings), 5 (WP4, experiments), and 6 and 7 (WP5, ranked causes and
@@ -51,7 +51,14 @@ mirrors the game's data files. We used commit
 
 The data is layered. Each layer overrides the one before it:
 
-`core` → `liberty` → `libertymulti` → `swarm` → `swarmmulti` → `void` → `voidmulti` → `balancemulti`.
+`core` → `liberty` → `swarm` → `void` → `voidmulti`.
+
+**Correction (2026-11-06, combat alignment WP13 step 4).** This section first gave the chain as `core` → `liberty` →
+`libertymulti` → `swarm` → `swarmmulti` → `void` → `voidmulti` → `balancemulti`. The catalog time audit showed that
+for 5.0.14 the chain is the five layers above: `libertymulti` and `swarmmulti` are the Wings of Liberty and Heart of
+the Swarm multiplayer mods, which Legacy of the Void's multiplayer does not build on, and `balancemulti` holds values
+older than 5.0.14 ([audit §2.2](2026-11-04-catalog-time-audit.md)). None of this investigation's figures change:
+every marine and zealot value it cites is the same under either chain.
 
 The table cells cite the file under `mods/<layer>.sc2mod/base.sc2data/GameData/` and the line of the element. A
 value that no layer sets comes from the `default="1"` element in `core`, which the cell says. Where `voidmulti` and
@@ -1130,13 +1137,13 @@ can reach.
 
 | Question | Proposal | Effect on battle 33 | Elsewhere in the matrix |
 |---|---|---|---|
-| [Q0035](../questions/open/0035-melee-contact-rules.md) | Research how StarCraft II packs melee attackers against solid enemies, then revisit the contact rules of `d4109e2` | Rank 1: the old rules gave −7.37 and a zealot win | Every melee battle; not measured |
+| [Q0035](../questions/closed/0035-melee-contact-rules.md) | Research how StarCraft II packs melee attackers against solid enemies, then revisit the contact rules of `d4109e2` | Rank 1: the old rules gave −7.37 and a zealot win | Every melee battle; not measured |
 | [Q0036](../questions/closed/0036-zealot-weapon-timing.md) | Zealot weapon to the reference: damage point 0, cadence 21 or 22 ticks, range 0.1, backswing 9; optionally the two strikes 5 ticks apart (code) | Ranks 4, 5 and 7: −2.82 to −4.96 together with the cadence; range +0.82 | 23a (2.10 → 2.00 zealots alive, passes); 25b hull 32 (passes) |
 | [Q0037](../questions/closed/0037-scan-ranges.md) | Scan ranges by StarCraft II's rule (weapon range + 0.5, at least 5) | Rank 3: −3.12 | Catalog-wide rule, 42 units: not measured |
 | [Q0038](../questions/closed/0038-marine-backswing-gate.md) | Marine damage point 1 and backswing 13, after changing the rule that lets a backswing delay the next attack | +0.09 (none) | 25b fails (zealot hull 62, expected 5 to 45) unless the rule changes first |
-| [Q0039](../questions/open/0039-normal-time-values.md) | Convert the values left in Normal time: marine speed, shield regeneration rate and delay, Stimpack duration; audit the rest of the catalog | Rank 6: −0.69; the rest 0 or not run | Marine speed and regeneration rate were in the control; the delay and the audit are not measured |
+| [Q0039](../questions/closed/0039-normal-time-values.md) | Convert the values left in Normal time: marine speed, shield regeneration rate and delay, Stimpack duration; audit the rest of the catalog | Rank 6: −0.69; the rest 0 or not run | Marine speed and regeneration rate were in the control; the delay and the audit are not measured |
 | [Q0040](../questions/closed/0040-zealot-attributes.md) | Zealot attributes Light, Biological instead of Light, Psionic | 0 (inert) | None: no rule reads either flag |
-| [Q0041](../questions/open/0041-battle-33-expectation-under-jitter.md) | Say in the fixture that battle 33 is about a 90 % marine win under jitter | none (documentation) | none |
+| [Q0041](../questions/closed/0041-battle-33-expectation-under-jitter.md) | Say in the fixture that battle 33 is about a 90 % marine win under jitter | none (documentation) | none |
 
 **Found but not proposed.** The separation radius (0.45 and 0.6 against 0.375) is read by no `sim_core` system
 (§2.3), so changing it does nothing. Push priority (20 and 25 against 10) orders friendly contact only and is the

@@ -41,3 +41,28 @@ Evidence: [`docs/evidence/2026-11-03-battle-33-investigation.md`](../../evidence
 ## Answer
 
 Owner (2026-11-04): Option 2 (document in the fixture's claim/comment that the outcome is about a 90% marine win under jitter, with a pointer to the evidence).
+
+## Resolution
+
+Option 2, carried out by combat alignment WP0 ([plan](../../plans/2026-11-04-combat-sc2-alignment.md)): commit
+`7f0d59b`, merged in `36943e1`, added the comment above battle 33 in
+`crates/sim_core/tests/fixtures/matchup_matrix.ron` with the 68-seed distribution and a pointer to the evidence. No
+expectation or seed changed then.
+
+The question's premise, a marine win on about 90 % of seeds, is obsolete. Every later commit that moved battle 33
+updated the comment's distribution and, where the seeds of record left the range, re-recorded the expectation (rule
+D-6, [Q0044](0044-battle-33-expectation-after-alignment.md)). The large moves were the zealot's StarCraft II weapon
+(combat alignment WP4), StarCraft II target selection (plan
+[`2026-11-05-sc2-deviation-fixes`](../../plans/2026-11-05-sc2-deviation-fixes.md) WP4, merged in `77f19c0`) and
+StarCraft II scan ranges measured edge to edge (combat alignment WP14 Amendment 7,
+[Q0057](0057-scan-range-measuring-rule.md), merged in `9df767e`). Battle 33 today (evidence
+[§16](../../evidence/2026-11-04-combat-sc2-alignment.md)):
+
+| | Value |
+|---|---|
+| Claim | "A close fight: unkited zealots and marines trade evenly, either side may win narrowly" |
+| Expectation | `blue: (0, 10), red: (0, 5)` |
+| 68 seeds (four of record plus 64 jittered): marine / zealot wins / unresolved at 500 ticks | 21 / 37 / 10 |
+| Marine survivors | mean 2.06, SD 2.87, range 0 to 10 |
+
+Closed.

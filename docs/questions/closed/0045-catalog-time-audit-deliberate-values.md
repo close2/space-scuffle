@@ -65,3 +65,28 @@ The audit you asked for in Q0039 (option 3) compared every time and speed value 
 ## Answer
 
 Owner (2026-11-04): For all answers: try to close in on SC2 behavior. We will create our own units later, but for now SC2 behavior is much easier to test and debug. Specifically: 1(b) (adopt SC2 reference turn rates), 2(b) (worker backswing 9 ticks), 3(b) (move 20-life Overclock from `rhino_beetle` to `shock_golem` with 268-tick duration), and 4(b) (align `flying_saucer` to its SC2 counterpart, the Phoenix per doc 07, and audit it like the others).
+
+## Resolution
+
+Carried out by plan [`2026-11-04-combat-sc2-alignment`](../../plans/2026-11-04-combat-sc2-alignment.md) (D-7 to D-10),
+one line per item:
+
+- **1(b) hull turning:** WP17 commits a to f, merged in `8960a3e`: rates in degrees per tick (a `b672e86`), a hull
+  turns at most its rate per tick (b `5802ab5`), matrix sides spawn facing each other (c `cbcabe8`), StarCraft II
+  firing arcs (d `35e0e47`, `c67de53`), turret rates W8 (e `6148c4f`) and the 42 hull rates (f `a51dee1`). Commit g,
+  turning before a step for the Siege Tank, Thor and Ultralisk analogues, went to
+  [Q0050](0050-turn-before-move.md) and was carried out by plan
+  [`2026-11-05-turn-before-move`](../../plans/2026-11-05-turn-before-move.md) WP1 (`6d7a9d5`) and WP3 (`b7d9f50`).
+  The remaining turning differences are recorded bugs B-28 (six mounts) and B-29 (acquisition arc) in plan
+  [`2026-11-05-sc2-deviation-fixes`](../../plans/2026-11-05-sc2-deviation-fixes.md) (WP10); B-31
+  (`StationaryTurningRate`) is fixed by plan `2026-11-05-turn-before-move` WP5 (`2522e3f`) and WP6 (`408d3b7`).
+- **2(b) worker backswing 9:** WP12 group D2 (`04bd426`), merged in `0f4e7fc`.
+- **3(b) Overclock to the Marauder analogue:** WP15 (`2057881`), merged in `6ef8fe9`: the 20-life Overclock left
+  `rhino_beetle` for `shock_golem`, 268 ticks.
+- **4(b) `flying_saucer` becomes the Phoenix:** WP16 (`7b91323`), merged in `a3cb950`, and audited like the others.
+
+The general direction, "close in on SC2 behavior", was applied through WP12's deferral rule (D-7): a reference value
+was applied where the game data settle it, and a value it could not settle was deferred and recorded (Q0039's
+resolution names the one left, bug B-4).
+
+Closed.
