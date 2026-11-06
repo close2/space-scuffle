@@ -265,6 +265,7 @@ SuiteCatalog(
             "sim_core/attack_move_simulation_tests",
             "sim_core/attack_swing_snapshot_tests",
             "sim_core/attribute_bonus_tests",
+            "sim_core/catalog_reference_values_tests",
             "sim_core/catalog_serialization_compatibility",
             "sim_core/checked_movement_tests",
             "sim_core/checksum_state_tests",
