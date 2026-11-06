@@ -1,0 +1,57 @@
+(
+    format_version: 1,
+    name: "omni_probe_drone",
+    atlas_sha256: "7de0977411fd31abc97bc81fe0e2431419d23fc8e333380a7b07d336389509a3",
+    manifest_sha256: "f25991cd57778bbd41387c1ef55c599cc7007805b0935e412e03b0c3d16a561f",
+    bake: (
+        frame_size: 512,
+        fps: 15,
+        max_frames_per_state: 16,
+        ffmpeg_version: "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+        framing: Letterbox(
+            feather_permille: 30,
+        ),
+    ),
+    states: {
+        Idle: (
+            clip: "omni_probe_drone_idle.mp4",
+            clip_sha256: "526ebe79d121fa12506690ef32f89152f9bb8eace7e19a97d9d1d9761d461fef",
+            start_frame: 0,
+            frame_count: 16,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/33c9d339-b8f8-4310-bf4a-3525a2e09668",
+                prompt_sha256: "6d98c35e384b5c81d5dbaa14594bd3a551614b23de386f44a7709362bb811d25",
+                keyframe_sha256: Some("802b036b94a0a565fb83e7222299803b1d4a2027067968e42a931bbb651ddc66"),
+                last_frame_sha256: Some("802b036b94a0a565fb83e7222299803b1d4a2027067968e42a931bbb651ddc66"),
+                ledger_line: 650,
+            ),
+            bar_rgb: Some((32, 39, 58)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Walk: (
+            clip: "omni_probe_drone_walk.mp4",
+            clip_sha256: "2b4e4a9dbaa0d843734305fa92cab090f36be3c9c792a5d770e0a8a954e2b00f",
+            start_frame: 16,
+            frame_count: 16,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/31340a9f-fd97-4052-a48b-3b0914103639",
+                prompt_sha256: "1e02c7b1f79331cda82d6d558f0966930047cc65554542fa914cb7f964023ee3",
+                keyframe_sha256: Some("802b036b94a0a565fb83e7222299803b1d4a2027067968e42a931bbb651ddc66"),
+                last_frame_sha256: Some("802b036b94a0a565fb83e7222299803b1d4a2027067968e42a931bbb651ddc66"),
+                ledger_line: 710,
+            ),
+            bar_rgb: Some((32, 39, 58)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+    },
+)
