@@ -17,6 +17,9 @@
 //! # Invariants
 //! - Every child is bounded: a test that cannot observe what it waits for fails within
 //!   [`PATIENCE`] and kills the child, never hangs.
+//! - Every child runs in its own process group, and dropping it kills the whole group, so no
+//!   grandchild (the `sleep` under `flock`, a `gate` under a `flock` wrapper) outlives its test
+//!   while holding a descriptor it inherited, such as the real gate lock of a `cargo gate` run.
 
 #![allow(clippy::expect_used, clippy::panic)]
 
@@ -24,6 +27,7 @@ use gate::{GateLock, Holder, HELD_VAR, LOCK_PATH_VAR};
 use std::ffi::OsStr;
 use std::fs::{OpenOptions, TryLockError};
 use std::io::{BufRead, BufReader};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver};
@@ -34,6 +38,11 @@ const PATIENCE: Duration = Duration::from_secs(30);
 
 /// Exit status of the gate outside a Git repository, once it has passed the lock.
 const NOT_A_REPOSITORY: i32 = 2;
+
+/// How long the holder's `sleep` lasts if nothing kills it: a backstop, not a timing. Every test
+/// is done with its holder well inside it, and a holder that was never dropped (a test process
+/// killed from outside) still lets go of what it inherited within a minute.
+const HOLDER_BACKSTOP_SECONDS: &str = "60";
 
 /// The `flock(1)` program; util-linux ships it on every host the charter names.
 fn flock_program() -> &'static Path {
@@ -71,6 +80,7 @@ impl GateChild {
         command
             .args(args)
             .current_dir(dir)
+            .process_group(0)
             .env(LOCK_PATH_VAR, lock)
             .env_remove(HELD_VAR)
             .stdout(Stdio::null())
@@ -113,8 +123,7 @@ impl GateChild {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        kill_group(&mut self.child);
         None
     }
 
@@ -139,14 +148,53 @@ impl GateChild {
 
 impl Drop for GateChild {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        kill_group(&mut self.child);
     }
 }
 
+/// Kills every process in the group `child` leads, then reaps `child`.
+///
+/// `child` must have been spawned with `process_group(0)`, so its process ID is the group ID.
+/// Killing only `child` would orphan its descendants, which keep every descriptor they
+/// inherited. `kill(1)` signals the group because the workspace forbids `unsafe`, which a direct
+/// `libc::kill` would need. A group that has already exited makes `kill` fail harmlessly.
+fn kill_group(child: &mut Child) {
+    let group = format!("-{}", child.id());
+    let _ = Command::new("kill")
+        .args(["-KILL", "--", &group])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let _ = child.wait();
+}
+
+/// Live (not zombie) processes whose process group is `group`, read from `/proc`.
+fn live_members_of_group(group: u32) -> Vec<u32> {
+    let group = group.to_string();
+    let entries = std::fs::read_dir("/proc")
+        .unwrap_or_else(|error| panic!("/proc is required to observe process groups: {error}"));
+    entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|pid| {
+            // `stat` reads `pid (comm) state ppid pgrp ...`; `comm` may hold spaces and
+            // parentheses, so the fields are counted after its last closing parenthesis.
+            let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
+                return false;
+            };
+            let Some((_, after_comm)) = stat.rsplit_once(')') else {
+                return false;
+            };
+            let fields: Vec<&str> = after_comm.split_whitespace().collect();
+            fields.first() != Some(&"Z") && fields.get(2) == Some(&group.as_str())
+        })
+        .collect()
+}
+
 /// Another process tree holding the lock: `flock -o <lock> sleep`, a sibling of the gate
-/// children, never their ancestor. `-o` keeps the lock out of `sleep`, so dropping this kills
-/// `flock` and so releases the lock.
+/// children, never their ancestor. `-o` keeps the lock out of `sleep`, so killing `flock`
+/// releases the lock; dropping this kills the whole process group, `sleep` included, so nothing
+/// either inherited outlives the test.
 struct OtherHolder {
     child: Child,
 }
@@ -158,7 +206,8 @@ impl OtherHolder {
         let child = Command::new(flock_program())
             .arg("-o")
             .arg(lock)
-            .args(["sleep", "600"])
+            .args(["sleep", HOLDER_BACKSTOP_SECONDS])
+            .process_group(0)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -199,8 +248,7 @@ impl OtherHolder {
 
 impl Drop for OtherHolder {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        kill_group(&mut self.child);
     }
 }
 
@@ -280,4 +328,32 @@ fn explain_never_takes_the_lock() {
             .any(|line| line.contains("waiting for the gate lock")),
         "{lines:?}"
     );
+}
+
+#[test]
+fn dropping_the_holder_leaves_no_process_of_its_group() {
+    let (_dir, lock, work) = sandbox();
+    let held = OtherHolder::take(&lock, &work);
+    let group = held.pid();
+    // `flock` forks `sleep` once it has the lock, so the group soon holds both.
+    let deadline = Instant::now() + PATIENCE;
+    while live_members_of_group(group).len() < 2 {
+        assert!(Instant::now() < deadline, "flock never started its sleep");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    drop(held);
+    // A killed `sleep` stays a zombie until its new parent reaps it; zombies hold no
+    // descriptors and are not counted, so only the signal's delivery is waited for.
+    let deadline = Instant::now() + PATIENCE;
+    loop {
+        let survivors = live_members_of_group(group);
+        if survivors.is_empty() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "processes {survivors:?} of the holder's group outlived it"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }

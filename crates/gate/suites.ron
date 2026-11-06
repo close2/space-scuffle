@@ -55,22 +55,23 @@ SuiteCatalog(
     // Every target that is not `fast` (blueprint section 3.2). Unlisted targets are `fast`.
     targets: {
         // Headless but long: the client's unit tests and the battle drivers that play the
-        // shipped skirmish, whole matrices, ffmpeg. Each test of the three battle drivers capped
-        // with `test_threads` holds a whole Bevy app, so their peak memory grows with libtest's
-        // thread count: at 16 threads (one per CPU) they reached 27, 16 and 13.6 GiB and, run by
-        // four gates at once, froze the server. Measured peak RSS at 1/2/4 threads: card 3.4/3.9/
-        // 5.4 GiB, hud 3.3/3.9/6.0 GiB, input 4.6/4.1/5.1 GiB; 4 threads keeps each near 6 GiB in
-        // a quarter or less of the 1-thread wall time (blueprint Amendment 2).
+        // shipped skirmish, whole matrices, ffmpeg. Each test of a client binary capped with
+        // `test_threads` holds a whole Bevy app with the shipped atlases, so peak memory grows
+        // with libtest's thread count: at 16 threads (one per CPU) most reached 12 to 28 GiB, and
+        // four gates at once froze the server. Each cap is the thread count that keeps the
+        // binary's peak RSS near 6 GiB in the least wall time, measured per binary at 16/4/3/2
+        // threads (blueprint Amendments 2 and 4); every Veo batch raises these figures, so they
+        // are re-measured when a binary's peak grows well past 6 GiB.
         "client/lib": (class: Slow),
-        "client/battle_card_tests": (class: Slow, test_threads: Some(4)),
-        "client/battle_card_path_tests": (class: Slow),
-        "client/battle_context_order_tests": (class: Slow),
-        "client/battle_flipbook_tests": (class: Slow),
-        "client/battle_fog_tests": (class: Slow),
-        "client/battle_hud_tests": (class: Slow, test_threads: Some(4)),
-        "client/battle_input_tests": (class: Slow, test_threads: Some(4)),
-        "client/battle_result_tests": (class: Slow),
-        "client/sync_steady_state_tests": (class: Slow),
+        "client/battle_card_tests": (class: Slow, test_threads: Some(2)),
+        "client/battle_card_path_tests": (class: Slow, test_threads: Some(2)),
+        "client/battle_context_order_tests": (class: Slow, test_threads: Some(3)),
+        "client/battle_flipbook_tests": (class: Slow, test_threads: Some(3)),
+        "client/battle_fog_tests": (class: Slow, test_threads: Some(2)),
+        "client/battle_hud_tests": (class: Slow, test_threads: Some(2)),
+        "client/battle_input_tests": (class: Slow, test_threads: Some(2)),
+        "client/battle_result_tests": (class: Slow, test_threads: Some(2)),
+        "client/sync_steady_state_tests": (class: Slow, test_threads: Some(2)),
         "sim_core/sc2_who_wins_matchup_matrix_tests": (class: Slow),
         "asset_baker/procedural_tests": (class: Slow),
         "asset_baker/loop_check_tests": (class: Slow),
@@ -78,19 +79,20 @@ SuiteCatalog(
 
         // GPU: every target that runs children through crates/client/tests/support/gpu_run.rs.
         // Each also runs when its own file or a support file it loads changes; the rules below
-        // add the renderer, HUD-window, live-sync and shader paths.
+        // add the renderer, HUD-window, live-sync and shader paths. The caps below bound the
+        // binaries whose in-process apps and children together passed 6 GiB (Amendment 4).
         "client/battle_hud_window_tests": (class: Gpu),
         "client/battle_result_window_tests": (class: Gpu),
         "client/combat_fx_slot_gpu_tests": (class: Gpu),
         "client/dome_fill_tests": (class: Gpu),
-        "client/editor_app_tests": (class: Gpu),
+        "client/editor_app_tests": (class: Gpu, test_threads: Some(2)),
         "client/flipbook_clock_gpu_tests": (class: Gpu),
         "client/gpu_validation_tests": (class: Gpu),
-        "client/lab_scene_tests": (class: Gpu),
+        "client/lab_scene_tests": (class: Gpu, test_threads: Some(4)),
         "client/round2_visual_tests": (class: Gpu),
         "client/runtime_battle_tests": (class: Gpu),
-        "client/skirmish_match_tests": (class: Gpu),
-        "client/smog_bouncing_bubbles_tests": (class: Gpu),
+        "client/skirmish_match_tests": (class: Gpu, test_threads: Some(2)),
+        "client/smog_bouncing_bubbles_tests": (class: Gpu, test_threads: Some(2)),
         "client/terrain_tests": (class: Gpu),
         // The frame-budget smoke run renders the 400-unit scenario through the real renderer.
         "client_diagnostics/frame_budget_tests": (class: Gpu, triggers: [

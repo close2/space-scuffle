@@ -1,6 +1,6 @@
 # Tiered test gates: run what a change can break, run everything on a schedule
 
-Date: 2026-11-04. Status: Active, WP1 to WP6a implemented (§11); Amendments 2 and 3 implemented. Host: the shared Debian 13 VM, 16 pinned cores of an AMD
+Date: 2026-11-04. Status: Active, WP1 to WP6a implemented (§11); Amendments 2, 3 and 4 implemented. Host: the shared Debian 13 VM, 16 pinned cores of an AMD
 EPYC 7301, AMD Radeon RX 580 on `radv`; other agents were building and testing at the same time, as they always
 are. Charter sections touched: §4.3 (rewritten), §5 (one new crate), §9 (C16 changed, C22 added). §6 is not
 touched.
@@ -794,3 +794,82 @@ under `flock` on the lock and a gate whose parent process holds the lock do not 
   `--no-run` never reuses. Unit tests in `stamp.rs`: reuse of a same-tree stamp by `merge` and `full`, the
   accepted tiers per tier, and no reuse for another tree, a red stamp or a dirty working tree; the message names
   the stamp and the tree.
+
+## Amendment 4 (orchestrator, 2026-11-05): a measured thread cap for every heavy client binary
+
+**Cause.** On 2026-11-05 package gates ran uncapped client binaries at tens of GiB: `battle_context_order_tests`
+reached 26.6 GiB and `editor_app_tests` 9.3 GiB (still growing), while only the three battle drivers of Amendment 2
+had a cap. Every Veo batch adds atlases, so each Bevy app a test builds grows, and with it every binary's peak at
+libtest's default of one thread per CPU. Separately, `tests/gate_lock_tests.rs` killed only the `flock` of its
+competing holder, orphaning the `sleep 600` under it, which kept the real gate lock open for minutes through a
+descriptor it inherited.
+
+**Decision.**
+
+- **Every `slow` or `gpu` client integration binary is measured, and each above about 6 GiB gets the
+  `test_threads` that keeps it near 6 GiB in the least wall time.** The caps in `crates/gate/suites.ron`:
+
+  | Binary | Cap |
+  |---|---|
+  | `battle_card_tests`, `battle_hud_tests`, `battle_input_tests` | 2 (was 4) |
+  | `battle_card_path_tests`, `battle_fog_tests`, `battle_result_tests`, `sync_steady_state_tests` | 2 |
+  | `battle_context_order_tests`, `battle_flipbook_tests` | 3 |
+  | `smog_bouncing_bubbles_tests`, `skirmish_match_tests` (GPU) | 2 |
+  | `lab_scene_tests` (GPU) | 4 |
+  | `editor_app_tests` (GPU) | 2, a deviation: see below |
+
+  The other binaries stay at libtest's default. `cargo test --workspace` (CI, and the full suite outside the gate)
+  is unchanged.
+- **`editor_app_tests` gets 2, not 1.** It is the only binary that no thread count above 1 brings near 6 GiB: at 2
+  threads its process tree peaks at 8.6 GiB while a `map_editor --verify-render` child runs beside an in-process
+  app, and 1 thread (6.2 GiB) doubles its wall time to 761 s, longer than any other client binary. With one gate at
+  a time, 8.6 GiB is far below the slice's 36 GiB working limit.
+- **The gate lock tests kill whole process groups.** Every child of `tests/gate_lock_tests.rs` (the competing
+  `flock` holder and each `gate` under test) starts in its own process group (`process_group(0)`), and dropping it
+  sends `SIGKILL` to the group through `kill(1)` (the workspace forbids `unsafe`, so not `libc::kill`) and then
+  reaps the child. The holder's `sleep` lasts 60 s instead of 600, a backstop for a test process killed from
+  outside. No other test spawns a long-lived helper that it kills by process ID alone: the GPU harness runs its
+  children under GNU `timeout`, which signals the whole group.
+
+**Measurement.** Debug build of `1e0a03d`, one executable at a time, each run under `flock -o
+~/scratch/gate.lock`, with the environment the gate gives a test executable. Peak RSS is the largest sum of `VmRSS`
+over the binary's process tree (its session and descendants, which includes GPU children under `xvfb-run`),
+sampled every 0.2 s; the largest single-process `VmHWM` differs from it only for the GPU binaries, given in
+brackets. The slice's `anon` memory was below 1 GiB before every run; other agents' work ran meanwhile. Logs:
+`~/scratch/logs/test-caps/` (`all-results.txt` and one log per run). Every run passed every test.
+
+| Binary (tests) | Class | 16 threads (default) | 4 threads | 3 threads | 2 threads | 1 thread | Cap |
+|---|---|---|---|---|---|---|---|
+| `battle_card_tests` (28) | slow | 28.0 GiB, 84 s | 9.0 GiB, 171 s | | 6.5 GiB, 318 s | | 2 |
+| `battle_card_path_tests` (4) | slow | 7.2 GiB, 33 s | = default | | 3.8 GiB, 56 s | | 2 |
+| `battle_context_order_tests` (24) | slow | 28.2 GiB, 65 s | 8.9 GiB, 128 s | 6.6 GiB, 170 s | 5.6 GiB, 255 s | | 3 |
+| `battle_flipbook_tests` (9) | slow | 14.7 GiB, 89 s | 7.5 GiB, 97 s | 5.9 GiB, 116 s | 4.2 GiB, 169 s | | 3 |
+| `battle_fog_tests` (20) | slow | 28.1 GiB, 81 s | 8.4 GiB, 130 s | 7.4 GiB, 151 s | 5.3 GiB, 233 s | | 2 |
+| `battle_hud_tests` (33) | slow | 28.2 GiB, 88 s | 8.9 GiB, 169 s | | 6.2 GiB, 337 s | | 2 |
+| `battle_input_tests` (35) | slow | 28.0 GiB, 103 s | 8.5 GiB, 195 s | | 5.9 GiB, 381 s | | 2 |
+| `battle_result_tests` (18) | slow | 28.3 GiB, 61 s | 8.3 GiB, 105 s | | 6.1 GiB, 191 s | | 2 |
+| `sync_steady_state_tests` (7) | slow | 12.4 GiB, 49 s | 8.8 GiB, 91 s | 7.1 GiB, 110 s | 5.3 GiB, 150 s | | 2 |
+| `editor_app_tests` (40) | gpu | 27.3 GiB, 113 s | 10.3 [8.4] GiB, 195 s | | 8.6 [7.2] GiB, 370 s | 6.2 [4.4] GiB, 761 s | 2 |
+| `lab_scene_tests` (10) | gpu | 11.8 [9.9] GiB, 48 s | 6.9 [6.6] GiB, 49 s | | 4.6 [3.6] GiB, 81 s | | 4 |
+| `skirmish_match_tests` (4) | gpu | 7.2 [3.7] GiB, 60 s | = default | | 5.6 [3.7] GiB, 63 s | | 2 |
+| `smog_bouncing_bubbles_tests` (25) | gpu | 16.3 [14.1] GiB, 40 s | 7.7 [6.9] GiB, 89 s | 7.7 [5.4] GiB, 100 s | 5.7 [3.7] GiB, 159 s | | 2 |
+| `runtime_battle_tests` (18) | gpu | 5.9 [3.9] GiB, 76 s | | | | | none |
+| `round2_visual_tests` (22) | gpu | 4.0 [3.5] GiB, 26 s | | | | | none |
+| `battle_hud_window_tests` (1) | gpu | 3.7 GiB, 23 s | | | | | none |
+| `gpu_validation_tests` (28) | gpu | 3.7 GiB, 107 s | | | | | none |
+| `battle_result_window_tests` (1) | gpu | 3.6 [3.7] GiB, 24 s | | | | | none |
+| `dome_fill_tests` (4) | gpu | 3.6 [3.5] GiB, 28 s | | | | | none |
+| `terrain_tests` (14) | gpu | 0.7 [0.3] GiB, 13 s | | | | | none |
+| `combat_fx_slot_gpu_tests` (1) | gpu | 0.3 [0.2] GiB, 2 s | | | | | none |
+| `flipbook_clock_gpu_tests` (3) | gpu | 0.3 [0.2] GiB, 5 s | | | | | none |
+
+The three battle drivers capped at 4 in Amendment 2 now reach 8.5 to 9.0 GiB at 4 threads (5.1 to 6.0 GiB then), so
+they drop to 2. Where 4 threads overshoot and 2 threads undershoot, 3 threads were measured, and they are chosen
+when they stay near 6 GiB (`battle_context_order_tests` 6.6, `battle_flipbook_tests` 5.9). `lab_scene_tests` keeps 4
+(6.9 GiB in 49 s against 4.6 GiB in 81 s). `client/lib` holds unit tests, not an integration binary, and was not
+measured.
+
+**Tests.** `catalog.rs` and `execute.rs` already cover `test_threads`; the catalog test (C22) parses the new caps.
+`tests/gate_lock_tests.rs` gains `dropping_the_holder_leaves_no_process_of_its_group`: it waits until the holder's
+group holds both `flock` and `sleep`, drops the holder, and requires that no live (non-zombie) process of the group
+remains, read from `/proc`. With the old drop it fails, naming the orphaned `sleep`.
