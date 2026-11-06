@@ -29,7 +29,7 @@ use super::feed::{BattleFeed, FeedTone};
 use super::model::{FocusedUnit, HudModel};
 use super::placement::PlacementPreview;
 use super::queue::{item_label, QueuePanel};
-use super::HudGeometry;
+use super::{HudGeometry, HudLayout};
 use crate::battle_input::command_mode::CommandMode;
 use crate::battle_pipeline::session::BattleSession;
 use crate::lab_ui::LabState;
@@ -109,6 +109,7 @@ pub fn battle_hud_system(
     mut contexts: EguiContexts<'_, '_>,
     mut lab: ResMut<'_, LabState>,
     mut geometry: ResMut<'_, HudGeometry>,
+    layout: Res<'_, HudLayout>,
     mut intent: ResMut<'_, HudIntent>,
     model: Res<'_, HudModel>,
     feed: Res<'_, BattleFeed>,
@@ -156,7 +157,9 @@ pub fn battle_hud_system(
                 .structure
                 .is_some_and(|structure| cancel_pending(&session, structure)),
         };
-        draw_command_panel(ctx, &surfaces, &mut intent, &mut geometry);
+        if layout.command_panel {
+            draw_command_panel(ctx, &surfaces, &mut intent, &mut geometry);
+        }
         draw_feed(ctx, &feed, &mut geometry);
         if let Some(reason) = preview.refusal() {
             draw_site_note(ctx, reason, &mut geometry);

@@ -32,7 +32,7 @@ use client::battle_hud::model::HudModel;
 use client::battle_hud::panels::{
     COMMAND_PANEL_HEIGHT, MAX_SIMULATION_SPEED, MIN_SIMULATION_SPEED, RESOURCE_BAR_HEIGHT,
 };
-use client::battle_hud::HudGeometry;
+use client::battle_hud::{HudGeometry, HudLayout};
 use client::battle_pipeline::commands::{SessionGeneration, SubmissionError};
 use client::battle_pipeline::session::BattleSession;
 use client::battle_pipeline::BattleSet;
@@ -224,6 +224,37 @@ fn the_world_viewport_excludes_both_panels() {
         (viewport.physical_position.y + viewport.physical_size.y) as f32,
         bottom.top().floor()
     );
+}
+
+#[test]
+fn a_layout_without_the_command_panel_gives_its_room_to_the_world() {
+    let mut harness = skirmish();
+    harness.app.insert_resource(HudLayout {
+        command_panel: false,
+    });
+    harness.step(2);
+    let top = {
+        let geometry = hud(&harness);
+        assert_eq!(geometry.bottom, None, "the command panel must not be drawn");
+        assert_eq!(geometry.card_column, None);
+        geometry.top.unwrap()
+    };
+    assert_eq!(top.height(), RESOURCE_BAR_HEIGHT);
+    let viewport = {
+        let world = harness.app.world_mut();
+        let camera = world
+            .query_filtered::<&Camera, With<RtsCamera>>()
+            .single(world);
+        camera.viewport.clone().expect("a world viewport")
+    };
+    assert_eq!(viewport.physical_position.y as f32, top.bottom().ceil());
+    assert_eq!(viewport.physical_position.y + viewport.physical_size.y, 720);
+
+    // The control: the default layout draws the panel again and takes its room back.
+    harness.app.insert_resource(HudLayout::default());
+    harness.step(2);
+    let bottom = hud(&harness).bottom.unwrap();
+    assert_eq!(bottom.height(), COMMAND_PANEL_HEIGHT);
 }
 
 #[test]

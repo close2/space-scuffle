@@ -99,6 +99,27 @@ pub struct HudGeometry {
     pub exit: Option<egui::Rect>,
 }
 
+/// Which optional HUD surfaces the `Player` profile draws.
+///
+/// The game always draws everything ([`HudLayout::default`]). A non-interactive presentation of a
+/// battle, such as the CI showcase video of `client_diagnostics`, may leave out the command panel,
+/// which then reserves no room: the world viewport extends to the bottom of the window. Nothing
+/// else changes; the selection, the card and their keys keep working, and a run that draws the
+/// panel again gets it back on the next frame.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HudLayout {
+    /// Whether the command panel (selection, queue and card) is drawn along the bottom.
+    pub command_panel: bool,
+}
+
+impl Default for HudLayout {
+    fn default() -> Self {
+        Self {
+            command_panel: true,
+        }
+    }
+}
+
 /// Registers the HUD. Added by [`ClientAppPlugin`](crate::ClientAppPlugin) only, because the map
 /// editor and the headless check present no player.
 pub struct BattleHudPlugin;
@@ -110,6 +131,7 @@ impl Plugin for BattleHudPlugin {
             app.init_resource::<BattleFog>();
         }
         app.init_resource::<HudGeometry>()
+            .init_resource::<HudLayout>()
             .init_resource::<model::HudModel>()
             .init_resource::<feed::BattleFeed>()
             .init_resource::<card::CommandCard>()
