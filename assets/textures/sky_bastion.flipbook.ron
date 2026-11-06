@@ -1,0 +1,31 @@
+(
+    name: "sky_bastion",
+    frame_width: 512,
+    frame_height: 512,
+    fps: 15,
+    total_frames: 30,
+    layout: VerticalStrip,
+    actions: {
+        Idle: (
+            start_frame: 0,
+            frame_count: 10,
+            looping: true,
+            hold_last_frame: false,
+            duration_ms: Some(3933),
+        ),
+        Walk: (
+            start_frame: 10,
+            frame_count: 10,
+            looping: true,
+            hold_last_frame: false,
+            duration_ms: Some(3933),
+        ),
+        Attack: (
+            start_frame: 20,
+            frame_count: 10,
+            looping: false,
+            hold_last_frame: false,
+            duration_ms: Some(4000),
+        ),
+    },
+)

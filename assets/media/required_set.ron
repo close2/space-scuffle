@@ -45,5 +45,11 @@
         (slug: "covert_ops_nexus_dome", tier: Expansion),
         (slug: "fusion_reactor_dome", tier: Expansion),
         (slug: "duplicator_module_pod", tier: Expansion),
+        // Expansion batch 5 (WP6, 2026-11-06): the late units, the four complete ones
+        // (docs/evidence/veo/2026-11-06-batch-5.md).
+        (slug: "vector_interceptor", tier: Expansion),
+        (slug: "sky_bastion", tier: Expansion),
+        (slug: "cloak_gunship", tier: Expansion),
+        (slug: "omni_probe_drone", tier: Expansion),
     ],
 )

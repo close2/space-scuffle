@@ -106,12 +106,12 @@
         // Attack that fires forward and returns to the hover pose.
         overrides: {
             "napalm_wheeler": {
-                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the trike keeps the same size and place in frame from start to end. The trike sits completely still with its engine off: no smoke, no fire and no exhaust, and its small hull lights glow steadily: nothing pulses, flares or flickers. The wheels, the barrels and the hull stay fixed. Seamless loop: the last frame matches the first.",
-                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the trike drives at full speed on a rolling road that holds it in place: all three wheels spin fast and continuously, hubs and tyre treads visibly turning the whole time, while the hull keeps the same place, size and facing in frame. The hull vibrates on its suspension; the barrels stay fixed and dark. Seamless loop: the last frame matches the first.",
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the trike keeps the same size and place in frame from start to end. The trike idles in place: its hull rocks very slightly on its suspension in a slow, even rhythm, exactly two cycles from the first frame to the last, while the wheels and barrels stay fixed; no smoke, no fire, and its small hull lights glow steadily. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the trike drives at full speed on a rolling road that holds it in place: all three wheels spin fast and continuously, their tread blocks and hub bolts visibly turning around the axles the whole time, while the hull keeps the same place, size and facing in frame. The hull vibrates on its suspension; the barrels stay fixed and dark, and the backdrop stays plain with no speed lines. Seamless loop: the last frame matches the first.",
                 Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the trike keeps its place in frame. Its front barrels shoot a short roaring jet of fire straight forward along its line and out of the frame, then the flame dies away and the trike settles back to its starting position.",
             },
             "colossus_mech": {
-                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size, pose and place in frame from start to end. It stands completely still like a statue, holding its fire: legs, arms, arm-cannons, head and missile pods never move, and its lights glow steadily: nothing pulses, flares or flickers. Seamless loop: the last frame matches the first.",
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps the same size, pose and place in frame from start to end. It stands in place holding its fire, feet planted and arm-cannons held where they are, while its whole body rises and sinks very slightly on its hydraulic legs in a slow, even rhythm, exactly two cycles from the first frame to the last; its lights glow steadily. Seamless loop: the last frame matches the first.",
                 Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans. The mech marches heavily on the spot as if on a treadmill: four full steps, left, right, left, right, each knee lifting high and each foot stamping down again at an even pace from the first frame to the last, while its body keeps the same place, size and three-quarter facing in frame and never leans toward the camera. Arm-cannons held ready; nothing else appears in the frame. Seamless loop: the last frame matches the first.",
                 Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the subject keeps its place in frame. It fires both arm-cannons along the line they point: a heavy recoil, bright muzzle flashes and shells streaking out of frame, then it settles smoothly back to its starting pose.",
             },
@@ -127,7 +127,7 @@
             },
             "cloak_gunship": {
                 Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the aircraft keeps the same size and place in frame from start to end. The aircraft hovers in place with a gentle steady bob, its nacelle vents glowing softly and small hull lights blinking; its body and every part keep the same shape and facing. Seamless loop: the last frame matches the first.",
-                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the aircraft flies at full speed in place, as if held in a wind tunnel, keeping the same size, pose and place in frame. From the first frame to the last its engines blaze with long bright exhaust flames streaming backward, flickering at an even pace, and thin vapour trails stream back from its wingtips; no ground contact. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the aircraft flies at full speed in place, as if held in a wind tunnel, keeping the same size, pose and place in frame. From the first frame to the last its two engine nacelles glow bright orange and long exhaust flames and vapour trails stream out behind them toward the upper left of the frame, flickering at an even pace; no ground contact. Seamless loop: the last frame matches the first.",
                 Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the aircraft keeps its place in frame, hovering. It fires forward along its nose: a bright launch flash at the pods and a quick salvo of orange rockets streaking straight out of the frame, then the smoke clears and it hovers in its starting pose.",
             },
             "omni_probe_drone": {
@@ -306,12 +306,20 @@
         // colossus_mech Walk: the golem's treatment from the first attempt (the end left free,
         // loop sampling only), because a heavy wide-stance biped pinned at both ends barely
         // stepped in eight golem Walks.
+        // napalm_wheeler Idle and Walk, colossus_mech Idle (batch 5): pinned at both ends, every
+        // clip drifted away from the pin and came back (six trike Idles and its first Walk at
+        // kept frames 6->7, five mech Idles), and a near-still subject makes that return the
+        // worst step. The end is left free, as the golem's Walk, and loop sampling picks the
+        // loop; the start is still the Idle pin.
         overrides: {
             "napalm_wheeler": {
                 Attack: (pin_end: true, seam: None),
+                Idle: (pin_end: false, seam: Some((scale_lock: true, crossfade_frames: 2))),
+                Walk: (pin_end: false, seam: Some((scale_lock: false, crossfade_frames: 2))),
             },
             "colossus_mech": {
                 Attack: (pin_end: true, seam: None),
+                Idle: (pin_end: false, seam: Some((scale_lock: true, crossfade_frames: 2))),
                 Walk: (pin_end: false, seam: Some((scale_lock: false, crossfade_frames: 0))),
             },
             "vector_interceptor": {
