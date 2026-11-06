@@ -421,3 +421,47 @@ busy.
 Nothing of B-7 to B-11, B-76 or B-80. The rank of a challenger follows the source's "first 3 criteria" (Amendment
 4); Liquipedia's weapon-range versus scan-range wording for a challenger is resolved to scan range (§4.6). The C7
 float counts did not move (the new fields are integers, enums and a fixed-point vector).
+
+## 5. WP5: multi-strike timing (B-2)
+
+Measurements under `~/scratch/sc2dev_wp5/<step>`, each from its commit extracted into a fixed directory under the
+shared heavy-run lock (§4.8). The base is `main` at `d1876fa` (WP4 complete, combat alignment WP14 measured but not
+applied): whole matrix bit-identical to §4.10, battle 33 20 / 35 / 13.
+
+### 5.1 Research (U-2)
+
+**Rule.** A multi-strike weapon of `StarCraft` II fires a `CEffectCreatePersistent`: `PeriodCount` strikes, the
+`k`-th after the delay `PeriodicPeriodArray[k]` from the one before (the first after entry 0), each applying its
+`PeriodicEffectArray` effect, which may carry its own validators. The data show that entry 0 delays the first strike:
+`voidmulti` EffectData:36 sets `BacklashRockets`' entry 0 to 0 and appends the old 0.15 (`liberty` EffectData:2550 had
+only 0.15), which is how a patch removes a first-strike delay. A layer that adds an array entry without an `index`
+appends it (the same Banshee edit). Times are Normal seconds; ticks = Normal s ÷ 1.4 × 25, rounded half up (audit
+§2.3).
+
+| Analogue (catalog slug) | `StarCraft` II weapon → effect | Periods (Normal s) | Interval | Later-strike condition | Source |
+|---|---|---|---|---|---|
+| Zealot (`psi_grey`) | `PsiBlades` → `PsiBladesBurst` | 0, 0.28 | **5** | `ZealotAttackDamageMaxRange` ≤ 2.1; `MultipleHitGroundOnlyAttackTargetFilter` | `liberty` WeaponData:150, EffectData:1919; `voidmulti` EffectData:361, ValidatorData:855, :867 |
+| Reaper (`jet_jumper`) | `P38ScytheGuassPistol` → `P38ScytheGuassPistolBurst` | 0, 0.122 | **2** (2.18) | `ReaperAttackDamageMaxRange` ≤ 7 (8 from a Bunker with its range upgrade; no Bunker carries units here); ground filter | `liberty` WeaponData:317, EffectData:1803; `voidmulti` EffectData:346, ValidatorData:843, :877 |
+| Thor ground (`colossus_mech`) | `ThorsHammer` → `ThorsHammer` | 0, 0.375 | **7** (6.70) | ground filter | `liberty` WeaponData:224, EffectData:2242; `voidmulti` EffectData:876 |
+| Viking (`vector_interceptor`) | `LanzerTorpedoes` → `LanzerTorpedoes` | 0, 0.21 | **4** (3.75) | each missile `RangeCheckLE15` ≤ 15 | `liberty` WeaponData:266, EffectData:1698, :1707, ValidatorData:1956 |
+| Banshee (`cloak_gunship`) | `BacklashRockets` → `BacklashRockets` | 0, 0.15 | **3** (2.68) | each missile ≤ 15 | `liberty` WeaponData:548, EffectData:2550, :2558; `voidmulti` EffectData:36 |
+| Liberator AA (`sky_bastion`) | `LiberatorMissileLaunchers` → `LiberatorMissileBurstPersistent` | 0.05 (one entry, repeated) | **1** (0.89) | none | `void` WeaponData:321, EffectData:2942 |
+| Missile Turret (`flak_array_dome`) | `LongboltMissile` → `LongboltMissile` | 0, 0.1 | **2** (1.79) | each missile ≤ 15 | `liberty` WeaponData:300, EffectData:1779, :1789 |
+| Queen ground (`hive_matron`) | `TalonsMissile` → `TalonsMissileBurst` (and the hidden melee `Talons` → `TalonsBurst`) | 0, 0.3 | **5** (5.36) | `QueenTalonsAGAttackDamageMaxRange` ≤ 5 (on `Talons`, inherited by `TalonsMissileDamage`); ground filter | `swarm` WeaponData:230, EffectData:3038, :3053; `liberty` EffectData:2320; `voidmulti` EffectData:649, ValidatorData:872 |
+| Phoenix (`flying_saucer`) | `IonCannons` → `IonCannons` | 0, 0 | 0 (both missiles on one loop) | none | `liberty` EffectData:1959 |
+| Colossus (`tripod_annihilator`) | `ThermalLances` → `ThermalLancesForward` + `ThermalLancesReverse` | both strikes on the target expire together | 0 | `ColossusAttackDamageMaxRange` ≤ 2 from the attack's target point | `liberty` EffectData:2357–2410; `voidmulti` EffectData:964, ValidatorData:882 |
+| Carrier (`mothership_carrier`) | interceptors (B-22) | — | not applicable | — | WP18 |
+| Brood Lord (`spore_matriarch`) | `BroodlingStrike` (B-21) | — | not applicable | — | WP18 |
+
+- **Measuring rule of the distance validators.** They are `CValidatorLocationCompareRange`: they compare two
+  *locations* (`WhichLocation TargetUnit` is the target unit's position point; the Colossus' compares two points
+  explicitly, `Value Effect="ThermalLances" Value="TargetPoint"`), and the class has no radius field. The catalog
+  measures `followup_max_distance` from centre to centre accordingly. This is read from the validator's type, not
+  stated in a source; for the Zealot the two readings differ only once the target is more than 2.1 − 0.875 = 1.225
+  further than the strike's 0.975 centre distance after 5 ticks, faster than any unit here moves.
+- **Not modelled, recorded.** The first strike of the Liberator's burst waits 0.05 Normal s (1 tick) and both of the
+  Colossus' strikes on its target 0.375 Normal s (7 ticks, the persistents' `ExpireDelay`) after the weapon fires;
+  ours land on the release tick. Recorded as **B-81** (class (i)); the Colossus part belongs with its sweep (B-18,
+  WP8b). Whether an order given between the strikes ends a `Channeled` burst is not stated in the data or on
+  Liquipedia: filed as [Q0058](../questions/open/0058-channeled-burst-interruption.md), default no change (only the
+  attacker's death or boarding ends a burst).
