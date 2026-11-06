@@ -936,7 +936,7 @@ not committed, as the time audit's); rows in `~/scratch/sc2dev_wp9/final_base.ts
 - Morphs (Orbital Command, Planetary Fortress, Lair, Hive, Greater Spire, Baneling, Ravager, Lurker, Brood Lord)
   carry the morph's increment as their cost and supply, and the Zergling analogue is one Zergling at the pair's
   price. That is right only under a morph and pair model, which we lack (B-63): a Baneling trained from its nest for
-  25 minerals and no supply is cheaper than the game's 75 and half a supply. Recorded as **B-85** (class (i), WP17,
+  25 minerals and no supply is cheaper than the game's 75 and half a supply. Recorded as **B-86** (class (i), WP17,
   with the morph model); no value changes here.
 - The Queen's and the Roach's ground attack is two weapons in the game (`Talons` 0–3 and `TalonsMissile` 3–5,
   `liberty` WeaponData:480, `swarm` WeaponData:235; `RoachMelee` 0–0.5 and `AcidSaliva` 0.6–4, `liberty`
@@ -947,7 +947,7 @@ not committed, as the time audit's); rows in `~/scratch/sc2dev_wp9/final_base.ts
 
 **Counts** (one row per value; "other" are the listed-only rows: B-6 49, push priority and inner radius 82, cargo 41):
 
-| File | A | C | D (B-85) | E | B-20 / B-82 | Total classified |
+| File | A | C | D (B-86) | E | B-20 / B-82 | Total classified |
 |---|---|---|---|---|---|---|
 | `units.ron` | 651 | 43 | 13 | 8 | 8 / 9 | 732 |
 | `structures.ron` | 499 | 63 | 7 | 0 | 0 | 569 |
@@ -966,7 +966,7 @@ onward follow this order (no matrix identity first).
 | g2 | Structure sight: Sensor Tower 22 → 12 (`liberty` UnitData:9480; its radar is not modelled, B-69), Factory 10 → 9, Starport 10 → 9, Tech Lab 7 → 9, Reactor 7 → 9, Pylon 9 → 10 (`voidmulti` UnitData:1300), Stargate 10 → 9, Fleet Beacon 10 → 9, Hatchery 11 → 12 (`voidmulti` :649), Lair 11 → 12 (`voidmulti` :932), Spire 10 → 9, Greater Spire 10 → 9 | 12 | none |
 | g3 | Costs: Armory gas 100 → 50 (`voidmulti` UnitData:2100), Dark Shrine 100 / 100 → 150 / 150 (`void` UnitData:1914), Liberator gas 150 → 125 (`voidmulti` UnitData:468), Ultralisk 300 → 275 (`voidmulti` UnitData:1940); research costs of 15 upgrades (Vehicle and Ship Plating 100 / 175 / 250, Protoss Air Weapons and Air Armor levels 2 and 3 175 / 250, Zerg Ground Carapace levels 2 and 3 200 / 250, Flyer Attacks levels 2 and 3 175 / 250, Flyer Carapace 100 / 175 / 250, Grooved Spines 75 / 75; `voidmulti` AbilData and `liberty` AbilData, cited per row in the test) | 36 | costs decide no battle |
 | g4 | Spore Crawler damage 15 → 20 (`SporeCrawlerU`, `voidmulti` EffectData:871) | 1 | none |
-| g5 | Upgrade targets: Neosteel Armor (B-51) and Advanced Ballistics (B-86), §10.6 | 2 upgrades | none |
+| g5 | Upgrade targets: Neosteel Armor (B-51) and Advanced Ballistics (B-87), §10.6 | 2 upgrades | none |
 | g6 | Observer shields 20 → 30 (`voidmulti` UnitData:1137) | 1 | none |
 | g7 | Attributes: SCV + Biological (`liberty` UnitData:4799), Sentry − Light (`voidmulti` UnitData:1553), Infestor + Armored (`liberty` UnitData:10113) | 3 | SCV (22a) |
 | g8 | Ravager damage 13 → 16 (`RavagerWeaponDamage`, `void` EffectData:1603) and +1 → +2 a level (`void` UpgradeData:517) | 2 | none |
@@ -974,7 +974,7 @@ onward follow this order (no matrix identity first).
 | g10 | Unit sight: Dark Templar 9 → 8 (`liberty` UnitData:3376), Roach 10 → 9 (:7210), Brood Lord 11 → 12 (:11132) | 3 | Roach, Brood Lord |
 | g11 | Weapon range: Dark Templar and Zergling 0.2 → 0.1 (`liberty` WeaponData:165, :361), Thor anti-air 10 → 11 (`voidmulti` WeaponData:130) | 3 | Zergling, Thor |
 | g12 | Collision radius (`CUnit` `Radius`) of 26 units, for example Siege Tank 0.75 → 0.875 (`liberty` UnitData:5094), Stalker 0.5 → 0.625 (:3973), Roach 0.5625 → 0.5 (class default, `core` UnitData:41) | 26 | 14 of them |
-| rule | Structure attributes are derived in `catalog.rs` (Psionic for a shielded structure, Mechanical otherwise); the game gives Protoss structures Armored and Structure only and Zerg structures Armored, Biological and Structure (for example Nexus `liberty` UnitData:4166, Hatchery :8193). Recorded as **B-87** | 33 | none |
+| rule | Structure attributes are derived in `catalog.rs` (Psionic for a shielded structure, Mechanical otherwise); the game gives Protoss structures Armored and Structure only and Zerg structures Armored, Biological and Structure (for example Nexus `liberty` UnitData:4166, Hatchery :8193). Recorded as **B-88** | 33 | none |
 
 **Not deviations.**
 - **The High Templar has a weapon at 5.0.14** (`voidmulti` UnitData:683 adds `HighTemplarWeapon`, `voidmulti`
