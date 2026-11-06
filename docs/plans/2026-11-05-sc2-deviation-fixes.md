@@ -768,7 +768,7 @@ requires.
 | B-15 | Shield break remainder | Fixed, narrowed | WP7 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §7); open only whether the 0.5 minimum applies to the life part ([Q0062](../questions/open/0062-shield-break-life-minimum.md)) |
 | B-16 | Fixed splash fractions | Fixed | WP8a ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §8.2, §8.3); the four line and arc weapons take their zones with their shapes (B-18, B-19) |
 | B-17 | Splash measured centre to centre | (i) | Not sourced (U-4, [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §8.1): [Q0063](../questions/open/0063-splash-distance-rule.md), default no change. The Siege Tank already matches |
-| B-18 | Line splash modelled as a circle | (i) | WP8b |
+| B-18 | Line splash modelled as a circle | (i) | WP8b: the line rule landed latent (Amendment 13); the Hellion, Lurker and Colossus data and the per-strike search are held on matrix winner flips ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §9.3, §9.4) |
 | B-19 | Ultralisk cleave modelled as a circle | (i) | WP8c |
 | B-20 | No glaive bounce | (i) | WP8d |
 | B-21 | No Broodlings | (i) | WP18 |
@@ -830,7 +830,8 @@ requires.
 | B-77 | Hard-coded Concussive slow | (i) | WP13d |
 | B-78 | Storm evacuation margin | (i) | WP18 |
 | B-82 | The Baneling's damage to structures is not its own effect (80, +5 a level, ignoring armour) | (i) | WP9. Found in WP6 (Amendment 9) |
-| B-81 | A first strike the effect chain delays (Liberator 1 tick, Colossus 7) lands on the release tick | (i) | WP5 follow-up; the Colossus part with B-18 (WP8b). Found in WP5 (Amendment 8) |
+| B-81 | A first strike the effect chain delays (Liberator 1 tick, Colossus 7) lands on the release tick | (i) | WP5 follow-up; the Colossus part with B-18 (WP8b). Found in WP5 (Amendment 8). The Colossus' delay is not sourced ([Q0064](../questions/open/0064-colossus-damage-timing.md), Amendment 13) |
+| B-85 | A line area lands whole on the shot's tick; the game spaces the Lurker's spines 0.125 Normal s apart and delays each Colossus search's damage 0.25 Normal s | (i) | WP8 follow-up. Found in WP8b (Amendment 13) |
 | B-83 | The Baneling's burst is centred on its target and strikes it directly; the game centres it on the Baneling and reaches the target through the area | (i) | WP8 follow-up. Found in WP8a (Amendment 12) |
 | B-84 | The Siege Tank splashes around a target of radius 1.25 or more; the game's shot at such a target has no area | (i) | WP8 follow-up. Found in WP8a (Amendment 12) |
 
@@ -1050,3 +1051,27 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
 - **Matrix effect:** none. No matrix battle spawns the Liberator analogue; matrix and battle 33 (54 / 7 / 7) are
   bit-identical at every commit, and the goldens moved only for the schema byte.
 - **WP8b not started** in this branch: the line shape is its own rule and data package.
+
+## Amendment 13 (WP8b, 2026-11-06): the line rule landed, the data held on winner flips
+
+Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §9.
+
+- **Sourced (§9.1):** each line is a persistent's offsets, one search each, struck once per marker: the Hellion 25
+  searches of 0.15 along the attack from itself (0.25 to 6.0, then 6.5); the Lurker 9 spines of 0.5 along the
+  attack (1 to 9); the Colossus two sweeps of 11 searches of 0.15 across the attack at the target (−1.25 to 1.25),
+  each sweep striking a unit once. Every search deals the whole strike.
+- **Landed:** the rule, latent (`SplashShape::Line`, checksum schema 15), and the C7 ratchet. Matrix and battle 33
+  (54 / 7 / 7) bit-identical; goldens moved for the schema byte only, reproduced in debug, release and
+  `wasm32-wasip1`.
+- **Held, stop rule (plan D-4):** each data commit and the per-strike search flip a matrix winner (§9.3, §9.4):
+  the Hellion line 9a and 10 (Hellions 20 → 0 of 20); the Lurker line 21 (Lurker 20 → 0); the Colossus line 26
+  (Zerglings 0 → 20); one search per strike 12b (Colossus 0 → 16 on its circle, 0 → 14 on its line). Under
+  [Q0063](../questions/open/0063-splash-distance-rule.md)'s default (centre to centre) a 0.15 search reaches almost
+  no unit beside the line; with the edge rule substituted for a probe, 21 and 26 keep their winners, while 9a, 10
+  and 12b still flip on unit mechanics (a lone Hellion dies to four Zerglings in two shots; three Marauders in a
+  column stand exactly on the Colossus' sweep). The orchestrator decides: answer Q0063 first, or apply and
+  re-record the battles whose claims the game's mechanics contradict.
+- **Not sourced:** the Colossus part of B-81 (when the sweeps' damage lands; WP5 read `liberty`'s `ExpireDelay`
+  0.375, `swarm` sets 0.73). Filed as [Q0064](../questions/open/0064-colossus-damage-timing.md), default no change.
+- **New, found: B-85** (class (i)): a line lands whole on the shot's tick; the game spaces the Lurker's spines and
+  delays each Colossus search.

@@ -161,7 +161,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-13 | Call-for-help radius, flee distance, leash and abandoned-target time are unsourced | WP16 |
 | B-15 | Whether the 0.5 minimum applies to the life part of a shield-breaking strike (not yet sourced, [Q0062](docs/questions/open/0062-shield-break-life-minimum.md)); the remainder itself is fixed | Q0062 |
 | B-17 | Where a splash is centred and whether it reaches a unit's edge (not yet sourced, [Q0063](docs/questions/open/0063-splash-distance-rule.md)); splash zones and fractions are fixed | Q0063 |
-| B-18 | Hellion, Lurker and Colossus line splash modelled as a circle | WP8b |
+| B-18 | Hellion, Lurker and Colossus line splash modelled as a circle; the line rule exists, the data are held on matrix winner flips (plan Amendment 13) | WP8b |
 | B-19 | Ultralisk cleave modelled as a circle | WP8c |
 | B-20 | Mutalisk glaive does not bounce | WP8d |
 | B-21 | Brood Lord spawns no Broodlings | WP18 |
@@ -207,9 +207,10 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-77 | Hard-coded Concussive slow | WP13d |
 | B-78 | Hard-coded storm evacuation margin | WP18 |
 | B-82 | The Baneling's damage to structures is not its own effect (80, +5 a level, ignoring armour) | WP9 |
-| B-81 | The Liberator's first missile and the Colossus' strikes land on the release tick; the game delays them 1 and 7 ticks | WP5 follow-up, WP8b |
+| B-81 | The Liberator's first missile and the Colossus' strikes land on the release tick; the game delays the missile 1 tick and the Colossus' strikes by an amount not yet sourced ([Q0064](docs/questions/open/0064-colossus-damage-timing.md)) | WP5 follow-up, Q0064 |
 | B-83 | The Baneling's burst is centred on its target and strikes it directly; the game centres it on the Baneling | WP8 follow-up |
 | B-84 | The Siege Tank splashes around targets of radius 1.25 or more; the game's shot at them has no area | WP8 follow-up |
+| B-85 | A line area lands whole on the shot's tick; the game spaces the Lurker's spines 0.125 Normal s apart and delays each Colossus search 0.25 Normal s | WP8 follow-up |
 
 ---
 
