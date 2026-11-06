@@ -15,6 +15,7 @@
 use sim_core::catalog::{AcquireLevel, AcquireTieBreak, PrimaryWeapon, UnitCatalog};
 use sim_core::{is_within_firing_arc, SimCoreError, SimWorld, UpgradeCatalog, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
+use sim_types::{Attribute, AttributeBonuses};
 use sim_types::{EntityId, MoverType, PlayerId, SimAngle, SimScalar, SimVec2, Tick, TickBundle};
 
 const UNITS: &str = include_str!("../../../assets/catalog/units.ron");
@@ -832,6 +833,167 @@ fn b2_strike_spacing_follows_starcraft() -> TestResult {
                 "{} {}: strike spacing as StarCraft II's effect",
                 archetype.slug,
                 weapon.name
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `StarCraft` II 5.0.14 `CEffectDamage` `AttributeBonus` of the weapons of the armed analogues
+/// this catalog models: `(analogue, weapon, [(attribute, bonus)], source)`, where `weapon` names
+/// the catalog weapon a row is for when the analogue's weapons differ (plan
+/// `2026-11-05-sc2-deviation-fixes` WP6, B-14; evidence §6.1). A row whose source says "none" is
+/// an analogue whose damage effects set no `AttributeBonus` anywhere in the layer chain.
+const SC2_ATTRIBUTE_BONUSES: [(&str, Option<&str>, &[(Attribute, f32)], &str); 37] = [
+    ("SCV", None, &[], "none"),
+    ("Marine", None, &[], "none"),
+    ("Roach", None, &[], "none"),
+    ("Zealot", None, &[], "none"),
+    (
+        "Siege Tank",
+        None,
+        &[(Attribute::Armored, 10.0)],
+        "90mmCannons, liberty EffectData:1666",
+    ),
+    (
+        "Phoenix",
+        None,
+        &[(Attribute::Light, 5.0)],
+        "IonCannonsU, liberty EffectData:1986",
+    ),
+    (
+        "Marauder",
+        None,
+        &[(Attribute::Armored, 10.0)],
+        "PunisherGrenadesU, liberty EffectData:1651",
+    ),
+    (
+        "Ghost",
+        None,
+        &[(Attribute::Light, 10.0)],
+        "C10CanisterRifle, liberty EffectData:1634",
+    ),
+    (
+        "Hellion",
+        None,
+        &[(Attribute::Light, 6.0)],
+        "InfernalFlameThrower, liberty EffectData:2607",
+    ),
+    (
+        "Viking",
+        None,
+        &[(Attribute::Armored, 4.0)],
+        "LanzerTorpedoesDamage, liberty EffectData:1718",
+    ),
+    ("Liberator", None, &[], "none"),
+    ("Banshee", None, &[], "none"),
+    ("Probe", None, &[], "none"),
+    (
+        "Stalker",
+        None,
+        &[(Attribute::Armored, 5.0)],
+        "ParticleDisruptorsU, voidmulti EffectData:583",
+    ),
+    ("Sentry", None, &[], "none"),
+    (
+        "Adept",
+        None,
+        &[(Attribute::Light, 12.0)],
+        "AdeptDamage, voidmulti EffectData:722",
+    ),
+    ("High Templar", None, &[], "none"),
+    ("Dark Templar", None, &[], "none"),
+    (
+        "Immortal",
+        None,
+        &[(Attribute::Armored, 30.0)],
+        "PhaseDisruptors, liberty EffectData:2439",
+    ),
+    (
+        "Colossus",
+        None,
+        &[(Attribute::Light, 5.0)],
+        "ThermalLancesMU, voidmulti EffectData:966",
+    ),
+    (
+        "Void Ray",
+        None,
+        &[(Attribute::Armored, 4.0)],
+        "PrismaticBeamMUx1, liberty EffectData:2050",
+    ),
+    ("Carrier / Mothership", None, &[], "none"),
+    ("Drone", None, &[], "none"),
+    ("Zergling", None, &[], "none"),
+    (
+        "Baneling",
+        None,
+        &[(Attribute::Light, 19.0)],
+        "VolatileBurstU, voidmulti EffectData:1026",
+    ),
+    ("Ravager", None, &[], "none"),
+    ("Hydralisk", None, &[], "none"),
+    (
+        "Lurker",
+        None,
+        &[(Attribute::Armored, 10.0)],
+        "LurkerMPDamage, voidmulti EffectData:817",
+    ),
+    ("Mutalisk", None, &[], "none"),
+    (
+        "Corruptor",
+        None,
+        &[(Attribute::Massive, 6.0)],
+        "ParasiteSporeDamage, swarm EffectData:2062",
+    ),
+    ("Brood Lord", None, &[], "none"),
+    (
+        "Ultralisk",
+        None,
+        &[],
+        "KaiserBladesDamage, void EffectData:1168 sets Armored 0",
+    ),
+    ("Queen", None, &[], "none"),
+    ("Planetary Fortress", None, &[], "none"),
+    ("Missile Turret", None, &[], "none"),
+    ("Photon Cannon", None, &[], "none"),
+    (
+        "Spine Crawler",
+        None,
+        &[(Attribute::Armored, 5.0)],
+        "ImpalerTentacleU, liberty EffectData:2166",
+    ),
+];
+
+#[test]
+fn b14_attribute_bonuses_follow_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    for archetype in world.catalog.archetypes() {
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next());
+        let weapons = [
+            &archetype.weapon,
+            &archetype.ground_weapon,
+            &archetype.air_weapon,
+        ];
+        for weapon in weapons.into_iter().flatten() {
+            let row = SC2_ATTRIBUTE_BONUSES.iter().find(|(unit, name, ..)| {
+                Some(*unit) == analogue && name.is_none_or(|name| name == weapon.name)
+            });
+            // Rows are added as the data commits of WP6 b land; the last makes every armed analogue
+            // need one.
+            let Some((_, _, bonuses, source)) = row else {
+                continue;
+            };
+            let expected = bonuses
+                .iter()
+                .fold(AttributeBonuses::NONE, |all, &(attribute, bonus)| {
+                    all.with(attribute, SimScalar::from_f32_lossy(bonus))
+                });
+            assert_eq!(
+                weapon.attribute_bonuses, expected,
+                "{} {}: attribute bonuses as StarCraft II's ({source})",
+                archetype.slug, weapon.name
             );
         }
     }

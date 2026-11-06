@@ -2844,7 +2844,7 @@
                 has_turret: false,
                 turret_turn_rate_deg_per_tick: 0.0,
                 base_damage: 14.0,
-                attribute_bonuses: [(Armored, 6.0)],
+                attribute_bonuses: [(Massive, 6.0)],
                 attacks_count: 1,
                 strike_interval_ticks: 0,
                 period_ticks: 34,
