@@ -622,9 +622,15 @@
         ),
         expect: (blue: (1, 1), red: (0, 0)),
     ),
+    // Battle 22a: StarCraft II 5.0.14 gives the Reaper no bonus against Light (P38ScytheGuassPistol's
+    // Light 5 of liberty EffectData:1817 is set to 0 by void EffectData:1499; plan
+    // 2026-11-05-sc2-deviation-fixes WP6, Amendment 10). Its two pistol shots of 4 each need twelve
+    // shots, six attacks, per 45-life worker instead of five 9-damage shots, so within the 200 ticks
+    // it kills one of the two workers and the other survives; with the bonus it killed both by tick
+    // 101. Evidence: docs/evidence/2026-11-05-sc2-deviation-fixes.md §6.4.
     (
         name: "22a_reaper_vs_2_workers",
-        claim: "The bonus vs light kills workers",
+        claim: "Without a bonus vs light, the Reaper kills only one of two workers in 200 ticks",
         map_cells: 64,
         ticks: 200,
         blue: (
@@ -639,7 +645,7 @@
             ],
             order: AttackMove(10, 32),
         ),
-        expect: (blue: (1, 1), red: (0, 0)),
+        expect: (blue: (1, 1), red: (1, 1)),
     ),
     (
         name: "22b_reaper_vs_stalker",

@@ -853,7 +853,7 @@ type BonusRow = (
 /// the catalog weapon a row is for when the analogue's weapons differ (plan
 /// `2026-11-05-sc2-deviation-fixes` WP6, B-14; evidence §6.1). A row whose source says "none" is
 /// an analogue whose damage effects set no `AttributeBonus` anywhere in the layer chain.
-const SC2_ATTRIBUTE_BONUSES: [BonusRow; 40] = [
+const SC2_ATTRIBUTE_BONUSES: [BonusRow; 41] = [
     ("SCV", None, &[], "none"),
     ("Marine", None, &[], "none"),
     ("Roach", None, &[], "none"),
@@ -875,6 +875,12 @@ const SC2_ATTRIBUTE_BONUSES: [BonusRow; 40] = [
         None,
         &[(Attribute::Armored, 10.0)],
         "PunisherGrenadesU, liberty EffectData:1651",
+    ),
+    (
+        "Reaper",
+        None,
+        &[],
+        "P38ScytheGuassPistol: Light 5 in liberty EffectData:1817, set to 0 by void EffectData:1499; voidmulti EffectData:346 leaves it",
     ),
     (
         "Ghost",
@@ -1002,10 +1008,12 @@ fn b14_attribute_bonuses_follow_starcraft() -> TestResult {
             let row = SC2_ATTRIBUTE_BONUSES.iter().find(|(unit, name, ..)| {
                 Some(*unit) == analogue && name.is_none_or(|name| name == weapon.name)
             });
-            // Rows are added as the data commits of WP6 b land; the last makes every armed analogue
-            // need one.
             let Some((_, _, bonuses, source)) = row else {
-                continue;
+                return Err(format!(
+                    "{} {}: armed, but its analogue has no row",
+                    archetype.slug, weapon.name
+                )
+                .into());
             };
             let expected = bonuses
                 .iter()

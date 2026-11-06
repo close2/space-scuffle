@@ -663,7 +663,7 @@
                 has_turret: false,
                 turret_turn_rate_deg_per_tick: 0.0,
                 base_damage: 4.0,
-                attribute_bonuses: [(Light, 5.0)],
+                attribute_bonuses: [],
                 attacks_count: 2,
                 strike_interval_ticks: 2,
                 followup_max_distance: Some(7.0),

@@ -549,7 +549,7 @@ failed on the old data (the archetype's weapon `(0, None)`) and passes. Each is 
   unresolved at the tick limit; no seed goes to the Colossi), Colossus survivors 0.20 → 0.40, mean end tick
   403.8 → 546.5. Battle 33 bit-identical.
 - **b4, Reaper** (`jet_jumper`): 2 ticks, within 7. Matrix and battle 33 bit-identical: in `22a` the Reaper kills
-  each 40-life worker with its fifth pistol shot, a first shot (9 a shot against Light), and in `22b` it dies to the
+  each 45-life worker with its fifth pistol shot, a first shot (9 a shot against Light), and in `22b` it dies to the
   Stalker either way; neither battle records the Stalker's shields.
 - **b5, units no matrix battle spawns**: Banshee (`cloak_gunship`) 3 ticks within 15, Liberator (`sky_bastion`)
   1 tick, Missile Turret (`flak_array_dome`) 2 ticks within 15, Queen (`hive_matron`, both ground slots) 5 ticks
@@ -621,7 +621,7 @@ against the one before, from the commits rebased onto `9df767e`; commit a was bi
   seed, with 150.00 life left instead of 110.00. Battle 33 bit-identical.
 - **b2, Thor high-impact payload** (`colossus_mech` air weapon): Massive 10 for Armored 10. Matrix and battle 33
   bit-identical (no Massive air unit in the matrix; the Thor's battle 14 is against the ground).
-- **b3, Reaper** (`jet_jumper`): no Light bonus (it was 5). **Stopped, not committed.** Measured on a scratch commit
+- **b3, Reaper** (`jet_jumper`): no Light bonus (it was 5). **Stopped first** (applied later, §6.4). Measured on a scratch commit
   on top of b2: `22a_reaper_vs_2_workers` changes its winner over its seeds, the Reaper winning 20 of 20 → 0 of 20
   (all 20 unresolved at the battle's 200-tick limit: the Reaper alive with 9.00 life, one worker alive in 11 seeds
   with 13.00); expectation failures 4 of record and 20 over all seeds; no other battle moved, battle 33
@@ -632,3 +632,25 @@ against the one before, from the commits rebased onto `9df767e`; commit a was bi
 - **b4, Spore Crawler** (`spore_spire_dome`): Biological 10. No matrix battle spawns it: matrix and battle 33
   bit-identical; goldens unchanged.
 - **Goldens.** No commit of WP6 b moves them (none of these units is in either fixture).
+
+### 6.4 Commit b3: the Reaper's Light bonus is 0 (B-14, plan Amendment 10)
+
+- **Resolved over the whole chain** (`core → liberty → swarm → void → voidmulti`, audit §2.2): `liberty`
+  EffectData:1817 gives `P38ScytheGuassPistol` `AttributeBonus Light 5`; `void` EffectData:1498–1499 sets it to 0;
+  `voidmulti` EffectData:346 overrides the same effect but only adds validators, so the 5.0.14 value is **0**
+  (final layer `void`, line 1499). The layers outside the audit's chain agree: `swarmmulti` EffectData:389 also
+  sets 0, and neither `libertymulti` nor `balancemulti` sets it. Applied per the orchestrator's decision
+  (Amendment 10).
+- **Test first:** the Reaper row of `b14_attribute_bonuses_follow_starcraft` failed on the old data (Light 5) and
+  passes; the table now requires a row for every armed analogue.
+- **Measured against §6.3's head:** one battle moved. `22a_reaper_vs_2_workers` changed its winner, as the decision
+  sanctions: the Reaper won 20 of 20 seeds by tick 101.0 with 40.00 life left; now all 20 end at the 200-tick limit
+  with the Reaper alive (9.00 life) and one worker alive. Cause, traced to the units: the Reaper (`jet_jumper`,
+  4 × 2 a 20-tick attack, 60 life) against two Light workers (`welder_drone`, 45 life, no armour) needed five 9-damage
+  shots a worker with the bonus and needs twelve 4-damage shots, six attacks, without it. Two workers take twelve
+  attacks, 240 ticks of attack periods, more than the battle's 200 ticks; on all 20 seeds exactly one worker is
+  left (the first of the two in 11 seeds, the second in 9). Battle 33
+  bit-identical (54 / 7 / 7); 0 expectation failures over 1000 runs after the re-record. Re-recorded:
+  `expect: (blue: (1, 1), red: (1, 1))` (was `red: (0, 0)`), and the claim, which said "The bonus vs light kills
+  workers", now reads "Without a bonus vs light, the Reaper kills only one of two workers in 200 ticks". Goldens
+  unchanged (no Reaper in them).
