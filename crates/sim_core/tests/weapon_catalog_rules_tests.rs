@@ -1058,6 +1058,18 @@ fn b16_splash_zones_must_be_usable() {
     );
 }
 
+/// B-18: a line splash needs at least one search point, and each offset must be a finite
+/// fixed-point value.
+#[test]
+fn b18_line_splash_must_be_usable() {
+    let zones = "zones: [(radius: 2.2, fraction: 1.0)]";
+    let line = |offsets: &str| {
+        format!("{zones}, shape: Line(origin: Attacker, axis: Along, offsets: [{offsets}])")
+    };
+    assert_rejected(UNITS, zones, &line(""), "offsets");
+    assert_rejected(UNITS, zones, &line("1.0, 3000000000.0"), "offsets[1]");
+}
+
 /// One row of [`SC2_SPLASH_ZONES`]: the analogue, its `(radius, fraction)` zones and the source.
 type SplashRow = (&'static str, &'static [(f32, f32)], &'static str);
 

@@ -271,7 +271,13 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 fraction: SimScalar::from_num(0.25),
             },
         ],
+        shape: sim_types::SplashShape::Circle,
         friendly_fire: false,
+    };
+    let line = sim_types::SplashLine {
+        origin: sim_types::SplashLineOrigin::Attacker,
+        axis: sim_types::SplashLineAxis::Along,
+        offsets: vec![SimScalar::ONE],
     };
     assert_mutations(
         &original,
@@ -289,6 +295,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 sim_types::SplashZone { radius: SimScalar::ONE, fraction: SimScalar::HALF },
                 sim_types::SplashZone { radius: SimScalar::ONE, fraction: SimScalar::from_num(0.25) },
             ],
+            shape: sim_types::SplashShape::Circle,
             friendly_fire: true,
         }),
                 projectile_speed => Some(SimScalar::ONE), weapon_class => Some(WeaponClassId(3)),
@@ -309,11 +316,36 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
         &splash,
         mutations! { SplashSpec;
             zones => vec![sim_types::SplashZone { radius: SimScalar::ONE, fraction: SimScalar::ONE }],
+            shape => sim_types::SplashShape::Line(sim_types::SplashLine {
+                origin: sim_types::SplashLineOrigin::Attacker,
+                axis: sim_types::SplashLineAxis::Along,
+                offsets: vec![SimScalar::ONE],
+            }),
             friendly_fire => true,
         },
         |splash| {
             let mut weapon = original.clone();
             weapon.splash = Some(splash.clone());
+            world
+                .entities
+                .get_mut(&EntityId(1))
+                .expect("fixture entity exists")
+                .siege_weapon = Some(weapon);
+            world.compute_checksum()
+        },
+    );
+    assert_mutations(
+        &line,
+        mutations! { sim_types::SplashLine;
+            origin => sim_types::SplashLineOrigin::Target,
+            axis => sim_types::SplashLineAxis::Across,
+            offsets => vec![SimScalar::HALF],
+        },
+        |line| {
+            let mut weapon = original.clone();
+            let mut changed = splash.clone();
+            changed.shape = sim_types::SplashShape::Line(line.clone());
+            weapon.splash = Some(changed);
             world
                 .entities
                 .get_mut(&EntityId(1))

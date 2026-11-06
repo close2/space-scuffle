@@ -541,6 +541,7 @@ fn test_ballistic_impact_last_known_position_splash() {
                 fraction: SimScalar::from_num(0.25),
             },
         ],
+        shape: sim_types::SplashShape::Circle,
         friendly_fire: false,
     };
     let weapon = custom_projectile_weapon(

@@ -271,6 +271,7 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
                     fraction: SimScalar::from_num(0.25),
                 },
             ],
+            shape: sim_types::SplashShape::Circle,
             friendly_fire: false,
         }),
         projectile_speed: None,

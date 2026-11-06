@@ -320,6 +320,7 @@ fn test_circular_splash_falloff() {
                 fraction: SimScalar::from_num(0.25),
             },
         ],
+        shape: sim_types::SplashShape::Circle,
         friendly_fire: false,
     };
     let target = dummy_target_archetype(AttributeFlags::LIGHT, SimScalar::ZERO, SimScalar::ZERO);
@@ -741,6 +742,7 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
                     fraction: SimScalar::from_num(0.25),
                 },
             ],
+            shape: sim_types::SplashShape::Circle,
             friendly_fire: true,
         }),
         projectile_speed: None,
@@ -770,6 +772,7 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
                     fraction: SimScalar::from_num(0.25),
                 },
             ],
+            shape: sim_types::SplashShape::Circle,
             friendly_fire: false,
         }),
         ..friendly_fire_weapon.clone()
@@ -939,6 +942,7 @@ fn s13_splash_falloff_scales_stat_bonus_damage() {
                 fraction: SimScalar::from_num(0.25),
             },
         ],
+        shape: sim_types::SplashShape::Circle,
         friendly_fire: false,
     };
     let mut attacker = PlayerUpgradeState::default();
@@ -1060,6 +1064,7 @@ fn b16_each_splash_zone_deals_its_own_fraction() {
                 fraction: SimScalar::from_num(0.75),
             },
         ],
+        shape: sim_types::SplashShape::Circle,
         friendly_fire: false,
     };
     let at = |distance: f32| {
@@ -1100,6 +1105,7 @@ fn b16_a_single_zone_deals_full_damage_to_its_edge() {
             radius: SimScalar::from_num(1.5),
             fraction: SimScalar::ONE,
         }],
+        shape: sim_types::SplashShape::Circle,
         friendly_fire: false,
     };
     let life_damage = calculate_splash_damage(
@@ -1112,4 +1118,144 @@ fn b16_a_single_zone_deals_full_damage_to_its_edge() {
     )
     .map(|resolution| resolution.life_damage);
     assert_eq!(life_damage, Some(SimScalar::from_num(5)));
+}
+
+/// Fires one shot of `weapon` from a `pulse_bot` at (10, 15) at a red dummy at (14, 15), with
+/// red dummies standing at `bystanders`, and returns the life each bystander lost.
+fn b18_bystander_losses(weapon: WeaponSpec, bystanders: &[(f32, f32)]) -> Vec<SimScalar> {
+    use sim_map::{CliffLevel, GameMap, MapCell};
+    use sim_types::{PlayerId, UnitOrder};
+
+    let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))
+        .expect("invariant: a 64 x 64 map is valid");
+    let mut world = sim_fixtures::world(map, 0x0b18);
+    let attacker_type = world.catalog.id_by_slug("pulse_bot").expect("pulse_bot");
+    let mut dummy = dummy_target_archetype(AttributeFlags::LIGHT, SimScalar::ZERO, SimScalar::ZERO);
+    dummy.max_shields = SimScalar::ZERO;
+    world.catalog.register(dummy);
+    world
+        .catalog
+        .get_mut(attacker_type)
+        .expect("pulse_bot")
+        .ground_weapon = Some(weapon);
+    let at = |x: f32, y: f32| SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y));
+    let attacker = world
+        .spawn_unit(attacker_type, PlayerId(0), at(10.0, 15.0))
+        .expect("spawn attacker");
+    let target = world
+        .spawn_unit(UnitTypeId(99), PlayerId(1), at(14.0, 15.0))
+        .expect("spawn target");
+    let ids: Vec<_> = bystanders
+        .iter()
+        .map(|&(x, y)| {
+            world
+                .spawn_unit(UnitTypeId(99), PlayerId(1), at(x, y))
+                .expect("spawn bystander")
+        })
+        .collect();
+    world
+        .entities
+        .get_mut(&attacker)
+        .expect("attacker")
+        .issue_order(UnitOrder::attack(target), false)
+        .expect("valid attack order");
+    let full = world.entities[&target].hp;
+    for tick in 1..=40 {
+        world.step(&TickBundle {
+            tick: Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        if world.entities[&target].hp < full {
+            break;
+        }
+    }
+    assert!(world.entities[&target].hp < full, "the shot must land");
+    ids.iter()
+        .map(|id| full - world.entities.get(id).map_or(SimScalar::ZERO, |e| e.hp))
+        .collect()
+}
+
+/// A weapon of 40 damage, `strikes` strikes landing together, with a line splash of one zone
+/// of radius 0.5.
+fn b18_line_weapon(line: sim_types::SplashLine, strikes: u8) -> WeaponSpec {
+    WeaponSpec {
+        max_range: SimScalar::from_num(10),
+        firing_arc: SimAngle::from_degrees(360),
+        attacks_count: strikes,
+        splash: Some(SplashSpec {
+            zones: vec![sim_types::SplashZone {
+                radius: SimScalar::HALF,
+                fraction: SimScalar::ONE,
+            }],
+            shape: sim_types::SplashShape::Line(line),
+            friendly_fire: false,
+        }),
+        ..dummy_weapon_spec(SimScalar::from_num(40), SimScalar::ZERO, SimScalar::ZERO)
+    }
+}
+
+/// A line of `offsets` from `origin` along `axis`.
+fn b18_line(
+    origin: sim_types::SplashLineOrigin,
+    axis: sim_types::SplashLineAxis,
+    offsets: &[i32],
+) -> sim_types::SplashLine {
+    sim_types::SplashLine {
+        origin,
+        axis,
+        offsets: offsets.iter().copied().map(SimScalar::from_i32).collect(),
+    }
+}
+
+/// B-18: a line along the attack from the attacker (the Hellion's flame and the Lurker's
+/// spines: `WhichLocation SourcePoint`, offsets `0,-d,0`) strikes units on the line in front
+/// of and behind the target, not a unit beside the target, and strikes a unit inside two of
+/// its searches once (`noMarkers`).
+#[test]
+fn b18_a_line_along_the_attack_strikes_the_line_once() {
+    let line = b18_line(
+        sim_types::SplashLineOrigin::Attacker,
+        sim_types::SplashLineAxis::Along,
+        &[1, 2, 3, 4, 5, 6, 7],
+    );
+    let losses = b18_bystander_losses(
+        b18_line_weapon(line, 1),
+        &[(12.0, 15.0), (16.5, 15.0), (14.0, 16.5)],
+    );
+    let forty = SimScalar::from_num(40);
+    assert_eq!(losses[0], forty, "on the line in front of the target");
+    assert_eq!(
+        losses[1], forty,
+        "behind the target, inside two searches, struck once"
+    );
+    assert_eq!(
+        losses[2],
+        SimScalar::ZERO,
+        "beside the target, off the line"
+    );
+}
+
+/// B-18: a line across the attack centred on the target (the Colossus' sweep:
+/// `WhichLocation TargetPoint`, offsets `d,0,0`) strikes units beside the target, not a unit
+/// behind it.
+#[test]
+fn b18_a_line_across_the_attack_strikes_beside_the_target() {
+    let line = b18_line(
+        sim_types::SplashLineOrigin::Target,
+        sim_types::SplashLineAxis::Across,
+        &[-1, 0, 1],
+    );
+    let losses = b18_bystander_losses(
+        b18_line_weapon(line, 1),
+        &[(14.0, 16.0), (14.0, 14.0), (15.5, 15.0)],
+    );
+    let forty = SimScalar::from_num(40);
+    assert_eq!(losses[0], forty, "beside the target, one side");
+    assert_eq!(losses[1], forty, "beside the target, the other side");
+    assert_eq!(
+        losses[2],
+        SimScalar::ZERO,
+        "behind the target, off the line"
+    );
 }

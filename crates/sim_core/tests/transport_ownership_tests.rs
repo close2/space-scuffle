@@ -699,6 +699,7 @@ fn all_three_splash_routes_ignore_cargo_at_dormant_pickup_coordinates() -> TestR
                     fraction: SimScalar::from_num(0.25),
                 },
             ],
+            shape: sim_types::SplashShape::Circle,
             friendly_fire: true,
         });
         if route == 0 {

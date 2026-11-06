@@ -2,7 +2,7 @@
 
 use crate::enums::{AttributeFlags, WeaponVisualKind};
 use crate::ids::WeaponClassId;
-use crate::math::{SimAngle, SimScalar};
+use crate::math::{SimAngle, SimScalar, SimVec2};
 use serde::{Deserialize, Serialize};
 
 /// One unit attribute a weapon can deal bonus damage against: an index of `StarCraft` II's
@@ -122,19 +122,71 @@ pub struct SplashZone {
     pub fraction: SimScalar,
 }
 
-/// Circular area damage around an impact point: a list of zones with their own radii and
-/// fractions, read per weapon from the catalog.
+/// Where the search points of a [`SplashLine`] are laid out from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SplashLineOrigin {
+    /// The attacker's position when it released the attack: the `SourcePoint` of the game's
+    /// `CEffectCreatePersistent` (the Hellion's and the Lurker's lines).
+    Attacker,
+    /// The point the attack struck: the `TargetPoint` of the persistent (the Colossus' sweep).
+    Target,
+}
+
+/// The direction in which a [`SplashLine`]'s offsets lie.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SplashLineAxis {
+    /// Along the attack, from the attacker towards its target: the persistent's forward axis
+    /// (its `PeriodicOffsetArray` `0,-d,0` entries; the game's forward is `-y`).
+    Along,
+    /// Across the attack, a quarter turn counter-clockwise from [`SplashLineAxis::Along`]:
+    /// the persistent's `d,0,0` entries.
+    Across,
+}
+
+/// A line of area searches: one search point per offset, each the centre of the splash's
+/// zones. `StarCraft` II builds such a line from a `CEffectCreatePersistent` whose
+/// `PeriodicOffsetArray` places one `CEffectEnumArea` per period (bug B-18).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SplashLine {
+    /// Where the offsets are measured from.
+    pub origin: SplashLineOrigin,
+    /// The direction the offsets lie in.
+    pub axis: SplashLineAxis,
+    /// Signed distances in world units from the origin along the axis, one search point each,
+    /// in the order the game's persistent visits them.
+    pub offsets: Vec<SimScalar>,
+}
+
+/// The shape of a weapon's area.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SplashShape {
+    /// One search centred on the impact point: what a damage effect's own `AreaArray` does
+    /// when no persistent places searches elsewhere, so this is the engine default.
+    #[default]
+    Circle,
+    /// A line of searches (see [`SplashLine`]).
+    Line(SplashLine),
+}
+
+/// Area damage: a list of zones with their own radii and fractions, searched around one point
+/// (a circle) or around each point of a line, read per weapon from the catalog.
 ///
 /// What this models of `StarCraft` II, and what it does not: the zones and fractions are the
-/// weapon's `AreaArray` (bug B-16 fixed). Distance is measured centre to centre, where the
+/// weapon's `AreaArray` (bug B-16 fixed), and a line weapon's search points are its
+/// persistent's offsets (bug B-18). A unit found by several searches of one strike takes that
+/// strike once, at the fraction of the nearest search point: the game's damage effects check
+/// `noMarkers` against the attack's marker. Distance is measured centre to centre, where the
 /// game's area searches may reach a unit's edge (`SearchFlags` `OffsetByUnitRadius`; bug B-17,
-/// owner question Q0063), and every area is a full circle, where some of the game's are lines
-/// or arcs (bugs B-18 and B-19). See the `DESIGN.md` bug register.
+/// owner question Q0063). A line's searches land together, where the game spaces some of them
+/// in time (bug B-85), and no area is an arc (bug B-19). See the `DESIGN.md` bug register.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SplashSpec {
     /// The zones, radii strictly increasing; a unit takes the fraction of the innermost zone
     /// that reaches it, and nothing beyond the last.
     pub zones: Vec<SplashZone>,
+    /// Where the zones are searched: around the impact point, or around each point of a line.
+    #[serde(default)]
+    pub shape: SplashShape,
     /// If true, splash affects allied units as well.
     #[serde(default)]
     pub friendly_fire: bool,
@@ -161,6 +213,35 @@ impl SplashSpec {
             .map(|zone| zone.radius)
             .max()
             .unwrap_or(SimScalar::ZERO)
+    }
+
+    /// Writes the centres of this splash's searches into `points`, replacing its contents.
+    ///
+    /// `attacker` is where the attacker released the attack, `impact` where it struck, and
+    /// `direction` the unit vector of the attack from attacker to target, all in world units.
+    /// A circle searches once, at `impact`; a line once per offset.
+    pub fn search_points(
+        &self,
+        attacker: SimVec2,
+        impact: SimVec2,
+        direction: SimVec2,
+        points: &mut Vec<SimVec2>,
+    ) {
+        points.clear();
+        match &self.shape {
+            SplashShape::Circle => points.push(impact),
+            SplashShape::Line(line) => {
+                let origin = match line.origin {
+                    SplashLineOrigin::Attacker => attacker,
+                    SplashLineOrigin::Target => impact,
+                };
+                let axis = match line.axis {
+                    SplashLineAxis::Along => direction,
+                    SplashLineAxis::Across => SimVec2::new(-direction.y, direction.x),
+                };
+                points.extend(line.offsets.iter().map(|&offset| origin + axis * offset));
+            }
+        }
     }
 }
 
@@ -265,7 +346,10 @@ pub struct WeaponSpec {
 
 #[cfg(test)]
 mod tests {
-    use super::{Attribute, AttributeBonuses, AttributeFlags, SimScalar, SplashSpec, SplashZone};
+    use super::{
+        Attribute, AttributeBonuses, AttributeFlags, SimScalar, SimVec2, SplashLine,
+        SplashLineAxis, SplashLineOrigin, SplashShape, SplashSpec, SplashZone,
+    };
 
     #[test]
     fn every_attribute_has_its_own_flag_in_declaration_order() {
@@ -313,6 +397,7 @@ mod tests {
         };
         let splash = SplashSpec {
             zones: vec![zone(1, 4), zone(3, 1)],
+            shape: SplashShape::Circle,
             friendly_fire: false,
         };
         assert_eq!(splash.fraction_at(SimScalar::ZERO), Some(SimScalar::ONE));
@@ -325,9 +410,49 @@ mod tests {
         assert_eq!(splash.reach(), SimScalar::from_i32(3));
         let empty = SplashSpec {
             zones: Vec::new(),
+            shape: SplashShape::Circle,
             friendly_fire: false,
         };
         assert_eq!(empty.fraction_at(SimScalar::ZERO), None);
         assert_eq!(empty.reach(), SimScalar::ZERO);
+    }
+
+    #[test]
+    fn b18_search_points_follow_the_shape() {
+        let v = |x: i32, y: i32| SimVec2::new(SimScalar::from_i32(x), SimScalar::from_i32(y));
+        let line = |origin, axis| SplashSpec {
+            zones: vec![SplashZone {
+                radius: SimScalar::HALF,
+                fraction: SimScalar::ONE,
+            }],
+            shape: SplashShape::Line(SplashLine {
+                origin,
+                axis,
+                offsets: vec![SimScalar::from_i32(-1), SimScalar::from_i32(2)],
+            }),
+            friendly_fire: false,
+        };
+        let (attacker, impact, east) = (v(0, 0), v(5, 0), v(1, 0));
+        let mut points = vec![v(9, 9)];
+        let circle = SplashSpec {
+            shape: SplashShape::Circle,
+            ..line(SplashLineOrigin::Target, SplashLineAxis::Along)
+        };
+        circle.search_points(attacker, impact, east, &mut points);
+        assert_eq!(points, vec![impact]);
+        line(SplashLineOrigin::Attacker, SplashLineAxis::Along).search_points(
+            attacker,
+            impact,
+            east,
+            &mut points,
+        );
+        assert_eq!(points, vec![v(-1, 0), v(2, 0)]);
+        line(SplashLineOrigin::Target, SplashLineAxis::Across).search_points(
+            attacker,
+            impact,
+            east,
+            &mut points,
+        );
+        assert_eq!(points, vec![v(5, -1), v(5, 2)]);
     }
 }
