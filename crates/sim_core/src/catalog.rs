@@ -26,7 +26,8 @@ use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AnimState, ArchetypeCapabilities, ArmorClassId,
     Attribute, AttributeBonuses, AttributeFlags, FactionId, HarvesterSpec, MoverType,
     OverclockSpec, ProjectileTargetLossBehavior, ShapeKind, SilhouetteClass, SimAngle, SimScalar,
-    UnitModeSpec, UnitTypeId, UpgradeEffect, WeaponVisualKind,
+    SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, UnitModeSpec, UnitTypeId,
+    UpgradeEffect, WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod factions;
@@ -841,8 +842,46 @@ struct SplashSpecDef {
     /// The weapon's `AreaArray`: required, so a catalog written with the former three fixed
     /// radii fails to load.
     zones: Vec<SplashZoneDef>,
+    /// The area's shape; a circle around the impact point when omitted, the engine default
+    /// of a damage effect's `AreaArray` (see [`SplashShape::Circle`]).
+    #[serde(default)]
+    shape: SplashShapeDef,
     #[serde(default)]
     friendly_fire: bool,
+}
+
+/// An authored splash shape (see [`SplashShape`]).
+#[derive(Debug, Default, Deserialize)]
+enum SplashShapeDef {
+    #[default]
+    Circle,
+    Line {
+        origin: SplashLineOrigin,
+        axis: SplashLineAxis,
+        /// Signed distances in world units, one search point each.
+        offsets: Vec<f32>,
+    },
+}
+
+impl SplashShapeDef {
+    fn resolve(&self) -> SplashShape {
+        match self {
+            Self::Circle => SplashShape::Circle,
+            Self::Line {
+                origin,
+                axis,
+                offsets,
+            } => SplashShape::Line(SplashLine {
+                origin: *origin,
+                axis: *axis,
+                offsets: offsets
+                    .iter()
+                    .copied()
+                    .map(SimScalar::from_f32_lossy)
+                    .collect(),
+            }),
+        }
+    }
 }
 
 /// One authored splash zone: a radius in world units and the fraction of the strike it deals.
@@ -1076,6 +1115,7 @@ impl UnitArchetypeDef {
                         fraction: SimScalar::from_f32_lossy(zone.fraction),
                     })
                     .collect(),
+                shape: s.shape.resolve(),
                 friendly_fire: s.friendly_fire,
             }),
             projectile_speed: w.projectile_speed.map(SimScalar::from_f32_lossy),

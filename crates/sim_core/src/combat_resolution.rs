@@ -109,6 +109,8 @@ pub(crate) struct CombatWorkspace {
     snapshots: Vec<(EntityId, TargetSnapshot)>,
     shots: Vec<PreparedShot>,
     splash_hits: Vec<(EntityId, DamageResolution)>,
+    /// Centres of the current splash's searches (one for a circle, one per offset for a line).
+    splash_points: Vec<SimVec2>,
     finished_projectiles: Vec<(usize, ProjectileStep)>,
 }
 
@@ -627,10 +629,13 @@ impl SimWorld {
         Some(hit)
     }
 
-    /// Applies `splash` around `hit.position` on the plane of the primary target.
+    /// Applies `splash` around its search points (`hit.position` for a circle, each point of
+    /// a line laid out from the attack) on the plane of the primary target.
     ///
-    /// Spares `primary`, already struck directly, and the attacker, which never damages
-    /// itself. Each struck entity then runs its retaliation against the attacker.
+    /// A unit inside several searches is struck once, at the fraction of its nearest search
+    /// point (the game's `noMarkers` validator on the damage effect). Spares `primary`,
+    /// already struck directly, and the attacker, which never damages itself. Each struck
+    /// entity then runs its retaliation against the attacker.
     fn apply_splash(
         &mut self,
         source: HitSource<'_>,
@@ -640,6 +645,13 @@ impl SimWorld {
     ) {
         let mut splash_hits = std::mem::take(&mut self.combat.splash_hits);
         splash_hits.clear();
+        let mut points = std::mem::take(&mut self.combat.splash_points);
+        splash.search_points(
+            source.origin,
+            hit.position,
+            self.attack_direction(source, hit.position),
+            &mut points,
+        );
         let attacker_upgrades = Self::upgrades_of(&self.player_upgrades, source.owner);
         let reach = splash.reach();
         for (&other_id, other) in &self.entities {
@@ -650,10 +662,14 @@ impl SimWorld {
             {
                 continue;
             }
-            let distance = hit.position.distance(other.position);
-            if distance > reach {
+            let Some(distance) = points
+                .iter()
+                .map(|point| point.distance(other.position))
+                .min()
+                .filter(|&distance| distance <= reach)
+            else {
                 continue;
-            }
+            };
             let Ok(other_arch) = self.catalog.get(other.unit_type_id) else {
                 continue;
             };
@@ -686,6 +702,21 @@ impl SimWorld {
             }
         }
         self.combat.splash_hits = splash_hits;
+        self.combat.splash_points = points;
+    }
+
+    /// The unit vector of an attack from `source.origin` towards `impact`. When the two
+    /// coincide, the attacker's facing (the game's `OffsetFacingFallback` `SourceUnit`, `core`
+    /// EffectData:39); zero when the attacker no longer exists either.
+    fn attack_direction(&self, source: HitSource<'_>, impact: SimVec2) -> SimVec2 {
+        (impact - source.origin).normalize().unwrap_or_else(|_| {
+            source
+                .attacker
+                .and_then(|id| self.entities.get(&id))
+                .map_or(SimVec2::ZERO, |attacker| {
+                    SimVec2::new(attacker.heading.cos(), attacker.heading.sin())
+                })
+        })
     }
 
     /// Records the renderer event for an instant hit.

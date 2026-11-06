@@ -33,7 +33,8 @@ use std::path::PathBuf;
 /// every attribute in place of its Armored and Light bonuses.
 /// Re-recorded for checksum schema 14 (work package 8a, B-16), which encodes each splash as its
 /// list of zones in place of three fixed radii.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 8_180_004_792_197_994_088;
+/// Re-recorded for checksum schema 15 (work package 8b, B-18), which encodes each splash's shape.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 9_874_857_617_800_651_092;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

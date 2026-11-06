@@ -29,7 +29,10 @@ B-16 and B-17, research item U-4) gave every splash its own zones and fractions 
   source found (Liquipedia's Siege Tank page: "within .4687 matrices of the target"; TeamLiquid, SC2Mapster and
   Hive Workshop searched, 2026-11-06).
 
-**Why it matters.** Both decide how many units a splash catches. The edge rule would widen every splash by the
+**Why it matters.** Both decide how many units a splash catches. For the line areas of WP8b (plan Amendment 13,
+evidence §9.4) the edge rule decides whether a line hits anything: the Hellion's and the Colossus' searches have a
+radius of 0.15, so measured to a unit's centre they reach almost no unit beside the line, and with the edge rule
+battles 21 and 26 keep their winners. The edge rule would widen every splash by the
 struck unit's radius (0.375 for a Marine); the offset would shift the Liberator's and the Baneling's areas by the
 target's radius.
 

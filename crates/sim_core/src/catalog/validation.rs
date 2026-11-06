@@ -8,8 +8,8 @@
 //! validation, not a balance audit: odd but runnable authored values remain legal.
 
 use super::{
-    PrimaryWeapon, SplashSpecDef, StructureArchetypeDef, UnitArchetypeDef, UnitModeSpecDef,
-    WeaponSpecDef,
+    PrimaryWeapon, SplashShapeDef, SplashSpecDef, StructureArchetypeDef, UnitArchetypeDef,
+    UnitModeSpecDef, WeaponSpecDef,
 };
 use crate::error::{SimCoreError, SimResult};
 use crate::movement::tuning::STALL_REPATH_TICKS;
@@ -633,6 +633,7 @@ impl WeaponSpecDef {
 impl SplashSpecDef {
     /// Checks the zones: at least one; each radius finite and nonnegative and larger than the
     /// one before; each fraction in `0 < fraction <= 1`, the share of a strike a zone can deal.
+    /// A line needs at least one search point, each offset a finite fixed-point value.
     fn validate(&self, definition: &str, prefix: &str) -> SimResult<()> {
         if self.zones.is_empty() {
             return Err(invalid(
@@ -662,6 +663,22 @@ impl SplashSpecDef {
                     &format!("{field}.fraction"),
                     "a splash zone deals at most the whole strike",
                 ));
+            }
+        }
+        if let SplashShapeDef::Line { offsets, .. } = &self.shape {
+            if offsets.is_empty() {
+                return Err(invalid(
+                    definition,
+                    &format!("{prefix}.shape.offsets"),
+                    "a line splash needs at least one search point",
+                ));
+            }
+            for (index, &offset) in offsets.iter().enumerate() {
+                scalar(
+                    definition,
+                    &format!("{prefix}.shape.offsets[{index}]"),
+                    f64::from(offset),
+                )?;
             }
         }
         Ok(())

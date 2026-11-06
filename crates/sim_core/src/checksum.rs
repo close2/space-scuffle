@@ -42,7 +42,8 @@ use std::collections::BTreeMap;
 /// attribute, eight values in `Attribute::ALL` order.
 /// Schema 14 replaces each splash's three fixed radii with its list of zones, each a radius and
 /// the fraction of the strike it deals.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 14;
+/// Schema 15 adds each splash's shape: a circle, or a line with its origin, axis and offsets.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 15;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

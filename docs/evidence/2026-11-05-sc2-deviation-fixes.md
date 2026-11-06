@@ -795,3 +795,112 @@ change (centre of the target, centre of each struck unit), and B-17 stays record
   unchanged. The change reaches skirmish play only.
 - **B-16 is fixed** for every circular splash; the four non-circular weapons take their zones with their shapes
   (B-18, B-19).
+
+## 9. WP8b: line splash (B-18), stopped at the data
+
+Measurements under `~/scratch/sc2dev_wp8b/<step>`, base `main` at `e99abae` (WP8a): matrix 0 expectation failures,
+battle 33 54 / 7 / 7 on 68 seeds. Winner tallies below are blue / red / unresolved wins over a battle's 20 seeds.
+
+### 9.1 Research (B-18)
+
+**Shape: sourced.** Each of the three weapons runs a `CEffectCreatePersistent` whose `PeriodicOffsetArray` places one
+`CEffectEnumArea` per period. The offsets are in the persistent's frame, oriented from the attacker to the target
+(`OffsetVectorStartLocation SourceUnit`, `OffsetVectorEndLocation TargetPoint`, `core` EffectData:37-38); a
+`0,-d,0` entry lies along the attack and a `d,0,0` entry across it, which matches Liquipedia's "perpendicular to the
+Colossus's direction of fire" ([Colossus (Legacy of the Void)](https://liquipedia.net/starcraft2/Colossus_(Legacy_of_the_Void))).
+
+| Analogue (catalog weapon) | Persistent → search | Origin | Offsets | Search radius | Catalog now |
+|---|---|---|---|---|---|
+| Hellion (`napalm_wheeler`) | `InfernalFlameThrowerCP` → `InfernalFlameThrowerE` | `SourcePoint` (the Hellion) | along: 0.25 to 6.0 in steps of 0.25 (`liberty` EffectData:2623-2646), then 6.5 (`swarm` EffectData:2244-2246 raises `PeriodCount` to 25 and appends it; 6.25 is not an entry); all in one loop (`PeriodicPeriodArray` 0, `liberty` EffectData:2647) | 0.15 (`liberty` EffectData:2613) | circle 2.2 at 100 % |
+| Lurker (`burrow_scorpion`) | `LurkerMP` → `LurkerMPCU` → `LurkerMPSearch` | `SourcePoint` (the Lurker) | along: 1 to 9 (`swarm` EffectData:3010-3019; `voidmulti` EffectData:809 sets `PeriodCount` 9), each spine 0.125 Normal s after the one before (`void` EffectData:298-307) and only while in weapon range (`voidmulti` EffectData:822) | 0.5 (`voidmulti` EffectData:821; was 0.625) | circle 1.5 / 2.0 / 2.5 at 100 / 50 / 25 % |
+| Colossus (`tripod_annihilator`) | `ThermalLancesForward` and `ThermalLancesReverse` → `ThermalLancesE`, `ThermalLancesEReverse` | `TargetPoint` (`swarm` EffectData:2323, :2328) | across: −1.25 to 1.25 in steps of 0.25, one sweep each way (`liberty` EffectData:2373-2383, :2398-2408), 0.0227 Normal s apart (`voidmulti` EffectData:954, :995) | 0.15 (`liberty` EffectData:789, :2415) | circle 1.8 / 2.4 / 3.0 at 100 / 50 / 25 %, two strikes, one splash |
+
+- **Fraction.** No search sets a `Fraction`; a damage effect's default is 1 (`core` EffectData:69). Each line is one
+  zone at 100 %.
+- **Once per attack, per sweep.** Every damage effect of the three carries the `noMarkers` validator
+  (`InfernalFlameThrower`, `liberty` EffectData:2605; `LurkerMPDamage`, `swarm` EffectData:3035; `ThermalLancesMU`,
+  `voidmulti` EffectData:968), a `CValidatorUnitCompareMarkerCount` that fails with `AlreadyTargeted` (`liberty`
+  ValidatorData:1251-1253), and the weapon or persistent carries a marker (`InfernalFlameThrower` `voidmulti`
+  WeaponData:592-594, `LurkerMP` `swarm` WeaponData:222-224, each Colossus sweep `liberty` EffectData:2366-2368,
+  :2391-2393). A unit found by several searches is struck once per marker: once per Hellion or Lurker attack, once
+  per Colossus sweep, so twice per Colossus attack (Liquipedia: "10 (+1) (x2)").
+- **Enemies only, ground only.** Every search filters `Ground;Player,Ally,…` (`liberty` EffectData:2611, :788,
+  :2414; `swarm` EffectData:3025).
+- **Cross-checks.** Liquipedia's Colossus area "2.8 width, 0.3 depth" is 2 × 1.25 + 2 × 0.15 by 2 × 0.15. Its
+  Hellion "stream is about 0.15 wide" and "AoE damage up to a range of 5.15" and its Lurker "10 spines … radius of
+  0.5 … reach out 10 cells" with range 9 describe earlier patches; the data win (audit §2.2). The Lurker's last
+  spine lies at range + 1 in both, so the range gate is read as letting it fire.
+- **Timing, not modelled (B-85, new).** The Lurker's spines are 0.125 Normal s apart (2 to 3 ticks), so the outer
+  ones can be dodged (Liquipedia), and each Colossus search hands a unit to `ThermalLancesDamageDelay`, 0.25 Normal s
+  later (`liberty` EffectData:780-785). Our line lands whole on the shot's tick. A delayed area is a mechanism of its
+  own; recorded as **B-85**, class (i), a WP8 follow-up.
+- **B-81, the Colossus part: not sourced.** WP5 (§5.1) read the delay of the Colossus' strikes on its target as
+  `liberty`'s `ExpireDelay` 0.375 Normal s; `swarm` EffectData:2325, :2330 set 0.73, and the persistent sits at
+  `TargetPoint`. Whether `ExpireDelay` counts from creation or after the last period, and whether a point persistent
+  still applies its `ExpireEffect` to the target unit, are not stated (an SC2Mapster forum tutorial says "after the
+  conditions of the persistent have been completed"). Filed as [Q0064](../questions/open/0064-colossus-damage-timing.md)
+  with an editor measurement; default no change.
+
+### 9.2 Commit a: the line shape, latent (B-18)
+
+- **Rule.** `SplashSpec::shape` is `Circle` (one search at the impact point, the engine default of a damage effect's
+  `AreaArray`, so the catalog field defaults to it) or `Line { origin, axis, offsets }`. Each offset is a search
+  point, the centre of the splash's zones; a unit takes the fraction of its nearest search point, once per strike.
+  With the attacker on its target, the direction falls back to the attacker's facing (`OffsetFacingFallback`
+  `SourceUnit`, `core` EffectData:39). Load rejects a line with no offset or a non-finite one.
+- **Latent.** No catalog weapon has a line. Matrix (1000 runs) bit-identical to WP8a (`~/scratch/sc2dev_wp8/b`);
+  battle 33 54 / 7 / 7, identical on every seed.
+- **Checksum schema 14 → 15** in the same commit. With the shape encoded at schema 14, both goldens reproduced as
+  recorded for WP8a; re-recorded for the schema byte with the sandbox checksum and four encodings' schema bytes.
+  Debug, release and `wasm32-wasip1` release (`wasmtime`) reproduce.
+- **Tests first.** `b18_a_line_along_the_attack_strikes_the_line_once` and
+  `b18_a_line_across_the_attack_strikes_beside_the_target` (`damage_and_shields_tests.rs`) red against the
+  circle-only resolution ("on the line in front of the target", left 0, right 40; "beside the target, one side",
+  left 0, right 40); green after.
+- **C7.** `catalog.rs` 50 → 51 and `catalog/validation.rs` 30 → 31 float tokens (the authored offsets and their
+  range check), in their own commit.
+
+### 9.3 Measured, not committed: one search per strike
+
+The Colossus' two strikes land together, and `apply_splash` searched once per shot, so its splash victims took one
+strike where the game's two sweeps strike them twice (§9.1). The rule "each strike searches its area"
+(`b18_each_strike_searches_its_area`, red: left 40, right 80) reaches only the Colossus (no other splash weapon has
+two strikes on one tick). On the Colossus' current circle (`~/scratch/sc2dev_wp8b/b`, against commit a):
+
+| Battle | Before | After | |
+|---|---|---|---|
+| `12a_colossus_vs_6_marines` | 20 / 0 / 0, end tick 83 | 20 / 0 / 0, end tick 29 | faster |
+| `12b_colossus_vs_3_marauders` ("Three armor-killers fell a colossus") | 0 / 20 / 0 | 16 / 4 / 0 | **winner flips** |
+| `26_100_lings_vs_6_colossi` | 0 / 20 / 0 | 0 / 20 / 0 | faster |
+
+Battle 33 54 / 7 / 7. **Stopped** (plan D-4): not committed.
+
+### 9.4 Measured, not committed: the three lines
+
+Each against commit a, with Q0063's default (centre to centre):
+
+| Probe | Battle | Before | After |
+|---|---|---|---|
+| Hellion line (`c`) | `9a_hellion_vs_4_lings` ("Flame splash clears four clumped zerglings") | 20 / 0 / 0 | 0 / 20 / 0, **flips** |
+| | `10_2_hellions_vs_8_lings` ("Two hellions roast eight zerglings") | 20 / 0 / 0 | 0 / 20 / 0, **flips** |
+| Lurker and Colossus lines (`probe_lc`) | `21_lurker_vs_6_marines` | 20 / 0 / 0 | 0 / 20 / 0, **flips** |
+| | `26_100_lings_vs_6_colossi` | 0 / 20 / 0 | 20 / 0 / 0, **flips** |
+| | `12a`, `12b` | moved | winners kept |
+| Lurker and Colossus lines and one search per strike (`probe_lc_strike`) | `21`, `26` | as above | **flip** |
+| | `12b` | 0 / 20 / 0 | 14 / 6 / 0, **flips** |
+
+Battle 33 is untouched by all (54 / 7 / 7). **Why.** A line search of radius 0.15 measured to a unit's centre reaches
+only units whose centre lies within 0.15 of the line, a strip far narrower than a Zergling (radius 0.375) or a Marine:
+under Q0063's default the lines hit almost nothing besides the target. **The edge rule decides it.** With Q0063
+option 3 substituted for a probe (a unit is reached when any part of it is in a zone; `probe_hellion_edge`,
+`probe_lc_strike_edge`, applied to every splash):
+
+- the Hellion still loses 9a and 10 (0 / 20 / 0 each): a lone Hellion's two shots before four Zerglings kill it do
+  not kill them, whatever the area;
+- the Lurker keeps 21 (16 / 4 / 0) and the Colossi keep 26 (0 / 20 / 0);
+- `12b` still flips (16 / 4 / 0): its three Marauders stand in a column 1 apart, exactly across the Colossus' line,
+  so both sweeps strike all three;
+- `32_30_marines_vs_15_banelings` flips (4 / 8 / 8 → 2 / 16 / 2) from the circles' edge rule, not from a line.
+
+**Held** (plan D-4, a non-33 winner flip stops): the three data commits and the per-strike rule, until the
+orchestrator decides. B-18 stays in the register; the rule of §9.2 is ready for the data.
