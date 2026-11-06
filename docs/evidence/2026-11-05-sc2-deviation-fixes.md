@@ -543,3 +543,8 @@ failed on the old data (the archetype's weapon `(0, None)`) and passes. Each is 
 - **b2, Thor ground** (`colossus_mech` "Thor's Hammer", both of its ground slots): 7 ticks. One battle moved, no
   winner: `14_thor_vs_ultralisk` (20 seeds), the Thor still wins every seed but ends 7 ticks later (200.0 → 207.0)
   with 4.00 life left instead of 37.00, its killing blow now a second shot. Battle 33 bit-identical.
+- **b3, Viking** (`vector_interceptor`): 4 ticks, each torpedo within 15. Two battles moved, no winner over its
+  seeds: `19_viking_vs_brood_lord` ends 4 ticks later (293.0 → 297.0); `35_12_vikings_vs_6_colossi` moved on 16
+  seeds, blue wins 16 → 12 of 20 (seeds of record 0 and 22, and seeds 7 and 9, go from a Viking win to a fight
+  unresolved at the tick limit; no seed goes to the Colossi), Colossus survivors 0.20 → 0.40, mean end tick
+  403.8 → 546.5. Battle 33 bit-identical.
