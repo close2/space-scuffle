@@ -102,7 +102,7 @@ pub struct HudGeometry {
 /// Which optional HUD surfaces the `Player` profile draws.
 ///
 /// The game always draws everything ([`HudLayout::default`]). A non-interactive presentation of a
-/// battle, such as the CI showcase video of `client_diagnostics`, may leave out the command panel,
+/// battle, such as a recorded showcase video, may leave out the command panel,
 /// which then reserves no room: the world viewport extends to the bottom of the window. Nothing
 /// else changes; the selection, the card and their keys keep working, and a run that draws the
 /// panel again gets it back on the next frame.
