@@ -1520,7 +1520,7 @@
                 firing_arc_deg: 11.25,
                 has_turret: true,
                 turret_turn_rate_deg_per_tick: 20.16,
-                base_damage: 15.0,
+                base_damage: 20.0,
                 attribute_bonuses: [(Biological, 10.0)],
                 attacks_count: 1,
                 strike_interval_ticks: 0,

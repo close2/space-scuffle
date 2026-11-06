@@ -18,6 +18,7 @@
 //! the catalog's own fixed-point conversion, to 0.001.
 
 use sim_core::catalog::UnitArchetype;
+use sim_core::WeaponSpec;
 use sim_types::{AttributeFlags, SimScalar};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -874,4 +875,118 @@ fn b47_research_costs_follow_starcraft() -> TestResult {
         SC2_RESEARCH_COSTS.len()
     );
     Ok(())
+}
+
+/// One weapon reference row: analogue, weapon block (`weapon`, `ground_weapon` or `air_weapon`),
+/// value and source.
+type WeaponRow = (&'static str, &'static str, f32, &'static str);
+
+/// The archetype's weapons by block name; `weapon` is the ground fallback (a structure's is a
+/// copy of its ground weapon, so structures skip it).
+fn weapon_blocks(archetype: &UnitArchetype) -> [(&'static str, Option<&WeaponSpec>); 3] {
+    [
+        ("weapon", archetype.weapon.as_ref()),
+        ("ground_weapon", archetype.ground_weapon.as_ref()),
+        ("air_weapon", archetype.air_weapon.as_ref()),
+    ]
+}
+
+/// Checks `read` of every weapon of every archetype of the kind `structures` selects, for which
+/// `applies` holds, against `rows` by analogue and block; every row must be used.
+fn check_weapons(
+    what: &str,
+    structures: bool,
+    rows: &[WeaponRow],
+    exempt: &[&str],
+    applies: impl Fn(&WeaponSpec) -> bool,
+    read: impl Fn(&WeaponSpec) -> f32,
+) -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut seen = std::collections::BTreeSet::new();
+    for archetype in catalogs.units.archetypes() {
+        let name = analogue(archetype);
+        if is_structure(archetype) != structures || exempt.contains(&name) {
+            continue;
+        }
+        for (block, weapon) in weapon_blocks(archetype) {
+            let Some(weapon) = weapon.filter(|w| applies(w)) else {
+                continue;
+            };
+            if structures && block == "weapon" {
+                continue;
+            }
+            let Some((_, _, want, source)) = rows
+                .iter()
+                .find(|(unit, b, ..)| *unit == name && *b == block)
+            else {
+                return Err(format!("{} ({name}) {block}: no {what} row", archetype.slug).into());
+            };
+            let got = read(weapon);
+            assert!(
+                (got - want).abs() < 0.001,
+                "{} ({name}) {block}: {what} is {got}, StarCraft II {want} ({source})",
+                archetype.slug
+            );
+            seen.insert((name.to_owned(), block));
+        }
+    }
+    for (unit, block, ..) in rows {
+        assert!(
+            seen.contains(&((*unit).to_owned(), *block)),
+            "{what}: row {unit} {block} has no weapon"
+        );
+    }
+    Ok(())
+}
+
+/// Damage per strike of every armed structure (the weapon's first `CEffectDamage` `Amount`).
+const SC2_STRUCTURE_DAMAGE: [WeaponRow; 6] = [
+    (
+        "Planetary Fortress",
+        "ground_weapon",
+        40.0,
+        "TwinIbiksCannon, liberty EffectData:2537",
+    ),
+    (
+        "Missile Turret",
+        "air_weapon",
+        12.0,
+        "LongboltMissileU, liberty EffectData:1797",
+    ),
+    (
+        "Photon Cannon",
+        "ground_weapon",
+        20.0,
+        "PhotonCannonU, liberty EffectData:2578",
+    ),
+    (
+        "Photon Cannon",
+        "air_weapon",
+        20.0,
+        "PhotonCannonU, liberty EffectData:2578",
+    ),
+    (
+        "Spine Crawler",
+        "ground_weapon",
+        25.0,
+        "ImpalerTentacleU, liberty EffectData:2165",
+    ),
+    (
+        "Spore Crawler",
+        "air_weapon",
+        20.0,
+        "SporeCrawlerU, voidmulti EffectData:871",
+    ),
+];
+
+#[test]
+fn b47_structure_weapon_damage_follows_starcraft() -> TestResult {
+    check_weapons(
+        "damage",
+        true,
+        &SC2_STRUCTURE_DAMAGE,
+        &[],
+        |_| true,
+        |w| f(w.base_damage),
+    )
 }
