@@ -395,3 +395,483 @@ fn b47_structure_sight_follows_starcraft() -> TestResult {
         [f(a.sight_radius)]
     })
 }
+
+/// Costs the audit corrected: `(analogue, [minerals, gas], source)` (`CUnit` `CostResource`). The other
+/// unit and structure costs match the game's build cost (evidence §10.1: a Zerg structure's data cost
+/// includes the Drone; morphs and the Zergling pair are B-86).
+const SC2_CORRECTED_COSTS: [(&str, [f32; 2], &str); 4] = [
+    (
+        "Armory",
+        [150.0, 50.0],
+        "liberty UnitData:6502; voidmulti UnitData:2100",
+    ),
+    ("Dark Shrine", [150.0, 150.0], "void UnitData:1914, :1915"),
+    (
+        "Liberator",
+        [150.0, 125.0],
+        "void UnitData:3305; voidmulti UnitData:468",
+    ),
+    (
+        "Ultralisk",
+        [275.0, 200.0],
+        "voidmulti UnitData:1940; liberty UnitData:8063",
+    ),
+];
+
+/// Research cost of every upgrade: `(upgrade slug, [minerals, gas], source)`, the research ability's
+/// `InfoArray` `Resource` entries.
+const SC2_RESEARCH_COSTS: [(&str, [f32; 2], &str); 82] = [
+    (
+        "infantry_weapons_1",
+        [100.0, 100.0],
+        "liberty AbilData:1700 (EngineeringBayResearch Research3)",
+    ),
+    (
+        "infantry_weapons_2",
+        [150.0, 150.0],
+        "voidmulti AbilData:1811 (EngineeringBayResearch Research4)",
+    ),
+    (
+        "infantry_weapons_3",
+        [200.0, 200.0],
+        "voidmulti AbilData:1815 (EngineeringBayResearch Research5)",
+    ),
+    (
+        "infantry_armor_1",
+        [100.0, 100.0],
+        "liberty AbilData:1722 (EngineeringBayResearch Research7)",
+    ),
+    (
+        "infantry_armor_2",
+        [150.0, 150.0],
+        "voidmulti AbilData:1819 (EngineeringBayResearch Research8)",
+    ),
+    (
+        "infantry_armor_3",
+        [200.0, 200.0],
+        "voidmulti AbilData:1823 (EngineeringBayResearch Research9)",
+    ),
+    (
+        "vehicle_weapons_1",
+        [100.0, 100.0],
+        "liberty AbilData:1875 (ArmoryResearch Research6)",
+    ),
+    (
+        "vehicle_weapons_2",
+        [175.0, 175.0],
+        "liberty AbilData:1880 (ArmoryResearch Research7)",
+    ),
+    (
+        "vehicle_weapons_3",
+        [250.0, 250.0],
+        "liberty AbilData:1885 (ArmoryResearch Research8)",
+    ),
+    (
+        "ship_weapons_1",
+        [100.0, 100.0],
+        "liberty AbilData:1905 (ArmoryResearch Research12)",
+    ),
+    (
+        "ship_weapons_2",
+        [175.0, 175.0],
+        "liberty AbilData:1910 (ArmoryResearch Research13)",
+    ),
+    (
+        "ship_weapons_3",
+        [250.0, 250.0],
+        "liberty AbilData:1915 (ArmoryResearch Research14)",
+    ),
+    (
+        "vehicle_ship_plating_1",
+        [100.0, 100.0],
+        "voidmulti AbilData:26 (ArmoryResearch Research15)",
+    ),
+    (
+        "vehicle_ship_plating_2",
+        [175.0, 175.0],
+        "voidmulti AbilData:31 (ArmoryResearch Research16)",
+    ),
+    (
+        "vehicle_ship_plating_3",
+        [250.0, 250.0],
+        "voidmulti AbilData:36 (ArmoryResearch Research17)",
+    ),
+    (
+        "combat_shield",
+        [100.0, 100.0],
+        "swarm AbilData:984 (BarracksTechLabResearch Research2)",
+    ),
+    (
+        "overclock_stim",
+        [100.0, 100.0],
+        "swarm AbilData:980 (BarracksTechLabResearch Research1)",
+    ),
+    (
+        "concussive_shells",
+        [50.0, 50.0],
+        "swarm AbilData:988 (BarracksTechLabResearch Research3)",
+    ),
+    (
+        "infernal_preigniter",
+        [100.0, 100.0],
+        "voidmulti AbilData:319 (FactoryTechLabResearch Research2)",
+    ),
+    (
+        "drilling_claws",
+        [75.0, 75.0],
+        "voidmulti AbilData:323 (FactoryTechLabResearch Research5)",
+    ),
+    (
+        "smart_servos",
+        [100.0, 100.0],
+        "void AbilData:653 (FactoryTechLabResearch Research7)",
+    ),
+    (
+        "personal_cloaking",
+        [150.0, 150.0],
+        "liberty AbilData:1843 (GhostAcademyResearch Research1)",
+    ),
+    (
+        "cloaking_field",
+        [100.0, 100.0],
+        "voidmulti AbilData:967 (StarportTechLabResearch Research1)",
+    ),
+    (
+        "neosteel_armor",
+        [150.0, 150.0],
+        "liberty AbilData:1695 (EngineeringBayResearch Research2)",
+    ),
+    (
+        "hi_sec_auto_tracking",
+        [100.0, 100.0],
+        "liberty AbilData:1690 (EngineeringBayResearch Research1)",
+    ),
+    (
+        "advanced_ballistics",
+        [150.0, 150.0],
+        "liberty AbilData:3369 (FusionCoreResearch Research2)",
+    ),
+    (
+        "ground_weapons_1",
+        [100.0, 100.0],
+        "liberty AbilData:2102 (ForgeResearch Research1)",
+    ),
+    (
+        "ground_weapons_2",
+        [150.0, 150.0],
+        "swarm AbilData:502 (ForgeResearch Research2)",
+    ),
+    (
+        "ground_weapons_3",
+        [200.0, 200.0],
+        "swarm AbilData:506 (ForgeResearch Research3)",
+    ),
+    (
+        "ground_armor_1",
+        [100.0, 100.0],
+        "liberty AbilData:2117 (ForgeResearch Research4)",
+    ),
+    (
+        "ground_armor_2",
+        [150.0, 150.0],
+        "swarm AbilData:510 (ForgeResearch Research5)",
+    ),
+    (
+        "ground_armor_3",
+        [200.0, 200.0],
+        "swarm AbilData:514 (ForgeResearch Research6)",
+    ),
+    (
+        "plasma_shields_1",
+        [150.0, 150.0],
+        "swarm AbilData:518 (ForgeResearch Research7)",
+    ),
+    (
+        "plasma_shields_2",
+        [200.0, 200.0],
+        "voidmulti AbilData:404 (ForgeResearch Research8)",
+    ),
+    (
+        "plasma_shields_3",
+        [250.0, 250.0],
+        "voidmulti AbilData:408 (ForgeResearch Research9)",
+    ),
+    (
+        "air_weapons_1",
+        [100.0, 100.0],
+        "liberty AbilData:3379 (CyberneticsCoreResearch Research1)",
+    ),
+    (
+        "air_weapons_2",
+        [175.0, 175.0],
+        "liberty AbilData:3384 (CyberneticsCoreResearch Research2)",
+    ),
+    (
+        "air_weapons_3",
+        [250.0, 250.0],
+        "liberty AbilData:3389 (CyberneticsCoreResearch Research3)",
+    ),
+    (
+        "air_armor_1",
+        [100.0, 100.0],
+        "voidmulti AbilData:301 (CyberneticsCoreResearch Research4)",
+    ),
+    (
+        "air_armor_2",
+        [175.0, 175.0],
+        "voidmulti AbilData:305 (CyberneticsCoreResearch Research5)",
+    ),
+    (
+        "air_armor_3",
+        [250.0, 250.0],
+        "voidmulti AbilData:309 (CyberneticsCoreResearch Research6)",
+    ),
+    (
+        "warp_gate_tech",
+        [50.0, 50.0],
+        "liberty AbilData:3409 (CyberneticsCoreResearch Research7)",
+    ),
+    (
+        "charge",
+        [100.0, 100.0],
+        "voidmulti AbilData:1075 (TwilightCouncilResearch Research1)",
+    ),
+    (
+        "phase_blink",
+        [150.0, 150.0],
+        "liberty AbilData:3434 (TwilightCouncilResearch Research2)",
+    ),
+    (
+        "resonating_glaives",
+        [100.0, 100.0],
+        "void AbilData:834 (TwilightCouncilResearch Research3)",
+    ),
+    (
+        "shadow_stride",
+        [100.0, 100.0],
+        "voidmulti AbilData:1319 (DarkShrineResearch Research1)",
+    ),
+    (
+        "psionic_storm",
+        [200.0, 200.0],
+        "liberty AbilData:2184 (TemplarArchivesResearch Research5)",
+    ),
+    (
+        "extended_thermal_lance",
+        [150.0, 150.0],
+        "voidmulti AbilData:865 (RoboticsBayResearch Research6)",
+    ),
+    (
+        "gravitic_boosters",
+        [100.0, 100.0],
+        "liberty AbilData:2151 (RoboticsBayResearch Research2)",
+    ),
+    (
+        "gravitic_drive",
+        [100.0, 100.0],
+        "liberty AbilData:2158 (RoboticsBayResearch Research3)",
+    ),
+    (
+        "anion_pulse_crystals",
+        [150.0, 150.0],
+        "swarm AbilData:1050 (FleetBeaconResearch Research3)",
+    ),
+    (
+        "flux_vanes",
+        [100.0, 100.0],
+        "voidmulti AbilData:381 (FleetBeaconResearch Research5)",
+    ),
+    (
+        "melee_attacks_1",
+        [100.0, 100.0],
+        "liberty AbilData:2247 (evolutionchamberresearch Research1)",
+    ),
+    (
+        "melee_attacks_2",
+        [150.0, 150.0],
+        "liberty AbilData:2252 (evolutionchamberresearch Research2)",
+    ),
+    (
+        "melee_attacks_3",
+        [200.0, 200.0],
+        "liberty AbilData:2257 (evolutionchamberresearch Research3)",
+    ),
+    (
+        "missile_attacks_1",
+        [100.0, 100.0],
+        "liberty AbilData:2277 (evolutionchamberresearch Research7)",
+    ),
+    (
+        "missile_attacks_2",
+        [150.0, 150.0],
+        "liberty AbilData:2282 (evolutionchamberresearch Research8)",
+    ),
+    (
+        "missile_attacks_3",
+        [200.0, 200.0],
+        "liberty AbilData:2287 (evolutionchamberresearch Research9)",
+    ),
+    (
+        "ground_carapace_1",
+        [150.0, 150.0],
+        "liberty AbilData:2262 (evolutionchamberresearch Research4)",
+    ),
+    (
+        "ground_carapace_2",
+        [200.0, 200.0],
+        "voidmulti AbilData:1680 (evolutionchamberresearch Research5)",
+    ),
+    (
+        "ground_carapace_3",
+        [250.0, 250.0],
+        "voidmulti AbilData:1684 (evolutionchamberresearch Research6)",
+    ),
+    (
+        "flyer_attacks_1",
+        [100.0, 100.0],
+        "liberty AbilData:2430 (SpireResearch Research1)",
+    ),
+    (
+        "flyer_attacks_2",
+        [175.0, 175.0],
+        "liberty AbilData:2437 (SpireResearch Research2)",
+    ),
+    (
+        "flyer_attacks_3",
+        [250.0, 250.0],
+        "liberty AbilData:2444 (SpireResearch Research3)",
+    ),
+    (
+        "flyer_carapace_1",
+        [100.0, 100.0],
+        "voidmulti AbilData:1797 (SpireResearch Research4)",
+    ),
+    (
+        "flyer_carapace_2",
+        [175.0, 175.0],
+        "voidmulti AbilData:1801 (SpireResearch Research5)",
+    ),
+    (
+        "flyer_carapace_3",
+        [250.0, 250.0],
+        "voidmulti AbilData:1805 (SpireResearch Research6)",
+    ),
+    (
+        "metabolic_boost",
+        [100.0, 100.0],
+        "liberty AbilData:2410 (SpawningPoolResearch Research2)",
+    ),
+    (
+        "adrenal_glands",
+        [200.0, 200.0],
+        "liberty AbilData:2403 (SpawningPoolResearch Research1)",
+    ),
+    (
+        "centrifugal_hooks",
+        [100.0, 100.0],
+        "voidmulti AbilData:1772 (BanelingNestResearch Research1)",
+    ),
+    (
+        "glial_reconstitution",
+        [100.0, 100.0],
+        "liberty AbilData:901 (RoachWarrenResearch Research2)",
+    ),
+    (
+        "tunneling_claws",
+        [100.0, 100.0],
+        "voidmulti AbilData:859 (RoachWarrenResearch Research3)",
+    ),
+    (
+        "muscular_augments",
+        [100.0, 100.0],
+        "voidmulti AbilData:536 (HydraliskDenResearch Research2)",
+    ),
+    (
+        "grooved_spines",
+        [75.0, 75.0],
+        "voidmulti AbilData:529 (HydraliskDenResearch Research1)",
+    ),
+    (
+        "nanomuscular_swell",
+        [100.0, 100.0],
+        "voidmulti AbilData:543 (HydraliskDenResearch Research3)",
+    ),
+    (
+        "adaptive_talons",
+        [100.0, 100.0],
+        "voidmulti AbilData:1348 (LurkerDenResearch Research1)",
+    ),
+    (
+        "seismic_spines",
+        [150.0, 150.0],
+        "voidmulti AbilData:1355 (LurkerDenResearch Research2)",
+    ),
+    (
+        "pneumatized_carapace",
+        [100.0, 100.0],
+        "swarm AbilData:1284 (LairResearch Research2)",
+    ),
+    (
+        "chitinous_plating",
+        [150.0, 150.0],
+        "liberty AbilData:1065 (UltraliskCavernResearch Research3)",
+    ),
+    (
+        "anabolic_synthesis",
+        [150.0, 150.0],
+        "voidmulti AbilData:1105 (UltraliskCavernResearch Research1)",
+    ),
+    (
+        "microbial_shroud",
+        [150.0, 150.0],
+        "voidmulti AbilData:599 (InfestationPitResearch Research6)",
+    ),
+    (
+        "neural_parasite",
+        [150.0, 150.0],
+        "swarm AbilData:1073 (InfestationPitResearch Research4)",
+    ),
+];
+
+#[test]
+fn b47_corrected_costs_follow_starcraft() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    for (unit, [minerals, gas], source) in SC2_CORRECTED_COSTS {
+        let archetype = catalogs
+            .units
+            .archetypes()
+            .find(|archetype| analogue(archetype) == unit)
+            .ok_or(format!("an archetype with the analogue {unit}"))?;
+        assert_eq!(
+            [archetype.mineral_cost, archetype.gas_cost],
+            [minerals as u32, gas as u32],
+            "{} ({unit}): cost as StarCraft II's ({source})",
+            archetype.slug
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn b47_research_costs_follow_starcraft() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    for upgrade in catalogs.upgrades.upgrades() {
+        let Some((_, [minerals, gas], source)) = SC2_RESEARCH_COSTS
+            .iter()
+            .find(|(slug, ..)| *slug == upgrade.slug)
+        else {
+            return Err(format!("{}: no research cost row", upgrade.slug).into());
+        };
+        assert_eq!(
+            [upgrade.mineral_cost, upgrade.gas_cost],
+            [*minerals as u32, *gas as u32],
+            "{}: research cost as StarCraft II's ({source})",
+            upgrade.slug
+        );
+    }
+    assert_eq!(
+        catalogs.upgrades.upgrades().count(),
+        SC2_RESEARCH_COSTS.len()
+    );
+    Ok(())
+}
