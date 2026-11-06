@@ -844,7 +844,7 @@ fn b2_strike_spacing_follows_starcraft() -> TestResult {
 /// the catalog weapon a row is for when the analogue's weapons differ (plan
 /// `2026-11-05-sc2-deviation-fixes` WP6, B-14; evidence §6.1). A row whose source says "none" is
 /// an analogue whose damage effects set no `AttributeBonus` anywhere in the layer chain.
-const SC2_ATTRIBUTE_BONUSES: [(&str, Option<&str>, &[(Attribute, f32)], &str); 37] = [
+const SC2_ATTRIBUTE_BONUSES: [(&str, Option<&str>, &[(Attribute, f32)], &str); 39] = [
     ("SCV", None, &[], "none"),
     ("Marine", None, &[], "none"),
     ("Roach", None, &[], "none"),
@@ -879,6 +879,13 @@ const SC2_ATTRIBUTE_BONUSES: [(&str, Option<&str>, &[(Attribute, f32)], &str); 3
         &[(Attribute::Light, 6.0)],
         "InfernalFlameThrower, liberty EffectData:2607",
     ),
+    (
+        "Thor",
+        Some("High Impact Payload"),
+        &[(Attribute::Massive, 10.0)],
+        "LanceMissileLaunchersDamage, voidmulti EffectData:749",
+    ),
+    ("Thor", None, &[], "ThorsHammerDamage: none"),
     (
         "Viking",
         None,
