@@ -140,6 +140,7 @@ Status is `Working` (built, tested, in the shipped game), `Partial` (built but l
 | Networking | Not built | Nothing; intent is deterministic lockstep | none | all |
 | Replays | Partial | The two golden replay fixtures only | `crates/sim_core/tests/golden_replay_tests.rs` | No recording of real matches |
 | Bot API | Not built | Nothing | none | all |
+| Showcase video | Working | The `showcase` tool (`crates/client_diagnostics`) renders a storyboarded tour of a real skirmish through the production client at one tick per frame; `.github/workflows/showcase.yml` renders it on `lavapipe` after green CI on `main` and publishes it to GitHub Pages for [`README.md`](README.md) (Q0056) | `crates/client_diagnostics/tests/showcase_tests.rs`, `crates/client_diagnostics/tests/showcase_storyboard_tests.rs`, `crates/client_diagnostics/tests/showcase_encode_tests.rs` | The CI video is `lavapipe` output, without terrain anisotropy on Mesa before 25.1 (Q0009); the battle shows fog only by hiding enemies, it does not shade terrain; the take leaves out the empty command panel ([evidence](docs/evidence/2026-11-05-showcase-video.md)) |
 
 ### Known deviations from StarCraft II (bugs)
 
@@ -281,6 +282,7 @@ machine, not figures of record:
 
 ## 6. Documentation Map
 
+- [`README.md`](README.md) — the front page: the pitch and the CI showcase video.
 - [`AGENTS.md`](AGENTS.md) — the engineering charter and how each rule is checked.
 - [`docs/plans/README.md`](docs/plans/README.md) — every implementation plan and what became of it.
 - [`docs/reviews/`](docs/reviews/) — independent reviews and findings.

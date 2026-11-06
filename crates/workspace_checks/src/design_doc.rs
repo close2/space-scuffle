@@ -69,7 +69,13 @@ pub fn design_doc(
 }
 
 /// `file://` links anywhere, and relative link targets outside code that do not exist.
-fn link_problems(root: &Path, all: &[MarkdownLine<'_>], problems: &mut Vec<(usize, String)>) {
+///
+/// Shared with check C24, which judges `README.md` by the same rule.
+pub(crate) fn link_problems(
+    root: &Path,
+    all: &[MarkdownLine<'_>],
+    problems: &mut Vec<(usize, String)>,
+) {
     for line in all {
         if line.text.contains(FILE_SCHEME) {
             problems.push((
@@ -96,7 +102,7 @@ fn link_problems(root: &Path, all: &[MarkdownLine<'_>], problems: &mut Vec<(usiz
 }
 
 /// Whether a link target leaves the repository (a URL, a mail address or an in-page anchor).
-fn is_external(target: &str) -> bool {
+pub(crate) fn is_external(target: &str) -> bool {
     target.starts_with("http://")
         || target.starts_with("https://")
         || target.starts_with("mailto:")

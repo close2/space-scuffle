@@ -1,9 +1,9 @@
 //! The charter's checkable claims, run against this repository.
 //!
 //! # Responsibility
-//! One `#[test]` per check, named after its ID (`c01_...`, `c02_...`); C1 and C15 to C20 judge
-//! the documentation (the charter's own statements, `DESIGN.md`, the plan index, notebook
-//! paths) rather than code. Each runs the check from
+//! One `#[test]` per check, named after its ID (`c01_...`, `c02_...`); C1, C15 to C20 and C24
+//! judge the documentation (the charter's own statements, `DESIGN.md`, the plan index, notebook
+//! paths, `README.md`) rather than code. Each runs the check from
 //! the `workspace_checks` library on the repository root and fails with every finding, one
 //! `path:line: message` per line, so a single run shows all the work to do.
 //!
@@ -24,7 +24,7 @@ use workspace_checks::{
     engine_free_simulation, expect_messages_state_invariants, float_ratchet, function_length_limit,
     host_math_in_smog, in_process_render_devices, module_docs, no_catalog_identities_in_code,
     no_discarded_results_in_simulation, no_embedded_assets, no_mutable_statics, no_work_markers,
-    notebook_references, performance_rationale_format, plan_index, render, repo_root,
+    notebook_references, performance_rationale_format, plan_index, readme, render, repo_root,
     simulation_clippy_config, test_subjects, tracked_files, typed_library_errors, Finding,
     FloatAllowance, SIMULATION_CRATES,
 };
@@ -220,5 +220,12 @@ fn c21_no_test_builds_a_render_device_in_its_own_process() -> Result<(), Box<dyn
 #[test]
 fn c23_smog_code_calls_no_host_transcendental_function() -> Result<(), Box<dyn Error>> {
     assert_clean("C23", &host_math_in_smog(&repo_root())?);
+    Ok(())
+}
+
+#[test]
+fn c24_readme_exists_its_links_resolve_and_it_shows_the_published_showcase(
+) -> Result<(), Box<dyn Error>> {
+    assert_clean("C24", &readme(&repo_root())?);
     Ok(())
 }

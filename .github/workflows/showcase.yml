@@ -1,5 +1,6 @@
 # Renders the showcase video of the latest green `main` with the real engine on software Vulkan
-# (plan docs/plans/2026-11-05-ci-showcase-video.md, D-11 to D-13; evidence
+# and publishes it to GitHub Pages, where README.md embeds its teaser
+# (plan docs/plans/2026-11-05-ci-showcase-video.md, D-10 to D-13; evidence
 # docs/evidence/2026-11-05-showcase-video.md). It never gates CI or a merge: it runs only after CI
 # succeeded, and its result is the video, not a verdict on the code.
 name: Showcase video
@@ -208,6 +209,13 @@ jobs:
             jq -r '.files[] | "| \(.name) | \(.bytes) | `\(.sha256)` |"' "$json"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # The site for the deploy job (plan D-10). Only the five published files, nothing else.
+      - name: Upload the site for GitHub Pages
+        if: steps.render.outcome == 'success'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/showcase/site
+
       # A 14-day debug copy: the site and the take manifests (per-frame ticks, checksums and hashes,
       # to compare two runs of one commit). The mezzanines stay behind: they are about 0.7 GB.
       - name: Upload the showcase as a workflow artifact
@@ -219,3 +227,22 @@ jobs:
           path: |
             ${{ runner.temp }}/showcase/site
             ${{ runner.temp }}/showcase/takes/*.manifest.ron
+
+  # Publishes the rendered site to GitHub Pages (Q0056). It holds the only write permissions of the
+  # workflow and runs no repository code: no checkout, only the deployment of the uploaded artifact.
+  deploy:
+    name: Publish to GitHub Pages
+    needs: render
+    if: needs.render.outputs.rendered == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy the showcase site
+        id: deployment
+        uses: actions/deploy-pages@v4

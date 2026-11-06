@@ -120,7 +120,7 @@ Code without tests is considered incomplete.
 | `sim_core` | Weapon timing with cancelable backswing, turrets, shield and armour spillover, push priority versus Hold Position, a whole match through `PlayerCommand`, cross-target golden replay | `stutter_step_tests.rs`, `turret_tracking_tests.rs`, `damage_and_shields_tests.rs`, `push_priority_tests.rs`, `full_match_tests.rs`, `golden_replay_tests.rs` |
 | `asset_baker` | Fixture flipbooks, frame validation, manifest round trip, media integrity, procedural output kept out of runtime paths | `procedural_tests.rs`, `bake_integrity_tests.rs`, `manifest_tests.rs`, `media_tests.rs` |
 | `client` | Shader validation, uniform packing, camera, scene transitions, a skirmish won through input alone | `gpu_validation_tests.rs`, `round2_visual_tests.rs`, `camera_drag_tests.rs`, `lab_scene_tests.rs`, `skirmish_match_tests.rs` |
-| `client_diagnostics` | Capture pipeline and one-way dependency on `client` | `runtime_capture_tests.rs`, `dependency_direction_tests.rs` |
+| `client_diagnostics` | Capture pipeline, one-way dependency on `client`, and the showcase storyboard, cards and a reproducible take | `runtime_capture_tests.rs`, `dependency_direction_tests.rs`, `showcase_tests.rs` |
 | `sim_fixtures` | The embedded catalogs equal the shipped files; the battle sandbox is built whole | `fixture_tests.rs` |
 | `workspace_checks` | The charter checks of §9 | `charter.rs` |
 | `gate` | Selection, globs, scheduling, stamps, catalog consistency | `selection_tests.rs`, `suite_catalog_tests.rs` |
@@ -299,3 +299,4 @@ the statement as a rule for reviewers.
 | C21 | No test builds a render device in its own process; GPU tests go through the harness of §7 |
 | C22 | `crates/gate/suites.ron` names existing targets, classes every GPU and valgrind test, and covers every tracked path (in `crates/gate/tests/suite_catalog_tests.rs`) |
 | C23 | Smog production code calls no host transcendental function outside `crates/client/src/smog/math.rs` |
+| C24 | `README.md` exists, its links resolve, and its showcase image and link use the site of `.github/workflows/showcase.yml` and the file names `showcase assemble` writes |
