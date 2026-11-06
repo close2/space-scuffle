@@ -159,7 +159,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-5 | Whether damage point and backswing hold an automatically attacking unit (not yet sourced) | WP16 |
 | B-6 | Release range slop 0.5 for every weapon | WP9 |
 | B-13 | Call-for-help radius, flee distance, leash and abandoned-target time are unsourced | WP16 |
-| B-14 | Bonus damage only against Armored and Light | WP6 |
+| B-14 | The Reaper's Light bonus (5) where 5.0.14 has none; applying it changes battle 22a's winner, so it waits for a decision | WP6 (stopped) |
 | B-15 | Shield-break remainder rule unsourced | WP7 |
 | B-16 | Splash fractions fixed at 100/50/25 % | WP8a |
 | B-17 | Splash distance measured centre to centre | WP8a |
@@ -209,6 +209,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-74 | Code comments claim exact parity for spillover and splash | WP7, WP8a |
 | B-77 | Hard-coded Concussive slow | WP13d |
 | B-78 | Hard-coded storm evacuation margin | WP18 |
+| B-82 | The Baneling's damage to structures is not its own effect (80, +5 a level, ignoring armour) | WP9 |
 | B-81 | The Liberator's first missile and the Colossus' strikes land on the release tick; the game delays them 1 and 7 ticks | WP5 follow-up, WP8b |
 
 ---

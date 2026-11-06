@@ -609,3 +609,26 @@ shipped data.
   for two): both golden replays, the default sandbox checksum and four encodings' schema bytes re-recorded; with the
   bonuses encoded as the two former fields at schema 12, both goldens reproduce as recorded for WP5 (release).
   Matrix and battle 33 bit-identical to §5.4.
+
+### 6.3 Commits b1, b2 and b4: the reference bonuses; b3 stopped
+
+Each data commit first adds its rows to `b14_attribute_bonuses_follow_starcraft` (`weapon_catalog_rules_tests.rs`,
+every armed analogue's cited bonuses, found by `sc2_analogue`), which failed on the old data and passes. Measured
+against the one before, from the commits rebased onto `9df767e`; commit a was bit-identical to §5.4.
+
+- **b1, Corruptor** (`sky_leviathan`): Massive 6 for Armored 6. One battle moved, no winner:
+  `18_void_ray_vs_corruptor`, where the Void Ray (Armored, not Massive) no longer takes the +6; it still wins every
+  seed, with 150.00 life left instead of 110.00. Battle 33 bit-identical.
+- **b2, Thor high-impact payload** (`colossus_mech` air weapon): Massive 10 for Armored 10. Matrix and battle 33
+  bit-identical (no Massive air unit in the matrix; the Thor's battle 14 is against the ground).
+- **b3, Reaper** (`jet_jumper`): no Light bonus (it was 5). **Stopped, not committed.** Measured on a scratch commit
+  on top of b2: `22a_reaper_vs_2_workers` changes its winner over its seeds, the Reaper winning 20 of 20 → 0 of 20
+  (all 20 unresolved at the battle's 200-tick limit: the Reaper alive with 9.00 life, one worker alive in 11 seeds
+  with 13.00); expectation failures 4 of record and 20 over all seeds; no other battle moved, battle 33
+  bit-identical. The battle's claim is "The bonus vs light kills workers", a bonus the 5.0.14 data no longer has
+  (`void` EffectData:1499 sets it to 0; `liberty` EffectData:1817 had Light 5). The stop rule
+  applies: the data value is reported for the orchestrator's decision, B-14 keeps the Reaper's bonus as its open
+  part, and the test table has no Reaper row yet.
+- **b4, Spore Crawler** (`spore_spire_dome`): Biological 10. No matrix battle spawns it: matrix and battle 33
+  bit-identical; goldens unchanged.
+- **Goldens.** No commit of WP6 b moves them (none of these units is in either fixture).

@@ -764,7 +764,7 @@ requires.
 | B-11 | No per-unit tie-break | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.9, §4.10) |
 | B-12 | Scan ranges | Fixed | combat alignment WP14 Amendment 7 ([evidence](../evidence/2026-11-04-combat-sc2-alignment.md) §16; Q0057; this plan's Amendment 7) |
 | B-13 | Call-for-help radius, flee distance, leash, abandoned-target time | (i) | WP16 research; how idle units answer an attack is unit behaviour |
-| B-14 | Bonus damage only against Armored and Light | (i) | WP6 |
+| B-14 | Bonus damage only against Armored and Light | Fixed, narrowed | WP6 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §6); open only the Reaper's Light 5, which 5.0.14 sets to 0: stopped, battle 22a's winner changes (Amendment 9) |
 | B-15 | Shield break remainder | (i) | WP7 |
 | B-16 | Fixed splash fractions | (i) | WP8a |
 | B-17 | Splash measured centre to centre | (i) | WP8a |
@@ -829,6 +829,7 @@ requires.
 | B-76 | Hard-coded threat categories | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.3, §4.5) |
 | B-77 | Hard-coded Concussive slow | (i) | WP13d |
 | B-78 | Storm evacuation margin | (i) | WP18 |
+| B-82 | The Baneling's damage to structures is not its own effect (80, +5 a level, ignoring armour) | (i) | WP9. Found in WP6 (Amendment 9) |
 | B-81 | A first strike the effect chain delays (Liberator 1 tick, Colossus 7) lands on the release tick | (i) | WP5 follow-up; the Colossus part with B-18 (WP8b). Found in WP5 (Amendment 8) |
 
 **Counts.** 78 IDs: (i) 70, two of them narrowed (B-52, B-67) and one carried by another plan (B-12); (ii) 3 (B-37,
@@ -977,3 +978,20 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
   longer. No other battle's winner over its seeds changed (battles 7, 8, 14, 19, 23b, 25a, 25b, 35 moved; 35's
   blue wins went 16 → 12 of 20 with the Viking's spaced torpedoes, the rest unresolved).
 - **Register:** B-2 narrowed to Q0058's part; B-81 added.
+
+## Amendment 9 (WP6, 2026-11-06): attribute bonuses landed, the Reaper's value stopped
+
+Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §6.
+
+- **Fixed: B-14**, narrowed. `attribute_bonuses` (one value per attribute, required) replaces `bonus_armored` and
+  `bonus_light`; each applying bonus gains `bonus_upgrade_per_level` (checksum schema 13, in the latent commit a).
+  Data from each damage effect's `AttributeBonus` (§6.1): the Corruptor's 6 and the Thor high-impact payload's 10
+  are against Massive; the Spore Crawler gains Biological 10. Every other armed analogue's bonuses already matched.
+- **Stopped: the Reaper.** 5.0.14 sets its Light bonus to 0 (`void` EffectData:1499). Applied, battle
+  `22a_reaper_vs_2_workers` (claim "The bonus vs light kills workers") goes from a Reaper win on all 20 seeds to 20
+  unresolved at its 200-tick limit (§6.3). Per the stop rule it is not committed; the catalog keeps Light 5 and
+  B-14 keeps it as its open part until the orchestrator decides (apply and re-record 22a, or not).
+- **The plan's Baneling example is not an attribute bonus.** Its +80 against structures is a separate effect,
+  `VolatileBurstU2` (80, +5 a level, ignoring armour): recorded as **B-82** (class (i), WP9).
+- **Rebased.** WP5 and WP6 were first built on `d1876fa` and rebased onto `9df767e` (the scan ranges, Amendment 7);
+  every number in evidence §5 and §6 is measured on the rebased commits.
