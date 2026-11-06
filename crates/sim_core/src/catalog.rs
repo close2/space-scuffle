@@ -1264,6 +1264,11 @@ struct StructureArchetypeDef {
     pub shield_armor: f64,
     /// Line-of-sight sight reveal radius.
     pub sight_radius: f64,
+    /// Auto-acquisition scan range in world units, measured edge to edge like a unit's
+    /// (`StarCraft` II: the greater of the weapon's `MinScanRange` and `Range`). Required on a
+    /// structure with a weapon and refused on one without, which acquires nothing.
+    #[serde(default)]
+    pub scan_range: Option<f64>,
     /// How attractive this structure is as an automatic target (`AttackTargetPriority`);
     /// required, so a catalog written before the field fails to load.
     pub attack_target_priority: u8,
@@ -1381,7 +1386,9 @@ impl StructureArchetypeDef {
             separation_radius: radius,
             push_priority: 255,
             sight_radius: SimScalar::from_num(self.sight_radius),
-            scan_range: SimScalar::from_num(self.sight_radius),
+            // Validation requires the field exactly on an armed structure; an unarmed one
+            // acquires nothing, so it scans 0.
+            scan_range: self.scan_range.map_or(SimScalar::ZERO, SimScalar::from_num),
             attack_target_priority: self.attack_target_priority,
             // Engine defaults, not authored: `StarCraft` II 5.0.14 sets no `AlwaysThreatens`,
             // no `Defensive` acquire level, no second weapon and no `AcquirePrioritization` on

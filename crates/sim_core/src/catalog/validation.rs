@@ -138,6 +138,29 @@ fn shield_regen_delay(definition: &str, has_shields: bool, delay: Option<u16>) -
     }
 }
 
+/// Requires a structure's `scan_range` exactly when it is `armed` (has a ground or an air
+/// weapon), as a finite, nonnegative world-unit value: an unarmed structure acquires nothing, so
+/// a scan range on it is a value nothing reads.
+fn structure_scan_range(definition: &str, armed: bool, scan_range: Option<f64>) -> SimResult<()> {
+    match (armed, scan_range) {
+        (true, None) => Err(invalid(
+            definition,
+            "scan_range",
+            "must be set on a structure with a weapon",
+        )),
+        (false, Some(_)) => Err(invalid(
+            definition,
+            "scan_range",
+            "must be absent on a structure without a weapon",
+        )),
+        (true, Some(value)) => {
+            scalar(definition, "scan_range", value)?;
+            nonnegative(definition, "scan_range", value)
+        }
+        (false, None) => Ok(()),
+    }
+}
+
 /// Requires `hp_regen_delay_ticks` to be 0 when the archetype does not regenerate life: a delay
 /// on an archetype with no life regeneration is a value nothing reads. `regenerates` is
 /// `hp_regen_per_tick > 0` as authored; any delay, 0 included, is legal when it regenerates.
@@ -672,6 +695,11 @@ impl StructureArchetypeDef {
             nonnegative(&self.slug, field, value)?;
         }
         sight(&self.slug, "sight_radius", self.sight_radius)?;
+        structure_scan_range(
+            &self.slug,
+            self.ground_weapon.is_some() || self.air_weapon.is_some(),
+            self.scan_range,
+        )?;
         start_energy(&self.slug, self.start_energy, self.max_energy)?;
         shield_regen_delay(
             &self.slug,

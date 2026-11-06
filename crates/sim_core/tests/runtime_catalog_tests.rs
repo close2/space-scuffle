@@ -10,7 +10,7 @@ use sim_core::catalog::{CatalogLoadError, RuntimeCatalogs, UnitCatalog};
 use sim_core::scenario::{build_world_with_catalogs, PlayerSetup, StartLoadoutCatalog};
 use sim_core::{SimCoreError, SimWorld, UpgradeCatalog};
 use sim_map::{CliffLevel, GameMap, MapCell, MapFile};
-use sim_types::{PlayerId, SimScalar, SimVec2, UnitTypeId};
+use sim_types::{PlayerId, ShapeKind, SimScalar, SimVec2, UnitTypeId};
 use std::path::{Path, PathBuf};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -496,5 +496,96 @@ fn slug_index_tracks_mutations_clones_and_storage_identity() -> TestResult {
             .collect::<Vec<_>>(),
         [UnitTypeId(1), UnitTypeId(2), UnitTypeId(3)]
     );
+    Ok(())
+}
+
+/// The shipped structures with every authored `scan_range` line removed, then `scan_range`
+/// written after the `sight_radius` of each definition for which `scan_of(armed)` gives a value
+/// (`armed`: the definition has a ground or an air weapon).
+fn structures_with_scan(
+    scan_of: impl Fn(bool) -> Option<&'static str>,
+) -> Result<String, std::io::Error> {
+    const OPENING: &str = "\n        (\n            structure_type_id";
+    let shipped = std::fs::read_to_string(catalog_directory().join(FILES[1]))?;
+    let mut stripped = String::new();
+    for line in shipped
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("scan_range:"))
+    {
+        stripped.push_str(line);
+        stripped.push('\n');
+    }
+    let mut definitions = stripped.split(OPENING);
+    let mut source = definitions.next().unwrap_or_default().to_owned();
+    for definition in definitions {
+        source.push_str(OPENING);
+        let armed = definition.contains("_weapon: Some(");
+        match scan_of(armed) {
+            Some(value) => {
+                let sight = definition
+                    .find("sight_radius:")
+                    .expect("every structure has a sight radius");
+                let line_end = sight + definition[sight..].find('\n').expect("the line ends") + 1;
+                source.push_str(&definition[..line_end]);
+                source.push_str("            scan_range: ");
+                source.push_str(value);
+                source.push_str(",\n");
+                source.push_str(&definition[line_end..]);
+            }
+            None => source.push_str(definition),
+        }
+    }
+    Ok(source)
+}
+
+/// B-12 (combat alignment WP14 Amendment 7): an armed structure scans to its authored
+/// `scan_range` (the reference of audit §11.3), not to its sight radius.
+#[test]
+fn an_armed_structure_scans_to_its_authored_range() -> TestResult {
+    let units = std::fs::read_to_string(catalog_directory().join(FILES[0]))?;
+    let structures = structures_with_scan(|armed| armed.then_some("Some(4.25)"))?;
+    let catalog =
+        UnitCatalog::from_ron_str_bundle(&sim_fixtures::shipped_factions(), &units, &structures)?;
+    let armed: Vec<_> = catalog
+        .archetypes()
+        .filter(|archetype| {
+            matches!(archetype.shape, ShapeKind::BuildingDome { .. })
+                && (archetype.ground_weapon.is_some() || archetype.air_weapon.is_some())
+        })
+        .collect();
+    assert!(
+        !armed.is_empty(),
+        "the shipped catalog has armed structures"
+    );
+    for archetype in armed {
+        assert_eq!(
+            archetype.scan_range,
+            SimScalar::from_num(4.25),
+            "{} scans to its authored range",
+            archetype.slug
+        );
+    }
+    Ok(())
+}
+
+/// B-12: `scan_range` is required on a structure with a weapon and refused on one without.
+#[test]
+fn a_structure_scan_range_is_required_exactly_when_it_is_armed() -> TestResult {
+    let units = std::fs::read_to_string(catalog_directory().join(FILES[0]))?;
+    let armed_without = structures_with_scan(|_| None)?;
+    let unarmed_with =
+        structures_with_scan(|armed| Some(if armed { "Some(7.0)" } else { "Some(5.0)" }))?;
+    for structures in [armed_without, unarmed_with] {
+        let result = UnitCatalog::from_ron_str_bundle(
+            &sim_fixtures::shipped_factions(),
+            &units,
+            &structures,
+        );
+        assert!(
+            matches!(&result, Err(SimCoreError::CatalogInvalidValue { field, .. }) if field == "scan_range"),
+            "{:?}",
+            result.as_ref().err()
+        );
+    }
     Ok(())
 }
