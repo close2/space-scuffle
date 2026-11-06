@@ -16,6 +16,7 @@
 use sim_core::catalog::{AcquireLevel, AcquireTieBreak, PrimaryWeapon};
 use sim_core::UnitArchetype;
 use sim_map::{CliffLevel, GameMap, MapCell};
+use sim_types::AttributeBonuses;
 use sim_types::{
     AnimState, ArchetypeCapabilities, AttributeFlags, EntityId, FactionId, MoverType,
     PlayerCommand, PlayerId, ShapeKind, SilhouetteClass, SimAngle, SimScalar, SimVec2, Tick,
@@ -207,9 +208,10 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         has_turret: false,
         turret_turn_rate: SimAngle::ZERO,
         base_damage: SimScalar::from_num(10),
-        bonus_armored: SimScalar::ZERO,
-        bonus_light: SimScalar::ZERO,
+        attribute_bonuses: AttributeBonuses::NONE,
         attacks_count: 1,
+        strike_interval_ticks: 0,
+        followup_max_distance: None,
         period_ticks: 10, // DPS = 1000
         damage_point_ticks: 1,
         backswing_ticks: 2,
@@ -233,9 +235,10 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         has_turret: false,
         turret_turn_rate: SimAngle::ZERO,
         base_damage: SimScalar::from_num(25),
-        bonus_armored: SimScalar::ZERO,
-        bonus_light: SimScalar::ZERO,
+        attribute_bonuses: AttributeBonuses::NONE,
         attacks_count: 1,
+        strike_interval_ticks: 0,
+        followup_max_distance: None,
         period_ticks: 10, // DPS = 2500
         damage_point_ticks: 1,
         backswing_ticks: 2,

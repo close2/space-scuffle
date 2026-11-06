@@ -622,9 +622,15 @@
         ),
         expect: (blue: (1, 1), red: (0, 0)),
     ),
+    // Battle 22a: StarCraft II 5.0.14 gives the Reaper no bonus against Light (P38ScytheGuassPistol's
+    // Light 5 of liberty EffectData:1817 is set to 0 by void EffectData:1499; plan
+    // 2026-11-05-sc2-deviation-fixes WP6, Amendment 10). Its two pistol shots of 4 each need twelve
+    // shots, six attacks, per 45-life worker instead of five 9-damage shots, so within the 200 ticks
+    // it kills one of the two workers and the other survives; with the bonus it killed both by tick
+    // 101. Evidence: docs/evidence/2026-11-05-sc2-deviation-fixes.md §6.4.
     (
         name: "22a_reaper_vs_2_workers",
-        claim: "The bonus vs light kills workers",
+        claim: "Without a bonus vs light, the Reaper kills only one of two workers in 200 ticks",
         map_cells: 64,
         ticks: 200,
         blue: (
@@ -639,7 +645,7 @@
             ],
             order: AttackMove(10, 32),
         ),
-        expect: (blue: (1, 1), red: (0, 0)),
+        expect: (blue: (1, 1), red: (1, 1)),
     ),
     (
         name: "22b_reaper_vs_stalker",
@@ -921,24 +927,26 @@
     // tick, where they turned instantly), a swing that starts on the tick its turn aligns it
     // (plan 2026-11-05-sc2-deviation-fixes WP1, M-22), StarCraft II's keep-target rule (WP4,
     // B-9: a unit whose target is out of weapon reach takes the closest candidate, so a chasing
-    // zealot no longer follows its first marine while another is up to 1.0 closer) and StarCraft
+    // zealot no longer follows its first marine while another is up to 1.0 closer), StarCraft
     // II's scan ranges measured edge to edge (WP14 Amendment 7, Q0057: the marine 5.5, the
-    // zealot 5, beyond both radii; they were 9 and 9), on 68 seeds (the four of record plus 64
-    // jittered ones, jitter 0.12) the marines win 21, the zealots win 37 and 10 are unresolved
-    // at 500 ticks; marine survivors average 2.06 (SD 2.87, range 0 to 10), zealot survivors 1.74
-    // (SD 1.44, range 0 to 5). With the edge rule alone (scan 9 / 9) it was 19 / 41 / 8 (1.69),
+    // zealot 5, beyond both radii; they were 9 and 9) and the zealot's second blade 5 ticks after
+    // its first (plan 2026-11-05-sc2-deviation-fixes WP5, B-2: StarCraft II's PsiBladesBurst; it
+    // landed on the swing's tick before), on 68 seeds (the four of record plus 64 jittered ones,
+    // jitter 0.12) the marines win 54, the zealots win 7 and 7 are unresolved at 500 ticks; marine
+    // survivors average 5.29 (SD 3.27, range 0 to 13), zealot survivors 0.37 (SD 0.83, range 0 to
+    // 4). Before B-2 it was 21 / 37 / 10 (2.06); with the edge rule alone (scan 9 / 9) 19 / 41 / 8 (1.69),
     // before it 20 / 35 / 13 (1.85), before B-9 37 / 20 / 11 (3.62), before WP1 39 / 20 / 9
     // (3.87), after the arcs 43 / 16 / 9 (4.38), before WP17 42 / 18 / 8 (4.03), after combat
     // alignment WP4 alone 30 / 24 / 14 (3.09), and before that WP4 a marine win on 61 of the 68
     // (7.41). The expectation is the smallest ranges that hold on all 20 matrix seeds since B-9
-    // (orchestrator, plan Amendment 5; the seeds of record are 0-2, 0-2, 3-0 and 6-0, marines -
-    // zealots left; the scan ranges widened blue to 10 for seeds 1 and 5, where the marines win
-    // 9 - 0 and 10 - 0); a seed outside them is re-recorded by the commit that causes it. What
+    // (orchestrator, plan Amendment 5; the seeds of record are 7-0, 7-0, 6-0 and 7-0, marines -
+    // zealots left; B-2 set them to blue 0 to 13 and red 0 to 3, the marines winning 17 of the 20
+    // seeds); a seed outside them is re-recorded by the commit that causes it. What
     // varies is how many zealots reach the marines at once.
     // Evidence: docs/evidence/2026-11-04-combat-sc2-alignment.md §16 (WP14 Amendment 7) and
     // §14.7 (§14.4 for the arcs, §6, §5 and §3 for WP7, WP6 and WP4, and §1 for the earlier
     // figures, from docs/evidence/2026-11-03-battle-33-investigation.md §4.2), and
-    // docs/evidence/2026-11-05-sc2-deviation-fixes.md §4.6 (B-9) and §1 (WP1).
+    // docs/evidence/2026-11-05-sc2-deviation-fixes.md §5.3 (B-2), §4.6 (B-9) and §1 (WP1).
     (
         name: "33_24_marines_vs_12_zealots",
         claim: "A close fight: unkited zealots and marines trade evenly, either side may win narrowly",
@@ -956,7 +964,7 @@
             ],
             order: AttackMove(20, 48),
         ),
-        expect: (blue: (0, 10), red: (0, 5)),
+        expect: (blue: (0, 13), red: (0, 3)),
     ),
     (
         name: "34_20_hydras_vs_12_mutas",

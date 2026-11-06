@@ -421,3 +421,236 @@ busy.
 Nothing of B-7 to B-11, B-76 or B-80. The rank of a challenger follows the source's "first 3 criteria" (Amendment
 4); Liquipedia's weapon-range versus scan-range wording for a challenger is resolved to scan range (§4.6). The C7
 float counts did not move (the new fields are integers, enums and a fixed-point vector).
+
+## 5. WP5: multi-strike timing (B-2)
+
+Measurements under `~/scratch/sc2dev_wp5/<step>`, each from its commit extracted into a fixed directory under the
+shared heavy-run lock (§4.8). The base is `main` at `9df767e` (WP4 complete and StarCraft II's scan ranges applied,
+Q0057; combat alignment evidence §16): whole matrix 0 expectation failures, battle 33 21 / 37 / 10 on 68 seeds, as
+recorded there. (WP5 and WP6 were first built on `d1876fa`, before the scan ranges; every number below is from the
+commits rebased onto `9df767e`, each measured against its predecessor.)
+
+### 5.1 Research (U-2)
+
+**Rule.** A multi-strike weapon of `StarCraft` II fires a `CEffectCreatePersistent`: `PeriodCount` strikes, the
+`k`-th after the delay `PeriodicPeriodArray[k]` from the one before (the first after entry 0), each applying its
+`PeriodicEffectArray` effect, which may carry its own validators. The data show that entry 0 delays the first strike:
+`voidmulti` EffectData:36 sets `BacklashRockets`' entry 0 to 0 and appends the old 0.15 (`liberty` EffectData:2550 had
+only 0.15), which is how a patch removes a first-strike delay. A layer that adds an array entry without an `index`
+appends it (the same Banshee edit). Times are Normal seconds; ticks = Normal s ÷ 1.4 × 25, rounded half up (audit
+§2.3).
+
+| Analogue (catalog slug) | `StarCraft` II weapon → effect | Periods (Normal s) | Interval | Later-strike condition | Source |
+|---|---|---|---|---|---|
+| Zealot (`psi_grey`) | `PsiBlades` → `PsiBladesBurst` | 0, 0.28 | **5** | `ZealotAttackDamageMaxRange` ≤ 2.1; `MultipleHitGroundOnlyAttackTargetFilter` | `liberty` WeaponData:150, EffectData:1919; `voidmulti` EffectData:361, ValidatorData:855, :867 |
+| Reaper (`jet_jumper`) | `P38ScytheGuassPistol` → `P38ScytheGuassPistolBurst` | 0, 0.122 | **2** (2.18) | `ReaperAttackDamageMaxRange` ≤ 7 (8 from a Bunker with its range upgrade; no Bunker carries units here); ground filter | `liberty` WeaponData:317, EffectData:1803; `voidmulti` EffectData:346, ValidatorData:843, :877 |
+| Thor ground (`colossus_mech`) | `ThorsHammer` → `ThorsHammer` | 0, 0.375 | **7** (6.70) | ground filter | `liberty` WeaponData:224, EffectData:2242; `voidmulti` EffectData:876 |
+| Viking (`vector_interceptor`) | `LanzerTorpedoes` → `LanzerTorpedoes` | 0, 0.21 | **4** (3.75) | each missile `RangeCheckLE15` ≤ 15 | `liberty` WeaponData:266, EffectData:1698, :1707, ValidatorData:1956 |
+| Banshee (`cloak_gunship`) | `BacklashRockets` → `BacklashRockets` | 0, 0.15 | **3** (2.68) | each missile ≤ 15 | `liberty` WeaponData:548, EffectData:2550, :2558; `voidmulti` EffectData:36 |
+| Liberator AA (`sky_bastion`) | `LiberatorMissileLaunchers` → `LiberatorMissileBurstPersistent` | 0.05 (one entry, repeated) | **1** (0.89) | none | `void` WeaponData:321, EffectData:2942 |
+| Missile Turret (`flak_array_dome`) | `LongboltMissile` → `LongboltMissile` | 0, 0.1 | **2** (1.79) | each missile ≤ 15 | `liberty` WeaponData:300, EffectData:1779, :1789 |
+| Queen ground (`hive_matron`) | `TalonsMissile` → `TalonsMissileBurst` (and the hidden melee `Talons` → `TalonsBurst`) | 0, 0.3 | **5** (5.36) | `QueenTalonsAGAttackDamageMaxRange` ≤ 5 (on `Talons`, inherited by `TalonsMissileDamage`); ground filter | `swarm` WeaponData:230, EffectData:3038, :3053; `liberty` EffectData:2320; `voidmulti` EffectData:649, ValidatorData:872 |
+| Phoenix (`flying_saucer`) | `IonCannons` → `IonCannons` | 0, 0 | 0 (both missiles on one loop) | none | `liberty` EffectData:1959 |
+| Colossus (`tripod_annihilator`) | `ThermalLances` → `ThermalLancesForward` + `ThermalLancesReverse` | both strikes on the target expire together | 0 | `ColossusAttackDamageMaxRange` ≤ 2 from the attack's target point | `liberty` EffectData:2357–2410; `voidmulti` EffectData:964, ValidatorData:882 |
+| Carrier (`mothership_carrier`) | interceptors (B-22) | — | not applicable | — | WP18 |
+| Brood Lord (`spore_matriarch`) | `BroodlingStrike` (B-21) | — | not applicable | — | WP18 |
+
+- **Measuring rule of the distance validators.** They are `CValidatorLocationCompareRange`: they compare two
+  *locations* (`WhichLocation TargetUnit` is the target unit's position point; the Colossus' compares two points
+  explicitly, `Value Effect="ThermalLances" Value="TargetPoint"`), and the class has no radius field. The catalog
+  measures `followup_max_distance` from centre to centre accordingly. This is read from the validator's type, not
+  stated in a source; for the Zealot the two readings differ only once the target is more than 2.1 − 0.875 = 1.225
+  further than the strike's 0.975 centre distance after 5 ticks, faster than any unit here moves.
+- **Not modelled, recorded.** The first strike of the Liberator's burst waits 0.05 Normal s (1 tick) and both of the
+  Colossus' strikes on its target 0.375 Normal s (7 ticks, the persistents' `ExpireDelay`) after the weapon fires;
+  ours land on the release tick. Recorded as **B-81** (class (i)); the Colossus part belongs with its sweep (B-18,
+  WP8b). Whether an order given between the strikes ends a `Channeled` burst is not stated in the data or on
+  Liquipedia: filed as [Q0058](../questions/open/0058-channeled-burst-interruption.md), default no change (only the
+  attacker's death or boarding ends a burst).
+
+### 5.2 Commit a: strikes on separate ticks, latent
+
+- **Rule** (`combat_resolution.rs` `begin_strikes`, `advance_pending_strikes`). A weapon with
+  `strike_interval_ticks` > 0 lands its first strike on the release tick and keeps the rest in
+  `Entity::pending_strikes`, one per interval. A later strike lands only if its target is still available to the
+  attacker (alive, damageable, revealed if cloaked), on the plane of the weapon that released it (the data's
+  `MultipleHitGroundOnlyAttackTargetFilter`), and within `followup_max_distance` from centre to centre if the
+  weapon names one; a strike that fails is lost and the next still tries, as each period's effect is validated on
+  its own. The attacker's death or boarding ends the burst. A projectile weapon launches one missile per strike,
+  each carrying one strike (`ActiveProjectile::strikes`); a strike with splash splashes. Catalog validation rejects
+  an interval on a single-strike weapon, a burst whose last strike would land after the attack period, and a
+  distance without an interval.
+- **Tests first** (`crates/sim_core/tests/multi_strike_timing_tests.rs`, scratch archetypes). On the old code
+  (`d1876fa`, built from a fresh extraction): `the_second_strike_lands_one_interval_after_the_first`,
+  `a_followup_beyond_its_distance_is_lost`, `a_dead_attacker_lands_no_further_strike`,
+  `a_spaced_projectile_weapon_launches_one_missile_per_strike` and `catalog_rejects_strike_spacing_it_cannot_honour`
+  failed (both strikes on the release tick: 20 damage on the first tick; one missile with both strikes; the
+  catalog accepted every spacing); the guards `strikes_with_no_interval_land_on_the_release_tick` and
+  `catalog_accepts_a_burst_that_ends_within_its_period` passed. All seven pass with the rule.
+- **Latent.** Every shipped interval is 0. Checksum schema 11 → 12 (the two weapon fields, `pending_strikes`, the
+  projectile's `strikes`): both golden replays, the default sandbox checksum and the schema bytes of four encoding
+  unit tests re-recorded for the schema alone. With the four fields left out of the encoding at schema 11, both
+  goldens reproduce as recorded for the scan ranges (release). Debug, release and `wasm32-wasip1` (debug and
+  release) reproduce the new lists. Matrix and battle 33 bit-identical to §5's base (21 / 37 / 10).
+- **Trace tool.** `sim_fixtures::trace` replays only the strikes a release lands (one for a spaced weapon) when it
+  counts wasted shots; later strikes are not releases, so in battles with spaced weapons the count is a lower
+  bound.
+
+### 5.3 Commit b1: the Zealot's second blade (B-2)
+
+- **Data.** `psi_grey`: `strike_interval_ticks: 5`, `followup_max_distance: Some(2.1)` (§5.1). **Test first:**
+  `b2_strike_spacing_follows_starcraft` (`weapon_catalog_rules_tests.rs`, a table of the cited spacings found by
+  `sc2_analogue`; every other weapon must land its strikes together) failed on the old data (`psi_grey` `(0, None)`)
+  and passes. Tests restated for the cause: the 1-v-1 cadence test (`sc2_battle_benchmarks_tests.rs`) and the trace
+  tool's melee test now expect each swing's second blade 5 ticks after its first, so the marine dies on the third
+  swing's second blade, 5 ticks later than before.
+- **Measured against §5.2.** Six battles moved; only battle 33's winner over its seeds changed. Each field alone:
+  the interval alone gives the same matrix and battle 33 bit for bit, so the 2.1 condition decides no blade in the
+  matrix.
+
+| Battle | Seeds moved | Wins blue/red | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|---|
+| 7_zealot_vs_roach | 20 | 20/0, same | 1.00 – 0.00, same | 240.9 → 245.9 | 42.00, same / — |
+| 8_zealot_vs_stalker | 20 | 20/0, same | 1.00 – 0.00, same | 241.5 → 246.5 | 51.00, same / — |
+| 23b_upgraded_zealot_vs_6_lings | 20 | 20/0, same | 1.00 – 0.00, same | 245.6 → 250.6 | 62.80 → 57.80 / — |
+| 25a_2_marines_vs_zealot | 20 | 0/20, same | 0.00 – 1.00, same | 145.7 → 153.7 | — / 62.00 → 57.50 |
+| 25b_upgraded_marines_vs_zealot | 20 | 0/20, same | 0.00 – 1.00, same | 141.4 → 146.4 | — / 32.00 → 22.00 |
+| 33_24_marines_vs_12_zealots | 20 | 7/13 → 17/1 | 2.25 – 1.75 → 5.80 – 0.25 | 442.9 → 431.7 | 37.00 (4) → 39.29 (7) / — |
+
+  Every zealot fight ends 5 ticks later (the killing blow is now a second blade), or 8 in 25a where the zealot
+  kills two marines; living 5 ticks longer, the last victims deal the zealot 4.5 to 10 more damage (lead hulls of
+  23b, 25a, 25b).
+- **Battle 33, 68 seeds:** 54 / 7 / 7 (was 21 / 37 / 10), marine survivors 5.29 (SD 3.27; was 2.06), zealot
+  survivors 0.37 (SD 0.83; was 1.74), mean end tick 434.9 (was 448.6). Seeds of record 7-0, 7-0, 6-0, 7-0 (were
+  0-2, 0-2, 3-0, 6-0). **Mechanism** (a probe build counting each second blade as it falls due, 68 seeds, not
+  committed; taken on the base before the scan ranges, where the same change moved 20 / 35 / 13 to 57 / 5 / 6):
+  3966 second blades fell due; 3650 landed (every one within 2.1 and on an available target) and 316
+  found their marine already dead (killed by its first blade or by another zealot in the 5 ticks). So the zealots
+  deal the same blades, half of them 5 ticks later: each marine kill takes 5 ticks longer, the marines fire through
+  those ticks, and in this even fight that turns most seeds. Re-recorded per combat alignment D-6:
+  `blue: (0, 13), red: (0, 3)` (was `(0, 10)` and `(0, 5)`), the smallest ranges that hold on all 20 matrix seeds;
+  the fixture comment states the distribution. The fixture's claim ("either side may win narrowly") is kept, as the
+  claim of the battle's design, and is no longer what the matrix shows.
+- **Golden replay** re-recorded: from checkpoint 5 (ticks 201 to 250), the first in which a "red_psi" (`psi_grey`)
+  zealot swings, every checkpoint changed; `golden_replay_orders` is unchanged (its zealots release no swing). Debug,
+  release and `wasm32-wasip1` reproduce.
+
+### 5.4 Commits b2 to b5: the other spaced weapons (B-2)
+
+Each commit sets the cited spacing (§5.1) and first adds its row to `b2_strike_spacing_follows_starcraft`, which
+failed on the old data (the archetype's weapon `(0, None)`) and passes. Each is measured against the one before.
+
+- **b2, Thor ground** (`colossus_mech` "Thor's Hammer", both of its ground slots): 7 ticks. One battle moved, no
+  winner: `14_thor_vs_ultralisk` (20 seeds), the Thor still wins every seed but ends 7 ticks later (200.0 → 207.0)
+  with 4.00 life left instead of 37.00, its killing blow now a second shot. Battle 33 bit-identical.
+- **b3, Viking** (`vector_interceptor`): 4 ticks, each torpedo within 15. Two battles moved, no winner over its
+  seeds: `19_viking_vs_brood_lord` ends 4 ticks later (293.0 → 297.0); `35_12_vikings_vs_6_colossi` moved on 16
+  seeds, blue wins 16 → 12 of 20 (seeds of record 0 and 22, and seeds 7 and 9, go from a Viking win to a fight
+  unresolved at the tick limit; no seed goes to the Colossi), Colossus survivors 0.20 → 0.40, mean end tick
+  403.8 → 546.5. Battle 33 bit-identical.
+- **b4, Reaper** (`jet_jumper`): 2 ticks, within 7. Matrix and battle 33 bit-identical: in `22a` the Reaper kills
+  each 45-life worker with its fifth pistol shot, a first shot (9 a shot against Light), and in `22b` it dies to the
+  Stalker either way; neither battle records the Stalker's shields.
+- **b5, units no matrix battle spawns**: Banshee (`cloak_gunship`) 3 ticks within 15, Liberator (`sky_bastion`)
+  1 tick, Missile Turret (`flak_array_dome`) 2 ticks within 15, Queen (`hive_matron`, both ground slots) 5 ticks
+  within 5. Matrix and battle 33 bit-identical; goldens unchanged. Test restated for the cause: S-4
+  (`combat_correctness_tests.rs`) takes the first shipped multi-strike missile weapon, now the Banshee's, and
+  expects its second missile one interval after the first.
+- **Goldens.** Only b1 moves them (no other spaced weapon is in either fixture); debug, release and
+  `wasm32-wasip1` reproduce after b1 and after b5.
+
+## 6. WP6: bonus damage against any attribute (B-14)
+
+### 6.1 Research
+
+**Rule.** A `StarCraft` II `CEffectDamage` carries an `AttributeBonus` array indexed by attribute (Light,
+Armored, Biological, Mechanical, Psionic, Massive, Structure, Heroic); a strike adds the entry of every attribute
+its target has. Upgrades raise an entry on its own: `EffectArray Reference="Effect,<effect>,AttributeBonus[<attribute>]"`
+(`liberty` UpgradeData:509, the Baneling's Light +2 a level; :679, the Corruptor's Massive +1; `voidmulti`
+UpgradeData:314, the Thor's high-impact Massive +1). The catalog's single `bonus_upgrade_per_level` therefore applies
+to each entry that applies; no shipped weapon has two entries, so per entry and once (the old rule) agree on all
+shipped data.
+
+**Data.** Every damage effect of the modelled weapons, resolved over the layer chain (`core` → … → `voidmulti`):
+
+| Analogue | Damage effect | `AttributeBonus` at 5.0.14 | Catalog before | Source |
+|---|---|---|---|---|
+| Corruptor (`sky_leviathan`) | `ParasiteSporeDamage` | Massive 6 | Armored 6 | `swarm` EffectData:2062 (`liberty` :2590 had Massive 10) |
+| Thor, high-impact mode (`colossus_mech` air weapon) | `LanceMissileLaunchersDamage` | Massive 10 | Armored 10 | `voidmulti` EffectData:749 |
+| Reaper (`jet_jumper`) | `P38ScytheGuassPistol` | none (Light 0) | Light 5 | `void` EffectData:1499 (`liberty` :1817 had Light 5) |
+| Spore Crawler (`spore_spire_dome`) | `SporeCrawlerU` | Biological 10 | none | `voidmulti` EffectData:870 (`void` :1432 had 30); Liquipedia Spore Crawler, patch 5.0.14: "Damage increased from 15 +15 biological to 20 +10 biological" |
+| Siege Tank, Marauder, Phoenix, Ghost, Hellion, Viking, Stalker, Adept, Immortal, Colossus, Void Ray, Baneling, Lurker, Spine Crawler | as cited in the test `b14_attribute_bonuses_follow_starcraft` | Armored or Light, as the catalog has | unchanged | `liberty` EffectData:1666, :1651, :1986, :1634, :2607, :1718, :2439, :2050, :2166; `voidmulti` :583, :722, :966, :1026, :817 |
+| every other armed analogue | — | none | none | no `AttributeBonus` in the chain (the Ultralisk's is set to 0 in `void` EffectData:1168) |
+
+- **Not an attribute bonus, recorded: B-82.** The Baneling's damage to structures is a second effect,
+  `VolatileBurstU2`: 80 to `Ground,Structure` targets, +5 a level, and `ArmorReduction 0`, so building armour does
+  not reduce it (`liberty` EffectData:1052, UpgradeData:505); its unit effect `VolatileBurstU` excludes structures
+  (`liberty` EffectData:1756). Ours has the one unit effect for every target, so a structure takes 16 less its armour. A Structure bonus of 64
+  would match only at level 0 and not the armour rule, so it is not used; class (i), WP9 with the other non-time
+  values.
+- **Found in passing, not attribute bonuses (B-47, WP9).** The Spore Crawler's base damage is 20 at 5.0.14
+  (`voidmulti` EffectData:871), the catalog's 15; the High Templar analogue has a weapon, the High Templar none.
+
+### 6.2 Commit a: a bonus against any attribute, latent
+
+- **Rule.** `WeaponSpec::attribute_bonuses` (`sim_types::AttributeBonuses`, one value per `Attribute`, Light to
+  Heroic) replaces `bonus_armored` and `bonus_light`; a strike adds the bonus of every attribute its target has,
+  each with `bonus_upgrade_per_level` a level (§6.1). The catalog field `attribute_bonuses: [(Attribute, bonus)]` is
+  required, so a catalog written with the old fields fails to load instead of losing its bonuses; validation
+  rejects a negative bonus and an attribute listed twice. The Siege Mode ability's weapon is boxed
+  (`AbilityEffectSpec::SiegeModeToggle`), because the larger `WeaponSpec` made that variant far larger than the
+  others (`clippy::large_enum_variant`).
+- **Tests first.** `attribute_bonus_tests.rs` (scratch archetypes; a Massive bonus, two bonuses on a target with
+  both, no bonus, and the validation including a stale weapon with the old fields) failed on the old code (the
+  catalog required `bonus_armored`), and `b14_each_applying_attribute_bonus_gains_its_upgrade`
+  (`damage_and_shields_tests.rs`, Light 5 and Armored 3 at level 2 against a Light and Armored target) failed with
+  20 for 22: the old rule added the per-level bonus once. All pass.
+- **Latent.** Every weapon's data is rewritten to the same bonuses. Checksum schema 12 → 13 (eight encoded values
+  for two): both golden replays, the default sandbox checksum and four encodings' schema bytes re-recorded; with the
+  bonuses encoded as the two former fields at schema 12, both goldens reproduce as recorded for WP5 (release).
+  Matrix and battle 33 bit-identical to §5.4.
+
+### 6.3 Commits b1, b2 and b4: the reference bonuses; b3 stopped
+
+Each data commit first adds its rows to `b14_attribute_bonuses_follow_starcraft` (`weapon_catalog_rules_tests.rs`,
+every armed analogue's cited bonuses, found by `sc2_analogue`), which failed on the old data and passes. Measured
+against the one before, from the commits rebased onto `9df767e`; commit a was bit-identical to §5.4.
+
+- **b1, Corruptor** (`sky_leviathan`): Massive 6 for Armored 6. One battle moved, no winner:
+  `18_void_ray_vs_corruptor`, where the Void Ray (Armored, not Massive) no longer takes the +6; it still wins every
+  seed, with 150.00 life left instead of 110.00. Battle 33 bit-identical.
+- **b2, Thor high-impact payload** (`colossus_mech` air weapon): Massive 10 for Armored 10. Matrix and battle 33
+  bit-identical (no Massive air unit in the matrix; the Thor's battle 14 is against the ground).
+- **b3, Reaper** (`jet_jumper`): no Light bonus (it was 5). **Stopped first** (applied later, §6.4). Measured on a scratch commit
+  on top of b2: `22a_reaper_vs_2_workers` changes its winner over its seeds, the Reaper winning 20 of 20 → 0 of 20
+  (all 20 unresolved at the battle's 200-tick limit: the Reaper alive with 9.00 life, one worker alive in 11 seeds
+  with 13.00); expectation failures 4 of record and 20 over all seeds; no other battle moved, battle 33
+  bit-identical. The battle's claim is "The bonus vs light kills workers", a bonus the 5.0.14 data no longer has
+  (`void` EffectData:1499 sets it to 0; `liberty` EffectData:1817 had Light 5). The stop rule
+  applies: the data value is reported for the orchestrator's decision, B-14 keeps the Reaper's bonus as its open
+  part, and the test table has no Reaper row yet.
+- **b4, Spore Crawler** (`spore_spire_dome`): Biological 10. No matrix battle spawns it: matrix and battle 33
+  bit-identical; goldens unchanged.
+- **Goldens.** No commit of WP6 b moves them (none of these units is in either fixture).
+
+### 6.4 Commit b3: the Reaper's Light bonus is 0 (B-14, plan Amendment 10)
+
+- **Resolved over the whole chain** (`core → liberty → swarm → void → voidmulti`, audit §2.2): `liberty`
+  EffectData:1817 gives `P38ScytheGuassPistol` `AttributeBonus Light 5`; `void` EffectData:1498–1499 sets it to 0;
+  `voidmulti` EffectData:346 overrides the same effect but only adds validators, so the 5.0.14 value is **0**
+  (final layer `void`, line 1499). The layers outside the audit's chain agree: `swarmmulti` EffectData:389 also
+  sets 0, and neither `libertymulti` nor `balancemulti` sets it. Applied per the orchestrator's decision
+  (Amendment 10).
+- **Test first:** the Reaper row of `b14_attribute_bonuses_follow_starcraft` failed on the old data (Light 5) and
+  passes; the table now requires a row for every armed analogue.
+- **Measured against §6.3's head:** one battle moved. `22a_reaper_vs_2_workers` changed its winner, as the decision
+  sanctions: the Reaper won 20 of 20 seeds by tick 101.0 with 40.00 life left; now all 20 end at the 200-tick limit
+  with the Reaper alive (9.00 life) and one worker alive. Cause, traced to the units: the Reaper (`jet_jumper`,
+  4 × 2 a 20-tick attack, 60 life) against two Light workers (`welder_drone`, 45 life, no armour) needed five 9-damage
+  shots a worker with the bonus and needs twelve 4-damage shots, six attacks, without it. Two workers take twelve
+  attacks, 240 ticks of attack periods, more than the battle's 200 ticks; on all 20 seeds exactly one worker is
+  left (the first of the two in 11 seeds, the second in 9). Battle 33
+  bit-identical (54 / 7 / 7); 0 expectation failures over 1000 runs after the re-record. Re-recorded:
+  `expect: (blue: (1, 1), red: (1, 1))` (was `red: (0, 0)`), and the claim, which said "The bonus vs light kills
+  workers", now reads "Without a bonus vs light, the Reaper kills only one of two workers in 200 ticks". Goldens
+  unchanged (no Reaper in them).

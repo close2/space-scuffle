@@ -17,6 +17,7 @@
 )]
 
 use sim_map::{CellFlags, CliffLevel, GameMap, MapCell};
+use sim_types::AttributeBonuses;
 use sim_types::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttributeFlags, OverclockSpec, PlayerId,
     SimAngle, SimScalar, SimVec2, SplashSpec, Tick, TickBundle, UnitOrder, WeaponSpec,
@@ -248,9 +249,10 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
         has_turret: true,
         turret_turn_rate: SimAngle::from_degrees(999),
         base_damage: SimScalar::from_num(40),
-        bonus_armored: SimScalar::ZERO,
-        bonus_light: SimScalar::ZERO,
+        attribute_bonuses: AttributeBonuses::NONE,
         attacks_count: 1,
+        strike_interval_ticks: 0,
+        followup_max_distance: None,
         period_ticks: 60,
         damage_point_ticks: 2,
         backswing_ticks: 4,
@@ -277,7 +279,7 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
         cast_range: SimScalar::ZERO,
         effect: AbilityEffectSpec::SiegeModeToggle {
             cast_ticks: 5, // 5 ticks for test speed
-            sieged_weapon: sieged_weapon.clone(),
+            sieged_weapon: Box::new(sieged_weapon.clone()),
         },
     };
 

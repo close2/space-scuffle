@@ -33,6 +33,7 @@
 
 use sim_core::SimWorld;
 use sim_map::{CliffLevel, GameMap, MapCell};
+use sim_types::Attribute;
 use sim_types::{PlayerId, SimAngle, SimScalar, SimVec2, Tick, TickBundle, UnitOrder};
 
 fn empty_bundle(tick: u32) -> TickBundle {
@@ -107,8 +108,10 @@ fn test_1v1_zealot_vs_marine_swing_cadence_and_three_hit_kill() {
     let zealot_shields = world.entities.get(&zealot_id).unwrap().shields;
 
     // The marine starts inside the zealot's band, so the first swing starts on tick 0, lands
-    // after the weapon's damage point, and the next ones follow every period. Both values are
-    // read from the catalog (plan 2026-11-04-combat-sc2-alignment D-1 item 5).
+    // after the weapon's damage point, and the next ones follow every period. Each swing lands
+    // its first blade at once and its second `strike_interval_ticks` later (plan
+    // 2026-11-05-sc2-deviation-fixes WP5, B-2). All values are read from the catalog (plan
+    // 2026-11-04-combat-sc2-alignment D-1 item 5).
     let zealot_weapon = world
         .catalog
         .get(zealot_type)
@@ -118,8 +121,14 @@ fn test_1v1_zealot_vs_marine_swing_cadence_and_three_hit_kill() {
         .expect("psi_grey has a weapon");
     let first = u32::from(zealot_weapon.damage_point_ticks);
     let period = u32::from(zealot_weapon.period_ticks);
-    let second = first + period;
-    let third = second + period;
+    let interval = u32::from(zealot_weapon.strike_interval_ticks);
+    let swings = [first, first + period, first + 2 * period];
+    let strike_ticks: Vec<u32> = swings
+        .iter()
+        .flat_map(|&swing| [swing, swing + interval])
+        .collect();
+    // 45 life, 8 a blade: the sixth blade, the third swing's second, kills.
+    let kill = swings[2] + interval;
 
     // Step tick by tick and monitor exact Marine HP
     let mut kill_tick = None;
@@ -130,50 +139,24 @@ fn test_1v1_zealot_vs_marine_swing_cadence_and_three_hit_kill() {
         let marine_hp = marine_opt.map_or(SimScalar::ZERO, |m| m.hp);
         let is_alive = marine_opt.is_some_and(sim_core::Entity::is_alive);
 
-        if tick < first {
-            // Zealot is winding up (its damage point)
-            assert_eq!(
-                marine_hp,
-                SimScalar::from_num(45),
-                "Marine must not take damage before tick {first} (windup phase)"
-            );
-        } else if tick == first {
-            // First swing lands: 16 damage (45 -> 29)
-            assert_eq!(
-                marine_hp,
-                SimScalar::from_num(29),
-                "First swing must land on tick {first} dealing 16 damage (45 -> 29)"
-            );
-        } else if tick < second {
-            // Backswing & cooldown: Marine stays at 29 HP
-            assert_eq!(
-                marine_hp,
-                SimScalar::from_num(29),
-                "Marine must remain at 29 HP after tick {first} and before tick {second}"
-            );
-        } else if tick == second {
-            // Second swing lands one period later: 16 damage (29 -> 13)
-            assert_eq!(
-                marine_hp,
-                SimScalar::from_num(13),
-                "Second swing must land on tick {second} dealing 16 damage (29 -> 13)"
-            );
-        } else if tick < third {
-            // Cooldown: Marine stays at 13 HP
-            assert_eq!(
-                marine_hp,
-                SimScalar::from_num(13),
-                "Marine must remain at 13 HP after tick {second} and before tick {third}"
-            );
-        } else if tick == third {
-            // Third swing lands one period later: Marine dies!
+        if tick == kill {
             assert!(
                 !is_alive || marine_hp <= SimScalar::ZERO,
-                "Third swing must kill Marine on tick {third}"
+                "The third swing's second blade must kill the Marine on tick {kill}"
             );
             kill_tick = Some(tick);
             break;
         }
+        let landed = strike_ticks
+            .iter()
+            .filter(|&&strike| strike <= tick)
+            .count();
+        let expected = 45 - 8 * i32::try_from(landed).expect("invariant: at most six blades");
+        assert_eq!(
+            marine_hp,
+            SimScalar::from_num(expected),
+            "Marine life on tick {tick}: {landed} blades of 8 landed (strikes on {strike_ticks:?})"
+        );
         assert!(
             matches!(
                 marine_opt.and_then(|marine| marine.order_queue.front()),
@@ -190,8 +173,8 @@ fn test_1v1_zealot_vs_marine_swing_cadence_and_three_hit_kill() {
 
     assert_eq!(
         kill_tick,
-        Some(third),
-        "Marine must die exactly on the third swing, tick {third}"
+        Some(kill),
+        "Marine must die exactly on the third swing's second blade, tick {kill}"
     );
 }
 
@@ -731,7 +714,10 @@ fn test_railgun_crawler_declarative_modes_and_siege_splash() {
 
     let unsieged_weapon = arch.weapon.as_ref().expect("unsieged weapon");
     assert_eq!(unsieged_weapon.base_damage, SimScalar::from_num(15));
-    assert_eq!(unsieged_weapon.bonus_armored, SimScalar::from_num(10));
+    assert_eq!(
+        unsieged_weapon.attribute_bonuses.get(Attribute::Armored),
+        SimScalar::from_num(10)
+    );
     assert!(
         unsieged_weapon.period_ticks < 54,
         "Tank mode must fire faster than the 54-tick Crucio cannon"
@@ -754,7 +740,10 @@ fn test_railgun_crawler_declarative_modes_and_siege_splash() {
         .and_then(|w| w.as_ref())
         .expect("siege weapon override");
     assert_eq!(siege_weapon.base_damage, SimScalar::from_num(40));
-    assert_eq!(siege_weapon.bonus_armored, SimScalar::from_num(30));
+    assert_eq!(
+        siege_weapon.attribute_bonuses.get(Attribute::Armored),
+        SimScalar::from_num(30)
+    );
     assert_eq!(siege_weapon.period_ticks, 54);
     assert!(
         siege_weapon.splash.is_some(),

@@ -172,8 +172,9 @@ pub enum AbilityEffectSpec {
     SiegeModeToggle {
         /// Channel ticks required to transform.
         cast_ticks: u16,
-        /// Active weapon configuration while sieged.
-        sieged_weapon: WeaponSpec,
+        /// Active weapon configuration while sieged, boxed so this variant stays close in size to
+        /// the others.
+        sieged_weapon: Box<WeaponSpec>,
     },
     /// Instant tactical teleportation to target coordinate.
     BlinkTeleport {

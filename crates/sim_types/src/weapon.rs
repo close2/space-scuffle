@@ -5,6 +5,112 @@ use crate::ids::WeaponClassId;
 use crate::math::{SimAngle, SimScalar};
 use serde::{Deserialize, Serialize};
 
+/// One unit attribute a weapon can deal bonus damage against: an index of `StarCraft` II's
+/// `CEffectDamage` `AttributeBonus` array, and one bit of [`AttributeFlags`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum Attribute {
+    /// [`AttributeFlags::LIGHT`].
+    Light,
+    /// [`AttributeFlags::ARMORED`].
+    Armored,
+    /// [`AttributeFlags::BIOLOGICAL`].
+    Biological,
+    /// [`AttributeFlags::MECHANICAL`].
+    Mechanical,
+    /// [`AttributeFlags::PSIONIC`].
+    Psionic,
+    /// [`AttributeFlags::MASSIVE`].
+    Massive,
+    /// [`AttributeFlags::STRUCTURE`].
+    Structure,
+    /// [`AttributeFlags::HEROIC`].
+    Heroic,
+}
+
+impl Attribute {
+    /// Every attribute, in declaration order, which is also the order of
+    /// [`AttributeBonuses`]' entries and of their checksum encoding.
+    pub const ALL: [Self; 8] = [
+        Self::Light,
+        Self::Armored,
+        Self::Biological,
+        Self::Mechanical,
+        Self::Psionic,
+        Self::Massive,
+        Self::Structure,
+        Self::Heroic,
+    ];
+
+    /// The attribute's bit in a unit's [`AttributeFlags`].
+    #[must_use]
+    pub const fn flag(self) -> AttributeFlags {
+        match self {
+            Self::Light => AttributeFlags::LIGHT,
+            Self::Armored => AttributeFlags::ARMORED,
+            Self::Biological => AttributeFlags::BIOLOGICAL,
+            Self::Mechanical => AttributeFlags::MECHANICAL,
+            Self::Psionic => AttributeFlags::PSIONIC,
+            Self::Massive => AttributeFlags::MASSIVE,
+            Self::Structure => AttributeFlags::STRUCTURE,
+            Self::Heroic => AttributeFlags::HEROIC,
+        }
+    }
+
+    /// Position of the attribute in [`Self::ALL`].
+    const fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// Bonus damage per strike against each [`Attribute`], in damage points; 0 for an attribute
+/// the weapon has no bonus against (`StarCraft` II's `AttributeBonus`, whose default is 0).
+///
+/// A strike adds the bonus of every attribute its target has, so a weapon with bonuses against
+/// two attributes deals both to a target with both, as the game's damage effect does.
+// PERFORMANCE RATIONALE:
+// Why: A weapon spec is cloned whenever combat resolves a weapon (every armed unit, every tick),
+// and a list of attribute–bonus pairs would allocate on each clone.
+// What: A fixed array indexed by attribute, `Copy`, at most one value per attribute by
+// construction.
+// Trade-off: Eight scalars per weapon where most weapons use none or one, in exchange for no
+// allocation and no duplicate-attribute state to guard against.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttributeBonuses([SimScalar; 8]);
+
+impl AttributeBonuses {
+    /// No bonus against any attribute.
+    pub const NONE: Self = Self([SimScalar::ZERO; 8]);
+
+    /// The bonus against `attribute`.
+    #[must_use]
+    pub const fn get(&self, attribute: Attribute) -> SimScalar {
+        self.0[attribute.index()]
+    }
+
+    /// These bonuses with the bonus against `attribute` set to `bonus`.
+    #[must_use]
+    pub const fn with(mut self, attribute: Attribute, bonus: SimScalar) -> Self {
+        self.0[attribute.index()] = bonus;
+        self
+    }
+
+    /// Every attribute with its bonus, in [`Attribute::ALL`] order, zeros included.
+    pub fn entries(&self) -> impl Iterator<Item = (Attribute, SimScalar)> + '_ {
+        Attribute::ALL
+            .into_iter()
+            .map(|attribute| (attribute, self.get(attribute)))
+    }
+
+    /// The positive bonuses that apply to a target with `attributes`.
+    pub fn against(&self, attributes: AttributeFlags) -> impl Iterator<Item = SimScalar> + '_ {
+        self.entries()
+            .filter(move |&(attribute, bonus)| {
+                bonus > SimScalar::ZERO && attributes.contains(attribute.flag())
+            })
+            .map(|(_, bonus)| bonus)
+    }
+}
+
 /// Concentric circular splash falloff parameters (`StarCraft` II standard).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SplashSpec {
@@ -72,12 +178,19 @@ pub struct WeaponSpec {
     pub turret_turn_rate: SimAngle,
     /// Base damage applied per hit.
     pub base_damage: SimScalar,
-    /// Bonus damage applied against [`AttributeFlags::ARMORED`] targets.
-    pub bonus_armored: SimScalar,
-    /// Bonus damage applied against [`AttributeFlags::LIGHT`] targets.
-    pub bonus_light: SimScalar,
+    /// Bonus damage per strike against each attribute the target has (`AttributeBonus`).
+    pub attribute_bonuses: AttributeBonuses,
     /// Number of distinct damage strikes applied per attack cycle (e.g. Zealot = 2).
     pub attacks_count: u8,
+    /// Ticks between consecutive strikes of one attack: the `PeriodicPeriodArray` of the
+    /// weapon's `CEffectCreatePersistent` in `StarCraft` II. The first strike lands on the
+    /// release tick and strike `k` (from 0) lands `k × strike_interval_ticks` ticks later. 0 lands
+    /// every strike on the release tick; a single-strike weapon authors 0.
+    pub strike_interval_ticks: u16,
+    /// Greatest centre-to-centre distance, in world units, between attacker and target at which
+    /// a strike after the first still lands (a `CValidatorLocationCompareRange` on the strike's
+    /// effect in `StarCraft` II, such as the Zealot's 2.1). `None`: no distance condition.
+    pub followup_max_distance: Option<SimScalar>,
     /// Total ticks between consecutive attack cycles (attack period).
     pub period_ticks: u16,
     /// Wind-up delay in ticks before damage is committed (`DamagePoint`).
@@ -95,7 +208,9 @@ pub struct WeaponSpec {
     /// Damage increase per upgrade level.
     #[serde(default)]
     pub upgrade_bonus_per_level: SimScalar,
-    /// Attribute bonus damage increase per upgrade level.
+    /// Increase per upgrade level of every attribute bonus that applies to a strike: each
+    /// bonus that applies gains this much per level (`StarCraft` II upgrades each
+    /// `AttributeBonus` entry of a damage effect, for example `liberty` UpgradeData:679).
     #[serde(default)]
     pub bonus_upgrade_per_level: SimScalar,
     /// Behavior when the target entity becomes unavailable mid-flight.
@@ -107,4 +222,47 @@ pub struct WeaponSpec {
     /// If true, firing this weapon causes the attacking unit to detonate and destroy itself (e.g. Baneling).
     #[serde(default)]
     pub suicide_on_attack: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Attribute, AttributeBonuses, AttributeFlags, SimScalar};
+
+    #[test]
+    fn every_attribute_has_its_own_flag_in_declaration_order() {
+        let mut seen = AttributeFlags::empty();
+        for (position, attribute) in Attribute::ALL.into_iter().enumerate() {
+            assert_eq!(attribute.index(), position, "{attribute:?}");
+            assert!(
+                !seen.intersects(attribute.flag()),
+                "{attribute:?} repeats a flag"
+            );
+            seen |= attribute.flag();
+        }
+        assert_eq!(seen, AttributeFlags::all());
+    }
+
+    #[test]
+    fn bonuses_apply_once_per_attribute_the_target_has() {
+        let six = SimScalar::from_i32(6);
+        let ten = SimScalar::from_i32(10);
+        let bonuses = AttributeBonuses::NONE
+            .with(Attribute::Massive, six)
+            .with(Attribute::Armored, ten);
+        assert_eq!(bonuses.get(Attribute::Massive), six);
+        assert_eq!(bonuses.get(Attribute::Light), SimScalar::ZERO);
+        let sum = |flags| bonuses.against(flags).fold(SimScalar::ZERO, |a, b| a + b);
+        assert_eq!(sum(AttributeFlags::MASSIVE), six);
+        assert_eq!(
+            sum(AttributeFlags::ARMORED | AttributeFlags::MASSIVE),
+            six + ten
+        );
+        assert_eq!(sum(AttributeFlags::LIGHT), SimScalar::ZERO);
+        assert_eq!(
+            AttributeBonuses::NONE
+                .against(AttributeFlags::all())
+                .count(),
+            0
+        );
+    }
 }

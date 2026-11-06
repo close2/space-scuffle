@@ -20,6 +20,7 @@ use sim_types::{
     PlayerSlot, ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, SplashSpec, Tick,
     TickBundle, UnitOrder, UnitStatDeltas, WeaponClassId, WeaponVisualKind,
 };
+use sim_types::{Attribute, AttributeBonuses};
 use std::collections::BTreeSet;
 
 /// The first player slot, which every mutation below edits.
@@ -84,6 +85,7 @@ fn projectile() -> ActiveProjectile {
         weapon_spec: weapon(),
         source_slug: Some("fixture-source".to_owned()),
         remaining_lifetime_ticks: 25,
+        strikes: 1,
     }
 }
 
@@ -150,6 +152,7 @@ fn every_public_entity_field_changes_the_world_checksum() {
             current_funnel_waypoints => vec![point(5, 5)],
             weapon_phase => WeaponPhase::Cooldown,
             weapon_cooldown_remaining => 7,
+            pending_strikes => Some(sim_core::PendingStrikes { target_id: EntityId(2), plane: MoverType::Ground, remaining: 1, ticks_until_next: 5 }),
             active_buffs => vec![ActiveBuff { buff_id: 1, remaining_ticks: 2, speed_multiplier: SimScalar::ONE, attack_rate_multiplier: SimScalar::ONE }],
             production_queue => [sim_core::production::ProductionJob { item: sim_core::production::ProductionItem::Unit(sim_types::UnitTypeId(0)), remaining_ticks: 7, total_ticks: 9, reserved_supply: 3, paid_minerals: 5, paid_gas: 6 }].into(),
             task => sim_core::UnitTask { legs: 2, ..Default::default() },
@@ -204,7 +207,7 @@ fn every_projectile_and_hazard_field_changes_the_world_checksum() {
             source_pos => point(2, 1), current_pos => point(3, 2), target_id => None,
             target_pos => point(4, 3), speed => SimScalar::from_i32(2),
             weapon_spec => { let mut changed = weapon(); changed.base_damage += SimScalar::ONE; changed },
-            source_slug => None, remaining_lifetime_ticks => 24,
+            source_slug => None, remaining_lifetime_ticks => 24, strikes => 2,
         },
         |projectile| {
             world.projectiles = vec![projectile.clone()];
@@ -238,9 +241,10 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
     original.has_turret = false;
     original.turret_turn_rate = SimAngle::ZERO;
     original.base_damage = SimScalar::ONE;
-    original.bonus_armored = SimScalar::ZERO;
-    original.bonus_light = SimScalar::ZERO;
+    original.attribute_bonuses = AttributeBonuses::NONE;
     original.attacks_count = 1;
+    original.strike_interval_ticks = 0;
+    original.followup_max_distance = None;
     original.period_ticks = 1;
     original.damage_point_ticks = 0;
     original.backswing_ticks = 0;
@@ -265,7 +269,8 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
             target_flags => AttributeFlags::ARMORED, min_range => SimScalar::ONE,
             max_range => SimScalar::from_i32(2), firing_arc => SimAngle::PI, has_turret => true,
             turret_turn_rate => SimAngle::PI, base_damage => SimScalar::from_i32(2),
-            bonus_armored => SimScalar::ONE, bonus_light => SimScalar::ONE, attacks_count => 2,
+            attribute_bonuses => AttributeBonuses::NONE.with(Attribute::Massive, SimScalar::ONE), attacks_count => 2,
+            strike_interval_ticks => 1, followup_max_distance => Some(SimScalar::ONE),
             period_ticks => 2, damage_point_ticks => 1, backswing_ticks => 1,
             splash => Some(SplashSpec { inner_radius: SimScalar::ONE, middle_radius: SimScalar::ONE, outer_radius: SimScalar::ONE, friendly_fire: true }),
             projectile_speed => Some(SimScalar::ONE), weapon_class => Some(WeaponClassId(3)),

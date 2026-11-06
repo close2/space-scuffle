@@ -752,7 +752,7 @@ requires.
 | ID | Short title | Class | Reason or WP |
 |---|---|---|---|
 | B-1 | A swing its turn aligns starts a tick late (M-22) | Fixed | WP1 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §1) |
-| B-2 | Every strike of a multi-strike weapon on one tick | (i) | WP5 |
+| B-2 | Every strike of a multi-strike weapon on one tick | Fixed, narrowed | WP5 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §5); open only whether an order between the strikes ends a `Channeled` burst ([Q0058](../questions/open/0058-channeled-burst-interruption.md)) |
 | B-3 | No random firing delay | (i) | WP11; it decides how volleys desynchronize, which players see |
 | B-4 | Siege Mode: one transformation time, no random part | (i) | WP11 |
 | B-5 | Whether damage point and backswing hold an automatically attacking unit | (i) | WP16 research |
@@ -764,7 +764,7 @@ requires.
 | B-11 | No per-unit tie-break | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.9, §4.10) |
 | B-12 | Scan ranges | Fixed | combat alignment WP14 Amendment 7 ([evidence](../evidence/2026-11-04-combat-sc2-alignment.md) §16; Q0057; this plan's Amendment 7) |
 | B-13 | Call-for-help radius, flee distance, leash, abandoned-target time | (i) | WP16 research; how idle units answer an attack is unit behaviour |
-| B-14 | Bonus damage only against Armored and Light | (i) | WP6 |
+| B-14 | Bonus damage only against Armored and Light | Fixed | WP6 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §6; the Reaper's value by Amendment 10) |
 | B-15 | Shield break remainder | (i) | WP7 |
 | B-16 | Fixed splash fractions | (i) | WP8a |
 | B-17 | Splash measured centre to centre | (i) | WP8a |
@@ -829,6 +829,8 @@ requires.
 | B-76 | Hard-coded threat categories | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.3, §4.5) |
 | B-77 | Hard-coded Concussive slow | (i) | WP13d |
 | B-78 | Storm evacuation margin | (i) | WP18 |
+| B-82 | The Baneling's damage to structures is not its own effect (80, +5 a level, ignoring armour) | (i) | WP9. Found in WP6 (Amendment 9) |
+| B-81 | A first strike the effect chain delays (Liberator 1 tick, Colossus 7) lands on the release tick | (i) | WP5 follow-up; the Colossus part with B-18 (WP8b). Found in WP5 (Amendment 8) |
 
 **Counts.** 78 IDs: (i) 70, two of them narrowed (B-52, B-67) and one carried by another plan (B-12); (ii) 3 (B-37,
 B-53, B-58); (iii) none; fixed 5 (B-31 and B-40 by the turn-before-move plan; B-71, B-73 and B-75 by WP0).
@@ -936,7 +938,6 @@ Evidence: [combat alignment evidence](../evidence/2026-11-04-combat-sc2-alignmen
 - **Matrix effect if applied (scratch, 20 seeds):** 26 battles move under our centre rule, 15 under an edge rule; no
   battle's winner over its seeds changes under either; battle 33 is §15.2's table.
 
-
 ## Amendment 7 (combat alignment WP14 Amendment 7, 2026-11-06): B-12 fixed
 
 The owner answered [Q0057](../questions/closed/0057-scan-range-measuring-rule.md) with option 2: scan range measured
@@ -953,3 +954,60 @@ edge to edge, the audited StarCraft II values across the catalog, the moved batt
 
 No battle's winner over its seeds changed in any step. B-12 is fixed and leaves the `DESIGN.md` register; the
 pursuit leash, which is a multiple of the scan range, stays with B-13.
+
+## Amendment 8 (WP5, 2026-11-06): multi-strike timing landed
+
+Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §5.
+
+- **Fixed: B-2**, narrowed. `strike_interval_ticks` (required) and `followup_max_distance` per weapon; the strikes
+  after the first wait in `Entity::pending_strikes` (checksum schema 12, in the latent commit a). The data follow
+  each weapon's `CEffectCreatePersistent` and validators (§5.1): Zealot 5 ticks within 2.1, Thor ground 7, Viking 4
+  within 15, Reaper 2 within 7, Banshee 3 within 15, Liberator 1, Missile Turret 2 within 15, Queen 5 within 5; the
+  Phoenix's and the Colossus' strikes land together. Open: whether an order between the strikes ends a `Channeled`
+  burst, filed as [Q0058](../questions/open/0058-channeled-burst-interruption.md) (default no change).
+- **Plan WP5 item 2 as built:** a later strike is also dropped when its target has left the weapon's plane (the
+  data's `MultipleHitGroundOnlyAttackTargetFilter`), a projectile weapon launches one missile per strike, and a
+  strike with splash splashes. The plan's "0.2 Normal s" for the Zealot is 0.28 Normal s (0.2 Faster s), 5 ticks
+  as the plan says.
+- **New, found: B-81** (class (i)). The effect chain delays the first strike of two weapons, which land on the
+  release tick here: the Liberator's first missile 0.05 Normal s (1 tick), and both of the Colossus' strikes on its
+  target 0.375 Normal s (7 ticks, the sweep's `ExpireDelay`). The Colossus part belongs with B-18 (WP8b).
+- **Battle 33 re-recorded** (D-4): on top of the scan ranges (Amendment 7), the Zealot's spaced blade moves it from
+  21 / 37 / 10 to 54 / 7 / 7 on 68 seeds (marines / zealots / unresolved); expectation `blue: (0, 13), red: (0, 3)`. The mechanism is the delay alone (the
+  2.1 condition decides no blade): every second blade lands 5 ticks later, so each marine kill takes 5 ticks
+  longer. No other battle's winner over its seeds changed (battles 7, 8, 14, 19, 23b, 25a, 25b, 35 moved; 35's
+  blue wins went 16 → 12 of 20 with the Viking's spaced torpedoes, the rest unresolved).
+- **Register:** B-2 narrowed to Q0058's part; B-81 added.
+
+## Amendment 9 (WP6, 2026-11-06): attribute bonuses landed, the Reaper's value stopped
+
+Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §6.
+
+- **Fixed: B-14**, narrowed. `attribute_bonuses` (one value per attribute, required) replaces `bonus_armored` and
+  `bonus_light`; each applying bonus gains `bonus_upgrade_per_level` (checksum schema 13, in the latent commit a).
+  Data from each damage effect's `AttributeBonus` (§6.1): the Corruptor's 6 and the Thor high-impact payload's 10
+  are against Massive; the Spore Crawler gains Biological 10. Every other armed analogue's bonuses already matched.
+- **Stopped: the Reaper.** 5.0.14 sets its Light bonus to 0 (`void` EffectData:1499). Applied, battle
+  `22a_reaper_vs_2_workers` (claim "The bonus vs light kills workers") goes from a Reaper win on all 20 seeds to 20
+  unresolved at its 200-tick limit (§6.3). Per the stop rule it is not committed; the catalog keeps Light 5 and
+  B-14 keeps it as its open part until the orchestrator decides (apply and re-record 22a, or not).
+- **The plan's Baneling example is not an attribute bonus.** Its +80 against structures is a separate effect,
+  `VolatileBurstU2` (80, +5 a level, ignoring armour): recorded as **B-82** (class (i), WP9).
+- **Rebased.** WP5 and WP6 were first built on `d1876fa` and rebased onto `9df767e` (the scan ranges, Amendment 7);
+  every number in evidence §5 and §6 is measured on the rebased commits.
+
+## Amendment 10 (orchestrator, 2026-11-06): the Reaper's Light bonus is applied
+
+> **Orchestrator decision on the WP6 b3 stop:** "first resolve the Reaper's Light bonus through the whole 5.0.14
+> chain the audit uses (core → liberty → swarm → void → voidmulti, and the balancemulti/libertymulti/swarmmulti
+> layers if the resolver includes them) — not just `void` EffectData:1499 — and cite the final layer and line. If
+> the resolved 5.0.14 value is 0: apply it (owner's standing rule Q0051: identical unit mechanics), re-record battle
+> 22a with a rewritten claim that states what the battle now shows (and why its winner changed), and trace the
+> change to named units; this is a sanctioned expectation change, not a stop. If a later layer restores +5: keep
+> Light 5, cite that layer, and B-14 is fully fixed. Either way add the Reaper row to the test table."
+
+- **Resolved: 0.** `liberty` EffectData:1817 sets Light 5, `void` EffectData:1499 sets it to 0, and `voidmulti`
+  EffectData:346 does not touch it; `swarmmulti` EffectData:389 also says 0 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §6.4).
+- **Applied** with the Reaper row in the test table, which now covers every armed analogue. Battle 22a is
+  re-recorded (the Reaper kills one of two workers in its 200 ticks instead of both) with a rewritten claim. **B-14
+  is fixed** and leaves the `DESIGN.md` register.

@@ -487,6 +487,62 @@ impl WeaponSpecDef {
         Ok(())
     }
 
+    /// Checks the spacing of the strikes of one attack: an interval needs a second strike, the
+    /// whole burst ends before the next attack can start, and a follow-up distance belongs to a
+    /// spaced burst and is positive.
+    fn validate_strikes(&self, definition: &str, prefix: &str) -> SimResult<()> {
+        let interval = &format!("{prefix}.strike_interval_ticks");
+        if self.strike_interval_ticks > 0 && self.attacks_count < 2 {
+            return Err(invalid(
+                definition,
+                interval,
+                "a single-strike weapon has no interval between strikes; author 0",
+            ));
+        }
+        // The last strike lands (attacks_count - 1) intervals after the release; the next release
+        // comes a whole period later at the earliest, so a burst never overlaps the next one.
+        let burst =
+            u32::from(self.attacks_count.saturating_sub(1)) * u32::from(self.strike_interval_ticks);
+        if burst >= u32::from(self.period_ticks) {
+            return Err(invalid(
+                definition,
+                interval,
+                "the last strike must land before the attack period ends",
+            ));
+        }
+        if let Some(distance) = self.followup_max_distance {
+            let field = &format!("{prefix}.followup_max_distance");
+            if self.strike_interval_ticks == 0 {
+                return Err(invalid(
+                    definition,
+                    field,
+                    "only a strike after the first, on a later tick, has a distance condition",
+                ));
+            }
+            positive(definition, field, distance)?;
+        }
+        Ok(())
+    }
+
+    /// Checks the attribute bonuses: each finite and nonnegative, at most one per attribute.
+    fn validate_attribute_bonuses(&self, definition: &str, prefix: &str) -> SimResult<()> {
+        let field = &format!("{prefix}.attribute_bonuses");
+        for (index, &(attribute, bonus)) in self.attribute_bonuses.iter().enumerate() {
+            nonnegative(definition, field, f64::from(bonus))?;
+            if self.attribute_bonuses[..index]
+                .iter()
+                .any(|&(earlier, _)| earlier == attribute)
+            {
+                return Err(invalid(
+                    definition,
+                    &format!("{field}.{attribute:?}"),
+                    "listed twice; a weapon has one bonus per attribute",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Checks the turret rate: a turreted weapon turns at a rate in `0 < rate <= 180` degrees
     /// per tick; a hull-mounted weapon turns with the hull and authors exactly 0.
     fn validate_turret(&self, definition: &str, prefix: &str) -> SimResult<()> {
@@ -510,8 +566,6 @@ impl WeaponSpecDef {
             ("min_range", self.min_range),
             ("max_range", self.max_range),
             ("base_damage", self.base_damage),
-            ("bonus_armored", self.bonus_armored),
-            ("bonus_light", self.bonus_light),
             ("upgrade_bonus_per_level", self.upgrade_bonus_per_level),
             ("bonus_upgrade_per_level", self.bonus_upgrade_per_level),
         ] {
@@ -532,6 +586,8 @@ impl WeaponSpecDef {
             ));
         }
         self.validate_cadence(definition, prefix)?;
+        self.validate_strikes(definition, prefix)?;
+        self.validate_attribute_bonuses(definition, prefix)?;
         angle(
             definition,
             &format!("{prefix}.firing_arc_deg"),

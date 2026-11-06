@@ -17,14 +17,16 @@
 //!    impacts apply in descending launch-list order. Both orders are deterministic.
 //! 3. No shot changes another entity's position, owner or lifecycle link during this phase.
 
+use crate::catalog::UnitCatalog;
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
 use crate::combat::{
     calculate_hit_damage_upgraded, calculate_splash_damage_upgraded, shares_combat_plane,
     step_entity_weapon, DamageResolution, WeaponTarget,
 };
-use crate::entity::{ActiveProjectile, Entity, WeaponPhase};
+use crate::entity::{ActiveProjectile, Entity, PendingStrikes, WeaponPhase};
 use crate::weapon_timing::{resolve_attack_period, AttackRate, SimulationDiagnostic};
 use crate::world::SimWorld;
+use sim_map::{PlayerVisionMap, SimMap};
 use sim_types::{
     CombatEventVisual, EntityId, MoverType, PerPlayer, PlayerId, PlayerUpgradeState,
     ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, Tick, UnitOrder, UnitTypeId,
@@ -57,6 +59,9 @@ struct PreparedShot {
     source_slug: String,
     origin: SimVec2,
     owner: PlayerId,
+    /// Strikes of `weapon` this shot lands: all of them on a release whose strikes land
+    /// together, one on a release that spaces them and on each later strike.
+    strikes: u8,
 }
 
 /// Provenance of a hit, borrowed from a prepared shot or a landed projectile.
@@ -67,6 +72,8 @@ struct HitSource<'a> {
     owner: PlayerId,
     attacker: Option<EntityId>,
     origin: SimVec2,
+    /// Strikes of `weapon` the hit applies to its target.
+    strikes: u8,
 }
 
 /// Where a direct hit landed, for the area damage and visuals that follow it.
@@ -147,6 +154,29 @@ impl ResolvedWeapon<'_> {
     }
 }
 
+/// The world state the weapon phase reads beside the entities it mutates.
+struct StrikeContext<'a> {
+    catalog: &'a UnitCatalog,
+    upgrades: &'a PerPlayer<PlayerUpgradeState>,
+    map: &'a SimMap,
+    vision_maps: &'a PerPlayer<PlayerVisionMap>,
+}
+
+impl StrikeContext<'_> {
+    /// Whether `viewer`'s weapons may strike the entity `snapshot` describes: it passes the
+    /// damage gate and, if cloaked, is revealed to `viewer`.
+    fn is_available(&self, viewer: PlayerId, snapshot: TargetSnapshot) -> bool {
+        snapshot.damageable
+            && (!snapshot.cloaked
+                || SimWorld::is_cloak_revealed(
+                    self.map,
+                    self.vision_maps,
+                    viewer,
+                    snapshot.position,
+                ))
+    }
+}
+
 /// Direction a hit arrives from, as stored for hull-impact rendering.
 fn hit_angle(origin: SimVec2, target: SimVec2) -> SimAngle {
     SimAngle::atan2(origin.y - target.y, origin.x - target.x)
@@ -200,6 +230,12 @@ impl SimWorld {
     /// Advances each armed entity's weapon state machine, queueing the shots that discharge.
     fn advance_weapon_cycles(&mut self) {
         let combat = &mut self.combat;
+        let context = StrikeContext {
+            catalog: &self.catalog,
+            upgrades: &self.player_upgrades,
+            map: &self.map,
+            vision_maps: &self.vision_maps,
+        };
         for (id, entity) in &mut self.entities {
             let attack_mult = match entity.attack_rate_multiplier() {
                 Ok(rate) => rate,
@@ -213,6 +249,7 @@ impl SimWorld {
                     continue;
                 }
             };
+            Self::advance_pending_strikes(&context, combat, *id, entity, attack_mult);
             if !entity.is_alive()
                 || entity.channeling_remaining_ticks > 0
                 || entity.is_loaded_in_transport()
@@ -264,23 +301,18 @@ impl SimWorld {
 
             let target_info = target_opt_id.and_then(|id| {
                 let snapshot = target_snapshot?;
-                let available = snapshot.damageable
-                    && (!snapshot.cloaked
-                        || Self::is_cloak_revealed(
-                            &self.map,
-                            &self.vision_maps,
-                            entity.owner,
-                            snapshot.position,
-                        ));
-                available.then_some(WeaponTarget {
-                    id,
-                    position: snapshot.position,
-                    combined_radius: snapshot.radius + arch.collision_radius,
-                })
+                context
+                    .is_available(entity.owner, snapshot)
+                    .then_some(WeaponTarget {
+                        id,
+                        position: snapshot.position,
+                        combined_radius: snapshot.radius + arch.collision_radius,
+                    })
             });
 
             if step_entity_weapon(entity, &weapon, target_info) {
                 if let Some(target) = target_info {
+                    let strikes = Self::begin_strikes(entity, &weapon, target.id, target_mover);
                     combat.shots.push(PreparedShot {
                         attacker: *id,
                         target: target.id,
@@ -288,9 +320,100 @@ impl SimWorld {
                         source_slug: arch.slug.clone(),
                         origin: entity.position,
                         owner: entity.owner,
+                        strikes,
                     });
                 }
             }
+        }
+    }
+
+    /// Starts the strikes of an attack `entity` releases with `weapon` at `target` on `plane`,
+    /// returning how many land on this release tick.
+    ///
+    /// A weapon whose strikes land together (`strike_interval_ticks` 0, or a single strike)
+    /// lands them all now. Otherwise the first lands now and the rest wait in
+    /// [`Entity::pending_strikes`], one every interval (B-2). A burst still pending is replaced;
+    /// catalog validation ends every burst within its attack period, so only a period shortened
+    /// below the burst (by upgrades or buffs) can do that.
+    fn begin_strikes(
+        entity: &mut Entity,
+        weapon: &WeaponSpec,
+        target: EntityId,
+        plane: MoverType,
+    ) -> u8 {
+        if weapon.strike_interval_ticks == 0 || weapon.attacks_count < 2 {
+            entity.pending_strikes = None;
+            return weapon.attacks_count;
+        }
+        entity.pending_strikes = Some(PendingStrikes {
+            target_id: target,
+            plane,
+            remaining: weapon.attacks_count - 1,
+            ticks_until_next: weapon.strike_interval_ticks,
+        });
+        1
+    }
+
+    /// Counts down the pending strikes of `entity` (`id`) and queues the one that falls due.
+    ///
+    /// The burst ends when the attacker dies or boards a transport, or when it no longer has the
+    /// weapon that released it. A strike that falls due lands only when its target is available
+    /// to the attacker, still on the weapon's plane, and within the weapon's
+    /// `followup_max_distance` (centre to centre) if it names one; otherwise that strike is lost
+    /// and the burst goes on (`StarCraft` II validates each period's effect on its own).
+    fn advance_pending_strikes(
+        context: &StrikeContext<'_>,
+        combat: &mut CombatWorkspace,
+        id: EntityId,
+        entity: &mut Entity,
+        attack_rate: AttackRate,
+    ) {
+        let Some(pending) = entity.pending_strikes.take() else {
+            return;
+        };
+        if !entity.is_alive() || entity.is_loaded_in_transport() {
+            return;
+        }
+        if pending.ticks_until_next > 1 {
+            entity.pending_strikes = Some(PendingStrikes {
+                ticks_until_next: pending.ticks_until_next - 1,
+                ..pending
+            });
+            return;
+        }
+        let Some(arch) = context.catalog.get(entity.unit_type_id).ok() else {
+            return;
+        };
+        let Some(weapon) =
+            Self::resolved_weapon(context.upgrades, entity, arch, pending.plane, attack_rate)
+                .map(ResolvedWeapon::to_spec)
+        else {
+            return;
+        };
+        let remaining = pending.remaining.saturating_sub(1);
+        if remaining > 0 && weapon.strike_interval_ticks > 0 {
+            entity.pending_strikes = Some(PendingStrikes {
+                remaining,
+                ticks_until_next: weapon.strike_interval_ticks,
+                ..pending
+            });
+        }
+        let Some(target) = combat.snapshot(pending.target_id) else {
+            return;
+        };
+        let in_reach = weapon
+            .followup_max_distance
+            .is_none_or(|limit| entity.position.distance(target.position) <= limit);
+        if target.mover == pending.plane && in_reach && context.is_available(entity.owner, target) {
+            combat.shots.push(PreparedShot {
+                attacker: id,
+                target: pending.target_id,
+                weapon,
+                source_slug: arch.slug.clone(),
+                origin: entity.position,
+                owner: entity.owner,
+                strikes: 1,
+            });
         }
     }
 
@@ -440,6 +563,7 @@ impl SimWorld {
             weapon_spec: shot.weapon,
             source_slug: Some(shot.source_slug),
             remaining_lifetime_ticks,
+            strikes: shot.strikes,
         });
     }
 
@@ -451,6 +575,7 @@ impl SimWorld {
             owner: shot.owner,
             attacker: Some(shot.attacker),
             origin: shot.origin,
+            strikes: shot.strikes,
         };
         let Some(hit) = self.apply_weapon_hit(source, shot.target) else {
             return;
@@ -461,7 +586,7 @@ impl SimWorld {
         self.emit_instant_hit_visual(shot, hit);
     }
 
-    /// Applies every strike of `source` to `target_id`, then the target's retaliation.
+    /// Applies the strikes `source` carries to `target_id`, then the target's retaliation.
     ///
     /// Returns where the shot landed, or `None` when the target no longer exists. A target
     /// that became unavailable after the shot was prepared, typically killed earlier this
@@ -484,7 +609,7 @@ impl SimWorld {
         }
         let attacker_upgrades = Self::upgrades_of(&self.player_upgrades, source.owner);
         let target_upgrades = Self::upgrades_of(&self.player_upgrades, target.owner);
-        for _ in 0..source.weapon.attacks_count {
+        for _ in 0..source.strikes {
             let resolution = calculate_hit_damage_upgraded(
                 source.weapon,
                 source.slug,
@@ -740,6 +865,7 @@ impl SimWorld {
             owner: proj.owner,
             attacker: proj.attacker_id,
             origin: proj.source_pos,
+            strikes: proj.strikes,
         };
         if let Some(target_id) = proj.target_id {
             let Some(hit) = self.apply_weapon_hit(source, target_id) else {

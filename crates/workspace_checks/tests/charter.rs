@@ -66,7 +66,7 @@ const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
     },
     FloatAllowance {
         path: "crates/sim_core/src/catalog/validation.rs",
-        count: 29,
+        count: 30,
         reason: "authoring: range checks on catalog decimals before their fixed-point conversion",
     },
     FloatAllowance {

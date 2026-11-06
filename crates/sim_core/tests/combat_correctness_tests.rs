@@ -24,6 +24,7 @@
 
 use sim_core::{SimCoreError, SimWorld, UpgradeCatalog, WeaponPhase};
 use sim_map::{CliffLevel, GameMap, MapCell};
+use sim_types::AttributeBonuses;
 use sim_types::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttackOrigin, EntityId, PlayerCommand,
     PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitModeSpec, UnitOrder,
@@ -138,7 +139,9 @@ fn siege(arena: &mut Arena, tank: EntityId) {
     assert!(arena.world.entities[&tank].is_sieged);
 }
 
-/// S-4: a projectile weapon's `attacks_count` strikes all land, as on the instant path.
+/// S-4: a projectile weapon's `attacks_count` strikes all land, as on the instant path. A weapon
+/// that spaces its strikes (plan `2026-11-05-sc2-deviation-fixes` WP5, B-2) launches one missile
+/// per strike, `strike_interval_ticks` apart, so the second strike lands that much later.
 #[test]
 fn s4_projectile_weapon_applies_every_strike() {
     let mut arena = Arena::new(32);
@@ -154,8 +157,7 @@ fn s4_projectile_weapon_applies_every_strike() {
                 w.attacks_count >= 2
                     && w.projectile_speed.is_some()
                     && w.splash.is_none()
-                    && w.bonus_armored == SimScalar::ZERO
-                    && w.bonus_light == SimScalar::ZERO
+                    && w.attribute_bonuses == AttributeBonuses::NONE
                     && w.max_range >= SimScalar::from_num(3)
             })
         })
@@ -193,7 +195,16 @@ fn s4_projectile_weapon_applies_every_strike() {
             break;
         }
     }
-    assert_eq!(first_damage, Some(per_strike * 2.0));
+    let first_volley = if weapon.strike_interval_ticks == 0 {
+        2.0
+    } else {
+        1.0
+    };
+    assert_eq!(first_damage, Some(per_strike * first_volley));
+    // Both missiles fly the same distance, so the second lands one interval after the first, well
+    // before the next attack.
+    arena.run(u32::from(weapon.strike_interval_ticks));
+    assert_eq!(before - arena.vitals(victim), per_strike * 2.0);
 }
 
 /// S-13: splash from a shot at a ground target leaves aircraft overhead untouched.
