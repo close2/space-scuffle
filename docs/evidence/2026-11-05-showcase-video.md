@@ -1,4 +1,4 @@
-# Evidence: the CI showcase video (WP1 to WP3)
+# Evidence: the CI showcase video (WP1 to WP5)
 
 Plan: [`2026-11-05-ci-showcase-video.md`](../plans/2026-11-05-ci-showcase-video.md). This file records the
 calibration, timings, sizes and review notes of WP2 and WP3, measured on the shared development server on
@@ -87,7 +87,8 @@ rung on the runner; if it is slow there, `compression_level` 4 is the first thin
 Accepted as they are:
 
 - The bottom quarter of every battle frame is the real HUD's command-card panel, empty because nothing is
-  selected; the director selects nothing (it never acts as the player).
+  selected; the director selects nothing (it never acts as the player). Superseded in WP4, below: the take
+  now leaves the panel out.
 - Fog of war shows only as enemies hidden outside sight (§2.3 of the plan); the caption says only that.
 - The teal patches on the ground are terrain decoration, not smog.
 
@@ -105,3 +106,45 @@ Final render r5: take ready after 5.0 s, 1,100 frames in 168 s (p50 156 ms, p95 
 mezzanine 705 MB, scenes title 125, terrain 150, units 150, smog 125, advance 50 (`UntilCombat`, combat
 already under way), clash 300, closing 200 frames. MP4 7,978,030 B and WebP 3,658,324 B, both within their
 budgets (25 MiB and 4.5 MiB).
+
+## WP4 and WP5 (local part, 2026-11-06)
+
+### The empty command panel (visual fix, Q0020: the agent's choice)
+
+Two ways to remove the empty band were weighed: (a) the director selects a fitting unit so the real card shows
+content, or (b) the take leaves the panel out. (b) was chosen. A selection would make the director act as the
+player, put selection rings on the followed units and a card whose content changes as units die, and at the
+teaser's 800 px the card's text is unreadable anyway; without the panel the battle fills the frame below the
+real resource bar, and nothing is faked. Implementation: the Player profile has a `HudLayout` resource
+(`crates/client/src/battle_hud/mod.rs`, default: everything drawn); the take sets `command_panel: false`, the
+panel reserves no room and the world viewport reaches the bottom of the window. Test:
+`battle_hud_tests::a_layout_without_the_command_panel_gives_its_room_to_the_world`.
+
+Render r6 (`showcase render --driver radv`, one `with-gpu-lock` per take, release build of `213b4b9`'s tree):
+take ready after 6.2 s, 1,100 frames in 147 s (p50 140 ms, p95 296 ms per frame on `radv`), the same scene
+lengths as r5. MP4 9,722,277 B (r5: 7,978,030 B; the larger world area has more detail). The teaser grew too:
+quality 60 gave 5,126,428 B, over the 4.5 MiB budget, and the ladder kept quality 50 at 4,302,014 B (800 px).
+That is 91 % of the budget; if a CI render exceeds it, the ladder steps to quality 40, then 640 px, and fails
+loudly only if all of them are over.
+
+Stills: `~/scratch/showcase/r6/stills/s01.png` to `s06.png` (frames 200, 350, 480, 580, 700, 850) and the site
+`~/scratch/showcase/r6/site/`. Checked: no panel and no black band; the resource bar, the caption band and the
+badge are unchanged; the followed unit of `units` sits lower than the centre but fully in view.
+
+### Take children leave no process behind (orchestrator note, 2026-11-06)
+
+`with-gpu-lock` is `flock` without `-o`, so every descendant of a take inherits the GPU lock's descriptor, and
+a descendant that outlived the take (the X server of `xvfb-run`, an encoder) would keep the shared GPU locked.
+`showcase render` now starts each take child as the leader of its own process group and, after the child exits
+or fails, kills the whole group with `kill -KILL -- -<pgid>` and waits until no live member is left; a survivor
+is a loud error (`crates/client_diagnostics/src/showcase/process_group.rs`, unit tests
+`a_take_leaves_no_process_of_its_group_after_success` and `..._after_failure`). `with-gpu-lock` itself is
+unchanged (shared, root-owned; the owner decides). After r6, `find /proc -path '/proc/*/fd/*' -lname
+/run/lock/gpu.lock` showed no process, and no `Xvfb` or `ffmpeg` of ours was left.
+
+### The workflow (WP4) and publication (WP5)
+
+`.github/workflows/showcase.yml` was validated locally by a YAML parse and by running its `jq` summary filters
+on a sample `showcase.json`; `actionlint` is not installed on the server and was not downloaded. The first CI
+run (Mesa release on the runner, cold build time, *c* per frame, disk, sizes, the D-13 calibration) and the
+camo check of the README image are recorded here after the orchestrator pushes, enables Pages and dispatches.

@@ -25,6 +25,7 @@ pub mod director;
 pub mod encode;
 pub mod overlay;
 pub mod pose;
+pub mod process_group;
 pub mod recorder;
 pub mod render;
 pub mod site;
