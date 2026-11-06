@@ -1,4 +1,4 @@
-# Evidence: the CI showcase video (WP1 to WP5)
+# Evidence: the CI showcase video (WP1 to WP6)
 
 Plan: [`2026-11-05-ci-showcase-video.md`](../plans/2026-11-05-ci-showcase-video.md). This file records the
 calibration, timings, sizes and review notes of WP2 and WP3, measured on the shared development server on
@@ -138,8 +138,9 @@ a descendant that outlived the take (the X server of `xvfb-run`, an encoder) wou
 `showcase render` now starts each take child as the leader of its own process group and, after the child exits
 or fails, kills the whole group with `kill -KILL -- -<pgid>` and waits until no live member is left; a survivor
 is a loud error (`crates/client_diagnostics/src/showcase/process_group.rs`, unit tests
-`a_take_leaves_no_process_of_its_group_after_success` and `..._after_failure`). `with-gpu-lock` itself is
-unchanged (shared, root-owned; the owner decides). After r6, `find /proc -path '/proc/*/fd/*' -lname
+`a_take_leaves_no_process_of_its_group_after_success` and `..._after_failure`). `with-gpu-lock` itself was
+unchanged then (shared, root-owned; the owner decides); since [Q0060](../questions/closed/0060-gpu-lock-descriptor-leak.md) (2026-11-06) it no longer passes the lock to
+the command it runs. After r6, `find /proc -path '/proc/*/fd/*' -lname
 /run/lock/gpu.lock` showed no process, and no `Xvfb` or `ffmpeg` of ours was left.
 
 Render r7 (`fc49f83`, with the process groups) confirmed it on the real path: during the take, `flock` (the
@@ -153,3 +154,31 @@ ms), MP4 9,617,809 B, teaser quality 60 5,125,796 B (over), quality 50 4,301,222
 on a sample `showcase.json`; `actionlint` is not installed on the server and was not downloaded. The first CI
 run (Mesa release on the runner, cold build time, *c* per frame, disk, sizes, the D-13 calibration) and the
 camo check of the README image are recorded here after the orchestrator pushes, enables Pages and dispatches.
+
+### The first CI run (2026-11-06)
+
+Run [42167833525](https://github.com/close2/space-scuffle/actions/runs/42167833525), dispatched by hand
+(`workflow_dispatch`) on `4633471`: both jobs succeeded, from 05:20:22 to 05:39:20 UTC, about 19 minutes in all.
+Figures from the published [`showcase.json`](https://close2.github.io/space-scuffle/showcase.json) and the job's
+step times:
+
+| Item | Value |
+|---|---|
+| Render job | 18 m 40 s: runner clean-up 1 m 46 s, packages and toolchain 27 s, release build of `showcase` 5 m 16 s (first run, no cache to restore), render step 10 m 44 s (take plus encoding) |
+| Publish job | 9 s |
+| Adapter | `llvmpipe (LLVM 20.1.2, 256 bits)`, Mesa 25.2.8 (`25.2.8-0ubuntu0.24.04.4`); Mesa 25.2 needs no anisotropy override (`anisotropy_override: null`) |
+| Encoder | `ffmpeg` 6.1.1 (Ubuntu 24.04 package) |
+| Take | 1,100 frames; ready after 8.1 s; 528.8 s of rendering |
+| Frame wall time | p50 489 ms, p95 599 ms (mean 481 ms) |
+| Teaser | 800 px at quality 60, 4,694,212 B: the first rung of the ladder fit the 4.5 MiB budget (local renders r6 and r7 needed quality 50) |
+| MP4 | 9,732,355 B |
+| Poster | 1,904,296 B |
+
+**Calibration (D-13).** On the runner's 4 vCPUs *c* is about 0.49 s per frame, half the 0.96 s measured on 4 shared
+cores of the development server with Mesa 25.0.7, and well inside the rule's limit of 1.4 s. The 1,100-frame take
+needs about 9 minutes, and the whole job stays under 20 minutes against the 40-minute budget. The storyboard keeps
+1280×720.
+
+**Publication.** The site <https://close2.github.io/space-scuffle/> serves the teaser as `image/webp` and the
+video as `video/mp4`. The README's teaser, fetched through GitHub's image proxy (camo) as the repository page
+embeds it, answered HTTP 200 with `image/webp` and the same length as the published file.
