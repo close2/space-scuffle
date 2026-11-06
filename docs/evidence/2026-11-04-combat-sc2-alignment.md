@@ -1852,3 +1852,167 @@ unresolved), marine survivors 4.03 (SD 3.26).
 - **Tests restated** first, test-only: three arc tests of `weapon_catalog_rules_tests.rs` (before d) and
   `sc2_battle_benchmarks_tests::test_1v1_zealot_vs_marine_swing_cadence_and_three_hit_kill` (before f).
 - **Finding:** M-22, a ready weapon that is not aligned swings one tick late.
+
+## 15. WP14: StarCraft II scan ranges (Q0037)
+
+Base: `main` at `77f19c0` (sc2-deviation-fixes WP4 merged, checksum schema 11): whole matrix 0 expectation
+failures over 1000 runs; battle 33 on 68 seeds 20 / 35 / 13 (marine / zealot wins / unresolved), as recorded.
+Measurements under `~/scratch/combat_wp14/s1/<variant>`; scratch catalogs and scripts under `~/scratch/combat_wp14/`
+(not committed). The reference values and their sources are in the audit,
+[`2026-11-04-catalog-time-audit.md`](2026-11-04-catalog-time-audit.md) §11. **No catalog value changed** (§15.5).
+
+### 15.1 The tool: targeting measures (commit `b1d28e6`)
+
+Step 1 asks, per marine, for the time to its first target, its distinct targets and its switches, and per tick for
+the number of marines firing at the most-targeted zealot. The per-unit CSV held the raw targets but no measure did,
+so `sim_fixtures::trace::focus` adds them to each run's summary, `seeds.csv` and `summary.md`: the mean first tick
+with a target, the distinct targets per unit, and the *focus* (the side's units whose target is the enemy most of
+them target; mean over the ticks on which any holds a target, and maximum). Tests first: the three `focus` unit
+tests failed on a stub returning defaults (`left: 0, right: 3`, …), and `trace_tests`'
+`the_runner_writes_every_file_for_every_seed` failed on the missing summary row; all pass. Which zealot each marine
+took, and from how far, was read from the unit CSVs by `~/scratch/combat_wp14/scripts/b33_mech.py`.
+
+### 15.2 Battle 33: the mechanism (step 1)
+
+68 seeds, 500 ticks. Scan ranges (marine / zealot), centre to centre as the code measures them. "6.375 / 5.875" is
+the reference under an edge-to-edge rule: 5.5 and 5 plus both radii (0.375 + 0.5); in this battle every pair is a
+marine and a zealot, so it is exactly that rule (checked: the scratch edge rule of §15.4 with 5.5 / 5 gives
+byte-identical `seeds.csv` on the four seeds of record). Paired Δ is the marine survivors' mean difference per seed
+against 9 / 9 (SE).
+
+| Scan ranges | Wins m / z / unres. | Marine survivors (SD) | Zealot survivors | Paired Δ marines (SE) | Marine first target, mean tick | Distance at first target | Marine switches | Marine focus mean / max | Distinct targets per marine | Marine shots | Seeds of record (m-z) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 9 / 9 (shipped) | 20 / 35 / 13 | 1.85 (2.46) | 1.76 | — | 60.7 | 8.62 | 4.35 | 6.24 / 14.97 | 4.00 | 325.7 | 0-2, 3-0, 0-2, 2-1 |
+| 5.5 / 9 | 10 / 45 / 13 | 0.96 (1.62) | 2.12 | −0.90 (0.37) | 77.4 | 5.30 | 0.00 | 5.65 / 13.93 | 3.76 | 317.8 | 0-3, 0-3, 3-1, 5-0 |
+| 9 / 5 | 22 / 36 / 10 | 1.79 (2.28) | 1.63 | −0.06 (0.45) | 60.7 | 8.62 | 4.34 | 6.20 / 14.94 | 4.03 | 328.5 | 4-0, 5-0, 5-0, 0-3 |
+| 5.5 / 5 (reference, centre) | 16 / 38 / 14 | 1.53 (2.13) | 2.12 | −0.32 (0.42) | 77.4 | 5.30 | 0.00 | 5.88 / 13.96 | 3.84 | 320.8 | 0-4, 0-4, 2-1, 0-4 |
+| 6.375 / 5.875 (reference, edge) | 21 / 37 / 10 | 2.06 (2.87) | 1.74 | +0.21 (0.47) | 72.6 | 6.14 | 1.63 | 6.12 / 14.41 | 3.95 | 326.5 | 0-2, 0-2, 3-0, 6-0 |
+
+Over all variants the marines' first target is the closest zealot (mean distance rank 0.01 to 0.02), and the most
+targeted zealot draws the same share of all marine-target ticks (0.10 to 0.11); the zealots each marine targets in
+the first 2 s after the first swing are 3.0 to 3.1 in every variant.
+
+**Reading.**
+
+1. **The effect is much smaller than the investigation measured.** The investigation (§5.3) found 5.5 / 5 cost the
+   marines 3.12 survivors (61 / 6 / 1 → 37 / 11 / 20). After combat alignment WP4 to WP17 and deviation-fixes WP1 to
+   WP4 it costs 0.32 (SE 0.42), within noise; the marine scan range alone costs 0.90 (SE 0.37).
+2. **The marines do not focus different zealots.** The investigation's reading 3 (§5.3, Q0037: "the marines focus
+   different zealots") is not what happens now: in every variant each marine takes the closest zealot, focus falls
+   only from 6.24 to 5.65 to 5.88 marines on the most-targeted zealot, and the top zealot's share does not move.
+3. **What the marine scan range changes is timing** (figures of the 5.5 / 9 row). At 5.5 between centres a marine scans *less* than its weapon
+   reaches a zealot (5 + 0.375 + 0.5 = 5.875). It walks on, attack-moving, until a zealot is 5.5 away (it acquires at
+   5.30 on average, 0.58 inside its reach), so its first target comes 16.7 ticks later than at 9 (60.7 → 77.4), the
+   marines start firing at a range the zealots close faster, and they release 7.9 fewer shots (325.7 → 317.8, about
+   a third of a volley each). The first zealot dies 2.6 ticks later (106.7 → 109.3).
+4. **Marine switches fall to 0** (4.35 → 0), the investigation's observation, for the same reason: a marine that
+   acquires only inside its reach never holds a target out of reach, so the keep-target rule (deviation-fixes B-9)
+   never hands it the closest candidate instead.
+5. **The zealot's scan range barely matters** (9 → 5: −0.06, SE 0.45). Zealots acquire 24 ticks later (60.4 → 84.8)
+   but they walk towards the marines on attack-move either way; their switches and distinct targets hardly move.
+6. **Under the edge rule nothing is lost.** 6.375 is beyond the marine's reach, so it acquires a zealot at 6.14 and
+   is already turned and waiting when the zealot enters reach; the outcome is the shipped distribution within noise
+   (+0.21, SE 0.47).
+
+So the mechanism is fully explained, and it depends on how the scan range is measured: a reference value copied
+under our centre-to-centre rule makes a ranged unit acquire only what it can already shoot.
+
+### 15.3 Whole matrix, reference values centre to centre (step 3)
+
+`~/scratch/combat_wp14/cat_ref`: the 35 armed units' `scan_range` set to the audit's §11.2 reference (seven unarmed
+units unchanged). 20 seeds against the base (`--compare`).
+
+- **26 battles moved; no battle's winner over its seeds changed** (the stop rule's sense, plan Amendment 4).
+- **Expectation failures:** 0 on the seeds of record; 1 over all seeds: `35_12_vikings_vs_6_colossi` seed 4,
+  12 – 2 at tick 900 against `red: (0, 1)` (two colossi flee out of the Vikings' 9 and live).
+- Battle 33 on 20 seeds: 7 / 11 → 2 / 15; seeds of record 0-4, 0-4, 2-1, 0-4 (the expectation `blue: (0, 8), red:
+  (0, 5)` holds).
+
+| Battle | Seeds moved | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|
+| 1b_stalker_vs_2_roaches | 20 | 0.00 – 2.00, same | 194.9 → 196.3 | — / 100.39 → 100.40 |
+| 4_marauder_vs_roach | 2 | 1.00 – 0.00, same | 193.1 → 193.0 | 35.00, same / — |
+| 6a_roach_vs_hydra | 10 | 1.00 – 0.00, same | 188.0 → 188.5 | 4.80 → 4.81 / — |
+| 6b_2_roaches_vs_hydra | 13 | 2.00 – 0.00, same | 80.0 → 80.9 | 113.12 → 112.58 / — |
+| 6c_roach_vs_2_hydras | 7 | 0.00 – 2.00, same | 95.5 → 95.3 | — / 69.00, same |
+| 7_zealot_vs_roach | 10 | 1.00 – 0.00, same | 240.9 → 240.4 | 42.00, same / — |
+| 9a_hellion_vs_4_lings | 20 | 1.00 – 0.00, same | 95.0 → 96.8 | 23.80 → 23.00 / — |
+| 10_2_hellions_vs_8_lings | 6 | 2.00 – 0.00, same | 61.2 → 56.8 | 69.40 → 70.60 / — |
+| 12a_colossus_vs_6_marines | 14 | 1.00 – 0.00, same | 76.2 → 66.8 | 240.75 → 249.00 / — |
+| 15_plated_ultralisk_vs_8_marines | 17 | 1.00 – 0.00, same | 108.0 → 106.2 | 420.92 → 418.19 / — |
+| 21_lurker_vs_6_marines | 20 | 1.00 – 0.00, same | 103.6 → 91.0 | 72.56 → 94.55 / — |
+| 23a_zealot_vs_6_lings | 5 | 0.00 – 2.00, same | 271.3 → 271.4 | — |
+| 24a_roach_vs_5_lings | 8 | 0.00 – 3.00, same | 288.5 → 287.9 | — |
+| 24b_upgraded_roach_vs_5_lings | 11 | 1.00 – 0.00, same | 328.0 → 328.5 | 25.42 → 25.43 / — |
+| 25a_2_marines_vs_zealot | 16 | 0.00 – 1.00, same | 145.1 → 144.1 | — / 62.00, same |
+| 25b_upgraded_marines_vs_zealot | 10 | 0.00 – 1.00, same | 141.4 → 140.6 | — / 32.00, same |
+| 26_100_lings_vs_6_colossi | 20 | 0.00 – 6.00, same | 107.5 → 116.4 | — / 250.00, same |
+| 27_100_lings_vs_8_ultralisks | 20 | 0.00 – 8.00, same | 273.8 → 251.7 | — / 393.99 → 399.65 |
+| 28_100_lings_vs_10_immortals | 20 | 35.10 → 35.45 – 0.00 | 597.1 → 601.8 | 35.00, same / — |
+| 29_100_lings_vs_12_stalkers | 20 | 70.80 → 71.60 – 0.00 | 423.2 → 421.6 | 35.00 → 32.96 / — |
+| 30_20_roaches_vs_10_immortals | 20 | 0.00 – 10.00, same | 236.9 → 243.1 | — / 147.55 → 171.50 |
+| 31_15_marauders_vs_15_stalkers | 20 | 3.00 → 3.40 – 0.95 → 0.80 | 637.7 → 664.6 | 86.14 → 24.70 / — |
+| 32_30_marines_vs_15_banelings | 11 | 1.45 → 0.75 – 0.65 → 0.75 | 51.8 → 50.6 | 27.50 → 17.00 / — |
+| 33_24_marines_vs_12_zealots | 20 | 2.10 → 0.70 – 1.70 → 2.80 | 441.7 → 436.2 | 29.00 → 21.00 / — |
+| 34_20_hydras_vs_12_mutas | 20 | 19.70 → 18.05 – 0.00 | 183.7 → 228.9 | 90.00, same / — |
+| 35_12_vikings_vs_6_colossi | 14 | 12.00 – 0.35 → 0.55 | 504.6 → 608.4 | 125.00, same / — |
+
+The common mechanism is §15.2's: every ranged unit whose reference is below its weapon reach between centres
+(range + 0.5 against a reach of range + both radii) now acquires only inside its reach, a little later and a little
+closer; melee units acquire later and nearer. Where only end ticks move by a tick or two, that is the whole effect.
+The larger moves are listed with the change most likely behind each; they were not traced per unit, because no
+value is applied (§15.5): the Mutalisks' scan 11 → 5 (34: the
+hydras' fight ends 45 ticks later), the Vikings' 10 → 9 against colossi that flee (35), the Lurker's 11 → 8 with the
+marines' 9 → 5.5 (21: the Lurker loses 22 life less) and the Colossus' 10 → 7.5 (12a, 26).
+
+### 15.4 Whole matrix, reference values edge to edge (scratch rule)
+
+The same catalog under a scratch rule that measures scan range from the edges: a candidate qualifies when its
+centre distance minus both collision radii is within the scan range (`~/scratch/combat_wp14/edge_rule.patch`, three
+lines in `target_acquisition.rs` `scan_candidates`, built into a separate binary and reverted; not committed). On
+battle 33 alone it reproduces the 6.375 / 5.875 row of §15.2 on all 68 seeds (byte-identical `seeds.csv`).
+
+- **15 battles moved; no battle's winner over its seeds changed.**
+- **Expectation failures:** 0 on the seeds of record; 2 over all seeds, both battle 33 (seeds 1 and 5, marines win
+  9 – 0 and 10 – 0 against `blue: (0, 8)`). Battle 33 on 20 seeds 7 / 11 → 7 / 13; seeds of record 0-2, 0-2, 3-0,
+  6-0.
+
+| Battle | Seeds moved | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|
+| 9a_hellion_vs_4_lings | 9 | 1.00 – 0.00, same | 95.0, same | 23.80 → 26.40 / — |
+| 12a_colossus_vs_6_marines | 3 | 1.00 – 0.00, same | 76.2 → 74.9 | 240.75 → 241.30 / — |
+| 21_lurker_vs_6_marines | 12 | 1.00 – 0.00, same | 103.6 → 91.0 | 72.56 → 87.61 / — |
+| 23a_zealot_vs_6_lings | 4 | 0.00 – 2.00, same | 271.3 → 271.4 | — |
+| 24a_roach_vs_5_lings | 4 | 0.00 – 3.00, same | 288.5 → 288.4 | — |
+| 25a_2_marines_vs_zealot | 11 | 0.00 – 1.00, same | 145.1 → 145.7 | — / 62.00, same |
+| 26_100_lings_vs_6_colossi | 12 | 0.00 – 6.00, same | 107.5 → 112.0 | — / 250.00, same |
+| 27_100_lings_vs_8_ultralisks | 20 | 0.00 – 8.00, same | 273.8 → 266.5 | — / 393.99 → 393.42 |
+| 28_100_lings_vs_10_immortals | 20 | 35.10 → 34.55 – 0.00 | 597.1 → 606.9 | 35.00 → 29.09 / — |
+| 29_100_lings_vs_12_stalkers | 20 | 70.80 → 70.90 – 0.00 | 423.2 → 424.2 | 35.00, same / — |
+| 30_20_roaches_vs_10_immortals | 20 | 0.00 – 10.00, same | 236.9 → 238.4 | — / 147.55 → 157.45 |
+| 31_15_marauders_vs_15_stalkers | 20 | 3.00 → 4.30 – 0.95 → 0.20 | 637.7 → 657.2 | 86.14 → 52.75 / — |
+| 33_24_marines_vs_12_zealots | 20 | 2.10 → 2.25 – 1.70 → 1.75 | 441.7 → 442.9 | 29.00 → 37.00 / — |
+| 34_20_hydras_vs_12_mutas | 18 | 19.70 → 19.50 – 0.00 | 183.7 → 186.6 | 90.00, same / — |
+| 35_12_vikings_vs_6_colossi | 18 | 12.00 – 0.35 → 0.20 | 504.6 → 403.8 | 125.00, same / — |
+
+Fewer battles move than under the centre rule, and by less: with both radii added, the reference ranges stay at or
+beyond every weapon's reach, so ranged units still acquire before they can fire (§15.2, item 6) and only the depth
+at which they first notice an enemy changes. Wins over 20 seeds: 31 16 / 4 → 19 / 1 (centre rule: 16 / 4), 35
+13 / 0 → 16 / 0 (centre: 10 / 0), 33 as above.
+
+### 15.5 Report (step 4) and what was applied
+
+- **Mechanism:** explained for battle 33 (§15.2): the marine's scan range sets when it acquires relative to its
+  weapon reach; the investigation's "different zealots" reading is not confirmed. The other moved battles follow the
+  same mechanism by inference, not by per-unit trace.
+- **The rule that decides the values is not sourced.** The game's per-weapon value is (audit §11.1), but no source
+  found says whether a scan range is measured from the centres or the edges, and the two give different matrices
+  (§15.3: 26 battles move, battle 33 drifts toward the zealots, a ranged unit acquires only what it can already
+  shoot; §15.4: 15 battles move, battle 33 within noise). Under the plan's step 4 and this package's brief the
+  unexplained part is filed as an owner question and the step stops:
+  [Q0057](../questions/open/0057-scan-range-measuring-rule.md), default no change.
+- **Applied:** nothing. No catalog value, rule or expectation changed; both golden replays are untouched (no
+  simulation code changed; `b1d28e6` touches only `sim_fixtures::trace`). Bug B-12 stays in the register, widened to
+  the armed structures (audit §11.3).
+- **Stop rule:** no battle other than 33 changed its winner over its seeds under either rule; battle 33 kept its
+  overall winner (the zealots) in both.

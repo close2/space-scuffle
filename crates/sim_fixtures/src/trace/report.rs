@@ -334,7 +334,9 @@ pub fn seeds_csv(results: &[SeedResult]) -> String {
          blue_max_engaged,red_max_engaged,blue_mean_fraction,red_mean_fraction,\
          red_blocked_s,red_flanking_s,red_approaching_s,blue_shots,red_swings,\
          blue_cancelled,red_cancelled_gone,red_cancelled_out_of_band,red_cancelled_other,\
-         blue_wasted,red_wasted,blue_switches,red_switches,blue_pushed_ticks,red_pushed_ticks\n",
+         blue_wasted,red_wasted,blue_switches,red_switches,blue_pushed_ticks,red_pushed_ticks,\
+         blue_first_target_tick,red_first_target_tick,blue_distinct_targets,red_distinct_targets,\
+         blue_mean_focus,red_mean_focus,blue_max_focus,red_max_focus\n",
     );
     for r in results {
         let s = &r.summary;
@@ -370,11 +372,24 @@ pub fn seeds_csv(results: &[SeedResult]) -> String {
             red.target_switches.to_string(),
             b.pushed_engaged.to_string(),
             red.pushed_engaged.to_string(),
+            mean_tick_cell(s.focus[0].mean_first_target_tick),
+            mean_tick_cell(s.focus[1].mean_first_target_tick),
+            format!("{:.3}", s.focus[0].mean_distinct_targets),
+            format!("{:.3}", s.focus[1].mean_distinct_targets),
+            format!("{:.3}", s.focus[0].mean_focus),
+            format!("{:.3}", s.focus[1].mean_focus),
+            s.focus[0].max_focus.to_string(),
+            s.focus[1].max_focus.to_string(),
         ];
         out.push_str(&cells.join(","));
         out.push('\n');
     }
     out
+}
+
+/// A mean tick as a CSV cell: empty when there is none.
+fn mean_tick_cell(tick: Option<f64>) -> String {
+    tick.map_or_else(String::new, |t| format!("{t:.2}"))
 }
 
 /// Mean, sample standard deviation, minimum, median and maximum of `values`.
@@ -520,7 +535,7 @@ fn outcome_section(results: &[SeedResult]) -> String {
 /// A measure's label, the decimals to print, and how to read it from a summary for one side.
 type MeasureRow = (&'static str, usize, fn(&BattleSummary, usize) -> f64);
 
-fn measure_rows() -> [MeasureRow; 17] {
+fn measure_rows() -> [MeasureRow; 21] {
     [
         ("Survivors", 2, |s, i| f64::from(s.survivors[i])),
         ("Health left", 1, |s, i| s.remaining_health[i]),
@@ -558,6 +573,18 @@ fn measure_rows() -> [MeasureRow; 17] {
         }),
         ("Unit-ticks pushed in contact", 1, |s, i| {
             f64::from(s.totals[i].pushed_engaged)
+        }),
+        ("First tick with a target, mean over units", 1, |s, i| {
+            s.focus[i].mean_first_target_tick.unwrap_or(f64::NAN)
+        }),
+        ("Distinct targets per unit", 2, |s, i| {
+            s.focus[i].mean_distinct_targets
+        }),
+        ("Units on the most-targeted enemy, mean", 2, |s, i| {
+            s.focus[i].mean_focus
+        }),
+        ("Units on the most-targeted enemy, max", 2, |s, i| {
+            f64::from(s.focus[i].max_focus)
         }),
     ]
 }

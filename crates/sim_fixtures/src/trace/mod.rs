@@ -8,7 +8,7 @@
 //! switches; and what every unit was doing ([`Activity`]: in contact, blocked, flanking,
 //! approaching, walking or idle). It also keeps every unit's position, velocity, life, shields,
 //! weapon phase and target per tick. [`summary`] derives the per-battle measures from those
-//! records, and [`report`] writes them as CSV and Markdown.
+//! records (with [`focus`] for who targets whom), and [`report`] writes them as CSV and Markdown.
 //!
 //! # How it fits
 //! This is the instrumentation of work package 3 of the battle 33 investigation
@@ -37,12 +37,14 @@
 
 pub mod activity;
 pub mod cli;
+pub mod focus;
 pub mod matrix;
 pub mod report;
 pub mod summary;
 pub mod swing;
 
 pub use activity::{classify, Activity, ActivityInput};
+pub use focus::{focus_stats, FocusStats};
 pub use summary::{BattleSummary, ContactStats, SecondRow, TeamTotals};
 pub use swing::{infer, SwingEvent};
 
