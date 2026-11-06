@@ -654,3 +654,66 @@ against the one before, from the commits rebased onto `9df767e`; commit a was bi
   `expect: (blue: (1, 1), red: (1, 1))` (was `red: (0, 0)`), and the claim, which said "The bonus vs light kills
   workers", now reads "Without a bonus vs light, the Reaper kills only one of two workers in 200 ticks". Goldens
   unchanged (no Reaper in them).
+
+## 7. WP7: shield spillover (B-15, B-74)
+
+### 7.1 Research (U-3)
+
+**Where the rule lives.** How a strike is divided between shields and life is engine code: no 5.0.14 data file
+states it. `CEffectDamage` carries the amounts, `ArmorReduction` and flags, not the order (`core` EffectData,
+`liberty` EffectData, searched for minimum, spill and shield fields over the chain `core` → … → `voidmulti`); the
+`DamageResponse` fields of `BehaviorData` (`ModifyMinimumDamage`, `Minimum`) belong to behaviours such as
+Hardened Shield, not to the default. Liquipedia is the source, read as wikitext on 2026-11-06:
+
+- [Damage Calculation](https://liquipedia.net/starcraft2/Damage_Calculation): "Defense Available: If the defender
+  is a Protoss unit with Shield Points, this equals Shield Defense. Otherwise, this equals Armor Defense"; "Damage
+  Inflicted … whichever is greater, Damage Capped − Guardian×Spell or 0.5"; "Total Damage: If the defender is a
+  Protoss unit with Shield Points, and the Damage Inflicted is greater than Shield Points + Armor Defense, then the
+  damage spills over to the HP and this equals Damage Inflicted − Armor Defense"; then "apply the Total Damage
+  first to the Shield Points and then to the HP". Its worked example: a +2 Marauder (10 + 10 Armored + 4) against
+  an Immortal with +1 shields, 4 armour and 2 shields; without Corruption, Hardened Shield and Guardian Shield that
+  is 24 − 1 = 23 inflicted, 2 to the shields and 23 − 4 − 2 = 17 to life.
+- [Plasma Shield](https://liquipedia.net/starcraft2/Plasma_Shield): shields "apply their own armor stat … independent
+  of the unit or building's standard armor which reduces damage to hit points"; shield armour "reduces incoming
+  damage to the shield total the same way Armor reduces attack damage to hit points".
+- [Armor](https://liquipedia.net/starcraft2/Armor): "Armor cannot reduce damage below 0.5, every attack deals at
+  least 0.5 damage."
+
+**Decided.**
+1. **Which remainder: sourced.** Life takes the shield-mitigated damage less the shields, then less life armour
+   (Damage Calculation). Ours took the raw damage scaled by the share the shields did not absorb,
+   `raw × (1 − shields ÷ mitigated)`, then life armour. The two agree when shield armour is 0 (exactly, in real
+   numbers) and differ once it is positive: 30 against shield armour 1, 20 shields and life armour 2 gives 7, where
+   ours gave 7.31. Fixed (§7.2).
+2. **The 0.5 minimum on the life part: not sourced.** Armor's "every attack deals at least 0.5" speaks of the strike,
+   which has already damaged the shields; Damage Calculation, read literally, sends a remainder no larger than
+   armour to life unarmoured, a jump (life damage falls from the armour value to nearly 0 as the strike grows past
+   shields plus armour) that reads as an editing slip. TeamLiquid, SC2Mapster and Hive Workshop searches found
+   nothing more. Filed as [Q0062](../questions/open/0062-shield-break-life-minimum.md) with an editor measurement
+   and the default "no change": the life part stays at least 0.5, and B-15 stays recorded for that part only.
+
+### 7.2 Commit: the shield-mitigated remainder reaches life (B-15, B-74 part)
+
+- **Rule.** `combat.rs` `mitigate_strike`: when the shield-mitigated damage exceeds the shields, life takes
+  `max(mitigated − shields − life armour, 0.5)` (§7.1 item 1); the 0.5 stays pending Q0062 (§7.1 item 2). The life
+  armour sum is one helper, `effective_life_armor`, for both branches. The module doc's "exact shield spillover
+  damage formulas" is replaced by the rule it now implements (B-74's `combat.rs` part; the `SplashSpec` part stays
+  with WP8a).
+- **Tests first** (`damage_and_shields_tests.rs`): `b15_shield_break_sends_the_mitigated_remainder_to_life`
+  (Liquipedia's worked example, 24 against shield armour 1, 2 shields, life armour 4) failed with 17.9130 for 17,
+  and `b15_shield_break_remainder_is_not_raw_proportional` (the old test's numbers) with 7.3103 for 7; both pass.
+  `b15_shield_break_remainder_below_life_armour_keeps_the_minimum` pins the Q0062 default (green before and after).
+  The old `test_sc2_shield_spillover_exact_formula`, which asserted the raw-proportional rule, is replaced by them.
+- **Measured** against `61e88d9` (the same commands, `~/scratch/sc2dev_wp7/{base,rule}`): no shipped unit has
+  shield armour and no matrix battle researches a shield level, so the two rules agree in real numbers on every
+  matrix strike; the old quotient lost up to 1.9e-9 of life to fixed-point rounding at each break. Four battles
+  "moved" by that alone, in the lead hull only (`8_zealot_vs_stalker`, `12a_colossus_vs_6_marines`,
+  `25a_2_marines_vs_zealot`, `25b_upgraded_marines_vs_zealot`: e.g. 50.9999999981 → 51); no end tick, survivor
+  count or expectation changed on any of the 1000 runs; 0 expectation failures. Battle 33 bit-identical on 68 seeds
+  (54 / 7 / 7). The rule moves battles only once shield armour is positive: the skirmish and future
+  shield-upgrade battles.
+- **Goldens re-recorded** for the same rounding: `golden_replay` checkpoints 5, 6 and 8 (ticks 201 to 300 and 351
+  to 400), `golden_replay_orders` checkpoints 7 to 12 and 16 to 34, while a damaged `psi_grey` zealot carried it.
+  Proof in a throwaway run: asserting shield armour 0 at every shield break and that old and new life parts differ
+  by at most 1e-5, and substituting the old value, both fixtures reproduce as recorded for WP6. The new lists
+  reproduce in debug, release and `wasm32-wasip1` release (`wasmtime`). Checksum schema unchanged (13).

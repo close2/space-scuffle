@@ -765,7 +765,7 @@ requires.
 | B-12 | Scan ranges | Fixed | combat alignment WP14 Amendment 7 ([evidence](../evidence/2026-11-04-combat-sc2-alignment.md) §16; Q0057; this plan's Amendment 7) |
 | B-13 | Call-for-help radius, flee distance, leash, abandoned-target time | (i) | WP16 research; how idle units answer an attack is unit behaviour |
 | B-14 | Bonus damage only against Armored and Light | Fixed | WP6 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §6; the Reaper's value by Amendment 10) |
-| B-15 | Shield break remainder | (i) | WP7 |
+| B-15 | Shield break remainder | Fixed, narrowed | WP7 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §7); open only whether the 0.5 minimum applies to the life part ([Q0062](../questions/open/0062-shield-break-life-minimum.md)) |
 | B-16 | Fixed splash fractions | (i) | WP8a |
 | B-17 | Splash measured centre to centre | (i) | WP8a |
 | B-18 | Line splash modelled as a circle | (i) | WP8b |
@@ -824,7 +824,7 @@ requires.
 | B-71 | Doc 03 random delay range | Fixed | WP0, in this amendment's commit |
 | B-72 | Doc 03 start energy | Fixed | WP3 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §3) |
 | B-73 | Doc 07 claims mechanics we lack | Fixed | WP0: each cell names its bug ID; the mechanics stay open as B-14, B-18 to B-22, B-26, B-42 and B-69 |
-| B-74 | Code comments claim exact parity | (i) | WP7, WP8a |
+| B-74 | Code comments claim exact parity | (i), narrowed | `combat.rs` part fixed in WP7 (evidence §7.2); the `SplashSpec` part stays with WP8a |
 | B-75 | Doc 03 "Turn Rate & Stationary Turn Rate" | Fixed | True since B-31 was fixed; no edit needed |
 | B-76 | Hard-coded threat categories | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.3, §4.5) |
 | B-77 | Hard-coded Concussive slow | (i) | WP13d |
@@ -1011,3 +1011,18 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
 - **Applied** with the Reaper row in the test table, which now covers every armed analogue. Battle 22a is
   re-recorded (the Reaper kills one of two workers in its 200 ticks instead of both) with a rewritten claim. **B-14
   is fixed** and leaves the `DESIGN.md` register.
+
+## Amendment 11 (WP7, 2026-11-06): the shield-break remainder
+
+Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §7.
+
+- **U-3, first half, sourced:** life takes the shield-mitigated damage less the shields, then less life armour
+  (Liquipedia [Damage Calculation](https://liquipedia.net/starcraft2/Damage_Calculation), "Total Damage", with its
+  worked example). The rule is engine code; no 5.0.14 data file states it (§7.1).
+- **Fixed: B-15**, narrowed. `mitigate_strike` applies it; the module doc's "exact" claim is replaced (B-74's
+  `combat.rs` part). Matrix: no winner, end tick or survivor changed (no shipped unit has shield armour); four
+  battles moved by about 1e-9 of life, the old quotient's rounding; battle 33 bit-identical (54 / 7 / 7). Both
+  goldens re-recorded for that rounding, proved by a throwaway substitution (§7.2).
+- **U-3, second half, not sourced:** whether the 0.5 minimum applies to the life part of a shield-breaking strike.
+  Filed as [Q0062](../questions/open/0062-shield-break-life-minimum.md) with an editor measurement; default no
+  change (at least 0.5). B-15 stays in the register for that part only.

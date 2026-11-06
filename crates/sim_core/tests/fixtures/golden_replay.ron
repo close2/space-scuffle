@@ -127,6 +127,13 @@
 // weapon's Armored and Light bonuses are replaced by its bonus against every attribute, encoded
 // as eight values, so every checkpoint changed. No behaviour did: with the bonuses encoded as the
 // two former fields at schema 12, both fixtures reproduce as recorded for WP5.
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP7 (B-15): a strike that breaks the shields
+// sends the shield-mitigated damage minus the shields to life (was raw x (1 - shields / mitigated)).
+// With shield armour 0, as for every "red_psi" (psi_grey) zealot here, the two are equal in real
+// numbers; the old quotient lost about 1e-9 of life to fixed-point rounding at each break. Only
+// checkpoints 5, 6 and 8 (ticks 201 to 300 and 351 to 400) changed, while a zealot carried that
+// rounding; with the old value substituted wherever the two differ by at most 1e-5 (they never
+// differ more, and shield armour is always 0), both fixtures reproduce as recorded for WP6.
 (
     checksum_schema: 13,
     seed: 0x5EED_0F_5CAFF1E,
@@ -158,10 +165,10 @@
         0x536c636fdc4c92f2,
         0x7695d1d443882caf,
         0x813baa1dd87bb5b7,
-        0x4cf7e24e4e0fb607,
-        0x71761b3ce7ded66f,
+        0xa56f8ecf8985ccde,
+        0xe1d10762d3484ad9,
         0x975d4bd5c40f6f67,
-        0x75ee6729bf3d2b38,
+        0x5bac4965200fca33,
         0x72e5085e1cb5af82,
         0xb0fb8a0d936c6470,
         0x2e071810804b0860,
