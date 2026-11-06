@@ -835,9 +835,9 @@
                 is_resource_dropoff: false,
             ),
             veo_prompts: {
-                Idle: "Pyre Outrider: Heavy three-wheeled motorized assault trike with front-mounted chemical flamer.",
-                Walk: "Pyre Outrider: High-velocity motorized drift tearing across terrain kicking up gravel plumes.",
-                Attack: "Pyre Outrider: Torrential burst of searing orange and blue chemical fire streaming forward.",
+                Idle: "Pyre Outrider: Unmanned heavy three-wheeled armored assault trike with one large front wheel and two rear wheels, a front-mounted chemical flamer nozzle glowing steady orange and two fuel tanks on its back, seen whole with empty space around it.",
+                Walk: "Pyre Outrider: Flat-out high-speed run, all three wheels spinning fast.",
+                Attack: "Pyre Outrider: A torrent of searing orange and blue chemical fire streaming forward from the flamer nozzle.",
             },
         ),
         (
@@ -955,9 +955,9 @@
                 is_resource_dropoff: false,
             ),
             veo_prompts: {
-                Idle: "Titan AA-Walker: Gigantic walking battle-fortress mech with massive twin arm-cannons and dorsal missile pods.",
-                Walk: "Titan AA-Walker: Earth-shaking lumbering strides crushing terrain beneath massive mechanical feet.",
-                Attack: "Titan AA-Walker: Staggering concussive double cannon fire followed by vertical missile salvo.",
+                Idle: "Titan AA-Walker: Gigantic bipedal battle-fortress mech with massive twin arm-cannons and two fixed missile pods on its shoulders, seen whole from head to feet with empty space around it.",
+                Walk: "Titan AA-Walker: Heavy lumbering marching steps of its massive mechanical legs.",
+                Attack: "Titan AA-Walker: A heavy double shot from both arm-cannons with bright muzzle flashes and puffs of smoke.",
             },
         ),
         (
@@ -1030,9 +1030,9 @@
                 is_resource_dropoff: false,
             ),
             veo_prompts: {
-                Idle: "Vector Interceptor: Sleek swept-wing aerospace fighter drone banking in hovering patrol formation.",
-                Walk: "Vector Interceptor: Rapid aerodynamic flight accelerating with twin supersonic afterburners.",
-                Attack: "Vector Interceptor: Dual missile exhaust blooms launching spiraling anti-air heavy torpedoes.",
+                Idle: "Vector Interceptor: a single sleek swept-wing aerospace fighter drone with twin rear engines and a torpedo pod under each wing, hovering steady in mid-air, one aircraft in the middle of the frame and fully visible, with wide empty space on both sides, no other aircraft.",
+                Walk: "Vector Interceptor: the same swept-wing fighter drone in fast level forward flight, both afterburners flaring bright, flying in place in the middle of the frame and fully visible, no other aircraft.",
+                Attack: "Vector Interceptor: Two heavy anti-air torpedoes launched from the wing pods, streaking forward on bright exhaust trails.",
             },
         ),
         (
@@ -1164,9 +1164,9 @@
                 is_resource_dropoff: false,
             ),
             veo_prompts: {
-                Idle: "Sky Bastion: Heavy ring-rotor gunship hovering motionless with stabilizing ventral gyros.",
-                Walk: "Sky Bastion: Smooth horizontal displacement with rotating aerodynamic lift rings.",
-                Attack: "Sky Bastion: Sealing into siege anchor and blasting blinding laser beam into ground zone.",
+                Idle: "Sky Bastion: a single heavy armored gunship with two large fixed ring-shaped lift nacelles glowing steady blue at its sides and a rocket launcher under its nose, hovering steady in mid-air, one aircraft in the middle of the frame and fully visible, with wide empty space on both sides, no other aircraft.",
+                Walk: "Sky Bastion: the same heavy gunship in smooth level forward flight, its fixed lift rings glowing brighter, flying in place in the middle of the frame and fully visible, no other aircraft.",
+                Attack: "Sky Bastion: A pair of anti-air rockets fired forward from its launcher on short bright exhaust trails.",
             },
         ),
         (
@@ -1238,9 +1238,9 @@
                 is_resource_dropoff: false,
             ),
             veo_prompts: {
-                Idle: "Cloak Gunship: Twin ducted-fan stealth helicopter craft with shimmering translucent camouflage hull.",
-                Walk: "Cloak Gunship: Low-altitude banking forward flight with whirring ducted fan rotors.",
-                Attack: "Cloak Gunship: Rapid salvo of orange thermite rockets cascading into target ground area.",
+                Idle: "Cloak Gunship: a single sleek stealth attack aircraft with a dark matte angular hull, two enclosed engine nacelles with softly glowing vents and a thermite rocket pod under each stub wing, hovering steady in mid-air, one aircraft in the middle of the frame and fully visible, with wide empty space on both sides, no other aircraft.",
+                Walk: "Cloak Gunship: the same stealth aircraft in fast level forward flight, both nacelle vents flaring bright, flying in place in the middle of the frame and fully visible, no other aircraft.",
+                Attack: "Cloak Gunship: A rapid salvo of orange thermite rockets fired forward from both pods.",
             },
         ),
         (
@@ -1292,8 +1292,8 @@
                 is_resource_dropoff: false,
             ),
             veo_prompts: {
-                Idle: "Omni-Probe Drone: Spherical electronic drone with spinning radar arrays and pulsing sensor dish.",
-                Walk: "Omni-Probe Drone: High-altitude gliding with gentle pitch adjustments and pulsing navigation lights.",
+                Idle: "Omni-Probe Drone: a single spherical electronic-warfare drone with a fixed sensor dish on top, four short fixed antenna fins and glowing cyan sensor lenses, hovering steady in mid-air, one drone in the middle of the frame and fully visible, with wide empty space on both sides, no other aircraft.",
+                Walk: "Omni-Probe Drone: the same spherical drone in smooth level forward flight, small thrusters glowing and navigation lights blinking, flying in place in the middle of the frame and fully visible, no other aircraft.",
                 Attack: "Omni-Probe Drone: Deploying miniature automated defense turret or targeting beam.",
             },
         ),
