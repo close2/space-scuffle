@@ -118,6 +118,11 @@
 // shipped interval is 0, so every strike still lands on its release tick, and with the four
 // fields left out of the encoding (schema 11) both fixtures reproduce as recorded for the scan
 // ranges (Q0057).
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP5 (B-2): "red_psi" (psi_grey) lands the
+// second blade of each swing 5 ticks after the first, and only within 2.1 of its target (was:
+// both on the swing's tick). Checkpoints 1 to 4 are unchanged; from checkpoint 5 (ticks 201 to
+// 250), the first in which a zealot swings, every checkpoint changed. golden_replay_orders is
+// unchanged: its "red_ledge" zealots swing at nothing before its last checkpoint.
 (
     checksum_schema: 12,
     seed: 0x5EED_0F_5CAFF1E,
@@ -149,21 +154,21 @@
         0xa27c87ec5671ef0a,
         0x7fc21f933c14217b,
         0x561c8b7849dd1b24,
-        0xe1e1df047820ca52,
-        0x4a1ed3c200c8fed8,
-        0xe7c4fc9a325e792d,
-        0x49b29ed5c4d9b73b,
-        0x6c6fca63d93f08a1,
-        0x7ed129d606ba6995,
-        0x4bb1a99648b8cb05,
-        0xd12a693fcc3e1d72,
-        0xa491344679f38172,
-        0xacd0c678d6a177ff,
-        0x90481fcd6cb806da,
-        0xc7f78c34a63a76f0,
-        0xcdc737de1aabb6e3,
-        0x44ffca933e167911,
-        0x384bb5840132ecc5,
-        0x6d0040daa3d30327,
+        0xce3325c00dedddc3,
+        0x8797e3e1cf3003eb,
+        0x462f535341a80cbc,
+        0x6c407c9cb4bf3ed8,
+        0x010c7b1d178c0965,
+        0xf8585484f0c34b6e,
+        0x614567c216e8e91b,
+        0xeb5e0d3d23f17db2,
+        0x401e1182aca827a6,
+        0x45a26e83f317d18b,
+        0x5797ccaabe84f5b0,
+        0xc10b851222e16358,
+        0x45459b4e8a315bb2,
+        0x565658c614a90a57,
+        0x4cdb94a64208b9be,
+        0x41024b147821c8d7,
     ],
 )

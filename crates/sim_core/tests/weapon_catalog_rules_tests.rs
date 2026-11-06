@@ -772,3 +772,59 @@ fn b11_acquire_tie_breaks_follow_starcraft() -> TestResult {
     }
     Ok(())
 }
+
+/// `StarCraft` II 5.0.14 strike spacing of the multi-strike weapons this catalog models:
+/// `(analogue, strike_interval_ticks, followup_max_distance, source)` (plan
+/// `2026-11-05-sc2-deviation-fixes` WP5, B-2; evidence §5.1). The interval is the effect's
+/// `PeriodicPeriodArray` in Normal seconds ÷ 1.4 × 25, rounded half up; the distance is the
+/// `CValidatorLocationCompareRange` on a later strike. Every weapon of every other archetype lands
+/// its strikes together: the Phoenix's two missiles leave on one loop and the Colossus' two
+/// strikes expire together; the Carrier's and the Brood Lord's attacks are B-22 and B-21.
+const SC2_STRIKE_SPACING: [(&str, u16, Option<f32>, &str); 1] = [(
+    "Zealot",
+    5,
+    Some(2.1),
+    "PsiBladesBurst 0, 0.28: liberty EffectData:1919; ZealotAttackDamageMaxRange: voidmulti ValidatorData:867",
+)];
+
+#[test]
+fn b2_strike_spacing_follows_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    for (unit, _, _, source) in SC2_STRIKE_SPACING {
+        assert!(
+            archetypes_with_analogue(&world, unit).next().is_some(),
+            "an archetype with the analogue {unit} ({source})"
+        );
+    }
+    for archetype in world.catalog.archetypes() {
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next());
+        let (interval, distance) = SC2_STRIKE_SPACING
+            .iter()
+            .find(|(unit, ..)| Some(*unit) == analogue)
+            .map_or((0, None), |&(_, interval, distance, _)| {
+                (interval, distance.map(SimScalar::from_f32_lossy))
+            });
+        let weapons = [
+            &archetype.weapon,
+            &archetype.ground_weapon,
+            &archetype.air_weapon,
+        ];
+        for weapon in weapons.into_iter().flatten() {
+            let (interval, distance) = if weapon.attacks_count > 1 {
+                (interval, distance)
+            } else {
+                (0, None)
+            };
+            assert_eq!(
+                (weapon.strike_interval_ticks, weapon.followup_max_distance),
+                (interval, distance),
+                "{} {}: strike spacing as StarCraft II's effect",
+                archetype.slug,
+                weapon.name
+            );
+        }
+    }
+    Ok(())
+}

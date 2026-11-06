@@ -425,8 +425,10 @@ float counts did not move (the new fields are integers, enums and a fixed-point 
 ## 5. WP5: multi-strike timing (B-2)
 
 Measurements under `~/scratch/sc2dev_wp5/<step>`, each from its commit extracted into a fixed directory under the
-shared heavy-run lock (§4.8). The base is `main` at `d1876fa` (WP4 complete, combat alignment WP14 measured but not
-applied): whole matrix bit-identical to §4.10, battle 33 20 / 35 / 13.
+shared heavy-run lock (§4.8). The base is `main` at `9df767e` (WP4 complete and StarCraft II's scan ranges applied,
+Q0057; combat alignment evidence §16): whole matrix 0 expectation failures, battle 33 21 / 37 / 10 on 68 seeds, as
+recorded there. (WP5 and WP6 were first built on `d1876fa`, before the scan ranges; every number below is from the
+commits rebased onto `9df767e`, each measured against its predecessor.)
 
 ### 5.1 Research (U-2)
 
@@ -465,3 +467,70 @@ appends it (the same Banshee edit). Times are Normal seconds; ticks = Normal s �
   WP8b). Whether an order given between the strikes ends a `Channeled` burst is not stated in the data or on
   Liquipedia: filed as [Q0058](../questions/open/0058-channeled-burst-interruption.md), default no change (only the
   attacker's death or boarding ends a burst).
+
+### 5.2 Commit a: strikes on separate ticks, latent
+
+- **Rule** (`combat_resolution.rs` `begin_strikes`, `advance_pending_strikes`). A weapon with
+  `strike_interval_ticks` > 0 lands its first strike on the release tick and keeps the rest in
+  `Entity::pending_strikes`, one per interval. A later strike lands only if its target is still available to the
+  attacker (alive, damageable, revealed if cloaked), on the plane of the weapon that released it (the data's
+  `MultipleHitGroundOnlyAttackTargetFilter`), and within `followup_max_distance` from centre to centre if the
+  weapon names one; a strike that fails is lost and the next still tries, as each period's effect is validated on
+  its own. The attacker's death or boarding ends the burst. A projectile weapon launches one missile per strike,
+  each carrying one strike (`ActiveProjectile::strikes`); a strike with splash splashes. Catalog validation rejects
+  an interval on a single-strike weapon, a burst whose last strike would land after the attack period, and a
+  distance without an interval.
+- **Tests first** (`crates/sim_core/tests/multi_strike_timing_tests.rs`, scratch archetypes). On the old code
+  (`d1876fa`, built from a fresh extraction): `the_second_strike_lands_one_interval_after_the_first`,
+  `a_followup_beyond_its_distance_is_lost`, `a_dead_attacker_lands_no_further_strike`,
+  `a_spaced_projectile_weapon_launches_one_missile_per_strike` and `catalog_rejects_strike_spacing_it_cannot_honour`
+  failed (both strikes on the release tick: 20 damage on the first tick; one missile with both strikes; the
+  catalog accepted every spacing); the guards `strikes_with_no_interval_land_on_the_release_tick` and
+  `catalog_accepts_a_burst_that_ends_within_its_period` passed. All seven pass with the rule.
+- **Latent.** Every shipped interval is 0. Checksum schema 11 → 12 (the two weapon fields, `pending_strikes`, the
+  projectile's `strikes`): both golden replays, the default sandbox checksum and the schema bytes of four encoding
+  unit tests re-recorded for the schema alone. With the four fields left out of the encoding at schema 11, both
+  goldens reproduce as recorded for the scan ranges (release). Debug, release and `wasm32-wasip1` (debug and
+  release) reproduce the new lists. Matrix and battle 33 bit-identical to §5's base (21 / 37 / 10).
+- **Trace tool.** `sim_fixtures::trace` replays only the strikes a release lands (one for a spaced weapon) when it
+  counts wasted shots; later strikes are not releases, so in battles with spaced weapons the count is a lower
+  bound.
+
+### 5.3 Commit b1: the Zealot's second blade (B-2)
+
+- **Data.** `psi_grey`: `strike_interval_ticks: 5`, `followup_max_distance: Some(2.1)` (§5.1). **Test first:**
+  `b2_strike_spacing_follows_starcraft` (`weapon_catalog_rules_tests.rs`, a table of the cited spacings found by
+  `sc2_analogue`; every other weapon must land its strikes together) failed on the old data (`psi_grey` `(0, None)`)
+  and passes. Tests restated for the cause: the 1-v-1 cadence test (`sc2_battle_benchmarks_tests.rs`) and the trace
+  tool's melee test now expect each swing's second blade 5 ticks after its first, so the marine dies on the third
+  swing's second blade, 5 ticks later than before.
+- **Measured against §5.2.** Six battles moved; only battle 33's winner over its seeds changed. Each field alone:
+  the interval alone gives the same matrix and battle 33 bit for bit, so the 2.1 condition decides no blade in the
+  matrix.
+
+| Battle | Seeds moved | Wins blue/red | Survivors blue – red | End tick | Lead hull blue / red |
+|---|---|---|---|---|---|
+| 7_zealot_vs_roach | 20 | 20/0, same | 1.00 – 0.00, same | 240.9 → 245.9 | 42.00, same / — |
+| 8_zealot_vs_stalker | 20 | 20/0, same | 1.00 – 0.00, same | 241.5 → 246.5 | 51.00, same / — |
+| 23b_upgraded_zealot_vs_6_lings | 20 | 20/0, same | 1.00 – 0.00, same | 245.6 → 250.6 | 62.80 → 57.80 / — |
+| 25a_2_marines_vs_zealot | 20 | 0/20, same | 0.00 – 1.00, same | 145.7 → 153.7 | — / 62.00 → 57.50 |
+| 25b_upgraded_marines_vs_zealot | 20 | 0/20, same | 0.00 – 1.00, same | 141.4 → 146.4 | — / 32.00 → 22.00 |
+| 33_24_marines_vs_12_zealots | 20 | 7/13 → 17/1 | 2.25 – 1.75 → 5.80 – 0.25 | 442.9 → 431.7 | 37.00 (4) → 39.29 (7) / — |
+
+  Every zealot fight ends 5 ticks later (the killing blow is now a second blade), or 8 in 25a where the zealot
+  kills two marines; living 5 ticks longer, the last victims deal the zealot 4.5 to 10 more damage (lead hulls of
+  23b, 25a, 25b).
+- **Battle 33, 68 seeds:** 54 / 7 / 7 (was 21 / 37 / 10), marine survivors 5.29 (SD 3.27; was 2.06), zealot
+  survivors 0.37 (SD 0.83; was 1.74), mean end tick 434.9 (was 448.6). Seeds of record 7-0, 7-0, 6-0, 7-0 (were
+  0-2, 0-2, 3-0, 6-0). **Mechanism** (a probe build counting each second blade as it falls due, 68 seeds, not
+  committed; taken on the base before the scan ranges, where the same change moved 20 / 35 / 13 to 57 / 5 / 6):
+  3966 second blades fell due; 3650 landed (every one within 2.1 and on an available target) and 316
+  found their marine already dead (killed by its first blade or by another zealot in the 5 ticks). So the zealots
+  deal the same blades, half of them 5 ticks later: each marine kill takes 5 ticks longer, the marines fire through
+  those ticks, and in this even fight that turns most seeds. Re-recorded per combat alignment D-6:
+  `blue: (0, 13), red: (0, 3)` (was `(0, 10)` and `(0, 5)`), the smallest ranges that hold on all 20 matrix seeds;
+  the fixture comment states the distribution. The fixture's claim ("either side may win narrowly") is kept, as the
+  claim of the battle's design, and is no longer what the matrix shows.
+- **Golden replay** re-recorded: from checkpoint 5 (ticks 201 to 250), the first in which a "red_psi" (`psi_grey`)
+  zealot swings, every checkpoint changed; `golden_replay_orders` is unchanged (its zealots release no swing). Debug,
+  release and `wasm32-wasip1` reproduce.

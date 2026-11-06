@@ -159,7 +159,7 @@ fn ticks_to_contact(distance: f64) -> Result<u32, Box<dyn Error>> {
 }
 
 /// The melee weapon's damage point and period, in ticks.
-fn melee_timing() -> Result<(u32, u32), Box<dyn Error>> {
+fn melee_timing() -> Result<(u32, u32, u32), Box<dyn Error>> {
     let catalogs = sim_fixtures::shipped_catalogs();
     let melee = catalogs
         .units
@@ -168,6 +168,7 @@ fn melee_timing() -> Result<(u32, u32), Box<dyn Error>> {
     Ok((
         u32::from(weapon.damage_point_ticks),
         u32::from(weapon.period_ticks),
+        u32::from(weapon.strike_interval_ticks),
     ))
 }
 
@@ -187,12 +188,13 @@ fn a_melee_unit_makes_contact_and_swings_on_the_ticks_the_catalog_predicts() -> 
     let trace = trace_battle(&battle, sim_fixtures::shipped_catalogs(), 1, 0.0)?;
     let summary = trace.summary();
     let contact = ticks_to_contact(5.0)?;
-    let (damage_point, period) = melee_timing()?;
+    let (damage_point, period, interval) = melee_timing()?;
 
     // The ranged unit is in range from the start; the melee unit closes the gap.
     assert_eq!(summary.first_engaged_tick, [Some(0), Some(contact)]);
     // Its swing starts on contact, lands after the damage point, and repeats every period; the
-    // third swing kills (6 strikes of 8 against 45 life).
+    // third swing's second strike, `interval` ticks after its first, kills (6 strikes of 8
+    // against 45 life).
     let first = contact + damage_point;
     assert_eq!(
         release_ticks(&trace, Team::Red),
@@ -201,7 +203,7 @@ fn a_melee_unit_makes_contact_and_swings_on_the_ticks_the_catalog_predicts() -> 
     assert_eq!(summary.totals[1].swings_started, 3);
     assert_eq!(summary.totals[1].cancelled(), 0);
     assert_eq!(summary.survivors, [0, 1]);
-    assert_eq!(summary.end_tick, first + 2 * period);
+    assert_eq!(summary.end_tick, first + 2 * period + interval);
     assert!((summary.totals[0].damage_taken - 45.0).abs() < 1e-3);
     // Each of the ranged unit's shots costs the melee unit 6 (shields) or 5 (spillover or life).
     for record in &trace.ticks()[1..] {
