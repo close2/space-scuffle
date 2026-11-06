@@ -158,7 +158,6 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-4 | Siege Mode has one transformation time and no random part | WP11 |
 | B-5 | Whether damage point and backswing hold an automatically attacking unit (not yet sourced) | WP16 |
 | B-6 | Release range slop 0.5 for every weapon | WP9 |
-| B-12 | Scan ranges of units and armed structures; how the game measures them is unsourced ([Q0057](docs/questions/open/0057-scan-range-measuring-rule.md)) | Q0057 (combat alignment WP14 measured it) |
 | B-13 | Call-for-help radius, flee distance, leash and abandoned-target time are unsourced | WP16 |
 | B-14 | Bonus damage only against Armored and Light | WP6 |
 | B-15 | Shield-break remainder rule unsourced | WP7 |

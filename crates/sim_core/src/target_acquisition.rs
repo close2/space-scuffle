@@ -20,6 +20,9 @@
 //!    best candidate by the whole key; among equals, the archetype's tie-break decides (closest,
 //!    least turning, or closest to the previous target).
 //! 4. Damage from a unit's own side never causes retaliation, flight or alerts.
+//! 5. Scan range, like weapon reach, is measured between the two units' edges: the centre
+//!    distance minus both collision radii (`StarCraft` II `MinScanRange`, Q0057). A weapon
+//!    scans at least to its own effective range.
 
 use crate::catalog::{AcquireLevel, AcquireTieBreak, UnitArchetype, WeaponSpec};
 use crate::combat::{is_threat_to, weapon_aim, TargetPriorityKey};
@@ -66,6 +69,26 @@ pub(crate) enum Acquisition {
     /// Record where the unit's current target stands, for the tie-break
     /// [`AcquireTieBreak::ClosestToPrevious`].
     RememberTarget(SimVec2),
+}
+
+/// Facts about the whole catalog that every unit's acquisition reads, gathered once per tick.
+#[derive(Clone, Copy)]
+struct CatalogBounds {
+    /// The highest attack target priority of any archetype.
+    top_priority: u8,
+    /// The largest collision radius of any archetype, in world units: how far beyond a scan
+    /// range a candidate's centre can lie while its edge is inside it.
+    largest_radius: SimScalar,
+}
+
+/// Where one unit's neighbourhood scan looks.
+#[derive(Clone, Copy)]
+struct ScanScope {
+    /// Whether the unit stays where it stands (holding or immobile), so only enemies inside its
+    /// weapon reach qualify.
+    stationary: bool,
+    /// The catalog's largest collision radius in world units ([`CatalogBounds::largest_radius`]).
+    largest_radius: SimScalar,
 }
 
 /// Best candidates from one neighbourhood scan.
@@ -334,12 +357,16 @@ impl SimWorld {
         acquisitions.clear();
         let mut neighbors = std::mem::take(&mut self.scratch_neighbors);
         let mut candidates = std::mem::take(&mut self.scratch_targets);
-        let top_priority = self
-            .catalog
-            .archetypes()
-            .map(|archetype| archetype.attack_target_priority)
-            .max()
-            .unwrap_or(0);
+        let bounds = self.catalog.archetypes().fold(
+            CatalogBounds {
+                top_priority: 0,
+                largest_radius: SimScalar::ZERO,
+            },
+            |bounds, archetype| CatalogBounds {
+                top_priority: bounds.top_priority.max(archetype.attack_target_priority),
+                largest_radius: bounds.largest_radius.max(archetype.collision_radius),
+            },
+        );
         for (&id, entity) in &self.entities {
             if entity.channeling_remaining_ticks > 0
                 || entity.is_loaded_in_transport()
@@ -350,13 +377,8 @@ impl SimWorld {
             let Ok(arch) = self.catalog.get(entity.unit_type_id) else {
                 continue;
             };
-            let decision = self.decide_acquisition(
-                entity,
-                arch,
-                top_priority,
-                &mut neighbors,
-                &mut candidates,
-            );
+            let decision =
+                self.decide_acquisition(entity, arch, bounds, &mut neighbors, &mut candidates);
             if let Some(decision) = decision.or_else(|| self.target_to_remember(entity, arch)) {
                 acquisitions.push((id, decision));
             }
@@ -474,7 +496,7 @@ impl SimWorld {
         &self,
         entity: &Entity,
         arch: &UnitArchetype,
-        top_priority: u8,
+        bounds: CatalogBounds,
         neighbors: &mut Vec<EntityId>,
         candidates: &mut Vec<(TargetPriorityKey, EntityId)>,
     ) -> Option<Acquisition> {
@@ -503,7 +525,7 @@ impl SimWorld {
             self.catalog
                 .get(target.unit_type_id)
                 .is_ok_and(|target_arch| {
-                    target_arch.attack_target_priority >= top_priority
+                    target_arch.attack_target_priority >= bounds.top_priority
                         && arch.primary_weapon_reaches(target_arch.mover_type)
                         && is_threat_to(target_arch, target, arch)
                 })
@@ -513,7 +535,17 @@ impl SimWorld {
         }
 
         let stationary = entity.is_immobile || matches!(engagement, Engagement::Hold);
-        let scan = self.scan_candidates(entity, arch, current, stationary, neighbors, candidates);
+        let scan = self.scan_candidates(
+            entity,
+            arch,
+            current,
+            ScanScope {
+                stationary,
+                largest_radius: bounds.largest_radius,
+            },
+            neighbors,
+            candidates,
+        );
         let Some(best) = scan.best else {
             return match engagement {
                 Engagement::Hold if current.is_some() && reachable_current.is_none() => {
@@ -536,21 +568,47 @@ impl SimWorld {
         Some(Acquisition::Engage(best.entity_id))
     }
 
+    /// The farthest `entity` scans beyond both edges against any candidate, in world units: its
+    /// archetype's scan range, or the effective range (upgrades included) of its longest weapon,
+    /// the siege weapon while sieged, when that is greater.
+    fn scan_extent(&self, entity: &Entity, arch: &UnitArchetype) -> SimScalar {
+        [
+            arch.ground_weapon.as_ref(),
+            arch.air_weapon.as_ref(),
+            arch.weapon.as_ref(),
+            entity.active_siege_weapon(),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|weapon| self.effective_weapon_range(weapon, &arch.slug, entity.owner))
+        .fold(arch.scan_range, SimScalar::max)
+    }
+
     /// Ranks every enemy `entity` could attack, returning the best and the current target.
     ///
-    /// With `stationary` set, only enemies inside weapon reach qualify.
+    /// An enemy is a candidate when its edge lies within the scan range of `entity`'s edge: the
+    /// centre distance minus both collision radii, as weapon reach is measured (`StarCraft` II
+    /// `MinScanRange`, Q0057). The scan range against a candidate is the archetype's, or the
+    /// effective range of the weapon `entity` would use against it when that is greater: in
+    /// `StarCraft` II a weapon scans to its `MinScanRange` or its `Range`, whichever is greater
+    /// (audit §11.1), so a sieged unit scans as far as its siege weapon reaches. The catalog's
+    /// largest collision radius in `scope` bounds how far beyond that range a candidate's centre
+    /// can lie. With `scope.stationary` set, only enemies inside weapon reach qualify.
     fn scan_candidates(
         &self,
         entity: &Entity,
         arch: &UnitArchetype,
         current: Option<EntityId>,
-        stationary: bool,
+        scope: ScanScope,
         neighbors: &mut Vec<EntityId>,
         candidates: &mut Vec<(TargetPriorityKey, EntityId)>,
     ) -> ScanResult {
         // The ranking key ends in the entity ID, so visiting order cannot change the winner.
-        self.spatial_hash
-            .query_radius_unordered(entity.position, arch.scan_range, neighbors);
+        self.spatial_hash.query_radius_unordered(
+            entity.position,
+            self.scan_extent(entity, arch) + arch.collision_radius + scope.largest_radius,
+            neighbors,
+        );
         candidates.clear();
         let mut result = ScanResult::default();
         let vision = self.vision_maps.get(entity.owner);
@@ -566,9 +624,6 @@ impl SimWorld {
                 continue;
             }
             let dist = entity.position.distance(neighbor.position);
-            if dist > arch.scan_range {
-                continue;
-            }
             let Ok((cx, cy)) = self.map.world_to_cell(neighbor.position) else {
                 continue;
             };
@@ -583,14 +638,20 @@ impl SimWorld {
             else {
                 continue;
             };
+            let radii = arch.collision_radius + target_arch.collision_radius;
+            let scan_range =
+                arch.scan_range
+                    .max(self.effective_weapon_range(weapon, &arch.slug, entity.owner));
+            if dist > scan_range + radii {
+                continue;
+            }
             if !weapon.target_flags.intersects(target_arch.attributes) {
                 continue;
             }
-            let radii = arch.collision_radius + target_arch.collision_radius;
             if weapon.min_range > SimScalar::ZERO && dist < weapon.min_range + radii {
                 continue;
             }
-            if stationary && !self.reaches_from_here(entity, arch, neighbor) {
+            if scope.stationary && !self.reaches_from_here(entity, arch, neighbor) {
                 continue;
             }
 

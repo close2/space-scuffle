@@ -1199,9 +1199,55 @@ ranges are measured on top of it), when the owner's priority allows. It may be s
 ([evidence](../evidence/2026-11-04-combat-sc2-alignment.md) §15, reference table in the
 [audit](../evidence/2026-11-04-catalog-time-audit.md) §11); the trace tool gained targeting measures (`b1d28e6`).
 The mechanism in battle 33 is explained (timing, not focus), but the game's measuring rule (centre or edge) is not
-sourced and decides what the values do, so no value is applied: [Q0057](../questions/open/0057-scan-range-measuring-rule.md),
+sourced and decides what the values do, so no value is applied: [Q0057](../questions/closed/0057-scan-range-measuring-rule.md),
 default no change; bug B-12 of plan [`2026-11-05-sc2-deviation-fixes`](2026-11-05-sc2-deviation-fixes.md) stays open
 (its Amendment 6).
+
+**Amendment 7 (orchestrator, 2026-11-06): Q0057 answered — edge rule, then reference values.** The owner answered
+[Q0057](../questions/closed/0057-scan-range-measuring-rule.md):
+
+> "Option 2 — measure scan range edge to edge (scan distance minus both radii, matching how weapon range is measured
+> and why SC2 sets `MinScanRange = Range + 0.5`), apply the audited SC2 reference scan ranges across the catalog,
+> and re-record the moved battles."
+
+This completes step 4 and fixes bug B-12 of plan [`2026-11-05-sc2-deviation-fixes`](2026-11-05-sc2-deviation-fixes.md).
+Commits, one cause each, tests first, each measured on its own (whole matrix on the seeds of record plus 16, with
+`--compare` against the previous step; battle 33 on 68 seeds):
+
+1. **Mechanism (code).** `target_acquisition.rs` qualifies a candidate when the centre distance minus both
+   collision radii is within the scan range; the spatial query widens by the scanner's radius and the catalog's
+   largest radius so no candidate is missed. Values unchanged, so this moves battles by itself (every ranged unit
+   notices an enemy about one unit pair of radii deeper).
+2. **Data.** Every armed unit's `scan_range` to the audit's §11.2 reference (the greater of `MinScanRange` and
+   `Range`; the data win over Liquipedia's rule for the Brood Lord, the Queen and the burrowed Lurker). The seven
+   unarmed units keep theirs (they acquire nothing).
+3. **What one value per unit cannot express**, each its own commit, from the audit's engine rule (§11.1: a weapon
+   scans to `MinScanRange` or its `Range`, whichever is greater):
+   - **(a) A weapon scans at least to its own range.** A candidate also qualifies within the effective range
+     (upgrades included) of the weapon the unit would use against it. This is the engine rule itself, not a new
+     value: Siege Mode's `CrucioShockCannon` (13, no `MinScanRange`) scans 13 while the tank-mode value stays 7.5,
+     and an upgraded range (for example the Colossus' Extended Thermal Lance) scans to the upgraded range, as the
+     SC2Mapster wiki states ("If the range should be higher than this value, this field implicitly becomes
+     equivalent to the current range").
+   - **(b) Armed structures read a catalog field.** `structures.ron` gains `scan_range`, required on a structure with
+     a weapon and refused on one without; the five armed structures take the reference (Planetary Fortress 6;
+     Photon Cannon, Missile Turret, Spine Crawler, Spore Crawler 7; audit §11.3). They scanned to their sight radius
+     (11) before.
+
+**Stop rule and re-recording.** A battle other than 33 whose winner over its seeds changes stops the step and is
+reported with numbers. The owner's answer authorises re-recording the moved battles' expectations, each with its
+explanation in the commit (D-6 for battle 33: the smallest ranges that hold on the matrix seeds, the 68-seed
+distribution in the comment). Goldens are re-recorded only in the commit that moves them, with the cause traced to
+named units, and reproduced in debug, release and `wasm32-wasip1`. Then Q0057 is resolved and closed, B-12 is marked
+fixed in the deviation plan's Amendment 2 table and the `DESIGN.md` register, and the design documents' scan-range
+cells are updated.
+
+**Outcome of Amendment 7 (2026-11-06).** Done ([evidence](../evidence/2026-11-04-combat-sc2-alignment.md) §16):
+`950b2bd` (edge rule; 10 battles moved), `74d5491` (step 3a, bit-identical), `8f77ddc` (unit values; 15 battles
+moved, battle 33 re-recorded to `blue: (0, 10), red: (0, 5)`, both goldens re-recorded) and `0a75c26` (step 3b,
+bit-identical). Step 3a was committed before the unit values, because the values alone leave a sieged tank blind
+between 7.5 and 13 and fail a workspace test. No battle's winner over its seeds changed. Q0057 is closed and B-12 is
+fixed.
 
 ---
 

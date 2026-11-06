@@ -49,5 +49,5 @@ below its weapon reach acquires a zealot only once it can already shoot it), the
 identity (audit [§11](../../evidence/2026-11-04-catalog-time-audit.md)) and the whole matrix with every reference
 value (evidence [§15](../../evidence/2026-11-04-combat-sc2-alignment.md); 26 battles move under our centre rule and 15
 under an edge rule, and no battle's winner over its seeds changes). No value was applied: whether the game measures a scan range from the units' centres or edges is
-not sourced and decides what the values do. That decision is [Q0057](../open/0057-scan-range-measuring-rule.md);
+not sourced and decides what the values do. That decision is [Q0057](0057-scan-range-measuring-rule.md);
 until it is answered every unit keeps its `scan_range`, and the difference stays recorded as bug B-12.

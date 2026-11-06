@@ -68,6 +68,10 @@ struct Scratch<'a> {
     ground: &'a str,
     /// The `air_weapon` slot in RON.
     air: &'a str,
+    /// `scan_range` in world units, in RON.
+    scan: &'a str,
+    /// `collision_radius` (and `separation_radius`) in world units, in RON.
+    radius: &'a str,
 }
 
 impl Scratch<'_> {
@@ -82,6 +86,8 @@ impl Scratch<'_> {
             extra: "",
             ground: "None",
             air: "None",
+            scan: "12.0",
+            radius: "0.5",
         }
     }
 
@@ -122,11 +128,11 @@ impl Scratch<'_> {
             acceleration: 0.1,
             deceleration: 0.1,
             turn_rate_deg_per_tick: 180.0,
-            collision_radius: 0.5,
-            separation_radius: 0.5,
+            collision_radius: {radius},
+            separation_radius: {radius},
             push_priority: 20,
             sight_radius: 12.0,
-            scan_range: 12.0,
+            scan_range: {scan},
             attack_target_priority: {priority},
             primary_weapon: {primary},
             acquire_tie_break: {tie_break},
@@ -148,6 +154,8 @@ impl Scratch<'_> {
             extra = self.extra,
             ground = self.ground,
             air = self.air,
+            scan = self.scan,
+            radius = self.radius,
         )
     }
 }
@@ -491,5 +499,104 @@ fn b80_a_defensive_unit_acquires_only_while_attack_moving() -> TestResult {
         Some((chooser, UnitOrder::AttackMove { target: beyond })),
     );
     assert_eq!(acquired(&world, chooser), Some(target), "attack-moving");
+    Ok(())
+}
+
+/// A gunner ([`RIFLE`], reach 6 beyond both edges) scanning 7 beyond both edges, as `StarCraft`
+/// II measures `MinScanRange` (Q0057).
+fn scanner() -> Scratch<'static> {
+    Scratch {
+        scan: "7.0",
+        ..Scratch::gunner(CHOOSER)
+    }
+}
+
+/// B-12 (Q0057): scan range is measured edge to edge. An enemy 8 between centres is 7 beyond
+/// both radii (0.5 each), exactly the scan range, so it is acquired; between centres it lies
+/// beyond the scan range.
+#[test]
+fn b12_scan_range_is_measured_from_the_edges() -> TestResult {
+    let mut world = world_with(&[scanner(), Scratch::unarmed("target")])?;
+    let chooser = spawn(&mut world, CHOOSER, 0, 10, 16)?;
+    let target = spawn(&mut world, "target", 1, 18, 16)?;
+    step(&mut world, 0, None);
+    assert_eq!(acquired(&world, chooser), Some(target));
+    Ok(())
+}
+
+/// B-12 (Q0057): an enemy 9 between centres, 8 beyond both edges, is outside the scan range of
+/// 7 and is left alone.
+#[test]
+fn b12_an_enemy_beyond_the_scan_range_from_the_edges_is_left_alone() -> TestResult {
+    let mut world = world_with(&[scanner(), Scratch::unarmed("target")])?;
+    let chooser = spawn(&mut world, CHOOSER, 0, 10, 16)?;
+    spawn(&mut world, "target", 1, 19, 16)?;
+    step(&mut world, 0, None);
+    assert_eq!(acquired(&world, chooser), None);
+    Ok(())
+}
+
+/// B-12 (Q0057): a large enemy is scanned from its edge. One of radius 2.5, 10 between centres,
+/// is 7 beyond both edges and is acquired, although its centre lies 2.5 beyond the chooser's
+/// scan range plus its own radius.
+#[test]
+fn b12_a_large_enemy_is_scanned_from_its_edge() -> TestResult {
+    let mut world = world_with(&[
+        scanner(),
+        Scratch {
+            radius: "2.5",
+            ..Scratch::unarmed("hulk")
+        },
+    ])?;
+    let chooser = spawn(&mut world, CHOOSER, 0, 10, 16)?;
+    let hulk = spawn(&mut world, "hulk", 1, 20, 16)?;
+    step(&mut world, 0, None);
+    assert_eq!(acquired(&world, chooser), Some(hulk));
+    Ok(())
+}
+
+/// B-12 (audit §11.1): a weapon scans at least to its own range. A gunner scanning 3 acquires
+/// an enemy 6 beyond both edges, inside its weapon's range of 6, as `StarCraft` II's
+/// `MinScanRange` "implicitly becomes equivalent to the current range" when the range is higher.
+#[test]
+fn b12_a_weapon_scans_at_least_to_its_range() -> TestResult {
+    let mut world = world_with(&[
+        Scratch {
+            scan: "3.0",
+            ..Scratch::gunner(CHOOSER)
+        },
+        Scratch::unarmed("target"),
+    ])?;
+    let chooser = spawn(&mut world, CHOOSER, 0, 10, 16)?;
+    let target = spawn(&mut world, "target", 1, 17, 16)?;
+    step(&mut world, 0, None);
+    assert_eq!(acquired(&world, chooser), Some(target));
+    Ok(())
+}
+
+/// B-12 (audit §11.3): a sieged unit scans to its siege weapon's range. The tank-mode scan of 7
+/// is the unit's value; sieged, with a weapon of range 13, it acquires an enemy 13 beyond both
+/// edges (`StarCraft` II's Siege Mode `CrucioShockCannon`, range 13, no `MinScanRange`).
+#[test]
+fn b12_a_sieged_unit_scans_to_its_siege_weapon_range() -> TestResult {
+    let mut world = world_with(&[scanner(), Scratch::unarmed("target")])?;
+    let chooser = spawn(&mut world, CHOOSER, 0, 10, 16)?;
+    let target = spawn(&mut world, "target", 1, 24, 16)?;
+    // An unarmed ally beside the target reveals it: it lies beyond the tank's sight of 12.
+    spawn(&mut world, "target", 0, 24, 19)?;
+    let unit_type = world.catalog.id_by_slug(CHOOSER).ok_or(CHOOSER)?;
+    let mut cannon = world
+        .catalog
+        .get(unit_type)?
+        .ground_weapon
+        .clone()
+        .ok_or("the scanner has a ground weapon")?;
+    cannon.max_range = SimScalar::from_i32(13);
+    let tank = world.entities.get_mut(&chooser).ok_or("tank")?;
+    tank.is_sieged = true;
+    tank.is_immobile = true;
+    tank.siege_weapon = Some(cannon);
+    step(&mut world, 0, None);
+    assert_eq!(acquired(&world, chooser), Some(target));
     Ok(())
 }

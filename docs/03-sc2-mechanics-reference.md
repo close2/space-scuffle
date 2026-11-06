@@ -50,7 +50,7 @@ flowchart LR
 
 ### 1.5 Target Acquisition & AI Behavior Flags (Per Unit)
 Even when controlled by a human, every RTS unit runs a small local **Auto-Behavior State Machine**:
-- **Scan Range:** Distance at which an idle or `Attack-Moving` unit automatically notices enemies (usually slightly larger than `WeaponRange`).
+- **Scan Range:** Distance at which an idle or `Attack-Moving` unit automatically notices enemies, measured edge to edge like weapon range. Per weapon it is the greater of `MinScanRange` (default 5; most ground weapons `Range` + 0.5 in Legacy of the Void) and `Range`, so a Marine scans 5.5, a Zealot 5, a sieged Siege Tank 13 and a Photon Cannon 7 (`units.ron` and `structures.ron` `scan_range`; [Q0057](questions/closed/0057-scan-range-measuring-rule.md)).
 - **Target Priority (`AttackTargetPriority`):** Combat units have priority `20`, Workers have priority `20` when attacking or `19` when harvesting, Buildings have priority `11`. Units automatically shoot the highest-priority threat in range unless explicitly right-clicked onto a specific target!
 - **Leash Range:** How far an idle unit will chase an enemy before returning to its guard spot.
 - **Hold Position:** Unit will not move or chase, even if attacked, and cannot be pushed by friendly units.

@@ -2134,3 +2134,11 @@ applied by the resolver; neither changes a maximum.
   between centres; under ours it is 5.5, which is less than its weapon reach (5 + 0.375 + 0.5 = 5.875), so the
   marine would acquire only what it can already shoot. That `MinScanRange` is set to `Range` + 0.5 suggests both
   are measured alike, but no source says so; it is asked as Q0057.
+
+### 11.4 Applied (2026-11-06, combat alignment WP14 Amendment 7)
+
+The owner answered [Q0057](../questions/closed/0057-scan-range-measuring-rule.md): edge to edge. Applied, with the
+measurements in the [combat alignment evidence](2026-11-04-combat-sc2-alignment.md) §16: the edge rule (`950b2bd`);
+a weapon scans at least to its effective range, which covers Siege Mode's 13 and upgraded ranges (`74d5491`); the 35
+"Reference" values of §11.2 in `units.ron` (`8f77ddc`); and a `scan_range` field for structures with the five
+values of §11.3 (`0a75c26`). The "Ours" column of §11.2 is the state before.

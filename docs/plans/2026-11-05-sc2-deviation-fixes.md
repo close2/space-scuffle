@@ -150,7 +150,7 @@ another path is given.
 | B-9 | The closest target is used for switching, with an invented margin of 1.0 | "Closest target" applies "only if the unit lost its previous target". A target is kept until it is no longer valid (dies, becomes invisible, goes up a ramp), leaves weapon range, or a higher-priority target enters (Liquipedia Automatic Targeting) | `target_acquisition.rs` `RETARGET_DISTANCE_MARGIN`, `decide_acquisition` | B-rule | matrix-wide focus pattern (investigation §5.3: the strongest single effect in battle 33 was through targeting) | M | WP4 |
 | B-10 | No primary-weapon criterion | Third criterion: a unit with two weapons prefers targets for its primary weapon (Liquipedia) | none | B-rule | thor, viking, liberator, queen | S | WP4 |
 | B-11 | No per-unit tie-break for step 4 | Hellbat, Thor, Battlecruiser and Ultralisk take the target that needs the least turning. Colossus, Immortal and an unsieged Siege Tank take the target closest to their previous target (Liquipedia) | none | B-rule + B-data (flag per archetype) | 2a–3, 12a/b, 14, 15, 26–28, 30, 35 | M | WP4 |
-| B-12 | Scan range 8 to 12 on units, the sight radius (11) on armed structures, centre to centre | Per weapon the greater of `MinScanRange` and `Range` (Liquipedia; `WeaponData`; table in audit §11): 5 to 10.5 on units, 6 or 7 on structures, 13 in Siege Mode. Whether it is measured from the centres or the edges is **not found** ([Q0057](../questions/open/0057-scan-range-measuring-rule.md)) | `units.ron` `scan_range`; `catalog.rs` (structures); `target_acquisition.rs` | P | matrix-wide (26 or 15 battles move, combat evidence §15.3, §15.4) | — | combat WP14 researched and measured (Amendment 6); open on Q0057 |
+| B-12 | Scan range 8 to 12 on units, the sight radius (11) on armed structures, centre to centre | Per weapon the greater of `MinScanRange` and `Range` (Liquipedia; `WeaponData`; table in audit §11): 5 to 10.5 on units, 6 or 7 on structures, 13 in Siege Mode. Whether it is measured from the centres or the edges was not found; the owner chose edge to edge ([Q0057](../questions/closed/0057-scan-range-measuring-rule.md)) | `units.ron` `scan_range`; `catalog.rs` (structures); `target_acquisition.rs` | P | matrix-wide (26 or 15 battles move, combat evidence §15.3, §15.4) | — | Fixed by combat alignment WP14 Amendment 7 (`950b2bd`, `74d5491`, `8f77ddc`, `0a75c26`; Q0057, this plan's Amendment 7) |
 | B-13 | Call-for-help radius 5, flee distance 5, pursuit leash 2 × scan range, abandoned target ignored for 2 s | Not found (§5). StarCraft II has unit alert and flee behaviour, but no radius or distance is sourced **(unsourced)** | `target_acquisition.rs` `CALL_FOR_HELP_RADIUS_SQ`, `HELPLESS_FLEE_DISTANCE`; `movement/tuning.rs` `PURSUIT_LEASH_SCAN_RANGES`, `ABANDONED_TARGET_TICKS` | B-? | skirmish; matrix where units are idle (13, held units) | — | WP16 research |
 
 ### 3.3 Damage model
@@ -762,7 +762,7 @@ requires.
 | B-9 | Closest-target switching with an invented margin | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.6; Amendment 5) |
 | B-10 | No primary-weapon criterion | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.7) |
 | B-11 | No per-unit tie-break | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.9, §4.10) |
-| B-12 | Scan ranges | (i) | combat alignment WP14 done to its report (Amendment 6); open on Q0057 |
+| B-12 | Scan ranges | Fixed | combat alignment WP14 Amendment 7 ([evidence](../evidence/2026-11-04-combat-sc2-alignment.md) §16; Q0057; this plan's Amendment 7) |
 | B-13 | Call-for-help radius, flee distance, leash, abandoned-target time | (i) | WP16 research; how idle units answer an attack is unit behaviour |
 | B-14 | Bonus damage only against Armored and Light | (i) | WP6 |
 | B-15 | Shield break remainder | (i) | WP7 |
@@ -929,10 +929,27 @@ Evidence: [combat alignment evidence](../evidence/2026-11-04-combat-sc2-alignmen
 - **Not applied: B-12 stays open.** The game's value per weapon is sourced (the greater of `MinScanRange` and
   `Range`), but how the game measures it, from the centres or from the edges, is not found, and it decides what the
   values do: copied under our centre rule, a ranged unit scans less than its weapon reaches and acquires only what
-  it can already shoot. Filed as [Q0057](../questions/open/0057-scan-range-measuring-rule.md), default no change
+  it can already shoot. Filed as [Q0057](../questions/closed/0057-scan-range-measuring-rule.md), default no change
   (the brief's rule for an unsourced measuring rule).
 - **B-12 widened:** armed structures scan to their sight radius (`catalog.rs`), not a catalog field; the reference
   is their weapon range (audit §11.3). The Siege Mode scan (13) is not expressible as one value per unit.
 - **Matrix effect if applied (scratch, 20 seeds):** 26 battles move under our centre rule, 15 under an edge rule; no
   battle's winner over its seeds changes under either; battle 33 is §15.2's table.
 
+
+## Amendment 7 (combat alignment WP14 Amendment 7, 2026-11-06): B-12 fixed
+
+The owner answered [Q0057](../questions/closed/0057-scan-range-measuring-rule.md) with option 2: scan range measured
+edge to edge, the audited StarCraft II values across the catalog, the moved battles re-recorded. Carried out by plan
+[`2026-11-04-combat-sc2-alignment`](2026-11-04-combat-sc2-alignment.md) WP14 Amendment 7
+([evidence](../evidence/2026-11-04-combat-sc2-alignment.md) §16):
+
+- `950b2bd`: the edge rule (centre distance minus both collision radii), values unchanged.
+- `74d5491`: a weapon scans at least to its own effective range, which covers Siege Mode (13) and upgraded ranges
+  without a per-mode value.
+- `8f77ddc`: the 35 armed units' `scan_range` to the audit's §11.2 reference; battle 33 re-recorded to `blue: (0,
+  10), red: (0, 5)`; both goldens re-recorded.
+- `0a75c26`: armed structures read `scan_range` from `structures.ron` (the widened part of Amendment 6).
+
+No battle's winner over its seeds changed in any step. B-12 is fixed and leaves the `DESIGN.md` register; the
+pursuit leash, which is a multiple of the scan range, stays with B-13.

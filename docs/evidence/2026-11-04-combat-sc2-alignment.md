@@ -2010,9 +2010,156 @@ at which they first notice an enemy changes. Wins over 20 seeds: 31 16 / 4 → 1
   (§15.3: 26 battles move, battle 33 drifts toward the zealots, a ranged unit acquires only what it can already
   shoot; §15.4: 15 battles move, battle 33 within noise). Under the plan's step 4 and this package's brief the
   unexplained part is filed as an owner question and the step stops:
-  [Q0057](../questions/open/0057-scan-range-measuring-rule.md), default no change.
+  [Q0057](../questions/closed/0057-scan-range-measuring-rule.md), default no change.
 - **Applied:** nothing. No catalog value, rule or expectation changed; both golden replays are untouched (no
   simulation code changed; `b1d28e6` touches only `sim_fixtures::trace`). Bug B-12 stays in the register, widened to
   the armed structures (audit §11.3).
 - **Stop rule:** no battle other than 33 changed its winner over its seeds under either rule; battle 33 kept its
   overall winner (the zealots) in both.
+
+## 16. WP14 Amendment 7: the edge rule and StarCraft II's scan ranges (Q0057, B-12)
+
+The owner answered [Q0057](../questions/closed/0057-scan-range-measuring-rule.md) with option 2 (plan Amendment 7).
+Base: `main` at `4633471`: whole matrix 0 expectation failures over 1000 runs; battle 33 on 68 seeds 20 / 35 / 13, as
+recorded (the same as §15's base). Each step is measured against the one before it: the matrix on the four seeds of
+record plus 16 (20 per battle, `--compare`), battle 33 on 68 seeds. Measurements under
+`~/scratch/scan_ranges/<step>`, with the comparison script `~/scratch/scan_ranges/scripts/compare.py` (not
+committed). "Wins b / r / u" are blue wins, red wins and unresolved over the 20 seeds.
+
+The commits come in this order: the rule, then the weapon-range floor of step 3a, then the unit values, then the
+structures. The plan listed the floor third; it comes before the values because the values alone leave a sieged
+tank blind between 7.5 and 13 (`combat_correctness_tests` `s7_sieged_unit_retargets_inside_minimum_range` fails on
+them), and each commit must pass the workspace's tests.
+
+| Step | Commit | Matrix battles moved | Winner over seeds changed | Failures (of record / all) | Battle 33, 68 seeds m / z / u | Goldens |
+|---|---|---|---|---|---|---|
+| 1. Edge rule, values unchanged | `950b2bd` | 10 | none | 0 / 0 | 20 / 35 / 13 → 19 / 41 / 8 | `golden_replay` from checkpoint 3 |
+| 3a. A weapon scans at least to its range | `74d5491` | 0 (bit-identical) | none | 0 / 0 | identical | unchanged |
+| 2. Unit values to the reference | `8f77ddc` | 15 | none | 0 / 2 (battle 33), re-recorded | 19 / 41 / 8 → 21 / 37 / 10 | both, from checkpoints 3 and 5 |
+| 3b. Armed structures read a catalog field | `0a75c26` | 0 (bit-identical) | none | 0 / 0 | identical | unchanged |
+
+The end state equals the scratch run of §15.4 (the same rule and values): the same 15 battles move against the base
+as there, battle 33 is §15.2's "6.375 / 5.875" row exactly (21 / 37 / 10, marine survivors 2.06, SD 2.87), and the
+two seeds that leave battle 33's expectation are the same (1 and 5).
+
+### 16.1 Step 1: the edge rule (`950b2bd`)
+
+`scan_candidates` (`target_acquisition.rs`) qualifies a candidate when its centre distance minus both collision
+radii is within the scan range, as weapon reach is measured; the spatial query widens by the scanner's radius and
+the catalog's largest collision radius. With every value unchanged (8 to 12 on units), each unit scans its own
+radius plus its target's further than before.
+
+| Battle | Seeds moved | Wins b / r / u | Survivors blue - red | End tick | Winner | Failures |
+|---|---|---|---|---|---|---|
+| 24a_roach_vs_5_lings | 1 | 0/20/0 → 0/20/0 | 0.00 → 0.00 - 3.00 → 3.00 | 288.5 → 288.4 | red → red | 0 → 0 (0 of record) |
+| 26_100_lings_vs_6_colossi | 19 | 0/20/0 → 0/20/0 | 0.00 → 0.00 - 6.00 → 6.00 | 107.5 → 104.3 | red → red | 0 → 0 (0 of record) |
+| 27_100_lings_vs_8_ultralisks | 20 | 0/20/0 → 0/20/0 | 0.00 → 0.00 - 8.00 → 8.00 | 273.8 → 272.1 | red → red | 0 → 0 (0 of record) |
+| 28_100_lings_vs_10_immortals | 20 | 20/0/0 → 20/0/0 | 35.10 → 34.55 - 0.00 → 0.00 | 597.1 → 596.0 | blue → blue | 0 → 0 (0 of record) |
+| 29_100_lings_vs_12_stalkers | 20 | 20/0/0 → 20/0/0 | 70.80 → 71.25 - 0.00 → 0.00 | 423.2 → 421.6 | blue → blue | 0 → 0 (0 of record) |
+| 30_20_roaches_vs_10_immortals | 19 | 0/20/0 → 0/20/0 | 0.00 → 0.00 - 10.00 → 10.00 | 236.9 → 238.8 | red → red | 0 → 0 (0 of record) |
+| 31_15_marauders_vs_15_stalkers | 20 | 16/4/0 → 17/3/0 | 3.00 → 3.25 - 0.95 → 0.45 | 637.7 → 636.0 | blue → blue | 0 → 0 (0 of record) |
+| 33_24_marines_vs_12_zealots | 20 | 7/11/2 → 6/12/2 | 2.10 → 1.80 - 1.70 → 1.70 | 441.7 → 451.4 | red → red | 0 → 0 (0 of record) |
+| 34_20_hydras_vs_12_mutas | 18 | 20/0/0 → 20/0/0 | 19.70 → 19.45 - 0.00 → 0.00 | 183.7 → 184.3 | blue → blue | 0 → 0 (0 of record) |
+| 35_12_vikings_vs_6_colossi | 17 | 13/0/7 → 13/0/7 | 12.00 → 12.00 - 0.35 → 0.35 | 504.6 → 493.9 | blue → blue | 0 → 0 (0 of record) |
+
+- **Battle 33:** 20 / 35 / 13 → 19 / 41 / 8; marine survivors 1.85 → 1.69 (SD 2.48; paired −0.16, SE 0.36), zealot
+  survivors 1.76 → 1.88 (SD 1.46). The marines' first target comes 3.2 ticks sooner (60.7 → 57.5), the zealots'
+  too; within noise otherwise. Seeds of record 0-2, 7-0, 0-3, 5-0 (were 0-2, 3-0, 0-2, 2-1), inside the expectation
+  `blue: (0, 8), red: (0, 5)`; the fixture comment records the distribution (D-6).
+- **The other nine** move by a few ticks or a fraction of a survivor; the largest, battle 35 (end tick 504.6 →
+  493.9), is the Vikings noticing fleeing colossi a little further out.
+- **`golden_replay.ron`** changed from checkpoint 3 (ticks 101 to 150). Cause, from a per-tick dump of every
+  entity's target and order before and after (a scratch observer in `golden_replay_tests.rs`, not committed): on tick
+  149 "blue_infantry" marine 16 (`pulse_bot`, scan 9, radius 0.375) acquires "red_psi" zealot 22 (`psi_grey`,
+  radius 0.5), 9.74 between centres and 8.87 between edges; under the centre rule it walked on. It is the first
+  difference in the replay. `golden_replay_orders.ron` unchanged. Debug, release and `wasm32-wasip1` (wasmtime,
+  debug and release) reproduce both.
+- **Tests first:** `b12_scan_range_is_measured_from_the_edges` and `b12_a_large_enemy_is_scanned_from_its_edge`
+  (`target_selection_tests.rs`) failed on the centre rule (`left: None, right: Some(EntityId(2))`) and pass; the
+  guard `b12_an_enemy_beyond_the_scan_range_from_the_edges_is_left_alone` passed before and after.
+
+### 16.2 Step 3a: a weapon scans at least to its own range (`74d5491`)
+
+The engine rule of audit §11.1 is "`MinScanRange` or `Range`, whichever is greater", per weapon. A candidate now also
+qualifies within the effective range (range upgrades included, `effective_weapon_range`) of the weapon the unit would
+use against it, the siege weapon while sieged, and the spatial query covers the longest of them. This is what one
+value per unit could not express (audit §11.3): the Siege Tank analogue keeps its tank-mode value (7.5 after step 2)
+and scans 13 sieged (`CrucioShockCannon` `Range` 13, `liberty` WeaponData:259, no `MinScanRange`); an upgraded range,
+for example the Colossus' Extended Thermal Lance (+2), scans to the upgraded range. It is the engine rule itself, so
+no per-mode catalog field is needed.
+
+- **Measured:** matrix and battle 33 bit-identical, goldens unchanged: no unit's weapon reaches beyond its scan range,
+  and no matrix battle sieges or upgrades a range.
+- **Tests first:** `b12_a_weapon_scans_at_least_to_its_range` (scan 3, weapon 6) and
+  `b12_a_sieged_unit_scans_to_its_siege_weapon_range` (scan 7, siege weapon 13, an enemy 13 between edges) failed
+  (`left: None`) and pass.
+
+### 16.3 Step 2: every armed unit's scan range to the reference (`8f77ddc`)
+
+The 35 armed units take the reference of audit §11.2 (the greater of `MinScanRange` and `Range` over their weapons;
+the data over Liquipedia's rule for the Brood Lord 10.5, the Queen 8.5 and the burrowed Lurker 8), checked value by
+value against the table by script; the commit message lists each with its source line. The seven unarmed units keep
+theirs.
+
+| Battle | Seeds moved | Wins b / r / u | Survivors blue - red | End tick | Winner | Failures |
+|---|---|---|---|---|---|---|
+| 9a_hellion_vs_4_lings | 9 | 20/0/0 → 20/0/0 | 1.00 → 1.00 - 0.00 → 0.00 | 95.0 → 95.0 | blue → blue | 0 → 0 (0 of record) |
+| 12a_colossus_vs_6_marines | 3 | 20/0/0 → 20/0/0 | 1.00 → 1.00 - 0.00 → 0.00 | 76.2 → 74.9 | blue → blue | 0 → 0 (0 of record) |
+| 21_lurker_vs_6_marines | 12 | 20/0/0 → 20/0/0 | 1.00 → 1.00 - 0.00 → 0.00 | 103.6 → 91.0 | blue → blue | 0 → 0 (0 of record) |
+| 23a_zealot_vs_6_lings | 4 | 0/20/0 → 0/20/0 | 0.00 → 0.00 - 2.00 → 2.00 | 271.3 → 271.4 | red → red | 0 → 0 (0 of record) |
+| 24a_roach_vs_5_lings | 5 | 0/20/0 → 0/20/0 | 0.00 → 0.00 - 3.00 → 3.00 | 288.4 → 288.4 | red → red | 0 → 0 (0 of record) |
+| 25a_2_marines_vs_zealot | 11 | 0/20/0 → 0/20/0 | 0.00 → 0.00 - 1.00 → 1.00 | 145.1 → 145.7 | red → red | 0 → 0 (0 of record) |
+| 26_100_lings_vs_6_colossi | 16 | 0/20/0 → 0/20/0 | 0.00 → 0.00 - 6.00 → 6.00 | 104.3 → 112.0 | red → red | 0 → 0 (0 of record) |
+| 27_100_lings_vs_8_ultralisks | 20 | 0/20/0 → 0/20/0 | 0.00 → 0.00 - 8.00 → 8.00 | 272.1 → 266.5 | red → red | 0 → 0 (0 of record) |
+| 28_100_lings_vs_10_immortals | 20 | 20/0/0 → 20/0/0 | 34.55 → 34.55 - 0.00 → 0.00 | 596.0 → 606.9 | blue → blue | 0 → 0 (0 of record) |
+| 29_100_lings_vs_12_stalkers | 20 | 20/0/0 → 20/0/0 | 71.25 → 70.90 - 0.00 → 0.00 | 421.6 → 424.2 | blue → blue | 0 → 0 (0 of record) |
+| 30_20_roaches_vs_10_immortals | 20 | 0/20/0 → 0/20/0 | 0.00 → 0.00 - 10.00 → 10.00 | 238.8 → 238.4 | red → red | 0 → 0 (0 of record) |
+| 31_15_marauders_vs_15_stalkers | 20 | 17/3/0 → 19/1/0 | 3.25 → 4.30 - 0.45 → 0.20 | 636.0 → 657.2 | blue → blue | 0 → 0 (0 of record) |
+| 33_24_marines_vs_12_zealots | 20 | 6/12/2 → 7/13/0 | 1.80 → 2.25 - 1.70 → 1.75 | 451.4 → 442.9 | red → red | 0 → 2 (0 of record) |
+| 34_20_hydras_vs_12_mutas | 19 | 20/0/0 → 20/0/0 | 19.45 → 19.50 - 0.00 → 0.00 | 184.3 → 186.6 | blue → blue | 0 → 0 (0 of record) |
+| 35_12_vikings_vs_6_colossi | 11 | 13/0/7 → 16/0/4 | 12.00 → 12.00 - 0.35 → 0.20 | 493.9 → 403.8 | blue → blue | 0 → 0 (0 of record) |
+
+- **Mechanism:** §15.4's. Every ranged reference lies at or beyond its weapon's reach between edges (`Range` + 0.5,
+  or `Range`), so ranged units still acquire before they can fire; only how deep they first notice an enemy changes,
+  and melee units notice later and nearer. The larger moves follow the units with the largest cuts: the Lurker 11 →
+  8 with the marines 9 → 5.5 (battle 21 ends 12.6 ticks sooner), the Colossus 10 → 7.5 (12a, 26), the Vikings 10 →
+  9 against colossi that flee (35: 13 / 0 / 7 → 16 / 0 / 4 and 90 ticks sooner), the Stalkers and Marauders 10 →
+  6.5 (31: 17 / 3 → 19 / 1, marauder survivors 3.25 → 4.30).
+- **Battle 33:** 19 / 41 / 8 → 21 / 37 / 10; marine survivors 1.69 → 2.06 (SD 2.87, range 0 to 10; paired +0.37, SE
+  0.44), zealot survivors 1.88 → 1.74 (SD 1.44, range 0 to 5). The marines acquire later (first target tick 57.5 →
+  72.6) but still before the zealots enter their reach: 5.5 beyond both radii is 0.5 beyond the rifle's 5 (§15.2,
+  reading 6). Seeds of record 0-2, 0-2, 3-0, 6-0.
+- **Expectation failures:** 0 on the seeds of record; 2 over all seeds, both battle 33 (seeds 1 and 5: the marines
+  win 9 - 0 and 10 - 0 against `blue: (0, 8)`). Re-recorded under D-6 and the owner's answer: `blue: (0, 10), red:
+  (0, 5)`, the smallest ranges that hold on all 20 matrix seeds, with the 68-seed distribution in the comment. No
+  other expectation changed.
+- **Goldens.** `golden_replay.ron` changed from checkpoint 3: on tick 149 marine 16 (scan 9 → 5.5) no longer
+  acquires zealot 22, 8.87 beyond both edges; it acquires it on tick 164. `golden_replay_orders.ron` changed from
+  checkpoint 5 (ticks 41 to 50): on tick 45, when the spotter reveals the ledge, "blue_line" marine 6 no longer
+  acquires "red_ledge" zealot 28, 6.40 between centres and 5.53 beyond both edges; the other five marines still do,
+  so the same-tick reveal and acquisition the fixture pins still occurs, and the test still finds both situations.
+  Debug, release and `wasm32-wasip1` reproduce both.
+- **Leash.** An automatic chase is abandoned when its route outruns `PURSUIT_LEASH_SCAN_RANGES` scan ranges
+  (`locomotion.rs`); that path length shrinks with the values. It is part of what this step measures, and the leash
+  itself stays bug B-13.
+
+### 16.4 Step 3b: armed structures read their scan range (`0a75c26`)
+
+`structures.ron` gains `scan_range`, required on a structure with a weapon and refused on one without
+(`CatalogInvalidValue`, field `scan_range`); an unarmed structure acquires nothing and scans 0. Before, `catalog.rs`
+gave every structure its sight radius (11 for the armed ones). The five armed structures take their weapon's
+`Range` (audit §11.3; none sets `MinScanRange`, whose default 5 is lower): `planetary_bulwark_dome` 6,
+`tesla_sentinel_dome`, `flak_array_dome`, `thorn_lasher_dome` and `spore_spire_dome` 7.
+
+- **Measured:** matrix and battle 33 bit-identical, goldens unchanged: no matrix battle and no golden replay has an
+  armed structure.
+- **Tests first:** `an_armed_structure_scans_to_its_authored_range` (failed: `tesla_sentinel_dome` scanned 11.0, its
+  sight radius, against an authored 4.25) and `a_structure_scan_range_is_required_exactly_when_it_is_armed` (failed:
+  both catalogs loaded) in `runtime_catalog_tests.rs` pass.
+
+### 16.5 Outcome
+
+- **B-12 is fixed:** scan ranges are measured edge to edge, every armed unit and structure scans to its StarCraft II
+  reference, and a weapon scans at least to its effective range, so Siege Mode (13) and upgraded ranges are covered.
+- **Stop rule:** no battle changed its winner over its seeds in any step; battle 33 kept its overall winner (the
+  zealots) and was re-recorded once (step 2).
