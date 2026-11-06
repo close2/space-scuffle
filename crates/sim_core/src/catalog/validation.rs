@@ -524,6 +524,25 @@ impl WeaponSpecDef {
         Ok(())
     }
 
+    /// Checks the attribute bonuses: each finite and nonnegative, at most one per attribute.
+    fn validate_attribute_bonuses(&self, definition: &str, prefix: &str) -> SimResult<()> {
+        let field = &format!("{prefix}.attribute_bonuses");
+        for (index, &(attribute, bonus)) in self.attribute_bonuses.iter().enumerate() {
+            nonnegative(definition, field, f64::from(bonus))?;
+            if self.attribute_bonuses[..index]
+                .iter()
+                .any(|&(earlier, _)| earlier == attribute)
+            {
+                return Err(invalid(
+                    definition,
+                    &format!("{field}.{attribute:?}"),
+                    "listed twice; a weapon has one bonus per attribute",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Checks the turret rate: a turreted weapon turns at a rate in `0 < rate <= 180` degrees
     /// per tick; a hull-mounted weapon turns with the hull and authors exactly 0.
     fn validate_turret(&self, definition: &str, prefix: &str) -> SimResult<()> {
@@ -547,8 +566,6 @@ impl WeaponSpecDef {
             ("min_range", self.min_range),
             ("max_range", self.max_range),
             ("base_damage", self.base_damage),
-            ("bonus_armored", self.bonus_armored),
-            ("bonus_light", self.bonus_light),
             ("upgrade_bonus_per_level", self.upgrade_bonus_per_level),
             ("bonus_upgrade_per_level", self.bonus_upgrade_per_level),
         ] {
@@ -570,6 +587,7 @@ impl WeaponSpecDef {
         }
         self.validate_cadence(definition, prefix)?;
         self.validate_strikes(definition, prefix)?;
+        self.validate_attribute_bonuses(definition, prefix)?;
         angle(
             definition,
             &format!("{prefix}.firing_arc_deg"),

@@ -24,6 +24,7 @@
 
 use sim_core::{SimCoreError, SimWorld, UpgradeCatalog, WeaponPhase};
 use sim_map::{CliffLevel, GameMap, MapCell};
+use sim_types::AttributeBonuses;
 use sim_types::{
     AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttackOrigin, EntityId, PlayerCommand,
     PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, Tick, TickBundle, UnitModeSpec, UnitOrder,
@@ -156,8 +157,7 @@ fn s4_projectile_weapon_applies_every_strike() {
                 w.attacks_count >= 2
                     && w.projectile_speed.is_some()
                     && w.splash.is_none()
-                    && w.bonus_armored == SimScalar::ZERO
-                    && w.bonus_light == SimScalar::ZERO
+                    && w.attribute_bonuses == AttributeBonuses::NONE
                     && w.max_range >= SimScalar::from_num(3)
             })
         })

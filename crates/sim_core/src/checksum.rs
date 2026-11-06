@@ -38,7 +38,9 @@ use std::collections::BTreeMap;
 /// to the previous target" reads.
 /// Schema 12 adds each weapon's strike interval and follow-up distance, each entity's pending
 /// strikes and each projectile's strike count: the strikes of one attack land on separate ticks.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 12;
+/// Schema 13 replaces each weapon's Armored and Light bonuses with its bonus against every
+/// attribute, eight values in `Attribute::ALL` order.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 13;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

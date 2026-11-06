@@ -20,6 +20,7 @@ use sim_types::{
     PlayerSlot, ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, SplashSpec, Tick,
     TickBundle, UnitOrder, UnitStatDeltas, WeaponClassId, WeaponVisualKind,
 };
+use sim_types::{Attribute, AttributeBonuses};
 use std::collections::BTreeSet;
 
 /// The first player slot, which every mutation below edits.
@@ -240,8 +241,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
     original.has_turret = false;
     original.turret_turn_rate = SimAngle::ZERO;
     original.base_damage = SimScalar::ONE;
-    original.bonus_armored = SimScalar::ZERO;
-    original.bonus_light = SimScalar::ZERO;
+    original.attribute_bonuses = AttributeBonuses::NONE;
     original.attacks_count = 1;
     original.strike_interval_ticks = 0;
     original.followup_max_distance = None;
@@ -269,7 +269,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
             target_flags => AttributeFlags::ARMORED, min_range => SimScalar::ONE,
             max_range => SimScalar::from_i32(2), firing_arc => SimAngle::PI, has_turret => true,
             turret_turn_rate => SimAngle::PI, base_damage => SimScalar::from_i32(2),
-            bonus_armored => SimScalar::ONE, bonus_light => SimScalar::ONE, attacks_count => 2,
+            attribute_bonuses => AttributeBonuses::NONE.with(Attribute::Massive, SimScalar::ONE), attacks_count => 2,
             strike_interval_ticks => 1, followup_max_distance => Some(SimScalar::ONE),
             period_ticks => 2, damage_point_ticks => 1, backswing_ticks => 1,
             splash => Some(SplashSpec { inner_radius: SimScalar::ONE, middle_radius: SimScalar::ONE, outer_radius: SimScalar::ONE, friendly_fire: true }),

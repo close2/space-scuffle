@@ -766,7 +766,7 @@ impl Entity {
                     self.is_sieged = true;
                     self.is_immobile = true;
                     self.unpushable = true;
-                    self.siege_weapon = Some(sieged_weapon.clone());
+                    self.siege_weapon = Some(WeaponSpec::clone(sieged_weapon));
                 }
             }
             _ => {}

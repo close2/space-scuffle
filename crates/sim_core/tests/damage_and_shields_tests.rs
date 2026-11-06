@@ -27,6 +27,7 @@ use sim_types::{
     ArchetypeCapabilities, AttributeFlags, FactionId, MoverType, ShapeKind, SilhouetteClass,
     SimAngle, SimScalar, SimVec2, Tick, TickBundle, UnitTypeId, WeaponVisualKind,
 };
+use sim_types::{Attribute, AttributeBonuses};
 
 fn dummy_target_archetype(
     attributes: AttributeFlags,
@@ -112,8 +113,9 @@ fn dummy_weapon_spec(
         has_turret: false,
         turret_turn_rate: SimAngle::ZERO,
         base_damage: base,
-        bonus_armored,
-        bonus_light,
+        attribute_bonuses: AttributeBonuses::NONE
+            .with(Attribute::Armored, bonus_armored)
+            .with(Attribute::Light, bonus_light),
         attacks_count: 1,
         strike_interval_ticks: 0,
         followup_max_distance: None,
@@ -664,8 +666,7 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
         has_turret: false,
         turret_turn_rate: SimAngle::ZERO,
         base_damage: SimScalar::from_num(40),
-        bonus_armored: SimScalar::ZERO,
-        bonus_light: SimScalar::ZERO,
+        attribute_bonuses: AttributeBonuses::NONE,
         attacks_count: 1,
         strike_interval_ticks: 0,
         followup_max_distance: None,
@@ -915,6 +916,41 @@ fn s14_bonus_upgrade_follows_the_weapons_attribute_bonus() {
     assert_eq!(
         damage(AttributeFlags::LIGHT | AttributeFlags::ARMORED),
         SimScalar::from_num(17),
-        "the per-level bonus is granted once"
+        "only the Light bonus applies, so its per-level bonus is granted once"
     );
+}
+
+/// B-14 (plan `2026-11-05-sc2-deviation-fixes` WP6): every attribute bonus that applies gains the
+/// per-level upgrade, as each `AttributeBonus` entry of a `StarCraft` II damage effect is upgraded
+/// on its own (`liberty` UpgradeData:679, `ParasiteSporeDamage` `AttributeBonus[Massive]`).
+#[test]
+fn b14_each_applying_attribute_bonus_gains_its_upgrade() {
+    use sim_core::calculate_hit_damage_upgraded;
+    use sim_types::{PlayerUpgradeState, WeaponClassId};
+
+    let mut upgrades = PlayerUpgradeState::default();
+    upgrades.weapon_levels.insert(WeaponClassId(1), 2);
+    let mut weapon = dummy_weapon_spec(
+        SimScalar::from_num(10),
+        SimScalar::from_num(3),
+        SimScalar::from_num(5),
+    );
+    weapon.bonus_upgrade_per_level = SimScalar::ONE;
+    weapon.weapon_class = Some(WeaponClassId(1));
+    let target = dummy_target_archetype(
+        AttributeFlags::LIGHT | AttributeFlags::ARMORED,
+        SimScalar::ZERO,
+        SimScalar::ZERO,
+    );
+    let damage = calculate_hit_damage_upgraded(
+        &weapon,
+        None,
+        &upgrades,
+        &target,
+        &PlayerUpgradeState::default(),
+        SimScalar::ZERO,
+        SimScalar::from_num(100),
+    )
+    .life_damage;
+    assert_eq!(damage, SimScalar::from_num(22), "10 + (3 + 2) + (5 + 2)");
 }

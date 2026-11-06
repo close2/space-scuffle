@@ -20,6 +20,7 @@
 
 use sim_core::{SimWorld, SplashSpec, UnitArchetype, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
+use sim_types::AttributeBonuses;
 use sim_types::{
     AttributeFlags, EntityId, PlayerId, ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2,
     Tick, TickBundle, UnitOrder, UnitTypeId, WeaponVisualKind, DEFAULT_PROJECTILE_LIFETIME_TICKS,
@@ -75,8 +76,7 @@ fn custom_projectile_weapon(
         has_turret: false,
         turret_turn_rate: SimAngle::ZERO,
         base_damage: SimScalar::from_num(30),
-        bonus_armored: SimScalar::ZERO,
-        bonus_light: SimScalar::ZERO,
+        attribute_bonuses: AttributeBonuses::NONE,
         attacks_count: 1,
         strike_interval_ticks: 0,
         followup_max_distance: None,

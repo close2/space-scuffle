@@ -17,10 +17,10 @@ use sim_map::{
     TerrainKind, Watchtower,
 };
 use sim_types::{
-    AnimState, ArmorClassId, AttackOrigin, AttributeFlags, EntityId, MatchResult, MoverType,
-    PlayerId, PlayerUpgradeState, ProjectileTargetLossBehavior, ResourceNodeId, SimAngle,
-    SimScalar, SimVec2, SplashSpec, Tick, UnitOrder, UnitStatDeltas, UnitTypeId, VisibilityState,
-    WeaponClassId, WeaponSpec, WeaponVisualKind,
+    AnimState, ArmorClassId, AttackOrigin, AttributeBonuses, AttributeFlags, EntityId, MatchResult,
+    MoverType, PlayerId, PlayerUpgradeState, ProjectileTargetLossBehavior, ResourceNodeId,
+    SimAngle, SimScalar, SimVec2, SplashSpec, Tick, UnitOrder, UnitStatDeltas, UnitTypeId,
+    VisibilityState, WeaponClassId, WeaponSpec, WeaponVisualKind,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use xxhash_rust::xxh64::Xxh64;
@@ -250,6 +250,16 @@ macro_rules! fields {
     };
 }
 
+impl Canonical for AttributeBonuses {
+    fn encode(&self, encoder: &mut Encoder) {
+        // Every attribute's bonus in `Attribute::ALL` order, zeros included, so the encoding
+        // has a fixed length and an attribute's place never depends on the others.
+        for (_, bonus) in self.entries() {
+            bonus.encode(encoder);
+        }
+    }
+}
+
 fields!(SimVec2 { x, y });
 fields!(MovementMemory {
     arrived_at,
@@ -352,8 +362,7 @@ fields!(WeaponSpec {
     has_turret,
     turret_turn_rate,
     base_damage,
-    bonus_armored,
-    bonus_light,
+    attribute_bonuses,
     attacks_count,
     strike_interval_ticks,
     followup_max_distance,

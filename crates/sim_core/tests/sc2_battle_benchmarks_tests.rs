@@ -33,6 +33,7 @@
 
 use sim_core::SimWorld;
 use sim_map::{CliffLevel, GameMap, MapCell};
+use sim_types::Attribute;
 use sim_types::{PlayerId, SimAngle, SimScalar, SimVec2, Tick, TickBundle, UnitOrder};
 
 fn empty_bundle(tick: u32) -> TickBundle {
@@ -713,7 +714,10 @@ fn test_railgun_crawler_declarative_modes_and_siege_splash() {
 
     let unsieged_weapon = arch.weapon.as_ref().expect("unsieged weapon");
     assert_eq!(unsieged_weapon.base_damage, SimScalar::from_num(15));
-    assert_eq!(unsieged_weapon.bonus_armored, SimScalar::from_num(10));
+    assert_eq!(
+        unsieged_weapon.attribute_bonuses.get(Attribute::Armored),
+        SimScalar::from_num(10)
+    );
     assert!(
         unsieged_weapon.period_ticks < 54,
         "Tank mode must fire faster than the 54-tick Crucio cannon"
@@ -736,7 +740,10 @@ fn test_railgun_crawler_declarative_modes_and_siege_splash() {
         .and_then(|w| w.as_ref())
         .expect("siege weapon override");
     assert_eq!(siege_weapon.base_damage, SimScalar::from_num(40));
-    assert_eq!(siege_weapon.bonus_armored, SimScalar::from_num(30));
+    assert_eq!(
+        siege_weapon.attribute_bonuses.get(Attribute::Armored),
+        SimScalar::from_num(30)
+    );
     assert_eq!(siege_weapon.period_ticks, 54);
     assert!(
         siege_weapon.splash.is_some(),

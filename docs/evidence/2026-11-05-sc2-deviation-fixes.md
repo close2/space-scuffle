@@ -558,3 +558,35 @@ failed on the old data (the archetype's weapon `(0, None)`) and passes. Each is 
   expects its second missile one interval after the first.
 - **Goldens.** Only b1 moves them (no other spaced weapon is in either fixture); debug, release and
   `wasm32-wasip1` reproduce after b1 and after b5.
+
+## 6. WP6: bonus damage against any attribute (B-14)
+
+### 6.1 Research
+
+**Rule.** A `StarCraft` II `CEffectDamage` carries an `AttributeBonus` array indexed by attribute (Light,
+Armored, Biological, Mechanical, Psionic, Massive, Structure, Heroic); a strike adds the entry of every attribute
+its target has. Upgrades raise an entry on its own: `EffectArray Reference="Effect,<effect>,AttributeBonus[<attribute>]"`
+(`liberty` UpgradeData:509, the Baneling's Light +2 a level; :679, the Corruptor's Massive +1; `voidmulti`
+UpgradeData:314, the Thor's high-impact Massive +1). The catalog's single `bonus_upgrade_per_level` therefore applies
+to each entry that applies; no shipped weapon has two entries, so per entry and once (the old rule) agree on all
+shipped data.
+
+**Data.** Every damage effect of the modelled weapons, resolved over the layer chain (`core` → … → `voidmulti`):
+
+| Analogue | Damage effect | `AttributeBonus` at 5.0.14 | Catalog before | Source |
+|---|---|---|---|---|
+| Corruptor (`sky_leviathan`) | `ParasiteSporeDamage` | Massive 6 | Armored 6 | `swarm` EffectData:2062 (`liberty` :2590 had Massive 10) |
+| Thor, high-impact mode (`colossus_mech` air weapon) | `LanceMissileLaunchersDamage` | Massive 10 | Armored 10 | `voidmulti` EffectData:749 |
+| Reaper (`jet_jumper`) | `P38ScytheGuassPistol` | none (Light 0) | Light 5 | `void` EffectData:1499 (`liberty` :1817 had Light 5) |
+| Spore Crawler (`spore_spire_dome`) | `SporeCrawlerU` | Biological 10 | none | `voidmulti` EffectData:870 (`void` :1432 had 30); Liquipedia Spore Crawler, patch 5.0.14: "Damage increased from 15 +15 biological to 20 +10 biological" |
+| Siege Tank, Marauder, Phoenix, Ghost, Hellion, Viking, Stalker, Adept, Immortal, Colossus, Void Ray, Baneling, Lurker, Spine Crawler | as cited in the test `b14_attribute_bonuses_follow_starcraft` | Armored or Light, as the catalog has | unchanged | `liberty` EffectData:1666, :1651, :1986, :1634, :2607, :1718, :2439, :2050, :2166; `voidmulti` :583, :722, :966, :1026, :817 |
+| every other armed analogue | — | none | none | no `AttributeBonus` in the chain (the Ultralisk's is set to 0 in `void` EffectData:1168) |
+
+- **Not an attribute bonus, recorded: B-82.** The Baneling's damage to structures is a second effect,
+  `VolatileBurstU2`: 80 to `Ground,Structure` targets, +5 a level, and `ArmorReduction 0`, so building armour does
+  not reduce it (`liberty` EffectData:1052, UpgradeData:505); its unit effect `VolatileBurstU` excludes structures
+  (`liberty` EffectData:1756). Ours has the one unit effect for every target, so a structure takes 16 less its armour. A Structure bonus of 64
+  would match only at level 0 and not the armour rule, so it is not used; class (i), WP9 with the other non-time
+  values.
+- **Found in passing, not attribute bonuses (B-47, WP9).** The Spore Crawler's base damage is 20 at 5.0.14
+  (`voidmulti` EffectData:871), the catalog's 15; the High Templar analogue has a weapon, the High Templar none.

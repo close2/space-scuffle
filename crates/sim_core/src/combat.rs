@@ -15,8 +15,7 @@
 use crate::catalog::{AcquireLevel, SplashSpec, UnitArchetype, WeaponSpec};
 use crate::entity::{Entity, WeaponPhase};
 use sim_types::{
-    AttackOrigin, AttributeFlags, EntityId, MoverType, PlayerUpgradeState, SimAngle, SimScalar,
-    SimVec2, UnitOrder,
+    AttackOrigin, EntityId, MoverType, PlayerUpgradeState, SimAngle, SimScalar, SimVec2, UnitOrder,
 };
 
 // PERFORMANCE RATIONALE:
@@ -65,22 +64,10 @@ fn raw_strike_damage(
         .and_then(|slug| attacker_upgrades.unit_stat_modifiers.get(slug))
         .map_or(SimScalar::ZERO, |m| m.bonus_damage_delta);
 
-    let armored_bonus = target_archetype
-        .attributes
-        .contains(AttributeFlags::ARMORED)
-        .then_some(spec.bonus_armored)
-        .filter(|bonus| *bonus > SimScalar::ZERO);
-    let light_bonus = target_archetype
-        .attributes
-        .contains(AttributeFlags::LIGHT)
-        .then_some(spec.bonus_light)
-        .filter(|bonus| *bonus > SimScalar::ZERO);
-
+    // Every attribute bonus the target matches applies, each with its upgrade (B-14).
     let mut raw_damage = spec.base_damage + spec.upgrade_bonus_per_level * level + stat_bonus_dmg;
-    if armored_bonus.is_some() || light_bonus.is_some() {
-        raw_damage += armored_bonus.unwrap_or(SimScalar::ZERO);
-        raw_damage += light_bonus.unwrap_or(SimScalar::ZERO);
-        raw_damage += spec.bonus_upgrade_per_level * level;
+    for bonus in spec.attribute_bonuses.against(target_archetype.attributes) {
+        raw_damage += bonus + spec.bonus_upgrade_per_level * level;
     }
     raw_damage
 }
@@ -187,7 +174,7 @@ fn mitigate_strike(
 /// Calculates the exact damage applied by an incoming weapon strike against a target.
 ///
 /// Implements `StarCraft` II armor mitigation and shield spillover with default (unupgraded) player state:
-/// 1. Computes raw damage including attribute bonuses ([`AttributeFlags::ARMORED`], [`AttributeFlags::LIGHT`]).
+/// 1. Computes raw damage including the weapon's bonus against each attribute the target has.
 /// 2. If target has active shields, mitigates by `target.shield_armor` (clamped to 0.5 minimum).
 /// 3. If damage exceeds remaining shields, remaining raw damage spills over into HP, mitigated by `target.life_armor`.
 /// 4. If shields were already 0, raw damage is mitigated directly by `target.life_armor` (clamped to 0.5 minimum).

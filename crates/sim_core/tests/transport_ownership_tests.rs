@@ -58,7 +58,7 @@ impl Fixture {
         arch.abilities = vec![
             ability(AbilityEffectSpec::SiegeModeToggle {
                 cast_ticks: 3,
-                sieged_weapon: weapon.clone(),
+                sieged_weapon: Box::new(weapon.clone()),
             }),
             ability(AbilityEffectSpec::SwitchMode {
                 mode_name: "transport-fixture-mode".into(),

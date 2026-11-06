@@ -24,9 +24,9 @@ use serde::{Deserialize, Serialize};
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AnimState, ArchetypeCapabilities, ArmorClassId,
-    AttributeFlags, FactionId, HarvesterSpec, MoverType, OverclockSpec,
-    ProjectileTargetLossBehavior, ShapeKind, SilhouetteClass, SimAngle, SimScalar, UnitModeSpec,
-    UnitTypeId, UpgradeEffect, WeaponVisualKind,
+    Attribute, AttributeBonuses, AttributeFlags, FactionId, HarvesterSpec, MoverType,
+    OverclockSpec, ProjectileTargetLossBehavior, ShapeKind, SilhouetteClass, SimAngle, SimScalar,
+    UnitModeSpec, UnitTypeId, UpgradeEffect, WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, WeaponSpec};
 mod factions;
@@ -857,8 +857,9 @@ struct WeaponSpecDef {
     /// Turret rate in degrees per tick: `0 < rate <= 180` on a turreted weapon, 0 otherwise.
     turret_turn_rate_deg_per_tick: f32,
     base_damage: f32,
-    bonus_armored: f32,
-    bonus_light: f32,
+    /// Bonus damage per strike against attributes: `(attribute, bonus)` pairs, at most one per
+    /// attribute; required, `[]` for none, so a catalog written before the field fails to load.
+    attribute_bonuses: Vec<(Attribute, f32)>,
     attacks_count: u8,
     /// Ticks between consecutive strikes of one attack; required, 0 for a single strike or a
     /// volley that lands at once (see [`WeaponSpec::strike_interval_ticks`]).
@@ -1047,8 +1048,12 @@ impl UnitArchetypeDef {
                 SimAngle::PI
             },
             base_damage: SimScalar::from_f32_lossy(w.base_damage),
-            bonus_armored: SimScalar::from_f32_lossy(w.bonus_armored),
-            bonus_light: SimScalar::from_f32_lossy(w.bonus_light),
+            attribute_bonuses: w.attribute_bonuses.iter().fold(
+                AttributeBonuses::NONE,
+                |bonuses, &(attribute, bonus)| {
+                    bonuses.with(attribute, SimScalar::from_f32_lossy(bonus))
+                },
+            ),
             attacks_count: w.attacks_count,
             strike_interval_ticks: w.strike_interval_ticks,
             followup_max_distance: w.followup_max_distance.map(SimScalar::from_f32_lossy),
