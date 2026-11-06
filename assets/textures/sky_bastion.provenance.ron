@@ -1,0 +1,72 @@
+(
+    format_version: 1,
+    name: "sky_bastion",
+    atlas_sha256: "f1be5367569757ad6b60c02fbbd527daf46303a5da6cf70c0d507313369ebf49",
+    manifest_sha256: "d5a2d76495dddb9e520bc08a9e68a8a674ffb63a3155cd5a668d92ba4e65b1fd",
+    bake: (
+        frame_size: 512,
+        fps: 15,
+        max_frames_per_state: 10,
+        ffmpeg_version: "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+        framing: Letterbox(
+            feather_permille: 30,
+        ),
+    ),
+    states: {
+        Idle: (
+            clip: "sky_bastion_idle.mp4",
+            clip_sha256: "b06a989d86e266ddcaa604efb3fccce491403d92c044bf26ec3e3b120ac5781a",
+            start_frame: 0,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/2ba7d24a-8ad8-4b38-b9f6-40fda4a9b759",
+                prompt_sha256: "1c06ec513a13770446fc7d76e25f1935408f6acbf62c5e0adbc799546c7fa9fa",
+                keyframe_sha256: Some("d33349fa5343cce6d98703241cb1055a185eb80c6279ba1534bcd43d107e9a85"),
+                last_frame_sha256: Some("d33349fa5343cce6d98703241cb1055a185eb80c6279ba1534bcd43d107e9a85"),
+                ledger_line: 716,
+            ),
+            bar_rgb: Some((51, 61, 81)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Walk: (
+            clip: "sky_bastion_walk.mp4",
+            clip_sha256: "069631d163d8311e0f08dc05043b97baf9c9530f626cc9ca32f376b8768d6d3c",
+            start_frame: 10,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/3dd26888-12a6-4ca4-a953-3f5ed69160c2",
+                prompt_sha256: "70b8b67497f9f524b4fc003aa98f21094b534a4526c73307a5a506d0c800afdd",
+                keyframe_sha256: Some("d33349fa5343cce6d98703241cb1055a185eb80c6279ba1534bcd43d107e9a85"),
+                last_frame_sha256: Some("d33349fa5343cce6d98703241cb1055a185eb80c6279ba1534bcd43d107e9a85"),
+                ledger_line: 780,
+            ),
+            bar_rgb: Some((51, 61, 81)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Attack: (
+            clip: "sky_bastion_attack.mp4",
+            clip_sha256: "fb70af4695d1797d970578e5e14549e31d86a4fa975c733e7466e2d5f03895a0",
+            start_frame: 20,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/fab20020-36fb-447a-9f7c-006168f89860",
+                prompt_sha256: "c8af29b49b48bf9168727b8d1c9207b1c0f9c25e50696093c3ae40430a9de905",
+                keyframe_sha256: Some("d33349fa5343cce6d98703241cb1055a185eb80c6279ba1534bcd43d107e9a85"),
+                last_frame_sha256: Some("d33349fa5343cce6d98703241cb1055a185eb80c6279ba1534bcd43d107e9a85"),
+                ledger_line: 755,
+            ),
+            bar_rgb: Some((55, 63, 81)),
+        ),
+    },
+)
