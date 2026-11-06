@@ -53,3 +53,4 @@ already inside its weapon reach, about 17 ticks later than today, and the marine
 
 ## Answer
 
+Owner (2026-11-06): Option 2 — measure scan range edge to edge (scan distance minus both radii, matching how weapon range is measured and why SC2 sets `MinScanRange = Range + 0.5`), apply the audited SC2 reference scan ranges across the catalog, and re-record the moved battles.

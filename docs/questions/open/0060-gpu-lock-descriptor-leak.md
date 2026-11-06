@@ -27,3 +27,5 @@ it.
 **Recommendation:** 2.
 
 ## Answer
+
+Owner (2026-11-06): Option 2 — updated `/usr/local/bin/with-gpu-lock` in `ansible/agents.yml` and applied to the VM so the lock file descriptor (FD 200) is closed in the spawned command (`200>&-`) and each acquisition, timeout, and release (with UTC timestamp, user, PID, exit code, duration in ms, and command) is logged to `/run/lock/gpu-lock.log`.
