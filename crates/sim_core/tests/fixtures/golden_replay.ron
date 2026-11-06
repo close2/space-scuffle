@@ -134,8 +134,12 @@
 // checkpoints 5, 6 and 8 (ticks 201 to 300 and 351 to 400) changed, while a zealot carried that
 // rounding; with the old value substituted wherever the two differ by at most 1e-5 (they never
 // differ more, and shield armour is always 0), both fixtures reproduce as recorded for WP6.
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP8a (B-16, checksum schema 13 -> 14): a
+// splash's three fixed radii become its list of zones (radius and fraction), so the schema byte
+// changes every checkpoint. No behaviour did: with the zones encoded at schema 13, both fixtures
+// reproduce as recorded for WP7 (no splash weapon is encoded in either replay's state).
 (
-    checksum_schema: 13,
+    checksum_schema: 14,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -161,25 +165,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x20f5baf8dd79fee6,
-        0x536c636fdc4c92f2,
-        0x7695d1d443882caf,
-        0x813baa1dd87bb5b7,
-        0xa56f8ecf8985ccde,
-        0xe1d10762d3484ad9,
-        0x975d4bd5c40f6f67,
-        0x5bac4965200fca33,
-        0x72e5085e1cb5af82,
-        0xb0fb8a0d936c6470,
-        0x2e071810804b0860,
-        0x33fefcddb21ec831,
-        0x797e30bc7ec0dc33,
-        0xe3283d9c1e65d32e,
-        0xe179d945cd3e18f1,
-        0xda2b7bff8a897817,
-        0xe457c18328f5dc77,
-        0x77bc8abec90bd3f9,
-        0xc8287ef8fce46494,
-        0x6e0fd25f5c9af468,
+        0x877a35166864fbf2,
+        0xc1851f24297bc17f,
+        0xa0483038a725ea20,
+        0x4176a4e588029219,
+        0xd7397b927c37c4de,
+        0x54b1f16cd4513db8,
+        0x6949486c02cf08b9,
+        0xd1f7cef0d9cd1438,
+        0x91e14a3074109a60,
+        0x3d18756eeebf5e03,
+        0x3aa816fe5374999a,
+        0x76e07fc191addbed,
+        0x5a8bcc5219148b98,
+        0xff7b0ced946c214c,
+        0x80255e8be7724f8c,
+        0xb413f36d38c12869,
+        0xe605d01158f93c5e,
+        0x46516f1678f1a236,
+        0xd9fa96365b7bdd41,
+        0xce0884ba3dd89c49,
     ],
 )

@@ -160,8 +160,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-6 | Release range slop 0.5 for every weapon | WP9 |
 | B-13 | Call-for-help radius, flee distance, leash and abandoned-target time are unsourced | WP16 |
 | B-15 | Whether the 0.5 minimum applies to the life part of a shield-breaking strike (not yet sourced, [Q0062](docs/questions/open/0062-shield-break-life-minimum.md)); the remainder itself is fixed | Q0062 |
-| B-16 | Splash fractions fixed at 100/50/25 % | WP8a |
-| B-17 | Splash distance measured centre to centre | WP8a |
+| B-17 | Where a splash is centred and whether it reaches a unit's edge (not yet sourced, [Q0063](docs/questions/open/0063-splash-distance-rule.md)); splash zones and fractions are fixed | Q0063 |
 | B-18 | Hellion, Lurker and Colossus line splash modelled as a circle | WP8b |
 | B-19 | Ultralisk cleave modelled as a circle | WP8c |
 | B-20 | Mutalisk glaive does not bounce | WP8d |
@@ -205,11 +204,12 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-68 | 14 researchable upgrades have no effect | WP13d, WP18 |
 | B-69 | Missing abilities and spells | WP18 |
 | B-70 | No Graviton Beam | WP18 |
-| B-74 | `SplashSpec`'s comment claims StarCraft II parity for splash; the spillover comment is fixed | WP8a |
 | B-77 | Hard-coded Concussive slow | WP13d |
 | B-78 | Hard-coded storm evacuation margin | WP18 |
 | B-82 | The Baneling's damage to structures is not its own effect (80, +5 a level, ignoring armour) | WP9 |
 | B-81 | The Liberator's first missile and the Colossus' strikes land on the release tick; the game delays them 1 and 7 ticks | WP5 follow-up, WP8b |
+| B-83 | The Baneling's burst is centred on its target and strikes it directly; the game centres it on the Baneling | WP8 follow-up |
+| B-84 | The Siege Tank splashes around targets of radius 1.25 or more; the game's shot at them has no area | WP8 follow-up |
 
 ---
 

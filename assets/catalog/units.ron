@@ -421,9 +421,11 @@
                         damage_point_ticks: 3,
                         backswing_ticks: 9,
                         splash: Some((
-                            inner_radius: 0.4687,
-                            middle_radius: 0.7812,
-                            outer_radius: 1.25,
+                            zones: [
+                                (radius: 0.4687, fraction: 1.0),
+                                (radius: 0.7812, fraction: 0.5),
+                                (radius: 1.25, fraction: 0.25),
+                            ],
                             friendly_fire: true,
                         )),
                         projectile_speed: None,
@@ -820,9 +822,7 @@
                 damage_point_ticks: 4,
                 backswing_ticks: 13,
                 splash: Some((
-                    inner_radius: 2.2,
-                    middle_radius: 2.2,
-                    outer_radius: 2.2,
+                    zones: [(radius: 2.2, fraction: 1.0)],
                     friendly_fire: false,
                 )),
                 projectile_speed: None,
@@ -1149,9 +1149,7 @@
                 damage_point_ticks: 3,
                 backswing_ticks: 9,
                 splash: Some((
-                    inner_radius: 0.5,
-                    middle_radius: 1.0,
-                    outer_radius: 1.5,
+                    zones: [(radius: 1.5, fraction: 1.0)],
                     friendly_fire: false,
                 )),
                 projectile_speed: Some(1.2),
@@ -1912,9 +1910,11 @@
                 damage_point_ticks: 1,
                 backswing_ticks: 9,
                 splash: Some((
-                    inner_radius: 1.8,
-                    middle_radius: 2.4,
-                    outer_radius: 3.0,
+                    zones: [
+                        (radius: 1.8, fraction: 1.0),
+                        (radius: 2.4, fraction: 0.5),
+                        (radius: 3.0, fraction: 0.25),
+                    ],
                     friendly_fire: false,
                 )),
                 projectile_speed: None,
@@ -2425,9 +2425,7 @@
                 damage_point_ticks: 0,
                 backswing_ticks: 9,
                 splash: Some((
-                    inner_radius: 2.2,
-                    middle_radius: 2.2,
-                    outer_radius: 2.2,
+                    zones: [(radius: 2.2, fraction: 1.0)],
                     friendly_fire: false,
                 )),
                 projectile_speed: None,
@@ -2676,9 +2674,11 @@
                 damage_point_ticks: 0,
                 backswing_ticks: 9,
                 splash: Some((
-                    inner_radius: 1.5,
-                    middle_radius: 2.0,
-                    outer_radius: 2.5,
+                    zones: [
+                        (radius: 1.5, fraction: 1.0),
+                        (radius: 2.0, fraction: 0.5),
+                        (radius: 2.5, fraction: 0.25),
+                    ],
                     friendly_fire: false,
                 )),
                 projectile_speed: None,
@@ -3024,9 +3024,11 @@
                 damage_point_ticks: 6,
                 backswing_ticks: 9,
                 splash: Some((
-                    inner_radius: 0.5,
-                    middle_radius: 1.0,
-                    outer_radius: 1.5,
+                    zones: [
+                        (radius: 0.5, fraction: 1.0),
+                        (radius: 1.0, fraction: 0.5),
+                        (radius: 1.5, fraction: 0.25),
+                    ],
                     friendly_fire: false,
                 )),
                 projectile_speed: None,

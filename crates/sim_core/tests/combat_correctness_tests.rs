@@ -250,9 +250,20 @@ fn s13_projectile_splash_spares_its_attacker() {
         .as_mut()
         .unwrap();
     weapon.splash = Some(sim_core::SplashSpec {
-        inner_radius: SimScalar::from_num(10),
-        middle_radius: SimScalar::from_num(11),
-        outer_radius: SimScalar::from_num(12),
+        zones: vec![
+            sim_types::SplashZone {
+                radius: SimScalar::from_num(10),
+                fraction: SimScalar::ONE,
+            },
+            sim_types::SplashZone {
+                radius: SimScalar::from_num(11),
+                fraction: SimScalar::HALF,
+            },
+            sim_types::SplashZone {
+                radius: SimScalar::from_num(12),
+                fraction: SimScalar::from_num(0.25),
+            },
+        ],
         friendly_fire: true,
     });
     let hp = arena.vitals(shooter);

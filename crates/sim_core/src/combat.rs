@@ -182,8 +182,9 @@ pub fn calculate_hit_damage(
     )
 }
 
-/// Calculates splash damage falloff across concentric circular zones (100% / 50% / 25%)
-/// taking into account active player upgrades.
+/// Calculates the damage of `splash` to a unit `distance` world units from the impact point:
+/// the fraction of the innermost zone that reaches it (see [`SplashSpec::fraction_at`]) of the
+/// strike's raw damage with every active upgrade, then mitigated. `None` beyond the last zone.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn calculate_splash_damage_upgraded(
@@ -197,15 +198,7 @@ pub fn calculate_splash_damage_upgraded(
     target_shields: SimScalar,
     target_hp: SimScalar,
 ) -> Option<DamageResolution> {
-    let damage_multiplier = if distance <= splash.inner_radius {
-        SimScalar::ONE
-    } else if distance <= splash.middle_radius {
-        SimScalar::HALF
-    } else if distance <= splash.outer_radius {
-        SimScalar::from_num(0.25)
-    } else {
-        return None;
-    };
+    let damage_multiplier = splash.fraction_at(distance)?;
 
     // PERFORMANCE RATIONALE:
     // Why: Splash runs once per entity in the blast, and a scaled `WeaponSpec` clone allocates.
@@ -240,7 +233,8 @@ pub const fn shares_combat_plane(primary: MoverType, other: MoverType) -> bool {
     }
 }
 
-/// Calculates splash damage falloff across concentric circular zones (100% / 50% / 25%).
+/// Calculates the damage of `splash` to a unit `distance` world units from the impact point,
+/// without upgrades; see [`calculate_splash_damage_upgraded`].
 #[must_use]
 pub fn calculate_splash_damage(
     attacker_spec: &WeaponSpec,

@@ -257,9 +257,20 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
         damage_point_ticks: 2,
         backswing_ticks: 4,
         splash: Some(SplashSpec {
-            inner_radius: SimScalar::HALF,
-            middle_radius: SimScalar::ONE,
-            outer_radius: SimScalar::from_num(1.5),
+            zones: vec![
+                sim_types::SplashZone {
+                    radius: SimScalar::HALF,
+                    fraction: SimScalar::ONE,
+                },
+                sim_types::SplashZone {
+                    radius: SimScalar::ONE,
+                    fraction: SimScalar::HALF,
+                },
+                sim_types::SplashZone {
+                    radius: SimScalar::from_num(1.5),
+                    fraction: SimScalar::from_num(0.25),
+                },
+            ],
             friendly_fire: false,
         }),
         projectile_speed: None,

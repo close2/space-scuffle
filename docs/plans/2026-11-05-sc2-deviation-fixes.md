@@ -766,8 +766,8 @@ requires.
 | B-13 | Call-for-help radius, flee distance, leash, abandoned-target time | (i) | WP16 research; how idle units answer an attack is unit behaviour |
 | B-14 | Bonus damage only against Armored and Light | Fixed | WP6 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §6; the Reaper's value by Amendment 10) |
 | B-15 | Shield break remainder | Fixed, narrowed | WP7 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §7); open only whether the 0.5 minimum applies to the life part ([Q0062](../questions/open/0062-shield-break-life-minimum.md)) |
-| B-16 | Fixed splash fractions | (i) | WP8a |
-| B-17 | Splash measured centre to centre | (i) | WP8a |
+| B-16 | Fixed splash fractions | Fixed | WP8a ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §8.2, §8.3); the four line and arc weapons take their zones with their shapes (B-18, B-19) |
+| B-17 | Splash measured centre to centre | (i) | Not sourced (U-4, [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §8.1): [Q0063](../questions/open/0063-splash-distance-rule.md), default no change. The Siege Tank already matches |
 | B-18 | Line splash modelled as a circle | (i) | WP8b |
 | B-19 | Ultralisk cleave modelled as a circle | (i) | WP8c |
 | B-20 | No glaive bounce | (i) | WP8d |
@@ -824,13 +824,15 @@ requires.
 | B-71 | Doc 03 random delay range | Fixed | WP0, in this amendment's commit |
 | B-72 | Doc 03 start energy | Fixed | WP3 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §3) |
 | B-73 | Doc 07 claims mechanics we lack | Fixed | WP0: each cell names its bug ID; the mechanics stay open as B-14, B-18 to B-22, B-26, B-42 and B-69 |
-| B-74 | Code comments claim exact parity | (i), narrowed | `combat.rs` part fixed in WP7 (evidence §7.2); the `SplashSpec` part stays with WP8a |
+| B-74 | Code comments claim exact parity | Fixed | `combat.rs` part in WP7 (evidence §7.2), `SplashSpec` part in WP8a (evidence §8.2) |
 | B-75 | Doc 03 "Turn Rate & Stationary Turn Rate" | Fixed | True since B-31 was fixed; no edit needed |
 | B-76 | Hard-coded threat categories | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.3, §4.5) |
 | B-77 | Hard-coded Concussive slow | (i) | WP13d |
 | B-78 | Storm evacuation margin | (i) | WP18 |
 | B-82 | The Baneling's damage to structures is not its own effect (80, +5 a level, ignoring armour) | (i) | WP9. Found in WP6 (Amendment 9) |
 | B-81 | A first strike the effect chain delays (Liberator 1 tick, Colossus 7) lands on the release tick | (i) | WP5 follow-up; the Colossus part with B-18 (WP8b). Found in WP5 (Amendment 8) |
+| B-83 | The Baneling's burst is centred on its target and strikes it directly; the game centres it on the Baneling and reaches the target through the area | (i) | WP8 follow-up. Found in WP8a (Amendment 12) |
+| B-84 | The Siege Tank splashes around a target of radius 1.25 or more; the game's shot at such a target has no area | (i) | WP8 follow-up. Found in WP8a (Amendment 12) |
 
 **Counts.** 78 IDs: (i) 70, two of them narrowed (B-52, B-67) and one carried by another plan (B-12); (ii) 3 (B-37,
 B-53, B-58); (iii) none; fixed 5 (B-31 and B-40 by the turn-before-move plan; B-71, B-73 and B-75 by WP0).
@@ -1026,3 +1028,25 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
 - **U-3, second half, not sourced:** whether the 0.5 minimum applies to the life part of a shield-breaking strike.
   Filed as [Q0062](../questions/open/0062-shield-break-life-minimum.md) with an editor measurement; default no
   change (at least 0.5). B-15 stays in the register for that part only.
+
+## Amendment 12 (WP8a, 2026-11-06): splash zones landed, the splash distance not sourced
+
+Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §8.
+
+- **Fixed: B-16.** `SplashSpec` is a list of zones, each a radius and a fraction (`CEffectDamage` `AreaArray`),
+  required in the catalog (checksum schema 14, in the latent commit a). Data (§8.1): the Siege Tank's and the
+  Baneling's zones already matched; the Liberator's anti-air splash is one zone of 1.5 at 100 % (`void`
+  EffectData:2938). The Hellion, Lurker, Colossus and Ultralisk keep their circles at 100 / 50 / 25 % until WP8b
+  and WP8c give them their shapes and zones; the Thor's Explosive Payload splash waits for that mode.
+- **Fixed: B-74**, its `SplashSpec` part: the doc states what is modelled and names B-17 to B-19.
+- **B-17 not sourced (U-4).** The data name `OffsetByUnitRadius` (1 by default, `core` EffectData:128; 0 on the
+  Siege Tank, Thor anti-air, Archon and Planetary Fortress, the four weapons patch 1.1 moved to "the center of the
+  target"), but no source states its direction, its meaning for an area centred on the attacker, or whether a zone
+  reaches a unit's edge. Filed as [Q0063](../questions/open/0063-splash-distance-rule.md) with two editor
+  measurements; default no change. B-17 stays in the register.
+- **New, found: B-83** (the Baneling's burst is centred on the Baneling, `ImpactLocation` `CasterUnit`) and **B-84**
+  (the Siege Tank does not splash a target of radius 1.25 or more, `CrucioShockCannonSwitch`), both class (i), for
+  a WP8 follow-up.
+- **Matrix effect:** none. No matrix battle spawns the Liberator analogue; matrix and battle 33 (54 / 7 / 7) are
+  bit-identical at every commit, and the goldens moved only for the schema byte.
+- **WP8b not started** in this branch: the line shape is its own rule and data package.

@@ -257,27 +257,45 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
     original.max_projectile_lifetime_ticks = 1;
     original.suicide_on_attack = false;
     let splash = SplashSpec {
-        inner_radius: SimScalar::ONE,
-        middle_radius: SimScalar::from_i32(2),
-        outer_radius: SimScalar::from_i32(3),
+        zones: vec![
+            sim_types::SplashZone {
+                radius: SimScalar::ONE,
+                fraction: SimScalar::ONE,
+            },
+            sim_types::SplashZone {
+                radius: SimScalar::from_i32(2),
+                fraction: SimScalar::HALF,
+            },
+            sim_types::SplashZone {
+                radius: SimScalar::from_i32(3),
+                fraction: SimScalar::from_num(0.25),
+            },
+        ],
         friendly_fire: false,
     };
     assert_mutations(
         &original,
         mutations! { WeaponSpec;
-            name => "different-weapon".to_owned(), visual_kind => WeaponVisualKind::Projectile,
-            target_flags => AttributeFlags::ARMORED, min_range => SimScalar::ONE,
-            max_range => SimScalar::from_i32(2), firing_arc => SimAngle::PI, has_turret => true,
-            turret_turn_rate => SimAngle::PI, base_damage => SimScalar::from_i32(2),
-            attribute_bonuses => AttributeBonuses::NONE.with(Attribute::Massive, SimScalar::ONE), attacks_count => 2,
-            strike_interval_ticks => 1, followup_max_distance => Some(SimScalar::ONE),
-            period_ticks => 2, damage_point_ticks => 1, backswing_ticks => 1,
-            splash => Some(SplashSpec { inner_radius: SimScalar::ONE, middle_radius: SimScalar::ONE, outer_radius: SimScalar::ONE, friendly_fire: true }),
-            projectile_speed => Some(SimScalar::ONE), weapon_class => Some(WeaponClassId(3)),
-            upgrade_bonus_per_level => SimScalar::ONE, bonus_upgrade_per_level => SimScalar::ONE,
-            target_loss_behavior => ProjectileTargetLossBehavior::ImpactLastKnownPosition,
-            max_projectile_lifetime_ticks => 2, suicide_on_attack => true,
-        },
+                name => "different-weapon".to_owned(), visual_kind => WeaponVisualKind::Projectile,
+                target_flags => AttributeFlags::ARMORED, min_range => SimScalar::ONE,
+                max_range => SimScalar::from_i32(2), firing_arc => SimAngle::PI, has_turret => true,
+                turret_turn_rate => SimAngle::PI, base_damage => SimScalar::from_i32(2),
+                attribute_bonuses => AttributeBonuses::NONE.with(Attribute::Massive, SimScalar::ONE), attacks_count => 2,
+                strike_interval_ticks => 1, followup_max_distance => Some(SimScalar::ONE),
+                period_ticks => 2, damage_point_ticks => 1, backswing_ticks => 1,
+                splash => Some(SplashSpec {
+            zones: vec![
+                sim_types::SplashZone { radius: SimScalar::ONE, fraction: SimScalar::ONE },
+                sim_types::SplashZone { radius: SimScalar::ONE, fraction: SimScalar::HALF },
+                sim_types::SplashZone { radius: SimScalar::ONE, fraction: SimScalar::from_num(0.25) },
+            ],
+            friendly_fire: true,
+        }),
+                projectile_speed => Some(SimScalar::ONE), weapon_class => Some(WeaponClassId(3)),
+                upgrade_bonus_per_level => SimScalar::ONE, bonus_upgrade_per_level => SimScalar::ONE,
+                target_loss_behavior => ProjectileTargetLossBehavior::ImpactLastKnownPosition,
+                max_projectile_lifetime_ticks => 2, suicide_on_attack => true,
+            },
         |weapon| {
             world
                 .entities
@@ -290,12 +308,30 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
     assert_mutations(
         &splash,
         mutations! { SplashSpec;
-            inner_radius => SimScalar::ZERO, middle_radius => SimScalar::ZERO,
-            outer_radius => SimScalar::ZERO, friendly_fire => true,
+            zones => vec![sim_types::SplashZone { radius: SimScalar::ONE, fraction: SimScalar::ONE }],
+            friendly_fire => true,
         },
         |splash| {
             let mut weapon = original.clone();
             weapon.splash = Some(splash.clone());
+            world
+                .entities
+                .get_mut(&EntityId(1))
+                .expect("fixture entity exists")
+                .siege_weapon = Some(weapon);
+            world.compute_checksum()
+        },
+    );
+    assert_mutations(
+        &splash.zones[0],
+        mutations! { sim_types::SplashZone;
+            radius => SimScalar::ZERO, fraction => SimScalar::HALF,
+        },
+        |zone| {
+            let mut weapon = original.clone();
+            let mut changed = splash.clone();
+            changed.zones[0] = *zone;
+            weapon.splash = Some(changed);
             world
                 .entities
                 .get_mut(&EntityId(1))

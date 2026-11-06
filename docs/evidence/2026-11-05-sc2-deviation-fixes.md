@@ -717,3 +717,81 @@ Hardened Shield, not to the default. Liquipedia is the source, read as wikitext 
   Proof in a throwaway run: asserting shield armour 0 at every shield break and that old and new life parts differ
   by at most 1e-5, and substituting the old value, both fixtures reproduce as recorded for WP6. The new lists
   reproduce in debug, release and `wasm32-wasip1` release (`wasmtime`). Checksum schema unchanged (13).
+
+## 8. WP8a: splash zones and the splash distance (B-16, B-17, B-74)
+
+### 8.1 Research (B-16, U-4)
+
+**Zones and fractions: sourced.** A weapon's splash is its damage effect's `AreaArray`: one entry per zone, each
+a `Radius` and the `Fraction` of the strike it deals. Read through the chain `core` → … → `voidmulti` for every
+circular splash this catalog models:
+
+| Analogue (catalog weapon) | Effect | `AreaArray` (radius, fraction) | `OffsetByUnitRadius` | Catalog before |
+|---|---|---|---|---|
+| Siege Tank, sieged (`railgun_crawler` Crucio Shock Cannon) | `CrucioShockCannonBlast` | 0.4687 1, 0.7812 0.5, 1.25 0.25 (`liberty` EffectData:1676-1678; later layers set only amounts) | 0 (`liberty` EffectData:1680) | equal |
+| Baneling (`volatile_tick`) | `VolatileBurstU` | 2.2 1 (`liberty` EffectData:1757; `voidmulti` EffectData:1025 sets only amounts) | 1, inherited | equal (three equal radii) |
+| Liberator, fighter (`sky_bastion` Lexington Rockets) | `LiberatorMissileDamage` | 1.5 1 (`void` EffectData:2938; `voidmulti` EffectData:752 sets only the amount, 5) | 1, inherited | 0.5 1, 1.0 0.5, 1.5 0.25 |
+
+`OffsetByUnitRadius` is 1 on every weapon damage effect by inheritance from `DU_WEAP` (`core` EffectData:128). The
+Hellion, Lurker, Colossus and Ultralisk areas are a line or an arc in the game (`InfernalFlameThrowerE`,
+`LurkerMPSearch`, `ThermalLancesE`, `KaiserBladesSearch`); their zones go with their shapes (B-18, B-19; WP8b,
+WP8c). The Thor's anti-air splash (`JavelinMissileLaunchersDamage`, 0.5 1, `liberty` EffectData:2280) belongs to
+its Explosive Payload mode, which the catalog does not model: `colossus_mech` carries the high-impact mode (§6.1).
+
+**Splash distance (U-4): not sourced.** Two things are open, and no source states either precisely enough to
+specify:
+1. **Where the area is centred.** The data name `OffsetByUnitRadius`; the Siege Tank's blast and the Thor's
+   anti-air splash clear it. Patch 1.1 (2010, [Blizzplanet's copy](https://www.blizzplanet.com/blog/comments/starcraft_ii_patch_11_build_013015250))
+   changed the splash of exactly the four weapons whose effects clear it: those two, the Archon's
+   (`PsionicShockwaveDamage`, `liberty` EffectData:1359) and the Planetary Fortress' (`TwinIbiksCannon`, `liberty`
+   EffectData:2545): "splash damage now originates
+   from the center of the target, rather than the impact location near the unit". So the flag most likely puts the
+   area's centre on the target's edge facing the attacker. Hive Workshop's page on the flag returned 502 throughout;
+   a search engine's extract of it reads "offsets the origin of the search radius … by the unit radius of the damage
+   effect's primary target". Neither states the direction, nor what the flag does for the Baneling, whose area is
+   centred on itself (`ImpactLocation` `CasterUnit`, `liberty` EffectData:1759).
+2. **Whether a zone reaches a unit's edge.** Liquipedia's Siege Tank page says only "within .4687 matrices of the
+   target"; TeamLiquid (403 to tools), SC2Mapster and Hive Workshop gave nothing more.
+
+Filed as [Q0063](../questions/open/0063-splash-distance-rule.md) with two editor measurements; the default is no
+change (centre of the target, centre of each struck unit), and B-17 stays recorded. The Siege Tank, whose flag is
+0, already splashes from the target's centre as the game does.
+
+**Found, recorded (class (i), not fixed here).**
+- **B-83:** the Baneling's burst is centred on the Baneling in the game (`ImpactLocation` `CasterUnit`, above) and
+  damages its target through the area, not by a direct strike; ours strikes the target and splashes around it.
+- **B-84:** the Siege Tank does not splash a target of radius 1.25 or more: `CrucioShockCannonSwitch` sends a
+  `TargetRadiusLarge` target (radius ≥ 1.25, `liberty` ValidatorData:824) to `CrucioShockCannonDirected`, which has
+  no `AreaArray` (`swarm` EffectData:2183, `voidmulti` EffectData:739, which adds only a lowered Supply Depot to the
+  splashing case). Ours splashes around every target.
+
+### 8.2 Commit a: zones with their own fractions, latent (B-16, B-74)
+
+- **Rule.** `SplashSpec` holds `zones: Vec<SplashZone>`, each a radius and a fraction; a unit takes the fraction of
+  the innermost zone that reaches it (`SplashSpec::fraction_at`). The catalog field is required, so a catalog with
+  the former three radii fails to load; load rejects an empty list, radii that do not increase, and a fraction
+  outside `0 < f <= 1`. `SplashSpec`'s doc no longer claims StarCraft II parity: it states what is modelled and
+  names B-17 to B-19 (B-74's `SplashSpec` part).
+- **Latent.** Every splash rewritten to the same zones (a triple of equal radii is one zone). Matrix (1000 runs)
+  and battle 33 (68 seeds, 54 / 7 / 7) bit-identical to WP7 (`~/scratch/sc2dev_wp8/a`).
+- **Checksum schema 13 → 14** in the same commit, for the new encoding. Before the bump, with the zones encoded at
+  schema 13, both goldens reproduced as recorded for WP7: no splash is in either replay's hashed state, so only the
+  schema byte moved them. Both re-recorded, with the sandbox checksum and four encodings' schema bytes; debug,
+  release and `wasm32-wasip1` release (`wasmtime`) reproduce.
+- **Tests first.** `b16_each_splash_zone_deals_its_own_fraction` and `b16_a_single_zone_deals_full_damage_to_its_edge`
+  (`damage_and_shields_tests.rs`) failed to compile on the old type; `b16_splash_zones_must_be_usable`
+  (`weapon_catalog_rules_tests.rs`) failed with "fixture text "(radius: 0.4687, fraction: 1.0)" not in catalog".
+  All pass.
+- **C7.** `catalog.rs` 51 → 50 float tokens, in its own commit.
+
+### 8.3 Commit b: the Liberator's anti-air splash (B-16)
+
+- **Data.** `sky_bastion` Lexington Rockets: one zone, 1.5 at fraction 1 (§8.1), for 0.5 / 1.0 / 1.5 at
+  100 / 50 / 25 %. The Siege Tank's and the Baneling's zones already matched.
+- **Test first.** `b16_splash_zones_follow_starcraft` checks every circular splash against the table of §8.1 and
+  fails on an armed analogue with a splash and no row; red on `sky_bastion` before the change.
+- **Measured** against commit a (`~/scratch/sc2dev_wp8/b`): no matrix battle spawns the Liberator analogue, so the
+  matrix (1000 runs, 0 expectation failures) and battle 33 (68 seeds, 54 / 7 / 7) are bit-identical; goldens
+  unchanged. The change reaches skirmish play only.
+- **B-16 is fixed** for every circular splash; the four non-circular weapons take their zones with their shapes
+  (B-18, B-19).

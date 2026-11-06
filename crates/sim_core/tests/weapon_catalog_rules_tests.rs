@@ -1029,3 +1029,121 @@ fn b14_attribute_bonuses_follow_starcraft() -> TestResult {
     }
     Ok(())
 }
+
+/// B-16: a splash is a list of zones (`CEffectDamage` `AreaArray`), each a radius and the
+/// fraction of the strike it deals. Load rejects a splash with no zone, a fraction outside
+/// `0 < fraction <= 1`, and radii that do not grow from one zone to the next.
+#[test]
+fn b16_splash_zones_must_be_usable() {
+    let tank_inner = "(radius: 0.4687, fraction: 1.0)";
+    for bad in [
+        "(radius: 0.4687, fraction: 0.0)",
+        "(radius: 0.4687, fraction: 1.5)",
+        "(radius: 0.4687, fraction: -0.5)",
+    ] {
+        assert_rejected(UNITS, tank_inner, bad, "fraction");
+    }
+    assert_rejected(UNITS, tank_inner, "(radius: -1.0, fraction: 1.0)", "radius");
+    assert_rejected(
+        UNITS,
+        "(radius: 0.7812, fraction: 0.5)",
+        "(radius: 0.4687, fraction: 0.5)",
+        "radius",
+    );
+    assert_rejected(
+        UNITS,
+        "zones: [(radius: 2.2, fraction: 1.0)]",
+        "zones: []",
+        "zones",
+    );
+}
+
+/// One row of [`SC2_SPLASH_ZONES`]: the analogue, its `(radius, fraction)` zones and the source.
+type SplashRow = (&'static str, &'static [(f32, f32)], &'static str);
+
+/// `StarCraft` II 5.0.14 `CEffectDamage` `AreaArray` of the circular splash weapons this catalog
+/// models: `(analogue, [(radius, fraction)], source)` (plan `2026-11-05-sc2-deviation-fixes`
+/// package 8a, B-16; evidence §8.1). The Hellion, Lurker, Colossus and Ultralisk areas are lines and an
+/// arc in the game, so their zones belong with their shapes (B-18, B-19; packages 8b, 8c).
+const SC2_SPLASH_ZONES: [SplashRow; 3] = [
+    (
+        "Siege Tank",
+        &[(0.4687, 1.0), (0.7812, 0.5), (1.25, 0.25)],
+        "CrucioShockCannonBlast, liberty EffectData:1676-1678",
+    ),
+    (
+        "Baneling",
+        &[(2.2, 1.0)],
+        "VolatileBurstU, liberty EffectData:1757",
+    ),
+    (
+        "Liberator",
+        &[(1.5, 1.0)],
+        "LiberatorMissileDamage, void EffectData:2938",
+    ),
+];
+
+/// Analogues whose splash is not a circle in the game; their zones wait for their shape.
+const NON_CIRCULAR_SPLASH: [&str; 4] = ["Hellion", "Lurker", "Colossus", "Ultralisk"];
+
+#[test]
+fn b16_splash_zones_follow_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    let mut checked = std::collections::BTreeSet::new();
+    for archetype in world.catalog.archetypes() {
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next())
+            .unwrap_or_default();
+        let mode_weapons = archetype.modes.iter().flat_map(|mode| {
+            [&mode.ground_weapon_override, &mode.air_weapon_override]
+                .into_iter()
+                .flatten()
+                .flatten()
+        });
+        let weapons = [
+            &archetype.weapon,
+            &archetype.ground_weapon,
+            &archetype.air_weapon,
+        ]
+        .into_iter()
+        .flatten()
+        .chain(mode_weapons);
+        for weapon in weapons {
+            let Some(splash) = &weapon.splash else {
+                continue;
+            };
+            if NON_CIRCULAR_SPLASH.contains(&analogue) {
+                continue;
+            }
+            let Some((_, zones, source)) =
+                SC2_SPLASH_ZONES.iter().find(|(unit, ..)| *unit == analogue)
+            else {
+                return Err(format!(
+                    "{} {}: splashes, but its analogue has no row",
+                    archetype.slug, weapon.name
+                )
+                .into());
+            };
+            let expected: Vec<sim_types::SplashZone> = zones
+                .iter()
+                .map(|&(radius, fraction)| sim_types::SplashZone {
+                    radius: SimScalar::from_f32_lossy(radius),
+                    fraction: SimScalar::from_f32_lossy(fraction),
+                })
+                .collect();
+            assert_eq!(
+                splash.zones, expected,
+                "{} {}: splash zones as StarCraft II's ({source})",
+                archetype.slug, weapon.name
+            );
+            checked.insert(analogue);
+        }
+    }
+    assert_eq!(
+        checked.len(),
+        SC2_SPLASH_ZONES.len(),
+        "every row reaches a shipped weapon"
+    );
+    Ok(())
+}
