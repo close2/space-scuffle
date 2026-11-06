@@ -128,11 +128,12 @@ Code without tests is considered incomplete.
 3. **Quality gates.** [CI: C16, C22] Tests are selected by `cargo gate`, from the catalog
    `crates/gate/suites.ron`, in four tiers:
    - `cargo gate quick`: optional, while working: fmt, clippy on the changed crates, their fast tests.
-   - `cargo gate package`: required once, after merging `main`, before an implementation agent's final commit.
+   - `cargo gate package`: required once per package, after merging `main`, on the package's final tree.
      Clippy on the whole workspace, `workspace_checks`, every test of the changed crates (GPU and valgrind tests
      when the change touches their triggers), the tests the catalog's path rules and downstream contracts select,
-     and the golden replays in release and on `wasm32-wasip1` for simulation changes. Its stamp goes in the
-     hand-back.
+     and the golden replays in release and on `wasm32-wasip1` for simulation changes. The implementation agent
+     hands back after `quick` and the tests its change needs; a verifier agent on a cheap model then runs `package`
+     and reports the stamp, or the failing targets, which go back to the implementation agent (owner, Q0061).
    - `cargo gate merge <branch>`: the orchestrator, for each merge to `main`.
    - `cargo gate full`: the full gate, on `main` before a push that contains a crate change, and on CI. Push only a
      commit whose tree has a green stamp. When it is red, fix forward or revert within an hour, and add the missing
