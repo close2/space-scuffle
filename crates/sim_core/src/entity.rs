@@ -96,6 +96,29 @@ pub enum WeaponPhase {
     Cooldown,
 }
 
+/// The strikes of an attack that land after its release tick (plan
+/// `2026-11-05-sc2-deviation-fixes` WP5, B-2).
+///
+/// In `StarCraft` II a multi-strike weapon is a `CEffectCreatePersistent` whose periods land one
+/// strike each: the Zealot's second blade 0.28 Normal s (5 ticks) after the first. Combat
+/// resolution lands the first strike on the release tick and keeps the rest here, one every
+/// [`WeaponSpec::strike_interval_ticks`]. A later strike lands only if its target is still a valid
+/// target on the weapon's plane and, where the weapon names one, within its
+/// [`WeaponSpec::followup_max_distance`]; a strike that fails its condition is lost, and the
+/// strikes after it still try. The attacker's death or boarding a transport ends the burst.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingStrikes {
+    /// Entity the attack was released at; every strike of the burst is aimed at it.
+    pub target_id: EntityId,
+    /// Combat plane of the weapon that released the attack; a strike lands only on a target
+    /// still on that plane, and the weapon is resolved against it again for each strike.
+    pub plane: MoverType,
+    /// Strikes still to land, at least 1 while the burst is pending.
+    pub remaining: u8,
+    /// Ticks until the next strike lands, at least 1 between ticks.
+    pub ticks_until_next: u16,
+}
+
 /// An active timed buff or debuff affecting unit stats.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveBuff {
@@ -137,6 +160,9 @@ pub struct ActiveProjectile {
     pub source_slug: Option<String>,
     /// Remaining in-flight lifetime in ticks before missile fuels out and expires.
     pub remaining_lifetime_ticks: u16,
+    /// Strikes of `weapon_spec` this projectile carries: every strike of the attack when they
+    /// land together, one when the weapon spaces its strikes ([`PendingStrikes`]).
+    pub strikes: u8,
 }
 
 /// What a unit remembers about its movement order between ticks.
@@ -252,6 +278,9 @@ pub struct Entity {
     pub weapon_phase: WeaponPhase,
     /// Remaining ticks until weapon cooldown expires.
     pub weapon_cooldown_remaining: u16,
+    /// Strikes of the last attack still to land on later ticks; `None` when its every strike
+    /// has landed or the weapon lands all of them on the release tick.
+    pub pending_strikes: Option<PendingStrikes>,
     /// Active temporary stat buffs and debuffs.
     pub active_buffs: Vec<ActiveBuff>,
     /// FIFO production jobs: archetype, remaining 25 Hz updates and reserved supply.
@@ -384,6 +413,7 @@ impl Entity {
             },
             weapon_phase: WeaponPhase::Ready,
             weapon_cooldown_remaining: 0,
+            pending_strikes: None,
             active_buffs: Vec::new(),
             production_queue: VecDeque::new(),
             captured_supply_used: archetype.supply_cost,

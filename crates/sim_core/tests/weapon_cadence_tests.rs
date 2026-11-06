@@ -130,6 +130,7 @@ fn catalog_ron_with_mount(
             bonus_armored: 0.0,
             bonus_light: 0.0,
             attacks_count: 1,
+            strike_interval_ticks: 0,
             period_ticks: {period},
             damage_point_ticks: {damage_point},
             backswing_ticks: {backswing},

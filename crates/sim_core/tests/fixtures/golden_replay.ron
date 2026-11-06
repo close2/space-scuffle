@@ -112,8 +112,14 @@
 // (was 11), edge to edge. On tick 149 marine 16 no longer acquires zealot 22, 8.87 beyond both
 // edges; it acquires it on tick 164. Checkpoints 1 and 2 are unchanged; from checkpoint 3 (ticks
 // 101 to 150) every checkpoint changed.
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP5 (B-2, checksum schema 11 -> 12): each
+// weapon's `strike_interval_ticks` and `followup_max_distance`, each entity's `pending_strikes`
+// and each projectile's `strikes` are hashed, so every checkpoint changed. No behaviour did: every
+// shipped interval is 0, so every strike still lands on its release tick, and with the four
+// fields left out of the encoding (schema 11) both fixtures reproduce as recorded for the scan
+// ranges (Q0057).
 (
-    checksum_schema: 11,
+    checksum_schema: 12,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -139,25 +145,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x3978ca1c92f81bc5,
-        0x8dd33ab038320f9c,
-        0x7bbcb1d151269093,
-        0xd26fc1e4f8b96e3a,
-        0xd654238c49aa67dc,
-        0x1ae820f062c25c78,
-        0x574783437289f23e,
-        0x26989b6a757682ff,
-        0x06d83523b3ce7355,
-        0x1e3ebd1eb7043ad3,
-        0x20e281b3ad395bd2,
-        0xca3efe964b647e3c,
-        0xf5e315b9ff043fc8,
-        0xfc5269f70a0e2830,
-        0x3543984612f6b78a,
-        0xe47f352421740783,
-        0x2838b00f61f1db23,
-        0x729f4d65f3c05473,
-        0xeff37485e11200e4,
-        0x37e710fa96fe5e5d,
+        0xdd845a70aac34444,
+        0xa27c87ec5671ef0a,
+        0x7fc21f933c14217b,
+        0x561c8b7849dd1b24,
+        0xe1e1df047820ca52,
+        0x4a1ed3c200c8fed8,
+        0xe7c4fc9a325e792d,
+        0x49b29ed5c4d9b73b,
+        0x6c6fca63d93f08a1,
+        0x7ed129d606ba6995,
+        0x4bb1a99648b8cb05,
+        0xd12a693fcc3e1d72,
+        0xa491344679f38172,
+        0xacd0c678d6a177ff,
+        0x90481fcd6cb806da,
+        0xc7f78c34a63a76f0,
+        0xcdc737de1aabb6e3,
+        0x44ffca933e167911,
+        0x384bb5840132ecc5,
+        0x6d0040daa3d30327,
     ],
 )

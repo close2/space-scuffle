@@ -251,6 +251,8 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
         bonus_armored: SimScalar::ZERO,
         bonus_light: SimScalar::ZERO,
         attacks_count: 1,
+        strike_interval_ticks: 0,
+        followup_max_distance: None,
         period_ticks: 60,
         damage_point_ticks: 2,
         backswing_ticks: 4,

@@ -78,6 +78,15 @@ pub struct WeaponSpec {
     pub bonus_light: SimScalar,
     /// Number of distinct damage strikes applied per attack cycle (e.g. Zealot = 2).
     pub attacks_count: u8,
+    /// Ticks between consecutive strikes of one attack: the `PeriodicPeriodArray` of the
+    /// weapon's `CEffectCreatePersistent` in `StarCraft` II. The first strike lands on the
+    /// release tick and strike `k` (from 0) lands `k × strike_interval_ticks` ticks later. 0 lands
+    /// every strike on the release tick; a single-strike weapon authors 0.
+    pub strike_interval_ticks: u16,
+    /// Greatest centre-to-centre distance, in world units, between attacker and target at which
+    /// a strike after the first still lands (a `CValidatorLocationCompareRange` on the strike's
+    /// effect in `StarCraft` II, such as the Zealot's 2.1). `None`: no distance condition.
+    pub followup_max_distance: Option<SimScalar>,
     /// Total ticks between consecutive attack cycles (attack period).
     pub period_ticks: u16,
     /// Wind-up delay in ticks before damage is committed (`DamagePoint`).

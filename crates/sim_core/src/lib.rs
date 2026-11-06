@@ -48,7 +48,8 @@ pub use combat::{
     RELEASE_RANGE_SLOP,
 };
 pub use entity::{
-    ActiveBuff, ActiveProjectile, Cargo, Entity, MovementMemory, UnitTask, WeaponPhase,
+    ActiveBuff, ActiveProjectile, Cargo, Entity, MovementMemory, PendingStrikes, UnitTask,
+    WeaponPhase,
 };
 pub use error::{SimCoreError, SimResult};
 pub use published_actions::ActionSet;

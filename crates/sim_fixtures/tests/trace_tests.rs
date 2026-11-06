@@ -95,6 +95,7 @@ const WINDUP_MELEE_RON: &str = r#"(
                 bonus_armored: 0.0,
                 bonus_light: 0.0,
                 attacks_count: 2,
+                strike_interval_ticks: 0,
                 period_ticks: 22,
                 damage_point_ticks: 4,
                 backswing_ticks: 6,

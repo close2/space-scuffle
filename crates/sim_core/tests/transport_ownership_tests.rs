@@ -712,6 +712,7 @@ fn all_three_splash_routes_ignore_cargo_at_dormant_pickup_coordinates() -> TestR
                 weapon_spec: weapon,
                 source_slug: Some(f.world.catalog.get(f.kind)?.slug.clone()),
                 remaining_lifetime_ticks: 10,
+                strikes: 1,
             });
         }
         f.world.try_load_unit_into_transport(passenger, carrier)?;
@@ -749,6 +750,7 @@ fn committed_projectile_from_loaded_attacker_still_damages_without_cargo_retalia
         weapon_spec: f.weapon.clone(),
         source_slug: Some(f.world.catalog.get(f.kind)?.slug.clone()),
         remaining_lifetime_ticks: 10,
+        strikes: 1,
     });
     f.world.try_load_unit_into_transport(attacker, carrier)?;
     let before = f.world.entities[&attacker].clone();

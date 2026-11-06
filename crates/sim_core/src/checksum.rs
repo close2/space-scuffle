@@ -36,7 +36,9 @@ use std::collections::BTreeMap;
 /// attack phase now reaches the renderer from the weapon state machine, not stored state.
 /// Schema 11 adds where each unit's automatic target last stood, which the tie-break "closest
 /// to the previous target" reads.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 11;
+/// Schema 12 adds each weapon's strike interval and follow-up distance, each entity's pending
+/// strikes and each projectile's strike count: the strikes of one attack land on separate ticks.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 12;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

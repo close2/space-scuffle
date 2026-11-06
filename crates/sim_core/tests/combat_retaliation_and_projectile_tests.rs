@@ -78,6 +78,8 @@ fn custom_projectile_weapon(
         bonus_armored: SimScalar::ZERO,
         bonus_light: SimScalar::ZERO,
         attacks_count: 1,
+        strike_interval_ticks: 0,
+        followup_max_distance: None,
         period_ticks: 30,
         damage_point_ticks: 1,
         backswing_ticks: 2,

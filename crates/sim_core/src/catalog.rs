@@ -860,6 +860,14 @@ struct WeaponSpecDef {
     bonus_armored: f32,
     bonus_light: f32,
     attacks_count: u8,
+    /// Ticks between consecutive strikes of one attack; required, 0 for a single strike or a
+    /// volley that lands at once (see [`WeaponSpec::strike_interval_ticks`]).
+    strike_interval_ticks: u16,
+    /// Greatest centre-to-centre distance at which a strike after the first lands. Omitted
+    /// reads as `None`, the engine default: a strike effect carries no range validator unless
+    /// its data adds one.
+    #[serde(default)]
+    followup_max_distance: Option<f32>,
     period_ticks: u16,
     damage_point_ticks: u16,
     backswing_ticks: u16,
@@ -1042,6 +1050,8 @@ impl UnitArchetypeDef {
             bonus_armored: SimScalar::from_f32_lossy(w.bonus_armored),
             bonus_light: SimScalar::from_f32_lossy(w.bonus_light),
             attacks_count: w.attacks_count,
+            strike_interval_ticks: w.strike_interval_ticks,
+            followup_max_distance: w.followup_max_distance.map(SimScalar::from_f32_lossy),
             period_ticks: w.period_ticks,
             damage_point_ticks: w.damage_point_ticks,
             backswing_ticks: w.backswing_ticks,

@@ -564,7 +564,15 @@ impl BattleTrace {
             if weapon.projectile_speed.is_some() {
                 return Ok(None);
             }
-            for _ in 0..weapon.attacks_count {
+            // A release lands every strike only when they land together; a weapon that spaces
+            // them lands one now and the rest on later ticks, which are not releases and so are
+            // not replayed here (plan `2026-11-05-sc2-deviation-fixes` WP5).
+            let strikes = if weapon.strike_interval_ticks == 0 {
+                weapon.attacks_count
+            } else {
+                1
+            };
+            for _ in 0..strikes {
                 let hit = calculate_hit_damage_upgraded(
                     weapon,
                     Some(&arch.slug),
