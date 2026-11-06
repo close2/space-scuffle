@@ -210,6 +210,12 @@ fn install(
         .insert_resource(FrameStamp::default())
         .insert_resource(ledger.clone())
         .insert_resource(client::media::MediaFailurePolicy::new(true))
+        // The director selects nothing, so the command panel would be an empty band across the
+        // bottom of every battle frame. The video leaves it out and gives its room to the world;
+        // the resource bar, the fog and the feed stay the real game's (evidence, WP4).
+        .insert_resource(client::battle_hud::HudLayout {
+            command_panel: false,
+        })
         .insert_resource(evidence.clone())
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO))
         .add_systems(

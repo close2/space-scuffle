@@ -12,7 +12,8 @@
 //!   `client::render_compatibility`.
 //!
 //! Both run under `xvfb-run` with a 1920×1080 screen, `WGPU_BACKEND=vulkan` and
-//! `SPACE_SCUFFLE_VIRTUAL_GPU=1`, as the GPU test harness does.
+//! `SPACE_SCUFFLE_VIRTUAL_GPU=1`, as the GPU test harness does. Each take child leads its own
+//! process group, killed whole when the take ends ([`super::process_group`]).
 //!
 //! # Layout of `--out`
 //! `takes/<take>.mkv`, `takes/<take>.manifest.ron` (the lossless mezzanines), and `site/` with
@@ -313,6 +314,10 @@ pub fn render(options: &RenderOptions) -> Result<PathBuf, ShowcaseError> {
 }
 
 /// Runs one take child with inherited output, so its log reaches the console or CI.
+///
+/// The child leads its own process group, which is killed when it ends: no descendant (the X
+/// server of `xvfb-run`, an encoder) may outlive the take and keep `with-gpu-lock`'s inherited
+/// lock descriptor open ([`super::process_group`]).
 fn run_child(take: &str, plan: &ChildPlan) -> Result<(), ShowcaseError> {
     let mut command = Command::new(&plan.program);
     command.args(&plan.arguments);
@@ -327,9 +332,8 @@ fn run_child(take: &str, plan: &ChildPlan) -> Result<(), ShowcaseError> {
         plan.program.display(),
         plan.arguments.join(" ")
     );
-    let status = command
-        .status()
-        .map_err(|error| ShowcaseError::Render(format!("cannot start take `{take}`: {error}")))?;
+    let status =
+        super::process_group::run_in_own_group(&mut command, &format!("take `{take}`"))?.status;
     if !status.success() {
         return Err(ShowcaseError::Render(format!(
             "take `{take}` failed: {status}"
