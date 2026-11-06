@@ -839,12 +839,21 @@ fn b2_strike_spacing_follows_starcraft() -> TestResult {
     Ok(())
 }
 
+/// One row of [`SC2_ATTRIBUTE_BONUSES`]: analogue, catalog weapon name if the row is for one
+/// weapon only, `(attribute, bonus)` pairs, and the source.
+type BonusRow = (
+    &'static str,
+    Option<&'static str>,
+    &'static [(Attribute, f32)],
+    &'static str,
+);
+
 /// `StarCraft` II 5.0.14 `CEffectDamage` `AttributeBonus` of the weapons of the armed analogues
 /// this catalog models: `(analogue, weapon, [(attribute, bonus)], source)`, where `weapon` names
 /// the catalog weapon a row is for when the analogue's weapons differ (plan
 /// `2026-11-05-sc2-deviation-fixes` WP6, B-14; evidence §6.1). A row whose source says "none" is
 /// an analogue whose damage effects set no `AttributeBonus` anywhere in the layer chain.
-const SC2_ATTRIBUTE_BONUSES: [(&str, Option<&str>, &[(Attribute, f32)], &str); 40] = [
+const SC2_ATTRIBUTE_BONUSES: [BonusRow; 40] = [
     ("SCV", None, &[], "none"),
     ("Marine", None, &[], "none"),
     ("Roach", None, &[], "none"),
