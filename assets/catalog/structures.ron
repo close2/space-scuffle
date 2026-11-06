@@ -1521,7 +1521,7 @@
                 has_turret: true,
                 turret_turn_rate_deg_per_tick: 20.16,
                 base_damage: 15.0,
-                attribute_bonuses: [],
+                attribute_bonuses: [(Biological, 10.0)],
                 attacks_count: 1,
                 strike_interval_ticks: 0,
                 period_ticks: 15,
