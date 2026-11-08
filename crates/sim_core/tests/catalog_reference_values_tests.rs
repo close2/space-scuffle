@@ -1978,3 +1978,58 @@ fn b47_unit_weapon_ranges_follow_starcraft() -> TestResult {
         |w| f(w.max_range),
     )
 }
+
+/// Unit collision radius (`CUnit` `Radius`; `core` UnitData:41 is the class default 0.5).
+const SC2_UNIT_RADIUS: [(&str, [f32; 1], &str); 40] = [
+    ("SCV", [0.375], "liberty UnitData:4743"),
+    ("Marine", [0.375], "liberty UnitData:4837"),
+    ("Roach", [0.5], "class default, core UnitData:41"),
+    ("Zealot", [0.5], "class default, core UnitData:41"),
+    ("Siege Tank", [0.875], "liberty UnitData:5094"),
+    ("Marauder", [0.5625], "liberty UnitData:11036"),
+    ("Reaper", [0.375], "liberty UnitData:4910"),
+    ("Ghost", [0.375], "liberty UnitData:5005"),
+    ("Hellion", [0.625], "liberty UnitData:11568"),
+    ("Thor", [1.0], "void UnitData:1404"),
+    ("Viking", [0.75], "liberty UnitData:6857"),
+    ("Medivac", [0.75], "liberty UnitData:5464"),
+    ("Liberator", [0.75], "void UnitData:3327"),
+    ("Banshee", [0.75], "liberty UnitData:5391"),
+    ("Raven", [0.625], "liberty UnitData:5597"),
+    ("Probe", [0.375], "liberty UnitData:3083"),
+    ("Stalker", [0.625], "liberty UnitData:3973"),
+    ("Sentry", [0.5], "class default, core UnitData:41"),
+    ("Adept", [0.5], "class default, core UnitData:41"),
+    ("High Templar", [0.375], "liberty UnitData:3267"),
+    ("Dark Templar", [0.375], "liberty UnitData:3361"),
+    ("Immortal", [0.75], "liberty UnitData:10744"),
+    ("Colossus", [1.0], "liberty UnitData:4051"),
+    ("Observer", [0.5], "class default, core UnitData:41"),
+    ("Warp Prism", [0.875], "liberty UnitData:3833"),
+    ("Void Ray", [1.0], "liberty UnitData:3767"),
+    ("Drone", [0.375], "liberty UnitData:7049"),
+    ("Zergling", [0.375], "liberty UnitData:7563"),
+    ("Baneling", [0.375], "liberty UnitData:9320"),
+    ("Ravager", [0.75], "liberty UnitData:1018"),
+    ("Hydralisk", [0.625], "liberty UnitData:7676"),
+    ("Lurker", [0.9375], "void UnitData:754"),
+    ("Mutalisk", [0.5], "class default, core UnitData:41"),
+    ("Corruptor", [0.625], "liberty UnitData:11231"),
+    ("Brood Lord", [1.0], "liberty UnitData:11120"),
+    ("Ultralisk", [1.0], "liberty UnitData:8022"),
+    ("Queen", [0.875], "liberty UnitData:11428"),
+    ("Infestor", [0.625], "voidmulti UnitData:830"),
+    ("Viper", [1.0], "swarm UnitData:2370"),
+    ("Overlord", [1.0], "liberty UnitData:7376"),
+];
+
+#[test]
+fn b47_unit_radii_follow_starcraft() -> TestResult {
+    check_table(
+        "radius",
+        false,
+        &SC2_UNIT_RADIUS,
+        &["Phoenix", "Carrier / Mothership"],
+        |a| [f(a.collision_radius)],
+    )
+}
