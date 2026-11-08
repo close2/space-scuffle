@@ -142,6 +142,10 @@
 // splash also encodes its shape (a circle, or a line's origin, axis and offsets), so the schema
 // byte changes every checkpoint. No behaviour did: with the shape encoded at schema 14, both
 // fixtures reproduce as recorded for WP8a.
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP9 group g10 (B-47): "blue_armor"
+// (rhino_beetle) sees 9 (was 10, StarCraft II 5.0.14 `liberty` UnitData:7210). What the squad sees
+// is world state from tick 1, so every checkpoint changed. With only the Roach analogue's sight
+// restored to 10, both fixtures reproduce as recorded for WP8b.
 (
     checksum_schema: 15,
     seed: 0x5EED_0F_5CAFF1E,
@@ -169,16 +173,16 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x13c2b0d7c59a23c1,
-        0xf7aefb4bd778d1e7,
-        0x97fa8d2e1a7750c7,
-        0xf3e3356b5ed753a0,
-        0x5012f8433cb325e5,
-        0xde1d64e2bf0a1457,
-        0xcd2427215a5ad3e3,
-        0x6105810e74b578d6,
-        0x20644c8f8a14b521,
-        0xb90857a59e8b706f,
+        0x9c6ce919e07d4246,
+        0x9473c8ce0bbed268,
+        0xead917bf901d6957,
+        0xe7c4920ff73381cf,
+        0xb414c669fbddd6bb,
+        0x87f5c9e9339b65be,
+        0x04108c4ee3f67d83,
+        0x1485328fbb674cd9,
+        0x0b5d60b6d7e7371d,
+        0xaedcfe8da9e1061c,
         0x0393815f0c448a98,
         0xea7c99af701d86b0,
         0x1e167bc16c815e52,

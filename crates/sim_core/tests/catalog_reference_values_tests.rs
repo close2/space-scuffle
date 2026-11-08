@@ -1861,3 +1861,55 @@ fn b47_unit_vitals_follow_starcraft() -> TestResult {
         |a| [f(a.max_hp), f(a.max_shields), f(a.life_armor)],
     )
 }
+
+/// Unit sight (`CUnit` `Sight`).
+const SC2_UNIT_SIGHT: [(&str, [f32; 1], &str); 41] = [
+    ("SCV", [8.0], "liberty UnitData:4759"),
+    ("Marine", [9.0], "liberty UnitData:4850"),
+    ("Roach", [9.0], "liberty UnitData:7210"),
+    ("Zealot", [9.0], "liberty UnitData:3201"),
+    ("Siege Tank", [11.0], "liberty UnitData:5107"),
+    ("Marauder", [10.0], "liberty UnitData:10992"),
+    ("Reaper", [9.0], "liberty UnitData:4923"),
+    ("Ghost", [11.0], "liberty UnitData:5019"),
+    ("Hellion", [10.0], "liberty UnitData:11580"),
+    ("Thor", [11.0], "liberty UnitData:5238"),
+    ("Viking", [10.0], "liberty UnitData:6866"),
+    ("Medivac", [11.0], "liberty UnitData:5474"),
+    ("Liberator", [10.0], "void UnitData:3300"),
+    ("Banshee", [10.0], "liberty UnitData:5401"),
+    ("Raven", [11.0], "liberty UnitData:5607"),
+    ("Probe", [8.0], "liberty UnitData:3099"),
+    ("Stalker", [10.0], "liberty UnitData:3988"),
+    ("Sentry", [10.0], "liberty UnitData:11325"),
+    ("Adept", [9.0], "void UnitData:3205"),
+    ("High Templar", [10.0], "liberty UnitData:3290"),
+    ("Dark Templar", [8.0], "liberty UnitData:3376"),
+    ("Immortal", [9.0], "liberty UnitData:10760"),
+    ("Colossus", [10.0], "liberty UnitData:4070"),
+    ("Observer", [11.0], "liberty UnitData:3442"),
+    ("Warp Prism", [10.0], "liberty UnitData:3848"),
+    ("Void Ray", [10.0], "liberty UnitData:3780"),
+    ("Carrier / Mothership", [12.0], "liberty UnitData:3507"),
+    ("Drone", [8.0], "liberty UnitData:7063"),
+    ("Zergling", [8.0], "liberty UnitData:7577"),
+    ("Baneling", [8.0], "liberty UnitData:9340"),
+    ("Ravager", [9.0], "liberty UnitData:999"),
+    ("Hydralisk", [9.0], "liberty UnitData:7698"),
+    ("Lurker", [11.0], "voidmulti UnitData:985"),
+    ("Mutalisk", [11.0], "liberty UnitData:7810"),
+    ("Corruptor", [10.0], "liberty UnitData:11242"),
+    ("Brood Lord", [12.0], "liberty UnitData:11132"),
+    ("Ultralisk", [9.0], "liberty UnitData:8041"),
+    ("Queen", [9.0], "liberty UnitData:11446"),
+    ("Infestor", [10.0], "liberty UnitData:10092"),
+    ("Viper", [11.0], "swarm UnitData:2343"),
+    ("Overlord", [11.0], "liberty UnitData:7390"),
+];
+
+#[test]
+fn b47_unit_sight_follows_starcraft() -> TestResult {
+    check_table("sight", false, &SC2_UNIT_SIGHT, &["Phoenix"], |a| {
+        [f(a.sight_radius)]
+    })
+}
