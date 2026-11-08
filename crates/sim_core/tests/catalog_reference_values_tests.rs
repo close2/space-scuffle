@@ -1913,3 +1913,68 @@ fn b47_unit_sight_follows_starcraft() -> TestResult {
         [f(a.sight_radius)]
     })
 }
+
+/// Maximum range of every armed unit's weapon (`CWeapon` `Range`; `core` WeaponData:12 is the class
+/// default 5).
+const SC2_UNIT_RANGE: [WeaponRow; 43] = [
+    ("SCV", "weapon", 0.2, "voidmulti WeaponData:105"),
+    ("Marine", "weapon", 5.0, "core WeaponData:12"),
+    ("Marine", "air_weapon", 5.0, "core WeaponData:12"),
+    ("Roach", "weapon", 4.0, "swarm WeaponData:167"),
+    ("Zealot", "weapon", 0.1, "liberty WeaponData:154"),
+    ("Siege Tank", "weapon", 7.0, "liberty WeaponData:241"),
+    ("Marauder", "weapon", 6.0, "liberty WeaponData:248"),
+    ("Reaper", "weapon", 5.0, "void WeaponData:90"),
+    ("Ghost", "weapon", 6.0, "liberty WeaponData:577"),
+    ("Hellion", "weapon", 5.0, "core WeaponData:12"),
+    ("Thor", "weapon", 7.0, "liberty WeaponData:231"),
+    ("Thor", "ground_weapon", 7.0, "liberty WeaponData:231"),
+    ("Thor", "air_weapon", 11.0, "voidmulti WeaponData:130"),
+    ("Viking", "air_weapon", 9.0, "liberty WeaponData:272"),
+    ("Liberator", "air_weapon", 5.0, "core WeaponData:12"),
+    ("Banshee", "weapon", 6.0, "liberty WeaponData:555"),
+    ("Probe", "weapon", 0.2, "voidmulti WeaponData:197"),
+    ("Stalker", "weapon", 6.0, "liberty WeaponData:490"),
+    ("Stalker", "air_weapon", 6.0, "liberty WeaponData:490"),
+    ("Sentry", "weapon", 5.0, "core WeaponData:12"),
+    ("Adept", "weapon", 4.0, "void WeaponData:317"),
+    ("High Templar", "weapon", 6.0, "voidmulti WeaponData:291"),
+    ("Dark Templar", "weapon", 0.1, "liberty WeaponData:165"),
+    ("Immortal", "weapon", 6.0, "swarm WeaponData:61"),
+    ("Colossus", "weapon", 7.0, "voidmulti WeaponData:255"),
+    ("Void Ray", "weapon", 6.0, "void WeaponData:166"),
+    ("Void Ray", "air_weapon", 6.0, "void WeaponData:166"),
+    ("Drone", "weapon", 0.2, "voidmulti WeaponData:220"),
+    ("Zergling", "weapon", 0.1, "liberty WeaponData:361"),
+    ("Baneling", "weapon", 0.25, "liberty WeaponData:467"),
+    ("Ravager", "weapon", 6.0, "void WeaponData:143"),
+    ("Hydralisk", "weapon", 5.0, "core WeaponData:12"),
+    ("Hydralisk", "air_weapon", 5.0, "core WeaponData:12"),
+    ("Lurker", "weapon", 8.0, "voidmulti WeaponData:145"),
+    ("Mutalisk", "weapon", 3.0, "liberty WeaponData:401"),
+    ("Mutalisk", "air_weapon", 3.0, "liberty WeaponData:401"),
+    ("Corruptor", "air_weapon", 6.0, "liberty WeaponData:571"),
+    ("Brood Lord", "weapon", 10.0, "voidmulti WeaponData:75"),
+    (
+        "Brood Lord",
+        "ground_weapon",
+        10.0,
+        "voidmulti WeaponData:75",
+    ),
+    ("Ultralisk", "weapon", 1.0, "liberty WeaponData:436"),
+    ("Queen", "weapon", 5.0, "core WeaponData:12"),
+    ("Queen", "ground_weapon", 5.0, "core WeaponData:12"),
+    ("Queen", "air_weapon", 7.0, "liberty WeaponData:105"),
+];
+
+#[test]
+fn b47_unit_weapon_ranges_follow_starcraft() -> TestResult {
+    check_weapons(
+        "range",
+        false,
+        &SC2_UNIT_RANGE,
+        &["Phoenix", "Carrier / Mothership"],
+        |_| true,
+        |w| f(w.max_range),
+    )
+}
