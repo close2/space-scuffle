@@ -945,12 +945,13 @@ not committed, as the time audit's); rows in `~/scratch/sc2dev_wp9/final_base.ts
   name only planes and states (`Ground`/`Air`, `Visible`; excluded `Missile`, `Stasis`, `Dead`, `Hidden`,
   `Invulnerable`), which WP2 audited. Class A.
 
-**Counts** (one row per value; "other" are the listed-only rows: B-6 49, push priority and inner radius 82, cargo 41):
+**Counts** (one row per value; listed only, not classified: `RangeSlop` 50 (B-6), push priority and inner radius
+82 (WP16), cargo 41 (WP17)):
 
-| File | A | C | D (B-86) | E | B-20 / B-82 | Total classified |
+| File | A | C | D (B-86) | E | B-20 / B-82 | Classified |
 |---|---|---|---|---|---|---|
-| `units.ron` | 651 | 43 | 13 | 8 | 8 / 9 | 732 |
-| `structures.ron` | 499 | 63 | 7 | 0 | 0 | 569 |
+| `units.ron` | 670 | 53 | 13 | 8 | 8 / 12 | 764 |
+| `structures.ron` | 501 | 63 | 7 | 0 | 0 | 571 |
 | `upgrades.ron` | 134 | 30 | 0 | 0 | 0 | 164 |
 
 Class E: `flying_saucer` (no single analogue), the Carrier / Mothership composite's vitals (350 / 350 are the
@@ -966,13 +967,14 @@ onward follow this order (no matrix identity first).
 | g2 | Structure sight: Sensor Tower 22 → 12 (`liberty` UnitData:9480; its radar is not modelled, B-69), Factory 10 → 9, Starport 10 → 9, Tech Lab 7 → 9, Reactor 7 → 9, Pylon 9 → 10 (`voidmulti` UnitData:1300), Stargate 10 → 9, Fleet Beacon 10 → 9, Hatchery 11 → 12 (`voidmulti` :649), Lair 11 → 12 (`voidmulti` :932), Spire 10 → 9, Greater Spire 10 → 9 | 12 | none |
 | g3 | Costs: Armory gas 100 → 50 (`voidmulti` UnitData:2100), Dark Shrine 100 / 100 → 150 / 150 (`void` UnitData:1914), Liberator gas 150 → 125 (`voidmulti` UnitData:468), Ultralisk 300 → 275 (`voidmulti` UnitData:1940); research costs of 15 upgrades (Vehicle and Ship Plating 100 / 175 / 250, Protoss Air Weapons and Air Armor levels 2 and 3 175 / 250, Zerg Ground Carapace levels 2 and 3 200 / 250, Flyer Attacks levels 2 and 3 175 / 250, Flyer Carapace 100 / 175 / 250, Grooved Spines 75 / 75; `voidmulti` AbilData and `liberty` AbilData, cited per row in the test) | 36 | costs decide no battle |
 | g4 | Spore Crawler damage 15 → 20 (`SporeCrawlerU`, `voidmulti` EffectData:871) | 1 | none |
-| g5 | Upgrade targets: Neosteel Armor (B-51) and Advanced Ballistics (B-87), §10.6 | 2 upgrades | none |
+| g5 | Upgrade targets: Neosteel Armor gives +2 armour to every Terran structure (`TerranBuildingArmor`, `liberty` UpgradeData:842-898; ours: the Bunker only, B-51); Advanced Ballistics adds range only to the Defender Mode weapon (`LiberatorAGRangeUpgrade`, `voidmulti` UpgradeData:154-155; ours lengthened the anti-air weapon, recorded as **B-87**) | 2 upgrades | none |
 | g6 | Observer shields 20 → 30 (`voidmulti` UnitData:1137) | 1 | none |
 | g7 | Attributes: SCV + Biological (`liberty` UnitData:4799), Sentry − Light (`voidmulti` UnitData:1553), Infestor + Armored (`liberty` UnitData:10113) | 3 | SCV (22a) |
 | g8 | Ravager damage 13 → 16 (`RavagerWeaponDamage`, `void` EffectData:1603) and +1 → +2 a level (`void` UpgradeData:517) | 2 | none |
 | g9 | Unit life and armour: Viking 125 → 135 (`voidmulti` UnitData:2000), Hellion armour 1 → 0 (no layer sets it; doc 07 says 0), Thor armour 2 → 1 (`liberty` UnitData:5208) | 3 | Viking, Hellion, Thor |
 | g10 | Unit sight: Dark Templar 9 → 8 (`liberty` UnitData:3376), Roach 10 → 9 (:7210), Brood Lord 11 → 12 (:11132) | 3 | Roach, Brood Lord |
 | g11 | Weapon range: Dark Templar and Zergling 0.2 → 0.1 (`liberty` WeaponData:165, :361), Thor anti-air 10 → 11 (`voidmulti` WeaponData:130) | 3 | Zergling, Thor |
+| g13 | Bonus damage per upgrade level: Siege Mode Armored +5 → +1 (`voidmulti` UpgradeData:305); Viking and Void Ray Armored +1 → 0 (no `AttributeBonus` entry in any layer's weapon upgrades) | 4 | none (no matrix upgrades) |
 | g12 | Collision radius (`CUnit` `Radius`) of 26 units, for example Siege Tank 0.75 → 0.875 (`liberty` UnitData:5094), Stalker 0.5 → 0.625 (:3973), Roach 0.5625 → 0.5 (class default, `core` UnitData:41) | 26 | 14 of them |
 | rule | Structure attributes are derived in `catalog.rs` (Psionic for a shielded structure, Mechanical otherwise); the game gives Protoss structures Armored and Structure only and Zerg structures Armored, Biological and Structure (for example Nexus `liberty` UnitData:4166, Hatchery :8193). Recorded as **B-88** | 33 | none |
 
@@ -987,3 +989,73 @@ onward follow this order (no matrix identity first).
 (for example 0 on the Hydralisk's and the Lurker's, `liberty` WeaponData:372, :505; 2 on the Siege Mode cannon,
 :402). Ours is one constant, 0.5. Applying it is a rule (a per-weapon field) with its own latent commit and a
 matrix-wide measurement; it is not part of this package's data groups and stays in the register.
+
+**Indexed upgrade overrides.** The resolver merges a `…Level1` upgrade's `EffectArray` parent first, then each
+layer's entries, an `index` updating that slot. It reproduces every per-level value Liquipedia gives where the
+override names its reference or only sets a value, but one case shows its numbering is not certain: `voidmulti`
+UpgradeData:911 (index 13, a Zergling icon) lands on the slot of the Baneling's Light +2 (`liberty` UpgradeData:509)
+in the merge. That value was read from its own line (WP6, §6.1) and is kept.
+
+### 10.2 Data groups and measurements
+
+Order as in the table of §10.1, groups with no matrix identity first; each group's test in
+`crates/sim_core/tests/catalog_reference_values_tests.rs` covers every identity of its field kind and failed
+before its data. Matrix: 20 seeds a battle (1000 runs); battle 33: 68 seeds. Directories under
+`~/scratch/sc2dev_wp9/<group>/`.
+
+| Group | Commit | Matrix (against the previous group) | Battle 33 | Goldens |
+|---|---|---|---|---|
+| g1 structure vitals | `9dcaa0e` | no structure in the matrix | — | unchanged |
+| g2 structure sight | `2d5eb17` | no structure | — | unchanged |
+| g3 costs | `b1e894f` | costs decide no battle | — | unchanged |
+| g4 Spore Crawler | `77d26e8` | no structure | — | unchanged |
+| g5 upgrade targets | `aab7041` | no upgrades researched | — | unchanged |
+| g7 attributes | `a5d7989` | bit-identical (the SCV of 22a; no matrix weapon has a Biological bonus) | 54 / 7 / 7 | unchanged |
+| g8 Ravager | `7d9fb44` | not spawned | — | unchanged |
+| g13 bonus per level | `e73667e` | no upgrades researched | — | unchanged |
+| g6 unit vitals | `eacdf18` | 9a, 10, 12c, 19, 35 moved, no winner changed; 12c and 19 re-recorded (the Viking's untouched hull 125 → 135) | bit-identical | unchanged |
+| g10 unit sight | `69cad65` | no result moved | bit-identical | re-recorded (Roach sight, §10.3) |
+| g11 weapon range | `aafc247` | 9a, 10, 23a, 23b, 24a, 24b, 26–29 moved (Zergling melee 0.1), no winner changed | bit-identical | unchanged |
+| g12 collision radii | `8626edf` | 24 battles moved, no winner changed; 35: Viking wins 12 → 20 of 20 (the rest were unresolved); 31: two seeds changed winner (19 / 1 overall either way) | bit-identical | re-recorded (§10.3) |
+
+Expectation failures after every group: 0 on the seeds of record and 0 over all seeds. Battle 33 stays
+54 / 7 / 7 (marine survivors 5.29, zealot survivors 0.37): no group touches the Marine or the Zealot, so its
+expectation `blue (0, 13), red (0, 3)` is not re-recorded.
+
+**Held: the Thor's armour (g6).** 2 → 1 (`liberty` UnitData:5208) flips battle `14_thor_vs_ultralisk` from the
+Thor on all 20 seeds (survivors 1.00 – 0.00, Thor hull 4.00) to the Ultralisk on all 20 (0.00 – 1.00, Ultralisk hull
+26.87); 12 expectation failures on the seeds of record. Per the stop rule it is not committed: the patch is
+`~/scratch/sc2dev_wp9/held/g6_unit_vitals_full.patch` (its `colossus_mech` hunk), the Thor is exempt from the
+vitals table, and B-47 keeps it as its open part until the orchestrator decides.
+
+### 10.3 Goldens
+
+- **g10:** the Roach squad (`blue_armor`) sees 9; what it sees is world state from tick 1, so every checkpoint of
+  both fixtures changed. With only the Roach's sight restored to 10 both reproduce as recorded for WP8b.
+- **g12:** the Roach (0.5625 → 0.5) and the Siege Tank (0.75 → 0.875) radii are hashed body state: every checkpoint
+  of `golden_replay` and checkpoints 1–60 of `golden_replay_orders` changed. With only those two radii restored
+  both reproduce as recorded for g10.
+- **B-82 rule (§10.4):** checksum schema 15 → 16; both fixtures and the sandbox checksum re-recorded for the
+  encoding alone.
+
+Each re-recording reproduces in debug, release, and `wasm32-wasip1` debug and release (`wasmtime`).
+
+### 10.4 B-82: the Baneling's structure strike
+
+- **Rule** (`3bbc750`, latent): `WeaponSpec::structure_strike` (damage, per-level growth, whether armour applies;
+  serde default `None`, the engine default). A structure struck by such a weapon takes it, with no attribute bonus,
+  instead of the weapon's own strike; without armour neither life nor shield armour reduces it. Checksum schema
+  16. Test `b82_a_structure_strike_replaces_the_strike_against_structures` (did not compile before). Matrix and
+  battle 33 bit-identical to g12.
+- **Data** (`2f8af7f`): the Baneling analogue, 80, +5 a level, ignoring armour (`VolatileBurstU2`, `liberty`
+  EffectData:1058, :1063; UpgradeData:505). No matrix battle has a structure: bit-identical. Its centre on the
+  Baneling stays B-83.
+
+### 10.5 What WP9 leaves open
+
+- **B-47:** the Thor's armour (held, §10.2) and the structure attributes (B-88, a rule: a required `attributes`
+  field on structures; nothing in the catalog reads Psionic, Mechanical or Biological against a structure today).
+- **B-6:** the per-weapon `RangeSlop` (§10.1), a rule with its own measurement.
+- **B-86:** morph and Zergling pair costs, with the morph model (WP17).
+- **B-87** is fixed by g5; **B-51** and **B-82** are fixed.
+
