@@ -916,6 +916,15 @@ fn check_weapons(
             if structures && block == "weapon" {
                 continue;
             }
+            // A unit's ground weapon defaults to its `weapon`; only authored blocks have rows.
+            let derived = block != "weapon" && archetype.weapon.as_ref() == Some(weapon);
+            if derived
+                && !rows
+                    .iter()
+                    .any(|(unit, b, ..)| *unit == name && *b == block)
+            {
+                continue;
+            }
             let Some((_, _, want, source)) = rows
                 .iter()
                 .find(|(unit, b, ..)| *unit == name && *b == block)
@@ -1229,4 +1238,281 @@ fn b47_unit_attributes_follow_starcraft() -> TestResult {
         &["Phoenix"],
         |a| [f32::from(a.attributes.bits())],
     )
+}
+
+/// Damage per strike of every armed unit (the weapon's first `CEffectDamage` `Amount`). The Brood
+/// Lord deals its damage through Broodlings (B-21) and has no row.
+const SC2_UNIT_DAMAGE: [WeaponRow; 41] = [
+    (
+        "SCV",
+        "weapon",
+        5.0,
+        "FusionCutter, liberty EffectData:1623",
+    ),
+    (
+        "Marine",
+        "weapon",
+        6.0,
+        "GuassRifle, liberty EffectData:1628",
+    ),
+    (
+        "Marine",
+        "air_weapon",
+        6.0,
+        "GuassRifle, liberty EffectData:1628",
+    ),
+    (
+        "Roach",
+        "weapon",
+        16.0,
+        "AcidSalivaU, liberty EffectData:2144",
+    ),
+    (
+        "Zealot",
+        "weapon",
+        8.0,
+        "PsiBlades, liberty EffectData:1931",
+    ),
+    (
+        "Siege Tank",
+        "weapon",
+        15.0,
+        "90mmCannons, liberty EffectData:1664",
+    ),
+    (
+        "Marauder",
+        "weapon",
+        10.0,
+        "PunisherGrenadesU, liberty EffectData:1649",
+    ),
+    (
+        "Reaper",
+        "weapon",
+        4.0,
+        "P38ScytheGuassPistol, liberty EffectData:1816",
+    ),
+    (
+        "Ghost",
+        "weapon",
+        10.0,
+        "C10CanisterRifle, liberty EffectData:1633",
+    ),
+    (
+        "Hellion",
+        "weapon",
+        8.0,
+        "InfernalFlameThrower, liberty EffectData:2604",
+    ),
+    (
+        "Thor",
+        "weapon",
+        30.0,
+        "ThorsHammerDamage, swarm EffectData:2355",
+    ),
+    (
+        "Thor",
+        "ground_weapon",
+        30.0,
+        "ThorsHammerDamage, swarm EffectData:2355",
+    ),
+    (
+        "Thor",
+        "air_weapon",
+        25.0,
+        "LanceMissileLaunchersDamage, voidmulti EffectData:750",
+    ),
+    (
+        "Viking",
+        "air_weapon",
+        10.0,
+        "LanzerTorpedoesDamage, liberty EffectData:1717",
+    ),
+    (
+        "Liberator",
+        "air_weapon",
+        5.0,
+        "LiberatorMissileDamage, voidmulti EffectData:753",
+    ),
+    (
+        "Banshee",
+        "weapon",
+        12.0,
+        "BacklashRocketsU, liberty EffectData:2567",
+    ),
+    (
+        "Probe",
+        "weapon",
+        5.0,
+        "ParticleBeam, liberty EffectData:1917",
+    ),
+    (
+        "Stalker",
+        "weapon",
+        13.0,
+        "ParticleDisruptorsU, voidmulti EffectData:584",
+    ),
+    (
+        "Stalker",
+        "air_weapon",
+        13.0,
+        "ParticleDisruptorsU, voidmulti EffectData:584",
+    ),
+    (
+        "Sentry",
+        "weapon",
+        6.0,
+        "DisruptionBeamDamage, liberty EffectData:2530",
+    ),
+    ("Adept", "weapon", 10.0, "AdeptDamage, void EffectData:2772"),
+    (
+        "High Templar",
+        "weapon",
+        4.0,
+        "HighTemplarWeaponDamage, voidmulti EffectData:1543",
+    ),
+    (
+        "Dark Templar",
+        "weapon",
+        45.0,
+        "WarpBlades, liberty EffectData:1937",
+    ),
+    (
+        "Immortal",
+        "weapon",
+        20.0,
+        "PhaseDisruptors, liberty EffectData:2434",
+    ),
+    (
+        "Colossus",
+        "weapon",
+        10.0,
+        "ThermalLancesMU, voidmulti EffectData:965",
+    ),
+    (
+        "Void Ray",
+        "weapon",
+        6.0,
+        "VoidRaySwarmDamage, void EffectData:1809",
+    ),
+    (
+        "Void Ray",
+        "air_weapon",
+        6.0,
+        "VoidRaySwarmDamage, void EffectData:1809",
+    ),
+    ("Drone", "weapon", 5.0, "Spines, liberty EffectData:2130"),
+    ("Zergling", "weapon", 5.0, "Claws, liberty EffectData:2134"),
+    (
+        "Baneling",
+        "weapon",
+        16.0,
+        "VolatileBurstU, voidmulti EffectData:1027",
+    ),
+    (
+        "Ravager",
+        "weapon",
+        16.0,
+        "RavagerWeaponDamage, void EffectData:1603",
+    ),
+    (
+        "Hydralisk",
+        "weapon",
+        12.0,
+        "NeedleSpinesDamage, liberty EffectData:2179",
+    ),
+    (
+        "Hydralisk",
+        "air_weapon",
+        12.0,
+        "NeedleSpinesDamage, liberty EffectData:2179",
+    ),
+    (
+        "Lurker",
+        "weapon",
+        20.0,
+        "LurkerMPDamage, swarm EffectData:3033",
+    ),
+    (
+        "Mutalisk",
+        "weapon",
+        9.0,
+        "GlaiveWurmU1, liberty EffectData:2230",
+    ),
+    (
+        "Mutalisk",
+        "air_weapon",
+        9.0,
+        "GlaiveWurmU1, liberty EffectData:2230",
+    ),
+    (
+        "Corruptor",
+        "air_weapon",
+        14.0,
+        "ParasiteSporeDamage, swarm EffectData:2063",
+    ),
+    (
+        "Ultralisk",
+        "weapon",
+        35.0,
+        "KaiserBladesDamage, void EffectData:1169",
+    ),
+    (
+        "Queen",
+        "weapon",
+        4.0,
+        "TalonsMissileDamage, liberty EffectData:2333",
+    ),
+    (
+        "Queen",
+        "ground_weapon",
+        4.0,
+        "TalonsMissileDamage, liberty EffectData:2333",
+    ),
+    (
+        "Queen",
+        "air_weapon",
+        9.0,
+        "AcidSpines, liberty EffectData:2849",
+    ),
+];
+
+/// Damage per upgrade level the audit corrected or resolved through an indexed upgrade override:
+/// `(analogue, per level, source)`.
+const SC2_DAMAGE_PER_LEVEL: [(&str, f32, &str); 2] = [
+    (
+        "Ravager",
+        2.0,
+        "RavagerWeaponDamage, ZergMissileWeaponsLevel1 void UpgradeData:517",
+    ),
+    (
+        "Ultralisk",
+        3.0,
+        "KaiserBladesDamage, ZergMeleeWeaponsLevel1 void UpgradeData:624",
+    ),
+];
+
+#[test]
+fn b47_unit_weapon_damage_follows_starcraft() -> TestResult {
+    check_weapons(
+        "damage",
+        false,
+        &SC2_UNIT_DAMAGE,
+        &["Phoenix", "Carrier / Mothership", "Brood Lord"],
+        |_| true,
+        |w| f(w.base_damage),
+    )?;
+    let catalogs = sim_fixtures::shipped_catalogs();
+    for (unit, per_level, source) in SC2_DAMAGE_PER_LEVEL {
+        let weapon = catalogs
+            .units
+            .archetypes()
+            .find(|archetype| analogue(archetype) == unit)
+            .and_then(|archetype| archetype.weapon.clone())
+            .ok_or(format!("an armed archetype with the analogue {unit}"))?;
+        assert!(
+            (f(weapon.upgrade_bonus_per_level) - per_level).abs() < 0.001,
+            "{unit}: +{per_level} a level ({source})"
+        );
+    }
+    Ok(())
 }
