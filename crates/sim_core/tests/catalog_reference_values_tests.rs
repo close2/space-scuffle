@@ -1516,3 +1516,141 @@ fn b47_unit_weapon_damage_follows_starcraft() -> TestResult {
     }
     Ok(())
 }
+
+/// Bonus damage gained per upgrade level by each attribute bonus (`Effect,<damage>,AttributeBonus[…]`
+/// of the weapon's `…Level1` upgrade; none for the Viking and the Void Ray).
+const SC2_BONUS_PER_LEVEL: [WeaponRow; 16] = [
+    (
+        "Siege Tank",
+        "weapon",
+        1.0,
+        "90mmCannons, TerranVehicleWeaponsLevel1 liberty UpgradeData:87",
+    ),
+    (
+        "Marauder",
+        "weapon",
+        1.0,
+        "PunisherGrenadesU, TerranInfantryWeaponsLevel1 liberty UpgradeData:20",
+    ),
+    (
+        "Ghost",
+        "weapon",
+        1.0,
+        "C10CanisterRifle, TerranInfantryWeaponsLevel1 liberty UpgradeData:24",
+    ),
+    (
+        "Hellion",
+        "weapon",
+        1.0,
+        "InfernalFlameThrower, TerranVehicleWeaponsLevel1 liberty UpgradeData:89",
+    ),
+    (
+        "Thor",
+        "air_weapon",
+        1.0,
+        "LanceMissileLaunchersDamage, TerranVehicleWeaponsLevel1 voidmulti UpgradeData:314",
+    ),
+    (
+        "Viking",
+        "air_weapon",
+        0.0,
+        "LanzerTorpedoesDamage, no upgrade entry",
+    ),
+    (
+        "Stalker",
+        "weapon",
+        1.0,
+        "ParticleDisruptorsU, ProtossGroundWeaponsLevel1 voidmulti UpgradeData:491",
+    ),
+    (
+        "Stalker",
+        "air_weapon",
+        1.0,
+        "ParticleDisruptorsU, ProtossGroundWeaponsLevel1 voidmulti UpgradeData:491",
+    ),
+    (
+        "Adept",
+        "weapon",
+        1.0,
+        "AdeptDamage, ProtossGroundWeaponsLevel1 void UpgradeData:685",
+    ),
+    (
+        "Immortal",
+        "weapon",
+        3.0,
+        "PhaseDisruptors, ProtossGroundWeaponsLevel1 liberty UpgradeData:252",
+    ),
+    (
+        "Colossus",
+        "weapon",
+        1.0,
+        "ThermalLancesMU, ProtossGroundWeaponsLevel1 voidmulti UpgradeData:486",
+    ),
+    (
+        "Void Ray",
+        "weapon",
+        0.0,
+        "VoidRaySwarmDamage, no upgrade entry",
+    ),
+    (
+        "Void Ray",
+        "air_weapon",
+        0.0,
+        "VoidRaySwarmDamage, no upgrade entry",
+    ),
+    (
+        "Baneling",
+        "weapon",
+        2.0,
+        "VolatileBurstU AttributeBonus[Light], ZergMeleeWeapons liberty UpgradeData:509",
+    ),
+    (
+        "Lurker",
+        "weapon",
+        1.0,
+        "LurkerMPDamage, ZergMissileWeaponsLevel1 voidmulti UpgradeData:433",
+    ),
+    (
+        "Corruptor",
+        "air_weapon",
+        1.0,
+        "ParasiteSporeDamage, ZergFlyerWeaponsLevel1 liberty UpgradeData:679",
+    ),
+];
+
+#[test]
+fn b47_bonus_damage_per_level_follows_starcraft() -> TestResult {
+    check_weapons(
+        "bonus per level",
+        false,
+        &SC2_BONUS_PER_LEVEL,
+        &["Phoenix", "Carrier / Mothership"],
+        |w| {
+            w.attribute_bonuses
+                .entries()
+                .any(|(_, bonus)| bonus > SimScalar::ZERO)
+        },
+        |w| f(w.bonus_upgrade_per_level),
+    )?;
+    // The Siege Mode cannon: +4 and Armored +1 a level (`voidmulti` UpgradeData:302, :305).
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let tank = catalogs
+        .units
+        .archetypes()
+        .find(|archetype| analogue(archetype) == "Siege Tank")
+        .ok_or("a Siege Tank analogue")?;
+    let sieged = tank
+        .modes
+        .iter()
+        .find_map(|mode| mode.ground_weapon_override.clone().flatten())
+        .ok_or("a Siege Mode weapon")?;
+    assert_eq!(
+        [
+            f(sieged.upgrade_bonus_per_level),
+            f(sieged.bonus_upgrade_per_level)
+        ],
+        [4.0, 1.0],
+        "Siege Mode: +4 (+1 Armored) a level (voidmulti UpgradeData:302, :305)"
+    );
+    Ok(())
+}
