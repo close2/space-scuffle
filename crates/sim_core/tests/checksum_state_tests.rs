@@ -256,6 +256,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
     original.target_loss_behavior = ProjectileTargetLossBehavior::Fizzle;
     original.max_projectile_lifetime_ticks = 1;
     original.suicide_on_attack = false;
+    original.structure_strike = None;
     let splash = SplashSpec {
         zones: vec![
             sim_types::SplashZone {
@@ -302,6 +303,9 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
                 upgrade_bonus_per_level => SimScalar::ONE, bonus_upgrade_per_level => SimScalar::ONE,
                 target_loss_behavior => ProjectileTargetLossBehavior::ImpactLastKnownPosition,
                 max_projectile_lifetime_ticks => 2, suicide_on_attack => true,
+                structure_strike => Some(sim_types::StructureStrike {
+                    damage: SimScalar::ONE, upgrade_per_level: SimScalar::ONE, ignores_armor: true,
+                }),
             },
         |weapon| {
             world

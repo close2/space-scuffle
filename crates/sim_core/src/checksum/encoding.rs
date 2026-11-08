@@ -20,8 +20,8 @@ use sim_types::{
     AnimState, ArmorClassId, AttackOrigin, AttributeBonuses, AttributeFlags, EntityId, MatchResult,
     MoverType, PlayerId, PlayerUpgradeState, ProjectileTargetLossBehavior, ResourceNodeId,
     SimAngle, SimScalar, SimVec2, SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape,
-    SplashSpec, SplashZone, Tick, UnitOrder, UnitStatDeltas, UnitTypeId, VisibilityState,
-    WeaponClassId, WeaponSpec, WeaponVisualKind,
+    SplashSpec, SplashZone, StructureStrike, Tick, UnitOrder, UnitStatDeltas, UnitTypeId,
+    VisibilityState, WeaponClassId, WeaponSpec, WeaponVisualKind,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use xxhash_rust::xxh64::Xxh64;
@@ -378,6 +378,7 @@ fields!(WeaponSpec {
     target_loss_behavior,
     max_projectile_lifetime_ticks,
     suicide_on_attack,
+    structure_strike,
 });
 fields!(PendingStrikes {
     target_id,
@@ -428,6 +429,11 @@ impl Canonical for SplashLineAxis {
     }
 }
 fields!(SplashZone { radius, fraction });
+fields!(StructureStrike {
+    damage,
+    upgrade_per_level,
+    ignores_armor
+});
 fields!(PlayerResources {
     minerals,
     gas,
@@ -696,7 +702,7 @@ mod tests {
         // Domain length, UTF-8 domain, schema u32, u16, i32, option tags/payload,
         // then UTF-8 string byte length and its two encoded bytes.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 15, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 16, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
             0xff, 0xff, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0xc3, 0xa9,
         ];
         assert_eq!(encoder.finish(), xxh64(&bytes, 0));
@@ -772,7 +778,7 @@ mod tests {
             let mut encoder = Encoder::new("test");
             7_u32.encode(&mut encoder);
             text.as_str().encode(&mut encoder);
-            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 15, 0, 0, 0];
+            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 16, 0, 0, 0];
             bytes.extend([7, 0, 0, 0]);
             bytes.extend((length as u64).to_le_bytes());
             bytes.extend(text.as_bytes());
@@ -795,7 +801,7 @@ mod tests {
         // Domain length and bytes, schema version, queue length, item tag, archetype u16,
         // then the full remaining duration u32 (0x0001_0001), total, supply and payments.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 15, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 16, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
             0x34, 0x12, 1, 0, 1, 0, 2, 0, 0, 0, 0x78, 0x56, 0x34, 0x12, 3, 0, 0, 0, 4, 0, 0, 0,
         ];
         assert_eq!(digest(&queue), xxh64(&bytes, 0));
@@ -803,7 +809,7 @@ mod tests {
 
     #[test]
     fn carrier_identity_has_explicit_option_tag_and_all_id_bytes() {
-        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 15, 0, 0, 0];
+        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 16, 0, 0, 0];
         bytes.push(0);
         assert_eq!(digest(&None::<sim_types::EntityId>), xxh64(&bytes, 0));
         bytes.pop();

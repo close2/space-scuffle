@@ -589,6 +589,15 @@ impl WeaponSpecDef {
         self.validate_cadence(definition, prefix)?;
         self.validate_strikes(definition, prefix)?;
         self.validate_attribute_bonuses(definition, prefix)?;
+        if let Some(strike) = &self.structure_strike {
+            if strike.damage <= SimScalar::ZERO || strike.upgrade_per_level < SimScalar::ZERO {
+                return Err(invalid(
+                    definition,
+                    &format!("{prefix}.structure_strike"),
+                    "damage must be positive and upgrade_per_level not negative",
+                ));
+            }
+        }
         angle(
             definition,
             &format!("{prefix}.firing_arc_deg"),

@@ -43,7 +43,9 @@ use std::collections::BTreeMap;
 /// Schema 14 replaces each splash's three fixed radii with its list of zones, each a radius and
 /// the fraction of the strike it deals.
 /// Schema 15 adds each splash's shape: a circle, or a line with its origin, axis and offsets.
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 15;
+/// Schema 16 adds each weapon's structure strike: the damage, per-level growth and armour rule
+/// it deals to a structure instead of its own strike (B-82).
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 16;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

@@ -16,7 +16,8 @@
 use crate::catalog::{AcquireLevel, SplashSpec, UnitArchetype, WeaponSpec};
 use crate::entity::{Entity, WeaponPhase};
 use sim_types::{
-    AttackOrigin, EntityId, MoverType, PlayerUpgradeState, SimAngle, SimScalar, SimVec2, UnitOrder,
+    AttackOrigin, AttributeFlags, EntityId, MoverType, PlayerUpgradeState, SimAngle, SimScalar,
+    SimVec2, StructureStrike, UnitOrder,
 };
 
 // PERFORMANCE RATIONALE:
@@ -45,11 +46,25 @@ pub const RELEASE_RANGE_SLOP: SimScalar = SimScalar::HALF;
 /// Minimum damage clamp applied to any penetrating attack in `StarCraft` II.
 pub const MIN_DAMAGE_CLAMP: SimScalar = SimScalar::HALF;
 
+/// The structure strike `spec` deals to `target_archetype`, if the target is a structure and
+/// the weapon has one (B-82).
+fn structure_strike_against<'a>(
+    spec: &'a WeaponSpec,
+    target_archetype: &UnitArchetype,
+) -> Option<&'a StructureStrike> {
+    spec.structure_strike.as_ref().filter(|_| {
+        target_archetype
+            .attributes
+            .contains(AttributeFlags::STRUCTURE)
+    })
+}
+
 /// Raw damage of one strike before falloff and armor, in hit points.
 ///
 /// Sums the base damage, weapon-level scaling, unit-specific stat bonus and attribute bonus.
 /// The per-level attribute growth is granted once, and only when `spec` carries an authored
-/// bonus against an attribute the target actually has.
+/// bonus against an attribute the target actually has. A structure struck by a weapon with a
+/// structure strike takes that strike and its own per-level growth instead (B-82).
 fn raw_strike_damage(
     spec: &WeaponSpec,
     attacker_slug: Option<&str>,
@@ -61,6 +76,9 @@ fn raw_strike_damage(
         .and_then(|wc| attacker_upgrades.weapon_levels.get(&wc).copied())
         .unwrap_or(0);
     let level = SimScalar::from_i32(i32::from(weapon_lvl));
+    if let Some(strike) = structure_strike_against(spec, target_archetype) {
+        return strike.damage + strike.upgrade_per_level * level;
+    }
     let stat_bonus_dmg = attacker_slug
         .and_then(|slug| attacker_upgrades.unit_stat_modifiers.get(slug))
         .map_or(SimScalar::ZERO, |m| m.bonus_damage_delta);
@@ -97,6 +115,7 @@ pub fn calculate_hit_damage_upgraded(
         target_upgrades,
         target_shields,
         target_hp,
+        structure_strike_against(attacker_spec, target_archetype).is_some_and(|s| s.ignores_armor),
     )
 }
 
@@ -122,20 +141,30 @@ fn effective_life_armor(
 /// A strike against standing shields is first reduced by shield armour (at least 0.5). If that
 /// exceeds the shields, the shields take what they have and the rest of the *shield-mitigated*
 /// damage, less life armour, reaches life (B-15; Liquipedia "Damage Calculation", "Total
-/// Damage"). The 0.5 minimum on that life part is kept pending Q0062.
+/// Damage"). The 0.5 minimum on that life part is kept pending Q0062. With `ignores_armor`
+/// (a structure strike with `ArmorReduction` 0, B-82) neither armour applies.
 fn mitigate_strike(
     raw_damage: SimScalar,
     target_archetype: &UnitArchetype,
     target_upgrades: &PlayerUpgradeState,
     target_shields: SimScalar,
     target_hp: SimScalar,
+    ignores_armor: bool,
 ) -> DamageResolution {
     let half = MIN_DAMAGE_CLAMP;
-    let life_armor = effective_life_armor(target_archetype, target_upgrades);
+    let life_armor = if ignores_armor {
+        SimScalar::ZERO
+    } else {
+        effective_life_armor(target_archetype, target_upgrades)
+    };
 
     let (applied_shield_damage, applied_life_damage) = if target_shields > SimScalar::ZERO {
-        let effective_shield_armor = target_archetype.shield_armor
-            + SimScalar::from_i32(i32::from(target_upgrades.shield_level));
+        let effective_shield_armor = if ignores_armor {
+            SimScalar::ZERO
+        } else {
+            target_archetype.shield_armor
+                + SimScalar::from_i32(i32::from(target_upgrades.shield_level))
+        };
         let shield_mitigated = (raw_damage - effective_shield_armor).max(half);
         if shield_mitigated <= target_shields {
             (shield_mitigated, SimScalar::ZERO)
@@ -215,6 +244,7 @@ pub fn calculate_splash_damage_upgraded(
         target_upgrades,
         target_shields,
         target_hp,
+        structure_strike_against(attacker_spec, target_archetype).is_some_and(|s| s.ignores_armor),
     ))
 }
 

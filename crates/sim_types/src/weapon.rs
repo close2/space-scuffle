@@ -342,6 +342,27 @@ pub struct WeaponSpec {
     /// If true, firing this weapon causes the attacking unit to detonate and destroy itself (e.g. Baneling).
     #[serde(default)]
     pub suicide_on_attack: bool,
+    /// The strike dealt to a structure instead of this weapon's own, if any. `None`, the engine
+    /// default, strikes structures like any unit.
+    #[serde(default)]
+    pub structure_strike: Option<StructureStrike>,
+}
+
+/// The strike a weapon deals to a structure in place of its usual one.
+///
+/// `StarCraft` II gives some weapons a separate damage effect whose search filter requires
+/// `Structure`, while the usual effect excludes it: the Baneling's `VolatileBurstU2` (80, +5 a
+/// level, `ArmorReduction` 0; `liberty` EffectData:1058-1063, UpgradeData:505) beside
+/// `VolatileBurstU` (bug B-82). A structure struck by such a weapon takes this damage, with no
+/// attribute bonus, instead of the weapon's base damage and bonuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StructureStrike {
+    /// Damage per strike to a structure, in hit points.
+    pub damage: SimScalar,
+    /// Damage added per level of the weapon's damage upgrade, in hit points.
+    pub upgrade_per_level: SimScalar,
+    /// If true, neither life nor shield armour reduces it (`ArmorReduction` 0).
+    pub ignores_armor: bool,
 }
 
 #[cfg(test)]

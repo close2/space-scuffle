@@ -26,8 +26,8 @@ use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AnimState, ArchetypeCapabilities, ArmorClassId,
     Attribute, AttributeBonuses, AttributeFlags, FactionId, HarvesterSpec, MoverType,
     OverclockSpec, ProjectileTargetLossBehavior, ShapeKind, SilhouetteClass, SimAngle, SimScalar,
-    SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, UnitModeSpec, UnitTypeId,
-    UpgradeEffect, WeaponVisualKind,
+    SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, StructureStrike, UnitModeSpec,
+    UnitTypeId, UpgradeEffect, WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod factions;
@@ -932,6 +932,10 @@ struct WeaponSpecDef {
     max_projectile_lifetime_ticks: u16,
     #[serde(default)]
     pub suicide_on_attack: bool,
+    /// The strike dealt to a structure instead of this weapon's own (B-82). Absent is the
+    /// engine default: structures take the weapon's usual strike.
+    #[serde(default)]
+    pub(crate) structure_strike: Option<StructureStrike>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1125,6 +1129,7 @@ impl UnitArchetypeDef {
             target_loss_behavior: w.target_loss_behavior,
             max_projectile_lifetime_ticks: w.max_projectile_lifetime_ticks,
             suicide_on_attack: w.suicide_on_attack,
+            structure_strike: w.structure_strike,
         })
     }
 

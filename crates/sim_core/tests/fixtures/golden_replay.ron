@@ -151,8 +151,12 @@
 // default `core` UnitData:41) and "red_siege" (railgun_crawler) 0.875 (was 0.75, `liberty`
 // UnitData:5094). Radii are part of the hashed bodies, so every checkpoint changed. With only
 // those two radii restored, both fixtures reproduce as recorded for WP9 group g10.
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP9 (B-82, checksum schema 15 -> 16): each
+// weapon also encodes its structure strike (none on any weapon here), so the encoding changes
+// every checkpoint. No behaviour did: no shipped weapon has a structure strike yet, and the whole
+// matrix and battle 33 are bit-identical to WP9 group g12.
 (
-    checksum_schema: 15,
+    checksum_schema: 16,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -178,25 +182,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xcac3f14e631a11b5,
-        0x48dcd83053a61ec8,
-        0x5ef22c2841eea987,
-        0x38242aec18470f15,
-        0x7a322e86007b2835,
-        0x1dd54d00da97f05e,
-        0x71d7831a426eb913,
-        0xfdfe04910570c238,
-        0x0ef8b53cd6584957,
-        0x02211be0c4f21d97,
-        0xbc675f521efd33cf,
-        0xb9343298957919fd,
-        0xcb6dc6792094c41c,
-        0x8db2937e619a4927,
-        0x2e439228e2de4cd4,
-        0xbddc43a8d32a8ca5,
-        0x5c45825b3cf26ac0,
-        0x2466ca9b31084d8d,
-        0x07114c1eb3752e7a,
-        0x0148002e244160d4,
+        0x1184cace741dd19c,
+        0x1fba6432527f14da,
+        0xcc69a4dab12702c5,
+        0x4afb8b8c72482edf,
+        0x16c05e1bf1de7e17,
+        0xda62d3b96a8c9134,
+        0x3f92d3a55cfee308,
+        0x36523e91e058b16f,
+        0xa1f150132adff937,
+        0xd3db5792f4885dce,
+        0x4fb4cf89cba7c95f,
+        0x5a5e2386fdcb4861,
+        0x0cc8084cc58ba776,
+        0x83bb66b52c78a650,
+        0x6515cdf0a58ad2ec,
+        0xfcb1a33a94bd0703,
+        0xc75c1d710789bce6,
+        0x2342151f17b75f8f,
+        0xcd510ccb9013f727,
+        0x09286a77e25d8168,
     ],
 )
