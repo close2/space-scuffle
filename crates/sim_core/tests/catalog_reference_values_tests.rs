@@ -2033,3 +2033,38 @@ fn b47_unit_radii_follow_starcraft() -> TestResult {
         |a| [f(a.collision_radius)],
     )
 }
+
+/// B-82: the Baneling's damage to a structure is its own effect, `VolatileBurstU2`: 80 (`liberty`
+/// EffectData:1058), +5 a level (`ZergMeleeWeapons`, `liberty` UpgradeData:505), `ArmorReduction`
+/// 0 (`liberty` EffectData:1063). No other modelled weapon has one.
+#[test]
+fn b82_only_the_baneling_has_its_structure_strike() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut found = 0;
+    for archetype in catalogs.units.archetypes() {
+        for (block, weapon) in weapon_blocks(archetype) {
+            let Some(strike) = weapon.and_then(|w| w.structure_strike) else {
+                continue;
+            };
+            assert_eq!(
+                analogue(archetype),
+                "Baneling",
+                "{} {block}: only the Baneling has a structure strike",
+                archetype.slug
+            );
+            assert_eq!(
+                (
+                    f(strike.damage),
+                    f(strike.upgrade_per_level),
+                    strike.ignores_armor
+                ),
+                (80.0, 5.0, true),
+                "{} {block}: VolatileBurstU2 (liberty EffectData:1058, :1063; UpgradeData:505)",
+                archetype.slug
+            );
+            found += 1;
+        }
+    }
+    assert!(found > 0, "the Baneling analogue has its structure strike");
+    Ok(())
+}

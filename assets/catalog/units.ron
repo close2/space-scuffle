@@ -2433,6 +2433,7 @@
                 upgrade_bonus_per_level: 2.0,
                 bonus_upgrade_per_level: 2.0,
                 suicide_on_attack: true,
+                structure_strike: Some((damage: 80.0, upgrade_per_level: 5.0, ignores_armor: true)),
             )),
             is_detector: false,
             capabilities: (
