@@ -1654,3 +1654,210 @@ fn b47_bonus_damage_per_level_follows_starcraft() -> TestResult {
     );
     Ok(())
 }
+
+/// Unit life, shields and life armour (`CUnit` `LifeMax`, `ShieldsMax`, `LifeArmor`). The
+/// Carrier / Mothership composite and the saucer without one analogue are class E (evidence §10.1).
+///
+/// The Thor's row (400, 0, armour 1: `liberty` UnitData:5207, :5208) is held: armour 2 -> 1 flips
+/// battle 14 from the Thor to the Ultralisk on all 20 seeds (plan D-4 stop; evidence §10.6), so
+/// the Thor is exempt until the orchestrator decides.
+const SC2_UNIT_VITALS: [(&str, [f32; 3], &str); 39] = [
+    ("SCV", [45.0, 0.0, 0.0], "liberty UnitData:4729; default 0"),
+    (
+        "Marine",
+        [45.0, 0.0, 0.0],
+        "liberty UnitData:4819; default 0",
+    ),
+    (
+        "Roach",
+        [145.0, 0.0, 1.0],
+        "liberty UnitData:7183; default 0; liberty UnitData:7239",
+    ),
+    (
+        "Zealot",
+        [100.0, 50.0, 1.0],
+        "liberty UnitData:3171; liberty UnitData:3175; liberty UnitData:3172",
+    ),
+    (
+        "Siege Tank",
+        [175.0, 0.0, 1.0],
+        "voidmulti UnitData:1577; default 0; liberty UnitData:5073",
+    ),
+    (
+        "Marauder",
+        [125.0, 0.0, 1.0],
+        "liberty UnitData:10965; default 0; liberty UnitData:10966",
+    ),
+    ("Reaper", [60.0, 0.0, 0.0], "swarm UnitData:1844; default 0"),
+    (
+        "Ghost",
+        [100.0, 0.0, 0.0],
+        "liberty UnitData:4985; default 0",
+    ),
+    (
+        "Hellion",
+        [90.0, 0.0, 0.0],
+        "liberty UnitData:11549; default 0",
+    ),
+    (
+        "Viking",
+        [135.0, 0.0, 0.0],
+        "voidmulti UnitData:2000; default 0",
+    ),
+    (
+        "Medivac",
+        [150.0, 0.0, 1.0],
+        "liberty UnitData:5436; default 0; liberty UnitData:5437",
+    ),
+    (
+        "Liberator",
+        [180.0, 0.0, 0.0],
+        "void UnitData:3293; default 0",
+    ),
+    (
+        "Banshee",
+        [140.0, 0.0, 0.0],
+        "liberty UnitData:5370; default 0",
+    ),
+    (
+        "Raven",
+        [140.0, 0.0, 1.0],
+        "liberty UnitData:5574; default 0; liberty UnitData:5575",
+    ),
+    (
+        "Probe",
+        [20.0, 20.0, 0.0],
+        "liberty UnitData:3068; liberty UnitData:3071; default 0",
+    ),
+    (
+        "Stalker",
+        [80.0, 80.0, 1.0],
+        "liberty UnitData:3956; liberty UnitData:3960; liberty UnitData:3957",
+    ),
+    (
+        "Sentry",
+        [40.0, 40.0, 1.0],
+        "liberty UnitData:11293; liberty UnitData:11300; liberty UnitData:11294",
+    ),
+    (
+        "Adept",
+        [70.0, 70.0, 1.0],
+        "voidmulti UnitData:27; voidmulti UnitData:25; void UnitData:3193",
+    ),
+    (
+        "High Templar",
+        [40.0, 40.0, 0.0],
+        "liberty UnitData:3248; liberty UnitData:3254; default 0",
+    ),
+    (
+        "Dark Templar",
+        [40.0, 80.0, 1.0],
+        "liberty UnitData:3346; liberty UnitData:3350; liberty UnitData:3347",
+    ),
+    (
+        "Immortal",
+        [200.0, 100.0, 1.0],
+        "liberty UnitData:10731; liberty UnitData:10734; liberty UnitData:10789",
+    ),
+    (
+        "Colossus",
+        [250.0, 100.0, 1.0],
+        "voidmulti UnitData:246; voidmulti UnitData:248; liberty UnitData:4035",
+    ),
+    (
+        "Observer",
+        [40.0, 30.0, 0.0],
+        "liberty UnitData:3415; voidmulti UnitData:1137; default 0",
+    ),
+    (
+        "Warp Prism",
+        [80.0, 100.0, 0.0],
+        "voidmulti UnitData:2045; swarm UnitData:1768; default 0",
+    ),
+    (
+        "Void Ray",
+        [150.0, 100.0, 0.0],
+        "liberty UnitData:3750; liberty UnitData:3753; default 0",
+    ),
+    (
+        "Drone",
+        [40.0, 0.0, 0.0],
+        "liberty UnitData:7037; default 0",
+    ),
+    (
+        "Zergling",
+        [35.0, 0.0, 0.0],
+        "liberty UnitData:7549; default 0",
+    ),
+    (
+        "Baneling",
+        [30.0, 0.0, 0.0],
+        "liberty UnitData:9306; default 0",
+    ),
+    (
+        "Ravager",
+        [120.0, 0.0, 1.0],
+        "liberty UnitData:989; default 0; liberty UnitData:990",
+    ),
+    (
+        "Hydralisk",
+        [90.0, 0.0, 0.0],
+        "voidmulti UnitData:736; default 0",
+    ),
+    (
+        "Lurker",
+        [190.0, 0.0, 1.0],
+        "voidmulti UnitData:984; default 0; liberty UnitData:709",
+    ),
+    (
+        "Mutalisk",
+        [120.0, 0.0, 0.0],
+        "liberty UnitData:7788; default 0",
+    ),
+    (
+        "Corruptor",
+        [200.0, 0.0, 2.0],
+        "liberty UnitData:11217; default 0; liberty UnitData:11272",
+    ),
+    (
+        "Brood Lord",
+        [225.0, 0.0, 1.0],
+        "swarm UnitData:2416; default 0; swarm UnitData:2417",
+    ),
+    (
+        "Ultralisk",
+        [500.0, 0.0, 2.0],
+        "swarm UnitData:1993; default 0; voidmulti UnitData:1906",
+    ),
+    (
+        "Queen",
+        [175.0, 0.0, 1.0],
+        "liberty UnitData:11411; default 0; liberty UnitData:11473",
+    ),
+    (
+        "Infestor",
+        [90.0, 0.0, 0.0],
+        "liberty UnitData:10054; default 0",
+    ),
+    (
+        "Viper",
+        [150.0, 0.0, 1.0],
+        "void UnitData:1420; default 0; swarm UnitData:2331",
+    ),
+    (
+        "Overlord",
+        [200.0, 0.0, 0.0],
+        "liberty UnitData:7361; default 0",
+    ),
+];
+
+#[test]
+fn b47_unit_vitals_follow_starcraft() -> TestResult {
+    check_table(
+        "life, shields, armour",
+        false,
+        &SC2_UNIT_VITALS,
+        &["Phoenix", "Carrier / Mothership", "Thor"],
+        |a| [f(a.max_hp), f(a.max_shields), f(a.life_armor)],
+    )
+}

@@ -430,7 +430,7 @@
             ],
             order: HoldPosition,
         ),
-        expect: (blue: (1, 1), red: (0, 0), blue_lead_hp: Some((125.0, 125.0))),
+        expect: (blue: (1, 1), red: (0, 0), blue_lead_hp: Some((135.0, 135.0))),
     ),
     (
         name: "13_storm_vs_held_lings",
@@ -582,7 +582,7 @@
             ],
             order: HoldPosition,
         ),
-        expect: (blue: (1, 1), red: (0, 0), blue_lead_hp: Some((125.0, 125.0))),
+        expect: (blue: (1, 1), red: (0, 0), blue_lead_hp: Some((135.0, 135.0))),
     ),
     (
         name: "20_brood_lord_vs_roach",
