@@ -182,7 +182,6 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-44 | Concussive Shells have no effect | WP13d |
 | B-45 | Phoenix and Void Ray analogues cannot fire while moving | WP13e |
 | B-46 | The Viking analogue cannot land | WP18 |
-| B-47 | Audited (WP9); open: the Thor's armour 2, the game's 1 (held: it flips battle 14) | orchestrator |
 | B-48 | Push priorities | WP16 |
 | B-49 | Which radius spaces units (`separation_radius` is unread) | WP16 |
 | B-50 | Melee attackers pack around a solid enemy by our own rule (Q0035) | WP16 |

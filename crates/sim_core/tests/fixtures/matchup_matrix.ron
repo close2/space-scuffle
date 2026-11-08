@@ -452,7 +452,11 @@
     ),
     (
         name: "14_thor_vs_ultralisk",
-        claim: "A thor beats an unupgraded ultralisk",
+        // Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP9 (Amendment 15): the Thor's armour is
+        // StarCraft II 5.0.14's 1 (liberty UnitData:5208), not 2. The Ultralisk's 35-damage blades
+        // now deal 34 a strike instead of 33; the Thor used to win on all 20 seeds with 4 life
+        // left, and now dies first on all 20, the Ultralisk keeping 26.8 of 500 life.
+        claim: "An unupgraded ultralisk narrowly beats a thor at 5.0.14 armour",
         map_cells: 64,
         ticks: 400,
         blue: (
@@ -467,7 +471,7 @@
             ],
             order: AttackMove(10, 32),
         ),
-        expect: (blue: (1, 1), red: (0, 0)),
+        expect: (blue: (0, 0), red: (1, 1)),
     ),
     (
         name: "15_plated_ultralisk_vs_8_marines",

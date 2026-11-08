@@ -1053,7 +1053,9 @@ Each re-recording reproduces in debug, release, and `wasm32-wasip1` debug and re
 
 ### 10.5 What WP9 leaves open
 
-- **B-47:** the Thor's armour (held, §10.2) and the structure attributes (B-88, a rule: a required `attributes`
+- **B-47:** fixed; the Thor's armour was applied by plan Amendment 15 (battle 14 re-recorded: the Ultralisk now
+  wins all 20 seeds with 26.8 life left, the Thor taking 34 a strike instead of 33). Open: the structure attributes
+  (B-88, a rule: a required `attributes`
   field on structures; nothing in the catalog reads Psionic, Mechanical or Biological against a structure today).
 - **B-6:** the per-weapon `RangeSlop` (§10.1), a rule with its own measurement.
 - **B-86:** morph and Zergling pair costs, with the morph model (WP17).

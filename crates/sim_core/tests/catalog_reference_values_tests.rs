@@ -1660,12 +1660,13 @@ fn b47_bonus_damage_per_level_follows_starcraft() -> TestResult {
 
 /// Unit life, shields and life armour (`CUnit` `LifeMax`, `ShieldsMax`, `LifeArmor`). The
 /// Carrier / Mothership composite and the saucer without one analogue are class E (evidence §10.1).
-///
-/// The Thor's row (400, 0, armour 1: `liberty` UnitData:5207, :5208) is held: armour 2 -> 1 flips
-/// battle 14 from the Thor to the Ultralisk on all 20 seeds (plan D-4 stop; evidence §10.6), so
-/// the Thor is exempt until the orchestrator decides.
-const SC2_UNIT_VITALS: [(&str, [f32; 3], &str); 39] = [
+const SC2_UNIT_VITALS: [(&str, [f32; 3], &str); 40] = [
     ("SCV", [45.0, 0.0, 0.0], "liberty UnitData:4729; default 0"),
+    (
+        "Thor",
+        [400.0, 0.0, 1.0],
+        "liberty UnitData:5207; default 0; liberty UnitData:5208",
+    ),
     (
         "Marine",
         [45.0, 0.0, 0.0],
@@ -1860,7 +1861,7 @@ fn b47_unit_vitals_follow_starcraft() -> TestResult {
         "life, shields, armour",
         false,
         &SC2_UNIT_VITALS,
-        &["Phoenix", "Carrier / Mothership", "Thor"],
+        &["Phoenix", "Carrier / Mothership"],
         |a| [f(a.max_hp), f(a.max_shields), f(a.life_armor)],
     )
 }

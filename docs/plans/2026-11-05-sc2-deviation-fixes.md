@@ -797,7 +797,7 @@ requires.
 | B-44 | Concussive Shells do nothing | (i) | WP13d |
 | B-45 | No firing while moving | (i) | WP13e |
 | B-46 | The Viking cannot land | (i) | WP18 |
-| B-47 | Non-time catalog values unaudited | Fixed, narrowed | WP9 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10); open only the Thor's armour, held (Amendment 14) |
+| B-47 | Non-time catalog values unaudited | Fixed | WP9 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10; the Thor's armour by Amendment 15) |
 | B-48 | Push priorities | (i) | WP16 |
 | B-49 | Which radius spaces units | (i) | WP16; how tightly armies clump is visible behaviour |
 | B-50 | Melee packing around a solid enemy | (i) | WP16 |
@@ -1099,4 +1099,15 @@ Evidence: [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.
 - **Recorded:** B-86 (morph and pair costs, WP17) and B-88 (structure attributes, a rule). **B-6** (per-weapon
   `RangeSlop`) is read (§10.1) and stays open: it is a rule with a matrix-wide measurement, not part of the data
   groups.
+
+## Amendment 15 (orchestrator, 2026-11-08): the Thor's armour is applied
+
+> **Orchestrator decision on the held Thor armour:** "apply it. It is the cited 5.0.14 value, the owner's standing
+> rule (Q0051) asks for identical unit values, and a lone Ultralisk beating a lone Thor is consistent with the game."
+
+- **Applied:** `colossus_mech` armour 1 (`liberty` UnitData:5208), its vitals-table row restored (red before).
+- **Battle 14 re-recorded:** the Ultralisk's 35-damage strikes deal 34 to the Thor instead of 33. The Thor used to
+  win on all 20 seeds with 4 life left; it now dies first on all 20, the Ultralisk keeping 26.8 of 500 life.
+  Expectation `blue (0, 0), red (1, 1)` with a rewritten claim. No other battle moved; battle 33 54 / 7 / 7;
+  goldens unchanged. **B-47 is fixed** and leaves the `DESIGN.md` register.
 
