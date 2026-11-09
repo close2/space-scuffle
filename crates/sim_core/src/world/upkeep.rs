@@ -83,6 +83,9 @@ fn upkeep_entity(entity: &mut Entity, catalog: &UnitCatalog) {
         *cd = cd.saturating_sub(1);
     }
 
+    // The barrier's window and cooldown (B-41).
+    entity.barrier.tick();
+
     // Buff timers
     for buff in &mut entity.active_buffs {
         buff.remaining_ticks = buff.remaining_ticks.saturating_sub(1);

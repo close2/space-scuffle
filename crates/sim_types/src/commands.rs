@@ -150,6 +150,23 @@ pub struct HarvesterSpec {
     pub harvest_rate_ticks: u16,
 }
 
+/// A damage-absorbing barrier that raises itself when its unit takes damage (`StarCraft` II's
+/// Immortal Barrier: the `BarrierDamageResponse` and `ImmortalOverload` behaviours).
+///
+/// The first damage while the barrier is ready raises it for `duration_ticks` and starts
+/// `cooldown_ticks`; while raised it absorbs incoming damage, before armour, until
+/// `absorb_limit` hit points have been absorbed. Times are simulation ticks (25 per Faster
+/// second); the limit is in hit points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BarrierSpec {
+    /// Total damage, in hit points, one raised barrier absorbs before it is spent.
+    pub absorb_limit: SimScalar,
+    /// Ticks the barrier stays raised, counting the tick that raised it.
+    pub duration_ticks: u16,
+    /// Ticks from raising the barrier until it can be raised again.
+    pub cooldown_ticks: u16,
+}
+
 /// Execution mode and targeting envelope for an active ability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AbilityTargetKind {
@@ -285,6 +302,9 @@ pub struct ArchetypeCapabilities {
     pub overclock: Option<OverclockSpec>,
     /// Resource harvesting parameters (if capable).
     pub harvester: Option<HarvesterSpec>,
+    /// Damage-absorbing barrier raised on taking damage (if capable).
+    #[serde(default)]
+    pub barrier: Option<BarrierSpec>,
     /// Whether this structure serves as a resource dropoff node.
     pub is_resource_dropoff: bool,
     /// Whether this structure extracts vespene gas for harvesters.

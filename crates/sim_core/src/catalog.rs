@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AnimState, ArchetypeCapabilities, ArmorClassId,
-    Attribute, AttributeBonuses, AttributeFlags, FactionId, HarvesterSpec, MoverType,
+    Attribute, AttributeBonuses, AttributeFlags, BarrierSpec, FactionId, HarvesterSpec, MoverType,
     OverclockSpec, ProjectileTargetLossBehavior, ShapeKind, SilhouetteClass, SimAngle, SimScalar,
     SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, StructureStrike, TurretIdle,
     UnitModeSpec, UnitTypeId, UpgradeEffect, WeaponVisualKind,
@@ -769,12 +769,25 @@ struct HarvesterSpecDef {
     harvest_rate_ticks: u16,
 }
 
+/// An authored barrier (`StarCraft` II's Immortal Barrier); see [`BarrierSpec`].
+#[derive(Debug, Deserialize)]
+struct BarrierSpecDef {
+    /// Hit points one raised barrier absorbs.
+    absorb_limit: f32,
+    /// Ticks the barrier stays raised.
+    duration_ticks: u16,
+    /// Ticks from raising until it can be raised again.
+    cooldown_ticks: u16,
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct CapabilitiesDef {
     #[serde(default)]
     overclock: Option<OverclockSpecDef>,
     #[serde(default)]
     harvester: Option<HarvesterSpecDef>,
+    #[serde(default)]
+    barrier: Option<BarrierSpecDef>,
     #[serde(default)]
     is_resource_dropoff: bool,
     #[serde(default)]
@@ -1253,6 +1266,11 @@ impl UnitArchetypeDef {
             harvest_capacity: h.harvest_capacity,
             harvest_rate_ticks: h.harvest_rate_ticks,
         });
+        let barrier = authored.barrier.map(|b| BarrierSpec {
+            absorb_limit: SimScalar::from_f32_lossy(b.absorb_limit),
+            duration_ticks: b.duration_ticks,
+            cooldown_ticks: b.cooldown_ticks,
+        });
         let abilities = if authored.abilities.is_empty() {
             std::mem::take(&mut self.abilities)
         } else {
@@ -1270,6 +1288,7 @@ impl UnitArchetypeDef {
         let capabilities = ArchetypeCapabilities {
             overclock,
             harvester,
+            barrier,
             is_resource_dropoff: authored.is_resource_dropoff,
             is_gas_extractor: false,
             can_construct: authored.can_construct,
@@ -1497,6 +1516,7 @@ impl StructureArchetypeDef {
         let capabilities = ArchetypeCapabilities {
             overclock: None,
             harvester: None,
+            barrier: None,
             is_resource_dropoff: self.is_resource_dropoff,
             is_gas_extractor: self.is_gas_extractor,
             can_construct: false,

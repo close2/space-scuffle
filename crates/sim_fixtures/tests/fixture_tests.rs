@@ -42,7 +42,9 @@ use std::path::PathBuf;
 /// idle behaviour.
 /// Re-recorded for checksum schema 19 (work package 11, B-3), which encodes each weapon's random
 /// delay range and each unit's carried delay.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 9_134_118_214_058_191_989;
+/// Re-recorded for checksum schema 20 (work package 13a, B-41), which encodes each unit's barrier
+/// window, absorption left and cooldown.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 17_158_258_873_892_969_830;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

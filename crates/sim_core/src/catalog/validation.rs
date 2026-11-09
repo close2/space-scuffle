@@ -293,6 +293,34 @@ impl UnitArchetypeDef {
         Ok(())
     }
 
+    /// A barrier absorbs a positive amount, stays raised at least one tick, and cannot be
+    /// raised again while it is still up.
+    fn validate_barrier(&self) -> SimResult<()> {
+        let Some(barrier) = &self.capabilities.barrier else {
+            return Ok(());
+        };
+        positive(
+            &self.slug,
+            "capabilities.barrier.absorb_limit",
+            barrier.absorb_limit,
+        )?;
+        if barrier.duration_ticks == 0 {
+            return Err(invalid(
+                &self.slug,
+                "capabilities.barrier.duration_ticks",
+                "must be positive",
+            ));
+        }
+        if barrier.cooldown_ticks < barrier.duration_ticks {
+            return Err(invalid(
+                &self.slug,
+                "capabilities.barrier.cooldown_ticks",
+                "must be at least duration_ticks",
+            ));
+        }
+        Ok(())
+    }
+
     /// Checks the hull rate, the stationary hull rate when authored, and `turn_before_move`
     /// against both. Runs after `max_speed` is checked nonnegative.
     fn validate_hull_turning(&self) -> SimResult<()> {
@@ -414,6 +442,7 @@ impl UnitArchetypeDef {
         self.validate_regeneration_delays()?;
         self.validate_weapons()?;
         self.validate_harvester()?;
+        self.validate_barrier()?;
         if let Some(overclock) = &self.capabilities.overclock {
             for (field, value) in [
                 ("capabilities.overclock.hp_cost", overclock.hp_cost),
@@ -1407,6 +1436,36 @@ mod tests {
                     Some("weapon.acquire_arc_deg"),
                     "{engaged} {acquisition}"
                 );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn b41_a_barrier_absorbs_something_for_at_least_a_tick_within_its_cooldown(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::{BarrierSpecDef, CatalogFile};
+        let units = include_str!("../../../../assets/catalog/units.ron");
+        let cases = [
+            (100.0_f32, 54, 804, None),
+            (100.0, 54, 54, None),
+            (0.0, 54, 804, Some("capabilities.barrier.absorb_limit")),
+            (f32::NAN, 54, 804, Some("capabilities.barrier.absorb_limit")),
+            (100.0, 0, 804, Some("capabilities.barrier.duration_ticks")),
+            (100.0, 54, 53, Some("capabilities.barrier.cooldown_ticks")),
+        ];
+        for (absorb_limit, duration_ticks, cooldown_ticks, rejected) in cases {
+            let mut file: CatalogFile = ron::from_str(units)?;
+            let unit = file.units.first_mut().ok_or("real catalog has no unit")?;
+            unit.capabilities.barrier = Some(BarrierSpecDef {
+                absorb_limit,
+                duration_ticks,
+                cooldown_ticks,
+            });
+            let result = unit.validate();
+            match rejected {
+                None => assert!(result.is_ok(), "{absorb_limit}: {result:?}"),
+                Some(field) => assert_eq!(rejected_field(&result), Some(field)),
             }
         }
         Ok(())
