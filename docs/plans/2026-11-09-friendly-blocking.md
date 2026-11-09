@@ -602,3 +602,20 @@ priority) and [Q0074](../questions/open/0074-surround-walk.md) (the surround wal
 replaces §6 WP0's placeholders in the bug register: **B-103** for B-a (oscillation between two friends that will not
 yield), **B-104** for B-b (attack-moving units without a target have no way round a firing line) and **B-105** for
 B-c (the chasing unit's flanking walk misses a fast sideways step into a corner).
+
+## Amendment 3 (2026-11-09): WP4 first; WP2 and WP3 held
+
+Implementation decisions, recorded under Q0002; figures in
+[`docs/evidence/2026-11-09-friendly-blocking.md`](../evidence/2026-11-09-friendly-blocking.md).
+
+- **WP4 landed before WP2**, as WP4 allows: R1 leaves units waiting under their orders, and without D-4 such a unit
+  counts as idle and is pushed through the line. WP4 is **not bit-identical**, against §6's expectation: a squad
+  standing still on its first tick after an order is already "waiting" today. 10 matrix battles moved, no overall
+  winner changed; goldens re-recorded with the traced cause.
+- **WP2 and WP3 are held** on branch `friendly-blocking-held` (stop rule, D-7): WP2 alone flips the showcase battle
+  (player 1 wins at tick 1,254), and WP3 on top flips four matrix battles (9a, 28 and 31, and 32 to a tie) while the
+  showcase stays won by player 1 (tick 1,171). Neither met §7: after WP3, 8 and 9 of 10 attackers are in range at
+  tick 900, with 40 and 51 reversals. The held branch's evidence records how D-1.1 had to change (walls of standing
+  bodies only, ends rounded only when known) and why WP3 needed more memory than `flank_active`.
+- **Not started:** WP5 (push priorities), WP6 (burrowed bodies), WP7 (bookkeeping), and Amendment 1's ramp E turn
+  (206° on the base, 202° after WP4).
