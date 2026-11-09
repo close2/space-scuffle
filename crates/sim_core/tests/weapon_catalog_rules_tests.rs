@@ -1326,10 +1326,16 @@ type LineRow = (
 
 /// `StarCraft` II 5.0.14 line areas of the weapons this catalog models (plan
 /// `2026-11-05-sc2-deviation-fixes` package 8b, B-18; evidence §9.1). Every search deals the
-/// whole strike (no `Fraction` is set; `core` EffectData:69). The Lurker's line (9 searches of 0.5
-/// along the attack, `swarm` EffectData:3010-3019) is held on branch
-/// `answers-held-b18-lurker-line` (plan Amendment 22).
-const SC2_LINE_SPLASH: [LineRow; 2] = [
+/// whole strike (no `Fraction` is set; `core` EffectData:69).
+const SC2_LINE_SPLASH: [LineRow; 3] = [
+    (
+        "Lurker",
+        0.5,
+        sim_types::SplashLineOrigin::Attacker,
+        sim_types::SplashLineAxis::Along,
+        &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+        "LurkerMP and LurkerMPSearch, swarm EffectData:3010-3019, voidmulti EffectData:809, :821",
+    ),
     (
         "Hellion",
         0.15,

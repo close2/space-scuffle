@@ -634,10 +634,19 @@
     // Without the burrow the marines win every seed. Evidence:
     // docs/evidence/2026-11-05-sc2-deviation-fixes.md §15.
     (
+        // Re-recorded for the Lurker's line (plan 2026-11-05-sc2-deviation-fixes Amendment 22,
+        // B-18; evidence §17.8): 9 searches of 0.5 along the attack from the Lurker (LurkerMP and
+        // LurkerMPSearch, swarm EffectData:3010-3019, voidmulti :809, :821). The marines cannot
+        // target the burrowed, cloaked Lurker; they walk onto it, stand around it (where the game's
+        // would stand over it: a burrowed Lurker collides only with Burrow, bug B-93) and move away
+        // when struck (the damage effects' ResponseFlags Flee, core EffectData:124-125), so a line
+        // meets one or two of them per volley. Over 500 ticks the Lurker, unharmed after burrowing,
+        // kills every marine on 8 of 20 seeds and all but one on 11; on seed 8 two are left out
+        // of its range.
         name: "21_lurker_vs_6_marines",
-        claim: "Spines decimate light infantry",
+        claim: "Spines kill light infantry that cannot detect the lurker, and it survives",
         map_cells: 64,
-        ticks: 250,
+        ticks: 500,
         blue: (
             squads: [
                 (unit: "burrow_scorpion", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
@@ -651,7 +660,7 @@
             ],
             order: AttackMove(10, 32),
         ),
-        expect: (blue: (1, 1), red: (0, 0)),
+        expect: (blue: (1, 1), red: (0, 2)),
     ),
     // Battle 22a: StarCraft II 5.0.14 gives the Reaper no bonus against Light (P38ScytheGuassPistol's
     // Light 5 of liberty EffectData:1817 is set to 0 by void EffectData:1499; plan

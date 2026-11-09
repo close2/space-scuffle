@@ -2831,11 +2831,12 @@
                         backswing_ticks: 9,
                         random_delay_ticks: (-1.1161, 2.2321),
                         splash: Some((
-                            zones: [
-                                (radius: 1.5, fraction: 1.0),
-                                (radius: 2.0, fraction: 0.5),
-                                (radius: 2.5, fraction: 0.25),
-                            ],
+                            zones: [(radius: 0.5, fraction: 1.0)],
+                            shape: Line(
+                                origin: Attacker,
+                                axis: Along,
+                                offsets: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+                            ),
                             friendly_fire: false,
                         )),
                         projectile_speed: None,
