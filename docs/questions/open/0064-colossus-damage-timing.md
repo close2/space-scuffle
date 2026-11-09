@@ -45,3 +45,9 @@ after its 0.0832 Normal s damage point. A target that dies or leaves in between 
 spines (0.125 Normal s apart, B-85) also need.
 
 ## Answer
+
+**Option 1 (No change for the Colossus — land on the weapon release tick), together with the note below on Lurker spines (`B-85`).**
+
+**Engine insight:** Keep Option 1 for the Colossus: its `ThermalLances` sweep takes only ~`0.25` Normal seconds across the target line, so resolving both strikes and the sweep on the weapon's release tick (after its `0.0832` Normal s damage point) is clean and avoids fragile guesses about how `swarm`'s `ExpireDelay` (`0.73`) and `TargetPoint` interact with `ThermalLancesDamageDelay` (`0.25`).
+
+**Note on `B-85` (Lurker spines):** Unlike the near-instant Colossus beam, the Lurker's subterranean spines travel outward across the ground with `0.125` Normal s (`2 ticks`) between successive spine searches along the line, which noticeably allows fast-moving units at the far end of the line to dodge in SC2. Feel free to space the Lurker's line searches in time (`B-85`) while keeping the Colossus instant.

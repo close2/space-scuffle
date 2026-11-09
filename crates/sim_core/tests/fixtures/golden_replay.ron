@@ -178,8 +178,11 @@
 // world's seeded generator. The first checkpoint whose ticks hold a release changes (here and in
 // the other fixture), and every later one; with the delays at (0.0, 0.0) both fixtures reproduce
 // as recorded for schema 19.
+// Re-recorded for WP13c (B-43, checksum schema 20 -> 21): each unit's attack dash cooldown is
+// encoded, so every checkpoint changed. No behaviour did: with the field left out of the encoding
+// at schema 20, every checkpoint stays as recorded for WP13a (no shipped archetype carries a dash).
 (
-    checksum_schema: 20,
+    checksum_schema: 21,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -205,25 +208,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x4b118249c708584a,
-        0xe46163a749836dd6,
-        0xac4116ad3d4bd999,
-        0x4e62e4c508a0d2fa,
-        0x44da6863bd0c7e75,
-        0x3dd1e76b38511bf4,
-        0x2fdb6867afdea660,
-        0xbaf2ac5022b72f53,
-        0xa58cc20b61e42259,
-        0x8ce47d4231a0a5a5,
-        0xde298523f91d69a5,
-        0x2bb0b82883571a7f,
-        0x6cccf6c6d1499e8b,
-        0x03bdb41194ca91e1,
-        0x8d28476c09dfd8de,
-        0xf740b9eecfc9a6aa,
-        0x480d3b9c51ad6460,
-        0x5843d497e8d9d7e2,
-        0xe63f1327b2f3041e,
-        0x70b13d9336871865,
+        0x93b072513e764439,
+        0xfa0d0347cde186e4,
+        0xaf796d6264c22f24,
+        0x8489e8e7d194f753,
+        0x4732afc97ace8865,
+        0xced9df2ed6c98c50,
+        0xee562de6714df64e,
+        0x4fb1b2b94fb70659,
+        0x3a64f75040e0bb04,
+        0x8802d249086f8bb5,
+        0x4706b0e523d7e80a,
+        0xfc3fb69a9d23d799,
+        0xa62e2309ca654bd0,
+        0x4efd89a80f8a5537,
+        0xa51e818d57204007,
+        0x60f117d74206d0df,
+        0x6a25ea06a14672ac,
+        0x1d40b3304f040d54,
+        0x4e4bdb3511509371,
+        0x786321b0343c7adb,
     ],
 )

@@ -1006,6 +1006,10 @@
                     attack_cooldown_delta: 0,
                     bonus_damage_delta: 0.0,
                 ),
+                UnlockAbility(
+                    target_slug: "psi_grey",
+                    ability_slug: "attack_dash",
+                ),
             ],
         ),
         (

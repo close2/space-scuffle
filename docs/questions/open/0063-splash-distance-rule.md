@@ -54,3 +54,7 @@ centre is 1.4 and its edge 1.025 from the Zergling's centre, reading whether the
 them as the source.
 
 ## Answer
+
+**Option 3 or Option 4 (Measure splash reach to the victim's edge, `distance - victim_radius <= R`, and optionally honor `OffsetByUnitRadius` on weapons that retain the flag — no editor test needed).**
+
+**Engine insight:** In StarCraft II's `CEffectDamage` / `CEffectEnumArea` search engine, area searches test intersection against each potential victim unit's collision circle (`center_distance - victim_radius <= R`), not its center point. That is why the Hellion's and Colossus's line-splash searches specify a radius of only `0.15` in `EffectData`: `0.15` is the half-width of the flame/beam itself, which catches any unit whose collision edge touches the `0.15` corridor (e.g., a Marine of radius `0.375` within `0.525` center distance), and why a Baneling (`2.2` splash radius) damages units whose collision circles touch the `2.2` circle. Combining victim-edge reach (Option 3) with `OffsetByUnitRadius` on weapons that keep the flag (Option 4 — matching Patch 1.1.0, where Siege Tank, Archon, Thor AA, and Planetary Fortress cleared `OffsetByUnitRadius` to center splash on the primary target while default splash weapons offset to the impact edge) reproduces SC2's exact geometry and unblocks WP8b's held line-splash data commit.

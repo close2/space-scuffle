@@ -617,6 +617,8 @@ pub fn charge_random_delay(entity: &mut Entity, weapon: &WeaponSpec, rng: &mut i
 /// `damage_point_ticks` after the start, which is what keeps the cycle at `period_ticks`.
 fn start_swing(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget) -> bool {
     entity.engaged_target = Some(target.id);
+    // An attack dash ends when the weapon starts to fire (B-43).
+    entity.end_attack_dash();
     if weapon.damage_point_ticks == 0 {
         return release_swing(entity, weapon, target);
     }

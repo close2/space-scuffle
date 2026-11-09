@@ -12,9 +12,9 @@ use crate::catalog::{UnitArchetype, WeaponSpec};
 use crate::movement::MovementMathError;
 use crate::weapon_timing::{combined_attack_rate, AttackRate, InvalidBuffAttackRate};
 use sim_types::{
-    AbilityEffectSpec, AnimState, AttackOrigin, BarrierSpec, EntityId, MoverType, OverclockSpec,
-    PlayerId, ResourceKind, ResourceNodeId, ShapeKind, SimAngle, SimScalar, SimVec2, Tick,
-    UnitOrder, UnitTypeId,
+    AbilityEffectSpec, AnimState, AttackDashSpec, AttackOrigin, BarrierSpec, EntityId, MoverType,
+    OverclockSpec, PlayerId, ResourceKind, ResourceNodeId, ShapeKind, SimAngle, SimScalar, SimVec2,
+    Tick, UnitOrder, UnitTypeId,
 };
 use std::collections::VecDeque;
 
@@ -28,6 +28,10 @@ use std::collections::VecDeque;
 
 /// `active_mode` value of the built-in siege toggle, which has no authored mode entry.
 const SIEGE_MODE_NAME: &str = "siege";
+
+/// [`ActiveBuff::buff_id`] of a running attack dash ([`AttackDashSpec`], `StarCraft` II's
+/// `Charging` buff, B-43).
+pub const ATTACK_DASH_BUFF_ID: u8 = 3;
 
 /// A malformed numeric buff/cost input, distinct from ordinary cast eligibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -122,7 +126,7 @@ pub struct PendingStrikes {
 /// An active timed buff or debuff affecting unit stats.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveBuff {
-    /// Distinct buff identifier (1 = Stimpack, 2 = Concussive Shells).
+    /// Distinct buff identifier (1 = Stimpack, 2 = Concussive Shells, 3 = attack dash).
     pub buff_id: u8,
     /// Remaining duration in ticks.
     pub remaining_ticks: u16,
@@ -360,6 +364,9 @@ pub struct Entity {
     pub active_buffs: Vec<ActiveBuff>,
     /// The damage-absorbing barrier's window, remaining absorption and cooldown (B-41).
     pub barrier: BarrierState,
+    /// Ticks until the attack dash may start again ([`AttackDashSpec::cooldown_ticks`], B-43);
+    /// 0 when it is ready and for a unit without the capability.
+    pub attack_dash_cooldown: u16,
     /// FIFO production jobs: archetype, remaining 25 Hz updates and reserved supply.
     /// Only the front job advances per update, preserving the authored `u32` duration.
     pub production_queue: VecDeque<crate::production::ProductionJob>,
@@ -498,6 +505,7 @@ impl Entity {
             weapon_cooldown_remaining: 0,
             weapon_delay_carry: SimScalar::ZERO,
             barrier: BarrierState::default(),
+            attack_dash_cooldown: 0,
             pending_strikes: None,
             active_buffs: Vec::new(),
             production_queue: VecDeque::new(),
@@ -755,6 +763,52 @@ impl Entity {
                 attack_rate_multiplier: spec.attack_rate_multiplier,
             });
         }
+    }
+
+    /// Starts an attack dash: the speed buff [`ATTACK_DASH_BUFF_ID`] for `spec.duration_ticks`
+    /// ticks, counting this one, and the dash's cooldown (B-43). The caller has checked that
+    /// the dash is ready and its trigger window holds.
+    ///
+    /// # Errors
+    /// Rejects malformed or unrepresentable buff state without changing anything.
+    pub(crate) fn begin_attack_dash(
+        &mut self,
+        spec: &AttackDashSpec,
+    ) -> Result<(), EntityAdmissionError> {
+        self.prospective_speed_multiplier(ATTACK_DASH_BUFF_ID, spec.speed_multiplier)?;
+        if let Some(buff) = self
+            .active_buffs
+            .iter_mut()
+            .find(|b| b.buff_id == ATTACK_DASH_BUFF_ID)
+        {
+            buff.remaining_ticks = spec.duration_ticks;
+            buff.speed_multiplier = spec.speed_multiplier;
+        } else {
+            self.active_buffs.push(ActiveBuff {
+                buff_id: ATTACK_DASH_BUFF_ID,
+                remaining_ticks: spec.duration_ticks,
+                speed_multiplier: spec.speed_multiplier,
+                attack_rate_multiplier: SimScalar::ONE,
+            });
+        }
+        self.attack_dash_cooldown = spec.cooldown_ticks;
+        Ok(())
+    }
+
+    /// Ends a running attack dash, as the unit's weapon starting a swing does in `StarCraft` II
+    /// (`Charging`'s remove validator `ChargeTargetAttacked`, `liberty` BehaviorData:967-975,
+    /// ValidatorData:3007-3011). Leaves its cooldown running; does nothing without a dash.
+    pub(crate) fn end_attack_dash(&mut self) {
+        self.active_buffs
+            .retain(|buff| buff.buff_id != ATTACK_DASH_BUFF_ID);
+    }
+
+    /// Whether an attack dash is running.
+    #[must_use]
+    pub fn is_attack_dashing(&self) -> bool {
+        self.active_buffs
+            .iter()
+            .any(|buff| buff.buff_id == ATTACK_DASH_BUFF_ID)
     }
 
     /// Applies the existing half-speed75-tick debuff after checked fold preparation.
