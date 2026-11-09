@@ -2867,9 +2867,9 @@
                 is_resource_dropoff: false,
             ),
             veo_prompts: {
-                Idle: "Subterranean Ambush Scorpion: Broad flat bio-armored scorpion digging into loose soil.",
-                Walk: "Subterranean Ambush Scorpion: Low heavy crawl with broad claws parting dust.",
-                Attack: "Subterranean Ambush Scorpion: Linear ripple of jagged subterranean spikes erupting from ground.",
+                Idle: "Subterranean Ambush Scorpion: one broad, flat organic scorpion of thick brown chitin, crouched low and compact: six short legs tucked close under its body, two broad pincer claws folded shut in front of its head, a spined tail curled over its back, amber glow along its back seams, seen from high above at a three-quarter angle, head toward the lower right, whole, centred, floating in evenly lit empty space, no floor, no shadow.",
+                Walk: "Subterranean Ambush Scorpion: the same armored scorpion crawling low and heavy, its six legs stepping in turn.",
+                Attack: "Subterranean Ambush Scorpion: it slams its spined tail down and a straight row of jagged bone spikes bursts up in a quick ripple ahead of it.",
             },
         ),
         (
