@@ -282,7 +282,7 @@ fn an_unburrowed_unit_without_a_weapon_attack_moves_past_an_enemy() {
     );
 }
 
-/// `burrow_scorpion`, the Lurker's analogue, attacks only burrowed, with StarCraft II's times.
+/// `burrow_scorpion`, the Lurker's analogue, attacks only burrowed, with `StarCraft` II's times.
 #[test]
 fn b42_the_lurker_analogue_attacks_only_burrowed() {
     let world = flat_world(1);
