@@ -35,3 +35,7 @@ issued one game loop after the first blade; count the damage.
 **Recommendation.** Option 1 until measured.
 
 ## Answer
+
+**Option 3 (Any new order ends a `Channeled` burst — no editor test needed).**
+
+**Engine insight:** In StarCraft II's engine, multi-hit melee and ground burst weapons like the Zealot's `PsiBladesBurst` and the Thor's `ThorAPBurst` are implemented as `CEffectCreatePersistent` effects with `Channeled = 1` bound to the active attack order (unlike multi-missile projectile bursts such as the Viking's or Banshee's, which do not set `Channeled`). While the weapon's preswing/channel is uninterruptible by passive target re-evaluation, issuing any explicit new order (`Move`, `Stop`, `HoldPosition`, or retargeting to a different unit) after the first strike lands (`t = 0.0`) but before the second strike lands (`t = 0.28s` Normal / 5 ticks for the Zealot, 7 ticks for the Thor) breaks the channel and cancels the remaining strike(s). This is a well-known StarCraft II micro behavior ("canceling the Zealot's second blade" or "canceling the Thor's second cannon" by stutter-stepping too early). Set `channeled` on `PendingAttackBurst` from the weapon effect's `Channeled` flag and drop `channeled` bursts on any explicit order override (`Move`, `Stop`, `HoldPosition`, `AttackMove`, or `AttackUnit` on a different target).

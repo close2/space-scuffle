@@ -10,7 +10,7 @@
 
 **Background.** Plan [`2026-11-09-client-mode-commands`](../../plans/2026-11-09-client-mode-commands.md) adds mode
 commands to the skirmish card (Siege Mode and Tank Mode for the Siege Tank analogue, Burrow and Unburrow for the
-Lurker analogue), built from catalog abilities, for [Q0070](0070-lurker-without-burrow-button.md). The card's keys
+Lurker analogue), built from catalog abilities, for [Q0070](../closed/0070-lurker-without-burrow-button.md). The card's keys
 are positional: fifteen slots `Q E R T Y / F G J K L / Z C V B N` in reading order, with `W A S D` panning the
 camera, Stop on `X` and Hold on `H` (`crates/client/src/input_bindings.rs`). Phase 5 chose this so that "no key
 belongs to any unit".

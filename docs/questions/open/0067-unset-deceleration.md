@@ -43,3 +43,7 @@ their speed at arrival lower. Under reading 1 (today's catalog), nothing changes
 **Recommendation.** Option 3; the change is data only once measured.
 
 ## Answer
+
+**Option 2 (Unset `Deceleration` reads as `Acceleration`; no editor test needed).**
+
+**Engine insight:** In StarCraft II gameplay, air units and hovering workers (Mutalisks, Medivacs, Vikings, Phoenixes, Battlecruisers, Carriers, SCVs/Probes/Drones) do not slam from full speed to an instantaneous 1-tick dead stop upon reaching a move target — they glide and decelerate smoothly into their destination over ~15–30 ticks. The reason `Deceleration` is omitted (`0`) on nearly all units in `UnitData.xml` is that SC2's `CMover` uses `Acceleration` as the default deceleration rate whenever `Deceleration` is `0`: ground units have `Acceleration = 1000`, so both their acceleration and deceleration are single-tick instant, whereas air units and workers have finite `Acceleration` and only specify an explicit `Deceleration` when their braking rate intentionally differs from their acceleration rate (such as the Overlord, Tempest, and Mothership). Copy each analogue's converted `Acceleration` into `deceleration` when `Deceleration` is unset, and extend braking to orders as described in Option 2.

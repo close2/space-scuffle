@@ -15,11 +15,13 @@
 //! This file owns the [`SimWorld`] state, its construction, spawning and the tick sequence.
 //! Each phase that is more than a call lives in a private child module with its own
 //! `impl SimWorld` block: `commands` (phase 1), `upkeep` (phase 2), `vision` (phase 3),
-//! `snapshot` (phase 10), plus `abilities` (casting and hazard zones), `upgrade_stats`
+//! `snapshot` (phase 10), plus `abilities` (casting and hazard zones), `attack_dash` (the dash
+//! an attack order triggers, after acquisition), `upgrade_stats`
 //! (research and effective stats) and `sandbox` (the Visual Lab scene). Children see the
 //! struct's private fields, so splitting the file widened no field's visibility.
 
 mod abilities;
+mod attack_dash;
 mod commands;
 mod snapshot;
 mod upgrade_stats;
@@ -141,6 +143,8 @@ pub struct SimWorld {
     pub(crate) scratch_neighbors: Vec<EntityId>,
     pub(crate) scratch_targets: Vec<(TargetPriorityKey, EntityId)>,
     pub(crate) scratch_acquisitions: Vec<(EntityId, crate::target_acquisition::Acquisition)>,
+    /// Units starting an attack dash this tick, with their dash (`attack_dash`).
+    pub(crate) scratch_dashes: Vec<(EntityId, sim_types::AttackDashSpec)>,
     /// Phase 3 bookkeeping derived from `vision_maps`; excluded from the checksum.
     pub(crate) vision: VisionWorkspace,
 }
@@ -205,6 +209,7 @@ impl SimWorld {
             scratch_neighbors: Vec::with_capacity(32),
             scratch_targets: Vec::with_capacity(64),
             scratch_acquisitions: Vec::with_capacity(64),
+            scratch_dashes: Vec::new(),
             vision: VisionWorkspace::default(),
         };
 
@@ -338,6 +343,7 @@ impl SimWorld {
         self.update_unit_tasks();
         self.update_vision();
         self.acquire_targets();
+        self.trigger_attack_dashes();
         self.step_movement_and_steering();
         self.resolve_collisions_and_push();
         self.step_weapons_and_projectiles();

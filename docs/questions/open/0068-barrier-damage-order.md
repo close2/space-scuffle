@@ -46,3 +46,7 @@ adds 0.5 per absorbed hit.
 **Recommendation.** Option 2; any change it shows is a few lines in `BarrierState::absorb` and its caller.
 
 ## Answer
+
+**Option 1 (Keep WP13a as landed, with optional adjustment for the triggering hit — no editor test needed).**
+
+**Engine insight:** In StarCraft II LotV (and as documented on Liquipedia: *"Barrier is triggered after the first attack hits the Immortal's shields or health"*), `BarrierDamageResponse` triggers upon taking damage so the initial triggering hit deals normal damage to shields/HP and raises `ImmortalOverload` (`100` absorption before armor) for subsequent hits over the next 3 Normal seconds (`2.14s` Faster), while hits fully absorbed by the active barrier deal `0` damage (no `0.5` minimum leak). Whether the triggering hit itself is absorbed (as WP13a currently does) or lands before raising the barrier is at most a single shot's difference — you may either keep WP13a as landed or let the triggering hit land first before raising the barrier, and close `Q0068` without an editor measurement.

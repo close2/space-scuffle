@@ -46,3 +46,7 @@ burrowing Lurker takes in a fight (battle 21: six marines shoot it while it burr
 **Recommendation.** Option 3, then option 1 or 2 as it shows.
 
 ## Answer
+
+**Option 2 (Switch weapon and cloak at the `Stats` section end at `1.8332` Normal s / `33 ticks`; no editor test needed).**
+
+**Engine insight:** In StarCraft II's `CAbilMorph` engine, each section timer in `InfoArray` governs its specific subsystem independently: `Collide` updates collision flags at `1.8332` Normal s (`33 ticks`), `Stats` swaps the unit's `CUnit` identity (activating `LurkerMPBurrowed`'s weapon and `Cloaked`/`Buried` flags) at `1.8332` Normal s (`33 ticks`), and `Actor` continues playing the visual burrow/dirt-settling animation until `2.5` Normal s (`45 ticks`). Thus a burrowing Lurker becomes untargetable without detection and able to fire 12 ticks before its visual `Actor` animation finishes. Switch weapon and cloak at the `Stats` section end (`33 ticks`), or set the functional morph completion timer to the `Stats` duration while letting the visual transition run to `Actor` (`45 ticks`).
