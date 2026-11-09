@@ -360,6 +360,7 @@ fn test_pure_displacement_math() -> Result<(), Box<dyn std::error::Error>> {
         owner: PlayerId(0),
         push_priority: 10,
         cannot_be_pushed: false,
+        idle: true,
         is_holding: false,
     };
     let b = PushEntityParams {
@@ -369,6 +370,7 @@ fn test_pure_displacement_math() -> Result<(), Box<dyn std::error::Error>> {
         owner: PlayerId(0),
         push_priority: 10,
         cannot_be_pushed: false,
+        idle: true,
         is_holding: false,
     };
 
@@ -387,4 +389,129 @@ fn test_pure_displacement_math() -> Result<(), Box<dyn std::error::Error>> {
         "Idle ally must be displaced sideways"
     );
     Ok(())
+}
+
+/// The push table of plan `2026-11-09-friendly-blocking` D-4, one test per row: how a friendly
+/// body `b` standing in the way of a mover `a` heading +x is corrected on contact.
+mod push_table {
+    use super::*;
+    use sim_core::steering::SteeringObstacle;
+
+    /// A body of player `owner` at (`x`, 10) with velocity `vx` along x.
+    fn body(id: u32, x: f32, vx: f32, owner: u8) -> PushEntityParams {
+        PushEntityParams {
+            id: EntityId(id),
+            pos: SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(10)),
+            vel: SimVec2::new(SimScalar::from_num(vx), SimScalar::ZERO),
+            owner: PlayerId(owner),
+            push_priority: 10,
+            cannot_be_pushed: false,
+            is_holding: false,
+            idle: true,
+        }
+    }
+
+    /// The corrections of `a` and `b`, 0.5 apart with combined radius 0.8.
+    fn contact(
+        a: PushEntityParams,
+        b: PushEntityParams,
+    ) -> Result<(SimVec2, SimVec2), Box<dyn std::error::Error>> {
+        Ok(compute_push_displacement(
+            a,
+            b,
+            SimScalar::from_num(0.5),
+            SimScalar::from_num(0.8),
+        )?)
+    }
+
+    /// Row 1: a body holding position, immobile or unpushable is never pushed.
+    #[test]
+    fn a_holding_body_is_never_pushed() -> Result<(), Box<dyn std::error::Error>> {
+        let mut held = body(2, 10.5, 0.0, 0);
+        held.is_holding = true;
+        held.cannot_be_pushed = true;
+        let (d_a, d_b) = contact(body(1, 10.0, 0.1, 0), held)?;
+        assert_eq!(d_b, SimVec2::ZERO);
+        assert!(
+            d_a.x < SimScalar::ZERO,
+            "the mover takes the whole correction"
+        );
+        Ok(())
+    }
+
+    /// Row 2: a firing body (anchored in combat) is never pushed by a friend.
+    #[test]
+    fn a_firing_body_is_never_pushed_by_a_friend() -> Result<(), Box<dyn std::error::Error>> {
+        let mut firing = body(2, 10.5, 0.0, 0);
+        firing.cannot_be_pushed = true;
+        let (d_a, d_b) = contact(body(1, 10.0, 0.1, 0), firing)?;
+        assert_eq!(d_b, SimVec2::ZERO);
+        assert_ne!(d_a, SimVec2::ZERO);
+        Ok(())
+    }
+
+    /// Row 3: an idle standing body is pushed sideways out of the lane by a mover of no lower
+    /// priority, and a mover of lower priority gives way to it instead.
+    #[test]
+    fn an_idle_standing_body_steps_aside_for_equal_or_higher_priority(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (d_a, d_b) = contact(body(1, 10.0, 0.1, 0), body(2, 10.5, 0.0, 0))?;
+        assert_eq!(d_a, SimVec2::ZERO);
+        assert_ne!(d_b.y, SimScalar::ZERO, "pushed sideways");
+        let mut weaker = body(1, 10.0, 0.1, 0);
+        weaker.push_priority = 9;
+        let (d_a, d_b) = contact(weaker, body(2, 10.5, 0.0, 0))?;
+        assert_eq!(d_b, SimVec2::ZERO);
+        assert!(d_a.x < SimScalar::ZERO, "the weaker mover gives way");
+        Ok(())
+    }
+
+    /// Row 4a: two moving friends separate evenly along the line of centres.
+    #[test]
+    fn moving_friends_separate_evenly() -> Result<(), Box<dyn std::error::Error>> {
+        let (d_a, d_b) = contact(body(1, 10.0, 0.1, 0), body(2, 10.5, 0.05, 0))?;
+        assert_eq!(d_a, -d_b);
+        assert_eq!((d_a.y, d_b.y), (SimScalar::ZERO, SimScalar::ZERO));
+        assert!(d_a.x < SimScalar::ZERO);
+        Ok(())
+    }
+
+    /// Row 4b: a body standing still under an order is waiting for room, not idle: it is not
+    /// pushed aside, and the two separate evenly as moving friends do.
+    #[test]
+    fn a_waiting_body_is_not_pushed_aside() -> Result<(), Box<dyn std::error::Error>> {
+        let mut waiting = body(2, 10.5, 0.0, 0);
+        waiting.idle = false;
+        let (d_a, d_b) = contact(body(1, 10.0, 0.1, 0), waiting)?;
+        assert_eq!(d_a, -d_b);
+        assert_eq!(d_b.y, SimScalar::ZERO, "no sideways shove");
+        // Steering agrees: a waiting body does not step aside, an idle one does.
+        let pos = SimVec2::new(SimScalar::from_num(10.5), SimScalar::from_num(10));
+        let idle = SteeringObstacle::new(EntityId(2), pos, SimScalar::HALF, SimVec2::ZERO);
+        assert!(idle.yields_to(PlayerId(0), 10));
+        let ordered = SteeringObstacle {
+            idle: false,
+            ..idle
+        };
+        assert!(!ordered.yields_to(PlayerId(0), 10));
+        Ok(())
+    }
+
+    /// Enemies never push each other: they separate evenly, without a sideways shove, however
+    /// they move.
+    #[test]
+    fn enemies_never_push() -> Result<(), Box<dyn std::error::Error>> {
+        for vb in [0.0, 0.05] {
+            let (d_a, d_b) = contact(body(1, 10.0, 0.1, 0), body(2, 10.5, vb, 1))?;
+            assert_eq!(d_a, -d_b);
+            assert_eq!((d_a.y, d_b.y), (SimScalar::ZERO, SimScalar::ZERO));
+        }
+        let pos = SimVec2::new(SimScalar::from_num(10.5), SimScalar::from_num(10));
+        let enemy = SteeringObstacle {
+            owner: PlayerId(1),
+            ..SteeringObstacle::new(EntityId(2), pos, SimScalar::HALF, SimVec2::ZERO)
+        };
+        assert!(!enemy.yields_to(PlayerId(0), u8::MAX));
+        Ok(())
+    }
 }

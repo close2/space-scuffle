@@ -619,6 +619,7 @@ impl SimWorld {
             owner: actor.owner,
             push_priority: entry.push_priority,
             anchored: actor.cannot_be_pushed() || self.is_anchored_in_combat(actor),
+            idle: actor.is_idle(),
             settled_on: actor.movement.arrived_at.filter(|_| idle),
         }
     }

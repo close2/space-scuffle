@@ -476,6 +476,17 @@ impl Entity {
         self.is_on_hold() || self.unpushable || self.is_immobile
     }
 
+    /// Whether this unit has nothing to do: no order, or `Idle` or `Stop` at the front. A unit
+    /// standing still under any other order is waiting, not idle, and friends do not push it
+    /// aside (plan `2026-11-09-friendly-blocking` D-4).
+    #[must_use]
+    pub fn is_idle(&self) -> bool {
+        matches!(
+            self.order_queue.front(),
+            None | Some(UnitOrder::Idle | UnitOrder::Stop)
+        )
+    }
+
     /// Creates a new entity initialized from its archetype definition.
     #[must_use]
     pub fn from_archetype(

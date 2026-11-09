@@ -210,6 +210,9 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-97 | The Lurker analogue's burrow cannot be cancelled while it runs; the game's can (`Interruptible`, a Cancel button) | WP18 |
 | B-98 | Anchored units (sieged, burrowed) get no Stop or Hold Position on the card; the game's sieged tank has both | next client package |
 | B-102 | Routes come from a grid A* corridor with radius tiers, not a triangulated navigation mesh with each unit's own radius | [`2026-11-09-sc2-pathfinding`](docs/plans/2026-11-09-sc2-pathfinding.md) Part B |
+| B-103 | A second-line unit oscillates every tick between two friends that will not yield (a firing unit and another stalled unit) instead of standing still or walking round them | [`2026-11-09-friendly-blocking`](docs/plans/2026-11-09-friendly-blocking.md) WP2 |
+| B-104 | An attack-moving unit without a target has no way round a firing line, and gives its order up after 10 s of no progress | [`2026-11-09-friendly-blocking`](docs/plans/2026-11-09-friendly-blocking.md) WP3 |
+| B-105 | A chasing unit's flanking walk misses a fast sideways step into a corner between two bodies, so it never starts | [`2026-11-09-friendly-blocking`](docs/plans/2026-11-09-friendly-blocking.md) WP3 |
 
 ---
 

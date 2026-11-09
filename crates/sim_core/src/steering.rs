@@ -185,6 +185,9 @@ pub struct SteeringObstacle {
     pub push_priority: u8,
     /// Whether this body holds its ground: on hold, immobile or anchored in combat.
     pub anchored: bool,
+    /// Whether this body has nothing to do: no order, `Idle` or `Stop`. A body standing still
+    /// under an order is waiting for room, not idle, and is not pushed aside.
+    pub idle: bool,
     /// Destination this body has finished moving to, while it stays there.
     pub settled_on: Option<SimVec2>,
 }
@@ -201,15 +204,19 @@ impl SteeringObstacle {
             owner: PlayerId(0),
             push_priority: 0,
             anchored: false,
+            idle: true,
             settled_on: None,
         }
     }
 
-    /// Whether this body steps aside for a unit of `owner` and `push_priority` walking into it.
+    /// Whether this body steps aside for a unit of `owner` and `push_priority` walking into it:
+    /// a friendly body that is idle, standing still, not anchored, and of no higher priority (plan
+    /// `2026-11-09-friendly-blocking` D-4). A body waiting under an order does not.
     #[must_use]
     pub fn yields_to(&self, owner: PlayerId, push_priority: u8) -> bool {
         self.owner == owner
             && !self.anchored
+            && self.idle
             && self.velocity == SimVec2::ZERO
             && push_priority >= self.push_priority
     }
@@ -518,6 +525,9 @@ pub struct PushEntityParams {
     pub cannot_be_pushed: bool,
     /// Whether nothing may move this entity: Hold Position, immobile or unpushable.
     pub is_holding: bool,
+    /// Whether this entity has nothing to do: no order, `Idle` or `Stop`. Only an idle, standing
+    /// friendly is pushed aside by a moving one; one standing under an order separates evenly.
+    pub idle: bool,
 }
 
 impl PushEntityParams {
@@ -539,6 +549,7 @@ impl PushEntityParams {
             push_priority,
             cannot_be_pushed,
             is_holding: cannot_be_pushed,
+            idle: true,
         }
     }
 }
@@ -597,13 +608,16 @@ fn slide_around_fixed(
     checked_vec_scale(slide, raw_overlap)
 }
 
-/// Resolves contact between two bodies. The rules, in order:
+/// Resolves contact between two bodies. The rules, in order (the push table of plan
+/// `2026-11-09-friendly-blocking` D-4):
 /// 1. Bodies that nothing may move stay put, against friend and foe alike.
 /// 2. A body that may not be pushed right now stays put and the other takes the whole correction.
 /// 3. Enemies separate evenly along the line of centres.
-/// 4. A moving friendly walks through an idle friendly of no higher priority, which steps aside.
-/// 5. A moving friendly gives way to an idle friendly of higher priority.
-/// 6. Everything else separates evenly along the line of centres, with no sideways shove.
+/// 4. A moving friendly walks through an idle, standing friendly of no higher priority, which
+///    steps aside.
+/// 5. A moving friendly gives way to an idle, standing friendly of higher priority.
+/// 6. Everything else, a body waiting under an order included, separates evenly along the line
+///    of centres, with no sideways shove.
 fn checked_dynamic_push(
     a: PushEntityParams,
     b: PushEntityParams,
@@ -658,7 +672,7 @@ fn checked_dynamic_push(
         return Ok((correction, checked_vec_neg(correction)?));
     }
     let (a_moving, b_moving) = (motion_flags(a.vel).0, motion_flags(b.vel).0);
-    if a_moving && !b_moving {
+    if a_moving && !b_moving && b.idle {
         if a.push_priority < b.push_priority {
             return Ok((checked_vec_scale(separation, overlap)?, SimVec2::ZERO));
         }
@@ -669,7 +683,7 @@ fn checked_dynamic_push(
         )?;
         return Ok((SimVec2::ZERO, checked_vec_scale(exit, overlap)?));
     }
-    if b_moving && !a_moving {
+    if b_moving && !a_moving && a.idle {
         if b.push_priority < a.push_priority {
             return Ok((SimVec2::ZERO, checked_vec_scale(opposite, overlap)?));
         }
@@ -721,6 +735,7 @@ pub fn resolve_push_interaction(
         push_priority: 10,
         cannot_be_pushed: moving_unit.cannot_be_pushed(),
         is_holding: moving_unit.cannot_be_pushed(),
+        idle: moving_unit.is_idle(),
     };
     let b = PushEntityParams {
         id: other_unit.id,
@@ -730,6 +745,7 @@ pub fn resolve_push_interaction(
         push_priority: 10,
         cannot_be_pushed: other_unit.cannot_be_pushed(),
         is_holding: other_unit.cannot_be_pushed(),
+        idle: other_unit.is_idle(),
     };
     let mobility = |e: &Entity| {
         if e.is_immobile || e.unpushable {
@@ -863,6 +879,7 @@ mod weighted_tests {
             push_priority: 0,
             cannot_be_pushed: false,
             is_holding: false,
+            idle: true,
         }
     }
     #[test]

@@ -211,6 +211,12 @@
 //   a target (ResetIfMoving); the turret angle is hashed, so from checkpoint 2 the checkpoints
 //   changed on that account too.
 // The schema bytes change every checkpoint; the checksums below are those of the merged tree.
+// Re-recorded for plan 2026-11-09-friendly-blocking WP4 (push table D-4), merged onto checksum
+// schema 24: a unit standing still under an order is waiting, not idle, so it no longer steps aside
+// for a friend walking into it (steering) or gets pushed sideways (contact); both separate evenly.
+// On tick 6, the first tick the "blue_infantry" squad (pulse_bot) walks after its AttackMove of
+// tick 5, its marines all stand still under that order and no longer clear each other's lanes, so
+// the squad sets off differently and every checkpoint changed from checkpoint 1 (ticks 1 to 50).
 (
     checksum_schema: 24,
     seed: 0x5EED_0F_5CAFF1E,
@@ -238,25 +244,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xd62f679443856835,
-        0x77bb312ab77bb129,
-        0x45161c1d073977c1,
-        0xd1fe047f90ea0a1e,
-        0x5383855c340dfdf6,
-        0x6b947e227fbdd248,
-        0x36a45d2163e36cf1,
-        0x91e2efa0b756d660,
-        0xe749175976e9bf81,
-        0xaa7ee0ca82eb04a9,
-        0xb74ace5864f7ffe0,
-        0xb1a30237b22455c9,
-        0xa6700e590dfc60b7,
-        0x0e5844bbe346460a,
-        0x6a4516f01042c85e,
-        0x4d00c0866bcc1fc2,
-        0x0a3b01d5627507b8,
-        0x06161c2a54a29574,
-        0xa8d56d91b2652e24,
-        0x92528675d0cb8be5,
+        0x0b99397bcfa1555a,
+        0x22fac6288b800d09,
+        0x0aad4e051a849daf,
+        0x69c5b4f4b1a1864e,
+        0xfe819be81ad60187,
+        0x09b5e57104490ea8,
+        0x488f692c88f0f1c2,
+        0x7de932502466d98b,
+        0x4c01dacc52e8da28,
+        0x9a7cc50b0c38e997,
+        0xa8e07c02201d0c2c,
+        0xdfb716cf76599550,
+        0xe87db5cf139a1cbb,
+        0x6d5af2401ffd21d8,
+        0xef8830f00c48dbb7,
+        0xa0eb0f812547c9da,
+        0x10fafda1db7683ae,
+        0xed168bafbf814cd5,
+        0x6e9b05a0fc0849df,
+        0x430e1018bafad2d3,
     ],
 )

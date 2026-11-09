@@ -44,6 +44,8 @@ pub(super) struct CollisionBody {
     engaged: bool,
     /// Passes through other units.
     ghost: bool,
+    /// Has nothing to do (no order, `Idle` or `Stop`); only then may a friend push it aside.
+    idle: bool,
 }
 
 /// Corrections accumulated for one body, kept apart because only friendly ones are speed capped.
@@ -111,6 +113,7 @@ impl SimWorld {
             holding: actor.cannot_be_pushed(),
             engaged: self.is_anchored_in_combat(actor),
             ghost: actor.is_mineral_walking,
+            idle: actor.is_idle(),
         }
     }
 
@@ -149,6 +152,7 @@ impl SimWorld {
             push_priority: priority,
             cannot_be_pushed: anchored,
             is_holding: body.holding,
+            idle: body.idle,
         };
         let mobility = |body: &CollisionBody| {
             if body.fixed {
