@@ -789,6 +789,12 @@ struct UnitModeSpecDef {
     mode_name: String,
     #[serde(default)]
     cast_ticks: u16,
+    /// Ticks to leave the mode; required, so a catalog written before the field fails to load.
+    leave_cast_ticks: u16,
+    /// Greatest random extra of the entering channel, in ticks; required, `0.0` for none.
+    cast_random_delay_max_ticks: f32,
+    /// Greatest random extra of the leaving channel, in ticks; required, `0.0` for none.
+    leave_random_delay_max_ticks: f32,
     #[serde(default)]
     is_immobile: bool,
     #[serde(default)]
@@ -825,6 +831,13 @@ impl UnitModeSpecDef {
         Ok(UnitModeSpec {
             mode_name: self.mode_name,
             cast_ticks: self.cast_ticks,
+            leave_cast_ticks: self.leave_cast_ticks,
+            cast_random_delay_max_ticks: SimScalar::from_f32_lossy(
+                self.cast_random_delay_max_ticks,
+            ),
+            leave_random_delay_max_ticks: SimScalar::from_f32_lossy(
+                self.leave_random_delay_max_ticks,
+            ),
             is_immobile: self.is_immobile,
             unpushable: self.unpushable,
             is_cloaked: self.is_cloaked,

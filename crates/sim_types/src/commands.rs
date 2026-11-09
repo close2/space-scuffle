@@ -219,9 +219,22 @@ pub enum AbilityEffectSpec {
 pub struct UnitModeSpec {
     /// Canonical identifier for this mode (e.g., `"siege"`, `"burrowed"`, `"assault"`, `"cloaked"`).
     pub mode_name: String,
-    /// Channel duration in ticks required to enter/exit this mode.
+    /// Channel duration in ticks required to enter this mode (`StarCraft` II: the morph's
+    /// longest section, delay plus duration).
     #[serde(default)]
     pub cast_ticks: u16,
+    /// Channel duration in ticks required to leave this mode back to the default stance.
+    #[serde(default)]
+    pub leave_cast_ticks: u16,
+    /// Greatest random extra added to the entering channel, in ticks (`StarCraft` II
+    /// `RandomDelayMax` of the morph; drawn uniformly from `0..=max` with the world's seeded
+    /// generator and rounded half up to whole ticks). 0 adds nothing and draws nothing.
+    #[serde(default)]
+    pub cast_random_delay_max_ticks: SimScalar,
+    /// Greatest random extra added to the leaving channel, in ticks, drawn as
+    /// `cast_random_delay_max_ticks` is.
+    #[serde(default)]
+    pub leave_random_delay_max_ticks: SimScalar,
     /// Whether the unit becomes immobile while this mode is active.
     #[serde(default)]
     pub is_immobile: bool,

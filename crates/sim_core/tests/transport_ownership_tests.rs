@@ -67,6 +67,9 @@ impl Fixture {
         arch.modes = vec![UnitModeSpec {
             mode_name: "transport-fixture-mode".into(),
             cast_ticks: 3,
+            leave_cast_ticks: 3,
+            cast_random_delay_max_ticks: SimScalar::ZERO,
+            leave_random_delay_max_ticks: SimScalar::ZERO,
             is_immobile: true,
             unpushable: true,
             is_cloaked: false,

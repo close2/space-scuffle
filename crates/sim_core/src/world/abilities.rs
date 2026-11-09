@@ -18,8 +18,10 @@ use crate::catalog::UnitArchetype;
 use crate::entity::{Entity, PreparedOverclock};
 use crate::movement::{DisplacementAdmissionError, MovementInvariant, MovementMathError};
 use crate::SimWorld;
+use rand::Rng;
 use sim_types::{
-    AbilityEffectSpec, EntityId, PlayerId, SimAngle, SimScalar, SimVec2, Tick, UnitOrder,
+    AbilityEffectSpec, EntityId, PlayerId, SimAngle, SimScalar, SimVec2, Tick, UnitModeSpec,
+    UnitOrder,
 };
 
 /// Active continuous hazard/AoE zone (e.g. Psionic Storm) ticking in the world.
@@ -85,6 +87,30 @@ struct HazardSpec {
     damage_per_interval: SimScalar,
     /// Whether the owner's own entities are also damaged.
     friendly_fire: bool,
+}
+
+/// The channel, in ticks, of entering `spec` (or of leaving it when `leaving`): the direction's
+/// fixed time plus a random extra drawn uniformly from `0..=max` ticks with `rng`, which must be
+/// the world's seeded generator, and rounded half up to whole ticks.
+///
+/// `StarCraft` II's morphs add a random delay "just before the morph starts" (`SC2Mapster`
+/// `CAbilMorph` reference, `InfoArray` `RandomDelayMax`; Siege Mode and Unsiege 0.5 Normal s,
+/// `liberty` AbilData:1308, :1334), and each direction has its own sections (plan
+/// `2026-11-05-sc2-deviation-fixes` WP11, B-4). A maximum of 0 draws nothing, so a mode
+/// without an extra leaves the generator untouched. Saturates at `u16::MAX` ticks.
+fn mode_channel_ticks(spec: &UnitModeSpec, leaving: bool, rng: &mut impl Rng) -> u16 {
+    let (base, max) = if leaving {
+        (spec.leave_cast_ticks, spec.leave_random_delay_max_ticks)
+    } else {
+        (spec.cast_ticks, spec.cast_random_delay_max_ticks)
+    };
+    if max <= SimScalar::ZERO {
+        return base;
+    }
+    let extra = SimScalar::from_raw(rng.gen_range(0..=max.raw()));
+    // Q32.32: adding one half and shifting down by 32 rounds half up to whole ticks.
+    let whole = extra.saturating_add(SimScalar::HALF).raw() >> 32;
+    u16::try_from(i64::from(base).saturating_add(whole)).unwrap_or(u16::MAX)
 }
 
 impl SimWorld {
@@ -393,9 +419,11 @@ impl SimWorld {
             }
             AbilityEffectSpec::SwitchMode { ref mode_name } => {
                 if let Some(spec) = arch.get_mode(mode_name) {
-                    if spec.cast_ticks > 0 {
+                    let leaving = entity.active_mode.as_deref() == Some(mode_name.as_str());
+                    let channel_ticks = mode_channel_ticks(spec, leaving, &mut self.rng);
+                    if channel_ticks > 0 {
                         entity.begin_mode_channel(
-                            spec.cast_ticks,
+                            channel_ticks,
                             ability_index,
                             target_pos,
                             target_entity,

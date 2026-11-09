@@ -213,6 +213,9 @@ mod tests {
         moded.modes.push(sim_types::UnitModeSpec {
             mode_name: "uprooted".to_owned(),
             cast_ticks: 0,
+            leave_cast_ticks: 0,
+            cast_random_delay_max_ticks: sim_types::SimScalar::ZERO,
+            leave_random_delay_max_ticks: sim_types::SimScalar::ZERO,
             is_immobile: false,
             unpushable: false,
             is_cloaked: false,

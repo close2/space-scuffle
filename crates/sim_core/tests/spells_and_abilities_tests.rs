@@ -3,7 +3,8 @@
 //! Verifies:
 //! 1. Overclock (Stimpack): HP deduction, speed multiplier, cooldown, and refusal unless life
 //!    exceeds the cost (Q0053).
-//! 2. Siege Mode: Transformation channeling, mobility lock, long-range splash cannon, and unsiege toggle.
+//! 2. Siege Mode: Transformation channeling, mobility lock, long-range splash cannon, and unsiege toggle;
+//!    entering and leaving each take their own time plus a seeded random extra (WP11, B-4).
 //! 3. Blink Teleport: Instant Euclidean relocation across unpathable cliff chasms and rejection of invalid terrain.
 //! 4. Psionic Storm: Continuous AoE hazard zone with strict non-stacking damage invariant.
 //! 5. Tactical Cloak & Detector Reveal: Invisibility under enemy line-of-sight and detection reveal.
@@ -16,11 +17,12 @@
     clippy::too_many_lines
 )]
 
+use sim_core::SimWorld;
 use sim_map::{CellFlags, CliffLevel, GameMap, MapCell};
 use sim_types::AttributeBonuses;
 use sim_types::{
-    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttributeFlags, OverclockSpec, PlayerId,
-    SimAngle, SimScalar, SimVec2, SplashSpec, Tick, TickBundle, UnitOrder, WeaponSpec,
+    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, AttributeFlags, EntityId, OverclockSpec,
+    PlayerId, SimAngle, SimScalar, SimVec2, SplashSpec, Tick, TickBundle, UnitOrder, WeaponSpec,
     WeaponVisualKind,
 };
 
@@ -661,5 +663,106 @@ fn test_cloak_invisibility_and_detector_reveal() {
             origin: sim_types::AttackOrigin::Acquired,
         }),
         "Blue unit must acquire revealed cloaked unit once covered by allied detector"
+    );
+}
+
+/// The shipped Siege Mode crawler in a world seeded with `seed`, its mode re-timed: entering
+/// takes `cast` ticks and leaving `leave`, each plus a random extra of up to `extra` ticks
+/// (plan `2026-11-05-sc2-deviation-fixes` WP11, B-4).
+fn timed_crawler(seed: u64, cast: u16, leave: u16, extra: f32) -> (SimWorld, EntityId) {
+    let map =
+        GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0))).expect("invariant: valid map");
+    let mut world = sim_fixtures::world(map, seed);
+    let crawler = world
+        .catalog
+        .id_by_slug("railgun_crawler")
+        .expect("railgun_crawler");
+    let mode = &mut world.catalog.get_mut(crawler).unwrap().modes[0];
+    mode.cast_ticks = cast;
+    mode.leave_cast_ticks = leave;
+    mode.cast_random_delay_max_ticks = SimScalar::from_num(extra);
+    mode.leave_random_delay_max_ticks = SimScalar::from_num(extra);
+    let tank = world
+        .spawn_unit(
+            crawler,
+            PlayerId(0),
+            SimVec2::new(SimScalar::from_num(10), SimScalar::from_num(16)),
+        )
+        .expect("spawn tank");
+    (world, tank)
+}
+
+/// Casts the mode toggle of `tank` and returns the channel it starts, in ticks.
+fn toggle(world: &mut SimWorld, tank: EntityId) -> u16 {
+    assert!(
+        world.execute_ability(tank, 0, None, None),
+        "the toggle is admitted"
+    );
+    world.entities[&tank].channeling_remaining_ticks
+}
+
+#[test]
+fn b4_siege_mode_enters_and_leaves_with_their_own_times() {
+    let (mut world, tank) = timed_crawler(7, 10, 4, 0.0);
+    let rng = world.rng.get_word_pos();
+    assert_eq!(toggle(&mut world, tank), 10, "entering takes cast_ticks");
+    for tick in 0..10 {
+        world.step(&empty_bundle(tick));
+    }
+    assert!(world.entities[&tank].is_sieged, "sieged after cast_ticks");
+    assert_eq!(
+        toggle(&mut world, tank),
+        4,
+        "leaving takes leave_cast_ticks"
+    );
+    for tick in 10..14 {
+        world.step(&empty_bundle(tick));
+    }
+    assert!(
+        !world.entities[&tank].is_sieged,
+        "unsieged after leave_cast_ticks"
+    );
+    assert_eq!(world.rng.get_word_pos(), rng, "no random extra, no draw");
+}
+
+#[test]
+fn b4_siege_mode_adds_a_seeded_random_delay() {
+    let channels: Vec<(u16, u16)> = (0..40)
+        .map(|seed| {
+            let (mut world, tank) = timed_crawler(seed, 10, 4, 3.0);
+            let rng = world.rng.get_word_pos();
+            let enter = toggle(&mut world, tank);
+            assert!(
+                world.rng.get_word_pos() > rng,
+                "the extra comes from SimWorld::rng"
+            );
+            for tick in 0..u32::from(enter) {
+                world.step(&empty_bundle(tick));
+            }
+            assert!(world.entities[&tank].is_sieged);
+            (enter, toggle(&mut world, tank))
+        })
+        .collect();
+    assert!(
+        channels
+            .iter()
+            .all(|&(enter, leave)| (10..=13).contains(&enter) && (4..=7).contains(&leave)),
+        "each direction lasts its time plus 0 to 3 ticks: {channels:?}"
+    );
+    let distinct: std::collections::BTreeSet<_> = channels.iter().map(|c| c.0).collect();
+    assert!(
+        distinct.len() >= 3,
+        "the extra varies with the seed: {distinct:?}"
+    );
+    let replay: Vec<u16> = (0..40)
+        .map(|seed| {
+            let (mut world, tank) = timed_crawler(seed, 10, 4, 3.0);
+            toggle(&mut world, tank)
+        })
+        .collect();
+    assert_eq!(
+        replay,
+        channels.iter().map(|c| c.0).collect::<Vec<_>>(),
+        "the same seed draws the same extra"
     );
 }
