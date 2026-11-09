@@ -1271,3 +1271,103 @@ Each re-recording reproduces in debug, release, and `wasm32-wasip1` debug and re
 - **B-91** ([Q0066](../questions/open/0066-random-delay-scaling.md)): whether an attack-rate buff scales the delay,
   and whether the first attack draws one.
 - The morph random delays of other modes (burrow, the Viking's) belong to the packages that add those modes (WP13).
+
+## 13. WP12: acceleration and deceleration (B-39)
+
+Sources: SC2GameData `5444e12f13`, chain `core → liberty → swarm → void → voidmulti` (the catalog time audit's
+references, §4, each value re-read at its line). The mover rule itself (how the engine applies `Acceleration` and
+`Deceleration` each game loop) is engine code with no published source: neither the SC2Mapster editor references nor
+Liquipedia describe it, so the rule below is the plain reading of the field names, stated as such. Matrix: 20 seeds a
+battle (1000 runs); battle 33: 68 seeds. Directories `~/scratch/sc2dev_wp12/<step>/`; baseline WP11's last matrix
+(`~/scratch/sc2dev_wp11/b4d`).
+
+### 13.1 Research
+
+**Units and conversion.** `Speed`, `Acceleration` and `Deceleration` are game-time values (Normal seconds), as
+every speed in the audit: `Speed` in units per Normal second, the two rates in units per Normal second squared. One
+tick is 1.4 ÷ 25 = 0.056 Normal s, so a rate converts as Normal × 0.056² = Normal × 1.4² ÷ 25² = Normal × 0.003136
+world units per tick per tick, the plan's formula. Check: the Mutalisk (`Speed` 4, `Acceleration` 3.5) reaches full
+speed in 4 ÷ 3.5 = 1.14 Normal s = 20.4 ticks; in the catalog 0.224 ÷ 0.010976 = 20.4 ticks.
+
+**Acceleration.** Every shipped analogue's value is set in the data (the audit's class E rows): 1000 for every ground
+combat unit (instant: 3.136 per tick², above any speed); finite for the workers (SCV `liberty` UnitData:4732, Probe
+:3075, Drone :7041: 2.5) and the air units: Phoenix 3.25 (:3686), Viking 2.625 (:6839), Medivac 2.25 (`swarm`
+UnitData:1706), Liberator 3.5 (`void` UnitData:3297), Banshee 3.25 (`liberty` :5377), Raven 2 (:5579), Observer 2.125
+(:3423), Warp Prism 2.625 (`voidmulti` UnitData:2043), Void Ray 2 (`liberty` :3758), Carrier 1.0625 (:3483), Mutalisk
+3.5 (`void` :3092), Corruptor 3 (`voidmulti` :269), Brood Lord 1.0625 (`liberty` :11113), Viper 3 (`void` :1417),
+Overlord 1.0625 (`liberty` :7366). The plan's B-39 row named the Hellion as finite; its value is 1000 (`liberty`
+:11552), instant.
+
+**Deceleration.** No `CUnit` default sets it, and only the High Templar (1000, `liberty` UnitData:3259) and the
+Overlord (1.625, `voidmulti` UnitData:1199) among the analogues do. What the engine does with an unset (zero)
+`Deceleration` is not sourced: [Q0067](../questions/open/0067-unset-deceleration.md), default no change (unset stays
+instant; the catalog keeps its copy of `max_speed`).
+
+**Not modelled.** `LateralAcceleration` (46.0625 for most ground units, e.g. `liberty` UnitData:4823; 1000 for the
+Medivac, `void` :1489) bounds how sharply a moving unit can curve; our units turn their velocity freely within the hull
+rate. Recorded as **B-92**.
+
+### 13.2 The rule
+
+`MotionEntry` gains `step`, this tick's own-motion budget: the effective top speed (upgrades and buffs included),
+capped at the length of the velocity the unit achieved on the tick before plus its archetype's `acceleration`. A
+walking unit whose `deceleration` is finite lowers it further to `braking_speed(d)`, the speed from which a run
+losing `deceleration` per tick covers exactly the `d` world units left along its route: the root `v` of
+`v² ÷ (2 dec) + v ÷ 2 = d`, never below `min(d, dec)`, so it always snaps onto its goal. A rate at or above the
+archetype's `max_speed` is instant (the game's 1000); comparing with the archetype's speed, not the effective one,
+keeps a stimmed unit instant too. The budget replaces the top speed in the step and in the "within one step"
+arrival checks; collision pushes, neighbour margins and the progress checks keep the top speed. No field is added
+to `Entity`: the speed carried between ticks is the achieved velocity, already hashed, so the checksum schema stays
+19.
+
+Scope, recorded here as the plan's D-2 allows: a unit stops at once when an order ends for any other reason than
+arriving (Stop, a target in range, a blocked step), and pursuit does not brake. With the data of Q0067's default only
+the Overlord analogue has a finite deceleration, and it has no weapon; these cases return with Q0067 if it is
+answered "use `Acceleration`".
+
+Tests (`acceleration_tests.rs`; three of five red before the rule): from rest a unit's speed is 0.02, 0.04, ... 0.1
+for acceleration 0.02 and top speed 0.1, ground and air alike; acceleration equal to the top speed moves the whole
+speed on the first tick; instant deceleration arrives at full speed; deceleration 0.01 slows the unit by at most
+0.01 a tick and it stops exactly on its goal.
+
+### 13.3 Results
+
+| Step | Commit | Matrix (against the previous step) | Battle 33 (68 seeds) | Goldens |
+|---|---|---|---|---|
+| Rule | `f71fa94` | bit-identical | bit-identical (41 / 10 / 17) | unchanged |
+| Acceleration data | `e11a118` | 3 battles moved, no overall winner changed (below) | bit-identical | `golden_replay_orders` re-recorded (§13.4) |
+| Deceleration data | `e9cd87b` | bit-identical (no battle spawns an Overlord analogue) | bit-identical | unchanged |
+
+**Acceleration data, the moved battles** (20 seeds each; outcome blue / red / unresolved):
+- **22a** (Reaper against two workers): 0 / 0 / 20 unchanged; the workers start their flight from rest, so the
+  per-tick rows differ, survivors and end ticks do not.
+- **34** (20 Hydralisks against 12 Mutalisks): 20 / 0 / 0 unchanged; Hydralisk survivors 18.90 → 19.15, mean end
+  tick 223 → 238. The Mutalisks reach the fight later and arrive at lower speed.
+- **35** (12 Vikings against 6 Colossi): 17 / 0 / 3 → 13 / 0 / 7; 8 seeds changed outcome (6 blue → unresolved, 2
+  unresolved → blue), mean end tick 416 → 571. The Vikings keep all 12; a Viking that stops to fire and then
+  follows its target restarts from rest each time, so in 7 seeds one Colossus survives to the 900-tick limit. Two
+  of the four seeds of record became unresolved (22, 33) and one resolved (11); the expectation holds on all 20.
+  The overall winner is unchanged (blue), so the stop rule does not hold the commit.
+
+Expectation failures: 0 on the seeds of record, 0 over all seeds, after each step; no expectation was re-recorded.
+
+**Tests adjusted by the acceleration data** (not weakened: each pins what it was written for on an instant unit):
+`checked_movement_tests` (overflow on a 60 000-cell flight, first-tick position) and `movement_contact_tests`
+(`buffed_unit_keeps_its_speed_through_friendly_contact`, first-tick distance) set their unit's acceleration to its
+speed; `cluster_arrival_tests` gives the air unit 48 ticks instead of 16 to walk its one cell (it needs about 20
+from rest). Client lib, `headless_tests` and `skirmish_match_tests` pass unchanged (the skirmish's workers
+accelerate).
+
+### 13.4 Goldens
+
+`golden_replay_orders` is re-recorded in the acceleration data commit: its Phoenix spotter (`blue_spotter`) starts its
+first move from rest, so checkpoint 1 (ticks 11 to 20) and every later one differ. `golden_replay` spawns no worker
+or air unit that moves and is unchanged. The rule commit left both as recorded (the latent catalog makes every rate
+instant). The re-recording reproduces in debug, release, and `wasm32-wasip1` debug and release (`wasmtime`).
+
+### 13.5 What WP12 leaves open
+
+- **B-39, narrowed** ([Q0067](../questions/open/0067-unset-deceleration.md)): how an unset `Deceleration` brakes.
+  Until answered it is instant, which also leaves out braking for a unit whose order ends without arriving, and for
+  pursuit.
+- **B-92**: `LateralAcceleration` (turning arcs of moving units) is not modelled.

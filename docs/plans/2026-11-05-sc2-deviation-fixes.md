@@ -789,7 +789,7 @@ requires.
 | B-36 | Unfinished structures regenerate life | (i) | WP15 |
 | B-37 | Whether Stimpack's life cost restarts the regeneration delays | (ii) | No shipped unit can reach it: the two archetypes with an Overclock (Stimpack) spec have `hp_regen_per_tick: 0.00`, and no other ability costs life. It returns to (i) if a catalog change gives one unit both. WP15 drops it and U-9 |
 | B-38 | No burrowed Roach regeneration, no Tunneling Claws | (i) | WP15, WP18 |
-| B-39 | No acceleration or deceleration | (i) | WP12 |
+| B-39 | No acceleration or deceleration | Fixed, narrowed | WP12 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §13; Amendment 18); open only how an unset `Deceleration` brakes ([Q0067](../questions/open/0067-unset-deceleration.md)) |
 | B-40 | Turn before move | Fixed | turn-before-move WP1 `6d7a9d5`, WP3 `b7d9f50` |
 | B-41 | No Immortal Barrier | (i) | WP13a |
 | B-42 | The Lurker attacks unburrowed | (i) | WP13b |
@@ -840,6 +840,7 @@ requires.
 | B-89 | Whether the Liberator analogue's anti-air weapon turns on the `Liberator` turret (`void` UnitData:3317-3318 lists a second weapon entry with that turret and no weapon); ours is a hull weapon | (i) | WP10 follow-up (research). Found in WP10 (Amendment 16) |
 | B-90 | A turreted weapon's wind-up does not hold its unit, and a turret works against `current_target` under any order, where the game ties firing while moving to `AllowedMovement` | (i) | WP13e, with B-45. Found in WP10 (Amendment 16): turreting five more analogues extends it |
 | B-91 | Whether an attack-rate buff scales the random firing delay, and whether the first attack draws one; ours does neither | (i) | [Q0066](../questions/open/0066-random-delay-scaling.md). Found in WP11 (Amendment 17) |
+| B-92 | `LateralAcceleration` (how sharply a moving unit can curve) is not modelled; our units turn their velocity freely within the hull rate | (i) | WP16. Found in WP12 (Amendment 18) |
 
 **Counts.** 78 IDs: (i) 70, two of them narrowed (B-52, B-67) and one carried by another plan (B-12); (ii) 3 (B-37,
 B-53, B-58); (iii) none; fixed 5 (B-31 and B-40 by the turn-before-move plan; B-71, B-73 and B-75 by WP0).
@@ -1145,4 +1146,22 @@ Evidence: [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.
 - **Found:** B-91, whether Stimpack scales the delay and whether the first attack draws one
   ([Q0066](../questions/open/0066-random-delay-scaling.md), default neither).
 - Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §12. No commit was
+  held.
+
+## Amendment 18 (WP12, 2026-11-09): acceleration landed, deceleration narrowed
+
+- **Research:** `Acceleration` and `Deceleration` are game-time rates (units per Normal second squared) and convert
+  as Normal × 1.4² ÷ 25² per tick², the formula of WP12, verified dimensionally and against the Mutalisk's time to
+  full speed. The mover rule itself is engine code with no published source; the rule is the plain reading of the
+  field names, recorded as such. The B-39 row's Hellion is 1000 (instant), not finite.
+- **B-39 fixed, narrowed:** latent rule `f71fa94` (a per-tick step budget from the achieved velocity plus
+  `acceleration`, braking into a move order's destination at `deceleration`; a rate at or above `max_speed` is
+  instant; no new hashed field, schema stays 19), acceleration data `e11a118` (every analogue, sourced), deceleration
+  data `e9cd87b` (High Templar 1000, Overlord 1.625; the only analogues whose data set it). Battles 22a, 34 and 35
+  moved, none changed its overall winner; battle 33 bit-identical (41 / 10 / 17), its expectation unchanged;
+  `golden_replay_orders` re-recorded. Open: how an unset `Deceleration` brakes
+  ([Q0067](../questions/open/0067-unset-deceleration.md), default instant), and with it braking for orders that end
+  without arriving and for pursuit.
+- **Found:** B-92, `LateralAcceleration` not modelled (WP16).
+- Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §13. No commit was
   held.
