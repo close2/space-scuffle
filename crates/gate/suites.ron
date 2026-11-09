@@ -65,6 +65,7 @@ SuiteCatalog(
         "client/lib": (class: Slow),
         "client/battle_card_tests": (class: Slow, test_threads: Some(2)),
         "client/battle_card_path_tests": (class: Slow, test_threads: Some(2)),
+        "client/battle_mode_tests": (class: Slow, test_threads: Some(2)),
         "client/battle_context_order_tests": (class: Slow, test_threads: Some(3)),
         "client/battle_flipbook_tests": (class: Slow, test_threads: Some(3)),
         "client/battle_fog_tests": (class: Slow, test_threads: Some(2)),
@@ -170,6 +171,7 @@ SuiteCatalog(
                 "client/lab_scene_tests",
                 "client/round2_visual_tests",
                 "client/battle_card_tests",
+                "client/battle_mode_tests",
                 "client_diagnostics/showcase_storyboard_tests",
             ],
         ),
@@ -252,6 +254,8 @@ SuiteCatalog(
             "client/skirmish_match_tests",
             // Pins attack cycles of shipped weapons: weapon timing changes break it (WP11's delay).
             "client/battle_flipbook_tests",
+            // The client proof of mode admission (`would_admit_cast`, `settled_mode`).
+            "client/battle_mode_tests",
         ],
         // Every target whose code calls `sim_fixtures::` (its own files or a support file it
         // loads); the catalog test keeps this list equal to the sources.
