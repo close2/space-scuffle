@@ -242,6 +242,11 @@
 // 1 to 50), through the straight step of a paused walk; switched on alone, the other parts first
 // move checkpoint 2 (the standing drift), 4 (the kept side, the straight way in) and 5 (the scan
 // bound).
+// Re-recorded for plan 2026-11-09-friendly-blocking Amendment 5: an idle friend that contact nudged
+// by at most STANDING_DRIFT (1/64 world unit) last tick still steps aside
+// (SteeringObstacle::yields_to), where it had to stand exactly still; the only change, so it is the
+// cause. Checkpoints 1 to 10 are unchanged; every checkpoint from checkpoint 11 (ticks 501 to 550)
+// changed.
 (
     checksum_schema: 25,
     seed: 0x5EED_0F_5CAFF1E,
@@ -279,15 +284,15 @@
         0xdd12f082410e962f,
         0xf6ed313eb1cf7b75,
         0x18488d940b5f0894,
-        0x5390ceaaec3f7516,
-        0x32f2f9318f01b02c,
-        0xf555c30b594cbba0,
-        0xfabe55c4df42ef1e,
-        0x013716d41d2db2a9,
-        0x31b01ff450e456ec,
-        0x77855a028b246764,
-        0x4179e1faa0ab7f5a,
-        0x5b89d24e49c5b7df,
-        0x183eedf589c7f420,
+        0x7c579512488b4721,
+        0x3aacd985f0bb0306,
+        0xf50dc0165a637761,
+        0xdba0df0e25721ccf,
+        0x21d88bcce7430aa0,
+        0x27cf61ffac416005,
+        0x8c9bbdf57e2418a2,
+        0x11e1acdee58b9799,
+        0x070c198ef5e3cd8b,
+        0x59b950fb8eb832b7,
     ],
 )

@@ -664,15 +664,24 @@ acceptance of §7 pursued. Implementation decisions, recorded under Q0002; figur
     Amendment 1.
   The three reproductions stay ignored with these figures. The remaining reversals are single steps at the edge of a
   crowd; zeroing them would need a further rule beyond StarCraft II's data, so tuning stops (Q0051).
-- **Open: a regression of WP2 found on the integration base.** `player_view_tests::
-  a_build_on_a_hidden_structure_is_accepted_and_abandoned_on_arrival` (new with the client mode commands) fails
-  from WP2 on: the builder starts wedged between its own town hall (anchored, radius 2.5) and a mining worker (under
-  a task order, so it does not yield); the two form a wall, its far end lies beyond `STEERING_LOOKAHEAD` (0.35), so
-  `round_wall` heads straight on and the builder waits (D-1.3) until the stall rule spends all its task legs
-  (`Unreachable`). Switching only the wait off makes the test pass. The fix belongs to R1 (a short wall whose end is
-  among the unit's neighbours must be rounded, or a worker under a task order must not wait against a mining
-  worker); it moves the matrix and needs the full measurement, and is the next step of this plan.
 - **Not started:** WP5 (push priorities), WP6 (burrowed bodies), WP7 (bookkeeping); the showcase storyboard
   (`assets/captures/showcase.ron`) was not changed: its captions are generic and its winner (player 0) is the base's,
   but the battle now ends at tick 1,098 in `route_trace` (1,355 on the base), so the header's tick figures need a
   render to confirm.
+
+## Amendment 5 (2026-11-09): the builder regression of WP2
+
+`player_view_tests::a_build_on_a_hidden_structure_is_accepted_and_abandoned_on_arrival` failed from WP2 on: the
+builder started wedged between its own town hall and another worker, waited (D-1.3) and spent its task legs
+(`Unreachable`). The orchestrator asked first for the StarCraft II rule that gathering workers do not collide with
+other units ("mineral walk"). Our harvest code already models that: a worker under a `Harvest` or `ReturnCargo` order
+sets `is_mineral_walking` and is left out of every other unit's obstacles (`prepare_movement_snapshot`), so it could
+not be the blocker. The blocker was an **idle** worker that contact had nudged by a few thousandths a tick: D-4's
+`yields_to` required an idle friend to stand *exactly* still, so the nudged one did not step aside and, standing
+within Amendment 4's drift, formed a wall with the hall. `yields_to` now uses Amendment 4's `STANDING_DRIFT` (1/64 a tick) for "standing",
+the same test as walls and the walk use, which completes D-4's row "idle, standing: pushed sideways".
+
+Measured against Amendment 4: 1 matrix battle moved (35), no overall winner changed (none against the base either),
+battle 33 identical on 68 seeds, showcase 10 / 10 in range at tick 900, 11 / 8 reversals, 0 give-ups, player 0 wins
+at tick 1,100. Goldens re-recorded (`golden_replay` from checkpoint 11, `golden_replay_orders` from checkpoint 19; the
+only change).

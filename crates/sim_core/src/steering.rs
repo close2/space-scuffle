@@ -220,7 +220,11 @@ impl SteeringObstacle {
         self.owner == owner
             && !self.anchored
             && self.idle
-            && self.velocity == SimVec2::ZERO
+            && within_distance(
+                self.velocity,
+                SimVec2::ZERO,
+                i128::from(STANDING_DRIFT.raw()),
+            )
             && push_priority >= self.push_priority
     }
 
