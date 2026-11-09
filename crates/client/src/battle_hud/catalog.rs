@@ -13,6 +13,9 @@
 //! # Invariants
 //! - Every string comes from a catalog's `display_name`. No identity is named in code.
 //! - Capabilities are read from optional archetype components, never from a type's identity.
+//! - Mode entries come from `ToggleMode` abilities whose `SwitchMode` effect names one of their
+//!   archetype's modes ([`mode_of_ability`]). A mode name is interned as a [`ModeId`] and compared
+//!   only with other catalog strings, never with a literal.
 //! - An identity is unpresentable exactly when
 //!   [`ClientMediaStatus::presentable`](crate::media::ClientMediaStatus::presentable) refuses it.
 
@@ -23,7 +26,7 @@ use sim_core::{UnitArchetype, UnitCatalog};
 use sim_types::enums::ShapeKind;
 use sim_types::{SimScalar, UnitTypeId, UpgradeEffect};
 
-use crate::battle_pipeline::commands::is_armed;
+use crate::battle_pipeline::commands::{is_armed, mode_of_ability};
 
 /// What one catalog identity is called and can do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +47,8 @@ pub struct ArchetypeCommands {
     pub overclock: bool,
     /// Catalog ID of the upgrade that unlocks its overclock, if one must be researched.
     pub overclock_unlock: Option<u32>,
+    /// Its mode abilities, one per mode, in `ModeId` order.
+    pub modes: Vec<ModeCommand>,
     /// Whether it can transport other units.
     pub carrier: bool,
     /// Whether it is a structure.
@@ -60,6 +65,36 @@ pub struct ArchetypeCommands {
     pub unpresentable: Option<String>,
 }
 
+/// A mode of the catalog, interned in catalog order (by archetype, then by ability).
+///
+/// Archetypes that declare the same mode name share one ID, and so one pair of card entries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ModeId(pub u16);
+
+/// One archetype's way into and out of one mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModeCommand {
+    /// The mode.
+    pub mode: ModeId,
+    /// Index of the archetype's first ability that switches it.
+    pub ability_index: u8,
+    /// Index of the mode in the archetype's `modes`, as `ModeStateView::settled_mode` reports it.
+    pub mode_index: u8,
+    /// Catalog ID of the upgrade that unlocks the ability, if one must be researched.
+    pub unlock: Option<u32>,
+}
+
+/// The names of one mode and of its two commands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModeLabels {
+    /// The mode's catalog name, which the simulation's ability effect names.
+    pub mode_name: String,
+    /// The command that enters it: the ability's `name`.
+    pub enter: String,
+    /// The command that leaves it: the ability's `leave_name`.
+    pub leave: String,
+}
+
 /// What one upgrade is called.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpgradeCommand {
@@ -72,6 +107,8 @@ pub struct UpgradeCommand {
 pub struct CommandCatalog {
     archetypes: BTreeMap<UnitTypeId, ArchetypeCommands>,
     upgrades: BTreeMap<u32, UpgradeCommand>,
+    /// Every mode, indexed by [`ModeId`]; labels from the first archetype that declares it.
+    modes: Vec<ModeLabels>,
 }
 
 impl CommandCatalog {
@@ -85,12 +122,14 @@ impl CommandCatalog {
         upgrades: &UpgradeCatalog,
         unpresentable: impl Fn(UnitTypeId) -> Option<String>,
     ) -> Self {
+        let modes = intern_modes(units);
         Self {
             archetypes: units
                 .archetypes()
                 .map(|archetype| {
                     let id = archetype.unit_type_id;
-                    let commands = commands_of(archetype, units, upgrades, unpresentable(id));
+                    let mut commands = commands_of(archetype, units, upgrades, unpresentable(id));
+                    commands.modes = mode_commands(archetype, upgrades, &modes);
                     (id, commands)
                 })
                 .collect(),
@@ -101,7 +140,19 @@ impl CommandCatalog {
                     (upgrade.upgrade_id, UpgradeCommand { label })
                 })
                 .collect(),
+            modes,
         }
+    }
+
+    /// The names of `mode`, if the catalog declares it.
+    #[must_use]
+    pub fn mode(&self, mode: ModeId) -> Option<&ModeLabels> {
+        self.modes.get(usize::from(mode.0))
+    }
+
+    /// Every mode's ID, in catalog order.
+    pub fn mode_ids(&self) -> impl Iterator<Item = ModeId> {
+        (0..self.modes.len()).filter_map(|index| u16::try_from(index).ok().map(ModeId))
     }
 
     /// The facts of `unit_type`, if the catalog holds it.
@@ -138,7 +189,8 @@ fn commands_of(
         armed: is_armed(archetype),
         harvester: archetype.capabilities.harvester.is_some(),
         overclock: archetype.overclock.is_some(),
-        overclock_unlock: overclock_unlock(archetype, upgrades),
+        overclock_unlock: unlock_of(archetype, OVERCLOCK_ABILITY_SLUG, upgrades),
+        modes: Vec::new(),
         carrier: archetype.capabilities.transport_capacity > 0,
         structure: is_structure(archetype),
         shielded: archetype.max_shields > SimScalar::ZERO,
@@ -165,8 +217,8 @@ fn commands_of(
     }
 }
 
-/// The upgrade whose effects unlock `archetype`'s overclock, if any.
-fn overclock_unlock(archetype: &UnitArchetype, upgrades: &UpgradeCatalog) -> Option<u32> {
+/// The upgrade whose effects unlock `archetype`'s ability named `ability`, if any.
+fn unlock_of(archetype: &UnitArchetype, ability: &str, upgrades: &UpgradeCatalog) -> Option<u32> {
     upgrades
         .upgrades()
         .find(|upgrade| {
@@ -174,13 +226,167 @@ fn overclock_unlock(archetype: &UnitArchetype, upgrades: &UpgradeCatalog) -> Opt
                 matches!(
                     effect,
                     UpgradeEffect::UnlockAbility { target_slug, ability_slug }
-                        if *target_slug == archetype.slug && ability_slug == OVERCLOCK_ABILITY_SLUG
+                        if *target_slug == archetype.slug && ability_slug == ability
                 )
             })
         })
         .map(|upgrade| upgrade.upgrade_id)
 }
 
+/// Every mode a mode ability switches, in catalog order, labelled by the first archetype that
+/// declares it.
+fn intern_modes(units: &UnitCatalog) -> Vec<ModeLabels> {
+    let mut modes: Vec<ModeLabels> = Vec::new();
+    for archetype in units.archetypes() {
+        for ability in &archetype.abilities {
+            let Some(mode_name) = mode_of_ability(archetype, ability) else {
+                continue;
+            };
+            if modes.iter().all(|mode| mode.mode_name != mode_name) {
+                modes.push(ModeLabels {
+                    mode_name: mode_name.to_owned(),
+                    enter: ability.name.clone(),
+                    leave: ability.leave_name.clone().unwrap_or_default(),
+                });
+            }
+        }
+    }
+    modes
+}
+
+/// `archetype`'s mode commands, one per mode (its first ability for that mode), in `ModeId`
+/// order.
+fn mode_commands(
+    archetype: &UnitArchetype,
+    upgrades: &UpgradeCatalog,
+    modes: &[ModeLabels],
+) -> Vec<ModeCommand> {
+    let mut commands: Vec<ModeCommand> = Vec::new();
+    for (ability, ability_index) in archetype.abilities.iter().zip(0_u8..) {
+        let Some(mode_name) = mode_of_ability(archetype, ability) else {
+            continue;
+        };
+        let interned = modes
+            .iter()
+            .position(|mode| mode.mode_name == mode_name)
+            .and_then(|index| u16::try_from(index).ok());
+        let mode_index = archetype
+            .modes
+            .iter()
+            .position(|mode| mode.mode_name == mode_name)
+            .and_then(|index| u8::try_from(index).ok());
+        let (Some(id), Some(mode_index)) = (interned, mode_index) else {
+            continue;
+        };
+        if commands.iter().any(|command| command.mode == ModeId(id)) {
+            continue;
+        }
+        commands.push(ModeCommand {
+            mode: ModeId(id),
+            ability_index,
+            mode_index,
+            unlock: unlock_of(archetype, &ability.name, upgrades),
+        });
+    }
+    commands.sort_unstable_by_key(|command| command.mode);
+    commands
+}
+
 const fn is_structure(archetype: &UnitArchetype) -> bool {
     matches!(archetype.shape, ShapeKind::BuildingDome { .. })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::battle_pipeline::commands::mode_of_ability;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn shipped() -> (UnitCatalog, UpgradeCatalog) {
+        let catalogs = sim_fixtures::shipped_catalogs();
+        (catalogs.units, catalogs.upgrades)
+    }
+
+    #[test]
+    fn every_mode_ability_gets_one_mode_with_labels_from_data() -> TestResult {
+        let (units, upgrades) = shipped();
+        let catalog = CommandCatalog::build(&units, &upgrades, |_| None);
+        let mut seen = 0;
+        for archetype in units.archetypes() {
+            for ability in &archetype.abilities {
+                let Some(mode_name) = mode_of_ability(archetype, ability) else {
+                    continue;
+                };
+                seen += 1;
+                let commands = catalog
+                    .archetype(archetype.unit_type_id)
+                    .ok_or("archetype")?;
+                let command = commands
+                    .modes
+                    .iter()
+                    .find(|command| {
+                        catalog
+                            .mode(command.mode)
+                            .is_some_and(|m| m.mode_name == mode_name)
+                    })
+                    .ok_or("a mode command")?;
+                let labels = catalog.mode(command.mode).ok_or("labels")?;
+                assert_eq!(labels.enter, ability.name);
+                assert_eq!(Some(&labels.leave), ability.leave_name.as_ref());
+                assert_eq!(
+                    archetype.modes[usize::from(command.mode_index)].mode_name,
+                    mode_name
+                );
+            }
+        }
+        assert!(seen >= 2, "the shipped catalog has mode abilities");
+        Ok(())
+    }
+
+    #[test]
+    fn archetypes_sharing_a_mode_share_one_id() -> TestResult {
+        let (mut units, upgrades) = shipped();
+        let holder = units
+            .archetypes()
+            .find(|archetype| {
+                archetype
+                    .abilities
+                    .iter()
+                    .any(|ability| mode_of_ability(archetype, ability).is_some())
+            })
+            .ok_or("a mode unit")?
+            .clone();
+        let other = units
+            .archetypes()
+            .find(|archetype| archetype.modes.is_empty() && archetype.abilities.is_empty())
+            .ok_or("a unit without modes")?
+            .unit_type_id;
+        {
+            let other = units.get_mut(other)?;
+            other.modes.clone_from(&holder.modes);
+            other.abilities.clone_from(&holder.abilities);
+        }
+        let catalog = CommandCatalog::build(&units, &upgrades, |_| None);
+        let first = catalog
+            .archetype(holder.unit_type_id)
+            .ok_or("holder")?
+            .modes[0];
+        let second = catalog.archetype(other).ok_or("other")?.modes[0];
+        assert_eq!(first.mode, second.mode, "one ModeId for one mode name");
+        assert_eq!(catalog.mode_ids().count(), {
+            let mut names: Vec<&str> = units
+                .archetypes()
+                .flat_map(|a| {
+                    a.abilities
+                        .iter()
+                        .filter_map(move |b| mode_of_ability(a, b))
+                })
+                .collect();
+            names.sort_unstable();
+            names.dedup();
+            names.len()
+        });
+        Ok(())
+    }
 }
