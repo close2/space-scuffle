@@ -173,7 +173,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-38 | No burrowed Roach regeneration and no Tunneling Claws | WP15, WP18 |
 | B-39 | How a unit whose data sets no `Deceleration` brakes; ours stops within a tick (not yet sourced, [Q0067](docs/questions/open/0067-unset-deceleration.md)); acceleration and the sourced decelerations are fixed | Q0067 |
 | B-41 | Where in a hit the Immortal's Barrier acts: whether the raising hit is absorbed, before or after armour, and whether a hit absorbed whole still deals 0.5 (not yet sourced, [Q0068](docs/questions/open/0068-barrier-damage-order.md)); the Barrier itself is fixed | Q0068 |
-| B-42 | The Lurker analogue attacks unburrowed | WP13b |
+| B-42 | Whether the burrowing Lurker analogue's weapon and cloak arrive at the morph's `Stats` section, 12 ticks before it ends (not yet sourced, [Q0069](docs/questions/open/0069-lurker-burrow-sections.md)); attacking only burrowed is fixed | Q0069 |
 | B-43 | Charge is a speed bonus without the dash | WP13c |
 | B-44 | Concussive Shells have no effect | WP13d |
 | B-45 | Phoenix and Void Ray analogues cannot fire while moving | WP13e |
@@ -210,6 +210,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-90 | A turreted weapon's wind-up does not hold its unit, and a turret works against the unit's `current_target` under any order; the game lets only weapons with `AllowedMovement` fire while moving. It reaches the Siege Tank analogue and, since WP10 (B-28), the Hellion, Immortal, Colossus, Lurker and Phoenix analogues | WP13e |
 | B-91 | Whether an attack-rate buff (Stimpack) scales the random firing delay, and whether the first attack of an engagement draws one; ours does neither (not yet sourced, [Q0066](docs/questions/open/0066-random-delay-scaling.md)) | Q0066 |
 | B-92 | `LateralAcceleration` (how sharply a moving unit can curve) is not modelled; our units turn their velocity freely within the hull rate | WP16 |
+| B-93 | A burrowed unit still blocks ground units; the game's burrowed Lurker collides only with burrowed units | WP16 |
 
 ---
 

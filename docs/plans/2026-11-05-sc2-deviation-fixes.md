@@ -792,7 +792,7 @@ requires.
 | B-39 | No acceleration or deceleration | Fixed, narrowed | WP12 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §13; Amendment 18); open only how an unset `Deceleration` brakes ([Q0067](../questions/open/0067-unset-deceleration.md)) |
 | B-40 | Turn before move | Fixed | turn-before-move WP1 `6d7a9d5`, WP3 `b7d9f50` |
 | B-41 | No Immortal Barrier | Fixed, narrowed | WP13a ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §14; Amendment 19); open only the engine order within a hit ([Q0068](../questions/open/0068-barrier-damage-order.md)) |
-| B-42 | The Lurker attacks unburrowed | (i) | WP13b |
+| B-42 | The Lurker attacks unburrowed | Fixed, narrowed | WP13b ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §15; Amendment 20); open only whether the weapon and the cloak arrive before the morph ends ([Q0069](../questions/open/0069-lurker-burrow-sections.md)) |
 | B-43 | Charge without the dash | (i) | WP13c |
 | B-44 | Concussive Shells do nothing | (i) | WP13d |
 | B-45 | No firing while moving | (i) | WP13e |
@@ -841,6 +841,7 @@ requires.
 | B-90 | A turreted weapon's wind-up does not hold its unit, and a turret works against `current_target` under any order, where the game ties firing while moving to `AllowedMovement` | (i) | WP13e, with B-45. Found in WP10 (Amendment 16): turreting five more analogues extends it |
 | B-91 | Whether an attack-rate buff scales the random firing delay, and whether the first attack draws one; ours does neither | (i) | [Q0066](../questions/open/0066-random-delay-scaling.md). Found in WP11 (Amendment 17) |
 | B-92 | `LateralAcceleration` (how sharply a moving unit can curve) is not modelled; our units turn their velocity freely within the hull rate | (i) | WP16. Found in WP12 (Amendment 18) |
+| B-93 | A burrowed unit still blocks ground units; the game's burrowed Lurker collides only with `Burrow` (`liberty` UnitData:775) | (i) | WP16, with B-49. Found in WP13b (Amendment 20) |
 
 **Counts.** 78 IDs: (i) 70, two of them narrowed (B-52, B-67) and one carried by another plan (B-12); (ii) 3 (B-37,
 B-53, B-58); (iii) none; fixed 5 (B-31 and B-40 by the turn-before-move plan; B-71, B-73 and B-75 by WP0).
@@ -1183,4 +1184,28 @@ Evidence: [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.
   before or after armour, and whether a wholly absorbed hit still deals 0.5
   ([Q0068](../questions/open/0068-barrier-damage-order.md), default the rule as landed).
 - Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §14. No commit was
+  held.
+
+## Amendment 20 (WP13b, 2026-11-09): the Lurker attacks only burrowed
+
+- **Research:** the unburrowed `LurkerMP` has no weapon (`liberty` UnitData:690-758; `voidmulti` :982's
+  `Spinesdisabled` is display only); `LurkerMPBurrowed` carries `LurkerMP` (`void` UnitData:775), is cloaked and
+  immobile. Burrowing takes the morph's longest section, `Actor` 2.5 Normal s (`void` AbilData:152) = 45 ticks plus
+  up to 0.25 s (`swarm` :1663); unburrowing 0.625 s (`voidmulti` AbilData:187) = 11 ticks plus up to 0.25 s.
+  Liquipedia's 5.0.9 Adaptive Talons note confirms the `Actor` section as the burrow time. The B-42 row's "verify"
+  is answered: the requirement is the weapon's absence on the unburrowed unit, not a weapon requirement.
+- **No rule commit.** The mode capability (WP11) already arms a weaponless archetype in a mode; the mechanism tests
+  passed on the engine as it was (`e7f002a`, with the test-only restatement of the reference tables and the matrix
+  harness's `Side::mode`). This departs from §7 WP13's "latent capability field and rule" only because the field
+  and rule exist.
+- **B-42 fixed, narrowed:** data `7e5e524` (`burrow_scorpion`: no own weapon; mode `burrowed`, 45 / 11 ticks, each plus
+  up to 4.4643, immobile, unpushable, cloaked, with the spines; a Burrow toggle). Matrix battle 21 burrows its Lurker
+  on the first tick; only it moved, its winner unchanged (Lurker lead hull 72.92 -> 119.72); without the burrow the
+  marines win every seed. Battle 33 bit-identical (41 / 10 / 17); goldens unchanged. Open: whether the weapon and
+  the cloak arrive at the `Stats` section's end, 12 ticks early
+  ([Q0069](../questions/open/0069-lurker-burrow-sections.md), default at the morph's end).
+- **Found:** B-93 (a burrowed unit still blocks ground units). The skirmish client has no ability UI, so a skirmish
+  Lurker cannot burrow and so cannot attack ([Q0070](../questions/open/0070-lurker-without-burrow-button.md),
+  default keep the fix; a client command follows).
+- Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §15. No commit was
   held.
