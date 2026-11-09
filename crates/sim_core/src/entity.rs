@@ -12,9 +12,9 @@ use crate::catalog::{UnitArchetype, WeaponSpec};
 use crate::movement::MovementMathError;
 use crate::weapon_timing::{combined_attack_rate, AttackRate, InvalidBuffAttackRate};
 use sim_types::{
-    AbilityEffectSpec, AnimState, AttackOrigin, EntityId, MoverType, OverclockSpec, PlayerId,
-    ResourceKind, ResourceNodeId, ShapeKind, SimAngle, SimScalar, SimVec2, Tick, UnitOrder,
-    UnitTypeId,
+    AbilityEffectSpec, AnimState, AttackOrigin, BarrierSpec, EntityId, MoverType, OverclockSpec,
+    PlayerId, ResourceKind, ResourceNodeId, ShapeKind, SimAngle, SimScalar, SimVec2, Tick,
+    UnitOrder, UnitTypeId,
 };
 use std::collections::VecDeque;
 
@@ -231,6 +231,77 @@ pub struct UnitTask {
     pub last_node: Option<ResourceNodeId>,
 }
 
+/// The state of a unit's damage-absorbing barrier ([`BarrierSpec`], B-41).
+///
+/// All zero for a unit without the capability and for one whose barrier is ready. It decides
+/// how much later damage is absorbed, so the checksum hashes all of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct BarrierState {
+    /// Ticks the raised barrier stays up, counting this one; zero when it is down.
+    pub raised_ticks: u16,
+    /// Hit points the raised barrier can still absorb; zero when it is down.
+    pub absorb_left: SimScalar,
+    /// Ticks until the barrier can be raised again; zero when it is ready.
+    pub cooldown_ticks: u16,
+}
+
+impl BarrierState {
+    /// Absorbs what it can of `damage` (hit points, before armour) and returns the rest.
+    ///
+    /// Without a `spec`, or with nothing to absorb, `damage` passes unchanged. A barrier that
+    /// is down and ready is raised by this damage first: `StarCraft` II's `BarrierDamageResponse`
+    /// (`voidmulti` BehaviorData:577-590, cooldown 45) applies the `TakenDamage` window
+    /// (BehaviorData:599-609, 3 Normal s) that enables the absorbing `ImmortalOverload`
+    /// response (`void` BehaviorData:97-108, fraction 0; `voidmulti` :273-279, limit 100). A
+    /// barrier that has absorbed its limit is spent: it goes down at once and stays down until
+    /// its cooldown ends.
+    pub fn absorb(&mut self, spec: Option<&BarrierSpec>, damage: SimScalar) -> SimScalar {
+        let Some(spec) = spec else {
+            return damage;
+        };
+        if damage <= SimScalar::ZERO {
+            return damage;
+        }
+        if self.raised_ticks == 0 {
+            if self.cooldown_ticks > 0 {
+                return damage;
+            }
+            self.raised_ticks = spec.duration_ticks;
+            self.absorb_left = spec.absorb_limit;
+            self.cooldown_ticks = spec.cooldown_ticks;
+        }
+        let absorbed = damage.min(self.absorb_left);
+        self.absorb_left -= absorbed;
+        if self.absorb_left <= SimScalar::ZERO {
+            self.lower();
+        }
+        damage - absorbed
+    }
+
+    /// Advances the barrier by one tick: a raised barrier runs down its window and the
+    /// cooldown counts towards readiness.
+    pub fn tick(&mut self) {
+        self.cooldown_ticks = self.cooldown_ticks.saturating_sub(1);
+        if self.raised_ticks > 0 {
+            self.raised_ticks -= 1;
+            if self.raised_ticks == 0 {
+                self.lower();
+            }
+        }
+    }
+
+    /// Whether the barrier is up and absorbing.
+    #[must_use]
+    pub const fn is_raised(&self) -> bool {
+        self.raised_ticks > 0
+    }
+
+    fn lower(&mut self) {
+        self.raised_ticks = 0;
+        self.absorb_left = SimScalar::ZERO;
+    }
+}
+
 /// Authoritative simulation entity state for a single unit or building dome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)]
@@ -287,6 +358,8 @@ pub struct Entity {
     pub pending_strikes: Option<PendingStrikes>,
     /// Active temporary stat buffs and debuffs.
     pub active_buffs: Vec<ActiveBuff>,
+    /// The damage-absorbing barrier's window, remaining absorption and cooldown (B-41).
+    pub barrier: BarrierState,
     /// FIFO production jobs: archetype, remaining 25 Hz updates and reserved supply.
     /// Only the front job advances per update, preserving the authored `u32` duration.
     pub production_queue: VecDeque<crate::production::ProductionJob>,
@@ -424,6 +497,7 @@ impl Entity {
             weapon_phase: WeaponPhase::Ready,
             weapon_cooldown_remaining: 0,
             weapon_delay_carry: SimScalar::ZERO,
+            barrier: BarrierState::default(),
             pending_strikes: None,
             active_buffs: Vec::new(),
             production_queue: VecDeque::new(),
@@ -868,4 +942,76 @@ fn fold_speed(
     product
         .checked_mul(value)
         .ok_or(MovementMathError::Unrepresentable)
+}
+
+#[cfg(test)]
+mod barrier_state_tests {
+    use super::BarrierState;
+    use sim_types::{BarrierSpec, SimScalar};
+
+    fn spec() -> BarrierSpec {
+        BarrierSpec {
+            absorb_limit: SimScalar::from_num(100),
+            duration_ticks: 3,
+            cooldown_ticks: 5,
+        }
+    }
+
+    fn n(value: i32) -> SimScalar {
+        SimScalar::from_num(value)
+    }
+
+    #[test]
+    fn without_a_spec_damage_passes_and_nothing_is_raised() {
+        let mut barrier = BarrierState::default();
+        assert_eq!(barrier.absorb(None, n(40)), n(40));
+        assert_eq!(barrier, BarrierState::default());
+    }
+
+    #[test]
+    fn no_damage_leaves_a_ready_barrier_down() {
+        let mut barrier = BarrierState::default();
+        assert_eq!(
+            barrier.absorb(Some(&spec()), SimScalar::ZERO),
+            SimScalar::ZERO
+        );
+        assert!(!barrier.is_raised());
+        assert_eq!(barrier.cooldown_ticks, 0);
+    }
+
+    #[test]
+    fn the_raising_damage_is_absorbed_and_the_limit_spends_it() {
+        let mut barrier = BarrierState::default();
+        assert_eq!(barrier.absorb(Some(&spec()), n(70)), SimScalar::ZERO);
+        assert!(barrier.is_raised());
+        assert_eq!(barrier.absorb_left, n(30));
+        assert_eq!(barrier.absorb(Some(&spec()), n(45)), n(15));
+        assert!(!barrier.is_raised(), "spent at its limit");
+        assert_eq!(
+            barrier.absorb(Some(&spec()), n(10)),
+            n(10),
+            "down while cooling"
+        );
+    }
+
+    #[test]
+    fn the_window_counts_the_raising_tick_and_the_cooldown_rearms() {
+        let mut barrier = BarrierState::default();
+        barrier.absorb(Some(&spec()), n(1));
+        barrier.tick();
+        barrier.tick();
+        assert!(barrier.is_raised(), "up through its third tick");
+        barrier.tick();
+        assert!(!barrier.is_raised());
+        assert_eq!(barrier.absorb_left, SimScalar::ZERO);
+        assert_eq!(barrier.absorb(Some(&spec()), n(1)), n(1));
+        barrier.tick();
+        barrier.tick();
+        assert_eq!(barrier.cooldown_ticks, 0);
+        assert_eq!(
+            barrier.absorb(Some(&spec()), n(1)),
+            SimScalar::ZERO,
+            "raised again"
+        );
+    }
 }

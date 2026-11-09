@@ -529,14 +529,22 @@ impl SimWorld {
                     }
                     let dist = hazard.center.distance(entity.position);
                     if dist <= hazard.radius {
-                        let dmg = hazard.damage_per_interval;
-                        let (shield_dmg, life_dmg) = if entity.shields >= dmg {
-                            (dmg, SimScalar::ZERO)
-                        } else {
-                            let s = entity.shields;
-                            (s, dmg - s)
-                        };
-                        entity.apply_damage(shield_dmg, life_dmg, SimAngle::ZERO);
+                        // The barrier absorbs spell damage too (B-41).
+                        let barrier = self
+                            .catalog
+                            .get(entity.unit_type_id)
+                            .ok()
+                            .and_then(|arch| arch.capabilities.barrier.as_ref());
+                        let dmg = entity.barrier.absorb(barrier, hazard.damage_per_interval);
+                        if dmg > SimScalar::ZERO {
+                            let (shield_dmg, life_dmg) = if entity.shields >= dmg {
+                                (dmg, SimScalar::ZERO)
+                            } else {
+                                let s = entity.shields;
+                                (s, dmg - s)
+                            };
+                            entity.apply_damage(shield_dmg, life_dmg, SimAngle::ZERO);
+                        }
                         entity.last_storm_damage_tick = Some(Tick(cur_tick));
 
                         // Idle mobile units evacuate the persistent hazard zone
