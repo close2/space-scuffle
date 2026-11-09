@@ -281,3 +281,50 @@ fn an_unburrowed_unit_without_a_weapon_attack_moves_past_an_enemy() {
         world.entities[&shooter].position.x
     );
 }
+
+/// `burrow_scorpion`, the Lurker's analogue, attacks only burrowed, with StarCraft II's times.
+#[test]
+fn b42_the_lurker_analogue_attacks_only_burrowed() {
+    let world = flat_world(1);
+    let lurker = world
+        .catalog
+        .id_by_slug("burrow_scorpion")
+        .expect("burrow_scorpion");
+    let arch = world.catalog.get(lurker).expect("archetype");
+    assert!(
+        arch.weapon.is_none() && arch.ground_weapon.is_none() && arch.air_weapon.is_none(),
+        "unburrowed it has no weapon (liberty UnitData:690-758)"
+    );
+    let mode = arch.get_mode("burrowed").expect("a burrowed mode");
+    // 2.5 Normal s x 25 / 1.4 = 44.64; 0.625 -> 11.16; 0.25 -> 4.4643.
+    assert_eq!(mode.cast_ticks, 45, "void AbilData:152 Actor 2.5");
+    assert_eq!(
+        mode.leave_cast_ticks, 11,
+        "voidmulti AbilData:187 Actor 0.625"
+    );
+    assert_eq!(
+        mode.cast_random_delay_max_ticks,
+        SimScalar::from_f32_lossy(4.4643)
+    );
+    assert_eq!(
+        mode.leave_random_delay_max_ticks,
+        SimScalar::from_f32_lossy(4.4643)
+    );
+    assert!(mode.is_immobile && mode.unpushable && mode.is_cloaked);
+    let spines = mode
+        .ground_weapon_override
+        .clone()
+        .flatten()
+        .expect("burrowed it carries its spines (void UnitData:775)");
+    assert_eq!(
+        spines.max_range,
+        SimScalar::from_num(8),
+        "voidmulti WeaponData:145"
+    );
+    assert_eq!(spines.period_ticks, 36);
+    assert_eq!(spines.base_damage, SimScalar::from_num(20));
+    assert!(arch.abilities.iter().any(|ability| matches!(
+        &ability.effect,
+        AbilityEffectSpec::SwitchMode { mode_name } if mode_name == "burrowed"
+    )));
+}
