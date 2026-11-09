@@ -884,11 +884,39 @@ fn b47_research_costs_follow_starcraft() -> TestResult {
 /// value and source.
 type WeaponRow = (&'static str, &'static str, f32, &'static str);
 
+/// The weapon a unit without one of its own carries only in a mode (the Lurker analogue, armed
+/// only burrowed as `StarCraft` II's `LurkerMPBurrowed`, B-42); checked as its `weapon` block.
+fn mode_only_weapon(archetype: &UnitArchetype) -> Option<&WeaponSpec> {
+    if archetype.weapon.is_some() || archetype.ground_weapon.is_some() {
+        return None;
+    }
+    archetype
+        .modes
+        .iter()
+        .find_map(|mode| mode.ground_weapon_override.as_ref()?.as_ref())
+}
+
+/// The mode weapons that replace a weapon of the archetype's own (Siege Mode's cannon).
+fn replacing_mode_weapons(archetype: &UnitArchetype) -> impl Iterator<Item = &WeaponSpec> {
+    let replaces = mode_only_weapon(archetype).is_none();
+    archetype
+        .modes
+        .iter()
+        .filter(move |_| replaces)
+        .filter_map(|mode| mode.ground_weapon_override.as_ref()?.as_ref())
+}
+
 /// The archetype's weapons by block name; `weapon` is the ground fallback (a structure's is a
-/// copy of its ground weapon, so structures skip it).
+/// copy of its ground weapon, so structures skip it), or the weapon of [`mode_only_weapon`].
 fn weapon_blocks(archetype: &UnitArchetype) -> [(&'static str, Option<&WeaponSpec>); 3] {
     [
-        ("weapon", archetype.weapon.as_ref()),
+        (
+            "weapon",
+            archetype
+                .weapon
+                .as_ref()
+                .or_else(|| mode_only_weapon(archetype)),
+        ),
         ("ground_weapon", archetype.ground_weapon.as_ref()),
         ("air_weapon", archetype.air_weapon.as_ref()),
     ]
@@ -2178,22 +2206,20 @@ fn b29_unit_acquisition_arcs_follow_starcraft() -> TestResult {
     };
     let mut checked = 0;
     for archetype in sim_fixtures::shipped_catalogs().units.archetypes() {
-        for mode in &archetype.modes {
-            if let Some(Some(weapon)) = &mode.ground_weapon_override {
-                let got = f32::from(weapon.acquire_arc.raw());
-                assert!(
-                    (got - want).abs() < 0.001,
-                    "{} {}: acquisition arc {got}, StarCraft II {want} ({source})",
-                    archetype.slug,
-                    mode.mode_name
-                );
-                checked += 1;
-            }
+        for weapon in replacing_mode_weapons(archetype) {
+            let got = f32::from(weapon.acquire_arc.raw());
+            assert!(
+                (got - want).abs() < 0.001,
+                "{} {}: acquisition arc {got}, StarCraft II {want} ({source})",
+                archetype.slug,
+                weapon.name
+            );
+            checked += 1;
         }
     }
     assert_eq!(
         checked, 1,
-        "one weapon override: the Siege Tank's Siege Mode"
+        "one replacing weapon override: the Siege Tank's Siege Mode"
     );
     Ok(())
 }
@@ -2396,11 +2422,7 @@ fn b30_turret_idle_follows_starcraft() -> TestResult {
     let mut checked = 0;
     for archetype in catalogs.units.archetypes() {
         let name = analogue(archetype);
-        let modes = archetype
-            .modes
-            .iter()
-            .filter_map(|mode| mode.ground_weapon_override.as_ref()?.as_ref())
-            .map(|weapon| ("siege_mode", Some(weapon)));
+        let modes = replacing_mode_weapons(archetype).map(|weapon| ("siege_mode", Some(weapon)));
         for (block, weapon) in weapon_blocks(archetype).into_iter().chain(modes) {
             let Some(weapon) = weapon.filter(|w| w.has_turret) else {
                 continue;
@@ -2442,10 +2464,7 @@ fn b3_every_weapon_has_the_legacy_random_delay() {
     let catalogs = sim_fixtures::shipped_catalogs();
     let mut checked = 0;
     for archetype in catalogs.units.archetypes() {
-        let modes = archetype
-            .modes
-            .iter()
-            .filter_map(|mode| mode.ground_weapon_override.as_ref()?.as_ref());
+        let modes = replacing_mode_weapons(archetype);
         let blocks = weapon_blocks(archetype).into_iter().filter_map(|(_, w)| w);
         for weapon in blocks.chain(modes) {
             let got = (f(weapon.random_delay_min), f(weapon.random_delay_max));
