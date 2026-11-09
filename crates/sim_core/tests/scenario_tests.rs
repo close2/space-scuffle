@@ -23,7 +23,8 @@
 use std::path::{Path, PathBuf};
 
 use sim_core::scenario::{
-    load_scenario_world, ring_perimeter, PlayerSetup, ScenarioError, ScenarioManifest,
+    apply_initial_orders, load_scenario_battle, load_scenario_world, ring_perimeter,
+    start_approaches, InitialOrder, PlayerSetup, ScenarioError, ScenarioManifest,
     StartLoadoutCatalog,
 };
 use sim_map::validation::validate_map;
@@ -31,6 +32,7 @@ use sim_map::{
     CellFlags, CliffLevel, MapCellSpec, MapDocument, MapFile, MapMetadata, ResourceKind,
     TerrainKind,
 };
+use sim_types::UnitOrder;
 use sim_types::{PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, Tick, TickBundle};
 
 fn empty_bundle(tick: u32) -> TickBundle {
@@ -748,5 +750,69 @@ fn start_loadouts_mark_exactly_one_editor_default() {
     assert!(matches!(
         edited.editor_default(),
         Err(ScenarioError::EditorDefaultLoadout { count: 0 })
+    ));
+}
+
+/// Plan 2026-11-09-sc2-pathfinding WP1: the showcase battle starts with every mobile armed unit
+/// attack-moving to the other base's approach, the start the client gives it.
+#[test]
+fn the_showcase_battle_starts_with_its_initial_orders() {
+    let scenario = Path::new("scenarios/showcase.ron");
+    let manifest = ScenarioManifest::from_ron_str(
+        &std::fs::read_to_string(assets_root().join(scenario)).expect("shipped showcase"),
+    )
+    .expect("showcase parses");
+    assert_eq!(manifest.initial_orders.len(), 2);
+    let world = load_scenario_battle(&assets_root(), scenario).expect("showcase battle starts");
+    let document = MapFile::load(&assets_root().join(&manifest.map))
+        .expect("showcase map")
+        .decode()
+        .expect("showcase map decodes");
+    let approaches =
+        start_approaches(&document, &manifest.players, &world).expect("both bases approachable");
+    let mut ordered = [0_usize; 2];
+    for entity in world.entities.values() {
+        let archetype = world.catalog.get(entity.unit_type_id).expect("shipped");
+        let armed = archetype.ground_weapon.is_some()
+            || archetype.air_weapon.is_some()
+            || archetype.weapon.is_some();
+        let combatant = !entity.is_immobile && archetype.capabilities.harvester.is_none() && armed;
+        let other = PlayerId(1 - entity.owner.0);
+        let expected = combatant.then(|| UnitOrder::AttackMove {
+            target: approaches[&other],
+        });
+        assert_eq!(entity.order_queue.front().cloned(), expected);
+        ordered[usize::from(entity.owner.0)] += usize::from(combatant);
+    }
+    assert!(ordered.iter().all(|&count| count > 0), "{ordered:?}");
+    assert_eq!(world.last_checksum(), world.compute_checksum());
+}
+
+/// An order for a player without combatants, or for a base that is not in the match, is a typed
+/// failure, never a silent start without orders.
+#[test]
+fn initial_orders_without_a_target_or_combatants_are_refused() {
+    let scenario = Path::new("scenarios/skirmish.ron");
+    let manifest = ScenarioManifest::from_ron_str(
+        &std::fs::read_to_string(assets_root().join(scenario)).expect("shipped skirmish"),
+    )
+    .expect("skirmish parses");
+    let document = MapFile::load(&assets_root().join(&manifest.map))
+        .expect("skirmish map")
+        .decode()
+        .expect("skirmish map decodes");
+    let mut world = load_scenario_world(&assets_root(), scenario).expect("skirmish builds");
+    let order = |player_slot, target_player_slot| InitialOrder::AttackMoveToStart {
+        player_slot,
+        target_player_slot,
+    };
+    assert!(matches!(
+        apply_initial_orders(&mut world, &document, &manifest.players, &[order(0, 7)]),
+        Err(ScenarioError::NoStartApproach { slot: 7 })
+    ));
+    // The skirmish fields only workers, which harvest, so no unit is a combatant.
+    assert!(matches!(
+        apply_initial_orders(&mut world, &document, &manifest.players, &[order(0, 1)]),
+        Err(ScenarioError::NoCombatants { slot: 0 })
     ));
 }

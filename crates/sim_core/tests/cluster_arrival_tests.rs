@@ -126,6 +126,7 @@ fn authored_cliff_groups_follow_real_ramp_and_replay_exactly() -> TestResult {
                     start,
                     goal,
                     clearance: UnitClearance::Medium,
+                    radius: UnitClearance::Medium.radius_scalar(),
                 },
             )?;
             assert!(path.waypoints.iter().any(|p| p.y >= SimScalar::from_num(8)));

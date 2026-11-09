@@ -102,6 +102,9 @@ pub struct PathRequest {
     pub goal: SimVec2,
     /// Unit clearance tier.
     pub clearance: UnitClearance,
+    /// The unit's own collision radius in world units. Corner waypoints are offset from the
+    /// obstacle by this radius plus [`CORNER_SAFETY_MARGIN`]; the tier still chooses the corridor.
+    pub radius: SimScalar,
 }
 
 /// Extended pathfinding request supporting optional player fog-of-war perception.
@@ -113,6 +116,9 @@ pub struct PathRequestWithVision<'a> {
     pub goal: SimVec2,
     /// Unit clearance tier (Small, Medium, Large).
     pub clearance: UnitClearance,
+    /// The unit's own collision radius in world units. Corner waypoints are offset from the
+    /// obstacle by this radius plus [`CORNER_SAFETY_MARGIN`]; the tier still chooses the corridor.
+    pub radius: SimScalar,
     /// Optional player vision map. If `Some`, unexplored ramps and fogged obstacles
     /// are evaluated through the player's knowledge.
     pub vision: Option<&'a PlayerVisionMap>,
@@ -128,6 +134,7 @@ impl From<PathRequest> for PathRequestWithVision<'_> {
             start: r.start,
             goal: r.goal,
             clearance: r.clearance,
+            radius: r.radius,
             vision: None,
             block_unexplored_ramps: false,
             known_structures: None,
@@ -1341,7 +1348,7 @@ impl Pathfinder {
                     let offset_left = if portal_left == request.goal {
                         portal_left
                     } else {
-                        Self::offset_corner_waypoint(portal_left, request.clearance, map, request)
+                        Self::offset_corner_waypoint(portal_left, map, request)
                     };
                     self.buffers.waypoints_scratch.push(offset_left);
                     apex = offset_left;
@@ -1365,7 +1372,7 @@ impl Pathfinder {
                     let offset_right = if portal_right == request.goal {
                         portal_right
                     } else {
-                        Self::offset_corner_waypoint(portal_right, request.clearance, map, request)
+                        Self::offset_corner_waypoint(portal_right, map, request)
                     };
                     self.buffers.waypoints_scratch.push(offset_right);
                     apex = offset_right;
@@ -1390,7 +1397,6 @@ impl Pathfinder {
 
     fn offset_corner_waypoint(
         vertex: SimVec2,
-        clearance: UnitClearance,
         map: &GameMap,
         request: &PathRequestWithVision<'_>,
     ) -> SimVec2 {
@@ -1486,7 +1492,7 @@ impl Pathfinder {
         }
 
         let dir = SimVec2::new(dir_x, dir_y).normalize_or_zero();
-        let offset_dist = (clearance.radius_scalar() + CORNER_SAFETY_MARGIN).max(min_margin);
+        let offset_dist = (request.radius + CORNER_SAFETY_MARGIN).max(min_margin);
         vertex + SimVec2::new(dir.x * offset_dist, dir.y * offset_dist)
     }
 }
