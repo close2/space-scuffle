@@ -835,6 +835,10 @@ struct CapabilitiesDef {
 
 #[derive(Debug, Deserialize)]
 #[allow(clippy::option_option)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "mirrors `UnitModeSpec`'s independent stance facts as authored in RON"
+)]
 struct UnitModeSpecDef {
     mode_name: String,
     #[serde(default)]

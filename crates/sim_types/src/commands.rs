@@ -256,6 +256,10 @@ pub enum AbilityEffectSpec {
 /// Declarative specification of a toggleable unit stance or transformation mode
 /// (e.g., Siege Mode, Burrowed Mode, Fighter/Assault Mode, High-Impact Payload, Surveillance Mode, Cloak).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts of one stance (anchored, unpushable, hidden, burrowed), authored in data"
+)]
 pub struct UnitModeSpec {
     /// Canonical identifier for this mode (e.g., `"siege"`, `"burrowed"`, `"assault"`, `"cloaked"`).
     pub mode_name: String,
