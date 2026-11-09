@@ -247,6 +247,11 @@
 // (SteeringObstacle::yields_to), where it had to stand exactly still; the only change, so it is the
 // cause. Checkpoints 1 to 10 are unchanged; every checkpoint from checkpoint 11 (ticks 501 to 550)
 // changed.
+// Re-recorded for plan 2026-11-09-friendly-blocking WP5 (B-48): every unit's push priority is
+// StarCraft II's PushPriority 10 (the Ultralisk analogue 11). On tick 63 psi grey 21 (25 -> 10)
+// walks into the idle railgun crawler 35 (40 -> 10), which now steps aside for it (D-4: an idle
+// friend yields to a mover of no lower priority); traced against the old priorities. Checkpoint 1
+// (ticks 51 to 100) and every later checkpoint changed.
 (
     checksum_schema: 25,
     seed: 0x5EED_0F_5CAFF1E,
@@ -275,24 +280,24 @@
     ],
     checksums: [
         0x612fb32d6a8dac24,
-        0x7f08cd5668affc01,
-        0x80974e809054f37b,
-        0x7b3a2a07e2e23a97,
-        0x87230f6e7c48549a,
-        0xd5a6c1057854e9d7,
-        0x18209d590b044e3b,
-        0xdd12f082410e962f,
-        0xf6ed313eb1cf7b75,
-        0x18488d940b5f0894,
-        0x7c579512488b4721,
-        0x3aacd985f0bb0306,
-        0xf50dc0165a637761,
-        0xdba0df0e25721ccf,
-        0x21d88bcce7430aa0,
-        0x27cf61ffac416005,
-        0x8c9bbdf57e2418a2,
-        0x11e1acdee58b9799,
-        0x070c198ef5e3cd8b,
-        0x59b950fb8eb832b7,
+        0xce29de9a406a927b,
+        0xa9c603742a6b2d91,
+        0x15823cff5526dba9,
+        0x9100c90281af4c04,
+        0x363ade4c45ae6139,
+        0x02d0ccccc49d7b9f,
+        0xfb16e2d2fe115443,
+        0x23e2265c5774d6d4,
+        0x18939560a07c37e1,
+        0xae8e1a9a48cb734b,
+        0x36c4cd6078af8dcf,
+        0xd559d8b7bbc94921,
+        0xb1ecc0287062f631,
+        0x2657679835931e7c,
+        0x6a50950c06c3ff90,
+        0xef58309006855800,
+        0x9f520a65106f3cc7,
+        0x1dea42ab82fb3d91,
+        0x1a3522ec06250b18,
     ],
 )
