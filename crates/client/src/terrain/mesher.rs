@@ -12,6 +12,23 @@
 //! - **Zero Per-Frame Heap Allocations:** Steady-state mesh updates reuse [`MesherScratch`]
 //!   and update `Mesh` vertex buffers in-place.
 //!
+//! # Ramp Invariants
+//! A ramp cell spans a whole cliff level, so the dual grid cannot draw it; the ramp pass owns it
+//! (plan `docs/plans/2026-11-09-ramp-geometry.md`, tested by `tests/ramp_geometry_tests.rs`):
+//! - **R1 (footprint):** the surface over a ramp cell's footprint is its ramp quad alone; the
+//!   dual grid emits no floor inside it and no wall inside it or on its edges.
+//! - **R2 (edges):** the ramp cell closes every height step on its edges, one half-edge at a
+//!   time: a side wall where its edge is higher than the surface beside it, a flank wall where
+//!   that surface is higher, and between two ramps one wall, from the higher of the two.
+//! - **R3 (agreement):** the surface beside a half-edge is [`dual_floor_level_beside`], built on
+//!   the same corner classification as the dual grid, so both passes agree by construction.
+//! - **R4 (classification):** [`dual_corner_levels`] classifies a ramp corner from its non-ramp
+//!   neighbours, never from its height, so no marching contour enters a ramp quadrant.
+//! - **R5 (clipping):** a dual cell with a ramp corner clips its floors to its non-ramp
+//!   quadrants without allocating; a dual cell without one is emitted unchanged.
+//! - **R6 (walls and rims):** a straight contour is split at the dual cell's centre and its half
+//!   on a ramp edge dropped; a contour midpoint on a ramp edge gets no rim, foot or jitter.
+//!
 //! # Coordinate Conventions
 //! - Simulation X maps to Bevy X.
 //! - Simulation Y maps to Bevy Z.
@@ -1848,4 +1865,129 @@ pub fn apply_scratch_to_mesh(scratch: &MesherScratch, mesh: &mut Mesh) {
     }
 
     mesh.insert_indices(bevy::render::mesh::Indices::U32(scratch.indices.clone()));
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    reason = "a failed test is a panic; each message states the invariant it relies on"
+)]
+mod tests {
+    use super::*;
+    use sim_map::grid::{CliffLevel, MapCell};
+
+    /// A 4x4 map at `level`, with the cells of `ramps` turned into north-ascending ramp cells.
+    fn map_with(level: u8, ramps: &[(u32, u32)]) -> GameMap {
+        let mut map = GameMap::new(4, 4, MapCell::default_ground(CliffLevel(level)))
+            .expect("invariant: 4x4 is a valid map size");
+        for &(x, y) in ramps {
+            let cell = map
+                .cell_mut(x, y)
+                .expect("invariant: the cell lies on the 4x4 map");
+            cell.ramp = Some(RampDir::North);
+        }
+        map
+    }
+
+    fn set_level(map: &mut GameMap, x: u32, y: u32, level: u8) {
+        map.cell_mut(x, y)
+            .expect("invariant: the cell lies on the 4x4 map")
+            .cliff_level = CliffLevel(level);
+    }
+
+    #[test]
+    fn ramp_corner_takes_the_lowest_non_ramp_edge_neighbour() {
+        // Dual cell (2, 2): corners (1,1) BL, (2,1) BR, (2,2) TR, (1,2) TL; TR is the ramp.
+        let mut map = map_with(1, &[(2, 2)]);
+        set_level(&mut map, 2, 1, 1);
+        set_level(&mut map, 1, 2, 2);
+        set_level(&mut map, 1, 1, 2);
+        let (levels, ramp_mask) = dual_corner_levels(&map, 2, 2);
+        assert_eq!(ramp_mask, 0b0100);
+        assert_eq!(levels, [2, 1, 1, 2]);
+    }
+
+    #[test]
+    fn ramp_corner_between_two_ramps_takes_its_diagonal() {
+        // BR, TR and TL are ramps; TR's edge neighbours are ramps, so it takes BL's level.
+        let mut map = map_with(1, &[(2, 1), (2, 2), (1, 2)]);
+        set_level(&mut map, 1, 1, 3);
+        let (levels, ramp_mask) = dual_corner_levels(&map, 2, 2);
+        assert_eq!(ramp_mask, 0b1110);
+        assert_eq!(levels, [3, 3, 3, 3]);
+    }
+
+    #[test]
+    fn four_ramp_corners_classify_as_void() {
+        let map = map_with(1, &[(1, 1), (2, 1), (2, 2), (1, 2)]);
+        assert_eq!(dual_corner_levels(&map, 2, 2), ([-1; 4], 0b1111));
+    }
+
+    #[test]
+    fn floor_beside_a_lone_corner_follows_its_neighbours() {
+        // BL = 2 is lone against BR = 1 and TL = 1: the centre side of its quadrant is level 1.
+        let mut map = map_with(1, &[]);
+        set_level(&mut map, 1, 1, 2);
+        assert_eq!(dual_floor_level_beside(&map, 2, 2, 0), 1);
+        // With TL raised to 2 as well, BL is no longer lone: its quadrant is level 2 throughout.
+        set_level(&mut map, 1, 2, 2);
+        assert_eq!(dual_floor_level_beside(&map, 2, 2, 0), 2);
+    }
+
+    fn square() -> FloorPolygon {
+        let mut polygon = FloorPolygon::EMPTY;
+        for p in [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)] {
+            polygon.push(Vec2::new(p.0, p.1));
+        }
+        polygon
+    }
+
+    #[test]
+    fn clip_keeps_the_inner_half_and_snaps_onto_the_line() {
+        let half = square().clip(Vec2::new(1.0, 0.0), Vec2::ZERO);
+        assert_eq!(
+            half.points(),
+            &[
+                Vec2::new(-0.5, -0.5),
+                Vec2::new(0.0, -0.5),
+                Vec2::new(0.0, 0.5),
+                Vec2::new(-0.5, 0.5),
+            ]
+        );
+    }
+
+    #[test]
+    fn opposite_diagonal_clips_share_their_cut_vertices_bit_for_bit() {
+        let mut polygon = FloorPolygon::EMPTY;
+        for p in [(-0.5, -0.3), (0.4, -0.5), (0.5, 0.35), (-0.15, 0.5)] {
+            polygon.push(Vec2::new(p.0, p.1));
+        }
+        let normal = Vec2::new(1.0, -1.0);
+        let origin = Vec2::new(0.1, 0.0);
+        let a = polygon.clip(normal, origin);
+        let b = polygon.clip(-normal, origin);
+        let on_line = |p: &&Vec2| ((p.x - origin.x) - (p.y - origin.y)).abs() < 1e-6;
+        let mut cut_a: Vec<[u32; 2]> = a
+            .points()
+            .iter()
+            .filter(on_line)
+            .map(|p| [p.x.to_bits(), p.y.to_bits()])
+            .collect();
+        let mut cut_b: Vec<[u32; 2]> = b
+            .points()
+            .iter()
+            .filter(on_line)
+            .map(|p| [p.x.to_bits(), p.y.to_bits()])
+            .collect();
+        cut_a.sort_unstable();
+        cut_b.sort_unstable();
+        assert_eq!(cut_a.len(), 2);
+        assert_eq!(cut_a, cut_b);
+    }
+
+    #[test]
+    fn clipping_away_everything_leaves_an_empty_polygon() {
+        let outside = square().clip(Vec2::new(-1.0, 0.0), Vec2::new(0.5, 0.0));
+        assert!(outside.points().len() < 3);
+    }
 }
