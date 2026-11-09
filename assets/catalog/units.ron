@@ -875,7 +875,12 @@
                 backswing_ticks: 13,
                 random_delay_ticks: (-1.1161, 2.2321),
                 splash: Some((
-                    zones: [(radius: 2.2, fraction: 1.0)],
+                    zones: [(radius: 0.15, fraction: 1.0)],
+                    shape: Line(
+                        origin: Attacker,
+                        axis: Along,
+                        offsets: [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75, 4.0, 4.25, 4.5, 4.75, 5.0, 5.25, 5.5, 5.75, 6.0, 6.5],
+                    ),
                     friendly_fire: false,
                 )),
                 projectile_speed: None,

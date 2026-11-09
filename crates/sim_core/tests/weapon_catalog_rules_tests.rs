@@ -1326,21 +1326,34 @@ type LineRow = (
 
 /// `StarCraft` II 5.0.14 line areas of the weapons this catalog models (plan
 /// `2026-11-05-sc2-deviation-fixes` package 8b, B-18; evidence §9.1). Every search deals the
-/// whole strike (no `Fraction` is set; `core` EffectData:69). The Hellion's line (25 searches of
-/// 0.15 along the attack, `liberty` EffectData:2609-2646) and the Lurker's (9 searches of 0.5
-/// along the attack, `swarm` EffectData:3010-3019) are held on branches
-/// `answers-held-b18-hellion-line` and `answers-held-b18-lurker-line` (plan Amendment 22).
-const SC2_LINE_SPLASH: [LineRow; 1] = [(
-    "Colossus",
-    0.15,
-    sim_types::SplashLineOrigin::Target,
-    sim_types::SplashLineAxis::Across,
-    &[
-        -1.25, -1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0, 1.25,
-    ],
-    "ThermalLancesForward/Reverse and ThermalLancesE, liberty EffectData:2373-2408, :2412; \
+/// whole strike (no `Fraction` is set; `core` EffectData:69). The Lurker's line (9 searches of 0.5
+/// along the attack, `swarm` EffectData:3010-3019) is held on branch
+/// `answers-held-b18-lurker-line` (plan Amendment 22).
+const SC2_LINE_SPLASH: [LineRow; 2] = [
+    (
+        "Hellion",
+        0.15,
+        sim_types::SplashLineOrigin::Attacker,
+        sim_types::SplashLineAxis::Along,
+        &[
+            0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75, 4.0,
+            4.25, 4.5, 4.75, 5.0, 5.25, 5.5, 5.75, 6.0, 6.5,
+        ],
+        "InfernalFlameThrowerCP and InfernalFlameThrowerE, liberty EffectData:2609-2646, swarm \
+         EffectData:2244-2246",
+    ),
+    (
+        "Colossus",
+        0.15,
+        sim_types::SplashLineOrigin::Target,
+        sim_types::SplashLineAxis::Across,
+        &[
+            -1.25, -1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0, 1.25,
+        ],
+        "ThermalLancesForward/Reverse and ThermalLancesE, liberty EffectData:2373-2408, :2412; \
          swarm EffectData:2323, :2328",
-)];
+    ),
+];
 
 #[test]
 fn b18_line_splash_follows_starcraft() -> TestResult {
