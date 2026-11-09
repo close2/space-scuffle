@@ -1453,3 +1453,88 @@ leaves both as recorded: neither spawns the Immortal analogue.
 - Graviton Beam and Scrambler Missile, which disable the Barrier in the data, are not modelled (no shipped
   analogue casts them); the Barrier has no visual in the client.
 
+
+## 15. WP13b: the Lurker attacks only burrowed (B-42)
+
+Sources: SC2GameData `5444e12f13`, chain `core → liberty → swarm → void → voidmulti`, each line re-read; Liquipedia
+[Lurker (Legacy of the Void)](https://liquipedia.net/starcraft2/Lurker_(Legacy_of_the_Void)) (wikitext,
+2026-11-09). Matrix: 20 seeds a battle (1000 runs); battle 33: 68 seeds. Directories `~/scratch/sc2dev_wp13b/`;
+baseline WP13a's data matrix (`~/scratch/sc2dev_wp13a/data`).
+
+### 15.1 Research
+
+- **No weapon unburrowed.** `LurkerMP` has no `WeaponArray` in any layer (`liberty` UnitData:690-758; `void` :752-765;
+  `voidmulti` :967-985). Its `EquipmentArray` is display only, and `voidmulti` replaces it with `Spinesdisabled`
+  (:982), a copy of `LurkerMP` with `Options Disabled` (WeaponData:362-364). Liquipedia: the Lurker "may attack only
+  when burrowed".
+- **The burrowed form.** `LurkerMPBurrowed` carries `LurkerMP` (`liberty` UnitData:797, turret `Lurker` from `void`
+  :775), is `Cloaked` and `Buried` (`liberty` :767-768), collides only with `Burrow` (:775) and moves with the
+  `Burrowed` mover (:783), which has no speed. Life, armour and sight equal the unburrowed form's (`voidmulti`
+  :987-995).
+- **Burrowing.** `BurrowLurkerMPDown` (`swarm` AbilData:1654-1674): `Actor` duration 2 (raised to 2.5 by `void`
+  :149-155), `Collide` and `Stats` delay 1.8332, `RandomDelayMax` 0.25, `SuppressMovement`. By WP11's reading of the
+  morph (§12.1: the morph's time is its longest section), 2.5 Normal s = 44.64 → **45 ticks**, plus up to 0.25 s =
+  **4.4643 ticks**. Cross-check: Adaptive Talons subtracts 1.0 from `Actor` and 0.66 from both delays (`voidmulti`
+  UpgradeData:780-783), and Liquipedia's patch 5.0.9 entry "Reduced the effectiveness of adaptive talon from 0.71
+  seconds to 1.07 seconds" is (2.5 − 1.0) ÷ 1.4 = 1.07 Faster s, the `Actor` time.
+- **Unburrowing.** `BurrowLurkerMPUp`: `Actor` 0.625 Normal s, `RandomDelayMax` 0.25 (`voidmulti` AbilData:181-189,
+  overriding `swarm` :1675-1685's 1 and 0.5) = 11.16 → **11 ticks**, plus up to **4.4643**.
+- **No automatic burrow for players.** The `TacticalBurrowLurkerMP` validators (`void` ValidatorData:1021-1049) are
+  referenced by no ability: they serve the computer AI. A player burrows the Lurker.
+
+Not stated by the data, and read as follows (owner question
+[Q0069](../questions/open/0069-lurker-burrow-sections.md), default this reading): every property of the burrowed form
+(weapon, cloak) arrives when the morph ends, not at the `Stats` section's end 12 ticks earlier.
+
+### 15.2 The mechanism needed no rule
+
+The existing mode capability (`UnitArchetype::modes`, WP11's timed channel) already expresses the unit: an archetype
+with no weapon of its own whose mode's `ground_weapon_override` arms it. `burrow_attack_tests.rs` pins it on scratch
+archetypes (five tests): no attack unburrowed, idle, under an attack order or attack-moving past an enemy (it walks
+on); the first hit on the tick the channel ends (cast 10 ticks: hit on tick 10 to 13); after unburrowing no hit and
+the unit walks again. All five passed on the engine as it was (`e7f002a`); the only red during writing was the test's
+own base archetype, a worker with the defensive acquire level. So WP13b has no rule commit, and nothing in the
+simulation or its hash changed.
+
+The same commit restates the reference-value tests, test-only and green before and after: the weapon a unit carries
+only in a mode is checked as its `weapon` block (`catalog_reference_values_tests`, `weapon_catalog_rules_tests`), so
+the Lurker's sourced rows (damage, Armored bonus, range 8, mount, idle, random delay) keep reading it; Siege Mode's
+replacing weapon is checked as before. The matrix harness gains `Side::mode`: on the first tick, after the standing
+order, each unit casts the ability that switches it into the named mode (two unit tests).
+
+### 15.3 Results
+
+| Step | Commit | Matrix (against the previous step) | Battle 33 (68 seeds) | Goldens |
+|---|---|---|---|---|
+| Tests, harness | `e7f002a` | (no simulation change; no battle sets a mode) | — | unchanged |
+| Data | `7e5e524` | battle 21 moved, winner unchanged (below) | bit-identical (41 / 10 / 17) | unchanged (no Lurker in them) |
+
+**Data** (`7e5e524`): `burrow_scorpion` `weapon: None`; mode `burrowed` (cast 45 ticks, leave 11, each plus up to
+4.4643; immobile, unpushable, cloaked) holding the unchanged spines; ability `Burrow` (`ToggleMode`,
+`SwitchMode("burrowed")`). Test `b42_the_lurker_analogue_attacks_only_burrowed`, red before.
+
+**Battle 21** (one Lurker against six Marines, both attack-moving) now burrows its Lurker on the first tick
+(`mode: Some("burrowed")`). Without that line the marines win all 20 seeds, keeping all 270 life: the Lurker never
+attacks. With it, blue wins all 20 as before:
+
+| | Before | After |
+|---|---|---|
+| Lurker lead hull (20 seeds) | 72.92 (42.2 to 96.1) | 119.72 (106.8 to 131.8) |
+| End tick | 94.95 | 130.70 |
+
+On the seed of record the Marines fire 17 shots, about 85 damage, all while it burrows (it is in contact from tick
+49); then it is cloaked and they have no detection, and three spine volleys kill all six. Battle 3 shows as moved
+only in its expectation column, which WP13a re-recorded after its data matrix. Expectation failures: 0 on the seeds
+of record, 0 over all seeds. The sim_core and sim_fixtures suites pass in debug.
+
+### 15.4 What WP13b leaves open
+
+- **B-42, narrowed** ([Q0069](../questions/open/0069-lurker-burrow-sections.md)): whether the weapon and the cloak
+  arrive at the `Stats` section's end, 12 ticks before the morph ends.
+- **B-93 (new):** a burrowed unit still blocks ground units and is pushed by nothing; the game's burrowed Lurker
+  collides only with `Burrow` (`liberty` UnitData:775). A mode has no collision layer (WP16, with B-49).
+- **The skirmish client cannot burrow** ([Q0070](../questions/open/0070-lurker-without-burrow-button.md)): it refuses
+  `CastAbility` (no ability UI in Phase 5), so a skirmish Lurker can move but not attack. Default: keep the fix; a
+  client package adds the command.
+- The `Interruptible` flag of the burrow (a unit can cancel it) and Adaptive Talons (B-68) are not modelled; Seismic
+  Spines (+2 range by slug) reaches the burrowed weapon, since upgrades find a weapon by its unit, not its slot.
