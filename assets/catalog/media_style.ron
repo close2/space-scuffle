@@ -111,7 +111,24 @@
         // arm-cannons shifted in nine Idles, so its arms hang low, its Idle stands completely
         // still (as the aircraft's), its Walk names "never leans or steps toward the camera"
         // first, and its Attack raises the cannons, fires and lowers them again.
+        // burrow_scorpion (batch 6, 2026-11-09): the Lurker analogue, the first creature of the
+        // Sylvan Swarm with generated media. Its authored texts named the ground ("digging into
+        // loose soil", "parting dust", "erupting from ground"), which drew floor planes in
+        // batches 2 and 5, and were rewritten as a whole beast seen at 3/4 with no floor. It
+        // follows the golem's pattern: a still crouch, a crawl on the spot that never turns
+        // toward the camera, and an Attack that strikes and settles back to the Idle pose.
+        // Its first pin (spread claws, raised legs) failed five Idles and five Walks, so it was
+        // re-seeded in a compact crouch; on that pin the Idle reads "as still as a statue", the
+        // Walk names legs that "clearly lift and step", and Walk and Attack ask for the smooth
+        // backdrop to stay unchanged (two clips turned it into grainy sand).
+        // The client shows no burrowed form (the burrowed mode is drawn cloaked on the same
+        // atlas), so the atlas holds the three published states only.
         overrides: {
+            "burrow_scorpion": {
+                Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the scorpion keeps the same size, pose and place in frame. It crouches as still as a statue: body, legs, claws and tail never move; only the amber bands on its back glow steadily. Seamless loop: the last frame matches the first.",
+                Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans. The scorpion scuttles on a treadmill that holds it in place: its six legs clearly lift and step in quick turns at an even pace from the first frame to the last, while its body, claws and tail stay at exactly the same place, size and three-quarter facing in frame; it never moves forward, back or toward the camera. The smooth plain backdrop stays unchanged. Seamless loop: the last frame matches the first.",
+                Attack: "Attack animation, one static tripod shot: the camera never moves, zooms or pans, and the scorpion keeps its place in frame. It hunches and drives its spined tail down: a straight row of jagged bone spikes bursts up in a quick ripple in front of it toward the right edge of the frame, then the spikes sink away and it rises smoothly back to its starting pose. The smooth plain backdrop stays unchanged throughout.",
+            },
             "napalm_wheeler": {
                 Idle: "Idle animation, one static tripod shot: the camera never moves, zooms or pans, and the trike keeps the same size and place in frame from start to end. The trike is parked and switched off: it never moves, rocks or turns, its wheels are locked still with steady hub lights, the barrel stays fixed; no smoke, no fire. Seamless loop: the last frame matches the first.",
                 Walk: "Walk animation, one static tripod shot: the camera never moves, zooms or pans, and the trike drives at full speed on a rolling road that holds it in place: all three wheels spin fast and continuously from the first frame to the last, their bright spoked hubs and tread blocks clearly turning around the axles, while the hull keeps the same place, size and facing in frame. The hull rides steady and level and the barrel stays fixed and dark; the plain backdrop stays empty and still. Seamless loop: the last frame matches the first.",
@@ -236,7 +253,12 @@
         // omni_probe_drone (batch 5, 2026-11-06): a trike, a wide mech with arm-cannons and four
         // aircraft seen at 3/4, the shapes the shuttle, the welder and batch 3 needed the
         // letterbox for; they are letterboxed from their first clip.
+        //
+        // burrow_scorpion (batch 6, 2026-11-09): a broad, flat creature seen at 3/4 with its claws
+        // and tail spread wide, the shape the trike and the mech needed the letterbox for; it is
+        // letterboxed from its first clip.
         overrides: {
+            "burrow_scorpion": Letterbox(feather_permille: 30),
             "repair_shuttle": Letterbox(feather_permille: 30),
             "welder_drone": Letterbox(feather_permille: 30),
             "railgun_crawler": Letterbox(feather_permille: 30),
@@ -329,7 +351,17 @@
         // scale (-1.5 %, +2.5 %), so both are pinned at both ends again; Idle takes the
         // default treatment, and Walk keeps no scale lock (the spinning wheels and the hull's
         // vibration read as an uneven zoom) with the default cross-fade.
+        // burrow_scorpion (batch 6, 2026-11-09): Attack pinned at its end to the Idle picture, as
+        // batch 3's units. Walk keeps no scale lock from the first attempt, because a stride
+        // reads as an uneven zoom (the specter, the hound, the mech). Its accepted Walk
+        // (b1ef0cb7) loops raw (worst 0.696 against a threshold of 0.689), and a cross-fade of 2
+        // of its 10 frames raises the median step and fails it by 0.0007, so it keeps loop
+        // sampling only, as the crawler's Idle.
         overrides: {
+            "burrow_scorpion": {
+                Attack: (pin_end: true, seam: None),
+                Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 0))),
+            },
             "napalm_wheeler": {
                 Attack: (pin_end: true, seam: None),
                 Walk: (pin_end: true, seam: Some((scale_lock: false, crossfade_frames: 2))),

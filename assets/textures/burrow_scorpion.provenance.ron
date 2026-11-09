@@ -1,0 +1,72 @@
+(
+    format_version: 1,
+    name: "burrow_scorpion",
+    atlas_sha256: "beec1fda918aac821ccd806812203be6e7bd75cd7285d881b9c4173a6d1ddc0f",
+    manifest_sha256: "f83221e50ba026ead43798c55fb2c67a6b69f5c7705d29e21fdc9d530cf189f2",
+    bake: (
+        frame_size: 512,
+        fps: 15,
+        max_frames_per_state: 10,
+        ffmpeg_version: "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+        framing: Letterbox(
+            feather_permille: 30,
+        ),
+    ),
+    states: {
+        Idle: (
+            clip: "burrow_scorpion_idle.mp4",
+            clip_sha256: "e531f9464d01e5978e3b3b34fbd92284f767e4daeaf83fd2cc016bafa0d9ab0e",
+            start_frame: 0,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/f1e1ece2-38b2-493d-a571-986af2d03105",
+                prompt_sha256: "78ff551f23316509858dd43859af0aa51c0ba7ae1ceacc76faed3d032155b13b",
+                keyframe_sha256: Some("feded63c2e982e017ed419196fce59c7e7c55c10c8c2841738a2e7ea7cc9457c"),
+                last_frame_sha256: Some("feded63c2e982e017ed419196fce59c7e7c55c10c8c2841738a2e7ea7cc9457c"),
+                ledger_line: 1114,
+            ),
+            bar_rgb: Some((54, 52, 83)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Walk: (
+            clip: "burrow_scorpion_walk.mp4",
+            clip_sha256: "2a67f3a9633fcef109cbb71437cbd4588b19a0a076858934feb20ce8245cb206",
+            start_frame: 10,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/b1ef0cb7-60bf-4b73-b9b3-6a8f81980398",
+                prompt_sha256: "c8c34ed913fd1e74f32895dd05cfe880af1e4f9ad92dc8fb5ff0d1f1cbc6ce59",
+                keyframe_sha256: Some("feded63c2e982e017ed419196fce59c7e7c55c10c8c2841738a2e7ea7cc9457c"),
+                last_frame_sha256: Some("feded63c2e982e017ed419196fce59c7e7c55c10c8c2841738a2e7ea7cc9457c"),
+                ledger_line: 1134,
+            ),
+            bar_rgb: Some((54, 53, 82)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 0,
+            )),
+        ),
+        Attack: (
+            clip: "burrow_scorpion_attack.mp4",
+            clip_sha256: "d35d197cb4c6444b7042674036fa2f5137688bbeada29fca9b0628e73ade77d5",
+            start_frame: 20,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/372e9c99-c6fd-4c34-af72-53b2526e9d0e",
+                prompt_sha256: "7096615c64b42c739034a2fa955ef123e14c85582d6f76547d7e286131db6866",
+                keyframe_sha256: Some("feded63c2e982e017ed419196fce59c7e7c55c10c8c2841738a2e7ea7cc9457c"),
+                last_frame_sha256: Some("feded63c2e982e017ed419196fce59c7e7c55c10c8c2841738a2e7ea7cc9457c"),
+                ledger_line: 1124,
+            ),
+            bar_rgb: Some((59, 59, 81)),
+        ),
+    },
+)

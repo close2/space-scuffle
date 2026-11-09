@@ -54,5 +54,6 @@
         // Expansion batch 5b (WP6, 2026-11-09): the trike, re-seeded
         // (docs/evidence/veo/2026-11-09-batch-5b.md).
         (slug: "napalm_wheeler", tier: Expansion),
+        (slug: "burrow_scorpion", tier: Expansion),
     ],
 )
