@@ -2207,3 +2207,71 @@ fn b29_structure_acquisition_arcs_follow_starcraft() -> TestResult {
         |w| f32::from(w.acquire_arc.raw()),
     )
 }
+
+/// One weapon mount: analogue, weapon block, the turret's `YawRate` in degrees per tick (`None`
+/// for a hull weapon), the engaged and the acquisition arcs as half angles in degrees, and the
+/// source.
+type MountRow = (
+    &'static str,
+    &'static str,
+    Option<f32>,
+    f32,
+    f32,
+    &'static str,
+);
+
+/// The weapons whose mount the catalog-time audit (§10.5) found different from the game, as
+/// `StarCraft` II 5.0.14 has them (B-28). Turret rates are Normal °/s × 1.4 ÷ 25; arcs are
+/// `Arc` ÷ 2 + `ArcSlop` (engaged) and `Arc` ÷ 2 (acquisition), `ArcSlop` 11.25 by default
+/// (`core` WeaponData:15).
+const SC2_WEAPON_MOUNTS: [MountRow; 1] = [(
+    "Hellion",
+    "weapon",
+    Some(55.99),
+    11.25,
+    0.0,
+    "Hellion turret, liberty UnitData:11603; YawRate 999.8437, liberty TurretData:97; \
+     InfernalFlameThrower sets no Arc",
+)];
+
+/// Whether two angles in degrees agree to within one binary unit (360 ÷ 65 536 degrees).
+fn same_angle(got: f32, want: f32) -> bool {
+    (got - want).abs() <= 360.0 / 65_536.0
+}
+
+#[test]
+fn b28_weapon_mounts_follow_starcraft() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    for (unit, block, rate, engaged, acquisition, source) in SC2_WEAPON_MOUNTS {
+        let archetype = catalogs
+            .units
+            .archetypes()
+            .find(|archetype| analogue(archetype) == unit)
+            .ok_or(unit)?;
+        let (_, weapon) = weapon_blocks(archetype)
+            .into_iter()
+            .find(|(b, _)| *b == block)
+            .ok_or(block)?;
+        let weapon = weapon.ok_or(block)?;
+        let got = (
+            weapon
+                .has_turret
+                .then(|| weapon.turret_turn_rate.to_degrees_f32()),
+            weapon.firing_arc.to_degrees_f32(),
+            weapon.acquire_arc.to_degrees_f32(),
+        );
+        let matches = match (got.0, rate) {
+            (Some(got_rate), Some(want_rate)) => same_angle(got_rate, want_rate),
+            (None, None) => true,
+            _ => false,
+        } && same_angle(got.1, engaged)
+            && same_angle(got.2, acquisition);
+        assert!(
+            matches,
+            "{} ({unit}) {block}: turret, engaged, acquisition {got:?}, StarCraft II \
+             {rate:?}, {engaged}, {acquisition} ({source})",
+            archetype.slug
+        );
+    }
+    Ok(())
+}
