@@ -2224,7 +2224,8 @@ type MountRow = (
 /// `StarCraft` II 5.0.14 has them (B-28). Turret rates are Normal °/s × 1.4 ÷ 25; arcs are
 /// `Arc` ÷ 2 + `ArcSlop` (engaged) and `Arc` ÷ 2 (acquisition), `ArcSlop` 11.25 by default
 /// (`core` WeaponData:15).
-const SC2_WEAPON_MOUNTS: [MountRow; 1] = [(
+const SC2_WEAPON_MOUNTS: [MountRow; 2] = [
+    (
     "Hellion",
     "weapon",
     Some(55.99),
@@ -2232,7 +2233,9 @@ const SC2_WEAPON_MOUNTS: [MountRow; 1] = [(
     0.0,
     "Hellion turret, liberty UnitData:11603; YawRate 999.8437, liberty TurretData:97; \
      InfernalFlameThrower sets no Arc",
-)];
+),
+    ("Immortal", "weapon", Some(40.32), 11.25, 0.0, "Immortal turret, liberty UnitData:10791; parent FreeRotate, YawRate 720, liberty TurretData:26, :73; PhaseDisruptors sets no Arc"),
+];
 
 /// Whether two angles in degrees agree to within one binary unit (360 ÷ 65 536 degrees).
 fn same_angle(got: f32, want: f32) -> bool {
