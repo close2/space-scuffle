@@ -24,7 +24,10 @@
 //!   generator and layer-major packing in milliseconds.
 //!
 //! # Invariants
-//! - The golden constants were recorded on `main` at `808b6dd`, before any WP4 edit.
+//! - The golden constants were recorded on `main` at `808b6dd`, before any WP4 edit. The three
+//!   mesh hashes were re-recorded at `3baab60`, plan `2026-11-09-ramp-geometry` WP1: ramp corners no
+//!   longer round into plateau levels, so the slabs, hidden floors and duplicated walls over ramp
+//!   footprints are gone and ramp cells wall their own edges. The pick hashes did not change.
 //! - A golden may only change together with a deliberate, documented change in terrain output.
 
 #![allow(
@@ -346,7 +349,7 @@ fn default_arena_mesh_and_picking_are_bit_exact() {
         "default_arena",
         mesh_hash(&map),
         pick_hash(&map),
-        (0xd023_23bb_3431_300e, 0x0d13_089f_628a_56b8, 2321),
+        (0x0f0d_39ef_7f97_58db, 0x0d13_089f_628a_56b8, 2321),
     );
 }
 
@@ -357,7 +360,7 @@ fn showcase_canyon_mesh_and_picking_are_bit_exact() {
         "showcase_canyon",
         mesh_hash(&map),
         pick_hash(&map),
-        (0x2b6a_057b_898d_a597, 0xd059_17a4_edfe_bf3a, 2262),
+        (0x771c_cfc1_98c0_befd, 0xd059_17a4_edfe_bf3a, 2262),
     );
 }
 
@@ -368,7 +371,7 @@ fn synthetic_map_mesh_and_picking_are_bit_exact() {
         "synthetic",
         mesh_hash(&map),
         pick_hash(&map),
-        (0x9026_6ce6_59f7_53a4, 0xe991_3ab4_d9ba_9745, 1532),
+        (0xe2a1_7869_8ccc_7174, 0xe991_3ab4_d9ba_9745, 1532),
     );
 }
 
