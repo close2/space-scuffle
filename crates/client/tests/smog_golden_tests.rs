@@ -101,6 +101,11 @@
 //!   (`vector_interceptor`, `sky_bastion`, `cloak_gunship`, `omni_probe_drone`). With those four
 //!   atlases moved out, all four reproduced their previous values, so no smog code or output
 //!   changed. The fluid, kinematics and noise goldens and both `libm` canaries are unchanged.
+//! - Veo batch 5b (plan `2026-11-04-phase-8-5-veo-media` WP6) re-recorded the four system
+//!   goldens (glibc 2.41, `x86_64`) because it ships one new atlas in `assets/textures`
+//!   (`napalm_wheeler`). With that atlas moved out, all seventeen tests passed on the previous
+//!   values, so no smog code or output changed. The fluid, kinematics and noise goldens and both
+//!   `libm` canaries are unchanged.
 //! - Q0014 option (b) (plan `docs/plans/2026-11-04-libm-smog-math.md`, WP2) moved every host
 //!   `libm` call on a smog path to the `libm` crate (at most about one ulp per call), hashed
 //!   headings, aims and rotations, and made the crowd scenarios call the generator instead of the
@@ -855,11 +860,11 @@ fn require_smog_activity(app: &App) -> usize {
     stats.active_bubbles
 }
 
-const GOLDEN_SYSTEMS_STARTUP: u64 = 0x0083_62ed_e28d_ffb0;
+const GOLDEN_SYSTEMS_STARTUP: u64 = 0xe79e_7028_2b67_1063;
 const GOLDEN_SYSTEMS_NOISE: u64 = 0x1fe2_2cc0_e03e_f783;
-const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0xe90c_c5d9_09e1_b858;
-const GOLDEN_SYSTEMS_SWARM: u64 = 0x1f05_29d8_dafc_0e5e;
-const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0x231b_bc16_6e57_0498;
+const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0xdef4_dd2e_c2ae_a6be;
+const GOLDEN_SYSTEMS_SWARM: u64 = 0x410b_6916_d521_92c1;
+const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0xf536_fd48_5dc1_a93f;
 
 /// The headless Visual Lab app after its startup frame (the clock's first update has `dt = 0`).
 fn startup_app() -> Result<App, Box<dyn std::error::Error>> {
