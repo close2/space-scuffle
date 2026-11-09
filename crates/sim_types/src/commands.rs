@@ -259,8 +259,12 @@ pub enum AbilityEffectSpec {
 pub struct UnitModeSpec {
     /// Canonical identifier for this mode (e.g., `"siege"`, `"burrowed"`, `"assault"`, `"cloaked"`).
     pub mode_name: String,
-    /// Channel duration in ticks required to enter this mode (`StarCraft` II: the morph's
-    /// longest section, delay plus duration).
+    /// Channel duration in ticks required to enter this mode: the time until the mode's stats
+    /// (weapon, cloak, stance) apply. In `StarCraft` II that is the end of the morph's `Stats`
+    /// section, delay plus duration, which may come before its longest (`Actor`) section ends:
+    /// each `InfoArray` section drives its own subsystem (owner answer to Q0069). Siege Mode's
+    /// `Stats` and `Actor` sections end together; the Lurker's `Stats` ends at 1.8332 Normal s,
+    /// its `Actor` at 2.5.
     #[serde(default)]
     pub cast_ticks: u16,
     /// Channel duration in ticks required to leave this mode back to the default stance.

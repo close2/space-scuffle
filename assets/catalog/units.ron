@@ -2799,7 +2799,7 @@
             modes: [
                 (
                     mode_name: "burrowed",
-                    cast_ticks: 45,
+                    cast_ticks: 33,
                     leave_cast_ticks: 11,
                     cast_random_delay_max_ticks: 4.4643,
                     leave_random_delay_max_ticks: 4.4643,
