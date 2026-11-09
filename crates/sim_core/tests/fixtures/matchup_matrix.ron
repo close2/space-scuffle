@@ -823,7 +823,12 @@
             ],
             order: AttackMove(24, 48),
         ),
-        expect: (blue: (0, 0), red: (5, 999)),
+        // Re-recorded for the Colossus' line (plan 2026-11-05-sc2-deviation-fixes Amendment 22,
+        // package B, B-18): each sweep strikes the zerglings whose edge is within 0.15 of 11
+        // searches across the attack (liberty EffectData:2373-2412), a band 2.8 long, where the
+        // stand-in circle reached 3.0 around the target. The colossi still win every seed, but the
+        // fight lasts about 313 ticks instead of 89, and on 2 of 20 seeds the zerglings kill two.
+        expect: (blue: (0, 0), red: (4, 999)),
     ),
     (
         name: "27_100_lings_vs_8_ultralisks",
