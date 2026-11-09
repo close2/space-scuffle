@@ -2101,8 +2101,8 @@ const SC2_UNIT_ACQUIRE_ARC: [WeaponRow; 41] = [
     (
         "Thor",
         "air_weapon",
-        32_768.0,
-        "a turret with an open arc here; the game's hull weapon, Arc 5.625, is B-28",
+        512.0,
+        "LanceMissileLaunchers Arc 5.625, void WeaponData:82",
     ),
     ("Viking", "air_weapon", 0.0, ARC_UNSET),
     ("Liberator", "air_weapon", 0.0, ARC_UNSET),
@@ -2154,8 +2154,8 @@ const SC2_STRUCTURE_ACQUIRE_ARC: [WeaponRow; 6] = [
     ("Spore Crawler", "air_weapon", 0.0, ARC_UNSET),
 ];
 
-/// The analogues whose weapon mount differs from the game (catalog-time audit §10.5, B-28): their
-/// arcs belong to the mount and change with it.
+/// The analogues whose weapon mount the catalog-time audit (§10.5, B-28) found different: their
+/// arcs are checked with their mounts, in [`SC2_WEAPON_MOUNTS`].
 const MOUNT_DIFFERS: [&str; 5] = ["Hellion", "Immortal", "Colossus", "Lurker", "Phoenix"];
 
 #[test]
@@ -2224,7 +2224,7 @@ type MountRow = (
 /// `StarCraft` II 5.0.14 has them (B-28). Turret rates are Normal °/s × 1.4 ÷ 25; arcs are
 /// `Arc` ÷ 2 + `ArcSlop` (engaged) and `Arc` ÷ 2 (acquisition), `ArcSlop` 11.25 by default
 /// (`core` WeaponData:15).
-const SC2_WEAPON_MOUNTS: [MountRow; 5] = [
+const SC2_WEAPON_MOUNTS: [MountRow; 6] = [
     (
     "Hellion",
     "weapon",
@@ -2238,6 +2238,7 @@ const SC2_WEAPON_MOUNTS: [MountRow; 5] = [
     ("Colossus", "weapon", Some(55.99), 56.25, 45.0, "Colossus turret, liberty UnitData:4099; YawRate 999.8437, liberty TurretData:51; ThermalLances Arc 90, liberty WeaponData:500"),
     ("Lurker", "weapon", Some(156.79), 11.25, 0.0, "Lurker turret of LurkerMPBurrowed, void UnitData:775; YawRate 2799.8437, void TurretData:18; LurkerMP sets no Arc (swarm WeaponData:215, void :14, voidmulti :144)"),
     ("Phoenix", "air_weapon", Some(30.20), 2.4994, 2.4994, "Phoenix turret, swarm UnitData:1805; YawRate 539.2968, swarm TurretData:33; IonCannons Arc 4.9987, ArcSlop 0, swarm WeaponData:179-180"),
+    ("Thor", "air_weapon", None, 14.0625, 2.8125, "a hull weapon: the Thor's WeaponArray names no Turret, liberty UnitData:5270-5271; LanceMissileLaunchers Arc 5.625, void WeaponData:82"),
 ];
 
 /// Whether two angles in degrees agree to within one binary unit (360 ÷ 65 536 degrees).
