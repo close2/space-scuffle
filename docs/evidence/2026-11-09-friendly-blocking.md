@@ -306,3 +306,67 @@ tick 1,100.
 **Goldens.** Re-recorded: `golden_replay` from checkpoint 11 and `golden_replay_orders` from checkpoint 19, both
 the nudged idle friend now yielding; the sandbox checksum is unchanged. Identical in debug, release and on
 `wasm32-wasip1`.
+
+## WP5: push priorities (data, B-48)
+
+**What.** Every unit's `push_priority` in `assets/catalog/units.ron` is StarCraft II's `PushPriority` 10 (the
+`CUnit` default, `core` UnitData:59; no modelled unit overrides it, only `Critter` and `SlaynElemental` do).
+`stag_behemoth`, the Ultralisk analogue, gets 11: `PushPriority` 10 plus the 5.0.14 `AlliedPushPriority` 1
+(`voidmulti` UnitData:1943; 5.0.14 patch notes: "now pushes allied units out of the way when moving"), Q0073's
+default while the question is open. Each value carries its source in a comment, and
+`catalog_reference_values_tests::b48_push_priorities_follow_starcraft` pins every mobile analogue (the default, and
+a table of exceptions holding the Ultralisk).
+
+**Matrix** (against Amendment 5): **bit-identical**, all 1,000 rows. Priority is read only when a mover meets an
+idle, standing friend (D-4); in the matrix no such meeting joins two archetypes whose old priorities differed in
+the deciding direction. Blocking totals unchanged: 1,206,580 / 53,025 / 0.
+
+**Battle 33**, 68 seeds: identical (48 / 9 / 11; 5.34 – 0.57).
+
+**Showcase:** identical: 10 / 10 in range at tick 900, 11 / 8 reversals, 0 / 0 give-ups, ramp E turn 211°, player 0
+wins at tick 1,100. (`route_trace` reads the catalog at run time; `matchup_trace` embeds it, and its binary was
+checked to carry the new values.)
+
+**Goldens.** Both re-recorded; the first differing tick of each was traced by replaying it with the old priorities
+patched into the catalog, side by side with the new:
+- `golden_replay` from checkpoint 1 (ticks 51 to 100): on tick 63, psi grey 21 (priority 25 → 10) walks into the
+  idle railgun crawler 35 (40 → 10), which now steps aside for it.
+- `golden_replay_orders` from checkpoint 20 (ticks 201 to 210): on tick 206, pulse bots 12 and 21 (20 → 10) meet
+  rhino beetle 24 (30 → 10), idle on its arrival, which now steps aside.
+
+The sandbox checksum is unchanged. Identical in debug, release and on `wasm32-wasip1`.
+
+## WP6: burrowed bodies (rule, B-93)
+
+**What.** `UnitModeSpec` gains `burrowed: bool` (default `false`), set on the Lurker analogue's `burrowed` mode
+(`LurkerMPBurrowed` collides only with `Burrow`, `void` UnitData:775). `Entity::is_burrowed` reads it from the
+active mode, or from a burrowing cloak toggle (`CloakToggle { is_burrow: true }`) that has hidden the unit; a unit
+still channelling its burrow is not yet burrowed, as its other mode stats are not. Movement gives each body a class
+(`MotionPolicy::body_class`: ground, air, burrowed), and steering, contact and displacement admission only pair
+bodies of one class; terrain still follows the layer. So ground units walk over a burrowed body, it neither pushes
+nor is pushed by them, and two burrowed bodies still keep apart. The plan said the rule "reads the existing burrowed
+state"; there was none (a burrowed mode was only cloaked, immobile and unpushable, as a sieged tank is anchored), so
+the mode now says it (Q0002). The plan's source `liberty` UnitData:775 is `void` UnitData:775, as in
+`burrow_attack_tests`.
+
+**Tests first** (`burrow_attack_tests.rs`): a ground unit, friendly or hostile, walks straight over a burrowed body
+(sideways offset below 0.01); the same stance not marked burrowed is still walked round (control); a burrowed body
+and the ground units standing half over it are never pushed apart; a burrowed mover still walks round a burrowed
+anchor without overlapping it; the burrowing cloak toggle burrows, and a mode burrows only once entered. With
+`body_class` ignoring `burrowed`, the first and third fail.
+
+**Matrix** (against WP5): **1 battle moved**, 21_lurker_vs_6_marines, the only battle that burrows (17 of 20 seeds):
+blue (the Lurker) wins 10 → 3, unresolved 10 → 17, red wins 0 → 0; marine survivors 0.65 → 1.25 (0 on 3 seeds, 1 on
+9, 2 on 8), mean end tick 417.5 → 474.2; expectation (red 0 to 2 survivors) met on every seed. **No overall winner
+flips**: the marines never win. The marines, unable to see the cloaked Lurker, walk to their attack-move point on
+top of it and now stand over it instead of round it, so its volleys meet a different set of them; as before, the
+survivors are marines that fled beyond its range of 8 when struck (the damage effects' `Flee` response) and stood
+there (seed 22: two marines idle 11.5 from the Lurker from tick 300). The battle's comment in `matchup_matrix.ron`
+is updated. Blocking totals: 1,206,580 blocked attacker ticks, 52,889 reversals, 0 give-ups.
+
+**Battle 33**, 68 seeds: identical.
+
+**Showcase:** identical (no unit burrows).
+
+**Goldens.** Unchanged (no golden unit burrows), in debug, release and on `wasm32-wasip1`; the sandbox checksum is
+unchanged. No checksum schema change: `burrowed` is read from the hashed `active_mode` through the catalog.

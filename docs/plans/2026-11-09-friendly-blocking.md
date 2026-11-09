@@ -685,3 +685,25 @@ Measured against Amendment 4: 1 matrix battle moved (35), no overall winner chan
 battle 33 identical on 68 seeds, showcase 10 / 10 in range at tick 900, 11 / 8 reversals, 0 give-ups, player 0 wins
 at tick 1,100. Goldens re-recorded (`golden_replay` from checkpoint 11, `golden_replay_orders` from checkpoint 19; the
 only change).
+
+## Amendment 6 (2026-11-09): WP5 to WP7 landed; state of the acceptance
+
+Implementation decisions, recorded under Q0002; figures in
+[`docs/evidence/2026-11-09-friendly-blocking.md`](../evidence/2026-11-09-friendly-blocking.md), sections WP5 and WP6.
+
+- **WP5 (B-48), `c942cea`.** `push_priority` 10 for every unit and 11 for `stag_behemoth`, each with its source
+  comment; `catalog_reference_values_tests::b48_push_priorities_follow_starcraft`. The matrix, battle 33 and the
+  showcase are bit-identical; both goldens moved (traced: an idle unit of a formerly higher priority now steps
+  aside for a mover, D-4).
+- **WP6 (B-93), `5009df9`.** There was no burrowed state to read (D-5 assumed one): a burrowed mode was only
+  cloaked, immobile and unpushable. `UnitModeSpec::burrowed` now says it, set on the Lurker analogue's mode, and
+  movement pairs only bodies of one class (ground, air, burrowed). D-5's source `liberty` UnitData:775 is `void`
+  UnitData:775. Battle 21 moved (the Lurker wins 3 of 20 seeds instead of 10, the rest unresolved; the marines never
+  win), no overall winner flipped; goldens unchanged; no checksum schema change.
+- **WP7.** Register: B-48, B-93, B-104 and B-105 removed as fixed; B-103 narrowed to the remaining single reversals
+  at a crowd's edge and the corridor units' 73 to 85 % standing. Deviation plan Amendment 2's table and its
+  Amendment 23. The three reproductions stay ignored with the current figures (showcase 11 and 8 reversals,
+  synthetic arc 3, corridor 5). Q0073 and Q0074 are unanswered; their defaults apply and they stay open.
+- **Still open:** §7's zero reversals and the corridor's 95 % (B-103), and Amendment 1's ramp E turn, 211° against
+  at most 115°, unchanged by every package of this plan (it comes from the marching column's steering, not the
+  blocked-attacker rules).

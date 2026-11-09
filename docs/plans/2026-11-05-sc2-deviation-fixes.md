@@ -798,7 +798,7 @@ requires.
 | B-45 | No firing while moving | (i) | WP13e |
 | B-46 | The Viking cannot land | (i) | WP18 |
 | B-47 | Non-time catalog values unaudited | Fixed | WP9 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10; the Thor's armour by Amendment 15) |
-| B-48 | Push priorities | (i) | WP16 |
+| B-48 | Push priorities | Fixed | Plan [`2026-11-09-friendly-blocking`](2026-11-09-friendly-blocking.md) WP5 (`c942cea`, [evidence](../evidence/2026-11-09-friendly-blocking.md)): `PushPriority` 10 for every unit, 11 for the Ultralisk analogue (`AlliedPushPriority` 1, [Q0073](../questions/open/0073-allied-push-priority.md) default) |
 | B-49 | Which radius spaces units | (i) | WP16; how tightly armies clump is visible behaviour |
 | B-50 | Melee packing around a solid enemy | (i) | WP16 |
 | B-51 | Neosteel Armor's targets | Fixed | WP9 g5 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.1) |
@@ -841,7 +841,7 @@ requires.
 | B-90 | A turreted weapon's wind-up does not hold its unit, and a turret works against `current_target` under any order, where the game ties firing while moving to `AllowedMovement` | (i) | WP13e, with B-45. Found in WP10 (Amendment 16): turreting five more analogues extends it |
 | B-91 | Whether an attack-rate buff scales the random firing delay, and whether the first attack draws one | Fixed | Closed by the owner's answer to [Q0066](../questions/closed/0066-random-delay-scaling.md): the unscaled delay is kept (Amendment 22) |
 | B-92 | `LateralAcceleration` (how sharply a moving unit can curve) is not modelled; our units turn their velocity freely within the hull rate | (i) | WP16. Found in WP12 (Amendment 18) |
-| B-93 | A burrowed unit still blocks ground units; the game's burrowed Lurker collides only with `Burrow` (`liberty` UnitData:775) | (i) | WP16, with B-49. Found in WP13b (Amendment 20) |
+| B-93 | A burrowed unit still blocks ground units; the game's burrowed Lurker collides only with `Burrow` (`void` UnitData:775) | Fixed | Plan [`2026-11-09-friendly-blocking`](2026-11-09-friendly-blocking.md) WP6 (`5009df9`, [evidence](../evidence/2026-11-09-friendly-blocking.md)): a burrowed body touches only burrowed bodies; battle 21 moved, no winner flipped |
 | B-94 | Charge's autocast cannot be switched off; the game's is a player toggle, on by default | (i) | WP18. Found in WP13c (Amendment 21) |
 | B-95 | A queued mode switch toggles whatever stance the unit has when it runs; the game's morphs are one ability per direction (`liberty` AbilData:1301, :1328), so a second queued switch would be refused | (i) | WP18 (a directional effect). Found by plan `2026-11-09-client-mode-commands` (D-5) |
 | B-96 | An order queued behind a switch into an anchoring mode stays at the front of the anchored unit's queue, and a `Move` there makes it `Busy` (never acquires); what the game does with an order its morphed unit cannot carry out is not yet sourced | (i) | WP18 (research). Found by plan `2026-11-09-client-mode-commands` (§8) |
@@ -1286,3 +1286,15 @@ with 9a and 10 re-recorded on their unchanged setups (a stationary Hellion loses
 orchestrator proposed red (0, 1), but one seed of 20 leaves two marines out of range. Measured against the merged
 tree, only 9a, 10 and 21 moved; battle 33 stayed 41 / 10 / 17 on 68 seeds; goldens unchanged. Still open from this
 round: the rule half of Q0067 (B-39) and the Lurker's spine spacing (B-85).
+
+## Amendment 23 (plan `2026-11-09-friendly-blocking` WP7, 2026-11-09): WP16's crowding items carried elsewhere
+
+Plan [`2026-11-09-friendly-blocking`](2026-11-09-friendly-blocking.md) carried four of WP16's items
+([evidence](../evidence/2026-11-09-friendly-blocking.md)):
+- **B-48** is fixed by its WP5 (`c942cea`) and **B-93** by its WP6 (`5009df9`); Amendment 2's table says so.
+- **M-19** (the marching crowd) no longer reproduces since plan `2026-11-09-sc2-pathfinding` Part A (B-99 to
+  B-101): closed by that plan's commits.
+- **M-21** (melee units at a contact ring stepping back once per weapon cycle) happens while an enemy touches the
+  unit, outside that plan's rules; it stays here with B-50 (Q0035).
+
+B-5, B-13, B-49, B-50, B-92, M-21, U-5 to U-7 and U-23 remain with WP16.
