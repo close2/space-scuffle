@@ -43,10 +43,21 @@ pub(crate) const ARRIVAL_WITNESS_REACH: SimScalar = ratio(3, 2);
 /// not a sourced one (U-23).
 pub(crate) const WAIT_THRESHOLD: SimScalar = ratio(1, 8);
 
+/// Displacement per tick, in world units, up to which a body counts as standing for walls and the
+/// surround walk: contact nudges a waiting body in a crowd by a few thousandths, while a walking
+/// one moves by its step, a tenth or more (plan `2026-11-09-friendly-blocking` Amendment 4). A
+/// named tuning value of our own, not a sourced one (U-23).
+pub(crate) const STANDING_DRIFT: SimScalar = ratio(1, 64);
+
 /// Ticks a surround walk's side must stay closed before the unit tries the other side, the
 /// repath cooldown (plan `2026-11-09-friendly-blocking` D-2.4). A named tuning value of our own,
 /// not a sourced one (U-23).
 pub(crate) const FLANK_REVERSE_TICKS: u16 = 12;
+
+/// Ticks a unit whose surround walk ended without a way in waits before it walks again, two
+/// side reversals' worth (plan `2026-11-09-friendly-blocking` D-3, Amendment 4). A named tuning
+/// value of our own, not a sourced one (U-23).
+pub(crate) const FLANK_RETRY_TICKS: u16 = 24;
 
 /// Route length a unit must gain to count as progress.
 pub(crate) const STALL_PROGRESS: SimScalar = ratio(1, 10);

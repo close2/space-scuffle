@@ -205,3 +205,80 @@ and owner's call (Q0074 offers `surround_walk: false` per archetype).
 **Goldens.** Re-recorded on the held branch: `golden_replay` from checkpoint 1 (ticks 1 to 50); `golden_replay_orders`
 unchanged (no unit of it is blocked under an attack order). The per-tick cause was not traced, because the commit is
 held.
+
+## Round 2: the integration base, WP2 and WP3 released, Amendment 4
+
+**Base.** The integration tree `b7ac748` (main `05d9dda` with the client mode commands and the owner answers to
+Q0058, Q0063, Q0065, Q0067 and Q0069; checksum schema 24). The "base" row below is that tree with WP1's tooling only
+(its `sim_core` sources); every step was measured again from its own release build with the commands at the top
+(`--jobs 8`), nothing compared against round 1.
+
+**Showcase** (`route_trace`, player 0 / player 1):
+
+| Step | In range at tick 900 | Reversals | Give-ups | Ramp E turn, player 0 | Outcome |
+|---|---|---|---|---|---|
+| base | 6 / 5 of 10 | 941 / 73 | 4 / 7 | 206° | player 0 at tick 1,355 |
+| WP4 | 6 / 5 | 604 / 455 | 5 / 7 | 202° | player 0 at 1,361 |
+| WP2 | 6 / 8 | 6 / 476 | 4 / 2 | 211° | **player 1** at 1,254 |
+| WP3 as held | 8 / 9 | 40 / 51 | 1 / 0 | 211° | **player 1** at 1,171 |
+| Amendment 4 | **10 / 10** | 7 / 4 | **0 / 0** | 211° | player 0 at 1,098 |
+
+**Matrix** (1,000 runs; totals of both sides: blocked attacker ticks, reversals, give-ups):
+
+| Step | Battles moved | Overall winner flips (against the step before) | Totals | Expectation failures, of record / all |
+|---|---|---|---|---|
+| base | — | — | 1,269,043 / 168,790 / 20 | 0 / 0 |
+| WP4 | 10 | none | 1,251,351 / 164,377 / 19 | 0 / 2 |
+| WP2 | 17 | none | 1,293,482 / 107,338 / 21 | 0 / 1 |
+| WP3 as held | 18 | 28 (blue 20/0 → red 0/19), 31 (blue 17/3 → red 7/13) | 1,425,545 / 40,988 / 4 | 4 / 20 |
+| Amendment 4 | 18 (19 against the base) | 28 and 31 back to blue; none against the base | 1,204,709 / 52,818 / 0 | 0 / 1 |
+
+Against the base, Amendment 4 changes single-seed winners in battles 21 (blue 8 → 10 wins of 20), 31 (19/0 → 10/4,
+6 unresolved), 32 (2/11 → 3/15), 33 (12/1 → 13/3) and 35 (13/0 → 16/0); no overall winner. Battle 28's zerglings
+keep 23.6 survivors on average (28.0 on the base, 0.1 with WP3 as held). The one failure over all seeds is battle 33
+seed 10 (0 – 4, a non-record seed; the matrix test reads the seeds of record).
+
+**Battle 33**, 68 seeds (blue wins / red wins / unresolved; mean survivors):
+
+| Step | Result |
+|---|---|
+| base | 41 / 10 / 17; 4.32 – 0.74 |
+| WP4 | 34 / 12 / 22; 3.76 – 0.96 |
+| WP2 | 52 / 9 / 7; 5.76 – 0.53 |
+| WP3 as held | 54 / 8 / 6; 5.46 – 0.49 |
+| Amendment 4 | 48 / 9 / 11; 5.34 – 0.57 |
+
+**The flips of WP3 as held, traced** (`matchup_trace --battle`, seeds 11 and 22 of battle 28, 11 and 3203386110 of
+battle 31, with a scratch build that logged each unit's walk state; not committed):
+
+- **Battle 28, seed 11.** From tick 160 to 400, 25 to 47 zerglings stood "blocked" behind those biting (2 to 15 with
+  WP2), and the zerglings in contact fell from 18 to 20 to 11 to 14. Of the zerglings' walk calls, about 3,000 found
+  their way ahead blocked but started no walk: the squadmate in front waited under its order and contact nudged it
+  by 0.0003 to 0.003 a tick, so it was not "exactly still". Walks that did start stopped on each free tick and chose
+  a side afresh on restart: 2,419 starts in seed 22, 832 of them on the other side. Spent walks stood for good.
+  The zerglings lost 19 of 20 seeds.
+- **Battle 31, seed 11.** The stalkers' second and third ranks, attack-moving without a target, walked north along
+  their own firing line from y 45 to y 60 (ticks 60 to 220): the walk's bound was one circle round the far
+  attack-move point. The fight turned 90° and the survivors passed each other out of scan.
+- **The showcase** flip came with WP2 (player 0's attack-movers waited instead of reaching range); with Amendment 4
+  all 20 attackers are in range at tick 900 and player 0 wins, as on the base.
+
+**What changed** (Amendment 4; each part measured alone on the matrix, the showcase and the reproductions): a
+standing body is one that moved by at most 1/64 a tick; the side is chosen once per target; a walk ends only on a
+free straight way in, and a paused walk steps straight in; a walk without a target ends after the scan range; a
+spent walk retries after 24 ticks. Intermediate measurements: dropping only the standing test left battle 28 at 8.7
+zergling survivors with record failures; keeping the side without the straight step made pulse bot 9 of the showcase
+reverse 413 times (a walk step across, then steering's step back); requiring a firing (anchored) friend before an
+attack-move walks flipped battle 31 to the stalkers and left pulse bot 4 reversing 109 times; dropping the retry left
+3 give-ups in the corridor reproduction. Those variants were not kept.
+
+**Reproductions** (`--include-ignored`, still ignored with these figures): showcase 10 / 10 in range, 7 / 4
+reversals, 0 give-ups; synthetic arc all in range by tick 98, 3 reversals, 0 give-ups; no room 3 of 6 in range, 5
+reversals, 0 give-ups, rear units still on 73 to 85 % of their ticks after their first stop.
+
+**Goldens** (debug; release and `wasm32-wasip1` in the hand-back): WP4 diverges where it did on the old base
+(`golden_replay` checkpoint 1, tick 6; `golden_replay_orders` checkpoint 3, tick 21), WP2 likewise (checkpoints 2 and
+6). The latent schema bump (24 → 25) changes every checkpoint and the sandbox checksum. WP3 moves `golden_replay`
+from checkpoint 1. Amendment 4 moves `golden_replay` from checkpoint 1 (the paused walk's straight step; switched on
+alone, the standing test first moves checkpoint 2, the kept side and the straight way in checkpoint 4, the scan bound
+checkpoint 5) and `golden_replay_orders` from checkpoint 19 (the standing test).

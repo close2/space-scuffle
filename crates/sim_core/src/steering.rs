@@ -30,7 +30,7 @@ pub use crate::movement::tuning::PUSH_RELAXATION;
 use crate::movement::tuning::{
     ARRIVAL_TOUCH_MARGIN, ARRIVAL_WITNESS_REACH, COMOVING_MIN_COSINE, EMERGENCY_SEPARATION,
     FIXED_BODY_TANGENT_WEIGHT, FLOCK_SHELL, FLOCK_WEIGHT_OVERLAPPING, FLOCK_WEIGHT_TOUCHING,
-    OBSTACLE_WEIGHT, STEERING_CORRIDOR_MARGIN, STEERING_LOOKAHEAD,
+    OBSTACLE_WEIGHT, STANDING_DRIFT, STEERING_CORRIDOR_MARGIN, STEERING_LOOKAHEAD,
 };
 use sim_types::{EntityId, PlayerId, SimScalar, SimVec2};
 
@@ -223,6 +223,18 @@ impl SteeringObstacle {
             && self.velocity == SimVec2::ZERO
             && push_priority >= self.push_priority
     }
+
+    /// Whether this body stands: it holds its ground (anchored), or it moved by at most
+    /// [`STANDING_DRIFT`] last tick, as a body waiting in a crowd does while contact nudges it.
+    #[must_use]
+    pub fn is_standing(&self) -> bool {
+        self.anchored
+            || within_distance(
+                self.velocity,
+                SimVec2::ZERO,
+                i128::from(STANDING_DRIFT.raw()),
+            )
+    }
 }
 
 /// The nearest relevant blocker on one side of a unit's path.
@@ -365,14 +377,14 @@ struct Steered {
 }
 
 /// Whether `obs` can be part of a wall for a unit of owner and push priority `mover`: it holds
-/// its ground (anchored: holding, immobile or fighting, whatever contact nudges it by) or stands
-/// exactly still, and will not step aside. A moving body leaves the way by itself, and steering
+/// its ground (anchored: holding, immobile or fighting, whatever contact nudges it by) or stands,
+/// moved by no more than contact nudges it ([`SteeringObstacle::is_standing`]), and will not step
+/// aside. A moving body leaves the way by itself, and steering
 /// spaces the unit from it like any flockmate; counting it would make the wall, and so the side the
 /// unit rounds it on, change from tick to tick as it moves. Without a known mover nothing is a
 /// wall.
 fn is_wall_body(obs: &SteeringObstacle, mover: Option<(PlayerId, u8)>) -> bool {
-    (obs.anchored || obs.velocity == SimVec2::ZERO)
-        && mover.is_some_and(|(owner, priority)| !obs.yields_to(owner, priority))
+    obs.is_standing() && mover.is_some_and(|(owner, priority)| !obs.yields_to(owner, priority))
 }
 
 /// Whether two side blockers that can be part of a wall leave too little room for a unit of

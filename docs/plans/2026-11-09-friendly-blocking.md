@@ -619,3 +619,48 @@ Implementation decisions, recorded under Q0002; figures in
   bodies only, ends rounded only when known) and why WP3 needed more memory than `flank_active`.
 - **Not started:** WP5 (push priorities), WP6 (burrowed bodies), WP7 (bookkeeping), and Amendment 1's ramp E turn
   (206° on the base, 202° after WP4).
+
+## Amendment 4 (2026-11-09): WP2 and WP3 released on the integration base; the surround walk's artefacts fixed
+
+Orchestrator decision: the held direction is accepted in principle, each winner flip must be justified, and the
+acceptance of §7 pursued. Implementation decisions, recorded under Q0002; figures in
+[`docs/evidence/2026-11-09-friendly-blocking.md`](../evidence/2026-11-09-friendly-blocking.md), section "Round 2".
+
+- **Base.** The work was carried onto the integration tree `b7ac748` (checksum schema 24); the latent WP3 schema
+  bump is therefore **24 → 25**. Every figure was measured again on that base.
+- **Flips of WP3 as held, traced.** On this base WP3 flipped battles 28 (100 zerglings now lost to 10 immortals) and
+  31, and kept WP2's showcase flip (player 1 won). Battle 9a no longer flips: its expectation already says the
+  zerglings win. Both matrix flips were artefacts of the walk, not StarCraft II consequences:
+  - **28:** zerglings stood for good behind squadmates that waited under their orders. Contact nudges such a
+    squadmate by a few thousandths a tick, so it was neither "exactly still" for the walk's start nor for walls;
+    walks that did start chose their side afresh on every restart (a third of 2,419 restarts swapped side in one
+    seed), and a spent walk never looked again. StarCraft II zerglings flow round such a crowd: Liquipedia's
+    Immortal page lists Zerglings among its counters, and the battle's claim is "Without splash, immortals are
+    overrun".
+  - **31:** an attack-move without a target walked up to one circle round its far attack-move point (about 100 world
+    units), so the second and third ranks stretched the line 15 units to one side and the armies passed each other.
+- **Changes to D-1, D-2 and D-3** (each measured alone; together they are the fix commit):
+  1. A body "stands" for walls (D-1.1) and for the walk's start (D-2.2) when it moved by at most
+     `STANDING_DRIFT` (1/64 world unit) last tick, not only when exactly still.
+  2. The walk's side is chosen once per target, when the unit first walks for it, and kept across pauses (D-2.4).
+  3. A walk in progress ends only when the straight way in is free; while a walk pauses, the unit steps straight in,
+     not along steering's step, which led back across the walk (a reversal every tick).
+  4. A walk without a target is bounded by the unit's scan range instead of a circle round its attack-move point
+     (D-3).
+  5. A spent walk waits `FLANK_RETRY_TICKS` (24) and then walks afresh: the crowd round a target changes as units
+     die. Without it, a corridor unit gave up its order (3 give-ups in `no_room_means_waiting_still`).
+- **Result.** No overall winner of the matrix or the showcase differs from the base. Battle 10's upper bound was
+  re-recorded with a cited reason (zerglings now surround both Hellions, and in StarCraft II all eight often live).
+  No archetype sets `surround_walk: false`.
+- **Acceptance (§7), not all reached; tuning stopped here.**
+  - Showcase: 10 of 10 attackers of each side in range at tick 900 (met); 0 give-ups (met); 7 and 4 reversals
+    (not 0).
+  - Synthetic arc: all 10 in range by tick 98 (met), 3 reversals.
+  - No room: 5 reversals; the rear units stand on 73 to 85 % of their ticks after their first stop, not 95 %: a
+    spent walk retries (change 5), and dropping the retry left them at 84 % with 3 give-ups.
+  - Amendment 1's ramp E turn stays at 211° (115° asked): 206° on the base, 202° after WP4, 211° after WP2 and at
+    every step since. No change to the blocked-attacker rules moved it, so it comes from the marching column's
+    steering (R1's walls among flockmates), not from the walk; it is not tuned here and stays open under
+    Amendment 1.
+  The three reproductions stay ignored with these figures. The remaining reversals are single steps at the edge of a
+  crowd; zeroing them would need a further rule beyond StarCraft II's data, so tuning stops (Q0051).

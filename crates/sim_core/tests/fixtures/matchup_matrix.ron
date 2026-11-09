@@ -333,6 +333,14 @@
         // Re-recorded for the Hellion's line, as battle 9a (Amendment 22, B-18; evidence §17.8):
         // the two Hellions' first volley strikes the zerglings on their two lines, the later ones
         // only one or two each as the zerglings close around them.
+        // Re-recorded for plan 2026-11-09-friendly-blocking Amendment 4: zerglings that walk round
+        // their own crowd surround both Hellions within about 60 ticks of contact, where two used
+        // to edge along behind the others, and the fight ends some 25 ticks sooner. The Hellions
+        // then fire about two volleys each before four zerglings on each (5 damage every 0.497 s
+        // apiece, some 40 a second against 90 life and no armour; Zergling and Hellion,
+        // Liquipedia, LotV) kill it, and a zergling dies only to three of those four 14-damage
+        // flames, so in
+        // StarCraft II all eight often live. The upper bound becomes 8.
         name: "10_2_hellions_vs_8_lings",
         claim: "Two stationary hellions lose to eight zerglings, though their flames burn some of them",
         map_cells: 64,
@@ -349,7 +357,7 @@
             ],
             order: AttackMove(10, 32),
         ),
-        expect: (blue: (0, 0), red: (4, 7)),
+        expect: (blue: (0, 0), red: (4, 8)),
     ),
     (
         name: "11a_2_banelings_vs_5_marines",

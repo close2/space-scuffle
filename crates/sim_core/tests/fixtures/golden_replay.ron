@@ -234,6 +234,14 @@
 // in its way on a kept side, and the walk counts as progress. Every checkpoint changed from
 // checkpoint 1 (ticks 1 to 50), where the attack-moving squads first meet standing squadmates; the
 // per-tick cause was not traced, because the commit is held under the stop rule.
+// Re-recorded for plan 2026-11-09-friendly-blocking Amendment 4 (surround-walk fixes): a body that
+// moved by at most 1/64 world unit last tick (STANDING_DRIFT, a contact nudge) counts as standing
+// for walls and for the surround walk's start; a walk keeps its side for one target, ends only on a
+// free straight way in, steps straight in while paused, is bounded by the scan range without a
+// target, and retries 24 ticks after it is spent. Every checkpoint changed from checkpoint 1 (ticks
+// 1 to 50), through the straight step of a paused walk; switched on alone, the other parts first
+// move checkpoint 2 (the standing drift), 4 (the kept side, the straight way in) and 5 (the scan
+// bound).
 (
     checksum_schema: 25,
     seed: 0x5EED_0F_5CAFF1E,
@@ -261,25 +269,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x24407451d898f2ea,
-        0x18acc9791830ffe0,
-        0x204de25fffde3a60,
-        0xe63c3f84d7cfde8a,
-        0xe719351714bb3548,
-        0x41ed0a592acc7228,
-        0x40e98e5b4300db0e,
-        0xc416f5a4a023d7fe,
-        0x91013c3cfc0a40a6,
-        0x15f5889a0848b813,
-        0xb561f22d99605e8f,
-        0x31a3a606fb797e4d,
-        0xf278d75eb8b62c5e,
-        0x346be5c60bc95a74,
-        0xc6c6f11c5af45e62,
-        0x4ce3b2e579d2e63a,
-        0xcf904ed5b0d6e904,
-        0xac8e7f5d9a2052bd,
-        0xbaaa3b047261e36a,
-        0xf4981a3ad52440b0,
+        0x612fb32d6a8dac24,
+        0x7f08cd5668affc01,
+        0x80974e809054f37b,
+        0x7b3a2a07e2e23a97,
+        0x87230f6e7c48549a,
+        0xd5a6c1057854e9d7,
+        0x18209d590b044e3b,
+        0xdd12f082410e962f,
+        0xf6ed313eb1cf7b75,
+        0x18488d940b5f0894,
+        0x5390ceaaec3f7516,
+        0x32f2f9318f01b02c,
+        0xf555c30b594cbba0,
+        0xfabe55c4df42ef1e,
+        0x013716d41d2db2a9,
+        0x31b01ff450e456ec,
+        0x77855a028b246764,
+        0x4179e1faa0ab7f5a,
+        0x5b89d24e49c5b7df,
+        0x183eedf589c7f420,
     ],
 )
