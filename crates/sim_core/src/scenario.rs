@@ -17,7 +17,7 @@
 //! - **State Consistency:** World checksum is deterministically recalculated after all structures
 //!   and units are placed.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -25,7 +25,7 @@ use sim_map::{
     validate_map, CellFlags, CliffLevel, MapDocument, MapFile, MapFormatError, MapStartLocation,
     MapValidationError, TerrainKind,
 };
-use sim_types::{PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, UnitTypeId};
+use sim_types::{PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, UnitOrder, UnitTypeId};
 
 use crate::catalog::{RuntimeCatalogs, UnitCatalog};
 use crate::error::SimCoreError;
@@ -205,16 +205,29 @@ pub enum ScenarioError {
     /// Rule catalogs in the assets directory could not be loaded.
     #[error(transparent)]
     Catalogs(#[from] crate::catalog::CatalogLoadError),
+
+    /// A player named by an initial order has no start location or no free cell around it.
+    #[error("battle start has no legal approach for player slot {slot}")]
+    NoStartApproach {
+        /// Player slot index.
+        slot: u8,
+    },
+
+    /// An initial order reaches no mobile armed unit of its player.
+    #[error("player slot {slot} has no mobile combatants for its initial order")]
+    NoCombatants {
+        /// Player slot index.
+        slot: u8,
+    },
 }
 
 /// The scenario file schema version this build reads.
 pub const SCENARIO_FORMAT_VERSION: u32 = 1;
 
-/// The parts of a scenario file the simulation needs: map, seed and players.
+/// The parts of a scenario file the simulation needs: map, seed, players and initial orders.
 ///
-/// Scenario files are shared with the client, which also reads a list of initial orders. That
-/// list is the client's own and this type passes over it, so a playable start must carry
-/// everything in its loadouts.
+/// Scenario files are shared with the client. A file without `initial_orders` starts with none,
+/// so a start that needs no orders carries everything in its loadouts.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ScenarioManifest {
     /// Scenario schema version.
@@ -225,6 +238,23 @@ pub struct ScenarioManifest {
     pub seed: u64,
     /// Player slots and their loadouts.
     pub players: Vec<PlayerSetup>,
+    /// Orders given once every authored entity is placed ([`apply_initial_orders`]).
+    #[serde(default)]
+    pub initial_orders: Vec<InitialOrder>,
+}
+
+/// A starting order of a scenario, given by capability and a map-relative destination, never by
+/// unit identity (charter §3.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+pub enum InitialOrder {
+    /// Every mobile armed unit of `player_slot` that is not a harvester attack-moves to the
+    /// approach of `target_player_slot`'s base ([`start_approaches`]).
+    AttackMoveToStart {
+        /// Owner whose combat-capable mobile units receive the order.
+        player_slot: u8,
+        /// Owner of the destination start location.
+        target_player_slot: u8,
+    },
 }
 
 impl ScenarioManifest {
@@ -240,6 +270,148 @@ impl ScenarioManifest {
         }
         Ok(manifest)
     }
+}
+
+/// The legal approach to each player's base: the first free low-ground cell centre on the ring
+/// just outside the player's start footprint, in [`ring_perimeter`] order, in world units.
+///
+/// Reads `world.map` after placement, so a cell a structure now covers is not an approach.
+///
+/// # Errors
+/// [`ScenarioError::NoStartApproach`] when a player has no start location in `document` or no
+/// free cell on its ring.
+pub fn start_approaches(
+    document: &MapDocument,
+    players: &[PlayerSetup],
+    world: &SimWorld,
+) -> Result<BTreeMap<PlayerId, SimVec2>, ScenarioError> {
+    let mut positions = BTreeMap::new();
+    for player in players {
+        let slot = player.player_slot;
+        let missing = ScenarioError::NoStartApproach { slot };
+        let start = document
+            .start_locations
+            .iter()
+            .find(|start| start.player_slot == slot)
+            .ok_or(ScenarioError::NoStartApproach { slot })?;
+        let (Ok(x), Ok(y)) = (i32::try_from(start.cell.0), i32::try_from(start.cell.1)) else {
+            return Err(missing);
+        };
+        let position = ring_perimeter(
+            x - 1,
+            x + i32::from(start.footprint.0),
+            y - 1,
+            y + i32::from(start.footprint.1),
+        )
+        .find_map(|(cx, cy)| {
+            let (Ok(cx), Ok(cy)) = (u32::try_from(cx), u32::try_from(cy)) else {
+                return None;
+            };
+            let cell = world.map.cell(cx, cy).ok()?;
+            (cell.flags.contains(CellFlags::GROUND_PATHABLE)
+                && !cell
+                    .flags
+                    .intersects(CellFlags::OCCUPIED_BY_STRUCTURE | CellFlags::UNPASSABLE_CLIFF)
+                && cell.ramp.is_none())
+            .then(|| {
+                SimVec2::new(
+                    SimScalar::from_num(cx) + SimScalar::HALF,
+                    SimScalar::from_num(cy) + SimScalar::HALF,
+                )
+            })
+        })
+        .ok_or(missing)?;
+        positions.insert(PlayerId(slot), position);
+    }
+    Ok(positions)
+}
+
+/// Gives a freshly built world its scenario's `orders`, then recomputes its checksum.
+///
+/// The client's battle start and the route trace tool both call this, so a traced battle starts
+/// exactly as the game does. A unit receives an [`InitialOrder::AttackMoveToStart`] when its
+/// owner matches, it is mobile, it is not a harvester and it has a weapon.
+///
+/// # Errors
+/// [`ScenarioError::NoStartApproach`] when either player of an order has no approach,
+/// [`ScenarioError::NoCombatants`] when an order reaches no unit, and [`ScenarioError::Spawn`]
+/// when the catalog lacks a unit's archetype or a unit refuses its order.
+pub fn apply_initial_orders(
+    world: &mut SimWorld,
+    document: &MapDocument,
+    players: &[PlayerSetup],
+    orders: &[InitialOrder],
+) -> Result<(), ScenarioError> {
+    let approaches = start_approaches(document, players, world)?;
+    for order in orders {
+        match *order {
+            InitialOrder::AttackMoveToStart {
+                player_slot,
+                target_player_slot,
+            } => {
+                if !approaches.contains_key(&PlayerId(player_slot)) {
+                    return Err(ScenarioError::NoStartApproach { slot: player_slot });
+                }
+                let target = *approaches.get(&PlayerId(target_player_slot)).ok_or(
+                    ScenarioError::NoStartApproach {
+                        slot: target_player_slot,
+                    },
+                )?;
+                let mut combatants = 0_usize;
+                for entity in world.entities.values_mut() {
+                    let archetype = world.catalog.get(entity.unit_type_id)?;
+                    if entity.owner == PlayerId(player_slot)
+                        && !entity.is_immobile
+                        && archetype.capabilities.harvester.is_none()
+                        && (archetype.ground_weapon.is_some()
+                            || archetype.air_weapon.is_some()
+                            || archetype.weapon.is_some())
+                    {
+                        entity
+                            .issue_order(UnitOrder::AttackMove { target }, false)
+                            .map_err(SimCoreError::from)?;
+                        combatants += 1;
+                    }
+                }
+                if combatants == 0 {
+                    return Err(ScenarioError::NoCombatants { slot: player_slot });
+                }
+            }
+        }
+    }
+    world.last_checksum = world.compute_checksum();
+    Ok(())
+}
+
+/// Builds the starting world of the scenario at `scenario_path` under `assets_root` and gives it
+/// the scenario's initial orders: the battle exactly as the client starts it.
+///
+/// # Errors
+/// Returns a typed I/O, parse, catalog, placement or order failure.
+pub fn load_scenario_battle(
+    assets_root: &Path,
+    scenario_path: &Path,
+) -> Result<SimWorld, ScenarioError> {
+    let manifest =
+        ScenarioManifest::from_ron_str(&std::fs::read_to_string(assets_root.join(scenario_path))?)?;
+    let document = MapFile::load(&assets_root.join(&manifest.map))?.decode()?;
+    let loadouts = StartLoadoutCatalog::load(assets_root.join("catalog/start_loadouts.ron"))?;
+    let catalogs = RuntimeCatalogs::load_from_directory(assets_root.join("catalog"))?;
+    let mut world = build_world_with_catalogs(
+        &document,
+        &loadouts,
+        &manifest.players,
+        manifest.seed,
+        catalogs.units,
+        catalogs.upgrades,
+    )?;
+    apply_initial_orders(
+        &mut world,
+        &document,
+        &manifest.players,
+        &manifest.initial_orders,
+    )?;
+    Ok(world)
 }
 
 /// Builds the starting world of the scenario at `scenario_path` under `assets_root`.
