@@ -842,6 +842,10 @@ requires.
 | B-91 | Whether an attack-rate buff scales the random firing delay, and whether the first attack draws one; ours does neither | (i) | [Q0066](../questions/open/0066-random-delay-scaling.md). Found in WP11 (Amendment 17) |
 | B-92 | `LateralAcceleration` (how sharply a moving unit can curve) is not modelled; our units turn their velocity freely within the hull rate | (i) | WP16. Found in WP12 (Amendment 18) |
 | B-93 | A burrowed unit still blocks ground units; the game's burrowed Lurker collides only with `Burrow` (`liberty` UnitData:775) | (i) | WP16, with B-49. Found in WP13b (Amendment 20) |
+| B-95 | A queued mode switch toggles whatever stance the unit has when it runs; the game's morphs are one ability per direction (`liberty` AbilData:1301, :1328), so a second queued switch would be refused | (i) | WP18 (a directional effect). Found by plan `2026-11-09-client-mode-commands` (D-5) |
+| B-96 | An order queued behind a switch into an anchoring mode stays at the front of the anchored unit's queue, and a `Move` there makes it `Busy` (never acquires); what the game does with an order its morphed unit cannot carry out is not yet sourced | (i) | WP18 (research). Found by plan `2026-11-09-client-mode-commands` (§8) |
+| B-97 | The Lurker analogue's burrow cannot be cancelled while it runs; the game's is `Interruptible` with a Cancel button (`swarm` AbilData:1658-1659) | (i) | WP18. Found by plan `2026-11-09-client-mode-commands` (§8) |
+| B-98 | Anchored units (sieged, burrowed) get no Stop or Hold Position on the card (the client's mobility policy); the game's sieged tank card has both (`liberty` UnitData:5185-5186) | (i) | The next client package. Found by plan `2026-11-09-client-mode-commands` (§8) |
 
 **Counts.** 78 IDs: (i) 70, two of them narrowed (B-52, B-67) and one carried by another plan (B-12); (ii) 3 (B-37,
 B-53, B-58); (iii) none; fixed 5 (B-31 and B-40 by the turn-before-move plan; B-71, B-73 and B-75 by WP0).

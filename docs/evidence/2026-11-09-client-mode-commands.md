@@ -64,3 +64,20 @@ at the front of the queue).
 **WP1c.** The front cast now runs only for units that the first check of `walking_goal` used to stop (held or
 anchored, not channelling); mobile units keep the existing path, so a unit winding up a fixed weapon is not changed.
 The new test `a_queued_switch_behind_a_focus_order_runs_on_an_anchored_unit` was red before the change.
+
+## 2. Client (WP2 to WP5)
+
+- **Tests run.** `sim_core` unit tests, `player_view_tests`, `spells_and_abilities_tests`, the catalog and literal
+  dependants, `golden_replay_tests` (debug) after WP2; `client` lib tests of `battle_hud` and
+  `battle_pipeline::commands` (95, two threads); `battle_mode_tests` (8); `gate/suite_catalog_tests` (C22); client
+  clippy with `--all-targets`. The client binaries the change touches, each at `--test-threads 2`: `battle_card_tests`
+  28 passed, `sync_steady_state_tests` 7 passed (no steady-state allocation from the view's new lists),
+  `battle_hud_tests` 34 passed, `skirmish_match_tests` 4 passed (1 ignored, as on `main`).
+- **`battle_mode_tests` memory.** Debug build, one executable at a time, the process tree's summed `VmRSS` sampled
+  every 0.2 s (`~/scratch/mode-meas/peak_rss.sh`): 5.76 GiB and 5.67 GiB peak at `--test-threads 2` (two runs,
+  121.6 s and 114.4 s), the slice's `anon` memory below 1 GiB before each. `test_threads: Some(2)` stands.
+- **First run red.** The first run failed two tests because the client refused to present the Lurker analogue: it
+  has no media (`assets/textures/burrow_scorpion.flipbook.ron` is absent), and the client stops a battle that would
+  show an unpresentable identity. The tests now choose presentable archetypes (plan Amendment 1).
+- **Gate stamps.** None: under Q0061 the implementation agent runs `cargo gate quick` and the targeted tests, and a
+  verifier runs `cargo gate package` on the final tree.

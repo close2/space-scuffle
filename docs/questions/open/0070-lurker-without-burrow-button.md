@@ -33,4 +33,13 @@ unburrowed (wrongly) and was usable.
 
 **Recommendation.** Option 1, and schedule the client command next to WP13's remaining packages.
 
+**Option 1 built (2026-11-09), while the question stays open.** Plan
+[`2026-11-09-client-mode-commands`](../../plans/2026-11-09-client-mode-commands.md) added a Burrow and Siege Mode
+command to the skirmish client: `97fd318`, `ea3cb75`, `885002a` (simulation queries and two measured fixes, every
+matrix battle and golden replay bit-identical), `99a97c8` (catalog `leave_name`, `PlayerView` mode states), `11a5874`
+(client admission), `a007e4c` (card entries), `372b165` (`battle_mode_tests`, through input alone). One limit
+remains for the Lurker analogue itself: it has no media yet, so the skirmish cannot train or show it (its card entry
+is locked "No approved media"); the input test proves the burrow-and-kill path on the presentable Siege Tank
+analogue with its own weapons removed, and switches to the Lurker analogue once its media ships.
+
 ## Answer
