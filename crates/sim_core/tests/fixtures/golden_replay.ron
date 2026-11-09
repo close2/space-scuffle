@@ -188,8 +188,11 @@
 // "red_psi" (psi_grey) now carries a channeled pending burst, so from checkpoint 5, the first in
 // which a zealot swings, every checkpoint changed. No behaviour did: with the drop disabled the
 // checksums are the same, as no order reaches a zealot between its blades.
+// Re-recorded for Q0063 (Amendment 22, package B, checksum schema 22 -> 23): whether each
+// splash is centred on its target's edge is encoded, so every checkpoint changed. No behaviour
+// did: neither replay has a unit whose weapon splashes.
 (
-    checksum_schema: 22,
+    checksum_schema: 23,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -215,25 +218,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x38aeb02e80ead8c2,
-        0xc0adfcbe9e9401b4,
-        0x6a193f8535d03a02,
-        0xe000934158f7d5c7,
-        0x36f65ed368c5662a,
-        0x58f49294dcdac086,
-        0x985e50cbd5560b47,
-        0x9e64b1675c32e5d8,
-        0x7116eb711c48f663,
-        0x8e1b75ad27bc53f5,
-        0x5a4bc1443a3bc0c0,
-        0xca6f1c910d4dc457,
-        0xae04529dfa9e02a0,
-        0xe2fa2359f49864c9,
-        0xf85572c50ae51900,
-        0x095a29dbbaa08afc,
-        0x67a292f2ca0e894f,
-        0xc851ba3c9417b0dd,
-        0xfd800a67c1d08811,
-        0xb49d6c65bf2a05b8,
+        0x64fa4798eb490fea,
+        0x50065ef8fba3cf5d,
+        0x2f3471cdbfc6ae05,
+        0x323fcf03b075aca4,
+        0x1634e3950b1d020c,
+        0xeeafb0c2bf0a1310,
+        0x5cb59c7ff54138a1,
+        0x6afa0f611cba30f7,
+        0x5facb04d312ac4be,
+        0xcf2df0d8d369acf4,
+        0x636d18c7c80c8146,
+        0x882d329eae7ffa44,
+        0xd0f506824ad18c77,
+        0xa450abaf7593def6,
+        0x98da6b1404db1661,
+        0xb3ebb515c754b891,
+        0x5bc8dee4195a8969,
+        0x6028bb6a9333afff,
+        0x04067c6b483ebdd0,
+        0x76c47a089c597798,
     ],
 )

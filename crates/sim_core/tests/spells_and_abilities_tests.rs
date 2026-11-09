@@ -280,6 +280,7 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
             ],
             shape: sim_types::SplashShape::Circle,
             friendly_fire: false,
+            offset_by_unit_radius: false,
         }),
         projectile_speed: None,
         weapon_class: None,

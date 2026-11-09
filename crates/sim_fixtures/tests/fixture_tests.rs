@@ -48,7 +48,9 @@ use std::path::PathBuf;
 /// dash cooldown.
 /// Re-recorded for checksum schema 22 (owner answer to Q0058), which encodes whether each weapon's
 /// burst and each pending burst is channeled.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 12_723_387_266_804_371_455;
+/// Re-recorded for checksum schema 23 (owner answer to Q0063), which encodes whether each splash
+/// is centred on its target's edge.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 6_586_074_945_161_334_585;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

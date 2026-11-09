@@ -898,6 +898,10 @@ struct SplashSpecDef {
     shape: SplashShapeDef,
     #[serde(default)]
     friendly_fire: bool,
+    /// Whether the area is centred on the target's edge facing the attacker (see
+    /// [`SplashSpec::offset_by_unit_radius`]); `false` when omitted.
+    #[serde(default)]
+    offset_by_unit_radius: bool,
 }
 
 /// An authored splash shape (see [`SplashShape`]).
@@ -1249,6 +1253,7 @@ impl UnitArchetypeDef {
                     .collect(),
                 shape: s.shape.resolve(),
                 friendly_fire: s.friendly_fire,
+                offset_by_unit_radius: s.offset_by_unit_radius,
             }),
             projectile_speed: w.projectile_speed.map(SimScalar::from_f32_lossy),
             weapon_class,

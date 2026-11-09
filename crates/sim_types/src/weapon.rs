@@ -175,10 +175,11 @@ pub enum SplashShape {
 /// weapon's `AreaArray` (bug B-16 fixed), and a line weapon's search points are its
 /// persistent's offsets (bug B-18). A unit found by several searches of one strike takes that
 /// strike once, at the fraction of the nearest search point: the game's damage effects check
-/// `noMarkers` against the attack's marker. Distance is measured centre to centre, where the
-/// game's area searches may reach a unit's edge (`SearchFlags` `OffsetByUnitRadius`; bug B-17,
-/// owner question Q0063). A line's searches land together, where the game spaces some of them
-/// in time (bug B-85), and no area is an arc (bug B-19). See the `DESIGN.md` bug register.
+/// `noMarkers` against the attack's marker. A zone reaches a unit whose edge lies within it, and
+/// a circle with `offset_by_unit_radius` is centred on the target's edge facing the attacker
+/// (owner answer to Q0063, bug B-17 fixed). A line's searches land together, where the game
+/// spaces some of them in time (bug B-85), and no area is an arc (bug B-19). See the
+/// `DESIGN.md` bug register.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SplashSpec {
     /// The zones, radii strictly increasing; a unit takes the fraction of the innermost zone
@@ -190,6 +191,13 @@ pub struct SplashSpec {
     /// If true, splash affects allied units as well.
     #[serde(default)]
     pub friendly_fire: bool,
+    /// Whether the area is centred on the struck target's edge facing the attacker instead of
+    /// its centre: `StarCraft` II's `SearchFlags` `OffsetByUnitRadius`, which every weapon damage
+    /// effect inherits from `DU_WEAP` (`core` EffectData:128) and the four weapons patch 1.1.0
+    /// moved to "the center of the target" clear (owner answer to Q0063). A line ignores it: its
+    /// searches are `CEffectEnumArea` effects, which do not set the flag.
+    #[serde(default)]
+    pub offset_by_unit_radius: bool,
 }
 
 impl SplashSpec {
@@ -478,6 +486,7 @@ mod tests {
             zones: vec![zone(1, 4), zone(3, 1)],
             shape: SplashShape::Circle,
             friendly_fire: false,
+            offset_by_unit_radius: false,
         };
         assert_eq!(splash.fraction_at(SimScalar::ZERO), Some(SimScalar::ONE));
         assert_eq!(splash.fraction_at(SimScalar::ONE), Some(SimScalar::ONE));
@@ -491,6 +500,7 @@ mod tests {
             zones: Vec::new(),
             shape: SplashShape::Circle,
             friendly_fire: false,
+            offset_by_unit_radius: false,
         };
         assert_eq!(empty.fraction_at(SimScalar::ZERO), None);
         assert_eq!(empty.reach(), SimScalar::ZERO);
@@ -510,6 +520,7 @@ mod tests {
                 offsets: vec![SimScalar::from_i32(-1), SimScalar::from_i32(2)],
             }),
             friendly_fire: false,
+            offset_by_unit_radius: false,
         };
         let (attacker, impact, east) = (v(0, 0), v(5, 0), v(1, 0));
         let mut points = vec![v(9, 9)];

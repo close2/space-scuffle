@@ -275,6 +275,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
         ],
         shape: sim_types::SplashShape::Circle,
         friendly_fire: false,
+        offset_by_unit_radius: false,
     };
     let line = sim_types::SplashLine {
         origin: sim_types::SplashLineOrigin::Attacker,
@@ -299,6 +300,7 @@ fn embedded_weapon_fields_and_splash_are_sensitive() {
             ],
             shape: sim_types::SplashShape::Circle,
             friendly_fire: true,
+            offset_by_unit_radius: false,
         }),
                 projectile_speed => Some(SimScalar::ONE), weapon_class => Some(WeaponClassId(3)),
                 upgrade_bonus_per_level => SimScalar::ONE, bonus_upgrade_per_level => SimScalar::ONE,
