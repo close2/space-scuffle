@@ -159,6 +159,12 @@
 // weapon's acquisition arc and each unit's engaged target are encoded, so every checkpoint
 // changed. No behaviour did: with the two fields left out of the encoding at schema 16, every
 // checkpoint stays as recorded for WP9 (the shipped acquisition arcs equal the engaged arcs).
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP10 (B-29): every shipped weapon takes its
+// StarCraft II acquisition arc, `Arc` / 2 (0 for every weapon that sets no `Arc`), so a unit faces
+// a new target exactly before its first swing. `golden_replay` differs from checkpoint index 3
+// (ticks 151 to 200) and `golden_replay_orders` from index 4 (ticks 41 to 50), the first fights;
+// with the acquisition arcs set back to the engaged arcs both reproduce as recorded for the schema
+// 17 commit.
 (
     checksum_schema: 17,
     seed: 0x5EED_0F_5CAFF1E,
@@ -189,22 +195,22 @@
         0x5c765bd69a42c391,
         0x9dc05689f5a15955,
         0xc26cea08d135a021,
-        0x602903c4835854e8,
-        0xeb127fc9cc9a5a46,
-        0x9d8f4a60244788cc,
-        0x45dbb31d5e4fb899,
-        0xdef70e016434a1bb,
-        0x82dc851a691c55f7,
-        0xe70c66d29455606e,
-        0xcfdd55e6cd1d2cda,
-        0x806fed922cf4af1f,
-        0x18b1337b4f4a0ece,
-        0x9f04fbc246d47725,
-        0x2f6d5203b9e1f862,
-        0x11deb5eba3c4abcc,
-        0x4fec20d743b6e6ba,
-        0x044211a596d4cb82,
-        0x3d399edc07688346,
-        0x313842d730c81a85,
+        0xb258f986da656352,
+        0xd8d30727b143f9e2,
+        0xb7a5800f58fdf96a,
+        0x83bb0f8d6ff24775,
+        0x57273402e4479b6d,
+        0xa902ea19aae97132,
+        0x871f29795c47a5f2,
+        0x70c4da8d1f523c6b,
+        0x0d44fcd2f738a2bc,
+        0x11168b31a97b3e0b,
+        0x18b3ae0329e8fce4,
+        0x68c6c83f20f3d2d6,
+        0x98d654a8d4d0ad40,
+        0x5ba8b947b62a8dc0,
+        0x5a8e02a0542f0726,
+        0x956207a1bb5f53b0,
+        0xd6608efd2f3348e0,
     ],
 )

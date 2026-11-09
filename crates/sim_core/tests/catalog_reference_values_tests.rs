@@ -2071,3 +2071,139 @@ fn b82_only_the_baneling_has_its_structure_strike() {
     }
     assert!(found > 0, "the Baneling analogue has its structure strike");
 }
+
+/// Where a weapon sets no `Arc`: no `CWeapon` default sets it (`core` WeaponData:3-31), so the
+/// engine's 0 applies (catalog-time audit §10.3).
+const ARC_UNSET: &str = "Arc not set: engine 0 (core WeaponData:3-31)";
+
+/// Acquisition arc of every unit weapon whose mount matches the game: `Arc` ÷ 2 of the weapon,
+/// in binary angle units (65 536 a turn; 32 768 is 180°, every direction). Plan
+/// `2026-11-05-sc2-deviation-fixes` WP10, B-29; weapons per catalog-time audit §10.3. The row
+/// with block `siege_mode` is the Siege Tank's Siege Mode cannon, checked through its mode.
+const SC2_UNIT_ACQUIRE_ARC: [WeaponRow; 41] = [
+    ("SCV", "weapon", 0.0, ARC_UNSET),
+    ("Marine", "weapon", 0.0, ARC_UNSET),
+    ("Marine", "air_weapon", 0.0, ARC_UNSET),
+    ("Roach", "weapon", 0.0, ARC_UNSET),
+    ("Zealot", "weapon", 0.0, ARC_UNSET),
+    (
+        "Siege Tank",
+        "weapon",
+        32_768.0,
+        "Arc 360, voidmulti WeaponData:5",
+    ),
+    ("Siege Tank", "siege_mode", 0.0, ARC_UNSET),
+    ("Marauder", "weapon", 0.0, ARC_UNSET),
+    ("Reaper", "weapon", 0.0, ARC_UNSET),
+    ("Ghost", "weapon", 0.0, ARC_UNSET),
+    ("Thor", "weapon", 0.0, ARC_UNSET),
+    ("Thor", "ground_weapon", 0.0, ARC_UNSET),
+    (
+        "Thor",
+        "air_weapon",
+        32_768.0,
+        "a turret with an open arc here; the game's hull weapon, Arc 5.625, is B-28",
+    ),
+    ("Viking", "air_weapon", 0.0, ARC_UNSET),
+    ("Liberator", "air_weapon", 0.0, ARC_UNSET),
+    ("Banshee", "weapon", 0.0, ARC_UNSET),
+    ("Probe", "weapon", 0.0, ARC_UNSET),
+    ("Stalker", "weapon", 0.0, ARC_UNSET),
+    ("Stalker", "air_weapon", 0.0, ARC_UNSET),
+    ("Sentry", "weapon", 0.0, ARC_UNSET),
+    ("Adept", "weapon", 0.0, ARC_UNSET),
+    ("High Templar", "weapon", 0.0, ARC_UNSET),
+    ("Dark Templar", "weapon", 0.0, ARC_UNSET),
+    ("Void Ray", "weapon", 0.0, ARC_UNSET),
+    ("Void Ray", "air_weapon", 0.0, ARC_UNSET),
+    (
+        "Carrier / Mothership",
+        "weapon",
+        32_768.0,
+        "Arc 360, liberty WeaponData:606",
+    ),
+    ("Drone", "weapon", 0.0, ARC_UNSET),
+    ("Zergling", "weapon", 0.0, ARC_UNSET),
+    ("Baneling", "weapon", 0.0, ARC_UNSET),
+    ("Ravager", "weapon", 0.0, ARC_UNSET),
+    ("Hydralisk", "weapon", 0.0, ARC_UNSET),
+    ("Hydralisk", "air_weapon", 0.0, ARC_UNSET),
+    ("Mutalisk", "weapon", 0.0, ARC_UNSET),
+    ("Mutalisk", "air_weapon", 0.0, ARC_UNSET),
+    ("Corruptor", "air_weapon", 0.0, ARC_UNSET),
+    ("Brood Lord", "weapon", 0.0, ARC_UNSET),
+    ("Brood Lord", "ground_weapon", 0.0, ARC_UNSET),
+    ("Ultralisk", "weapon", 0.0, ARC_UNSET),
+    ("Queen", "weapon", 0.0, ARC_UNSET),
+    ("Queen", "ground_weapon", 0.0, ARC_UNSET),
+    ("Queen", "air_weapon", 0.0, ARC_UNSET),
+];
+
+/// Acquisition arc of every structure weapon: `Arc` ÷ 2, binary angle units.
+const SC2_STRUCTURE_ACQUIRE_ARC: [WeaponRow; 6] = [
+    (
+        "Planetary Fortress",
+        "ground_weapon",
+        8_192.0,
+        "Arc 90, liberty WeaponData:138",
+    ),
+    ("Missile Turret", "air_weapon", 0.0, ARC_UNSET),
+    ("Photon Cannon", "ground_weapon", 0.0, ARC_UNSET),
+    ("Photon Cannon", "air_weapon", 0.0, ARC_UNSET),
+    ("Spine Crawler", "ground_weapon", 0.0, ARC_UNSET),
+    ("Spore Crawler", "air_weapon", 0.0, ARC_UNSET),
+];
+
+/// The analogues whose weapon mount differs from the game (catalog-time audit §10.5, B-28): their
+/// arcs belong to the mount and change with it.
+const MOUNT_DIFFERS: [&str; 5] = ["Hellion", "Immortal", "Colossus", "Lurker", "Phoenix"];
+
+#[test]
+fn b29_unit_acquisition_arcs_follow_starcraft() -> TestResult {
+    let (siege, rows): (Vec<WeaponRow>, Vec<WeaponRow>) = SC2_UNIT_ACQUIRE_ARC
+        .iter()
+        .partition(|(_, block, ..)| *block == "siege_mode");
+    check_weapons(
+        "acquisition arc",
+        false,
+        &rows,
+        &MOUNT_DIFFERS,
+        |_| true,
+        |w| f32::from(w.acquire_arc.raw()),
+    )?;
+    let [(_, _, want, source)] = siege[..] else {
+        return Err("one Siege Mode row".into());
+    };
+    let mut checked = 0;
+    for archetype in sim_fixtures::shipped_catalogs().units.archetypes() {
+        for mode in &archetype.modes {
+            if let Some(Some(weapon)) = &mode.ground_weapon_override {
+                let got = f32::from(weapon.acquire_arc.raw());
+                assert!(
+                    (got - want).abs() < 0.001,
+                    "{} {}: acquisition arc {got}, StarCraft II {want} ({source})",
+                    archetype.slug,
+                    mode.mode_name
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert_eq!(
+        checked, 1,
+        "one weapon override: the Siege Tank's Siege Mode"
+    );
+    Ok(())
+}
+
+#[test]
+fn b29_structure_acquisition_arcs_follow_starcraft() -> TestResult {
+    check_weapons(
+        "acquisition arc",
+        true,
+        &SC2_STRUCTURE_ACQUIRE_ARC,
+        &[],
+        |_| true,
+        |w| f32::from(w.acquire_arc.raw()),
+    )
+}
