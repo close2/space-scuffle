@@ -220,8 +220,10 @@ jobs:
             os: ubuntu-latest
           - name: Windows x86_64
             os: windows-latest
+          # Apple silicon. GitHub no longer serves macos-14 ("The configuration
+          # 'macos-14-arm64-us-default' is not supported", 2026-11-09); macos-15 is arm64 too.
           - name: macOS ARM64
-            os: macos-14
+            os: macos-15
 
     steps:
       # Embedded data files must be byte-identical across hosts; never translate line endings.
