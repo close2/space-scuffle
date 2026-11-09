@@ -178,8 +178,15 @@
 // world's seeded generator. The first checkpoint whose ticks hold a release changes (here and in
 // the other fixture), and every later one; with the delays at (0.0, 0.0) both fixtures reproduce
 // as recorded for schema 19.
+// Re-recorded for plan 2026-11-09-sc2-pathfinding WP2+WP3 (B-99, B-100, checksum schema 20 ->
+// 21): each unit's `corner_round` (the sense in which it rounds a body parked on its corner) is
+// hashed, so every checkpoint changed. Behaviour first differs on tick 155 (checkpoint 4, ticks
+// 151 to 200): "blue_infantry" marine 15 no longer holds (31.11, 29.44), the point the removed
+// corner rewrite had put in place of the ramp corner (30.30, 29.70) because marines stood on it;
+// it passes the corner and heads for its goal (32, 46). Marines 8, 14 and 16 beside it move
+// differently in contact on the same tick.
 (
-    checksum_schema: 20,
+    checksum_schema: 21,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -205,25 +212,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x4b118249c708584a,
-        0xe46163a749836dd6,
-        0xac4116ad3d4bd999,
-        0x4e62e4c508a0d2fa,
-        0x44da6863bd0c7e75,
-        0x3dd1e76b38511bf4,
-        0x2fdb6867afdea660,
-        0xbaf2ac5022b72f53,
-        0xa58cc20b61e42259,
-        0x8ce47d4231a0a5a5,
-        0xde298523f91d69a5,
-        0x2bb0b82883571a7f,
-        0x6cccf6c6d1499e8b,
-        0x03bdb41194ca91e1,
-        0x8d28476c09dfd8de,
-        0xf740b9eecfc9a6aa,
-        0x480d3b9c51ad6460,
-        0x5843d497e8d9d7e2,
-        0xe63f1327b2f3041e,
-        0x70b13d9336871865,
+        0xd7d0ec9245e891ee,
+        0xe4badb1018958a73,
+        0xc9baa6ecc9d7bd62,
+        0xfd8b564f37b15cab,
+        0x7fb06a293490e0f4,
+        0x2ca47c9c5a62243d,
+        0xee0031e01af44392,
+        0x2f9c4e3903540c60,
+        0xa2dcc4169faae90b,
+        0x738faedd7db5c69d,
+        0x6d7ce3d2de822ff8,
+        0x6447b94900d3ed66,
+        0x6d1970937e7e411b,
+        0xdb36e5875406c9b0,
+        0x20be865feeaf7ee6,
+        0xe7c236c9c10e5d22,
+        0x40c5098496d23db2,
+        0x648f1995594c87fe,
+        0xc09c9b4b637dc220,
+        0x118eb9fd6c25a368,
     ],
 )

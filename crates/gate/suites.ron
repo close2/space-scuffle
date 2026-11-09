@@ -305,6 +305,7 @@ SuiteCatalog(
             "sim_core/ramp_movement_tests",
             "sim_core/research_and_cancel_tests",
             "sim_core/research_transaction_tests",
+            "sim_core/route_following_tests",
             "sim_core/runtime_catalog_tests",
             "sim_core/sc2_battle_benchmarks_tests",
             "sim_core/sc2_who_wins_matchup_matrix_tests",

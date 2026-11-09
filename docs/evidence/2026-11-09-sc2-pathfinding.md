@@ -69,3 +69,32 @@ run is the comparison base of WP2. Battle 33 on 68 seeds: `seeds.csv` kept as th
 
 WP1 changes no behaviour: `apply_initial_orders` is the code the client ran, moved, and the golden replays do not
 start from a scenario file.
+
+## WP2+WP3: route following leaves bodies to steering (B-99, B-100)
+
+One commit (plan R-1). Showcase, `route_trace --ticks 1500`:
+
+| Box | Owner | Units | Ratio mean / max | Turn mean / max |
+|---|---:|---:|---|---|
+| ramp_w_foot | 0 | 10 | 1.063 / 1.113 | 92° / 146° |
+| ramp_w_foot | 1 | 10 | 1.399 / 1.416 | 156° / 207° |
+| plateau_se | 0 | 10 | 1.045 / 1.078 | 67° / 148° |
+| ramp_e_foot | 0 | 10 | 1.557 / 1.635 | 213° / 415° |
+| ramp_e_foot | 1 | 10 | 1.176 / 1.216 | 107° / 222° |
+
+Outcome: player 0 wins at tick 1,351. A1 and A2 alone give the same table: no body is parked on a showcase corner,
+so A3 does not act there. These are §3.6.1's "A1 and A2 together" numbers.
+
+The ramp E turn rose from 114° to 213°: the column reaches ramp E about 20 ticks sooner and flockmates jostle each
+unit sideways by about ±15° per 3-tick sample while it heads for the corner (34.70, 52.30). Under D-12 the package
+was held; the orchestrator accepted it and moved the criterion to plan `2026-11-09-friendly-blocking` (Amendment 1
+of both plans).
+
+Experiments not kept:
+- A3 with D-9's literal occupant rule (any non-yielding body, moving flockmates included): ramp W 1.185 / 1.371,
+  350° / 720°; plateau 1.129 / 1.236, 309° / 583°; ramp E 1.562 / 1.593, 179° / 258°; **player 1 wins** at tick
+  1,464.
+- Handoff only beyond the corner (no "near" alternative): ramp E 1.570 / 1.593, 189° / 230°.
+
+Matrix (1,000 runs) and battle 33 (68 seeds): bit-identical to WP1. Goldens: checksum schema 21, re-recorded; first
+behaviour change on tick 155 of `golden_replay` and tick 120 of `golden_replay_orders` (fixture headers).
