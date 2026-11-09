@@ -152,34 +152,84 @@ pub fn surface_class(map: &GameMap, cx: i32, cy: i32) -> SurfaceClass {
     SurfaceClass::Plateau(i32::from(cell.cliff_level.0))
 }
 
-/// Returns the effective numeric cliff level of cell `(cx, cy)` at its local corner `(corner_fx, corner_fy)`.
+/// Marching levels of the four corner cells of dual cell `(di, dj)`, in corner order
+/// bottom-left, bottom-right, top-right, top-left, and the corners that are ramp cells as a mask
+/// in the marching-case bit order (bottom-left = 1, bottom-right = 2, top-right = 4,
+/// top-left = 8).
+///
+/// A plateau corner has its cliff level and a void corner (abyss or off the map) has level -1.
+/// A ramp corner spans a whole cliff level, so no level of its own is right; it takes its level
+/// from its non-ramp neighbours in the dual cell (rule R4 of the module documentation): the
+/// lowest of its non-ramp edge-adjacent corners, else its diagonal corner when that is not a
+/// ramp, else -1 (a dual cell of four ramp corners emits nothing). At every threshold a ramp
+/// corner so classifies like one of its edge-adjacent corners, and no marching contour crosses
+/// the inside of a ramp quadrant.
 #[must_use]
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    reason = "map cell coordinates stay far below the range of f32 and i32"
-)]
-pub fn corner_marching_level(
-    map: &GameMap,
-    cx: i32,
-    cy: i32,
-    corner_fx: f32,
-    corner_fy: f32,
-) -> i32 {
-    let s = surface_class(map, cx, cy);
-    match s {
-        SurfaceClass::Void => -1,
-        SurfaceClass::Plateau(lvl) => lvl,
-        SurfaceClass::Ramp(prof) => {
-            let h = prof
-                .height_at(
-                    SimScalar::from_num(corner_fx),
-                    SimScalar::from_num(corner_fy),
-                )
-                .to_f32();
-            (h / CLIFF_LEVEL_HEIGHT as f32).round() as i32
+pub fn dual_corner_levels(map: &GameMap, di: u32, dj: u32) -> ([i32; 4], u8) {
+    let cells = dual_corner_cells(di, dj);
+    let mut base = [-1; 4];
+    let mut ramp_mask = 0_u8;
+    for (k, &(cx, cy)) in cells.iter().enumerate() {
+        match surface_class(map, cx, cy) {
+            SurfaceClass::Void => {}
+            SurfaceClass::Plateau(level) => base[k] = level,
+            SurfaceClass::Ramp(_) => ramp_mask |= 1 << k,
         }
     }
+    let is_ramp = |k: usize| ramp_mask & (1 << k) != 0;
+    let mut levels = base;
+    for (k, level) in levels.iter_mut().enumerate() {
+        if !is_ramp(k) {
+            continue;
+        }
+        let lowest_adjacent = [(k + 1) % 4, (k + 3) % 4]
+            .into_iter()
+            .filter(|&a| !is_ramp(a))
+            .map(|a| base[a])
+            .min();
+        let diagonal = (k + 2) % 4;
+        *level = match lowest_adjacent {
+            Some(adjacent) => adjacent,
+            None if !is_ramp(diagonal) => base[diagonal],
+            None => -1,
+        };
+    }
+    (levels, ramp_mask)
+}
+
+/// Marching level of the floor that the dual grid draws in corner `corner` (0..4, bottom-left,
+/// bottom-right, top-right, top-left) of dual cell `(di, dj)` next to the dual cell's centre:
+/// the median of the corner's level and the levels of its two edge-adjacent corners (rule R3).
+///
+/// Marching squares cut a corner's quadrant only when the corner is lone, unlike both
+/// edge-adjacent corners; the part of the quadrant at the dual cell's centre then belongs to
+/// the region of its neighbours. The median is the one level that covers both cases. The ramp
+/// pass compares a ramp cell's edges with this level, so the dual grid and the ramp pass agree
+/// on every height step by construction. Level -1 is the void.
+#[must_use]
+pub fn dual_floor_level_beside(map: &GameMap, di: u32, dj: u32, corner: usize) -> i32 {
+    let (levels, _) = dual_corner_levels(map, di, dj);
+    let mut three = [
+        levels[corner % 4],
+        levels[(corner + 1) % 4],
+        levels[(corner + 3) % 4],
+    ];
+    three.sort_unstable();
+    three[1]
+}
+
+/// Cells `(x, y)` at the corners of dual cell `(di, dj)`, in corner order bottom-left,
+/// bottom-right, top-right, top-left. Dual cell `(di, dj)` is centred on the shared corner
+/// `(di, dj)` of these four cells.
+fn dual_corner_cells(di: u32, dj: u32) -> [(i32, i32); 4] {
+    let di_i = i32::try_from(di).unwrap_or(0);
+    let dj_i = i32::try_from(dj).unwrap_or(0);
+    [
+        (di_i - 1, dj_i - 1),
+        (di_i, dj_i - 1),
+        (di_i, dj_i),
+        (di_i - 1, dj_i),
+    ]
 }
 
 /// Returns the world altitude `H(level)` for a given discrete cliff level.
@@ -497,110 +547,6 @@ const MARCHING_CASES: [MarchingCase; 16] = [
     },
 ];
 
-/// Computes the outward normal direction of a cardinal ramp direction.
-#[must_use]
-pub fn ramp_step_2d(dir: RampDir) -> (i32, i32) {
-    match dir {
-        RampDir::North => (0, 1),
-        RampDir::South => (0, -1),
-        RampDir::East => (1, 0),
-        RampDir::West => (-1, 0),
-        RampDir::NorthEast => (1, 1),
-        RampDir::NorthWest => (-1, 1),
-        RampDir::SouthEast => (1, -1),
-        RampDir::SouthWest => (-1, -1),
-    }
-}
-
-#[inline]
-fn to_cell_coords(c: (i32, i32)) -> Option<(u32, u32)> {
-    match (u32::try_from(c.0), u32::try_from(c.1)) {
-        (Ok(x), Ok(y)) => Some((x, y)),
-        _ => None,
-    }
-}
-
-/// Checks whether the shared boundary between cell `a` and cell `b` is ramp-connected,
-/// requiring wall and rim suppression along that edge.
-#[must_use]
-pub fn is_ramp_connected(map: &GameMap, ca: (i32, i32), cb: (i32, i32)) -> bool {
-    let delta = (cb.0 - ca.0, cb.1 - ca.1);
-    let cell_a_u = to_cell_coords(ca);
-    let cell_b_u = to_cell_coords(cb);
-
-    if let Some((ax, ay)) = cell_a_u {
-        if let Some(prof) = map.ramp_profile(ax, ay) {
-            let s = ramp_step_2d(prof.dir);
-            if delta == s {
-                if prof.index + 1 < prof.run_len {
-                    return true;
-                }
-                // High landing connection
-                if let Some((bx, by)) = cell_b_u {
-                    if let Ok(cell_b) = map.cell(bx, by) {
-                        if cell_b.terrain_kind != TerrainKind::Abyss
-                            && cell_b.cliff_level.0 == prof.low_level.0 + 1
-                        {
-                            return true;
-                        }
-                    }
-                }
-            } else if delta == (-s.0, -s.1) {
-                if prof.index > 0 {
-                    return true;
-                }
-                // Low landing connection
-                if let Some((bx, by)) = cell_b_u {
-                    if let Ok(cell_b) = map.cell(bx, by) {
-                        if cell_b.terrain_kind != TerrainKind::Abyss
-                            && cell_b.cliff_level.0 == prof.low_level.0
-                        {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Symmetrically check from cb to ca
-    let neg_delta = (-delta.0, -delta.1);
-    if let Some((bx, by)) = cell_b_u {
-        if let Some(prof) = map.ramp_profile(bx, by) {
-            let s = ramp_step_2d(prof.dir);
-            if neg_delta == s {
-                if prof.index + 1 < prof.run_len {
-                    return true;
-                }
-                if let Some((ax, ay)) = cell_a_u {
-                    if let Ok(cell_a) = map.cell(ax, ay) {
-                        if cell_a.terrain_kind != TerrainKind::Abyss
-                            && cell_a.cliff_level.0 == prof.low_level.0 + 1
-                        {
-                            return true;
-                        }
-                    }
-                }
-            } else if neg_delta == (-s.0, -s.1) {
-                if prof.index > 0 {
-                    return true;
-                }
-                if let Some((ax, ay)) = cell_a_u {
-                    if let Ok(cell_a) = map.cell(ax, ay) {
-                        if cell_a.terrain_kind != TerrainKind::Abyss
-                            && cell_a.cliff_level.0 == prof.low_level.0
-                        {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    false
-}
-
 /// Evaluates ambient occlusion at a floor or ramp vertex.
 #[must_use]
 #[expect(
@@ -897,14 +843,15 @@ pub fn build_chunk_mesh(
     stats
 }
 
-/// Marching levels, geometry and ramp suppression of one dual cell.
+/// Marching levels, geometry and wall suppression of one dual cell.
 ///
 /// Dual cell `(di, dj)` is centred on the shared corner of simulation cells
 /// `(di - 1, dj - 1)` (bottom-left), `(di, dj - 1)` (bottom-right), `(di, dj)` (top-right) and
 /// `(di - 1, dj)` (top-left). Positions are world XZ in world units.
 #[derive(Debug, Clone, Copy)]
 struct DualCell {
-    /// Marching level of the bottom-left, bottom-right, top-right and top-left corner cells.
+    /// Marching level of the bottom-left, bottom-right, top-right and top-left corner cells
+    /// ([`dual_corner_levels`]).
     l_bl: i32,
     l_br: i32,
     l_tr: i32,
@@ -922,8 +869,13 @@ struct DualCell {
     p_r: Vec2,
     p_t: Vec2,
     p_l: Vec2,
-    /// Whether each edge, in bottom, right, top, left order, joins two ramp-connected cells,
-    /// which suppresses walls and rims there.
+    /// Centre of the dual cell: the shared corner of its four cells.
+    centre: Vec2,
+    /// Corners that are ramp cells, in the marching-case bit order.
+    ramp_mask: u8,
+    /// Whether each edge, in bottom, right, top, left order, lies on a ramp cell's edge: one of
+    /// its two corner cells is a ramp. A contour midpoint there gets no rim, foot or jitter, and
+    /// a wall along it belongs to the ramp (rules R1, R2 and R6).
     suppressed: [bool; 4],
 }
 
@@ -933,17 +885,8 @@ struct DualCell {
     reason = "map cell coordinates stay far below the range of f32 and i32"
 )]
 fn dual_cell_corners(map: &GameMap, di: u32, dj: u32) -> DualCell {
-    let dj_i = i32::try_from(dj).unwrap_or(0);
-    let di_i = i32::try_from(di).unwrap_or(0);
-    let c_bl = (di_i - 1, dj_i - 1);
-    let c_br = (di_i, dj_i - 1);
-    let c_tr = (di_i, dj_i);
-    let c_tl = (di_i - 1, dj_i);
-
-    let l_bl = corner_marching_level(map, c_bl.0, c_bl.1, 1.0, 1.0);
-    let l_br = corner_marching_level(map, c_br.0, c_br.1, 0.0, 1.0);
-    let l_tr = corner_marching_level(map, c_tr.0, c_tr.1, 0.0, 0.0);
-    let l_tl = corner_marching_level(map, c_tl.0, c_tl.1, 1.0, 0.0);
+    let ([l_bl, l_br, l_tr, l_tl], ramp_mask) = dual_corner_levels(map, di, dj);
+    let is_ramp = |k: u8| ramp_mask & (1 << k) != 0;
 
     let center_x = di as f32;
     let center_z = dj as f32;
@@ -963,11 +906,13 @@ fn dual_cell_corners(map: &GameMap, di: u32, dj: u32) -> DualCell {
         p_r: Vec2::new(center_x + 0.5, center_z),
         p_t: Vec2::new(center_x, center_z + 0.5),
         p_l: Vec2::new(center_x - 0.5, center_z),
+        centre: Vec2::new(center_x, center_z),
+        ramp_mask,
         suppressed: [
-            is_ramp_connected(map, c_bl, c_br),
-            is_ramp_connected(map, c_br, c_tr),
-            is_ramp_connected(map, c_tl, c_tr),
-            is_ramp_connected(map, c_bl, c_tl),
+            is_ramp(0) || is_ramp(1),
+            is_ramp(1) || is_ramp(2),
+            is_ramp(2) || is_ramp(3),
+            is_ramp(3) || is_ramp(0),
         ],
     }
 }
@@ -1067,11 +1012,44 @@ impl DualCell {
         }
         idx
     }
+
+    /// The wall profile of a contour midpoint for the threshold run `ta..=tb`. A midpoint on a
+    /// ramp edge has neither rim nor foot, and no jitter, so that the wall ends exactly on the
+    /// ramp edge (rule R6).
+    fn midpoint_profile(&self, m: EdgeMidpoint, ta: i32, tb: i32) -> Vec<WallProfileRow> {
+        let (la, lb) = self.midpoint_levels(m, tb);
+        let p = self.midpoint_coord(m);
+        let suppressed = self.midpoint_suppressed(m);
+        let mut rows = generate_wall_profile(p, self.midpoint_d(m, tb), la, lb, ta, tb, suppressed);
+        if suppressed {
+            for row in &mut rows {
+                row.xz = p;
+            }
+        }
+        rows
+    }
+
+    /// The wall profile at the dual cell's centre for the half of a straight contour that ends
+    /// at `kept`: the profile of `kept` without rim, foot or jitter (rule R6).
+    fn centre_profile(&self, kept: EdgeMidpoint, ta: i32, tb: i32) -> Vec<WallProfileRow> {
+        let (la, lb) = self.midpoint_levels(kept, tb);
+        let mut rows =
+            generate_wall_profile(self.centre, self.midpoint_d(kept, tb), la, lb, ta, tb, true);
+        for row in &mut rows {
+            row.xz = self.centre;
+        }
+        rows
+    }
 }
 
 /// Section 1 of [`build_chunk_mesh`] for one dual cell: for every run of thresholds that share
 /// a marching case, the raised plateau polygon at the run's top level and its cliff walls; then
 /// the low floor polygon at the cell's lowest level.
+///
+/// A dual cell with a ramp corner classifies that corner from its neighbours
+/// ([`dual_corner_levels`]), clips its floors to its non-ramp quadrants and leaves the ramp's
+/// edges to the ramp pass (rules R1, R4 to R6); one with four ramp corners emits nothing. A dual
+/// cell without a ramp corner is emitted exactly as before those rules existed.
 fn emit_dual_cell(
     map: &GameMap,
     di: u32,
@@ -1080,6 +1058,9 @@ fn emit_dual_cell(
     stats: &mut MeshStats,
 ) {
     let cell = dual_cell_corners(map, di, dj);
+    if cell.ramp_mask == 0x0F {
+        return;
+    }
     let (lo, hi) = (cell.lo, cell.hi);
 
     // Evaluate threshold runs for t in (lo + 1)..=hi
@@ -1097,27 +1078,21 @@ fn emit_dual_cell(
                 let mcase = &MARCHING_CASES[curr_case];
 
                 // Emit region polygon as floor at H(tb), contour vertices inset by the rim
-                emit_floor_polygon(
-                    map,
-                    mcase.region,
-                    cliff_level_height(tb),
-                    scratch,
-                    stats,
-                    |vref| match vref {
-                        DualVertexRef::Corner(c) => cell.corner_coord(c),
-                        DualVertexRef::Midpoint(m) => {
-                            let (la, _) = cell.midpoint_levels(m, tb);
-                            let rim_present = la == tb && !cell.midpoint_suppressed(m);
-                            let base_coord = cell.midpoint_coord(m);
-                            if rim_present {
-                                let d = cell.midpoint_d(m, tb);
-                                base_coord - d * RIM_WIDTH
-                            } else {
-                                base_coord
-                            }
+                let polygon = region_polygon(&cell, mcase.region, |vref| match vref {
+                    DualVertexRef::Corner(c) => cell.corner_coord(c),
+                    DualVertexRef::Midpoint(m) => {
+                        let (la, _) = cell.midpoint_levels(m, tb);
+                        let rim_present = la == tb && !cell.midpoint_suppressed(m);
+                        let base_coord = cell.midpoint_coord(m);
+                        if rim_present {
+                            let d = cell.midpoint_d(m, tb);
+                            base_coord - d * RIM_WIDTH
+                        } else {
+                            base_coord
                         }
-                    },
-                );
+                    }
+                });
+                emit_dual_floor(map, &cell, &polygon, cliff_level_height(tb), scratch, stats);
 
                 emit_cliff_walls(&cell, mcase.segments, ta, tb, scratch, stats);
             }
@@ -1142,51 +1117,229 @@ fn emit_dual_cell(
 
         if low_case != 0 {
             let region = MARCHING_CASES[low_case].region;
-            emit_floor_polygon(
-                map,
-                region,
-                cliff_level_height(lo),
-                scratch,
-                stats,
-                |vref| match vref {
-                    DualVertexRef::Corner(c) => cell.corner_coord(c),
-                    DualVertexRef::Midpoint(m) => cell.midpoint_coord(m),
-                },
+            let polygon = region_polygon(&cell, region, |vref| match vref {
+                DualVertexRef::Corner(c) => cell.corner_coord(c),
+                DualVertexRef::Midpoint(m) => cell.midpoint_coord(m),
+            });
+            emit_dual_floor(map, &cell, &polygon, cliff_level_height(lo), scratch, stats);
+        }
+    }
+}
+
+/// Most vertices a floor polygon of one dual cell can have: a marching region has at most six,
+/// a ramp-aware cell adds the centre once, and each of at most two clipping half-planes adds one.
+const FLOOR_POLYGON_CAPACITY: usize = 12;
+
+/// A convex floor polygon in world XZ, counter-clockwise seen from +Y.
+// PERFORMANCE RATIONALE:
+// Why: Floors are built and clipped for every dual cell of every rebuilt chunk; a `Vec` per
+// polygon would allocate in the terrain rebuild path.
+// What: A fixed-capacity array on the stack, sized by the bound in `FLOOR_POLYGON_CAPACITY`.
+// Trade-off: A hard vertex bound that the marching table and the clipping rules must respect,
+// in exchange for no heap allocation per polygon.
+#[derive(Debug, Clone, Copy)]
+struct FloorPolygon {
+    points: [Vec2; FLOOR_POLYGON_CAPACITY],
+    len: usize,
+}
+
+impl FloorPolygon {
+    const EMPTY: Self = Self {
+        points: [Vec2::ZERO; FLOOR_POLYGON_CAPACITY],
+        len: 0,
+    };
+
+    fn push(&mut self, p: Vec2) {
+        debug_assert!(
+            self.len < FLOOR_POLYGON_CAPACITY,
+            "invariant: a dual-cell floor polygon has at most {FLOOR_POLYGON_CAPACITY} vertices"
+        );
+        if self.len < FLOOR_POLYGON_CAPACITY {
+            self.points[self.len] = p;
+            self.len += 1;
+        }
+    }
+
+    fn points(&self) -> &[Vec2] {
+        &self.points[..self.len]
+    }
+
+    /// Sutherland–Hodgman clip against the half-plane `normal · (p - origin) <= 0`. `normal` has
+    /// components in `{-1, 0, 1}`. A new vertex on an axis-aligned line is snapped onto it, and
+    /// each edge is cut from its own start, so two clips of one polygon against opposite
+    /// half-planes produce bit-identical vertices on the shared line.
+    fn clip(&self, normal: Vec2, origin: Vec2) -> Self {
+        let side = |p: Vec2| normal.x * (p.x - origin.x) + normal.y * (p.y - origin.y);
+        let mut out = Self::EMPTY;
+        for i in 0..self.len {
+            let prev = self.points[(i + self.len - 1) % self.len];
+            let cur = self.points[i];
+            let (s_prev, s_cur) = (side(prev), side(cur));
+            if (s_prev < 0.0 && s_cur > 0.0) || (s_prev > 0.0 && s_cur < 0.0) {
+                let mut q = prev + (cur - prev) * (s_prev / (s_prev - s_cur));
+                if normal.x.abs() < 0.5 {
+                    q.y = origin.y;
+                }
+                if normal.y.abs() < 0.5 {
+                    q.x = origin.x;
+                }
+                out.push(q);
+            }
+            if s_cur <= 0.0 {
+                out.push(cur);
+            }
+        }
+        out
+    }
+}
+
+/// Lays out a marching region polygon with `position` mapping each region vertex to world XZ.
+/// In a dual cell with a ramp corner, the centre is inserted between two opposite midpoints, so
+/// that a straight contour whose two halves differ (one on a ramp edge, rule R6) bends there.
+fn region_polygon(
+    cell: &DualCell,
+    region: &[DualVertexRef],
+    position: impl Fn(DualVertexRef) -> Vec2,
+) -> FloorPolygon {
+    let mut polygon = FloorPolygon::EMPTY;
+    for (k, &vref) in region.iter().enumerate() {
+        polygon.push(position(vref));
+        let next = region[(k + 1) % region.len()];
+        if cell.ramp_mask != 0 {
+            if let (DualVertexRef::Midpoint(a), DualVertexRef::Midpoint(b)) = (vref, next) {
+                if are_opposite(a, b) {
+                    polygon.push(cell.centre);
+                }
+            }
+        }
+    }
+    polygon
+}
+
+/// Whether two edge midpoints lie on opposite edges of a dual cell (a straight contour).
+fn are_opposite(a: EdgeMidpoint, b: EdgeMidpoint) -> bool {
+    matches!(
+        (a, b),
+        (EdgeMidpoint::Bottom, EdgeMidpoint::Top)
+            | (EdgeMidpoint::Top, EdgeMidpoint::Bottom)
+            | (EdgeMidpoint::Left, EdgeMidpoint::Right)
+            | (EdgeMidpoint::Right, EdgeMidpoint::Left)
+    )
+}
+
+/// Direction from a dual cell's centre to its corner `k` (bottom-left, bottom-right, top-right,
+/// top-left), with components `±1`.
+fn corner_direction(k: usize) -> Vec2 {
+    match k % 4 {
+        0 => Vec2::new(-1.0, -1.0),
+        1 => Vec2::new(1.0, -1.0),
+        2 => Vec2::new(1.0, 1.0),
+        _ => Vec2::new(-1.0, 1.0),
+    }
+}
+
+/// Emits a floor polygon of a dual cell at altitude `floor_y`: whole in a dual cell without a
+/// ramp corner, else clipped to the union of the non-ramp quadrants (rule R5).
+///
+/// The union is cut into convex pieces whose outer edges are whole dual-cell edges wherever
+/// both corners of the edge are non-ramp, so the pieces add no vertex on an edge that a
+/// neighbouring dual cell meshes without one: one quadrant, a half of two adjacent quadrants,
+/// two diagonal quadrants, or (three quadrants) two halves split along the diagonal through the
+/// ramp corner.
+fn emit_dual_floor(
+    map: &GameMap,
+    cell: &DualCell,
+    polygon: &FloorPolygon,
+    floor_y: f32,
+    scratch: &mut MesherScratch,
+    stats: &mut MeshStats,
+) {
+    if cell.ramp_mask == 0 {
+        emit_floor_points(map, polygon.points(), floor_y, scratch, stats);
+        return;
+    }
+    let centre = cell.centre;
+    let is_ramp = |k: usize| cell.ramp_mask & (1 << (k % 4)) != 0;
+    // Half-plane normals keeping quadrant `k` (two of them) or the half of quadrants `k, k + 1`.
+    let quadrant = |k: usize| {
+        let o = corner_direction(k);
+        [Vec2::new(-o.x, 0.0), Vec2::new(0.0, -o.y)]
+    };
+    let half = |k: usize| -(corner_direction(k) + corner_direction(k + 1)) * 0.5;
+    let mut emit = |piece: FloorPolygon| {
+        emit_floor_points(map, piece.points(), floor_y, scratch, stats);
+    };
+    match cell.ramp_mask.count_ones() {
+        1 => {
+            // Quadrants `first`, `opposite` and `last` follow the ramp corner counter-clockwise;
+            // the split runs along the diagonal through the ramp corner and `opposite`.
+            let ramp = (0..4).find(|&k| is_ramp(k)).unwrap_or(0);
+            let (first, opposite) = (ramp + 1, ramp + 2);
+            let diagonal = corner_direction(opposite);
+            let normal = Vec2::new(diagonal.y, -diagonal.x);
+            let toward_first = if normal.dot(corner_direction(first)) < 0.0 {
+                normal
+            } else {
+                -normal
+            };
+            emit(polygon.clip(toward_first, centre).clip(half(first), centre));
+            emit(
+                polygon
+                    .clip(-toward_first, centre)
+                    .clip(half(opposite), centre),
             );
+        }
+        2 => {
+            if let Some(k) = (0..4).find(|&k| !is_ramp(k) && !is_ramp(k + 1)) {
+                emit(polygon.clip(half(k), centre));
+            } else {
+                for k in (0..4).filter(|&k| !is_ramp(k)) {
+                    let [n1, n2] = quadrant(k);
+                    emit(polygon.clip(n1, centre).clip(n2, centre));
+                }
+            }
+        }
+        _ => {
+            for k in (0..4).filter(|&k| !is_ramp(k)) {
+                let [n1, n2] = quadrant(k);
+                emit(polygon.clip(n1, centre).clip(n2, centre));
+            }
         }
     }
 }
 
 /// Emits a convex, CCW (seen from +Y) floor polygon at altitude `floor_y` as an upward-facing
-/// triangle fan, with per-vertex ambient occlusion. `position` maps each region vertex to world
-/// XZ. Polygons with fewer than three vertices emit nothing.
+/// triangle fan, with per-vertex ambient occlusion. Polygons with fewer than three vertices emit
+/// nothing, and fan triangles of (near) zero area, which clipping can leave, are skipped.
 #[expect(
     clippy::cast_possible_truncation,
     reason = "a chunk holds far fewer than u32::MAX vertices"
 )]
-fn emit_floor_polygon(
+fn emit_floor_points(
     map: &GameMap,
-    region: &[DualVertexRef],
+    points: &[Vec2],
     floor_y: f32,
     scratch: &mut MesherScratch,
     stats: &mut MeshStats,
-    position: impl Fn(DualVertexRef) -> Vec2,
 ) {
-    if region.len() < 3 {
+    if points.len() < 3 {
         return;
     }
     let base_idx = scratch.positions.len() as u32;
-    for &vref in region {
-        let pos2 = position(vref);
+    for &pos2 in points {
         let ao = compute_floor_ao(map, pos2.x, floor_y, pos2.y);
         scratch.positions.push([pos2.x, floor_y, pos2.y]);
         scratch.normals.push([0.0, 1.0, 0.0]);
         scratch.uv0.push([pos2.x, pos2.y]);
         scratch.uv1.push([ao, 0.0]);
     }
-    stats.floor_vertices += region.len();
+    stats.floor_vertices += points.len();
 
-    for k in 1..region.len() - 1 {
+    for k in 1..points.len() - 1 {
+        let doubled_area = (points[k] - points[0]).perp_dot(points[k + 1] - points[0]);
+        if doubled_area.abs() < MIN_FLOOR_TRIANGLE_DOUBLED_AREA {
+            continue;
+        }
         scratch.indices.push(base_idx);
         scratch.indices.push(base_idx + (k + 1) as u32);
         scratch.indices.push(base_idx + k as u32);
@@ -1194,9 +1347,16 @@ fn emit_floor_polygon(
     }
 }
 
+/// Twice the smallest area of an emitted floor triangle, in square world units. Marching
+/// regions never come near it; clipped pieces can leave slivers below it.
+const MIN_FLOOR_TRIANGLE_DOUBLED_AREA: f32 = 1e-6;
+
 /// Emits the cliff walls of one threshold run `ta..=tb` of a dual cell: one quad strip per contour
-/// segment, from the wall profiles at the segment's two edge midpoints. A segment whose two ends
-/// are both ramp-suppressed has no wall.
+/// segment, from the wall profiles at the segment's two edge midpoints.
+///
+/// In a dual cell with a ramp corner, a straight segment (through the centre) is split there:
+/// a half on a ramp edge is dropped, because the ramp cell owns that edge (rule R2), and the
+/// other half runs from its midpoint to the centre (rule R6).
 fn emit_cliff_walls(
     cell: &DualCell,
     segments: &[ContourSegment],
@@ -1206,26 +1366,33 @@ fn emit_cliff_walls(
     stats: &mut MeshStats,
 ) {
     for &seg in segments {
-        // Check ramp suppression: if both endpoints are suppressed, omit wall
-        if cell.midpoint_suppressed(seg.start) && cell.midpoint_suppressed(seg.end) {
+        if cell.ramp_mask == 0 || !are_opposite(seg.start, seg.end) {
+            let prof0 = cell.midpoint_profile(seg.start, ta, tb);
+            let prof1 = cell.midpoint_profile(seg.end, ta, tb);
+            emit_wall_strip(&prof0, &prof1, scratch, stats);
             continue;
         }
-
-        let profile_at = |m: EdgeMidpoint| {
-            let (la, lb) = cell.midpoint_levels(m, tb);
-            generate_wall_profile(
-                cell.midpoint_coord(m),
-                cell.midpoint_d(m, tb),
-                la,
-                lb,
-                ta,
-                tb,
-                cell.midpoint_suppressed(m),
-            )
-        };
-        let prof0 = profile_at(seg.start);
-        let prof1 = profile_at(seg.end);
-        emit_wall_strip(&prof0, &prof1, scratch, stats);
+        let on_ramp = |m| cell.midpoint_suppressed(m);
+        match (on_ramp(seg.start), on_ramp(seg.end)) {
+            (true, true) => {}
+            (true, false) => {
+                let prof0 = cell.centre_profile(seg.end, ta, tb);
+                let prof1 = cell.midpoint_profile(seg.end, ta, tb);
+                emit_wall_strip(&prof0, &prof1, scratch, stats);
+            }
+            (false, true) => {
+                let prof0 = cell.midpoint_profile(seg.start, ta, tb);
+                let prof1 = cell.centre_profile(seg.start, ta, tb);
+                emit_wall_strip(&prof0, &prof1, scratch, stats);
+            }
+            // A straight contour borders every quadrant, so a ramp corner puts one of its
+            // halves on a ramp edge; whole is still the right wall if it ever does not.
+            (false, false) => {
+                let prof0 = cell.midpoint_profile(seg.start, ta, tb);
+                let prof1 = cell.midpoint_profile(seg.end, ta, tb);
+                emit_wall_strip(&prof0, &prof1, scratch, stats);
+            }
+        }
     }
 }
 
@@ -1301,24 +1468,81 @@ fn emit_wall_strip(
     }
 }
 
-/// One side edge of a ramp cell, parallel to the ramp's run direction.
+/// A straight stretch of a ramp cell's edge on the ramp surface: a side edge carrying a guard
+/// rail, or a half-edge carrying a wall.
 #[derive(Debug, Clone, Copy)]
 struct RampSide {
     /// Edge start on the ramp surface (world space).
     start: Vec3,
     /// Edge end on the ramp surface (world space).
     end: Vec3,
-    /// Cell offset `(dx, dy)` of the neighbour across this edge.
-    neighbour_offset: (i32, i32),
     /// Unit vector pointing out of the ramp across this edge.
     outward: Vec3,
     /// Unit vector pointing into the ramp across this edge.
     inward: Vec3,
 }
 
-/// Section 2 of [`build_chunk_mesh`] for one ramp cell `(cx, cy)`: the sloped surface quad, then,
-/// for each side edge not shared with the same ramp run, a side wall down to a lower neighbour and
-/// a guard rail. Diagonal ramps get only the surface.
+/// Height difference in world units below which a ramp edge and the surface beside it count as
+/// level, and no wall closes them.
+const RAMP_STEP_EPSILON: f32 = 1e-4;
+
+/// One half of an edge of a ramp cell (rule R2), in cell-local half-cell units: it runs from the
+/// cell corner `corner` to the edge midpoint `mid`, and borders the cell at `neighbour_offset`.
+/// Each half lies in the one dual cell centred on `corner`.
+#[derive(Debug, Clone, Copy)]
+struct RampHalfEdge {
+    corner: (u8, u8),
+    mid: (u8, u8),
+    neighbour_offset: (i32, i32),
+}
+
+/// The eight half-edges of a ramp cell: south, east, north and west edge, two halves each.
+const RAMP_HALF_EDGES: [RampHalfEdge; 8] = [
+    RampHalfEdge {
+        corner: (0, 0),
+        mid: (1, 0),
+        neighbour_offset: (0, -1),
+    },
+    RampHalfEdge {
+        corner: (2, 0),
+        mid: (1, 0),
+        neighbour_offset: (0, -1),
+    },
+    RampHalfEdge {
+        corner: (2, 0),
+        mid: (2, 1),
+        neighbour_offset: (1, 0),
+    },
+    RampHalfEdge {
+        corner: (2, 2),
+        mid: (2, 1),
+        neighbour_offset: (1, 0),
+    },
+    RampHalfEdge {
+        corner: (2, 2),
+        mid: (1, 2),
+        neighbour_offset: (0, 1),
+    },
+    RampHalfEdge {
+        corner: (0, 2),
+        mid: (1, 2),
+        neighbour_offset: (0, 1),
+    },
+    RampHalfEdge {
+        corner: (0, 2),
+        mid: (0, 1),
+        neighbour_offset: (-1, 0),
+    },
+    RampHalfEdge {
+        corner: (0, 0),
+        mid: (0, 1),
+        neighbour_offset: (-1, 0),
+    },
+];
+
+/// Section 2 of [`build_chunk_mesh`] for one ramp cell `(cx, cy)`: the sloped surface quad, the
+/// walls on its half-edges (rule R2), then, on a cardinal ramp, a guard rail on each side edge
+/// not shared with the same ramp run.
 fn emit_ramp_cell(
     map: &GameMap,
     cx: u32,
@@ -1328,64 +1552,31 @@ fn emit_ramp_cell(
     stats: &mut MeshStats,
 ) {
     let [p_bl, p_br, p_tr, p_tl] = emit_ramp_surface(map, cx, cy, profile, scratch, stats);
+    let (Ok(cx_i), Ok(cy_i)) = (i32::try_from(cx), i32::try_from(cy)) else {
+        return;
+    };
+    for half in RAMP_HALF_EDGES {
+        emit_ramp_half_edge_wall(map, (cx_i, cy_i), profile, half, scratch, stats);
+    }
 
-    // Ramp side edges: perpendicular to the run's direction
-    // Side edges are parallel to dir
+    // Ramp side edges are parallel to the run's direction
     let (side1, side2) = match profile.dir {
         RampDir::North | RampDir::South => (
             // West edge (p_bl -> p_tl) facing -X
-            RampSide {
-                start: p_bl,
-                end: p_tl,
-                neighbour_offset: (-1, 0),
-                outward: Vec3::new(-1.0, 0.0, 0.0),
-                inward: Vec3::new(1.0, 0.0, 0.0),
-            },
+            (p_bl, p_tl, (-1, 0), Vec3::new(-1.0, 0.0, 0.0)),
             // East edge (p_br -> p_tr) facing +X
-            RampSide {
-                start: p_br,
-                end: p_tr,
-                neighbour_offset: (1, 0),
-                outward: Vec3::new(1.0, 0.0, 0.0),
-                inward: Vec3::new(-1.0, 0.0, 0.0),
-            },
+            (p_br, p_tr, (1, 0), Vec3::new(1.0, 0.0, 0.0)),
         ),
         RampDir::East | RampDir::West => (
             // South edge (p_bl -> p_br) facing -Z
-            RampSide {
-                start: p_bl,
-                end: p_br,
-                neighbour_offset: (0, -1),
-                outward: Vec3::new(0.0, 0.0, -1.0),
-                inward: Vec3::new(0.0, 0.0, 1.0),
-            },
+            (p_bl, p_br, (0, -1), Vec3::new(0.0, 0.0, -1.0)),
             // North edge (p_tl -> p_tr) facing +Z
-            RampSide {
-                start: p_tl,
-                end: p_tr,
-                neighbour_offset: (0, 1),
-                outward: Vec3::new(0.0, 0.0, 1.0),
-                inward: Vec3::new(0.0, 0.0, -1.0),
-            },
+            (p_tl, p_tr, (0, 1), Vec3::new(0.0, 0.0, 1.0)),
         ),
         _ => return,
     };
-
-    let Ok(cx_i) = i32::try_from(cx) else {
-        return;
-    };
-    let Ok(cy_i) = i32::try_from(cy) else {
-        return;
-    };
-    for side in [side1, side2] {
-        let n_cell = (
-            cx_i + side.neighbour_offset.0,
-            cy_i + side.neighbour_offset.1,
-        );
-        let n_class = surface_class(map, n_cell.0, n_cell.1);
-
-        // Check if neighbour is a parallel ramp in the same run
-        let neighbour_same_run = match n_class {
+    for (start, end, offset, outward) in [side1, side2] {
+        let neighbour_same_run = match surface_class(map, cx_i + offset.0, cy_i + offset.1) {
             SurfaceClass::Ramp(n_prof) => {
                 n_prof.dir == profile.dir
                     && n_prof.low_level == profile.low_level
@@ -1393,25 +1584,87 @@ fn emit_ramp_cell(
             }
             _ => false,
         };
-        if neighbour_same_run {
-            continue;
+        if !neighbour_same_run {
+            let side = RampSide {
+                start,
+                end,
+                outward,
+                inward: -outward,
+            };
+            emit_guard_rail(&side, scratch, stats);
         }
+    }
+}
 
-        let neighbour_h = match n_class {
-            SurfaceClass::Void => ABYSS_WALL_BOTTOM_Y,
-            SurfaceClass::Plateau(lvl) => cliff_level_height(lvl),
-            SurfaceClass::Ramp(n_prof) => {
-                n_prof.height_at(SimScalar::HALF, SimScalar::HALF).to_f32()
-            }
+/// Emits the wall on one half-edge of ramp cell `cell` (rule R2): where the ramp's edge lies
+/// above the surface beside it, a side wall facing out of the ramp, down to that surface.
+///
+/// The surface beside a non-ramp neighbour is the dual grid's floor in the neighbour's quadrant
+/// of the half-edge's dual cell ([`dual_floor_level_beside`], rule R3), so this wall and the
+/// dual grid's floor meet exactly. A ramp neighbour or a higher neighbour gets no wall here.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "map cell coordinates stay far below the range of f32"
+)]
+fn emit_ramp_half_edge_wall(
+    map: &GameMap,
+    cell: (i32, i32),
+    profile: RampProfile,
+    half: RampHalfEdge,
+    scratch: &mut MesherScratch,
+    stats: &mut MeshStats,
+) {
+    let neighbour = (
+        cell.0 + half.neighbour_offset.0,
+        cell.1 + half.neighbour_offset.1,
+    );
+    if matches!(
+        surface_class(map, neighbour.0, neighbour.1),
+        SurfaceClass::Ramp(_)
+    ) {
+        return;
+    }
+    // The dual cell centred on the half-edge's cell corner, and the neighbour's corner in it.
+    let di = cell.0 + i32::from(half.corner.0 / 2);
+    let dj = cell.1 + i32::from(half.corner.1 / 2);
+    let (Ok(di_u), Ok(dj_u)) = (u32::try_from(di), u32::try_from(dj)) else {
+        return;
+    };
+    let corner = match (neighbour.0 - (di - 1), neighbour.1 - (dj - 1)) {
+        (0, 0) => 0,
+        (1, 0) => 1,
+        (1, 1) => 2,
+        _ => 3,
+    };
+    let beside = cliff_level_height(dual_floor_level_beside(map, di_u, dj_u, corner));
+
+    let edge_point = |(hx, hy): (u8, u8)| {
+        let local = |h: u8| match h {
+            0 => SimScalar::ZERO,
+            1 => SimScalar::HALF,
+            _ => SimScalar::ONE,
         };
-
-        // (a) Side wall down to neighbour if neighbour is lower
-        if side.start.y > neighbour_h || side.end.y > neighbour_h {
-            emit_ramp_side_wall(&side, neighbour_h, scratch, stats);
-        }
-
-        // (b) Guard rail riding on the ramp edge
-        emit_guard_rail(&side, scratch, stats);
+        Vec3::new(
+            cell.0 as f32 + f32::from(hx) * 0.5,
+            profile.height_at(local(hx), local(hy)).to_f32(),
+            cell.1 as f32 + f32::from(hy) * 0.5,
+        )
+    };
+    let start = edge_point(half.corner);
+    let end = edge_point(half.mid);
+    let outward = Vec3::new(
+        half.neighbour_offset.0 as f32,
+        0.0,
+        half.neighbour_offset.1 as f32,
+    );
+    if start.y.max(end.y) > beside + RAMP_STEP_EPSILON {
+        let side = RampSide {
+            start,
+            end,
+            outward,
+            inward: -outward,
+        };
+        emit_ramp_side_wall(&side, beside, scratch, stats);
     }
 }
 
