@@ -1453,3 +1453,100 @@ leaves both as recorded: neither spawns the Immortal analogue.
 - Graviton Beam and Scrambler Missile, which disable the Barrier in the data, are not modelled (no shipped
   analogue casts them); the Barrier has no visual in the client.
 
+## 16. WP13c: Charge (B-43)
+
+Numbered after WP13b's §15, which lands on another branch. Sources: SC2GameData `5444e12f13`, chain
+`core → liberty → swarm → void → voidmulti` (and `balancemulti`, read only to confirm it agrees), each line re-read;
+Liquipedia [Charge](https://liquipedia.net/starcraft2/Charge) (wikitext, 2026-11-09); battle 33 investigation §1.6
+and §1.11. Matrix: 20 seeds a battle (1000 runs); battle 33: 68 seeds. Directories `~/scratch/sc2dev_wp13c/`;
+baseline `a227e7d` (`base`). The gate lock's queue was long (another worktree's package gate held it), so every
+build, test and measurement ran unlocked at `-j 4` under `nice`, with the user slice's `anon` memory at about 5 GiB when checked (limit 8).
+
+### 16.1 Research
+
+- **The ability.** `Charge` is a `CAbilAugment` of the `attack` command (`liberty` AbilData:3825-3834): `AutoCast`
+  and `AutoCastOn` (on by default), cost a 10 Normal s cooldown on the unit, the autocast validator
+  `CasterNotHoldingPosition` (ValidatorData:166-170: no Hold Position order in the queue), and the requirement
+  `UseCharge` (the Charge research). The augment's default effect is its own id (`core` AbilData:145) and its default
+  autocast filters `Visible;Player,Ally` (:146): visible enemies only. `swarm` AbilData:473-475 changes only its
+  alignment.
+- **The trigger.** Effect `Charge` (`liberty` EffectData:2062-2068) applies `Charging` to the caster if
+  `ChargeMinTriggerDistance` (ValidatorData:183-190, order target range `GT 0.6`) and `ChargeMaxDistance`
+  (:1697-1704, source to target location `LT 4`, `Pathing 1`) pass.
+- **The dash.** `Charging` (`liberty` BehaviorData:967-975): `Duration` 3.5, `MoveSpeedMultiplier` 2.2, flag
+  `Channeling`, removed when `ChargeTargetAttacked` fails (ValidatorData:3007-3011: `PsiBlades` not firing), that is
+  when the Zealot's weapon fires. `voidmulti` BehaviorData:94-97 adds only the impact-damage chain, whose damage
+  effects need `HaveSunderingImpact` (`voidmulti` EffectData:1254-1259, ValidatorData:94-98), an upgrade no player
+  researches at 5.0.14 (`TechTreeCheat`; patch 4.11.0 removed the impact damage, investigation §1.6). No later layer
+  changes the duration, multiplier, cooldown or window.
+- **The research.** `voidmulti` UpgradeData:68-71 (Zealot speed +1.125 Normal = +0.063 a tick, the shipped
+  `move_speed_delta`).
+- **In ticks** (25 a Faster second, 1.4 Normal s a Faster second, halves up as the audit rounds): 3.5 Normal s =
+  62.5 → **63 ticks**; 10 Normal s = 178.6 → **179 ticks**. A dashing Zealot with Charge: 0.189 × 2.2 = 0.4158 a
+  tick (10.40 Faster; Liquipedia's 9.1 is the pre-4.11 base speed, investigation §1.11).
+- **Liquipedia** agrees on the window (range 4), the autocast and the end on attack, and adds that "switching to a
+  more distant target while Charge is active" lets the Zealot cover more ground, so the dash survives a retarget.
+
+Not stated by the data, and read as follows (owner question
+[Q0071](../questions/open/0071-charge-trigger-details.md), default this reading): the 0.6 is measured edge to edge
+(as weapon and scan ranges are); the 4 is a straight centre-to-centre distance, not a walk; the autocast looks on every
+tick; the dash ends at the start of a swing, and a new order does not end it.
+
+### 16.2 The rule
+
+`ArchetypeCapabilities::attack_dash: Option<AttackDashSpec>` (`speed_multiplier`, `duration_ticks`,
+`cooldown_ticks`, `min_gap`, `max_distance`), validated (multiplier and distance positive, gap nonnegative,
+duration at least 1). A new phase, `world/attack_dash.rs`, runs after target acquisition and before movement: a
+living, completed unit in the world, not channelling and not holding position, whose front order is an attack on a
+visible, attackable enemy (explicit or acquired, so an attack-move dashes too), with its dash off cooldown and
+unlocked for its owner, starts the dash when the gap exceeds `min_gap` and the centre distance is below
+`max_distance`. The dash is the speed buff 3 (`ATTACK_DASH_BUFF_ID`), so movement reads it as it reads Stimpack;
+upkeep runs it and the new `Entity::attack_dash_cooldown` down; `start_swing` ends it. Research gates it through
+`UnlockAbility` with the slug `attack_dash`, as `overclock` gates Stimpack. The cooldown is hashed: checksum
+schema 21.
+
+Tests (`attack_dash_tests.rs`): with the phase disabled 5 of 8 rule tests are red (the dash and its speed until the
+swing; the maximum distance; the duration and cooldown; attack-move; the unlock); the other three assert that no
+dash starts (no capability; within the minimum gap; holding position) and pass either way. Unit tests: catalog
+validation, and an `UnlockAbility` naming `attack_dash` on an archetype without the capability is a load error. The
+shipped-values test was red before the data commit (`None`).
+
+### 16.3 Results
+
+| Step | Commit | Matrix (against the previous step) | Battle 33 (68 seeds) | Goldens |
+|---|---|---|---|---|
+| Rule | `b36ec13` | bit-identical | bit-identical (41 / 10 / 17) | re-recorded for schema 21 alone (§16.4) |
+| Data | `1ac40ac` | bit-identical | bit-identical (41 / 10 / 17) | unchanged |
+
+**No matrix battle reaches Charge.** The plan's §3 row and WP13 list battle 23b, but 23b researches only
+`ground_weapons_1`, and no battle researches `charge`; the data commit therefore moves nothing the matrix measures.
+No commit was held, and no expectation changed.
+
+**What the dash does (scratch probe, not committed).** The matrix fixture with the Zealot side researching `charge`
+in battles 23b and 33 (`~/scratch/sc2dev_wp13c/probe/`), 68 seeds each, once on the shipped catalog and once on
+`a227e7d`'s (the speed bonus without the dash):
+
+| Battle | Charge speed only | Charge with the dash |
+|---|---|---|
+| 23b (one Zealot against six Zerglings) | Zealot wins 68; life left 58.0; end tick 253.2 | wins 68; 57.3; 251.0 |
+| 33 (24 Marines against 12 Zealots) | Zealots win 67, Marines 1; Zealot survivors 3.62; end tick 408.5 | Zealots win 68; survivors 5.78; end tick 341.6 |
+
+The Zerglings run at the Zealot, so the dash saves only two ticks; against standing Marines it closes the gap at
+10.40 a Faster second and two more Zealots survive.
+
+### 16.4 Goldens
+
+The rule commit adds `Entity::attack_dash_cooldown` to the hash (schema 21). With the field unhashed at schema 20
+both golden replays (debug and release) and the sandbox checksum (debug) reproduce as recorded, so the
+re-recording is the encoding alone; the re-recorded lists reproduce in debug, release, and `wasm32-wasip1` debug and release
+(`wasmtime`). The data commit leaves both as recorded: neither researches Charge.
+
+### 16.5 What WP13c leaves open
+
+- **B-43, narrowed** ([Q0071](../questions/open/0071-charge-trigger-details.md)): how the engine measures the 0.6
+  and the 4 (edges or centres; a straight line or the walk), when the autocast looks, and whether a new order ends a
+  dash.
+- **B-94 (new):** Charge's autocast cannot be switched off; the game's is a player toggle (`AutoCast`, on by
+  default). Ours always charges (WP18, with the abilities plan's autocast commands).
+- The dash has no visual of its own in the client, and the render snapshot's speed-boost flag still reads only
+  Stimpack.

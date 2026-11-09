@@ -793,7 +793,7 @@ requires.
 | B-40 | Turn before move | Fixed | turn-before-move WP1 `6d7a9d5`, WP3 `b7d9f50` |
 | B-41 | No Immortal Barrier | Fixed, narrowed | WP13a ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §14; Amendment 19); open only the engine order within a hit ([Q0068](../questions/open/0068-barrier-damage-order.md)) |
 | B-42 | The Lurker attacks unburrowed | (i) | WP13b |
-| B-43 | Charge without the dash | (i) | WP13c |
+| B-43 | Charge without the dash | Fixed, narrowed | WP13c ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §16; Amendment 21); open only how the engine measures the trigger window, when the autocast looks and whether a new order ends a dash ([Q0071](../questions/open/0071-charge-trigger-details.md)) |
 | B-44 | Concussive Shells do nothing | (i) | WP13d |
 | B-45 | No firing while moving | (i) | WP13e |
 | B-46 | The Viking cannot land | (i) | WP18 |
@@ -841,6 +841,7 @@ requires.
 | B-90 | A turreted weapon's wind-up does not hold its unit, and a turret works against `current_target` under any order, where the game ties firing while moving to `AllowedMovement` | (i) | WP13e, with B-45. Found in WP10 (Amendment 16): turreting five more analogues extends it |
 | B-91 | Whether an attack-rate buff scales the random firing delay, and whether the first attack draws one; ours does neither | (i) | [Q0066](../questions/open/0066-random-delay-scaling.md). Found in WP11 (Amendment 17) |
 | B-92 | `LateralAcceleration` (how sharply a moving unit can curve) is not modelled; our units turn their velocity freely within the hull rate | (i) | WP16. Found in WP12 (Amendment 18) |
+| B-94 | Charge's autocast cannot be switched off; the game's is a player toggle, on by default | (i) | WP18. Found in WP13c (Amendment 21) |
 
 **Counts.** 78 IDs: (i) 70, two of them narrowed (B-52, B-67) and one carried by another plan (B-12); (ii) 3 (B-37,
 B-53, B-58); (iii) none; fixed 5 (B-31 and B-40 by the turn-before-move plan; B-71, B-73 and B-75 by WP0).
@@ -1183,4 +1184,26 @@ Evidence: [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.
   before or after armour, and whether a wholly absorbed hit still deals 0.5
   ([Q0068](../questions/open/0068-barrier-damage-order.md), default the rule as landed).
 - Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §14. No commit was
+  held.
+
+## Amendment 21 (WP13c, 2026-11-09): Charge dashes
+
+- **Research:** Charge is an autocast augment of the `attack` command, on by default, not while holding position,
+  cooldown 10 Normal s (`liberty` AbilData:3825-3834); its effect applies `Charging` when the attack target is farther
+  than 0.6 and nearer than 4 (EffectData:2062-2068, ValidatorData:183-190, :1697-1704); `Charging` multiplies speed
+  by 2.2 for 3.5 Normal s and ends when the weapon fires (BehaviorData:967-975, ValidatorData:3007-3011). No later
+  layer changes these; `voidmulti`'s impact damage needs Sundering Impact, which nobody researches at 5.0.14. In
+  ticks: 63 (62.5, halves up) and 179.
+- **B-43 fixed, narrowed:** latent rule `b36ec13` (capability `ArchetypeCapabilities::attack_dash`, a phase after
+  target acquisition, the dash as speed buff 3, ended by a swing; per-unit `Entity::attack_dash_cooldown`, checksum
+  schema 21; research gates it through `UnlockAbility` slug `attack_dash`), data `1ac40ac` (`psi_grey`: 2.2, 63, 179,
+  0.6, 4; the `charge` research unlocks it). Matrix and battle 33 (41 / 10 / 17) bit-identical at both commits;
+  goldens re-recorded only for the schema. Open: how the engine measures 0.6 and 4, when the autocast looks, and
+  whether a new order ends a dash ([Q0071](../questions/open/0071-charge-trigger-details.md), default the rule as
+  landed).
+- **The §3 row and WP13 name battle 23b, which does not research Charge;** no matrix battle does, so the data moved
+  nothing the matrix measures. A scratch probe with the Zealots researching Charge (evidence §16.3) shows the dash:
+  battle 33 goes from 67 to 68 Zealot wins of 68, with 5.78 Zealots left instead of 3.62.
+- **Found:** B-94, Charge's autocast cannot be switched off (WP18).
+- Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §16. No commit was
   held.
