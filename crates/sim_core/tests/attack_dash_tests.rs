@@ -377,3 +377,69 @@ fn b43_a_dash_an_upgrade_unlocks_waits_for_the_research() {
     let trace = learned.steps(2);
     assert!(trace[0].1, "{trace:?}");
 }
+
+/// The shipped Zealot analogue's first-tick displacement and dash against a holding target 3.5
+/// away, with or without the shipped Charge research.
+fn shipped_zealot_first_step(research: bool) -> (f32, bool) {
+    let mut world = flat_world();
+    let zealot_type = world.catalog.id_by_slug("psi_grey").expect("shipped");
+    let target_type = register_target(&mut world);
+    if research {
+        world
+            .research_upgrade(PlayerId(0), "charge")
+            .expect("research");
+    }
+    let zealot = world
+        .spawn_unit(zealot_type, PlayerId(0), at(10.0, 10.0))
+        .expect("spawn zealot");
+    let target = world
+        .spawn_unit(target_type, PlayerId(1), at(13.5, 10.0))
+        .expect("spawn target");
+    world
+        .entities
+        .get_mut(&target)
+        .expect("target")
+        .issue_order(UnitOrder::HoldPosition, false)
+        .expect("hold admitted");
+    world
+        .entities
+        .get_mut(&zealot)
+        .expect("zealot")
+        .issue_order(UnitOrder::attack(target), false)
+        .expect("attack admitted");
+    world.step(&empty(0));
+    let entity = &world.entities[&zealot];
+    (
+        (entity.position.x - SimScalar::from_num(10)).to_f32(),
+        entity.is_attack_dashing(),
+    )
+}
+
+#[test]
+fn b43_the_shipped_zealot_analogue_carries_charge_and_dashes_once_researched() {
+    // Speed × 2.2 (`liberty` BehaviorData:971), 3.5 Normal s (:970) and a 10 Normal s cooldown
+    // (AbilData:3832), at 1.4 Normal s per Faster second and 25 ticks per Faster second:
+    // 3.5 × 25 ÷ 1.4 = 62.5 → 63 ticks (halves up), 10 × 25 ÷ 1.4 = 178.6 → 179 ticks; the
+    // window is gap > 0.6 (ValidatorData:189) and distance < 4 (:1701).
+    let world = flat_world();
+    let id = world.catalog.id_by_slug("psi_grey").expect("shipped");
+    let arch = world.catalog.get(id).expect("registered");
+    assert_eq!(
+        arch.capabilities.attack_dash,
+        Some(AttackDashSpec {
+            speed_multiplier: SimScalar::from_f32_lossy(2.2),
+            duration_ticks: 63,
+            cooldown_ticks: 179,
+            min_gap: SimScalar::from_f32_lossy(0.6),
+            max_distance: SimScalar::from_f32_lossy(4.0),
+        })
+    );
+    // Charge needs its research (`UseCharge`, `liberty` AbilData:3827).
+    assert!(world.upgrade_catalog.unlocks_ability("psi_grey", "attack_dash"));
+
+    let (walked, dashing) = shipped_zealot_first_step(false);
+    assert!(!dashing && close(walked, 0.126), "{walked} {dashing}");
+    // 3.375 Normal = 4.725 Faster = 0.189 a tick with Charge's speed, × 2.2 = 0.4158.
+    let (dashed, dashing) = shipped_zealot_first_step(true);
+    assert!(dashing && close(dashed, 0.4158), "{dashed} {dashing}");
+}

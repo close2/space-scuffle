@@ -340,6 +340,18 @@
             capabilities: (
                 overclock: None,
                 harvester: None,
+                // StarCraft II's Charge (liberty AbilData:3825-3834, EffectData:2062-2068,
+                // BehaviorData:967-975, ValidatorData:183-190, :1697-1704): speed x2.2 for
+                // 3.5 Normal s (62.5 ticks, halves up), cooldown 10 Normal s (178.6 ticks),
+                // when the target's gap exceeds 0.6 and it is nearer than 4; unlocked by the
+                // `charge` research (the `UseCharge` requirement, liberty AbilData:3827).
+                attack_dash: Some((
+                    speed_multiplier: 2.2,
+                    duration_ticks: 63,
+                    cooldown_ticks: 179,
+                    min_gap: 0.6,
+                    max_distance: 4.0,
+                )),
                 is_resource_dropoff: false,
             ),
             veo_prompts: {
