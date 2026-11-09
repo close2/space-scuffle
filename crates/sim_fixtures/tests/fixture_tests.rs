@@ -46,7 +46,9 @@ use std::path::PathBuf;
 /// window, absorption left and cooldown.
 /// Re-recorded for checksum schema 21 (work package 13c, B-43), which encodes each unit's attack
 /// dash cooldown.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 2_234_267_680_913_195_054;
+/// Re-recorded for checksum schema 22 (owner answer to Q0058), which encodes whether each weapon's
+/// burst and each pending burst is channeled.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 12_723_387_266_804_371_455;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

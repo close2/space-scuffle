@@ -356,6 +356,11 @@ pub struct WeaponSpec {
     /// a strike after the first still lands (a `CValidatorLocationCompareRange` on the strike's
     /// effect in `StarCraft` II, such as the Zealot's 2.1). `None`: no distance condition.
     pub followup_max_distance: Option<SimScalar>,
+    /// Whether the burst effect is channeled (`StarCraft` II `CEffectCreatePersistent` flag
+    /// `Channeled`): an explicit order that replaces the attacker's orders between two strikes
+    /// ends the burst, and its later strikes are lost (Q0058). Meaningful only on a weapon whose
+    /// strikes land on separate ticks.
+    pub channeled: bool,
     /// Total ticks between consecutive attack cycles (attack period).
     pub period_ticks: u16,
     /// Wind-up delay in ticks before damage is committed (`DamagePoint`).

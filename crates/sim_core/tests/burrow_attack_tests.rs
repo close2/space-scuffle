@@ -50,6 +50,7 @@ fn spines() -> WeaponSpec {
         attacks_count: 1,
         strike_interval_ticks: 0,
         followup_max_distance: None,
+        channeled: false,
         period_ticks: 10,
         damage_point_ticks: 1,
         backswing_ticks: 1,

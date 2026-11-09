@@ -378,6 +378,7 @@ fields!(WeaponSpec {
     attacks_count,
     strike_interval_ticks,
     followup_max_distance,
+    channeled,
     period_ticks,
     damage_point_ticks,
     backswing_ticks,
@@ -397,7 +398,8 @@ fields!(PendingStrikes {
     target_id,
     plane,
     remaining,
-    ticks_until_next
+    ticks_until_next,
+    channeled
 });
 fields!(SplashSpec {
     zones,

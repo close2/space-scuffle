@@ -46,6 +46,7 @@ fn weapon(damage: i32, period: u16) -> WeaponSpec {
         attacks_count: 1,
         strike_interval_ticks: 0,
         followup_max_distance: None,
+        channeled: false,
         period_ticks: period,
         damage_point_ticks: 1,
         backswing_ticks: 1,

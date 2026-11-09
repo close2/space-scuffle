@@ -385,13 +385,15 @@ impl SimWorld {
             plane,
             remaining: weapon.attacks_count - 1,
             ticks_until_next: weapon.strike_interval_ticks,
+            channeled: weapon.channeled,
         });
         1
     }
 
     /// Counts down the pending strikes of `entity` (`id`) and queues the one that falls due.
     ///
-    /// The burst ends when the attacker dies or boards a transport, or when it no longer has the
+    /// The burst ends when the attacker dies or boards a transport, when an explicit order ends a
+    /// channeled burst ([`Entity::pending_strikes`], Q0058), or when it no longer has the
     /// weapon that released it. A strike that falls due lands only when its target is available
     /// to the attacker, still on the weapon's plane, and within the weapon's
     /// `followup_max_distance` (centre to centre) if it names one; otherwise that strike is lost

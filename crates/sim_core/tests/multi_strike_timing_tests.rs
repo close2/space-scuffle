@@ -22,7 +22,9 @@
 use sim_core::catalog::UnitCatalog;
 use sim_core::SimWorld;
 use sim_map::{CliffLevel, GameMap, MapCell};
-use sim_types::{EntityId, PlayerId, SimScalar, SimVec2, Tick, TickBundle};
+use sim_types::{
+    EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
+};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -48,6 +50,8 @@ struct Burst {
     strikes: u8,
     /// `period_ticks` of the weapon.
     period: u16,
+    /// `channeled` of the weapon: an explicit order between the strikes ends the burst.
+    channeled: bool,
 }
 
 impl Burst {
@@ -59,6 +63,7 @@ impl Burst {
             projectile_speed: None,
             strikes: 2,
             period: 40,
+            channeled: false,
         }
     }
 }
@@ -89,6 +94,7 @@ fn weapon_ron(burst: Burst) -> String {
             attacks_count: {strikes},
             strike_interval_ticks: {interval},
             {max_distance}
+            channeled: {channeled},
             period_ticks: {period},
             damage_point_ticks: 0,
             backswing_ticks: 0,
@@ -99,6 +105,7 @@ fn weapon_ron(burst: Burst) -> String {
         strikes = burst.strikes,
         interval = burst.interval,
         period = burst.period,
+        channeled = burst.channeled,
     )
 }
 
@@ -159,11 +166,18 @@ fn catalog_ron(burst: Burst) -> String {
     )
 }
 
-/// A shooter at (10, 16) and a target `distance` world units to its right.
+/// A point 6 world units to the shooter's left, away from both enemies.
+fn away() -> SimVec2 {
+    SimVec2::new(SimScalar::from_i32(4), SimScalar::from_i32(16))
+}
+
+/// A shooter at (10, 16), a target `distance` world units to its right and a bystander of the
+/// target's player 5 world units below the shooter.
 struct Bench {
     world: SimWorld,
     shooter: EntityId,
     target: EntityId,
+    bystander: EntityId,
     tick: u32,
 }
 
@@ -180,21 +194,39 @@ impl Bench {
         let shooter = world.spawn_unit(shooter_type, PlayerId(0), SimVec2::new(x, y))?;
         let offset = SimScalar::from_f32_lossy(distance);
         let target = world.spawn_unit(target_type, PlayerId(1), SimVec2::new(x + offset, y))?;
+        let below = SimVec2::new(x, y + SimScalar::from_i32(5));
+        let bystander = world.spawn_unit(target_type, PlayerId(1), below)?;
         Ok(Self {
             world,
             shooter,
             target,
+            bystander,
             tick: 0,
         })
     }
 
     fn step(&mut self) {
+        self.step_with(Vec::new());
+    }
+
+    /// Steps one tick with `commands`.
+    fn step_with(&mut self, commands: Vec<PlayerCommand>) {
         self.world.step(&TickBundle {
             tick: Tick(self.tick),
-            commands: Vec::new(),
+            commands,
             state_checksum: None,
         });
         self.tick += 1;
+    }
+
+    /// The shooter's player gives it `order`, queued or not.
+    fn order(&self, order: UnitOrder, queue: bool) -> PlayerCommand {
+        PlayerCommand {
+            player_id: PlayerId(0),
+            entities: vec![self.shooter],
+            order,
+            queue,
+        }
     }
 
     /// Life the target has lost so far.
@@ -330,6 +362,94 @@ fn a_spaced_projectile_weapon_launches_one_missile_per_strike() -> TestResult {
         (trace - 2.0 * STRIKE).abs() < 1e-3,
         "each missile lands one strike: {trace}"
     );
+    Ok(())
+}
+
+/// Damage the target has taken 10 ticks after the shooter's first strike, when the shooter is
+/// given `order(bench)` (queued if `queue`) on the tick after that strike, between the strikes of
+/// a 5-tick burst.
+fn damage_after_order_between_strikes(
+    channeled: bool,
+    queue: bool,
+    order: impl Fn(&Bench) -> UnitOrder,
+) -> Result<f32, Box<dyn std::error::Error>> {
+    let burst = Burst {
+        channeled,
+        ..Burst::hitscan(5)
+    };
+    let mut bench = Bench::new(burst, 3.0)?;
+    for _ in 0..30 {
+        bench.step();
+        if bench.damage_taken()? > 0.0 {
+            break;
+        }
+    }
+    assert!(
+        (bench.damage_taken()? - STRIKE).abs() < 1e-3,
+        "the first strike landed"
+    );
+    let command = bench.order(order(&bench), queue);
+    bench.step_with(vec![command]);
+    for _ in 0..9 {
+        bench.step();
+    }
+    bench.damage_taken()
+}
+
+/// A named order, built from the bench it is given in.
+type NamedOrder = (&'static str, fn(&Bench) -> UnitOrder);
+
+/// The orders Q0058 names, each replacing the attacker's orders between the strikes.
+fn overriding_orders() -> Vec<NamedOrder> {
+    vec![
+        ("Move", |_| UnitOrder::Move { target: away() }),
+        ("Stop", |_| UnitOrder::Stop),
+        ("HoldPosition", |_| UnitOrder::HoldPosition),
+        ("AttackMove", |_| UnitOrder::AttackMove { target: away() }),
+        ("AttackTarget on another unit", |bench| {
+            UnitOrder::attack(bench.bystander)
+        }),
+    ]
+}
+
+#[test]
+fn q0058_an_explicit_order_ends_a_channeled_burst() -> TestResult {
+    for (name, order) in overriding_orders() {
+        let damage = damage_after_order_between_strikes(true, false, order)?;
+        assert!(
+            (damage - STRIKE).abs() < 1e-3,
+            "{name} between the strikes ends a channeled burst: damage {damage}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn q0058_a_channeled_burst_survives_a_queued_order_and_its_own_target() -> TestResult {
+    let damage =
+        damage_after_order_between_strikes(true, true, |_| UnitOrder::Move { target: away() })?;
+    assert!(
+        (damage - 2.0 * STRIKE).abs() < 1e-3,
+        "a queued order does not replace the attack: damage {damage}"
+    );
+    let damage =
+        damage_after_order_between_strikes(true, false, |bench| UnitOrder::attack(bench.target))?;
+    assert!(
+        (damage - 2.0 * STRIKE).abs() < 1e-3,
+        "an attack on the burst's own target keeps it: damage {damage}"
+    );
+    Ok(())
+}
+
+#[test]
+fn q0058_an_order_does_not_end_a_burst_that_is_not_channeled() -> TestResult {
+    for (name, order) in overriding_orders() {
+        let damage = damage_after_order_between_strikes(false, false, order)?;
+        assert!(
+            (damage - 2.0 * STRIKE).abs() < 1e-3,
+            "{name} between the strikes keeps a burst that is not channeled: damage {damage}"
+        );
+    }
     Ok(())
 }
 

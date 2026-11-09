@@ -82,6 +82,7 @@ fn custom_projectile_weapon(
         attacks_count: 1,
         strike_interval_ticks: 0,
         followup_max_distance: None,
+        channeled: false,
         period_ticks: 30,
         damage_point_ticks: 1,
         backswing_ticks: 2,
