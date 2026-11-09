@@ -876,7 +876,7 @@
                 is_resource_dropoff: false,
             ),
             veo_prompts: {
-                Idle: "Pyre Outrider: Unmanned heavy armored assault trike with one front wheel and two rear wheels, a long armored barrel at the front and two fuel tanks on its back, seen from above at a three-quarter angle with its front toward the lower right, whole, floating in empty space.",
+                Idle: "Pyre Outrider: Unmanned trike of bold clean armor plates, no outline glow, three wheels only: one large front wheel and two large rear wheels, with cyan-lit spoked hubs, a long barrel at the front and two fuel tanks on its back, seen from above at a three-quarter angle, front toward the lower right, whole, floating in evenly lit empty space, no floor, no shadow.",
                 Walk: "Pyre Outrider: Flat-out high-speed run, all three wheels spinning fast.",
                 Attack: "Pyre Outrider: A torrent of searing orange and blue chemical fire streaming forward from the front barrel.",
             },
@@ -1005,7 +1005,7 @@
                 is_resource_dropoff: false,
             ),
             veo_prompts: {
-                Idle: "Titan AA-Walker: Gigantic bipedal battle-fortress mech with massive twin arm-cannons and two fixed missile pods on its shoulders, seen from slightly above at a three-quarter angle, whole from head to feet with empty space around it.",
+                Idle: "Titan AA-Walker: Giant bipedal battle mech of bold clean armor plates, its two massive arm-cannons hanging low at its sides, muzzles pointing forward and down, two fixed missile pods on its shoulders, seen from slightly above at a three-quarter angle, whole from head to feet, centred with empty space all around it, no floor, no shadow.",
                 Walk: "Titan AA-Walker: Heavy lumbering marching steps of its massive mechanical legs.",
                 Attack: "Titan AA-Walker: A heavy double shot from both arm-cannons with bright muzzle flashes and puffs of smoke.",
             },

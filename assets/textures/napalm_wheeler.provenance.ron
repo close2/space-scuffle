@@ -1,0 +1,72 @@
+(
+    format_version: 1,
+    name: "napalm_wheeler",
+    atlas_sha256: "58236163d2bb2bb2334f5e7ded58c265385fbac45c8a722f1afb7d73634d14f6",
+    manifest_sha256: "36292642cfb14d534381e72baa43570f79acab02d4a7d22602c979a6f291c484",
+    bake: (
+        frame_size: 512,
+        fps: 15,
+        max_frames_per_state: 10,
+        ffmpeg_version: "ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers",
+        framing: Letterbox(
+            feather_permille: 30,
+        ),
+    ),
+    states: {
+        Idle: (
+            clip: "napalm_wheeler_idle.mp4",
+            clip_sha256: "a4488eee872a030ca26f33ab504a69e93f2cc2bf55f3a47ed574254fd089560b",
+            start_frame: 0,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/05491f52-35c1-405e-a328-d5a46b30dfb0",
+                prompt_sha256: "26c0831f6bc5961de7857a68539ec1cc8e68614a9c843edf46afc3e5104bf340",
+                keyframe_sha256: Some("401c1072b17b56743bc5093b8aac6c292526a2cfbe49355a464faf4ac9b23c7f"),
+                last_frame_sha256: Some("401c1072b17b56743bc5093b8aac6c292526a2cfbe49355a464faf4ac9b23c7f"),
+                ledger_line: 1014,
+            ),
+            bar_rgb: Some((45, 51, 70)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Walk: (
+            clip: "napalm_wheeler_walk.mp4",
+            clip_sha256: "08f8de2ca301da2c5a21a2835e5a99b138113fcd610b1bebb2513c6581c7ea11",
+            start_frame: 10,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/ed130554-44f2-43c6-8622-b1ab4a917dcc",
+                prompt_sha256: "bd0cdc43a2055f8c933e299b085a57094afd52dbe96fe881a3e8563b1ea75eda",
+                keyframe_sha256: Some("401c1072b17b56743bc5093b8aac6c292526a2cfbe49355a464faf4ac9b23c7f"),
+                last_frame_sha256: Some("401c1072b17b56743bc5093b8aac6c292526a2cfbe49355a464faf4ac9b23c7f"),
+                ledger_line: 993,
+            ),
+            bar_rgb: Some((45, 51, 70)),
+            seam: Some((
+                sampling: Loop,
+                scale_permille: 0,
+                crossfade_frames: 2,
+            )),
+        ),
+        Attack: (
+            clip: "napalm_wheeler_attack.mp4",
+            clip_sha256: "f251b151dd246f124559ce9b7fd2fe29443020837824813a039af1fb72899bc3",
+            start_frame: 20,
+            frame_count: 10,
+            origin: Veo(
+                model: "veo-3.1-fast-generate-001",
+                operation: "projects/970212666211/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/d696c44a-6b2e-49a3-8b0a-8fdc613e092e",
+                prompt_sha256: "5ea9a71aab9fc3e69a67a580d237d6f3fb5ffd6a362cc9ab26e08bede72a74b9",
+                keyframe_sha256: Some("401c1072b17b56743bc5093b8aac6c292526a2cfbe49355a464faf4ac9b23c7f"),
+                last_frame_sha256: Some("401c1072b17b56743bc5093b8aac6c292526a2cfbe49355a464faf4ac9b23c7f"),
+                ledger_line: 959,
+            ),
+            bar_rgb: Some((45, 51, 70)),
+        ),
+    },
+)
