@@ -368,3 +368,14 @@ fn b41_the_barrier_absorbs_storm_damage() {
     // Pulses of 40: two absorbed whole, the third has 20 absorbed, the fourth lands whole.
     assert_eq!(losses, vec![n(20), n(40)], "{losses:?}");
 }
+
+#[test]
+fn b41_the_shipped_immortal_analogue_carries_the_sourced_barrier() {
+    // 100 absorbed (`voidmulti` BehaviorData:278), 3 Normal s raised (:601) and 45 Normal s of
+    // cooldown (:585), at 1.4 Normal s per Faster second and 25 ticks per Faster second:
+    // 3 × 25 ÷ 1.4 = 53.6 → 54 ticks, 45 × 25 ÷ 1.4 = 803.6 → 804 ticks.
+    let world = flat_world();
+    let id = world.catalog.id_by_slug("void_goliath").expect("shipped");
+    let arch = world.catalog.get(id).expect("registered");
+    assert_eq!(arch.capabilities.barrier, barrier(100, 54, 804));
+}
