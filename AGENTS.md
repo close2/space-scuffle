@@ -143,10 +143,11 @@ Code without tests is considered incomplete.
      agent merged `main` right before its gate and nothing landed since (the merged tree is the tested tree). Merge
      branches one at a time in that order, batch pushes to a few a day, and run at most one or two building agents
      at once (owner, Q0055).
-   - **Full gate** (what `cargo gate full` and CI run):
+   - **Full gate** (what CI runs on every push):
      - `cargo fmt --all -- --check`
      - `cargo clippy --workspace --all-targets --locked -- -D warnings`
-     - `cargo test --workspace --locked`
+     - `cargo gate full`: every test executable and doc test of the workspace, each executable with its thread
+       cap from `crates/gate/suites.ron` so that the run fits the runner's memory, and the golden replays.
    - Docs-only changes: `cargo gate package` runs fmt and `workspace_checks` only.
 
 ---

@@ -1,6 +1,6 @@
 # Tiered test gates: run what a change can break, run everything on a schedule
 
-Date: 2026-11-04. Status: Active, WP1 to WP6a implemented (§11); Amendments 2, 3 and 4 implemented. Host: the shared Debian 13 VM, 16 pinned cores of an AMD
+Date: 2026-11-04. Status: Active, WP1 to WP6a implemented (§11); Amendments 2, 3, 4 and 5 implemented. Host: the shared Debian 13 VM, 16 pinned cores of an AMD
 EPYC 7301, AMD Radeon RX 580 on `radv`; other agents were building and testing at the same time, as they always
 are. Charter sections touched: §4.3 (rewritten), §5 (one new crate), §9 (C16 changed, C22 added). §6 is not
 touched.
@@ -542,7 +542,7 @@ every tracked path", verified by `crates/gate/tests/suite_catalog_tests.rs`.
 
 ### 9.3 CI
 
-CI keeps its commands. It must not depend on the selection logic: if the catalog had a bug, CI would still run
+CI keeps its commands (until Amendment 5, which runs the suite through `cargo gate full`). It must not depend on the selection logic: if the catalog had a bug, CI would still run
 everything. One addition: the job summary gets the per-binary timing table (`cargo gate timings --from-log`
 parses the `cargo test` output), so CI shows the same class report as the VM. No new download.
 
@@ -873,3 +873,61 @@ measured.
 `tests/gate_lock_tests.rs` gains `dropping_the_holder_leaves_no_process_of_its_group`: it waits until the holder's
 group holds both `flock` and `sleep`, drops the holder, and requires that no live (non-zombie) process of the group
 remains, read from `/proc`. With the old drop it fails, naming the orphaned `sleep`.
+
+## Amendment 5 (orchestrator, 2026-11-09): CI runs the complete suite through `cargo gate full`
+
+**Cause.** Every CI run on `main` from 2026-11-06 to 2026-11-09 (runs 42226793973, 42529696317, 42540926020,
+42548003625, 42573148235) lost its "Format, Clippy & Workspace Tests" job with "The runner has received a shutdown
+signal … exit code 143", 38 to 50 minutes in; the run that did not was red earlier on a real test failure
+(42554761499, `battle_flipbook_tests`). Each lost runner (Azure class, 4 CPUs, 16 GB) died 38 to 45 s into
+`gpu_validation_tests`, after every headless battle driver had passed at libtest's default of 4 threads. CI ran
+`cargo test --workspace`, so none of the catalog's `test_threads` caps applied there (Amendments 2 and 4 left CI
+unchanged). On lavapipe the GPU harness takes no lock, so each test thread runs a whole `client` at once, and
+lavapipe keeps every texture in host memory; the shipped atlases have grown with each Veo batch since the last
+green CI run (2026-11-05, 42060192515), where the same binary passed in 76 s.
+
+**Measurement.** Debug build of `13e22da`, one executable at a time under `flock -o ~/scratch/gate.lock`,
+`SPACE_SCUFFLE_GPU_TEST_DRIVER=lavapipe`, `LP_NUM_THREADS=4` (the runner's CPU count), Mesa 25.0.7. Peak over the
+binary's session, sampled every 0.2 s: the sum of `VmRSS` (counts shared file pages once per process) and the sum
+of `RssAnon` (private memory). Logs: `~/scratch/ci-mem-logs/` (`measure1.txt` to `measure3.txt`, one log per run).
+
+| Binary (lavapipe) | Threads | Peak RSS sum | Peak private | Wall |
+|---|---|---|---|---|
+| `gpu_validation_tests` | 4 (CI default) | 20.2 to 23.7 GiB | 10.6 GiB | 79 s |
+| `gpu_validation_tests` | 2 | 11.8 to 12.9 GiB | 7.1 GiB | 130 s |
+| `gpu_validation_tests` | 1 | 6.7 GiB | 4.1 GiB | 224 s |
+| `editor_app_tests` | 4 / 2 (cap) | 13.8 / 13.1 GiB | 12.5 / 10.9 GiB | |
+| `smog_bouncing_bubbles_tests` | 2 (cap) | 10.6 GiB | 7.6 GiB | |
+| `skirmish_match_tests` | 2 (cap) | 8.8 GiB | 6.3 GiB | |
+| `lab_scene_tests` | 4 (cap) | 8.7 GiB | 7.7 GiB | 136 s |
+| `runtime_battle_tests` | 4 | 7.9 GiB | 7.0 GiB | 92 s |
+| `round2_visual_tests`, `dome_fill_tests`, the two window tests | 4 | 6.4 to 6.9 GiB | | |
+| `client_diagnostics/lib` | 4 | 6.2 GiB | 4.0 GiB | 35 s |
+
+The runner's memory at the moment it died was not recorded, so memory is the most likely cause, not a proven
+one: `editor_app_tests` passed on CI at 4 threads with more private memory, but its peak is brief, while
+`gpu_validation_tests` holds four validated clients (validation layer, `--battle`, `--skirmish`, `--lab`)
+together.
+
+**Decision.**
+
+- **CI runs `cargo gate full`** in place of `cargo test --workspace --locked`. The `full` tier selects every test
+  target `cargo metadata` lists, independent of the catalog's path rules, so §9.3's guarantee (a catalog bug
+  cannot shrink what CI runs) holds; the catalog now also sets each executable's thread cap there. The tier adds
+  doc tests (as before), the golden replays in release and on `wasm32-wasip1`, and the `wasm32-unknown-unknown`
+  check, so the job installs both targets and wasmtime. A fresh runner has no stamps, so nothing is reused. The
+  rejected alternative, a global `RUST_TEST_THREADS=2`, leaves `gpu_validation_tests` at 12 to 13 GiB of RSS on a
+  16 GB runner and slows every binary that needs no cap.
+- **Charter §4.3**: the **Full gate** list's third command is `cargo gate full`, described as every test
+  executable and doc test with its thread cap, and the golden replays. C16 needs no code change: it requires
+  each listed command in `ci.yml`, and `cargo gate full` is there.
+- **`client/gpu_validation_tests` gets `test_threads: Some(1)`.** On radv the GPU lock serializes its children
+  anyway, so the cap costs little on the VM.
+- **The job reports memory**: a step prints `free -g`, the CPU count and the cgroup limit before the tests, and a
+  sampler prints the available memory and the largest process every 30 s into the test step's log, so the next
+  lost runner shows how close it came. A red run uploads `~/scratch/logs/gate/` (each target's log) as the
+  artifact `gate-logs`; the job summary gets the gate's result table in place of `cargo gate timings --from-log`.
+- **`timeout-minutes` 60 → 150.** At 4 threads the job was on course for about 67 min on 2026-11-09 (38 min to
+  `gpu_validation_tests`, then about 25 min more by the 2026-11-05 run's figures scaled to today's). The caps
+  roughly double the capped binaries' times (Amendment 4's 2-to-4-thread ratios applied to CI's 4-thread times:
+  about +26 min), and the replays add about 4 min: about 100 min.
