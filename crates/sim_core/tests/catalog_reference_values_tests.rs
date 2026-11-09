@@ -3,7 +3,9 @@
 //!
 //! # Responsibility
 //! Holds the `StarCraft` II 5.0.14 values of every non-time field the audit corrected, one table
-//! per field kind, and checks the shipped catalog against them through its public API.
+//! per field kind, and checks the shipped catalog against them through its public API. Later
+//! packages add their sourced fields here too: arcs, mounts and turret idle (WP10) and the
+//! random firing delay (WP11, B-3).
 //!
 //! # How it fits
 //! The audit (evidence `2026-11-05-sc2-deviation-fixes` §10) reads `SC2Mapster` `SC2GameData` at
@@ -2425,4 +2427,37 @@ fn b30_turret_idle_follows_starcraft() -> TestResult {
     }
     assert_eq!(checked, SC2_TURRET_IDLE.len(), "every row has its turret");
     Ok(())
+}
+
+/// The random firing delay of every legacy weapon, `(RandomDelayMin, RandomDelayMax)` in ticks:
+/// −0.0625 and 0.125 Normal s (`core` WeaponData:35–36, the `CWeaponLegacy` default) × 25 ÷ 1.4.
+/// The 5.0.14 weapons that override it (`liberty` WeaponData:76–77 `PointDefenseLaser`, :285 and
+/// :297 the Battlecruiser's batteries, :336–337 `D8Charge`; `voidmulti` WeaponData:22–40,
+/// :68–69, :151–152, :165–166, :281–282: the Battlecruiser, Mothership Core, Oracle and
+/// `BypassArmorDroneWeapon`) belong to no shipped analogue, so every shipped weapon has it (B-3).
+const SC2_RANDOM_DELAY_TICKS: (f32, f32) = (-1.1161, 2.2321);
+
+#[test]
+fn b3_every_weapon_has_the_legacy_random_delay() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut checked = 0;
+    for archetype in catalogs.units.archetypes() {
+        let modes = archetype
+            .modes
+            .iter()
+            .filter_map(|mode| mode.ground_weapon_override.as_ref()?.as_ref());
+        let blocks = weapon_blocks(archetype).into_iter().filter_map(|(_, w)| w);
+        for weapon in blocks.chain(modes) {
+            let got = (f(weapon.random_delay_min), f(weapon.random_delay_max));
+            let want = SC2_RANDOM_DELAY_TICKS;
+            assert!(
+                (got.0 - want.0).abs() < 0.001 && (got.1 - want.1).abs() < 0.001,
+                "{} {}: random delay {got:?} ticks, StarCraft II {want:?} (core WeaponData:35-36)",
+                archetype.slug,
+                weapon.name
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 50, "every weapon is checked: {checked}");
 }

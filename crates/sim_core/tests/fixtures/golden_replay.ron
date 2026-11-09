@@ -173,6 +173,11 @@
 // unit's carried delay are encoded, so every checkpoint changed. No behaviour did: with the fields
 // left out of the encoding at schema 18, every checkpoint stays as recorded for the B-30 data
 // (every shipped weapon authors no delay yet).
+// Re-recorded for WP11 (B-3 data): every weapon adds StarCraft II's random delay of -0.0625 to
+// 0.125 Normal s (-1.1161 to 2.2321 ticks, core WeaponData:35-36) to each attack, drawn from the
+// world's seeded generator. The first checkpoint whose ticks hold a release changes (here and in
+// the other fixture), and every later one; with the delays at (0.0, 0.0) both fixtures reproduce
+// as recorded for schema 19.
 (
     checksum_schema: 19,
     seed: 0x5EED_0F_5CAFF1E,
@@ -203,22 +208,22 @@
         0xb3429cdbb2720e58,
         0xc3d4924440faa981,
         0x45b00d5d1b83935a,
-        0x3a2d259a04c5ca98,
-        0x24d5a6b6bda63114,
-        0x8fed759aa0370324,
-        0x8ebb80bbb1366891,
-        0x255769d3ace8fba4,
-        0x6c63242f1afcfa67,
-        0xf4d58ba7a7edbd21,
-        0x6b75dfa5a1965bf5,
-        0xdbd3de20fdc6d2a7,
-        0x20c5b627dd59a3e5,
-        0xe390bfd83f0a0640,
-        0xce4294bbcc1799e5,
-        0xf2bc91e147d0ee86,
-        0xc19121adcb5cde06,
-        0x3c30da11e9cc71b2,
-        0xef139057f4b8d84c,
-        0x4fbaeb06407badc8,
+        0x40d4858f35b74a90,
+        0x1839273807ca1f5c,
+        0x9f64d95673728433,
+        0x6f3043c6b4c633ac,
+        0xf3472cf76d774e68,
+        0x25dc0a8abc48d803,
+        0xd2b8bc95cd3dbaa5,
+        0xef5f5b809d0096fe,
+        0x97eccbe9ae02d3d3,
+        0x182ed4886d0b3b75,
+        0x76ba2fca57fde0cf,
+        0x34b2b037bcad9f47,
+        0xffbc8a62da591b86,
+        0x412991e3a96938dc,
+        0x622b7bfc4930f8ef,
+        0x23daaf6584b848de,
+        0xec7298fe68583c9f,
     ],
 )

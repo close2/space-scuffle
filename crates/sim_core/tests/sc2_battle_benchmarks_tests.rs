@@ -58,6 +58,8 @@ fn create_test_world() -> SimWorld {
 #[test]
 fn test_1v1_zealot_vs_marine_swing_cadence_and_three_hit_kill() {
     let mut world = create_test_world();
+    // The test pins the period; the random firing delay (B-3) would spread it.
+    sim_fixtures::without_random_delays(&mut world.catalog);
     let player_blue = PlayerId(0);
     let player_red = PlayerId(1);
 

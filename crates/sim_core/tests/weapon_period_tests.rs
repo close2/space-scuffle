@@ -109,6 +109,8 @@ fn battle(
 ) -> Result<(SimWorld, EntityId, EntityId, u16), Box<dyn std::error::Error>> {
     let map = GameMap::new(16, 16, MapCell::default_ground(CliffLevel(0)))?;
     let mut world = sim_fixtures::world(map, 123);
+    // These tests pin the modified period; the random firing delay (B-3) would add to it.
+    sim_fixtures::without_random_delays(&mut world.catalog);
     let unit_type = world
         .catalog
         .archetypes()

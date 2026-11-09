@@ -78,6 +78,34 @@ pub fn shipped_catalogs() -> RuntimeCatalogs {
     RuntimeCatalogs { units, upgrades }
 }
 
+/// Removes the random firing delay (plan `2026-11-05-sc2-deviation-fixes` WP11, B-3) from every
+/// weapon of `catalog`, mode overrides included, for tests that pin a weapon's exact period,
+/// which the delay spreads by a few ticks a shot.
+///
+/// # Panics
+/// Never: every id it looks up comes from the catalog's own archetypes.
+pub fn without_random_delays(catalog: &mut UnitCatalog) {
+    let ids: Vec<_> = catalog.archetypes().map(|a| a.unit_type_id).collect();
+    for id in ids {
+        let arch = catalog
+            .get_mut(id)
+            .expect("invariant: the id was read from this catalog");
+        let modes = arch
+            .modes
+            .iter_mut()
+            .filter_map(|mode| mode.ground_weapon_override.as_mut()?.as_mut());
+        let blocks = [
+            &mut arch.weapon,
+            &mut arch.ground_weapon,
+            &mut arch.air_weapon,
+        ];
+        for weapon in blocks.into_iter().flatten().chain(modes) {
+            weapon.random_delay_min = sim_types::SimScalar::ZERO;
+            weapon.random_delay_max = sim_types::SimScalar::ZERO;
+        }
+    }
+}
+
 /// A world on `map` with the shipped catalogs and the deterministic RNG `seed`.
 ///
 /// Replaces the former `SimWorld::new`; the world is identical to the one that built.
