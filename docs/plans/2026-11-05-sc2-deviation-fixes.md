@@ -793,7 +793,7 @@ requires.
 | B-40 | Turn before move | Fixed | turn-before-move WP1 `6d7a9d5`, WP3 `b7d9f50` |
 | B-41 | No Immortal Barrier | Fixed, narrowed | WP13a ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §14; Amendment 19); open only the engine order within a hit ([Q0068](../questions/open/0068-barrier-damage-order.md)) |
 | B-42 | The Lurker attacks unburrowed | Fixed, narrowed | WP13b ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §15; Amendment 20); open only whether the weapon and the cloak arrive before the morph ends ([Q0069](../questions/open/0069-lurker-burrow-sections.md)) |
-| B-43 | Charge without the dash | (i) | WP13c |
+| B-43 | Charge without the dash | Fixed, narrowed | WP13c ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §16; Amendment 21); open only how the engine measures the trigger window, when the autocast looks and whether a new order ends a dash ([Q0071](../questions/open/0071-charge-trigger-details.md)) |
 | B-44 | Concussive Shells do nothing | (i) | WP13d |
 | B-45 | No firing while moving | (i) | WP13e |
 | B-46 | The Viking cannot land | (i) | WP18 |
@@ -842,12 +842,13 @@ requires.
 | B-91 | Whether an attack-rate buff scales the random firing delay, and whether the first attack draws one; ours does neither | (i) | [Q0066](../questions/open/0066-random-delay-scaling.md). Found in WP11 (Amendment 17) |
 | B-92 | `LateralAcceleration` (how sharply a moving unit can curve) is not modelled; our units turn their velocity freely within the hull rate | (i) | WP16. Found in WP12 (Amendment 18) |
 | B-93 | A burrowed unit still blocks ground units; the game's burrowed Lurker collides only with `Burrow` (`liberty` UnitData:775) | (i) | WP16, with B-49. Found in WP13b (Amendment 20) |
+| B-94 | Charge's autocast cannot be switched off; the game's is a player toggle, on by default | (i) | WP18. Found in WP13c (Amendment 21) |
 | B-99 | A body parked on a route corner made the unit rewrite its route to a point stepped outward, and a corner was passed only once the next leg held no body; columns walked V-shaped detours at shared corners. StarCraft II leaves bodies to steering (sc2-pathfinding plan §2, S3) | Fixed | Plan [`2026-11-09-sc2-pathfinding`](2026-11-09-sc2-pathfinding.md) WP2+WP3 |
 | B-100 | A unit facing a body parked on its corner had no way past it but the rewrite of B-99; it now steers past the body on the outside of the turn | Fixed | Plan `2026-11-09-sc2-pathfinding` WP2+WP3 (Amendment 1 there) |
 | B-101 | Corner waypoints are offset by the unit's radius tier (0.375 for every radius up to 0.5), not by its own radius; the game paths each unit by its own size | Fixed | Plan `2026-11-09-sc2-pathfinding` WP4 |
 | B-102 | Routes come from a grid A* corridor with three radius tiers, not StarCraft II's triangulated navigation mesh with a per-unit radius | (i) | Plan `2026-11-09-sc2-pathfinding` Part B (WP5 to WP10) |
 
-**Counts.** 82 IDs: (i) 71, two of them narrowed (B-52, B-67) and two carried by other plans (B-12; B-102 by the
+**Counts.** 83 IDs: (i) 72, two of them narrowed (B-52, B-67) and two carried by other plans (B-12; B-102 by the
 sc2-pathfinding plan); (ii) 3 (B-37, B-53, B-58); (iii) none; fixed 8 (B-31 and B-40 by the turn-before-move plan;
 B-71, B-73 and B-75 by WP0; B-99, B-100 and B-101 by the sc2-pathfinding plan).
 
@@ -1213,4 +1214,24 @@ Evidence: [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.
   Lurker cannot burrow and so cannot attack ([Q0070](../questions/open/0070-lurker-without-burrow-button.md),
   default keep the fix; a client command follows).
 - Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §15. No commit was
+## Amendment 21 (WP13c, 2026-11-09): Charge dashes
+
+- **Research:** Charge is an autocast augment of the `attack` command, on by default, not while holding position,
+  cooldown 10 Normal s (`liberty` AbilData:3825-3834); its effect applies `Charging` when the attack target is farther
+  than 0.6 and nearer than 4 (EffectData:2062-2068, ValidatorData:183-190, :1697-1704); `Charging` multiplies speed
+  by 2.2 for 3.5 Normal s and ends when the weapon fires (BehaviorData:967-975, ValidatorData:3007-3011). No later
+  layer changes these; `voidmulti`'s impact damage needs Sundering Impact, which nobody researches at 5.0.14. In
+  ticks: 63 (62.5, halves up) and 179.
+- **B-43 fixed, narrowed:** latent rule `b36ec13` (capability `ArchetypeCapabilities::attack_dash`, a phase after
+  target acquisition, the dash as speed buff 3, ended by a swing; per-unit `Entity::attack_dash_cooldown`, checksum
+  schema 21; research gates it through `UnlockAbility` slug `attack_dash`), data `1ac40ac` (`psi_grey`: 2.2, 63, 179,
+  0.6, 4; the `charge` research unlocks it). Matrix and battle 33 (41 / 10 / 17) bit-identical at both commits;
+  goldens re-recorded only for the schema. Open: how the engine measures 0.6 and 4, when the autocast looks, and
+  whether a new order ends a dash ([Q0071](../questions/open/0071-charge-trigger-details.md), default the rule as
+  landed).
+- **The §3 row and WP13 name battle 23b, which does not research Charge;** no matrix battle does, so the data moved
+  nothing the matrix measures. A scratch probe with the Zealots researching Charge (evidence §16.3) shows the dash:
+  battle 33 goes from 67 to 68 Zealot wins of 68, with 5.78 Zealots left instead of 3.62.
+- **Found:** B-94, Charge's autocast cannot be switched off (WP18).
+- Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §16. No commit was
   held.

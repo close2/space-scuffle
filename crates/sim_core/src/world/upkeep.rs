@@ -86,6 +86,9 @@ fn upkeep_entity(entity: &mut Entity, catalog: &UnitCatalog) {
     // The barrier's window and cooldown (B-41).
     entity.barrier.tick();
 
+    // The attack dash's cooldown (B-43).
+    entity.attack_dash_cooldown = entity.attack_dash_cooldown.saturating_sub(1);
+
     // Buff timers
     for buff in &mut entity.active_buffs {
         buff.remaining_ticks = buff.remaining_ticks.saturating_sub(1);

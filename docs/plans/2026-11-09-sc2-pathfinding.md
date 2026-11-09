@@ -747,11 +747,12 @@ of the friendly-blocking plan's acceptance (its Amendment 1). D-12's other stop 
   merely within the handoff distance. Otherwise a unit beside the body heads straight for the next point and is
   pushed into the gap between the body and the obstacle the corner turns around, where it sticks.
 
-**Checksum schema 21.** The memoryless side rule of D-9 A3 was tried and fails: once the unit stands beside the body,
+**Checksum schema 22.** The memoryless side rule of D-9 A3 was tried and fails: once the unit stands beside the body,
 the line to the next point no longer cuts the obstacle and the rule picks the inside. The sense in which the unit
 rounds the body is therefore held in `MovementMemory::corner_round` (`i8`), chosen at the first aim and cleared when
-the corner is passed or the route replaced. Schema 20 → 21; both goldens and the sandbox checksum are re-recorded
-with their traced causes.
+the corner is passed or the route replaced. Recorded first as schema 20 → 21; on the merge with WP13c of the
+deviation-fix plan, which took 21 for `attack_dash_cooldown`, it became 21 → 22. Both goldens and the sandbox
+checksum are re-recorded with their traced causes.
 
 **One commit (R-1).** WP2 and WP3 landed as one commit: with A1 and A2 alone, M-5
 (`route_continues_past_a_blocker_on_its_corner_waypoint`) stalls 12.5 from its goal.

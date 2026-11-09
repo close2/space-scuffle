@@ -19,15 +19,16 @@
 //!    slug is unknown. The catalog keeps that [`FactionCatalog`] for presentation lookups.
 
 use crate::error::{SimCoreError, SimResult};
-use crate::upgrades::{UpgradeCatalog, OVERCLOCK_ABILITY_SLUG};
+use crate::upgrades::{UpgradeCatalog, ATTACK_DASH_ABILITY_SLUG, OVERCLOCK_ABILITY_SLUG};
 use serde::{Deserialize, Serialize};
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AnimState, ArchetypeCapabilities, ArmorClassId,
-    Attribute, AttributeBonuses, AttributeFlags, BarrierSpec, FactionId, HarvesterSpec, MoverType,
-    OverclockSpec, ProjectileTargetLossBehavior, ShapeKind, SilhouetteClass, SimAngle, SimScalar,
-    SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, StructureStrike, TurretIdle,
-    UnitModeSpec, UnitTypeId, UpgradeEffect, WeaponVisualKind,
+    AttackDashSpec, Attribute, AttributeBonuses, AttributeFlags, BarrierSpec, FactionId,
+    HarvesterSpec, MoverType, OverclockSpec, ProjectileTargetLossBehavior, ShapeKind,
+    SilhouetteClass, SimAngle, SimScalar, SplashLine, SplashLineAxis, SplashLineOrigin,
+    SplashShape, StructureStrike, TurretIdle, UnitModeSpec, UnitTypeId, UpgradeEffect,
+    WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod factions;
@@ -672,6 +673,8 @@ impl UnitCatalog {
                     )
                 })?;
                 let exists = (ability_slug == OVERCLOCK_ABILITY_SLUG && target.overclock.is_some())
+                    || (ability_slug == ATTACK_DASH_ABILITY_SLUG
+                        && target.capabilities.attack_dash.is_some())
                     || target.abilities.iter().any(|a| a.name == *ability_slug);
                 if exists {
                     Ok(())
@@ -780,6 +783,21 @@ struct BarrierSpecDef {
     cooldown_ticks: u16,
 }
 
+/// An authored attack dash (`StarCraft` II's Charge); see [`AttackDashSpec`].
+#[derive(Debug, Deserialize)]
+struct AttackDashSpecDef {
+    /// Factor on movement speed while dashing.
+    speed_multiplier: f32,
+    /// Ticks a dash lasts at most.
+    duration_ticks: u16,
+    /// Ticks from a dash's start until the next may start.
+    cooldown_ticks: u16,
+    /// Edge-to-edge gap to the target a dash must exceed, world units.
+    min_gap: f32,
+    /// Centre distance to the target a dash must stay below, world units.
+    max_distance: f32,
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct CapabilitiesDef {
     #[serde(default)]
@@ -788,6 +806,8 @@ struct CapabilitiesDef {
     harvester: Option<HarvesterSpecDef>,
     #[serde(default)]
     barrier: Option<BarrierSpecDef>,
+    #[serde(default)]
+    attack_dash: Option<AttackDashSpecDef>,
     #[serde(default)]
     is_resource_dropoff: bool,
     #[serde(default)]
@@ -1271,6 +1291,13 @@ impl UnitArchetypeDef {
             duration_ticks: b.duration_ticks,
             cooldown_ticks: b.cooldown_ticks,
         });
+        let attack_dash = authored.attack_dash.map(|d| AttackDashSpec {
+            speed_multiplier: SimScalar::from_f32_lossy(d.speed_multiplier),
+            duration_ticks: d.duration_ticks,
+            cooldown_ticks: d.cooldown_ticks,
+            min_gap: SimScalar::from_f32_lossy(d.min_gap),
+            max_distance: SimScalar::from_f32_lossy(d.max_distance),
+        });
         let abilities = if authored.abilities.is_empty() {
             std::mem::take(&mut self.abilities)
         } else {
@@ -1289,6 +1316,7 @@ impl UnitArchetypeDef {
             overclock,
             harvester,
             barrier,
+            attack_dash,
             is_resource_dropoff: authored.is_resource_dropoff,
             is_gas_extractor: false,
             can_construct: authored.can_construct,
@@ -1517,6 +1545,7 @@ impl StructureArchetypeDef {
             overclock: None,
             harvester: None,
             barrier: None,
+            attack_dash: None,
             is_resource_dropoff: self.is_resource_dropoff,
             is_gas_extractor: self.is_gas_extractor,
             can_construct: false,

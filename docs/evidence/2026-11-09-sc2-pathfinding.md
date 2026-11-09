@@ -96,7 +96,7 @@ Experiments not kept:
   1,464.
 - Handoff only beyond the corner (no "near" alternative): ramp E 1.570 / 1.593, 189° / 230°.
 
-Matrix (1,000 runs) and battle 33 (68 seeds): bit-identical to WP1. Goldens: checksum schema 21, re-recorded; first
+Matrix (1,000 runs) and battle 33 (68 seeds): bit-identical to WP1. Goldens: checksum schema 22 (21 before the merge with WP13c), re-recorded; first
 behaviour change on tick 155 of `golden_replay` and tick 120 of `golden_replay_orders` (fixture headers).
 
 ## WP4: corner offsets use the unit's own radius (B-101)
@@ -119,4 +119,12 @@ Outcome: player 0 wins at tick 1,355. Every mean ratio is within D-12's +0.05 of
 Matrix (1,000 runs) and battle 33 (68 seeds): bit-identical to WP2+WP3. Goldens re-recorded: `golden_replay` from
 checkpoint 1 and `golden_replay_orders` from checkpoint 3, both because "blue_armor" (radius 0.5) turns its ramp
 corner 0.55 from the corner instead of 0.425 (fixture headers); with the tier offset restored both reproduce as
-recorded for WP2+WP3. Checksum schema unchanged (21).
+recorded for WP2+WP3. Checksum schema unchanged by WP4.
+
+## Merge with main `0e1a836` (WP13c, schema 21 for `attack_dash_cooldown`)
+
+`corner_round` lands as schema 22, both fields hashed. Both goldens and the sandbox checksum are re-recorded on the
+merged tree; the behaviour changes are those of WP2+WP3 and WP4 above on top of WP13c, which changed no behaviour in
+the replays. Matrix (1,000 runs) and battle 33 (68 seeds) on the merged tree are bit-identical to a build of main's
+simulation (`0e1a836`). The showcase numbers equal those of WP4 (player 0 wins at tick 1,355). Goldens verified in
+debug, release and wasm32-wasip1.

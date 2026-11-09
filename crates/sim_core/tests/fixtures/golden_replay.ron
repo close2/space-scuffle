@@ -178,8 +178,11 @@
 // world's seeded generator. The first checkpoint whose ticks hold a release changes (here and in
 // the other fixture), and every later one; with the delays at (0.0, 0.0) both fixtures reproduce
 // as recorded for schema 19.
-// Re-recorded for plan 2026-11-09-sc2-pathfinding WP2+WP3 (B-99, B-100, checksum schema 20 ->
-// 21): each unit's `corner_round` (the sense in which it rounds a body parked on its corner) is
+// Re-recorded for WP13c (B-43, checksum schema 20 -> 21): each unit's attack dash cooldown is
+// encoded, so every checkpoint changed. No behaviour did: with the field left out of the encoding
+// at schema 20, every checkpoint stays as recorded for WP13a (no shipped archetype carries a dash).
+// Re-recorded for plan 2026-11-09-sc2-pathfinding WP2+WP3 (B-99, B-100, checksum schema 21 ->
+// 22): each unit's `corner_round` (the sense in which it rounds a body parked on its corner) is
 // hashed, so every checkpoint changed. Behaviour first differs on tick 155 (checkpoint 4, ticks
 // 151 to 200): "blue_infantry" marine 15 no longer holds (31.11, 29.44), the point the removed
 // corner rewrite had put in place of the ramp corner (30.30, 29.70) because marines stood on it;
@@ -191,8 +194,12 @@
 // the corner, in place of (30.30, 29.70), from its first route on tick 6, so every checkpoint
 // changed from checkpoint 1 (ticks 1 to 50). With the tier offset restored, every checkpoint
 // equals that of WP2+WP3.
+// These two entries were recorded before WP13c (schema 21 for the dash cooldown) was merged
+// with them; the checksums below are those of the merged tree at schema 22, so every
+// checkpoint changed. Against WP13c, behaviour first differs on tick 6, checkpoint 1 (ticks 1 to 50),
+// where the WP4 corner of "blue_armor" first applies; the WP2+WP3 changes follow as above.
 (
-    checksum_schema: 21,
+    checksum_schema: 22,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -218,25 +225,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xfc8e298aadfacee9,
-        0x05fa2623d6bf0bf9,
-        0x4e172757485c9f7e,
-        0xc3db041af30e62f0,
-        0x715837f949acfab3,
-        0x7cba9224ad1a727a,
-        0x804f9b937a4dc62f,
-        0x722a56ebe248e168,
-        0xa95f4b351e21260a,
-        0x11cbfbe877c93fe2,
-        0x073d66a743d7618c,
-        0x2866c8b0ac5f9de4,
-        0x3fd2c8928dafc476,
-        0xe0800d1c592c2124,
-        0x2fa4476ace0599c7,
-        0xfade0f9021472a78,
-        0xf58c9441a0b548fb,
-        0x0c088039394ccaa3,
-        0x1cdfcb97deb76f1a,
-        0x95c0ad913cefaaba,
+        0x8d6f121b056fd27a,
+        0xec8d9e54185d22dc,
+        0xafb8ea36e2b97867,
+        0x6e3e6bfff4784df5,
+        0xd5ad9c0748e22bc9,
+        0xbeed8f73b92d5731,
+        0xed25a0dd902590fa,
+        0xd200f078ad92d821,
+        0xa9a76cb1fb798617,
+        0x4a8e6e6463b86e5b,
+        0xd14ac667b5d8d2e1,
+        0x8c745cba4bacea94,
+        0xa1b68d6e87c57c4b,
+        0xd496ecc264986a84,
+        0xbf0df5f91db5c0b8,
+        0xe727c44b952c3bb5,
+        0xfd3faea9e6e2b067,
+        0xf2e2738a23c34771,
+        0xdc6f1591fa51bae9,
+        0x5680b111e7644d24,
     ],
 )

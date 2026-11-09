@@ -321,6 +321,37 @@ impl UnitArchetypeDef {
         Ok(())
     }
 
+    /// An attack dash speeds its unit up, lasts at least a tick, and reaches some distance;
+    /// its minimum gap may be 0 (every target beyond contact).
+    fn validate_attack_dash(&self) -> SimResult<()> {
+        let Some(dash) = &self.capabilities.attack_dash else {
+            return Ok(());
+        };
+        positive(
+            &self.slug,
+            "capabilities.attack_dash.speed_multiplier",
+            dash.speed_multiplier,
+        )?;
+        positive(
+            &self.slug,
+            "capabilities.attack_dash.max_distance",
+            dash.max_distance,
+        )?;
+        nonnegative(
+            &self.slug,
+            "capabilities.attack_dash.min_gap",
+            f64::from(dash.min_gap),
+        )?;
+        if dash.duration_ticks == 0 {
+            return Err(invalid(
+                &self.slug,
+                "capabilities.attack_dash.duration_ticks",
+                "must be positive",
+            ));
+        }
+        Ok(())
+    }
+
     /// Checks the hull rate, the stationary hull rate when authored, and `turn_before_move`
     /// against both. Runs after `max_speed` is checked nonnegative.
     fn validate_hull_turning(&self) -> SimResult<()> {
@@ -443,6 +474,7 @@ impl UnitArchetypeDef {
         self.validate_weapons()?;
         self.validate_harvester()?;
         self.validate_barrier()?;
+        self.validate_attack_dash()?;
         if let Some(overclock) = &self.capabilities.overclock {
             for (field, value) in [
                 ("capabilities.overclock.hp_cost", overclock.hp_cost),
@@ -1465,6 +1497,63 @@ mod tests {
             let result = unit.validate();
             match rejected {
                 None => assert!(result.is_ok(), "{absorb_limit}: {result:?}"),
+                Some(field) => assert_eq!(rejected_field(&result), Some(field)),
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn b43_an_attack_dash_speeds_up_for_at_least_a_tick_and_reaches_somewhere(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::{AttackDashSpecDef, CatalogFile};
+        let units = include_str!("../../../../assets/catalog/units.ron");
+        let cases = [
+            (2.2_f32, 63, 0.6_f32, 4.0_f32, None),
+            (2.2, 63, 0.0, 4.0, None),
+            (
+                0.0,
+                63,
+                0.6,
+                4.0,
+                Some("capabilities.attack_dash.speed_multiplier"),
+            ),
+            (
+                f32::NAN,
+                63,
+                0.6,
+                4.0,
+                Some("capabilities.attack_dash.speed_multiplier"),
+            ),
+            (
+                2.2,
+                0,
+                0.6,
+                4.0,
+                Some("capabilities.attack_dash.duration_ticks"),
+            ),
+            (2.2, 63, -0.1, 4.0, Some("capabilities.attack_dash.min_gap")),
+            (
+                2.2,
+                63,
+                0.6,
+                0.0,
+                Some("capabilities.attack_dash.max_distance"),
+            ),
+        ];
+        for (speed_multiplier, duration_ticks, min_gap, max_distance, rejected) in cases {
+            let mut file: CatalogFile = ron::from_str(units)?;
+            let unit = file.units.first_mut().ok_or("real catalog has no unit")?;
+            unit.capabilities.attack_dash = Some(AttackDashSpecDef {
+                speed_multiplier,
+                duration_ticks,
+                cooldown_ticks: 179,
+                min_gap,
+                max_distance,
+            });
+            let result = unit.validate();
+            match rejected {
+                None => assert!(result.is_ok(), "{speed_multiplier}: {result:?}"),
                 Some(field) => assert_eq!(rejected_field(&result), Some(field)),
             }
         }
