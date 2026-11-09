@@ -1093,3 +1093,43 @@ fn a_transient_ability_leaves_the_orders() {
         "a transient ability keeps the walk"
     );
 }
+
+/// D-6b (plan `2026-11-09-client-mode-commands` WP1c): a switch queued behind an anchored
+/// unit's focus order runs once the target is gone. Before, `walking_goal` stopped every
+/// anchored unit before it read the queue, so the cast stayed at the front for ever.
+#[test]
+fn a_queued_switch_behind_a_focus_order_runs_on_an_anchored_unit() {
+    let (mut world, tank) = one_unit("railgun_crawler", 9);
+    let enemy_type = world.catalog.id_by_slug("pulse_bot").expect("shipped unit");
+    let enemy = world
+        .spawn_unit(enemy_type, PlayerId(1), row_point(20))
+        .expect("spawn enemy");
+    world.entities.get_mut(&enemy).unwrap().hp = SimScalar::from_num(1);
+    world.entities.get_mut(&enemy).unwrap().max_hp = SimScalar::from_num(1);
+    assert!(world.execute_ability(tank, 0, None, None));
+    let enter = u32::from(world.entities[&tank].channeling_remaining_ticks);
+    // Keep the target away while the tank sieges, then let the focus order kill it.
+    world.entities.get_mut(&enemy).unwrap().position = row_point(36);
+    run(&mut world, enter);
+    assert!(world.entities[&tank].is_sieged);
+    world.entities.get_mut(&enemy).unwrap().position = row_point(20);
+    command(&mut world, &[tank], UnitOrder::attack(enemy), false);
+    command(&mut world, &[tank], cast_first(), true);
+    assert!(
+        matches!(
+            world.entities[&tank].order_queue.back(),
+            Some(UnitOrder::CastAbility { .. })
+        ),
+        "the switch waits behind the focus order"
+    );
+    run(&mut world, 200);
+    assert!(
+        world.entities.get(&enemy).is_none_or(|e| !e.is_alive()),
+        "the focus target died"
+    );
+    let unit = &world.entities[&tank];
+    assert!(unit.order_queue.is_empty(), "the queued switch ran");
+    assert_eq!(unit.active_mode, None, "the tank left Siege Mode");
+    assert!(!unit.is_immobile, "and walks again");
+    assert_eq!(world.diagnostics(), []);
+}
