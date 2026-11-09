@@ -154,8 +154,6 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | ID | Deviation | Package |
 |---|---|---|
 | B-2 | Whether an order between the strikes of a multi-strike attack cancels the later strikes (not yet sourced, [Q0058](docs/questions/open/0058-channeled-burst-interruption.md)); the spacing itself is fixed | Q0058 |
-| B-3 | No random firing delay | WP11 |
-| B-4 | Siege Mode has one transformation time and no random part | WP11 |
 | B-5 | Whether damage point and backswing hold an automatically attacking unit (not yet sourced) | WP16 |
 | B-6 | Release range slop 0.5 for every weapon | WP9 |
 | B-13 | Call-for-help radius, flee distance, leash and abandoned-target time are unsourced | WP16 |
@@ -210,6 +208,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-88 | Structure attributes are derived in code (Psionic if shielded, else Mechanical); the game gives Protoss structures Armored and Structure, Zerg structures Armored, Biological and Structure | WP9 follow-up |
 | B-89 | Whether the Liberator analogue's anti-air weapon turns on the `Liberator` turret: the game's unit lists a second weapon entry with that turret and no weapon (`void` UnitData:3317-3318); ours is a hull weapon | WP10 follow-up (research) |
 | B-90 | A turreted weapon's wind-up does not hold its unit, and a turret works against the unit's `current_target` under any order; the game lets only weapons with `AllowedMovement` fire while moving. It reaches the Siege Tank analogue and, since WP10 (B-28), the Hellion, Immortal, Colossus, Lurker and Phoenix analogues | WP13e |
+| B-91 | Whether an attack-rate buff (Stimpack) scales the random firing delay, and whether the first attack of an engagement draws one; ours does neither (not yet sourced, [Q0066](docs/questions/open/0066-random-delay-scaling.md)) | Q0066 |
 
 ---
 

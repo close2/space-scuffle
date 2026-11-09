@@ -15,6 +15,7 @@
 
 use crate::catalog::{AcquireLevel, SplashSpec, UnitArchetype, WeaponSpec};
 use crate::entity::{Entity, WeaponPhase};
+use rand::Rng;
 use sim_types::{
     AttackOrigin, AttributeFlags, EntityId, MoverType, PlayerUpgradeState, SimAngle, SimScalar,
     SimVec2, StructureStrike, TurretIdle, UnitOrder,
@@ -523,6 +524,39 @@ fn release_swing(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget)
         WeaponPhase::Cooldown
     };
     true
+}
+
+/// Adds the random firing delay of `weapon` to the cooldown its release just charged.
+///
+/// `StarCraft` II draws a delay from `RandomDelayMin..=RandomDelayMax` before each attack
+/// (`core` WeaponData:35–36; the `SC2Mapster` reference: "a random value between the maximum and
+/// minimum is selected and used as a delay before firing the weapon"), so volleys drift apart and
+/// the mean cycle is `Period` plus the mean delay (plan `2026-11-05-sc2-deviation-fixes` WP11,
+/// B-3). The draw is uniform over the fixed-point values of the range, from `rng`, which must be
+/// the world's seeded generator; the combat phase calls this in entity order, once per release,
+/// so the draws are deterministic. Equal bounds add a fixed delay without a draw, so a weapon
+/// without a delay leaves the generator untouched.
+///
+/// The delay is added to [`Entity::weapon_delay_carry`] and its whole ticks move into the
+/// cooldown, so the cycles are the exact sums quantised to ticks. Catalog validation keeps
+/// `random_delay_min` above minus the charged cooldown; a cooldown is never taken below 0.
+/// Must be called only on the step a shot discharges ([`step_entity_weapon`] returned true).
+pub fn charge_random_delay(entity: &mut Entity, weapon: &WeaponSpec, rng: &mut impl Rng) {
+    let (min, max) = (weapon.random_delay_min, weapon.random_delay_max);
+    if min == SimScalar::ZERO && max == SimScalar::ZERO {
+        return;
+    }
+    let delay = if min == max {
+        min
+    } else {
+        SimScalar::from_raw(rng.gen_range(min.raw()..=max.raw()))
+    };
+    let carried = entity.weapon_delay_carry.saturating_add(delay);
+    // Q32.32: the whole ticks are the raw value shifted down by 32 (rounding towards −∞).
+    let whole = carried.raw() >> 32;
+    entity.weapon_delay_carry = carried.saturating_sub(SimScalar::from_raw(whole << 32));
+    let cooldown = i64::from(entity.weapon_cooldown_remaining).saturating_add(whole);
+    entity.weapon_cooldown_remaining = u16::try_from(cooldown.max(0)).unwrap_or(u16::MAX);
 }
 
 /// Starts a swing against `target`. Returns true when the shot discharges in this call.

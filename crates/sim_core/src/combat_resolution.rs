@@ -20,8 +20,8 @@
 use crate::catalog::UnitCatalog;
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
 use crate::combat::{
-    calculate_hit_damage_upgraded, calculate_splash_damage_upgraded, shares_combat_plane,
-    step_entity_weapon, DamageResolution, WeaponTarget,
+    calculate_hit_damage_upgraded, calculate_splash_damage_upgraded, charge_random_delay,
+    shares_combat_plane, step_entity_weapon, DamageResolution, WeaponTarget,
 };
 use crate::entity::{ActiveProjectile, Entity, PendingStrikes, WeaponPhase};
 use crate::weapon_timing::{resolve_attack_period, AttackRate, SimulationDiagnostic};
@@ -232,6 +232,7 @@ impl SimWorld {
     /// Advances each armed entity's weapon state machine, queueing the shots that discharge.
     fn advance_weapon_cycles(&mut self) {
         let combat = &mut self.combat;
+        let rng = &mut self.rng;
         let context = StrikeContext {
             catalog: &self.catalog,
             upgrades: &self.player_upgrades,
@@ -313,6 +314,7 @@ impl SimWorld {
             });
 
             if step_entity_weapon(entity, &weapon, target_info) {
+                charge_random_delay(entity, &weapon, rng);
                 if let Some(target) = target_info {
                     let strikes = Self::begin_strikes(entity, &weapon, target.id, target_mover);
                     combat.shots.push(PreparedShot {

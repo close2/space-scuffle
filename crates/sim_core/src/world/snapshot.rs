@@ -84,7 +84,8 @@ impl SimWorld {
     ///
     /// `Some` from the tick a swing's wind-up starts until the weapon is ready again: in
     /// `Windup` (`elapsed = damage point − remaining`), in `Backswing`, and in `Cooldown` while
-    /// the cooldown runs (`elapsed = period − cooldown left`, clamped below the period). `None`
+    /// the cooldown runs (`elapsed = period − cooldown left`, clamped below the period and not
+    /// below the damage point, where a random firing delay holds it). `None`
     /// in `Ready` and `RotatingToTarget`, and when the weapon or the attack rate cannot be
     /// resolved. The release charges `period − damage point` ticks of cooldown, so the two
     /// formulas meet at the release tick (`combat::release_swing`).
@@ -122,7 +123,11 @@ impl SimWorld {
             WeaponPhase::Windup {
                 remaining_ticks, ..
             } => damage_point_ticks.saturating_sub(remaining_ticks),
-            _ => period_ticks.saturating_sub(entity.weapon_cooldown_remaining),
+            // A random firing delay (B-3) can charge more than `period − damage point`; the
+            // swing then holds at its release rather than stepping back into the wind-up.
+            _ => period_ticks
+                .saturating_sub(entity.weapon_cooldown_remaining)
+                .max(damage_point_ticks),
         };
         Some(AttackSwing {
             elapsed_ticks: elapsed.min(period_ticks.saturating_sub(1)),
@@ -344,6 +349,41 @@ mod tests {
             swing(period - 1),
             "a backswing outlasting the cooldown stays below the period"
         );
+    }
+
+    #[test]
+    fn a_random_delay_holds_the_swing_at_its_release() {
+        // B-3: a release that draws a positive delay charges more than `period - damage point`;
+        // the published swing stays at the release instead of stepping back into the wind-up.
+        let (mut world, id, arch) = armed_unit();
+        let weapon = arch
+            .weapon_against(MoverType::Ground, None)
+            .expect("invariant: armed_unit() requires a ground weapon");
+        let (dp, period) = (weapon.damage_point_ticks, weapon.period_ticks);
+        let swing = |elapsed_ticks| {
+            Some(AttackSwing {
+                elapsed_ticks,
+                damage_point_ticks: dp,
+                period_ticks: period,
+            })
+        };
+        let backswing = WeaponPhase::Backswing {
+            target_id: EntityId(9_999),
+            remaining_ticks: 1,
+        };
+        for extra in 1..=2 {
+            assert_eq!(
+                swing_in(
+                    &mut world,
+                    id,
+                    &arch,
+                    backswing.clone(),
+                    period - dp + extra
+                ),
+                swing(dp),
+                "{extra} ticks of delay"
+            );
+        }
     }
 
     #[test]

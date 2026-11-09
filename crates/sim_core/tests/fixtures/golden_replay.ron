@@ -169,8 +169,17 @@
 // rate are encoded, so every checkpoint changed. No behaviour did: with the field left out of the
 // encoding at schema 17, every checkpoint stays as recorded for the B-29 data (every shipped
 // turret holds).
+// Re-recorded for WP11 (B-3, checksum schema 18 -> 19): each weapon's random delay range and each
+// unit's carried delay are encoded, so every checkpoint changed. No behaviour did: with the fields
+// left out of the encoding at schema 18, every checkpoint stays as recorded for the B-30 data
+// (every shipped weapon authors no delay yet).
+// Re-recorded for WP11 (B-3 data): every weapon adds StarCraft II's random delay of -0.0625 to
+// 0.125 Normal s (-1.1161 to 2.2321 ticks, core WeaponData:35-36) to each attack, drawn from the
+// world's seeded generator. The first checkpoint whose ticks hold a release changes (here and in
+// the other fixture), and every later one; with the delays at (0.0, 0.0) both fixtures reproduce
+// as recorded for schema 19.
 (
-    checksum_schema: 18,
+    checksum_schema: 19,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -196,25 +205,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x9f28410f25234177,
-        0x733a08a9bb376f74,
-        0x46ffb3309b682914,
-        0x51797f88ecdff683,
-        0x3f3ae624026aa20d,
-        0x6bd493367be5621c,
-        0xd4fd1940f64e49d7,
-        0x0035081d397dc6dd,
-        0x8cab35fe8de4fdb0,
-        0x130fb79c9615f7b5,
-        0xc0eed127984f6409,
-        0x2c65c9c72c396bd6,
-        0xee85b9252bdde5c4,
-        0x8b45ff7986b776d2,
-        0x559b55f13036edaf,
-        0xe1f2bf1c9b8a4e8b,
-        0x01209598f1108693,
-        0x99955cf7962da711,
-        0xabe8e74b66968c08,
-        0x43a79b9bafbdeecf,
+        0xb3429cdbb2720e58,
+        0xc3d4924440faa981,
+        0x45b00d5d1b83935a,
+        0x40d4858f35b74a90,
+        0x1839273807ca1f5c,
+        0x9f64d95673728433,
+        0x6f3043c6b4c633ac,
+        0xf3472cf76d774e68,
+        0x25dc0a8abc48d803,
+        0xd2b8bc95cd3dbaa5,
+        0xef5f5b809d0096fe,
+        0x97eccbe9ae02d3d3,
+        0x182ed4886d0b3b75,
+        0x76ba2fca57fde0cf,
+        0x34b2b037bcad9f47,
+        0xffbc8a62da591b86,
+        0x412991e3a96938dc,
+        0x622b7bfc4930f8ef,
+        0x23daaf6584b848de,
+        0xec7298fe68583c9f,
     ],
 )

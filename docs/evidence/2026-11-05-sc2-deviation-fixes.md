@@ -1162,3 +1162,112 @@ Each re-recording reproduces in debug, release, and `wasm32-wasip1` debug and re
   `current_target` under any order. Turreting the Hellion, Immortal, Colossus, Lurker and Phoenix gives them that
   behaviour, which the game ties to `AllowedMovement` instead. Recorded as **B-90** for WP13e, beside B-45; no matrix
   battle moved for it beyond the rows above.
+
+## 12. WP11: random delays (B-3, B-4, U-1, U-22)
+
+Sources: SC2GameData `5444e12f13`, chain `core → liberty → swarm → void → voidmulti`; the SC2Mapster editor reference
+([Data/Weapons/Legacy](https://sc2mapster.wiki.gg/wiki/Data/Weapons/Legacy) and
+[Data/Abilities/Morph](https://sc2mapster.wiki.gg/wiki/Data/Abilities/Morph), read 2026-11-09); Blizzard's
+[StarCraft II Balance Revamp 2018](https://starcraft2.com/news/22372713) (quoted on
+[devtrackers.gg](https://devtrackers.gg/starcraft2/p/41c0dca3-starcraft-ii-balance-revamp-2018), read 2026-11-09).
+Liquipedia's Cooldown, Damage Point and Siege Tank pages (wikitext, read 2026-11-09) state neither delay. Matrix: 20
+seeds a battle (1000 runs); battle 33: 68 seeds. Directories `~/scratch/sc2dev_wp11/<step>/`; baseline `base`
+reproduces WP10's last matrix bit for bit.
+
+### 12.1 Research
+
+**U-1, the weapon delay.** `CWeaponLegacy` sets `RandomDelayMin` −0.0625 and `RandomDelayMax` 0.125 Normal s (`core`
+WeaponData:35-36). The reference: "A random value between the maximum and minimum is selected and used as a delay
+before firing the weapon". Blizzard, 2018: "While virtually all units in StarCraft II have a random delay, the
+Battlecruiser's high random delay ratio to the auto-attack cooldown could cause moments where the Battlecruiser would
+do less damage than expected" (patch 4.7.1 removed it), so the delay adds to the cycle: the mean period is `Period` +
+0.03125 Normal s. The negative minimum places it between attacks, where it can shorten one. Drawn per attack; the
+reference names no distribution, so "a random value between" is read as uniform. Not sourced: whether an
+attack-rate buff scales it, and whether the first attack draws one ([Q0066](../questions/open/0066-random-delay-scaling.md),
+B-91, default: neither).
+
+Overrides at 5.0.14: `PointDefenseLaser` 0/0 (`liberty` WeaponData:76-77), the Battlecruiser's `ATSLaserBattery` and
+`ATALaserBattery` (:285, :297, then 0/0 in `voidmulti` :22-40), `D8Charge` 0.1/0.5 (:336-337),
+`BattlecruiserWeaponSwitch`, `MothershipCoreWeapon`, `Oracle` and `BypassArmorDroneWeapon` 0/0 (`voidmulti` :68-69,
+:151-152, :165-166, :281-282). None is the weapon of a shipped analogue, and every other weapon is a `CWeaponLegacy`
+except the Interceptor beams (`CWeaponStrafe`); the Carrier / Mothership composite's catalog weapon follows its
+`InterceptorLaunch` (Legacy, no override), as its acquisition arc does (§11.2), and the saucer without an analogue
+takes the engine default.
+
+**U-22, the morph.** The reference: Section Delay "is how long after the morph begins before [the section] start[s]
+to become that of the final unit", Section Duration "the time over which [it] transition[s]", and the morph's total
+time is "the single section with the greatest sum of time": delay and duration add. `SiegeMode` (`liberty`
+AbilData:1301-1326): `Actor` and `Stats` 0.5 + 3.5417 = 4.0417 Normal s; `Unsiege` (:1328-1341): 3.5417 s. Both set
+`RandomDelayMax="0.5"` (:1308, :1334; no `RandomDelayMin`, so 0), which "will be added just before the morph starts".
+No later layer changes a time (`swarm` AbilData:351, :1353; `void` :805; `voidmulti` :915, :1112). This corrects
+combat alignment evidence §13.7, which read Unsiege as having no random part.
+
+### 12.2 Results
+
+| Step | Commit | Matrix (against the previous step) | Battle 33 (68 seeds) | Goldens |
+|---|---|---|---|---|
+| B-3 rule, schema 19 | `006d804` | bit-identical | 55 / 6 / 7 | re-recorded for the encoding (§12.5) |
+| Published swing at a delayed release | `46465f9` | (presentation only) | — | unchanged |
+| B-3 data | `ad5f6eb` | 47 battles moved, no overall winner changed; single-seed winner changes: 14 (5 seeds; Ultralisk 20 / 20 → 15 / 20), 31 (2; 19 / 1 → 19 / 0), 32 (2; 4 / 10 → 4 / 8), 33 (7; 18 / 0 → 12 / 1), 35 (3; 20 / 0 → 17 / 0, 3 unresolved) | 41 / 10 / 17 (marine survivors 5.53 → 4.32, SD 3.02; zealot survivors 0.74, SD 1.13) | re-recorded (§12.5) |
+| B-4 rule | `1e3dddd` | bit-identical | bit-identical | unchanged |
+| B-4 data | `a8b961a` | bit-identical (no battle sieges) | bit-identical | unchanged (no fixture sieges) |
+
+**Battle 14** (Thor against Ultralisk) is a near-tie since the Thor's armour (Amendment 15): the Ultralisk won all 20
+seeds keeping 26.8 of 500 life. With the delay the Thor wins 5 (two of them seeds of record), keeping 26 of 400; the
+Ultralisk wins 15, keeping 26.9 to 55. The overall winner is unchanged, so the stop rule does not hold the commit;
+the expectation `blue (0, 0), red (1, 1)` failed on those 5 seeds and is re-recorded in `ad5f6eb` to `blue (0, 1),
+red (0, 1)` with the claim "An unupgraded ultralisk and a thor are a near-tie at 5.0.14 armour; the ultralisk wins
+most". After it: expectation failures 0 on the seeds of record and 0 over all seeds.
+
+**Battle 33** keeps its expectation `blue (0, 13), red (0, 3)`: on its 20 matrix seeds the marines win 12 and the
+zealots 1 (blue 0 to 9, red 0 to 3); the seeds of record are now 5-0, 9-0, 2-1 (unresolved) and 8-0. The comment's
+distribution is rewritten (combat plan D-6). On the 68 seeds the range is blue 0 to 10, red 0 to 5: one seed outside
+the expectation, none of the 20 the expectation covers.
+
+### 12.3 B-3: the rule
+
+`WeaponSpec` gains `random_delay_min` and `random_delay_max` (ticks; catalog `random_delay_ticks: (min, max)`,
+required), `Entity` gains `weapon_delay_carry`. When a release discharges, `combat::charge_random_delay` draws the
+delay uniformly over the fixed-point values of the range from `SimWorld::rng` (the combat phase steps entities in id
+order, once per release), adds it to the carry, and moves the carry's whole ticks into the cooldown, so the shot times
+are the exact sums of periods and delays quantised to ticks. Equal bounds add a fixed delay without a draw; (0, 0)
+leaves the generator untouched, which is what made the rule commit bit-identical. Validation: `min <= max`, and `min`
+above minus the charged cooldown. Tests (`weapon_cadence_tests.rs`, four red before the rule): a 10-tick period with
+a delay in [−1, 2] ticks releases every 9 to 12 ticks with a mean of 10.5 over 6000 ticks; a fixed half-tick
+alternates 10 and 11 without a draw; the same seed replays the same shots and another seed differs; the range rules
+reject (1, −1) and (−9.5, 0).
+
+`RenderSnapshot`'s swing counted `period − cooldown left`, which stepped back into the wind-up for up to two ticks at a
+delayed release; it now holds at the release (`46465f9`, unit test red before). Five cadence tests that pin a shipped
+weapon's exact period (`attack_swing_snapshot_tests` ×2, `sc2_battle_benchmarks_tests`, `weapon_period_tests`,
+`trace_tests`) remove the delay through `sim_fixtures::without_random_delays`.
+
+**Data** (`ad5f6eb`): every weapon of `units.ron` and `structures.ron`, the Siege Mode cannon included, (−1.1161,
+2.2321) ticks = (−0.0625, 0.125) × 25 ÷ 1.4. Test `b3_every_weapon_has_the_legacy_random_delay`.
+
+### 12.4 B-4: the rule and the data
+
+A mode has `cast_ticks` (entering), `leave_cast_ticks`, and for each direction `*_random_delay_max_ticks`: when the
+toggle is committed, an extra drawn uniformly from `0..=max` ticks with `SimWorld::rng` and rounded half up is added
+to the channel. A maximum of 0 draws nothing (`1e3dddd`, bit-identical with 71 / 71 / 0 / 0). Tests
+(`spells_and_abilities_tests.rs`, red: the fields did not exist): 10 ticks in and 4 out with no extra and no draw;
+with up to 3 extra ticks, 40 seeds give 10 to 13 in and 4 to 7 out, at least three distinct lengths, the same per
+seed on a replay. Data (`a8b961a`): 72 in (4.0417 s), 63 out (3.5417 s), each plus up to 8.9286 (0.5 s), so sieging
+takes 72 to 81 ticks and unsieging 63 to 72. Test `b4_siege_mode_timings_follow_starcraft`. The legacy
+`AbilityEffectSpec::SiegeModeToggle` effect, which no shipped catalog uses, keeps its one `cast_ticks`.
+
+### 12.5 Goldens
+
+- **Schema 19** (`006d804`): both fixtures and the sandbox checksum re-recorded for the encoding alone; with the new
+  fields unhashed at schema 18 both fixtures reproduce as recorded.
+- **B-3 data** (`ad5f6eb`): `golden_replay` differs from checkpoint index 3 (ticks 151 to 200), `golden_replay_orders`
+  from index 4 (ticks 41 to 50), the first fights, as for B-29 (§11.5); with the delays at (0, 0) both reproduce as
+  recorded for schema 19.
+
+Each re-recording reproduces in debug, release, and `wasm32-wasip1` debug and release (`wasmtime`).
+
+### 12.6 What WP11 leaves open
+
+- **B-91** ([Q0066](../questions/open/0066-random-delay-scaling.md)): whether an attack-rate buff scales the delay,
+  and whether the first attack draws one.
+- The morph random delays of other modes (burrow, the Viking's) belong to the packages that add those modes (WP13).

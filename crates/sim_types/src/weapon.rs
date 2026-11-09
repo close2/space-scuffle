@@ -362,6 +362,14 @@ pub struct WeaponSpec {
     pub damage_point_ticks: u16,
     /// Post-shot follow-through animation ticks (can be cancelled by Move).
     pub backswing_ticks: u16,
+    /// Least random delay added to each attack's cycle, in ticks; may be negative
+    /// (`StarCraft` II `RandomDelayMin`). Each attack draws its delay uniformly from
+    /// `random_delay_min..=random_delay_max` with the world's seeded generator.
+    pub random_delay_min: SimScalar,
+    /// Greatest random delay added to each attack's cycle, in ticks, at least
+    /// `random_delay_min` (`StarCraft` II `RandomDelayMax`). Equal bounds add a fixed delay
+    /// without a draw.
+    pub random_delay_max: SimScalar,
     /// Area-of-effect splash specifications, if applicable.
     pub splash: Option<SplashSpec>,
     /// Projectile linear flight speed per tick (`None` for hitscan / continuous beams).

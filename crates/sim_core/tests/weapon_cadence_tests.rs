@@ -9,7 +9,10 @@
 //! also pins the catalog rule that a weapon's period is longer than its damage point, and the
 //! two arcs of plan `2026-11-05-sc2-deviation-fixes` WP10 (B-29): a weapon starts on a target it
 //! is not engaged with only inside its acquisition arc (`Arc` ÷ 2), and keeps firing at the
-//! target it is engaged with inside its engaged arc (`Arc` ÷ 2 + `ArcSlop`).
+//! target it is engaged with inside its engaged arc (`Arc` ÷ 2 + `ArcSlop`). It pins WP11's
+//! random firing delay (B-3): each attack adds a delay drawn uniformly from the weapon's
+//! `random_delay_ticks` range by the world's seeded generator, and the shot times are the exact
+//! sums quantised to ticks.
 //!
 //! # How it fits
 //! `sim_core::combat::step_entity_weapon` runs once per unit per tick. Most tests drive it
@@ -136,6 +139,7 @@ fn catalog_ron_with_mount(
             period_ticks: {period},
             damage_point_ticks: {damage_point},
             backswing_ticks: {backswing},
+            random_delay_ticks: (0.0, 0.0),
             splash: None,
             projectile_speed: None,
         ))"#
@@ -804,4 +808,138 @@ fn b30_a_turret_with_a_target_does_not_idle() -> TestResult {
     assert!(step_entity_weapon(&mut shooter, &weapon, Some(target)));
     assert_eq!(shooter.turret_angle, SimAngle::ZERO);
     Ok(())
+}
+
+/// The timings of the random-delay benches: a 10-tick period with a 1-tick damage point.
+const DELAY_TIMINGS: Timings = Timings {
+    period: 10,
+    damage_point: 1,
+    backswing: 2,
+};
+
+/// A bench whose shooter's weapon carries `random_delay_ticks: delay` (RON of the
+/// `(min, max)` pair, in ticks), in a world seeded with `seed`, the shooter ordered to attack.
+fn delayed_bench(delay: &str, seed: u64) -> Result<Bench, Box<dyn std::error::Error>> {
+    let catalog = catalog_ron(DELAY_TIMINGS, 1_000_000.0, None).replace(
+        "random_delay_ticks: (0.0, 0.0)",
+        &format!("random_delay_ticks: {delay}"),
+    );
+    let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
+    let mut world = sim_fixtures::world(map, seed);
+    world.catalog = UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &catalog)?;
+    let shooter_type = world.catalog.id_by_slug(SHOOTER).ok_or("shooter")?;
+    let target_type = world.catalog.id_by_slug(TARGET).ok_or("target")?;
+    let at = |x: i32| SimVec2::new(SimScalar::from_i32(x), SimScalar::from_i32(16));
+    let shooter = world.spawn_unit(shooter_type, PlayerId(0), at(10))?;
+    let target = world.spawn_unit(target_type, PlayerId(1), at(13))?;
+    world.step(&TickBundle {
+        tick: Tick(0),
+        commands: vec![PlayerCommand {
+            player_id: PlayerId(0),
+            entities: vec![shooter],
+            order: UnitOrder::attack(target),
+            queue: false,
+        }],
+        state_checksum: None,
+    });
+    Ok(Bench {
+        world,
+        shooter,
+        target,
+    })
+}
+
+#[test]
+fn b3_a_random_delay_spreads_the_period_and_adds_its_mean() -> TestResult {
+    // Plan 2026-11-05-sc2-deviation-fixes WP11 (B-3): each attack draws a delay uniformly from
+    // [min, max] ticks and adds it to the period; the shot times are the exact sums quantised to
+    // ticks, so a 10-tick period with a delay in [-1, 2] averages 10.5 ticks a shot.
+    let mut bench = delayed_bench("(-1.0, 2.0)", 11)?;
+    let releases = bench.release_ticks(6_000);
+    let gaps = gaps(&releases);
+    assert!(gaps.len() > 500, "too few releases: {}", gaps.len());
+    assert!(
+        gaps.iter().all(|gap| (9..=12).contains(gap)),
+        "every gap lies within the period plus the delay range: {gaps:?}"
+    );
+    let distinct: std::collections::BTreeSet<_> = gaps.iter().collect();
+    assert!(
+        distinct.len() >= 3,
+        "the delay spreads the gaps: {distinct:?}"
+    );
+    let span = releases.last().ok_or("releases")? - releases.first().ok_or("releases")?;
+    #[allow(clippy::cast_precision_loss)]
+    let mean = f64::from(span) / gaps.len() as f64;
+    assert!((10.35..=10.65).contains(&mean), "mean gap {mean}");
+    Ok(())
+}
+
+#[test]
+fn b3_a_fixed_delay_lengthens_every_period_without_a_draw() -> TestResult {
+    let mut bench = delayed_bench("(0.5, 0.5)", 11)?;
+    let rng_before = bench.world.rng.get_word_pos();
+    let releases = bench.release_ticks(400);
+    let gaps = gaps(&releases);
+    assert!(
+        gaps.iter().all(|gap| *gap == 10 || *gap == 11),
+        "a half tick a shot alternates 10 and 11: {gaps:?}"
+    );
+    assert_eq!(
+        gaps.iter().filter(|gap| **gap == 11).count() * 2 / gaps.len(),
+        1
+    );
+    assert_eq!(
+        bench.world.rng.get_word_pos(),
+        rng_before,
+        "a fixed delay draws nothing"
+    );
+    Ok(())
+}
+
+#[test]
+fn b3_a_weapon_without_a_random_delay_draws_nothing() -> TestResult {
+    let mut bench = delayed_bench("(0.0, 0.0)", 11)?;
+    let rng_before = bench.world.rng.get_word_pos();
+    let releases = bench.release_ticks(200);
+    assert!(gaps(&releases).iter().all(|gap| *gap == 10), "{releases:?}");
+    assert_eq!(bench.world.rng.get_word_pos(), rng_before);
+    Ok(())
+}
+
+#[test]
+fn b3_the_delays_come_from_the_seeded_world_rng() -> TestResult {
+    let run = |seed| -> Result<Vec<u32>, Box<dyn std::error::Error>> {
+        Ok(delayed_bench("(-1.0, 2.0)", seed)?.release_ticks(1_000))
+    };
+    assert_eq!(run(11)?, run(11)?, "the same seed replays the same shots");
+    assert_ne!(run(11)?, run(12)?, "another seed draws other delays");
+    let mut bench = delayed_bench("(-1.0, 2.0)", 11)?;
+    let rng_before = bench.world.rng.get_word_pos();
+    bench.release_ticks(100);
+    assert!(
+        bench.world.rng.get_word_pos() > rng_before,
+        "the delays use SimWorld::rng"
+    );
+    Ok(())
+}
+
+#[test]
+fn b3_a_random_delay_range_must_be_ordered_and_keep_the_cooldown() {
+    // (-9.5, 0.0): a cooldown of period - damage point = 9 ticks cannot lose 9.5.
+    for delay in ["(1.0, -1.0)", "(-9.5, 0.0)"] {
+        let catalog = catalog_ron(DELAY_TIMINGS, 100.0, None).replace(
+            "random_delay_ticks: (0.0, 0.0)",
+            &format!("random_delay_ticks: {delay}"),
+        );
+        let result =
+            UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &catalog).map(|_| ());
+        assert!(
+            matches!(
+                &result,
+                Err(SimCoreError::CatalogInvalidValue { definition, field, .. })
+                    if definition == SHOOTER && field == "weapon.random_delay_ticks"
+            ),
+            "{delay} must be rejected naming weapon.random_delay_ticks: {result:?}"
+        );
+    }
 }

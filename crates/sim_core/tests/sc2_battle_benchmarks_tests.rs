@@ -58,6 +58,8 @@ fn create_test_world() -> SimWorld {
 #[test]
 fn test_1v1_zealot_vs_marine_swing_cadence_and_three_hit_kill() {
     let mut world = create_test_world();
+    // The test pins the period; the random firing delay (B-3) would spread it.
+    sim_fixtures::without_random_delays(&mut world.catalog);
     let player_blue = PlayerId(0);
     let player_red = PlayerId(1);
 
@@ -730,7 +732,8 @@ fn test_railgun_crawler_declarative_modes_and_siege_splash() {
     let siege_mode = arch
         .get_mode("siege_mode")
         .expect("must declare siege_mode in catalog");
-    assert_eq!(siege_mode.cast_ticks, 71);
+    assert_eq!(siege_mode.cast_ticks, 72);
+    assert_eq!(siege_mode.leave_cast_ticks, 63);
     assert!(siege_mode.is_immobile);
     assert!(siege_mode.unpushable);
 
@@ -812,8 +815,10 @@ fn test_railgun_crawler_declarative_modes_and_siege_splash() {
     let cast = world.execute_ability(tank_id, 0, None, None);
     assert!(cast, "Must cast Siege Mode ability successfully");
 
-    // Advance 71 ticks of transformation channel
-    for tick in 30..102 {
+    // Advance through the transformation channel: its time plus the seeded random extra
+    // (WP11, B-4), read from the channel the cast started.
+    let sieged_at = 31 + u32::from(world.entities[&tank_id].channeling_remaining_ticks);
+    for tick in 30..sieged_at {
         world.step(&empty_bundle(tick));
     }
 
@@ -836,7 +841,7 @@ fn test_railgun_crawler_declarative_modes_and_siege_splash() {
         .push_back(UnitOrder::attack(enemy_primary));
 
     // Step until cannon fires
-    for tick in 102..170 {
+    for tick in sieged_at..sieged_at + 68 {
         world.step(&empty_bundle(tick));
         if !world
             .entities

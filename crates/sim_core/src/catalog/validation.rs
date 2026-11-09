@@ -488,6 +488,28 @@ impl WeaponSpecDef {
         Ok(())
     }
 
+    /// Checks the random delay `(min, max)` in ticks: both finite fixed-point values, `min <=
+    /// max`, and `min` greater than minus the cooldown a release charges (`period − damage
+    /// point`), so no draw can take the whole cooldown away (B-3).
+    fn validate_random_delay(&self, definition: &str, prefix: &str) -> SimResult<()> {
+        let field = &format!("{prefix}.random_delay_ticks");
+        let (min, max) = self.random_delay_ticks;
+        scalar(definition, field, f64::from(min))?;
+        scalar(definition, field, f64::from(max))?;
+        if min > max {
+            return Err(invalid(definition, field, "min must not exceed max"));
+        }
+        let cooldown = f64::from(self.period_ticks) - f64::from(self.damage_point_ticks);
+        if f64::from(min) <= -cooldown {
+            return Err(invalid(
+                definition,
+                field,
+                "min must leave part of the period − damage point cooldown",
+            ));
+        }
+        Ok(())
+    }
+
     /// Checks the spacing of the strikes of one attack: an interval needs a second strike, the
     /// whole burst ends before the next attack can start, and a follow-up distance belongs to a
     /// spaced burst and is positive.
@@ -628,6 +650,7 @@ impl WeaponSpecDef {
             ));
         }
         self.validate_cadence(definition, prefix)?;
+        self.validate_random_delay(definition, prefix)?;
         self.validate_strikes(definition, prefix)?;
         self.validate_attribute_bonuses(definition, prefix)?;
         if let Some(strike) = &self.structure_strike {
@@ -727,6 +750,22 @@ impl SplashSpecDef {
 impl UnitModeSpecDef {
     fn validate(&self, definition: &str) -> SimResult<()> {
         let prefix = format!("modes.{}", self.mode_name);
+        for (field, value) in [
+            (
+                "cast_random_delay_max_ticks",
+                self.cast_random_delay_max_ticks,
+            ),
+            (
+                "leave_random_delay_max_ticks",
+                self.leave_random_delay_max_ticks,
+            ),
+        ] {
+            let field = format!("{prefix}.{field}");
+            nonnegative(definition, &field, f64::from(value))?;
+            if f64::from(value) > f64::from(u16::MAX) {
+                return Err(invalid(definition, &field, "must not exceed 65535 ticks"));
+            }
+        }
         scalar(
             definition,
             &format!("{prefix}.energy_cost_per_second"),
@@ -1368,6 +1407,38 @@ mod tests {
                     Some("weapon.acquire_arc_deg"),
                     "{engaged} {acquisition}"
                 );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn b4_mode_random_extras_are_nonnegative_and_bounded() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use crate::catalog::CatalogFile;
+        let units = include_str!("../../../../assets/catalog/units.ron");
+        for (extra, valid) in [
+            (0.0_f32, true),
+            (8.9286, true),
+            (-0.5, false),
+            (f32::NAN, false),
+        ] {
+            let mut file: CatalogFile = ron::from_str(units)?;
+            let unit = file
+                .units
+                .iter_mut()
+                .find(|unit| !unit.modes.is_empty())
+                .ok_or("real catalog has no mode")?;
+            let name = format!(
+                "modes.{}.leave_random_delay_max_ticks",
+                unit.modes[0].mode_name
+            );
+            unit.modes[0].leave_random_delay_max_ticks = extra;
+            let result = unit.validate();
+            if valid {
+                assert!(result.is_ok(), "{extra}: {result:?}");
+            } else {
+                assert_eq!(rejected_field(&result), Some(name.as_str()), "{extra}");
             }
         }
         Ok(())

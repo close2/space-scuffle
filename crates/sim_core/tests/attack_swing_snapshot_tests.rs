@@ -92,6 +92,8 @@ impl Duel {
         let map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))
             .expect("invariant: a flat 64x64 map is valid");
         let mut world = sim_fixtures::world(map, 0x0A77_AC4E);
+        // The duel pins the published period; the random firing delay (B-3) would spread it.
+        sim_fixtures::without_random_delays(&mut world.catalog);
         let arch = duellist(&world);
         let weapon = ground_weapon(&arch)
             .cloned()

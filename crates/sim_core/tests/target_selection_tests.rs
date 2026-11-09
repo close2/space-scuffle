@@ -48,6 +48,7 @@ const RIFLE: &str = r#"Some((
             period_ticks: 20,
             damage_point_ticks: 2,
             backswing_ticks: 0,
+            random_delay_ticks: (0.0, 0.0),
             splash: None,
             projectile_speed: None,
         ))"#;

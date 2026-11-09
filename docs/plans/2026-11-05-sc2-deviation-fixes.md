@@ -753,8 +753,8 @@ requires.
 |---|---|---|---|
 | B-1 | A swing its turn aligns starts a tick late (M-22) | Fixed | WP1 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §1) |
 | B-2 | Every strike of a multi-strike weapon on one tick | Fixed, narrowed | WP5 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §5); open only whether an order between the strikes ends a `Channeled` burst ([Q0058](../questions/open/0058-channeled-burst-interruption.md)) |
-| B-3 | No random firing delay | (i) | WP11; it decides how volleys desynchronize, which players see |
-| B-4 | Siege Mode: one transformation time, no random part | (i) | WP11 |
+| B-3 | No random firing delay | Fixed | WP11 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §12.3; Amendment 17); open only B-91 |
+| B-4 | Siege Mode: one transformation time, no random part | Fixed | WP11 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §12.4; Amendment 17) |
 | B-5 | Whether damage point and backswing hold an automatically attacking unit | (i) | WP16 research |
 | B-6 | Release range slop 0.5 for every weapon | (i) | WP9 |
 | B-7 | Threat criterion | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.3, §4.4) |
@@ -839,6 +839,7 @@ requires.
 | B-88 | Structure attributes derived in code (Psionic if shielded, else Mechanical); the game's Protoss structures are Armored and Structure, Zerg structures Armored, Biological and Structure | (i) | WP9 follow-up (a rule). Found in WP9 (Amendment 14) |
 | B-89 | Whether the Liberator analogue's anti-air weapon turns on the `Liberator` turret (`void` UnitData:3317-3318 lists a second weapon entry with that turret and no weapon); ours is a hull weapon | (i) | WP10 follow-up (research). Found in WP10 (Amendment 16) |
 | B-90 | A turreted weapon's wind-up does not hold its unit, and a turret works against `current_target` under any order, where the game ties firing while moving to `AllowedMovement` | (i) | WP13e, with B-45. Found in WP10 (Amendment 16): turreting five more analogues extends it |
+| B-91 | Whether an attack-rate buff scales the random firing delay, and whether the first attack draws one; ours does neither | (i) | [Q0066](../questions/open/0066-random-delay-scaling.md). Found in WP11 (Amendment 17) |
 
 **Counts.** 78 IDs: (i) 70, two of them narrowed (B-52, B-67) and one carried by another plan (B-12); (ii) 3 (B-37,
 B-53, B-58); (iii) none; fixed 5 (B-31 and B-40 by the turn-before-move plan; B-71, B-73 and B-75 by WP0).
@@ -1127,4 +1128,21 @@ Evidence: [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.
 - **Found:** B-89 (the Liberator's turret entry, research) and B-90 (turreted weapons fire while their unit moves,
   for WP13e with B-45).
 - Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §11. No commit was
+  held.
+
+## Amendment 17 (WP11, 2026-11-09): random delays landed
+
+- **U-1 answered:** the weapon delay is drawn per attack and lengthens the mean cycle (the `SC2Mapster` reference, "a
+  delay before firing the weapon"; Blizzard's 2018 notes on the Battlecruiser); uniform is the reading of "a random
+  value between". **U-22 answered:** a morph's section delay and duration add, and its time is its longest section.
+- **B-3 fixed:** latent rule `006d804` (checksum schema 19; a per-unit carry keeps the shot times the exact sums
+  quantised to ticks), the presentation fix `46465f9`, data `ad5f6eb` (every weapon (−1.1161, 2.2321) ticks, the
+  `CWeaponLegacy` default; no shipped analogue's weapon overrides it). 47 battles moved, none changed its overall
+  winner; battle 14 re-recorded to `blue (0, 1), red (0, 1)` (the Thor now wins 5 of 20 seeds of a near-tie);
+  battle 33 41 / 10 / 17 (was 55 / 6 / 7), its expectation unchanged, its comment rewritten; goldens re-recorded.
+- **B-4 fixed:** latent rule `1e3dddd` (separate leaving time, a seeded random extra per direction), data `a8b961a`
+  (72 ticks in, 63 out, each plus up to 8.9286). No battle or golden sieges; nothing moved.
+- **Found:** B-91, whether Stimpack scales the delay and whether the first attack draws one
+  ([Q0066](../questions/open/0066-random-delay-scaling.md), default neither).
+- Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §12. No commit was
   held.

@@ -619,6 +619,9 @@ fn author_stances(arena: &mut Arena, cast_ticks: u16) -> EntityId {
     let stance = |mode_name: &str, ground_weapon_override| UnitModeSpec {
         mode_name: mode_name.to_owned(),
         cast_ticks,
+        leave_cast_ticks: cast_ticks,
+        cast_random_delay_max_ticks: SimScalar::ZERO,
+        leave_random_delay_max_ticks: SimScalar::ZERO,
         is_immobile: true,
         unpushable: true,
         is_cloaked: false,

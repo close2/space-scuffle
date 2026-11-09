@@ -100,6 +100,7 @@ const WINDUP_MELEE_RON: &str = r#"(
                 period_ticks: 22,
                 damage_point_ticks: 4,
                 backswing_ticks: 6,
+                random_delay_ticks: (0.0, 0.0),
                 splash: None,
                 projectile_speed: None,
             )),
@@ -186,7 +187,10 @@ fn release_ticks(trace: &BattleTrace, team: Team) -> Vec<u32> {
 #[test]
 fn a_melee_unit_makes_contact_and_swings_on_the_ticks_the_catalog_predicts() -> TestResult {
     let battle = scripted(&squad(RANGED, 15.0, 32.0), &squad(MELEE, 10.0, 32.0))?;
-    let trace = trace_battle(&battle, sim_fixtures::shipped_catalogs(), 1, 0.0)?;
+    // The test predicts the swings from the period; the random firing delay (B-3) spreads it.
+    let mut catalogs = sim_fixtures::shipped_catalogs();
+    sim_fixtures::without_random_delays(&mut catalogs.units);
+    let trace = trace_battle(&battle, catalogs, 1, 0.0)?;
     let summary = trace.summary();
     let contact = ticks_to_contact(5.0)?;
     let (damage_point, period, interval) = melee_timing()?;

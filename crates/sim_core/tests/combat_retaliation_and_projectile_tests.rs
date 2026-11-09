@@ -85,6 +85,8 @@ fn custom_projectile_weapon(
         period_ticks: 30,
         damage_point_ticks: 1,
         backswing_ticks: 2,
+        random_delay_min: SimScalar::ZERO,
+        random_delay_max: SimScalar::ZERO,
         splash,
         projectile_speed: Some(speed),
         weapon_class: None,

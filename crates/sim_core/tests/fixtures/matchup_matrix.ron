@@ -456,7 +456,12 @@
         // StarCraft II 5.0.14's 1 (liberty UnitData:5208), not 2. The Ultralisk's 35-damage blades
         // now deal 34 a strike instead of 33; the Thor used to win on all 20 seeds with 4 life
         // left, and now dies first on all 20, the Ultralisk keeping 26.8 of 500 life.
-        claim: "An unupgraded ultralisk narrowly beats a thor at 5.0.14 armour",
+        // Re-recorded for WP11 (B-3): StarCraft II's random firing delay (each attack adds
+        // -0.0625 to 0.125 Normal s, drawn per attack) decides this near-tie on some seeds. On the
+        // 20 matrix seeds the Ultralisk wins 15 (keeping 26.9 to 55 life) and the Thor 5 (keeping
+        // 26 of 400), two of them seeds of record. Evidence:
+        // docs/evidence/2026-11-05-sc2-deviation-fixes.md §12.
+        claim: "An unupgraded ultralisk and a thor are a near-tie at 5.0.14 armour; the ultralisk wins most",
         map_cells: 64,
         ticks: 400,
         blue: (
@@ -471,7 +476,7 @@
             ],
             order: AttackMove(10, 32),
         ),
-        expect: (blue: (0, 0), red: (1, 1)),
+        expect: (blue: (0, 1), red: (0, 1)),
     ),
     (
         name: "15_plated_ultralisk_vs_8_marines",
@@ -936,10 +941,12 @@
     // zealot 5, beyond both radii; they were 9 and 9) and the zealot's second blade 5 ticks after
     // its first (plan 2026-11-05-sc2-deviation-fixes WP5, B-2: StarCraft II's PsiBladesBurst; it
     // landed on the swing's tick before) and StarCraft II's acquisition arc (WP10, B-29: a new
-    // target must be faced exactly, `Arc` 0, before the first swing), on 68 seeds (the four of
-    // record plus 64 jittered ones, jitter 0.12) the marines win 55, the zealots win 6 and 7 are
-    // unresolved at 500 ticks; marine survivors average 5.53 (SD 3.21, range 0 to 13), zealot
-    // survivors 0.29 (SD 0.67, range 0 to 3). Before B-29 it was 54 / 7 / 7 (5.29); before B-2
+    // target must be faced exactly, `Arc` 0, before the first swing) and StarCraft II's random
+    // firing delay (WP11, B-3: each attack adds -0.0625 to 0.125 Normal s, drawn per attack), on
+    // 68 seeds (the four of record plus 64 jittered ones, jitter 0.12) the marines win 41, the
+    // zealots win 10 and 17 are unresolved at 500 ticks; marine survivors average 4.32 (SD 3.02,
+    // range 0 to 10), zealot survivors 0.74 (SD 1.13, range 0 to 5). Before B-3 it was 55 / 6 / 7
+    // (5.53); before B-29 54 / 7 / 7 (5.29); before B-2
     // 21 / 37 / 10 (2.06); with the edge rule alone (scan 9 / 9) 19 / 41 / 8 (1.69),
     // before it 20 / 35 / 13 (1.85), before B-9 37 / 20 / 11 (3.62), before WP1 39 / 20 / 9
     // (3.87), after the arcs 43 / 16 / 9 (4.38), before WP17 42 / 18 / 8 (4.03), after combat
@@ -947,12 +954,13 @@
     // (7.41). The expectation is the smallest ranges that hold on all 20 matrix seeds since B-9
     // (orchestrator, plan Amendment 5; the seeds of record are 9-0, 3-0, 6-0 and 7-0, marines -
     // zealots left; B-2 set them to blue 0 to 13 and red 0 to 3; since B-29 the marines win 18 of
-    // the 20 seeds, blue 1 to 13 and red 0 to 2); a seed outside them is re-recorded by the commit that causes it. What
+    // the 20 seeds, blue 1 to 13 and red 0 to 2; since B-3 they win 12, the zealots 1, blue 0 to
+    // 9 and red 0 to 3, and the seeds of record are 5-0, 9-0, 2-1 and 8-0); a seed outside them is re-recorded by the commit that causes it. What
     // varies is how many zealots reach the marines at once.
     // Evidence: docs/evidence/2026-11-04-combat-sc2-alignment.md §16 (WP14 Amendment 7) and
     // §14.7 (§14.4 for the arcs, §6, §5 and §3 for WP7, WP6 and WP4, and §1 for the earlier
     // figures, from docs/evidence/2026-11-03-battle-33-investigation.md §4.2), and
-    // docs/evidence/2026-11-05-sc2-deviation-fixes.md §11 (B-29), §5.3 (B-2), §4.6 (B-9) and §1
+    // docs/evidence/2026-11-05-sc2-deviation-fixes.md §12 (B-3), §11 (B-29), §5.3 (B-2), §4.6 (B-9) and §1
     // (WP1).
     (
         name: "33_24_marines_vs_12_zealots",
