@@ -156,7 +156,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-5 | Whether damage point and backswing hold an automatically attacking unit (not yet sourced) | WP16 |
 | B-6 | Release range slop 0.5 for every weapon | WP9 |
 | B-13 | Call-for-help radius, flee distance, leash and abandoned-target time are unsourced | WP16 |
-| B-18 | Hellion and Lurker line splash modelled as a circle; their line data flip matrix battles 9a, 10 and 21 and are held (plan Amendment 22); the Colossus' line is fixed | WP8b |
+| B-18 | One search per strike: the Colossus' two sweeps strike a unit on the line once per shot; the game's two sweeps strike it twice (plan Amendment 13, §9.3; held, it flips battle 12b) | WP8b |
 | B-19 | Ultralisk cleave modelled as a circle | WP8c |
 | B-20 | Mutalisk glaive does not bounce | WP8d |
 | B-21 | Brood Lord spawns no Broodlings | WP18 |
@@ -197,7 +197,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-81 | The Liberator's first missile lands on the release tick; the game delays it 1 tick. The Colossus' strikes stay on the release tick by the owner's answer to [Q0064](docs/questions/closed/0064-colossus-damage-timing.md) | WP5 follow-up |
 | B-83 | The Baneling's burst is centred on its target and strikes it directly; the game centres it on the Baneling | WP8 follow-up |
 | B-84 | The Siege Tank splashes around targets of radius 1.25 or more; the game's shot at them has no area | WP8 follow-up |
-| B-85 | The Lurker's spines land together; the game spaces its 9 searches 0.125 Normal s (2 ticks) apart (owner note on [Q0064](docs/questions/closed/0064-colossus-damage-timing.md)). The Colossus' searches stay on the release tick by that answer | WP8 follow-up, after B-18's Lurker line |
+| B-85 | The Lurker's spines land together; the game spaces its 9 searches 0.125 Normal s (2 ticks) apart (owner note on [Q0064](docs/questions/closed/0064-colossus-damage-timing.md)). The Colossus' searches stay on the release tick by that answer | WP8 follow-up |
 | B-86 | Morphs (Baneling, Ravager, Lurker, Brood Lord, Orbital Command, Planetary Fortress, Lair, Hive, Greater Spire) cost their morph increment and the Zergling analogue one Zergling at the pair's price, while ours trains them whole | WP17 |
 | B-88 | Structure attributes are derived in code (Psionic if shielded, else Mechanical); the game gives Protoss structures Armored and Structure, Zerg structures Armored, Biological and Structure | WP9 follow-up |
 | B-89 | Whether the Liberator analogue's anti-air weapon turns on the `Liberator` turret: the game's unit lists a second weapon entry with that turret and no weapon (`void` UnitData:3317-3318); ours is a hull weapon | WP10 follow-up (research) |

@@ -1682,9 +1682,9 @@ wins over a battle's 20 seeds. Goldens are checked in debug, release and `wasm32
     own world and only battle 21 spawns a Lurker): 12a, 12b, 26 moved, no winner changed; battle 26's expectation
     re-recorded red (5, 999) → (4, 999) (the colossi win every seed, the fight lasts 313 ticks instead of 89, two
     seeds lose two colossi).
-  - Hellion: **held** on branch `answers-held-b18-hellion-line` (`06eb273`; `b_hellion`): 9a and 10 flip from
+  - Hellion: **held** (landed later by the orchestrator's decision, §17.8) on branch `answers-held-b18-hellion-line` (`06eb273`; `b_hellion`): 9a and 10 flip from
     20 / 0 / 0 to 0 / 20 / 0, as §9.4 found under the edge rule.
-  - Lurker: **held** on branch `answers-held-b18-lurker-line`: battle 21 20 / 0 / 0 → 4 / 0 / 16 (16 seeds reach the
+  - Lurker: **held** (landed later, §17.8) on branch `answers-held-b18-lurker-line`: battle 21 20 / 0 / 0 → 4 / 0 / 16 (16 seeds reach the
     250-tick limit). §9.4's probe kept the winner (16 / 4 / 0); it predates WP10 to WP13b, which changed the
     Lurker (its turret, and attacking only burrowed). Measured again after package E in §17.5.
   - One search per strike (§9.3): not redone; §9.4's edge probe already flipped battle 12b with it.
@@ -1777,3 +1777,10 @@ named). Positions are world units, the Hellion or Lurker at about (9.9, 32.0).
   than over it (B-93: a burrowed Lurker should not block ground units) and the battle's time limit. **Proposal:** land
   the line with battle 21 re-recorded to what the game supports (the Lurker unharmed after burrowing, at most one
   marine left: `blue (1, 1), red (0, 1)`, with 500 ticks), and fix B-93 in WP16; no change to the line rule.
+
+**Decision and result.** The orchestrator accepted both lines (plan Amendment 22). Measured against the merged tree
+(`~/scratch/answers/merged`): the Hellion's line (`585c2ab`, `hellion2`) moved only 9a and 10 (20 / 0 / 0 → 0 / 20 / 0
+each), re-recorded red (2, 4) and red (4, 7); the Lurker's line (`678a0db`, `lurker3`) moved only battle 21, at 500
+ticks 8 / 0 / 12 with the Lurker alive on every seed (marines left: 0 on 8 seeds, 1 on 11, 2 on seed 8), re-recorded
+`blue (1, 1), red (0, 2)`. Battle 33 41 / 10 / 17 on 68 seeds; 0 expectation failures; goldens and the sandbox
+unchanged in debug, release and `wasm32-wasip1`.

@@ -67,3 +67,7 @@ data `089d6f5` (Liberator, Baneling and Ultralisk keep the flag; Siege Tank clea
 held lines: the Colossus' sweep landed (`1b16eac`); the Hellion's and the Lurker's still flip matrix battles 9a, 10
 and 21 and are held on branches `answers-held-b18-hellion-line` and `answers-held-b18-lurker-line` (B-18 narrowed).
 Plan `2026-11-05-sc2-deviation-fixes` Amendment 22 records it; evidence `2026-11-05-sc2-deviation-fixes.md` §17.
+
+Update, 2026-11-09: by the orchestrator's decision (plan Amendment 22) both held lines landed, the Hellion's as
+`585c2ab` and the Lurker's as `678a0db`, with battles 9a, 10 and 21 re-recorded; B-18 stays open only for one search
+per strike.

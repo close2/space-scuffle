@@ -768,7 +768,7 @@ requires.
 | B-15 | Shield break remainder | Fixed | WP7 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §7); the life part's 0.5 minimum confirmed by the owner ([Q0062](../questions/closed/0062-shield-break-life-minimum.md), Amendment 22) |
 | B-16 | Fixed splash fractions | Fixed | WP8a ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §8.2, §8.3); the four line and arc weapons take their zones with their shapes (B-18, B-19) |
 | B-17 | Splash measured centre to centre | Fixed | Amendment 22 package B ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §17.2; [Q0063](../questions/closed/0063-splash-distance-rule.md)): reach to a unit's edge, `OffsetByUnitRadius` |
-| B-18 | Line splash modelled as a circle | (i), narrowed | The Colossus' line is fixed by Amendment 22 package B ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §17.2); the Hellion's and the Lurker's lines flip matrix battles 9a, 10 and 21 and are held on branches; one search per strike stays held (§9.3) |
+| B-18 | Line splash modelled as a circle | (i), narrowed | The Colossus', Hellion's and Lurker's lines are fixed by Amendment 22 package B ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §17.2, §17.8); battles 9a, 10 and 21 re-recorded by the orchestrator's decision. Open only one search per strike (§9.3), which flips battle 12b |
 | B-19 | Ultralisk cleave modelled as a circle | (i) | WP8c |
 | B-20 | No glaive bounce | (i) | WP8d |
 | B-21 | No Broodlings | (i) | WP18 |
@@ -1265,7 +1265,7 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
 | Package | Commits | Outcome |
 |---|---|---|
 | A | rule `a9a24bf` (schema 23 after the merge with pathfinding Part A), data `0c0cb1e` | B-2 fixed. The data flag seven analogues' bursts (Zealot, Thor, Reaper, Queen, Liberator, Missile Turret, Colossus), not only the two the answer named |
-| B | rule `2f65bc9` (schema 24 after the merge), offset data `089d6f5`, Colossus line `1b16eac` | B-17 fixed; B-18 narrowed: the Hellion's and the Lurker's lines are held on branches `answers-held-b18-hellion-line` and `answers-held-b18-lurker-line` (battles 9a and 10 flip, and 21 still flips after package E); one search per strike stays held (§9.3). Battle 26's expectation re-recorded |
+| B | rule `2f65bc9` (schema 24 after the merge), offset data `089d6f5`, Colossus line `1b16eac`, Hellion line `585c2ab`, Lurker line `678a0db` | B-17 fixed; B-18 narrowed to one search per strike (§9.3). Battle 26's expectation re-recorded; battles 9a, 10 and 21 re-recorded by the decision below |
 | C | data `9c2e8e4` | B-30 fixed |
 | D | data `4c1e83a` | B-39 narrowed: the rule half (braking for orders that end without arriving and for pursuit) is not done |
 | E | data `e59a23f` | B-42 fixed: the burrow's functional time is the `Stats` section end, 33 ticks; the `Actor` section's 45 ticks are the animation only, which the client does not present yet |
@@ -1273,3 +1273,12 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
 | G | resolutions only | B-15, B-41, B-91 closed; Q0070 stays open for plan `2026-11-09-client-mode-commands` |
 
 No landed commit flipped a battle's overall winner; battle 32's tie between red wins and unresolved became red wins under the edge rule (§17.2), as its claim says. Battle 33 stayed 41 / 10 / 17 throughout.
+
+**Orchestrator decision (2026-11-09, short note under charter §6): the held lines land.** The Hellion's and the
+Lurker's lines flipped battles 9a, 10 and 21, and the traces of evidence §17.8 show the flips are the game's
+consequence of the data's line geometry, with cited sources, not defects. The Hellion's line landed as `585c2ab`
+with 9a and 10 re-recorded on their unchanged setups (a stationary Hellion loses to the zerglings: 9a red (2, 4),
+10 red (4, 7)). The Lurker's line landed as `678a0db` with battle 21 at 500 ticks, `blue (1, 1), red (0, 2)`: the
+orchestrator proposed red (0, 1), but one seed of 20 leaves two marines out of range. Measured against the merged
+tree, only 9a, 10 and 21 moved; battle 33 stayed 41 / 10 / 17 on 68 seeds; goldens unchanged. Still open from this
+round: the rule half of Q0067 (B-39) and the Lurker's spine spacing (B-85).
