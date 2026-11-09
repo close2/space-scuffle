@@ -155,6 +155,11 @@
 // while their unit moves without a target (ResetIfMoving), where they held their angle. The turret
 // angle is hashed, so from the first checkpoint in which such a unit moves after its turret
 // turned (2 here, 1 in golden_replay_orders) every checkpoint changed.
+// Re-recorded for Q0067 (Amendment 22, package D): an unset Deceleration reads as the converted
+// Acceleration, so "blue_spotter" (flying_saucer, the Phoenix analogue) brakes into its move
+// destination (12, 32) at 0.010192 per tick squared, about 23 ticks from full speed, where it
+// stopped within one tick. From checkpoint 7, when it starts braking, every checkpoint changed.
+// golden_replay is unchanged: none of its units with a finite acceleration ends a move order.
 (
     checksum_schema: 23,
     seed: 0x0DE5_0F_0D3125,
@@ -184,9 +189,9 @@
         0x950dbce3b23291a6,
         0x1f2e790653cf83ba,
         0xf2cded5ca8fb5f77,
-        0x5c5a758b9d7d4254,
-        0x0f442993d46c1f14,
-        0xcb7ce7bb6a998212,
+        0xe5355a91915473e2,
+        0xc0319f15f3cb6565,
+        0xc8eda8b827af7024,
         0x758583aa39f715b4,
         0x12f48d4778d1e1ab,
         0x263bc2e31a825f96,

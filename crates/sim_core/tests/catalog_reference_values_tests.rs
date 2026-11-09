@@ -2612,7 +2612,8 @@ fn b39_acceleration_follows_starcraft() -> TestResult {
 }
 
 /// The analogues whose data sets `Deceleration` (Normal units per second squared). Every other
-/// analogue's is unset, which Q0067 leaves instant: its catalog value copies `max_speed`.
+/// analogue's is unset, which the engine reads as its `Acceleration` (owner answer to Q0067): its
+/// catalog value copies the converted `acceleration`.
 const SC2_DECELERATION: [(&str, f32, &str); 2] = [
     ("High Templar", 1000.0, "liberty UnitData:3259"),
     ("Overlord", 1.625, "voidmulti UnitData:1199"),
@@ -2631,8 +2632,8 @@ fn b39_deceleration_follows_starcraft() {
             }
             None => (
                 f(arch.deceleration),
-                f(arch.max_speed),
-                "unset: instant (Q0067)",
+                f(arch.acceleration),
+                "unset: the Acceleration (Q0067)",
             ),
         };
         assert!(
