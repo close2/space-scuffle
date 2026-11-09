@@ -859,6 +859,62 @@ fn b2_strike_spacing_follows_starcraft() -> TestResult {
     Ok(())
 }
 
+/// `StarCraft` II 5.0.14 analogues whose multi-strike weapon's burst effect sets the
+/// `Channeled` flag: `(analogue, source)` (Q0058, plan `2026-11-05-sc2-deviation-fixes`
+/// Amendment 22, package A). No `CEffectCreatePersistent` default sets the flag (`core`
+/// EffectData:34-40). The Viking's `LanzerTorpedoes` (`liberty` EffectData:1698), the Banshee's
+/// `BacklashRockets` (`liberty` EffectData:2550, `voidmulti` EffectData:36) and the Phoenix's
+/// `IonCannons` (`liberty` EffectData:1959) do not set it, so their bursts survive an order.
+const SC2_CHANNELED_BURSTS: [(&str, &str); 7] = [
+    ("Zealot", "PsiBladesBurst: liberty EffectData:1924"),
+    ("Thor", "ThorsHammer: liberty EffectData:2247"),
+    (
+        "Reaper",
+        "P38ScytheGuassPistolBurst: liberty EffectData:1808",
+    ),
+    (
+        "Liberator",
+        "LiberatorMissileBurstPersistent: void EffectData:2945",
+    ),
+    ("Missile Turret", "LongboltMissile: liberty EffectData:1784"),
+    (
+        "Queen",
+        "TalonsMissileBurst: swarm EffectData:3043; TalonsBurst: liberty EffectData:2325",
+    ),
+    (
+        "Colossus",
+        "ThermalLancesForward and ThermalLancesReverse: liberty EffectData:2371, :2396",
+    ),
+];
+
+#[test]
+fn q0058_channeled_bursts_follow_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    for (unit, source) in SC2_CHANNELED_BURSTS {
+        assert!(
+            archetypes_with_analogue(&world, unit).next().is_some(),
+            "an archetype with the analogue {unit} ({source})"
+        );
+    }
+    for archetype in world.catalog.archetypes() {
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next());
+        let listed = SC2_CHANNELED_BURSTS
+            .iter()
+            .any(|(unit, _)| Some(*unit) == analogue);
+        for weapon in own_weapons(archetype) {
+            let expected = listed && weapon.attacks_count > 1;
+            assert_eq!(
+                weapon.channeled, expected,
+                "{} {}: channeled as StarCraft II's burst effect",
+                archetype.slug, weapon.name
+            );
+        }
+    }
+    Ok(())
+}
+
 /// One row of [`SC2_ATTRIBUTE_BONUSES`]: analogue, catalog weapon name if the row is for one
 /// weapon only, `(attribute, bonus)` pairs, and the source.
 type BonusRow = (

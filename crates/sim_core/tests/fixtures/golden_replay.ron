@@ -181,6 +181,13 @@
 // Re-recorded for WP13c (B-43, checksum schema 20 -> 21): each unit's attack dash cooldown is
 // encoded, so every checkpoint changed. No behaviour did: with the field left out of the encoding
 // at schema 20, every checkpoint stays as recorded for WP13a (no shipped archetype carries a dash).
+// Re-recorded for Q0058 (plan 2026-11-05-sc2-deviation-fixes Amendment 22, package A, checksum
+// schema 21 -> 22): whether each weapon's burst and each pending burst is channeled is encoded, so
+// every checkpoint changed. No behaviour did: no shipped weapon was channeled yet.
+// Re-recorded for Q0058's data (the seven analogues whose burst effect sets `Channeled`):
+// "red_psi" (psi_grey) now carries a channeled pending burst, so from checkpoint 5, the first in
+// which a zealot swings, every checkpoint changed. No behaviour did: with the drop disabled the
+// checksums are the same, as no order reaches a zealot between its blades.
 (
     checksum_schema: 22,
     seed: 0x5EED_0F_5CAFF1E,
@@ -213,10 +220,10 @@
         0x6a193f8535d03a02,
         0xe000934158f7d5c7,
         0x36f65ed368c5662a,
-        0xe4af056cedf933f3,
-        0xcc6fc107dddfa73e,
+        0x58f49294dcdac086,
+        0x985e50cbd5560b47,
         0x9e64b1675c32e5d8,
-        0x1e1eb24c44cebe1c,
+        0x7116eb711c48f663,
         0x8e1b75ad27bc53f5,
         0x5a4bc1443a3bc0c0,
         0xca6f1c910d4dc457,

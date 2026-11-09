@@ -144,6 +144,9 @@
 // Re-recorded for WP13c (B-43, checksum schema 20 -> 21): each unit's attack dash cooldown is
 // encoded, so every checkpoint changed. No behaviour did: with the field left out of the encoding
 // at schema 20, every checkpoint stays as recorded for WP13a (no shipped archetype carries a dash).
+// Re-recorded for Q0058 (plan 2026-11-05-sc2-deviation-fixes Amendment 22, package A, checksum
+// schema 21 -> 22): whether each weapon's burst and each pending burst is channeled is encoded, so
+// every checkpoint changed. No behaviour did: no shipped weapon was channeled yet.
 (
     checksum_schema: 22,
     seed: 0x0DE5_0F_0D3125,
