@@ -2812,6 +2812,7 @@
                     is_immobile: true,
                     unpushable: true,
                     is_cloaked: true,
+                    is_burrowed: true,
                     ground_weapon_override: Some(Some((
                         name: "Subterranean Spines",
                         visual_kind: MeleeSlash,

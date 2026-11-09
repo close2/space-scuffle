@@ -2,9 +2,10 @@
 //!
 //! # Responsibility
 //! Writes the world's visible state into a [`RenderSnapshot`]: player status, resource nodes,
-//! one bubble per entity not carried in a transport, and the tick's visual events. A bubble's
-//! attack cycle (`AttackSwing`) is derived from the weapon state machine through the same
-//! weapon resolution combat uses, with no state of its own.
+//! one bubble per entity not carried in a transport, the open hazard zones, and the tick's
+//! visual events. A bubble's attack cycle (`AttackSwing`) is derived from the weapon state
+//! machine through the same weapon resolution combat uses, with no state of its own; its
+//! concealment, stance, status and barrier fraction come from `world::presentation`.
 //!
 //! # How it fits
 //! The last phase of `step_into`, and the only place the simulation converts fixed-point values
@@ -12,17 +13,18 @@
 //!
 //! # Invariants
 //! - Writing a snapshot changes no authoritative state and no checksum; it only drains
-//!   `pending_events`.
-//! - Bubbles are ordered by entity ID.
+//!   `pending_events` and the tick's barrier hits.
+//! - Bubbles are ordered by entity ID, areas by opening order (hazard ID order).
 
+use super::presentation;
+use super::AIR_UNIT_ALTITUDE;
 use crate::catalog::UnitArchetype;
-use crate::entity::{Entity, WeaponPhase};
+use crate::entity::{Entity, WeaponPhase, OVERCLOCK_BUFF_ID};
 use crate::SimWorld;
 use sim_map::SimMap;
 use sim_types::{
-    AttackSwing, BubbleRenderInstance, Concealment, MoverType, PlayerSlot, PlayerStatusView,
-    RenderSnapshot, ResourceNodeId, ResourceNodeView, SimScalar, StanceView, StatusFlags, Tick,
-    WeaponVisualKind,
+    AreaView, AttackSwing, BubbleRenderInstance, MoverType, PlayerSlot, PlayerStatusView,
+    RenderSnapshot, ResourceNodeId, ResourceNodeView, SimScalar, Tick, WeaponVisualKind,
 };
 
 impl SimWorld {
@@ -64,7 +66,9 @@ impl SimWorld {
         output.match_result = self.match_state.result;
         self.write_player_views(output);
         self.write_resource_nodes(output);
+        self.write_areas(output);
 
+        self.presentation.settle_barrier_hits();
         for entity in self.entities.values() {
             if entity.is_loaded_in_transport() {
                 continue;
@@ -73,12 +77,41 @@ impl SimWorld {
                 continue;
             };
             let swing = self.published_swing(entity, arch);
+            let barrier_hit = self.presentation.barrier_hit(entity.id);
             output
                 .bubbles
-                .push(bubble_instance(entity, arch, &self.map, swing));
+                .push(bubble_instance(entity, arch, &self.map, swing, barrier_hit));
         }
+        self.presentation.clear_barrier_hits();
 
         output.combat_events.append(&mut self.pending_events);
+    }
+
+    /// Replaces the area list with the open hazard zones, in opening order.
+    ///
+    /// A zone opened by a cast carries its caster and full length; one placed otherwise has no
+    /// source and counts its remaining ticks as its length.
+    fn write_areas(&self, output: &mut RenderSnapshot) {
+        output.areas.clear();
+        output.links.clear();
+        output
+            .areas
+            .extend(self.active_hazards.iter().map(|hazard| {
+                let record = self.presentation.area(hazard.id);
+                AreaView {
+                    id: hazard.id,
+                    owner: hazard.owner,
+                    center: [
+                        hazard.center.x.to_f32(),
+                        hazard.center.y.to_f32(),
+                        self.map.terrain_altitude_at(hazard.center),
+                    ],
+                    radius: hazard.radius.to_f32(),
+                    remaining_ticks: hazard.remaining_ticks,
+                    total_ticks: record.map_or(hazard.remaining_ticks, |record| record.total_ticks),
+                    source: record.map(|record| record.source),
+                }
+            }));
     }
 
     /// The attack cycle `entity` (of archetype `arch`) is in, derived from its weapon state.
@@ -172,16 +205,18 @@ impl SimWorld {
 }
 
 /// The render record of one entity of archetype `arch` standing on `map`, in the attack cycle
-/// `attack_swing` ([`SimWorld::published_swing`]).
+/// `attack_swing` ([`SimWorld::published_swing`]); `barrier_hit` says whether its barrier
+/// absorbed damage this tick.
 fn bubble_instance(
     entity: &Entity,
     arch: &UnitArchetype,
     map: &SimMap,
     attack_swing: Option<AttackSwing>,
+    barrier_hit: bool,
 ) -> BubbleRenderInstance {
     let ground_z = map.terrain_altitude_at(entity.position);
     let altitude_z = if matches!(arch.mover_type, MoverType::Air) {
-        ground_z + 2.5
+        ground_z + AIR_UNIT_ALTITUDE
     } else {
         ground_z
     };
@@ -206,7 +241,10 @@ fn bubble_instance(
     let shield_flash = (f32::from(entity.shield_hit_flash_ticks)) / 8.0;
     let hull_flash = (f32::from(entity.hull_hit_flash_ticks)) / 8.0;
 
-    let speed_boosted = entity.active_buffs.iter().any(|b| b.buff_id == 1);
+    let speed_boosted = entity
+        .active_buffs
+        .iter()
+        .any(|b| b.buff_id == OVERCLOCK_BUFF_ID);
 
     BubbleRenderInstance {
         entity_id: entity.id,
@@ -242,14 +280,10 @@ fn bubble_instance(
         hull_hit_flash: hull_flash,
         build_or_queue_progress: SimWorld::published_progress(entity),
         selected: false,
-        concealment: if entity.is_cloaked {
-            Concealment::Cloaked
-        } else {
-            Concealment::None
-        },
-        stance: StanceView::default(),
-        status: StatusFlags::default(),
-        barrier_ratio: 0.0,
+        concealment: presentation::concealment(entity, arch),
+        stance: presentation::stance(entity, arch),
+        status: presentation::status(entity, barrier_hit),
+        barrier_ratio: presentation::barrier_ratio(entity, arch),
         speed_boosted,
     }
 }

@@ -31,11 +31,13 @@ use sim_types::{
     WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
+mod effects;
 mod factions;
 mod runtime;
 mod targeting;
 mod validation;
 
+pub use effects::{ArchetypeEffects, ModeEffects, WeaponEffects};
 pub use factions::{ArmorClassDef, FactionCatalog, FactionDef, WeaponClassDef};
 pub use runtime::{CatalogLoadError, RuntimeCatalogs};
 pub use targeting::{AcquireLevel, AcquireTieBreak, PrimaryWeapon};
@@ -213,6 +215,11 @@ pub struct UnitArchetype {
     /// Declarative transformation stances and operational modes (e.g. Siege Mode, Burrowed Mode).
     #[serde(default)]
     pub modes: Vec<UnitModeSpec>,
+    /// Effects this archetype chooses for its weapons, modes, statuses, abilities and death
+    /// (plan `2026-11-09-effect-visualization` §5.3). Presentation data for the client: the
+    /// simulation never reads it and no entity copies it, so it is not hashed.
+    #[serde(default)]
+    pub effects: ArchetypeEffects,
 }
 
 impl UnitArchetype {
@@ -1167,6 +1174,8 @@ struct UnitArchetypeDef {
     armor_class: Option<String>,
     #[serde(default)]
     modes: Vec<UnitModeSpecDef>,
+    #[serde(default)]
+    effects: ArchetypeEffects,
 }
 
 /// Converts authored degrees in `0..=180` to binary angle units (65 536 per turn).
@@ -1427,6 +1436,7 @@ impl UnitArchetypeDef {
             researches_upgrades: self.researches_upgrades,
             armor_class,
             modes,
+            effects: self.effects,
         })
     }
 }
@@ -1530,6 +1540,10 @@ struct StructureArchetypeDef {
     /// Generative Veo 3.1 video prompts.
     #[serde(default)]
     pub veo_prompts: BTreeMap<String, String>,
+    /// Effects this structure chooses (plan `2026-11-09-effect-visualization` §5.3); presentation
+    /// data, empty when omitted.
+    #[serde(default)]
+    pub effects: ArchetypeEffects,
 }
 
 impl StructureArchetypeDef {
@@ -1637,6 +1651,7 @@ impl StructureArchetypeDef {
             researches_upgrades: self.researches_upgrades,
             armor_class: None,
             modes: Vec::new(),
+            effects: self.effects,
         })
     }
 }

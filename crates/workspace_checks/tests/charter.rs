@@ -77,9 +77,20 @@ const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
     },
     FloatAllowance {
         path: "crates/sim_core/src/combat_resolution.rs",
-        count: 3,
+        count: 4,
         reason: "a decimal constant converted once with `SimScalar::from_num`, and the \
-                 presentation-only flight time of a projectile visual event",
+                 presentation-only flight time of a projectile visual event and zone radii of \
+                 a splash visual event",
+    },
+    FloatAllowance {
+        path: "crates/sim_core/src/world.rs",
+        count: 1,
+        reason: "presentation: the altitude at which snapshot output draws air units",
+    },
+    FloatAllowance {
+        path: "crates/sim_core/src/world/presentation.rs",
+        count: 1,
+        reason: "presentation: the barrier fraction written into `RenderSnapshot`",
     },
     FloatAllowance {
         path: "crates/sim_core/src/world/snapshot.rs",

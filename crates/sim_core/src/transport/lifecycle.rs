@@ -7,7 +7,9 @@
 
 use crate::production::ProductionInvariant;
 use crate::{PlayerResources, SimWorld};
-use sim_types::{CombatEventVisual, EntityId, PlayerId, PlayerSlot, SimScalar, SimVec2};
+use sim_types::{
+    CombatEventVisual, EntityId, PlayerId, PlayerSlot, SimScalar, SimVec2, UnitTypeId,
+};
 
 struct PreparedDeathGroup {
     economy: PlayerResources,
@@ -15,7 +17,7 @@ struct PreparedDeathGroup {
     /// `owner`'s slot, proven while preparing, so the commit writes without a lookup.
     slot: PlayerSlot,
     foundation: bool,
-    shatter: Option<(SimVec2, SimScalar)>,
+    shatter: Option<(SimVec2, SimScalar, UnitTypeId)>,
 }
 
 impl SimWorld {
@@ -78,7 +80,7 @@ impl SimWorld {
                     if prepared.foundation {
                         self.pathfinder.recompute_clearance(&self.map);
                     }
-                    if let Some((position, radius)) = prepared.shatter {
+                    if let Some((position, radius, unit_type)) = prepared.shatter {
                         self.pending_events.push(CombatEventVisual::BubbleShatter {
                             pos: [
                                 position.x.to_f32(),
@@ -88,7 +90,7 @@ impl SimWorld {
                             radius: radius.to_f32(),
                             is_dome: prepared.foundation,
                             owner: prepared.owner,
-                            unit_type: sim_types::UnitTypeId::default(),
+                            unit_type,
                         });
                     }
                 }
@@ -146,7 +148,11 @@ impl SimWorld {
             owner,
             slot,
             foundation,
-            shatter: (!source.is_loaded_in_transport()).then_some((source.position, root_radius)),
+            shatter: (!source.is_loaded_in_transport()).then_some((
+                source.position,
+                root_radius,
+                source.unit_type_id,
+            )),
         })
     }
 }
