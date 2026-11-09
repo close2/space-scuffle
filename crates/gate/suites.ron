@@ -311,6 +311,7 @@ SuiteCatalog(
             "sim_core/sc2_battle_benchmarks_tests",
             "sim_core/sc2_who_wins_matchup_matrix_tests",
             "sim_core/scenario_tests",
+            "sim_core/second_line_tests",
             "sim_core/snapshot_output_tests",
             "sim_core/spells_and_abilities_tests",
             "sim_core/stutter_step_tests",
