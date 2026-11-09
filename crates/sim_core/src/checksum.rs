@@ -47,7 +47,8 @@ use std::collections::BTreeMap;
 /// it deals to a structure instead of its own strike (B-82).
 /// Schema 17 adds each weapon's acquisition arc and each unit's engaged target (B-29).
 /// Schema 18 adds each weapon's turret idle behaviour and rate (B-30).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 18;
+/// Schema 19 adds each weapon's random delay range and each unit's carried delay (B-3).
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 19;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

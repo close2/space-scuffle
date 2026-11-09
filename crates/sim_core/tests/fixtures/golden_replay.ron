@@ -169,8 +169,12 @@
 // rate are encoded, so every checkpoint changed. No behaviour did: with the field left out of the
 // encoding at schema 17, every checkpoint stays as recorded for the B-29 data (every shipped
 // turret holds).
+// Re-recorded for WP11 (B-3, checksum schema 18 -> 19): each weapon's random delay range and each
+// unit's carried delay are encoded, so every checkpoint changed. No behaviour did: with the fields
+// left out of the encoding at schema 18, every checkpoint stays as recorded for the B-30 data
+// (every shipped weapon authors no delay yet).
 (
-    checksum_schema: 18,
+    checksum_schema: 19,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -196,25 +200,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x9f28410f25234177,
-        0x733a08a9bb376f74,
-        0x46ffb3309b682914,
-        0x51797f88ecdff683,
-        0x3f3ae624026aa20d,
-        0x6bd493367be5621c,
-        0xd4fd1940f64e49d7,
-        0x0035081d397dc6dd,
-        0x8cab35fe8de4fdb0,
-        0x130fb79c9615f7b5,
-        0xc0eed127984f6409,
-        0x2c65c9c72c396bd6,
-        0xee85b9252bdde5c4,
-        0x8b45ff7986b776d2,
-        0x559b55f13036edaf,
-        0xe1f2bf1c9b8a4e8b,
-        0x01209598f1108693,
-        0x99955cf7962da711,
-        0xabe8e74b66968c08,
-        0x43a79b9bafbdeecf,
+        0xb3429cdbb2720e58,
+        0xc3d4924440faa981,
+        0x45b00d5d1b83935a,
+        0x3a2d259a04c5ca98,
+        0x24d5a6b6bda63114,
+        0x8fed759aa0370324,
+        0x8ebb80bbb1366891,
+        0x255769d3ace8fba4,
+        0x6c63242f1afcfa67,
+        0xf4d58ba7a7edbd21,
+        0x6b75dfa5a1965bf5,
+        0xdbd3de20fdc6d2a7,
+        0x20c5b627dd59a3e5,
+        0xe390bfd83f0a0640,
+        0xce4294bbcc1799e5,
+        0xf2bc91e147d0ee86,
+        0xc19121adcb5cde06,
+        0x3c30da11e9cc71b2,
+        0xef139057f4b8d84c,
+        0x4fbaeb06407badc8,
     ],
 )

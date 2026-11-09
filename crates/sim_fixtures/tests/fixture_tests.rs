@@ -40,7 +40,9 @@ use std::path::PathBuf;
 /// acquisition arc and each unit's engaged target.
 /// Re-recorded for checksum schema 18 (work package 10, B-30), which encodes each weapon's turret
 /// idle behaviour.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 17_322_181_708_874_448_200;
+/// Re-recorded for checksum schema 19 (work package 11, B-3), which encodes each weapon's random
+/// delay range and each unit's carried delay.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 9_134_118_214_058_191_989;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

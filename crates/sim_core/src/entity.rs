@@ -278,6 +278,10 @@ pub struct Entity {
     pub weapon_phase: WeaponPhase,
     /// Remaining ticks until weapon cooldown expires.
     pub weapon_cooldown_remaining: u16,
+    /// The fraction of a tick of random firing delay drawn but not yet charged, in `0..1`
+    /// ticks: each release adds its delay here and moves the whole ticks into the cooldown, so
+    /// the shot times are the exact sums of periods and delays quantised to ticks (B-3).
+    pub weapon_delay_carry: SimScalar,
     /// Strikes of the last attack still to land on later ticks; `None` when its every strike
     /// has landed or the weapon lands all of them on the release tick.
     pub pending_strikes: Option<PendingStrikes>,
@@ -419,6 +423,7 @@ impl Entity {
             },
             weapon_phase: WeaponPhase::Ready,
             weapon_cooldown_remaining: 0,
+            weapon_delay_carry: SimScalar::ZERO,
             pending_strikes: None,
             active_buffs: Vec::new(),
             production_queue: VecDeque::new(),

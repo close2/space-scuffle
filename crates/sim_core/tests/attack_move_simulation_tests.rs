@@ -217,6 +217,8 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         period_ticks: 10, // DPS = 1000
         damage_point_ticks: 1,
         backswing_ticks: 2,
+        random_delay_min: SimScalar::ZERO,
+        random_delay_max: SimScalar::ZERO,
         splash: None,
         projectile_speed: None,
         weapon_class: None,
@@ -247,6 +249,8 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         period_ticks: 10, // DPS = 2500
         damage_point_ticks: 1,
         backswing_ticks: 2,
+        random_delay_min: SimScalar::ZERO,
+        random_delay_max: SimScalar::ZERO,
         splash: None,
         projectile_speed: None,
         weapon_class: None,

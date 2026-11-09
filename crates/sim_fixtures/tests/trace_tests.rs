@@ -100,6 +100,7 @@ const WINDUP_MELEE_RON: &str = r#"(
                 period_ticks: 22,
                 damage_point_ticks: 4,
                 backswing_ticks: 6,
+                random_delay_ticks: (0.0, 0.0),
                 splash: None,
                 projectile_speed: None,
             )),

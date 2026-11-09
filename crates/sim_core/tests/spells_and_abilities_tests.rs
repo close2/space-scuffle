@@ -258,6 +258,8 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
         period_ticks: 60,
         damage_point_ticks: 2,
         backswing_ticks: 4,
+        random_delay_min: SimScalar::ZERO,
+        random_delay_max: SimScalar::ZERO,
         splash: Some(SplashSpec {
             zones: vec![
                 sim_types::SplashZone {

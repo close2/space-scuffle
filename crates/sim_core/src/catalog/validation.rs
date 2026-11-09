@@ -488,6 +488,28 @@ impl WeaponSpecDef {
         Ok(())
     }
 
+    /// Checks the random delay `(min, max)` in ticks: both finite fixed-point values, `min <=
+    /// max`, and `min` greater than minus the cooldown a release charges (`period − damage
+    /// point`), so no draw can take the whole cooldown away (B-3).
+    fn validate_random_delay(&self, definition: &str, prefix: &str) -> SimResult<()> {
+        let field = &format!("{prefix}.random_delay_ticks");
+        let (min, max) = self.random_delay_ticks;
+        scalar(definition, field, f64::from(min))?;
+        scalar(definition, field, f64::from(max))?;
+        if min > max {
+            return Err(invalid(definition, field, "min must not exceed max"));
+        }
+        let cooldown = f64::from(self.period_ticks) - f64::from(self.damage_point_ticks);
+        if f64::from(min) <= -cooldown {
+            return Err(invalid(
+                definition,
+                field,
+                "min must leave part of the period − damage point cooldown",
+            ));
+        }
+        Ok(())
+    }
+
     /// Checks the spacing of the strikes of one attack: an interval needs a second strike, the
     /// whole burst ends before the next attack can start, and a follow-up distance belongs to a
     /// spaced burst and is positive.
@@ -628,6 +650,7 @@ impl WeaponSpecDef {
             ));
         }
         self.validate_cadence(definition, prefix)?;
+        self.validate_random_delay(definition, prefix)?;
         self.validate_strikes(definition, prefix)?;
         self.validate_attribute_bonuses(definition, prefix)?;
         if let Some(strike) = &self.structure_strike {

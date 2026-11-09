@@ -93,6 +93,7 @@ fn catalog_ron(bonuses: &str) -> String {
             period_ticks: 20,
             damage_point_ticks: 0,
             backswing_ticks: 0,
+            random_delay_ticks: (0.0, 0.0),
             splash: None,
             projectile_speed: None,
         ))"#

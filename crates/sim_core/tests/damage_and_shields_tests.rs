@@ -125,6 +125,8 @@ fn dummy_weapon_spec(
         period_ticks: 20,
         damage_point_ticks: 2,
         backswing_ticks: 4,
+        random_delay_min: SimScalar::ZERO,
+        random_delay_max: SimScalar::ZERO,
         splash: None,
         projectile_speed: None,
         weapon_class: None,
@@ -732,6 +734,8 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
         period_ticks: 30,
         damage_point_ticks: 1,
         backswing_ticks: 2,
+        random_delay_min: SimScalar::ZERO,
+        random_delay_max: SimScalar::ZERO,
         splash: Some(SplashSpec {
             zones: vec![
                 sim_types::SplashZone {
