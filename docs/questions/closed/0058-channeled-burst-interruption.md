@@ -39,3 +39,12 @@ issued one game loop after the first blade; count the damage.
 **Option 3 (Any new order ends a `Channeled` burst — no editor test needed).**
 
 **Engine insight:** In StarCraft II's engine, multi-hit melee and ground burst weapons like the Zealot's `PsiBladesBurst` and the Thor's `ThorAPBurst` are implemented as `CEffectCreatePersistent` effects with `Channeled = 1` bound to the active attack order (unlike multi-missile projectile bursts such as the Viking's or Banshee's, which do not set `Channeled`). While the weapon's preswing/channel is uninterruptible by passive target re-evaluation, issuing any explicit new order (`Move`, `Stop`, `HoldPosition`, or retargeting to a different unit) after the first strike lands (`t = 0.0`) but before the second strike lands (`t = 0.28s` Normal / 5 ticks for the Zealot, 7 ticks for the Thor) breaks the channel and cancels the remaining strike(s). This is a well-known StarCraft II micro behavior ("canceling the Zealot's second blade" or "canceling the Thor's second cannon" by stutter-stepping too early). Set `channeled` on `PendingAttackBurst` from the weapon effect's `Channeled` flag and drop `channeled` bursts on any explicit order override (`Move`, `Stop`, `HoldPosition`, `AttackMove`, or `AttackUnit` on a different target).
+
+## Resolution
+
+2026-11-09. Option 3. Each weapon carries its burst effect's `Channeled` flag (`WeaponSpec::channeled`), and a
+non-queued order that replaces the attacker's orders (Move, Stop, Hold Position, Attack Move, an attack on another
+target, any other order) drops a pending channeled burst; an attack on the burst's own target keeps it. Rule
+`a9a24bf` (checksum schema 22), data `0c0cb1e`: the 5.0.14 data flag the Zealot, Thor (ground), Reaper, Queen,
+Liberator, Missile Turret and Colossus bursts; the Viking's, Banshee's and Phoenix's are not channeled. Bug B-2 is
+fixed. Plan `2026-11-05-sc2-deviation-fixes` Amendment 22 records it; evidence `2026-11-05-sc2-deviation-fixes.md` §17.

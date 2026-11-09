@@ -41,3 +41,9 @@ how long they turn before their first shot (the acquisition arc of B-29 is 0 for
 **Option 2 (`YawRate` — return to front at their targeting rate; no editor test needed).**
 
 **Engine insight:** In StarCraft II's `CTurret` implementation, `YawIdleRate` is an optional override used primarily by decorative/continuous-spin turrets (`Idle = Spin`, such as the Missile Turret or Sensor/Radar Tower). When a combat turret has `Idle = ResetIfMoving` or `Reset` (such as the Siege Tank in tank mode, Hellion, or Phoenix) and leaves `YawIdleRate` unset (`0` in XML), the engine falls back to the turret's normal `YawRate` (`55.99°`, `30.20°`, and `40.32°` per tick) to rotate the turret back to its forward `YawStart` (`0°`) alignment. Fall back to `yaw_rate` when `YawIdleRate` is unset (`0`).
+
+## Resolution
+
+2026-11-09. Option 2. The Siege Tank (tank mode), Hellion and Phoenix analogues' `ResetIfMoving` turrets return at
+their own `YawRate`: 40.32, 55.99 and 30.20 degrees per tick (the question listed the three values in another order).
+Data `9c2e8e4`. Bug B-30 is fixed. Plan `2026-11-05-sc2-deviation-fixes` Amendment 22 records it; evidence `2026-11-05-sc2-deviation-fixes.md` §17.

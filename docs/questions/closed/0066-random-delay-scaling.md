@@ -42,3 +42,10 @@ desynchronised one attack earlier.
 **Option 1 (No change — unscaled cooldown jitter; do not block on an editor test).**
 
 **Engine insight:** Keep Option 1 and close `B-91` without waiting on an editor measurement. The `~0.01` Normal s (`0.2` tick) difference from scaling `RandomDelay` by Stimpack is negligible in practice. (Optionally, if you wish to draw a non-negative delay in `[0, RandomDelayMax]` on a unit's initial ready shot so lines of Marines naturally desynchronize their muzzle flashes and audio on volley 1 as SC2's *"used as a delay before firing the weapon"* describes, you may do so, or simply keep the current implementation as-is.)
+
+## Resolution
+
+2026-11-09. Option 1: no change. Each attack's random delay stays unscaled by attack-rate buffs, and the first attack
+after the weapon becomes ready draws none; the owner called the difference negligible and allowed keeping the
+implementation as is. Bug B-91 is closed and leaves the `DESIGN.md` register; plan
+`2026-11-05-sc2-deviation-fixes` Amendment 22 (package G) records it. No code commit.

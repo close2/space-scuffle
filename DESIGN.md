@@ -153,13 +153,10 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 
 | ID | Deviation | Package |
 |---|---|---|
-| B-2 | Whether an order between the strikes of a multi-strike attack cancels the later strikes (not yet sourced, [Q0058](docs/questions/open/0058-channeled-burst-interruption.md)); the spacing itself is fixed | Q0058 |
 | B-5 | Whether damage point and backswing hold an automatically attacking unit (not yet sourced) | WP16 |
 | B-6 | Release range slop 0.5 for every weapon | WP9 |
 | B-13 | Call-for-help radius, flee distance, leash and abandoned-target time are unsourced | WP16 |
-| B-15 | Whether the 0.5 minimum applies to the life part of a shield-breaking strike (not yet sourced, [Q0062](docs/questions/open/0062-shield-break-life-minimum.md)); the remainder itself is fixed | Q0062 |
-| B-17 | Where a splash is centred and whether it reaches a unit's edge (not yet sourced, [Q0063](docs/questions/open/0063-splash-distance-rule.md)); splash zones and fractions are fixed | Q0063 |
-| B-18 | Hellion, Lurker and Colossus line splash modelled as a circle; the line rule exists, the data are held on matrix winner flips (plan Amendment 13) | WP8b |
+| B-18 | Hellion and Lurker line splash modelled as a circle; their line data flip matrix battles 9a, 10 and 21 and are held (plan Amendment 22); the Colossus' line is fixed | WP8b |
 | B-19 | Ultralisk cleave modelled as a circle | WP8c |
 | B-20 | Mutalisk glaive does not bounce | WP8d |
 | B-21 | Brood Lord spawns no Broodlings | WP18 |
@@ -167,13 +164,10 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-23 | Storm hits structures, and idle units dodge it on their own | WP18 |
 | B-24 | Matrix battle 13's storm values | WP18 |
 | B-27 | Liberator analogue has no Defender Mode, so no ground attack at all (its fighter-mode ground attack was removed by WP2) | WP18 |
-| B-30 | The Siege Tank (tank mode), Hellion and Phoenix analogues' turrets do not return to the front while moving without a target (`ResetIfMoving`; the rate is not sourced, [Q0065](docs/questions/open/0065-turret-idle-rate.md)); the idle rule itself is fixed | Q0065 |
 | B-35 | No energy regeneration delay | WP15 |
 | B-36 | Unfinished structures regenerate life | WP15 |
 | B-38 | No burrowed Roach regeneration and no Tunneling Claws | WP15, WP18 |
-| B-39 | How a unit whose data sets no `Deceleration` brakes; ours stops within a tick (not yet sourced, [Q0067](docs/questions/open/0067-unset-deceleration.md)); acceleration and the sourced decelerations are fixed | Q0067 |
-| B-41 | Where in a hit the Immortal's Barrier acts: whether the raising hit is absorbed, before or after armour, and whether a hit absorbed whole still deals 0.5 (not yet sourced, [Q0068](docs/questions/open/0068-barrier-damage-order.md)); the Barrier itself is fixed | Q0068 |
-| B-42 | Whether the burrowing Lurker analogue's weapon and cloak arrive at the morph's `Stats` section, 12 ticks before it ends (not yet sourced, [Q0069](docs/questions/open/0069-lurker-burrow-sections.md)); attacking only burrowed is fixed | Q0069 |
+| B-39 | Braking applies only into a move order's destination; an order that ends without arriving, and pursuit, stop within a tick (owner answer to [Q0067](docs/questions/closed/0067-unset-deceleration.md), rule part open); unset `Deceleration` reading as `Acceleration` is fixed | WP12 follow-up |
 | B-43 | How the engine measures Charge's trigger window (0.6 edge or centre; 4 as a straight line or the walk), when its autocast looks, and whether a new order ends a dash (not yet sourced, [Q0071](docs/questions/open/0071-charge-trigger-details.md)); the dash itself is fixed | Q0071 |
 | B-44 | Concussive Shells have no effect | WP13d |
 | B-45 | Phoenix and Void Ray analogues cannot fire while moving | WP13e |
@@ -200,15 +194,14 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-70 | No Graviton Beam | WP18 |
 | B-77 | Hard-coded Concussive slow | WP13d |
 | B-78 | Hard-coded storm evacuation margin | WP18 |
-| B-81 | The Liberator's first missile and the Colossus' strikes land on the release tick; the game delays the missile 1 tick and the Colossus' strikes by an amount not yet sourced ([Q0064](docs/questions/open/0064-colossus-damage-timing.md)) | WP5 follow-up, Q0064 |
+| B-81 | The Liberator's first missile lands on the release tick; the game delays it 1 tick. The Colossus' strikes stay on the release tick by the owner's answer to [Q0064](docs/questions/closed/0064-colossus-damage-timing.md) | WP5 follow-up |
 | B-83 | The Baneling's burst is centred on its target and strikes it directly; the game centres it on the Baneling | WP8 follow-up |
 | B-84 | The Siege Tank splashes around targets of radius 1.25 or more; the game's shot at them has no area | WP8 follow-up |
-| B-85 | A line area lands whole on the shot's tick; the game spaces the Lurker's spines 0.125 Normal s apart and delays each Colossus search 0.25 Normal s | WP8 follow-up |
+| B-85 | The Lurker's spines land together; the game spaces its 9 searches 0.125 Normal s (2 ticks) apart (owner note on [Q0064](docs/questions/closed/0064-colossus-damage-timing.md)). The Colossus' searches stay on the release tick by that answer | WP8 follow-up, after B-18's Lurker line |
 | B-86 | Morphs (Baneling, Ravager, Lurker, Brood Lord, Orbital Command, Planetary Fortress, Lair, Hive, Greater Spire) cost their morph increment and the Zergling analogue one Zergling at the pair's price, while ours trains them whole | WP17 |
 | B-88 | Structure attributes are derived in code (Psionic if shielded, else Mechanical); the game gives Protoss structures Armored and Structure, Zerg structures Armored, Biological and Structure | WP9 follow-up |
 | B-89 | Whether the Liberator analogue's anti-air weapon turns on the `Liberator` turret: the game's unit lists a second weapon entry with that turret and no weapon (`void` UnitData:3317-3318); ours is a hull weapon | WP10 follow-up (research) |
 | B-90 | A turreted weapon's wind-up does not hold its unit, and a turret works against the unit's `current_target` under any order; the game lets only weapons with `AllowedMovement` fire while moving. It reaches the Siege Tank analogue and, since WP10 (B-28), the Hellion, Immortal, Colossus, Lurker and Phoenix analogues | WP13e |
-| B-91 | Whether an attack-rate buff (Stimpack) scales the random firing delay, and whether the first attack of an engagement draws one; ours does neither (not yet sourced, [Q0066](docs/questions/open/0066-random-delay-scaling.md)) | Q0066 |
 | B-92 | `LateralAcceleration` (how sharply a moving unit can curve) is not modelled; our units turn their velocity freely within the hull rate | WP16 |
 | B-93 | A burrowed unit still blocks ground units; the game's burrowed Lurker collides only with burrowed units | WP16 |
 | B-94 | Charge's autocast cannot be switched off; the game's is a player toggle, on by default | WP18 |

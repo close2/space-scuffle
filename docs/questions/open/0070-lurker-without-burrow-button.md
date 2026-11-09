@@ -38,3 +38,11 @@ unburrowed (wrongly) and was usable.
 **Option 1 (Keep the simulation fix and schedule the client command button/hotkey for mode toggles).**
 
 **Engine insight:** Simulation rules should stay faithful to SC2 (`LurkerMP` unarmed above ground, armed only when burrowed as `LurkerMPBurrowed`) rather than carrying temporary rule hacks for missing UI controls. Scheduling a small client work package to add a mode-toggle command button and hotkey (`CastAbility`) to the skirmish HUD cleanly unblocks both the Lurker (`Burrow` / `Unburrow`) and the Siege Tank (`Siege Mode` / `Tank Mode`) at the same time.
+
+## Resolution
+
+Draft, 2026-11-09. Option 1: the simulation keeps the Lurker analogue armed only when burrowed, as StarCraft II's
+`LurkerMP` and `LurkerMPBurrowed`. The skirmish client's mode-toggle buttons and hotkeys (Burrow and Unburrow, Siege
+and Tank Mode) are delivered by plan `2026-11-09-client-mode-commands`, in progress on another branch. This question
+stays in `open/` until that round lands on `main`; the agent that merges it completes this resolution with its
+commit and moves the file to `closed/`.
