@@ -20,7 +20,7 @@
 use sim_core::catalog::UnitArchetype;
 use sim_core::WeaponSpec;
 use sim_types::upgrades::UpgradeEffect;
-use sim_types::{AttributeFlags, SimScalar};
+use sim_types::{AttributeFlags, SimAngle, SimScalar, TurretIdle};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -2280,5 +2280,149 @@ fn b28_weapon_mounts_follow_starcraft() -> TestResult {
             archetype.slug
         );
     }
+    Ok(())
+}
+
+/// `ResetIfMoving` with no `YawIdleRate` in any layer: the return rate is unknown, so the turret
+/// holds until the owner answers Q0065 (B-30 stays open for it).
+const RESET_RATE_UNKNOWN: &str = "ResetIfMoving, no YawIdleRate: holds by Q0065's default";
+
+/// Idle behaviour (`CTurret` `Idle`, `YawIdleRate` in degrees per tick = Normal °/s × 1.4 ÷ 25)
+/// of every turreted weapon, by analogue and block; `siege_mode` is the Siege Tank's Siege Mode
+/// cannon. Every turret here descends from `FreeRotate`, `Idle` `Hold` (`liberty`
+/// TurretData:24), unless its row says otherwise (B-30).
+const SC2_TURRET_IDLE: [(&str, &str, TurretIdleRef, &str); 13] = [
+    (
+        "Siege Tank",
+        "weapon",
+        TurretIdleRef::Hold,
+        RESET_RATE_UNKNOWN,
+    ),
+    (
+        "Siege Tank",
+        "siege_mode",
+        TurretIdleRef::Hold,
+        "SiegeTankSieged, liberty TurretData:80-83",
+    ),
+    ("Hellion", "weapon", TurretIdleRef::Hold, RESET_RATE_UNKNOWN),
+    (
+        "Immortal",
+        "weapon",
+        TurretIdleRef::FollowMovement(20.16),
+        "FollowMovement, YawIdleRate 360, liberty TurretData:74-75",
+    ),
+    (
+        "Colossus",
+        "weapon",
+        TurretIdleRef::FollowMovement(5.04),
+        "FollowMovement, YawIdleRate 90, liberty TurretData:50-52",
+    ),
+    (
+        "Lurker",
+        "weapon",
+        TurretIdleRef::Hold,
+        "Lurker turret, Hold, void TurretData:16",
+    ),
+    (
+        "Phoenix",
+        "air_weapon",
+        TurretIdleRef::Hold,
+        RESET_RATE_UNKNOWN,
+    ),
+    (
+        "Planetary Fortress",
+        "ground_weapon",
+        TurretIdleRef::Hold,
+        "PlanetaryFortress, liberty TurretData:88-90",
+    ),
+    (
+        "Missile Turret",
+        "air_weapon",
+        TurretIdleRef::Spin(2.52),
+        "Spin, YawIdleRate 45, liberty TurretData:85-86",
+    ),
+    (
+        "Photon Cannon",
+        "ground_weapon",
+        TurretIdleRef::Hold,
+        "PhotonCannon, liberty TurretData:48",
+    ),
+    (
+        "Photon Cannon",
+        "air_weapon",
+        TurretIdleRef::Hold,
+        "PhotonCannon, liberty TurretData:48",
+    ),
+    (
+        "Spine Crawler",
+        "ground_weapon",
+        TurretIdleRef::Hold,
+        "SpineCrawler, liberty TurretData:61-63",
+    ),
+    (
+        "Spore Crawler",
+        "air_weapon",
+        TurretIdleRef::Hold,
+        "SporeCrawler, liberty TurretData:69-72 (a YawIdleRate under Hold)",
+    ),
+];
+
+/// A reference idle behaviour, rates in degrees per tick.
+#[derive(Clone, Copy, Debug)]
+enum TurretIdleRef {
+    Hold,
+    FollowMovement(f32),
+    Spin(f32),
+}
+
+impl TurretIdleRef {
+    /// Whether the catalog's `idle` is this behaviour, rates to one binary unit.
+    fn matches(self, idle: TurretIdle) -> bool {
+        let rate = |angle: SimAngle| angle.to_degrees_f32();
+        match (self, idle) {
+            (Self::Hold, TurretIdle::Hold) => true,
+            (Self::FollowMovement(want), TurretIdle::FollowMovement { rate: got })
+            | (Self::Spin(want), TurretIdle::Spin { step: got }) => same_angle(rate(got), want),
+            _ => false,
+        }
+    }
+}
+
+#[test]
+fn b30_turret_idle_follows_starcraft() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut checked = 0;
+    for archetype in catalogs.units.archetypes() {
+        let name = analogue(archetype);
+        let modes = archetype
+            .modes
+            .iter()
+            .filter_map(|mode| mode.ground_weapon_override.as_ref()?.as_ref())
+            .map(|weapon| ("siege_mode", Some(weapon)));
+        for (block, weapon) in weapon_blocks(archetype).into_iter().chain(modes) {
+            let Some(weapon) = weapon.filter(|w| w.has_turret) else {
+                continue;
+            };
+            // A structure's `weapon`, and a unit's ground weapon left to default, copy another.
+            let derived = block == "ground_weapon" && archetype.weapon.as_ref() == Some(weapon);
+            if (is_structure(archetype) && block == "weapon")
+                || (!is_structure(archetype) && derived)
+            {
+                continue;
+            }
+            let (_, _, want, source) = SC2_TURRET_IDLE
+                .iter()
+                .find(|(unit, b, ..)| *unit == name && *b == block)
+                .ok_or_else(|| format!("{} ({name}) {block}: no idle row", archetype.slug))?;
+            assert!(
+                want.matches(weapon.turret_idle),
+                "{} ({name}) {block}: idle {:?}, StarCraft II {want:?} ({source})",
+                archetype.slug,
+                weapon.turret_idle
+            );
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, SC2_TURRET_IDLE.len(), "every row has its turret");
     Ok(())
 }
