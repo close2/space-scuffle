@@ -2586,3 +2586,36 @@ fn b39_acceleration_follows_starcraft() -> TestResult {
         f(arch.acceleration)
     })
 }
+
+/// The analogues whose data sets `Deceleration` (Normal units per second squared). Every other
+/// analogue's is unset, which Q0067 leaves instant: its catalog value copies `max_speed`.
+const SC2_DECELERATION: [(&str, f32, &str); 2] = [
+    ("High Templar", 1000.0, "liberty UnitData:3259"),
+    ("Overlord", 1.625, "voidmulti UnitData:1199"),
+];
+
+#[test]
+fn b39_deceleration_follows_starcraft() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut seen = 0;
+    for arch in catalogs.units.archetypes().filter(|a| !is_structure(a)) {
+        let name = analogue(arch);
+        let (got, want, source) = match SC2_DECELERATION.iter().find(|(unit, ..)| *unit == name) {
+            Some(&(_, normal, source)) => {
+                seen += 1;
+                (f(arch.deceleration), per_tick_squared(normal), source)
+            }
+            None => (
+                f(arch.deceleration),
+                f(arch.max_speed),
+                "unset: instant (Q0067)",
+            ),
+        };
+        assert!(
+            (got - want).abs() < 0.00001,
+            "{} ({name}): deceleration {got}, expected {want} ({source})",
+            arch.slug
+        );
+    }
+    assert_eq!(seen, SC2_DECELERATION.len());
+}
