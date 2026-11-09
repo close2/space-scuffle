@@ -1222,6 +1222,7 @@
                 splash: Some((
                     zones: [(radius: 1.5, fraction: 1.0)],
                     friendly_fire: false,
+                    offset_by_unit_radius: true,
                 )),
                 projectile_speed: Some(1.2),
                 weapon_class: Some("directorate_ship_weapons"),
@@ -2552,6 +2553,7 @@
                 splash: Some((
                     zones: [(radius: 2.2, fraction: 1.0)],
                     friendly_fire: false,
+                    offset_by_unit_radius: true,
                 )),
                 projectile_speed: None,
                 weapon_class: Some("swarm_melee_attacks"),
@@ -3211,6 +3213,7 @@
                         (radius: 1.5, fraction: 0.25),
                     ],
                     friendly_fire: false,
+                    offset_by_unit_radius: true,
                 )),
                 projectile_speed: None,
                 weapon_class: Some("swarm_melee_attacks"),

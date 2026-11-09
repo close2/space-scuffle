@@ -1230,3 +1230,53 @@ fn b16_splash_zones_follow_starcraft() -> TestResult {
     );
     Ok(())
 }
+
+/// `StarCraft` II 5.0.14 `SearchFlags` `OffsetByUnitRadius` of every splash weapon this catalog
+/// models: `(analogue, flag, source)` (Q0063, plan `2026-11-05-sc2-deviation-fixes` Amendment
+/// 22, package B). A `CEffectDamage` inherits 1 from `DU_WEAP` (`core` EffectData:128) unless it
+/// clears it; a line's searches are `CEffectEnumArea` effects, whose default sets no flag (`core`
+/// EffectData:71-77).
+const SC2_SPLASH_OFFSET: [(&str, bool, &str); 7] = [
+    ("Siege Tank", false, "CrucioShockCannonBlast clears it: liberty EffectData:1680"),
+    ("Baneling", true, "VolatileBurstU, parent DU_WEAP: liberty EffectData:1753"),
+    ("Liberator", true, "LiberatorMissileDamage, parent DU_WEAP_MISSILE: void EffectData:2932"),
+    ("Ultralisk", true, "KaiserBladesDamage, parent DU_WEAP: liberty EffectData:2296"),
+    ("Hellion", false, "InfernalFlameThrowerE, a CEffectEnumArea: liberty EffectData:2609"),
+    ("Lurker", false, "LurkerMPSearch, a CEffectEnumArea: swarm EffectData:3022"),
+    ("Colossus", false, "ThermalLancesE, a CEffectEnumArea: liberty EffectData:2412"),
+];
+
+#[test]
+fn q0063_splash_offset_follows_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    let mut checked = std::collections::BTreeSet::new();
+    for archetype in world.catalog.archetypes() {
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next())
+            .unwrap_or_default();
+        let mode_weapons = archetype.modes.iter().flat_map(|mode| {
+            [&mode.ground_weapon_override, &mode.air_weapon_override]
+                .into_iter()
+                .flatten()
+                .flatten()
+        });
+        for weapon in own_weapons(archetype).chain(mode_weapons) {
+            let Some(splash) = &weapon.splash else {
+                continue;
+            };
+            let (_, expected, source) = SC2_SPLASH_OFFSET
+                .iter()
+                .find(|(unit, ..)| *unit == analogue)
+                .ok_or_else(|| format!("{} {}: no offset row", archetype.slug, weapon.name))?;
+            assert_eq!(
+                splash.offset_by_unit_radius, *expected,
+                "{} {}: OffsetByUnitRadius as StarCraft II's ({source})",
+                archetype.slug, weapon.name
+            );
+            checked.insert(analogue);
+        }
+    }
+    assert_eq!(checked.len(), SC2_SPLASH_OFFSET.len(), "every row reaches a weapon");
+    Ok(())
+}
