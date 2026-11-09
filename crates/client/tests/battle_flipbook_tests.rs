@@ -457,6 +457,8 @@ fn state_change_resets_the_loop() {
 #[test]
 fn attack_release_shows_the_release_frame() {
     let mut harness = boot(ClientMode::LiveBattle, DEFAULT_BATTLE_SCENARIO);
+    // The window pins one fixed period per cycle; the random firing delay (WP11, B-3) spreads it.
+    sim_fixtures::without_random_delays(&mut harness.world_mut().catalog);
     harness.resume();
     let attacker = first_swing(&mut harness);
     let (start, count) = slice(&harness, attacker, AnimState::Attack);
@@ -506,6 +508,8 @@ fn attack_release_shows_the_release_frame() {
 #[test]
 fn sustained_fire_changes_no_material() {
     let mut harness = boot(ClientMode::Skirmish, SKIRMISH_SCENARIO);
+    // Ten swings at one period: the random firing delay (WP11, B-3) would vary it.
+    sim_fixtures::without_random_delays(&mut harness.world_mut().catalog);
     let attacker_type = harness
         .world()
         .catalog
