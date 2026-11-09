@@ -2493,3 +2493,129 @@ fn b4_siege_mode_timings_follow_starcraft() {
         );
     }
 }
+
+/// Unit `Acceleration` (`CUnit`, Normal units per second squared) at 5.0.14, plan
+/// `2026-11-05-sc2-deviation-fixes` WP12 (B-39). `1000` is instant.
+const SC2_ACCELERATION: [(&str, f32, &str); 42] = [
+    ("SCV", 2.5, "liberty UnitData:4732"),
+    ("Marine", 1000.0, "liberty UnitData:4822"),
+    ("Roach", 1000.0, "liberty UnitData:7188"),
+    ("Zealot", 1000.0, "liberty UnitData:3179"),
+    ("Siege Tank", 1000.0, "liberty UnitData:5076"),
+    ("Phoenix", 3.25, "liberty UnitData:3686"),
+    ("Marauder", 1000.0, "liberty UnitData:10969"),
+    ("Reaper", 1000.0, "liberty UnitData:4892"),
+    ("Ghost", 1000.0, "liberty UnitData:4991"),
+    ("Hellion", 1000.0, "liberty UnitData:11552"),
+    ("Thor", 1000.0, "liberty UnitData:5211"),
+    ("Viking", 2.625, "liberty UnitData:6839"),
+    ("Medivac", 2.25, "swarm UnitData:1706"),
+    ("Liberator", 3.5, "void UnitData:3297"),
+    ("Banshee", 3.25, "liberty UnitData:5377"),
+    ("Raven", 2.0, "liberty UnitData:5579"),
+    ("Probe", 2.5, "liberty UnitData:3075"),
+    ("Stalker", 1000.0, "liberty UnitData:3964"),
+    ("Sentry", 1000.0, "liberty UnitData:11304"),
+    ("Adept", 1000.0, "void UnitData:3201"),
+    ("High Templar", 1000.0, "liberty UnitData:3258"),
+    ("Dark Templar", 1000.0, "liberty UnitData:3354"),
+    ("Immortal", 1000.0, "liberty UnitData:10738"),
+    ("Colossus", 1000.0, "liberty UnitData:4043"),
+    ("Observer", 2.125, "liberty UnitData:3423"),
+    ("Warp Prism", 2.625, "voidmulti UnitData:2043"),
+    ("Void Ray", 2.0, "liberty UnitData:3758"),
+    (
+        "Carrier / Mothership",
+        1.0625,
+        "liberty UnitData:3483 (Carrier)",
+    ),
+    ("Drone", 2.5, "liberty UnitData:7041"),
+    ("Zergling", 1000.0, "liberty UnitData:7554"),
+    ("Baneling", 1000.0, "liberty UnitData:9311"),
+    ("Ravager", 1000.0, "liberty UnitData:995"),
+    ("Hydralisk", 1000.0, "liberty UnitData:7675"),
+    ("Lurker", 1000.0, "liberty UnitData:714"),
+    ("Mutalisk", 3.5, "void UnitData:3092"),
+    ("Corruptor", 3.0, "voidmulti UnitData:269"),
+    ("Brood Lord", 1.0625, "liberty UnitData:11113"),
+    ("Ultralisk", 1000.0, "liberty UnitData:8015"),
+    ("Queen", 1000.0, "liberty UnitData:11420"),
+    ("Infestor", 1000.0, "liberty UnitData:10062"),
+    ("Viper", 3.0, "void UnitData:1417"),
+    ("Overlord", 1.0625, "liberty UnitData:7366"),
+];
+
+/// Normal units per second squared to world units per tick per tick: one tick is 1.4 ÷ 25
+/// Normal seconds, so a rate scales by (1.4 ÷ 25)².
+fn per_tick_squared(normal: f32) -> f32 {
+    normal * 1.4 * 1.4 / (25.0 * 25.0)
+}
+
+/// Checks one rate of every mobile archetype against `rows` within 0.00001 per tick²: the
+/// rates are two orders of magnitude below `check_table`'s tolerance.
+fn check_rates(
+    what: &str,
+    rows: &[(&str, f32, &str)],
+    read: impl Fn(&UnitArchetype) -> f32,
+) -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut seen = 0;
+    for archetype in catalogs.units.archetypes() {
+        if is_structure(archetype) {
+            continue;
+        }
+        let name = analogue(archetype);
+        let Some(&(_, normal, source)) = rows.iter().find(|(unit, ..)| *unit == name) else {
+            return Err(format!("{} ({name}): no {what} row", archetype.slug).into());
+        };
+        let (got, want) = (read(archetype), per_tick_squared(normal));
+        assert!(
+            (got - want).abs() < 0.00001,
+            "{} ({name}): {what} is {got}, StarCraft II {normal} Normal = {want} ({source})",
+            archetype.slug
+        );
+        seen += 1;
+    }
+    assert_eq!(seen, rows.len(), "{what}: every row has one archetype");
+    Ok(())
+}
+
+#[test]
+fn b39_acceleration_follows_starcraft() -> TestResult {
+    check_rates("acceleration", &SC2_ACCELERATION, |arch| {
+        f(arch.acceleration)
+    })
+}
+
+/// The analogues whose data sets `Deceleration` (Normal units per second squared). Every other
+/// analogue's is unset, which Q0067 leaves instant: its catalog value copies `max_speed`.
+const SC2_DECELERATION: [(&str, f32, &str); 2] = [
+    ("High Templar", 1000.0, "liberty UnitData:3259"),
+    ("Overlord", 1.625, "voidmulti UnitData:1199"),
+];
+
+#[test]
+fn b39_deceleration_follows_starcraft() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut seen = 0;
+    for arch in catalogs.units.archetypes().filter(|a| !is_structure(a)) {
+        let name = analogue(arch);
+        let (got, want, source) = match SC2_DECELERATION.iter().find(|(unit, ..)| *unit == name) {
+            Some(&(_, normal, source)) => {
+                seen += 1;
+                (f(arch.deceleration), per_tick_squared(normal), source)
+            }
+            None => (
+                f(arch.deceleration),
+                f(arch.max_speed),
+                "unset: instant (Q0067)",
+            ),
+        };
+        assert!(
+            (got - want).abs() < 0.00001,
+            "{} ({name}): deceleration {got}, expected {want} ({source})",
+            arch.slug
+        );
+    }
+    assert_eq!(seen, SC2_DECELERATION.len());
+}

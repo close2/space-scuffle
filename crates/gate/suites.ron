@@ -246,6 +246,8 @@ SuiteCatalog(
             "client/simulation_diagnostics_tests",
             "client/battle_result_tests",
             "client/skirmish_match_tests",
+            // Pins attack cycles of shipped weapons: weapon timing changes break it (WP11's delay).
+            "client/battle_flipbook_tests",
         ],
         // Every target whose code calls `sim_fixtures::` (its own files or a support file it
         // loads); the catalog test keeps this list equal to the sources.
@@ -257,11 +259,13 @@ SuiteCatalog(
             "asset_baker/veo_reliability_tests",
             "asset_baker/veo_tests",
             "client/lib",
+            "client/battle_flipbook_tests",
             "client/editor_core_tests",
             "client/headless_tests",
             "client/round2_visual_tests",
             "client/skirmish_match_tests",
             "client_diagnostics/lib",
+            "sim_core/acceleration_tests",
             "sim_core/attack_move_simulation_tests",
             "sim_core/attack_swing_snapshot_tests",
             "sim_core/attribute_bonus_tests",

@@ -42,6 +42,10 @@ impl Fixture {
         for id in [air, ground] {
             let a = catalog.get_mut(id)?;
             a.max_speed = SimScalar::from_num(0.125);
+            // Instant, so a first tick covers the whole speed (acceleration is pinned in
+            // `acceleration_tests.rs`).
+            a.acceleration = a.max_speed;
+            a.deceleration = a.max_speed;
             a.collision_radius = SimScalar::from_num(0.375);
             a.weapon = None;
             a.ground_weapon = None;

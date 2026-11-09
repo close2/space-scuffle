@@ -893,6 +893,10 @@ fn squad_climbs_a_ramp_and_reaches_its_target() -> TestResult {
 fn buffed_unit_keeps_its_speed_through_friendly_contact() -> TestResult {
     let mut world = sim_fixtures::world(flat(64)?, SEED);
     let kind = small_unit(&world)?;
+    // Instant acceleration, so the first tick shows the buffed speed (acceleration itself is
+    // pinned in `acceleration_tests.rs`).
+    let archetype = world.catalog.get_mut(kind)?;
+    archetype.acceleration = archetype.max_speed;
     let fast = spawn(&mut world, kind, BLUE, at(10.0, 30.0))?;
     let beside = spawn(&mut world, kind, BLUE, at(10.0, 30.6))?;
     let base = world.catalog.get(kind)?.max_speed;
