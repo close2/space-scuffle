@@ -17,7 +17,7 @@ use crate::catalog::{AcquireLevel, SplashSpec, UnitArchetype, WeaponSpec};
 use crate::entity::{Entity, WeaponPhase};
 use sim_types::{
     AttackOrigin, AttributeFlags, EntityId, MoverType, PlayerUpgradeState, SimAngle, SimScalar,
-    SimVec2, StructureStrike, UnitOrder,
+    SimVec2, StructureStrike, TurretIdle, UnitOrder,
 };
 
 // PERFORMANCE RATIONALE:
@@ -448,6 +448,32 @@ fn slew_towards(entity: &mut Entity, weapon: &WeaponSpec, angle: SimAngle) {
     }
 }
 
+/// Moves a turret whose weapon has no target this tick, as its [`TurretIdle`] says (plan
+/// `2026-11-05-sc2-deviation-fixes` WP10, B-30). "Moving" is a tick on which the unit was
+/// displaced (`Entity::velocity`, which the movement phase leaves as the displacement achieved),
+/// and the default position is the hull's facing. A hull weapon's idle is always `Hold`.
+fn idle_turret(entity: &mut Entity, weapon: &WeaponSpec) {
+    if !weapon.has_turret {
+        return;
+    }
+    let moving = entity.velocity != SimVec2::ZERO;
+    let towards_hull = |rate: SimAngle| {
+        entity
+            .turret_angle
+            .rotate_towards(entity.heading, rate.raw())
+    };
+    entity.turret_angle = match weapon.turret_idle {
+        TurretIdle::Spin { step } => entity.turret_angle + step,
+        TurretIdle::Reset { rate } => towards_hull(rate),
+        TurretIdle::ResetIfMoving { rate } | TurretIdle::FollowMovement { rate } if moving => {
+            towards_hull(rate)
+        }
+        TurretIdle::Hold | TurretIdle::ResetIfMoving { .. } | TurretIdle::FollowMovement { .. } => {
+            entity.turret_angle
+        }
+    };
+}
+
 /// Current aim of the weapon mount: the turret's angle for a turreted weapon, else the hull's.
 pub(crate) fn weapon_aim(entity: &Entity, weapon: &WeaponSpec) -> SimAngle {
     if weapon.has_turret {
@@ -665,6 +691,9 @@ pub fn step_entity_weapon(
     // A weapon working against another target, or none, is no longer engaged (B-29).
     if entity.engaged_target.is_some() && entity.engaged_target != target_opt.map(|t| t.id) {
         entity.engaged_target = None;
+    }
+    if target_opt.is_none() {
+        idle_turret(entity, weapon);
     }
     // Decrement weapon cooldown if running
     entity.weapon_cooldown_remaining = entity.weapon_cooldown_remaining.saturating_sub(1);

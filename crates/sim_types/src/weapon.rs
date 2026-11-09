@@ -277,6 +277,42 @@ pub const fn default_projectile_lifetime_ticks() -> u16 {
     DEFAULT_PROJECTILE_LIFETIME_TICKS
 }
 
+/// What a turret does while its weapon has no target: `StarCraft` II's `CTurret` `Idle` with its
+/// `YawIdleRate` (plan `2026-11-05-sc2-deviation-fixes` WP10, B-30). The `SC2Mapster` editor
+/// reference (Data/Turrets) defines each value; rates are binary angles per tick. A turret's
+/// default position is the hull's facing: no modelled turret sets a `YawStart` with an `Idle`
+/// that returns to it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TurretIdle {
+    /// "Stays at its current angle" (`Hold`), in the world frame; every hull weapon.
+    #[default]
+    Hold,
+    /// "Resets to default position" (`Reset`): turns towards the hull's facing by at most `rate`
+    /// per tick.
+    Reset {
+        /// Greatest turn per tick.
+        rate: SimAngle,
+    },
+    /// "Resets to default position if the unit is moving" (`ResetIfMoving`): as `Reset`, on a
+    /// tick the unit moved.
+    ResetIfMoving {
+        /// Greatest turn per tick.
+        rate: SimAngle,
+    },
+    /// "Follows the movement of the unit" (`FollowMovement`): on a tick the unit moved, turns
+    /// towards the hull's facing, which follows its movement, by at most `rate` per tick.
+    FollowMovement {
+        /// Greatest turn per tick.
+        rate: SimAngle,
+    },
+    /// "Rotates continuously" (`Spin`): adds `step` every tick; a step above `DEG_180` is a
+    /// clockwise turn (a negative `YawIdleRate`).
+    Spin {
+        /// Turn per tick, counter-clockwise.
+        step: SimAngle,
+    },
+}
+
 /// Definition of weapon capabilities, firing geometry, and timing envelopes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WeaponSpec {
@@ -302,6 +338,9 @@ pub struct WeaponSpec {
     pub has_turret: bool,
     /// Turret angular rotation speed per tick.
     pub turret_turn_rate: SimAngle,
+    /// What the turret does while the weapon has no target; `TurretIdle::Hold` for a hull
+    /// weapon.
+    pub turret_idle: TurretIdle,
     /// Base damage applied per hit.
     pub base_damage: SimScalar,
     /// Bonus damage per strike against each attribute the target has (`AttributeBonus`).

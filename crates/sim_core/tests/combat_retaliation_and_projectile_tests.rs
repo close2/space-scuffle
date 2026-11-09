@@ -76,6 +76,7 @@ fn custom_projectile_weapon(
         acquire_arc: SimAngle::from_degrees(360),
         has_turret: false,
         turret_turn_rate: SimAngle::ZERO,
+        turret_idle: sim_types::TurretIdle::Hold,
         base_damage: SimScalar::from_num(30),
         attribute_bonuses: AttributeBonuses::NONE,
         attacks_count: 1,

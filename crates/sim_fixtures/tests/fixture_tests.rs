@@ -38,7 +38,9 @@ use std::path::PathBuf;
 /// structure strike.
 /// Re-recorded for checksum schema 17 (work package 10, B-29), which encodes each weapon's
 /// acquisition arc and each unit's engaged target.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 11_712_807_352_609_724_824;
+/// Re-recorded for checksum schema 18 (work package 10, B-30), which encodes each weapon's turret
+/// idle behaviour.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 17_322_181_708_874_448_200;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

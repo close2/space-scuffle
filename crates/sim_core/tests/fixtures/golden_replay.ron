@@ -165,8 +165,12 @@
 // (ticks 151 to 200) and `golden_replay_orders` from index 4 (ticks 41 to 50), the first fights;
 // with the acquisition arcs set back to the engaged arcs both reproduce as recorded for the schema
 // 17 commit.
+// Re-recorded for WP10 (B-30, checksum schema 17 -> 18): each weapon's turret idle behaviour and
+// rate are encoded, so every checkpoint changed. No behaviour did: with the field left out of the
+// encoding at schema 17, every checkpoint stays as recorded for the B-29 data (every shipped
+// turret holds).
 (
-    checksum_schema: 17,
+    checksum_schema: 18,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -192,25 +196,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x5c765bd69a42c391,
-        0x9dc05689f5a15955,
-        0xc26cea08d135a021,
-        0xb258f986da656352,
-        0xd8d30727b143f9e2,
-        0xb7a5800f58fdf96a,
-        0x83bb0f8d6ff24775,
-        0x57273402e4479b6d,
-        0xa902ea19aae97132,
-        0x871f29795c47a5f2,
-        0x70c4da8d1f523c6b,
-        0x0d44fcd2f738a2bc,
-        0x11168b31a97b3e0b,
-        0x18b3ae0329e8fce4,
-        0x68c6c83f20f3d2d6,
-        0x98d654a8d4d0ad40,
-        0x5ba8b947b62a8dc0,
-        0x5a8e02a0542f0726,
-        0x956207a1bb5f53b0,
-        0xd6608efd2f3348e0,
+        0x9f28410f25234177,
+        0x733a08a9bb376f74,
+        0x46ffb3309b682914,
+        0x51797f88ecdff683,
+        0x3f3ae624026aa20d,
+        0x6bd493367be5621c,
+        0xd4fd1940f64e49d7,
+        0x0035081d397dc6dd,
+        0x8cab35fe8de4fdb0,
+        0x130fb79c9615f7b5,
+        0xc0eed127984f6409,
+        0x2c65c9c72c396bd6,
+        0xee85b9252bdde5c4,
+        0x8b45ff7986b776d2,
+        0x559b55f13036edaf,
+        0xe1f2bf1c9b8a4e8b,
+        0x01209598f1108693,
+        0x99955cf7962da711,
+        0xabe8e74b66968c08,
+        0x43a79b9bafbdeecf,
     ],
 )

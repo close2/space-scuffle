@@ -46,7 +46,8 @@ use std::collections::BTreeMap;
 /// Schema 16 adds each weapon's structure strike: the damage, per-level growth and armour rule
 /// it deals to a structure instead of its own strike (B-82).
 /// Schema 17 adds each weapon's acquisition arc and each unit's engaged target (B-29).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 17;
+/// Schema 18 adds each weapon's turret idle behaviour and rate (B-30).
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 18;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

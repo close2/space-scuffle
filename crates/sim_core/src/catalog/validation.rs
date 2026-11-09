@@ -8,8 +8,8 @@
 //! validation, not a balance audit: odd but runnable authored values remain legal.
 
 use super::{
-    PrimaryWeapon, SplashShapeDef, SplashSpecDef, StructureArchetypeDef, UnitArchetypeDef,
-    UnitModeSpecDef, WeaponSpecDef,
+    PrimaryWeapon, SplashShapeDef, SplashSpecDef, StructureArchetypeDef, TurretIdleDef,
+    UnitArchetypeDef, UnitModeSpecDef, WeaponSpecDef,
 };
 use crate::error::{SimCoreError, SimResult};
 use crate::movement::tuning::STALL_REPATH_TICKS;
@@ -564,9 +564,30 @@ impl WeaponSpecDef {
         Ok(())
     }
 
+    /// Checks the turret's idle behaviour: a hull weapon has no turret to move and authors
+    /// `Hold`; a turret's idle rate lies in `0 < |rate| <= 180` degrees per tick, and only `Spin`
+    /// may turn clockwise (a negative rate).
+    fn validate_turret_idle(&self, definition: &str, prefix: &str) -> SimResult<()> {
+        let field = format!("{prefix}.turret_idle");
+        if !self.has_turret && self.turret_idle != TurretIdleDef::Hold {
+            return Err(invalid(
+                definition,
+                &field,
+                "must be Hold on a weapon without a turret",
+            ));
+        }
+        match self.turret_idle {
+            TurretIdleDef::Spin(rate) => rate_per_tick(definition, &field, rate.abs()),
+            idle => idle
+                .rate()
+                .map_or(Ok(()), |rate| rate_per_tick(definition, &field, rate)),
+        }
+    }
+
     /// Checks the turret rate: a turreted weapon turns at a rate in `0 < rate <= 180` degrees
     /// per tick; a hull-mounted weapon turns with the hull and authors exactly 0.
     fn validate_turret(&self, definition: &str, prefix: &str) -> SimResult<()> {
+        self.validate_turret_idle(definition, prefix)?;
         let field = format!("{prefix}.turret_turn_rate_deg_per_tick");
         if self.has_turret {
             return rate_per_tick(definition, &field, self.turret_turn_rate_deg_per_tick);
@@ -1346,6 +1367,47 @@ mod tests {
                     rejected_field(&result),
                     Some("weapon.acquire_arc_deg"),
                     "{engaged} {acquisition}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn b30_turret_idle_rates_are_bounded_and_hull_weapons_hold(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::{CatalogFile, TurretIdleDef};
+        let units = include_str!("../../../../assets/catalog/units.ron");
+        let cases = [
+            (false, TurretIdleDef::Hold, true),
+            (false, TurretIdleDef::FollowMovement(20.16), false),
+            (true, TurretIdleDef::Hold, true),
+            (true, TurretIdleDef::FollowMovement(20.16), true),
+            (true, TurretIdleDef::ResetIfMoving(0.0), false),
+            (true, TurretIdleDef::Reset(180.5), false),
+            (true, TurretIdleDef::Spin(-2.52), true),
+            (true, TurretIdleDef::Spin(0.0), false),
+            (true, TurretIdleDef::FollowMovement(-5.0), false),
+        ];
+        for (has_turret, idle, valid) in cases {
+            let mut file: CatalogFile = ron::from_str(units)?;
+            let unit = file
+                .units
+                .iter_mut()
+                .find(|unit| unit.weapon.is_some())
+                .ok_or("real catalog has no weapon")?;
+            let weapon = unit.weapon.as_mut().ok_or("weapon missing")?;
+            weapon.has_turret = has_turret;
+            weapon.turret_turn_rate_deg_per_tick = if has_turret { 40.32 } else { 0.0 };
+            weapon.turret_idle = idle;
+            let result = unit.validate();
+            if valid {
+                assert!(result.is_ok(), "{has_turret} {idle:?}: {result:?}");
+            } else {
+                assert_eq!(
+                    rejected_field(&result),
+                    Some("weapon.turret_idle"),
+                    "{has_turret} {idle:?}"
                 );
             }
         }

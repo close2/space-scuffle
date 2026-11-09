@@ -83,6 +83,7 @@ fn weapon_ron(burst: Burst) -> String {
             acquire_arc_deg: 360.0,
             has_turret: false,
             turret_turn_rate_deg_per_tick: 0.0,
+            turret_idle: Hold,
             base_damage: {STRIKE:.1},
             attribute_bonuses: [],
             attacks_count: {strikes},

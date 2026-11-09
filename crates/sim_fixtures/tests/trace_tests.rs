@@ -92,6 +92,7 @@ const WINDUP_MELEE_RON: &str = r#"(
                 acquire_arc_deg: 180.0,
                 has_turret: false,
                 turret_turn_rate_deg_per_tick: 0.0,
+                turret_idle: Hold,
                 base_damage: 8.0,
                 attribute_bonuses: [],
                 attacks_count: 2,

@@ -100,7 +100,7 @@ fn unit_ron(slug: &str, id: u16, max_hp: f32, weapon: &str, overclock: &str) -> 
 
 /// The RON of a hull-mounted weapon that may fire in every direction.
 const OPEN_MOUNT: &str = "firing_arc_deg: 360.0, acquire_arc_deg: 360.0, has_turret: false, \
-     turret_turn_rate_deg_per_tick: 0.0";
+     turret_turn_rate_deg_per_tick: 0.0, turret_idle: Hold";
 
 /// The scratch catalog: a shooter with `timings` and an optional overclock, and a target with
 /// `target_hp` hit points. The shooter deals 10 damage per shot from up to 6 world units.
@@ -519,7 +519,7 @@ fn damage_point_zero_releases_on_the_tick_its_swing_starts() -> TestResult {
 fn damage_point_zero_after_turning_releases_on_the_tick_it_is_aligned() -> TestResult {
     // A turret at 10 degrees per tick with a 15 degree half arc, its target straight behind.
     let mount = "firing_arc_deg: 15.0, acquire_arc_deg: 15.0, has_turret: true, \
-                 turret_turn_rate_deg_per_tick: 10.0";
+                 turret_turn_rate_deg_per_tick: 10.0, turret_idle: Hold";
     let catalog = catalog_ron_with_mount(DAMAGE_POINT_ZERO, mount, 10_000.0, None);
     let bench = Bench::spawned(&catalog, 7)?;
     let (mut shooter, weapon, target) = bench.direct()?;
@@ -647,7 +647,7 @@ fn a_windup_with_no_ticks_left_releases_on_its_next_step() -> TestResult {
 /// half arc of 30 degrees and an acquisition
 /// half arc of 0 (`Arc` 0, `ArcSlop` 30), so the two angles of B-29 are far apart.
 const SPLIT_ARC_TURRET: &str = "firing_arc_deg: 30.0, acquire_arc_deg: 0.0, has_turret: true, \
-     turret_turn_rate_deg_per_tick: 11.25";
+     turret_turn_rate_deg_per_tick: 11.25, turret_idle: Hold";
 
 /// The shooter's aim error against `target`, in binary units (65 536 per turn).
 fn aim_error(shooter: &Entity, target: &WeaponTarget) -> u16 {
@@ -723,5 +723,85 @@ fn b29_a_target_that_leaves_the_engaged_arc_is_acquired_again() -> TestResult {
     // The cooldown ends on call 21; the turret turns 33.75, 22.5, 11.25, 0: back inside the
     // engaged 30 on call 22, but the swing waits for the exact aim on call 24.
     assert_eq!(releases.first(), Some(&(24, 0)), "{releases:?}");
+    Ok(())
+}
+
+/// A turret at 11.25 degrees per tick with `idle` as its idle behaviour (B-30).
+fn idle_turret_mount(idle: &str) -> String {
+    format!(
+        "firing_arc_deg: 11.25, acquire_arc_deg: 0.0, has_turret: true, \
+         turret_turn_rate_deg_per_tick: 11.25, turret_idle: {idle}"
+    )
+}
+
+/// The shooter with `idle`, its turret at 90 degrees and its hull at 0, after `calls` steps
+/// with no target; `moving` gives it a displacement. Returns the turret angle in degrees.
+fn idle_turret_after(
+    idle: &str,
+    moving: bool,
+    calls: u32,
+) -> Result<f32, Box<dyn std::error::Error>> {
+    let mount = idle_turret_mount(idle);
+    let catalog = catalog_ron_with_mount(DAMAGE_POINT_ZERO, &mount, 10_000.0, None);
+    let bench = Bench::spawned(&catalog, 13)?;
+    let (mut shooter, weapon, _) = bench.direct()?;
+    shooter.turret_angle = SimAngle::DEG_90;
+    if moving {
+        shooter.velocity = SimVec2::new(SimScalar::from_num(0.1), SimScalar::ZERO);
+    }
+    for _ in 0..calls {
+        step_entity_weapon(&mut shooter, &weapon, None);
+    }
+    Ok(shooter.turret_angle.to_degrees_f32())
+}
+
+#[test]
+fn b30_a_holding_turret_keeps_its_angle() -> TestResult {
+    let held = idle_turret_after("Hold", true, 4)?;
+    assert!((held - 90.0).abs() < 0.01, "{held}");
+    Ok(())
+}
+
+#[test]
+fn b30_a_following_turret_turns_to_the_hull_only_while_the_unit_moves() -> TestResult {
+    for idle in ["FollowMovement(11.25)", "ResetIfMoving(11.25)"] {
+        let moved = idle_turret_after(idle, true, 2)?;
+        assert!((moved - 67.5).abs() < 0.01, "{idle}: {moved}");
+        let settled = idle_turret_after(idle, true, 20)?;
+        assert!(settled.abs() < 0.01, "{idle}: {settled}");
+        let still = idle_turret_after(idle, false, 4)?;
+        assert!((still - 90.0).abs() < 0.01, "{idle}: {still}");
+    }
+    Ok(())
+}
+
+#[test]
+fn b30_a_resetting_turret_turns_to_the_hull_while_standing() -> TestResult {
+    let still = idle_turret_after("Reset(11.25)", false, 4)?;
+    assert!((still - 45.0).abs() < 0.01, "{still}");
+    Ok(())
+}
+
+#[test]
+fn b30_a_spinning_turret_rotates_by_its_signed_rate() -> TestResult {
+    let counter_clockwise = idle_turret_after("Spin(11.25)", false, 2)?;
+    assert!(
+        (counter_clockwise - 112.5).abs() < 0.01,
+        "{counter_clockwise}"
+    );
+    let clockwise = idle_turret_after("Spin(-11.25)", false, 2)?;
+    assert!((clockwise - 67.5).abs() < 0.01, "{clockwise}");
+    Ok(())
+}
+
+#[test]
+fn b30_a_turret_with_a_target_does_not_idle() -> TestResult {
+    // The target lies straight ahead: the spinning turret stays on it and fires instead.
+    let mount = idle_turret_mount("Spin(11.25)");
+    let catalog = catalog_ron_with_mount(DAMAGE_POINT_ZERO, &mount, 10_000.0, None);
+    let bench = Bench::spawned(&catalog, 13)?;
+    let (mut shooter, weapon, target) = bench.direct()?;
+    assert!(step_entity_weapon(&mut shooter, &weapon, Some(target)));
+    assert_eq!(shooter.turret_angle, SimAngle::ZERO);
     Ok(())
 }

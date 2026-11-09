@@ -40,6 +40,7 @@ const RIFLE: &str = r#"Some((
             acquire_arc_deg: 180.0,
             has_turret: false,
             turret_turn_rate_deg_per_tick: 0.0,
+            turret_idle: Hold,
             base_damage: 1.0,
             attribute_bonuses: [],
             attacks_count: 1,

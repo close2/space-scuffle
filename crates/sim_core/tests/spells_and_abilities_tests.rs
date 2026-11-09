@@ -249,6 +249,7 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
         acquire_arc: SimAngle::from_degrees(360),
         has_turret: true,
         turret_turn_rate: SimAngle::from_degrees(999),
+        turret_idle: sim_types::TurretIdle::Hold,
         base_damage: SimScalar::from_num(40),
         attribute_bonuses: AttributeBonuses::NONE,
         attacks_count: 1,
