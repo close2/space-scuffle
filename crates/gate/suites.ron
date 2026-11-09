@@ -262,6 +262,7 @@ SuiteCatalog(
             "client/round2_visual_tests",
             "client/skirmish_match_tests",
             "client_diagnostics/lib",
+            "sim_core/acceleration_tests",
             "sim_core/attack_move_simulation_tests",
             "sim_core/attack_swing_snapshot_tests",
             "sim_core/attribute_bonus_tests",

@@ -62,8 +62,16 @@ use std::ops::ControlFlow;
 pub(crate) struct MotionEntry {
     pub(crate) id: EntityId,
     pub(crate) policy: MotionPolicy,
-    /// Effective speed in world units per tick, including upgrades and buffs.
+    /// Effective top speed in world units per tick, including upgrades and buffs.
     pub(crate) speed: SimScalar,
+    /// This tick's own-motion budget in world units per tick: [`Self::speed`] limited by the
+    /// archetype's acceleration from the speed achieved on the tick before (plan
+    /// `2026-11-05-sc2-deviation-fixes` WP12). A walking unit lowers it further to brake into
+    /// its destination ([`braking_speed`]).
+    pub(crate) step: SimScalar,
+    /// Speed lost per tick when braking, world units per tick per tick, or `None` when the
+    /// archetype stops within one tick (its `deceleration` is at least its `max_speed`).
+    pub(crate) deceleration: Option<SimScalar>,
     /// Authored priority for friendly contact.
     pub(crate) push_priority: u8,
     /// Hull rate in binary angle units per tick (the archetype's `turn_rate`).
@@ -607,10 +615,14 @@ impl SimWorld {
                     .ok_or(MovementMathError::Unrepresentable)
             })
             .map_err(|e| arithmetic(id, e))?;
+        let step = accelerated_speed(speed, arch.acceleration, arch.max_speed, actor.velocity);
+        let deceleration = (arch.deceleration < arch.max_speed).then_some(arch.deceleration);
         Ok(MotionEntry {
             id,
             policy,
             speed,
+            step,
+            deceleration,
             push_priority: arch.push_priority,
             turn_rate: arch.turn_rate.raw(),
             turn_before_move: arch.turn_before_move,
@@ -1151,7 +1163,7 @@ impl MotionDraft<'_> {
         StepContext {
             map,
             policy: self.entry.policy,
-            speed: self.entry.speed,
+            speed: self.entry.step,
             body: ContactBody {
                 id: self.entry.id,
                 owner: self.actor.owner,
@@ -1202,6 +1214,7 @@ impl MotionDraft<'_> {
         check_route: bool,
         map_news: bool,
     ) -> Result<(), MovementInvariant> {
+        self.brake()?;
         if self.upkeep_route(scene, check_route)?.is_break() {
             return Ok(());
         }
@@ -1220,6 +1233,26 @@ impl MotionDraft<'_> {
             return Ok(());
         }
         self.propose_step(&context, next, gap)
+    }
+
+    /// Lowers this tick's step so a unit with a finite deceleration can stop on its goal,
+    /// measuring the way left along its stored route and on to the goal.
+    fn brake(&mut self) -> Result<(), MovementInvariant> {
+        let Some(deceleration) = self.entry.deceleration else {
+            return Ok(());
+        };
+        let mut remaining = SimScalar::ZERO;
+        let mut from = self.actor.position;
+        let route = self.proposal.route(self.actor);
+        for &point in route.iter().chain(std::iter::once(&self.goal)) {
+            remaining = remaining
+                .checked_add(distance(from, point).map_err(self.fault())?)
+                .ok_or_else(|| arithmetic(self.entry.id, MovementMathError::Unrepresentable))?;
+            from = point;
+        }
+        let limit = braking_speed(remaining, deceleration).map_err(self.fault())?;
+        self.entry.step = self.entry.step.min(limit);
+        Ok(())
     }
 
     /// Route upkeep: drops a stored route that no longer works, finishes a unit already within
@@ -1248,7 +1281,7 @@ impl MotionDraft<'_> {
         if !self.proposal.route(actor).is_empty() {
             return Ok(Stage::Continue(()));
         }
-        if distance(actor.position, self.goal).map_err(self.fault())? <= self.entry.speed
+        if distance(actor.position, self.goal).map_err(self.fault())? <= self.entry.step
             && policy.permits_segment(scene.map, actor.position, self.goal)
         {
             if self.may_snap_to(self.goal)? {
@@ -1432,7 +1465,7 @@ impl MotionDraft<'_> {
         self.pass_reached_waypoint(next);
         if self.proposal.route(actor).is_empty()
             && self.proposal.position == next
-            && distance(next, self.goal).map_err(self.fault())? <= self.entry.speed
+            && distance(next, self.goal).map_err(self.fault())? <= self.entry.step
             && policy.permits_segment(map, next, self.goal)
         {
             self.proposal.position = self.goal;
@@ -1632,6 +1665,48 @@ fn drop_passed_waypoints(
         proposal.remove_prefix += 1;
     }
     Ok(())
+}
+
+/// This tick's own-motion budget for a unit whose effective top speed is `top`, world units per
+/// tick, having moved `previous` (world units) on the tick before.
+///
+/// `StarCraft` II's `Acceleration` (`CUnit`, Normal units per second squared, converted to world
+/// units per tick per tick in the catalog) raises speed by at most that much per tick. An
+/// `acceleration` at or above the archetype's `max_speed` reaches any speed within one tick,
+/// so it is instant, as the game's `1000`; comparing with the archetype's speed rather than the
+/// effective one keeps a buffed unit (Stimpack) instant too.
+fn accelerated_speed(
+    top: SimScalar,
+    acceleration: SimScalar,
+    archetype_speed: SimScalar,
+    previous: SimVec2,
+) -> SimScalar {
+    if acceleration >= archetype_speed {
+        return top;
+    }
+    top.min(previous.length().saturating_add(acceleration))
+}
+
+/// The highest speed from which a unit losing `deceleration` per tick still stops within
+/// `remaining` world units: the root `v` of `v² ÷ (2 d) + v ÷ 2 = remaining`, the distance a
+/// tick-by-tick braking run from `v` covers. It is at least `remaining` once `remaining` is at
+/// most `deceleration`, so the unit always snaps onto its goal (the fixed-point root rounds
+/// down, so this floor is applied explicitly).
+fn braking_speed(
+    remaining: SimScalar,
+    deceleration: SimScalar,
+) -> Result<SimScalar, MovementMathError> {
+    let half = deceleration
+        .checked_div(SimScalar::from_i32(2))
+        .ok_or(MovementMathError::Unrepresentable)?;
+    let root = deceleration
+        .checked_mul(remaining)
+        .and_then(|product| product.checked_mul(SimScalar::from_i32(2)))
+        .and_then(|twice| twice.checked_add(half.checked_mul(half)?))
+        .ok_or(MovementMathError::Unrepresentable)?
+        .sqrt()
+        .map_err(|_| MovementMathError::Unrepresentable)?;
+    Ok(root.saturating_sub(half).max(remaining.min(deceleration)))
 }
 
 /// Takes one step toward `next`, `gap` world units away, avoiding `neighbours`.

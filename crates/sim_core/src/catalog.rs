@@ -123,9 +123,13 @@ pub struct UnitArchetype {
     pub energy_regen_per_tick: SimScalar,
     /// Maximum linear translation speed per tick.
     pub max_speed: SimScalar,
-    /// Acceleration increase per tick.
+    /// Speed gained per tick while a unit's own motion speeds up, world units per tick per tick
+    /// (`StarCraft` II `Acceleration` in Normal units per second squared × 1.4² ÷ 25²). A value at
+    /// or above `max_speed` is instant, as the game's `1000`.
     pub acceleration: SimScalar,
-    /// Deceleration braking decrease per tick.
+    /// Speed lost per tick while a walking unit brakes into its destination, world units per
+    /// tick per tick (`StarCraft` II `Deceleration`, converted as `acceleration`). A value at or
+    /// above `max_speed` stops within one tick.
     pub deceleration: SimScalar,
     /// Hull turn rate in binary angle units per tick (65 536 units per turn), from the authored
     /// `turn_rate_deg_per_tick`. Half a turn (32 768) reaches any facing in one tick. Structures
