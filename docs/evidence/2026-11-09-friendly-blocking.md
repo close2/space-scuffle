@@ -282,3 +282,27 @@ reversals, 0 give-ups, rear units still on 73 to 85 % of their ticks after their
 from checkpoint 1. Amendment 4 moves `golden_replay` from checkpoint 1 (the paused walk's straight step; switched on
 alone, the standing test first moves checkpoint 2, the kept side and the straight way in checkpoint 4, the scan bound
 checkpoint 5) and `golden_replay_orders` from checkpoint 19 (the standing test).
+
+## Amendment 5: the builder regression of WP2 (rule)
+
+**What.** `player_view_tests::a_build_on_a_hidden_structure_is_accepted_and_abandoned_on_arrival` failed from WP2 on:
+the builder started wedged between its own town hall and an idle worker, waited (D-1.3) and spent its task legs
+(`Unreachable`). Gathering workers were not the blocker: a worker under `Harvest` or `ReturnCargo` already
+mineral-walks (`is_mineral_walking` leaves it out of every other unit's obstacles). The blocker was an idle worker
+that contact nudged by a few thousandths a tick: `SteeringObstacle::yields_to` required an idle friend to stand
+exactly still, so it did not step aside and, standing within Amendment 4's drift, formed a wall with the hall.
+`yields_to` now uses `STANDING_DRIFT` (1/64 a tick) for "standing", the test walls and the walk already use, which
+completes D-4's row "idle, standing: pushed sideways".
+
+**Matrix** (against Amendment 4): 1 battle moved, 35_12_vikings_vs_6_colossi (9 seeds; survivors 12.00 – 0.20 →
+12.00 – 0.15, mean end tick 545.5 → 516.1); no overall winner changed, and none against the base. Blocking totals:
+1,206,580 blocked attacker ticks, 53,025 reversals, 0 give-ups.
+
+**Battle 33**, 68 seeds: identical to Amendment 4 (48 / 9 / 11; 5.34 – 0.57).
+
+**Showcase:** 10 / 10 in range at tick 900, 11 / 8 reversals, 0 / 0 give-ups, ramp E turn 211°, player 0 wins at
+tick 1,100.
+
+**Goldens.** Re-recorded: `golden_replay` from checkpoint 11 and `golden_replay_orders` from checkpoint 19, both
+the nudged idle friend now yielding; the sandbox checksum is unchanged. Identical in debug, release and on
+`wasm32-wasip1`.
