@@ -1741,3 +1741,39 @@ Q0062 (B-15's life minimum: option 1, the landed WP7 rule), Q0066 (B-91: option 
 (B-41's order within a hit: option 1, WP13a as landed) are closed with resolutions. Q0070 (option 1) keeps the
 simulation as it is; its resolution is drafted and the question stays open until plan
 `2026-11-09-client-mode-commands` delivers the skirmish client's mode buttons.
+
+### 17.8 Addendum: why the Hellion's and the Lurker's lines flip their battles
+
+Traces with the held commits' `matchup_trace` builds (`~/scratch/answers/diag_*`, per-unit CSVs; seed 11 unless
+named). Positions are world units, the Hellion or Lurker at about (9.9, 32.0).
+
+**Hellion (battles 9a and 10): the SC2-correct consequence, not a defect.**
+- 9a, seed 11. The Hellion fires three times before it dies (ticks 5, 50, about 95; its period is 2.5 Normal s, 45
+  ticks). Shot 1 at the leading zergling (15.15, 31.68) strikes it and the one behind it on the line (15.78, 31.61);
+  the two beside it, 0.7 off the line, are outside 0.15 of every search even measured to their edge (0.7 − 0.375 =
+  0.33). Shot 2, with the zerglings around the Hellion, strikes only its target: the others stand 0.6 to 0.8 to the
+  side of a line that starts at the Hellion. With the stand-in circle (2.2 around the target) every shot struck all
+  four. In battle 10 (seed 11) the two Hellions' volleys strike 4, then 2 and 2 zerglings, where the circle struck all
+  eight on the first volley.
+- The geometry is the data's (§9.1: 25 searches of 0.15 along the attack from `SourcePoint`, `liberty`
+  EffectData:2609-2646), the reach to a unit's edge is Q0063's answer, and the numbers are the game's: 14 per flame
+  against a 35-life zergling (`InfernalFlameThrower`: 8, +6 Light, `liberty` EffectData:2600-2607), so three flames kill only the zerglings struck by
+  all three, while four zerglings (5 per 0.696 Normal s each) kill a 90-life Hellion in about 3 Normal s. A Hellion
+  that stands still is not expected to clear four zerglings in the game; the battles' claims rest on the circle.
+- **Proposal:** land the line and re-record 9a and 10 with claims the game supports (for example a Hellion that
+  kites, or zerglings that arrive in a column along the flame); no code change.
+
+**Lurker (battle 21): the line is right; the battle's 250 ticks are too short for it, and the marines flee.**
+- The line is anchored on the Lurker and points at the target: on the first volley (tick 35) the spines aimed at the
+  marine at (16.63, 32.52) strike it and the two within reach of the line (16.02, 32.03) and (15.91, 32.77), not the
+  three below it, 1.0 to 1.2 off the line. Volleys strike 3, 4, 1, 2, 1, 1 marines (ticks 35, 72, 108, 143, 178, 250),
+  where the circle struck all six on the first two and won by tick 113.
+- The marines cannot target the burrowed, cloaked Lurker: after tick 35 its life stays at about 136 to the end. They
+  walk onto its position and stand around it, so a line from the Lurker meets one or two of them; struck, they move
+  away (the damage effects' `ResponseFlags` `Flee`, `core` EffectData:124-125). With the limit raised to 500 ticks
+  (`diag_21_500`), the Lurker kills all six on 8 of 20 seeds (ticks 215 to 363); on the others one marine survives
+  at 5 life, out of range: seed 3203386110's last marine stands at (21.3, 28.3), 11.9 from the Lurker.
+- **Not a defect of the line search.** What differs from the game is the marines standing beside the Lurker rather
+  than over it (B-93: a burrowed Lurker should not block ground units) and the battle's time limit. **Proposal:** land
+  the line with battle 21 re-recorded to what the game supports (the Lurker unharmed after burrowing, at most one
+  marine left: `blue (1, 1), red (0, 1)`, with 500 ticks), and fix B-93 in WP16; no change to the line rule.
