@@ -66,10 +66,10 @@ so that **no battle outcome, golden replay or checksum moves** (D-1); a work pac
 | [Q0020](../questions/closed/0020-smog-velocity-quiescence.md) answer: "The agent is always allowed to decide visual questions" | Standing rule | §7, D-11 |
 | [Q0069](../questions/open/0069-lurker-burrow-sections.md) when a burrowing Lurker becomes burrowed | Answered (option 2: `Stats` at 33 ticks, `Actor` animation to 45) but not yet implemented | D-6 |
 | [Q0070](../questions/open/0070-lurker-without-burrow-button.md) no Burrow button in the skirmish | Open, default option 1; plan `2026-11-09-client-mode-commands` adds the button | §2.4, WP12 |
-| Q0075 (new) Veo spend for morph and mode unit clips | Filed by WP0, default "no spend; the effect system carries burrow and siege" | D-4, WP13 |
-| Q0076 (new) what an enemy sees of an undetected cloaked unit | Filed by WP0, default "shimmer, as StarCraft II" | D-5 |
-| Q0077 (new) the missing caster spells (Abduct, Psionic Storm, Blinding Cloud, …) | Filed by WP0, default "presentation contract only here; mechanics in a later plan" | D-8, §12 |
-| Q0078 (new) a Google image model for effect textures (new paid model) | Filed by WP0, **Blocking: no**, default "no image-model spend; textures from Veo clips on black (approved service) and offline noise" | §6, D-4 |
+| [Q0075](../questions/open/0075-veo-morph-and-mode-clips.md) (filed) Veo spend for morph and mode unit clips | Filed by WP0 (2026-11-09), default "no spend; the effect system carries burrow and siege" | D-4, WP13 |
+| [Q0076](../questions/open/0076-undetected-cloaked-enemies.md) (filed) what an enemy sees of an undetected cloaked unit | Filed by WP0 (2026-11-09), default "shimmer, as StarCraft II" | D-5 |
+| [Q0077](../questions/open/0077-caster-spells.md) (filed) the missing caster spells (Abduct, Psionic Storm, Blinding Cloud, …) | Filed by WP0 (2026-11-09), default "presentation contract only here; mechanics in a later plan" | D-8, §12 |
+| [Q0078](../questions/open/0078-image-model-for-effect-textures.md) a Google image model for effect textures (new paid model) | Filed by WP0, **Blocking: no**; default changed by the orchestrator to **"yes, within $25.25 of the $200 total"**, because the owner proposed generated images in chat (2026-11-09) | §6, D-4 |
 
 Question numbers: `open/` and `closed/` on `main` end at Q0071; Q0072 to Q0074 are taken on the `friendly-blocking`
 branches; Q0075 to Q0077 were reserved by the first version of this plan and are still unfiled; Q0078 is the next

@@ -210,6 +210,12 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-97 | The Lurker analogue's burrow cannot be cancelled while it runs; the game's can (`Interruptible`, a Cancel button) | WP18 |
 | B-98 | Anchored units (sieged, burrowed) get no Stop or Hold Position on the card; the game's sieged tank has both | next client package |
 | B-102 | Routes come from a grid A* corridor with radius tiers, not a triangulated navigation mesh with each unit's own radius | [`2026-11-09-sc2-pathfinding`](docs/plans/2026-11-09-sc2-pathfinding.md) Part B |
+| B-106 | An undetected burrowed or cloaked enemy is drawn to every viewer (an information leak); the game shows nothing of a burrowed unit and a shimmer of a cloaked one until a detector covers it | [`2026-11-09-effect-visualization`](docs/plans/2026-11-09-effect-visualization.md) WP3 |
+| B-107 | Splash damage has no presentation: no area is drawn at the simulation's radii | [`2026-11-09-effect-visualization`](docs/plans/2026-11-09-effect-visualization.md) WP6, WP7 |
+| B-108 | Mode transitions (siege, burrow) are invisible and the settled stance is not readable | [`2026-11-09-effect-visualization`](docs/plans/2026-11-09-effect-visualization.md) WP8 |
+| B-109 | Barrier, Charge dash and the concussive slow are invisible | [`2026-11-09-effect-visualization`](docs/plans/2026-11-09-effect-visualization.md) WP9 |
+| B-110 | A projectile shows no impact when it arrives | [`2026-11-09-effect-visualization`](docs/plans/2026-11-09-effect-visualization.md) WP7 |
+| B-111 | A unit's flipbook does not change with its mode (a sieged tank looks mobile) | [`2026-11-09-effect-visualization`](docs/plans/2026-11-09-effect-visualization.md) WP13 ([Q0075](docs/questions/open/0075-veo-morph-and-mode-clips.md)) |
 
 ---
 
