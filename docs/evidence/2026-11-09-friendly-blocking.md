@@ -370,3 +370,30 @@ is updated. Blocking totals: 1,206,580 blocked attacker ticks, 52,889 reversals,
 
 **Goldens.** Unchanged (no golden unit burrows), in debug, release and on `wasm32-wasip1`; the sandbox checksum is
 unchanged. No checksum schema change: `burrowed` is read from the hashed `active_mode` through the catalog.
+
+## Showcase storyboard (WP7)
+
+**Render.** `showcase render --driver radv` of `00dc9ba` (release build, one `with-gpu-lock` per take), output under
+`~/scratch/blocking/r2/show1/` (not committed). The take completed: 1,100 frames.
+
+| Scene | Frames | Start tick |
+|---|---|---|
+| title | 125 | 0 |
+| terrain | 150 | 2 |
+| units | 150 | 301 |
+| smog | 125 | 451 |
+| advance | 50 (its minimum) | 579 |
+| clash | 300 | 776 |
+| closing (paused) | 200 | 1,075 |
+
+Stills (frames 598, 700, 899, 1,000): at the end of `advance` the viewer's ten attackers already fire on the enemy
+hall; `clash` shows them round that hall until tick 1,075, the hall still standing; `closing` shows the status card
+with no result window. `route_trace` ends the battle at tick 1,100 with player 0 winning, 25 ticks after `closing`
+pauses.
+
+**Changed.** Only the storyboard's header comment in `assets/captures/showcase.ron`: it said the viewer's base falls
+near tick 1,225; it now records this render's scene ticks and the win near tick 1,100. No scene length, camera or
+caption changed: the story still fits, and the captions are generic. The margin before the result is 25 ticks; a
+later change that ends the battle earlier needs `clash` shortened.
+
+**Tests.** `showcase_tests` (the GPU smoke take through the harness on `radv`) and `showcase_storyboard_tests` pass.
