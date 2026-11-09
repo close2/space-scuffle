@@ -640,6 +640,7 @@ fn author_stances(arena: &mut Arena, cast_ticks: u16) -> EntityId {
         effect: AbilityEffectSpec::SwitchMode {
             mode_name: name.to_owned(),
         },
+        leave_name: None,
     };
     arch.modes = vec![stance("armed", Some(weapon)), stance("plain", None)];
     arch.abilities = vec![switch("armed"), switch("plain")];

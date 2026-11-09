@@ -75,6 +75,7 @@ impl Fixture {
             cast_range: SimScalar::ZERO,
             cooldown_ticks: 20,
             effect: AbilityEffectSpec::Overclock(spec),
+            leave_name: None,
         }];
         Ok(())
     }
@@ -477,6 +478,7 @@ fn widened_blink_and_flee_queries_preserve_exact_admission_and_payments() -> Tes
             max_range: SimScalar::from_num(50_000),
             cooldown_ticks: 20,
         },
+        leave_name: None,
     }];
     let id = f.spawn(f.air, point(2, 2))?;
     f.world.entities.get_mut(&id).ok_or("actor")?.energy = SimScalar::from_num(10);
@@ -620,6 +622,7 @@ fn queued_blink_commits_pre_cast_origin_with_exact_destination_and_payment() -> 
             max_range: SimScalar::from_num(12),
             cooldown_ticks: 20,
         },
+        leave_name: None,
     }];
     let origin = point(8, 8);
     let destination = point(18, 8);

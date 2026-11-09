@@ -237,6 +237,7 @@ mod tests {
                 energy_cost_per_second: sim_types::SimScalar::ZERO,
                 is_burrow: true,
             },
+            leave_name: None,
         });
         assert!(anchored.can_ever_move());
     }

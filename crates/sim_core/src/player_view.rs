@@ -24,9 +24,9 @@ use crate::upgrades::OVERCLOCK_ABILITY_SLUG;
 use crate::{Entity, SimWorld};
 use sim_map::PlacementFailureReason;
 use sim_types::{
-    CarrierView, CommandOptionView, CommandSubject, PlayerId, PlayerStatusView, PlayerView,
-    QueuedItem, QueuedJobView, ResourceNodeId, ShapeKind, SiteRefusal, StructureQueueView, Tick,
-    UnitTypeId, VisibilityState, VisibleNodeView,
+    AbilityLockView, CarrierView, CommandOptionView, CommandSubject, ModeStateView, PlayerId,
+    PlayerStatusView, PlayerView, QueuedItem, QueuedJobView, ResourceNodeId, ShapeKind,
+    SiteRefusal, StructureQueueView, Tick, UnitTypeId, VisibilityState, VisibleNodeView,
 };
 
 impl SimWorld {
@@ -105,13 +105,27 @@ impl SimWorld {
                     capacity,
                 });
             }
+            if !arch.modes.is_empty() {
+                let settled = entity.settled_mode(arch);
+                out.mode_states.push(ModeStateView {
+                    entity: entity.id,
+                    settled_mode: settled.and_then(|mode| {
+                        arch.modes
+                            .iter()
+                            .position(|candidate| candidate.mode_name == mode.mode_name)
+                            .and_then(|index| u8::try_from(index).ok())
+                    }),
+                    channeling: entity.channeling_remaining_ticks > 0,
+                });
+            }
         }
         if entity.is_completed {
             out.completed_types.push(entity.unit_type_id);
         }
     }
 
-    /// Derives `options` and `overclock_ready` from the sorted `completed_types` of `out`.
+    /// Derives `options`, `overclock_ready` and `ability_locks` from the sorted
+    /// `completed_types` of `out`.
     // PERFORMANCE RATIONALE:
     // Why: The writer takes `&self` so that reading cannot touch authoritative state, which
     // rules out scratch buffers held in the world, and this runs once per executed tick.
@@ -124,6 +138,7 @@ impl SimWorld {
             completed_types,
             options,
             overclock_ready,
+            ability_locks,
             ..
         } = out;
         for &unit_type in completed_types.iter() {
@@ -170,6 +185,14 @@ impl SimWorld {
                 && self.is_ability_unlocked(arch, *viewer, OVERCLOCK_ABILITY_SLUG)
             {
                 overclock_ready.push(unit_type);
+            }
+            for (ability, index) in arch.abilities.iter().zip(0_u8..) {
+                if !self.is_ability_unlocked(arch, *viewer, &ability.name) {
+                    ability_locks.push(AbilityLockView {
+                        unit_type,
+                        ability_index: index,
+                    });
+                }
             }
         }
         options.sort_unstable_by_key(|option| option.subject);

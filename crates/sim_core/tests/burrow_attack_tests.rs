@@ -121,6 +121,7 @@ fn register_burrower(world: &mut SimWorld, cast: u16, leave: u16) -> UnitTypeId 
             effect: AbilityEffectSpec::SwitchMode {
                 mode_name: MODE.to_string(),
             },
+            leave_name: None,
         }];
     })
 }

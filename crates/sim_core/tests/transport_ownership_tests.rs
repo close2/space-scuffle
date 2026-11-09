@@ -115,6 +115,7 @@ fn ability(effect: AbilityEffectSpec) -> AbilitySpec {
         cooldown_ticks: 8,
         cast_range: SimScalar::ZERO,
         effect,
+        leave_name: None,
     }
 }
 fn command(actor: EntityId, order: UnitOrder) -> PlayerCommand {

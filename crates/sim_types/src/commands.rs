@@ -293,6 +293,12 @@ pub struct AbilitySpec {
     pub cast_range: SimScalar,
     /// Mechanical effect payload.
     pub effect: AbilityEffectSpec,
+    /// Name of the command that leaves the mode of a [`AbilityTargetKind::ToggleMode`] ability
+    /// (`StarCraft` II's button name, e.g. "Tank Mode" or "Unburrow"); `name` is the command that
+    /// enters it. Required for a mode toggle and absent for every other target kind, as catalog
+    /// validation checks. Display data only: the simulation never reads it.
+    #[serde(default)]
+    pub leave_name: Option<String>,
 }
 
 /// Bundle of optional mechanical capabilities possessed by an archetype.

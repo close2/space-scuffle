@@ -69,6 +69,7 @@ fn test_overclock_stim_hp_cost_and_stat_multipliers() {
         cooldown_ticks: 250,
         cast_range: SimScalar::ZERO,
         effect: AbilityEffectSpec::Overclock(overclock_spec),
+        leave_name: None,
     };
 
     world.catalog.get_mut(pulse_bot_id).unwrap().abilities = vec![ability];
@@ -166,6 +167,7 @@ fn stim_is_refused_unless_life_exceeds_its_cost() {
         cooldown_ticks: 250,
         cast_range: SimScalar::ZERO,
         effect: AbilityEffectSpec::Overclock(spec),
+        leave_name: None,
     }];
 
     for (life, admitted) in [(9, false), (10, false), (11, true)] {
@@ -300,6 +302,7 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
             cast_ticks: 5, // 5 ticks for test speed
             sieged_weapon: Box::new(sieged_weapon.clone()),
         },
+        leave_name: None,
     };
 
     world.catalog.get_mut(crawler_id).unwrap().abilities = vec![ability];
@@ -442,6 +445,7 @@ fn test_blink_teleport_across_cliff_chasm() {
             max_range: SimScalar::from_num(8),
             cooldown_ticks: 175,
         },
+        leave_name: None,
     };
 
     world.catalog.get_mut(crawler_id).unwrap().abilities = vec![ability];
@@ -534,6 +538,7 @@ fn test_psionic_storm_hazard_zone_aoe_and_non_stacking() {
             damage_per_interval: SimScalar::from_num(14),
             friendly_fire: true,
         },
+        leave_name: None,
     };
 
     world.catalog.get_mut(caster_type_id).unwrap().abilities = vec![storm_ability];
@@ -627,6 +632,7 @@ fn test_cloak_invisibility_and_detector_reveal() {
             energy_cost_per_second: SimScalar::ZERO,
             is_burrow: false,
         },
+        leave_name: None,
     };
 
     world.catalog.get_mut(pulse_bot_id).unwrap().abilities = vec![cloak_ability];
@@ -1076,6 +1082,7 @@ fn a_transient_ability_leaves_the_orders() {
             speed_multiplier: SimScalar::from_num(1.5),
             attack_rate_multiplier: SimScalar::from_num(1.5),
         }),
+        leave_name: None,
     }];
     command(
         &mut world,

@@ -469,6 +469,7 @@
                     effect: SwitchMode(
                         mode_name: "siege_mode",
                     ),
+                    leave_name: Some("Tank Mode"),
                 ),
             ],
             is_detector: false,
@@ -2829,6 +2830,7 @@
                     effect: SwitchMode(
                         mode_name: "burrowed",
                     ),
+                    leave_name: Some("Unburrow"),
                 ),
             ],
             is_detector: false,
