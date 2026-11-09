@@ -21,6 +21,7 @@ fn params(id: u32, pos: SimVec2) -> PushEntityParams {
         owner: PlayerId(0),
         push_priority: 10,
         cannot_be_pushed: false,
+        idle: true,
         is_holding: false,
     }
 }

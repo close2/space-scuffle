@@ -198,6 +198,12 @@
 // with them; the checksums below are those of the merged tree at schema 22, so every
 // checkpoint changed. Against WP13c, behaviour first differs on tick 6, checkpoint 1 (ticks 1 to 50),
 // where the WP4 corner of "blue_armor" first applies; the WP2+WP3 changes follow as above.
+// Re-recorded for plan 2026-11-09-friendly-blocking WP4 (push table D-4): a unit standing still
+// under an order is waiting, not idle, so it no longer steps aside for a friend walking into it
+// (steering) or gets pushed sideways (contact); both separate evenly. On tick 6, the first tick the
+// "blue_infantry" squad (pulse_bot) walks after its AttackMove of tick 5, its marines all stand
+// still under that order and no longer clear each other's lanes, so the squad sets off differently
+// and every checkpoint changed from checkpoint 1 (ticks 1 to 50).
 (
     checksum_schema: 22,
     seed: 0x5EED_0F_5CAFF1E,
@@ -225,25 +231,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x8d6f121b056fd27a,
-        0xec8d9e54185d22dc,
-        0xafb8ea36e2b97867,
-        0x6e3e6bfff4784df5,
-        0xd5ad9c0748e22bc9,
-        0xbeed8f73b92d5731,
-        0xed25a0dd902590fa,
-        0xd200f078ad92d821,
-        0xa9a76cb1fb798617,
-        0x4a8e6e6463b86e5b,
-        0xd14ac667b5d8d2e1,
-        0x8c745cba4bacea94,
-        0xa1b68d6e87c57c4b,
-        0xd496ecc264986a84,
-        0xbf0df5f91db5c0b8,
-        0xe727c44b952c3bb5,
-        0xfd3faea9e6e2b067,
-        0xf2e2738a23c34771,
-        0xdc6f1591fa51bae9,
-        0x5680b111e7644d24,
+        0xc4e377276989ef4b,
+        0x10e88c9f9ea2c6a6,
+        0xbeeaaefb601c493c,
+        0x8da878ea1c15bbf3,
+        0x22483bba7222ffa3,
+        0x1647a991b418320d,
+        0x4c230a6592db2f8d,
+        0xbf609127b09c5fb7,
+        0x32ee8517187ce69d,
+        0x0f5843673d1a98f9,
+        0xfb25e556e6474d01,
+        0xea0636e9941d0cfa,
+        0xfb9fcb10e9be742d,
+        0xa56201e5aa3227fa,
+        0x729f54827cab4d5e,
+        0xa5d97b5f8e2d3add,
+        0x97cc962a64c726d9,
+        0xe7751886fecc1fe2,
+        0xf7ff77fabe3d94ab,
+        0xb87980d0d63b6eca,
     ],
 )

@@ -66,3 +66,46 @@ mostly stand behind their line (pulse bot 24: 40 reversals). Ramp E foot, player
   unit: the enemy's contact push is uncapped by design and moves the unit in, and its own step brings it back. D-1.4
   excludes ticks on which an enemy touches the unit, so M-21 is outside D-a and D-b (steering against friends that
   will not yield) and stays with the deviation plan's WP16 with B-50 (melee packing, Q0035).
+
+## WP4: the push table (rule; landed before WP2)
+
+**Order.** Plan WP4 allows the push table to land before WP2, and it must: R1's waiting leaves a unit standing still
+under its order, and without D-4 a standing unit counts as idle, so a friend walking into it pushes it on through the
+firing line (plan D-4). Measured on WP2's first draft, a waiting unit that a squadmate walked into stepped in and was
+pushed back every tick.
+
+**What.** `SteeringObstacle::idle` and `PushEntityParams::idle` carry whether a body has nothing to do (no order,
+`Idle` or `Stop`; `Entity::is_idle`). Only an idle, standing friend steps aside in steering (`yields_to`) or is pushed
+sideways in contact; a body standing still under an order separates evenly, as moving friends do. Tests: one per row
+of D-4 in `push_priority_tests.rs` (`push_table`), plus enemies never pushing and a waiting unit not pushed.
+
+**Not bit-identical**, against the plan's expectation. The plan's probe saw no waiting units, but standing still under
+an order is common today: a whole squad on the first tick after its order, before any of it has moved. Traced on
+golden replay: on tick 6, the first tick the `blue_infantry` squad walks after its attack-move of tick 5, its
+marines (entities 17 to 22 and on) all stand still under that order; each used to count its neighbours as idle and
+walk into them, and now treats them as bodies that will not yield.
+
+**Matrix.** 10 battles moved, **no overall winner changed**: 9a (1 seed), 26 to 30 (17 to 20 seeds each, no single
+winner changed), 31 (20 seeds; single-seed winners changed on 3, blue wins 19 → 17 of 20), 33 (12 single-seed
+changes, blue wins 12 → 9 of 20, red 1 → 3), 34 (no winner changed), 35 (6 single-seed changes, blue wins 13 → 15).
+Blocking totals: 1,173,188 blocked attacker ticks, 166,303 reversals, 18 give-ups.
+
+**Battle 33**, 68 seeds: blue wins 41 → 34, red 10 → 12, unresolved 17 → 22; mean survivors 4.32 – 0.74 →
+3.76 – 0.96. Blue still wins overall.
+
+**Goldens.** Both re-recorded with the cause above: `golden_replay` from checkpoint 1 (ticks 1 to 50, tick 6),
+`golden_replay_orders` from checkpoint 3 (ticks 21 to 30, tick 21, the first walking tick of `blue_column`). The
+sandbox checksum is unchanged (no schema change). Identical in debug, release and on `wasm32-wasip1`.
+
+**Test restated first** (test-only commit): `movement_contact_tests::unreachable_order_reports_retargets_and_terminates`
+now allows 1,200 ticks; the last of its 20 units settles on tick 900, one tick past the old bound, because units
+waiting behind the crowd at the wall are no longer pushed through it.
+
+**Showcase:**
+
+| Player | In range at tick 900 | Blocked attacker ticks | Reversals | Give-ups |
+|---|---|---|---|---|
+| 0 | 6 of 10 | 331 | 604 | 5 |
+| 1 | 5 of 10 | 1,205 | 455 | 7 |
+
+Ramp E foot, player 0: mean turn 202° (maximum 266°). Player 0 wins at tick 1,361 (was 1,355).
