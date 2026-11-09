@@ -1596,12 +1596,14 @@ fn emit_ramp_cell(
     }
 }
 
-/// Emits the wall on one half-edge of ramp cell `cell` (rule R2): where the ramp's edge lies
-/// above the surface beside it, a side wall facing out of the ramp, down to that surface.
+/// Emits the wall on one half-edge of ramp cell `cell` (rule R2) where the ramp's edge and the
+/// surface beside it differ in height: a side wall facing out of the ramp where the edge is
+/// higher, a flank wall facing into it where the neighbour is higher.
 ///
 /// The surface beside a non-ramp neighbour is the dual grid's floor in the neighbour's quadrant
 /// of the half-edge's dual cell ([`dual_floor_level_beside`], rule R3), so this wall and the
-/// dual grid's floor meet exactly. A ramp neighbour or a higher neighbour gets no wall here.
+/// dual grid's floor meet exactly. Beside another ramp it is that ramp's own edge, and of the
+/// two cells only the one whose half-edge midpoint is higher emits the wall between them.
 #[expect(
     clippy::cast_precision_loss,
     reason = "map cell coordinates stay far below the range of f32"
@@ -1614,60 +1616,99 @@ fn emit_ramp_half_edge_wall(
     scratch: &mut MesherScratch,
     stats: &mut MeshStats,
 ) {
-    let neighbour = (
-        cell.0 + half.neighbour_offset.0,
-        cell.1 + half.neighbour_offset.1,
-    );
-    if matches!(
-        surface_class(map, neighbour.0, neighbour.1),
-        SurfaceClass::Ramp(_)
-    ) {
-        return;
-    }
-    // The dual cell centred on the half-edge's cell corner, and the neighbour's corner in it.
-    let di = cell.0 + i32::from(half.corner.0 / 2);
-    let dj = cell.1 + i32::from(half.corner.1 / 2);
-    let (Ok(di_u), Ok(dj_u)) = (u32::try_from(di), u32::try_from(dj)) else {
-        return;
+    let (dx, dy) = half.neighbour_offset;
+    let neighbour = (cell.0 + dx, cell.1 + dy);
+    let local = |h: i32| match h {
+        0 => SimScalar::ZERO,
+        1 => SimScalar::HALF,
+        _ => SimScalar::ONE,
     };
-    let corner = match (neighbour.0 - (di - 1), neighbour.1 - (dj - 1)) {
-        (0, 0) => 0,
-        (1, 0) => 1,
-        (1, 1) => 2,
-        _ => 3,
-    };
-    let beside = cliff_level_height(dual_floor_level_beside(map, di_u, dj_u, corner));
-
     let edge_point = |(hx, hy): (u8, u8)| {
-        let local = |h: u8| match h {
-            0 => SimScalar::ZERO,
-            1 => SimScalar::HALF,
-            _ => SimScalar::ONE,
-        };
+        let (hx, hy) = (i32::from(hx), i32::from(hy));
         Vec3::new(
-            cell.0 as f32 + f32::from(hx) * 0.5,
+            cell.0 as f32 + hx as f32 * 0.5,
             profile.height_at(local(hx), local(hy)).to_f32(),
-            cell.1 as f32 + f32::from(hy) * 0.5,
+            cell.1 as f32 + hy as f32 * 0.5,
         )
     };
     let start = edge_point(half.corner);
     let end = edge_point(half.mid);
-    let outward = Vec3::new(
-        half.neighbour_offset.0 as f32,
-        0.0,
-        half.neighbour_offset.1 as f32,
-    );
-    if start.y.max(end.y) > beside + RAMP_STEP_EPSILON {
-        let side = RampSide {
-            start,
-            end,
-            outward,
-            inward: -outward,
+
+    let beside = if let SurfaceClass::Ramp(other) = surface_class(map, neighbour.0, neighbour.1) {
+        // The neighbour's edge at the same points, in its own cell-local coordinates.
+        let other_at = |(hx, hy): (u8, u8)| {
+            let (hx, hy) = (i32::from(hx) - 2 * dx, i32::from(hy) - 2 * dy);
+            other.height_at(local(hx), local(hy)).to_f32()
         };
-        emit_ramp_side_wall(&side, beside, scratch, stats);
-    }
+        let (other_start, other_end) = (other_at(half.corner), other_at(half.mid));
+        if start.y + end.y <= other_start + other_end + 2.0 * RAMP_STEP_EPSILON {
+            return;
+        }
+        (other_start, other_end)
+    } else {
+        // The dual cell centred on the half-edge's cell corner, and the neighbour's corner in it.
+        let di = cell.0 + i32::from(half.corner.0 / 2);
+        let dj = cell.1 + i32::from(half.corner.1 / 2);
+        let (Ok(di_u), Ok(dj_u)) = (u32::try_from(di), u32::try_from(dj)) else {
+            return;
+        };
+        let corner = match (neighbour.0 - (di - 1), neighbour.1 - (dj - 1)) {
+            (0, 0) => 0,
+            (1, 0) => 1,
+            (1, 1) => 2,
+            _ => 3,
+        };
+        let floor = cliff_level_height(dual_floor_level_beside(map, di_u, dj_u, corner));
+        (floor, floor)
+    };
+    let outward = Vec3::new(dx as f32, 0.0, dy as f32);
+    emit_ramp_step_wall([start, end], beside, outward, scratch, stats);
 }
 
+/// Emits the vertical wall between a ramp half-edge `edge` (start and end on the ramp surface)
+/// and the surface beside it, at altitudes `beside` under the same two points: at each end from
+/// the higher of the two down to the lower. It faces out of the ramp (`outward`) where the ramp
+/// edge is the higher side and into the ramp where the neighbour is, and is skipped where the
+/// two differ by no more than [`RAMP_STEP_EPSILON`].
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "a chunk holds far fewer than u32::MAX vertices"
+)]
+fn emit_ramp_step_wall(
+    edge: [Vec3; 2],
+    beside: (f32, f32),
+    outward: Vec3,
+    scratch: &mut MesherScratch,
+    stats: &mut MeshStats,
+) {
+    let [start, end] = edge;
+    let step = (start.y - beside.0).abs().max((end.y - beside.1).abs());
+    if step <= RAMP_STEP_EPSILON {
+        return;
+    }
+    let facing = if start.y + end.y >= beside.0 + beside.1 {
+        outward
+    } else {
+        -outward
+    };
+    let at = |p: Vec3, y: f32| Vec3::new(p.x, y, p.z);
+    let top_start = at(start, start.y.max(beside.0));
+    let top_end = at(end, end.y.max(beside.1));
+    let bot_start = at(start, start.y.min(beside.0));
+    let bot_end = at(end, end.y.min(beside.1));
+
+    let wall_base = scratch.positions.len() as u32;
+    push_side_vertex(scratch, top_start, facing, 1.0, 0.0);
+    push_side_vertex(scratch, top_end, facing, 1.0, 0.0);
+    push_side_vertex(scratch, bot_end, facing, WALL_FOOT_AO, 0.0);
+    push_side_vertex(scratch, bot_start, facing, WALL_FOOT_AO, 0.0);
+
+    // Orient wall triangles toward the lower side, emitting only non-degenerate triangles
+    stats.wall_indices +=
+        push_quad_oriented(&scratch.positions, &mut scratch.indices, wall_base, facing);
+
+    stats.wall_vertices += 4;
+}
 /// Emits the sloped surface quad of ramp cell `(cx, cy)` at the simulation's authoritative corner
 /// altitudes, and returns its corners `[bottom-left, bottom-right, top-right, top-left]` in world
 /// space.
@@ -1725,39 +1766,6 @@ fn push_side_vertex(scratch: &mut MesherScratch, p: Vec3, outward: Vec3, ao: f32
     scratch.normals.push([outward.x, 0.0, outward.z]);
     scratch.uv0.push([p.x, p.z]);
     scratch.uv1.push([ao, emissive]);
-}
-
-/// Emits the vertical wall below a ramp side edge, down to the neighbour's altitude
-/// `neighbour_h` (never above the edge itself), facing out of the ramp.
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "a chunk holds far fewer than u32::MAX vertices"
-)]
-fn emit_ramp_side_wall(
-    side: &RampSide,
-    neighbour_h: f32,
-    scratch: &mut MesherScratch,
-    stats: &mut MeshStats,
-) {
-    let (v_start, v_end, perp_dir) = (side.start, side.end, side.outward);
-    let wall_base = scratch.positions.len() as u32;
-    let bot_start = Vec3::new(v_start.x, neighbour_h.min(v_start.y), v_start.z);
-    let bot_end = Vec3::new(v_end.x, neighbour_h.min(v_end.y), v_end.z);
-
-    push_side_vertex(scratch, v_start, perp_dir, 1.0, 0.0);
-    push_side_vertex(scratch, v_end, perp_dir, 1.0, 0.0);
-    push_side_vertex(scratch, bot_end, perp_dir, WALL_FOOT_AO, 0.0);
-    push_side_vertex(scratch, bot_start, perp_dir, WALL_FOOT_AO, 0.0);
-
-    // Orient wall triangles outward, emitting only non-degenerate triangles
-    stats.wall_indices += push_quad_oriented(
-        &scratch.positions,
-        &mut scratch.indices,
-        wall_base,
-        perp_dir,
-    );
-
-    stats.wall_vertices += 4;
 }
 
 /// Emits a guard rail riding on a ramp side edge: an emissive top face (`uv1.y = 1`) inset by
