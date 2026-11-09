@@ -2224,7 +2224,7 @@ type MountRow = (
 /// `StarCraft` II 5.0.14 has them (B-28). Turret rates are Normal °/s × 1.4 ÷ 25; arcs are
 /// `Arc` ÷ 2 + `ArcSlop` (engaged) and `Arc` ÷ 2 (acquisition), `ArcSlop` 11.25 by default
 /// (`core` WeaponData:15).
-const SC2_WEAPON_MOUNTS: [MountRow; 4] = [
+const SC2_WEAPON_MOUNTS: [MountRow; 5] = [
     (
     "Hellion",
     "weapon",
@@ -2237,6 +2237,7 @@ const SC2_WEAPON_MOUNTS: [MountRow; 4] = [
     ("Immortal", "weapon", Some(40.32), 11.25, 0.0, "Immortal turret, liberty UnitData:10791; parent FreeRotate, YawRate 720, liberty TurretData:26, :73; PhaseDisruptors sets no Arc"),
     ("Colossus", "weapon", Some(55.99), 56.25, 45.0, "Colossus turret, liberty UnitData:4099; YawRate 999.8437, liberty TurretData:51; ThermalLances Arc 90, liberty WeaponData:500"),
     ("Lurker", "weapon", Some(156.79), 11.25, 0.0, "Lurker turret of LurkerMPBurrowed, void UnitData:775; YawRate 2799.8437, void TurretData:18; LurkerMP sets no Arc (swarm WeaponData:215, void :14, voidmulti :144)"),
+    ("Phoenix", "air_weapon", Some(30.20), 2.4994, 2.4994, "Phoenix turret, swarm UnitData:1805; YawRate 539.2968, swarm TurretData:33; IonCannons Arc 4.9987, ArcSlop 0, swarm WeaponData:179-180"),
 ];
 
 /// Whether two angles in degrees agree to within one binary unit (360 ÷ 65 536 degrees).
