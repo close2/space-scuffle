@@ -40,6 +40,7 @@ impl SimWorld {
             MotionPolicy {
                 layer: MovementLayer::Ground,
                 radius: SimScalar::ONE,
+                burrowed: false,
             },
             victim_pos,
             threat_pos,

@@ -2846,6 +2846,9 @@
                     is_immobile: true,
                     unpushable: true,
                     is_cloaked: true,
+                    // LurkerMPBurrowed collides only with Burrow (void UnitData:775): ground units
+                    // walk over it (plan 2026-11-09-friendly-blocking R6, B-93).
+                    burrowed: true,
                     ground_weapon_override: Some(Some((
                         name: "Subterranean Spines",
                         visual_kind: MeleeSlash,

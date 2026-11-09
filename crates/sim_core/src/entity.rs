@@ -1010,6 +1010,31 @@ impl Entity {
         self.is_sieged = false;
     }
 
+    /// Whether this unit is burrowed: its active mode is a [`UnitModeSpec::burrowed`] one, or a
+    /// burrowing cloak toggle (`CloakToggle { is_burrow: true }`) has put it under ground. A
+    /// burrowed body touches only other burrowed bodies (plan `2026-11-09-friendly-blocking` R6,
+    /// B-93). A unit still channelling its burrow is not yet burrowed, as its other mode stats
+    /// are not. `archetype` must be this unit's.
+    #[must_use]
+    pub fn is_burrowed(&self, archetype: &UnitArchetype) -> bool {
+        let burrow_toggle = || {
+            archetype.abilities.iter().any(|ability| {
+                matches!(
+                    ability.effect,
+                    AbilityEffectSpec::CloakToggle {
+                        is_burrow: true,
+                        ..
+                    }
+                )
+            })
+        };
+        self.active_mode
+            .as_deref()
+            .and_then(|mode| archetype.get_mode(mode))
+            .is_some_and(|mode| mode.burrowed)
+            || (self.is_cloaked && self.is_immobile && burrow_toggle())
+    }
+
     /// The mode this unit is in or, while it channels a switch, the mode it will be in when the
     /// channel ends; `None` for the archetype's default stance. `archetype` must be this unit's.
     ///

@@ -288,6 +288,12 @@ pub struct UnitModeSpec {
     /// Whether the unit is cloaked/burrowed (invisible without detection) in this mode.
     #[serde(default)]
     pub is_cloaked: bool,
+    /// Whether the unit is burrowed in this mode: its body then touches only other burrowed
+    /// bodies, so unburrowed units walk over it and it neither pushes nor is pushed by them
+    /// (`StarCraft` II's burrowed Lurker collides only with `Burrow`, `void` UnitData:775; plan
+    /// `2026-11-09-friendly-blocking` R6, B-93). Visibility is `is_cloaked`'s, not this field's.
+    #[serde(default)]
+    pub burrowed: bool,
     /// Optional movement type override while in this mode (e.g., Air -> Ground for transforming fighters).
     #[serde(default)]
     pub mover_type_override: Option<crate::enums::MoverType>,

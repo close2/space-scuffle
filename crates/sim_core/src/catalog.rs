@@ -852,6 +852,8 @@ struct UnitModeSpecDef {
     #[serde(default)]
     is_cloaked: bool,
     #[serde(default)]
+    burrowed: bool,
+    #[serde(default)]
     mover_type_override: Option<MoverType>,
     #[serde(default)]
     sight_radius_override: Option<f32>,
@@ -891,6 +893,7 @@ impl UnitModeSpecDef {
             is_immobile: self.is_immobile,
             unpushable: self.unpushable,
             is_cloaked: self.is_cloaked,
+            burrowed: self.burrowed,
             mover_type_override: self.mover_type_override,
             sight_radius_override: self.sight_radius_override.map(SimScalar::from_f32_lossy),
             ground_weapon_override: resolve(self.ground_weapon_override)?,

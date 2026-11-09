@@ -645,12 +645,13 @@
         // Re-recorded for the Lurker's line (plan 2026-11-05-sc2-deviation-fixes Amendment 22,
         // B-18; evidence §17.8): 9 searches of 0.5 along the attack from the Lurker (LurkerMP and
         // LurkerMPSearch, swarm EffectData:3010-3019, voidmulti :809, :821). The marines cannot
-        // target the burrowed, cloaked Lurker; they walk onto it, stand around it (where the game's
-        // would stand over it: a burrowed Lurker collides only with Burrow, bug B-93) and move away
-        // when struck (the damage effects' ResponseFlags Flee, core EffectData:124-125), so a line
-        // meets one or two of them per volley. Over 500 ticks the Lurker, unharmed after burrowing,
-        // kills every marine on 8 of 20 seeds and all but one on 11; on seed 8 two are left out
-        // of its range.
+        // target the burrowed, cloaked Lurker; they walk onto it and stand over it (a burrowed
+        // Lurker collides only with Burrow, void UnitData:775; plan 2026-11-09-friendly-blocking
+        // WP6, B-93) and move away when struck (the damage effects' ResponseFlags Flee, core
+        // EffectData:124-125), so a line meets one or two of them per volley. Over 500 ticks the
+        // Lurker, unharmed after burrowing, kills four to six of the six marines on every seed:
+        // all six on 3 of 20 seeds, all but one on 9 and all but two on 8; the survivors are
+        // marines that fled beyond its range of 8 when struck and stood there.
         name: "21_lurker_vs_6_marines",
         claim: "Spines kill light infantry that cannot detect the lurker, and it survives",
         map_cells: 64,

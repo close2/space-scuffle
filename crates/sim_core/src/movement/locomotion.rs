@@ -650,7 +650,7 @@ impl SimWorld {
                 .filter(|e| e.is_alive() && !e.is_loaded_in_transport())
                 .map(|e| e.id),
         );
-        self.movement.largest_radius = [SimScalar::ZERO; 2];
+        self.movement.largest_radius = [SimScalar::ZERO; super::BODY_CLASSES];
         for layer in &mut self.movement.obstacles {
             layer.clear();
         }
@@ -659,10 +659,10 @@ impl SimWorld {
                 Ok(entry) => {
                     if let Some(actor) = self.entities.get(&id).filter(|a| !a.is_mineral_walking) {
                         let obstacle = self.obstacle_of(entry, actor);
-                        let layer = entry.policy.layer.index();
-                        self.movement.obstacles[layer].push(obstacle);
-                        self.movement.largest_radius[layer] =
-                            self.movement.largest_radius[layer].max(entry.policy.radius);
+                        let class = entry.policy.body_class();
+                        self.movement.obstacles[class].push(obstacle);
+                        self.movement.largest_radius[class] =
+                            self.movement.largest_radius[class].max(entry.policy.radius);
                     }
                     entries.push(entry);
                 }
@@ -671,9 +671,9 @@ impl SimWorld {
         }
         self.movement.phase_ids = ids;
         let (width, height) = (self.map.width(), self.map.height());
-        for layer in 0..2 {
-            let positions = self.movement.obstacles[layer].iter().map(|o| o.pos);
-            self.movement.grids[layer].rebuild(width, height, positions);
+        for class in 0..super::BODY_CLASSES {
+            let positions = self.movement.obstacles[class].iter().map(|o| o.pos);
+            self.movement.grids[class].rebuild(width, height, positions);
         }
         let navigation = self.pathfinder.nav_version();
         if navigation != self.movement.seen_nav_version {
@@ -1098,19 +1098,19 @@ struct MotionScene<'a> {
 }
 
 impl MotionScene<'_> {
-    /// Collects the tick-start bodies near `position` on `entry`'s layer into `out`.
+    /// Collects the tick-start bodies near `position` of `entry`'s body class into `out`.
     fn gather_neighbours(
         &self,
         entry: MotionEntry,
         position: SimVec2,
         out: &mut Vec<SteeringObstacle>,
     ) {
-        let layer = entry.policy.layer.index();
+        let class = entry.policy.body_class();
         gather_neighbours(
             &NeighbourIndex {
-                grid: &self.movement.grids[layer],
-                obstacles: &self.movement.obstacles[layer],
-                largest_radius: self.movement.largest_radius[layer],
+                grid: &self.movement.grids[class],
+                obstacles: &self.movement.obstacles[class],
+                largest_radius: self.movement.largest_radius[class],
             },
             self.map,
             entry,
