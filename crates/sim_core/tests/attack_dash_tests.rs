@@ -435,7 +435,9 @@ fn b43_the_shipped_zealot_analogue_carries_charge_and_dashes_once_researched() {
         })
     );
     // Charge needs its research (`UseCharge`, `liberty` AbilData:3827).
-    assert!(world.upgrade_catalog.unlocks_ability("psi_grey", "attack_dash"));
+    assert!(world
+        .upgrade_catalog
+        .unlocks_ability("psi_grey", "attack_dash"));
 
     let (walked, dashing) = shipped_zealot_first_step(false);
     assert!(!dashing && close(walked, 0.126), "{walked} {dashing}");
