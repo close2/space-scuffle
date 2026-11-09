@@ -201,6 +201,21 @@ pub struct MovementMemory {
     /// body and kept until the corner is passed or the route replaced, so the unit does not swap
     /// sides while it rounds the body (plan `2026-11-09-sc2-pathfinding` D-9 A3).
     pub corner_round: i8,
+    /// Whether this unit is walking round a crowd that blocks its way to its goal, on the side
+    /// `flank_left` keeps (the surround walk, plan `2026-11-09-friendly-blocking` D-2).
+    pub flank_active: bool,
+    /// Whether the surround walk has already turned back once, its first side having closed.
+    pub flank_reversed: bool,
+    /// Whether the surround walk has ended without a way in (both sides closed, or a full circle
+    /// walked); the unit then waits until its way forward opens or its goal changes (D-3).
+    pub flank_spent: bool,
+    /// Consecutive ticks the surround walk's side has been closed (`FLANK_REVERSE_TICKS`).
+    pub flank_blocked_ticks: u16,
+    /// Distance walked round the crowd on this walk, in world units.
+    pub flank_walked: SimScalar,
+    /// The target the surround walk approaches; `None` for an attack-move without one. A walk
+    /// for another goal starts afresh.
+    pub flank_target: Option<EntityId>,
 }
 
 impl MovementMemory {

@@ -51,7 +51,9 @@ use std::path::PathBuf;
 /// Re-recorded for checksum schema 23 (owner answer to Q0058), which encodes whether each weapon's
 /// burst and each pending burst is channeled, and schema 24 (owner answer to Q0063), which encodes
 /// whether each splash is centred on its target's edge.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 7_548_950_251_413_344_567;
+/// Re-recorded for checksum schema 25 (plan 2026-11-09-friendly-blocking WP3, B-104, B-105), which
+/// encodes each unit's surround-walk state, all at its defaults at spawn.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 16_815_478_854_166_671_532;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

@@ -53,7 +53,9 @@ use std::collections::BTreeMap;
 /// Schema 22 adds the sense in which each unit rounds a body parked on its next corner (B-100).
 /// Schema 23 adds whether each weapon's burst, and each pending burst, is channeled (Q0058).
 /// Schema 24 adds whether each splash is centred on its target's edge (Q0063).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 24;
+/// Schema 25 adds each unit's surround-walk state: whether it walks, has turned back or ended,
+/// its closed ticks, the distance walked and the target it approaches (B-104, B-105).
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 25;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.
