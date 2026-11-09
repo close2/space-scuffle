@@ -182,11 +182,9 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-44 | Concussive Shells have no effect | WP13d |
 | B-45 | Phoenix and Void Ray analogues cannot fire while moving | WP13e |
 | B-46 | The Viking analogue cannot land | WP18 |
-| B-47 | Non-time catalog values not audited | WP9 |
 | B-48 | Push priorities | WP16 |
 | B-49 | Which radius spaces units (`separation_radius` is unread) | WP16 |
 | B-50 | Melee attackers pack around a solid enemy by our own rule (Q0035) | WP16 |
-| B-51 | Neosteel Armor's targets | WP9 |
 | B-52 | Projectile flight times of multi-phase movers, High Templar and Spine Crawler | WP14 |
 | B-54 | A projectile fizzles when its target cloaks | WP14 |
 | B-55 | A shooter hidden by high ground or fog is never revealed to its victim | WP14 |
@@ -206,11 +204,12 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-70 | No Graviton Beam | WP18 |
 | B-77 | Hard-coded Concussive slow | WP13d |
 | B-78 | Hard-coded storm evacuation margin | WP18 |
-| B-82 | The Baneling's damage to structures is not its own effect (80, +5 a level, ignoring armour) | WP9 |
 | B-81 | The Liberator's first missile and the Colossus' strikes land on the release tick; the game delays the missile 1 tick and the Colossus' strikes by an amount not yet sourced ([Q0064](docs/questions/open/0064-colossus-damage-timing.md)) | WP5 follow-up, Q0064 |
 | B-83 | The Baneling's burst is centred on its target and strikes it directly; the game centres it on the Baneling | WP8 follow-up |
 | B-84 | The Siege Tank splashes around targets of radius 1.25 or more; the game's shot at them has no area | WP8 follow-up |
 | B-85 | A line area lands whole on the shot's tick; the game spaces the Lurker's spines 0.125 Normal s apart and delays each Colossus search 0.25 Normal s | WP8 follow-up |
+| B-86 | Morphs (Baneling, Ravager, Lurker, Brood Lord, Orbital Command, Planetary Fortress, Lair, Hive, Greater Spire) cost their morph increment and the Zergling analogue one Zergling at the pair's price, while ours trains them whole | WP17 |
+| B-88 | Structure attributes are derived in code (Psionic if shielded, else Mechanical); the game gives Protoss structures Armored and Structure, Zerg structures Armored, Biological and Structure | WP9 follow-up |
 
 ---
 

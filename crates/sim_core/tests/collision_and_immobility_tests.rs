@@ -766,7 +766,7 @@ fn test_live_battle_scenario_dual_ramp_traversal() {
         }
         if arch.ground_weapon.is_some() || arch.air_weapon.is_some() || arch.weapon.is_some() {
             p0_combatants.push(id);
-            if arch.collision_radius > SimScalar::from_f32_lossy(0.5) {
+            if arch.collision_radius >= SimScalar::from_f32_lossy(0.5) {
                 large_p0 += 1;
             } else {
                 small_medium_p0 += 1;
@@ -780,7 +780,7 @@ fn test_live_battle_scenario_dual_ramp_traversal() {
     );
     assert_eq!(
         large_p0, 2,
-        "Player 0 must have exactly 2 large radius=0.75 combatants (found {large_p0})"
+        "Player 0 must have exactly 2 large (radius at least 0.5) combatants (found {large_p0})"
     );
 
     // Issue AttackMove toward enemy base approach (52.5, 52.5)
@@ -860,7 +860,7 @@ fn test_live_battle_scenario_dual_ramp_traversal() {
         }
         if arch.ground_weapon.is_some() || arch.air_weapon.is_some() || arch.weapon.is_some() {
             p1_combatants.push(id);
-            if arch.collision_radius > SimScalar::from_f32_lossy(0.5) {
+            if arch.collision_radius >= SimScalar::from_f32_lossy(0.5) {
                 large_p1 += 1;
             } else {
                 small_medium_p1 += 1;

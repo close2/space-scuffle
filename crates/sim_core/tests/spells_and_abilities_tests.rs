@@ -281,6 +281,7 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
         target_loss_behavior: sim_types::ProjectileTargetLossBehavior::Fizzle,
         max_projectile_lifetime_ticks: sim_types::DEFAULT_PROJECTILE_LIFETIME_TICKS,
         suicide_on_attack: false,
+        structure_strike: None,
     };
 
     let ability = AbilitySpec {

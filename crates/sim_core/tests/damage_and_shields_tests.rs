@@ -131,6 +131,7 @@ fn dummy_weapon_spec(
         target_loss_behavior: sim_types::ProjectileTargetLossBehavior::Fizzle,
         max_projectile_lifetime_ticks: sim_types::DEFAULT_PROJECTILE_LIFETIME_TICKS,
         suicide_on_attack: false,
+        structure_strike: None,
     }
 }
 
@@ -752,6 +753,7 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
         target_loss_behavior: sim_types::ProjectileTargetLossBehavior::Fizzle,
         max_projectile_lifetime_ticks: sim_types::DEFAULT_PROJECTILE_LIFETIME_TICKS,
         suicide_on_attack: false,
+        structure_strike: None,
     };
 
     // Case B: Weapon with friendly_fire: false
@@ -1257,5 +1259,65 @@ fn b18_a_line_across_the_attack_strikes_beside_the_target() {
         losses[2],
         SimScalar::ZERO,
         "behind the target, off the line"
+    );
+}
+
+/// B-82: a weapon with a structure strike deals that strike, and only it, to a structure; its
+/// armour rule follows the strike (`VolatileBurstU2` `ArmorReduction` 0, `liberty`
+/// EffectData:1063), while a unit still takes the weapon's own strike and bonuses.
+#[test]
+fn b82_a_structure_strike_replaces_the_strike_against_structures() {
+    let mut weapon = dummy_weapon_spec(
+        SimScalar::from_num(16),
+        SimScalar::ZERO,
+        SimScalar::from_num(19),
+    );
+    weapon.structure_strike = Some(sim_types::StructureStrike {
+        damage: SimScalar::from_num(80),
+        upgrade_per_level: SimScalar::from_num(5),
+        ignores_armor: true,
+    });
+    let structure = dummy_target_archetype(
+        AttributeFlags::STRUCTURE | AttributeFlags::ARMORED | AttributeFlags::LIGHT,
+        SimScalar::from_num(3),
+        SimScalar::from_num(2),
+    );
+    let unit = dummy_target_archetype(
+        AttributeFlags::LIGHT,
+        SimScalar::from_num(1),
+        SimScalar::ZERO,
+    );
+    let life = SimScalar::from_num(1000);
+
+    let on_structure = calculate_hit_damage(&weapon, &structure, SimScalar::ZERO, life);
+    assert_eq!(
+        on_structure.life_damage,
+        SimScalar::from_num(80),
+        "80, no bonus, no armour"
+    );
+    let on_shields = calculate_hit_damage(&weapon, &structure, SimScalar::from_num(100), life);
+    assert_eq!(
+        on_shields.shield_damage,
+        SimScalar::from_num(80),
+        "no shield armour either"
+    );
+    let on_unit = calculate_hit_damage(&weapon, &unit, SimScalar::ZERO, life);
+    assert_eq!(
+        on_unit.life_damage,
+        SimScalar::from_num(34),
+        "16 + 19 Light - 1 armour"
+    );
+
+    weapon.structure_strike = weapon
+        .structure_strike
+        .map(|strike| sim_types::StructureStrike {
+            ignores_armor: false,
+            ..strike
+        });
+    let armoured = calculate_hit_damage(&weapon, &structure, SimScalar::ZERO, life);
+    assert_eq!(
+        armoured.life_damage,
+        SimScalar::from_num(77),
+        "80 - 3 armour"
     );
 }

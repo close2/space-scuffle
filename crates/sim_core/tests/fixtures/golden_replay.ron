@@ -142,8 +142,21 @@
 // splash also encodes its shape (a circle, or a line's origin, axis and offsets), so the schema
 // byte changes every checkpoint. No behaviour did: with the shape encoded at schema 14, both
 // fixtures reproduce as recorded for WP8a.
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP9 group g10 (B-47): "blue_armor"
+// (rhino_beetle) sees 9 (was 10, StarCraft II 5.0.14 `liberty` UnitData:7210). What the squad sees
+// is world state from tick 1, so every checkpoint changed. With only the Roach analogue's sight
+// restored to 10, both fixtures reproduce as recorded for WP8b.
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP9 group g12 (B-47): collision radii as
+// StarCraft II 5.0.14 (`CUnit` `Radius`): "blue_armor" (rhino_beetle) 0.5 (was 0.5625, the class
+// default `core` UnitData:41) and "red_siege" (railgun_crawler) 0.875 (was 0.75, `liberty`
+// UnitData:5094). Radii are part of the hashed bodies, so every checkpoint changed. With only
+// those two radii restored, both fixtures reproduce as recorded for WP9 group g10.
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP9 (B-82, checksum schema 15 -> 16): each
+// weapon also encodes its structure strike (none on any weapon here), so the encoding changes
+// every checkpoint. No behaviour did: no shipped weapon has a structure strike yet, and the whole
+// matrix and battle 33 are bit-identical to WP9 group g12.
 (
-    checksum_schema: 15,
+    checksum_schema: 16,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -169,25 +182,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x13c2b0d7c59a23c1,
-        0xf7aefb4bd778d1e7,
-        0x97fa8d2e1a7750c7,
-        0xf3e3356b5ed753a0,
-        0x5012f8433cb325e5,
-        0xde1d64e2bf0a1457,
-        0xcd2427215a5ad3e3,
-        0x6105810e74b578d6,
-        0x20644c8f8a14b521,
-        0xb90857a59e8b706f,
-        0x0393815f0c448a98,
-        0xea7c99af701d86b0,
-        0x1e167bc16c815e52,
-        0x19531632d920970a,
-        0x32c33f13fa72e512,
-        0x39f68544df40eecd,
-        0xaaa8010999c47c3d,
-        0x170da18faa4c0168,
-        0x39bec618cf4bcfec,
-        0x9c4efd00793a7acf,
+        0x1184cace741dd19c,
+        0x1fba6432527f14da,
+        0xcc69a4dab12702c5,
+        0x4afb8b8c72482edf,
+        0x16c05e1bf1de7e17,
+        0xda62d3b96a8c9134,
+        0x3f92d3a55cfee308,
+        0x36523e91e058b16f,
+        0xa1f150132adff937,
+        0xd3db5792f4885dce,
+        0x4fb4cf89cba7c95f,
+        0x5a5e2386fdcb4861,
+        0x0cc8084cc58ba776,
+        0x83bb66b52c78a650,
+        0x6515cdf0a58ad2ec,
+        0xfcb1a33a94bd0703,
+        0xc75c1d710789bce6,
+        0x2342151f17b75f8f,
+        0xcd510ccb9013f727,
+        0x09286a77e25d8168,
     ],
 )

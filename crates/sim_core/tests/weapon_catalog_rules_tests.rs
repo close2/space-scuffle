@@ -450,7 +450,7 @@ fn f12_catalog_sight_beyond_vision_is_rejected_not_shortened() {
     );
     assert_rejected(
         STRUCTURES,
-        "sight_radius: 22.0",
+        "sight_radius: 11.0",
         "sight_radius: 33.0",
         "sight_radius",
     );

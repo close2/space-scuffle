@@ -797,11 +797,11 @@ requires.
 | B-44 | Concussive Shells do nothing | (i) | WP13d |
 | B-45 | No firing while moving | (i) | WP13e |
 | B-46 | The Viking cannot land | (i) | WP18 |
-| B-47 | Non-time catalog values unaudited | (i) | WP9 |
+| B-47 | Non-time catalog values unaudited | Fixed | WP9 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10; the Thor's armour by Amendment 15) |
 | B-48 | Push priorities | (i) | WP16 |
 | B-49 | Which radius spaces units | (i) | WP16; how tightly armies clump is visible behaviour |
 | B-50 | Melee packing around a solid enemy | (i) | WP16 |
-| B-51 | Neosteel Armor's targets | (i) | WP9 |
+| B-51 | Neosteel Armor's targets | Fixed | WP9 g5 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.1) |
 | B-52 | Projectile speeds with several phases; High Templar and Spine Crawler speeds | (i), narrowed | WP14, for each attack's flight time from release to impact, which delays its damage. The shape of the phases inside that time (a missile that drifts, then accelerates) is (ii): attack missiles home, so a player cannot act on the path |
 | B-53 | Attack projectiles fuel out after 125 ticks | (ii) | A safety bound no shipped attack reaches: the slowest projectile moves 0.56 per tick and the fastest unit 0.238 per tick, so a missile released within the longest weapon range (13) arrives in under 50 ticks. It returns to (i) if a catalog change makes it reachable. WP14 drops it and U-11's lifetime half |
 | B-54 | A projectile fizzles when its target cloaks | (i) | WP14 |
@@ -829,11 +829,14 @@ requires.
 | B-76 | Hard-coded threat categories | Fixed | WP4 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §4.3, §4.5) |
 | B-77 | Hard-coded Concussive slow | (i) | WP13d |
 | B-78 | Storm evacuation margin | (i) | WP18 |
-| B-82 | The Baneling's damage to structures is not its own effect (80, +5 a level, ignoring armour) | (i) | WP9. Found in WP6 (Amendment 9) |
+| B-82 | The Baneling's damage to structures is not its own effect (80, +5 a level, ignoring armour) | Fixed | WP9 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.4). Found in WP6 (Amendment 9) |
 | B-81 | A first strike the effect chain delays (Liberator 1 tick, Colossus 7) lands on the release tick | (i) | WP5 follow-up; the Colossus part with B-18 (WP8b). Found in WP5 (Amendment 8). The Colossus' delay is not sourced ([Q0064](../questions/open/0064-colossus-damage-timing.md), Amendment 13) |
 | B-85 | A line area lands whole on the shot's tick; the game spaces the Lurker's spines 0.125 Normal s apart and delays each Colossus search's damage 0.25 Normal s | (i) | WP8 follow-up. Found in WP8b (Amendment 13) |
 | B-83 | The Baneling's burst is centred on its target and strikes it directly; the game centres it on the Baneling and reaches the target through the area | (i) | WP8 follow-up. Found in WP8a (Amendment 12) |
 | B-84 | The Siege Tank splashes around a target of radius 1.25 or more; the game's shot at such a target has no area | (i) | WP8 follow-up. Found in WP8a (Amendment 12) |
+| B-86 | Morph costs and supply (Baneling, Ravager, Lurker, Brood Lord, Orbital Command, Planetary Fortress, Lair, Hive, Greater Spire) and the Zergling pair, while ours trains each whole | (i) | WP17, with the morph model. Found in WP9 (Amendment 14) |
+| B-87 | Advanced Ballistics lengthened the Liberator analogue's anti-air weapon; the game's adds range to Defender Mode only | Fixed | WP9 g5. Found in WP9 (Amendment 14) |
+| B-88 | Structure attributes derived in code (Psionic if shielded, else Mechanical); the game's Protoss structures are Armored and Structure, Zerg structures Armored, Biological and Structure | (i) | WP9 follow-up (a rule). Found in WP9 (Amendment 14) |
 
 **Counts.** 78 IDs: (i) 70, two of them narrowed (B-52, B-67) and one carried by another plan (B-12); (ii) 3 (B-37,
 B-53, B-58); (iii) none; fixed 5 (B-31 and B-40 by the turn-before-move plan; B-71, B-73 and B-75 by WP0).
@@ -1075,3 +1078,36 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
   0.375, `swarm` sets 0.73). Filed as [Q0064](../questions/open/0064-colossus-damage-timing.md), default no change.
 - **New, found: B-85** (class (i)): a line lands whole on the shot's tick; the game spaces the Lurker's spines and
   delays each Colossus search.
+
+## Amendment 14 (WP9, 2026-11-08): the non-time audit, applied in data groups
+
+Evidence: [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.
+
+- **Audit (B-47):** every non-time field of every identity with an analogue, through `core` → … → `voidmulti`;
+  1499 values classified, 146 class C (33 of them B-88's derived structure attributes) in thirteen
+  field-kind groups (§10.1). The High Templar has a weapon at 5.0.14 (`voidmulti` UnitData:683): the
+  analogue's weapon is right, and §6.1's note was wrong.
+- **Applied**, one group per commit, tests first: structure vitals, structure sight, costs (with 15 upgrades'
+  research costs), Spore Crawler damage 20, upgrade targets (B-51 fixed; B-87 found and fixed), unit attributes,
+  Ravager damage, bonus per upgrade level, unit vitals, unit sight, weapon ranges and 26 collision radii. No
+  battle's winner over its seeds changed in any committed group; battle 33 stayed 54 / 7 / 7, its expectation
+  unchanged; 12c and 19 re-recorded for the Viking's 135 life; goldens re-recorded for the Roach's sight, the
+  Roach's and Siege Tank's radii, and schema 16.
+- **Held:** the Thor's armour 2 → 1 flips battle 14 to the Ultralisk on all 20 seeds (§10.2); B-47 stays open for
+  it until the orchestrator decides.
+- **Fixed: B-82** (§10.4): `structure_strike` per weapon (checksum schema 16, latent commit), then the Baneling's.
+- **Recorded:** B-86 (morph and pair costs, WP17) and B-88 (structure attributes, a rule). **B-6** (per-weapon
+  `RangeSlop`) is read (§10.1) and stays open: it is a rule with a matrix-wide measurement, not part of the data
+  groups.
+
+## Amendment 15 (orchestrator, 2026-11-08): the Thor's armour is applied
+
+> **Orchestrator decision on the held Thor armour:** "apply it. It is the cited 5.0.14 value, the owner's standing
+> rule (Q0051) asks for identical unit values, and a lone Ultralisk beating a lone Thor is consistent with the game."
+
+- **Applied:** `colossus_mech` armour 1 (`liberty` UnitData:5208), its vitals-table row restored (red before).
+- **Battle 14 re-recorded:** the Ultralisk's 35-damage strikes deal 34 to the Thor instead of 33. The Thor used to
+  win on all 20 seeds with 4 life left; it now dies first on all 20, the Ultralisk keeping 26.8 of 500 life.
+  Expectation `blue (0, 0), red (1, 1)` with a rewritten claim. No other battle moved; battle 33 54 / 7 / 7;
+  goldens unchanged. **B-47 is fixed** and leaves the `DESIGN.md` register.
+

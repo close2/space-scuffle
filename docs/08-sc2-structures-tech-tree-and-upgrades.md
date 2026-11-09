@@ -137,13 +137,13 @@ flowchart TD
 | 6 | **Assembly Bay Dome** | `assembly_bay_dome` | Barracks | 3x3 | 150 / 0 | 1161 (46.4s) | 1000 / 1 | Trains `pulse_bot`, `shock_golem`, `jet_jumper`, `specter_android`. Can lift off. | `foundry_core_dome` |
 | 7 | **Mechanics Lab Dome** | `mechanics_lab_dome` | Engineering Bay | 3x3 | 125 / 0 | 625 (25s) | 850 / 1 | Researches Infantry Weapons 1-3, Infantry Armor 1-3, Neosteel Armor, Hi-Sec Auto Tracking. Can lift. | `foundry_core_dome` |
 | 8 | **Fortress Bunker Dome** | `fortress_bunker_dome` | Bunker | 3x3 | 100 / 0 | 714 (28.6s) | 400 / 1 | Garrisons 4 infantry (+1 range to occupants). Salvageable for 75% mineral refund. | `assembly_bay_dome` |
-| 9 | **Radar Beacon Dome** | `radar_beacon_dome` | Sensor Tower | 2x2 | 100 / 50 *(5.0.14)* | 446 (17.8s) | 200 / 0 | Reveals enemy movement blips in 22.0 radius under Fog of War. Salvageable *(5.0.14)*. | `mechanics_lab_dome` |
+| 9 | **Radar Beacon Dome** | `radar_beacon_dome` | Sensor Tower | 2x2 | 100 / 50 *(5.0.14)* | 446 (17.8s) | 200 / 0 | Sight 12 (its radar, which reveals movement blips, is not modelled: bug B-69). Salvageable *(5.0.14)*. | `mechanics_lab_dome` |
 | 10 | **Flak Array Dome** | `flak_array_dome` | Missile Turret | 2x2 | 100 / 0 | 446 (17.8s) | 250 / 0 | Static AA battery: 12x2 AA dmg / range 7.0 / period 15 ticks. Detector (LOS 11.0). | `mechanics_lab_dome` |
 | 11 | **Machining Plant Dome** | `machining_plant_dome` | Factory | 3x3 | 150 / 100 | 1071 (42.8s) | 1250 / 1 | Trains `napalm_wheeler`, `railgun_crawler`, `colossus_mech`. Can lift off. | `assembly_bay_dome` |
-| 12 | **Covert Ops Nexus Dome** | `covert_ops_nexus_dome` | Ghost Academy | 3x3 | 150 / 50 | 714 (28.6s) | 850 / 1 | Researches Personal Cloaking. Silo builds and stores Tactical Antimatter Warheads. | `assembly_bay_dome` |
-| 13 | **Aerospace Hangar Dome** | `aerospace_hangar_dome` | Starport | 3x3 | 150 / 100 | 893 (35.7s) | 1000 / 1 | Trains `vector_interceptor`, `repair_shuttle`, `sky_bastion`, `cloak_gunship`, `omni_probe_drone`. Can lift. | `machining_plant_dome` |
-| 14 | **Weapons Arsenal Dome** | `weapons_arsenal_dome` | Armory | 3x3 | 150 / 100 | 1161 (46.4s) | 750 / 1 | Researches Vehicle Weapons 1-3, Ship Weapons 1-3, Vehicle & Ship Plating 1-3. Unlocks L2/L3 Infantry upgrades. | `machining_plant_dome` |
-| 15 | **Fusion Reactor Dome** | `fusion_reactor_dome` | Fusion Core | 3x3 | 150 / 150 | 1161 (46.4s) | 850 / 1 | Researches Advanced Ballistics. Unlocks advanced capital ordnance. | `aerospace_hangar_dome` |
+| 12 | **Covert Ops Nexus Dome** | `covert_ops_nexus_dome` | Ghost Academy | 3x3 | 150 / 50 | 714 (28.6s) | 1250 / 1 | Researches Personal Cloaking. Silo builds and stores Tactical Antimatter Warheads. | `assembly_bay_dome` |
+| 13 | **Aerospace Hangar Dome** | `aerospace_hangar_dome` | Starport | 3x3 | 150 / 100 | 893 (35.7s) | 1300 / 1 | Trains `vector_interceptor`, `repair_shuttle`, `sky_bastion`, `cloak_gunship`, `omni_probe_drone`. Can lift. | `machining_plant_dome` |
+| 14 | **Weapons Arsenal Dome** | `weapons_arsenal_dome` | Armory | 3x3 | 150 / 50 | 1161 (46.4s) | 750 / 1 | Researches Vehicle Weapons 1-3, Ship Weapons 1-3, Vehicle & Ship Plating 1-3. Unlocks L2/L3 Infantry upgrades. | `machining_plant_dome` |
+| 15 | **Fusion Reactor Dome** | `fusion_reactor_dome` | Fusion Core | 3x3 | 150 / 150 | 1161 (46.4s) | 750 / 1 | Researches Advanced Ballistics. Unlocks advanced capital ordnance. | `aerospace_hangar_dome` |
 | 16 | **Tech Module Pod** | `tech_module_pod` | Tech Lab | 2x2 | 50 / 25 | 446 (17.8s) | 400 / 1 | Add-on module. Unlocks specialized units (`shock_golem`, `railgun_crawler`, `cloak_gunship`) & tech upgrades. | Dome attachment |
 | 17 | **Duplicator Module Pod** | `duplicator_module_pod` | Reactor | 2x2 | 50 / 50 | 893 (35.7s) | 400 / 1 | Add-on module. Allows the attached production dome to train 2 units in parallel. | Dome attachment |
 
@@ -163,9 +163,9 @@ flowchart TD
 | `ship_weapons_1` | Ship Weapons 1 | `weapons_arsenal_dome` | 1 | 100 / 100 | 2857 (114.3s) | — | `vector_interceptor` +1x2 (+1x2 Armored), `sky_bastion` +1x2 Air / +5 Defender Mode, `cloak_gunship` +1x2 |
 | `ship_weapons_2` | Ship Weapons 2 | `weapons_arsenal_dome` | 2 | 175 / 175 | 3393 (135.7s) | — | Same per-level scaling |
 | `ship_weapons_3` | Ship Weapons 3 | `weapons_arsenal_dome` | 3 | 250 / 250 | 3929 (157.2s) | — | Same per-level scaling |
-| `vehicle_ship_plating_1`| Veh/Ship Plating 1 | `weapons_arsenal_dome` | 1 | 150 / 150 | 2857 (114.3s) | — | All vehicles and ships +1 Life Armor |
-| `vehicle_ship_plating_2`| Veh/Ship Plating 2 | `weapons_arsenal_dome` | 2 | 225 / 225 | 3393 (135.7s) | — | All vehicles and ships +1 Life Armor |
-| `vehicle_ship_plating_3`| Veh/Ship Plating 3 | `weapons_arsenal_dome` | 3 | 300 / 300 | 3929 (157.2s) | — | All vehicles and ships +1 Life Armor |
+| `vehicle_ship_plating_1`| Veh/Ship Plating 1 | `weapons_arsenal_dome` | 1 | 100 / 100 | 2857 (114.3s) | — | All vehicles and ships +1 Life Armor |
+| `vehicle_ship_plating_2`| Veh/Ship Plating 2 | `weapons_arsenal_dome` | 2 | 175 / 175 | 3393 (135.7s) | — | All vehicles and ships +1 Life Armor |
+| `vehicle_ship_plating_3`| Veh/Ship Plating 3 | `weapons_arsenal_dome` | 3 | 250 / 250 | 3929 (157.2s) | — | All vehicles and ships +1 Life Armor |
 
 ### 3.4 Unit-Specific Tech Upgrades: Automaton Directorate
 
@@ -179,9 +179,9 @@ flowchart TD
 | `smart_servos` | Smart Servos | `machining_plant_dome` (Tech Lab) | 100 / 100 | 1964 (78.6s) | `weapons_arsenal_dome` | `vector_interceptor`, `sky_bastion`: Reduces mode transformation duration by 66% (from 50 ticks to 17 ticks). |
 | `personal_cloaking` | Personal Cloaking | `covert_ops_nexus_dome` | 150 / 150 | 2143 (85.7s) | — | `specter_android`: Unlocks active `Cloak` (25 energy activation, drains 1.3 energy/s, invisible to non-detectors). |
 | `cloaking_field` | Cloaking Field | `aerospace_hangar_dome` (Tech Lab) | 100 / 100 | 1964 (78.6s) | `tech_module_pod` | `cloak_gunship`: Unlocks active `Cloak` (25 energy activation, drains 1.25 energy/s). |
-| `neosteel_armor` | Neosteel Armor | `mechanics_lab_dome` | 150 / 150 | 2500 (100s) | — | All Automaton Domes gain +2 Base Armor; `fortress_bunker_dome` cargo capacity increased by +2 (4 -> 6). |
+| `neosteel_armor` | Neosteel Armor | `mechanics_lab_dome` | 150 / 150 | 2500 (100s) | — | All Automaton Domes gain +2 Base Armor; the Bunker's +2 and the Command Center's +5 cargo wait for structure cargo (bug B-64). |
 | `hi_sec_auto_tracking`| Hi-Sec Auto Tracking | `mechanics_lab_dome` | 100 / 100 | 1429 (57.2s) | — | `flak_array_dome`, `planetary_bulwark_dome`: Weapon range increased by +1.0 (Flak: 7.0 -> 8.0, Bulwark: 6.0 -> 7.0). |
-| `advanced_ballistics` | Advanced Ballistics | `fusion_reactor_dome` | 150 / 150 | 1964 (78.6s) | — | `sky_bastion`: Defender Mode strike targeting range increased by +2.0 (9.0 -> 11.0); zone radius calibrated to 6.25 *(5.0.14)*. |
+| `advanced_ballistics` | Advanced Ballistics | `fusion_reactor_dome` | 150 / 150 | 1964 (78.6s) | — | `sky_bastion`: Defender Mode range +2 (`voidmulti` UpgradeData:154-155); no modelled effect until Defender Mode exists (bugs B-27, B-87). |
 
 ---
 
@@ -228,20 +228,20 @@ flowchart TD
 | # | Dome Name | Internal Slug | SC2 Analogue | Footprint | Cost (M/G) | Build Ticks | HP / Shields / Armor | Abilities & Production | Requires |
 | :- | :--- | :--- | :--- | :---: | :---: | :---: | :---: | :--- | :--- |
 | 1 | **Citadel Nexus Dome** | `citadel_nexus_dome` | Nexus | 5x5 | 400 / 0 *(5.0.14)* | 1786 (71.4s) | 1000 / 1000 / 1 | Trains `grav_harvester`. Resource dropoff. Supply +15. Casts **Energy Recharge** (50 en, 60s cd) *(5.0.14)*. | — |
-| 2 | **Psi Pylon Dome** | `psi_pylon_dome` | Pylon | 2x2 | 100 / 0 | 446 (17.8s) | 200 / 200 / 0 | Projects Psionic Power Matrix in 6.5 tile radius. Powers Enclave domes. Supply +8. | — |
-| 3 | **Rift Siphon Dome** | `rift_siphon_dome` | Assimilator | 3x3 | 75 / 0 | 536 (21.4s) | 450 / 450 / 1 | Placed on Vespene Geyser. Allows 3 Grav Harvesters to harvest gas. | — |
+| 2 | **Psi Pylon Dome** | `psi_pylon_dome` | Pylon | 2x2 | 100 / 0 | 446 (17.8s) | 200 / 200 / 1 | Projects Psionic Power Matrix in 6.5 tile radius. Powers Enclave domes. Supply +8. | — |
+| 3 | **Rift Siphon Dome** | `rift_siphon_dome` | Assimilator | 3x3 | 75 / 0 | 536 (21.4s) | 300 / 300 / 1 | Placed on Vespene Geyser. Allows 3 Grav Harvesters to harvest gas. | — |
 | 4 | **Warp Gate Dome** | `warp_gate_dome` | Gateway | 3x3 | 150 / 0 | 1161 (46.4s) | 500 / 500 / 1 | Trains `psi_grey`, `warp_strider`, `prism_weaver`, `astral_vagrant`. Upgrades into instant Warp Gate. | `citadel_nexus_dome` |
-| 5 | **Crystalline Forge Dome** | `crystalline_forge_dome` | Forge | 3x3 | 150 / 0 | 804 (32.2s) | 500 / 500 / 1 | Researches Ground Weapons 1-3, Ground Armor 1-3, Plasma Shields 1-3. Unlocks Tesla Sentinel. | `citadel_nexus_dome` |
-| 6 | **Tesla Sentinel Dome** | `tesla_sentinel_dome` | Photon Cannon | 2x2 | 150 / 0 | 714 (28.6s) | 150 / 150 / 0 | Static defense: 20 lightning arc / range 7.0 / period 22 ticks (ground & air). Detector (LOS 11.0). Requires power. | `crystalline_forge_dome` |
+| 5 | **Crystalline Forge Dome** | `crystalline_forge_dome` | Forge | 3x3 | 150 / 0 | 804 (32.2s) | 400 / 400 / 1 | Researches Ground Weapons 1-3, Ground Armor 1-3, Plasma Shields 1-3. Unlocks Tesla Sentinel. | `citadel_nexus_dome` |
+| 6 | **Tesla Sentinel Dome** | `tesla_sentinel_dome` | Photon Cannon | 2x2 | 150 / 0 | 714 (28.6s) | 150 / 150 / 1 | Static defense: 20 lightning arc / range 7.0 / period 22 ticks (ground & air). Detector (LOS 11.0). Requires power. | `crystalline_forge_dome` |
 | 7 | **Harmonic Recharge Dome** | `harmonic_recharge_dome` | Shield Battery | 2x2 | 100 / 0 | 714 (28.6s) | 200 / 200 / 1 | Restores friendly shields (36 shields/s for 1 en/3 shields, 100 en pool). Max range 12 from Nexus *(5.0.14)*. | `cybernetics_conduit_dome`|
-| 8 | **Cybernetics Conduit Dome**| `cybernetics_conduit_dome`| Cybernetics Core| 3x3 | 150 / 0 | 893 (35.7s) | 500 / 500 / 1 | Researches Warp Gate Tech, Air Weapons 1-3, Air Armor 1-3. Unlocks Stalker, Sentry, Twilight, Stargate, Robo. | `warp_gate_dome` |
+| 8 | **Cybernetics Conduit Dome**| `cybernetics_conduit_dome`| Cybernetics Core| 3x3 | 150 / 0 | 893 (35.7s) | 550 / 550 / 1 | Researches Warp Gate Tech, Air Weapons 1-3, Air Armor 1-3. Unlocks Stalker, Sentry, Twilight, Stargate, Robo. | `warp_gate_dome` |
 | 9 | **Templar Conclave Dome** | `templar_conclave_dome` | Twilight Council| 3x3 | 150 / 100 | 893 (35.7s) | 500 / 500 / 1 | Researches Charge, Blink, Resonating Glaives. Unlocks L2/L3 Forge Upgrades, Templar Archives, Dark Shrine. | `cybernetics_conduit_dome`|
-| 10 | **Stellar Portal Dome** | `stellar_portal_dome` | Stargate | 3x3 | 150 / 150 | 1071 (42.8s) | 500 / 500 / 1 | Warps in `flying_saucer`, `prismatic_saucer`, `mothership_carrier`. | `cybernetics_conduit_dome`|
+| 10 | **Stellar Portal Dome** | `stellar_portal_dome` | Stargate | 3x3 | 150 / 150 | 1071 (42.8s) | 600 / 600 / 1 | Warps in `flying_saucer`, `prismatic_saucer`, `mothership_carrier`. | `cybernetics_conduit_dome`|
 | 11 | **Robotic Foundry Dome** | `robotic_foundry_dome` | Robotics Facility| 3x3 | 150 / 100 | 1161 (46.4s) | 450 / 450 / 1 | Warps in `stealth_eye_orb`, `phase_prism_saucer`, `void_goliath`, `tripod_annihilator`. | `cybernetics_conduit_dome`|
 | 12 | **Psionic Archives Dome** | `psionic_archives_dome` | Templar Archives| 3x3 | 150 / 200 | 893 (35.7s) | 500 / 500 / 1 | Researches Psionic Storm. Unlocks High Templar morph to Archon. | `templar_conclave_dome` |
-| 13 | **Void Sanctuary Dome** | `void_sanctuary_dome` | Dark Shrine | 2x2 | 100 / 100 | 1786 (71.4s) | 500 / 500 / 1 | Researches Shadow Stride. Unlocks `shadow_visitor` (Dark Templar) warp-in and Archon morph. | `templar_conclave_dome` |
+| 13 | **Void Sanctuary Dome** | `void_sanctuary_dome` | Dark Shrine | 2x2 | 150 / 150 | 1786 (71.4s) | 500 / 500 / 1 | Researches Shadow Stride. Unlocks `shadow_visitor` (Dark Templar) warp-in and Archon morph. | `templar_conclave_dome` |
 | 14 | **Robotic Assembly Bay Dome**| `robotic_assembly_bay_dome`| Robotics Bay | 3x3 | 150 / 150 | 1161 (46.4s) | 500 / 500 / 1 | Researches Extended Thermal Lance, Gravitic Boosters, Gravitic Drive. Unlocks Colossus warp-in. | `robotic_foundry_dome` |
-| 15 | **Celestial Beacon Dome** | `celestial_beacon_dome` | Fleet Beacon | 3x3 | 300 / 200 | 1071 (42.8s) | 750 / 750 / 1 | Researches Anion Pulse-Crystals, Flux Vanes. Unlocks L2/L3 Air Upgrades and Mothership Carrier. | `stellar_portal_dome` |
+| 15 | **Celestial Beacon Dome** | `celestial_beacon_dome` | Fleet Beacon | 3x3 | 300 / 200 | 1071 (42.8s) | 500 / 500 / 1 | Researches Anion Pulse-Crystals, Flux Vanes. Unlocks L2/L3 Air Upgrades and Mothership Carrier. | `stellar_portal_dome` |
 
 ### 4.3 Scaling Weapon, Armor & Shield Upgrades: Cosmic Enclave
 
@@ -257,11 +257,11 @@ flowchart TD
 | `plasma_shields_2` | Plasma Shields 2 | `crystalline_forge_dome` | 2 | 200 / 200 | 3616 (144.6s) | `templar_conclave_dome` | ALL Cosmic Enclave units and domes +1 Shield Armor |
 | `plasma_shields_3` | Plasma Shields 3 | `crystalline_forge_dome` | 3 | 250 / 250 | 4196 (167.8s) | `templar_conclave_dome` | ALL Cosmic Enclave units and domes +1 Shield Armor |
 | `air_weapons_1` | Air Weapons 1 | `cybernetics_conduit_dome`| 1 | 100 / 100 | 3214 (128.6s) | — | `flying_saucer` +1x2, `prismatic_saucer` +1 (+1 Armored), `mothership_carrier` +1x2 per interceptor |
-| `air_weapons_2` | Air Weapons 2 | `cybernetics_conduit_dome`| 2 | 150 / 150 | 3839 (153.6s) | `celestial_beacon_dome` | Same per-level scaling |
-| `air_weapons_3` | Air Weapons 3 | `cybernetics_conduit_dome`| 3 | 200 / 200 | 4464 (178.6s) | `celestial_beacon_dome` | Same per-level scaling |
+| `air_weapons_2` | Air Weapons 2 | `cybernetics_conduit_dome`| 2 | 175 / 175 | 3839 (153.6s) | `celestial_beacon_dome` | Same per-level scaling |
+| `air_weapons_3` | Air Weapons 3 | `cybernetics_conduit_dome`| 3 | 250 / 250 | 4464 (178.6s) | `celestial_beacon_dome` | Same per-level scaling |
 | `air_armor_1` | Air Armor 1 | `cybernetics_conduit_dome`| 1 | 100 / 100 | 3214 (128.6s) | — | All flying units +1 Life Armor |
-| `air_armor_2` | Air Armor 2 | `cybernetics_conduit_dome`| 2 | 150 / 150 | 3839 (153.6s) | `celestial_beacon_dome` | All flying units +1 Life Armor |
-| `air_armor_3` | Air Armor 3 | `cybernetics_conduit_dome`| 3 | 200 / 200 | 4464 (178.6s) | `celestial_beacon_dome` | All flying units +1 Life Armor |
+| `air_armor_2` | Air Armor 2 | `cybernetics_conduit_dome`| 2 | 175 / 175 | 3839 (153.6s) | `celestial_beacon_dome` | All flying units +1 Life Armor |
+| `air_armor_3` | Air Armor 3 | `cybernetics_conduit_dome`| 3 | 250 / 250 | 4464 (178.6s) | `celestial_beacon_dome` | All flying units +1 Life Armor |
 
 ### 4.4 Unit-Specific Tech Upgrades: Cosmic Enclave
 
@@ -337,7 +337,7 @@ flowchart TD
 | 5 | **Spawning Hollow Dome** | `spawning_hollow_dome` | Spawning Pool | 3x3 | 200 / 0 | 1161 (46.4s) | 1000 / 1 | Enables `razor_mantis` metamorphosis and `hive_matron` (Queen) incubation. Researches Mantis tech. | `ancient_tree_dome` |
 | 6 | **Metamorphic Chamber Dome**| `metamorphic_chamber_dome`| Evolution Chamber| 3x3| 75 / 0 | 625 (25s) | 750 / 1 | Researches Melee Attacks 1-3, Missile Attacks 1-3, Ground Carapace 1-3. | `ancient_tree_dome` |
 | 7 | **Thorn Lasher Dome** | `thorn_lasher_dome` | Spine Crawler | 2x2 | 100 / 0 | 893 (35.7s) | 300 / 2 | Ground defense: 25 (+5 Armored) / range 7.0 / period 33 ticks. Can uproot and walk on creep. | `spawning_hollow_dome` |
-| 8 | **Spore Spire Dome** | `spore_spire_dome` | Spore Crawler | 2x2 | 75 / 0 | 536 (21.4s) | 300 / 1 | Anti-air defense: 15 (+30 Bio) / range 7.0 / period 15 ticks. Detector (LOS 11.0). Uprootable. | `spawning_hollow_dome` |
+| 8 | **Spore Spire Dome** | `spore_spire_dome` | Spore Crawler | 2x2 | 75 / 0 | 536 (21.4s) | 300 / 1 | Anti-air defense: 20 (+10 Bio) / range 7.0 / period 15 ticks. Detector (LOS 11.0). Uprootable. | `spawning_hollow_dome` |
 | 9 | **Carapace Mound Dome** | `carapace_mound_dome` | Roach Warren | 3x3 | 150 / 0 | 982 (39.3s) | 850 / 1 | Enables `rhino_beetle` (Roach) metamorphosis. Researches Glial Reconstitution & Tunneling Claws. | `spawning_hollow_dome` |
 | 10 | **Caustic Nursery Dome** | `caustic_nursery_dome` | Baneling Nest | 3x3 | 100 / 50 | 1071 (42.8s) | 850 / 1 | Enables `volatile_tick` (Baneling) morph from Mantis. Researches Centrifugal Hooks. | `spawning_hollow_dome` |
 | 11 | **Spine Den Dome** | `spine_den_dome` | Hydralisk Den | 3x3 | 100 / 100 | 714 (28.6s) | 850 / 1 | Enables `thorn_viper` (Hydralisk) metamorphosis. Researches Muscular Augments, Grooved Spines, Nanomuscular Swell *(5.0.14)*. | `canopy_grove_dome` |
@@ -359,14 +359,14 @@ flowchart TD
 | `missile_attacks_2` | Missile Attacks 2 | `metamorphic_chamber_dome` | 2 | 150 / 150 | 3393 (135.7s) | `canopy_grove_dome` | Same per-level scaling |
 | `missile_attacks_3` | Missile Attacks 3 | `metamorphic_chamber_dome` | 3 | 200 / 200 | 3929 (157.2s) | `primal_world_tree_dome` | Same per-level scaling |
 | `ground_carapace_1` | Ground Carapace 1 | `metamorphic_chamber_dome` | 1 | 150 / 150 | 2857 (114.3s) | — | All ground bio-units +1 Life Armor |
-| `ground_carapace_2` | Ground Carapace 2 | `metamorphic_chamber_dome` | 2 | 225 / 225 | 3393 (135.7s) | `canopy_grove_dome` | All ground bio-units +1 Life Armor |
-| `ground_carapace_3` | Ground Carapace 3 | `metamorphic_chamber_dome` | 3 | 300 / 300 | 3929 (157.2s) | `primal_world_tree_dome` | All ground bio-units +1 Life Armor |
+| `ground_carapace_2` | Ground Carapace 2 | `metamorphic_chamber_dome` | 2 | 200 / 200 | 3393 (135.7s) | `canopy_grove_dome` | All ground bio-units +1 Life Armor |
+| `ground_carapace_3` | Ground Carapace 3 | `metamorphic_chamber_dome` | 3 | 250 / 250 | 3929 (157.2s) | `primal_world_tree_dome` | All ground bio-units +1 Life Armor |
 | `flyer_attacks_1` | Flyer Attacks 1 | `chitin_spire_dome` | 1 | 100 / 100 | 2857 (114.3s) | — | `sonic_bat` +1 (bounces 0.33, 0.11), `sky_leviathan` +1 (+1 Massive), `spore_matriarch` +2 |
-| `flyer_attacks_2` | Flyer Attacks 2 | `chitin_spire_dome` | 2 | 150 / 150 | 3393 (135.7s) | `canopy_grove_dome` | Same per-level scaling |
-| `flyer_attacks_3` | Flyer Attacks 3 | `chitin_spire_dome` | 3 | 200 / 200 | 3929 (157.2s) | `primal_world_tree_dome` | Same per-level scaling |
-| `flyer_carapace_1` | Flyer Carapace 1 | `chitin_spire_dome` | 1 | 150 / 150 | 2857 (114.3s) | — | All flying bio-units +1 Life Armor |
-| `flyer_carapace_2` | Flyer Carapace 2 | `chitin_spire_dome` | 2 | 225 / 225 | 3393 (135.7s) | `canopy_grove_dome` | All flying bio-units +1 Life Armor |
-| `flyer_carapace_3` | Flyer Carapace 3 | `chitin_spire_dome` | 3 | 300 / 300 | 3929 (157.2s) | `primal_world_tree_dome` | All flying bio-units +1 Life Armor |
+| `flyer_attacks_2` | Flyer Attacks 2 | `chitin_spire_dome` | 2 | 175 / 175 | 3393 (135.7s) | `canopy_grove_dome` | Same per-level scaling |
+| `flyer_attacks_3` | Flyer Attacks 3 | `chitin_spire_dome` | 3 | 250 / 250 | 3929 (157.2s) | `primal_world_tree_dome` | Same per-level scaling |
+| `flyer_carapace_1` | Flyer Carapace 1 | `chitin_spire_dome` | 1 | 100 / 100 | 2857 (114.3s) | — | All flying bio-units +1 Life Armor |
+| `flyer_carapace_2` | Flyer Carapace 2 | `chitin_spire_dome` | 2 | 175 / 175 | 3393 (135.7s) | `canopy_grove_dome` | All flying bio-units +1 Life Armor |
+| `flyer_carapace_3` | Flyer Carapace 3 | `chitin_spire_dome` | 3 | 250 / 250 | 3929 (157.2s) | `primal_world_tree_dome` | All flying bio-units +1 Life Armor |
 
 ### 5.4 Unit-Specific Tech Upgrades: Sylvan Swarm
 
@@ -378,7 +378,7 @@ flowchart TD
 | `glial_reconstitution`| Glial Reconstitution| `carapace_mound_dome` | 100 / 100 | 1964 (78.6s) | `canopy_grove_dome` | `rhino_beetle`: Movement speed increased by +0.042 world units/tick (+0.75 Normal per s, `liberty` UpgradeData:1925). |
 | `tunneling_claws` | Tunneling Claws | `carapace_mound_dome` | 100 / 100 | 1964 (78.6s) | `canopy_grove_dome` | `rhino_beetle`: Gains ability to move while burrowed (speed 0.0560); subterranean HP regen +10 HP/s. |
 | `muscular_augments` | Muscular Augments | `spine_den_dome` | 100 / 100 | 1607 (64.3s) | `canopy_grove_dome` | `thorn_viper`: Movement speed off creep increased by +0.0392 world units/tick (+0.7 Normal per s, `voidmulti` UpgradeData:743). |
-| `grooved_spines` | Grooved Spines | `spine_den_dome` | 100 / 100 | 1250 (50s) | `canopy_grove_dome` | `thorn_viper`: Spine attack range increased by +1.0 (5.0 -> 6.0 world units). |
+| `grooved_spines` | Grooved Spines | `spine_den_dome` | 75 / 75 | 1250 (50s) | `canopy_grove_dome` | `thorn_viper`: Spine attack range increased by +1.0 (5.0 -> 6.0 world units). |
 | `nanomuscular_swell`| Nanomuscular Swell| `spine_den_dome` | 100 / 100 | 1607 (64.3s) | `primal_world_tree_dome` *(5.0.14)* | `thorn_viper`: Unlocks **Lunge** ability (+100% movement speed sprint for 0.71s = 18 ticks) *(5.0.14)*. |
 | `adaptive_talons` | Adaptive Talons | `burrow_spire_dome` | 100 / 100 | 1429 (57.2s) | `primal_world_tree_dome` | `burrow_scorpion`: Burrow duration reduced from 50 ticks to 27 ticks (1.07s). |
 | `seismic_spines` | Seismic Spines | `burrow_spire_dome` | 150 / 150 | 1429 (57.2s) | `primal_world_tree_dome` | `burrow_scorpion`: Subterranean impaling spike attack range increased by +2.0 (8.0 -> 10.0 world units). |

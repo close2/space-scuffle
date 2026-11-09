@@ -391,10 +391,10 @@ fn test_multi_level_upgrade_stacking_3_plus_3() {
 
     // Damage calculation:
     // Base damage: 40.0 + 4.0 * 3 = 52.0
-    // Bonus vs armored: 30.0 + 5.0 * 3 = 45.0
-    // Total raw damage = 52.0 + 45.0 = 97.0
+    // Bonus vs armored: 30.0 + 1.0 * 3 = 33.0 (+1 Armored a level, voidmulti UpgradeData:305)
+    // Total raw damage = 52.0 + 33.0 = 85.0
     // Ultra armor: base 2.0 + 3.0 (carapace level 3) + 2.0 (chitinous plating stat delta) = 7.0
-    // Applied life damage = (97.0 - 7.0).max(0.5) = 90.0!
+    // Applied life damage = (85.0 - 7.0).max(0.5) = 78.0
     let res = calculate_hit_damage_upgraded(
         tank_weapon,
         Some(&tank_arch.slug),
@@ -406,7 +406,7 @@ fn test_multi_level_upgrade_stacking_3_plus_3() {
     );
 
     assert_eq!(res.shield_damage, SimScalar::ZERO);
-    assert_eq!(res.life_damage, SimScalar::from_num(90.0));
+    assert_eq!(res.life_damage, SimScalar::from_num(78.0));
     assert!(!res.killed);
 }
 

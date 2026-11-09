@@ -223,6 +223,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         target_loss_behavior: sim_types::ProjectileTargetLossBehavior::Fizzle,
         max_projectile_lifetime_ticks: sim_types::DEFAULT_PROJECTILE_LIFETIME_TICKS,
         suicide_on_attack: false,
+        structure_strike: None,
     };
 
     let air_weapon_high_dps = WeaponSpec {
@@ -250,6 +251,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         target_loss_behavior: sim_types::ProjectileTargetLossBehavior::Fizzle,
         max_projectile_lifetime_ticks: sim_types::DEFAULT_PROJECTILE_LIFETIME_TICKS,
         suicide_on_attack: false,
+        structure_strike: None,
     };
 
     let arch = UnitArchetype {
