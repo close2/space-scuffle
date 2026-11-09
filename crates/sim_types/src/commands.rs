@@ -256,6 +256,10 @@ pub enum AbilityEffectSpec {
 /// Declarative specification of a toggleable unit stance or transformation mode
 /// (e.g., Siege Mode, Burrowed Mode, Fighter/Assault Mode, High-Impact Payload, Surveillance Mode, Cloak).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent authored facts about one mode, each read by a different mechanism"
+)]
 pub struct UnitModeSpec {
     /// Canonical identifier for this mode (e.g., `"siege"`, `"burrowed"`, `"assault"`, `"cloaked"`).
     pub mode_name: String,
@@ -288,6 +292,11 @@ pub struct UnitModeSpec {
     /// Whether the unit is cloaked/burrowed (invisible without detection) in this mode.
     #[serde(default)]
     pub is_cloaked: bool,
+    /// Whether this mode puts the unit underground (`StarCraft` II's `Buried` flag), so a
+    /// concealed unit in it is presented as burrowed rather than cloaked. Presentation data:
+    /// the tick never reads it (plan `2026-11-09-effect-visualization` D-3).
+    #[serde(default)]
+    pub is_burrowed: bool,
     /// Optional movement type override while in this mode (e.g., Air -> Ground for transforming fighters).
     #[serde(default)]
     pub mover_type_override: Option<crate::enums::MoverType>,

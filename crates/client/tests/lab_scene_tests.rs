@@ -103,7 +103,8 @@ fn event_points(event: &CombatEventVisual) -> Vec<Vec3> {
             vec![start, start + world(*vel) * flight]
         }
         CombatEventVisual::MeleeSlashVisual { pos, .. }
-        | CombatEventVisual::BubbleShatter { pos, .. } => vec![world(*pos)],
+        | CombatEventVisual::BubbleShatter { pos, .. }
+        | CombatEventVisual::SplashVisual { center: pos, .. } => vec![world(*pos)],
     }
 }
 

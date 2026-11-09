@@ -756,8 +756,11 @@ fn battle_unit(entity_id: u32, pos: Vec3, velocity: [f32; 2]) -> client::BubbleI
         hull_hit_flash: 0.0,
         build_or_queue_progress: Some(1.0),
         selected: false,
-        cloaked: false,
+        concealment: sim_types::Concealment::None,
         speed_boosted: false,
+        stance: sim_types::StanceView::default(),
+        status: sim_types::StatusFlags::default(),
+        barrier_ratio: 0.0,
     })
 }
 

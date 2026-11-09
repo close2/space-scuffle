@@ -107,6 +107,7 @@ fn register_burrower(world: &mut SimWorld, cast: u16, leave: u16) -> UnitTypeId 
             is_immobile: true,
             unpushable: true,
             is_cloaked: true,
+            is_burrowed: true,
             mover_type_override: None,
             sight_radius_override: None,
             ground_weapon_override: Some(Some(spines())),

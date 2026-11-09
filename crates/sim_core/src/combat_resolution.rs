@@ -28,7 +28,7 @@ use crate::weapon_timing::{resolve_attack_period, AttackRate, SimulationDiagnost
 use crate::world::SimWorld;
 use sim_map::{PlayerVisionMap, SimMap};
 use sim_types::{
-    CombatEventVisual, EntityId, MoverType, PerPlayer, PlayerId, PlayerUpgradeState,
+    CombatEventVisual, EffectSource, EntityId, MoverType, PerPlayer, PlayerId, PlayerUpgradeState,
     ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, Tick, UnitOrder, UnitTypeId,
     WeaponVisualKind,
 };
@@ -586,6 +586,7 @@ impl SimWorld {
                 vel: [vx, vy, vz],
                 owner: shot.owner,
                 duration_secs: Some(flight_duration_secs),
+                source: EffectSource::default(),
             });
 
         let remaining_lifetime_ticks = shot.weapon.max_projectile_lifetime_ticks;
@@ -771,24 +772,32 @@ impl SimWorld {
         let to = [hit.position.x.to_f32(), hit.position.y.to_f32(), tz + 0.5];
         let owner = shot.owner;
         let event = match shot.weapon.visual_kind {
-            WeaponVisualKind::Hitscan => CombatEventVisual::HitscanTracer { from, to, owner },
+            WeaponVisualKind::Hitscan => CombatEventVisual::HitscanTracer {
+                from,
+                to,
+                owner,
+                source: EffectSource::default(),
+            },
             WeaponVisualKind::LaserBeam => CombatEventVisual::BeamVisual {
                 from,
                 to,
                 is_lightning: false,
                 owner,
+                source: EffectSource::default(),
             },
             WeaponVisualKind::LightningArc => CombatEventVisual::BeamVisual {
                 from,
                 to,
                 is_lightning: true,
                 owner,
+                source: EffectSource::default(),
             },
             WeaponVisualKind::MeleeSlash => CombatEventVisual::MeleeSlashVisual {
                 pos: to,
                 angle_rad: hit.angle.to_radians_f32(),
                 radius: 0.5,
                 owner,
+                source: EffectSource::default(),
             },
             _ => return,
         };

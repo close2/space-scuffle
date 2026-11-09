@@ -613,35 +613,41 @@ fn each_kind_of_event_is_judged_where_it_lands() {
         from: [from.x, from.y, 0.5],
         to: [to.x, to.y, 0.5],
         owner: ENEMY,
+        source: sim_types::EffectSource::default(),
     };
     let foe_beam = |to: Vec2| CombatEventVisual::BeamVisual {
         from: [fog.x, fog.y, 0.5],
         to: [to.x, to.y, 0.5],
         is_lightning: false,
         owner: ENEMY,
+        source: sim_types::EffectSource::default(),
     };
     let foe_shatter = |at: Vec2| CombatEventVisual::BubbleShatter {
         pos: [at.x, at.y, 0.5],
         radius: 0.5,
         is_dome: false,
         owner: ENEMY,
+        unit_type: UnitTypeId::default(),
     };
     let foe_slash = |at: Vec2| CombatEventVisual::MeleeSlashVisual {
         pos: [at.x, at.y, 0.5],
         angle_rad: 0.0,
         radius: 0.5,
         owner: ENEMY,
+        source: sim_types::EffectSource::default(),
     };
     let foe_shot = |from: Vec2, to: Vec2| CombatEventVisual::ProjectileVisual {
         pos: [from.x, from.y, 0.5],
         vel: [(to.x - from.x) * 2.0, (to.y - from.y) * 2.0, 0.0],
         owner: ENEMY,
         duration_secs: Some(0.5),
+        source: sim_types::EffectSource::default(),
     };
     let own_tracer = CombatEventVisual::HitscanTracer {
         from: [seen.x, seen.y, 0.5],
         to: [fog.x, fog.y, 0.5],
         owner: LOCAL_PLAYER,
+        source: sim_types::EffectSource::default(),
     };
     let landing_in_sight = vec![
         foe_tracer(fog, seen),

@@ -51,8 +51,14 @@ const FLOAT_ALLOWLIST: &[FloatAllowance] = &[
     },
     FloatAllowance {
         path: "crates/sim_types/src/snapshot.rs",
-        count: 27,
+        count: 30,
         reason: "presentation: `RenderSnapshot` is the documented fixed-point to GPU boundary",
+    },
+    FloatAllowance {
+        path: "crates/sim_types/src/presentation.rs",
+        count: 5,
+        reason: "presentation: line-splash and area geometry carried by `RenderSnapshot` for the \
+                 effect system",
     },
     FloatAllowance {
         path: "crates/sim_map/src/grid.rs",

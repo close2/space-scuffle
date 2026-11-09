@@ -88,8 +88,11 @@ fn test_bubble_uniform_packing() -> Result<(), Box<dyn std::error::Error>> {
         hull_hit_flash: 0.4,
         build_or_queue_progress: None,
         selected: true,
-        cloaked: false,
+        concealment: sim_types::Concealment::None,
         speed_boosted: true,
+        stance: sim_types::StanceView::default(),
+        status: sim_types::StatusFlags::default(),
+        barrier_ratio: 0.0,
     };
 
     let definition = client::runtime_battle::BattleDefinition::load(

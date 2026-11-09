@@ -225,6 +225,7 @@ mod tests {
             from: [0.0; 3],
             to: [to[0], to[1], 0.5],
             owner,
+            source: sim_types::EffectSource::default(),
         }
     }
 

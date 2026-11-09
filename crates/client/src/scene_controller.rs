@@ -255,8 +255,15 @@ fn preview_instance(
         hull_hit_flash: selected_or(lab.hull_hit_flash, 0.0),
         build_or_queue_progress: Some(selected_or(lab.build_progress, 1.0)),
         selected: is_selected,
-        cloaked: is_selected && lab.cloaked,
+        concealment: if is_selected && lab.cloaked {
+            sim_types::Concealment::Cloaked
+        } else {
+            sim_types::Concealment::None
+        },
         speed_boosted: is_selected && lab.speed_boosted,
+        stance: sim_types::StanceView::default(),
+        status: sim_types::StatusFlags::default(),
+        barrier_ratio: 0.0,
     }
 }
 
@@ -281,7 +288,7 @@ fn preview_feature_flags(lab: &LabState, instance: &BubbleRenderInstance, select
         (lab.opt_focal_lens, FLAG_ATTACK_APERTURE),
         (lab.opt_frame_blend, FLAG_FRAME_BLEND),
         (selected, FLAG_SELECTED),
-        (instance.cloaked, FLAG_CLOAKED),
+        (instance.concealment.is_concealed(), FLAG_CLOAKED),
         (instance.speed_boosted, FLAG_SPEED_BOOSTED),
     ]
     .into_iter()
@@ -327,8 +334,11 @@ fn swarm_instance(
         hull_hit_flash: 0.0,
         build_or_queue_progress: None,
         selected: false,
-        cloaked: false,
+        concealment: sim_types::Concealment::None,
         speed_boosted: false,
+        stance: sim_types::StanceView::default(),
+        status: sim_types::StatusFlags::default(),
+        barrier_ratio: 0.0,
     }
 }
 
@@ -1341,8 +1351,11 @@ mod tests {
             hull_hit_flash: 0.0,
             build_or_queue_progress: None,
             selected: false,
-            cloaked: false,
+            concealment: sim_types::Concealment::None,
             speed_boosted: false,
+            stance: sim_types::StanceView::default(),
+            status: sim_types::StatusFlags::default(),
+            barrier_ratio: 0.0,
         };
         (instance, Transform::from_xyz(x, 0.5, SWARM_MIN_Z))
     }

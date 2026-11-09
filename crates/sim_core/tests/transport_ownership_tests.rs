@@ -73,6 +73,7 @@ impl Fixture {
             is_immobile: true,
             unpushable: true,
             is_cloaked: false,
+            is_burrowed: false,
             mover_type_override: None,
             sight_radius_override: None,
             ground_weapon_override: None,

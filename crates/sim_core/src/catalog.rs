@@ -821,7 +821,7 @@ struct CapabilitiesDef {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(clippy::option_option)]
+#[allow(clippy::option_option, clippy::struct_excessive_bools)]
 struct UnitModeSpecDef {
     mode_name: String,
     #[serde(default)]
@@ -838,6 +838,9 @@ struct UnitModeSpecDef {
     unpushable: bool,
     #[serde(default)]
     is_cloaked: bool,
+    /// `StarCraft` II's `Buried` flag; omitted reads as `false`. Presentation only.
+    #[serde(default)]
+    is_burrowed: bool,
     #[serde(default)]
     mover_type_override: Option<MoverType>,
     #[serde(default)]
@@ -878,6 +881,7 @@ impl UnitModeSpecDef {
             is_immobile: self.is_immobile,
             unpushable: self.unpushable,
             is_cloaked: self.is_cloaked,
+            is_burrowed: self.is_burrowed,
             mover_type_override: self.mover_type_override,
             sight_radius_override: self.sight_radius_override.map(SimScalar::from_f32_lossy),
             ground_weapon_override: resolve(self.ground_weapon_override)?,

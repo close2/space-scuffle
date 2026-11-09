@@ -88,6 +88,7 @@ impl SimWorld {
                             radius: radius.to_f32(),
                             is_dome: prepared.foundation,
                             owner: prepared.owner,
+                            unit_type: sim_types::UnitTypeId::default(),
                         });
                     }
                 }

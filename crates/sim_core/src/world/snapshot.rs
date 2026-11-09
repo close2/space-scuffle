@@ -20,8 +20,9 @@ use crate::entity::{Entity, WeaponPhase};
 use crate::SimWorld;
 use sim_map::SimMap;
 use sim_types::{
-    AttackSwing, BubbleRenderInstance, MoverType, PlayerSlot, PlayerStatusView, RenderSnapshot,
-    ResourceNodeId, ResourceNodeView, SimScalar, Tick, WeaponVisualKind,
+    AttackSwing, BubbleRenderInstance, Concealment, MoverType, PlayerSlot, PlayerStatusView,
+    RenderSnapshot, ResourceNodeId, ResourceNodeView, SimScalar, StanceView, StatusFlags, Tick,
+    WeaponVisualKind,
 };
 
 impl SimWorld {
@@ -241,7 +242,14 @@ fn bubble_instance(
         hull_hit_flash: hull_flash,
         build_or_queue_progress: SimWorld::published_progress(entity),
         selected: false,
-        cloaked: entity.is_cloaked,
+        concealment: if entity.is_cloaked {
+            Concealment::Cloaked
+        } else {
+            Concealment::None
+        },
+        stance: StanceView::default(),
+        status: StatusFlags::default(),
+        barrier_ratio: 0.0,
         speed_boosted,
     }
 }
