@@ -27,7 +27,8 @@ use sim_core::catalog::RuntimeCatalogs;
 use sim_core::{ActiveHazardZone, SimCoreError, SimWorld};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
-    EntityId, PlayerCommand, PlayerId, SimAngle, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
+    AbilityEffectSpec, EntityId, PlayerCommand, PlayerId, SimAngle, SimScalar, SimVec2, Tick,
+    TickBundle, UnitOrder,
 };
 
 /// The shipped matchup matrix, `crates/sim_core/tests/fixtures/matchup_matrix.ron`.
@@ -74,6 +75,14 @@ pub enum MatchupError {
     /// A side ordered to focus the enemy's first unit faces no enemy.
     #[error("`AttackFirstEnemy` needs an enemy unit, and the other side has none")]
     NoEnemyToFocus,
+    /// A side asks to switch its units into a mode that one of them has no ability to enter.
+    #[error("`{unit}` has no ability that switches to the mode `{mode}`")]
+    NoModeAbility {
+        /// The slug of the unit without the ability.
+        unit: String,
+        /// The mode name from the fixture.
+        mode: String,
+    },
 }
 
 /// The whole matrix: seeds, jitter and battles.
@@ -155,6 +164,11 @@ pub struct Side {
     /// Issues `UseStim` to the whole side on the first tick.
     #[serde(default)]
     pub stim: bool,
+    /// On the first tick, after the standing order, every unit casts its ability that switches
+    /// it into this mode (catalog `mode_name`), as a player would burrow a unit that attacks only
+    /// burrowed. `None` casts nothing.
+    #[serde(default)]
+    pub mode: Option<String>,
 }
 
 /// A rectangular group of identical units.
@@ -427,6 +441,55 @@ pub fn side_commands(
     Ok(commands)
 }
 
+/// The first tick's casts that switch `side`'s `units` into its [`Side::mode`], one command a
+/// unit (each unit's archetype places the ability at its own index); empty without a mode.
+///
+/// # Errors
+/// [`MatchupError::NoModeAbility`] if a unit has no ability that switches to the mode.
+pub fn mode_commands(
+    world: &SimWorld,
+    owner: PlayerId,
+    side: &Side,
+    units: &[EntityId],
+) -> Result<Vec<PlayerCommand>, MatchupError> {
+    let Some(mode) = &side.mode else {
+        return Ok(Vec::new());
+    };
+    units
+        .iter()
+        .map(|unit| {
+            let archetype = world
+                .entities
+                .get(unit)
+                .and_then(|entity| world.catalog.get(entity.unit_type_id).ok());
+            let index = archetype.and_then(|archetype| {
+                archetype.abilities.iter().position(|ability| {
+                    matches!(
+                        &ability.effect,
+                        AbilityEffectSpec::SwitchMode { mode_name } if mode_name == mode
+                    )
+                })
+            });
+            let ability_index = index
+                .and_then(|index| u8::try_from(index).ok())
+                .ok_or_else(|| MatchupError::NoModeAbility {
+                    unit: archetype.map_or_else(String::new, |archetype| archetype.slug.clone()),
+                    mode: mode.clone(),
+                })?;
+            Ok(PlayerCommand {
+                player_id: owner,
+                entities: vec![*unit],
+                order: UnitOrder::CastAbility {
+                    ability_index,
+                    target_pos: None,
+                    target_entity: None,
+                },
+                queue: false,
+            })
+        })
+        .collect()
+}
+
 /// Places `hazard`, owned by the blue player, directly on the map.
 fn place_hazard(world: &mut SimWorld, hazard: &HazardFixture) {
     world.active_hazards.push(ActiveHazardZone {
@@ -501,6 +564,8 @@ impl BattleRun {
         }
         let mut commands = side_commands(BLUE, &battle.blue, &blue, &red)?;
         commands.extend(side_commands(RED, &battle.red, &red, &blue)?);
+        commands.extend(mode_commands(&world, BLUE, &battle.blue, &blue)?);
+        commands.extend(mode_commands(&world, RED, &battle.red, &red)?);
         Ok(Self {
             world,
             blue,
@@ -621,6 +686,7 @@ mod tests {
             order: SideOrder::None,
             research: Vec::new(),
             stim: false,
+            mode: None,
         }
     }
 
@@ -661,10 +727,48 @@ mod tests {
             order: SideOrder::AttackFirstEnemy,
             research: Vec::new(),
             stim: false,
+            mode: None,
         };
         assert!(matches!(
             side_commands(BLUE, &side, &[], &[]),
             Err(MatchupError::NoEnemyToFocus)
+        ));
+    }
+
+    /// A side of two `unit`s asking for `mode`, spawned in a battle against one worker row.
+    fn mode_run(unit: &str, mode: &str) -> Result<BattleRun, MatchupError> {
+        let matrix = Matrix::from_ron_str(MATRIX_RON)?;
+        let mut battle = matrix.battle("33_24_marines_vs_12_zealots")?.clone();
+        battle.blue = row((10.0, 10.0), 2);
+        battle.blue.squads[0].unit = unit.to_owned();
+        battle.blue.mode = Some(mode.to_owned());
+        battle.red = row((40.0, 40.0), 1);
+        BattleRun::new(&battle, crate::shipped_catalogs(), 1, 0.0)
+    }
+
+    #[test]
+    fn a_side_with_a_mode_casts_its_switch_on_the_first_tick(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut run = mode_run("railgun_crawler", "siege_mode")?;
+        let casts: Vec<_> = run
+            .commands
+            .iter()
+            .filter(|command| matches!(command.order, UnitOrder::CastAbility { .. }))
+            .collect();
+        assert_eq!(casts.len(), 2, "one cast a unit");
+        run.step();
+        for id in &run.blue {
+            let unit = run.world.entities.get(id).ok_or("unit missing")?;
+            assert!(unit.channeling_remaining_ticks > 0, "the switch has begun");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_mode_a_unit_cannot_enter_is_an_error() {
+        assert!(matches!(
+            mode_run("pulse_bot", "siege_mode"),
+            Err(MatchupError::NoModeAbility { .. })
         ));
     }
 }

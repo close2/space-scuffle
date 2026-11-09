@@ -615,6 +615,13 @@
         ),
         expect: (blue: (1, 1), red: (0, 0)),
     ),
+    // Battle 21: StarCraft II's Lurker attacks only burrowed (the unburrowed LurkerMP has no weapon,
+    // liberty UnitData:690-758; LurkerMPBurrowed carries it, void UnitData:775), so the side burrows
+    // it on the first tick, as a player would (plan 2026-11-05-sc2-deviation-fixes WP13b, B-42).
+    // The burrow takes 45 to 49 ticks, in which the marines' 17 shots take about 85 of its 190 life;
+    // burrowed it is cloaked, the marines have no detection, and three spine volleys kill all six.
+    // Without the burrow the marines win every seed. Evidence:
+    // docs/evidence/2026-11-05-sc2-deviation-fixes.md §15.
     (
         name: "21_lurker_vs_6_marines",
         claim: "Spines decimate light infantry",
@@ -625,6 +632,7 @@
                 (unit: "burrow_scorpion", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
             ],
             order: AttackMove(16, 32),
+            mode: Some("burrowed"),
         ),
         red: (
             squads: [

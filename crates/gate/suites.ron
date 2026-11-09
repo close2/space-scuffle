@@ -87,7 +87,11 @@ SuiteCatalog(
         "client/dome_fill_tests": (class: Gpu),
         "client/editor_app_tests": (class: Gpu, test_threads: Some(2)),
         "client/flipbook_clock_gpu_tests": (class: Gpu),
-        "client/gpu_validation_tests": (class: Gpu),
+        // On lavapipe (CI) a GPU child keeps its textures in host memory and no GPU lock
+        // serializes the children, so each test thread runs a whole client at once: four threads
+        // reached 10.6 GiB of private memory (20 GiB of RSS) and lost the 16 GB CI runner; one
+        // thread peaks at 4.1 GiB (Amendment 5). On radv the GPU lock serializes the children anyway.
+        "client/gpu_validation_tests": (class: Gpu, test_threads: Some(1)),
         "client/lab_scene_tests": (class: Gpu, test_threads: Some(4)),
         "client/round2_visual_tests": (class: Gpu),
         "client/runtime_battle_tests": (class: Gpu),
@@ -270,6 +274,8 @@ SuiteCatalog(
             "sim_core/attack_move_simulation_tests",
             "sim_core/attack_swing_snapshot_tests",
             "sim_core/attribute_bonus_tests",
+            "sim_core/barrier_tests",
+            "sim_core/burrow_attack_tests",
             "sim_core/catalog_reference_values_tests",
             "sim_core/catalog_serialization_compatibility",
             "sim_core/checked_movement_tests",

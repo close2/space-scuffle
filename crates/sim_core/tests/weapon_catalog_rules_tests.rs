@@ -12,7 +12,7 @@
 //! Invalid inputs are produced by editing the real shipped catalog text, so each case proves
 //! the validator rejects that one field and not a fixture that was already malformed.
 
-use sim_core::catalog::{AcquireLevel, AcquireTieBreak, PrimaryWeapon, UnitCatalog};
+use sim_core::catalog::{AcquireLevel, AcquireTieBreak, PrimaryWeapon, UnitArchetype, UnitCatalog};
 use sim_core::{is_within_firing_arc, SimCoreError, SimWorld, UpgradeCatalog, WeaponSpec};
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{Attribute, AttributeBonuses};
@@ -160,7 +160,7 @@ const SC2_AIR_ONLY_UNITS: [(&str, &str, &str); 3] = [
 fn archetypes_with_analogue<'a>(
     world: &'a SimWorld,
     unit: &'a str,
-) -> impl Iterator<Item = &'a sim_core::catalog::UnitArchetype> {
+) -> impl Iterator<Item = &'a UnitArchetype> {
     world.catalog.archetypes().filter(move |archetype| {
         archetype
             .sc2_analogue()
@@ -226,17 +226,36 @@ fn b25_to_b27_air_only_units_leave_a_ground_unit_unharmed() -> TestResult {
     Ok(())
 }
 
-/// Every weapon of the shipped archetypes: the ground, air and legacy single slots.
+/// Every weapon of the shipped archetypes: the ground, air and legacy single slots, and the
+/// weapon of [`mode_only_weapon`].
 fn shipped_weapons(world: &SimWorld) -> impl Iterator<Item = &WeaponSpec> {
-    world.catalog.archetypes().flat_map(|archetype| {
-        [
-            archetype.ground_weapon.as_ref(),
-            archetype.air_weapon.as_ref(),
-            archetype.weapon.as_ref(),
-        ]
-        .into_iter()
-        .flatten()
-    })
+    world.catalog.archetypes().flat_map(own_weapons)
+}
+
+/// The weapon a unit without one of its own carries only in a mode (the Lurker analogue, armed
+/// only burrowed as `StarCraft` II's `LurkerMPBurrowed`, B-42).
+fn mode_only_weapon(archetype: &UnitArchetype) -> Option<&WeaponSpec> {
+    if archetype.weapon.is_some() || archetype.ground_weapon.is_some() {
+        return None;
+    }
+    archetype
+        .modes
+        .iter()
+        .find_map(|mode| mode.ground_weapon_override.as_ref()?.as_ref())
+}
+
+/// The archetype's own weapons, the weapon of [`mode_only_weapon`] in the `weapon` slot.
+fn own_weapons(archetype: &UnitArchetype) -> impl Iterator<Item = &WeaponSpec> {
+    [
+        archetype.ground_weapon.as_ref(),
+        archetype.air_weapon.as_ref(),
+        archetype
+            .weapon
+            .as_ref()
+            .or_else(|| mode_only_weapon(archetype)),
+    ]
+    .into_iter()
+    .flatten()
 }
 
 #[test]
@@ -605,7 +624,7 @@ const SC2_DEFENSIVE_ACQUIRE: [(&str, &str); 3] = [
 #[test]
 fn b7_threat_flags_and_acquire_levels_follow_starcraft() -> TestResult {
     let world = flat_world(16)?;
-    let listed = |table: &[(&str, &str)], archetype: &sim_core::catalog::UnitArchetype| {
+    let listed = |table: &[(&str, &str)], archetype: &UnitArchetype| {
         table.iter().any(|(unit, _)| {
             archetype
                 .sc2_analogue()
@@ -822,12 +841,7 @@ fn b2_strike_spacing_follows_starcraft() -> TestResult {
             .map_or((0, None), |&(_, interval, distance, _)| {
                 (interval, distance.map(SimScalar::from_f32_lossy))
             });
-        let weapons = [
-            &archetype.weapon,
-            &archetype.ground_weapon,
-            &archetype.air_weapon,
-        ];
-        for weapon in weapons.into_iter().flatten() {
+        for weapon in own_weapons(archetype) {
             let (interval, distance) = if weapon.attacks_count > 1 {
                 (interval, distance)
             } else {
@@ -1005,12 +1019,7 @@ fn b14_attribute_bonuses_follow_starcraft() -> TestResult {
         let analogue = archetype
             .sc2_analogue()
             .and_then(|analogue| analogue.split(" (").next());
-        let weapons = [
-            &archetype.weapon,
-            &archetype.ground_weapon,
-            &archetype.air_weapon,
-        ];
-        for weapon in weapons.into_iter().flatten() {
+        for weapon in own_weapons(archetype) {
             let row = SC2_ATTRIBUTE_BONUSES.iter().find(|(unit, name, ..)| {
                 Some(*unit) == analogue && name.is_none_or(|name| name == weapon.name)
             });
