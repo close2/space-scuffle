@@ -42,3 +42,7 @@ decimals.
 **Recommendation.** Option 1 until measured.
 
 ## Answer
+
+**Option 1 (No change — the life part is at least `0.5`; no editor test needed).**
+
+**Engine insight:** In StarCraft II's C++ damage pipeline, when a hit breaks a unit's remaining shields with strictly positive post-shield-armor spillover (`remainder > 0`), the hull damage step applies its own `max(0.5, remainder - life_armor)` minimum floor rather than allowing life armor to reduce positive spillover to `0.0`. Thus any hit that exceeds current shields always chips at least `0.5` HP off life regardless of how much life armor the target has. The landed WP7 code (`apply_damage` in `crates/sim/src/combat.rs`) already matches SC2 and requires no change.
