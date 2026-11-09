@@ -32,10 +32,11 @@
 //! 10. **Amanatides-Woo Raycasting:** Ray tests correctly identify plateau surfaces, continuous ramps,
 //!     lip occlusion, and abyss misses.
 //! 11. **Virtual GPU Terrain Preview Render Verification (§5.7b):** `terrain_preview` binary
-//!     executes under the test GPU (xvfb + radv or lavapipe) and renders 4 canonical camera views of
+//!     executes under the test GPU (xvfb + radv or lavapipe) and renders 5 canonical camera views of
 //!     `showcase_canyon` with `orbital_foundry` theme to 1600x900 PNGs. Verifies non-trivial
 //!     luminance distribution (mean in [0.06, 0.85], std-dev > 0.06), and <20% void color
-//!     in the central 50% framing region.
+//!     in the central 50% framing region; in the `ramp` close-up, the projected footprint of a
+//!     ramp cell shows the ramp's dirt, not the upper plateau's metal plate.
 
 #![allow(
     clippy::unwrap_used,
@@ -1123,7 +1124,7 @@ fn test_terrain_preview_renders() {
     cmd.allow_for_hex_tiling_driver_defect();
     cmd.assert_passes_validation("terrain_preview");
 
-    let poses = ["overview", "p0_base", "mesa", "chasm"];
+    let poses = ["overview", "p0_base", "mesa", "chasm", "ramp"];
     let void_srgb = [0.01_f32, 0.012_f32, 0.03_f32];
 
     for pose in poses {
@@ -1198,4 +1199,112 @@ fn test_terrain_preview_renders() {
             "Pose {pose}: central 50% void fraction {void_fraction:.3} >= 0.20 (terrain not sufficiently visible)"
         );
     }
+
+    let ramp = image::open(out_dir.join("ramp.png"))
+        .expect("the ramp pose was checked above")
+        .to_rgba8();
+    assert_ramp_footprint_shows_no_plateau(&ramp);
+}
+
+/// Ramp cell whose footprint the `ramp` pose of `terrain_preview` centres on.
+const RAMP_POSE_CELL: (u32, u32) = (27, 9);
+
+/// Pixel of world point `p` in a 1600x900 `terrain_preview` render from the `ramp` pose: the
+/// binary's `compute_pose_transform` (55° pitch, target (27.5, 9.5), distance 11, look-at height
+/// 4.5) and Bevy's default perspective projection (vertical field of view π/4).
+fn project_ramp_pose(p: Vec3) -> Vec2 {
+    let (target, distance, look_at_y) = (Vec2::new(27.5, 9.5), 11.0, 4.5);
+    let rotation = Quat::from_rotation_x(-55.0_f32.to_radians());
+    let eye = Vec3::new(target.x, 0.0, target.y) + rotation * Vec3::new(0.0, 0.0, distance);
+    let view = Transform::from_translation(eye)
+        .looking_at(Vec3::new(target.x, look_at_y, target.y), Vec3::Y)
+        .compute_matrix()
+        .inverse();
+    let projection = Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, 1600.0 / 900.0, 0.1, 1000.0);
+    let clip = projection * view * p.extend(1.0);
+    let ndc = clip.truncate() / clip.w;
+    Vec2::new(
+        f32::midpoint(ndc.x, 1.0) * 1600.0,
+        f32::midpoint(1.0, -ndc.y) * 900.0,
+    )
+}
+
+/// Whether a pixel shows the plateau's metal-plate layer: bright and colour-neutral. On both
+/// drivers about 92% of the plateau's pixels and at most about 1% of the ramp's dirt pixels pass
+/// (plan `2026-11-09-ramp-geometry`, evidence file).
+fn is_metal_plate_pixel(pixel: image::Rgba<u8>) -> bool {
+    let [r, g, b] = [pixel[0], pixel[1], pixel[2]].map(|c| f32::from(c) / 255.0);
+    let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    lum > 0.45 && r - b < 0.02
+}
+
+/// The projected footprint of [`RAMP_POSE_CELL`], shrunk by a fifth towards its centre to stay
+/// clear of edges, at the simulation's ramp heights, must show the ramp's lit dirt and not the
+/// upper plateau's metal plate: the plateau ends where the ramp begins, and nothing floats over
+/// the slope.
+fn assert_ramp_footprint_shows_no_plateau(img: &image::RgbaImage) {
+    let map = load_test_map("showcase_canyon.scmap.ron");
+    let (cx, cy) = RAMP_POSE_CELL;
+    assert!(
+        map.ramp_profile(cx, cy).is_some(),
+        "the ramp pose looks at a ramp cell"
+    );
+    let corner = |fx: f32, fz: f32| {
+        let (x, z) = (cx as f32 + fx, cy as f32 + fz);
+        let y =
+            map.terrain_altitude_at(SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(z)));
+        project_ramp_pose(Vec3::new(x, y, z))
+    };
+    let quad = [
+        corner(0.2, 0.2),
+        corner(0.8, 0.2),
+        corner(0.8, 0.8),
+        corner(0.2, 0.8),
+    ];
+    let inside = |p: Vec2| {
+        let sides: [f32; 4] =
+            std::array::from_fn(|k| (quad[(k + 1) % 4] - quad[k]).perp_dot(p - quad[k]));
+        sides.iter().all(|&s| s >= 0.0) || sides.iter().all(|&s| s <= 0.0)
+    };
+    let (mut total, mut metal, mut dirt) = (0_u32, 0_u32, 0_u32);
+    for (x, y, pixel) in img.enumerate_pixels() {
+        if inside(Vec2::new(x as f32 + 0.5, y as f32 + 0.5)) {
+            total += 1;
+            if is_metal_plate_pixel(*pixel) {
+                metal += 1;
+            }
+            if is_lit_dirt_pixel(*pixel) {
+                dirt += 1;
+            }
+        }
+    }
+    println!(
+        "ramp pose: footprint {quad:?}, of {total} pixels {metal} metal plate, {dirt} lit dirt"
+    );
+    assert!(
+        total > 1000,
+        "ramp footprint covers only {total} pixels: {quad:?}"
+    );
+    let fraction = f64::from(metal) / f64::from(total);
+    assert!(
+        fraction < 0.05,
+        "ramp pose: {:.1}% of the ramp footprint {quad:?} shows the plateau's metal plate",
+        fraction * 100.0
+    );
+    let lit = f64::from(dirt) / f64::from(total);
+    assert!(
+        lit > 0.9,
+        "ramp pose: only {:.1}% of the ramp footprint {quad:?} shows the lit ramp surface",
+        lit * 100.0
+    );
+}
+
+/// Whether a pixel shows the ramp's lit dirt: not dark and warm (red above blue). Before plan
+/// `2026-11-09-ramp-geometry` the slab over the ramp carried the ramp's own dirt splat, so the
+/// metal check alone could not see it; its edge and the wall below it left only 52% of the
+/// footprint lit dirt on both drivers, against 99.98% with the ramp drawn alone.
+fn is_lit_dirt_pixel(pixel: image::Rgba<u8>) -> bool {
+    let [r, g, b] = [pixel[0], pixel[1], pixel[2]].map(|c| f32::from(c) / 255.0);
+    let lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    lum > 0.3 && r - b >= 0.02
 }
