@@ -109,3 +109,49 @@ waiting behind the crowd at the wall are no longer pushed through it.
 | 1 | 5 of 10 | 1,205 | 455 | 7 |
 
 Ramp E foot, player 0: mean turn 202° (maximum 266°). Player 0 wins at tick 1,361 (was 1,355).
+
+## WP2: R1, waiting (rule)
+
+**What.** `steering::remove_blocked_velocity` repeats its per-body removal until no body that will not yield is
+approached (at most one pass per such body in reach), so a step into a corner is removed whole. `steer_body` joins
+the nearest standing (anchored, or exactly still) non-yielding bodies on each side of the path into one wall when
+their edges are closer than the unit's diameter plus 0.05, follows the wall through the unit's neighbours to its
+ends, and rounds the nearer end only when the point beside it lies within `STEERING_LOOKAHEAD` (0.35) of the unit;
+otherwise the unit heads straight into the wall. A unit whose admissible step is at most `WAIT_THRESHOLD` (1/8) of
+its step waits: no move, no turn, `Idle`, order kept.
+
+**Deviations from D-1.1, recorded (Q0002).** The planner's per-pair rule (the nearer end of the two nearest bodies)
+and a memoryless wall end were tried first; both vibrate along a firing line of more than two bodies, because the
+nearest pair, and the chain of bodies the unit can see, change with every small step: in the synthetic arc the
+reversals rose from 324 to 702 (per pair) and stayed at 220 to 592 (memoryless ends, moving bodies included). Moving
+bodies are left out of walls (they leave by themselves; pathfinding Amendment 1's `parked_on_corner` precedent), and
+an end is rounded only when it is known to be one. Walking round a crowd on a kept side is D-2's surround walk.
+
+**Tests.** `steering::wall_tests` (a 0.70 gap is a wall, 0.81 is not; rounding at a wall's end; a step into a
+right-angle corner is removed whole and a 60° wedge leaves no approach), and the D-1.4 property test
+`movement_contact_tests::units_blocked_by_a_holding_line_never_reverse` (eight layouts; a unit nudged by a
+squadmate's contact may settle back once, under 0.01 a tick). `no_room_means_waiting_still` stays ignored until WP3:
+its chasing units still flip sides every tick through `flank_if_blocked`, defect D-c, which WP3 replaces (the plan
+expected R1 alone to end the vibration).
+
+**Matrix.** 17 battles moved, no overall winner changed. Single-seed winners changed in battles 31 (6 seeds), 32 (5;
+blue wins 4 → 6 of 20, red 8 → 7), 33 (10; blue wins 9 → 15) and 35 (2). Blocking totals: 1,217,899 blocked
+attacker ticks, 105,040 reversals (−37 %), 21 give-ups.
+
+**Battle 33**, 68 seeds: blue wins 34 → 52, red 12 → 9, unresolved 22 → 7; survivors 3.76 – 0.96 → 5.76 – 0.53.
+
+**Goldens.** Re-recorded: `golden_replay` from checkpoint 2 (the second removal pass first changes a step on tick 63,
+a `blue_infantry` marine pressed between squadmates, by one raw unit; waiting first moves a unit on tick 73),
+`golden_replay_orders` from checkpoint 6 (tick 54, a `blue_column` unit; waiting first on tick 146). Each cause was
+traced by switching the three parts of R1 off one at a time in a scratch build.
+
+**Showcase.** **The winner flips**: player 1 wins at tick 1,254 (was player 0 at 1,361).
+
+| Player | In range at tick 900 | Blocked attacker ticks | Reversals | Give-ups |
+|---|---|---|---|---|
+| 0 | 6 of 10 | 74 | 6 | 4 |
+| 1 | 8 of 10 | 673 | 476 | 2 |
+
+Player 0's attack-movers now wait instead of vibrating (941 → 6 reversals) but still cannot reach range; player 1's
+chasing units still flank through `flank_if_blocked` and two more of them reach range. Ramp E foot, player 0: mean
+turn 211° (maximum 287°).

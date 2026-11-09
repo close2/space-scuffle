@@ -217,6 +217,14 @@
 // On tick 6, the first tick the "blue_infantry" squad (pulse_bot) walks after its AttackMove of
 // tick 5, its marines all stand still under that order and no longer clear each other's lanes, so
 // the squad sets off differently and every checkpoint changed from checkpoint 1 (ticks 1 to 50).
+// Re-recorded for plan 2026-11-09-friendly-blocking WP2 (R1, waiting; B-103): a step is cleared of
+// every body that will not yield at once, repeating the per-body removal until nothing approaches
+// one; a unit never steers into a gap narrower than itself between two such bodies; and a unit
+// whose admissible step is at most an eighth of its step waits. Checkpoint 1 is unchanged; from
+// checkpoint 2 (ticks 51 to 100) every checkpoint changed: on tick 63 the second removal pass first
+// changes a step, that of a "blue_infantry" marine (pulse_bot, entity 14) pressed between two
+// squadmates, by one raw unit; waiting first moves a unit on tick 73 (a "red_psi" zealot, entity
+// 21). (Merged onto checksum schema 24: the same first divergent checkpoint.)
 (
     checksum_schema: 24,
     seed: 0x5EED_0F_5CAFF1E,
@@ -245,24 +253,24 @@
     ],
     checksums: [
         0x0b99397bcfa1555a,
-        0x22fac6288b800d09,
-        0x0aad4e051a849daf,
-        0x69c5b4f4b1a1864e,
-        0xfe819be81ad60187,
-        0x09b5e57104490ea8,
-        0x488f692c88f0f1c2,
-        0x7de932502466d98b,
-        0x4c01dacc52e8da28,
-        0x9a7cc50b0c38e997,
-        0xa8e07c02201d0c2c,
-        0xdfb716cf76599550,
-        0xe87db5cf139a1cbb,
-        0x6d5af2401ffd21d8,
-        0xef8830f00c48dbb7,
-        0xa0eb0f812547c9da,
-        0x10fafda1db7683ae,
-        0xed168bafbf814cd5,
-        0x6e9b05a0fc0849df,
-        0x430e1018bafad2d3,
+        0x25b00aca3ef92351,
+        0xd38a58f3d2184e5c,
+        0x52bb51e81007e531,
+        0xd9e4efe2386e9978,
+        0x9683475166ab55f1,
+        0x82f35fc22def9a1a,
+        0xeeef9f4d35df3e36,
+        0x546899d51076b93b,
+        0x41e4b3517cf2f5c7,
+        0x7b5843e9024aa557,
+        0x02767c09f7ffe570,
+        0x18fb8f3b12b2242d,
+        0xad3a129857a9245f,
+        0xb7be3dcaff0afaf2,
+        0x1ff3b1ddbb14573f,
+        0x6d4c55edd5909071,
+        0xd71ee2c68f23f656,
+        0xf550748e29abe127,
+        0x3cbb7dddef9dd7bc,
     ],
 )

@@ -35,7 +35,7 @@ use super::math::{
 use super::tuning::{
     ABANDONED_TARGET_TICKS, PURSUIT_LEASH_SCAN_RANGES, PURSUIT_ROUTE_DRIFT, REPATH_COOLDOWN_TICKS,
     ROUTE_CHECK_PERIOD, ROUTE_START_TOLERANCE, STALL_ABANDON_TICKS, STALL_ARRIVAL_REACH,
-    STALL_PROGRESS, STALL_REPATH_TICKS, STEERING_LOOKAHEAD, TERRAIN_GUARD_HORIZON,
+    STALL_PROGRESS, STALL_REPATH_TICKS, STEERING_LOOKAHEAD, TERRAIN_GUARD_HORIZON, WAIT_THRESHOLD,
     WAYPOINT_HANDOFF_MARGIN,
 };
 use super::{
@@ -44,8 +44,7 @@ use super::{
 };
 use crate::entity::{Entity, MovementMemory};
 use crate::steering::{
-    check_cluster_arrival_with, compute_unified_local_steering, remove_blocked_velocity,
-    ContactBody, SteeringObstacle,
+    check_cluster_arrival_with, remove_blocked_velocity, steer_body, ContactBody, SteeringObstacle,
 };
 use crate::{SimWorld, WeaponPhase};
 use sim_map::{
@@ -1768,6 +1767,11 @@ fn braking_speed(
 
 /// Takes one step toward `next`, `gap` world units away, avoiding `neighbours`.
 ///
+/// A unit whose admissible step, after bodies that will not yield have taken their share, is
+/// shorter than [`WAIT_THRESHOLD`] of its step waits: it neither moves nor turns, keeps its order
+/// and plays `Idle`, and tries again next tick (plan `2026-11-09-friendly-blocking` D-1.3). It
+/// does not step into the gap and get pushed back out, which vibrated (bug B-103).
+///
 /// Returns whether terrain refused the step as planned, so the caller can check its route.
 fn step_toward(
     context: &StepContext<'_>,
@@ -1792,8 +1796,7 @@ fn step_toward(
         gate_step_by_facing(hull, origin, proposal);
         return Ok(false);
     }
-    let heading =
-        compute_unified_local_steering(body.id, origin, policy.radius, next, ignored, neighbours)?;
+    let heading = steer_body(body, next, ignored, neighbours)?;
     let mut velocity = checked_vec_scale(heading, speed)?;
     if policy.layer == MovementLayer::Ground {
         velocity = keep_terrain_view(context, next, gap, velocity)?;
@@ -1801,6 +1804,11 @@ fn step_toward(
     let mut velocity = remove_blocked_velocity(body, velocity, neighbours)?;
     if ignored.is_some() {
         velocity = flank_if_blocked(context, proposal, next, velocity)?;
+    }
+    if is_waiting(velocity, speed) {
+        proposal.velocity = SimVec2::ZERO;
+        proposal.anim = AnimState::Idle;
+        return Ok(false);
     }
     let wanted = checked_vec_add(origin, velocity)?;
     let refused = !policy.permits_segment(map, origin, wanted);
@@ -1816,6 +1824,13 @@ fn step_toward(
     }
     gate_step_by_facing(hull, origin, proposal);
     Ok(refused)
+}
+
+/// Whether a unit whose step budget is `speed` (world units per tick) and whose admissible step
+/// is `velocity` waits this tick: a step no longer than [`WAIT_THRESHOLD`] of the budget.
+fn is_waiting(velocity: SimVec2, speed: SimScalar) -> bool {
+    let threshold = speed.saturating_mul(WAIT_THRESHOLD);
+    within_distance(velocity, SimVec2::ZERO, i128::from(threshold.raw()))
 }
 
 /// Sends a chasing unit sideways along whatever blocks its way to `next`.
