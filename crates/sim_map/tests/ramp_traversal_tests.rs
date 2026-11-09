@@ -200,6 +200,7 @@ fn clearance_and_smoothing_keep_ramp_side_walls_closed() -> TestResult {
             start: center(6, 4),
             goal: center(7, 9),
             clearance,
+            radius: clearance.radius_scalar(),
         };
         let path = pathfinder.find_path(&map, &request)?;
         for pair in path.waypoints.windows(2) {
@@ -211,6 +212,7 @@ fn clearance_and_smoothing_keep_ramp_side_walls_closed() -> TestResult {
         start: center(4, 6),
         goal: center(7, 9),
         clearance: UnitClearance::Small,
+        radius: UnitClearance::Small.radius_scalar(),
     };
     assert!(!segment(&map, request.start, request.goal));
     let path = pathfinder.find_path(&map, &request)?;
@@ -232,6 +234,7 @@ fn clearance_and_smoothing_keep_ramp_side_walls_closed() -> TestResult {
         start: center(2, 2),
         goal: center(12, 9),
         clearance: UnitClearance::Small,
+        radius: UnitClearance::Small.radius_scalar(),
     };
     assert_eq!(
         Pathfinder::new(&flat).find_path(&flat, &request)?.waypoints,
@@ -248,6 +251,7 @@ fn unexplored_ramps_are_not_reintroduced_by_smoothing() -> TestResult {
         start: center(4, 6),
         goal: center(7, 9),
         clearance: UnitClearance::Small,
+        radius: UnitClearance::Small.radius_scalar(),
         vision: Some(&vision),
         block_unexplored_ramps: true,
         known_structures: None,
@@ -286,6 +290,7 @@ fn real_structures_obey_knowledge_and_same_cell_footprint_policy() -> TestResult
         start: center(3, 7),
         goal: center(12, 7),
         clearance: UnitClearance::Small,
+        radius: UnitClearance::Small.radius_scalar(),
         vision: None,
         block_unexplored_ramps: false,
         known_structures: Some(&unknown),
@@ -307,6 +312,7 @@ fn real_structures_obey_knowledge_and_same_cell_footprint_policy() -> TestResult
         start: center(7, 7),
         goal: center(7, 7),
         clearance: UnitClearance::Large,
+        radius: UnitClearance::Large.radius_scalar(),
         known_structures: Some(&known),
         ..request
     };
@@ -370,6 +376,7 @@ fn real_versioned_maps_have_bidirectional_ramp_routes() -> TestResult {
                         start,
                         goal,
                         clearance: UnitClearance::Small,
+                        radius: UnitClearance::Small.radius_scalar(),
                     };
                     let first = pathfinder.find_path(&map, &request)?;
                     assert_eq!(first, pathfinder.find_path(&map, &request)?);

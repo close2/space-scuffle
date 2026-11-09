@@ -78,6 +78,7 @@ fn test_unexplored_ramp_blocks_path_until_scouted() {
         start: start_pos,
         goal: high_goal,
         clearance: UnitClearance::Medium,
+        radius: UnitClearance::Medium.radius_scalar(),
         vision: Some(&world.vision_maps[PlayerSlot::ALL[0]]),
         block_unexplored_ramps: false,
         known_structures: Some(&world.known_blocked_cells[PlayerSlot::ALL[0]]),

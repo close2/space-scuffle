@@ -1652,7 +1652,7 @@ wins over a battle's 20 seeds. Goldens are checked in debug, release and `wasm32
   Banshee's `BacklashRockets` (`liberty` :2550, `voidmulti` :36), the Phoenix's `IonCannons` (`liberty` :1959). No
   `CEffectCreatePersistent` default sets it (`core` EffectData:34-40). The owner's answer names the Zealot and the
   Thor and says to follow the flag; the flag also covers the Reaper, Queen, Liberator and Missile Turret.
-- **Rule** `a9a24bf` (latent, checksum schema 21 → 22): `WeaponSpec::channeled` (catalog default `false`) is copied
+- **Rule** `a9a24bf` (latent, checksum schema 21 → 22 on the branch, 22 → 23 after the merge with pathfinding Part A): `WeaponSpec::channeled` (catalog default `false`) is copied
   onto the pending burst; a non-queued order that replaces the attacker's orders drops a channeled burst, except an
   attack on the burst's own target. Red: `q0058_an_explicit_order_ends_a_channeled_burst` (Move between the strikes:
   damage 20, expected 10). Matrix and battle 33 bit-identical; goldens and the sandbox re-recorded for the schema.
@@ -1663,7 +1663,7 @@ wins over a battle's 20 seeds. Goldens are checked in debug, release and `wasm32
 
 ### 17.2 Package B: splash distance and lines (Q0063, B-17, B-18)
 
-- **Rule** `2f65bc9` (checksum schema 22 → 23): a zone reaches a unit whose edge is within it (centre distance less
+- **Rule** `2f65bc9` (checksum schema 22 → 23 on the branch, 23 → 24 after the merge): a zone reaches a unit whose edge is within it (centre distance less
   the unit's collision radius, never below 0); a splash with `offset_by_unit_radius` is centred on the struck
   target's edge facing the attacker. Red: `q0063_a_zone_reaches_a_units_edge` (0, expected 40) and
   `q0063_offset_by_unit_radius_centres_the_area_on_the_near_edge` ([0, 0], expected [40, 0]). Measured

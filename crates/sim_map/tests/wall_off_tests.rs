@@ -115,11 +115,13 @@ fn test_ramp_wall_off_geometry() {
         start: start_pos,
         goal: goal_pos,
         clearance: UnitClearance::Small,
+        radius: UnitClearance::Small.radius_scalar(),
     };
     let req_large = PathRequest {
         start: start_pos,
         goal: goal_pos,
         clearance: UnitClearance::Large,
+        radius: UnitClearance::Large.radius_scalar(),
     };
 
     assert!(pathfinder.find_path(&map, &req_small).is_ok());

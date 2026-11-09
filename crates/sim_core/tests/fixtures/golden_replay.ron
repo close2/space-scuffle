@@ -181,23 +181,38 @@
 // Re-recorded for WP13c (B-43, checksum schema 20 -> 21): each unit's attack dash cooldown is
 // encoded, so every checkpoint changed. No behaviour did: with the field left out of the encoding
 // at schema 20, every checkpoint stays as recorded for WP13a (no shipped archetype carries a dash).
-// Re-recorded for Q0058 (plan 2026-11-05-sc2-deviation-fixes Amendment 22, package A, checksum
-// schema 21 -> 22): whether each weapon's burst and each pending burst is channeled is encoded, so
-// every checkpoint changed. No behaviour did: no shipped weapon was channeled yet.
-// Re-recorded for Q0058's data (the seven analogues whose burst effect sets `Channeled`):
-// "red_psi" (psi_grey) now carries a channeled pending burst, so from checkpoint 5, the first in
-// which a zealot swings, every checkpoint changed. No behaviour did: with the drop disabled the
-// checksums are the same, as no order reaches a zealot between its blades.
-// Re-recorded for Q0063 (Amendment 22, package B, checksum schema 22 -> 23): whether each
-// splash is centred on its target's edge is encoded, so every checkpoint changed. No behaviour
-// did: neither replay has a unit whose weapon splashes.
-// Re-recorded for Q0065 (Amendment 22, package C): the turrets of the Siege Tank (tank mode,
-// railgun_crawler) and Phoenix (flying_saucer) analogues return to the front at their YawRate
-// while their unit moves without a target (ResetIfMoving), where they held their angle. The turret
-// angle is hashed, so from the first checkpoint in which such a unit moves after its turret
-// turned (2 here, 1 in golden_replay_orders) every checkpoint changed.
+// Re-recorded for plan 2026-11-09-sc2-pathfinding WP2+WP3 (B-99, B-100, checksum schema 21 ->
+// 22): each unit's `corner_round` (the sense in which it rounds a body parked on its corner) is
+// hashed, so every checkpoint changed. Behaviour first differs on tick 155 (checkpoint 4, ticks
+// 151 to 200): "blue_infantry" marine 15 no longer holds (31.11, 29.44), the point the removed
+// corner rewrite had put in place of the ramp corner (30.30, 29.70) because marines stood on it;
+// it passes the corner and heads for its goal (32, 46). Marines 8, 14 and 16 beside it move
+// differently in contact on the same tick.
+// Re-recorded for plan 2026-11-09-sc2-pathfinding WP4 (B-101): a corner waypoint is offset by the
+// unit's own radius plus 0.05, no longer by its tier's (0.375 for every radius up to 0.5).
+// "blue_armor" (rhino_beetle, radius 0.5) now turns the ramp corner at (30.39, 29.61), 0.55 from
+// the corner, in place of (30.30, 29.70), from its first route on tick 6, so every checkpoint
+// changed from checkpoint 1 (ticks 1 to 50). With the tier offset restored, every checkpoint
+// equals that of WP2+WP3.
+// These two entries were recorded before WP13c (schema 21 for the dash cooldown) was merged
+// with them; the checksums below are those of the merged tree at schema 22, so every
+// checkpoint changed. Against WP13c, behaviour first differs on tick 6, checkpoint 1 (ticks 1 to 50),
+// where the WP4 corner of "blue_armor" first applies; the WP2+WP3 changes follow as above.
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes Amendment 22 (owner answers of 2026-11-09),
+// merged after the pathfinding schema 22:
+// - Q0058 (package A, checksum schema 22 -> 23): whether each weapon's burst and each pending burst
+//   is channeled is encoded. Its data make "red_psi" (psi_grey) carry a channeled pending burst
+//   from checkpoint 5, the first in which a zealot swings; with the drop disabled the checksums are
+//   the same, as no order reaches a zealot between its blades.
+// - Q0063 (package B, schema 23 -> 24): whether each splash is centred on its target's edge is
+//   encoded. No behaviour changed: no unit of this replay splashes.
+// - Q0065 (package C): the turrets of the Siege Tank (tank mode, railgun_crawler) and Phoenix
+//   (flying_saucer) analogues return to the front at their YawRate while their unit moves without
+//   a target (ResetIfMoving); the turret angle is hashed, so from checkpoint 2 the checkpoints
+//   changed on that account too.
+// The schema bytes change every checkpoint; the checksums below are those of the merged tree.
 (
-    checksum_schema: 23,
+    checksum_schema: 24,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -223,25 +238,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x64fa4798eb490fea,
-        0x50065ef8fba3cf5d,
-        0x280f21084ee39460,
-        0xe8a12cb89f40853a,
-        0xa047084576b60334,
-        0xeeafb0c2bf0a1310,
-        0xaa482a857c82c791,
-        0x6d91bb1e80e2712b,
-        0x5607ba7f1d9c216f,
-        0xcf2df0d8d369acf4,
-        0x636d18c7c80c8146,
-        0xdca29dfa5d30e562,
-        0xb4222802f4022bbe,
-        0x91b6fb79debfd5c1,
-        0xe674999be76ec09d,
-        0xcb5d51752a6d932b,
-        0x5c2339c03f999c3e,
-        0x66eac4cdf8b2a05a,
-        0x56aa300911adce6e,
-        0xcca0b5e6a5c6569e,
+        0xd62f679443856835,
+        0x77bb312ab77bb129,
+        0x45161c1d073977c1,
+        0xd1fe047f90ea0a1e,
+        0x5383855c340dfdf6,
+        0x6b947e227fbdd248,
+        0x36a45d2163e36cf1,
+        0x91e2efa0b756d660,
+        0xe749175976e9bf81,
+        0xaa7ee0ca82eb04a9,
+        0xb74ace5864f7ffe0,
+        0xb1a30237b22455c9,
+        0xa6700e590dfc60b7,
+        0x0e5844bbe346460a,
+        0x6a4516f01042c85e,
+        0x4d00c0866bcc1fc2,
+        0x0a3b01d5627507b8,
+        0x06161c2a54a29574,
+        0xa8d56d91b2652e24,
+        0x92528675d0cb8be5,
     ],
 )

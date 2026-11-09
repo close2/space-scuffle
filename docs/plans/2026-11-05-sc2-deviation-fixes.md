@@ -843,9 +843,14 @@ requires.
 | B-92 | `LateralAcceleration` (how sharply a moving unit can curve) is not modelled; our units turn their velocity freely within the hull rate | (i) | WP16. Found in WP12 (Amendment 18) |
 | B-93 | A burrowed unit still blocks ground units; the game's burrowed Lurker collides only with `Burrow` (`liberty` UnitData:775) | (i) | WP16, with B-49. Found in WP13b (Amendment 20) |
 | B-94 | Charge's autocast cannot be switched off; the game's is a player toggle, on by default | (i) | WP18. Found in WP13c (Amendment 21) |
+| B-99 | A body parked on a route corner made the unit rewrite its route to a point stepped outward, and a corner was passed only once the next leg held no body; columns walked V-shaped detours at shared corners. StarCraft II leaves bodies to steering (sc2-pathfinding plan §2, S3) | Fixed | Plan [`2026-11-09-sc2-pathfinding`](2026-11-09-sc2-pathfinding.md) WP2+WP3 |
+| B-100 | A unit facing a body parked on its corner had no way past it but the rewrite of B-99; it now steers past the body on the outside of the turn | Fixed | Plan `2026-11-09-sc2-pathfinding` WP2+WP3 (Amendment 1 there) |
+| B-101 | Corner waypoints are offset by the unit's radius tier (0.375 for every radius up to 0.5), not by its own radius; the game paths each unit by its own size | Fixed | Plan `2026-11-09-sc2-pathfinding` WP4 |
+| B-102 | Routes come from a grid A* corridor with three radius tiers, not StarCraft II's triangulated navigation mesh with a per-unit radius | (i) | Plan `2026-11-09-sc2-pathfinding` Part B (WP5 to WP10) |
 
-**Counts.** 78 IDs: (i) 70, two of them narrowed (B-52, B-67) and one carried by another plan (B-12); (ii) 3 (B-37,
-B-53, B-58); (iii) none; fixed 5 (B-31 and B-40 by the turn-before-move plan; B-71, B-73 and B-75 by WP0).
+**Counts.** 83 IDs: (i) 72, two of them narrowed (B-52, B-67) and two carried by other plans (B-12; B-102 by the
+sc2-pathfinding plan); (ii) 3 (B-37, B-53, B-58); (iii) none; fixed 8 (B-31 and B-40 by the turn-before-move plan;
+B-71, B-73 and B-75 by WP0; B-99, B-100 and B-101 by the sc2-pathfinding plan).
 
 **No (iii) item.** No B-ID asks us to reproduce a StarCraft II engine quirk: each is either a game rule we lack or a
 rule of our own. The class stays for later findings. For example, units pushed through walls are not ours to
@@ -1251,7 +1256,7 @@ it with a cited StarCraft II reason, is held on a side branch.
 | G | [Q0062](../questions/closed/0062-shield-break-life-minimum.md), [Q0066](../questions/closed/0066-random-delay-scaling.md), [Q0068](../questions/closed/0068-barrier-damage-order.md), option 1 each; [Q0070](../questions/open/0070-lurker-without-burrow-button.md) option 1 | No rule change. B-15, B-41 lose their open parts; B-91 closes with the unscaled delay kept. Q0070 stays open until plan `2026-11-09-client-mode-commands` lands the buttons | B-15, B-41, B-91 closed |
 
 **Schema.** A package that changes the hashed encoding bumps the checksum schema from main's value at the time; the
-pathfinding round (schema 22 on its branch) and this one are merged in the order the orchestrator picks.
+pathfinding round (schema 22) landed first: this round's bumps are 23 (Q0058) and 24 (Q0063) after the merge.
 
 ### Result (2026-11-09)
 
@@ -1259,8 +1264,8 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
 
 | Package | Commits | Outcome |
 |---|---|---|
-| A | rule `a9a24bf` (schema 22), data `0c0cb1e` | B-2 fixed. The data flag seven analogues' bursts (Zealot, Thor, Reaper, Queen, Liberator, Missile Turret, Colossus), not only the two the answer named |
-| B | rule `2f65bc9` (schema 23), offset data `089d6f5`, Colossus line `1b16eac` | B-17 fixed; B-18 narrowed: the Hellion's and the Lurker's lines are held on branches `answers-held-b18-hellion-line` and `answers-held-b18-lurker-line` (battles 9a and 10 flip, and 21 still flips after package E); one search per strike stays held (§9.3). Battle 26's expectation re-recorded |
+| A | rule `a9a24bf` (schema 23 after the merge with pathfinding Part A), data `0c0cb1e` | B-2 fixed. The data flag seven analogues' bursts (Zealot, Thor, Reaper, Queen, Liberator, Missile Turret, Colossus), not only the two the answer named |
+| B | rule `2f65bc9` (schema 24 after the merge), offset data `089d6f5`, Colossus line `1b16eac` | B-17 fixed; B-18 narrowed: the Hellion's and the Lurker's lines are held on branches `answers-held-b18-hellion-line` and `answers-held-b18-lurker-line` (battles 9a and 10 flip, and 21 still flips after package E); one search per strike stays held (§9.3). Battle 26's expectation re-recorded |
 | C | data `9c2e8e4` | B-30 fixed |
 | D | data `4c1e83a` | B-39 narrowed: the rule half (braking for orders that end without arriving and for pursuit) is not done |
 | E | data `e59a23f` | B-42 fixed: the burrow's functional time is the `Stats` section end, 33 ticks; the `Actor` section's 45 ticks are the animation only, which the client does not present yet |

@@ -144,24 +144,37 @@
 // Re-recorded for WP13c (B-43, checksum schema 20 -> 21): each unit's attack dash cooldown is
 // encoded, so every checkpoint changed. No behaviour did: with the field left out of the encoding
 // at schema 20, every checkpoint stays as recorded for WP13a (no shipped archetype carries a dash).
-// Re-recorded for Q0058 (plan 2026-11-05-sc2-deviation-fixes Amendment 22, package A, checksum
-// schema 21 -> 22): whether each weapon's burst and each pending burst is channeled is encoded, so
-// every checkpoint changed. No behaviour did: no shipped weapon was channeled yet.
-// Re-recorded for Q0063 (Amendment 22, package B, checksum schema 22 -> 23): whether each
-// splash is centred on its target's edge is encoded, so every checkpoint changed. No behaviour
-// did: neither replay has a unit whose weapon splashes.
-// Re-recorded for Q0065 (Amendment 22, package C): the turrets of the Siege Tank (tank mode,
-// railgun_crawler) and Phoenix (flying_saucer) analogues return to the front at their YawRate
-// while their unit moves without a target (ResetIfMoving), where they held their angle. The turret
-// angle is hashed, so from the first checkpoint in which such a unit moves after its turret
-// turned (2 here, 1 in golden_replay_orders) every checkpoint changed.
-// Re-recorded for Q0067 (Amendment 22, package D): an unset Deceleration reads as the converted
-// Acceleration, so "blue_spotter" (flying_saucer, the Phoenix analogue) brakes into its move
-// destination (12, 32) at 0.010192 per tick squared, about 23 ticks from full speed, where it
-// stopped within one tick. From checkpoint 7, when it starts braking, every checkpoint changed.
-// golden_replay is unchanged: none of its units with a finite acceleration ends a move order.
+// Re-recorded for plan 2026-11-09-sc2-pathfinding WP2+WP3 (B-99, B-100, checksum schema 21 ->
+// 22): each unit's `corner_round` is hashed, so every checkpoint changed. Behaviour first differs
+// on tick 120 (checkpoint 12, ticks 111 to 120): "blue_column" unit 17 no longer holds
+// (32.92, 29.37), the point the removed corner rewrite had put in place of its ramp corner
+// because the column stood on it; it passes the corner and heads for its goal (32, 37). Units 8
+// and 18 beside it move differently in contact on the same tick. The test still finds both
+// situations.
+// Re-recorded for plan 2026-11-09-sc2-pathfinding WP4 (B-101): a corner waypoint is offset by the
+// unit's own radius plus 0.05. "blue_armor" (rhino_beetle, radius 0.5) turns the ramp corner at
+// (33.61, 29.61) in place of (33.70, 29.70) from its first route on tick 21, so checkpoints 1 and
+// 2 are unchanged and from checkpoint 3 (ticks 21 to 30) every checkpoint changed. With the tier
+// offset restored, every checkpoint equals that of WP2+WP3. The test still finds both situations.
+// These two entries were recorded before WP13c (schema 21 for the dash cooldown) was merged
+// with them; the checksums below are those of the merged tree at schema 22, so every
+// checkpoint changed. Against WP13c, behaviour first differs on tick 21, checkpoint 3 (ticks 21 to 30),
+// where the WP4 corner of "blue_armor" first applies; the WP2+WP3 changes follow as above.
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes Amendment 22 (owner answers of 2026-11-09),
+// merged after the pathfinding schema 22:
+// - Q0058 (package A, checksum schema 22 -> 23) and Q0063 (package B, schema 23 -> 24): whether each
+//   burst is channeled and whether each splash is centred on its target's edge are encoded. No
+//   behaviour changed: no zealot here swings before the last checkpoint and no unit splashes.
+// - Q0065 (package C): the turrets of the Siege Tank (tank mode) and Phoenix analogues return to the
+//   front at their YawRate while moving without a target (ResetIfMoving); the turret angle is
+//   hashed, so from checkpoint 1 the checkpoints changed on that account too.
+// - Q0067 (package D): an unset Deceleration reads as the converted Acceleration, so
+//   "blue_spotter" (flying_saucer) brakes into its move destination (12, 32) at 0.010192 per tick
+//   squared, where it stopped within one tick; from checkpoint 7 the checkpoints changed on that
+//   account too.
+// The schema bytes change every checkpoint; the checksums below are those of the merged tree.
 (
-    checksum_schema: 23,
+    checksum_schema: 24,
     seed: 0x0DE5_0F_0D3125,
     total_ticks: 600,
     checkpoint_interval: 10,
@@ -182,65 +195,65 @@
         (tick: 420, squads: ["blue_column", "blue_armor"], order: Move(40, 22)),
     ],
     checksums: [
-        0xef63de3f729385ad,
-        0x4103e84cb9c7a810,
-        0x8cb05f3f32edba77,
-        0x15a6efa4edd9dc40,
-        0x950dbce3b23291a6,
-        0x1f2e790653cf83ba,
-        0xf2cded5ca8fb5f77,
-        0xe5355a91915473e2,
-        0xc0319f15f3cb6565,
-        0xc8eda8b827af7024,
-        0x758583aa39f715b4,
-        0x12f48d4778d1e1ab,
-        0x263bc2e31a825f96,
-        0xbe1b49e8ecc445f4,
-        0x46db4c73e71f4ac9,
-        0x21af960b4c8ac6df,
-        0x5b2545153a8e579a,
-        0xe29117f0df8a10c1,
-        0x414a6551098e62cf,
-        0x2fb5d98ca01d018b,
-        0x4eaa2f907a29df1b,
-        0x72b9de6991e1f41b,
-        0x72f7f56fac9858fe,
-        0xee3f91f711ed1985,
-        0x5b0faf259d78eb12,
-        0x32a97855eb23c265,
-        0x004051ac877eadbf,
-        0x4fbcacae96375ec1,
-        0x37ff01274e4c58a1,
-        0x5d37f5ff113e94a6,
-        0xe329c3b092d277c8,
-        0x57348684c2cff8c7,
-        0x5ece6b85c67e3dbc,
-        0xe85d85b5dfa3e26e,
-        0x4460f46e3ccd23be,
-        0x44cf8c2ebd62931c,
-        0xd015905fb0becf01,
-        0x28820022999a4397,
-        0x4d09c9e759cd38cf,
-        0xbc0c734a9a71c1ad,
-        0xe562fbafc9bc354c,
-        0x4bf257ac0a8ab0ce,
-        0x3d4d19a37be85c0f,
-        0x85ba78f4ec1ae903,
-        0x003295e281a252d8,
-        0xa667db50f0389bd1,
-        0x4094a6490c3a7420,
-        0x7adf41544142f4ca,
-        0x73dac7206d10f219,
-        0x88e747a5f3375a5d,
-        0x88d73dafbe7b5780,
-        0x5f52789aeedf8e2c,
-        0x8ae4dcd7b160c541,
-        0xba2dff01717429f1,
-        0x13c9ef0a8814f98c,
-        0xc09622ea3cb7fe65,
-        0x33884a30104e7751,
-        0xb9e9a4d915347567,
-        0x9c27547e98a0818b,
-        0xc2407b0bd33f7d81,
+        0x9089b9a113e539b2,
+        0x5e46458e86e59d3a,
+        0x244d3a264469d8e8,
+        0xbfa78fb5caf3b4d8,
+        0xea78019bd2af0cf5,
+        0x63fcee8330c5b3ae,
+        0xbde9391c871737f0,
+        0x4e85a2ed6eed6e31,
+        0xe3fb4ebff1682f2c,
+        0x9df69ae75276b508,
+        0x24c741ae1f3ffb1a,
+        0x2aa4ee9d7a0910be,
+        0x9f90635745d2b6e7,
+        0xc19126d19639eac6,
+        0x7c5322f10f36650f,
+        0x83268e38747a53e9,
+        0xfa06f61432ad3bce,
+        0x8f5a8c7a8cff1d0f,
+        0xe96ef1ce9c63f61b,
+        0x4c513e983147cf12,
+        0x36479cb1f2ba0723,
+        0x624ebc4cdd376da6,
+        0x9db5e2f25805a3ae,
+        0x0ddca1081c46a550,
+        0x95c3d5762822e811,
+        0x6edecfbe309728eb,
+        0x73f5743aa9303c87,
+        0x6a562fff3b40ee1f,
+        0xd6cbed6d3bd487d6,
+        0x07ccc0d6c6471874,
+        0x45174df516b4ff85,
+        0xa67b49225cc8649b,
+        0x2f804f6005ae012b,
+        0xe6933cf6dcdc49cf,
+        0xf328899a722a9faf,
+        0x36ffa86174d8f6f5,
+        0xe5bab29ae51ed4c1,
+        0x59b76df058365ac6,
+        0x972d74bacc64c711,
+        0x09779a46c38db6d5,
+        0x1a6f3c15bfb97e09,
+        0xb52203caaee41be5,
+        0xc84e158b544d7f71,
+        0x9531ef5d1371c5e5,
+        0xf385495e276c4551,
+        0x97f513bec4362756,
+        0x27768d7bc9709532,
+        0x43bee0b13bdd0caa,
+        0xfe48a914a1029e49,
+        0xa6cfcfce83e73193,
+        0xdf8fe65318192780,
+        0x74e003790765f18f,
+        0xf12e8dd926e1151f,
+        0x327b4603cb374bb5,
+        0x95dee8a2bdcbdfee,
+        0x8b7296770644421b,
+        0x8d7290f42ff7e916,
+        0x208d732859157779,
+        0xfd2c3772b1d3f90c,
+        0x6ba32446d2db172a,
     ],
 )

@@ -60,6 +60,7 @@ fn test_cross_platform_determinism_checksum() {
                 SimScalar::from_num(gy) + SimScalar::HALF,
             ),
             clearance,
+            radius: clearance.radius_scalar(),
         };
 
         if let Ok(res) = pathfinder.find_path(&arena, &request) {
@@ -152,6 +153,7 @@ fn test_performance_quality_gate() {
                 SimScalar::from_num(gy) + SimScalar::HALF,
             ),
             clearance: UnitClearance::Medium,
+            radius: UnitClearance::Medium.radius_scalar(),
         };
 
         if pathfinder.find_path(&arena, &req).is_ok() {

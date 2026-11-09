@@ -722,3 +722,41 @@ by CI on the next push.
 - **Air units.** They do not path, as today.
 - **Cliff jumpers and cliff walkers.** The mesh's triangle tags (D-2) make them possible later.
 - **Ground truth from the real game** through `RequestQueryPathing` (S6). It would need the owner to run the game.
+
+---
+
+## Amendment 1 (Part A, 2026-11-09): orchestrator decision
+
+**Decision.** WP2 and WP3, held under D-12 because player 0's mean total turn at the showcase's ramp E foot rose
+from 114° to 213° (not back at or below 115°), are accepted by the orchestrator (short note, charter §6). Reason:
+both owner-reported defects are fixed (ramp W foot worst walked/chord 1.383 → 1.113 and worst turn 840° → 146°;
+plateau south-east corner 1.500 → 1.078 and 1,070° → 148°); the matrix and battle 33 are bit-identical; the showcase
+winner is unchanged (player 0, tick 1,369 → 1,351); the ramp E walked/chord is unchanged (mean 1.551 → 1.557). The
+ramp E turn rise comes from flockmates jostling in a tighter column (the army reaches ramp E about 20 ticks
+sooner), which is local steering owned by plan [`2026-11-09-friendly-blocking`](2026-11-09-friendly-blocking.md).
+
+**Criterion moved.** D-12's ramp E turn criterion (mean at most 115° for player 0) leaves this plan and becomes part
+of the friendly-blocking plan's acceptance (its Amendment 1). D-12's other stop rules stay.
+
+**Deviations from D-9, recorded under Q0002:**
+- **A3 acts only on parked bodies:** a body that stands still and will not yield (`parked_on_corner` in
+  `movement/locomotion.rs`). With D-9's literal rule, every non-yielding body touching the corner including moving
+  flockmates, the showcase got worse in all three boxes and its winner flipped (player 1 wins at tick 1,464).
+  Moving bodies leave the corner by themselves and are spaced by steering.
+- **A corner with a parked body is handed off only beyond it** (the half-plane test of A2), not when the unit is
+  merely within the handoff distance. Otherwise a unit beside the body heads straight for the next point and is
+  pushed into the gap between the body and the obstacle the corner turns around, where it sticks.
+
+**Checksum schema 22.** The memoryless side rule of D-9 A3 was tried and fails: once the unit stands beside the body,
+the line to the next point no longer cuts the obstacle and the rule picks the inside. The sense in which the unit
+rounds the body is therefore held in `MovementMemory::corner_round` (`i8`), chosen at the first aim and cleared when
+the corner is passed or the route replaced. Recorded first as schema 20 → 21; on the merge with WP13c of the
+deviation-fix plan, which took 21 for `attack_dash_cooldown`, it became 21 → 22. Both goldens and the sandbox
+checksum are re-recorded with their traced causes.
+
+**One commit (R-1).** WP2 and WP3 landed as one commit: with A1 and A2 alone, M-5
+(`route_continues_past_a_blocker_on_its_corner_waypoint`) stalls 12.5 from its goal.
+
+**Register IDs.** The orchestrator's numbering replaces §D-9's: B-99 (corner rewrite and empty-leg handoff), B-100
+(a body parked on a corner), B-101 (tier radius at corners, WP4), B-102 (grid corridor in place of the triangle mesh,
+Part B).
