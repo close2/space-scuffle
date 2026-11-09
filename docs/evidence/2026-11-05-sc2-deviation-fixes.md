@@ -1061,3 +1061,104 @@ Each re-recording reproduces in debug, release, and `wasm32-wasip1` debug and re
 - **B-86:** morph and Zergling pair costs, with the morph model (WP17).
 - **B-87** is fixed by g5; **B-51** and **B-82** are fixed.
 
+
+## 11. WP10: turning follow-ups (B-28, B-29, B-30)
+
+Sources: SC2GameData `5444e12f13`, chain `core → liberty → swarm → void → voidmulti` (catalog-time audit §2.2), and
+the SC2Mapster editor reference for the field semantics ([Data/Weapons/Legacy](https://sc2mapster.wiki.gg/wiki/Data/Weapons/Legacy)
+as in audit §10.3; [Data/Turrets](https://sc2mapster.wiki.gg/wiki/Data/Turrets), read 2026-11-09). Matrix: 20 seeds a
+battle (1000 runs); battle 33: 68 seeds. Directories `~/scratch/sc2dev_wp10/<step>/`; baseline `base` reproduces
+WP9's last matrix bit for bit.
+
+### 11.1 Results
+
+| Step | Commit | Matrix (against the previous step) | Battle 33 | Goldens |
+|---|---|---|---|---|
+| B-29 rule, schema 17 | `91ecbef` | bit-identical | 54 / 7 / 7 | re-recorded for the encoding (§11.5) |
+| B-29 data | `26e3bf6` | 15, 27, 28, 29, 32, 33, 34, 35 moved, no overall winner changed; single-seed winner changes: 32 (2 seeds; 4 / 8 → 4 / 10 wins), 33 (2; 17 / 1 → 18 / 0) | 55 / 6 / 7 (marine survivors 5.29 → 5.53) | re-recorded (§11.5) |
+| Hellion mount | `95a3ce4` | 10 moved (end ticks), winner unchanged | bit-identical | unchanged |
+| Immortal mount | `12dc0ac` | 28, 30 moved (28: survivors 36.75 → 36.95), winners unchanged | bit-identical | unchanged |
+| Colossus mount | `ca6e1e4` | bit-identical | bit-identical | unchanged |
+| Lurker mount | `1abc38b` | bit-identical (battle 21 included) | bit-identical | unchanged |
+| Phoenix mount | `379bf4f` | bit-identical (not spawned) | bit-identical | unchanged |
+| Thor anti-air mount | `b81f8c4` | bit-identical (no air target) | bit-identical | unchanged |
+| B-30 rule, schema 18 | `9b9cc48` | bit-identical | bit-identical | re-recorded for the encoding (§11.5) |
+| B-30 data | `0b91676` | 28 (survivors 36.95 → 37.80), 30 (end ticks) moved, winners unchanged | bit-identical | unchanged |
+
+Expectation failures after every step: 0 on the seeds of record and 0 over all seeds. No battle other than 33 changed
+its overall winner, so nothing was held. Battle 33's expectation `blue (0, 13), red (0, 3)` holds (its 20 matrix seeds
+now span blue 1 to 13, red 0 to 2) and is not re-recorded; its comment's distribution is rewritten in `26e3bf6`.
+
+### 11.2 B-29: two arcs
+
+**Rule.** `Arc` is the angle within which a weapon acquires a target without turning; `ArcSlop` how far outside it
+the target may go before the weapon loses it (audit §10.3). `WeaponSpec` gains `acquire_arc` (catalog
+`acquire_arc_deg`, a required half angle, `0 ≤ acquire ≤ firing_arc_deg`) beside `firing_arc` (the engaged arc,
+`Arc` ÷ 2 + `ArcSlop`), and `Entity` gains `engaged_target`: set when a swing starts, cleared when the weapon works
+against another target or none, or when the target's bearing leaves the engaged arc. A swing against the engaged
+target starts within the engaged arc, against any other within the acquisition arc. Tests in
+`weapon_cadence_tests.rs`: a new target behind a turret is swung at on the call it is faced exactly (16), not on the
+call it enters the engaged 30° (14); a target knocked 45° off is re-acquired exactly (call 24), not at 22.5° (22).
+Both failed on the old rule.
+
+**Data** (`26e3bf6`): `Arc` ÷ 2 for every weapon whose mount matches: 0 where `Arc` is unset (no `CWeapon` default
+sets it, `core` WeaponData:3-31), 180 for the Siege Tank's tank cannon (`voidmulti` WeaponData:5) and the Carrier
+analogue (`liberty` WeaponData:606), 45 for the Planetary Fortress (`liberty` WeaponData:138). Tables
+`SC2_UNIT_ACQUIRE_ARC` and `SC2_STRUCTURE_ACQUIRE_ARC` in `catalog_reference_values_tests.rs`. With an acquisition
+arc of 0 a unit faces a new target exactly before its first swing; the marines of battle 33 gain slightly (one more
+win in 68).
+
+### 11.3 B-28: the six mounts
+
+| Analogue | Block | Now | Turret rate (per tick) | Arcs engaged / acquisition | Source |
+|---|---|---|---|---|---|
+| Hellion | `weapon` | turret | 55.99 | 11.25 / 0 | `liberty` UnitData:11603, TurretData:97 |
+| Immortal | `weapon` | turret | 40.32 | 11.25 / 0 | `liberty` UnitData:10791, TurretData:26, :73 |
+| Colossus | `weapon` | turret | 55.99 | 56.25 / 45 | `liberty` UnitData:4099, TurretData:51, WeaponData:500 |
+| Lurker | `weapon` | turret | 156.79 | 11.25 / 0 | `void` UnitData:775, TurretData:18; `LurkerMP` sets no `Arc` (`swarm` WeaponData:215, `void` :14, `voidmulti` :144) |
+| Phoenix | `air_weapon` | turret | 30.20 | 2.4994 / 2.4994 | `swarm` UnitData:1805, TurretData:33, WeaponData:179-180 |
+| Thor | `air_weapon` | hull | — | 14.0625 / 2.8125 | `liberty` UnitData:5270-5271 (no turret), `void` WeaponData:82 |
+
+**Correction to audit §10.5.** In 5.0.14 the attacking Lurker (`LurkerMPBurrowed`) mounts its weapon on the `Lurker`
+turret (`void` UnitData:775, `YawRate` 2799.8437), not on `FreeRotate` (`liberty` UnitData:797, which `void`
+overrides). Table `SC2_WEAPON_MOUNTS`, test `b28_weapon_mounts_follow_starcraft`, one row added per commit, each red
+before its data.
+
+**Found: B-89.** The Liberator's unit lists a second weapon entry with the `Liberator` turret and no weapon
+(`void` UnitData:3317-3318) besides `LiberatorMissileLaunchers` with none. Whether the anti-air weapon turns on that
+turret cannot be read from the data; it is recorded as B-89 (research), not changed.
+
+### 11.4 B-30: turret idle behaviour
+
+**Rule** (`9b9cc48`). `TurretIdle` from `CTurret` `Idle` and `YawIdleRate`, with the reference's definitions: `Hold`
+keeps the angle; `Reset` turns towards the hull's facing; `ResetIfMoving` and `FollowMovement` do so on a tick the unit
+was displaced; `Spin` turns by its signed rate every tick (positive counter-clockwise, as the game's angles). It acts
+only on a tick the weapon has no target. Hull weapons author `Hold`. Tests: following, resetting and spinning turrets
+failed with the rule's call removed.
+
+**Data** (`0b91676`): Immortal `FollowMovement` 20.16 (`liberty` TurretData:74-75), Colossus `FollowMovement` 5.04
+(:50-52), Missile Turret `Spin` 2.52 (:85-86); every other turret `Hold` (`FreeRotate`, `liberty` TurretData:24;
+the Lurker's own, `void` TurretData:16). Test `b30_turret_idle_follows_starcraft`.
+
+**Not sourced: Q0065.** The `SiegeTank`, `Hellion` and `Phoenix` turrets use `ResetIfMoving` and set no `YawIdleRate`;
+no layer's default sets one (`core` TurretData:3-10) and the reference states none. They hold until the owner answers
+[Q0065](../questions/open/0065-turret-idle-rate.md); B-30 stays open for that part only.
+
+### 11.5 Goldens
+
+- **Schema 17** (`91ecbef`) and **schema 18** (`9b9cc48`): both fixtures and the sandbox checksum re-recorded for the
+  encoding alone; with the new fields left unhashed at the previous schema both fixtures reproduce as recorded.
+- **B-29 data** (`26e3bf6`): `golden_replay` differs from checkpoint index 3 (ticks 151 to 200), `golden_replay_orders`
+  from index 4 (ticks 41 to 50), the first fights; with the acquisition arcs back at the engaged arcs both reproduce
+  as recorded for schema 17.
+
+Each re-recording reproduces in debug, release, and `wasm32-wasip1` debug and release (`wasmtime`).
+
+### 11.6 What WP10 leaves open
+
+- **B-30**, narrowed to the three `ResetIfMoving` return rates (Q0065).
+- **B-89**, the Liberator's turret entry (research).
+- `has_turret` also decides, in our movement code, that a wind-up does not hold the unit and that a turret tracks
+  `current_target` under any order. Turreting the Hellion, Immortal, Colossus, Lurker and Phoenix gives them that
+  behaviour, which the game ties to `AllowedMovement` instead. Recorded as **B-90** for WP13e, beside B-45; no matrix
+  battle moved for it beyond the rows above.
