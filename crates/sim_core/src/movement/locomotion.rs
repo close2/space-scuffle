@@ -29,8 +29,8 @@
 
 use super::grid::BodyGrid;
 use super::math::{
-    checked_dot, checked_normalize, checked_vec_add, checked_vec_scale, checked_vec_sub, direction,
-    distance, within_distance,
+    checked_dot, checked_vec_add, checked_vec_scale, checked_vec_sub, difference_product,
+    direction, distance, within_distance,
 };
 use super::tuning::{
     ABANDONED_TARGET_TICKS, PURSUIT_LEASH_SCAN_RANGES, PURSUIT_ROUTE_DRIFT, REPATH_COOLDOWN_TICKS,
@@ -138,16 +138,17 @@ impl MotionProposal {
         &route[self.remove_prefix.min(route.len())..]
     }
 
-    fn replace_route(&mut self, route: Vec<SimVec2>) {
-        self.clear_route = false;
-        self.remove_prefix = 0;
-        self.replacement = Some(route);
-    }
-
     fn drop_route(&mut self) {
         self.clear_route = true;
         self.replacement = None;
         self.remove_prefix = 0;
+        self.memory.corner_round = 0;
+    }
+
+    /// Consumes the route's first waypoint, forgetting the sense chosen to round a body on it.
+    fn pass_waypoint(&mut self) {
+        self.remove_prefix += 1;
+        self.memory.corner_round = 0;
     }
 
     /// Ends a move order on arrival at `destination`.
@@ -181,6 +182,7 @@ impl MotionProposal {
     ) -> Result<(), MovementMathError> {
         self.clear_route = false;
         self.remove_prefix = 0;
+        self.memory.corner_round = 0;
         if let Some(&first) = waypoints.first() {
             if distance(first, position)? <= ROUTE_START_TOLERANCE {
                 self.remove_prefix = 1;
@@ -464,6 +466,7 @@ fn route_request<'a>(
         start: actor.position,
         goal,
         clearance: UnitClearance::for_radius(policy.radius),
+        radius: policy.radius,
         vision: knowledge.map(|(vision, _)| vision),
         block_unexplored_ramps: false,
         known_structures: knowledge.map(|(_, known)| known.as_slice()),
@@ -529,54 +532,6 @@ fn note_progress(
         memory.stalled_ticks = memory.stalled_ticks.saturating_add(1);
     }
     Ok(memory.stalled_ticks)
-}
-
-/// Replaces a corner someone has parked on with a point the unit can actually walk to.
-///
-/// A route corner hugs the obstacle it turns around, so a body standing on it can only be passed
-/// on the outside of the turn. Stepping the corner outward once, from where the unit first meets
-/// the body, picks that side for good: recomputing it every tick would swap sides as soon as the
-/// unit rounded the body.
-fn sidestep_occupied_corner(
-    context: &StepContext<'_>,
-    pathfinder: &Pathfinder,
-    request: &PathRequestWithVision<'_>,
-    route: &[SimVec2],
-) -> Result<Option<Vec<SimVec2>>, MovementMathError> {
-    let &[first, subsequent, ..] = route else {
-        return Ok(None);
-    };
-    let (body, policy) = (context.body, context.policy);
-    let occupant = context.neighbours.iter().find(|obstacle| {
-        !obstacle.yields_to(body.owner, body.push_priority)
-            && within_distance(
-                obstacle.pos,
-                first,
-                i128::from(policy.radius.raw()) + i128::from(obstacle.radius.raw()),
-            )
-    });
-    let Some(occupant) = occupant else {
-        return Ok(None);
-    };
-    let reach = policy.radius + occupant.radius + WAYPOINT_HANDOFF_MARGIN;
-    if distance(body.pos, first)? > reach {
-        return Ok(None);
-    }
-    let incoming = direction(first, body.pos)?;
-    let outgoing = direction(subsequent, first)?;
-    let outside = checked_normalize(checked_vec_sub(incoming, outgoing)?)?;
-    if outside == SimVec2::ZERO {
-        return Ok(None);
-    }
-    let aim = checked_vec_add(first, checked_vec_scale(outside, reach)?)?;
-    let walkable = policy.permits_segment(context.map, body.pos, aim)
-        && (policy.layer == MovementLayer::Air
-            || pathfinder.segment_is_passable(context.map, request, aim, subsequent));
-    Ok(walkable.then(|| {
-        std::iter::once(aim)
-            .chain(route[1..].iter().copied())
-            .collect()
-    }))
 }
 
 impl SimWorld {
@@ -1224,7 +1179,7 @@ impl MotionDraft<'_> {
             ControlFlow::Continue(on_last_leg) => on_last_leg,
             ControlFlow::Break(()) => return Ok(()),
         };
-        let (next, gap) = self.next_waypoint(&context, scene.pathfinder)?;
+        let (next, gap) = self.next_waypoint(&context)?;
         let routes = &mut scene.movement.route_outcomes;
         if self
             .check_progress(routes, on_last_leg, gap, map_news)?
@@ -1373,30 +1328,29 @@ impl MotionDraft<'_> {
         Ok(ControlFlow::Continue(on_last_leg))
     }
 
-    /// Steps around a body parked on the next corner, and returns the point to step toward and
-    /// its distance from the unit in world units.
+    /// The point to step toward, the route's first waypoint or else the goal, and its distance
+    /// from the unit in world units.
+    ///
+    /// The route is the pathfinder's, never rewritten here: a body parked on a corner is an
+    /// obstacle for steering, as anywhere else on the route (plan `2026-11-09-sc2-pathfinding`
+    /// D-9 A1). When a body is parked on the corner, the unit aims past it on the outside of the
+    /// turn instead ([`aim_past_parked_body`], D-9 A3).
     fn next_waypoint(
         &mut self,
         context: &StepContext<'_>,
-        pathfinder: &Pathfinder,
     ) -> Result<(SimVec2, SimScalar), MovementInvariant> {
         let actor = self.actor;
-        if let Some(route) = sidestep_occupied_corner(
-            context,
-            pathfinder,
-            &self.request,
-            self.proposal.route(actor),
-        )
-        .map_err(self.fault())?
-        {
-            self.proposal.replace_route(route);
-        }
-        let next = self
-            .proposal
-            .route(actor)
-            .first()
-            .copied()
-            .unwrap_or(self.goal);
+        let next = match *self.proposal.route(actor) {
+            [corner, subsequent, ..] => {
+                let mut sense = self.proposal.memory.corner_round;
+                let aim = aim_past_parked_body(context, corner, subsequent, &mut sense)
+                    .map_err(self.fault())?;
+                self.proposal.memory.corner_round = sense;
+                aim.unwrap_or(corner)
+            }
+            [last] => last,
+            [] => self.goal,
+        };
         let gap = distance(actor.position, next).map_err(self.fault())?;
         Ok((next, gap))
     }
@@ -1478,7 +1432,7 @@ impl MotionDraft<'_> {
     fn pass_reached_waypoint(&mut self, next: SimVec2) {
         if self.proposal.position == next && self.proposal.route(self.actor).first() == Some(&next)
         {
-            self.proposal.remove_prefix += 1;
+            self.proposal.pass_waypoint();
         }
     }
 
@@ -1506,7 +1460,7 @@ impl MotionDraft<'_> {
             &mut self.proposal,
         )
         .map_err(self.fault())?;
-        let (next, gap) = self.next_waypoint(&context, scene.pathfinder)?;
+        let (next, gap) = self.next_waypoint(&context)?;
         let routes = &mut scene.movement.route_outcomes;
         if self.check_pursuit_progress(routes, pursuit)?.is_break() {
             return Ok(());
@@ -1606,35 +1560,117 @@ impl MotionDraft<'_> {
     }
 }
 
-/// Whether a unit can walk straight from where it stands to `end` without being stopped by a body
-/// that will not yield. Bodies that do yield are no reason to take a longer way.
-fn leg_is_free_of_bodies(
+/// The body parked on `corner`, if any: a tick-start neighbour standing still that will not step
+/// aside for this unit and touches the corner point with its own radius and the unit's.
+///
+/// A moving body is not parked: it clears the corner by itself, and steering spaces the unit from
+/// it like any other flockmate.
+fn parked_on_corner<'n>(
+    context: &StepContext<'n>,
+    corner: SimVec2,
+) -> Option<&'n SteeringObstacle> {
+    let (body, policy) = (context.body, context.policy);
+    context.neighbours.iter().find(|obstacle| {
+        obstacle.velocity == SimVec2::ZERO
+            && !obstacle.yields_to(body.owner, body.push_priority)
+            && within_distance(
+                obstacle.pos,
+                corner,
+                i128::from(policy.radius.raw()) + i128::from(obstacle.radius.raw()),
+            )
+    })
+}
+
+/// The point a unit steers toward instead of its corner waypoint when a body that will not yield
+/// is parked on that corner ([`parked_on_corner`]), or `None` when no body is, the geometry is
+/// degenerate, or terrain refuses the step toward it. Positions are world units.
+///
+/// A corner hugs the obstacle it turns around, so a body parked on it can only be passed on the
+/// outside of the turn (plan `2026-11-09-sc2-pathfinding` D-9 A3). The aim is the tangent point,
+/// seen from the unit, of the circle around the body of radius `r_body + r_self +`
+/// [`WAYPOINT_HANDOFF_MARGIN`]; inside that circle it is a point along the circle's tangent at
+/// the unit, one circle radius away.
+///
+/// Of the two candidates, the first aim is the one further onto the corner's side of the line
+/// from the unit to the next waypoint `subsequent`. Before the corner, that line cuts the
+/// obstacle and the corner lies between the line and the outside of the turn, so that candidate
+/// is on the outside. Its sense round the body is then kept in `sense` (`1` counter-clockwise,
+/// `-1` clockwise; [`MovementMemory::corner_round`]) and every later aim takes the candidate of
+/// that sense: once the unit is beside the body the line no longer cuts the obstacle, and the
+/// side rule would send it back. The route is never written: this is a steering aim.
+fn aim_past_parked_body(
     context: &StepContext<'_>,
-    end: SimVec2,
-) -> Result<bool, MovementMathError> {
-    let body = context.body;
-    let length = distance(body.pos, end)?;
-    let along = direction(end, body.pos)?;
-    for obstacle in context.neighbours {
-        if obstacle.yields_to(body.owner, body.push_priority) {
-            continue;
-        }
-        let offset = checked_vec_sub(obstacle.pos, body.pos)?;
-        let reach = checked_dot(offset, along)?.clamp(SimScalar::ZERO, length);
-        let nearest = checked_vec_add(body.pos, checked_vec_scale(along, reach)?)?;
-        let touching = i128::from(body.radius.raw()) + i128::from(obstacle.radius.raw());
-        if within_distance(nearest, obstacle.pos, touching) {
-            return Ok(false);
-        }
+    corner: SimVec2,
+    subsequent: SimVec2,
+    sense: &mut i8,
+) -> Result<Option<SimVec2>, MovementMathError> {
+    let (body, policy) = (context.body, context.policy);
+    let Some(occupant) = parked_on_corner(context, corner) else {
+        return Ok(None);
+    };
+    let away = direction(body.pos, occupant.pos)?;
+    if away == SimVec2::ZERO {
+        return Ok(None);
     }
-    Ok(true)
+    let reach = policy.radius + occupant.radius + WAYPOINT_HANDOFF_MARGIN;
+    let normal = SimVec2::new(-away.y, away.x);
+    let gap = distance(body.pos, occupant.pos)?;
+    let (base, lateral) = if gap > reach {
+        let cosine = reach
+            .checked_div(gap)
+            .ok_or(MovementMathError::Unrepresentable)?;
+        let sine = SimScalar::ONE
+            .checked_sub(cosine.saturating_mul(cosine))
+            .ok_or(MovementMathError::Unrepresentable)?
+            .sqrt()
+            .map_err(|_| MovementMathError::Unrepresentable)?;
+        let base = checked_vec_add(
+            occupant.pos,
+            checked_vec_scale(away, reach.saturating_mul(cosine))?,
+        )?;
+        (base, checked_vec_scale(normal, reach.saturating_mul(sine))?)
+    } else {
+        (body.pos, checked_vec_scale(normal, reach)?)
+    };
+    // `normal` turns `away` a quarter counter-clockwise, so `base + lateral` lies
+    // counter-clockwise round the body from the unit.
+    let counter_clockwise = checked_vec_add(base, lateral)?;
+    let clockwise = checked_vec_sub(base, lateral)?;
+    if *sense == 0 {
+        let along = direction(subsequent, body.pos)?;
+        let side = difference_product(along, corner, body.pos, true)?.signum();
+        if side == 0 || along == SimVec2::ZERO {
+            return Ok(None);
+        }
+        let onto_corner_side =
+            |point: SimVec2| difference_product(along, point, body.pos, true).map(|v| v * side);
+        *sense = if onto_corner_side(counter_clockwise)? >= onto_corner_side(clockwise)? {
+            1
+        } else {
+            -1
+        };
+    }
+    let aim = if *sense > 0 {
+        counter_clockwise
+    } else {
+        clockwise
+    };
+    Ok(policy
+        .permits_segment(context.map, body.pos, aim)
+        .then_some(aim))
 }
 
 /// Drops leading waypoints the unit no longer needs to touch.
 ///
-/// A corner is a means of reaching the next point. Once that point is in clear view from here,
-/// and the unit is near the corner or already past it, the corner has done its work. Being near is
-/// measured in body widths because another unit may stand exactly on the corner.
+/// A corner is a means of reaching the next point. Once that point is in terrain view from here,
+/// and the unit is near the corner or already beyond it (in the half-plane past the corner along
+/// the next leg), the corner has done its work. Being near is measured in body widths because
+/// another unit may stand exactly on the corner. Bodies on the next leg do not keep the corner:
+/// they are steering's to avoid, and a unit pushed past its corner must not turn back to it
+/// (plan `2026-11-09-sc2-pathfinding` D-9 A2). A corner with a body parked on it is passed only
+/// beyond it: until then the unit rounds the body on the outside ([`aim_past_parked_body`]), and
+/// heading straight for the next point from beside the body would push it into the gap between
+/// the body and the obstacle the corner turns around.
 fn drop_passed_waypoints(
     context: &StepContext<'_>,
     pathfinder: &Pathfinder,
@@ -1653,16 +1689,17 @@ fn drop_passed_waypoints(
                 checked_vec_sub(actor.position, first)?,
                 checked_vec_sub(subsequent, first)?,
             )? >= SimScalar::ZERO;
-        if gap > handoff && !past {
+        let near = gap <= handoff && parked_on_corner(context, first).is_none();
+        if !near && !past {
             break;
         }
         let in_view = policy.permits_segment(map, actor.position, subsequent)
             && (policy.layer == MovementLayer::Air
                 || pathfinder.segment_is_passable(map, request, actor.position, subsequent));
-        if !in_view || !leg_is_free_of_bodies(context, subsequent)? {
+        if !in_view {
             break;
         }
-        proposal.remove_prefix += 1;
+        proposal.pass_waypoint();
     }
     Ok(())
 }

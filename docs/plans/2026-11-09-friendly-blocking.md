@@ -584,3 +584,13 @@ Nothing here is accepted as a deviation by being left out.
 These stay with the deviation plan's WP16. The path search, corridor and clearance stay with plan
 `2026-11-09-sc2-pathfinding`. Patch 5.0.15's Thor and Siege Tank allied push priority is after our patch of record
 and is recorded only.
+
+---
+
+## Amendment 1 (2026-11-09): showcase ramp E turning moves here from the pathfinding plan
+
+Orchestrator decision recorded in plan [`2026-11-09-sc2-pathfinding`](2026-11-09-sc2-pathfinding.md), Amendment 1:
+this plan's acceptance (§7) also requires that player 0's mean total turn at the showcase's ramp E foot be at most
+115°, measured with `route_trace` (`crates/sim_core/examples/route_trace.rs`, default boxes) as in
+[`docs/evidence/2026-11-09-sc2-pathfinding.md`](../evidence/2026-11-09-sc2-pathfinding.md). After that plan's
+WP2+WP3 it is 213°, from flockmates jostling in a tighter column: local steering, which this plan owns.

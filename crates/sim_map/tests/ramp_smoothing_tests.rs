@@ -45,6 +45,7 @@ fn f9_real_map_routes_stay_legal_across_ramps() -> TestResult {
                         start: centre(start.0, start.1),
                         goal: centre(goal.0, goal.1),
                         clearance,
+                        radius: clearance.radius_scalar(),
                     };
                     let Ok(route) = pathfinder.find_path(&map, &request) else {
                         continue;

@@ -50,7 +50,8 @@ use std::collections::BTreeMap;
 /// Schema 19 adds each weapon's random delay range and each unit's carried delay (B-3).
 /// Schema 20 adds each unit's barrier window, absorption left and cooldown (B-41).
 /// Schema 21 adds each unit's attack dash cooldown (B-43).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 21;
+/// Schema 22 adds the sense in which each unit rounds a body parked on its next corner (B-100).
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 22;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

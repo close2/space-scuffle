@@ -166,6 +166,7 @@ proptest! {
             start: centre(start.0, start.1),
             goal: centre(goal.0, goal.1),
             clearance: tier(tier_index),
+            radius: (tier(tier_index)).radius_scalar(),
         };
         if let Ok(path) = pathfinder.find_path(&map, &request) {
             prop_assert_eq!(path.waypoints.first(), Some(&request.start));
@@ -199,11 +200,13 @@ proptest! {
             start: centre(start.0, start.1),
             goal: centre(goal.0, goal.1),
             clearance,
+            radius: clearance.radius_scalar(),
         };
         let backward = PathRequest {
             start: forward.goal,
             goal: forward.start,
             clearance,
+            radius: clearance.radius_scalar(),
         };
         prop_assert_eq!(
             pathfinder.find_path(&map, &forward).is_ok(),
@@ -224,11 +227,13 @@ proptest! {
             start: centre(first.0, first.1),
             goal: centre(second.0, second.1),
             clearance: UnitClearance::Small,
+            radius: UnitClearance::Small.radius_scalar(),
         };
         let target = PathRequest {
             start: distraction.goal,
             goal: distraction.start,
             clearance: UnitClearance::Medium,
+            radius: UnitClearance::Medium.radius_scalar(),
         };
         let _discarded = reused.find_path(&map, &distraction);
         let after_reuse = reused.find_path(&map, &target);

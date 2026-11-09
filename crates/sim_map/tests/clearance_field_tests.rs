@@ -49,6 +49,7 @@ fn route_exists(map: &GameMap, from: (u32, u32), to: (u32, u32), clearance: Unit
                 start: centre(from.0, from.1),
                 goal: centre(to.0, to.1),
                 clearance,
+                radius: clearance.radius_scalar(),
             },
         )
         .is_ok()
@@ -184,6 +185,7 @@ fn m8_known_structures_block_symmetrically() -> TestResult {
                     start: centre(goal.0, 1),
                     goal: centre(goal.0, goal.1),
                     clearance: UnitClearance::Large,
+                    radius: UnitClearance::Large.radius_scalar(),
                 },
             )
             .is_ok()
@@ -242,6 +244,7 @@ fn f7_no_tier_passes_between_structures_touching_at_a_corner() -> TestResult {
             start: centre(3, 18),
             goal: centre(18, 3),
             clearance,
+            radius: clearance.radius_scalar(),
         };
         assert!(
             matches!(
@@ -272,6 +275,7 @@ fn f7_diagonal_segment_between_touching_structures_is_rejected() -> TestResult {
         start: centre(5, 5),
         goal: centre(6, 6),
         clearance: UnitClearance::Small,
+        radius: UnitClearance::Small.radius_scalar(),
     };
     assert!(!pathfinder.segment_is_passable(&map, &request.into(), request.start, request.goal));
     Ok(())

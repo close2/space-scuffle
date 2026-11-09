@@ -1003,6 +1003,7 @@ impl ValidationContext<'_> {
                     start: pos_a,
                     goal: pos_b,
                     clearance: VALIDATION_PATH_CLEARANCE,
+                    radius: VALIDATION_PATH_CLEARANCE.radius_scalar(),
                 };
 
                 if pathfinder.find_path(map, &req).is_err() {
