@@ -149,6 +149,27 @@ pub fn apply_card_action(action: &CardAction, queued: bool, ctx: &mut CardContex
             report(result, queue);
         }
         CardAction::Mode(mode) => *ctx.mode = *mode,
+        CardAction::SwitchMode { mode, direction } => {
+            let (viewer, selection, model) = (ctx.viewer, ctx.selection, ctx.model);
+            let (world, queue) = ctx.session.world_and_commands();
+            let result = world.ok_or(SubmissionError::NotReady).and_then(|world| {
+                let labels = model
+                    .catalog
+                    .mode(*mode)
+                    .ok_or(SubmissionError::EmptySelection)?;
+                queue
+                    .submit_mode_switch(
+                        world,
+                        viewer,
+                        selection,
+                        &labels.mode_name,
+                        *direction,
+                        queued,
+                    )
+                    .map(|_| ())
+            });
+            report(result, queue);
+        }
         CardAction::Train(unit_type) => {
             let unit_type = *unit_type;
             let structure = ctx.shortest_queue(|structure| structure.trains.contains(&unit_type));

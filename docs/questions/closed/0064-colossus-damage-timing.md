@@ -51,3 +51,10 @@ spines (0.125 Normal s apart, B-85) also need.
 **Engine insight:** Keep Option 1 for the Colossus: its `ThermalLances` sweep takes only ~`0.25` Normal seconds across the target line, so resolving both strikes and the sweep on the weapon's release tick (after its `0.0832` Normal s damage point) is clean and avoids fragile guesses about how `swarm`'s `ExpireDelay` (`0.73`) and `TargetPoint` interact with `ThermalLancesDamageDelay` (`0.25`).
 
 **Note on `B-85` (Lurker spines):** Unlike the near-instant Colossus beam, the Lurker's subterranean spines travel outward across the ground with `0.125` Normal s (`2 ticks`) between successive spine searches along the line, which noticeably allows fast-moving units at the far end of the line to dodge in SC2. Feel free to space the Lurker's line searches in time (`B-85`) while keeping the Colossus instant.
+
+## Resolution
+
+2026-11-09. Option 1 for the Colossus: no change, its strikes and sweep land on the release tick; B-81's and B-85's
+Colossus parts are closed. The Lurker's spine spacing (2 ticks, which the answer allows) is not done in this round:
+it needs the Lurker's line, which is held (Q0063's resolution), and pending per-unit state; B-85 stays open for it.
+Plan `2026-11-05-sc2-deviation-fixes` Amendment 22 records it; evidence `2026-11-05-sc2-deviation-fixes.md` §17.

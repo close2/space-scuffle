@@ -898,6 +898,10 @@ struct SplashSpecDef {
     shape: SplashShapeDef,
     #[serde(default)]
     friendly_fire: bool,
+    /// Whether the area is centred on the target's edge facing the attacker (see
+    /// [`SplashSpec::offset_by_unit_radius`]); `false` when omitted.
+    #[serde(default)]
+    offset_by_unit_radius: bool,
 }
 
 /// An authored splash shape (see [`SplashShape`]).
@@ -1030,6 +1034,10 @@ struct WeaponSpecDef {
     /// its data adds one.
     #[serde(default)]
     followup_max_distance: Option<f32>,
+    /// Whether the burst effect is channeled (see [`WeaponSpec::channeled`]). Omitted reads as
+    /// `false`, the engine default: no `CEffectCreatePersistent` default sets the flag.
+    #[serde(default)]
+    channeled: bool,
     period_ticks: u16,
     damage_point_ticks: u16,
     backswing_ticks: u16,
@@ -1228,6 +1236,7 @@ impl UnitArchetypeDef {
             attacks_count: w.attacks_count,
             strike_interval_ticks: w.strike_interval_ticks,
             followup_max_distance: w.followup_max_distance.map(SimScalar::from_f32_lossy),
+            channeled: w.channeled,
             period_ticks: w.period_ticks,
             damage_point_ticks: w.damage_point_ticks,
             backswing_ticks: w.backswing_ticks,
@@ -1244,6 +1253,7 @@ impl UnitArchetypeDef {
                     .collect(),
                 shape: s.shape.resolve(),
                 friendly_fire: s.friendly_fire,
+                offset_by_unit_radius: s.offset_by_unit_radius,
             }),
             projectile_speed: w.projectile_speed.map(SimScalar::from_f32_lossy),
             weapon_class,

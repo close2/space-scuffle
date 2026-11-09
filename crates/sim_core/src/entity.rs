@@ -14,7 +14,7 @@ use crate::weapon_timing::{combined_attack_rate, AttackRate, InvalidBuffAttackRa
 use sim_types::{
     AbilityEffectSpec, AnimState, AttackDashSpec, AttackOrigin, BarrierSpec, EntityId, MoverType,
     OverclockSpec, PlayerId, ResourceKind, ResourceNodeId, ShapeKind, SimAngle, SimScalar, SimVec2,
-    Tick, UnitOrder, UnitTypeId,
+    Tick, UnitModeSpec, UnitOrder, UnitTypeId,
 };
 use std::collections::VecDeque;
 
@@ -121,6 +121,9 @@ pub struct PendingStrikes {
     pub remaining: u8,
     /// Ticks until the next strike lands, at least 1 between ticks.
     pub ticks_until_next: u16,
+    /// Whether the weapon's burst is channeled ([`sim_types::WeaponSpec::channeled`]): an
+    /// explicit order that replaces the attacker's orders ends it (Q0058).
+    pub channeled: bool,
 }
 
 /// An active timed buff or debuff affecting unit stats.
@@ -581,6 +584,20 @@ impl Entity {
         self.is_mineral_walking = false;
     }
 
+    /// Replaces this unit's orders after a mode switch given without Shift: the queue empties
+    /// and Hold Position ends, as a `Stop` replaces them, but the weapon keeps its phase.
+    ///
+    /// `StarCraft` II's morphs (Siege Mode, the Lurker's burrow) are not `Transient`, so a
+    /// non-queued one replaces the unit's orders; a `Transient` ability such as Stimpack does
+    /// not (`liberty` AbilData:1231; plan `2026-11-09-client-mode-commands` D-6a). The caller
+    /// has already cleared velocity and funnel waypoints when the cast committed.
+    pub(crate) fn replace_orders_after_mode_switch(&mut self) {
+        self.movement.restart();
+        self.abandon_task_leg();
+        self.order_queue.clear();
+        self.is_holding_position = false;
+    }
+
     /// Handles player move/stop input during combat, executing SC2 backswing cancellation.
     fn handle_interrupting_move(&mut self, move_pos: SimVec2) {
         match self.weapon_phase {
@@ -659,6 +676,7 @@ impl Entity {
 
         self.movement.restart();
         self.abandon_task_leg();
+        self.end_channeled_burst_for(&order);
         match order {
             UnitOrder::Move { target } => {
                 self.handle_interrupting_move(target);
@@ -701,6 +719,24 @@ impl Entity {
                 self.current_funnel_waypoints.clear();
                 self.is_holding_position = false;
             }
+        }
+    }
+
+    /// Ends a pending channeled burst that `order`, replacing this unit's orders, interrupts.
+    ///
+    /// In `StarCraft` II a multi-strike weapon whose burst effect sets `Channeled` (the
+    /// Zealot's `PsiBladesBurst`, `liberty` EffectData:1924) channels it under the attack order,
+    /// so any explicit order that replaces that order between the strikes cancels the strikes
+    /// still to land (owner answer to Q0058). Only an attack on the burst's own target keeps it.
+    /// A burst that is not channeled (the Viking's `LanzerTorpedoes`) always runs to its end.
+    fn end_channeled_burst_for(&mut self, order: &UnitOrder) {
+        let Some(pending) = &self.pending_strikes else {
+            return;
+        };
+        let keeps =
+            matches!(order, UnitOrder::AttackTarget { target, .. } if *target == pending.target_id);
+        if pending.channeled && !keeps {
+            self.pending_strikes = None;
         }
     }
 
@@ -941,6 +977,54 @@ impl Entity {
         self.is_cloaked = false;
         self.siege_weapon = None;
         self.is_sieged = false;
+    }
+
+    /// The mode this unit is in or, while it channels a switch, the mode it will be in when the
+    /// channel ends; `None` for the archetype's default stance. `archetype` must be this unit's.
+    ///
+    /// Reads `active_mode`, `channeling_remaining_ticks` and `pending_ability` exactly as the end
+    /// of a channel resolves them (`upkeep_entity`, then [`Self::apply_mode_transition`]): a
+    /// pending `SwitchMode` of the active mode settles in no mode, a pending `SwitchMode` of any
+    /// other declared mode settles in that mode, a pending index the archetype lacks settles in
+    /// no mode, and any other pending effect leaves the stance as it is. Read-only, so the
+    /// client's command card and its admission share the simulation's rule (plan
+    /// `2026-11-09-client-mode-commands` D-3).
+    #[must_use]
+    pub fn settled_mode<'a>(&self, archetype: &'a UnitArchetype) -> Option<&'a UnitModeSpec> {
+        let active = self.active_mode.as_deref();
+        let settled = match self.pending_ability {
+            Some((index, _, _)) if self.channeling_remaining_ticks > 0 => {
+                match archetype.abilities.get(usize::from(index)) {
+                    Some(ability) => match &ability.effect {
+                        AbilityEffectSpec::SwitchMode { mode_name }
+                            if archetype.get_mode(mode_name).is_some() =>
+                        {
+                            (active != Some(mode_name.as_str())).then_some(mode_name.as_str())
+                        }
+                        _ => active,
+                    },
+                    None => None,
+                }
+            }
+            _ => active,
+        };
+        settled.and_then(|name| archetype.get_mode(name))
+    }
+
+    /// Whether this unit will be anchored once its current channel, if any, has ended.
+    /// `archetype` must be this unit's.
+    ///
+    /// A unit that does not channel is anchored exactly when `is_immobile`; a channelling unit
+    /// by its [`Self::settled_mode`], or by the archetype's default stance without one.
+    #[must_use]
+    pub fn immobile_after_channel(&self, archetype: &UnitArchetype) -> bool {
+        if self.channeling_remaining_ticks == 0 {
+            return self.is_immobile;
+        }
+        self.settled_mode(archetype).map_or_else(
+            || archetype.is_immobile_by_default(),
+            |mode| mode.is_immobile,
+        )
     }
 
     /// The sieged weapon replacing the archetype's ground weapon, if one is active.

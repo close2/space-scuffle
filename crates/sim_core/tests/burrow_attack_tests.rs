@@ -50,6 +50,7 @@ fn spines() -> WeaponSpec {
         attacks_count: 1,
         strike_interval_ticks: 0,
         followup_max_distance: None,
+        channeled: false,
         period_ticks: 10,
         damage_point_ticks: 1,
         backswing_ticks: 1,
@@ -121,6 +122,7 @@ fn register_burrower(world: &mut SimWorld, cast: u16, leave: u16) -> UnitTypeId 
             effect: AbilityEffectSpec::SwitchMode {
                 mode_name: MODE.to_string(),
             },
+            leave_name: None,
         }];
     })
 }
@@ -296,8 +298,13 @@ fn b42_the_lurker_analogue_attacks_only_burrowed() {
         "unburrowed it has no weapon (liberty UnitData:690-758)"
     );
     let mode = arch.get_mode("burrowed").expect("a burrowed mode");
-    // 2.5 Normal s x 25 / 1.4 = 44.64; 0.625 -> 11.16; 0.25 -> 4.4643.
-    assert_eq!(mode.cast_ticks, 45, "void AbilData:152 Actor 2.5");
+    // The weapon and the cloak arrive at the end of the morph's Stats section, 1.8332 Normal s
+    // (owner answer to Q0069) x 25 / 1.4 = 32.74; 0.625 -> 11.16; 0.25 -> 4.4643. The Actor
+    // section (2.5 s, 45 ticks) is the burrow animation only.
+    assert_eq!(
+        mode.cast_ticks, 33,
+        "swarm AbilData:1654-1674, void :149-155: Stats delay 1.8332"
+    );
     assert_eq!(
         mode.leave_cast_ticks, 11,
         "voidmulti AbilData:187 Actor 0.625"

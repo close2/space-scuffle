@@ -31,9 +31,10 @@ use sim_types::{
     CommandOptionView, CommandSubject, EntityId, OptionLock, PlayerView, UnitOrder, UnitTypeId,
 };
 
-use super::catalog::ArchetypeCommands;
+use super::catalog::{ArchetypeCommands, ModeCommand, ModeId};
 use super::model::{HudModel, SelectedFact};
 use crate::battle_input::command_mode::CommandMode;
+use crate::battle_pipeline::commands::ModeDirection;
 use crate::input_bindings::{
     COMMAND_CARD_KEYS, COMMAND_CARD_KEY_LABELS, COMMAND_CARD_SLOTS, HOLD_POSITION_KEY,
     HOLD_POSITION_KEY_LABEL, STOP_KEY, STOP_KEY_LABEL,
@@ -61,6 +62,13 @@ pub enum CardAction {
     Order(UnitOrder),
     /// Enter a targeted mode.
     Mode(CommandMode),
+    /// Switch the selected units that can into or out of a unit mode (Siege Mode, Burrow).
+    SwitchMode {
+        /// The unit mode.
+        mode: ModeId,
+        /// Into it or out of it.
+        direction: ModeDirection,
+    },
     /// Train at the selected capable structure with the shortest queue.
     Train(UnitTypeId),
     /// Research the upgrade with this catalog ID at the selected capable structure with the
@@ -154,6 +162,13 @@ pub enum CardLabel {
     Unload,
     /// Cancel a foundation.
     CancelBuild,
+    /// A unit mode's enter or leave command, named by the catalog.
+    Mode {
+        /// The unit mode.
+        mode: ModeId,
+        /// Which of its two commands.
+        direction: ModeDirection,
+    },
     /// Stop.
     Stop,
     /// Hold position.
@@ -177,7 +192,12 @@ pub enum CardLock {
     NoMedia,
     /// The ability needs this upgrade first, if the catalog names one.
     NeedsResearch(Option<u32>),
+    /// Every unit that could take the command is switching a mode now.
+    Transforming,
 }
+
+/// Tooltip of a mode entry whose units are all switching.
+pub const TRANSFORMING_TEXT: &str = "Transforming";
 
 /// What a slot costs, for its tooltip.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -346,6 +366,84 @@ fn overclock_entry(model: &HudModel, facts: &[SelectedFact]) -> Option<CardEntry
     })
 }
 
+/// The selected units that hold a command for `mode`, with that command.
+fn mode_holders<'a>(
+    model: &'a HudModel,
+    facts: &'a [SelectedFact],
+    mode: ModeId,
+) -> impl Iterator<Item = (&'a SelectedFact, ModeCommand)> + 'a {
+    facts
+        .iter()
+        .filter(|fact| !fact.foundation)
+        .filter_map(move |fact| {
+            let archetype = model.catalog.archetype(fact.unit_type)?;
+            let command = archetype
+                .modes
+                .iter()
+                .find(|command| command.mode == mode)?;
+            Some((fact, *command))
+        })
+}
+
+/// Which way `fact` switches `command`'s mode, and whether it is channelling now, from the view.
+fn mode_side(model: &HudModel, fact: &SelectedFact, command: ModeCommand) -> (ModeDirection, bool) {
+    let states = &model.view.mode_states;
+    let state = states
+        .binary_search_by_key(&fact.id, |state| state.entity)
+        .ok()
+        .map(|index| states[index]);
+    let settles_in_mode = state.is_some_and(|state| state.settled_mode == Some(command.mode_index));
+    let direction = if settles_in_mode {
+        ModeDirection::Leave
+    } else {
+        ModeDirection::Enter
+    };
+    (direction, state.is_some_and(|state| state.channeling))
+}
+
+/// The entry of `mode` in `direction`, if a selected unit would switch that way.
+///
+/// Locked by research when every contributor's ability is locked, and as transforming when
+/// every unlocked contributor is channelling (D-8 of the plan: shown, not hidden).
+fn mode_entry(
+    model: &HudModel,
+    facts: &[SelectedFact],
+    mode: ModeId,
+    direction: ModeDirection,
+) -> Option<CardEntry> {
+    let locks = &model.view.ability_locks;
+    let contributors = || {
+        mode_holders(model, facts, mode).filter_map(|(fact, command)| {
+            let (side, channeling) = mode_side(model, fact, command);
+            let locked = locks
+                .binary_search(&sim_types::AbilityLockView {
+                    unit_type: fact.unit_type,
+                    ability_index: command.ability_index,
+                })
+                .is_ok();
+            (side == direction).then_some((command, locked, channeling))
+        })
+    };
+    let (first, _, _) = contributors().next()?;
+    let lock = if contributors().all(|(_, locked, _)| locked) {
+        Some(CardLock::NeedsResearch(first.unlock))
+    } else if contributors()
+        .filter(|(_, locked, _)| !locked)
+        .all(|(_, _, channeling)| channeling)
+    {
+        Some(CardLock::Transforming)
+    } else {
+        None
+    };
+    Some(CardEntry {
+        lock,
+        ..CardEntry::free(
+            CardAction::SwitchMode { mode, direction },
+            CardLabel::Mode { mode, direction },
+        )
+    })
+}
+
 /// Calls `emit` with each root entry, in the order of the card's table.
 fn root_entries(model: &HudModel, facts: &[SelectedFact], mut emit: impl FnMut(CardEntry)) {
     let view = &model.view;
@@ -354,6 +452,16 @@ fn root_entries(model: &HudModel, facts: &[SelectedFact], mut emit: impl FnMut(C
             CardAction::Mode(CommandMode::AttackMove),
             CardLabel::Attack,
         ));
+    }
+    // Mode entries follow Attack, by mode, the enter entry of a mode before its leave entry.
+    if completed(model, facts).any(|archetype| !archetype.modes.is_empty()) {
+        for mode in model.catalog.mode_ids() {
+            for direction in [ModeDirection::Enter, ModeDirection::Leave] {
+                if let Some(entry) = mode_entry(model, facts, mode, direction) {
+                    emit(entry);
+                }
+            }
+        }
     }
     if completed(model, facts).any(|archetype| !archetype.raises.is_empty()) {
         emit(CardEntry::free(CardAction::OpenBuildMenu, CardLabel::Build));
@@ -447,6 +555,15 @@ fn label_text(label: CardLabel, model: &HudModel) -> &str {
         CardLabel::Overclock => "Overclock",
         CardLabel::Unload => "Unload",
         CardLabel::CancelBuild => "Cancel build",
+        CardLabel::Mode { mode, direction } => {
+            model
+                .catalog
+                .mode(mode)
+                .map_or("", |labels| match direction {
+                    ModeDirection::Enter => labels.enter.as_str(),
+                    ModeDirection::Leave => labels.leave.as_str(),
+                })
+        }
         CardLabel::Stop => "Stop",
         CardLabel::Hold => "Hold",
         CardLabel::Unit(unit_type) => model.catalog.label(unit_type),
@@ -462,6 +579,7 @@ fn label_text(label: CardLabel, model: &HudModel) -> &str {
 fn write_lock(tooltip: &mut String, lock: CardLock, model: &HudModel) {
     let _ = match lock {
         CardLock::NoMedia => tooltip.write_str(NO_MEDIA_TEXT),
+        CardLock::Transforming => tooltip.write_str(TRANSFORMING_TEXT),
         CardLock::Option(OptionLock::MissingStructure(unit_type)) => {
             write!(tooltip, "Requires {}", model.catalog.label(unit_type))
         }
@@ -657,6 +775,7 @@ pub fn refresh_command_card(
 mod tests {
     use super::super::catalog::CommandCatalog;
     use super::*;
+    use crate::battle_pipeline::commands::ModeDirection;
     use sim_core::entity::Cargo;
     use sim_core::{SimWorld, UnitArchetype};
     use sim_map::{CliffLevel, GameMap, MapCell, ResourceKind};
@@ -1212,6 +1331,204 @@ mod tests {
             card.text[0].caption.ends_with('!'),
             "an unchanged slot keeps its text"
         );
+        Ok(())
+    }
+    // --- Mode entries (plan `2026-11-09-client-mode-commands` D-8) ------------------------------
+
+    /// A unit of `ME` whose archetype holds a mode command and is armed by default exactly when
+    /// `armed`; found by capability.
+    fn mode_unit(world: &mut SimWorld, armed: bool) -> Outcome<EntityId> {
+        unit_where(world, |a| {
+            crate::battle_pipeline::commands::is_armed(a) == armed
+                && a.abilities.iter().any(|ability| {
+                    crate::battle_pipeline::commands::mode_of_ability(a, ability).is_some()
+                })
+        })
+    }
+
+    /// The mode command of `unit`'s archetype.
+    fn command_of(model: &HudModel, world: &SimWorld, unit: EntityId) -> Outcome<ModeCommand> {
+        Ok(*model
+            .catalog
+            .archetype(world.entities[&unit].unit_type_id)
+            .and_then(|archetype| archetype.modes.first())
+            .ok_or("a mode command")?)
+    }
+
+    /// Switches `unit` with its ability 0 (the shipped mode units' only ability) and steps until
+    /// the channel ends.
+    fn switch(world: &mut SimWorld, unit: EntityId) {
+        assert!(world.execute_ability(unit, 0, None, None));
+        while world.entities[&unit].channeling_remaining_ticks > 0 {
+            let tick = world.current_tick;
+            world.step(&sim_types::TickBundle {
+                tick: Tick(tick),
+                commands: Vec::new(),
+                state_checksum: None,
+            });
+        }
+    }
+
+    fn mode_label(mode: ModeId, direction: ModeDirection) -> CardLabel {
+        CardLabel::Mode { mode, direction }
+    }
+
+    #[test]
+    fn a_tank_shows_siege_mode_after_attack_then_tank_mode_on_the_same_key() -> TestResult {
+        let mut world = flat_world()?;
+        let tank = mode_unit(&mut world, true)?;
+        let model = model_of(&world, &[]);
+        let mode = command_of(&model, &world, tank)?.mode;
+        let card = card_for(&world, &[tank]);
+        assert_eq!(
+            labels(&card),
+            [CardLabel::Attack, mode_label(mode, ModeDirection::Enter)]
+        );
+        let enter = card.slots[1].as_ref().ok_or("slot")?;
+        assert_eq!(enter.key, COMMAND_CARD_KEYS[1]);
+        assert_eq!(
+            enter.action,
+            CardAction::SwitchMode {
+                mode,
+                direction: ModeDirection::Enter
+            }
+        );
+        let ability = world
+            .catalog
+            .get(world.entities[&tank].unit_type_id)?
+            .abilities[0]
+            .clone();
+        assert!(card.text[1].caption.ends_with(ability.name.as_str()));
+
+        switch(&mut world, tank);
+        let card = card_for(&world, &[tank]);
+        assert_eq!(
+            labels(&card),
+            [CardLabel::Attack, mode_label(mode, ModeDirection::Leave)]
+        );
+        assert_eq!(
+            card.slots[1].as_ref().ok_or("slot")?.key,
+            COMMAND_CARD_KEYS[1]
+        );
+        let leave = ability.leave_name.ok_or("a leave name")?;
+        assert!(
+            card.text[1].caption.ends_with(leave.as_str()),
+            "labels from data"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_mixed_selection_shows_both_directions_in_order() -> TestResult {
+        let mut world = flat_world()?;
+        let sieged = mode_unit(&mut world, true)?;
+        let fresh = mode_unit(&mut world, true)?;
+        switch(&mut world, sieged);
+        let mode = command_of(&model_of(&world, &[]), &world, sieged)?.mode;
+        let card = card_for(&world, &[sieged, fresh]);
+        assert_eq!(
+            labels(&card),
+            [
+                CardLabel::Attack,
+                mode_label(mode, ModeDirection::Enter),
+                mode_label(mode, ModeDirection::Leave)
+            ]
+        );
+        assert_eq!(
+            card.slots[2].as_ref().ok_or("slot")?.key,
+            COMMAND_CARD_KEYS[2]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_unit_armed_only_in_its_mode_shows_its_switch_first_and_no_attack() -> TestResult {
+        let mut world = flat_world()?;
+        let lurker = mode_unit(&mut world, false)?;
+        let mode = command_of(&model_of(&world, &[]), &world, lurker)?.mode;
+        let card = card_for(&world, &[lurker]);
+        assert_eq!(labels(&card), [mode_label(mode, ModeDirection::Enter)]);
+        assert_eq!(
+            card.slots[0].as_ref().ok_or("slot")?.key,
+            COMMAND_CARD_KEYS[0]
+        );
+        switch(&mut world, lurker);
+        let card = card_for(&world, &[lurker]);
+        assert_eq!(labels(&card), [mode_label(mode, ModeDirection::Leave)]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_switching_unit_shows_its_entry_locked_as_transforming() -> TestResult {
+        let mut world = flat_world()?;
+        let tank = mode_unit(&mut world, true)?;
+        assert!(world.execute_ability(tank, 0, None, None));
+        let model = model_of(&world, &[]);
+        let mode = command_of(&model, &world, tank)?.mode;
+        let mut card = CommandCard::default();
+        derive_card(&model, &[fact(&world, tank)], &mut card);
+        let slot = slot_with(&card, mode_label(mode, ModeDirection::Leave)).ok_or("entry")?;
+        assert!(
+            !slot.enabled,
+            "the settled direction, locked while it switches"
+        );
+        assert_eq!(slot.lock, Some(CardLock::Transforming));
+        assert_eq!(card.text[1].tooltip, TRANSFORMING_TEXT);
+
+        // One unlocked contributor that is not switching unlocks the entry.
+        let other = mode_unit(&mut world, true)?;
+        switch(&mut world, other);
+        let model = model_of(&world, &[]);
+        derive_card(
+            &model,
+            &[fact(&world, tank), fact(&world, other)],
+            &mut card,
+        );
+        let slot = slot_with(&card, mode_label(mode, ModeDirection::Leave)).ok_or("entry")?;
+        assert!(slot.enabled);
+        Ok(())
+    }
+
+    #[test]
+    fn a_mode_ability_needing_research_is_locked_and_names_the_upgrade() -> TestResult {
+        let mut world = flat_world()?;
+        let tank = mode_unit(&mut world, true)?;
+        let mut model = model_of(&world, &[]);
+        let command = command_of(&model, &world, tank)?;
+        model.view.ability_locks.push(sim_types::AbilityLockView {
+            unit_type: world.entities[&tank].unit_type_id,
+            ability_index: command.ability_index,
+        });
+        let mut card = CommandCard::default();
+        derive_card(&model, &[fact(&world, tank)], &mut card);
+        let slot =
+            slot_with(&card, mode_label(command.mode, ModeDirection::Enter)).ok_or("entry")?;
+        assert_eq!(slot.lock, Some(CardLock::NeedsResearch(command.unlock)));
+        assert!(!slot.enabled);
+        Ok(())
+    }
+
+    #[test]
+    fn a_closed_match_shows_no_mode_entry() -> TestResult {
+        let mut world = flat_world()?;
+        let tank = mode_unit(&mut world, true)?;
+        world.match_state.result = MatchResult::Draw { tick: Tick(1) };
+        let card = card_for(&world, &[tank]);
+        assert!(card.slots.iter().all(Option::is_none));
+        Ok(())
+    }
+
+    #[test]
+    fn a_warm_card_with_mode_entries_allocates_no_new_text() -> TestResult {
+        let mut world = flat_world()?;
+        let tank = mode_unit(&mut world, true)?;
+        let model = model_of(&world, &[]);
+        let facts = [fact(&world, tank)];
+        let mut card = CommandCard::default();
+        derive_card(&model, &facts, &mut card);
+        let pointer = card.text[1].caption.as_ptr();
+        derive_card(&model, &facts, &mut card);
+        assert_eq!(card.text[1].caption.as_ptr(), pointer);
         Ok(())
     }
 }

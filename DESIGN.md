@@ -122,14 +122,14 @@ Status is `Working` (built, tested, in the shipped game), `Partial` (built but l
 | Construction | Working | Transactional build admission and a construction lifecycle | `crates/sim_core/tests/construction_lifecycle_tests.rs` | none known |
 | Production and research | Working | Production and research queues, cancel and refund | `crates/sim_core/tests/production_transactions_tests.rs`, `crates/sim_core/tests/research_transaction_tests.rs`, `crates/client/tests/battle_card_path_tests.rs` (`research_through_the_card_then_overclock_works`) | none known; research is enabled in the shipped game since Veo batch 1 (`2c5ed5e`) |
 | Transport | Working | Load and unload orders with ownership checks; enabled in the shipped game since Veo batch 1 (`2c5ed5e`) | `crates/sim_core/tests/transport_ownership_tests.rs`, `crates/sim_core/tests/load_orders_tests.rs`, `crates/client/tests/battle_card_path_tests.rs` (`load_and_unload_through_right_click_and_the_card`) | none known |
-| Abilities and hazard zones | Working | Data-defined abilities, modes and hazard zones | `crates/sim_core/tests/spells_and_abilities_tests.rs` | none known |
+| Abilities and hazard zones | Working | Data-defined abilities, modes and hazard zones; a mode switch given without Shift replaces the unit's orders, and a queued one reaches an anchored unit (plan `2026-11-09-client-mode-commands` D-6) | `crates/sim_core/tests/spells_and_abilities_tests.rs` | the skirmish client issues only mode switches; other abilities have no command (B-69) |
 | Match result | Working | Victory and defeat from the game rules | `crates/sim_core/tests/match_result_tests.rs` | Rules accepted by the owner (Q0008); where the spec is silent, they follow StarCraft II (charter §8) |
 | `PlayerView` | Working | Per-player knowledge for the HUD and admission | `crates/sim_core/tests/player_view_tests.rs` | none known |
 | Catalog data | Working | Factions, units, structures, upgrades, start loadouts and scenarios read at run time | `crates/sim_core/tests/runtime_catalog_tests.rs`, `crates/sim_core/tests/faction_catalog_tests.rs` | Data choices await the owner (Q0007) |
 | Bubble and dome rendering | Working | Instanced bubbles and domes with optics, dome fill and validated shaders | `crates/client/tests/gpu_validation_tests.rs`, `crates/client/tests/bubble_optics_tests.rs`, `crates/client/tests/dome_fill_tests.rs` | none known |
 | Smog fog presentation | Working | Smog field driven by the player's vision; the all-pairs kinematics fallback above 512 bubbles reports its peer bounces (`9987863`, unit test `all_pairs_fallback_reports_its_contacts`, `kinematics_all_pairs_fallback_golden`) | `crates/client/tests/smog_golden_tests.rs`, `crates/client/tests/battle_fog_tests.rs` | Smog goldens are host-independent: every transcendental function on a smog path is the `libm` crate's (`client::smog::math`, check C23, Q0014; `docs/evidence/2026-11-05-libm-smog-math.md`); the solver costs about 6 ms per frame during a 400-unit fight (C-18, partly fixed; §5) |
 | Runtime mist | Removed | Deleted in `0f31027` (remediation decision D2) | none | none |
-| HUD and command card | Working | Resources, selection card, command card and production queue | `crates/client/tests/battle_hud_tests.rs`, `crates/client/tests/battle_card_tests.rs` | none known |
+| HUD and command card | Working | Resources, selection card, command card and production queue, mode commands built from catalog `ToggleMode` abilities (Siege Mode, Burrow analogues; plan `2026-11-09-client-mode-commands`) | `crates/client/tests/battle_hud_tests.rs`, `crates/client/tests/battle_card_tests.rs`, `crates/client/tests/battle_mode_tests.rs` | keys are positional, not StarCraft II's per-ability keys ([Q0072](docs/questions/open/0072-per-ability-hotkeys.md)) |
 | Selection and input | Working | Selection, box select, control groups, right-click orders; one declared writer per client concern; input ownership sampled after the inspector draws | `crates/client/tests/battle_input_tests.rs`, `crates/client/tests/battle_context_order_tests.rs`, `crates/client/tests/system_ownership_tests.rs` | none known |
 | Result screen | Working | Victory and defeat screen | `crates/client/tests/battle_result_tests.rs`, [`docs/evidence/2026-11-03-result-window-victory.md`](docs/evidence/2026-11-03-result-window-victory.md) | none known |
 | Whole skirmish | Working | A skirmish won headless through input events alone | `crates/client/tests/skirmish_match_tests.rs` | none known |
@@ -153,13 +153,10 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 
 | ID | Deviation | Package |
 |---|---|---|
-| B-2 | Whether an order between the strikes of a multi-strike attack cancels the later strikes (not yet sourced, [Q0058](docs/questions/open/0058-channeled-burst-interruption.md)); the spacing itself is fixed | Q0058 |
 | B-5 | Whether damage point and backswing hold an automatically attacking unit (not yet sourced) | WP16 |
 | B-6 | Release range slop 0.5 for every weapon | WP9 |
 | B-13 | Call-for-help radius, flee distance, leash and abandoned-target time are unsourced | WP16 |
-| B-15 | Whether the 0.5 minimum applies to the life part of a shield-breaking strike (not yet sourced, [Q0062](docs/questions/open/0062-shield-break-life-minimum.md)); the remainder itself is fixed | Q0062 |
-| B-17 | Where a splash is centred and whether it reaches a unit's edge (not yet sourced, [Q0063](docs/questions/open/0063-splash-distance-rule.md)); splash zones and fractions are fixed | Q0063 |
-| B-18 | Hellion, Lurker and Colossus line splash modelled as a circle; the line rule exists, the data are held on matrix winner flips (plan Amendment 13) | WP8b |
+| B-18 | One search per strike: the Colossus' two sweeps strike a unit on the line once per shot; the game's two sweeps strike it twice (plan Amendment 13, §9.3; held, it flips battle 12b) | WP8b |
 | B-19 | Ultralisk cleave modelled as a circle | WP8c |
 | B-20 | Mutalisk glaive does not bounce | WP8d |
 | B-21 | Brood Lord spawns no Broodlings | WP18 |
@@ -167,13 +164,10 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-23 | Storm hits structures, and idle units dodge it on their own | WP18 |
 | B-24 | Matrix battle 13's storm values | WP18 |
 | B-27 | Liberator analogue has no Defender Mode, so no ground attack at all (its fighter-mode ground attack was removed by WP2) | WP18 |
-| B-30 | The Siege Tank (tank mode), Hellion and Phoenix analogues' turrets do not return to the front while moving without a target (`ResetIfMoving`; the rate is not sourced, [Q0065](docs/questions/open/0065-turret-idle-rate.md)); the idle rule itself is fixed | Q0065 |
 | B-35 | No energy regeneration delay | WP15 |
 | B-36 | Unfinished structures regenerate life | WP15 |
 | B-38 | No burrowed Roach regeneration and no Tunneling Claws | WP15, WP18 |
-| B-39 | How a unit whose data sets no `Deceleration` brakes; ours stops within a tick (not yet sourced, [Q0067](docs/questions/open/0067-unset-deceleration.md)); acceleration and the sourced decelerations are fixed | Q0067 |
-| B-41 | Where in a hit the Immortal's Barrier acts: whether the raising hit is absorbed, before or after armour, and whether a hit absorbed whole still deals 0.5 (not yet sourced, [Q0068](docs/questions/open/0068-barrier-damage-order.md)); the Barrier itself is fixed | Q0068 |
-| B-42 | Whether the burrowing Lurker analogue's weapon and cloak arrive at the morph's `Stats` section, 12 ticks before it ends (not yet sourced, [Q0069](docs/questions/open/0069-lurker-burrow-sections.md)); attacking only burrowed is fixed | Q0069 |
+| B-39 | Braking applies only into a move order's destination; an order that ends without arriving, and pursuit, stop within a tick (owner answer to [Q0067](docs/questions/closed/0067-unset-deceleration.md), rule part open); unset `Deceleration` reading as `Acceleration` is fixed | WP12 follow-up |
 | B-43 | How the engine measures Charge's trigger window (0.6 edge or centre; 4 as a straight line or the walk), when its autocast looks, and whether a new order ends a dash (not yet sourced, [Q0071](docs/questions/open/0071-charge-trigger-details.md)); the dash itself is fixed | Q0071 |
 | B-44 | Concussive Shells have no effect | WP13d |
 | B-45 | Phoenix and Void Ray analogues cannot fire while moving | WP13e |
@@ -200,18 +194,21 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-70 | No Graviton Beam | WP18 |
 | B-77 | Hard-coded Concussive slow | WP13d |
 | B-78 | Hard-coded storm evacuation margin | WP18 |
-| B-81 | The Liberator's first missile and the Colossus' strikes land on the release tick; the game delays the missile 1 tick and the Colossus' strikes by an amount not yet sourced ([Q0064](docs/questions/open/0064-colossus-damage-timing.md)) | WP5 follow-up, Q0064 |
+| B-81 | The Liberator's first missile lands on the release tick; the game delays it 1 tick. The Colossus' strikes stay on the release tick by the owner's answer to [Q0064](docs/questions/closed/0064-colossus-damage-timing.md) | WP5 follow-up |
 | B-83 | The Baneling's burst is centred on its target and strikes it directly; the game centres it on the Baneling | WP8 follow-up |
 | B-84 | The Siege Tank splashes around targets of radius 1.25 or more; the game's shot at them has no area | WP8 follow-up |
-| B-85 | A line area lands whole on the shot's tick; the game spaces the Lurker's spines 0.125 Normal s apart and delays each Colossus search 0.25 Normal s | WP8 follow-up |
+| B-85 | The Lurker's spines land together; the game spaces its 9 searches 0.125 Normal s (2 ticks) apart (owner note on [Q0064](docs/questions/closed/0064-colossus-damage-timing.md)). The Colossus' searches stay on the release tick by that answer | WP8 follow-up |
 | B-86 | Morphs (Baneling, Ravager, Lurker, Brood Lord, Orbital Command, Planetary Fortress, Lair, Hive, Greater Spire) cost their morph increment and the Zergling analogue one Zergling at the pair's price, while ours trains them whole | WP17 |
 | B-88 | Structure attributes are derived in code (Psionic if shielded, else Mechanical); the game gives Protoss structures Armored and Structure, Zerg structures Armored, Biological and Structure | WP9 follow-up |
 | B-89 | Whether the Liberator analogue's anti-air weapon turns on the `Liberator` turret: the game's unit lists a second weapon entry with that turret and no weapon (`void` UnitData:3317-3318); ours is a hull weapon | WP10 follow-up (research) |
 | B-90 | A turreted weapon's wind-up does not hold its unit, and a turret works against the unit's `current_target` under any order; the game lets only weapons with `AllowedMovement` fire while moving. It reaches the Siege Tank analogue and, since WP10 (B-28), the Hellion, Immortal, Colossus, Lurker and Phoenix analogues | WP13e |
-| B-91 | Whether an attack-rate buff (Stimpack) scales the random firing delay, and whether the first attack of an engagement draws one; ours does neither (not yet sourced, [Q0066](docs/questions/open/0066-random-delay-scaling.md)) | Q0066 |
 | B-92 | `LateralAcceleration` (how sharply a moving unit can curve) is not modelled; our units turn their velocity freely within the hull rate | WP16 |
 | B-93 | A burrowed unit still blocks ground units; the game's burrowed Lurker collides only with burrowed units | WP16 |
 | B-94 | Charge's autocast cannot be switched off; the game's is a player toggle, on by default | WP18 |
+| B-95 | A queued mode switch toggles whatever stance the unit has when it runs; the game's morphs are one ability per direction, so a second queued switch would be refused | WP18 |
+| B-96 | An order queued behind a switch into an anchoring mode stays at the front of the anchored unit's queue, and a `Move` there keeps it from acquiring targets; what the game does with such an order is not yet sourced | WP18 (research) |
+| B-97 | The Lurker analogue's burrow cannot be cancelled while it runs; the game's can (`Interruptible`, a Cancel button) | WP18 |
+| B-98 | Anchored units (sieged, burrowed) get no Stop or Hold Position on the card; the game's sieged tank has both | next client package |
 | B-102 | Routes come from a grid A* corridor with radius tiers, not a triangulated navigation mesh with each unit's own radius | [`2026-11-09-sc2-pathfinding`](docs/plans/2026-11-09-sc2-pathfinding.md) Part B |
 
 ---

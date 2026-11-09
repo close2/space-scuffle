@@ -23,9 +23,9 @@ use sim_core::scenario::{build_world_with_catalogs, ScenarioManifest, StartLoado
 use sim_core::{SimWorld, UnitArchetype, UnitCatalog, UpgradeCatalog};
 use sim_map::{CliffLevel, GameMap, MapCell, MapFile, PlacementFailureReason, ResourceNode};
 use sim_types::{
-    CommandOptionView, CommandSubject, EntityId, OptionLock, PlayerCommand, PlayerId, PlayerSlot,
-    PlayerView, QueuedItem, ResourceKind, ResourceNodeId, ShapeKind, SimScalar, SimVec2,
-    SiteRefusal, Tick, TickBundle, UnitOrder, UnitTypeId, VisibilityState,
+    AbilityLockView, CommandOptionView, CommandSubject, EntityId, OptionLock, PlayerCommand,
+    PlayerId, PlayerSlot, PlayerView, QueuedItem, ResourceKind, ResourceNodeId, ShapeKind,
+    SimScalar, SimVec2, SiteRefusal, Tick, TickBundle, UnitOrder, UnitTypeId, VisibilityState,
 };
 use std::error::Error;
 
@@ -1077,5 +1077,110 @@ fn can_raise_matches_admission_for_every_catalog_pair() -> TestResult {
     }
     assert_eq!(world.game_command_outcomes().len(), pairs.len());
     assert!(raised > 0);
+    Ok(())
+}
+
+/// The first archetype with a mode and an ability, found by capability.
+fn mode_unit(world: &SimWorld) -> Result<&UnitArchetype, Box<dyn Error>> {
+    Ok(world
+        .catalog
+        .archetypes()
+        .find(|arch| !arch.modes.is_empty() && !arch.abilities.is_empty())
+        .ok_or("the catalog has a mode unit")?)
+}
+
+/// The viewer's mode units through a whole enter and leave (plan
+/// `2026-11-09-client-mode-commands` D-9); the enemy's are absent.
+#[test]
+fn mode_states_follow_a_switch_in_and_out_and_hide_the_enemy() -> TestResult {
+    let mut world = skirmish()?;
+    let tank_type = mode_unit(&world)?.unit_type_id;
+    // Beside a worker of each side, which stands on open ground.
+    let home_spot = world.entities[&builders(&world, HOME)[0]].position;
+    let away_spot = world.entities[&builders(&world, AWAY)[0]].position;
+    let tank = world.spawn_unit(tank_type, HOME, home_spot)?;
+    let theirs = world.spawn_unit(tank_type, AWAY, away_spot)?;
+    let state = |world: &SimWorld| -> Vec<(Option<u8>, bool)> {
+        let view = view_of(world, HOME);
+        assert!(view.mode_states.iter().all(|state| state.entity != theirs));
+        assert!(view
+            .mode_states
+            .windows(2)
+            .all(|pair| pair[0].entity < pair[1].entity));
+        view.mode_states
+            .iter()
+            .filter(|state| state.entity == tank)
+            .map(|state| (state.settled_mode, state.channeling))
+            .collect()
+    };
+    assert_eq!(state(&world), [(None, false)]);
+    let cast = UnitOrder::CastAbility {
+        ability_index: 0,
+        target_pos: None,
+        target_entity: None,
+    };
+    step(&mut world, vec![command(HOME, vec![tank], cast.clone())]);
+    assert_eq!(state(&world), [(Some(0), true)], "entering");
+    until(&mut world, 200, |world| {
+        world.entities[&tank].channeling_remaining_ticks == 0
+    })?;
+    assert_eq!(state(&world), [(Some(0), false)], "in the mode");
+    step(&mut world, vec![command(HOME, vec![tank], cast)]);
+    assert_eq!(state(&world), [(None, true)], "leaving");
+    until(&mut world, 200, |world| {
+        world.entities[&tank].channeling_remaining_ticks == 0
+    })?;
+    assert_eq!(state(&world), [(None, false)], "back in the default stance");
+    Ok(())
+}
+
+/// An ability an upgrade unlocks is listed until researched, by type and index (D-9).
+#[test]
+fn ability_locks_list_an_unresearched_mode_ability() -> TestResult {
+    let mut world = skirmish()?;
+    let arch = mode_unit(&world)?;
+    let (tank_type, slug, ability) = (
+        arch.unit_type_id,
+        arch.slug.clone(),
+        arch.abilities[0].name.clone(),
+    );
+    let faction = world
+        .catalog
+        .factions()
+        .faction(arch.faction)
+        .ok_or("the mode unit's faction is in the catalog")?
+        .slug
+        .clone();
+    let researched_at = world
+        .catalog
+        .archetypes()
+        .find(|other| {
+            other.faction == arch.faction && matches!(other.shape, ShapeKind::BuildingDome { .. })
+        })
+        .ok_or("the faction has a structure")?
+        .slug
+        .clone();
+    let upgrades = format!(
+        r#"(upgrades: [(
+            upgrade_id: 1, slug: "learn_mode", name: "learn_mode", display_name: "Learn Mode",
+            faction: "{faction}", level: 1, mineral_cost: 0, gas_cost: 0,
+            research_ticks: 1, researched_at: "{researched_at}",
+            effects: [UnlockAbility(target_slug: "{slug}", ability_slug: "{ability}")],
+        )])"#
+    );
+    world.upgrade_catalog =
+        UpgradeCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &upgrades)?;
+    let (base, _) = base_of(&world, HOME)?;
+    world.spawn_unit(tank_type, HOME, world.entities[&base].position)?;
+    assert_eq!(
+        view_of(&world, HOME).ability_locks,
+        [AbilityLockView {
+            unit_type: tank_type,
+            ability_index: 0
+        }]
+    );
+    assert_eq!(view_of(&world, AWAY).ability_locks, [], "not owned");
+    world.research_upgrade(HOME, "learn_mode")?;
+    assert_eq!(view_of(&world, HOME).ability_locks, []);
     Ok(())
 }

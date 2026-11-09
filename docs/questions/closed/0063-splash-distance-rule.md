@@ -58,3 +58,16 @@ them as the source.
 **Option 3 or Option 4 (Measure splash reach to the victim's edge, `distance - victim_radius <= R`, and optionally honor `OffsetByUnitRadius` on weapons that retain the flag — no editor test needed).**
 
 **Engine insight:** In StarCraft II's `CEffectDamage` / `CEffectEnumArea` search engine, area searches test intersection against each potential victim unit's collision circle (`center_distance - victim_radius <= R`), not its center point. That is why the Hellion's and Colossus's line-splash searches specify a radius of only `0.15` in `EffectData`: `0.15` is the half-width of the flame/beam itself, which catches any unit whose collision edge touches the `0.15` corridor (e.g., a Marine of radius `0.375` within `0.525` center distance), and why a Baneling (`2.2` splash radius) damages units whose collision circles touch the `2.2` circle. Combining victim-edge reach (Option 3) with `OffsetByUnitRadius` on weapons that keep the flag (Option 4 — matching Patch 1.1.0, where Siege Tank, Archon, Thor AA, and Planetary Fortress cleared `OffsetByUnitRadius` to center splash on the primary target while default splash weapons offset to the impact edge) reproduces SC2's exact geometry and unblocks WP8b's held line-splash data commit.
+
+## Resolution
+
+2026-11-09. Options 3 and 4. A splash zone reaches a unit whose edge lies within it, and a splash whose damage effect
+keeps `OffsetByUnitRadius` is centred on the target's edge facing the attacker: rule `2f65bc9` (checksum schema 23),
+data `089d6f5` (Liberator, Baneling and Ultralisk keep the flag; Siege Tank clears it). Bug B-17 is fixed. WP8b's
+held lines: the Colossus' sweep landed (`1b16eac`); the Hellion's and the Lurker's still flip matrix battles 9a, 10
+and 21 and are held on branches `answers-held-b18-hellion-line` and `answers-held-b18-lurker-line` (B-18 narrowed).
+Plan `2026-11-05-sc2-deviation-fixes` Amendment 22 records it; evidence `2026-11-05-sc2-deviation-fixes.md` §17.
+
+Update, 2026-11-09: by the orchestrator's decision (plan Amendment 22) both held lines landed, the Hellion's as
+`585c2ab` and the Lurker's as `678a0db`, with battles 9a, 10 and 21 re-recorded; B-18 stays open only for one search
+per strike.

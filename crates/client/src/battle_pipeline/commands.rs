@@ -9,8 +9,8 @@ use bevy::prelude::Resource;
 use sim_core::upgrades::OVERCLOCK_ABILITY_SLUG;
 use sim_core::{movement::MovementLayer, Entity, SimWorld, UnitArchetype};
 use sim_types::{
-    EntityId, PlayerCommand, PlayerId, SimScalar, SiteRefusal, Tick, TickBundle, UnitOrder,
-    UnitTypeId,
+    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, EntityId, PlayerCommand, PlayerId,
+    SimScalar, SiteRefusal, Tick, TickBundle, UnitOrder, UnitTypeId,
 };
 
 /// Successful session-commit identity, independent of ticks and recycled entity IDs.
@@ -115,10 +115,28 @@ impl SubmissionError {
     }
 }
 
+/// Which way a mode command switches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ModeDirection {
+    /// Into the mode: the ability's `name`, for example Siege Mode or Burrow.
+    Enter,
+    /// Out of the mode: the ability's `leave_name`, for example Tank Mode or Unburrow.
+    Leave,
+}
+
+/// What a pending mode switch must still hold when its tick takes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PendingMode {
+    /// The direction the player pressed.
+    direction: ModeDirection,
+}
+
 struct PendingCommand {
     generation: SessionGeneration,
     sequence: SubmissionSequence,
     command: PlayerCommand,
+    /// `Some` for a mode switch, which revalidates by direction ([`validate_mode_switch`]).
+    mode: Option<PendingMode>,
 }
 
 /// Revalidation evidence for an intent omitted from an actual execution bundle.
@@ -221,6 +239,16 @@ impl BattleCommandQueue {
     ) -> Result<SubmissionSequence, SubmissionError> {
         let generation = self.generation.ok_or(SubmissionError::NotReady)?;
         validate(world, &command)?;
+        self.capture(generation, command, None)
+    }
+
+    /// Appends one admitted command in FIFO order and reports the queue.
+    fn capture(
+        &mut self,
+        generation: SessionGeneration,
+        command: PlayerCommand,
+        mode: Option<PendingMode>,
+    ) -> Result<SubmissionSequence, SubmissionError> {
         let next = self
             .next_sequence
             .checked_add(1)
@@ -230,11 +258,79 @@ impl BattleCommandQueue {
             generation,
             sequence,
             command,
+            mode,
         });
         self.next_sequence = next;
         self.status.clear();
         super::status::write_order_count(&mut self.status, self.pending.len(), "queued");
         Ok(sequence)
+    }
+
+    /// Sends the switch of `mode_name` in `direction` to every member of `selection` that can
+    /// make it now, one command per distinct ability index, in ascending index order.
+    ///
+    /// A member is a recipient when the player may still give orders, it is owned, alive,
+    /// finished and not carried, its archetype has a mode ability for `mode_name` (the first,
+    /// by index), the simulation would admit that cast now ([`SimWorld::would_admit_cast`]:
+    /// channel, unlock, cooldown, energy) and its settled mode matches `direction`: `Leave`
+    /// exactly when it settles in `mode_name` ([`Entity::settled_mode`]). Each command keeps
+    /// its direction, and [`Self::prepare_tick`] checks it again against the tick's world.
+    /// Returns the sequence of the last command. Allocation belongs to the user action.
+    /// # Errors
+    /// [`SubmissionError::EmptySelection`] if no member qualifies, a closed match, a missing
+    /// archetype, or identity exhaustion.
+    pub fn submit_mode_switch(
+        &mut self,
+        world: &SimWorld,
+        player: PlayerId,
+        selection: &[EntityId],
+        mode_name: &str,
+        direction: ModeDirection,
+        queued: bool,
+    ) -> Result<SubmissionSequence, SubmissionError> {
+        let generation = self.generation.ok_or(SubmissionError::NotReady)?;
+        accepts_orders(world, player)?;
+        if player.slot().is_none() {
+            return Err(SubmissionError::InvalidPlayer(player));
+        }
+        // (ability index, recipients), kept sorted by index.
+        let mut groups: Vec<(u8, Vec<EntityId>)> = Vec::new();
+        for id in selection {
+            let Some(entity) = world.entities.get(id).filter(|entity| {
+                entity.owner == player && can_receive_order(entity, &UnitOrder::Idle)
+            }) else {
+                continue;
+            };
+            let archetype = world
+                .catalog
+                .get(entity.unit_type_id)
+                .map_err(|_| SubmissionError::MissingArchetype(*id))?;
+            let Some(index) = mode_ability_index(archetype, mode_name) else {
+                continue;
+            };
+            if !can_switch(world, entity, archetype, index, mode_name, direction) {
+                continue;
+            }
+            match groups.binary_search_by_key(&index, |(group, _)| *group) {
+                Ok(at) => groups[at].1.push(*id),
+                Err(at) => groups.insert(at, (index, vec![*id])),
+            }
+        }
+        let mut last = Err(SubmissionError::EmptySelection);
+        for (ability_index, entities) in groups {
+            let command = PlayerCommand {
+                player_id: player,
+                entities,
+                order: UnitOrder::CastAbility {
+                    ability_index,
+                    target_pos: None,
+                    target_entity: None,
+                },
+                queue: queued,
+            };
+            last = Ok(self.capture(generation, command, Some(PendingMode { direction }))?);
+        }
+        last
     }
 
     /// Selects current owned capable actors for the existing roster-level controls.
@@ -341,7 +437,7 @@ impl BattleCommandQueue {
         // Preserve the entire pending batch when a corrupted live definition makes
         // execution unsafe; ordinary actor/capability changes remain per-order rejections.
         for pending in &self.pending {
-            if let Err(error) = validate(world, &pending.command) {
+            if let Err(error) = validate_pending(world, pending) {
                 if error.is_fatal() {
                     return Err(error);
                 }
@@ -353,7 +449,7 @@ impl BattleCommandQueue {
         sequences.clear();
         while let Some(pending) = self.pending.pop_front() {
             let result = if pending.generation == generation {
-                validate(world, &pending.command)
+                validate_pending(world, &pending)
             } else {
                 Err(SubmissionError::StaleGeneration)
             };
@@ -452,7 +548,9 @@ const fn supported(order: &UnitOrder) -> Result<(), SubmissionError> {
         | UnitOrder::CancelProduction { .. }
         | UnitOrder::Load { .. }
         | UnitOrder::UnloadAll => Ok(()),
-        // Abilities have no UI in Phase 5, so this order is refused deliberately.
+        // A cast needs a direction, which only `submit_mode_switch` carries and checks again
+        // at its tick, so the generic paths refuse it (plan `2026-11-09-client-mode-commands`
+        // D-4). Other abilities have no command yet (B-69).
         UnitOrder::CastAbility { .. } => Err(SubmissionError::UnsupportedOrder),
     }
 }
@@ -487,7 +585,9 @@ fn capable(
     order: &UnitOrder,
     subject: Option<&UnitArchetype>,
 ) -> bool {
-    let mobile = !entity.is_immobile && archetype.max_speed > SimScalar::ZERO;
+    // A unit leaving an anchoring mode counts as mobile: the simulation keeps a move given
+    // during the channel and walks when it ends (plan `2026-11-09-client-mode-commands` D-7).
+    let mobile = !entity.immobile_after_channel(archetype) && archetype.max_speed > SimScalar::ZERO;
     let armed = is_armed(archetype);
     match order {
         // These roster controls intentionally address movable actors only. This is
@@ -600,6 +700,113 @@ fn order_subject<'w>(
         .get(entity.unit_type_id)
         .map(Some)
         .map_err(|_| SubmissionError::MissingArchetype(aimed_at))
+}
+
+/// The mode `ability` of `archetype` toggles, if it is a mode ability: a `ToggleMode` ability
+/// whose `SwitchMode` effect names one of the archetype's own modes. The one rule the command
+/// card and admission share; it reads mechanics, never a name.
+#[must_use]
+pub fn mode_of_ability<'a>(archetype: &UnitArchetype, ability: &'a AbilitySpec) -> Option<&'a str> {
+    match (&ability.target_kind, &ability.effect) {
+        (AbilityTargetKind::ToggleMode, AbilityEffectSpec::SwitchMode { mode_name })
+            if archetype.get_mode(mode_name).is_some() =>
+        {
+            Some(mode_name.as_str())
+        }
+        _ => None,
+    }
+}
+
+/// Index of `archetype`'s first mode ability for `mode_name`, if it has one.
+#[must_use]
+pub fn mode_ability_index(archetype: &UnitArchetype, mode_name: &str) -> Option<u8> {
+    archetype
+        .abilities
+        .iter()
+        .position(|ability| mode_of_ability(archetype, ability) == Some(mode_name))
+        .and_then(|index| u8::try_from(index).ok())
+}
+
+/// Whether `entity`, of `archetype`, can switch `mode_name` in `direction` now with the ability
+/// at `ability_index`: the simulation would admit the cast, and the unit's settled mode is the
+/// one the direction leaves from.
+fn can_switch(
+    world: &SimWorld,
+    entity: &Entity,
+    archetype: &UnitArchetype,
+    ability_index: u8,
+    mode_name: &str,
+    direction: ModeDirection,
+) -> bool {
+    let settles_in_mode = entity
+        .settled_mode(archetype)
+        .is_some_and(|mode| mode.mode_name == mode_name);
+    world.would_admit_cast(entity.id, ability_index, None)
+        && settles_in_mode == (direction == ModeDirection::Leave)
+}
+
+/// Revalidates a pending command against the world of the tick that will execute it.
+fn validate_pending(world: &SimWorld, pending: &PendingCommand) -> Result<(), SubmissionError> {
+    match pending.mode {
+        Some(PendingMode { direction }) => validate_mode_switch(world, &pending.command, direction),
+        None => validate(world, &pending.command),
+    }
+}
+
+/// Repeats the member test of [`BattleCommandQueue::submit_mode_switch`] for every listed
+/// entity, the mode recovered from the recipient's ability at the command's index. Fails the
+/// whole command on the first that no longer qualifies, as [`validate`] does, so a unit whose
+/// earlier switch completed meanwhile is not toggled back.
+fn validate_mode_switch(
+    world: &SimWorld,
+    command: &PlayerCommand,
+    direction: ModeDirection,
+) -> Result<(), SubmissionError> {
+    accepts_orders(world, command.player_id)?;
+    let UnitOrder::CastAbility { ability_index, .. } = command.order else {
+        return Err(SubmissionError::UnsupportedOrder);
+    };
+    if command.player_id.slot().is_none() {
+        return Err(SubmissionError::InvalidPlayer(command.player_id));
+    }
+    if command.entities.is_empty() {
+        return Err(SubmissionError::EmptySelection);
+    }
+    for id in &command.entities {
+        let entity = world
+            .entities
+            .get(id)
+            .ok_or(SubmissionError::MissingRecipient(*id))?;
+        if entity.owner != command.player_id {
+            return Err(SubmissionError::ForeignRecipient(*id));
+        }
+        if !can_receive_order(entity, &command.order) {
+            return Err(SubmissionError::UnavailableRecipient(*id));
+        }
+        let archetype = world
+            .catalog
+            .get(entity.unit_type_id)
+            .map_err(|_| SubmissionError::MissingArchetype(*id))?;
+        let qualifies = archetype
+            .abilities
+            .get(usize::from(ability_index))
+            .and_then(|ability| mode_of_ability(archetype, ability))
+            .is_some_and(|mode_name| {
+                mode_ability_index(archetype, mode_name) == Some(ability_index)
+                    && can_switch(
+                        world,
+                        entity,
+                        archetype,
+                        ability_index,
+                        mode_name,
+                        direction,
+                    )
+            });
+        if !qualifies {
+            return Err(SubmissionError::Capability(*id));
+        }
+    }
+    Ok(())
 }
 
 fn validate(world: &SimWorld, command: &PlayerCommand) -> Result<(), SubmissionError> {

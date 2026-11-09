@@ -122,6 +122,7 @@ fn dummy_weapon_spec(
         attacks_count: 1,
         strike_interval_ticks: 0,
         followup_max_distance: None,
+        channeled: false,
         period_ticks: 20,
         damage_point_ticks: 2,
         backswing_ticks: 4,
@@ -327,6 +328,7 @@ fn test_circular_splash_falloff() {
         ],
         shape: sim_types::SplashShape::Circle,
         friendly_fire: false,
+        offset_by_unit_radius: false,
     };
     let target = dummy_target_archetype(AttributeFlags::LIGHT, SimScalar::ZERO, SimScalar::ZERO);
 
@@ -731,6 +733,7 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
         attacks_count: 1,
         strike_interval_ticks: 0,
         followup_max_distance: None,
+        channeled: false,
         period_ticks: 30,
         damage_point_ticks: 1,
         backswing_ticks: 2,
@@ -753,6 +756,7 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
             ],
             shape: sim_types::SplashShape::Circle,
             friendly_fire: true,
+            offset_by_unit_radius: false,
         }),
         projectile_speed: None,
         weapon_class: None,
@@ -784,6 +788,7 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
             ],
             shape: sim_types::SplashShape::Circle,
             friendly_fire: false,
+            offset_by_unit_radius: false,
         }),
         ..friendly_fire_weapon.clone()
     };
@@ -954,6 +959,7 @@ fn s13_splash_falloff_scales_stat_bonus_damage() {
         ],
         shape: sim_types::SplashShape::Circle,
         friendly_fire: false,
+        offset_by_unit_radius: false,
     };
     let mut attacker = PlayerUpgradeState::default();
     attacker.unit_stat_modifiers.insert(
@@ -1076,6 +1082,7 @@ fn b16_each_splash_zone_deals_its_own_fraction() {
         ],
         shape: sim_types::SplashShape::Circle,
         friendly_fire: false,
+        offset_by_unit_radius: false,
     };
     let at = |distance: f32| {
         calculate_splash_damage(
@@ -1117,6 +1124,7 @@ fn b16_a_single_zone_deals_full_damage_to_its_edge() {
         }],
         shape: sim_types::SplashShape::Circle,
         friendly_fire: false,
+        offset_by_unit_radius: false,
     };
     let life_damage = calculate_splash_damage(
         &weapon,
@@ -1201,6 +1209,7 @@ fn b18_line_weapon(line: sim_types::SplashLine, strikes: u8) -> WeaponSpec {
             }],
             shape: sim_types::SplashShape::Line(line),
             friendly_fire: false,
+            offset_by_unit_radius: false,
         }),
         ..dummy_weapon_spec(SimScalar::from_num(40), SimScalar::ZERO, SimScalar::ZERO)
     }
@@ -1328,5 +1337,67 @@ fn b82_a_structure_strike_replaces_the_strike_against_structures() {
         armoured.life_damage,
         SimScalar::from_num(77),
         "80 - 3 armour"
+    );
+}
+
+/// A weapon of 40 damage with a circular splash of one zone of radius 1, centred on the
+/// target's edge facing the attacker when `offset` is set.
+fn q0063_circle_weapon(offset: bool) -> WeaponSpec {
+    WeaponSpec {
+        max_range: SimScalar::from_num(10),
+        firing_arc: SimAngle::from_degrees(360),
+        acquire_arc: SimAngle::from_degrees(360),
+        splash: Some(SplashSpec {
+            zones: vec![sim_types::SplashZone {
+                radius: SimScalar::ONE,
+                fraction: SimScalar::ONE,
+            }],
+            shape: sim_types::SplashShape::Circle,
+            friendly_fire: false,
+            offset_by_unit_radius: offset,
+        }),
+        ..dummy_weapon_spec(SimScalar::from_num(40), SimScalar::ZERO, SimScalar::ZERO)
+    }
+}
+
+/// Q0063 (option 3): a zone reaches a unit when any part of it lies inside, so the distance is
+/// measured to the unit's edge (`centre distance − radius ≤ R`), as `StarCraft` II's area
+/// searches test each unit's collision circle. The bystanders have radius 0.5: one centred 1.4
+/// from the target (edge 0.9) is struck by a zone of 1, one centred 1.6 away (edge 1.1) is not.
+#[test]
+fn q0063_a_zone_reaches_a_units_edge() {
+    let losses = b18_bystander_losses(q0063_circle_weapon(false), &[(14.0, 16.4), (14.0, 13.4)]);
+    assert_eq!(
+        losses[0],
+        SimScalar::from_num(40),
+        "edge 0.9 from the target's centre"
+    );
+    assert_eq!(
+        losses[1],
+        SimScalar::ZERO,
+        "edge 1.1 from the target's centre"
+    );
+}
+
+/// Q0063 (option 4): a weapon whose damage effect keeps `OffsetByUnitRadius` (the default,
+/// `core` EffectData:128) centres its area on the target's edge facing the attacker, 0.5 nearer
+/// the attacker for this target of radius 0.5. The attacker stands at (10, 15), the target at
+/// (14, 15): a bystander at (12.2, 15) is struck (edge 0.8 from (13.5, 15)), one at (15.3, 15)
+/// is not (edge 1.3); without the offset it is the other way round.
+#[test]
+fn q0063_offset_by_unit_radius_centres_the_area_on_the_near_edge() {
+    let bystanders = [(12.2, 15.0), (15.3, 15.0)];
+    let forty = SimScalar::from_num(40);
+    let offset = b18_bystander_losses(q0063_circle_weapon(true), &bystanders);
+    assert_eq!(
+        offset,
+        vec![forty, SimScalar::ZERO],
+        "centred on the near edge"
+    );
+    let centred = b18_bystander_losses(q0063_circle_weapon(false), &bystanders);
+    assert_eq!(
+        centred,
+        vec![SimScalar::ZERO, forty],
+        "centred on the target"
     );
 }

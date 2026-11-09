@@ -263,6 +263,7 @@ fn blink_rejection_is_before_energy_cooldown_and_all_entity_mutation() -> TestRe
             max_range: SimScalar::from_num(10),
             cooldown_ticks: 17,
         },
+        leave_name: None,
     }];
     f.world.entities.get_mut(&id).ok_or("actor")?.energy = SimScalar::from_num(20);
     f.world.map.place_structure(EntityId(999), 10, 5, 1, 1)?;
@@ -475,7 +476,9 @@ fn exact_air_boundary_snap_and_cross_layer_neighbor_do_not_end_order_early() -> 
         .ok_or("actor")?
         .current_funnel_waypoints = vec![point(32.0, 8.5)];
     f.step(vec![command(vec![id], target, false)]);
-    for _ in 0..20 {
+    // The air archetype accelerates and, since Q0067, brakes at its finite acceleration, so it
+    // needs more than 20 ticks for the 2.125 to its goal.
+    for _ in 0..60 {
         f.step(vec![]);
     }
     assert_eq!(f.world.entities[&id].position, target);
@@ -513,6 +516,7 @@ fn registered_foundation_placement_rejects_before_any_actor_or_map_mutation() ->
             max_range: SimScalar::from_num(20),
             cooldown_ticks: 10,
         },
+        leave_name: None,
     }];
     let id = f.world.spawn_structure(kind, PlayerId(0), 10, 10)?;
     f.world.entities.get_mut(&id).ok_or("foundation")?.energy = SimScalar::from_num(100);

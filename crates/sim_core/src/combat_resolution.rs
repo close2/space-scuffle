@@ -83,6 +83,8 @@ struct ResolvedHit {
     angle: SimAngle,
     /// Combat plane of the area damage this hit may cause.
     plane: MoverType,
+    /// Collision radius of the struck target in world units; zero for a hit on a point.
+    radius: SimScalar,
 }
 
 /// Outcome of advancing one projectile by a tick.
@@ -385,13 +387,15 @@ impl SimWorld {
             plane,
             remaining: weapon.attacks_count - 1,
             ticks_until_next: weapon.strike_interval_ticks,
+            channeled: weapon.channeled,
         });
         1
     }
 
     /// Counts down the pending strikes of `entity` (`id`) and queues the one that falls due.
     ///
-    /// The burst ends when the attacker dies or boards a transport, or when it no longer has the
+    /// The burst ends when the attacker dies or boards a transport, when an explicit order ends a
+    /// channeled burst ([`Entity::pending_strikes`], Q0058), or when it no longer has the
     /// weapon that released it. A strike that falls due lands only when its target is available
     /// to the attacker, still on the weapon's plane, and within the weapon's
     /// `followup_max_distance` (centre to centre) if it names one; otherwise that strike is lost
@@ -638,6 +642,7 @@ impl SimWorld {
             position: target.position,
             angle: hit_angle(source.origin, target.position),
             plane: target_arch.mover_type,
+            radius: target_arch.collision_radius,
         };
         if !available {
             return Some(hit);
@@ -661,13 +666,17 @@ impl SimWorld {
         Some(hit)
     }
 
-    /// Applies `splash` around its search points (`hit.position` for a circle, each point of
+    /// Applies `splash` around its search points (the impact point for a circle, each point of
     /// a line laid out from the attack) on the plane of the primary target.
     ///
-    /// A unit inside several searches is struck once, at the fraction of its nearest search
-    /// point (the game's `noMarkers` validator on the damage effect). Spares `primary`,
-    /// already struck directly, and the attacker, which never damages itself. Each struck
-    /// entity then runs its retaliation against the attacker.
+    /// The impact point is the target's centre, or, for a splash with
+    /// [`SplashSpec::offset_by_unit_radius`], the target's edge facing the attacker. A zone
+    /// reaches a unit whose edge lies within it: the distance is measured from the search point
+    /// to the unit's centre, less the unit's collision radius, and never below zero (owner
+    /// answer to Q0063). A unit inside several searches is struck once, at the fraction of its
+    /// nearest search point (the game's `noMarkers` validator on the damage effect). Spares
+    /// `primary`, already struck directly, and the attacker, which never damages itself. Each
+    /// struck entity then runs its retaliation against the attacker.
     fn apply_splash(
         &mut self,
         source: HitSource<'_>,
@@ -678,12 +687,13 @@ impl SimWorld {
         let mut splash_hits = std::mem::take(&mut self.combat.splash_hits);
         splash_hits.clear();
         let mut points = std::mem::take(&mut self.combat.splash_points);
-        splash.search_points(
-            source.origin,
-            hit.position,
-            self.attack_direction(source, hit.position),
-            &mut points,
-        );
+        let direction = self.attack_direction(source, hit.position);
+        let impact = if splash.offset_by_unit_radius {
+            hit.position - direction * hit.radius
+        } else {
+            hit.position
+        };
+        splash.search_points(source.origin, impact, direction, &mut points);
         let attacker_upgrades = Self::upgrades_of(&self.player_upgrades, source.owner);
         let reach = splash.reach();
         for (&other_id, other) in &self.entities {
@@ -694,15 +704,18 @@ impl SimWorld {
             {
                 continue;
             }
+            let Ok(other_arch) = self.catalog.get(other.unit_type_id) else {
+                continue;
+            };
             let Some(distance) = points
                 .iter()
-                .map(|point| point.distance(other.position))
+                .map(|point| {
+                    (point.distance(other.position) - other_arch.collision_radius)
+                        .max(SimScalar::ZERO)
+                })
                 .min()
                 .filter(|&distance| distance <= reach)
             else {
-                continue;
-            };
-            let Ok(other_arch) = self.catalog.get(other.unit_type_id) else {
                 continue;
             };
             if !shares_combat_plane(hit.plane, other_arch.mover_type)
@@ -943,6 +956,7 @@ impl SimWorld {
                 position: proj.target_pos,
                 angle: hit_angle(proj.source_pos, proj.target_pos),
                 plane: proj.target_mover,
+                radius: SimScalar::ZERO,
             };
             self.apply_splash(source, splash, hit, None);
         }

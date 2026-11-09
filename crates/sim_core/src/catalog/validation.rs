@@ -16,7 +16,8 @@ use crate::movement::tuning::STALL_REPATH_TICKS;
 use crate::weapon_timing::AttackRate;
 use sim_map::MAX_SIGHT_RADIUS_CELLS;
 use sim_types::{
-    AbilityEffectSpec, AbilitySpec, ProjectileTargetLossBehavior, SimAngle, SimScalar,
+    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, ProjectileTargetLossBehavior, SimAngle,
+    SimScalar,
 };
 
 fn invalid(definition: &str, field: &str, reason: &'static str) -> SimCoreError {
@@ -514,8 +515,79 @@ impl UnitArchetypeDef {
         for mode in self.modes.iter().chain(&self.capabilities.modes) {
             mode.validate(&self.slug)?;
         }
+        self.validate_mode_abilities()
+    }
+
+    /// A mode toggle switches one of the archetype's own modes and names the command that
+    /// leaves it; no other ability names one (plan `2026-11-09-client-mode-commands` D-2).
+    ///
+    /// The client builds its command card from these abilities, so a toggle it could not
+    /// label or switch would be a button that does nothing. Each ability list is checked
+    /// against the modes the archetype will hold: `capabilities.modes` when authored,
+    /// otherwise `modes`, as `UnitArchetypeDef::capabilities` resolves them.
+    fn validate_mode_abilities(&self) -> SimResult<()> {
+        let modes = if self.capabilities.modes.is_empty() {
+            &self.modes
+        } else {
+            &self.capabilities.modes
+        };
+        for (prefix, abilities) in [
+            ("abilities", &self.abilities),
+            ("capabilities.abilities", &self.capabilities.abilities),
+        ] {
+            for (index, ability) in abilities.iter().enumerate() {
+                mode_ability(&self.slug, &format!("{prefix}[{index}]"), ability, modes)?;
+            }
+        }
         Ok(())
     }
+}
+
+/// Checks the mode-toggle rule of [`UnitArchetypeDef::validate_mode_abilities`] for one ability
+/// at `field` of `definition`, whose archetype holds `modes`.
+fn mode_ability(
+    definition: &str,
+    field: &str,
+    ability: &AbilitySpec,
+    modes: &[UnitModeSpecDef],
+) -> SimResult<()> {
+    if !matches!(ability.target_kind, AbilityTargetKind::ToggleMode) {
+        return if ability.leave_name.is_some() {
+            Err(invalid(
+                definition,
+                &format!("{field}.leave_name"),
+                "only a ToggleMode ability names a leave command",
+            ))
+        } else {
+            Ok(())
+        };
+    }
+    let AbilityEffectSpec::SwitchMode { mode_name } = &ability.effect else {
+        return Err(invalid(
+            definition,
+            &format!("{field}.effect"),
+            "a ToggleMode ability must have a SwitchMode effect",
+        ));
+    };
+    if !modes.iter().any(|mode| mode.mode_name == *mode_name) {
+        return Err(invalid(
+            definition,
+            &format!("{field}.effect.mode_name"),
+            "must name a mode of the same archetype",
+        ));
+    }
+    if ability
+        .leave_name
+        .as_deref()
+        .is_none_or(|name| name.trim().is_empty())
+    {
+        return Err(invalid(
+            definition,
+            &format!("{field}.leave_name"),
+            "a ToggleMode ability must name its leave command",
+        ));
+    }
+    Ok(())
 }
 
 impl WeaponSpecDef {
@@ -996,6 +1068,7 @@ mod tests {
                     speed_multiplier: SimScalar::ONE,
                     attack_rate_multiplier: rate,
                 }),
+                leave_name: None,
             };
             for capability_list in [false, true] {
                 let mut file: CatalogFile = ron::from_str(units)?;
@@ -1628,6 +1701,79 @@ mod tests {
                     Some("weapon.turret_idle"),
                     "{has_turret} {idle:?}"
                 );
+            }
+        }
+        Ok(())
+    }
+
+    /// Plan `2026-11-09-client-mode-commands` D-2: a mode toggle switches one of its own
+    /// archetype's modes and names its leave command; no other ability names one.
+    #[test]
+    fn a_mode_toggle_switches_its_own_mode_and_names_its_leave_command(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use crate::catalog::CatalogFile;
+        use sim_types::{AbilityEffectSpec, AbilityTargetKind};
+        type Edit = fn(&mut sim_types::AbilitySpec);
+        let units = include_str!("../../../../assets/catalog/units.ron");
+        let shipped: CatalogFile = ron::from_str(units)?;
+        let toggles = shipped
+            .units
+            .iter()
+            .filter(|unit| {
+                unit.abilities
+                    .iter()
+                    .any(|a| matches!(a.target_kind, AbilityTargetKind::ToggleMode))
+            })
+            .count();
+        assert!(toggles >= 2, "the shipped catalog has mode toggles");
+        for unit in &shipped.units {
+            unit.validate()?;
+        }
+        let cases: [(Edit, Option<&str>); 6] = [
+            (|_| {}, None),
+            (|a| a.leave_name = None, Some("abilities[0].leave_name")),
+            (
+                |a| a.leave_name = Some("  ".into()),
+                Some("abilities[0].leave_name"),
+            ),
+            (
+                |a| {
+                    a.effect = AbilityEffectSpec::SwitchMode {
+                        mode_name: "no_such_mode".into(),
+                    };
+                },
+                Some("abilities[0].effect.mode_name"),
+            ),
+            (
+                |a| {
+                    a.effect = AbilityEffectSpec::CloakToggle {
+                        energy_cost_per_second: sim_types::SimScalar::ZERO,
+                        is_burrow: true,
+                    };
+                },
+                Some("abilities[0].effect"),
+            ),
+            (
+                |a| a.target_kind = AbilityTargetKind::InstantSelf,
+                Some("abilities[0].leave_name"),
+            ),
+        ];
+        for (index, (edit, rejected)) in cases.into_iter().enumerate() {
+            let mut file: CatalogFile = ron::from_str(units)?;
+            let unit = file
+                .units
+                .iter_mut()
+                .find(|unit| {
+                    unit.abilities
+                        .first()
+                        .is_some_and(|a| matches!(a.target_kind, AbilityTargetKind::ToggleMode))
+                })
+                .ok_or("real catalog has no mode toggle")?;
+            edit(&mut unit.abilities[0]);
+            let result = unit.validate();
+            match rejected {
+                None => assert!(result.is_ok(), "case {index}: {result:?}"),
+                Some(field) => assert_eq!(rejected_field(&result), Some(field), "case {index}"),
             }
         }
         Ok(())
