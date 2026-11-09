@@ -1371,3 +1371,85 @@ instant). The re-recording reproduces in debug, release, and `wasm32-wasip1` deb
   Until answered it is instant, which also leaves out braking for a unit whose order ends without arriving, and for
   pursuit.
 - **B-92**: `LateralAcceleration` (turning arcs of moving units) is not modelled.
+
+## 14. WP13a: the Immortal's Barrier (B-41)
+
+Sources: SC2GameData `5444e12f13`, chain `core → liberty → swarm → void → voidmulti`, each line re-read. Matrix: 20
+seeds a battle (1000 runs); battle 33: 68 seeds. Directories `~/scratch/sc2dev_wp13a/<step>/`; baseline WP12's last
+matrix (`~/scratch/sc2dev_wp12/decel`).
+
+### 14.1 Research
+
+The 5.0.14 Barrier is a chain of behaviours, not a cast ability:
+
+- The Immortal carries `BarrierDamageResponse` and `ImmortalOverload` (`voidmulti` UnitData:775-776).
+- `BarrierDamageResponse` (`voidmulti` BehaviorData:577-590) responds to any damage (`Chance` 1) with a cooldown of
+  45 Normal s, running `ImmortalBarrierAfterfirstdamageeffect` (EffectData:2395-2399): it applies `TakenDamage`
+  (BehaviorData:599-609, `Duration` 3, through `ImmortalOverloadAB`, EffectData:2408-2410) and
+  `ImmortalBarrierSupressed` (BehaviorData:592-598, `Duration` 45, through EffectData:1314-1318).
+- `ImmortalOverload` (`void` BehaviorData:97-108, overridden by `voidmulti` :273-279) has no duration, absorbs every
+  point (`ModifyFraction` 0) up to `ModifyLimit` 100 (the `void` 200 is overridden), and is enabled only while the
+  response's cooldown runs (`BarrierNoGravitonBeamOrBarrierOnCooldown`, ValidatorData:905-908 and :698-703).
+  Exhausting it removes `TakenDamage` (EffectData:2400-2403); `TakenDamage` expiring removes it (:2404-2407);
+  `ImmortalBarrierSupressed` expiring restores it (:2391-2394).
+- So: the first damage while ready raises an absorb of 100 for 3 Normal s; it is spent at 100 or at the end of the
+  window; it can be raised again 45 Normal s after it was raised. In ticks: 3 × 25 ÷ 1.4 = 53.6 → 54 and
+  45 × 25 ÷ 1.4 = 803.6 → 804, rounded as the catalog's other times.
+- The `ImmortalOverload` ability (`voidmulti` AbilData:585-591, autocast, cooldown 45) the plan's row cited is not in
+  the Immortal's command card at 5.0.14 (the card's button shows `BarrierDamageResponse`, UnitData:778); its
+  cooldown agrees.
+
+Not stated by the data, and read as follows (owner question
+[Q0068](../questions/open/0068-barrier-damage-order.md), default this reading): the raising hit is itself absorbed;
+the barrier acts on the damage before armour (Liquipedia "Damage Calculation" caps Hardened Shield, also a damage
+response, before defence; §7.1 quotes it); a hit absorbed whole deals nothing, no 0.5 minimum, and does not restart
+the regeneration delays.
+
+### 14.2 The rule
+
+`ArchetypeCapabilities::barrier: Option<BarrierSpec>` (`absorb_limit`, `duration_ticks`, `cooldown_ticks`), validated
+(limit positive, duration at least 1, cooldown at least the duration). Per unit, `Entity::barrier: BarrierState`
+(ticks raised left, absorption left, cooldown left), hashed: checksum schema 20. `BarrierState::absorb` takes the
+raw damage of each strike (direct, every strike of a multi-strike attack, splash after its falloff, storm pulses),
+raises a ready barrier, absorbs up to what is left and returns the rest, which is then mitigated by shields and
+armour as before; upkeep (phase 2) counts the window and the cooldown down. The window counts the raising tick.
+
+Tests (`barrier_tests.rs`, 6 of 7 rule tests red with the rule disabled): limit then life; no capability; the
+window's end; re-raising after the cooldown; before armour (life armour 2, limit 50: 8 reaches life, where after
+armour would be 6); splash; storm. Unit tests: `BarrierState` and catalog validation. The shipped-values test was
+red before the data commit.
+
+### 14.3 Results
+
+| Step | Commit | Matrix (against the previous step) | Battle 33 (68 seeds) | Goldens |
+|---|---|---|---|---|
+| Rule | `e79972a` | bit-identical | bit-identical (41 / 10 / 17) | re-recorded for schema 20 alone (§14.4) |
+| Data | `34d578c` | 4 battles moved, no overall winner changed (below) | bit-identical | unchanged |
+
+**The moved battles** (20 seeds; outcome blue / red / unresolved unchanged in each):
+
+| Battle | Before | After |
+|---|---|---|
+| 2b (Immortal against two Roaches) | lead hull 197.25 (20 seeds) | 200.00 |
+| 3 (Immortal against a Siege Tank) | lead hull 176 on every seed | 200 on every seed |
+| 28 (100 Zerglings against 10 Immortals) | Zergling survivors 36.50, end tick 610 | 28.00, 692 |
+| 30 (20 Roaches against 10 Immortals) | Immortal lead hull 165.05 | 190.70 |
+
+Battle 3's expectation (`blue_lead_hp: (176, 176)`) failed on all 20 seeds and is re-recorded to `(200, 200)`, its
+claim now saying the Barrier absorbs the first shots; this closes remediation finding M-20 (combat alignment
+§13.13). Battle 2a (one Roach) is bit-identical: its Immortal already lost no hull.
+Expectation failures after re-recording: 0 on the seeds of record, 0 over all seeds.
+
+### 14.4 Goldens
+
+The rule commit adds `Entity::barrier` to the hash (schema 20). With the field unhashed at schema 19 both golden
+replays and the sandbox checksum reproduce as recorded (debug), so the re-recording is the encoding alone; the
+re-recorded lists reproduce in debug, release, and `wasm32-wasip1` debug and release (`wasmtime`). The data commit
+leaves both as recorded: neither spawns the Immortal analogue.
+
+### 14.5 What WP13a leaves open
+
+- **B-41, narrowed** ([Q0068](../questions/open/0068-barrier-damage-order.md)): where in a hit the Barrier acts.
+- Graviton Beam and Scrambler Missile, which disable the Barrier in the data, are not modelled (no shipped
+  analogue casts them); the Barrier has no visual in the client.
+

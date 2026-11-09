@@ -791,7 +791,7 @@ requires.
 | B-38 | No burrowed Roach regeneration, no Tunneling Claws | (i) | WP15, WP18 |
 | B-39 | No acceleration or deceleration | Fixed, narrowed | WP12 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §13; Amendment 18); open only how an unset `Deceleration` brakes ([Q0067](../questions/open/0067-unset-deceleration.md)) |
 | B-40 | Turn before move | Fixed | turn-before-move WP1 `6d7a9d5`, WP3 `b7d9f50` |
-| B-41 | No Immortal Barrier | (i) | WP13a |
+| B-41 | No Immortal Barrier | Fixed, narrowed | WP13a ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §14; Amendment 19); open only the engine order within a hit ([Q0068](../questions/open/0068-barrier-damage-order.md)) |
 | B-42 | The Lurker attacks unburrowed | (i) | WP13b |
 | B-43 | Charge without the dash | (i) | WP13c |
 | B-44 | Concussive Shells do nothing | (i) | WP13d |
@@ -1164,4 +1164,23 @@ Evidence: [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.
   without arriving and for pursuit.
 - **Found:** B-92, `LateralAcceleration` not modelled (WP16).
 - Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §13. No commit was
+  held.
+
+## Amendment 19 (WP13a, 2026-11-09): the Immortal's Barrier landed
+
+- **Research:** the Barrier is two behaviours on the Immortal (`voidmulti` UnitData:775-776). `BarrierDamageResponse`
+  answers any damage with a 45 s cooldown (`voidmulti` BehaviorData:577-590) by applying `TakenDamage` (3 Normal s,
+  :599-609) and `ImmortalBarrierSupressed` (45 s, :592-598); `ImmortalOverload` absorbs everything (`ModifyFraction`
+  0, `void` BehaviorData:104) up to 100 (`voidmulti` :278) while that cooldown runs. The plan's B-41 row cited the
+  `ImmortalOverload` ability (AbilData:585-591), whose 45 is the same cooldown; the live mechanism is the behaviour
+  chain. Where in a hit it acts is engine order: the rule reads it before armour, as Liquipedia's "Damage
+  Calculation" caps Hardened Shield's damage response before defence.
+- **B-41 fixed, narrowed:** latent rule `e79972a` (capability `ArchetypeCapabilities::barrier`, per-unit
+  `Entity::barrier`; direct hits, every strike, splash and storm; checksum schema 20), data `34d578c`
+  (`void_goliath`: 100, 54 ticks, 804 ticks). Battles 2b, 3, 28 and 30 moved, none changed its overall winner;
+  battle 3's expectation re-recorded (lead hull 176 -> 200), which closes remediation finding M-20; battle 33
+  bit-identical (41 / 10 / 17); goldens re-recorded only for the schema. Open: whether the raising hit is absorbed,
+  before or after armour, and whether a wholly absorbed hit still deals 0.5
+  ([Q0068](../questions/open/0068-barrier-damage-order.md), default the rule as landed).
+- Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §14. No commit was
   held.

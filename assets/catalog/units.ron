@@ -1925,6 +1925,11 @@
             capabilities: (
                 overclock: None,
                 harvester: None,
+                barrier: Some((
+                    absorb_limit: 100.0,
+                    duration_ticks: 54,
+                    cooldown_ticks: 804,
+                )),
                 is_resource_dropoff: false,
             ),
             veo_prompts: {

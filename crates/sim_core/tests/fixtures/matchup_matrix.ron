@@ -89,10 +89,13 @@
         // Re-recorded for plan 2026-11-04-combat-sc2-alignment WP12 group W1: the tank fires every
         // 19 ticks (StarCraft II's 1.04 Normal s; was 26, the Normal value unconverted), so it lands
         // five shots instead of four before it dies and the fifth reaches the immortal's life
-        // (200 -> 176 on every seed). In StarCraft II the immortal's Barrier absorbs it; Barrier is
-        // not modelled (finding M-20 of the remediation plan). Evidence: combat alignment §13.13.
+        // (200 -> 176 on every seed). Evidence: combat alignment §13.13.
+        // Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP13a (B-41, finding M-20): the
+        // immortal's Barrier absorbs the tank's shots of its first 54 ticks (under its 100), so the
+        // shields take the rest and no shot reaches life (176 -> 200 on every seed). Evidence:
+        // sc2-deviation-fixes §14.
         name: "3_immortal_vs_tank",
-        claim: "An immortal beats a tank-mode tank, losing its shields and one shot of life (no Barrier)",
+        claim: "An immortal beats a tank-mode tank; its Barrier absorbs the first shots and no shot reaches its life",
         map_cells: 64,
         ticks: 200,
         blue: (
@@ -107,7 +110,7 @@
             ],
             order: AttackMove(10, 32),
         ),
-        expect: (blue: (1, 1), red: (0, 0), blue_lead_hp: Some((176.0, 176.0))),
+        expect: (blue: (1, 1), red: (0, 0), blue_lead_hp: Some((200.0, 200.0))),
     ),
     (
         name: "4_marauder_vs_roach",

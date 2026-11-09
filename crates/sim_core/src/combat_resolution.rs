@@ -20,8 +20,8 @@
 use crate::catalog::UnitCatalog;
 use crate::catalog::{SplashSpec, UnitArchetype, WeaponSpec};
 use crate::combat::{
-    calculate_hit_damage_upgraded, calculate_splash_damage_upgraded, charge_random_delay,
-    shares_combat_plane, step_entity_weapon, DamageResolution, WeaponTarget,
+    charge_random_delay, mitigate_weapon_strike, raw_strike_damage, shares_combat_plane,
+    splash_raw_damage, step_entity_weapon, WeaponTarget,
 };
 use crate::entity::{ActiveProjectile, Entity, PendingStrikes, WeaponPhase};
 use crate::weapon_timing::{resolve_attack_period, AttackRate, SimulationDiagnostic};
@@ -108,7 +108,8 @@ pub(crate) struct CombatWorkspace {
     /// Sorted by `EntityId`, because they are built from an ordered map walk.
     snapshots: Vec<(EntityId, TargetSnapshot)>,
     shots: Vec<PreparedShot>,
-    splash_hits: Vec<(EntityId, DamageResolution)>,
+    /// Each struck entity with the raw damage it takes, before its barrier and armour.
+    splash_hits: Vec<(EntityId, SimScalar)>,
     /// Centres of the current splash's searches (one for a circle, one per offset for a line).
     splash_points: Vec<SimVec2>,
     finished_projectiles: Vec<(usize, ProjectileStep)>,
@@ -182,6 +183,36 @@ impl StrikeContext<'_> {
 /// Direction a hit arrives from, as stored for hull-impact rendering.
 fn hit_angle(origin: SimVec2, target: SimVec2) -> SimAngle {
     SimAngle::atan2(origin.y - target.y, origin.x - target.x)
+}
+
+/// Lands one strike of `weapon` carrying `raw` damage (before armour) on `target`.
+///
+/// The target's barrier, if its archetype has one, absorbs first (B-41). What it lets through
+/// is mitigated by shields and armour and applied. A strike the barrier absorbs whole deals
+/// nothing: no 0.5 minimum, no hit flash, and the regeneration delays keep running.
+fn strike_through_barrier(
+    target: &mut Entity,
+    target_arch: &UnitArchetype,
+    target_upgrades: &PlayerUpgradeState,
+    weapon: &WeaponSpec,
+    raw: SimScalar,
+    angle: SimAngle,
+) {
+    let raw = target
+        .barrier
+        .absorb(target_arch.capabilities.barrier.as_ref(), raw);
+    if raw <= SimScalar::ZERO {
+        return;
+    }
+    let resolution = mitigate_weapon_strike(
+        raw,
+        weapon,
+        target_arch,
+        target_upgrades,
+        target.shields,
+        target.hp,
+    );
+    target.apply_damage(resolution.shield_damage, resolution.life_damage, angle);
 }
 
 impl SimWorld {
@@ -613,17 +644,16 @@ impl SimWorld {
         }
         let attacker_upgrades = Self::upgrades_of(&self.player_upgrades, source.owner);
         let target_upgrades = Self::upgrades_of(&self.player_upgrades, target.owner);
+        let raw = raw_strike_damage(source.weapon, source.slug, attacker_upgrades, target_arch);
         for _ in 0..source.strikes {
-            let resolution = calculate_hit_damage_upgraded(
-                source.weapon,
-                source.slug,
-                attacker_upgrades,
+            strike_through_barrier(
+                target,
                 target_arch,
                 target_upgrades,
-                target.shields,
-                target.hp,
+                source.weapon,
+                raw,
+                hit.angle,
             );
-            target.apply_damage(resolution.shield_damage, resolution.life_damage, hit.angle);
         }
         if let Some(attacker) = source.attacker {
             self.apply_combat_retaliation_prevalidated(target_id, attacker);
@@ -680,24 +710,23 @@ impl SimWorld {
             {
                 continue;
             }
-            let resolution = calculate_splash_damage_upgraded(
+            if let Some(raw) = splash_raw_damage(
                 source.weapon,
                 source.slug,
                 attacker_upgrades,
                 splash,
                 distance,
                 other_arch,
-                Self::upgrades_of(&self.player_upgrades, other.owner),
-                other.shields,
-                other.hp,
-            );
-            if let Some(resolution) = resolution {
-                splash_hits.push((other_id, resolution));
+            ) {
+                splash_hits.push((other_id, raw));
             }
         }
-        for &(id, resolution) in &splash_hits {
+        for &(id, raw) in &splash_hits {
             if let Some(entity) = self.entities.get_mut(&id) {
-                entity.apply_damage(resolution.shield_damage, resolution.life_damage, hit.angle);
+                if let Ok(arch) = self.catalog.get(entity.unit_type_id) {
+                    let upgrades = Self::upgrades_of(&self.player_upgrades, entity.owner);
+                    strike_through_barrier(entity, arch, upgrades, source.weapon, raw, hit.angle);
+                }
             }
             if let Some(attacker) = source.attacker {
                 self.apply_combat_retaliation_prevalidated(id, attacker);

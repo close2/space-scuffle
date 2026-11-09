@@ -66,7 +66,7 @@ fn structure_strike_against<'a>(
 /// The per-level attribute growth is granted once, and only when `spec` carries an authored
 /// bonus against an attribute the target actually has. A structure struck by a weapon with a
 /// structure strike takes that strike and its own per-level growth instead (B-82).
-fn raw_strike_damage(
+pub(crate) fn raw_strike_damage(
     spec: &WeaponSpec,
     attacker_slug: Option<&str>,
     attacker_upgrades: &PlayerUpgradeState,
@@ -105,13 +105,38 @@ pub fn calculate_hit_damage_upgraded(
     target_shields: SimScalar,
     target_hp: SimScalar,
 ) -> DamageResolution {
-    mitigate_strike(
+    mitigate_weapon_strike(
         raw_strike_damage(
             attacker_spec,
             attacker_slug,
             attacker_upgrades,
             target_archetype,
         ),
+        attacker_spec,
+        target_archetype,
+        target_upgrades,
+        target_shields,
+        target_hp,
+    )
+}
+
+/// Mitigates `raw_damage` of one strike of `attacker_spec`: shield armour, spillover, life
+/// armour and the minimum clamp, as [`calculate_hit_damage_upgraded`] does after its raw sum.
+///
+/// The world calls it between the raw sum and the mitigation when the target's barrier
+/// ([`crate::entity::BarrierState`]) has absorbed part of the strike: a damage response acts
+/// on the damage before defence, as Hardened Shield's cap does in Liquipedia's "Damage
+/// Calculation" ("Damage Capped", then defence).
+pub(crate) fn mitigate_weapon_strike(
+    raw_damage: SimScalar,
+    attacker_spec: &WeaponSpec,
+    target_archetype: &UnitArchetype,
+    target_upgrades: &PlayerUpgradeState,
+    target_shields: SimScalar,
+    target_hp: SimScalar,
+) -> DamageResolution {
+    mitigate_strike(
+        raw_damage,
         target_archetype,
         target_upgrades,
         target_shields,
@@ -228,25 +253,49 @@ pub fn calculate_splash_damage_upgraded(
     target_shields: SimScalar,
     target_hp: SimScalar,
 ) -> Option<DamageResolution> {
+    let raw_damage = splash_raw_damage(
+        attacker_spec,
+        attacker_slug,
+        attacker_upgrades,
+        splash,
+        distance,
+        target_archetype,
+    )?;
+    Some(mitigate_weapon_strike(
+        raw_damage,
+        attacker_spec,
+        target_archetype,
+        target_upgrades,
+        target_shields,
+        target_hp,
+    ))
+}
+
+/// The raw damage of `splash` to a unit `distance` world units from the impact point, before
+/// armour: the strike's raw damage scaled by the fraction of the innermost zone that reaches
+/// it. `None` beyond the last zone.
+pub(crate) fn splash_raw_damage(
+    attacker_spec: &WeaponSpec,
+    attacker_slug: Option<&str>,
+    attacker_upgrades: &PlayerUpgradeState,
+    splash: &SplashSpec,
+    distance: SimScalar,
+    target_archetype: &UnitArchetype,
+) -> Option<SimScalar> {
     let damage_multiplier = splash.fraction_at(distance)?;
 
     // PERFORMANCE RATIONALE:
     // Why: Splash runs once per entity in the blast, and a scaled `WeaponSpec` clone allocates.
     // What: Scale the summed raw damage, which also covers the unit-specific stat bonus.
     // Trade-off: None for readability: one multiplication replaces one per damage component.
-    Some(mitigate_strike(
+    Some(
         raw_strike_damage(
             attacker_spec,
             attacker_slug,
             attacker_upgrades,
             target_archetype,
         ) * damage_multiplier,
-        target_archetype,
-        target_upgrades,
-        target_shields,
-        target_hp,
-        structure_strike_against(attacker_spec, target_archetype).is_some_and(|s| s.ignores_armor),
-    ))
+    )
 }
 
 /// Whether area damage centred on a `primary` entity reaches an `other` entity.

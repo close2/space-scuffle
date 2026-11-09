@@ -172,7 +172,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-36 | Unfinished structures regenerate life | WP15 |
 | B-38 | No burrowed Roach regeneration and no Tunneling Claws | WP15, WP18 |
 | B-39 | How a unit whose data sets no `Deceleration` brakes; ours stops within a tick (not yet sourced, [Q0067](docs/questions/open/0067-unset-deceleration.md)); acceleration and the sourced decelerations are fixed | Q0067 |
-| B-41 | No Immortal Barrier (M-20) | WP13a |
+| B-41 | Where in a hit the Immortal's Barrier acts: whether the raising hit is absorbed, before or after armour, and whether a hit absorbed whole still deals 0.5 (not yet sourced, [Q0068](docs/questions/open/0068-barrier-damage-order.md)); the Barrier itself is fixed | Q0068 |
 | B-42 | The Lurker analogue attacks unburrowed | WP13b |
 | B-43 | Charge is a speed bonus without the dash | WP13c |
 | B-44 | Concussive Shells have no effect | WP13d |
