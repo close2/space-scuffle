@@ -27,7 +27,9 @@
 //! - The golden constants were recorded on `main` at `808b6dd`, before any WP4 edit. The three
 //!   mesh hashes were re-recorded at `3baab60`, plan `2026-11-09-ramp-geometry` WP1: ramp corners no
 //!   longer round into plateau levels, so the slabs, hidden floors and duplicated walls over ramp
-//!   footprints are gone and ramp cells wall their own edges. The pick hashes did not change.
+//!   footprints are gone and ramp cells wall their own edges. The synthetic mesh hash was
+//!   re-recorded again at `ef26242`, plan `2026-11-09-ramp-geometry` WP2: flank walls beside
+//!   higher ground and walls between ramps of different height. The pick hashes did not change.
 //! - A golden may only change together with a deliberate, documented change in terrain output.
 
 #![allow(
@@ -371,7 +373,7 @@ fn synthetic_map_mesh_and_picking_are_bit_exact() {
         "synthetic",
         mesh_hash(&map),
         pick_hash(&map),
-        (0xe2a1_7869_8ccc_7174, 0xe991_3ab4_d9ba_9745, 1532),
+        (0xce78_5e16_375b_bd4c, 0xe991_3ab4_d9ba_9745, 1532),
     );
 }
 
