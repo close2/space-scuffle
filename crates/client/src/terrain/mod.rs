@@ -29,10 +29,10 @@ pub use material::{
 };
 pub use mesher::{
     apply_scratch_to_mesh, build_chunk_mesh, cliff_level_height, compute_floor_ao,
-    generate_wall_profile, is_ramp_connected, pcg2d, surface_class, MeshStats, MesherScratch,
-    SurfaceClass, ABYSS_WALL_BOTTOM_Y, AO_RADIUS_CELLS, AO_STRENGTH, ATTRIBUTE_UV_1,
-    CHUNK_DUAL_CELLS, FOOT_RISE, FOOT_WIDTH, MAX_CHUNK_REBUILDS_PER_FRAME, RAIL_HEIGHT, RAIL_WIDTH,
-    RIM_DROP, RIM_WIDTH, WALL_FOOT_AO, WALL_JITTER_AMPLITUDE, WALL_ROW_SPACING,
+    generate_wall_profile, pcg2d, surface_class, MeshStats, MesherScratch, SurfaceClass,
+    ABYSS_WALL_BOTTOM_Y, AO_RADIUS_CELLS, AO_STRENGTH, ATTRIBUTE_UV_1, CHUNK_DUAL_CELLS, FOOT_RISE,
+    FOOT_WIDTH, MAX_CHUNK_REBUILDS_PER_FRAME, RAIL_HEIGHT, RAIL_WIDTH, RIM_DROP, RIM_WIDTH,
+    WALL_FOOT_AO, WALL_JITTER_AMPLITUDE, WALL_ROW_SPACING,
 };
 pub use picking::{pick_terrain, TerrainHit};
 pub use theme_gpu::{

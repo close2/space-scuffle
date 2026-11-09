@@ -69,6 +69,7 @@ fn test_overclock_stim_hp_cost_and_stat_multipliers() {
         cooldown_ticks: 250,
         cast_range: SimScalar::ZERO,
         effect: AbilityEffectSpec::Overclock(overclock_spec),
+        leave_name: None,
     };
 
     world.catalog.get_mut(pulse_bot_id).unwrap().abilities = vec![ability];
@@ -166,6 +167,7 @@ fn stim_is_refused_unless_life_exceeds_its_cost() {
         cooldown_ticks: 250,
         cast_range: SimScalar::ZERO,
         effect: AbilityEffectSpec::Overclock(spec),
+        leave_name: None,
     }];
 
     for (life, admitted) in [(9, false), (10, false), (11, true)] {
@@ -257,6 +259,7 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
         attacks_count: 1,
         strike_interval_ticks: 0,
         followup_max_distance: None,
+        channeled: false,
         period_ticks: 60,
         damage_point_ticks: 2,
         backswing_ticks: 4,
@@ -279,6 +282,7 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
             ],
             shape: sim_types::SplashShape::Circle,
             friendly_fire: false,
+            offset_by_unit_radius: false,
         }),
         projectile_speed: None,
         weapon_class: None,
@@ -300,6 +304,7 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
             cast_ticks: 5, // 5 ticks for test speed
             sieged_weapon: Box::new(sieged_weapon.clone()),
         },
+        leave_name: None,
     };
 
     world.catalog.get_mut(crawler_id).unwrap().abilities = vec![ability];
@@ -442,6 +447,7 @@ fn test_blink_teleport_across_cliff_chasm() {
             max_range: SimScalar::from_num(8),
             cooldown_ticks: 175,
         },
+        leave_name: None,
     };
 
     world.catalog.get_mut(crawler_id).unwrap().abilities = vec![ability];
@@ -534,6 +540,7 @@ fn test_psionic_storm_hazard_zone_aoe_and_non_stacking() {
             damage_per_interval: SimScalar::from_num(14),
             friendly_fire: true,
         },
+        leave_name: None,
     };
 
     world.catalog.get_mut(caster_type_id).unwrap().abilities = vec![storm_ability];
@@ -627,6 +634,7 @@ fn test_cloak_invisibility_and_detector_reveal() {
             energy_cost_per_second: SimScalar::ZERO,
             is_burrow: false,
         },
+        leave_name: None,
     };
 
     world.catalog.get_mut(pulse_bot_id).unwrap().abilities = vec![cloak_ability];
@@ -765,4 +773,372 @@ fn b4_siege_mode_adds_a_seeded_random_delay() {
         channels.iter().map(|c| c.0).collect::<Vec<_>>(),
         "the same seed draws the same extra"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Read-only mode queries for the client (plan `2026-11-09-client-mode-commands` WP1a, D-3, D-4).
+// ---------------------------------------------------------------------------------------------
+
+/// A 40 × 40 flat world on the shipped catalog with one `slug` of player 0 at (10, 16).
+fn one_unit(slug: &str, seed: u64) -> (SimWorld, EntityId) {
+    let map =
+        GameMap::new(40, 40, MapCell::default_ground(CliffLevel(0))).expect("invariant: valid map");
+    let mut world = sim_fixtures::world(map, seed);
+    let unit_type = world.catalog.id_by_slug(slug).expect("shipped unit");
+    let unit = world
+        .spawn_unit(
+            unit_type,
+            PlayerId(0),
+            SimVec2::new(SimScalar::from_num(10), SimScalar::from_num(16)),
+        )
+        .expect("spawn unit");
+    (world, unit)
+}
+
+/// Steps `world` through `ticks` ticks without commands.
+fn run(world: &mut SimWorld, ticks: u32) {
+    for _ in 0..ticks {
+        let tick = world.current_tick;
+        world.step(&empty_bundle(tick));
+    }
+}
+
+/// The settled mode's name and whether the unit will be anchored, for `unit` of `world`.
+fn settled(world: &SimWorld, unit: EntityId) -> (Option<String>, bool) {
+    let entity = &world.entities[&unit];
+    let archetype = world.catalog.get(entity.unit_type_id).expect("archetype");
+    (
+        entity
+            .settled_mode(archetype)
+            .map(|mode| mode.mode_name.clone()),
+        entity.immobile_after_channel(archetype),
+    )
+}
+
+/// Asserts that the read-only admission and a real cast of ability 0 agree; returns the verdict.
+fn admission_agrees(world: &mut SimWorld, unit: EntityId) -> bool {
+    let predicted = world.would_admit_cast(unit, 0, None);
+    let cast = world.execute_ability(unit, 0, None, None);
+    assert_eq!(
+        predicted, cast,
+        "would_admit_cast agrees with execute_ability"
+    );
+    cast
+}
+
+#[test]
+fn would_admit_cast_agrees_with_execute_ability_on_every_refusal() {
+    const UPGRADES: &str = r#"(upgrades: [(
+        upgrade_id: 1, slug: "learn_siege", name: "learn_siege", display_name: "Learn Siege",
+        faction: "automaton_directorate", level: 1, mineral_cost: 0, gas_cost: 0,
+        research_ticks: 1, researched_at: "foundry_core_dome",
+        effects: [UnlockAbility(target_slug: "railgun_crawler", ability_slug: "Siege Mode")],
+    )])"#;
+
+    // Admitted, then refused while the channel runs.
+    let (mut world, tank) = one_unit("railgun_crawler", 3);
+    assert!(admission_agrees(&mut world, tank), "a fresh tank may siege");
+    assert!(
+        !admission_agrees(&mut world, tank),
+        "refused while channelling"
+    );
+
+    // Dead.
+    let (mut world, tank) = one_unit("railgun_crawler", 3);
+    world.entities.get_mut(&tank).unwrap().hp = SimScalar::ZERO;
+    assert!(!admission_agrees(&mut world, tank), "refused when dead");
+
+    // Carried.
+    let (mut world, tank) = one_unit("railgun_crawler", 3);
+    let carrier_type = world
+        .catalog
+        .archetypes()
+        .find(|a| a.capabilities.transport_capacity > 0)
+        .map(|a| a.unit_type_id)
+        .expect("a carrier in the catalog");
+    let carrier = world
+        .spawn_unit(
+            carrier_type,
+            PlayerId(0),
+            SimVec2::new(SimScalar::from_num(11), SimScalar::from_num(16)),
+        )
+        .expect("spawn carrier");
+    assert!(
+        world.load_unit_into_transport(tank, carrier),
+        "the tank boards"
+    );
+    assert!(!admission_agrees(&mut world, tank), "refused when carried");
+
+    // Cooldown.
+    let (mut world, tank) = one_unit("railgun_crawler", 3);
+    world.entities.get_mut(&tank).unwrap().ability_cooldowns[0] = 5;
+    assert!(!admission_agrees(&mut world, tank), "refused on cooldown");
+
+    // Energy.
+    let (mut world, tank) = one_unit("railgun_crawler", 3);
+    let crawler = world.entities[&tank].unit_type_id;
+    world.catalog.get_mut(crawler).unwrap().abilities[0].energy_cost = SimScalar::from_num(10);
+    world.entities.get_mut(&tank).unwrap().energy = SimScalar::from_num(9);
+    assert!(
+        !admission_agrees(&mut world, tank),
+        "refused without energy"
+    );
+
+    // Unknown ability index.
+    let (world, tank) = one_unit("railgun_crawler", 3);
+    assert!(!world.would_admit_cast(tank, 3, None), "no such ability");
+
+    // Locked until researched.
+    let (mut world, tank) = one_unit("railgun_crawler", 3);
+    world.upgrade_catalog = sim_core::upgrades::UpgradeCatalog::from_ron_str(
+        &sim_fixtures::shipped_factions(),
+        UPGRADES,
+    )
+    .unwrap();
+    assert!(!admission_agrees(&mut world, tank), "refused while locked");
+    world.research_upgrade(PlayerId(0), "learn_siege").unwrap();
+    assert!(
+        admission_agrees(&mut world, tank),
+        "admitted once researched"
+    );
+}
+
+#[test]
+fn settled_mode_follows_both_channels_of_both_shipped_mode_units() {
+    for slug in ["railgun_crawler", "burrow_scorpion"] {
+        let (mut world, unit) = one_unit(slug, 11);
+        let mode = world
+            .catalog
+            .get(world.entities[&unit].unit_type_id)
+            .unwrap()
+            .modes[0]
+            .mode_name
+            .clone();
+        assert_eq!(
+            settled(&world, unit),
+            (None, false),
+            "{slug}: default stance"
+        );
+
+        assert!(world.execute_ability(unit, 0, None, None));
+        assert!(world.entities[&unit].channeling_remaining_ticks > 0);
+        assert_eq!(world.entities[&unit].active_mode, None);
+        assert_eq!(
+            settled(&world, unit),
+            (Some(mode.clone()), true),
+            "{slug}: entering settles in the mode"
+        );
+        let enter = u32::from(world.entities[&unit].channeling_remaining_ticks);
+        run(&mut world, enter);
+        assert_eq!(
+            world.entities[&unit].active_mode.as_deref(),
+            Some(mode.as_str())
+        );
+        assert_eq!(
+            settled(&world, unit),
+            (Some(mode.clone()), true),
+            "{slug}: in the mode"
+        );
+
+        assert!(world.execute_ability(unit, 0, None, None));
+        assert!(
+            world.entities[&unit].is_immobile,
+            "anchored while it channels"
+        );
+        assert_eq!(
+            settled(&world, unit),
+            (None, false),
+            "{slug}: leaving settles in no mode and walks afterwards"
+        );
+        let leave = u32::from(world.entities[&unit].channeling_remaining_ticks);
+        run(&mut world, leave);
+        assert_eq!(world.entities[&unit].active_mode, None);
+        assert_eq!(
+            settled(&world, unit),
+            (None, false),
+            "{slug}: back in default"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// A mode switch given without Shift replaces the unit's orders (plan
+// `2026-11-09-client-mode-commands` WP1b, D-6a). StarCraft II's morphs are not `Transient`
+// (`liberty` AbilData:1301, :1328), Stimpack is (`liberty` AbilData:1231).
+// ---------------------------------------------------------------------------------------------
+
+/// Steps `world` one tick with `order` from player 0 to `units`, queued when `queue`.
+fn command(world: &mut SimWorld, units: &[EntityId], order: UnitOrder, queue: bool) {
+    let tick = world.current_tick;
+    world.step(&TickBundle {
+        tick: Tick(tick),
+        commands: vec![sim_types::PlayerCommand {
+            player_id: PlayerId(0),
+            entities: units.to_vec(),
+            order,
+            queue,
+        }],
+        state_checksum: None,
+    });
+}
+
+/// The cast of ability 0 without a target.
+fn cast_first() -> UnitOrder {
+    UnitOrder::CastAbility {
+        ability_index: 0,
+        target_pos: None,
+        target_entity: None,
+    }
+}
+
+/// A point on the row y = 16 of [`one_unit`]'s world.
+fn row_point(x: i32) -> SimVec2 {
+    SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(16))
+}
+
+/// A tank of player 0 walking east from (10, 16), and an enemy of player 1 holding at
+/// (21, 16), outside tank mode's range and inside Siege Mode's.
+fn walking_tank_and_target() -> (SimWorld, EntityId, EntityId) {
+    let (mut world, tank) = one_unit("railgun_crawler", 5);
+    let enemy_type = world.catalog.id_by_slug("pulse_bot").expect("shipped unit");
+    let enemy = world
+        .spawn_unit(enemy_type, PlayerId(1), row_point(21))
+        .expect("spawn enemy");
+    let tick = world.current_tick;
+    world.step(&TickBundle {
+        tick: Tick(tick),
+        commands: vec![sim_types::PlayerCommand {
+            player_id: PlayerId(1),
+            entities: vec![enemy],
+            order: UnitOrder::HoldPosition,
+            queue: false,
+        }],
+        state_checksum: None,
+    });
+    command(
+        &mut world,
+        &[tank],
+        UnitOrder::Move {
+            target: row_point(36),
+        },
+        false,
+    );
+    run(&mut world, 3);
+    assert!(
+        matches!(
+            world.entities[&tank].order_queue.front(),
+            Some(UnitOrder::Move { .. })
+        ),
+        "the tank walks"
+    );
+    (world, tank, enemy)
+}
+
+#[test]
+fn a_mode_switch_without_shift_drops_the_walk_and_the_anchored_unit_fires() {
+    let (mut world, tank, enemy) = walking_tank_and_target();
+    let life = world.entities[&enemy].hp;
+    command(&mut world, &[tank], cast_first(), false);
+    let unit = &world.entities[&tank];
+    assert!(
+        unit.channeling_remaining_ticks > 0,
+        "the switch is admitted"
+    );
+    assert!(unit.order_queue.is_empty(), "the walk is replaced");
+    assert!(!unit.is_holding_position);
+    run(&mut world, 200);
+    assert!(world.entities[&tank].is_sieged, "sieged where it stood");
+    assert!(
+        world.entities.get(&enemy).is_none_or(|e| e.hp < life),
+        "the sieged tank acquires and fires"
+    );
+    assert_eq!(world.diagnostics(), []);
+}
+
+#[test]
+fn a_refused_mode_switch_leaves_the_orders() {
+    let (mut world, tank, _) = walking_tank_and_target();
+    world.entities.get_mut(&tank).unwrap().ability_cooldowns[0] = 50;
+    command(&mut world, &[tank], cast_first(), false);
+    let unit = &world.entities[&tank];
+    assert_eq!(unit.channeling_remaining_ticks, 0, "the switch is refused");
+    assert!(
+        matches!(unit.order_queue.front(), Some(UnitOrder::Move { .. })),
+        "a refused switch changes nothing"
+    );
+}
+
+#[test]
+fn a_transient_ability_leaves_the_orders() {
+    let (mut world, bot) = one_unit("pulse_bot", 5);
+    let bot_type = world.entities[&bot].unit_type_id;
+    world.catalog.get_mut(bot_type).unwrap().abilities = vec![AbilitySpec {
+        name: "Transient Overclock Test".to_string(),
+        target_kind: AbilityTargetKind::InstantSelf,
+        energy_cost: SimScalar::ZERO,
+        cooldown_ticks: 10,
+        cast_range: SimScalar::ZERO,
+        effect: AbilityEffectSpec::Overclock(OverclockSpec {
+            hp_cost: SimScalar::from_num(10),
+            duration_ticks: 100,
+            speed_multiplier: SimScalar::from_num(1.5),
+            attack_rate_multiplier: SimScalar::from_num(1.5),
+        }),
+        leave_name: None,
+    }];
+    command(
+        &mut world,
+        &[bot],
+        UnitOrder::Move {
+            target: row_point(36),
+        },
+        false,
+    );
+    command(&mut world, &[bot], cast_first(), false);
+    let unit = &world.entities[&bot];
+    assert!(!unit.active_buffs.is_empty(), "the overclock is admitted");
+    assert!(
+        matches!(unit.order_queue.front(), Some(UnitOrder::Move { .. })),
+        "a transient ability keeps the walk"
+    );
+}
+
+/// D-6b (plan `2026-11-09-client-mode-commands` WP1c): a switch queued behind an anchored
+/// unit's focus order runs once the target is gone. Before, `walking_goal` stopped every
+/// anchored unit before it read the queue, so the cast stayed at the front for ever.
+#[test]
+fn a_queued_switch_behind_a_focus_order_runs_on_an_anchored_unit() {
+    let (mut world, tank) = one_unit("railgun_crawler", 9);
+    let enemy_type = world.catalog.id_by_slug("pulse_bot").expect("shipped unit");
+    let enemy = world
+        .spawn_unit(enemy_type, PlayerId(1), row_point(20))
+        .expect("spawn enemy");
+    world.entities.get_mut(&enemy).unwrap().hp = SimScalar::from_num(1);
+    world.entities.get_mut(&enemy).unwrap().max_hp = SimScalar::from_num(1);
+    assert!(world.execute_ability(tank, 0, None, None));
+    let enter = u32::from(world.entities[&tank].channeling_remaining_ticks);
+    // Keep the target away while the tank sieges, then let the focus order kill it.
+    world.entities.get_mut(&enemy).unwrap().position = row_point(36);
+    run(&mut world, enter);
+    assert!(world.entities[&tank].is_sieged);
+    world.entities.get_mut(&enemy).unwrap().position = row_point(20);
+    command(&mut world, &[tank], UnitOrder::attack(enemy), false);
+    command(&mut world, &[tank], cast_first(), true);
+    assert!(
+        matches!(
+            world.entities[&tank].order_queue.back(),
+            Some(UnitOrder::CastAbility { .. })
+        ),
+        "the switch waits behind the focus order"
+    );
+    run(&mut world, 200);
+    assert!(
+        world.entities.get(&enemy).is_none_or(|e| !e.is_alive()),
+        "the focus target died"
+    );
+    let unit = &world.entities[&tank];
+    assert!(unit.order_queue.is_empty(), "the queued switch ran");
+    assert_eq!(unit.active_mode, None, "the tank left Siege Mode");
+    assert!(!unit.is_immobile, "and walks again");
+    assert_eq!(world.diagnostics(), []);
 }

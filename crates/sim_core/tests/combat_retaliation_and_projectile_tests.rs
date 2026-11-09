@@ -82,6 +82,7 @@ fn custom_projectile_weapon(
         attacks_count: 1,
         strike_interval_ticks: 0,
         followup_max_distance: None,
+        channeled: false,
         period_ticks: 30,
         damage_point_ticks: 1,
         backswing_ticks: 2,
@@ -548,6 +549,7 @@ fn test_ballistic_impact_last_known_position_splash() {
         ],
         shape: sim_types::SplashShape::Circle,
         friendly_fire: false,
+        offset_by_unit_radius: false,
     };
     let weapon = custom_projectile_weapon(
         SimScalar::from_f32_lossy(0.60),

@@ -465,7 +465,7 @@ appends it (the same Banshee edit). Times are Normal seconds; ticks = Normal s �
   Colossus' strikes on its target 0.375 Normal s (7 ticks, the persistents' `ExpireDelay`) after the weapon fires;
   ours land on the release tick. Recorded as **B-81** (class (i)); the Colossus part belongs with its sweep (B-18,
   WP8b). Whether an order given between the strikes ends a `Channeled` burst is not stated in the data or on
-  Liquipedia: filed as [Q0058](../questions/open/0058-channeled-burst-interruption.md), default no change (only the
+  Liquipedia: filed as [Q0058](../questions/closed/0058-channeled-burst-interruption.md), default no change (only the
   attacker's death or boarding ends a burst).
 
 ### 5.2 Commit a: strikes on separate ticks, latent
@@ -689,7 +689,7 @@ Hardened Shield, not to the default. Liquipedia is the source, read as wikitext 
    which has already damaged the shields; Damage Calculation, read literally, sends a remainder no larger than
    armour to life unarmoured, a jump (life damage falls from the armour value to nearly 0 as the strike grows past
    shields plus armour) that reads as an editing slip. TeamLiquid, SC2Mapster and Hive Workshop searches found
-   nothing more. Filed as [Q0062](../questions/open/0062-shield-break-life-minimum.md) with an editor measurement
+   nothing more. Filed as [Q0062](../questions/closed/0062-shield-break-life-minimum.md) with an editor measurement
    and the default "no change": the life part stays at least 0.5, and B-15 stays recorded for that part only.
 
 ### 7.2 Commit: the shield-mitigated remainder reaches life (B-15, B-74 part)
@@ -753,7 +753,7 @@ specify:
 2. **Whether a zone reaches a unit's edge.** Liquipedia's Siege Tank page says only "within .4687 matrices of the
    target"; TeamLiquid (403 to tools), SC2Mapster and Hive Workshop gave nothing more.
 
-Filed as [Q0063](../questions/open/0063-splash-distance-rule.md) with two editor measurements; the default is no
+Filed as [Q0063](../questions/closed/0063-splash-distance-rule.md) with two editor measurements; the default is no
 change (centre of the target, centre of each struck unit), and B-17 stays recorded. The Siege Tank, whose flag is
 0, already splashes from the target's centre as the game does.
 
@@ -838,7 +838,7 @@ Colossus's direction of fire" ([Colossus (Legacy of the Void)](https://liquipedi
   `liberty`'s `ExpireDelay` 0.375 Normal s; `swarm` EffectData:2325, :2330 set 0.73, and the persistent sits at
   `TargetPoint`. Whether `ExpireDelay` counts from creation or after the last period, and whether a point persistent
   still applies its `ExpireEffect` to the target unit, are not stated (an SC2Mapster forum tutorial says "after the
-  conditions of the persistent have been completed"). Filed as [Q0064](../questions/open/0064-colossus-damage-timing.md)
+  conditions of the persistent have been completed"). Filed as [Q0064](../questions/closed/0064-colossus-damage-timing.md)
   with an editor measurement; default no change.
 
 ### 9.2 Commit a: the line shape, latent (B-18)
@@ -1142,7 +1142,7 @@ the Lurker's own, `void` TurretData:16). Test `b30_turret_idle_follows_starcraft
 
 **Not sourced: Q0065.** The `SiegeTank`, `Hellion` and `Phoenix` turrets use `ResetIfMoving` and set no `YawIdleRate`;
 no layer's default sets one (`core` TurretData:3-10) and the reference states none. They hold until the owner answers
-[Q0065](../questions/open/0065-turret-idle-rate.md); B-30 stays open for that part only.
+[Q0065](../questions/closed/0065-turret-idle-rate.md); B-30 stays open for that part only.
 
 ### 11.5 Goldens
 
@@ -1183,7 +1183,7 @@ Battlecruiser's high random delay ratio to the auto-attack cooldown could cause 
 do less damage than expected" (patch 4.7.1 removed it), so the delay adds to the cycle: the mean period is `Period` +
 0.03125 Normal s. The negative minimum places it between attacks, where it can shorten one. Drawn per attack; the
 reference names no distribution, so "a random value between" is read as uniform. Not sourced: whether an
-attack-rate buff scales it, and whether the first attack draws one ([Q0066](../questions/open/0066-random-delay-scaling.md),
+attack-rate buff scales it, and whether the first attack draws one ([Q0066](../questions/closed/0066-random-delay-scaling.md),
 B-91, default: neither).
 
 Overrides at 5.0.14: `PointDefenseLaser` 0/0 (`liberty` WeaponData:76-77), the Battlecruiser's `ATSLaserBattery` and
@@ -1268,7 +1268,7 @@ Each re-recording reproduces in debug, release, and `wasm32-wasip1` debug and re
 
 ### 12.6 What WP11 leaves open
 
-- **B-91** ([Q0066](../questions/open/0066-random-delay-scaling.md)): whether an attack-rate buff scales the delay,
+- **B-91** ([Q0066](../questions/closed/0066-random-delay-scaling.md)): whether an attack-rate buff scales the delay,
   and whether the first attack draws one.
 - The morph random delays of other modes (burrow, the Viking's) belong to the packages that add those modes (WP13).
 
@@ -1300,7 +1300,7 @@ Overlord 1.0625 (`liberty` :7366). The plan's B-39 row named the Hellion as fini
 
 **Deceleration.** No `CUnit` default sets it, and only the High Templar (1000, `liberty` UnitData:3259) and the
 Overlord (1.625, `voidmulti` UnitData:1199) among the analogues do. What the engine does with an unset (zero)
-`Deceleration` is not sourced: [Q0067](../questions/open/0067-unset-deceleration.md), default no change (unset stays
+`Deceleration` is not sourced: [Q0067](../questions/closed/0067-unset-deceleration.md), default no change (unset stays
 instant; the catalog keeps its copy of `max_speed`).
 
 **Not modelled.** `LateralAcceleration` (46.0625 for most ground units, e.g. `liberty` UnitData:4823; 1000 for the
@@ -1367,7 +1367,7 @@ instant). The re-recording reproduces in debug, release, and `wasm32-wasip1` deb
 
 ### 13.5 What WP12 leaves open
 
-- **B-39, narrowed** ([Q0067](../questions/open/0067-unset-deceleration.md)): how an unset `Deceleration` brakes.
+- **B-39, narrowed** ([Q0067](../questions/closed/0067-unset-deceleration.md)): how an unset `Deceleration` brakes.
   Until answered it is instant, which also leaves out braking for a unit whose order ends without arriving, and for
   pursuit.
 - **B-92**: `LateralAcceleration` (turning arcs of moving units) is not modelled.
@@ -1400,7 +1400,7 @@ The 5.0.14 Barrier is a chain of behaviours, not a cast ability:
   cooldown agrees.
 
 Not stated by the data, and read as follows (owner question
-[Q0068](../questions/open/0068-barrier-damage-order.md), default this reading): the raising hit is itself absorbed;
+[Q0068](../questions/closed/0068-barrier-damage-order.md), default this reading): the raising hit is itself absorbed;
 the barrier acts on the damage before armour (Liquipedia "Damage Calculation" caps Hardened Shield, also a damage
 response, before defence; §7.1 quotes it); a hit absorbed whole deals nothing, no 0.5 minimum, and does not restart
 the regeneration delays.
@@ -1449,7 +1449,7 @@ leaves both as recorded: neither spawns the Immortal analogue.
 
 ### 14.5 What WP13a leaves open
 
-- **B-41, narrowed** ([Q0068](../questions/open/0068-barrier-damage-order.md)): where in a hit the Barrier acts.
+- **B-41, narrowed** ([Q0068](../questions/closed/0068-barrier-damage-order.md)): where in a hit the Barrier acts.
 - Graviton Beam and Scrambler Missile, which disable the Barrier in the data, are not modelled (no shipped
   analogue casts them); the Barrier has no visual in the client.
 
@@ -1483,7 +1483,7 @@ baseline WP13a's data matrix (`~/scratch/sc2dev_wp13a/data`).
   referenced by no ability: they serve the computer AI. A player burrows the Lurker.
 
 Not stated by the data, and read as follows (owner question
-[Q0069](../questions/open/0069-lurker-burrow-sections.md), default this reading): every property of the burrowed form
+[Q0069](../questions/closed/0069-lurker-burrow-sections.md), default this reading): every property of the burrowed form
 (weapon, cloak) arrives when the morph ends, not at the `Stats` section's end 12 ticks earlier.
 
 ### 15.2 The mechanism needed no rule
@@ -1529,11 +1529,11 @@ of record, 0 over all seeds. The sim_core and sim_fixtures suites pass in debug.
 
 ### 15.4 What WP13b leaves open
 
-- **B-42, narrowed** ([Q0069](../questions/open/0069-lurker-burrow-sections.md)): whether the weapon and the cloak
+- **B-42, narrowed** ([Q0069](../questions/closed/0069-lurker-burrow-sections.md)): whether the weapon and the cloak
   arrive at the `Stats` section's end, 12 ticks before the morph ends.
 - **B-93 (new):** a burrowed unit still blocks ground units and is pushed by nothing; the game's burrowed Lurker
   collides only with `Burrow` (`liberty` UnitData:775). A mode has no collision layer (WP16, with B-49).
-- **The skirmish client cannot burrow** ([Q0070](../questions/open/0070-lurker-without-burrow-button.md)): it refuses
+- **The skirmish client cannot burrow** ([Q0070](../questions/closed/0070-lurker-without-burrow-button.md)): it refuses
   `CastAbility` (no ability UI in Phase 5), so a skirmish Lurker can move but not attack. Default: keep the fix; a
   client package adds the command.
 - The `Interruptible` flag of the burrow (a unit can cancel it) and Adaptive Talons (B-68) are not modelled; Seismic
@@ -1635,3 +1635,152 @@ re-recording is the encoding alone; the re-recorded lists reproduce in debug, re
   default). Ours always charges (WP18, with the abilities plan's autocast commands).
 - The dash has no visual of its own in the client, and the render snapshot's speed-boost flag still reads only
   Stimpack.
+
+## 17. Owner answers of 2026-11-09 (plan Amendment 22)
+
+Measurements under `~/scratch/answers/<step>`, base `main` at `bc3af54` (`base`: matrix 0 expectation failures,
+battle 33 41 / 10 / 17 on 68 seeds). Each step compares against the one before; tallies are blue / red / unresolved
+wins over a battle's 20 seeds. Goldens are checked in debug, release and `wasm32-wasip1` release (`wasmtime`).
+
+### 17.1 Package A: channeled bursts (Q0058, B-2)
+
+- **Data.** The 5.0.14 burst effects that set `Flags` `Channeled` 1, read through the chain: Zealot `PsiBladesBurst`
+  (`liberty` EffectData:1924), Thor `ThorsHammer` (:2247), Reaper `P38ScytheGuassPistolBurst` (:1808), Missile Turret
+  `LongboltMissile` (:1784), Queen `TalonsMissileBurst` (`swarm` EffectData:3043) and `TalonsBurst` (`liberty`
+  :2325), Liberator `LiberatorMissileBurstPersistent` (`void` EffectData:2945), Colossus `ThermalLancesForward` and
+  `ThermalLancesReverse` (`liberty` :2371, :2396). Not set: the Viking's `LanzerTorpedoes` (`liberty` :1698), the
+  Banshee's `BacklashRockets` (`liberty` :2550, `voidmulti` :36), the Phoenix's `IonCannons` (`liberty` :1959). No
+  `CEffectCreatePersistent` default sets it (`core` EffectData:34-40). The owner's answer names the Zealot and the
+  Thor and says to follow the flag; the flag also covers the Reaper, Queen, Liberator and Missile Turret.
+- **Rule** `a9a24bf` (latent, checksum schema 21 → 22 on the branch, 22 → 23 after the merge with pathfinding Part A): `WeaponSpec::channeled` (catalog default `false`) is copied
+  onto the pending burst; a non-queued order that replaces the attacker's orders drops a channeled burst, except an
+  attack on the burst's own target. Red: `q0058_an_explicit_order_ends_a_channeled_burst` (Move between the strikes:
+  damage 20, expected 10). Matrix and battle 33 bit-identical; goldens and the sandbox re-recorded for the schema.
+- **Data** `0c0cb1e`: red `q0058_channeled_bursts_follow_starcraft` (`psi_grey`: false). Matrix and battle 33
+  bit-identical (no matrix battle orders a unit between its strikes). `golden_replay` changed from checkpoint 5, the
+  first in which its zealot swings; with the drop disabled the checksums are the same, so the encoded flag alone
+  moved them. `golden_replay_orders` unchanged.
+
+### 17.2 Package B: splash distance and lines (Q0063, B-17, B-18)
+
+- **Rule** `2f65bc9` (checksum schema 22 → 23 on the branch, 23 → 24 after the merge): a zone reaches a unit whose edge is within it (centre distance less
+  the unit's collision radius, never below 0); a splash with `offset_by_unit_radius` is centred on the struck
+  target's edge facing the attacker. Red: `q0063_a_zone_reaches_a_units_edge` (0, expected 40) and
+  `q0063_offset_by_unit_radius_centres_the_area_on_the_near_edge` ([0, 0], expected [40, 0]). Measured
+  (`b_rule`): 8 battles moved, every expectation met; battle 32 4 / 8 / 8 → 0 / 18 / 2 (a Baneling's 2.2 now reaches
+  a marine 2.575 away between centres; its claim "Banelings trade far above their cost" holds more clearly); 10,
+  12a, 15, 21, 26, 27 end sooner. Battle 33 41 / 10 / 17. Goldens re-recorded for the schema only (no unit of either
+  replay splashes). The encoding unit tests' schema byte, left at 21 by `a9a24bf`, is set here.
+- **Offset data** `089d6f5`: the flag is inherited from `DU_WEAP` (`core` EffectData:128) by the Liberator's
+  `LiberatorMissileDamage` (`void` :2932), the Baneling's `VolatileBurstU` (`liberty` :1753) and the Ultralisk's
+  `KaiserBladesDamage` (`liberty` :2296); the Siege Tank's `CrucioShockCannonBlast` clears it (`liberty` :1680); the
+  line searches are `CEffectEnumArea` effects, whose default sets no flag (`core` :71-77). Red
+  `q0063_splash_offset_follows_starcraft`. Measured (`b_offset`): 15, 27 and 32 moved (32: 0 / 18 / 2 → 2 / 11 / 7),
+  no winner changed; battle 33 unchanged; goldens unchanged.
+- **Lines** (WP8b's held data, §9.4, redone from the recorded values):
+  - Colossus `1b16eac`: landed. Measured with the Lurker's line in the same run (`b_lc`; each matrix battle is its
+    own world and only battle 21 spawns a Lurker): 12a, 12b, 26 moved, no winner changed; battle 26's expectation
+    re-recorded red (5, 999) → (4, 999) (the colossi win every seed, the fight lasts 313 ticks instead of 89, two
+    seeds lose two colossi).
+  - Hellion: **held** (landed later by the orchestrator's decision, §17.8) on branch `answers-held-b18-hellion-line` (`06eb273`; `b_hellion`): 9a and 10 flip from
+    20 / 0 / 0 to 0 / 20 / 0, as §9.4 found under the edge rule.
+  - Lurker: **held** (landed later, §17.8) on branch `answers-held-b18-lurker-line`: battle 21 20 / 0 / 0 → 4 / 0 / 16 (16 seeds reach the
+    250-tick limit). §9.4's probe kept the winner (16 / 4 / 0); it predates WP10 to WP13b, which changed the
+    Lurker (its turret, and attacking only burrowed). Measured again after package E in §17.5.
+  - One search per strike (§9.3): not redone; §9.4's edge probe already flipped battle 12b with it.
+
+### 17.3 Package C: turrets with no idle rate (Q0065, B-30)
+
+- **Data** `9c2e8e4`: the three `ResetIfMoving` turrets with no `YawIdleRate` in any layer (`core` TurretData:3-10
+  sets none) return at their `YawRate`: the Siege Tank's tank-mode `SiegeTank` (`liberty` TurretData:77-79, 720 from
+  `FreeRotate`) 40.32° per tick, the `Hellion` (:95-98, 999.8437) 55.99°, the `Phoenix` (`swarm` TurretData:31-39,
+  539.2968) 30.20°. The question listed the same three rates in another order; each turret takes its own.
+- Red `b30_turret_idle_follows_starcraft` (`railgun_crawler` weapon: idle `Hold`). Matrix and battle 33
+  bit-identical (`c_data`). Both goldens re-recorded: their tank and Phoenix turn their turrets back to the front
+  while moving without a target, and the turret angle is hashed.
+
+### 17.4 Package D: unset deceleration (Q0067, B-39)
+
+- **Data** `4c1e83a`: 40 unit archetypes take their converted `Acceleration` as `deceleration`; the High Templar
+  (`liberty` UnitData:3259) and the Overlord (`voidmulti` UnitData:1199) keep the values their data set. Ground units
+  (1000, 3.136 per tick²) still stop within a tick. Red `b39_deceleration_follows_starcraft` (`welder_drone`:
+  0.1575, expected 0.00784).
+- Measured (`d_data`): only battle 35 moved (end tick 570.8 → 570.9), no winner or expectation changed; battle 33
+  41 / 10 / 17. `golden_replay_orders` re-recorded from checkpoint 7: its Phoenix analogue brakes into its move
+  destination; `golden_replay` unchanged.
+- **Not done:** the rule half of option 2, braking for orders that end without arriving (Stop, Hold Position, a
+  replaced move) and for pursuit. Today a unit brakes only into a move order's destination; B-39 stays open for it.
+
+### 17.5 Package E: the Lurker's burrow sections (Q0069, B-42)
+
+- **Data** `e59a23f`: `burrow_scorpion`'s entering channel is the `Stats` section's end, 1.8332 Normal s (`swarm`
+  AbilData:1654-1674, `void` :149-155) = 32.74 → 33 ticks, plus the morph's random extra (up to 4.4643) as before;
+  it was the `Actor` section's 45. `UnitModeSpec::cast_ticks` now names the `Stats` section; Siege Mode's sections
+  end together, so its times stand. No rule was needed: the channel's end already arms the mode's weapon and sets
+  its cloak. The `Actor` section's 45 ticks are the burrow animation, which the client does not present yet.
+- Red `b42_the_lurker_analogue_attacks_only_burrowed` (`cast_ticks` 45, expected 33). Measured (`e_data`): only
+  battle 21 moved (20 / 0 / 0 as before, end tick 125.2 → 112.6); battle 33 41 / 10 / 17; goldens unchanged.
+- **The Lurker's line, measured again on top of this commit** (`b_lurker`): battle 21 still flips, 20 / 0 / 0 →
+  2 / 0 / 18 (18 seeds reach the 250-tick limit, 18 expectation failures). The line stays held on branch
+  `answers-held-b18-lurker-line`.
+
+### 17.6 Package F: when the Colossus' and the Lurker's damage lands (Q0064, B-81, B-85)
+
+- **Colossus:** no change, by the owner's answer: both strikes and the sweep land on the release tick. B-81's
+  Colossus part and B-85's Colossus search delay are closed; B-81 keeps the Liberator's 1-tick first-missile delay.
+- **Lurker spines:** not done in this round. The data space the 9 searches by `PeriodicPeriodArray` 0, then 0.125
+  Normal s each (`void` EffectData:297-307, appended by `voidmulti` :797-813 with `PeriodCount` 9), so spine k lands
+  k × 0.125 s after the first; the owner allows 2 ticks apart. The searches stop when the Lurker dies or unburrows
+  (`PeriodicValidator` `CasterIsAliveandBurrowedLurker`, `voidmulti` :813). A spaced line needs per-unit pending
+  state (the next search, its origin and direction, and the units already struck for `noMarkers`), a hashed field
+  and a schema bump; B-85 stays open for it.
+
+### 17.7 Package G: answers that change nothing
+
+Q0062 (B-15's life minimum: option 1, the landed WP7 rule), Q0066 (B-91: option 1, the unscaled delay kept) and Q0068
+(B-41's order within a hit: option 1, WP13a as landed) are closed with resolutions. Q0070 (option 1) keeps the
+simulation as it is; its resolution is drafted and the question stays open until plan
+`2026-11-09-client-mode-commands` delivers the skirmish client's mode buttons.
+
+### 17.8 Addendum: why the Hellion's and the Lurker's lines flip their battles
+
+Traces with the held commits' `matchup_trace` builds (`~/scratch/answers/diag_*`, per-unit CSVs; seed 11 unless
+named). Positions are world units, the Hellion or Lurker at about (9.9, 32.0).
+
+**Hellion (battles 9a and 10): the SC2-correct consequence, not a defect.**
+- 9a, seed 11. The Hellion fires three times before it dies (ticks 5, 50, about 95; its period is 2.5 Normal s, 45
+  ticks). Shot 1 at the leading zergling (15.15, 31.68) strikes it and the one behind it on the line (15.78, 31.61);
+  the two beside it, 0.7 off the line, are outside 0.15 of every search even measured to their edge (0.7 − 0.375 =
+  0.33). Shot 2, with the zerglings around the Hellion, strikes only its target: the others stand 0.6 to 0.8 to the
+  side of a line that starts at the Hellion. With the stand-in circle (2.2 around the target) every shot struck all
+  four. In battle 10 (seed 11) the two Hellions' volleys strike 4, then 2 and 2 zerglings, where the circle struck all
+  eight on the first volley.
+- The geometry is the data's (§9.1: 25 searches of 0.15 along the attack from `SourcePoint`, `liberty`
+  EffectData:2609-2646), the reach to a unit's edge is Q0063's answer, and the numbers are the game's: 14 per flame
+  against a 35-life zergling (`InfernalFlameThrower`: 8, +6 Light, `liberty` EffectData:2600-2607), so three flames kill only the zerglings struck by
+  all three, while four zerglings (5 per 0.696 Normal s each) kill a 90-life Hellion in about 3 Normal s. A Hellion
+  that stands still is not expected to clear four zerglings in the game; the battles' claims rest on the circle.
+- **Proposal:** land the line and re-record 9a and 10 with claims the game supports (for example a Hellion that
+  kites, or zerglings that arrive in a column along the flame); no code change.
+
+**Lurker (battle 21): the line is right; the battle's 250 ticks are too short for it, and the marines flee.**
+- The line is anchored on the Lurker and points at the target: on the first volley (tick 35) the spines aimed at the
+  marine at (16.63, 32.52) strike it and the two within reach of the line (16.02, 32.03) and (15.91, 32.77), not the
+  three below it, 1.0 to 1.2 off the line. Volleys strike 3, 4, 1, 2, 1, 1 marines (ticks 35, 72, 108, 143, 178, 250),
+  where the circle struck all six on the first two and won by tick 113.
+- The marines cannot target the burrowed, cloaked Lurker: after tick 35 its life stays at about 136 to the end. They
+  walk onto its position and stand around it, so a line from the Lurker meets one or two of them; struck, they move
+  away (the damage effects' `ResponseFlags` `Flee`, `core` EffectData:124-125). With the limit raised to 500 ticks
+  (`diag_21_500`), the Lurker kills all six on 8 of 20 seeds (ticks 215 to 363); on the others one marine survives
+  at 5 life, out of range: seed 3203386110's last marine stands at (21.3, 28.3), 11.9 from the Lurker.
+- **Not a defect of the line search.** What differs from the game is the marines standing beside the Lurker rather
+  than over it (B-93: a burrowed Lurker should not block ground units) and the battle's time limit. **Proposal:** land
+  the line with battle 21 re-recorded to what the game supports (the Lurker unharmed after burrowing, at most one
+  marine left: `blue (1, 1), red (0, 1)`, with 500 ticks), and fix B-93 in WP16; no change to the line rule.
+
+**Decision and result.** The orchestrator accepted both lines (plan Amendment 22). Measured against the merged tree
+(`~/scratch/answers/merged`): the Hellion's line (`585c2ab`, `hellion2`) moved only 9a and 10 (20 / 0 / 0 → 0 / 20 / 0
+each), re-recorded red (2, 4) and red (4, 7); the Lurker's line (`678a0db`, `lurker3`) moved only battle 21, at 500
+ticks 8 / 0 / 12 with the Lurker alive on every seed (marines left: 0 on 8 seeds, 1 on 11, 2 on seed 8), re-recorded
+`blue (1, 1), red (0, 2)`. Battle 33 41 / 10 / 17 on 68 seeds; 0 expectation failures; goldens and the sandbox
+unchanged in debug, release and `wasm32-wasip1`.

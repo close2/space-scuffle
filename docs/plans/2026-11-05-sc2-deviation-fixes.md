@@ -752,7 +752,7 @@ requires.
 | ID | Short title | Class | Reason or WP |
 |---|---|---|---|
 | B-1 | A swing its turn aligns starts a tick late (M-22) | Fixed | WP1 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §1) |
-| B-2 | Every strike of a multi-strike weapon on one tick | Fixed, narrowed | WP5 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §5); open only whether an order between the strikes ends a `Channeled` burst ([Q0058](../questions/open/0058-channeled-burst-interruption.md)) |
+| B-2 | Every strike of a multi-strike weapon on one tick | Fixed | WP5 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §5); an order between the strikes ends a `Channeled` burst, Amendment 22 package A ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §17.1, [Q0058](../questions/closed/0058-channeled-burst-interruption.md)) |
 | B-3 | No random firing delay | Fixed | WP11 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §12.3; Amendment 17); open only B-91 |
 | B-4 | Siege Mode: one transformation time, no random part | Fixed | WP11 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §12.4; Amendment 17) |
 | B-5 | Whether damage point and backswing hold an automatically attacking unit | (i) | WP16 research |
@@ -765,10 +765,10 @@ requires.
 | B-12 | Scan ranges | Fixed | combat alignment WP14 Amendment 7 ([evidence](../evidence/2026-11-04-combat-sc2-alignment.md) §16; Q0057; this plan's Amendment 7) |
 | B-13 | Call-for-help radius, flee distance, leash, abandoned-target time | (i) | WP16 research; how idle units answer an attack is unit behaviour |
 | B-14 | Bonus damage only against Armored and Light | Fixed | WP6 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §6; the Reaper's value by Amendment 10) |
-| B-15 | Shield break remainder | Fixed, narrowed | WP7 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §7); open only whether the 0.5 minimum applies to the life part ([Q0062](../questions/open/0062-shield-break-life-minimum.md)) |
+| B-15 | Shield break remainder | Fixed | WP7 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §7); the life part's 0.5 minimum confirmed by the owner ([Q0062](../questions/closed/0062-shield-break-life-minimum.md), Amendment 22) |
 | B-16 | Fixed splash fractions | Fixed | WP8a ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §8.2, §8.3); the four line and arc weapons take their zones with their shapes (B-18, B-19) |
-| B-17 | Splash measured centre to centre | (i) | Not sourced (U-4, [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §8.1): [Q0063](../questions/open/0063-splash-distance-rule.md), default no change. The Siege Tank already matches |
-| B-18 | Line splash modelled as a circle | (i) | WP8b: the line rule landed latent (Amendment 13); the Hellion, Lurker and Colossus data and the per-strike search are held on matrix winner flips ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §9.3, §9.4) |
+| B-17 | Splash measured centre to centre | Fixed | Amendment 22 package B ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §17.2; [Q0063](../questions/closed/0063-splash-distance-rule.md)): reach to a unit's edge, `OffsetByUnitRadius` |
+| B-18 | Line splash modelled as a circle | (i), narrowed | The Colossus', Hellion's and Lurker's lines are fixed by Amendment 22 package B ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §17.2, §17.8); battles 9a, 10 and 21 re-recorded by the orchestrator's decision. Open only one search per strike (§9.3), which flips battle 12b |
 | B-19 | Ultralisk cleave modelled as a circle | (i) | WP8c |
 | B-20 | No glaive bounce | (i) | WP8d |
 | B-21 | No Broodlings | (i) | WP18 |
@@ -780,7 +780,7 @@ requires.
 | B-27 | Liberator analogue shoots the ground outside Defender Mode | (i), narrowed | The ground attack outside Defender Mode is fixed by WP2 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §2); Defender Mode itself, and with it the ground attack, stays open for WP18 |
 | B-28 | Six weapon mounts | Fixed | WP10 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §11.3; Amendment 16) |
 | B-29 | No acquisition arc | Fixed | WP10 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §11.2) |
-| B-30 | A turret keeps its angle when idle | (i), narrowed | The idle rule and its sourced data are fixed by WP10 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §11.4); open only the return rate of the three `ResetIfMoving` turrets without a `YawIdleRate` (Siege Tank, Hellion, Phoenix; [Q0065](../questions/open/0065-turret-idle-rate.md)) |
+| B-30 | A turret keeps its angle when idle | Fixed | WP10 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §11.4); the three `ResetIfMoving` turrets return at their `YawRate`, Amendment 22 package C ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §17.3, [Q0065](../questions/closed/0065-turret-idle-rate.md)) |
 | B-31 | `StationaryTurningRate` | Fixed | turn-before-move WP5 `2522e3f`, WP6 `408d3b7` |
 | B-32 | Hard-coded Stimpack path | Fixed | WP3 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §3) |
 | B-33 | Stim admitted at any life above 1 | Fixed | `ad0dcde`: the owner answered [Q0053](../questions/closed/0053-stimpack-at-low-life.md) with rule (a), so the stim is refused, changing nothing, unless life is strictly greater than its cost; matrix and both golden replays bit-identical |
@@ -789,10 +789,10 @@ requires.
 | B-36 | Unfinished structures regenerate life | (i) | WP15 |
 | B-37 | Whether Stimpack's life cost restarts the regeneration delays | (ii) | No shipped unit can reach it: the two archetypes with an Overclock (Stimpack) spec have `hp_regen_per_tick: 0.00`, and no other ability costs life. It returns to (i) if a catalog change gives one unit both. WP15 drops it and U-9 |
 | B-38 | No burrowed Roach regeneration, no Tunneling Claws | (i) | WP15, WP18 |
-| B-39 | No acceleration or deceleration | Fixed, narrowed | WP12 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §13; Amendment 18); open only how an unset `Deceleration` brakes ([Q0067](../questions/open/0067-unset-deceleration.md)) |
+| B-39 | No acceleration or deceleration | (i), narrowed | WP12 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §13); unset `Deceleration` reads as `Acceleration`, Amendment 22 package D ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §17.4, [Q0067](../questions/closed/0067-unset-deceleration.md)); open: braking for orders that end without arriving and for pursuit |
 | B-40 | Turn before move | Fixed | turn-before-move WP1 `6d7a9d5`, WP3 `b7d9f50` |
-| B-41 | No Immortal Barrier | Fixed, narrowed | WP13a ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §14; Amendment 19); open only the engine order within a hit ([Q0068](../questions/open/0068-barrier-damage-order.md)) |
-| B-42 | The Lurker attacks unburrowed | Fixed, narrowed | WP13b ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §15; Amendment 20); open only whether the weapon and the cloak arrive before the morph ends ([Q0069](../questions/open/0069-lurker-burrow-sections.md)) |
+| B-41 | No Immortal Barrier | Fixed | WP13a ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §14); the order within a hit kept as landed by the owner ([Q0068](../questions/closed/0068-barrier-damage-order.md), Amendment 22) |
+| B-42 | The Lurker attacks unburrowed | Fixed | WP13b ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §15); weapon and cloak at the `Stats` section end, Amendment 22 package E ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §17.5, [Q0069](../questions/closed/0069-lurker-burrow-sections.md)) |
 | B-43 | Charge without the dash | Fixed, narrowed | WP13c ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §16; Amendment 21); open only how the engine measures the trigger window, when the autocast looks and whether a new order ends a dash ([Q0071](../questions/open/0071-charge-trigger-details.md)) |
 | B-44 | Concussive Shells do nothing | (i) | WP13d |
 | B-45 | No firing while moving | (i) | WP13e |
@@ -830,8 +830,8 @@ requires.
 | B-77 | Hard-coded Concussive slow | (i) | WP13d |
 | B-78 | Storm evacuation margin | (i) | WP18 |
 | B-82 | The Baneling's damage to structures is not its own effect (80, +5 a level, ignoring armour) | Fixed | WP9 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.4). Found in WP6 (Amendment 9) |
-| B-81 | A first strike the effect chain delays (Liberator 1 tick, Colossus 7) lands on the release tick | (i) | WP5 follow-up; the Colossus part with B-18 (WP8b). Found in WP5 (Amendment 8). The Colossus' delay is not sourced ([Q0064](../questions/open/0064-colossus-damage-timing.md), Amendment 13) |
-| B-85 | A line area lands whole on the shot's tick; the game spaces the Lurker's spines 0.125 Normal s apart and delays each Colossus search's damage 0.25 Normal s | (i) | WP8 follow-up. Found in WP8b (Amendment 13) |
+| B-81 | A first strike the effect chain delays (Liberator 1 tick) lands on the release tick | (i), narrowed | WP5 follow-up. The Colossus part is closed: its strikes land on the release tick by the owner's answer to [Q0064](../questions/closed/0064-colossus-damage-timing.md) (Amendment 22) |
+| B-85 | A line area lands whole on the shot's tick; the game spaces the Lurker's spines 0.125 Normal s apart | (i), narrowed | WP8 follow-up, after the Lurker's line (B-18). The Colossus' search delay is closed by the owner's answer to [Q0064](../questions/closed/0064-colossus-damage-timing.md), which keeps it instant and allows the Lurker's spacing (2 ticks) |
 | B-83 | The Baneling's burst is centred on its target and strikes it directly; the game centres it on the Baneling and reaches the target through the area | (i) | WP8 follow-up. Found in WP8a (Amendment 12) |
 | B-84 | The Siege Tank splashes around a target of radius 1.25 or more; the game's shot at such a target has no area | (i) | WP8 follow-up. Found in WP8a (Amendment 12) |
 | B-86 | Morph costs and supply (Baneling, Ravager, Lurker, Brood Lord, Orbital Command, Planetary Fortress, Lair, Hive, Greater Spire) and the Zergling pair, while ours trains each whole | (i) | WP17, with the morph model. Found in WP9 (Amendment 14) |
@@ -839,10 +839,14 @@ requires.
 | B-88 | Structure attributes derived in code (Psionic if shielded, else Mechanical); the game's Protoss structures are Armored and Structure, Zerg structures Armored, Biological and Structure | (i) | WP9 follow-up (a rule). Found in WP9 (Amendment 14) |
 | B-89 | Whether the Liberator analogue's anti-air weapon turns on the `Liberator` turret (`void` UnitData:3317-3318 lists a second weapon entry with that turret and no weapon); ours is a hull weapon | (i) | WP10 follow-up (research). Found in WP10 (Amendment 16) |
 | B-90 | A turreted weapon's wind-up does not hold its unit, and a turret works against `current_target` under any order, where the game ties firing while moving to `AllowedMovement` | (i) | WP13e, with B-45. Found in WP10 (Amendment 16): turreting five more analogues extends it |
-| B-91 | Whether an attack-rate buff scales the random firing delay, and whether the first attack draws one; ours does neither | (i) | [Q0066](../questions/open/0066-random-delay-scaling.md). Found in WP11 (Amendment 17) |
+| B-91 | Whether an attack-rate buff scales the random firing delay, and whether the first attack draws one | Fixed | Closed by the owner's answer to [Q0066](../questions/closed/0066-random-delay-scaling.md): the unscaled delay is kept (Amendment 22) |
 | B-92 | `LateralAcceleration` (how sharply a moving unit can curve) is not modelled; our units turn their velocity freely within the hull rate | (i) | WP16. Found in WP12 (Amendment 18) |
 | B-93 | A burrowed unit still blocks ground units; the game's burrowed Lurker collides only with `Burrow` (`liberty` UnitData:775) | (i) | WP16, with B-49. Found in WP13b (Amendment 20) |
 | B-94 | Charge's autocast cannot be switched off; the game's is a player toggle, on by default | (i) | WP18. Found in WP13c (Amendment 21) |
+| B-95 | A queued mode switch toggles whatever stance the unit has when it runs; the game's morphs are one ability per direction (`liberty` AbilData:1301, :1328), so a second queued switch would be refused | (i) | WP18 (a directional effect). Found by plan `2026-11-09-client-mode-commands` (D-5) |
+| B-96 | An order queued behind a switch into an anchoring mode stays at the front of the anchored unit's queue, and a `Move` there makes it `Busy` (never acquires); what the game does with an order its morphed unit cannot carry out is not yet sourced | (i) | WP18 (research). Found by plan `2026-11-09-client-mode-commands` (§8) |
+| B-97 | The Lurker analogue's burrow cannot be cancelled while it runs; the game's is `Interruptible` with a Cancel button (`swarm` AbilData:1658-1659) | (i) | WP18. Found by plan `2026-11-09-client-mode-commands` (§8) |
+| B-98 | Anchored units (sieged, burrowed) get no Stop or Hold Position on the card (the client's mobility policy); the game's sieged tank card has both (`liberty` UnitData:5185-5186) | (i) | The next client package. Found by plan `2026-11-09-client-mode-commands` (§8) |
 | B-99 | A body parked on a route corner made the unit rewrite its route to a point stepped outward, and a corner was passed only once the next leg held no body; columns walked V-shaped detours at shared corners. StarCraft II leaves bodies to steering (sc2-pathfinding plan §2, S3) | Fixed | Plan [`2026-11-09-sc2-pathfinding`](2026-11-09-sc2-pathfinding.md) WP2+WP3 |
 | B-100 | A unit facing a body parked on its corner had no way past it but the rewrite of B-99; it now steers past the body on the outside of the turn | Fixed | Plan `2026-11-09-sc2-pathfinding` WP2+WP3 (Amendment 1 there) |
 | B-101 | Corner waypoints are offset by the unit's radius tier (0.375 for every radius up to 0.5), not by its own radius; the game paths each unit by its own size | Fixed | Plan `2026-11-09-sc2-pathfinding` WP4 |
@@ -981,7 +985,7 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
   each weapon's `CEffectCreatePersistent` and validators (§5.1): Zealot 5 ticks within 2.1, Thor ground 7, Viking 4
   within 15, Reaper 2 within 7, Banshee 3 within 15, Liberator 1, Missile Turret 2 within 15, Queen 5 within 5; the
   Phoenix's and the Colossus' strikes land together. Open: whether an order between the strikes ends a `Channeled`
-  burst, filed as [Q0058](../questions/open/0058-channeled-burst-interruption.md) (default no change).
+  burst, filed as [Q0058](../questions/closed/0058-channeled-burst-interruption.md) (default no change).
 - **Plan WP5 item 2 as built:** a later strike is also dropped when its target has left the weapon's plane (the
   data's `MultipleHitGroundOnlyAttackTargetFilter`), a projectile weapon launches one missile per strike, and a
   strike with splash splashes. The plan's "0.2 Normal s" for the Zealot is 0.28 Normal s (0.2 Faster s), 5 ticks
@@ -1041,7 +1045,7 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
   battles moved by about 1e-9 of life, the old quotient's rounding; battle 33 bit-identical (54 / 7 / 7). Both
   goldens re-recorded for that rounding, proved by a throwaway substitution (§7.2).
 - **U-3, second half, not sourced:** whether the 0.5 minimum applies to the life part of a shield-breaking strike.
-  Filed as [Q0062](../questions/open/0062-shield-break-life-minimum.md) with an editor measurement; default no
+  Filed as [Q0062](../questions/closed/0062-shield-break-life-minimum.md) with an editor measurement; default no
   change (at least 0.5). B-15 stays in the register for that part only.
 
 ## Amendment 12 (WP8a, 2026-11-06): splash zones landed, the splash distance not sourced
@@ -1057,7 +1061,7 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
 - **B-17 not sourced (U-4).** The data name `OffsetByUnitRadius` (1 by default, `core` EffectData:128; 0 on the
   Siege Tank, Thor anti-air, Archon and Planetary Fortress, the four weapons patch 1.1 moved to "the center of the
   target"), but no source states its direction, its meaning for an area centred on the attacker, or whether a zone
-  reaches a unit's edge. Filed as [Q0063](../questions/open/0063-splash-distance-rule.md) with two editor
+  reaches a unit's edge. Filed as [Q0063](../questions/closed/0063-splash-distance-rule.md) with two editor
   measurements; default no change. B-17 stays in the register.
 - **New, found: B-83** (the Baneling's burst is centred on the Baneling, `ImpactLocation` `CasterUnit`) and **B-84**
   (the Siege Tank does not splash a target of radius 1.25 or more, `CrucioShockCannonSwitch`), both class (i), for
@@ -1080,13 +1084,13 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
 - **Held, stop rule (plan D-4):** each data commit and the per-strike search flip a matrix winner (§9.3, §9.4):
   the Hellion line 9a and 10 (Hellions 20 → 0 of 20); the Lurker line 21 (Lurker 20 → 0); the Colossus line 26
   (Zerglings 0 → 20); one search per strike 12b (Colossus 0 → 16 on its circle, 0 → 14 on its line). Under
-  [Q0063](../questions/open/0063-splash-distance-rule.md)'s default (centre to centre) a 0.15 search reaches almost
+  [Q0063](../questions/closed/0063-splash-distance-rule.md)'s default (centre to centre) a 0.15 search reaches almost
   no unit beside the line; with the edge rule substituted for a probe, 21 and 26 keep their winners, while 9a, 10
   and 12b still flip on unit mechanics (a lone Hellion dies to four Zerglings in two shots; three Marauders in a
   column stand exactly on the Colossus' sweep). The orchestrator decides: answer Q0063 first, or apply and
   re-record the battles whose claims the game's mechanics contradict.
 - **Not sourced:** the Colossus part of B-81 (when the sweeps' damage lands; WP5 read `liberty`'s `ExpireDelay`
-  0.375, `swarm` sets 0.73). Filed as [Q0064](../questions/open/0064-colossus-damage-timing.md), default no change.
+  0.375, `swarm` sets 0.73). Filed as [Q0064](../questions/closed/0064-colossus-damage-timing.md), default no change.
 - **New, found: B-85** (class (i)): a line lands whole on the shot's tick; the game spaces the Lurker's spines and
   delays each Colossus search.
 
@@ -1132,7 +1136,7 @@ Evidence: [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.
   `LurkerMPBurrowed` (`void` UnitData:775), correcting audit §10.5's `FreeRotate`.
 - **B-30 narrowed:** the idle rule (`9b9cc48`, schema 18) and the sourced data (`0b91676`: Immortal and Colossus
   `FollowMovement`, Missile Turret `Spin`). The return rate of the three `ResetIfMoving` turrets without a
-  `YawIdleRate` is not sourced: [Q0065](../questions/open/0065-turret-idle-rate.md), default no change.
+  `YawIdleRate` is not sourced: [Q0065](../questions/closed/0065-turret-idle-rate.md), default no change.
 - **Found:** B-89 (the Liberator's turret entry, research) and B-90 (turreted weapons fire while their unit moves,
   for WP13e with B-45).
 - Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §11. No commit was
@@ -1151,7 +1155,7 @@ Evidence: [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.
 - **B-4 fixed:** latent rule `1e3dddd` (separate leaving time, a seeded random extra per direction), data `a8b961a`
   (72 ticks in, 63 out, each plus up to 8.9286). No battle or golden sieges; nothing moved.
 - **Found:** B-91, whether Stimpack scales the delay and whether the first attack draws one
-  ([Q0066](../questions/open/0066-random-delay-scaling.md), default neither).
+  ([Q0066](../questions/closed/0066-random-delay-scaling.md), default neither).
 - Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §12. No commit was
   held.
 
@@ -1167,7 +1171,7 @@ Evidence: [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.
   data `e9cd87b` (High Templar 1000, Overlord 1.625; the only analogues whose data set it). Battles 22a, 34 and 35
   moved, none changed its overall winner; battle 33 bit-identical (41 / 10 / 17), its expectation unchanged;
   `golden_replay_orders` re-recorded. Open: how an unset `Deceleration` brakes
-  ([Q0067](../questions/open/0067-unset-deceleration.md), default instant), and with it braking for orders that end
+  ([Q0067](../questions/closed/0067-unset-deceleration.md), default instant), and with it braking for orders that end
   without arriving and for pursuit.
 - **Found:** B-92, `LateralAcceleration` not modelled (WP16).
 - Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §13. No commit was
@@ -1188,7 +1192,7 @@ Evidence: [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.
   battle 3's expectation re-recorded (lead hull 176 -> 200), which closes remediation finding M-20; battle 33
   bit-identical (41 / 10 / 17); goldens re-recorded only for the schema. Open: whether the raising hit is absorbed,
   before or after armour, and whether a wholly absorbed hit still deals 0.5
-  ([Q0068](../questions/open/0068-barrier-damage-order.md), default the rule as landed).
+  ([Q0068](../questions/closed/0068-barrier-damage-order.md), default the rule as landed).
 - Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §14. No commit was
   held.
 
@@ -1209,9 +1213,9 @@ Evidence: [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.
   on the first tick; only it moved, its winner unchanged (Lurker lead hull 72.92 -> 119.72); without the burrow the
   marines win every seed. Battle 33 bit-identical (41 / 10 / 17); goldens unchanged. Open: whether the weapon and
   the cloak arrive at the `Stats` section's end, 12 ticks early
-  ([Q0069](../questions/open/0069-lurker-burrow-sections.md), default at the morph's end).
+  ([Q0069](../questions/closed/0069-lurker-burrow-sections.md), default at the morph's end).
 - **Found:** B-93 (a burrowed unit still blocks ground units). The skirmish client has no ability UI, so a skirmish
-  Lurker cannot burrow and so cannot attack ([Q0070](../questions/open/0070-lurker-without-burrow-button.md),
+  Lurker cannot burrow and so cannot attack ([Q0070](../questions/closed/0070-lurker-without-burrow-button.md),
   default keep the fix; a client command follows).
 - Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §15. No commit was
 ## Amendment 21 (WP13c, 2026-11-09): Charge dashes
@@ -1235,3 +1239,50 @@ Evidence: [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.
 - **Found:** B-94, Charge's autocast cannot be switched off (WP18).
 - Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §16. No commit was
   held.
+
+## Amendment 22 (orchestrator, 2026-11-09): owner answers of 2026-11-09
+
+The owner answered Q0058 and Q0062 to Q0070 (commit `bc3af54`). The answers, with the orchestrator's brief of the
+same day, are this round's plan amendment (charter §6, short note). Each package is its own commit or commits,
+tests first with a recorded red run, measured after each rule or data commit as plan D-3 states (matrix 16 seeds
+against the previous step, battle 33 on 64 seeds, both goldens and the sandbox checksum in debug, release and
+`wasm32-wasip1`). The stop rule of D-4 stands: a battle whose overall winner flips, except where the package explains
+it with a cited StarCraft II reason, is held on a side branch.
+
+| Package | Question, answer | Rule | B-ID |
+|---|---|---|---|
+| A | [Q0058](../questions/closed/0058-channeled-burst-interruption.md), option 3 | Each weapon carries the `Channeled` flag of its burst effect (5.0.14 data); a pending burst of a channeled weapon ends on any explicit order that replaces the attacker's orders (Move, Stop, Hold Position, Attack Move, an attack on another target, any other order not queued) | B-2 closed |
+| B | [Q0063](../questions/closed/0063-splash-distance-rule.md), options 3 and 4 | A splash zone reaches a unit when the unit's edge is within it (`centre distance − victim radius ≤ R`); a weapon whose damage effect keeps `OffsetByUnitRadius` (the default) centres its area on the target's edge facing the attacker, the four weapons patch 1.1.0 changed clear it. Then WP8b's held line data (Hellion, Lurker, Colossus) and the per-strike search land | B-17 fixed; B-18 fixed |
+| C | [Q0065](../questions/closed/0065-turret-idle-rate.md), option 2 | A turret whose data sets no `YawIdleRate` returns at its `YawRate` | B-30 fixed |
+| D | [Q0067](../questions/closed/0067-unset-deceleration.md), option 2 | An unset `Deceleration` reads as the analogue's converted `Acceleration`; braking extends to orders that end without arriving and to pursuit | B-39 fixed |
+| E | [Q0069](../questions/closed/0069-lurker-burrow-sections.md), option 2 | A mode may arm its weapon and cloak at an earlier section's end: the burrowing Lurker analogue at the `Stats` end (33 ticks), the visual transition to 45 | B-42 fixed |
+| F | [Q0064](../questions/closed/0064-colossus-damage-timing.md), option 1 with the B-85 note | The Colossus' strikes and sweep stay on the release tick (B-81's Colossus part closed as the owner's choice); the Lurker's spine searches are spaced 2 ticks apart along the line | B-85 narrowed to the Colossus' search delay, closed by the answer |
+| G | [Q0062](../questions/closed/0062-shield-break-life-minimum.md), [Q0066](../questions/closed/0066-random-delay-scaling.md), [Q0068](../questions/closed/0068-barrier-damage-order.md), option 1 each; [Q0070](../questions/closed/0070-lurker-without-burrow-button.md) option 1 | No rule change. B-15, B-41 lose their open parts; B-91 closes with the unscaled delay kept. Q0070 closed when plan `2026-11-09-client-mode-commands` landed the buttons | B-15, B-41, B-91 closed |
+
+**Schema.** A package that changes the hashed encoding bumps the checksum schema from main's value at the time; the
+pathfinding round (schema 22) landed first: this round's bumps are 23 (Q0058) and 24 (Q0063) after the merge.
+
+### Result (2026-11-09)
+
+Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §17.
+
+| Package | Commits | Outcome |
+|---|---|---|
+| A | rule `a9a24bf` (schema 23 after the merge with pathfinding Part A), data `0c0cb1e` | B-2 fixed. The data flag seven analogues' bursts (Zealot, Thor, Reaper, Queen, Liberator, Missile Turret, Colossus), not only the two the answer named |
+| B | rule `2f65bc9` (schema 24 after the merge), offset data `089d6f5`, Colossus line `1b16eac`, Hellion line `585c2ab`, Lurker line `678a0db` | B-17 fixed; B-18 narrowed to one search per strike (§9.3). Battle 26's expectation re-recorded; battles 9a, 10 and 21 re-recorded by the decision below |
+| C | data `9c2e8e4` | B-30 fixed |
+| D | data `4c1e83a` | B-39 narrowed: the rule half (braking for orders that end without arriving and for pursuit) is not done |
+| E | data `e59a23f` | B-42 fixed: the burrow's functional time is the `Stats` section end, 33 ticks; the `Actor` section's 45 ticks are the animation only, which the client does not present yet |
+| F | none | B-81's and B-85's Colossus parts closed by the answer; the Lurker's spine spacing (B-85) waits for the Lurker's line |
+| G | resolutions only | B-15, B-41, B-91 closed; Q0070 stays open for plan `2026-11-09-client-mode-commands` |
+
+No landed commit flipped a battle's overall winner; battle 32's tie between red wins and unresolved became red wins under the edge rule (§17.2), as its claim says. Battle 33 stayed 41 / 10 / 17 throughout.
+
+**Orchestrator decision (2026-11-09, short note under charter §6): the held lines land.** The Hellion's and the
+Lurker's lines flipped battles 9a, 10 and 21, and the traces of evidence §17.8 show the flips are the game's
+consequence of the data's line geometry, with cited sources, not defects. The Hellion's line landed as `585c2ab`
+with 9a and 10 re-recorded on their unchanged setups (a stationary Hellion loses to the zerglings: 9a red (2, 4),
+10 red (4, 7)). The Lurker's line landed as `678a0db` with battle 21 at 500 ticks, `blue (1, 1), red (0, 2)`: the
+orchestrator proposed red (0, 1), but one seed of 20 leaves two marines out of range. Measured against the merged
+tree, only 9a, 10 and 21 moved; battle 33 stayed 41 / 10 / 17 on 68 seeds; goldens unchanged. Still open from this
+round: the rule half of Q0067 (B-39) and the Lurker's spine spacing (B-85).

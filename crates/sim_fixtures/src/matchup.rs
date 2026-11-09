@@ -562,10 +562,12 @@ impl BattleRun {
         if let Some(hazard) = &battle.hazard {
             place_hazard(&mut world, hazard);
         }
-        let mut commands = side_commands(BLUE, &battle.blue, &blue, &red)?;
-        commands.extend(side_commands(RED, &battle.red, &red, &blue)?);
-        commands.extend(mode_commands(&world, BLUE, &battle.blue, &blue)?);
+        // A player switches modes, then gives the order: a mode switch given without Shift
+        // replaces the unit's orders (plan `2026-11-09-client-mode-commands` D-6a).
+        let mut commands = mode_commands(&world, BLUE, &battle.blue, &blue)?;
         commands.extend(mode_commands(&world, RED, &battle.red, &red)?);
+        commands.extend(side_commands(BLUE, &battle.blue, &blue, &red)?);
+        commands.extend(side_commands(RED, &battle.red, &red, &blue)?);
         Ok(Self {
             world,
             blue,
@@ -760,6 +762,39 @@ mod tests {
         for id in &run.blue {
             let unit = run.world.entities.get(id).ok_or("unit missing")?;
             assert!(unit.channeling_remaining_ticks > 0, "the switch has begun");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn mode_commands_precede_the_standing_order_which_survives_the_switch(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let matrix = Matrix::from_ron_str(MATRIX_RON)?;
+        let mut battle = matrix.battle("33_24_marines_vs_12_zealots")?.clone();
+        battle.blue = row((10.0, 10.0), 2);
+        battle.blue.squads[0].unit = "railgun_crawler".to_owned();
+        battle.blue.mode = Some("siege_mode".to_owned());
+        battle.blue.order = SideOrder::HoldPosition;
+        battle.red = row((40.0, 40.0), 1);
+        let mut run = BattleRun::new(&battle, crate::shipped_catalogs(), 1, 0.0)?;
+        let first_side_order = run
+            .commands
+            .iter()
+            .position(|command| !matches!(command.order, UnitOrder::CastAbility { .. }))
+            .ok_or("the side has a standing order")?;
+        assert!(
+            run.commands[first_side_order..]
+                .iter()
+                .all(|command| !matches!(command.order, UnitOrder::CastAbility { .. })),
+            "every cast comes before every standing order"
+        );
+        run.step();
+        for id in &run.blue {
+            let unit = run.world.entities.get(id).ok_or("unit missing")?;
+            assert!(
+                !unit.order_queue.is_empty(),
+                "the switch did not clear the order given after it"
+            );
         }
         Ok(())
     }

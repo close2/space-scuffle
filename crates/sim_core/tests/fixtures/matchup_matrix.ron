@@ -284,8 +284,16 @@
         expect: (blue: (1, 1), red: (0, 0)),
     ),
     (
+        // Re-recorded for the Hellion's line (plan 2026-11-05-sc2-deviation-fixes Amendment 22,
+        // B-18; evidence §17.8). The flame is 25 searches of 0.15 along the attack from the Hellion
+        // (InfernalFlameThrowerCP / InfernalFlameThrowerE, liberty EffectData:2609-2646, swarm
+        // :2244-2246), reaching a zergling whose edge is within 0.15 of one (Q0063). It deals 14 to
+        // a 35-life zergling (InfernalFlameThrower: 8, +6 Light, liberty EffectData:2600-2607), so
+        // a Hellion that stands still kills only zerglings its three flames all strike; once the
+        // zerglings surround it, a flame strikes only its target. The former claim rested on a
+        // stand-in circle of 2.2 around the target.
         name: "9a_hellion_vs_4_lings",
-        claim: "Flame splash clears four clumped zerglings",
+        claim: "A stationary hellion loses to four zerglings: its flame strikes only the zerglings on its line",
         map_cells: 64,
         ticks: 300,
         blue: (
@@ -300,7 +308,7 @@
             ],
             order: AttackMove(10, 32),
         ),
-        expect: (blue: (1, 1), red: (0, 0)),
+        expect: (blue: (0, 0), red: (2, 4)),
     ),
     (
         name: "9b_hellion_vs_roach",
@@ -322,8 +330,11 @@
         expect: (blue: (0, 0), red: (1, 1)),
     ),
     (
+        // Re-recorded for the Hellion's line, as battle 9a (Amendment 22, B-18; evidence §17.8):
+        // the two Hellions' first volley strikes the zerglings on their two lines, the later ones
+        // only one or two each as the zerglings close around them.
         name: "10_2_hellions_vs_8_lings",
-        claim: "Two hellions roast eight zerglings",
+        claim: "Two stationary hellions lose to eight zerglings, though their flames burn some of them",
         map_cells: 64,
         ticks: 250,
         blue: (
@@ -338,7 +349,7 @@
             ],
             order: AttackMove(10, 32),
         ),
-        expect: (blue: (1, 999), red: (0, 0)),
+        expect: (blue: (0, 0), red: (4, 7)),
     ),
     (
         name: "11a_2_banelings_vs_5_marines",
@@ -623,10 +634,19 @@
     // Without the burrow the marines win every seed. Evidence:
     // docs/evidence/2026-11-05-sc2-deviation-fixes.md §15.
     (
+        // Re-recorded for the Lurker's line (plan 2026-11-05-sc2-deviation-fixes Amendment 22,
+        // B-18; evidence §17.8): 9 searches of 0.5 along the attack from the Lurker (LurkerMP and
+        // LurkerMPSearch, swarm EffectData:3010-3019, voidmulti :809, :821). The marines cannot
+        // target the burrowed, cloaked Lurker; they walk onto it, stand around it (where the game's
+        // would stand over it: a burrowed Lurker collides only with Burrow, bug B-93) and move away
+        // when struck (the damage effects' ResponseFlags Flee, core EffectData:124-125), so a line
+        // meets one or two of them per volley. Over 500 ticks the Lurker, unharmed after burrowing,
+        // kills every marine on 8 of 20 seeds and all but one on 11; on seed 8 two are left out
+        // of its range.
         name: "21_lurker_vs_6_marines",
-        claim: "Spines decimate light infantry",
+        claim: "Spines kill light infantry that cannot detect the lurker, and it survives",
         map_cells: 64,
-        ticks: 250,
+        ticks: 500,
         blue: (
             squads: [
                 (unit: "burrow_scorpion", count: 1, columns: 1, origin: (10.0, 32.0), spacing: 1.0),
@@ -640,7 +660,7 @@
             ],
             order: AttackMove(10, 32),
         ),
-        expect: (blue: (1, 1), red: (0, 0)),
+        expect: (blue: (1, 1), red: (0, 2)),
     ),
     // Battle 22a: StarCraft II 5.0.14 gives the Reaper no bonus against Light (P38ScytheGuassPistol's
     // Light 5 of liberty EffectData:1817 is set to 0 by void EffectData:1499; plan
@@ -823,7 +843,12 @@
             ],
             order: AttackMove(24, 48),
         ),
-        expect: (blue: (0, 0), red: (5, 999)),
+        // Re-recorded for the Colossus' line (plan 2026-11-05-sc2-deviation-fixes Amendment 22,
+        // package B, B-18): each sweep strikes the zerglings whose edge is within 0.15 of 11
+        // searches across the attack (liberty EffectData:2373-2412), a band 2.8 long, where the
+        // stand-in circle reached 3.0 around the target. The colossi still win every seed, but the
+        // fight lasts about 313 ticks instead of 89, and on 2 of 20 seeds the zerglings kill two.
+        expect: (blue: (0, 0), red: (4, 999)),
     ),
     (
         name: "27_100_lings_vs_8_ultralisks",

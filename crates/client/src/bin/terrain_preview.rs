@@ -5,14 +5,17 @@
 //! this binary boots a real windowed Bevy application (1600x900), instantiates the production
 //! shared terrain renderer ([`client::terrain`]), loads `showcase_canyon.scmap.ron` under the
 //! theme named by `--theme` (default: the first entry of `catalog/terrain_themes.ron`), and
-//! captures screenshots from four canonical camera poses:
+//! captures screenshots from five canonical camera poses:
 //! 1. `overview`: Full 64x64 battlefield overview (target (32, 32), distance 70).
 //! 2. `p0_base`: Player 0 high plateau base with 45° staircase edges and ramp D (target (12, 12), distance 28).
 //! 3. `mesa`: Two-level wall rows 35..=37, ramp G, and guard rails (target (32, 30), distance 24).
 //! 4. `chasm`: Bottomless abyss rim into the void nebula backdrop (target (45, 8), distance 22).
+//! 5. `ramp`: Close-up of the west ramp (cells x 26..=28, y 8..=11), where the upper plateau
+//!    must end at the ramp's head (target (27.5, 9.5), distance 11, look-at height 4.5; plan
+//!    `docs/plans/2026-11-09-ramp-geometry.md`).
 //!
 //! # Failure Modes & Exit Codes
-//! - Exit `0`: All four screenshots successfully written to disk.
+//! - Exit `0`: All five screenshots successfully written to disk.
 //! - Exit `1`: Any pipeline shader compilation failure (`CachedPipelineState::Err`), or a
 //!   [`PreviewError`] before the window opens (output directory, map or theme), returned from
 //!   `main` with its message.
@@ -76,7 +79,7 @@ enum PreviewError {
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Terrain preview and pipeline verification")]
 struct CliArgs {
-    /// Directory where the four output screenshot PNGs will be saved.
+    /// Directory where the five output screenshot PNGs will be saved.
     #[arg(long)]
     out: PathBuf,
 
@@ -144,7 +147,7 @@ struct CameraPose {
     look_at_y: f32,
 }
 
-const POSES: [CameraPose; 4] = [
+const POSES: [CameraPose; 5] = [
     CameraPose {
         name: "overview",
         target: Vec2::new(32.0, 32.0),
@@ -169,6 +172,12 @@ const POSES: [CameraPose; 4] = [
         distance: 22.0,
         look_at_y: 0.0,
     },
+    CameraPose {
+        name: "ramp",
+        target: Vec2::new(27.5, 9.5),
+        distance: 11.0,
+        look_at_y: 4.5,
+    },
 ];
 
 fn compute_pose_transform(pose: &CameraPose) -> Transform {
@@ -188,7 +197,7 @@ struct PipelineSync {
     has_error: Arc<AtomicBool>,
 }
 
-/// State of capture progression across the four camera poses.
+/// State of capture progression across the five camera poses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StepState {
     WaitingForReadiness,
@@ -391,7 +400,7 @@ fn update_preview_poses(
                         state.step_state = StepState::WaitingForReadiness;
 
                         if state.current_pose_idx >= POSES.len() {
-                            println!("All four poses captured successfully! Exiting 0.");
+                            println!("All five poses captured successfully! Exiting 0.");
                             exit_events.send(AppExit::Success);
                         }
                     }

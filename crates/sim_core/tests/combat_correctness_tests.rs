@@ -266,6 +266,7 @@ fn s13_projectile_splash_spares_its_attacker() {
         ],
         shape: sim_types::SplashShape::Circle,
         friendly_fire: true,
+        offset_by_unit_radius: false,
     });
     let hp = arena.vitals(shooter);
     let victim_hp = arena.vitals(victim);
@@ -640,6 +641,7 @@ fn author_stances(arena: &mut Arena, cast_ticks: u16) -> EntityId {
         effect: AbilityEffectSpec::SwitchMode {
             mode_name: name.to_owned(),
         },
+        leave_name: None,
     };
     arch.modes = vec![stance("armed", Some(weapon)), stance("plain", None)];
     arch.abilities = vec![switch("armed"), switch("plain")];

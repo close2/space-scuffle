@@ -1092,3 +1092,286 @@ fn roster_stim_skips_units_whose_overclock_is_locked() -> TestResult {
     assert_eq!(queue.pending_len(), 0);
     Ok(())
 }
+
+// --- Mode switches (plan `2026-11-09-client-mode-commands` WP3) --------------------------------
+
+/// Whether `archetype` has a mode ability; roles are found by capability, never by name.
+fn has_mode_ability(archetype: &UnitArchetype) -> bool {
+    archetype
+        .abilities
+        .iter()
+        .any(|ability| mode_of_ability(archetype, ability).is_some())
+}
+
+/// A mobile unit of `ME` that is armed by default and can switch a mode, and that mode's name.
+fn moder(
+    world: &mut SimWorld,
+    slot: i32,
+) -> Result<(EntityId, String), Box<dyn std::error::Error>> {
+    let unit = unit_where(world, slot, |a| {
+        has_mode_ability(a) && is_armed(a) && a.max_speed > SimScalar::ZERO
+    })?;
+    let archetype = world.catalog.get(world.entities[&unit].unit_type_id)?;
+    let mode = archetype
+        .abilities
+        .iter()
+        .find_map(|ability| mode_of_ability(archetype, ability))
+        .ok_or("a mode ability")?
+        .to_owned();
+    Ok((unit, mode))
+}
+
+/// Steps `world` without commands until no unit channels, at most 200 ticks.
+fn settle(world: &mut SimWorld) -> TestResult {
+    for _ in 0..200 {
+        if world
+            .entities
+            .values()
+            .all(|entity| entity.channeling_remaining_ticks == 0)
+        {
+            return Ok(());
+        }
+        let mut input = bundle();
+        input.tick = Tick(world.current_tick);
+        world.step(&input);
+    }
+    Err("a channel did not end".into())
+}
+
+/// The ability index and recipients of every pending command.
+fn pending_casts(queue: &BattleCommandQueue) -> Vec<(u8, Vec<EntityId>, bool)> {
+    queue
+        .pending_commands()
+        .filter_map(|(_, command)| match command.order {
+            UnitOrder::CastAbility { ability_index, .. } => {
+                Some((ability_index, command.entities.clone(), command.queue))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_mode_switch_goes_each_way_by_the_settled_mode() -> TestResult {
+    let (mut world, mut queue) = role_fixture()?;
+    let (tank, mode) = moder(&mut world, 0)?;
+    let index = mode_ability_index(
+        world.catalog.get(world.entities[&tank].unit_type_id)?,
+        &mode,
+    )
+    .ok_or("mode ability")?;
+    let selection = [tank];
+    assert_eq!(
+        queue.submit_mode_switch(&world, ME, &selection, &mode, ModeDirection::Leave, false),
+        Err(SubmissionError::EmptySelection),
+        "a unit in its default stance cannot leave the mode"
+    );
+    queue.submit_mode_switch(&world, ME, &selection, &mode, ModeDirection::Enter, true)?;
+    assert_eq!(
+        pending_casts(&queue),
+        [(index, vec![tank], true)],
+        "Shift queues"
+    );
+    run_tick(&mut world, &mut queue)?;
+    assert!(world.entities[&tank].channeling_remaining_ticks > 0);
+    assert_eq!(
+        queue.submit_mode_switch(&world, ME, &selection, &mode, ModeDirection::Enter, false),
+        Err(SubmissionError::EmptySelection),
+        "a channelling unit is no recipient"
+    );
+    settle(&mut world)?;
+    assert_eq!(
+        queue.submit_mode_switch(&world, ME, &selection, &mode, ModeDirection::Enter, false),
+        Err(SubmissionError::EmptySelection),
+        "a unit in the mode cannot enter it"
+    );
+    queue.submit_mode_switch(&world, ME, &selection, &mode, ModeDirection::Leave, false)?;
+    run_tick(&mut world, &mut queue)?;
+    settle(&mut world)?;
+    assert_eq!(world.entities[&tank].active_mode, None, "left the mode");
+    Ok(())
+}
+
+#[test]
+fn a_mixed_selection_sends_each_direction_only_to_its_units() -> TestResult {
+    let (mut world, mut queue) = role_fixture()?;
+    let (sieged, mode) = moder(&mut world, 0)?;
+    let (fresh, _) = moder(&mut world, 1)?;
+    let soldier = soldier(&mut world, 2)?;
+    let index = mode_ability_index(
+        world.catalog.get(world.entities[&sieged].unit_type_id)?,
+        &mode,
+    )
+    .ok_or("mode ability")?;
+    assert!(world.execute_ability(sieged, index, None, None));
+    settle(&mut world)?;
+    let selection = [sieged, fresh, soldier];
+    queue.submit_mode_switch(&world, ME, &selection, &mode, ModeDirection::Enter, false)?;
+    queue.submit_mode_switch(&world, ME, &selection, &mode, ModeDirection::Leave, false)?;
+    assert_eq!(
+        pending_casts(&queue),
+        [(index, vec![fresh], false), (index, vec![sieged], false)]
+    );
+    Ok(())
+}
+
+#[test]
+fn recipients_are_grouped_by_their_own_ability_index() -> TestResult {
+    let (mut world, mut queue) = role_fixture()?;
+    let (tank, mode) = moder(&mut world, 0)?;
+    let tank_arch = world
+        .catalog
+        .get(world.entities[&tank].unit_type_id)?
+        .clone();
+    let index = mode_ability_index(&tank_arch, &mode).ok_or("mode ability")?;
+    // A second archetype holding the same mode behind another ability, at index `index + 1`.
+    let other = soldier(&mut world, 1)?;
+    let other_type = world.entities[&other].unit_type_id;
+    {
+        let other_arch = world.catalog.get_mut(other_type)?;
+        let mut before = tank_arch.abilities[usize::from(index)].clone();
+        before.target_kind = AbilityTargetKind::InstantSelf;
+        before.leave_name = None;
+        other_arch.abilities = tank_arch.abilities[..=usize::from(index)].to_vec();
+        other_arch.abilities.insert(0, before);
+        other_arch.modes.clone_from(&tank_arch.modes);
+    }
+    let selection = [other, tank];
+    queue.submit_mode_switch(&world, ME, &selection, &mode, ModeDirection::Enter, false)?;
+    assert_eq!(
+        pending_casts(&queue),
+        [(index, vec![tank], false), (index + 1, vec![other], false)],
+        "one command per index, in ascending order"
+    );
+    run_tick(&mut world, &mut queue)?;
+    for unit in [tank, other] {
+        assert!(
+            world.entities[&unit].channeling_remaining_ticks > 0,
+            "{unit:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_locked_mode_ability_has_no_recipient() -> TestResult {
+    let (mut world, mut queue) = role_fixture()?;
+    let (tank, mode) = moder(&mut world, 0)?;
+    let arch = world.catalog.get(world.entities[&tank].unit_type_id)?;
+    let index = mode_ability_index(arch, &mode).ok_or("mode ability")?;
+    let ability = arch.abilities[usize::from(index)].name.clone();
+    let faction = world
+        .catalog
+        .factions()
+        .faction(arch.faction)
+        .ok_or("faction")?
+        .slug
+        .clone();
+    let researched_at = type_where(&world, |a| is_dome(a) && a.faction == arch.faction)?;
+    let researched_at = world.catalog.get(researched_at)?.slug.clone();
+    let upgrades = format!(
+        r#"(upgrades: [(
+            upgrade_id: 1, slug: "learn_mode", name: "learn_mode", display_name: "Learn Mode",
+            faction: "{faction}", level: 1, mineral_cost: 0, gas_cost: 0,
+            research_ticks: 1, researched_at: "{researched_at}",
+            effects: [UnlockAbility(target_slug: "{}", ability_slug: "{ability}")],
+        )])"#,
+        arch.slug
+    );
+    world.upgrade_catalog =
+        sim_core::UpgradeCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &upgrades)?;
+    assert_eq!(
+        queue.submit_mode_switch(&world, ME, &[tank], &mode, ModeDirection::Enter, false),
+        Err(SubmissionError::EmptySelection)
+    );
+    world.research_upgrade(ME, "learn_mode")?;
+    queue.submit_mode_switch(&world, ME, &[tank], &mode, ModeDirection::Enter, false)?;
+    assert_eq!(queue.pending_len(), 1);
+    Ok(())
+}
+
+#[test]
+fn a_unit_that_switched_meanwhile_is_rejected_at_its_tick() -> TestResult {
+    let (mut world, mut queue) = role_fixture()?;
+    let (tank, mode) = moder(&mut world, 0)?;
+    let index = mode_ability_index(
+        world.catalog.get(world.entities[&tank].unit_type_id)?,
+        &mode,
+    )
+    .ok_or("mode ability")?;
+    queue.submit_mode_switch(&world, ME, &[tank], &mode, ModeDirection::Enter, false)?;
+    // The unit enters the mode before the tick takes the press.
+    assert!(world.execute_ability(tank, index, None, None));
+    settle(&mut world)?;
+    let (mut input, mut sequences, mut rejected) = (bundle(), Vec::new(), Vec::new());
+    queue.prepare_tick(&world, &mut input, &mut sequences, &mut rejected)?;
+    assert_eq!(input.commands, []);
+    assert_eq!(rejected.len(), 1);
+    assert_eq!(rejected[0].reason, SubmissionError::Capability(tank));
+    world.step(&input);
+    assert_eq!(
+        world.entities[&tank].active_mode.as_deref(),
+        Some(mode.as_str()),
+        "not toggled back"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_generic_paths_still_refuse_a_cast() -> TestResult {
+    let (mut world, mut queue) = role_fixture()?;
+    let (tank, _) = moder(&mut world, 0)?;
+    assert_eq!(
+        queue.submit_selection(&world, ME, &[tank], cast_ability(), false),
+        Err(SubmissionError::UnsupportedOrder)
+    );
+    assert_eq!(
+        queue.submit(&world, command(tank, ME, cast_ability(), false)),
+        Err(SubmissionError::UnsupportedOrder)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_unit_leaving_its_anchoring_mode_may_be_told_to_move() -> TestResult {
+    let (mut world, mut queue) = role_fixture()?;
+    let (tank, mode) = moder(&mut world, 0)?;
+    let index = mode_ability_index(
+        world.catalog.get(world.entities[&tank].unit_type_id)?,
+        &mode,
+    )
+    .ok_or("mode ability")?;
+    let target = SimVec2::new(SimScalar::from_i32(30), SimScalar::from_i32(30));
+    let walk = UnitOrder::Move { target };
+    assert!(world.execute_ability(tank, index, None, None));
+    assert_eq!(
+        queue.submit_selection(&world, ME, &[tank], walk.clone(), false),
+        Err(SubmissionError::EmptySelection),
+        "entering an anchoring mode: no move"
+    );
+    settle(&mut world)?;
+    assert_eq!(
+        queue.submit_selection(&world, ME, &[tank], walk.clone(), false),
+        Err(SubmissionError::EmptySelection),
+        "anchored: no move"
+    );
+    assert!(world.execute_ability(tank, index, None, None));
+    assert!(
+        world.entities[&tank].is_immobile,
+        "anchored while it leaves"
+    );
+    queue.submit_selection(&world, ME, &[tank], walk, false)?;
+    run_tick(&mut world, &mut queue)?;
+    settle(&mut world)?;
+    for _ in 0..25 {
+        let mut input = bundle();
+        input.tick = Tick(world.current_tick);
+        world.step(&input);
+    }
+    assert!(
+        world.entities[&tank].velocity != SimVec2::ZERO
+            || world.entities[&tank].order_queue.is_empty(),
+        "it walks once the channel ends"
+    );
+    Ok(())
+}

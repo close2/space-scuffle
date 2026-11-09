@@ -815,6 +815,25 @@ impl SimWorld {
         mut proposal: MotionProposal,
     ) -> Result<ControlFlow<MotionAction, (MotionProposal, SimVec2)>, MovementInvariant> {
         if actor.is_on_hold() || actor.is_immobile || actor.channeling_remaining_ticks > 0 {
+            // A cast queued behind an anchored unit's orders runs when it reaches the front
+            // (plan `2026-11-09-client-mode-commands` D-6b): a sieged tank told to focus and
+            // then, with Shift, to unsiege, unsieges once the target is gone. A channelling unit
+            // finishes its channel first, as the cast's own admission requires.
+            if actor.channeling_remaining_ticks == 0 {
+                if let Some(&UnitOrder::CastAbility {
+                    ability_index,
+                    target_pos,
+                    target_entity,
+                }) = actor.order_queue.front()
+                {
+                    return Ok(ControlFlow::Break(MotionAction::Cast((
+                        id,
+                        ability_index,
+                        target_pos,
+                        target_entity,
+                    ))));
+                }
+            }
             proposal.clear_route = false;
             proposal.velocity = SimVec2::ZERO;
             return Ok(ControlFlow::Break(MotionAction::Commit(proposal)));

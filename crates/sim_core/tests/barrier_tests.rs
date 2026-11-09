@@ -46,6 +46,7 @@ fn weapon(damage: i32, period: u16) -> WeaponSpec {
         attacks_count: 1,
         strike_interval_ticks: 0,
         followup_max_distance: None,
+        channeled: false,
         period_ticks: period,
         damage_point_ticks: 1,
         backswing_ticks: 1,
@@ -304,6 +305,7 @@ fn b41_the_barrier_absorbs_splash() {
         }],
         shape: sim_types::SplashShape::Circle,
         friendly_fire: false,
+        offset_by_unit_radius: false,
     });
     let attacker = register_attacker(&mut world, gun);
     let plain = register_target(&mut world, 0, None);

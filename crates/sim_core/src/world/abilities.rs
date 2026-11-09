@@ -211,6 +211,28 @@ impl SimWorld {
         Ok(self.commit_cast(entity_id, cast, target_pos, target_entity))
     }
 
+    /// Whether a cast of the ability at `ability_index` by `entity_id`, aimed at `target_pos` in
+    /// world units, would be admitted now: the simulation's own admission, run without mutation
+    /// and without drawing from the generator.
+    ///
+    /// `false` for every ordinary refusal (dead, carried, channelling, unknown or locked
+    /// ability, cooldown, energy, range or placement) and also for malformed authored data,
+    /// which a real cast reports as a tick diagnostic. The client asks this before it submits
+    /// a mode switch, so its admission cannot drift from the tick's (plan
+    /// `2026-11-09-client-mode-commands` D-4).
+    #[must_use]
+    pub fn would_admit_cast(
+        &self,
+        entity_id: EntityId,
+        ability_index: u8,
+        target_pos: Option<SimVec2>,
+    ) -> bool {
+        matches!(
+            self.admit_cast(entity_id, ability_index, target_pos),
+            Ok(Some(_))
+        )
+    }
+
     /// Runs every check of a cast, in order, without mutation.
     ///
     /// Returns `Ok(None)` for an ordinary refusal (dead, carried, channeling, unknown or locked

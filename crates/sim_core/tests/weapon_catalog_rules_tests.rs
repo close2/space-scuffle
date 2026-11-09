@@ -859,6 +859,62 @@ fn b2_strike_spacing_follows_starcraft() -> TestResult {
     Ok(())
 }
 
+/// `StarCraft` II 5.0.14 analogues whose multi-strike weapon's burst effect sets the
+/// `Channeled` flag: `(analogue, source)` (Q0058, plan `2026-11-05-sc2-deviation-fixes`
+/// Amendment 22, package A). No `CEffectCreatePersistent` default sets the flag (`core`
+/// EffectData:34-40). The Viking's `LanzerTorpedoes` (`liberty` EffectData:1698), the Banshee's
+/// `BacklashRockets` (`liberty` EffectData:2550, `voidmulti` EffectData:36) and the Phoenix's
+/// `IonCannons` (`liberty` EffectData:1959) do not set it, so their bursts survive an order.
+const SC2_CHANNELED_BURSTS: [(&str, &str); 7] = [
+    ("Zealot", "PsiBladesBurst: liberty EffectData:1924"),
+    ("Thor", "ThorsHammer: liberty EffectData:2247"),
+    (
+        "Reaper",
+        "P38ScytheGuassPistolBurst: liberty EffectData:1808",
+    ),
+    (
+        "Liberator",
+        "LiberatorMissileBurstPersistent: void EffectData:2945",
+    ),
+    ("Missile Turret", "LongboltMissile: liberty EffectData:1784"),
+    (
+        "Queen",
+        "TalonsMissileBurst: swarm EffectData:3043; TalonsBurst: liberty EffectData:2325",
+    ),
+    (
+        "Colossus",
+        "ThermalLancesForward and ThermalLancesReverse: liberty EffectData:2371, :2396",
+    ),
+];
+
+#[test]
+fn q0058_channeled_bursts_follow_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    for (unit, source) in SC2_CHANNELED_BURSTS {
+        assert!(
+            archetypes_with_analogue(&world, unit).next().is_some(),
+            "an archetype with the analogue {unit} ({source})"
+        );
+    }
+    for archetype in world.catalog.archetypes() {
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next());
+        let listed = SC2_CHANNELED_BURSTS
+            .iter()
+            .any(|(unit, _)| Some(*unit) == analogue);
+        for weapon in own_weapons(archetype) {
+            let expected = listed && weapon.attacks_count > 1;
+            assert_eq!(
+                weapon.channeled, expected,
+                "{} {}: channeled as StarCraft II's burst effect",
+                archetype.slug, weapon.name
+            );
+        }
+    }
+    Ok(())
+}
+
 /// One row of [`SC2_ATTRIBUTE_BONUSES`]: analogue, catalog weapon name if the row is for one
 /// weapon only, `(attribute, bonus)` pairs, and the source.
 type BonusRow = (
@@ -1171,6 +1227,193 @@ fn b16_splash_zones_follow_starcraft() -> TestResult {
         checked.len(),
         SC2_SPLASH_ZONES.len(),
         "every row reaches a shipped weapon"
+    );
+    Ok(())
+}
+
+/// `StarCraft` II 5.0.14 `SearchFlags` `OffsetByUnitRadius` of every splash weapon this catalog
+/// models: `(analogue, flag, source)` (Q0063, plan `2026-11-05-sc2-deviation-fixes` Amendment
+/// 22, package B). A `CEffectDamage` inherits 1 from `DU_WEAP` (`core` EffectData:128) unless it
+/// clears it; a line's searches are `CEffectEnumArea` effects, whose default sets no flag (`core`
+/// EffectData:71-77).
+const SC2_SPLASH_OFFSET: [(&str, bool, &str); 7] = [
+    (
+        "Siege Tank",
+        false,
+        "CrucioShockCannonBlast clears it: liberty EffectData:1680",
+    ),
+    (
+        "Baneling",
+        true,
+        "VolatileBurstU, parent DU_WEAP: liberty EffectData:1753",
+    ),
+    (
+        "Liberator",
+        true,
+        "LiberatorMissileDamage, parent DU_WEAP_MISSILE: void EffectData:2932",
+    ),
+    (
+        "Ultralisk",
+        true,
+        "KaiserBladesDamage, parent DU_WEAP: liberty EffectData:2296",
+    ),
+    (
+        "Hellion",
+        false,
+        "InfernalFlameThrowerE, a CEffectEnumArea: liberty EffectData:2609",
+    ),
+    (
+        "Lurker",
+        false,
+        "LurkerMPSearch, a CEffectEnumArea: swarm EffectData:3022",
+    ),
+    (
+        "Colossus",
+        false,
+        "ThermalLancesE, a CEffectEnumArea: liberty EffectData:2412",
+    ),
+];
+
+#[test]
+fn q0063_splash_offset_follows_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    let mut checked = std::collections::BTreeSet::new();
+    for archetype in world.catalog.archetypes() {
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next())
+            .unwrap_or_default();
+        let mode_weapons = archetype.modes.iter().flat_map(|mode| {
+            [&mode.ground_weapon_override, &mode.air_weapon_override]
+                .into_iter()
+                .flatten()
+                .flatten()
+        });
+        for weapon in own_weapons(archetype).chain(mode_weapons) {
+            let Some(splash) = &weapon.splash else {
+                continue;
+            };
+            let (_, expected, source) = SC2_SPLASH_OFFSET
+                .iter()
+                .find(|(unit, ..)| *unit == analogue)
+                .ok_or_else(|| format!("{} {}: no offset row", archetype.slug, weapon.name))?;
+            assert_eq!(
+                splash.offset_by_unit_radius, *expected,
+                "{} {}: OffsetByUnitRadius as StarCraft II's ({source})",
+                archetype.slug, weapon.name
+            );
+            checked.insert(analogue);
+        }
+    }
+    assert_eq!(
+        checked.len(),
+        SC2_SPLASH_OFFSET.len(),
+        "every row reaches a weapon"
+    );
+    Ok(())
+}
+
+/// One row of [`SC2_LINE_SPLASH`]: the analogue, the radius of each search, where the line
+/// starts, the direction of its offsets, the offsets and the source.
+type LineRow = (
+    &'static str,
+    f32,
+    sim_types::SplashLineOrigin,
+    sim_types::SplashLineAxis,
+    &'static [f32],
+    &'static str,
+);
+
+/// `StarCraft` II 5.0.14 line areas of the weapons this catalog models (plan
+/// `2026-11-05-sc2-deviation-fixes` package 8b, B-18; evidence §9.1). Every search deals the
+/// whole strike (no `Fraction` is set; `core` EffectData:69).
+const SC2_LINE_SPLASH: [LineRow; 3] = [
+    (
+        "Lurker",
+        0.5,
+        sim_types::SplashLineOrigin::Attacker,
+        sim_types::SplashLineAxis::Along,
+        &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+        "LurkerMP and LurkerMPSearch, swarm EffectData:3010-3019, voidmulti EffectData:809, :821",
+    ),
+    (
+        "Hellion",
+        0.15,
+        sim_types::SplashLineOrigin::Attacker,
+        sim_types::SplashLineAxis::Along,
+        &[
+            0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75, 4.0,
+            4.25, 4.5, 4.75, 5.0, 5.25, 5.5, 5.75, 6.0, 6.5,
+        ],
+        "InfernalFlameThrowerCP and InfernalFlameThrowerE, liberty EffectData:2609-2646, swarm \
+         EffectData:2244-2246",
+    ),
+    (
+        "Colossus",
+        0.15,
+        sim_types::SplashLineOrigin::Target,
+        sim_types::SplashLineAxis::Across,
+        &[
+            -1.25, -1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0, 1.25,
+        ],
+        "ThermalLancesForward/Reverse and ThermalLancesE, liberty EffectData:2373-2408, :2412; \
+         swarm EffectData:2323, :2328",
+    ),
+];
+
+#[test]
+fn b18_line_splash_follows_starcraft() -> TestResult {
+    let world = flat_world(16)?;
+    let mut checked = std::collections::BTreeSet::new();
+    for archetype in world.catalog.archetypes() {
+        let analogue = archetype
+            .sc2_analogue()
+            .and_then(|analogue| analogue.split(" (").next())
+            .unwrap_or_default();
+        let Some((_, radius, origin, axis, offsets, source)) =
+            SC2_LINE_SPLASH.iter().find(|(unit, ..)| *unit == analogue)
+        else {
+            continue;
+        };
+        let mode_weapons = archetype.modes.iter().flat_map(|mode| {
+            [&mode.ground_weapon_override, &mode.air_weapon_override]
+                .into_iter()
+                .flatten()
+                .flatten()
+        });
+        for weapon in own_weapons(archetype).chain(mode_weapons) {
+            let Some(splash) = &weapon.splash else {
+                continue;
+            };
+            let expected = sim_types::SplashSpec {
+                zones: vec![sim_types::SplashZone {
+                    radius: SimScalar::from_f32_lossy(*radius),
+                    fraction: SimScalar::ONE,
+                }],
+                shape: sim_types::SplashShape::Line(sim_types::SplashLine {
+                    origin: *origin,
+                    axis: *axis,
+                    offsets: offsets
+                        .iter()
+                        .copied()
+                        .map(SimScalar::from_f32_lossy)
+                        .collect(),
+                }),
+                friendly_fire: false,
+                offset_by_unit_radius: false,
+            };
+            assert_eq!(
+                splash, &expected,
+                "{} {}: line splash as StarCraft II's ({source})",
+                archetype.slug, weapon.name
+            );
+            checked.insert(analogue);
+        }
+    }
+    assert_eq!(
+        checked.len(),
+        SC2_LINE_SPLASH.len(),
+        "every row reaches a shipped splash weapon"
     );
     Ok(())
 }

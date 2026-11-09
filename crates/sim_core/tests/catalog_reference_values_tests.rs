@@ -2311,20 +2311,18 @@ fn b28_weapon_mounts_follow_starcraft() -> TestResult {
     Ok(())
 }
 
-/// `ResetIfMoving` with no `YawIdleRate` in any layer: the return rate is unknown, so the turret
-/// holds until the owner answers Q0065 (B-30 stays open for it).
-const RESET_RATE_UNKNOWN: &str = "ResetIfMoving, no YawIdleRate: holds by Q0065's default";
-
 /// Idle behaviour (`CTurret` `Idle`, `YawIdleRate` in degrees per tick = Normal °/s × 1.4 ÷ 25)
 /// of every turreted weapon, by analogue and block; `siege_mode` is the Siege Tank's Siege Mode
 /// cannon. Every turret here descends from `FreeRotate`, `Idle` `Hold` (`liberty`
-/// TurretData:24), unless its row says otherwise (B-30).
+/// TurretData:24), unless its row says otherwise (B-30). A `ResetIfMoving` turret with no
+/// `YawIdleRate` in any layer (no `CTurret` default sets it, `core` TurretData:3-10) returns at
+/// its `YawRate` (owner answer to Q0065).
 const SC2_TURRET_IDLE: [(&str, &str, TurretIdleRef, &str); 13] = [
     (
         "Siege Tank",
         "weapon",
-        TurretIdleRef::Hold,
-        RESET_RATE_UNKNOWN,
+        TurretIdleRef::ResetIfMoving(40.32),
+        "SiegeTank, liberty TurretData:77-79, YawRate 720 from FreeRotate; no YawIdleRate, returns at YawRate (Q0065)",
     ),
     (
         "Siege Tank",
@@ -2332,7 +2330,12 @@ const SC2_TURRET_IDLE: [(&str, &str, TurretIdleRef, &str); 13] = [
         TurretIdleRef::Hold,
         "SiegeTankSieged, liberty TurretData:80-83",
     ),
-    ("Hellion", "weapon", TurretIdleRef::Hold, RESET_RATE_UNKNOWN),
+    (
+        "Hellion",
+        "weapon",
+        TurretIdleRef::ResetIfMoving(55.99),
+        "Hellion, liberty TurretData:95-98, YawRate 999.8437; no YawIdleRate, returns at YawRate (Q0065)",
+    ),
     (
         "Immortal",
         "weapon",
@@ -2354,8 +2357,8 @@ const SC2_TURRET_IDLE: [(&str, &str, TurretIdleRef, &str); 13] = [
     (
         "Phoenix",
         "air_weapon",
-        TurretIdleRef::Hold,
-        RESET_RATE_UNKNOWN,
+        TurretIdleRef::ResetIfMoving(30.20),
+        "Phoenix, swarm TurretData:31-39, YawRate 539.2968; no YawIdleRate, returns at YawRate (Q0065)",
     ),
     (
         "Planetary Fortress",
@@ -2399,6 +2402,7 @@ const SC2_TURRET_IDLE: [(&str, &str, TurretIdleRef, &str); 13] = [
 #[derive(Clone, Copy, Debug)]
 enum TurretIdleRef {
     Hold,
+    ResetIfMoving(f32),
     FollowMovement(f32),
     Spin(f32),
 }
@@ -2409,7 +2413,8 @@ impl TurretIdleRef {
         let rate = |angle: SimAngle| angle.to_degrees_f32();
         match (self, idle) {
             (Self::Hold, TurretIdle::Hold) => true,
-            (Self::FollowMovement(want), TurretIdle::FollowMovement { rate: got })
+            (Self::ResetIfMoving(want), TurretIdle::ResetIfMoving { rate: got })
+            | (Self::FollowMovement(want), TurretIdle::FollowMovement { rate: got })
             | (Self::Spin(want), TurretIdle::Spin { step: got }) => same_angle(rate(got), want),
             _ => false,
         }
@@ -2607,7 +2612,8 @@ fn b39_acceleration_follows_starcraft() -> TestResult {
 }
 
 /// The analogues whose data sets `Deceleration` (Normal units per second squared). Every other
-/// analogue's is unset, which Q0067 leaves instant: its catalog value copies `max_speed`.
+/// analogue's is unset, which the engine reads as its `Acceleration` (owner answer to Q0067): its
+/// catalog value copies the converted `acceleration`.
 const SC2_DECELERATION: [(&str, f32, &str); 2] = [
     ("High Templar", 1000.0, "liberty UnitData:3259"),
     ("Overlord", 1.625, "voidmulti UnitData:1199"),
@@ -2626,8 +2632,8 @@ fn b39_deceleration_follows_starcraft() {
             }
             None => (
                 f(arch.deceleration),
-                f(arch.max_speed),
-                "unset: instant (Q0067)",
+                f(arch.acceleration),
+                "unset: the Acceleration (Q0067)",
             ),
         };
         assert!(

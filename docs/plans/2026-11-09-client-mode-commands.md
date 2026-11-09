@@ -4,7 +4,7 @@ This plan lets a player switch a unit's mode from the skirmish client: Siege Mod
 analogue (`railgun_crawler`), Burrow and Unburrow for the Lurker analogue (`burrow_scorpion`). It does so for every
 catalog ability that toggles a declared mode, so the card is built from capabilities and the client names no
 identity (charter §3.3, C5). It is the "client package" that the default of
-[Q0070](../questions/open/0070-lurker-without-burrow-button.md) asks for. Without it, a trained Lurker analogue
+[Q0070](../questions/closed/0070-lurker-without-burrow-button.md) asks for. Without it, a trained Lurker analogue
 can never attack in a skirmish, because plan `2026-11-05-sc2-deviation-fixes` WP13b (bug B-42) made it attack only
 when burrowed.
 
@@ -21,8 +21,8 @@ This is a full plan, not a short note (charter §6): it spans `sim_types`, `sim_
 
 | Question | State | Where in this plan |
 |---|---|---|
-| [Q0070](../questions/open/0070-lurker-without-burrow-button.md) the Lurker without a Burrow button (on the B-42 branch) | Open; default option 1, "keep the fix, add a client Burrow/Siege command". This plan is that command | D-1, WP6 |
-| [Q0069](../questions/open/0069-lurker-burrow-sections.md) when during its burrow the Lurker becomes burrowed | Open; unaffected. The card reads the stance the simulation reports, whatever Q0069 decides | §8 |
+| [Q0070](../questions/closed/0070-lurker-without-burrow-button.md) the Lurker without a Burrow button (on the B-42 branch) | Answered option 1 and closed (WP6); default was option 1, "keep the fix, add a client Burrow/Siege command". This plan is that command | D-1, WP6 |
+| [Q0069](../questions/closed/0069-lurker-burrow-sections.md) when during its burrow the Lurker becomes burrowed | Answered (option 2: weapon and cloak at the `Stats` end, 33 ticks) and closed by the owner-answers round; unaffected. The card reads the stance the simulation reports, whatever Q0069 decides | §8 |
 | [Q0051](../questions/closed/0051-sc2-mechanics-standing-rule.md) follow StarCraft II | Standing rule (charter §8) | §2.5, D-3 to D-7 |
 | [Q0061](../questions/closed/0061-cheap-verification.md) who waits for gates | Standing rule (charter §4.3) | §5 |
 | New question: per-ability hotkeys (number assigned when filed) | Filed by WP6 with the default "keys stay positional" | D-8, WP6 |
@@ -276,7 +276,7 @@ Without this, a unit whose earlier queued switch completed between the press and
 A queued switch (`queue: true` behind other orders) is stored in the unit's `order_queue` and runs later, as a toggle
 of whatever stance the unit then has. The client cannot see a unit's queue, so it cannot refuse a second queued
 switch that would undo the first. StarCraft II's morphs are separate abilities per direction, so its second press
-would fail instead. Recorded as a bug for the deviation register (§8, proposed B-94), not fixed here: the fix is a
+would fail instead. Recorded as a bug for the deviation register (§8, proposed B-95), not fixed here: the fix is a
 directional effect in the simulation, which belongs with the abilities plan (deviation-fixes WP18).
 
 ### D-6. Two simulation fixes (one cause per commit, measured)
@@ -500,7 +500,7 @@ hand-back.
 
 ### WP6: Bookkeeping
 
-- `DESIGN.md` rows of D-11; the register rows of §8 (B-94 to B-97, or the next free IDs) in the deviation-fixes plan
+- `DESIGN.md` rows of D-11; the register rows of §8 (B-95 to B-98, or the next free IDs) in the deviation-fixes plan
   and in `DESIGN.md`, each scheduled as §8 says.
 - Q0070: add under its question the commits that built option 1. If `## Answer` has text, add `## Resolution` and
   `git mv` it to `closed/` (questions README, rule 2); if not, leave it open, because only the owner closes it by
@@ -548,15 +548,15 @@ Deferred without asking, as charter §8 allows when written down (Q0002):
    `SiegeModeToggle` and `CloakToggle` effects. All wait for the abilities plan of deviation-fixes WP18 (B-69), which
    should reuse D-2 to D-5: a capability-driven card entry, `would_admit_cast`, one command per ability index.
 2. **Overclock as an ability.** Stim stays a capability with `UseStim` (deviation-fixes WP3 owns its catalog form).
-3. **Proposed B-94: a queued mode switch toggles whatever stance the unit has when it runs** (D-5). StarCraft II's
+3. **Proposed B-95: a queued mode switch toggles whatever stance the unit has when it runs** (D-5). StarCraft II's
    per-direction morphs (`liberty` AbilData:1301, :1328) would refuse the second. Fix: a directional effect
    (enter or leave) in the simulation; deviation-fixes WP18.
-4. **Proposed B-95: an order queued behind a switch into an anchoring mode stays at the front of the anchored unit's
+4. **Proposed B-96: an order queued behind a switch into an anchoring mode stays at the front of the anchored unit's
    queue**, and a `Move` there makes it `Busy`. What StarCraft II does with an order its morphed unit cannot carry
    out is **(unsourced)**. Deviation-fixes WP18 (research).
-5. **Proposed B-96: the Lurker analogue's burrow cannot be cancelled while it runs** (`Interruptible` and a Cancel
+5. **Proposed B-97: the Lurker analogue's burrow cannot be cancelled while it runs** (`Interruptible` and a Cancel
    button, `swarm` AbilData:1658-1659). Deviation-fixes WP18.
-6. **Proposed B-97: anchored units get no Stop or Hold** (the client's mobility policy, `capable`); StarCraft II's
+6. **Proposed B-98: anchored units get no Stop or Hold** (the client's mobility policy, `capable`); StarCraft II's
    sieged tank card has both (`liberty` UnitData:5185-5186). A client package, small; scheduled with the next client
    work.
 7. **Per-ability hotkeys** (D-8): the owner's question filed by WP6.
@@ -566,3 +566,29 @@ Deferred without asking, as charter §8 allows when written down (Q0002):
 11. **A transformation cue** on the bubble while a unit channels: presentation, not needed for play.
 12. **Q0069** (when the burrowed weapon and cloak arrive) and **B-93** (burrowed units still block): unaffected; the
     card follows whatever stance the simulation reports.
+
+---
+
+## Amendment 1 (implementation, 2026-11-09): what the build changed or found
+
+- **Register numbers.** WP13c took B-94, so this plan's proposed bugs are B-95 to B-98 (orchestrator); §5, §8 and
+  the registers use them.
+- **Verify claims (R-6).** Shift queueing is confirmed by Blizzard's game guide. The transient-morph reading of D-6a
+  has no official source; editor-community sources support it (evidence §1.2), and the data it rests on is cited.
+- **D-6a order replacement.** Besides clearing the queue and ending Hold, the switch restarts the unit's movement
+  memory and drops its task leg, exactly as every non-queued order does in `commit_order` ("as `Stop` replaces
+  them"). Measured bit-identical.
+- **D-6b scope.** The front cast runs early only for units the first check of `walking_goal` used to stop (held or
+  anchored, not channelling); mobile units keep their existing path, so a unit winding up a fixed weapon is
+  unchanged.
+- **D-2 typed error.** The validation rule reports through the catalog's existing typed error,
+  `SimCoreError::CatalogInvalidValue`, naming the field (`abilities[i].leave_name`, `.effect`,
+  `.effect.mode_name`), as every other catalog rule does; no new variant.
+- **D-10 test 2 and media.** The Lurker analogue (`burrow_scorpion`) has no media, and the client stops a battle
+  that would present it, so it cannot appear in a skirmish at all (its train entry is locked "No approved media").
+  `battle_mode_tests` therefore picks, by capability, a presentable unit armed only in its mode; none ships, so the
+  test takes the presentable mode unit whose mode arms it and removes its own weapons from the session's catalog.
+  It uses a shipped one unchanged once one is presentable. Enemies in the tests are one-life structures, which do
+  not fight back or walk out of range. Q0070's practical goal also needs the Lurker analogue's media (Veo plan).
+- **WP5 memory.** `battle_mode_tests` peaks at 5.67 to 5.76 GiB at 2 threads (debug, process tree sampled every
+  0.2 s), so `test_threads: Some(2)` stands.

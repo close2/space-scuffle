@@ -62,6 +62,11 @@ pub struct PlayerView {
     pub overclock_ready: Vec<UnitTypeId>,
     /// Nodes in `Visible` cells, by node ID.
     pub visible_nodes: Vec<VisibleNodeView>,
+    /// The viewer's living, uncarried units whose archetype declares modes, by entity ID.
+    pub mode_states: Vec<ModeStateView>,
+    /// Abilities of the viewer's completed types that still need research, sorted by type and
+    /// then ability index.
+    pub ability_locks: Vec<AbilityLockView>,
 }
 
 impl PlayerView {
@@ -81,6 +86,8 @@ impl PlayerView {
         self.options.clear();
         self.overclock_ready.clear();
         self.visible_nodes.clear();
+        self.mode_states.clear();
+        self.ability_locks.clear();
     }
 
     /// The jobs of `queue`, front of the queue first.
@@ -147,6 +154,28 @@ pub struct CarrierView {
     pub slots_used: u32,
     /// Passenger slots in all.
     pub capacity: u32,
+}
+
+/// The stance of one of the viewer's units whose archetype declares modes.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModeStateView {
+    /// The unit.
+    pub entity: EntityId,
+    /// Index into the archetype's `modes` of the mode the unit is in or, while it channels a
+    /// switch, the mode it will be in when the channel ends (`Entity::settled_mode`); `None`
+    /// for the default stance.
+    pub settled_mode: Option<u8>,
+    /// Whether it is channelling a switch now.
+    pub channeling: bool,
+}
+
+/// One of the viewer's types whose ability at `ability_index` still needs research.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct AbilityLockView {
+    /// The type.
+    pub unit_type: UnitTypeId,
+    /// Index into the type's `abilities`.
+    pub ability_index: u8,
 }
 
 /// One resource node in sight of the viewer.
@@ -309,6 +338,15 @@ mod tests {
             visible_nodes: vec![VisibleNodeView {
                 id: ResourceNodeId(1),
                 remaining: 900,
+            }],
+            mode_states: vec![ModeStateView {
+                entity: EntityId(12),
+                settled_mode: Some(0),
+                channeling: true,
+            }],
+            ability_locks: vec![AbilityLockView {
+                unit_type: UnitTypeId(4),
+                ability_index: 1,
             }],
         }
     }

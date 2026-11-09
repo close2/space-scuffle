@@ -51,7 +51,9 @@ use std::collections::BTreeMap;
 /// Schema 20 adds each unit's barrier window, absorption left and cooldown (B-41).
 /// Schema 21 adds each unit's attack dash cooldown (B-43).
 /// Schema 22 adds the sense in which each unit rounds a body parked on its next corner (B-100).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 22;
+/// Schema 23 adds whether each weapon's burst, and each pending burst, is channeled (Q0058).
+/// Schema 24 adds whether each splash is centred on its target's edge (Q0063).
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 24;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

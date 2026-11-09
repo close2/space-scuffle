@@ -115,6 +115,7 @@ fn ability(effect: AbilityEffectSpec) -> AbilitySpec {
         cooldown_ticks: 8,
         cast_range: SimScalar::ZERO,
         effect,
+        leave_name: None,
     }
 }
 fn command(actor: EntityId, order: UnitOrder) -> PlayerCommand {
@@ -704,6 +705,7 @@ fn all_three_splash_routes_ignore_cargo_at_dormant_pickup_coordinates() -> TestR
             ],
             shape: sim_types::SplashShape::Circle,
             friendly_fire: true,
+            offset_by_unit_radius: false,
         });
         if route == 0 {
             f.world.catalog.get_mut(f.kind)?.ground_weapon = Some(weapon.clone());

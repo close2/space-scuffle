@@ -48,7 +48,10 @@ use std::path::PathBuf;
 /// dash cooldown.
 /// Re-recorded for checksum schema 22 (plan 2026-11-09-sc2-pathfinding WP2+WP3, B-100), which
 /// encodes each unit's `corner_round`, 0 at spawn.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 13_116_413_848_042_653_014;
+/// Re-recorded for checksum schema 23 (owner answer to Q0058), which encodes whether each weapon's
+/// burst and each pending burst is channeled, and schema 24 (owner answer to Q0063), which encodes
+/// whether each splash is centred on its target's edge.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 7_548_950_251_413_344_567;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

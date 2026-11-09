@@ -3,11 +3,13 @@
 **Owner report (chat, 2026-11-09):** "the ramps have artifacts. the top floor continues over the ramp." Seen in the
 showcase video (<https://close2.github.io/space-scuffle/showcase.mp4>).
 
-**Status of this document:** Stage 1 blueprint under charter §6, written on 2026-11-09 against `main` at `33a8e82`.
+**Status of this document:** Stage 1 blueprint under charter §6, written on 2026-11-09 against `main` at `33a8e82`;
+implemented the same day, WP1 to WP3 (§10).
 Line numbers drift, so search for the quoted symbol. The numbers in §2.3 are derived from the code
 (`corner_marching_level`, `emit_dual_cell`, `RampProfile::height_at`) and the shipped map files; the mesh probe of
 §2.4 was written but its build was stopped under a server load of about 190 before it ran, so WP1's first step
-runs it and records the measured figures (marked **verify**).
+ran it; the figures the plan marked **verify** are replaced below by the measured values (**measured**), and §10
+records the implementation.
 
 **Kind of change.** The cause is single (§2.3) and client-only, and the obvious test exists (§4, T1), so the bug
 qualifies for a short note under charter §6 (Q0054) **if** the fix is limited to that cause. The complete fix is
@@ -106,9 +108,14 @@ For the run-4 ramp of `default_arena` the slab starts at edge k = 2 (y = 32), co
 (y ∈ [31.5, 34]) and floats up to **1.875** above the slope (at y = 31.5 the ramp is at 4.125).
 
 This matches the video: in `t_7.5.png` the slab leaves the plateau at the ramp head and ends about halfway down
-the three-cell ramp, and a unit on the slope is drawn below it. **verify** with the probe (§2.4) in WP1: expected
-on every ramp cell of the upper half, highest mesh hit above `terrain_altitude_at` by up to 1.5 (showcase) and
-1.875 (default arena).
+the three-cell ramp, and a unit on the slope is drawn below it. **Measured** with the probe (§2.4) on `5accec2`
+(64 vertical rays per ramp cell at the points `(i + 0.5) / 8`): every sample past the middle of each ramp is off,
+32 of 64 in the cell of index 1 of a run of 3 and all 64 in index 2 (showcase), and 32 of 64 in index 1 and all
+64 in indices 2 and 3 of the run of 4 (default arena); the highest hit is the flat floor at 6.0, at most **+1.44**
+(showcase, at x = 27.44, where the analytic 1.5 lies at the cell boundary x = 27.5 between samples) and **+1.83**
+(default arena, analytic 1.875) above `terrain_altitude_at`. No sample of the lower half is off except the guard
+rail tops (+0.30) at the lateral samples 0.0625 cells from a side edge. Log:
+`~/scratch/rampplan/probe_measured.log`.
 
 The lower half of each ramp has the converse, hidden defect: its corners round to level 1, so a flat level-1 quad
 lies under the slope (invisible, but drawn), and next to the abyss in `default_arena` the dual-grid cliff wall
@@ -125,7 +132,9 @@ from `H(1)` down to the abyss floor lies in the same plane as the ramp's own sid
   units from each ramp's centre at the preview's 55° pitch) are kept as `~/scratch/rampplan/terrain_preview_probe_poses.diff`;
   the probe source is `~/scratch/rampplan/zz_ramp_probe.rs`. They were not rendered during planning (same build
   stop). WP1 renders `probe_ramp_w` on the RX 580 (`with-gpu-lock`) and on `lavapipe` before and after the fix;
-  since the defect is in the CPU mesh, both drivers are expected to show it identically (**verify**).
+  since the defect is in the CPU mesh, both drivers are expected to show it identically (**measured**: the two
+  `probe_ramp_w` renders of `5accec2`, `~/scratch/rampplan/before_radv/` and `~/scratch/rampplan/before_lvp/`,
+  show the same slab and give identical footprint statistics, §10).
 
 ### 2.5 Geometry, not shading
 
@@ -217,7 +226,8 @@ on `showcase_canyon`, `default_arena` and a new synthetic fixture (T0), building
   `CHUNK_DUAL_CELLS`.
 - **T1 top surface.** For every ramp cell, at an 8×8 grid of points in the footprint (lateral margin
   `RAIL_WIDTH + 1e-3` so rails are excluded), the highest triangle hit of a vertical ray equals
-  `terrain_altitude_at` within `1e-4`. On `main` it is expected to fail on every ramp cell of the upper half (**verify**: the red run is recorded in the
+  `terrain_altitude_at` within `1e-4`. On `main` it is expected to fail on every ramp cell of the upper half (**measured**: it fails on 22 of 36
+  showcase_canyon cells, 12 of 16 default_arena cells and 74 fixture cells, exactly the cells past each ramp's middle; the red run is recorded in the
   WP1 hand-back).
 - **T2 footprint exclusivity** (the owner's property, extended to walls). No triangle other than the ramp quad of
   that cell and its guard rails has an XZ projection (a triangle or, for a wall, a segment) that meets the open
@@ -241,8 +251,11 @@ on `showcase_canyon`, `default_arena` and a new synthetic fixture (T0), building
   canonical pose, `ramp`, a close-up of the west ramp of `showcase_canyon` (target (27.5, 9.5), distance 11,
   look-at height 4.5). `test_terrain_preview_renders` asserts it like the other poses and adds one geometric pixel
   check: the projected footprint of ramp cell (27, 9) (projected from the known camera) shows no pixel of the
-  plateau's metal-plate layer. **verify** that the plateau and dirt splat colours are separable on both drivers;
-  if they are not, the pose stays as a human-review artefact and the pixel check is dropped (record it).
+  plateau's metal-plate layer. **Measured**: the colours are separable on both drivers (about 92% of plateau
+  pixels and at most 1.3% of dirt pixels are bright and neutral), but the slab carried the ramp's own dirt splat,
+  so the pre-fix render has no metal pixel in the footprint either; the check therefore also requires that more
+  than 90% of the footprint is lit dirt, which separates the pre-fix render (52% on radv and lavapipe) from the
+  fixed one (99.98% on radv, 100% on lavapipe).
 
 ---
 
@@ -272,7 +285,8 @@ after the next green CI on `main` (`.github/workflows/showcase.yml`); WP3 checks
 - `sim_types`, `sim_map`, `sim_core`: none (§3.4). The orchestrator's merge check must show no file under those crates.
 - `client_diagnostics`: none in code; the showcase output changes in pixels only. `showcase_tests` compares two
   renders of the same build with each other, so it is unaffected. `frame_budget` may move slightly (fewer hidden
-  triangles); no budget assertion is expected to trip (**verify** in the gate).
+  triangles); no budget assertion is expected to trip (verified by the package gate, which the verifier agent
+  runs under Q0061; the implementation ran `quick` and the targeted client tests, §10).
 - `gate`: the new test file is CPU-only and fast, so it needs no `suites.ron` class entry; C22 must stay green.
 
 ## 7. Decisions
@@ -308,3 +322,45 @@ after the next green CI on `main` (`.github/workflows/showcase.yml`); WP3 checks
 - `generate_wall_profile`'s per-call `Vec` (existing; a separate performance note if wanted).
 - Any change to `sim_map` ramp rules, validation of lateral ramp neighbours, or map data.
 - The `round()` semantics elsewhere (none other than `corner_marching_level` found).
+
+---
+
+## 10. Implementation Record (2026-11-09)
+
+Implemented in one package on `main` at `5accec2`; measurements, renders and red runs are in
+[`docs/evidence/2026-11-09-ramp-geometry.md`](../evidence/2026-11-09-ramp-geometry.md).
+
+| WP | Commits | Result |
+|---|---|---|
+| WP1 | `6c3fe8a` tests (red), `3baab60` fix, `aec11e4` goldens | T1/T2 red on `main` (22/36, 12/16 and 74 fixture cells off; 33/36, 16/16 and 108 cells intruded), green after the fix; T3 green throughout; ramp-free chunk hash unchanged; picker hashes unchanged |
+| WP2 | `9eab60d` tests (red), `ef26242` fix, `41f502c` synthetic golden | T3 on the full fixture: 470 open steps on 32 cells, then 0; shipped-map goldens unchanged |
+| WP3 | `1105091` GPU pose, `cda8ff6` catalog, this commit (docs) | `ramp` pose green through the GPU harness on radv and lavapipe |
+
+Golden hashes: `default_arena` mesh `0xd02323bb3431300e` → `0x0f0d39ef7f9758db`, `showcase_canyon`
+`0x2b6a057b898da597` → `0x771ccfc198c0befd`, synthetic `0x90266ce659f753a4` → `0xe2a178698ccc7174` (WP1) →
+`0xce785e16375bbd4c` (WP2); every pick hash and hit count unchanged.
+
+Decisions taken during implementation (scoping is the agent's call if written down, charter §8, Q0002):
+
+- **D-8** R4's classification reduces to one integer level per ramp corner (`dual_corner_levels`: the lowest
+  non-ramp edge-adjacent level, else the diagonal's), so the existing threshold runs, rims and walls apply
+  unchanged. R3's level beside a half-edge is the median of the neighbour's corner and its two edge-adjacent
+  corners, which is the marching region at the dual cell's centre in every case (a lone corner's quadrant is cut,
+  so the centre side follows its neighbours).
+- **D-9** R5 cuts the union of non-ramp quadrants into convex pieces that keep whole dual-cell edges where both
+  corners are non-ramp (one quadrant, a half, two diagonal quadrants, or two halves split along the diagonal
+  through the ramp corner), so clipping adds no vertex on an edge a ramp-free neighbour meshes without one; the
+  chunk-seam test stays bit-exact. Fan triangles below `1e-6` doubled area, which only clipping can leave, are
+  skipped.
+- **D-10** The kept half of a split straight contour ends at the dual cell's centre with no rim, foot or jitter;
+  the centre is inserted into the floor polygon between the two opposite midpoints, so the floor edge and the
+  wall's top edge meet (a taper where the kept midpoint has a rim, as at any ramp-suppressed midpoint before).
+- **D-11** `corner_marching_level`, `is_ramp_connected`, `ramp_step_2d` and `to_cell_coords` are removed: they
+  encoded the rounding rule and the old suppression, and nothing else used them.
+- **D-12** The ramp-free chunk hash lives in `mesher_golden_tests.rs` (`ramp_free_chunks_are_bit_exact`), next to
+  the goldens and their hashing code, rather than in `ramp_geometry_tests.rs`.
+- **D-13** The GPU pose's pixel check also requires more than 90 % lit dirt in the footprint: the slab carried the
+  ramp's dirt splat, so the metal check alone does not see it (§4).
+- **D-14** `ramp_geometry_tests` is not in `crates/gate/suites.ron`: it is `fast` by default, and a catalog edit
+  would select the complete suite for this client-only package. A `sim_map` change reaches the ramp geometry
+  through `client/mesher_golden_tests`.
