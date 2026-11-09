@@ -475,7 +475,9 @@ fn exact_air_boundary_snap_and_cross_layer_neighbor_do_not_end_order_early() -> 
         .ok_or("actor")?
         .current_funnel_waypoints = vec![point(32.0, 8.5)];
     f.step(vec![command(vec![id], target, false)]);
-    for _ in 0..20 {
+    // The air archetype accelerates and, since Q0067, brakes at its finite acceleration, so it
+    // needs more than 20 ticks for the 2.125 to its goal.
+    for _ in 0..60 {
         f.step(vec![]);
     }
     assert_eq!(f.world.entities[&id].position, target);
