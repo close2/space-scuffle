@@ -1230,3 +1230,25 @@ Evidence: [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.
 - **Found:** B-94, Charge's autocast cannot be switched off (WP18).
 - Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §16. No commit was
   held.
+
+## Amendment 22 (orchestrator, 2026-11-09): owner answers of 2026-11-09
+
+The owner answered Q0058 and Q0062 to Q0070 (commit `bc3af54`). The answers, with the orchestrator's brief of the
+same day, are this round's plan amendment (charter §6, short note). Each package is its own commit or commits,
+tests first with a recorded red run, measured after each rule or data commit as plan D-3 states (matrix 16 seeds
+against the previous step, battle 33 on 64 seeds, both goldens and the sandbox checksum in debug, release and
+`wasm32-wasip1`). The stop rule of D-4 stands: a battle whose overall winner flips, except where the package explains
+it with a cited StarCraft II reason, is held on a side branch.
+
+| Package | Question, answer | Rule | B-ID |
+|---|---|---|---|
+| A | [Q0058](../questions/open/0058-channeled-burst-interruption.md), option 3 | Each weapon carries the `Channeled` flag of its burst effect (5.0.14 data); a pending burst of a channeled weapon ends on any explicit order that replaces the attacker's orders (Move, Stop, Hold Position, Attack Move, an attack on another target, any other order not queued) | B-2 closed |
+| B | [Q0063](../questions/open/0063-splash-distance-rule.md), options 3 and 4 | A splash zone reaches a unit when the unit's edge is within it (`centre distance − victim radius ≤ R`); a weapon whose damage effect keeps `OffsetByUnitRadius` (the default) centres its area on the target's edge facing the attacker, the four weapons patch 1.1.0 changed clear it. Then WP8b's held line data (Hellion, Lurker, Colossus) and the per-strike search land | B-17 fixed; B-18 fixed |
+| C | [Q0065](../questions/open/0065-turret-idle-rate.md), option 2 | A turret whose data sets no `YawIdleRate` returns at its `YawRate` | B-30 fixed |
+| D | [Q0067](../questions/open/0067-unset-deceleration.md), option 2 | An unset `Deceleration` reads as the analogue's converted `Acceleration`; braking extends to orders that end without arriving and to pursuit | B-39 fixed |
+| E | [Q0069](../questions/open/0069-lurker-burrow-sections.md), option 2 | A mode may arm its weapon and cloak at an earlier section's end: the burrowing Lurker analogue at the `Stats` end (33 ticks), the visual transition to 45 | B-42 fixed |
+| F | [Q0064](../questions/open/0064-colossus-damage-timing.md), option 1 with the B-85 note | The Colossus' strikes and sweep stay on the release tick (B-81's Colossus part closed as the owner's choice); the Lurker's spine searches are spaced 2 ticks apart along the line | B-85 narrowed to the Colossus' search delay, closed by the answer |
+| G | [Q0062](../questions/open/0062-shield-break-life-minimum.md), [Q0066](../questions/open/0066-random-delay-scaling.md), [Q0068](../questions/open/0068-barrier-damage-order.md), option 1 each; [Q0070](../questions/open/0070-lurker-without-burrow-button.md) option 1 | No rule change. B-15, B-41 lose their open parts; B-91 closes with the unscaled delay kept. Q0070 stays open until plan `2026-11-09-client-mode-commands` lands the buttons | B-15, B-41, B-91 closed |
+
+**Schema.** A package that changes the hashed encoding bumps the checksum schema from main's value at the time; the
+pathfinding round (schema 22 on its branch) and this one are merged in the order the orchestrator picks.
