@@ -4,8 +4,10 @@
 //! Boots the production client on the shipped skirmish, as `client --skirmish` does, and proves what
 //! reaches the screen under `BattleProfile::Player`: enemy bubbles outside `Visible` cells are not
 //! drawn and not pickable, their combat events are not delivered, resource nodes keep their last
-//! seen state, and a unit that has left sight leaves the selection panel. The same gestures under
-//! `Sandbox` must change nothing.
+//! seen state, and a unit that has left sight leaves the selection panel. A concealed enemy the
+//! viewer does not detect shows nothing if burrowed and only its shimmer if cloaked, and is never
+//! picked, inspected or given a health bar (plan `2026-11-09-effect-visualization` D-5). The same
+//! gestures under `Sandbox` must change nothing.
 //!
 //! # How it fits
 //! The policy of a single cell, node or event lives in `battle_pipeline::fog`, tested there.
@@ -47,7 +49,7 @@ use client::vfx::{
 };
 use client::{ClientMode, LabState};
 use sim_types::{
-    AttackOrigin, CombatEventVisual, EntityId, PlayerCommand, PlayerId, ResourceKind,
+    AttackOrigin, CombatEventVisual, Concealment, EntityId, PlayerCommand, PlayerId, ResourceKind,
     ResourceNodeId, SimScalar, UnitOrder, UnitTypeId,
 };
 
@@ -470,6 +472,212 @@ fn an_enemy_in_sight_stays_inspected() {
     run_ticks(&mut harness, 25);
     assert_eq!(harness.selection().inspected(), Some(foe));
     assert!(model(&harness).focus.is_some());
+}
+
+// --- Concealment and detection (plan 2026-11-09-effect-visualization D-5) ----------------------
+
+/// Whose unit is hidden, and what the viewer has to find it with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Watcher {
+    /// The viewer's own concealed unit.
+    Own,
+    /// An enemy's, in sight but with no detector of the viewer over it.
+    EnemyUndetected,
+    /// An enemy's, in sight and under a detector of the viewer.
+    EnemyRevealed,
+    /// An enemy's, undetected, in the developer view, which keeps no fog.
+    NoFog,
+}
+
+/// What the viewer gets of the unit: whether it is drawn, and whether a click inspects or selects
+/// it with its ring and health bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Seen {
+    drawn: bool,
+    picked: bool,
+}
+
+/// Spawns a concealed unit beside home, as `watcher` says, and returns it with the detector.
+fn stage_concealed(
+    harness: &mut Harness,
+    watcher: Watcher,
+    concealment: Concealment,
+) -> (EntityId, Option<EntityId>) {
+    let place = harness.open_ground(home(harness), 4.0);
+    let owner = if watcher == Watcher::Own {
+        LOCAL_PLAYER
+    } else {
+        ENEMY
+    };
+    let hidden = harness.spawn_concealed(owner, place, concealment);
+    let detector = (watcher == Watcher::EnemyRevealed).then(|| {
+        let beside = harness.open_ground(place, 3.0);
+        let detector = harness.detector();
+        harness
+            .world_mut()
+            .spawn_unit(detector, LOCAL_PLAYER, sim_position(beside))
+            .expect("open ground")
+    });
+    // The workers are armed, and a fight would end the case before it is looked at.
+    let own = mobile(harness, LOCAL_PLAYER);
+    if watcher != Watcher::NoFog {
+        submit(harness, LOCAL_PLAYER, &own, UnitOrder::HoldPosition);
+    }
+    run_ticks(harness, 3);
+    assert_eq!(
+        harness.published_concealment(hidden),
+        concealment,
+        "the staging must publish the concealment under test"
+    );
+    harness.look_at(place);
+    (hidden, detector)
+}
+
+/// What a viewer gets of a unit concealed as `concealment`, seen by `watcher`.
+fn seen(watcher: Watcher, concealment: Concealment) -> Seen {
+    let mut harness = if watcher == Watcher::NoFog {
+        let mut harness = sandbox_skirmish();
+        run_ticks(&mut harness, 2);
+        harness
+    } else {
+        skirmish()
+    };
+    let (hidden, _) = stage_concealed(&mut harness, watcher, concealment);
+    let drawn = drawn(&harness, hidden);
+    harness.select(hidden);
+    let picked = harness.selection().contains(hidden);
+    assert_eq!(
+        harness.draws_selected(hidden),
+        picked,
+        "the ring and the health bar follow the pick"
+    );
+    if watcher != Watcher::NoFog {
+        assert_eq!(
+            model(&harness).focus.is_some(),
+            picked,
+            "the panel follows the pick"
+        );
+    }
+    Seen { drawn, picked }
+}
+
+#[test]
+fn a_concealed_unit_reaches_each_viewer_as_detection_allows() {
+    const SHOWN: Seen = Seen {
+        drawn: true,
+        picked: true,
+    };
+    // The developer view draws the truth; who may be clicked stays the simulation's targeting,
+    // which no player without detection has (`a_cloaked_enemy_cannot_be_selected_or_targeted`).
+    const DRAWN_ONLY: Seen = Seen {
+        drawn: true,
+        picked: false,
+    };
+    const NOTHING: Seen = Seen {
+        drawn: false,
+        picked: false,
+    };
+    let expected = [
+        (Watcher::Own, Concealment::Burrowed, SHOWN),
+        (Watcher::Own, Concealment::Cloaked, SHOWN),
+        (Watcher::EnemyUndetected, Concealment::Burrowed, NOTHING),
+        (Watcher::EnemyUndetected, Concealment::Cloaked, DRAWN_ONLY),
+        (Watcher::EnemyRevealed, Concealment::Burrowed, SHOWN),
+        (Watcher::EnemyRevealed, Concealment::Cloaked, SHOWN),
+        (Watcher::NoFog, Concealment::Burrowed, DRAWN_ONLY),
+        (Watcher::NoFog, Concealment::Cloaked, DRAWN_ONLY),
+    ];
+    let mut wrong = Vec::new();
+    for (watcher, concealment, wanted) in expected {
+        let got = seen(watcher, concealment);
+        if got != wanted {
+            wrong.push(format!(
+                "{watcher:?} {concealment:?}: {got:?}, wanted {wanted:?}"
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+#[test]
+fn an_undetected_burrowed_enemy_draws_nothing_at_all() {
+    let mut harness = skirmish();
+    let (hidden, _) = stage_concealed(
+        &mut harness,
+        Watcher::EnemyUndetected,
+        Concealment::Burrowed,
+    );
+    assert_nothing_of_it_is_drawn(&harness, hidden);
+}
+
+/// Kills `detector`, and checks on every frame until it is gone and the fog has caught up that
+/// `hidden` is inspected only while the view lists it as revealed.
+fn lose_detection(harness: &mut Harness, hidden: EntityId, detector: EntityId) {
+    harness
+        .world_mut()
+        .entities
+        .get_mut(&detector)
+        .expect("the detector stands")
+        .hp = SimScalar::ZERO;
+    harness.resume();
+    let mut settled = 0;
+    for _ in 0..WALK_FRAMES {
+        harness.step(1);
+        let revealed = model(harness).view.revealed.contains(&hidden);
+        if !revealed {
+            assert_eq!(
+                harness.selection().inspected(),
+                None,
+                "inspected undetected"
+            );
+            assert_eq!(
+                model(harness).focus,
+                None,
+                "the panel kept an undetected enemy"
+            );
+            settled += 1;
+        }
+        if settled > 3 {
+            harness.pause();
+            return;
+        }
+    }
+    panic!("the detector never died");
+}
+
+#[test]
+fn an_inspected_enemy_that_goes_undetected_stops_being_inspected() {
+    for (concealment, still_drawn) in [(Concealment::Burrowed, false), (Concealment::Cloaked, true)]
+    {
+        let mut harness = skirmish();
+        let (hidden, detector) = stage_concealed(&mut harness, Watcher::EnemyRevealed, concealment);
+        harness.select(hidden);
+        assert_eq!(
+            harness.selection().inspected(),
+            Some(hidden),
+            "{concealment:?}"
+        );
+        assert!(harness.draws_selected(hidden));
+
+        lose_detection(&mut harness, hidden, detector.expect("a revealed case"));
+        assert_eq!(drawn(&harness, hidden), still_drawn, "{concealment:?}");
+        assert!(
+            !harness.draws_selected(hidden),
+            "{concealment:?}: no ring or health bar on an undetected enemy"
+        );
+
+        // It is dropped for good: being detected again does not fill the panel by itself.
+        let place = harness.simulated_position(hidden);
+        let beside = harness.open_ground(place, 3.0);
+        let detector = harness.detector();
+        harness
+            .world_mut()
+            .spawn_unit(detector, LOCAL_PLAYER, sim_position(beside))
+            .expect("open ground");
+        run_ticks(&mut harness, 3);
+        assert!(drawn(&harness, hidden), "{concealment:?}: detected again");
+        assert_eq!(harness.selection().inspected(), None, "{concealment:?}");
+    }
 }
 
 // --- Combat events (G-22) -------------------------------------------------------------------------
@@ -913,6 +1121,9 @@ fn play_again_starts_with_a_fresh_memory_and_the_enemy_still_hidden() {
 #[test]
 fn the_fog_rewrites_only_on_a_tick_and_reuses_its_buffers() {
     let mut harness = skirmish();
+    // A detected unit, so the list of revealed units is refilled on every tick too.
+    let (hidden, _) = stage_concealed(&mut harness, Watcher::EnemyRevealed, Concealment::Burrowed);
+    assert!(model(&harness).view.revealed.contains(&hidden));
     let fog = |harness: &Harness| {
         let fog = harness.app.world().resource::<BattleFog>();
         (fog.buffers(), fog.refills())

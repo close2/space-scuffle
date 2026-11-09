@@ -85,6 +85,7 @@ SuiteCatalog(
         "client/battle_hud_window_tests": (class: Gpu),
         "client/battle_result_window_tests": (class: Gpu),
         "client/combat_fx_slot_gpu_tests": (class: Gpu),
+        "client/concealment_gpu_tests": (class: Gpu),
         "client/dome_fill_tests": (class: Gpu),
         "client/editor_app_tests": (class: Gpu, test_threads: Some(2)),
         "client/flipbook_clock_gpu_tests": (class: Gpu),
@@ -136,7 +137,12 @@ SuiteCatalog(
         (
             name: "HUD windows",
             paths: ["crates/client/src/battle_hud/**", "crates/client/src/battle_presentation.rs"],
-            targets: ["client/battle_hud_window_tests", "client/battle_result_window_tests"],
+            targets: [
+                "client/battle_hud_window_tests",
+                "client/battle_result_window_tests",
+                // The fog's detection rule is applied to the bubbles in `battle_hud/fog.rs`.
+                "client/concealment_gpu_tests",
+            ],
         ),
         (
             name: "live sync",
@@ -145,6 +151,7 @@ SuiteCatalog(
                 "client/sync_allocation_count_tests",
                 "client/skirmish_match_tests",
                 "client/runtime_battle_tests",
+                "client/concealment_gpu_tests",
             ],
         ),
         (
@@ -172,6 +179,7 @@ SuiteCatalog(
                 "client/round2_visual_tests",
                 "client/battle_card_tests",
                 "client/battle_mode_tests",
+                "client/concealment_gpu_tests",
                 "client_diagnostics/showcase_storyboard_tests",
             ],
         ),

@@ -1,9 +1,18 @@
 //! One viewer's knowledge of the battlefield, in the shape presentation asks about it.
 //!
 //! # Responsibility
-//! Owns [`BattleFog`]: which map cells the viewer sees right now, and how each resource node looked
-//! when it was last in sight. It answers the questions every presentation path shares: may this
-//! unit be drawn, and may this combat event be delivered. It decides no policy of the simulation.
+//! Owns [`BattleFog`]: which map cells the viewer sees right now, which concealed units of other
+//! players the viewer detects, and how each resource node looked when it was last in sight. It
+//! answers the questions every presentation path shares: how may this unit reach the screen
+//! ([`Presence`]), and may this combat event be delivered. It decides no policy of the simulation.
+//!
+//! # Detection (plan `2026-11-09-effect-visualization` D-5)
+//! A unit of another player whose concealment is not `None` and which the view's `revealed` list
+//! does not name is *undetected*. Undetected and burrowed, it is [`Presence::Hidden`]: nothing of
+//! it is drawn. Undetected and cloaked, it is [`Presence::Shimmer`]: drawn with the cloak look a
+//! player of the game would see, but never picked, inspected or given a health bar. This is the
+//! one place the rule is written; the bubbles, picking, the selection panel and the bars all ask
+//! [`presence_of`].
 //!
 //! # How it fits
 //! The simulation writes a viewer-scoped [`PlayerView`] once per tick. The HUD copies the part
@@ -18,15 +27,53 @@
 //!
 //! # Invariants
 //! - It fails closed: with no viewer or no vision written, [`BattleFog::sees`] answers `false` and
-//!   only a viewer's own unit could be shown, so an unwritten fog hides rather than reveals.
+//!   only a viewer's own unit could be shown, so an unwritten fog hides rather than reveals. An
+//!   unwritten fog detects nothing either.
+//! - The viewer's own units are always [`Presence::Shown`], concealed or not.
 //! - A node's remembered presence changes only on a tick its cell is in sight.
 //! - It knows nothing that its [`PlayerView`] did not say, so nothing here can leak.
 //! - After the first refresh of a session, refreshing allocates nothing.
 
 use bevy::prelude::*;
-use sim_types::{CombatEventVisual, PlayerId, PlayerView, Tick, VisibilityState};
+use sim_types::{
+    BubbleRenderInstance, CombatEventVisual, Concealment, EntityId, PlayerId, PlayerView, Tick,
+    VisibilityState,
+};
 
 use super::commands::SessionGeneration;
+
+/// How one unit may reach the viewer's screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Presence {
+    /// Drawn as it is, and it may be picked, inspected and given a health bar.
+    Shown,
+    /// An undetected cloaked unit: drawn only with the cloak look, never picked, inspected or
+    /// given a health bar.
+    Shimmer,
+    /// Nothing of it is drawn, and nothing of it may be picked.
+    Hidden,
+}
+
+impl Presence {
+    /// Whether any of the unit is drawn.
+    #[must_use]
+    pub const fn is_drawn(self) -> bool {
+        !matches!(self, Self::Hidden)
+    }
+
+    /// Whether the unit may be picked, inspected, targeted and given a health bar.
+    #[must_use]
+    pub const fn is_pickable(self) -> bool {
+        matches!(self, Self::Shown)
+    }
+}
+
+/// The [`Presence`] of `bubble` under `fog`, where `None` is no fog: the sandbox, the editor and
+/// the headless check, which show the truth.
+#[must_use]
+pub fn presence_of(fog: Option<&BattleFog>, bubble: &BubbleRenderInstance) -> Presence {
+    fog.map_or(Presence::Shown, |fog| fog.presence(bubble))
+}
 
 /// What one viewer knows of the map, as of the latest refresh.
 ///
@@ -41,6 +88,8 @@ pub struct BattleFog {
     visible: Vec<bool>,
     /// Last seen presence of each node, in map order.
     node_present: Vec<bool>,
+    /// Concealed units of other players the viewer detects, sorted, as the view listed them.
+    revealed: Vec<EntityId>,
     /// Session, viewer and tick this fog was written for.
     written: Option<(SessionGeneration, PlayerId, Tick)>,
     /// Session whose map seeded `node_present`.
@@ -65,6 +114,11 @@ impl BattleFog {
                 "fog.node_present",
                 self.node_present.as_ptr().addr(),
                 self.node_present.capacity(),
+            ),
+            (
+                "fog.revealed",
+                self.revealed.as_ptr().addr(),
+                self.revealed.capacity(),
             ),
         ]
         .into_iter()
@@ -110,6 +164,38 @@ impl BattleFog {
         self.viewer == Some(owner) || self.sees(x, y)
     }
 
+    /// Whether the viewer detects unit `id` of `owner`, concealed as `concealment`.
+    ///
+    /// An unconcealed unit and a unit of the viewer's own are always detected. Any other needs the
+    /// view's `revealed` list to name it, which the simulation fills only for a unit under the
+    /// viewer's detection and in a `Visible` cell.
+    #[must_use]
+    pub fn detects(&self, owner: PlayerId, id: EntityId, concealment: Concealment) -> bool {
+        !concealment.is_concealed()
+            || self.viewer == Some(owner)
+            || self.revealed.binary_search(&id).is_ok()
+    }
+
+    /// How `bubble` may reach the screen: the one rule every reader of a unit asks (D-5).
+    ///
+    /// Out of sight, a unit of another player is [`Presence::Hidden`]. In sight but undetected,
+    /// a burrowed unit is [`Presence::Hidden`] and a cloaked one [`Presence::Shimmer`]. The
+    /// bubble is judged at the position it is drawn at, `world_pos`, in world units.
+    #[must_use]
+    pub fn presence(&self, bubble: &BubbleRenderInstance) -> Presence {
+        let [x, y, _] = bubble.world_pos;
+        if !self.shows(bubble.owner, x, y) {
+            return Presence::Hidden;
+        }
+        if self.detects(bubble.owner, bubble.entity_id, bubble.concealment) {
+            return Presence::Shown;
+        }
+        match bubble.concealment {
+            Concealment::Cloaked => Presence::Shimmer,
+            Concealment::Burrowed | Concealment::None => Presence::Hidden,
+        }
+    }
+
     /// Whether `event` may be delivered to the visual layer, judged where it lands.
     #[must_use]
     pub fn reveals(&self, event: &CombatEventVisual) -> bool {
@@ -137,13 +223,14 @@ impl BattleFog {
 
     /// Address and capacity of each retained buffer, which an allocation would move or grow.
     #[must_use]
-    pub fn buffers(&self) -> [(usize, usize); 2] {
+    pub fn buffers(&self) -> [(usize, usize); 3] {
         [
             (self.visible.as_ptr() as usize, self.visible.capacity()),
             (
                 self.node_present.as_ptr() as usize,
                 self.node_present.capacity(),
             ),
+            (self.revealed.as_ptr() as usize, self.revealed.capacity()),
         ]
     }
 
@@ -152,6 +239,7 @@ impl BattleFog {
         self.viewer = None;
         self.width = 0;
         self.visible.clear();
+        self.revealed.clear();
         self.written = None;
     }
 
@@ -160,7 +248,8 @@ impl BattleFog {
     // What: A flat row-major copy, refilled in place only when the tick changes. Every frame reads
     // it in O(1) per bubble with no allocation, and nothing rescans the bubbles against the nodes.
     // Trade-off: One byte per cell held a second time, so that presentation, which sits below the
-    // HUD, does not depend on `HudModel` or on the fuller `PlayerView` enum.
+    // HUD, does not depend on `HudModel` or on the fuller `PlayerView` enum. The detected units
+    // are copied sorted, so each bubble asks with one binary search and nothing is allocated.
     /// Takes in `view`, written for `generation`, whose map loaded with the nodes `loaded` says.
     ///
     /// `loaded` runs once per session: how the map looked at load is public, because every node is
@@ -184,6 +273,11 @@ impl BattleFog {
                 .iter()
                 .map(|state| *state == VisibilityState::Visible),
         );
+        self.revealed.clear();
+        self.revealed.extend_from_slice(&view.revealed);
+        // The view promises a sorted list; sorting in place keeps the binary search sound if a
+        // writer ever breaks that, and costs one pass over a sorted slice otherwise.
+        self.revealed.sort_unstable();
         for node in &view.visible_nodes {
             if let Some(present) = self.node_present.get_mut(node.id.0 as usize) {
                 *present = node.remaining > 0;
@@ -341,7 +435,8 @@ mod tests {
 
     #[test]
     fn a_refill_reuses_its_buffers_and_counts_itself() {
-        let view = view();
+        let mut view = view();
+        view.revealed = vec![EntityId(4), EntityId(9)];
         let mut fog = fog_of(&view);
         let warmed = fog.buffers();
         for _ in 0..50 {
@@ -349,6 +444,177 @@ mod tests {
         }
         assert_eq!(fog.buffers(), warmed);
         assert_eq!(fog.refills(), 51);
+    }
+
+    /// A bubble of `owner`, unit `id`, concealed as `concealment`, standing at `(x, y)`.
+    fn unit(
+        owner: PlayerId,
+        id: u32,
+        concealment: Concealment,
+        at: [f32; 2],
+    ) -> BubbleRenderInstance {
+        use sim_types::{AnimState, ShapeKind, SilhouetteClass, UnitTypeId, WeaponVisualKind};
+        BubbleRenderInstance {
+            entity_id: EntityId(id),
+            shape: ShapeKind::UnitSphere,
+            silhouette: SilhouetteClass::HeavyHex,
+            unit_type: UnitTypeId::default(),
+            owner,
+            world_pos: [at[0], at[1], 0.5],
+            ground_z: 0.0,
+            radius: 0.45,
+            velocity: [0.0; 2],
+            heading_angle_rad: 0.0,
+            aim_angle_rad: 0.0,
+            is_attacking: false,
+            weapon_visual: WeaponVisualKind::Hitscan,
+            attack_target_pos: None,
+            anim_state: AnimState::Idle,
+            attack_swing: None,
+            hp_ratio: 1.0,
+            shield_ratio: 1.0,
+            shield_hit_flash: 0.0,
+            hull_hit_angle_rad: 0.0,
+            hull_hit_flash: 0.0,
+            build_or_queue_progress: None,
+            selected: false,
+            concealment,
+            speed_boosted: false,
+            stance: sim_types::StanceView::default(),
+            status: sim_types::StatusFlags::default(),
+            barrier_ratio: 0.0,
+        }
+    }
+
+    /// The fog of [`view`] that detects units 4 and 9.
+    fn detecting_fog() -> BattleFog {
+        let mut view = view();
+        view.revealed = vec![EntityId(4), EntityId(9)];
+        fog_of(&view)
+    }
+
+    #[test]
+    fn an_undetected_enemy_in_sight_is_hidden_if_burrowed_and_a_shimmer_if_cloaked() {
+        let fog = detecting_fog();
+        let in_sight = [1.5, 0.5];
+        assert_eq!(
+            fog.presence(&unit(THEM, 5, Concealment::Burrowed, in_sight)),
+            Presence::Hidden
+        );
+        assert_eq!(
+            fog.presence(&unit(THEM, 5, Concealment::Cloaked, in_sight)),
+            Presence::Shimmer
+        );
+        assert_eq!(
+            fog.presence(&unit(THEM, 5, Concealment::None, in_sight)),
+            Presence::Shown
+        );
+    }
+
+    #[test]
+    fn a_detected_enemy_in_sight_is_shown_whatever_hides_it() {
+        let fog = detecting_fog();
+        for concealment in [Concealment::Burrowed, Concealment::Cloaked] {
+            for id in [4, 9] {
+                assert_eq!(
+                    fog.presence(&unit(THEM, id, concealment, [1.5, 0.5])),
+                    Presence::Shown,
+                    "{id} {concealment:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn detection_does_not_reach_out_of_sight() {
+        let fog = detecting_fog();
+        for concealment in [
+            Concealment::None,
+            Concealment::Burrowed,
+            Concealment::Cloaked,
+        ] {
+            assert_eq!(
+                fog.presence(&unit(THEM, 4, concealment, [0.5, 0.5])),
+                Presence::Hidden,
+                "{concealment:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_viewers_own_concealed_units_are_always_shown() {
+        let fog = detecting_fog();
+        for concealment in [
+            Concealment::None,
+            Concealment::Burrowed,
+            Concealment::Cloaked,
+        ] {
+            for at in [[1.5, 0.5], [0.5, 0.5]] {
+                assert_eq!(
+                    fog.presence(&unit(ME, 5, concealment, at)),
+                    Presence::Shown,
+                    "{concealment:?} at {at:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_fog_shows_the_truth() {
+        for concealment in [
+            Concealment::None,
+            Concealment::Burrowed,
+            Concealment::Cloaked,
+        ] {
+            assert_eq!(
+                presence_of(None, &unit(THEM, 5, concealment, [0.5, 0.5])),
+                Presence::Shown
+            );
+        }
+        let fog = detecting_fog();
+        assert_eq!(
+            presence_of(
+                Some(&fog),
+                &unit(THEM, 5, Concealment::Burrowed, [1.5, 0.5])
+            ),
+            Presence::Hidden
+        );
+    }
+
+    #[test]
+    fn only_a_shown_unit_is_pickable_and_only_a_hidden_one_is_not_drawn() {
+        assert!(Presence::Shown.is_pickable() && Presence::Shown.is_drawn());
+        assert!(!Presence::Shimmer.is_pickable() && Presence::Shimmer.is_drawn());
+        assert!(!Presence::Hidden.is_pickable() && !Presence::Hidden.is_drawn());
+    }
+
+    #[test]
+    fn an_unsorted_reveal_list_still_detects_and_a_closed_fog_forgets_it() {
+        let mut view = view();
+        view.revealed = vec![EntityId(9), EntityId(2), EntityId(4)];
+        let mut fog = fog_of(&view);
+        for id in [2, 4, 9] {
+            assert!(
+                fog.detects(THEM, EntityId(id), Concealment::Cloaked),
+                "{id}"
+            );
+        }
+        assert!(!fog.detects(THEM, EntityId(3), Concealment::Cloaked));
+        fog.close();
+        assert!(!fog.detects(THEM, EntityId(4), Concealment::Burrowed));
+        assert!(fog.detects(THEM, EntityId(3), Concealment::None));
+    }
+
+    #[test]
+    fn a_tick_that_loses_detection_hides_the_unit_again() {
+        let mut view = view();
+        view.revealed = vec![EntityId(4)];
+        let mut fog = fog_of(&view);
+        let burrowed = unit(THEM, 4, Concealment::Burrowed, [1.5, 0.5]);
+        assert_eq!(fog.presence(&burrowed), Presence::Shown);
+        view.revealed.clear();
+        fog.refill(SessionGeneration::FIRST, &view, std::iter::empty());
+        assert_eq!(fog.presence(&burrowed), Presence::Hidden);
     }
 
     #[test]
