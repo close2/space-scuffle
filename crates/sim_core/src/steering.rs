@@ -594,7 +594,7 @@ pub(crate) fn surround_side(
         radius: unit.radius,
         mover: Some((unit.owner, unit.push_priority)),
     };
-    let parity = unit.id.0 % 2 == 0;
+    let parity = unit.id.0.is_multiple_of(2);
     let goal_dir = direction(goal_pos, unit.pos)?;
     if goal_dir == SimVec2::ZERO {
         return Ok(parity);

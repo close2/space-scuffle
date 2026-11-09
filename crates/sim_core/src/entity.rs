@@ -177,6 +177,10 @@ pub struct ActiveProjectile {
 /// All of this is authoritative: it decides when an order ends, so it is hashed by the checksum.
 /// A new order starts it afresh, apart from [`Self::abandoned_target`], which outlives orders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent hashed flags of one unit's movement, each read by a different rule"
+)]
 pub struct MovementMemory {
     /// Destination this unit finished moving to. Others heading there stop against this unit.
     pub arrived_at: Option<SimVec2>,

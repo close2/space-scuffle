@@ -151,7 +151,7 @@ pub struct UnitArchetype {
     pub turn_before_move: bool,
     /// Whether a blocked attacker of this archetype walks round the friends in its way on a side
     /// it keeps until it has a clear way in (the surround walk, plan
-    /// `2026-11-09-friendly-blocking` D-2). StarCraft II leaves such a unit standing for the
+    /// `2026-11-09-friendly-blocking` D-2). `StarCraft` II leaves such a unit standing for the
     /// player to move; walking round is an "allows more" deviation (Q0051), so the default `true`
     /// rests on [Q0074](../../../docs/questions/open/0074-surround-walk.md), and `false` restores
     /// the game's stand. Either way a blocked unit never vibrates: it waits (D-1).

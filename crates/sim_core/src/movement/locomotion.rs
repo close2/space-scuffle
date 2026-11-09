@@ -274,6 +274,10 @@ struct StepContext<'a> {
     hull: Option<HullGate>,
     /// For a unit that may walk round a crowd blocking it ([`surround_walk`]), the target it
     /// approaches (`None` for an attack-move without one); `None` for every other unit.
+    #[expect(
+        clippy::option_option,
+        reason = "whether the unit walks, then the target it walks for, which an attack-move lacks"
+    )]
     surround: Option<Option<EntityId>>,
     /// The unit's auto-acquisition scan range in world units, edge to edge.
     scan_range: SimScalar,
