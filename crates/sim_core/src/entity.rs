@@ -121,6 +121,9 @@ pub struct PendingStrikes {
     pub remaining: u8,
     /// Ticks until the next strike lands, at least 1 between ticks.
     pub ticks_until_next: u16,
+    /// Whether the weapon's burst is channeled ([`sim_types::WeaponSpec::channeled`]): an
+    /// explicit order that replaces the attacker's orders ends it (Q0058).
+    pub channeled: bool,
 }
 
 /// An active timed buff or debuff affecting unit stats.
@@ -673,6 +676,7 @@ impl Entity {
 
         self.movement.restart();
         self.abandon_task_leg();
+        self.end_channeled_burst_for(&order);
         match order {
             UnitOrder::Move { target } => {
                 self.handle_interrupting_move(target);
@@ -715,6 +719,24 @@ impl Entity {
                 self.current_funnel_waypoints.clear();
                 self.is_holding_position = false;
             }
+        }
+    }
+
+    /// Ends a pending channeled burst that `order`, replacing this unit's orders, interrupts.
+    ///
+    /// In `StarCraft` II a multi-strike weapon whose burst effect sets `Channeled` (the
+    /// Zealot's `PsiBladesBurst`, `liberty` EffectData:1924) channels it under the attack order,
+    /// so any explicit order that replaces that order between the strikes cancels the strikes
+    /// still to land (owner answer to Q0058). Only an attack on the burst's own target keeps it.
+    /// A burst that is not channeled (the Viking's `LanzerTorpedoes`) always runs to its end.
+    fn end_channeled_burst_for(&mut self, order: &UnitOrder) {
+        let Some(pending) = &self.pending_strikes else {
+            return;
+        };
+        let keeps =
+            matches!(order, UnitOrder::AttackTarget { target, .. } if *target == pending.target_id);
+        if pending.channeled && !keeps {
+            self.pending_strikes = None;
         }
     }
 

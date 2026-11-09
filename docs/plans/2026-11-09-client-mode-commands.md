@@ -22,7 +22,7 @@ This is a full plan, not a short note (charter §6): it spans `sim_types`, `sim_
 | Question | State | Where in this plan |
 |---|---|---|
 | [Q0070](../questions/closed/0070-lurker-without-burrow-button.md) the Lurker without a Burrow button (on the B-42 branch) | Answered option 1 and closed (WP6); default was option 1, "keep the fix, add a client Burrow/Siege command". This plan is that command | D-1, WP6 |
-| [Q0069](../questions/open/0069-lurker-burrow-sections.md) when during its burrow the Lurker becomes burrowed | Open; unaffected. The card reads the stance the simulation reports, whatever Q0069 decides | §8 |
+| [Q0069](../questions/closed/0069-lurker-burrow-sections.md) when during its burrow the Lurker becomes burrowed | Answered (option 2: weapon and cloak at the `Stats` end, 33 ticks) and closed by the owner-answers round; unaffected. The card reads the stance the simulation reports, whatever Q0069 decides | §8 |
 | [Q0051](../questions/closed/0051-sc2-mechanics-standing-rule.md) follow StarCraft II | Standing rule (charter §8) | §2.5, D-3 to D-7 |
 | [Q0061](../questions/closed/0061-cheap-verification.md) who waits for gates | Standing rule (charter §4.3) | §5 |
 | New question: per-ability hotkeys (number assigned when filed) | Filed by WP6 with the default "keys stay positional" | D-8, WP6 |

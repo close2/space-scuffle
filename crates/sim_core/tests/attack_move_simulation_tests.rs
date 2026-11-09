@@ -214,6 +214,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         attacks_count: 1,
         strike_interval_ticks: 0,
         followup_max_distance: None,
+        channeled: false,
         period_ticks: 10, // DPS = 1000
         damage_point_ticks: 1,
         backswing_ticks: 2,
@@ -246,6 +247,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         attacks_count: 1,
         strike_interval_ticks: 0,
         followup_max_distance: None,
+        channeled: false,
         period_ticks: 10, // DPS = 2500
         damage_point_ticks: 1,
         backswing_ticks: 2,

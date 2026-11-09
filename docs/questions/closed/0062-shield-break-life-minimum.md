@@ -46,3 +46,9 @@ decimals.
 **Option 1 (No change — the life part is at least `0.5`; no editor test needed).**
 
 **Engine insight:** In StarCraft II's C++ damage pipeline, when a hit breaks a unit's remaining shields with strictly positive post-shield-armor spillover (`remainder > 0`), the hull damage step applies its own `max(0.5, remainder - life_armor)` minimum floor rather than allowing life armor to reduce positive spillover to `0.0`. Thus any hit that exceeds current shields always chips at least `0.5` HP off life regardless of how much life armor the target has. The landed WP7 code (`apply_damage` in `crates/sim/src/combat.rs`) already matches SC2 and requires no change.
+
+## Resolution
+
+2026-11-09. Option 1: no change. The landed WP7 rule already deals at least 0.5 to life when a strike breaks the
+shields with a positive remainder, which the owner's answer confirms as the engine's. Bug B-15 is closed and leaves
+the `DESIGN.md` register; plan `2026-11-05-sc2-deviation-fixes` Amendment 22 (package G) records it. No code commit.

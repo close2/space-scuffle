@@ -266,6 +266,7 @@ fn s13_projectile_splash_spares_its_attacker() {
         ],
         shape: sim_types::SplashShape::Circle,
         friendly_fire: true,
+        offset_by_unit_radius: false,
     });
     let hp = arena.vitals(shooter);
     let victim_hp = arena.vitals(victim);
