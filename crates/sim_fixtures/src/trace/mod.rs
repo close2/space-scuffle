@@ -40,6 +40,7 @@ pub mod cli;
 pub mod focus;
 pub mod matrix;
 pub mod report;
+pub mod route;
 pub mod summary;
 pub mod swing;
 

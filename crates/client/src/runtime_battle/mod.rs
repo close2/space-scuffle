@@ -24,11 +24,12 @@ use bevy::prelude::Resource;
 use serde::{Deserialize, Serialize};
 use sim_core::catalog::{CatalogLoadError, RuntimeCatalogs};
 use sim_core::scenario::{
-    build_world_with_catalogs, ring_perimeter, PlayerSetup, ScenarioError, StartLoadoutCatalog,
+    apply_initial_orders, build_world_with_catalogs, start_approaches, PlayerSetup, ScenarioError,
+    StartLoadoutCatalog,
 };
 use sim_core::SimWorld;
-use sim_map::{CellFlags, MapDocument, MapFile, MapFormatError};
-use sim_types::{PlayerId, SimScalar, SimVec2, UnitOrder};
+use sim_map::{MapDocument, MapFile, MapFormatError};
+use sim_types::{PlayerId, SimVec2};
 
 /// Default declarative game session, resolved beneath the validated assets root.
 pub const DEFAULT_BATTLE_SCENARIO: &str = "scenarios/default_battle.ron";
@@ -51,17 +52,9 @@ pub struct BattleScenarioFile {
     pub initial_orders: Vec<BattleInitialOrder>,
 }
 
-/// Capability-driven starting orders with map-relative destinations.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub enum BattleInitialOrder {
-    /// Mobile armed combatants attack toward a legal approach to another player's base.
-    AttackMoveToStart {
-        /// Owner whose combat-capable mobile units receive the order.
-        player_slot: u8,
-        /// Owner of the destination start location.
-        target_player_slot: u8,
-    },
-}
+/// Capability-driven starting orders with map-relative destinations, shared with the simulation's
+/// scenario loader.
+pub use sim_core::scenario::InitialOrder as BattleInitialOrder;
 
 /// A fully loaded immutable battle definition and its external rule snapshot.
 #[derive(Resource)]
@@ -228,7 +221,8 @@ impl BattleDefinition {
         Ok(definition)
     }
 
-    /// Builds the deterministic starting world and applies its declarative initial orders.
+    /// Builds the deterministic starting world and applies its declarative initial orders through
+    /// [`apply_initial_orders`], the code the route trace tool also starts battles with.
     ///
     /// # Errors
     /// Returns a typed scenario placement, missing-start or capability failure.
@@ -241,50 +235,18 @@ impl BattleDefinition {
             self.catalogs.units.clone(),
             self.catalogs.upgrades.clone(),
         )?;
-        let approaches = self.start_approaches(&world)?;
-        for order in &self.scenario.initial_orders {
-            match *order {
-                BattleInitialOrder::AttackMoveToStart {
-                    player_slot,
-                    target_player_slot,
-                } => {
-                    if !approaches.contains_key(&PlayerId(player_slot)) {
-                        return Err(BattleLoadError::Start(player_slot));
-                    }
-                    let target = *approaches
-                        .get(&PlayerId(target_player_slot))
-                        .ok_or(BattleLoadError::Start(target_player_slot))?;
-                    let mut combatants = 0;
-                    for entity in world.entities.values_mut() {
-                        let archetype = world
-                            .catalog
-                            .get(entity.unit_type_id)
-                            .map_err(ScenarioError::from)?;
-                        if entity.owner == PlayerId(player_slot)
-                            && !entity.is_immobile
-                            && archetype.capabilities.harvester.is_none()
-                            && (archetype.ground_weapon.is_some()
-                                || archetype.air_weapon.is_some()
-                                || archetype.weapon.is_some())
-                        {
-                            entity
-                                .issue_order(UnitOrder::AttackMove { target }, false)
-                                .map_err(sim_core::SimCoreError::from)
-                                .map_err(ScenarioError::from)?;
-                            combatants += 1;
-                        }
-                    }
-                    if combatants == 0 {
-                        return Err(BattleLoadError::NoCombatants(player_slot));
-                    }
-                }
-            }
-        }
-        world.last_checksum = world.compute_checksum();
+        apply_initial_orders(
+            &mut world,
+            &self.document,
+            &self.scenario.players,
+            &self.scenario.initial_orders,
+        )
+        .map_err(BattleLoadError::from_order_error)?;
         Ok(world)
     }
 
-    /// Legal map-relative base approach positions for runtime commands and camera focus.
+    /// Legal map-relative base approach positions for runtime commands and camera focus
+    /// ([`start_approaches`]).
     ///
     /// # Errors
     /// Returns [`BattleLoadError::Start`] if a selected base has no free perimeter cell.
@@ -292,45 +254,20 @@ impl BattleDefinition {
         &self,
         world: &SimWorld,
     ) -> Result<BTreeMap<PlayerId, SimVec2>, BattleLoadError> {
-        let mut positions = BTreeMap::new();
-        for player in &self.scenario.players {
-            let start = self
-                .document
-                .start_locations
-                .iter()
-                .find(|start| start.player_slot == player.player_slot)
-                .ok_or(BattleLoadError::Start(player.player_slot))?;
-            let x = i32::try_from(start.cell.0)
-                .map_err(|_| BattleLoadError::Start(player.player_slot))?;
-            let y = i32::try_from(start.cell.1)
-                .map_err(|_| BattleLoadError::Start(player.player_slot))?;
-            let position = ring_perimeter(
-                x - 1,
-                x + i32::from(start.footprint.0),
-                y - 1,
-                y + i32::from(start.footprint.1),
-            )
-            .find_map(|(cx, cy)| {
-                let (Ok(cx), Ok(cy)) = (u32::try_from(cx), u32::try_from(cy)) else {
-                    return None;
-                };
-                let cell = world.map.cell(cx, cy).ok()?;
-                (cell.flags.contains(CellFlags::GROUND_PATHABLE)
-                    && !cell
-                        .flags
-                        .intersects(CellFlags::OCCUPIED_BY_STRUCTURE | CellFlags::UNPASSABLE_CLIFF)
-                    && cell.ramp.is_none())
-                .then(|| {
-                    SimVec2::new(
-                        SimScalar::from_num(cx) + SimScalar::HALF,
-                        SimScalar::from_num(cy) + SimScalar::HALF,
-                    )
-                })
-            })
-            .ok_or(BattleLoadError::Start(player.player_slot))?;
-            positions.insert(PlayerId(player.player_slot), position);
+        start_approaches(&self.document, &self.scenario.players, world)
+            .map_err(BattleLoadError::from_order_error)
+    }
+}
+
+impl BattleLoadError {
+    /// Names a player's missing start or missing combatants as this error's own variants, so a
+    /// caller can tell them from other scenario failures.
+    fn from_order_error(error: ScenarioError) -> Self {
+        match error {
+            ScenarioError::NoStartApproach { slot } => Self::Start(slot),
+            ScenarioError::NoCombatants { slot } => Self::NoCombatants(slot),
+            other => Self::Scenario(other),
         }
-        Ok(positions)
     }
 }
 

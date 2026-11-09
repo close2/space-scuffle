@@ -33,6 +33,7 @@ fn request(start: SimVec2, goal: SimVec2) -> sim_map::PathRequestWithVision<'sta
         start,
         goal,
         clearance: UnitClearance::Small,
+        radius: UnitClearance::Small.radius_scalar(),
     }
     .into()
 }

@@ -46,7 +46,9 @@ use std::path::PathBuf;
 /// window, absorption left and cooldown.
 /// Re-recorded for checksum schema 21 (work package 13c, B-43), which encodes each unit's attack
 /// dash cooldown.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 2_234_267_680_913_195_054;
+/// Re-recorded for checksum schema 22 (plan 2026-11-09-sc2-pathfinding WP2+WP3, B-100), which
+/// encodes each unit's `corner_round`, 0 at spawn.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 13_116_413_848_042_653_014;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

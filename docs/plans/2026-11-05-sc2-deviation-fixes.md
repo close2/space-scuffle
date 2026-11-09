@@ -847,9 +847,14 @@ requires.
 | B-96 | An order queued behind a switch into an anchoring mode stays at the front of the anchored unit's queue, and a `Move` there makes it `Busy` (never acquires); what the game does with an order its morphed unit cannot carry out is not yet sourced | (i) | WP18 (research). Found by plan `2026-11-09-client-mode-commands` (§8) |
 | B-97 | The Lurker analogue's burrow cannot be cancelled while it runs; the game's is `Interruptible` with a Cancel button (`swarm` AbilData:1658-1659) | (i) | WP18. Found by plan `2026-11-09-client-mode-commands` (§8) |
 | B-98 | Anchored units (sieged, burrowed) get no Stop or Hold Position on the card (the client's mobility policy); the game's sieged tank card has both (`liberty` UnitData:5185-5186) | (i) | The next client package. Found by plan `2026-11-09-client-mode-commands` (§8) |
+| B-99 | A body parked on a route corner made the unit rewrite its route to a point stepped outward, and a corner was passed only once the next leg held no body; columns walked V-shaped detours at shared corners. StarCraft II leaves bodies to steering (sc2-pathfinding plan §2, S3) | Fixed | Plan [`2026-11-09-sc2-pathfinding`](2026-11-09-sc2-pathfinding.md) WP2+WP3 |
+| B-100 | A unit facing a body parked on its corner had no way past it but the rewrite of B-99; it now steers past the body on the outside of the turn | Fixed | Plan `2026-11-09-sc2-pathfinding` WP2+WP3 (Amendment 1 there) |
+| B-101 | Corner waypoints are offset by the unit's radius tier (0.375 for every radius up to 0.5), not by its own radius; the game paths each unit by its own size | Fixed | Plan `2026-11-09-sc2-pathfinding` WP4 |
+| B-102 | Routes come from a grid A* corridor with three radius tiers, not StarCraft II's triangulated navigation mesh with a per-unit radius | (i) | Plan `2026-11-09-sc2-pathfinding` Part B (WP5 to WP10) |
 
-**Counts.** 78 IDs: (i) 70, two of them narrowed (B-52, B-67) and one carried by another plan (B-12); (ii) 3 (B-37,
-B-53, B-58); (iii) none; fixed 5 (B-31 and B-40 by the turn-before-move plan; B-71, B-73 and B-75 by WP0).
+**Counts.** 83 IDs: (i) 72, two of them narrowed (B-52, B-67) and two carried by other plans (B-12; B-102 by the
+sc2-pathfinding plan); (ii) 3 (B-37, B-53, B-58); (iii) none; fixed 8 (B-31 and B-40 by the turn-before-move plan;
+B-71, B-73 and B-75 by WP0; B-99, B-100 and B-101 by the sc2-pathfinding plan).
 
 **No (iii) item.** No B-ID asks us to reproduce a StarCraft II engine quirk: each is either a game rule we lack or a
 rule of our own. The class stays for later findings. For example, units pushed through walls are not ours to
