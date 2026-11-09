@@ -541,7 +541,10 @@ fn unreachable_order_reports_retargets_and_terminates() -> TestResult {
         .filter(|o| matches!(o.kind, RouteOutcomeKind::Retargeted { .. }))
         .count();
     assert_eq!(retargeted, 20, "every unit must report the new destination");
-    run_until_settled(&mut world, &ids, 900)?;
+    // Every unit settles; the bound is generous. Units that stand waiting behind the crowd at the
+    // wall are not pushed through it (plan 2026-11-09-friendly-blocking D-4), so the last one
+    // settles on tick 900 by the stall rule.
+    run_until_settled(&mut world, &ids, 1_200)?;
     for &id in &ids {
         let x = world.entities[&id].position.x;
         assert!(x < SimScalar::from_num(32), "{id:?} crossed the wall");
