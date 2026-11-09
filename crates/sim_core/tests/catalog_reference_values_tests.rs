@@ -2461,3 +2461,35 @@ fn b3_every_weapon_has_the_legacy_random_delay() {
     }
     assert!(checked > 50, "every weapon is checked: {checked}");
 }
+
+/// Siege Mode's channels, ticks (Normal s × 25 ÷ 1.4, rounded half up): entering is the
+/// `SiegeMode` morph's longest section, `Stats` delay 0.5 plus duration 3.5417 (the sections'
+/// greatest sum is the morph's time, `SC2Mapster` `CAbilMorph` reference), 4.0417 s = 72; leaving
+/// is `Unsiege`'s 3.5417 s = 63; each adds up to `RandomDelayMax` 0.5 s = 8.9286 ticks
+/// (`liberty` AbilData:1301-1341; no later layer changes a time: `swarm` AbilData:351, :1353,
+/// `void` :805, `voidmulti` :915, :1112).
+const SC2_SIEGE_MODE: (u16, u16, f32, f32) = (72, 63, 8.9286, 8.9286);
+
+#[test]
+fn b4_siege_mode_timings_follow_starcraft() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let modes: Vec<_> = catalogs
+        .units
+        .archetypes()
+        .filter(|arch| analogue(arch) == "Siege Tank")
+        .flat_map(|arch| arch.modes.iter())
+        .collect();
+    assert_eq!(modes.len(), 1, "the Siege Tank analogue has Siege Mode");
+    let mode = modes[0];
+    let (cast, leave, cast_extra, leave_extra) = SC2_SIEGE_MODE;
+    assert_eq!((mode.cast_ticks, mode.leave_cast_ticks), (cast, leave));
+    for (got, want) in [
+        (mode.cast_random_delay_max_ticks, cast_extra),
+        (mode.leave_random_delay_max_ticks, leave_extra),
+    ] {
+        assert!(
+            (f(got) - want).abs() < 0.001,
+            "extra {got:?}, StarCraft II {want}"
+        );
+    }
+}

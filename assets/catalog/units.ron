@@ -418,10 +418,10 @@
             modes: [
                 (
                     mode_name: "siege_mode",
-                    cast_ticks: 71,
-                    leave_cast_ticks: 71,
-                    cast_random_delay_max_ticks: 0.0,
-                    leave_random_delay_max_ticks: 0.0,
+                    cast_ticks: 72,
+                    leave_cast_ticks: 63,
+                    cast_random_delay_max_ticks: 8.9286,
+                    leave_random_delay_max_ticks: 8.9286,
                     is_immobile: true,
                     unpushable: true,
                     is_cloaked: false,
