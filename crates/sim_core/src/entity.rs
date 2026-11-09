@@ -568,6 +568,20 @@ impl Entity {
         self.is_mineral_walking = false;
     }
 
+    /// Replaces this unit's orders after a mode switch given without Shift: the queue empties
+    /// and Hold Position ends, as a `Stop` replaces them, but the weapon keeps its phase.
+    ///
+    /// `StarCraft` II's morphs (Siege Mode, the Lurker's burrow) are not `Transient`, so a
+    /// non-queued one replaces the unit's orders; a `Transient` ability such as Stimpack does
+    /// not (`liberty` AbilData:1231; plan `2026-11-09-client-mode-commands` D-6a). The caller
+    /// has already cleared velocity and funnel waypoints when the cast committed.
+    pub(crate) fn replace_orders_after_mode_switch(&mut self) {
+        self.movement.restart();
+        self.abandon_task_leg();
+        self.order_queue.clear();
+        self.is_holding_position = false;
+    }
+
     /// Handles player move/stop input during combat, executing SC2 backswing cancellation.
     fn handle_interrupting_move(&mut self, move_pos: SimVec2) {
         match self.weapon_phase {

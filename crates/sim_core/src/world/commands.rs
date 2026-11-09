@@ -19,7 +19,7 @@ use crate::movement::{MovementInvariant, MovementOutcome};
 use crate::upgrades::OVERCLOCK_ABILITY_SLUG;
 use crate::weapon_timing::SimulationDiagnostic;
 use crate::SimWorld;
-use sim_types::{EntityId, PlayerCommand, SimVec2, Tick, TickBundle, UnitOrder};
+use sim_types::{AbilityTargetKind, EntityId, PlayerCommand, SimVec2, Tick, TickBundle, UnitOrder};
 
 impl SimWorld {
     /// Phase 1: Process scheduled player input commands.
@@ -194,17 +194,32 @@ impl SimWorld {
                                     },
                                 });
                         }
-                    } else {
-                        self.execute_ability_prevalidated(
-                            ent_id,
-                            ability_index,
-                            target_pos,
-                            target_entity,
-                        );
+                    } else if self.execute_ability_prevalidated(
+                        ent_id,
+                        ability_index,
+                        target_pos,
+                        target_entity,
+                    ) && self.is_mode_toggle(ent_id, ability_index)
+                    {
+                        if let Some(ent) = self.entities.get_mut(&ent_id) {
+                            ent.replace_orders_after_mode_switch();
+                        }
                     }
                 }
             }
         }
+    }
+
+    /// Whether the ability at `ability_index` of `entity`'s archetype toggles a mode
+    /// (`AbilityTargetKind::ToggleMode`). An admitted non-queued cast of one replaces the
+    /// unit's orders, because `StarCraft` II's morphs are not transient (plan
+    /// `2026-11-09-client-mode-commands` D-6a); every other ability leaves them.
+    fn is_mode_toggle(&self, entity: EntityId, ability_index: u8) -> bool {
+        self.entities
+            .get(&entity)
+            .and_then(|ent| self.catalog.get(ent.unit_type_id).ok())
+            .and_then(|arch| arch.abilities.get(usize::from(ability_index)))
+            .is_some_and(|ability| matches!(ability.target_kind, AbilityTargetKind::ToggleMode))
     }
 
     /// Issues any other order to every commanded unit the player owns.
