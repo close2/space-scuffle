@@ -222,12 +222,35 @@ fn hash_stats(h: &mut Fnv64, s: &MeshStats) {
 /// Builds every chunk that covers the map's dual grid (`(width + 1) x (height + 1)` dual cells)
 /// and hashes stats, positions, normals, both UV channels and indices by raw bits.
 fn mesh_hash(map: &GameMap) -> u64 {
+    chunk_hash(map, |_, _| true).0
+}
+
+/// Whether no dual cell of chunk `(chunk_x, chunk_y)` has a ramp corner: the chunk's dual cells
+/// `16 * chunk .. 16 * (chunk + 1)` touch the cells `16 * chunk - 1 ..= 16 * chunk + 15` on each
+/// axis, and its ramp pass reads a subset of them.
+fn chunk_is_ramp_free(map: &GameMap, chunk_x: u32, chunk_y: u32) -> bool {
+    let span = |chunk: u32, len: u32| {
+        let start = (chunk * CHUNK_DUAL_CELLS).saturating_sub(1);
+        let end = ((chunk + 1) * CHUNK_DUAL_CELLS).min(len);
+        start..end
+    };
+    span(chunk_y, map.height())
+        .all(|y| span(chunk_x, map.width()).all(|x| map.ramp_profile(x, y).is_none()))
+}
+
+/// [`mesh_hash`] over the chunks `include` accepts; also returns how many it hashed.
+fn chunk_hash(map: &GameMap, include: impl Fn(u32, u32) -> bool) -> (u64, u32) {
     let mut h = Fnv64::new();
+    let mut count = 0;
     let mut scratch = MesherScratch::default();
     let cols = (map.width() + 1).div_ceil(CHUNK_DUAL_CELLS);
     let rows = (map.height() + 1).div_ceil(CHUNK_DUAL_CELLS);
     for chunk_y in 0..rows {
         for chunk_x in 0..cols {
+            if !include(chunk_x, chunk_y) {
+                continue;
+            }
+            count += 1;
             let stats = build_chunk_mesh(map, chunk_x, chunk_y, &mut scratch);
             h.u32(chunk_x);
             h.u32(chunk_y);
@@ -251,7 +274,7 @@ fn mesh_hash(map: &GameMap) -> u64 {
             }
         }
     }
-    h.0
+    (h.0, count)
 }
 
 /// One origin/direction pair for grid point `(i, j)` of a `RAY_GRID x RAY_GRID` grid.
@@ -346,6 +369,41 @@ fn synthetic_map_mesh_and_picking_are_bit_exact() {
         mesh_hash(&map),
         pick_hash(&map),
         (0x9026_6ce6_59f7_53a4, 0xe991_3ab4_d9ba_9745, 1532),
+    );
+}
+
+/// Chunks with no ramp corner in any dual cell are untouched by ramp geometry: their hashes were
+/// recorded before plan `2026-11-09-ramp-geometry` WP1 changed the mesher's ramp handling, and
+/// must not move with any later ramp change (plan section 4, D-3 and D-5).
+#[test]
+fn ramp_free_chunks_are_bit_exact() {
+    let maps = [
+        (
+            "default_arena",
+            load_shipped_map("default_arena.scmap.ron"),
+            (0x1d88_581e_ad3f_f398, 21),
+        ),
+        (
+            "showcase_canyon",
+            load_shipped_map("showcase_canyon.scmap.ron"),
+            (0xdbb5_9ede_15b0_9c12, 21),
+        ),
+        ("synthetic", synthetic_map(), (0x4b31_db42_9fac_1b7d, 1)),
+    ];
+    let mut changed = Vec::new();
+    for (name, map, expected) in maps {
+        let measured = chunk_hash(&map, |x, y| chunk_is_ramp_free(&map, x, y));
+        println!(
+            "{name}: ramp-free chunks = 0x{:016x} over {} chunks",
+            measured.0, measured.1
+        );
+        if measured != expected {
+            changed.push(name);
+        }
+    }
+    assert!(
+        changed.is_empty(),
+        "ramp-free chunk output changed (hash, chunk count) on {changed:?}"
     );
 }
 

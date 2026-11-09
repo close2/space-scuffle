@@ -238,6 +238,8 @@ SuiteCatalog(
             "client/editor_core_tests",
             "client/editor_entity_placement_tests",
             "client/mesher_golden_tests",
+            // Ramp profiles and terrain altitude are the reference of the ramp geometry properties.
+            "client/ramp_geometry_tests",
             "client/runtime_battle_tests",
         ],
         // `skirmish_match_tests` is the whole-match proof through input: combat and economy
