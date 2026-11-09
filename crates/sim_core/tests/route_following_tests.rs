@@ -11,6 +11,9 @@
 //! WP3 (D-9 A3, B-100): a unit whose corner has a body parked on it steers past the body on the
 //! outside of the turn, keeps that side while it rounds the body, and never rewrites its route.
 //!
+//! WP4 (B-101): a corner waypoint keeps the unit's own radius plus the corner margin from the
+//! corner, whatever its radius tier.
+//!
 //! # How it fits
 //! Runs whole ticks through `SimWorld::step` with scratch archetypes written in this file, so a
 //! rebalance of the shipped catalog cannot move these results. The trajectory metrics are those of
@@ -40,6 +43,8 @@ type TestResult = Result<(), Box<dyn Error>>;
 
 /// The scratch walker: radius 0.375, 0.126 world units per tick, instant acceleration.
 const WALKER: &str = "route_walker";
+/// The wide scratch walker: radius 0.5, otherwise the same as [`WALKER`].
+const WIDE: &str = "route_wide";
 const BLUE: PlayerId = PlayerId(0);
 
 /// One unarmed scratch ground unit of `radius` in the catalog's RON form.
@@ -122,7 +127,11 @@ fn wall_world() -> Result<SimWorld, Box<dyn Error>> {
 
 fn world_on(map: GameMap) -> Result<SimWorld, Box<dyn Error>> {
     let mut world = sim_fixtures::world(map, 0x5c2_9a7);
-    let units = format!("(units: [{}])", scratch_unit(WALKER, 1, 0.375));
+    let units = format!(
+        "(units: [{}, {}])",
+        scratch_unit(WALKER, 1, 0.375),
+        scratch_unit(WIDE, 2, 0.5)
+    );
     world.catalog = UnitCatalog::from_ron_str(&sim_fixtures::shipped_factions(), &units)?;
     Ok(world)
 }
@@ -166,6 +175,7 @@ fn searched(world: &SimWorld, start: SimVec2, goal: SimVec2) -> Option<Vec<SimVe
                 start,
                 goal,
                 clearance: UnitClearance::Small,
+                radius: UnitClearance::Small.radius_scalar(),
             },
         )
         .ok()
@@ -414,6 +424,29 @@ fn a_unit_rounds_a_body_parked_on_its_corner_on_the_outside() -> TestResult {
         "total turn {}",
         pass.total_turn_degrees
     );
+    assert_eq!(world.diagnostics(), []);
+    Ok(())
+}
+
+/// WP4 (B-101): a unit's corner waypoint keeps its own radius plus the 0.05 corner margin from
+/// the corner it turns around: 0.55 for a body of radius 0.5, 0.425 for one of 0.375, though the
+/// two route on the same radius tier.
+#[test]
+fn corner_waypoints_keep_each_units_own_radius_from_the_corner() -> TestResult {
+    let mut world = corner_world()?;
+    let goal = at(COLUMN_GOAL.0, COLUMN_GOAL.1);
+    let vertex = (16.0, 16.0);
+    for (slug, expected) in [(WIDE, 0.55), (WALKER, 0.425)] {
+        let kind = world.catalog.id_by_slug(slug).ok_or("scratch unit")?;
+        let unit = world.spawn_unit(kind, BLUE, at(10.5, 19.5))?;
+        order(&mut world, &[unit], UnitOrder::Move { target: goal });
+        let corner = point(*route(&world, unit).first().ok_or("a corner")?);
+        let gap = (corner.0 - vertex.0).hypot(corner.1 - vertex.1);
+        assert!(
+            (gap - expected).abs() < 1e-4,
+            "{slug}: corner {corner:?} is {gap} from the vertex, expected {expected}"
+        );
+    }
     assert_eq!(world.diagnostics(), []);
     Ok(())
 }

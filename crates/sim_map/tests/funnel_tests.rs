@@ -28,6 +28,7 @@ fn test_straight_line_optimization() {
         start,
         goal,
         clearance: UnitClearance::Medium,
+        radius: UnitClearance::Medium.radius_scalar(),
     };
 
     let result = pathfinder.find_path(&map, &request).unwrap();
@@ -75,6 +76,7 @@ fn test_l_shaped_obstacle_euclidean_shortcut() {
         start,
         goal,
         clearance: UnitClearance::Medium,
+        radius: UnitClearance::Medium.radius_scalar(),
     };
 
     let result = pathfinder.find_path(&map, &request).unwrap();
@@ -134,11 +136,13 @@ fn test_corner_clearance_radius_offset_scaling() {
         start,
         goal,
         clearance: UnitClearance::Small,
+        radius: UnitClearance::Small.radius_scalar(),
     };
     let req_medium = PathRequest {
         start,
         goal,
         clearance: UnitClearance::Medium,
+        radius: UnitClearance::Medium.radius_scalar(),
     };
 
     let path_small = pathfinder.find_path(&map, &req_small).unwrap();
@@ -184,6 +188,7 @@ fn test_sandbox_all_blue_units_direct_path_no_errant_detour() {
             start,
             goal,
             clearance: UnitClearance::Small,
+            radius: UnitClearance::Small.radius_scalar(),
         };
         let result = pathfinder
             .find_path(&map, &request)
@@ -203,6 +208,7 @@ fn test_sandbox_all_blue_units_direct_path_no_errant_detour() {
             start,
             goal,
             clearance: UnitClearance::Medium,
+            radius: UnitClearance::Medium.radius_scalar(),
         };
         let result = pathfinder
             .find_path(&map, &request)
@@ -244,6 +250,7 @@ fn test_showcase_canyon_ramp_funnel_paths_are_concise() -> Result<(), Box<dyn st
         start: r1_start,
         goal: r1_goal,
         clearance: UnitClearance::Small,
+        radius: UnitClearance::Small.radius_scalar(),
     };
     let r1_path = pathfinder.find_path(&map, &r1_req)?;
     assert!(
@@ -265,6 +272,7 @@ fn test_showcase_canyon_ramp_funnel_paths_are_concise() -> Result<(), Box<dyn st
         start: r2_start,
         goal: r2_goal,
         clearance: UnitClearance::Small,
+        radius: UnitClearance::Small.radius_scalar(),
     };
     let r2_path = pathfinder.find_path(&map, &r2_req)?;
     assert!(
@@ -274,4 +282,50 @@ fn test_showcase_canyon_ramp_funnel_paths_are_concise() -> Result<(), Box<dyn st
     );
 
     Ok(())
+}
+
+/// Plan 2026-11-09-sc2-pathfinding WP4 (B-101): a corner waypoint keeps the requesting unit's
+/// own radius plus `CORNER_SAFETY_MARGIN` from the corner it turns around: 0.55 for a body of
+/// radius 0.5 and 0.425 for one of 0.375, though both route on the Small tier.
+#[test]
+fn corner_offsets_use_the_units_own_radius() {
+    let mut map = GameMap::new(20, 20, MapCell::default_ground(CliffLevel(1))).unwrap();
+    for y in 0..10 {
+        for x in 0..10 {
+            map.cell_mut(x, y).unwrap().flags = CellFlags::UNPASSABLE_CLIFF;
+        }
+    }
+    let vertex = SimVec2::new(SimScalar::from_num(10), SimScalar::from_num(10));
+    for (radius, expected) in [(0.5_f64, 0.55_f64), (0.375, 0.425)] {
+        let mut pathfinder = Pathfinder::new(&map);
+        let request = PathRequest {
+            start: SimVec2::new(SimScalar::from_num(2.5), SimScalar::from_num(12.5)),
+            goal: SimVec2::new(SimScalar::from_num(12.5), SimScalar::from_num(2.5)),
+            clearance: UnitClearance::Small,
+            radius: SimScalar::from_num(radius),
+        };
+        let path = pathfinder.find_path(&map, &request).unwrap();
+        let corners: Vec<SimVec2> = path
+            .waypoints
+            .iter()
+            .copied()
+            .filter(|&w| {
+                w != request.start
+                    && w != request.goal
+                    && w.distance(vertex) < SimScalar::from_num(2)
+            })
+            .collect();
+        assert_eq!(
+            corners.len(),
+            1,
+            "one corner near the vertex: {:?}",
+            path.waypoints
+        );
+        let gap = f64::from(corners[0].distance(vertex).to_f32());
+        assert!(
+            (gap - expected).abs() < 1e-4,
+            "radius {radius}: corner {:?} is {gap} from the vertex, expected {expected}",
+            corners[0]
+        );
+    }
 }

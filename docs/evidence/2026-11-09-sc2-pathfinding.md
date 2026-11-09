@@ -98,3 +98,25 @@ Experiments not kept:
 
 Matrix (1,000 runs) and battle 33 (68 seeds): bit-identical to WP1. Goldens: checksum schema 21, re-recorded; first
 behaviour change on tick 155 of `golden_replay` and tick 120 of `golden_replay_orders` (fixture headers).
+
+## WP4: corner offsets use the unit's own radius (B-101)
+
+`PathRequest` and `PathRequestWithVision` gain `radius` (the unit's `collision_radius`; `route_request` passes
+`policy.radius`), and `offset_corner_waypoint` offsets a corner by `radius + CORNER_SAFETY_MARGIN`. The tier still
+chooses the corridor (until WP9). Showcase:
+
+| Box | Owner | Units | Ratio mean / max | Turn mean / max |
+|---|---:|---:|---|---|
+| ramp_w_foot | 0 | 10 | 1.067 / 1.112 | 99° / 182° |
+| ramp_w_foot | 1 | 10 | 1.399 / 1.412 | 153° / 188° |
+| plateau_se | 0 | 10 | 1.044 / 1.077 | 65° / 165° |
+| ramp_e_foot | 0 | 10 | 1.573 / 1.598 | 206° / 292° |
+| ramp_e_foot | 1 | 10 | 1.175 / 1.216 | 114° / 227° |
+
+Outcome: player 0 wins at tick 1,355. Every mean ratio is within D-12's +0.05 of WP2+WP3 (largest rise: ramp E,
++0.016). Only the Rhino Beetles (radius 0.5) take new corners, 0.125 further out.
+
+Matrix (1,000 runs) and battle 33 (68 seeds): bit-identical to WP2+WP3. Goldens re-recorded: `golden_replay` from
+checkpoint 1 and `golden_replay_orders` from checkpoint 3, both because "blue_armor" (radius 0.5) turns its ramp
+corner 0.55 from the corner instead of 0.425 (fixture headers); with the tier offset restored both reproduce as
+recorded for WP2+WP3. Checksum schema unchanged (21).

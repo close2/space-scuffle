@@ -185,6 +185,12 @@
 // corner rewrite had put in place of the ramp corner (30.30, 29.70) because marines stood on it;
 // it passes the corner and heads for its goal (32, 46). Marines 8, 14 and 16 beside it move
 // differently in contact on the same tick.
+// Re-recorded for plan 2026-11-09-sc2-pathfinding WP4 (B-101): a corner waypoint is offset by the
+// unit's own radius plus 0.05, no longer by its tier's (0.375 for every radius up to 0.5).
+// "blue_armor" (rhino_beetle, radius 0.5) now turns the ramp corner at (30.39, 29.61), 0.55 from
+// the corner, in place of (30.30, 29.70), from its first route on tick 6, so every checkpoint
+// changed from checkpoint 1 (ticks 1 to 50). With the tier offset restored, every checkpoint
+// equals that of WP2+WP3.
 (
     checksum_schema: 21,
     seed: 0x5EED_0F_5CAFF1E,
@@ -212,25 +218,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xd7d0ec9245e891ee,
-        0xe4badb1018958a73,
-        0xc9baa6ecc9d7bd62,
-        0xfd8b564f37b15cab,
-        0x7fb06a293490e0f4,
-        0x2ca47c9c5a62243d,
-        0xee0031e01af44392,
-        0x2f9c4e3903540c60,
-        0xa2dcc4169faae90b,
-        0x738faedd7db5c69d,
-        0x6d7ce3d2de822ff8,
-        0x6447b94900d3ed66,
-        0x6d1970937e7e411b,
-        0xdb36e5875406c9b0,
-        0x20be865feeaf7ee6,
-        0xe7c236c9c10e5d22,
-        0x40c5098496d23db2,
-        0x648f1995594c87fe,
-        0xc09c9b4b637dc220,
-        0x118eb9fd6c25a368,
+        0xfc8e298aadfacee9,
+        0x05fa2623d6bf0bf9,
+        0x4e172757485c9f7e,
+        0xc3db041af30e62f0,
+        0x715837f949acfab3,
+        0x7cba9224ad1a727a,
+        0x804f9b937a4dc62f,
+        0x722a56ebe248e168,
+        0xa95f4b351e21260a,
+        0x11cbfbe877c93fe2,
+        0x073d66a743d7618c,
+        0x2866c8b0ac5f9de4,
+        0x3fd2c8928dafc476,
+        0xe0800d1c592c2124,
+        0x2fa4476ace0599c7,
+        0xfade0f9021472a78,
+        0xf58c9441a0b548fb,
+        0x0c088039394ccaa3,
+        0x1cdfcb97deb76f1a,
+        0x95c0ad913cefaaba,
     ],
 )

@@ -466,6 +466,7 @@ fn route_request<'a>(
         start: actor.position,
         goal,
         clearance: UnitClearance::for_radius(policy.radius),
+        radius: policy.radius,
         vision: knowledge.map(|(vision, _)| vision),
         block_unexplored_ramps: false,
         known_structures: knowledge.map(|(_, known)| known.as_slice()),

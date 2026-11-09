@@ -844,12 +844,12 @@ requires.
 | B-93 | A burrowed unit still blocks ground units; the game's burrowed Lurker collides only with `Burrow` (`liberty` UnitData:775) | (i) | WP16, with B-49. Found in WP13b (Amendment 20) |
 | B-99 | A body parked on a route corner made the unit rewrite its route to a point stepped outward, and a corner was passed only once the next leg held no body; columns walked V-shaped detours at shared corners. StarCraft II leaves bodies to steering (sc2-pathfinding plan §2, S3) | Fixed | Plan [`2026-11-09-sc2-pathfinding`](2026-11-09-sc2-pathfinding.md) WP2+WP3 |
 | B-100 | A unit facing a body parked on its corner had no way past it but the rewrite of B-99; it now steers past the body on the outside of the turn | Fixed | Plan `2026-11-09-sc2-pathfinding` WP2+WP3 (Amendment 1 there) |
-| B-101 | Corner waypoints are offset by the unit's radius tier (0.375 for every radius up to 0.5), not by its own radius; the game paths each unit by its own size | (i) | Plan `2026-11-09-sc2-pathfinding` WP4 |
+| B-101 | Corner waypoints are offset by the unit's radius tier (0.375 for every radius up to 0.5), not by its own radius; the game paths each unit by its own size | Fixed | Plan `2026-11-09-sc2-pathfinding` WP4 |
 | B-102 | Routes come from a grid A* corridor with three radius tiers, not StarCraft II's triangulated navigation mesh with a per-unit radius | (i) | Plan `2026-11-09-sc2-pathfinding` Part B (WP5 to WP10) |
 
-**Counts.** 82 IDs: (i) 72, two of them narrowed (B-52, B-67) and three carried by other plans (B-12; B-101 and
-B-102 by the sc2-pathfinding plan); (ii) 3 (B-37, B-53, B-58); (iii) none; fixed 7 (B-31 and B-40 by the
-turn-before-move plan; B-71, B-73 and B-75 by WP0; B-99 and B-100 by the sc2-pathfinding plan).
+**Counts.** 82 IDs: (i) 71, two of them narrowed (B-52, B-67) and two carried by other plans (B-12; B-102 by the
+sc2-pathfinding plan); (ii) 3 (B-37, B-53, B-58); (iii) none; fixed 8 (B-31 and B-40 by the turn-before-move plan;
+B-71, B-73 and B-75 by WP0; B-99, B-100 and B-101 by the sc2-pathfinding plan).
 
 **No (iii) item.** No B-ID asks us to reproduce a StarCraft II engine quirk: each is either a game rule we lack or a
 rule of our own. The class stays for later findings. For example, units pushed through walls are not ours to

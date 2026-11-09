@@ -641,6 +641,7 @@ fn find_path_with_vision_matches_the_recorded_corpus_digest() {
                 start: random_point(&map, &mut rng),
                 goal: random_point(&map, &mut rng),
                 clearance,
+                radius: clearance.radius_scalar(),
             };
             let outcome = match rng.gen_range(0..4) {
                 0 => pathfinder.find_path(&map, &base),
