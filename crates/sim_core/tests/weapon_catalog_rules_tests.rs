@@ -507,6 +507,12 @@ fn s11_upgrade_effects_must_resolve() -> TestResult {
             "ability_slug: \"no_such_ability\"",
             "UnlockAbility.ability_slug",
         ),
+        // B-43: the attack dash unlocks only on an archetype that carries one.
+        (
+            "ability_slug: \"overclock\"",
+            "ability_slug: \"attack_dash\"",
+            "UnlockAbility.ability_slug",
+        ),
         (
             "UnlockAbility(\n                    target_slug: \"",
             "UnlockAbility(\n                    target_slug: \"no_such_",

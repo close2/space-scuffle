@@ -20,6 +20,10 @@ use std::path::Path;
 /// Ability slug under which `UnlockAbility` effects address the overclock capability.
 pub const OVERCLOCK_ABILITY_SLUG: &str = "overclock";
 
+/// Ability slug under which `UnlockAbility` effects address the attack dash capability
+/// (`ArchetypeCapabilities::attack_dash`, `StarCraft` II's Charge).
+pub const ATTACK_DASH_ABILITY_SLUG: &str = "attack_dash";
+
 /// Unique upgrade identifier type.
 pub type UpgradeId = u32;
 
