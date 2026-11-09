@@ -17,8 +17,9 @@
 //! - The two shipped maps, loaded through the real `MapFile` loader.
 //! - A synthetic fixture (T0) of ramp "stations", each a ramp run inside its own box of low and
 //!   high ground: protruding ramps in all four directions with run lengths 1 to
-//!   `MAX_RAMP_RUN_CELLS` and widths 1 to 4, ramps beside the abyss, and a ramp whose head lies
-//!   on a chunk border. The map size is not a multiple of
+//!   `MAX_RAMP_RUN_CELLS` and widths 1 to 4, ramps beside the abyss, recessed and half-recessed
+//!   ramps, ramps beside a plateau two levels up, two runs side by side with different low
+//!   levels, and a ramp whose head lies on a chunk border. The map size is not a multiple of
 //!   `CHUNK_DUAL_CELLS`, and the fixture passes the map validator's ramp checks.
 //!
 //! # Invariants checked
@@ -87,8 +88,14 @@ fn load_shipped_map(filename: &str) -> GameMap {
 enum Side {
     /// Ground at the ramp's low level: a protruding ramp.
     Low,
+    /// Ground at the ramp's high level: a recessed ramp on this side.
+    High,
+    /// Ground two levels above the ramp's low level.
+    High2,
     /// Bottomless abyss.
     Abyss,
+    /// A second ramp run of the same direction and width 2, one level higher.
+    Twin,
 }
 
 /// One ramp run inside its own box of ground.
@@ -105,12 +112,25 @@ struct Station {
 /// Cells of ground around a station's ramp on every side.
 const STATION_MARGIN: u32 = 3;
 
+/// Width of the second run of a [`Side::Twin`] station.
+const TWIN_WIDTH: u32 = 2;
+
 impl Station {
+    /// Lateral extent of the station's ramps, without margins.
+    fn lateral_cells(&self) -> u32 {
+        self.width
+            + if self.right == Side::Twin {
+                TWIN_WIDTH
+            } else {
+                0
+            }
+    }
+
     /// Box size `(along the run, across it)` in cells.
     fn box_size(&self) -> (u32, u32) {
         (
             self.run + 2 * STATION_MARGIN,
-            self.width + 2 * STATION_MARGIN,
+            self.lateral_cells() + 2 * STATION_MARGIN,
         )
     }
 
@@ -141,14 +161,27 @@ impl Station {
         let run = i64::from(self.run);
         let width = i64::from(self.width);
         let in_run = (0..run).contains(&u);
-        let low = self.low;
-        if in_run && (0..width).contains(&v) {
+        let twin = self.right == Side::Twin && v >= width;
+        let (low, v_local, width_local) = if twin {
+            (self.low + 1, v - width, i64::from(TWIN_WIDTH))
+        } else {
+            (self.low, v, width)
+        };
+        if in_run && (0..width_local).contains(&v_local) {
             return ramp_cell(low, self.dir);
         }
         if in_run {
-            let side = if v < 0 { self.left } else { self.right };
+            let side = if v_local < 0 {
+                self.left
+            } else if twin {
+                Side::Low
+            } else {
+                self.right
+            };
             return match side {
-                Side::Low => ground(low),
+                Side::Low | Side::Twin => ground(low),
+                Side::High => ground(low + 1),
+                Side::High2 => ground(low + 2),
                 Side::Abyss => abyss(),
             };
         }
@@ -197,7 +230,7 @@ fn ramp_cell(low: u8, dir: RampDir) -> MapCell {
 /// The stations of the fixture. The first one is placed so that its head lies on a chunk border.
 fn stations() -> Vec<Station> {
     use RampDir::{East, North, South, West};
-    use Side::{Abyss, Low};
+    use Side::{Abyss, High, High2, Low, Twin};
     let dirs = [North, East, South, West];
     let mut list = vec![Station {
         dir: East,
@@ -232,6 +265,70 @@ fn stations() -> Vec<Station> {
         low: 0,
         left: Abyss,
         right: Low,
+    });
+    list.push(Station {
+        dir: South,
+        run: 3,
+        width: 2,
+        low: 0,
+        left: High,
+        right: High,
+    });
+    list.push(Station {
+        dir: East,
+        run: 4,
+        width: 3,
+        low: 1,
+        left: High,
+        right: High,
+    });
+    list.push(Station {
+        dir: West,
+        run: 3,
+        width: 2,
+        low: 1,
+        left: High,
+        right: Low,
+    });
+    list.push(Station {
+        dir: North,
+        run: 2,
+        width: 1,
+        low: 0,
+        left: Low,
+        right: High,
+    });
+    list.push(Station {
+        dir: East,
+        run: 3,
+        width: 2,
+        low: 0,
+        left: High2,
+        right: Low,
+    });
+    list.push(Station {
+        dir: North,
+        run: 4,
+        width: 2,
+        low: 1,
+        left: Low,
+        right: High2,
+    });
+    list.push(Station {
+        dir: South,
+        run: 3,
+        width: 2,
+        low: 0,
+        left: Low,
+        right: Twin,
+    });
+    list.push(Station {
+        dir: West,
+        run: 2,
+        width: 1,
+        low: 1,
+        left: Abyss,
+        right: Twin,
     });
     list
 }
@@ -726,34 +823,15 @@ fn neighbour_surface(map: &GameMap, mesh: &MapMesh, x: u32, y: u32, h: &HalfEdge
     mesh.top_at(nx, ny, p.x, p.y).unwrap_or(ABYSS_WALL_BOTTOM_Y)
 }
 
-/// Kinds of neighbour a closure check covers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Closure {
-    /// Only steps down from the ramp edge to a non-ramp neighbour.
-    SideWalls,
-}
-
-fn open_steps(map: &GameMap, mesh: &MapMesh, scope: Closure) -> Vec<String> {
+fn open_steps(map: &GameMap, mesh: &MapMesh) -> Vec<String> {
     let mut failures = Vec::new();
     for (x, y) in ramp_cells(map) {
         let profile = map.ramp_profile(x, y).expect("ramp cell");
         for h in half_edges() {
-            let neighbour_is_ramp = {
-                let nx = i64::from(x) + i64::from(h.offset.0);
-                let ny = i64::from(y) + i64::from(h.offset.1);
-                u32::try_from(nx)
-                    .ok()
-                    .zip(u32::try_from(ny).ok())
-                    .is_some_and(|(nx, ny)| map.ramp_profile(nx, ny).is_some())
-            };
             for s in [0.2_f32, 0.5, 0.8] {
                 let f = h.a.lerp(h.b, s);
                 let edge_h = ramp_height(profile, f.x, f.y);
                 let beside = neighbour_surface(map, mesh, x, y, &h, f);
-                match scope {
-                    Closure::SideWalls if neighbour_is_ramp || beside > edge_h => continue,
-                    Closure::SideWalls => {}
-                }
                 let (lo, hi) = (edge_h.min(beside), edge_h.max(beside));
                 if hi - lo <= 2.0 * EDGE_EPSILON {
                     continue;
@@ -784,9 +862,9 @@ fn open_steps(map: &GameMap, mesh: &MapMesh, scope: Closure) -> Vec<String> {
     failures
 }
 
-fn assert_steps_closed(name: &str, map: &GameMap, scope: Closure) {
+fn assert_steps_closed(name: &str, map: &GameMap) {
     let mesh = MapMesh::build(map);
-    let failures = open_steps(map, &mesh, scope);
+    let failures = open_steps(map, &mesh);
     assert!(
         failures.is_empty(),
         "{name}: {} open steps along ramp edges:\n{}",
@@ -800,7 +878,6 @@ fn t3_ramp_edge_steps_are_closed_showcase_canyon() {
     assert_steps_closed(
         "showcase_canyon",
         &load_shipped_map("showcase_canyon.scmap.ron"),
-        Closure::SideWalls,
     );
 }
 
@@ -809,11 +886,10 @@ fn t3_ramp_edge_steps_are_closed_default_arena() {
     assert_steps_closed(
         "default_arena",
         &load_shipped_map("default_arena.scmap.ron"),
-        Closure::SideWalls,
     );
 }
 
 #[test]
 fn t3_ramp_edge_steps_are_closed_fixture() {
-    assert_steps_closed("fixture", &fixture_map(), Closure::SideWalls);
+    assert_steps_closed("fixture", &fixture_map());
 }
