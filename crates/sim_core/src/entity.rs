@@ -14,7 +14,7 @@ use crate::weapon_timing::{combined_attack_rate, AttackRate, InvalidBuffAttackRa
 use sim_types::{
     AbilityEffectSpec, AnimState, AttackOrigin, BarrierSpec, EntityId, MoverType, OverclockSpec,
     PlayerId, ResourceKind, ResourceNodeId, ShapeKind, SimAngle, SimScalar, SimVec2, Tick,
-    UnitOrder, UnitTypeId,
+    UnitModeSpec, UnitOrder, UnitTypeId,
 };
 use std::collections::VecDeque;
 
@@ -882,6 +882,54 @@ impl Entity {
         self.is_cloaked = false;
         self.siege_weapon = None;
         self.is_sieged = false;
+    }
+
+    /// The mode this unit is in or, while it channels a switch, the mode it will be in when the
+    /// channel ends; `None` for the archetype's default stance. `archetype` must be this unit's.
+    ///
+    /// Reads `active_mode`, `channeling_remaining_ticks` and `pending_ability` exactly as the end
+    /// of a channel resolves them (`upkeep_entity`, then [`Self::apply_mode_transition`]): a
+    /// pending `SwitchMode` of the active mode settles in no mode, a pending `SwitchMode` of any
+    /// other declared mode settles in that mode, a pending index the archetype lacks settles in
+    /// no mode, and any other pending effect leaves the stance as it is. Read-only, so the
+    /// client's command card and its admission share the simulation's rule (plan
+    /// `2026-11-09-client-mode-commands` D-3).
+    #[must_use]
+    pub fn settled_mode<'a>(&self, archetype: &'a UnitArchetype) -> Option<&'a UnitModeSpec> {
+        let active = self.active_mode.as_deref();
+        let settled = match self.pending_ability {
+            Some((index, _, _)) if self.channeling_remaining_ticks > 0 => {
+                match archetype.abilities.get(usize::from(index)) {
+                    Some(ability) => match &ability.effect {
+                        AbilityEffectSpec::SwitchMode { mode_name }
+                            if archetype.get_mode(mode_name).is_some() =>
+                        {
+                            (active != Some(mode_name.as_str())).then_some(mode_name.as_str())
+                        }
+                        _ => active,
+                    },
+                    None => None,
+                }
+            }
+            _ => active,
+        };
+        settled.and_then(|name| archetype.get_mode(name))
+    }
+
+    /// Whether this unit will be anchored once its current channel, if any, has ended.
+    /// `archetype` must be this unit's.
+    ///
+    /// A unit that does not channel is anchored exactly when `is_immobile`; a channelling unit
+    /// by its [`Self::settled_mode`], or by the archetype's default stance without one.
+    #[must_use]
+    pub fn immobile_after_channel(&self, archetype: &UnitArchetype) -> bool {
+        if self.channeling_remaining_ticks == 0 {
+            return self.is_immobile;
+        }
+        self.settled_mode(archetype).map_or_else(
+            || archetype.is_immobile_by_default(),
+            |mode| mode.is_immobile,
+        )
     }
 
     /// The sieged weapon replacing the archetype's ground weapon, if one is active.

@@ -766,3 +766,189 @@ fn b4_siege_mode_adds_a_seeded_random_delay() {
         "the same seed draws the same extra"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// Read-only mode queries for the client (plan `2026-11-09-client-mode-commands` WP1a, D-3, D-4).
+// ---------------------------------------------------------------------------------------------
+
+/// A 40 × 40 flat world on the shipped catalog with one `slug` of player 0 at (10, 16).
+fn one_unit(slug: &str, seed: u64) -> (SimWorld, EntityId) {
+    let map =
+        GameMap::new(40, 40, MapCell::default_ground(CliffLevel(0))).expect("invariant: valid map");
+    let mut world = sim_fixtures::world(map, seed);
+    let unit_type = world.catalog.id_by_slug(slug).expect("shipped unit");
+    let unit = world
+        .spawn_unit(
+            unit_type,
+            PlayerId(0),
+            SimVec2::new(SimScalar::from_num(10), SimScalar::from_num(16)),
+        )
+        .expect("spawn unit");
+    (world, unit)
+}
+
+/// Steps `world` through `ticks` ticks without commands.
+fn run(world: &mut SimWorld, ticks: u32) {
+    for _ in 0..ticks {
+        let tick = world.current_tick;
+        world.step(&empty_bundle(tick));
+    }
+}
+
+/// The settled mode's name and whether the unit will be anchored, for `unit` of `world`.
+fn settled(world: &SimWorld, unit: EntityId) -> (Option<String>, bool) {
+    let entity = &world.entities[&unit];
+    let archetype = world.catalog.get(entity.unit_type_id).expect("archetype");
+    (
+        entity
+            .settled_mode(archetype)
+            .map(|mode| mode.mode_name.clone()),
+        entity.immobile_after_channel(archetype),
+    )
+}
+
+/// Asserts that the read-only admission and a real cast of ability 0 agree; returns the verdict.
+fn admission_agrees(world: &mut SimWorld, unit: EntityId) -> bool {
+    let predicted = world.would_admit_cast(unit, 0, None);
+    let cast = world.execute_ability(unit, 0, None, None);
+    assert_eq!(
+        predicted, cast,
+        "would_admit_cast agrees with execute_ability"
+    );
+    cast
+}
+
+#[test]
+fn would_admit_cast_agrees_with_execute_ability_on_every_refusal() {
+    const UPGRADES: &str = r#"(upgrades: [(
+        upgrade_id: 1, slug: "learn_siege", name: "learn_siege", display_name: "Learn Siege",
+        faction: "automaton_directorate", level: 1, mineral_cost: 0, gas_cost: 0,
+        research_ticks: 1, researched_at: "foundry_core_dome",
+        effects: [UnlockAbility(target_slug: "railgun_crawler", ability_slug: "Siege Mode")],
+    )])"#;
+
+    // Admitted, then refused while the channel runs.
+    let (mut world, tank) = one_unit("railgun_crawler", 3);
+    assert!(admission_agrees(&mut world, tank), "a fresh tank may siege");
+    assert!(
+        !admission_agrees(&mut world, tank),
+        "refused while channelling"
+    );
+
+    // Dead.
+    let (mut world, tank) = one_unit("railgun_crawler", 3);
+    world.entities.get_mut(&tank).unwrap().hp = SimScalar::ZERO;
+    assert!(!admission_agrees(&mut world, tank), "refused when dead");
+
+    // Carried.
+    let (mut world, tank) = one_unit("railgun_crawler", 3);
+    let carrier_type = world
+        .catalog
+        .archetypes()
+        .find(|a| a.capabilities.transport_capacity > 0)
+        .map(|a| a.unit_type_id)
+        .expect("a carrier in the catalog");
+    let carrier = world
+        .spawn_unit(
+            carrier_type,
+            PlayerId(0),
+            SimVec2::new(SimScalar::from_num(11), SimScalar::from_num(16)),
+        )
+        .expect("spawn carrier");
+    assert!(
+        world.load_unit_into_transport(tank, carrier),
+        "the tank boards"
+    );
+    assert!(!admission_agrees(&mut world, tank), "refused when carried");
+
+    // Cooldown.
+    let (mut world, tank) = one_unit("railgun_crawler", 3);
+    world.entities.get_mut(&tank).unwrap().ability_cooldowns[0] = 5;
+    assert!(!admission_agrees(&mut world, tank), "refused on cooldown");
+
+    // Energy.
+    let (mut world, tank) = one_unit("railgun_crawler", 3);
+    let crawler = world.entities[&tank].unit_type_id;
+    world.catalog.get_mut(crawler).unwrap().abilities[0].energy_cost = SimScalar::from_num(10);
+    world.entities.get_mut(&tank).unwrap().energy = SimScalar::from_num(9);
+    assert!(
+        !admission_agrees(&mut world, tank),
+        "refused without energy"
+    );
+
+    // Unknown ability index.
+    let (world, tank) = one_unit("railgun_crawler", 3);
+    assert!(!world.would_admit_cast(tank, 3, None), "no such ability");
+
+    // Locked until researched.
+    let (mut world, tank) = one_unit("railgun_crawler", 3);
+    world.upgrade_catalog = sim_core::upgrades::UpgradeCatalog::from_ron_str(
+        &sim_fixtures::shipped_factions(),
+        UPGRADES,
+    )
+    .unwrap();
+    assert!(!admission_agrees(&mut world, tank), "refused while locked");
+    world.research_upgrade(PlayerId(0), "learn_siege").unwrap();
+    assert!(
+        admission_agrees(&mut world, tank),
+        "admitted once researched"
+    );
+}
+
+#[test]
+fn settled_mode_follows_both_channels_of_both_shipped_mode_units() {
+    for slug in ["railgun_crawler", "burrow_scorpion"] {
+        let (mut world, unit) = one_unit(slug, 11);
+        let mode = world
+            .catalog
+            .get(world.entities[&unit].unit_type_id)
+            .unwrap()
+            .modes[0]
+            .mode_name
+            .clone();
+        assert_eq!(
+            settled(&world, unit),
+            (None, false),
+            "{slug}: default stance"
+        );
+
+        assert!(world.execute_ability(unit, 0, None, None));
+        assert!(world.entities[&unit].channeling_remaining_ticks > 0);
+        assert_eq!(world.entities[&unit].active_mode, None);
+        assert_eq!(
+            settled(&world, unit),
+            (Some(mode.clone()), true),
+            "{slug}: entering settles in the mode"
+        );
+        let enter = u32::from(world.entities[&unit].channeling_remaining_ticks);
+        run(&mut world, enter);
+        assert_eq!(
+            world.entities[&unit].active_mode.as_deref(),
+            Some(mode.as_str())
+        );
+        assert_eq!(
+            settled(&world, unit),
+            (Some(mode.clone()), true),
+            "{slug}: in the mode"
+        );
+
+        assert!(world.execute_ability(unit, 0, None, None));
+        assert!(
+            world.entities[&unit].is_immobile,
+            "anchored while it channels"
+        );
+        assert_eq!(
+            settled(&world, unit),
+            (None, false),
+            "{slug}: leaving settles in no mode and walks afterwards"
+        );
+        let leave = u32::from(world.entities[&unit].channeling_remaining_ticks);
+        run(&mut world, leave);
+        assert_eq!(world.entities[&unit].active_mode, None);
+        assert_eq!(
+            settled(&world, unit),
+            (None, false),
+            "{slug}: back in default"
+        );
+    }
+}
