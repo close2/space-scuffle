@@ -155,8 +155,12 @@
 // weapon also encodes its structure strike (none on any weapon here), so the encoding changes
 // every checkpoint. No behaviour did: no shipped weapon has a structure strike yet, and the whole
 // matrix and battle 33 are bit-identical to WP9 group g12.
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP10 (B-29, checksum schema 16 -> 17): each
+// weapon's acquisition arc and each unit's engaged target are encoded, so every checkpoint
+// changed. No behaviour did: with the two fields left out of the encoding at schema 16, every
+// checkpoint stays as recorded for WP9 (the shipped acquisition arcs equal the engaged arcs).
 (
-    checksum_schema: 16,
+    checksum_schema: 17,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -182,25 +186,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x1184cace741dd19c,
-        0x1fba6432527f14da,
-        0xcc69a4dab12702c5,
-        0x4afb8b8c72482edf,
-        0x16c05e1bf1de7e17,
-        0xda62d3b96a8c9134,
-        0x3f92d3a55cfee308,
-        0x36523e91e058b16f,
-        0xa1f150132adff937,
-        0xd3db5792f4885dce,
-        0x4fb4cf89cba7c95f,
-        0x5a5e2386fdcb4861,
-        0x0cc8084cc58ba776,
-        0x83bb66b52c78a650,
-        0x6515cdf0a58ad2ec,
-        0xfcb1a33a94bd0703,
-        0xc75c1d710789bce6,
-        0x2342151f17b75f8f,
-        0xcd510ccb9013f727,
-        0x09286a77e25d8168,
+        0x5c765bd69a42c391,
+        0x9dc05689f5a15955,
+        0xc26cea08d135a021,
+        0x602903c4835854e8,
+        0xeb127fc9cc9a5a46,
+        0x9d8f4a60244788cc,
+        0x45dbb31d5e4fb899,
+        0xdef70e016434a1bb,
+        0x82dc851a691c55f7,
+        0xe70c66d29455606e,
+        0xcfdd55e6cd1d2cda,
+        0x806fed922cf4af1f,
+        0x18b1337b4f4a0ece,
+        0x9f04fbc246d47725,
+        0x2f6d5203b9e1f862,
+        0x11deb5eba3c4abcc,
+        0x4fec20d743b6e6ba,
+        0x044211a596d4cb82,
+        0x3d399edc07688346,
+        0x313842d730c81a85,
     ],
 )

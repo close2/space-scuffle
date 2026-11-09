@@ -898,7 +898,13 @@ struct WeaponSpecDef {
     target_flags: AttributeFlagsDef,
     min_range: f32,
     max_range: f32,
+    /// Engaged arc, a half angle in degrees: `Arc` ÷ 2 + `ArcSlop` of the `StarCraft` II weapon;
+    /// 180 or more fires in every direction.
     firing_arc_deg: f32,
+    /// Acquisition arc, a half angle in degrees: `Arc` ÷ 2 of the `StarCraft` II weapon, within
+    /// which it starts on a target it is not engaged with; required, `0 <= acquire_arc_deg <=
+    /// firing_arc_deg`.
+    acquire_arc_deg: f32,
     has_turret: bool,
     /// Turret rate in degrees per tick: `0 < rate <= 180` on a turreted weapon, 0 otherwise.
     turret_turn_rate_deg_per_tick: f32,
@@ -1090,6 +1096,7 @@ impl UnitArchetypeDef {
             min_range: SimScalar::from_f32_lossy(w.min_range),
             max_range: SimScalar::from_f32_lossy(w.max_range),
             firing_arc: Self::firing_half_angle(w.firing_arc_deg),
+            acquire_arc: Self::firing_half_angle(w.acquire_arc_deg),
             has_turret: w.has_turret,
             // A hull-mounted weapon turns with the hull; its rate is never read for turning.
             turret_turn_rate: if w.has_turret {

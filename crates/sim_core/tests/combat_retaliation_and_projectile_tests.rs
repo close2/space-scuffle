@@ -73,6 +73,7 @@ fn custom_projectile_weapon(
         min_range: SimScalar::ZERO,
         max_range: SimScalar::from_num(20),
         firing_arc: SimAngle::from_degrees(360),
+        acquire_arc: SimAngle::from_degrees(360),
         has_turret: false,
         turret_turn_rate: SimAngle::ZERO,
         base_damage: SimScalar::from_num(30),

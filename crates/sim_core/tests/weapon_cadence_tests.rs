@@ -6,7 +6,10 @@
 //! weapon acts as a ready weapon would; a new swing ends the backswing, and with nothing to
 //! attack the backswing runs on to its end. It pins D-3 (Q0036): a damage point of 0 releases on
 //! the tick its swing starts, so `period_ticks` is the attack cycle for every damage point. It
-//! also pins the catalog rule that a weapon's period is longer than its damage point.
+//! also pins the catalog rule that a weapon's period is longer than its damage point, and the
+//! two arcs of plan `2026-11-05-sc2-deviation-fixes` WP10 (B-29): a weapon starts on a target it
+//! is not engaged with only inside its acquisition arc (`Arc` ÷ 2), and keeps firing at the
+//! target it is engaged with inside its engaged arc (`Arc` ÷ 2 + `ArcSlop`).
 //!
 //! # How it fits
 //! `sim_core::combat::step_entity_weapon` runs once per unit per tick. Most tests drive it
@@ -26,7 +29,7 @@ use sim_core::{
 };
 use sim_map::{CliffLevel, GameMap, MapCell};
 use sim_types::{
-    EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
+    EntityId, PlayerCommand, PlayerId, SimAngle, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
 };
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -96,8 +99,8 @@ fn unit_ron(slug: &str, id: u16, max_hp: f32, weapon: &str, overclock: &str) -> 
 }
 
 /// The RON of a hull-mounted weapon that may fire in every direction.
-const OPEN_MOUNT: &str =
-    "firing_arc_deg: 360.0, has_turret: false, turret_turn_rate_deg_per_tick: 0.0";
+const OPEN_MOUNT: &str = "firing_arc_deg: 360.0, acquire_arc_deg: 360.0, has_turret: false, \
+     turret_turn_rate_deg_per_tick: 0.0";
 
 /// The scratch catalog: a shooter with `timings` and an optional overclock, and a target with
 /// `target_hp` hit points. The shooter deals 10 damage per shot from up to 6 world units.
@@ -105,8 +108,8 @@ fn catalog_ron(timings: Timings, target_hp: f32, overclock: Option<f32>) -> Stri
     catalog_ron_with_mount(timings, OPEN_MOUNT, target_hp, overclock)
 }
 
-/// As [`catalog_ron`], with `mount` the RON of the weapon's `firing_arc_deg`, `has_turret` and
-/// `turret_turn_rate_deg_per_tick` fields.
+/// As [`catalog_ron`], with `mount` the RON of the weapon's `firing_arc_deg`, `acquire_arc_deg`,
+/// `has_turret` and `turret_turn_rate_deg_per_tick` fields.
 fn catalog_ron_with_mount(
     timings: Timings,
     mount: &str,
@@ -515,7 +518,8 @@ fn damage_point_zero_releases_on_the_tick_its_swing_starts() -> TestResult {
 #[test]
 fn damage_point_zero_after_turning_releases_on_the_tick_it_is_aligned() -> TestResult {
     // A turret at 10 degrees per tick with a 15 degree half arc, its target straight behind.
-    let mount = "firing_arc_deg: 15.0, has_turret: true, turret_turn_rate_deg_per_tick: 10.0";
+    let mount = "firing_arc_deg: 15.0, acquire_arc_deg: 15.0, has_turret: true, \
+                 turret_turn_rate_deg_per_tick: 10.0";
     let catalog = catalog_ron_with_mount(DAMAGE_POINT_ZERO, mount, 10_000.0, None);
     let bench = Bench::spawned(&catalog, 7)?;
     let (mut shooter, weapon, target) = bench.direct()?;
@@ -636,5 +640,88 @@ fn a_windup_with_no_ticks_left_releases_on_its_next_step() -> TestResult {
     };
     assert!(step_entity_weapon(&mut shooter, &weapon, Some(target)));
     assert_eq!(shooter.weapon_cooldown_remaining, 21);
+    Ok(())
+}
+
+/// A turret at 11.25 degrees per tick (2 048 binary units, so turns are exact) with an engaged
+/// half arc of 30 degrees and an acquisition
+/// half arc of 0 (`Arc` 0, `ArcSlop` 30), so the two angles of B-29 are far apart.
+const SPLIT_ARC_TURRET: &str = "firing_arc_deg: 30.0, acquire_arc_deg: 0.0, has_turret: true, \
+     turret_turn_rate_deg_per_tick: 11.25";
+
+/// The shooter's aim error against `target`, in binary units (65 536 per turn).
+fn aim_error(shooter: &Entity, target: &WeaponTarget) -> u16 {
+    let delta = target.position - shooter.position;
+    shooter
+        .turret_angle
+        .diff(SimAngle::atan2(delta.y, delta.x))
+        .unsigned_abs()
+}
+
+#[test]
+fn b29_a_new_target_needs_the_acquisition_arc() -> TestResult {
+    // The target straight behind: the turret turns 180 degrees, and the swing starts only when
+    // it faces the target exactly (`Arc` ÷ 2 = 0), not once it is inside the engaged 30.
+    let catalog = catalog_ron_with_mount(DAMAGE_POINT_ZERO, SPLIT_ARC_TURRET, 10_000.0, None);
+    let bench = Bench::spawned(&catalog, 7)?;
+    let (mut shooter, weapon, target) = bench.direct()?;
+    let mut released_at = None;
+    for call in 1..=30_u32 {
+        let error = aim_error(&shooter, &target);
+        let released = step_entity_weapon(&mut shooter, &weapon, Some(target));
+        if released {
+            released_at = Some(call);
+            assert_eq!(aim_error(&shooter, &target), 0, "call {call}");
+            break;
+        }
+        assert!(
+            call == 1 || error > 0,
+            "call {call}: an aimed weapon must have swung, error {error}"
+        );
+    }
+    // 180 degrees at 11.25 per tick: aligned on the 16th call, not on the 14th (inside 30).
+    assert_eq!(released_at, Some(16));
+    Ok(())
+}
+
+#[test]
+fn b29_an_engaged_weapon_fires_within_the_engaged_arc_without_turning() -> TestResult {
+    let catalog = catalog_ron_with_mount(DAMAGE_POINT_ZERO, SPLIT_ARC_TURRET, 10_000.0, None);
+    let bench = Bench::spawned(&catalog, 13)?;
+    let (mut shooter, weapon, target) = bench.direct()?;
+    assert!(step_entity_weapon(&mut shooter, &weapon, Some(target)));
+    // Knock the turret 20 degrees off the target: inside the engaged arc.
+    let offset = SimAngle::from_degrees(20);
+    shooter.turret_angle += offset;
+    let mut released = false;
+    for _ in 0..21 {
+        released = step_entity_weapon(&mut shooter, &weapon, Some(target));
+    }
+    assert!(
+        released,
+        "the engaged weapon must swing when its cooldown ends"
+    );
+    assert_eq!(shooter.turret_angle, offset, "and must not have turned");
+    Ok(())
+}
+
+#[test]
+fn b29_a_target_that_leaves_the_engaged_arc_is_acquired_again() -> TestResult {
+    let catalog = catalog_ron_with_mount(DAMAGE_POINT_ZERO, SPLIT_ARC_TURRET, 10_000.0, None);
+    let bench = Bench::spawned(&catalog, 13)?;
+    let (mut shooter, weapon, target) = bench.direct()?;
+    assert!(step_entity_weapon(&mut shooter, &weapon, Some(target)));
+    // 45 degrees off: outside the engaged 30, so the weapon has lost the target and must face
+    // it exactly again (4 calls at 11.25 degrees) before the next swing.
+    shooter.turret_angle = SimAngle::from_degrees(45);
+    let mut releases = Vec::new();
+    for call in 1..=30_u32 {
+        if step_entity_weapon(&mut shooter, &weapon, Some(target)) {
+            releases.push((call, aim_error(&shooter, &target)));
+        }
+    }
+    // The cooldown ends on call 21; the turret turns 33.75, 22.5, 11.25, 0: back inside the
+    // engaged 30 on call 22, but the swing waits for the exact aim on call 24.
+    assert_eq!(releases.first(), Some(&(24, 0)), "{releases:?}");
     Ok(())
 }

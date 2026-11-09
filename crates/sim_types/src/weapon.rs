@@ -290,8 +290,14 @@ pub struct WeaponSpec {
     pub min_range: SimScalar,
     /// Maximum engagement range in world units.
     pub max_range: SimScalar,
-    /// Maximum angular deviation allowed from target before firing (e.g. 15°).
+    /// Engaged arc: the greatest aim error, a half angle in binary units, at which the weapon
+    /// keeps firing at the target it is engaged with (`StarCraft` II `Arc` ÷ 2 + `ArcSlop`).
+    /// `SimAngle::DEG_180` fires in every direction.
     pub firing_arc: SimAngle,
+    /// Acquisition arc: the greatest aim error, a half angle in binary units, at which the
+    /// weapon starts on a target it is not engaged with (`StarCraft` II `Arc` ÷ 2). Never wider
+    /// than `firing_arc`.
+    pub acquire_arc: SimAngle,
     /// Whether weapon rotates independently on a turret mount.
     pub has_turret: bool,
     /// Turret angular rotation speed per tick.

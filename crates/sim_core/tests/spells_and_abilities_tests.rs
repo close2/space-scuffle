@@ -246,6 +246,7 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
         min_range: SimScalar::from_num(2),
         max_range: SimScalar::from_num(13),
         firing_arc: SimAngle::from_degrees(360),
+        acquire_arc: SimAngle::from_degrees(360),
         has_turret: true,
         turret_turn_rate: SimAngle::from_degrees(999),
         base_damage: SimScalar::from_num(40),

@@ -37,6 +37,7 @@ const RIFLE: &str = r#"Some((
             min_range: 0.0,
             max_range: 6.0,
             firing_arc_deg: 180.0,
+            acquire_arc_deg: 180.0,
             has_turret: false,
             turret_turn_rate_deg_per_tick: 0.0,
             base_damage: 1.0,

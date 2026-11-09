@@ -133,6 +133,7 @@ fn catalog_ron(shooter: Shooter) -> String {
             min_range: 0.0,
             max_range: 6.0,
             firing_arc_deg: {arc:.2},
+            acquire_arc_deg: {arc:.2},
             {mount},
             base_damage: 1.0,
             attribute_bonuses: [],

@@ -315,6 +315,12 @@ pub struct Entity {
     /// that once the target is lost (dead, gone, out of reach) the unit takes the candidate
     /// closest to it. `None` until such a unit first holds a target.
     pub previous_target_position: Option<SimVec2>,
+    /// The target this unit's weapon is engaged with: set when a swing starts against it, and
+    /// cleared when the weapon works against another target or none, or when the target leaves
+    /// the weapon's engaged arc. A target the weapon is engaged with is held within the engaged
+    /// arc (`StarCraft` II `Arc` ÷ 2 + `ArcSlop`); any other must first come within the
+    /// acquisition arc (`Arc` ÷ 2) (plan `2026-11-05-sc2-deviation-fixes` WP10, B-29).
+    pub engaged_target: Option<EntityId>,
     /// Whether the unit is completely immobile (e.g. Siege Mode, Burrowed, Channeling).
     pub is_immobile: bool,
     /// Collision unpushability flag (cannot be displaced by friendly push priority).
@@ -429,6 +435,7 @@ impl Entity {
             hull_hit_flash_ticks: 0,
             current_target: None,
             previous_target_position: None,
+            engaged_target: None,
             is_immobile: is_immobile_archetype,
             unpushable: is_immobile_archetype,
             is_sieged: false,

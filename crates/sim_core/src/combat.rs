@@ -507,6 +507,7 @@ fn release_swing(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget)
 /// `damage_point_ticks` ticks and releases in [`step_windup`]. Either way the release falls
 /// `damage_point_ticks` after the start, which is what keeps the cycle at `period_ticks`.
 fn start_swing(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget) -> bool {
+    entity.engaged_target = Some(target.id);
     if weapon.damage_point_ticks == 0 {
         return release_swing(entity, weapon, target);
     }
@@ -517,9 +518,25 @@ fn start_swing(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget) -
     false
 }
 
+/// The arc within which `weapon` may start a swing against `target`, a half angle: the engaged
+/// arc (`StarCraft` II `Arc` ÷ 2 + `ArcSlop`) while the weapon is engaged with `target`, else the
+/// acquisition arc (`Arc` ÷ 2). Plan `2026-11-05-sc2-deviation-fixes` WP10, B-29: the `SC2Mapster`
+/// editor reference defines `Arc` as the angle within which a weapon acquires a target without
+/// turning, and `ArcSlop` as how far outside it the target may go before the weapon loses it.
+fn swing_arc(entity: &Entity, weapon: &WeaponSpec, target: WeaponTarget) -> SimAngle {
+    if entity.engaged_target == Some(target.id) {
+        weapon.firing_arc
+    } else {
+        weapon.acquire_arc
+    }
+}
+
 /// Steps a ready weapon: starts the swing if aimed, or begins rotating and starts the swing on
 /// this same tick if the turn aligns it ([`slew_and_try_swing`]). Returns true when the shot
 /// discharges in this call (a swing with damage point 0, [`start_swing`]).
+///
+/// A weapon engaged with `target` whose aim has fallen outside the engaged arc has lost it: it
+/// must bring the target within the acquisition arc again ([`swing_arc`]).
 fn step_ready_weapon(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTarget) -> bool {
     let distance = entity.position.distance(target.position);
     if !in_engagement_band(distance, weapon, target.combined_radius, SimScalar::ZERO) {
@@ -528,10 +545,16 @@ fn step_ready_weapon(entity: &mut Entity, weapon: &WeaponSpec, target: WeaponTar
     let delta = target.position - entity.position;
     let target_angle = SimAngle::atan2(delta.y, delta.x);
     let aim = weapon_aim(entity, weapon);
-    if is_within_firing_arc(aim, entity.position, target.position, weapon.firing_arc) {
+    if entity.engaged_target == Some(target.id)
+        && !is_within_firing_arc(aim, entity.position, target.position, weapon.firing_arc)
+    {
+        entity.engaged_target = None;
+    }
+    let arc = swing_arc(entity, weapon, target);
+    if is_within_firing_arc(aim, entity.position, target.position, arc) {
         // An unrestricted arc removes the aiming gate, not the aiming: the turret
         // or hull keeps slewing, so a firing weapon never stays pointed away.
-        if weapon.firing_arc >= SimAngle::DEG_180 {
+        if arc >= SimAngle::DEG_180 {
             slew_towards(entity, weapon, target_angle);
         }
         // CRITICAL COOLDOWN GUARD:
@@ -564,7 +587,8 @@ fn slew_and_try_swing(
 ) -> bool {
     slew_towards(entity, weapon, target_angle);
     let aim = weapon_aim(entity, weapon);
-    if is_within_firing_arc(aim, entity.position, target.position, weapon.firing_arc) {
+    let arc = swing_arc(entity, weapon, target);
+    if is_within_firing_arc(aim, entity.position, target.position, arc) {
         if entity.weapon_cooldown_remaining == 0 {
             return start_swing(entity, weapon, target);
         }
@@ -637,6 +661,10 @@ pub fn step_entity_weapon(
     // Valid cargo has no weapon participation; even cooldown/phase remain frozen.
     if entity.is_loaded_in_transport() {
         return false;
+    }
+    // A weapon working against another target, or none, is no longer engaged (B-29).
+    if entity.engaged_target.is_some() && entity.engaged_target != target_opt.map(|t| t.id) {
+        entity.engaged_target = None;
     }
     // Decrement weapon cooldown if running
     entity.weapon_cooldown_remaining = entity.weapon_cooldown_remaining.saturating_sub(1);

@@ -36,7 +36,9 @@ use std::path::PathBuf;
 /// Re-recorded for checksum schema 15 (work package 8b, B-18), which encodes each splash's shape.
 /// Re-recorded for checksum schema 16 (work package 9, B-82), which encodes each weapon's
 /// structure strike.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 4_696_006_936_364_380_958;
+/// Re-recorded for checksum schema 17 (work package 10, B-29), which encodes each weapon's
+/// acquisition arc and each unit's engaged target.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 11_712_807_352_609_724_824;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")
