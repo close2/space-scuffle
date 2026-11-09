@@ -31,8 +31,8 @@ plan was). That covers corridors, funnel, clearance field, waypoint handoff and 
 |---|---|---|
 | [Q0051](../questions/closed/0051-sc2-mechanics-standing-rule.md) follow StarCraft II | Standing rule | D-1 to D-5 |
 | [Q0035](../questions/closed/0035-melee-contact-rules.md) melee contact rules | Answered "no change … for now". B-50 stays recorded | §8 (out of scope) |
-| New, filed by WP0: how `AlliedPushPriority` combines with `PushPriority` | Default: our one `push_priority` field takes the game's `PushPriority` (10 everywhere). The Ultralisk analogue's 5.0.14 "pushes allied units out of the way" is modelled as priority 11 | D-4, WP5 |
-| New, filed by WP0: may a blocked second-line unit walk around a firing line it cannot pass, where the game would leave it standing (Blizzard's own guide tells the player to fix this by hand)? | Default: yes, as an "allows more" deviation (Q0051), configurable per archetype through `surround_walk: bool` (default `true`). The waiting rule R1 holds either way | D-2, WP3 |
+| [Q0073](../questions/open/0073-allied-push-priority.md) how `AlliedPushPriority` combines with `PushPriority` | Default: our one `push_priority` field takes the game's `PushPriority` (10 everywhere). The Ultralisk analogue's 5.0.14 "pushes allied units out of the way" is modelled as priority 11 | D-4, WP5 |
+| [Q0074](../questions/open/0074-surround-walk.md) may a blocked second-line unit walk around a firing line it cannot pass, where the game would leave it standing (Blizzard's own guide tells the player to fix this by hand)? | Default: yes, as an "allows more" deviation (Q0051), configurable per archetype through `surround_walk: bool` (default `true`). The waiting rule R1 holds either way | D-2, WP3 |
 
 ---
 
@@ -594,3 +594,11 @@ this plan's acceptance (§7) also requires that player 0's mean total turn at th
 115°, measured with `route_trace` (`crates/sim_core/examples/route_trace.rs`, default boxes) as in
 [`docs/evidence/2026-11-09-sc2-pathfinding.md`](../evidence/2026-11-09-sc2-pathfinding.md). After that plan's
 WP2+WP3 it is 213°, from flockmates jostling in a tighter column: local steering, which this plan owns.
+
+## Amendment 2 (2026-11-09): register IDs and questions
+
+WP0 filed the header's two questions as [Q0073](../questions/open/0073-allied-push-priority.md) (allied push
+priority) and [Q0074](../questions/open/0074-surround-walk.md) (the surround walk). The orchestrator's numbering
+replaces §6 WP0's placeholders in the bug register: **B-103** for B-a (oscillation between two friends that will not
+yield), **B-104** for B-b (attack-moving units without a target have no way round a firing line) and **B-105** for
+B-c (the chasing unit's flanking walk misses a fast sideways step into a corner).
