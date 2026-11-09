@@ -174,7 +174,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-39 | How a unit whose data sets no `Deceleration` brakes; ours stops within a tick (not yet sourced, [Q0067](docs/questions/open/0067-unset-deceleration.md)); acceleration and the sourced decelerations are fixed | Q0067 |
 | B-41 | Where in a hit the Immortal's Barrier acts: whether the raising hit is absorbed, before or after armour, and whether a hit absorbed whole still deals 0.5 (not yet sourced, [Q0068](docs/questions/open/0068-barrier-damage-order.md)); the Barrier itself is fixed | Q0068 |
 | B-42 | Whether the burrowing Lurker analogue's weapon and cloak arrive at the morph's `Stats` section, 12 ticks before it ends (not yet sourced, [Q0069](docs/questions/open/0069-lurker-burrow-sections.md)); attacking only burrowed is fixed | Q0069 |
-| B-43 | Charge is a speed bonus without the dash | WP13c |
+| B-43 | How the engine measures Charge's trigger window (0.6 edge or centre; 4 as a straight line or the walk), when its autocast looks, and whether a new order ends a dash (not yet sourced, [Q0071](docs/questions/open/0071-charge-trigger-details.md)); the dash itself is fixed | Q0071 |
 | B-44 | Concussive Shells have no effect | WP13d |
 | B-45 | Phoenix and Void Ray analogues cannot fire while moving | WP13e |
 | B-46 | The Viking analogue cannot land | WP18 |
@@ -211,6 +211,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-91 | Whether an attack-rate buff (Stimpack) scales the random firing delay, and whether the first attack of an engagement draws one; ours does neither (not yet sourced, [Q0066](docs/questions/open/0066-random-delay-scaling.md)) | Q0066 |
 | B-92 | `LateralAcceleration` (how sharply a moving unit can curve) is not modelled; our units turn their velocity freely within the hull rate | WP16 |
 | B-93 | A burrowed unit still blocks ground units; the game's burrowed Lurker collides only with burrowed units | WP16 |
+| B-94 | Charge's autocast cannot be switched off; the game's is a player toggle, on by default | WP18 |
 
 ---
 

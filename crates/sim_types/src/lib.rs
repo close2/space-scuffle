@@ -32,9 +32,9 @@ pub mod weapon;
 
 // Flat convenient re-exports
 pub use commands::{
-    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, ArchetypeCapabilities, AttackOrigin,
-    BarrierSpec, HarvesterSpec, OverclockSpec, PlayerCommand, TickBundle, TickInputBundle,
-    UnitModeSpec, UnitOrder,
+    AbilityEffectSpec, AbilitySpec, AbilityTargetKind, ArchetypeCapabilities, AttackDashSpec,
+    AttackOrigin, BarrierSpec, HarvesterSpec, OverclockSpec, PlayerCommand, TickBundle,
+    TickInputBundle, UnitModeSpec, UnitOrder,
 };
 pub use enums::{
     AnimState, AttributeFlags, MoverType, ResourceKind, ShapeKind, SilhouetteClass,

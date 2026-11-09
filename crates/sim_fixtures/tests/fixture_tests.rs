@@ -44,7 +44,9 @@ use std::path::PathBuf;
 /// delay range and each unit's carried delay.
 /// Re-recorded for checksum schema 20 (work package 13a, B-41), which encodes each unit's barrier
 /// window, absorption left and cooldown.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 17_158_258_873_892_969_830;
+/// Re-recorded for checksum schema 21 (work package 13c, B-43), which encodes each unit's attack
+/// dash cooldown.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 2_234_267_680_913_195_054;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")
