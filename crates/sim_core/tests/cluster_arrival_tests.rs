@@ -211,7 +211,9 @@ fn flat_and_air_keep_arrival_and_pop_only_the_current_order() -> TestResult {
             assert!(w.movement_outcomes().iter().all(|o| o.result.is_ok()));
             // The unit on the goal is done at once and walks off to its queued order, so the
             // other one settles on the goal itself. Only the first order may end either way.
-            for _ in 0..16 {
+            // An air unit starts from rest at its acceleration (WP12), so it needs about 20
+            // ticks for the one cell; 48 leaves room for either.
+            for _ in 0..48 {
                 if w.entities[&ids[0]].order_queue.len() == 1 {
                     break;
                 }
