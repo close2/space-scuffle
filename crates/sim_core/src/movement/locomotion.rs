@@ -33,10 +33,10 @@ use super::math::{
     direction, distance, within_distance,
 };
 use super::tuning::{
-    ABANDONED_TARGET_TICKS, PURSUIT_LEASH_SCAN_RANGES, PURSUIT_ROUTE_DRIFT, REPATH_COOLDOWN_TICKS,
-    ROUTE_CHECK_PERIOD, ROUTE_START_TOLERANCE, STALL_ABANDON_TICKS, STALL_ARRIVAL_REACH,
-    STALL_PROGRESS, STALL_REPATH_TICKS, STEERING_LOOKAHEAD, TERRAIN_GUARD_HORIZON, WAIT_THRESHOLD,
-    WAYPOINT_HANDOFF_MARGIN,
+    ABANDONED_TARGET_TICKS, FLANK_REVERSE_TICKS, PURSUIT_LEASH_SCAN_RANGES, PURSUIT_ROUTE_DRIFT,
+    REPATH_COOLDOWN_TICKS, ROUTE_CHECK_PERIOD, ROUTE_START_TOLERANCE, STALL_ABANDON_TICKS,
+    STALL_ARRIVAL_REACH, STALL_PROGRESS, STALL_REPATH_TICKS, STEERING_LOOKAHEAD,
+    TERRAIN_GUARD_HORIZON, WAIT_THRESHOLD, WAYPOINT_HANDOFF_MARGIN,
 };
 use super::{
     MotionPolicy, MovementInvariant, MovementLayer, MovementMathError, MovementWorkspace,
@@ -44,7 +44,8 @@ use super::{
 };
 use crate::entity::{Entity, MovementMemory};
 use crate::steering::{
-    check_cluster_arrival_with, remove_blocked_velocity, steer_body, ContactBody, SteeringObstacle,
+    check_cluster_arrival_with, remove_blocked_velocity, steer_body, surround_side, ContactBody,
+    SteeringObstacle,
 };
 use crate::{SimWorld, WeaponPhase};
 use sim_map::{
@@ -77,6 +78,8 @@ pub(crate) struct MotionEntry {
     pub(crate) turn_rate: u16,
     /// Whether the hull must face a step before the unit takes it.
     pub(crate) turn_before_move: bool,
+    /// Whether a blocked attacker walks round its own crowd (the archetype's `surround_walk`).
+    pub(crate) surround_walk: bool,
 }
 
 /// The nearest reachable point last found, so a group costs one region scan, not one per unit.
@@ -266,6 +269,9 @@ struct StepContext<'a> {
     /// The facing a `turn_before_move` unit must reach before it steps; `None` for every other
     /// unit, whose steps are never gated by facing.
     hull: Option<HullGate>,
+    /// For a unit that may walk round a crowd blocking it ([`surround_walk`]), the target it
+    /// approaches (`None` for an attack-move without one); `None` for every other unit.
+    surround: Option<Option<EntityId>>,
 }
 
 /// What gates a `turn_before_move` unit's step: its tick-start heading and its moving hull rate.
@@ -580,6 +586,7 @@ impl SimWorld {
             push_priority: arch.push_priority,
             turn_rate: arch.turn_rate.raw(),
             turn_before_move: arch.turn_before_move,
+            surround_walk: arch.surround_walk,
         })
     }
 
@@ -1147,6 +1154,7 @@ impl MotionDraft<'_> {
             },
             neighbours,
             hull: self.hull_gate(),
+            surround: None,
         }
     }
 
@@ -1193,7 +1201,14 @@ impl MotionDraft<'_> {
             return Ok(());
         }
         scene.gather_neighbours(self.entry, self.actor.position, neighbours);
-        let context = self.step_context(scene.map, neighbours);
+        let attack_moving = matches!(
+            self.actor.order_queue.front(),
+            Some(UnitOrder::AttackMove { .. })
+        );
+        let context = StepContext {
+            surround: (self.entry.surround_walk && attack_moving).then_some(None),
+            ..self.step_context(scene.map, neighbours)
+        };
         let on_last_leg = match self.decide_arrival(&context, scene.pathfinder)? {
             ControlFlow::Continue(on_last_leg) => on_last_leg,
             ControlFlow::Break(()) => return Ok(()),
@@ -1384,7 +1399,8 @@ impl MotionDraft<'_> {
         map_news: bool,
     ) -> Result<Stage, MovementInvariant> {
         if self.entry.speed > SimScalar::ZERO {
-            if map_news {
+            if map_news || self.proposal.memory.flank_active {
+                // A surround walk gains ground round the crowd, not along the route (D-3).
                 self.proposal.memory.progress_best = None;
             }
             let route = self.proposal.route(self.actor);
@@ -1470,7 +1486,10 @@ impl MotionDraft<'_> {
             self.proposal.drop_route();
         }
         scene.gather_neighbours(self.entry, self.actor.position, neighbours);
-        let context = self.step_context(scene.map, neighbours);
+        let context = StepContext {
+            surround: self.entry.surround_walk.then_some(Some(pursuit.target)),
+            ..self.step_context(scene.map, neighbours)
+        };
         drop_passed_waypoints(
             &context,
             scene.pathfinder,
@@ -1506,8 +1525,9 @@ impl MotionDraft<'_> {
         pursuit: &Pursuit,
     ) -> Result<Stage, MovementInvariant> {
         if self.entry.speed > SimScalar::ZERO {
-            if pursuit.target_moving {
-                // A moving goal says nothing about whether this unit is stuck.
+            if pursuit.target_moving || self.proposal.memory.flank_active {
+                // A moving goal says nothing about whether this unit is stuck, and a surround
+                // walk gains ground round the crowd, not toward the target (D-3).
                 self.proposal.memory.progress_best = None;
             }
             let route = self.proposal.route(self.actor);
@@ -1787,6 +1807,7 @@ fn step_toward(
         body,
         neighbours,
         hull,
+        ..
     } = *context;
     let origin = body.pos;
     if gap <= speed && policy.permits_segment(map, origin, next) {
@@ -1802,8 +1823,8 @@ fn step_toward(
         velocity = keep_terrain_view(context, next, gap, velocity)?;
     }
     let mut velocity = remove_blocked_velocity(body, velocity, neighbours)?;
-    if ignored.is_some() {
-        velocity = flank_if_blocked(context, proposal, next, velocity)?;
+    if let Some(target) = context.surround {
+        velocity = surround_walk(context, proposal, next, velocity, target)?;
     }
     if is_waiting(velocity, speed) {
         proposal.velocity = SimVec2::ZERO;
@@ -1833,49 +1854,126 @@ fn is_waiting(velocity: SimVec2, speed: SimScalar) -> bool {
     within_distance(velocity, SimVec2::ZERO, i128::from(threshold.raw()))
 }
 
-/// Sends a chasing unit sideways along whatever blocks its way to `next`.
+/// Walks a blocked attacker round the crowd in its way to `next`, on the side it keeps (the
+/// surround walk, plan `2026-11-09-friendly-blocking` D-2, bugs B-104 and B-105).
 ///
-/// Attackers pile up behind those already fighting, and steering alone leaves them shuffling
-/// between neighbours. A blocked attacker instead walks along the crowd to the side it chose,
-/// and turns back the other way only when that side closes too, which is how a surround forms.
-fn flank_if_blocked(
+/// The walk starts when the forward part of the admissible step `velocity` is below half the
+/// unit's step and a standing friend that will not step aside lies just ahead. The unit then steps
+/// across its way to `next` at full speed, on the side chosen when the walk began
+/// ([`surround_side`]) and kept in [`MovementMemory::flank_left`] even as the nearest blocker
+/// changes. A side closed by a body or terrain for [`FLANK_REVERSE_TICKS`] is given up for the
+/// other once; when that closes too, or the unit has walked one full circle round `next`
+/// (D-3), the walk ends and the unit waits. A free way forward pauses the walk while the unit
+/// steps forward; the sides tried and the distance walked count for the whole approach to one
+/// target, and a walk toward another target, or under a new order, starts afresh. Returns the
+/// step to take; zero means wait.
+fn surround_walk(
     context: &StepContext<'_>,
     proposal: &mut MotionProposal,
     next: SimVec2,
     velocity: SimVec2,
+    target: Option<EntityId>,
 ) -> Result<SimVec2, MovementMathError> {
     let StepContext {
+        map,
+        policy,
         speed,
         body,
         neighbours,
         ..
     } = *context;
-    let walking_pace = i128::from(speed.raw()) >> 1;
-    if !within_distance(velocity, SimVec2::ZERO, walking_pace) {
-        return Ok(velocity);
+    let memory = &mut proposal.memory;
+    if memory.flank_target != target {
+        end_surround_walk(memory);
+        memory.flank_target = target;
     }
     let ahead = direction(next, body.pos)?;
-    let left = checked_vec_scale(SimVec2::new(-ahead.y, ahead.x), speed)?;
-    let along = |to_left: bool| -> Result<SimVec2, MovementMathError> {
-        let step = if to_left {
-            left
-        } else {
-            checked_vec_sub(SimVec2::ZERO, left)?
-        };
-        remove_blocked_velocity(body, step, neighbours)
-    };
-    let side = proposal.memory.flank_left;
-    let preferred = along(side)?;
-    if !within_distance(preferred, SimVec2::ZERO, walking_pace) {
-        return Ok(preferred);
+    let half_pace = speed.saturating_mul(SimScalar::HALF);
+    let forward_free = checked_dot(velocity, ahead)? >= half_pace;
+    if !forward_free && !memory.flank_active && !friend_blocks_ahead(context, ahead)? {
+        return Ok(velocity);
     }
-    proposal.memory.flank_left = !side;
-    let other = along(!side)?;
-    Ok(if within_distance(other, SimVec2::ZERO, walking_pace) {
-        velocity
+    if forward_free {
+        // The unit steps forward. The sides it tried stay tried for this target, so a crowd that
+        // opens for a tick and closes again cannot send it back and forth for ever.
+        memory.flank_active = false;
+        memory.flank_blocked_ticks = 0;
+        return Ok(velocity);
+    }
+    if memory.flank_spent {
+        return Ok(SimVec2::ZERO);
+    }
+    if !memory.flank_active {
+        memory.flank_active = true;
+        memory.flank_left = surround_side(body, next, target, neighbours)?;
+    }
+    let left = SimVec2::new(-ahead.y, ahead.x);
+    let across = if memory.flank_left {
+        left
     } else {
-        other
-    })
+        checked_vec_sub(SimVec2::ZERO, left)?
+    };
+    let step = remove_blocked_velocity(body, checked_vec_scale(across, speed)?, neighbours)?;
+    let open = !is_waiting(step, speed)
+        && policy.permits_segment(map, body.pos, checked_vec_add(body.pos, step)?);
+    if open {
+        memory.flank_blocked_ticks = 0;
+        memory.flank_walked = memory.flank_walked.saturating_add(step.length());
+        let circle = distance(body.pos, next)?.saturating_mul(SimScalar::TWO_PI);
+        if memory.flank_walked >= circle {
+            memory.flank_active = false;
+            memory.flank_spent = true;
+        }
+        return Ok(step);
+    }
+    memory.flank_blocked_ticks = memory.flank_blocked_ticks.saturating_add(1);
+    if memory.flank_blocked_ticks >= FLANK_REVERSE_TICKS {
+        memory.flank_blocked_ticks = 0;
+        if memory.flank_reversed {
+            memory.flank_active = false;
+            memory.flank_spent = true;
+        } else {
+            memory.flank_reversed = true;
+            memory.flank_left = !memory.flank_left;
+        }
+    }
+    Ok(SimVec2::ZERO)
+}
+
+/// Clears the surround walk for a new target, keeping the side last walked.
+fn end_surround_walk(memory: &mut MovementMemory) {
+    memory.flank_active = false;
+    memory.flank_reversed = false;
+    memory.flank_spent = false;
+    memory.flank_blocked_ticks = 0;
+    memory.flank_walked = SimScalar::ZERO;
+}
+
+/// Whether a friend of the unit that stands (anchored, or exactly still) and will not step aside
+/// lies within one step of its edge, on the side toward `ahead` (a unit vector).
+fn friend_blocks_ahead(
+    context: &StepContext<'_>,
+    ahead: SimVec2,
+) -> Result<bool, MovementMathError> {
+    let (body, speed) = (context.body, context.speed);
+    for obstacle in context.neighbours {
+        if obstacle.id == body.id
+            || obstacle.owner != body.owner
+            || !(obstacle.anchored || obstacle.velocity == SimVec2::ZERO)
+            || obstacle.yields_to(body.owner, body.push_priority)
+        {
+            continue;
+        }
+        let reach = i128::from(body.radius.raw())
+            + i128::from(obstacle.radius.raw())
+            + i128::from(speed.raw());
+        if within_distance(body.pos, obstacle.pos, reach)
+            && difference_product(ahead, obstacle.pos, body.pos, false)? > 0
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Undoes a sidestep that would lose sight of `next` across a cliff edge.

@@ -155,3 +155,53 @@ traced by switching the three parts of R1 off one at a time in a scratch build.
 Player 0's attack-movers now wait instead of vibrating (941 → 6 reversals) but still cannot reach range; player 1's
 chasing units still flank through `flank_if_blocked` and two more of them reach range. Ramp E foot, player 0: mean
 turn 211° (maximum 287°).
+
+## WP3: R2 and R4, the surround walk (rule; HELD under the stop rule)
+
+**Latent commit first.** Checksum schema 22 → 23: `MovementMemory` gains `flank_active`, `flank_reversed`,
+`flank_spent`, `flank_blocked_ticks`, `flank_walked` and `flank_target`, all hashed. The plan named `flank_active`
+only; the kept side's `FLANK_REVERSE_TICKS` count, the one-circle bound of D-3 and the reset on a new target need the
+others. Both goldens and the sandbox checksum re-recorded; no behaviour changed.
+
+**What.** `flank_if_blocked` is replaced by `surround_walk` (`movement/locomotion.rs`), for a chase out of range and
+for an attack-move without a target, when the archetype's new `surround_walk` field is `true` (the default, Q0074).
+It starts when the forward part of the admissible step is below half the step and a standing friend that will not
+yield lies just ahead, and goes on until the forward part reaches half the step again. The side comes from
+`steering::surround_side` (the wall's nearer end, else the open side, else ID parity) and is kept; a side closed for
+`FLANK_REVERSE_TICKS` (12) is swapped once, and when the other closes too, or a full circle round the goal has been
+walked, the walk is spent and the unit waits. The sides tried and the distance walked count for the whole approach to
+one target (a crowd that opens for one tick must not restart the walk; with a reset on every free tick, corridor
+units walked back and forth for ever). A walking unit's stall evidence is cleared each tick (R4).
+
+**Showcase.** **Player 1 still wins**, at tick 1,171.
+
+| Player | In range at tick 900 | Blocked attacker ticks | Reversals | Give-ups |
+|---|---|---|---|---|
+| 0 | 8 of 10 | 118 | 40 | 1 |
+| 1 | 9 of 10 | 603 | 51 | 0 |
+
+Ramp E foot, player 0: mean turn 211° (unchanged; Amendment 1 asks for at most 115°).
+
+**Reproductions:** `ranged_block_reaches_the_arc`: all 10 in range from tick 159, 0 give-ups, but 7 reversals.
+`no_room_means_waiting_still`: 5 reversals; the rear units stand on 91 % of their ticks after their first stop; 3
+give-ups (waiting counts as stalled, D-3). The three tests stay ignored with these figures.
+
+**Matrix.** 18 battles moved; blocking totals 1,367,407 blocked attacker ticks, 40,069 reversals (−62 % on WP2), 8
+give-ups. **Four overall winners flip** (stop rule):
+
+| Battle | Wins blue / red, WP2 → WP3 | Single-seed winner changes |
+|---|---|---|
+| 9a_hellion_vs_4_lings | 20 / 0 → 6 / 14 | 14 |
+| 28_100_lings_vs_10_immortals | 20 / 0 → 0 / 19 | 20 |
+| 31_15_marauders_vs_15_stalkers | 17 / 3 → 7 / 13 | 12 |
+| 32_30_marines_vs_15_banelings | 6 / 7 → 7 / 7 (tie) | 4 |
+
+In 9a and 28 the zerglings, which used to stand behind those already biting, now walk round and surround their
+target, as zerglings do in StarCraft II; whether these expectations or the walk should change is the orchestrator's
+and owner's call (Q0074 offers `surround_walk: false` per archetype).
+
+**Battle 33**, 68 seeds: blue wins 52 → 54, red 9 → 8; survivors 5.76 – 0.53 → 5.46 – 0.49.
+
+**Goldens.** Re-recorded on the held branch: `golden_replay` from checkpoint 1 (ticks 1 to 50); `golden_replay_orders`
+unchanged (no unit of it is blocked under an attack order). The per-tick cause was not traced, because the commit is
+held.

@@ -43,6 +43,11 @@ pub(crate) const ARRIVAL_WITNESS_REACH: SimScalar = ratio(3, 2);
 /// not a sourced one (U-23).
 pub(crate) const WAIT_THRESHOLD: SimScalar = ratio(1, 8);
 
+/// Ticks a surround walk's side must stay closed before the unit tries the other side, the
+/// repath cooldown (plan `2026-11-09-friendly-blocking` D-2.4). A named tuning value of our own,
+/// not a sourced one (U-23).
+pub(crate) const FLANK_REVERSE_TICKS: u16 = 12;
+
 /// Route length a unit must gain to count as progress.
 pub(crate) const STALL_PROGRESS: SimScalar = ratio(1, 10);
 /// Ticks without progress before a unit rebuilds its route, one second.

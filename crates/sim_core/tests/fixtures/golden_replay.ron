@@ -229,6 +229,11 @@
 // unit's movement memory gains its surround-walk state (flank_active, flank_reversed, flank_spent,
 // flank_blocked_ticks, flank_walked, flank_target), all hashed and all at their defaults, so every
 // checkpoint changed and no behaviour did.
+// Re-recorded for plan 2026-11-09-friendly-blocking WP3 (R2 and R4, the surround walk; B-104,
+// B-105), on the held branch: a blocked attacker, chasing or attack-moving, walks round the friends
+// in its way on a kept side, and the walk counts as progress. Every checkpoint changed from
+// checkpoint 1 (ticks 1 to 50), where the attack-moving squads first meet standing squadmates; the
+// per-tick cause was not traced, because the commit is held under the stop rule.
 (
     checksum_schema: 25,
     seed: 0x5EED_0F_5CAFF1E,
@@ -256,25 +261,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xec0f3184162b921a,
-        0xcb2cea15559d2b07,
-        0xbdd100ea90130b75,
-        0x0158cb28a25db14a,
-        0x3b098486d9b6da43,
-        0xe463fba12e03ec3c,
-        0xcdb1ad9b8fd06320,
-        0x3e16a33f9a5f9d33,
-        0x222255d2e9e4e2a5,
-        0xcb9754ff98c79637,
-        0x0e29633d19ca2458,
-        0x0618bddbd8a4dae9,
-        0x8961b347811f73bb,
-        0xe9e00e51949e9fde,
-        0x9836a03734eacb0c,
-        0x2ade14fe42372900,
-        0xeb2e596b91bc47ec,
-        0xc33ef042225a7832,
-        0x599d5cd331474ef4,
-        0x497aa0ae54f9abe3,
+        0x24407451d898f2ea,
+        0x18acc9791830ffe0,
+        0x204de25fffde3a60,
+        0xe63c3f84d7cfde8a,
+        0xe719351714bb3548,
+        0x41ed0a592acc7228,
+        0x40e98e5b4300db0e,
+        0xc416f5a4a023d7fe,
+        0x91013c3cfc0a40a6,
+        0x15f5889a0848b813,
+        0xb561f22d99605e8f,
+        0x31a3a606fb797e4d,
+        0xf278d75eb8b62c5e,
+        0x346be5c60bc95a74,
+        0xc6c6f11c5af45e62,
+        0x4ce3b2e579d2e63a,
+        0xcf904ed5b0d6e904,
+        0xac8e7f5d9a2052bd,
+        0xbaaa3b047261e36a,
+        0xf4981a3ad52440b0,
     ],
 )

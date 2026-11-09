@@ -560,6 +560,50 @@ fn side_blockers(
     Ok(sides)
 }
 
+/// The side a blocked unit walks round the crowd in its way to `goal_pos` on: `true` for the
+/// left of its way, `false` for the right (plan `2026-11-09-friendly-blocking` D-2.4).
+///
+/// It is the side of the nearer end of the wall in front of the unit, as [`round_wall`] judges
+/// it; with a standing body that will not yield on one side only, the other side; and on a tie,
+/// or with none, the parity of the unit's ID (even walks left). `ignored_entity` is the unit's
+/// target, which is no part of the crowd.
+///
+/// # Errors
+/// Rejects nonpositive radii or unrepresentable geometry.
+pub(crate) fn surround_side(
+    unit: ContactBody,
+    goal_pos: SimVec2,
+    ignored_entity: Option<EntityId>,
+    obstacles: &[SteeringObstacle],
+) -> Result<bool, PushGeometryError> {
+    let steered = Steered {
+        id: unit.id,
+        pos: unit.pos,
+        radius: unit.radius,
+        mover: Some((unit.owner, unit.push_priority)),
+    };
+    let parity = unit.id.0 % 2 == 0;
+    let goal_dir = direction(goal_pos, unit.pos)?;
+    if goal_dir == SimVec2::ZERO {
+        return Ok(parity);
+    }
+    let sides = side_blockers(&steered, goal_dir, ignored_entity, obstacles)?;
+    Ok(match &sides.walls {
+        [Some(left), Some(right)] => {
+            let left_end = wall_end(&steered, goal_dir, left, 1, obstacles)?.outer;
+            let right_end = wall_end(&steered, goal_dir, right, -1, obstacles)?.outer;
+            if left_end == right_end {
+                parity
+            } else {
+                left_end < right_end
+            }
+        }
+        [Some(_), None] => false,
+        [None, Some(_)] => true,
+        [None, None] => parity,
+    })
+}
+
 /// The steering rule shared by [`compute_unified_local_steering`] and [`steer_body`].
 fn steer(
     unit: Steered,

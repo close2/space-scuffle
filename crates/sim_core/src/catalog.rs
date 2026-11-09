@@ -44,6 +44,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::OnceLock;
 
+/// The default of `surround_walk`: blocked attackers walk round their crowd (Q0074).
+const fn surround_walk_default() -> bool {
+    true
+}
+
 /// Static archetype specification defining baseline vitals, movement, capabilities, and abilities.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[expect(
@@ -144,6 +149,14 @@ pub struct UnitArchetype {
     /// `StarCraft` II stores this as the `CUnit` flag `TurnBeforeMove`. Structures have `false`.
     #[serde(default)]
     pub turn_before_move: bool,
+    /// Whether a blocked attacker of this archetype walks round the friends in its way on a side
+    /// it keeps until it has a clear way in (the surround walk, plan
+    /// `2026-11-09-friendly-blocking` D-2). StarCraft II leaves such a unit standing for the
+    /// player to move; walking round is an "allows more" deviation (Q0051), so the default `true`
+    /// rests on [Q0074](../../../docs/questions/open/0074-surround-walk.md), and `false` restores
+    /// the game's stand. Either way a blocked unit never vibrates: it waits (D-1).
+    #[serde(default = "surround_walk_default")]
+    pub surround_walk: bool,
     /// Hull turn rate in binary angle units per tick on a tick the unit does not translate by its
     /// own motion (standing, turning in place before a move, aiming while still), from the
     /// authored `stationary_turn_rate_deg_per_tick`, which defaults to the hull rate. On a tick
@@ -1113,6 +1126,10 @@ struct UnitArchetypeDef {
     /// hull rate that faces a reversal within the stall repath window.
     #[serde(default)]
     turn_before_move: bool,
+    /// Whether a blocked attacker walks round its own crowd (plan `2026-11-09-friendly-blocking`
+    /// D-2, Q0074); omitted reads as `true`.
+    #[serde(default = "surround_walk_default")]
+    surround_walk: bool,
     /// Hull rate in degrees per tick while the unit does not translate, `0 < rate <= 180`;
     /// omitted means equal to `turn_rate_deg_per_tick` (`StationaryTurningRate`).
     #[serde(default)]
@@ -1397,6 +1414,7 @@ impl UnitArchetypeDef {
             deceleration: SimScalar::from_f32_lossy(self.deceleration),
             turn_rate,
             turn_before_move: self.turn_before_move,
+            surround_walk: self.surround_walk,
             stationary_turn_rate,
             collision_radius: SimScalar::from_f32_lossy(self.collision_radius),
             separation_radius: SimScalar::from_f32_lossy(self.separation_radius),
@@ -1602,6 +1620,7 @@ impl StructureArchetypeDef {
             deceleration: SimScalar::ZERO,
             turn_rate: SimAngle::ZERO,
             turn_before_move: false,
+            surround_walk: false,
             stationary_turn_rate: SimAngle::ZERO,
             collision_radius: radius,
             separation_radius: radius,

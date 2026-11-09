@@ -179,7 +179,7 @@ fn assets() -> PathBuf {
 /// 1. The showcase battle: every attacker of both sides in range at tick 900; no reversals and
 ///    no give-ups up to tick 1,300 (plan §7).
 #[test]
-#[ignore = "friendly-blocking WP2 (no reversals) and WP3 (all in range, no give-ups) make this pass"]
+#[ignore = "friendly-blocking WP3 held: 8 and 9 of 10 in range, 40 and 51 reversals (evidence)"]
 fn showcase_second_line_reaches_range() -> TestResult {
     let mut world = load_scenario_battle(&assets(), Path::new("scenarios/showcase.ron"))?;
     let mut meter = BlockingMeter::new();
@@ -207,7 +207,7 @@ fn showcase_second_line_reaches_range() -> TestResult {
 /// 2. Ten ranged units in two rows of five, 12 world units from an immobile pillar's edge,
 ///    attack-move past it: all ten reach range by tick 300, without a reversal or a give-up.
 #[test]
-#[ignore = "friendly-blocking WP3 (the surround walk) makes this pass"]
+#[ignore = "friendly-blocking WP3 held: all in range by tick 159, but 7 reversals (evidence)"]
 fn ranged_block_reaches_the_arc() -> TestResult {
     let mut world = scratch_world(GameMap::new(
         64,
@@ -249,7 +249,7 @@ fn ranged_block_reaches_the_arc() -> TestResult {
 ///    pillar that plugs it: those that cannot reach range stand still on at least 95 % of the
 ///    ticks after they first stop, and nobody reverses.
 #[test]
-#[ignore = "friendly-blocking WP2 (waiting) makes this pass"]
+#[ignore = "friendly-blocking WP3 held: 5 reversals, rear units still on 91 % of ticks (evidence)"]
 fn no_room_means_waiting_still() -> TestResult {
     let mut map = GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?;
     for y in 0..64 {
@@ -285,8 +285,11 @@ fn no_room_means_waiting_still() -> TestResult {
     }
     let (in_range, attackers) = attackers_in_range(&world, BLUE);
     let blue = meter.of_owner(BLUE);
-    let report =
-        format!("in range {in_range} of {attackers}; {blue:?}; still since stop {since_stop:?}");
+    let per_unit: Vec<u32> = file.iter().map(|u| meter.reversals_of(*u)).collect();
+    let report = format!(
+        "in range {in_range} of {attackers}; {blue:?}; reversals per unit {per_unit:?}; still \
+         since stop {since_stop:?}"
+    );
     assert!(
         in_range >= 1 && in_range < attackers,
         "the corridor must leave units out: {report}"
