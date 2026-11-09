@@ -155,8 +155,22 @@
 // weapon also encodes its structure strike (none on any weapon here), so the encoding changes
 // every checkpoint. No behaviour did: no shipped weapon has a structure strike yet, and the whole
 // matrix and battle 33 are bit-identical to WP9 group g12.
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP10 (B-29, checksum schema 16 -> 17): each
+// weapon's acquisition arc and each unit's engaged target are encoded, so every checkpoint
+// changed. No behaviour did: with the two fields left out of the encoding at schema 16, every
+// checkpoint stays as recorded for WP9 (the shipped acquisition arcs equal the engaged arcs).
+// Re-recorded for plan 2026-11-05-sc2-deviation-fixes WP10 (B-29): every shipped weapon takes its
+// StarCraft II acquisition arc, `Arc` / 2 (0 for every weapon that sets no `Arc`), so a unit faces
+// a new target exactly before its first swing. `golden_replay` differs from checkpoint index 3
+// (ticks 151 to 200) and `golden_replay_orders` from index 4 (ticks 41 to 50), the first fights;
+// with the acquisition arcs set back to the engaged arcs both reproduce as recorded for the schema
+// 17 commit.
+// Re-recorded for WP10 (B-30, checksum schema 17 -> 18): each weapon's turret idle behaviour and
+// rate are encoded, so every checkpoint changed. No behaviour did: with the field left out of the
+// encoding at schema 17, every checkpoint stays as recorded for the B-29 data (every shipped
+// turret holds).
 (
-    checksum_schema: 16,
+    checksum_schema: 18,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -182,25 +196,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x1184cace741dd19c,
-        0x1fba6432527f14da,
-        0xcc69a4dab12702c5,
-        0x4afb8b8c72482edf,
-        0x16c05e1bf1de7e17,
-        0xda62d3b96a8c9134,
-        0x3f92d3a55cfee308,
-        0x36523e91e058b16f,
-        0xa1f150132adff937,
-        0xd3db5792f4885dce,
-        0x4fb4cf89cba7c95f,
-        0x5a5e2386fdcb4861,
-        0x0cc8084cc58ba776,
-        0x83bb66b52c78a650,
-        0x6515cdf0a58ad2ec,
-        0xfcb1a33a94bd0703,
-        0xc75c1d710789bce6,
-        0x2342151f17b75f8f,
-        0xcd510ccb9013f727,
-        0x09286a77e25d8168,
+        0x9f28410f25234177,
+        0x733a08a9bb376f74,
+        0x46ffb3309b682914,
+        0x51797f88ecdff683,
+        0x3f3ae624026aa20d,
+        0x6bd493367be5621c,
+        0xd4fd1940f64e49d7,
+        0x0035081d397dc6dd,
+        0x8cab35fe8de4fdb0,
+        0x130fb79c9615f7b5,
+        0xc0eed127984f6409,
+        0x2c65c9c72c396bd6,
+        0xee85b9252bdde5c4,
+        0x8b45ff7986b776d2,
+        0x559b55f13036edaf,
+        0xe1f2bf1c9b8a4e8b,
+        0x01209598f1108693,
+        0x99955cf7962da711,
+        0xabe8e74b66968c08,
+        0x43a79b9bafbdeecf,
     ],
 )

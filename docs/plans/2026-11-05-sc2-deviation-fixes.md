@@ -778,9 +778,9 @@ requires.
 | B-25 | Viking analogue shoots the ground in fighter mode | Fixed | WP2 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §2) |
 | B-26 | Corruptor analogue shoots the ground | Fixed | WP2 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §2) |
 | B-27 | Liberator analogue shoots the ground outside Defender Mode | (i), narrowed | The ground attack outside Defender Mode is fixed by WP2 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §2); Defender Mode itself, and with it the ground attack, stays open for WP18 |
-| B-28 | Six weapon mounts | (i) | WP10 |
-| B-29 | No acquisition arc | (i) | WP10 |
-| B-30 | A turret keeps its angle when idle | (i) | WP10; it sets the delay of the first shot after idling |
+| B-28 | Six weapon mounts | Fixed | WP10 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §11.3; Amendment 16) |
+| B-29 | No acquisition arc | Fixed | WP10 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §11.2) |
+| B-30 | A turret keeps its angle when idle | (i), narrowed | The idle rule and its sourced data are fixed by WP10 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §11.4); open only the return rate of the three `ResetIfMoving` turrets without a `YawIdleRate` (Siege Tank, Hellion, Phoenix; [Q0065](../questions/open/0065-turret-idle-rate.md)) |
 | B-31 | `StationaryTurningRate` | Fixed | turn-before-move WP5 `2522e3f`, WP6 `408d3b7` |
 | B-32 | Hard-coded Stimpack path | Fixed | WP3 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §3) |
 | B-33 | Stim admitted at any life above 1 | Fixed | `ad0dcde`: the owner answered [Q0053](../questions/closed/0053-stimpack-at-low-life.md) with rule (a), so the stim is refused, changing nothing, unless life is strictly greater than its cost; matrix and both golden replays bit-identical |
@@ -837,6 +837,8 @@ requires.
 | B-86 | Morph costs and supply (Baneling, Ravager, Lurker, Brood Lord, Orbital Command, Planetary Fortress, Lair, Hive, Greater Spire) and the Zergling pair, while ours trains each whole | (i) | WP17, with the morph model. Found in WP9 (Amendment 14) |
 | B-87 | Advanced Ballistics lengthened the Liberator analogue's anti-air weapon; the game's adds range to Defender Mode only | Fixed | WP9 g5. Found in WP9 (Amendment 14) |
 | B-88 | Structure attributes derived in code (Psionic if shielded, else Mechanical); the game's Protoss structures are Armored and Structure, Zerg structures Armored, Biological and Structure | (i) | WP9 follow-up (a rule). Found in WP9 (Amendment 14) |
+| B-89 | Whether the Liberator analogue's anti-air weapon turns on the `Liberator` turret (`void` UnitData:3317-3318 lists a second weapon entry with that turret and no weapon); ours is a hull weapon | (i) | WP10 follow-up (research). Found in WP10 (Amendment 16) |
+| B-90 | A turreted weapon's wind-up does not hold its unit, and a turret works against `current_target` under any order, where the game ties firing while moving to `AllowedMovement` | (i) | WP13e, with B-45. Found in WP10 (Amendment 16): turreting five more analogues extends it |
 
 **Counts.** 78 IDs: (i) 70, two of them narrowed (B-52, B-67) and one carried by another plan (B-12); (ii) 3 (B-37,
 B-53, B-58); (iii) none; fixed 5 (B-31 and B-40 by the turn-before-move plan; B-71, B-73 and B-75 by WP0).
@@ -1111,3 +1113,18 @@ Evidence: [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.
   Expectation `blue (0, 0), red (1, 1)` with a rewritten claim. No other battle moved; battle 33 54 / 7 / 7;
   goldens unchanged. **B-47 is fixed** and leaves the `DESIGN.md` register.
 
+## Amendment 16 (WP10, 2026-11-09): turning follow-ups landed
+
+- **B-29 fixed:** a second arc, `acquire_arc` (`Arc` ÷ 2), and the engaged target that selects between it and the
+  engaged arc (`Arc` ÷ 2 + `ArcSlop`); latent rule `91ecbef` (checksum schema 17), data `26e3bf6`. Eight battles
+  moved, none changed its winner; battle 33 55 / 6 / 7 (was 54 / 7 / 7), its expectation unchanged.
+- **B-28 fixed:** the six mounts, one commit each (`95a3ce4`, `12dc0ac`, `ca6e1e4`, `1abc38b`, `379bf4f`, `b81f8c4`);
+  only battles 10, 28 and 30 moved, no winner changed. The Lurker's turret is the `Lurker` turret of
+  `LurkerMPBurrowed` (`void` UnitData:775), correcting audit §10.5's `FreeRotate`.
+- **B-30 narrowed:** the idle rule (`9b9cc48`, schema 18) and the sourced data (`0b91676`: Immortal and Colossus
+  `FollowMovement`, Missile Turret `Spin`). The return rate of the three `ResetIfMoving` turrets without a
+  `YawIdleRate` is not sourced: [Q0065](../questions/open/0065-turret-idle-rate.md), default no change.
+- **Found:** B-89 (the Liberator's turret entry, research) and B-90 (turreted weapons fire while their unit moves,
+  for WP13e with B-45).
+- Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §11. No commit was
+  held.

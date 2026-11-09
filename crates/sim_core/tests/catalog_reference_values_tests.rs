@@ -20,7 +20,7 @@
 use sim_core::catalog::UnitArchetype;
 use sim_core::WeaponSpec;
 use sim_types::upgrades::UpgradeEffect;
-use sim_types::{AttributeFlags, SimScalar};
+use sim_types::{AttributeFlags, SimAngle, SimScalar, TurretIdle};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -2070,4 +2070,359 @@ fn b82_only_the_baneling_has_its_structure_strike() {
         }
     }
     assert!(found > 0, "the Baneling analogue has its structure strike");
+}
+
+/// Where a weapon sets no `Arc`: no `CWeapon` default sets it (`core` WeaponData:3-31), so the
+/// engine's 0 applies (catalog-time audit §10.3).
+const ARC_UNSET: &str = "Arc not set: engine 0 (core WeaponData:3-31)";
+
+/// Acquisition arc of every unit weapon whose mount matches the game: `Arc` ÷ 2 of the weapon,
+/// in binary angle units (65 536 a turn; 32 768 is 180°, every direction). Plan
+/// `2026-11-05-sc2-deviation-fixes` WP10, B-29; weapons per catalog-time audit §10.3. The row
+/// with block `siege_mode` is the Siege Tank's Siege Mode cannon, checked through its mode.
+const SC2_UNIT_ACQUIRE_ARC: [WeaponRow; 41] = [
+    ("SCV", "weapon", 0.0, ARC_UNSET),
+    ("Marine", "weapon", 0.0, ARC_UNSET),
+    ("Marine", "air_weapon", 0.0, ARC_UNSET),
+    ("Roach", "weapon", 0.0, ARC_UNSET),
+    ("Zealot", "weapon", 0.0, ARC_UNSET),
+    (
+        "Siege Tank",
+        "weapon",
+        32_768.0,
+        "Arc 360, voidmulti WeaponData:5",
+    ),
+    ("Siege Tank", "siege_mode", 0.0, ARC_UNSET),
+    ("Marauder", "weapon", 0.0, ARC_UNSET),
+    ("Reaper", "weapon", 0.0, ARC_UNSET),
+    ("Ghost", "weapon", 0.0, ARC_UNSET),
+    ("Thor", "weapon", 0.0, ARC_UNSET),
+    ("Thor", "ground_weapon", 0.0, ARC_UNSET),
+    (
+        "Thor",
+        "air_weapon",
+        512.0,
+        "LanceMissileLaunchers Arc 5.625, void WeaponData:82",
+    ),
+    ("Viking", "air_weapon", 0.0, ARC_UNSET),
+    ("Liberator", "air_weapon", 0.0, ARC_UNSET),
+    ("Banshee", "weapon", 0.0, ARC_UNSET),
+    ("Probe", "weapon", 0.0, ARC_UNSET),
+    ("Stalker", "weapon", 0.0, ARC_UNSET),
+    ("Stalker", "air_weapon", 0.0, ARC_UNSET),
+    ("Sentry", "weapon", 0.0, ARC_UNSET),
+    ("Adept", "weapon", 0.0, ARC_UNSET),
+    ("High Templar", "weapon", 0.0, ARC_UNSET),
+    ("Dark Templar", "weapon", 0.0, ARC_UNSET),
+    ("Void Ray", "weapon", 0.0, ARC_UNSET),
+    ("Void Ray", "air_weapon", 0.0, ARC_UNSET),
+    (
+        "Carrier / Mothership",
+        "weapon",
+        32_768.0,
+        "Arc 360, liberty WeaponData:606",
+    ),
+    ("Drone", "weapon", 0.0, ARC_UNSET),
+    ("Zergling", "weapon", 0.0, ARC_UNSET),
+    ("Baneling", "weapon", 0.0, ARC_UNSET),
+    ("Ravager", "weapon", 0.0, ARC_UNSET),
+    ("Hydralisk", "weapon", 0.0, ARC_UNSET),
+    ("Hydralisk", "air_weapon", 0.0, ARC_UNSET),
+    ("Mutalisk", "weapon", 0.0, ARC_UNSET),
+    ("Mutalisk", "air_weapon", 0.0, ARC_UNSET),
+    ("Corruptor", "air_weapon", 0.0, ARC_UNSET),
+    ("Brood Lord", "weapon", 0.0, ARC_UNSET),
+    ("Brood Lord", "ground_weapon", 0.0, ARC_UNSET),
+    ("Ultralisk", "weapon", 0.0, ARC_UNSET),
+    ("Queen", "weapon", 0.0, ARC_UNSET),
+    ("Queen", "ground_weapon", 0.0, ARC_UNSET),
+    ("Queen", "air_weapon", 0.0, ARC_UNSET),
+];
+
+/// Acquisition arc of every structure weapon: `Arc` ÷ 2, binary angle units.
+const SC2_STRUCTURE_ACQUIRE_ARC: [WeaponRow; 6] = [
+    (
+        "Planetary Fortress",
+        "ground_weapon",
+        8_192.0,
+        "Arc 90, liberty WeaponData:138",
+    ),
+    ("Missile Turret", "air_weapon", 0.0, ARC_UNSET),
+    ("Photon Cannon", "ground_weapon", 0.0, ARC_UNSET),
+    ("Photon Cannon", "air_weapon", 0.0, ARC_UNSET),
+    ("Spine Crawler", "ground_weapon", 0.0, ARC_UNSET),
+    ("Spore Crawler", "air_weapon", 0.0, ARC_UNSET),
+];
+
+/// The analogues whose weapon mount the catalog-time audit (§10.5, B-28) found different: their
+/// arcs are checked with their mounts, in [`SC2_WEAPON_MOUNTS`].
+const MOUNT_DIFFERS: [&str; 5] = ["Hellion", "Immortal", "Colossus", "Lurker", "Phoenix"];
+
+#[test]
+fn b29_unit_acquisition_arcs_follow_starcraft() -> TestResult {
+    let (siege, rows): (Vec<WeaponRow>, Vec<WeaponRow>) = SC2_UNIT_ACQUIRE_ARC
+        .iter()
+        .partition(|(_, block, ..)| *block == "siege_mode");
+    check_weapons(
+        "acquisition arc",
+        false,
+        &rows,
+        &MOUNT_DIFFERS,
+        |_| true,
+        |w| f32::from(w.acquire_arc.raw()),
+    )?;
+    let [(_, _, want, source)] = siege[..] else {
+        return Err("one Siege Mode row".into());
+    };
+    let mut checked = 0;
+    for archetype in sim_fixtures::shipped_catalogs().units.archetypes() {
+        for mode in &archetype.modes {
+            if let Some(Some(weapon)) = &mode.ground_weapon_override {
+                let got = f32::from(weapon.acquire_arc.raw());
+                assert!(
+                    (got - want).abs() < 0.001,
+                    "{} {}: acquisition arc {got}, StarCraft II {want} ({source})",
+                    archetype.slug,
+                    mode.mode_name
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert_eq!(
+        checked, 1,
+        "one weapon override: the Siege Tank's Siege Mode"
+    );
+    Ok(())
+}
+
+#[test]
+fn b29_structure_acquisition_arcs_follow_starcraft() -> TestResult {
+    check_weapons(
+        "acquisition arc",
+        true,
+        &SC2_STRUCTURE_ACQUIRE_ARC,
+        &[],
+        |_| true,
+        |w| f32::from(w.acquire_arc.raw()),
+    )
+}
+
+/// One weapon mount: analogue, weapon block, the turret's `YawRate` in degrees per tick (`None`
+/// for a hull weapon), the engaged and the acquisition arcs as half angles in degrees, and the
+/// source.
+type MountRow = (
+    &'static str,
+    &'static str,
+    Option<f32>,
+    f32,
+    f32,
+    &'static str,
+);
+
+/// The weapons whose mount the catalog-time audit (§10.5) found different from the game, as
+/// `StarCraft` II 5.0.14 has them (B-28). Turret rates are Normal °/s × 1.4 ÷ 25; arcs are
+/// `Arc` ÷ 2 + `ArcSlop` (engaged) and `Arc` ÷ 2 (acquisition), `ArcSlop` 11.25 by default
+/// (`core` WeaponData:15).
+const SC2_WEAPON_MOUNTS: [MountRow; 6] = [
+    (
+    "Hellion",
+    "weapon",
+    Some(55.99),
+    11.25,
+    0.0,
+    "Hellion turret, liberty UnitData:11603; YawRate 999.8437, liberty TurretData:97; \
+     InfernalFlameThrower sets no Arc",
+),
+    ("Immortal", "weapon", Some(40.32), 11.25, 0.0, "Immortal turret, liberty UnitData:10791; parent FreeRotate, YawRate 720, liberty TurretData:26, :73; PhaseDisruptors sets no Arc"),
+    ("Colossus", "weapon", Some(55.99), 56.25, 45.0, "Colossus turret, liberty UnitData:4099; YawRate 999.8437, liberty TurretData:51; ThermalLances Arc 90, liberty WeaponData:500"),
+    ("Lurker", "weapon", Some(156.79), 11.25, 0.0, "Lurker turret of LurkerMPBurrowed, void UnitData:775; YawRate 2799.8437, void TurretData:18; LurkerMP sets no Arc (swarm WeaponData:215, void :14, voidmulti :144)"),
+    ("Phoenix", "air_weapon", Some(30.20), 2.4994, 2.4994, "Phoenix turret, swarm UnitData:1805; YawRate 539.2968, swarm TurretData:33; IonCannons Arc 4.9987, ArcSlop 0, swarm WeaponData:179-180"),
+    ("Thor", "air_weapon", None, 14.0625, 2.8125, "a hull weapon: the Thor's WeaponArray names no Turret, liberty UnitData:5270-5271; LanceMissileLaunchers Arc 5.625, void WeaponData:82"),
+];
+
+/// Whether two angles in degrees agree to within one binary unit (360 ÷ 65 536 degrees).
+fn same_angle(got: f32, want: f32) -> bool {
+    (got - want).abs() <= 360.0 / 65_536.0
+}
+
+#[test]
+fn b28_weapon_mounts_follow_starcraft() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    for (unit, block, rate, engaged, acquisition, source) in SC2_WEAPON_MOUNTS {
+        let archetype = catalogs
+            .units
+            .archetypes()
+            .find(|archetype| analogue(archetype) == unit)
+            .ok_or(unit)?;
+        let (_, weapon) = weapon_blocks(archetype)
+            .into_iter()
+            .find(|(b, _)| *b == block)
+            .ok_or(block)?;
+        let weapon = weapon.ok_or(block)?;
+        let got = (
+            weapon
+                .has_turret
+                .then(|| weapon.turret_turn_rate.to_degrees_f32()),
+            weapon.firing_arc.to_degrees_f32(),
+            weapon.acquire_arc.to_degrees_f32(),
+        );
+        let matches = match (got.0, rate) {
+            (Some(got_rate), Some(want_rate)) => same_angle(got_rate, want_rate),
+            (None, None) => true,
+            _ => false,
+        } && same_angle(got.1, engaged)
+            && same_angle(got.2, acquisition);
+        assert!(
+            matches,
+            "{} ({unit}) {block}: turret, engaged, acquisition {got:?}, StarCraft II \
+             {rate:?}, {engaged}, {acquisition} ({source})",
+            archetype.slug
+        );
+    }
+    Ok(())
+}
+
+/// `ResetIfMoving` with no `YawIdleRate` in any layer: the return rate is unknown, so the turret
+/// holds until the owner answers Q0065 (B-30 stays open for it).
+const RESET_RATE_UNKNOWN: &str = "ResetIfMoving, no YawIdleRate: holds by Q0065's default";
+
+/// Idle behaviour (`CTurret` `Idle`, `YawIdleRate` in degrees per tick = Normal °/s × 1.4 ÷ 25)
+/// of every turreted weapon, by analogue and block; `siege_mode` is the Siege Tank's Siege Mode
+/// cannon. Every turret here descends from `FreeRotate`, `Idle` `Hold` (`liberty`
+/// TurretData:24), unless its row says otherwise (B-30).
+const SC2_TURRET_IDLE: [(&str, &str, TurretIdleRef, &str); 13] = [
+    (
+        "Siege Tank",
+        "weapon",
+        TurretIdleRef::Hold,
+        RESET_RATE_UNKNOWN,
+    ),
+    (
+        "Siege Tank",
+        "siege_mode",
+        TurretIdleRef::Hold,
+        "SiegeTankSieged, liberty TurretData:80-83",
+    ),
+    ("Hellion", "weapon", TurretIdleRef::Hold, RESET_RATE_UNKNOWN),
+    (
+        "Immortal",
+        "weapon",
+        TurretIdleRef::FollowMovement(20.16),
+        "FollowMovement, YawIdleRate 360, liberty TurretData:74-75",
+    ),
+    (
+        "Colossus",
+        "weapon",
+        TurretIdleRef::FollowMovement(5.04),
+        "FollowMovement, YawIdleRate 90, liberty TurretData:50-52",
+    ),
+    (
+        "Lurker",
+        "weapon",
+        TurretIdleRef::Hold,
+        "Lurker turret, Hold, void TurretData:16",
+    ),
+    (
+        "Phoenix",
+        "air_weapon",
+        TurretIdleRef::Hold,
+        RESET_RATE_UNKNOWN,
+    ),
+    (
+        "Planetary Fortress",
+        "ground_weapon",
+        TurretIdleRef::Hold,
+        "PlanetaryFortress, liberty TurretData:88-90",
+    ),
+    (
+        "Missile Turret",
+        "air_weapon",
+        TurretIdleRef::Spin(2.52),
+        "Spin, YawIdleRate 45, liberty TurretData:85-86",
+    ),
+    (
+        "Photon Cannon",
+        "ground_weapon",
+        TurretIdleRef::Hold,
+        "PhotonCannon, liberty TurretData:48",
+    ),
+    (
+        "Photon Cannon",
+        "air_weapon",
+        TurretIdleRef::Hold,
+        "PhotonCannon, liberty TurretData:48",
+    ),
+    (
+        "Spine Crawler",
+        "ground_weapon",
+        TurretIdleRef::Hold,
+        "SpineCrawler, liberty TurretData:61-63",
+    ),
+    (
+        "Spore Crawler",
+        "air_weapon",
+        TurretIdleRef::Hold,
+        "SporeCrawler, liberty TurretData:69-72 (a YawIdleRate under Hold)",
+    ),
+];
+
+/// A reference idle behaviour, rates in degrees per tick.
+#[derive(Clone, Copy, Debug)]
+enum TurretIdleRef {
+    Hold,
+    FollowMovement(f32),
+    Spin(f32),
+}
+
+impl TurretIdleRef {
+    /// Whether the catalog's `idle` is this behaviour, rates to one binary unit.
+    fn matches(self, idle: TurretIdle) -> bool {
+        let rate = |angle: SimAngle| angle.to_degrees_f32();
+        match (self, idle) {
+            (Self::Hold, TurretIdle::Hold) => true,
+            (Self::FollowMovement(want), TurretIdle::FollowMovement { rate: got })
+            | (Self::Spin(want), TurretIdle::Spin { step: got }) => same_angle(rate(got), want),
+            _ => false,
+        }
+    }
+}
+
+#[test]
+fn b30_turret_idle_follows_starcraft() -> TestResult {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut checked = 0;
+    for archetype in catalogs.units.archetypes() {
+        let name = analogue(archetype);
+        let modes = archetype
+            .modes
+            .iter()
+            .filter_map(|mode| mode.ground_weapon_override.as_ref()?.as_ref())
+            .map(|weapon| ("siege_mode", Some(weapon)));
+        for (block, weapon) in weapon_blocks(archetype).into_iter().chain(modes) {
+            let Some(weapon) = weapon.filter(|w| w.has_turret) else {
+                continue;
+            };
+            // A structure's `weapon`, and a unit's ground weapon left to default, copy another.
+            let derived = block == "ground_weapon" && archetype.weapon.as_ref() == Some(weapon);
+            if (is_structure(archetype) && block == "weapon")
+                || (!is_structure(archetype) && derived)
+            {
+                continue;
+            }
+            let (_, _, want, source) = SC2_TURRET_IDLE
+                .iter()
+                .find(|(unit, b, ..)| *unit == name && *b == block)
+                .ok_or_else(|| format!("{} ({name}) {block}: no idle row", archetype.slug))?;
+            assert!(
+                want.matches(weapon.turret_idle),
+                "{} ({name}) {block}: idle {:?}, StarCraft II {want:?} ({source})",
+                archetype.slug,
+                weapon.turret_idle
+            );
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, SC2_TURRET_IDLE.len(), "every row has its turret");
+    Ok(())
 }

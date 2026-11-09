@@ -935,22 +935,25 @@
     // II's scan ranges measured edge to edge (WP14 Amendment 7, Q0057: the marine 5.5, the
     // zealot 5, beyond both radii; they were 9 and 9) and the zealot's second blade 5 ticks after
     // its first (plan 2026-11-05-sc2-deviation-fixes WP5, B-2: StarCraft II's PsiBladesBurst; it
-    // landed on the swing's tick before), on 68 seeds (the four of record plus 64 jittered ones,
-    // jitter 0.12) the marines win 54, the zealots win 7 and 7 are unresolved at 500 ticks; marine
-    // survivors average 5.29 (SD 3.27, range 0 to 13), zealot survivors 0.37 (SD 0.83, range 0 to
-    // 4). Before B-2 it was 21 / 37 / 10 (2.06); with the edge rule alone (scan 9 / 9) 19 / 41 / 8 (1.69),
+    // landed on the swing's tick before) and StarCraft II's acquisition arc (WP10, B-29: a new
+    // target must be faced exactly, `Arc` 0, before the first swing), on 68 seeds (the four of
+    // record plus 64 jittered ones, jitter 0.12) the marines win 55, the zealots win 6 and 7 are
+    // unresolved at 500 ticks; marine survivors average 5.53 (SD 3.21, range 0 to 13), zealot
+    // survivors 0.29 (SD 0.67, range 0 to 3). Before B-29 it was 54 / 7 / 7 (5.29); before B-2
+    // 21 / 37 / 10 (2.06); with the edge rule alone (scan 9 / 9) 19 / 41 / 8 (1.69),
     // before it 20 / 35 / 13 (1.85), before B-9 37 / 20 / 11 (3.62), before WP1 39 / 20 / 9
     // (3.87), after the arcs 43 / 16 / 9 (4.38), before WP17 42 / 18 / 8 (4.03), after combat
     // alignment WP4 alone 30 / 24 / 14 (3.09), and before that WP4 a marine win on 61 of the 68
     // (7.41). The expectation is the smallest ranges that hold on all 20 matrix seeds since B-9
-    // (orchestrator, plan Amendment 5; the seeds of record are 7-0, 7-0, 6-0 and 7-0, marines -
-    // zealots left; B-2 set them to blue 0 to 13 and red 0 to 3, the marines winning 17 of the 20
-    // seeds); a seed outside them is re-recorded by the commit that causes it. What
+    // (orchestrator, plan Amendment 5; the seeds of record are 9-0, 3-0, 6-0 and 7-0, marines -
+    // zealots left; B-2 set them to blue 0 to 13 and red 0 to 3; since B-29 the marines win 18 of
+    // the 20 seeds, blue 1 to 13 and red 0 to 2); a seed outside them is re-recorded by the commit that causes it. What
     // varies is how many zealots reach the marines at once.
     // Evidence: docs/evidence/2026-11-04-combat-sc2-alignment.md §16 (WP14 Amendment 7) and
     // §14.7 (§14.4 for the arcs, §6, §5 and §3 for WP7, WP6 and WP4, and §1 for the earlier
     // figures, from docs/evidence/2026-11-03-battle-33-investigation.md §4.2), and
-    // docs/evidence/2026-11-05-sc2-deviation-fixes.md §5.3 (B-2), §4.6 (B-9) and §1 (WP1).
+    // docs/evidence/2026-11-05-sc2-deviation-fixes.md §11 (B-29), §5.3 (B-2), §4.6 (B-9) and §1
+    // (WP1).
     (
         name: "33_24_marines_vs_12_zealots",
         claim: "A close fight: unkited zealots and marines trade evenly, either side may win narrowly",

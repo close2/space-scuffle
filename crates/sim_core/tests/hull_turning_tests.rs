@@ -122,8 +122,12 @@ fn unit_ron(
 /// and a target that turns at 180° per tick and moves at 0.1 per tick.
 fn catalog_ron(shooter: Shooter) -> String {
     let mount = match shooter.turret {
-        Some(rate) => format!("has_turret: true, turret_turn_rate_deg_per_tick: {rate:.2}"),
-        None => "has_turret: false, turret_turn_rate_deg_per_tick: 0.0".to_owned(),
+        Some(rate) => {
+            format!("has_turret: true, turret_turn_rate_deg_per_tick: {rate:.2}, turret_idle: Hold")
+        }
+        None => {
+            "has_turret: false, turret_turn_rate_deg_per_tick: 0.0, turret_idle: Hold".to_owned()
+        }
     };
     let weapon = format!(
         r#"Some((
@@ -133,6 +137,7 @@ fn catalog_ron(shooter: Shooter) -> String {
             min_range: 0.0,
             max_range: 6.0,
             firing_arc_deg: {arc:.2},
+            acquire_arc_deg: {arc:.2},
             {mount},
             base_damage: 1.0,
             attribute_bonuses: [],

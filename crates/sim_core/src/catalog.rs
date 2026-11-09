@@ -26,8 +26,8 @@ use sim_types::{
     default_projectile_lifetime_ticks, AbilitySpec, AnimState, ArchetypeCapabilities, ArmorClassId,
     Attribute, AttributeBonuses, AttributeFlags, FactionId, HarvesterSpec, MoverType,
     OverclockSpec, ProjectileTargetLossBehavior, ShapeKind, SilhouetteClass, SimAngle, SimScalar,
-    SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, StructureStrike, UnitModeSpec,
-    UnitTypeId, UpgradeEffect, WeaponVisualKind,
+    SplashLine, SplashLineAxis, SplashLineOrigin, SplashShape, StructureStrike, TurretIdle,
+    UnitModeSpec, UnitTypeId, UpgradeEffect, WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod factions;
@@ -891,6 +891,62 @@ struct SplashZoneDef {
     fraction: f32,
 }
 
+/// A turret's idle behaviour as authored: `StarCraft` II's `Idle` value, with its `YawIdleRate`
+/// in degrees per tick (Normal °/s × 1.4 ÷ 25). See [`TurretIdle`].
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub(crate) enum TurretIdleDef {
+    /// `Hold`.
+    Hold,
+    /// `Reset`, at the given rate, `0 < rate <= 180`.
+    Reset(f32),
+    /// `ResetIfMoving`, at the given rate, `0 < rate <= 180`.
+    ResetIfMoving(f32),
+    /// `FollowMovement`, at the given rate, `0 < rate <= 180`.
+    FollowMovement(f32),
+    /// `Spin`, the given signed turn per tick, counter-clockwise when positive, `0 < |rate| <= 180`.
+    Spin(f32),
+}
+
+impl TurretIdleDef {
+    /// The rate the variant carries, in degrees per tick; `None` for `Hold`.
+    pub(crate) const fn rate(self) -> Option<f32> {
+        match self {
+            Self::Hold => None,
+            Self::Reset(rate)
+            | Self::ResetIfMoving(rate)
+            | Self::FollowMovement(rate)
+            | Self::Spin(rate) => Some(rate),
+        }
+    }
+
+    /// Converts a validated definition: rates to binary units per tick, a clockwise spin to its
+    /// wrapped step.
+    fn to_spec(self) -> TurretIdle {
+        match self {
+            Self::Hold => TurretIdle::Hold,
+            Self::Reset(rate) => TurretIdle::Reset {
+                rate: binary_angle(rate),
+            },
+            Self::ResetIfMoving(rate) => TurretIdle::ResetIfMoving {
+                rate: binary_angle(rate),
+            },
+            Self::FollowMovement(rate) => TurretIdle::FollowMovement {
+                rate: binary_angle(rate),
+            },
+            Self::Spin(rate) => {
+                let magnitude = binary_angle(rate.abs()).raw();
+                TurretIdle::Spin {
+                    step: SimAngle::from_raw(if rate < 0.0 {
+                        magnitude.wrapping_neg()
+                    } else {
+                        magnitude
+                    }),
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct WeaponSpecDef {
     name: String,
@@ -898,10 +954,19 @@ struct WeaponSpecDef {
     target_flags: AttributeFlagsDef,
     min_range: f32,
     max_range: f32,
+    /// Engaged arc, a half angle in degrees: `Arc` ÷ 2 + `ArcSlop` of the `StarCraft` II weapon;
+    /// 180 or more fires in every direction.
     firing_arc_deg: f32,
+    /// Acquisition arc, a half angle in degrees: `Arc` ÷ 2 of the `StarCraft` II weapon, within
+    /// which it starts on a target it is not engaged with; required, `0 <= acquire_arc_deg <=
+    /// firing_arc_deg`.
+    acquire_arc_deg: f32,
     has_turret: bool,
     /// Turret rate in degrees per tick: `0 < rate <= 180` on a turreted weapon, 0 otherwise.
     turret_turn_rate_deg_per_tick: f32,
+    /// What the turret does with no target (`CTurret` `Idle` and `YawIdleRate`); required,
+    /// `Hold` on a hull weapon.
+    pub(crate) turret_idle: TurretIdleDef,
     base_damage: f32,
     /// Bonus damage per strike against attributes: `(attribute, bonus)` pairs, at most one per
     /// attribute; required, `[]` for none, so a catalog written before the field fails to load.
@@ -1090,6 +1155,7 @@ impl UnitArchetypeDef {
             min_range: SimScalar::from_f32_lossy(w.min_range),
             max_range: SimScalar::from_f32_lossy(w.max_range),
             firing_arc: Self::firing_half_angle(w.firing_arc_deg),
+            acquire_arc: Self::firing_half_angle(w.acquire_arc_deg),
             has_turret: w.has_turret,
             // A hull-mounted weapon turns with the hull; its rate is never read for turning.
             turret_turn_rate: if w.has_turret {
@@ -1097,6 +1163,7 @@ impl UnitArchetypeDef {
             } else {
                 SimAngle::PI
             },
+            turret_idle: w.turret_idle.to_spec(),
             base_damage: SimScalar::from_f32_lossy(w.base_damage),
             attribute_bonuses: w.attribute_bonuses.iter().fold(
                 AttributeBonuses::NONE,

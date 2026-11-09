@@ -169,9 +169,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-23 | Storm hits structures, and idle units dodge it on their own | WP18 |
 | B-24 | Matrix battle 13's storm values | WP18 |
 | B-27 | Liberator analogue has no Defender Mode, so no ground attack at all (its fighter-mode ground attack was removed by WP2) | WP18 |
-| B-28 | Six weapon mounts (turret or hull) differ | WP10 |
-| B-29 | No acquisition arc separate from the firing arc | WP10 |
-| B-30 | An idle turret keeps its last angle | WP10 |
+| B-30 | The Siege Tank (tank mode), Hellion and Phoenix analogues' turrets do not return to the front while moving without a target (`ResetIfMoving`; the rate is not sourced, [Q0065](docs/questions/open/0065-turret-idle-rate.md)); the idle rule itself is fixed | Q0065 |
 | B-35 | No energy regeneration delay | WP15 |
 | B-36 | Unfinished structures regenerate life | WP15 |
 | B-38 | No burrowed Roach regeneration and no Tunneling Claws | WP15, WP18 |
@@ -210,6 +208,8 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-85 | A line area lands whole on the shot's tick; the game spaces the Lurker's spines 0.125 Normal s apart and delays each Colossus search 0.25 Normal s | WP8 follow-up |
 | B-86 | Morphs (Baneling, Ravager, Lurker, Brood Lord, Orbital Command, Planetary Fortress, Lair, Hive, Greater Spire) cost their morph increment and the Zergling analogue one Zergling at the pair's price, while ours trains them whole | WP17 |
 | B-88 | Structure attributes are derived in code (Psionic if shielded, else Mechanical); the game gives Protoss structures Armored and Structure, Zerg structures Armored, Biological and Structure | WP9 follow-up |
+| B-89 | Whether the Liberator analogue's anti-air weapon turns on the `Liberator` turret: the game's unit lists a second weapon entry with that turret and no weapon (`void` UnitData:3317-3318); ours is a hull weapon | WP10 follow-up (research) |
+| B-90 | A turreted weapon's wind-up does not hold its unit, and a turret works against the unit's `current_target` under any order; the game lets only weapons with `AllowedMovement` fire while moving. It reaches the Siege Tank analogue and, since WP10 (B-28), the Hellion, Immortal, Colossus, Lurker and Phoenix analogues | WP13e |
 
 ---
 

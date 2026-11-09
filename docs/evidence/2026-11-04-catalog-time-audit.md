@@ -2000,6 +2000,11 @@ angle (plan §8 F-6).
 
 ### 10.5 Weapons whose mount differs (listed, not changed)
 
+**Applied** by plan [`2026-11-05-sc2-deviation-fixes`](../plans/2026-11-05-sc2-deviation-fixes.md) WP10 (B-28), with
+the acquisition arcs of §10.3 (B-29) and the idle return of §10.4 (B-30): evidence
+[`2026-11-05-sc2-deviation-fixes.md`](2026-11-05-sc2-deviation-fixes.md) §11. One correction: the burrowed Lurker's
+turret is `Lurker` (`void` UnitData:775, `YawRate` 2799.8437, `void` TurretData:18), not `FreeRotate`.
+
 Six weapons sit on a turret in the game and on the hull here, or the reverse:
 
 | Identity | Ours | Game | Turret rate in the game |

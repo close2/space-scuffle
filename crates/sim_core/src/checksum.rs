@@ -45,7 +45,9 @@ use std::collections::BTreeMap;
 /// Schema 15 adds each splash's shape: a circle, or a line with its origin, axis and offsets.
 /// Schema 16 adds each weapon's structure strike: the damage, per-level growth and armour rule
 /// it deals to a structure instead of its own strike (B-82).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 16;
+/// Schema 17 adds each weapon's acquisition arc and each unit's engaged target (B-29).
+/// Schema 18 adds each weapon's turret idle behaviour and rate (B-30).
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 18;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.
