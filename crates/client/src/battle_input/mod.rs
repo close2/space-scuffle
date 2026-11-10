@@ -15,8 +15,10 @@
 //!
 //! # Invariants
 //! - Pointer and keyboard input act only when [`InputOwnership`] grants them to the world.
-//! - Only units the player can see are picked: Bevy-visible, not behind terrain, and for a unit of
-//!   another player, one the simulation says that player can target.
+//! - Only units the player can see are picked: Bevy-visible, not behind terrain, pickable under
+//!   the battle's fog ([`presence_of`]: never an undetected cloaked or burrowed enemy, plan
+//!   `2026-11-09-effect-visualization` D-5), and for a unit of another player, one the simulation
+//!   says that player can target.
 //! - Orders go only to the local player's units; a foreign unit can be looked at, never ordered.
 //! - Once the match is over no gesture orders anything or reports a refusal, and left click still
 //!   selects, so the player can look around.
@@ -38,6 +40,7 @@ use sim_types::enums::ShapeKind;
 use sim_types::{EntityId, PlayerId, ResourceNodeId, UnitOrder};
 
 use crate::battle_pipeline::commands::SubmissionError;
+use crate::battle_pipeline::fog::{presence_of, BattleFog};
 use crate::battle_pipeline::session::BattleSession;
 use crate::battle_pipeline::BattleSet;
 use crate::battle_presentation::BattlePresentation;
@@ -127,6 +130,8 @@ pub struct BattleView<'w, 's> {
     terrain: Option<Res<'w, TerrainState>>,
     /// Map billboards, absent until a battle first commits.
     map_objects: Option<Res<'w, MapPresentation>>,
+    /// The viewer's knowledge, absent when nobody is kept from anything (the sandbox).
+    fog: Option<Res<'w, BattleFog>>,
     bubbles: BubbleQuery<'w, 's>,
 }
 
@@ -205,8 +210,9 @@ impl BattleView<'_, '_> {
     /// Returns the nearest unit under `ray` that `viewer` may see.
     fn pick_unit(&self, world: &SimWorld, viewer: PlayerId, ray: Ray3d) -> Option<PickedUnit> {
         let mut nearest: Option<(PickedUnit, f32)> = None;
+        let fog = self.fog.as_deref();
         for (transform, bubble, visibility) in &self.bubbles {
-            if !visibility.get() {
+            if !visibility.get() || !presence_of(fog, &bubble.0).is_pickable() {
                 continue;
             }
             let center = transform.translation();

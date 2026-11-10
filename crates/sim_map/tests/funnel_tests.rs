@@ -21,9 +21,13 @@ mod arena;
 #[path = "support/oracle.rs"]
 mod oracle;
 
+#[path = "support/radii.rs"]
+mod radii;
+use radii::{MEDIUM_RADIUS, SMALL_RADIUS};
+
 use sim_map::{
     CellFlags, CliffLevel, GameMap, MapCell, MapError, MapFile, PathRequest, PathRequestWithVision,
-    Pathfinder, Side, UnitClearance, CORNER_SAFETY_MARGIN,
+    Pathfinder, Side, CORNER_SAFETY_MARGIN,
 };
 use sim_types::{EntityId, SimScalar, SimVec2};
 
@@ -40,8 +44,7 @@ fn test_straight_line_optimization() {
     let request = PathRequest {
         start,
         goal,
-        clearance: UnitClearance::Medium,
-        radius: UnitClearance::Medium.radius_scalar(),
+        radius: MEDIUM_RADIUS,
     };
 
     let result = pathfinder.find_path(&map, &request).unwrap();
@@ -88,43 +91,30 @@ fn test_l_shaped_obstacle_euclidean_shortcut() {
     let request = PathRequest {
         start,
         goal,
-        clearance: UnitClearance::Medium,
-        radius: UnitClearance::Medium.radius_scalar(),
+        radius: MEDIUM_RADIUS,
     };
 
     let result = pathfinder.find_path(&map, &request).unwrap();
 
-    // The string-pulled path must not contain grid staircase zig-zags
-    // It must contain exactly 3 waypoints: [Start, CornerWaypoint, Goal]
-    assert_eq!(
-        result.waypoints.len(),
-        3,
-        "String-pulled path around L-corner must have exactly 3 waypoints: {:?}",
-        result.waypoints
-    );
-    assert_eq!(result.waypoints[0], start);
-    assert_eq!(result.waypoints[2], goal);
-
-    // Corner waypoint must be near obstacle corner (5, 7)
-    let corner_wp = result.waypoints[1];
+    // The string-pulled path has no grid staircase: start, the arc round the obstacle corner
+    // (5, 7) as points on its circle of radius + margin (plan Amendment 2), and the goal.
+    let waypoints = &result.waypoints;
+    assert_eq!(waypoints.first(), Some(&start));
+    assert_eq!(waypoints.last(), Some(&goal));
     let corner_vertex = SimVec2::new(SimScalar::from_num(5), SimScalar::from_num(7));
-    let offset_dist = (corner_wp - corner_vertex).length();
-
-    let expected_offset = UnitClearance::Medium.radius_scalar() + CORNER_SAFETY_MARGIN;
-    let diff = (offset_dist - expected_offset).abs();
+    let expected_offset = MEDIUM_RADIUS + CORNER_SAFETY_MARGIN;
+    let interior = &waypoints[1..waypoints.len() - 1];
     assert!(
-        diff < SimScalar::from_num(0.01),
-        "Corner waypoint offset ({:?}) must match radius + margin ({:?})",
-        offset_dist,
-        expected_offset
+        (1..=8).contains(&interior.len()),
+        "one arc round the L-corner: {waypoints:?}"
     );
-
-    // Confirm that a circle of unit radius centered at waypoint does not intersect the obstacle corner
-    let dist_to_corner = corner_wp.distance(corner_vertex);
-    assert!(
-        dist_to_corner >= UnitClearance::Medium.radius_scalar(),
-        "Waypoint must maintain safe clearance from obstacle corner"
-    );
+    for &w in interior {
+        let diff = (w.distance(corner_vertex) - expected_offset).abs();
+        assert!(
+            diff < SimScalar::from_num(0.001),
+            "waypoint {w:?} must lie at radius + margin ({expected_offset:?}) from the corner"
+        );
+    }
 }
 
 #[test]
@@ -148,14 +138,12 @@ fn test_corner_clearance_radius_offset_scaling() {
     let req_small = PathRequest {
         start,
         goal,
-        clearance: UnitClearance::Small,
-        radius: UnitClearance::Small.radius_scalar(),
+        radius: SMALL_RADIUS,
     };
     let req_medium = PathRequest {
         start,
         goal,
-        clearance: UnitClearance::Medium,
-        radius: UnitClearance::Medium.radius_scalar(),
+        radius: MEDIUM_RADIUS,
     };
 
     let path_small = pathfinder.find_path(&map, &req_small).unwrap();
@@ -166,8 +154,8 @@ fn test_corner_clearance_radius_offset_scaling() {
     let dist_small = (path_small.waypoints[1] - corner_vertex).length();
     let dist_medium = (path_medium.waypoints[1] - corner_vertex).length();
 
-    let expected_small = UnitClearance::Small.radius_scalar() + CORNER_SAFETY_MARGIN;
-    let expected_medium = UnitClearance::Medium.radius_scalar() + CORNER_SAFETY_MARGIN;
+    let expected_small = SMALL_RADIUS + CORNER_SAFETY_MARGIN;
+    let expected_medium = MEDIUM_RADIUS + CORNER_SAFETY_MARGIN;
 
     assert!((dist_small - expected_small).abs() < SimScalar::from_num(0.01));
     assert!((dist_medium - expected_medium).abs() < SimScalar::from_num(0.01));
@@ -200,8 +188,7 @@ fn test_sandbox_all_blue_units_direct_path_no_errant_detour() {
         let request = PathRequest {
             start,
             goal,
-            clearance: UnitClearance::Small,
-            radius: UnitClearance::Small.radius_scalar(),
+            radius: SMALL_RADIUS,
         };
         let result = pathfinder
             .find_path(&map, &request)
@@ -220,8 +207,7 @@ fn test_sandbox_all_blue_units_direct_path_no_errant_detour() {
         let request = PathRequest {
             start,
             goal,
-            clearance: UnitClearance::Medium,
-            radius: UnitClearance::Medium.radius_scalar(),
+            radius: MEDIUM_RADIUS,
         };
         let result = pathfinder
             .find_path(&map, &request)
@@ -262,8 +248,7 @@ fn test_showcase_canyon_ramp_funnel_paths_are_concise() -> Result<(), Box<dyn st
     let r1_req = PathRequest {
         start: r1_start,
         goal: r1_goal,
-        clearance: UnitClearance::Small,
-        radius: UnitClearance::Small.radius_scalar(),
+        radius: SMALL_RADIUS,
     };
     let r1_path = pathfinder.find_path(&map, &r1_req)?;
     assert!(
@@ -284,8 +269,7 @@ fn test_showcase_canyon_ramp_funnel_paths_are_concise() -> Result<(), Box<dyn st
     let r2_req = PathRequest {
         start: r2_start,
         goal: r2_goal,
-        clearance: UnitClearance::Small,
-        radius: UnitClearance::Small.radius_scalar(),
+        radius: SMALL_RADIUS,
     };
     let r2_path = pathfinder.find_path(&map, &r2_req)?;
     assert!(
@@ -297,9 +281,9 @@ fn test_showcase_canyon_ramp_funnel_paths_are_concise() -> Result<(), Box<dyn st
     Ok(())
 }
 
-/// Plan 2026-11-09-sc2-pathfinding WP4 (B-101): a corner waypoint keeps the requesting unit's
-/// own radius plus `CORNER_SAFETY_MARGIN` from the corner it turns around: 0.55 for a body of
-/// radius 0.5 and 0.425 for one of 0.375, though both route on the Small tier.
+/// Plan 2026-11-09-sc2-pathfinding WP4 (B-101), restated for the mesh (WP9): the waypoints that
+/// round a corner lie on the circle of the requesting unit's own radius plus
+/// `CORNER_SAFETY_MARGIN` round it: 0.55 for a body of radius 0.5 and 0.425 for one of 0.375.
 #[test]
 fn corner_offsets_use_the_units_own_radius() {
     let mut map = GameMap::new(20, 20, MapCell::default_ground(CliffLevel(1))).unwrap();
@@ -314,7 +298,6 @@ fn corner_offsets_use_the_units_own_radius() {
         let request = PathRequest {
             start: SimVec2::new(SimScalar::from_num(2.5), SimScalar::from_num(12.5)),
             goal: SimVec2::new(SimScalar::from_num(12.5), SimScalar::from_num(2.5)),
-            clearance: UnitClearance::Small,
             radius: SimScalar::from_num(radius),
         };
         let path = pathfinder.find_path(&map, &request).unwrap();
@@ -328,18 +311,18 @@ fn corner_offsets_use_the_units_own_radius() {
                     && w.distance(vertex) < SimScalar::from_num(2)
             })
             .collect();
-        assert_eq!(
-            corners.len(),
-            1,
-            "one corner near the vertex: {:?}",
+        assert!(
+            !corners.is_empty(),
+            "an arc near the vertex: {:?}",
             path.waypoints
         );
-        let gap = f64::from(corners[0].distance(vertex).to_f32());
-        assert!(
-            (gap - expected).abs() < 1e-4,
-            "radius {radius}: corner {:?} is {gap} from the vertex, expected {expected}",
-            corners[0]
-        );
+        for corner in corners {
+            let gap = f64::from(corner.distance(vertex).to_f32());
+            assert!(
+                (gap - expected).abs() < 1e-4,
+                "radius {radius}: corner {corner:?} is {gap} from the vertex, expected {expected}"
+            );
+        }
     }
 }
 
@@ -353,7 +336,6 @@ fn mesh_request(
     PathRequestWithVision {
         start,
         goal,
-        clearance: UnitClearance::for_radius(radius),
         radius,
         vision: None,
         block_unexplored_ramps: false,
@@ -370,8 +352,10 @@ fn f64_of(p: SimVec2) -> (f64, f64) {
 }
 
 /// Routes `start -> goal` on the mesh and checks it against the exact oracle: every leg passes
-/// the segment predicate, and the route's tangent-and-arc length is within 1 % of the oracle's.
-/// Returns the route's polyline length and the oracle's length.
+/// the segment predicate, the route's tangent-and-arc length is within 1 % of the oracle's, and
+/// its polyline is no longer than its tangent-and-arc length (arcs are emitted on their circle,
+/// plan Amendment 2). Returns the polyline length and the oracle's length at
+/// `r + margin / 2`, the closest any leg may come to a vertex it turns around.
 fn assert_mesh_route_matches_oracle(
     map: &GameMap,
     start: SimVec2,
@@ -388,7 +372,7 @@ fn assert_mesh_route_matches_oracle(
     assert!(!route.fallback, "funnel fell back: {route:?}");
     for pair in route.waypoints.windows(2) {
         assert!(
-            pathfinder.mesh_segment_is_passable(map, &request, pair[0], pair[1]),
+            pathfinder.segment_is_passable(map, &request, pair[0], pair[1]),
             "leg {pair:?}"
         );
     }
@@ -411,7 +395,16 @@ fn assert_mesh_route_matches_oracle(
         smooth <= reference * 1.01,
         "route {smooth} against oracle {reference}: {route:?}"
     );
-    (f64::from(route.total_length.to_f32()), reference)
+    let polyline = f64::from(route.total_length.to_f32());
+    assert!(
+        polyline <= smooth + 1e-3,
+        "polyline {polyline} against arcs {smooth}"
+    );
+    let dipped = f64::from((radius + CORNER_SAFETY_MARGIN / 2).to_f32());
+    let floor = oracle::Oracle::new(oracle::walls_of(map), dipped)
+        .shortest(f64_of(start), f64_of(goal))
+        .expect("the oracle finds a route");
+    (polyline, floor)
 }
 
 #[test]
@@ -445,6 +438,40 @@ fn mesh_route_for_the_showcase_pair_is_at_the_oracle_length() {
     for radius in [0.375, 0.5] {
         assert_mesh_route_matches_oracle(&map, at(61.5, 24.5), at(16.5, 35.5), radius);
     }
+}
+
+/// A unit standing just south of ramp E's side wall, its body touching it, goes round the wall's
+/// western end, up the ramp and out of its eastern side: the route wraps the corner (35, 52) by
+/// more than a half turn. The shrunk funnel loses that turn; the pinned retry keeps it, so the
+/// route is legal and no fallback to portal midpoints is needed (plan Amendment 2; WP8's worst
+/// pair, 3.08 times the grid's length through the midpoints).
+#[test]
+fn mesh_route_wraps_the_end_of_a_thin_wall_without_falling_back() {
+    let map = arena::load_game_map(arena::SHOWCASE_CANYON_FILE);
+    let (start, goal) = (at(36.5, 51.5), at(43.5, 49.5));
+    let radius = SimScalar::HALF;
+    let mut pathfinder = Pathfinder::new(&map);
+    let request = mesh_request(start, goal, radius);
+    let route = pathfinder
+        .find_route_mesh(&map, &request)
+        .expect("a route exists");
+    assert!(!route.fallback, "funnel fell back: {route:?}");
+    for pair in route.waypoints.windows(2) {
+        assert!(
+            pathfinder.segment_is_passable(&map, &request, pair[0], pair[1]),
+            "leg {pair:?}"
+        );
+    }
+    let corners: Vec<(i32, i32, Side)> = route.turns.iter().map(|&(p, s)| (p.x, p.y, s)).collect();
+    assert_eq!(corners, [(35, 52, Side::Right), (38, 52, Side::Right)]);
+    let legal = oracle::Oracle::new(oracle::walls_of(&map), 0.5)
+        .shortest(f64_of(start), f64_of(goal))
+        .expect("the oracle finds a route");
+    let length = f64::from(route.total_length.to_f32());
+    assert!(
+        length >= legal - 1e-3 && length <= legal * 1.02,
+        "route {length} against the legal minimum {legal}"
+    );
 }
 
 /// A wall across the map with one opening of `gap` cells at `x = 8`.

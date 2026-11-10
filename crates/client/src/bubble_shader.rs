@@ -353,13 +353,13 @@ impl BubbleUniformGpu {
             hull_hit_flash: instance.hull_hit_flash,
             build_progress: instance.build_or_queue_progress.unwrap_or(1.0),
             selected: u32::from(instance.selected),
-            cloaked: u32::from(instance.cloaked),
+            cloaked: u32::from(instance.concealment.is_concealed()),
             feature_flags: {
                 let mut flags = DEFAULT_FEATURE_FLAGS;
                 if instance.selected {
                     flags |= FLAG_SELECTED;
                 }
-                if instance.cloaked {
+                if instance.concealment.is_concealed() {
                     flags |= FLAG_CLOAKED;
                 }
                 if instance.speed_boosted {

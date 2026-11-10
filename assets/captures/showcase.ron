@@ -19,6 +19,14 @@
 // army takes the enemy base at tick 1,100 in `route_trace` (1,355 before the plan). `advance` ends at
 // its minimum on tick 776, with the viewer's army already firing on the enemy hall, `clash` runs to
 // tick 1,075 on that hall, and `closing` pauses there, before the result.
+// Restructured for plan 2026-11-09-sc2-pathfinding Amendment 6 (routes on the navigation mesh, mirrored
+// attack-move targets): both armies now take the west lane and meet there at about tick 310; the lane
+// fight lasts to tick 577, the viewer's survivors walk to the enemy base (its workers fall at ticks 868
+// and 890) and fire on the hall until it falls at tick 1,693. `terrain` is paused, so `units`, `smog`
+// and `advance` show the march at 1x (ticks 0 to about 310) until the first shot; `clash` covers the
+// lane fight; `march` follows one survivor to the enemy base at 4x until it opens fire there (the
+// army's centroid would include the viewer's workers at home); `assault` shows the base at 2x;
+// `closing` pauses before the result. Scene ticks of the checking render are in docs/evidence/2026-11-09-sc2-pathfinding.md.
 (
     format_version: 1,
     resolution: (1280, 720),
@@ -39,8 +47,7 @@
                 ),
                 (
                     name: "terrain",
-                    speed: Speed(2),
-                    badge: Some("Fast-forward ×2"),
+                    speed: Paused,
                     length: Frames(150),
                     camera: Path(keys: [
                         (frame: 0, focus: (12.0, 14.0), distance: 30.0, pitch_deg: 58.0),
@@ -67,7 +74,7 @@
                 (
                     name: "smog",
                     speed: Speed(1),
-                    length: Frames(125),
+                    length: Frames(100),
                     camera: FollowUnit(player: 0, unit_types: ["pulse_bot", "rhino_beetle"], distance: 10.0, pitch_deg: 35.0),
                     overlay: Caption(
                         title: "Smog",
@@ -77,9 +84,8 @@
                 ),
                 (
                     name: "advance",
-                    speed: Speed(4),
-                    badge: Some("Fast-forward ×4"),
-                    length: UntilCombat(min: 50, max: 500),
+                    speed: Speed(1),
+                    length: UntilCombat(min: 25, max: 500),
                     camera: FollowArmy(player: 0, distance: 26.0, pitch_deg: 55.0),
                     overlay: Caption(
                         title: "Fog of war",
@@ -90,11 +96,35 @@
                 (
                     name: "clash",
                     speed: Speed(1),
-                    length: Frames(300),
+                    length: Frames(270),
                     camera: FollowCombat(distance: 16.0, pitch_deg: 52.0),
                     overlay: Caption(
                         title: "Combat",
                         body: "Weapons wind up, fire and recover; shields take damage before the hull; splash hits groups.",
+                        subsystems: ["Combat"],
+                    ),
+                ),
+                (
+                    name: "march",
+                    speed: Speed(4),
+                    badge: Some("Fast-forward ×4"),
+                    length: UntilCombat(min: 5, max: 200),
+                    camera: FollowUnit(player: 0, unit_types: ["pulse_bot", "rhino_beetle"], distance: 16.0, pitch_deg: 55.0),
+                    overlay: Caption(
+                        title: "Pathfinding",
+                        body: "The survivors head for the enemy base; each unit finds its own route on a navigation mesh, sized to its body.",
+                        subsystems: ["Movement and pathfinding"],
+                    ),
+                ),
+                (
+                    name: "assault",
+                    speed: Speed(2),
+                    badge: Some("Fast-forward ×2"),
+                    length: Frames(200),
+                    camera: FollowCombat(distance: 18.0, pitch_deg: 55.0),
+                    overlay: Caption(
+                        title: "Assault",
+                        body: "The attackers cut down the base's workers and lay siege to its hall.",
                         subsystems: ["Combat"],
                     ),
                 ),
@@ -118,8 +148,9 @@
             (scene: "title", first: 0, frames: 75),
             (scene: "units", first: 0, frames: 75),
             (scene: "smog", first: 0, frames: 100),
-            (scene: "advance", first: 0, frames: 40, from_end: true),
+            (scene: "advance", first: 0, frames: 25),
             (scene: "clash", first: 0, frames: 150),
+            (scene: "assault", first: 0, frames: 75),
             (scene: "closing", first: 0, frames: 150),
         ],
     ),

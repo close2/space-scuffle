@@ -14,14 +14,15 @@
 //!   energy, cooldowns and the entity untouched.
 //! - Hazard IDs come from `next_hazard_id` and are never reused within a world.
 
+use super::presentation::AreaRecord;
 use crate::catalog::UnitArchetype;
 use crate::entity::{Entity, PreparedOverclock};
 use crate::movement::{DisplacementAdmissionError, MovementInvariant, MovementMathError};
 use crate::SimWorld;
 use rand::Rng;
 use sim_types::{
-    AbilityEffectSpec, EntityId, PlayerId, SimAngle, SimScalar, SimVec2, Tick, UnitModeSpec,
-    UnitOrder,
+    AbilityEffectSpec, AbilitySource, EntityId, PlayerId, SimAngle, SimScalar, SimVec2, Tick,
+    UnitModeSpec, UnitOrder,
 };
 
 /// Active continuous hazard/AoE zone (e.g. Psionic Storm) ticking in the world.
@@ -481,7 +482,11 @@ impl SimWorld {
                         damage_per_interval,
                         friendly_fire,
                     };
-                    self.spawn_hazard_zone(owner, pos, &spec);
+                    let caster = AbilitySource {
+                        unit_type: entity.unit_type_id,
+                        ability: ability_index,
+                    };
+                    self.spawn_hazard_zone(owner, pos, &spec, caster);
                 }
             }
             AbilityEffectSpec::CloakToggle { is_burrow, .. } => {
@@ -500,9 +505,23 @@ impl SimWorld {
         true
     }
 
-    /// Opens a hazard zone of `spec` owned by `owner` at `center`, taking the next hazard ID.
-    fn spawn_hazard_zone(&mut self, owner: PlayerId, center: SimVec2, spec: &HazardSpec) {
+    /// Opens a hazard zone of `spec` owned by `owner` at `center`, taking the next hazard ID,
+    /// and records `caster` as its source for the render snapshot.
+    fn spawn_hazard_zone(
+        &mut self,
+        owner: PlayerId,
+        center: SimVec2,
+        spec: &HazardSpec,
+        caster: AbilitySource,
+    ) {
         let h_id = self.next_hazard_id;
+        self.presentation.record_area(
+            h_id,
+            AreaRecord {
+                source: caster,
+                total_ticks: spec.duration_ticks,
+            },
+        );
         self.next_hazard_id = self.next_hazard_id.wrapping_add(1);
         self.active_hazards.push(ActiveHazardZone {
             id: h_id,
@@ -558,6 +577,9 @@ impl SimWorld {
                             .ok()
                             .and_then(|arch| arch.capabilities.barrier.as_ref());
                         let dmg = entity.barrier.absorb(barrier, hazard.damage_per_interval);
+                        if dmg < hazard.damage_per_interval {
+                            self.presentation.record_barrier_hit(entity_id);
+                        }
                         if dmg > SimScalar::ZERO {
                             let (shield_dmg, life_dmg) = if entity.shields >= dmg {
                                 (dmg, SimScalar::ZERO)
@@ -587,7 +609,8 @@ impl SimWorld {
             }
         }
         for h_idx in expired_hazards.into_iter().rev() {
-            self.active_hazards.remove(h_idx);
+            let closed = self.active_hazards.remove(h_idx);
+            self.presentation.forget_area(closed.id);
         }
 
         // Direct hazard evacuation moves outside the affected radius
@@ -601,7 +624,7 @@ impl SimWorld {
             if let Ok(Some(flee_target)) = flee {
                 if let Some(unit) = self.entities.get_mut(&id) {
                     unit.order_queue.clear();
-                    unit.order_queue.push_back(UnitOrder::Move {
+                    unit.enqueue_order(UnitOrder::Move {
                         target: flee_target,
                     });
                     unit.current_funnel_waypoints.clear();

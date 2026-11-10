@@ -206,8 +206,21 @@ pub struct FrameBudgetReport {
     /// Sum of the means of the passes not nested in another pass, in milliseconds; `None`
     /// without GPU timings. Instrumented passes only ([`GPU_PASSES_NOTE`]).
     pub gpu_pass_mean_sum_ms: Option<f64>,
+    /// The camera and effect variant of the run (plan `2026-11-09-effect-visualization`,
+    /// `WP6c`); the default for a report written before it existed.
+    #[serde(default)]
+    pub variant: RunVariant,
     /// Every measured frame, in order.
     pub frames: Vec<FrameSample>,
+}
+
+/// What a run changed besides the scenario: the D-11 camera and the effect stress mode.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RunVariant {
+    /// Whether the camera was HDR with bloom (`--hdr-bloom`).
+    pub hdr_bloom: bool,
+    /// What `--effect-stress` and `--capture` did; `None` when neither was given.
+    pub effect_stress: Option<super::effect_stress::StressSummary>,
 }
 
 /// The report schema version this build writes and reads. Version 2 added the display path
@@ -352,6 +365,8 @@ pub struct ReportInputs {
     pub environment: RunEnvironment,
     /// Per-pass GPU timings, for a `--render-diagnostics` run.
     pub gpu_passes: Option<Vec<GpuPassTiming>>,
+    /// The camera and effect variant of the run.
+    pub variant: RunVariant,
 }
 
 impl FrameBudgetReport {
@@ -391,6 +406,7 @@ impl FrameBudgetReport {
             },
             gpu_passes,
             gpu_pass_mean_sum_ms,
+            variant: inputs.variant,
             frames,
         })
     }
@@ -466,8 +482,56 @@ impl FrameBudgetReport {
         if let (Some(passes), Some(sum)) = (&self.gpu_passes, self.gpu_pass_mean_sum_ms) {
             text.push_str(&gpu_table(passes, sum));
         }
+        text.push_str(&variant_text(&self.variant));
         text
     }
+}
+
+/// The Markdown lines of the run's camera and effect variant.
+fn variant_text(variant: &RunVariant) -> String {
+    let mut text = format!(
+        "\n- Camera: {}\n",
+        if variant.hdr_bloom {
+            "HDR with bloom above 1.0 (`--hdr-bloom`)"
+        } else {
+            "shipped (no HDR, no bloom)"
+        }
+    );
+    let Some(stress) = &variant.effect_stress else {
+        return text;
+    };
+    let _ = writeln!(
+        text,
+        "- Effect stress: {} splash events/s; sent {}; effects spawned {}, refused {}; critical \
+         overflow {}, detail skipped {}, LOD skipped {}, retired {}",
+        stress.rate_per_second,
+        stress.events_sent,
+        stress.effects_spawned,
+        stress.effects_refused,
+        stress.critical_overflow,
+        stress.detail_skipped,
+        stress.lod_skipped,
+        stress.retired
+    );
+    for source in &stress.sources {
+        let _ = writeln!(text, "  - source: {source}");
+    }
+    if let Some(capture) = &stress.capture {
+        let _ = writeln!(
+            text,
+            "- Capture `{}` at tick {}: {} live effects, {} cards, {} decals; effect footprints \
+             cover {:.2} % of the screen, overdraw {:.3} screens, at most {} layers on one cell",
+            capture.path.display(),
+            capture.tick,
+            capture.live_effects,
+            capture.cards,
+            capture.decals,
+            capture.coverage.covered_fraction * 100.0,
+            capture.coverage.overdraw,
+            capture.coverage.max_layers
+        );
+    }
+    text
 }
 
 /// `NAME=value` pairs of the recorded graphics environment, comma-separated.
@@ -560,6 +624,7 @@ mod tests {
                 graphics_environment: vec![("DISPLAY".into(), ":99".into())],
             },
             gpu_passes: None,
+            variant: RunVariant::default(),
         }
     }
 

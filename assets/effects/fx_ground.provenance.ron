@@ -1,0 +1,166 @@
+(
+    format_version: 1,
+    set: "fx_ground",
+    manifest_sha256: "8996b30f14c8e495d5e058b1b7b7aff0a856f8eae6fd194cb2c8f87111bdc0bf",
+    mip_sha256: {
+        "fx_ground.mip1.png": "07367be2bacbd0007ebc979dc0f8108240b6718eb21239769bb26a6999d27691",
+        "fx_ground.mip2.png": "f0f58e3f594b78ab0b14a6e2fe749997f068fce14fb92c0f87f7e9485c499b93",
+        "fx_ground.mip3.png": "7daf652b8987f4aaea0be32239fd9f3c499762050ac65ef321d69bc3c3c64028",
+        "fx_ground.mip4.png": "b30b1c09b2ff553f8470e4b1d0a3acd96262b3893abbc59ec9c31b8df0e7fc3f",
+        "fx_ground.png": "5edebc399c2a729a676fc1aa1922aedd0f51b55e9098ed4f1b95c2246db16516",
+    },
+    erosion: Some((
+        noise: (
+            seed: 1,
+            period: 4,
+            octaves: 3,
+            gain_permille: 500,
+        ),
+        blur_radius_px: 2,
+        mask_level: 8,
+    )),
+    ffmpeg_version: None,
+    elements: {
+        "chitin_spine": (
+            origin: GeneratedImage(
+                sources: [
+                    (
+                        role: OnBlack,
+                        file: "fx_ground.chitin_spine.20261110T090833Z-1077968-1.on_black.png",
+                        sha256: "862c84ac7adb6457366297fc0675bc5f42c779e9a1779575c007b99ae22491fe",
+                        model: "gemini-nano-banana-2.1",
+                        prompt_sha256: "8d16f7161ae973a6cd8b615e7acaf7c9b14c94470b596663ed28672255995e78",
+                        request_id: "20261110T090833Z-1077968/1",
+                        ledger_line: 1260,
+                    ),
+                    (
+                        role: OnBlack,
+                        file: "fx_ground.chitin_spine.20261110T090916Z-1080994-1.on_black.png",
+                        sha256: "fab3f423a92c4b5ed7f58b1516c5b5c18551306a127a89924fc32df91b5b40a6",
+                        model: "gemini-nano-banana-2.1",
+                        prompt_sha256: "1899460b7f6eecca115e5273708003580ff4832fbd6758915558fa3bb5cb412f",
+                        request_id: "20261110T090916Z-1080994/1",
+                        ledger_line: 1264,
+                    ),
+                    (
+                        role: OnBlack,
+                        file: "fx_ground.chitin_spine.20261110T090944Z-1082596-1.on_black.png",
+                        sha256: "b74f0efa10d6cec83f3067b4292b09aae958b623b455e33a9e32f9ebde0c8f87",
+                        model: "gemini-nano-banana-2.1",
+                        prompt_sha256: "edb8577141dbab014bad663eec2b2e5b9cb2f8fd4b1c0b996c9009958456f8ea",
+                        request_id: "20261110T090944Z-1082596/1",
+                        ledger_line: 1268,
+                    ),
+                    (
+                        role: OnBlack,
+                        file: "fx_ground.chitin_spine.20261110T091245Z-1096361-1.on_black.png",
+                        sha256: "d5b3a5171febfcd6bf8553178cd3aa2e9f8f2b19b500fcb8093518cb5ba6b6af",
+                        model: "gemini-nano-banana-2.1",
+                        prompt_sha256: "8ca11270c7aa5fd9820a056abaf981506a88dc4151de9338e17266fc2f0c35eb",
+                        request_id: "20261110T091245Z-1096361/1",
+                        ledger_line: 1290,
+                    ),
+                ],
+            ),
+            keying: (
+                method: SilhouetteKey,
+                levels: Some((
+                    black: 3,
+                    white: 222,
+                )),
+                black_check: Some((
+                    band_px: 32,
+                    lit_border_permille: (1, 5, 1, 1),
+                    darkest_level: 0,
+                )),
+                matte: None,
+            ),
+            span: None,
+        ),
+        "ground_crack": (
+            origin: GeneratedImage(
+                sources: [
+                    (
+                        role: OnBlack,
+                        file: "fx_ground.ground_crack.20261110T004422Z-2247765-1.on_black.png",
+                        sha256: "46b5c82e01e4cc9ae048fefd6460fa5297dc2c22a524f7c0965b306d7b6fcf1d",
+                        model: "gemini-nano-banana-2.1",
+                        prompt_sha256: "4007123e0a0a37a828d33b0433226921dac50b205c426cdabf759387bbdb4e92",
+                        request_id: "20261110T004422Z-2247765/1",
+                        ledger_line: 1228,
+                    ),
+                    (
+                        role: OnBlack,
+                        file: "fx_ground.ground_crack.20261110T004525Z-2253706-1.on_black.png",
+                        sha256: "4ef0ae6821fbbe3c8a8f4dadcd6a9fd5429abb4f2fa5009e4d0b65e2d2df4a65",
+                        model: "gemini-nano-banana-2.1",
+                        prompt_sha256: "41c68355bdf46074040c5a9c34fb9ac5a0e59f4286807a6c5f826ce9a3044e84",
+                        request_id: "20261110T004525Z-2253706/1",
+                        ledger_line: 1234,
+                    ),
+                ],
+            ),
+            keying: (
+                method: LuminanceKey,
+                levels: Some((
+                    black: 3,
+                    white: 255,
+                )),
+                black_check: Some((
+                    band_px: 32,
+                    lit_border_permille: (1, 6, 1, 1),
+                    darkest_level: 0,
+                )),
+                matte: None,
+            ),
+            span: None,
+        ),
+        "spine_crack": (
+            origin: GeneratedImage(
+                sources: [
+                    (
+                        role: OnBlack,
+                        file: "fx_ground.spine_crack.20261110T091941Z-1161892-1.on_black.png",
+                        sha256: "e7e7d878ebb933f1fefcf7d0af9a7a5a4303d63661c1a2f6186fd5c1ec669dd2",
+                        model: "gemini-nano-banana-2.1",
+                        prompt_sha256: "df0a3125bfac41ceffb7760991265ec2ac78df61e1015e160af75b24ca8f8b5e",
+                        request_id: "20261110T091941Z-1161892/1",
+                        ledger_line: 1304,
+                    ),
+                    (
+                        role: OnBlack,
+                        file: "fx_ground.spine_crack.20261110T092043Z-1166097-1.on_black.png",
+                        sha256: "88386bce1b856284fdaa3b65a4c1e725586a4d7198c8f4575f75f8fe0af8a74b",
+                        model: "gemini-nano-banana-2.1",
+                        prompt_sha256: "34ed3ccb53abd27486258e162fb91185c2d15d8e398140993f4ee31bfb9ae534",
+                        request_id: "20261110T092043Z-1166097/1",
+                        ledger_line: 1306,
+                    ),
+                    (
+                        role: OnBlack,
+                        file: "fx_ground.spine_crack.20261110T092204Z-1171787-1.on_black.png",
+                        sha256: "9e09a9237d0ddc40e7dd237682512623121a5f07c51fa925eda0408139cdcd72",
+                        model: "gemini-nano-banana-2.1",
+                        prompt_sha256: "eb9676848bf266595f59f761ee50cd031a6944437d9025d56b18eef01170cdbf",
+                        request_id: "20261110T092204Z-1171787/1",
+                        ledger_line: 1308,
+                    ),
+                ],
+            ),
+            keying: (
+                method: LuminanceKey,
+                levels: Some((
+                    black: 3,
+                    white: 255,
+                )),
+                black_check: Some((
+                    band_px: 32,
+                    lit_border_permille: (1, 5, 1, 1),
+                    darkest_level: 0,
+                )),
+                matte: None,
+            ),
+            span: None,
+        ),
+    },
+)

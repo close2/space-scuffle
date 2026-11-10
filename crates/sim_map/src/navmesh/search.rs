@@ -7,9 +7,9 @@
 //! it with the radius funnel (D-6), and validates every leg with the segment predicate (D-7).
 //!
 //! # How it fits
-//! `Pathfinder::find_path_mesh`, `Pathfinder::mesh_segment_is_passable` and
-//! `Pathfinder::nearest_reachable_point_mesh` are thin wrappers over this module. Until WP9 no
-//! simulation code calls them.
+//! `Pathfinder::find_path_with_vision`, `Pathfinder::segment_is_passable` and
+//! `Pathfinder::nearest_reachable_point` are thin wrappers over this module; since WP9 every
+//! route, every route check and every unreachable-goal answer of the simulation comes from it.
 //!
 //! # Invariants
 //! - Search nodes are paths, not triangles (TA*): a triangle may be reached along several
@@ -30,7 +30,8 @@ use std::collections::BinaryHeap;
 use sim_types::{SimScalar, SimVec2};
 
 use super::cdt::NONE;
-use super::funnel::{portal_midpoints, radius_funnel, Anchor, FunnelRoute, Side};
+use super::funnel::{portal_midpoints, radius_funnel, Anchor, FunnelRoute, PullStrategy, Side};
+use super::lanes::{LaneCuts, LaneScratch, LaneWord, WORD_ROOT};
 use super::predicates::LatticePoint;
 use super::segment::{segment_clear, SegmentScratch};
 use super::{next, prev, Access, NavMesh};
@@ -60,6 +61,9 @@ struct Node {
     parent: u32,
     g: SimScalar,
     h: SimScalar,
+    /// Interned lane word of the node's portal-midpoint polyline ([`WORD_ROOT`] when the search
+    /// is not restricted to a lane).
+    word: u32,
 }
 
 /// A route found on the mesh, with what the search learned on the way.
@@ -84,32 +88,75 @@ pub struct MeshSearch {
     open: BinaryHeap<Reverse<(i64, u32, u32)>>,
     visits: Vec<u8>,
     portals: Vec<(u32, u32)>,
+    /// Flood stack of [`nearest_reachable_point`]: `(triangle, entry edge)` states.
+    flood_stack: Vec<(u32, u8)>,
+    /// Reachable cells of [`nearest_reachable_point`]: `(distance squared, cell index, x)`.
+    candidates: Vec<(u64, u32, u32)>,
     pub(crate) segment: SegmentScratch,
+    /// Word trie and word-keyed visit lists of the lane-restricted search (D-5 of plan
+    /// `2026-11-10-group-routing`).
+    lanes: LaneScratch,
     /// Funnel legs that failed the segment predicate since construction (a diagnostic, D-6).
     pub fallbacks: u64,
 }
 
-/// Distance from `p` to the segment `[a, b]`, in world units.
-fn point_segment_distance(p: SimVec2, a: SimVec2, b: SimVec2) -> SimScalar {
+/// The vector from the point of `[a, b]` nearest `p` to `p`, in world units.
+fn offset_from_segment(p: SimVec2, a: SimVec2, b: SimVec2) -> SimVec2 {
     let d = b - a;
     let length_sq = d.length_sq();
     if length_sq == SimScalar::ZERO {
-        return p.distance(a);
+        return p - a;
     }
     let t = ((p - a).dot(d) / length_sq).clamp(SimScalar::ZERO, SimScalar::ONE);
-    p.distance(a + d * t)
+    p - (a + d * t)
+}
+
+/// Distance from `p` to the segment `[a, b]`, in world units.
+fn point_segment_distance(p: SimVec2, a: SimVec2, b: SimVec2) -> SimScalar {
+    offset_from_segment(p, a, b).length()
+}
+
+/// Exact squared length of `v` in raw units, the order [`SimVec2::length`] preserves.
+fn raw_length_sq(v: SimVec2) -> u128 {
+    let (x, y) = (
+        u128::from(v.x.raw().unsigned_abs()),
+        u128::from(v.y.raw().unsigned_abs()),
+    );
+    x * x + y * y
 }
 
 /// Distance between two mesh edges, which meet at most at a shared vertex.
+// PERFORMANCE RATIONALE:
+// Why: TA* bounds every child against up to eight ancestor edges, four point-to-segment distances
+// each; a 128-bit square root per distance was the search's largest single cost (WP9 profile).
+// What: Compare the four offsets by their exact squared lengths and take one root of the least.
+// The integer root is monotonic, so the result is bit-identical to the least of four roots.
+// Trade-off: A local squared-length helper next to `SimVec2::length`.
 fn segment_distance(a: SimVec2, b: SimVec2, c: SimVec2, d: SimVec2) -> SimScalar {
-    point_segment_distance(a, c, d)
-        .min(point_segment_distance(b, c, d))
-        .min(point_segment_distance(c, a, b))
-        .min(point_segment_distance(d, a, b))
+    [
+        offset_from_segment(a, c, d),
+        offset_from_segment(b, c, d),
+        offset_from_segment(c, a, b),
+        offset_from_segment(d, a, b),
+    ]
+    .into_iter()
+    .min_by_key(|&offset| raw_length_sq(offset))
+    .map_or(SimScalar::ZERO, SimVec2::length)
 }
 
 /// How many ancestors' entry edges bound a node's `g` (see `MeshSearch::lower_bound`).
 const NAV_TA_STAR_BOUND_ANCESTORS: usize = 8;
+
+/// The lane restriction of a search (D-5 of plan `2026-11-10-group-routing`).
+#[derive(Clone, Copy)]
+struct LaneQuery<'a> {
+    cuts: &'a LaneCuts,
+    /// Interned id of the target word.
+    target: u32,
+    /// `K`: how many letters a node's word may carry beyond its longest common prefix with the
+    /// target before the node is pruned.
+    bound: u32,
+}
 
 #[derive(Clone, Copy)]
 struct Query<'a> {
@@ -125,14 +172,58 @@ struct Query<'a> {
     /// a second pass, when the first route fails the segment predicate: the check samples
     /// straight sweeps only, so it can refuse a triangle the disc crosses on a bend.
     end_checks: bool,
+    /// The lane the route must keep, or `None` for an unrestricted search.
+    lane: Option<LaneQuery<'a>>,
 }
 
 impl MeshSearch {
-    fn reset(&mut self, triangles: usize) {
+    fn reset(&mut self, triangles: usize, lane: bool) {
         self.nodes.clear();
         self.open.clear();
-        self.visits.clear();
-        self.visits.resize(3 * triangles, 0);
+        if lane {
+            self.lanes.reset_visits(triangles);
+        } else {
+            self.visits.clear();
+            self.visits.resize(3 * triangles, 0);
+        }
+    }
+
+    /// The channel of the last route returned by [`find_route`] or [`find_route_in_lane`]: the
+    /// portals it crosses, as `(left, right)` vertex pairs, start first; empty for a straight
+    /// route.
+    pub(crate) fn channel(&self) -> &[(u32, u32)] {
+        &self.portals
+    }
+
+    /// The point a node's lane word ends at: the start, or the midpoint of its entry edge.
+    fn node_point(&self, query: &Query<'_>, id: u32) -> SimVec2 {
+        let node = self.nodes[id as usize];
+        if node.parent == NONE {
+            return query.start;
+        }
+        let entry = usize::from(node.entry);
+        (query.mesh.corner(node.triangle, next(entry)).to_sim()
+            + query.mesh.corner(node.triangle, prev(entry)).to_sim())
+            / 2
+    }
+
+    /// `word` followed by the crossings of the leg `from -> to`, interned.
+    fn extend_word(&mut self, cuts: &LaneCuts, word: u32, from: SimVec2, to: SimVec2) -> u32 {
+        let lanes = &mut self.lanes;
+        let mut word = word;
+        cuts.for_each_crossing(from, to, |letter| word = lanes.push(word, letter));
+        word
+    }
+
+    /// The word of a child entered through the edge `[a, b]` of node `id`, or `None` when it
+    /// strays more than `K` letters from every prefix of the target (D-5's pruning).
+    fn child_word(&mut self, query: &Query<'_>, id: u32, a: SimVec2, b: SimVec2) -> Option<u32> {
+        let Some(lane) = query.lane else {
+            return Some(WORD_ROOT);
+        };
+        let from = self.node_point(query, id);
+        let word = self.extend_word(lane.cuts, self.nodes[id as usize].word, from, (a + b) / 2);
+        (self.lanes.excess(word) <= lane.bound).then_some(word)
     }
 
     fn push(&mut self, node: Node) {
@@ -190,10 +281,20 @@ impl MeshSearch {
             );
             if node.entry != NO_EDGE {
                 let corner = 3 - usize::from(node.entry) - k;
-                if !query
-                    .access
-                    .width(node.triangle, corner)
-                    .admits_diameter(query.radius)
+                let entry = usize::from(node.entry);
+                // D-3: a disc wedged where it starts enters every triangle it already overlaps
+                // whatever its width, so it can leave the gap it was spawned or pushed into.
+                let wedged_in = !query.start_fits
+                    && point_segment_distance(
+                        query.start,
+                        mesh.vertex(tv[next(entry)]).to_sim(),
+                        mesh.vertex(tv[prev(entry)]).to_sim(),
+                    ) < query.radius;
+                if !wedged_in
+                    && !query
+                        .access
+                        .width(node.triangle, corner)
+                        .admits_diameter(query.radius)
                 {
                     continue;
                 }
@@ -209,6 +310,9 @@ impl MeshSearch {
             {
                 continue;
             }
+            let Some(word) = self.child_word(query, id, a, b) else {
+                continue;
+            };
             let h = point_segment_distance(query.goal, a, b);
             let g = self.lower_bound(query, id, a, b);
             let entry = mesh
@@ -223,6 +327,7 @@ impl MeshSearch {
                 parent: id,
                 g,
                 h,
+                word,
             });
         }
     }
@@ -298,18 +403,57 @@ impl MeshSearch {
         })
     }
 
-    /// Whether every leg of `route` passes the segment predicate.
+    /// Whether every leg of `route` passes the segment predicate. Legs from a wedged start up to
+    /// the first waypoint where the disc fits cannot; they are held to the predicate for the
+    /// unit's centre only (D-3: a wedged unit may always work its way out; the movement layer
+    /// holds them to the terrain).
     fn is_legal(&mut self, query: &Query<'_>, route: &FunnelRoute) -> bool {
-        route.waypoints.windows(2).all(|pair| {
-            segment_clear(
-                query.mesh,
-                query.access,
-                &mut self.segment,
-                pair[0],
-                pair[1],
-                query.radius,
-            )
-        })
+        let mut wedged = !query.start_fits;
+        for pair in route.waypoints.windows(2) {
+            let clear = |scratch: &mut SegmentScratch, a, b, radius| {
+                segment_clear(query.mesh, query.access, scratch, a, b, radius)
+            };
+            if wedged {
+                wedged = !clear(&mut self.segment, pair[0], pair[0], query.radius);
+            }
+            // A wedged leg must still keep the unit's centre in open triangles.
+            let radius = if wedged {
+                SimScalar::ZERO
+            } else {
+                query.radius
+            };
+            if !clear(&mut self.segment, pair[0], pair[1], radius) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Pulls the channel in `self.portals` again with [`PullStrategy::Pinned`] after the shrunk
+    /// route `shrunk` failed the segment predicate; returns the pinned route when it is legal,
+    /// else `shrunk`, and whether the returned route is legal.
+    fn pinned_retry(
+        &mut self,
+        query: &Query<'_>,
+        start_triangle: u32,
+        shrunk: FunnelRoute,
+    ) -> (FunnelRoute, bool) {
+        let (s, g) = (
+            query.mesh.triangle_vertices(start_triangle),
+            query.mesh.triangle_vertices(query.goal_triangle),
+        );
+        let pinned = radius_funnel(
+            query.mesh,
+            (query.start, query.goal),
+            &self.portals,
+            &[s[0], s[1], s[2], g[0], g[1], g[2]],
+            (query.radius + CORNER_SAFETY_MARGIN, PullStrategy::Pinned),
+        );
+        if self.is_legal(query, &pinned) {
+            (pinned, true)
+        } else {
+            (shrunk, false)
+        }
     }
 
     /// TA* without, then if its route is illegal with, the start and goal reach checks.
@@ -346,7 +490,7 @@ impl MeshSearch {
             query.mesh.triangle_vertices(query.goal_triangle),
         );
         let end_vertices = [s[0], s[1], s[2], g[0], g[1], g[2]];
-        self.reset(query.mesh.triangle_count());
+        self.reset(query.mesh.triangle_count(), query.lane.is_some());
         self.push(Node {
             triangle: start_triangle,
             entry: NO_EDGE,
@@ -354,6 +498,7 @@ impl MeshSearch {
             parent: NONE,
             g: SimScalar::ZERO,
             h: query.start.distance(query.goal),
+            word: WORD_ROOT,
         });
         let mut best: Option<(FunnelRoute, Vec<(u32, u32)>)> = None;
         let (mut expansions, mut extra) = (0u32, 0u32);
@@ -366,13 +511,20 @@ impl MeshSearch {
             }
             let node = self.nodes[id as usize];
             if node.triangle == query.goal_triangle && node.parent != NONE {
+                // D-5: a restricted search accepts a channel only when its word is the target.
+                if let Some(lane) = query.lane {
+                    let from = self.node_point(query, id);
+                    if self.extend_word(lane.cuts, node.word, from, query.goal) != lane.target {
+                        continue;
+                    }
+                }
                 self.collect_portals(query.mesh, id);
                 let route = radius_funnel(
                     query.mesh,
                     (query.start, query.goal),
                     &self.portals,
                     &end_vertices,
-                    rho,
+                    (rho, PullStrategy::Shrunk),
                 );
                 if best.as_ref().is_none_or(|(b, _)| route.length < b.length) {
                     best = Some((route, self.portals.clone()));
@@ -381,12 +533,23 @@ impl MeshSearch {
             }
             // Counted per (triangle, entry edge) state: the first arrival in a state is always
             // expanded, so the search is complete; later arrivals explore other channels.
+            // A restricted search counts per (state, word) instead (D-5), so each word's first
+            // arrival in a state is expanded.
             let state = 3 * node.triangle as usize + usize::from(node.entry.min(2));
-            let visits = &mut self.visits[state];
-            if *visits >= NAV_TA_STAR_TRIANGLE_VISITS {
-                continue;
+            if query.lane.is_some() {
+                if !self
+                    .lanes
+                    .visit(state, node.word, NAV_TA_STAR_TRIANGLE_VISITS)
+                {
+                    continue;
+                }
+            } else {
+                let visits = &mut self.visits[state];
+                if *visits >= NAV_TA_STAR_TRIANGLE_VISITS {
+                    continue;
+                }
+                *visits += 1;
             }
-            *visits += 1;
             expansions += 1;
             self.expand(query, id);
         }
@@ -441,6 +604,49 @@ pub fn find_route(
     map: &GameMap,
     request: &PathRequestWithVision<'_>,
 ) -> Result<MeshRoute> {
+    route(mesh, search, map, request, None)
+}
+
+/// A lane restriction: the terrain's cuts, `K` of the current mesh, and the target word.
+#[derive(Debug, Clone, Copy)]
+pub struct LaneRestriction<'a> {
+    /// The terrain's cuts (D-2).
+    pub cuts: &'a LaneCuts,
+    /// `K`: the largest number of cuts any edge of the mesh crosses
+    /// ([`LaneCuts::max_edge_crossings`]).
+    pub bound: u32,
+    /// The lane word the route must have.
+    pub word: &'a LaneWord,
+}
+
+/// Finds the route of [`find_route`] restricted to one lane (D-5 of plan
+/// `2026-11-10-group-routing`): TA* whose nodes carry the lane word of their portal-midpoint
+/// polyline, which accepts a channel only when its word is `lane.word`. Nodes whose word strays
+/// more than `lane.bound` letters from every prefix of the target are pruned, and the visit cap
+/// counts per (triangle, entry edge, word). Everything else is [`find_route`]'s: the anytime
+/// budget, both passes, the pinned retry, the legality check and the fallback.
+///
+/// # Errors
+/// As [`find_route`]; [`MapError::NoPathFound`] also when no channel of that lane admits the
+/// disc (the lane is too narrow, or the word names no route between the endpoints).
+pub fn find_route_in_lane(
+    mesh: &NavMesh,
+    search: &mut MeshSearch,
+    map: &GameMap,
+    request: &PathRequestWithVision<'_>,
+    lane: &LaneRestriction<'_>,
+) -> Result<MeshRoute> {
+    route(mesh, search, map, request, Some(lane))
+}
+
+/// [`find_route`] and [`find_route_in_lane`].
+fn route(
+    mesh: &NavMesh,
+    search: &mut MeshSearch,
+    map: &GameMap,
+    request: &PathRequestWithVision<'_>,
+    restriction: Option<&LaneRestriction<'_>>,
+) -> Result<MeshRoute> {
     let access = Access::new(mesh, map, request);
     let (start_triangle, goal_triangle) = endpoints(mesh, &access, &mut search.segment, request)?;
     let (start, goal) = (request.start, request.goal);
@@ -451,16 +657,24 @@ pub fn find_route(
         fallback: false,
         expansions,
     };
-    if start_triangle == goal_triangle
-        || segment_clear(
-            mesh,
-            &access,
-            &mut search.segment,
-            start,
-            goal,
-            request.radius,
-        )
+    let lane = restriction.map(|r| LaneQuery {
+        cuts: r.cuts,
+        target: search.lanes.begin(r.word),
+        bound: r.bound,
+    });
+    let straight_in_lane = restriction.is_none_or(|r| r.cuts.word(&[start, goal]) == *r.word);
+    if straight_in_lane
+        && (start_triangle == goal_triangle
+            || segment_clear(
+                mesh,
+                &access,
+                &mut search.segment,
+                start,
+                goal,
+                request.radius,
+            ))
     {
+        search.portals.clear();
         return Ok(straight(0));
     }
     let query = Query {
@@ -479,9 +693,15 @@ pub fn find_route(
             request.radius,
         ),
         end_checks: false,
+        lane,
     };
     let (route, legal, expansions) = search.two_pass(&query, start_triangle);
     let route = route.ok_or(MapError::NoPathFound { start, goal })?;
+    let (route, legal) = if legal {
+        (route, true)
+    } else {
+        search.pinned_retry(&query, start_triangle, route)
+    };
     let turns = route
         .anchors
         .iter()
@@ -535,7 +755,9 @@ fn flood(
     // expanded once. Bit `entry` of `visits` records the state, bit 3 the start.
     search.visits.clear();
     search.visits.resize(mesh.triangle_count(), 0);
-    let mut stack: Vec<(u32, u8)> = vec![(start, NO_EDGE)];
+    let mut stack = std::mem::take(&mut search.flood_stack);
+    stack.clear();
+    stack.push((start, NO_EDGE));
     search.visits[start as usize] = 1 << NO_EDGE;
     while let Some((t, entry)) = stack.pop() {
         for k in 0..3 {
@@ -563,6 +785,7 @@ fn flood(
             }
         }
     }
+    search.flood_stack = stack;
 }
 
 /// The point nearest `request.goal` that the unit can reach, on the mesh: the centre of the
@@ -590,7 +813,8 @@ pub fn nearest_reachable_point(
         .world_to_cell(request.goal)
         .map_err(|_| MapError::InvalidGoal(request.goal))?;
     flood(search, mesh, &access, start, request.radius);
-    let mut candidates: Vec<(u64, u32, u32)> = Vec::new();
+    let mut candidates = std::mem::take(&mut search.candidates);
+    candidates.clear();
     for y in 0..map.height() {
         for x in 0..map.width() {
             let centre = map.cell_to_world_center(x, y)?;
@@ -604,7 +828,8 @@ pub fn nearest_reachable_point(
         }
     }
     candidates.sort_unstable();
-    for (_, index, x) in candidates {
+    let mut found = None;
+    for &(_, index, x) in &candidates {
         let y = index / map.width();
         let centre = map.cell_to_world_center(x, y)?;
         if segment_clear(
@@ -615,8 +840,10 @@ pub fn nearest_reachable_point(
             centre,
             request.radius,
         ) {
-            return Ok(((x, y) != start_cell).then_some(centre));
+            found = ((x, y) != start_cell).then_some(centre);
+            break;
         }
     }
-    Ok(None)
+    search.candidates = candidates;
+    Ok(found)
 }

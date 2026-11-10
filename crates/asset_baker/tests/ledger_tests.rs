@@ -9,8 +9,8 @@
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
 use asset_baker::ledger::{
-    format_utc, new_run_id, read_ledger, ApiMode, Ledger, LedgerError, LedgerEvent, LedgerHistory,
-    OperationOutcome,
+    format_utc, new_run_id, read_ledger, ApiMode, ImageRequestKind, Ledger, LedgerError,
+    LedgerEvent, LedgerHistory, OperationOutcome,
 };
 use asset_baker::VeoParameters;
 use sim_types::enums::AnimState;
@@ -366,4 +366,82 @@ fn run_ids_and_times_are_utc() {
     let id = new_run_id();
     assert!(id.contains('Z'), "{id}");
     assert!(id.ends_with(&format!("-{}", std::process::id())), "{id}");
+}
+
+/// The lines of one image-model request (plan `2026-11-09-effect-visualization.md` §6.6).
+fn image_started(request_id: &str, model: &str, kind: ImageRequestKind) -> LedgerEvent {
+    LedgerEvent::ImageRequestStarted {
+        request_id: request_id.to_string(),
+        set: "fx_test".to_string(),
+        element: "smoke_puff".to_string(),
+        model: model.to_string(),
+        mode: ApiMode::VertexExpress,
+        kind,
+        prompt_sha256: "c".repeat(64),
+        prompt: "an isolated smoke puff".to_string(),
+        source_sha256: matches!(kind, ImageRequestKind::OnWhiteEdit).then(|| "d".repeat(64)),
+    }
+}
+
+#[test]
+fn image_lines_round_trip_and_count_as_paid_starts_unless_refused_for_quota() {
+    let events = vec![
+        started("r/1", AnimState::Idle),
+        image_started("r/2", "image-model", ImageRequestKind::OnBlack),
+        LedgerEvent::ImageDownloaded {
+            request_id: "r/2".to_string(),
+            set: "fx_test".to_string(),
+            element: "smoke_puff".to_string(),
+            model: "image-model".to_string(),
+            bytes: 10,
+            sha256: "e".repeat(64),
+            width: 1024,
+            height: 1024,
+            mime_type: "image/png".to_string(),
+            path: "/images/a.png".to_string(),
+        },
+        image_started("r/3", "image-model", ImageRequestKind::OnWhiteEdit),
+        LedgerEvent::ImageRequestFailed {
+            request_id: "r/3".to_string(),
+            set: "fx_test".to_string(),
+            element: "smoke_puff".to_string(),
+            error: "HTTP 500".to_string(),
+        },
+        image_started("r/4", "image-model", ImageRequestKind::OnBlack),
+        LedgerEvent::ImageQuotaRefused {
+            request_id: "r/4".to_string(),
+            set: "fx_test".to_string(),
+            element: "smoke_puff".to_string(),
+            http_status: 429,
+            status: Some("RESOURCE_EXHAUSTED".to_string()),
+            reason: None,
+        },
+    ];
+    let (_dir, path) = ledger_with(events.clone());
+    let read: Vec<LedgerEvent> = read_ledger(&path)
+        .expect("read")
+        .into_iter()
+        .map(|r| r.event)
+        .collect();
+    assert_eq!(read, events);
+    let text = std::fs::read_to_string(&path).expect("text");
+    assert!(
+        text.contains(r#""event":"image_request_started""#),
+        "{text}"
+    );
+    assert!(text.contains(r#""kind":"on_white_edit""#), "{text}");
+    assert_eq!(
+        text.matches("source_sha256").count(),
+        1,
+        "only an edit names its source"
+    );
+
+    let history = LedgerHistory::load(&path).expect("history");
+    assert_eq!(
+        history.paid_start_models().collect::<Vec<_>>(),
+        ["fixture-model", "image-model", "image-model"],
+        "a failed image request may have been billed; a quota refusal is free"
+    );
+    assert!(events[1].clip().is_none());
+    assert_eq!(events[0].clip(), Some((SLUG, AnimState::Idle)));
 }

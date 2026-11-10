@@ -63,6 +63,8 @@ use client::battle_pipeline::session::BattleSession;
 use client::battle_presentation::BattlePresentation;
 use client::battle_selection::BattleSelection;
 use client::bubble_shader::{BubbleDomeMaterial, BubbleUniformGpu, FlipbookRegistry};
+use client::effects::runtime::EffectRuntime;
+use client::effects::systems::{EffectCatalogSource, EffectLightPool};
 use client::flipbook_clock::{battle_uniform, FlipbookClock, FlipbookPhase};
 use client::indicators::SelectionRingMaterial;
 use client::player_presentation::PlayerStyle;
@@ -81,6 +83,9 @@ use sim_types::{EntityId, RenderSnapshot};
 )]
 #[path = "support/battle_harness.rs"]
 mod battle_harness;
+
+#[path = "support/effect_fixtures.rs"]
+mod effect_fixtures;
 
 use battle_harness::{Harness, LOCAL_PLAYER};
 
@@ -361,6 +366,19 @@ fn retained_buffers(world: &World) -> Vec<Buffer> {
     if let Some(map) = world.get_resource::<MapPresentation>() {
         found.push(vector("map.objects", &map.objects));
         found.push(vector("map.sprite_images", &map.sprite_images));
+    }
+    if let Some(runtime) = world.get_resource::<EffectRuntime>() {
+        let names = [
+            "effects.cards",
+            "effects.depth",
+            "effects.order",
+            "effects.sorted",
+            "effects.decals",
+            "effects.lights",
+        ];
+        for (name, (address, capacity)) in names.into_iter().zip(runtime.frame.buffers()) {
+            found.push((name, address, capacity));
+        }
     }
     let smog = world.resource::<SmogGrid3d>();
     found.extend(smog.retained_byte_buffers());
@@ -1075,4 +1093,135 @@ fn combat_frames_reuse_effect_materials() {
         "no window of {COMBAT_FRAMES} frames in the first {MAX_COMBAT_WINDOWS} held steady combat \
          ({MIN_COMBAT_EVENTS} combat events)"
     );
+}
+
+/// Effects every impact and splash of the default battle draws in the effect-stream window:
+/// a card, a ring, a decal, a light and a particle burst.
+const STREAM_EFFECTS: &str = r#"
+    "spark": (class: Minor, event: Point, layers: [
+        (block: Sprite(texture: "flip", ramp: "red_add"), size: (scale: 0.4), duration: 0.3,
+         priority: Critical),
+        (block: Ring(texture: "solid", ramp: "green", orient: Ground, thickness: 0.3),
+         radius: (from: (scale: 0.2), to: (scale: 0.8)), duration: 0.25),
+        (block: Decal(texture: "soft_disc", ramp: "blue"), size: (scale: 0.5), duration: 1.5),
+        (block: Light(color: (1.0, 0.6, 0.3), intensity: 400.0), size: (scale: 2.0),
+         duration: 0.2, curve: "fade"),
+        (block: Particles(emitter: "chips")),
+    ]),
+    "burst": (class: Major, event: Splash, layers: [
+        (block: Sprite(texture: "soft_disc", ramp: "white"), size: (bind: SplashReach, scale: 1.0),
+         duration: 0.5, priority: Critical),
+    ])
+"#;
+
+/// The emitter of [`STREAM_EFFECTS`].
+const STREAM_EMITTERS: &str = r#""chips": (spawn: Burst(count: (base: 6, max: 6)), speed: (1.0, 2.0),
+    cone_deg: 45.0, gravity: 9.0, lifetime: (0.2, 0.5), size: (0.03, 0.06), texture: "soft_disc",
+    orient: VelocityStretched(1.0), ramp: "red_add")"#;
+
+/// Plan `2026-11-09-effect-visualization` WP4 (D-7): steady combat with an effect on every
+/// impact and splash keeps every effect buffer at its address and capacity and keeps the
+/// pooled light entities (the effects draw from retained GPU buffers, never assets or entities).
+#[test]
+fn combat_frames_with_an_effect_stream_reuse_every_effect_buffer() {
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let manifest = effect_fixtures::write_fixture_set(directory.path());
+    let vocabulary = directory.path().join("effects.ron");
+    std::fs::write(
+        &vocabulary,
+        effect_fixtures::vocabulary(
+            &manifest,
+            STREAM_EMITTERS,
+            STREAM_EFFECTS,
+            r#"impact: "spark", splash: "burst""#,
+        ),
+    )
+    .expect("the vocabulary is written");
+    let mut harness = Harness::boot_root_with(
+        &battle_harness::assets(),
+        ClientMode::LiveBattle,
+        client::runtime_battle::DEFAULT_BATTLE_SCENARIO,
+        |app| {
+            app.insert_resource(EffectCatalogSource(vocabulary.clone()));
+            // The shipped presentation blocks name shipped effects this test vocabulary does
+            // not define; the stream comes from its defaults instead.
+            if let Some(mut units) = app
+                .world_mut()
+                .get_resource_mut::<client::CatalogResource>()
+            {
+                let ids: Vec<_> = units
+                    .0
+                    .archetypes()
+                    .map(|archetype| archetype.unit_type_id)
+                    .collect();
+                for id in ids {
+                    if let Ok(archetype) = units.0.get_mut(id) {
+                        archetype.effects = sim_core::catalog::ArchetypeEffects::default();
+                    }
+                }
+            }
+        },
+    );
+    harness.frame_army();
+    settle(&mut harness, true);
+    harness.resume();
+    let start = harness.world().current_tick;
+    while tallies(&harness).combat_events == 0 {
+        harness.step(1);
+        assert!(
+            harness.world().current_tick < start + 2_000,
+            "the armies never met"
+        );
+    }
+    harness.step(COMBAT_WARM_FRAMES);
+    let lights = harness
+        .app
+        .world()
+        .resource::<EffectLightPool>()
+        .lights
+        .clone();
+    for window in 1..=MAX_COMBAT_WINDOWS {
+        reset(&mut harness);
+        let spawned_before = harness
+            .app
+            .world()
+            .resource::<EffectRuntime>()
+            .stats
+            .spawned;
+        let buffers = harness
+            .app
+            .world()
+            .resource::<EffectRuntime>()
+            .frame
+            .buffers();
+        harness.step(COMBAT_FRAMES);
+        let runtime = harness.app.world().resource::<EffectRuntime>();
+        let spawned = runtime.stats.spawned - spawned_before;
+        eprintln!(
+            "effect window {window}: {} combat events, {spawned} effects spawned, {} live, {} particles",
+            tallies(&harness).combat_events,
+            runtime.pool.live_total(),
+            runtime.particles.len()
+        );
+        assert_eq!(
+            runtime.frame.buffers(),
+            buffers,
+            "an effect buffer moved or grew"
+        );
+        assert_eq!(
+            harness.app.world().resource::<EffectLightPool>().lights,
+            lights,
+            "the light pool's entities changed"
+        );
+        for entity in &lights {
+            assert!(
+                harness.app.world().get_entity(*entity).is_ok(),
+                "a pooled light was despawned"
+            );
+        }
+        if spawned >= MIN_COMBAT_EVENTS {
+            return;
+        }
+    }
+    panic!("no window of {COMBAT_FRAMES} frames spawned {MIN_COMBAT_EVENTS} effects");
 }

@@ -1,0 +1,15 @@
+Effect contact sheet of 'shell_impact' (plan 2026-11-09-effect-visualization §6.5), made by
+`battle_capture --effect-lab shell_impact` on the production effect plugin and shaders.
+Bindings: SplashFull=0.4687, SplashMid=0.7812, SplashReach=1.25. Lifetime: 8.030 s. Capture 1280x720, battle camera at 58° pitch.
+Camera: HDR camera with bloom above 1.0 (`--hdr-bloom`, plan D-11 experiment).
+shell_impact_hdr_contact.png columns: ages 0 (0.000 s), 0.03 (0.241 s), 0.08 (0.642 s), 0.15 (1.204 s), 0.3 (2.409 s), 0.5 (4.015 s), 0.75 (6.023 s), 1 (8.030 s).
+Rows: bright ground default zoom, the same with the 1-unit grid and the bound radii (red full
+damage, yellow reach; for a line, the line and the full radius at each search point), bright
+close zoom, its reference, dark default, its reference, dark close, its reference.
+Default-zoom cells show the middle half of the frame, close-zoom cells its middle three quarters
+(a line's close-zoom cells the whole frame).
+shell_impact_hdr_sequence.png: the first 3 s on the bright ground at the default zoom, one frame every
+40 ms, read left to right, top to bottom.
+Driver: lavapipe, debug build, 2026-11-10, effects.ron of commit 1eaaf64 (round 0 data, ramps up to 6.0).
+Its LDR counterpart for the A/B is the same program without --hdr-bloom on lavapipe (scratch
+frames; statistics in ../hdr_bloom_decision.md); ldr_hdr_ab_close.png shows the close cells side by side.

@@ -155,6 +155,12 @@ pub struct SplashLine {
     /// Signed distances in world units from the origin along the axis, one search point each,
     /// in the order the game's persistent visits them.
     pub offsets: Vec<SimScalar>,
+    /// Ticks between successive searches, the persistent's `PeriodicPeriodArray` (bug B-85):
+    /// the first search lands on the release tick and search `k` lands `k × period_ticks`
+    /// ticks later. 0 lands every search on the release tick (the Hellion's flame; the
+    /// Colossus' sweep by the owner's answer to Q0064).
+    #[serde(default)]
+    pub period_ticks: u16,
 }
 
 /// The shape of a weapon's area.
@@ -236,20 +242,36 @@ impl SplashSpec {
         points: &mut Vec<SimVec2>,
     ) {
         points.clear();
-        match &self.shape {
-            SplashShape::Circle => points.push(impact),
-            SplashShape::Line(line) => {
-                let origin = match line.origin {
-                    SplashLineOrigin::Attacker => attacker,
-                    SplashLineOrigin::Target => impact,
-                };
-                let axis = match line.axis {
-                    SplashLineAxis::Along => direction,
-                    SplashLineAxis::Across => SimVec2::new(-direction.y, direction.x),
-                };
+        match self.line_frame(attacker, impact, direction) {
+            None => points.push(impact),
+            Some((line, origin, axis)) => {
                 points.extend(line.offsets.iter().map(|&offset| origin + axis * offset));
             }
         }
+    }
+
+    /// For a line splash, the line with the point its offsets are measured from and the unit
+    /// axis they lie along, for an attack as [`Self::search_points`] takes it; `None` for a
+    /// circle.
+    #[must_use]
+    pub fn line_frame(
+        &self,
+        attacker: SimVec2,
+        impact: SimVec2,
+        direction: SimVec2,
+    ) -> Option<(&SplashLine, SimVec2, SimVec2)> {
+        let SplashShape::Line(line) = &self.shape else {
+            return None;
+        };
+        let origin = match line.origin {
+            SplashLineOrigin::Attacker => attacker,
+            SplashLineOrigin::Target => impact,
+        };
+        let axis = match line.axis {
+            SplashLineAxis::Along => direction,
+            SplashLineAxis::Across => SimVec2::new(-direction.y, direction.x),
+        };
+        Some((line, origin, axis))
     }
 }
 
@@ -518,6 +540,7 @@ mod tests {
                 origin,
                 axis,
                 offsets: vec![SimScalar::from_i32(-1), SimScalar::from_i32(2)],
+                period_ticks: 0,
             }),
             friendly_fire: false,
             offset_by_unit_radius: false,

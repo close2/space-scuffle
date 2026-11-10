@@ -15,9 +15,13 @@
 #[path = "support/arena.rs"]
 mod arena;
 
+#[path = "support/radii.rs"]
+mod radii;
+use radii::{LARGE_RADIUS, SMALL_RADIUS};
+
 use sim_map::{
     CellFlags, CliffLevel, GameMap, MapCell, MapError, PathRequest, Pathfinder,
-    PlacementFailureReason, RampDir, UnitClearance,
+    PlacementFailureReason, RampDir,
 };
 use sim_types::{EntityId, SimScalar, SimVec2};
 
@@ -114,14 +118,12 @@ fn test_ramp_wall_off_geometry() {
     let req_small = PathRequest {
         start: start_pos,
         goal: goal_pos,
-        clearance: UnitClearance::Small,
-        radius: UnitClearance::Small.radius_scalar(),
+        radius: SMALL_RADIUS,
     };
     let req_large = PathRequest {
         start: start_pos,
         goal: goal_pos,
-        clearance: UnitClearance::Large,
-        radius: UnitClearance::Large.radius_scalar(),
+        radius: LARGE_RADIUS,
     };
 
     assert!(pathfinder.find_path(&map, &req_small).is_ok());

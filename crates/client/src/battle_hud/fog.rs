@@ -2,27 +2,34 @@
 //!
 //! # Responsibility
 //! [`refresh_battle_fog`] copies the viewer's knowledge from [`HudModel`] into
-//! [`BattleFog`], and [`apply_battle_fog`] makes the bubbles obey it: an enemy outside `Visible`
-//! cells is hidden, and an enemy that was being inspected stops being inspected. Enemies are hidden
-//! and not shrouded, and an enemy structure disappears with sight (decision D-10).
+//! [`BattleFog`], and [`apply_battle_fog`] makes the bubbles obey its [`Presence`]: an enemy
+//! outside `Visible` cells is hidden, an undetected burrowed enemy is hidden, an undetected
+//! cloaked enemy keeps its shimmer but loses its selection, and an enemy that was being inspected
+//! stops being inspected once it is no longer [`Presence::Shown`]. Enemies are hidden and not
+//! shrouded, and an enemy structure disappears with sight (decision D-10).
 //!
 //! # How it fits
 //! Both run in `PreparePresentation`, after scene sync, so a bubble spawned this frame is hidden
-//! on the frame it appears. Hiding is the whole mechanism: Bevy's visibility propagation carries it
-//! to the bars and rings, [`pick_unit`](crate::battle_input) skips what is not visible, and smog
-//! skips hidden bubbles, so none of those needs to know fog exists.
+//! on the frame it appears. For a hidden bubble, hiding is the whole mechanism: Bevy's visibility
+//! propagation carries it to the bars and rings, and smog skips hidden bubbles. A shimmering
+//! bubble stays visible, so the rule reaches its other readers directly: picking asks
+//! [`presence_of`](crate::battle_pipeline::fog::presence_of) itself, and this system clears the
+//! bubble's `selected` flag, which is what the ring and the health bar draw from.
 //!
 //! # Invariants
 //! - Runs only under the `Player` profile, so `Sandbox` keeps every bubble as it was.
-//! - The viewer's own bubbles are always shown. A bubble of anyone else is shown only in sight.
-//! - No enemy stays inspected once it is hidden, not even for a frame of the HUD. It is dropped
-//!   for good, so that its return to sight does not fill the panel by itself and give it away.
+//! - The viewer's own bubbles are always shown. A bubble of anyone else is shown only in sight,
+//!   and a concealed one only where the viewer detects it (plan
+//!   `2026-11-09-effect-visualization` D-5).
+//! - No enemy stays inspected once it is hidden or undetected, not even for a frame of the HUD. It
+//!   is dropped for good, so that its return to sight does not fill the panel by itself and give
+//!   it away.
 //! - O(N) in the bubbles per frame, with no allocation.
 
 use bevy::prelude::*;
 
 use super::model::HudModel;
-use crate::battle_pipeline::fog::BattleFog;
+use crate::battle_pipeline::fog::{BattleFog, Presence};
 use crate::battle_pipeline::session::BattleSession;
 use crate::battle_selection::BattleSelection;
 use crate::bubble_shader::BubbleInstance;
@@ -63,9 +70,12 @@ pub fn refresh_battle_fog(
     }
 }
 
-/// Hides what the viewer cannot see, and stops inspecting an enemy that has gone.
+/// Hides what the viewer cannot see, and stops inspecting an enemy that has gone or gone
+/// undetected.
 ///
-/// A unit is judged at the position it is drawn at, which is what the player would see.
+/// A unit is judged at the position it is drawn at, which is what the player would see. A
+/// shimmering unit stays drawn, but its `selected` flag is cleared on this frame, before the ring
+/// and the health bar read it.
 #[expect(
     clippy::needless_pass_by_value,
     reason = "Bevy passes system parameters by value"
@@ -73,18 +83,24 @@ pub fn refresh_battle_fog(
 pub fn apply_battle_fog(
     fog: Res<'_, BattleFog>,
     mut selection: ResMut<'_, BattleSelection>,
-    mut bubbles: Query<'_, '_, (&BubbleInstance, &mut Visibility), With<LiveBattleBubble>>,
+    mut bubbles: Query<'_, '_, (&mut BubbleInstance, &mut Visibility), With<LiveBattleBubble>>,
 ) {
-    for (bubble, mut visibility) in &mut bubbles {
-        let [x, y, _] = bubble.0.world_pos;
-        let shown = fog.shows(bubble.0.owner, x, y);
-        visibility.set_if_neq(if shown {
+    for (mut bubble, mut visibility) in &mut bubbles {
+        let presence = fog.presence(&bubble.0);
+        visibility.set_if_neq(if presence.is_drawn() {
             Visibility::Inherited
         } else {
             Visibility::Hidden
         });
-        if !shown && selection.inspected() == Some(bubble.0.entity_id) {
+        if presence == Presence::Shown {
+            continue;
+        }
+        if selection.inspected() == Some(bubble.0.entity_id) {
             selection.stop_inspecting();
+        }
+        // `selected` is only read through the change-detecting deref when it must change.
+        if bubble.0.selected {
+            bubble.0.selected = false;
         }
     }
 }

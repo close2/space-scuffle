@@ -760,3 +760,163 @@ checksum are re-recorded with their traced causes.
 **Register IDs.** The orchestrator's numbering replaces §D-9's: B-99 (corner rewrite and empty-leg handoff), B-100
 (a body parked on a corner), B-101 (tier radius at corners, WP4), B-102 (grid corridor in place of the triangle mesh,
 Part B).
+
+## Amendment 2 (Part B switch, 2026-11-10): orchestrator decisions
+
+Short note under charter §6, recorded before WP9 on the Part B report (evidence, "Part B, WP5 to WP8").
+
+1. **Turn emission before the switch.** WP8 found mesh polylines longer than the grid's by more than 1 % on 12 of
+   790 (radius 0.375) and 49 of 793 (radius 0.5) canyon pairs, worst 3.08 (a portal-midpoint fallback). Before WP9
+   the cause is confirmed on the worst pairs and the turns are emitted more tightly, exact and deterministic, with
+   the oracle agreement kept (every route within 1 % of the exact disc oracle, worst at most 1.01 on the seeded
+   set). Acceptance: on the WP8 comparison at most 1 % of pairs longer than the grid by more than 1 %, none by more
+   than 5 %, and every fallback counted and explained. This replaces D-6's "two tangent points above 45 degrees, one
+   point on the bisector otherwise".
+2. **Local mesh repair is out of scope for this round.** The shipped maps are 64×64 and rebuild in under 0.9 ms;
+   a 256×256 map of tiled canyons rebuilds in about 14 ms (Part B evidence). R-3's local repair stays an open item
+   for maps above 64×64 and is not a condition of WP9.
+3. **The mesh's goal check is accepted.** The mesh refuses a goal where the unit's disc does not fit, where the grid
+   tested only the goal cell's clearance tier. This is StarCraft II-like (a unit cannot stand where its body does
+   not fit) and is accepted. A refused goal goes through the unreachable-move rule (Q0052 S-4, Q0006: the unit
+   walks to the nearest reachable point), and WP9 shows that such orders still end cleanly.
+
+## Amendment 3 (WP9 held, 2026-11-10): orchestrator decisions
+
+Short note under charter §6, on the report of the Amendment 2 work (evidence, "Amendment 2, step 1").
+
+1. **Turn emission accepted.** On the canyon at radius 0.5, 16 of 793 pairs are more than 1 % longer than the
+   grid. Every one is a grid route that a disc of that radius cannot walk, and no mesh route is more than 1 %
+   longer than a legal grid route. `80a48a6` stays as the latent improvement.
+2. **WP9 is not accepted yet.** The held switch (side branch `sc2-path-wp9-held`, `7636e32`) moved the showcase
+   for player 0 as follows:
+   - ramp W foot ratio 1.064 → 1.301;
+   - reversals 11 → 253;
+   - ramp E turn 211° → 381°;
+   - the winner flips: player 1 wins at tick 1,273, against player 0 at tick 1,100;
+   - the canyon throughput scenario loses 17 % (141 → 117 ticks/s, measured unlocked).
+
+   Before the switch lands:
+   - a. Diagnose the showcase regression with traces and fix it in route following and emission (this plan's
+     side of the `locomotion.rs` split, friendly-blocking plan §4). Friendly blocking's rules are not undone.
+     Leads to trace:
+     - arc points at exactly `r + margin` whose legs graze the wall, so that `route_is_usable` and
+       `drop_passed_waypoints` reject the leg or re-plan;
+     - arc runs at the clearance limit, which leave no room for flockmates;
+     - the re-plan frequency;
+     - how a run of arc points is handed off.
+
+     Candidate fixes follow StarCraft II's reported "inside the vertices expanded by unit radius": a small extra
+     corner margin for route following, handing an arc run off as a whole, and re-planning less often.
+   - b. Recover throughput to within 10 % of the grid on the canyon scenario, by profiling:
+     - TA*'s extra expansions;
+     - the waypoint count per route (arc subdivision, `ARC_CHORD_DIP`);
+     - the extra fit check per handoff;
+     - the re-plan rate.
+
+     Measure under the gate lock, or record the noise.
+   - c. Acceptance for the switch:
+     - Showcase, player 0: the route ratio and turn in each box are no worse than base, where base is:
+       - ramp W 1.064 / 1.112 and 103° / 213°;
+       - plateau SE 1.044 / 1.093;
+       - ramp E 1.573 / 1.611 and 211°.
+     - Reversals at most base + 10.
+     - 10 of 10 in range, 0 give-ups, and the winner unchanged.
+     - The matrix and battle 33 meet the stop rules of D-12.
+     - Throughput as in b.
+3. Once the acceptance is met, WP9 lands with the goldens re-recorded and their causes traced in debug, release and
+   `wasm32-wasip1`, followed by WP10 and WP11. Until then the switch stays held.
+
+## Amendment 4 (WP9 acceptance revised, 2026-11-10): orchestrator decisions
+
+Short note under charter §6, on the diagnosis of Amendment 3 (evidence, "Amendment 3, diagnosis of the held
+switch").
+
+1. **Per-unit shortest routes stay.** Each unit paths on its own, as StarCraft II reportedly does. The showcase's
+   winner flip comes from the near-tied west and east lanes (0.35 %) splitting the armies, not from route
+   following. Group-consistent routing, an "allows more" deviation, is owner question
+   [Q0079](../questions/closed/0079-group-consistent-routing.md) (non-blocking; default: per-unit routes).
+2. **Revised acceptance for landing the switch** (replaces Amendment 3, 2.c):
+   - The showcase is judged on the lanes units actually take: route ratio and turning per box along each unit's
+     own lane, no worse than base on comparable boxes. Ramp W's lane-end turn of about 100° at (29, 12) is
+     legitimate when the lane is the west one.
+   - Reversals at most base + 10, after the defects below are fixed.
+   - 10 of 10 attackers in range at tick 900; 0 give-ups.
+   - The winner may change only because of the lane split. Then the showcase storyboard
+     (`assets/captures/showcase.ron`) must still tell a coherent story, checked with a render (`showcase_tests`,
+     GPU through the harness), with captions and scene ticks updated if needed, or the scenario's attack-move
+     targets made mirror images if that is the cleaner fix (the reason recorded).
+   - The matrix and battle 33 meet the stop rules of D-12; throughput as in 3.d.
+3. **Defects to fix first**, each with a test that is red before the fix:
+   - a. *Illegal funnel leg:* `pathfinding_properties::funnel_paths_are_legal_and_no_shorter_than_a_straight_line`
+     fails at the held switch (a leg near (9.6, 12.3)). Find and fix the cause in the mesh funnel or route layer,
+     then re-record the two `sim_map` digests (`determinism_tests::test_cross_platform_determinism_checksum`,
+     `validation_golden_tests::find_path_with_vision_matches_the_recorded_corpus_digest`) with the cause stated.
+   - b. *Surround walk toggling every tick* (228 of player 0's 255 reversals, ticks 350 to 550): fixed in friendly
+     blocking's rule with hysteresis consistent with that plan's Amendment 4, measured on main without the switch
+     too, recorded as an amendment of the friendly-blocking plan; it may land alone.
+   - c. *Ramp E corner crowding:* bodies pushed past the corner (35, 52) wait for stall re-plans; fixed in route
+     following.
+   - d. *Throughput*, under the gate lock, base `02f494b` and candidate back to back: the canyon scenario within
+     10 % of base, every scenario at least 25 ticks/s.
+4. If the acceptance is reached, WP9 lands with goldens and the sandbox checksum re-recorded and traced (debug,
+   release, `wasm32-wasip1`), then WP10 and WP11. If not, whatever is independently good lands on the main line and
+   the switch stays held on a side branch.
+
+## Amendment 5 (WP9 held, 2026-11-10): orchestrator decisions
+
+Short note under charter §6, on the report of the Amendment 4 work (evidence, "Amendment 4: defects a to d on the
+held switch").
+
+1. **Battle 31's flip from fix b is accepted.** Its claim accepts either side (friendly-blocking plan Amendment 7).
+2. **Throughput criterion relaxed** for the canyon terrain scenario (`showcase_canyon`, 400 units) from 10 % to
+   **15 %** below the grid baseline. Measured under the gate lock: 140 to 143 against 125 to 127 ticks/s, still about
+   five times real time. Every scenario must still run at 25 ticks/s or more. No further throughput work unless a
+   scenario falls below that.
+3. **The showcase's attack-move targets become mirror images of each other.** Today player 0 aims at (52.5, 52.5),
+   the corner of player 1's base ring that faces the map's centre, and player 1 at (5.5, 5.5), the corner of player
+   0's ring that faces away from it: both are the first free cell of the ring, which is not a symmetric rule. The
+   map is point-symmetric about its centre except the central plateau. The targets become images of each other under
+   that symmetry, so that the near-tied lane choice (Amendment 4, 1) is symmetric too. This is presentation scenario
+   data (`assets/scenarios/showcase.ron`). The showcase is then re-checked on the grid (main) and on the switch, and
+   the storyboard (`assets/captures/showcase.ron`) is rendered (`showcase_tests`, GPU through the harness) and its
+   scene ticks and captions adjusted if needed.
+4. **Fix defect c (ramp E corner crowding)** in route following:
+   - (i) a wedged unit whose first leg is not passable for its whole disc re-plans, bounded so that no re-plan storm
+     can start (re-plans counted per unit);
+   - (ii) an attack-move surround walk's side resets at each route corner, or is chosen on the outside of the turn
+     when the walk starts at a corner, so that a column is not carried to the inside of the turn.
+
+   The earlier attempt (evidence, Amendment 4, c) improved the ratio but worsened the maximum turn and left one unit
+   out of range; the fix is judged on all of the acceptance's rows.
+5. **Acceptance for landing the switch** (replaces Amendment 4, 2, for the showcase): with the mirrored targets, on
+   the lanes units actually take, per-box ratios and turns no worse than the grid run with the same mirrored targets
+   (both measured); reversals at most the grid's plus 10; 10 of 10 in range at tick 900; 0 give-ups; the winner
+   unchanged against the grid run with mirrored targets. The matrix and battle 33 per the stop rules of D-12;
+   throughput per 2. If reached, the switch lands as in Amendment 4, 4, followed by WP10 and WP11; if not, it stays
+   held and the numbers are reported.
+
+## Amendment 6 (WP9 accepted, 2026-11-10): orchestrator decisions
+
+Short note under charter §6, on the report of the Amendment 5 work (evidence, "Amendment 5: mirrored showcase
+targets, B-106, defect c").
+
+1. **The switch is accepted** with the mirrored showcase targets. Against the grid run with the same targets and
+   fixes: the winner is unchanged (player 0); stall give-ups 0 (grid 57, one welder's abandoned chases); ramp E,
+   player 0, ratio 1.198 / 1.300 against 1.573 / 1.611 and mean turn 190° against 211°; reversals 17 and 7, within
+   the grid's plus 10; the matrix (16 seeds) and battle 33 (68 seeds) bit-identical to the grid with the same fixes;
+   canyon throughput 11 to 13 % below the grid, within Amendment 5, 2.
+2. **Two rows of Amendment 5, 5 are missed and accepted, with reasons:**
+   - *10 of 10 in range at tick 900* is a snapshot artefact of the battle's new shape: both armies take the west
+     lane and fight there from tick 310 to 576 (9 of 9 in range at tick 430); the survivors are between targets at
+     tick 900, and 6 of 6 are in range from tick 940.
+   - *Ramp E maximum turn* (454° against the grid's 287°) is one pulse bot that the crowd wedges 0.30 from the
+     corner vertex (35, 52), inside its radius. It is filed as **B-113**, open, in the bug register.
+3. **Bug IDs.** The effects branch registered B-106 to B-111 in its WP0, so this plan's "B-106" (an attack-move
+   resumed after a chase measures progress against the chase) is renumbered **B-112**; commit `3c51afe`'s message
+   and the Amendment 5 evidence call it B-106. Defect c's wedged corner is B-113.
+4. **Q0079** (group-consistent routing) stays open with its default, per-unit routes.
+5. **Landing.** The goldens and the sandbox checksum are re-recorded on the final tree with traced causes (the
+   first divergent tick and entity for the switch, B-112 and the mirrored targets) in debug, release and
+   `wasm32-wasip1`. The showcase storyboard (`assets/captures/showcase.ron`) is restructured for the battle's new
+   shape (the armies meet in the west lane at about tick 310) and checked with a real render. WP10 and WP11 follow
+   in the same branch; the charter §4 wording for `sim_map` is proposed to the orchestrator, not edited here.

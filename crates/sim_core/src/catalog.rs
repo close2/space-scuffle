@@ -31,12 +31,16 @@ use sim_types::{
     WeaponVisualKind,
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
+mod effects;
 mod factions;
+mod movement_rules;
 mod runtime;
 mod targeting;
 mod validation;
 
+pub use effects::{ArchetypeEffects, ModeEffects, WeaponEffects};
 pub use factions::{ArmorClassDef, FactionCatalog, FactionDef, WeaponClassDef};
+pub use movement_rules::{MovementRules, MAX_LANE_TOLERANCE_PERMILLE};
 pub use runtime::{CatalogLoadError, RuntimeCatalogs};
 pub use targeting::{AcquireLevel, AcquireTieBreak, PrimaryWeapon};
 
@@ -153,7 +157,7 @@ pub struct UnitArchetype {
     /// it keeps until it has a clear way in (the surround walk, plan
     /// `2026-11-09-friendly-blocking` D-2). `StarCraft` II leaves such a unit standing for the
     /// player to move; walking round is an "allows more" deviation (Q0051), so the default `true`
-    /// rests on [Q0074](../../../docs/questions/open/0074-surround-walk.md), and `false` restores
+    /// rests on [Q0074](../../../docs/questions/closed/0074-surround-walk.md), and `false` restores
     /// the game's stand. Either way a blocked unit never vibrates: it waits (D-1).
     #[serde(default = "surround_walk_default")]
     pub surround_walk: bool,
@@ -226,6 +230,11 @@ pub struct UnitArchetype {
     /// Declarative transformation stances and operational modes (e.g. Siege Mode, Burrowed Mode).
     #[serde(default)]
     pub modes: Vec<UnitModeSpec>,
+    /// Effects this archetype chooses for its weapons, modes, statuses, abilities and death
+    /// (plan `2026-11-09-effect-visualization` §5.3). Presentation data for the client: the
+    /// simulation never reads it and no entity copies it, so it is not hashed.
+    #[serde(default)]
+    pub effects: ArchetypeEffects,
 }
 
 impl UnitArchetype {
@@ -344,6 +353,7 @@ pub struct UnitCatalog {
     archetypes: Vec<Option<UnitArchetype>>,
     slug_index: OnceLock<Vec<(String, usize)>>,
     factions: FactionCatalog,
+    movement_rules: MovementRules,
 }
 
 impl UnitCatalog {
@@ -363,6 +373,7 @@ impl UnitCatalog {
             archetypes: vec![None; 128],
             slug_index: OnceLock::new(),
             factions: factions.clone(),
+            movement_rules: MovementRules::PER_UNIT,
         };
         catalog.register_authored_batch(catalog_file.units.into_iter().map(|def| {
             def.validate()?;
@@ -376,6 +387,19 @@ impl UnitCatalog {
     #[must_use]
     pub fn factions(&self) -> &FactionCatalog {
         &self.factions
+    }
+
+    /// The movement rules of `movement_rules.ron` (group routing, plan `2026-11-10-group-routing`
+    /// D-7). [`MovementRules::PER_UNIT`] until [`Self::set_movement_rules`] replaces them;
+    /// [`RuntimeCatalogs::load_from_directory`] always loads them from the file.
+    #[must_use]
+    pub const fn movement_rules(&self) -> MovementRules {
+        self.movement_rules
+    }
+
+    /// Replaces the movement rules this catalog carries into the world.
+    pub fn set_movement_rules(&mut self, rules: MovementRules) {
+        self.movement_rules = rules;
     }
 
     /// Loads additional structures from a raw RON string and registers them into the catalog.
@@ -934,6 +958,9 @@ enum SplashShapeDef {
         axis: SplashLineAxis,
         /// Signed distances in world units, one search point each.
         offsets: Vec<f32>,
+        /// Ticks between successive searches; 0 (the default) lands them together.
+        #[serde(default)]
+        period_ticks: u16,
     },
 }
 
@@ -945,6 +972,7 @@ impl SplashShapeDef {
                 origin,
                 axis,
                 offsets,
+                period_ticks,
             } => SplashShape::Line(SplashLine {
                 origin: *origin,
                 axis: *axis,
@@ -953,6 +981,7 @@ impl SplashShapeDef {
                     .copied()
                     .map(SimScalar::from_f32_lossy)
                     .collect(),
+                period_ticks: *period_ticks,
             }),
         }
     }
@@ -1187,6 +1216,8 @@ struct UnitArchetypeDef {
     armor_class: Option<String>,
     #[serde(default)]
     modes: Vec<UnitModeSpecDef>,
+    #[serde(default)]
+    effects: ArchetypeEffects,
 }
 
 /// Converts authored degrees in `0..=180` to binary angle units (65 536 per turn).
@@ -1448,6 +1479,7 @@ impl UnitArchetypeDef {
             researches_upgrades: self.researches_upgrades,
             armor_class,
             modes,
+            effects: self.effects,
         })
     }
 }
@@ -1551,6 +1583,10 @@ struct StructureArchetypeDef {
     /// Generative Veo 3.1 video prompts.
     #[serde(default)]
     pub veo_prompts: BTreeMap<String, String>,
+    /// Effects this structure chooses (plan `2026-11-09-effect-visualization` §5.3); presentation
+    /// data, empty when omitted.
+    #[serde(default)]
+    pub effects: ArchetypeEffects,
 }
 
 impl StructureArchetypeDef {
@@ -1659,6 +1695,7 @@ impl StructureArchetypeDef {
             researches_upgrades: self.researches_upgrades,
             armor_class: None,
             modes: Vec::new(),
+            effects: self.effects,
         })
     }
 }

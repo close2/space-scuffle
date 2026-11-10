@@ -291,6 +291,59 @@ pub fn compose_and_validate(
     Ok(ValidatedShader { module, info })
 }
 
+/// Composes `source` after registering `modules` (`(path, source)` of shipped WGSL files that
+/// declare `#define_import_path`) beside Bevy's library, under the boolean `defs`, then
+/// validates it strictly. The effect shaders import `space_scuffle::effects::common` this way.
+///
+/// # Errors
+/// As [`compose_and_validate`].
+pub fn compose_with_modules(
+    path: &str,
+    source: &str,
+    defs: &[&str],
+    modules: &[(&str, String)],
+) -> Result<ValidatedShader, String> {
+    let library: HashMap<&ShaderImport, &Shader> = bevy_shader_library()
+        .iter()
+        .filter(|shader| matches!(shader.import_path(), ShaderImport::Custom(_)))
+        .map(|shader| (shader.import_path(), shader))
+        .collect();
+    let mut composer = Composer::default().with_capabilities(baseline_capabilities());
+    for (module_path, module_source) in modules {
+        let module = Shader::from_wgsl(module_source.clone(), (*module_path).to_owned());
+        for import in module.imports() {
+            add_import(&mut composer, &library, import)?;
+        }
+        let added = composer
+            .add_composable_module(naga_oil::compose::ComposableModuleDescriptor::from(&module))
+            .map(|_| ());
+        if let Err(error) = added {
+            return Err(format!(
+                "{module_path}: {}",
+                error.emit_to_string(&composer)
+            ));
+        }
+    }
+    let shader = Shader::from_wgsl(source.to_owned(), path.to_owned());
+    for import in shader.imports() {
+        add_import(&mut composer, &library, import)?;
+    }
+    let shader_defs: HashMap<String, ShaderDefValue> = defs
+        .iter()
+        .map(|def| ((*def).to_owned(), ShaderDefValue::Bool(true)))
+        .collect();
+    let module = composer
+        .make_naga_module(NagaModuleDescriptor {
+            shader_defs,
+            ..NagaModuleDescriptor::from(&shader)
+        })
+        .map_err(|error| format!("{path} {defs:?}: {}", error.emit_to_string(&composer)))?;
+    let info = Validator::new(ValidationFlags::all(), baseline_capabilities())
+        .validate(&module)
+        .map_err(|error| format!("{path} {defs:?}: {}", error.emit_to_string(source)))?;
+    Ok(ValidatedShader { module, info })
+}
+
 /// Reads a shipped shader from `assets/shaders`, the directory the game loads from.
 pub fn shipped_source(file_name: &str) -> String {
     let path = client::resolve_assets_dir().join("shaders").join(file_name);

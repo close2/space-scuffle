@@ -27,11 +27,15 @@
 #[path = "support/oracle.rs"]
 mod oracle;
 
+#[path = "support/radii.rs"]
+mod radii;
+use radii::{required_clearance, LARGE_RADIUS, MEDIUM_RADIUS, SMALL_RADIUS};
+
 use proptest::collection::vec;
 use proptest::prelude::*;
 use sim_map::{
     CellFlags, CliffLevel, GameMap, MapCell, MapError, PathRequest, PathRequestWithVision,
-    Pathfinder, Side, UnitClearance, CORNER_SAFETY_MARGIN,
+    Pathfinder, Side, CORNER_SAFETY_MARGIN,
 };
 use sim_types::{SimScalar, SimVec2};
 
@@ -61,11 +65,12 @@ fn centre(x: u32, y: u32) -> SimVec2 {
     )
 }
 
-fn tier(index: u8) -> UnitClearance {
+/// One of the three sample body radii, by index.
+fn tier(index: u8) -> SimScalar {
     match index {
-        0 => UnitClearance::Small,
-        1 => UnitClearance::Medium,
-        _ => UnitClearance::Large,
+        0 => SMALL_RADIUS,
+        1 => MEDIUM_RADIUS,
+        _ => LARGE_RADIUS,
     }
 }
 
@@ -142,7 +147,7 @@ proptest! {
             let clearance = pathfinder.clearance_at(index % SIDE, index / SIDE);
             prop_assert_eq!(clearance == 0, is_blocked);
             if !is_blocked {
-                prop_assert!(clearance >= UnitClearance::Small.required_clearance());
+                prop_assert!(clearance >= required_clearance(SMALL_RADIUS));
             }
         }
     }
@@ -164,6 +169,9 @@ proptest! {
     }
 
     /// Every returned path joins its endpoints through legal segments, and reporting is honest.
+    /// A start where the disc does not fit may always be left (plan D-3), so its first leg is
+    /// held to the predicate only when the disc fits at the start; a counted fallback to portal
+    /// midpoints is exempt.
     #[test]
     fn funnel_paths_are_legal_and_no_shorter_than_a_straight_line(
         blocked in obstacle_mask(8),
@@ -176,19 +184,36 @@ proptest! {
         let request = PathRequest {
             start: centre(start.0, start.1),
             goal: centre(goal.0, goal.1),
-            clearance: tier(tier_index),
-            radius: (tier(tier_index)).radius_scalar(),
+            radius: tier(tier_index),
         };
-        if let Ok(path) = pathfinder.find_path(&map, &request) {
+        let fallbacks = pathfinder.mesh_funnel_fallbacks();
+        let found = pathfinder.find_path(&map, &request);
+        // A counted fallback through portal midpoints (plan D-6, R-2) is exempt from legality.
+        let fell_back = pathfinder.mesh_funnel_fallbacks() != fallbacks;
+        if let Ok(path) = found {
             prop_assert_eq!(path.waypoints.first(), Some(&request.start));
             prop_assert_eq!(path.waypoints.last(), Some(&request.goal));
+            // D-3: legs from a wedged start up to the first waypoint where the disc fits are held
+            // to the predicate for the unit's centre only, as the search's own legality check
+            // holds them. A turn rounded right beside the wedged start puts its first arc point
+            // inside the disc's band along the wall that wedges it (the seed of record, start
+            // (9, 12), radius 0.625).
+            let centre_only = PathRequestWithVision {
+                radius: SimScalar::ZERO,
+                ..request.into()
+            };
+            let mut wedged = true;
             let mut measured = SimScalar::ZERO;
             for pair in path.waypoints.windows(2) {
                 measured += pair[0].distance(pair[1]);
-                prop_assert!(
-                    pathfinder.segment_is_passable(&map, &request.into(), pair[0], pair[1]),
-                    "illegal segment {:?}", pair
-                );
+                wedged = wedged
+                    && !pathfinder.segment_is_passable(&map, &request.into(), pair[0], pair[0]);
+                let legal = if wedged {
+                    pathfinder.segment_is_passable(&map, &centre_only, pair[0], pair[1])
+                } else {
+                    pathfinder.segment_is_passable(&map, &request.into(), pair[0], pair[1])
+                };
+                prop_assert!(fell_back || legal, "illegal segment {:?} (wedged {})", pair, wedged);
             }
             prop_assert_eq!(measured, path.total_length);
             let straight = request.start.distance(request.goal);
@@ -196,7 +221,8 @@ proptest! {
         }
     }
 
-    /// Reachability is symmetric: terrain has no one-way doors.
+    /// Reachability is symmetric: terrain has no one-way doors. Compared where both endpoints
+    /// take the disc: a wedged start may be left (D-3) while the same point is refused as a goal.
     #[test]
     fn reachability_is_symmetric(
         blocked in obstacle_mask(5),
@@ -206,23 +232,26 @@ proptest! {
     ) {
         let map = build_map(&blocked)?;
         let mut pathfinder = Pathfinder::new(&map);
-        let clearance = tier(tier_index);
+        let radius = tier(tier_index);
         let forward = PathRequest {
             start: centre(start.0, start.1),
             goal: centre(goal.0, goal.1),
-            clearance,
-            radius: clearance.radius_scalar(),
+            radius,
         };
         let backward = PathRequest {
             start: forward.goal,
             goal: forward.start,
-            clearance,
-            radius: clearance.radius_scalar(),
+            radius,
         };
-        prop_assert_eq!(
-            pathfinder.find_path(&map, &forward).is_ok(),
-            pathfinder.find_path(&map, &backward).is_ok()
-        );
+        let fits = |pathfinder: &mut Pathfinder, at: SimVec2| {
+            pathfinder.segment_is_passable(&map, &forward.into(), at, at)
+        };
+        if fits(&mut pathfinder, forward.start) && fits(&mut pathfinder, forward.goal) {
+            prop_assert_eq!(
+                pathfinder.find_path(&map, &forward).is_ok(),
+                pathfinder.find_path(&map, &backward).is_ok()
+            );
+        }
     }
 
     /// Searching twice with reused buffers gives the same result as a fresh pathfinder.
@@ -237,14 +266,12 @@ proptest! {
         let distraction = PathRequest {
             start: centre(first.0, first.1),
             goal: centre(second.0, second.1),
-            clearance: UnitClearance::Small,
-            radius: UnitClearance::Small.radius_scalar(),
+            radius: SMALL_RADIUS,
         };
         let target = PathRequest {
             start: distraction.goal,
             goal: distraction.start,
-            clearance: UnitClearance::Medium,
-            radius: UnitClearance::Medium.radius_scalar(),
+            radius: MEDIUM_RADIUS,
         };
         let _discarded = reused.find_path(&map, &distraction);
         let after_reuse = reused.find_path(&map, &target);
@@ -273,7 +300,6 @@ fn mesh_request(
     PathRequestWithVision {
         start,
         goal,
-        clearance: UnitClearance::for_radius(radius),
         radius,
         vision: None,
         block_unexplored_ramps: false,
@@ -317,7 +343,7 @@ fn compare_with_oracle(
         return Ok(Some(FALLBACK));
     }
     for pair in route.waypoints.windows(2) {
-        if !pathfinder.mesh_segment_is_passable(map, &request, pair[0], pair[1]) {
+        if !pathfinder.segment_is_passable(map, &request, pair[0], pair[1]) {
             return Err(format!("leg {pair:?} fails the segment predicate"));
         }
     }
@@ -490,4 +516,68 @@ fn mesh_route_lengths_are_within_one_percent_of_the_oracle() {
     assert!(fallbacks * 50 <= total, "{fallbacks}/{total} fell back");
     assert!(worst <= MESH_RATIO_BOUND, "worst ratio {worst}");
     assert!(share >= 0.95, "only {within}/{total} within 1 %");
+}
+
+/// The legality law of `funnel_paths_are_legal_and_no_shorter_than_a_straight_line`, for one
+/// route: legs from a wedged start are held to the predicate for the centre only (D-3).
+fn route_is_legal(
+    pathfinder: &mut Pathfinder,
+    map: &GameMap,
+    request: &PathRequestWithVision<'_>,
+    waypoints: &[SimVec2],
+) -> bool {
+    let centre_only = PathRequestWithVision {
+        radius: SimScalar::ZERO,
+        ..*request
+    };
+    let mut wedged = true;
+    waypoints.windows(2).all(|pair| {
+        wedged = wedged && !pathfinder.segment_is_passable(map, request, pair[0], pair[0]);
+        let leg_request = if wedged { &centre_only } else { request };
+        pathfinder.segment_is_passable(map, leg_request, pair[0], pair[1])
+    })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+
+    /// The lane-restricted search (group-routing WP2): asked for the unrestricted route's own
+    /// lane it returns exactly that route (H-4); asked for the lane of a detour through a third
+    /// point, any route it returns carries that lane's word and is legal (or a counted fallback).
+    #[test]
+    fn restricted_routes_are_legal_and_carry_their_target_word(
+        blocked in obstacle_mask(7),
+        start in (0..SIDE, 0..SIDE),
+        via in (0..SIDE, 0..SIDE),
+        goal in (0..SIDE, 0..SIDE),
+        tier_index in 0_u8..2,
+    ) {
+        let map = build_map(&blocked)?;
+        let mut pathfinder = Pathfinder::new(&map);
+        let radius = tier(tier_index);
+        let (start, via, goal) = (centre(start.0, start.1), centre(via.0, via.1), centre(goal.0, goal.1));
+        let request = mesh_request(start, goal, radius);
+        let Ok(free) = pathfinder.find_path_with_vision(&map, &request) else {
+            return Ok(());
+        };
+        let own = pathfinder.lane_word(&free.waypoints);
+        prop_assert_eq!(pathfinder.find_path_in_lane(&map, &request, &own), Ok(free));
+        let (Ok(first), Ok(second)) = (
+            pathfinder.find_path_with_vision(&map, &mesh_request(start, via, radius)),
+            pathfinder.find_path_with_vision(&map, &mesh_request(via, goal, radius)),
+        ) else {
+            return Ok(());
+        };
+        let mut detour = first.waypoints;
+        detour.extend_from_slice(&second.waypoints[1..]);
+        let lane = pathfinder.lane_word(&detour);
+        let fallbacks = pathfinder.mesh_funnel_fallbacks();
+        if let Ok(routed) = pathfinder.find_path_in_lane(&map, &request, &lane) {
+            let fell_back = pathfinder.mesh_funnel_fallbacks() != fallbacks;
+            prop_assert_eq!(pathfinder.lane_word(&routed.waypoints), lane);
+            prop_assert_eq!(routed.waypoints.first(), Some(&start));
+            prop_assert_eq!(routed.waypoints.last(), Some(&goal));
+            prop_assert!(fell_back || route_is_legal(&mut pathfinder, &map, &request, &routed.waypoints));
+        }
+    }
 }

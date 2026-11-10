@@ -34,6 +34,9 @@
 //!   and the checks behind the audit's `Verified` status.
 //! - [`media_audit`]: The read-only audit of installed media; `--strict` over the required set.
 //! - [`procedural_generator`]: Pure-Rust sprite synthesizers that produce test fixtures only.
+//! - [`effects`]: The effect-texture pipeline: authored noise sheets, keying on black, channel
+//!   packing, texture sets with provenance, contact sheets, and the image-model client
+//!   (plan `2026-11-09-effect-visualization.md` §6).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -42,6 +45,7 @@
 pub mod assets_root;
 pub mod budget;
 pub mod clip_review;
+pub mod effects;
 pub mod error;
 pub mod ffmpeg_importer;
 pub mod framing;

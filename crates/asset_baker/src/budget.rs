@@ -21,6 +21,9 @@
 //!   error, never a free generation. A start the service refused for quota costs nothing.
 //! - A refusal names the amounts that caused it; nothing is spent when it is returned.
 //! - The budget and prices are data: changing them needs no rebuild (charter §3.3).
+//! - Image-model requests for effect textures (`image_request_started` lines, plan
+//!   `2026-11-09-effect-visualization.md` §6.6) are paid starts like Veo starts, counted at
+//!   their own model's price against the same total.
 
 use crate::ledger::LedgerHistory;
 use serde::Deserialize;
@@ -392,5 +395,10 @@ mod tests {
                 .expect("the default model is priced"),
             40
         );
+        // Image models (effect plan §6.6): budgeted at the dearer model's 2K price, $0.101,
+        // rounded up to 11 cents.
+        for model in ["gemini-nano-banana-2.1", "gemini-3.1-flash-image"] {
+            assert_eq!(config.price_cents(model).expect("image model priced"), 11);
+        }
     }
 }

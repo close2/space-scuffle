@@ -41,3 +41,13 @@ keys our keys are:
 **Recommendation.** Option 1 until a player asks; option 3 is the smaller step if the difference matters.
 
 ## Answer
+
+**Option 1 (Keep positional keys).**
+
+**Engine insight:** Because `space-scuffle` uses `WASD` for camera movement, adopting StarCraft II's "Standard" mnemonic per-ability hotkeys (Option 2) would collide directly with camera panning (`D` for Unsiege, `A` for Attack, `S` for Stop). Keeping positional keys (`Q E R T Y / F G J K L / Z C V B N`, closely analogous to StarCraft II's built-in "Grid" hotkey profile) ensures zero collisions with camera controls and mixed-selection cards.
+
+## Resolution
+
+2026-11-10. Option 1: no change. The command card's keys were already positional
+(`crates/client/src/input_bindings.rs`), as the answer keeps them. Plan
+`2026-11-05-sc2-deviation-fixes` Amendment 24, item 5.

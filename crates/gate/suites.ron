@@ -85,8 +85,14 @@ SuiteCatalog(
         "client/battle_hud_window_tests": (class: Gpu),
         "client/battle_result_window_tests": (class: Gpu),
         "client/combat_fx_slot_gpu_tests": (class: Gpu),
+        "client/concealment_gpu_tests": (class: Gpu),
         "client/dome_fill_tests": (class: Gpu),
         "client/editor_app_tests": (class: Gpu, test_threads: Some(2)),
+        // The effect blocks (plan 2026-11-09-effect-visualization WP4): one child, eight shots.
+        "client/effect_gpu_tests": (class: Gpu),
+        // The slice's effects (WP6b): three parents, three lab children each, at 1280x720. One
+        // thread: each child is a whole client, and on lavapipe they would run at once.
+        "client/effect_slice_gpu_tests": (class: Gpu, test_threads: Some(1)),
         "client/flipbook_clock_gpu_tests": (class: Gpu),
         // On lavapipe (CI) a GPU child keeps its textures in host memory and no GPU lock
         // serializes the children, so each test thread runs a whole client at once: four threads
@@ -120,7 +126,7 @@ SuiteCatalog(
 
         // Valgrind: counts the live battle sync's steady-state allocations.
         "client/sync_allocation_count_tests": (class: Valgrind, triggers: [
-            "crates/client/src/{battle_pipeline/**,presentation.rs,runtime_battle/**,player_presentation/**}",
+            "crates/client/src/{battle_pipeline/**,presentation.rs,runtime_battle/**,player_presentation/**,effects/**}",
         ]),
     },
 
@@ -130,13 +136,18 @@ SuiteCatalog(
     rules: [
         (
             name: "GPU renderer",
-            paths: ["crates/client/src/{bubble_shader.rs,bubble_optics.rs,render_compatibility.rs,flipbook_clock.rs,vfx.rs,vfx/**,terrain/**,smog/**,camera.rs,lab_stage.rs,scene_controller.rs,editor/**}"],
+            paths: ["crates/client/src/{bubble_shader.rs,bubble_optics.rs,render_compatibility.rs,flipbook_clock.rs,vfx.rs,vfx/**,effects/**,terrain/**,smog/**,camera.rs,lab_stage.rs,scene_controller.rs,editor/**}"],
             targets: ["client/@gpu"],
         ),
         (
             name: "HUD windows",
             paths: ["crates/client/src/battle_hud/**", "crates/client/src/battle_presentation.rs"],
-            targets: ["client/battle_hud_window_tests", "client/battle_result_window_tests"],
+            targets: [
+                "client/battle_hud_window_tests",
+                "client/battle_result_window_tests",
+                // The fog's detection rule is applied to the bubbles in `battle_hud/fog.rs`.
+                "client/concealment_gpu_tests",
+            ],
         ),
         (
             name: "live sync",
@@ -145,6 +156,7 @@ SuiteCatalog(
                 "client/sync_allocation_count_tests",
                 "client/skirmish_match_tests",
                 "client/runtime_battle_tests",
+                "client/concealment_gpu_tests",
             ],
         ),
         (
@@ -166,12 +178,20 @@ SuiteCatalog(
                 "asset_baker/media_tests",
                 "asset_baker/provenance_tests",
                 "asset_baker/prompt_tests",
+                "asset_baker/effect_texture_tests",
+                "asset_baker/effect_veo_tests",
                 "client/player_presentation_tests",
                 "client/runtime_media_tests",
                 "client/lab_scene_tests",
                 "client/round2_visual_tests",
                 "client/battle_card_tests",
                 "client/battle_mode_tests",
+                "client/concealment_gpu_tests",
+                // `effects.ron` and the units' presentation blocks.
+                "client/effect_catalog_tests",
+                "client/effect_runtime_tests",
+                "client/effect_gpu_tests",
+                "client/effect_slice_gpu_tests",
                 "client_diagnostics/showcase_storyboard_tests",
             ],
         ),
@@ -189,10 +209,13 @@ SuiteCatalog(
         ),
         (
             name: "media",
-            paths: ["assets/{media,videos,textures,ai_keyframes,source_art}/**"],
+            paths: ["assets/{media,videos,textures,ai_keyframes,source_art,effects}/**"],
             targets: [
                 "asset_baker/media_tests",
                 "asset_baker/bake_integrity_tests",
+                "asset_baker/effect_texture_tests",
+                "asset_baker/image_client_tests",
+                "asset_baker/effect_veo_tests",
                 "asset_baker/provenance_tests",
                 "asset_baker/terrain_assets_tests",
                 "client/runtime_media_tests",
@@ -209,7 +232,7 @@ SuiteCatalog(
         (
             // C15 to C20 and C24 read these files; `always` already runs the checks.
             name: "charter documents",
-            paths: ["DESIGN.md", "AGENTS.md", "CLAUDE.md", "README.md", "docs/plans/README.md"],
+            paths: ["DESIGN.md", "AGENTS.md", "CLAUDE.md", "README.md", "LICENSE", "docs/plans/README.md"],
             targets: ["workspace_checks/@fast"],
         ),
         (
@@ -269,6 +292,9 @@ SuiteCatalog(
             "client/lib",
             "client/battle_flipbook_tests",
             "client/editor_core_tests",
+            "client/effect_catalog_tests",
+            "client/effect_runtime_tests",
+            "client/effect_slice_gpu_tests",
             "client/headless_tests",
             "client/round2_visual_tests",
             "client/skirmish_match_tests",
@@ -290,6 +316,7 @@ SuiteCatalog(
             "sim_core/construction_lifecycle_tests",
             "sim_core/damage_and_shields_tests",
             "sim_core/determinism_lockstep_tests",
+            "sim_core/effect_snapshot_tests",
             "sim_core/fixed_body_transactions_tests",
             "sim_core/flee_and_evasion_tests",
             "sim_core/fog_of_war_pathfinding_tests",

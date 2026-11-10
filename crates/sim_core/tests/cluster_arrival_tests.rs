@@ -3,11 +3,14 @@
 //! registered foundations, supply and transport lifecycles remain authoritative.
 
 use sim_core::{catalog::RuntimeCatalogs, SimWorld};
-use sim_map::{CliffLevel, GameMap, MapCell, MapFile, PathRequest, UnitClearance};
+use sim_map::{CliffLevel, GameMap, MapCell, MapFile, PathRequest};
 use sim_types::{
     EntityId, MoverType, PlayerCommand, PlayerId, PlayerSlot, ShapeKind, SimScalar, SimVec2, Tick,
     TickBundle, UnitOrder, UnitTypeId,
 };
+
+/// Radius 0.375 in world units: the smallest infantry body.
+const SMALL_RADIUS: SimScalar = SimScalar::from_raw(3 << 29);
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 const SEED: u64 = 0x52_2026_1028;
@@ -120,13 +123,15 @@ fn authored_cliff_groups_follow_real_ramp_and_replay_exactly() -> TestResult {
             );
             let (mut first, kind) = world(map.clone(), MoverType::Ground, fog)?;
             let (mut second, second_kind) = world(map, MoverType::Ground, fog)?;
+            // The route goes round by the ramp. Asked for a Small body: the mesh refuses a goal
+            // where the whole disc does not fit (sc2 pathfinding Amendment 2), and a Medium disc
+            // does not fit at the goal's cell centre beside the cliff.
             let path = first.pathfinder.find_path(
                 &first.map,
                 &PathRequest {
                     start,
                     goal,
-                    clearance: UnitClearance::Medium,
-                    radius: UnitClearance::Medium.radius_scalar(),
+                    radius: SMALL_RADIUS,
                 },
             )?;
             assert!(path.waypoints.iter().any(|p| p.y >= SimScalar::from_num(8)));

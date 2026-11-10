@@ -36,6 +36,7 @@
 //! - A run whose environment contradicts its declared display path writes nothing.
 
 pub mod display;
+pub mod effect_stress;
 pub mod fixture;
 pub mod recorder;
 pub mod report;
@@ -95,6 +96,24 @@ pub struct FrameBudgetOptions {
     /// run is never a figure of record.
     #[arg(long)]
     pub render_diagnostics: bool,
+    /// Effect stress mode (plan `2026-11-09-effect-visualization` §10.3): this many splash
+    /// events per second of game time over the battle, round-robin over every weapon whose
+    /// presentation block names a splash effect ([`effect_stress`]).
+    #[arg(long, value_name = "PER_SECOND")]
+    pub effect_stress: Option<u32>,
+    /// Screenshot (PNG) of the frame at the middle of the window (the first frame of a
+    /// `--measure-frames` run), with the effect coverage of that frame in the report. The
+    /// capture's readback adds work to one frame.
+    #[arg(long, value_name = "PNG")]
+    pub capture: Option<PathBuf>,
+    /// Simulation tick of the `--capture` frame, instead of the middle of the window (the
+    /// fight thins out as it goes on; an early tick shows the crowd).
+    #[arg(long, value_name = "TICK")]
+    pub capture_tick: Option<u32>,
+    /// The plan's D-11 experiment: an HDR camera with a bloom only values above 1.0 feed
+    /// ([`crate::hdr_bloom`]).
+    #[arg(long)]
+    pub hdr_bloom: bool,
 }
 
 /// Smallest window side `--resolution` accepts, in physical pixels.
@@ -292,6 +311,9 @@ pub enum FrameBudgetError {
     /// The report could not be built or written.
     #[error(transparent)]
     Report(#[from] report::ReportError),
+    /// `--effect-stress` was asked for, but no unit's presentation block names a splash effect.
+    #[error("--effect-stress: no weapon of the unit catalog names a splash effect")]
+    NoStressSource,
 }
 
 impl FrameBudgetSpec {
@@ -424,6 +446,7 @@ pub fn run(options: &FrameBudgetOptions) -> Result<report::FrameBudgetReport, Fr
     if options.render_diagnostics {
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
     }
+    let stressed = add_variant(&mut app, options, &spec);
     app.world_mut()
         .resource_mut::<client::LabState>()
         .battle_paused = true;
@@ -454,6 +477,7 @@ pub fn run(options: &FrameBudgetOptions) -> Result<report::FrameBudgetReport, Fr
     if !exit.is_success() {
         return Err(FrameBudgetError::ExitedEarly(exit));
     }
+    let effect_stress = stress_summary(options, stressed.as_ref())?;
     let environment = report::RunEnvironment {
         commit: source_commit(),
         adapter: recorded.adapter,
@@ -475,11 +499,59 @@ pub fn run(options: &FrameBudgetOptions) -> Result<report::FrameBudgetReport, Fr
             combat_window_ticks: spec.combat_window_ticks,
             environment,
             gpu_passes: recorded.gpu_passes,
+            variant: report::RunVariant {
+                hdr_bloom: options.hdr_bloom,
+                effect_stress,
+            },
         },
         recorded.samples,
     )?;
     report.save(&options.out)?;
     Ok(report)
+}
+
+/// Adds the D-11 camera and the effect stress mode to `app` as `options` ask; returns the
+/// stress mode's handle if it (or a capture) was installed.
+fn add_variant(
+    app: &mut App,
+    options: &FrameBudgetOptions,
+    spec: &FrameBudgetSpec,
+) -> Option<effect_stress::StressHandle> {
+    if options.hdr_bloom {
+        app.add_plugins(crate::hdr_bloom::HdrBloomPlugin);
+    }
+    let stressed = options.effect_stress.is_some() || options.capture.is_some();
+    stressed.then(|| {
+        effect_stress::install(
+            app,
+            effect_stress::StressConfig {
+                rate_per_second: options.effect_stress.unwrap_or(0),
+                capture: options.capture.clone(),
+                capture_tick: options.capture_tick.unwrap_or_else(|| {
+                    options.measure_frames.map_or(spec.measure_ticks / 2, |_| 0)
+                }),
+            },
+        )
+    })
+}
+
+/// The stress mode's report section, if it was installed.
+///
+/// # Errors
+/// [`FrameBudgetError::NoStressSource`] when a stream was asked for and no weapon names a
+/// splash effect.
+fn stress_summary(
+    options: &FrameBudgetOptions,
+    handle: Option<&effect_stress::StressHandle>,
+) -> Result<Option<effect_stress::StressSummary>, FrameBudgetError> {
+    let Some(handle) = handle else {
+        return Ok(None);
+    };
+    let summary = handle.snapshot();
+    if options.effect_stress.is_some_and(|rate| rate > 0) && summary.sources.is_empty() {
+        return Err(FrameBudgetError::NoStressSource);
+    }
+    Ok(Some(summary))
 }
 
 /// The `assets/` directory of the source tree this tool was built from.

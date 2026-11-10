@@ -23,14 +23,17 @@ use crate::combat::{
     charge_random_delay, mitigate_weapon_strike, raw_strike_damage, shares_combat_plane,
     splash_raw_damage, step_entity_weapon, WeaponTarget,
 };
-use crate::entity::{ActiveProjectile, Entity, PendingStrikes, WeaponPhase};
+use crate::entity::{
+    ActiveProjectile, Entity, PendingLine, PendingLineView, PendingStrikes, WeaponPhase,
+};
 use crate::weapon_timing::{resolve_attack_period, AttackRate, SimulationDiagnostic};
+use crate::world::presentation::{weapon_source, PresentationWorkspace};
 use crate::world::SimWorld;
 use sim_map::{PlayerVisionMap, SimMap};
 use sim_types::{
-    CombatEventVisual, EntityId, MoverType, PerPlayer, PlayerId, PlayerUpgradeState,
-    ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, Tick, UnitOrder, UnitTypeId,
-    WeaponVisualKind,
+    CombatEventVisual, EffectSource, EntityId, LineView, MoverType, PerPlayer, PlayerId,
+    PlayerUpgradeState, ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, SplashShape,
+    Tick, UnitOrder, UnitTypeId, WeaponVisualKind,
 };
 
 /// Lowest impact distance used for flight timing, so a point-blank launch still takes a tick.
@@ -62,6 +65,8 @@ struct PreparedShot {
     /// Strikes of `weapon` this shot lands: all of them on a release whose strikes land
     /// together, one on a release that spaces them and on each later strike.
     strikes: u8,
+    /// The attacker's type and weapon, for the shot's renderer events.
+    source: EffectSource,
 }
 
 /// Provenance of a hit, borrowed from a prepared shot or a landed projectile.
@@ -74,6 +79,8 @@ struct HitSource<'a> {
     origin: SimVec2,
     /// Strikes of `weapon` the hit applies to its target.
     strikes: u8,
+    /// The attacker's type and weapon, for the hit's renderer events.
+    effect: EffectSource,
 }
 
 /// Where a direct hit landed, for the area damage and visuals that follow it.
@@ -85,6 +92,15 @@ struct ResolvedHit {
     plane: MoverType,
     /// Collision radius of the struck target in world units; zero for a hit on a point.
     radius: SimScalar,
+}
+
+/// Where an area strikes: the plane it reaches, the direction its hits come from, and the
+/// target it spares because a direct hit struck it already.
+#[derive(Clone, Copy)]
+struct AreaStrike {
+    plane: MoverType,
+    angle: SimAngle,
+    primary: Option<EntityId>,
 }
 
 /// Outcome of advancing one projectile by a tick.
@@ -114,6 +130,8 @@ pub(crate) struct CombatWorkspace {
     splash_hits: Vec<(EntityId, SimScalar)>,
     /// Centres of the current splash's searches (one for a circle, one per offset for a line).
     splash_points: Vec<SimVec2>,
+    /// Units with pending line searches this tick, in `EntityId` order.
+    line_owners: Vec<EntityId>,
     finished_projectiles: Vec<(usize, ProjectileStep)>,
 }
 
@@ -187,11 +205,52 @@ fn hit_angle(origin: SimVec2, target: SimVec2) -> SimAngle {
     SimAngle::atan2(origin.y - target.y, origin.x - target.x)
 }
 
+/// The line a line splash's searches lie on, for their renderer events: the point its offsets
+/// are measured from, that point moved by the largest offset, and the spacing of its first two
+/// offsets, in world units; `None` for a circle. `attacker`, `impact` and `direction` are those of
+/// [`SplashSpec::line_frame`].
+fn splash_line_view(
+    splash: &SplashSpec,
+    attacker: SimVec2,
+    impact: SimVec2,
+    direction: SimVec2,
+) -> Option<(SimVec2, SimVec2, SimScalar)> {
+    splash
+        .line_frame(attacker, impact, direction)
+        .map(|(line, origin, axis)| {
+            let far = line
+                .offsets
+                .iter()
+                .copied()
+                .max()
+                .unwrap_or(SimScalar::ZERO);
+            let spacing = match line.offsets.as_slice() {
+                [first, second, ..] => (*second - *first).abs(),
+                _ => SimScalar::ZERO,
+            };
+            (origin, origin + axis * far, spacing)
+        })
+}
+
+/// The radii in world units of `splash`'s innermost, middle and outermost zones, as a
+/// `SplashVisual` publishes them; with fewer than three zones the middle is the innermost.
+fn splash_zone_radii(splash: &SplashSpec) -> [f32; 3] {
+    let radius = |index: usize| {
+        splash
+            .zones
+            .get(index)
+            .map_or(0.0, |zone| zone.radius.to_f32())
+    };
+    let last = splash.zones.len().saturating_sub(1);
+    [radius(0), radius(last / 2), splash.reach().to_f32()]
+}
+
 /// Lands one strike of `weapon` carrying `raw` damage (before armour) on `target`.
 ///
 /// The target's barrier, if its archetype has one, absorbs first (B-41). What it lets through
 /// is mitigated by shields and armour and applied. A strike the barrier absorbs whole deals
-/// nothing: no 0.5 minimum, no hit flash, and the regeneration delays keep running.
+/// nothing: no 0.5 minimum, no hit flash, and the regeneration delays keep running. A barrier
+/// that absorbs any of the strike is noted in `presentation` for the render snapshot.
 fn strike_through_barrier(
     target: &mut Entity,
     target_arch: &UnitArchetype,
@@ -199,10 +258,15 @@ fn strike_through_barrier(
     weapon: &WeaponSpec,
     raw: SimScalar,
     angle: SimAngle,
+    presentation: &mut PresentationWorkspace,
 ) {
-    let raw = target
+    let passed = target
         .barrier
         .absorb(target_arch.capabilities.barrier.as_ref(), raw);
+    if passed < raw {
+        presentation.record_barrier_hit(target.id);
+    }
+    let raw = passed;
     if raw <= SimScalar::ZERO {
         return;
     }
@@ -223,6 +287,7 @@ impl SimWorld {
     /// normal `step_into` establishes this precondition once for its phase sequence.
     pub fn step_weapons_and_projectiles(&mut self) {
         self.capture_target_snapshots();
+        self.advance_pending_lines();
         self.advance_weapon_cycles();
 
         let mut shots = std::mem::take(&mut self.combat.shots);
@@ -232,6 +297,106 @@ impl SimWorld {
         self.combat.shots = shots;
 
         self.advance_projectiles();
+    }
+
+    /// Counts down every unit's pending line searches ([`Entity::pending_line`], B-85) and lands
+    /// the ones that fall due, in `EntityId` order.
+    ///
+    /// It runs before this tick's releases, so a line released on a tick waits its whole first
+    /// period. The line ends when its attacker dies,
+    /// boards a transport, starts a mode change (channeling) or no longer resolves a weapon with
+    /// an area against the line's plane; each search uses the weapon as it resolves now.
+    fn advance_pending_lines(&mut self) {
+        let mut owners = std::mem::take(&mut self.combat.line_owners);
+        owners.clear();
+        owners.extend(
+            self.entities
+                .iter()
+                .filter(|(_, entity)| entity.pending_line.is_some())
+                .map(|(&id, _)| id),
+        );
+        for &id in &owners {
+            let Some(entity) = self.entities.get_mut(&id) else {
+                continue;
+            };
+            let Some(mut pending) = entity.pending_line.take() else {
+                continue;
+            };
+            if pending.ticks_until_next > 1 {
+                pending.ticks_until_next -= 1;
+                entity.pending_line = Some(pending);
+                continue;
+            }
+            let Some((weapon, slug)) = self.pending_line_weapon(id, pending.plane) else {
+                continue;
+            };
+            let Some(splash) = weapon.splash.as_ref() else {
+                continue;
+            };
+            if pending.points.is_empty() {
+                continue;
+            }
+            let view = pending.view;
+            let index = view
+                .count
+                .saturating_sub(u8::try_from(pending.points.len()).unwrap_or(u8::MAX));
+            let point = pending.points.remove(0);
+            let Some(owner) = self.entities.get(&id).map(|entity| entity.owner) else {
+                continue;
+            };
+            let source = HitSource {
+                weapon: &weapon,
+                slug: Some(&slug),
+                owner,
+                attacker: Some(id),
+                origin: point,
+                strikes: 1,
+                effect: view.effect,
+            };
+            let area = AreaStrike {
+                plane: pending.plane,
+                angle: pending.angle,
+                primary: Some(pending.primary),
+            };
+            self.emit_search_visuals(
+                source,
+                splash,
+                pending.plane,
+                view.line,
+                &[point],
+                (index, view.count),
+            );
+            self.strike_area(source, splash, area, &[point], Some(&mut pending.struck));
+            let period = match &splash.shape {
+                SplashShape::Line(line) => line.period_ticks,
+                SplashShape::Circle => 0,
+            };
+            if !pending.points.is_empty() && period > 0 {
+                pending.ticks_until_next = period;
+                if let Some(entity) = self.entities.get_mut(&id) {
+                    entity.pending_line = Some(pending);
+                }
+            }
+        }
+        self.combat.line_owners = owners;
+    }
+
+    /// The weapon with which unit `id` lands its next pending line search against `plane`, with
+    /// its archetype's slug, or `None` when the line ends (see
+    /// [`Self::advance_pending_lines`]).
+    fn pending_line_weapon(&self, id: EntityId, plane: MoverType) -> Option<(WeaponSpec, String)> {
+        let entity = self.entities.get(&id)?;
+        if !entity.is_alive()
+            || entity.is_loaded_in_transport()
+            || entity.channeling_remaining_ticks > 0
+        {
+            return None;
+        }
+        let rate = entity.attack_rate_multiplier().ok()?;
+        let arch = self.catalog.get(entity.unit_type_id).ok()?;
+        let weapon =
+            Self::resolved_weapon(&self.player_upgrades, entity, arch, plane, rate)?.to_spec();
+        Some((weapon, arch.slug.clone()))
     }
 
     /// Records every entity's targeting data so weapons can read targets while mutating
@@ -320,14 +485,17 @@ impl SimWorld {
             let target_mover =
                 target_snapshot.map_or_else(|| Self::idle_weapon_plane(entity, arch), |t| t.mover);
 
-            let Some(weapon) = Self::resolved_weapon(
+            let Some((weapon, source)) = Self::resolved_weapon(
                 &self.player_upgrades,
                 entity,
                 arch,
                 target_mover,
                 attack_mult,
             )
-            .map(ResolvedWeapon::to_spec) else {
+            .map(|resolved| {
+                let source = weapon_source(arch, entity, resolved.spec);
+                (resolved.to_spec(), source)
+            }) else {
                 // A target that vanished mid-swing may leave no weapon to resolve here.
                 if matches!(entity.weapon_phase, WeaponPhase::Windup { .. }) {
                     entity.weapon_phase = WeaponPhase::Ready;
@@ -358,6 +526,7 @@ impl SimWorld {
                         origin: entity.position,
                         owner: entity.owner,
                         strikes,
+                        source,
                     });
                 }
             }
@@ -423,9 +592,13 @@ impl SimWorld {
         let Some(arch) = context.catalog.get(entity.unit_type_id).ok() else {
             return;
         };
-        let Some(weapon) =
-            Self::resolved_weapon(context.upgrades, entity, arch, pending.plane, attack_rate)
-                .map(ResolvedWeapon::to_spec)
+        let Some((weapon, source)) =
+            Self::resolved_weapon(context.upgrades, entity, arch, pending.plane, attack_rate).map(
+                |resolved| {
+                    let source = weapon_source(arch, entity, resolved.spec);
+                    (resolved.to_spec(), source)
+                },
+            )
         else {
             return;
         };
@@ -452,6 +625,7 @@ impl SimWorld {
                 origin: entity.position,
                 owner: entity.owner,
                 strikes: 1,
+                source,
             });
         }
     }
@@ -586,7 +760,9 @@ impl SimWorld {
                 vel: [vx, vy, vz],
                 owner: shot.owner,
                 duration_secs: Some(flight_duration_secs),
+                source: shot.source,
             });
+        self.presentation.record_projectile(id, shot.source);
 
         let remaining_lifetime_ticks = shot.weapon.max_projectile_lifetime_ticks;
         self.projectiles.push(ActiveProjectile {
@@ -615,6 +791,7 @@ impl SimWorld {
             attacker: Some(shot.attacker),
             origin: shot.origin,
             strikes: shot.strikes,
+            effect: shot.source,
         };
         let Some(hit) = self.apply_weapon_hit(source, shot.target) else {
             return;
@@ -658,6 +835,7 @@ impl SimWorld {
                 source.weapon,
                 raw,
                 hit.angle,
+                &mut self.presentation,
             );
         }
         if let Some(attacker) = source.attacker {
@@ -670,13 +848,11 @@ impl SimWorld {
     /// a line laid out from the attack) on the plane of the primary target.
     ///
     /// The impact point is the target's centre, or, for a splash with
-    /// [`SplashSpec::offset_by_unit_radius`], the target's edge facing the attacker. A zone
-    /// reaches a unit whose edge lies within it: the distance is measured from the search point
-    /// to the unit's centre, less the unit's collision radius, and never below zero (owner
-    /// answer to Q0063). A unit inside several searches is struck once, at the fraction of its
-    /// nearest search point (the game's `noMarkers` validator on the damage effect). Spares
-    /// `primary`, already struck directly, and the attacker, which never damages itself. Each
-    /// struck entity then runs its retaliation against the attacker.
+    /// [`SplashSpec::offset_by_unit_radius`], the target's edge facing the attacker. A line
+    /// whose searches are spaced in time ([`sim_types::SplashLine::period_ticks`], B-85) lands
+    /// its first search now and leaves the rest to the attacker's [`Entity::pending_line`],
+    /// replacing any line still pending; every other area lands whole now. See
+    /// [`Self::strike_area`] for who is struck.
     fn apply_splash(
         &mut self,
         source: HitSource<'_>,
@@ -684,8 +860,6 @@ impl SimWorld {
         hit: ResolvedHit,
         primary: Option<EntityId>,
     ) {
-        let mut splash_hits = std::mem::take(&mut self.combat.splash_hits);
-        splash_hits.clear();
         let mut points = std::mem::take(&mut self.combat.splash_points);
         let direction = self.attack_direction(source, hit.position);
         let impact = if splash.offset_by_unit_radius {
@@ -694,11 +868,73 @@ impl SimWorld {
             hit.position
         };
         splash.search_points(source.origin, impact, direction, &mut points);
+        let area = AreaStrike {
+            plane: hit.plane,
+            angle: hit.angle,
+            primary,
+        };
+        let line = splash_line_view(splash, source.origin, impact, direction);
+        let period = match &splash.shape {
+            SplashShape::Line(line) => line.period_ticks,
+            SplashShape::Circle => 0,
+        };
+        let count = u8::try_from(points.len()).unwrap_or(u8::MAX);
+        match (source.attacker, primary) {
+            (Some(attacker), Some(target)) if period > 0 && points.len() > 1 => {
+                let mut struck = Vec::new();
+                self.emit_search_visuals(source, splash, hit.plane, line, &points[..1], (0, count));
+                self.strike_area(source, splash, area, &points[..1], Some(&mut struck));
+                if let Some(entity) = self.entities.get_mut(&attacker) {
+                    entity.pending_line = Some(PendingLine {
+                        points: points[1..].to_vec(),
+                        ticks_until_next: period,
+                        plane: hit.plane,
+                        angle: hit.angle,
+                        primary: target,
+                        struck,
+                        view: PendingLineView {
+                            effect: source.effect,
+                            line,
+                            count,
+                        },
+                    });
+                }
+            }
+            _ => {
+                self.emit_search_visuals(source, splash, hit.plane, line, &points, (0, count));
+                self.strike_area(source, splash, area, &points, None);
+            }
+        }
+        self.combat.splash_points = points;
+    }
+
+    /// Strikes every unit `splash` reaches from the search centres `points` on `area`'s plane.
+    ///
+    /// A zone reaches a unit whose edge lies within it: the distance is measured from the search
+    /// point to the unit's centre, less the unit's collision radius, and never below zero (owner
+    /// answer to Q0063). A unit inside several searches is struck once, at the fraction of its
+    /// nearest search point, and a unit in `struck` not at all (the game's `noMarkers` validator
+    /// on the damage effect); each unit struck is appended to `struck`. Spares `area.primary`,
+    /// already struck directly, and the attacker, which never damages itself. Each struck entity
+    /// then runs its retaliation against the attacker.
+    fn strike_area(
+        &mut self,
+        source: HitSource<'_>,
+        splash: &SplashSpec,
+        area: AreaStrike,
+        points: &[SimVec2],
+        mut struck: Option<&mut Vec<EntityId>>,
+    ) {
+        let mut splash_hits = std::mem::take(&mut self.combat.splash_hits);
+        splash_hits.clear();
         let attacker_upgrades = Self::upgrades_of(&self.player_upgrades, source.owner);
         let reach = splash.reach();
         for (&other_id, other) in &self.entities {
-            if Some(other_id) == primary
+            if Some(other_id) == area.primary
                 || Some(other_id) == source.attacker
+                || struck
+                    .as_deref()
+                    .is_some_and(|struck| struck.contains(&other_id))
                 || !Self::is_damageable(other)
                 || (!splash.friendly_fire && other.owner == source.owner)
             {
@@ -718,7 +954,7 @@ impl SimWorld {
             else {
                 continue;
             };
-            if !shares_combat_plane(hit.plane, other_arch.mover_type)
+            if !shares_combat_plane(area.plane, other_arch.mover_type)
                 || !source.weapon.target_flags.intersects(other_arch.attributes)
             {
                 continue;
@@ -738,15 +974,69 @@ impl SimWorld {
             if let Some(entity) = self.entities.get_mut(&id) {
                 if let Ok(arch) = self.catalog.get(entity.unit_type_id) {
                     let upgrades = Self::upgrades_of(&self.player_upgrades, entity.owner);
-                    strike_through_barrier(entity, arch, upgrades, source.weapon, raw, hit.angle);
+                    strike_through_barrier(
+                        entity,
+                        arch,
+                        upgrades,
+                        source.weapon,
+                        raw,
+                        area.angle,
+                        &mut self.presentation,
+                    );
                 }
+            }
+            if let Some(struck) = struck.as_deref_mut() {
+                struck.push(id);
             }
             if let Some(attacker) = source.attacker {
                 self.apply_combat_retaliation_prevalidated(id, attacker);
             }
         }
         self.combat.splash_hits = splash_hits;
-        self.combat.splash_points = points;
+    }
+
+    /// Records one renderer event per search of `splash` at `points`, on `plane`, for an attack
+    /// by `source`. `line` is the whole line the searches lie on, if the splash is a line (see
+    /// [`splash_line_view`]); the searches are numbered from `first` of `count`, so a line whose
+    /// searches land on several ticks (B-85) numbers each by its place in the line.
+    fn emit_search_visuals(
+        &mut self,
+        source: HitSource<'_>,
+        splash: &SplashSpec,
+        plane: MoverType,
+        line: Option<(SimVec2, SimVec2, SimScalar)>,
+        points: &[SimVec2],
+        (first, count): (u8, u8),
+    ) {
+        let lift = if plane == MoverType::Air {
+            crate::world::AIR_UNIT_ALTITUDE
+        } else {
+            0.0
+        };
+        let at = |point: SimVec2| {
+            [
+                point.x.to_f32(),
+                point.y.to_f32(),
+                self.map.terrain_altitude_at(point) + lift,
+            ]
+        };
+        let zones = splash_zone_radii(splash);
+        let line = line.map(|(from, to, spacing)| (at(from), at(to), spacing.to_f32()));
+        for (index, &point) in (first..).zip(points) {
+            self.pending_events.push(CombatEventVisual::SplashVisual {
+                center: at(point),
+                zones,
+                line: line.map(|(from, to, spacing)| LineView {
+                    from,
+                    to,
+                    spacing,
+                    index,
+                    count,
+                }),
+                source: source.effect,
+                owner: source.owner,
+            });
+        }
     }
 
     /// The unit vector of an attack from `source.origin` towards `impact`. When the two
@@ -770,25 +1060,34 @@ impl SimWorld {
         let from = [shot.origin.x.to_f32(), shot.origin.y.to_f32(), z + 0.5];
         let to = [hit.position.x.to_f32(), hit.position.y.to_f32(), tz + 0.5];
         let owner = shot.owner;
+        let source = shot.source;
         let event = match shot.weapon.visual_kind {
-            WeaponVisualKind::Hitscan => CombatEventVisual::HitscanTracer { from, to, owner },
+            WeaponVisualKind::Hitscan => CombatEventVisual::HitscanTracer {
+                from,
+                to,
+                owner,
+                source,
+            },
             WeaponVisualKind::LaserBeam => CombatEventVisual::BeamVisual {
                 from,
                 to,
                 is_lightning: false,
                 owner,
+                source,
             },
             WeaponVisualKind::LightningArc => CombatEventVisual::BeamVisual {
                 from,
                 to,
                 is_lightning: true,
                 owner,
+                source,
             },
             WeaponVisualKind::MeleeSlash => CombatEventVisual::MeleeSlashVisual {
                 pos: to,
                 angle_rad: hit.angle.to_radians_f32(),
                 radius: 0.5,
                 owner,
+                source,
             },
             _ => return,
         };
@@ -810,8 +1109,12 @@ impl SimWorld {
 
         for &(index, step) in finished.iter().rev() {
             let projectile = self.projectiles.remove(index);
+            let source = self
+                .presentation
+                .take_projectile_source(projectile.id)
+                .unwrap_or_else(|| self.unrecorded_projectile_source(&projectile));
             if matches!(step, ProjectileStep::Impact) {
-                self.resolve_projectile_impact(&projectile);
+                self.resolve_projectile_impact(&projectile, source);
             }
         }
         self.combat.finished_projectiles = finished;
@@ -933,8 +1236,22 @@ impl SimWorld {
         best.map(|(id, position, radius, mover, _)| (id, position, radius, mover))
     }
 
-    /// Applies the damage of a landed projectile: on its target, or on bare ground.
-    fn resolve_projectile_impact(&mut self, proj: &ActiveProjectile) {
+    /// The source of a projectile launched outside combat resolution, which recorded none: the
+    /// archetype its slug names, with the default weapon key.
+    fn unrecorded_projectile_source(&self, proj: &ActiveProjectile) -> EffectSource {
+        EffectSource {
+            unit_type: proj
+                .source_slug
+                .as_deref()
+                .and_then(|slug| self.catalog.id_by_slug(slug))
+                .unwrap_or_default(),
+            ..EffectSource::default()
+        }
+    }
+
+    /// Applies the damage of a landed projectile, fired by `effect`: on its target, or on bare
+    /// ground.
+    fn resolve_projectile_impact(&mut self, proj: &ActiveProjectile, effect: EffectSource) {
         let source = HitSource {
             weapon: &proj.weapon_spec,
             slug: proj.source_slug.as_deref(),
@@ -942,6 +1259,7 @@ impl SimWorld {
             attacker: proj.attacker_id,
             origin: proj.source_pos,
             strikes: proj.strikes,
+            effect,
         };
         if let Some(target_id) = proj.target_id {
             let Some(hit) = self.apply_weapon_hit(source, target_id) else {

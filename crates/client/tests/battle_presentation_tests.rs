@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 use client::battle_presentation::{refresh_battle_presentation, BattlePresentation};
-use client::runtime_battle::{BattleDefinition, DEFAULT_BATTLE_SCENARIO};
+use client::runtime_battle::{BattleDefinition, BattleInitialOrder, DEFAULT_BATTLE_SCENARIO};
 use sim_types::PlayerId;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -13,6 +13,28 @@ fn definition() -> Result<BattleDefinition, client::runtime_battle::BattleLoadEr
         &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets"),
         DEFAULT_BATTLE_SCENARIO.as_ref(),
     )
+}
+
+/// Moves every slot `from` that `orders` name to `to`: the commanded slot of each order, and the
+/// targeted slot of a start order. A cell order's target is a map cell, which no slot remap moves.
+fn remap_order_slots(orders: &mut [BattleInitialOrder], from: u8, to: u8) {
+    let remap = |slot: &mut u8| {
+        if *slot == from {
+            *slot = to;
+        }
+    };
+    for order in orders {
+        match order {
+            BattleInitialOrder::AttackMoveToStart {
+                player_slot,
+                target_player_slot,
+            } => {
+                remap(player_slot);
+                remap(target_player_slot);
+            }
+            BattleInitialOrder::AttackMoveToCell { player_slot, .. } => remap(player_slot),
+        }
+    }
 }
 
 #[test]
@@ -26,18 +48,7 @@ fn actual_rosters_sparse_owners_and_retained_labels_follow_the_session() -> Test
             start.player_slot = 3;
         }
     }
-    for order in &mut definition.scenario.initial_orders {
-        let client::runtime_battle::BattleInitialOrder::AttackMoveToStart {
-            player_slot,
-            target_player_slot,
-        } = order;
-        if *player_slot == 1 {
-            *player_slot = 3;
-        }
-        if *target_player_slot == 1 {
-            *target_player_slot = 3;
-        }
-    }
+    remap_order_slots(&mut definition.scenario.initial_orders, 1, 3);
     let mut world = definition.instantiate()?;
     let total = world.entities.len();
     let title = definition.document.metadata.title.clone();

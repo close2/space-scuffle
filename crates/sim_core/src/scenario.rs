@@ -213,6 +213,17 @@ pub enum ScenarioError {
         slot: u8,
     },
 
+    /// An initial order names a cell outside the map, or one where no ground unit can stand.
+    #[error(
+        "initial order of player slot {slot} targets cell {cell:?}, where no ground unit can stand"
+    )]
+    OrderCellNotStandable {
+        /// Player slot index of the order.
+        slot: u8,
+        /// The order's cell `(x, y)` in grid cells.
+        cell: (u32, u32),
+    },
+
     /// An initial order reaches no mobile armed unit of its player.
     #[error("player slot {slot} has no mobile combatants for its initial order")]
     NoCombatants {
@@ -254,6 +265,15 @@ pub enum InitialOrder {
         player_slot: u8,
         /// Owner of the destination start location.
         target_player_slot: u8,
+    },
+    /// Every mobile armed unit of `player_slot` that is not a harvester attack-moves to the centre
+    /// of `cell`. A scenario names its targets this way when the first-free-cell rule of
+    /// [`start_approaches`] would not give the players mirror-image destinations.
+    AttackMoveToCell {
+        /// Owner whose combat-capable mobile units receive the order.
+        player_slot: u8,
+        /// Destination cell `(x, y)` in grid cells; the order aims at its centre, in world units.
+        cell: (u32, u32),
     },
 }
 
@@ -329,13 +349,15 @@ pub fn start_approaches(
 /// Gives a freshly built world its scenario's `orders`, then recomputes its checksum.
 ///
 /// The client's battle start and the route trace tool both call this, so a traced battle starts
-/// exactly as the game does. A unit receives an [`InitialOrder::AttackMoveToStart`] when its
-/// owner matches, it is mobile, it is not a harvester and it has a weapon.
+/// exactly as the game does. A unit receives an [`InitialOrder::AttackMoveToStart`] or
+/// [`InitialOrder::AttackMoveToCell`] when its owner matches, it is mobile, it is not a harvester
+/// and it has a weapon.
 ///
 /// # Errors
-/// [`ScenarioError::NoStartApproach`] when either player of an order has no approach,
-/// [`ScenarioError::NoCombatants`] when an order reaches no unit, and [`ScenarioError::Spawn`]
-/// when the catalog lacks a unit's archetype or a unit refuses its order.
+/// [`ScenarioError::NoStartApproach`] when either player of a start order has no approach,
+/// [`ScenarioError::OrderCellNotStandable`] when a cell order's cell is off the map or not free
+/// ground, [`ScenarioError::NoCombatants`] when an order reaches no unit, and
+/// [`ScenarioError::Spawn`] when the catalog lacks a unit's archetype or a unit refuses its order.
 pub fn apply_initial_orders(
     world: &mut SimWorld,
     document: &MapDocument,
@@ -344,7 +366,7 @@ pub fn apply_initial_orders(
 ) -> Result<(), ScenarioError> {
     let approaches = start_approaches(document, players, world)?;
     for order in orders {
-        match *order {
+        let (player_slot, target) = match *order {
             InitialOrder::AttackMoveToStart {
                 player_slot,
                 target_player_slot,
@@ -357,29 +379,70 @@ pub fn apply_initial_orders(
                         slot: target_player_slot,
                     },
                 )?;
-                let mut combatants = 0_usize;
-                for entity in world.entities.values_mut() {
-                    let archetype = world.catalog.get(entity.unit_type_id)?;
-                    if entity.owner == PlayerId(player_slot)
-                        && !entity.is_immobile
-                        && archetype.capabilities.harvester.is_none()
-                        && (archetype.ground_weapon.is_some()
-                            || archetype.air_weapon.is_some()
-                            || archetype.weapon.is_some())
-                    {
-                        entity
-                            .issue_order(UnitOrder::AttackMove { target }, false)
-                            .map_err(SimCoreError::from)?;
-                        combatants += 1;
-                    }
-                }
-                if combatants == 0 {
-                    return Err(ScenarioError::NoCombatants { slot: player_slot });
-                }
+                (player_slot, target)
             }
-        }
+            InitialOrder::AttackMoveToCell { player_slot, cell } => (
+                player_slot,
+                standable_cell_centre(world, player_slot, cell)?,
+            ),
+        };
+        attack_move_combatants(world, player_slot, target)?;
     }
     world.last_checksum = world.compute_checksum();
+    Ok(())
+}
+
+/// The centre of `cell` in world units, when a ground unit can stand there: on the map, ground
+/// pathable, not a cliff, not under a structure.
+fn standable_cell_centre(
+    world: &SimWorld,
+    slot: u8,
+    cell: (u32, u32),
+) -> Result<SimVec2, ScenarioError> {
+    let standable = world.map.cell(cell.0, cell.1).is_ok_and(|map_cell| {
+        map_cell.flags.contains(CellFlags::GROUND_PATHABLE)
+            && !map_cell
+                .flags
+                .intersects(CellFlags::OCCUPIED_BY_STRUCTURE | CellFlags::UNPASSABLE_CLIFF)
+    });
+    if !standable {
+        return Err(ScenarioError::OrderCellNotStandable { slot, cell });
+    }
+    Ok(SimVec2::new(
+        SimScalar::from_num(cell.0) + SimScalar::HALF,
+        SimScalar::from_num(cell.1) + SimScalar::HALF,
+    ))
+}
+
+/// Orders every mobile armed non-harvester of `player_slot` to attack-move to `target`.
+fn attack_move_combatants(
+    world: &mut SimWorld,
+    player_slot: u8,
+    target: SimVec2,
+) -> Result<(), ScenarioError> {
+    let mut combatants = Vec::new();
+    let order = UnitOrder::AttackMove { target };
+    for entity in world.entities.values_mut() {
+        let archetype = world.catalog.get(entity.unit_type_id)?;
+        if entity.owner == PlayerId(player_slot)
+            && !entity.is_immobile
+            && archetype.capabilities.harvester.is_none()
+            && (archetype.ground_weapon.is_some()
+                || archetype.air_weapon.is_some()
+                || archetype.weapon.is_some())
+        {
+            entity
+                .issue_order(order.clone(), false)
+                .map_err(SimCoreError::from)?;
+            combatants.push(entity.id);
+        }
+    }
+    if combatants.is_empty() {
+        return Err(ScenarioError::NoCombatants { slot: player_slot });
+    }
+    // The army attack-moves as one command: one route group (plan `2026-11-10-group-routing`,
+    // D-1).
+    world.form_route_group(PlayerId(player_slot), &combatants, &order);
     Ok(())
 }
 

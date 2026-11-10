@@ -66,10 +66,10 @@ so that **no battle outcome, golden replay or checksum moves** (D-1); a work pac
 | [Q0020](../questions/closed/0020-smog-velocity-quiescence.md) answer: "The agent is always allowed to decide visual questions" | Standing rule | §7, D-11 |
 | [Q0069](../questions/open/0069-lurker-burrow-sections.md) when a burrowing Lurker becomes burrowed | Answered (option 2: `Stats` at 33 ticks, `Actor` animation to 45) but not yet implemented | D-6 |
 | [Q0070](../questions/open/0070-lurker-without-burrow-button.md) no Burrow button in the skirmish | Open, default option 1; plan `2026-11-09-client-mode-commands` adds the button | §2.4, WP12 |
-| Q0075 (new) Veo spend for morph and mode unit clips | Filed by WP0, default "no spend; the effect system carries burrow and siege" | D-4, WP13 |
-| Q0076 (new) what an enemy sees of an undetected cloaked unit | Filed by WP0, default "shimmer, as StarCraft II" | D-5 |
-| Q0077 (new) the missing caster spells (Abduct, Psionic Storm, Blinding Cloud, …) | Filed by WP0, default "presentation contract only here; mechanics in a later plan" | D-8, §12 |
-| Q0078 (new) a Google image model for effect textures (new paid model) | Filed by WP0, **Blocking: no**, default "no image-model spend; textures from Veo clips on black (approved service) and offline noise" | §6, D-4 |
+| [Q0075](../questions/open/0075-veo-morph-and-mode-clips.md) (filed) Veo spend for morph and mode unit clips | Filed by WP0 (2026-11-09), default "no spend; the effect system carries burrow and siege" | D-4, WP13 |
+| [Q0076](../questions/open/0076-undetected-cloaked-enemies.md) (filed) what an enemy sees of an undetected cloaked unit | Filed by WP0 (2026-11-09), default "shimmer, as StarCraft II" | D-5 |
+| [Q0077](../questions/open/0077-caster-spells.md) (filed) the missing caster spells (Abduct, Psionic Storm, Blinding Cloud, …) | Filed by WP0 (2026-11-09), default "presentation contract only here; mechanics in a later plan" | D-8, §12 |
+| [Q0078](../questions/open/0078-image-model-for-effect-textures.md) a Google image model for effect textures (new paid model) | Filed by WP0, **Blocking: no**; default changed by the orchestrator to **"yes, within $25.25 of the $200 total"**, because the owner proposed generated images in chat (2026-11-09) | §6, D-4 |
 
 Question numbers: `open/` and `closed/` on `main` end at Q0071; Q0072 to Q0074 are taken on the `friendly-blocking`
 branches; Q0075 to Q0077 were reserved by the first version of this plan and are still unfiled; Q0078 is the next
@@ -745,6 +745,11 @@ above 1.0 bloom (terrain and bubbles unchanged within the visual tests' toleranc
 only). The agent decides (Q0020) and records the evidence; if it is rejected, ramps cap at 1.0 and cores rely on
 additive layering and the light block.
 
+**Decided in WP6c (2026-11-10): rejected.** The threshold kept the scene unchanged, but the post-pass tone mapper
+washed out every effect (saturation of the acid front 85 → 50) for a halo visible only during flashes, at 0.28 ms
+of bloom per frame; ramps are capped at 1.0 and the loader enforces it (`RampOutOfRange`). Evidence:
+[`docs/evidence/effects/review/hdr_bloom_decision.md`](../evidence/effects/review/hdr_bloom_decision.md).
+
 ### D-12. Composition stays bounded
 
 An effect has at most 12 layers and 4 placements per layer; a placement replicates at most 32 instances. These
@@ -886,3 +891,50 @@ the unit clip does not change with a mode (WP13 or recorded).
   clips on black (already approved) and offline noise; generated stills replace Veo-derived ones element by element
   if the answer is yes. Recommendation: yes, because decals and single-frame elements are where a still model is
   strongest and cheapest.
+
+---
+
+## Amendment 1: review gate outcome, 2026-11-10
+
+**Verdicts.** The WP6c gate (§9, §7.3) ran two independent review rounds on the vertical slice:
+
+| Effect | Round 1 ([`independent_review.md`](../evidence/effects/review/independent_review.md)) | Round 2 ([`independent_review_round2.md`](../evidence/effects/review/independent_review_round2.md)) | Contact sheet |
+|---|---|---|---|
+| `shell_impact` (sieged Siege-Tank analogue splash) | reject | **accept** (with three optional improvements) | [`shell_impact_contact.png`](../evidence/effects/review/shell_impact_contact.png) |
+| `acid_burst` (Baneling analogue) | reject | **reject** (items 4 and 5: a flat single-value green stain with polka dots, a button-like pop) | [`acid_burst_contact.png`](../evidence/effects/review/acid_burst_contact.png) |
+| `spine_line` (Lurker analogue) | reject | **reject** (items 4 and 5: hook-shaped spines that read as glyphs, sparse clumps, hard clip edges, no focal point) | [`spine_line_contact.png`](../evidence/effects/review/spine_line_contact.png) |
+
+**Stop rule applied.** WP6c's exit says that two failed review rounds stop the effect work before any scale-out.
+`acid_burst` and `spine_line` failed both rounds, so the orchestrator stopped the effect work at the gate and landed
+only what passed (decision note, 2026-11-10).
+
+**What landed.**
+
+- The presentation contract and the leak fix: WP1 (`sim_types`), WP2 (`sim_core` writer, every golden replay and
+  matrix battle bit-identical), WP3 (`BattleFog`; B-106 fixed).
+- The framework and the pipeline: WP4 (`client::effects`: vocabulary, unit tables, runtime, budget and level of
+  detail, instanced renderer, effect lab), WP4a (`bevy_hanabi` no-go), WP5 (`asset_baker` effect-texture pipeline),
+  and the WP6c framework extensions (breakup noise, `Front` rings, radial glows, landing particles, upright clumps,
+  line clips) and decisions (D-11 HDR and bloom rejected, frame budget).
+- `shell_impact`, named by the sieged Siege-Tank analogue's presentation block, as accepted in round 2. The
+  reviewer's optional improvements are not applied now.
+
+**What ships unused.** `acid_burst`, its `acid_fleck` and `spine_line` stay in `assets/catalog/effects.ron` with
+their texture sets in `assets/effects/`, valid catalog data under the catalog tests. No shipped unit names them: the
+presentation blocks of `volatile_tick` and `burrow_scorpion` are removed, so both fall back to their pre-slice
+presentation (the default combat looks). The GPU tests of the framework (footprint, coverage, no pop, nothing
+lingers, golden stills) still render all three effects through the effect lab: the two rejected ones are bound to
+those units' weapons by lab-only presentation blocks in `crates/client/tests/data/effect_lab_blocks.ron`, a test
+fixture, and `effect_catalog_tests.rs` checks that no shipped unit names an effect only those blocks name. The
+goldens are unchanged.
+
+**One burrow flag.** Plan `2026-11-09-friendly-blocking` (R6, B-93) landed `UnitModeSpec::burrowed` on `main` first,
+for the burrowed body's collision. As §2.4 and §11 provide (the first to land adds the field, the other reuses it),
+the merge drops this plan's `is_burrowed` and the snapshot writer's concealment reads `burrowed`; `burrow_scorpion`'s
+burrowed mode carries `burrowed: true` once. The presentation is the same, and the field is no longer read by the
+presentation only.
+
+**Stopped.** Scale-out (WP7 to WP15) does not start until the owner answers
+[Q0080](../questions/open/0080-effect-review-outcome.md): a third round for the two rejected effects, a changed
+approach (for example owner-provided art direction or reference images), or leaving them out. Register entries
+B-107 (now only partly addressed), B-108, B-109, B-110 and B-111 stay open, scheduled behind that answer.

@@ -912,7 +912,9 @@ fn event_matches_contact(
 ) -> bool {
     use sim_types::CombatEventVisual;
     let (from, impact, team) = match event {
-        CombatEventVisual::HitscanTracer { from, to, owner }
+        CombatEventVisual::HitscanTracer {
+            from, to, owner, ..
+        }
         | CombatEventVisual::BeamVisual {
             from, to, owner, ..
         } => (Some(from), to, *owner),
@@ -1322,6 +1324,7 @@ mod tests {
             from: source.world_pos,
             to: victim.world_pos,
             owner: source.owner,
+            source: sim_types::EffectSource::default(),
         };
         assert!(!displayed_contact(&proof, 16, victim, source, &event));
         assert!(displayed_contact(&proof, 17, victim, source, &event));
@@ -1389,7 +1392,12 @@ mod tests {
         use sim_types::{CombatEventVisual, PlayerId};
         let source = ([1.0, 2.0, 0.0], PlayerId(0));
         let victim = ([4.0, 5.0, 0.0], PlayerId(1));
-        let tracer = |from, to, owner| CombatEventVisual::HitscanTracer { from, to, owner };
+        let tracer = |from, to, owner| CombatEventVisual::HitscanTracer {
+            from,
+            to,
+            owner,
+            source: sim_types::EffectSource::default(),
+        };
         assert!(event_matches_contact(
             &tracer(source.0, victim.0, source.1),
             victim,
@@ -1415,7 +1423,8 @@ mod tests {
                 pos: victim.0,
                 radius: 1.0,
                 is_dome: false,
-                owner: victim.1
+                owner: victim.1,
+                unit_type: sim_types::UnitTypeId::default(),
             },
             victim,
             source
@@ -1425,7 +1434,8 @@ mod tests {
                 pos: victim.0,
                 vel: [1.0; 3],
                 owner: source.1,
-                duration_secs: None
+                duration_secs: None,
+                source: sim_types::EffectSource::default(),
             },
             victim,
             source

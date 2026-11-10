@@ -1184,3 +1184,86 @@ fn ability_locks_list_an_unresearched_mode_ability() -> TestResult {
     assert_eq!(view_of(&world, HOME).ability_locks, []);
     Ok(())
 }
+
+fn point(x: i32, y: i32) -> SimVec2 {
+    SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y))
+}
+
+/// A flat 48 × 48 world on the shipped catalog with a hidden enemy at (30, 24): a cloaked,
+/// unarmed mobile unit of `AWAY`. Returns the world, the hidden unit, and the types of an
+/// unarmed non-detector and an unarmed detector (plan `2026-11-09-effect-visualization` D-5).
+fn concealment_world() -> Result<(SimWorld, EntityId, UnitTypeId, UnitTypeId), Box<dyn Error>> {
+    let map = GameMap::new(48, 48, MapCell::default_ground(CliffLevel(0)))?;
+    let mut world = sim_fixtures::world(map, 0x0e_ff10);
+    let unarmed = |arch: &&UnitArchetype| {
+        arch.weapon.is_none()
+            && arch.ground_weapon.is_none()
+            && arch.air_weapon.is_none()
+            && arch.max_speed > SimScalar::ZERO
+    };
+    let plain = world
+        .catalog
+        .archetypes()
+        .filter(unarmed)
+        .find(|arch| !arch.is_detector)
+        .ok_or("a shipped unarmed unit")?
+        .unit_type_id;
+    let detector = world
+        .catalog
+        .archetypes()
+        .filter(unarmed)
+        .find(|arch| arch.is_detector)
+        .ok_or("a shipped unarmed mobile detector")?
+        .unit_type_id;
+    let hidden = world.spawn_unit(plain, AWAY, point(30, 24))?;
+    world.entities.get_mut(&hidden).ok_or("hidden")?.is_cloaked = true;
+    // Each player keeps a unit in a far corner, so both stay in the match.
+    world.spawn_unit(plain, HOME, point(3, 3))?;
+    world.spawn_unit(plain, AWAY, point(44, 44))?;
+    Ok((world, hidden, plain, detector))
+}
+
+fn visibility_at(view: &PlayerView, x: u32, y: u32) -> VisibilityState {
+    view.visibility[(y * view.map_width + x) as usize]
+}
+
+#[test]
+fn a_concealed_enemy_under_fog_is_not_revealed() -> TestResult {
+    let (mut world, _hidden, _, _) = concealment_world()?;
+    idle(&mut world, 2);
+    let view = view_of(&world, HOME);
+    assert_ne!(visibility_at(&view, 30, 24), VisibilityState::Visible);
+    assert_eq!(view.revealed, []);
+    Ok(())
+}
+
+#[test]
+fn a_concealed_enemy_in_plain_sight_is_not_revealed() -> TestResult {
+    let (mut world, _hidden, plain, _) = concealment_world()?;
+    world.spawn_unit(plain, HOME, point(28, 24))?;
+    idle(&mut world, 2);
+    let view = view_of(&world, HOME);
+    assert_eq!(visibility_at(&view, 30, 24), VisibilityState::Visible);
+    assert_eq!(
+        view.revealed,
+        [],
+        "seeing the cell is not detecting the unit"
+    );
+    Ok(())
+}
+
+#[test]
+fn only_the_viewers_detection_reveals_and_never_its_own_units() -> TestResult {
+    let (mut world, hidden, plain, detector) = concealment_world()?;
+    world.spawn_unit(detector, HOME, point(28, 24))?;
+    let own = world.spawn_unit(plain, HOME, point(29, 26))?;
+    world.entities.get_mut(&own).ok_or("own")?.is_cloaked = true;
+    idle(&mut world, 2);
+    assert_eq!(view_of(&world, HOME).revealed, [hidden]);
+    assert_eq!(
+        view_of(&world, AWAY).revealed,
+        [],
+        "the hidden unit's owner detects nothing here, and its own units are never listed"
+    );
+    Ok(())
+}

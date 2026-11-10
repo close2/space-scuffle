@@ -13,8 +13,9 @@
 //!
 //! # Invariants
 //! - Both entry points take `&self`, so reading them cannot change a checksum.
-//! - Hidden state does not reach the output: entities are filtered by owner, nodes by `Visible`
-//!   cells, and a site is judged with [`Knowledge::Player`].
+//! - Hidden state does not reach the output: entities are filtered by owner (other players'
+//!   concealed entities by detection), nodes by `Visible` cells, and a site is judged with
+//!   [`Knowledge::Player`].
 //! - A warmed [`PlayerView`] is refilled without allocating unless a list grows.
 //! - A viewer outside the player slots gets an empty view and no panic.
 
@@ -60,6 +61,24 @@ impl SimWorld {
         out.completed_types.sort_unstable();
         out.completed_types.dedup();
         self.record_options(out);
+        // Entity-ID order, so the list is sorted (plan `2026-11-09-effect-visualization` D-5).
+        out.revealed.extend(
+            self.entities
+                .values()
+                .filter(|entity| {
+                    entity.owner != viewer
+                        && entity.is_cloaked
+                        && entity.is_alive()
+                        && !entity.is_loaded_in_transport()
+                        && Self::is_cloak_revealed(
+                            &self.map,
+                            &self.vision_maps,
+                            viewer,
+                            entity.position,
+                        )
+                })
+                .map(|entity| entity.id),
+        );
         for (node, index) in self.map.resources().iter().zip(0_u32..) {
             if vision.visibility_at(node.cell.0, node.cell.1) == VisibilityState::Visible {
                 out.visible_nodes.push(VisibleNodeView {
