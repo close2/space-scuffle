@@ -29,11 +29,12 @@ use std::path::{Path, PathBuf};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
-const FILES: [&str; 4] = [
+const FILES: [&str; 5] = [
     "factions.ron",
     "units.ron",
     "structures.ron",
     "upgrades.ron",
+    "movement_rules.ron",
 ];
 const ME: PlayerId = PlayerId(0);
 

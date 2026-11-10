@@ -493,6 +493,12 @@ pub struct Entity {
     pub(crate) transport_carrier: Option<EntityId>,
     /// Invulnerability flag (e.g. Stasis field, Phase Shift, Recall, Divine Shield).
     pub is_invulnerable: bool,
+    /// How many `Move` and `AttackMove` orders have ever entered [`Self::order_queue`], wrapping
+    /// (plan `2026-11-10-group-routing`, D-1). An order's ordinal is this count before it
+    /// entered, so the active route order's ordinal is this count minus the route orders still
+    /// queued ([`Self::active_route_ordinal`]); route groups bind members by it. Only
+    /// [`Self::enqueue_order`] changes it.
+    pub route_orders_issued: u32,
     /// Hull rotation still allowed this tick, in binary angle units.
     ///
     /// Set to the archetype's `stationary_turn_rate` at the start of every movement phase
@@ -608,6 +614,7 @@ impl Entity {
             is_completed: true,
             transport_carrier: None,
             is_invulnerable: false,
+            route_orders_issued: 0,
             hull_turn_budget: archetype.turn_rate.raw(),
         }
     }
@@ -668,8 +675,7 @@ impl Entity {
                 // ABORT: Shot was winding up; moving cancels the shot with zero damage.
                 self.weapon_phase = WeaponPhase::Ready;
                 self.order_queue.clear();
-                self.order_queue
-                    .push_back(UnitOrder::Move { target: move_pos });
+                self.enqueue_order(UnitOrder::Move { target: move_pos });
                 self.current_funnel_waypoints.clear();
                 self.is_holding_position = false;
             }
@@ -679,15 +685,13 @@ impl Entity {
                 // The weapon cooldown continues to tick down in the background.
                 self.weapon_phase = WeaponPhase::Cooldown;
                 self.order_queue.clear();
-                self.order_queue
-                    .push_back(UnitOrder::Move { target: move_pos });
+                self.enqueue_order(UnitOrder::Move { target: move_pos });
                 self.current_funnel_waypoints.clear();
                 self.is_holding_position = false;
             }
             _ => {
                 self.order_queue.clear();
-                self.order_queue
-                    .push_back(UnitOrder::Move { target: move_pos });
+                self.enqueue_order(UnitOrder::Move { target: move_pos });
                 self.current_funnel_waypoints.clear();
                 self.is_holding_position = false;
             }
@@ -719,6 +723,34 @@ impl Entity {
         Ok(true)
     }
 
+    /// Appends `order` to the back of [`Self::order_queue`], counting it in
+    /// [`Self::route_orders_issued`] when it is a `Move` or `AttackMove`.
+    ///
+    /// Every insertion of a route order goes through here, so a route group's ordinal binding
+    /// (plan `2026-11-10-group-routing`, D-1) stays exact. Other orders may be pushed through it
+    /// too; they leave the counter alone.
+    pub fn enqueue_order(&mut self, order: UnitOrder) {
+        if is_route_order(&order) {
+            self.route_orders_issued = self.route_orders_issued.wrapping_add(1);
+        }
+        self.order_queue.push_back(order);
+    }
+
+    /// The ordinal of the active route order: the first `Move` or `AttackMove` in the queue, or,
+    /// with none queued, the ordinal the next one will get (plan `2026-11-10-group-routing`,
+    /// D-1). Route orders leave the queue only from the front or by clearing, so this is exact.
+    #[must_use]
+    pub fn active_route_ordinal(&self) -> u32 {
+        let queued = self
+            .order_queue
+            .iter()
+            .filter(|o| is_route_order(o))
+            .count();
+        // A queue never holds 2^32 orders; saturation keeps the arithmetic total regardless.
+        self.route_orders_issued
+            .wrapping_sub(u32::try_from(queued).unwrap_or(u32::MAX))
+    }
+
     /// Infallible concrete movement commit after world selection preflight.
     pub(crate) fn commit_movement_order(&mut self, target: SimVec2, attack: bool, queue: bool) {
         let order = if attack {
@@ -733,7 +765,7 @@ impl Entity {
     // helper only constructs Move/AttackMove. No fallible work follows admission.
     fn commit_order(&mut self, order: UnitOrder, queue: bool) {
         if queue {
-            self.order_queue.push_back(order);
+            self.enqueue_order(order);
             return;
         }
 
@@ -757,7 +789,7 @@ impl Entity {
                 self.is_holding_position = true;
                 self.velocity = SimVec2::ZERO;
                 self.order_queue.clear();
-                self.order_queue.push_back(UnitOrder::HoldPosition);
+                self.enqueue_order(UnitOrder::HoldPosition);
                 self.current_funnel_waypoints.clear();
             }
             UnitOrder::Stop => {
@@ -777,8 +809,7 @@ impl Entity {
                 }
                 self.current_target = Some(target);
                 self.order_queue.clear();
-                self.order_queue
-                    .push_back(UnitOrder::AttackTarget { target, origin });
+                self.enqueue_order(UnitOrder::AttackTarget { target, origin });
                 self.current_funnel_waypoints.clear();
                 self.is_holding_position = false;
             }
@@ -787,7 +818,7 @@ impl Entity {
                     self.weapon_phase = WeaponPhase::Ready;
                 }
                 self.order_queue.clear();
-                self.order_queue.push_back(order);
+                self.enqueue_order(order);
                 self.current_funnel_waypoints.clear();
                 self.is_holding_position = false;
             }
@@ -1170,6 +1201,12 @@ impl Entity {
     pub fn attack_rate_multiplier(&self) -> Result<AttackRate, InvalidBuffAttackRate> {
         combined_attack_rate(&self.active_buffs)
     }
+}
+
+/// Whether `order` is a route order: a `Move` or `AttackMove`, the orders route groups bind to.
+#[must_use]
+pub const fn is_route_order(order: &UnitOrder) -> bool {
+    matches!(order, UnitOrder::Move { .. } | UnitOrder::AttackMove { .. })
 }
 
 fn fold_speed(

@@ -57,7 +57,10 @@ use std::collections::BTreeMap;
 /// its closed ticks, the distance walked and the target it approaches (B-104, B-105).
 /// Schema 26 adds each line's search period and each unit's pending line searches: their
 /// points, countdown, plane, hit angle, primary target and the units already struck (B-85).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 26;
+/// Schema 27 adds each unit's count of route orders issued and the world's route groups: the
+/// next group id, then per group its id, player, kind, target, members with their ordinals, and
+/// lane state with the lane's polyline, word, leader and radius (plan `2026-11-10-group-routing`).
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 27;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.
@@ -117,6 +120,9 @@ pub fn compute_simulation_checksum(world: &SimWorld) -> u64 {
     world.match_state.encode(&mut encoder);
     "hazards".encode(&mut encoder);
     world.active_hazards.encode(&mut encoder);
+    "route-groups".encode(&mut encoder);
+    world.next_route_group.encode(&mut encoder);
+    world.route_groups.encode(&mut encoder);
 
     "map".encode(&mut encoder);
     world.map.width().encode(&mut encoder);

@@ -10,6 +10,7 @@ pub(crate) mod collision;
 mod flee;
 pub(crate) mod geometry;
 mod grid;
+pub mod groups;
 mod locomotion;
 pub(crate) mod math;
 pub(crate) mod tuning;
@@ -419,6 +420,9 @@ impl SimWorld {
                 }
             }
         }
+        let recipients = std::mem::take(&mut self.movement.recipients);
+        self.form_route_group(player, &recipients, order);
+        self.movement.recipients = recipients;
         Ok(receipt)
     }
 

@@ -32,11 +32,13 @@ use sim_types::{
 };
 pub use sim_types::{SplashSpec, SplashZone, WeaponSpec};
 mod factions;
+mod movement_rules;
 mod runtime;
 mod targeting;
 mod validation;
 
 pub use factions::{ArmorClassDef, FactionCatalog, FactionDef, WeaponClassDef};
+pub use movement_rules::{MovementRules, MAX_LANE_TOLERANCE_PERMILLE};
 pub use runtime::{CatalogLoadError, RuntimeCatalogs};
 pub use targeting::{AcquireLevel, AcquireTieBreak, PrimaryWeapon};
 
@@ -344,6 +346,7 @@ pub struct UnitCatalog {
     archetypes: Vec<Option<UnitArchetype>>,
     slug_index: OnceLock<Vec<(String, usize)>>,
     factions: FactionCatalog,
+    movement_rules: MovementRules,
 }
 
 impl UnitCatalog {
@@ -363,6 +366,7 @@ impl UnitCatalog {
             archetypes: vec![None; 128],
             slug_index: OnceLock::new(),
             factions: factions.clone(),
+            movement_rules: MovementRules::PER_UNIT,
         };
         catalog.register_authored_batch(catalog_file.units.into_iter().map(|def| {
             def.validate()?;
@@ -376,6 +380,19 @@ impl UnitCatalog {
     #[must_use]
     pub fn factions(&self) -> &FactionCatalog {
         &self.factions
+    }
+
+    /// The movement rules of `movement_rules.ron` (group routing, plan `2026-11-10-group-routing`
+    /// D-7). [`MovementRules::PER_UNIT`] until [`Self::set_movement_rules`] replaces them;
+    /// [`RuntimeCatalogs::load_from_directory`] always loads them from the file.
+    #[must_use]
+    pub const fn movement_rules(&self) -> MovementRules {
+        self.movement_rules
+    }
+
+    /// Replaces the movement rules this catalog carries into the world.
+    pub fn set_movement_rules(&mut self, rules: MovementRules) {
+        self.movement_rules = rules;
     }
 
     /// Loads additional structures from a raw RON string and registers them into the catalog.

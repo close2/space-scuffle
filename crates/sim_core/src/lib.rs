@@ -96,6 +96,13 @@ pub(crate) mod test_support {
             include_str!("../../../assets/catalog/upgrades.ron"),
         )
         .expect("invariant: the shipped upgrades.ron is valid");
+        let mut units = units;
+        units.set_movement_rules(
+            crate::catalog::MovementRules::from_ron_str(include_str!(
+                "../../../assets/catalog/movement_rules.ron"
+            ))
+            .expect("invariant: the shipped movement_rules.ron is valid"),
+        );
         RuntimeCatalogs { units, upgrades }
     }
 

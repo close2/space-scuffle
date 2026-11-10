@@ -715,6 +715,7 @@ impl SimWorld {
         // actor while preparing compact scalar edits and optional new path ownership.
         // Trade-off: Buff/radius validation is phase-entry work; scratch capacities
         // grow at population high-water marks, while pathfinding retains its costs.
+        self.reconcile_route_groups();
         let mut entries = std::mem::take(&mut self.movement.entries);
         entries.clear();
         let mut pursuits = std::mem::take(&mut self.movement.pursuits);

@@ -32,7 +32,7 @@ pub mod trace;
 
 pub use sandbox::{default_battle_sandbox, default_battle_sandbox_on, SandboxError};
 
-use sim_core::catalog::{FactionCatalog, RuntimeCatalogs};
+use sim_core::catalog::{FactionCatalog, MovementRules, RuntimeCatalogs};
 use sim_core::scenario::{
     build_world_with_catalogs, PlayerSetup, ScenarioError, StartLoadoutCatalog,
 };
@@ -47,6 +47,8 @@ pub const UNITS_RON: &str = include_str!("../../../assets/catalog/units.ron");
 pub const STRUCTURES_RON: &str = include_str!("../../../assets/catalog/structures.ron");
 /// The shipped `assets/catalog/upgrades.ron`.
 pub const UPGRADES_RON: &str = include_str!("../../../assets/catalog/upgrades.ron");
+/// The shipped `assets/catalog/movement_rules.ron`.
+pub const MOVEMENT_RULES_RON: &str = include_str!("../../../assets/catalog/movement_rules.ron");
 /// The shipped `assets/catalog/start_loadouts.ron`.
 pub const START_LOADOUTS_RON: &str = include_str!("../../../assets/catalog/start_loadouts.ron");
 
@@ -68,13 +70,17 @@ pub fn shipped_factions() -> FactionCatalog {
 #[must_use]
 pub fn shipped_catalogs() -> RuntimeCatalogs {
     let factions = shipped_factions();
-    let units = UnitCatalog::from_ron_str_bundle(&factions, UNITS_RON, STRUCTURES_RON)
+    let mut units = UnitCatalog::from_ron_str_bundle(&factions, UNITS_RON, STRUCTURES_RON)
         .expect("invariant: the shipped units.ron and structures.ron are valid");
     let upgrades = UpgradeCatalog::from_ron_str(&factions, UPGRADES_RON)
         .expect("invariant: the shipped upgrades.ron is valid");
     units
         .validate_upgrade_references(&upgrades)
         .expect("invariant: the shipped unit catalog names only shipped upgrades");
+    units.set_movement_rules(
+        MovementRules::from_ron_str(MOVEMENT_RULES_RON)
+            .expect("invariant: the shipped movement_rules.ron is valid"),
+    );
     RuntimeCatalogs { units, upgrades }
 }
 
