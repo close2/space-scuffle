@@ -1,0 +1,32 @@
+// The effect vocabulary of the client (plan docs/plans/2026-11-09-effect-visualization.md §5.2).
+// Read at run time by client::effects::catalog; an unknown name, an unprovided binding, a
+// missing texture element, unordered curve keys or a broken D-12 limit fails the load with an
+// error naming this file, the effect and the layer.
+//
+// The vertical slice's effects (WP6b) and texture sets (WP6a) are not authored yet, so the
+// sections are empty and the live battle draws nothing new.
+(
+    format_version: 1,
+    // Baked texture sets: paths of `<set>.texture.ron` manifests below the assets root.
+    textures: [],
+    // Colour ramps: (position 0..1, (r, g, b, opacity)); opacity 0 is additive.
+    ramps: {},
+    // Timing curves: (time 0..1, value, easing to the next key).
+    curves: {},
+    emitters: {},
+    effects: {},
+    // Pool capacities (sized at load, never grown in a battle) and level of detail (§5.6).
+    budget: (
+        particles: 30000,
+        sprites: 2048,
+        decals: 512,
+        lights: 16,
+        effects: 480,
+        classes: { Major: 96, Minor: 256, Ambient: 128 },
+        min_screen_px: 6.0,
+        full_particle_px: 96.0,
+        crowd_threshold: 24,
+    ),
+    // Effects used where a unit's presentation block names none; none yet.
+    defaults: (),
+)
