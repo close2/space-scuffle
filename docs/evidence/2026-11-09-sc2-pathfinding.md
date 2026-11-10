@@ -316,3 +316,44 @@ size, so the 10 % criterion needs a measurement under the gate lock.
 (`find_path_with_vision_matches_the_recorded_corpus_digest`) and `pathfinding_properties`
 (`funnel_paths_are_legal_and_no_shorter_than_a_straight_line`: an illegal leg, recorded in the commit's
 `pathfinding_properties.proptest-regressions`).
+
+## Amendment 4: defects a to d on the held switch (2026-11-10)
+
+Held switch `dd2e5e9` with main `d914917` merged. Output under `~/scratch/path-c/` (`sb/`, `c4/`; not committed).
+
+**a. Illegal funnel leg: not a route defect.** Seed of record: start (9, 12), goal (14, 2), radius 0.625. The start
+is wedged, 0.5 from the walls west and north of it. The route rounds the corner (9, 12) beside it; the arc's first
+point, the tangent point (9.598, 12.313), is 0.598 from the west wall, still inside the disc's band, so the second
+leg also starts where the disc does not fit. D-3 and the search's own legality check (`navmesh/search.rs`,
+`is_legal`) hold every leg up to the first waypoint where the disc fits to the centre only; the property exempted
+only the first leg. The property now applies D-3's rule exactly. The two `sim_map` digests: a build of the switch
+commit `1f75ae0` itself produces `0x672c257d0fcacc1b` and `0xa1a3327e2a30f8b7`, the values of this tree; the switch
+recorded them before its last edits. No route changed.
+
+**b. Walk toggling:** friendly-blocking plan Amendment 7 (its evidence has the figures). On the switch, player 0's
+showcase reversals 253 to 56, player 1's 24 to 2.
+
+**c. Ramp E corner crowding: not fixed.** Trace: rhino 12 (and pulse bots 4, 6, 7) reach the corner (35, 52) as a
+column and start a surround walk (attack-move without a target, a standing friend ahead) on the side kept from an
+earlier walk, the inside of the turn, which carries them east under the ramp's south wall; there they lose sight
+of the corner and wait for a stall re-plan. Pulse bot 7 ends wedged on the corner vertex itself with a route whose
+first leg passes D-3's centre-only test, so no re-plan comes, and it jitters (1,364° in the box). Tried, not
+kept: a walk side closed where the step loses terrain view of the next waypoint, and a walk round a crowd on a
+route corner always on the outside of the turn. Together: ramp E ratio 1.295 to 1.247, but turn mean 352° to
+339°, maximum 845° to 1,364°, 9 of 10 in range at tick 900 (from 10), reversals 56 to 61. Patch at
+`~/scratch/path-c/c4.diff`.
+
+**d. Throughput, under the gate lock**, base `02f494b` and candidate alternately, ticks/s:
+
+| Scenario | Base | Candidate |
+|---|---|---|
+| showcase_canyon, 400 | 140, 142, 143 | 127, 126, 125 (-11 to -13 %) |
+| 64x64, 400 | 171, 176, 174 | 169, 171, 171 |
+| 128x128, 400 | 206, 212, 210 | 201, 204, 198 |
+
+Every scenario is above 25 ticks/s; the canyon scenario misses the 10 % criterion.
+
+**Showcase on the switch with b** (player 0 / base): ramp W 1.301 / 1.064 and 157° / 103° (the west lane, its
+lane-end turn about 100°); plateau SE not passed by player 0 (the lane is the other one); ramp E 1.295 / 1.573 and
+352° / 211°; reversals 56 / 11 (acceptance at most 21); 10 of 10 in range; 0 give-ups; player 1 wins at tick 1,266
+(the lane split). **Acceptance not reached:** reversals, ramp E turning, canyon throughput. The switch stays held.
