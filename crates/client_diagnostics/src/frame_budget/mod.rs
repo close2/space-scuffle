@@ -106,6 +106,10 @@ pub struct FrameBudgetOptions {
     /// capture's readback adds work to one frame.
     #[arg(long, value_name = "PNG")]
     pub capture: Option<PathBuf>,
+    /// Simulation tick of the `--capture` frame, instead of the middle of the window (the
+    /// fight thins out as it goes on; an early tick shows the crowd).
+    #[arg(long, value_name = "TICK")]
+    pub capture_tick: Option<u32>,
     /// The plan's D-11 experiment: an HDR camera with a bloom only values above 1.0 feed
     /// ([`crate::hdr_bloom`]).
     #[arg(long)]
@@ -523,7 +527,9 @@ fn add_variant(
             effect_stress::StressConfig {
                 rate_per_second: options.effect_stress.unwrap_or(0),
                 capture: options.capture.clone(),
-                capture_tick: options.measure_frames.map_or(spec.measure_ticks / 2, |_| 0),
+                capture_tick: options.capture_tick.unwrap_or_else(|| {
+                    options.measure_frames.map_or(spec.measure_ticks / 2, |_| 0)
+                }),
             },
         )
     })

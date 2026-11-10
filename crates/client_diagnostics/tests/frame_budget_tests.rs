@@ -140,7 +140,8 @@ fn the_stress_sources_are_the_catalogs_splash_weapons() -> Result<(), Box<dyn Er
         &root.join(client::effects::catalog::EFFECTS_CATALOG_PATH),
         &root,
     )?;
-    let units = sim_fixtures::shipped_catalogs().units;
+    let units =
+        sim_core::catalog::RuntimeCatalogs::load_from_directory(root.join("catalog"))?.units;
     let tables = client::effects::catalog::UnitEffectTables::build(&units, &effects)?;
     let sources =
         client_diagnostics::frame_budget::effect_stress::stress_sources(&units, &tables, &effects);
