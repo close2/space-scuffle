@@ -94,37 +94,25 @@ fn test_l_shaped_obstacle_euclidean_shortcut() {
 
     let result = pathfinder.find_path(&map, &request).unwrap();
 
-    // The string-pulled path must not contain grid staircase zig-zags
-    // It must contain exactly 3 waypoints: [Start, CornerWaypoint, Goal]
-    assert_eq!(
-        result.waypoints.len(),
-        3,
-        "String-pulled path around L-corner must have exactly 3 waypoints: {:?}",
-        result.waypoints
-    );
-    assert_eq!(result.waypoints[0], start);
-    assert_eq!(result.waypoints[2], goal);
-
-    // Corner waypoint must be near obstacle corner (5, 7)
-    let corner_wp = result.waypoints[1];
+    // The string-pulled path has no grid staircase: start, the arc round the obstacle corner
+    // (5, 7) as points on its circle of radius + margin (plan Amendment 2), and the goal.
+    let waypoints = &result.waypoints;
+    assert_eq!(waypoints.first(), Some(&start));
+    assert_eq!(waypoints.last(), Some(&goal));
     let corner_vertex = SimVec2::new(SimScalar::from_num(5), SimScalar::from_num(7));
-    let offset_dist = (corner_wp - corner_vertex).length();
-
     let expected_offset = UnitClearance::Medium.radius_scalar() + CORNER_SAFETY_MARGIN;
-    let diff = (offset_dist - expected_offset).abs();
+    let interior = &waypoints[1..waypoints.len() - 1];
     assert!(
-        diff < SimScalar::from_num(0.01),
-        "Corner waypoint offset ({:?}) must match radius + margin ({:?})",
-        offset_dist,
-        expected_offset
+        (1..=8).contains(&interior.len()),
+        "one arc round the L-corner: {waypoints:?}"
     );
-
-    // Confirm that a circle of unit radius centered at waypoint does not intersect the obstacle corner
-    let dist_to_corner = corner_wp.distance(corner_vertex);
-    assert!(
-        dist_to_corner >= UnitClearance::Medium.radius_scalar(),
-        "Waypoint must maintain safe clearance from obstacle corner"
-    );
+    for &w in interior {
+        let diff = (w.distance(corner_vertex) - expected_offset).abs();
+        assert!(
+            diff < SimScalar::from_num(0.001),
+            "waypoint {w:?} must lie at radius + margin ({expected_offset:?}) from the corner"
+        );
+    }
 }
 
 #[test]
@@ -297,9 +285,9 @@ fn test_showcase_canyon_ramp_funnel_paths_are_concise() -> Result<(), Box<dyn st
     Ok(())
 }
 
-/// Plan 2026-11-09-sc2-pathfinding WP4 (B-101): a corner waypoint keeps the requesting unit's
-/// own radius plus `CORNER_SAFETY_MARGIN` from the corner it turns around: 0.55 for a body of
-/// radius 0.5 and 0.425 for one of 0.375, though both route on the Small tier.
+/// Plan 2026-11-09-sc2-pathfinding WP4 (B-101), restated for the mesh (WP9): the waypoints that
+/// round a corner lie on the circle of the requesting unit's own radius plus
+/// `CORNER_SAFETY_MARGIN` round it: 0.55 for a body of radius 0.5 and 0.425 for one of 0.375.
 #[test]
 fn corner_offsets_use_the_units_own_radius() {
     let mut map = GameMap::new(20, 20, MapCell::default_ground(CliffLevel(1))).unwrap();
@@ -328,18 +316,18 @@ fn corner_offsets_use_the_units_own_radius() {
                     && w.distance(vertex) < SimScalar::from_num(2)
             })
             .collect();
-        assert_eq!(
-            corners.len(),
-            1,
-            "one corner near the vertex: {:?}",
+        assert!(
+            !corners.is_empty(),
+            "an arc near the vertex: {:?}",
             path.waypoints
         );
-        let gap = f64::from(corners[0].distance(vertex).to_f32());
-        assert!(
-            (gap - expected).abs() < 1e-4,
-            "radius {radius}: corner {:?} is {gap} from the vertex, expected {expected}",
-            corners[0]
-        );
+        for corner in corners {
+            let gap = f64::from(corner.distance(vertex).to_f32());
+            assert!(
+                (gap - expected).abs() < 1e-4,
+                "radius {radius}: corner {corner:?} is {gap} from the vertex, expected {expected}"
+            );
+        }
     }
 }
 
@@ -390,7 +378,7 @@ fn assert_mesh_route_matches_oracle(
     assert!(!route.fallback, "funnel fell back: {route:?}");
     for pair in route.waypoints.windows(2) {
         assert!(
-            pathfinder.mesh_segment_is_passable(map, &request, pair[0], pair[1]),
+            pathfinder.segment_is_passable(map, &request, pair[0], pair[1]),
             "leg {pair:?}"
         );
     }
@@ -476,7 +464,7 @@ fn mesh_route_wraps_the_end_of_a_thin_wall_without_falling_back() {
     assert!(!route.fallback, "funnel fell back: {route:?}");
     for pair in route.waypoints.windows(2) {
         assert!(
-            pathfinder.mesh_segment_is_passable(&map, &request, pair[0], pair[1]),
+            pathfinder.segment_is_passable(&map, &request, pair[0], pair[1]),
             "leg {pair:?}"
         );
     }

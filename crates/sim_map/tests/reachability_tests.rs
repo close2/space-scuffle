@@ -141,9 +141,7 @@ fn mesh_nearest_reachable_point_is_shared_by_a_whole_region() -> TestResult {
     let radius = SimScalar::from_num(0.375);
     let mut answers = Vec::new();
     for start in [at(2.5, 2.5), at(5.5, 17.5), at(8.5, 9.5), at(1.5, 1.5)] {
-        answers.push(
-            pathfinder.nearest_reachable_point_mesh(&map, &mesh_request(start, goal, radius))?,
-        );
+        answers.push(pathfinder.nearest_reachable_point(&map, &mesh_request(start, goal, radius))?);
     }
     assert!(
         answers.iter().all(|answer| *answer == answers[0]),
@@ -161,7 +159,7 @@ fn mesh_nearest_reachable_point_is_shared_by_a_whole_region() -> TestResult {
 fn mesh_nearest_reachable_point_is_none_from_the_best_cell() -> TestResult {
     let map = divided(20, 10)?;
     let mut pathfinder = Pathfinder::new(&map);
-    let point = pathfinder.nearest_reachable_point_mesh(
+    let point = pathfinder.nearest_reachable_point(
         &map,
         &mesh_request(at(9.5, 7.5), at(15.5, 7.5), SimScalar::from_num(0.375)),
     )?;
@@ -212,7 +210,7 @@ fn mesh_walks_through_unknown_structures_and_not_known_ones() -> TestResult {
         "a known structure cell is walked around: {route:?}"
     );
     for pair in route.waypoints.windows(2) {
-        assert!(pathfinder.mesh_segment_is_passable(&map, &request, pair[0], pair[1]));
+        assert!(pathfinder.segment_is_passable(&map, &request, pair[0], pair[1]));
     }
     // Vision: an unexplored map knows no structure; a fully visible one knows them all.
     let unseen = PlayerVisionMap::new(20, 20);
@@ -286,7 +284,7 @@ fn mesh_segment_predicate_agrees_with_the_grid() {
                 }
                 .into();
                 let grid = pathfinder.segment_is_passable(&map, &request, a, b);
-                let mesh = pathfinder.mesh_segment_is_passable(&map, &request, a, b);
+                let mesh = pathfinder.segment_is_passable(&map, &request, a, b);
                 if mesh {
                     assert!(
                         map.ground_segment_is_connected(a, b, |_, _| true),

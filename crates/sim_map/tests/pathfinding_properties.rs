@@ -164,6 +164,9 @@ proptest! {
     }
 
     /// Every returned path joins its endpoints through legal segments, and reporting is honest.
+    /// A start where the disc does not fit may always be left (plan D-3), so its first leg is
+    /// held to the predicate only when the disc fits at the start; a counted fallback to portal
+    /// midpoints is exempt.
     #[test]
     fn funnel_paths_are_legal_and_no_shorter_than_a_straight_line(
         blocked in obstacle_mask(8),
@@ -179,14 +182,22 @@ proptest! {
             clearance: tier(tier_index),
             radius: (tier(tier_index)).radius_scalar(),
         };
-        if let Ok(path) = pathfinder.find_path(&map, &request) {
+        let fallbacks = pathfinder.mesh_funnel_fallbacks();
+        let found = pathfinder.find_path(&map, &request);
+        // A counted fallback through portal midpoints (plan D-6, R-2) is exempt from legality.
+        let fell_back = pathfinder.mesh_funnel_fallbacks() != fallbacks;
+        if let Ok(path) = found {
             prop_assert_eq!(path.waypoints.first(), Some(&request.start));
             prop_assert_eq!(path.waypoints.last(), Some(&request.goal));
+            let start_fits =
+                pathfinder.segment_is_passable(&map, &request.into(), request.start, request.start);
             let mut measured = SimScalar::ZERO;
-            for pair in path.waypoints.windows(2) {
+            for (leg, pair) in path.waypoints.windows(2).enumerate() {
                 measured += pair[0].distance(pair[1]);
                 prop_assert!(
-                    pathfinder.segment_is_passable(&map, &request.into(), pair[0], pair[1]),
+                    fell_back
+                        || (leg == 0 && !start_fits)
+                        || pathfinder.segment_is_passable(&map, &request.into(), pair[0], pair[1]),
                     "illegal segment {:?}", pair
                 );
             }
@@ -196,7 +207,8 @@ proptest! {
         }
     }
 
-    /// Reachability is symmetric: terrain has no one-way doors.
+    /// Reachability is symmetric: terrain has no one-way doors. Compared where both endpoints
+    /// take the disc: a wedged start may be left (D-3) while the same point is refused as a goal.
     #[test]
     fn reachability_is_symmetric(
         blocked in obstacle_mask(5),
@@ -219,10 +231,15 @@ proptest! {
             clearance,
             radius: clearance.radius_scalar(),
         };
-        prop_assert_eq!(
-            pathfinder.find_path(&map, &forward).is_ok(),
-            pathfinder.find_path(&map, &backward).is_ok()
-        );
+        let fits = |pathfinder: &mut Pathfinder, at: SimVec2| {
+            pathfinder.segment_is_passable(&map, &forward.into(), at, at)
+        };
+        if fits(&mut pathfinder, forward.start) && fits(&mut pathfinder, forward.goal) {
+            prop_assert_eq!(
+                pathfinder.find_path(&map, &forward).is_ok(),
+                pathfinder.find_path(&map, &backward).is_ok()
+            );
+        }
     }
 
     /// Searching twice with reused buffers gives the same result as a fresh pathfinder.
@@ -317,7 +334,7 @@ fn compare_with_oracle(
         return Ok(Some(FALLBACK));
     }
     for pair in route.waypoints.windows(2) {
-        if !pathfinder.mesh_segment_is_passable(map, &request, pair[0], pair[1]) {
+        if !pathfinder.segment_is_passable(map, &request, pair[0], pair[1]) {
             return Err(format!("leg {pair:?} fails the segment predicate"));
         }
     }

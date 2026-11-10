@@ -72,8 +72,10 @@ const PATH_REQUESTS_PER_MAP: usize = 250;
 const VALIDATION_GOLDEN: u64 = 0xf028_1611_929c_52d1;
 /// Digest of every decode result over the corpus, recorded before the step 9.2 split.
 const DECODE_GOLDEN: u64 = 0x56c4_3eea_8701_94bd;
-/// Digest of every path result over the corpus, recorded before the step 9.2 split.
-const PATH_GOLDEN: u64 = 0x52cf_7f61_9e6e_88b1;
+/// Digest of every path result over the corpus. Re-recorded for sc2 pathfinding WP9: routes
+/// come from the navigation mesh at the request's radius (before, the grid corridor:
+/// `0x52cf_7f61_9e6e_88b1`, recorded before the step 9.2 split).
+const PATH_GOLDEN: u64 = 0x574b_ceb4_0a08_2c4d;
 
 /// Builds the validation corpus: both shipped maps, then the seeded mutations.
 fn document_corpus() -> Vec<MapDocument> {

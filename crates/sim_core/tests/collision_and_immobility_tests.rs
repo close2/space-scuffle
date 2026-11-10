@@ -929,6 +929,12 @@ fn test_live_battle_scenario_dual_ramp_traversal() {
 /// test so it keeps judging the open march it was written for.
 const JITTER_MARCH_DISTANCE: f32 = 16.2;
 
+/// Ticks of departure before the march is judged. On the first ticks the spawned group's bodies
+/// separate, and a unit shoved sideways on tick 1 turns back onto its route on the next two: one
+/// such pair appears since routes come from the navigation mesh (sc2 pathfinding WP9; unit 6
+/// turns 77 degrees on tick 2 and 13 back on tick 3 towards the first point of its route).
+const JITTER_DEPARTURE_TICKS: u32 = 3;
+
 /// Ticks the fastest of `units` needs to walk [`JITTER_MARCH_DISTANCE`] at its catalog speed,
 /// rounded up.
 fn jitter_window_ticks(
@@ -1056,6 +1062,7 @@ fn battlefield_bubble_trajectories_are_smooth_without_micro_jitter(
 
                     if let Some(&(prev_tick, prev_sign, prev_angle_deg)) = prev_turns.get(&id) {
                         if prev_tick == tick - 1
+                            && tick > JITTER_DEPARTURE_TICKS
                             && prev_sign * turn_sign < 0.0
                             && angle_deg > 8.0
                             && prev_angle_deg > 8.0
@@ -1098,6 +1105,7 @@ fn battlefield_bubble_trajectories_are_smooth_without_micro_jitter(
 
                     if let Some(&(prev_tick, prev_sign, prev_angle_deg)) = prev_pos_turns.get(&id) {
                         if prev_tick == tick - 1
+                            && tick > JITTER_DEPARTURE_TICKS
                             && prev_sign * turn_sign < 0.0
                             && angle_deg > 8.0
                             && prev_angle_deg > 8.0

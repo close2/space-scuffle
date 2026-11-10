@@ -113,9 +113,10 @@ fn test_cross_platform_determinism_checksum() {
     let final_checksum = hasher.digest();
     eprintln!("sim_map reference checksum: 0x{:016x}", final_checksum);
 
-    // Fixed-seed reference after the symmetric clearance field (M-8), which admits cells near
-    // +x and +y walls that the corner-anchored field refused, changing the hashed routes.
-    const EXPECTED_CHECKSUM: u64 = 0x69cd_c3bf_29fa_dbd8;
+    // Fixed-seed reference after the switch to the navigation mesh (sc2 pathfinding WP9): the
+    // hashed routes are the mesh's, with arcs emitted on their circles (Amendment 2), and goals
+    // where the tier's disc does not fit are refused. Before: 0x69cd_c3bf_29fa_dbd8 (the grid).
+    const EXPECTED_CHECKSUM: u64 = 0xa324_e36c_647d_586e;
     assert_eq!(
         final_checksum, EXPECTED_CHECKSUM,
         "Checksum diverged from reference"

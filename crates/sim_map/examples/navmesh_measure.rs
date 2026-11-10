@@ -165,7 +165,7 @@ fn differential(map: &GameMap, radius: SimScalar, seed: u64) -> Differential {
             radius,
         };
         let started = Instant::now();
-        let grid = pathfinder.find_path(map, &grid_request);
+        let grid = pathfinder.find_path_grid(map, &grid_request.into());
         out.grid_micros.push(started.elapsed().as_micros());
         let request: PathRequestWithVision<'_> = grid_request.into();
         let started = Instant::now();
@@ -187,17 +187,19 @@ fn differential(map: &GameMap, radius: SimScalar, seed: u64) -> Differential {
                 out.longer_than_five_percent += u32::from(ratio > SimScalar::from_num(105) / 100);
                 // The grid's legs are checked against cell clearance only; under the exact disc
                 // predicate many of them cut a corner, which no legal route can match.
-                let grid_legal = grid.waypoints.windows(2).all(|pair| {
-                    pathfinder.mesh_segment_is_passable(map, &request, pair[0], pair[1])
-                });
+                let grid_legal = grid
+                    .waypoints
+                    .windows(2)
+                    .all(|pair| pathfinder.segment_is_passable(map, &request, pair[0], pair[1]));
                 out.illegal_grid_routes += u32::from(!grid_legal);
                 out.longer_than_legal_grid += u32::from(longer && grid_legal);
                 out.gains.push((g - m, start, goal));
                 out.fallbacks += u32::from(mesh.fallback);
                 out.max_expansions = out.max_expansions.max(mesh.expansions);
-                let legal = mesh.waypoints.windows(2).all(|pair| {
-                    pathfinder.mesh_segment_is_passable(map, &request, pair[0], pair[1])
-                });
+                let legal = mesh
+                    .waypoints
+                    .windows(2)
+                    .all(|pair| pathfinder.segment_is_passable(map, &request, pair[0], pair[1]));
                 out.illegal_mesh_legs += u32::from(!legal);
             }
             (Ok(_), Err(_)) => out.grid_only += 1,

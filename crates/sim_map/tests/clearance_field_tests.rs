@@ -55,6 +55,29 @@ fn route_exists(map: &GameMap, from: (u32, u32), to: (u32, u32), clearance: Unit
         .is_ok()
 }
 
+fn at(x: f64, y: f64) -> SimVec2 {
+    SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y))
+}
+
+/// The route of a disc of `clearance`'s radius between two world points (the mesh refuses a
+/// goal where the whole disc does not fit, plan Amendment 2).
+fn route_between(
+    map: &GameMap,
+    start: SimVec2,
+    goal: SimVec2,
+    clearance: UnitClearance,
+) -> sim_map::Result<sim_map::PathResult> {
+    Pathfinder::new(map).find_path(
+        map,
+        &PathRequest {
+            start,
+            goal,
+            clearance,
+            radius: clearance.radius_scalar(),
+        },
+    )
+}
+
 /// Mirrors a blocked-cell list through the map centre on both axes.
 fn mirrored(cells: &[(u32, u32)]) -> Vec<(u32, u32)> {
     cells
@@ -110,14 +133,25 @@ fn m8_large_unit_can_stand_beside_a_wall_on_any_side() -> TestResult {
         route_exists(&map, (18, 5), (14, 5), large),
         "east of wall, one cell clear"
     );
+    // The wall occupies 12 <= x <= 13: a disc of radius 1 touches it at x = 11 and x = 14.
     assert!(
-        route_exists(&map, (5, 5), (11, 5), large),
+        route_between(&map, at(5.5, 5.5), at(11.0, 5.5), large).is_ok(),
         "touching the wall from the west"
     );
     assert!(
-        route_exists(&map, (18, 5), (13, 5), large),
+        route_between(&map, at(18.5, 5.5), at(14.0, 5.5), large).is_ok(),
         "touching the wall from the east"
     );
+    // A goal the disc overlaps is refused on both sides alike.
+    for (start, goal) in [((5.5, 5.5), (11.5, 5.5)), ((18.5, 5.5), (13.5, 5.5))] {
+        assert!(
+            matches!(
+                route_between(&map, at(start.0, start.1), at(goal.0, goal.1), large),
+                Err(MapError::InvalidGoal(_))
+            ),
+            "{goal:?} overlaps the wall"
+        );
+    }
     Ok(())
 }
 
@@ -125,11 +159,12 @@ fn m8_large_unit_can_stand_beside_a_wall_on_any_side() -> TestResult {
 fn m8_large_unit_can_reach_every_map_edge() -> TestResult {
     let map = open_map()?;
     let large = UnitClearance::Large;
-    let last = SIDE - 1;
-    for goal in [(0, 12), (last, 12), (12, 0), (12, last)] {
+    // The disc touches the map border with its centre one radius inside it.
+    let far = f64::from(SIDE) - 1.0;
+    for goal in [(1.0, 12.5), (far, 12.5), (12.5, 1.0), (12.5, far)] {
         assert!(
-            route_exists(&map, (12, 12), goal, large),
-            "edge cell {goal:?}"
+            route_between(&map, at(12.5, 12.5), at(goal.0, goal.1), large).is_ok(),
+            "edge point {goal:?}"
         );
     }
     Ok(())
@@ -176,28 +211,10 @@ fn m8_units_fit_through_gaps_as_wide_as_their_real_diameter() -> TestResult {
 fn m8_known_structures_block_symmetrically() -> TestResult {
     let mut map = open_map()?;
     map.place_structure(EntityId(1), 11, 4, 2, 16)?;
-    let mut pathfinder = Pathfinder::new(&map);
-    let reach = |pathfinder: &mut Pathfinder, map: &GameMap, goal: (u32, u32)| {
-        pathfinder
-            .find_path(
-                map,
-                &PathRequest {
-                    start: centre(goal.0, 1),
-                    goal: centre(goal.0, goal.1),
-                    clearance: UnitClearance::Large,
-                    radius: UnitClearance::Large.radius_scalar(),
-                },
-            )
-            .is_ok()
-    };
-    assert!(
-        reach(&mut pathfinder, &map, (10, 8)),
-        "west face of the structure"
-    );
-    assert!(
-        reach(&mut pathfinder, &map, (13, 8)),
-        "east face of the structure"
-    );
+    // The structure occupies 11 <= x <= 13: a disc of radius 1 touches it at x = 10 and 14.
+    let reach = |x: f64| route_between(&map, at(x, 1.5), at(x, 8.5), UnitClearance::Large).is_ok();
+    assert!(reach(10.0), "west face of the structure");
+    assert!(reach(14.0), "east face of the structure");
     Ok(())
 }
 
@@ -270,7 +287,7 @@ fn f7_diagonal_segment_between_touching_structures_is_rejected() -> TestResult {
     let mut map = open_map()?;
     map.place_structure(EntityId(1), 5, 6, 1, 1)?;
     map.place_structure(EntityId(2), 6, 5, 1, 1)?;
-    let pathfinder = Pathfinder::new(&map);
+    let mut pathfinder = Pathfinder::new(&map);
     let request = PathRequest {
         start: centre(5, 5),
         goal: centre(6, 6),

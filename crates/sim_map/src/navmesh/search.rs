@@ -7,9 +7,9 @@
 //! it with the radius funnel (D-6), and validates every leg with the segment predicate (D-7).
 //!
 //! # How it fits
-//! `Pathfinder::find_path_mesh`, `Pathfinder::mesh_segment_is_passable` and
-//! `Pathfinder::nearest_reachable_point_mesh` are thin wrappers over this module. Until WP9 no
-//! simulation code calls them.
+//! `Pathfinder::find_path_with_vision`, `Pathfinder::segment_is_passable` and
+//! `Pathfinder::nearest_reachable_point` are thin wrappers over this module; since WP9 every
+//! route, every route check and every unreachable-goal answer of the simulation comes from it.
 //!
 //! # Invariants
 //! - Search nodes are paths, not triangles (TA*): a triangle may be reached along several
@@ -84,6 +84,10 @@ pub struct MeshSearch {
     open: BinaryHeap<Reverse<(i64, u32, u32)>>,
     visits: Vec<u8>,
     portals: Vec<(u32, u32)>,
+    /// Flood stack of [`nearest_reachable_point`]: `(triangle, entry edge)` states.
+    flood_stack: Vec<(u32, u8)>,
+    /// Reachable cells of [`nearest_reachable_point`]: `(distance squared, cell index, x)`.
+    candidates: Vec<(u64, u32, u32)>,
     pub(crate) segment: SegmentScratch,
     /// Funnel legs that failed the segment predicate since construction (a diagnostic, D-6).
     pub fallbacks: u64,
@@ -190,10 +194,20 @@ impl MeshSearch {
             );
             if node.entry != NO_EDGE {
                 let corner = 3 - usize::from(node.entry) - k;
-                if !query
-                    .access
-                    .width(node.triangle, corner)
-                    .admits_diameter(query.radius)
+                let entry = usize::from(node.entry);
+                // D-3: a disc wedged where it starts enters every triangle it already overlaps
+                // whatever its width, so it can leave the gap it was spawned or pushed into.
+                let wedged_in = !query.start_fits
+                    && point_segment_distance(
+                        query.start,
+                        mesh.vertex(tv[next(entry)]).to_sim(),
+                        mesh.vertex(tv[prev(entry)]).to_sim(),
+                    ) < query.radius;
+                if !wedged_in
+                    && !query
+                        .access
+                        .width(node.triangle, corner)
+                        .admits_diameter(query.radius)
                 {
                     continue;
                 }
@@ -298,18 +312,30 @@ impl MeshSearch {
         })
     }
 
-    /// Whether every leg of `route` passes the segment predicate.
+    /// Whether every leg of `route` passes the segment predicate. Legs from a wedged start up to
+    /// the first waypoint where the disc fits cannot; they are held to the predicate for the
+    /// unit's centre only (D-3: a wedged unit may always work its way out; the movement layer
+    /// holds them to the terrain).
     fn is_legal(&mut self, query: &Query<'_>, route: &FunnelRoute) -> bool {
-        route.waypoints.windows(2).all(|pair| {
-            segment_clear(
-                query.mesh,
-                query.access,
-                &mut self.segment,
-                pair[0],
-                pair[1],
-                query.radius,
-            )
-        })
+        let mut wedged = !query.start_fits;
+        for pair in route.waypoints.windows(2) {
+            let clear = |scratch: &mut SegmentScratch, a, b, radius| {
+                segment_clear(query.mesh, query.access, scratch, a, b, radius)
+            };
+            if wedged {
+                wedged = !clear(&mut self.segment, pair[0], pair[0], query.radius);
+            }
+            // A wedged leg must still keep the unit's centre in open triangles.
+            let radius = if wedged {
+                SimScalar::ZERO
+            } else {
+                query.radius
+            };
+            if !clear(&mut self.segment, pair[0], pair[1], radius) {
+                return false;
+            }
+        }
+        true
     }
 
     /// Pulls the channel in `self.portals` again with [`PullStrategy::Pinned`] after the shrunk
@@ -567,7 +593,9 @@ fn flood(
     // expanded once. Bit `entry` of `visits` records the state, bit 3 the start.
     search.visits.clear();
     search.visits.resize(mesh.triangle_count(), 0);
-    let mut stack: Vec<(u32, u8)> = vec![(start, NO_EDGE)];
+    let mut stack = std::mem::take(&mut search.flood_stack);
+    stack.clear();
+    stack.push((start, NO_EDGE));
     search.visits[start as usize] = 1 << NO_EDGE;
     while let Some((t, entry)) = stack.pop() {
         for k in 0..3 {
@@ -595,6 +623,7 @@ fn flood(
             }
         }
     }
+    search.flood_stack = stack;
 }
 
 /// The point nearest `request.goal` that the unit can reach, on the mesh: the centre of the
@@ -622,7 +651,8 @@ pub fn nearest_reachable_point(
         .world_to_cell(request.goal)
         .map_err(|_| MapError::InvalidGoal(request.goal))?;
     flood(search, mesh, &access, start, request.radius);
-    let mut candidates: Vec<(u64, u32, u32)> = Vec::new();
+    let mut candidates = std::mem::take(&mut search.candidates);
+    candidates.clear();
     for y in 0..map.height() {
         for x in 0..map.width() {
             let centre = map.cell_to_world_center(x, y)?;
@@ -636,7 +666,8 @@ pub fn nearest_reachable_point(
         }
     }
     candidates.sort_unstable();
-    for (_, index, x) in candidates {
+    let mut found = None;
+    for &(_, index, x) in &candidates {
         let y = index / map.width();
         let centre = map.cell_to_world_center(x, y)?;
         if segment_clear(
@@ -647,8 +678,10 @@ pub fn nearest_reachable_point(
             centre,
             request.radius,
         ) {
-            return Ok(((x, y) != start_cell).then_some(centre));
+            found = ((x, y) != start_cell).then_some(centre);
+            break;
         }
     }
-    Ok(None)
+    search.candidates = candidates;
+    Ok(found)
 }

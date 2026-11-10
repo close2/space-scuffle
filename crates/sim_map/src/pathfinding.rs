@@ -644,13 +644,13 @@ impl Pathfinder {
     }
 
     /// Finds a route on the navigation mesh for a disc of `request.radius` (plan D-4 to D-7):
-    /// triangle A* with Demyen widths, the radius funnel, and the mesh segment predicate. Latent
-    /// until WP9; the details of the route are in [`MeshRoute`].
+    /// triangle A* with Demyen widths, the radius funnel, and the mesh segment predicate; the
+    /// details of the route are in [`MeshRoute`].
     ///
     /// # Errors
     /// [`MapError::InvalidStart`], [`MapError::InvalidGoal`] or [`MapError::NoPathFound`], as
     /// [`navmesh::search::find_route`] documents; [`MapError::NoPathFound`] also when the map has
-    /// no mesh.
+    /// no mesh (a side above [`navmesh::NAV_MESH_MAX_DIMENSION`] cells).
     pub fn find_route_mesh(
         &mut self,
         map: &GameMap,
@@ -663,11 +663,37 @@ impl Pathfinder {
         navmesh::search::find_route(mesh, &mut self.mesh_search, map, request)
     }
 
-    /// [`Self::find_route_mesh`] as a [`PathResult`], the shape `find_path_with_vision` returns.
+    /// Finds a route for a disc of `request.radius` from `request.start` to `request.goal`,
+    /// seeing every structure (no player knowledge). See [`Self::find_path_with_vision`].
     ///
     /// # Errors
-    /// As [`Self::find_route_mesh`].
-    pub fn find_path_mesh(
+    /// As [`Self::find_path_with_vision`].
+    pub fn find_path(&mut self, map: &GameMap, request: &PathRequest) -> Result<PathResult> {
+        self.find_path_with_vision(map, &(*request).into())
+    }
+
+    /// Finds the route a unit of radius `request.radius` walks, on the navigation mesh (plan
+    /// D-4 to D-7, `StarCraft` II's reported design): the waypoints are the start, points on the
+    /// circles of radius `radius + CORNER_SAFETY_MARGIN` round the vertices the route turns
+    /// around, and the goal, in world units. Every leg passes [`Self::segment_is_passable`].
+    ///
+    /// A unit standing where its body does not fit may always leave (D-3): the start triangle
+    /// is entered whatever its width. The goal must fit the whole disc, as in `StarCraft` II
+    /// (plan Amendment 2); a goal that does not is reported as invalid, and the caller walks to
+    /// [`Self::nearest_reachable_point`] instead.
+    ///
+    /// # Invariants
+    /// 1. If `request.vision` is `Some` and `block_unexplored_ramps == true`, ramp or higher-ground
+    ///    triangles with an unexplored cell of their terrain are closed (per triangle, coarser than
+    ///    a per-cell rule; no production caller sets the flag).
+    /// 2. A structure the request does not know (not in `known_structures`, or not `Visible` in
+    ///    `vision`) is walked through until revealed.
+    ///
+    /// # Errors
+    /// [`MapError::InvalidStart`] when the start is off the map or in a triangle the request may
+    /// not enter; [`MapError::InvalidGoal`] likewise, or when the disc does not fit at the goal;
+    /// [`MapError::NoPathFound`] when no channel admits the disc, or the map has no mesh.
+    pub fn find_path_with_vision(
         &mut self,
         map: &GameMap,
         request: &PathRequestWithVision<'_>,
@@ -678,10 +704,12 @@ impl Pathfinder {
         })
     }
 
-    /// The mesh segment predicate (plan D-7): whether a disc of `request.radius` may sweep from
-    /// `start` to `goal` through triangles the request may enter, keeping `radius` from every
-    /// edge that blocks it. `false` when the map has no mesh.
-    pub fn mesh_segment_is_passable(
+    /// The segment predicate of routes and movement (plan D-7): whether a disc of
+    /// `request.radius` may sweep from `start` to `goal` through triangles the request may enter,
+    /// keeping `radius` from every edge that blocks it. `false` when the map has no mesh.
+    ///
+    /// Takes `&mut self` for the mesh's reusable flood buffers, so it allocates nothing.
+    pub fn segment_is_passable(
         &mut self,
         map: &GameMap,
         request: &PathRequestWithVision<'_>,
@@ -700,13 +728,22 @@ impl Pathfinder {
         })
     }
 
-    /// [`Self::nearest_reachable_point`] on the mesh, at the request's own radius.
+    /// Finds the world point closest to `request.goal` that a disc of `request.radius` can reach
+    /// from `request.start`, on the mesh.
+    ///
+    /// A blocked goal, or one cut off from the start, is the normal case for a click on a cliff
+    /// or behind a wall. The answer is the centre of the reachable cell nearest the goal cell
+    /// where the disc fits, ties to the lowest cell index, so every unit of one size in one
+    /// region gets the same point. `Ok(None)` when the unit already stands in that cell.
     ///
     /// # Errors
-    /// [`MapError::InvalidStart`] or [`MapError::InvalidGoal`], as
-    /// [`navmesh::search::nearest_reachable_point`] documents; [`MapError::InvalidStart`] when the
-    /// map has no mesh.
-    pub fn nearest_reachable_point_mesh(
+    /// [`MapError::InvalidStart`] if the start is off the map or in a closed triangle, or the map
+    /// has no mesh; [`MapError::InvalidGoal`] if the goal is off the map.
+    // PERFORMANCE RATIONALE:
+    // Why: The answer needs the whole region the disc reaches, and a group asks the same question.
+    // What: One flood over the triangles, then one pass over the cells, into reused buffers.
+    // Trade-off: O(map area) per call, so callers cache per goal and throttle by unit.
+    pub fn nearest_reachable_point(
         &mut self,
         map: &GameMap,
         request: &PathRequestWithVision<'_>,
@@ -718,16 +755,10 @@ impl Pathfinder {
         navmesh::search::nearest_reachable_point(mesh, &mut self.mesh_search, map, request)
     }
 
-    /// Finds a smooth, corner-rounded shortest path using A* and Simple Stupid Funnel.
-    ///
-    /// # Errors
-    /// Returns `Err(MapError::InvalidStart)` or `Err(MapError::InvalidGoal)` if endpoints are impassable.
-    /// Returns `Err(MapError::NoPathFound)` if start and goal are disconnected.
-    pub fn find_path(&mut self, map: &GameMap, request: &PathRequest) -> Result<PathResult> {
-        self.find_path_with_vision(map, &(*request).into())
-    }
-
-    /// Computes a smooth shortest path taking player vision and fog-of-war into account.
+    /// The grid corridor route: A* over cells of the request's tier and the Simple Stupid Funnel
+    /// with corner offsets. Simulation routes come from the mesh since WP9
+    /// ([`Self::find_path_with_vision`]); this is kept for the grid-against-mesh measurement until
+    /// WP10 removes it.
     ///
     /// # Invariants
     /// 1. If `request.vision` is `Some` and `block_unexplored_ramps == true`, cells with `CellFlags::RAMP`
@@ -739,7 +770,7 @@ impl Pathfinder {
     ///
     /// # Errors
     /// Returns [`MapError::NoPathFound`] if no valid route connects the start and goal cells.
-    pub fn find_path_with_vision(
+    pub fn find_path_grid(
         &mut self,
         map: &GameMap,
         request: &PathRequestWithVision<'_>,
@@ -758,7 +789,7 @@ impl Pathfinder {
             });
         }
 
-        if self.segment_is_passable(map, request, request.start, request.goal) {
+        if self.grid_segment_is_passable(map, request, request.start, request.goal) {
             // PERFORMANCE RATIONALE:
             // Why: An army crossing open ground issues hundreds of searches whose funnel
             // collapses to the straight line, each visiting and portalling every corridor cell.
@@ -789,7 +820,7 @@ impl Pathfinder {
         let mut waypoints = self.run_funnel(map, request);
         if !waypoints
             .windows(2)
-            .all(|pair| self.segment_is_passable(map, request, pair[0], pair[1]))
+            .all(|pair| self.grid_segment_is_passable(map, request, pair[0], pair[1]))
         {
             waypoints = self.smooth_connected_corridor(map, request)?;
         }
@@ -893,10 +924,10 @@ impl Pathfinder {
             return Err(MapError::InvalidGoal(request.goal));
         }
 
-        if !self.segment_is_passable(map, request, request.start, request.start) {
+        if !self.grid_segment_is_passable(map, request, request.start, request.start) {
             return Err(MapError::InvalidStart(request.start));
         }
-        if !self.segment_is_passable(map, request, request.goal, request.goal) {
+        if !self.grid_segment_is_passable(map, request, request.goal, request.goal) {
             return Err(MapError::InvalidGoal(request.goal));
         }
 
@@ -930,7 +961,7 @@ impl Pathfinder {
     /// Runs A* from `start_idx` toward `goal`, leaving every cell it reached marked visited.
     ///
     /// Returns whether the goal cell was reached. On `false` the search has exhausted the region
-    /// connected to the start, which is what [`Self::nearest_reachable_point`] relies on.
+    /// connected to the start, which is what [`Self::nearest_reachable_point_grid`] relies on.
     #[expect(
         clippy::cast_possible_truncation,
         reason = "cell indices are stored as u32 by design, and start was validated on the map"
@@ -1072,7 +1103,7 @@ impl Pathfinder {
     // Why: The answer needs the whole connected region, and a group asks the same question.
     // What: The search that fails has already marked that region; this scans the marks once.
     // Trade-off: O(map area) per call, so callers must cache per goal and throttle by unit.
-    pub fn nearest_reachable_point(
+    pub fn nearest_reachable_point_grid(
         &mut self,
         map: &GameMap,
         request: &PathRequestWithVision<'_>,
@@ -1116,11 +1147,11 @@ impl Pathfinder {
             .transpose()
     }
 
-    /// Validates a continuous world-space segment using this request's current
-    /// ground clearance, vision and remembered structure policy without allocating.
-    /// This is the same predicate used to verify and smooth generated routes.
+    /// The grid corridor's segment predicate: a segment through cells with this request's tier
+    /// clearance, vision and remembered structure policy, without allocating. Kept for the
+    /// grid-against-mesh measurement (`navmesh_measure`) until WP10 removes the grid corridor.
     #[must_use]
-    pub fn segment_is_passable(
+    pub fn grid_segment_is_passable(
         &self,
         map: &GameMap,
         request: &PathRequestWithVision<'_>,
@@ -1246,7 +1277,7 @@ impl Pathfinder {
                     continue;
                 }
                 let candidate_point = point(candidate)?;
-                if self.segment_is_passable(map, request, current, candidate_point) {
+                if self.grid_segment_is_passable(map, request, current, candidate_point) {
                     visible = Some((candidate, candidate_point));
                     break;
                 }

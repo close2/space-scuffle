@@ -90,7 +90,8 @@ pub(crate) struct MotionEntry {
 pub(super) struct ReachCache {
     tick: u32,
     goal: SimVec2,
-    clearance: UnitClearance,
+    /// The radius the point was found for: the mesh answers per disc size.
+    radius: SimScalar,
     owner: u8,
     reachable: SimVec2,
 }
@@ -150,10 +151,18 @@ impl MotionProposal {
         self.memory.corner_round = 0;
     }
 
-    /// Consumes the route's first waypoint, forgetting the sense chosen to round a body on it.
-    fn pass_waypoint(&mut self) {
+    /// Consumes the route's first waypoint. The sense chosen to round a body parked on it is
+    /// forgotten, unless the next waypoint lies within `reach` of it: the two are points of one
+    /// arc round the same corner (plan Amendment 2), and the body is still to be rounded.
+    fn pass_waypoint(&mut self, actor: &Entity, reach: SimScalar) {
+        let same_arc = match *self.route(actor) {
+            [passed, next, ..] => within_distance(passed, next, i128::from(reach.raw())),
+            _ => false,
+        };
         self.remove_prefix += 1;
-        self.memory.corner_round = 0;
+        if !same_arc {
+            self.memory.corner_round = 0;
+        }
     }
 
     /// Ends a move order on arrival at `destination`.
@@ -420,22 +429,17 @@ fn search_route(
     tick: u32,
     owner: u8,
 ) -> RouteSearch {
-    let mut request = *request;
-    let mut found = pathfinder.find_path_with_vision(map, &request);
-    if matches!(found, Err(MapError::InvalidStart(_))) && request.clearance != UnitClearance::Small
-    {
-        // Physics only tests a unit's centre, so a wide body can stand where its tier cannot
-        // start: spawned in a gap, or pushed into one. It leaves on the narrowest tier.
-        request.clearance = UnitClearance::Small;
-        found = pathfinder.find_path_with_vision(map, &request);
-    }
-    match found {
+    // Physics only tests a unit's centre, so a body can stand where its disc does not fit:
+    // spawned in a gap, or pushed into one. The mesh lets it leave (plan D-3: the start triangle
+    // is entered whatever its width), so no narrower retry is needed.
+    let request = *request;
+    match pathfinder.find_path_with_vision(map, &request) {
         Ok(path) => RouteSearch::Found(path),
         Err(MapError::InvalidGoal(_) | MapError::NoPathFound { .. }) => {
             let cached = cache
                 .filter(|c| {
-                    (c.tick, c.goal, c.clearance, c.owner)
-                        == (tick, request.goal, request.clearance, owner)
+                    (c.tick, c.goal, c.radius, c.owner)
+                        == (tick, request.goal, request.radius, owner)
                 })
                 .map(|c| c.reachable);
             let reachable = match cached {
@@ -451,7 +455,7 @@ fn search_route(
             *cache = Some(ReachCache {
                 tick,
                 goal: request.goal,
-                clearance: request.clearance,
+                radius: request.radius,
                 owner,
                 reachable,
             });
@@ -489,22 +493,36 @@ fn route_request<'a>(
 
 /// Whether a stored route still works from `position`.
 ///
-/// The first leg asks only whether the unit can physically walk it. The remaining legs ask for
-/// this tier's clearance. A body pushed into a narrow cell has a first leg the tier would refuse,
-/// and that must not cost it the route it is still able to follow.
+/// The first leg asks only whether the unit can physically walk it. The remaining legs ask the
+/// mesh predicate whether the unit's disc fits along them. A body pushed into a narrow gap has a
+/// first leg its disc would not fit, and that must not cost it the route it is still able to
+/// follow.
 fn route_is_usable(
     map: &SimMap,
-    pathfinder: &Pathfinder,
+    pathfinder: &mut Pathfinder,
     request: &PathRequestWithVision<'_>,
     policy: MotionPolicy,
     position: SimVec2,
     route: &[SimVec2],
 ) -> bool {
-    route.first().is_some_and(|&first| {
-        policy.permits_segment(map, position, first)
-            && route
-                .windows(2)
-                .all(|leg| pathfinder.segment_is_passable(map, request, leg[0], leg[1]))
+    let Some(&first) = route.first() else {
+        return false;
+    };
+    if !policy.permits_segment(map, position, first) {
+        return false;
+    }
+    // Legs from waypoints where the disc does not fit, up to the first where it does, lead a
+    // wedged body out (plan D-3); they are held to the terrain only, as the search held them.
+    let mut wedged = true;
+    route.windows(2).all(|leg| {
+        if wedged {
+            wedged = !pathfinder.segment_is_passable(map, request, leg[0], leg[0]);
+        }
+        if wedged {
+            policy.permits_segment(map, leg[0], leg[1])
+        } else {
+            pathfinder.segment_is_passable(map, request, leg[0], leg[1])
+        }
     })
 }
 
@@ -1341,7 +1359,7 @@ impl MotionDraft<'_> {
     fn decide_arrival(
         &mut self,
         context: &StepContext<'_>,
-        pathfinder: &Pathfinder,
+        pathfinder: &mut Pathfinder,
     ) -> Result<ControlFlow<(), bool>, MovementInvariant> {
         let (id, actor, goal, ground) = (self.entry.id, self.actor, self.goal, self.ground);
         drop_passed_waypoints(
@@ -1387,6 +1405,16 @@ impl MotionDraft<'_> {
         let actor = self.actor;
         let next = match *self.proposal.route(actor) {
             [corner, subsequent, ..] => {
+                // A rounded corner is a run of points on an arc (plan Amendment 2); the side to
+                // pass a parked body on is judged against where the route goes after the arc,
+                // its first point beyond a body width of the corner.
+                let reach =
+                    self.entry.policy.radius + self.entry.policy.radius + WAYPOINT_HANDOFF_MARGIN;
+                let subsequent = self.proposal.route(actor)[1..]
+                    .iter()
+                    .copied()
+                    .find(|&point| !within_distance(point, corner, i128::from(reach.raw())))
+                    .unwrap_or(subsequent);
                 let mut sense = self.proposal.memory.corner_round;
                 let aim = aim_past_parked_body(context, corner, subsequent, &mut sense)
                     .map_err(self.fault())?;
@@ -1478,7 +1506,9 @@ impl MotionDraft<'_> {
     fn pass_reached_waypoint(&mut self, next: SimVec2) {
         if self.proposal.position == next && self.proposal.route(self.actor).first() == Some(&next)
         {
-            self.proposal.pass_waypoint();
+            let reach =
+                self.entry.policy.radius + self.entry.policy.radius + WAYPOINT_HANDOFF_MARGIN;
+            self.proposal.pass_waypoint(self.actor, reach);
         }
     }
 
@@ -1723,7 +1753,7 @@ fn aim_past_parked_body(
 /// the body and the obstacle the corner turns around.
 fn drop_passed_waypoints(
     context: &StepContext<'_>,
-    pathfinder: &Pathfinder,
+    pathfinder: &mut Pathfinder,
     request: &PathRequestWithVision<'_>,
     actor: &Entity,
     proposal: &mut MotionProposal,
@@ -1743,13 +1773,19 @@ fn drop_passed_waypoints(
         if !near && !past {
             break;
         }
+        // A body wedged where it stands (its disc overlaps a wall) sees by terrain only, as its
+        // route's first leg is held (plan D-3); otherwise the disc must fit along the leg.
         let in_view = policy.permits_segment(map, actor.position, subsequent)
             && (policy.layer == MovementLayer::Air
+                || !pathfinder.segment_is_passable(map, request, actor.position, actor.position)
                 || pathfinder.segment_is_passable(map, request, actor.position, subsequent));
         if !in_view {
             break;
         }
-        proposal.pass_waypoint();
+        proposal.pass_waypoint(
+            actor,
+            policy.radius + policy.radius + WAYPOINT_HANDOFF_MARGIN,
+        );
     }
     Ok(())
 }

@@ -120,13 +120,16 @@ fn authored_cliff_groups_follow_real_ramp_and_replay_exactly() -> TestResult {
             );
             let (mut first, kind) = world(map.clone(), MoverType::Ground, fog)?;
             let (mut second, second_kind) = world(map, MoverType::Ground, fog)?;
+            // The route goes round by the ramp. Asked for a Small body: the mesh refuses a goal
+            // where the whole disc does not fit (sc2 pathfinding Amendment 2), and a Medium disc
+            // does not fit at the goal's cell centre beside the cliff.
             let path = first.pathfinder.find_path(
                 &first.map,
                 &PathRequest {
                     start,
                     goal,
-                    clearance: UnitClearance::Medium,
-                    radius: UnitClearance::Medium.radius_scalar(),
+                    clearance: UnitClearance::Small,
+                    radius: UnitClearance::Small.radius_scalar(),
                 },
             )?;
             assert!(path.waypoints.iter().any(|p| p.y >= SimScalar::from_num(8)));
