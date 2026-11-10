@@ -209,3 +209,67 @@ at 40 ms.
 
 **Round 2 result: accepted by the implementer, every item for every effect.** The independent round-2 review follows on
 [`independent_review_packet.md`](independent_review_packet.md).
+
+## Changes for round 3 (after the independent review of round 2; plan Amendment 2)
+
+The owner chose to continue the review loop for up to five rounds (Q0080) and restated round 2's ranked changes.
+Round 3 applies them; the mapping of every round-2 finding to its change is in
+[`independent_review_packet.md`](independent_review_packet.md), section "Round 3".
+
+### Framework
+
+| Gap | Change |
+|---|---|
+| Hard straight cut where a line's ground marks end | Decals take a per-layer **`clip_feather`** (world units; default 0.015 as before): the fade spans the line's end, 60 % of it beyond, so a mark is still about two thirds strong at the end and its tip fades out. The spine line's marks use 0.3. |
+| A flat single-value stain | A **`liquid`** decal material: the element's shading is the liquid's thickness; pooling noise (the layer's breakup noise at twice its scale) moves its value and thickness; the thickness, read two mips above the footprint so only broad swells and the thick rim count, is lit as a surface by a key light from the upper left of the screen, low over the ground (a diffuse term on the relief and a mirror-reflection sheen, so a flat film never shines and only slopes facing the key catch it); relief light and sheen dry away with the layer's ramp curve. Range-checked at load (`relief`, `sheen`, `gloss`, `value_noise`, `dry_below`). |
+| Fog rule for a burrowed attacker's line (Q0076) | A line's search points are admitted one by one and merged per line (`LineAssembly`, `WorldLine::seen`); line-placed instances draw only at seen points (R6). |
+| Burrowed movement (Q0076) | A mode's `moving` slot and an effect's `repeat` period: `spawn_mode_trails` lays the trail where the viewer sees the ground (R5). `burrow_trail` is defined, used by no shipped unit. |
+
+Tests: `placement` unit test of the seen mask; `effect_runtime_tests.rs` (`a_line_whose_first_points_are_fogged_shows_where_it_is_seen`, `the_line_assembly_keeps_lines_apart`, `the_fog_admits_a_line_point_by_point`, `a_burrowed_unit_moving_underground_leaves_a_trail_where_the_ground_is_seen`, `a_trail_without_a_repeat_period_is_refused`); `effect_catalog_tests.rs` (`liquid_feather_and_repeat_values_are_range_checked`); `effect_slice_gpu_tests.rs` (`a_line_seen_only_in_part_draws_only_where_it_is_seen`, in pixels through the harness).
+
+### Textures ([`texture_review.md`](texture_review.md), "Review round 3")
+
+New image-model stills (8 paid, $0.88): `chitin_clump` (3 clumps of straight, splayed spikes), `chitin_spine`
+(2 straight spikes, replacing the curved four), `spine_crack` (a second elongated rupture; the ring and the star are
+dropped), `earth_scar` (2 ragged furrows).
+
+## Round 3
+
+Evidence: the round-3 contact sheets and sequences in this directory (lavapipe, debug build, 2026-11-10), the crowd
+capture [`stress_capture_400.png`](stress_capture_400.png) ([`stress_capture.txt`](stress_capture.txt), round-3
+paragraph), and `effect_slice_gpu_tests.rs` on lavapipe and radv (goldens re-recorded for all three effects: the
+acid and spine looks changed, and the shell's char core is darker). Judged cell by cell, cropped and enlarged, against
+the round-2 review's findings and the checklist.
+
+### `shell_impact`
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1–7 | All | Accept | Unchanged from round 2 except the char core, now 0.007–0.024 linear (row 4 and 8, 2.4–6.0 s: a near-black core inside the soot streaks, still brown-black rather than pure black). Footprint, coverage, pop and lingering tests pass as in round 2. |
+
+### `acid_burst`
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1 | Reads at gameplay zoom | Accept | The stain spreads over most of the 2.2 disc by about 0.12 s (its irregular edge lies inside the reach) and the front races out to the reach and marks it; the critical footprint test passes (the stain, now Critical, stays inside the reach). Focal point: the crown burst and its hot core in the first frames, then the glossy wet centre. |
+| 2 | Layered | Accept | Light, crown burst (flipbook, liquid ramp), hot core, ragged ground flash, front with dark edge, nine large globs, spray, rising vapour, the liquid stain, the wet centre. |
+| 3 | Timing | Accept | Peak at frames 0–1; the stain dries visibly from about 0.4 s (emerald with sheen at 0.48 s, duller at 1.8 s, olive-green matte at 3.0 s) and erodes from its edge and from irregular holes; gone at 6 s. |
+| 4 | No tells of cheapness | Accept | The stain is a liquid: pooled value, a thick darker rim, highlights only on swells and on the rim facing the upper-left key, no uniform fill, no dots (flecks removed), no bevelled pop (the crown is torn by noise). |
+| 5 | Value and colour | Accept | Lime-yellow only in the burst's first frames and its centre; deep emerald field with a darker, more saturated rim; olive-brown crust when dry; separates from the teal ground by value and saturation. |
+| 6 | Crowd | Accept | Over the Major cap the stain stays (Critical), so bursts keep a liquid disc rather than a lone ring. At 200 splashes a second the 6-second stains merge into green fields; every unit stays visible on them. |
+| 7 | Fog | Accept | Anchored at the burst centre; no layer at the source. |
+
+### `spine_line`
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1 | Reads at gameplay zoom | Accept | A row of spike clumps travelling along the line on both grounds, then one continuous broken scar; the line's critical marks pass the footprint test with their 0.3 feathered ends; the heave around each point covers the full-damage discs at their peak. Focal point: the newest one or two clumps, lit bone-ivory. |
+| 2 | Layered | Accept | Heave, scar, crack ruptures, fissure, clumps, side spikes, light dust burst, settling dust, chips. |
+| 3 | Timing | Accept | Cracks open a frame or two ahead; clumps shoot up, overshoot and settle, lit for their first frames, then sink from the source end; the heave erodes within 0.7 s, the cracks by 1.5 s, the scar and fissure by about 2.5 s. |
+| 4 | No tells of cheapness | Accept | Straight, tapering spikes in splayed clumps (three variants, mirrored, of their own lean and size) instead of hooks; no letter-like silhouettes at default zoom; the scar is continuous and uneven; the cracks are scattered elongated ruptures of their own turn and size, no rings or stars; the ends feather out. |
+| 5 | Value and colour | Accept | Dark umber bodies, paler tips; the newest clumps bone-ivory (the brightest value of the effect); the scar a darker shade of the ground. |
+| 6 | Crowd | Accept | In the crowd capture the lines are thin dark scars with spike clumps; lighter than in round 2. |
+| 7 | Fog | Accept | Nothing is drawn more than 0.18 before the first search point (the faint tip of the end feather, 0.82 from the attacker's centre); a line seen only in part draws only at its seen points (GPU test). |
+
+**Round 3 result: accepted by the implementer, every item for every effect.** The independent round-3 review
+follows on [`independent_review_packet.md`](independent_review_packet.md).

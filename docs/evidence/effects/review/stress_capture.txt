@@ -35,9 +35,9 @@ nothing else differs. Made by `frame_budget --scenario 400 --display-path xvfb-s
 build, lavapipe under Xvfb, 1280x720): the RX 580 path of rounds 1 and 2 was not used, because the server's
 disk was saturated by other users and a release build was out of reach; the picture is the same renderer.
 Each line splash now arrives as one event per search point, as the simulation emits them, and is merged
-back into one effect. On the captured frame: 1 117 live effects, 732 cards, 2 748 ground decals; footprints
-cover 29.5 % of the screen (upper bound), summed area 2.34 screens, at most 60 footprints over one cell. Over
+back into one effect. On the captured frame: 1 151 live effects, 732 cards, 3 072 ground decals; footprints
+cover 29.0 % of the screen (upper bound), summed area 2.25 screens, at most 58 footprints over one cell. Over
 the run: 1 700 splashes, 1 700 effects spawned, none refused, no Critical instance without a slot, 655 Detail
-instances skipped for room, 1 006 skipped as smaller than 6 pixels. The acid stain is Critical since round 3,
+instances skipped for room, 988 skipped as smaller than 6 pixels. The acid stain is Critical since round 3,
 so over the Major cap a burst keeps its liquid stain (and its front) instead of only a ring; at 200 splashes a
 second the 6-second stains overlap into green fields between the armies, and every unit stays visible on them.
