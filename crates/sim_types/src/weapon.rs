@@ -155,6 +155,12 @@ pub struct SplashLine {
     /// Signed distances in world units from the origin along the axis, one search point each,
     /// in the order the game's persistent visits them.
     pub offsets: Vec<SimScalar>,
+    /// Ticks between successive searches, the persistent's `PeriodicPeriodArray` (bug B-85):
+    /// the first search lands on the release tick and search `k` lands `k × period_ticks`
+    /// ticks later. 0 lands every search on the release tick (the Hellion's flame; the
+    /// Colossus' sweep by the owner's answer to Q0064).
+    #[serde(default)]
+    pub period_ticks: u16,
 }
 
 /// The shape of a weapon's area.
@@ -534,6 +540,7 @@ mod tests {
                 origin,
                 axis,
                 offsets: vec![SimScalar::from_i32(-1), SimScalar::from_i32(2)],
+                period_ticks: 0,
             }),
             friendly_fire: false,
             offset_by_unit_radius: false,

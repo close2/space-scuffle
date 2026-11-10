@@ -1143,6 +1143,34 @@ fn b16_a_single_zone_deals_full_damage_to_its_edge() {
 /// Fires one shot of `weapon` from a `pulse_bot` at (10, 15) at a red dummy at (14, 15), with
 /// red dummies standing at `bystanders`, and returns the life each bystander lost.
 fn b18_bystander_losses(weapon: WeaponSpec, bystanders: &[(f32, f32)]) -> Vec<SimScalar> {
+    let (mut world, target, ids) = b18_setup(weapon, bystanders);
+    let full = world.entities[&target].hp;
+    for tick in 1..=40 {
+        world.step(&TickBundle {
+            tick: Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        if world.entities[&target].hp < full {
+            break;
+        }
+    }
+    assert!(world.entities[&target].hp < full, "the shot must land");
+    ids.iter()
+        .map(|id| full - world.entities.get(id).map_or(SimScalar::ZERO, |e| e.hp))
+        .collect()
+}
+
+/// The world of [`b18_bystander_losses`], the attack ordered: the world, the target and the
+/// bystanders.
+fn b18_setup(
+    weapon: WeaponSpec,
+    bystanders: &[(f32, f32)],
+) -> (
+    sim_core::SimWorld,
+    sim_types::EntityId,
+    Vec<sim_types::EntityId>,
+) {
     use sim_map::{CliffLevel, GameMap, MapCell};
     use sim_types::{PlayerId, UnitOrder};
 
@@ -1179,21 +1207,7 @@ fn b18_bystander_losses(weapon: WeaponSpec, bystanders: &[(f32, f32)]) -> Vec<Si
         .expect("attacker")
         .issue_order(UnitOrder::attack(target), false)
         .expect("valid attack order");
-    let full = world.entities[&target].hp;
-    for tick in 1..=40 {
-        world.step(&TickBundle {
-            tick: Tick(tick),
-            commands: Vec::new(),
-            state_checksum: None,
-        });
-        if world.entities[&target].hp < full {
-            break;
-        }
-    }
-    assert!(world.entities[&target].hp < full, "the shot must land");
-    ids.iter()
-        .map(|id| full - world.entities.get(id).map_or(SimScalar::ZERO, |e| e.hp))
-        .collect()
+    (world, target, ids)
 }
 
 /// A weapon of 40 damage, `strikes` strikes landing together, with a line splash of one zone
@@ -1227,7 +1241,132 @@ fn b18_line(
         origin,
         axis,
         offsets: offsets.iter().copied().map(SimScalar::from_i32).collect(),
+        period_ticks: 0,
     }
+}
+
+/// Steps the world of [`b18_setup`] until the target is struck and `extra` ticks more; returns,
+/// per bystander, the tick after the target's strike on which it first lost life, if it did,
+/// and its total loss.
+fn b85_strike_ticks(
+    weapon: WeaponSpec,
+    bystanders: &[(f32, f32)],
+    extra: u32,
+) -> Vec<(Option<u32>, SimScalar)> {
+    let (mut world, target, ids) = b18_setup(weapon, bystanders);
+    let full = world.entities[&target].hp;
+    let mut struck_on = None;
+    let mut first = vec![None; ids.len()];
+    for tick in 1..=200 {
+        world.step(&TickBundle {
+            tick: Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        if struck_on.is_none() && world.entities[&target].hp < full {
+            struck_on = Some(tick);
+        }
+        let Some(start) = struck_on else {
+            continue;
+        };
+        for (slot, id) in first.iter_mut().zip(&ids) {
+            if slot.is_none() && world.entities[id].hp < full {
+                *slot = Some(tick - start);
+            }
+        }
+        if tick - start >= extra {
+            break;
+        }
+    }
+    assert!(struck_on.is_some(), "the shot must land");
+    first
+        .into_iter()
+        .zip(&ids)
+        .map(|(tick, id)| (tick, full - world.entities[id].hp))
+        .collect()
+}
+
+/// B-85: a line whose searches are spaced (the Lurker's spines, 0.125 Normal s apart, `void`
+/// EffectData:297-307; the owner's note on Q0064 allows 2 ticks) lands its first search on the
+/// release tick and each later one `period_ticks` after the one before, in offset order; a unit
+/// inside several searches is struck once, by the first that reaches it.
+#[test]
+fn b85_a_spaced_line_lands_its_searches_period_ticks_apart() {
+    let mut line = b18_line(
+        sim_types::SplashLineOrigin::Attacker,
+        sim_types::SplashLineAxis::Along,
+        &[1, 2, 3, 4, 5, 6, 7],
+    );
+    line.period_ticks = 2;
+    // Searches at x = 11, 12, …, 17 land 0, 2, …, 12 ticks after the release; the attacker
+    // fires again 20 ticks later, after the whole line.
+    let traces = b85_strike_ticks(
+        b18_line_weapon(line, 1),
+        &[(11.0, 15.0), (13.0, 15.9), (16.5, 15.0), (14.0, 16.5)],
+        14,
+    );
+    let forty = SimScalar::from_num(40);
+    assert_eq!(
+        traces[0],
+        (Some(0), forty),
+        "first search, on the release tick"
+    );
+    assert_eq!(
+        traces[1],
+        (Some(4), forty),
+        "only the third search reaches it, 4 ticks later"
+    );
+    assert_eq!(
+        traces[2],
+        (Some(10), forty),
+        "inside the sixth and seventh searches, struck once by the sixth"
+    );
+    assert_eq!(traces[3], (None, SimScalar::ZERO), "off the line");
+}
+
+/// B-85: a spaced line's later searches end with its attacker (`PeriodicValidator`
+/// `CasterIsAliveandBurrowedLurker`, `voidmulti` EffectData:813).
+#[test]
+fn b85_a_spaced_line_ends_when_its_attacker_dies() {
+    let mut line = b18_line(
+        sim_types::SplashLineOrigin::Attacker,
+        sim_types::SplashLineAxis::Along,
+        &[1, 2, 3, 4, 5, 6, 7],
+    );
+    line.period_ticks = 2;
+    let (mut world, target, ids) =
+        b18_setup(b18_line_weapon(line, 1), &[(11.0, 15.0), (16.5, 15.0)]);
+    let attacker = *world
+        .entities
+        .iter()
+        .find(|(_, e)| e.owner == sim_types::PlayerId(0))
+        .expect("the attacker")
+        .0;
+    let full = world.entities[&target].hp;
+    let mut tick = 1;
+    while world.entities[&target].hp == full {
+        world.step(&TickBundle {
+            tick: Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        tick += 1;
+        assert!(tick < 100, "the shot must land");
+    }
+    world.entities.get_mut(&attacker).expect("attacker").hp = SimScalar::ZERO;
+    for _ in 0..14 {
+        world.step(&TickBundle {
+            tick: Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        tick += 1;
+    }
+    assert!(world.entities[&ids[0]].hp < full, "the first search landed");
+    assert_eq!(
+        world.entities[&ids[1]].hp, full,
+        "the later searches died with the attacker"
+    );
 }
 
 /// B-18: a line along the attack from the attacker (the Hellion's flame and the Lurker's

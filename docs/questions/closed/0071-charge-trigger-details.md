@@ -59,3 +59,19 @@ within 4, and item 4 how far a dash can carry a Zealot that is ordered elsewhere
 2. **Autocast evaluation timing:** `CAbilAugment` with `AutoCast` on the `attack` order evaluates every game loop while the Zealot moves toward its attack target until the `< 4.0` range check passes. WP13c already does this.
 3. **`4.0` maximum range (`Pathing = 1`):** In SC2, `Pathing = 1` checks ground pathing distance (`<= 4.0`) so a Zealot does not trigger Charge across an impassable cliff or a sealed wall when the walking detour is longer than `4.0`. Straight-line distance (as landed in WP13c) is fine on open terrain, or you may check navpath length if already available at the call site.
 4. **Ending the `Charging` buff:** In SC2, the `Charging` buff (`Channeling` flag on the augment) is removed when `ChargeTargetAttacked` (`CValidatorUnitWeaponFiring` on `PsiBlades`) triggers, OR when the player cancels the attack with a non-attack command (`Move`, `Stop`, `HoldPosition`), whereas retargeting to another enemy unit keeps the charge speed active. Feel free to drop `Charging` on explicit non-attack orders (`Move`/`Stop`/`HoldPosition`) while keeping it across attack retargets, and close `Q0071` without an editor test.
+
+## Resolution
+
+2026-11-10. Option 1 with the optional details the owner's engine notes endorse, without an editor
+test (plan `2026-11-05-sc2-deviation-fixes` Amendment 24, item 1). Commit `93dffe7`:
+
+- an explicit `Move`, `Stop` or `HoldPosition` order now ends a running dash; an attack on another
+  target or an attack-move keeps it (item 4);
+- the 4 is the ground path distance: the length of the dasher's route on the navigation mesh to
+  the target's centre. The straight line stands in only where no route query is possible (a map
+  without a mesh, a dasher that does not walk on the ground, a dasher or target centre where the
+  dasher's disc does not fit, such as a structure), and a target the dasher cannot walk to is never
+  in the window (item 2);
+- the 0.6 edge to edge and the per-tick autocast were already as answered (items 1 and 3).
+
+Bug B-43 is closed. Evidence `2026-11-05-sc2-deviation-fixes.md` §18.

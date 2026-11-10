@@ -420,7 +420,8 @@ fn attack_move_combatants(
     player_slot: u8,
     target: SimVec2,
 ) -> Result<(), ScenarioError> {
-    let mut combatants = 0_usize;
+    let mut combatants = Vec::new();
+    let order = UnitOrder::AttackMove { target };
     for entity in world.entities.values_mut() {
         let archetype = world.catalog.get(entity.unit_type_id)?;
         if entity.owner == PlayerId(player_slot)
@@ -431,14 +432,17 @@ fn attack_move_combatants(
                 || archetype.weapon.is_some())
         {
             entity
-                .issue_order(UnitOrder::AttackMove { target }, false)
+                .issue_order(order.clone(), false)
                 .map_err(SimCoreError::from)?;
-            combatants += 1;
+            combatants.push(entity.id);
         }
     }
-    if combatants == 0 {
+    if combatants.is_empty() {
         return Err(ScenarioError::NoCombatants { slot: player_slot });
     }
+    // The army attack-moves as one command: one route group (plan `2026-11-10-group-routing`,
+    // D-1).
+    world.form_route_group(PlayerId(player_slot), &combatants, &order);
     Ok(())
 }
 

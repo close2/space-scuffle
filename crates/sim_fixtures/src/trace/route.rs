@@ -31,8 +31,14 @@
 
 use super::blocking::{attackers_in_range, BlockingMeter, BlockingMetrics};
 use super::cli::RunError;
-use sim_core::scenario::{load_scenario_battle, ScenarioError};
+use super::route_groups::{groups_markdown, lanes_csv, GroupMeter};
+use sim_core::catalog::{MovementRules, RuntimeCatalogs};
+use sim_core::scenario::{
+    apply_initial_orders, build_world_with_catalogs, InitialOrder, ScenarioError, ScenarioManifest,
+    StartLoadoutCatalog,
+};
 use sim_core::SimWorld;
+use sim_map::MapFile;
 use sim_types::{MatchResult, PlayerId, SimScalar, Tick, TickBundle};
 use std::path::{Path, PathBuf};
 
@@ -47,13 +53,19 @@ const STILL_SEGMENT: f64 = 1e-6;
 
 /// The usage text printed on an argument error.
 pub const USAGE: &str = "usage: route_trace --scenario <file> --out <dir> [--assets <dir>] \
-[--ticks <n>] [--box <name>=<x0>,<y0>,<x1>,<y1>]...
+[--ticks <n>] [--box <name>=<x0>,<y0>,<x1>,<y1>]... [--lane-line <y>] [--order <ron>]... \
+[--lane-tolerance <permille>]
   --scenario <file>  scenario path relative to the assets directory, e.g. scenarios/showcase.ron
   --out <dir>        output directory for units.csv, passes.csv and summary.md
   --assets <dir>     assets directory (default: the repository's assets/)
   --ticks <n>        ticks to play at most (default 900); the run stops when the match ends
   --box ...          a measuring box in world units, bounds inclusive (repeatable; default: the
-                     three showcase boxes of plan 2026-11-09-sc2-pathfinding §3.1)";
+                     three showcase boxes of plan 2026-11-09-sc2-pathfinding §3.1)
+  --lane-line <y>    also write lanes.csv: the x where each unit first crosses y (world units)
+  --order <ron>      an initial order replacing the scenario's own (repeatable), e.g.
+                     \"AttackMoveToStart(player_slot: 1, target_player_slot: 0)\"; built in memory
+  --lane-tolerance   group-routing tolerance in permille replacing the catalog's
+  Always writes groups.md: route groups, their lanes and GroupLane events.";
 
 /// A named axis-aligned box of the map in world units, bounds inclusive.
 #[derive(Debug, Clone, PartialEq)]
@@ -236,6 +248,12 @@ pub struct RouteTraceArgs {
     pub out: PathBuf,
     /// Boxes to measure.
     pub boxes: Vec<RouteBox>,
+    /// The horizontal line whose crossings `lanes.csv` records, world units.
+    pub lane_line: Option<f64>,
+    /// Initial orders replacing the scenario's, when not empty.
+    pub orders: Vec<InitialOrder>,
+    /// Group-routing tolerance replacing the catalog's, in permille.
+    pub lane_tolerance: Option<u32>,
 }
 
 /// Ticks played when `--ticks` is not given (plan §D-11).
@@ -251,6 +269,7 @@ impl RouteTraceArgs {
         let usage = RouteTraceError::Usage;
         let mut args = args.into_iter();
         let (mut scenario, mut out, mut boxes) = (None, None, Vec::new());
+        let (mut lane_line, mut orders, mut lane_tolerance) = (None, Vec::new(), None);
         let mut assets = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets");
         let mut ticks = DEFAULT_TICKS;
         while let Some(flag) = args.next() {
@@ -271,6 +290,21 @@ impl RouteTraceArgs {
                         "--box needs <name>=<x0>,<y0>,<x1>,<y1>, got {value}"
                     ))
                 })?),
+                "--lane-line" => {
+                    lane_line = Some(value.parse().map_err(|_| {
+                        usage(format!("--lane-line needs a y coordinate, got {value}"))
+                    })?);
+                }
+                "--order" => {
+                    orders.push(ron::from_str(&value).map_err(|error| {
+                        usage(format!("--order needs an initial order: {error}"))
+                    })?);
+                }
+                "--lane-tolerance" => {
+                    lane_tolerance = Some(value.parse().map_err(|_| {
+                        usage(format!("--lane-tolerance needs permille, got {value}"))
+                    })?);
+                }
                 _ => return Err(usage(format!("unknown argument {flag}"))),
             }
         }
@@ -284,6 +318,9 @@ impl RouteTraceArgs {
             } else {
                 boxes
             },
+            lane_line,
+            orders,
+            lane_tolerance,
         })
     }
 }
@@ -317,6 +354,9 @@ pub enum RouteTraceError {
     /// The scenario could not be loaded or started.
     #[error(transparent)]
     Scenario(#[from] ScenarioError),
+    /// The `--lane-tolerance` value is out of range.
+    #[error("invalid lane tolerance: {0}")]
+    Tolerance(#[from] sim_core::SimCoreError),
 }
 
 /// One unit's first pass through a box.
@@ -357,6 +397,47 @@ pub struct RouteTraceOutput {
     /// Per owner slot, `(attackers in range, attackers)` after [`IN_RANGE_TICK`] ticks; empty
     /// if the run ended earlier.
     pub in_range: Vec<(u8, (u32, u32))>,
+    /// Route groups, `GroupLane` events and lane-line crossings (plan `2026-11-10-group-routing`).
+    pub groups: GroupMeter,
+}
+
+/// Starts the scenario as [`sim_core::scenario::load_scenario_battle`] does, with the initial
+/// orders and the group-routing tolerance of `args` in place of the scenario's and catalog's
+/// when given. Nothing is written under the assets directory.
+///
+/// # Errors
+/// As `load_scenario_battle`, and an out-of-range tolerance.
+pub fn start_battle(args: &RouteTraceArgs) -> Result<SimWorld, RouteTraceError> {
+    let assets = &args.assets;
+    let manifest = ScenarioManifest::from_ron_str(
+        &std::fs::read_to_string(assets.join(&args.scenario)).map_err(ScenarioError::from)?,
+    )?;
+    let document = MapFile::load(&assets.join(&manifest.map))
+        .and_then(|file| file.decode())
+        .map_err(ScenarioError::from)?;
+    let loadouts = StartLoadoutCatalog::load(assets.join("catalog/start_loadouts.ron"))?;
+    let mut catalogs = RuntimeCatalogs::load_from_directory(assets.join("catalog"))
+        .map_err(ScenarioError::from)?;
+    if let Some(permille) = args.lane_tolerance {
+        catalogs
+            .units
+            .set_movement_rules(MovementRules::with_lane_tolerance(permille)?);
+    }
+    let mut world = build_world_with_catalogs(
+        &document,
+        &loadouts,
+        &manifest.players,
+        manifest.seed,
+        catalogs.units,
+        catalogs.upgrades,
+    )?;
+    let orders = if args.orders.is_empty() {
+        &manifest.initial_orders
+    } else {
+        &args.orders
+    };
+    apply_initial_orders(&mut world, &document, &manifest.players, orders)?;
+    Ok(world)
 }
 
 /// Plays the scenario, measures the boxes and writes `units.csv`, `passes.csv` and `summary.md`.
@@ -364,8 +445,9 @@ pub struct RouteTraceOutput {
 /// # Errors
 /// A scenario that fails to load, a simulation diagnostic, or a file that cannot be written.
 pub fn run_route_trace(args: &RouteTraceArgs) -> Result<RouteTraceOutput, RouteTraceError> {
-    let mut world = load_scenario_battle(&args.assets, &args.scenario)?;
+    let mut world = start_battle(args)?;
     let mut samples = Vec::new();
+    let mut groups = GroupMeter::new(args.lane_line);
     let mut ticks_played = 0;
     let mut meter = BlockingMeter::new();
     let mut in_range = Vec::new();
@@ -390,6 +472,7 @@ pub fn run_route_trace(args: &RouteTraceArgs) -> Result<RouteTraceOutput, RouteT
         }
         record_samples(&world, ticks_played, &mut samples);
         meter.observe(&world);
+        groups.observe(&world, ticks_played);
         ticks_played += 1;
         if ticks_played == IN_RANGE_TICK {
             in_range = owners
@@ -409,6 +492,7 @@ pub fn run_route_trace(args: &RouteTraceArgs) -> Result<RouteTraceOutput, RouteT
             .map(|&owner| (owner, meter.of_owner(PlayerId(owner))))
             .collect(),
         in_range,
+        groups,
     };
     write_outputs(&args.out, &output)?;
     Ok(output)
@@ -500,6 +584,14 @@ fn write_outputs(out: &Path, output: &RouteTraceOutput) -> Result<(), RunError> 
     std::fs::write(&passes_path, passes_csv(&output.boxes)).map_err(io(&passes_path))?;
     let summary_path = out.join("summary.md");
     std::fs::write(&summary_path, summary_markdown(output)).map_err(io(&summary_path))?;
+    let groups_path = out.join("groups.md");
+    let groups = groups_markdown(&output.groups.groups(), output.groups.events());
+    std::fs::write(&groups_path, groups).map_err(io(&groups_path))?;
+    if output.groups.has_lane_line() {
+        let lanes_path = out.join("lanes.csv");
+        std::fs::write(&lanes_path, lanes_csv(&output.groups.crossings()))
+            .map_err(io(&lanes_path))?;
+    }
     Ok(())
 }
 

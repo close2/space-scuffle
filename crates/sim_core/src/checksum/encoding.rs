@@ -5,13 +5,16 @@
 //! Exhaustive struct destructuring makes field additions require checksum review.
 
 use crate::entity::{
-    ActiveBuff, ActiveProjectile, BarrierState, Entity, MovementMemory, PendingStrikes, WeaponPhase,
+    ActiveBuff, ActiveProjectile, BarrierState, Entity, MovementMemory, PendingLine,
+    PendingStrikes, WeaponPhase,
 };
 use crate::entity::{Cargo, UnitTask};
 use crate::match_state::MatchState;
+use crate::movement::groups::{GroupLane, LaneState, RouteGroup, RouteGroupId, RouteGroupKind};
 use crate::production::construction::Construction;
 use crate::production::{ProductionItem, ProductionJob};
 use crate::world::{ActiveHazardZone, PlayerResources};
+use sim_map::navmesh::lanes::LaneWord;
 use sim_map::{
     CellFlags, CliffLevel, MapCell, PlacedStructure, RampDir, ResourceKind, ResourceNode,
     TerrainKind, Watchtower,
@@ -319,6 +322,7 @@ fields!(Entity {
     weapon_cooldown_remaining,
     weapon_delay_carry,
     pending_strikes,
+    pending_line,
     active_buffs,
     barrier,
     attack_dash_cooldown,
@@ -351,8 +355,50 @@ fields!(Entity {
     is_completed,
     transport_carrier,
     is_invulnerable,
+    route_orders_issued,
 } unhashed {
     hull_turn_budget,
+});
+wrapper!(RouteGroupId);
+impl Canonical for RouteGroupKind {
+    fn encode(&self, encoder: &mut Encoder) {
+        let tag: u8 = match self {
+            RouteGroupKind::Move => 0,
+            RouteGroupKind::AttackMove => 1,
+        };
+        tag.encode(encoder);
+    }
+}
+impl Canonical for LaneWord {
+    fn encode(&self, encoder: &mut Encoder) {
+        self.letters().encode(encoder);
+    }
+}
+impl Canonical for LaneState {
+    fn encode(&self, encoder: &mut Encoder) {
+        match self {
+            LaneState::Pending => 0_u8.encode(encoder),
+            LaneState::None => 1_u8.encode(encoder),
+            LaneState::Lane(lane) => {
+                2_u8.encode(encoder);
+                lane.encode(encoder);
+            }
+        }
+    }
+}
+fields!(GroupLane {
+    polyline,
+    word,
+    leader,
+    radius
+});
+fields!(RouteGroup {
+    id,
+    player,
+    kind,
+    target,
+    members,
+    lane
 });
 fields!(ActiveProjectile {
     id,
@@ -401,6 +447,17 @@ fields!(WeaponSpec {
     suicide_on_attack,
     structure_strike,
 });
+// `view` is presentation only (the line's renderer events): it decides nothing.
+fields!(PendingLine {
+    points,
+    ticks_until_next,
+    plane,
+    angle,
+    primary,
+    struck
+} unhashed {
+    view
+});
 fields!(PendingStrikes {
     target_id,
     plane,
@@ -417,7 +474,8 @@ fields!(SplashSpec {
 fields!(SplashLine {
     origin,
     axis,
-    offsets
+    offsets,
+    period_ticks
 });
 
 impl Canonical for SplashShape {
@@ -739,7 +797,7 @@ mod tests {
         // Domain length, UTF-8 domain, schema u32, u16, i32, option tags/payload,
         // then UTF-8 string byte length and its two encoded bytes.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 25, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 27, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
             0xff, 0xff, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0xc3, 0xa9,
         ];
         assert_eq!(encoder.finish(), xxh64(&bytes, 0));
@@ -815,7 +873,7 @@ mod tests {
             let mut encoder = Encoder::new("test");
             7_u32.encode(&mut encoder);
             text.as_str().encode(&mut encoder);
-            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 25, 0, 0, 0];
+            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 27, 0, 0, 0];
             bytes.extend([7, 0, 0, 0]);
             bytes.extend((length as u64).to_le_bytes());
             bytes.extend(text.as_bytes());
@@ -838,7 +896,7 @@ mod tests {
         // Domain length and bytes, schema version, queue length, item tag, archetype u16,
         // then the full remaining duration u32 (0x0001_0001), total, supply and payments.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 25, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 27, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
             0x34, 0x12, 1, 0, 1, 0, 2, 0, 0, 0, 0x78, 0x56, 0x34, 0x12, 3, 0, 0, 0, 4, 0, 0, 0,
         ];
         assert_eq!(digest(&queue), xxh64(&bytes, 0));
@@ -846,7 +904,7 @@ mod tests {
 
     #[test]
     fn carrier_identity_has_explicit_option_tag_and_all_id_bytes() {
-        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 25, 0, 0, 0];
+        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 27, 0, 0, 0];
         bytes.push(0);
         assert_eq!(digest(&None::<sim_types::EntityId>), xxh64(&bytes, 0));
         bytes.pop();

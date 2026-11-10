@@ -834,7 +834,7 @@ switch").
 1. **Per-unit shortest routes stay.** Each unit paths on its own, as StarCraft II reportedly does. The showcase's
    winner flip comes from the near-tied west and east lanes (0.35 %) splitting the armies, not from route
    following. Group-consistent routing, an "allows more" deviation, is owner question
-   [Q0079](../questions/open/0079-group-consistent-routing.md) (non-blocking; default: per-unit routes).
+   [Q0079](../questions/closed/0079-group-consistent-routing.md) (non-blocking; default: per-unit routes).
 2. **Revised acceptance for landing the switch** (replaces Amendment 3, 2.c):
    - The showcase is judged on the lanes units actually take: route ratio and turning per box along each unit's
      own lane, no worse than base on comparable boxes. Ramp W's lane-end turn of about 100° at (29, 12) is
