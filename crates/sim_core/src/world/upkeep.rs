@@ -46,6 +46,7 @@ impl SimWorld {
         }
 
         self.step_hazards();
+        self.step_effects();
 
         // Hazards may have killed a ready producer; completion rechecks its life.
         self.complete_production();

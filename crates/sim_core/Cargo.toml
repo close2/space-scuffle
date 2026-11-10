@@ -23,6 +23,8 @@ ron.workspace = true
 [dev-dependencies]
 # The shipped catalogs and worlds, embedded for tests only; production loads them from disk.
 sim_fixtures.workspace = true
+# Property tests of the effect-tree engine (plan 2026-11-10-spellcaster-mechanics §11).
+proptest.workspace = true
 
 # Release throughput report; run with `cargo bench -p sim_core --bench throughput`.
 [[bench]]

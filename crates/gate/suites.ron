@@ -317,6 +317,8 @@ SuiteCatalog(
             "sim_core/damage_and_shields_tests",
             "sim_core/determinism_lockstep_tests",
             "sim_core/effect_snapshot_tests",
+            "sim_core/effect_tree_properties",
+            "sim_core/effect_tree_tests",
             "sim_core/fixed_body_transactions_tests",
             "sim_core/flee_and_evasion_tests",
             "sim_core/fog_of_war_pathfinding_tests",

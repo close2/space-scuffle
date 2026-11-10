@@ -206,7 +206,8 @@ impl SimWorld {
         target_pos: Option<SimVec2>,
         target_entity: Option<EntityId>,
     ) -> Result<bool, MovementInvariant> {
-        let Some(cast) = self.admit_cast(entity_id, ability_index, target_pos)? else {
+        let Some(cast) = self.admit_cast(entity_id, ability_index, target_pos, target_entity)?
+        else {
             return Ok(false);
         };
         Ok(self.commit_cast(entity_id, cast, target_pos, target_entity))
@@ -229,7 +230,7 @@ impl SimWorld {
         target_pos: Option<SimVec2>,
     ) -> bool {
         matches!(
-            self.admit_cast(entity_id, ability_index, target_pos),
+            self.admit_cast(entity_id, ability_index, target_pos, None),
             Ok(Some(_))
         )
     }
@@ -243,6 +244,7 @@ impl SimWorld {
         entity_id: EntityId,
         ability_index: u8,
         target_pos: Option<SimVec2>,
+        target_entity: Option<EntityId>,
     ) -> Result<Option<PreparedCast>, MovementInvariant> {
         let entity = match self.entities.get(&entity_id) {
             Some(e) if e.is_alive() => e,
@@ -306,8 +308,13 @@ impl SimWorld {
             .checked_sub(ability.energy_cost)
             .ok_or_else(|| admission(crate::entity::EntityAdmissionError::PaymentOverflow))?;
         // Validate every fallible payment/rate/placement before any commit.
-        let EffectAdmission::Admitted(overclock) =
-            self.admit_effect(entity_id, entity, arch, &ability.effect, target_pos)?
+        let EffectAdmission::Admitted(overclock) = self.admit_effect(
+            entity_id,
+            entity,
+            arch,
+            &ability.effect,
+            (target_pos, target_entity),
+        )?
         else {
             return Ok(None);
         };
@@ -330,7 +337,7 @@ impl SimWorld {
         entity: &Entity,
         arch: &UnitArchetype,
         effect: &AbilityEffectSpec,
-        target_pos: Option<SimVec2>,
+        (target_pos, target_entity): (Option<SimVec2>, Option<EntityId>),
     ) -> Result<EffectAdmission, MovementInvariant> {
         let admission = |source| MovementInvariant::Admission {
             entity: entity_id,
@@ -389,9 +396,18 @@ impl SimWorld {
                     return Ok(EffectAdmission::Refused);
                 }
             }
-            // The effect-tree engine and its cast pipeline arrive in WP1c and WP1d of plan
-            // `2026-11-10-spellcaster-mechanics`; until then an effect cast is refused unpaid.
-            AbilityEffectSpec::Effect(_) => return Ok(EffectAdmission::Refused),
+            // The immediate path of plan `2026-11-10-spellcaster-mechanics` WP1c: the root must
+            // exist and the target kind must be given; approach, range, vision and the target
+            // filter arrive with the cast pipeline (WP1d).
+            AbilityEffectSpec::Effect(key) => {
+                let target_given = target_pos.is_some()
+                    || target_entity.is_some_and(|id| {
+                        crate::effects::is_effect_unit_target(&self.entities, id)
+                    });
+                if self.catalog.spells().effect_id(key).is_none() || !target_given {
+                    return Ok(EffectAdmission::Refused);
+                }
+            }
         }
         Ok(EffectAdmission::Admitted(prepared_overclock))
     }
@@ -432,8 +448,8 @@ impl SimWorld {
 
         match effect {
             AbilityEffectSpec::Overclock(_) | AbilityEffectSpec::Effect(_) => {
-                // The prepared buff committed atomically with resources above. An effect cast
-                // is refused at admission and never reaches here.
+                // The prepared buff committed atomically with resources above; an effect's
+                // walk starts below, once the caster is no longer borrowed.
             }
             AbilityEffectSpec::SiegeModeToggle { cast_ticks, .. } => {
                 if cast_ticks > 0 {
@@ -506,7 +522,46 @@ impl SimWorld {
             }
         }
 
+        if let AbilityEffectSpec::Effect(key) = &effect {
+            self.start_cast_walk(entity_id, ability_index, key, (target_pos, target_entity));
+        }
         true
+    }
+
+    /// Starts the walk of an `Effect` ability's root for a committed cast: the target unit if
+    /// one was given, else the target point; origin and source point are the caster's position
+    /// (origin placement arrives with the cast pipeline, plan
+    /// `2026-11-10-spellcaster-mechanics`, package 1d).
+    fn start_cast_walk(
+        &mut self,
+        caster: EntityId,
+        ability_index: u8,
+        key: &str,
+        (target_pos, target_entity): (Option<SimVec2>, Option<EntityId>),
+    ) {
+        let target = match (target_entity, target_pos) {
+            (Some(unit), _) => sim_types::EffectTarget::Unit(unit),
+            (None, Some(point)) => sim_types::EffectTarget::Point(point),
+            (None, None) => return,
+        };
+        let (Some(root), Some(entity)) = (
+            self.catalog.spells().effect_id(key),
+            self.entities.get(&caster),
+        ) else {
+            return;
+        };
+        let context = sim_types::EffectContext {
+            owner: entity.owner,
+            caster: Some(caster),
+            ability: AbilitySource {
+                unit_type: entity.unit_type_id,
+                ability: ability_index,
+            },
+            origin: entity.position,
+            source_point: entity.position,
+            target,
+        };
+        self.run_effect_walk(root, context);
     }
 
     /// Opens a hazard zone of `spec` owned by `owner` at `center`, taking the next hazard ID,

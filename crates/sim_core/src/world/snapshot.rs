@@ -23,8 +23,9 @@ use crate::entity::{Entity, WeaponPhase, OVERCLOCK_BUFF_ID};
 use crate::SimWorld;
 use sim_map::SimMap;
 use sim_types::{
-    AreaView, AttackSwing, BubbleRenderInstance, MoverType, PlayerSlot, PlayerStatusView,
-    RenderSnapshot, ResourceNodeId, ResourceNodeView, SimScalar, Tick, WeaponVisualKind,
+    AreaView, AttackSwing, BubbleRenderInstance, EntityId, MoverType, PlayerSlot, PlayerStatusView,
+    RenderSnapshot, ResourceNodeId, ResourceNodeView, SimScalar, StatusKind, Tick,
+    WeaponVisualKind,
 };
 
 impl SimWorld {
@@ -67,6 +68,7 @@ impl SimWorld {
         self.write_player_views(output);
         self.write_resource_nodes(output);
         self.write_areas(output);
+        self.write_effect_views(output);
 
         self.presentation.settle_barrier_hits();
         for entity in self.entities.values() {
@@ -78,9 +80,9 @@ impl SimWorld {
             };
             let swing = self.published_swing(entity, arch);
             let barrier_hit = self.presentation.barrier_hit(entity.id);
-            output
-                .bubbles
-                .push(bubble_instance(entity, arch, &self.map, swing, barrier_hit));
+            let mut bubble = bubble_instance(entity, arch, &self.map, swing, barrier_hit);
+            self.raise_status_flags(entity.id, &mut bubble.status);
+            output.bubbles.push(bubble);
         }
         self.presentation.clear_barrier_hits();
 
@@ -112,6 +114,138 @@ impl SimWorld {
                     source: record.map(|record| record.source),
                 }
             }));
+    }
+
+    /// Appends the effect engine's views (plan `2026-11-10-spellcaster-mechanics` D-19): an
+    /// area per point-anchored persistent that searches, a spell missile per projectile
+    /// missile, and a link per tether missile, tethered waiting persistent and tethered
+    /// displacement whose caster lives. Areas of persistents carry the high bit in their id so
+    /// they never share one with a hazard zone (removed in work package 2b).
+    fn write_effect_views(&self, output: &mut RenderSnapshot) {
+        let spells = self.catalog.spells();
+        output.spell_missiles.clear();
+        for persistent in self.effects.persistents() {
+            let (Some(node), Some(facts)) =
+                (spells.node(persistent.node), spells.facts(persistent.node))
+            else {
+                continue;
+            };
+            let crate::catalog::EffectNode::Persistent {
+                period_ticks,
+                count,
+                ..
+            } = node.kind
+            else {
+                continue;
+            };
+            match persistent.anchor {
+                crate::effects::PersistentAnchor::Point(center) => {
+                    let Some(radius) = facts.area_radius else {
+                        continue;
+                    };
+                    let total = crate::effects::pulse_offset(period_ticks, count)
+                        .map_or(0, |ticks| u16::try_from(ticks).unwrap_or(u16::MAX));
+                    let elapsed = self.current_tick.wrapping_sub(persistent.created_tick.0);
+                    let elapsed = u16::try_from(elapsed).unwrap_or(u16::MAX);
+                    output.areas.push(AreaView {
+                        id: persistent.id | crate::effects::PERSISTENT_AREA_ID_BIT,
+                        owner: persistent.context.owner,
+                        center: [
+                            center.x.to_f32(),
+                            center.y.to_f32(),
+                            self.map.terrain_altitude_at(center),
+                        ],
+                        radius: radius.to_f32(),
+                        remaining_ticks: total.saturating_sub(elapsed),
+                        total_ticks: total,
+                        source: Some(persistent.context.ability),
+                    });
+                }
+                crate::effects::PersistentAnchor::Unit(unit) => {
+                    if facts.reaches_tether {
+                        self.push_link(output, &persistent.context, unit);
+                    }
+                }
+            }
+        }
+        for missile in self.effects.missiles() {
+            let Some(crate::catalog::EffectNode::LaunchMissile { view, .. }) =
+                spells.node(missile.node).map(|node| node.kind)
+            else {
+                continue;
+            };
+            match (view, missile.target) {
+                (sim_types::MissileView::Projectile, _) => {
+                    output.spell_missiles.push(sim_types::SpellMissileView {
+                        id: missile.id,
+                        owner: missile.context.owner,
+                        position: [
+                            missile.position.x.to_f32(),
+                            missile.position.y.to_f32(),
+                            self.map.terrain_altitude_at(missile.position),
+                        ],
+                        source: missile.context.ability,
+                    });
+                }
+                (sim_types::MissileView::Tether, sim_types::EffectTarget::Unit(unit)) => {
+                    self.push_link(output, &missile.context, unit);
+                }
+                (sim_types::MissileView::Tether, sim_types::EffectTarget::Point(_)) => {}
+            }
+        }
+        for (id, entity) in &self.entities {
+            let Some(flight) = entity.displacement else {
+                continue;
+            };
+            if let Some(crate::catalog::EffectNode::Displace { tether: true, .. }) =
+                spells.node(flight.node).map(|node| node.kind)
+            {
+                self.push_link(output, &flight.context, *id);
+            }
+        }
+    }
+
+    /// Adds a link from the context's caster to `to`, when the caster lives.
+    fn push_link(
+        &self,
+        output: &mut RenderSnapshot,
+        context: &sim_types::EffectContext,
+        to: EntityId,
+    ) {
+        let Some(caster) = context
+            .caster
+            .filter(|id| self.entities.get(id).is_some_and(Entity::is_alive))
+        else {
+            return;
+        };
+        output.links.push(sim_types::LinkView {
+            from: caster,
+            to,
+            owner: context.owner,
+            source: context.ability,
+        });
+    }
+
+    /// Raises the presentation flags of every status `entity` carries.
+    fn raise_status_flags(&self, entity: EntityId, flags: &mut sim_types::StatusFlags) {
+        let spells = self.catalog.spells();
+        for active in self.effects.statuses_of(entity) {
+            let Some(status) = spells.status(active.status) else {
+                continue;
+            };
+            for kind in &status.spec.presentation {
+                match kind {
+                    StatusKind::Overclock => flags.overclock = true,
+                    StatusKind::Dash => flags.dash = true,
+                    StatusKind::Slowed => flags.slowed = true,
+                    StatusKind::Barrier => flags.barrier_up = true,
+                    StatusKind::DamageOverTime => flags.damage_over_time = true,
+                    StatusKind::Stunned => flags.stunned = true,
+                    StatusKind::RangeReduced => flags.range_reduced = true,
+                    StatusKind::Revealed => flags.revealed = true,
+                }
+            }
+        }
     }
 
     /// The attack cycle `entity` (of archetype `arch`) is in, derived from its weapon state.

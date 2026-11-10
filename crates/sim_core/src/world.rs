@@ -155,6 +155,8 @@ pub struct SimWorld {
     /// Statuses, persistents and missiles of the effect-tree engine (plan
     /// `2026-11-10-spellcaster-mechanics` D-13, D-18); hashed.
     pub(crate) effects: crate::effects::EffectWorld,
+    /// Reused buffers of the effect engine; not state, excluded from the checksum.
+    pub(crate) effect_scratch: crate::effects::EffectScratch,
     /// Live route groups sorted by id (plan `2026-11-10-group-routing`, D-1); hashed.
     pub(crate) route_groups: Vec<crate::movement::groups::RouteGroup>,
     /// The id the next route group gets; hashed.
@@ -227,6 +229,7 @@ impl SimWorld {
             scratch_dashes: Vec::new(),
             vision: VisionWorkspace::default(),
             effects: crate::effects::EffectWorld::default(),
+            effect_scratch: crate::effects::EffectScratch::default(),
             route_groups: Vec::new(),
             next_route_group: 1,
             presentation: presentation::PresentationWorkspace::default(),

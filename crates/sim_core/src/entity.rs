@@ -1205,6 +1205,25 @@ impl Entity {
             || matches!(self.order_queue.front(), Some(UnitOrder::HoldPosition))
     }
 
+    /// Clears the order queue, hold, current target, route and weapon swing, as an effect's
+    /// `CancelOrders` node does (plan `2026-11-10-spellcaster-mechanics` D-8): a swing in
+    /// wind-up returns to ready, a backswing goes to cooldown. A mode channel in progress and a
+    /// settled mode are kept.
+    pub(crate) fn cancel_orders_for_effect(&mut self) {
+        match self.weapon_phase {
+            WeaponPhase::Windup { .. } => self.weapon_phase = WeaponPhase::Ready,
+            WeaponPhase::Backswing { .. } => self.weapon_phase = WeaponPhase::Cooldown,
+            _ => {}
+        }
+        self.end_attack_dash();
+        self.order_queue.clear();
+        self.current_funnel_waypoints.clear();
+        self.is_holding_position = false;
+        self.current_target = None;
+        self.velocity = SimVec2::ZERO;
+        self.movement.restart();
+    }
+
     /// Whether this entity is alive (`hp > 0`).
     #[must_use]
     #[inline]
