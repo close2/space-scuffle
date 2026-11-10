@@ -861,3 +861,36 @@ switch").
 4. If the acceptance is reached, WP9 lands with goldens and the sandbox checksum re-recorded and traced (debug,
    release, `wasm32-wasip1`), then WP10 and WP11. If not, whatever is independently good lands on the main line and
    the switch stays held on a side branch.
+
+## Amendment 5 (WP9 held, 2026-11-10): orchestrator decisions
+
+Short note under charter §6, on the report of the Amendment 4 work (evidence, "Amendment 4: defects a to d on the
+held switch").
+
+1. **Battle 31's flip from fix b is accepted.** Its claim accepts either side (friendly-blocking plan Amendment 7).
+2. **Throughput criterion relaxed** for the canyon terrain scenario (`showcase_canyon`, 400 units) from 10 % to
+   **15 %** below the grid baseline. Measured under the gate lock: 140 to 143 against 125 to 127 ticks/s, still about
+   five times real time. Every scenario must still run at 25 ticks/s or more. No further throughput work unless a
+   scenario falls below that.
+3. **The showcase's attack-move targets become mirror images of each other.** Today player 0 aims at (52.5, 52.5),
+   the corner of player 1's base ring that faces the map's centre, and player 1 at (5.5, 5.5), the corner of player
+   0's ring that faces away from it: both are the first free cell of the ring, which is not a symmetric rule. The
+   map is point-symmetric about its centre except the central plateau. The targets become images of each other under
+   that symmetry, so that the near-tied lane choice (Amendment 4, 1) is symmetric too. This is presentation scenario
+   data (`assets/scenarios/showcase.ron`). The showcase is then re-checked on the grid (main) and on the switch, and
+   the storyboard (`assets/captures/showcase.ron`) is rendered (`showcase_tests`, GPU through the harness) and its
+   scene ticks and captions adjusted if needed.
+4. **Fix defect c (ramp E corner crowding)** in route following:
+   - (i) a wedged unit whose first leg is not passable for its whole disc re-plans, bounded so that no re-plan storm
+     can start (re-plans counted per unit);
+   - (ii) an attack-move surround walk's side resets at each route corner, or is chosen on the outside of the turn
+     when the walk starts at a corner, so that a column is not carried to the inside of the turn.
+
+   The earlier attempt (evidence, Amendment 4, c) improved the ratio but worsened the maximum turn and left one unit
+   out of range; the fix is judged on all of the acceptance's rows.
+5. **Acceptance for landing the switch** (replaces Amendment 4, 2, for the showcase): with the mirrored targets, on
+   the lanes units actually take, per-box ratios and turns no worse than the grid run with the same mirrored targets
+   (both measured); reversals at most the grid's plus 10; 10 of 10 in range at tick 900; 0 give-ups; the winner
+   unchanged against the grid run with mirrored targets. The matrix and battle 33 per the stop rules of D-12;
+   throughput per 2. If reached, the switch lands as in Amendment 4, 4, followed by WP10 and WP11; if not, it stays
+   held and the numbers are reported.
