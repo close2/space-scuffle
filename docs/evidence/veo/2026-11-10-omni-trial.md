@@ -7,7 +7,7 @@ switch away from Veo to Google's new video model, Gemini Omni 1.2 Flash (`gemini
 **Result: the trial stopped at Gate 0, the free preflight.** Omni is served only through Vertex AI's Interactions
 API, and that API refuses API keys, the only credential the pipeline has. Its error asks for an OAuth2 principal.
 No generation was started, so nothing was spent and no ledger line was written. Gate 1 (the six clips) did not run.
-The owner question is [Q0081](../../questions/open/0081-gemini-omni-credential.md); until it is answered, media stays
+The owner question is [Q0081](../../questions/closed/0081-gemini-omni-credential.md); until it is answered, media stays
 on Veo 3.1 Fast.
 
 ## What was built (no spend)

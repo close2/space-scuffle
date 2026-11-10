@@ -44,3 +44,12 @@ option 1 keeps the spending on the same credit.
 **Option 3 (Stay on Veo 3.1 Fast for now; keep the Gemini Omni trial parked at $0.00 spent).**
 
 **Technical insight:** Veo 3.1 Fast works directly with the existing Vertex Express API key, our unit sheets are already calibrated to Veo's visual style, and Gemini Omni 1.2 Flash's behavior on isometric RTS turntables and walk cycles is unproven. Keep the Omni client parked unless we later decide to provision a Service Account key for a specific unit gap.
+
+## Resolution
+
+Option 3, as the owner answered (2026-11-10): the project stays on Veo 3.1 Fast. The Gemini Omni client built for the
+trial (`crates/asset_baker/src/omni_client.rs`, `video_service.rs`; Veo plan Amendment 2) lands parked: it is
+tested without network, priced in `assets/media/veo_budget.ron`, and spends nothing until a service-account or
+other OAuth2 credential is provided for a specific unit gap. The trial stopped at Gate 0 with $0.00 spent
+(`docs/evidence/veo/2026-11-10-omni-trial.md`). Landed with the merge of branch
+`worktree-agent-a5e6d2d1f829a8e93` (head `50f26b8`, merged with main for verification).

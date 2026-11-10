@@ -693,5 +693,5 @@ short note charter §6.1 asks for; the client is a second transport behind the e
 **Outcome (2026-11-10):** stopped at Gate 0 with nothing spent. The Interactions API refuses API keys (HTTP 401
 `UNAUTHENTICATED`, "API keys are not supported by this API. Expected OAuth2 access token …"), both for creating and
 for reading an interaction ([evidence](../evidence/veo/2026-11-10-omni-trial.md)). Owner question
-[Q0081](../questions/open/0081-gemini-omni-credential.md) asks for an OAuth2 credential or another path; the default
+[Q0081](../questions/closed/0081-gemini-omni-credential.md) asks for an OAuth2 credential or another path; the default
 is to stay on Veo. The client stays in the baker, so the trial can resume at Gate 0 once a credential exists.
