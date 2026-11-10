@@ -1329,3 +1329,16 @@ Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-devia
 | 5 | `7273da7` | Q0071 to Q0074 closed |
 
 Battle 33 stayed 47 / 16 / 5 on 68 seeds throughout; no overall winner flipped in any landed commit.
+
+## Amendment 25 (plan `2026-11-10-group-routing` WP6, 2026-11-10): sanctioned item S-7
+
+Short note under charter §6, recording the owner's answer to
+[Q0079](../questions/closed/0079-group-consistent-routing.md) (option 2) in this plan's sanctioned list of §4. It
+adds one row; no rule of this plan changes.
+
+| ID | Item | Why it is not a bug |
+|---|---|---|
+| S-7 | Group-consistent routing: ground units that receive one `Move` or `AttackMove` command together (or one scenario initial order) take the lane of the group's leader round terrain obstacles when that route is at most `lane_tolerance_permille` longer than their own shortest route (`assets/catalog/movement_rules.ron`, 75 ‰) | Q0079, option 2: an "allows more" deviation under Q0051, configurable. StarCraft II routes each unit on its own; a tolerance of 0 restores that bit for bit (plan `2026-11-10-group-routing` D-6, test G-3). The game's magic box, which spreads goals by formation, is not modelled (that plan, §9) |
+
+Implemented by plan [`2026-11-10-group-routing`](2026-11-10-group-routing.md) WP1 to WP5; evidence
+[`2026-11-10-group-routing.md`](../evidence/2026-11-10-group-routing.md). `DESIGN.md` now names S-1 to S-7.
