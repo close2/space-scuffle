@@ -825,3 +825,39 @@ Short note under charter §6, on the report of the Amendment 2 work (evidence, "
      - Throughput as in b.
 3. Once the acceptance is met, WP9 lands with the goldens re-recorded and their causes traced in debug, release and
    `wasm32-wasip1`, followed by WP10 and WP11. Until then the switch stays held.
+
+## Amendment 4 (WP9 acceptance revised, 2026-11-10): orchestrator decisions
+
+Short note under charter §6, on the diagnosis of Amendment 3 (evidence, "Amendment 3, diagnosis of the held
+switch").
+
+1. **Per-unit shortest routes stay.** Each unit paths on its own, as StarCraft II reportedly does. The showcase's
+   winner flip comes from the near-tied west and east lanes (0.35 %) splitting the armies, not from route
+   following. Group-consistent routing, an "allows more" deviation, is owner question
+   [Q0079](../questions/open/0079-group-consistent-routing.md) (non-blocking; default: per-unit routes).
+2. **Revised acceptance for landing the switch** (replaces Amendment 3, 2.c):
+   - The showcase is judged on the lanes units actually take: route ratio and turning per box along each unit's
+     own lane, no worse than base on comparable boxes. Ramp W's lane-end turn of about 100° at (29, 12) is
+     legitimate when the lane is the west one.
+   - Reversals at most base + 10, after the defects below are fixed.
+   - 10 of 10 attackers in range at tick 900; 0 give-ups.
+   - The winner may change only because of the lane split. Then the showcase storyboard
+     (`assets/captures/showcase.ron`) must still tell a coherent story, checked with a render (`showcase_tests`,
+     GPU through the harness), with captions and scene ticks updated if needed, or the scenario's attack-move
+     targets made mirror images if that is the cleaner fix (the reason recorded).
+   - The matrix and battle 33 meet the stop rules of D-12; throughput as in 3.d.
+3. **Defects to fix first**, each with a test that is red before the fix:
+   - a. *Illegal funnel leg:* `pathfinding_properties::funnel_paths_are_legal_and_no_shorter_than_a_straight_line`
+     fails at the held switch (a leg near (9.6, 12.3)). Find and fix the cause in the mesh funnel or route layer,
+     then re-record the two `sim_map` digests (`determinism_tests::test_cross_platform_determinism_checksum`,
+     `validation_golden_tests::find_path_with_vision_matches_the_recorded_corpus_digest`) with the cause stated.
+   - b. *Surround walk toggling every tick* (228 of player 0's 255 reversals, ticks 350 to 550): fixed in friendly
+     blocking's rule with hysteresis consistent with that plan's Amendment 4, measured on main without the switch
+     too, recorded as an amendment of the friendly-blocking plan; it may land alone.
+   - c. *Ramp E corner crowding:* bodies pushed past the corner (35, 52) wait for stall re-plans; fixed in route
+     following.
+   - d. *Throughput*, under the gate lock, base `02f494b` and candidate back to back: the canyon scenario within
+     10 % of base, every scenario at least 25 ticks/s.
+4. If the acceptance is reached, WP9 lands with goldens and the sandbox checksum re-recorded and traced (debug,
+   release, `wasm32-wasip1`), then WP10 and WP11. If not, whatever is independently good lands on the main line and
+   the switch stays held on a side branch.
