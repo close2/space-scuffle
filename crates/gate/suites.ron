@@ -232,7 +232,7 @@ SuiteCatalog(
         (
             // C15 to C20 and C24 read these files; `always` already runs the checks.
             name: "charter documents",
-            paths: ["DESIGN.md", "AGENTS.md", "CLAUDE.md", "README.md", "docs/plans/README.md"],
+            paths: ["DESIGN.md", "AGENTS.md", "CLAUDE.md", "README.md", "LICENSE", "docs/plans/README.md"],
             targets: ["workspace_checks/@fast"],
         ),
         (
