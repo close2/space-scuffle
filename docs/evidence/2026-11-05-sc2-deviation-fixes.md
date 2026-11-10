@@ -1784,3 +1784,90 @@ each), re-recorded red (2, 4) and red (4, 7); the Lurker's line (`678a0db`, `lur
 ticks 8 / 0 / 12 with the Lurker alive on every seed (marines left: 0 on 8 seeds, 1 on 11, 2 on seed 8), re-recorded
 `blue (1, 1), red (0, 2)`. Battle 33 41 / 10 / 17 on 68 seeds; 0 expectation failures; goldens and the sandbox
 unchanged in debug, release and `wasm32-wasip1`.
+
+
+## 18. Owner answers Q0071 to Q0074 and the open rule halves (plan Amendment 24)
+
+Method as §17: every new test was run red on its commit's parent tree with only the new tests added
+(and, for B-85, the latent `period_ticks` field without its mechanism), then green on the head. Each
+commit's tree was exported with `git archive` and measured by release builds of `matchup_trace`
+(whole matrix, the seeds of record plus 16, `--compare` against the step before) and battle 33 (68
+seeds), and by `route_trace` on the showcase battle (1,800 ticks). Outputs under
+`~/scratch/followups/` (`out/<step>/`, `logs/`; not committed). Steps: base (main `3ae6409`), a
+(`93dffe7`), b (`cd02e88`), c (`adc4b08`), d (`1d58e67`), e (`993ee14`, the glide fix before its
+animation amendment), final (`c207048`).
+
+| Step | Matrix against the step before | Battle 33 (68 seeds) | Showcase |
+|---|---|---|---|
+| a, Charge | bit-identical to main | bit-identical: blue 47, red 16, unresolved 5 | identical to main |
+| b, braking | moved 22a, 34, 35; no winner changed; expectations met | bit-identical | diverged: no winner by tick 1,800 (see 18.2) |
+| c, spaced line (latent) | bit-identical | bit-identical | as b |
+| d, the Lurker's spines | moved 21 only; winner unchanged | bit-identical | as b |
+| e, glide fix | bit-identical | bit-identical | identical to main |
+| final | bit-identical | bit-identical | identical to main |
+
+Expectation failures: 0 on the seeds of record and 3 over all seeds at every step, as on main.
+
+### 18.1 Charge (Q0071, B-43), `93dffe7`
+
+- Red on `e04f46e`: `q0071_an_explicit_non_attack_order_ends_a_running_dash` ("ends the dash at
+  once" fails for `Move`) and `q0071_the_maximum_is_the_walk_not_the_straight_line` (the dasher
+  dashes on its first tick, through the wall's straight line). `q0071_an_attack_retarget_or_attack_move_keeps_a_running_dash`
+  passes on both trees: it guards the half of the answer the rule already met. Two expectations of
+  the new tests were wrong and are corrected in `0a9af39` (the cooldown counts from the dash's
+  start; the wall test reads the position on the dash's first tick), with no rule change.
+- No matrix battle researches Charge (Amendment 21), so the matrix and battle 33 do not move.
+
+### 18.2 Braking (Q0067, B-39), `cd02e88` and `af70813`
+
+- Red on `93dffe7`: the glide after Stop and Hold Position (speeds 0.09, 0.08, … 0.01, 0.45 past the
+  order's point) and the pursuit braking into its band. The instant-deceleration twins pass on both
+  trees, as they should.
+- Matrix: battles 22a (Reaper against workers: blocked attacker ticks rise, the Reaper's lead hull 10 to
+  15 on some seeds), 34 (Hydralisks against Mutalisks: end ticks and survivors move by one or two)
+  and 35 (Vikings against Colossi: end ticks move) moved, each with finite-acceleration units; every
+  winner and expectation held.
+- Showcase: on `cd02e88` the battle diverged on tick 3, where welder drone 16 (a worker, finite
+  deceleration) stood beside pulse bot 17. Collision writes a body's net displacement into its
+  velocity, so a push gave the standing worker a velocity, and the glide carried it on. The battle
+  then took another shape: no winner by tick 1,800 (main: player 0 at 1,693), one stall give-up,
+  player 1's reversals 7 to 29. Fix `af70813`: only a unit that walked on the tick before (animation
+  `Walk`) glides; red on `1d58e67`, `q0067_a_pushed_unit_at_rest_does_not_glide`. The showcase is then
+  identical to main (ramp W foot P0 1.301 / 1.473, 157° / 301°; ramp E foot P0 1.198 / 1.300,
+  190° / 454°, P1 1.149 / 1.168, 81° / 152°; reversals 17 / 7; give-ups 0 / 0; player 0 wins at
+  tick 1,693), and the matrix is bit-identical to step d. The amendment of `af70813` keeps the
+  animation of a unit that rests to its caller, as before (`checked_movement_tests` pins it); the
+  final tree measures as step e.
+- Not modelled: a unit whose target comes into range while it moves fast stops within a tick (the
+  braking aims at the band's edge, which a closing target can move), and an order given up by the
+  stall check ends at rest (the unit had stalled).
+
+### 18.3 The Lurker's spines (Q0064 note, B-85), `adc4b08` and `1d58e67`
+
+- Red on `cd02e88` with the latent field: `b85_a_spaced_line_lands_its_searches_period_ticks_apart`
+  and `b85_a_spaced_line_ends_when_its_attacker_dies` (every search on the release tick). Red on
+  `adc4b08`: `b18_line_splash_follows_starcraft` (the Lurker row's period 2).
+- The rule is latent at `adc4b08` (matrix bit-identical). With the data, battle 21 moved alone: the
+  Lurker survives every seed as before; the marines left change on seeds 1 (0 to 1, the run now ends
+  at 500), 7 and 13 (2 to 1); the expectation `blue (1, 1), red (0, 2)` holds.
+- The target itself is still struck on the release tick, as before: in the game the Lurker's target
+  takes its damage from a spine like any other unit, so a fast target could outrun it; recorded as a
+  detail difference, not a new ID, since the target is where the line points.
+
+### 18.4 Goldens and the sandbox
+
+Both replays pass unchanged (schema 25) on `93dffe7` and on `cd02e88` with the glide fix: no rule of
+this round changes their battles, and the Lurker analogue is in neither. Schema 26 (`adc4b08`)
+changes every checkpoint from the first and the default sandbox checksum; re-recorded in `c207048`.
+The re-recorded lists pass in debug and release and on `wasm32-wasip1` (wasmtime); the sandbox
+checksum passes in debug, release and on `wasm32-wasip1`.
+
+### 18.5 B-113: variant D, rejected
+
+Variant D: a wedged body (its disc does not fit where it stands) keeps a route corner's points until
+it is past them (the half-plane test of `drop_passed_waypoints`), instead of passing them by terrain
+view when near. Showcase on the head with D: ramp W foot P0 1.343 / 1.473, 227° / 527°; player 1
+now reaches ramp W (1.656 / 1.869, 250° / 712°); give-ups 1 / 0; player 1 wins at tick 1,605, a
+winner flip. Rejected. With variants A to C (plan `2026-11-09-sc2-pathfinding` evidence, Amendment 5)
+four route-following variants have failed; a fix likely needs the body to slide along the wall it is
+wedged against (a contact rule), not a route rule. B-113 stays open.

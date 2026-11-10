@@ -167,8 +167,10 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-35 | No energy regeneration delay | WP15 |
 | B-36 | Unfinished structures regenerate life | WP15 |
 | B-38 | No burrowed Roach regeneration and no Tunneling Claws | WP15, WP18 |
-| B-39 | Braking applies only into a move order's destination; an order that ends without arriving, and pursuit, stop within a tick (owner answer to [Q0067](docs/questions/closed/0067-unset-deceleration.md), rule part open); unset `Deceleration` reading as `Acceleration` is fixed | WP12 follow-up |
-| B-43 | How the engine measures Charge's trigger window (0.6 edge or centre; 4 as a straight line or the walk), when its autocast looks, and whether a new order ends a dash (not yet sourced, [Q0071](docs/questions/closed/0071-charge-trigger-details.md)); the dash itself is fixed | Q0071 |
+=== end
+
+=== end
+
 | B-44 | Concussive Shells have no effect | WP13d |
 | B-45 | Phoenix and Void Ray analogues cannot fire while moving | WP13e |
 | B-46 | The Viking analogue cannot land | WP18 |
@@ -196,7 +198,8 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-81 | The Liberator's first missile lands on the release tick; the game delays it 1 tick. The Colossus' strikes stay on the release tick by the owner's answer to [Q0064](docs/questions/closed/0064-colossus-damage-timing.md) | WP5 follow-up |
 | B-83 | The Baneling's burst is centred on its target and strikes it directly; the game centres it on the Baneling | WP8 follow-up |
 | B-84 | The Siege Tank splashes around targets of radius 1.25 or more; the game's shot at them has no area | WP8 follow-up |
-| B-85 | The Lurker's spines land together; the game spaces its 9 searches 0.125 Normal s (2 ticks) apart (owner note on [Q0064](docs/questions/closed/0064-colossus-damage-timing.md)). The Colossus' searches stay on the release tick by that answer | WP8 follow-up |
+=== end
+
 | B-86 | Morphs (Baneling, Ravager, Lurker, Brood Lord, Orbital Command, Planetary Fortress, Lair, Hive, Greater Spire) cost their morph increment and the Zergling analogue one Zergling at the pair's price, while ours trains them whole | WP17 |
 | B-88 | Structure attributes are derived in code (Psionic if shielded, else Mechanical); the game gives Protoss structures Armored and Structure, Zerg structures Armored, Biological and Structure | WP9 follow-up |
 | B-89 | Whether the Liberator analogue's anti-air weapon turns on the `Liberator` turret: the game's unit lists a second weapon entry with that turret and no weapon (`void` UnitData:3317-3318); ours is a hull weapon | WP10 follow-up (research) |
@@ -208,7 +211,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-97 | The Lurker analogue's burrow cannot be cancelled while it runs; the game's can (`Interruptible`, a Cancel button) | WP18 |
 | B-98 | Anchored units (sieged, burrowed) get no Stop or Hold Position on the card; the game's sieged tank has both | next client package |
 | B-103 | A blocked unit at the edge of a crowd still steps back and forth now and then (11 and 8 reversals per side in the showcase battle, 3 in the synthetic arc, where the game's stands), and a rear unit in a corridor that cannot reach range stands on 73 to 85 % of its ticks; the every-tick oscillation is fixed, and a walk at a crowd's edge no longer ends and restarts every other tick (narrowed, plan `2026-11-09-friendly-blocking` Amendments 4, 5 and 7) | [`2026-11-09-friendly-blocking`](docs/plans/2026-11-09-friendly-blocking.md), open |
-| B-113 | A unit that the crowd pushes inside its own radius of a route corner (0.30 from the vertex for a radius of 0.375) passes the corner's arc points by terrain view, its next leg cuts the corner and is refused, and it steps back and forth until the crowd frees it (one pulse bot, ticks 756 to 769 of the showcase battle; 454° of turning at the ramp E foot); the game's units slide round the corner | [`2026-11-09-sc2-pathfinding`](docs/plans/2026-11-09-sc2-pathfinding.md) Amendment 6, open |
+| B-113 | A unit that the crowd pushes inside its own radius of a route corner (0.30 from the vertex for a radius of 0.375) passes the corner's arc points by terrain view, its next leg cuts the corner and is refused, and it steps back and forth until the crowd frees it (one pulse bot, ticks 756 to 769 of the showcase battle; 454° of turning at the ramp E foot); the game's units slide round the corner. Four route-following variants are measured and rejected (that plan's evidence, Amendment 5, A to C; deviation-fix evidence §18.5, D) | [`2026-11-09-sc2-pathfinding`](docs/plans/2026-11-09-sc2-pathfinding.md) Amendment 6, open |
 
 ---
 

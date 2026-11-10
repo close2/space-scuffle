@@ -789,11 +789,11 @@ requires.
 | B-36 | Unfinished structures regenerate life | (i) | WP15 |
 | B-37 | Whether Stimpack's life cost restarts the regeneration delays | (ii) | No shipped unit can reach it: the two archetypes with an Overclock (Stimpack) spec have `hp_regen_per_tick: 0.00`, and no other ability costs life. It returns to (i) if a catalog change gives one unit both. WP15 drops it and U-9 |
 | B-38 | No burrowed Roach regeneration, no Tunneling Claws | (i) | WP15, WP18 |
-| B-39 | No acceleration or deceleration | (i), narrowed | WP12 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §13); unset `Deceleration` reads as `Acceleration`, Amendment 22 package D ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §17.4, [Q0067](../questions/closed/0067-unset-deceleration.md)); open: braking for orders that end without arriving and for pursuit |
+| B-39 | No acceleration or deceleration | Fixed | WP12 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §13); unset `Deceleration` reads as `Acceleration`, Amendment 22 package D ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §17.4, [Q0067](../questions/closed/0067-unset-deceleration.md)); braking for orders that end without arriving and for pursuit, Amendment 24 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §18.2) |
 | B-40 | Turn before move | Fixed | turn-before-move WP1 `6d7a9d5`, WP3 `b7d9f50` |
 | B-41 | No Immortal Barrier | Fixed | WP13a ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §14); the order within a hit kept as landed by the owner ([Q0068](../questions/closed/0068-barrier-damage-order.md), Amendment 22) |
 | B-42 | The Lurker attacks unburrowed | Fixed | WP13b ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §15); weapon and cloak at the `Stats` section end, Amendment 22 package E ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §17.5, [Q0069](../questions/closed/0069-lurker-burrow-sections.md)) |
-| B-43 | Charge without the dash | Fixed, narrowed | WP13c ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §16; Amendment 21); open only how the engine measures the trigger window, when the autocast looks and whether a new order ends a dash ([Q0071](../questions/closed/0071-charge-trigger-details.md)) |
+| B-43 | Charge without the dash | Fixed | WP13c ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §16; Amendment 21); the end on non-attack orders and the ground path distance, Amendment 24 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §18.1, [Q0071](../questions/closed/0071-charge-trigger-details.md)) |
 | B-44 | Concussive Shells do nothing | (i) | WP13d |
 | B-45 | No firing while moving | (i) | WP13e |
 | B-46 | The Viking cannot land | (i) | WP18 |
@@ -831,7 +831,7 @@ requires.
 | B-78 | Storm evacuation margin | (i) | WP18 |
 | B-82 | The Baneling's damage to structures is not its own effect (80, +5 a level, ignoring armour) | Fixed | WP9 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.4). Found in WP6 (Amendment 9) |
 | B-81 | A first strike the effect chain delays (Liberator 1 tick) lands on the release tick | (i), narrowed | WP5 follow-up. The Colossus part is closed: its strikes land on the release tick by the owner's answer to [Q0064](../questions/closed/0064-colossus-damage-timing.md) (Amendment 22) |
-| B-85 | A line area lands whole on the shot's tick; the game spaces the Lurker's spines 0.125 Normal s apart | (i), narrowed | WP8 follow-up, after the Lurker's line (B-18). The Colossus' search delay is closed by the owner's answer to [Q0064](../questions/closed/0064-colossus-damage-timing.md), which keeps it instant and allows the Lurker's spacing (2 ticks) |
+| B-85 | A line area lands whole on the shot's tick; the game spaces the Lurker's spines 0.125 Normal s apart | Fixed | Amendment 24 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §18.3): the Lurker's spines 2 ticks apart; the Colossus' sweep stays instant by the owner's answer to [Q0064](../questions/closed/0064-colossus-damage-timing.md) |
 | B-83 | The Baneling's burst is centred on its target and strikes it directly; the game centres it on the Baneling and reaches the target through the area | (i) | WP8 follow-up. Found in WP8a (Amendment 12) |
 | B-84 | The Siege Tank splashes around a target of radius 1.25 or more; the game's shot at such a target has no area | (i) | WP8 follow-up. Found in WP8a (Amendment 12) |
 | B-86 | Morph costs and supply (Baneling, Ravager, Lurker, Brood Lord, Orbital Command, Planetary Fortress, Lair, Hive, Greater Spire) and the Zergling pair, while ours trains each whole | (i) | WP17, with the morph model. Found in WP9 (Amendment 14) |
@@ -1315,3 +1315,17 @@ main). The stop rule of D-4 stands: an overall-winner flip without a cited StarC
 | 3 | [Q0064](../questions/closed/0064-colossus-damage-timing.md)'s note on B-85 | The Lurker analogue's line searches land 2 ticks apart along the line, nearest first; the Colossus' line stays on the release tick. The pending searches are per-unit hashed state: checksum schema bump | B-85 closed |
 | 4 | `DESIGN.md` B-113, plan `2026-11-09-sc2-pathfinding` Amendment 6 | A unit the crowd wedges inside its radius of a route corner re-plans from where it stands when its first leg is not passable for its whole disc, bounded per unit, if a measured fix exists; the earlier variants A to C (that plan's evidence, Amendment 5) did not help. Otherwise the attempts are recorded and B-113 stays open | B-113 |
 | 5 | [Q0072](../questions/closed/0072-per-ability-hotkeys.md), [Q0073](../questions/closed/0073-allied-push-priority.md), [Q0074](../questions/closed/0074-surround-walk.md), option 1 each | No change: the code is already as answered. The four questions are closed | none |
+
+### Result (2026-11-10)
+
+Evidence: [`2026-11-05-sc2-deviation-fixes.md`](../evidence/2026-11-05-sc2-deviation-fixes.md) §18.
+
+| Item | Commits | Outcome |
+|---|---|---|
+| 1 | rule `93dffe7`, test expectations `0a9af39` | B-43 closed. Matrix, battle 33 and showcase identical to main |
+| 2 | rule `cd02e88`, fix `af70813` | B-39 closed. Battles 22a, 34, 35 moved, no winner changed; the first rule carried pushes on and changed the showcase, the fix restores it exactly |
+| 3 | rule `adc4b08` (schema 26), data `1d58e67`, goldens `c207048` | B-85 closed. Only battle 21 moved, its winner and expectation unchanged |
+| 4 | none | B-113 open: variant D flipped the showcase's winner and was rejected (§18.5) |
+| 5 | `7273da7` | Q0071 to Q0074 closed |
+
+Battle 33 stayed 47 / 16 / 5 on 68 seeds throughout; no overall winner flipped in any landed commit.
