@@ -30,6 +30,10 @@ pub struct CaptureOptions {
     /// Effect-lab directory for the contact sheets (default: the output directory).
     #[arg(long, value_name = "DIR")]
     pub sheet_dir: Option<PathBuf>,
+    /// Effect-lab experiment of plan D-11: render on an HDR camera with a bloom that only
+    /// values above 1.0 feed (`client_diagnostics::hdr_bloom`).
+    #[arg(long)]
+    pub hdr_bloom: bool,
 }
 
 /// Failures are surfaced as nonzero exit and an incomplete manifest where possible.

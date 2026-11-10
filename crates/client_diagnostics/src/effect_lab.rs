@@ -50,6 +50,9 @@ pub struct EffectLabOptions {
     pub out: PathBuf,
     /// Directory of the sheets (the frame directory when `None`).
     pub sheet_dir: Option<PathBuf>,
+    /// The D-11 experiment: an HDR camera with a thresholded bloom
+    /// ([`crate::hdr_bloom`]); the sheets are then named `<effect>_hdr_*`.
+    pub hdr_bloom: bool,
 }
 
 /// Parses `Binding=value` pairs into bound values.
@@ -117,12 +120,20 @@ pub fn run_effect_lab(options: &EffectLabOptions) -> Result<AppExit, CaptureErro
     let program = LabProgram::contact_sheet(subject, lifetime, options.out.clone());
     let mut app = lab_app(root, program.clone(), None, CAPTURE_SIZE)
         .map_err(|error| CaptureError::Verification(error.to_string()))?;
+    if options.hdr_bloom {
+        app.add_plugins(crate::hdr_bloom::HdrBloomPlugin);
+    }
     let exit = client::render_compatibility::run_render_app(&mut app);
     if !exit.is_success() {
         return Ok(exit);
     }
     let sheets = options.sheet_dir.as_deref().unwrap_or(&options.out);
-    assemble(&program, &options.effect, lifetime, sheets)?;
+    let look = if options.hdr_bloom {
+        Look::HdrBloom
+    } else {
+        Look::Ldr
+    };
+    assemble(&program, &options.effect, lifetime, look, sheets)?;
     Ok(exit)
 }
 
@@ -134,13 +145,24 @@ fn frame(program: &LabProgram, name: &str) -> Result<RgbImage, CaptureError> {
         .map_err(|source| CaptureError::MediaImage { path, source })
 }
 
-/// The cell of `image` shown on a sheet: the middle half (each way) of a default-zoom frame,
-/// the middle three quarters of a close frame, scaled to `size`.
-fn cell(image: &RgbImage, zoom: LabZoom, size: (u32, u32)) -> RgbImage {
+/// How much of a frame a sheet's cell shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Framing {
+    /// The middle half (each way) of a default-zoom frame, the middle three quarters of a
+    /// close frame: a splash, which sits in the middle.
+    Centre,
+    /// The middle half of a default-zoom frame and the whole close frame: a line, whose ends
+    /// the close crop would cut off.
+    Line,
+}
+
+/// The cell of `image` shown on a sheet as `framing` crops it, scaled to `size`.
+fn cell(image: &RgbImage, zoom: LabZoom, framing: Framing, size: (u32, u32)) -> RgbImage {
     let (width, height) = image.dimensions();
-    let (keep_w, keep_h) = match zoom {
-        LabZoom::Default => (width / 2, height / 2),
-        LabZoom::Close => (width * 3 / 4, height * 3 / 4),
+    let (keep_w, keep_h) = match (zoom, framing) {
+        (LabZoom::Default, _) => (width / 2, height / 2),
+        (LabZoom::Close, Framing::Centre) => (width * 3 / 4, height * 3 / 4),
+        (LabZoom::Close, Framing::Line) => (width, height),
     };
     let view = imageops::crop_imm(
         image,
@@ -153,13 +175,49 @@ fn cell(image: &RgbImage, zoom: LabZoom, size: (u32, u32)) -> RgbImage {
     imageops::resize(&view, size.0, size.1, imageops::FilterType::Triangle)
 }
 
-/// Writes `<effect>_contact.png`, `<effect>_sequence.png` and `<effect>_contact.txt`.
+/// The camera a sheet was captured with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Look {
+    /// The shipped camera: no HDR target, no bloom.
+    Ldr,
+    /// The D-11 experiment ([`crate::hdr_bloom`]).
+    HdrBloom,
+}
+
+impl Look {
+    /// Infix of the sheets' file names.
+    const fn infix(self) -> &'static str {
+        match self {
+            Self::Ldr => "",
+            Self::HdrBloom => "_hdr",
+        }
+    }
+
+    /// The legend's description of the camera.
+    const fn description(self) -> &'static str {
+        match self {
+            Self::Ldr => "shipped camera (no HDR, no bloom)",
+            Self::HdrBloom => {
+                "HDR camera with bloom above 1.0 (`--hdr-bloom`, plan D-11 experiment)"
+            }
+        }
+    }
+}
+
+/// Writes `<effect>[_hdr]_contact.png`, `_sequence.png` and `_contact.txt`.
 fn assemble(
     program: &LabProgram,
     effect: &str,
     lifetime: f32,
+    look: Look,
     directory: &Path,
 ) -> Result<(), CaptureError> {
+    let stem = format!("{effect}{}", look.infix());
+    let framing = if program.subject.line_to.is_some() {
+        Framing::Line
+    } else {
+        Framing::Centre
+    };
     std::fs::create_dir_all(directory).map_err(|source| CaptureError::Io {
         path: directory.to_path_buf(),
         source,
@@ -174,7 +232,7 @@ fn assemble(
                 for column in 0..columns {
                     let suffix = if overlay { "_ref" } else { "" };
                     let name = format!("{}_{}_{column}{suffix}", ground.label(), zoom.label());
-                    let image = cell(&frame(program, &name)?, zoom, CELL);
+                    let image = cell(&frame(program, &name)?, zoom, framing, CELL);
                     imageops::replace(
                         &mut sheet,
                         &image,
@@ -186,7 +244,7 @@ fn assemble(
             }
         }
     }
-    save(&sheet, &directory.join(format!("{effect}_contact.png")))?;
+    save(&sheet, &directory.join(format!("{stem}_contact.png")))?;
     let frames = client::effects::lab::program::sequence_frames();
     let sequence_rows = frames.div_ceil(THUMBS_PER_ROW);
     let mut strip = RgbImage::from_pixel(
@@ -198,6 +256,7 @@ fn assemble(
         let image = cell(
             &frame(program, &format!("seq_{index:03}"))?,
             LabZoom::Default,
+            framing,
             THUMB,
         );
         imageops::replace(
@@ -207,9 +266,9 @@ fn assemble(
             i64::from(index / THUMBS_PER_ROW * THUMB.1),
         );
     }
-    save(&strip, &directory.join(format!("{effect}_sequence.png")))?;
-    let legend = legend(program, effect, lifetime);
-    let path = directory.join(format!("{effect}_contact.txt"));
+    save(&strip, &directory.join(format!("{stem}_sequence.png")))?;
+    let legend = legend(program, effect, lifetime, look);
+    let path = directory.join(format!("{stem}_contact.txt"));
     std::fs::write(&path, legend).map_err(|source| CaptureError::Io { path, source })
 }
 
@@ -221,7 +280,8 @@ fn save(image: &RgbImage, path: &Path) -> Result<(), CaptureError> {
 }
 
 /// The text legend of the sheets.
-fn legend(program: &LabProgram, effect: &str, lifetime: f32) -> String {
+fn legend(program: &LabProgram, effect: &str, lifetime: f32, look: Look) -> String {
+    let stem = format!("{effect}{}", look.infix());
     let ages: Vec<String> = CONTACT_AGES
         .iter()
         .map(|fraction| format!("{fraction} ({:.3} s)", fraction * lifetime))
@@ -243,15 +303,18 @@ fn legend(program: &LabProgram, effect: &str, lifetime: f32) -> String {
         "Effect contact sheet of '{effect}' (plan 2026-11-09-effect-visualization §6.5), made by\n\
          `battle_capture --effect-lab {effect}` on the production effect plugin and shaders.\n\
          Bindings: {bindings}. Lifetime: {lifetime:.3} s. Capture {}x{}, battle camera at 58° pitch.\n\
-         {effect}_contact.png columns: ages {}.\n\
+         Camera: {}.\n\
+         {stem}_contact.png columns: ages {}.\n\
          Rows: bright ground default zoom, the same with the 1-unit grid and the bound radii (red full\n\
          damage, yellow reach; for a line, the line and the full radius at each search point), bright\n\
          close zoom, its reference, dark default, its reference, dark close, its reference.\n\
-         Default-zoom cells show the middle half of the frame, close-zoom cells its middle three quarters.\n\
-         {effect}_sequence.png: the first 3 s on the bright ground at the default zoom, one frame every\n\
+         Default-zoom cells show the middle half of the frame, close-zoom cells its middle three quarters\n\
+         (a line's close-zoom cells the whole frame).\n\
+         {stem}_sequence.png: the first 3 s on the bright ground at the default zoom, one frame every\n\
          {} ms, read left to right, top to bottom.\n",
         CAPTURE_SIZE.x,
         CAPTURE_SIZE.y,
+        look.description(),
         ages.join(", "),
         (SEQUENCE_STEP * 1000.0).round(),
     )
@@ -296,9 +359,13 @@ mod tests {
     fn cells_keep_the_middle_of_a_default_frame() {
         let mut image = RgbImage::new(1280, 720);
         image.put_pixel(640, 360, image::Rgb([255, 0, 0]));
-        let default = cell(&image, LabZoom::Default, (640, 360));
+        let default = cell(&image, LabZoom::Default, Framing::Centre, (640, 360));
         assert_eq!(default.get_pixel(320, 180).0[0], 255, "1:1 middle crop");
-        let close = cell(&image, LabZoom::Close, (960, 540));
+        let close = cell(&image, LabZoom::Close, Framing::Centre, (960, 540));
         assert_eq!(close.get_pixel(480, 270).0[0], 255);
+        // A line's close cell keeps the whole frame, so its ends stay in view.
+        image.put_pixel(4, 360, image::Rgb([0, 255, 0]));
+        let line = cell(&image, LabZoom::Close, Framing::Line, (1280, 720));
+        assert_eq!(line.get_pixel(4, 360).0[1], 255);
     }
 }

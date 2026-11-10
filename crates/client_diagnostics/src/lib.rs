@@ -19,6 +19,7 @@
 
 pub mod effect_lab;
 pub mod frame_budget;
+pub mod hdr_bloom;
 pub mod native_input_probe;
 pub mod palette_fixture;
 pub mod runtime_capture;

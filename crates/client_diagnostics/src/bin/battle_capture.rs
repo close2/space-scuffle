@@ -1,5 +1,5 @@
 //! Reproducible GPU captures driven through the normal production client systems, and the
-//! effect lab's contact sheets (`--effect-lab <effect> --bind NAME=VALUE ...`).
+//! effect lab's contact sheets (`--effect-lab <effect> --bind NAME=VALUE ... [--hdr-bloom]`).
 
 use bevy::app::AppExit;
 use clap::Parser;
@@ -14,6 +14,7 @@ fn main() -> AppExit {
             bindings: options.bindings.clone(),
             out: options.out.clone(),
             sheet_dir: options.sheet_dir.clone(),
+            hdr_bloom: options.hdr_bloom,
         }),
         None => run_capture(options),
     };
