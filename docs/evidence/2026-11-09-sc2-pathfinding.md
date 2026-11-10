@@ -357,3 +357,82 @@ Every scenario is above 25 ticks/s; the canyon scenario misses the 10 % criterio
 lane-end turn about 100°); plateau SE not passed by player 0 (the lane is the other one); ramp E 1.295 / 1.573 and
 352° / 211°; reversals 56 / 11 (acceptance at most 21); 10 of 10 in range; 0 give-ups; player 1 wins at tick 1,266
 (the lane split). **Acceptance not reached:** reversals, ramp E turning, canyon throughput. The switch stays held.
+
+## Amendment 5: mirrored showcase targets, B-106, defect c (2026-11-10)
+
+Held switch `0209b54` plus this amendment's commits. Grid runs: main `d914917` with friendly-blocking fix b
+(`35aab04`), the mirrored targets and B-106, built from a source copy under `~/scratch/path-c/grid-src`. Outputs
+under `~/scratch/path-c/` (`gridm2/`, `mir2/`, `cA/` to `cC/`; not committed). Outcome measurements ran without
+the gate lock (other agents' gates held it; outcomes do not depend on timing).
+
+**Mirrored targets.** The canyon map is point-symmetric about its centre, (x, y) to (63 − x, 63 − y) in cells,
+apart from the central plateau (72 level cells, 42 ramp cells and 18 flag cells differ, all in or beside the
+plateau; the anti-diagonal and the diagonal leave 54 to 342 cells unmatched per layer). The targets are now cells
+(52, 52) and (11, 11), the centre-facing corners of the two base rings (scenario order `AttackMoveToCell`).
+
+**B-106: an attack-move resumed after a chase gave up.** On the switch with mirrored targets four of player 0's
+pulse bots gave the attack-move up at tick 828 (`NoProgress`, exactly 250 ticks after they resumed it at 578) while
+walking freely toward player 1's base, and the match never ended. Cause: `prepare_pursuit` dropped a finished
+attack order without restarting the movement memory, so the resumed attack-move measured its progress against the
+chase's best distance (a few world units to the dead target). Fixed by restarting the memory as a new order does
+(test red before, green after). On the grid the matrix (16 seeds) and battle 33 (68 seeds) are bit-identical with
+and without the fix, and so is the grid showcase.
+
+**Showcase with mirrored targets** (player 0 / player 1; ratio mean / max, turn mean / max):
+
+| Box | Grid | Switch |
+|---|---|---|
+| ramp W foot, P0 | 1.064 / 1.112, 103° / 213° (east lane) | 1.301 / 1.473, 157° / 301° (west lane) |
+| ramp W foot, P1 | 1.588 / 1.644, 194° / 241° (west lane) | not reached (army died in the lane fight) |
+| plateau SE, P0 | 1.044 / 1.093, 66° / 191° | not passed (west lane) |
+| ramp E foot, P0 | 1.573 / 1.611, 211° / 287° | 1.198 / 1.300, 190° / 454° (6 units) |
+| ramp E foot, P1 | 1.170 / 1.214, 108° / 214° | 1.149 / 1.168, 81° / 152° |
+
+| | Grid | Switch |
+|---|---|---|
+| Lanes (x where units cross y = 32) | P0 east (38.0 to 38.6), P1 west (25.8 to 25.9): the armies pass | both west (P0 22.5 to 26.0); they meet at (22 to 28, 31 to 38) from tick 310 to 576 |
+| Winner | player 0, tick 1,102 | player 0, tick 1,693 (6 of 10 survive the fight) |
+| In range at tick 900 | 10 of 10 / 9 of 10 | 0 of 6 / 0 of 0 (between the welders' death at 891 and the hall; 9 of 9 in the fight at tick 430, 6 of 6 from 940) |
+| Reversals | 10 / 5 | 17 / 7 |
+| Stall give-ups | 57 / 0 | 0 / 0 (4 / 0 before B-106) |
+
+The grid's 57 give-ups are all one unit's: player 0's welder drone (entity 2), standing at its base, (6.4, 6.0),
+abandons a chase of player 1's raiders (`PursuitAbandoned`, targets 17, 20 and 21 in turn) 57 times between ticks 624
+and 814; the abandoned-target memory skips one target only, so it takes the next. Not a route defect; it is not
+filed here.
+
+The mirrored targets make the lanes symmetric on the grid only. The central plateau is not point-symmetric (its
+northern corners, y 35 to 37, are low ground where the southern ones are plateau, and its one ramp faces south),
+so on the mesh, which measures the lanes exactly, both armies find the west lane shorter and meet in it.
+
+**Matrix and battle 33**, switch against the grid with the same fixes: bit-identical (whole matrix, 16 seeds; battle
+33, 68 seeds). Fix b against base `02f494b`, for reference: battles 21, 26, 31 (the accepted flip) and 33 move;
+battle 33 blue 48 → 47, red 9 → 16 of 68.
+
+**Defect c, ramp E corner.** Trace of pulse bot 7 (454° in the box): at tick 756 the crowd has pushed it to 0.30
+from the corner vertex (35, 52), inside its radius 0.375, so it is wedged; at 757 it passes the two arc points round
+that corner by terrain view (the wedged exemption of `drop_passed_waypoints`), its leg to (35.00, 52.42) cuts the
+corner, the step is refused at 762 and the route dropped; the re-plan leads back west to (34.58, 51.98), and it steps
+back and forth until 769, then walks straight on. Three variants, each measured on the whole showcase:
+
+| Variant | Ramp E P0 | Ramp W P0 | Ramp E P1 | Reversals | Kept |
+|---|---|---|---|---|---|
+| none (B-106 only) | 1.198 / 1.300, 190° / 454° | 1.301 / 1.473, 157° / 301° | 1.149 / 1.168, 81° / 152° | 17 / 7 | — |
+| A: an attack-move's walk side resets at each route corner (ii) | bit-identical: no attack-move surround walk starts at a corner in this battle | | | | no (no effect) |
+| B: a wedged body keeps an arc point where its disc fits until the disc fits along the leg past it | 1.209 / 1.341, 164° / 508° | 1.407 / 1.611, 270° / 636° | 1.174 / 1.288, 127° / 397° | 21 / 3 | no |
+| C: a wedged unit whose first leg leads deeper into the wall (a half-radius disc fits where it stands, not along the leg) re-plans, at most once per re-plan cooldown and only while stalled (i) | 1.191 / 1.270, 239° / 739° (5 units) | 1.300 / 1.473, 155° / 303° | 1.149 / 1.168, 81° / 152° | 20 / 7 | no |
+
+B makes the column at ramp W's lane-end corner walk back to arc points the crowd pushed it past; C's re-plan from
+the wedge gives the same route back out (the one seen at tick 763), earlier, and changes the fight. Re-plans were
+not counted, as neither variant is kept. Without a variant the ramp E means are better than the grid's on both
+sides; the maximum turn of player 0 (454°, pulse bot 7) is not.
+
+**Throughput** not re-measured: the gate lock was held by other agents' gates throughout, and nothing in this
+amendment touches the route search. Amendment 4's figure stands: canyon 125 to 127 against 140 to 143 ticks/s
+(−11 to −13 %), within the 15 % of Amendment 5, 2.
+
+**Acceptance (Amendment 5, 5): not reached.** Met: per-box means on the lanes taken (ramp E better than the grid
+for both players; ramp W's west-lane box better than the grid's west-lane box for player 1), reversals 17 and 7
+(at most 20 and 15), 0 give-ups, winner unchanged (player 0), matrix and battle 33 bit-identical, throughput. Not
+met: 10 of 10 in range at tick 900 (the battle has another shape: the armies meet, 6 of player 0's units survive, and
+at tick 900 they are between targets), and the ramp E maximum turn (454° against 287°). The switch stays held.
