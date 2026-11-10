@@ -258,6 +258,7 @@ fn legend(program: &LabProgram, effect: &str, lifetime: f32) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used, reason = "a failed test is a panic")]
 mod tests {
     use super::*;
 

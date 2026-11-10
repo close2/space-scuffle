@@ -336,14 +336,14 @@ mod tests {
     fn the_contact_sheet_covers_every_age_ground_and_zoom_and_a_sequence() {
         let program = LabProgram::contact_sheet(subject(), 2.0, PathBuf::from("out"));
         assert_eq!(program.takes.len(), 5);
-        program.validate().expect("the standard program is valid");
+        assert_eq!(program.validate(), Ok(()), "the standard program is valid");
         for take in &program.takes[..4] {
             assert_eq!(take.shots.len(), 16);
             assert!(
                 (take.shots[15].age - 2.0).abs() < 1e-6,
                 "the last age is the lifetime"
             );
-            assert!(take.shots.iter().filter(|shot| shot.overlay).count() == 8);
+            assert_eq!(take.shots.iter().filter(|shot| shot.overlay).count(), 8);
         }
         let sequence = &program.takes[4];
         assert_eq!(sequence.shots.len(), 76, "0 to 3 s every 40 ms");

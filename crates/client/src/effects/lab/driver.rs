@@ -6,7 +6,8 @@
 //! subject drawn meanwhile so every effect pipeline is specialized), then for each take resets
 //! the effect runtime, poses the battle camera, lays the take's ground, spawns the subject and
 //! steps `Time<Virtual>` in steps of at most the take's step until each shot's exact age, where
-//! it requests a screenshot and holds time still until the PNG is written.
+//! it draws one settling frame, then requests a screenshot and holds time still until the PNG
+//! is written.
 //!
 //! # How it fits
 //! Time advances only through [`TimeUpdateStrategy::ManualDuration`], set here each frame for
@@ -96,6 +97,8 @@ pub struct LabDriver {
     pub failed: Option<String>,
     /// PNGs written.
     pub written: u32,
+    /// The current shot's state has been drawn once and the screenshot is due.
+    pub settled: bool,
 }
 
 impl Default for LabDriver {
@@ -106,6 +109,7 @@ impl Default for LabDriver {
             overlay: false,
             failed: None,
             written: 0,
+            settled: false,
         }
     }
 }
@@ -297,6 +301,13 @@ fn advance(
         return;
     }
     driver.overlay = next.overlay;
+    if !driver.settled {
+        // One frame at the shot's age and overlay before the screenshot, so the captured frame
+        // is that state whichever frame the readback copies.
+        driver.settled = true;
+        return;
+    }
+    driver.settled = false;
     driver.pending = true;
     let path = program.out.join(format!("{}.png", next.name));
     world.commands.spawn(Screenshot::primary_window()).observe(

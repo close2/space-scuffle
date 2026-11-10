@@ -1010,6 +1010,9 @@ mod tests {
             let (roll, _) = roll_and_mirror(RotationDef::Random, seed);
             assert!((0.0..std::f32::consts::TAU).contains(&roll));
         }
-        assert!(mirrored > 16 && mirrored < 48, "about half are mirrored: {mirrored}");
+        assert!(
+            mirrored > 16 && mirrored < 48,
+            "about half are mirrored: {mirrored}"
+        );
     }
 }
