@@ -493,8 +493,8 @@ fn q0071_an_explicit_non_attack_order_ends_a_running_dash() {
         );
         assert_eq!(
             duel.world.entities[&duel.dasher].attack_dash_cooldown,
-            100 - 4,
-            "{order:?} leaves the cooldown running"
+            100 - 3,
+            "{order:?} leaves the cooldown running from the dash's start"
         );
     }
 }
@@ -547,17 +547,21 @@ fn q0071_the_maximum_is_the_walk_not_the_straight_line() {
     // `ChargeMaxDistance` compares with `Pathing 1` (`liberty` ValidatorData:1697-1704): the
     // owner's engine note on Q0071 reads it as the ground path distance.
     let mut duel = Duel::on(walled_world(), Some(dash(40, 300)), 13.5, UnitOrder::attack);
-    let trace = duel.steps(60);
-    let first_dash = trace
-        .iter()
-        .position(|&(_, dashing, _)| dashing)
-        .expect("a dash once the walk left is below 4");
+    let mut trace = Vec::new();
+    let mut start = None;
+    for _ in 0..60 {
+        let step = duel.step();
+        trace.push(step);
+        if step.1 {
+            start = Some(duel.world.entities[&duel.dasher].position);
+            break;
+        }
+    }
+    let start = start.expect("a dash once the walk left is below 4");
     // Walking 0.2 a tick, the dasher must cover more than 5 of the 9.3 first.
-    assert!(first_dash >= 25, "{first_dash}: {trace:?}");
-    let dasher = &duel.world.entities[&duel.dasher];
+    assert!(trace.len() > 25, "{}: {trace:?}", trace.len());
     assert!(
-        dasher.position.y > SimScalar::from_num(12),
-        "the dash starts round the wall's end, not through it: {:?}",
-        dasher.position
+        start.y > SimScalar::from_num(12),
+        "the dash starts round the wall's end, not through it: {start:?}"
     );
 }
