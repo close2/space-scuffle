@@ -53,7 +53,9 @@ use std::path::PathBuf;
 /// whether each splash is centred on its target's edge.
 /// Re-recorded for checksum schema 25 (plan 2026-11-09-friendly-blocking WP3, B-104, B-105), which
 /// encodes each unit's surround-walk state, all at its defaults at spawn.
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 16_815_478_854_166_671_532;
+/// Re-recorded for checksum schema 26 (B-85), which encodes each splash line's search period
+/// and each unit's pending line searches, none at spawn.
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 750_188_626_174_411_146;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

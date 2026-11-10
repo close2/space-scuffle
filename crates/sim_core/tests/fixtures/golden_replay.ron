@@ -268,8 +268,14 @@
 // bot 1's route rounds the corner near (30.3, 29.7) on two arc points of its own radius where the
 // grid gave one corner waypoint, and its first step differs by 0.0001. Every checkpoint changed
 // from checkpoint 1 (ticks 1 to 50); identical in debug, release and on wasm32-wasip1.
+// Re-recorded for checksum schema 26 (plan 2026-11-05-sc2-deviation-fixes Amendment 24, B-85),
+// which encodes each splash line's search period and each unit's pending line searches; every
+// checkpoint changed from checkpoint 1 and no behaviour did. The replay as of schema 25 passes
+// unchanged on the trees of Amendment 24's Charge (93dffe7) and braking (cd02e88 with 993ee14)
+// rules, which hash nothing new; the Lurker analogue, whose data the round changed, is not in
+// this replay.
 (
-    checksum_schema: 25,
+    checksum_schema: 26,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -295,25 +301,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xb3fe51161bfd7b17,
-        0xfd773ca1a7be93f5,
-        0xcad6f232bf741730,
-        0xe429d7c6957be1ab,
-        0xf7285169bbd7c7a6,
-        0x9a5fd25b7750555a,
-        0x5f135c4bc6927769,
-        0x497aeb5d6c63db4c,
-        0xe91e77f7532b3bb5,
-        0xdf3d06ecbaeb215b,
-        0xdc3c15694161c45a,
-        0x364a86d0b8c289e2,
-        0x53c096be2a56e0ea,
-        0xa172d429e924b3f8,
-        0x63d2de8ce3947eaa,
-        0x0540d26fd2969840,
-        0xcc5bc3952658f49f,
-        0x1e0224655e600607,
-        0x02101cc806f253aa,
-        0xa991e4b93d2b75d2,
+        0xd4a5c6a8e0f24a79,
+        0x710885adf0aa4911,
+        0xf003d27fbfc489c9,
+        0xd68141d044490ccd,
+        0xd3a694bd569aa526,
+        0xf3f35160061e9ed4,
+        0x23c6359a310acf0c,
+        0x70a9749c44259839,
+        0xca07e758ba6894ae,
+        0xb8fb2854bfd59a18,
+        0x4ee67c2873ae7f30,
+        0x03d9e55d49f20942,
+        0x013ebada0c6753cc,
+        0x61d01accfbb08922,
+        0x955284870d841d32,
+        0x2ac0a5e4440066dd,
+        0x3d5c0d871a4baaca,
+        0x9f1c0872480e3ace,
+        0x13bc2579c1de726e,
+        0xfa100508399b0480,
     ],
 )
