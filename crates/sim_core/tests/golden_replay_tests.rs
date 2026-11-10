@@ -26,6 +26,7 @@
 //!   from the replay itself, so an edit to the script cannot quietly drop it.
 
 use serde::Deserialize;
+use sim_core::catalog::MovementRules;
 use sim_core::checksum::CHECKSUM_SCHEMA_VERSION;
 use sim_core::{Entity, SimWorld};
 use sim_map::MapFile;
@@ -294,8 +295,22 @@ fn replay_checksums(
     replay: &GoldenReplay,
     observer: &mut dyn ReplayObserver,
 ) -> Result<(Vec<u64>, SimWorld), Box<dyn Error>> {
+    replay_with(replay, observer, None, false)
+}
+
+/// Runs the script with the catalog's movement rules replaced by `rules` when given, and with
+/// every squad command split into one single-unit command per member when `split` is true.
+fn replay_with(
+    replay: &GoldenReplay,
+    observer: &mut dyn ReplayObserver,
+    rules: Option<MovementRules>,
+    split: bool,
+) -> Result<(Vec<u64>, SimWorld), Box<dyn Error>> {
     let map = MapFile::from_ron_str(MAP)?.decode()?.to_game_map()?;
     let mut world = sim_fixtures::world(map, replay.seed);
+    if let Some(rules) = rules {
+        world.catalog.set_movement_rules(rules);
+    }
     let squads = populate(&mut world, replay)?;
 
     let mut checksums = Vec::new();
@@ -306,12 +321,17 @@ fn replay_checksums(
                 let (player, members) = squads
                     .get(name)
                     .ok_or_else(|| format!("order names unknown squad {name}"))?;
-                commands.push(PlayerCommand {
+                let selections: Vec<Vec<EntityId>> = if split {
+                    members.iter().map(|id| vec![*id]).collect()
+                } else {
+                    vec![members.clone()]
+                };
+                commands.extend(selections.into_iter().map(|entities| PlayerCommand {
                     player_id: PlayerId(*player),
-                    entities: members.clone(),
+                    entities,
                     order: scripted.order.to_unit_order(),
                     queue: false,
-                });
+                }));
             }
         }
         observer.before_step(&world)?;
@@ -423,5 +443,36 @@ fn golden_replay_is_stable_within_one_process() -> Result<(), Box<dyn Error>> {
         let (second, _) = replay_checksums(&replay, &mut ChecksumsOnly)?;
         assert_eq!(first, second, "replaying the same script must not diverge");
     }
+    Ok(())
+}
+
+/// Records the world checksum after every tick.
+struct EveryTick(Vec<u64>);
+
+impl ReplayObserver for EveryTick {
+    fn before_step(&mut self, _world: &SimWorld) -> Result<(), Box<dyn Error>> {
+        Ok(())
+    }
+
+    fn after_step(&mut self, world: &SimWorld) -> Result<(), Box<dyn Error>> {
+        self.0.push(world.last_checksum());
+        Ok(())
+    }
+}
+
+/// Group routing G-3 (plan `2026-11-10-group-routing`): at tolerance 0 the orders fixture's
+/// squad commands give the same checksum on every tick as the same commands split into
+/// single-unit commands, which is per-unit routing.
+#[test]
+fn golden_orders_at_tolerance_zero_equal_single_unit_commands() -> Result<(), Box<dyn Error>> {
+    let replay: GoldenReplay = ron::from_str(ORDERS_FIXTURE)?;
+    let mut sums = Vec::new();
+    for split in [false, true] {
+        let mut every = EveryTick(Vec::new());
+        replay_with(&replay, &mut every, Some(MovementRules::PER_UNIT), split)?;
+        sums.push(every.0);
+    }
+    assert_eq!(sums[0], sums[1]);
+    assert_eq!(sums[0].len(), usize::try_from(replay.total_ticks)?);
     Ok(())
 }

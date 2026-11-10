@@ -42,6 +42,7 @@ pub mod focus;
 pub mod matrix;
 pub mod report;
 pub mod route;
+pub mod route_groups;
 pub mod summary;
 pub mod swing;
 

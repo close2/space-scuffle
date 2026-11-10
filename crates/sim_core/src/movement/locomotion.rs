@@ -716,6 +716,7 @@ impl SimWorld {
         // Trade-off: Buff/radius validation is phase-entry work; scratch capacities
         // grow at population high-water marks, while pathfinding retains its costs.
         self.reconcile_route_groups();
+        self.compute_group_lanes();
         let mut entries = std::mem::take(&mut self.movement.entries);
         entries.clear();
         let mut pursuits = std::mem::take(&mut self.movement.pursuits);
@@ -840,6 +841,8 @@ impl SimWorld {
             pathfinder: &mut self.pathfinder,
             movement: &mut self.movement,
             current_tick: self.current_tick,
+            route_groups: &self.route_groups,
+            lane_tolerance: self.catalog.movement_rules().lane_tolerance_permille(),
         };
         let mut neighbours = std::mem::take(&mut scene.movement.neighbours);
         let walked = draft.walk(&mut scene, &mut neighbours, check_route, map_news);
@@ -1034,6 +1037,8 @@ impl SimWorld {
             pathfinder: &mut self.pathfinder,
             movement: &mut self.movement,
             current_tick: self.current_tick,
+            route_groups: &self.route_groups,
+            lane_tolerance: self.catalog.movement_rules().lane_tolerance_permille(),
         };
         let mut neighbours = std::mem::take(&mut scene.movement.neighbours);
         let chased = draft.chase(&mut scene, &mut neighbours, &pursuit);
@@ -1166,6 +1171,10 @@ struct MotionScene<'a> {
     pathfinder: &'a mut Pathfinder,
     movement: &'a mut MovementWorkspace,
     current_tick: u32,
+    /// The world's route groups (plan `2026-11-10-group-routing`).
+    route_groups: &'a [super::groups::RouteGroup],
+    /// The catalog's lane tolerance in permille; 0 switches group routing off.
+    lane_tolerance: u16,
 }
 
 impl MotionScene<'_> {
@@ -1377,7 +1386,18 @@ impl MotionDraft<'_> {
             actor.owner.0,
         );
         let path = match search {
-            RouteSearch::Found(path) => path,
+            // A member of a route group may take its group's lane instead (group-routing D-4).
+            RouteSearch::Found(path) => super::groups::GroupedSearch {
+                groups: scene.route_groups,
+                tolerance: scene.lane_tolerance,
+                pathfinder: scene.pathfinder,
+                map: scene.map,
+                request: &self.request,
+                events: &mut scene.movement.route_outcomes,
+                searches: &mut scene.movement.path_searches,
+                tick: self.tick,
+            }
+            .decide(actor, self.goal, path),
             RouteSearch::Retargeted(reachable, path) => {
                 scene.movement.route_outcomes.push(RouteOutcome {
                     tick: self.tick,

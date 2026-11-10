@@ -169,6 +169,19 @@ pub enum RouteOutcomeKind {
         /// The target given up on.
         target: EntityId,
     },
+    /// A route group member ran the restricted search for its group's lane (plan
+    /// `2026-11-10-group-routing`, D-4 step 5): its own route was in another lane.
+    GroupLane {
+        /// The member's group.
+        group: groups::RouteGroupId,
+        /// Length of the member's own shortest route, in world units.
+        own_length: SimScalar,
+        /// Length of the shortest route in the group's lane, in world units; `None` when the
+        /// lane admits no route for the member.
+        lane_length: Option<SimScalar>,
+        /// Whether the member walks the lane route (it is within the tolerance).
+        adopted: bool,
+    },
 }
 
 /// One unit's route event during a tick.
