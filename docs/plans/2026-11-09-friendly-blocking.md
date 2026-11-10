@@ -707,3 +707,33 @@ Implementation decisions, recorded under Q0002; figures in
 - **Still open:** §7's zero reversals and the corridor's 95 % (B-103), and Amendment 1's ramp E turn, 211° against
   at most 115°, unchanged by every package of this plan (it comes from the marching column's steering, not the
   blocked-attacker rules).
+
+## Amendment 7 (2026-11-10): a walk ends only at a full free step
+
+Implementation decision under the sc2 pathfinding plan's Amendment 4 (defect b), recorded under Q0002; figures in
+[`docs/evidence/2026-11-09-friendly-blocking.md`](../evidence/2026-11-09-friendly-blocking.md), section
+"Amendment 7".
+
+- **Cause.** On the held mesh switch, 228 of player 0's 255 showcase reversals were units behind a firing rhino
+  that ended their surround walk and restarted it every other tick. A walk starts when less than half a step
+  forward is free; a walk in progress ended (Amendment 4, change 3) as soon as the straight step was free for half
+  a step. At a crowd's edge the straight step is clipped to between the two (0.09 to 0.10 of a 0.12 step): the walk
+  ended, the unit stepped into contact, was blocked and walked again.
+- **Rule.** A walk in progress ends only when the whole straight step is free, short by at most `STANDING_DRIFT`
+  (1/64 world unit, what contact nudges a standing body): hysteresis between the start (half a step) and the end
+  (a full step). The side kept per target, `STANDING_DRIFT` and `FLANK_RETRY_TICKS` are unchanged.
+- **Test, red first.** `second_line_tests::walkers_at_the_crowds_edge_do_not_toggle`: five shooters fire at the
+  pillar, twelve short-ranged walkers behind them. Before: 210 reversals, one walker 107, 14 of 17 in range at tick
+  300. After: 31 reversals, at most 7 per walker, 17 of 17.
+- **Held under D-7's stop rule (orchestrator decision needed).** Measured on main (`d914917`, simulation equal to
+  `02f494b`): the showcase is unchanged in every box, player 0 still wins (tick 1,101 against 1,100), reversals 10
+  and 8 (11 and 8 before), 10 of 10 in range per side, 0 give-ups. The matrix moves in 18 battles and its reversals
+  halve (52,889 to 28,879 over all battles); one overall winner flips: battle 31 (15 marauders against 15 stalkers,
+  claim "Equal supply is close: a small change of formation can swing the winner", expectation either side) goes
+  from 10 blue / 4 red / 6 unresolved to 6 / 7 / 7 of 20 seeds. Battle 33 moves without a flip (68 seeds: blue 48,
+  red 9, other 11 before; 47, 16, 5 after). Battle 26's expectation fails on 2 extra seeds of 20 (none of record).
+- **Tests restated and goldens.** `trace_tests::a_unit_behind_a_friend_is_held_up_before_it_reaches_the_target`
+  now checks the front unit up to its first engagement, as its name says: it was held up for one tick at its first
+  kill (tick 64), the rear walker standing between it and its next target. `golden_replay` re-recorded (every
+  checkpoint from the first, ticks 1 to 50, where an attack-moving squad walks round its own column);
+  `golden_replay_orders` unchanged.

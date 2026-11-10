@@ -208,7 +208,7 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-97 | The Lurker analogue's burrow cannot be cancelled while it runs; the game's can (`Interruptible`, a Cancel button) | WP18 |
 | B-98 | Anchored units (sieged, burrowed) get no Stop or Hold Position on the card; the game's sieged tank has both | next client package |
 | B-102 | Routes come from a grid A* corridor with radius tiers, not a triangulated navigation mesh with each unit's own radius | [`2026-11-09-sc2-pathfinding`](docs/plans/2026-11-09-sc2-pathfinding.md) Part B |
-| B-103 | A blocked unit at the edge of a crowd still steps back and forth now and then (11 and 8 reversals per side in the showcase battle, 3 in the synthetic arc, where the game's stands), and a rear unit in a corridor that cannot reach range stands on 73 to 85 % of its ticks; the every-tick oscillation is fixed (narrowed, plan `2026-11-09-friendly-blocking` Amendments 4 and 5) | [`2026-11-09-friendly-blocking`](docs/plans/2026-11-09-friendly-blocking.md), open |
+| B-103 | A blocked unit at the edge of a crowd still steps back and forth now and then (11 and 8 reversals per side in the showcase battle, 3 in the synthetic arc, where the game's stands), and a rear unit in a corridor that cannot reach range stands on 73 to 85 % of its ticks; the every-tick oscillation is fixed, and a walk at a crowd's edge no longer ends and restarts every other tick (narrowed, plan `2026-11-09-friendly-blocking` Amendments 4, 5 and 7) | [`2026-11-09-friendly-blocking`](docs/plans/2026-11-09-friendly-blocking.md), open |
 
 ---
 
