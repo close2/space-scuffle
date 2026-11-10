@@ -23,7 +23,9 @@ use crate::combat::{
     charge_random_delay, mitigate_weapon_strike, raw_strike_damage, shares_combat_plane,
     splash_raw_damage, step_entity_weapon, WeaponTarget,
 };
-use crate::entity::{ActiveProjectile, Entity, PendingLine, PendingStrikes, WeaponPhase};
+use crate::entity::{
+    ActiveProjectile, Entity, PendingLine, PendingLineView, PendingStrikes, WeaponPhase,
+};
 use crate::weapon_timing::{resolve_attack_period, AttackRate, SimulationDiagnostic};
 use crate::world::presentation::{weapon_source, PresentationWorkspace};
 use crate::world::SimWorld;
@@ -203,6 +205,33 @@ fn hit_angle(origin: SimVec2, target: SimVec2) -> SimAngle {
     SimAngle::atan2(origin.y - target.y, origin.x - target.x)
 }
 
+/// The line a line splash's searches lie on, for their renderer events: the point its offsets
+/// are measured from, that point moved by the largest offset, and the spacing of its first two
+/// offsets, in world units; `None` for a circle. `attacker`, `impact` and `direction` are those of
+/// [`SplashSpec::line_frame`].
+fn splash_line_view(
+    splash: &SplashSpec,
+    attacker: SimVec2,
+    impact: SimVec2,
+    direction: SimVec2,
+) -> Option<(SimVec2, SimVec2, SimScalar)> {
+    splash
+        .line_frame(attacker, impact, direction)
+        .map(|(line, origin, axis)| {
+            let far = line
+                .offsets
+                .iter()
+                .copied()
+                .max()
+                .unwrap_or(SimScalar::ZERO);
+            let spacing = match line.offsets.as_slice() {
+                [first, second, ..] => (*second - *first).abs(),
+                _ => SimScalar::ZERO,
+            };
+            (origin, origin + axis * far, spacing)
+        })
+}
+
 /// The radii in world units of `splash`'s innermost, middle and outermost zones, as a
 /// `SplashVisual` publishes them; with fewer than three zones the middle is the innermost.
 fn splash_zone_radii(splash: &SplashSpec) -> [f32; 3] {
@@ -298,7 +327,7 @@ impl SimWorld {
                 entity.pending_line = Some(pending);
                 continue;
             }
-            let Some((weapon, slug, effect)) = self.pending_line_weapon(id, pending.plane) else {
+            let Some((weapon, slug)) = self.pending_line_weapon(id, pending.plane) else {
                 continue;
             };
             let Some(splash) = weapon.splash.as_ref() else {
@@ -307,6 +336,10 @@ impl SimWorld {
             if pending.points.is_empty() {
                 continue;
             }
+            let view = pending.view;
+            let index = view
+                .count
+                .saturating_sub(u8::try_from(pending.points.len()).unwrap_or(u8::MAX));
             let point = pending.points.remove(0);
             let Some(owner) = self.entities.get(&id).map(|entity| entity.owner) else {
                 continue;
@@ -318,13 +351,21 @@ impl SimWorld {
                 attacker: Some(id),
                 origin: point,
                 strikes: 1,
-                effect,
+                effect: view.effect,
             };
             let area = AreaStrike {
                 plane: pending.plane,
                 angle: pending.angle,
                 primary: Some(pending.primary),
             };
+            self.emit_search_visuals(
+                source,
+                splash,
+                pending.plane,
+                view.line,
+                &[point],
+                (index, view.count),
+            );
             self.strike_area(source, splash, area, &[point], Some(&mut pending.struck));
             let period = match &splash.shape {
                 SplashShape::Line(line) => line.period_ticks,
@@ -343,11 +384,7 @@ impl SimWorld {
     /// The weapon with which unit `id` lands its next pending line search against `plane`, with
     /// its archetype's slug, or `None` when the line ends (see
     /// [`Self::advance_pending_lines`]).
-    fn pending_line_weapon(
-        &self,
-        id: EntityId,
-        plane: MoverType,
-    ) -> Option<(WeaponSpec, String, EffectSource)> {
+    fn pending_line_weapon(&self, id: EntityId, plane: MoverType) -> Option<(WeaponSpec, String)> {
         let entity = self.entities.get(&id)?;
         if !entity.is_alive()
             || entity.is_loaded_in_transport()
@@ -357,9 +394,9 @@ impl SimWorld {
         }
         let rate = entity.attack_rate_multiplier().ok()?;
         let arch = self.catalog.get(entity.unit_type_id).ok()?;
-        let resolved = Self::resolved_weapon(&self.player_upgrades, entity, arch, plane, rate)?;
-        let effect = weapon_source(arch, entity, resolved.spec);
-        Some((resolved.to_spec(), arch.slug.clone(), effect))
+        let weapon =
+            Self::resolved_weapon(&self.player_upgrades, entity, arch, plane, rate)?.to_spec();
+        Some((weapon, arch.slug.clone()))
     }
 
     /// Records every entity's targeting data so weapons can read targets while mutating
@@ -831,19 +868,21 @@ impl SimWorld {
             hit.position
         };
         splash.search_points(source.origin, impact, direction, &mut points);
-        self.emit_splash_visuals(source, splash, (impact, direction), hit.plane, &points);
         let area = AreaStrike {
             plane: hit.plane,
             angle: hit.angle,
             primary,
         };
+        let line = splash_line_view(splash, source.origin, impact, direction);
         let period = match &splash.shape {
             SplashShape::Line(line) => line.period_ticks,
             SplashShape::Circle => 0,
         };
+        let count = u8::try_from(points.len()).unwrap_or(u8::MAX);
         match (source.attacker, primary) {
             (Some(attacker), Some(target)) if period > 0 && points.len() > 1 => {
                 let mut struck = Vec::new();
+                self.emit_search_visuals(source, splash, hit.plane, line, &points[..1], (0, count));
                 self.strike_area(source, splash, area, &points[..1], Some(&mut struck));
                 if let Some(entity) = self.entities.get_mut(&attacker) {
                     entity.pending_line = Some(PendingLine {
@@ -853,10 +892,18 @@ impl SimWorld {
                         angle: hit.angle,
                         primary: target,
                         struck,
+                        view: PendingLineView {
+                            effect: source.effect,
+                            line,
+                            count,
+                        },
                     });
                 }
             }
-            _ => self.strike_area(source, splash, area, &points, None),
+            _ => {
+                self.emit_search_visuals(source, splash, hit.plane, line, &points, (0, count));
+                self.strike_area(source, splash, area, &points, None);
+            }
         }
         self.combat.splash_points = points;
     }
@@ -948,19 +995,18 @@ impl SimWorld {
         self.combat.splash_hits = splash_hits;
     }
 
-    /// Records one renderer event per search of `splash` at `points`, the searches of an attack
-    /// by `source` that struck `impact` along the unit vector `direction`, on `plane`.
-    ///
-    /// A search of a line splash also carries the whole line: from the point its offsets are
-    /// measured from to that point moved by the largest offset, and the spacing of its first
-    /// two offsets.
-    fn emit_splash_visuals(
+    /// Records one renderer event per search of `splash` at `points`, on `plane`, for an attack
+    /// by `source`. `line` is the whole line the searches lie on, if the splash is a line (see
+    /// [`splash_line_view`]); the searches are numbered from `first` of `count`, so a line whose
+    /// searches land on several ticks (B-85) numbers each by its place in the line.
+    fn emit_search_visuals(
         &mut self,
         source: HitSource<'_>,
         splash: &SplashSpec,
-        (impact, direction): (SimVec2, SimVec2),
         plane: MoverType,
+        line: Option<(SimVec2, SimVec2, SimScalar)>,
         points: &[SimVec2],
+        (first, count): (u8, u8),
     ) {
         let lift = if plane == MoverType::Air {
             crate::world::AIR_UNIT_ALTITUDE
@@ -975,24 +1021,8 @@ impl SimWorld {
             ]
         };
         let zones = splash_zone_radii(splash);
-        let line =
-            splash
-                .line_frame(source.origin, impact, direction)
-                .map(|(line, origin, axis)| {
-                    let far = line
-                        .offsets
-                        .iter()
-                        .copied()
-                        .max()
-                        .unwrap_or(SimScalar::ZERO);
-                    let spacing = match line.offsets.as_slice() {
-                        [first, second, ..] => (*second - *first).abs().to_f32(),
-                        _ => 0.0,
-                    };
-                    (at(origin), at(origin + axis * far), spacing)
-                });
-        let count = u8::try_from(points.len()).unwrap_or(u8::MAX);
-        for (index, &point) in (0_u8..).zip(points) {
+        let line = line.map(|(from, to, spacing)| (at(from), at(to), spacing.to_f32()));
+        for (index, &point) in (first..).zip(points) {
             self.pending_events.push(CombatEventVisual::SplashVisual {
                 center: at(point),
                 zones,

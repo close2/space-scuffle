@@ -12,9 +12,9 @@ use crate::catalog::{UnitArchetype, WeaponSpec};
 use crate::movement::MovementMathError;
 use crate::weapon_timing::{combined_attack_rate, AttackRate, InvalidBuffAttackRate};
 use sim_types::{
-    AbilityEffectSpec, AnimState, AttackDashSpec, AttackOrigin, BarrierSpec, EntityId, MoverType,
-    OverclockSpec, PlayerId, ResourceKind, ResourceNodeId, ShapeKind, SimAngle, SimScalar, SimVec2,
-    Tick, UnitModeSpec, UnitOrder, UnitTypeId,
+    AbilityEffectSpec, AnimState, AttackDashSpec, AttackOrigin, BarrierSpec, EffectSource,
+    EntityId, MoverType, OverclockSpec, PlayerId, ResourceKind, ResourceNodeId, ShapeKind,
+    SimAngle, SimScalar, SimVec2, Tick, UnitModeSpec, UnitOrder, UnitTypeId,
 };
 use std::collections::VecDeque;
 
@@ -130,6 +130,24 @@ pub struct PendingLine {
     pub primary: EntityId,
     /// Units an earlier search of this line struck, in the order they were struck.
     pub struck: Vec<EntityId>,
+    /// What the renderer is told about each search as it lands; presentation only, not hashed.
+    pub view: PendingLineView,
+}
+
+/// The presentation of a [`PendingLine`]'s searches (plan `2026-11-09-effect-visualization`):
+/// each search, when it lands, is published as a `SplashVisual` numbered by its place in the
+/// whole line, as the searches of an instant line are.
+///
+/// Not hashed: no simulation decision reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingLineView {
+    /// The attacker's type and weapon that released the line.
+    pub effect: EffectSource,
+    /// The whole line in world units: the point its offsets are measured from, that point moved
+    /// by the largest offset, and the spacing of its first two offsets.
+    pub line: Option<(SimVec2, SimVec2, SimScalar)>,
+    /// How many searches the whole line has, the first included.
+    pub count: u8,
 }
 
 /// The strikes of an attack that land after its release tick (plan

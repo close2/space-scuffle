@@ -447,6 +447,7 @@ fields!(WeaponSpec {
     suicide_on_attack,
     structure_strike,
 });
+// `view` is presentation only (the line's renderer events): it decides nothing.
 fields!(PendingLine {
     points,
     ticks_until_next,
@@ -454,6 +455,8 @@ fields!(PendingLine {
     angle,
     primary,
     struck
+} unhashed {
+    view
 });
 fields!(PendingStrikes {
     target_id,
