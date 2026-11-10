@@ -490,6 +490,9 @@ pub struct MediaStyle {
     pub framing: FramingPolicy,
     /// Which states pin their last frame and which get a seam repair in the bake.
     pub loops: LoopPolicy,
+    /// The prompt class "effect element": texts for effect texture requests (plan
+    /// `2026-11-09-effect-visualization.md` §6), which name a set and an element, not a unit.
+    pub effect_element: crate::effects::prompt::EffectElementStyle,
 }
 
 impl MediaStyle {

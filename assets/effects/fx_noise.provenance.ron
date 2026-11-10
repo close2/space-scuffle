@@ -1,0 +1,176 @@
+(
+    format_version: 1,
+    set: "fx_noise",
+    manifest_sha256: "720e87bdfd31de821a2d41f7fb3bf1dfc349adb76da9ccb7ae8dcf4051c2b49b",
+    mip_sha256: {
+        "fx_noise.mip1.png": "6e4fb4caf979d75a73bfea9b124e45a4591f89112053c372419a89dc9f1d81e4",
+        "fx_noise.mip2.png": "cb6dddd690bc0f50b02012f538162735b9ad03cbdaee7dbdd324ee8a1d487a72",
+        "fx_noise.mip3.png": "cb3ec0832fbab6d564568492aeeb1180e93c9dcf10a7245998f999f5d13f5218",
+        "fx_noise.mip4.png": "e8bc52c7977848138679d18759932de42b9e9cec8766462180995351c8e99779",
+        "fx_noise.png": "9728fd401655ad2294f299597253f6d625d596822b799fade8ae4c447aa08ca5",
+    },
+    erosion: None,
+    ffmpeg_version: None,
+    elements: {
+        "erosion_gradient": (
+            origin: Authored(
+                tool: "asset_baker effect-noise",
+                params: (
+                    name: "erosion_gradient",
+                    channels: (
+                        r: ErosionGradient(
+                            noise: (
+                                seed: 401,
+                                period: 4,
+                                octaves: 4,
+                                gain_permille: 500,
+                            ),
+                            noise_permille: 250,
+                        ),
+                        g: ErosionGradient(
+                            noise: (
+                                seed: 402,
+                                period: 6,
+                                octaves: 5,
+                                gain_permille: 550,
+                            ),
+                            noise_permille: 400,
+                        ),
+                        b: ErosionGradient(
+                            noise: (
+                                seed: 403,
+                                period: 3,
+                                octaves: 3,
+                                gain_permille: 450,
+                            ),
+                            noise_permille: 150,
+                        ),
+                        a: Constant(255),
+                    ),
+                ),
+            ),
+            keying: (
+                method: Authored,
+                levels: None,
+                black_check: None,
+                matte: None,
+            ),
+            span: None,
+        ),
+        "fire_noise": (
+            origin: Authored(
+                tool: "asset_baker effect-noise",
+                params: (
+                    name: "fire_noise",
+                    channels: (
+                        r: Perlin((
+                            seed: 301,
+                            period: 6,
+                            octaves: 6,
+                            gain_permille: 550,
+                        )),
+                        g: Value((
+                            seed: 302,
+                            period: 8,
+                            octaves: 5,
+                            gain_permille: 500,
+                        )),
+                        b: Worley(
+                            seed: 303,
+                            cells: 6,
+                            invert: true,
+                        ),
+                        a: Constant(255),
+                    ),
+                ),
+            ),
+            keying: (
+                method: Authored,
+                levels: None,
+                black_check: None,
+                matte: None,
+            ),
+            span: None,
+        ),
+        "noise_tile": (
+            origin: Authored(
+                tool: "asset_baker effect-noise",
+                params: (
+                    name: "noise_tile",
+                    channels: (
+                        r: Perlin((
+                            seed: 101,
+                            period: 4,
+                            octaves: 5,
+                            gain_permille: 500,
+                        )),
+                        g: Worley(
+                            seed: 102,
+                            cells: 8,
+                            invert: true,
+                        ),
+                        b: Curl(
+                            potential: (
+                                seed: 103,
+                                period: 3,
+                                octaves: 3,
+                                gain_permille: 500,
+                            ),
+                            component: X,
+                        ),
+                        a: Curl(
+                            potential: (
+                                seed: 103,
+                                period: 3,
+                                octaves: 3,
+                                gain_permille: 500,
+                            ),
+                            component: Y,
+                        ),
+                    ),
+                ),
+            ),
+            keying: (
+                method: Authored,
+                levels: None,
+                black_check: None,
+                matte: None,
+            ),
+            span: None,
+        ),
+        "ring_noise": (
+            origin: Authored(
+                tool: "asset_baker effect-noise",
+                params: (
+                    name: "ring_noise",
+                    channels: (
+                        r: RingMask(
+                            inner_permille: 700,
+                            outer_permille: 880,
+                            softness_permille: 60,
+                        ),
+                        g: Perlin((
+                            seed: 201,
+                            period: 8,
+                            octaves: 4,
+                            gain_permille: 550,
+                        )),
+                        b: Worley(
+                            seed: 202,
+                            cells: 12,
+                            invert: false,
+                        ),
+                        a: Constant(255),
+                    ),
+                ),
+            ),
+            keying: (
+                method: Authored,
+                levels: None,
+                black_check: None,
+                matte: None,
+            ),
+            span: None,
+        ),
+    },
+)

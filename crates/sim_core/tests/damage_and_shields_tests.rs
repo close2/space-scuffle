@@ -97,6 +97,7 @@ fn dummy_target_archetype(
         researches_upgrades: Vec::new(),
         armor_class: None,
         modes: Vec::new(),
+        effects: sim_core::catalog::ArchetypeEffects::default(),
     }
 }
 

@@ -389,6 +389,7 @@ fn test_dual_weapon_ground_air_and_cliffwalker_selection() {
         researches_upgrades: Vec::new(),
         armor_class: None,
         modes: Vec::new(),
+        effects: sim_core::catalog::ArchetypeEffects::default(),
     };
 
     // 1. Target Ground -> Chooses Ground weapon

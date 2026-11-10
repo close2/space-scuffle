@@ -1,5 +1,8 @@
 //! The append-only ledger of every paid Veo request (plan `2026-11-04-phase-8-5-veo-media.md`,
-//! decision D-3).
+//! decision D-3), every paid image-model request for effect textures (plan
+//! `2026-11-09-effect-visualization.md` §6.6, `image_*` events) and every paid Veo request for
+//! an effect element (`effect_clip_*` events, keyed by texture set and element instead of a
+//! unit and its animation state).
 //!
 //! # Responsibility
 //! Records each event of a generation run as one JSON object per line, and reads a ledger back
@@ -265,6 +268,175 @@ pub enum LedgerEvent {
         /// The error, with the key redacted.
         error: String,
     },
+    /// A paid image-model request (effect textures, plan `2026-11-09-effect-visualization.md`
+    /// §6.6) is about to be sent. Counted at its model's price like a Veo start.
+    ImageRequestStarted {
+        /// `<run id>/<sequence>`, linking the events of one request.
+        request_id: String,
+        /// Effect texture set the image is for.
+        set: String,
+        /// Element of the set.
+        element: String,
+        /// Model identifier.
+        model: String,
+        /// API the request goes to.
+        mode: ApiMode,
+        /// What the request asks for.
+        kind: ImageRequestKind,
+        /// SHA-256 of the prompt text, lowercase hex.
+        prompt_sha256: String,
+        /// The prompt text.
+        prompt: String,
+        /// SHA-256 of the image sent with an edit request (the element on black), if any.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_sha256: Option<String>,
+    },
+    /// An image request returned an image, which was written and validated.
+    ImageDownloaded {
+        /// The request that produced it.
+        request_id: String,
+        /// Effect texture set.
+        set: String,
+        /// Element of the set.
+        element: String,
+        /// Model identifier.
+        model: String,
+        /// File size in bytes.
+        bytes: u64,
+        /// SHA-256 of the file, lowercase hex.
+        sha256: String,
+        /// Image width in pixels.
+        width: u32,
+        /// Image height in pixels.
+        height: u32,
+        /// MIME type of the stored bytes (`image/png` or `image/jpeg`).
+        mime_type: String,
+        /// Where the image was stored.
+        path: String,
+    },
+    /// An image request was refused for quota. It cost nothing.
+    ImageQuotaRefused {
+        /// The refused request.
+        request_id: String,
+        /// Effect texture set.
+        set: String,
+        /// Element of the set.
+        element: String,
+        /// HTTP status of the refusal.
+        http_status: u16,
+        /// The error's `status` field.
+        status: Option<String>,
+        /// The error's reason or message.
+        reason: Option<String>,
+    },
+    /// An image request failed after it may have been billed (or returned no image). It is
+    /// counted as paid.
+    ImageRequestFailed {
+        /// The failed request.
+        request_id: String,
+        /// Effect texture set.
+        set: String,
+        /// Element of the set.
+        element: String,
+        /// The error, with the key redacted.
+        error: String,
+    },
+    /// A paid Veo start request for an effect element (plan
+    /// `2026-11-09-effect-visualization.md` §6.2 item 2, `asset_baker effect-veo`) is about to
+    /// be sent. Counted at its model's price like a unit clip's start.
+    EffectClipRequestStarted {
+        /// `<run id>/<sequence>`, linking the events of one request.
+        request_id: String,
+        /// Effect texture set the clip is for.
+        set: String,
+        /// Element of the set.
+        element: String,
+        /// Model identifier.
+        model: String,
+        /// API the request goes to.
+        mode: ApiMode,
+        /// SHA-256 of the prompt text, lowercase hex.
+        prompt_sha256: String,
+        /// The prompt text.
+        prompt: String,
+        /// SHA-256 of the keyframe image sent (image to video), if any.
+        keyframe_sha256: Option<String>,
+        /// The generation parameters sent.
+        parameters: VeoParameters,
+    },
+    /// The service named the operation of a started effect-clip request.
+    EffectClipOperationNamed {
+        /// The request this operation belongs to.
+        request_id: String,
+        /// Effect texture set.
+        set: String,
+        /// Element of the set.
+        element: String,
+        /// Model the operation runs on, which polling needs.
+        model: String,
+        /// Operation resource name.
+        operation: String,
+    },
+    /// An effect-clip operation finished.
+    EffectClipOperationDone {
+        /// Effect texture set.
+        set: String,
+        /// Element of the set.
+        element: String,
+        /// Operation resource name.
+        operation: String,
+        /// What it returned.
+        outcome: OperationOutcome,
+    },
+    /// An effect clip was downloaded and validated.
+    EffectClipDownloaded {
+        /// Effect texture set.
+        set: String,
+        /// Element of the set.
+        element: String,
+        /// Operation that produced the clip.
+        operation: String,
+        /// File size in bytes.
+        bytes: u64,
+        /// SHA-256 of the file, lowercase hex.
+        sha256: String,
+        /// Container duration measured by ffprobe, in seconds.
+        duration_seconds: f64,
+        /// Video packets read by ffprobe.
+        frames: u64,
+        /// Frame width in pixels.
+        width: u32,
+        /// Frame height in pixels.
+        height: u32,
+        /// Where the clip was stored.
+        path: String,
+    },
+    /// An effect-clip start request was refused for quota. It cost nothing.
+    EffectClipQuotaRefused {
+        /// The refused request.
+        request_id: String,
+        /// Effect texture set.
+        set: String,
+        /// Element of the set.
+        element: String,
+        /// HTTP status of the refusal.
+        http_status: u16,
+        /// The error's `status` field, such as `RESOURCE_EXHAUSTED`.
+        status: Option<String>,
+        /// The error's reason or message.
+        reason: Option<String>,
+    },
+    /// An effect-clip start request failed in a way that may have started paid work.
+    EffectClipStartFailed {
+        /// The failed request.
+        request_id: String,
+        /// Effect texture set.
+        set: String,
+        /// Element of the set.
+        element: String,
+        /// The error, with the key redacted.
+        error: String,
+    },
     /// A reviewer rejected a downloaded clip.
     RejectedInReview {
         /// Catalog slug.
@@ -279,10 +451,22 @@ pub enum LedgerEvent {
     },
 }
 
+/// What an image-model request asks for (plan `2026-11-09-effect-visualization.md` §6.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageRequestKind {
+    /// The element generated from text, on pure black.
+    OnBlack,
+    /// An edit of the element on black: the same element on pure white, the second picture of
+    /// a difference-matte pair.
+    OnWhiteEdit,
+}
+
 impl LedgerEvent {
-    /// The clip this event concerns.
+    /// The unit's Veo clip this event concerns, or `None` for an image-model or effect-clip
+    /// event, which names an effect set and element instead.
     #[must_use]
-    pub fn clip(&self) -> (&str, AnimState) {
+    pub fn clip(&self) -> Option<(&str, AnimState)> {
         match self {
             Self::RequestStarted { slug, state, .. }
             | Self::OperationNamed { slug, state, .. }
@@ -290,7 +474,32 @@ impl LedgerEvent {
             | Self::Downloaded { slug, state, .. }
             | Self::QuotaRefused { slug, state, .. }
             | Self::StartFailed { slug, state, .. }
-            | Self::RejectedInReview { slug, state, .. } => (slug, *state),
+            | Self::RejectedInReview { slug, state, .. } => Some((slug, *state)),
+            Self::ImageRequestStarted { .. }
+            | Self::ImageDownloaded { .. }
+            | Self::ImageQuotaRefused { .. }
+            | Self::ImageRequestFailed { .. }
+            | Self::EffectClipRequestStarted { .. }
+            | Self::EffectClipOperationNamed { .. }
+            | Self::EffectClipOperationDone { .. }
+            | Self::EffectClipDownloaded { .. }
+            | Self::EffectClipQuotaRefused { .. }
+            | Self::EffectClipStartFailed { .. } => None,
+        }
+    }
+
+    /// The effect element (`set`, `element`) of an effect-clip event, or `None` for any other
+    /// event.
+    #[must_use]
+    pub fn effect_clip(&self) -> Option<(&str, &str)> {
+        match self {
+            Self::EffectClipRequestStarted { set, element, .. }
+            | Self::EffectClipOperationNamed { set, element, .. }
+            | Self::EffectClipOperationDone { set, element, .. }
+            | Self::EffectClipDownloaded { set, element, .. }
+            | Self::EffectClipQuotaRefused { set, element, .. }
+            | Self::EffectClipStartFailed { set, element, .. } => Some((set, element)),
+            _ => None,
         }
     }
 }
@@ -486,6 +695,8 @@ pub struct ClipHistory {
 #[derive(Debug, Clone, Default)]
 pub struct LedgerHistory {
     clips: BTreeMap<(String, AnimState), ClipHistory>,
+    /// Effect clips by (`set`, `element`).
+    effect_clips: BTreeMap<(String, String), ClipHistory>,
     failure_kinds: BTreeSet<String>,
     /// `(request id, model)` of every start request, in ledger order.
     starts: Vec<(String, String)>,
@@ -512,7 +723,15 @@ impl LedgerHistory {
     }
 
     fn apply(&mut self, record: &LedgerRecord) {
-        let (slug, state) = record.event.clip();
+        if let Some((set, element)) = record.event.effect_clip() {
+            let key = (set.to_string(), element.to_string());
+            self.apply_effect_clip(key, &record.event);
+            return;
+        }
+        let Some((slug, state)) = record.event.clip() else {
+            self.apply_image(&record.event);
+            return;
+        };
         let clip = self.clips.entry((slug.to_string(), state)).or_default();
         match &record.event {
             LedgerEvent::RequestStarted {
@@ -571,6 +790,74 @@ impl LedgerHistory {
                     clip.downloaded = None;
                 }
             }
+            _ => {}
+        }
+    }
+
+    /// Folds an effect-clip event into the history of its element, as [`Self::apply`] folds
+    /// a unit clip's: a start is paid at its model's price unless refused for quota, and a
+    /// named operation is pending until it finishes without a video or downloads.
+    fn apply_effect_clip(&mut self, key: (String, String), event: &LedgerEvent) {
+        let clip = self.effect_clips.entry(key).or_default();
+        match event {
+            LedgerEvent::EffectClipRequestStarted {
+                request_id, model, ..
+            } => {
+                clip.paid_attempts += 1;
+                self.starts.push((request_id.clone(), model.clone()));
+            }
+            LedgerEvent::EffectClipOperationNamed {
+                operation, model, ..
+            } => {
+                clip.named_operations.insert(operation.clone());
+                clip.pending = Some(PendingOperation {
+                    operation: operation.clone(),
+                    model: model.clone(),
+                });
+            }
+            LedgerEvent::EffectClipOperationDone { outcome, .. } => {
+                if !outcome.has_video() {
+                    clip.pending = None;
+                    clip.unusable_results += 1;
+                }
+                if let Some(kind) = outcome.failure_kind() {
+                    self.failure_kinds.insert(kind);
+                }
+            }
+            LedgerEvent::EffectClipDownloaded {
+                sha256,
+                path,
+                operation,
+                ..
+            } => {
+                clip.pending = None;
+                clip.downloaded_sha256.insert(sha256.clone());
+                clip.downloaded = Some(DownloadedClip {
+                    path: PathBuf::from(path),
+                    sha256: sha256.clone(),
+                    operation: operation.clone(),
+                });
+            }
+            LedgerEvent::EffectClipQuotaRefused { request_id, .. } => {
+                clip.paid_attempts = clip.paid_attempts.saturating_sub(1);
+                self.quota_refused.insert(request_id.clone());
+            }
+            LedgerEvent::EffectClipStartFailed { .. } => clip.unusable_results += 1,
+            _ => {}
+        }
+    }
+
+    /// Folds an image-model event: a start is a paid start at its model's price unless the
+    /// service refused it for quota.
+    fn apply_image(&mut self, event: &LedgerEvent) {
+        match event {
+            LedgerEvent::ImageRequestStarted {
+                request_id, model, ..
+            } => self.starts.push((request_id.clone(), model.clone())),
+            LedgerEvent::ImageQuotaRefused { request_id, .. } => {
+                self.quota_refused.insert(request_id.clone());
+            }
+            _ => {}
         }
     }
 
@@ -580,6 +867,13 @@ impl LedgerHistory {
         self.clips.get(&(slug.to_string(), state))
     }
 
+    /// The history of one effect element's clips, if the ledger mentions it.
+    #[must_use]
+    pub fn effect_clip(&self, set: &str, element: &str) -> Option<&ClipHistory> {
+        self.effect_clips
+            .get(&(set.to_string(), element.to_string()))
+    }
+
     /// Whether a failure of `kind` (see [`OperationOutcome::failure_kind`]) was recorded.
     #[must_use]
     pub fn knows_failure(&self, kind: &str) -> bool {
@@ -587,7 +881,8 @@ impl LedgerHistory {
     }
 
     /// The model of every start that may have cost a generation, in ledger order: every
-    /// `request_started` line except those the service refused for quota (those cost nothing).
+    /// `request_started`, `image_request_started` and `effect_clip_request_started` line except
+    /// those the service refused for quota (those cost nothing).
     /// A start that failed ambiguously counts, because it may have started paid work.
     pub fn paid_start_models(&self) -> impl Iterator<Item = &str> {
         self.starts

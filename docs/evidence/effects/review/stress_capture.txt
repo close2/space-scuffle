@@ -1,0 +1,27 @@
+Crowd capture of the effect stress mode (plan 2026-11-09-effect-visualization §7.2 item 6, §10.3), WP6c.
+
+Made by `frame_budget --scenario 400 --display-path kwin-virtual --effect-stress 200 --capture-tick 150
+--capture <png>` (release build, RX 580 / radv, headless KWin, 1280x720, 2026-11-10), and the same command
+without `--effect-stress` for the baseline. The battle: eight armies of 50 units on a flat 128x128 map, each
+attack-moving to the opposite start, seen from the frame-budget camera (75 world units away, 58 degree pitch).
+The stream: 200 splash events per second of game time, round-robin over shell_impact, acid_burst and
+spine_line, each at a live unit chosen by a hash, with the zones (and line) the simulation publishes.
+
+stress_capture_400.png: with the stream, simulation tick 150 (6 s into the battle, 1 200 events sent so far).
+stress_capture_400_baseline.png: the same tick without the stream (the simulation is deterministic, so the
+units stand in the same places).
+Both are cropped to x 360..1280 of the 1280x720 window: the left 360 pixels are the HUD's side panel, which
+the headless capture shows black in both runs.
+
+Review round 2 (2026-11-10): stress_capture_400.png is re-taken with the round-2 effects by the same
+command (release build, RX 580 / radv, headless KWin); the baseline is unchanged (it draws no effect).
+On the captured frame: 1 027 live effects, 1 786 cards, 2 818 ground decals. Effect footprints (cards as
+quads, decals as their ground rectangles, transparent parts included, so an upper bound) cover 29.9 % of the
+screen; summed footprint area 1.85 screens; at most 44 footprints over one 4-pixel cell. Over the whole run:
+12 002 events, 12 076 effects spawned (the 74 beyond the events are acid flecks spawned by landing globs:
+over the Major cap a burst's globs, which are Detail, are retired at birth), none refused, no Critical instance without a slot, 1 079 Detail instances
+skipped for room and 154 556 skipped as smaller than 6 pixels on screen. The first round-2 run had the round-1
+decal pool (2 048) and overflowed it with Critical marks (the spine line's churned earth and fissure, 17 per
+line for 2.6 s); the pool is now 4 096. The Major class cap (96 live) is far exceeded, so an effect spawned over
+it has its Detail layers retired at birth (eroded out over 0.1 s, never popped) and draws its Critical layers:
+the acid front, the shell's shock front, the spines and the spine line's churned earth and fissure.

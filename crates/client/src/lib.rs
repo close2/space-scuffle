@@ -21,6 +21,7 @@
 //! - [`bubble_shader`]: Custom `BubbleDomeMaterial` and GPU uniform packing for unit spheres and domes.
 //! - [`flipbook_clock`]: The shared flipbook clock, its GPU buffer and the integer frame function.
 //! - [`indicators`]: Ground selection rings, equatorial facing chevron, attack focal lens, and collar meshes.
+//! - [`effects`]: Data-defined layered effects (sprites, rings, decals, lights, particles).
 //! - [`vfx`]: Hitscan tracers, plasma bolts, lasers, lightning, and glass shatter.
 //! - [`lab_ui`]: Tabbed `bevy_egui` dashboard (Visual Lab, Live Combat Sandbox, Swarm Stress Test).
 
@@ -38,6 +39,7 @@ pub mod bubble_shader;
 pub mod camera;
 pub mod camera_drag;
 pub mod editor;
+pub mod effects;
 pub mod flipbook_clock;
 pub mod indicators;
 pub mod input_bindings;
@@ -376,6 +378,7 @@ fn add_material_and_feature_plugins(app: &mut App) {
         .add_plugins(MaterialPlugin::<SelectionRingMaterial>::default())
         .add_plugins(bubble_optics::BubbleOpticsPlugin)
         .add_plugins(CombatFxPlugin)
+        .add_plugins(effects::EffectsPlugin)
         .add_plugins(MaterialPlugin::<SmogVolumeMaterial>::default())
         .add_plugins(SmogPlugin)
         .add_plugins(battle_input::BattleInputPlugin)

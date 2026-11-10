@@ -190,9 +190,21 @@ fn b5_unreadable_credential_file_is_not_silently_ignored() {
 
 #[test]
 fn b5_no_source_file_contains_a_developer_home_path() {
-    let sources = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    for entry in std::fs::read_dir(&sources).expect("read src") {
-        let path = entry.expect("entry").path();
+    // Every file under src/, including module directories such as src/effects/.
+    let mut pending = vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+    let mut files = Vec::new();
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).expect("read src") {
+            let path = entry.expect("entry").path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    assert!(files.len() > 10, "the walk found the sources");
+    for path in files {
         let text = std::fs::read_to_string(&path).expect("read source");
         assert!(
             !text.contains("/home/"),

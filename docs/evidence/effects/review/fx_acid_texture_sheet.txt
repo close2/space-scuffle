@@ -1,0 +1,7 @@
+Contact sheet of effect texture set 'fx_acid' (plan 2026-11-09-effect-visualization §6.5).
+Columns: on black | on mid-grey | on swatch 1 | on swatch 2 | warm ramp | cool ramp | erosion 25 % | erosion 50 % | erosion 75 % | alpha histogram
+Swatches: /home/spacescuffle/space-scuffle/.claude/worktrees/agent-ad1a5d854f30e1181/assets/textures/terrain/orbital_foundry/basalt_wall_albedo.png ; /home/spacescuffle/space-scuffle/.claude/worktrees/agent-ad1a5d854f30e1181/assets/textures/terrain/orbital_foundry/deck_plating_albedo.png
+Rows:
+  acid_crown (24 frame(s), middle frame shown)
+  acid_stain (2 frame(s), middle frame shown)
+  droplet (1 frame(s), middle frame shown)

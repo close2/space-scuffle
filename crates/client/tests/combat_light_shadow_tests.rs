@@ -21,36 +21,46 @@ fn combat_events(owner: PlayerId) -> [CombatEventVisual; 6] {
     let from = [2.0, 3.0, 1.0];
     let to = [8.0, 7.0, 1.0];
     [
-        CombatEventVisual::HitscanTracer { from, to, owner },
+        CombatEventVisual::HitscanTracer {
+            from,
+            to,
+            owner,
+            source: sim_types::EffectSource::default(),
+        },
         CombatEventVisual::ProjectileVisual {
             pos: from,
             vel: [3.0, 0.0, 0.0],
             owner,
             duration_secs: Some(0.5),
+            source: sim_types::EffectSource::default(),
         },
         CombatEventVisual::BeamVisual {
             from,
             to,
             owner,
             is_lightning: false,
+            source: sim_types::EffectSource::default(),
         },
         CombatEventVisual::BeamVisual {
             from,
             to,
             owner,
             is_lightning: true,
+            source: sim_types::EffectSource::default(),
         },
         CombatEventVisual::MeleeSlashVisual {
             pos: from,
             angle_rad: 0.5,
             radius: 0.8,
             owner,
+            source: sim_types::EffectSource::default(),
         },
         CombatEventVisual::BubbleShatter {
             pos: to,
             radius: 0.8,
             is_dome: false,
             owner,
+            unit_type: sim_types::UnitTypeId::default(),
         },
     ]
 }
@@ -198,6 +208,7 @@ fn projectile_cards_follow_their_flight_and_face_the_camera(
                 vel: velocity,
                 owner,
                 duration_secs: Some(1.0),
+                source: sim_types::EffectSource::default(),
             }));
         for _ in 0..2 {
             app.update();
@@ -246,6 +257,7 @@ fn melee_slash_applies_its_angle_once_and_keeps_the_card_facing_up(
                 angle_rad,
                 radius: 1.0,
                 owner,
+                source: sim_types::EffectSource::default(),
             }));
         app.update();
         let world = app.world_mut();

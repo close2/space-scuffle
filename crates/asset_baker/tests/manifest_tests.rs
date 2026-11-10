@@ -327,3 +327,79 @@ fn a_zero_duration_is_refused() {
         other => panic!("expected ValidationFailed, got {other:?}"),
     }
 }
+
+/// An effect texture manifest (plan `2026-11-09-effect-visualization.md` §6.4) with every
+/// field set, including both blends and a noise element's channel labels.
+fn effect_manifest() -> asset_baker::effects::texture_set::EffectTextureSet {
+    use asset_baker::effects::texture_set::{
+        ChannelLayout, EffectElement, EffectTextureSet, ElementBlend,
+    };
+    EffectTextureSet {
+        format_version: 1,
+        set: "fx_test".to_string(),
+        cell_size: 256,
+        padding_px: 2,
+        channels: ChannelLayout::PackedV1,
+        layers: 33,
+        mip_files: (0..5)
+            .map(|level| asset_baker::effects::texture_set::mip_file_name("fx_test", level))
+            .collect(),
+        elements: vec![
+            EffectElement {
+                name: "fireball_flipbook".to_string(),
+                first_layer: 0,
+                frames: 32,
+                duration_ms: Some(1_400),
+                pivot_px: [128, 128],
+                blend: ElementBlend::Additive,
+                channel_labels: None,
+            },
+            EffectElement {
+                name: "scorch".to_string(),
+                first_layer: 32,
+                frames: 1,
+                duration_ms: None,
+                pivot_px: [128, 128],
+                blend: ElementBlend::Premultiplied,
+                channel_labels: Some(["perlin", "worley", "curl_x", "curl_y"].map(String::from)),
+            },
+        ],
+    }
+}
+
+#[test]
+fn an_effect_texture_manifest_round_trips_and_checks_its_layers() {
+    use asset_baker::effects::texture_set::{check_manifest, load_ron, to_ron_text};
+    let manifest = effect_manifest();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("fx_test.texture.ron");
+    let text = to_ron_text(&manifest, "manifest").expect("ron");
+    assert!(!text.contains('\r'), "written with \\n line ends");
+    std::fs::write(&path, &text).expect("write");
+    let read: asset_baker::effects::texture_set::EffectTextureSet = load_ron(&path).expect("read");
+    assert_eq!(read, manifest);
+    assert_eq!(
+        to_ron_text(&read, "manifest").expect("ron"),
+        text,
+        "byte for byte"
+    );
+    check_manifest(&read, &path).expect("consistent");
+    assert_eq!(read.mip_files[0], "fx_test.png");
+    assert_eq!(read.mip_files[2], "fx_test.mip2.png");
+
+    let mut gap = manifest.clone();
+    gap.elements[1].first_layer = 33;
+    assert!(
+        check_manifest(&gap, &path).is_err(),
+        "elements must tile the layers"
+    );
+    let mut count = manifest.clone();
+    count.layers = 40;
+    assert!(check_manifest(&count, &path).is_err());
+    let mut foreign = manifest;
+    foreign.mip_files[1] = "../other.png".to_string();
+    assert!(
+        check_manifest(&foreign, &path).is_err(),
+        "strips are the set's own files"
+    );
+}

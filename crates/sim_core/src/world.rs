@@ -23,6 +23,7 @@
 mod abilities;
 mod attack_dash;
 mod commands;
+pub(crate) mod presentation;
 mod snapshot;
 mod upgrade_stats;
 mod upkeep;
@@ -47,6 +48,10 @@ use sim_types::{
     ShapeKind, SimAngle, SimScalar, SimVec2, TickBundle, UnitTypeId,
 };
 use std::collections::BTreeMap;
+
+/// Height in world units above the terrain at which presentation output draws air units and
+/// what happens to them; presentation only, the simulation has no altitude.
+pub(crate) const AIR_UNIT_ALTITUDE: f32 = 2.5;
 
 // PERFORMANCE RATIONALE:
 // Why: Allocating intermediate vectors during the 10-phase tick loop causes allocator fragmentation
@@ -151,6 +156,9 @@ pub struct SimWorld {
     pub(crate) route_groups: Vec<crate::movement::groups::RouteGroup>,
     /// The id the next route group gets; hashed.
     pub(crate) next_route_group: u32,
+    /// Unhashed provenance for the render snapshot: projectile and hazard sources and this
+    /// tick's barrier hits (plan `2026-11-09-effect-visualization` D-1).
+    pub(crate) presentation: presentation::PresentationWorkspace,
 }
 
 impl SimWorld {
@@ -217,6 +225,7 @@ impl SimWorld {
             vision: VisionWorkspace::default(),
             route_groups: Vec::new(),
             next_route_group: 1,
+            presentation: presentation::PresentationWorkspace::default(),
         };
 
         world.last_checksum = world.compute_checksum();
