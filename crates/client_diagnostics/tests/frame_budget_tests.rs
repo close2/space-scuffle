@@ -111,6 +111,60 @@ fn fixture_root_scenarios_spawn_exactly_their_units() -> Result<(), Box<dyn Erro
     Ok(())
 }
 
+/// The client loads the effect vocabulary and its texture sets at startup and exits if they
+/// are missing, so the fixture root must hold them (the effect plan's `WP6c` found it did not).
+#[test]
+fn fixture_root_loads_the_effect_vocabulary() -> Result<(), Box<dyn Error>> {
+    let spec = spec()?;
+    let work = tempfile::tempdir()?;
+    let root = fixture::build_fixture_root(&spec, &assets(), work.path())?;
+    let catalog = client::effects::catalog::EffectCatalog::load(
+        &root.join(client::effects::catalog::EFFECTS_CATALOG_PATH),
+        &root,
+    )?;
+    assert!(
+        !catalog.effects.is_empty(),
+        "the shipped vocabulary has effects"
+    );
+    Ok(())
+}
+
+/// The stress mode streams every weapon whose presentation block names a splash effect, with
+/// the zones the simulation publishes.
+#[test]
+fn the_stress_sources_are_the_catalogs_splash_weapons() -> Result<(), Box<dyn Error>> {
+    let spec = spec()?;
+    let work = tempfile::tempdir()?;
+    let root = fixture::build_fixture_root(&spec, &assets(), work.path())?;
+    let effects = client::effects::catalog::EffectCatalog::load(
+        &root.join(client::effects::catalog::EFFECTS_CATALOG_PATH),
+        &root,
+    )?;
+    let units = sim_fixtures::shipped_catalogs().units;
+    let tables = client::effects::catalog::UnitEffectTables::build(&units, &effects)?;
+    let sources =
+        client_diagnostics::frame_budget::effect_stress::stress_sources(&units, &tables, &effects);
+    let mut named: Vec<&str> = sources
+        .iter()
+        .map(|source| source.effect.as_str())
+        .collect();
+    named.sort_unstable();
+    named.dedup();
+    let mut chosen: Vec<&str> = units
+        .archetypes()
+        .flat_map(|archetype| archetype.effects.weapons.iter())
+        .filter_map(|weapon| weapon.splash.as_deref())
+        .collect();
+    chosen.sort_unstable();
+    chosen.dedup();
+    assert!(!chosen.is_empty(), "the shipped units name splash effects");
+    assert_eq!(named, chosen, "every chosen splash effect is streamed");
+    assert!(sources
+        .iter()
+        .all(|source| source.zones[2] > 0.0 && source.zones[0] <= source.zones[2]));
+    Ok(())
+}
+
 #[test]
 fn the_generated_map_passes_validation_without_warnings() -> Result<(), Box<dyn Error>> {
     let spec = spec()?;
