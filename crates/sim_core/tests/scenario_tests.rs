@@ -23,9 +23,8 @@
 use std::path::{Path, PathBuf};
 
 use sim_core::scenario::{
-    apply_initial_orders, load_scenario_battle, load_scenario_world, ring_perimeter,
-    start_approaches, InitialOrder, PlayerSetup, ScenarioError, ScenarioManifest,
-    StartLoadoutCatalog,
+    apply_initial_orders, load_scenario_battle, load_scenario_world, ring_perimeter, InitialOrder,
+    PlayerSetup, ScenarioError, ScenarioManifest, StartLoadoutCatalog,
 };
 use sim_map::validation::validate_map;
 use sim_map::{
@@ -753,8 +752,10 @@ fn start_loadouts_mark_exactly_one_editor_default() {
     ));
 }
 
-/// Plan 2026-11-09-sc2-pathfinding WP1: the showcase battle starts with every mobile armed unit
-/// attack-moving to the other base's approach, the start the client gives it.
+/// Plan 2026-11-09-sc2-pathfinding WP1 and Amendment 5: the showcase battle starts with every
+/// mobile armed unit attack-moving to the centre-facing corner of the other base's ring, the start
+/// the client gives it, and the two targets are images of each other under the map's point
+/// symmetry about its centre.
 #[test]
 fn the_showcase_battle_starts_with_its_initial_orders() {
     let scenario = Path::new("scenarios/showcase.ron");
@@ -768,8 +769,26 @@ fn the_showcase_battle_starts_with_its_initial_orders() {
         .expect("showcase map")
         .decode()
         .expect("showcase map decodes");
-    let approaches =
-        start_approaches(&document, &manifest.players, &world).expect("both bases approachable");
+    let size = (document.width, document.height);
+    let mut targets = std::collections::BTreeMap::new();
+    for order in &manifest.initial_orders {
+        let InitialOrder::AttackMoveToCell { player_slot, cell } = *order else {
+            panic!("the showcase names its targets by cell: {order:?}");
+        };
+        targets.insert(
+            PlayerId(player_slot),
+            SimVec2::new(
+                SimScalar::from_num(cell.0) + SimScalar::HALF,
+                SimScalar::from_num(cell.1) + SimScalar::HALF,
+            ),
+        );
+    }
+    let (first, second) = (targets[&PlayerId(0)], targets[&PlayerId(1)]);
+    assert_eq!(
+        (first.x + second.x, first.y + second.y),
+        (SimScalar::from_num(size.0), SimScalar::from_num(size.1)),
+        "the targets mirror each other about the map's centre"
+    );
     let mut ordered = [0_usize; 2];
     for entity in world.entities.values() {
         let archetype = world.catalog.get(entity.unit_type_id).expect("shipped");
@@ -777,9 +796,8 @@ fn the_showcase_battle_starts_with_its_initial_orders() {
             || archetype.air_weapon.is_some()
             || archetype.weapon.is_some();
         let combatant = !entity.is_immobile && archetype.capabilities.harvester.is_none() && armed;
-        let other = PlayerId(1 - entity.owner.0);
         let expected = combatant.then(|| UnitOrder::AttackMove {
-            target: approaches[&other],
+            target: targets[&entity.owner],
         });
         assert_eq!(entity.order_queue.front().cloned(), expected);
         ordered[usize::from(entity.owner.0)] += usize::from(combatant);
@@ -813,6 +831,62 @@ fn initial_orders_without_a_target_or_combatants_are_refused() {
     // The skirmish fields only workers, which harvest, so no unit is a combatant.
     assert!(matches!(
         apply_initial_orders(&mut world, &document, &manifest.players, &[order(0, 1)]),
+        Err(ScenarioError::NoCombatants { slot: 0 })
+    ));
+}
+
+/// A cell order whose cell is off the map or not free ground is refused with the order's slot and
+/// cell; a standable cell is accepted up to the combatant check.
+#[test]
+fn cell_orders_refuse_cells_where_no_ground_unit_can_stand() {
+    let scenario = Path::new("scenarios/skirmish.ron");
+    let manifest = ScenarioManifest::from_ron_str(
+        &std::fs::read_to_string(assets_root().join(scenario)).expect("shipped skirmish"),
+    )
+    .expect("skirmish parses");
+    let document = MapFile::load(&assets_root().join(&manifest.map))
+        .expect("skirmish map")
+        .decode()
+        .expect("skirmish map decodes");
+    let mut world = load_scenario_world(&assets_root(), scenario).expect("skirmish builds");
+    let order = |cell| InitialOrder::AttackMoveToCell {
+        player_slot: 0,
+        cell,
+    };
+    let off_map = (document.width, 0);
+    assert!(matches!(
+        apply_initial_orders(&mut world, &document, &manifest.players, &[order(off_map)]),
+        Err(ScenarioError::OrderCellNotStandable { slot: 0, cell }) if cell == off_map
+    ));
+    let cells: Vec<(u32, u32)> = (0..document.height)
+        .flat_map(|y| (0..document.width).map(move |x| (x, y)))
+        .collect();
+    let flags = |(x, y): (u32, u32)| world.map.cell(x, y).expect("on the map").flags;
+    let blocked = *cells
+        .iter()
+        .find(|&&cell| !flags(cell).contains(CellFlags::GROUND_PATHABLE))
+        .expect("the skirmish map has unpathable cells");
+    let structure = *cells
+        .iter()
+        .find(|&&cell| flags(cell).contains(CellFlags::OCCUPIED_BY_STRUCTURE))
+        .expect("the town halls cover cells");
+    let free = *cells
+        .iter()
+        .find(|&&cell| {
+            flags(cell).contains(CellFlags::GROUND_PATHABLE)
+                && !flags(cell)
+                    .intersects(CellFlags::OCCUPIED_BY_STRUCTURE | CellFlags::UNPASSABLE_CLIFF)
+        })
+        .expect("the skirmish map has free ground");
+    for refused in [blocked, structure] {
+        assert!(matches!(
+            apply_initial_orders(&mut world, &document, &manifest.players, &[order(refused)]),
+            Err(ScenarioError::OrderCellNotStandable { slot: 0, cell }) if cell == refused
+        ));
+    }
+    // The skirmish fields only workers, so a standable cell reaches the combatant check.
+    assert!(matches!(
+        apply_initial_orders(&mut world, &document, &manifest.players, &[order(free)]),
         Err(ScenarioError::NoCombatants { slot: 0 })
     ));
 }

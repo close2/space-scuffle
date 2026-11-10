@@ -74,6 +74,9 @@ fn remap_scenario(
                 *player_slot = remap(*player_slot, inverse)?;
                 *target_player_slot = remap(*target_player_slot, inverse)?;
             }
+            BattleInitialOrder::AttackMoveToCell { player_slot, .. } => {
+                *player_slot = remap(*player_slot, inverse)?;
+            }
         }
     }
     Ok(())
