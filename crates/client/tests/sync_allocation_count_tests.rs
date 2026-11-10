@@ -283,7 +283,18 @@ fn add_effect_stream(app: &mut App, with_effects: bool) -> TestResult {
         r#"splash: "burst""#,
     );
     let catalog = EffectCatalog::from_text(&text, &directory.join("effects.ron"), &directory)?;
-    let units = app.world().resource::<client::CatalogResource>().0.clone();
+    // The shipped presentation blocks name shipped effects this test vocabulary does not
+    // define; the stream comes from its default splash instead.
+    let mut units = app.world().resource::<client::CatalogResource>().0.clone();
+    let ids: Vec<_> = units
+        .archetypes()
+        .map(|archetype| archetype.unit_type_id)
+        .collect();
+    for id in ids {
+        if let Ok(archetype) = units.get_mut(id) {
+            archetype.effects = sim_core::catalog::ArchetypeEffects::default();
+        }
+    }
     let tables = UnitEffectTables::build(&units, &catalog)?;
     app.insert_resource(EffectRuntime::new(&catalog))
         .insert_resource(tables)

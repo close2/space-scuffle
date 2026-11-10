@@ -1143,6 +1143,23 @@ fn combat_frames_with_an_effect_stream_reuse_every_effect_buffer() {
         client::runtime_battle::DEFAULT_BATTLE_SCENARIO,
         |app| {
             app.insert_resource(EffectCatalogSource(vocabulary.clone()));
+            // The shipped presentation blocks name shipped effects this test vocabulary does
+            // not define; the stream comes from its defaults instead.
+            if let Some(mut units) = app
+                .world_mut()
+                .get_resource_mut::<client::CatalogResource>()
+            {
+                let ids: Vec<_> = units
+                    .0
+                    .archetypes()
+                    .map(|archetype| archetype.unit_type_id)
+                    .collect();
+                for id in ids {
+                    if let Ok(archetype) = units.0.get_mut(id) {
+                        archetype.effects = sim_core::catalog::ArchetypeEffects::default();
+                    }
+                }
+            }
         },
     );
     harness.frame_army();

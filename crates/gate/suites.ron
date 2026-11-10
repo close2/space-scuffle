@@ -90,6 +90,9 @@ SuiteCatalog(
         "client/editor_app_tests": (class: Gpu, test_threads: Some(2)),
         // The effect blocks (plan 2026-11-09-effect-visualization WP4): one child, eight shots.
         "client/effect_gpu_tests": (class: Gpu),
+        // The slice's effects (WP6b): three parents, three lab children each, at 1280x720. One
+        // thread: each child is a whole client, and on lavapipe they would run at once.
+        "client/effect_slice_gpu_tests": (class: Gpu, test_threads: Some(1)),
         "client/flipbook_clock_gpu_tests": (class: Gpu),
         // On lavapipe (CI) a GPU child keeps its textures in host memory and no GPU lock
         // serializes the children, so each test thread runs a whole client at once: four threads
@@ -184,6 +187,11 @@ SuiteCatalog(
                 "client/battle_card_tests",
                 "client/battle_mode_tests",
                 "client/concealment_gpu_tests",
+                // `effects.ron` and the units' presentation blocks.
+                "client/effect_catalog_tests",
+                "client/effect_runtime_tests",
+                "client/effect_gpu_tests",
+                "client/effect_slice_gpu_tests",
                 "client_diagnostics/showcase_storyboard_tests",
             ],
         ),
@@ -286,6 +294,7 @@ SuiteCatalog(
             "client/editor_core_tests",
             "client/effect_catalog_tests",
             "client/effect_runtime_tests",
+            "client/effect_slice_gpu_tests",
             "client/headless_tests",
             "client/round2_visual_tests",
             "client/skirmish_match_tests",

@@ -71,14 +71,19 @@ fn catalog_with(budget_edit: impl Fn(String) -> String) -> (tempfile::TempDir, E
     (dir, catalog)
 }
 
-/// The shipped units with the first archetype's primary weapon splashing `splash`.
+/// The shipped units with the first archetype's primary weapon splashing `splash` and no other
+/// presentation block.
 fn tables_for(catalog: &EffectCatalog, splash: &str) -> (UnitEffectTables, UnitTypeId) {
     let mut units = sim_fixtures::shipped_catalogs().units;
-    let id = units
+    let ids: Vec<UnitTypeId> = units
         .archetypes()
-        .next()
-        .expect("an archetype")
-        .unit_type_id;
+        .map(|archetype| archetype.unit_type_id)
+        .collect();
+    let id = *ids.first().expect("an archetype");
+    // The shipped blocks name effects the test vocabulary does not define.
+    for other in &ids {
+        units.get_mut(*other).expect("it exists").effects = ArchetypeEffects::default();
+    }
     units.get_mut(id).expect("it exists").effects = ArchetypeEffects {
         weapons: vec![WeaponEffects {
             weapon: WeaponSlot::Primary,
@@ -208,7 +213,7 @@ fn a_splash_draws_every_block_sized_by_its_zones() {
 }
 
 #[test]
-fn shipped_data_names_no_effect_so_nothing_is_spawned() {
+fn shipped_data_spawns_only_the_splash_effects_units_name() {
     let root = ResolvedAssetsRoot::resolve().expect("assets root");
     let catalog = EffectCatalog::load(&root.as_path().join("catalog/effects.ron"), root.as_path())
         .expect("the shipped vocabulary loads");
@@ -216,8 +221,14 @@ fn shipped_data_names_no_effect_so_nothing_is_spawned() {
     let tables = UnitEffectTables::build(&units, &catalog).expect("tables");
     for archetype in units.archetypes() {
         let event = splash(archetype.unit_type_id, 1.0, 1.0, [1.0, 1.0, 1.0], None);
-        assert!(
-            spawn_request(&event, &tables, &catalog).is_none(),
+        // The event's source is the primary weapon in the default stance; there are no
+        // defaults, so only a block naming that weapon's splash spawns anything.
+        let named = archetype.effects.weapons.iter().any(|entry| {
+            entry.weapon == WeaponSlot::Primary && entry.mode.is_none() && entry.splash.is_some()
+        });
+        assert_eq!(
+            spawn_request(&event, &tables, &catalog).is_some(),
+            named,
             "{}",
             archetype.slug
         );
