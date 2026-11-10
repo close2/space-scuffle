@@ -995,3 +995,25 @@ re-recorded only for the effects whose look changed, each with its traced cause.
 **Gate.** After round 3's fixes the implementer writes the round-3 section of
 [`independent_review_packet.md`](../evidence/effects/review/independent_review_packet.md) (each round-2 finding
 mapped to what changed) and hands back; the orchestrator launches the independent round-3 review.
+
+**Round-3 implementation (2026-11-10, commits `ca082cd` to `a69acdb`).** Done as above, with these decisions
+(recorded under Q0002, reversible):
+
+- `shell_impact`: only the darker char core is applied; the shock ring's width variation and a less regular
+  streak fringe are deferred to the scale-out, because they change the accepted Critical layer and need a new
+  blast-mark texture.
+- `acid_burst`: the landing flecks are removed (inside the stain they read as the round-2 "polka dots"), and the
+  `acid_fleck` effect with them; the stain is sized to the reach (scale 1.0) so its Critical footprint stays
+  inside it.
+- `spine_line`: a short heave of churned soil over each point's full-damage disc (gone within 0.7 s) keeps the
+  slice's coverage test (at least 60 % of the full-damage disc at peak) while the lasting mark is one continuous
+  scar.
+- The decal end feather lies 60 % beyond the line's end, so a mark is about two thirds strong at the end; the
+  faint tip reaches at most 0.18 before the first search point (0.82 from the attacker's centre, inside its
+  hidden body, which the owner's R6 allows: the attack shows from its origin).
+- The round-3 crowd capture ran on lavapipe (debug, Xvfb) through a scratch copy of `assets/` that names the
+  two effects for their units, because no shipped unit names them and the server's disk was saturated.
+
+Evidence: [`slice_review.md`](../evidence/effects/review/slice_review.md) ("Round 3"),
+[`texture_review.md`](../evidence/effects/review/texture_review.md) ("Review round 3"), the packet's "Round 3"
+section. The independent round-3 review is next.
