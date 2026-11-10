@@ -1,0 +1,23 @@
+Crowd capture of the effect stress mode (plan 2026-11-09-effect-visualization §7.2 item 6, §10.3), WP6c.
+
+Made by `frame_budget --scenario 400 --display-path kwin-virtual --effect-stress 200 --capture-tick 150
+--capture <png>` (release build, RX 580 / radv, headless KWin, 1280x720, 2026-11-10), and the same command
+without `--effect-stress` for the baseline. The battle: eight armies of 50 units on a flat 128x128 map, each
+attack-moving to the opposite start, seen from the frame-budget camera (75 world units away, 58 degree pitch).
+The stream: 200 splash events per second of game time, round-robin over shell_impact, acid_burst and
+spine_line, each at a live unit chosen by a hash, with the zones (and line) the simulation publishes.
+
+stress_capture_400.png: with the stream, simulation tick 150 (6 s into the battle, 1 200 events sent so far).
+stress_capture_400_baseline.png: the same tick without the stream (the simulation is deterministic, so the
+units stand in the same places).
+Both are cropped to x 360..1280 of the 1280x720 window: the left 360 pixels are the HUD's side panel, which
+the headless capture shows black in both runs.
+
+On the captured frame: 1 016 live effects, 498 cards (sprites, rings, particles after level of detail),
+1 427 ground decals. Effect footprints (cards as quads, decals as their ground rectangles, transparent parts
+included, so an upper bound) cover 25.3 % of the screen; summed footprint area 0.92 screens; at most 19
+footprints over one 4-pixel cell. Over the whole run: 12 001 events, 12 001 effects spawned, none refused, no
+Critical instance without a slot, 1 059 Detail instances skipped for room and 4 023 skipped as smaller than
+6 pixels on screen. The Major class cap (96 live) is far exceeded, so an effect spawned over it has its Detail
+layers retired at birth (eroded out over 0.1 s, never popped) and draws its Critical layers: the acid front
+ring, the shell's shock ring, the spines and their dark cracks.

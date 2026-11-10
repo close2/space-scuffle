@@ -745,6 +745,11 @@ above 1.0 bloom (terrain and bubbles unchanged within the visual tests' toleranc
 only). The agent decides (Q0020) and records the evidence; if it is rejected, ramps cap at 1.0 and cores rely on
 additive layering and the light block.
 
+**Decided in WP6c (2026-11-10): rejected.** The threshold kept the scene unchanged, but the post-pass tone mapper
+washed out every effect (saturation of the acid front 85 → 50) for a halo visible only during flashes, at 0.28 ms
+of bloom per frame; ramps are capped at 1.0 and the loader enforces it (`RampOutOfRange`). Evidence:
+[`docs/evidence/effects/review/hdr_bloom_decision.md`](../evidence/effects/review/hdr_bloom_decision.md).
+
 ### D-12. Composition stays bounded
 
 An effect has at most 12 layers and 4 placements per layer; a placement replicates at most 32 instances. These
