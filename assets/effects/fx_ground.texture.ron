@@ -1,0 +1,35 @@
+(
+    format_version: 1,
+    set: "fx_ground",
+    cell_size: 256,
+    padding_px: 2,
+    channels: PackedV1,
+    layers: 26,
+    mip_files: [
+        "fx_ground.png",
+        "fx_ground.mip1.png",
+        "fx_ground.mip2.png",
+        "fx_ground.mip3.png",
+        "fx_ground.mip4.png",
+    ],
+    elements: [
+        (
+            name: "spine_erupt",
+            first_layer: 0,
+            frames: 24,
+            duration_ms: Some(1500),
+            pivot_px: (128, 128),
+            blend: Premultiplied,
+            channel_labels: None,
+        ),
+        (
+            name: "ground_crack",
+            first_layer: 24,
+            frames: 2,
+            duration_ms: None,
+            pivot_px: (128, 128),
+            blend: Premultiplied,
+            channel_labels: None,
+        ),
+    ],
+)

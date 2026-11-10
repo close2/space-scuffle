@@ -1,0 +1,8 @@
+Contact sheet of effect texture set 'fx_blast' (plan 2026-11-09-effect-visualization §6.5).
+Columns: on black | on mid-grey | on swatch 1 | on swatch 2 | warm ramp | cool ramp | erosion 25 % | erosion 50 % | erosion 75 % | alpha histogram
+Swatches: /home/spacescuffle/space-scuffle/.claude/worktrees/agent-a4a864066427af898/assets/textures/terrain/orbital_foundry/basalt_wall_albedo.png ; /home/spacescuffle/space-scuffle/.claude/worktrees/agent-a4a864066427af898/assets/textures/terrain/orbital_foundry/deck_plating_albedo.png
+Rows:
+  fireball_flipbook (32 frame(s), middle frame shown)
+  smoke_puff (4 frame(s), middle frame shown)
+  debris_atlas (16 frame(s), middle frame shown)
+  scorch (2 frame(s), middle frame shown)

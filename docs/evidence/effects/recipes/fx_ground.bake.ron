@@ -1,0 +1,37 @@
+// Bake recipe of the `fx_ground` set (plan docs/plans/2026-11-09-effect-visualization.md §6.3,
+// WP6a): `asset_baker effect-bake --recipe <this file> --sources-dir <dir holding the sources>
+// --ledger docs/evidence/veo/ledger.jsonl --output-dir assets/effects`.
+//
+// Sources are named by their bare file names; each is cited by its ledger line in
+// assets/effects/fx_ground.provenance.ron. Review: docs/evidence/effects/review/texture_review.md.
+// - spine_erupt: Veo clip (effect-veo, third attempt). Only the eruption is kept (the spikes
+//   slide up out of a floor slit); the clip's spikes never retract, so the first 1.6 s are
+//   used and the effect retracts them by playing the flipbook backwards or eroding it. The
+//   spikes are wider than the centre square, so the whole 16:9 frame is letterboxed.
+// - ground_crack: two generated stills, top-down, a crack tapering to hairlines at both ends,
+//   so segments chain along a line with overlap; variants, one layer each.
+(
+    set: "fx_ground",
+    cell_size: 256,
+    elements: [
+        (
+            name: "spine_erupt",
+            look: Lit,
+            source: Clip(
+                file: "3ce386ff-1321-4c54-9728-fe8318208312.mp4",
+                frames: 24,
+                decode_fps: 24,
+                until_ms: Some(1600),
+                framing: Letterbox(feather_permille: 0),
+            ),
+        ),
+        (
+            name: "ground_crack",
+            look: Lit,
+            source: Variants(pictures: [
+                Still(file: "fx_ground.ground_crack.20261110T004422Z-2247765-1.on_black.png"),
+                Still(file: "fx_ground.ground_crack.20261110T004525Z-2253706-1.on_black.png"),
+            ]),
+        ),
+    ],
+)

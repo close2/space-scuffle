@@ -1,0 +1,8 @@
+Contact sheet of effect texture set 'fx_noise' (plan 2026-11-09-effect-visualization §6.5).
+Columns: R | G | B | A | R tiled 2x2
+Swatches: /home/spacescuffle/space-scuffle/.claude/worktrees/agent-a4a864066427af898/assets/textures/terrain/orbital_foundry/basalt_wall_albedo.png ; /home/spacescuffle/space-scuffle/.claude/worktrees/agent-a4a864066427af898/assets/textures/terrain/orbital_foundry/deck_plating_albedo.png
+Rows:
+  noise_tile (1 frame(s), middle frame shown)
+  ring_noise (1 frame(s), middle frame shown)
+  fire_noise (1 frame(s), middle frame shown)
+  erosion_gradient (1 frame(s), middle frame shown)

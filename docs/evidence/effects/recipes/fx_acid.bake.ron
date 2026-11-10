@@ -1,0 +1,46 @@
+// Bake recipe of the `fx_acid` set (plan docs/plans/2026-11-09-effect-visualization.md §6.3,
+// WP6a): `asset_baker effect-bake --recipe <this file> --sources-dir <dir holding the sources>
+// --ledger docs/evidence/veo/ledger.jsonl --output-dir assets/effects`.
+//
+// Sources are named by their bare file names; each is cited by its ledger line in
+// assets/effects/fx_acid.provenance.ron. Review: docs/evidence/effects/review/texture_review.md.
+// - acid_crown: Veo clip (effect-veo, fourth attempt), a glowing splash crown rising out of
+//   black. The clip's later frames spread droplets to the frame edges instead of dissipating,
+//   and its first second has the splash column touching the frame's bottom edge, so 1.1 s to
+//   2.15 s are used (the crown opening to its peak), letterboxed so the column stays clear
+//   of the cell border; the effect fades it in and erodes it away.
+// - acid_splat: three generated stills, top-down splats of different shapes; variants.
+// - droplet: one generated still, a teardrop moving towards +x (tail to the left).
+// - acid_bubbles: not shipped (both clips rejected, the WP's clip cap reached; see the review).
+(
+    set: "fx_acid",
+    cell_size: 256,
+    elements: [
+        (
+            name: "acid_crown",
+            look: Emissive,
+            source: Clip(
+                file: "874eca1f-54ba-4c42-89e3-f4980b4a58b9.mp4",
+                frames: 24,
+                decode_fps: 24,
+                from_ms: Some(1100),
+                until_ms: Some(2150),
+                framing: Letterbox(feather_permille: 0),
+            ),
+        ),
+        (
+            name: "acid_splat",
+            look: Lit,
+            source: Variants(pictures: [
+                Still(file: "fx_acid.acid_splat.20261110T003629Z-2192944-1.on_black.png"),
+                Still(file: "fx_acid.acid_splat.20261110T003714Z-2198041-1.on_black.png"),
+                Still(file: "fx_acid.acid_splat.20261110T004246Z-2237154-1.on_black.png"),
+            ]),
+        ),
+        (
+            name: "droplet",
+            look: Lit,
+            source: Still(file: "fx_acid.droplet.20261110T004336Z-2243079-1.on_black.png"),
+        ),
+    ],
+)

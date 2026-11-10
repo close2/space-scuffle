@@ -1,0 +1,62 @@
+// Bake recipe of the `fx_blast` set (plan docs/plans/2026-11-09-effect-visualization.md §6.3,
+// WP6a): `asset_baker effect-bake --recipe <this file> --sources-dir <dir holding the sources>
+// --ledger docs/evidence/veo/ledger.jsonl --output-dir assets/effects`.
+//
+// Sources are named by their bare file names; each is cited by its ledger line in
+// assets/effects/fx_blast.provenance.ron. Review: docs/evidence/effects/review/texture_review.md.
+// - fireball_flipbook: Veo clip (effect-veo), a rolling fireball cooling into smoke. The first
+//   0.7 s (a flash whose glow lights the whole frame) and the tail after 2.25 s (smoke reaching
+//   the frame edge) fail the black check and are cut; the effect draws the flash as a light.
+// - smoke_puff: four generated stills on black, luminance-keyed (lit); variants. Black/white
+//   pairs were generated for the difference matte, but the model's on-white edits moved the
+//   smoke: three of the four candidate pairs fail the matte residual rule (plan §6.4), so the
+//   pictures on black are keyed by luminance instead (see the review log).
+// - debris_atlas: one generated still of a 4 x 4 grid of rock chunks, cut into 16 cells (the
+//   third picture; the sheet's outer 16 px frame, which holds no chunk but carries the
+//   generator's grain above 3/255, is cut off before the sheet is divided).
+// - scorch: two generated top-down stills; variants.
+(
+    set: "fx_blast",
+    cell_size: 256,
+    elements: [
+        (
+            name: "fireball_flipbook",
+            look: Emissive,
+            source: Clip(
+                file: "318cc0e2-b9d1-4e26-904d-04bad499bc7a.mp4",
+                frames: 32,
+                decode_fps: 24,
+                from_ms: Some(700),
+                until_ms: Some(2250),
+            ),
+        ),
+        (
+            name: "smoke_puff",
+            look: Lit,
+            source: Variants(pictures: [
+                Still(file: "fx_blast.smoke_puff.20261110T002957Z-2150332-1.on_black.png"),
+                Still(file: "fx_blast.smoke_puff.20261110T003418Z-2179569-1.on_black.png"),
+                Still(file: "fx_blast.smoke_puff.20261110T003520Z-2185735-1.on_black.png"),
+                Still(file: "fx_blast.smoke_puff.20261110T004854Z-2275847-1.on_black.png"),
+            ]),
+        ),
+        (
+            name: "debris_atlas",
+            look: Lit,
+            source: Grid(
+                picture: Still(file: "fx_blast.debris_atlas.20261110T010845Z-2398802-1.on_black.png"),
+                columns: 4,
+                rows: 4,
+                margin_px: 16,
+            ),
+        ),
+        (
+            name: "scorch",
+            look: Lit,
+            source: Variants(pictures: [
+                Still(file: "fx_blast.scorch.20261110T003129Z-2160901-1.on_black.png"),
+                Still(file: "fx_blast.scorch.20261110T003213Z-2165717-1.on_black.png"),
+            ]),
+        ),
+    ],
+)
