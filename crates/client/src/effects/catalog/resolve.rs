@@ -14,7 +14,7 @@
 use super::error::{EffectCatalogError, NameKind, Site};
 use super::schema::{
     BlockDef, BreakupDef, EffectClass, EffectDefRaw, EffectsFile, EmitterDef, EventKind, LayerDef,
-    PlacementDef, SpawnDef, ValueDef,
+    LiquidDef, PlacementDef, SpawnDef, ValueDef,
 };
 use super::textures::TextureAtlas;
 use super::{
@@ -254,6 +254,52 @@ impl Resolver<'_> {
         }))
     }
 
+    /// Checks a decal's liquid material against the ranges [`LiquidDef`] states.
+    fn liquid(&self, at: &Site, liquid: &LiquidDef) -> Result<(), EffectCatalogError> {
+        let checks: [(&'static str, f32, bool, &'static str); 5] = [
+            (
+                "liquid.relief",
+                liquid.relief,
+                liquid.relief > 0.0,
+                "it must be positive",
+            ),
+            (
+                "liquid.sheen",
+                liquid.sheen,
+                (0.0..=4.0).contains(&liquid.sheen),
+                "it must be in [0, 4]",
+            ),
+            (
+                "liquid.gloss",
+                liquid.gloss,
+                liquid.gloss >= 1.0,
+                "it must be at least 1",
+            ),
+            (
+                "liquid.value_noise",
+                liquid.value_noise,
+                (0.0..=1.0).contains(&liquid.value_noise),
+                "it must be in [0, 1]",
+            ),
+            (
+                "liquid.dry_below",
+                liquid.dry_below,
+                (0.0..1.0).contains(&liquid.dry_below),
+                "it must be in [0, 1)",
+            ),
+        ];
+        match checks.into_iter().find(|(_, _, ok, _)| !ok) {
+            None => Ok(()),
+            Some((field, value, _, rule)) => Err(EffectCatalogError::InvalidValue {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                field,
+                value,
+                rule,
+            }),
+        }
+    }
+
     /// Checks that `value` lies in `(0, 1]`.
     fn positive_fraction(
         &self,
@@ -376,12 +422,25 @@ impl Resolver<'_> {
             .iter()
             .map(|layer| layer.start + layer.duration)
             .fold(0.0_f32, f32::max);
+        if let Some(repeat) = effect.repeat {
+            // The negated comparison also refuses NaN.
+            if !(repeat > 0.0 && repeat.is_finite()) {
+                return Err(EffectCatalogError::InvalidValue {
+                    path: self.path.to_path_buf(),
+                    site: site(name, None),
+                    field: "repeat",
+                    value: repeat,
+                    rule: "it must be a positive number of seconds",
+                });
+            }
+        }
         Ok(Effect {
             name: name.to_owned(),
             class: effect.class,
             event: effect.event,
             layers,
             lifetime,
+            repeat: effect.repeat,
         })
     }
 
@@ -683,9 +742,15 @@ impl Resolver<'_> {
                 yaw,
                 width,
                 clip_to_line,
+                clip_feather,
                 breakup,
+                liquid,
             } => {
                 self.at_least(at, "depth", *depth, 0.01)?;
+                self.at_least(at, "clip_feather", *clip_feather, 0.005)?;
+                if let Some(liquid) = liquid {
+                    self.liquid(at, liquid)?;
+                }
                 self.positive_fraction(at, "width", *width)?;
                 if !(0.0..1.0).contains(grazing) {
                     return Err(EffectCatalogError::InvalidValue {
@@ -705,7 +770,9 @@ impl Resolver<'_> {
                     yaw: *yaw,
                     width: *width,
                     clip_to_line: *clip_to_line,
+                    clip_feather: *clip_feather,
                     breakup: self.breakup(breakup.as_ref(), at)?,
+                    liquid: *liquid,
                 }))
             }
             BlockDef::Sprite { .. } | BlockDef::Light { .. } | BlockDef::Particles { .. } => {

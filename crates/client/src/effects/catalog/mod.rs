@@ -159,8 +159,12 @@ pub struct DecalLook {
     pub width: f32,
     /// Whether the mark is cut off at the line's ends.
     pub clip_to_line: bool,
+    /// World units over which a clipped mark feathers out, centred on each end.
+    pub clip_feather: f32,
     /// Noise breakup.
     pub breakup: Option<Breakup>,
+    /// The wet-liquid material, if the mark is a liquid.
+    pub liquid: Option<schema::LiquidDef>,
 }
 
 /// A layer's block, resolved.
@@ -271,6 +275,8 @@ pub struct Effect {
     pub layers: Vec<Layer>,
     /// Seconds from the event until the last layer ends.
     pub lifetime: f32,
+    /// Seconds between spawns while its fact holds (trails), if it repeats.
+    pub repeat: Option<f32>,
 }
 
 /// A resolved emitter.

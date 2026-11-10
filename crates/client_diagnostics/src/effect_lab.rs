@@ -93,6 +93,7 @@ pub fn subject(effect: &str, kind: EventKind, bound: BoundValues) -> LabSubject 
         bound,
         anchor,
         line_to,
+        line_seen: u64::MAX,
     }
 }
 

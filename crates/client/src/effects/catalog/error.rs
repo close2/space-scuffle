@@ -339,4 +339,12 @@ pub enum EffectCatalogError {
         /// The effect's kind.
         found: EventKind,
     },
+    /// A mode's `moving` slot names an effect that does not say how often it repeats.
+    #[error("unit '{unit}' mode moving names effect '{name}', which has no `repeat` period")]
+    TrailWithoutRepeat {
+        /// Slug of the unit or structure.
+        unit: String,
+        /// The effect name.
+        name: String,
+    },
 }

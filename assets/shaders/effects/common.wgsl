@@ -58,8 +58,12 @@ struct DecalInstance {
     noise_layer: u32,
     clip_axis_x: f32,
     clip_axis_z: f32,
-    padding_a: f32,
-    padding_b: f32,
+    clip_feather: f32,
+    relief: f32,
+    sheen: f32,
+    gloss: f32,
+    value_noise: f32,
+    dry_below: f32,
 }
 
 const ORIENT_CAMERA: u32 = 0u;

@@ -21,7 +21,9 @@
 //! - **golden stills** at 0.08, 0.3 and 0.75 of the effect's lifetime, per driver, in
 //!   `tests/data/effects/<driver>/`: pass when ≥ 99 % of the region's pixels are within 8/255
 //!   and the mean absolute difference is ≤ 1.5/255. `SPACE_SCUFFLE_EFFECT_GOLDEN_UPDATE=1`
-//!   writes them (re-baselining needs the contact sheet in the same commit).
+//!   writes them (re-baselining needs the contact sheet in the same commit);
+//! - **a line out of the fog** (plan Amendment 2, R6): the line subject seen only from its
+//!   fifth search point on draws no pixel at the points before it and its look after it.
 //!
 //! # Invariants verified
 //! As listed; every statistic is printed for the driver comparison.
@@ -166,6 +168,7 @@ fn lab_subject(subject: &SplashSubject) -> LabSubject {
         bound: subject.bound,
         anchor,
         line_to,
+        line_seen: u64::MAX,
     }
 }
 
@@ -868,4 +871,109 @@ fn slice_effect_1_renders_to_its_bindings() -> TestResult {
 #[test]
 fn slice_effect_2_renders_to_its_bindings() -> TestResult {
     check_subject(2)
+}
+
+// --- A line out of the fog (plan Amendment 2, R6) ---------------------------------------------
+
+/// The first search point of the masked line that the viewer sees.
+const FIRST_SEEN_POINT: u32 = 4;
+/// Age of the masked shot, seconds: every spine of the line is up.
+const MASKED_AGE: f32 = 1.0;
+/// How far, in world units along the line, a drawn instance at the first seen point may reach
+/// back towards the unseen points: clump and spike scatter, lean and card width.
+const MASKED_REACH_BACK: f32 = 0.75;
+/// Fewest lit pixels the seen part of the line must draw.
+const MASKED_MIN_LIT: usize = 200;
+/// The index of the line subject, if the subjects have one.
+fn line_subject() -> Option<usize> {
+    effect_subjects::splash_subjects()
+        .iter()
+        .position(|subject| subject.line)
+}
+
+/// The masked child: the line subject seen only from point [`FIRST_SEEN_POINT`] on, and the
+/// background.
+#[test]
+#[ignore = "launched by the slice effect tests on a virtual display"]
+fn effect_slice_masked_line_child() {
+    let out = PathBuf::from(std::env::var_os(OUT_VAR).expect("the parent names the directory"));
+    let subjects = effect_subjects::splash_subjects();
+    let subject = &subjects[line_subject().expect("a line subject")];
+    let mut lab = lab_subject(subject);
+    lab.line_seen = u64::MAX << FIRST_SEEN_POINT;
+    let program = LabProgram {
+        subject: lab,
+        takes: vec![
+            take(false, None, 0.25, &[("bg", 0.0)]),
+            take(true, None, SEQUENCE_STEP, &[("masked", MASKED_AGE)]),
+        ],
+        out,
+    };
+    let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+    let mut app = lab_app(root, program, None, SIZE).expect("the lab app builds");
+    assert!(client::render_compatibility::run_render_app(&mut app).is_success());
+}
+
+/// Plan Amendment 2, R6, in pixels: a line whose first search points the viewer does not see
+/// (an undetected burrowed attacker firing out of the fog) draws nothing at those points and
+/// its whole look from the first seen point on.
+#[test]
+fn a_line_seen_only_in_part_draws_only_where_it_is_seen() -> TestResult {
+    if gpu_run::gpu_tests_opted_out() {
+        return Ok(());
+    }
+    let Some(index) = line_subject() else {
+        return Ok(());
+    };
+    let subjects = effect_subjects::splash_subjects();
+    let subject = &subjects[index];
+    let directory = tempfile::tempdir()?;
+    let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
+    command.args([
+        "--ignored",
+        "--exact",
+        "--nocapture",
+        "effect_slice_masked_line_child",
+    ]);
+    command.env(OUT_VAR, directory.path());
+    command.assert_passes_validation("slice masked line");
+    let lab = lab_subject(subject);
+    let view = View::new(lab.focus());
+    let ground = Ground::of(&lab);
+    let spacing = subject.bound.get(Binding::LineSpacing);
+    #[expect(clippy::cast_precision_loss, reason = "a small point index")]
+    let first_seen = FIRST_SEEN_POINT as f32 * spacing;
+    let bg = capture(directory.path(), "bg");
+    let masked = capture(directory.path(), "masked");
+    let (mut unseen_lit, mut seen_lit) = (0_usize, 0_usize);
+    for y in 0..SIZE.y {
+        for x in 0..SIZE.x {
+            if !lit(&masked, &bg, x, y) {
+                continue;
+            }
+            let Some(point) = view.ground(x, y) else {
+                continue;
+            };
+            let along = (point - ground.anchor).dot(ground.direction);
+            if along < first_seen - MASKED_REACH_BACK {
+                unseen_lit += 1;
+            } else if along >= first_seen {
+                seen_lit += 1;
+            }
+        }
+    }
+    eprintln!(
+        "masked line {}: {seen_lit} lit pixels from point {FIRST_SEEN_POINT} on, {unseen_lit} \
+         before it (more than {MASKED_REACH_BACK} back)",
+        subject.effect
+    );
+    assert_eq!(
+        unseen_lit, 0,
+        "nothing is drawn at the search points the viewer does not see"
+    );
+    assert!(
+        seen_lit >= MASKED_MIN_LIT,
+        "the seen part of the line is drawn: {seen_lit} lit pixels"
+    );
+    Ok(())
 }

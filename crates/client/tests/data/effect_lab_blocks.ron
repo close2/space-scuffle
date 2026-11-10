@@ -17,5 +17,8 @@
     ),
     "burrow_scorpion": (
         weapons: [(weapon: Primary, mode: Some("burrowed"), splash: Some("spine_line"))],
+        // The trail of a burrowed unit moving underground (plan Amendment 2, R5). The shipped
+        // burrowed mode cannot move, so only the tests drive this unit with a velocity.
+        modes: [(mode: "burrowed", moving: Some("burrow_trail"))],
     ),
 }

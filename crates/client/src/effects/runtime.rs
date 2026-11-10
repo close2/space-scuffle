@@ -42,7 +42,7 @@ use super::instances::{
     SHAPE_TEXTURE,
 };
 use super::particles::{Burst, LineClip, ParticlePool};
-use super::placement::{hash3, instance_count, place, unit_float, WorldLine};
+use super::placement::{hash3, instance_count, place, placed_seen, unit_float, WorldLine};
 use super::pool::{EffectHandle, EffectInstance, EffectInstancePool};
 use bevy::math::{Vec2, Vec3};
 use bevy::prelude::Resource;
@@ -419,6 +419,9 @@ impl EffectRuntime {
         for (placement_index, placement) in layer.placements.iter().enumerate() {
             let placement_salt = u32::try_from(placement_index).unwrap_or(0);
             for index in 0..instance_count(placement, &instance.bound, instance.line) {
+                if !placed_seen(placement, index, instance.line) {
+                    continue;
+                }
                 let seed = hash3(instance.seed, layer_salt * 64 + placement_salt, index);
                 let placed = place(placement, index, seed, &instance.bound, instance.line);
                 let due = layer.start + placed.delay;
@@ -508,6 +511,9 @@ impl EffectRuntime {
         for (placement_index, placement) in layer.placements.iter().enumerate() {
             let salt = u32::try_from(context.layer_index * 4 + placement_index).unwrap_or(0);
             for index in 0..instance_count(placement, &instance.bound, instance.line) {
+                if !placed_seen(placement, index, instance.line) {
+                    continue;
+                }
                 let seed = hash3(instance.seed, salt, index);
                 let placed = place(placement, index, seed, &instance.bound, instance.line);
                 #[expect(
@@ -750,6 +756,12 @@ impl EffectRuntime {
             clip_min: clip[2],
             clip_max: clip[3],
             clip_axis: [clip[0], clip[1]],
+            clip_feather: look.clip_feather,
+            relief: look.liquid.map_or(0.0, |liquid| liquid.relief),
+            sheen: look.liquid.map_or(0.0, |liquid| liquid.sheen),
+            gloss: look.liquid.map_or(1.0, |liquid| liquid.gloss),
+            value_noise: look.liquid.map_or(0.0, |liquid| liquid.value_noise),
+            dry_below: look.liquid.map_or(0.0, |liquid| liquid.dry_below),
             ..Surface::of(look.breakup.as_ref(), seed).decal()
         });
         Written::Yes
@@ -1105,19 +1117,13 @@ mod tests {
 
     #[test]
     fn a_line_clip_window_spans_the_line_from_its_start_to_its_end() {
-        let line = WorldLine {
-            from: Vec3::new(2.0, 1.0, 3.0),
-            to: Vec3::new(2.0, 1.0, 11.0),
-        };
+        let line = WorldLine::whole(Vec3::new(2.0, 1.0, 3.0), Vec3::new(2.0, 1.0, 11.0));
         let [x, z, min, max] = line_clip_window(line);
         assert!(x.abs() < 1e-6 && (z - 1.0).abs() < 1e-6, "along +z");
         assert!((min - 3.0).abs() < 1e-5 && (max - 11.0).abs() < 1e-5);
         let point = Vec3::new(2.0, 0.0, 3.0);
         assert!(((Vec2::new(point.x, point.z).dot(Vec2::new(x, z))) - min).abs() < 1e-5);
-        let vertical = WorldLine {
-            from: Vec3::ZERO,
-            to: Vec3::new(0.0, 4.0, 0.0),
-        };
+        let vertical = WorldLine::whole(Vec3::ZERO, Vec3::new(0.0, 4.0, 0.0));
         assert_eq!(
             line_clip_window(vertical),
             NO_CLIP,

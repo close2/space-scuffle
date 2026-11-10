@@ -408,9 +408,16 @@ pub enum BlockDef {
         /// so segments longer than their spacing still end exactly at the line's ends.
         #[serde(default)]
         clip_to_line: bool,
+        /// World units over which a mark cut off at the line's ends feathers out, centred on
+        /// each end (half the fade lies inside the line, half beyond it), at least 0.005.
+        #[serde(default = "default_clip_feather")]
+        clip_feather: f32,
         /// Noise breakup of the erosion and edges.
         #[serde(default)]
         breakup: Option<BreakupDef>,
+        /// Draws the mark as a wet liquid (a stain): see [`LiquidDef`].
+        #[serde(default)]
+        liquid: Option<LiquidDef>,
     },
     /// A short point light.
     Light {
@@ -436,6 +443,35 @@ pub enum BlockDef {
 /// Serde default of a decal's grazing cosine.
 const fn default_grazing() -> f32 {
     0.35
+}
+
+/// The default clip feather: an anti-aliased edge, so a mark ends at its line's end within a
+/// pixel at the default zoom.
+const fn default_clip_feather() -> f32 {
+    0.015
+}
+
+/// A decal drawn as a wet liquid (plan Amendment 2, the acid stain of review round 3).
+///
+/// The element's shading is read as the liquid's thickness. Pooling noise (the layer's
+/// breakup noise, sampled at twice its scale) varies the value and the thickness, so
+/// the fill pools darker and thinner in places instead of lying flat. The thickness field is
+/// lit as a surface by a key light from the upper left of the screen: a diffuse term shades
+/// its relief and a specular term draws a wet sheen. Both fade as the layer's ramp curve dries
+/// the liquid: full at a ramp factor of 1, gone at `dry_below`.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LiquidDef {
+    /// Slope scale of the thickness field, > 0: higher is a more pronounced relief.
+    pub relief: f32,
+    /// Strength of the specular sheen at full wetness, in [0, 4].
+    pub sheen: f32,
+    /// Specular exponent, at least 1: higher is a tighter highlight.
+    pub gloss: f32,
+    /// Weight of the low-frequency noise in the value and the thickness, in [0, 1].
+    pub value_noise: f32,
+    /// Ramp factor at which the liquid counts as dry, in [0, 1).
+    pub dry_below: f32,
 }
 
 /// Whether a layer may be dropped by the budget.
@@ -539,6 +575,11 @@ pub struct EffectDefRaw {
     pub event: EventKind,
     /// Its layers, at most 12.
     pub layers: Vec<LayerDef>,
+    /// Seconds between spawns while the fact it shows holds (a trail laid while a burrowed
+    /// unit moves, plan Amendment 2, R5); positive. Required for an effect named in a mode's
+    /// `moving` slot, unused elsewhere.
+    #[serde(default)]
+    pub repeat: Option<f32>,
 }
 
 /// How many particles a burst spawns: `base + per_unit_radius · radius`, at most `max`.

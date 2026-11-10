@@ -110,6 +110,10 @@ pub struct LabSubject {
     pub anchor: Vec3,
     /// End of the event's line, for a line effect; its start is the anchor.
     pub line_to: Option<Vec3>,
+    /// The line's search points the viewer sees, as [`WorldLine::seen`](crate::effects::placement::WorldLine::seen):
+    /// `u64::MAX` for all of them (the contact sheets), fewer to show a line that runs out of
+    /// the fog (plan Amendment 2, R6).
+    pub line_seen: u64,
 }
 
 impl LabSubject {
@@ -313,6 +317,7 @@ mod tests {
             bound: BoundValues::default(),
             anchor: Vec3::new(-4.0, 0.0, 0.0),
             line_to: Some(Vec3::new(4.0, 0.0, 0.0)),
+            line_seen: u64::MAX,
         }
     }
 

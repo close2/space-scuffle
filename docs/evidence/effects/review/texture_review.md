@@ -87,6 +87,27 @@ Spend of round 2: 25 `image_request_started`, 9 refused for quota (free), **16 p
 $1.76** (`gemini-nano-banana-2.1`, `global`); no Veo clip. Ledger after round 2: **$104.91**
 (Q0078's image cap $25.25: $4.51 used).
 
+## Review round 3 (plan Amendment 2): replaced and new elements
+
+The independent review of round 2 ([`independent_review_round2.md`](independent_review_round2.md))
+rejected the spine line's curved spines ("a row of handwritten glyphs"), its sparse clumps and its
+regular row of leftover stars and rings. The owner restated those fixes in Q0080. The `fx_ground`
+set is rebaked ([`../recipes/fx_ground.bake.ron`](../recipes/fx_ground.bake.ron)); `fx_acid`,
+`fx_blast` and `fx_noise` are unchanged (the acid's round-3 fixes are in the shader and the data).
+Sheet: [fx_ground_texture_sheet.png](fx_ground_texture_sheet.png), strips:
+[fx_ground_frames.png](fx_ground_frames.png).
+
+| Set / element | Layers | Source | Verdict | Reasons |
+|---|---|---|---|---|
+| `fx_ground/chitin_clump` (new) | 3 variants | 3 image-model stills side-on, silhouette key | Accept | Clumps of straight, tapering chitin spikes splayed from one shared base: a fan of four, an uneven five, an uneven three. Wide bases, needle tips, dark umber bodies with growth rings, bone-ivory tips and a lit left edge (the units' upper-left key). Each reads as one eruption, not as a letter; no hooks. The flat base is sunk below the ground by the effect. |
+| `fx_ground/chitin_spine` (replaced) | 2 variants | 2 image-model stills side-on, silhouette key | Accept | One straight, slightly tapering spike (tall, slender) and one short thick thorn; the round-2 claw, hook, barbed thorn and S-curve are dropped. Used as single spikes leaning out beside each clump. |
+| `fx_ground/spine_crack` (changed) | 2 variants | round 2's elongated rupture, plus 1 new image-model still | Accept | Two narrow, elongated ruptures with uneven branching cracks. Round 2's torn hole (it read as a donut ring) and its radial star are dropped. |
+| `fx_ground/earth_scar` (new) | 2 variants | 2 image-model stills top-down, luminance key | Accept | A ragged furrow of torn, upturned earth (clods and crumbs) running across the frame, wider and narrower in places, fading out at both ends; one thin and broken, one thick and lumpy. Stretched along the line with overlap, the pieces merge into one broken scar. |
+
+Spend of round 3: 11 `image_request_started`, 3 refused for quota (free), **8 paid × $0.11 = $0.88**
+(`gemini-nano-banana-2.1`, `global`); no Veo clip. Ledger after round 3: **$105.79** of $200
+(image model in all: 49 paid, $5.39, within Q0078's target of about $25 and its cap below $50).
+
 ## Not shipped
 
 - `fx_acid/acid_bubbles`: both clips rejected and the WP's cap of 10 Veo clips reached. The slice's acid

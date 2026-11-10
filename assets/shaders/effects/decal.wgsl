@@ -9,9 +9,28 @@
     derivative_mip_level, flipbook_sample, premultiply,
 }
 
-// World units over which a clipped mark fades out at a clip end: an anti-aliased edge, so a
-// mark on a line ends at the line's end within a pixel.
-const CLIP_EDGE: f32 = 0.015;
+// Liquid material (DecalInstance::relief > 0): the element's shading is the liquid's
+// thickness, varied by low-frequency noise and lit by a key light from the upper left of the
+// screen (the units' studio light).
+// Texels of the thickness field's finite differences, at the sampled mip.
+const LIQUID_STEP_TEXELS: f32 = 1.5;
+// Mips above the footprint's at which the relief is read: only broad swells and the thick
+// rim catch the light, not every speck of the texture.
+const LIQUID_RELIEF_MIPS: f32 = 2.0;
+// Pooling noise: this multiple of the breakup noise's scale (a few pools across a stain).
+const LIQUID_NOISE_SCALE: f32 = 2.0;
+// How far the noise moves the ramp input and the thickness (at value_noise 1).
+const LIQUID_VALUE_SWING: f32 = 1.3;
+const LIQUID_THICKNESS_SWING: f32 = 0.6;
+// Diffuse light on the relief: the factor's range around the flat surface's 1.
+const LIQUID_DIFFUSE: f32 = 0.9;
+const LIQUID_DIFFUSE_MIN: f32 = 0.45;
+const LIQUID_DIFFUSE_MAX: f32 = 1.7;
+// Elevation of the key light over the ground: 30 degrees (its cosine and sine).
+const LIQUID_KEY_COS: f32 = 0.8660254;
+const LIQUID_KEY_SIN: f32 = 0.5;
+// Colour of the specular sheen (wet acid catching a white key light: pale lime-white).
+const LIQUID_SHEEN_COLOR: vec3<f32> = vec3<f32>(0.80, 1.00, 0.62);
 
 @group(0) @binding(0) var<uniform> view: View;
 #ifdef MULTISAMPLED
@@ -88,15 +107,25 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let texel = flipbook_sample(atlas, atlas_sampler, uv, decal.layer_a, decal.layer_b, decal.frame_mix, level);
     let noisy = decal.noise_amount > 0.0;
     var order = texel.b;
+    let noise_offset = vec2<f32>(decal.noise_offset_x, decal.noise_offset_y);
     if (noisy) {
-        let noise_uv = uv * decal.noise_scale + vec2<f32>(decal.noise_offset_x, decal.noise_offset_y);
+        let noise_uv = uv * decal.noise_scale + noise_offset;
         let noise = noise_sample(atlas, atlas_sampler, noise_uv, decal.noise_layer, level + log2(max(decal.noise_scale, 1.0)));
         order = breakup_order(order, noise, decal.noise_amount);
     }
+    // The liquid's thickness, slope and pooling noise (nothing is read for a decal that is no liquid).
+    let liquid = liquid_surface(decal, uv, texel.r, level, noise_offset, noisy);
     var clip = 1.0;
     let clip_axis = vec2<f32>(decal.clip_axis_x, decal.clip_axis_z);
     if (dot(clip_axis, clip_axis) > 0.0) {
-        clip = clip_fade(dot(world.xz, clip_axis), decal.clip_min, decal.clip_max, CLIP_EDGE);
+        // Feathered across each clip end, half inside the line and half beyond it.
+        let half_feather = 0.5 * decal.clip_feather;
+        clip = clip_fade(
+            dot(world.xz, clip_axis),
+            decal.clip_min - half_feather,
+            decal.clip_max + half_feather,
+            decal.clip_feather,
+        );
     }
     let inside = all(abs(local) <= vec3<f32>(1.0)) && depth > 0.0;
     let grazing = clamp((abs(normal.y) - decal.grazing) / max(1.0 - decal.grazing, 1e-3), 0.0, 1.0);
@@ -107,6 +136,85 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     if (!inside || coverage <= 0.0) {
         discard;
     }
-    let shading = self_shade(texel.r, texel.g, decal.shade);
-    return premultiply(ramp_lookup(ramps, decal.ramp_row, shading * decal.ramp_scale), coverage);
+    var shading = self_shade(texel.r, texel.g, decal.shade);
+    if (decal.relief <= 0.0) {
+        return premultiply(ramp_lookup(ramps, decal.ramp_row, shading * decal.ramp_scale), coverage);
+    }
+    // Liquid: value pooled by the noise, the relief lit from the upper left while wet, and a
+    // specular sheen that dries away with the ramp curve.
+    shading = clamp(shading * (1.0 + LIQUID_VALUE_SWING * decal.value_noise * (liquid.w - 0.5)), 0.0, 1.0);
+    let wet = clamp((decal.ramp_scale - decal.dry_below) / max(1.0 - decal.dry_below, 1e-3), 0.0, 1.0);
+    let local_normal = normalize(vec3<f32>(-decal.relief * liquid.x, 1.0, -decal.relief * liquid.y));
+    let surface_normal = rotate_yaw(local_normal, decal.yaw);
+    // The key light comes from the upper left of the screen: on the ground, half to the
+    // screen's left and half away from the camera, low over the ground. A flat film does not
+    // mirror it towards the camera, so the sheen lies only on slopes facing it (the thick rim,
+    // the noise's swells) and never washes the whole stain.
+    let right = view.world_from_view[0].xyz;
+    let away = -view.world_from_view[2].xyz;
+    let ground_left = normalize(vec3<f32>(-right.x, 0.0, -right.z) + 1e-6);
+    let ground_away = normalize(vec3<f32>(away.x, 0.0, away.z) + 1e-6);
+    let key_heading = normalize(ground_left + ground_away);
+    let key = normalize(key_heading * LIQUID_KEY_COS + vec3<f32>(0.0, LIQUID_KEY_SIN, 0.0));
+    let eye = normalize(view.world_position - world);
+    let diffuse = clamp(
+        1.0 + LIQUID_DIFFUSE * wet * (dot(surface_normal, key) - key.y),
+        LIQUID_DIFFUSE_MIN,
+        LIQUID_DIFFUSE_MAX,
+    );
+    let mirrored = reflect(-eye, surface_normal);
+    let specular = pow(max(dot(mirrored, key), 0.0), decal.gloss) * decal.sheen * wet;
+    let base = premultiply(ramp_lookup(ramps, decal.ramp_row, shading * decal.ramp_scale), coverage);
+    return vec4<f32>(base.rgb * diffuse + LIQUID_SHEEN_COLOR * specular * coverage, base.a);
+}
+
+// The liquid surface at `uv`: xy the thickness field's slope per world unit along the box's
+// local x and z, z the thickness, w the low-frequency noise (0.5 without noise). The thickness
+// is the element's shading `thickness` moved by the noise. Zero slope when the decal is no
+// liquid; a decal that is no liquid reads nothing more (every read here takes an explicit mip,
+// so it may sit in non-uniform control flow).
+fn liquid_surface(
+    decal: DecalInstance,
+    uv: vec2<f32>,
+    thickness: f32,
+    level: f32,
+    noise_offset: vec2<f32>,
+    noisy: bool,
+) -> vec4<f32> {
+    if (decal.relief <= 0.0) {
+        return vec4<f32>(0.0, 0.0, thickness, 0.5);
+    }
+    let cell = f32(textureDimensions(atlas).x);
+    let relief_level = level + LIQUID_RELIEF_MIPS;
+    let step_uv = LIQUID_STEP_TEXELS * exp2(relief_level) / cell;
+    let du = vec2<f32>(step_uv, 0.0);
+    let dv = vec2<f32>(0.0, step_uv);
+    let noise_scale = decal.noise_scale * LIQUID_NOISE_SCALE;
+    let noise_level = level + log2(max(noise_scale, 1.0));
+    let field = vec4<f32>(
+        flipbook_sample(atlas, atlas_sampler, uv + du, decal.layer_a, decal.layer_b, decal.frame_mix, relief_level).r,
+        flipbook_sample(atlas, atlas_sampler, uv - du, decal.layer_a, decal.layer_b, decal.frame_mix, relief_level).r,
+        flipbook_sample(atlas, atlas_sampler, uv + dv, decal.layer_a, decal.layer_b, decal.frame_mix, relief_level).r,
+        flipbook_sample(atlas, atlas_sampler, uv - dv, decal.layer_a, decal.layer_b, decal.frame_mix, relief_level).r,
+    );
+    var noise = vec4<f32>(0.5);
+    var centre_noise = 0.5;
+    if (noisy) {
+        let noise_uv = uv * noise_scale + noise_offset;
+        let noise_du = du * noise_scale;
+        let noise_dv = dv * noise_scale;
+        noise = vec4<f32>(
+            noise_sample(atlas, atlas_sampler, noise_uv + noise_du, decal.noise_layer, noise_level),
+            noise_sample(atlas, atlas_sampler, noise_uv - noise_du, decal.noise_layer, noise_level),
+            noise_sample(atlas, atlas_sampler, noise_uv + noise_dv, decal.noise_layer, noise_level),
+            noise_sample(atlas, atlas_sampler, noise_uv - noise_dv, decal.noise_layer, noise_level),
+        );
+        centre_noise = noise_sample(atlas, atlas_sampler, noise_uv, decal.noise_layer, noise_level);
+    }
+    let swing = LIQUID_THICKNESS_SWING * decal.value_noise;
+    let heights = field + swing * (noise - vec4<f32>(0.5));
+    // One uv unit spans the box's full length (2 half extents) along each axis.
+    let world_step = 2.0 * step_uv * vec2<f32>(decal.half_extents.x, decal.half_extents.z);
+    let slope = vec2<f32>(heights.x - heights.y, heights.z - heights.w) / max(2.0 * world_step, vec2<f32>(1e-5));
+    return vec4<f32>(slope, thickness + swing * (centre_noise - 0.5), centre_noise);
 }

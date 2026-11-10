@@ -416,6 +416,63 @@ fn the_d12_limits_are_load_time_errors() {
     );
 }
 
+/// Plan Amendment 2: a liquid decal's material, a decal's clip feather and an effect's repeat
+/// period are range-checked at load, naming the field.
+#[test]
+fn liquid_feather_and_repeat_values_are_range_checked() {
+    let (dir, manifest) = fixture();
+    let decal = |extra: &str| {
+        format!(
+            r#"(block: Decal(texture: "solid", ramp: "blue"{extra}), size: (scale: 1.0), duration: 1.0)"#
+        )
+    };
+    let liquid = |relief: f32, sheen: f32, gloss: f32, noise: f32, dry: f32| {
+        decal(&format!(
+            ", liquid: (relief: {relief}, sheen: {sheen}, gloss: {gloss}, value_noise: {noise}, dry_below: {dry})"
+        ))
+    };
+    let good = liquid(0.05, 1.0, 20.0, 0.5, 0.5);
+    load(
+        dir.path(),
+        &vocabulary(&manifest, "", &splash_effect(&good), ""),
+    )
+    .expect("a valid liquid decal loads");
+    for (layer, field) in [
+        (liquid(0.0, 1.0, 20.0, 0.5, 0.5), "liquid.relief"),
+        (liquid(0.05, 5.0, 20.0, 0.5, 0.5), "liquid.sheen"),
+        (liquid(0.05, 1.0, 0.5, 0.5, 0.5), "liquid.gloss"),
+        (liquid(0.05, 1.0, 20.0, 1.5, 0.5), "liquid.value_noise"),
+        (liquid(0.05, 1.0, 20.0, 0.5, 1.0), "liquid.dry_below"),
+        (decal(", clip_feather: 0.0"), "clip_feather"),
+    ] {
+        let error = load(
+            dir.path(),
+            &vocabulary(&manifest, "", &splash_effect(&layer), ""),
+        )
+        .expect_err(field);
+        assert!(
+            matches!(&error, EffectCatalogError::InvalidValue { field: found, .. } if *found == field),
+            "{field}: {error}"
+        );
+    }
+    let repeating = format!(
+        r#""boom": (class: Minor, event: Mode, repeat: Some(-1.0), layers: [ {} ])"#,
+        decal("")
+    );
+    let error = load(dir.path(), &vocabulary(&manifest, "", &repeating, ""))
+        .expect_err("a negative repeat period");
+    assert!(
+        matches!(
+            &error,
+            EffectCatalogError::InvalidValue {
+                field: "repeat",
+                ..
+            }
+        ),
+        "{error}"
+    );
+}
+
 #[test]
 fn out_of_range_values_and_empty_pools_are_refused() {
     let (dir, manifest) = fixture();

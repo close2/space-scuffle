@@ -1,8 +1,8 @@
 Effect contact sheet of 'spine_line' (plan 2026-11-09-effect-visualization §6.5), made by
 `battle_capture --effect-lab spine_line` on the production effect plugin and shaders.
-Bindings: SplashFull=0.5, SplashMid=0.5, SplashReach=0.5, LineLength=8, LineSpacing=1. Lifetime: 2.630 s. Capture 1280x720, battle camera at 58° pitch.
+Bindings: SplashFull=0.5, SplashMid=0.5, SplashReach=0.5, LineLength=8, LineSpacing=1. Lifetime: 2.230 s. Capture 1280x720, battle camera at 58° pitch.
 Camera: shipped camera (no HDR, no bloom).
-spine_line_contact.png columns: ages 0 (0.000 s), 0.03 (0.079 s), 0.08 (0.210 s), 0.15 (0.394 s), 0.3 (0.789 s), 0.5 (1.315 s), 0.75 (1.972 s), 1 (2.630 s).
+spine_line_contact.png columns: ages 0 (0.000 s), 0.03 (0.067 s), 0.08 (0.178 s), 0.15 (0.335 s), 0.3 (0.669 s), 0.5 (1.115 s), 0.75 (1.673 s), 1 (2.230 s).
 Rows: bright ground default zoom, the same with the 1-unit grid and the bound radii (red full
 damage, yellow reach; for a line, the line and the full radius at each search point), bright
 close zoom, its reference, dark default, its reference, dark close, its reference.
@@ -10,5 +10,6 @@ Default-zoom cells show the middle half of the frame, close-zoom cells its middl
 (a line's close-zoom cells the whole frame).
 spine_line_sequence.png: the first 3 s on the bright ground at the default zoom, one frame every
 40 ms, read left to right, top to bottom.
-Driver: lavapipe (Mesa software Vulkan, the CI reference), debug build, 2026-11-10; review round 2 of WP6c
-(docs/evidence/effects/review/slice_review.md). Round 1 is in commit bb5a61c, round 0 (WP6b, radv) in 1eaaf64.
+Driver: lavapipe (Mesa software Vulkan, the CI reference), debug build, 2026-11-10; review round 3
+(plan Amendment 2; docs/evidence/effects/review/slice_review.md). Round 2 is in commit d03ed19, round 1
+in bb5a61c, round 0 (WP6b, radv) in 1eaaf64.

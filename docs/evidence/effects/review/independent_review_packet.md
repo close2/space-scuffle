@@ -1,11 +1,69 @@
-# Independent Review Packet: Effect Vertical Slice (Round 2)
+# Independent Review Packet: Effect Vertical Slice (Round 3)
 
 Plan: [`docs/plans/2026-11-09-effect-visualization.md`](../../../plans/2026-11-09-effect-visualization.md) §7.3.
 This packet is for the second reviewer of the vertical slice. It lists the material to judge and the checklist to
 judge it by, and nothing else: it holds no verdict of the implementer, on purpose. Please judge each of the three
 effects against each of the seven checklist items, write **accept** or **reject** with a concrete reason (which
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
-(round 2: `independent_review_round2.md`, see "Round 2" below).
+(round 3: `independent_review_round3.md`, see "Round 3" below).
+
+## Round 3
+
+Rounds 1 and 2 were rejected for `acid_burst` and `spine_line` ([`independent_review.md`](independent_review.md),
+[`independent_review_round2.md`](independent_review_round2.md), both kept as written); `shell_impact` was accepted
+in round 2. The owner chose to continue, for up to five rounds in all (plan Amendment 2, Q0080), working from
+round 2's ranked changes. Please write the round-3 review to a new file next to this one,
+`independent_review_round3.md`, in the same form, and judge all three effects afresh against the checklist
+(`shell_impact` too, so that a regression would show). The table below maps each round-2 finding to what changed;
+it is a list of changes, not of verdicts. The images of this directory are the round-3 ones; round 2's are in
+commit `d03ed19`, round 1's in `bb5a61c`.
+
+### `spine_line`
+
+| Round-2 finding | What changed |
+|---|---|
+| 4a: curved spine variants read as handwritten glyphs; C-, J- and claw-shaped hooks | New textures (image-model stills, [`texture_review.md`](texture_review.md), "Review round 3"): the clump at each search point is one card showing three to five **straight, tapering conical chitin spikes splayed outward from a shared base** (three variants: a fan of four, an uneven five, an uneven three), wide at the base and needle-sharp at the tip, upright within a few degrees, mirrored at random. The hook, claw, thorn and S-curve variants are gone. |
+| 4b: sparse, one or two spines per point | Each point has its clump (three to five spikes) plus two single straight spikes leaning out beside it (up to ±26°), a frame later: four to seven spikes per point. |
+| Ranked change 1: taller, 0.6–0.9 units | The clump card is sized to the spacing (1 unit) with ±15 % jitter, and the spikes stand about 0.6 to 0.9 units tall at the default binding; the single spikes are smaller (0.6 of the clump). |
+| 5 / ranked change 2: no focal point; newest clump no brighter; tips not visible | The newest clump is lit for its first two to three frames: its ramp input is raised to 2.4× (the dark umber body goes to warm bone and the tips and the lit left edges to bone-ivory), easing back to its own colours by about 0.2 s after it breaks the ground. A short, light dust burst (pale, about 0.3 s) rises at each eruption. The tips stay paler than the bodies on every spike. |
+| 4c / ranked change 3: hard straight cut at both ends of the churned earth and fissure | Every ground mark of the line (scar, fissure, cracks) **feathers over 0.3 units at each end**, centred on the end (half the fade inside the line, half beyond), instead of the 0.015-unit cut. Nothing is drawn before the first search point's feather (the first point lies 1.0 from the attacker's centre). |
+| 4d / ranked change 3: leftover marks alternate stars and donut rings at exactly 1-unit spacing | The churned earth is a new texture, a ragged furrow of torn earth, stretched along the line (each piece about 1.9 units long, 1 unit apart, scattered and of its own size), so the pieces merge into **one continuous broken scar** of uneven width. The crack bursts are now two narrow, elongated ruptures (the donut-shaped torn hole and the radial star are dropped), scattered off the line by up to 0.25, randomly turned, ±40 % in size, and gone by 1.5 s, before the scar. |
+| 4e: dust puffs pale flat blobs on teal | The settling dust is fainter (opacity 0.22 to 0.38, was 0.35 to 0.55) and darker; the new light dust burst is short and small. |
+| Crowd note (b): the churned earth reads as dirt over the whole battlefield | The scar is lighter (opacity 0.34 to 0.52, was 0.45 to 0.62) and shorter-lived (2.0 s, was 2.4 s); the fissure lasts 2.2 s (was 2.6 s). |
+
+### `acid_burst`
+
+| Round-2 finding | What changed |
+|---|---|
+| 4a / 5 / ranked change 1: one flat, uniform mid-green fill, no sheen, depth or value variation; the rim lighter, not darker | The stain is drawn as a **liquid** (a new decal material): noise varies its value and thickness so it pools darker and thinner in places; its thickness is lit as a surface by the key light from the upper left (the units' studio light), so swells and the thick rim catch a wet specular sheen and the far sides fall darker; the sheen and the relief light dry away with the stain. The colour ramp follows the art direction: wet emerald in the middle, a **darker, more saturated wet rim**, olive-brown crust when dry. |
+| 3 note / ranked change 1: drying starts late (still saturated green at 1.8 s) | Drying starts at about 0.4 s and is well under way by 1.5 s (ramp factor 0.64 at 1.5 s, was 0.85); the sheen is gone by about 1.5 s. |
+| 4b: evenly spaced round darker dots | The flecks the landing globs left (they were small copies of the stain, which read as dots) are removed; the stain's erosion noise is coarser (scale 1.4, was 2.6), so its holes are irregular rather than round. |
+| 4c / ranked change 2: the pop is a glossy lime ellipse with a bevelled rim, like a button | The glowing dome is replaced by a **ragged burst**: the splash-crown flipbook (a real liquid splash from a Veo clip) drawn as liquid matter (dark wet body, lime highlights) and torn by coarse noise, plus a small hot core broken by noise for two to three frames and a ragged ground flash. The front's leading edge is a darker wet green, no longer a glowing lime rim. |
+| 2 note / ranked change 2: globs only tiny white specks; larger globs with dark wet bodies | Nine globs of 0.17 to 0.30 units (were sixteen of 0.10 to 0.18), dark green bodies with a lime highlight. |
+| 2 note / ranked change 2: vapour a flat lichen-like patch to one side | The vapour is four soft puffs at the centre (within 0.15 of the reach), rising (0.7 units per second) and spreading, gone by 1 s. |
+| 4e / 6 / ranked change 3: in the crowd only thin pale-green front rings, like selection circles | The stain is now **Critical**: when the crowd budget retires the Detail layers, the stain stays and marks the area as a liquid disc, and the front sits on it. The front ring and its dark edge are more broken by noise. |
+| 4d / ranked change 3: a pale grey-white fringe at the stain's edge | The stain's edge is now its darker wet rim (the ramp's top) over an olive-brown low end, shaded by the liquid relief; the round-2 vapour patch that lay beside the stain, and the flecks along its edge, are gone. Please check the edge at 0.48 to 1.8 s (rows 3 and 4). |
+
+### `shell_impact` (accepted in round 2; optional changes)
+
+| Round-2 optional change | What changed |
+|---|---|
+| 3: darken the char core towards 0.01–0.03 linear | Done: the char ramp is now 0.007 to 0.024 linear (was 0.010 to 0.035). |
+| 1: vary the shock ring's width by about two, drop the faint fill | Not changed: it alters the accepted Critical layer and its footprint test; recorded for the scale-out. |
+| 2: a less regular streak fringe | Not changed: it needs a new blast-mark texture; recorded for the scale-out. |
+
+### Fog (checklist item 7), round 3
+
+The owner extended the fog rules (Q0076, plan Amendment 2): an undetected burrowed attacker stays hidden, but its
+spine line is shown to the viewer **wherever the viewer sees it**, from its first search point on. In round 2 the
+line appeared only if its first search point was in sight; now a line that runs out of the fog into sight draws
+at exactly the search points in sight (tested in pixels). Judge item 7 on the sheets as before: nothing may be
+drawn on or behind the attacker (before the first search point and its 0.15-unit feather).
+
+### Crowd capture, round 3
+
+[`stress_capture_400.png`](stress_capture_400.png) is re-taken with the round-3 effects (see
+[`stress_capture.txt`](stress_capture.txt)); the baseline is unchanged.
 
 ## Round 2
 
