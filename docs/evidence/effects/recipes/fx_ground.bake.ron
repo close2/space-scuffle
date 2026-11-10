@@ -8,7 +8,10 @@
 //   three to five straight, tapering chitin spikes splayed outward from one shared base (a fan
 //   of four, an uneven five, an uneven three); silhouette key (`Solid`) so the dark umber
 //   bodies stay opaque; variants. Replaces round 2's curved single spines as the clump at each
-//   search point, which the round-2 review read as handwritten glyphs.
+//   search point, which the round-2 review read as handwritten glyphs. Review round 4: the
+//   three stills are replaced by massive clumps (heavy, wide-based spikes with a lit left and a
+//   shadowed right flank, a collar of torn soil at the root), because the round-3 review read
+//   the slender fans as small, twiggy, flat silhouettes ("dark weeds or bird feet").
 // - chitin_spine (review round 3): two generated stills side-on, one straight spike each (a
 //   tall slender one, a short thick thorn), silhouette key; variants. The single spikes that
 //   lean out beside each clump. Round 2's curved claw, hook, thorn and S-curve are dropped.
@@ -29,9 +32,9 @@
             name: "chitin_clump",
             look: Solid,
             source: Variants(pictures: [
-                Still(file: "fx_ground.chitin_clump.20261110T183137Z-480898-1.on_black.png"),
-                Still(file: "fx_ground.chitin_clump.20261110T183204Z-483667-1.on_black.png"),
-                Still(file: "fx_ground.chitin_clump.20261110T183231Z-486319-1.on_black.png"),
+                Still(file: "fx_ground.chitin_clump.20261110T214403Z-2125531-1.on_black.png"),
+                Still(file: "fx_ground.chitin_clump.20261110T214431Z-2132494-1.on_black.png"),
+                Still(file: "fx_ground.chitin_clump.20261110T214452Z-2135916-1.on_black.png"),
             ]),
         ),
         (

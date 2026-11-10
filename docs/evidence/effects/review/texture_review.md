@@ -108,6 +108,27 @@ Spend of round 3: 11 `image_request_started`, 3 refused for quota (free), **8 pa
 (`gemini-nano-banana-2.1`, `global`); no Veo clip. Ledger after round 3: **$105.79** of $200
 (image model in all: 49 paid, $5.39, within Q0078's target of about $25 and its cap below $50).
 
+## Review round 4: replaced elements
+
+The independent review of round 3 ([`independent_review_round3.md`](independent_review_round3.md)) read the
+spine clumps at default zoom as "small and twiggy, like dark weeds or bird feet: flat silhouettes with almost no
+shading". The slender fans of round 3 are replaced; `fx_ground` is rebaked
+([`../recipes/fx_ground.bake.ron`](../recipes/fx_ground.bake.ron)) with every other element's sources unchanged.
+Sheet: [fx_ground_texture_sheet.png](fx_ground_texture_sheet.png), strips:
+[fx_ground_frames.png](fx_ground_frames.png).
+
+| Set / element | Layers | Source | Verdict | Reasons |
+|---|---|---|---|---|
+| `fx_ground/chitin_clump` (replaced) | 3 variants | 3 image-model stills side-on, silhouette key | Accept | Massive clumps: four, an uneven five, three heavy conical spikes from one broad root, each about a third as wide at its base as it is tall. The key light from the upper left gives every spike a bright warm-umber left flank with a crisp highlight and a shadowed right flank, so the clump has volume; growth rings, bone-ivory tips. A low collar of torn soil clods is heaped around the root, so the clump sits in the ground instead of standing on it. |
+
+`spine_crack` stays in the set but no layer uses it any more: round 4 draws the ruptures with the torn-earth
+`earth_scar` texture running along the line (the review read the narrow cracks as pen strokes across it).
+
+Spend of round 4: 3 `image_request_started` (two more attempts were refused locally before sending: the composed prompt was over
+1 024 characters, so they are not in the ledger), **3 paid × $0.11 = $0.33** (`gemini-nano-banana-2.1`,
+`global`); no Veo clip. Ledger after round 4: **$106.12** of $200 (image model in all: 52 paid, $5.72, within
+Q0078's target of about $25 and its cap below $50).
+
 ## Not shipped
 
 - `fx_acid/acid_bubbles`: both clips rejected and the WP's cap of 10 Veo clips reached. The slice's acid
