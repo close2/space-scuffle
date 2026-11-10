@@ -17,10 +17,15 @@
 //! - `clearance_at` is zero exactly on cells no unit may enter.
 //! - The mesh and the clearance field always describe the same map state, and `nav_version`
 //!   changes whenever either is rebuilt.
+//! - The lane cuts (plan `2026-11-10-group-routing`, D-2) are built once from the terrain and
+//!   kept across structure rebuilds; `K`, the most cuts any mesh edge crosses, is recomputed
+//!   with every mesh.
 
 use crate::error::{MapError, Result};
 use crate::grid::{CellFlags, GameMap};
-use crate::navmesh::{self, search::MeshRoute, search::MeshSearch, NavMesh};
+use crate::navmesh::lanes::{LaneCuts, LaneWord};
+use crate::navmesh::search::{MeshRoute, MeshSearch};
+use crate::navmesh::{self, NavMesh};
 use crate::vision::PlayerVisionMap;
 use sim_types::{SimScalar, SimVec2};
 
@@ -298,6 +303,10 @@ pub struct Pathfinder {
     /// clearance fields. `None` for a map beyond the mesh's size limit, which has no routes.
     navmesh: Option<NavMesh>,
     mesh_search: MeshSearch,
+    /// The terrain's lane cuts (group-routing D-2): structure-independent, built once.
+    lane_cuts: LaneCuts,
+    /// `K` of group-routing D-5 for the current mesh: the most cuts any of its edges crosses.
+    lane_edge_bound: u32,
 }
 
 impl Pathfinder {
@@ -316,6 +325,8 @@ impl Pathfinder {
             nav_version: 1,
             navmesh: None,
             mesh_search: MeshSearch::default(),
+            lane_cuts: LaneCuts::build(map),
+            lane_edge_bound: 0,
         };
         pathfinder.recompute_clearance(map);
         pathfinder
@@ -369,6 +380,10 @@ impl Pathfinder {
         }
 
         self.navmesh = NavMesh::build(map).ok();
+        self.lane_edge_bound = self
+            .navmesh
+            .as_ref()
+            .map_or(0, |mesh| self.lane_cuts.max_edge_crossings(mesh));
         self.nav_version = self.nav_version.wrapping_add(1);
     }
 
@@ -403,6 +418,45 @@ impl Pathfinder {
             goal: request.goal,
         })?;
         navmesh::search::find_route(mesh, &mut self.mesh_search, map, request)
+    }
+
+    /// The terrain's lane cuts (plan `2026-11-10-group-routing`, D-2), one per terrain obstacle.
+    #[must_use]
+    pub fn lane_cuts(&self) -> &LaneCuts {
+        &self.lane_cuts
+    }
+
+    /// Number of lane cuts, which is the number of terrain obstacles (a diagnostic).
+    #[must_use]
+    pub fn lane_cut_count(&self) -> usize {
+        self.lane_cuts.len()
+    }
+
+    /// `K` of the current mesh: the largest number of lane cuts any of its edges crosses (0 when
+    /// the map has no mesh or no obstacle).
+    #[must_use]
+    pub fn lane_edge_bound(&self) -> u32 {
+        self.lane_edge_bound
+    }
+
+    /// The lane word of the polyline through `polyline`, in world units: the reduced sequence of
+    /// the cuts it crosses (D-2). Two routes with the same endpoints are in the same lane exactly
+    /// when their words are equal.
+    #[must_use]
+    pub fn lane_word(&self, polyline: &[SimVec2]) -> LaneWord {
+        self.lane_cuts.word(polyline)
+    }
+
+    /// The portal-midpoint polyline of the channel of the last route this pathfinder returned
+    /// (`start`, the midpoint of every portal crossed, `goal`), for a route from `start` to
+    /// `goal`: `[start, goal]` after a straight route. A diagnostic: the route and this polyline
+    /// lie in one sleeve of triangles, so their lane words agree (group-routing D-2).
+    #[must_use]
+    pub fn last_channel_midpoints(&self, start: SimVec2, goal: SimVec2) -> Vec<SimVec2> {
+        self.navmesh.as_ref().map_or_else(
+            || vec![start, goal],
+            |mesh| navmesh::funnel::portal_midpoints(mesh, start, goal, self.mesh_search.channel()),
+        )
     }
 
     /// Finds a route for a disc of `request.radius` from `request.start` to `request.goal`,

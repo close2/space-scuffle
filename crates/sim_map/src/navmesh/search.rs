@@ -164,6 +164,12 @@ impl MeshSearch {
         self.visits.resize(3 * triangles, 0);
     }
 
+    /// The channel of the last route returned by [`find_route`]: the portals it crosses, as
+    /// `(left, right)` vertex pairs, start first; empty for a straight route.
+    pub(crate) fn channel(&self) -> &[(u32, u32)] {
+        &self.portals
+    }
+
     fn push(&mut self, node: Node) {
         let id = u32::try_from(self.nodes.len()).unwrap_or(NONE);
         let f = node.g.saturating_add(node.h).raw();
@@ -539,6 +545,7 @@ pub fn find_route(
             request.radius,
         )
     {
+        search.portals.clear();
         return Ok(straight(0));
     }
     let query = Query {

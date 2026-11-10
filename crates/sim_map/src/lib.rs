@@ -37,8 +37,11 @@ pub use map_format::{
     MIN_MAP_DIMENSION, WATCHTOWER_ENTITY_ID_BASE,
 };
 pub use navmesh::{
-    funnel::Side, predicates::LatticePoint, search::MeshRoute, EdgeKind, NavMesh, NavMeshError,
-    TriangleKind, TriangleLabel,
+    funnel::Side,
+    lanes::{LaneCut, LaneCuts, LaneWord},
+    predicates::LatticePoint,
+    search::MeshRoute,
+    EdgeKind, NavMesh, NavMeshError, TriangleKind, TriangleLabel,
 };
 pub use pathfinding::{
     PathRequest, PathRequestWithVision, PathResult, Pathfinder, CORNER_SAFETY_MARGIN,
