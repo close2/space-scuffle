@@ -36,4 +36,4 @@ Contributors start with the engineering charter, [`AGENTS.md`](AGENTS.md).
 
 ## Licence
 
-MIT OR Apache-2.0 (workspace `Cargo.toml`).
+[Apache License 2.0](LICENSE) (also declared in the workspace `Cargo.toml`).
