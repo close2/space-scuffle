@@ -2,7 +2,8 @@
 //!
 //! # Responsibility
 //! This crate owns the real-GPU capture harness, the transparent-phase audit, the native input
-//! probe, the capture input fixtures, the frame-budget measurement and the showcase video. Each one builds the production application through the
+//! probe, the capture input fixtures, the frame-budget measurement, the showcase video and the
+//! effect lab's contact sheets. Each one builds the production application through the
 //! public `client` API and attaches itself through ordinary plugins, schedules and state.
 //!
 //! # Place in the workspace
@@ -16,6 +17,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod effect_lab;
 pub mod frame_budget;
 pub mod native_input_probe;
 pub mod palette_fixture;

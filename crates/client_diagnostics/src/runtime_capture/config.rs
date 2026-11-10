@@ -19,6 +19,17 @@ pub struct CaptureOptions {
     /// New output directory; existing directories are rejected to prevent stale evidence.
     #[arg(long)]
     pub out: PathBuf,
+    /// Effect-lab mode (plan `2026-11-09-effect-visualization` §6.5): capture this effect of
+    /// `catalog/effects.ron` on the lab stage instead of running a script, and assemble its
+    /// contact sheet.
+    #[arg(long, value_name = "EFFECT")]
+    pub effect_lab: Option<String>,
+    /// Effect-lab binding `NAME=VALUE` (e.g. `SplashReach=1.25`); repeatable.
+    #[arg(long = "bind", value_name = "NAME=VALUE")]
+    pub bindings: Vec<String>,
+    /// Effect-lab directory for the contact sheets (default: the output directory).
+    #[arg(long, value_name = "DIR")]
+    pub sheet_dir: Option<PathBuf>,
 }
 
 /// Failures are surfaced as nonzero exit and an incomplete manifest where possible.
