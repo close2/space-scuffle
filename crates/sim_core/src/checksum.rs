@@ -55,7 +55,9 @@ use std::collections::BTreeMap;
 /// Schema 24 adds whether each splash is centred on its target's edge (Q0063).
 /// Schema 25 adds each unit's surround-walk state: whether it walks, has turned back or ended,
 /// its closed ticks, the distance walked and the target it approaches (B-104, B-105).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 25;
+/// Schema 26 adds each line's search period and each unit's pending line searches: their
+/// points, countdown, plane, hit angle, primary target and the units already struck (B-85).
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 26;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.

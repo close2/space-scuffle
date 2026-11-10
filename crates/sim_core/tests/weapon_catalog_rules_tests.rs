@@ -1314,13 +1314,14 @@ fn q0063_splash_offset_follows_starcraft() -> TestResult {
 }
 
 /// One row of [`SC2_LINE_SPLASH`]: the analogue, the radius of each search, where the line
-/// starts, the direction of its offsets, the offsets and the source.
+/// starts, the direction of its offsets, the offsets, the ticks between searches and the source.
 type LineRow = (
     &'static str,
     f32,
     sim_types::SplashLineOrigin,
     sim_types::SplashLineAxis,
     &'static [f32],
+    u16,
     &'static str,
 );
 
@@ -1334,6 +1335,8 @@ const SC2_LINE_SPLASH: [LineRow; 3] = [
         sim_types::SplashLineOrigin::Attacker,
         sim_types::SplashLineAxis::Along,
         &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+        // The spines' spacing is not applied yet (B-85).
+        0,
         "LurkerMP and LurkerMPSearch, swarm EffectData:3010-3019, voidmulti EffectData:809, :821",
     ),
     (
@@ -1345,6 +1348,7 @@ const SC2_LINE_SPLASH: [LineRow; 3] = [
             0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0, 3.25, 3.5, 3.75, 4.0,
             4.25, 4.5, 4.75, 5.0, 5.25, 5.5, 5.75, 6.0, 6.5,
         ],
+        0,
         "InfernalFlameThrowerCP and InfernalFlameThrowerE, liberty EffectData:2609-2646, swarm \
          EffectData:2244-2246",
     ),
@@ -1356,6 +1360,8 @@ const SC2_LINE_SPLASH: [LineRow; 3] = [
         &[
             -1.25, -1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0, 1.25,
         ],
+        // Instant by the owner's answer to Q0064.
+        0,
         "ThermalLancesForward/Reverse and ThermalLancesE, liberty EffectData:2373-2408, :2412; \
          swarm EffectData:2323, :2328",
     ),
@@ -1370,7 +1376,7 @@ fn b18_line_splash_follows_starcraft() -> TestResult {
             .sc2_analogue()
             .and_then(|analogue| analogue.split(" (").next())
             .unwrap_or_default();
-        let Some((_, radius, origin, axis, offsets, source)) =
+        let Some((_, radius, origin, axis, offsets, period_ticks, source)) =
             SC2_LINE_SPLASH.iter().find(|(unit, ..)| *unit == analogue)
         else {
             continue;
@@ -1398,6 +1404,7 @@ fn b18_line_splash_follows_starcraft() -> TestResult {
                         .copied()
                         .map(SimScalar::from_f32_lossy)
                         .collect(),
+                    period_ticks: *period_ticks,
                 }),
                 friendly_fire: false,
                 offset_by_unit_radius: false,

@@ -934,6 +934,9 @@ enum SplashShapeDef {
         axis: SplashLineAxis,
         /// Signed distances in world units, one search point each.
         offsets: Vec<f32>,
+        /// Ticks between successive searches; 0 (the default) lands them together.
+        #[serde(default)]
+        period_ticks: u16,
     },
 }
 
@@ -945,6 +948,7 @@ impl SplashShapeDef {
                 origin,
                 axis,
                 offsets,
+                period_ticks,
             } => SplashShape::Line(SplashLine {
                 origin: *origin,
                 axis: *axis,
@@ -953,6 +957,7 @@ impl SplashShapeDef {
                     .copied()
                     .map(SimScalar::from_f32_lossy)
                     .collect(),
+                period_ticks: *period_ticks,
             }),
         }
     }

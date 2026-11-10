@@ -5,7 +5,8 @@
 //! Exhaustive struct destructuring makes field additions require checksum review.
 
 use crate::entity::{
-    ActiveBuff, ActiveProjectile, BarrierState, Entity, MovementMemory, PendingStrikes, WeaponPhase,
+    ActiveBuff, ActiveProjectile, BarrierState, Entity, MovementMemory, PendingLine,
+    PendingStrikes, WeaponPhase,
 };
 use crate::entity::{Cargo, UnitTask};
 use crate::match_state::MatchState;
@@ -319,6 +320,7 @@ fields!(Entity {
     weapon_cooldown_remaining,
     weapon_delay_carry,
     pending_strikes,
+    pending_line,
     active_buffs,
     barrier,
     attack_dash_cooldown,
@@ -401,6 +403,14 @@ fields!(WeaponSpec {
     suicide_on_attack,
     structure_strike,
 });
+fields!(PendingLine {
+    points,
+    ticks_until_next,
+    plane,
+    angle,
+    primary,
+    struck
+});
 fields!(PendingStrikes {
     target_id,
     plane,
@@ -417,7 +427,8 @@ fields!(SplashSpec {
 fields!(SplashLine {
     origin,
     axis,
-    offsets
+    offsets,
+    period_ticks
 });
 
 impl Canonical for SplashShape {

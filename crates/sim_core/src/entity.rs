@@ -100,6 +100,35 @@ pub enum WeaponPhase {
     Cooldown,
 }
 
+/// The searches of a spaced line area that land after its release tick (plan
+/// `2026-11-05-sc2-deviation-fixes` Amendment 24, B-85).
+///
+/// In `StarCraft` II the Lurker's spines are a `CEffectCreatePersistent` whose periods search
+/// one point of the line each, 0.125 Normal s apart (`void` EffectData:297-307), while the
+/// Lurker is alive and burrowed (`PeriodicValidator` `CasterIsAliveandBurrowedLurker`,
+/// `voidmulti` EffectData:813). Combat resolution lands the first search on the release tick and
+/// keeps the rest here, one every [`sim_types::SplashLine::period_ticks`]. The points are fixed
+/// where the release laid them out; a unit standing in a search when it lands is struck, unless
+/// an earlier search of the same line struck it (the game's `noMarkers`). The attacker's death,
+/// boarding a transport, a mode change starting (channeling, such as unburrowing) or losing the
+/// weapon ends the line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingLine {
+    /// Centres of the searches still to land, world units, the next first.
+    pub points: Vec<SimVec2>,
+    /// Ticks until the next search lands, at least 1 between ticks.
+    pub ticks_until_next: u16,
+    /// Combat plane of the struck target: the weapon is resolved against it again for each
+    /// search, and only units on it are struck.
+    pub plane: MoverType,
+    /// Direction the attack came from, for the struck units' hit feedback.
+    pub angle: SimAngle,
+    /// The attack's target, struck directly on the release tick and spared by the searches.
+    pub primary: EntityId,
+    /// Units an earlier search of this line struck, in the order they were struck.
+    pub struck: Vec<EntityId>,
+}
+
 /// The strikes of an attack that land after its release tick (plan
 /// `2026-11-05-sc2-deviation-fixes` WP5, B-2).
 ///
@@ -388,6 +417,8 @@ pub struct Entity {
     /// Strikes of the last attack still to land on later ticks; `None` when its every strike
     /// has landed or the weapon lands all of them on the release tick.
     pub pending_strikes: Option<PendingStrikes>,
+    /// Searches of the last spaced line area still to land; `None` when none are pending.
+    pub pending_line: Option<PendingLine>,
     /// Active temporary stat buffs and debuffs.
     pub active_buffs: Vec<ActiveBuff>,
     /// The damage-absorbing barrier's window, remaining absorption and cooldown (B-41).
@@ -546,6 +577,7 @@ impl Entity {
             barrier: BarrierState::default(),
             attack_dash_cooldown: 0,
             pending_strikes: None,
+            pending_line: None,
             active_buffs: Vec::new(),
             production_queue: VecDeque::new(),
             captured_supply_used: archetype.supply_cost,
