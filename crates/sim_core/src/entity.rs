@@ -708,6 +708,15 @@ impl Entity {
         self.movement.restart();
         self.abandon_task_leg();
         self.end_channeled_burst_for(&order);
+        // An explicit non-attack order cancels the attack, and with it a running dash; an
+        // attack on another target or an attack-move keeps it (the owner's engine note on
+        // Q0071).
+        if matches!(
+            order,
+            UnitOrder::Move { .. } | UnitOrder::Stop | UnitOrder::HoldPosition
+        ) {
+            self.end_attack_dash();
+        }
         match order {
             UnitOrder::Move { target } => {
                 self.handle_interrupting_move(target);
@@ -869,7 +878,8 @@ impl Entity {
 
     /// Ends a running attack dash, as the unit's weapon starting a swing does in `StarCraft` II
     /// (`Charging`'s remove validator `ChargeTargetAttacked`, `liberty` BehaviorData:967-975,
-    /// ValidatorData:3007-3011). Leaves its cooldown running; does nothing without a dash.
+    /// ValidatorData:3007-3011), and as an explicit move, stop or hold-position order does (the
+    /// owner's engine note on Q0071). Leaves its cooldown running; does nothing without a dash.
     pub(crate) fn end_attack_dash(&mut self) {
         self.active_buffs
             .retain(|buff| buff.buff_id != ATTACK_DASH_BUFF_ID);
