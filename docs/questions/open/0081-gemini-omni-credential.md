@@ -41,3 +41,6 @@ option 1 keeps the spending on the same credit.
 
 ## Answer
 
+**Option 3 (Stay on Veo 3.1 Fast for now; keep the Gemini Omni trial parked at $0.00 spent).**
+
+**Technical insight:** Veo 3.1 Fast works directly with the existing Vertex Express API key, our unit sheets are already calibrated to Veo's visual style, and Gemini Omni 1.2 Flash's behavior on isometric RTS turntables and walk cycles is unproven. Keep the Omni client parked unless we later decide to provision a Service Account key for a specific unit gap.
