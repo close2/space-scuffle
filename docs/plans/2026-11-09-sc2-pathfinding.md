@@ -779,3 +779,49 @@ Short note under charter §6, recorded before WP9 on the Part B report (evidence
    tested only the goal cell's clearance tier. This is StarCraft II-like (a unit cannot stand where its body does
    not fit) and is accepted. A refused goal goes through the unreachable-move rule (Q0052 S-4, Q0006: the unit
    walks to the nearest reachable point), and WP9 shows that such orders still end cleanly.
+
+## Amendment 3 (WP9 held, 2026-11-10): orchestrator decisions
+
+Short note under charter §6, on the report of the Amendment 2 work (evidence, "Amendment 2, step 1").
+
+1. **Turn emission accepted.** On the canyon at radius 0.5, 16 of 793 pairs are more than 1 % longer than the
+   grid. Every one is a grid route that a disc of that radius cannot walk, and no mesh route is more than 1 %
+   longer than a legal grid route. `80a48a6` stays as the latent improvement.
+2. **WP9 is not accepted yet.** The held switch (side branch `sc2-path-wp9-held`, `7636e32`) moved the showcase
+   for player 0 as follows:
+   - ramp W foot ratio 1.064 → 1.301;
+   - reversals 11 → 253;
+   - ramp E turn 211° → 381°;
+   - the winner flips: player 1 wins at tick 1,273, against player 0 at tick 1,100;
+   - the canyon throughput scenario loses 17 % (141 → 117 ticks/s, measured unlocked).
+
+   Before the switch lands:
+   - a. Diagnose the showcase regression with traces and fix it in route following and emission (this plan's
+     side of the `locomotion.rs` split, friendly-blocking plan §4). Friendly blocking's rules are not undone.
+     Leads to trace:
+     - arc points at exactly `r + margin` whose legs graze the wall, so that `route_is_usable` and
+       `drop_passed_waypoints` reject the leg or re-plan;
+     - arc runs at the clearance limit, which leave no room for flockmates;
+     - the re-plan frequency;
+     - how a run of arc points is handed off.
+
+     Candidate fixes follow StarCraft II's reported "inside the vertices expanded by unit radius": a small extra
+     corner margin for route following, handing an arc run off as a whole, and re-planning less often.
+   - b. Recover throughput to within 10 % of the grid on the canyon scenario, by profiling:
+     - TA*'s extra expansions;
+     - the waypoint count per route (arc subdivision, `ARC_CHORD_DIP`);
+     - the extra fit check per handoff;
+     - the re-plan rate.
+
+     Measure under the gate lock, or record the noise.
+   - c. Acceptance for the switch:
+     - Showcase, player 0: the route ratio and turn in each box are no worse than base, where base is:
+       - ramp W 1.064 / 1.112 and 103° / 213°;
+       - plateau SE 1.044 / 1.093;
+       - ramp E 1.573 / 1.611 and 211°.
+     - Reversals at most base + 10.
+     - 10 of 10 in range, 0 give-ups, and the winner unchanged.
+     - The matrix and battle 33 meet the stop rules of D-12.
+     - Throughput as in b.
+3. Once the acceptance is met, WP9 lands with the goldens re-recorded and their causes traced in debug, release and
+   `wasm32-wasip1`, followed by WP10 and WP11. Until then the switch stays held.
