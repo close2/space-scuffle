@@ -266,6 +266,7 @@ mod tests {
                     generate_audio: None,
                     negative_prompt: None,
                     seed: None,
+                    resolution: None,
                 },
             },
         }

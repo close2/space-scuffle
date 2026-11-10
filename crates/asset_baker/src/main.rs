@@ -47,7 +47,9 @@ use asset_baker::media_audit::MediaAuditStatus;
 use asset_baker::prompts::{atlas_loops, check_pin, SeamRepair};
 use asset_baker::provenance;
 use asset_baker::veo_plan::{parse_state, published_states, resolve_keyframe, state_slug, VeoDirs};
-use asset_baker::{BakerError, MediaStyle, RunContext, VeoClient, VeoRequestSettings};
+use asset_baker::{
+    BakerError, MediaStyle, OmniClient, RunContext, VeoClient, VeoRequestSettings, VideoService,
+};
 use clap::{Args, Parser, Subcommand};
 use sim_core::UnitCatalog;
 use sim_types::enums::AnimState;
@@ -143,6 +145,11 @@ struct GenerateArgs {
     /// the same clip; without it the service picks one. The ledger records it.
     #[arg(long)]
     seed: Option<u32>,
+
+    /// Output resolution of a Gemini Omni run (`360p`, `720p`, `1080p` or `4k`; default
+    /// `720p`). Refused with a Veo model, whose requests send no resolution.
+    #[arg(long)]
+    resolution: Option<String>,
 
     /// Record a clip fetched by hand: `--import <SLUG> <STATE> <FILE> --operation <NAME>`.
     #[arg(long, num_args = 3, value_names = ["SLUG", "STATE", "FILE"])]
@@ -855,6 +862,15 @@ fn run_generate_veo(assets: Option<&Path>, args: &GenerateArgs) -> RunResult {
         Some(&args.ledger),
         args.seed,
     )?;
+    if args.resolution.is_some() && !asset_baker::is_omni_model(&args.model) {
+        return Err(BakerError::InvalidArgument {
+            reason: format!(
+                "--resolution is for Gemini Omni models; '{}' sends no resolution",
+                args.model
+            ),
+        }
+        .into());
+    }
     let mut stdout = std::io::stdout().lock();
     println!("==> Veo plan (model {}):", args.model);
     planned.plan.print(&mut stdout)?;
@@ -919,12 +935,25 @@ fn execute(
     needed: u32,
     out: &mut dyn std::io::Write,
 ) -> RunResult {
-    let client = veo_client(
+    let veo = veo_client(
         &args.model,
         args.credentials_dir.as_deref(),
         args.curl_path.as_deref(),
     )?
     .with_parameters(planned.plan.parameters.clone());
+    let omni = if asset_baker::is_omni_model(&args.model) {
+        let omni = OmniClient::new(veo.clone(), &args.model)?;
+        Some(match &args.resolution {
+            Some(resolution) => omni.with_resolution(resolution)?,
+            None => omni,
+        })
+    } else {
+        None
+    };
+    let client: &dyn VideoService = match &omni {
+        Some(omni) => omni,
+        None => &veo,
+    };
     println!(
         "==> Veo run: {needed} generation(s) at most, {} with model {}.",
         client.mode().label(),
@@ -934,7 +963,7 @@ fn execute(
     let summary = asset_baker::execute_plan(
         &planned.plan,
         RunContext {
-            client: &client,
+            client,
             ledger: &mut ledger,
             history: &planned.history,
             dirs: &planned.dirs,
@@ -1015,6 +1044,9 @@ fn run_veo_preflight(
     curl_path: Option<&Path>,
 ) -> RunResult {
     let client = veo_client(model, credentials_dir, curl_path)?;
+    if asset_baker::is_omni_model(model) {
+        return run_omni_preflight(&OmniClient::new(client, model)?);
+    }
     let report = client.preflight()?;
     println!("Mode: {}", report.mode.label());
     println!("Model: {}", report.model);
@@ -1030,6 +1062,49 @@ fn run_veo_preflight(
         Err(format!(
             "the key cannot read model '{model}' (HTTP {})",
             report.http_status
+        )
+        .into())
+    }
+}
+
+/// `veo-preflight --model gemini-omni-*`: the two free GETs of [`OmniClient::preflight`],
+/// printed with each refusal's status and redacted message.
+fn run_omni_preflight(client: &OmniClient) -> RunResult {
+    let report = client.preflight()?;
+    println!("Mode: {} (global endpoint)", client.mode().label());
+    println!("Model: {}", report.model_id);
+    for (what, probe) in [
+        ("Model resource", &report.model),
+        ("Interactions API", &report.interactions),
+        ("Model resource, project-less path", &report.express_model),
+        (
+            "Interactions API, project-less path",
+            &report.express_interactions,
+        ),
+        (
+            "Interactions API, empty create (POST {})",
+            &report.empty_create,
+        ),
+    ] {
+        println!("{what}: HTTP {}", probe.http_status);
+        if let Some(status) = &probe.error_status {
+            println!("  error status: {status}");
+        }
+        if let Some(message) = &probe.message {
+            println!("  message: {message}");
+        }
+    }
+    let reachable = report.interactions_reachable();
+    println!(
+        "Interactions API reachable with this key: {}",
+        if reachable { "yes" } else { "no" }
+    );
+    if reachable {
+        Ok(())
+    } else {
+        Err(format!(
+            "the key cannot call the Interactions API for '{}' (HTTP {})",
+            report.model_id, report.interactions.http_status
         )
         .into())
     }

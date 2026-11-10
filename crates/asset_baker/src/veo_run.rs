@@ -11,7 +11,10 @@
 //! end frame (`lastFrame`), and the ledger records the end frame's hash. Each request sends its
 //! clip's own parameters ([`RunPlan::parameters_for`]: the run's, including a `--seed`, with
 //! the clip's negative prompt), and the ledger records them exactly as sent (plan
-//! `2026-11-04-veo-structure-action-text.md`, D-2 and D-3).
+//! `2026-11-04-veo-structure-action-text.md`, D-2 and D-3). The service is a
+//! [`VideoService`]: Veo, or Gemini Omni for the trial of the Veo plan's Amendment 2, whose
+//! requests carry the text and parameters [`VideoService::request_as_sent`] gives, which are
+//! also what the ledger records.
 //!
 //! # How it fits
 //! `generate-veo` calls [`execute_plan`] after the plan, prompt validation and budget checks
@@ -39,8 +42,9 @@ use crate::ledger::{
     sha256_file, Ledger, LedgerError, LedgerEvent, LedgerHistory, OperationOutcome,
 };
 use crate::prompts::{check_pin, KeyframeSource, PromptProblem};
-use crate::veo_client::{GenerationImages, VeoClient, VeoOperation, VeoParameters};
+use crate::veo_client::{GenerationImages, VeoOperation, VeoParameters};
 use crate::veo_plan::{state_slug, ClipAction, PlannedClip, RunPlan, VeoDirs};
+use crate::video_service::VideoService;
 use sim_types::enums::AnimState;
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -66,7 +70,7 @@ pub struct RunSummary {
 /// Everything a run needs besides its plan.
 pub struct RunContext<'a> {
     /// The authenticated client.
-    pub client: &'a VeoClient,
+    pub client: &'a dyn VideoService,
     /// The ledger, open for appending.
     pub ledger: &'a mut Ledger,
     /// The ledger as it was before the run.
@@ -91,7 +95,7 @@ pub struct RunContext<'a> {
 /// was skipped; and any transport, ledger or validation error, which also ends the run (a
 /// recorded operation is then resumed by the next run).
 pub fn execute_plan(plan: &RunPlan, context: RunContext<'_>) -> Result<RunSummary, BakerError> {
-    if !context.client.is_vertex_ai() {
+    if !context.client.accepts_end_frame_and_seed() {
         if plan.parameters.seed.is_some() && plan.generations() > 0 {
             return Err(BakerError::SeedNeedsVertex);
         }
@@ -167,12 +171,7 @@ impl Run<'_> {
             )),
             ClipAction::Resume { operation, model } => {
                 self.say(&format!("==> {label}: resuming {operation}"))?;
-                let completed = self
-                    .context
-                    .client
-                    .clone()
-                    .with_model(model)
-                    .poll_operation(operation)?;
+                let completed = self.context.client.resume(model, operation)?;
                 self.finish(clip, operation, &completed)
             }
             ClipAction::Generate { .. } => self.generate(clip, parameters),
@@ -252,6 +251,13 @@ impl Run<'_> {
         let keyframe_sha256 = keyframe.as_deref().map(sha256_file).transpose()?;
         let last_frame_sha256 = end.and(keyframe_sha256.clone());
         let client = self.context.client;
+        let images = GenerationImages {
+            start: keyframe.as_deref(),
+            end,
+        };
+        // The text and parameters both sent and recorded (Omni folds the negative prompt into
+        // the text, Veo sends both unchanged).
+        let (text, sent) = client.request_as_sent(&clip.prompt.text, images, parameters)?;
         let request_id = self.context.ledger.next_request_id();
         self.context.ledger.append(LedgerEvent::RequestStarted {
             request_id: request_id.clone(),
@@ -259,26 +265,22 @@ impl Run<'_> {
             state: clip.state,
             model: client.model().to_string(),
             mode: client.mode(),
-            prompt_sha256: crate::ledger::sha256_hex(clip.prompt.text.as_bytes()),
-            prompt: clip.prompt.text.clone(),
+            prompt_sha256: crate::ledger::sha256_hex(text.as_bytes()),
+            prompt: text.clone(),
             keyframe_sha256,
             last_frame_sha256,
-            parameters: parameters.clone(),
+            parameters: sent.clone(),
         })?;
         self.summary.started += 1;
         self.say(&format!(
             "==> {label}: starting a generation ({request_id})"
         ))?;
-        let images = GenerationImages {
-            start: keyframe.as_deref(),
-            end,
-        };
-        let operation = self.start(clip, &request_id, images, parameters)?;
+        let operation = self.start(clip, &request_id, images, (&text, &sent))?;
         let completed = if operation.done {
             operation.clone()
         } else {
             self.say(&format!("    polling {}", operation.name))?;
-            client.poll_operation(&operation.name)?
+            client.poll(&operation.name)?
         };
         self.finish(clip, &operation.name, &completed)
     }
@@ -295,11 +297,10 @@ impl Run<'_> {
         clip: &PlannedClip,
         request_id: &str,
         images: GenerationImages<'_>,
-        parameters: &VeoParameters,
+        (text, parameters): (&str, &VeoParameters),
     ) -> Result<VeoOperation, BakerError> {
         let client = self.context.client;
-        let operation = match client.initiate_generation_with(&clip.prompt.text, images, parameters)
-        {
+        let operation = match client.start(text, images, parameters) {
             Ok(operation) => operation,
             Err(BakerError::VeoQuotaExhausted {
                 http_status,
@@ -375,11 +376,11 @@ impl Run<'_> {
     ) -> Result<(), BakerError> {
         let client = self.context.client;
         let label = format!("{} {}", clip.slug, state_slug(clip.state));
-        let outcome = client.classify_operation(completed);
+        let outcome = client.classify(completed);
         let dir = self.context.dirs.clip_dir(&clip.slug, clip.state);
         let stem = operation_stem(operation_name);
         let record = dir.join(format!("{stem}.json"));
-        write_record(&record, &client.operation_record(completed))?;
+        write_record(&record, &client.record(completed))?;
         self.context.ledger.append(LedgerEvent::OperationDone {
             slug: clip.slug.clone(),
             state: clip.state,
@@ -389,7 +390,7 @@ impl Run<'_> {
         match outcome {
             OperationOutcome::VideoInline | OperationOutcome::VideoUri { .. } => {
                 let path = dir.join(format!("{stem}.mp4"));
-                client.save_operation_video(completed, &path)?;
+                client.save_video(completed, &path)?;
                 self.downloaded(clip, operation_name, &path)
             }
             OperationOutcome::GcsUri { uri } => Err(BakerError::VeoRunStopped {

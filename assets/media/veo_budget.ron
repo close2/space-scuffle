@@ -15,9 +15,15 @@
 //   id. A ledger line or a run whose model is missing here is refused, never counted as free.
 //   `veo-3.1-fast-generate-001`: one 4 s 720p clip with sound at $0.10 a second (the rate the
 //   batch evidence in docs/evidence/veo/ uses).
+//   `gemini-omni-1.2-flash` (the Gemini Omni trial, Veo plan Amendment 2, D-15): one 4 s clip
+//   priced at the higher known rate, $0.10 a second (third parties' figure for the earlier Omni
+//   Flash; the Gemini API lists about $0.07 a second at 720p for 1.2; the Vertex AI price was
+//   not readable on 2026-11-10), plus 5 cents for input and thinking tokens: 45 cents at any
+//   resolution.
 (
     total_budget_usd_cents: 20000,
     price_per_generation_usd_cents: {
         "veo-3.1-fast-generate-001": 40,
+        "gemini-omni-1.2-flash": 45,
     },
 )

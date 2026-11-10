@@ -20,6 +20,9 @@
 //! - [`framing`]: The framing policy per render shape (`media_style.ron`), the bar colour
 //!   measured from each clip's border, the edge feather and the square composer.
 //! - [`veo_client`]: Strongly-typed Google Gemini and Vertex AI Veo Video Generation client.
+//! - [`omni_client`]: The Gemini Omni client on Vertex AI's Interactions API (the trial of the
+//!   Veo plan's Amendment 2), on the Veo client's transport.
+//! - [`video_service`]: The trait a paid run uses, implemented by both clients.
 //! - [`prompts`]: Veo prompts composed from data (`media_style.ron`) and validated before spend.
 //! - [`veo_plan`]: Which clips a Veo run reuses, resumes or pays for: exactly the actions the
 //!   simulation publishes, Idle first.
@@ -47,6 +50,7 @@ pub mod loop_metrics;
 pub mod manifest;
 pub mod media;
 pub mod media_audit;
+pub mod omni_client;
 pub mod procedural_generator;
 pub mod prompts;
 pub mod provenance;
@@ -55,6 +59,7 @@ pub mod terrain_theme;
 pub mod veo_client;
 pub mod veo_plan;
 pub mod veo_run;
+pub mod video_service;
 
 pub use assets_root::{load_catalogs, resolve_assets_root};
 pub use error::BakerError;
@@ -64,6 +69,7 @@ pub use ffmpeg_importer::{
 };
 pub use framing::{BakeFraming, FramingPolicy};
 pub use manifest::{ActionSlice, FlipbookAtlasMeta, FlipbookLayout};
+pub use omni_client::{is_omni_model, OmniClient, OmniPreflightReport, DEFAULT_OMNI_MODEL};
 pub use procedural_generator::{
     ensure_outside_runtime_assets, generate_procedural_atlas, generate_procedural_dome_atlas,
     generate_procedural_unit_atlas, write_procedural_atlas, ProceduralAtlasOutput,
@@ -91,6 +97,7 @@ pub use veo_client::{
 };
 pub use veo_plan::{plan_run, RunPlan, VeoDirs};
 pub use veo_run::{execute_plan, RunContext, RunSummary};
+pub use video_service::VideoService;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
