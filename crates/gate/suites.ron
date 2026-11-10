@@ -88,6 +88,8 @@ SuiteCatalog(
         "client/concealment_gpu_tests": (class: Gpu),
         "client/dome_fill_tests": (class: Gpu),
         "client/editor_app_tests": (class: Gpu, test_threads: Some(2)),
+        // The effect blocks (plan 2026-11-09-effect-visualization WP4): one child, eight shots.
+        "client/effect_gpu_tests": (class: Gpu),
         "client/flipbook_clock_gpu_tests": (class: Gpu),
         // On lavapipe (CI) a GPU child keeps its textures in host memory and no GPU lock
         // serializes the children, so each test thread runs a whole client at once: four threads
@@ -121,7 +123,7 @@ SuiteCatalog(
 
         // Valgrind: counts the live battle sync's steady-state allocations.
         "client/sync_allocation_count_tests": (class: Valgrind, triggers: [
-            "crates/client/src/{battle_pipeline/**,presentation.rs,runtime_battle/**,player_presentation/**}",
+            "crates/client/src/{battle_pipeline/**,presentation.rs,runtime_battle/**,player_presentation/**,effects/**}",
         ]),
     },
 
@@ -131,7 +133,7 @@ SuiteCatalog(
     rules: [
         (
             name: "GPU renderer",
-            paths: ["crates/client/src/{bubble_shader.rs,bubble_optics.rs,render_compatibility.rs,flipbook_clock.rs,vfx.rs,vfx/**,terrain/**,smog/**,camera.rs,lab_stage.rs,scene_controller.rs,editor/**}"],
+            paths: ["crates/client/src/{bubble_shader.rs,bubble_optics.rs,render_compatibility.rs,flipbook_clock.rs,vfx.rs,vfx/**,effects/**,terrain/**,smog/**,camera.rs,lab_stage.rs,scene_controller.rs,editor/**}"],
             targets: ["client/@gpu"],
         ),
         (

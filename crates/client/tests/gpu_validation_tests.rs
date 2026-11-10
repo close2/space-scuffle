@@ -23,6 +23,13 @@
 #[path = "support/gpu_run.rs"]
 mod gpu_run;
 
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/shader_ir.rs"]
+mod shader_ir;
+
 use gpu_run::{
     AdapterEvidence, AllowedValidationId, DriverRequest, DriverSelectionError, FindingSeverity,
     GpuCommand, GpuDriver, GpuLock, GpuLockError, HostGpu, MissingPrerequisite, RenderNode,
@@ -732,4 +739,44 @@ fn the_host_lock_tool_uses_the_harness_lock_file() -> Result<(), Box<dyn std::er
         gpu_run::GPU_LOCK_PATH
     );
     Ok(())
+}
+
+/// Every effect shader (plan `2026-11-09-effect-visualization` WP4) composes with its shared
+/// import and validates strictly, single-sampled and multisampled; the shared import declares
+/// every function the plan names.
+#[test]
+fn effect_shaders_compose_and_validate() {
+    let read = |name: &str| shader_ir::shipped_source(&format!("effects/{name}"));
+    let common = read("common.wgsl");
+    for function in [
+        "fn ramp_lookup",
+        "fn erosion_step",
+        "fn soft_depth_fade",
+        "fn flipbook_sample",
+        "fn premultiply",
+    ] {
+        assert!(
+            common.contains(function),
+            "common.wgsl must define {function}"
+        );
+    }
+    let modules = [("effects/common.wgsl", common)];
+    let mut failures = Vec::new();
+    for shader in ["sprite.wgsl", "decal.wgsl"] {
+        let source = read(shader);
+        for defs in [&[][..], &["MULTISAMPLED"][..]] {
+            match shader_ir::compose_with_modules(shader, &source, defs, &modules) {
+                Ok(validated) => {
+                    validated.entry_point(naga::ShaderStage::Vertex, "vertex");
+                    validated.entry_point(naga::ShaderStage::Fragment, "fragment");
+                }
+                Err(error) => failures.push(error),
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "effect shaders failed:\n{}",
+        failures.join("\n")
+    );
 }

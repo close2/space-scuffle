@@ -22,6 +22,39 @@
 //! - Pools are sized from the catalog's budget at load and never grow during a battle.
 
 pub mod binding;
+pub mod budget;
 pub mod catalog;
 pub mod curve;
+pub mod instances;
+pub mod particles;
 pub mod placement;
+pub mod pool;
+pub mod render;
+pub mod runtime;
+pub mod systems;
+
+use bevy::prelude::*;
+
+/// Registers the effect system: loading at startup, event wiring in the battle's present
+/// stage, the per-frame build after transforms propagate, the light pool and the renderer.
+pub struct EffectsPlugin;
+
+impl Plugin for EffectsPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<render::EffectCatalogVersion>()
+            .add_systems(Startup, systems::load_effect_catalog)
+            .add_systems(
+                Update,
+                systems::spawn_effects_from_events
+                    .after(crate::battle_pipeline::driver::publish_combat_events)
+                    .in_set(crate::battle_pipeline::BattleSet::Present),
+            )
+            .add_systems(
+                PostUpdate,
+                (systems::build_effect_frame, systems::apply_effect_lights)
+                    .chain()
+                    .after(TransformSystem::TransformPropagate),
+            )
+            .add_plugins(render::EffectRenderPlugin);
+    }
+}
