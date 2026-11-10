@@ -79,6 +79,17 @@ impl Harness {
     /// The real loader reads `directory`, so a temporary root is held to the same rules as the
     /// shipped one.
     pub fn boot_root(directory: &Path, mode: client::ClientMode, scenario: &str) -> Self {
+        Self::boot_root_with(directory, mode, scenario, |_| {})
+    }
+
+    /// Boots as [`Self::boot_root`], letting `configure` insert resources before the first
+    /// update (an explicit effect vocabulary, for example).
+    pub fn boot_root_with(
+        directory: &Path,
+        mode: client::ClientMode,
+        scenario: &str,
+        configure: impl FnOnce(&mut App),
+    ) -> Self {
         let root = ResolvedAssetsRoot::from_directory(directory).expect("assets root");
         let definition =
             BattleDefinition::load(root.as_path(), scenario.as_ref()).expect("battle scenario");
@@ -119,6 +130,7 @@ impl Harness {
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
                 40,
             )));
+        configure(&mut app);
         app.finish();
         app.cleanup();
         app.world_mut().resource_mut::<LabState>().battle_paused = true;

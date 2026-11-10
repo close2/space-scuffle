@@ -46,6 +46,9 @@
 //! is no skip (charter §1.2). The children return at once unless `SPACE_SCUFFLE_STEADY_FRAMES` is
 //! set, so a plain `cargo test` runs them as no-ops.
 
+#[path = "support/effect_fixtures.rs"]
+mod effect_fixtures;
+
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
@@ -89,6 +92,11 @@ enum Variant {
     RunningLive,
     /// The battle driver alone on the resumed, idle skirmish.
     RunningBaseline,
+    /// The live synchroniser, a splash event every frame and the effect systems (plan
+    /// `2026-11-09-effect-visualization` WP4, D-7).
+    EffectStream,
+    /// The same splash stream and live synchroniser without the effect systems.
+    EffectBaseline,
 }
 
 impl Variant {
@@ -100,7 +108,14 @@ impl Variant {
             Self::Planted => "planted_allocation_is_counted",
             Self::RunningLive => "running_live_sync_frames",
             Self::RunningBaseline => "running_baseline_frames",
+            Self::EffectStream => "effect_stream_frames",
+            Self::EffectBaseline => "effect_baseline_frames",
         }
+    }
+
+    /// Whether a splash event is sent every frame.
+    fn streams_effects(self) -> bool {
+        matches!(self, Self::EffectStream | Self::EffectBaseline)
     }
 
     /// Whether the battle runs during the window rather than staying paused.
@@ -194,6 +209,9 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
     if variant == Variant::Planted {
         app.add_systems(Update, planted_allocation);
     }
+    if variant.streams_effects() {
+        add_effect_stream(&mut app, variant == Variant::EffectStream)?;
+    }
     // The multi-threaded executor allocates on every frame for its own task spawning (about 18
     // blocks a frame in the baseline, all inside bevy_tasks and async_executor), and the number
     // varies with thread timing. It is Bevy's, not the client's, so the children run on the
@@ -202,6 +220,80 @@ fn steady_state_app(variant: Variant) -> Result<App, Box<dyn std::error::Error>>
         schedule.set_executor_kind(ExecutorKind::SingleThreaded);
     }
     Ok(app)
+}
+
+/// Sends one splash event per frame, its centre walking over a 9 by 7 grid.
+fn send_splash(
+    mut counter: Local<'_, u32>,
+    mut events: EventWriter<'_, client::CombatVisualEvent>,
+) {
+    *counter = counter.wrapping_add(1);
+    let x = f32::from(u8::try_from(*counter % 9).unwrap_or(0));
+    let y = f32::from(u8::try_from(*counter % 7).unwrap_or(0));
+    events.send(client::CombatVisualEvent(
+        sim_types::snapshot::CombatEventVisual::SplashVisual {
+            center: [x, y, 0.0],
+            zones: [0.4, 0.7, 1.0],
+            line: None,
+            source: sim_types::EffectSource::default(),
+            owner: sim_types::PlayerId(0),
+        },
+    ));
+}
+
+/// The vocabulary of the effect stream: the default splash draws a card, a ring, a decal, a
+/// light and a particle burst, all within 0.6 s, so at one splash per 20 ms frame about 30
+/// effects live at once, inside the fixture budget's 64 slots: every splash spawns.
+const STREAM_EFFECTS: &str = r#"
+    "burst": (class: Minor, event: Splash, layers: [
+        (block: Sprite(texture: "flip", ramp: "red_add"), size: (bind: SplashReach, scale: 1.0),
+         duration: 0.6, priority: Critical),
+        (block: Ring(texture: "solid", ramp: "green", orient: Ground, thickness: 0.3),
+         radius: (from: (bind: SplashFull, scale: 1.0), to: (bind: SplashReach, scale: 1.0)),
+         duration: 0.3),
+        (block: Decal(texture: "soft_disc", ramp: "blue"), size: (bind: SplashReach, scale: 1.0),
+         duration: 0.5),
+        (block: Light(color: (1.0, 0.6, 0.3), intensity: 400.0), size: (scale: 2.0),
+         duration: 0.2, curve: "fade"),
+        (block: Particles(emitter: "chips"), size: (bind: SplashReach, scale: 1.0)),
+    ])
+"#;
+
+/// The emitter of [`STREAM_EFFECTS`].
+const STREAM_EMITTERS: &str = r#""chips": (spawn: Burst(count: (base: 8, max: 8)),
+    speed: (1.0, 2.0), cone_deg: 45.0, gravity: 9.0, lifetime: (0.2, 0.5), size: (0.03, 0.06),
+    texture: "soft_disc", orient: VelocityStretched(1.0), ramp: "red_add")"#;
+
+/// Adds the splash sender and, when `with_effects`, the production effect systems over a
+/// test-only vocabulary written into a temporary directory (kept for the process's life).
+fn add_effect_stream(app: &mut App, with_effects: bool) -> TestResult {
+    use client::effects::catalog::{EffectCatalog, UnitEffectTables};
+    use client::effects::runtime::EffectRuntime;
+    use client::effects::systems::{build_effect_frame, spawn_effects_from_events};
+    app.add_systems(Update, send_splash.before(publish_combat_events));
+    if !with_effects {
+        return Ok(());
+    }
+    let directory = tempfile::tempdir()?.keep();
+    let manifest = effect_fixtures::write_fixture_set(&directory);
+    let text = effect_fixtures::vocabulary(
+        &manifest,
+        STREAM_EMITTERS,
+        STREAM_EFFECTS,
+        r#"splash: "burst""#,
+    );
+    let catalog = EffectCatalog::from_text(&text, &directory.join("effects.ron"), &directory)?;
+    let units = app.world().resource::<client::CatalogResource>().0.clone();
+    let tables = UnitEffectTables::build(&units, &catalog)?;
+    app.insert_resource(EffectRuntime::new(&catalog))
+        .insert_resource(tables)
+        .insert_resource(catalog)
+        .add_systems(
+            Update,
+            spawn_effects_from_events.after(publish_combat_events),
+        )
+        .add_systems(PostUpdate, build_effect_frame);
+    Ok(())
 }
 
 // PERFORMANCE RATIONALE:
@@ -256,7 +348,16 @@ fn run_child(variant: Variant) -> TestResult {
             .0
     };
     let before = tick(&app);
+    let spawned_before = effects_spawned(&app);
     measured_steady_frames(&mut app, frames);
+    if variant == Variant::EffectStream {
+        let spawned = effects_spawned(&app) - spawned_before;
+        if spawned < u64::from(frames) {
+            return Err(
+                format!("the effect stream spawned {spawned} effects in {frames} frames").into(),
+            );
+        }
+    }
     let after = tick(&app);
     if !variant.is_running() {
         if after != 0 {
@@ -281,6 +382,23 @@ fn run_child(variant: Variant) -> TestResult {
         return Err(format!("the running window must stay idle, but {id:?} is not").into());
     }
     Ok(())
+}
+
+/// Effects spawned so far, 0 without the effect runtime.
+fn effects_spawned(app: &App) -> u64 {
+    app.world()
+        .get_resource::<client::effects::runtime::EffectRuntime>()
+        .map_or(0, |runtime| runtime.stats.spawned)
+}
+
+#[test]
+fn effect_stream_frames() -> TestResult {
+    run_child(Variant::EffectStream)
+}
+
+#[test]
+fn effect_baseline_frames() -> TestResult {
+    run_child(Variant::EffectBaseline)
 }
 
 #[test]
@@ -509,6 +627,8 @@ fn measure_all_variants(directory: &Path) -> Result<Vec<Counts>, String> {
         (Variant::Planted, 1),
         (Variant::RunningLive, 1),
         (Variant::RunningBaseline, 1),
+        (Variant::EffectStream, 1),
+        (Variant::EffectBaseline, 1),
     ];
     let runs: Vec<Run> = plan
         .iter()
@@ -548,7 +668,9 @@ fn measure_all_variants(directory: &Path) -> Result<Vec<Counts>, String> {
 fn steady_state_frames_allocate_nothing() -> TestResult {
     let directory = tempfile::tempdir()?;
     let counts = measure_all_variants(directory.path())?;
-    let [live, baseline, planted, running_live, running_baseline] = counts.as_slice() else {
+    let [live, baseline, planted, running_live, running_baseline, effect_stream, effect_baseline] =
+        counts.as_slice()
+    else {
         return Err("invariant: measure_all_variants returns one entry per variant".into());
     };
     let report = format!(
@@ -566,12 +688,16 @@ fn steady_state_frames_allocate_nothing() -> TestResult {
         Some(planted_difference),
         Some(running_live_difference),
         Some(running_baseline_difference),
+        Some(effect_stream_difference),
+        Some(effect_baseline_difference),
     ) = (
         live.difference(),
         baseline.difference(),
         planted.difference(),
         running_live.difference(),
         running_baseline.difference(),
+        effect_stream.difference(),
+        effect_baseline.difference(),
     )
     else {
         return Err(format!("a variant has no run at one of the windows\n{report}").into());
@@ -599,6 +725,12 @@ fn steady_state_frames_allocate_nothing() -> TestResult {
         "the client's battle sync systems allocated {} times over {window} running frames \
          beyond the tick driver's and Bevy's own work\n{report}",
         running_live_difference - running_baseline_difference,
+    );
+    assert_eq!(
+        effect_stream_difference - effect_baseline_difference,
+        0,
+        "the effect systems allocated {} times over {window} frames of a splash stream\n{report}",
+        effect_stream_difference - effect_baseline_difference,
     );
     Ok(())
 }

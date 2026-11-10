@@ -378,6 +378,7 @@ fn add_material_and_feature_plugins(app: &mut App) {
         .add_plugins(MaterialPlugin::<SelectionRingMaterial>::default())
         .add_plugins(bubble_optics::BubbleOpticsPlugin)
         .add_plugins(CombatFxPlugin)
+        .add_plugins(effects::EffectsPlugin)
         .add_plugins(MaterialPlugin::<SmogVolumeMaterial>::default())
         .add_plugins(SmogPlugin)
         .add_plugins(battle_input::BattleInputPlugin)

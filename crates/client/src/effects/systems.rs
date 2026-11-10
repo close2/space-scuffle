@@ -41,7 +41,8 @@ use std::path::PathBuf;
 #[derive(Resource, Debug, Clone, PartialEq, Eq)]
 pub struct EffectCatalogSource(pub PathBuf);
 
-/// The pooled point lights of the `Light` block, spawned hidden at load.
+/// The pooled point lights of the `Light` block, spawned hidden at load when any effect has a
+/// light layer (none otherwise).
 #[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
 pub struct EffectLightPool {
     /// The light entities.
@@ -84,7 +85,19 @@ pub fn load_effect_catalog(
             return;
         }
     };
-    let lights = (0..catalog.budget.lights)
+    // The pool exists only when some effect has a light layer, so a vocabulary without lights
+    // (the shipped one today) adds no light entity to any scene.
+    let uses_lights = catalog.effects.iter().any(|effect| {
+        effect
+            .layers
+            .iter()
+            .any(|layer| matches!(layer.block, super::catalog::Block::Light { .. }))
+    });
+    let lights = (0..if uses_lights {
+        catalog.budget.lights
+    } else {
+        0
+    })
         .map(|_| {
             commands
                 .spawn((
