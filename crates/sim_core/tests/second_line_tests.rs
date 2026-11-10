@@ -10,6 +10,8 @@
 //!    ten reach range by tick 300 with no reversals and no give-ups.
 //! 3. No room: units in a corridor two cells wide queue behind those that reach range, and
 //!    those that cannot reach it stand still, without reversals.
+//! 4. Walkers at a crowd's edge: short-ranged units behind a firing line walk round it without
+//!    ending and restarting their walk every other tick (plan Amendment 7).
 //!
 //! The synthetic tests use scratch archetypes written in this file (C5), so a rebalance of the
 //! shipped catalog cannot break them.
@@ -305,5 +307,58 @@ fn no_room_means_waiting_still() -> TestResult {
             "unit {unit:?} moved too often: {report}"
         );
     }
+    Ok(())
+}
+
+/// 4. Walkers at a crowd's edge: a line of five ranged units fires at the pillar, and three rows
+///    of four short-ranged units behind it attack-move past. A walker whose straight way in is
+///    half clipped by the firing line used to end its surround walk, step into contact and walk
+///    again, a reversal every other tick (107 for one walker before friendly-blocking plan
+///    Amendment 7, and 14 of 17 in range at tick 300). The walk now ends only when the whole
+///    straight step is free, so every attacker reaches range and no walker reverses more than
+///    a few times at the crowd's edge.
+#[test]
+fn walkers_at_the_crowds_edge_do_not_toggle() -> TestResult {
+    const GAP: f32 = 0.85;
+    let mut world = scratch_world(GameMap::new(
+        64,
+        64,
+        MapCell::default_ground(CliffLevel(0)),
+    )?)?;
+    spawn(&mut world, PILLAR, RED, at(40.0, 32.0))?;
+    let mut army = Vec::new();
+    for file in 0..5 {
+        army.push(spawn(
+            &mut world,
+            SHOOTER,
+            BLUE,
+            at(27.5, 30.4 + 0.8 * file as f32),
+        )?);
+    }
+    let mut walkers = Vec::new();
+    for row in 0..3 {
+        for file in 0..4 {
+            let x = 25.0 - GAP * row as f32;
+            let y = 30.8 + 0.8 * file as f32 + 0.4 * row as f32;
+            walkers.push(spawn(&mut world, SHORT, BLUE, at(x, y))?);
+        }
+    }
+    army.extend(&walkers);
+    let mut meter = BlockingMeter::new();
+    step(&mut world, &mut meter, attack_move(&army, at(60.0, 32.0)));
+    while world.current_tick < 300 {
+        step(&mut world, &mut meter, Vec::new());
+        assert_eq!(world.diagnostics(), [], "tick {}", world.current_tick);
+    }
+    let per_walker: Vec<u32> = walkers.iter().map(|u| meter.reversals_of(*u)).collect();
+    let report = format!(
+        "in range {:?}; {:?}; reversals per walker {per_walker:?}",
+        attackers_in_range(&world, BLUE),
+        meter.of_owner(BLUE)
+    );
+    assert_eq!(attackers_in_range(&world, BLUE), (17, 17), "{report}");
+    assert_eq!(meter.of_owner(BLUE).stall_giveups, 0, "{report}");
+    // A few single reversals at the crowd's edge remain (B-103); a toggling walk made dozens.
+    assert!(per_walker.iter().all(|&count| count <= 10), "{report}");
     Ok(())
 }

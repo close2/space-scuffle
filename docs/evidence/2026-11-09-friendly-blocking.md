@@ -397,3 +397,29 @@ caption changed: the story still fits, and the captions are generic. The margin 
 later change that ends the battle earlier needs `clash` shortened.
 
 **Tests.** `showcase_tests` (the GPU smoke take through the harness on `radv`) and `showcase_storyboard_tests` pass.
+
+## Amendment 7: a walk ends only at a full free step (2026-11-10)
+
+Base: main `d914917` (simulation identical to `02f494b`). Tools: `route_trace` and `matchup_trace` release builds,
+matrix with 16 extra seeds and battle 33 with 64 extra seeds under the gate lock; output under
+`~/scratch/path-c/mb/` (not committed).
+
+**Trace of the cause** (held mesh switch, throw-away probe printing the walk state on each reversal): player 0's
+pulse bot 4 at (22.9 to 23.0, 34.5), heading for its route corner (25.575, 35.0) behind the firing line, alternates
+every tick or two between `flank_active` with a clipped walk step of 0.05 and a straight step of 0.093 to 0.112
+(its full step is 0.126): the half-step test ended the walk, the step forward met the line, the walk started again.
+
+**Synthetic reproduction** (`walkers_at_the_crowds_edge_do_not_toggle`): 210 reversals (walkers 107, 69, 18, ...)
+and 14 of 17 in range at tick 300 before; 31 (at most 7 per walker) and 17 of 17 after.
+
+**Showcase on main:** every box unchanged (ramp W 1.064 / 1.112, 103° / 213°; plateau SE 1.044 / 1.093; ramp E
+1.573 / 1.611, 211°); player 0 wins at tick 1,101 (1,100); reversals 10 and 8 (11 and 8); 10 of 10 in range per
+side; 0 give-ups.
+
+**On the held mesh switch:** player 0's reversals 253 to 56 and player 1's 24 to 2; ramp E turn 381° to 352°; 10 of
+10 in range; player 1 still wins (the lane split, sc2 pathfinding Amendment 4).
+
+**Matrix:** 18 battles move; reversals over all battles 52,889 to 28,879, blocked-attacker ticks 1,206,580 to
+1,171,337, give-ups 0 and 0. One overall winner flips, battle 31 (blue wins 10 to 6, red 4 to 7, unresolved 6 to 7
+of 20; its claim is that a small change of formation swings it). Battle 26 fails its expectation on 2 extra seeds
+(0 of record). Battle 33 (68 seeds): blue 48 to 47, red 9 to 16, other 11 to 5; the overall winner stays blue.

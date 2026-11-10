@@ -35,7 +35,7 @@ use super::math::{
 use super::tuning::{
     ABANDONED_TARGET_TICKS, FLANK_RETRY_TICKS, FLANK_REVERSE_TICKS, PURSUIT_LEASH_SCAN_RANGES,
     PURSUIT_ROUTE_DRIFT, REPATH_COOLDOWN_TICKS, ROUTE_CHECK_PERIOD, ROUTE_START_TOLERANCE,
-    STALL_ABANDON_TICKS, STALL_ARRIVAL_REACH, STALL_PROGRESS, STALL_REPATH_TICKS,
+    STALL_ABANDON_TICKS, STALL_ARRIVAL_REACH, STALL_PROGRESS, STALL_REPATH_TICKS, STANDING_DRIFT,
     STEERING_LOOKAHEAD, TERRAIN_GUARD_HORIZON, WAIT_THRESHOLD, WAYPOINT_HANDOFF_MARGIN,
 };
 use super::{
@@ -1943,9 +1943,13 @@ fn surround_walk(
     let mut velocity = velocity;
     if forward_free && memory.flank_active {
         // A walk in progress ends only when the straight way in is open, not when steering finds
-        // a step that edges forward and back across the walk.
+        // a step that edges forward and back across the walk. Open means the whole straight step
+        // is free, short by at most what contact nudges a standing body (`STANDING_DRIFT`): a
+        // walk starts below half a step forward and ends at a full one, so a unit at the crowd's
+        // edge, whose straight step is clipped to between the two, keeps walking instead of
+        // stepping in and out of contact every tick (friendly-blocking plan Amendment 7).
         let straight = remove_blocked_velocity(body, checked_vec_scale(ahead, speed)?, neighbours)?;
-        forward_free = checked_dot(straight, ahead)? >= half_pace;
+        forward_free = checked_dot(straight, ahead)? >= speed.saturating_sub(STANDING_DRIFT);
     } else if forward_free && memory.flank_walked > SimScalar::ZERO {
         // A unit that has walked round this crowd goes in straight while its walk pauses:
         // steering's step can lead back across the walk, and the next blocked tick sends the unit

@@ -252,6 +252,10 @@
 // walks into the idle railgun crawler 35 (40 -> 10), which now steps aside for it (D-4: an idle
 // friend yields to a mover of no lower priority); traced against the old priorities. Checkpoint 1
 // (ticks 51 to 100) and every later checkpoint changed.
+// Re-recorded for plan 2026-11-09-friendly-blocking Amendment 7: a surround walk in progress ends
+// only when the whole straight step is free (was half a step), so a walking unit at a crowd's edge
+// keeps walking where it used to end and restart its walk; every checkpoint changed from
+// checkpoint 1 (ticks 1 to 50).
 (
     checksum_schema: 25,
     seed: 0x5EED_0F_5CAFF1E,
@@ -279,25 +283,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x612fb32d6a8dac24,
-        0xce29de9a406a927b,
-        0xa9c603742a6b2d91,
-        0x15823cff5526dba9,
-        0x9100c90281af4c04,
-        0x363ade4c45ae6139,
-        0x02d0ccccc49d7b9f,
-        0xfb16e2d2fe115443,
-        0x23e2265c5774d6d4,
-        0x18939560a07c37e1,
-        0xae8e1a9a48cb734b,
-        0x36c4cd6078af8dcf,
-        0xd559d8b7bbc94921,
-        0xb1ecc0287062f631,
-        0x2657679835931e7c,
-        0x6a50950c06c3ff90,
-        0xef58309006855800,
-        0x9f520a65106f3cc7,
-        0x1dea42ab82fb3d91,
-        0x1a3522ec06250b18,
+        0x20c21ea6a801f6ef,
+        0xff2a8eb8e771077a,
+        0x0a82ae2819953ca7,
+        0x2d1f3137e9e4b382,
+        0x4369f59b226fc62b,
+        0xadc23c0001ac0917,
+        0x92352526c9f33a45,
+        0xc13a57a4e90a52af,
+        0x9c93732c63234a4c,
+        0x127e3b8800922a74,
+        0x84820c51bf0cc2e2,
+        0x879d2388d53d47cd,
+        0x43a24a4458657f6b,
+        0xba38b0221550cb90,
+        0x5cdd2cbab8b28b20,
+        0x0657d870b5cefdd6,
+        0xaf2bf7ac16360d39,
+        0x030addd2fdf7e77f,
+        0x1ac08a9cecf3719c,
+        0x16ebfafd1bd95f1e,
     ],
 )
