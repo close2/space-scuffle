@@ -122,7 +122,7 @@ fn test_attack_move_wave_engages_and_resumes_destination() {
     );
 }
 
-/// B-106: an attack-move that chased an acquired target and killed it walks on to its far goal.
+/// B-112: an attack-move that chased an acquired target and killed it walks on to its far goal.
 /// The chase's progress memory measured the distance to the target, a few world units; the
 /// resumed walk measured against that never gained ground and gave the order up after
 /// `STALL_ABANDON_TICKS` (ten seconds), half way to its goal, with a `NoProgress` outcome.

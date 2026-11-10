@@ -182,7 +182,7 @@ impl MotionProposal {
     /// Ends an attack order whose target is gone or out of reach. The order beneath it, an
     /// attack-move the acquired target interrupted, starts afresh as after a new order: its
     /// progress is measured toward its own goal, not from the chase's best distance to the target,
-    /// which a walk to a far goal never beats (B-106).
+    /// which a walk to a far goal never beats (B-112).
     fn end_attack(&mut self) {
         self.discard_order();
         self.memory.restart();

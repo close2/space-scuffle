@@ -894,3 +894,29 @@ held switch").
    unchanged against the grid run with mirrored targets. The matrix and battle 33 per the stop rules of D-12;
    throughput per 2. If reached, the switch lands as in Amendment 4, 4, followed by WP10 and WP11; if not, it stays
    held and the numbers are reported.
+
+## Amendment 6 (WP9 accepted, 2026-11-10): orchestrator decisions
+
+Short note under charter §6, on the report of the Amendment 5 work (evidence, "Amendment 5: mirrored showcase
+targets, B-106, defect c").
+
+1. **The switch is accepted** with the mirrored showcase targets. Against the grid run with the same targets and
+   fixes: the winner is unchanged (player 0); stall give-ups 0 (grid 57, one welder's abandoned chases); ramp E,
+   player 0, ratio 1.198 / 1.300 against 1.573 / 1.611 and mean turn 190° against 211°; reversals 17 and 7, within
+   the grid's plus 10; the matrix (16 seeds) and battle 33 (68 seeds) bit-identical to the grid with the same fixes;
+   canyon throughput 11 to 13 % below the grid, within Amendment 5, 2.
+2. **Two rows of Amendment 5, 5 are missed and accepted, with reasons:**
+   - *10 of 10 in range at tick 900* is a snapshot artefact of the battle's new shape: both armies take the west
+     lane and fight there from tick 310 to 576 (9 of 9 in range at tick 430); the survivors are between targets at
+     tick 900, and 6 of 6 are in range from tick 940.
+   - *Ramp E maximum turn* (454° against the grid's 287°) is one pulse bot that the crowd wedges 0.30 from the
+     corner vertex (35, 52), inside its radius. It is filed as **B-113**, open, in the bug register.
+3. **Bug IDs.** The effects branch registered B-106 to B-111 in its WP0, so this plan's "B-106" (an attack-move
+   resumed after a chase measures progress against the chase) is renumbered **B-112**; commit `3c51afe`'s message
+   and the Amendment 5 evidence call it B-106. Defect c's wedged corner is B-113.
+4. **Q0079** (group-consistent routing) stays open with its default, per-unit routes.
+5. **Landing.** The goldens and the sandbox checksum are re-recorded on the final tree with traced causes (the
+   first divergent tick and entity for the switch, B-112 and the mirrored targets) in debug, release and
+   `wasm32-wasip1`. The showcase storyboard (`assets/captures/showcase.ron`) is restructured for the battle's new
+   shape (the armies meet in the west lane at about tick 310) and checked with a real render. WP10 and WP11 follow
+   in the same branch; the charter §4 wording for `sim_map` is proposed to the orchestrator, not edited here.
