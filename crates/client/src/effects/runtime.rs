@@ -664,7 +664,13 @@ impl EffectRuntime {
             (_, RingMapping::Front) if ring_inner > 0.0 => SHAPE_FRONT,
             _ => SHAPE_TEXTURE,
         };
-        let clip = clip_window(line, look.clip_to_line, &context.instance.bound, position);
+        // A standing card (a clump of spikes) is drawn only at a seen point and kept whole: cut
+        // at the fog's edge it would read as half a clump (review round 4, fog capture). Only
+        // the line's own ends cut it; ground-hugging cards end where the fog begins.
+        let clip = match line {
+            Some(line) if standing && look.clip_to_line => line_clip_window(line),
+            _ => clip_window(line, look.clip_to_line, &context.instance.bound, position),
+        };
         let surface = Surface::of(look.breakup.as_ref(), seed);
         let card = SpriteInstance {
             center: center.to_array(),
@@ -929,8 +935,8 @@ fn clip_window(
 /// The clip window of an instance at `position` (XZ) on `line`, whose search points lie
 /// `spacing` apart from its start: the whole line when the viewer sees every point, otherwise
 /// the run of seen points around the instance's own point, ending half a spacing beyond its
-/// outermost seen points (where the fog's cell edge lies for points at cell centres), so every
-/// layer of the line (ground marks, spikes, dust, chips) is cut at the same place where the line
+/// outermost seen points (where the fog's cell edge lies for points at cell centres), so the
+/// ground-hugging layers of the line (marks, dust, chips) end at the same place where the line
 /// runs into the fog (plan Amendment 2, R6; review round 4). No clip for a line without
 /// horizontal length.
 #[must_use]

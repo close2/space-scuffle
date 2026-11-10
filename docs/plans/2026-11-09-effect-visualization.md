@@ -1033,9 +1033,10 @@ applies its ranked changes in the client, the catalog's presentation data, the e
   instead of by the ramp's top, which the drying ramp curve had turned into the brightest emerald.
 - `shell_impact` (accepted): only the shock front's width variation (a shader change shared with the acid front)
   and the dust starting after the front; the streak fringe stays recorded for the scale-out.
-- Fog (R6): a partly seen line's layers are clipped to the run of seen points around each instance, half a
-  spacing beyond the outermost seen point, so ground marks and spikes end at the same place; the effect lab can
-  draw the viewer's fog as the battle terrain does, for the review's fog capture.
+- Fog (R6): a partly seen line's ground-hugging layers are clipped to the run of seen points around each
+  instance, half a spacing beyond the outermost seen point (the cell edge); a standing clump is drawn whole when
+  its point is seen, so it is never cut in half at the fog's edge; the effect lab can draw the viewer's fog as the
+  battle terrain does, for the review's fog capture.
 
 Evidence: [`slice_review.md`](../evidence/effects/review/slice_review.md) ("Round 4"),
 [`texture_review.md`](../evidence/effects/review/texture_review.md) ("Review round 4"), the packet's "Round 4"

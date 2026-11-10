@@ -294,7 +294,7 @@ section "Round 4".
 
 | Gap | Change |
 |---|---|
-| A partly seen line's marks ran on past the last seen point into the fog (each layer clipped only to the whole line), and the reviewer could not see the fog edge | Every `clip_to_line` layer of a partly seen line is clipped to the **run of seen points** around its own point, half a spacing beyond the outermost seen points (`runtime::seen_clip_window`): ground marks, spikes, dust and chips all end at the same place (the cell edge for points at cell centres); the ground marks feather over 0.3 as at the line's ends. Unit test `a_partly_seen_line_is_clipped_to_the_seen_run_around_each_instance`; the GPU test `a_line_seen_only_in_part_draws_only_where_it_is_seen` now allows 0.7 (was 0.75) of reach back. |
+| A partly seen line's marks ran on past the last seen point into the fog (each layer clipped only to the whole line), and the reviewer could not see the fog edge | Every ground-hugging `clip_to_line` layer of a partly seen line (marks, dust, chips) is clipped to the **run of seen points** around its own point, half a spacing beyond the outermost seen points (`runtime::seen_clip_window`), the cell edge for points at cell centres; the ground marks feather over 0.3 as at the line's ends. A standing clump is drawn whole when its point is seen (clipped there it read as half a clump in the fog take). Unit test `a_partly_seen_line_is_clipped_to_the_seen_run_around_each_instance`; the GPU test `a_line_seen_only_in_part_draws_only_where_it_is_seen` now allows 1.0 (was 0.75) of reach back, for the whole first clump. |
 | No picture of the fog edge | The effect lab draws the viewer's fog as the battle terrain does (a black veil that leaves the ground a quarter of its colour, hard cell edge; `LabSubject::fog_below_x`), and `battle_capture --effect-lab spine_line --fog-seen-from 4` makes `spine_line_fog_contact.png` and `spine_line_fog_sequence.png`: the attacker and the first four points in fog, the line running into sight. |
 | The sheet's last column was the effect's lifetime without a line's travel, so the far half of the fissure still showed in it (round-3 review, `spine_line` item 3) | The lab's ages run to the effect's true end (lifetime plus the line's travel delay, `runtime::max_line_delay`), the moment the runtime frees it. |
 | The liquid stain went flat when it dried, had no dark rim, and its relief was uniform | The liquid material keeps 75 % of its relief light when dry (only the sheen dries away); the relief's strength varies with the pooling noise from flat pools (0.2) to large swells (1.6); a **wet rim** darkens and saturates the colour (×0.36, 0.58, 0.34) along every edge of the liquid: the band of erosion order 0.10 beyond the erosion step (the outline and the holes it dries into) and the texture's thinning outline. |
@@ -304,3 +304,48 @@ section "Round 4".
 
 Three new image-model stills ($0.33) replace `chitin_clump`: massive clumps with lit and shadowed flanks and a soil
 collar. Ledger $106.12 of $200.
+
+## Round 4
+
+Evidence: the round-4 contact sheets, sequences and the new fog sheet in this directory (lavapipe, Mesa software
+Vulkan, debug build of `battle_capture`, Xvfb, 2026-11-10: the same path as round 3), judged cell by cell,
+cropped and enlarged (full-resolution lab frames for the close checks), with stain colours sampled along a ray
+from the centre (3×3 averages of the sRGB frame, bright ground, close zoom). The crowd capture was **not**
+re-taken in round 4 (it is round 3's, with the scratch catalog); item 6 is judged on the sheets and on round 3's
+frame and is marked accordingly. Strict reading of the round-3 review's ranked changes: anything that still reads
+as a tell is a reject.
+
+### `shell_impact`
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1–5, 7 | All | Accept | Unchanged except the two polish items: the shock band's width now wavers visibly around the circle while its outer edge stays on the reach (sequence frames 2–6); the ground dust starts at 0.12 s, so the ring races out over clean ground. Char core, streak mark, timing and fall-off as in round 3. The regular streak fringe (round-3 optional 2) remains, recorded for the scale-out. |
+| 6 | Crowd | Accept (round 3's frame) | Not re-taken; the shell's look in a crowd is unchanged apart from the ring's width. |
+
+### `acid_burst`
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1 | Reads at gameplay zoom | Accept | From frame 0 a ragged dark-green stain of about 0.9 of the reach, at full size by about 0.12 s and holding the red 2.2 circle (rows 2 and 4) until erosion starts at about 1.8 s; no contraction when the front leaves (sequence frames 8–10). |
+| 2 | Layered | Accept | Light, crown (opaque dark-wet body with lime highlights), hot core, front lip, dark edge ring, eleven globs on arcs (visible at default zoom, sequence frames 1–6), spray, fumes rising off the stain (visible as a pale wisp above it at 0.48–0.9 s), liquid stain, wet centre. |
+| 3 | Timing | Accept | Peak at frames 0–1; stain olive-green at 0.9 s and olive-brown at 1.8 s (samples in the packet), erodes from its edge and holes from about 1.8 s, gone at 6 s. |
+| 4 | No tells of cheapness | Accept, with two watch points | Relief and a dark wet rim at every age; relief varies (flat pools and swells, no polka dots); no glass rim, no pale gap, no gel oval at frame 0. Watch points for the reviewer: (a) the crown's first frames are a symmetric three-pronged splash seen from above; at close zoom it can read as a "Y" (rows 3 and 7, ages 0–0.18 s); (b) the dry stain at 3.0 s is a fairly even olive with soft relief, crust texture is modest. |
+| 5 | Value and colour | Accept | Lime only in the first frames and at the centre; emerald body with a darker, more saturated rim band (sampled darker than the body at 0.9 s and 1.8 s); olive-brown crust by 1.8 s; separates from teal by value and hue. |
+| 6 | Crowd | Not judged (no round-4 frame) | The rim, kept relief and early olive should remove round 3's pastel fields; this needs the crowd frame to confirm. |
+| 7 | Fog | Accept | Anchored at the burst centre; nothing outside the zone. |
+
+### `spine_line`
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1 | Reads at gameplay zoom | Accept | A row of heavy spike clumps travelling along the line, then the torn-earth scar and the fissure; marks run from the first to the last search point. |
+| 2 | Layered | Accept | Heave, scar, tears along the line, fissure, clumps with soil collars, light dust burst, settling dust, chips. |
+| 3 | Timing | Accept | Tears open a frame or two before each clump; clumps shoot up, overshoot, settle, sink from the source end; the sheet now runs to the true end (3.28 s) and the last column is clean. |
+| 4 | No tells of cheapness | Accept, with a watch point | No strokes across the line at any age (single spikes removed, tears run along it); clumps have volume (lit and shadowed flanks, soil collar) and stand about 0.7–0.9 units. Watch point: at close zoom the clumps' outer spikes splay wide, so a row of them can read as a row of spiky crowns; the scar is wider and broken, but its clods read only at close zoom. |
+| 5 | Value and colour | Accept | The newest clump bone-ivory but still shaded; older clumps umber; scar darker than the ground with lighter clods. |
+| 6 | Crowd | Not judged (no round-4 frame) | Round 3's frame shows thin lines; the round-4 scar is wider and needs the crowd frame. |
+| 7 | Fog | Accept | Fog sheet: nothing at the attacker; the ground marks and dust end at the fog edge (the cell edge half a spacing before the first seen point), fading in over 0.3; the first seen clump is drawn whole (a first take cut it in half at the edge, fixed), so its outer spikes lean a little over the fogged ground; no pop. |
+
+**Round 4 result (implementer):** `shell_impact` accept; `acid_burst` and `spine_line` accept on items 1–5 and
+7, with the watch points above; item 6 open until a round-4 crowd frame exists. Tests: see the packet and the
+hand-back.

@@ -181,13 +181,13 @@
             (1.00, (0.030, 0.022, 0.016, 0.92)),
         ],
         // The spine line's scar of torn earth (review round 4): dark furrows between the clods
-        // and lit, upturned clods near the ground's own value, so the torn-earth texture reads.
+        // and lit, upturned clods a step darker than the ground, so the torn-earth texture reads.
         "scar": [
             (0.00, (0.016, 0.012, 0.008, 0.00)),
             (0.25, (0.020, 0.015, 0.010, 0.55)),
             (0.50, (0.048, 0.036, 0.025, 0.62)),
-            (0.80, (0.20, 0.165, 0.12, 0.74)),
-            (1.00, (0.50, 0.44, 0.34, 0.80)),
+            (0.80, (0.10, 0.080, 0.058, 0.72)),
+            (1.00, (0.20, 0.17, 0.13, 0.76)),
         ],
         // The ground tearing open ahead of the spines (review round 4): soft, dark, lower in
         // contrast than a crack.

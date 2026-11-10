@@ -1,11 +1,83 @@
-# Independent Review Packet: Effect Vertical Slice (Round 3)
+# Independent Review Packet: Effect Vertical Slice (Round 4)
 
 Plan: [`docs/plans/2026-11-09-effect-visualization.md`](../../../plans/2026-11-09-effect-visualization.md) §7.3.
 This packet is for the second reviewer of the vertical slice. It lists the material to judge and the checklist to
 judge it by, and nothing else: it holds no verdict of the implementer, on purpose. Please judge each of the three
 effects against each of the seven checklist items, write **accept** or **reject** with a concrete reason (which
 sheet, which cell or frame, what you see), and put your review in a new file next to this one
-(round 3: `independent_review_round3.md`, see "Round 3" below).
+(round 4: `independent_review_round4.md`, see "Round 4" below).
+
+## Round 4
+
+Round 3 accepted `shell_impact` again and rejected `acid_burst` and `spine_line` (narrowly)
+([`independent_review_round3.md`](independent_review_round3.md), kept as written with rounds 1 and 2). This is
+round 4 of up to five (Q0080). Please write the round-4 review to a new file next to this one,
+`independent_review_round4.md`, in the same form, and judge all three effects afresh against the checklist
+(`shell_impact` too, so that a regression would show). The tables below map each round-3 finding to what changed;
+they list changes, not verdicts. The images of this directory are the round-4 ones; round 3's are in commit
+`fd24c31`, round 2's in `d03ed19`, round 1's in `bb5a61c`.
+
+**What else changed in the material.** The contact sheets' last column is now the effect's true end, the moment
+the runtime frees it: for the line that is its lifetime plus the travel of its last point, so the spine sheet's
+ages are 0, 0.099, 0.263, 0.493, 0.985, 1.642, 2.463 and 3.284 s (round 3 stopped at 2.53 s, before the far
+points' marks had faded; see `spine_line` item 3). The splash sheets' ages are unchanged. A new **fog sheet** and
+sequence show the line running out of the fog (section "Fog" below).
+
+### `spine_line`
+
+| Round-3 finding | What changed |
+|---|---|
+| 4a / ranked change 1: dark pen-stroke ruptures and leaning single spikes cross the line; at 1.27 s only "/ \| — \\" strokes remain | The ruptures are now short, wide, **ragged tears of torn earth running along the line** (the `earth_scar` texture turned along the line, 0.84 units long and about as wide as the scar, of their own size, scattered at most 0.1 off the line), soft-edged (erosion softness 0.25) and lower in contrast (their own ramp, opacity 0.55 to 0.66, was 0.85 to 0.92); they open a frame or two before the clump and are gone by 1.0 s, with the spines. The **single leaning spikes are removed**: each clump now carries three to five heavy spikes, so nothing slanted stands on its own at any age. |
+| 4b / ranked change 2: clumps small and twiggy, flat silhouettes with almost no shading, about half a unit tall | New clump textures ([`texture_review.md`](texture_review.md), "Review round 4"): heavy conical spikes, about a third as wide at the base as tall, a bright warm-umber left flank and a shadowed right flank (the key light from the upper left), and a **collar of torn soil clods** at the root. The card is larger (0.9 of the spacing, was 0.62) and stands higher, so the spikes rise about 0.7 to 0.9 units over the ground. The newest clump's highlight is gentler (ramp input 1.8×, was 2.4×), so it stays shaded while it is the brightest thing in the line. |
+| 4c / ranked change 3: the scar is a thin, pencil-like grey line; the torn earth does not show | The scar's box is three times as wide (a decal's `width` may now exceed 1), so the furrow of torn earth is about 0.3 to 0.5 across and of uneven width; its own ramp keeps the dark furrows and the upturned clods a step darker than the ground, with the faint parts of the texture transparent, and less noise breakup lets the texture's clods show. |
+| 3 note / ranked change 3: a faint stretch of fissure still visible at 2.53 s | The sheet now runs to the true end (3.28 s): its last column shows the ground clean. The runtime always kept the effect until then and every mark's intensity reaches zero at its own end. |
+
+### `acid_burst`
+
+| Round-3 finding | What changed |
+|---|---|
+| 1 / ranked change 2: after the front leaves (about 0.36 s) the stain covers only 75–85 % of the reach, with deep bites; it visibly contracts between frames 8 and 10 | The stain is a little larger (1.14 of the reach; its texture's ragged outline lies at the reach) and its erosion **holds the full disc until about 1.8 s** (only a noise-broken edge, threshold 0.10 to 0.12), then dries from its edge and from holes. It is at its full size from about 0.12 s, before the front reaches the reach, so nothing contracts when the front hands over. |
+| 4a / 5 / ranked change 1: from 0.9 s a flat, mottled mid-green moss patch; no darker wet rim at any age | The liquid **keeps its relief as it dries** (the crust keeps 75 % of the relief light; only the wet sheen dries away). A **dark wet rim** is drawn by the liquid material along every edge of the liquid, its outline and the holes it dries into, at every age: a band about 0.1 to 0.2 wide, darker and more saturated than the body (colour ×0.24, 0.44, 0.24 at the edge). Sampled on the round-4 sheet (bright ground, close zoom, a ray from the centre to the right edge, sRGB): at 0.9 s the body is about (61, 112, 53) and the band inside the edge about (63, 96, 51); at 1.8 s the body is about (77, 91, 57) and the band about (69, 80, 53). |
+| 3 note / ranked change 1: the colour is still emerald at 1.8 s; olive only at 4.5 s | The stain's ramp has a wide olive-brown range below the emerald, and the drying curve walks the body there faster: olive-green by 0.9 s, **olive-brown by about 1.8 s** (sample above; round 3 sampled (77, 140, 64) at 1.8 s). |
+| 4b / ranked change 3: the front is a pale, translucent, even glass or soap-bubble rim with a lighter halo; a pale gap between stain and rim | The front's ramp is now a **dark, wet, nearly opaque lip** (opacity 0.80 to 0.96, darkest at its leading edge), with no pale or translucent part; its trailing edge is broken by stronger noise, so its width varies about twofold around the circle. The stain lies under it from the first frame, so no ground shows between them. |
+| 4c: the contraction is a soft pop | See the first row. |
+| 4d / ranked change 4: frame 0 is a smooth, glowing lime oval of half the reach with white sparkle dots | The radial ground glow is removed. At frame 0 the stain itself is there, thick, at 0.85 of its size (about 0.9 of the reach, ragged), with the splash crown above it and a small hot core for two frames. |
+| 2 note / ranked change 4: no airborne part at default zoom; tiny crown; globs not visible; vapour lies on the stain | The crown has its own opaque dark-wet ramp (lime only on its highlights), is larger from frame 0 (1.0 of the reach, growing to 1.18) and thrown higher, and torn harder by noise. **Eleven globs** of 0.28 to 0.44 units fly on visible arcs from across the burst (the particle level of detail had cut them at default zoom, because it read the emitter's small size). The fumes are fainter and pale yellow-grey, start from five places over the stain and rise at 2.2 units per second. |
+| 4e / ranked change 5: the relief is regular and blobby, uniform over the disc | The relief's strength varies with low-frequency pooling noise, from flat pools (0.2) to large swells (1.6), and is read three mips above the footprint, so only broad swells catch the light. |
+| Crowd: flat, light, pastel-green fields | Follows from the rim, the kept relief and the early olive (see the crowd capture). |
+
+### `shell_impact` (accepted in rounds 2 and 3; optional changes)
+
+| Round-3 optional change | What changed |
+|---|---|
+| 1: vary the shock ring's width by about two around its circumference; drop the haze inside it | The front's trailing-edge noise is stretched in contrast, so the band's width varies about twofold around the circle (its outer edge, the reach, is unchanged). The dust kicked out along the ground starts at 0.12 s, after the front has left the reach (was 0.03 s), so no haze sits inside the ring while it races out. |
+| 2: a less regular streak fringe | Not changed: it needs a new blast-mark texture; recorded for the scale-out. |
+| New note: four soft lobes at the flash's edge on teal at age 0 | Not changed (not visible at gameplay zoom). |
+
+### Fog (checklist item 7), round 4
+
+The round-3 review asked for a picture of the line running out of the fog. [`spine_line_fog_contact.png`](spine_line_fog_contact.png)
+(legend [`spine_line_fog_contact.txt`](spine_line_fog_contact.txt)) and [`spine_line_fog_sequence.png`](spine_line_fog_sequence.png)
+are the same program as the other sheets with the burrowed attacker and the line's first four search points in
+the viewer's fog. The fog is drawn as the battle terrain draws it: fogged ground keeps a quarter of its colour, with
+a hard edge at a cell boundary (`terrain.wgsl`). The line's points sit at cell centres, as for units standing on
+cells, so the fog edge lies half a spacing before the first seen point.
+
+What it showed, and what changed for it. Before round 4 every layer was clipped only to the whole line, so the
+scar and fissure pieces of the first seen point ran on up to about a unit into the fog. Now the ground-hugging
+layers (scar, tears, heave, fissure, dust, chips) end where the line enters the fog, the cell edge half a spacing
+before the first seen point, fading in over 0.3 units across it (the same feather as at the line's ends). A first
+fog take also clipped the clumps there, and the first clump, whose splayed spikes reach about 0.9 to each side of
+its point, was cut in half at the edge; so a standing clump is now drawn whole whenever its point is seen (only the
+line's own ends cut it): it never pops or appears cut, and its outer spikes may lean up to about 0.4 over the
+fogged ground beside the first seen point. Nothing else is drawn on the fogged side, and nothing at the attacker.
+
+### Crowd capture, round 4
+
+**Not re-taken in round 4.** [`stress_capture_400.png`](stress_capture_400.png) is still round 3's frame
+(lavapipe, debug, a scratch catalog naming the two effects for their units), so it shows the round-3 looks. The
+implementer handed back before re-taking it; the orchestrator decides whether a round-4 crowd frame is made before
+this review or judged from the sheets (the default-zoom look of one stain is in rows 1 and 5 of the acid sheet).
 
 ## Round 3
 
