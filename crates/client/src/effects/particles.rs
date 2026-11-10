@@ -241,6 +241,8 @@ mod tests {
             ramp: RampId(0),
             size_curve: None,
             curve: None,
+            rotation: crate::effects::catalog::schema::RotationDef::Fixed,
+            roll: 0.0,
         }
     }
 

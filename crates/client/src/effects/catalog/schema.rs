@@ -172,13 +172,18 @@ const fn yes() -> bool {
 }
 
 /// A radius animated from one value to another over the layer's life.
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RadiusDef {
     /// Radius at the start of the layer.
     pub from: ValueDef,
     /// Radius at the end of the layer.
     pub to: ValueDef,
+    /// Progress from `from` to `to` over the layer's life (0 at `from`, 1 at `to`); `None`
+    /// is linear. A curve that reaches 1 early holds the ring at `to`, a front that stops at
+    /// the reach.
+    #[serde(default)]
+    pub curve: Option<String>,
 }
 
 /// How a card is turned.
@@ -193,14 +198,39 @@ pub enum Orient {
     VerticalAlongLine,
 }
 
-/// How a card's roll angle is chosen.
+/// How a card's roll angle and mirroring are chosen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 pub enum RotationDef {
-    /// No roll.
+    /// No roll, never mirrored.
     #[default]
     Fixed,
-    /// A roll drawn from the layer's deterministic hash.
+    /// A roll and a horizontal mirror drawn from the layer's deterministic hash.
     Random,
+    /// No roll; a horizontal mirror drawn from the hash (upright elements such as spikes,
+    /// which must keep their base down).
+    Mirror,
+}
+
+/// How a ring card maps its texture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+pub enum RingMapping {
+    /// The texture spans the card; the ring mask cuts the band out of it.
+    #[default]
+    Card,
+    /// The texture's middle band is wrapped around the ring (v across the band, u along the
+    /// angle, mirrored back and forth over the element's middle so there is no seam), so any
+    /// element breaks the ring up along its length.
+    Polar,
+}
+
+/// How a decal's box is turned about world up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+pub enum DecalYaw {
+    /// A yaw drawn from the layer's deterministic hash.
+    #[default]
+    Random,
+    /// The texture's u axis along the event's line (random without a line).
+    AlongLine,
 }
 
 /// The block a layer draws, with its look parameters (§5.1).
@@ -233,6 +263,14 @@ pub enum BlockDef {
         /// Flipbook frames per second; `None` fits the flipbook to the layer's duration.
         #[serde(default)]
         fps: Option<f32>,
+        /// Flipbook position over the layer's life (0 first frame, 1 last frame); overrides
+        /// `fps`. A falling curve plays the flipbook backwards, a flat one holds a frame.
+        #[serde(default)]
+        frame_curve: Option<String>,
+        /// Height of the card's centre above its placed point, in multiples of its half
+        /// size; `None` is 1 for `VerticalAlongLine` (base on the ground) and 0 otherwise.
+        #[serde(default)]
+        lift: Option<f32>,
     },
     /// A card masked to a ring, its radius animated from `radius.from` to `radius.to`.
     Ring {
@@ -248,6 +286,13 @@ pub enum BlockDef {
         /// Erosion threshold over the layer's life.
         #[serde(default)]
         erosion: Option<String>,
+        /// How the texture is mapped onto the ring.
+        #[serde(default)]
+        mapping: RingMapping,
+        /// Height of the ring above its placed point in world units (a ground ring sits a
+        /// little above the ground so the depth test keeps it).
+        #[serde(default)]
+        height: f32,
     },
     /// A ground mark projected through the depth buffer.
     Decal {
@@ -264,6 +309,17 @@ pub enum BlockDef {
         /// Upward-normal cosine below which the mark fades out (steep faces), in [0, 1).
         #[serde(default = "default_grazing")]
         grazing: f32,
+        /// How the box is turned about world up.
+        #[serde(default)]
+        yaw: DecalYaw,
+        /// Half width across the texture's u axis as a fraction of the half length (`size`),
+        /// in (0, 1]; 1 is a square mark.
+        #[serde(default = "one")]
+        width: f32,
+        /// With `yaw: AlongLine`, the mark is cut off where the event's line starts and ends,
+        /// so segments longer than their spacing still end exactly at the line's ends.
+        #[serde(default)]
+        clip_to_line: bool,
     },
     /// A short point light.
     Light {
@@ -271,6 +327,10 @@ pub enum BlockDef {
         color: (f32, f32, f32),
         /// Peak intensity in lumens.
         intensity: f32,
+        /// Height of the light above its placed point in world units (a light on the ground
+        /// grazes it and lights nothing).
+        #[serde(default)]
+        height: f32,
     },
     /// A burst of CPU-simulated particles.
     Particles {
@@ -314,6 +374,10 @@ pub enum PlacementDef {
         /// Speed at which the instances appear along the line.
         #[serde(default)]
         travel: f32,
+        /// Instances sit between the points, half a spacing in, one fewer: segments that join
+        /// the points and end exactly at the line's ends (rather than centred on the ends).
+        #[serde(default)]
+        between: bool,
     },
 }
 
@@ -332,6 +396,17 @@ pub struct LayerDef {
     /// Intensity over the layer's life; `None` is a constant 1.
     #[serde(default)]
     pub curve: Option<String>,
+    /// Factor on `size` over the layer's life (cards, decals and lights); `None` is 1.
+    #[serde(default)]
+    pub size_curve: Option<String>,
+    /// Factor on the texture's shading before the ramp lookup over the layer's life (cards
+    /// and decals): a falling curve cools the element down its ramp; `None` is 1.
+    #[serde(default)]
+    pub ramp_curve: Option<String>,
+    /// Random spread of each placed instance's size: the size is scaled by a hashed factor in
+    /// `[1 - size_jitter, 1 + size_jitter]`; in [0, 1).
+    #[serde(default)]
+    pub size_jitter: f32,
     /// Budget priority.
     #[serde(default)]
     pub priority: Priority,
@@ -442,6 +517,14 @@ pub struct EmitterDef {
     /// Opacity over life; `None` is a constant 1.
     #[serde(default)]
     pub curve: Option<String>,
+    /// Roll of each card: `Fixed` uses `roll_deg` only, `Random` adds a hashed roll and
+    /// mirror, `Mirror` a hashed mirror.
+    #[serde(default)]
+    pub rotation: RotationDef,
+    /// Fixed roll in degrees, which turns the texture's own axis onto the card's length (90
+    /// for an element drawn along +x under `VelocityStretched`).
+    #[serde(default)]
+    pub roll_deg: f32,
 }
 
 /// Pool capacities and level-of-detail rules (§5.6), sized at load and never grown.

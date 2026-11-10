@@ -23,6 +23,10 @@ pub const ORIENT_GROUND: u32 = 1;
 pub const ORIENT_VERTICAL: u32 = 2;
 /// The card faces the camera with its length along `axis`, stretched by `stretch`.
 pub const ORIENT_STRETCHED: u32 = 3;
+/// [`SpriteInstance::flags`] bit: the texture is mirrored horizontally.
+pub const FLAG_MIRROR: u32 = 1;
+/// [`SpriteInstance::flags`] bit: a ring wraps the texture's middle band around itself.
+pub const FLAG_POLAR: u32 = 2;
 
 /// One card: a sprite, a ring or a particle.
 // PERFORMANCE RATIONALE:
@@ -65,15 +69,15 @@ pub struct SpriteInstance {
     pub orient: u32,
     /// Factor on the texture's shading before the ramp lookup (particles cool over life).
     pub ramp_scale: f32,
-    /// Unused; keeps the record a multiple of 16 bytes.
-    pub padding: f32,
+    /// `FLAG_*` bits.
+    pub flags: u32,
 }
 
 /// One decal box.
 // PERFORMANCE RATIONALE:
 // Why: As for cards: decals are drawn by one instanced draw from a retained storage buffer.
 // What: A `Pod` record of four 16-byte rows matching the WGSL struct.
-// Trade-off: Two padding words.
+// Trade-off: Three padding words.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Default, Pod, Zeroable)]
 pub struct DecalInstance {
@@ -97,8 +101,15 @@ pub struct DecalInstance {
     pub intensity: f32,
     /// Erosion threshold 0..1.
     pub erosion: f32,
-    /// Unused.
-    pub padding: [f32; 2],
+    /// Factor on the texture's shading before the ramp lookup.
+    pub ramp_scale: f32,
+    /// Smallest local x (along the box's own x axis, in half extents) drawn: a mark clipped
+    /// to its line ends there; -1 or less draws the whole box.
+    pub clip_min: f32,
+    /// Largest local x drawn; 1 or more draws the whole box.
+    pub clip_max: f32,
+    /// Unused; keeps the record a multiple of 16 bytes.
+    pub padding: [f32; 3],
 }
 
 /// A point light requested this frame.
@@ -121,7 +132,8 @@ mod tests {
     #[test]
     fn records_are_whole_sixteen_byte_rows() {
         assert_eq!(size_of::<SpriteInstance>(), 80);
-        assert_eq!(size_of::<DecalInstance>(), 64);
+        assert_eq!(size_of::<DecalInstance>(), 80);
+        assert_eq!(std::mem::offset_of!(DecalInstance, clip_min), 60);
         assert_eq!(std::mem::offset_of!(SpriteInstance, axis), 16);
         assert_eq!(std::mem::offset_of!(SpriteInstance, layer_a), 32);
         assert_eq!(std::mem::offset_of!(SpriteInstance, intensity), 48);

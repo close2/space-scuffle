@@ -78,12 +78,13 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let texel = flipbook_sample(
         atlas, atlas_sampler, local.xz * 0.5 + 0.5, decal.layer_a, decal.layer_b, decal.frame_mix, 0.0,
     );
-    let inside = all(abs(local) <= vec3<f32>(1.0)) && depth > 0.0;
+    let clipped = local.x < decal.clip_min || local.x > decal.clip_max;
+    let inside = all(abs(local) <= vec3<f32>(1.0)) && depth > 0.0 && !clipped;
     let grazing = clamp((abs(normal.y) - decal.grazing) / max(1.0 - decal.grazing, 1e-3), 0.0, 1.0);
     let height_fade = 1.0 - smoothstep(0.7, 1.0, abs(local.y));
     let coverage = texel.g * erosion_step(texel.b, decal.erosion) * decal.intensity * grazing * height_fade;
     if (!inside || coverage <= 0.0) {
         discard;
     }
-    return premultiply(ramp_lookup(ramps, decal.ramp_row, texel.r), coverage);
+    return premultiply(ramp_lookup(ramps, decal.ramp_row, texel.r * decal.ramp_scale), coverage);
 }

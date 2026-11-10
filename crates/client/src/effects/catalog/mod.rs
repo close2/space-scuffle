@@ -29,8 +29,8 @@ pub use units::{UnitEffectTables, WeaponEffectIds};
 use super::curve::{Curve, Ramp};
 use bevy::prelude::*;
 use schema::{
-    BurstCount, EffectClass, EmitterShape, EventKind, Orient, ParticleOrient, PlacementDef,
-    Priority, RadiusDef, RotationDef, ValueDef,
+    BurstCount, DecalYaw, EffectClass, EmitterShape, EventKind, Orient, ParticleOrient,
+    PlacementDef, Priority, RingMapping, RotationDef, ValueDef,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -71,6 +71,15 @@ pub struct ElementRef {
     pub duration_secs: Option<f32>,
 }
 
+impl ElementRef {
+    /// Whether the element is a set of interchangeable variants (several frames and no play
+    /// time) rather than a flipbook: each drawn instance shows one variant, chosen by hash.
+    #[must_use]
+    pub const fn is_variant_set(&self) -> bool {
+        self.frames > 1 && self.duration_secs.is_none()
+    }
+}
+
 /// The look of a card (sprite or ring).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CardLook {
@@ -92,6 +101,13 @@ pub struct CardLook {
     pub drift: Vec3,
     /// Frames per second; `None` fits the flipbook to the layer.
     pub fps: Option<f32>,
+    /// Flipbook position over life; overrides `fps`.
+    pub frame_curve: Option<CurveId>,
+    /// Height of the card's centre above its placed point in half sizes; `None` is the
+    /// orientation's default.
+    pub lift: Option<f32>,
+    /// Texture mapping of a ring (plain cards ignore it).
+    pub mapping: RingMapping,
 }
 
 /// The look of a decal.
@@ -107,6 +123,12 @@ pub struct DecalLook {
     pub depth: f32,
     /// Upward-normal cosine below which the mark fades out.
     pub grazing: f32,
+    /// How the box is turned about world up.
+    pub yaw: DecalYaw,
+    /// Half width as a fraction of the half length.
+    pub width: f32,
+    /// Whether the mark is cut off at the line's ends.
+    pub clip_to_line: bool,
 }
 
 /// A layer's block, resolved.
@@ -120,6 +142,8 @@ pub enum Block {
         look: CardLook,
         /// Thickness as a fraction of the radius.
         thickness: f32,
+        /// Height above the placed point, world units.
+        height: f32,
     },
     /// A projected ground mark.
     Decal(DecalLook),
@@ -129,6 +153,8 @@ pub enum Block {
         color: Vec3,
         /// Peak intensity in lumens.
         intensity: f32,
+        /// Height above the placed point, world units.
+        height: f32,
     },
     /// A particle burst.
     Particles(EmitterId),
@@ -175,10 +201,27 @@ pub struct Layer {
     pub priority: Priority,
     /// Half-size, radius or emitter radius.
     pub size: ValueDef,
+    /// Factor on the size over life.
+    pub size_curve: Option<CurveId>,
+    /// Factor on the shading before the ramp lookup over life.
+    pub ramp_curve: Option<CurveId>,
+    /// Hashed spread of each instance's size, as a fraction.
+    pub size_jitter: f32,
     /// Ring radius over life.
-    pub radius: Option<RadiusDef>,
+    pub radius: Option<RingRadius>,
     /// Placements, 1 to [`MAX_PLACEMENTS`].
     pub placements: Vec<PlacementDef>,
+}
+
+/// A ring's radius over its layer's life, resolved.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RingRadius {
+    /// Radius at the start.
+    pub from: ValueDef,
+    /// Radius at the end.
+    pub to: ValueDef,
+    /// Progress from `from` to `to` over life; `None` is linear.
+    pub curve: Option<CurveId>,
 }
 
 /// A resolved effect.
@@ -225,6 +268,10 @@ pub struct Emitter {
     pub size_curve: Option<CurveId>,
     /// Opacity over life.
     pub curve: Option<CurveId>,
+    /// Roll and mirror choice.
+    pub rotation: RotationDef,
+    /// Fixed roll, radians.
+    pub roll: f32,
 }
 
 /// Pool capacities and level-of-detail rules.

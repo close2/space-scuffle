@@ -30,13 +30,15 @@ use super::budget::{
     burst_count, crowd_factor, layer_admitted, lod_skips, particle_scale, projected_px,
     retire_fade, retirement_candidate, RetireCandidate,
 };
-use super::catalog::schema::{EffectClass, Orient, ParticleOrient, Priority, RotationDef};
+use super::catalog::schema::{
+    DecalYaw, EffectClass, Orient, ParticleOrient, Priority, RingMapping, RotationDef,
+};
 use super::catalog::{
-    Block, CardLook, DecalLook, EffectCatalog, EffectId, ElementRef, Layer, Pool,
+    Block, CardLook, CurveId, DecalLook, EffectCatalog, EffectId, ElementRef, Layer, Pool,
 };
 use super::instances::{
-    DecalInstance, LightInstance, SpriteInstance, ORIENT_CAMERA, ORIENT_GROUND, ORIENT_STRETCHED,
-    ORIENT_VERTICAL,
+    DecalInstance, LightInstance, SpriteInstance, FLAG_MIRROR, FLAG_POLAR, ORIENT_CAMERA,
+    ORIENT_GROUND, ORIENT_STRETCHED, ORIENT_VERTICAL,
 };
 use super::particles::{Burst, ParticlePool};
 use super::placement::{hash3, instance_count, place, unit_float, WorldLine};
@@ -164,6 +166,9 @@ pub struct EffectRuntime {
     pub stats: EffectStats,
     /// Time of the last build, seconds.
     last_build: Option<f64>,
+    /// When set, only layers of this priority are drawn and fired (diagnostics: the effect
+    /// lab and the GPU tests isolate the `Critical` layers to measure their footprint).
+    pub only: Option<Priority>,
 }
 
 /// Where and how an effect is spawned.
@@ -198,6 +203,7 @@ impl EffectRuntime {
             ),
             stats: EffectStats::default(),
             last_build: None,
+            only: None,
         }
     }
 
@@ -227,7 +233,7 @@ impl EffectRuntime {
                 .layers
                 .iter()
                 .any(|layer| layer.priority == Priority::Detail),
-            bursts_fired: 0,
+            bursts_through: f32::NEG_INFINITY,
         };
         self.sequence = self.sequence.wrapping_add(1);
         if let Ok(handle) = self.pool.spawn(instance) {
@@ -237,6 +243,13 @@ impl EffectRuntime {
             self.stats.refused += 1;
             None
         }
+    }
+
+    /// Removes every effect and particle and restarts the spawn sequence, so the next effects
+    /// draw the same random choices as the first ones did (the effect lab's takes).
+    pub fn reset(&mut self) {
+        self.clear();
+        self.sequence = 0;
     }
 
     /// Removes every effect and particle.
@@ -299,7 +312,8 @@ impl EffectRuntime {
         }
     }
 
-    /// Spawns the bursts of particle layers whose start has come.
+    /// Spawns every particle burst that fell due since the previous build: each placed
+    /// instance of a particle layer is due at the layer's start plus its placement delay.
     fn fire_bursts(&mut self, catalog: &EffectCatalog, now: f64, camera: Option<&CameraView>) {
         let crowd = camera.map_or(1.0, |camera| {
             let majors = self
@@ -318,35 +332,36 @@ impl EffectRuntime {
             let Some(instance) = self.pool.slot_mut(slot) else {
                 continue;
             };
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "an effect's age in seconds fits f32"
+            )]
+            let age = (now - instance.birth) as f32;
+            let through = instance.bursts_through;
+            if age < 0.0 || age <= through {
+                continue;
+            }
+            instance.bursts_through = age;
+            let instance = *instance;
             let Some(effect) = catalog.effect(instance.effect) else {
                 continue;
             };
-            let mut bursts = 0_u16;
             for (index, layer) in effect.layers.iter().enumerate() {
-                let bit = 1_u16 << index;
-                let Block::Particles(_) = layer.block else {
-                    continue;
-                };
-                if instance.bursts_fired & bit == 0
-                    && now >= instance.birth + f64::from(layer.start)
-                {
-                    bursts |= bit;
-                }
-            }
-            if bursts == 0 {
-                continue;
-            }
-            instance.bursts_fired |= bursts;
-            let instance = *instance;
-            for (index, layer) in effect.layers.iter().enumerate() {
-                if bursts & (1_u16 << index) != 0 {
-                    self.burst(catalog, &instance, layer, index, crowd, camera);
+                let shown = self.only.is_none_or(|only| only == layer.priority);
+                if matches!(layer.block, Block::Particles(_)) && layer.start <= age && shown {
+                    let window = (through, age);
+                    self.burst(catalog, &instance, layer, index, crowd, camera, window);
                 }
             }
         }
     }
 
-    /// Spawns one particle layer's bursts, one per placed instance.
+    /// Spawns the bursts of one particle layer's placed instances that fall due in
+    /// `window` (exclusive start, inclusive end, seconds of the effect's age).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the burst's effect, layer, level-of-detail factors and time window"
+    )]
     fn burst(
         &mut self,
         catalog: &EffectCatalog,
@@ -355,6 +370,7 @@ impl EffectRuntime {
         layer_index: usize,
         crowd: f32,
         camera: Option<&CameraView>,
+        window: (f32, f32),
     ) {
         let Block::Particles(emitter_id) = layer.block else {
             return;
@@ -384,6 +400,10 @@ impl EffectRuntime {
             for index in 0..instance_count(placement, &instance.bound, instance.line) {
                 let seed = hash3(instance.seed, layer_salt * 64 + placement_salt, index);
                 let placed = place(placement, index, seed, &instance.bound, instance.line);
+                let due = layer.start + placed.delay;
+                if due <= window.0 || due > window.1 {
+                    continue;
+                }
                 let burst = Burst {
                     emitter: emitter_id,
                     origin: instance.anchor + placed.offset,
@@ -429,7 +449,7 @@ impl EffectRuntime {
                 continue;
             }
             for (layer_index, layer) in effect.layers.iter().enumerate() {
-                if layer.priority != priority {
+                if layer.priority != priority || self.only.is_some_and(|only| only != priority) {
                     continue;
                 }
                 let free = match layer.block.pool() {
@@ -496,14 +516,18 @@ impl EffectRuntime {
         seed: u32,
     ) -> Written {
         let layer = context.layer;
+        let catalog = context.catalog;
         let life = (age / layer.duration).clamp(0.0, 1.0);
-        let intensity = context.catalog.sample(layer.curve, life, 1.0) * context.fade;
-        let size = resolve_value(&layer.size, &context.instance.bound);
+        let intensity = catalog.sample(layer.curve, life, 1.0) * context.fade;
+        let jitter = 1.0 + layer.size_jitter * (2.0 * unit_float(hash3(seed, 0x51CE, 0)) - 1.0);
+        let size = resolve_value(&layer.size, &context.instance.bound)
+            * catalog.sample(layer.size_curve, life, 1.0)
+            * jitter;
         let extent = match &layer.block {
             Block::Ring { .. } => layer.radius.map_or(size, |radius| {
                 let from = resolve_value(&radius.from, &context.instance.bound);
                 let to = resolve_value(&radius.to, &context.instance.bound);
-                from + (to - from) * life
+                from + (to - from) * catalog.sample(radius.curve, life, life)
             }),
             _ => size,
         };
@@ -520,10 +544,14 @@ impl EffectRuntime {
             Block::Sprite(look) => self.push_card(
                 context, look, position, extent, age, life, intensity, seed, 0.0,
             ),
-            Block::Ring { look, thickness } => self.push_card(
+            Block::Ring {
+                look,
+                thickness,
+                height,
+            } => self.push_card(
                 context,
                 look,
-                position,
+                position + Vec3::Y * *height,
                 extent,
                 age,
                 life,
@@ -531,25 +559,19 @@ impl EffectRuntime {
                 seed,
                 1.0 - thickness,
             ),
-            Block::Decal(look) => self.push_decal(
-                context.catalog,
-                look,
-                position,
-                extent,
-                age,
-                life,
-                intensity,
-                seed,
-            ),
+            Block::Decal(look) => {
+                self.push_decal(context, look, position, extent, life, intensity, seed)
+            }
             Block::Light {
                 color,
                 intensity: peak,
+                height,
             } => {
                 if self.frame.lights.len() == self.frame.lights.capacity() {
                     return Written::Full;
                 }
                 self.frame.lights.push(LightInstance {
-                    position: position.to_array(),
+                    position: (position + Vec3::Y * *height).to_array(),
                     color: color.to_array(),
                     intensity: peak * intensity,
                     range: extent,
@@ -580,23 +602,23 @@ impl EffectRuntime {
         if self.frame.cards.len() == self.frame.cards.capacity() {
             return Written::Full;
         }
-        let (layer_a, layer_b, frame_mix) =
-            flipbook_frame(&look.element, look.fps, age, life, look.frame_blend);
-        let rotation = match look.rotation {
-            RotationDef::Fixed => 0.0,
-            RotationDef::Random => std::f32::consts::TAU * unit_float(hash3(seed, 0x0207, 0)),
-        };
+        let catalog = context.catalog;
+        let (layer_a, layer_b, frame_mix) = card_frame(catalog, look, age, life, seed);
+        let (rotation, mut flags) = roll_and_mirror(look.rotation, seed);
+        if ring_inner > 0.0 && look.mapping == RingMapping::Polar {
+            flags |= FLAG_POLAR;
+        }
         let line_axis = context
             .instance
             .line
             .map_or(Vec3::ZERO, |line| (line.to - line.from).normalize_or_zero());
-        let (orient, axis, center) = match look.orient {
-            Orient::Camera => (ORIENT_CAMERA, Vec3::ZERO, position),
-            Orient::Ground => (ORIENT_GROUND, Vec3::ZERO, position),
-            Orient::VerticalAlongLine if line_axis != Vec3::ZERO => {
-                (ORIENT_VERTICAL, line_axis, position + Vec3::Y * extent)
-            }
-            Orient::VerticalAlongLine => (ORIENT_CAMERA, Vec3::ZERO, position + Vec3::Y * extent),
+        let vertical = look.orient == Orient::VerticalAlongLine;
+        let lift = look.lift.unwrap_or(if vertical { 1.0 } else { 0.0 });
+        let center = position + Vec3::Y * extent * lift;
+        let (orient, axis) = match look.orient {
+            Orient::Ground => (ORIENT_GROUND, Vec3::ZERO),
+            Orient::VerticalAlongLine if line_axis != Vec3::ZERO => (ORIENT_VERTICAL, line_axis),
+            Orient::Camera | Orient::VerticalAlongLine => (ORIENT_CAMERA, Vec3::ZERO),
         };
         self.push_sorted_card(
             SpriteInstance {
@@ -609,13 +631,13 @@ impl EffectRuntime {
                 frame_mix,
                 ramp_row: u32::from(look.ramp.0),
                 intensity,
-                erosion: context.catalog.sample(look.erosion, life, 0.0),
+                erosion: catalog.sample(look.erosion, life, 0.0),
                 soft_depth: look.soft_depth,
                 ring_inner,
                 rotation,
                 orient,
-                ramp_scale: 1.0,
-                padding: 0.0,
+                ramp_scale: catalog.sample(context.layer.ramp_curve, life, 1.0),
+                flags,
             },
             context.camera,
         );
@@ -637,11 +659,10 @@ impl EffectRuntime {
     )]
     fn push_decal(
         &mut self,
-        catalog: &EffectCatalog,
+        context: &LayerContext<'_>,
         look: &DecalLook,
         position: Vec3,
         extent: f32,
-        age: f32,
         life: f32,
         intensity: f32,
         seed: u32,
@@ -649,11 +670,29 @@ impl EffectRuntime {
         if self.frame.decals.len() == self.frame.decals.capacity() {
             return Written::Full;
         }
-        let (layer_a, layer_b, frame_mix) = flipbook_frame(&look.element, None, age, life, true);
+        let catalog = context.catalog;
+        let (layer_a, layer_b, frame_mix) = variant_frame(&look.element, seed)
+            .unwrap_or_else(|| flipbook_frame(&look.element, None, 0.0, life, true));
+        let random_yaw = std::f32::consts::TAU * unit_float(hash3(seed, 0x0DEC, 0));
+        let mut clip = (-2.0, 2.0);
+        let yaw = match (look.yaw, context.instance.line) {
+            (DecalYaw::AlongLine, Some(line)) => {
+                let direction = line.to - line.from;
+                if direction.x.abs() + direction.z.abs() > f32::EPSILON {
+                    if look.clip_to_line && extent > f32::EPSILON {
+                        clip = line_clip(line, position, extent);
+                    }
+                    (-direction.z).atan2(direction.x)
+                } else {
+                    random_yaw
+                }
+            }
+            _ => random_yaw,
+        };
         self.frame.decals.push(DecalInstance {
             center: position.to_array(),
-            yaw: std::f32::consts::TAU * unit_float(hash3(seed, 0x0DEC, 0)),
-            half_extents: [extent, look.depth, extent],
+            yaw,
+            half_extents: [extent, look.depth, extent * look.width],
             grazing: look.grazing,
             layer_a,
             layer_b,
@@ -661,7 +700,10 @@ impl EffectRuntime {
             ramp_row: u32::from(look.ramp.0),
             intensity,
             erosion: catalog.sample(look.erosion, life, 0.0),
-            padding: [0.0; 2],
+            ramp_scale: catalog.sample(context.layer.ramp_curve, life, 1.0),
+            clip_min: clip.0,
+            clip_max: clip.1,
+            padding: [0.0; 3],
         });
         Written::Yes
     }
@@ -691,8 +733,9 @@ impl EffectRuntime {
                     )
                 }
             };
-            let (layer_a, layer_b, frame_mix) =
-                flipbook_frame(&emitter.element, None, 0.0, life, true);
+            let (layer_a, layer_b, frame_mix) = variant_frame(&emitter.element, particle.seed)
+                .unwrap_or_else(|| flipbook_frame(&emitter.element, None, 0.0, life, true));
+            let (roll, flags) = roll_and_mirror(emitter.rotation, particle.seed);
             let card = SpriteInstance {
                 center: particle.position.to_array(),
                 half_size: particle.size * catalog.sample(emitter.size_curve, life, 1.0),
@@ -706,10 +749,10 @@ impl EffectRuntime {
                 erosion: 0.0,
                 soft_depth: 0.0,
                 ring_inner: 0.0,
-                rotation: 0.0,
+                rotation: emitter.roll + roll,
                 orient,
                 ramp_scale: 1.0 - life,
-                padding: 0.0,
+                flags,
             };
             let depth = camera.map_or(0.0, |camera| camera.depth(particle.position));
             frame.cards.push(card);
@@ -785,6 +828,96 @@ fn max_line_delay(layers: &[Layer], line: Option<WorldLine>) -> f32 {
         .fold(0.0, f32::max)
 }
 
+/// The local-x range (in half extents `extent`) of a mark centred at `position` and turned
+/// along `line` that lies between the line's ends.
+#[must_use]
+pub fn line_clip(line: WorldLine, position: Vec3, extent: f32) -> (f32, f32) {
+    let axis = line.to - line.from;
+    let length = axis.length();
+    let direction = axis / length.max(f32::EPSILON);
+    let along = (position - line.from).dot(direction);
+    ((0.0 - along) / extent, (length - along) / extent)
+}
+
+/// The roll in radians and the `FLAG_*` mirror bit of a card under `rotation`, drawn from
+/// the card's hash `seed`.
+#[must_use]
+pub fn roll_and_mirror(rotation: RotationDef, seed: u32) -> (f32, u32) {
+    let mirror = if hash3(seed, 0x0303, 0) & 1 == 1 {
+        FLAG_MIRROR
+    } else {
+        0
+    };
+    match rotation {
+        RotationDef::Fixed => (0.0, 0),
+        RotationDef::Random => (
+            std::f32::consts::TAU * unit_float(hash3(seed, 0x0207, 0)),
+            mirror,
+        ),
+        RotationDef::Mirror => (0.0, mirror),
+    }
+}
+
+/// The frame of a variant set (see [`ElementRef::is_variant_set`]) shown by the instance
+/// hashed `seed`, as `(layer, layer, 0.0)`; `None` for a flipbook or a still.
+#[must_use]
+pub fn variant_frame(element: &ElementRef, seed: u32) -> Option<(u32, u32, f32)> {
+    if !element.is_variant_set() {
+        return None;
+    }
+    let layer = element.first_layer + hash3(seed, 0x7A41, 0) % element.frames;
+    Some((layer, layer, 0.0))
+}
+
+/// The frame of a card: its variant, its flipbook position from the layer's frame curve, or
+/// its flipbook frame by `fps` or fitted to the layer.
+fn card_frame(
+    catalog: &EffectCatalog,
+    look: &CardLook,
+    age: f32,
+    life: f32,
+    seed: u32,
+) -> (u32, u32, f32) {
+    if let Some(frame) = variant_frame(&look.element, seed) {
+        return frame;
+    }
+    match look.frame_curve {
+        Some(curve) => curve_frame(catalog, &look.element, curve, life, look.frame_blend),
+        None => flipbook_frame(&look.element, look.fps, age, life, look.frame_blend),
+    }
+}
+
+/// The frame of `element` at the flipbook position the curve `curve` gives at `life` (0 the
+/// first frame, 1 the last).
+fn curve_frame(
+    catalog: &EffectCatalog,
+    element: &ElementRef,
+    curve: CurveId,
+    life: f32,
+    blend: bool,
+) -> (u32, u32, f32) {
+    let frames = element.frames.max(1);
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "frame counts are far below 2^24"
+    )]
+    let last = (frames - 1) as f32;
+    let position = catalog.sample(Some(curve), life, 0.0).clamp(0.0, 1.0) * last;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "position is clamped to 0..frames-1"
+    )]
+    let whole = position.floor() as u32;
+    let next = (whole + 1).min(frames - 1);
+    let mix = if blend {
+        position - position.floor()
+    } else {
+        0.0
+    };
+    (element.first_layer + whole, element.first_layer + next, mix)
+}
+
 /// The two array layers and their blend for element `element` at `age` seconds into a layer
 /// at life fraction `life`: at `fps`, or fitted to the layer's life when `fps` is `None`.
 #[must_use]
@@ -817,4 +950,66 @@ pub fn flipbook_frame(
         0.0
     };
     (element.first_layer + whole, element.first_layer + next, mix)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::effects::catalog::ElementRef;
+
+    #[test]
+    fn a_mark_on_a_line_is_clipped_at_both_ends() {
+        let line = WorldLine {
+            from: Vec3::ZERO,
+            to: Vec3::new(8.0, 0.0, 0.0),
+        };
+        let (min, max) = line_clip(line, Vec3::new(0.5, 0.0, 0.0), 0.8);
+        assert!((min + 0.625).abs() < 1e-6, "cut 0.5 behind the centre");
+        assert!(max > 1.0, "the far end is beyond this mark");
+        let (min, max) = line_clip(line, Vec3::new(7.5, 0.0, 0.0), 0.8);
+        assert!(min < -1.0);
+        assert!((max - 0.625).abs() < 1e-6, "cut 0.5 ahead of the centre");
+    }
+
+    #[test]
+    fn variant_sets_pick_one_whole_variant_and_flipbooks_none() {
+        let variants = ElementRef {
+            first_layer: 10,
+            frames: 4,
+            duration_secs: None,
+        };
+        let picks: std::collections::BTreeSet<u32> = (0..64)
+            .filter_map(|seed| variant_frame(&variants, seed))
+            .map(|(a, b, mix)| {
+                assert_eq!(a, b);
+                assert!(mix.abs() < f32::EPSILON);
+                a
+            })
+            .collect();
+        assert_eq!(picks, (10..14).collect(), "every variant is used");
+        let flipbook = ElementRef {
+            duration_secs: Some(1.0),
+            ..variants
+        };
+        assert!(variant_frame(&flipbook, 3).is_none());
+        let still = ElementRef {
+            frames: 1,
+            ..variants
+        };
+        assert!(variant_frame(&still, 3).is_none());
+    }
+
+    #[test]
+    fn mirror_never_rolls_and_fixed_never_mirrors() {
+        let mut mirrored = 0;
+        for seed in 0..64 {
+            let (roll, flags) = roll_and_mirror(RotationDef::Mirror, seed);
+            assert!(roll.abs() < f32::EPSILON);
+            mirrored += flags & FLAG_MIRROR;
+            assert_eq!(roll_and_mirror(RotationDef::Fixed, seed), (0.0, 0));
+            let (roll, _) = roll_and_mirror(RotationDef::Random, seed);
+            assert!((0.0..std::f32::consts::TAU).contains(&roll));
+        }
+        assert!(mirrored > 16 && mirrored < 48, "about half are mirrored: {mirrored}");
+    }
 }

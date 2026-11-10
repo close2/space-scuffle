@@ -53,8 +53,10 @@ pub struct EffectInstance {
     pub detail_retired_at: Option<f64>,
     /// Whether it has detail layers.
     pub has_detail: bool,
-    /// Bit `i` set once particle layer `i` has spawned its burst.
-    pub bursts_fired: u16,
+    /// Age in seconds up to which every particle burst due has been spawned (negative
+    /// infinity before the first build); a burst due at age `e` fires once `e` falls in
+    /// `(bursts_through, age]`, so bursts delayed along a line fire one by one.
+    pub bursts_through: f32,
 }
 
 /// A slot: its generation and its instance, if live.
@@ -228,7 +230,7 @@ mod tests {
             seed: 0,
             detail_retired_at: None,
             has_detail: true,
-            bursts_fired: 0,
+            bursts_through: f32::NEG_INFINITY,
         }
     }
 

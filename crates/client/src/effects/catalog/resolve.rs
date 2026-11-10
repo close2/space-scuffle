@@ -19,8 +19,8 @@ use super::schema::{
 use super::textures::TextureAtlas;
 use super::{
     Block, Budget, CardLook, CurveId, DecalLook, Defaults, Effect, EffectCatalog, EffectId,
-    ElementRef, Emitter, EmitterId, Layer, Pool, RampId, EFFECTS_FORMAT_VERSION, MAX_LAYERS,
-    MAX_PLACEMENTS,
+    ElementRef, Emitter, EmitterId, Layer, Pool, RampId, RingRadius, EFFECTS_FORMAT_VERSION,
+    MAX_LAYERS, MAX_PLACEMENTS,
 };
 use crate::effects::binding::provides;
 use crate::effects::curve::{Curve, Ramp};
@@ -241,6 +241,8 @@ impl Resolver<'_> {
             ramp: RampId(self.id(NameKind::Ramp, &emitter.ramp, &at)?),
             size_curve: self.curve(emitter.size_curve.as_ref(), &at)?,
             curve: self.curve(emitter.curve.as_ref(), &at)?,
+            rotation: emitter.rotation,
+            roll: emitter.roll_deg.to_radians(),
         })
     }
 
@@ -294,9 +296,10 @@ impl Resolver<'_> {
             scale: 1.0,
         });
         let mut values = vec![size];
-        if let Some(radius) = layer.radius {
+        if let Some(radius) = &layer.radius {
             values.extend([radius.from, radius.to]);
         }
+        self.fraction(at, "size_jitter", layer.size_jitter)?;
         for placement in &placements {
             match placement {
                 PlacementDef::Point => {}
@@ -319,6 +322,14 @@ impl Resolver<'_> {
                 rule: "a ring needs `radius: (from: .., to: ..)`",
             });
         }
+        let radius = match &layer.radius {
+            Some(radius) => Some(RingRadius {
+                from: radius.from,
+                to: radius.to,
+                curve: self.curve(radius.curve.as_ref(), at)?,
+            }),
+            None => None,
+        };
         Ok(Layer {
             block,
             start: layer.start,
@@ -326,8 +337,30 @@ impl Resolver<'_> {
             curve: self.curve(layer.curve.as_ref(), at)?,
             priority: layer.priority,
             size,
-            radius: layer.radius,
+            size_curve: self.curve(layer.size_curve.as_ref(), at)?,
+            ramp_curve: self.curve(layer.ramp_curve.as_ref(), at)?,
+            size_jitter: layer.size_jitter,
+            radius,
             placements,
+        })
+    }
+
+    /// Checks that `value` lies in `[0, 1)`.
+    fn fraction(
+        &self,
+        at: &Site,
+        field: &'static str,
+        value: f32,
+    ) -> Result<(), EffectCatalogError> {
+        if (0.0..1.0).contains(&value) {
+            return Ok(());
+        }
+        Err(EffectCatalogError::InvalidValue {
+            path: self.path.to_path_buf(),
+            site: at.clone(),
+            field,
+            value,
+            rule: "it must be in [0, 1)",
         })
     }
 
@@ -396,10 +429,15 @@ impl Resolver<'_> {
                 erosion,
                 drift,
                 fps,
+                frame_curve,
+                lift,
             } => {
                 self.at_least(at, "soft_depth", *soft_depth, 0.0)?;
                 if let Some(fps) = fps {
                     self.at_least(at, "fps", *fps, 0.001)?;
+                }
+                if let Some(lift) = lift {
+                    self.at_least(at, "lift", *lift, -1.0)?;
                 }
                 Block::Sprite(CardLook {
                     element: self.element(texture, at)?,
@@ -411,14 +449,23 @@ impl Resolver<'_> {
                     erosion: self.curve(erosion.as_ref(), at)?,
                     drift: Vec3::new(drift.0, drift.1, drift.2),
                     fps: *fps,
+                    frame_curve: self.curve(frame_curve.as_ref(), at)?,
+                    lift: *lift,
+                    mapping: super::schema::RingMapping::Card,
                 })
             }
             BlockDef::Ring { .. } | BlockDef::Decal { .. } => self.masked_block(at, block)?,
-            BlockDef::Light { color, intensity } => {
+            BlockDef::Light {
+                color,
+                intensity,
+                height,
+            } => {
                 self.at_least(at, "intensity", *intensity, 0.0)?;
+                self.at_least(at, "height", *height, 0.0)?;
                 Block::Light {
                     color: Vec3::new(color.0, color.1, color.2),
                     intensity: *intensity,
+                    height: *height,
                 }
             }
             BlockDef::Particles { emitter } => {
@@ -436,7 +483,10 @@ impl Resolver<'_> {
                 orient,
                 thickness,
                 erosion,
+                mapping,
+                height,
             } => {
+                self.at_least(at, "height", *height, 0.0)?;
                 if !(*thickness > 0.0 && *thickness <= 1.0) {
                     return Err(EffectCatalogError::InvalidValue {
                         path: self.path.to_path_buf(),
@@ -457,8 +507,12 @@ impl Resolver<'_> {
                         erosion: self.curve(erosion.as_ref(), at)?,
                         drift: Vec3::ZERO,
                         fps: None,
+                        frame_curve: None,
+                        lift: None,
+                        mapping: *mapping,
                     },
                     thickness: *thickness,
+                    height: *height,
                 })
             }
             BlockDef::Decal {
@@ -467,8 +521,20 @@ impl Resolver<'_> {
                 erosion,
                 depth,
                 grazing,
+                yaw,
+                width,
+                clip_to_line,
             } => {
                 self.at_least(at, "depth", *depth, 0.01)?;
+                if !(*width > 0.0 && *width <= 1.0) {
+                    return Err(EffectCatalogError::InvalidValue {
+                        path: self.path.to_path_buf(),
+                        site: at.clone(),
+                        field: "width",
+                        value: *width,
+                        rule: "it must be in (0, 1]",
+                    });
+                }
                 if !(0.0..1.0).contains(grazing) {
                     return Err(EffectCatalogError::InvalidValue {
                         path: self.path.to_path_buf(),
@@ -484,6 +550,9 @@ impl Resolver<'_> {
                     erosion: self.curve(erosion.as_ref(), at)?,
                     depth: *depth,
                     grazing: *grazing,
+                    yaw: *yaw,
+                    width: *width,
+                    clip_to_line: *clip_to_line,
                 }))
             }
             BlockDef::Sprite { .. } | BlockDef::Light { .. } | BlockDef::Particles { .. } => {

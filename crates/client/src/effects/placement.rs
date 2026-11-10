@@ -72,7 +72,9 @@ pub fn instance_count(
     match placement {
         PlacementDef::Point => 1,
         PlacementDef::Disc { count, .. } => (*count).min(MAX_INSTANCES_PER_PLACEMENT),
-        PlacementDef::Line { spacing, .. } => {
+        PlacementDef::Line {
+            spacing, between, ..
+        } => {
             let Some(line) = line else {
                 return 1;
             };
@@ -88,7 +90,8 @@ pub fn instance_count(
                 reason = "steps is a non-negative whole number at most 32"
             )]
             let steps = steps as u32;
-            (steps + 1).min(MAX_INSTANCES_PER_PLACEMENT)
+            let count = if *between { steps.max(1) } else { steps + 1 };
+            count.min(MAX_INSTANCES_PER_PLACEMENT)
         }
     }
 }
@@ -117,7 +120,11 @@ pub fn place(
                 delay: 0.0,
             }
         }
-        PlacementDef::Line { spacing, travel } => {
+        PlacementDef::Line {
+            spacing,
+            travel,
+            between,
+        } => {
             let Some(line) = line else {
                 return Placed {
                     offset: Vec3::ZERO,
@@ -126,7 +133,8 @@ pub fn place(
             };
             let direction = (line.to - line.from).normalize_or_zero();
             #[expect(clippy::cast_precision_loss, reason = "index is below 32")]
-            let distance = resolve_value(spacing, bound) * index as f32;
+            let steps = index as f32 + if *between { 0.5 } else { 0.0 };
+            let distance = resolve_value(spacing, bound) * steps;
             let delay = if *travel > f32::EPSILON {
                 distance / travel
             } else {
@@ -199,6 +207,7 @@ mod tests {
         let placement = PlacementDef::Line {
             spacing: constant(1.5),
             travel: 3.0,
+            between: false,
         };
         let bound = BoundValues::default();
         assert_eq!(instance_count(&placement, &bound, Some(line)), 7);
@@ -217,6 +226,29 @@ mod tests {
         assert_eq!(
             instance_count(&placement, &bound, Some(long)),
             MAX_INSTANCES_PER_PLACEMENT
+        );
+    }
+
+    #[test]
+    fn segments_between_the_points_end_at_the_line_ends() {
+        let line = WorldLine {
+            from: Vec3::ZERO,
+            to: Vec3::new(8.0, 0.0, 0.0),
+        };
+        let placement = PlacementDef::Line {
+            spacing: constant(1.0),
+            travel: 4.0,
+            between: true,
+        };
+        let bound = BoundValues::default();
+        assert_eq!(instance_count(&placement, &bound, Some(line)), 8);
+        let first = place(&placement, 0, 1, &bound, Some(line));
+        let last = place(&placement, 7, 1, &bound, Some(line));
+        assert!((first.offset.x - 0.5).abs() < 1e-5);
+        assert!((last.offset.x - 7.5).abs() < 1e-5);
+        assert!(
+            (last.delay - 7.5 / 4.0).abs() < 1e-5,
+            "delayed by its distance"
         );
     }
 }

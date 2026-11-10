@@ -19,7 +19,7 @@ struct SpriteInstance {
     rotation: f32,
     orient: u32,
     ramp_scale: f32,
-    padding: f32,
+    flags: u32,
 }
 
 struct DecalInstance {
@@ -33,13 +33,22 @@ struct DecalInstance {
     ramp_row: u32,
     intensity: f32,
     erosion: f32,
-    padding: vec2<f32>,
+    ramp_scale: f32,
+    clip_min: f32,
+    clip_max: f32,
+    padding_a: f32,
+    padding_b: f32,
+    padding_c: f32,
 }
 
 const ORIENT_CAMERA: u32 = 0u;
 const ORIENT_GROUND: u32 = 1u;
 const ORIENT_VERTICAL: u32 = 2u;
 const ORIENT_STRETCHED: u32 = 3u;
+
+// SpriteInstance::flags bits.
+const FLAG_MIRROR: u32 = 1u;
+const FLAG_POLAR: u32 = 2u;
 
 // Width of the soft step of the erosion threshold.
 const EROSION_SOFTNESS: f32 = 0.08;
