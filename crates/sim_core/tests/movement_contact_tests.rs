@@ -17,7 +17,7 @@
 
 use sim_core::movement::RouteOutcomeKind;
 use sim_core::SimWorld;
-use sim_map::{CellFlags, CliffLevel, GameMap, MapCell, MapFile, RampDir, UnitClearance};
+use sim_map::{CellFlags, CliffLevel, GameMap, MapCell, MapFile, RampDir};
 use sim_types::{
     EntityId, MoverType, PlayerCommand, PlayerId, ShapeKind, SimScalar, SimVec2, Tick, TickBundle,
     UnitOrder, UnitTypeId,
@@ -812,15 +812,11 @@ fn group_passes_a_two_cell_choke() -> TestResult {
     Ok(())
 }
 
-/// Clearance now agrees with physics: a disc of radius 0.5 fits a one-cell gap.
+/// Routes agree with physics: a disc of radius 0.5 fits a one-cell gap.
 #[test]
 fn radius_half_unit_routes_through_a_one_cell_gap() -> TestResult {
     let mut world = sim_fixtures::world(wall_with_gap(32, 16, 15..16)?, SEED);
     let kind = ground_unit(&world, |r| r == SimScalar::HALF).ok_or("catalog body")?;
-    assert_eq!(
-        UnitClearance::for_radius(SimScalar::HALF),
-        UnitClearance::Small
-    );
     let unit = spawn(&mut world, kind, BLUE, at(8.5, 8.5))?;
     order(
         &mut world,

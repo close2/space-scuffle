@@ -43,6 +43,10 @@
 #[path = "support/arena.rs"]
 mod arena;
 
+#[path = "support/radii.rs"]
+mod radii;
+use radii::{LARGE_RADIUS, MEDIUM_RADIUS, SMALL_RADIUS};
+
 use std::collections::BTreeSet;
 
 use rand::Rng;
@@ -51,7 +55,7 @@ use rand_chacha::ChaCha8Rng;
 use sim_map::{
     validate_map, CellFlags, CliffLevel, GameMap, MapDocument, MapEntityId, MapFile,
     MapFormatError, MapValidationError, PathRequest, PathRequestWithVision, PathResult, Pathfinder,
-    PlayerVisionMap, RampDir, TerrainKind, UnitClearance, VisionSource,
+    PlayerVisionMap, RampDir, TerrainKind, VisionSource,
 };
 use sim_types::{EntityId, MoverType, SimScalar, SimVec2};
 use xxhash_rust::xxh64::xxh64;
@@ -72,8 +76,12 @@ const PATH_REQUESTS_PER_MAP: usize = 250;
 const VALIDATION_GOLDEN: u64 = 0xf028_1611_929c_52d1;
 /// Digest of every decode result over the corpus, recorded before the step 9.2 split.
 const DECODE_GOLDEN: u64 = 0x56c4_3eea_8701_94bd;
-/// Digest of every path result over the corpus, recorded before the step 9.2 split.
-const PATH_GOLDEN: u64 = 0x52cf_7f61_9e6e_88b1;
+/// Digest of every path result over the corpus. Re-recorded for sc2 pathfinding WP9: routes
+/// come from the navigation mesh at the request's radius (before, the grid corridor:
+/// `0x52cf_7f61_9e6e_88b1`, recorded before the step 9.2 split). Re-recorded under Amendment 4:
+/// the switch commit's `0x574b_ceb4_0a08_2c4d` was recorded before the last edits of that
+/// commit, whose own tree already produced this value.
+const PATH_GOLDEN: u64 = 0xa1a3_327e_2a30_f8b7;
 
 /// Builds the validation corpus: both shipped maps, then the seeded mutations.
 fn document_corpus() -> Vec<MapDocument> {
@@ -632,16 +640,11 @@ fn find_path_with_vision_matches_the_recorded_corpus_digest() {
             .collect();
         let mut pathfinder = Pathfinder::new(&map);
         for _ in 0..PATH_REQUESTS_PER_MAP {
-            let clearance = [
-                UnitClearance::Small,
-                UnitClearance::Medium,
-                UnitClearance::Large,
-            ][rng.gen_range(0..3)];
+            let radius = [SMALL_RADIUS, MEDIUM_RADIUS, LARGE_RADIUS][rng.gen_range(0..3)];
             let base = PathRequest {
                 start: random_point(&map, &mut rng),
                 goal: random_point(&map, &mut rng),
-                clearance,
-                radius: clearance.radius_scalar(),
+                radius,
             };
             let outcome = match rng.gen_range(0..4) {
                 0 => pathfinder.find_path(&map, &base),

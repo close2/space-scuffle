@@ -12,7 +12,11 @@
 //! # Invariants
 //! Routes that do not exist are skipped: connectivity is covered by map validation.
 
-use sim_map::{MapFile, PathRequest, Pathfinder, UnitClearance};
+#[path = "support/radii.rs"]
+mod radii;
+use radii::{LARGE_RADIUS, MEDIUM_RADIUS, SMALL_RADIUS};
+
+use sim_map::{MapFile, PathRequest, Pathfinder};
 use sim_types::{SimScalar, SimVec2};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -36,16 +40,11 @@ fn f9_real_map_routes_stay_legal_across_ramps() -> TestResult {
         let endpoints = [(4, 4), (58, 4), (4, 58), (58, 58), (32, 10), (32, 50)];
         for &start in &endpoints {
             for &goal in &endpoints {
-                for clearance in [
-                    UnitClearance::Small,
-                    UnitClearance::Medium,
-                    UnitClearance::Large,
-                ] {
+                for radius in [SMALL_RADIUS, MEDIUM_RADIUS, LARGE_RADIUS] {
                     let request = PathRequest {
                         start: centre(start.0, start.1),
                         goal: centre(goal.0, goal.1),
-                        clearance,
-                        radius: clearance.radius_scalar(),
+                        radius,
                     };
                     let Ok(route) = pathfinder.find_path(&map, &request) else {
                         continue;
@@ -54,7 +53,7 @@ fn f9_real_map_routes_stay_legal_across_ramps() -> TestResult {
                     for pair in route.waypoints.windows(2) {
                         assert!(
                             pathfinder.segment_is_passable(&map, &request.into(), pair[0], pair[1]),
-                            "{filename}: illegal segment {pair:?} for {clearance:?}"
+                            "{filename}: illegal segment {pair:?} for {radius:?}"
                         );
                     }
                 }

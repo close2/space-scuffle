@@ -7,9 +7,9 @@
 //! it with the radius funnel (D-6), and validates every leg with the segment predicate (D-7).
 //!
 //! # How it fits
-//! `Pathfinder::find_path_mesh`, `Pathfinder::mesh_segment_is_passable` and
-//! `Pathfinder::nearest_reachable_point_mesh` are thin wrappers over this module. Until WP9 no
-//! simulation code calls them.
+//! `Pathfinder::find_path_with_vision`, `Pathfinder::segment_is_passable` and
+//! `Pathfinder::nearest_reachable_point` are thin wrappers over this module; since WP9 every
+//! route, every route check and every unreachable-goal answer of the simulation comes from it.
 //!
 //! # Invariants
 //! - Search nodes are paths, not triangles (TA*): a triangle may be reached along several
@@ -30,7 +30,7 @@ use std::collections::BinaryHeap;
 use sim_types::{SimScalar, SimVec2};
 
 use super::cdt::NONE;
-use super::funnel::{portal_midpoints, radius_funnel, Anchor, FunnelRoute, Side};
+use super::funnel::{portal_midpoints, radius_funnel, Anchor, FunnelRoute, PullStrategy, Side};
 use super::predicates::LatticePoint;
 use super::segment::{segment_clear, SegmentScratch};
 use super::{next, prev, Access, NavMesh};
@@ -84,28 +84,57 @@ pub struct MeshSearch {
     open: BinaryHeap<Reverse<(i64, u32, u32)>>,
     visits: Vec<u8>,
     portals: Vec<(u32, u32)>,
+    /// Flood stack of [`nearest_reachable_point`]: `(triangle, entry edge)` states.
+    flood_stack: Vec<(u32, u8)>,
+    /// Reachable cells of [`nearest_reachable_point`]: `(distance squared, cell index, x)`.
+    candidates: Vec<(u64, u32, u32)>,
     pub(crate) segment: SegmentScratch,
     /// Funnel legs that failed the segment predicate since construction (a diagnostic, D-6).
     pub fallbacks: u64,
 }
 
-/// Distance from `p` to the segment `[a, b]`, in world units.
-fn point_segment_distance(p: SimVec2, a: SimVec2, b: SimVec2) -> SimScalar {
+/// The vector from the point of `[a, b]` nearest `p` to `p`, in world units.
+fn offset_from_segment(p: SimVec2, a: SimVec2, b: SimVec2) -> SimVec2 {
     let d = b - a;
     let length_sq = d.length_sq();
     if length_sq == SimScalar::ZERO {
-        return p.distance(a);
+        return p - a;
     }
     let t = ((p - a).dot(d) / length_sq).clamp(SimScalar::ZERO, SimScalar::ONE);
-    p.distance(a + d * t)
+    p - (a + d * t)
+}
+
+/// Distance from `p` to the segment `[a, b]`, in world units.
+fn point_segment_distance(p: SimVec2, a: SimVec2, b: SimVec2) -> SimScalar {
+    offset_from_segment(p, a, b).length()
+}
+
+/// Exact squared length of `v` in raw units, the order [`SimVec2::length`] preserves.
+fn raw_length_sq(v: SimVec2) -> u128 {
+    let (x, y) = (
+        u128::from(v.x.raw().unsigned_abs()),
+        u128::from(v.y.raw().unsigned_abs()),
+    );
+    x * x + y * y
 }
 
 /// Distance between two mesh edges, which meet at most at a shared vertex.
+// PERFORMANCE RATIONALE:
+// Why: TA* bounds every child against up to eight ancestor edges, four point-to-segment distances
+// each; a 128-bit square root per distance was the search's largest single cost (WP9 profile).
+// What: Compare the four offsets by their exact squared lengths and take one root of the least.
+// The integer root is monotonic, so the result is bit-identical to the least of four roots.
+// Trade-off: A local squared-length helper next to `SimVec2::length`.
 fn segment_distance(a: SimVec2, b: SimVec2, c: SimVec2, d: SimVec2) -> SimScalar {
-    point_segment_distance(a, c, d)
-        .min(point_segment_distance(b, c, d))
-        .min(point_segment_distance(c, a, b))
-        .min(point_segment_distance(d, a, b))
+    [
+        offset_from_segment(a, c, d),
+        offset_from_segment(b, c, d),
+        offset_from_segment(c, a, b),
+        offset_from_segment(d, a, b),
+    ]
+    .into_iter()
+    .min_by_key(|&offset| raw_length_sq(offset))
+    .map_or(SimScalar::ZERO, SimVec2::length)
 }
 
 /// How many ancestors' entry edges bound a node's `g` (see `MeshSearch::lower_bound`).
@@ -190,10 +219,20 @@ impl MeshSearch {
             );
             if node.entry != NO_EDGE {
                 let corner = 3 - usize::from(node.entry) - k;
-                if !query
-                    .access
-                    .width(node.triangle, corner)
-                    .admits_diameter(query.radius)
+                let entry = usize::from(node.entry);
+                // D-3: a disc wedged where it starts enters every triangle it already overlaps
+                // whatever its width, so it can leave the gap it was spawned or pushed into.
+                let wedged_in = !query.start_fits
+                    && point_segment_distance(
+                        query.start,
+                        mesh.vertex(tv[next(entry)]).to_sim(),
+                        mesh.vertex(tv[prev(entry)]).to_sim(),
+                    ) < query.radius;
+                if !wedged_in
+                    && !query
+                        .access
+                        .width(node.triangle, corner)
+                        .admits_diameter(query.radius)
                 {
                     continue;
                 }
@@ -298,18 +337,57 @@ impl MeshSearch {
         })
     }
 
-    /// Whether every leg of `route` passes the segment predicate.
+    /// Whether every leg of `route` passes the segment predicate. Legs from a wedged start up to
+    /// the first waypoint where the disc fits cannot; they are held to the predicate for the
+    /// unit's centre only (D-3: a wedged unit may always work its way out; the movement layer
+    /// holds them to the terrain).
     fn is_legal(&mut self, query: &Query<'_>, route: &FunnelRoute) -> bool {
-        route.waypoints.windows(2).all(|pair| {
-            segment_clear(
-                query.mesh,
-                query.access,
-                &mut self.segment,
-                pair[0],
-                pair[1],
-                query.radius,
-            )
-        })
+        let mut wedged = !query.start_fits;
+        for pair in route.waypoints.windows(2) {
+            let clear = |scratch: &mut SegmentScratch, a, b, radius| {
+                segment_clear(query.mesh, query.access, scratch, a, b, radius)
+            };
+            if wedged {
+                wedged = !clear(&mut self.segment, pair[0], pair[0], query.radius);
+            }
+            // A wedged leg must still keep the unit's centre in open triangles.
+            let radius = if wedged {
+                SimScalar::ZERO
+            } else {
+                query.radius
+            };
+            if !clear(&mut self.segment, pair[0], pair[1], radius) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Pulls the channel in `self.portals` again with [`PullStrategy::Pinned`] after the shrunk
+    /// route `shrunk` failed the segment predicate; returns the pinned route when it is legal,
+    /// else `shrunk`, and whether the returned route is legal.
+    fn pinned_retry(
+        &mut self,
+        query: &Query<'_>,
+        start_triangle: u32,
+        shrunk: FunnelRoute,
+    ) -> (FunnelRoute, bool) {
+        let (s, g) = (
+            query.mesh.triangle_vertices(start_triangle),
+            query.mesh.triangle_vertices(query.goal_triangle),
+        );
+        let pinned = radius_funnel(
+            query.mesh,
+            (query.start, query.goal),
+            &self.portals,
+            &[s[0], s[1], s[2], g[0], g[1], g[2]],
+            (query.radius + CORNER_SAFETY_MARGIN, PullStrategy::Pinned),
+        );
+        if self.is_legal(query, &pinned) {
+            (pinned, true)
+        } else {
+            (shrunk, false)
+        }
     }
 
     /// TA* without, then if its route is illegal with, the start and goal reach checks.
@@ -372,7 +450,7 @@ impl MeshSearch {
                     (query.start, query.goal),
                     &self.portals,
                     &end_vertices,
-                    rho,
+                    (rho, PullStrategy::Shrunk),
                 );
                 if best.as_ref().is_none_or(|(b, _)| route.length < b.length) {
                     best = Some((route, self.portals.clone()));
@@ -482,6 +560,11 @@ pub fn find_route(
     };
     let (route, legal, expansions) = search.two_pass(&query, start_triangle);
     let route = route.ok_or(MapError::NoPathFound { start, goal })?;
+    let (route, legal) = if legal {
+        (route, true)
+    } else {
+        search.pinned_retry(&query, start_triangle, route)
+    };
     let turns = route
         .anchors
         .iter()
@@ -535,7 +618,9 @@ fn flood(
     // expanded once. Bit `entry` of `visits` records the state, bit 3 the start.
     search.visits.clear();
     search.visits.resize(mesh.triangle_count(), 0);
-    let mut stack: Vec<(u32, u8)> = vec![(start, NO_EDGE)];
+    let mut stack = std::mem::take(&mut search.flood_stack);
+    stack.clear();
+    stack.push((start, NO_EDGE));
     search.visits[start as usize] = 1 << NO_EDGE;
     while let Some((t, entry)) = stack.pop() {
         for k in 0..3 {
@@ -563,6 +648,7 @@ fn flood(
             }
         }
     }
+    search.flood_stack = stack;
 }
 
 /// The point nearest `request.goal` that the unit can reach, on the mesh: the centre of the
@@ -590,7 +676,8 @@ pub fn nearest_reachable_point(
         .world_to_cell(request.goal)
         .map_err(|_| MapError::InvalidGoal(request.goal))?;
     flood(search, mesh, &access, start, request.radius);
-    let mut candidates: Vec<(u64, u32, u32)> = Vec::new();
+    let mut candidates = std::mem::take(&mut search.candidates);
+    candidates.clear();
     for y in 0..map.height() {
         for x in 0..map.width() {
             let centre = map.cell_to_world_center(x, y)?;
@@ -604,7 +691,8 @@ pub fn nearest_reachable_point(
         }
     }
     candidates.sort_unstable();
-    for (_, index, x) in candidates {
+    let mut found = None;
+    for &(_, index, x) in &candidates {
         let y = index / map.width();
         let centre = map.cell_to_world_center(x, y)?;
         if segment_clear(
@@ -615,8 +703,10 @@ pub fn nearest_reachable_point(
             centre,
             request.radius,
         ) {
-            return Ok(((x, y) != start_cell).then_some(centre));
+            found = ((x, y) != start_cell).then_some(centre);
+            break;
         }
     }
-    Ok(None)
+    search.candidates = candidates;
+    Ok(found)
 }

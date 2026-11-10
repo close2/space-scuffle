@@ -13,13 +13,14 @@
     clippy::too_many_lines
 )]
 
-use sim_map::{
-    CellFlags, CliffLevel, GameMap, MapCell, PathRequestWithVision, RampDir, UnitClearance,
-};
+use sim_map::{CellFlags, CliffLevel, GameMap, MapCell, PathRequestWithVision, RampDir};
 use sim_types::{
     EntityId, MoverType, PlayerId, PlayerSlot, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
     VisibilityState,
 };
+
+/// Radius 0.625 in world units: a standard combat body.
+const MEDIUM_RADIUS: SimScalar = SimScalar::from_raw(5 << 29);
 
 /// Empty tick input helper.
 fn empty_bundle(tick: u32) -> TickBundle {
@@ -77,8 +78,7 @@ fn test_unexplored_ramp_blocks_path_until_scouted() {
     let req = PathRequestWithVision {
         start: start_pos,
         goal: high_goal,
-        clearance: UnitClearance::Medium,
-        radius: UnitClearance::Medium.radius_scalar(),
+        radius: MEDIUM_RADIUS,
         vision: Some(&world.vision_maps[PlayerSlot::ALL[0]]),
         block_unexplored_ramps: false,
         known_structures: Some(&world.known_blocked_cells[PlayerSlot::ALL[0]]),

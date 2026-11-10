@@ -1,7 +1,7 @@
 //! # `sim_map`
 //!
 //! Authoritative, deterministic map representation, terrain elevation,
-//! Fog of War visibility, and funnel pathfinding for **Space Scuffle**.
+//! Fog of War visibility, and navigation-mesh pathfinding for **Space Scuffle**.
 //!
 //! ## Architectural Principles
 //! - **Dual-Grid Model:** A discrete 1x1 cell grid controls discrete spatial properties
@@ -41,14 +41,13 @@ pub use navmesh::{
     TriangleKind, TriangleLabel,
 };
 pub use pathfinding::{
-    PathRequest, PathRequestWithVision, PathResult, Pathfinder, PathfinderBuffers, PortalEdge,
-    UnitClearance, CORNER_SAFETY_MARGIN, NO_HEAP_POS,
+    PathRequest, PathRequestWithVision, PathResult, Pathfinder, CORNER_SAFETY_MARGIN,
 };
 pub use sim_types::VisibilityState;
 pub use validation::{
     validate_map, CellRect, MapValidationError, MapValidationReport, MapValidationWarning,
     MIN_RECOMMENDED_RAMP_WIDTH, MIN_START_LOCATIONS, MIN_START_SEPARATION_CELLS,
-    RESOURCE_ASSOCIATION_RADIUS_CELLS, VALIDATION_PATH_CLEARANCE,
+    RESOURCE_ASSOCIATION_RADIUS_CELLS, VALIDATION_PATH_RADIUS,
 };
 pub use vision::{watchtower_source, PlayerVisionMap, VisionSource, MAX_SIGHT_RADIUS_CELLS};
 

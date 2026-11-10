@@ -33,11 +33,14 @@
 use sim_core::catalog::UnitCatalog;
 use sim_core::SimWorld;
 use sim_fixtures::trace::route::{first_pass, RouteBox, RouteSample};
-use sim_map::{CellFlags, CliffLevel, GameMap, MapCell, PathRequest, Pathfinder, UnitClearance};
+use sim_map::{CellFlags, CliffLevel, GameMap, MapCell, PathRequest, Pathfinder};
 use sim_types::{
     EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
 };
 use std::error::Error;
+
+/// Radius 0.375 in world units: the smallest infantry body.
+const SMALL_RADIUS: SimScalar = SimScalar::from_raw(3 << 29);
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -174,8 +177,7 @@ fn searched(world: &SimWorld, start: SimVec2, goal: SimVec2) -> Option<Vec<SimVe
             &PathRequest {
                 start,
                 goal,
-                clearance: UnitClearance::Small,
-                radius: UnitClearance::Small.radius_scalar(),
+                radius: SMALL_RADIUS,
             },
         )
         .ok()
@@ -447,6 +449,35 @@ fn corner_waypoints_keep_each_units_own_radius_from_the_corner() -> TestResult {
             "{slug}: corner {corner:?} is {gap} from the vertex, expected {expected}"
         );
     }
+    assert_eq!(world.diagnostics(), []);
+    Ok(())
+}
+
+/// WP9 (B-102): routes come from the navigation mesh at the unit's own radius, so a body of
+/// radius 0.5 rounding a corner keeps its whole disc clear of it: on every tick of the walk its
+/// centre stays at least its radius from the corner vertex, and it arrives.
+#[test]
+fn a_wide_unit_keeps_its_body_clear_of_the_corner_it_rounds() -> TestResult {
+    let mut world = corner_world()?;
+    let goal = at(COLUMN_GOAL.0, COLUMN_GOAL.1);
+    let kind = world.catalog.id_by_slug(WIDE).ok_or("scratch unit")?;
+    let unit = world.spawn_unit(kind, BLUE, at(10.5, 19.5))?;
+    order(&mut world, &[unit], UnitOrder::Move { target: goal });
+    let mut closest = f64::INFINITY;
+    for _ in 0..200 {
+        let p = point(world.entities[&unit].position);
+        closest = closest.min((p.0 - 16.0).hypot(p.1 - 16.0));
+        tick(&mut world, Vec::new());
+    }
+    assert!(
+        closest >= 0.5 - 1e-3,
+        "the body came {closest} from the corner"
+    );
+    let end = point(world.entities[&unit].position);
+    assert!(
+        (end.0 - COLUMN_GOAL.0).hypot(end.1 - COLUMN_GOAL.1) < 0.1,
+        "arrived at {end:?}"
+    );
     assert_eq!(world.diagnostics(), []);
     Ok(())
 }
