@@ -5,7 +5,9 @@
 //! Pins the locomotion rule: a unit's own motion on a tick is at most the speed it achieved on
 //! the tick before plus its archetype's `acceleration`, capped at its effective top speed; on
 //! the way to a move order's destination it brakes so that its speed falls by at most its
-//! `deceleration` per tick and it still stops on the destination. An `acceleration` or
+//! `deceleration` per tick and it still stops on the destination; an order that ends without
+//! arriving (Stop, Hold Position) lets it glide to rest at that rate, and a chase brakes into its
+//! weapon's range (the owner's answer to Q0067). An `acceleration` or
 //! `deceleration` at or above the archetype's `max_speed` changes speed within one tick, which
 //! is how the catalog spells `StarCraft` II's `1000` ("instant").
 //!
@@ -299,5 +301,201 @@ fn finite_deceleration_brakes_into_the_destination() -> TestResult {
         "stopped at {}",
         bench.x()?
     );
+    Ok(())
+}
+
+/// An air mover at top speed 0.1 at once, braking at 0.01 per tick².
+const AIR_GLIDER: Motion = Motion {
+    mover: "Air",
+    max_speed: 0.1,
+    acceleration: 0.1,
+    deceleration: 0.01,
+};
+
+/// Moves `motion` east at full speed for 10 ticks, then gives `order`; returns the speeds and x
+/// positions of the 15 ticks after the order, the order's tick first.
+fn speeds_after(
+    motion: Motion,
+    order: UnitOrder,
+) -> Result<(Vec<f64>, Vec<f64>), Box<dyn std::error::Error>> {
+    let mut bench = Bench::new(motion, 40)?;
+    for _ in 0..10 {
+        bench.step(None);
+    }
+    let mut speeds = Vec::new();
+    let mut xs = Vec::new();
+    bench.step(Some(order));
+    for _ in 0..15 {
+        speeds.push(bench.speed()?);
+        xs.push(bench.x()?);
+        bench.step(None);
+    }
+    Ok((speeds, xs))
+}
+
+#[test]
+fn q0067_an_order_that_ends_without_arriving_glides_to_rest_at_the_deceleration() -> TestResult {
+    // The owner's answer to Q0067, option 2: braking extends to orders that end without
+    // arriving. Stop and Hold Position end the move short of its destination.
+    for order in [UnitOrder::Stop, UnitOrder::HoldPosition] {
+        let (speeds, xs) = speeds_after(AIR_GLIDER, order.clone())?;
+        let expected = [0.09, 0.08, 0.07, 0.06, 0.05, 0.04, 0.03, 0.02, 0.01, 0.0];
+        for (tick, (speed, want)) in speeds.iter().zip(expected).enumerate() {
+            assert!(
+                (speed - want).abs() < EPSILON,
+                "{order:?} tick {tick}: speed {speed}, expected {want} (all {speeds:?})"
+            );
+        }
+        assert!(
+            speeds[expected.len()..].iter().all(|s| *s == 0.0),
+            "{order:?}: at rest, it stays: {speeds:?}"
+        );
+        // It glides on along its heading: 0.09 + 0.08 + … + 0.01 = 0.45 past the order's point.
+        let glide = xs[9] - (xs[0] - 0.09);
+        assert!(
+            (glide - 0.45).abs() < 1e-4,
+            "{order:?}: glided {glide} ({xs:?})"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn q0067_instant_deceleration_still_stops_within_a_tick() -> TestResult {
+    let motion = Motion {
+        deceleration: 0.1,
+        ..AIR_GLIDER
+    };
+    for order in [UnitOrder::Stop, UnitOrder::HoldPosition] {
+        let (speeds, xs) = speeds_after(motion, order.clone())?;
+        assert!(speeds.iter().all(|s| *s == 0.0), "{order:?}: {speeds:?}");
+        assert!(xs.windows(2).all(|w| w[0] == w[1]), "{order:?}: {xs:?}");
+    }
+    Ok(())
+}
+
+/// A world on the shipped catalog with a chaser cloned from the first shipped armed mobile
+/// unit (radius 0.5, top speed 0.1 reached at once, braking at `deceleration`, every weapon's
+/// reach 2) at (8, 24), attacking a passive, holding target at (20, 24). Returns the world and
+/// both ids.
+fn pursuit_world(
+    deceleration: f32,
+) -> Result<(SimWorld, EntityId, EntityId), Box<dyn std::error::Error>> {
+    let map = GameMap::new(64, 48, MapCell::default_ground(CliffLevel(0)))?;
+    let mut world = sim_fixtures::world(map, 11);
+    let base = world
+        .catalog
+        .archetypes()
+        .find(|arch| arch.weapon.is_some() && arch.max_speed > SimScalar::ZERO)
+        .ok_or("a shipped armed unit")?
+        .clone();
+    let mut free = (1..=u16::MAX)
+        .map(sim_types::UnitTypeId)
+        .filter(|id| world.catalog.get(*id).is_err());
+    let (chaser_type, target_type) = (free.next().ok_or("id")?, free.next().ok_or("id")?);
+    let mut chaser = base.clone();
+    chaser.unit_type_id = chaser_type;
+    chaser.slug = "braking_chaser".to_string();
+    chaser.collision_radius = SimScalar::from_num(0.5);
+    chaser.max_speed = SimScalar::from_num(0.1);
+    chaser.acceleration = SimScalar::from_num(0.1);
+    chaser.deceleration = SimScalar::from_f32_lossy(deceleration);
+    chaser.turn_before_move = false;
+    chaser.capabilities.attack_dash = None;
+    for weapon in [
+        &mut chaser.weapon,
+        &mut chaser.ground_weapon,
+        &mut chaser.air_weapon,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        weapon.max_range = SimScalar::from_num(2);
+        weapon.min_range = SimScalar::ZERO;
+    }
+    let mut target = base;
+    target.unit_type_id = target_type;
+    target.slug = "braking_target".to_string();
+    target.collision_radius = SimScalar::from_num(0.5);
+    target.weapon = None;
+    target.ground_weapon = None;
+    target.air_weapon = None;
+    target.max_hp = SimScalar::from_num(100_000);
+    world.catalog.register(chaser);
+    world.catalog.register(target);
+    let at = |x: i32, y: i32| SimVec2::new(SimScalar::from_i32(x), SimScalar::from_i32(y));
+    let chaser = world.spawn_unit(chaser_type, PlayerId(0), at(8, 24))?;
+    let target = world.spawn_unit(target_type, PlayerId(1), at(20, 24))?;
+    world
+        .entities
+        .get_mut(&target)
+        .ok_or("target")?
+        .issue_order(UnitOrder::HoldPosition, false)?;
+    world
+        .entities
+        .get_mut(&chaser)
+        .ok_or("chaser")?
+        .issue_order(UnitOrder::attack(target), false)?;
+    Ok((world, chaser, target))
+}
+
+/// The chaser's speed each tick for 200 ticks, and its final centre distance to the target.
+fn pursuit_speeds(deceleration: f32) -> Result<(Vec<f64>, f64), Box<dyn std::error::Error>> {
+    let (mut world, chaser, target) = pursuit_world(deceleration)?;
+    let mut speeds = Vec::new();
+    for tick in 0..200 {
+        world.step(&TickBundle {
+            tick: Tick(tick),
+            commands: Vec::new(),
+            state_checksum: None,
+        });
+        let velocity = world.entities.get(&chaser).ok_or("chaser")?.velocity;
+        speeds.push(f64::from(velocity.length().to_f32()));
+    }
+    let gap = world
+        .entities
+        .get(&chaser)
+        .ok_or("chaser")?
+        .position
+        .distance(world.entities.get(&target).ok_or("target")?.position);
+    Ok((speeds, f64::from(gap.to_f32())))
+}
+
+#[test]
+fn q0067_pursuit_brakes_into_the_weapon_range() -> TestResult {
+    // The owner's answer to Q0067, option 2: braking extends to pursuit. The chaser closes from
+    // 12 to its reach of 2 + 0.5 + 0.5 = 3 and stops there, losing at most 0.01 a tick.
+    let (speeds, gap) = pursuit_speeds(0.01)?;
+    for pair in speeds.windows(2) {
+        let drop = pair[0] - pair[1];
+        assert!(
+            drop <= 0.01 + EPSILON,
+            "speed fell by {drop} in one tick: {speeds:?}"
+        );
+    }
+    assert!(
+        speeds.iter().any(|s| *s > 0.0 && *s < 0.1 - EPSILON),
+        "it braked: {speeds:?}"
+    );
+    assert!(*speeds.last().ok_or("speeds")? == 0.0, "{speeds:?}");
+    assert!(gap <= 3.0 + 1e-4, "in range: {gap}");
+    assert!(gap >= 2.9, "not past its reach: {gap}");
+    Ok(())
+}
+
+#[test]
+fn q0067_instant_deceleration_pursuit_stops_within_a_tick() -> TestResult {
+    let (speeds, gap) = pursuit_speeds(0.1)?;
+    let stop = speeds
+        .iter()
+        .position(|s| *s == 0.0)
+        .ok_or("the chaser stopped")?;
+    assert!(
+        speeds[..stop.saturating_sub(1)]
+            .iter()
+            .all(|s| (s - 0.1).abs() < EPSILON),
+        "{speeds:?}"
+    );
+    assert!(gap <= 3.0 + 1e-4, "in range: {gap}");
     Ok(())
 }
