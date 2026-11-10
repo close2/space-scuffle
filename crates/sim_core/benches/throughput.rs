@@ -29,7 +29,7 @@
 use serde::Deserialize;
 use sim_core::catalog::RuntimeCatalogs;
 use sim_core::SimWorld;
-use sim_map::{CliffLevel, GameMap, MapCell};
+use sim_map::{CliffLevel, GameMap, MapCell, MapFile};
 use sim_types::{
     EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
 };
@@ -65,12 +65,25 @@ struct BenchmarkConfig {
 }
 
 /// One row of the throughput table.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct Scenario {
-    /// Side length of the flat square map in cells.
+    /// Side length of the flat square map in cells; ignored when `map_file` is set.
     map_cells: u32,
     /// Total units across both players.
     units: u32,
+    /// A shipped map under `assets/maps/` to fight on instead of a flat square: each army
+    /// starts packed around its start location and attack-moves to the other's (sc2
+    /// pathfinding WP8, the terrain scenario).
+    #[serde(default)]
+    map_file: Option<String>,
+}
+
+impl Scenario {
+    fn label(&self) -> String {
+        self.map_file
+            .clone()
+            .unwrap_or_else(|| format!("{0}x{0}", self.map_cells))
+    }
 }
 
 fn scalar_from_cells(cells: u32) -> Result<SimScalar, Box<dyn Error>> {
@@ -112,8 +125,11 @@ fn catalog_directory() -> PathBuf {
 fn build_world(
     config: &BenchmarkConfig,
     catalogs: &RuntimeCatalogs,
-    scenario: Scenario,
+    scenario: &Scenario,
 ) -> Result<(SimWorld, u32), Box<dyn Error>> {
+    if let Some(file) = &scenario.map_file {
+        return build_terrain_world(config, catalogs, file, scenario.units);
+    }
     let map = GameMap::new(
         scenario.map_cells,
         scenario.map_cells,
@@ -157,6 +173,90 @@ fn build_world(
     Ok((world, tick))
 }
 
+/// The cells of `map` around `centre` in rings of growing Chebyshev radius, in a fixed order,
+/// keeping those a ground unit may stand on.
+fn standable_cells_around(map: &GameMap, centre: (u32, u32), count: usize) -> Vec<(u32, u32)> {
+    let mut cells = Vec::with_capacity(count);
+    let side = i64::from(map.width().max(map.height()));
+    for ring in 0..side {
+        for dy in -ring..=ring {
+            for dx in -ring..=ring {
+                if dx.abs().max(dy.abs()) != ring || cells.len() >= count {
+                    continue;
+                }
+                let (Ok(x), Ok(y)) = (
+                    u32::try_from(i64::from(centre.0) + dx),
+                    u32::try_from(i64::from(centre.1) + dy),
+                ) else {
+                    continue;
+                };
+                let free = map
+                    .cell(x, y)
+                    .is_ok_and(|cell| cell.occupying_structure.is_none());
+                if free && map.terrain_step_is_connected((x, y), (x, y)) {
+                    cells.push((x, y));
+                }
+            }
+        }
+    }
+    cells
+}
+
+/// Builds a world on the shipped map `file` with `units` split between its first two start
+/// locations, each army attack-moving to the other's start.
+fn build_terrain_world(
+    config: &BenchmarkConfig,
+    catalogs: &RuntimeCatalogs,
+    file: &str,
+    units: u32,
+) -> Result<(SimWorld, u32), Box<dyn Error>> {
+    let path = catalog_directory().join("../maps").join(file);
+    let document = MapFile::load(&path)?.decode()?;
+    let [first, second, ..] = document.start_locations.as_slice() else {
+        return Err(format!("{file} needs two start locations").into());
+    };
+    let (home, away) = (first.cell, second.cell);
+    let map = document.to_game_map()?;
+    let per_side = usize::try_from(units / 2)?;
+    let blue_cells = standable_cells_around(&map, home, per_side);
+    let red_cells = standable_cells_around(&map, away, per_side);
+    let mut world = SimWorld::with_catalogs(
+        map,
+        config.seed,
+        catalogs.units.clone(),
+        catalogs.upgrades.clone(),
+    );
+    let unit_type = world
+        .catalog
+        .id_by_slug(&config.unit_slug)
+        .ok_or("scenario unit_slug is not in the catalog")?;
+    let centre = |(x, y): (u32, u32)| {
+        Ok::<_, Box<dyn Error>>(SimVec2::new(
+            scalar_from_cells(x)? + SimScalar::HALF,
+            scalar_from_cells(y)? + SimScalar::HALF,
+        ))
+    };
+    let (mut blue, mut red) = (Vec::new(), Vec::new());
+    for cell in blue_cells {
+        blue.push(world.spawn_unit(unit_type, PlayerId(0), centre(cell)?)?);
+    }
+    for cell in red_cells {
+        red.push(world.spawn_unit(unit_type, PlayerId(1), centre(cell)?)?);
+    }
+    let mut tick = 0;
+    step_with(
+        &mut world,
+        &mut tick,
+        vec![attack_move(0, blue, centre(away)?)],
+    );
+    step_with(
+        &mut world,
+        &mut tick,
+        vec![attack_move(1, red, centre(home)?)],
+    );
+    Ok((world, tick))
+}
+
 /// Measures one repeat, returning ticks per second.
 #[expect(
     clippy::disallowed_methods,
@@ -165,7 +265,7 @@ fn build_world(
 fn measure(
     config: &BenchmarkConfig,
     catalogs: &RuntimeCatalogs,
-    scenario: Scenario,
+    scenario: &Scenario,
 ) -> Result<f64, Box<dyn Error>> {
     let (mut world, mut tick) = build_world(config, catalogs, scenario)?;
     let started = Instant::now();
@@ -210,20 +310,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     for scenario in &config.scenarios {
         let mut samples = Vec::with_capacity(config.repeats);
         for _ in 0..config.repeats {
-            samples.push(measure(&config, &catalogs, *scenario)?);
+            samples.push(measure(&config, &catalogs, scenario)?);
         }
         samples.sort_by(f64::total_cmp);
         let median = samples
             .get(samples.len() / 2)
             .ok_or("scenario table must request at least one repeat")?;
         println!(
-            "| {0}x{0} | {1} | {median:.0} |",
-            scenario.map_cells, scenario.units
+            "| {} | {} | {median:.0} |",
+            scenario.label(),
+            scenario.units
         );
         if floor.is_some_and(|floor| *median < floor) {
             below.push(format!(
-                "{0}x{0} with {1} units at {median:.0} ticks/s",
-                scenario.map_cells, scenario.units
+                "{} with {} units at {median:.0} ticks/s",
+                scenario.label(),
+                scenario.units
             ));
         }
     }
