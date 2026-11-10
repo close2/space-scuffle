@@ -153,7 +153,7 @@ pub struct UnitArchetype {
     /// it keeps until it has a clear way in (the surround walk, plan
     /// `2026-11-09-friendly-blocking` D-2). `StarCraft` II leaves such a unit standing for the
     /// player to move; walking round is an "allows more" deviation (Q0051), so the default `true`
-    /// rests on [Q0074](../../../docs/questions/open/0074-surround-walk.md), and `false` restores
+    /// rests on [Q0074](../../../docs/questions/closed/0074-surround-walk.md), and `false` restores
     /// the game's stand. Either way a blocked unit never vibrates: it waits (D-1).
     #[serde(default = "surround_walk_default")]
     pub surround_walk: bool,

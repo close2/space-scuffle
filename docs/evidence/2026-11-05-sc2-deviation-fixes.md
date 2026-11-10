@@ -1573,7 +1573,7 @@ build, test and measurement ran unlocked at `-j 4` under `nice`, with the user s
   more distant target while Charge is active" lets the Zealot cover more ground, so the dash survives a retarget.
 
 Not stated by the data, and read as follows (owner question
-[Q0071](../questions/open/0071-charge-trigger-details.md), default this reading): the 0.6 is measured edge to edge
+[Q0071](../questions/closed/0071-charge-trigger-details.md), default this reading): the 0.6 is measured edge to edge
 (as weapon and scan ranges are); the 4 is a straight centre-to-centre distance, not a walk; the autocast looks on every
 tick; the dash ends at the start of a swing, and a new order does not end it.
 
@@ -1628,7 +1628,7 @@ re-recording is the encoding alone; the re-recorded lists reproduce in debug, re
 
 ### 16.5 What WP13c leaves open
 
-- **B-43, narrowed** ([Q0071](../questions/open/0071-charge-trigger-details.md)): how the engine measures the 0.6
+- **B-43, narrowed** ([Q0071](../questions/closed/0071-charge-trigger-details.md)): how the engine measures the 0.6
   and the 4 (edges or centres; a straight line or the walk), when the autocast looks, and whether a new order ends a
   dash.
 - **B-94 (new):** Charge's autocast cannot be switched off; the game's is a player toggle (`AutoCast`, on by

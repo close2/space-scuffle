@@ -793,12 +793,12 @@ requires.
 | B-40 | Turn before move | Fixed | turn-before-move WP1 `6d7a9d5`, WP3 `b7d9f50` |
 | B-41 | No Immortal Barrier | Fixed | WP13a ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §14); the order within a hit kept as landed by the owner ([Q0068](../questions/closed/0068-barrier-damage-order.md), Amendment 22) |
 | B-42 | The Lurker attacks unburrowed | Fixed | WP13b ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §15); weapon and cloak at the `Stats` section end, Amendment 22 package E ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §17.5, [Q0069](../questions/closed/0069-lurker-burrow-sections.md)) |
-| B-43 | Charge without the dash | Fixed, narrowed | WP13c ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §16; Amendment 21); open only how the engine measures the trigger window, when the autocast looks and whether a new order ends a dash ([Q0071](../questions/open/0071-charge-trigger-details.md)) |
+| B-43 | Charge without the dash | Fixed, narrowed | WP13c ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §16; Amendment 21); open only how the engine measures the trigger window, when the autocast looks and whether a new order ends a dash ([Q0071](../questions/closed/0071-charge-trigger-details.md)) |
 | B-44 | Concussive Shells do nothing | (i) | WP13d |
 | B-45 | No firing while moving | (i) | WP13e |
 | B-46 | The Viking cannot land | (i) | WP18 |
 | B-47 | Non-time catalog values unaudited | Fixed | WP9 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10; the Thor's armour by Amendment 15) |
-| B-48 | Push priorities | Fixed | Plan [`2026-11-09-friendly-blocking`](2026-11-09-friendly-blocking.md) WP5 (`c942cea`, [evidence](../evidence/2026-11-09-friendly-blocking.md)): `PushPriority` 10 for every unit, 11 for the Ultralisk analogue (`AlliedPushPriority` 1, [Q0073](../questions/open/0073-allied-push-priority.md) default) |
+| B-48 | Push priorities | Fixed | Plan [`2026-11-09-friendly-blocking`](2026-11-09-friendly-blocking.md) WP5 (`c942cea`, [evidence](../evidence/2026-11-09-friendly-blocking.md)): `PushPriority` 10 for every unit, 11 for the Ultralisk analogue (`AlliedPushPriority` 1, [Q0073](../questions/closed/0073-allied-push-priority.md) default) |
 | B-49 | Which radius spaces units | (i) | WP16; how tightly armies clump is visible behaviour |
 | B-50 | Melee packing around a solid enemy | (i) | WP16 |
 | B-51 | Neosteel Armor's targets | Fixed | WP9 g5 ([evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.1) |
@@ -1231,7 +1231,7 @@ Evidence: [evidence](../evidence/2026-11-05-sc2-deviation-fixes.md) §10.
   schema 21; research gates it through `UnlockAbility` slug `attack_dash`), data `1ac40ac` (`psi_grey`: 2.2, 63, 179,
   0.6, 4; the `charge` research unlocks it). Matrix and battle 33 (41 / 10 / 17) bit-identical at both commits;
   goldens re-recorded only for the schema. Open: how the engine measures 0.6 and 4, when the autocast looks, and
-  whether a new order ends a dash ([Q0071](../questions/open/0071-charge-trigger-details.md), default the rule as
+  whether a new order ends a dash ([Q0071](../questions/closed/0071-charge-trigger-details.md), default the rule as
   landed).
 - **The §3 row and WP13 name battle 23b, which does not research Charge;** no matrix battle does, so the data moved
   nothing the matrix measures. A scratch probe with the Zealots researching Charge (evidence §16.3) shows the dash:
@@ -1310,8 +1310,8 @@ main). The stop rule of D-4 stands: an overall-winner flip without a cited StarC
 
 | Item | Source | Rule | B-ID |
 |---|---|---|---|
-| 1 | [Q0071](../questions/open/0071-charge-trigger-details.md), option 1 with the optional details the owner endorsed | Keep WP13c's trigger (0.6 edge to edge, tried every tick). A running dash ends on an explicit non-attack order (Move, Stop, Hold Position) and survives an attack retarget. The 4 is the ground path distance on the navigation mesh (`Pathing 1`, the owner's engine note) where a route query is possible; the straight line stands only where none is (no mesh, the target's centre where the dasher's disc does not fit, a dasher that does not walk), which the module documents | B-43 closed |
+| 1 | [Q0071](../questions/closed/0071-charge-trigger-details.md), option 1 with the optional details the owner endorsed | Keep WP13c's trigger (0.6 edge to edge, tried every tick). A running dash ends on an explicit non-attack order (Move, Stop, Hold Position) and survives an attack retarget. The 4 is the ground path distance on the navigation mesh (`Pathing 1`, the owner's engine note) where a route query is possible; the straight line stands only where none is (no mesh, the target's centre where the dasher's disc does not fit, a dasher that does not walk), which the module documents | B-43 closed |
 | 2 | [Q0067](../questions/closed/0067-unset-deceleration.md), option 2, rule half | A unit with a finite deceleration brakes at it also when its order ends without arriving (Stop, Hold Position, an order given up or a target lost: it glides to rest along its last velocity, held to terrain) and in pursuit (it brakes into its weapon's range band instead of stopping within a tick) | B-39 closed |
 | 3 | [Q0064](../questions/closed/0064-colossus-damage-timing.md)'s note on B-85 | The Lurker analogue's line searches land 2 ticks apart along the line, nearest first; the Colossus' line stays on the release tick. The pending searches are per-unit hashed state: checksum schema bump | B-85 closed |
 | 4 | `DESIGN.md` B-113, plan `2026-11-09-sc2-pathfinding` Amendment 6 | A unit the crowd wedges inside its radius of a route corner re-plans from where it stands when its first leg is not passable for its whole disc, bounded per unit, if a measured fix exists; the earlier variants A to C (that plan's evidence, Amendment 5) did not help. Otherwise the attempts are recorded and B-113 stays open | B-113 |
-| 5 | [Q0072](../questions/open/0072-per-ability-hotkeys.md), [Q0073](../questions/open/0073-allied-push-priority.md), [Q0074](../questions/open/0074-surround-walk.md), option 1 each | No change: the code is already as answered. The four questions are closed | none |
+| 5 | [Q0072](../questions/closed/0072-per-ability-hotkeys.md), [Q0073](../questions/closed/0073-allied-push-priority.md), [Q0074](../questions/closed/0074-surround-walk.md), option 1 each | No change: the code is already as answered. The four questions are closed | none |
