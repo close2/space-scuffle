@@ -15,14 +15,15 @@
 //!   start, the goal, or a channel vertex with the side on which the route passes it. Directions
 //!   from the apex are tangent directions, so the comparisons are those of S11's modified funnel.
 //! - All arithmetic is Q32.32 with `SimScalar::sqrt`; no float (charter §3.1).
-//! - An arc turning by at most 45 degrees becomes one waypoint, where the two tangent lines meet;
-//!   a larger arc becomes two, where the tangent lines meet the tangent at the arc's middle. Each
-//!   leg is then tangent to the circle or outside it, so it keeps at least `r + margin` from the
-//!   vertex it turns around.
+//! - Each arc becomes waypoints on its circle: its two tangent points and the points of the arc
+//!   halved until every chord keeps at least `r + margin - ARC_CHORD_DIP` from the vertex it turns
+//!   around (plan Amendment 2). The polyline is therefore never longer than the tangent-and-arc
+//!   route, and every leg keeps at least `r + margin / 2` from the vertices it rounds.
 
 use sim_types::{SimScalar, SimVec2};
 
 use super::NavMesh;
+use crate::pathfinding::CORNER_SAFETY_MARGIN;
 
 /// The side of the route on which a channel vertex lies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -106,6 +107,20 @@ fn tangent(mesh: &NavMesh, from: Anchor, to: Anchor, rho: SimScalar) -> Tangent 
     }
 }
 
+/// How the funnel orders the turns before making them exact for circles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PullStrategy {
+    /// Pull a point through the portals shrunk by `rho` at both ends: robust where circles
+    /// overlap the apex. The search uses it for every channel.
+    Shrunk,
+    /// Pull a point through the portals' own vertices, and keep a turn of more than a half turn
+    /// that the vertices bend with the side (a route wrapping the end of a thin wall). Used only
+    /// when the shrunk route fails the segment predicate (plan Amendment 2): shrinking a fan's
+    /// shared vertex towards each portal's other end makes it orbit its circle, and an apex
+    /// beside that circle then sees the funnel's side sweep past it.
+    Pinned,
+}
+
 /// Runs the radius funnel through `portals` (`(left, right)` vertex indices in travel order).
 ///
 /// `rho` is the unit's radius plus [`crate::CORNER_SAFETY_MARGIN`]. `extra` lists the vertices
@@ -116,7 +131,7 @@ pub fn radius_funnel(
     (start, goal): (SimVec2, SimVec2),
     portals: &[(u32, u32)],
     extra: &[u32],
-    rho: SimScalar,
+    (rho, strategy): (SimScalar, PullStrategy),
 ) -> FunnelRoute {
     let mut items: Vec<(Anchor, Anchor)> = Vec::with_capacity(portals.len() + 2);
     items.push((Anchor::Point(start), Anchor::Point(start)));
@@ -127,7 +142,7 @@ pub fn radius_funnel(
         )
     }));
     items.push((Anchor::Point(goal), Anchor::Point(goal)));
-    let anchors = string_pull(mesh, &items, extra, rho);
+    let anchors = string_pull(mesh, &items, extra, rho, strategy);
     let waypoints = emit_waypoints(mesh, &anchors, rho);
     let mut length = SimScalar::ZERO;
     for pair in waypoints.windows(2) {
@@ -168,15 +183,14 @@ fn string_pull(
     items: &[(Anchor, Anchor)],
     extra: &[u32],
     rho: SimScalar,
+    strategy: PullStrategy,
 ) -> Vec<Anchor> {
     let points: Vec<(SimVec2, SimVec2)> = items
         .iter()
-        .map(|&(l, r)| {
-            if let Anchor::Point(p) = l {
-                (p, p)
-            } else {
-                shrink(centre(mesh, l), centre(mesh, r), rho)
-            }
+        .map(|&(l, r)| match (l, strategy) {
+            (Anchor::Point(p), _) => (p, p),
+            (_, PullStrategy::Shrunk) => shrink(centre(mesh, l), centre(mesh, r), rho),
+            (_, PullStrategy::Pinned) => (centre(mesh, l), centre(mesh, r)),
         })
         .collect();
     let mut path = vec![items[0].0];
@@ -216,21 +230,46 @@ fn string_pull(
     }
     path.push(items[items.len() - 1].0);
     path.dedup();
-    refine(mesh, items, extra, path, rho)
+    refine(mesh, items, extra, path, (rho, strategy))
+}
+
+/// Whether `turn` (a cross product of travel directions) bends in the sense `side` requires.
+fn bends_with(side: Side, turn: SimScalar) -> bool {
+    match side {
+        Side::Left => turn >= SimScalar::ZERO,
+        Side::Right => turn <= SimScalar::ZERO,
+    }
 }
 
 /// Whether the route turns at anchor `j` in the sense its side requires.
-fn turns_with_side(mesh: &NavMesh, anchors: &[Anchor], j: usize, rho: SimScalar) -> bool {
+///
+/// A route that wraps the end of a thin wall turns there by more than a half turn, and the
+/// cross product of its tangent directions then has the other sign. Under
+/// [`PullStrategy::Pinned`] such a turn is kept when it reverses the direction of travel and
+/// still bends with the side when the anchors are taken as points (Mononen's test).
+fn turns_with_side(
+    mesh: &NavMesh,
+    anchors: &[Anchor],
+    j: usize,
+    (rho, strategy): (SimScalar, PullStrategy),
+) -> bool {
     let Anchor::Vertex(_, side) = anchors[j] else {
         return true;
     };
     let incoming = tangent(mesh, anchors[j - 1], anchors[j], rho).direction;
     let outgoing = tangent(mesh, anchors[j], anchors[j + 1], rho).direction;
-    let turn = incoming.cross_2d(outgoing);
-    match side {
-        Side::Left => turn >= SimScalar::ZERO,
-        Side::Right => turn <= SimScalar::ZERO,
+    if bends_with(side, incoming.cross_2d(outgoing)) {
+        return true;
     }
+    if strategy == PullStrategy::Shrunk {
+        return false;
+    }
+    let (a, c, b) = (
+        centre(mesh, anchors[j - 1]),
+        centre(mesh, anchors[j]),
+        centre(mesh, anchors[j + 1]),
+    );
+    incoming.dot(outgoing) < SimScalar::ZERO && bends_with(side, (c - a).cross_2d(b - c))
 }
 
 /// Distance from `p` to the segment `[a, b]`.
@@ -297,11 +336,11 @@ fn refine(
     items: &[(Anchor, Anchor)],
     extra: &[u32],
     mut anchors: Vec<Anchor>,
-    rho: SimScalar,
+    (rho, strategy): (SimScalar, PullStrategy),
 ) -> Vec<Anchor> {
     for _ in 0..4 * items.len() + 8 {
-        if let Some(j) =
-            (1..anchors.len().saturating_sub(1)).find(|&j| !turns_with_side(mesh, &anchors, j, rho))
+        if let Some(j) = (1..anchors.len().saturating_sub(1))
+            .find(|&j| !turns_with_side(mesh, &anchors, j, (rho, strategy)))
         {
             anchors.remove(j);
             continue;
@@ -316,24 +355,65 @@ fn refine(
     anchors
 }
 
-/// cos(45 degrees) in Q32.32.
-const COS_45: SimScalar = SimScalar::from_raw(3_037_000_500);
+/// How far a leg between two arc waypoints may dip inside the circle of `r + margin`, in world
+/// units: half of [`CORNER_SAFETY_MARGIN`], so every leg keeps at least `r + margin / 2` from the
+/// vertex it turns around.
+pub const ARC_CHORD_DIP: SimScalar = SimScalar::from_raw(CORNER_SAFETY_MARGIN.raw() / 2);
 
-/// Smallest `1 + cos` used when placing a corner point, so a near-reversal stays bounded.
-const MIN_HALF_COS: SimScalar = SimScalar::from_raw(1 << 30);
+/// Bisection depth bound of one arc: at most `2^ARC_MAX_DEPTH` legs per rounded vertex.
+const ARC_MAX_DEPTH: u32 = 6;
 
-/// Where the tangent lines at unit normals `n1` and `n2` of a circle of radius `rho` meet.
-fn corner_point(c: SimVec2, n1: SimVec2, n2: SimVec2, rho: SimScalar) -> SimVec2 {
-    let denominator = (SimScalar::ONE + n1.dot(n2)).max(MIN_HALF_COS);
-    c + (n1 + n2) * (rho / denominator)
+/// Smallest `|a + b|^2` treated as two opposite directions when bisecting an arc.
+const OPPOSITE_SUM_SQ: SimScalar = SimScalar::from_raw(1 << 20);
+
+/// The unit direction halfway along the arc from `a` to `b` in the sense `arc_sign` (+1
+/// counter-clockwise, -1 clockwise); both are unit vectors from the circle's centre.
+fn arc_middle(a: SimVec2, b: SimVec2, arc_sign: i32) -> SimVec2 {
+    let sum = a + b;
+    if sum.length_sq() <= OPPOSITE_SUM_SQ {
+        return perp(a) * arc_sign;
+    }
+    let bisector = sum.normalize_or_zero();
+    if a.cross_2d(b) * arc_sign >= SimScalar::ZERO {
+        bisector
+    } else {
+        -bisector
+    }
 }
 
-/// Replaces each rounded vertex's arc by one or two waypoints (D-6).
+/// Pushes the waypoints strictly inside the arc from `a` to `b` (unit directions from `c`, in
+/// the sense `arc_sign`), on the circle of radius `rho`: the arc is halved until every chord
+/// keeps at least `floor` from `c`, at most [`ARC_MAX_DEPTH`] times.
+fn arc_points(
+    (c, rho, floor): (SimVec2, SimScalar, SimScalar),
+    (a, b): (SimVec2, SimVec2),
+    arc_sign: i32,
+    depth: u32,
+    out: &mut Vec<SimVec2>,
+) {
+    // The chord from `a` to `b` keeps `rho |a + b| / 2` from the centre when the arc is at most
+    // a half turn; compared on squares.
+    let short = a.cross_2d(b) * arc_sign >= SimScalar::ZERO;
+    let sum = a + b;
+    if depth >= ARC_MAX_DEPTH || (short && sum.length_sq() * rho * rho >= floor * floor * 4) {
+        return;
+    }
+    let m = arc_middle(a, b, arc_sign);
+    arc_points((c, rho, floor), (a, m), arc_sign, depth + 1, out);
+    out.push(c + m * rho);
+    arc_points((c, rho, floor), (m, b), arc_sign, depth + 1, out);
+}
+
+/// Replaces each rounded vertex's arc by waypoints on its circle (D-6, Amendment 2): the two
+/// tangent points and, between them, the points of the arc halved until every chord keeps at
+/// least `rho - ARC_CHORD_DIP` from the vertex. The polyline is then never longer than the
+/// tangent-and-arc route and dips at most [`ARC_CHORD_DIP`] inside its circle.
 fn emit_waypoints(mesh: &NavMesh, anchors: &[Anchor], rho: SimScalar) -> Vec<SimVec2> {
     let tangents: Vec<Tangent> = anchors
         .windows(2)
         .map(|pair| tangent(mesh, pair[0], pair[1], rho))
         .collect();
+    let floor = rho - ARC_CHORD_DIP;
     let mut points = vec![centre(mesh, anchors[0])];
     for j in 1..anchors.len().saturating_sub(1) {
         let Anchor::Vertex(_, side) = anchors[j] else {
@@ -341,32 +421,15 @@ fn emit_waypoints(mesh: &NavMesh, anchors: &[Anchor], rho: SimScalar) -> Vec<Sim
             continue;
         };
         let c = centre(mesh, anchors[j]);
-        let n_in = (tangents[j - 1].to - c).normalize_or_zero();
-        let n_out = (tangents[j].from - c).normalize_or_zero();
-        if n_in == SimVec2::ZERO || n_out == SimVec2::ZERO {
-            points.push(tangents[j - 1].to);
-            points.push(tangents[j].from);
-            continue;
+        let (enter, leave) = (tangents[j - 1].to, tangents[j].from);
+        points.push(enter);
+        let n_in = (enter - c).normalize_or_zero();
+        let n_out = (leave - c).normalize_or_zero();
+        if n_in != SimVec2::ZERO && n_out != SimVec2::ZERO {
+            let arc_sign = if side == Side::Left { 1 } else { -1 };
+            arc_points((c, rho, floor), (n_in, n_out), arc_sign, 0, &mut points);
         }
-        let arc_sign = if side == Side::Left { 1 } else { -1 };
-        let turns_forward = n_in.cross_2d(n_out) * arc_sign >= SimScalar::ZERO;
-        if turns_forward && n_in.dot(n_out) >= COS_45 {
-            points.push(corner_point(c, n_in, n_out, rho));
-            continue;
-        }
-        let sum = n_in + n_out;
-        let middle = if sum.length_sq() > SimScalar::from_raw(1 << 20) {
-            let bisector = sum.normalize_or_zero();
-            if turns_forward {
-                bisector
-            } else {
-                -bisector
-            }
-        } else {
-            perp(n_in) * arc_sign
-        };
-        points.push(corner_point(c, n_in, middle, rho));
-        points.push(corner_point(c, middle, n_out, rho));
+        points.push(leave);
     }
     points.push(centre(mesh, anchors[anchors.len() - 1]));
     points.dedup();
@@ -396,4 +459,56 @@ pub fn portal_midpoints(
 #[must_use]
 pub fn tangent_direction(mesh: &NavMesh, from: Anchor, to: Anchor, rho: SimScalar) -> SimVec2 {
     tangent(mesh, from, to, rho).direction
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unit(degrees: f64) -> SimVec2 {
+        let radians = degrees.to_radians();
+        SimVec2::new(
+            SimScalar::from_num(radians.cos()),
+            SimScalar::from_num(radians.sin()),
+        )
+        .normalize_or_zero()
+    }
+
+    /// Every emitted arc point lies on the circle, and every chord between consecutive points
+    /// (tangent points included) keeps at least `rho - ARC_CHORD_DIP` from the centre, for
+    /// small turns, a right angle, a half turn and a wrap beyond it, in both senses.
+    #[test]
+    fn arc_points_stay_on_the_circle_and_chords_keep_the_floor() {
+        let c = SimVec2::new(SimScalar::from_num(10), SimScalar::from_num(7));
+        let rho = SimScalar::from_num(0.55);
+        let floor = rho - ARC_CHORD_DIP;
+        let tolerance = SimScalar::from_raw(1 << 16);
+        for (from, sweep) in [(0.0, 10.0), (30.0, 90.0), (-90.0, 180.0), (45.0, 250.0)] {
+            for arc_sign in [1, -1] {
+                let a = unit(from);
+                let b = unit(from + sweep * f64::from(arc_sign));
+                let mut points = vec![c + a * rho];
+                arc_points((c, rho, floor), (a, b), arc_sign, 0, &mut points);
+                points.push(c + b * rho);
+                for &p in &points {
+                    assert!(
+                        (p.distance(c) - rho).abs() <= tolerance,
+                        "{p:?} off the circle"
+                    );
+                }
+                for pair in points.windows(2) {
+                    let middle = (pair[0] + pair[1]) / 2;
+                    assert!(
+                        middle.distance(c) + tolerance >= floor,
+                        "sweep {sweep} sense {arc_sign}: chord {pair:?} dips below the floor"
+                    );
+                    // Consecutive points advance in the arc's sense.
+                    let turn = (pair[0] - c).cross_2d(pair[1] - c) * arc_sign;
+                    assert!(turn >= SimScalar::ZERO, "sweep {sweep}: {pair:?} goes back");
+                }
+                let pieces = points.len() - 1;
+                assert!(pieces <= 1 << ARC_MAX_DEPTH, "{pieces} pieces");
+            }
+        }
+    }
 }

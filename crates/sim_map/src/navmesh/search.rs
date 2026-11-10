@@ -30,7 +30,7 @@ use std::collections::BinaryHeap;
 use sim_types::{SimScalar, SimVec2};
 
 use super::cdt::NONE;
-use super::funnel::{portal_midpoints, radius_funnel, Anchor, FunnelRoute, Side};
+use super::funnel::{portal_midpoints, radius_funnel, Anchor, FunnelRoute, PullStrategy, Side};
 use super::predicates::LatticePoint;
 use super::segment::{segment_clear, SegmentScratch};
 use super::{next, prev, Access, NavMesh};
@@ -312,6 +312,33 @@ impl MeshSearch {
         })
     }
 
+    /// Pulls the channel in `self.portals` again with [`PullStrategy::Pinned`] after the shrunk
+    /// route `shrunk` failed the segment predicate; returns the pinned route when it is legal,
+    /// else `shrunk`, and whether the returned route is legal.
+    fn pinned_retry(
+        &mut self,
+        query: &Query<'_>,
+        start_triangle: u32,
+        shrunk: FunnelRoute,
+    ) -> (FunnelRoute, bool) {
+        let (s, g) = (
+            query.mesh.triangle_vertices(start_triangle),
+            query.mesh.triangle_vertices(query.goal_triangle),
+        );
+        let pinned = radius_funnel(
+            query.mesh,
+            (query.start, query.goal),
+            &self.portals,
+            &[s[0], s[1], s[2], g[0], g[1], g[2]],
+            (query.radius + CORNER_SAFETY_MARGIN, PullStrategy::Pinned),
+        );
+        if self.is_legal(query, &pinned) {
+            (pinned, true)
+        } else {
+            (shrunk, false)
+        }
+    }
+
     /// TA* without, then if its route is illegal with, the start and goal reach checks.
     /// Returns the route, whether it is legal, and the expansions spent; `self.portals` holds
     /// the returned route's channel.
@@ -372,7 +399,7 @@ impl MeshSearch {
                     (query.start, query.goal),
                     &self.portals,
                     &end_vertices,
-                    rho,
+                    (rho, PullStrategy::Shrunk),
                 );
                 if best.as_ref().is_none_or(|(b, _)| route.length < b.length) {
                     best = Some((route, self.portals.clone()));
@@ -482,6 +509,11 @@ pub fn find_route(
     };
     let (route, legal, expansions) = search.two_pass(&query, start_triangle);
     let route = route.ok_or(MapError::NoPathFound { start, goal })?;
+    let (route, legal) = if legal {
+        (route, true)
+    } else {
+        search.pinned_retry(&query, start_triangle, route)
+    };
     let turns = route
         .anchors
         .iter()

@@ -370,8 +370,10 @@ fn f64_of(p: SimVec2) -> (f64, f64) {
 }
 
 /// Routes `start -> goal` on the mesh and checks it against the exact oracle: every leg passes
-/// the segment predicate, and the route's tangent-and-arc length is within 1 % of the oracle's.
-/// Returns the route's polyline length and the oracle's length.
+/// the segment predicate, the route's tangent-and-arc length is within 1 % of the oracle's, and
+/// its polyline is no longer than its tangent-and-arc length (arcs are emitted on their circle,
+/// plan Amendment 2). Returns the polyline length and the oracle's length at
+/// `r + margin / 2`, the closest any leg may come to a vertex it turns around.
 fn assert_mesh_route_matches_oracle(
     map: &GameMap,
     start: SimVec2,
@@ -411,7 +413,16 @@ fn assert_mesh_route_matches_oracle(
         smooth <= reference * 1.01,
         "route {smooth} against oracle {reference}: {route:?}"
     );
-    (f64::from(route.total_length.to_f32()), reference)
+    let polyline = f64::from(route.total_length.to_f32());
+    assert!(
+        polyline <= smooth + 1e-3,
+        "polyline {polyline} against arcs {smooth}"
+    );
+    let dipped = f64::from((radius + CORNER_SAFETY_MARGIN / 2).to_f32());
+    let floor = oracle::Oracle::new(oracle::walls_of(map), dipped)
+        .shortest(f64_of(start), f64_of(goal))
+        .expect("the oracle finds a route");
+    (polyline, floor)
 }
 
 #[test]
@@ -445,6 +456,40 @@ fn mesh_route_for_the_showcase_pair_is_at_the_oracle_length() {
     for radius in [0.375, 0.5] {
         assert_mesh_route_matches_oracle(&map, at(61.5, 24.5), at(16.5, 35.5), radius);
     }
+}
+
+/// A unit standing just south of ramp E's side wall, its body touching it, goes round the wall's
+/// western end, up the ramp and out of its eastern side: the route wraps the corner (35, 52) by
+/// more than a half turn. The shrunk funnel loses that turn; the pinned retry keeps it, so the
+/// route is legal and no fallback to portal midpoints is needed (plan Amendment 2; WP8's worst
+/// pair, 3.08 times the grid's length through the midpoints).
+#[test]
+fn mesh_route_wraps_the_end_of_a_thin_wall_without_falling_back() {
+    let map = arena::load_game_map(arena::SHOWCASE_CANYON_FILE);
+    let (start, goal) = (at(36.5, 51.5), at(43.5, 49.5));
+    let radius = SimScalar::HALF;
+    let mut pathfinder = Pathfinder::new(&map);
+    let request = mesh_request(start, goal, radius);
+    let route = pathfinder
+        .find_route_mesh(&map, &request)
+        .expect("a route exists");
+    assert!(!route.fallback, "funnel fell back: {route:?}");
+    for pair in route.waypoints.windows(2) {
+        assert!(
+            pathfinder.mesh_segment_is_passable(&map, &request, pair[0], pair[1]),
+            "leg {pair:?}"
+        );
+    }
+    let corners: Vec<(i32, i32, Side)> = route.turns.iter().map(|&(p, s)| (p.x, p.y, s)).collect();
+    assert_eq!(corners, [(35, 52, Side::Right), (38, 52, Side::Right)]);
+    let legal = oracle::Oracle::new(oracle::walls_of(&map), 0.5)
+        .shortest(f64_of(start), f64_of(goal))
+        .expect("the oracle finds a route");
+    let length = f64::from(route.total_length.to_f32());
+    assert!(
+        length >= legal - 1e-3 && length <= legal * 1.02,
+        "route {length} against the legal minimum {legal}"
+    );
 }
 
 /// A wall across the map with one opening of `gap` cells at `x = 8`.

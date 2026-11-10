@@ -120,6 +120,9 @@ struct Differential {
     mesh_only: u32,
     neither: u32,
     longer_than_one_percent: u32,
+    longer_than_five_percent: u32,
+    illegal_grid_routes: u32,
+    longer_than_legal_grid: u32,
     illegal_mesh_legs: u32,
     fallbacks: u32,
     sum_ratio: SimScalar,
@@ -179,7 +182,16 @@ fn differential(map: &GameMap, radius: SimScalar, seed: u64) -> Differential {
                 };
                 out.sum_ratio += ratio;
                 out.worst_ratio = out.worst_ratio.max(ratio);
-                out.longer_than_one_percent += u32::from(ratio > SimScalar::from_num(101) / 100);
+                let longer = ratio > SimScalar::from_num(101) / 100;
+                out.longer_than_one_percent += u32::from(longer);
+                out.longer_than_five_percent += u32::from(ratio > SimScalar::from_num(105) / 100);
+                // The grid's legs are checked against cell clearance only; under the exact disc
+                // predicate many of them cut a corner, which no legal route can match.
+                let grid_legal = grid.waypoints.windows(2).all(|pair| {
+                    pathfinder.mesh_segment_is_passable(map, &request, pair[0], pair[1])
+                });
+                out.illegal_grid_routes += u32::from(!grid_legal);
+                out.longer_than_legal_grid += u32::from(longer && grid_legal);
                 out.gains.push((g - m, start, goal));
                 out.fallbacks += u32::from(mesh.fallback);
                 out.max_expansions = out.max_expansions.max(mesh.expansions);
@@ -198,7 +210,7 @@ fn differential(map: &GameMap, radius: SimScalar, seed: u64) -> Differential {
 
 fn report(name: &str, radius: SimScalar, d: &mut Differential) {
     println!(
-        "| {name} | {radius} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
+        "| {name} | {radius} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
         d.both,
         d.grid_only,
         d.mesh_only,
@@ -206,6 +218,9 @@ fn report(name: &str, radius: SimScalar, d: &mut Differential) {
         d.sum_ratio / i32::try_from(d.both.max(1)).unwrap_or(1),
         d.worst_ratio,
         d.longer_than_one_percent,
+        d.longer_than_five_percent,
+        d.illegal_grid_routes,
+        d.longer_than_legal_grid,
         d.illegal_mesh_legs,
         d.fallbacks,
         median_micros(d.grid_micros.clone()),
@@ -224,8 +239,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     build_row("showcase_canyon 64x64", &canyon, 6)?;
     build_row("canyon 4x4 tiled 256x256", &big, 40)?;
     println!();
-    println!("| Map | Radius | Both | Grid only | Mesh only | Neither | Mean mesh/grid | Worst | > 1 % | Illegal mesh | Fallbacks | Grid µs (median) | Mesh µs (median) | Max expansions |");
-    println!("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+    println!("| Map | Radius | Both | Grid only | Mesh only | Neither | Mean mesh/grid | Worst | > 1 % | > 5 % | Illegal grid | > 1 % over a legal grid route | Illegal mesh | Fallbacks | Grid µs (median) | Mesh µs (median) | Max expansions |");
+    println!(
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+    );
     let mut all_gains = Vec::new();
     for (name, map) in [("default_arena", &arena), ("showcase_canyon", &canyon)] {
         for radius in [SimScalar::from_num(3) / 8, SimScalar::HALF] {

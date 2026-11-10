@@ -212,3 +212,59 @@ grid or `ground_segment_is_connected` refuses.
 Every scenario is above 25 ticks/s. The flat rows are 2 % to 15 % below `DESIGN.md` §5 on the loaded shared
 server; nothing in a flat battle reads the mesh, which is built once per world (a structure placement rebuilds it).
 The new terrain row is the grid baseline WP9's stop rule compares against.
+
+## Amendment 2, step 1: tighter turn emission and the wrap retry (2026-11-10)
+
+Base `02f494b`. Latent: nothing in the simulation reads the mesh yet, so goldens, matrix and battle 33 cannot move.
+
+**Cause, confirmed on the longest pairs.** A throw-away probe (not committed) set each WP8 canyon pair's grid
+length beside the mesh polyline, the same route as tangents and arcs, and the exact oracle at `r` and at
+`r + margin`. Two causes:
+
+1. *Emission.* Each turn above 45 degrees became two points on tangents outside the circle of `r + margin`, one
+   below became the tangent lines' intersection, so the polyline was up to 2 % longer than its own
+   tangent-and-arc route (`(26.5, 37.5) -> (30.5, 27.5)` at r 0.5: polyline 24.284, arcs 24.131 = oracle 24.131,
+   grid 23.779). Done exactly as arcs, 3 (r 0.375) and 16 (r 0.5) of the pairs stay more than 1 % longer, not 12
+   and 49.
+2. *The 3.08 fallback* (`(36.5, 51.5) -> (43.5, 49.5)`, r 0.5): the unit stands under ramp E's south side wall
+   and must go round its western end (35, 52), up the ramp and out east, a turn of more than 180 degrees at
+   (35, 52). The shrunk funnel shrinks that fan vertex towards each portal's other end, so its point orbits the
+   circle and the apex beside it sees the side sweep past; and the refinement drops a turn whose tangent cross
+   product has the "wrong" sign, which a turn above 180 degrees has. The route lost (35, 52), crossed the wall and
+   fell back to portal midpoints.
+
+**Fix** (`navmesh/funnel.rs`, `navmesh/search.rs`):
+
+- Arcs are emitted on their circle: the two tangent points and, between them, the arc halved until every chord
+  keeps at least `r + margin - ARC_CHORD_DIP` (`ARC_CHORD_DIP` = margin / 2 = 0.025) from the vertex, at most
+  2^6 pieces. Exact Q32.32, bisection by normalised sums, no trigonometry. The polyline is never longer than the
+  tangent-and-arc route; every leg keeps at least `r + 0.025` from the vertex it rounds and still passes the
+  segment predicate (checked, as before).
+- When the shrunk funnel's route fails the segment predicate, the same channel is pulled again with
+  `PullStrategy::Pinned` (portal vertices themselves, and a turn above a half turn is kept when it reverses the
+  travel direction and the anchors as points bend with the side); used if legal, else portal midpoints as
+  before. Applying either rule to every channel instead produced 8 to 10 new fallbacks per 1,000 queries
+  (slack spikes look like wraps locally), so it is only the retry.
+
+**Grid against mesh after the fix** (`navmesh_measure`, the WP8 queries; new columns: routes the grid returns
+that fail the exact disc predicate, and mesh routes more than 1 % longer than a grid route that passes it):
+
+| Map | Radius | Both | Mean mesh/grid | Worst | > 1 % (WP8) | > 1 % | > 5 % | Illegal grid | > 1 % over a legal grid route | Fallbacks (WP8) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| default_arena | 0.375 | 1000 | 1.0002 | 1.0037 | 0 | 0 | 0 | 358 | 0 | 0 (0) |
+| default_arena | 0.5 | 1000 | 1.0004 | 1.0048 | 0 | 0 | 0 | 398 | 0 | 0 (0) |
+| showcase_canyon | 0.375 | 790 | 1.0008 | 1.0137 | 12 | 3 | 0 | 505 | 0 | 0 (0) |
+| showcase_canyon | 0.5 | 793 | 1.0017 | 1.0439 | 49 | 16 | 0 | 527 | 0 | 0 (1) |
+
+Acceptance (Amendment 2, decision 1): no pair more than 5 % longer, no fallback, at most 1 % of pairs more than
+1 % longer on three of the four rows. **The r 0.5 canyon row has 16 of 793 (2.0 %).** Every one of the 16 is a
+grid route that the disc cannot walk: it fails the exact predicate (the grid checks cell clearance and offsets a
+corner by `r + margin` on its bisector, so its legs pass inside `r` of the corner). In 6 of them even the exact
+oracle at `r` itself, with no margin, is more than 1 % longer than the grid; the other 10 are within the
+margin's cost (0.025 to 0.05 per turn). No mesh route is more than 1 % longer than a grid route that is legal.
+Keeping the margin whole cost 2 more pairs (ARC_CHORD_DIP = 7/8 margin gave 14).
+
+Oracle agreement unchanged: 542 of 542 seeded routes within 1 % of the exact oracle, worst 1.0007, no fallback
+(`pathfinding_properties.rs`). `funnel_tests.rs` now holds the polyline at or below its arcs and at or above the
+oracle at `r + margin / 2`, and adds the wrap pair above (turns (35, 52) and (38, 52) on the right, no fallback,
+within 2 % of the oracle at `r`).
