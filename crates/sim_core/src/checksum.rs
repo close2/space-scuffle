@@ -60,7 +60,11 @@ use std::collections::BTreeMap;
 /// Schema 27 adds each unit's count of route orders issued and the world's route groups: the
 /// next group id, then per group its id, player, kind, target, members with their ordinals, and
 /// lane state with the lane's polyline, word, leader and radius (plan `2026-11-10-group-routing`).
-pub const CHECKSUM_SCHEMA_VERSION: u32 = 27;
+/// Schema 28 adds the effect-tree engine's state (plan `2026-11-10-spellcaster-mechanics` D-13):
+/// each weapon's melee flag, each unit's cast lock and displacement, and the world's effect
+/// state: the next persistent and missile ids, then the statuses, persistents and missiles, each
+/// with its node or status id, timing and effect context.
+pub const CHECKSUM_SCHEMA_VERSION: u32 = 28;
 
 // PERFORMANCE RATIONALE:
 // Why: Serializing a complete world into a temporary byte vector allocates per checksum.
@@ -120,6 +124,8 @@ pub fn compute_simulation_checksum(world: &SimWorld) -> u64 {
     world.match_state.encode(&mut encoder);
     "hazards".encode(&mut encoder);
     world.active_hazards.encode(&mut encoder);
+    "effects".encode(&mut encoder);
+    world.effects.encode(&mut encoder);
     "route-groups".encode(&mut encoder);
     world.next_route_group.encode(&mut encoder);
     world.route_groups.encode(&mut encoder);

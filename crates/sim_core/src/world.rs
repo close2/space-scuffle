@@ -152,6 +152,9 @@ pub struct SimWorld {
     pub(crate) scratch_dashes: Vec<(EntityId, sim_types::AttackDashSpec)>,
     /// Phase 3 bookkeeping derived from `vision_maps`; excluded from the checksum.
     pub(crate) vision: VisionWorkspace,
+    /// Statuses, persistents and missiles of the effect-tree engine (plan
+    /// `2026-11-10-spellcaster-mechanics` D-13, D-18); hashed.
+    pub(crate) effects: crate::effects::EffectWorld,
     /// Live route groups sorted by id (plan `2026-11-10-group-routing`, D-1); hashed.
     pub(crate) route_groups: Vec<crate::movement::groups::RouteGroup>,
     /// The id the next route group gets; hashed.
@@ -223,6 +226,7 @@ impl SimWorld {
             scratch_acquisitions: Vec::with_capacity(64),
             scratch_dashes: Vec::new(),
             vision: VisionWorkspace::default(),
+            effects: crate::effects::EffectWorld::default(),
             route_groups: Vec::new(),
             next_route_group: 1,
             presentation: presentation::PresentationWorkspace::default(),
@@ -378,6 +382,12 @@ impl SimWorld {
     /// Normal clients must report any returned error before continuing the match.
     pub fn drain_diagnostics(&mut self) -> std::vec::Drain<'_, SimulationDiagnostic> {
         self.tick_diagnostics.drain(..)
+    }
+
+    /// The live statuses, persistents and missiles of the effect-tree engine.
+    #[must_use]
+    pub fn effects(&self) -> &crate::effects::EffectWorld {
+        &self.effects
     }
 
     /// Returns the most recently computed 64-bit state checksum.

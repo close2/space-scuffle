@@ -57,7 +57,10 @@ use std::path::PathBuf;
 /// and each unit's pending line searches, none at spawn.
 /// Re-recorded for checksum schema 27 (plan 2026-11-10-group-routing WP3), which encodes each
 /// unit's count of route orders issued (0 at spawn) and the world's route groups (none).
-const DEFAULT_SANDBOX_CHECKSUM: u64 = 11_298_638_387_780_327_088;
+/// Re-recorded for checksum schema 28 (plan `2026-11-10-spellcaster-mechanics`, package 1b), which
+/// encodes each weapon's melee flag, each unit's cast lock and displacement (none) and the
+/// world's effect state (empty).
+const DEFAULT_SANDBOX_CHECKSUM: u64 = 5_447_656_271_563_457_974;
 
 fn shipped_catalog_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/catalog")

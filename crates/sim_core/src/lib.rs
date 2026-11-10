@@ -23,6 +23,7 @@ pub mod checksum;
 pub mod combat;
 pub(crate) mod combat_resolution;
 pub mod economy;
+pub mod effects;
 pub mod entity;
 pub mod error;
 pub mod match_state;

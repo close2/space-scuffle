@@ -4,6 +4,9 @@
 //! enum tags keep the byte stream independent of platform layouts and serde formats.
 //! Exhaustive struct destructuring makes field additions require checksum review.
 
+use crate::effects::{
+    ActiveMissile, ActivePersistent, ActiveStatus, Displacement, EffectWorld, PersistentAnchor,
+};
 use crate::entity::{
     ActiveBuff, ActiveProjectile, BarrierState, Entity, MovementMemory, PendingLine,
     PendingStrikes, WeaponPhase,
@@ -19,6 +22,7 @@ use sim_map::{
     CellFlags, CliffLevel, MapCell, PlacedStructure, RampDir, ResourceKind, ResourceNode,
     TerrainKind, Watchtower,
 };
+use sim_types::{AbilitySource, EffectContext, EffectId, EffectTarget, StatusId};
 use sim_types::{
     AnimState, ArmorClassId, AttackOrigin, AttributeBonuses, AttributeFlags, EntityId, MatchResult,
     MoverType, PlayerId, PlayerUpgradeState, ProjectileTargetLossBehavior, ResourceNodeId,
@@ -356,8 +360,85 @@ fields!(Entity {
     transport_carrier,
     is_invulnerable,
     route_orders_issued,
+    cast_lock_ticks,
+    displacement,
 } unhashed {
     hull_turn_budget,
+});
+wrapper!(EffectId, StatusId);
+fields!(AbilitySource { unit_type, ability });
+impl Canonical for EffectTarget {
+    fn encode(&self, encoder: &mut Encoder) {
+        match self {
+            Self::Point(point) => {
+                0_u8.encode(encoder);
+                point.encode(encoder);
+            }
+            Self::Unit(entity) => {
+                1_u8.encode(encoder);
+                entity.encode(encoder);
+            }
+        }
+    }
+}
+fields!(EffectContext {
+    owner,
+    caster,
+    ability,
+    origin,
+    source_point,
+    target
+});
+impl Canonical for PersistentAnchor {
+    fn encode(&self, encoder: &mut Encoder) {
+        match self {
+            Self::Point(point) => {
+                0_u8.encode(encoder);
+                point.encode(encoder);
+            }
+            Self::Unit(entity) => {
+                1_u8.encode(encoder);
+                entity.encode(encoder);
+            }
+        }
+    }
+}
+fields!(ActiveStatus {
+    entity,
+    status,
+    applied_tick,
+    expires_at,
+    pulses_done,
+    context
+});
+fields!(ActivePersistent {
+    id,
+    node,
+    context,
+    anchor,
+    created_tick,
+    pulses_done
+});
+fields!(ActiveMissile {
+    id,
+    node,
+    context,
+    position,
+    target
+});
+fields!(Displacement {
+    node,
+    context,
+    from,
+    to,
+    start_tick
+});
+fields!(EffectWorld {
+    next_persistent_id,
+    next_missile_id,
+    statuses,
+    persistents,
+    missiles
 });
 wrapper!(RouteGroupId);
 impl Canonical for RouteGroupKind {
@@ -446,7 +527,6 @@ fields!(WeaponSpec {
     max_projectile_lifetime_ticks,
     suicide_on_attack,
     structure_strike,
-} unhashed {
     melee,
 });
 // `view` is presentation only (the line's renderer events): it decides nothing.
@@ -799,7 +879,7 @@ mod tests {
         // Domain length, UTF-8 domain, schema u32, u16, i32, option tags/payload,
         // then UTF-8 string byte length and its two encoded bytes.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 27, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 28, 0, 0, 0, 0x34, 0x12, 0xfe, 0xff,
             0xff, 0xff, 1, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0xc3, 0xa9,
         ];
         assert_eq!(encoder.finish(), xxh64(&bytes, 0));
@@ -875,7 +955,7 @@ mod tests {
             let mut encoder = Encoder::new("test");
             7_u32.encode(&mut encoder);
             text.as_str().encode(&mut encoder);
-            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 27, 0, 0, 0];
+            let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 28, 0, 0, 0];
             bytes.extend([7, 0, 0, 0]);
             bytes.extend((length as u64).to_le_bytes());
             bytes.extend(text.as_bytes());
@@ -898,7 +978,7 @@ mod tests {
         // Domain length and bytes, schema version, queue length, item tag, archetype u16,
         // then the full remaining duration u32 (0x0001_0001), total, supply and payments.
         let bytes = [
-            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 27, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+            4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 28, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
             0x34, 0x12, 1, 0, 1, 0, 2, 0, 0, 0, 0x78, 0x56, 0x34, 0x12, 3, 0, 0, 0, 4, 0, 0, 0,
         ];
         assert_eq!(digest(&queue), xxh64(&bytes, 0));
@@ -906,7 +986,7 @@ mod tests {
 
     #[test]
     fn carrier_identity_has_explicit_option_tag_and_all_id_bytes() {
-        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 27, 0, 0, 0];
+        let mut bytes = vec![4, 0, 0, 0, 0, 0, 0, 0, b't', b'e', b's', b't', 28, 0, 0, 0];
         bytes.push(0);
         assert_eq!(digest(&None::<sim_types::EntityId>), xxh64(&bytes, 0));
         bytes.pop();

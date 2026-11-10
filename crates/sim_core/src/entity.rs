@@ -520,6 +520,11 @@ pub struct Entity {
     /// queued ([`Self::active_route_ordinal`]); route groups bind members by it. Only
     /// [`Self::enqueue_order`] changes it.
     pub route_orders_issued: u32,
+    /// Ticks the unit stays locked after a cast (`CastOutroTime`, plan
+    /// `2026-11-10-spellcaster-mechanics` D-7.4): no movement, attack or other cast.
+    pub cast_lock_ticks: u16,
+    /// The flight a `Displace` effect node gives the unit (D-8); `None` when not displaced.
+    pub displacement: Option<crate::effects::Displacement>,
     /// Hull rotation still allowed this tick, in binary angle units.
     ///
     /// Set to the archetype's `stationary_turn_rate` at the start of every movement phase
@@ -636,6 +641,8 @@ impl Entity {
             transport_carrier: None,
             is_invulnerable: false,
             route_orders_issued: 0,
+            cast_lock_ticks: 0,
+            displacement: None,
             hull_turn_budget: archetype.turn_rate.raw(),
         }
     }

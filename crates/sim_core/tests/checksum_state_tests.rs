@@ -189,6 +189,21 @@ fn every_public_entity_field_changes_the_world_checksum() {
             max_hp => SimScalar::from_i32(-1),
             is_completed => false,
             is_invulnerable => true,
+            cast_lock_ticks => 9,
+            displacement => Some(sim_core::effects::Displacement {
+                node: sim_types::EffectId(1),
+                context: sim_types::EffectContext {
+                    owner: PlayerId(1),
+                    caster: Some(EntityId(2)),
+                    ability: sim_types::AbilitySource::default(),
+                    origin: point(1, 1),
+                    source_point: point(2, 2),
+                    target: sim_types::EffectTarget::Unit(EntityId(1)),
+                },
+                from: point(3, 3),
+                to: point(4, 4),
+                start_tick: Tick(5),
+            }),
         },
         |entity| {
             world.entities.insert(EntityId(1), entity.clone());
