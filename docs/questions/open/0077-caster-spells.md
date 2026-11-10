@@ -20,3 +20,6 @@ Options:
 
 ## Answer
 
+**Option 1 (Build presentation contracts `RenderSnapshot::areas` and `links` now; implement simulation mechanics in a dedicated follow-up plan in StarCraft II order of impact: `Psionic Storm`, `Abduct`, `Fungal Growth`, `Blinding Cloud`).**
+
+**Engine insight:** Landing the `RenderSnapshot::areas` (persistent AoE zones) and `RenderSnapshot::links` (tethers/beams such as Viper `Abduct`) rendering contracts in the effect visualization plan keeps visual infrastructure cleanly decoupled from simulation checksums, and scheduling a dedicated spellcaster mechanics plan next (`Psionic Storm` → `Abduct` → `Fungal Growth` → `Blinding Cloud`) brings StarCraft II's four signature area/displacement spells online in order of combat impact.

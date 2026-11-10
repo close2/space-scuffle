@@ -23,3 +23,6 @@ readability gap.
 
 ## Answer
 
+**Option 2 — Spend up to $20.00 (target < $10.00, e.g., the planned ~$6.80) on WP13 for morph and mode unit animations (siege, burrow).**
+
+**Engine & gameplay insight:** In StarCraft II, telling at a glance whether enemy Siege Tanks are in Tank Mode or Siege Mode (and seeing the 3-second siege/unsiege transformation animation) is critical for tactical decision-making and combat readability. Baking dedicated Veo mode and morph flipbook slices (targeting < $10, with a ceiling of up to $20 if extra retries are needed) is well within the remaining media budget and closes this readability gap.

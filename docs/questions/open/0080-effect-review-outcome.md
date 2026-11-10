@@ -35,3 +35,10 @@ Options:
 The default above holds meanwhile.
 
 ## Answer
+
+**Option 1 — Continue with further review rounds (up to 5 rounds total before asking again) for `acid_burst` and `spine_line` working from the reviewer's ranked fixes, and unblock the WP7+ effect scale-out.**
+
+**Visual & technical insight:** Both `acid_burst` and `spine_line` already passed 5 of 7 criteria in Round 2 (readability, multi-layer composition, timing/anticipation/retraction, crowd clarity, and fog clipping), and the Round 2 independent review isolated concrete, actionable fixes for the remaining two items:
+1. **`spine_line`:** Replace the C/J-curved hook silhouettes (which read like handwritten glyphs at default zoom) with straight or gently tapering conical chitin spikes (3–5 splayed outward per clump, taller at `0.6–0.9` units); brighten the bone-ivory tip and rim light on the newest erupting clump for its first 2–3 frames to create a clear travelling focal point; and feather the churned-earth/fissure decal over `~0.3` units at both ends while breaking up the regular 1-unit leftover marks into an irregular scar.
+2. **`acid_burst`:** Drive the interior of the ground stain with noise-based value and thickness variation plus a darker, more saturated wet rim and upper-left key-light sheen (removing the flat felt-disc fill and evenly spaced polka-dot speckles), start drying toward olive earlier (`~0.6s`), and replace the bevelled button-like rim on the frame 0–2 pop with a ragged noise-broken burst and larger airborne globs.
+You may iterate up to **5 review rounds total** before pausing to ask again, and proceed with the WP7+ effect scale-out.
