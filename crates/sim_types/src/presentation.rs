@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 
 /// How a bubble is hidden from players without detection (plan D-3).
 ///
-/// Data, not identity: `Burrowed` comes from the catalog flag `UnitModeSpec::is_burrowed` (or
+/// Data, not identity: `Burrowed` comes from the catalog flag `UnitModeSpec::burrowed` (or
 /// a burrowing cloak toggle), never from a unit name.
 ///
 /// Older RON records carried a boolean `cloaked` field instead; `BubbleRenderInstance` reads

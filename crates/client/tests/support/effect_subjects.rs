@@ -20,8 +20,8 @@
 use client::effects::binding::BoundValues;
 use client::effects::catalog::schema::Binding;
 use sim_core::catalog::{ArchetypeEffects, UnitArchetype, UnitCatalog};
-use std::collections::BTreeMap;
 use sim_types::{SplashShape, SplashSpec, WeaponSlot, WeaponSpec};
+use std::collections::BTreeMap;
 
 /// A splash effect of the shipped catalog and its weapon's bindings.
 #[derive(Debug, Clone)]
@@ -100,7 +100,9 @@ pub fn lab_units() -> UnitCatalog {
         let id = units
             .id_by_slug(&slug)
             .unwrap_or_else(|| panic!("lab block for unknown unit {slug}"));
-        let archetype = units.get_mut(id).expect("invariant: the id was just looked up");
+        let archetype = units
+            .get_mut(id)
+            .expect("invariant: the id was just looked up");
         assert!(
             archetype.effects.is_empty(),
             "{slug} already carries a shipped presentation block; its lab block is stale"

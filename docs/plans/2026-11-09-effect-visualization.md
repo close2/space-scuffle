@@ -926,8 +926,13 @@ presentation (the default combat looks). The GPU tests of the framework (footpri
 lingers, golden stills) still render all three effects through the effect lab: the two rejected ones are bound to
 those units' weapons by lab-only presentation blocks in `crates/client/tests/data/effect_lab_blocks.ron`, a test
 fixture, and `effect_catalog_tests.rs` checks that no shipped unit names an effect only those blocks name. The
-goldens are unchanged. `burrow_scorpion`'s `is_burrowed: true` (WP2) stays: it is part of the contract and the leak
-fix, not of the rejected look.
+goldens are unchanged.
+
+**One burrow flag.** Plan `2026-11-09-friendly-blocking` (R6, B-93) landed `UnitModeSpec::burrowed` on `main` first,
+for the burrowed body's collision. As §2.4 and §11 provide (the first to land adds the field, the other reuses it),
+the merge drops this plan's `is_burrowed` and the snapshot writer's concealment reads `burrowed`; `burrow_scorpion`'s
+burrowed mode carries `burrowed: true` once. The presentation is the same, and the field is no longer read by the
+presentation only.
 
 **Stopped.** Scale-out (WP7 to WP15) does not start until the owner answers
 [Q0080](../questions/open/0080-effect-review-outcome.md): a third round for the two rejected effects, a changed

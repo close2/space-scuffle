@@ -12,7 +12,7 @@
 //! Combat resolution asks [`weapon_source`] when a weapon releases and records projectile
 //! sources; abilities record hazard casters; the snapshot writer (tick phase 10) reads the rest.
 //! Nothing here names a unit, mode or effect: modes and abilities are indices into the source
-//! archetype's own lists, and burrowing is the catalog flag `UnitModeSpec::is_burrowed`.
+//! archetype's own lists, and burrowing is the catalog flag `UnitModeSpec::burrowed`.
 //!
 //! # Invariants
 //! - Presentation only: nothing here is hashed, consumes randomness or is read by a tick
@@ -180,7 +180,7 @@ pub(crate) fn weapon_source(
 /// How `entity` (of archetype `arch`) is hidden (plan D-3).
 ///
 /// [`Concealment::Burrowed`] when it is concealed and either its active mode is marked
-/// `is_burrowed`, or it has no active mode and its archetype's concealment comes from a
+/// `burrowed`, or it has no active mode and its archetype's concealment comes from a
 /// burrowing cloak toggle (`CloakToggle { is_burrow: true }`); [`Concealment::Cloaked`] for any
 /// other concealment.
 pub(crate) fn concealment(entity: &Entity, arch: &UnitArchetype) -> Concealment {
@@ -188,7 +188,7 @@ pub(crate) fn concealment(entity: &Entity, arch: &UnitArchetype) -> Concealment 
         return Concealment::None;
     }
     let burrowed = match entity.active_mode.as_deref() {
-        Some(name) => arch.get_mode(name).is_some_and(|mode| mode.is_burrowed),
+        Some(name) => arch.get_mode(name).is_some_and(|mode| mode.burrowed),
         None => arch.abilities.iter().any(|ability| {
             matches!(
                 ability.effect,

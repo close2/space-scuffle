@@ -572,7 +572,7 @@ pub fn burrower(world: &mut SimWorld, assets: &Path) -> (UnitTypeId, String) {
         .catalog
         .archetypes()
         .find_map(|arch| {
-            let mode = arch.modes.iter().find(|mode| mode.is_burrowed)?;
+            let mode = arch.modes.iter().find(|mode| mode.burrowed)?;
             Some((arch.clone(), mode.clone()))
         })
         .expect("the shipped catalog has a burrowing unit");

@@ -102,7 +102,7 @@ fn progress(remaining: u16, nominal: u16) -> f32 {
 #[test]
 fn burrowing_publishes_its_progress_and_then_burrowed() {
     let mut world = flat_world(0x0e_ff01);
-    let (arch, mode) = moded(&world, |mode| mode.is_burrowed);
+    let (arch, mode) = moded(&world, |mode| mode.burrowed);
     let spec = arch.get_mode(&mode).expect("the mode exists").clone();
     let index = mode_index(&arch, &mode);
     let unit = world
@@ -746,7 +746,7 @@ fn equal_worlds_publish_equal_records() {
     let build = || {
         let mut world = flat_world(0x0e_ff0a);
         let caster_type = register_storm_caster(&mut world, 500);
-        let (arch, mode) = moded(&world, |mode| mode.is_burrowed);
+        let (arch, mode) = moded(&world, |mode| mode.burrowed);
         let burrower = world
             .spawn_unit(arch.unit_type_id, ATTACKER, at(20.0, 20.0))
             .expect("spawn");

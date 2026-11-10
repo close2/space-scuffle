@@ -30,6 +30,7 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
             separation_radius: 0.45,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
             sight_radius: 8.0,
             scan_range: 5.0,
@@ -113,7 +114,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
             separation_radius: 0.45,
-            push_priority: 20,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 9.0,
             scan_range: 5.5,
             attack_target_priority: 20,
@@ -220,7 +222,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.5,
             separation_radius: 0.65,
-            push_priority: 30,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 9.0,
             scan_range: 5.0,
             attack_target_priority: 20,
@@ -298,7 +301,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.5,
             separation_radius: 0.6,
-            push_priority: 25,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 9.0,
             scan_range: 5.0,
             attack_target_priority: 20,
@@ -391,7 +395,8 @@
             stationary_turn_rate_deg_per_tick: Some(40.32),
             collision_radius: 0.875,
             separation_radius: 0.85,
-            push_priority: 40,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 11.0,
             scan_range: 7.5,
             attack_target_priority: 20,
@@ -530,7 +535,8 @@
             turn_rate_deg_per_tick: 84.0,
             collision_radius: 0.625,
             separation_radius: 0.7,
-            push_priority: 15,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 10.0,
             scan_range: 5.0,
             attack_target_priority: 20,
@@ -608,7 +614,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.5625,
             separation_radius: 0.6,
-            push_priority: 30,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 10.0,
             scan_range: 6.5,
             attack_target_priority: 20,
@@ -691,7 +698,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
             separation_radius: 0.45,
-            push_priority: 15,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 9.0,
             scan_range: 5.5,
             attack_target_priority: 20,
@@ -770,7 +778,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
             separation_radius: 0.45,
-            push_priority: 20,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 11.0,
             scan_range: 6.5,
             attack_target_priority: 20,
@@ -848,7 +857,8 @@
             stationary_turn_rate_deg_per_tick: Some(84.0),
             collision_radius: 0.625,
             separation_radius: 0.6,
-            push_priority: 25,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 10.0,
             scan_range: 5.5,
             attack_target_priority: 20,
@@ -935,7 +945,8 @@
             stationary_turn_rate_deg_per_tick: Some(40.32),
             collision_radius: 1.0,
             separation_radius: 1.0,
-            push_priority: 50,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 11.0,
             scan_range: 10.5,
             attack_target_priority: 20,
@@ -1064,7 +1075,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.75,
             separation_radius: 0.7,
-            push_priority: 20,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 10.0,
             scan_range: 9.0,
             attack_target_priority: 20,
@@ -1143,7 +1155,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.75,
             separation_radius: 0.7,
-            push_priority: 15,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 11.0,
             scan_range: 11.0,
             attack_target_priority: 20,
@@ -1197,7 +1210,8 @@
             turn_rate_deg_per_tick: 84.0,
             collision_radius: 0.75,
             separation_radius: 0.7,
-            push_priority: 25,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 10.0,
             scan_range: 5.0,
             attack_target_priority: 20,
@@ -1280,7 +1294,8 @@
             turn_rate_deg_per_tick: 84.0,
             collision_radius: 0.75,
             separation_radius: 0.7,
-            push_priority: 20,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 10.0,
             scan_range: 6.0,
             attack_target_priority: 20,
@@ -1358,7 +1373,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.625,
             separation_radius: 0.7,
-            push_priority: 20,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 11.0,
             scan_range: 11.0,
             attack_target_priority: 20,
@@ -1413,6 +1429,7 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
             separation_radius: 0.45,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
             sight_radius: 8.0,
             scan_range: 5.0,
@@ -1496,7 +1513,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.625,
             separation_radius: 0.6,
-            push_priority: 25,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 10.0,
             scan_range: 6.5,
             attack_target_priority: 20,
@@ -1599,7 +1617,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.5,
             separation_radius: 0.45,
-            push_priority: 20,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 10.0,
             scan_range: 5.5,
             attack_target_priority: 20,
@@ -1677,7 +1696,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.5,
             separation_radius: 0.45,
-            push_priority: 20,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 9.0,
             scan_range: 5.0,
             attack_target_priority: 20,
@@ -1755,7 +1775,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
             separation_radius: 0.45,
-            push_priority: 20,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 10.0,
             scan_range: 6.5,
             attack_target_priority: 20,
@@ -1834,7 +1855,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
             separation_radius: 0.45,
-            push_priority: 25,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 8.0,
             scan_range: 5.0,
             attack_target_priority: 20,
@@ -1912,7 +1934,8 @@
             turn_rate_deg_per_tick: 40.32,
             collision_radius: 0.75,
             separation_radius: 0.7,
-            push_priority: 35,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 9.0,
             scan_range: 6.5,
             attack_target_priority: 20,
@@ -1995,7 +2018,8 @@
             turn_rate_deg_per_tick: 40.32,
             collision_radius: 1.0,
             separation_radius: 1.0,
-            push_priority: 45,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 10.0,
             scan_range: 7.5,
             attack_target_priority: 20,
@@ -2082,6 +2106,7 @@
             turn_rate_deg_per_tick: 40.32,
             collision_radius: 0.5,
             separation_radius: 0.45,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
             sight_radius: 11.0,
             scan_range: 11.0,
@@ -2136,7 +2161,8 @@
             turn_rate_deg_per_tick: 40.32,
             collision_radius: 0.875,
             separation_radius: 0.7,
-            push_priority: 15,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 10.0,
             scan_range: 10.0,
             attack_target_priority: 20,
@@ -2191,7 +2217,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 1.0,
             separation_radius: 0.7,
-            push_priority: 25,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 10.0,
             scan_range: 6.0,
             attack_target_priority: 20,
@@ -2294,7 +2321,8 @@
             turn_rate_deg_per_tick: 40.32,
             collision_radius: 1.0,
             separation_radius: 1.15,
-            push_priority: 50,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 12.0,
             scan_range: 8.0,
             attack_target_priority: 20,
@@ -2371,6 +2399,7 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
             separation_radius: 0.45,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
             push_priority: 10,
             sight_radius: 8.0,
             scan_range: 5.0,
@@ -2453,7 +2482,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
             separation_radius: 0.45,
-            push_priority: 15,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 8.0,
             scan_range: 5.0,
             attack_target_priority: 20,
@@ -2530,7 +2560,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.375,
             separation_radius: 0.45,
-            push_priority: 20,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 8.0,
             scan_range: 5.0,
             attack_target_priority: 20,
@@ -2613,7 +2644,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.75,
             separation_radius: 0.6,
-            push_priority: 30,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 9.0,
             scan_range: 6.5,
             attack_target_priority: 20,
@@ -2690,7 +2722,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.625,
             separation_radius: 0.6,
-            push_priority: 25,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 9.0,
             scan_range: 5.5,
             attack_target_priority: 20,
@@ -2792,7 +2825,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.9375,
             separation_radius: 0.7,
-            push_priority: 35,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 11.0,
             scan_range: 8.0,
             attack_target_priority: 20,
@@ -2816,7 +2850,9 @@
                     is_immobile: true,
                     unpushable: true,
                     is_cloaked: true,
-                    is_burrowed: true,
+                    // LurkerMPBurrowed collides only with Burrow (void UnitData:775): ground units
+                    // walk over it (plan 2026-11-09-friendly-blocking R6, B-93).
+                    burrowed: true,
                     ground_weapon_override: Some(Some((
                         name: "Subterranean Spines",
                         visual_kind: MeleeSlash,
@@ -2905,7 +2941,8 @@
             turn_rate_deg_per_tick: 84.0,
             collision_radius: 0.5,
             separation_radius: 0.6,
-            push_priority: 20,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 11.0,
             scan_range: 5.0,
             attack_target_priority: 20,
@@ -3007,7 +3044,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.625,
             separation_radius: 0.7,
-            push_priority: 30,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 10.0,
             scan_range: 6.0,
             attack_target_priority: 20,
@@ -3085,7 +3123,8 @@
             turn_rate_deg_per_tick: 40.32,
             collision_radius: 1.0,
             separation_radius: 1.0,
-            push_priority: 40,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 12.0,
             scan_range: 10.5,
             attack_target_priority: 20,
@@ -3189,7 +3228,10 @@
             stationary_turn_rate_deg_per_tick: Some(40.32),
             collision_radius: 1.0,
             separation_radius: 1.0,
-            push_priority: 50,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59) plus AlliedPushPriority 1
+            // (voidmulti:1943; 5.0.14 patch notes: "now pushes allied units out of the way when
+            // moving"), modelled as 11 (Q0073 default).
+            push_priority: 11,
             sight_radius: 9.0,
             scan_range: 5.0,
             attack_target_priority: 20,
@@ -3274,7 +3316,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.875,
             separation_radius: 0.7,
-            push_priority: 30,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 9.0,
             scan_range: 8.5,
             attack_target_priority: 20,
@@ -3405,7 +3448,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 0.625,
             separation_radius: 0.6,
-            push_priority: 25,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 10.0,
             scan_range: 10.0,
             attack_target_priority: 20,
@@ -3459,7 +3503,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 1.0,
             separation_radius: 0.7,
-            push_priority: 25,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 11.0,
             scan_range: 11.0,
             attack_target_priority: 20,
@@ -3513,7 +3558,8 @@
             turn_rate_deg_per_tick: 55.99,
             collision_radius: 1.0,
             separation_radius: 0.7,
-            push_priority: 15,
+            // 5.0.14 UnitData: PushPriority 10 (CUnit default, core:59; not overridden).
+            push_priority: 10,
             sight_radius: 11.0,
             scan_range: 11.0,
             attack_target_priority: 20,

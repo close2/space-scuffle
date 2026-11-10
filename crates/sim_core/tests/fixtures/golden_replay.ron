@@ -211,8 +211,53 @@
 //   a target (ResetIfMoving); the turret angle is hashed, so from checkpoint 2 the checkpoints
 //   changed on that account too.
 // The schema bytes change every checkpoint; the checksums below are those of the merged tree.
+// Re-recorded for plan 2026-11-09-friendly-blocking WP4 (push table D-4), merged onto checksum
+// schema 24: a unit standing still under an order is waiting, not idle, so it no longer steps aside
+// for a friend walking into it (steering) or gets pushed sideways (contact); both separate evenly.
+// On tick 6, the first tick the "blue_infantry" squad (pulse_bot) walks after its AttackMove of
+// tick 5, its marines all stand still under that order and no longer clear each other's lanes, so
+// the squad sets off differently and every checkpoint changed from checkpoint 1 (ticks 1 to 50).
+// Re-recorded for plan 2026-11-09-friendly-blocking WP2 (R1, waiting; B-103): a step is cleared of
+// every body that will not yield at once, repeating the per-body removal until nothing approaches
+// one; a unit never steers into a gap narrower than itself between two such bodies; and a unit
+// whose admissible step is at most an eighth of its step waits. Checkpoint 1 is unchanged; from
+// checkpoint 2 (ticks 51 to 100) every checkpoint changed: on tick 63 the second removal pass first
+// changes a step, that of a "blue_infantry" marine (pulse_bot, entity 14) pressed between two
+// squadmates, by one raw unit; waiting first moves a unit on tick 73 (a "red_psi" zealot, entity
+// 21). (Merged onto checksum schema 24: the same first divergent checkpoint.)
+// Re-recorded for plan 2026-11-09-friendly-blocking WP3, latent (checksum schema 24 -> 25): each
+// unit's movement memory gains its surround-walk state (flank_active, flank_reversed, flank_spent,
+// flank_blocked_ticks, flank_walked, flank_target), all hashed and all at their defaults, so every
+// checkpoint changed and no behaviour did.
+// Re-recorded for plan 2026-11-09-friendly-blocking WP3 (R2 and R4, the surround walk; B-104,
+// B-105), on the held branch: a blocked attacker, chasing or attack-moving, walks round the friends
+// in its way on a kept side, and the walk counts as progress. Every checkpoint changed from
+// checkpoint 1 (ticks 1 to 50), where the attack-moving squads first meet standing squadmates; the
+// per-tick cause was not traced, because the commit is held under the stop rule.
+// Re-recorded for plan 2026-11-09-friendly-blocking Amendment 4 (surround-walk fixes): a body that
+// moved by at most 1/64 world unit last tick (STANDING_DRIFT, a contact nudge) counts as standing
+// for walls and for the surround walk's start; a walk keeps its side for one target, ends only on a
+// free straight way in, steps straight in while paused, is bounded by the scan range without a
+// target, and retries 24 ticks after it is spent. Every checkpoint changed from checkpoint 1 (ticks
+// 1 to 50), through the straight step of a paused walk; switched on alone, the other parts first
+// move checkpoint 2 (the standing drift), 4 (the kept side, the straight way in) and 5 (the scan
+// bound).
+// Re-recorded for plan 2026-11-09-friendly-blocking Amendment 5: an idle friend that contact nudged
+// by at most STANDING_DRIFT (1/64 world unit) last tick still steps aside
+// (SteeringObstacle::yields_to), where it had to stand exactly still; the only change, so it is the
+// cause. Checkpoints 1 to 10 are unchanged; every checkpoint from checkpoint 11 (ticks 501 to 550)
+// changed.
+// Re-recorded for plan 2026-11-09-friendly-blocking WP5 (B-48): every unit's push priority is
+// StarCraft II's PushPriority 10 (the Ultralisk analogue 11). On tick 63 psi grey 21 (25 -> 10)
+// walks into the idle railgun crawler 35 (40 -> 10), which now steps aside for it (D-4: an idle
+// friend yields to a mover of no lower priority); traced against the old priorities. Checkpoint 1
+// (ticks 51 to 100) and every later checkpoint changed.
+// Re-recorded for plan 2026-11-09-friendly-blocking Amendment 7: a surround walk in progress ends
+// only when the whole straight step is free (was half a step), so a walking unit at a crowd's edge
+// keeps walking where it used to end and restart its walk; every checkpoint changed from
+// checkpoint 1 (ticks 1 to 50).
 (
-    checksum_schema: 24,
+    checksum_schema: 25,
     seed: 0x5EED_0F_5CAFF1E,
     total_ticks: 1000,
     checkpoint_interval: 50,
@@ -238,25 +283,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0xd62f679443856835,
-        0x77bb312ab77bb129,
-        0x45161c1d073977c1,
-        0xd1fe047f90ea0a1e,
-        0x5383855c340dfdf6,
-        0x6b947e227fbdd248,
-        0x36a45d2163e36cf1,
-        0x91e2efa0b756d660,
-        0xe749175976e9bf81,
-        0xaa7ee0ca82eb04a9,
-        0xb74ace5864f7ffe0,
-        0xb1a30237b22455c9,
-        0xa6700e590dfc60b7,
-        0x0e5844bbe346460a,
-        0x6a4516f01042c85e,
-        0x4d00c0866bcc1fc2,
-        0x0a3b01d5627507b8,
-        0x06161c2a54a29574,
-        0xa8d56d91b2652e24,
-        0x92528675d0cb8be5,
+        0x20c21ea6a801f6ef,
+        0xff2a8eb8e771077a,
+        0x0a82ae2819953ca7,
+        0x2d1f3137e9e4b382,
+        0x4369f59b226fc62b,
+        0xadc23c0001ac0917,
+        0x92352526c9f33a45,
+        0xc13a57a4e90a52af,
+        0x9c93732c63234a4c,
+        0x127e3b8800922a74,
+        0x84820c51bf0cc2e2,
+        0x879d2388d53d47cd,
+        0x43a24a4458657f6b,
+        0xba38b0221550cb90,
+        0x5cdd2cbab8b28b20,
+        0x0657d870b5cefdd6,
+        0xaf2bf7ac16360d39,
+        0x030addd2fdf7e77f,
+        0x1ac08a9cecf3719c,
+        0x16ebfafd1bd95f1e,
     ],
 )

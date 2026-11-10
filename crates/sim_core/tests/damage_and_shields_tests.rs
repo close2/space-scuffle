@@ -70,6 +70,7 @@ fn dummy_target_archetype(
         deceleration: SimScalar::ZERO,
         turn_rate: SimAngle::ZERO,
         turn_before_move: false,
+        surround_walk: true,
         stationary_turn_rate: SimAngle::ZERO,
         collision_radius: SimScalar::HALF,
         separation_radius: SimScalar::HALF,

@@ -10,6 +10,11 @@
 //! The capability is a mode (`UnitArchetype::modes`) whose `ground_weapon_override` arms an
 //! archetype that has no weapon of its own. These tests drive scratch archetypes cloned from a
 //! shipped unit through `SimWorld::step`.
+//!
+//! A burrowed body is under ground: `LurkerMPBurrowed` collides only with `Burrow` (`void`
+//! UnitData:775), so ground units walk over it and it neither pushes nor is pushed by them, while
+//! two burrowed bodies still keep apart (plan `2026-11-09-friendly-blocking` R6, B-93). The mode
+//! says so through `UnitModeSpec::burrowed`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::too_many_lines)]
 
@@ -107,7 +112,7 @@ fn register_burrower(world: &mut SimWorld, cast: u16, leave: u16) -> UnitTypeId 
             is_immobile: true,
             unpushable: true,
             is_cloaked: true,
-            is_burrowed: true,
+            burrowed: false,
             mover_type_override: None,
             sight_radius_override: None,
             ground_weapon_override: Some(Some(spines())),
@@ -319,6 +324,10 @@ fn b42_the_lurker_analogue_attacks_only_burrowed() {
         SimScalar::from_f32_lossy(4.4643)
     );
     assert!(mode.is_immobile && mode.unpushable && mode.is_cloaked);
+    assert!(
+        mode.burrowed,
+        "LurkerMPBurrowed collides only with Burrow (void UnitData:775)"
+    );
     let spines = mode
         .ground_weapon_override
         .clone()
@@ -335,4 +344,275 @@ fn b42_the_lurker_analogue_attacks_only_burrowed() {
         &ability.effect,
         AbilityEffectSpec::SwitchMode { mode_name } if mode_name == "burrowed"
     )));
+}
+
+/// A burrowing body: its one ability switches, in one tick, to a burrowed mode that is
+/// `immobile` or not (a burrowed Lurker, or a unit that moves under ground) and `burrowed` or
+/// not (the control: the same hidden, anchored stance above ground).
+fn register_burrow_body(
+    world: &mut SimWorld,
+    slug: &str,
+    immobile: bool,
+    burrowed: bool,
+) -> UnitTypeId {
+    register(world, slug, |arch| {
+        arch.weapon = None;
+        arch.ground_weapon = None;
+        arch.air_weapon = None;
+        arch.modes = vec![UnitModeSpec {
+            mode_name: MODE.to_string(),
+            cast_ticks: 1,
+            leave_cast_ticks: 1,
+            cast_random_delay_max_ticks: SimScalar::ZERO,
+            leave_random_delay_max_ticks: SimScalar::ZERO,
+            is_immobile: immobile,
+            unpushable: immobile,
+            is_cloaked: true,
+            burrowed,
+            mover_type_override: None,
+            sight_radius_override: None,
+            ground_weapon_override: None,
+            air_weapon_override: None,
+            energy_cost_per_second: SimScalar::ZERO,
+        }];
+        arch.abilities = vec![AbilitySpec {
+            name: "Burrow".to_string(),
+            target_kind: AbilityTargetKind::ToggleMode,
+            energy_cost: SimScalar::ZERO,
+            cooldown_ticks: 0,
+            cast_range: SimScalar::ZERO,
+            effect: AbilityEffectSpec::SwitchMode {
+                mode_name: MODE.to_string(),
+            },
+            leave_name: None,
+        }];
+    })
+}
+
+/// Spawns a body of `unit_type` for `owner` at `position` and burrows it, stepping from tick
+/// `*tick` until its mode is active.
+fn burrow_at(
+    world: &mut SimWorld,
+    unit_type: UnitTypeId,
+    owner: PlayerId,
+    position: SimVec2,
+    tick: &mut u32,
+) -> EntityId {
+    let body = world
+        .spawn_unit(unit_type, owner, position)
+        .expect("spawn body");
+    assert!(
+        world.execute_ability(body, 0, None, None),
+        "burrow admitted"
+    );
+    while world.entities[&body].active_mode.is_none() {
+        assert!(*tick < 20, "the one-tick burrow ends");
+        world.step(&empty(*tick));
+        *tick += 1;
+    }
+    body
+}
+
+/// The largest sideways offset from y = 10 of a walker sent from (14, 10) to (26, 10) past a body
+/// burrowed at (20, 10), and whether it arrived; the body must not move.
+fn walk_past(owner_of_walker: PlayerId, burrowed: bool) -> (SimScalar, bool) {
+    let mut world = flat_world(0x0b93);
+    let body_type = register_burrow_body(&mut world, "burrow_body_test_anchor", true, burrowed);
+    let walker_type = register_target(&mut world);
+    let mut tick = 0;
+    let body = burrow_at(&mut world, body_type, PlayerId(0), at(20, 10), &mut tick);
+    let anchor = world.entities[&body].position;
+    let walker = world
+        .spawn_unit(walker_type, owner_of_walker, at(14, 10))
+        .expect("spawn walker");
+    world
+        .entities
+        .get_mut(&walker)
+        .expect("walker")
+        .issue_order(UnitOrder::Move { target: at(26, 10) }, false)
+        .expect("move order");
+    let mut widest = SimScalar::ZERO;
+    for _ in 0..200 {
+        world.step(&empty(tick));
+        tick += 1;
+        let offset = (world.entities[&walker].position.y - SimScalar::from_num(10)).abs();
+        widest = widest.max(offset);
+    }
+    assert_eq!(
+        world.entities[&body].position, anchor,
+        "the anchored body never moves"
+    );
+    let arrived = world.entities[&walker].position.x > SimScalar::from_num(25.9);
+    (widest, arrived)
+}
+
+#[test]
+fn b93_a_ground_unit_walks_straight_over_a_burrowed_body() {
+    for owner in [PlayerId(0), PlayerId(1)] {
+        let (widest, arrived) = walk_past(owner, true);
+        assert!(arrived, "{owner:?}: the walker arrives");
+        assert!(
+            widest < SimScalar::from_num(0.01),
+            "{owner:?}: the walker keeps its line over the burrowed body: offset {widest}"
+        );
+    }
+}
+
+#[test]
+fn b93_the_same_stance_above_ground_still_blocks() {
+    let (widest, _) = walk_past(PlayerId(0), false);
+    assert!(
+        widest > SimScalar::from_num(0.5),
+        "an anchored body above ground is walked around: offset {widest}"
+    );
+}
+
+#[test]
+fn b93_a_burrowed_body_neither_pushes_nor_is_pushed_by_a_ground_unit() {
+    let mut world = flat_world(0x0b94);
+    let anchor_type = register_burrow_body(&mut world, "burrow_body_test_anchor", true, true);
+    let mover_type = register_burrow_body(&mut world, "burrow_body_test_mover", false, true);
+    let ground_type = register_target(&mut world);
+    let mut tick = 0;
+    let anchor = burrow_at(&mut world, anchor_type, PlayerId(0), at(20, 10), &mut tick);
+    let mover = burrow_at(&mut world, mover_type, PlayerId(0), at(30, 10), &mut tick);
+    // An idle ground unit standing half over each burrowed body, one friendly, one hostile.
+    let half = SimScalar::HALF;
+    let over_anchor = world
+        .spawn_unit(
+            ground_type,
+            PlayerId(0),
+            SimVec2::new(SimScalar::from_num(20) + half, SimScalar::from_num(10)),
+        )
+        .expect("spawn ground unit");
+    let over_mover = world
+        .spawn_unit(
+            ground_type,
+            PlayerId(1),
+            SimVec2::new(SimScalar::from_num(30) + half, SimScalar::from_num(10)),
+        )
+        .expect("spawn ground unit");
+    let before: Vec<SimVec2> = [anchor, mover, over_anchor, over_mover]
+        .iter()
+        .map(|id| world.entities[id].position)
+        .collect();
+    for _ in 0..50 {
+        world.step(&empty(tick));
+        tick += 1;
+    }
+    let after: Vec<SimVec2> = [anchor, mover, over_anchor, over_mover]
+        .iter()
+        .map(|id| world.entities[id].position)
+        .collect();
+    assert_eq!(
+        after, before,
+        "no body is pushed out of an overlap across the ground"
+    );
+}
+
+#[test]
+fn b93_burrowed_bodies_still_collide_with_each_other() {
+    let mut world = flat_world(0x0b95);
+    let anchor_type = register_burrow_body(&mut world, "burrow_body_test_anchor", true, true);
+    let mover_type = register_burrow_body(&mut world, "burrow_body_test_mover", false, true);
+    let mut tick = 0;
+    let anchor = burrow_at(&mut world, anchor_type, PlayerId(0), at(20, 10), &mut tick);
+    let mover = burrow_at(&mut world, mover_type, PlayerId(0), at(14, 10), &mut tick);
+    world
+        .entities
+        .get_mut(&mover)
+        .expect("mover")
+        .issue_order(UnitOrder::Move { target: at(26, 10) }, false)
+        .expect("move order");
+    let contact = world
+        .catalog
+        .get(anchor_type)
+        .expect("anchor")
+        .collision_radius
+        + world
+            .catalog
+            .get(mover_type)
+            .expect("mover")
+            .collision_radius;
+    let mut widest = SimScalar::ZERO;
+    for _ in 0..200 {
+        world.step(&empty(tick));
+        tick += 1;
+        let gap = world.entities[&mover]
+            .position
+            .distance(world.entities[&anchor].position);
+        assert!(
+            gap > contact - SimScalar::from_num(0.05),
+            "tick {tick}: the burrowed mover overlaps the burrowed anchor: {gap} < {contact}"
+        );
+        widest = widest.max((world.entities[&mover].position.y - SimScalar::from_num(10)).abs());
+    }
+    assert!(
+        widest > SimScalar::from_num(0.5),
+        "it walks round the anchor: offset {widest}"
+    );
+}
+
+#[test]
+fn b93_a_burrowing_cloak_toggle_burrows_and_a_mode_burrows_only_once_entered() {
+    let mut world = flat_world(0x0b96);
+    let toggler = register(&mut world, "burrow_body_test_toggler", |arch| {
+        arch.modes = Vec::new();
+        arch.abilities = vec![AbilitySpec {
+            name: "Burrow".to_string(),
+            target_kind: AbilityTargetKind::ToggleMode,
+            energy_cost: SimScalar::ZERO,
+            cooldown_ticks: 0,
+            cast_range: SimScalar::ZERO,
+            effect: AbilityEffectSpec::CloakToggle {
+                energy_cost_per_second: SimScalar::ZERO,
+                is_burrow: true,
+            },
+            leave_name: None,
+        }];
+    });
+    let slow = register_burrower(&mut world, 10, 4);
+    let unit = world
+        .spawn_unit(toggler, PlayerId(0), at(10, 10))
+        .expect("spawn toggler");
+    let channelling = world
+        .spawn_unit(slow, PlayerId(0), at(20, 10))
+        .expect("spawn burrower");
+    let burrowed = |world: &SimWorld, id: EntityId| {
+        let entity = &world.entities[&id];
+        entity.is_burrowed(world.catalog.get(entity.unit_type_id).expect("archetype"))
+    };
+    assert!(!burrowed(&world, unit) && !burrowed(&world, channelling));
+    assert!(
+        world.execute_ability(unit, 0, None, None),
+        "toggle admitted"
+    );
+    assert!(
+        world.execute_ability(channelling, 0, None, None),
+        "burrow admitted"
+    );
+    world.step(&empty(0));
+    assert!(
+        burrowed(&world, unit),
+        "the burrowing toggle puts the unit under ground"
+    );
+    assert!(
+        !burrowed(&world, channelling),
+        "a unit still channelling its burrow stands above ground"
+    );
+    // `register_burrower`'s mode is hidden and anchored but not marked burrowed.
+    for tick in 1..20 {
+        world.step(&empty(tick));
+    }
+    assert!(world.entities[&channelling].active_mode.is_some());
+    assert!(
+        !burrowed(&world, channelling),
+        "only a burrowed mode burrows"
+    );
+    assert!(
+        world.execute_ability(unit, 0, None, None),
+        "toggle back admitted"
+    );
+    world.step(&empty(20));
+    assert!(!burrowed(&world, unit), "toggled back, it is above ground");
 }

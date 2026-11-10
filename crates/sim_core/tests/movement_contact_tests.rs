@@ -541,7 +541,10 @@ fn unreachable_order_reports_retargets_and_terminates() -> TestResult {
         .filter(|o| matches!(o.kind, RouteOutcomeKind::Retargeted { .. }))
         .count();
     assert_eq!(retargeted, 20, "every unit must report the new destination");
-    run_until_settled(&mut world, &ids, 900)?;
+    // Every unit settles; the bound is generous. Units that stand waiting behind the crowd at the
+    // wall are not pushed through it (plan 2026-11-09-friendly-blocking D-4), so the last one
+    // settles on tick 900 by the stall rule.
+    run_until_settled(&mut world, &ids, 1_200)?;
     for &id in &ids {
         let x = world.entities[&id].position.x;
         assert!(x < SimScalar::from_num(32), "{id:?} crossed the wall");
@@ -1054,5 +1057,69 @@ fn moving_pair_separates_radially() -> TestResult {
     assert_eq!(first.y, SimScalar::ZERO);
     assert_eq!(second.y, SimScalar::ZERO);
     assert_eq!(first.x, -second.x);
+    Ok(())
+}
+
+/// Invariant D-1.4 of plan `2026-11-09-friendly-blocking` (bug B-103), over eight layouts: units
+/// ordered through a closed line of friends holding position do not vibrate. They stand and wait
+/// instead of stepping into the line and being pushed back out every tick.
+#[test]
+fn units_blocked_by_a_holding_line_never_reverse() -> TestResult {
+    let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next = move || {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        f64::from(u32::try_from(state >> 40).unwrap_or(0)) / f64::from(1_u32 << 24)
+    };
+    for layout in 0..8 {
+        let mut world = sim_fixtures::world(
+            GameMap::new(64, 64, MapCell::default_ground(CliffLevel(0)))?,
+            SEED,
+        );
+        let kind = small_unit(&world)?;
+        let radius = world.catalog.get(kind)?.collision_radius.to_f32();
+        let spacing = 2.0 * f64::from(radius);
+        let line: Vec<EntityId> = (0..7)
+            .map(|i| {
+                spawn(
+                    &mut world,
+                    kind,
+                    BLUE,
+                    at(30.0, 28.0 + spacing * f64::from(i)),
+                )
+            })
+            .collect::<Result<_, _>>()?;
+        order(&mut world, BLUE, &line, UnitOrder::HoldPosition);
+        let movers: Vec<EntityId> = (0..4)
+            .map(|i| {
+                let x = 26.0 + next();
+                let y = 29.0 + 1.2 * f64::from(i) + 0.4 * next();
+                spawn(&mut world, kind, BLUE, at(x, y))
+            })
+            .collect::<Result<_, _>>()?;
+        order(
+            &mut world,
+            BLUE,
+            &movers,
+            UnitOrder::Move {
+                target: at(40.0, 30.5),
+            },
+        );
+        let mut meter = sim_fixtures::trace::blocking::BlockingMeter::new();
+        for _ in 0..200 {
+            tick(&mut world, Vec::new());
+            meter.observe(&world);
+        }
+        // A unit nudged by a squadmate's contact correction may settle back once, by under 0.01
+        // a tick; a vibrating unit reverses tick after tick.
+        for &unit in &movers {
+            assert!(
+                meter.reversals_of(unit) <= 1,
+                "layout {layout}, unit {unit:?}"
+            );
+        }
+        assert_eq!(world.diagnostics(), []);
+    }
     Ok(())
 }

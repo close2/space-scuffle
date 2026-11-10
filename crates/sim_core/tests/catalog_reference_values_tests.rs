@@ -4,8 +4,9 @@
 //! # Responsibility
 //! Holds the `StarCraft` II 5.0.14 values of every non-time field the audit corrected, one table
 //! per field kind, and checks the shipped catalog against them through its public API. Later
-//! packages add their sourced fields here too: arcs, mounts and turret idle (WP10) and the
-//! random firing delay (WP11, B-3).
+//! packages add their sourced fields here too: arcs, mounts and turret idle (WP10), the
+//! random firing delay (WP11, B-3), and push priorities (plan `2026-11-09-friendly-blocking`
+//! WP5, B-48).
 //!
 //! # How it fits
 //! The audit (evidence `2026-11-05-sc2-deviation-fixes` §10) reads `SC2Mapster` `SC2GameData` at
@@ -2643,4 +2644,41 @@ fn b39_deceleration_follows_starcraft() {
         );
     }
     assert_eq!(seen, SC2_DECELERATION.len());
+}
+
+/// `PushPriority` of every mobile analogue (B-48, plan `2026-11-09-friendly-blocking` WP5).
+/// `CUnit` sets 10 (`core` UnitData:59) and no layer overrides it for a modelled unit: only
+/// `Critter` (5, `liberty` UnitData:156) and `SlaynElemental` (11, `void` UnitData:3569) do. The
+/// rows below are the exceptions; every other mobile analogue must hold the default.
+const SC2_PUSH_PRIORITY_DEFAULT: (u8, &str) = (10, "CUnit PushPriority, core UnitData:59");
+
+/// The analogues whose priority differs from the default. The Ultralisk's 5.0.14
+/// `AlliedPushPriority` 1 (`voidmulti` UnitData:1943; 5.0.14 patch notes: "now pushes allied units
+/// out of the way when moving") is added to its `PushPriority` 10 (Q0073's default, option 1).
+const SC2_PUSH_PRIORITY: [(&str, u8, &str); 1] = [(
+    "Ultralisk",
+    11,
+    "PushPriority 10 + AlliedPushPriority 1, voidmulti UnitData:1943 (Q0073)",
+)];
+
+#[test]
+fn b48_push_priorities_follow_starcraft() {
+    let catalogs = sim_fixtures::shipped_catalogs();
+    let mut seen = 0;
+    for arch in catalogs.units.archetypes().filter(|a| !is_structure(a)) {
+        let name = analogue(arch);
+        let (want, source) = match SC2_PUSH_PRIORITY.iter().find(|(unit, ..)| *unit == name) {
+            Some(&(_, priority, source)) => {
+                seen += 1;
+                (priority, source)
+            }
+            None => SC2_PUSH_PRIORITY_DEFAULT,
+        };
+        assert_eq!(
+            arch.push_priority, want,
+            "{} ({name}): push priority {}, StarCraft II {want} ({source})",
+            arch.slug, arch.push_priority
+        );
+    }
+    assert_eq!(seen, SC2_PUSH_PRIORITY.len(), "every row has an archetype");
 }

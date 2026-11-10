@@ -15,7 +15,7 @@
 //! # How it fits
 //! The pixel test re-executes this test binary on the virtual GPU through `support/gpu_run.rs`
 //! (charter §7, check C21), as `skirmish_match_tests.rs` does. Staging writes the world directly:
-//! the burrowed unit stands in a catalog mode marked `is_burrowed`, as the end of its channel
+//! the burrowed unit stands in a catalog mode marked `burrowed`, as the end of its channel
 //! leaves it, but without any weapon, so no spine or flash can change the patch
 //! (`battle_harness::burrower` explains the stand-in used while the shipped burrower has no
 //! media). The

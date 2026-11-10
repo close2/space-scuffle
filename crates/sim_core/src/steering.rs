@@ -2,7 +2,8 @@
 //!
 //! Owns the pure, per-pair and per-unit rules of local movement:
 //! 1. One continuous steering function that bends a unit's heading around nearby bodies.
-//! 2. Removal of the part of a step that would drive a unit into a body that will not yield.
+//! 2. Removal of the part of a step that would drive a unit into a body that will not yield, for
+//!    all such bodies at once, so a step into a corner between two of them is removed whole.
 //! 3. Explicit arrival: a unit stops against a body that already settled on its destination.
 //! 4. Positional contact correction, where only the side that may move does.
 //! 5. A spatial hash grid for neighbourhood queries.
@@ -16,6 +17,8 @@
 //! 2. Neighbourhood queries return strictly sorted candidates for deterministic iteration.
 //! 3. A body that may not move receives exactly zero correction, whoever touches it.
 //! 4. Facing units decide sides the same way, each to its own right, so they always separate.
+//! 5. A unit never steers into a gap narrower than itself between two bodies that will not yield:
+//!    the pair is one wall, rounded at its nearer end (plan `2026-11-09-friendly-blocking` D-1).
 
 use crate::entity::Entity;
 use crate::movement::math::{
@@ -27,7 +30,7 @@ pub use crate::movement::tuning::PUSH_RELAXATION;
 use crate::movement::tuning::{
     ARRIVAL_TOUCH_MARGIN, ARRIVAL_WITNESS_REACH, COMOVING_MIN_COSINE, EMERGENCY_SEPARATION,
     FIXED_BODY_TANGENT_WEIGHT, FLOCK_SHELL, FLOCK_WEIGHT_OVERLAPPING, FLOCK_WEIGHT_TOUCHING,
-    OBSTACLE_WEIGHT, STEERING_CORRIDOR_MARGIN, STEERING_LOOKAHEAD,
+    OBSTACLE_WEIGHT, STANDING_DRIFT, STEERING_CORRIDOR_MARGIN, STEERING_LOOKAHEAD,
 };
 use sim_types::{EntityId, PlayerId, SimScalar, SimVec2};
 
@@ -185,6 +188,9 @@ pub struct SteeringObstacle {
     pub push_priority: u8,
     /// Whether this body holds its ground: on hold, immobile or anchored in combat.
     pub anchored: bool,
+    /// Whether this body has nothing to do: no order, `Idle` or `Stop`. A body standing still
+    /// under an order is waiting for room, not idle, and is not pushed aside.
+    pub idle: bool,
     /// Destination this body has finished moving to, while it stays there.
     pub settled_on: Option<SimVec2>,
 }
@@ -201,17 +207,37 @@ impl SteeringObstacle {
             owner: PlayerId(0),
             push_priority: 0,
             anchored: false,
+            idle: true,
             settled_on: None,
         }
     }
 
-    /// Whether this body steps aside for a unit of `owner` and `push_priority` walking into it.
+    /// Whether this body steps aside for a unit of `owner` and `push_priority` walking into it:
+    /// a friendly body that is idle, standing still, not anchored, and of no higher priority (plan
+    /// `2026-11-09-friendly-blocking` D-4). A body waiting under an order does not.
     #[must_use]
     pub fn yields_to(&self, owner: PlayerId, push_priority: u8) -> bool {
         self.owner == owner
             && !self.anchored
-            && self.velocity == SimVec2::ZERO
+            && self.idle
+            && within_distance(
+                self.velocity,
+                SimVec2::ZERO,
+                i128::from(STANDING_DRIFT.raw()),
+            )
             && push_priority >= self.push_priority
+    }
+
+    /// Whether this body stands: it holds its ground (anchored), or it moved by at most
+    /// [`STANDING_DRIFT`] last tick, as a body waiting in a crowd does while contact nudges it.
+    #[must_use]
+    pub fn is_standing(&self) -> bool {
+        self.anchored
+            || within_distance(
+                self.velocity,
+                SimVec2::ZERO,
+                i128::from(STANDING_DRIFT.raw()),
+            )
     }
 }
 
@@ -223,6 +249,9 @@ struct SideBlocker {
     radius: SimScalar,
     lateral: SimScalar,
     co_moving: bool,
+    /// Whether this body can be part of a wall: it stands still and will not step aside for the
+    /// steered unit ([`SteeringObstacle::yields_to`]).
+    walls: bool,
 }
 
 /// Whether `velocity` runs broadly along the unit-length `heading`.
@@ -284,6 +313,10 @@ fn side_weight(blocker: &SideBlocker, unit_pos: SimVec2, unit_radius: SimScalar)
 /// A blocker dead ahead counts as lying to the left, so the unit passes on its right. Two units
 /// meeting head-on therefore turn to opposite world sides, and they separate.
 ///
+/// This form knows no owner for the unit, so every body is a separate obstacle. The movement
+/// phase steers with [`steer_body`], which also joins two bodies that will not yield into one
+/// wall when the unit cannot pass between them.
+///
 /// # Errors
 /// Rejects nonpositive radii or unrepresentable geometry without mutation.
 pub fn compute_unified_local_steering(
@@ -294,67 +327,323 @@ pub fn compute_unified_local_steering(
     ignored_entity: Option<EntityId>,
     obstacles: &[SteeringObstacle],
 ) -> Result<SimVec2, PushGeometryError> {
-    if unit_radius <= SimScalar::ZERO {
-        return Err(PushGeometryError::InvalidDistance);
-    }
-    let goal_dir = direction(goal_pos, unit_pos)?;
-    let mut nearest_left: Option<SideBlocker> = None;
-    let mut nearest_right: Option<SideBlocker> = None;
+    steer(
+        Steered {
+            id: unit_id,
+            pos: unit_pos,
+            radius: unit_radius,
+            mover: None,
+        },
+        goal_pos,
+        ignored_entity,
+        obstacles,
+    )
+}
 
+/// [`compute_unified_local_steering`] for a unit of known owner and push priority.
+///
+/// Two standing bodies that will not step aside for `unit` ([`SteeringObstacle::yields_to`]), the
+/// nearest on each side of its path, whose edges are closer than the unit's diameter plus
+/// [`STEERING_CORRIDOR_MARGIN`], are one wall, with every further body that closes up to them:
+/// the unit cannot pass between them, so it heads for the outside of the wall's nearer end
+/// ([`round_wall`]) and never toward a gap (plan
+/// `2026-11-09-friendly-blocking` D-1.1, bug B-103).
+///
+/// # Errors
+/// Rejects nonpositive radii or unrepresentable geometry without mutation.
+pub(crate) fn steer_body(
+    unit: ContactBody,
+    goal_pos: SimVec2,
+    ignored_entity: Option<EntityId>,
+    obstacles: &[SteeringObstacle],
+) -> Result<SimVec2, PushGeometryError> {
+    steer(
+        Steered {
+            id: unit.id,
+            pos: unit.pos,
+            radius: unit.radius,
+            mover: Some((unit.owner, unit.push_priority)),
+        },
+        goal_pos,
+        ignored_entity,
+        obstacles,
+    )
+}
+
+/// The unit a heading is computed for. `mover` is its owner and push priority when known, which
+/// decides which bodies step aside for it.
+#[derive(Clone, Copy)]
+struct Steered {
+    id: EntityId,
+    pos: SimVec2,
+    radius: SimScalar,
+    mover: Option<(PlayerId, u8)>,
+}
+
+/// Whether `obs` can be part of a wall for a unit of owner and push priority `mover`: it holds
+/// its ground (anchored: holding, immobile or fighting, whatever contact nudges it by) or stands,
+/// moved by no more than contact nudges it ([`SteeringObstacle::is_standing`]), and will not step
+/// aside. A moving body leaves the way by itself, and steering
+/// spaces the unit from it like any flockmate; counting it would make the wall, and so the side the
+/// unit rounds it on, change from tick to tick as it moves. Without a known mover nothing is a
+/// wall.
+fn is_wall_body(obs: &SteeringObstacle, mover: Option<(PlayerId, u8)>) -> bool {
+    obs.is_standing() && mover.is_some_and(|(owner, priority)| !obs.yields_to(owner, priority))
+}
+
+/// Whether two side blockers that can be part of a wall leave too little room for a unit of
+/// `unit_radius` to pass between them, edge to edge.
+fn forms_wall(
+    left: &SideBlocker,
+    right: &SideBlocker,
+    unit_radius: SimScalar,
+) -> Result<bool, PushGeometryError> {
+    let gap = distance(left.pos, right.pos)? - left.radius - right.radius;
+    Ok(gap < unit_radius + unit_radius + STEERING_CORRIDOR_MARGIN)
+}
+
+/// One end of a wall: the body at it and how far its outer edge lies from the unit's path line
+/// on that side, in raw fixed-point units.
+#[derive(Clone, Copy)]
+struct WallEnd {
+    pos: SimVec2,
+    radius: SimScalar,
+    outer: i128,
+}
+
+/// The outermost body of the wall that starts at `first` on the side `sign` (`1` left of
+/// `goal_dir`, `-1` right), among `obstacles`.
+///
+/// The wall continues from a body to any further-out body that can be part of a wall
+/// ([`is_wall_body`]) and whose edge lies closer to it than the unit's diameter plus [`STEERING_CORRIDOR_MARGIN`]: the
+/// unit could not pass between those two either. Only `obstacles` are known, the unit's
+/// neighbours, so a wall that runs on beyond them ends at the last one seen; the unit learns more
+/// as it walks.
+// PERFORMANCE RATIONALE:
+// Why: A wall is a chain of bodies; following it needs the pairwise gaps of the unit's neighbours.
+// What: Rescan the neighbour slice once per link, keeping only the current end, with no buffer.
+// Trade-off: O(k^2) in the neighbour count k (a handful of bodies within about one body width),
+// in exchange for no allocation in the movement phase.
+fn wall_end(
+    unit: &Steered,
+    goal_dir: SimVec2,
+    first: &SideBlocker,
+    sign: i128,
+    obstacles: &[SteeringObstacle],
+) -> Result<WallEnd, PushGeometryError> {
+    let outer_of = |pos: SimVec2, radius: SimScalar| -> Result<i128, PushGeometryError> {
+        let lateral = difference_product(goal_dir, pos, unit.pos, true)? >> 32;
+        Ok(lateral * sign + i128::from(radius.raw()))
+    };
+    let mut end = WallEnd {
+        pos: first.pos,
+        radius: first.radius,
+        outer: outer_of(first.pos, first.radius)?,
+    };
+    let passable = unit.radius + unit.radius + STEERING_CORRIDOR_MARGIN;
+    for _ in 0..obstacles.len() {
+        let mut next: Option<WallEnd> = None;
+        for obs in obstacles {
+            if obs.id == unit.id || obs.pos == end.pos || !is_wall_body(obs, unit.mover) {
+                continue;
+            }
+            let outer = outer_of(obs.pos, obs.radius)?;
+            if outer <= end.outer || next.is_some_and(|best| best.outer >= outer) {
+                continue;
+            }
+            let reach = i128::from(end.radius.raw())
+                + i128::from(obs.radius.raw())
+                + i128::from(passable.raw());
+            if within_distance(end.pos, obs.pos, reach) {
+                next = Some(WallEnd {
+                    pos: obs.pos,
+                    radius: obs.radius,
+                    outer,
+                });
+            }
+        }
+        match next {
+            Some(further) => end = further,
+            None => break,
+        }
+    }
+    Ok(end)
+}
+
+/// The heading past a wall of bodies the unit cannot pass between: toward the point just
+/// outside its nearer end.
+///
+/// Each side's end is the outermost body of the wall on that side ([`wall_end`]); the nearer end
+/// is the one whose outer edge lies nearer the unit's path line, and on a tie the left one. The
+/// aim lies beside that body, perpendicular to `goal_dir`, at the body's radius plus the unit's
+/// plus [`STEERING_CORRIDOR_MARGIN`], so the heading never points into a gap of the wall.
+///
+/// A unit rounds an end only when the point beside it lies within [`STEERING_LOOKAHEAD`] of the
+/// unit: every body that could stand there is then among the unit's neighbours, so the end is
+/// known to be one. Otherwise the unit heads straight on: the wall leaves it no admissible step,
+/// and it waits (D-1.3). An end chosen from further away changes with every body that comes into
+/// or leaves the unit's view, and the unit vibrates; walking round a crowd on a kept side is the
+/// surround walk's work (D-2), which remembers the side.
+fn round_wall(
+    unit: &Steered,
+    goal_dir: SimVec2,
+    left: &SideBlocker,
+    right: &SideBlocker,
+    obstacles: &[SteeringObstacle],
+) -> Result<SimVec2, PushGeometryError> {
+    let tangent_left = SimVec2::new(-goal_dir.y, goal_dir.x);
+    let left_end = wall_end(unit, goal_dir, left, 1, obstacles)?;
+    let right_end = wall_end(unit, goal_dir, right, -1, obstacles)?;
+    let (end, outward) = if left_end.outer <= right_end.outer {
+        (left_end, tangent_left)
+    } else {
+        (right_end, checked_vec_neg(tangent_left)?)
+    };
+    let clearance = end.radius + unit.radius + STEERING_CORRIDOR_MARGIN;
+    let aim = checked_vec_add(end.pos, checked_vec_scale(outward, clearance)?)?;
+    if !within_distance(unit.pos, aim, i128::from(STEERING_LOOKAHEAD.raw())) {
+        // The way past the end lies beyond what the unit knows of the wall: another body may
+        // close it. The unit heads straight into the wall, which leaves no admissible step.
+        return Ok(goal_dir);
+    }
+    direction(aim, unit.pos)
+}
+
+/// The bodies in a unit's path, nearest first on each side.
+#[derive(Default)]
+struct SideBlockers {
+    /// Nearest relevant blocker on each side, `[left, right]`, which steering deflects from.
+    nearest: [Option<SideBlocker>; 2],
+    /// Nearest blocker on each side that can be part of a wall ([`is_wall_body`]).
+    walls: [Option<SideBlocker>; 2],
+}
+
+/// Finds the nearest blockers on each side of the path from `unit` along `goal_dir`.
+fn side_blockers(
+    unit: &Steered,
+    goal_dir: SimVec2,
+    ignored_entity: Option<EntityId>,
+    obstacles: &[SteeringObstacle],
+) -> Result<SideBlockers, PushGeometryError> {
+    let mut sides = SideBlockers::default();
     for obs in obstacles {
-        if obs.id == unit_id || Some(obs.id) == ignored_entity {
+        if obs.id == unit.id || Some(obs.id) == ignored_entity {
             continue;
         }
         if obs.radius <= SimScalar::ZERO {
             return Err(PushGeometryError::InvalidDistance);
         }
-        let combined = i128::from(unit_radius.raw()) + i128::from(obs.radius.raw());
+        let combined = i128::from(unit.radius.raw()) + i128::from(obs.radius.raw());
         let reach = combined + i128::from(STEERING_LOOKAHEAD.raw());
-        if obs.pos == unit_pos || !within_distance(unit_pos, obs.pos, reach) {
+        if obs.pos == unit.pos || !within_distance(unit.pos, obs.pos, reach) {
             continue;
         }
-        let ahead = difference_product(goal_dir, obs.pos, unit_pos, false)?;
+        let ahead = difference_product(goal_dir, obs.pos, unit.pos, false)?;
         if ahead <= 0 {
             continue;
         }
-        let cross = difference_product(goal_dir, obs.pos, unit_pos, true)?;
+        let cross = difference_product(goal_dir, obs.pos, unit.pos, true)?;
         let half_width = combined + i128::from(STEERING_CORRIDOR_MARGIN.raw());
         let lateral_raw = cross.unsigned_abs() >> 32;
         if lateral_raw >= half_width.unsigned_abs() {
             continue;
         }
+        let side = usize::from(cross < 0);
+        let square = squared_distance(unit.pos, obs.pos);
         let co_moving = is_co_moving(goal_dir, obs.velocity)?;
-        if co_moving {
-            let is_column_leader = ahead.unsigned_abs() >> 32 > lateral_raw;
-            let shell = combined + i128::from(FLOCK_SHELL.raw());
-            if is_column_leader || !within_distance(unit_pos, obs.pos, shell) {
-                continue;
-            }
-        }
-        let square = squared_distance(unit_pos, obs.pos);
         let candidate = SideBlocker {
             square,
             pos: obs.pos,
             radius: obs.radius,
             lateral: SimScalar::from_raw(i64::try_from(lateral_raw).unwrap_or(i64::MAX)),
             co_moving,
+            walls: is_wall_body(obs, unit.mover),
         };
-        let side = if cross >= 0 {
-            &mut nearest_left
-        } else {
-            &mut nearest_right
-        };
-        if side.is_none_or(|best| square < best.square) {
-            *side = Some(candidate);
+        if candidate.walls && sides.walls[side].is_none_or(|best| square < best.square) {
+            sides.walls[side] = Some(candidate);
+        }
+        if co_moving {
+            let is_column_leader = ahead.unsigned_abs() >> 32 > lateral_raw;
+            let shell = combined + i128::from(FLOCK_SHELL.raw());
+            if is_column_leader || !within_distance(unit.pos, obs.pos, shell) {
+                continue;
+            }
+        }
+        if sides.nearest[side].is_none_or(|best| square < best.square) {
+            sides.nearest[side] = Some(candidate);
         }
     }
+    Ok(sides)
+}
+
+/// The side a blocked unit walks round the crowd in its way to `goal_pos` on: `true` for the
+/// left of its way, `false` for the right (plan `2026-11-09-friendly-blocking` D-2.4).
+///
+/// It is the side of the nearer end of the wall in front of the unit, as [`round_wall`] judges
+/// it; with a standing body that will not yield on one side only, the other side; and on a tie,
+/// or with none, the parity of the unit's ID (even walks left). `ignored_entity` is the unit's
+/// target, which is no part of the crowd.
+///
+/// # Errors
+/// Rejects nonpositive radii or unrepresentable geometry.
+pub(crate) fn surround_side(
+    unit: ContactBody,
+    goal_pos: SimVec2,
+    ignored_entity: Option<EntityId>,
+    obstacles: &[SteeringObstacle],
+) -> Result<bool, PushGeometryError> {
+    let steered = Steered {
+        id: unit.id,
+        pos: unit.pos,
+        radius: unit.radius,
+        mover: Some((unit.owner, unit.push_priority)),
+    };
+    let parity = unit.id.0.is_multiple_of(2);
+    let goal_dir = direction(goal_pos, unit.pos)?;
+    if goal_dir == SimVec2::ZERO {
+        return Ok(parity);
+    }
+    let sides = side_blockers(&steered, goal_dir, ignored_entity, obstacles)?;
+    Ok(match &sides.walls {
+        [Some(left), Some(right)] => {
+            let left_end = wall_end(&steered, goal_dir, left, 1, obstacles)?.outer;
+            let right_end = wall_end(&steered, goal_dir, right, -1, obstacles)?.outer;
+            if left_end == right_end {
+                parity
+            } else {
+                left_end < right_end
+            }
+        }
+        [Some(_), None] => false,
+        [None, Some(_)] => true,
+        [None, None] => parity,
+    })
+}
+
+/// The steering rule shared by [`compute_unified_local_steering`] and [`steer_body`].
+fn steer(
+    unit: Steered,
+    goal_pos: SimVec2,
+    ignored_entity: Option<EntityId>,
+    obstacles: &[SteeringObstacle],
+) -> Result<SimVec2, PushGeometryError> {
+    if unit.radius <= SimScalar::ZERO {
+        return Err(PushGeometryError::InvalidDistance);
+    }
+    let goal_dir = direction(goal_pos, unit.pos)?;
+    let sides = side_blockers(&unit, goal_dir, ignored_entity, obstacles)?;
     if goal_dir == SimVec2::ZERO {
         return Ok(SimVec2::ZERO);
     }
-
+    if let [Some(left), Some(right)] = &sides.walls {
+        if forms_wall(left, right, unit.radius)? {
+            return round_wall(&unit, goal_dir, left, right, obstacles);
+        }
+    }
     let weight_of = |blocker: Option<SideBlocker>| {
-        blocker.map_or(SimScalar::ZERO, |b| side_weight(&b, unit_pos, unit_radius))
+        blocker.map_or(SimScalar::ZERO, |b| side_weight(&b, unit.pos, unit.radius))
     };
+    let [nearest_left, nearest_right] = sides.nearest;
     let net_weight = weight_of(nearest_right) - weight_of(nearest_left);
     if net_weight == SimScalar::ZERO {
         return Ok(goal_dir);
@@ -382,12 +671,38 @@ pub(crate) struct ContactBody {
 /// ground, so what remains of its step slides it around the body. An idle friendly of no higher
 /// priority does not count, because the mover's contact pushes it aside. A body receding at least
 /// as fast as the unit approaches is no obstacle either, which lets columns march closed up.
+///
+/// The constraint holds for all such bodies at once: the per-body removal is repeated, in the
+/// slice's order, until a pass removes nothing, and at most as many passes as there are bodies
+/// within reach. Two bodies at an angle then both take their share, so a step into the corner
+/// between them is removed whole instead of leaving a residue that contact would undo (plan
+/// `2026-11-09-friendly-blocking` D-1.2, bug B-103).
 pub(crate) fn remove_blocked_velocity(
     unit: ContactBody,
     mut velocity: SimVec2,
     obstacles: &[SteeringObstacle],
 ) -> Result<SimVec2, PushGeometryError> {
     let step = velocity.x.raw().unsigned_abs() + velocity.y.raw().unsigned_abs();
+    let mut passes = 0;
+    loop {
+        let (projected, within_reach) = remove_blocked_once(unit, velocity, step, obstacles)?;
+        passes += 1;
+        if projected == velocity || passes >= within_reach {
+            return Ok(projected);
+        }
+        velocity = projected;
+    }
+}
+
+/// One pass of [`remove_blocked_velocity`] with reach `step` (raw Manhattan length of the
+/// original step): the projected velocity and how many non-yielding bodies lie within reach.
+fn remove_blocked_once(
+    unit: ContactBody,
+    mut velocity: SimVec2,
+    step: u64,
+    obstacles: &[SteeringObstacle],
+) -> Result<(SimVec2, usize), PushGeometryError> {
+    let mut within_reach = 0;
     for obs in obstacles {
         if obs.id == unit.id {
             continue;
@@ -399,6 +714,7 @@ pub(crate) fn remove_blocked_velocity(
         if obs.pos == unit.pos || !within_distance(unit.pos, obs.pos, reach) {
             continue;
         }
+        within_reach += 1;
         let toward = direction(obs.pos, unit.pos)?;
         let approach = checked_dot(velocity, toward)?;
         if approach <= SimScalar::ZERO {
@@ -412,7 +728,7 @@ pub(crate) fn remove_blocked_velocity(
         }
         velocity = checked_vec_sub(velocity, checked_vec_scale(toward, approach - room)?)?;
     }
-    Ok(velocity)
+    Ok((velocity, within_reach))
 }
 
 /// Checks whether a settled body stops a unit at `unit_pos` heading for `target_pos`.
@@ -518,6 +834,9 @@ pub struct PushEntityParams {
     pub cannot_be_pushed: bool,
     /// Whether nothing may move this entity: Hold Position, immobile or unpushable.
     pub is_holding: bool,
+    /// Whether this entity has nothing to do: no order, `Idle` or `Stop`. Only an idle, standing
+    /// friendly is pushed aside by a moving one; one standing under an order separates evenly.
+    pub idle: bool,
 }
 
 impl PushEntityParams {
@@ -539,6 +858,7 @@ impl PushEntityParams {
             push_priority,
             cannot_be_pushed,
             is_holding: cannot_be_pushed,
+            idle: true,
         }
     }
 }
@@ -597,13 +917,16 @@ fn slide_around_fixed(
     checked_vec_scale(slide, raw_overlap)
 }
 
-/// Resolves contact between two bodies. The rules, in order:
+/// Resolves contact between two bodies. The rules, in order (the push table of plan
+/// `2026-11-09-friendly-blocking` D-4):
 /// 1. Bodies that nothing may move stay put, against friend and foe alike.
 /// 2. A body that may not be pushed right now stays put and the other takes the whole correction.
 /// 3. Enemies separate evenly along the line of centres.
-/// 4. A moving friendly walks through an idle friendly of no higher priority, which steps aside.
-/// 5. A moving friendly gives way to an idle friendly of higher priority.
-/// 6. Everything else separates evenly along the line of centres, with no sideways shove.
+/// 4. A moving friendly walks through an idle, standing friendly of no higher priority, which
+///    steps aside.
+/// 5. A moving friendly gives way to an idle, standing friendly of higher priority.
+/// 6. Everything else, a body waiting under an order included, separates evenly along the line
+///    of centres, with no sideways shove.
 fn checked_dynamic_push(
     a: PushEntityParams,
     b: PushEntityParams,
@@ -658,7 +981,7 @@ fn checked_dynamic_push(
         return Ok((correction, checked_vec_neg(correction)?));
     }
     let (a_moving, b_moving) = (motion_flags(a.vel).0, motion_flags(b.vel).0);
-    if a_moving && !b_moving {
+    if a_moving && !b_moving && b.idle {
         if a.push_priority < b.push_priority {
             return Ok((checked_vec_scale(separation, overlap)?, SimVec2::ZERO));
         }
@@ -669,7 +992,7 @@ fn checked_dynamic_push(
         )?;
         return Ok((SimVec2::ZERO, checked_vec_scale(exit, overlap)?));
     }
-    if b_moving && !a_moving {
+    if b_moving && !a_moving && a.idle {
         if b.push_priority < a.push_priority {
             return Ok((SimVec2::ZERO, checked_vec_scale(opposite, overlap)?));
         }
@@ -721,6 +1044,7 @@ pub fn resolve_push_interaction(
         push_priority: 10,
         cannot_be_pushed: moving_unit.cannot_be_pushed(),
         is_holding: moving_unit.cannot_be_pushed(),
+        idle: moving_unit.is_idle(),
     };
     let b = PushEntityParams {
         id: other_unit.id,
@@ -730,6 +1054,7 @@ pub fn resolve_push_interaction(
         push_priority: 10,
         cannot_be_pushed: other_unit.cannot_be_pushed(),
         is_holding: other_unit.cannot_be_pushed(),
+        idle: other_unit.is_idle(),
     };
     let mobility = |e: &Entity| {
         if e.is_immobile || e.unpushable {
@@ -863,6 +1188,7 @@ mod weighted_tests {
             push_priority: 0,
             cannot_be_pushed: false,
             is_holding: false,
+            idle: true,
         }
     }
     #[test]
@@ -953,6 +1279,109 @@ mod weighted_tests {
             )?,
             (SimVec2::ZERO, -SimVec2::X_AXIS)
         );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod wall_tests {
+    use super::*;
+
+    /// 0.375 world units.
+    const RADIUS: SimScalar = SimScalar::from_raw(3 << 29);
+
+    /// A unit of player 0, priority 10, radius 0.375, at the origin.
+    fn mover() -> ContactBody {
+        ContactBody {
+            id: EntityId(1),
+            owner: PlayerId(0),
+            push_priority: 10,
+            pos: SimVec2::ZERO,
+            radius: RADIUS,
+        }
+    }
+
+    /// A friendly body of radius 0.375 at (`x`, `y`) that holds its ground.
+    fn anchored(id: u32, x: f32, y: f32) -> SteeringObstacle {
+        SteeringObstacle {
+            anchored: true,
+            push_priority: 10,
+            ..SteeringObstacle::new(
+                EntityId(id),
+                SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y)),
+                RADIUS,
+                SimVec2::ZERO,
+            )
+        }
+    }
+
+    #[test]
+    fn a_gap_narrower_than_the_unit_is_a_wall_and_a_wider_one_is_not(
+    ) -> Result<(), PushGeometryError> {
+        let goal = SimVec2::new(SimScalar::from_num(10), SimScalar::ZERO);
+        // Edges 0.70 apart: below the unit's 0.75 diameter plus 0.05, so one wall. The unit
+        // stands in front of its middle, far from either end, and heads straight into it.
+        let narrow = [anchored(2, 0.6, 0.70), anchored(3, 0.6, -0.75)];
+        assert_eq!(steer_body(mover(), goal, None, &narrow)?, SimVec2::X_AXIS);
+        // Edges 0.81 apart (0.80 sits on the boundary, where fixed-point rounding decides):
+        // passable, so each body is rounded on its own and the unequal
+        // offsets deflect the unit.
+        let wide = [anchored(2, 0.6, 0.775), anchored(3, 0.6, -0.785)];
+        assert_ne!(steer_body(mover(), goal, None, &wide)?, SimVec2::X_AXIS);
+        // Without a known mover nothing is a wall.
+        let unknown = compute_unified_local_steering(
+            EntityId(1),
+            SimVec2::ZERO,
+            RADIUS,
+            goal,
+            None,
+            &narrow,
+        )?;
+        assert_ne!(unknown, SimVec2::X_AXIS);
+        Ok(())
+    }
+
+    #[test]
+    fn a_unit_at_the_end_of_a_wall_rounds_it_on_the_outside() -> Result<(), PushGeometryError> {
+        let goal = SimVec2::new(SimScalar::from_num(10), SimScalar::ZERO);
+        // The unit stands almost beside the wall's left end, which a short step clears.
+        let wall = [
+            anchored(2, 0.45, -0.05),
+            anchored(3, 0.45, -0.8),
+            anchored(4, 0.45, 0.70),
+        ];
+        let heading = steer_body(mover(), goal, None, &wall[..2])?;
+        assert!(
+            heading.y > SimScalar::ZERO,
+            "rounds the left end: {heading:?}"
+        );
+        // A third body closing the left end makes the right end the nearer one, out of reach,
+        // so the unit heads straight on and waits.
+        assert_eq!(steer_body(mover(), goal, None, &wall)?, SimVec2::X_AXIS);
+        Ok(())
+    }
+
+    #[test]
+    fn a_step_into_a_corner_between_two_bodies_is_removed_whole() -> Result<(), PushGeometryError> {
+        // Two bodies touching the unit at right angles: a step into the corner is all removed.
+        let corner = [anchored(2, 0.75, 0.0), anchored(3, 0.0, 0.75)];
+        let step = SimVec2::new(SimScalar::from_num(0.1), SimScalar::from_num(0.1));
+        assert_eq!(
+            remove_blocked_velocity(mover(), step, &corner)?,
+            SimVec2::ZERO
+        );
+        // A wedge of 60 degrees: what remains approaches neither body.
+        let (c, h) = (0.75 * 0.866_025_4, 0.75 * 0.5);
+        let wedge = [anchored(2, c, h), anchored(3, c, -h)];
+        let forward = SimVec2::new(SimScalar::from_num(0.1), SimScalar::from_num(0.01));
+        let left = remove_blocked_velocity(mover(), forward, &wedge)?;
+        for body in &wedge {
+            let toward = direction(body.pos, SimVec2::ZERO)?;
+            assert!(
+                checked_dot(left, toward)? <= SimScalar::from_raw(1 << 8),
+                "{left:?}"
+            );
+        }
         Ok(())
     }
 }

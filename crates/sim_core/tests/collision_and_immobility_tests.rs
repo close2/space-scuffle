@@ -52,6 +52,7 @@ fn test_moving_friendly_pushes_idle_friendly_laterally() -> Result<(), Box<dyn s
         is_holding: false,
         push_priority: 20,
         cannot_be_pushed: false,
+        idle: true,
     };
 
     let idle_params = PushEntityParams {
@@ -62,6 +63,7 @@ fn test_moving_friendly_pushes_idle_friendly_laterally() -> Result<(), Box<dyn s
         is_holding: false,
         push_priority: 20,
         cannot_be_pushed: false,
+        idle: true,
     };
 
     let distance = sim_core::movement::checked_distance(mover_params.pos, idle_params.pos)
@@ -98,6 +100,7 @@ fn test_hold_position_friendly_acts_as_immovable_wall() -> Result<(), Box<dyn st
         is_holding: false,
         push_priority: 20,
         cannot_be_pushed: false,
+        idle: true,
     };
 
     let hold_params = PushEntityParams {
@@ -108,6 +111,7 @@ fn test_hold_position_friendly_acts_as_immovable_wall() -> Result<(), Box<dyn st
         is_holding: true,
         push_priority: 20,
         cannot_be_pushed: true,
+        idle: true,
     };
 
     let distance = sim_core::movement::checked_distance(mover_params.pos, hold_params.pos)

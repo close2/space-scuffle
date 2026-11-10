@@ -392,7 +392,10 @@ fn a_unit_behind_a_friend_is_held_up_before_it_reaches_the_target() -> TestResul
     let held_up = summary.unit_seconds[1][Activity::Blocked.index()]
         + summary.unit_seconds[1][Activity::Flanking.index()];
     assert!(held_up > 0.0, "{:?}", summary.unit_seconds[1]);
-    // Only the rear unit (spawned second, so the higher id) is ever held up.
+    // Only the rear unit (spawned second, so the higher id) is held up on the way in. Once the
+    // front unit has engaged, the rear one may stand beside it, between it and its next target:
+    // with the walk's end hysteresis (friendly-blocking plan Amendment 7) the front unit is held
+    // up for one tick at its kill (tick 64), which is not the approach this test is about.
     let front = trace
         .unit_rows()
         .iter()
@@ -400,7 +403,14 @@ fn a_unit_behind_a_friend_is_held_up_before_it_reaches_the_target() -> TestResul
         .map(|row| row.sample.id)
         .min()
         .ok_or("red units")?;
+    let engaged = trace
+        .unit_rows()
+        .iter()
+        .find(|row| row.sample.id == front && row.sample.activity == Activity::Engaged)
+        .map(|row| row.tick)
+        .ok_or("the front unit engages")?;
     assert!(trace.unit_rows().iter().all(|row| row.sample.id != front
+        || row.tick >= engaged
         || !matches!(row.sample.activity, Activity::Blocked | Activity::Flanking)));
     Ok(())
 }
@@ -577,7 +587,7 @@ fn the_matrix_mode_writes_every_battle_and_seed_and_compares_runs() -> TestResul
     assert_eq!(
         lines[0],
         "battle,seed,of_record,end_tick,blue_survivors,red_survivors,blue_lead_hull,\
-         red_lead_hull,expectation_met"
+         red_lead_hull,expectation_met,blocked_attacker_ticks,reversals,stall_giveups"
     );
     assert_eq!(lines.len(), 7);
     let first_row: Vec<&str> = lines[1].split(',').collect();

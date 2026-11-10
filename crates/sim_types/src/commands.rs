@@ -258,7 +258,7 @@ pub enum AbilityEffectSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "independent authored facts about one mode, each read by a different mechanism"
+    reason = "independent facts of one stance (anchored, unpushable, hidden, burrowed), authored in data"
 )]
 pub struct UnitModeSpec {
     /// Canonical identifier for this mode (e.g., `"siege"`, `"burrowed"`, `"assault"`, `"cloaked"`).
@@ -292,11 +292,14 @@ pub struct UnitModeSpec {
     /// Whether the unit is cloaked/burrowed (invisible without detection) in this mode.
     #[serde(default)]
     pub is_cloaked: bool,
-    /// Whether this mode puts the unit underground (`StarCraft` II's `Buried` flag), so a
-    /// concealed unit in it is presented as burrowed rather than cloaked. Presentation data:
-    /// the tick never reads it (plan `2026-11-09-effect-visualization` D-3).
+    /// Whether the unit is burrowed in this mode: its body then touches only other burrowed
+    /// bodies, so unburrowed units walk over it and it neither pushes nor is pushed by them
+    /// (`StarCraft` II's burrowed Lurker collides only with `Burrow`, `void` UnitData:775; plan
+    /// `2026-11-09-friendly-blocking` R6, B-93). Visibility is `is_cloaked`'s, not this field's;
+    /// the snapshot presents a concealed unit in such a mode as burrowed rather than cloaked
+    /// (plan `2026-11-09-effect-visualization` D-3).
     #[serde(default)]
-    pub is_burrowed: bool,
+    pub burrowed: bool,
     /// Optional movement type override while in this mode (e.g., Air -> Ground for transforming fighters).
     #[serde(default)]
     pub mover_type_override: Option<crate::enums::MoverType>,

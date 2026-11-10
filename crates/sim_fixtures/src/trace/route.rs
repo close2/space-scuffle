@@ -12,7 +12,10 @@
 //! - **first-waypoint variants**: how many different first waypoints the unit's route had during
 //!   the pass.
 //!
-//! It also records the battle's outcome: the winner and the tick the match ended.
+//! It also records the battle's outcome: the winner and the tick the match ended; each owner's
+//! blocking counters ([`super::blocking`], plan `2026-11-09-friendly-blocking` WP1); and, at
+//! [`IN_RANGE_TICK`], how many of each owner's attackers have a target inside their weapon's
+//! band (that plan's §7 acceptance).
 //!
 //! # How it fits
 //! The instrument of plan `2026-11-09-sc2-pathfinding` (§3.1, WP1). The example
@@ -26,14 +29,18 @@
 //!   lies in the box (bounds inclusive). A unit that dies or leaves ends its pass.
 //! - A simulation diagnostic during the run is an error, as in the matrix tool.
 
+use super::blocking::{attackers_in_range, BlockingMeter, BlockingMetrics};
 use super::cli::RunError;
 use sim_core::scenario::{load_scenario_battle, ScenarioError};
 use sim_core::SimWorld;
-use sim_types::{MatchResult, SimScalar, Tick, TickBundle};
+use sim_types::{MatchResult, PlayerId, SimScalar, Tick, TickBundle};
 use std::path::{Path, PathBuf};
 
 /// Ticks between the heading samples of the total-turn metric (plan §3.1).
 pub const TURN_SAMPLE_TICKS: usize = 3;
+
+/// The tick after which attackers in range are counted (plan `2026-11-09-friendly-blocking` §7).
+pub const IN_RANGE_TICK: u32 = 900;
 
 /// A segment shorter than this, in world units, has no heading and is skipped by the turn metric.
 const STILL_SEGMENT: f64 = 1e-6;
@@ -345,6 +352,11 @@ pub struct RouteTraceOutput {
     pub result: MatchResult,
     /// Ticks played.
     pub ticks_played: u32,
+    /// Each owner's blocking counters over the run, by owner slot.
+    pub blocking: Vec<(u8, BlockingMetrics)>,
+    /// Per owner slot, `(attackers in range, attackers)` after [`IN_RANGE_TICK`] ticks; empty
+    /// if the run ended earlier.
+    pub in_range: Vec<(u8, (u32, u32))>,
 }
 
 /// Plays the scenario, measures the boxes and writes `units.csv`, `passes.csv` and `summary.md`.
@@ -355,6 +367,9 @@ pub fn run_route_trace(args: &RouteTraceArgs) -> Result<RouteTraceOutput, RouteT
     let mut world = load_scenario_battle(&args.assets, &args.scenario)?;
     let mut samples = Vec::new();
     let mut ticks_played = 0;
+    let mut meter = BlockingMeter::new();
+    let mut in_range = Vec::new();
+    let owners = scenario_owners(&world);
     while ticks_played < args.ticks && !world.match_state.result.is_over() {
         world.step(&TickBundle {
             tick: Tick(ticks_played),
@@ -374,7 +389,14 @@ pub fn run_route_trace(args: &RouteTraceArgs) -> Result<RouteTraceOutput, RouteT
             .into());
         }
         record_samples(&world, ticks_played, &mut samples);
+        meter.observe(&world);
         ticks_played += 1;
+        if ticks_played == IN_RANGE_TICK {
+            in_range = owners
+                .iter()
+                .map(|&owner| (owner, attackers_in_range(&world, PlayerId(owner))))
+                .collect();
+        }
     }
     let boxes = measure_boxes(&samples, &args.boxes);
     let output = RouteTraceOutput {
@@ -382,9 +404,22 @@ pub fn run_route_trace(args: &RouteTraceArgs) -> Result<RouteTraceOutput, RouteT
         boxes,
         result: world.match_state.result,
         ticks_played,
+        blocking: owners
+            .iter()
+            .map(|&owner| (owner, meter.of_owner(PlayerId(owner))))
+            .collect(),
+        in_range,
     };
     write_outputs(&args.out, &output)?;
     Ok(output)
+}
+
+/// The owner slots of the world's units, ascending.
+fn scenario_owners(world: &SimWorld) -> Vec<u8> {
+    let mut owners: Vec<u8> = world.entities.values().map(|e| e.owner.0).collect();
+    owners.sort_unstable();
+    owners.dedup();
+    owners
 }
 
 fn record_samples(world: &SimWorld, tick: u32, out: &mut Vec<RouteSample>) {
@@ -545,6 +580,22 @@ pub fn summary_markdown(output: &RouteTraceOutput) -> String {
         "Ticks played: {}. Outcome: {outcome}.",
         output.ticks_played
     ));
+    rows.push(String::new());
+    rows.push(format!(
+        "| Owner | In range at tick {IN_RANGE_TICK} | Blocked attacker ticks | Reversals | Stall give-ups |"
+    ));
+    rows.push("|---:|---|---:|---:|---:|".to_owned());
+    for &(owner, blocking) in &output.blocking {
+        let in_range = output
+            .in_range
+            .iter()
+            .find(|(slot, _)| *slot == owner)
+            .map_or_else(|| "—".to_owned(), |(_, (hit, of))| format!("{hit} of {of}"));
+        rows.push(format!(
+            "| {owner} | {in_range} | {} | {} | {} |",
+            blocking.blocked_attacker_ticks, blocking.reversals, blocking.stall_giveups
+        ));
+    }
     lines(&rows)
 }
 

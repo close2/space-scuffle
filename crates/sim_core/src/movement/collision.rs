@@ -7,7 +7,8 @@
 //! what every unit actually achieved, which is what the next tick steers against.
 //!
 //! # Invariants
-//! - Bodies on different layers, or with a cliff between them, are never in contact.
+//! - Bodies of different classes (`MotionPolicy::body_class`: ground, air, burrowed), or with a
+//!   cliff between them, are never in contact.
 //! - Friendly correction is capped to the unit's effective speed; hostile correction is not,
 //!   because bodies of two sides must never overlap by choice.
 //! - A body that may not move receives exactly zero correction.
@@ -44,6 +45,8 @@ pub(super) struct CollisionBody {
     engaged: bool,
     /// Passes through other units.
     ghost: bool,
+    /// Has nothing to do (no order, `Idle` or `Stop`); only then may a friend push it aside.
+    idle: bool,
 }
 
 /// Corrections accumulated for one body, kept apart because only friendly ones are speed capped.
@@ -111,6 +114,7 @@ impl SimWorld {
             holding: actor.cannot_be_pushed(),
             engaged: self.is_anchored_in_combat(actor),
             ghost: actor.is_mineral_walking,
+            idle: actor.is_idle(),
         }
     }
 
@@ -149,6 +153,7 @@ impl SimWorld {
             push_priority: priority,
             cannot_be_pushed: anchored,
             is_holding: body.holding,
+            idle: body.idle,
         };
         let mobility = |body: &CollisionBody| {
             if body.fixed {
@@ -292,12 +297,12 @@ impl SimWorld {
         let mut pushes = std::mem::take(&mut self.movement.pushes);
         let mut grid = std::mem::take(&mut self.movement.collision_grid);
         bodies.clear();
-        let mut largest = [SimScalar::ZERO; 2];
+        let mut largest = [SimScalar::ZERO; super::BODY_CLASSES];
         for entry in &entries {
             if let Some(actor) = self.entities.get(&entry.id) {
                 bodies.push(self.collision_body(*entry, actor));
-                let layer = entry.policy.layer.index();
-                largest[layer] = largest[layer].max(entry.policy.radius);
+                let class = entry.policy.body_class();
+                largest[class] = largest[class].max(entry.policy.radius);
             }
         }
         pushes.clear();
@@ -314,14 +319,14 @@ impl SimWorld {
                 continue;
             }
             let policy = a.entry.policy;
-            let reach = policy.radius + largest[policy.layer.index()];
+            let reach = policy.radius + largest[policy.body_class()];
             let mut neighbours = std::mem::take(&mut self.movement.pair_scratch);
             neighbours.clear();
             grid.for_each_near(a.position, reach, |index_b| {
                 let b = &bodies[index_b];
                 if index_b > index_a
                     && !b.ghost
-                    && b.entry.policy.layer == policy.layer
+                    && b.entry.policy.body_class() == policy.body_class()
                     && super::circles_overlap(
                         a.position,
                         policy.radius,

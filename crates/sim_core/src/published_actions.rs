@@ -219,7 +219,7 @@ mod tests {
             is_immobile: false,
             unpushable: false,
             is_cloaked: false,
-            is_burrowed: false,
+            burrowed: false,
             mover_type_override: None,
             sight_radius_override: None,
             ground_weapon_override: None,

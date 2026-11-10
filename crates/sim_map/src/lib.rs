@@ -20,6 +20,7 @@
 pub mod error;
 pub mod grid;
 pub mod map_format;
+pub mod navmesh;
 pub mod pathfinding;
 pub mod traversal;
 pub mod validation;
@@ -34,6 +35,10 @@ pub use map_format::{
     MapCellSpec, MapDocument, MapEntityId, MapFile, MapFormatError, MapLayer, MapMetadata,
     MapResource, MapStartLocation, MapWatchtower, CURRENT_MAP_FORMAT_VERSION, MAX_MAP_DIMENSION,
     MIN_MAP_DIMENSION, WATCHTOWER_ENTITY_ID_BASE,
+};
+pub use navmesh::{
+    funnel::Side, predicates::LatticePoint, search::MeshRoute, EdgeKind, NavMesh, NavMeshError,
+    TriangleKind, TriangleLabel,
 };
 pub use pathfinding::{
     PathRequest, PathRequestWithVision, PathResult, Pathfinder, PathfinderBuffers, PortalEdge,
