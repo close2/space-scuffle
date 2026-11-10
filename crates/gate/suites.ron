@@ -173,6 +173,7 @@ SuiteCatalog(
                 "asset_baker/media_tests",
                 "asset_baker/provenance_tests",
                 "asset_baker/prompt_tests",
+                "asset_baker/effect_texture_tests",
                 "client/player_presentation_tests",
                 "client/runtime_media_tests",
                 "client/lab_scene_tests",
@@ -197,10 +198,12 @@ SuiteCatalog(
         ),
         (
             name: "media",
-            paths: ["assets/{media,videos,textures,ai_keyframes,source_art}/**"],
+            paths: ["assets/{media,videos,textures,ai_keyframes,source_art,effects}/**"],
             targets: [
                 "asset_baker/media_tests",
                 "asset_baker/bake_integrity_tests",
+                "asset_baker/effect_texture_tests",
+                "asset_baker/image_client_tests",
                 "asset_baker/provenance_tests",
                 "asset_baker/terrain_assets_tests",
                 "client/runtime_media_tests",

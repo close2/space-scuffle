@@ -71,9 +71,13 @@ pub const DEFAULT_POLL_INTERVAL_SECS: u64 = 5;
 pub const DEFAULT_POLL_TIMEOUT_SECS: u64 = 300;
 
 /// The only hosts that may receive the API key. A download URI on any other host is refused.
-pub const TRUSTED_API_HOSTS: [&str; 2] = [
+///
+/// `aiplatform.googleapis.com` is Vertex AI's global endpoint, which Google documents for the
+/// Gemini image models (`locations/global`); the effect image client may use it.
+pub const TRUSTED_API_HOSTS: [&str; 3] = [
     "generativelanguage.googleapis.com",
     "us-central1-aiplatform.googleapis.com",
+    "aiplatform.googleapis.com",
 ];
 
 /// Default number of consecutive transient faults retried before giving up.
@@ -1286,6 +1290,59 @@ impl VeoClient {
             http_status,
             error_status,
         })
+    }
+}
+
+impl VeoClient {
+    /// The Google Cloud project of the credentials, if any (Vertex AI needs one).
+    pub(crate) fn project_id(&self) -> Option<&str> {
+        self.credentials.project_id.as_deref()
+    }
+
+    /// Sends one authenticated JSON POST that may start paid work and parses the response.
+    ///
+    /// The transport, key handling, trusted-host rule and redaction are those of the Veo
+    /// requests. A failure is retried only when the request cannot have started work, and a
+    /// quota refusal becomes [`BakerError::VeoQuotaExhausted`] without a retry.
+    pub(crate) fn post_paid_json(
+        &self,
+        url: &str,
+        body: &str,
+    ) -> Result<serde_json::Value, BakerError> {
+        self.with_retries(request_started_no_work, || {
+            self.api_request(url, Some(body), API_REQUEST_TIMEOUT)
+                .map_err(as_quota_refusal)
+        })
+    }
+
+    /// One authenticated JSON POST for a free check: returns the HTTP status and, for a
+    /// refusal, the `status` field of Google's error body, instead of failing.
+    pub(crate) fn post_status(
+        &self,
+        url: &str,
+        body: &str,
+    ) -> Result<(u16, Option<String>), BakerError> {
+        ensure_trusted_host(url)?;
+        let temp_error = |source| BakerError::Io {
+            path: std::env::temp_dir(),
+            source,
+        };
+        let body_file = tempfile::NamedTempFile::new().map_err(temp_error)?;
+        std::fs::write(body_file.path(), body).map_err(temp_error)?;
+        let response_file = tempfile::NamedTempFile::new().map_err(temp_error)?;
+        match self.run_curl(&CurlRequest {
+            url,
+            post_body: Some(body_file.path()),
+            authenticated: true,
+            output: response_file.path(),
+            max_time: API_REQUEST_TIMEOUT,
+        }) {
+            Ok(response) => Ok((response.status, None)),
+            Err(BakerError::VeoHttpStatus { status, body }) => {
+                Ok((status, google_error(&body).and_then(|e| e.status)))
+            }
+            Err(other) => Err(other),
+        }
     }
 }
 

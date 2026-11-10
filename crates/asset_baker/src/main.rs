@@ -23,10 +23,14 @@
 //! `loops` section gives a `seam` (plan `docs/plans/2026-11-04-veo-seamless-loops.md`, D-5);
 //! `generate-veo` sends the parameters of `media/veo_request.ron`.
 //!
+//! The effect-texture commands (`effect-noise`, `effect-bake`, `effect-review`,
+//! `effect-prompt`, `effect-image`, `effect-image-preflight`; plan
+//! `docs/plans/2026-11-09-effect-visualization.md` §6) live in `effect_cli`.
+//!
 //! # Invariants
 //! - The catalog is read once per run, from disk; nothing is compiled in.
 //! - `generate-veo` validates its plan, prompts and budget before it reads any credential.
-//! - Exit status: 0 on success; 3 when Veo refused a request for quota (wait, do not retry);
+//! - Exit status: 0 on success; 3 when Veo or the image model refused a request for quota (wait, do not retry);
 //!   4 when a run stopped on a result that needs a person (Cloud Storage URI, filtered, new
 //!   failure kind); 2 for a usage error; 1 for any other failure.
 
@@ -55,6 +59,8 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+
+mod effect_cli;
 
 #[derive(Parser, Debug)]
 #[command(name = "asset_baker")]
@@ -393,6 +399,11 @@ enum Commands {
         #[arg(short, long)]
         catalog: Option<PathBuf>,
     },
+
+    /// Effect textures (plan `2026-11-09-effect-visualization.md` §6): noise, bake, review,
+    /// prompts and the image model.
+    #[command(flatten)]
+    Effects(effect_cli::EffectCommand),
 }
 
 /// Result of a subcommand; any error ends the process with a nonzero status.
@@ -410,7 +421,13 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("Error: {error}");
-            match error.downcast_ref::<BakerError>() {
+            let baker = error.downcast_ref::<BakerError>().or_else(|| {
+                match error.downcast_ref::<asset_baker::effects::EffectError>() {
+                    Some(asset_baker::effects::EffectError::Baker(inner)) => Some(inner.as_ref()),
+                    _ => None,
+                }
+            });
+            match baker {
                 Some(BakerError::VeoQuotaExhausted { .. }) => ExitCode::from(EXIT_QUOTA),
                 Some(BakerError::VeoRunStopped { .. }) => ExitCode::from(EXIT_STOPPED),
                 _ => ExitCode::FAILURE,
@@ -513,6 +530,7 @@ fn run(cli: Cli) -> RunResult {
         Commands::BakeTerrainTheme { theme, catalog } => {
             run_bake_terrain_theme(assets, &theme, catalog)
         }
+        Commands::Effects(command) => effect_cli::run(assets, command),
     }
 }
 

@@ -1,5 +1,6 @@
 // assets/media/veo_budget.ron
-// The total-spend budget for paid Veo generations, read by `asset_baker generate-veo`.
+// The total-spend budget for paid Veo generations and image-model requests, read by
+// `asset_baker generate-veo` and `asset_baker effect-image`.
 //
 // Not a secret. The owner's rule (chat, 2026-11-05, recorded in
 // docs/questions/closed/0024-veo-billing-and-weekly-cap.md and the Veo plan's D-12): "the only
@@ -15,9 +16,15 @@
 //   id. A ledger line or a run whose model is missing here is refused, never counted as free.
 //   `veo-3.1-fast-generate-001`: one 4 s 720p clip with sound at $0.10 a second (the rate the
 //   batch evidence in docs/evidence/veo/ uses).
+//   Image models (effect textures, plan docs/plans/2026-11-09-effect-visualization.md §6.6 and
+//   Q0078): one generated or edited image, budgeted at the dearer model's 2K price of $0.101,
+//   rounded up to 11 cents, for every image model id (the plan's rule "budgeted at the higher
+//   price"). `asset_baker effect-image` refuses a model id that has no price here.
 (
     total_budget_usd_cents: 20000,
     price_per_generation_usd_cents: {
         "veo-3.1-fast-generate-001": 40,
+        "gemini-nano-banana-2.1": 11,
+        "gemini-3.1-flash-image": 11,
     },
 )

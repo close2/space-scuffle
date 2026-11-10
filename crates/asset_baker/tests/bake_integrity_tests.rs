@@ -564,3 +564,86 @@ fn a_still_image_bake_records_no_duration() {
     assert_eq!(slice.frame_count, 1, "a still decodes to one frame");
     assert_eq!(slice.duration_ms, None, "a still has no length to play at");
 }
+
+/// The shipped media ledger, which every generated effect source must cite.
+fn shipped_ledger() -> Vec<asset_baker::ledger::NumberedRecord> {
+    asset_baker::ledger::read_ledger_numbered(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/evidence/veo/ledger.jsonl"),
+    )
+    .expect("the shipped ledger reads")
+}
+
+/// Every file under `dir`, relative to it, recursively.
+fn files_under(dir: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return found;
+    };
+    for entry in entries.map(|e| e.expect("entry")) {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if path.is_dir() {
+            found.extend(
+                files_under(&path)
+                    .into_iter()
+                    .map(|f| format!("{name}/{f}")),
+            );
+        } else {
+            found.push(name);
+        }
+    }
+    found.sort();
+    found
+}
+
+/// Effect plan §6.4: every file under `assets/effects/` belongs to a texture set whose every
+/// element has a real origin (a ledger line of the shipped ledger, or authored parameters that
+/// regenerate it), and whose recorded hashes match. Nothing else may live there.
+#[test]
+fn every_shipped_effect_texture_has_a_verified_origin() {
+    use asset_baker::effects::texture_set::{list_sets, owned_files, verify_set};
+    let effects = shipped_assets().join("effects");
+    let ledger = shipped_ledger();
+    let mut owned = BTreeSet::new();
+    for set in list_sets(&effects).expect("list") {
+        let problems = verify_set(&effects, &set, &ledger);
+        assert!(problems.is_empty(), "effect set '{set}': {problems:?}");
+        owned.extend(owned_files(&effects, &set).expect("owned files"));
+    }
+    let strays: Vec<String> = files_under(&effects)
+        .into_iter()
+        .filter(|file| !owned.contains(file))
+        .collect();
+    assert!(
+        strays.is_empty(),
+        "files under assets/effects/ that belong to no verified set: {strays:?}"
+    );
+}
+
+/// Effect plan §6.4: a procedural fixture can never be written under `assets/effects/`, the
+/// shipped bundle's or any other bundle's.
+#[test]
+fn procedural_output_is_refused_under_an_effects_directory() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let bundle = fake_runtime_bundle(dir.path());
+    for target in [bundle.join("effects"), shipped_assets().join("effects")] {
+        assert!(
+            matches!(
+                ensure_outside_runtime_assets(&target),
+                Err(BakerError::RuntimePathRefused { .. })
+            ),
+            "{}",
+            target.display()
+        );
+    }
+    let unit = &asset_baker::default_unit_archetypes(&catalog())[0];
+    let output = baker()
+        .current_dir(dir.path())
+        .args(["procedural", "--size", "8", "--archetype", unit])
+        .arg("--output-dir")
+        .arg(bundle.join("effects"))
+        .output()
+        .expect("run baker");
+    assert!(!output.status.success());
+    assert!(!bundle.join("effects").exists(), "nothing may be written");
+}

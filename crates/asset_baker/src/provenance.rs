@@ -528,6 +528,30 @@ pub fn veo_origin_from_ledger(
     }
 }
 
+/// The origin of a clip with SHA-256 `clip_sha256` that the ledger downloaded under any
+/// subject: the last `downloaded` line of these bytes and the request whose operation produced
+/// it. Effect clips (plan `2026-11-09-effect-visualization.md` §6.4) are found by their bytes
+/// alone. `None` if the ledger never downloaded these bytes.
+#[must_use]
+pub fn veo_origin_by_clip_sha256(
+    ledger: &[NumberedRecord],
+    clip_sha256: &str,
+) -> Option<ClipOrigin> {
+    let (slug, state) = ledger
+        .iter()
+        .rev()
+        .find_map(|numbered| match &numbered.record.event {
+            LedgerEvent::Downloaded {
+                slug,
+                state,
+                sha256,
+                ..
+            } if sha256 == clip_sha256 => Some((slug.clone(), *state)),
+            _ => None,
+        })?;
+    veo_origin_from_ledger(ledger, &slug, state, clip_sha256)
+}
+
 /// The `request_started` event of the request whose operation the ledger named `operation`.
 fn started_request<'a>(ledger: &'a [NumberedRecord], operation: &str) -> Option<&'a LedgerEvent> {
     let request_id = ledger

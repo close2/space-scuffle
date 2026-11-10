@@ -373,4 +373,24 @@
             },
         },
     ),
+
+    // Prompt class "effect element" (docs/plans/2026-11-09-effect-visualization.md §6.1 to §6.4):
+    // greyscale shape and shading of one isolated effect element on pure black, for the image
+    // model (stills, decals) and for Veo (camera-facing flipbooks). Colour, size and timing come
+    // from the engine, so the prompt asks for no colour scheme and no scene. An effect request
+    // names a texture set and an element, never a unit. A prompt is composed as: the request's
+    // own description, then the view text, then the medium text (`still` or `clip`), then
+    // `style`; it is checked like a unit prompt (deny list, placeholder markers, length).
+    // - on_white_edit: the edit request that renders the same element on pure white, the second
+    //   picture of a difference-matte pair (§6.4).
+    // - negative_terms: nouns a clip request appends to the global negative prompt.
+    effect_element: (
+        style: "Isolated single visual effect element, centred with empty margin on every side, on a pure black background (#000000). Nothing else in frame: no floor, no ground plane, no horizon, no light rays, no god rays, no stripes, no gradient, no vignette, no text. Neutral white light, soft natural detail, photographic quality.",
+        side_on: "Seen side-on at eye level, the element rising from an invisible base line near the lower third of the frame.",
+        top_down: "Seen from directly above in a top-down orthographic view, the element lying flat and filling the middle of the frame.",
+        still: "A single still image, sharp focus, square format.",
+        clip: "One static tripod shot: the camera never moves, zooms or pans. The frame starts pure black, the element appears, develops and fully dissipates back to pure black before the clip ends.",
+        on_white_edit: "Render exactly the same element with the same shape, position, size, lighting and detail on a pure white background (#FFFFFF) instead of black. Change nothing else.",
+        negative_terms: "floor, ground, horizon, light rays, stripes, gradient, vignette, text, watermark, scenery",
+    ),
 )

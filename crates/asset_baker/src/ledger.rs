@@ -1,5 +1,6 @@
 //! The append-only ledger of every paid Veo request (plan `2026-11-04-phase-8-5-veo-media.md`,
-//! decision D-3).
+//! decision D-3) and every paid image-model request for effect textures (plan
+//! `2026-11-09-effect-visualization.md` §6.6, `image_*` events).
 //!
 //! # Responsibility
 //! Records each event of a generation run as one JSON object per line, and reads a ledger back
@@ -265,6 +266,79 @@ pub enum LedgerEvent {
         /// The error, with the key redacted.
         error: String,
     },
+    /// A paid image-model request (effect textures, plan `2026-11-09-effect-visualization.md`
+    /// §6.6) is about to be sent. Counted at its model's price like a Veo start.
+    ImageRequestStarted {
+        /// `<run id>/<sequence>`, linking the events of one request.
+        request_id: String,
+        /// Effect texture set the image is for.
+        set: String,
+        /// Element of the set.
+        element: String,
+        /// Model identifier.
+        model: String,
+        /// API the request goes to.
+        mode: ApiMode,
+        /// What the request asks for.
+        kind: ImageRequestKind,
+        /// SHA-256 of the prompt text, lowercase hex.
+        prompt_sha256: String,
+        /// The prompt text.
+        prompt: String,
+        /// SHA-256 of the image sent with an edit request (the element on black), if any.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_sha256: Option<String>,
+    },
+    /// An image request returned an image, which was written and validated.
+    ImageDownloaded {
+        /// The request that produced it.
+        request_id: String,
+        /// Effect texture set.
+        set: String,
+        /// Element of the set.
+        element: String,
+        /// Model identifier.
+        model: String,
+        /// File size in bytes.
+        bytes: u64,
+        /// SHA-256 of the file, lowercase hex.
+        sha256: String,
+        /// Image width in pixels.
+        width: u32,
+        /// Image height in pixels.
+        height: u32,
+        /// MIME type of the stored bytes (`image/png` or `image/jpeg`).
+        mime_type: String,
+        /// Where the image was stored.
+        path: String,
+    },
+    /// An image request was refused for quota. It cost nothing.
+    ImageQuotaRefused {
+        /// The refused request.
+        request_id: String,
+        /// Effect texture set.
+        set: String,
+        /// Element of the set.
+        element: String,
+        /// HTTP status of the refusal.
+        http_status: u16,
+        /// The error's `status` field.
+        status: Option<String>,
+        /// The error's reason or message.
+        reason: Option<String>,
+    },
+    /// An image request failed after it may have been billed (or returned no image). It is
+    /// counted as paid.
+    ImageRequestFailed {
+        /// The failed request.
+        request_id: String,
+        /// Effect texture set.
+        set: String,
+        /// Element of the set.
+        element: String,
+        /// The error, with the key redacted.
+        error: String,
+    },
     /// A reviewer rejected a downloaded clip.
     RejectedInReview {
         /// Catalog slug.
@@ -279,10 +353,22 @@ pub enum LedgerEvent {
     },
 }
 
+/// What an image-model request asks for (plan `2026-11-09-effect-visualization.md` §6.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageRequestKind {
+    /// The element generated from text, on pure black.
+    OnBlack,
+    /// An edit of the element on black: the same element on pure white, the second picture of
+    /// a difference-matte pair.
+    OnWhiteEdit,
+}
+
 impl LedgerEvent {
-    /// The clip this event concerns.
+    /// The Veo clip this event concerns, or `None` for an image-model event, which names an
+    /// effect set and element instead.
     #[must_use]
-    pub fn clip(&self) -> (&str, AnimState) {
+    pub fn clip(&self) -> Option<(&str, AnimState)> {
         match self {
             Self::RequestStarted { slug, state, .. }
             | Self::OperationNamed { slug, state, .. }
@@ -290,7 +376,11 @@ impl LedgerEvent {
             | Self::Downloaded { slug, state, .. }
             | Self::QuotaRefused { slug, state, .. }
             | Self::StartFailed { slug, state, .. }
-            | Self::RejectedInReview { slug, state, .. } => (slug, *state),
+            | Self::RejectedInReview { slug, state, .. } => Some((slug, *state)),
+            Self::ImageRequestStarted { .. }
+            | Self::ImageDownloaded { .. }
+            | Self::ImageQuotaRefused { .. }
+            | Self::ImageRequestFailed { .. } => None,
         }
     }
 }
@@ -512,7 +602,10 @@ impl LedgerHistory {
     }
 
     fn apply(&mut self, record: &LedgerRecord) {
-        let (slug, state) = record.event.clip();
+        let Some((slug, state)) = record.event.clip() else {
+            self.apply_image(&record.event);
+            return;
+        };
         let clip = self.clips.entry((slug.to_string(), state)).or_default();
         match &record.event {
             LedgerEvent::RequestStarted {
@@ -571,6 +664,24 @@ impl LedgerHistory {
                     clip.downloaded = None;
                 }
             }
+            LedgerEvent::ImageRequestStarted { .. }
+            | LedgerEvent::ImageDownloaded { .. }
+            | LedgerEvent::ImageQuotaRefused { .. }
+            | LedgerEvent::ImageRequestFailed { .. } => {}
+        }
+    }
+
+    /// Folds an image-model event: a start is a paid start at its model's price unless the
+    /// service refused it for quota.
+    fn apply_image(&mut self, event: &LedgerEvent) {
+        match event {
+            LedgerEvent::ImageRequestStarted {
+                request_id, model, ..
+            } => self.starts.push((request_id.clone(), model.clone())),
+            LedgerEvent::ImageQuotaRefused { request_id, .. } => {
+                self.quota_refused.insert(request_id.clone());
+            }
+            _ => {}
         }
     }
 
@@ -587,7 +698,7 @@ impl LedgerHistory {
     }
 
     /// The model of every start that may have cost a generation, in ledger order: every
-    /// `request_started` line except those the service refused for quota (those cost nothing).
+    /// `request_started` and `image_request_started` line except those the service refused for quota (those cost nothing).
     /// A start that failed ambiguously counts, because it may have started paid work.
     pub fn paid_start_models(&self) -> impl Iterator<Item = &str> {
         self.starts
