@@ -37,3 +37,6 @@ one data change away.
 
 ## Answer
 
+**Option 1 (Walk around — `surround_walk: true` by default).**
+
+**Engine insight:** In real StarCraft II gameplay, SC2's avoidance steering (`CMoverAvoidance`) naturally slides attack-moving second-row units laterally along the back of stationary front-line friendly units until they reach an open arc in weapon range, automatically forming a concave (players only need to manually stutter-step in narrow chokes or with very large armies). Keeping `surround_walk: true` by default matches how SC2 armies flow into a concave, eliminates the 1-tick direction oscillation, and ensures completely boxed-in units stand still cleanly.

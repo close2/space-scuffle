@@ -23,7 +23,7 @@ use crate::map_format::{
     MapDocument, MapEntityId, MapStartLocation, MAX_MAP_DIMENSION, MIN_MAP_DIMENSION,
     WATCHTOWER_ENTITY_ID_BASE,
 };
-use crate::pathfinding::{PathRequest, Pathfinder, UnitClearance};
+use crate::pathfinding::{PathRequest, Pathfinder};
 use crate::vision::MAX_SIGHT_RADIUS_CELLS;
 
 /// Minimum number of player start locations required for a valid playable map.
@@ -38,8 +38,9 @@ pub const RESOURCE_ASSOCIATION_RADIUS_CELLS: u32 = 12;
 /// Recommended minimum width (perpendicular to direction) for navigable ramps.
 pub const MIN_RECOMMENDED_RAMP_WIDTH: u8 = 2;
 
-/// Unit clearance size required for base-to-base pathfinding validation.
-pub const VALIDATION_PATH_CLEARANCE: UnitClearance = UnitClearance::Medium;
+/// Radius in world units of the unit that must reach every start location from every other,
+/// 0.625: a standard combat unit, which needs a gap two cells wide.
+pub const VALIDATION_PATH_RADIUS: SimScalar = SimScalar::from_raw(5 << 29);
 
 /// Axis-aligned bounding box of grid cells on the map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1002,8 +1003,7 @@ impl ValidationContext<'_> {
                 let req = PathRequest {
                     start: pos_a,
                     goal: pos_b,
-                    clearance: VALIDATION_PATH_CLEARANCE,
-                    radius: VALIDATION_PATH_CLEARANCE.radius_scalar(),
+                    radius: VALIDATION_PATH_RADIUS,
                 };
 
                 if pathfinder.find_path(map, &req).is_err() {

@@ -31,3 +31,6 @@ priority sideways out of its lane, and a firing or holding unit is never pushed 
 
 ## Answer
 
+**Option 1 (Single `push_priority` field set to `PushPriority + AlliedPushPriority` — `11` for the Ultralisk analogue, `10` for standard units).**
+
+**Engine insight:** In StarCraft II's `UnitData.xml`, all standard combat units share `PushPriority = 10` (`core` UnitData:59). Patch 5.0.14 set `AlliedPushPriority = 1` on the Ultralisk so moving Ultralisks push idle friendly Zerglings and Roaches sideways out of their path instead of getting body-blocked behind their own army (and Patch 5.0.15 later applied the same `AlliedPushPriority` change to Thors and Siege Tanks). Because `PushPriority` is uniformly `10` across all combat archetypes, computing `push_priority = PushPriority + AlliedPushPriority` (`11` vs `10`) is mathematically equivalent to comparing `(AlliedPushPriority, PushPriority)` lexicographically between allies without requiring a schema change.

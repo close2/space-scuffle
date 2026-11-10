@@ -51,3 +51,11 @@ within 4, and item 4 how far a dash can carry a Zealot that is ordered elsewhere
 **Recommendation.** Option 2; any change it shows is a few lines in `world/attack_dash.rs`.
 
 ## Answer
+
+**Option 1 (No editor test needed — keep WP13c, optionally cancelling `Charging` on non-attack orders `Move`/`Stop`/`HoldPosition` and/or using path distance if cheap).**
+
+**Engine insight:** In StarCraft II's engine:
+1. **`0.6` minimum range (`CValidatorUnitCompareOrderTargetRange`):** Measured edge-to-edge (`center_distance - source_radius - target_radius > 0.6`), matching weapon range measurement (`Q0057`) so a Zealot already in or near `0.1` melee range does not waste its Charge cooldown. WP13c already does this.
+2. **Autocast evaluation timing:** `CAbilAugment` with `AutoCast` on the `attack` order evaluates every game loop while the Zealot moves toward its attack target until the `< 4.0` range check passes. WP13c already does this.
+3. **`4.0` maximum range (`Pathing = 1`):** In SC2, `Pathing = 1` checks ground pathing distance (`<= 4.0`) so a Zealot does not trigger Charge across an impassable cliff or a sealed wall when the walking detour is longer than `4.0`. Straight-line distance (as landed in WP13c) is fine on open terrain, or you may check navpath length if already available at the call site.
+4. **Ending the `Charging` buff:** In SC2, the `Charging` buff (`Channeling` flag on the augment) is removed when `ChargeTargetAttacked` (`CValidatorUnitWeaponFiring` on `PsiBlades`) triggers, OR when the player cancels the attack with a non-attack command (`Move`, `Stop`, `HoldPosition`), whereas retargeting to another enemy unit keeps the charge speed active. Feel free to drop `Charging` on explicit non-attack orders (`Move`/`Stop`/`HoldPosition`) while keeping it across attack retargets, and close `Q0071` without an editor test.

@@ -18,7 +18,6 @@
 
 use sim_types::{SimScalar, SimVec2};
 
-use super::cdt::NONE;
 use super::predicates::{segments_within, QPoint, Q_BITS};
 use super::{next, prev, Access, NavMesh};
 
@@ -43,6 +42,10 @@ impl SegmentScratch {
             self.generation = 1;
         }
         self.stack.clear();
+    }
+
+    fn seen(&self, t: u32) -> bool {
+        self.stamp[t as usize] == self.generation
     }
 
     fn visit(&mut self, t: u32) -> bool {
@@ -84,6 +87,18 @@ pub(crate) fn segment_clear(
     scratch.visit(start);
     while let Some(t) = scratch.stack.pop() {
         for k in 0..3 {
+            let n = mesh.triangle_neighbors(t)[k];
+            let blocks = mesh.edge_blocks(t, k, |x| access.open(x));
+            // PERFORMANCE RATIONALE:
+            // Why: The exact capsule test is the predicate's main cost, and every triangle's edge
+            // back to the one it was reached from would repeat it with nothing to learn.
+            // What: An open edge to a triangle already reached is skipped before the test; a
+            // blocking edge is always tested, so the answer and the triangles reached are
+            // unchanged.
+            // Trade-off: One cheap edge lookup before the test instead of after it.
+            if !blocks && scratch.seen(n) {
+                continue;
+            }
             let (u, v) = (
                 mesh.corner(t, next(k)).to_q(),
                 mesh.corner(t, prev(k)).to_q(),
@@ -91,13 +106,10 @@ pub(crate) fn segment_clear(
             if !segments_within(qa, qb, u, v, r) {
                 continue;
             }
-            if mesh.edge_blocks(t, k, |x| access.open(x)) {
+            if blocks {
                 return false;
             }
-            let n = mesh.triangle_neighbors(t)[k];
-            if n != NONE {
-                scratch.visit(n);
-            }
+            scratch.visit(n);
         }
     }
     true

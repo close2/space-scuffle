@@ -1,7 +1,12 @@
 // The battle of the CI showcase video (assets/captures/showcase.ron).
 //
-// A copy of default_battle.ron in its own file, so the video does not move when tests change the
-// default battle: both slots field the battle loadout and attack-move to each other's base.
+// Both slots field the battle loadout and attack-move to each other's base. The map is
+// point-symmetric about its centre (32, 32) apart from the central plateau, so each player's target
+// is the image of the other's under (x, y) -> (63 - x, 63 - y) in cells: the corner of the enemy
+// base's ring that faces the map's centre, (52, 52) and (11, 11). The first-free-cell rule of
+// AttackMoveToStart would give player 1 the ring's far corner (5, 5) instead, and the two near-tied
+// lanes round the central plateau would then not be chosen symmetrically (sc2 pathfinding plan,
+// Amendment 5).
 // Every identity of the loadout has admitted media (crates/client_diagnostics/tests/
 // showcase_storyboard_tests.rs, the_showcase_scenario_fields_only_media_backed_identities).
 (
@@ -13,7 +18,7 @@
         (player_slot: 1, loadout_slug: "battle_automaton"),
     ],
     initial_orders: [
-        AttackMoveToStart(player_slot: 0, target_player_slot: 1),
-        AttackMoveToStart(player_slot: 1, target_player_slot: 0),
+        AttackMoveToCell(player_slot: 0, cell: (52, 52)),
+        AttackMoveToCell(player_slot: 1, cell: (11, 11)),
     ],
 )

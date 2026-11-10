@@ -212,3 +212,331 @@ grid or `ground_segment_is_connected` refuses.
 Every scenario is above 25 ticks/s. The flat rows are 2 % to 15 % below `DESIGN.md` §5 on the loaded shared
 server; nothing in a flat battle reads the mesh, which is built once per world (a structure placement rebuilds it).
 The new terrain row is the grid baseline WP9's stop rule compares against.
+
+## Amendment 2, step 1: tighter turn emission and the wrap retry (2026-11-10)
+
+Base `02f494b`. Latent: nothing in the simulation reads the mesh yet, so goldens, matrix and battle 33 cannot move.
+
+**Cause, confirmed on the longest pairs.** A throw-away probe (not committed) set each WP8 canyon pair's grid
+length beside the mesh polyline, the same route as tangents and arcs, and the exact oracle at `r` and at
+`r + margin`. Two causes:
+
+1. *Emission.* Each turn above 45 degrees became two points on tangents outside the circle of `r + margin`, one
+   below became the tangent lines' intersection, so the polyline was up to 2 % longer than its own
+   tangent-and-arc route (`(26.5, 37.5) -> (30.5, 27.5)` at r 0.5: polyline 24.284, arcs 24.131 = oracle 24.131,
+   grid 23.779). Done exactly as arcs, 3 (r 0.375) and 16 (r 0.5) of the pairs stay more than 1 % longer, not 12
+   and 49.
+2. *The 3.08 fallback* (`(36.5, 51.5) -> (43.5, 49.5)`, r 0.5): the unit stands under ramp E's south side wall
+   and must go round its western end (35, 52), up the ramp and out east, a turn of more than 180 degrees at
+   (35, 52). The shrunk funnel shrinks that fan vertex towards each portal's other end, so its point orbits the
+   circle and the apex beside it sees the side sweep past; and the refinement drops a turn whose tangent cross
+   product has the "wrong" sign, which a turn above 180 degrees has. The route lost (35, 52), crossed the wall and
+   fell back to portal midpoints.
+
+**Fix** (`navmesh/funnel.rs`, `navmesh/search.rs`):
+
+- Arcs are emitted on their circle: the two tangent points and, between them, the arc halved until every chord
+  keeps at least `r + margin - ARC_CHORD_DIP` (`ARC_CHORD_DIP` = margin / 2 = 0.025) from the vertex, at most
+  2^6 pieces. Exact Q32.32, bisection by normalised sums, no trigonometry. The polyline is never longer than the
+  tangent-and-arc route; every leg keeps at least `r + 0.025` from the vertex it rounds and still passes the
+  segment predicate (checked, as before).
+- When the shrunk funnel's route fails the segment predicate, the same channel is pulled again with
+  `PullStrategy::Pinned` (portal vertices themselves, and a turn above a half turn is kept when it reverses the
+  travel direction and the anchors as points bend with the side); used if legal, else portal midpoints as
+  before. Applying either rule to every channel instead produced 8 to 10 new fallbacks per 1,000 queries
+  (slack spikes look like wraps locally), so it is only the retry.
+
+**Grid against mesh after the fix** (`navmesh_measure`, the WP8 queries; new columns: routes the grid returns
+that fail the exact disc predicate, and mesh routes more than 1 % longer than a grid route that passes it):
+
+| Map | Radius | Both | Mean mesh/grid | Worst | > 1 % (WP8) | > 1 % | > 5 % | Illegal grid | > 1 % over a legal grid route | Fallbacks (WP8) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| default_arena | 0.375 | 1000 | 1.0002 | 1.0037 | 0 | 0 | 0 | 358 | 0 | 0 (0) |
+| default_arena | 0.5 | 1000 | 1.0004 | 1.0048 | 0 | 0 | 0 | 398 | 0 | 0 (0) |
+| showcase_canyon | 0.375 | 790 | 1.0008 | 1.0137 | 12 | 3 | 0 | 505 | 0 | 0 (0) |
+| showcase_canyon | 0.5 | 793 | 1.0017 | 1.0439 | 49 | 16 | 0 | 527 | 0 | 0 (1) |
+
+Acceptance (Amendment 2, decision 1): no pair more than 5 % longer, no fallback, at most 1 % of pairs more than
+1 % longer on three of the four rows. **The r 0.5 canyon row has 16 of 793 (2.0 %).** Every one of the 16 is a
+grid route that the disc cannot walk: it fails the exact predicate (the grid checks cell clearance and offsets a
+corner by `r + margin` on its bisector, so its legs pass inside `r` of the corner). In 6 of them even the exact
+oracle at `r` itself, with no margin, is more than 1 % longer than the grid; the other 10 are within the
+margin's cost (0.025 to 0.05 per turn). No mesh route is more than 1 % longer than a grid route that is legal.
+Keeping the margin whole cost 2 more pairs (ARC_CHORD_DIP = 7/8 margin gave 14).
+
+Oracle agreement unchanged: 542 of 542 seeded routes within 1 % of the exact oracle, worst 1.0007, no fallback
+(`pathfinding_properties.rs`). `funnel_tests.rs` now holds the polyline at or below its arcs and at or above the
+oracle at `r + margin / 2`, and adds the wrap pair above (turns (35, 52) and (38, 52) on the right, no fallback,
+within 2 % of the oracle at `r`).
+
+## Amendment 3, diagnosis of the held switch (2026-11-10)
+
+Held switch `7636e32` on `c34955b`, simulation unchanged by this step (the showcase `units.csv` is byte-identical
+to the held switch's). Probes were throw-away examples, not committed.
+
+**Every showcase regression follows from which side of the central plateau each unit takes.** The two lanes
+between the ramp feet, west (x 25.6) and east (x 38.4), differ by about 0.3 world units in 80 to 95 (0.35 %).
+Initial routes (tick 0): all ten player 0 units west (the grid took them east); player 1's eight pulse bots east,
+its two rhino beetles (radius 0.5, spawned north of the base) west. The rhinos meet player 0's whole army in the
+west lane at tick about 330, at (22 to 26, 32 to 35), and hold it until about tick 525 (player 0's units have no
+route and stand attacking or waiting behind the firing line), while the eight bots walk east to player 0's base.
+
+- *Winner.* With a throw-away rule that refuses the west lane to player 1 only (so the armies pass each other, as
+  on the grid), player 0 wins at tick 1,195 (base 1,100), ramp E foot 1.157 / 1.164 and 66° / 75°, reversals 66.
+  The flip is the split army, not route following.
+- *Reversals.* 228 of player 0's 255 (counted from `units.csv`) are in that fight, ticks 350 to 550: units behind
+  the firing rhino toggle the surround walk (`flank_active`) every tick, friendly blocking's rule. With the armies
+  passing, the remaining reversals are at player 1's base (47, 53), as in base.
+- *Ramp W foot.* Units follow their routes cleanly (rhino 13: no re-plan, walked 5.80 in the box against about
+  5.65 of route); the ratio rises because the west lane turns about 100° at the ramp's north wall end (29, 12)
+  where the east lane turned about 35°. Plateau SE is not passed because the lane is the other one.
+- *Ramp E foot turns.* The army arrives as a crowd after the fight; bodies pushed east of the corner (35, 52)
+  under the ramp's south wall wait on stall repaths (rhino 12: 975°).
+- *Lead 1, re-plans:* not supported. Whole match, player 0 routes adopted per unit 2 to 13; no re-plan storm at
+  (25.575, 35.0) — the units there were stopped by the fight.
+- *Search.* The side choices are TA*'s: for player 1's bots the first channel is east and the anytime loop spends
+  its budget on east variants; raising the budget to 8,192 and the per-state visits to 32 changes no choice.
+
+**Throughput** (bit-identical changes, measured unlocked: the gate lock was held by other agents' gates; canyon
+scenario ticks/s, base `02f494b` and candidate back to back):
+
+| Build | Canyon | 64x64, 400 |
+|---|---|---|
+| base | 134, 134, 137, 142, 141, 143 | 171 to 176 |
+| held switch | 116 to 124 | 154 |
+| one square root per edge distance (TA* bound) | 126, 127, 127 | 159 to 171 |
+| + leg asked before the wedge check in `drop_passed_waypoints` | 127, 127, 128 | 157 to 172 |
+| + open edges to reached triangles skip the capsule test | 116 / 104 against base 128 / 137 (machine loaded) | — |
+
+The canyon scenario is 7 to 10 % below base after the first two changes; the noise between runs is of the same
+size, so the 10 % criterion needs a measurement under the gate lock.
+
+**Pre-existing red tests at `7636e32`** (unchanged by this step): `determinism_tests`
+(`test_cross_platform_determinism_checksum`), `validation_golden_tests`
+(`find_path_with_vision_matches_the_recorded_corpus_digest`) and `pathfinding_properties`
+(`funnel_paths_are_legal_and_no_shorter_than_a_straight_line`: an illegal leg, recorded in the commit's
+`pathfinding_properties.proptest-regressions`).
+
+## Amendment 4: defects a to d on the held switch (2026-11-10)
+
+Held switch `dd2e5e9` with main `d914917` merged. Output under `~/scratch/path-c/` (`sb/`, `c4/`; not committed).
+
+**a. Illegal funnel leg: not a route defect.** Seed of record: start (9, 12), goal (14, 2), radius 0.625. The start
+is wedged, 0.5 from the walls west and north of it. The route rounds the corner (9, 12) beside it; the arc's first
+point, the tangent point (9.598, 12.313), is 0.598 from the west wall, still inside the disc's band, so the second
+leg also starts where the disc does not fit. D-3 and the search's own legality check (`navmesh/search.rs`,
+`is_legal`) hold every leg up to the first waypoint where the disc fits to the centre only; the property exempted
+only the first leg. The property now applies D-3's rule exactly. The two `sim_map` digests: a build of the switch
+commit `1f75ae0` itself produces `0x672c257d0fcacc1b` and `0xa1a3327e2a30f8b7`, the values of this tree; the switch
+recorded them before its last edits. No route changed.
+
+**b. Walk toggling:** friendly-blocking plan Amendment 7 (its evidence has the figures). On the switch, player 0's
+showcase reversals 253 to 56, player 1's 24 to 2.
+
+**c. Ramp E corner crowding: not fixed.** Trace: rhino 12 (and pulse bots 4, 6, 7) reach the corner (35, 52) as a
+column and start a surround walk (attack-move without a target, a standing friend ahead) on the side kept from an
+earlier walk, the inside of the turn, which carries them east under the ramp's south wall; there they lose sight
+of the corner and wait for a stall re-plan. Pulse bot 7 ends wedged on the corner vertex itself with a route whose
+first leg passes D-3's centre-only test, so no re-plan comes, and it jitters (1,364° in the box). Tried, not
+kept: a walk side closed where the step loses terrain view of the next waypoint, and a walk round a crowd on a
+route corner always on the outside of the turn. Together: ramp E ratio 1.295 to 1.247, but turn mean 352° to
+339°, maximum 845° to 1,364°, 9 of 10 in range at tick 900 (from 10), reversals 56 to 61. Patch at
+`~/scratch/path-c/c4.diff`.
+
+**d. Throughput, under the gate lock**, base `02f494b` and candidate alternately, ticks/s:
+
+| Scenario | Base | Candidate |
+|---|---|---|
+| showcase_canyon, 400 | 140, 142, 143 | 127, 126, 125 (-11 to -13 %) |
+| 64x64, 400 | 171, 176, 174 | 169, 171, 171 |
+| 128x128, 400 | 206, 212, 210 | 201, 204, 198 |
+
+Every scenario is above 25 ticks/s; the canyon scenario misses the 10 % criterion.
+
+**Showcase on the switch with b** (player 0 / base): ramp W 1.301 / 1.064 and 157° / 103° (the west lane, its
+lane-end turn about 100°); plateau SE not passed by player 0 (the lane is the other one); ramp E 1.295 / 1.573 and
+352° / 211°; reversals 56 / 11 (acceptance at most 21); 10 of 10 in range; 0 give-ups; player 1 wins at tick 1,266
+(the lane split). **Acceptance not reached:** reversals, ramp E turning, canyon throughput. The switch stays held.
+
+## Amendment 5: mirrored showcase targets, B-112, defect c (2026-11-10)
+
+B-112 was registered here as B-106; the effects branch had already used B-106 to B-111, so plan Amendment 6
+renumbers it (commit `3c51afe` keeps the old name in its message).
+
+Held switch `0209b54` plus this amendment's commits. Grid runs: main `d914917` with friendly-blocking fix b
+(`35aab04`), the mirrored targets and B-112, built from a source copy under `~/scratch/path-c/grid-src`. Outputs
+under `~/scratch/path-c/` (`gridm2/`, `mir2/`, `cA/` to `cC/`; not committed). Outcome measurements ran without
+the gate lock (other agents' gates held it; outcomes do not depend on timing).
+
+**Mirrored targets.** The canyon map is point-symmetric about its centre, (x, y) to (63 − x, 63 − y) in cells,
+apart from the central plateau (72 level cells, 42 ramp cells and 18 flag cells differ, all in or beside the
+plateau; the anti-diagonal and the diagonal leave 54 to 342 cells unmatched per layer). The targets are now cells
+(52, 52) and (11, 11), the centre-facing corners of the two base rings (scenario order `AttackMoveToCell`).
+
+**B-112: an attack-move resumed after a chase gave up.** On the switch with mirrored targets four of player 0's
+pulse bots gave the attack-move up at tick 828 (`NoProgress`, exactly 250 ticks after they resumed it at 578) while
+walking freely toward player 1's base, and the match never ended. Cause: `prepare_pursuit` dropped a finished
+attack order without restarting the movement memory, so the resumed attack-move measured its progress against the
+chase's best distance (a few world units to the dead target). Fixed by restarting the memory as a new order does
+(test red before, green after). On the grid the matrix (16 seeds) and battle 33 (68 seeds) are bit-identical with
+and without the fix, and so is the grid showcase. The grid's `golden_replay` is not: with B-112 it diverges at its first checkpoint
+(ticks up to 50) in debug and release, and passes without it; `golden_replay_orders` passes either way. Before
+B-112 lands on main that list is re-recorded with the traced cause (not done in this step).
+
+**Showcase with mirrored targets** (player 0 / player 1; ratio mean / max, turn mean / max):
+
+| Box | Grid | Switch |
+|---|---|---|
+| ramp W foot, P0 | 1.064 / 1.112, 103° / 213° (east lane) | 1.301 / 1.473, 157° / 301° (west lane) |
+| ramp W foot, P1 | 1.588 / 1.644, 194° / 241° (west lane) | not reached (army died in the lane fight) |
+| plateau SE, P0 | 1.044 / 1.093, 66° / 191° | not passed (west lane) |
+| ramp E foot, P0 | 1.573 / 1.611, 211° / 287° | 1.198 / 1.300, 190° / 454° (6 units) |
+| ramp E foot, P1 | 1.170 / 1.214, 108° / 214° | 1.149 / 1.168, 81° / 152° |
+
+| | Grid | Switch |
+|---|---|---|
+| Lanes (x where units cross y = 32) | P0 east (38.0 to 38.6), P1 west (25.8 to 25.9): the armies pass | both west (P0 22.5 to 26.0); they meet at (22 to 28, 31 to 38) from tick 310 to 576 |
+| Winner | player 0, tick 1,102 | player 0, tick 1,693 (6 of 10 survive the fight) |
+| In range at tick 900 | 10 of 10 / 9 of 10 | 0 of 6 / 0 of 0 (between the welders' death at 891 and the hall; 9 of 9 in the fight at tick 430, 6 of 6 from 940) |
+| Reversals | 10 / 5 | 17 / 7 |
+| Stall give-ups | 57 / 0 | 0 / 0 (4 / 0 before B-112) |
+
+The grid's 57 give-ups are all one unit's: player 0's welder drone (entity 2), standing at its base, (6.4, 6.0),
+abandons a chase of player 1's raiders (`PursuitAbandoned`, targets 17, 20 and 21 in turn) 57 times between ticks 624
+and 814; the abandoned-target memory skips one target only, so it takes the next. Not a route defect; it is not
+filed here.
+
+The mirrored targets make the lanes symmetric on the grid only. The central plateau is not point-symmetric (its
+northern corners, y 35 to 37, are low ground where the southern ones are plateau, and its one ramp faces south),
+so on the mesh, which measures the lanes exactly, both armies find the west lane shorter and meet in it.
+
+**Matrix and battle 33**, switch against the grid with the same fixes: bit-identical (whole matrix, 16 seeds; battle
+33, 68 seeds). Fix b against base `02f494b`, for reference: battles 21, 26, 31 (the accepted flip) and 33 move;
+battle 33 blue 48 → 47, red 9 → 16 of 68.
+
+**Defect c, ramp E corner.** Trace of pulse bot 7 (454° in the box): at tick 756 the crowd has pushed it to 0.30
+from the corner vertex (35, 52), inside its radius 0.375, so it is wedged; at 757 it passes the two arc points round
+that corner by terrain view (the wedged exemption of `drop_passed_waypoints`), its leg to (35.00, 52.42) cuts the
+corner, the step is refused at 762 and the route dropped; the re-plan leads back west to (34.58, 51.98), and it steps
+back and forth until 769, then walks straight on. Three variants, each measured on the whole showcase:
+
+| Variant | Ramp E P0 | Ramp W P0 | Ramp E P1 | Reversals | Kept |
+|---|---|---|---|---|---|
+| none (B-112 only) | 1.198 / 1.300, 190° / 454° | 1.301 / 1.473, 157° / 301° | 1.149 / 1.168, 81° / 152° | 17 / 7 | — |
+| A: an attack-move's walk side resets at each route corner (ii) | bit-identical: no attack-move surround walk starts at a corner in this battle | | | | no (no effect) |
+| B: a wedged body keeps an arc point where its disc fits until the disc fits along the leg past it | 1.209 / 1.341, 164° / 508° | 1.407 / 1.611, 270° / 636° | 1.174 / 1.288, 127° / 397° | 21 / 3 | no |
+| C: a wedged unit whose first leg leads deeper into the wall (a half-radius disc fits where it stands, not along the leg) re-plans, at most once per re-plan cooldown and only while stalled (i) | 1.191 / 1.270, 239° / 739° (5 units) | 1.300 / 1.473, 155° / 303° | 1.149 / 1.168, 81° / 152° | 20 / 7 | no |
+
+B makes the column at ramp W's lane-end corner walk back to arc points the crowd pushed it past; C's re-plan from
+the wedge gives the same route back out (the one seen at tick 763), earlier, and changes the fight. Re-plans were
+not counted, as neither variant is kept. Without a variant the ramp E means are better than the grid's on both
+sides; the maximum turn of player 0 (454°, pulse bot 7) is not.
+
+**Throughput** not re-measured: the gate lock was held by other agents' gates throughout, and nothing in this
+amendment touches the route search. Amendment 4's figure stands: canyon 125 to 127 against 140 to 143 ticks/s
+(−11 to −13 %), within the 15 % of Amendment 5, 2.
+
+**Acceptance (Amendment 5, 5): not reached.** Met: per-box means on the lanes taken (ramp E better than the grid
+for both players; ramp W's west-lane box better than the grid's west-lane box for player 1), reversals 17 and 7
+(at most 20 and 15), 0 give-ups, winner unchanged (player 0), matrix and battle 33 bit-identical, throughput. Not
+met: 10 of 10 in range at tick 900 (the battle has another shape: the armies meet, 6 of player 0's units survive, and
+at tick 900 they are between targets), and the ramp E maximum turn (454° against 287°). The switch stays held.
+
+## Amendment 6: landing the switch, WP10 and WP11 (2026-11-10)
+
+Plan Amendment 6 accepts the switch with the mirrored showcase targets. This section records the landing on the tree
+of main `0157437`, the switch, the mirrored targets, B-112 (registered above as B-106) and WP10. Tools: release builds
+of `route_trace` and `matchup_trace` per tree; outputs under `~/scratch/path-c/` (`trace/`, `m/`, `wp10/`; not
+committed).
+
+**Goldens, traced.** Three source copies were built and replayed tick by tick, dumping every entity's state after
+each tick (`Debug`) and the checksum: A, main `0157437` with the mirrored targets; B, A plus B-112; C, the branch
+head (the switch, the mirrored targets, B-112 and WP10). Every copy builds into its own target directory: cargo
+names workspace members by their path relative to the workspace, so copies sharing one directory reuse each other's
+artefacts.
+
+| Change | `golden_replay` | `golden_replay_orders` |
+|---|---|---|
+| Mirrored targets (A against main) | unchanged | unchanged |
+| B-112 (B against A) | first state difference on tick 200: pulse bot 1's movement memory restarts when its target dies, where it kept the chase's best distance (0.977 to `None`); reconverges; lasting from tick 500, when psi grey 26 ends a chase the same way (positions from tick 536); checkpoint 11 (ticks 501 to 550) on | unchanged |
+| The mesh (C against B) | from tick 5, the first tick "blue_infantry" walks: pulse bot 1's route rounds the corner near (30.3, 29.7) on two arc points of its own radius where the grid gave one corner waypoint; its first step differs by 0.0001; checkpoint 1 on | from tick 20, the column's first Move: pulse bot 9 rounds the corner near (33.6, 29.9) on two arc points where the grid's line ran straight; checkpoint 3 (ticks 21 to 30) on |
+
+With the mesh, `golden_replay_orders` lost its mid-route repath: the column no longer stalls at the foot of the ramp
+on its way to (32, 37), and the test's evidence check fails (0 repaths). Five goals for the column were tried, each
+also with route upkeep and the arrival decision of `MotionDraft::walk` swapped (the mutation the fixture exists to
+catch):
+
+| Column goal | Repaths | Swapped: repaths | Swap diverges at checkpoint |
+|---|---:|---:|---:|
+| (32, 37), as recorded | 0 | 0 | none |
+| (32, 35) | 2 | 4 | 34 |
+| (31, 34) | 5 | 2 | 17 |
+| **(32, 36)**, kept | 4 | 1 | 15 (ticks 141 to 150) |
+| (32, 39) | 4 | 3 | 14 |
+| (33, 38) | 1 | 3 | 20 |
+
+(32, 36) is the smallest change: one cell south, still just past the top of the ramp. Units 19 and 22 stall at the
+foot corner (34.0, 29.9) and are re-routed mid-order on ticks 140 and 172, unit 11 at the plateau corner on ticks 347
+and 496; the swap diverges within ten ticks of the first. Both fixtures are re-recorded (`d9d210a`) and pass in debug,
+release and on `wasm32-wasip1` (wasmtime). The sandbox checksum is unchanged: it hashes the spawned state only.
+
+**Showcase battle** on the head (`route_trace`, 1,800 ticks): identical to Amendment 5's "none" row: ramp W foot P0
+1.301 / 1.473, 157° / 301°; ramp E foot P0 1.198 / 1.300, 190° / 454° (6 units), P1 1.149 / 1.168, 81° / 152°;
+reversals 17 / 7; give-ups 0 / 0; player 0 wins at tick 1,693. Timeline (units leaving the trace): the first death on
+tick 333, the lane fight to tick 577 (player 0 loses two rhino beetles and two pulse bots, player 1 its ten
+attackers), player 1's workers on ticks 868 and 890, the hall on tick 1,693.
+
+**Matrix and battle 33** against a build of main `0157437`: the whole matrix (16 seeds) and battle 33 (68 seeds) are
+bit-identical; battle 33 blue 47, red 16, other 5 of 68. The fix-b movements recorded in Amendment 5 are already on
+main; B-112 and the switch move nothing.
+
+**Storyboard.** With the switch the armies meet in the west lane at about tick 310, during the old `units` and
+`smog` scenes, and the old `advance` (at 4x from tick 575, minimum 50 frames) would skip the lane fight. Restructured
+(`assets/captures/showcase.ron`):
+
+| Scene | Before | After | Render (frames, start tick) |
+|---|---|---|---|
+| title | paused, 125 | unchanged | 125, 0 |
+| terrain | 2x, 150 | paused, 150 | 150, 0 |
+| units | 1x, 150 | unchanged | 150, 1 |
+| smog | 1x, 125 | 1x, 100 | 100, 151 |
+| advance | 4x until combat, 50 to 500 | 1x until combat, 25 to 500 | 54, 251 |
+| clash | 1x, 300 | 1x, 270 | 270, 305 |
+| march (new) | | 4x until combat, 5 to 200, following one survivor; caption "Pathfinding" | 68, 578 |
+| assault (new) | | 2x, 200; caption "Assault" | 200, 848 |
+| closing | paused, 200 | unchanged | 200, 1,246 |
+
+`march` follows one survivor rather than the army: the army's centroid includes player 0's workers at home, so it lies
+on empty ground. The teaser loses the `advance` cut (its minimum is now 25 frames, below the old cut's 40) and gains a
+75-frame `assault` cut. Rendered on the RX 580 (`showcase render --driver radv`, one GPU lock per take), 1,317 frames,
+the site assembled within its budgets; `showcase_storyboard_tests` pass. Stills (640 wide) under
+`~/scratch/path-c/wp10/`: after, `show2/stills/f560.png` (advance: the column at the west lane, the enemy base and
+caption "Fog of war"), `f700.png` (clash in the lane), `f890.png` (march), `f950.png` and `f1100.png` (assault on the
+hall), `f1200.png` (closing card, before the result); before (the old storyboard rendered on the same tree, take
+only), `show-before/stills/f400.png` (the old `units` caption over the start of the lane fight, tick 426) and
+`f600.png` (the old `advance` at 4x over empty ground after the fight, tick 778). An intermediate
+render (`show1b`, advance at 4x with a 5-frame minimum and `march` following the army) showed the caption of
+`advance` for 8 frames and `march` over empty ground; both were changed.
+
+**WP10.** Removed from `crates/sim_map/src/pathfinding.rs` (1,780 to 499 lines): `find_path_grid`,
+`search_corridor`, `reconstruct_corridor`, `build_portals`, `add_orthogonal_portal`, `run_funnel`,
+`offset_corner_waypoint`, `smooth_connected_corridor`, `index_corridor`, `validate_endpoints`,
+`nearest_reachable_point_grid`, `grid_segment_is_passable`, their helpers, `PathfinderBuffers`, `PortalEdge`,
+`NO_HEAP_POS` and `UnitClearance`; `PathRequest` and `PathRequestWithVision` carry only the radius. The clearance
+field
+stays: `checksum.rs` hashes it. Placement does not read it (`grep`). `VALIDATION_PATH_CLEARANCE` becomes
+`VALIDATION_PATH_RADIUS` (0.625, the old Medium tier). `navmesh_measure` keeps the mesh size, build and route
+statistics; its grid-against-mesh columns are retired, and the WP8 table above is their last measurement. No
+behaviour change: every `sim_map` test, including the two recorded digests, passes unchanged.
+
+**Throughput** (`cargo bench -p sim_core --bench throughput`, release, each run under the gate lock, the head and
+main `0157437` alternated, six rounds; rounds 1 to 3 at load average 9 to 17 while other agents built, rounds 4 to 6
+at 5.5 to 6.5). Medians of rounds 4 to 6, head against main: 64x64 empty 3392 / 3383; 100 units 1031 / 1031; 400
+units 173 / 177; 128x128 400 units 203 / 209; 256x256 empty 208 / 210; `showcase_canyon` 400 units 127 / 145
+(−12 %, within Amendment 5's 15 %). Rounds 1 to 3 give the canyon 115 / 133 (one run at 83 under load). Every
+scenario is above 25 ticks/s. `DESIGN.md` §5 now carries the table of rounds 4 to 6.
+
+**Bookkeeping (WP11).** Register: B-102 closed (removed), B-113 added, open; B-112 was found and fixed within this
+plan and never registered open. The deviation-fix plan's Amendment 2 table marks B-102 fixed and its counts follow.
+The `DESIGN.md` Movement and pathfinding row names the mesh and lists `navmesh_tests.rs`. The plan's index row is
+Done.

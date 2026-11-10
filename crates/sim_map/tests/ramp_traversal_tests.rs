@@ -2,9 +2,13 @@
 //! navigation through real versioned maps. Expected ramp entrances and forbidden
 //! side faces are specified independently of the implementation under test.
 
+#[path = "support/radii.rs"]
+mod radii;
+use radii::{required_clearance, LARGE_RADIUS, MEDIUM_RADIUS, SMALL_RADIUS};
+
 use sim_map::{
     CellFlags, CliffLevel, GameMap, MapCell, MapFile, PathRequest, PathRequestWithVision,
-    Pathfinder, PlayerVisionMap, RampDir, UnitClearance,
+    Pathfinder, PlayerVisionMap, RampDir,
 };
 use sim_types::{EntityId, SimScalar, SimVec2};
 
@@ -189,18 +193,13 @@ fn clearance_and_smoothing_keep_ramp_side_walls_closed() -> TestResult {
     let map = ramp_map()?;
     let mut pathfinder = Pathfinder::new(&map);
     // The ramp is three cells wide, and its side wall limits the ground beside it.
-    assert!(pathfinder.clearance_at(6, 6) >= UnitClearance::Large.required_clearance());
+    assert!(pathfinder.clearance_at(6, 6) >= required_clearance(LARGE_RADIUS));
     assert!(pathfinder.clearance_at(5, 6) < pathfinder.clearance_at(2, 2));
-    for clearance in [
-        UnitClearance::Small,
-        UnitClearance::Medium,
-        UnitClearance::Large,
-    ] {
+    for radius in [SMALL_RADIUS, MEDIUM_RADIUS, LARGE_RADIUS] {
         let request = PathRequest {
             start: center(6, 4),
             goal: center(7, 9),
-            clearance,
-            radius: clearance.radius_scalar(),
+            radius,
         };
         let path = pathfinder.find_path(&map, &request)?;
         for pair in path.waypoints.windows(2) {
@@ -211,8 +210,7 @@ fn clearance_and_smoothing_keep_ramp_side_walls_closed() -> TestResult {
     let request = PathRequest {
         start: center(4, 6),
         goal: center(7, 9),
-        clearance: UnitClearance::Small,
-        radius: UnitClearance::Small.radius_scalar(),
+        radius: SMALL_RADIUS,
     };
     assert!(!segment(&map, request.start, request.goal));
     let path = pathfinder.find_path(&map, &request)?;
@@ -233,8 +231,7 @@ fn clearance_and_smoothing_keep_ramp_side_walls_closed() -> TestResult {
     let request = PathRequest {
         start: center(2, 2),
         goal: center(12, 9),
-        clearance: UnitClearance::Small,
-        radius: UnitClearance::Small.radius_scalar(),
+        radius: SMALL_RADIUS,
     };
     assert_eq!(
         Pathfinder::new(&flat).find_path(&flat, &request)?.waypoints,
@@ -250,8 +247,7 @@ fn unexplored_ramps_are_not_reintroduced_by_smoothing() -> TestResult {
     let request = PathRequestWithVision {
         start: center(4, 6),
         goal: center(7, 9),
-        clearance: UnitClearance::Small,
-        radius: UnitClearance::Small.radius_scalar(),
+        radius: SMALL_RADIUS,
         vision: Some(&vision),
         block_unexplored_ramps: true,
         known_structures: None,
@@ -289,8 +285,7 @@ fn real_structures_obey_knowledge_and_same_cell_footprint_policy() -> TestResult
     let request = PathRequestWithVision {
         start: center(3, 7),
         goal: center(12, 7),
-        clearance: UnitClearance::Small,
-        radius: UnitClearance::Small.radius_scalar(),
+        radius: SMALL_RADIUS,
         vision: None,
         block_unexplored_ramps: false,
         known_structures: Some(&unknown),
@@ -311,8 +306,7 @@ fn real_structures_obey_knowledge_and_same_cell_footprint_policy() -> TestResult
     let same_cell = PathRequestWithVision {
         start: center(7, 7),
         goal: center(7, 7),
-        clearance: UnitClearance::Large,
-        radius: UnitClearance::Large.radius_scalar(),
+        radius: LARGE_RADIUS,
         known_structures: Some(&known),
         ..request
     };
@@ -375,8 +369,7 @@ fn real_versioned_maps_have_bidirectional_ramp_routes() -> TestResult {
                     let request = PathRequest {
                         start,
                         goal,
-                        clearance: UnitClearance::Small,
-                        radius: UnitClearance::Small.radius_scalar(),
+                        radius: SMALL_RADIUS,
                     };
                     let first = pathfinder.find_path(&map, &request)?;
                     assert_eq!(first, pathfinder.find_path(&map, &request)?);

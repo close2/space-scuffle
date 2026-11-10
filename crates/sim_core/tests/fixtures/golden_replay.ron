@@ -256,6 +256,18 @@
 // only when the whole straight step is free (was half a step), so a walking unit at a crowd's edge
 // keeps walking where it used to end and restart its walk; every checkpoint changed from
 // checkpoint 1 (ticks 1 to 50).
+// Re-recorded for plan 2026-11-09-sc2-pathfinding WP9 to WP10 (Amendment 6): routes come from the
+// triangle navigation mesh at each unit's own radius (B-102), and an attack-move resumed after a
+// chase restarts its movement memory (B-112). Traced tick by tick against main 0157437 with the
+// same changes added one at a time. The mirrored showcase targets change nothing here (scenario
+// data only; every checkpoint as recorded). B-112 alone, on the grid: the first state difference is
+// pulse bot 1's movement memory on tick 200, when its target dies (restarted instead of keeping the
+// chase's best distance); it reconverges, and from tick 500, when psi grey 26 ends a chase the same
+// way, every checksum differs (positions from tick 536), so from checkpoint 11 (ticks 501 to 550).
+// The mesh, against the grid with B-112: on tick 5, the first tick that "blue_infantry" walks, pulse
+// bot 1's route rounds the corner near (30.3, 29.7) on two arc points of its own radius where the
+// grid gave one corner waypoint, and its first step differs by 0.0001. Every checkpoint changed
+// from checkpoint 1 (ticks 1 to 50); identical in debug, release and on wasm32-wasip1.
 (
     checksum_schema: 25,
     seed: 0x5EED_0F_5CAFF1E,
@@ -283,25 +295,25 @@
         (tick: 760, squads: ["red_psi", "red_siege"], order: Stop),
     ],
     checksums: [
-        0x20c21ea6a801f6ef,
-        0xff2a8eb8e771077a,
-        0x0a82ae2819953ca7,
-        0x2d1f3137e9e4b382,
-        0x4369f59b226fc62b,
-        0xadc23c0001ac0917,
-        0x92352526c9f33a45,
-        0xc13a57a4e90a52af,
-        0x9c93732c63234a4c,
-        0x127e3b8800922a74,
-        0x84820c51bf0cc2e2,
-        0x879d2388d53d47cd,
-        0x43a24a4458657f6b,
-        0xba38b0221550cb90,
-        0x5cdd2cbab8b28b20,
-        0x0657d870b5cefdd6,
-        0xaf2bf7ac16360d39,
-        0x030addd2fdf7e77f,
-        0x1ac08a9cecf3719c,
-        0x16ebfafd1bd95f1e,
+        0xb3fe51161bfd7b17,
+        0xfd773ca1a7be93f5,
+        0xcad6f232bf741730,
+        0xe429d7c6957be1ab,
+        0xf7285169bbd7c7a6,
+        0x9a5fd25b7750555a,
+        0x5f135c4bc6927769,
+        0x497aeb5d6c63db4c,
+        0xe91e77f7532b3bb5,
+        0xdf3d06ecbaeb215b,
+        0xdc3c15694161c45a,
+        0x364a86d0b8c289e2,
+        0x53c096be2a56e0ea,
+        0xa172d429e924b3f8,
+        0x63d2de8ce3947eaa,
+        0x0540d26fd2969840,
+        0xcc5bc3952658f49f,
+        0x1e0224655e600607,
+        0x02101cc806f253aa,
+        0xa991e4b93d2b75d2,
     ],
 )

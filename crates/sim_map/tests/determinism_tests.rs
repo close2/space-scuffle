@@ -19,10 +19,14 @@
 #[path = "support/arena.rs"]
 mod arena;
 
+#[path = "support/radii.rs"]
+mod radii;
+use radii::{LARGE_RADIUS, MEDIUM_RADIUS, SMALL_RADIUS};
+
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use sim_map::{PathRequest, Pathfinder, PlayerVisionMap, UnitClearance, VisionSource};
+use sim_map::{PathRequest, Pathfinder, PlayerVisionMap, VisionSource};
 use sim_types::{MoverType, PlayerId, SimScalar, SimVec2};
 use std::time::Instant;
 use xxhash_rust::xxh64::Xxh64;
@@ -44,10 +48,10 @@ fn test_cross_platform_determinism_checksum() {
         let gx = rng.gen_range(2..62);
         let gy = rng.gen_range(2..62);
 
-        let clearance = match rng.gen_range(0..3) {
-            0 => UnitClearance::Small,
-            1 => UnitClearance::Medium,
-            _ => UnitClearance::Large,
+        let radius = match rng.gen_range(0..3) {
+            0 => SMALL_RADIUS,
+            1 => MEDIUM_RADIUS,
+            _ => LARGE_RADIUS,
         };
 
         let request = PathRequest {
@@ -59,8 +63,7 @@ fn test_cross_platform_determinism_checksum() {
                 SimScalar::from_num(gx) + SimScalar::HALF,
                 SimScalar::from_num(gy) + SimScalar::HALF,
             ),
-            clearance,
-            radius: clearance.radius_scalar(),
+            radius,
         };
 
         if let Ok(res) = pathfinder.find_path(&arena, &request) {
@@ -113,9 +116,12 @@ fn test_cross_platform_determinism_checksum() {
     let final_checksum = hasher.digest();
     eprintln!("sim_map reference checksum: 0x{:016x}", final_checksum);
 
-    // Fixed-seed reference after the symmetric clearance field (M-8), which admits cells near
-    // +x and +y walls that the corner-anchored field refused, changing the hashed routes.
-    const EXPECTED_CHECKSUM: u64 = 0x69cd_c3bf_29fa_dbd8;
+    // Fixed-seed reference after the switch to the navigation mesh (sc2 pathfinding WP9): the
+    // hashed routes are the mesh's, with arcs emitted on their circles (Amendment 2), and goals
+    // where the tier's disc does not fit are refused. Before: 0x69cd_c3bf_29fa_dbd8 (the grid).
+    // Re-recorded under Amendment 4: the switch commit's 0xa324_e36c_647d_586e was recorded
+    // before the last edits of that commit, and its own tree already produced this value.
+    const EXPECTED_CHECKSUM: u64 = 0x672c_257d_0fca_cc1b;
     assert_eq!(
         final_checksum, EXPECTED_CHECKSUM,
         "Checksum diverged from reference"
@@ -152,8 +158,7 @@ fn test_performance_quality_gate() {
                 SimScalar::from_num(gx) + SimScalar::HALF,
                 SimScalar::from_num(gy) + SimScalar::HALF,
             ),
-            clearance: UnitClearance::Medium,
-            radius: UnitClearance::Medium.radius_scalar(),
+            radius: MEDIUM_RADIUS,
         };
 
         if pathfinder.find_path(&arena, &req).is_ok() {
