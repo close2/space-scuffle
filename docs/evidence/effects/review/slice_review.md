@@ -241,6 +241,15 @@ paragraph), and `effect_slice_gpu_tests.rs` on lavapipe and radv (goldens re-rec
 acid and spine looks changed, and the shell's char core is darker). Judged cell by cell, cropped and enlarged, against
 the round-2 review's findings and the checklist.
 
+GPU figures (radv, RX 580, through the harness, 2026-11-10; lavapipe passes the same tests):
+
+| Effect | Footprint | Coverage of the full-damage disc at peak | Pop (largest change after the impact) | Lingering |
+|---|---|---|---|---|
+| `shell_impact` | 100 % of 72 rays within ±2 px of the reach, mean −0.65 px, largest overshoot +0.44 px (as round 2) | 100 % | 1.47/255 | 0/255 after the end |
+| `acid_burst` | 94 % of 72 rays within ±2 px, mean −0.85 px, largest overshoot +0.25 px | 87 % | 1.45/255 | 0/255 after the end |
+| `spine_line` | marks start −0.65 px and end −1.69 px from the line's projected ends | 65 % (least point 37 %, an end point half beyond the line) | 0.40/255 | 0/255 after the end |
+| `spine_line`, seen only from its fifth point (R6) | 2 350 lit pixels from point 4 on, 0 more than 0.75 before it | | | |
+
 ### `shell_impact`
 
 | # | Item | Verdict | Reason |
