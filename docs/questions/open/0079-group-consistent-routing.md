@@ -28,3 +28,7 @@ players correct it with a move command or rally. The game has no documented grou
 order-level rule without changing the mesh or the route search.
 
 ## Answer
+
+**Option 2 (Group-consistent routing as an "allows more" deviation under `Q0051` when a unit's shortest route is within a small configurable relative tolerance, e.g. ~5–10%, of the group centroid/leader's lane).**
+
+**Engine & gameplay insight:** While StarCraft II's low-level constrained Delaunay triangulation (CDT) funnel query is evaluated per unit at its own collision radius, having a cohesive army at a single spawn location fracture 2-vs-8 around opposite sides of a central plateau over a `0.35%` distance tie separates frontline units from ranged support on a single `AttackMove` order and looks like a pathfinding defect in the showcase. Routing units that receive a single order together along the group centroid/leader's corridor whenever that route is within a small configurable fraction (e.g., `5%–10%`) of the unit's individual shortest path keeps cohesive armies together across near-symmetric forks while still allowing genuinely separated units to take their own shorter routes.
