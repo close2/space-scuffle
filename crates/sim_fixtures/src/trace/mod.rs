@@ -36,6 +36,7 @@
 //!   in a later tick, so its release is counted, but never as wasted.
 
 pub mod activity;
+pub mod blocking;
 pub mod cli;
 pub mod focus;
 pub mod matrix;
@@ -600,7 +601,7 @@ fn count_u32(count: usize) -> u32 {
 }
 
 /// A fixed-point value as `f64`, for reporting only.
-fn to_f64(value: SimScalar) -> f64 {
+pub(crate) fn to_f64(value: SimScalar) -> f64 {
     f64::from(value.to_f32())
 }
 
@@ -656,7 +657,7 @@ fn weapon_against<'a>(
 
 /// The enemy `entity` is attacking: its front attack order's target, otherwise its
 /// `current_target`.
-fn attack_target(entity: &Entity) -> Option<EntityId> {
+pub(crate) fn attack_target(entity: &Entity) -> Option<EntityId> {
     match entity.order_queue.front() {
         Some(UnitOrder::AttackTarget { target, .. }) => Some(*target),
         _ => entity.current_target,
@@ -665,7 +666,7 @@ fn attack_target(entity: &Entity) -> Option<EntityId> {
 
 /// Whether `enemy` lies inside the engagement band of `entity`'s weapon against it, with `slop`
 /// extra reach: `min_range + radii <= distance <= max_range + radii + slop`, centre to centre.
-fn in_band(
+pub(crate) fn in_band(
     world: &SimWorld,
     entity: &Entity,
     arch: &UnitArchetype,

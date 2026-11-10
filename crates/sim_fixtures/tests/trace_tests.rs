@@ -577,7 +577,7 @@ fn the_matrix_mode_writes_every_battle_and_seed_and_compares_runs() -> TestResul
     assert_eq!(
         lines[0],
         "battle,seed,of_record,end_tick,blue_survivors,red_survivors,blue_lead_hull,\
-         red_lead_hull,expectation_met"
+         red_lead_hull,expectation_met,blocked_attacker_ticks,reversals,stall_giveups"
     );
     assert_eq!(lines.len(), 7);
     let first_row: Vec<&str> = lines[1].split(',').collect();

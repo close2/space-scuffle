@@ -49,6 +49,9 @@ impl MovementLayer {
     }
 }
 
+/// Number of body classes ([`MotionPolicy::body_class`]): ground, air and burrowed.
+pub(crate) const BODY_CLASSES: usize = 3;
+
 /// Corruption or arithmetic that cannot be represented, distinct from player error.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum MovementInvariant {
@@ -209,9 +212,9 @@ pub(crate) struct MovementWorkspace {
     pub outcomes: Vec<MovementOutcome>,
     pub route_outcomes: Vec<RouteOutcome>,
     pub path_searches: u64,
-    pub obstacles: [Vec<SteeringObstacle>; 2],
-    grids: [grid::BodyGrid; 2],
-    largest_radius: [SimScalar; 2],
+    pub obstacles: [Vec<SteeringObstacle>; BODY_CLASSES],
+    grids: [grid::BodyGrid; BODY_CLASSES],
+    largest_radius: [SimScalar; BODY_CLASSES],
     neighbours: Vec<SteeringObstacle>,
     recipients: Vec<EntityId>,
     entries: Vec<locomotion::MotionEntry>,
@@ -234,6 +237,8 @@ pub(crate) struct MovementWorkspace {
 pub(crate) struct MotionPolicy {
     pub layer: MovementLayer,
     pub radius: SimScalar,
+    /// The body is burrowed ([`Entity::is_burrowed`]): it touches only burrowed bodies.
+    pub burrowed: bool,
 }
 
 impl MotionPolicy {
@@ -257,7 +262,21 @@ impl MotionPolicy {
         Ok(Self {
             layer: MovementLayer::from_mover(arch.mover_type),
             radius,
+            burrowed: entity.is_burrowed(arch),
         })
+    }
+
+    /// Which bodies this one touches: two bodies steer around, push and block each other only
+    /// when their classes are equal. Ground and air bodies keep their layer's index; a burrowed
+    /// body has a class of its own, below the ground, so ground units walk over it and it
+    /// neither pushes nor is pushed by them (plan `2026-11-09-friendly-blocking` R6, B-93).
+    /// Terrain still follows [`Self::layer`].
+    pub const fn body_class(self) -> usize {
+        if self.burrowed {
+            2
+        } else {
+            self.layer.index()
+        }
     }
 
     pub fn validate_origin(self, map: &GameMap, actor: &Entity) -> Result<(), MovementInvariant> {
@@ -488,7 +507,7 @@ impl SimWorld {
             .filter(|e| e.id != id && e.is_alive() && !e.is_loaded_in_transport())
         {
             let other_policy = MotionPolicy::resolve(&self.catalog, &self.map, other)?;
-            if policy.layer == other_policy.layer
+            if policy.body_class() == other_policy.body_class()
                 && circles_overlap(point, policy.radius, other.position, other_policy.radius)
             {
                 return Err(DisplacementAdmissionError::Occupied(other.id));

@@ -173,8 +173,41 @@
 //   squared, where it stopped within one tick; from checkpoint 7 the checkpoints changed on that
 //   account too.
 // The schema bytes change every checkpoint; the checksums below are those of the merged tree.
+// Re-recorded for plan 2026-11-09-friendly-blocking WP4 (push table D-4), merged onto checksum
+// schema 24: a unit standing still under an order is waiting, not idle, so it no longer steps aside
+// for a friend walking into it (steering) or gets pushed sideways (contact). On tick 21, the first
+// tick "blue_column" walks after its Move of tick 20, its units all stand still under that order
+// and no longer clear each other's lanes, so every checkpoint changed from checkpoint 3 (ticks 21
+// to 30).
+// Re-recorded for plan 2026-11-09-friendly-blocking WP2 (R1, waiting; B-103): a step is cleared of
+// every body that will not yield at once, repeating the per-body removal until nothing approaches
+// one; a unit never steers into a gap narrower than itself between two such bodies; and a unit
+// whose admissible step is at most an eighth of its step waits. Checkpoints 1 to 5 are unchanged;
+// from checkpoint 6 (ticks 51 to 60) every checkpoint changed: on tick 54 the second removal pass
+// first changes a step, that of a "blue_column" unit (entity 10) walking between squadmates;
+// waiting first moves a unit on tick 146. (Merged onto checksum schema 24: the same first divergent
+// checkpoint.)
+// Re-recorded for plan 2026-11-09-friendly-blocking WP3, latent (checksum schema 24 -> 25): each
+// unit's movement memory gains its surround-walk state (flank_active, flank_reversed, flank_spent,
+// flank_blocked_ticks, flank_walked, flank_target), all hashed and all at their defaults, so every
+// checkpoint changed and no behaviour did.
+// Re-recorded for plan 2026-11-09-friendly-blocking Amendment 4 (surround-walk fixes): a body that
+// moved by at most 1/64 world unit last tick (STANDING_DRIFT, a contact nudge) counts as standing
+// for walls and for the surround walk's start, where it had to stand exactly still. Checkpoints 1
+// to 18 are unchanged; from checkpoint 19 (ticks 181 to 190) every checkpoint changed, through the
+// standing drift alone (traced by switching each part on alone).
+// Re-recorded for plan 2026-11-09-friendly-blocking Amendment 5: an idle friend that contact nudged
+// by at most STANDING_DRIFT (1/64 world unit) last tick still steps aside
+// (SteeringObstacle::yields_to), where it had to stand exactly still; the only change, so it is the
+// cause. Checkpoints 1 to 18 are unchanged; every checkpoint from checkpoint 19 (ticks 181 to 190)
+// changed.
+// Re-recorded for plan 2026-11-09-friendly-blocking WP5 (B-48): every unit's push priority is
+// StarCraft II's PushPriority 10. On tick 206 pulse bots 12 and 21 (20 -> 10) meet rhino beetle
+// 24 (30 -> 10), idle on its arrival, which now steps aside for them (D-4); traced against the old
+// priorities. Checkpoints 1 to 19 are unchanged; every checkpoint from checkpoint 20 (ticks 201
+// to 210) changed.
 (
-    checksum_schema: 24,
+    checksum_schema: 25,
     seed: 0x0DE5_0F_0D3125,
     total_ticks: 600,
     checkpoint_interval: 10,
@@ -195,65 +228,65 @@
         (tick: 420, squads: ["blue_column", "blue_armor"], order: Move(40, 22)),
     ],
     checksums: [
-        0x9089b9a113e539b2,
-        0x5e46458e86e59d3a,
-        0x244d3a264469d8e8,
-        0xbfa78fb5caf3b4d8,
-        0xea78019bd2af0cf5,
-        0x63fcee8330c5b3ae,
-        0xbde9391c871737f0,
-        0x4e85a2ed6eed6e31,
-        0xe3fb4ebff1682f2c,
-        0x9df69ae75276b508,
-        0x24c741ae1f3ffb1a,
-        0x2aa4ee9d7a0910be,
-        0x9f90635745d2b6e7,
-        0xc19126d19639eac6,
-        0x7c5322f10f36650f,
-        0x83268e38747a53e9,
-        0xfa06f61432ad3bce,
-        0x8f5a8c7a8cff1d0f,
-        0xe96ef1ce9c63f61b,
-        0x4c513e983147cf12,
-        0x36479cb1f2ba0723,
-        0x624ebc4cdd376da6,
-        0x9db5e2f25805a3ae,
-        0x0ddca1081c46a550,
-        0x95c3d5762822e811,
-        0x6edecfbe309728eb,
-        0x73f5743aa9303c87,
-        0x6a562fff3b40ee1f,
-        0xd6cbed6d3bd487d6,
-        0x07ccc0d6c6471874,
-        0x45174df516b4ff85,
-        0xa67b49225cc8649b,
-        0x2f804f6005ae012b,
-        0xe6933cf6dcdc49cf,
-        0xf328899a722a9faf,
-        0x36ffa86174d8f6f5,
-        0xe5bab29ae51ed4c1,
-        0x59b76df058365ac6,
-        0x972d74bacc64c711,
-        0x09779a46c38db6d5,
-        0x1a6f3c15bfb97e09,
-        0xb52203caaee41be5,
-        0xc84e158b544d7f71,
-        0x9531ef5d1371c5e5,
-        0xf385495e276c4551,
-        0x97f513bec4362756,
-        0x27768d7bc9709532,
-        0x43bee0b13bdd0caa,
-        0xfe48a914a1029e49,
-        0xa6cfcfce83e73193,
-        0xdf8fe65318192780,
-        0x74e003790765f18f,
-        0xf12e8dd926e1151f,
-        0x327b4603cb374bb5,
-        0x95dee8a2bdcbdfee,
-        0x8b7296770644421b,
-        0x8d7290f42ff7e916,
-        0x208d732859157779,
-        0xfd2c3772b1d3f90c,
-        0x6ba32446d2db172a,
+        0xdff43d123fb31ed9,
+        0x0bd4b08272a7031f,
+        0xd54084a9c4897d9f,
+        0x16cef16d9b64d4fe,
+        0xa7cc38e53234ad59,
+        0x512f8936252485b6,
+        0xa739c7419bb227e6,
+        0x02e7b6ece4d25dfe,
+        0xfac0c9d45a866b7c,
+        0x1eec1e626316b2bd,
+        0x70ca22d2a94fb02e,
+        0x779e056f1f3f1444,
+        0xca43bf53be513b68,
+        0x954341df2774cfc4,
+        0x016843c278c86039,
+        0xd0aab9b0de18311f,
+        0xe1756ce6ffd274d0,
+        0x49d38aa1874e63d5,
+        0x4620e12da8d1139e,
+        0x6b03bb761dd88ba1,
+        0xbd659d1294f25c2d,
+        0x03507b2c48d56c03,
+        0x4808bad11ace8107,
+        0x04dbcaf0d620c7a0,
+        0xf9ba05a69fe77d32,
+        0xac8299faee5d0bbd,
+        0x2fb899743ce4fc51,
+        0xd5664a2adb56be94,
+        0x1ab90011dd6769a8,
+        0x2316b0a3c0f0171a,
+        0x4043f78634a7b82d,
+        0x2844008bd5733652,
+        0x45fee46d164deae1,
+        0x006604f2357a8152,
+        0x8312b1fba69662d5,
+        0xa00370821229e0fd,
+        0xb5d091ad5dbe6190,
+        0xb9bb4b217fbbd678,
+        0x49de6f7ea1f4de85,
+        0x93be87ef8f8e5980,
+        0x383d69b152fecc65,
+        0x3004acef18268611,
+        0x7a3f74b044ef9c14,
+        0x892ae3cbcae4008d,
+        0x02a8d07c9a008204,
+        0xb03dd934c1798d27,
+        0x92f7eaace7d58bbf,
+        0x5332e8a042a5a734,
+        0xadebc23d49ceb3c4,
+        0xbe99621af423ba4a,
+        0x574ad1d410d46ddb,
+        0x5eccd21e24a6fd56,
+        0x0ca9f25c762d1fdf,
+        0x7b87f6ecca35d494,
+        0xfb35bb11de1994c1,
+        0x3e214e7af10124e1,
+        0x94c5685752601adf,
+        0xeee8ae868f18d5f8,
+        0xf255ab100989033d,
+        0x7fcd6e21b9d7e5df,
     ],
 )

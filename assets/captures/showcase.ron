@@ -10,11 +10,15 @@
 // (960, 540) first, then shorten `clash`, `smog` and `closing`, and record why in the evidence file.
 //
 // Tuned after the first local render (docs/evidence/2026-11-05-showcase-video.md): the two armies
-// pass each other and raid the other's base, and the viewer's base falls around tick 1,225. The
-// scenes before `closing` therefore end near tick 1,100, and `closing` is paused, so the video never
-// shows the result window. `units` and `smog` come before the armies meet, while every follow
-// target lives and the army moves: the smog shows best in the wakes of moving bubbles. Both follow
-// one unit: the army splits around the central plateau, so its centroid can lie on empty ground.
+// pass each other and raid the other's base. `closing` is paused, so the video never shows the
+// result window. `units` and `smog` come before the armies meet, while every follow target lives
+// and the army moves: the smog shows best in the wakes of moving bubbles. Both follow one unit: the
+// army splits around the central plateau, so its centroid can lie on empty ground.
+// Checked again after plan 2026-11-09-friendly-blocking (render of 00dc9ba on radv, evidence
+// docs/evidence/2026-11-09-friendly-blocking.md): every attacker now reaches range, and the viewer's
+// army takes the enemy base at tick 1,100 in `route_trace` (1,355 before the plan). `advance` ends at
+// its minimum on tick 776, with the viewer's army already firing on the enemy hall, `clash` runs to
+// tick 1,075 on that hall, and `closing` pauses there, before the result.
 (
     format_version: 1,
     resolution: (1280, 720),

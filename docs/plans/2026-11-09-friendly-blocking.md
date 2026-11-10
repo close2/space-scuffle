@@ -31,8 +31,8 @@ plan was). That covers corridors, funnel, clearance field, waypoint handoff and 
 |---|---|---|
 | [Q0051](../questions/closed/0051-sc2-mechanics-standing-rule.md) follow StarCraft II | Standing rule | D-1 to D-5 |
 | [Q0035](../questions/closed/0035-melee-contact-rules.md) melee contact rules | Answered "no change … for now". B-50 stays recorded | §8 (out of scope) |
-| New, filed by WP0: how `AlliedPushPriority` combines with `PushPriority` | Default: our one `push_priority` field takes the game's `PushPriority` (10 everywhere). The Ultralisk analogue's 5.0.14 "pushes allied units out of the way" is modelled as priority 11 | D-4, WP5 |
-| New, filed by WP0: may a blocked second-line unit walk around a firing line it cannot pass, where the game would leave it standing (Blizzard's own guide tells the player to fix this by hand)? | Default: yes, as an "allows more" deviation (Q0051), configurable per archetype through `surround_walk: bool` (default `true`). The waiting rule R1 holds either way | D-2, WP3 |
+| [Q0073](../questions/open/0073-allied-push-priority.md) how `AlliedPushPriority` combines with `PushPriority` | Default: our one `push_priority` field takes the game's `PushPriority` (10 everywhere). The Ultralisk analogue's 5.0.14 "pushes allied units out of the way" is modelled as priority 11 | D-4, WP5 |
+| [Q0074](../questions/open/0074-surround-walk.md) may a blocked second-line unit walk around a firing line it cannot pass, where the game would leave it standing (Blizzard's own guide tells the player to fix this by hand)? | Default: yes, as an "allows more" deviation (Q0051), configurable per archetype through `surround_walk: bool` (default `true`). The waiting rule R1 holds either way | D-2, WP3 |
 
 ---
 
@@ -594,3 +594,116 @@ this plan's acceptance (§7) also requires that player 0's mean total turn at th
 115°, measured with `route_trace` (`crates/sim_core/examples/route_trace.rs`, default boxes) as in
 [`docs/evidence/2026-11-09-sc2-pathfinding.md`](../evidence/2026-11-09-sc2-pathfinding.md). After that plan's
 WP2+WP3 it is 213°, from flockmates jostling in a tighter column: local steering, which this plan owns.
+
+## Amendment 2 (2026-11-09): register IDs and questions
+
+WP0 filed the header's two questions as [Q0073](../questions/open/0073-allied-push-priority.md) (allied push
+priority) and [Q0074](../questions/open/0074-surround-walk.md) (the surround walk). The orchestrator's numbering
+replaces §6 WP0's placeholders in the bug register: **B-103** for B-a (oscillation between two friends that will not
+yield), **B-104** for B-b (attack-moving units without a target have no way round a firing line) and **B-105** for
+B-c (the chasing unit's flanking walk misses a fast sideways step into a corner).
+
+## Amendment 3 (2026-11-09): WP4 first; WP2 and WP3 held
+
+Implementation decisions, recorded under Q0002; figures in
+[`docs/evidence/2026-11-09-friendly-blocking.md`](../evidence/2026-11-09-friendly-blocking.md).
+
+- **WP4 landed before WP2**, as WP4 allows: R1 leaves units waiting under their orders, and without D-4 such a unit
+  counts as idle and is pushed through the line. WP4 is **not bit-identical**, against §6's expectation: a squad
+  standing still on its first tick after an order is already "waiting" today. 10 matrix battles moved, no overall
+  winner changed; goldens re-recorded with the traced cause.
+- **WP2 and WP3 are held** on branch `friendly-blocking-held` (stop rule, D-7): WP2 alone flips the showcase battle
+  (player 1 wins at tick 1,254), and WP3 on top flips four matrix battles (9a, 28 and 31, and 32 to a tie) while the
+  showcase stays won by player 1 (tick 1,171). Neither met §7: after WP3, 8 and 9 of 10 attackers are in range at
+  tick 900, with 40 and 51 reversals. The held branch's evidence records how D-1.1 had to change (walls of standing
+  bodies only, ends rounded only when known) and why WP3 needed more memory than `flank_active`.
+- **Not started:** WP5 (push priorities), WP6 (burrowed bodies), WP7 (bookkeeping), and Amendment 1's ramp E turn
+  (206° on the base, 202° after WP4).
+
+## Amendment 4 (2026-11-09): WP2 and WP3 released on the integration base; the surround walk's artefacts fixed
+
+Orchestrator decision: the held direction is accepted in principle, each winner flip must be justified, and the
+acceptance of §7 pursued. Implementation decisions, recorded under Q0002; figures in
+[`docs/evidence/2026-11-09-friendly-blocking.md`](../evidence/2026-11-09-friendly-blocking.md), section "Round 2".
+
+- **Base.** The work was carried onto the integration tree `b7ac748` (checksum schema 24); the latent WP3 schema
+  bump is therefore **24 → 25**. Every figure was measured again on that base.
+- **Flips of WP3 as held, traced.** On this base WP3 flipped battles 28 (100 zerglings now lost to 10 immortals) and
+  31, and kept WP2's showcase flip (player 1 won). Battle 9a no longer flips: its expectation already says the
+  zerglings win. Both matrix flips were artefacts of the walk, not StarCraft II consequences:
+  - **28:** zerglings stood for good behind squadmates that waited under their orders. Contact nudges such a
+    squadmate by a few thousandths a tick, so it was neither "exactly still" for the walk's start nor for walls;
+    walks that did start chose their side afresh on every restart (a third of 2,419 restarts swapped side in one
+    seed), and a spent walk never looked again. StarCraft II zerglings flow round such a crowd: Liquipedia's
+    Immortal page lists Zerglings among its counters, and the battle's claim is "Without splash, immortals are
+    overrun".
+  - **31:** an attack-move without a target walked up to one circle round its far attack-move point (about 100 world
+    units), so the second and third ranks stretched the line 15 units to one side and the armies passed each other.
+- **Changes to D-1, D-2 and D-3** (each measured alone; together they are the fix commit):
+  1. A body "stands" for walls (D-1.1) and for the walk's start (D-2.2) when it moved by at most
+     `STANDING_DRIFT` (1/64 world unit) last tick, not only when exactly still.
+  2. The walk's side is chosen once per target, when the unit first walks for it, and kept across pauses (D-2.4).
+  3. A walk in progress ends only when the straight way in is free; while a walk pauses, the unit steps straight in,
+     not along steering's step, which led back across the walk (a reversal every tick).
+  4. A walk without a target is bounded by the unit's scan range instead of a circle round its attack-move point
+     (D-3).
+  5. A spent walk waits `FLANK_RETRY_TICKS` (24) and then walks afresh: the crowd round a target changes as units
+     die. Without it, a corridor unit gave up its order (3 give-ups in `no_room_means_waiting_still`).
+- **Result.** No overall winner of the matrix or the showcase differs from the base. Battle 10's upper bound was
+  re-recorded with a cited reason (zerglings now surround both Hellions, and in StarCraft II all eight often live).
+  No archetype sets `surround_walk: false`.
+- **Acceptance (§7), not all reached; tuning stopped here.**
+  - Showcase: 10 of 10 attackers of each side in range at tick 900 (met); 0 give-ups (met); 7 and 4 reversals
+    (not 0).
+  - Synthetic arc: all 10 in range by tick 98 (met), 3 reversals.
+  - No room: 5 reversals; the rear units stand on 73 to 85 % of their ticks after their first stop, not 95 %: a
+    spent walk retries (change 5), and dropping the retry left them at 84 % with 3 give-ups.
+  - Amendment 1's ramp E turn stays at 211° (115° asked): 206° on the base, 202° after WP4, 211° after WP2 and at
+    every step since. No change to the blocked-attacker rules moved it, so it comes from the marching column's
+    steering (R1's walls among flockmates), not from the walk; it is not tuned here and stays open under
+    Amendment 1.
+  The three reproductions stay ignored with these figures. The remaining reversals are single steps at the edge of a
+  crowd; zeroing them would need a further rule beyond StarCraft II's data, so tuning stops (Q0051).
+- **Not started:** WP5 (push priorities), WP6 (burrowed bodies), WP7 (bookkeeping); the showcase storyboard
+  (`assets/captures/showcase.ron`) was not changed: its captions are generic and its winner (player 0) is the base's,
+  but the battle now ends at tick 1,098 in `route_trace` (1,355 on the base), so the header's tick figures need a
+  render to confirm.
+
+## Amendment 5 (2026-11-09): the builder regression of WP2
+
+`player_view_tests::a_build_on_a_hidden_structure_is_accepted_and_abandoned_on_arrival` failed from WP2 on: the
+builder started wedged between its own town hall and another worker, waited (D-1.3) and spent its task legs
+(`Unreachable`). The orchestrator asked first for the StarCraft II rule that gathering workers do not collide with
+other units ("mineral walk"). Our harvest code already models that: a worker under a `Harvest` or `ReturnCargo` order
+sets `is_mineral_walking` and is left out of every other unit's obstacles (`prepare_movement_snapshot`), so it could
+not be the blocker. The blocker was an **idle** worker that contact had nudged by a few thousandths a tick: D-4's
+`yields_to` required an idle friend to stand *exactly* still, so the nudged one did not step aside and, standing
+within Amendment 4's drift, formed a wall with the hall. `yields_to` now uses Amendment 4's `STANDING_DRIFT` (1/64 a tick) for "standing",
+the same test as walls and the walk use, which completes D-4's row "idle, standing: pushed sideways".
+
+Measured against Amendment 4: 1 matrix battle moved (35), no overall winner changed (none against the base either),
+battle 33 identical on 68 seeds, showcase 10 / 10 in range at tick 900, 11 / 8 reversals, 0 give-ups, player 0 wins
+at tick 1,100. Goldens re-recorded (`golden_replay` from checkpoint 11, `golden_replay_orders` from checkpoint 19; the
+only change).
+
+## Amendment 6 (2026-11-09): WP5 to WP7 landed; state of the acceptance
+
+Implementation decisions, recorded under Q0002; figures in
+[`docs/evidence/2026-11-09-friendly-blocking.md`](../evidence/2026-11-09-friendly-blocking.md), sections WP5 and WP6.
+
+- **WP5 (B-48), `c942cea`.** `push_priority` 10 for every unit and 11 for `stag_behemoth`, each with its source
+  comment; `catalog_reference_values_tests::b48_push_priorities_follow_starcraft`. The matrix, battle 33 and the
+  showcase are bit-identical; both goldens moved (traced: an idle unit of a formerly higher priority now steps
+  aside for a mover, D-4).
+- **WP6 (B-93), `5009df9`.** There was no burrowed state to read (D-5 assumed one): a burrowed mode was only
+  cloaked, immobile and unpushable. `UnitModeSpec::burrowed` now says it, set on the Lurker analogue's mode, and
+  movement pairs only bodies of one class (ground, air, burrowed). D-5's source `liberty` UnitData:775 is `void`
+  UnitData:775. Battle 21 moved (the Lurker wins 3 of 20 seeds instead of 10, the rest unresolved; the marines never
+  win), no overall winner flipped; goldens unchanged; no checksum schema change.
+- **WP7.** Register: B-48, B-93, B-104 and B-105 removed as fixed; B-103 narrowed to the remaining single reversals
+  at a crowd's edge and the corridor units' 73 to 85 % standing. Deviation plan Amendment 2's table and its
+  Amendment 23. The three reproductions stay ignored with the current figures (showcase 11 and 8 reversals,
+  synthetic arc 3, corridor 5). Q0073 and Q0074 are unanswered; their defaults apply and they stay open.
+- **Still open:** §7's zero reversals and the corridor's 95 % (B-103), and Amendment 1's ramp E turn, 211° against
+  at most 115°, unchanged by every package of this plan (it comes from the marching column's steering, not the
+  blocked-attacker rules).

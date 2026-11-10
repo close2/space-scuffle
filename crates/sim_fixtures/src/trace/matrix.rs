@@ -24,7 +24,12 @@
 //!   a battle "moved" iff one of its rows differs or exists in one table only.
 //! - A battle name that would break the CSV (a comma, quote or line break) is an error, never a
 //!   silently shifted column.
+//! - The blocking columns ([`super::blocking`], plan `2026-11-09-friendly-blocking` WP1) are a
+//!   measurement of the same run, not part of its outcome: two tables are compared on the outcome
+//!   columns only, and a table written before those columns existed ([`LEGACY_CSV_HEADER`]) is
+//!   still read, with no blocking figures.
 
+use super::blocking::{BlockingMeter, BlockingMetrics};
 use super::cli::{
     create_dir, load_catalogs, load_matrix, read, source_line, write, RunError, TraceArgs,
 };
@@ -37,10 +42,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// The header line of `matrix.csv`.
 pub const CSV_HEADER: &str = "battle,seed,of_record,end_tick,blue_survivors,red_survivors,\
-blue_lead_hull,red_lead_hull,expectation_met";
+blue_lead_hull,red_lead_hull,expectation_met,blocked_attacker_ticks,reversals,stall_giveups";
 
-/// Columns of `matrix.csv`.
-const CSV_COLUMNS: usize = 9;
+/// The header of a `matrix.csv` written before the blocking columns, still read by `--compare`.
+pub const LEGACY_CSV_HEADER: &str = "battle,seed,of_record,end_tick,blue_survivors,\
+red_survivors,blue_lead_hull,red_lead_hull,expectation_met";
+
+/// Outcome columns of `matrix.csv`, the whole of a legacy row.
+const OUTCOME_COLUMNS: usize = 9;
+
+/// Columns of `matrix.csv`: the outcome, then the three blocking counters.
+const CSV_COLUMNS: usize = 12;
 
 /// One battle played on one seed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,12 +69,30 @@ pub struct MatrixRow {
     pub outcome: Outcome,
     /// Whether the outcome meets the battle's expectation ([`Expected::holds`]).
     pub expectation_met: bool,
+    /// Both sides' blocking counters over the run; `None` for a row read from a legacy table.
+    pub blocking: Option<BlockingMetrics>,
 }
 
 impl MatrixRow {
-    /// The row as one line of `matrix.csv`, without the line break; an absent hull is empty.
+    /// The row as one line of `matrix.csv`, without the line break; an absent hull is empty,
+    /// and so are the blocking cells of a row without blocking figures.
     #[must_use]
     pub fn csv_line(&self) -> String {
+        let blocking = self.blocking.map_or_else(
+            || ",,".to_owned(),
+            |b| {
+                format!(
+                    "{},{},{}",
+                    b.blocked_attacker_ticks, b.reversals, b.stall_giveups
+                )
+            },
+        );
+        format!("{},{blocking}", self.outcome_line())
+    }
+
+    /// The outcome columns of the row, the part two tables are compared on.
+    #[must_use]
+    pub fn outcome_line(&self) -> String {
         let hull = |value: Option<SimScalar>| value.map_or_else(String::new, |v| v.0.to_string());
         format!(
             "{},{},{},{},{},{},{},{},{}",
@@ -78,15 +108,26 @@ impl MatrixRow {
         )
     }
 
-    /// Parses one line of `matrix.csv` (not the header).
+    /// Parses one line of `matrix.csv` (not the header): [`CSV_COLUMNS`] cells, or
+    /// [`OUTCOME_COLUMNS`] for a legacy table, whose row has no blocking figures.
     ///
     /// # Errors
     /// A description of the first malformed cell.
     pub fn from_csv_line(line: &str) -> Result<Self, String> {
         let cells: Vec<&str> = line.split(',').collect();
-        if cells.len() != CSV_COLUMNS {
+        if cells.len() != CSV_COLUMNS && cells.len() != OUTCOME_COLUMNS {
             return Err(format!("{} cells, expected {CSV_COLUMNS}", cells.len()));
         }
+        let blocking = match cells.get(OUTCOME_COLUMNS..) {
+            Some(["", "", ""]) => None,
+            Some(["", _, _]) => return Err("blocking cells: all empty or all filled".to_owned()),
+            Some([ticks, reversals, giveups]) => Some(BlockingMetrics {
+                blocked_attacker_ticks: cell(ticks, "blocked_attacker_ticks")?,
+                reversals: cell(reversals, "reversals")?,
+                stall_giveups: cell(giveups, "stall_giveups")?,
+            }),
+            _ => None,
+        };
         Ok(Self {
             battle: cells[0].to_owned(),
             seed: cell(cells[1], "seed")?,
@@ -99,6 +140,7 @@ impl MatrixRow {
                 red_lead_hull: hull_cell(cells[7], "red_lead_hull")?,
             },
             expectation_met: cell(cells[8], "expectation_met")?,
+            blocking,
         })
     }
 }
@@ -135,7 +177,8 @@ pub fn matrix_csv(rows: &[MatrixRow]) -> String {
 /// Reads the rows of the `matrix.csv` text `text`, which came from `path`.
 ///
 /// # Errors
-/// [`RunError::Csv`] if the header is not [`CSV_HEADER`] or a row is malformed.
+/// [`RunError::Csv`] if the header is neither [`CSV_HEADER`] nor [`LEGACY_CSV_HEADER`], or a
+/// row is malformed.
 pub fn parse_matrix_csv(path: &Path, text: &str) -> Result<Vec<MatrixRow>, RunError> {
     let error = |line: usize, reason: String| RunError::Csv {
         path: path.to_owned(),
@@ -143,7 +186,7 @@ pub fn parse_matrix_csv(path: &Path, text: &str) -> Result<Vec<MatrixRow>, RunEr
         reason,
     };
     let mut lines = text.lines();
-    if lines.next() != Some(CSV_HEADER) {
+    if !matches!(lines.next(), Some(CSV_HEADER | LEGACY_CSV_HEADER)) {
         return Err(error(1, format!("the header is not `{CSV_HEADER}`")));
     }
     lines
@@ -171,12 +214,7 @@ impl Comparison {
     /// Compares `after` with the rows `before` read from `file`.
     #[must_use]
     pub fn new(file: PathBuf, before: Vec<MatrixRow>, after: &[MatrixRow]) -> Self {
-        let lines = |rows: &[MatrixRow]| -> BTreeMap<(String, u64), String> {
-            rows.iter()
-                .map(|row| ((row.battle.clone(), row.seed), row.csv_line()))
-                .collect()
-        };
-        let (old, new) = (lines(&before), lines(after));
+        let (old, new) = (outcome_lines(&before), outcome_lines(after));
         let mut moved = Vec::new();
         let mut seen = BTreeSet::new();
         for row in after.iter().chain(&before) {
@@ -201,6 +239,13 @@ impl Comparison {
             moved,
         }
     }
+}
+
+/// Each row's outcome columns, by battle and seed.
+fn outcome_lines(rows: &[MatrixRow]) -> BTreeMap<(String, u64), String> {
+    rows.iter()
+        .map(|row| ((row.battle.clone(), row.seed), row.outcome_line()))
+        .collect()
 }
 
 /// Seeds of `battle` whose row differs between `old` and `new`, or exists in one only.
@@ -354,8 +399,10 @@ fn play_one(
     };
     let mut run = BattleRun::new(battle, catalogs.clone(), seed, matrix.jitter_for(seed))
         .map_err(|source| failed(source.into()))?;
+    let mut meter = BlockingMeter::new();
     while !run.is_finished() {
         let diagnostics = run.step();
+        meter.observe(&run.world);
         if !diagnostics.is_empty() {
             return Err(failed(RunError::Diagnostics {
                 seed,
@@ -372,6 +419,7 @@ fn play_one(
         end_tick: run.ticks_played(),
         outcome,
         expectation_met: battle.expect.holds(&outcome),
+        blocking: Some(meter.total()),
     })
 }
 
@@ -517,6 +565,53 @@ pub fn matrix_markdown(
         );
     }
     out.push_str(&failures_section(matrix, &failures));
+    out.push_str(&blocking_section(rows, comparison));
+    out
+}
+
+/// Both sides' blocking counters summed over `rows`, or `None` if a row has none.
+fn blocking_sum<'a>(rows: impl IntoIterator<Item = &'a MatrixRow>) -> Option<BlockingMetrics> {
+    rows.into_iter()
+        .try_fold(BlockingMetrics::default(), |sum, row| {
+            row.blocking.map(|blocking| sum.plus(blocking))
+        })
+}
+
+/// The per-battle blocking counters, summed over the seeds, with the earlier table's totals.
+fn blocking_section(rows: &[MatrixRow], comparison: Option<&Comparison>) -> String {
+    let mut out = String::from(
+        "\n## Blocking\n\nBoth sides' counters of plan `2026-11-09-friendly-blocking` WP1, summed \
+         over the seeds: unit-ticks out of range behind a friend that will not yield, step \
+         reversals under an unchanged order (D-1.4), and orders given up for lack of progress.\n\n",
+    );
+    let cell = |sum: Option<BlockingMetrics>| {
+        sum.map_or_else(
+            || "— | — | —".to_owned(),
+            |b| {
+                format!(
+                    "{} | {} | {}",
+                    b.blocked_attacker_ticks, b.reversals, b.stall_giveups
+                )
+            },
+        )
+    };
+    if let Some(comparison) = comparison {
+        push(
+            &mut out,
+            format_args!(
+                "All battles: {} before, {} now (blocked ticks | reversals | give-ups).\n\n",
+                cell(blocking_sum(&comparison.before)),
+                cell(blocking_sum(rows))
+            ),
+        );
+    }
+    out.push_str(
+        "| Battle | Blocked attacker ticks | Reversals | Stall give-ups |\n|---|---|---|---|\n",
+    );
+    for name in battle_names(rows) {
+        let sum = blocking_sum(rows.iter().filter(|row| row.battle == name));
+        push(&mut out, format_args!("| {name} | {} |\n", cell(sum)));
+    }
     out
 }
 
@@ -578,12 +673,7 @@ fn comparison_section(comparison: &Comparison, rows: &[MatrixRow]) -> String {
             rows.len()
         );
     }
-    let lines = |rows: &[MatrixRow]| -> BTreeMap<(String, u64), String> {
-        rows.iter()
-            .map(|row| ((row.battle.clone(), row.seed), row.csv_line()))
-            .collect()
-    };
-    let (old, new) = (lines(&comparison.before), lines(rows));
+    let (old, new) = (outcome_lines(&comparison.before), outcome_lines(rows));
     let mut out = format!(
         "## Moved against `{file}`\n\nBattles moved: {}. Before and after are means over each \
          table's seeds.\n\n\
@@ -636,6 +726,11 @@ mod tests {
                 red_lead_hull: None,
             },
             expectation_met: true,
+            blocking: Some(BlockingMetrics {
+                blocked_attacker_ticks: 7,
+                reversals: 3,
+                stall_giveups: 1,
+            }),
         }
     }
 
@@ -658,7 +753,25 @@ mod tests {
     }
 
     #[test]
+    fn a_legacy_row_reads_without_blocking_figures_and_compares_on_its_outcome(
+    ) -> Result<(), String> {
+        let current = row("a_b", 5, 2, Some(SimScalar::from_i32(45)));
+        let legacy = MatrixRow::from_csv_line(&current.outcome_line())?;
+        assert_eq!(legacy.blocking, None);
+        assert_eq!(legacy.outcome_line(), current.outcome_line());
+        assert!(legacy.csv_line().ends_with(",,,"));
+        assert_eq!(MatrixRow::from_csv_line(&legacy.csv_line())?, legacy);
+        let comparison = Comparison::new(PathBuf::from("m.csv"), vec![legacy], &[current]);
+        assert_eq!(comparison.moved, Vec::<String>::new());
+        let path = Path::new("m.csv");
+        assert!(parse_matrix_csv(path, &format!("{LEGACY_CSV_HEADER}\n")).is_ok());
+        Ok(())
+    }
+
+    #[test]
     fn malformed_lines_and_headers_are_errors() {
+        assert!(MatrixRow::from_csv_line("a,1,true,5,1,0,,,true,1,,").is_err());
+        assert!(MatrixRow::from_csv_line("a,1,true,5,1,0,,,true,1,x,0").is_err());
         assert!(MatrixRow::from_csv_line("a,1,true,5,1,0,,").is_err());
         assert!(MatrixRow::from_csv_line("a,x,true,5,1,0,,,true").is_err());
         assert!(MatrixRow::from_csv_line("a,1,yes,5,1,0,,,true").is_err());

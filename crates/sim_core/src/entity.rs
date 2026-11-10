@@ -177,6 +177,10 @@ pub struct ActiveProjectile {
 /// All of this is authoritative: it decides when an order ends, so it is hashed by the checksum.
 /// A new order starts it afresh, apart from [`Self::abandoned_target`], which outlives orders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent hashed flags of one unit's movement, each read by a different rule"
+)]
 pub struct MovementMemory {
     /// Destination this unit finished moving to. Others heading there stop against this unit.
     pub arrived_at: Option<SimVec2>,
@@ -201,6 +205,22 @@ pub struct MovementMemory {
     /// body and kept until the corner is passed or the route replaced, so the unit does not swap
     /// sides while it rounds the body (plan `2026-11-09-sc2-pathfinding` D-9 A3).
     pub corner_round: i8,
+    /// Whether this unit is walking round a crowd that blocks its way to its goal, on the side
+    /// `flank_left` keeps (the surround walk, plan `2026-11-09-friendly-blocking` D-2).
+    pub flank_active: bool,
+    /// Whether the surround walk has already turned back once, its first side having closed.
+    pub flank_reversed: bool,
+    /// Whether the surround walk has ended without a way in (both sides closed, or a full circle
+    /// walked); the unit then waits until its way forward opens, its goal changes or
+    /// `FLANK_RETRY_TICKS` pass (D-3, plan Amendment 4).
+    pub flank_spent: bool,
+    /// Consecutive ticks the surround walk's side has been closed (`FLANK_REVERSE_TICKS`).
+    pub flank_blocked_ticks: u16,
+    /// Distance walked round the crowd on this walk, in world units.
+    pub flank_walked: SimScalar,
+    /// The target the surround walk approaches; `None` for an attack-move without one. A walk
+    /// for another goal starts afresh.
+    pub flank_target: Option<EntityId>,
 }
 
 impl MovementMemory {
@@ -474,6 +494,17 @@ impl Entity {
     #[inline]
     pub fn cannot_be_pushed(&self) -> bool {
         self.is_on_hold() || self.unpushable || self.is_immobile
+    }
+
+    /// Whether this unit has nothing to do: no order, or `Idle` or `Stop` at the front. A unit
+    /// standing still under any other order is waiting, not idle, and friends do not push it
+    /// aside (plan `2026-11-09-friendly-blocking` D-4).
+    #[must_use]
+    pub fn is_idle(&self) -> bool {
+        matches!(
+            self.order_queue.front(),
+            None | Some(UnitOrder::Idle | UnitOrder::Stop)
+        )
     }
 
     /// Creates a new entity initialized from its archetype definition.
@@ -977,6 +1008,31 @@ impl Entity {
         self.is_cloaked = false;
         self.siege_weapon = None;
         self.is_sieged = false;
+    }
+
+    /// Whether this unit is burrowed: its active mode is a [`UnitModeSpec::burrowed`] one, or a
+    /// burrowing cloak toggle (`CloakToggle { is_burrow: true }`) has put it under ground. A
+    /// burrowed body touches only other burrowed bodies (plan `2026-11-09-friendly-blocking` R6,
+    /// B-93). A unit still channelling its burrow is not yet burrowed, as its other mode stats
+    /// are not. `archetype` must be this unit's.
+    #[must_use]
+    pub fn is_burrowed(&self, archetype: &UnitArchetype) -> bool {
+        let burrow_toggle = || {
+            archetype.abilities.iter().any(|ability| {
+                matches!(
+                    ability.effect,
+                    AbilityEffectSpec::CloakToggle {
+                        is_burrow: true,
+                        ..
+                    }
+                )
+            })
+        };
+        self.active_mode
+            .as_deref()
+            .and_then(|mode| archetype.get_mode(mode))
+            .is_some_and(|mode| mode.burrowed)
+            || (self.is_cloaked && self.is_immobile && burrow_toggle())
     }
 
     /// The mode this unit is in or, while it channels a switch, the mode it will be in when the
