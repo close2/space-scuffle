@@ -93,23 +93,48 @@ pub struct MeshSearch {
     pub fallbacks: u64,
 }
 
-/// Distance from `p` to the segment `[a, b]`, in world units.
-fn point_segment_distance(p: SimVec2, a: SimVec2, b: SimVec2) -> SimScalar {
+/// The vector from the point of `[a, b]` nearest `p` to `p`, in world units.
+fn offset_from_segment(p: SimVec2, a: SimVec2, b: SimVec2) -> SimVec2 {
     let d = b - a;
     let length_sq = d.length_sq();
     if length_sq == SimScalar::ZERO {
-        return p.distance(a);
+        return p - a;
     }
     let t = ((p - a).dot(d) / length_sq).clamp(SimScalar::ZERO, SimScalar::ONE);
-    p.distance(a + d * t)
+    p - (a + d * t)
+}
+
+/// Distance from `p` to the segment `[a, b]`, in world units.
+fn point_segment_distance(p: SimVec2, a: SimVec2, b: SimVec2) -> SimScalar {
+    offset_from_segment(p, a, b).length()
+}
+
+/// Exact squared length of `v` in raw units, the order [`SimVec2::length`] preserves.
+fn raw_length_sq(v: SimVec2) -> u128 {
+    let (x, y) = (
+        u128::from(v.x.raw().unsigned_abs()),
+        u128::from(v.y.raw().unsigned_abs()),
+    );
+    x * x + y * y
 }
 
 /// Distance between two mesh edges, which meet at most at a shared vertex.
+// PERFORMANCE RATIONALE:
+// Why: TA* bounds every child against up to eight ancestor edges, four point-to-segment distances
+// each; a 128-bit square root per distance was the search's largest single cost (WP9 profile).
+// What: Compare the four offsets by their exact squared lengths and take one root of the least.
+// The integer root is monotonic, so the result is bit-identical to the least of four roots.
+// Trade-off: A local squared-length helper next to `SimVec2::length`.
 fn segment_distance(a: SimVec2, b: SimVec2, c: SimVec2, d: SimVec2) -> SimScalar {
-    point_segment_distance(a, c, d)
-        .min(point_segment_distance(b, c, d))
-        .min(point_segment_distance(c, a, b))
-        .min(point_segment_distance(d, a, b))
+    [
+        offset_from_segment(a, c, d),
+        offset_from_segment(b, c, d),
+        offset_from_segment(c, a, b),
+        offset_from_segment(d, a, b),
+    ]
+    .into_iter()
+    .min_by_key(|&offset| raw_length_sq(offset))
+    .map_or(SimScalar::ZERO, SimVec2::length)
 }
 
 /// How many ancestors' entry edges bound a node's `g` (see `MeshSearch::lower_bound`).

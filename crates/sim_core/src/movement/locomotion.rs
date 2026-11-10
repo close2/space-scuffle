@@ -1774,11 +1774,12 @@ fn drop_passed_waypoints(
             break;
         }
         // A body wedged where it stands (its disc overlaps a wall) sees by terrain only, as its
-        // route's first leg is held (plan D-3); otherwise the disc must fit along the leg.
+        // route's first leg is held (plan D-3); otherwise the disc must fit along the leg. The
+        // leg is asked first: when the disc fits along it, whether it fits where it stands is moot.
         let in_view = policy.permits_segment(map, actor.position, subsequent)
             && (policy.layer == MovementLayer::Air
-                || !pathfinder.segment_is_passable(map, request, actor.position, actor.position)
-                || pathfinder.segment_is_passable(map, request, actor.position, subsequent));
+                || pathfinder.segment_is_passable(map, request, actor.position, subsequent)
+                || !pathfinder.segment_is_passable(map, request, actor.position, actor.position));
         if !in_view {
             break;
         }

@@ -268,3 +268,51 @@ Oracle agreement unchanged: 542 of 542 seeded routes within 1 % of the exact ora
 (`pathfinding_properties.rs`). `funnel_tests.rs` now holds the polyline at or below its arcs and at or above the
 oracle at `r + margin / 2`, and adds the wrap pair above (turns (35, 52) and (38, 52) on the right, no fallback,
 within 2 % of the oracle at `r`).
+
+## Amendment 3, diagnosis of the held switch (2026-11-10)
+
+Held switch `7636e32` on `c34955b`, simulation unchanged by this step (the showcase `units.csv` is byte-identical
+to the held switch's). Probes were throw-away examples, not committed.
+
+**Every showcase regression follows from which side of the central plateau each unit takes.** The two lanes
+between the ramp feet, west (x 25.6) and east (x 38.4), differ by about 0.3 world units in 80 to 95 (0.35 %).
+Initial routes (tick 0): all ten player 0 units west (the grid took them east); player 1's eight pulse bots east,
+its two rhino beetles (radius 0.5, spawned north of the base) west. The rhinos meet player 0's whole army in the
+west lane at tick about 330, at (22 to 26, 32 to 35), and hold it until about tick 525 (player 0's units have no
+route and stand attacking or waiting behind the firing line), while the eight bots walk east to player 0's base.
+
+- *Winner.* With a throw-away rule that refuses the west lane to player 1 only (so the armies pass each other, as
+  on the grid), player 0 wins at tick 1,195 (base 1,100), ramp E foot 1.157 / 1.164 and 66° / 75°, reversals 66.
+  The flip is the split army, not route following.
+- *Reversals.* 228 of player 0's 255 (counted from `units.csv`) are in that fight, ticks 350 to 550: units behind
+  the firing rhino toggle the surround walk (`flank_active`) every tick, friendly blocking's rule. With the armies
+  passing, the remaining reversals are at player 1's base (47, 53), as in base.
+- *Ramp W foot.* Units follow their routes cleanly (rhino 13: no re-plan, walked 5.80 in the box against about
+  5.65 of route); the ratio rises because the west lane turns about 100° at the ramp's north wall end (29, 12)
+  where the east lane turned about 35°. Plateau SE is not passed because the lane is the other one.
+- *Ramp E foot turns.* The army arrives as a crowd after the fight; bodies pushed east of the corner (35, 52)
+  under the ramp's south wall wait on stall repaths (rhino 12: 975°).
+- *Lead 1, re-plans:* not supported. Whole match, player 0 routes adopted per unit 2 to 13; no re-plan storm at
+  (25.575, 35.0) — the units there were stopped by the fight.
+- *Search.* The side choices are TA*'s: for player 1's bots the first channel is east and the anytime loop spends
+  its budget on east variants; raising the budget to 8,192 and the per-state visits to 32 changes no choice.
+
+**Throughput** (bit-identical changes, measured unlocked: the gate lock was held by other agents' gates; canyon
+scenario ticks/s, base `02f494b` and candidate back to back):
+
+| Build | Canyon | 64x64, 400 |
+|---|---|---|
+| base | 134, 134, 137, 142, 141, 143 | 171 to 176 |
+| held switch | 116 to 124 | 154 |
+| one square root per edge distance (TA* bound) | 126, 127, 127 | 159 to 171 |
+| + leg asked before the wedge check in `drop_passed_waypoints` | 127, 127, 128 | 157 to 172 |
+| + open edges to reached triangles skip the capsule test | 116 / 104 against base 128 / 137 (machine loaded) | — |
+
+The canyon scenario is 7 to 10 % below base after the first two changes; the noise between runs is of the same
+size, so the 10 % criterion needs a measurement under the gate lock.
+
+**Pre-existing red tests at `7636e32`** (unchanged by this step): `determinism_tests`
+(`test_cross_platform_determinism_checksum`), `validation_golden_tests`
+(`find_path_with_vision_matches_the_recorded_corpus_digest`) and `pathfinding_properties`
+(`funnel_paths_are_legal_and_no_shorter_than_a_straight_line`: an illegal leg, recorded in the commit's
+`pathfinding_properties.proptest-regressions`).
