@@ -42,3 +42,11 @@ The default above holds meanwhile.
 1. **`spine_line`:** Replace the C/J-curved hook silhouettes (which read like handwritten glyphs at default zoom) with straight or gently tapering conical chitin spikes (3–5 splayed outward per clump, taller at `0.6–0.9` units); brighten the bone-ivory tip and rim light on the newest erupting clump for its first 2–3 frames to create a clear travelling focal point; and feather the churned-earth/fissure decal over `~0.3` units at both ends while breaking up the regular 1-unit leftover marks into an irregular scar.
 2. **`acid_burst`:** Drive the interior of the ground stain with noise-based value and thickness variation plus a darker, more saturated wet rim and upper-left key-light sheen (removing the flat felt-disc fill and evenly spaced polka-dot speckles), start drying toward olive earlier (`~0.6s`), and replace the bevelled button-like rim on the frame 0–2 pop with a ragged noise-broken burst and larger airborne globs.
 You may iterate up to **5 review rounds total** before pausing to ask again, and proceed with the WP7+ effect scale-out.
+
+## Resolution
+
+Recorded in plan [`2026-11-09-effect-visualization`](../../plans/2026-11-09-effect-visualization.md), Amendment 2
+(commit `c5b5de2`): the stop rule is five review rounds; round 3 for `acid_burst` and `spine_line` works from
+round 2's ranked changes (commit `ca082cd`, packet
+[`independent_review_packet.md`](../../evidence/effects/review/independent_review_packet.md), section "Round 3").
+The scale-out (WP7 onwards) is unblocked; both effects return to their units once a round accepts them.
