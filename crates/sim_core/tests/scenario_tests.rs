@@ -772,9 +772,11 @@ fn the_showcase_battle_starts_with_its_initial_orders() {
     let size = (document.width, document.height);
     let mut targets = std::collections::BTreeMap::new();
     for order in &manifest.initial_orders {
-        let InitialOrder::AttackMoveToCell { player_slot, cell } = *order else {
-            panic!("the showcase names its targets by cell: {order:?}");
-        };
+        let (player_slot, cell) = match *order {
+            InitialOrder::AttackMoveToCell { player_slot, cell } => Some((player_slot, cell)),
+            InitialOrder::AttackMoveToStart { .. } => None,
+        }
+        .expect("the showcase names its targets by cell");
         targets.insert(
             PlayerId(player_slot),
             SimVec2::new(

@@ -376,7 +376,9 @@ walking freely toward player 1's base, and the match never ended. Cause: `prepar
 attack order without restarting the movement memory, so the resumed attack-move measured its progress against the
 chase's best distance (a few world units to the dead target). Fixed by restarting the memory as a new order does
 (test red before, green after). On the grid the matrix (16 seeds) and battle 33 (68 seeds) are bit-identical with
-and without the fix, and so is the grid showcase.
+and without the fix, and so is the grid showcase. The grid's `golden_replay` is not: with B-106 it diverges at its first checkpoint
+(ticks up to 50) in debug and release, and passes without it; `golden_replay_orders` passes either way. Before
+B-106 lands on main that list is re-recorded with the traced cause (not done in this step).
 
 **Showcase with mirrored targets** (player 0 / player 1; ratio mean / max, turn mean / max):
 
