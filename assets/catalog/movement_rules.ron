@@ -9,6 +9,6 @@
 // StarCraft II. Allowed range 0 to 1000.
 (
     group_routing: (
-        lane_tolerance_permille: 0,
+        lane_tolerance_permille: 75,
     ),
 )

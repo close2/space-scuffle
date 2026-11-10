@@ -64,3 +64,20 @@ Measured with WP4's build and `--lane-tolerance 75` before the data change:
 
 The shipped showcase's `units.csv` at 75 is byte-identical to the run at 0: every member's own route is already in
 its group's lane. G-1's winner returns to player 0, which is the fixture's purpose (§1 of the plan).
+
+## WP5: tolerance 75 ‰ shipped
+
+| Measure | Result |
+|---|---|
+| Matrix, 16 extra seeds (1,000 runs) | bit-identical to WP4's `matrix.csv` (no battle moved; the arenas have no lane cut) |
+| Battle 33, 68 seeds | identical to WP4 |
+| Shipped showcase `units.csv`, 1,800 ticks | byte-identical to WP4 (player 0 wins at tick 1,693); two groups, lane word `[]`, no `GroupLane` event |
+| G-1 fixture | `units.csv` byte-identical to WP4's run at `--lane-tolerance 75` (table above): player 1's ten attackers all east, three adoptions (ratios 1.0032 to 1.0047), player 0 wins at tick 1,093 |
+| Goldens | re-recorded. Cause: the hashed route groups alone. The per-tick dumps of both scripts at 75 are byte-identical to WP3's (and so to the base's but for `route_orders_issued`): `default_arena` has no lane cut, so every own route is already in its group's lane and no restricted search runs; the checksums differ from the first checkpoint because the squads' groups are hashed. Passed in debug, release and `wasm32-wasip1` (wasmtime) |
+| Sandbox checksum | unchanged (no group at spawn) |
+| `sim_core` and `sim_fixtures` tests | pass at 75 |
+
+Own-to-lane ratios of every `GroupLane` event: the G-1 fixture's three (1.0032, 1.0032, 1.0047); none in the shipped
+showcase and none in the goldens. Every adoption so far lies far below 7.5 %.
+
+The storyboard (`assets/captures/showcase.ron`) was not re-rendered: the shipped showcase did not move.
