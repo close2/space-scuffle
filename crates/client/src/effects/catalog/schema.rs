@@ -166,6 +166,11 @@ const fn one() -> f32 {
     1.0
 }
 
+/// Serde default of a count of one.
+const fn one_u32() -> u32 {
+    1
+}
+
 /// Serde default of a frame blend.
 const fn yes() -> bool {
     true
@@ -196,6 +201,50 @@ pub enum Orient {
     Ground,
     /// Stands upright, its width along the event's line (or facing the camera without one).
     VerticalAlongLine,
+    /// Stands upright and turns about world up to face the camera (a cylindrical
+    /// billboard): things standing on the ground (spines, columns) never turn edge-on.
+    Upright,
+}
+
+/// The shape a card draws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+pub enum CardShape {
+    /// The texture element.
+    #[default]
+    Texture,
+    /// A soft radial glow computed in the shader (shading and coverage fall off as a
+    /// Gaussian from the centre; the erosion order rises towards the centre), broken by the
+    /// layer's `breakup` noise: flashes and glows, which are light rather than matter.
+    Radial,
+}
+
+/// Noise breakup of an element's erosion and edges, with a phase of its own per instance, so
+/// no two instances erode alike and no erosion is mirror-symmetric.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BreakupDef {
+    /// Noise element (a `NoiseV1` set element; its first channel is read).
+    pub noise: String,
+    /// Noise repeats across the element (a ring: around its circumference, rounded to whole
+    /// repeats so it has no seam).
+    #[serde(default = "one")]
+    pub scale: f32,
+    /// Weight of the noise in the erosion order, in [0, 1]: 0 erodes by the element's baked
+    /// order alone, 1 by the noise alone.
+    #[serde(default)]
+    pub amount: f32,
+    /// Width of the soft step of the erosion threshold, in (0, 1]: wider is softer.
+    #[serde(default = "default_softness")]
+    pub softness: f32,
+    /// Self-shading in [0, 1]: thin parts of the element are darkened towards its dark ramp
+    /// end by this much (volume: dense middles lit, thin edges in shadow, no bright rims).
+    #[serde(default)]
+    pub shade: f32,
+}
+
+/// Serde default of an erosion softness.
+const fn default_softness() -> f32 {
+    0.08
 }
 
 /// How a card's roll angle and mirroring are chosen.
@@ -221,6 +270,11 @@ pub enum RingMapping {
     /// angle, mirrored back and forth over the element's middle so there is no seam), so any
     /// element breaks the ring up along its length.
     Polar,
+    /// A pressure front computed from the layer's `breakup` noise (which it requires):
+    /// brightest and densest at its leading (outer) edge, fading towards the trailing edge,
+    /// its width and brightness wavering around the circumference with a phase of its own per
+    /// instance; the element's texture is not read.
+    Front,
 }
 
 /// How a decal's box is turned about world up.
@@ -268,9 +322,36 @@ pub enum BlockDef {
         #[serde(default)]
         frame_curve: Option<String>,
         /// Height of the card's centre above its placed point, in multiples of its half
-        /// size; `None` is 1 for `VerticalAlongLine` (base on the ground) and 0 otherwise.
+        /// size; `None` is 1 for `VerticalAlongLine` and `Upright` (base on the ground) and 0
+        /// otherwise.
         #[serde(default)]
         lift: Option<f32>,
+        /// Lift over the layer's life, in half sizes (overrides `lift`): a card rising out of
+        /// the ground and sinking back into it (the depth test hides what is below).
+        #[serde(default)]
+        lift_curve: Option<String>,
+        /// Largest lean in degrees: each instance rolls by a hashed angle in `[-lean, lean]`
+        /// about the point where it meets the ground (`Upright` and `VerticalAlongLine`) or its
+        /// centre.
+        #[serde(default)]
+        lean_deg: f32,
+        /// Distance in world units the card moves away from the effect's anchor over its life,
+        /// easing out (a dust ring kicked outward).
+        #[serde(default)]
+        spread: f32,
+        /// Moves the card this many world units towards the camera in the back-to-front sort
+        /// only (a front drawn over the fireball standing on it).
+        #[serde(default)]
+        sort_bias: f32,
+        /// With an event line, the card is cut off where the line starts and ends.
+        #[serde(default)]
+        clip_to_line: bool,
+        /// Texture or computed shape.
+        #[serde(default)]
+        shape: CardShape,
+        /// Noise breakup of the erosion and edges.
+        #[serde(default)]
+        breakup: Option<BreakupDef>,
     },
     /// A card masked to a ring, its radius animated from `radius.from` to `radius.to`.
     Ring {
@@ -293,6 +374,13 @@ pub enum BlockDef {
         /// little above the ground so the depth test keeps it).
         #[serde(default)]
         height: f32,
+        /// Moves the ring this many world units towards the camera in the back-to-front sort
+        /// only.
+        #[serde(default)]
+        sort_bias: f32,
+        /// Noise breakup of the erosion and edges (required by `mapping: Front`).
+        #[serde(default)]
+        breakup: Option<BreakupDef>,
     },
     /// A ground mark projected through the depth buffer.
     Decal {
@@ -320,6 +408,9 @@ pub enum BlockDef {
         /// so segments longer than their spacing still end exactly at the line's ends.
         #[serde(default)]
         clip_to_line: bool,
+        /// Noise breakup of the erosion and edges.
+        #[serde(default)]
+        breakup: Option<BreakupDef>,
     },
     /// A short point light.
     Light {
@@ -336,6 +427,9 @@ pub enum BlockDef {
     Particles {
         /// Emitter name.
         emitter: String,
+        /// With an event line, the particles are cut off where the line starts and ends.
+        #[serde(default)]
+        clip_to_line: bool,
     },
 }
 
@@ -378,6 +472,16 @@ pub enum PlacementDef {
         /// the points and end exactly at the line's ends (rather than centred on the ends).
         #[serde(default)]
         between: bool,
+        /// Instances per point (a clump), at least 1.
+        #[serde(default = "one_u32")]
+        per_point: u32,
+        /// Each instance is moved by a hashed offset of up to this many world units along
+        /// and across the line.
+        #[serde(default)]
+        scatter: f32,
+        /// Each instance's delay grows by a hashed `0..delay_jitter` seconds.
+        #[serde(default)]
+        delay_jitter: f32,
     },
 }
 
@@ -396,7 +500,8 @@ pub struct LayerDef {
     /// Intensity over the layer's life; `None` is a constant 1.
     #[serde(default)]
     pub curve: Option<String>,
-    /// Factor on `size` over the layer's life (cards, decals and lights); `None` is 1.
+    /// Factor on `size` over the layer's life (cards, decals and lights; a ring's thickness);
+    /// `None` is 1.
     #[serde(default)]
     pub size_curve: Option<String>,
     /// Factor on the texture's shading before the ramp lookup over the layer's life (cards
@@ -525,6 +630,10 @@ pub struct EmitterDef {
     /// for an element drawn along +x under `VelocityStretched`).
     #[serde(default)]
     pub roll_deg: f32,
+    /// Effect spawned where a particle falls back to the height it started at (a droplet
+    /// leaving a splat); the particle ends there. The effect's event kind must be `Point`.
+    #[serde(default)]
+    pub land: Option<String>,
 }
 
 /// Pool capacities and level-of-detail rules (§5.6), sized at load and never grown.

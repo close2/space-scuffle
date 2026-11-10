@@ -1,5 +1,6 @@
 // Shared functions and records of the effect renderer (plan 2026-11-09-effect-visualization
-// §5.1): ramp lookup, erosion step, soft depth, flipbook frame blend and premultiplication.
+// §5.1): ramp lookup, noise breakup and erosion step, soft depth, flipbook frame blend and
+// premultiplication.
 // The records match client::effects::instances byte for byte.
 #define_import_path space_scuffle::effects::common
 
@@ -20,6 +21,18 @@ struct SpriteInstance {
     orient: u32,
     ramp_scale: f32,
     flags: u32,
+    noise_offset_x: f32,
+    noise_offset_y: f32,
+    noise_scale: f32,
+    noise_amount: f32,
+    clip_axis_x: f32,
+    clip_axis_z: f32,
+    clip_min: f32,
+    clip_max: f32,
+    softness: f32,
+    shade: f32,
+    noise_layer: u32,
+    shape: u32,
 }
 
 struct DecalInstance {
@@ -36,22 +49,33 @@ struct DecalInstance {
     ramp_scale: f32,
     clip_min: f32,
     clip_max: f32,
+    noise_offset_x: f32,
+    noise_offset_y: f32,
+    noise_scale: f32,
+    noise_amount: f32,
+    softness: f32,
+    shade: f32,
+    noise_layer: u32,
+    clip_axis_x: f32,
+    clip_axis_z: f32,
     padding_a: f32,
     padding_b: f32,
-    padding_c: f32,
 }
 
 const ORIENT_CAMERA: u32 = 0u;
 const ORIENT_GROUND: u32 = 1u;
 const ORIENT_VERTICAL: u32 = 2u;
 const ORIENT_STRETCHED: u32 = 3u;
+const ORIENT_UPRIGHT: u32 = 4u;
+
+const SHAPE_TEXTURE: u32 = 0u;
+const SHAPE_RADIAL: u32 = 1u;
+const SHAPE_FRONT: u32 = 2u;
 
 // SpriteInstance::flags bits.
 const FLAG_MIRROR: u32 = 1u;
 const FLAG_POLAR: u32 = 2u;
 
-// Width of the soft step of the erosion threshold.
-const EROSION_SOFTNESS: f32 = 0.08;
 
 // Colour of `ramps` row `row` at luminance `x` (0..1), linearly interpolated between texels.
 // The ramp atlas is Rgba32Float and not filterable, so the two texels are loaded and mixed.
@@ -66,12 +90,49 @@ fn ramp_lookup(ramps: texture_2d<f32>, row: u32, x: f32) -> vec4<f32> {
 }
 
 // Survival of a texel of erosion order `order` (low erodes first) under `threshold` (0 keeps
-// everything, 1 erodes everything), with a soft step so the edge does not alias.
-fn erosion_step(order: f32, threshold: f32) -> f32 {
-    if (threshold <= 0.0) {
+// everything, 1 erodes everything), with a soft step `softness` wide so the edge feathers
+// instead of stepping. Without breakup noise a zero threshold keeps everything; with it the
+// noise already shapes the edge at a zero threshold.
+fn erosion_step(order: f32, threshold: f32, softness: f32, noisy: bool) -> f32 {
+    if (threshold <= 0.0 && !noisy) {
         return 1.0;
     }
-    return smoothstep(threshold, threshold + EROSION_SOFTNESS, order);
+    return smoothstep(threshold, threshold + max(softness, 1e-3), order);
+}
+
+// The erosion order of a texel whose baked order is `order` with breakup noise `noise` mixed
+// in by `amount` (0 the baked order only, 1 the noise only).
+fn breakup_order(order: f32, noise: f32, amount: f32) -> f32 {
+    return mix(order, noise, clamp(amount, 0.0, 1.0));
+}
+
+// Shading darkened in thin parts: `shading` scaled towards `shading * density` by `shade`, so
+// a volume's dense middle stays lit and its thin rim falls into shadow instead of glowing.
+fn self_shade(shading: f32, density: f32, shade: f32) -> f32 {
+    return shading * mix(1.0, clamp(density, 0.0, 1.0), clamp(shade, 0.0, 1.0));
+}
+
+// First channel of noise layer `layer` at `uv` (tiling; the sampler repeats), at mip `level`.
+fn noise_sample(
+    atlas: texture_2d_array<f32>,
+    atlas_sampler: sampler,
+    uv: vec2<f32>,
+    layer: u32,
+    level: f32,
+) -> f32 {
+    return textureSampleLevel(atlas, atlas_sampler, uv, i32(layer), level).r;
+}
+
+// Fade across a clip window [`low`, `high`] of a coordinate `d`, soft over `edge` world units.
+fn clip_fade(d: f32, low: f32, high: f32, edge: f32) -> f32 {
+    return smoothstep(low, low + edge, d) * (1.0 - smoothstep(high - edge, high, d));
+}
+
+// Mip level of a texture `cell` texels wide sampled at `uv` whose screen derivatives are `dx`
+// and `dy`.
+fn derivative_mip_level(cell: f32, dx: vec2<f32>, dy: vec2<f32>) -> f32 {
+    let footprint = max(length(dx), length(dy)) * cell;
+    return max(log2(max(footprint, 1e-6)), 0.0);
 }
 
 // View-space z (negative in front of the camera) of normalized device depth `ndc_depth`

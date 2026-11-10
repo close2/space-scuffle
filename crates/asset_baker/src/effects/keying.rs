@@ -316,6 +316,32 @@ pub fn luminance_emissive(image: &RgbaImage, levels: Levels) -> KeyedElement {
     }
 }
 
+/// Leveled luminance over which the silhouette key's density rises from 0 to 1: the
+/// anti-aliased rim of an opaque element against pure black.
+pub const SILHOUETTE_BAND: f32 = 0.04;
+
+/// The silhouette key for an opaque, hard-edged lit element on pure black (chitin, rock):
+/// `density = smoothstep(0, SILHOUETTE_BAND, l)` and `shading = l`, with `l` the leveled
+/// luminance, so dark parts of the element stay opaque and keep their dark shading; nothing
+/// is emissive. The black check guarantees the background is at most the black point.
+#[must_use]
+pub fn silhouette_key(image: &RgbaImage, levels: Levels) -> KeyedElement {
+    let (width, height) = image.dimensions();
+    let mut shading = Plane::zeros(width, height);
+    let mut density = Plane::zeros(width, height);
+    for (index, pixel) in image.pixels().enumerate() {
+        let l = leveled(*pixel, levels);
+        let t = (l / SILHOUETTE_BAND).clamp(0.0, 1.0);
+        density.data[index] = t * t * (3.0 - 2.0 * t);
+        shading.data[index] = l;
+    }
+    KeyedElement {
+        shading,
+        density,
+        emissive: Plane::zeros(width, height),
+    }
+}
+
 /// The luminance key fallback for a lit semi-transparent element without a pair:
 /// `density = smoothstep(0, 1, l)` and `shading = min(1, l / density)` with `l` the leveled
 /// luminance; nothing is emissive.
@@ -465,5 +491,31 @@ mod tests {
         assert!(keyed.density.data[5] > 0.0 && keyed.density.data[5] < 0.2);
         assert!(keyed.shading.data[5] <= 1.0);
         assert_eq!(keyed.emissive.data[5], 0.0);
+    }
+
+    #[test]
+    fn the_silhouette_key_keeps_dark_parts_opaque_and_dark() {
+        let mut image = flat(4, 4, 0);
+        image.put_pixel(1, 1, Rgba([16, 16, 16, 255]));
+        image.put_pixel(2, 2, Rgba([230, 230, 230, 255]));
+        image.put_pixel(3, 3, Rgba([5, 5, 5, 255]));
+        let levels = Levels {
+            black: 3,
+            white: 230,
+        };
+        let keyed = silhouette_key(&image, levels);
+        assert!(
+            (keyed.density.data[5] - 1.0).abs() < 1e-6,
+            "a dark body pixel is opaque"
+        );
+        assert!(keyed.shading.data[5] < 0.1, "and keeps its dark shading");
+        assert!((keyed.density.data[10] - 1.0).abs() < 1e-6);
+        assert!((keyed.shading.data[10] - 1.0).abs() < 1e-6);
+        assert!(
+            keyed.density.data[15] > 0.0 && keyed.density.data[15] < 1.0,
+            "an anti-aliased rim pixel is partly covered"
+        );
+        assert_eq!(keyed.density.data[0], 0.0, "black stays empty");
+        assert!(keyed.emissive.data.iter().all(|value| *value == 0.0));
     }
 }

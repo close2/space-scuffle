@@ -29,7 +29,7 @@ pub use units::{UnitEffectTables, WeaponEffectIds};
 use super::curve::{Curve, Ramp};
 use bevy::prelude::*;
 use schema::{
-    BurstCount, DecalYaw, EffectClass, EmitterShape, EventKind, Orient, ParticleOrient,
+    BurstCount, CardShape, DecalYaw, EffectClass, EmitterShape, EventKind, Orient, ParticleOrient,
     PlacementDef, Priority, RingMapping, RotationDef, ValueDef,
 };
 use std::collections::BTreeMap;
@@ -80,6 +80,22 @@ impl ElementRef {
     }
 }
 
+/// Noise breakup of a card's or decal's erosion and edges, resolved (see
+/// [`schema::BreakupDef`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Breakup {
+    /// Texture array layer of the noise element.
+    pub noise_layer: u32,
+    /// Noise repeats across the element.
+    pub scale: f32,
+    /// Weight of the noise in the erosion order, 0..1.
+    pub amount: f32,
+    /// Width of the erosion threshold's soft step.
+    pub softness: f32,
+    /// Self-shading of thin parts, 0..1.
+    pub shade: f32,
+}
+
 /// The look of a card (sprite or ring).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CardLook {
@@ -108,6 +124,20 @@ pub struct CardLook {
     pub lift: Option<f32>,
     /// Texture mapping of a ring (plain cards ignore it).
     pub mapping: RingMapping,
+    /// Lift over life in half sizes; overrides `lift`.
+    pub lift_curve: Option<CurveId>,
+    /// Largest hashed lean, radians.
+    pub lean: f32,
+    /// Distance moved away from the anchor over life, world units.
+    pub spread: f32,
+    /// Shift towards the camera in the sort, world units.
+    pub sort_bias: f32,
+    /// Whether the card is cut off at the event line's ends.
+    pub clip_to_line: bool,
+    /// Texture or computed shape.
+    pub shape: CardShape,
+    /// Noise breakup.
+    pub breakup: Option<Breakup>,
 }
 
 /// The look of a decal.
@@ -129,6 +159,8 @@ pub struct DecalLook {
     pub width: f32,
     /// Whether the mark is cut off at the line's ends.
     pub clip_to_line: bool,
+    /// Noise breakup.
+    pub breakup: Option<Breakup>,
 }
 
 /// A layer's block, resolved.
@@ -211,6 +243,8 @@ pub struct Layer {
     pub radius: Option<RingRadius>,
     /// Placements, 1 to [`MAX_PLACEMENTS`].
     pub placements: Vec<PlacementDef>,
+    /// A particle layer's particles are cut off at the event line's ends.
+    pub clip_to_line: bool,
 }
 
 /// A ring's radius over its layer's life, resolved.
@@ -272,6 +306,8 @@ pub struct Emitter {
     pub rotation: RotationDef,
     /// Fixed roll, radians.
     pub roll: f32,
+    /// Effect spawned where a particle lands (a `Point` effect).
+    pub land: Option<EffectId>,
 }
 
 /// Pool capacities and level-of-detail rules.

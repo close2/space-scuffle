@@ -31,7 +31,7 @@
 use super::flipbook::{select_span, SpanRecord};
 use super::keying::{
     check_black, difference_matte, luminance_emissive, luminance_key, measure_levels,
-    BlackCheckReport, KeyedElement, MatteReport,
+    silhouette_key, BlackCheckReport, KeyedElement, Levels, MatteReport,
 };
 use super::noise::{generate_sheet, NoiseRecipe, EFFECT_NOISE_TOOL};
 use super::packing::{centre_into_cells, mip_chain, pack_cell, strip, ErosionParams, MipFilter};
@@ -64,6 +64,30 @@ pub enum ElementLook {
     /// Lit and semi-transparent (smoke, dust, goo, stains): difference matte from a pair, else
     /// the luminance key fallback; drawn with premultiplied alpha.
     Lit,
+    /// Opaque, hard-edged and lit (chitin, rock) on pure black: the silhouette key (density
+    /// steps up just above the black point, shading is the luminance), so dark parts stay
+    /// opaque; drawn with premultiplied alpha. Takes pictures on black only.
+    Solid,
+}
+
+impl ElementLook {
+    /// The key of a picture on black of an element of this look, and its method.
+    fn key_on_black(self, picture: &RgbaImage, levels: Levels) -> KeyedElement {
+        match self {
+            Self::Emissive => luminance_emissive(picture, levels),
+            Self::Lit => luminance_key(picture, levels),
+            Self::Solid => silhouette_key(picture, levels),
+        }
+    }
+
+    /// The method [`Self::key_on_black`] records.
+    const fn method_on_black(self) -> KeyingMethod {
+        match self {
+            Self::Emissive => KeyingMethod::LuminanceEmissive,
+            Self::Lit => KeyingMethod::LuminanceKey,
+            Self::Solid => KeyingMethod::SilhouetteKey,
+        }
+    }
 }
 
 /// Most variants or grid items one element may have.
@@ -234,9 +258,9 @@ impl EffectBakeRecipe {
                 return Err(invalid(format!("element '{}' appears twice", element.name)));
             }
             check_pictures(element).map_err(invalid)?;
-            if element.source.has_pair() && element.look == ElementLook::Emissive {
+            if element.source.has_pair() && element.look != ElementLook::Lit {
                 return Err(invalid(format!(
-                    "element '{}': a black/white pair is for lit elements; an emissive element is keyed by luminance from its picture on black",
+                    "element '{}': a black/white pair is for lit elements; an emissive or solid element is keyed from its picture on black",
                     element.name
                 )));
             }
@@ -426,7 +450,7 @@ fn key_element(
 ) -> Result<KeyedSource, EffectError> {
     let blend = match element.look {
         ElementLook::Emissive => ElementBlend::Additive,
-        ElementLook::Lit => ElementBlend::Premultiplied,
+        ElementLook::Lit | ElementLook::Solid => ElementBlend::Premultiplied,
     };
     match &element.source {
         ElementSource::Clip {
@@ -454,13 +478,10 @@ fn key_element(
             let source = generated_source(inputs.ledger, element, file, &path, ImageRole::OnBlack)?;
             let black = check_black(&picture, &element.name, None)?;
             let levels = measure_levels(&[&picture], &element.name)?;
-            let (keyed, method) = match element.look {
-                ElementLook::Emissive => (
-                    luminance_emissive(&picture, levels),
-                    KeyingMethod::LuminanceEmissive,
-                ),
-                ElementLook::Lit => (luminance_key(&picture, levels), KeyingMethod::LuminanceKey),
-            };
+            let (keyed, method) = (
+                element.look.key_on_black(&picture, levels),
+                element.look.method_on_black(),
+            );
             Ok(KeyedSource {
                 pictures: vec![keyed],
                 provenance: ElementProvenance {
@@ -625,14 +646,12 @@ fn key_pictures(
     } else {
         let blacks: Vec<&RgbaImage> = pictures.iter().map(|p| &p.black).collect();
         let levels = measure_levels(&blacks, &element.name)?;
-        let method = match element.look {
-            ElementLook::Emissive => KeyingMethod::LuminanceEmissive,
-            ElementLook::Lit => KeyingMethod::LuminanceKey,
-        };
-        keyed.extend(blacks.iter().map(|picture| match element.look {
-            ElementLook::Emissive => luminance_emissive(picture, levels),
-            ElementLook::Lit => luminance_key(picture, levels),
-        }));
+        let method = element.look.method_on_black();
+        keyed.extend(
+            blacks
+                .iter()
+                .map(|picture| element.look.key_on_black(picture, levels)),
+        );
         KeyingRecord {
             method,
             levels: Some(levels),
@@ -807,16 +826,12 @@ fn key_frames(
         worst = Some(worst.map_or(report, |w| w.worst(report)));
     }
     let levels = measure_levels(kept, &element.name)?;
-    let (pictures, method) = match element.look {
-        ElementLook::Emissive => (
-            kept.iter().map(|f| luminance_emissive(f, levels)).collect(),
-            KeyingMethod::LuminanceEmissive,
-        ),
-        ElementLook::Lit => (
-            kept.iter().map(|f| luminance_key(f, levels)).collect(),
-            KeyingMethod::LuminanceKey,
-        ),
-    };
+    let (pictures, method) = (
+        kept.iter()
+            .map(|f| element.look.key_on_black(f, levels))
+            .collect(),
+        element.look.method_on_black(),
+    );
     Ok((
         pictures,
         KeyingRecord {

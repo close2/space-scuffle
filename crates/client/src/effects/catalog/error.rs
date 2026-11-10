@@ -141,6 +141,36 @@ pub enum EffectCatalogError {
         /// The element name.
         element: String,
     },
+    /// A `breakup` names an element that is not a noise element.
+    #[error("'{path}': {site} reads texture element '{element}' as breakup noise, which is not a noise element")]
+    NotNoiseElement {
+        /// The file.
+        path: PathBuf,
+        /// Where the element is used.
+        site: Site,
+        /// The element name.
+        element: String,
+    },
+    /// An emitter's `land` effect is not made for `Point` events.
+    #[error(
+        "'{path}': emitter '{emitter}' lands with effect '{effect}', whose event is not Point"
+    )]
+    LandEffectNotPoint {
+        /// The file.
+        path: PathBuf,
+        /// The emitter.
+        emitter: String,
+        /// The effect it names.
+        effect: String,
+    },
+    /// A ring with `mapping: Front` has no `breakup`.
+    #[error("'{path}': {site} is a Front ring without the breakup noise it is computed from")]
+    FrontWithoutBreakup {
+        /// The file.
+        path: PathBuf,
+        /// The layer.
+        site: Site,
+    },
     /// Two texture sets define the same element name.
     #[error("'{path}': texture element '{element}' is defined by two sets")]
     DuplicateElement {

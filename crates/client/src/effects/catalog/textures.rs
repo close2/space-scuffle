@@ -2,17 +2,17 @@
 //!
 //! # Responsibility
 //! Owns [`TextureAtlas`]: the elements of every listed set by name, and the texels of every
-//! drawable (`PackedV1`) set concatenated into one layer-major array with its mip chain, ready
-//! to become a single `texture_2d_array` on the GPU.
+//! drawable (`PackedV1`) and noise (`NoiseV1`) set concatenated into one layer-major array
+//! with its mip chain, ready to become a single `texture_2d_array` on the GPU.
 //!
 //! # How it fits
 //! The manifest type and its consistency check belong to `asset_baker`
 //! (`asset_baker::effects::texture_set`, plan §6.4), which writes the sets; this module only
-//! reads them, so the format has one definition. `NoiseV1` sets are resolved by name (their
-//! elements are data for later blocks) but not uploaded by WP4's blocks.
+//! reads them, so the format has one definition. `NoiseV1` elements are uploaded with the
+//! drawable ones but are not drawable shapes: blocks read them as breakup noise only.
 //!
 //! # Invariants
-//! - Every drawable set shares one cell size and mip count (one array), else a typed error.
+//! - Every uploaded set shares one cell size and mip count (one array), else a typed error.
 //! - Element names are unique across all listed sets.
 //! - A strip whose size differs from its manifest is refused, never resampled.
 
@@ -34,6 +34,8 @@ pub struct AtlasElement {
     pub duration_secs: Option<f32>,
     /// Whether a block may draw it (`PackedV1` and not `Data`).
     pub drawable: bool,
+    /// Whether it is a noise element (`NoiseV1`), uploaded for breakup only.
+    pub noise: bool,
 }
 
 /// The listed texture sets: elements by name and the drawable texels.
@@ -75,7 +77,9 @@ impl TextureAtlas {
                 }
             })?;
             let drawable_set = manifest.channels == ChannelLayout::PackedV1;
-            if drawable_set {
+            let noise_set = manifest.channels == ChannelLayout::NoiseV1;
+            let uploaded = drawable_set || noise_set;
+            if uploaded {
                 atlas.admit_shape(&manifest, &path)?;
             }
             for element in &manifest.elements {
@@ -84,6 +88,7 @@ impl TextureAtlas {
                     frames: element.frames,
                     duration_secs: element.duration_ms.map(millis_to_secs),
                     drawable: drawable_set && element.blend != ElementBlend::Data,
+                    noise: noise_set,
                 };
                 if atlas.elements.insert(element.name.clone(), entry).is_some() {
                     return Err(EffectCatalogError::DuplicateElement {
@@ -92,7 +97,7 @@ impl TextureAtlas {
                     });
                 }
             }
-            if drawable_set {
+            if uploaded {
                 let directory = path.parent().unwrap_or(root);
                 strips_by_set.push(read_strips(directory, &manifest)?);
                 atlas.layers += manifest.layers;

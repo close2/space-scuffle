@@ -13,14 +13,14 @@
 
 use super::error::{EffectCatalogError, NameKind, Site};
 use super::schema::{
-    BlockDef, EffectClass, EffectDefRaw, EffectsFile, EmitterDef, EventKind, LayerDef,
+    BlockDef, BreakupDef, EffectClass, EffectDefRaw, EffectsFile, EmitterDef, EventKind, LayerDef,
     PlacementDef, SpawnDef, ValueDef,
 };
 use super::textures::TextureAtlas;
 use super::{
-    Block, Budget, CardLook, CurveId, DecalLook, Defaults, Effect, EffectCatalog, EffectId,
-    ElementRef, Emitter, EmitterId, Layer, Pool, RampId, RingRadius, EFFECTS_FORMAT_VERSION,
-    MAX_LAYERS, MAX_PLACEMENTS,
+    Block, Breakup, Budget, CardLook, CurveId, DecalLook, Defaults, Effect, EffectCatalog,
+    EffectId, ElementRef, Emitter, EmitterId, Layer, Pool, RampId, RingRadius,
+    EFFECTS_FORMAT_VERSION, MAX_LAYERS, MAX_PLACEMENTS,
 };
 use crate::effects::binding::provides;
 use crate::effects::curve::{Curve, Ramp};
@@ -55,6 +55,19 @@ pub(super) fn resolve(
     let ramps = resolver.ramps(file)?;
     let curves = resolver.curves(file)?;
     for (name, emitter) in &file.emitters {
+        if let Some(land) = &emitter.land {
+            if file
+                .effects
+                .get(land)
+                .is_some_and(|effect| effect.event != EventKind::Point)
+            {
+                return Err(EffectCatalogError::LandEffectNotPoint {
+                    path: path.to_path_buf(),
+                    emitter: name.clone(),
+                    effect: land.clone(),
+                });
+            }
+        }
         let resolved = resolver.emitter(name, emitter)?;
         resolver.emitters.push(resolved);
     }
@@ -211,6 +224,75 @@ impl Resolver<'_> {
         })
     }
 
+    /// A breakup: its noise element and checked parameters.
+    fn breakup(
+        &self,
+        def: Option<&BreakupDef>,
+        at: &Site,
+    ) -> Result<Option<Breakup>, EffectCatalogError> {
+        let Some(def) = def else {
+            return Ok(None);
+        };
+        let element = self.atlas.elements.get(&def.noise);
+        let Some(element) = element.filter(|element| element.noise) else {
+            return Err(EffectCatalogError::NotNoiseElement {
+                path: self.path.to_path_buf(),
+                site: at.clone(),
+                element: def.noise.clone(),
+            });
+        };
+        self.at_least(at, "breakup.scale", def.scale, 0.01)?;
+        self.unit_range(at, "breakup.amount", def.amount, 0.0)?;
+        self.unit_range(at, "breakup.softness", def.softness, 0.001)?;
+        self.unit_range(at, "breakup.shade", def.shade, 0.0)?;
+        Ok(Some(Breakup {
+            noise_layer: element.first_layer,
+            scale: def.scale,
+            amount: def.amount,
+            softness: def.softness,
+            shade: def.shade,
+        }))
+    }
+
+    /// Checks that `value` lies in `(0, 1]`.
+    fn positive_fraction(
+        &self,
+        at: &Site,
+        field: &'static str,
+        value: f32,
+    ) -> Result<(), EffectCatalogError> {
+        if value > 0.0 && value <= 1.0 {
+            return Ok(());
+        }
+        Err(EffectCatalogError::InvalidValue {
+            path: self.path.to_path_buf(),
+            site: at.clone(),
+            field,
+            value,
+            rule: "it must be in (0, 1]",
+        })
+    }
+
+    /// Checks that `value` lies in `[min, 1]`.
+    fn unit_range(
+        &self,
+        at: &Site,
+        field: &'static str,
+        value: f32,
+        min: f32,
+    ) -> Result<(), EffectCatalogError> {
+        if (min..=1.0).contains(&value) {
+            return Ok(());
+        }
+        Err(EffectCatalogError::InvalidValue {
+            path: self.path.to_path_buf(),
+            site: at.clone(),
+            field,
+            value,
+            rule: "it must lie between its minimum and 1",
+        })
+    }
+
     /// Checks that `value` is finite and at least `min`.
     fn at_least(
         &self,
@@ -268,6 +350,11 @@ impl Resolver<'_> {
             curve: self.curve(emitter.curve.as_ref(), &at)?,
             rotation: emitter.rotation,
             roll: emitter.roll_deg.to_radians(),
+            land: emitter
+                .land
+                .as_ref()
+                .map(|land| self.id(NameKind::Effect, land, &at).map(EffectId))
+                .transpose()?,
         })
     }
 
@@ -329,9 +416,25 @@ impl Resolver<'_> {
             match placement {
                 PlacementDef::Point => {}
                 PlacementDef::Disc { radius, .. } => values.push(*radius),
-                PlacementDef::Line { spacing, .. } => {
+                PlacementDef::Line {
+                    spacing,
+                    per_point,
+                    scatter,
+                    delay_jitter,
+                    ..
+                } => {
                     values.push(*spacing);
                     self.require(at, event, super::schema::Binding::LineSpacing)?;
+                    if *per_point == 0 || *per_point > MAX_INSTANCES_PER_PLACEMENT {
+                        return Err(EffectCatalogError::TooManyInstances {
+                            path: self.path.to_path_buf(),
+                            site: at.clone(),
+                            count: *per_point,
+                            limit: MAX_INSTANCES_PER_PLACEMENT,
+                        });
+                    }
+                    self.at_least(at, "scatter", *scatter, 0.0)?;
+                    self.at_least(at, "delay_jitter", *delay_jitter, 0.0)?;
                 }
             }
         }
@@ -367,6 +470,13 @@ impl Resolver<'_> {
             size_jitter: layer.size_jitter,
             radius,
             placements,
+            clip_to_line: matches!(
+                layer.block,
+                BlockDef::Particles {
+                    clip_to_line: true,
+                    ..
+                }
+            ),
         })
     }
 
@@ -456,8 +566,17 @@ impl Resolver<'_> {
                 fps,
                 frame_curve,
                 lift,
+                lift_curve,
+                lean_deg,
+                spread,
+                sort_bias,
+                clip_to_line,
+                shape,
+                breakup,
             } => {
                 self.at_least(at, "soft_depth", *soft_depth, 0.0)?;
+                self.at_least(at, "lean_deg", *lean_deg, 0.0)?;
+                self.at_least(at, "spread", *spread, 0.0)?;
                 if let Some(fps) = fps {
                     self.at_least(at, "fps", *fps, 0.001)?;
                 }
@@ -477,6 +596,13 @@ impl Resolver<'_> {
                     frame_curve: self.curve(frame_curve.as_ref(), at)?,
                     lift: *lift,
                     mapping: super::schema::RingMapping::Card,
+                    lift_curve: self.curve(lift_curve.as_ref(), at)?,
+                    lean: lean_deg.to_radians(),
+                    spread: *spread,
+                    sort_bias: *sort_bias,
+                    clip_to_line: *clip_to_line,
+                    shape: *shape,
+                    breakup: self.breakup(breakup.as_ref(), at)?,
                 })
             }
             BlockDef::Ring { .. } | BlockDef::Decal { .. } => self.masked_block(at, block)?,
@@ -493,7 +619,7 @@ impl Resolver<'_> {
                     height: *height,
                 }
             }
-            BlockDef::Particles { emitter } => {
+            BlockDef::Particles { emitter, .. } => {
                 Block::Particles(EmitterId(self.id(NameKind::Emitter, emitter, at)?))
             }
         })
@@ -510,17 +636,18 @@ impl Resolver<'_> {
                 erosion,
                 mapping,
                 height,
+                sort_bias,
+                breakup,
             } => {
                 self.at_least(at, "height", *height, 0.0)?;
-                if !(*thickness > 0.0 && *thickness <= 1.0) {
-                    return Err(EffectCatalogError::InvalidValue {
+                let breakup = self.breakup(breakup.as_ref(), at)?;
+                if *mapping == super::schema::RingMapping::Front && breakup.is_none() {
+                    return Err(EffectCatalogError::FrontWithoutBreakup {
                         path: self.path.to_path_buf(),
                         site: at.clone(),
-                        field: "thickness",
-                        value: *thickness,
-                        rule: "it must be in (0, 1]",
                     });
                 }
+                self.positive_fraction(at, "thickness", *thickness)?;
                 Ok(Block::Ring {
                     look: CardLook {
                         element: self.element(texture, at)?,
@@ -535,6 +662,13 @@ impl Resolver<'_> {
                         frame_curve: None,
                         lift: None,
                         mapping: *mapping,
+                        lift_curve: None,
+                        lean: 0.0,
+                        spread: 0.0,
+                        sort_bias: *sort_bias,
+                        clip_to_line: false,
+                        shape: super::schema::CardShape::Texture,
+                        breakup,
                     },
                     thickness: *thickness,
                     height: *height,
@@ -549,17 +683,10 @@ impl Resolver<'_> {
                 yaw,
                 width,
                 clip_to_line,
+                breakup,
             } => {
                 self.at_least(at, "depth", *depth, 0.01)?;
-                if !(*width > 0.0 && *width <= 1.0) {
-                    return Err(EffectCatalogError::InvalidValue {
-                        path: self.path.to_path_buf(),
-                        site: at.clone(),
-                        field: "width",
-                        value: *width,
-                        rule: "it must be in (0, 1]",
-                    });
-                }
+                self.positive_fraction(at, "width", *width)?;
                 if !(0.0..1.0).contains(grazing) {
                     return Err(EffectCatalogError::InvalidValue {
                         path: self.path.to_path_buf(),
@@ -578,6 +705,7 @@ impl Resolver<'_> {
                     yaw: *yaw,
                     width: *width,
                     clip_to_line: *clip_to_line,
+                    breakup: self.breakup(breakup.as_ref(), at)?,
                 }))
             }
             BlockDef::Sprite { .. } | BlockDef::Light { .. } | BlockDef::Particles { .. } => {

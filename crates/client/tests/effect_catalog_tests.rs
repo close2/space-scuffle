@@ -722,3 +722,157 @@ fn every_shipped_splash_weapon_with_a_block_names_a_splash_effect_bound_to_its_e
         defaulted.join("\n  ")
     );
 }
+
+/// A fixture directory with the fixture set and the noise set; returns both manifests.
+fn noise_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let (dir, manifest) = fixture();
+    let noise = effect_fixtures::write_noise_set(dir.path());
+    (dir, manifest, noise)
+}
+
+#[test]
+fn breakup_noise_resolves_to_its_layer_after_the_drawable_elements() {
+    let (dir, manifest, noise) = noise_fixture();
+    let layer = r#"(block: Sprite(texture: "soft_disc", ramp: "white", orient: Upright,
+        lean_deg: 20.0, spread: 0.5, sort_bias: 1.0, shape: Radial,
+        breakup: (noise: "grain", scale: 2.0, amount: 0.4, softness: 0.1, shade: 0.5)),
+        size: (bind: SplashReach, scale: 1.0), duration: 0.5, priority: Critical)"#;
+    let catalog = load(
+        dir.path(),
+        &effect_fixtures::vocabulary_with_noise(&manifest, &noise, "", &splash_effect(layer)),
+    )
+    .expect("a breakup naming a noise element resolves");
+    assert_eq!(
+        catalog.atlas.layers, 8,
+        "the noise layer is uploaded after the 7 drawable ones"
+    );
+    let boom = catalog
+        .effect(catalog.effect_id("boom").expect("boom"))
+        .expect("boom exists");
+    let Block::Sprite(look) = &boom.layers[0].block else {
+        panic!("a sprite");
+    };
+    let breakup = look.breakup.expect("the breakup resolved");
+    assert_eq!(breakup.noise_layer, 7);
+    assert!((breakup.amount - 0.4).abs() < f32::EPSILON);
+    assert!((look.lean - 20.0_f32.to_radians()).abs() < 1e-6);
+}
+
+#[test]
+fn a_breakup_must_name_a_noise_element() {
+    let (dir, manifest, noise) = noise_fixture();
+    let layer = SPRITE.replace(
+        r#"ramp: "white")"#,
+        r#"ramp: "white", breakup: (noise: "solid", amount: 0.3))"#,
+    );
+    let error = load(
+        dir.path(),
+        &effect_fixtures::vocabulary_with_noise(&manifest, &noise, "", &splash_effect(&layer)),
+    )
+    .expect_err("a drawable element is not noise");
+    assert!(
+        matches!(&error, EffectCatalogError::NotNoiseElement { element, .. } if element == "solid"),
+        "{error}"
+    );
+    assert_names(&error, &["'boom' layer 0"]);
+    let grain = SPRITE.replace("soft_disc", "grain");
+    let error = load(
+        dir.path(),
+        &effect_fixtures::vocabulary_with_noise(&manifest, &noise, "", &splash_effect(&grain)),
+    )
+    .expect_err("a noise element is not drawable");
+    assert!(
+        matches!(&error, EffectCatalogError::UndrawableElement { .. }),
+        "{error}"
+    );
+    let loud = SPRITE.replace(
+        r#"ramp: "white")"#,
+        r#"ramp: "white", breakup: (noise: "grain", amount: 1.5))"#,
+    );
+    let error = load(
+        dir.path(),
+        &effect_fixtures::vocabulary_with_noise(&manifest, &noise, "", &splash_effect(&loud)),
+    )
+    .expect_err("an amount above 1");
+    assert!(
+        matches!(
+            &error,
+            EffectCatalogError::InvalidValue {
+                field: "breakup.amount",
+                ..
+            }
+        ),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_front_ring_needs_its_breakup_noise() {
+    let (dir, manifest, noise) = noise_fixture();
+    let ring = r#"(block: Ring(texture: "soft_disc", ramp: "green", thickness: 0.2, mapping: Front),
+        radius: (from: (scale: 0.5), to: (bind: SplashReach, scale: 1.0)), duration: 0.3,
+        priority: Critical)"#;
+    let error = load(
+        dir.path(),
+        &effect_fixtures::vocabulary_with_noise(&manifest, &noise, "", &splash_effect(ring)),
+    )
+    .expect_err("a front without noise");
+    assert!(
+        matches!(&error, EffectCatalogError::FrontWithoutBreakup { .. }),
+        "{error}"
+    );
+    assert_names(&error, &["'boom' layer 0"]);
+    let with_noise = ring.replace(
+        "mapping: Front)",
+        r#"mapping: Front, breakup: (noise: "grain", scale: 4.0, amount: 0.3))"#,
+    );
+    load(
+        dir.path(),
+        &effect_fixtures::vocabulary_with_noise(&manifest, &noise, "", &splash_effect(&with_noise)),
+    )
+    .expect("a front with noise resolves");
+}
+
+#[test]
+fn a_landing_emitter_spawns_only_point_effects() {
+    let (dir, manifest) = fixture();
+    let emitters = |land: &str| {
+        format!(
+            r#""globs": (spawn: Burst(count: (base: 4, max: 4)), speed: (1.0, 2.0),
+            cone_deg: 30.0, gravity: 10.0, lifetime: (0.5, 1.0), size: (0.05, 0.1),
+            texture: "soft_disc", orient: Camera, ramp: "green", land: "{land}")"#
+        )
+    };
+    let fleck = r#""fleck": (class: Minor, event: Point, layers: [
+        (block: Decal(texture: "solid", ramp: "blue"), size: (scale: 0.2), duration: 1.0)])"#;
+    let thrower = r#"(block: Particles(emitter: "globs"), size: (scale: 0.5))"#;
+    let effects = format!("{}, {fleck}", splash_effect(thrower));
+    let catalog = load(
+        dir.path(),
+        &vocabulary(&manifest, &emitters("fleck"), &effects, ""),
+    )
+    .expect("a Point landing effect resolves");
+    assert_eq!(
+        catalog.emitters[0].land,
+        catalog.effect_id("fleck"),
+        "the emitter lands with the fleck"
+    );
+    let error = load(
+        dir.path(),
+        &vocabulary(&manifest, &emitters("boom"), &effects, ""),
+    )
+    .expect_err("a splash effect cannot be a landing");
+    assert!(
+        matches!(&error, EffectCatalogError::LandEffectNotPoint { effect, .. } if effect == "boom"),
+        "{error}"
+    );
+    let error = load(
+        dir.path(),
+        &vocabulary(&manifest, &emitters("nowhere"), &effects, ""),
+    )
+    .expect_err("an unknown landing effect");
+    assert!(
+        matches!(&error, EffectCatalogError::UnknownName { name, .. } if name == "nowhere"),
+        "{error}"
+    );
+}

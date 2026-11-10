@@ -187,6 +187,8 @@ pub enum KeyingMethod {
     DifferenceMatte,
     /// Luminance key fallback for a lit element without a pair.
     LuminanceKey,
+    /// Silhouette key of an opaque element on black.
+    SilhouetteKey,
     /// Not keyed: an authored sheet.
     Authored,
 }

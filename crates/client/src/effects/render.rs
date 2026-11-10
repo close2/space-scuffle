@@ -205,6 +205,10 @@ impl EffectGpu {
                 mag_filter: bevy::render::render_resource::FilterMode::Linear,
                 min_filter: bevy::render::render_resource::FilterMode::Linear,
                 mipmap_filter: bevy::render::render_resource::FilterMode::Linear,
+                // Breakup noise tiles; drawable cells have empty borders, so repeating
+                // addressing never shows a neighbour's texels on them.
+                address_mode_u: bevy::render::render_resource::AddressMode::Repeat,
+                address_mode_v: bevy::render::render_resource::AddressMode::Repeat,
                 ..default()
             }),
             card_count: 0,

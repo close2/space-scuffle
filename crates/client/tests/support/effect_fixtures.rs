@@ -155,6 +155,74 @@ pub fn write_named_set(dir: &Path, set: &str, cell: u32, mips: u32, prefix: &str
     path
 }
 
+/// Name of the fixture noise set.
+pub const NOISE_SET: &str = "fx_fixture_noise";
+
+/// Writes a `NoiseV1` set of one element, `grain` (R rising with u, G with v, B and A 0), with
+/// the fixture's cell size and mip count; returns the manifest path.
+#[allow(clippy::cast_precision_loss)]
+pub fn write_noise_set(dir: &Path) -> PathBuf {
+    let mut manifest = EffectTextureSet {
+        format_version: EFFECT_FORMAT_VERSION,
+        set: NOISE_SET.to_owned(),
+        cell_size: CELL,
+        padding_px: 0,
+        channels: ChannelLayout::NoiseV1,
+        layers: 1,
+        mip_files: Vec::new(),
+        elements: vec![EffectElement {
+            name: "grain".to_owned(),
+            first_layer: 0,
+            frames: 1,
+            duration_ms: None,
+            pivot_px: [CELL / 2, CELL / 2],
+            blend: ElementBlend::Data,
+            channel_labels: Some(["u".into(), "v".into(), "zero".into(), "zero".into()]),
+        }],
+    };
+    for level in 0..MIPS {
+        let side = CELL >> level;
+        let mut strip = image::RgbaImage::new(side, side);
+        for y in 0..side {
+            for x in 0..side {
+                let u = (x as f32 + 0.5) / side as f32;
+                let v = (y as f32 + 0.5) / side as f32;
+                strip.put_pixel(x, y, image::Rgba([unit_byte(u), unit_byte(v), 0, 0]));
+            }
+        }
+        let name = mip_file_name(NOISE_SET, level as usize);
+        strip
+            .save(dir.join(&name))
+            .expect("the noise strip is written");
+        manifest.mip_files.push(name);
+    }
+    let path = dir.join(format!("{NOISE_SET}.texture.ron"));
+    let text = to_ron_text(&manifest, "fixture noise manifest").expect("the manifest encodes");
+    std::fs::write(&path, text).expect("the noise manifest is written");
+    path
+}
+
+/// `value` in 0..1 as a byte.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn unit_byte(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+/// A vocabulary as [`vocabulary`] that lists both the fixture set and the noise set.
+pub fn vocabulary_with_noise(
+    manifest: &Path,
+    noise: &Path,
+    emitters: &str,
+    effects: &str,
+) -> String {
+    format!(
+        "(format_version: 1, textures: [{manifest:?}, {noise:?}], {RAMPS_AND_CURVES} \
+         emitters: {{ {emitters} }}, effects: {{ {effects} }}, {BUDGET}, defaults: ())",
+        manifest = manifest.display().to_string(),
+        noise = noise.display().to_string()
+    )
+}
+
 /// The standard budget section of fixture vocabularies.
 pub const BUDGET: &str = "budget: (particles: 512, sprites: 256, decals: 64, lights: 4, \
      effects: 64, classes: { Major: 16, Minor: 32, Ambient: 16 }, min_screen_px: 0.0, \

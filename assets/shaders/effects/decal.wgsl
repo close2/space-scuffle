@@ -1,11 +1,17 @@
 // Effect decals: boxes projected onto the scene through the depth prepass
 // (client::effects::render). Each box is drawn by its back faces with no depth test; the
 // fragment reconstructs the scene's world position, keeps it only inside the box, samples the
-// texture in the box's local XZ and fades on faces steeper than the decal's grazing cosine.
+// texture in the box's local XZ at the mip its screen footprint needs, breaks its erosion up
+// with noise of its own phase and fades on faces steeper than the decal's grazing cosine.
 #import bevy_render::view::View
 #import space_scuffle::effects::common::{
-    DecalInstance, ramp_lookup, erosion_step, flipbook_sample, premultiply,
+    DecalInstance, ramp_lookup, erosion_step, breakup_order, self_shade, noise_sample, clip_fade,
+    derivative_mip_level, flipbook_sample, premultiply,
 }
+
+// World units over which a clipped mark fades out at a clip end: an anti-aliased edge, so a
+// mark on a line ends at the line's end within a pixel.
+const CLIP_EDGE: f32 = 0.015;
 
 @group(0) @binding(0) var<uniform> view: View;
 #ifdef MULTISAMPLED
@@ -69,22 +75,38 @@ fn vertex(@builtin(vertex_index) vertex_index: u32, @builtin(instance_index) ins
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let decal = decals[in.instance];
     let depth = textureLoad(depth_prepass, vec2<i32>(floor(in.position.xy)), 0);
-    let uv = (in.position.xy - view.viewport.xy) / view.viewport.zw;
-    let ndc = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
+    let screen_uv = (in.position.xy - view.viewport.xy) / view.viewport.zw;
+    let ndc = vec4<f32>(screen_uv.x * 2.0 - 1.0, 1.0 - screen_uv.y * 2.0, depth, 1.0);
     let world_h = view.world_from_clip * ndc;
     let world = world_h.xyz / world_h.w;
     let normal = normalize(cross(dpdy(world), dpdx(world)));
     let local = rotate_yaw(world - decal.center, -decal.yaw) / decal.half_extents;
-    let texel = flipbook_sample(
-        atlas, atlas_sampler, local.xz * 0.5 + 0.5, decal.layer_a, decal.layer_b, decal.frame_mix, 0.0,
-    );
-    let clipped = local.x < decal.clip_min || local.x > decal.clip_max;
-    let inside = all(abs(local) <= vec3<f32>(1.0)) && depth > 0.0 && !clipped;
+    let uv = local.xz * 0.5 + 0.5;
+    // Derivatives in uniform control flow, before anything is discarded: the mip that matches
+    // the decal's footprint on screen keeps its eroded edges from stair-stepping.
+    let level = derivative_mip_level(f32(textureDimensions(atlas).x), dpdx(uv), dpdy(uv));
+    let texel = flipbook_sample(atlas, atlas_sampler, uv, decal.layer_a, decal.layer_b, decal.frame_mix, level);
+    let noisy = decal.noise_amount > 0.0;
+    var order = texel.b;
+    if (noisy) {
+        let noise_uv = uv * decal.noise_scale + vec2<f32>(decal.noise_offset_x, decal.noise_offset_y);
+        let noise = noise_sample(atlas, atlas_sampler, noise_uv, decal.noise_layer, level + log2(max(decal.noise_scale, 1.0)));
+        order = breakup_order(order, noise, decal.noise_amount);
+    }
+    var clip = 1.0;
+    let clip_axis = vec2<f32>(decal.clip_axis_x, decal.clip_axis_z);
+    if (dot(clip_axis, clip_axis) > 0.0) {
+        clip = clip_fade(dot(world.xz, clip_axis), decal.clip_min, decal.clip_max, CLIP_EDGE);
+    }
+    let inside = all(abs(local) <= vec3<f32>(1.0)) && depth > 0.0;
     let grazing = clamp((abs(normal.y) - decal.grazing) / max(1.0 - decal.grazing, 1e-3), 0.0, 1.0);
     let height_fade = 1.0 - smoothstep(0.7, 1.0, abs(local.y));
-    let coverage = texel.g * erosion_step(texel.b, decal.erosion) * decal.intensity * grazing * height_fade;
+    let survive = erosion_step(order, decal.erosion, decal.softness, noisy);
+    // An intensity above 1 thickens thin parts; the coverage itself never exceeds 1.
+    let coverage = min(texel.g * survive * decal.intensity * grazing * height_fade * clip, 1.0);
     if (!inside || coverage <= 0.0) {
         discard;
     }
-    return premultiply(ramp_lookup(ramps, decal.ramp_row, texel.r * decal.ramp_scale), coverage);
+    let shading = self_shade(texel.r, texel.g, decal.shade);
+    return premultiply(ramp_lookup(ramps, decal.ramp_row, shading * decal.ramp_scale), coverage);
 }

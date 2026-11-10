@@ -73,7 +73,10 @@ pub fn instance_count(
         PlacementDef::Point => 1,
         PlacementDef::Disc { count, .. } => (*count).min(MAX_INSTANCES_PER_PLACEMENT),
         PlacementDef::Line {
-            spacing, between, ..
+            spacing,
+            between,
+            per_point,
+            ..
         } => {
             let Some(line) = line else {
                 return 1;
@@ -91,7 +94,9 @@ pub fn instance_count(
             )]
             let steps = steps as u32;
             let count = if *between { steps.max(1) } else { steps + 1 };
-            count.min(MAX_INSTANCES_PER_PLACEMENT)
+            count
+                .saturating_mul((*per_point).max(1))
+                .min(MAX_INSTANCES_PER_PLACEMENT)
         }
     }
 }
@@ -124,6 +129,9 @@ pub fn place(
             spacing,
             travel,
             between,
+            per_point,
+            scatter,
+            delay_jitter,
         } => {
             let Some(line) = line else {
                 return Placed {
@@ -132,17 +140,22 @@ pub fn place(
                 };
             };
             let direction = (line.to - line.from).normalize_or_zero();
-            #[expect(clippy::cast_precision_loss, reason = "index is below 32")]
-            let steps = index as f32 + if *between { 0.5 } else { 0.0 };
+            let across = Vec3::new(-direction.z, 0.0, direction.x);
+            let point = index / (*per_point).max(1);
+            #[expect(clippy::cast_precision_loss, reason = "point is below 32")]
+            let steps = point as f32 + if *between { 0.5 } else { 0.0 };
             let distance = resolve_value(spacing, bound) * steps;
             let delay = if *travel > f32::EPSILON {
                 distance / travel
             } else {
                 0.0
             };
+            let signed = |salt: u32| 2.0 * unit_float(hash3(seed, index, salt)) - 1.0;
+            let scattered =
+                (direction * signed(0x5CA7_0001) + across * signed(0x5CA7_0002)) * *scatter;
             Placed {
-                offset: direction * distance,
-                delay,
+                offset: direction * distance + scattered,
+                delay: delay + *delay_jitter * unit_float(hash3(seed, index, 0x0DE1_A700)),
             }
         }
     }
@@ -208,6 +221,9 @@ mod tests {
             spacing: constant(1.5),
             travel: 3.0,
             between: false,
+            per_point: 1,
+            scatter: 0.0,
+            delay_jitter: 0.0,
         };
         let bound = BoundValues::default();
         assert_eq!(instance_count(&placement, &bound, Some(line)), 7);
@@ -239,6 +255,9 @@ mod tests {
             spacing: constant(1.0),
             travel: 4.0,
             between: true,
+            per_point: 1,
+            scatter: 0.0,
+            delay_jitter: 0.0,
         };
         let bound = BoundValues::default();
         assert_eq!(instance_count(&placement, &bound, Some(line)), 8);
@@ -250,5 +269,39 @@ mod tests {
             (last.delay - 7.5 / 4.0).abs() < 1e-5,
             "delayed by its distance"
         );
+    }
+
+    #[test]
+    fn a_clump_per_point_scatters_and_jitters_within_its_bounds() {
+        let line = WorldLine {
+            from: Vec3::ZERO,
+            to: Vec3::new(4.0, 0.0, 0.0),
+        };
+        let placement = PlacementDef::Line {
+            spacing: constant(1.0),
+            travel: 10.0,
+            between: false,
+            per_point: 3,
+            scatter: 0.25,
+            delay_jitter: 0.05,
+        };
+        let bound = BoundValues::default();
+        assert_eq!(
+            instance_count(&placement, &bound, Some(line)),
+            15,
+            "five points, three each"
+        );
+        let mut spread = 0.0_f32;
+        for index in 0..15 {
+            let placed = place(&placement, index, 7, &bound, Some(line));
+            #[expect(clippy::cast_precision_loss, reason = "a small index")]
+            let point = (index / 3) as f32;
+            let along = placed.offset.x - point;
+            assert!(along.abs() <= 0.25 + 1e-5 && placed.offset.z.abs() <= 0.25 + 1e-5);
+            let base_delay = point / 10.0;
+            assert!(placed.delay >= base_delay - 1e-6 && placed.delay <= base_delay + 0.05 + 1e-6);
+            spread = spread.max(placed.offset.z.abs());
+        }
+        assert!(spread > 0.05, "the clump is scattered across the line");
     }
 }

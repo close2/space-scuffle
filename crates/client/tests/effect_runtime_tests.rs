@@ -478,3 +478,125 @@ fn the_same_stream_builds_the_same_frames_and_reuses_every_buffer() {
     );
     assert!(a.stats.spawned > 60);
 }
+
+/// A vocabulary whose splash throws particles that land with a `Point` effect, and a line
+/// effect whose cards and particles are clipped to the line.
+const LANDING_EFFECTS: &str = r#"
+    "throw": (class: Major, event: Splash, layers: [
+        (block: Particles(emitter: "globs"), size: (scale: 0.2)),
+    ]),
+    "fleck": (class: Minor, event: Point, layers: [
+        (block: Decal(texture: "solid", ramp: "blue"), size: (scale: 0.2), duration: 2.0),
+    ]),
+    "clipped": (class: Major, event: Line, layers: [
+        (block: Sprite(texture: "soft_disc", ramp: "white", orient: Upright, lean_deg: 20.0,
+            clip_to_line: true),
+         size: (scale: 0.4), duration: 1.0, priority: Critical,
+         placement: Line(spacing: (bind: LineSpacing, scale: 1.0), per_point: 2, scatter: 0.3)),
+        (block: Particles(emitter: "chips", clip_to_line: true),
+         placement: Line(spacing: (bind: LineSpacing, scale: 1.0))),
+    ])
+"#;
+
+/// The emitters of [`LANDING_EFFECTS`].
+const LANDING_EMITTERS: &str = r#"
+    "globs": (spawn: Burst(count: (base: 6, max: 6)), shape: Disc, speed: (2.0, 3.0),
+        cone_deg: 30.0, gravity: 12.0, lifetime: (2.0, 2.0), size: (0.05, 0.1),
+        texture: "soft_disc", orient: Camera, ramp: "green", land: "fleck"),
+    "chips": (spawn: Burst(count: (base: 3, max: 3)), shape: Point, speed: (1.0, 2.0),
+        cone_deg: 60.0, gravity: 9.0, lifetime: (0.5, 0.5), size: (0.05, 0.05),
+        texture: "soft_disc", orient: Camera, ramp: "red_add")
+"#;
+
+/// The landing vocabulary loaded from a temporary directory.
+fn landing_catalog() -> (tempfile::TempDir, EffectCatalog) {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let manifest = write_fixture_set(dir.path());
+    let text = vocabulary(&manifest, LANDING_EMITTERS, LANDING_EFFECTS, "");
+    let catalog = EffectCatalog::from_text(&text, &dir.path().join("effects.ron"), dir.path())
+        .expect("the landing vocabulary is valid");
+    (dir, catalog)
+}
+
+#[test]
+fn thrown_particles_leave_their_landing_effect_where_they_land() {
+    use client::effects::binding::BoundValues;
+    use client::effects::runtime::SpawnRequest;
+    let (_dir, catalog) = landing_catalog();
+    let mut runtime = EffectRuntime::new(&catalog);
+    let request = SpawnRequest {
+        effect: catalog.effect_id("throw").expect("throw"),
+        anchor: Vec3::new(4.0, 0.0, 4.0),
+        bound: BoundValues::default(),
+        line: None,
+        delay: 0.0,
+    };
+    runtime.spawn(&catalog, &request, 0.0);
+    let buffers = runtime.frame.buffers();
+    for step in 0..30 {
+        runtime.build_frame(&catalog, f64::from(step) * 0.04, None);
+    }
+    assert_eq!(
+        runtime.stats.spawned,
+        1 + 6,
+        "every glob landed and spawned one fleck"
+    );
+    assert!(
+        runtime.particles.is_empty(),
+        "the globs ended where they landed"
+    );
+    assert_eq!(runtime.frame.decals.len(), 6, "six flecks on the ground");
+    for decal in &runtime.frame.decals {
+        assert!(
+            decal.center[1].abs() < 1e-5,
+            "at the height the globs started at"
+        );
+        let away = Vec3::from_array(decal.center) - request.anchor;
+        assert!(
+            away.length() > 0.05 && away.length() < 3.0,
+            "thrown away from the anchor"
+        );
+    }
+    assert_eq!(runtime.frame.buffers(), buffers, "no retained buffer grew");
+}
+
+#[test]
+fn line_clipped_cards_and_particles_carry_the_line_window() {
+    use client::effects::binding::BoundValues;
+    use client::effects::catalog::schema::Binding;
+    use client::effects::placement::WorldLine;
+    use client::effects::runtime::SpawnRequest;
+    let (_dir, catalog) = landing_catalog();
+    let mut runtime = EffectRuntime::new(&catalog);
+    let line = WorldLine {
+        from: Vec3::new(1.0, 0.0, 2.0),
+        to: Vec3::new(1.0, 0.0, 6.0),
+    };
+    let request = SpawnRequest {
+        effect: catalog.effect_id("clipped").expect("clipped"),
+        anchor: line.from,
+        bound: BoundValues::default()
+            .with(Binding::LineSpacing, 1.0)
+            .with(Binding::LineLength, 4.0),
+        line: Some(line),
+        delay: 0.0,
+    };
+    runtime.spawn(&catalog, &request, 0.0);
+    runtime.build_frame(&catalog, 0.0, None);
+    runtime.build_frame(&catalog, 0.04, None);
+    let cards = &runtime.frame.sorted;
+    assert!(
+        cards.len() >= 5 * 2,
+        "two spines on each of five points: {}",
+        cards.len()
+    );
+    for card in cards {
+        assert_eq!(card.clip_axis, [0.0, 1.0], "clipped along the line (+z)");
+        assert!((card.clip_min - 2.0).abs() < 1e-5 && (card.clip_max - 6.0).abs() < 1e-5);
+    }
+    let upright = cards
+        .iter()
+        .filter(|card| card.orient == client::effects::instances::ORIENT_UPRIGHT)
+        .count();
+    assert_eq!(upright, 10, "every spine card stands upright");
+}

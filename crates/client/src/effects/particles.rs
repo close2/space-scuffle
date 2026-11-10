@@ -3,8 +3,10 @@
 //! # Responsibility
 //! Owns [`ParticlePool`], a fixed structure-of-arrays pool: bursts spawn into it, every frame
 //! integrates gravity and drag and ages each particle, and dead particles are removed by
-//! swapping the last live one into their place. The runtime draws each live particle as a
-//! card through the sprite instancer.
+//! swapping the last live one into their place. A particle of an emitter with a `land` effect
+//! ends where it falls back to the height it started at, and the landing is queued for the
+//! runtime to spawn that effect. The runtime draws each live particle as a card through the
+//! sprite instancer.
 //!
 //! # How it fits
 //! The `WP4a` spike rejected `bevy_hanabi` (`docs/evidence/effects/hanabi-spike.md`: its
@@ -14,13 +16,32 @@
 //!
 //! # Invariants
 //! - The arrays are allocated once at the budget's capacity; spawning, stepping and removal
-//!   never allocate. A burst beyond the free capacity is truncated.
+//!   never allocate. A burst beyond the free capacity is truncated, and landings beyond
+//!   [`LANDING_CAPACITY`] in one step end without their effect.
 //! - A particle's motion depends only on its spawn hash and the frame steps, never on a clock.
 
 use super::catalog::schema::EmitterShape;
-use super::catalog::{Emitter, EmitterId};
+use super::catalog::{EffectId, Emitter, EmitterId};
 use super::placement::{hash3, unit_float};
 use bevy::math::Vec3;
+
+/// The most landings queued by one step.
+pub const LANDING_CAPACITY: usize = 256;
+
+/// A clip window along an event line: `(axis x, axis z, min, max)` of `dot(world.xz, axis)`;
+/// all zero for none.
+pub type LineClip = [f32; 4];
+
+/// A particle that landed this step: the effect its emitter spawns there.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Landing {
+    /// The emitter's `land` effect.
+    pub effect: EffectId,
+    /// Where it landed, world space.
+    pub position: Vec3,
+    /// The particle's hash.
+    pub seed: u32,
+}
 
 /// The live particles, one array per attribute.
 // PERFORMANCE RATIONALE:
@@ -47,6 +68,12 @@ pub struct ParticlePool {
     emitter: Vec<EmitterId>,
     /// Spawn hash of each particle.
     seed: Vec<u32>,
+    /// Height each particle started at: it lands when it falls back to it.
+    ground: Vec<f32>,
+    /// Clip window of each particle.
+    clip: Vec<LineClip>,
+    /// Landings of the last step, for the runtime to spawn.
+    landings: Vec<Landing>,
     /// Capacity, fixed.
     capacity: usize,
 }
@@ -66,6 +93,8 @@ pub struct ParticleView {
     pub emitter: EmitterId,
     /// Spawn hash.
     pub seed: u32,
+    /// Clip window along the event line.
+    pub clip: LineClip,
 }
 
 /// Where and how a burst spawns.
@@ -81,6 +110,8 @@ pub struct Burst {
     pub count: u32,
     /// Seed of the burst.
     pub seed: u32,
+    /// Clip window of its particles.
+    pub clip: LineClip,
 }
 
 impl ParticlePool {
@@ -96,6 +127,9 @@ impl ParticlePool {
             size: Vec::with_capacity(capacity),
             emitter: Vec::with_capacity(capacity),
             seed: Vec::with_capacity(capacity),
+            ground: Vec::with_capacity(capacity),
+            clip: Vec::with_capacity(capacity),
+            landings: Vec::with_capacity(LANDING_CAPACITY),
             capacity,
         }
     }
@@ -152,13 +186,18 @@ impl ParticlePool {
             self.size.push(lerp(emitter.size, draw(7)));
             self.emitter.push(burst.emitter);
             self.seed.push(hash3(burst.seed, index, 8));
+            self.ground.push(burst.origin.y + offset.y);
+            self.clip.push(burst.clip);
         }
         u32::try_from(count).unwrap_or(u32::MAX)
     }
 
-    /// Advances every particle by `dt` seconds under its emitter's gravity and drag, and
-    /// removes those past their life.
+    /// Advances every particle by `dt` seconds under its emitter's gravity and drag, removes
+    /// those past their life, and ends and queues (see [`Self::landings`]) those of a `land`
+    /// emitter that fell back to their start height. The queue holds this step's landings
+    /// only.
     pub fn step(&mut self, dt: f32, emitters: &[Emitter]) {
+        self.landings.clear();
         let mut index = 0;
         while index < self.age.len() {
             self.age[index] += dt;
@@ -166,14 +205,36 @@ impl ParticlePool {
                 self.swap_remove(index);
                 continue;
             }
-            if let Some(emitter) = emitters.get(usize::from(self.emitter[index].0)) {
+            let emitter = emitters.get(usize::from(self.emitter[index].0));
+            if let Some(emitter) = emitter {
                 let velocity = &mut self.velocity[index];
                 velocity.y -= emitter.gravity * dt;
                 *velocity *= (1.0 - emitter.drag * dt).max(0.0);
             }
             self.position[index] += self.velocity[index] * dt;
+            let land = emitter.and_then(|emitter| emitter.land);
+            if let Some(effect) = land {
+                let position = self.position[index];
+                if self.velocity[index].y < 0.0 && position.y <= self.ground[index] {
+                    if self.landings.len() < LANDING_CAPACITY {
+                        self.landings.push(Landing {
+                            effect,
+                            position: Vec3::new(position.x, self.ground[index], position.z),
+                            seed: self.seed[index],
+                        });
+                    }
+                    self.swap_remove(index);
+                    continue;
+                }
+            }
             index += 1;
         }
+    }
+
+    /// The landings of the last step.
+    #[must_use]
+    pub fn landings(&self) -> &[Landing] {
+        &self.landings
     }
 
     /// Removes every particle.
@@ -185,6 +246,9 @@ impl ParticlePool {
         self.size.clear();
         self.emitter.clear();
         self.seed.clear();
+        self.ground.clear();
+        self.clip.clear();
+        self.landings.clear();
     }
 
     /// Removes particle `index` by moving the last one into its place.
@@ -196,6 +260,8 @@ impl ParticlePool {
         self.size.swap_remove(index);
         self.emitter.swap_remove(index);
         self.seed.swap_remove(index);
+        self.ground.swap_remove(index);
+        self.clip.swap_remove(index);
     }
 
     /// Every live particle.
@@ -207,6 +273,7 @@ impl ParticlePool {
             size: self.size[index],
             emitter: self.emitter[index],
             seed: self.seed[index],
+            clip: self.clip[index],
         })
     }
 }
@@ -243,6 +310,7 @@ mod tests {
             curve: None,
             rotation: crate::effects::catalog::schema::RotationDef::Fixed,
             roll: 0.0,
+            land: None,
         }
     }
 
@@ -253,6 +321,7 @@ mod tests {
             radius: 1.0,
             count,
             seed: 7,
+            clip: [0.0; 4],
         }
     }
 
@@ -309,5 +378,30 @@ mod tests {
             (speed - 2.0 * 0.8).abs() < 1e-4,
             "drag 2/s over 0.1 s: {speed}"
         );
+    }
+
+    #[test]
+    fn a_landing_particle_ends_where_it_falls_back_and_queues_its_effect() {
+        let mut lander = emitter(10.0, 0.0);
+        lander.land = Some(EffectId(3));
+        let emitters = [lander];
+        let mut pool = ParticlePool::with_capacity(4);
+        let before = pool.landings.capacity();
+        pool.spawn(&burst(1), &emitters[0]);
+        let mut landed = None;
+        for _ in 0..12 {
+            pool.step(0.05, &emitters);
+            if let Some(landing) = pool.landings().first() {
+                landed = Some(*landing);
+                break;
+            }
+        }
+        let landing = landed.expect("a 2 u/s throw under gravity 10 lands within 0.6 s");
+        assert_eq!(landing.effect, EffectId(3));
+        assert!(landing.position.y.abs() < 1e-6, "at the start height");
+        assert!(pool.is_empty(), "the particle ends where it lands");
+        pool.step(0.05, &emitters);
+        assert!(pool.landings().is_empty(), "the queue holds one step");
+        assert_eq!(pool.landings.capacity(), before);
     }
 }

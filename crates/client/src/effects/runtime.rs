@@ -31,20 +31,24 @@ use super::budget::{
     retire_fade, retirement_candidate, RetireCandidate,
 };
 use super::catalog::schema::{
-    DecalYaw, EffectClass, Orient, ParticleOrient, Priority, RingMapping, RotationDef,
+    CardShape, DecalYaw, EffectClass, Orient, ParticleOrient, Priority, RingMapping, RotationDef,
 };
 use super::catalog::{
-    Block, CardLook, CurveId, DecalLook, EffectCatalog, EffectId, ElementRef, Layer, Pool,
+    Block, Breakup, CardLook, CurveId, DecalLook, EffectCatalog, EffectId, ElementRef, Layer, Pool,
 };
 use super::instances::{
-    DecalInstance, LightInstance, SpriteInstance, FLAG_MIRROR, FLAG_POLAR, ORIENT_CAMERA,
-    ORIENT_GROUND, ORIENT_STRETCHED, ORIENT_VERTICAL,
+    DecalInstance, LightInstance, SpriteInstance, FLAG_MIRROR, FLAG_POLAR, NO_NOISE, ORIENT_CAMERA,
+    ORIENT_GROUND, ORIENT_STRETCHED, ORIENT_UPRIGHT, ORIENT_VERTICAL, SHAPE_FRONT, SHAPE_RADIAL,
+    SHAPE_TEXTURE,
 };
-use super::particles::{Burst, ParticlePool};
+use super::particles::{Burst, LineClip, ParticlePool};
 use super::placement::{hash3, instance_count, place, unit_float, WorldLine};
 use super::pool::{EffectHandle, EffectInstance, EffectInstancePool};
-use bevy::math::Vec3;
+use bevy::math::{Vec2, Vec3};
 use bevy::prelude::Resource;
+
+/// Soft-step width of the erosion threshold of an element without breakup.
+const DEFAULT_SOFTNESS: f32 = 0.08;
 
 /// The camera the frame is built for.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -277,6 +281,7 @@ impl EffectRuntime {
         self.pool.free_ended(now);
         self.fire_bursts(catalog, now, camera);
         self.particles.step(dt, &catalog.emitters);
+        self.spawn_landings(catalog, now);
         self.frame.cards.clear();
         self.frame.depth.clear();
         self.frame.decals.clear();
@@ -291,6 +296,22 @@ impl EffectRuntime {
         }
         self.write_particles(catalog, camera);
         self.sort_cards();
+    }
+
+    /// Spawns the `land` effect of every particle that landed in the last step, at its
+    /// landing point.
+    fn spawn_landings(&mut self, catalog: &EffectCatalog, now: f64) {
+        for index in 0..self.particles.landings().len() {
+            let landing = self.particles.landings()[index];
+            let request = SpawnRequest {
+                effect: landing.effect,
+                anchor: landing.position,
+                bound: BoundValues::default(),
+                line: None,
+                delay: 0.0,
+            };
+            self.spawn(catalog, &request, now);
+        }
     }
 
     /// Retires the detail of the oldest `Minor` or `Ambient` effect still drawing it.
@@ -404,12 +425,17 @@ impl EffectRuntime {
                 if due <= window.0 || due > window.1 {
                     continue;
                 }
+                let clip = match instance.line {
+                    Some(line) if layer.clip_to_line => line_clip_window(line),
+                    _ => NO_CLIP,
+                };
                 let burst = Burst {
                     emitter: emitter_id,
                     origin: instance.anchor + placed.offset,
                     radius,
                     count,
                     seed,
+                    clip,
                 };
                 self.particles.spawn(&burst, emitter);
             }
@@ -557,7 +583,7 @@ impl EffectRuntime {
                 life,
                 intensity,
                 seed,
-                1.0 - thickness,
+                1.0 - (thickness * catalog.sample(layer.size_curve, life, 1.0)).clamp(0.01, 0.99),
             ),
             Block::Decal(look) => {
                 self.push_decal(context, look, position, extent, life, intensity, seed)
@@ -608,46 +634,65 @@ impl EffectRuntime {
         if ring_inner > 0.0 && look.mapping == RingMapping::Polar {
             flags |= FLAG_POLAR;
         }
-        let line_axis = context
-            .instance
-            .line
-            .map_or(Vec3::ZERO, |line| (line.to - line.from).normalize_or_zero());
-        let vertical = look.orient == Orient::VerticalAlongLine;
-        let lift = look.lift.unwrap_or(if vertical { 1.0 } else { 0.0 });
-        let center = position + Vec3::Y * extent * lift;
+        let line = context.instance.line;
+        let line_axis = line.map_or(Vec3::ZERO, |line| (line.to - line.from).normalize_or_zero());
+        let standing = matches!(look.orient, Orient::VerticalAlongLine | Orient::Upright);
+        let lift = match look.lift_curve {
+            Some(curve) => catalog.sample(Some(curve), life, 0.0),
+            None => look.lift.unwrap_or(if standing { 1.0 } else { 0.0 }),
+        };
+        let lean = look.lean * (2.0 * unit_float(hash3(seed, 0x1EA4, 0)) - 1.0);
+        let outward = spread_offset(look.spread, position - context.instance.anchor, life, seed);
+        let center = position + Vec3::Y * extent * lift + outward + look.drift * age;
         let (orient, axis) = match look.orient {
             Orient::Ground => (ORIENT_GROUND, Vec3::ZERO),
+            Orient::Upright => (ORIENT_UPRIGHT, Vec3::ZERO),
             Orient::VerticalAlongLine if line_axis != Vec3::ZERO => (ORIENT_VERTICAL, line_axis),
             Orient::Camera | Orient::VerticalAlongLine => (ORIENT_CAMERA, Vec3::ZERO),
         };
-        self.push_sorted_card(
-            SpriteInstance {
-                center: (center + look.drift * age).to_array(),
-                half_size: extent,
-                axis: axis.to_array(),
-                stretch: 1.0,
-                layer_a,
-                layer_b,
-                frame_mix,
-                ramp_row: u32::from(look.ramp.0),
-                intensity,
-                erosion: catalog.sample(look.erosion, life, 0.0),
-                soft_depth: look.soft_depth,
-                ring_inner,
-                rotation,
-                orient,
-                ramp_scale: catalog.sample(context.layer.ramp_curve, life, 1.0),
-                flags,
-            },
-            context.camera,
-        );
+        let shape = match (look.shape, look.mapping) {
+            (CardShape::Radial, _) => SHAPE_RADIAL,
+            (_, RingMapping::Front) if ring_inner > 0.0 => SHAPE_FRONT,
+            _ => SHAPE_TEXTURE,
+        };
+        let clip = match line {
+            Some(line) if look.clip_to_line => line_clip_window(line),
+            _ => NO_CLIP,
+        };
+        let surface = Surface::of(look.breakup.as_ref(), seed);
+        let card = SpriteInstance {
+            center: center.to_array(),
+            half_size: extent,
+            axis: axis.to_array(),
+            stretch: if standing { lift } else { 1.0 },
+            layer_a,
+            layer_b,
+            frame_mix,
+            ramp_row: u32::from(look.ramp.0),
+            intensity,
+            erosion: catalog.sample(look.erosion, life, 0.0),
+            soft_depth: look.soft_depth,
+            ring_inner,
+            rotation: rotation + lean,
+            orient,
+            ramp_scale: catalog.sample(context.layer.ramp_curve, life, 1.0),
+            flags,
+            clip_axis: [clip[0], clip[1]],
+            clip_min: clip[2],
+            clip_max: clip[3],
+            shape,
+            ..surface.card()
+        };
+        self.push_sorted_card(card, context.camera, look.sort_bias);
         self.frame.card_count += 1;
         Written::Yes
     }
 
-    /// Appends a card and its depth.
-    fn push_sorted_card(&mut self, card: SpriteInstance, camera: Option<&CameraView>) {
-        let depth = camera.map_or(0.0, |camera| camera.depth(Vec3::from_array(card.center)));
+    /// Appends a card and its depth, moved `bias` world units towards the camera in the sort.
+    fn push_sorted_card(&mut self, card: SpriteInstance, camera: Option<&CameraView>, bias: f32) {
+        let depth = camera.map_or(0.0, |camera| {
+            camera.depth(Vec3::from_array(card.center)) - bias
+        });
         self.frame.cards.push(card);
         self.frame.depth.push(depth);
     }
@@ -674,14 +719,15 @@ impl EffectRuntime {
         let (layer_a, layer_b, frame_mix) = variant_frame(&look.element, seed)
             .unwrap_or_else(|| flipbook_frame(&look.element, None, 0.0, life, true));
         let random_yaw = std::f32::consts::TAU * unit_float(hash3(seed, 0x0DEC, 0));
-        let mut clip = (-2.0, 2.0);
-        let yaw = match (look.yaw, context.instance.line) {
+        let line = context.instance.line;
+        let clip = match line {
+            Some(line) if look.clip_to_line => line_clip_window(line),
+            _ => NO_CLIP,
+        };
+        let yaw = match (look.yaw, line) {
             (DecalYaw::AlongLine, Some(line)) => {
                 let direction = line.to - line.from;
                 if direction.x.abs() + direction.z.abs() > f32::EPSILON {
-                    if look.clip_to_line && extent > f32::EPSILON {
-                        clip = line_clip(line, position, extent);
-                    }
                     (-direction.z).atan2(direction.x)
                 } else {
                     random_yaw
@@ -701,9 +747,10 @@ impl EffectRuntime {
             intensity,
             erosion: catalog.sample(look.erosion, life, 0.0),
             ramp_scale: catalog.sample(context.layer.ramp_curve, life, 1.0),
-            clip_min: clip.0,
-            clip_max: clip.1,
-            padding: [0.0; 3],
+            clip_min: clip[2],
+            clip_max: clip[3],
+            clip_axis: [clip[0], clip[1]],
+            ..Surface::of(look.breakup.as_ref(), seed).decal()
         });
         Written::Yes
     }
@@ -753,6 +800,10 @@ impl EffectRuntime {
                 orient,
                 ramp_scale: 1.0 - life,
                 flags,
+                clip_axis: [particle.clip[0], particle.clip[1]],
+                clip_min: particle.clip[2],
+                clip_max: particle.clip[3],
+                ..Surface::NONE.card()
             };
             let depth = camera.map_or(0.0, |camera| camera.depth(particle.position));
             frame.cards.push(card);
@@ -820,23 +871,118 @@ fn max_line_delay(layers: &[Layer], line: Option<WorldLine>) -> f32 {
         .iter()
         .flat_map(|layer| layer.placements.iter())
         .map(|placement| match placement {
-            super::catalog::schema::PlacementDef::Line { travel, .. } if *travel > f32::EPSILON => {
-                length / travel
-            }
+            super::catalog::schema::PlacementDef::Line {
+                travel,
+                delay_jitter,
+                ..
+            } if *travel > f32::EPSILON => length / travel + delay_jitter,
+            super::catalog::schema::PlacementDef::Line { delay_jitter, .. } => *delay_jitter,
             _ => 0.0,
         })
         .fold(0.0, f32::max)
 }
 
-/// The local-x range (in half extents `extent`) of a mark centred at `position` and turned
-/// along `line` that lies between the line's ends.
+/// No clip window.
+const NO_CLIP: LineClip = [0.0; 4];
+
+/// The clip window of `line`: its XZ direction and the range of `dot(xz, direction)` from its
+/// start to its end; no clip for a line without horizontal length.
 #[must_use]
-pub fn line_clip(line: WorldLine, position: Vec3, extent: f32) -> (f32, f32) {
-    let axis = line.to - line.from;
-    let length = axis.length();
-    let direction = axis / length.max(f32::EPSILON);
-    let along = (position - line.from).dot(direction);
-    ((0.0 - along) / extent, (length - along) / extent)
+pub fn line_clip_window(line: WorldLine) -> LineClip {
+    let along = Vec2::new(line.to.x - line.from.x, line.to.z - line.from.z);
+    let length = along.length();
+    if length <= f32::EPSILON {
+        return NO_CLIP;
+    }
+    let axis = along / length;
+    let start = axis.dot(Vec2::new(line.from.x, line.from.z));
+    [axis.x, axis.y, start, start + length]
+}
+
+/// Offset of a card that moves `spread` world units away from its anchor over its life,
+/// easing out; `from_anchor` is its placed offset (a hashed direction when it is at the anchor).
+fn spread_offset(spread: f32, from_anchor: Vec3, life: f32, seed: u32) -> Vec3 {
+    if spread <= 0.0 {
+        return Vec3::ZERO;
+    }
+    let flat = Vec3::new(from_anchor.x, 0.0, from_anchor.z);
+    let direction = flat.try_normalize().unwrap_or_else(|| {
+        let angle = std::f32::consts::TAU * unit_float(hash3(seed, 0x5B2E, 0));
+        Vec3::new(angle.cos(), 0.0, angle.sin())
+    });
+    let eased = 1.0 - (1.0 - life.clamp(0.0, 1.0)).powi(2);
+    direction * spread * eased
+}
+
+/// The breakup fields of one card or decal: its noise layer and parameters and its own noise
+/// phase drawn from its hash.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Surface {
+    /// Noise phase in tiles.
+    offset: [f32; 2],
+    /// Noise repeats.
+    scale: f32,
+    /// Weight of the noise in the erosion order.
+    amount: f32,
+    /// Soft-step width of the erosion threshold.
+    softness: f32,
+    /// Self-shading.
+    shade: f32,
+    /// Noise layer.
+    layer: u32,
+}
+
+impl Surface {
+    /// No breakup: the baked erosion order with the default soft step.
+    const NONE: Self = Self {
+        offset: [0.0; 2],
+        scale: 1.0,
+        amount: 0.0,
+        softness: DEFAULT_SOFTNESS,
+        shade: 0.0,
+        layer: NO_NOISE,
+    };
+
+    /// The fields of `breakup` with a phase drawn from `seed`.
+    fn of(breakup: Option<&Breakup>, seed: u32) -> Self {
+        breakup.map_or(Self::NONE, |breakup| Self {
+            offset: [
+                unit_float(hash3(seed, 0x4015_E001, 0)),
+                unit_float(hash3(seed, 0x4015_E002, 0)),
+            ],
+            scale: breakup.scale,
+            amount: breakup.amount,
+            softness: breakup.softness,
+            shade: breakup.shade,
+            layer: breakup.noise_layer,
+        })
+    }
+
+    /// A card with these fields and every other field zero.
+    fn card(self) -> SpriteInstance {
+        SpriteInstance {
+            noise_offset: self.offset,
+            noise_scale: self.scale,
+            noise_amount: self.amount,
+            softness: self.softness,
+            shade: self.shade,
+            noise_layer: self.layer,
+            ..SpriteInstance::default()
+        }
+    }
+
+    /// A decal with these fields and every other field zero.
+    fn decal(self) -> DecalInstance {
+        DecalInstance {
+            noise_offset: self.offset,
+            noise_scale: self.scale,
+            noise_amount: self.amount,
+            softness: self.softness,
+            shade: self.shade,
+            noise_layer: self.layer,
+            ..DecalInstance::default()
+        }
+    }
 }
 
 /// The roll in radians and the `FLAG_*` mirror bit of a card under `rotation`, drawn from
@@ -958,17 +1104,65 @@ mod tests {
     use crate::effects::catalog::ElementRef;
 
     #[test]
-    fn a_mark_on_a_line_is_clipped_at_both_ends() {
+    fn a_line_clip_window_spans_the_line_from_its_start_to_its_end() {
         let line = WorldLine {
-            from: Vec3::ZERO,
-            to: Vec3::new(8.0, 0.0, 0.0),
+            from: Vec3::new(2.0, 1.0, 3.0),
+            to: Vec3::new(2.0, 1.0, 11.0),
         };
-        let (min, max) = line_clip(line, Vec3::new(0.5, 0.0, 0.0), 0.8);
-        assert!((min + 0.625).abs() < 1e-6, "cut 0.5 behind the centre");
-        assert!(max > 1.0, "the far end is beyond this mark");
-        let (min, max) = line_clip(line, Vec3::new(7.5, 0.0, 0.0), 0.8);
-        assert!(min < -1.0);
-        assert!((max - 0.625).abs() < 1e-6, "cut 0.5 ahead of the centre");
+        let [x, z, min, max] = line_clip_window(line);
+        assert!(x.abs() < 1e-6 && (z - 1.0).abs() < 1e-6, "along +z");
+        assert!((min - 3.0).abs() < 1e-5 && (max - 11.0).abs() < 1e-5);
+        let point = Vec3::new(2.0, 0.0, 3.0);
+        assert!(((Vec2::new(point.x, point.z).dot(Vec2::new(x, z))) - min).abs() < 1e-5);
+        let vertical = WorldLine {
+            from: Vec3::ZERO,
+            to: Vec3::new(0.0, 4.0, 0.0),
+        };
+        assert_eq!(
+            line_clip_window(vertical),
+            NO_CLIP,
+            "no horizontal length, no clip"
+        );
+    }
+
+    #[test]
+    fn spreading_cards_move_outward_and_ease_out() {
+        assert_eq!(spread_offset(0.0, Vec3::X, 0.5, 1), Vec3::ZERO);
+        let half = spread_offset(1.0, Vec3::new(0.0, 0.0, 2.0), 0.5, 1);
+        let end = spread_offset(1.0, Vec3::new(0.0, 0.0, 2.0), 1.0, 1);
+        assert!(
+            (end - Vec3::Z).length() < 1e-6,
+            "the whole spread along the placed offset"
+        );
+        assert!(
+            (half.z - 0.75).abs() < 1e-6,
+            "eased out: three quarters at half life"
+        );
+        let from_anchor = spread_offset(1.0, Vec3::ZERO, 1.0, 9);
+        assert!((from_anchor.length() - 1.0).abs() < 1e-5 && from_anchor.y.abs() < 1e-6);
+    }
+
+    #[test]
+    fn breakup_gives_every_instance_its_own_noise_phase() {
+        let breakup = Breakup {
+            noise_layer: 5,
+            scale: 2.0,
+            amount: 0.4,
+            softness: 0.1,
+            shade: 0.3,
+        };
+        let a = Surface::of(Some(&breakup), 1);
+        let b = Surface::of(Some(&breakup), 2);
+        assert_ne!(a.offset, b.offset, "phases differ per instance");
+        assert!(a.offset.iter().all(|value| (0.0..1.0).contains(value)));
+        assert_eq!(a.layer, 5);
+        let card = a.card();
+        assert_eq!(card.noise_layer, 5);
+        assert!((card.noise_amount - 0.4).abs() < f32::EPSILON);
+        let none = Surface::of(None, 1).decal();
+        assert_eq!(none.noise_layer, NO_NOISE);
+        assert!(none.noise_amount.abs() < f32::EPSILON);
+        assert!((none.softness - DEFAULT_SOFTNESS).abs() < f32::EPSILON);
     }
 
     #[test]

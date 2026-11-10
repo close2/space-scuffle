@@ -27,12 +27,22 @@ pub const ORIENT_STRETCHED: u32 = 3;
 pub const FLAG_MIRROR: u32 = 1;
 /// [`SpriteInstance::flags`] bit: a ring wraps the texture's middle band around itself.
 pub const FLAG_POLAR: u32 = 2;
+/// The card stands upright and turns about world up to face the camera.
+pub const ORIENT_UPRIGHT: u32 = 4;
+/// [`SpriteInstance::shape`]: the texture element.
+pub const SHAPE_TEXTURE: u32 = 0;
+/// [`SpriteInstance::shape`]: a soft radial glow computed in the shader.
+pub const SHAPE_RADIAL: u32 = 1;
+/// [`SpriteInstance::shape`]: a ring computed as a pressure front from the breakup noise.
+pub const SHAPE_FRONT: u32 = 2;
+/// `noise_layer` of an instance without breakup noise.
+pub const NO_NOISE: u32 = u32::MAX;
 
 /// One card: a sprite, a ring or a particle.
 // PERFORMANCE RATIONALE:
 // Why: Thousands of cards are written and uploaded every frame; one draw per run of cards
 // needs them in one contiguous GPU array the vertex shader indexes by instance.
-// What: A `Pod` record of five 16-byte rows matching the WGSL struct, written into a retained
+// What: A `Pod` record of eight 16-byte rows matching the WGSL struct, written into a retained
 // vector and copied to the storage buffer with one `write_buffer`.
 // Trade-off: Fields are packed for alignment rather than grouped by meaning, and orientation
 // and shape are codes rather than an enum.
@@ -45,7 +55,9 @@ pub struct SpriteInstance {
     pub half_size: f32,
     /// Direction for `ORIENT_VERTICAL` and `ORIENT_STRETCHED` (world space, unit or zero).
     pub axis: [f32; 3],
-    /// Length factor along `axis` for `ORIENT_STRETCHED` (1 elsewhere).
+    /// Length factor along `axis` for `ORIENT_STRETCHED`; for `ORIENT_UPRIGHT` and
+    /// `ORIENT_VERTICAL` the height of the roll's pivot below the centre, in half sizes (the
+    /// point where the card meets the ground); unused elsewhere.
     pub stretch: f32,
     /// Texture array layer of the current flipbook frame.
     pub layer_a: u32,
@@ -71,13 +83,34 @@ pub struct SpriteInstance {
     pub ramp_scale: f32,
     /// `FLAG_*` bits.
     pub flags: u32,
+    /// Offset of the breakup noise in noise tiles (the instance's own phase).
+    pub noise_offset: [f32; 2],
+    /// Noise repeats across the card.
+    pub noise_scale: f32,
+    /// Weight of the noise in the erosion order, 0..1.
+    pub noise_amount: f32,
+    /// World XZ direction the card is clipped along; zero for no clip.
+    pub clip_axis: [f32; 2],
+    /// Smallest `dot(world.xz, clip_axis)` drawn.
+    pub clip_min: f32,
+    /// Largest `dot(world.xz, clip_axis)` drawn.
+    pub clip_max: f32,
+    /// Width of the erosion threshold's soft step.
+    pub softness: f32,
+    /// Self-shading of thin parts, 0..1.
+    pub shade: f32,
+    /// Texture array layer of the breakup noise, or [`NO_NOISE`].
+    pub noise_layer: u32,
+    /// One of the `SHAPE_*` codes.
+    pub shape: u32,
 }
 
 /// One decal box.
 // PERFORMANCE RATIONALE:
 // Why: As for cards: decals are drawn by one instanced draw from a retained storage buffer.
-// What: A `Pod` record of four 16-byte rows matching the WGSL struct.
-// Trade-off: Three padding words.
+// What: A `Pod` record of seven 16-byte rows matching the WGSL struct.
+// Trade-off: Fields are packed for alignment rather than grouped by meaning, and the noise
+// offset is two scalars in WGSL (a `vec2` there would need 8-byte alignment).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Default, Pod, Zeroable)]
 pub struct DecalInstance {
@@ -103,13 +136,26 @@ pub struct DecalInstance {
     pub erosion: f32,
     /// Factor on the texture's shading before the ramp lookup.
     pub ramp_scale: f32,
-    /// Smallest local x (along the box's own x axis, in half extents) drawn: a mark clipped
-    /// to its line ends there; -1 or less draws the whole box.
+    /// Smallest `dot(world.xz, clip_axis)` drawn: a mark clipped to its line ends there.
     pub clip_min: f32,
-    /// Largest local x drawn; 1 or more draws the whole box.
+    /// Largest `dot(world.xz, clip_axis)` drawn.
     pub clip_max: f32,
+    /// Offset of the breakup noise in noise tiles (the instance's own phase).
+    pub noise_offset: [f32; 2],
+    /// Noise repeats across the box.
+    pub noise_scale: f32,
+    /// Weight of the noise in the erosion order, 0..1.
+    pub noise_amount: f32,
+    /// Width of the erosion threshold's soft step.
+    pub softness: f32,
+    /// Self-shading of thin parts, 0..1.
+    pub shade: f32,
+    /// Texture array layer of the breakup noise, or [`NO_NOISE`].
+    pub noise_layer: u32,
+    /// World XZ direction the mark is clipped along; zero for no clip.
+    pub clip_axis: [f32; 2],
     /// Unused; keeps the record a multiple of 16 bytes.
-    pub padding: [f32; 3],
+    pub padding: [f32; 2],
 }
 
 /// A point light requested this frame.
@@ -131,8 +177,14 @@ mod tests {
 
     #[test]
     fn records_are_whole_sixteen_byte_rows() {
-        assert_eq!(size_of::<SpriteInstance>(), 80);
-        assert_eq!(size_of::<DecalInstance>(), 80);
+        assert_eq!(size_of::<SpriteInstance>(), 128);
+        assert_eq!(size_of::<DecalInstance>(), 112);
+        assert_eq!(std::mem::offset_of!(DecalInstance, clip_axis), 96);
+        assert_eq!(std::mem::offset_of!(SpriteInstance, noise_offset), 80);
+        assert_eq!(std::mem::offset_of!(SpriteInstance, clip_axis), 96);
+        assert_eq!(std::mem::offset_of!(SpriteInstance, softness), 112);
+        assert_eq!(std::mem::offset_of!(DecalInstance, noise_offset), 68);
+        assert_eq!(std::mem::offset_of!(DecalInstance, softness), 84);
         assert_eq!(std::mem::offset_of!(DecalInstance, clip_min), 60);
         assert_eq!(std::mem::offset_of!(SpriteInstance, axis), 16);
         assert_eq!(std::mem::offset_of!(SpriteInstance, layer_a), 32);
