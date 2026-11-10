@@ -389,6 +389,9 @@ impl SimWorld {
                     return Ok(EffectAdmission::Refused);
                 }
             }
+            // The effect-tree engine and its cast pipeline arrive in WP1c and WP1d of plan
+            // `2026-11-10-spellcaster-mechanics`; until then an effect cast is refused unpaid.
+            AbilityEffectSpec::Effect(_) => return Ok(EffectAdmission::Refused),
         }
         Ok(EffectAdmission::Admitted(prepared_overclock))
     }
@@ -428,8 +431,9 @@ impl SimWorld {
         }
 
         match effect {
-            AbilityEffectSpec::Overclock(_) => {
-                // The prepared buff committed atomically with resources above.
+            AbilityEffectSpec::Overclock(_) | AbilityEffectSpec::Effect(_) => {
+                // The prepared buff committed atomically with resources above. An effect cast
+                // is refused at admission and never reaches here.
             }
             AbilityEffectSpec::SiegeModeToggle { cast_ticks, .. } => {
                 if cast_ticks > 0 {

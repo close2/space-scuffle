@@ -253,6 +253,10 @@ pub enum AbilityEffectSpec {
         /// Canonical mode identifier to enter/toggle (matches `UnitModeSpec.mode_name`).
         mode_name: String,
     },
+    /// Runs the effect tree whose root is the named entry of `assets/catalog/ability_effects.ron`
+    /// (plan `2026-11-10-spellcaster-mechanics` D-1). Only for `TargetPosition` and
+    /// `TargetEntity` abilities.
+    Effect(String),
 }
 
 /// Declarative specification of a toggleable unit stance or transformation mode
@@ -340,6 +344,21 @@ pub struct AbilitySpec {
     /// validation checks. Display data only: the simulation never reads it.
     #[serde(default)]
     pub leave_name: Option<String>,
+    /// Ticks the caster stays locked after the cast (`StarCraft` II `CastOutroTime`; plan
+    /// `2026-11-10-spellcaster-mechanics` D-6, D-7).
+    #[serde(default)]
+    pub cast_backswing_ticks: u16,
+    /// Whether a non-queued group command is sent to one caster only (`BestUnit`). Read for
+    /// `TargetPosition` and `TargetEntity` abilities only.
+    #[serde(default = "default_true")]
+    pub single_caster: bool,
+    /// The units a `TargetEntity` ability may target.
+    #[serde(default)]
+    pub target_filter: Option<crate::effects::TargetFilter>,
+    /// Placement of the effect tree's origin near the caster; the caster's position when
+    /// absent.
+    #[serde(default)]
+    pub origin: Option<crate::effects::OriginPlacement>,
 }
 
 /// Bundle of optional mechanical capabilities possessed by an archetype.

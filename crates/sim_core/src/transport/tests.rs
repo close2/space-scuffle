@@ -245,6 +245,10 @@ fn normal_batched_tick_validates_at_tick_and_reap_not_per_command_or_caster() ->
             is_burrow: false,
         },
         leave_name: None,
+        cast_backswing_ticks: 0,
+        single_caster: true,
+        target_filter: None,
+        origin: None,
     }];
     for id in [ids[1], ids[2]] {
         world.entities.get_mut(&id).ok_or("caster")?.energy = SimScalar::from_num(100);

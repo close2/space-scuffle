@@ -18,6 +18,10 @@ pub enum SimCoreError {
     /// An atomic spawn or supply operation encountered invalid authoritative state.
     #[error(transparent)]
     ProductionInvariant(#[from] crate::production::ProductionInvariant),
+    /// The spell catalog (`statuses.ron`, `ability_effects.ron`) or an ability naming it
+    /// breaks a rule of plan `2026-11-10-spellcaster-mechanics` D-15 or D-17.
+    #[error(transparent)]
+    SpellCatalog(#[from] crate::catalog::CatalogError),
     /// A researched effect could not be accumulated without losing numeric information.
     #[error(transparent)]
     UpgradeApplication(#[from] sim_types::UpgradeApplicationError),

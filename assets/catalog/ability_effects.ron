@@ -1,0 +1,10 @@
+// Ability effect trees (plan 2026-11-10-spellcaster-mechanics, Amendment 1, D-1). Node kinds
+// mirror the StarCraft II editor's CEffect classes: Set, Search, Persistent, LaunchMissile,
+// Damage, ApplyStatus, RemoveStatus, ModifyVitals, CancelOrders and Displace, plus Use("name")
+// to reference a named node. Times are 25 Hz ticks; speeds world units per tick
+// (Normal × 1.4 ÷ 25). Values cite SC2GameData 5.0.14 (5444e12f13).
+//
+// Empty until the first spell package (WP2b) adds Psionic Storm's tree.
+(
+    effects: [],
+)

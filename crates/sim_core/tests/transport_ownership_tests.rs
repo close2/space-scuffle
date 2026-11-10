@@ -117,6 +117,10 @@ fn ability(effect: AbilityEffectSpec) -> AbilitySpec {
         cast_range: SimScalar::ZERO,
         effect,
         leave_name: None,
+        cast_backswing_ticks: 0,
+        single_caster: true,
+        target_filter: None,
+        origin: None,
     }
 }
 fn command(actor: EntityId, order: UnitOrder) -> PlayerCommand {

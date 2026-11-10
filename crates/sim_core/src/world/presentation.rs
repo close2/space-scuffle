@@ -261,6 +261,10 @@ pub(crate) fn status(entity: &Entity, barrier_hit: bool) -> StatusFlags {
             .any(|buff| buff.speed_multiplier < SimScalar::ONE),
         barrier_up: entity.barrier.is_raised(),
         barrier_hit,
+        damage_over_time: false,
+        stunned: false,
+        range_reduced: false,
+        revealed: false,
     }
 }
 

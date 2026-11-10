@@ -15,11 +15,13 @@ use std::path::{Path, PathBuf};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 /// The rule files a bundle holds; `factions.ron` is last so the indices of the others are stable.
-const FILES: [&str; 5] = [
+const FILES: [&str; 7] = [
     "units.ron",
     "structures.ron",
     "upgrades.ron",
     "movement_rules.ron",
+    "statuses.ron",
+    "ability_effects.ron",
     "factions.ron",
 ];
 

@@ -345,6 +345,10 @@ pub enum TurretIdle {
 
 /// Definition of weapon capabilities, firing geometry, and timing envelopes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent authored facts of one weapon (turret, channel, suicide, melee), each read by a different rule"
+)]
 pub struct WeaponSpec {
     /// Descriptive name of the weapon system.
     pub name: String,
@@ -434,6 +438,11 @@ pub struct WeaponSpec {
     /// default, strikes structures like any unit.
     #[serde(default)]
     pub structure_strike: Option<StructureStrike>,
+    /// Whether this is a melee weapon (`StarCraft` II `WeaponData` `Options Melee`). Only
+    /// reductions of ranged weapons (`RangedWeaponRange`, plan `2026-11-10-spellcaster-mechanics`
+    /// D-14) read it.
+    #[serde(default)]
+    pub melee: bool,
 }
 
 /// The strike a weapon deals to a structure in place of its usual one.

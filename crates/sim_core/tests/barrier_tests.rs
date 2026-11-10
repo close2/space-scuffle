@@ -61,6 +61,7 @@ fn weapon(damage: i32, period: u16) -> WeaponSpec {
         max_projectile_lifetime_ticks: sim_types::DEFAULT_PROJECTILE_LIFETIME_TICKS,
         suicide_on_attack: false,
         structure_strike: None,
+        melee: false,
     }
 }
 

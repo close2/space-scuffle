@@ -1,0 +1,9 @@
+// Timed per-unit effects applied by `ApplyStatus` nodes of ability_effects.ron (plan
+// 2026-11-10-spellcaster-mechanics, Amendment 1, D-3, D-20). Times are 25 Hz ticks
+// (Normal s × 17.857143), exact; pulses round per pulse (D-4). Damage and healing are effect
+// references into ability_effects.ron. Every value cites SC2GameData 5.0.14 (5444e12f13).
+//
+// Empty until the first spell package (WP2b) adds Psionic Storm's status.
+(
+    statuses: [],
+)

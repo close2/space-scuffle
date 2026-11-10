@@ -446,6 +446,8 @@ fields!(WeaponSpec {
     max_projectile_lifetime_ticks,
     suicide_on_attack,
     structure_strike,
+} unhashed {
+    melee,
 });
 // `view` is presentation only (the line's renderer events): it decides nothing.
 fields!(PendingLine {

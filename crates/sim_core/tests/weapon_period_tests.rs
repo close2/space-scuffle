@@ -257,6 +257,10 @@ fn invalid_overclock_admission_preserves_costs_cooldowns_and_existing_buffs() ->
             cast_range: SimScalar::ZERO,
             effect: AbilityEffectSpec::Overclock(spec),
             leave_name: None,
+            cast_backswing_ticks: 0,
+            single_caster: true,
+            target_filter: None,
+            origin: None,
         }];
         assert!(!world.execute_ability(attacker, 0, None, None));
         assert_eq!(world.entities[&attacker], before);

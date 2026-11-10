@@ -32,7 +32,7 @@ pub mod trace;
 
 pub use sandbox::{default_battle_sandbox, default_battle_sandbox_on, SandboxError};
 
-use sim_core::catalog::{FactionCatalog, MovementRules, RuntimeCatalogs};
+use sim_core::catalog::{FactionCatalog, MovementRules, RuntimeCatalogs, SpellCatalog};
 use sim_core::scenario::{
     build_world_with_catalogs, PlayerSetup, ScenarioError, StartLoadoutCatalog,
 };
@@ -49,6 +49,10 @@ pub const STRUCTURES_RON: &str = include_str!("../../../assets/catalog/structure
 pub const UPGRADES_RON: &str = include_str!("../../../assets/catalog/upgrades.ron");
 /// The shipped `assets/catalog/movement_rules.ron`.
 pub const MOVEMENT_RULES_RON: &str = include_str!("../../../assets/catalog/movement_rules.ron");
+/// The shipped `assets/catalog/statuses.ron`.
+pub const STATUSES_RON: &str = include_str!("../../../assets/catalog/statuses.ron");
+/// The shipped `assets/catalog/ability_effects.ron`.
+pub const ABILITY_EFFECTS_RON: &str = include_str!("../../../assets/catalog/ability_effects.ron");
 /// The shipped `assets/catalog/start_loadouts.ron`.
 pub const START_LOADOUTS_RON: &str = include_str!("../../../assets/catalog/start_loadouts.ron");
 
@@ -81,6 +85,12 @@ pub fn shipped_catalogs() -> RuntimeCatalogs {
         MovementRules::from_ron_str(MOVEMENT_RULES_RON)
             .expect("invariant: the shipped movement_rules.ron is valid"),
     );
+    units
+        .set_spell_catalog(
+            SpellCatalog::from_ron_strs(STATUSES_RON, ABILITY_EFFECTS_RON)
+                .expect("invariant: the shipped statuses.ron and ability_effects.ron are valid"),
+        )
+        .expect("invariant: the shipped abilities name only shipped effects and statuses");
     RuntimeCatalogs { units, upgrades }
 }
 

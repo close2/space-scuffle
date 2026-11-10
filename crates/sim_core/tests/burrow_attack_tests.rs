@@ -70,6 +70,7 @@ fn spines() -> WeaponSpec {
         max_projectile_lifetime_ticks: sim_types::DEFAULT_PROJECTILE_LIFETIME_TICKS,
         suicide_on_attack: false,
         structure_strike: None,
+        melee: false,
     }
 }
 
@@ -129,6 +130,10 @@ fn register_burrower(world: &mut SimWorld, cast: u16, leave: u16) -> UnitTypeId 
                 mode_name: MODE.to_string(),
             },
             leave_name: None,
+            cast_backswing_ticks: 0,
+            single_caster: true,
+            target_filter: None,
+            origin: None,
         }];
     })
 }
@@ -385,6 +390,10 @@ fn register_burrow_body(
                 mode_name: MODE.to_string(),
             },
             leave_name: None,
+            cast_backswing_ticks: 0,
+            single_caster: true,
+            target_filter: None,
+            origin: None,
         }];
     })
 }
@@ -569,6 +578,10 @@ fn b93_a_burrowing_cloak_toggle_burrows_and_a_mode_burrows_only_once_entered() {
                 is_burrow: true,
             },
             leave_name: None,
+            cast_backswing_ticks: 0,
+            single_caster: true,
+            target_filter: None,
+            origin: None,
         }];
     });
     let slow = register_burrower(&mut world, 10, 4);

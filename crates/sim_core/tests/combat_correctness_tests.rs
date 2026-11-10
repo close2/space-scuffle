@@ -643,6 +643,10 @@ fn author_stances(arena: &mut Arena, cast_ticks: u16) -> EntityId {
             mode_name: name.to_owned(),
         },
         leave_name: None,
+        cast_backswing_ticks: 0,
+        single_caster: true,
+        target_filter: None,
+        origin: None,
     };
     arch.modes = vec![stance("armed", Some(weapon)), stance("plain", None)];
     arch.abilities = vec![switch("armed"), switch("plain")];

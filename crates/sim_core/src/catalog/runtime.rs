@@ -1,11 +1,12 @@
 //! Filesystem boundary for complete external simulation rule bundles.
 //!
-//! Loads the five selected files in fixed order (`factions.ron` first, because the others name
-//! its factions and classes; `movement_rules.ron` last) and returns a bundle only after all parse and authored-data checks
+//! Loads the seven selected files in fixed order (`factions.ron` first, because the others name
+//! its factions and classes; `movement_rules.ron`, then the spell tables `statuses.ron` and
+//! `ability_effects.ron` last, checked against the abilities that name them) and returns a bundle only after all parse and authored-data checks
 //! succeed. Errors preserve the failing file path; no embedded definitions or alternate
 //! directories replace missing inputs.
 
-use super::{FactionCatalog, MovementRules, UnitCatalog};
+use super::{FactionCatalog, MovementRules, SpellCatalog, UnitCatalog};
 use crate::error::SimCoreError;
 use crate::upgrades::UpgradeCatalog;
 use std::path::{Path, PathBuf};
@@ -44,9 +45,10 @@ pub enum CatalogLoadError {
 }
 
 impl RuntimeCatalogs {
-    /// Loads `factions.ron`, `units.ron`, `structures.ron`, `upgrades.ron` and
-    /// `movement_rules.ron` from `directory`; the movement rules travel in the unit catalog
-    /// ([`UnitCatalog::movement_rules`]).
+    /// Loads `factions.ron`, `units.ron`, `structures.ron`, `upgrades.ron`,
+    /// `movement_rules.ron`, `statuses.ron` and `ability_effects.ron` from `directory`; the
+    /// movement rules and the spell catalog travel in the unit catalog
+    /// ([`UnitCatalog::movement_rules`], [`UnitCatalog::spells`]).
     ///
     /// The directory is the catalog directory itself, typically `asset_root/catalog`.
     /// Definitions are read at call time, so restarting the same binary observes edits.
@@ -108,8 +110,46 @@ impl RuntimeCatalogs {
             }
         })?;
         units.set_movement_rules(rules);
+        load_spells(directory, &mut units)?;
         Ok(Self { units, upgrades })
     }
+}
+
+/// Loads the spell tables and checks the abilities naming them. A failure names
+/// `statuses.ron` when it lies in a status alone, `units.ron` when an ability is at fault, and
+/// `ability_effects.ron` otherwise.
+fn load_spells(directory: &Path, units: &mut UnitCatalog) -> Result<(), CatalogLoadError> {
+    let statuses_path = directory.join("statuses.ron");
+    let effects_path = directory.join("ability_effects.ron");
+    let statuses = SpellCatalog::parse_statuses(&read(&statuses_path)?).map_err(|source| {
+        CatalogLoadError::Invalid {
+            path: statuses_path.clone(),
+            source,
+        }
+    })?;
+    let effects = SpellCatalog::parse_effects(&read(&effects_path)?).map_err(|source| {
+        CatalogLoadError::Invalid {
+            path: effects_path.clone(),
+            source,
+        }
+    })?;
+    let spells = SpellCatalog::from_defs(statuses, effects).map_err(|error| {
+        let path = if error.is_status_only() {
+            statuses_path
+        } else {
+            effects_path
+        };
+        CatalogLoadError::Invalid {
+            path,
+            source: error.into(),
+        }
+    })?;
+    units
+        .set_spell_catalog(spells)
+        .map_err(|source| CatalogLoadError::Invalid {
+            path: directory.join("units.ron"),
+            source,
+        })
 }
 
 fn read(path: &Path) -> Result<String, CatalogLoadError> {

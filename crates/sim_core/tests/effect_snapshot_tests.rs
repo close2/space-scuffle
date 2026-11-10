@@ -578,6 +578,10 @@ fn register_storm_caster(world: &mut SimWorld, duration_ticks: u16) -> UnitTypeI
             friendly_fire: false,
         },
         leave_name: None,
+        cast_backswing_ticks: 0,
+        single_caster: true,
+        target_filter: None,
+        origin: None,
     }];
     world.catalog.register(arch);
     free

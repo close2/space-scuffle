@@ -139,6 +139,7 @@ fn dummy_weapon_spec(
         max_projectile_lifetime_ticks: sim_types::DEFAULT_PROJECTILE_LIFETIME_TICKS,
         suicide_on_attack: false,
         structure_strike: None,
+        melee: false,
     }
 }
 
@@ -768,6 +769,7 @@ fn test_friendly_fire_splash_damages_allies_vs_enemy_only_splash() {
         max_projectile_lifetime_ticks: sim_types::DEFAULT_PROJECTILE_LIFETIME_TICKS,
         suicide_on_attack: false,
         structure_strike: None,
+        melee: false,
     };
 
     // Case B: Weapon with friendly_fire: false

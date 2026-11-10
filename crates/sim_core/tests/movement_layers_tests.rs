@@ -264,6 +264,10 @@ fn blink_rejection_is_before_energy_cooldown_and_all_entity_mutation() -> TestRe
             cooldown_ticks: 17,
         },
         leave_name: None,
+        cast_backswing_ticks: 0,
+        single_caster: true,
+        target_filter: None,
+        origin: None,
     }];
     f.world.entities.get_mut(&id).ok_or("actor")?.energy = SimScalar::from_num(20);
     f.world.map.place_structure(EntityId(999), 10, 5, 1, 1)?;
@@ -517,6 +521,10 @@ fn registered_foundation_placement_rejects_before_any_actor_or_map_mutation() ->
             cooldown_ticks: 10,
         },
         leave_name: None,
+        cast_backswing_ticks: 0,
+        single_caster: true,
+        target_filter: None,
+        origin: None,
     }];
     let id = f.world.spawn_structure(kind, PlayerId(0), 10, 10)?;
     f.world.entities.get_mut(&id).ok_or("foundation")?.energy = SimScalar::from_num(100);

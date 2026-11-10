@@ -70,6 +70,10 @@ fn test_overclock_stim_hp_cost_and_stat_multipliers() {
         cast_range: SimScalar::ZERO,
         effect: AbilityEffectSpec::Overclock(overclock_spec),
         leave_name: None,
+        cast_backswing_ticks: 0,
+        single_caster: true,
+        target_filter: None,
+        origin: None,
     };
 
     world.catalog.get_mut(pulse_bot_id).unwrap().abilities = vec![ability];
@@ -168,6 +172,10 @@ fn stim_is_refused_unless_life_exceeds_its_cost() {
         cast_range: SimScalar::ZERO,
         effect: AbilityEffectSpec::Overclock(spec),
         leave_name: None,
+        cast_backswing_ticks: 0,
+        single_caster: true,
+        target_filter: None,
+        origin: None,
     }];
 
     for (life, admitted) in [(9, false), (10, false), (11, true)] {
@@ -292,6 +300,7 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
         max_projectile_lifetime_ticks: sim_types::DEFAULT_PROJECTILE_LIFETIME_TICKS,
         suicide_on_attack: false,
         structure_strike: None,
+        melee: false,
     };
 
     let ability = AbilitySpec {
@@ -305,6 +314,10 @@ fn test_siege_mode_toggle_immobility_and_long_range_splash() {
             sieged_weapon: Box::new(sieged_weapon.clone()),
         },
         leave_name: None,
+        cast_backswing_ticks: 0,
+        single_caster: true,
+        target_filter: None,
+        origin: None,
     };
 
     world.catalog.get_mut(crawler_id).unwrap().abilities = vec![ability];
@@ -448,6 +461,10 @@ fn test_blink_teleport_across_cliff_chasm() {
             cooldown_ticks: 175,
         },
         leave_name: None,
+        cast_backswing_ticks: 0,
+        single_caster: true,
+        target_filter: None,
+        origin: None,
     };
 
     world.catalog.get_mut(crawler_id).unwrap().abilities = vec![ability];
@@ -541,6 +558,10 @@ fn test_psionic_storm_hazard_zone_aoe_and_non_stacking() {
             friendly_fire: true,
         },
         leave_name: None,
+        cast_backswing_ticks: 0,
+        single_caster: true,
+        target_filter: None,
+        origin: None,
     };
 
     world.catalog.get_mut(caster_type_id).unwrap().abilities = vec![storm_ability];
@@ -635,6 +656,10 @@ fn test_cloak_invisibility_and_detector_reveal() {
             is_burrow: false,
         },
         leave_name: None,
+        cast_backswing_ticks: 0,
+        single_caster: true,
+        target_filter: None,
+        origin: None,
     };
 
     world.catalog.get_mut(pulse_bot_id).unwrap().abilities = vec![cloak_ability];
@@ -1085,6 +1110,10 @@ fn a_transient_ability_leaves_the_orders() {
             attack_rate_multiplier: SimScalar::from_num(1.5),
         }),
         leave_name: None,
+        cast_backswing_ticks: 0,
+        single_caster: true,
+        target_filter: None,
+        origin: None,
     }];
     command(
         &mut world,
