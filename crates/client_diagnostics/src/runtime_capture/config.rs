@@ -34,6 +34,11 @@ pub struct CaptureOptions {
     /// values above 1.0 feed (`client_diagnostics::hdr_bloom`).
     #[arg(long)]
     pub hdr_bloom: bool,
+    /// Effect-lab fog take of a line (review round 4): the viewer sees the line's search points
+    /// from this index on; the points before it, and the burrowed attacker behind them, lie in
+    /// the fog, drawn as the battle terrain draws it. The sheets are named `<effect>_fog_*`.
+    #[arg(long, value_name = "POINT")]
+    pub fog_seen_from: Option<u32>,
 }
 
 /// Failures are surfaced as nonzero exit and an incomplete manifest where possible.

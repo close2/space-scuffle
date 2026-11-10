@@ -169,6 +169,7 @@ fn lab_subject(subject: &SplashSubject) -> LabSubject {
         anchor,
         line_to,
         line_seen: u64::MAX,
+        fog_below_x: None,
     }
 }
 
@@ -880,8 +881,9 @@ const FIRST_SEEN_POINT: u32 = 4;
 /// Age of the masked shot, seconds: every spine of the line is up.
 const MASKED_AGE: f32 = 1.0;
 /// How far, in world units along the line, a drawn instance at the first seen point may reach
-/// back towards the unseen points: clump and spike scatter, lean and card width.
-const MASKED_REACH_BACK: f32 = 0.75;
+/// back towards the unseen points: every layer is clipped half a spacing before the first seen
+/// point (review round 4), and a ground mark's end feather reaches 0.18 beyond that.
+const MASKED_REACH_BACK: f32 = 0.7;
 /// Fewest lit pixels the seen part of the line must draw.
 const MASKED_MIN_LIT: usize = 200;
 /// The index of the line subject, if the subjects have one.

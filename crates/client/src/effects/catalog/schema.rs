@@ -400,8 +400,9 @@ pub enum BlockDef {
         /// How the box is turned about world up.
         #[serde(default)]
         yaw: DecalYaw,
-        /// Half width across the texture's u axis as a fraction of the half length (`size`),
-        /// in (0, 1]; 1 is a square mark.
+        /// Half width across the texture's u axis as a multiple of the half length (`size`),
+        /// in (0, 4]; 1 is a square mark, above 1 a box wider than long (for an element whose
+        /// mark is a narrow band across it).
         #[serde(default = "one")]
         width: f32,
         /// With `yaw: AlongLine`, the mark is cut off where the event's line starts and ends,

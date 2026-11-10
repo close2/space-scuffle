@@ -114,6 +114,10 @@ pub struct LabSubject {
     /// `u64::MAX` for all of them (the contact sheets), fewer to show a line that runs out of
     /// the fog (plan Amendment 2, R6).
     pub line_seen: u64,
+    /// World x below which the viewer's fog lies over the ground, drawn as the battle terrain
+    /// draws it (the ground darkened to a quarter, a hard edge); `None` for no fog. Used with
+    /// [`Self::line_seen`] to show a line running out of the fog into sight.
+    pub fog_below_x: Option<f32>,
 }
 
 impl LabSubject {
@@ -318,6 +322,7 @@ mod tests {
             anchor: Vec3::new(-4.0, 0.0, 0.0),
             line_to: Some(Vec3::new(4.0, 0.0, 0.0)),
             line_seen: u64::MAX,
+            fog_below_x: None,
         }
     }
 

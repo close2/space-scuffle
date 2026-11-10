@@ -282,3 +282,25 @@ GPU figures (radv, RX 580, through the harness, 2026-11-10; lavapipe passes the 
 
 **Round 3 result: accepted by the implementer, every item for every effect.** The independent round-3 review
 follows on [`independent_review_packet.md`](independent_review_packet.md).
+
+## Changes for round 4 (after the independent review of round 3)
+
+Round 3 accepted `shell_impact` and rejected `acid_burst` and `spine_line` (narrowly)
+([`independent_review_round3.md`](independent_review_round3.md)). Round 4 works from its ranked changes; the
+mapping of every round-3 finding to its change is in [`independent_review_packet.md`](independent_review_packet.md),
+section "Round 4".
+
+### Framework
+
+| Gap | Change |
+|---|---|
+| A partly seen line's marks ran on past the last seen point into the fog (each layer clipped only to the whole line), and the reviewer could not see the fog edge | Every `clip_to_line` layer of a partly seen line is clipped to the **run of seen points** around its own point, half a spacing beyond the outermost seen points (`runtime::seen_clip_window`): ground marks, spikes, dust and chips all end at the same place (the cell edge for points at cell centres); the ground marks feather over 0.3 as at the line's ends. Unit test `a_partly_seen_line_is_clipped_to_the_seen_run_around_each_instance`; the GPU test `a_line_seen_only_in_part_draws_only_where_it_is_seen` now allows 0.7 (was 0.75) of reach back. |
+| No picture of the fog edge | The effect lab draws the viewer's fog as the battle terrain does (a black veil that leaves the ground a quarter of its colour, hard cell edge; `LabSubject::fog_below_x`), and `battle_capture --effect-lab spine_line --fog-seen-from 4` makes `spine_line_fog_contact.png` and `spine_line_fog_sequence.png`: the attacker and the first four points in fog, the line running into sight. |
+| The sheet's last column was the effect's lifetime without a line's travel, so the far half of the fissure still showed in it (round-3 review, `spine_line` item 3) | The lab's ages run to the effect's true end (lifetime plus the line's travel delay, `runtime::max_line_delay`), the moment the runtime frees it. |
+| The liquid stain went flat when it dried, had no dark rim, and its relief was uniform | The liquid material keeps 75 % of its relief light when dry (only the sheen dries away); the relief's strength varies with the pooling noise from flat pools (0.2) to large swells (1.6); a **wet rim** darkens and saturates the colour (×0.36, 0.58, 0.34) along every edge of the liquid: the band of erosion order 0.10 beyond the erosion step (the outline and the holes it dries into) and the texture's thinning outline. |
+| The shock and acid fronts read as even rims | A pressure front's trailing-edge noise is stretched in contrast (×2.2), so the band's width varies about twofold around the circumference. |
+
+### Textures ([`texture_review.md`](texture_review.md), "Review round 4")
+
+Three new image-model stills ($0.33) replace `chitin_clump`: massive clumps with lit and shadowed flanks and a soil
+collar. Ledger $106.12 of $200.

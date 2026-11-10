@@ -300,6 +300,24 @@ impl Resolver<'_> {
         }
     }
 
+    /// Largest decal width: a mark four times as wide as long, for a texture whose mark is a
+    /// narrow band across a square element (the spine line's torn-earth scar, review round 4).
+    const MAX_DECAL_WIDTH: f32 = 4.0;
+
+    /// Checks a decal's `width` against (0, [`Self::MAX_DECAL_WIDTH`]].
+    fn decal_width(&self, at: &Site, width: f32) -> Result<(), EffectCatalogError> {
+        if width > 0.0 && width <= Self::MAX_DECAL_WIDTH {
+            return Ok(());
+        }
+        Err(EffectCatalogError::InvalidValue {
+            path: self.path.to_path_buf(),
+            site: at.clone(),
+            field: "width",
+            value: width,
+            rule: "it must be in (0, 4]",
+        })
+    }
+
     /// Checks that `value` lies in `(0, 1]`.
     fn positive_fraction(
         &self,
@@ -751,7 +769,7 @@ impl Resolver<'_> {
                 if let Some(liquid) = liquid {
                     self.liquid(at, liquid)?;
                 }
-                self.positive_fraction(at, "width", *width)?;
+                self.decal_width(at, *width)?;
                 if !(0.0..1.0).contains(grazing) {
                     return Err(EffectCatalogError::InvalidValue {
                         path: self.path.to_path_buf(),

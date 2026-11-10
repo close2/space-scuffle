@@ -437,6 +437,11 @@ fn liquid_feather_and_repeat_values_are_range_checked() {
         &vocabulary(&manifest, "", &splash_effect(&good), ""),
     )
     .expect("a valid liquid decal loads");
+    load(
+        dir.path(),
+        &vocabulary(&manifest, "", &splash_effect(&decal(", width: 4.0")), ""),
+    )
+    .expect("a decal four times as wide as long loads (review round 4)");
     for (layer, field) in [
         (liquid(0.0, 1.0, 20.0, 0.5, 0.5), "liquid.relief"),
         (liquid(0.05, 5.0, 20.0, 0.5, 0.5), "liquid.sheen"),
@@ -444,6 +449,8 @@ fn liquid_feather_and_repeat_values_are_range_checked() {
         (liquid(0.05, 1.0, 20.0, 1.5, 0.5), "liquid.value_noise"),
         (liquid(0.05, 1.0, 20.0, 0.5, 1.0), "liquid.dry_below"),
         (decal(", clip_feather: 0.0"), "clip_feather"),
+        (decal(", width: 0.0"), "width"),
+        (decal(", width: 4.5"), "width"),
     ] {
         let error = load(
             dir.path(),

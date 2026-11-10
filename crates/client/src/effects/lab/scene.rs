@@ -267,3 +267,37 @@ pub fn draw_overlay(gizmos: &mut Gizmos<'_, '_>, subject: &LabSubject, radii: [f
         distance += spacing;
     }
 }
+
+/// Opacity of the black fog veil: the ground behind it keeps a quarter of its colour, as the
+/// battle terrain's fog factor (`terrain.wgsl`, `mix(0.25, 1.0, visible)`) leaves it.
+const FOG_VEIL_OPACITY: f32 = 0.75;
+/// Height of the fog veil over the ground: above the ground's depth, far below any effect.
+const FOG_VEIL_HEIGHT: f32 = 0.002;
+
+/// Spawns the fog veil over the ground below world x `below_x`: an unlit black plane whose
+/// blend leaves the ground a quarter of its colour with a hard edge, the battle terrain's fog
+/// over cells the viewer does not see. It is blended and writes no depth prepass, so decals
+/// still project onto the ground beneath it.
+pub fn spawn_fog_veil(
+    commands: &mut Commands<'_, '_>,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    below_x: f32,
+) {
+    let left = -GROUND_SIDE * 0.5;
+    let width = (below_x - left).max(0.0);
+    if width <= 0.0 {
+        return;
+    }
+    let material = StandardMaterial {
+        base_color: Color::BLACK.with_alpha(FOG_VEIL_OPACITY),
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    };
+    commands.spawn((
+        Mesh3d(meshes.add(Plane3d::default().mesh().size(width, GROUND_SIDE))),
+        MeshMaterial3d(materials.add(material)),
+        Transform::from_xyz(left + width * 0.5, FOG_VEIL_HEIGHT, 0.0),
+    ));
+}

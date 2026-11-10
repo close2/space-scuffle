@@ -31,7 +31,8 @@ use super::budget::{
     retire_fade, retirement_candidate, RetireCandidate,
 };
 use super::catalog::schema::{
-    CardShape, DecalYaw, EffectClass, Orient, ParticleOrient, Priority, RingMapping, RotationDef,
+    Binding, CardShape, DecalYaw, EffectClass, Orient, ParticleOrient, Priority, RingMapping,
+    RotationDef,
 };
 use super::catalog::{
     Block, Breakup, CardLook, CurveId, DecalLook, EffectCatalog, EffectId, ElementRef, Layer, Pool,
@@ -428,10 +429,12 @@ impl EffectRuntime {
                 if due <= window.0 || due > window.1 {
                     continue;
                 }
-                let clip = match instance.line {
-                    Some(line) if layer.clip_to_line => line_clip_window(line),
-                    _ => NO_CLIP,
-                };
+                let clip = clip_window(
+                    instance.line,
+                    layer.clip_to_line,
+                    &instance.bound,
+                    instance.anchor + placed.offset,
+                );
                 let burst = Burst {
                     emitter: emitter_id,
                     origin: instance.anchor + placed.offset,
@@ -661,10 +664,7 @@ impl EffectRuntime {
             (_, RingMapping::Front) if ring_inner > 0.0 => SHAPE_FRONT,
             _ => SHAPE_TEXTURE,
         };
-        let clip = match line {
-            Some(line) if look.clip_to_line => line_clip_window(line),
-            _ => NO_CLIP,
-        };
+        let clip = clip_window(line, look.clip_to_line, &context.instance.bound, position);
         let surface = Surface::of(look.breakup.as_ref(), seed);
         let card = SpriteInstance {
             center: center.to_array(),
@@ -726,10 +726,7 @@ impl EffectRuntime {
             .unwrap_or_else(|| flipbook_frame(&look.element, None, 0.0, life, true));
         let random_yaw = std::f32::consts::TAU * unit_float(hash3(seed, 0x0DEC, 0));
         let line = context.instance.line;
-        let clip = match line {
-            Some(line) if look.clip_to_line => line_clip_window(line),
-            _ => NO_CLIP,
-        };
+        let clip = clip_window(line, look.clip_to_line, &context.instance.bound, position);
         let yaw = match (look.yaw, line) {
             (DecalYaw::AlongLine, Some(line)) => {
                 let direction = line.to - line.from;
@@ -874,7 +871,7 @@ fn len32(len: usize) -> u32 {
 }
 
 /// The longest extra delay the line placements of `layers` add on `line`.
-fn max_line_delay(layers: &[Layer], line: Option<WorldLine>) -> f32 {
+pub fn max_line_delay(layers: &[Layer], line: Option<WorldLine>) -> f32 {
     let Some(line) = line else {
         return 0.0;
     };
@@ -909,6 +906,77 @@ pub fn line_clip_window(line: WorldLine) -> LineClip {
     let axis = along / length;
     let start = axis.dot(Vec2::new(line.from.x, line.from.z));
     [axis.x, axis.y, start, start + length]
+}
+
+/// The clip window of an instance at `position` of a layer that `clips` to the event's
+/// `line`: [`seen_clip_window`] with the line's bound spacing, or no clip.
+fn clip_window(
+    line: Option<WorldLine>,
+    clips: bool,
+    bound: &BoundValues,
+    position: Vec3,
+) -> LineClip {
+    match line {
+        Some(line) if clips => seen_clip_window(
+            line,
+            bound.get(Binding::LineSpacing),
+            Vec2::new(position.x, position.z),
+        ),
+        _ => NO_CLIP,
+    }
+}
+
+/// The clip window of an instance at `position` (XZ) on `line`, whose search points lie
+/// `spacing` apart from its start: the whole line when the viewer sees every point, otherwise
+/// the run of seen points around the instance's own point, ending half a spacing beyond its
+/// outermost seen points (where the fog's cell edge lies for points at cell centres), so every
+/// layer of the line (ground marks, spikes, dust, chips) is cut at the same place where the line
+/// runs into the fog (plan Amendment 2, R6; review round 4). No clip for a line without
+/// horizontal length.
+#[must_use]
+pub fn seen_clip_window(line: WorldLine, spacing: f32, position: Vec2) -> LineClip {
+    let whole = line_clip_window(line);
+    if whole == NO_CLIP || line.seen == u64::MAX || spacing <= f32::EPSILON {
+        return whole;
+    }
+    let [x, z, start, end] = whole;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a point index of a line of at most a few hundred spacings, clamped at 0"
+    )]
+    let (point, last) = (
+        ((position.dot(Vec2::new(x, z)) - start) / spacing)
+            .round()
+            .max(0.0) as u32,
+        ((end - start) / spacing + 1e-3).floor().max(0.0) as u32,
+    );
+    let point = point.min(last);
+    let mut low = point;
+    while low > 0 && line.sees_point(low - 1) {
+        low -= 1;
+    }
+    let mut high = point;
+    while high < last && line.sees_point(high + 1) {
+        high += 1;
+    }
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a small point index is exact in f32"
+    )]
+    let (low_at, high_at) = (
+        if low == 0 {
+            start
+        } else {
+            start + (low as f32 - 0.5) * spacing
+        },
+        if high == last {
+            end
+        } else {
+            start + (high as f32 + 0.5) * spacing
+        },
+    );
+    [x, z, low_at, high_at]
 }
 
 /// Offset of a card that moves `spread` world units away from its anchor over its life,
@@ -1128,6 +1196,39 @@ mod tests {
             line_clip_window(vertical),
             NO_CLIP,
             "no horizontal length, no clip"
+        );
+    }
+
+    #[test]
+    fn a_partly_seen_line_is_clipped_to_the_seen_run_around_each_instance() {
+        let mut line = WorldLine::whole(Vec3::new(0.0, 0.0, 0.0), Vec3::new(8.0, 0.0, 0.0));
+        assert_eq!(
+            seen_clip_window(line, 1.0, Vec2::new(3.0, 0.0)),
+            line_clip_window(line),
+            "a wholly seen line keeps its whole window"
+        );
+        // Points 0..=3 fogged, 4..=6 seen, 7 fogged, 8 seen.
+        line.seen = 0b1_0111_0000;
+        let [_, _, min, max] = seen_clip_window(line, 1.0, Vec2::new(5.2, 0.3));
+        assert!(
+            (min - 3.5).abs() < 1e-5 && (max - 6.5).abs() < 1e-5,
+            "{min} {max}"
+        );
+        let [_, _, min, max] = seen_clip_window(line, 1.0, Vec2::new(8.0, 0.0));
+        assert!(
+            (min - 7.5).abs() < 1e-5 && (max - 8.0).abs() < 1e-5,
+            "the end point keeps the line's end: {min} {max}"
+        );
+        line.seen = 0b0_0000_0111;
+        let [_, _, min, max] = seen_clip_window(line, 1.0, Vec2::new(-0.4, 0.0));
+        assert!(
+            min.abs() < 1e-5 && (max - 2.5).abs() < 1e-5,
+            "the first point keeps the line's start"
+        );
+        assert_eq!(
+            seen_clip_window(line, 0.0, Vec2::ZERO),
+            line_clip_window(line),
+            "no spacing bound: the whole window"
         );
     }
 

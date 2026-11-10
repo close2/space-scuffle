@@ -1017,3 +1017,26 @@ mapped to what changed) and hands back; the orchestrator launches the independen
 Evidence: [`slice_review.md`](../evidence/effects/review/slice_review.md) ("Round 3"),
 [`texture_review.md`](../evidence/effects/review/texture_review.md) ("Review round 3"), the packet's "Round 3"
 section. The independent round-3 review is next.
+
+**Round 4 (2026-11-10, short note, charter §6).** The independent round-3 review
+([`independent_review_round3.md`](../evidence/effects/review/independent_review_round3.md)) accepted
+`shell_impact` again and rejected `acid_burst` and `spine_line` (narrowly); it asked for a fog capture. Round 4
+applies its ranked changes in the client, the catalog's presentation data, the effect shaders and one texture
+(no simulation state, golden replay or checksum changes; D-1 holds). Decisions (Q0002, reversible):
+
+- `spine_line`: the single leaning spikes are **dropped** rather than re-timed, because the new massive clumps
+  already carry three to five spikes each and every single spike read as a lone stroke; the ruptures use the
+  torn-earth texture along the line (`spine_crack` and `chitin_spine` stay baked but unused); the scar decal's
+  box may be wider than long (a decal's `width` now ranges over (0, 4]).
+- `acid_burst`: the radial ground flash is dropped (it read as a glowing gel oval at frame 0); the stain itself is
+  there, thick and at 0.85 of its size, from frame 0. The wet rim is drawn by the liquid material along every edge
+  instead of by the ramp's top, which the drying ramp curve had turned into the brightest emerald.
+- `shell_impact` (accepted): only the shock front's width variation (a shader change shared with the acid front)
+  and the dust starting after the front; the streak fringe stays recorded for the scale-out.
+- Fog (R6): a partly seen line's layers are clipped to the run of seen points around each instance, half a
+  spacing beyond the outermost seen point, so ground marks and spikes end at the same place; the effect lab can
+  draw the viewer's fog as the battle terrain does, for the review's fog capture.
+
+Evidence: [`slice_review.md`](../evidence/effects/review/slice_review.md) ("Round 4"),
+[`texture_review.md`](../evidence/effects/review/texture_review.md) ("Review round 4"), the packet's "Round 4"
+section. The independent round-4 review is next.

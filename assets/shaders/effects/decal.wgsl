@@ -16,9 +16,10 @@
 const LIQUID_STEP_TEXELS: f32 = 1.5;
 // Mips above the footprint's at which the relief is read: only broad swells and the thick
 // rim catch the light, not every speck of the texture.
-const LIQUID_RELIEF_MIPS: f32 = 2.0;
-// Pooling noise: this multiple of the breakup noise's scale (a few pools across a stain).
-const LIQUID_NOISE_SCALE: f32 = 2.0;
+const LIQUID_RELIEF_MIPS: f32 = 3.0;
+// Pooling noise: this multiple of the breakup noise's scale (a few large pools and swells
+// across a stain; review round 4).
+const LIQUID_NOISE_SCALE: f32 = 1.0;
 // How far the noise moves the ramp input and the thickness (at value_noise 1).
 const LIQUID_VALUE_SWING: f32 = 1.3;
 const LIQUID_THICKNESS_SWING: f32 = 0.6;
@@ -33,6 +34,23 @@ const LIQUID_KEY_COS: f32 = 0.8660254;
 const LIQUID_KEY_SIN: f32 = 0.5;
 // Colour of the specular sheen (wet acid catching a white key light: pale lime-white).
 const LIQUID_SHEEN_COLOR: vec3<f32> = vec3<f32>(0.80, 1.00, 0.62);
+// Share of the relief light a dry crust keeps (review round 4): the liquid's swells stay
+// shaded as it dries; only the specular sheen dries away.
+const LIQUID_DRY_RELIEF: f32 = 0.75;
+// The relief's strength across the stain, from flat pools to large swells, by the pooling
+// noise (review round 4: round 3's relief was uniform, "green coral").
+const LIQUID_POOL_RELIEF: f32 = 0.2;
+const LIQUID_SWELL_RELIEF: f32 = 1.6;
+// The wet rim (review round 4): a band along every edge of the liquid (its outline and the
+// edges of the holes it dries into), this wide in erosion order beyond the erosion step,
+// darker and more saturated than the body by this colour factor at every age.
+const LIQUID_RIM_ORDER: f32 = 0.10;
+// The outline's band: the coverage read this many mips above the footprint (blurred over about
+// a tenth of a unit at gameplay zooms), darkened where it falls between these two values, so
+// the band lies inside the outline where the liquid is still opaque.
+const LIQUID_RIM_MIPS: f32 = 3.5;
+const LIQUID_RIM_COVERAGE: vec2<f32> = vec2<f32>(0.70, 0.995);
+const LIQUID_RIM_DARK: vec3<f32> = vec3<f32>(0.24, 0.44, 0.24);
 
 @group(0) @binding(0) var<uniform> view: View;
 #ifdef MULTISAMPLED
@@ -148,7 +166,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // specular sheen that dries away with the ramp curve.
     shading = clamp(shading * (1.0 + LIQUID_VALUE_SWING * decal.value_noise * (liquid.w - 0.5)), 0.0, 1.0);
     let wet = clamp((decal.ramp_scale - decal.dry_below) / max(1.0 - decal.dry_below, 1e-3), 0.0, 1.0);
-    let local_normal = normalize(vec3<f32>(-decal.relief * liquid.x, 1.0, -decal.relief * liquid.y));
+    let swell = mix(LIQUID_POOL_RELIEF, LIQUID_SWELL_RELIEF, smoothstep(0.3, 0.7, liquid.w));
+    let relief = decal.relief * swell;
+    let local_normal = normalize(vec3<f32>(-relief * liquid.x, 1.0, -relief * liquid.y));
     let surface_normal = rotate_yaw(local_normal, decal.yaw);
     // The key light comes from the upper left of the screen: on the ground, half to the
     // screen's left and half away from the camera, low over the ground. A flat film does not
@@ -162,14 +182,25 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let key = normalize(key_heading * LIQUID_KEY_COS + vec3<f32>(0.0, LIQUID_KEY_SIN, 0.0));
     let eye = normalize(view.world_position - world);
     let diffuse = clamp(
-        1.0 + LIQUID_DIFFUSE * wet * (dot(surface_normal, key) - key.y),
+        1.0 + LIQUID_DIFFUSE * mix(LIQUID_DRY_RELIEF, 1.0, wet) * (dot(surface_normal, key) - key.y),
         LIQUID_DIFFUSE_MIN,
         LIQUID_DIFFUSE_MAX,
     );
     let mirrored = reflect(-eye, surface_normal);
     let specular = pow(max(dot(mirrored, key), 0.0), decal.gloss) * decal.sheen * wet;
     let base = premultiply(ramp_lookup(ramps, decal.ramp_row, shading * decal.ramp_scale), coverage);
-    return vec4<f32>(base.rgb * diffuse + LIQUID_SHEEN_COLOR * specular * coverage, base.a);
+    // The wet rim: the band of erosion order just inside the erosion step, and a band inside the
+    // texture's own outline, darkened and saturated.
+    let step_top = decal.erosion + max(decal.softness, 1e-3);
+    let blurred = flipbook_sample(
+        atlas, atlas_sampler, uv, decal.layer_a, decal.layer_b, decal.frame_mix, level + LIQUID_RIM_MIPS,
+    ).g;
+    let rim = max(
+        1.0 - smoothstep(step_top, step_top + LIQUID_RIM_ORDER, order),
+        1.0 - smoothstep(LIQUID_RIM_COVERAGE.x, LIQUID_RIM_COVERAGE.y, blurred),
+    );
+    let rimmed = base.rgb * mix(vec3<f32>(1.0), LIQUID_RIM_DARK, rim);
+    return vec4<f32>(rimmed * diffuse + LIQUID_SHEEN_COLOR * specular * coverage * (1.0 - rim), base.a);
 }
 
 // The liquid surface at `uv`: xy the thickness field's slope per world unit along the box's
