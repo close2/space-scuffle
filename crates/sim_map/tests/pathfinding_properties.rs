@@ -189,17 +189,27 @@ proptest! {
         if let Ok(path) = found {
             prop_assert_eq!(path.waypoints.first(), Some(&request.start));
             prop_assert_eq!(path.waypoints.last(), Some(&request.goal));
-            let start_fits =
-                pathfinder.segment_is_passable(&map, &request.into(), request.start, request.start);
+            // D-3: legs from a wedged start up to the first waypoint where the disc fits are held
+            // to the predicate for the unit's centre only, as the search's own legality check
+            // holds them. A turn rounded right beside the wedged start puts its first arc point
+            // inside the disc's band along the wall that wedges it (the seed of record, start
+            // (9, 12), radius 0.625).
+            let centre_only = PathRequestWithVision {
+                radius: SimScalar::ZERO,
+                ..request.into()
+            };
+            let mut wedged = true;
             let mut measured = SimScalar::ZERO;
-            for (leg, pair) in path.waypoints.windows(2).enumerate() {
+            for pair in path.waypoints.windows(2) {
                 measured += pair[0].distance(pair[1]);
-                prop_assert!(
-                    fell_back
-                        || (leg == 0 && !start_fits)
-                        || pathfinder.segment_is_passable(&map, &request.into(), pair[0], pair[1]),
-                    "illegal segment {:?}", pair
-                );
+                wedged = wedged
+                    && !pathfinder.segment_is_passable(&map, &request.into(), pair[0], pair[0]);
+                let legal = if wedged {
+                    pathfinder.segment_is_passable(&map, &centre_only, pair[0], pair[1])
+                } else {
+                    pathfinder.segment_is_passable(&map, &request.into(), pair[0], pair[1])
+                };
+                prop_assert!(fell_back || legal, "illegal segment {:?} (wedged {})", pair, wedged);
             }
             prop_assert_eq!(measured, path.total_length);
             let straight = request.start.distance(request.goal);

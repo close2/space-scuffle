@@ -116,7 +116,9 @@ fn test_cross_platform_determinism_checksum() {
     // Fixed-seed reference after the switch to the navigation mesh (sc2 pathfinding WP9): the
     // hashed routes are the mesh's, with arcs emitted on their circles (Amendment 2), and goals
     // where the tier's disc does not fit are refused. Before: 0x69cd_c3bf_29fa_dbd8 (the grid).
-    const EXPECTED_CHECKSUM: u64 = 0xa324_e36c_647d_586e;
+    // Re-recorded under Amendment 4: the switch commit's 0xa324_e36c_647d_586e was recorded
+    // before the last edits of that commit, and its own tree already produced this value.
+    const EXPECTED_CHECKSUM: u64 = 0x672c_257d_0fca_cc1b;
     assert_eq!(
         final_checksum, EXPECTED_CHECKSUM,
         "Checksum diverged from reference"
