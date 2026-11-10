@@ -81,3 +81,22 @@ Own-to-lane ratios of every `GroupLane` event: the G-1 fixture's three (1.0032, 
 showcase and none in the goldens. Every adoption so far lies far below 7.5 %.
 
 The storyboard (`assets/captures/showcase.ron`) was not re-rendered: the shipped showcase did not move.
+
+## Throughput
+
+`cargo bench -p sim_core --bench throughput` binaries (release), run under the gate lock (`flock -o
+~/scratch/gate.lock`), three runs each alternating main `b3a4c94` and this branch at WP5 (`49e39aa`, tolerance 75),
+each run itself the median of three repeats. The server was heavily loaded (load average 261 to 322), so the figures
+are noisy; the median of the three runs is shown.
+
+| Map | Units | Main `b3a4c94` | WP5 |
+|---|---:|---:|---:|
+| 64x64 | 0 | 3224 | 3304 |
+| 64x64 | 100 | 1007 | 1005 |
+| 64x64 | 400 | 152 | 175 |
+| 128x128 | 400 | 193 | 187 |
+| 256x256 | 0 | 200 | 201 |
+| showcase_canyon | 400 | 118 | 125 |
+
+Every scenario runs far above 25 ticks per second, and `showcase_canyon` is not slower than main (the 15 % limit of
+D-9 holds). `DESIGN.md` §5 is left as it is: the differences are within the noise of this load.
