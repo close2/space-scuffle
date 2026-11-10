@@ -159,7 +159,7 @@ pub struct DecalLook {
     pub width: f32,
     /// Whether the mark is cut off at the line's ends.
     pub clip_to_line: bool,
-    /// World units over which a clipped mark feathers out, centred on each end.
+    /// World units over which a clipped mark feathers out, across each end (60 % of it beyond the end).
     pub clip_feather: f32,
     /// Noise breakup.
     pub breakup: Option<Breakup>,

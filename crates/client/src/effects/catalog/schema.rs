@@ -408,8 +408,8 @@ pub enum BlockDef {
         /// so segments longer than their spacing still end exactly at the line's ends.
         #[serde(default)]
         clip_to_line: bool,
-        /// World units over which a mark cut off at the line's ends feathers out, centred on
-        /// each end (half the fade lies inside the line, half beyond it), at least 0.005.
+        /// World units over which a mark cut off at the line's ends feathers out across each end
+        /// (60 % of the fade beyond the end, 40 % inside the line), at least 0.005.
         #[serde(default = "default_clip_feather")]
         clip_feather: f32,
         /// Noise breakup of the erosion and edges.

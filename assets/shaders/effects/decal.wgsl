@@ -26,6 +26,8 @@ const LIQUID_THICKNESS_SWING: f32 = 0.6;
 const LIQUID_DIFFUSE: f32 = 0.9;
 const LIQUID_DIFFUSE_MIN: f32 = 0.45;
 const LIQUID_DIFFUSE_MAX: f32 = 1.7;
+// Share of a clipped mark's end feather that lies beyond the line's end.
+const CLIP_FEATHER_OUTSIDE: f32 = 0.6;
 // Elevation of the key light over the ground: 30 degrees (its cosine and sine).
 const LIQUID_KEY_COS: f32 = 0.8660254;
 const LIQUID_KEY_SIN: f32 = 0.5;
@@ -118,12 +120,14 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var clip = 1.0;
     let clip_axis = vec2<f32>(decal.clip_axis_x, decal.clip_axis_z);
     if (dot(clip_axis, clip_axis) > 0.0) {
-        // Feathered across each clip end, half inside the line and half beyond it.
-        let half_feather = 0.5 * decal.clip_feather;
+        // Feathered across each clip end: CLIP_FEATHER_OUTSIDE of the fade lies beyond the end,
+        // so the mark is still about two thirds strong at the end itself and ends there to
+        // the eye, while its tip fades out instead of being cut.
+        let outside = CLIP_FEATHER_OUTSIDE * decal.clip_feather;
         clip = clip_fade(
             dot(world.xz, clip_axis),
-            decal.clip_min - half_feather,
-            decal.clip_max + half_feather,
+            decal.clip_min - outside,
+            decal.clip_max + outside,
             decal.clip_feather,
         );
     }

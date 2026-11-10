@@ -449,7 +449,7 @@
                     block: Decal(texture: "acid_stain", ramp: "acid_stain", erosion: "stain_dry", depth: 0.6,
                         breakup: (noise: "noise_tile", scale: 1.4, amount: 0.45, softness: 0.14, shade: 0.25),
                         liquid: (relief: 0.4, sheen: 1.6, gloss: 30.0, value_noise: 0.75, dry_below: 0.5)),
-                    size: (bind: SplashReach, scale: 1.08), size_jitter: 0.04, size_curve: "stain_spread",
+                    size: (bind: SplashReach, scale: 1.0), size_curve: "stain_spread",
                     ramp_curve: "dry", duration: 6.0, curve: "stain_in", priority: Critical,
                 ),
                 (
@@ -486,7 +486,19 @@
                         breakup: (noise: "noise_tile", scale: 1.6, amount: 0.45, softness: 0.2)),
                     placement: Line(spacing: (bind: LineSpacing, scale: 1.0), travel: 11.2, scatter: 0.1),
                     size: (bind: LineSpacing, scale: 0.95), size_jitter: 0.25,
-                    duration: 2.0, curve: "linger", priority: Critical,
+                    duration: 2.3, curve: "linger", priority: Critical,
+                ),
+                (
+                    // The ground heaving around each eruption over the full-damage disc: a
+                    // noise-broken patch of churned soil that comes with the crack and erodes
+                    // away within 0.7 s, so it marks the point that hits without leaving a row of
+                    // patches behind (the scar stays).
+                    block: Decal(texture: "scorch", ramp: "churn", erosion: "erode_rise", depth: 0.6,
+                        clip_to_line: true, clip_feather: 0.3,
+                        breakup: (noise: "noise_tile", scale: 1.8, amount: 0.5, softness: 0.2)),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 1.0), travel: 11.2, scatter: 0.08),
+                    size: (bind: SplashFull, scale: 1.35), size_jitter: 0.2,
+                    duration: 0.7, curve: "punch",
                 ),
                 (
                     // The ground cracking open at each point, two frames before its spines:
@@ -505,7 +517,7 @@
                         breakup: (noise: "noise_tile", scale: 2.0, amount: 0.3, softness: 0.12)),
                     placement: Line(spacing: (bind: LineSpacing, scale: 1.0), travel: 11.2, between: true),
                     size: (bind: LineSpacing, scale: 1.1),
-                    start: 0.03, duration: 2.2, curve: "linger", priority: Critical,
+                    start: 0.03, duration: 2.5, curve: "linger", priority: Critical,
                 ),
                 (
                     // The clump at each point: three to five spikes splayed from one base, of

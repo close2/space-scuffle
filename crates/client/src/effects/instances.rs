@@ -154,7 +154,7 @@ pub struct DecalInstance {
     pub noise_layer: u32,
     /// World XZ direction the mark is clipped along; zero for no clip.
     pub clip_axis: [f32; 2],
-    /// World units over which a clipped mark feathers out, centred on each clip end.
+    /// World units over which a clipped mark feathers out, across each clip end (60 % of it beyond the end).
     pub clip_feather: f32,
     /// Liquid relief: slope scale of the thickness field lit as a wet surface; 0 for none.
     pub relief: f32,
