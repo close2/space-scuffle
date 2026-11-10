@@ -64,6 +64,11 @@ struct PreparedCast {
     effect: AbilityEffectSpec,
     /// The caster's owner, who owns any hazard zone the cast opens.
     owner: PlayerId,
+    /// Ticks the caster stays locked after the cast (`cast_backswing_ticks`, plan D-7.4).
+    backswing_ticks: u16,
+    /// The effect tree's origin, placed at admission (plan D-6); the caster's position for
+    /// every other ability.
+    origin: SimVec2,
 }
 
 /// The verdict of an ability effect's own admission checks.
@@ -112,6 +117,19 @@ fn mode_channel_ticks(spec: &UnitModeSpec, leaving: bool, rng: &mut impl Rng) ->
     // Q32.32: adding one half and shifting down by 32 rounds half up to whole ticks.
     let whole = extra.saturating_add(SimScalar::HALF).raw() >> 32;
     u16::try_from(i64::from(base).saturating_add(whole)).unwrap_or(u16::MAX)
+}
+
+/// Toggles `entity`'s cloak; a burrowing cloak also anchors it while hidden and stops it.
+fn toggle_cloak(entity: &mut Entity, is_burrow: bool) {
+    entity.is_cloaked = !entity.is_cloaked;
+    if is_burrow {
+        entity.is_immobile = entity.is_cloaked;
+        entity.unpushable = entity.is_cloaked;
+        if entity.is_cloaked {
+            entity.velocity = SimVec2::ZERO;
+            entity.current_funnel_waypoints.clear();
+        }
+    }
 }
 
 impl SimWorld {
@@ -217,8 +235,9 @@ impl SimWorld {
     /// world units, would be admitted now: the simulation's own admission, run without mutation
     /// and without drawing from the generator.
     ///
-    /// `false` for every ordinary refusal (dead, carried, channelling, unknown or locked
-    /// ability, cooldown, energy, range or placement) and also for malformed authored data,
+    /// `false` for every ordinary refusal (dead, carried, channelling, stunned or locked after a
+    /// cast, unknown or locked ability, cooldown, energy, range, target or placement) and also
+    /// for malformed authored data,
     /// which a real cast reports as a tick diagnostic. The client asks this before it submits
     /// a mode switch, so its admission cannot drift from the tick's (plan
     /// `2026-11-09-client-mode-commands` D-4).
@@ -228,9 +247,10 @@ impl SimWorld {
         entity_id: EntityId,
         ability_index: u8,
         target_pos: Option<SimVec2>,
+        target_entity: Option<EntityId>,
     ) -> bool {
         matches!(
-            self.admit_cast(entity_id, ability_index, target_pos, None),
+            self.admit_cast(entity_id, ability_index, target_pos, target_entity),
             Ok(Some(_))
         )
     }
@@ -294,7 +314,22 @@ impl SimWorld {
             return Ok(None);
         }
 
-        if ability.cast_range > SimScalar::ZERO {
+        let mut origin = entity.position;
+        if matches!(ability.effect, AbilityEffectSpec::Effect(_)) {
+            // The cast pipeline of plan `2026-11-10-spellcaster-mechanics` D-7: the target
+            // suits the ability and is seen, it stands in range of the caster's edge, and the
+            // origin finds a place (D-6).
+            let targets = (target_pos, target_entity);
+            if !self.cast_target_admitted(entity, ability, ability_index, targets)
+                || self.cast_in_range(entity, ability, targets) != Some(true)
+            {
+                return Ok(None);
+            }
+            match self.place_cast_origin(entity, ability, target_entity) {
+                Some(placed) => origin = placed,
+                None => return Ok(None),
+            }
+        } else if ability.cast_range > SimScalar::ZERO {
             if let Some(pos) = target_pos {
                 if !crate::movement::math::within_distance(
                     entity.position,
@@ -311,13 +346,8 @@ impl SimWorld {
             .checked_sub(ability.energy_cost)
             .ok_or_else(|| admission(crate::entity::EntityAdmissionError::PaymentOverflow))?;
         // Validate every fallible payment/rate/placement before any commit.
-        let EffectAdmission::Admitted(overclock) = self.admit_effect(
-            entity_id,
-            entity,
-            arch,
-            &ability.effect,
-            (target_pos, target_entity),
-        )?
+        let EffectAdmission::Admitted(overclock) =
+            self.admit_effect(entity_id, entity, arch, &ability.effect, target_pos)?
         else {
             return Ok(None);
         };
@@ -328,6 +358,8 @@ impl SimWorld {
             overclock,
             effect: ability.effect.clone(),
             owner: entity.owner,
+            backswing_ticks: ability.cast_backswing_ticks,
+            origin,
         }))
     }
 
@@ -340,7 +372,7 @@ impl SimWorld {
         entity: &Entity,
         arch: &UnitArchetype,
         effect: &AbilityEffectSpec,
-        (target_pos, target_entity): (Option<SimVec2>, Option<EntityId>),
+        target_pos: Option<SimVec2>,
     ) -> Result<EffectAdmission, MovementInvariant> {
         let admission = |source| MovementInvariant::Admission {
             entity: entity_id,
@@ -401,15 +433,10 @@ impl SimWorld {
                     return Ok(EffectAdmission::Refused);
                 }
             }
-            // The immediate path of plan `2026-11-10-spellcaster-mechanics` WP1c: the root must
-            // exist and the target kind must be given; approach, range, vision and the target
-            // filter arrive with the cast pipeline (WP1d).
+            // The target, range and origin were admitted by `admit_cast` (`casts.rs`); the root
+            // must exist in the loaded spell catalog.
             AbilityEffectSpec::Effect(key) => {
-                let target_given = target_pos.is_some()
-                    || target_entity.is_some_and(|id| {
-                        crate::effects::is_effect_unit_target(&self.entities, id)
-                    });
-                if self.catalog.spells().effect_id(key).is_none() || !target_given {
+                if self.catalog.spells().effect_id(key).is_none() {
                     return Ok(EffectAdmission::Refused);
                 }
             }
@@ -442,13 +469,16 @@ impl SimWorld {
             overclock,
             effect,
             owner,
+            backswing_ticks,
+            origin,
         } = cast;
+        entity.cast_lock_ticks = backswing_ticks;
         if let Some(prepared) = overclock {
             entity.commit_overclock(prepared);
         }
         entity.energy = energy;
-        if (ability_index as usize) < entity.ability_cooldowns.len() {
-            entity.ability_cooldowns[ability_index as usize] = cooldown_ticks;
+        if let Some(cooldown) = entity.ability_cooldowns.get_mut(usize::from(ability_index)) {
+            *cooldown = cooldown_ticks;
         }
 
         match effect {
@@ -514,34 +544,30 @@ impl SimWorld {
                     self.spawn_hazard_zone(owner, pos, &spec, caster);
                 }
             }
-            AbilityEffectSpec::CloakToggle { is_burrow, .. } => {
-                entity.is_cloaked = !entity.is_cloaked;
-                if is_burrow {
-                    entity.is_immobile = entity.is_cloaked;
-                    entity.unpushable = entity.is_cloaked;
-                    if entity.is_cloaked {
-                        entity.velocity = SimVec2::ZERO;
-                        entity.current_funnel_waypoints.clear();
-                    }
-                }
-            }
+            AbilityEffectSpec::CloakToggle { is_burrow, .. } => toggle_cloak(entity, is_burrow),
         }
 
         if let AbilityEffectSpec::Effect(key) = &effect {
-            self.start_cast_walk(entity_id, ability_index, key, (target_pos, target_entity));
+            self.start_cast_walk(
+                entity_id,
+                ability_index,
+                key,
+                origin,
+                (target_pos, target_entity),
+            );
         }
         true
     }
 
     /// Starts the walk of an `Effect` ability's root for a committed cast: the target unit if
-    /// one was given, else the target point; origin and source point are the caster's position
-    /// (origin placement arrives with the cast pipeline, plan
-    /// `2026-11-10-spellcaster-mechanics`, package 1d).
+    /// one was given, else the target point; `origin` is the point admission placed (plan
+    /// `2026-11-10-spellcaster-mechanics` D-6) and the source point the caster's position.
     fn start_cast_walk(
         &mut self,
         caster: EntityId,
         ability_index: u8,
         key: &str,
+        origin: SimVec2,
         (target_pos, target_entity): (Option<SimVec2>, Option<EntityId>),
     ) {
         let target = match (target_entity, target_pos) {
@@ -562,7 +588,7 @@ impl SimWorld {
                 unit_type: entity.unit_type_id,
                 ability: ability_index,
             },
-            origin: entity.position,
+            origin,
             source_point: entity.position,
             target,
         };

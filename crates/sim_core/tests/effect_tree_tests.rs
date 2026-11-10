@@ -458,6 +458,8 @@ fn an_effect_ability_cast_pays_and_starts_its_walk() {
         origin: None,
     });
     let index = u8::try_from(arch.abilities.len() - 1).expect("few abilities");
+    // The caster's owner must see the enemy target (plan D-7.7): one tick computes vision.
+    step(&mut w);
     let before = hp(&w, target);
     assert!(w.execute_ability(caster, index, None, Some(target)));
     assert_eq!(hp(&w, target), before - SimScalar::from_i32(10));

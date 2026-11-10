@@ -842,7 +842,7 @@ fn settled(world: &SimWorld, unit: EntityId) -> (Option<String>, bool) {
 
 /// Asserts that the read-only admission and a real cast of ability 0 agree; returns the verdict.
 fn admission_agrees(world: &mut SimWorld, unit: EntityId) -> bool {
-    let predicted = world.would_admit_cast(unit, 0, None);
+    let predicted = world.would_admit_cast(unit, 0, None, None);
     let cast = world.execute_ability(unit, 0, None, None);
     assert_eq!(
         predicted, cast,
@@ -911,7 +911,10 @@ fn would_admit_cast_agrees_with_execute_ability_on_every_refusal() {
 
     // Unknown ability index.
     let (world, tank) = one_unit("railgun_crawler", 3);
-    assert!(!world.would_admit_cast(tank, 3, None), "no such ability");
+    assert!(
+        !world.would_admit_cast(tank, 3, None, None),
+        "no such ability"
+    );
 
     // Locked until researched.
     let (mut world, tank) = one_unit("railgun_crawler", 3);

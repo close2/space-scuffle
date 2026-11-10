@@ -31,7 +31,7 @@
 
 mod actions;
 mod eval;
-mod filter;
+pub(crate) mod filter;
 mod modifiers;
 pub mod state;
 mod step;
@@ -84,14 +84,6 @@ impl Default for EffectScratch {
 /// Distances of the placement rings in halves of a world unit (0.5, 1.0, 1.5, 2.0, … ),
 /// tried after the centre, eight directions each (plan D-8).
 const RING_STEP: SimScalar = SimScalar::HALF;
-
-/// Whether a unit-targeted effect may start on `id` now (alive, present, not loaded).
-pub(crate) fn is_effect_unit_target(
-    entities: &std::collections::BTreeMap<EntityId, crate::entity::Entity>,
-    id: EntityId,
-) -> bool {
-    filter::unit_target(entities, id).is_some()
-}
 
 impl SimWorld {
     /// Nodes entered by every effect walk of this world so far (a test hook for the work

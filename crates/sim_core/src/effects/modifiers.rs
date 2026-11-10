@@ -26,6 +26,11 @@ use sim_types::{EntityId, SimScalar, StatusSpec};
 
 /// What a unit's statuses do to it, combined.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent modifiers of the status data (stun, reveal, four suppressions), each read \
+              by a different system"
+)]
 pub struct StatusModifiers {
     /// The unit cannot move, attack or cast (its orders wait).
     pub stun: bool,

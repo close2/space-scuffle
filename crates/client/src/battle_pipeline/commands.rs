@@ -741,7 +741,7 @@ fn can_switch(
     let settles_in_mode = entity
         .settled_mode(archetype)
         .is_some_and(|mode| mode.mode_name == mode_name);
-    world.would_admit_cast(entity.id, ability_index, None)
+    world.would_admit_cast(entity.id, ability_index, None, None)
         && settles_in_mode == (direction == ModeDirection::Leave)
 }
 

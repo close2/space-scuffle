@@ -494,6 +494,23 @@ impl SpellCatalog {
         self.statuses.get(usize::from(id.0))
     }
 
+    /// `filter` with its status key resolved against this catalog, or `None` when it names a
+    /// status the catalog lacks (catalog validation refuses such an ability at load).
+    #[must_use]
+    pub fn resolve_filter(&self, filter: &sim_types::TargetFilter) -> Option<ResolvedFilter> {
+        let without_status = match filter.without_status.as_deref() {
+            Some(name) => Some(self.status_id(name)?),
+            None => None,
+        };
+        Some(ResolvedFilter {
+            alliance: filter.alliance,
+            ground: filter.planes.contains(&sim_types::TargetPlane::Ground),
+            air: filter.planes.contains(&sim_types::TargetPlane::Air),
+            structures: filter.structures,
+            without_status,
+        })
+    }
+
     /// Number of nodes in the arena.
     #[must_use]
     pub fn node_count(&self) -> usize {

@@ -342,6 +342,20 @@ fn gate_step_by_facing(hull: Option<HullGate>, origin: SimVec2, proposal: &mut M
     }
 }
 
+/// `point` moved, if need be, into the full-radius domain of `policy`'s body on `map`.
+fn clamp_into_domain(policy: MotionPolicy, map: &SimMap, point: SimVec2) -> SimVec2 {
+    let r = policy.radius;
+    let clamp = |value: SimScalar, extent: u32| {
+        let high = SimScalar::from_num(extent).saturating_sub(r);
+        if high < r {
+            SimScalar::from_num(extent).saturating_mul(SimScalar::HALF)
+        } else {
+            value.clamp(r, high)
+        }
+    };
+    SimVec2::new(clamp(point.x, map.width()), clamp(point.y, map.height()))
+}
+
 fn arithmetic(id: EntityId, source: MovementMathError) -> MovementInvariant {
     MovementInvariant::Arithmetic {
         entity: id,
@@ -927,17 +941,24 @@ impl SimWorld {
             Some(UnitOrder::AttackTarget { target, origin }) => {
                 return Ok(ControlFlow::Break(MotionAction::Pursue(*target, *origin)))
             }
-            Some(UnitOrder::CastAbility {
+            Some(&UnitOrder::CastAbility {
                 ability_index,
                 target_pos,
                 target_entity,
             }) => {
-                return Ok(ControlFlow::Break(MotionAction::Cast((
-                    id,
-                    *ability_index,
-                    *target_pos,
-                    *target_entity,
-                ))))
+                // An effect ability out of range walks toward its target first (plan
+                // `2026-11-10-spellcaster-mechanics` D-7.1); the goal stays inside the domain.
+                match self.cast_approach_goal(actor, ability_index, target_pos, target_entity) {
+                    Some(goal) => clamp_into_domain(entry.policy, &self.map, goal),
+                    None => {
+                        return Ok(ControlFlow::Break(MotionAction::Cast((
+                            id,
+                            ability_index,
+                            target_pos,
+                            target_entity,
+                        ))))
+                    }
+                }
             }
             _ => {
                 self.coast(entry, actor, &mut proposal)?;
