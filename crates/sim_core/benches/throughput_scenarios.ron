@@ -3,7 +3,8 @@
 // Mirrors the attack-move throughput table in Appendix A of
 // docs/plans/2026-11-01-codebase-remediation.md. Each run builds a flat map, splits
 // `units` evenly between two players in opposite corners, orders both sides to
-// attack-move across the map, and measures `ticks` steps of the real `SimWorld`.
+// attack-move across the map, and measures `ticks` steps of the real `SimWorld`. A row with
+// `map_file` fights on that shipped map instead, between its first two start locations.
 (
     unit_slug: "pulse_bot",
     seed: 7,
@@ -15,5 +16,8 @@
         (map_cells: 64, units: 400),
         (map_cells: 128, units: 400),
         (map_cells: 256, units: 0),
+        // Terrain: the showcase canyon's ramps and plateau, 400 units marching between the
+        // bases through the route planner (sc2 pathfinding WP8).
+        (map_cells: 64, units: 400, map_file: Some("showcase_canyon.scmap.ron")),
     ],
 )

@@ -8,9 +8,22 @@
     clippy::doc_markdown
 )]
 
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/arena.rs"]
+mod arena;
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/oracle.rs"]
+mod oracle;
+
 use sim_map::{
-    CellFlags, CliffLevel, GameMap, MapCell, MapFile, PathRequest, Pathfinder, UnitClearance,
-    CORNER_SAFETY_MARGIN,
+    CellFlags, CliffLevel, GameMap, MapCell, MapError, MapFile, PathRequest, PathRequestWithVision,
+    Pathfinder, Side, UnitClearance, CORNER_SAFETY_MARGIN,
 };
 use sim_types::{EntityId, SimScalar, SimVec2};
 
@@ -328,4 +341,207 @@ fn corner_offsets_use_the_units_own_radius() {
             corners[0]
         );
     }
+}
+
+// --- Navigation mesh routes (sc2 pathfinding WP6): TA*, Demyen widths and the radius funnel.
+
+fn mesh_request(
+    start: SimVec2,
+    goal: SimVec2,
+    radius: SimScalar,
+) -> PathRequestWithVision<'static> {
+    PathRequestWithVision {
+        start,
+        goal,
+        clearance: UnitClearance::for_radius(radius),
+        radius,
+        vision: None,
+        block_unexplored_ramps: false,
+        known_structures: None,
+    }
+}
+
+fn at(x: f64, y: f64) -> SimVec2 {
+    SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(y))
+}
+
+fn f64_of(p: SimVec2) -> (f64, f64) {
+    (f64::from(p.x.to_f32()), f64::from(p.y.to_f32()))
+}
+
+/// Routes `start -> goal` on the mesh and checks it against the exact oracle: every leg passes
+/// the segment predicate, and the route's tangent-and-arc length is within 1 % of the oracle's.
+/// Returns the route's polyline length and the oracle's length.
+fn assert_mesh_route_matches_oracle(
+    map: &GameMap,
+    start: SimVec2,
+    goal: SimVec2,
+    radius: f64,
+) -> (f64, f64) {
+    let radius = SimScalar::from_num(radius);
+    let rho = f64::from((radius + CORNER_SAFETY_MARGIN).to_f32());
+    let mut pathfinder = Pathfinder::new(map);
+    let request = mesh_request(start, goal, radius);
+    let route = pathfinder
+        .find_route_mesh(map, &request)
+        .expect("a route exists");
+    assert!(!route.fallback, "funnel fell back: {route:?}");
+    for pair in route.waypoints.windows(2) {
+        assert!(
+            pathfinder.mesh_segment_is_passable(map, &request, pair[0], pair[1]),
+            "leg {pair:?}"
+        );
+    }
+    let oracle = oracle::Oracle::new(oracle::walls_of(map), rho);
+    let reference = oracle
+        .shortest(f64_of(start), f64_of(goal))
+        .expect("the oracle finds a route");
+    let turns: Vec<((f64, f64), i8)> = route
+        .turns
+        .iter()
+        .map(|&(p, side)| {
+            (
+                (f64::from(p.x), f64::from(p.y)),
+                if side == Side::Left { -1 } else { 1 },
+            )
+        })
+        .collect();
+    let smooth = oracle::smooth_length(f64_of(start), f64_of(goal), &turns, rho);
+    assert!(
+        smooth <= reference * 1.01,
+        "route {smooth} against oracle {reference}: {route:?}"
+    );
+    (f64::from(route.total_length.to_f32()), reference)
+}
+
+#[test]
+fn mesh_route_rounds_an_l_shaped_wall_at_the_oracle_length() {
+    let mut map = GameMap::new(20, 20, MapCell::default_ground(CliffLevel(1))).unwrap();
+    for i in 5..15 {
+        map.cell_mut(i, 10).unwrap().flags = CellFlags::empty();
+        map.cell_mut(14, i).unwrap().flags = CellFlags::empty();
+    }
+    for radius in [0.25, 0.375, 0.5, 0.875] {
+        let (length, reference) =
+            assert_mesh_route_matches_oracle(&map, at(10.5, 5.5), at(10.5, 15.5), radius);
+        assert!(
+            length >= reference - 1e-3,
+            "radius {radius}: {length} shorter than {reference}"
+        );
+    }
+}
+
+#[test]
+fn mesh_route_climbs_the_default_arena_ramp_at_the_oracle_length() {
+    let map = arena::default_arena();
+    assert_mesh_route_matches_oracle(&map, at(10.5, 20.5), at(45.5, 50.5), 0.375);
+    assert_mesh_route_matches_oracle(&map, at(31.5, 12.5), at(32.5, 40.5), 0.5);
+}
+
+/// The §3.4 pair of the plan, where the grid corridor was 2.7 % longer than the reference.
+#[test]
+fn mesh_route_for_the_showcase_pair_is_at_the_oracle_length() {
+    let map = arena::load_game_map(arena::SHOWCASE_CANYON_FILE);
+    for radius in [0.375, 0.5] {
+        assert_mesh_route_matches_oracle(&map, at(61.5, 24.5), at(16.5, 35.5), radius);
+    }
+}
+
+/// A wall across the map with one opening of `gap` cells at `x = 8`.
+fn wall_with_gap(gap: u32) -> GameMap {
+    let mut map = GameMap::new(20, 12, MapCell::default_ground(CliffLevel(1))).unwrap();
+    for x in (0..20).filter(|&x| !(8..8 + gap).contains(&x)) {
+        map.cell_mut(x, 6).unwrap().flags = CellFlags::empty();
+    }
+    map
+}
+
+#[test]
+fn mesh_gap_of_exactly_two_radii_passes_and_a_hair_less_does_not() {
+    let (start, goal) = (at(8.5, 2.5), at(8.5, 10.5));
+    for (gap, radius) in [(1, SimScalar::HALF), (2, SimScalar::ONE)] {
+        let map = wall_with_gap(gap);
+        let mut pathfinder = Pathfinder::new(&map);
+        let fits = pathfinder.find_route_mesh(&map, &mesh_request(start, goal, radius));
+        assert!(
+            fits.is_ok(),
+            "gap {gap} must admit radius {radius}: {fits:?}"
+        );
+        let wider = radius + SimScalar::EPSILON;
+        let blocked = pathfinder.find_route_mesh(&map, &mesh_request(start, goal, wider));
+        assert!(
+            matches!(blocked, Err(MapError::NoPathFound { .. })),
+            "gap {gap} must refuse radius {wider}: {blocked:?}"
+        );
+    }
+}
+
+#[test]
+fn mesh_diagonal_gap_is_exact() {
+    // Row 5 is blocked for x < 6 and row 7 for x >= 7: the only way up passes between the
+    // corners (6, 6) and (7, 7), sqrt(2) = 1.41421 apart.
+    let mut map = GameMap::new(14, 12, MapCell::default_ground(CliffLevel(1))).unwrap();
+    for x in 0..6 {
+        map.cell_mut(x, 5).unwrap().flags = CellFlags::empty();
+    }
+    for x in 7..14 {
+        map.cell_mut(x, 7).unwrap().flags = CellFlags::empty();
+    }
+    for y in 0..12 {
+        if y != 5 && y != 6 && y != 7 {
+            continue;
+        }
+        map.cell_mut(13, y).unwrap().flags = CellFlags::empty();
+    }
+    let (start, goal) = (at(10.5, 2.5), at(2.5, 10.5));
+    let mut pathfinder = Pathfinder::new(&map);
+    let fits = pathfinder.find_route_mesh(
+        &map,
+        &mesh_request(start, goal, SimScalar::from_num(7071) / 10_000),
+    );
+    assert!(fits.is_ok(), "{fits:?}");
+    let blocked = pathfinder.find_route_mesh(
+        &map,
+        &mesh_request(start, goal, SimScalar::from_num(7072) / 10_000),
+    );
+    assert!(
+        matches!(blocked, Err(MapError::NoPathFound { .. })),
+        "{blocked:?}"
+    );
+}
+
+#[test]
+fn mesh_structures_touching_at_a_corner_block_every_radius_until_unknown() {
+    // A barrier of column 7 above y = 9 and column 8 below y = 7, closed by two one-cell
+    // structures at (7, 8) and (8, 7) that touch only at the point (8, 8).
+    let mut map = GameMap::new(18, 16, MapCell::default_ground(CliffLevel(1))).unwrap();
+    for y in 9..16 {
+        map.cell_mut(7, y).unwrap().flags = CellFlags::empty();
+    }
+    for y in 0..7 {
+        map.cell_mut(8, y).unwrap().flags = CellFlags::empty();
+    }
+    map.place_structure(EntityId(1), 7, 8, 1, 1).unwrap();
+    map.place_structure(EntityId(2), 8, 7, 1, 1).unwrap();
+    let mut pathfinder = Pathfinder::new(&map);
+    let (start, goal) = (at(3.5, 7.5), at(14.5, 7.5));
+    for radius in [0.05, 0.25, 0.375, 0.5] {
+        let result = pathfinder.find_route_mesh(
+            &map,
+            &mesh_request(start, goal, SimScalar::from_num(radius)),
+        );
+        assert!(
+            matches!(result, Err(MapError::NoPathFound { .. })),
+            "radius {radius}: {result:?}"
+        );
+    }
+    let unknown = vec![false; 18 * 16];
+    let request = PathRequestWithVision {
+        known_structures: Some(&unknown),
+        ..mesh_request(start, goal, SimScalar::from_num(0.375))
+    };
+    assert!(
+        pathfinder.find_route_mesh(&map, &request).is_ok(),
+        "unknown structures are walked through"
+    );
 }

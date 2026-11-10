@@ -10,7 +10,8 @@
 //! simple and shares no code with the linear-time transform it verifies.
 //!
 //! # Invariants
-//! Maps are small, so the O(cells * walls) oracle stays cheap. Generated maps may be entirely
+//! Maps are small, so the O(cells * walls) oracle stays cheap. The navigation mesh's routes
+//! (sc2 pathfinding WP6) are compared with the exact disc oracle of `support/oracle.rs`. Generated maps may be entirely
 //! disconnected; properties that need a route are conditional on the search finding one.
 
 #![expect(
@@ -19,9 +20,19 @@
     reason = "indices into a 16x16 test map always fit in i64 and u32"
 )]
 
+#[allow(
+    dead_code,
+    reason = "shared by several test binaries that each use a subset"
+)]
+#[path = "support/oracle.rs"]
+mod oracle;
+
 use proptest::collection::vec;
 use proptest::prelude::*;
-use sim_map::{CellFlags, CliffLevel, GameMap, MapCell, PathRequest, Pathfinder, UnitClearance};
+use sim_map::{
+    CellFlags, CliffLevel, GameMap, MapCell, MapError, PathRequest, PathRequestWithVision,
+    Pathfinder, Side, UnitClearance, CORNER_SAFETY_MARGIN,
+};
 use sim_types::{SimScalar, SimVec2};
 
 const SIDE: u32 = 16;
@@ -240,4 +251,243 @@ proptest! {
         let fresh = Pathfinder::new(&map).find_path(&map, &target);
         prop_assert_eq!(after_reuse.ok(), fresh.ok());
     }
+}
+
+/// Radii whose disc and safety-margin disc fit the same lattice gaps, with room to spare: no gap
+/// width `sqrt(k)` lies in `[2r - 0.02, 2(r + margin) + 0.02]`, so a route exists at `r` exactly
+/// when it does at `r + margin`, and no route squeezes through a slot a hair wider than the disc
+/// (where floating-point tolerance, not geometry, would decide the oracle's answer).
+fn radius_is_unambiguous(radius: f64) -> bool {
+    let rho = radius + f64::from(CORNER_SAFETY_MARGIN.to_f32());
+    (1..=64).all(|k: u32| {
+        let gap = f64::from(k).sqrt();
+        gap < 2.0 * radius - 0.02 || gap > 2.0 * rho + 0.02
+    })
+}
+
+fn mesh_request(
+    start: SimVec2,
+    goal: SimVec2,
+    radius: SimScalar,
+) -> PathRequestWithVision<'static> {
+    PathRequestWithVision {
+        start,
+        goal,
+        clearance: UnitClearance::for_radius(radius),
+        radius,
+        vision: None,
+        block_unexplored_ramps: false,
+        known_structures: None,
+    }
+}
+
+fn to_f64(p: SimVec2) -> (f64, f64) {
+    (f64::from(p.x.to_f32()), f64::from(p.y.to_f32()))
+}
+
+/// Compares the mesh route with the oracle for one pair. Returns the ratio of the route's
+/// tangent-and-arc length to the oracle's at `r + margin` (`None` when neither finds a route),
+/// or a violated law. The route may be shorter than that oracle where its straight shortcut
+/// passes within the margin of a corner, but never shorter than the oracle at `r` itself.
+fn compare_with_oracle(
+    map: &GameMap,
+    pathfinder: &mut Pathfinder,
+    tight: &oracle::Oracle,
+    padded: &oracle::Oracle,
+    (start, goal): (SimVec2, SimVec2),
+    radius: SimScalar,
+) -> Result<Option<f64>, String> {
+    let rho = f64::from((radius + CORNER_SAFETY_MARGIN).to_f32());
+    let (s, g) = (to_f64(start), to_f64(goal));
+    let request = mesh_request(start, goal, radius);
+    let mesh = pathfinder.find_route_mesh(map, &request);
+    let reference = padded.shortest(s, g);
+    let (route, reference) = match (mesh, reference) {
+        (Err(_), None) => return Ok(None),
+        (Ok(route), Some(reference)) => (route, reference),
+        (mesh, reference) => {
+            return Err(format!(
+                "existence differs: mesh {mesh:?}, oracle {reference:?}"
+            ));
+        }
+    };
+    if route.fallback {
+        // R-2's second outcome: the D-6 post-check refused the funnel route and the portal
+        // midpoints were used. Counted by the share test; existence still had to agree.
+        return Ok(Some(FALLBACK));
+    }
+    for pair in route.waypoints.windows(2) {
+        if !pathfinder.mesh_segment_is_passable(map, &request, pair[0], pair[1]) {
+            return Err(format!("leg {pair:?} fails the segment predicate"));
+        }
+    }
+    let turns: Vec<((f64, f64), i8)> = route
+        .turns
+        .iter()
+        .map(|&(p, side)| {
+            (
+                (f64::from(p.x), f64::from(p.y)),
+                if side == Side::Left { -1 } else { 1 },
+            )
+        })
+        .collect();
+    let polyline = f64::from(route.total_length.to_f32());
+    let smooth = if turns.is_empty() {
+        polyline
+    } else {
+        oracle::smooth_length(s, g, &turns, rho)
+    };
+    let floor = tight.shortest(s, g).unwrap_or(reference);
+    if polyline < floor - 1e-3 {
+        return Err(format!(
+            "route {polyline} is shorter than the legal minimum {floor}"
+        ));
+    }
+    Ok(Some(if reference > 0.0 {
+        smooth / reference
+    } else {
+        1.0
+    }))
+}
+
+/// The ratio reported for a route that fell back to portal midpoints.
+const FALLBACK: f64 = -1.0;
+
+/// Every cell centre with room for the padded disc, in index order.
+fn roomy_centres(map: &GameMap, padded: &oracle::Oracle, rho: f64) -> Vec<SimVec2> {
+    let mut out = Vec::new();
+    for y in 0..map.height() {
+        for x in 0..map.width() {
+            let p = (f64::from(x) + 0.5, f64::from(y) + 0.5);
+            if map.terrain_step_is_connected((x, y), (x, y)) && padded.clearance(p) >= rho + 1e-6 {
+                out.push(centre(x, y));
+            }
+        }
+    }
+    out
+}
+
+fn is_no_path<T>(result: &Result<T, MapError>) -> bool {
+    matches!(result, Err(MapError::NoPathFound { .. }))
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(24))]
+
+    /// The mesh finds a route exactly when the exact oracle does, its legs pass the segment
+    /// predicate, it is never shorter than the legal minimum, and it is never more than
+    /// [`MESH_RATIO_BOUND`] times the oracle's length (sc2 pathfinding WP6, D-11; the share
+    /// within 1 % is measured by `mesh_route_lengths_are_within_one_percent_of_the_oracle`).
+    #[test]
+    fn mesh_routes_agree_with_the_exact_oracle(
+        blocked in obstacle_mask(5),
+        radius_steps in 0u32..=75,
+        picks in vec((0usize..1000, 0usize..1000), 4),
+    ) {
+        let radius_f = 0.25 + f64::from(radius_steps) * 0.01;
+        prop_assume!(radius_is_unambiguous(radius_f));
+        let radius = SimScalar::from_num(radius_f);
+        let rho = f64::from((radius + CORNER_SAFETY_MARGIN).to_f32());
+        let map = build_map(&blocked)?;
+        let walls = oracle::walls_of(&map);
+        let tight = oracle::Oracle::new(walls.clone(), f64::from(radius.to_f32()));
+        let padded = oracle::Oracle::new(walls, rho);
+        let centres = roomy_centres(&map, &padded, rho);
+        prop_assume!(centres.len() >= 2);
+        let mut pathfinder = Pathfinder::new(&map);
+        for (a, b) in picks {
+            let pair = (centres[a % centres.len()], centres[b % centres.len()]);
+            let ratio = compare_with_oracle(&map, &mut pathfinder, &tight, &padded, pair, radius)
+                .map_err(TestCaseError::fail)?;
+            if let Some(ratio) = ratio.filter(|&ratio| ratio != FALLBACK) {
+                prop_assert!(ratio <= MESH_RATIO_BOUND, "{pair:?} at r {radius_f}: ratio {ratio}");
+            }
+        }
+    }
+
+    /// Mesh routes exist symmetrically and repeat exactly, with reused or fresh buffers.
+    #[test]
+    fn mesh_routes_are_symmetric_and_repeatable(
+        blocked in obstacle_mask(5),
+        start in (0..SIDE, 0..SIDE),
+        goal in (0..SIDE, 0..SIDE),
+        radius_steps in 0u32..=75,
+    ) {
+        let map = build_map(&blocked)?;
+        let radius = SimScalar::from_num(0.25 + f64::from(radius_steps) * 0.01);
+        let (a, b) = (centre(start.0, start.1), centre(goal.0, goal.1));
+        let mut pathfinder = Pathfinder::new(&map);
+        let forward = pathfinder.find_route_mesh(&map, &mesh_request(a, b, radius));
+        let backward = pathfinder.find_route_mesh(&map, &mesh_request(b, a, radius));
+        let endpoints_fit = |r: &Result<sim_map::MeshRoute, MapError>| {
+            !matches!(r, Err(MapError::InvalidStart(_) | MapError::InvalidGoal(_)))
+        };
+        if endpoints_fit(&forward) && endpoints_fit(&backward) {
+            prop_assert_eq!(is_no_path(&forward), is_no_path(&backward));
+        }
+        let again = pathfinder.find_route_mesh(&map, &mesh_request(a, b, radius));
+        let fresh = Pathfinder::new(&map).find_route_mesh(&map, &mesh_request(a, b, radius));
+        prop_assert_eq!(&forward, &again);
+        prop_assert_eq!(&forward, &fresh);
+    }
+}
+
+/// Hard bound of a mesh route's length over the oracle's. D-11 asks for 1.01; TA* with a
+/// bounded anytime search can settle on a slightly longer channel, so 1.01 is held as a share
+/// below (recorded deviation of WP6) and this bound catches real defects.
+const MESH_RATIO_BOUND: f64 = 1.10;
+
+/// Over a fixed set of seeded maps, radii and pairs, at least 95 % of mesh routes are within
+/// 1 % of the oracle's length, none is beyond [`MESH_RATIO_BOUND`], none disagrees on
+/// existence or fails a leg, and at most 2 % fall back to portal midpoints.
+#[test]
+fn mesh_route_lengths_are_within_one_percent_of_the_oracle() {
+    use rand::{Rng, SeedableRng};
+    let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0x0_7ac1e);
+    let (mut within, mut total, mut worst, mut fallbacks) = (0u32, 0u32, 1.0f64, 0u32);
+    let mut maps = 0;
+    while maps < 120 {
+        let radius_f = 0.25 + f64::from(rng.gen_range(0u32..=75)) * 0.01;
+        if !radius_is_unambiguous(radius_f) {
+            continue;
+        }
+        maps += 1;
+        let blocked: Vec<bool> = (0..CELLS).map(|_| rng.gen_range(0..5) == 0).collect();
+        let Ok(map) = build_map(&blocked) else {
+            continue;
+        };
+        let radius = SimScalar::from_num(radius_f);
+        let rho = f64::from((radius + CORNER_SAFETY_MARGIN).to_f32());
+        let walls = oracle::walls_of(&map);
+        let tight = oracle::Oracle::new(walls.clone(), f64::from(radius.to_f32()));
+        let padded = oracle::Oracle::new(walls, rho);
+        let centres = roomy_centres(&map, &padded, rho);
+        if centres.len() < 2 {
+            continue;
+        }
+        let mut pathfinder = Pathfinder::new(&map);
+        for _ in 0..6 {
+            let pair = (
+                centres[rng.gen_range(0..centres.len())],
+                centres[rng.gen_range(0..centres.len())],
+            );
+            let outcome = compare_with_oracle(&map, &mut pathfinder, &tight, &padded, pair, radius);
+            assert!(outcome.is_ok(), "{pair:?} at r {radius_f}: {outcome:?}");
+            let ratio = outcome.ok().flatten();
+            if let Some(ratio) = ratio {
+                total += 1;
+                fallbacks += u32::from(ratio == FALLBACK);
+                within += u32::from(ratio != FALLBACK && ratio <= 1.01);
+                worst = worst.max(ratio);
+            }
+        }
+    }
+    let share = f64::from(within) / f64::from(total.max(1));
+    eprintln!(
+        "mesh against oracle: {within}/{total} within 1 %, worst ratio {worst:.4}, \
+         {fallbacks} fallbacks"
+    );
+    assert!(fallbacks * 50 <= total, "{fallbacks}/{total} fell back");
+    assert!(worst <= MESH_RATIO_BOUND, "worst ratio {worst}");
+    assert!(share >= 0.95, "only {within}/{total} within 1 %");
 }

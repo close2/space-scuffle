@@ -18,6 +18,7 @@
 
 use crate::error::{MapError, Result};
 use crate::grid::{CellFlags, GameMap};
+use crate::navmesh::{self, search::MeshRoute, search::MeshSearch, NavMesh};
 use crate::vision::PlayerVisionMap;
 use serde::{Deserialize, Serialize};
 use sim_types::{SimScalar, SimVec2, VisibilityState};
@@ -549,6 +550,11 @@ pub struct Pathfinder {
     /// Incremented whenever obstacles change, invalidating cached paths.
     nav_version: u32,
     buffers: PathfinderBuffers,
+    /// The triangle navigation mesh of the current map state (plan D-2, D-8). Latent: built and
+    /// rebuilt with the clearance fields, read only by the `*_mesh` queries until WP9. `None`
+    /// for a map beyond the mesh's size limit.
+    navmesh: Option<NavMesh>,
+    mesh_search: MeshSearch,
 }
 
 impl Pathfinder {
@@ -566,6 +572,8 @@ impl Pathfinder {
             clearance_workspace: ClearanceWorkspace::new(width as usize, height as usize),
             nav_version: 1,
             buffers: PathfinderBuffers::new(size),
+            navmesh: None,
+            mesh_search: MeshSearch::default(),
         };
         pathfinder.recompute_clearance(map);
         pathfinder
@@ -618,7 +626,96 @@ impl Pathfinder {
                 .copy_from_slice(&self.static_clearance_grid);
         }
 
+        self.navmesh = NavMesh::build(map).ok();
         self.nav_version = self.nav_version.wrapping_add(1);
+    }
+
+    /// The navigation mesh of the current map state, if the map is within the mesh's limits.
+    #[must_use]
+    pub fn navmesh(&self) -> Option<&NavMesh> {
+        self.navmesh.as_ref()
+    }
+
+    /// Funnel routes that failed the segment predicate and fell back to portal midpoints since
+    /// this pathfinder was built (plan D-6 diagnostic).
+    #[must_use]
+    pub fn mesh_funnel_fallbacks(&self) -> u64 {
+        self.mesh_search.fallbacks
+    }
+
+    /// Finds a route on the navigation mesh for a disc of `request.radius` (plan D-4 to D-7):
+    /// triangle A* with Demyen widths, the radius funnel, and the mesh segment predicate. Latent
+    /// until WP9; the details of the route are in [`MeshRoute`].
+    ///
+    /// # Errors
+    /// [`MapError::InvalidStart`], [`MapError::InvalidGoal`] or [`MapError::NoPathFound`], as
+    /// [`navmesh::search::find_route`] documents; [`MapError::NoPathFound`] also when the map has
+    /// no mesh.
+    pub fn find_route_mesh(
+        &mut self,
+        map: &GameMap,
+        request: &PathRequestWithVision<'_>,
+    ) -> Result<MeshRoute> {
+        let mesh = self.navmesh.as_ref().ok_or(MapError::NoPathFound {
+            start: request.start,
+            goal: request.goal,
+        })?;
+        navmesh::search::find_route(mesh, &mut self.mesh_search, map, request)
+    }
+
+    /// [`Self::find_route_mesh`] as a [`PathResult`], the shape `find_path_with_vision` returns.
+    ///
+    /// # Errors
+    /// As [`Self::find_route_mesh`].
+    pub fn find_path_mesh(
+        &mut self,
+        map: &GameMap,
+        request: &PathRequestWithVision<'_>,
+    ) -> Result<PathResult> {
+        self.find_route_mesh(map, request).map(|route| PathResult {
+            waypoints: route.waypoints,
+            total_length: route.total_length,
+        })
+    }
+
+    /// The mesh segment predicate (plan D-7): whether a disc of `request.radius` may sweep from
+    /// `start` to `goal` through triangles the request may enter, keeping `radius` from every
+    /// edge that blocks it. `false` when the map has no mesh.
+    pub fn mesh_segment_is_passable(
+        &mut self,
+        map: &GameMap,
+        request: &PathRequestWithVision<'_>,
+        start: SimVec2,
+        goal: SimVec2,
+    ) -> bool {
+        self.navmesh.as_ref().is_some_and(|mesh| {
+            navmesh::search::segment_is_passable(
+                mesh,
+                &mut self.mesh_search,
+                map,
+                request,
+                start,
+                goal,
+            )
+        })
+    }
+
+    /// [`Self::nearest_reachable_point`] on the mesh, at the request's own radius.
+    ///
+    /// # Errors
+    /// [`MapError::InvalidStart`] or [`MapError::InvalidGoal`], as
+    /// [`navmesh::search::nearest_reachable_point`] documents; [`MapError::InvalidStart`] when the
+    /// map has no mesh.
+    pub fn nearest_reachable_point_mesh(
+        &mut self,
+        map: &GameMap,
+        request: &PathRequestWithVision<'_>,
+    ) -> Result<Option<SimVec2>> {
+        let mesh = self
+            .navmesh
+            .as_ref()
+            .ok_or(MapError::InvalidStart(request.start))?;
+        navmesh::search::nearest_reachable_point(mesh, &mut self.mesh_search, map, request)
     }
 
     /// Finds a smooth, corner-rounded shortest path using A* and Simple Stupid Funnel.
