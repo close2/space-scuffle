@@ -27,6 +27,26 @@
 > Everything else stands: the 5.0.14 values (§3), the cast pipeline (D-7), the hazard replacement (D-12), the
 > matrix battles (§10) and the scope (§16).
 
+> **Amendment 2 (implementation decisions, 2026-11-10, WP1 engine gaps and WP1d as built; Q0002).**
+>
+> - **Status modifiers** are folded into an unhashed cache, `Entity::status_modifiers`, refreshed by the engine on
+>   every status insertion, removal and expiry; neutral modifiers leave every reader unchanged. Stun, the after-cast
+>   lock and a displacement share one rule, `Entity::is_action_locked`: no walk, weapon, acquisition, dash or cast;
+>   orders wait (SU-3). A displaced unit is left out of the movement and collision phases. Weapon cooldowns do not
+>   count down while a unit is locked, as during a mode channel today (recorded difference, minor).
+> - **The D-7 pipeline governs `Effect` abilities only.** Blink keeps its immediate path (the game's Blink does not
+>   approach), hazard zones keep theirs until WP2b removes them, and mode toggles are unchanged. The backswing lock
+>   applies to any ability with `cast_backswing_ticks > 0` (none shipped). The lock counts down after the weapon
+>   phase, so a lock of *n* set on tick *t* holds ticks *t* … *t + n − 1* wherever the cast ran.
+> - **Approach to a unit target** walks toward the target's current position each tick (re-pathing as a move order
+>   does) rather than through the weapon pursuit, which needs a weapon band; the goal is clamped into the caster's
+>   domain. A cast that cannot reach is dropped as a move that cannot reach is.
+> - **Target vision** requires the target's cell visible to the caster's owner (where it has a vision map) and, for a
+>   concealed unit, detection; own units are always admitted. **Origin placement** for a point cast places for the
+>   caster's own movement layer (no spell uses it).
+> - **Allocation test (D-18)** counts with DHAT scoped by call stack (no counting allocator, Q0011): engine blocks are
+>   compared between 0 and 200 measured ticks, because DHAT attributes a `realloc` to the block's first allocation.
+
 The owner answered [Q0077](../questions/open/0077-caster-spells.md) with option 1: the presentation contracts
 (`RenderSnapshot::areas` and `links`) stay as plan [`2026-11-09-effect-visualization`](2026-11-09-effect-visualization.md)
 landed them, and a dedicated plan builds the mechanics of the four missing caster spells, in StarCraft II order of
