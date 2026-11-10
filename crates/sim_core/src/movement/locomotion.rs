@@ -179,6 +179,15 @@ impl MotionProposal {
         self.drop_route();
     }
 
+    /// Ends an attack order whose target is gone or out of reach. The order beneath it, an
+    /// attack-move the acquired target interrupted, starts afresh as after a new order: its
+    /// progress is measured toward its own goal, not from the chase's best distance to the target,
+    /// which a walk to a far goal never beats (B-106).
+    fn end_attack(&mut self) {
+        self.discard_order();
+        self.memory.restart();
+    }
+
     /// Ends an attack order on a target this unit cannot get to, and leaves that target alone.
     fn abandon_target(&mut self, target: EntityId) {
         self.discard_order();
@@ -939,7 +948,7 @@ impl SimWorld {
             })?;
         let mut proposal = MotionProposal::new(actor, policy);
         if !self.is_entity_available_for_combat(actor.owner, target_id) {
-            proposal.discard_order();
+            proposal.end_attack();
             return Ok(proposal);
         }
         let target = self
@@ -950,7 +959,7 @@ impl SimWorld {
                 reason: "available target disappeared",
             })?;
         let Some(pursuit) = self.pursuit_band(entry, actor, target, target_id, origin)? else {
-            proposal.discard_order();
+            proposal.end_attack();
             return Ok(proposal);
         };
         if pursuit.aim_if_in_range(id, actor, target.position, &mut proposal)? {

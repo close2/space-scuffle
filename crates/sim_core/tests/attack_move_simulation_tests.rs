@@ -122,6 +122,69 @@ fn test_attack_move_wave_engages_and_resumes_destination() {
     );
 }
 
+/// B-106: an attack-move that chased an acquired target and killed it walks on to its far goal.
+/// The chase's progress memory measured the distance to the target, a few world units; the
+/// resumed walk measured against that never gained ground and gave the order up after
+/// `STALL_ABANDON_TICKS` (ten seconds), half way to its goal, with a `NoProgress` outcome.
+#[test]
+fn an_attack_move_resumed_after_a_chase_reaches_its_far_goal() {
+    let map = GameMap::new(112, 32, MapCell::default_ground(CliffLevel(0)))
+        .expect("invariant: valid map");
+    let mut world = sim_fixtures::world(map, 0xB106);
+    let pulse_bot_id = world.catalog.id_by_slug("pulse_bot").expect("pulse_bot");
+    let at = |x: i32| SimVec2::new(SimScalar::from_num(x), SimScalar::from_num(16));
+    let walker = world
+        .spawn_unit(pulse_bot_id, PlayerId(0), at(4))
+        .expect("spawn walker");
+    // Inside the walker's scan range (5.5, edge to edge) and outside its weapon's (5.0): it
+    // chases before it fires.
+    let enemy = world
+        .spawn_unit(
+            pulse_bot_id,
+            PlayerId(1),
+            SimVec2::new(SimScalar::from_num(10), SimScalar::from_num(16)),
+        )
+        .expect("spawn enemy");
+    world.entities.get_mut(&enemy).expect("spawned").hp = SimScalar::from_num(1);
+    let destination = at(100);
+    world
+        .entities
+        .get_mut(&walker)
+        .expect("spawned")
+        .issue_order(
+            UnitOrder::AttackMove {
+                target: destination,
+            },
+            false,
+        )
+        .expect("valid authored fixture order");
+    let mut chased = false;
+    for tick in 1..=1200 {
+        world.step(&empty_bundle(tick));
+        chased |= matches!(
+            world.entities[&walker].order_queue.front(),
+            Some(UnitOrder::AttackTarget { .. })
+        );
+        assert!(
+            world.route_outcomes().is_empty(),
+            "tick {tick}: {:?}",
+            world.route_outcomes()
+        );
+        if world.entities[&walker].order_queue.is_empty() {
+            break;
+        }
+    }
+    assert!(chased, "the walker engaged the enemy on its way");
+    assert!(!world.entities.contains_key(&enemy), "the enemy died");
+    let walker = &world.entities[&walker];
+    assert!(walker.order_queue.is_empty(), "{:?}", walker.order_queue);
+    assert!(
+        walker.position.distance(destination) <= SimScalar::ONE,
+        "the walker stopped at {:?}, short of {destination:?}",
+        walker.position
+    );
+}
+
 /// Test 5: Threat Priority logic selects active armed combatants (Priority 20)
 /// over closer passive domes (Priority 11).
 #[test]
