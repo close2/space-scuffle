@@ -30,7 +30,7 @@ use gpu_run::{
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// Stderr excerpt in the exact form produced by the real client, including ANSI colours.
 const ACTIVE_HEADER: &str = "\u{1b}[2m2026-11-01T22:32:19.649733Z\u{1b}[0m \u{1b}[32m INFO\u{1b}[0m \
@@ -730,6 +730,115 @@ fn the_host_lock_tool_uses_the_harness_lock_file() -> Result<(), Box<dyn std::er
         "{} must lock {}",
         tool.display(),
         gpu_run::GPU_LOCK_PATH
+    );
+    Ok(())
+}
+
+/// A child's log timestamps are read in UTC with their fraction, and lines without one are not
+/// records.
+#[test]
+fn log_record_times_are_read_from_tracing_timestamps() {
+    let at = gpu_run::log_record_time(LAVAPIPE_ADAPTER_LINE).expect("a timestamped record");
+    // 2026-11-03T09:51:52.365083Z: 20,760 days after 1970-01-01, then 35,512.365083 s.
+    assert_eq!(
+        at.duration_since(SystemTime::UNIX_EPOCH)
+            .expect("after the epoch"),
+        Duration::new(20_760 * 86_400 + 35_512, 365_083_000)
+    );
+    let plain = gpu_run::log_record_time("2000-02-29T00:00:01Z  INFO x: y")
+        .expect("a record without a fraction");
+    assert_eq!(
+        plain
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("after the epoch"),
+        Duration::from_secs(951_782_401)
+    );
+    assert_eq!(gpu_run::log_record_time("\tobjects: (type: DEVICE)"), None);
+    assert_eq!(gpu_run::log_record_time("running 1 test"), None);
+    assert_eq!(gpu_run::log_record_time("2026-13-01T00:00:00Z"), None);
+}
+
+/// A timeline splits the run at the first record, the adapter line, the window and the last
+/// record, and a timeout names its slowest phase.
+#[test]
+fn a_child_timeline_names_its_slowest_phase() {
+    let spawned = gpu_run::log_record_time("2026-11-10T00:50:47.000000Z").expect("spawn time");
+    let log = "\u{1b}[2m2026-11-10T00:50:49.000000Z\u{1b}[0m INFO SystemInfo { os: \"Linux\" }\n\
+               \tcontinued record without a timestamp\n\
+               2026-11-10T00:50:58.000000Z INFO bevy_render::renderer: AdapterInfo { name: \"AMD\" }\n\
+               2026-11-10T00:51:29.500000Z INFO bevy_winit::system: Creating new window \"x\"\n\
+               2026-11-10T00:51:59.500000Z INFO client::media: Media unapproved\n";
+    let timeline = gpu_run::ChildTimeline::read(log, spawned, Duration::from_secs(80));
+    let expected = [
+        ("launch", Duration::from_secs(2)),
+        ("render device", Duration::from_secs(9)),
+        ("app build", Duration::from_millis(31_500)),
+        ("startup and frames", Duration::from_secs(30)),
+        ("after the last log record", Duration::from_millis(7_500)),
+    ];
+    assert_eq!(timeline.phases, expected);
+    assert_eq!(
+        timeline.slowest(),
+        Some(("app build", Duration::from_millis(31_500)))
+    );
+    assert_eq!(
+        timeline.to_string(),
+        "launch 2.0 s, render device 9.0 s, app build 31.5 s, startup and frames 30.0 s, \
+         after the last log record 7.5 s"
+    );
+
+    // A child that logs nothing spends its whole run in the last phase.
+    let silent = gpu_run::ChildTimeline::read("no records\n", spawned, Duration::from_secs(5));
+    assert_eq!(
+        silent.phases,
+        [("after the last log record", Duration::from_secs(5))]
+    );
+}
+
+/// The executable pre-read reads a file larger than one read, stops at the end of the mapped part
+/// of an ELF executable, and fails on a missing file instead of starting a child that cannot run;
+/// every run records it.
+#[test]
+fn the_executable_is_read_before_the_lock_and_recorded() -> Result<(), Box<dyn std::error::Error>> {
+    let directory = tempfile::tempdir()?;
+    let file = directory.path().join("program");
+    std::fs::write(&file, vec![7_u8; 3 << 20])?;
+    gpu_run::preload_executable(&file)?;
+    let missing = gpu_run::preload_executable(&directory.path().join("absent"))
+        .expect_err("a missing executable is an error");
+    assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
+
+    // This test executable: the mapped part ends inside the file, before the debug sections.
+    let exe = std::fs::File::open(std::env::current_exe()?)?;
+    let size = exe.metadata()?.len();
+    let read_at = |offset: u64, bytes: usize| {
+        let mut buffer = vec![0_u8; bytes];
+        std::os::unix::fs::FileExt::read_exact_at(&exe, &mut buffer, offset).ok()?;
+        Some(buffer)
+    };
+    let header = read_at(0, 64).expect("a 64-byte header");
+    let extent = gpu_run::loaded_extent(&header, read_at).expect("an ELF executable");
+    assert!(
+        extent > 1 << 20 && extent < size,
+        "mapped part {extent} of {size} bytes"
+    );
+    // Not ELF, a 32-bit header, and a program header table past the end of the file.
+    assert_eq!(gpu_run::loaded_extent(&[0_u8; 64], read_at), None);
+    let mut elf32 = header.clone();
+    elf32[4] = 1;
+    assert_eq!(gpu_run::loaded_extent(&elf32, read_at), None);
+    let mut beyond = header;
+    beyond[32..40].copy_from_slice(&size.to_le_bytes());
+    assert_eq!(gpu_run::loaded_extent(&beyond, read_at), None);
+
+    let lock = directory.path().join("gpu.lock");
+    let mut command = GpuCommand::lock_probe(Path::new("/bin/sh"), &lock, Duration::from_secs(5));
+    command.args(["-c", "true"]);
+    let run = command.run("pre-read probe");
+    assert!(
+        run.preload < Duration::from_secs(10),
+        "reading /bin/sh took {:?}",
+        run.preload
     );
     Ok(())
 }
