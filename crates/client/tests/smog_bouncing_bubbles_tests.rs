@@ -835,8 +835,11 @@ fn make_test_battle_unit(
         hull_hit_flash: 0.0,
         build_or_queue_progress: Some(1.0),
         selected: false,
-        cloaked: false,
+        concealment: sim_types::Concealment::None,
         speed_boosted: false,
+        stance: sim_types::StanceView::default(),
+        status: sim_types::StatusFlags::default(),
+        barrier_ratio: 0.0,
     })
 }
 

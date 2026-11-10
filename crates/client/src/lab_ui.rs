@@ -97,35 +97,41 @@ impl LabVfxTrigger {
                 radius: 0.6,
                 is_dome: false,
                 owner,
+                unit_type: sim_types::UnitTypeId::default(),
             },
             Self::HitscanFire => CombatEventVisual::HitscanTracer {
                 from: origin,
                 to: target,
                 owner,
+                source: sim_types::EffectSource::default(),
             },
             Self::PlasmaBolt => CombatEventVisual::ProjectileVisual {
                 pos: origin,
                 vel: [2.5, 0.7, 0.0],
                 owner,
                 duration_secs: Some(1.2),
+                source: sim_types::EffectSource::default(),
             },
             Self::LaserBeam => CombatEventVisual::BeamVisual {
                 from: origin,
                 to: target,
                 is_lightning: false,
                 owner,
+                source: sim_types::EffectSource::default(),
             },
             Self::LightningArc => CombatEventVisual::BeamVisual {
                 from: origin,
                 to: target,
                 is_lightning: true,
                 owner,
+                source: sim_types::EffectSource::default(),
             },
             Self::MeleeSlash => CombatEventVisual::MeleeSlashVisual {
                 pos: origin,
                 angle_rad: heading_rad,
                 radius: 1.0,
                 owner,
+                source: sim_types::EffectSource::default(),
             },
         }
     }

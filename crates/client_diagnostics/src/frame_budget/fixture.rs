@@ -1,8 +1,9 @@
 //! The measurement's assets root: a copy of the real one with the arena, loadouts and scenarios.
 //!
 //! # Responsibility
-//! Builds `<work-dir>/root` ([`build_fixture_root`]): the real `textures/` mirrored by hard link
-//! (or copy across file systems), the real `catalog/`, `maps/`, `scenarios/` and `shaders/`
+//! Builds `<work-dir>/root` ([`build_fixture_root`]): the real `textures/` and `effects/` (the
+//! effect texture sets `catalog/effects.ron` lists) mirrored by hard link (or copy across file
+//! systems), the real `catalog/`, `maps/`, `scenarios/` and `shaders/`
 //! copied, and then, written into the copy only:
 //! - the flat arena map named by the spec, generated through the `sim_map` document API and
 //!   checked by [`sim_map::validate_map`] with no error and no warning;
@@ -39,8 +40,8 @@ pub const ROOT_MARKER: &str = ".frame_budget_fixture";
 /// Directories of the real assets root that are copied, so their text can be extended.
 const COPIED_DIRECTORIES: [&str; 4] = ["catalog", "maps", "scenarios", "shaders"];
 
-/// Directory of the real assets root that is mirrored by hard link.
-const LINKED_DIRECTORY: &str = "textures";
+/// Directories of the real assets root that are mirrored by hard link: read, never extended.
+const LINKED_DIRECTORIES: [&str; 2] = ["textures", "effects"];
 
 /// Start loadout catalog, relative to an assets root.
 const LOADOUTS_FILE: &str = "catalog/start_loadouts.ron";
@@ -186,7 +187,9 @@ pub fn build_fixture_root(
     let marker = root.join(ROOT_MARKER);
     std::fs::write(&marker, "built by the frame_budget tool; safe to delete\n")
         .map_err(io_at(&marker))?;
-    link_tree(&assets.join(LINKED_DIRECTORY), &root.join(LINKED_DIRECTORY))?;
+    for name in LINKED_DIRECTORIES {
+        link_tree(&assets.join(name), &root.join(name))?;
+    }
     for name in COPIED_DIRECTORIES {
         copy_tree(&assets.join(name), &root.join(name))?;
     }

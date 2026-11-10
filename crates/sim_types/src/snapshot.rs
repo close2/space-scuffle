@@ -2,6 +2,9 @@
 
 use crate::enums::{AnimState, ResourceKind, ShapeKind, SilhouetteClass, WeaponVisualKind};
 use crate::ids::{EntityId, PlayerId, ResourceNodeId, Tick, UnitTypeId, MAX_PLAYERS};
+use crate::presentation::{
+    AreaView, Concealment, EffectSource, LineView, LinkView, StanceView, StatusFlags,
+};
 use serde::{Deserialize, Serialize};
 
 /// Comprehensive visual parameters for a single bubble or building dome.
@@ -61,10 +64,24 @@ pub struct BubbleRenderInstance {
     pub build_or_queue_progress: Option<f32>,
     /// Selection highlight flag (activates double ground ring).
     pub selected: bool,
-    /// Stealth cloaking flag (translucent refractive shimmer).
-    pub cloaked: bool,
+    /// How the bubble is hidden from players without detection. Whether a given viewer sees
+    /// it is [`crate::PlayerView::revealed`]'s business, not this field's.
+    ///
+    /// Older records carry the boolean key `cloaked`, which reads as this field.
+    #[serde(default, alias = "cloaked")]
+    pub concealment: Concealment,
     /// Stim/speed boost flag (intensifies wake particle emission).
     pub speed_boosted: bool,
+    /// The bubble's current mode and any mode switch under way.
+    #[serde(default)]
+    pub stance: StanceView,
+    /// Status effects active on the bubble.
+    #[serde(default)]
+    pub status: StatusFlags,
+    /// Fraction (0.0..=1.0) of the raised barrier's absorption left; 0.0 while it is down or
+    /// for an archetype without one.
+    #[serde(default)]
+    pub barrier_ratio: f32,
 }
 
 /// Where an entity stands in one attack cycle, in whole simulation ticks (25 Hz).
@@ -90,6 +107,10 @@ pub struct AttackSwing {
 }
 
 /// Instantaneous transient visual combat event (tracers, beams, slashes, explosions).
+///
+/// Every weapon event carries its [`EffectSource`] and a shatter its unit type, so the client
+/// can choose the effect the source unit's presentation block names. Records written before
+/// those fields existed read their defaults.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum CombatEventVisual {
@@ -101,6 +122,9 @@ pub enum CombatEventVisual {
         to: [f32; 3],
         /// Actual firing owner, retained after its source disappears.
         owner: PlayerId,
+        /// Archetype and weapon that fired.
+        #[serde(default)]
+        source: EffectSource,
     },
     /// Traveling plasma or kinetic missile bolt.
     ProjectileVisual {
@@ -113,6 +137,9 @@ pub enum CombatEventVisual {
         /// Optional exact duration in seconds before reaching target surface.
         #[serde(default)]
         duration_secs: Option<f32>,
+        /// Archetype and weapon that fired.
+        #[serde(default)]
+        source: EffectSource,
     },
     /// Continuous laser beam or jagged lightning arc.
     BeamVisual {
@@ -124,6 +151,9 @@ pub enum CombatEventVisual {
         is_lightning: bool,
         /// Actual firing owner, retained after its source disappears.
         owner: PlayerId,
+        /// Archetype and weapon that fired.
+        #[serde(default)]
+        source: EffectSource,
     },
     /// Close-quarters melee blade shockwave.
     MeleeSlashVisual {
@@ -135,6 +165,9 @@ pub enum CombatEventVisual {
         radius: f32,
         /// Actual attacking owner, independent of color or alliance.
         owner: PlayerId,
+        /// Archetype and weapon that fired.
+        #[serde(default)]
+        source: EffectSource,
     },
     /// Bubble glass fracture and explosive collapse upon entity death.
     BubbleShatter {
@@ -145,6 +178,24 @@ pub enum CombatEventVisual {
         /// True if building dome, false if unit sphere.
         is_dome: bool,
         /// Actual owner of the destroyed entity, retained for shard tinting.
+        owner: PlayerId,
+        /// Archetype of the destroyed entity, for its presentation block's death effect.
+        #[serde(default)]
+        unit_type: UnitTypeId,
+    },
+    /// One search of a weapon's area damage, emitted on the tick of the search: one event for a
+    /// circular splash, one per search point for a line splash.
+    SplashVisual {
+        /// Centre of the search `[x, y, altitude]` in world units.
+        center: [f32; 3],
+        /// Radii in world units of the search's zones: innermost (full damage), middle and
+        /// outermost (reach). With fewer than three zones the middle repeats the innermost.
+        zones: [f32; 3],
+        /// The whole line, when the search is one point of a line splash.
+        line: Option<LineView>,
+        /// Archetype and weapon that caused the splash.
+        source: EffectSource,
+        /// Actual attacking owner, retained after its source disappears.
         owner: PlayerId,
     },
 }
@@ -159,14 +210,29 @@ impl CombatEventVisual {
             | Self::ProjectileVisual { owner, .. }
             | Self::BeamVisual { owner, .. }
             | Self::MeleeSlashVisual { owner, .. }
-            | Self::BubbleShatter { owner, .. } => *owner,
+            | Self::BubbleShatter { owner, .. }
+            | Self::SplashVisual { owner, .. } => *owner,
+        }
+    }
+
+    /// The archetype and weapon a weapon event came from; `None` for a shatter, which is no
+    /// weapon's.
+    #[must_use]
+    pub const fn source(&self) -> Option<EffectSource> {
+        match self {
+            Self::HitscanTracer { source, .. }
+            | Self::ProjectileVisual { source, .. }
+            | Self::BeamVisual { source, .. }
+            | Self::MeleeSlashVisual { source, .. }
+            | Self::SplashVisual { source, .. } => Some(*source),
+            Self::BubbleShatter { .. } => None,
         }
     }
 
     /// Returns where this event lands on the map plane, `[x, y]` in world units.
     ///
     /// That is the impact of a tracer or beam, the expected arrival of a timed projectile, and the
-    /// position of anything else. A client judges whether a viewer may see an event by this point.
+    /// position of anything else (a splash's search centre). A client judges whether a viewer may see an event by this point.
     /// Every event position is `[x, y, altitude]`, so the first two components are the map plane.
     /// Derived from visual data only, so it takes no part in the simulation.
     #[must_use]
@@ -182,9 +248,9 @@ impl CombatEventVisual {
                 let flight = duration_secs.unwrap_or(0.0);
                 [pos[0] + vel[0] * flight, pos[1] + vel[1] * flight]
             }
-            Self::MeleeSlashVisual { pos, .. } | Self::BubbleShatter { pos, .. } => {
-                [pos[0], pos[1]]
-            }
+            Self::MeleeSlashVisual { pos, .. }
+            | Self::BubbleShatter { pos, .. }
+            | Self::SplashVisual { center: pos, .. } => [pos[0], pos[1]],
         }
     }
 }
@@ -265,6 +331,12 @@ pub struct RenderSnapshot {
     /// Every map resource node in identifier order, including exhausted ones.
     #[serde(default)]
     pub resource_nodes: Vec<ResourceNodeView>,
+    /// Persistent areas on the ground (hazard zones), by area ID.
+    #[serde(default)]
+    pub areas: Vec<AreaView>,
+    /// Tethers between entities; empty until a mechanic makes one.
+    #[serde(default)]
+    pub links: Vec<LinkView>,
 }
 
 impl RenderSnapshot {
@@ -283,8 +355,16 @@ impl RenderSnapshot {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::presentation::{WeaponKey, WeaponSlot};
 
     const OWNER: PlayerId = PlayerId(1);
+    const SOURCE: EffectSource = EffectSource {
+        unit_type: UnitTypeId(7),
+        weapon: WeaponKey {
+            slot: WeaponSlot::Ground,
+            mode: Some(1),
+        },
+    };
 
     #[test]
     fn a_tracer_and_a_beam_are_anchored_at_their_impact() {
@@ -292,12 +372,14 @@ mod tests {
             from: [1.0, 2.0, 3.0],
             to: [4.0, 5.0, 6.0],
             owner: OWNER,
+            source: SOURCE,
         };
         let beam = CombatEventVisual::BeamVisual {
             from: [1.0, 2.0, 3.0],
             to: [7.0, 8.0, 9.0],
             is_lightning: true,
             owner: OWNER,
+            source: SOURCE,
         };
         assert_eq!(tracer.anchor(), [4.0, 5.0]);
         assert_eq!(beam.anchor(), [7.0, 8.0]);
@@ -310,15 +392,39 @@ mod tests {
             angle_rad: 1.0,
             radius: 2.0,
             owner: OWNER,
+            source: SOURCE,
         };
         let shatter = CombatEventVisual::BubbleShatter {
             pos: [7.0, 8.0, 9.0],
             radius: 1.0,
             is_dome: true,
             owner: OWNER,
+            unit_type: UnitTypeId(3),
         };
         assert_eq!(slash.anchor(), [4.0, 5.0]);
         assert_eq!(shatter.anchor(), [7.0, 8.0]);
+        assert_eq!(slash.source(), Some(SOURCE));
+        assert_eq!(shatter.source(), None, "a shatter is no weapon's");
+    }
+
+    #[test]
+    fn a_splash_is_anchored_at_its_centre() {
+        let splash = CombatEventVisual::SplashVisual {
+            center: [4.5, 6.5, 1.0],
+            zones: [0.5, 0.75, 1.25],
+            line: Some(LineView {
+                from: [0.0, 0.0, 0.0],
+                to: [9.0, 0.0, 0.0],
+                spacing: 1.0,
+                index: 4,
+                count: 9,
+            }),
+            source: SOURCE,
+            owner: OWNER,
+        };
+        assert_eq!(splash.anchor(), [4.5, 6.5]);
+        assert_eq!(splash.owner(), OWNER);
+        assert_eq!(splash.source(), Some(SOURCE));
     }
 
     #[test]
@@ -328,6 +434,7 @@ mod tests {
             vel: [4.0, -2.0, 8.0],
             owner: OWNER,
             duration_secs,
+            source: SOURCE,
         };
         assert_eq!(shot(Some(0.5)).anchor(), [3.0, 1.0]);
         assert_eq!(
@@ -367,14 +474,18 @@ mod tests {
             hull_hit_flash: 0.0,
             build_or_queue_progress: None,
             selected: true,
-            cloaked: false,
+            concealment: Concealment::Burrowed,
             speed_boosted: false,
+            stance: StanceView::default(),
+            status: StatusFlags::default(),
+            barrier_ratio: 0.0,
         };
 
         let event = CombatEventVisual::HitscanTracer {
             from: [10.0, 20.0, 0.5],
             to: [15.0, 20.0, 0.5],
             owner: PlayerId(1),
+            source: SOURCE,
         };
 
         let snapshot = RenderSnapshot {
@@ -393,6 +504,7 @@ mod tests {
                 position: [4.5, 6.5],
                 remaining: 25,
             }],
+            ..RenderSnapshot::default()
         };
 
         let ron_str = ron::to_string(&snapshot).expect("invariant: valid ron serialization");

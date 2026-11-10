@@ -44,30 +44,35 @@ impl EffectKind {
                 from: origin,
                 to: end,
                 owner,
+                source: sim_types::EffectSource::default(),
             },
             Self::Projectile => CombatEventVisual::ProjectileVisual {
                 pos: origin,
                 vel: [2.0, 0.0, 0.0],
                 owner,
                 duration_secs: Some(1.2),
+                source: sim_types::EffectSource::default(),
             },
             Self::Laser | Self::Lightning => CombatEventVisual::BeamVisual {
                 from: origin,
                 to: end,
                 owner,
                 is_lightning: self == Self::Lightning,
+                source: sim_types::EffectSource::default(),
             },
             Self::Melee => CombatEventVisual::MeleeSlashVisual {
                 pos: origin,
                 angle_rad: 0.75,
                 radius: 0.8,
                 owner,
+                source: sim_types::EffectSource::default(),
             },
             Self::Shatter => CombatEventVisual::BubbleShatter {
                 pos: origin,
                 radius: 0.8,
                 is_dome: false,
                 owner,
+                unit_type: sim_types::UnitTypeId::default(),
             },
         }
     }

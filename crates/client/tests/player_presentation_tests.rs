@@ -191,30 +191,39 @@ fn events(owner: PlayerId) -> [CombatEventVisual; 5] {
     let from = [1.0, 2.0, 0.5];
     let to = [4.0, 5.0, 0.5];
     [
-        CombatEventVisual::HitscanTracer { from, to, owner },
+        CombatEventVisual::HitscanTracer {
+            from,
+            to,
+            owner,
+            source: sim_types::EffectSource::default(),
+        },
         CombatEventVisual::ProjectileVisual {
             pos: from,
             vel: [1.0, 0.0, 0.0],
             owner,
             duration_secs: Some(0.5),
+            source: sim_types::EffectSource::default(),
         },
         CombatEventVisual::BeamVisual {
             from,
             to,
             owner,
             is_lightning: true,
+            source: sim_types::EffectSource::default(),
         },
         CombatEventVisual::MeleeSlashVisual {
             pos: from,
             angle_rad: 0.75,
             radius: 0.5,
             owner,
+            source: sim_types::EffectSource::default(),
         },
         CombatEventVisual::BubbleShatter {
             pos: to,
             radius: 0.5,
             is_dome: false,
             owner,
+            unit_type: sim_types::UnitTypeId::default(),
         },
     ]
 }

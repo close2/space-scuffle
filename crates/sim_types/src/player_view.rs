@@ -67,6 +67,12 @@ pub struct PlayerView {
     /// Abilities of the viewer's completed types that still need research, sorted by type and
     /// then ability index.
     pub ability_locks: Vec<AbilityLockView>,
+    /// Concealed entities of other players that the viewer detects now, sorted: each stands in
+    /// a cell that is `Visible` to the viewer and covered by one of the viewer's detectors. A
+    /// concealed entity not listed is hidden from the viewer (plan
+    /// `2026-11-09-effect-visualization` D-5). Never holds the viewer's own entities.
+    #[serde(default)]
+    pub revealed: Vec<EntityId>,
 }
 
 impl PlayerView {
@@ -88,6 +94,7 @@ impl PlayerView {
         self.visible_nodes.clear();
         self.mode_states.clear();
         self.ability_locks.clear();
+        self.revealed.clear();
     }
 
     /// The jobs of `queue`, front of the queue first.
@@ -348,7 +355,19 @@ mod tests {
                 unit_type: UnitTypeId(4),
                 ability_index: 1,
             }],
+            revealed: vec![EntityId(14), EntityId(20)],
         }
+    }
+
+    #[test]
+    fn a_view_written_before_revealed_existed_still_reads() {
+        let mut view = populated();
+        view.revealed.clear();
+        let text = ron::to_string(&view).expect("the view has no unserializable field");
+        let legacy = text.replace(",revealed:[]", "");
+        assert_ne!(legacy, text, "the field was removed from the text");
+        let back: PlayerView = ron::from_str(&legacy).expect("a missing list reads as empty");
+        assert_eq!(back, view);
     }
 
     #[test]

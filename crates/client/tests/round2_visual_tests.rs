@@ -561,8 +561,11 @@ fn test_ground_unit_altitude_never_spawns_air_tether() -> Result<(), Box<dyn std
                     hull_hit_flash: 0.0,
                     build_or_queue_progress: None,
                     selected: true,
-                    cloaked: false,
+                    concealment: sim_types::Concealment::None,
                     speed_boosted: false,
+                    stance: sim_types::StanceView::default(),
+                    status: sim_types::StatusFlags::default(),
+                    barrier_ratio: 0.0,
                 };
 
                 let parent = commands.spawn(Transform::default()).id();
@@ -815,6 +818,7 @@ fn test_all_combat_vfx_entities_despawn_after_lifetime() -> Result<(), Box<dyn s
                 from: [0.0, 0.0, 0.5],
                 to: [10.0, 0.0, 0.5],
                 owner: primary,
+                source: sim_types::EffectSource::default(),
             },
         ));
         events.send(client::vfx::CombatVisualEvent(
@@ -823,6 +827,7 @@ fn test_all_combat_vfx_entities_despawn_after_lifetime() -> Result<(), Box<dyn s
                 vel: [10.0, 0.0, 0.0],
                 owner: secondary,
                 duration_secs: Some(1.2),
+                source: sim_types::EffectSource::default(),
             },
         ));
         events.send(client::vfx::CombatVisualEvent(
@@ -831,6 +836,7 @@ fn test_all_combat_vfx_entities_despawn_after_lifetime() -> Result<(), Box<dyn s
                 to: [5.0, 5.0, 0.5],
                 is_lightning: true,
                 owner: primary,
+                source: sim_types::EffectSource::default(),
             },
         ));
         events.send(client::vfx::CombatVisualEvent(
@@ -839,6 +845,7 @@ fn test_all_combat_vfx_entities_despawn_after_lifetime() -> Result<(), Box<dyn s
                 angle_rad: 0.785,
                 radius: 0.8,
                 owner: secondary,
+                source: sim_types::EffectSource::default(),
             },
         ));
         events.send(client::vfx::CombatVisualEvent(
@@ -847,6 +854,7 @@ fn test_all_combat_vfx_entities_despawn_after_lifetime() -> Result<(), Box<dyn s
                 radius: 0.6,
                 is_dome: false,
                 owner: primary,
+                unit_type: UnitTypeId::default(),
             },
         ));
     }

@@ -45,7 +45,7 @@ use client::scene_controller::LiveBattleBubble;
 use client::{LabState, ResolvedAssetsRoot, RtsCamera};
 use sim_core::SimWorld;
 use sim_map::CellFlags;
-use sim_types::{EntityId, PlayerId, SimScalar, SimVec2};
+use sim_types::{Concealment, EntityId, MoverType, PlayerId, SimScalar, SimVec2, UnitTypeId};
 
 /// Owner of the armies driven by these tests: the scenario's first participant.
 pub const LOCAL_PLAYER: PlayerId = PlayerId(0);
@@ -79,6 +79,17 @@ impl Harness {
     /// The real loader reads `directory`, so a temporary root is held to the same rules as the
     /// shipped one.
     pub fn boot_root(directory: &Path, mode: client::ClientMode, scenario: &str) -> Self {
+        Self::boot_root_with(directory, mode, scenario, |_| {})
+    }
+
+    /// Boots as [`Self::boot_root`], letting `configure` insert resources before the first
+    /// update (an explicit effect vocabulary, for example).
+    pub fn boot_root_with(
+        directory: &Path,
+        mode: client::ClientMode,
+        scenario: &str,
+        configure: impl FnOnce(&mut App),
+    ) -> Self {
         let root = ResolvedAssetsRoot::from_directory(directory).expect("assets root");
         let definition =
             BattleDefinition::load(root.as_path(), scenario.as_ref()).expect("battle scenario");
@@ -119,6 +130,7 @@ impl Harness {
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
                 40,
             )));
+        configure(&mut app);
         app.finish();
         app.cleanup();
         app.world_mut().resource_mut::<LabState>().battle_paused = true;
@@ -172,6 +184,62 @@ impl Harness {
             .into_inner()
             .world_mut()
             .expect("committed battle")
+    }
+
+    /// A presentable burrowing unit type and its burrowed mode's name, see [`burrower`].
+    pub fn burrower(&mut self) -> (UnitTypeId, String) {
+        burrower(self.world_mut(), &assets())
+    }
+
+    /// A shipped mobile detector.
+    pub fn detector(&self) -> UnitTypeId {
+        self.world()
+            .catalog
+            .archetypes()
+            .find(|arch| arch.is_detector && arch.max_speed > SimScalar::ZERO)
+            .expect("the shipped catalog has a mobile detector")
+            .unit_type_id
+    }
+
+    /// Spawns a [`Self::burrower`] of `owner` at `place`, hidden as `concealment`, and returns it.
+    ///
+    /// Burrowed, it stands in its burrowed mode as the end of the mode's channel leaves it, but
+    /// without the mode's weapon, so it cannot fight and change what is on screen. Cloaked, it
+    /// keeps its default stance, which has no weapon either.
+    pub fn spawn_concealed(
+        &mut self,
+        owner: PlayerId,
+        place: Vec2,
+        concealment: Concealment,
+    ) -> EntityId {
+        let (unit_type, mode) = self.burrower();
+        let world = self.world_mut();
+        let id = world
+            .spawn_unit(unit_type, owner, sim_position(place))
+            .expect("open ground");
+        let unit = world.entities.get_mut(&id).expect("just spawned");
+        match concealment {
+            Concealment::None => {}
+            Concealment::Cloaked => unit.is_cloaked = true,
+            Concealment::Burrowed => {
+                unit.is_cloaked = true;
+                unit.active_mode = Some(mode);
+                unit.is_immobile = true;
+                unit.unpushable = true;
+            }
+        }
+        id
+    }
+
+    /// The concealment the bubble of unit `id` was last synchronized with.
+    pub fn published_concealment(&mut self, id: EntityId) -> Concealment {
+        let world = self.app.world_mut();
+        world
+            .query_filtered::<&BubbleInstance, With<LiveBattleBubble>>()
+            .iter(world)
+            .find(|bubble| bubble.0.entity_id == id)
+            .map(|bubble| bubble.0.concealment)
+            .expect("unit must have a bubble")
     }
 
     pub fn selection(&self) -> &BattleSelection {
@@ -477,4 +545,64 @@ pub fn sim_position(position: Vec2) -> SimVec2 {
         SimScalar::from_num(position.x),
         SimScalar::from_num(position.y),
     )
+}
+
+// A presentable, unarmed unit type with a burrowed mode, for tests of what a concealed unit shows.
+//
+// The shipped burrowing unit (the Lurker analogue) has no media yet, and the client refuses to
+// present a unit without media. Until it has, `burrower` takes a presentable mobile ground
+// archetype that nothing on the field uses, removes its weapons in the session's catalog and
+// gives it a copy of the shipped burrowed mode without the mode's weapon. Only the test world's
+// catalog changes, never a file; once the shipped unit is presentable and unarmed by default, it
+// is used unchanged, as `battle_mode_tests.rs` does for the same unit. Every choice is made by
+// catalog properties, so no catalog identity is named.
+
+/// Whether the client can load the media of the unit `slug`: its flipbook manifest ships.
+pub fn presentable(assets: &Path, slug: &str) -> bool {
+    assets
+        .join("textures")
+        .join(format!("{slug}.flipbook.ron"))
+        .is_file()
+}
+
+/// A presentable, unarmed unit type with a burrowed mode in `world`'s catalog, and that mode's
+/// name. `assets` is the shipped asset root.
+pub fn burrower(world: &mut SimWorld, assets: &Path) -> (UnitTypeId, String) {
+    let (shipped, mode) = world
+        .catalog
+        .archetypes()
+        .find_map(|arch| {
+            let mode = arch.modes.iter().find(|mode| mode.burrowed)?;
+            Some((arch.clone(), mode.clone()))
+        })
+        .expect("the shipped catalog has a burrowing unit");
+    let unarmed =
+        shipped.weapon.is_none() && shipped.ground_weapon.is_none() && shipped.air_weapon.is_none();
+    if unarmed && presentable(assets, &shipped.slug) {
+        return (shipped.unit_type_id, mode.mode_name);
+    }
+    let in_use = |id: UnitTypeId| world.entities.values().any(|unit| unit.unit_type_id == id);
+    let stand_in = world
+        .catalog
+        .archetypes()
+        .find(|arch| {
+            arch.max_speed > SimScalar::ZERO
+                && arch.mover_type == MoverType::Ground
+                && arch.modes.is_empty()
+                && !in_use(arch.unit_type_id)
+                && presentable(assets, &arch.slug)
+        })
+        .expect("the catalog ships a presentable ground unit nothing on the field uses")
+        .unit_type_id;
+    let archetype = world
+        .catalog
+        .get_mut(stand_in)
+        .expect("invariant: the type was just found in this catalog");
+    archetype.weapon = None;
+    archetype.ground_weapon = None;
+    archetype.air_weapon = None;
+    let mut burrowed = mode.clone();
+    burrowed.ground_weapon_override = None;
+    archetype.modes.push(burrowed);
+    (stand_in, mode.mode_name)
 }

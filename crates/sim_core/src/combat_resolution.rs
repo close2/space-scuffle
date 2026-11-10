@@ -25,12 +25,13 @@ use crate::combat::{
 };
 use crate::entity::{ActiveProjectile, Entity, PendingStrikes, WeaponPhase};
 use crate::weapon_timing::{resolve_attack_period, AttackRate, SimulationDiagnostic};
+use crate::world::presentation::{weapon_source, PresentationWorkspace};
 use crate::world::SimWorld;
 use sim_map::{PlayerVisionMap, SimMap};
 use sim_types::{
-    CombatEventVisual, EntityId, MoverType, PerPlayer, PlayerId, PlayerUpgradeState,
-    ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, Tick, UnitOrder, UnitTypeId,
-    WeaponVisualKind,
+    CombatEventVisual, EffectSource, EntityId, LineView, MoverType, PerPlayer, PlayerId,
+    PlayerUpgradeState, ProjectileTargetLossBehavior, SimAngle, SimScalar, SimVec2, Tick,
+    UnitOrder, UnitTypeId, WeaponVisualKind,
 };
 
 /// Lowest impact distance used for flight timing, so a point-blank launch still takes a tick.
@@ -62,6 +63,8 @@ struct PreparedShot {
     /// Strikes of `weapon` this shot lands: all of them on a release whose strikes land
     /// together, one on a release that spaces them and on each later strike.
     strikes: u8,
+    /// The attacker's type and weapon, for the shot's renderer events.
+    source: EffectSource,
 }
 
 /// Provenance of a hit, borrowed from a prepared shot or a landed projectile.
@@ -74,6 +77,8 @@ struct HitSource<'a> {
     origin: SimVec2,
     /// Strikes of `weapon` the hit applies to its target.
     strikes: u8,
+    /// The attacker's type and weapon, for the hit's renderer events.
+    effect: EffectSource,
 }
 
 /// Where a direct hit landed, for the area damage and visuals that follow it.
@@ -187,11 +192,25 @@ fn hit_angle(origin: SimVec2, target: SimVec2) -> SimAngle {
     SimAngle::atan2(origin.y - target.y, origin.x - target.x)
 }
 
+/// The radii in world units of `splash`'s innermost, middle and outermost zones, as a
+/// `SplashVisual` publishes them; with fewer than three zones the middle is the innermost.
+fn splash_zone_radii(splash: &SplashSpec) -> [f32; 3] {
+    let radius = |index: usize| {
+        splash
+            .zones
+            .get(index)
+            .map_or(0.0, |zone| zone.radius.to_f32())
+    };
+    let last = splash.zones.len().saturating_sub(1);
+    [radius(0), radius(last / 2), splash.reach().to_f32()]
+}
+
 /// Lands one strike of `weapon` carrying `raw` damage (before armour) on `target`.
 ///
 /// The target's barrier, if its archetype has one, absorbs first (B-41). What it lets through
 /// is mitigated by shields and armour and applied. A strike the barrier absorbs whole deals
-/// nothing: no 0.5 minimum, no hit flash, and the regeneration delays keep running.
+/// nothing: no 0.5 minimum, no hit flash, and the regeneration delays keep running. A barrier
+/// that absorbs any of the strike is noted in `presentation` for the render snapshot.
 fn strike_through_barrier(
     target: &mut Entity,
     target_arch: &UnitArchetype,
@@ -199,10 +218,15 @@ fn strike_through_barrier(
     weapon: &WeaponSpec,
     raw: SimScalar,
     angle: SimAngle,
+    presentation: &mut PresentationWorkspace,
 ) {
-    let raw = target
+    let passed = target
         .barrier
         .absorb(target_arch.capabilities.barrier.as_ref(), raw);
+    if passed < raw {
+        presentation.record_barrier_hit(target.id);
+    }
+    let raw = passed;
     if raw <= SimScalar::ZERO {
         return;
     }
@@ -320,14 +344,17 @@ impl SimWorld {
             let target_mover =
                 target_snapshot.map_or_else(|| Self::idle_weapon_plane(entity, arch), |t| t.mover);
 
-            let Some(weapon) = Self::resolved_weapon(
+            let Some((weapon, source)) = Self::resolved_weapon(
                 &self.player_upgrades,
                 entity,
                 arch,
                 target_mover,
                 attack_mult,
             )
-            .map(ResolvedWeapon::to_spec) else {
+            .map(|resolved| {
+                let source = weapon_source(arch, entity, resolved.spec);
+                (resolved.to_spec(), source)
+            }) else {
                 // A target that vanished mid-swing may leave no weapon to resolve here.
                 if matches!(entity.weapon_phase, WeaponPhase::Windup { .. }) {
                     entity.weapon_phase = WeaponPhase::Ready;
@@ -358,6 +385,7 @@ impl SimWorld {
                         origin: entity.position,
                         owner: entity.owner,
                         strikes,
+                        source,
                     });
                 }
             }
@@ -423,9 +451,13 @@ impl SimWorld {
         let Some(arch) = context.catalog.get(entity.unit_type_id).ok() else {
             return;
         };
-        let Some(weapon) =
-            Self::resolved_weapon(context.upgrades, entity, arch, pending.plane, attack_rate)
-                .map(ResolvedWeapon::to_spec)
+        let Some((weapon, source)) =
+            Self::resolved_weapon(context.upgrades, entity, arch, pending.plane, attack_rate).map(
+                |resolved| {
+                    let source = weapon_source(arch, entity, resolved.spec);
+                    (resolved.to_spec(), source)
+                },
+            )
         else {
             return;
         };
@@ -452,6 +484,7 @@ impl SimWorld {
                 origin: entity.position,
                 owner: entity.owner,
                 strikes: 1,
+                source,
             });
         }
     }
@@ -586,7 +619,9 @@ impl SimWorld {
                 vel: [vx, vy, vz],
                 owner: shot.owner,
                 duration_secs: Some(flight_duration_secs),
+                source: shot.source,
             });
+        self.presentation.record_projectile(id, shot.source);
 
         let remaining_lifetime_ticks = shot.weapon.max_projectile_lifetime_ticks;
         self.projectiles.push(ActiveProjectile {
@@ -615,6 +650,7 @@ impl SimWorld {
             attacker: Some(shot.attacker),
             origin: shot.origin,
             strikes: shot.strikes,
+            effect: shot.source,
         };
         let Some(hit) = self.apply_weapon_hit(source, shot.target) else {
             return;
@@ -658,6 +694,7 @@ impl SimWorld {
                 source.weapon,
                 raw,
                 hit.angle,
+                &mut self.presentation,
             );
         }
         if let Some(attacker) = source.attacker {
@@ -694,6 +731,7 @@ impl SimWorld {
             hit.position
         };
         splash.search_points(source.origin, impact, direction, &mut points);
+        self.emit_splash_visuals(source, splash, (impact, direction), hit.plane, &points);
         let attacker_upgrades = Self::upgrades_of(&self.player_upgrades, source.owner);
         let reach = splash.reach();
         for (&other_id, other) in &self.entities {
@@ -738,7 +776,15 @@ impl SimWorld {
             if let Some(entity) = self.entities.get_mut(&id) {
                 if let Ok(arch) = self.catalog.get(entity.unit_type_id) {
                     let upgrades = Self::upgrades_of(&self.player_upgrades, entity.owner);
-                    strike_through_barrier(entity, arch, upgrades, source.weapon, raw, hit.angle);
+                    strike_through_barrier(
+                        entity,
+                        arch,
+                        upgrades,
+                        source.weapon,
+                        raw,
+                        hit.angle,
+                        &mut self.presentation,
+                    );
                 }
             }
             if let Some(attacker) = source.attacker {
@@ -747,6 +793,67 @@ impl SimWorld {
         }
         self.combat.splash_hits = splash_hits;
         self.combat.splash_points = points;
+    }
+
+    /// Records one renderer event per search of `splash` at `points`, the searches of an attack
+    /// by `source` that struck `impact` along the unit vector `direction`, on `plane`.
+    ///
+    /// A search of a line splash also carries the whole line: from the point its offsets are
+    /// measured from to that point moved by the largest offset, and the spacing of its first
+    /// two offsets.
+    fn emit_splash_visuals(
+        &mut self,
+        source: HitSource<'_>,
+        splash: &SplashSpec,
+        (impact, direction): (SimVec2, SimVec2),
+        plane: MoverType,
+        points: &[SimVec2],
+    ) {
+        let lift = if plane == MoverType::Air {
+            crate::world::AIR_UNIT_ALTITUDE
+        } else {
+            0.0
+        };
+        let at = |point: SimVec2| {
+            [
+                point.x.to_f32(),
+                point.y.to_f32(),
+                self.map.terrain_altitude_at(point) + lift,
+            ]
+        };
+        let zones = splash_zone_radii(splash);
+        let line =
+            splash
+                .line_frame(source.origin, impact, direction)
+                .map(|(line, origin, axis)| {
+                    let far = line
+                        .offsets
+                        .iter()
+                        .copied()
+                        .max()
+                        .unwrap_or(SimScalar::ZERO);
+                    let spacing = match line.offsets.as_slice() {
+                        [first, second, ..] => (*second - *first).abs().to_f32(),
+                        _ => 0.0,
+                    };
+                    (at(origin), at(origin + axis * far), spacing)
+                });
+        let count = u8::try_from(points.len()).unwrap_or(u8::MAX);
+        for (index, &point) in (0_u8..).zip(points) {
+            self.pending_events.push(CombatEventVisual::SplashVisual {
+                center: at(point),
+                zones,
+                line: line.map(|(from, to, spacing)| LineView {
+                    from,
+                    to,
+                    spacing,
+                    index,
+                    count,
+                }),
+                source: source.effect,
+                owner: source.owner,
+            });
+        }
     }
 
     /// The unit vector of an attack from `source.origin` towards `impact`. When the two
@@ -770,25 +877,34 @@ impl SimWorld {
         let from = [shot.origin.x.to_f32(), shot.origin.y.to_f32(), z + 0.5];
         let to = [hit.position.x.to_f32(), hit.position.y.to_f32(), tz + 0.5];
         let owner = shot.owner;
+        let source = shot.source;
         let event = match shot.weapon.visual_kind {
-            WeaponVisualKind::Hitscan => CombatEventVisual::HitscanTracer { from, to, owner },
+            WeaponVisualKind::Hitscan => CombatEventVisual::HitscanTracer {
+                from,
+                to,
+                owner,
+                source,
+            },
             WeaponVisualKind::LaserBeam => CombatEventVisual::BeamVisual {
                 from,
                 to,
                 is_lightning: false,
                 owner,
+                source,
             },
             WeaponVisualKind::LightningArc => CombatEventVisual::BeamVisual {
                 from,
                 to,
                 is_lightning: true,
                 owner,
+                source,
             },
             WeaponVisualKind::MeleeSlash => CombatEventVisual::MeleeSlashVisual {
                 pos: to,
                 angle_rad: hit.angle.to_radians_f32(),
                 radius: 0.5,
                 owner,
+                source,
             },
             _ => return,
         };
@@ -810,8 +926,12 @@ impl SimWorld {
 
         for &(index, step) in finished.iter().rev() {
             let projectile = self.projectiles.remove(index);
+            let source = self
+                .presentation
+                .take_projectile_source(projectile.id)
+                .unwrap_or_else(|| self.unrecorded_projectile_source(&projectile));
             if matches!(step, ProjectileStep::Impact) {
-                self.resolve_projectile_impact(&projectile);
+                self.resolve_projectile_impact(&projectile, source);
             }
         }
         self.combat.finished_projectiles = finished;
@@ -933,8 +1053,22 @@ impl SimWorld {
         best.map(|(id, position, radius, mover, _)| (id, position, radius, mover))
     }
 
-    /// Applies the damage of a landed projectile: on its target, or on bare ground.
-    fn resolve_projectile_impact(&mut self, proj: &ActiveProjectile) {
+    /// The source of a projectile launched outside combat resolution, which recorded none: the
+    /// archetype its slug names, with the default weapon key.
+    fn unrecorded_projectile_source(&self, proj: &ActiveProjectile) -> EffectSource {
+        EffectSource {
+            unit_type: proj
+                .source_slug
+                .as_deref()
+                .and_then(|slug| self.catalog.id_by_slug(slug))
+                .unwrap_or_default(),
+            ..EffectSource::default()
+        }
+    }
+
+    /// Applies the damage of a landed projectile, fired by `effect`: on its target, or on bare
+    /// ground.
+    fn resolve_projectile_impact(&mut self, proj: &ActiveProjectile, effect: EffectSource) {
         let source = HitSource {
             weapon: &proj.weapon_spec,
             slug: proj.source_slug.as_deref(),
@@ -942,6 +1076,7 @@ impl SimWorld {
             attacker: proj.attacker_id,
             origin: proj.source_pos,
             strikes: proj.strikes,
+            effect,
         };
         if let Some(target_id) = proj.target_id {
             let Some(hit) = self.apply_weapon_hit(source, target_id) else {

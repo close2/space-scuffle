@@ -496,6 +496,10 @@
                 harvester: None,
                 is_resource_dropoff: false,
             ),
+            // Presentation (plan 2026-11-09-effect-visualization §5.3): the sieged cannon's splash.
+            effects: (
+                weapons: [(weapon: Primary, mode: Some("siege_mode"), splash: Some("shell_impact"))],
+            ),
             veo_prompts: {
                 Idle: "Railgun Crawler: Quad-tracked heavy siege artillery tank with a twin-railgun turret on top, both long rail barrels pointing forward, four exposed chunky tracks, smooth armored hull sides without side vents, two exhaust stacks at the rear.",
                 Walk: "Railgun Crawler: Heavy tracked advance, treads churning, smoke from its two rear stacks.",

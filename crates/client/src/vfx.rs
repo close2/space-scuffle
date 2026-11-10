@@ -581,6 +581,7 @@ impl CombatEffectSpawner<'_, '_, '_> {
                 vel,
                 owner: _,
                 duration_secs,
+                source: _,
             } => {
                 let lifetime = duration_secs.unwrap_or(0.35);
                 self.projectile(world_point(pos), world_point(vel), lifetime, style, owner);
@@ -590,6 +591,7 @@ impl CombatEffectSpawner<'_, '_, '_> {
                 to,
                 is_lightning,
                 owner: _,
+                source: _,
             } => {
                 let (from, to) = (world_point(from), world_point(to));
                 self.beam(from, to, *is_lightning, style, owner);
@@ -599,12 +601,14 @@ impl CombatEffectSpawner<'_, '_, '_> {
                 angle_rad,
                 radius,
                 owner: _,
+                source: _,
             } => self.melee_slash(pos, *angle_rad, *radius, style, owner),
             CombatEventVisual::BubbleShatter {
                 pos,
                 radius,
                 is_dome: _,
                 owner: _,
+                unit_type: _,
             } => spawn_death_shatter(
                 self.commands,
                 self.assets,
@@ -614,6 +618,9 @@ impl CombatEffectSpawner<'_, '_, '_> {
                 style,
                 owner,
             ),
+            // Area-damage searches get their effect from the effect system (plan
+            // `2026-11-09-effect-visualization` WP6); until then they draw nothing, as before.
+            CombatEventVisual::SplashVisual { .. } => {}
         }
     }
 

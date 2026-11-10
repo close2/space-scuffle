@@ -27,9 +27,10 @@ use client::battle_pipeline::session::BattleSession;
 use client::battle_presentation::BattlePresentation;
 use client::bubble_shader::{BubbleDomeMaterial, BubbleInstance, FLAG_SELECTED};
 use client::input_bindings::{HOLD_POSITION_KEY, STOP_KEY};
+use client::runtime_battle::SKIRMISH_SCENARIO;
 use client::scene_controller::SwarmBubble;
-use client::{LabState, LabTab, RtsCamera, SelectionState};
-use sim_types::{PlayerId, SimScalar, UnitOrder};
+use client::{ClientMode, LabState, LabTab, RtsCamera, SelectionState};
+use sim_types::{AttackOrigin, Concealment, EntityId, PlayerId, SimScalar, UnitOrder};
 
 #[allow(
     dead_code,
@@ -197,6 +198,85 @@ fn a_cloaked_enemy_cannot_be_selected_or_targeted() {
     );
 }
 
+/// The order a right click on a concealed enemy beside the local army sends, under the skirmish's
+/// fog, after a left click on it has been tried; `detected` stands a detector of the player
+/// beside it.
+fn click_a_concealed_enemy(
+    concealment: Concealment,
+    detected: bool,
+) -> (Option<EntityId>, UnitOrder, EntityId) {
+    let mut harness = Harness::boot_scenario(ClientMode::Skirmish, SKIRMISH_SCENARIO);
+    harness.resume();
+    harness.step(2);
+    harness.pause();
+    // A unit of the army's own type, apart from the crowd so that a click on it picks it alone.
+    let worker = harness.local_army()[0];
+    let spot = harness.open_ground(harness.simulated_position(worker), 6.0);
+    let unit_type = harness.world().entities[&worker].unit_type_id;
+    let soldier = harness
+        .world_mut()
+        .spawn_unit(unit_type, LOCAL_PLAYER, sim_position(spot))
+        .expect("open ground");
+    let place = harness.open_ground(spot, 3.0);
+    let enemy = harness.spawn_concealed(PlayerId(1), place, concealment);
+    if detected {
+        let beside = harness.open_ground(place, 3.0);
+        let detector = harness.detector();
+        harness
+            .world_mut()
+            .spawn_unit(detector, LOCAL_PLAYER, sim_position(beside))
+            .expect("open ground");
+    }
+    harness.resume();
+    harness.step(3);
+    harness.pause();
+    assert_eq!(harness.published_concealment(enemy), concealment);
+    harness.look_at(place);
+
+    let on_screen = harness.unit_on_screen(enemy);
+    harness.click(MouseButton::Left, on_screen);
+    let inspected = harness.selection().inspected();
+
+    harness.select(soldier);
+    assert_eq!(harness.selection().ids(), [soldier]);
+    harness.click(MouseButton::Right, on_screen);
+    let session = harness.app.world().resource::<BattleSession>();
+    let (_, command) = session
+        .commands
+        .pending_commands()
+        .next()
+        .expect("an order");
+    (inspected, command.order.clone(), enemy)
+}
+
+#[test]
+fn an_undetected_enemy_cannot_be_selected_or_targeted_by_click_under_fog() {
+    for concealment in [Concealment::Burrowed, Concealment::Cloaked] {
+        let (inspected, order, _) = click_a_concealed_enemy(concealment, false);
+        assert_eq!(inspected, None, "{concealment:?}");
+        assert!(
+            matches!(order, UnitOrder::Move { .. }),
+            "{concealment:?}: the click must pass through to the ground, not target: {order:?}"
+        );
+    }
+}
+
+#[test]
+fn a_detected_enemy_is_selected_and_targeted_by_click_under_fog() {
+    for concealment in [Concealment::Burrowed, Concealment::Cloaked] {
+        let (inspected, order, enemy) = click_a_concealed_enemy(concealment, true);
+        assert_eq!(inspected, Some(enemy), "{concealment:?}");
+        assert_eq!(
+            order,
+            UnitOrder::AttackTarget {
+                target: enemy,
+                origin: AttackOrigin::Explicit,
+            },
+            "{concealment:?}"
+        );
+    }
+}
+
 #[test]
 fn selecting_one_unit_leaves_every_other_material_unchanged() {
     let mut harness = Harness::battle();
@@ -287,7 +367,7 @@ fn the_selection_survives_a_visit_to_another_tab() {
 
 #[test]
 fn a_swarm_click_touches_no_shared_material_and_selects_nothing() {
-    let mut harness = Harness::boot(client::ClientMode::SwarmStressTest);
+    let mut harness = Harness::boot(ClientMode::SwarmStressTest);
     harness.step(3);
     let world = harness.app.world_mut();
     let (center, material) = world
@@ -316,7 +396,7 @@ fn a_swarm_click_touches_no_shared_material_and_selects_nothing() {
 
 #[test]
 fn a_hidden_lab_actor_is_clicked_through() {
-    let mut harness = Harness::boot(client::ClientMode::VisualLab);
+    let mut harness = Harness::boot(ClientMode::VisualLab);
     harness.step(6);
     let mut actor_at = |index: usize| {
         let world = harness.app.world_mut();

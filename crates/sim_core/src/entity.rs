@@ -33,6 +33,9 @@ const SIEGE_MODE_NAME: &str = "siege";
 /// `Charging` buff, B-43).
 pub const ATTACK_DASH_BUFF_ID: u8 = 3;
 
+/// [`ActiveBuff::buff_id`] of a running overclock ([`OverclockSpec`], `StarCraft` II's Stimpack).
+pub const OVERCLOCK_BUFF_ID: u8 = 1;
+
 /// A malformed numeric buff/cost input, distinct from ordinary cast eligibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum EntityAdmissionError {
@@ -823,13 +826,17 @@ impl Entity {
     pub(crate) fn commit_overclock(&mut self, prepared: PreparedOverclock) {
         let spec = prepared.spec;
         self.hp = prepared.hp;
-        if let Some(buff) = self.active_buffs.iter_mut().find(|b| b.buff_id == 1) {
+        if let Some(buff) = self
+            .active_buffs
+            .iter_mut()
+            .find(|b| b.buff_id == OVERCLOCK_BUFF_ID)
+        {
             buff.remaining_ticks = spec.duration_ticks;
             buff.speed_multiplier = spec.speed_multiplier;
             buff.attack_rate_multiplier = spec.attack_rate_multiplier;
         } else {
             self.active_buffs.push(ActiveBuff {
-                buff_id: 1,
+                buff_id: OVERCLOCK_BUFF_ID,
                 remaining_ticks: spec.duration_ticks,
                 speed_multiplier: spec.speed_multiplier,
                 attack_rate_multiplier: spec.attack_rate_multiplier,
