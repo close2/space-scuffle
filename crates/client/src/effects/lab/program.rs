@@ -8,8 +8,8 @@
 //! sequence at the showcase's 40 ms step ([`LabProgram::contact_sheet`]).
 //!
 //! # How it fits
-//! The lab driver ([`super::driver`]) walks the program frame by frame; the effect-lab capture
-//! tool (`client_diagnostics`) and the effect GPU tests build programs and read the PNGs it
+//! The lab driver ([`super::driver`]) walks the program frame by frame; an effect-lab capture
+//! tool built on this crate and the effect GPU tests build programs and read the PNGs it
 //! writes.
 //!
 //! # Invariants

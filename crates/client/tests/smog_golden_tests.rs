@@ -116,6 +116,13 @@
 //!   crate's trig (28 of the 2,400 values differ from glibc's by one ulp), and four showcase
 //!   colours' linear values differ by one ulp (`powf`). The two classes, the recorded crowd trig
 //!   table and `smog_golden_libm_canary` were retired with it.
+//! - The effect presentation contract (plan `2026-11-09-effect-visualization` WP1) re-recorded
+//!   the four system goldens (glibc 2.41, `x86_64`) because `BubbleRenderInstance`'s `Debug`
+//!   text changed: `cloaked: false` became `concealment: None`, and `stance`, `status` and
+//!   `barrier_ratio` were appended. The bubble uniform bytes are unchanged (`cloaked` is now
+//!   `concealment.is_concealed()`, false for every bubble here). With the old spelling
+//!   substituted back (the text cut at `, stance: ` and `concealment: None` read as
+//!   `cloaked: false`), all four reproduced their previous values, so no smog output changed.
 //! - A golden may only change together with a deliberate, documented change in smog output.
 
 #![allow(
@@ -863,11 +870,11 @@ fn require_smog_activity(app: &App) -> usize {
     stats.active_bubbles
 }
 
-const GOLDEN_SYSTEMS_STARTUP: u64 = 0xe79e_7028_2b67_1063;
+const GOLDEN_SYSTEMS_STARTUP: u64 = 0x7c1d_cfbb_0f5a_8a85;
 const GOLDEN_SYSTEMS_NOISE: u64 = 0x1fe2_2cc0_e03e_f783;
-const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0xdef4_dd2e_c2ae_a6be;
-const GOLDEN_SYSTEMS_SWARM: u64 = 0x410b_6916_d521_92c1;
-const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0xf536_fd48_5dc1_a93f;
+const GOLDEN_SYSTEMS_VISUAL_LAB: u64 = 0xac8a_ffb3_30dc_18f2;
+const GOLDEN_SYSTEMS_SWARM: u64 = 0xd5f6_b250_61a5_4171;
+const GOLDEN_SYSTEMS_LIVE_BATTLE: u64 = 0xb4a5_3438_4cb2_65cf;
 
 /// The headless Visual Lab app after its startup frame (the clock's first update has `dt = 0`).
 fn startup_app() -> Result<App, Box<dyn std::error::Error>> {

@@ -9,8 +9,8 @@
 //! [`LabProgram`] ([`driver`]) and writes one PNG per shot.
 //!
 //! # How it fits
-//! `client_diagnostics`' `battle_capture --effect-lab` builds a contact-sheet program and
-//! assembles the PNGs into a sheet; the effect GPU tests build their own programs in a child
+//! A capture tool downstream of this crate builds a contact-sheet program and assembles the
+//! PNGs into a sheet; the effect GPU tests build their own programs in a child
 //! process of the GPU harness and measure the PNGs. Both run the same code, so what the tests
 //! check is what the sheets show.
 //!
