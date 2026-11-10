@@ -21,9 +21,13 @@ mod arena;
 #[path = "support/oracle.rs"]
 mod oracle;
 
+#[path = "support/radii.rs"]
+mod radii;
+use radii::{MEDIUM_RADIUS, SMALL_RADIUS};
+
 use sim_map::{
     CellFlags, CliffLevel, GameMap, MapCell, MapError, MapFile, PathRequest, PathRequestWithVision,
-    Pathfinder, Side, UnitClearance, CORNER_SAFETY_MARGIN,
+    Pathfinder, Side, CORNER_SAFETY_MARGIN,
 };
 use sim_types::{EntityId, SimScalar, SimVec2};
 
@@ -40,8 +44,7 @@ fn test_straight_line_optimization() {
     let request = PathRequest {
         start,
         goal,
-        clearance: UnitClearance::Medium,
-        radius: UnitClearance::Medium.radius_scalar(),
+        radius: MEDIUM_RADIUS,
     };
 
     let result = pathfinder.find_path(&map, &request).unwrap();
@@ -88,8 +91,7 @@ fn test_l_shaped_obstacle_euclidean_shortcut() {
     let request = PathRequest {
         start,
         goal,
-        clearance: UnitClearance::Medium,
-        radius: UnitClearance::Medium.radius_scalar(),
+        radius: MEDIUM_RADIUS,
     };
 
     let result = pathfinder.find_path(&map, &request).unwrap();
@@ -100,7 +102,7 @@ fn test_l_shaped_obstacle_euclidean_shortcut() {
     assert_eq!(waypoints.first(), Some(&start));
     assert_eq!(waypoints.last(), Some(&goal));
     let corner_vertex = SimVec2::new(SimScalar::from_num(5), SimScalar::from_num(7));
-    let expected_offset = UnitClearance::Medium.radius_scalar() + CORNER_SAFETY_MARGIN;
+    let expected_offset = MEDIUM_RADIUS + CORNER_SAFETY_MARGIN;
     let interior = &waypoints[1..waypoints.len() - 1];
     assert!(
         (1..=8).contains(&interior.len()),
@@ -136,14 +138,12 @@ fn test_corner_clearance_radius_offset_scaling() {
     let req_small = PathRequest {
         start,
         goal,
-        clearance: UnitClearance::Small,
-        radius: UnitClearance::Small.radius_scalar(),
+        radius: SMALL_RADIUS,
     };
     let req_medium = PathRequest {
         start,
         goal,
-        clearance: UnitClearance::Medium,
-        radius: UnitClearance::Medium.radius_scalar(),
+        radius: MEDIUM_RADIUS,
     };
 
     let path_small = pathfinder.find_path(&map, &req_small).unwrap();
@@ -154,8 +154,8 @@ fn test_corner_clearance_radius_offset_scaling() {
     let dist_small = (path_small.waypoints[1] - corner_vertex).length();
     let dist_medium = (path_medium.waypoints[1] - corner_vertex).length();
 
-    let expected_small = UnitClearance::Small.radius_scalar() + CORNER_SAFETY_MARGIN;
-    let expected_medium = UnitClearance::Medium.radius_scalar() + CORNER_SAFETY_MARGIN;
+    let expected_small = SMALL_RADIUS + CORNER_SAFETY_MARGIN;
+    let expected_medium = MEDIUM_RADIUS + CORNER_SAFETY_MARGIN;
 
     assert!((dist_small - expected_small).abs() < SimScalar::from_num(0.01));
     assert!((dist_medium - expected_medium).abs() < SimScalar::from_num(0.01));
@@ -188,8 +188,7 @@ fn test_sandbox_all_blue_units_direct_path_no_errant_detour() {
         let request = PathRequest {
             start,
             goal,
-            clearance: UnitClearance::Small,
-            radius: UnitClearance::Small.radius_scalar(),
+            radius: SMALL_RADIUS,
         };
         let result = pathfinder
             .find_path(&map, &request)
@@ -208,8 +207,7 @@ fn test_sandbox_all_blue_units_direct_path_no_errant_detour() {
         let request = PathRequest {
             start,
             goal,
-            clearance: UnitClearance::Medium,
-            radius: UnitClearance::Medium.radius_scalar(),
+            radius: MEDIUM_RADIUS,
         };
         let result = pathfinder
             .find_path(&map, &request)
@@ -250,8 +248,7 @@ fn test_showcase_canyon_ramp_funnel_paths_are_concise() -> Result<(), Box<dyn st
     let r1_req = PathRequest {
         start: r1_start,
         goal: r1_goal,
-        clearance: UnitClearance::Small,
-        radius: UnitClearance::Small.radius_scalar(),
+        radius: SMALL_RADIUS,
     };
     let r1_path = pathfinder.find_path(&map, &r1_req)?;
     assert!(
@@ -272,8 +269,7 @@ fn test_showcase_canyon_ramp_funnel_paths_are_concise() -> Result<(), Box<dyn st
     let r2_req = PathRequest {
         start: r2_start,
         goal: r2_goal,
-        clearance: UnitClearance::Small,
-        radius: UnitClearance::Small.radius_scalar(),
+        radius: SMALL_RADIUS,
     };
     let r2_path = pathfinder.find_path(&map, &r2_req)?;
     assert!(
@@ -302,7 +298,6 @@ fn corner_offsets_use_the_units_own_radius() {
         let request = PathRequest {
             start: SimVec2::new(SimScalar::from_num(2.5), SimScalar::from_num(12.5)),
             goal: SimVec2::new(SimScalar::from_num(12.5), SimScalar::from_num(2.5)),
-            clearance: UnitClearance::Small,
             radius: SimScalar::from_num(radius),
         };
         let path = pathfinder.find_path(&map, &request).unwrap();
@@ -341,7 +336,6 @@ fn mesh_request(
     PathRequestWithVision {
         start,
         goal,
-        clearance: UnitClearance::for_radius(radius),
         radius,
         vision: None,
         block_unexplored_ramps: false,

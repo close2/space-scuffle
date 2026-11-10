@@ -33,11 +33,14 @@
 use sim_core::catalog::UnitCatalog;
 use sim_core::SimWorld;
 use sim_fixtures::trace::route::{first_pass, RouteBox, RouteSample};
-use sim_map::{CellFlags, CliffLevel, GameMap, MapCell, PathRequest, Pathfinder, UnitClearance};
+use sim_map::{CellFlags, CliffLevel, GameMap, MapCell, PathRequest, Pathfinder};
 use sim_types::{
     EntityId, PlayerCommand, PlayerId, SimScalar, SimVec2, Tick, TickBundle, UnitOrder,
 };
 use std::error::Error;
+
+/// Radius 0.375 in world units: the smallest infantry body.
+const SMALL_RADIUS: SimScalar = SimScalar::from_raw(3 << 29);
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -174,8 +177,7 @@ fn searched(world: &SimWorld, start: SimVec2, goal: SimVec2) -> Option<Vec<SimVe
             &PathRequest {
                 start,
                 goal,
-                clearance: UnitClearance::Small,
-                radius: UnitClearance::Small.radius_scalar(),
+                radius: SMALL_RADIUS,
             },
         )
         .ok()

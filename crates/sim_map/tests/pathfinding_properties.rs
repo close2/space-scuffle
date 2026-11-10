@@ -27,11 +27,15 @@
 #[path = "support/oracle.rs"]
 mod oracle;
 
+#[path = "support/radii.rs"]
+mod radii;
+use radii::{required_clearance, LARGE_RADIUS, MEDIUM_RADIUS, SMALL_RADIUS};
+
 use proptest::collection::vec;
 use proptest::prelude::*;
 use sim_map::{
     CellFlags, CliffLevel, GameMap, MapCell, MapError, PathRequest, PathRequestWithVision,
-    Pathfinder, Side, UnitClearance, CORNER_SAFETY_MARGIN,
+    Pathfinder, Side, CORNER_SAFETY_MARGIN,
 };
 use sim_types::{SimScalar, SimVec2};
 
@@ -61,11 +65,12 @@ fn centre(x: u32, y: u32) -> SimVec2 {
     )
 }
 
-fn tier(index: u8) -> UnitClearance {
+/// One of the three sample body radii, by index.
+fn tier(index: u8) -> SimScalar {
     match index {
-        0 => UnitClearance::Small,
-        1 => UnitClearance::Medium,
-        _ => UnitClearance::Large,
+        0 => SMALL_RADIUS,
+        1 => MEDIUM_RADIUS,
+        _ => LARGE_RADIUS,
     }
 }
 
@@ -142,7 +147,7 @@ proptest! {
             let clearance = pathfinder.clearance_at(index % SIDE, index / SIDE);
             prop_assert_eq!(clearance == 0, is_blocked);
             if !is_blocked {
-                prop_assert!(clearance >= UnitClearance::Small.required_clearance());
+                prop_assert!(clearance >= required_clearance(SMALL_RADIUS));
             }
         }
     }
@@ -179,8 +184,7 @@ proptest! {
         let request = PathRequest {
             start: centre(start.0, start.1),
             goal: centre(goal.0, goal.1),
-            clearance: tier(tier_index),
-            radius: (tier(tier_index)).radius_scalar(),
+            radius: tier(tier_index),
         };
         let fallbacks = pathfinder.mesh_funnel_fallbacks();
         let found = pathfinder.find_path(&map, &request);
@@ -228,18 +232,16 @@ proptest! {
     ) {
         let map = build_map(&blocked)?;
         let mut pathfinder = Pathfinder::new(&map);
-        let clearance = tier(tier_index);
+        let radius = tier(tier_index);
         let forward = PathRequest {
             start: centre(start.0, start.1),
             goal: centre(goal.0, goal.1),
-            clearance,
-            radius: clearance.radius_scalar(),
+            radius,
         };
         let backward = PathRequest {
             start: forward.goal,
             goal: forward.start,
-            clearance,
-            radius: clearance.radius_scalar(),
+            radius,
         };
         let fits = |pathfinder: &mut Pathfinder, at: SimVec2| {
             pathfinder.segment_is_passable(&map, &forward.into(), at, at)
@@ -264,14 +266,12 @@ proptest! {
         let distraction = PathRequest {
             start: centre(first.0, first.1),
             goal: centre(second.0, second.1),
-            clearance: UnitClearance::Small,
-            radius: UnitClearance::Small.radius_scalar(),
+            radius: SMALL_RADIUS,
         };
         let target = PathRequest {
             start: distraction.goal,
             goal: distraction.start,
-            clearance: UnitClearance::Medium,
-            radius: UnitClearance::Medium.radius_scalar(),
+            radius: MEDIUM_RADIUS,
         };
         let _discarded = reused.find_path(&map, &distraction);
         let after_reuse = reused.find_path(&map, &target);
@@ -300,7 +300,6 @@ fn mesh_request(
     PathRequestWithVision {
         start,
         goal,
-        clearance: UnitClearance::for_radius(radius),
         radius,
         vision: None,
         block_unexplored_ramps: false,

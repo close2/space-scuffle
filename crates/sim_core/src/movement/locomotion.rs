@@ -48,9 +48,7 @@ use crate::steering::{
     SteeringObstacle,
 };
 use crate::{SimWorld, WeaponPhase};
-use sim_map::{
-    MapError, PathRequestWithVision, PathResult, Pathfinder, PlayerVisionMap, SimMap, UnitClearance,
-};
+use sim_map::{MapError, PathRequestWithVision, PathResult, Pathfinder, PlayerVisionMap, SimMap};
 use sim_types::{
     AnimState, AttackOrigin, EntityId, PerPlayer, PlayerSlot, SimAngle, SimScalar, SimVec2, Tick,
     UnitOrder, MAX_PLAYERS,
@@ -492,7 +490,6 @@ fn route_request<'a>(
     PathRequestWithVision {
         start: actor.position,
         goal,
-        clearance: UnitClearance::for_radius(policy.radius),
         radius: policy.radius,
         vision: knowledge.map(|(vision, _)| vision),
         block_unexplored_ramps: false,

@@ -1,10 +1,12 @@
-//! Grid-against-mesh measurement of the latent navigation mesh (sc2 pathfinding WP8).
+//! Measurement of the navigation mesh (sc2 pathfinding WP8; grid comparison retired in WP10).
 //!
 //! # Responsibility
 //! Prints, as Markdown tables, what `docs/evidence/2026-11-09-sc2-pathfinding.md` records for
 //! Part B: mesh size and build and rebuild times on both shipped maps and on a 256x256 map; and,
-//! on 1,000 seeded queries per map and radius, the grid route against the mesh route: found or
-//! not, length, legality under the mesh predicate, funnel fallbacks, and microseconds per search.
+//! on 1,000 seeded queries per map and radius, the mesh route: found or not, legality under the
+//! mesh predicate, funnel fallbacks, and microseconds per search. WP10 removed the grid corridor
+//! search, so the grid-against-mesh columns of WP8's tables are no longer produced; the evidence
+//! keeps their last measurement.
 //!
 //! # How it fits
 //! A measurement tool, not a test: it times with the wall clock, which the simulation never
@@ -26,9 +28,7 @@ use std::time::Instant;
 
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use sim_map::{
-    GameMap, MapFile, NavMesh, PathRequest, PathRequestWithVision, Pathfinder, UnitClearance,
-};
+use sim_map::{GameMap, MapFile, NavMesh, PathRequest, PathRequestWithVision, Pathfinder};
 use sim_types::{EntityId, SimScalar, SimVec2};
 
 const QUERIES: usize = 1_000;
@@ -113,22 +113,13 @@ fn tiled(map: &GameMap) -> Result<GameMap, Box<dyn Error>> {
     )?)
 }
 
+/// Route statistics of the mesh on one map and radius.
 #[derive(Default)]
-struct Differential {
-    both: u32,
-    grid_only: u32,
-    mesh_only: u32,
-    neither: u32,
-    longer_than_one_percent: u32,
-    longer_than_five_percent: u32,
-    illegal_grid_routes: u32,
-    longer_than_legal_grid: u32,
+struct RouteStats {
+    found: u32,
+    not_found: u32,
     illegal_mesh_legs: u32,
     fallbacks: u32,
-    sum_ratio: SimScalar,
-    worst_ratio: SimScalar,
-    gains: Vec<(SimScalar, SimVec2, SimVec2)>,
-    grid_micros: Vec<u128>,
     mesh_micros: Vec<u128>,
     max_expansions: u32,
 }
@@ -151,49 +142,24 @@ fn standable(map: &GameMap, rng: &mut ChaCha8Rng) -> SimVec2 {
     }
 }
 
-fn differential(map: &GameMap, radius: SimScalar, seed: u64) -> Differential {
-    let mut out = Differential::default();
+fn route_stats(map: &GameMap, radius: SimScalar, seed: u64) -> RouteStats {
+    let mut out = RouteStats::default();
     let mut pathfinder = Pathfinder::new(map);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    let clearance = UnitClearance::for_radius(radius);
     for _ in 0..QUERIES {
         let (start, goal) = (standable(map, &mut rng), standable(map, &mut rng));
-        let grid_request = PathRequest {
+        let request: PathRequestWithVision<'_> = PathRequest {
             start,
             goal,
-            clearance,
             radius,
-        };
-        let started = Instant::now();
-        let grid = pathfinder.find_path_grid(map, &grid_request.into());
-        out.grid_micros.push(started.elapsed().as_micros());
-        let request: PathRequestWithVision<'_> = grid_request.into();
+        }
+        .into();
         let started = Instant::now();
         let mesh = pathfinder.find_route_mesh(map, &request);
         out.mesh_micros.push(started.elapsed().as_micros());
-        match (&grid, &mesh) {
-            (Ok(grid), Ok(mesh)) => {
-                out.both += 1;
-                let (g, m) = (grid.total_length, mesh.total_length);
-                let ratio = if g > SimScalar::ZERO {
-                    m / g
-                } else {
-                    SimScalar::ONE
-                };
-                out.sum_ratio += ratio;
-                out.worst_ratio = out.worst_ratio.max(ratio);
-                let longer = ratio > SimScalar::from_num(101) / 100;
-                out.longer_than_one_percent += u32::from(longer);
-                out.longer_than_five_percent += u32::from(ratio > SimScalar::from_num(105) / 100);
-                // The grid's legs are checked against cell clearance only; under the exact disc
-                // predicate many of them cut a corner, which no legal route can match.
-                let grid_legal = grid
-                    .waypoints
-                    .windows(2)
-                    .all(|pair| pathfinder.segment_is_passable(map, &request, pair[0], pair[1]));
-                out.illegal_grid_routes += u32::from(!grid_legal);
-                out.longer_than_legal_grid += u32::from(longer && grid_legal);
-                out.gains.push((g - m, start, goal));
+        match &mesh {
+            Ok(mesh) => {
+                out.found += 1;
                 out.fallbacks += u32::from(mesh.fallback);
                 out.max_expansions = out.max_expansions.max(mesh.expansions);
                 let legal = mesh
@@ -202,30 +168,19 @@ fn differential(map: &GameMap, radius: SimScalar, seed: u64) -> Differential {
                     .all(|pair| pathfinder.segment_is_passable(map, &request, pair[0], pair[1]));
                 out.illegal_mesh_legs += u32::from(!legal);
             }
-            (Ok(_), Err(_)) => out.grid_only += 1,
-            (Err(_), Ok(_)) => out.mesh_only += 1,
-            (Err(_), Err(_)) => out.neither += 1,
+            Err(_) => out.not_found += 1,
         }
     }
     out
 }
 
-fn report(name: &str, radius: SimScalar, d: &mut Differential) {
+fn report(name: &str, radius: SimScalar, d: &RouteStats) {
     println!(
-        "| {name} | {radius} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
-        d.both,
-        d.grid_only,
-        d.mesh_only,
-        d.neither,
-        d.sum_ratio / i32::try_from(d.both.max(1)).unwrap_or(1),
-        d.worst_ratio,
-        d.longer_than_one_percent,
-        d.longer_than_five_percent,
-        d.illegal_grid_routes,
-        d.longer_than_legal_grid,
+        "| {name} | {radius} | {} | {} | {} | {} | {} | {} |",
+        d.found,
+        d.not_found,
         d.illegal_mesh_legs,
         d.fallbacks,
-        median_micros(d.grid_micros.clone()),
         median_micros(d.mesh_micros.clone()),
         d.max_expansions,
     );
@@ -241,32 +196,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     build_row("showcase_canyon 64x64", &canyon, 6)?;
     build_row("canyon 4x4 tiled 256x256", &big, 40)?;
     println!();
-    println!("| Map | Radius | Both | Grid only | Mesh only | Neither | Mean mesh/grid | Worst | > 1 % | > 5 % | Illegal grid | > 1 % over a legal grid route | Illegal mesh | Fallbacks | Grid µs (median) | Mesh µs (median) | Max expansions |");
-    println!(
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
-    );
-    let mut all_gains = Vec::new();
+    println!("| Map | Radius | Found | Not found | Illegal mesh | Fallbacks | Mesh µs (median) | Max expansions |");
+    println!("|---|---:|---:|---:|---:|---:|---:|---:|");
     for (name, map) in [("default_arena", &arena), ("showcase_canyon", &canyon)] {
         for radius in [SimScalar::from_num(3) / 8, SimScalar::HALF] {
-            let mut d = differential(
+            let d = route_stats(
                 map,
                 radius,
                 0x9a7f_0000 + u64::from(radius == SimScalar::HALF),
             );
-            report(name, radius, &mut d);
-            all_gains.extend(
-                d.gains
-                    .drain(..)
-                    .map(|(gain, s, g)| (gain, name, radius, s, g)),
-            );
+            report(name, radius, &d);
         }
-    }
-    all_gains.sort_by_key(|gain| std::cmp::Reverse(gain.0));
-    println!();
-    println!("| Gain (grid - mesh) | Map | Radius | Start | Goal |");
-    println!("|---:|---|---:|---|---|");
-    for (gain, name, radius, s, g) in all_gains.iter().take(10) {
-        println!("| {gain} | {name} | {radius} | {s:?} | {g:?} |");
     }
     Ok(())
 }

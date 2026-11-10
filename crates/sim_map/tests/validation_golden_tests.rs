@@ -43,6 +43,10 @@
 #[path = "support/arena.rs"]
 mod arena;
 
+#[path = "support/radii.rs"]
+mod radii;
+use radii::{LARGE_RADIUS, MEDIUM_RADIUS, SMALL_RADIUS};
+
 use std::collections::BTreeSet;
 
 use rand::Rng;
@@ -51,7 +55,7 @@ use rand_chacha::ChaCha8Rng;
 use sim_map::{
     validate_map, CellFlags, CliffLevel, GameMap, MapDocument, MapEntityId, MapFile,
     MapFormatError, MapValidationError, PathRequest, PathRequestWithVision, PathResult, Pathfinder,
-    PlayerVisionMap, RampDir, TerrainKind, UnitClearance, VisionSource,
+    PlayerVisionMap, RampDir, TerrainKind, VisionSource,
 };
 use sim_types::{EntityId, MoverType, SimScalar, SimVec2};
 use xxhash_rust::xxh64::xxh64;
@@ -636,16 +640,11 @@ fn find_path_with_vision_matches_the_recorded_corpus_digest() {
             .collect();
         let mut pathfinder = Pathfinder::new(&map);
         for _ in 0..PATH_REQUESTS_PER_MAP {
-            let clearance = [
-                UnitClearance::Small,
-                UnitClearance::Medium,
-                UnitClearance::Large,
-            ][rng.gen_range(0..3)];
+            let radius = [SMALL_RADIUS, MEDIUM_RADIUS, LARGE_RADIUS][rng.gen_range(0..3)];
             let base = PathRequest {
                 start: random_point(&map, &mut rng),
                 goal: random_point(&map, &mut rng),
-                clearance,
-                radius: clearance.radius_scalar(),
+                radius,
             };
             let outcome = match rng.gen_range(0..4) {
                 0 => pathfinder.find_path(&map, &base),

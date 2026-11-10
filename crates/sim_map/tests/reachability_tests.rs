@@ -1,16 +1,19 @@
-//! What the pathfinder answers when a goal cannot be reached, and which tier routes a body.
+//! What the pathfinder answers when a goal cannot be reached, and which segments a body sweeps.
 //!
 //! # Responsibility
 //! Pins the two contracts movement relies on: [`Pathfinder::nearest_reachable_point`] returns the
-//! same point for every unit in a connected region, and [`UnitClearance::for_radius`] agrees with
-//! what a disc of that radius physically fits through.
+//! same point for every unit in a connected region, and [`Pathfinder::segment_is_passable`] never
+//! admits a segment across terrain a disc cannot physically cross.
 //!
 //! # Invariants
 //! All maps are built in place; nothing here touches the filesystem.
 
+#[path = "support/radii.rs"]
+mod radii;
+use radii::{ALL_RADII, SMALL_RADIUS};
+
 use sim_map::{
     CellFlags, CliffLevel, GameMap, MapCell, MapError, PathRequest, Pathfinder, PlayerVisionMap,
-    UnitClearance,
 };
 use sim_types::{SimScalar, SimVec2};
 
@@ -33,8 +36,7 @@ fn request(start: SimVec2, goal: SimVec2) -> sim_map::PathRequestWithVision<'sta
     PathRequest {
         start,
         goal,
-        clearance: UnitClearance::Small,
-        radius: UnitClearance::Small.radius_scalar(),
+        radius: SMALL_RADIUS,
     }
     .into()
 }
@@ -85,20 +87,6 @@ fn nearest_point_rejects_a_start_without_clearance() -> TestResult {
 }
 
 #[test]
-fn tier_follows_what_the_disc_fits_through() {
-    let tier = |radius: f64| UnitClearance::for_radius(SimScalar::from_num(radius));
-    assert_eq!(tier(0.375), UnitClearance::Small);
-    assert_eq!(
-        tier(0.5),
-        UnitClearance::Small,
-        "fits a one-cell gap exactly"
-    );
-    assert_eq!(tier(0.5625), UnitClearance::Medium);
-    assert_eq!(tier(0.875), UnitClearance::Medium);
-    assert_eq!(tier(1.0), UnitClearance::Large);
-}
-
-#[test]
 fn clear_line_needs_no_search_and_gives_the_straight_route() -> TestResult {
     let map = GameMap::new(32, 32, MapCell::default_ground(CliffLevel(0)))?;
     let mut pathfinder = Pathfinder::new(&map);
@@ -125,7 +113,6 @@ fn mesh_request(
     sim_map::PathRequestWithVision {
         start,
         goal,
-        clearance: UnitClearance::for_radius(radius),
         radius,
         vision: None,
         block_unexplored_ramps: false,
@@ -250,24 +237,18 @@ fn mesh_refuses_unexplored_ramps_when_asked_like_the_grid() {
     assert!(pathfinder.find_path_with_vision(&map, &request).is_ok());
 }
 
-/// The mesh predicate (exact radius) agrees with the grid predicate (tier clearance) on random
-/// segments of both shipped maps, apart from the documented difference: the grid tests whole
-/// cells against a tier's clearance, the mesh the swept disc itself, so every disagreement is
-/// a segment the grid admits and the mesh refuses. The mesh never admits a segment that
-/// crosses terrain the grid's physical-motion truth refuses.
+/// The mesh segment predicate never admits a segment that crosses terrain the physical-motion
+/// truth refuses, on random segments of both shipped maps, for each sample radius, and it is not
+/// vacuous: it admits some of them.
 #[test]
-fn mesh_segment_predicate_agrees_with_the_grid() {
+fn mesh_segment_predicate_never_crosses_terrain() {
     use rand::{Rng, SeedableRng};
     for file in [arena::DEFAULT_ARENA_FILE, arena::SHOWCASE_CANYON_FILE] {
         let map = arena::load_game_map(file);
         let mut pathfinder = Pathfinder::new(&map);
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0x5e9_3e47);
-        for tier in [
-            UnitClearance::Small,
-            UnitClearance::Medium,
-            UnitClearance::Large,
-        ] {
-            let (mut agree, mut total, mut grid_only) = (0u32, 0u32, 0u32);
+        for radius in ALL_RADII {
+            let mut admitted = 0u32;
             for _ in 0..10_000 {
                 let mut point = || {
                     at(
@@ -279,36 +260,18 @@ fn mesh_segment_predicate_agrees_with_the_grid() {
                 let request = PathRequest {
                     start: a,
                     goal: b,
-                    clearance: tier,
-                    radius: tier.radius_scalar(),
+                    radius,
                 }
                 .into();
-                let grid = pathfinder.segment_is_passable(&map, &request, a, b);
-                let mesh = pathfinder.segment_is_passable(&map, &request, a, b);
-                if mesh {
+                if pathfinder.segment_is_passable(&map, &request, a, b) {
+                    admitted += 1;
                     assert!(
                         map.ground_segment_is_connected(a, b, |_, _| true),
                         "{file}: mesh admits {a:?} -> {b:?} across terrain"
                     );
                 }
-                total += 1;
-                agree += u32::from(grid == mesh);
-                grid_only += u32::from(grid && !mesh);
             }
-            let rate = f64::from(agree) / f64::from(total);
-            eprintln!(
-                "{file} {tier:?}: {agree}/{total} agree; {grid_only} grid-only, {} mesh-only",
-                total - agree - grid_only
-            );
-            // Measured in WP7: 91 % to 96 % agreement, every difference grid-only. The grid
-            // passes whole cells whose clearance field admits the tier somewhere; the mesh
-            // tests the swept disc itself, so it is never the more permissive of the two.
-            assert_eq!(
-                total - agree - grid_only,
-                0,
-                "{file} {tier:?}: mesh admits more"
-            );
-            assert!(rate >= 0.85, "{file} {tier:?}: agreement {rate}");
+            assert!(admitted > 0, "{file} {radius:?}: no segment admitted");
         }
     }
 }
