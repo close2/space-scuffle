@@ -58,5 +58,15 @@
                 Still(file: "fx_blast.scorch.20261110T003213Z-2165717-1.on_black.png"),
             ]),
         ),
+        (
+            // Review round 2 (WP6c): the scoured blast mark that carries the reach, a dense
+            // core with radial soot streaks feathering out; two variants.
+            name: "blast_mark",
+            look: Lit,
+            source: Variants(pictures: [
+                Still(file: "fx_blast.blast_mark.20261110T091418Z-1101907-1.on_black.png"),
+                Still(file: "fx_blast.blast_mark.20261110T091522Z-1111602-1.on_black.png"),
+            ]),
+        ),
     ],
 )

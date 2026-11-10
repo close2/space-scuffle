@@ -94,3 +94,10 @@ measured peak: effects 1 536, sprites 4 096, decals 2 048 (particles 30 000, lig
 unchanged). Every stress run since: 12 000 events, **0 refused, 0 Critical overflow**; about 1 000 Detail
 instances skipped for room and 4 000 for being smaller than 6 px, by design. The Major class cap (96) stays: in
 such a crowd the Detail layers of effects spawned over it retire at birth, so the degradation never pops.
+
+**Review round 2 (2026-11-10).** The round-2 effects add Critical ground marks to the spine line (churned earth
+and the fissure, 17 per line for 2.6 s) and Minor acid flecks (16 per burst, 4.5 s). The first round-2 stress
+run overflowed the 2 048 decals with Critical marks; the budget is now effects 2 048, decals 4 096 and the Minor
+class cap 512 (the rest unchanged), and the re-run has **0 refused, 0 Critical overflow** (12 002 events;
+[`stress_capture.txt`](stress_capture.txt)). The frame time was not re-measured in this round (the RX 580 is
+shared and the round-1 measurement could not resolve ±5 % under its load); the scale-out's measurement covers it.

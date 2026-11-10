@@ -4,7 +4,7 @@
     cell_size: 256,
     padding_px: 2,
     channels: PackedV1,
-    layers: 28,
+    layers: 27,
     mip_files: [
         "fx_acid.png",
         "fx_acid.mip1.png",
@@ -23,9 +23,9 @@
             channel_labels: None,
         ),
         (
-            name: "acid_splat",
+            name: "acid_stain",
             first_layer: 24,
-            frames: 3,
+            frames: 2,
             duration_ms: None,
             pivot_px: (128, 128),
             blend: Premultiplied,
@@ -33,7 +33,7 @@
         ),
         (
             name: "droplet",
-            first_layer: 27,
+            first_layer: 26,
             frames: 1,
             duration_ms: None,
             pivot_px: (128, 128),

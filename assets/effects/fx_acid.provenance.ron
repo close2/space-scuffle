@@ -1,13 +1,13 @@
 (
     format_version: 1,
     set: "fx_acid",
-    manifest_sha256: "a296a297db521fee24001afa0d88e714427557378aba02ca56fd4c4fbdf55fb3",
+    manifest_sha256: "ad9b63b0a59e9512431ca583ccd54075231daa12439c5859e11446709d40ad53",
     mip_sha256: {
-        "fx_acid.mip1.png": "6e21ae9afe71c15260e2ed201daee76362a4ec22509d1d8b9f2894f53b1dc42a",
-        "fx_acid.mip2.png": "ef0f2dae44a22336affa214062d7ce9214c14254ceb760d94ce0d671c7b82977",
-        "fx_acid.mip3.png": "aefa48294279b7c4410f520acd88bf49d0126b298a1c2eca5aab95a901757b24",
-        "fx_acid.mip4.png": "8c3f733dfc4f1df552864f3ff0925f1d9d442c69526413ad98933b17741f7527",
-        "fx_acid.png": "8352622ed97a90a6698f9cc3396e001d19a173d8732340b2a53e3836ad64ad82",
+        "fx_acid.mip1.png": "46b261a3aca6768f08d47408dfe8eadd2d2185676b7d08ee63f8ecbd92a48d6a",
+        "fx_acid.mip2.png": "bde326be2b1657fa648a349146b06619068e8a2335df4c6dc5a861f602861166",
+        "fx_acid.mip3.png": "3cc7016d17c15bdee7e2c1f36ec5983f1e38a9ec9ede49c7d82f3822637dcbcf",
+        "fx_acid.mip4.png": "5e7bc0b3709942db7debf962586d944565af307da6bad036a32a7e6880b42cbf",
+        "fx_acid.png": "4ed93ac119b3f2dc1508ab171a48c51f825597e51f1acda7983f9705416834dd",
     },
     erosion: Some((
         noise: (
@@ -83,35 +83,26 @@
                 )),
             )),
         ),
-        "acid_splat": (
+        "acid_stain": (
             origin: GeneratedImage(
                 sources: [
                     (
                         role: OnBlack,
-                        file: "fx_acid.acid_splat.20261110T003629Z-2192944-1.on_black.png",
-                        sha256: "7d6ef9b9033c9ae18749552a981368524685d4dab9633d9cf3457e4c04fc1bb2",
+                        file: "fx_acid.acid_stain.20261110T091626Z-1115729-1.on_black.png",
+                        sha256: "22c17babca053d59819d69012387576c1f2d0cb82eb48b2680fe2ef287ff9848",
                         model: "gemini-nano-banana-2.1",
-                        prompt_sha256: "8f1e87a963a74aaa2e582a5ca2ef3004006d0decbb790cdff2a0e1987edd8e06",
-                        request_id: "20261110T003629Z-2192944/1",
-                        ledger_line: 1194,
+                        prompt_sha256: "fe804c7c1a3d6fd7da96a1151b76edcdcee5890c4745e1bcdb28d782c7ea3857",
+                        request_id: "20261110T091626Z-1115729/1",
+                        ledger_line: 1298,
                     ),
                     (
                         role: OnBlack,
-                        file: "fx_acid.acid_splat.20261110T003714Z-2198041-1.on_black.png",
-                        sha256: "78c86d8976b64054a866c25a3f51862b8dafed607c74caa787a3c2843edd56dd",
+                        file: "fx_acid.acid_stain.20261110T091833Z-1121960-1.on_black.png",
+                        sha256: "baa8f6282a9082c5eef47e5cce54e3939e1aa92d4a5b4b8cdebf6c6fd41c35da",
                         model: "gemini-nano-banana-2.1",
-                        prompt_sha256: "f03a235d16766eb743ee262b5161852060efd9863145bf123d3c355f95bce7b5",
-                        request_id: "20261110T003714Z-2198041/1",
-                        ledger_line: 1200,
-                    ),
-                    (
-                        role: OnBlack,
-                        file: "fx_acid.acid_splat.20261110T004246Z-2237154-1.on_black.png",
-                        sha256: "b67da091a6d035b58b97346c424c7202ba4a15e378517075697988c568c39090",
-                        model: "gemini-nano-banana-2.1",
-                        prompt_sha256: "066e6b3eeeeceb2cb2e3ac47a9b0ac8e2f6bff2e8fcbdfba27b03a7343cd016f",
-                        request_id: "20261110T004246Z-2237154/1",
-                        ledger_line: 1216,
+                        prompt_sha256: "ef8b4287048aa61a87b0a09585a8f46654fb33523392e325188c34668bd26eeb",
+                        request_id: "20261110T091833Z-1121960/1",
+                        ledger_line: 1302,
                     ),
                 ],
             ),
@@ -119,7 +110,7 @@
                 method: LuminanceKey,
                 levels: Some((
                     black: 3,
-                    white: 242,
+                    white: 239,
                 )),
                 black_check: Some((
                     band_px: 32,

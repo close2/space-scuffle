@@ -56,6 +56,37 @@ first, a flipbook with onset, peak and dissipation, and no "AI-looking" clutter 
 | Veo clip `6648f2a0…` | acid_bubbles | Green-tinted background (not black), an underwater bubble stream with a water surface line. |
 | Veo clip `5cfd4f1d…` | acid_bubbles | A faint lit floor line across the whole frame; one bubble that collapses rather than pops. |
 
+## Review round 2 (WP6c): replaced and new elements
+
+The independent review of round 1 ([`independent_review.md`](independent_review.md)) traced three
+of its rejections to sources: the acid splat's clip-art spike rosette, the spines' row of pale
+identical wedges (the Veo `spine_erupt` flipbook) and the scorch that marked only about 0.8 of
+the shell's 1.25 reach. They are replaced by new image-model stills made to the art direction of
+[`../reference.md`](../reference.md) ("Art direction"), reviewed on the sheets above with the same
+checklist. The noise set is unchanged; it is now uploaded with the drawable sets and read as
+per-instance breakup noise.
+
+| Set / element | Layers | Source | Verdict | Reasons |
+|---|---|---|---|---|
+| `fx_blast/blast_mark` (new) | 2 variants | 2 image-model stills, top-down, luminance key | Accept | A dense soot core with hundreds of radial streaks and specks feathering to nothing; one round and even, one with long rays on one side; no floor texture, nothing at the cell border. Drawn at the reach so the streaks' tips mark it. |
+| `fx_acid/acid_stain` (new, replaces `acid_splat`) | 2 variants | 2 image-model stills, top-down, luminance key | Accept | A viscous puddle with an organic, uneven outline, a thin middle film and a thick raised rim (the rim is the brighter shading, which the `acid_stain` ramp maps to the wetter, darker emerald); no spikes, no droplet rosette. |
+| `fx_ground/chitin_spine` (new, replaces `spine_erupt`) | 4 variants | 4 image-model stills side-on (claw, scythe hook, barbed thorn, S-curve), **silhouette key** (`Solid`, new) | Accept | Curved chitin, thick at the base and tapering to a pale bone tip, dark umber body with growth ridges and a lit edge; each a different silhouette, the base a flat cut that the effect sinks below the ground. The silhouette key keeps the dark body opaque (the luminance key would have made it see-through, which is why the round-1 spines were pale). |
+| `fx_ground/spine_crack` (new) | 3 variants | 3 image-model stills, top-down, luminance key | Accept | A small burst of cracks: a torn hole with lifted shards and jagged cracks of uneven length splitting into hairlines; one elongated rupture. |
+
+Rejected in round 2:
+
+| Source | Element | Reason |
+|---|---|---|
+| The four on-white edits of the `chitin_spine` pairs (`…090833Z…`, `…090916Z…`, `…090944Z…`, `…091245Z…`, each `-2.on_white`) | chitin_spine | Difference matte residual above 4/255 on 1.4 to 2.4 % of pixels (limit 0.5 %): the edit redraws the spine's edges and adds a soft floor shadow. Their pictures on black ship with the silhouette key instead. |
+| Image `fx_acid.acid_stain.…091729Z…` | acid_stain | A two-lobed pool with a deep bay: drawn over the reach it left a third of the damaged disc bare on the first contact sheet of round 2, so the stain no longer marked the area. |
+
+Removed from the sets: `fx_acid/acid_splat` and `fx_ground/spine_erupt` (replaced above). Their
+sources stay in the ledger and under `~/scratch/effects/sources/`.
+
+Spend of round 2: 25 `image_request_started`, 9 refused for quota (free), **16 paid × $0.11 =
+$1.76** (`gemini-nano-banana-2.1`, `global`); no Veo clip. Ledger after round 2: **$104.91**
+(Q0078's image cap $25.25: $4.51 used).
+
 ## Not shipped
 
 - `fx_acid/acid_bubbles`: both clips rejected and the WP's cap of 10 Veo clips reached. The slice's acid

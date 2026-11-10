@@ -1,13 +1,13 @@
 (
     format_version: 1,
     set: "fx_blast",
-    manifest_sha256: "4b079bed4f68cc0f8995f9bc33933aad7e41a03966a25510bfeae8df1d849c16",
+    manifest_sha256: "1b72858900e382c8214dbf74d16c074ff7f9d4b26e3d1a58926d020e60fa6267",
     mip_sha256: {
-        "fx_blast.mip1.png": "1890f769ff6e4dc09d109854c9d44157495d5d19d6a0c946f16e576a58532abc",
-        "fx_blast.mip2.png": "3e4c8aa621a335d711174758ae04a6728b8e7c21c5a23d6ecf75bcf11a60b519",
-        "fx_blast.mip3.png": "6b2dbb2f3296a54a6b60b2ad7ca69de10cf573a83b4ac2a7bbf492961238bf3f",
-        "fx_blast.mip4.png": "876b97a4823cc74269f842ef56c13bdd2902292743595b8244dcd367eecce133",
-        "fx_blast.png": "e89ee7ea077fb8b61121264dfefb8a07f5ea7657d46d0eb0be199414ce233a14",
+        "fx_blast.mip1.png": "1c184dea510536e7414b0af955de670f58158340f6d2f06a1db2719b4b32bee7",
+        "fx_blast.mip2.png": "16ef7bdbfe5bf78550d0b423dee6b995b35e52b7ecef3d646803175bd18f6a2d",
+        "fx_blast.mip3.png": "c739d19b093131565df9246077350eb9c5079cc837857d9d465e1cc681fc8101",
+        "fx_blast.mip4.png": "ec14a32da17aad8c8cfe4e6230d56363c4df5ef957ed97a820669e42278c28ea",
+        "fx_blast.png": "6e4db1176e8685f27f7bcae458ec228738595abe965c2fbb8bf1b963b516f601",
     },
     erosion: Some((
         noise: (
@@ -21,6 +21,44 @@
     )),
     ffmpeg_version: Some("ffmpeg version 7.1.5-0+deb13u1 Copyright (c) 2000-2026 the FFmpeg developers"),
     elements: {
+        "blast_mark": (
+            origin: GeneratedImage(
+                sources: [
+                    (
+                        role: OnBlack,
+                        file: "fx_blast.blast_mark.20261110T091418Z-1101907-1.on_black.png",
+                        sha256: "7119d3efa3649eb2843919403a08a26156911db362d39ddc919b9794f9dbeda0",
+                        model: "gemini-nano-banana-2.1",
+                        prompt_sha256: "dfb2e9875b7df7bf5cd043949d3a3d56f08ac62b7f6cb5e2dff9f76f154a2ad1",
+                        request_id: "20261110T091418Z-1101907/1",
+                        ledger_line: 1294,
+                    ),
+                    (
+                        role: OnBlack,
+                        file: "fx_blast.blast_mark.20261110T091522Z-1111602-1.on_black.png",
+                        sha256: "4d3a81a3e4590f1dc75522c38aac6bb6a12472b8f791495b71e7790d5d30989a",
+                        model: "gemini-nano-banana-2.1",
+                        prompt_sha256: "70e0b4cc91a9e2b64ece3e2307d19d1abb2b938e4745607cbf18007e3a930852",
+                        request_id: "20261110T091522Z-1111602/1",
+                        ledger_line: 1296,
+                    ),
+                ],
+            ),
+            keying: (
+                method: LuminanceKey,
+                levels: Some((
+                    black: 3,
+                    white: 239,
+                )),
+                black_check: Some((
+                    band_px: 32,
+                    lit_border_permille: (1, 4, 1, 1),
+                    darkest_level: 0,
+                )),
+                matte: None,
+            ),
+            span: None,
+        ),
         "debris_atlas": (
             origin: GeneratedImage(
                 sources: [

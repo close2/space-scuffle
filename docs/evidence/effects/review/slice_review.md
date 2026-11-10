@@ -14,7 +14,8 @@ battle camera's default distance; "close" is the hero framing. A cheap-looking e
 | Round | Data | Contact sheets and sequences | Driver |
 |---|---|---|---|
 | 0 | `effects.ron` of WP6b (commit `1eaaf64`) | `<effect>_contact.png`, `<effect>_sequence.png` as of commit `1eaaf64` (WP6b) | radv |
-| 1 | `effects.ron` of this WP | [`shell_impact_contact.png`](shell_impact_contact.png), [`acid_burst_contact.png`](acid_burst_contact.png), [`spine_line_contact.png`](spine_line_contact.png) and the `_sequence.png` beside each | lavapipe |
+| 1 | `effects.ron` of commit `8576300` | the contact sheets and sequences of commit `bb5a61c` | lavapipe |
+| 2 | `effects.ron` of review round 2 | [`shell_impact_contact.png`](shell_impact_contact.png), [`acid_burst_contact.png`](acid_burst_contact.png), [`spine_line_contact.png`](spine_line_contact.png) and the `_sequence.png` beside each | lavapipe |
 
 - GPU statistics: `crates/client/tests/effect_slice_gpu_tests.rs` (footprint of the Critical layers against the
   bound radius or line, coverage of the full-damage disc within 80 ms, frame-to-frame luminance change, nothing
@@ -126,3 +127,85 @@ All in `assets/catalog/effects.ron` (data), except the cap check and the tool's 
 
 **Round 1 result: accepted**, every item for every effect. The gate of WP6c also needs the independent review
 ([`independent_review_packet.md`](independent_review_packet.md)); its verdicts go to `independent_review.md`.
+
+## Changes for round 2 (after the independent review of round 1)
+
+The independent review ([`independent_review.md`](independent_review.md)) rejected all three effects: `shell_impact`
+on items 1 and 4, `acid_burst` on 2 to 5, `spine_line` on 1, 2, 4, 5 and 7, and the slice as a whole for flatness,
+three styles, symmetric erosion and stair-stepped eroded edges. Round 2 starts from one art direction, written into
+[`../reference.md`](../reference.md) ("Art direction"): painted realism to match the units' baked atlases, one focal
+point per effect, a palette per element, soft eroded edges, noise-driven irregular shapes with a phase per instance,
+and an airborne part for every impact. Every texture and layer follows it.
+
+### Framework (`client::effects`, the effect shaders, `asset_baker`)
+
+| Gap the review found | Change |
+|---|---|
+| Symmetric erosion (the shell ring's two arcs, the acid ring's four wedges, repeated over every burst of a crowd) | **Breakup noise per instance**: a `breakup: (noise, scale, amount, softness, shade)` on sprites, rings and decals mixes a noise element (the `fx_noise` set, now uploaded with the drawable sets and sampled with repeating addressing) into the erosion order at a phase drawn from each instance's hash, so no two instances erode alike and no erosion is mirror-symmetric. The polar ring mapping that mirrored its texture four times is no longer used by the slice. |
+| Stair-stepped, hard eroded edges | The erosion threshold's soft step has a data width (`breakup.softness`, default 0.08 as before); decals sample the mip their screen footprint needs (from the derivatives of their texture coordinates) instead of mip 0; coverage may be thickened by an intensity above 1 but is clamped to 1. |
+| Bright rims on fireball lobes ("soap bubbles") | **Self-shading** (`breakup.shade`): thin parts of an element are darkened towards its ramp's dark end by their density, so dense middles stay lit and thin edges fall into shadow. |
+| A clean band of constant width and brightness for the shock and acid fronts | **`mapping: Front` rings**, computed from the breakup noise: brightest and densest at the leading edge, fading to the trailing edge, width and brightness wavering around the circumference (whole noise repeats, so no seam), thinner as it expands (`size_curve` scales a ring's thickness); `sort_bias` draws the shell's front over the fireball standing on it, so it is never cut into two arcs. |
+| A flash with a clipped cotton-ball silhouette | **`shape: Radial` cards**: a soft Gaussian glow computed in the shader (white core, warm halo through the ramp), broken by the breakup noise. |
+| Flatness: no airborne part | **Particles that land**: an emitter's `land` names a `Point` effect spawned where each particle falls back to its start height (acid globs leaving flecks); **`spread`** moves cards away from the anchor over their life with an ease-out (a dust ring kicked outward); **`Upright`** cards stand on the ground and turn about world up to face the camera, so spines and columns never turn edge-on. |
+| Spines all the same, leaning one way, appearing at full height, fading out | **Line clumps** (`per_point`, `scatter`, `delay_jitter` on line placements); **`lean_deg`**: a hashed lean about the point where a standing card meets the ground; **`lift_curve`**: a card rises out of the ground and sinks back into it (the depth test hides what is below). |
+| Spine streaks drawn behind the first search point, on the attacker's side (fog item 7) | **`clip_to_line`** on sprites, decals (now a world-space clip window, any yaw) and particle layers: every layer of `spine_line` fades out within 0.1 world units inside the first and last search points and draws nothing beyond them. |
+| Opaque dark chitin keyed transparent | `asset_baker`: a **silhouette key** (`look: Solid`) for opaque, hard-edged elements on pure black: density steps up just above the black point, shading is the luminance, so the dark umber body stays opaque. |
+
+Tests: unit tests of the placement clumps, spread, line clip window, per-instance noise phase, landing queue,
+silhouette key and record layouts; `effect_catalog_tests.rs` (breakup resolution and its errors, Front rings without
+noise, landing effects of the wrong kind); `effect_runtime_tests.rs` (landed globs spawn their flecks without growing
+a buffer, clipped cards and particles carry the line's window).
+
+### Textures ([`texture_review.md`](texture_review.md), "Review round 2")
+
+New image-model stills (16 paid, $1.76; no Veo clip): `blast_mark` (2, radial soot streaks to the reach),
+`acid_stain` (2, an irregular puddle with a thick wet rim; replaces the clip-art `acid_splat`), `chitin_spine`
+(4 curved chitin spines; replaces the Veo `spine_erupt` wedges), `spine_crack` (3 small crack bursts).
+
+## Round 2
+
+Evidence: the round-2 contact sheets and sequences in this directory (lavapipe, debug build, 2026-11-10), the
+crowd capture [`stress_capture_400.png`](stress_capture_400.png), and `effect_slice_gpu_tests.rs` on radv and
+lavapipe (figures below are radv's; lavapipe's agree within 0.01/255 and 0.01 px on every figure; both drivers pass footprint, coverage, pop, lingering and their re-baselined goldens (100 % within, mean 0.000/255 on re-run)). The reviewer (the implementing agent) judged the
+sheets cropped and enlarged cell by cell, as the independent reviewer did, against the independent review's
+findings as well as the checklist. "Close" cells are row 3 (bright) and row 7 (dark); "sequence" frames count from 0
+at 40 ms.
+
+### `shell_impact`
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1 | Reads at gameplay zoom | Accept | The shock front is a whole, uneven ring at the reach from frame 2 (80 ms) to frame 5, drawn over the fireball's base (never two arcs; sequence frames 2 to 6); then the ground mark states both radii for 8 s: a near-black charred core on the red full-damage circle and radial soot streaks feathering out to the yellow reach (row 4, ages 0.6 to 6.0 s). GPU (radv): 100 % of 72 rays within ±2 px of the projected reach, mean error −0.65 px, largest overshoot +0.44 px; the full-damage disc 100 % covered at the peak.. One focal point: the flash, then the fireball's hot core. |
+| 2 | Layered | Accept | Light, radial flash, a cluster of three fireball cards, the shock front, a dust ring kicked outward, sparks, debris chunks thrown on arcs (visible as dark specks leaving the crater, close rows at 0.24 s), smoke, embers, the char core and the blast mark: eleven layers, five of them airborne. |
+| 3 | Timing | Accept | Flash at its peak at age 0 for two frames; the fireball grows from 62 % to 92 % of its size over its first 0.19 s while it cools (sequence frames 1 to 6), then swells slowly; the front races out in 0.12 s and thins as it goes; smoke and the ground mark erode by noise from their thin parts (row 3, 6.0 s) and are gone at 8.03 s. GPU: Only decal pixels after the detail ends, 0/255 after the end.. |
+| 4 | No tells of cheapness | Accept | The flash is a soft radial glow with a white core and warm halo, no silhouette; the fireball lobes are self-shaded (thin edges dark, no bright rims; close rows at 0.24 s); the front wavers in width and brightness with a bright leading edge and a phase of its own per burst; the scorch has a dark core, radial streaks and a feathered edge, eroded by noise with a soft step (no stair-steps when enlarged). No quad edge or hard ground line in any cell. GPU: Largest frame-to-frame change after the impact 1.47/255 (limit 6).. |
+| 5 | Value and colour | Accept | White core only in the first two frames, then yellow, orange, oxblood, soot; the lasting mark is darker than the ground on both grounds (char core near black, streaks brown-grey), never lighter; no team colour. |
+| 6 | Crowd behaviour | Accept | [`stress_capture_400.png`](stress_capture_400.png) (round 2, [`stress_capture.txt`](stress_capture.txt)): every unit cluster of the baseline is still readable; 12 002 events, none refused, no Critical instance without a slot once the decal pool was sized to 4 096; footprint coverage 29.9 % (upper bound); retirement at birth, no pop. The spine lines are the busiest element of the frame (dark lines between the armies) but pass between units without covering them. |
+| 7 | Fog | Accept | Anchored where it lands; no layer at the source. |
+
+### `acid_burst`
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1 | Reads at gameplay zoom | Accept | At age 0 the glowing pop and a stain of 62 % of the reach mark the area; the front reaches the 2.2 circle by 0.17 s (frame 4) and the stain fills the whole disc behind it (row 4, 0.18 to 1.8 s), with an irregular noise-broken edge on the reach circle. GPU (radv): 100 % of 72 rays within ±2 px of the projected reach, mean error −0.49 px, largest overshoot +0.97 px; the full-damage disc 90 % covered at the peak.. One focal point: the pop's lime-yellow centre over a deep emerald field, kept as a wet glow at the centre for 1 s. |
+| 2 | Layered | Accept | Light, the glowing pop dome (camera-facing), a ground flash, the front over a thin dark rim, sixteen globs thrown up on arcs that each leave a fleck where they land, a fine spray, low vapour, the stain and the wet centre: ten layers, four of them airborne. |
+| 3 | Timing | Accept | Peak at age 0; front at the reach by 0.17 s and eroded away by 0.42 s with an asymmetric, noise-driven break-up; the stain dries visibly from wet emerald to an olive crust (ramp curve `dry`, rows 3 and 7 from 0.9 to 4.5 s) and dries by erosion from its edge and from holes inside it (no uniform fade); flecks dry with it. GPU: Only decal pixels after the detail ends, 0/255 after the end.. |
+| 4 | No tells of cheapness | Accept | One stain, not stacked copies: a viscous puddle with a thick wet rim, rotated and eroded with its own noise phase per burst; no spike rosette; no four-way symmetry anywhere (the front's break-up and the stain's erosion differ per instance); soft eroded edges; no quad edge (the pop and the ground glows have soft depth or sit above the ground). GPU: Largest frame-to-frame change after the impact 2.19/255 (limit 6).. |
+| 5 | Value and colour | Accept | Brightest at the pop's centre; the field is a deep, saturated emerald with a darker wet rim on bright ground and separates from the teal dark ground by value (row 7); drying shifts it to a dull olive crust; no team colour. |
+| 6 | Crowd behaviour | Accept | [`stress_capture_400.png`](stress_capture_400.png) (round 2, [`stress_capture.txt`](stress_capture.txt)): every unit cluster of the baseline is still readable; 12 002 events, none refused, no Critical instance without a slot once the decal pool was sized to 4 096; footprint coverage 29.9 % (upper bound); retirement at birth, no pop. The spine lines are the busiest element of the frame (dark lines between the armies) but pass between units without covering them. |
+| 7 | Fog | Accept | Anchored at the burst centre; no layer at the source; flecks land inside the reach. |
+
+### `spine_line`
+
+| # | Item | Verdict | Reason |
+|---|---|---|---|
+| 1 | Reads at gameplay zoom | Accept | At default zoom the line reads as a travelling row of dark chitin clumps on bright and dark ground (row 1 and 5, 0.2 to 0.8 s), not a dashed line; after the spines sink, a continuous strip of churned earth and the fissure (both Critical, with the spines) marks it for 2.6 s. Every layer is clipped to the first and last search points: nothing is drawn before the first point (1.0 from the attacker's centre, 0.06 beyond its body radius of 0.9375) or past the last. GPU (radv): the Critical marks start +0.33 px and end −0.35 px from the line's projected ends; 76 % of the search points' full-damage discs covered at their peak (the least 42 %, at an end point, half of whose disc lies beyond the clipped line).. Focal point: the newest clump, lit as the front (ramp curve `spine_hot`). |
+| 2 | Layered | Accept | Churned earth, a crack burst per point, the fissure joining the points, clumps of three spines per point, dirt puffs and thrown chips: six layers, three airborne. |
+| 3 | Timing | Accept | Each point's crack opens about two frames before its spines (anticipation; contact sheet 0.08 s and 0.21 s show the crack at the next point ahead of the spines); the spines shoot up from below the ground to full height within two frames, overshoot by 10 % and settle; they sink back into the ground from the source end (0.8 to 1.3 s), and the marks erode out by 2.6 s. GPU: Only decal pixels after the detail ends, 0/255 after the end.. |
+| 4 | No tells of cheapness | Accept | Four curved chitin variants (claw, scythe hook, barbed thorn, S-curve), mirrored, leaning up to ±14° about their base, ±30 % in height, scattered and staggered per spine: no comb, no two clumps alike; they stand upright to the camera (never edge-on) with soft depth where they meet the ground; the ground marks are crack bursts of three variants at random turns over noise-broken churned earth, not a stencil of dashes. GPU: Largest frame-to-frame change after the impact 0.53/255 (limit 6).. |
+| 5 | Value and colour | Accept | Dark umber chitin with pale bone tips on both grounds (high contrast on the bright ground, where round 1 was beige on beige); the newest clump is lighter (the front); cracks are the darkest marks; no team colour. |
+| 6 | Crowd behaviour | Accept | [`stress_capture_400.png`](stress_capture_400.png) (round 2, [`stress_capture.txt`](stress_capture.txt)): every unit cluster of the baseline is still readable; 12 002 events, none refused, no Critical instance without a slot once the decal pool was sized to 4 096; footprint coverage 29.9 % (upper bound); retirement at birth, no pop. The spine lines are the busiest element of the frame (dark lines between the armies) but pass between units without covering them. |
+| 7 | Fog | Accept | The effect is anchored at the first search point and every layer (cards, decals and particles) is clipped to the segment from the first to the last search point, so nothing is drawn on or behind the burrowed attacker; an undetected attacker's spines show, the attacker does not. |
+
+**Round 2 result: accepted by the implementer, every item for every effect.** The independent round-2 review follows on
+[`independent_review_packet.md`](independent_review_packet.md).

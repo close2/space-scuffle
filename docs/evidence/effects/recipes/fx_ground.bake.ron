@@ -4,10 +4,15 @@
 //
 // Sources are named by their bare file names; each is cited by its ledger line in
 // assets/effects/fx_ground.provenance.ron. Review: docs/evidence/effects/review/texture_review.md.
-// - spine_erupt: Veo clip (effect-veo, third attempt). Only the eruption is kept (the spikes
-//   slide up out of a floor slit); the clip's spikes never retract, so the first 1.6 s are
-//   used and the effect retracts them by playing the flipbook backwards or eroding it. The
-//   spikes are wider than the centre square, so the whole 16:9 frame is letterboxed.
+// - chitin_spine (review round 2, WP6c; replaces the Veo `spine_erupt` flipbook, whose regular
+//   row of pale wedges read as a comb): four generated black/white pairs, each one curved
+//   chitin spine side-on (claw, scythe hook, barbed thorn, S-curve). Their difference mattes
+//   failed the residual rule (1.4 to 2.4 % of pixels above 4/255: the on-white edits redraw the
+//   edges and add a floor shadow), so the pictures on black ship with the silhouette key
+//   (`Solid`), which keeps the dark umber body opaque; variants. The effect raises and sinks
+//   them.
+// - spine_crack (review round 2): three generated stills, top-down, a small burst of cracks
+//   where a spine punches up; variants.
 // - ground_crack: two generated stills, top-down, a crack tapering to hairlines at both ends,
 //   so segments chain along a line with overlap; variants, one layer each.
 (
@@ -15,15 +20,23 @@
     cell_size: 256,
     elements: [
         (
-            name: "spine_erupt",
+            name: "chitin_spine",
+            look: Solid,
+            source: Variants(pictures: [
+                Still(file: "fx_ground.chitin_spine.20261110T090833Z-1077968-1.on_black.png"),
+                Still(file: "fx_ground.chitin_spine.20261110T090916Z-1080994-1.on_black.png"),
+                Still(file: "fx_ground.chitin_spine.20261110T090944Z-1082596-1.on_black.png"),
+                Still(file: "fx_ground.chitin_spine.20261110T091245Z-1096361-1.on_black.png"),
+            ]),
+        ),
+        (
+            name: "spine_crack",
             look: Lit,
-            source: Clip(
-                file: "3ce386ff-1321-4c54-9728-fe8318208312.mp4",
-                frames: 24,
-                decode_fps: 24,
-                until_ms: Some(1600),
-                framing: Letterbox(feather_permille: 0),
-            ),
+            source: Variants(pictures: [
+                Still(file: "fx_ground.spine_crack.20261110T091941Z-1161892-1.on_black.png"),
+                Still(file: "fx_ground.spine_crack.20261110T092043Z-1166097-1.on_black.png"),
+                Still(file: "fx_ground.spine_crack.20261110T092204Z-1171787-1.on_black.png"),
+            ]),
         ),
         (
             name: "ground_crack",

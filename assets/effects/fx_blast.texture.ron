@@ -4,7 +4,7 @@
     cell_size: 256,
     padding_px: 2,
     channels: PackedV1,
-    layers: 54,
+    layers: 56,
     mip_files: [
         "fx_blast.png",
         "fx_blast.mip1.png",
@@ -43,6 +43,15 @@
         (
             name: "scorch",
             first_layer: 52,
+            frames: 2,
+            duration_ms: None,
+            pivot_px: (128, 128),
+            blend: Premultiplied,
+            channel_labels: None,
+        ),
+        (
+            name: "blast_mark",
+            first_layer: 54,
             frames: 2,
             duration_ms: None,
             pivot_px: (128, 128),
