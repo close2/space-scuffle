@@ -21,9 +21,12 @@
 //! 2. [`GpuCommand::run`], [`GpuCommand::run_validated`] or [`GpuCommand::assert_passes_validation`]
 //!    is the only way to start it. A `GpuCommand` exposes no `output`, `spawn` or `status`, so no
 //!    caller can run a GPU child without the lock.
-//! 3. The run takes the lock (radv only), spawns the child, waits for it, releases the lock, then
+//! 3. The run reads the child's executable into the page cache ([`preload_executable`]), takes
+//!    the lock (radv only), spawns the child, waits for it, releases the lock, then
 //!    checks the exit status and the adapter line, and appends a line to the ledger if
-//!    `SPACE_SCUFFLE_GPU_RUN_LEDGER` names a file.
+//!    `SPACE_SCUFFLE_GPU_RUN_LEDGER` names a file. The child's own log timestamps split its run
+//!    into phases ([`ChildTimeline`]); the ledger records them, and a timeout names the slowest.
+//!    `SPACE_SCUFFLE_GPU_RUN_LOG_DIR` keeps each child's whole log for a timing investigation.
 //!
 //! `SPACE_SCUFFLE_VIRTUAL_GPU=1`, which every child receives, means "a test display": the client
 //! keeps its window off the desktop. It does not mean a software GPU.
@@ -77,7 +80,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// The lock file `with-gpu-lock` takes with `flock(1)`, shared by every user of the server's GPU.
 ///
@@ -108,6 +111,9 @@ pub const DRIVER_VAR: &str = "SPACE_SCUFFLE_GPU_TEST_DRIVER";
 
 /// Variable naming a file that receives one line per child run (plan decision D6).
 pub const LEDGER_VAR: &str = "SPACE_SCUFFLE_GPU_RUN_LEDGER";
+
+/// Variable naming a directory that receives each child's whole log, for timing investigations.
+pub const RUN_LOG_DIR_VAR: &str = "SPACE_SCUFFLE_GPU_RUN_LOG_DIR";
 
 /// Program whose presence on `PATH` declares that a host runs the shared lock protocol.
 pub const LOCK_TOOL: &str = "with-gpu-lock";
@@ -1069,6 +1075,8 @@ pub struct GpuCommand {
     lock: LockPolicy,
     /// The run limit given to `timeout`, in seconds.
     run_limit_secs: u32,
+    /// The executable the child runs, which [`preload_executable`] reads before the lock.
+    program: PathBuf,
 }
 
 /// Builds a [`GpuCommand`] that runs `binary` on a virtual display with the selected driver.
@@ -1167,6 +1175,7 @@ impl GpuCommand {
             kind: ChildKind::Renderer(driver),
             lock,
             run_limit_secs,
+            program: binary.to_owned(),
         }
     }
 
@@ -1183,6 +1192,7 @@ impl GpuCommand {
             kind: ChildKind::LockProbe,
             lock: LockPolicy::Private(lock.to_owned(), wait),
             run_limit_secs: LOCK_PROBE_RUN_LIMIT_SECS,
+            program: program.to_owned(),
         }
     }
 
@@ -1254,6 +1264,9 @@ impl GpuCommand {
     /// As [`Self::run`] for everything after the lock.
     pub fn try_run(mut self, label: &str) -> Result<GpuRun, GpuLockError> {
         self.keep_adapter_line();
+        let preload = preload_executable(&self.program).unwrap_or_else(|error| {
+            panic!("{label}: cannot read {}: {error}", self.program.display())
+        });
         let (guard, lock_wait) = match &self.lock {
             LockPolicy::None => (None, None),
             LockPolicy::Shared => {
@@ -1266,6 +1279,7 @@ impl GpuCommand {
                 (Some(guard), Some(waited))
             }
         };
+        let spawned = SystemTime::now();
         let started = Instant::now();
         let output = self.command.output();
         let run_time = started.elapsed();
@@ -1274,15 +1288,20 @@ impl GpuCommand {
             panic!("{label}: failed to launch {:?}: {error}", self.command)
         });
         let driver = self.driver();
-        let adapter = AdapterEvidence::parse(&captured_log(&output));
+        let log = captured_log(&output);
+        let adapter = AdapterEvidence::parse(&log);
+        let timeline = ChildTimeline::read(&log, spawned, run_time);
         let run = GpuRun {
             output,
             driver,
             adapter,
+            preload,
             lock_wait,
             run_time,
+            timeline,
         };
         append_to_ledger(&run.ledger_line(label, self.lock.name()));
+        keep_run_log(label, &log);
         run.assert_completed(label, self.run_limit_secs);
         Ok(run)
     }
@@ -1356,6 +1375,112 @@ fn timeout_command(limit_secs: u32) -> Command {
     command
 }
 
+/// Reads the part of the executable at `path` that the loader maps, once, in large sequential
+/// reads, and returns how long that took, so the child starts with its code in the page cache.
+/// The part ends where the last loadable segment ends ([`loaded_extent`]); a file that is not a
+/// 64-bit little-endian ELF file is read whole.
+///
+/// Agent worktrees build their debug executables (about 235 MiB, of which about 88 MiB are mapped)
+/// under `~/scratch`, a rotational disk shared with every user of the server, and the user slice's
+/// page cache churns at its `memory.high`, so a gate often finds a GPU test's executable no longer
+/// cached. The child then loads its code by page faults, one small random read at a time: measured
+/// 738 major faults and 89.2 s for the windowed HUD child against 30.0 s warm, with the phases
+/// before its first frame growing from 0.5 s to 52.8 s
+/// (`docs/evidence/2026-11-10-gpu-child-timeouts.md`).
+///
+/// PERFORMANCE RATIONALE:
+/// Why: Demand paging a cold executable from a busy rotational disk costs a seek per fault.
+/// What: Read the mapped part sequentially before the lock, so readahead fetches it in large
+///   requests and the child, the GPU lock and the run limit find it cached.
+/// Trade-off: Mapped pages the child never touches are read too: a few hundredths of a second
+///   when the file is cached, up to tens of seconds when it is cold, recorded as `preload_s`.
+///
+/// # Errors
+/// The I/O error when the file cannot be opened or read; the spawn would fail on it anyway.
+pub fn preload_executable(path: &Path) -> std::io::Result<Duration> {
+    use std::io::{Read, Seek, SeekFrom};
+    let started = Instant::now();
+    let mut file = File::open(path)?;
+    let read_at = |offset: u64, bytes: usize| -> Option<Vec<u8>> {
+        let mut reader = &file;
+        reader.seek(SeekFrom::Start(offset)).ok()?;
+        let mut buffer = vec![0_u8; bytes];
+        reader.read_exact(&mut buffer).ok()?;
+        Some(buffer)
+    };
+    let extent = read_at(0, ELF_HEADER_BYTES).and_then(|header| loaded_extent(&header, read_at));
+    let length = match extent {
+        Some(end) => end,
+        None => file.metadata()?.len(),
+    };
+    file.rewind()?;
+    let mut mapped = file.take(length);
+    let mut buffer = vec![0_u8; PRELOAD_CHUNK_BYTES];
+    while mapped.read(&mut buffer)? > 0 {}
+    Ok(started.elapsed())
+}
+
+/// Size of one read of [`preload_executable`], in bytes: 1 MiB.
+const PRELOAD_CHUNK_BYTES: usize = 1 << 20;
+
+/// Size of a 64-bit ELF file header, in bytes.
+const ELF_HEADER_BYTES: usize = 64;
+
+/// Size of a 64-bit ELF program header, in bytes; a larger `e_phentsize` is accepted.
+const ELF_PROGRAM_HEADER_BYTES: usize = 56;
+
+/// `PT_LOAD`, the program header type of a segment the loader maps.
+const PT_LOAD: u32 = 1;
+
+/// The file offset where the last loadable segment of a 64-bit little-endian ELF file ends, or
+/// `None` if `header` is not such a file's header or its program headers cannot be read.
+///
+/// `read_at(offset, bytes)` reads `bytes` bytes at `offset` of the same file. Field offsets follow
+/// the System V ABI: in the file header `e_phoff` at 32, `e_phentsize` at 54 and `e_phnum` at 56;
+/// in a program header `p_type` at 0, `p_offset` at 8 and `p_filesz` at 32.
+pub fn loaded_extent(
+    header: &[u8],
+    read_at: impl Fn(u64, usize) -> Option<Vec<u8>>,
+) -> Option<u64> {
+    let elf64_little_endian = header.len() >= ELF_HEADER_BYTES
+        && header.starts_with(b"\x7fELF")
+        && header[4] == 2
+        && header[5] == 1;
+    if !elf64_little_endian {
+        return None;
+    }
+    let table = le_u64(header, 32)?;
+    let entry = usize::from(le_u16(header, 54)?);
+    let count = usize::from(le_u16(header, 56)?);
+    if entry < ELF_PROGRAM_HEADER_BYTES {
+        return None;
+    }
+    let programs = read_at(table, entry.checked_mul(count)?)?;
+    let mut end: Option<u64> = None;
+    for program in programs.chunks_exact(entry) {
+        if le_u32(program, 0)? == PT_LOAD {
+            let segment_end = le_u64(program, 8)?.checked_add(le_u64(program, 32)?)?;
+            end = Some(end.map_or(segment_end, |end| end.max(segment_end)));
+        }
+    }
+    end
+}
+
+/// The little-endian `u16` at byte `at` of `bytes`.
+fn le_u16(bytes: &[u8], at: usize) -> Option<u16> {
+    Some(u16::from_le_bytes(bytes.get(at..at + 2)?.try_into().ok()?))
+}
+
+/// The little-endian `u32` at byte `at` of `bytes`.
+fn le_u32(bytes: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
+}
+
+/// The little-endian `u64` at byte `at` of `bytes`.
+fn le_u64(bytes: &[u8], at: usize) -> Option<u64> {
+    Some(u64::from_le_bytes(bytes.get(at..at + 8)?.try_into().ok()?))
+}
+
 /// What one child did, with the evidence of where it ran.
 #[derive(Debug)]
 pub struct GpuRun {
@@ -1365,10 +1490,14 @@ pub struct GpuRun {
     pub driver: Option<GpuDriver>,
     /// The adapter it reported, if it logged one.
     pub adapter: Option<AdapterEvidence>,
+    /// Time spent reading the executable before the lock ([`preload_executable`]).
+    pub preload: Duration,
     /// Time spent waiting for the lock; `None` on `lavapipe`, which takes no lock.
     pub lock_wait: Option<Duration>,
     /// Time from spawn to exit, during which the lock (if any) was held.
     pub run_time: Duration,
+    /// Where that time went, by phase.
+    pub timeline: ChildTimeline,
 }
 
 impl GpuRun {
@@ -1389,12 +1518,21 @@ impl GpuRun {
     /// Fails on a timeout, an unsuccessful exit, or a renderer's wrong or missing adapter.
     fn assert_completed(&self, label: &str, run_limit_secs: u32) {
         let context = self.context(label);
-        assert_ne!(
-            self.output.status.code(),
-            Some(TIMEOUT_EXIT_CODE),
-            "{context} did not finish within {run_limit_secs} s. Last output:\n{}",
-            tail(&self.log())
-        );
+        if self.output.status.code() == Some(TIMEOUT_EXIT_CODE) {
+            let (slowest, spent) = self
+                .timeline
+                .slowest()
+                .unwrap_or((TAIL_PHASE, self.run_time));
+            panic!(
+                "{context} did not finish within {run_limit_secs} s; the slowest phase was \
+                 {slowest} ({:.1} s). Phases: {}. Reading the executable beforehand took {:.1} s, \
+                 outside the limit. Last output:\n{}",
+                spent.as_secs_f64(),
+                self.timeline,
+                self.preload.as_secs_f64(),
+                tail(&self.log())
+            );
+        }
         assert!(
             self.output.status.success(),
             "{context} exited with {:?}. Last output:\n{}",
@@ -1411,8 +1549,8 @@ impl GpuRun {
         }
     }
 
-    /// One tab-separated ledger line: label, driver, lock, adapter, `driver_info`, lock wait and
-    /// run time in seconds, and exit status.
+    /// One tab-separated ledger line: label, driver, lock, adapter, `driver_info`, executable
+    /// preload, lock wait and run time in seconds, exit status, and the [`ChildTimeline`].
     fn ledger_line(&self, label: &str, lock: &str) -> String {
         let (adapter, driver_info) = self.adapter.as_ref().map_or(("-", "-"), |adapter| {
             (adapter.name.as_str(), adapter.driver_info.as_str())
@@ -1428,9 +1566,11 @@ impl GpuRun {
             .map_or_else(|| "signal".to_owned(), |code| code.to_string());
         format!(
             "label={label}\tdriver={}\tlock={lock}\tadapter={adapter}\tdriver_info={driver_info}\t\
-             lock_wait_s={lock_wait}\trun_s={:.2}\texit={exit}\n",
+             preload_s={:.2}\tlock_wait_s={lock_wait}\trun_s={:.2}\texit={exit}\tphases={}\n",
             self.driver.map_or("none", GpuDriver::name),
+            self.preload.as_secs_f64(),
             self.run_time.as_secs_f64(),
+            self.timeline,
         )
     }
 }
@@ -1461,6 +1601,178 @@ fn append_to_ledger(line: &str) {
         )
     });
     assert_eq!(written, line.len(), "the GPU run ledger line was cut short");
+}
+
+/// Writes `log` to `<dir>/<label>-<pid>-<n>.log` if [`RUN_LOG_DIR_VAR`] names a directory `dir`,
+/// with every character of the label that is not alphanumeric replaced by `_`.
+///
+/// # Panics
+/// Panics if the log cannot be written: a run that asked for evidence must not lose it.
+fn keep_run_log(label: &str, log: &str) {
+    static NEXT_LOG: AtomicU32 = AtomicU32::new(0);
+    let Some(directory) = std::env::var_os(RUN_LOG_DIR_VAR) else {
+        return;
+    };
+    let name: String = label
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    let path = Path::new(&directory).join(format!(
+        "{name}-{}-{}.log",
+        std::process::id(),
+        NEXT_LOG.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&path, log)
+        .unwrap_or_else(|error| panic!("cannot write the GPU run log {}: {error}", path.display()));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Where a child's time went
+// ---------------------------------------------------------------------------------------------
+
+/// Log records that mark the end of a phase of a Bevy child, in the order they occur, with the
+/// name of the phase each one ends. The first timestamped record ends the launch phase.
+const PHASE_MARKERS: [(&str, &str); 2] = [
+    (ADAPTER_MARKER, "render device"),
+    ("Creating new window", "app build"),
+];
+
+/// Name of the phase from the spawn to the child's first timestamped log record: `xvfb-run`
+/// starting its server, the binary loading, and whatever the child does before Bevy's
+/// `LogPlugin` (the windowed client loads its battle definition there).
+const LAUNCH_PHASE: &str = "launch";
+
+/// Name of the phase from the last milestone to the last timestamped log record.
+const RUN_PHASE: &str = "startup and frames";
+
+/// Name of the phase from the last timestamped log record to the child's exit.
+const TAIL_PHASE: &str = "after the last log record";
+
+/// Where one child's wall time went, read from the timestamps of its own log records.
+///
+/// Phases are consecutive and end at milestones: the first timestamped record, the adapter line
+/// (render device created), a window being created (windowed children only), the last timestamped
+/// record, and the exit the harness observed. A milestone the log does not show is skipped, and
+/// its time counts toward the next phase.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChildTimeline {
+    /// Each phase with its duration, in order.
+    pub phases: Vec<(&'static str, Duration)>,
+}
+
+impl ChildTimeline {
+    /// Reads the timeline of a child spawned at `spawned` (wall clock) that ran for `run_time`.
+    ///
+    /// Log timestamps are the RFC 3339 UTC times `tracing-subscriber` prints, such as
+    /// `2026-11-10T00:46:32.893283Z`, possibly wrapped in ANSI colour codes. Records before the
+    /// spawn or after the exit (clock steps) are clamped into the run.
+    pub fn read(log: &str, spawned: SystemTime, run_time: Duration) -> Self {
+        let mut milestones: Vec<(&'static str, Duration)> = Vec::new();
+        let mut next_marker = 0;
+        let mut last_record = None;
+        for line in log.lines() {
+            let Some(at) = log_record_time(line) else {
+                continue;
+            };
+            let offset = at
+                .duration_since(spawned)
+                .unwrap_or(Duration::ZERO)
+                .min(run_time);
+            if last_record.is_none() {
+                milestones.push((LAUNCH_PHASE, offset));
+            }
+            last_record = Some(offset);
+            if let Some(&(marker, phase)) = PHASE_MARKERS.get(next_marker) {
+                if line.contains(marker) {
+                    milestones.push((phase, offset));
+                    next_marker += 1;
+                }
+            }
+        }
+        if let Some(last) = last_record {
+            milestones.push((RUN_PHASE, last));
+        }
+        milestones.push((TAIL_PHASE, run_time));
+        let mut phases = Vec::with_capacity(milestones.len());
+        let mut start = Duration::ZERO;
+        for (phase, end) in milestones {
+            let end = end.max(start);
+            phases.push((phase, end.saturating_sub(start)));
+            start = end;
+        }
+        Self { phases }
+    }
+
+    /// The longest phase, which a timeout message names.
+    pub fn slowest(&self) -> Option<(&'static str, Duration)> {
+        self.phases
+            .iter()
+            .copied()
+            .max_by_key(|&(_, duration)| duration)
+    }
+}
+
+impl fmt::Display for ChildTimeline {
+    /// `launch 2.1 s, render device 6.0 s, ...`, one decimal.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (index, (phase, duration)) in self.phases.iter().enumerate() {
+            if index > 0 {
+                formatter.write_str(", ")?;
+            }
+            write!(formatter, "{phase} {:.1} s", duration.as_secs_f64())?;
+        }
+        Ok(())
+    }
+}
+
+/// The wall-clock time of a `tracing-subscriber` record, or `None` for any other line.
+///
+/// Accepts `YYYY-MM-DDTHH:MM:SS[.fraction]Z` at the start of the line once ANSI escape sequences
+/// are removed.
+pub fn log_record_time(line: &str) -> Option<SystemTime> {
+    let plain = strip_ansi(line);
+    let stamp = plain.split_whitespace().next()?.strip_suffix('Z')?;
+    let (date, time) = stamp.split_once('T')?;
+    let mut date_fields = date.splitn(3, '-').map(str::parse::<i64>);
+    let (year, month, day) = (
+        date_fields.next()?.ok()?,
+        date_fields.next()?.ok()?,
+        date_fields.next()?.ok()?,
+    );
+    let (clock, fraction) = time.split_once('.').unwrap_or((time, ""));
+    let mut clock_fields = clock.splitn(3, ':').map(str::parse::<u64>);
+    let (hour, minute, second) = (
+        clock_fields.next()?.ok()?,
+        clock_fields.next()?.ok()?,
+        clock_fields.next()?.ok()?,
+    );
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 {
+        return None;
+    }
+    let nanos = if fraction.is_empty() {
+        0
+    } else {
+        let digits: String = fraction
+            .chars()
+            .chain(std::iter::repeat('0'))
+            .take(9)
+            .collect();
+        digits.parse::<u32>().ok()?
+    };
+    let days = u64::try_from(days_from_civil(year, month, day)).ok()?;
+    let seconds = days * 86_400 + hour * 3_600 + minute * 60 + second;
+    Some(SystemTime::UNIX_EPOCH + Duration::new(seconds, nanos))
+}
+
+/// Days from 1970-01-01 to the proleptic Gregorian date `year-month-day` (H. Hinnant's
+/// `days_from_civil`).
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let day_of_year = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
 }
 
 // ---------------------------------------------------------------------------------------------
