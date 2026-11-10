@@ -128,3 +128,87 @@ merged tree; the behaviour changes are those of WP2+WP3 and WP4 above on top of 
 the replays. Matrix (1,000 runs) and battle 33 (68 seeds) on the merged tree are bit-identical to a build of main's
 simulation (`0e1a836`). The showcase numbers equal those of WP4 (player 0 wins at tick 1,355). Goldens verified in
 debug, release and wasm32-wasip1.
+
+## Part B, WP5 to WP8: the latent navigation mesh (2026-11-10)
+
+Base `12ec668` (checksum schema 25). The mesh is built in `Pathfinder::new` and on every `recompute_clearance`,
+and nothing in the simulation reads it: both goldens pass in debug, release and `wasm32-wasip1`, and the sandbox
+checksum (`sim_fixtures` `fixture_tests`) passes, unchanged. The showcase mesh digest (`navmesh_tests.rs`,
+`0x46d3_38ba_8cd1_c537`) is the same on x86_64 and `wasm32-wasip1` (wasmtime, release).
+
+### Mesh size and build time
+
+`cargo run --release -p sim_map --example navmesh_measure` (shared server, medians of 21 builds; "with structures"
+places 3x3 structures on a 9-cell lattice of free footprints):
+
+| Map | Vertices / triangles | Build (µs) | Structures | With structures: vertices / triangles | Rebuild (µs) | `recompute_clearance` (µs) |
+|---|---:|---:|---:|---:|---:|---:|
+| default_arena 64x64 | 12 / 14 | 300 | 6 | 108 / 206 | 438 | 1298 |
+| showcase_canyon 64x64 | 256 / 494 | 728 | 6 | 351 / 684 | 890 | 1870 |
+| canyon 4x4 tiled 256x256 | 4057 / 8048 | 12535 | 40 | 4691 / 9316 | 14002 | 30472 |
+
+R-3: the 64x64 maps rebuild within the 2 ms target; a 256x256 map of four-by-four showcase canyons takes about
+14 ms, so R-3's local repair is needed before the switch (WP9) for large maps. The structure cells are fully
+gridded (every cell edge of a footprint is a constraint, so a structure triangle lies in one cell and per-cell
+knowledge stays exact), which is part of the cost.
+
+### Exact oracle (WP6)
+
+`pathfinding_properties.rs` compares `find_route_mesh` with an exact disc oracle (`tests/support/oracle.rs`:
+tangents between circles of radius `r + margin` round every wall vertex, arcs between them, Dijkstra). Radii are
+drawn from 0.25 to 1.0 with no lattice gap `sqrt(k)` within 0.02 of `[2r, 2(r + margin)]`. On 120 seeded 16x16
+maps (one cell in five blocked), 542 of 542 routes are within 1 % of the oracle (worst 1.0007, tangent-and-arc
+length), none disagrees on existence, none fails a leg, none falls back; the proptest (24 cases per run; runs of
+400 to 600 cases while developing) holds existence, legality and a hard 1.10 bound.
+
+Narrow passages (`funnel_tests.rs`): a 1-cell gap admits radius 0.5 and refuses 0.5 + 2^-32; a 2-cell gap admits
+1.0 and refuses 1.0 + 2^-32; a diagonal gap of sqrt(2) admits 0.7071 and refuses 0.7072; two structures touching at
+a corner block radii 0.05 to 0.5 and are walked through when unknown. S12's adversarial case was not constructed
+explicitly; the randomized oracle comparison found two families of failures while developing, both fixed in the
+route layer, not in the width test: a narrow gap inside the start triangle (exempt from the width test by D-3), now
+caught by a reach check of the start and goal triangles, and funnel turns at vertices of the start and goal
+triangles that belong to no portal, now refined. Rare funnel legs that still fail the segment predicate fall back
+to portal midpoints and are counted (`Pathfinder::mesh_funnel_fallbacks`, R-2's second outcome): 1 in about 3,600
+grid-and-mesh queries below.
+
+### Grid against mesh (WP8), 1,000 seeded queries per map and radius
+
+| Map | Radius | Both | Grid only | Mesh only | Neither | Mean mesh/grid | Worst | > 1 % | Illegal mesh | Fallbacks | Grid µs (median) | Mesh µs (median) | Max expansions |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| default_arena | 0.375 | 1000 | 0 | 0 | 0 | 1.0004 | 1.0062 | 0 | 0 | 0 | 3 | 2 | 8 |
+| default_arena | 0.5 | 1000 | 0 | 0 | 0 | 1.0006 | 1.0078 | 0 | 0 | 0 | 3 | 2 | 8 |
+| showcase_canyon | 0.375 | 790 | 0 | 0 | 210 | 1.0015 | 1.0230 | 12 | 0 | 0 | 172 | 201 | 293 |
+| showcase_canyon | 0.5 | 793 | 0 | 0 | 207 | 1.0052 | 3.0755 | 49 | 0 | 1 | 170 | 211 | 295 |
+
+Found-or-not agrees on every query (the 210 "neither" pairs start or end in a region cut off from the other).
+The mesh is longer than the grid by more than 1 % on 12 and 49 of the pairs: the mesh polyline replaces each
+turn above 45° by two points outside the circle of `r + margin` (D-6), where the grid keeps one offset point whose
+legs are only checked against cell clearance; the worst case (3.08) is the one portal-midpoint fallback. D-11's
+"never longer than the grid by more than 1 %" therefore does not hold for the polyline; WP9 has to decide whether
+to accept it or emit arcs more tightly. Ten largest gains (grid minus mesh, world units): 2.713, 2.670, 2.644,
+1.668, 1.601, 1.371 (showcase canyon), 1.295, 1.181, 1.138 (default arena), 1.094 (showcase canyon); the example
+prints their endpoints. Search time: the mesh is about as fast as the grid on the open arena and about 20 % slower
+on the canyon (TA*'s anytime loop, `NAV_TA_STAR_EXTRA_EXPANSIONS = 256`, `NAV_TA_STAR_TRIANGLE_VISITS = 4` per
+triangle and entry edge; the oracle share above is the same with a budget of 100,000).
+
+Segment predicate (WP7, `reachability_tests.rs`, 10,000 random segments per map and tier): every disagreement is
+a segment the grid admits and the mesh refuses (the grid passes cells whose clearance admits the tier somewhere;
+the mesh tests the swept disc), 4 % to 9 % of segments on the default arena; the mesh never admits a segment the
+grid or `ground_segment_is_connected` refuses.
+
+### Throughput
+
+`cargo bench -p sim_core --bench throughput` (shared server, under the gate lock):
+
+| Map | Units | Ticks/s (median of 3) |
+|---|---:|---:|
+| 64x64 | 0 | 3385 |
+| 64x64 | 100 | 1029 |
+| 64x64 | 400 | 169 |
+| 128x128 | 400 | 205 |
+| 256x256 | 0 | 208 |
+| showcase_canyon.scmap.ron | 400 | 141 |
+
+Every scenario is above 25 ticks/s. The flat rows are 2 % to 15 % below `DESIGN.md` §5 on the loaded shared
+server; nothing in a flat battle reads the mesh, which is built once per world (a structure placement rebuilds it).
+The new terrain row is the grid baseline WP9's stop rule compares against.
