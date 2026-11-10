@@ -922,6 +922,9 @@ impl SimWorld {
             }
             _ => {
                 self.coast(entry, actor, &mut proposal)?;
+                if proposal.velocity == SimVec2::ZERO && proposal.anim == AnimState::Walk {
+                    proposal.anim = AnimState::Idle;
+                }
                 return Ok(ControlFlow::Break(MotionAction::Commit(proposal)));
             }
         };
@@ -931,7 +934,7 @@ impl SimWorld {
     /// Settles a unit with no walk this tick, whose order ended without arriving or which holds
     /// (B-39, the owner's answer to Q0067): a unit with a finite deceleration glides on along its
     /// last velocity, losing its deceleration each tick until it rests; terrain that refuses the
-    /// glide stops it at once. Any other unit rests now.
+    /// glide stops it at once. Any other unit rests now; its animation is the caller's.
     fn coast(
         &self,
         entry: MotionEntry,
@@ -941,10 +944,10 @@ impl SimWorld {
         let id = entry.id;
         let fault = |e| arithmetic(id, e);
         let mut glide = None;
-        if let Some(deceleration) = entry
-            .deceleration
-            .filter(|_| actor.velocity != SimVec2::ZERO)
-        {
+        // Only a unit that walked last tick has momentum of its own: the velocity of one that
+        // stood is what a push gave it, and a push does not carry on.
+        let walked = actor.current_anim == AnimState::Walk && actor.velocity != SimVec2::ZERO;
+        if let Some(deceleration) = entry.deceleration.filter(|_| walked) {
             let speed = distance(actor.velocity, SimVec2::ZERO).map_err(fault)?;
             let left = speed.saturating_sub(deceleration);
             if left > SimScalar::ZERO {
@@ -961,9 +964,6 @@ impl SimWorld {
             proposal.velocity = step;
         } else {
             proposal.velocity = SimVec2::ZERO;
-            if proposal.anim == AnimState::Walk {
-                proposal.anim = AnimState::Idle;
-            }
         }
         Ok(())
     }

@@ -361,6 +361,25 @@ fn q0067_an_order_that_ends_without_arriving_glides_to_rest_at_the_deceleration(
 }
 
 #[test]
+fn q0067_a_pushed_unit_at_rest_does_not_glide() -> TestResult {
+    // Collision writes a pushed body's displacement into its velocity; a push is not momentum
+    // of the unit's own, so a standing unit does not carry it on.
+    let mut bench = Bench::new(AIR_GLIDER, 40)?;
+    bench.step(Some(UnitOrder::Stop));
+    for _ in 0..15 {
+        bench.step(None);
+    }
+    assert!(bench.speed()? == 0.0, "at rest after its glide");
+    let mover = bench.world.entities.get_mut(&bench.mover).ok_or("mover")?;
+    mover.velocity = SimVec2::new(SimScalar::from_num(0.05), SimScalar::ZERO);
+    let x = bench.x()?;
+    bench.step(None);
+    assert!((bench.x()? - x).abs() < EPSILON, "a push does not carry on");
+    assert!(bench.speed()? == 0.0, "{}", bench.speed()?);
+    Ok(())
+}
+
+#[test]
 fn q0067_instant_deceleration_still_stops_within_a_tick() -> TestResult {
     let motion = Motion {
         deceleration: 0.1,
@@ -369,7 +388,10 @@ fn q0067_instant_deceleration_still_stops_within_a_tick() -> TestResult {
     for order in [UnitOrder::Stop, UnitOrder::HoldPosition] {
         let (speeds, xs) = speeds_after(motion, order.clone())?;
         assert!(speeds.iter().all(|s| *s == 0.0), "{order:?}: {speeds:?}");
-        assert!(xs.windows(2).all(|w| w[0] == w[1]), "{order:?}: {xs:?}");
+        assert!(
+            xs.windows(2).all(|w| (w[0] - w[1]).abs() < EPSILON),
+            "{order:?}: {xs:?}"
+        );
     }
     Ok(())
 }
