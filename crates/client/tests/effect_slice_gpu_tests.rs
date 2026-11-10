@@ -2,8 +2,9 @@
 //! package 6b, §7.2, §10.2).
 //!
 //! # Responsibility
-//! For each splash effect the shipped units name (`support/effect_subjects.rs`, sorted by
-//! name; one parent test per index, no effect named in Rust), three children of this binary run
+//! For each splash effect the shipped units or the lab-only blocks (Amendment 1) name
+//! (`support/effect_subjects.rs`, sorted by name; one parent test per index, no effect named
+//! in Rust), three children of this binary run
 //! the production effect lab (`client::effects::lab`) through `support/gpu_run.rs` (radv with
 //! the shared lock, or lavapipe; charter C21) at 1280×720 under the battle camera's default
 //! zoom on the bright ground, with the shipped vocabulary and the bindings the unit's weapon
@@ -851,19 +852,19 @@ fn check_subject(index: usize) -> TestResult {
     Ok(())
 }
 
-/// The first shipped splash effect (by name).
+/// The first splash subject (by name).
 #[test]
 fn slice_effect_0_renders_to_its_bindings() -> TestResult {
     check_subject(0)
 }
 
-/// The second shipped splash effect (by name).
+/// The second splash subject (by name).
 #[test]
 fn slice_effect_1_renders_to_its_bindings() -> TestResult {
     check_subject(1)
 }
 
-/// The third shipped splash effect (by name).
+/// The third splash subject (by name).
 #[test]
 fn slice_effect_2_renders_to_its_bindings() -> TestResult {
     check_subject(2)

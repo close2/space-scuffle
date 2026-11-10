@@ -8,7 +8,9 @@
 //! temporary directory loads a different effect with no rebuild (charter C6); and the
 //! coverage rule of §5.3: every shipped splash weapon of a unit with a presentation block names
 //! a splash effect whose `Critical` layers bind the reach or the line (the units without a
-//! block, which fall back to the defaults, are reported).
+//! block, which fall back to the defaults, are reported), checked over the shipped blocks and
+//! the lab-only blocks of plan Amendment 1; the effects only those blocks name stay defined but
+//! are named by no shipped unit.
 //!
 //! # Invariants verified
 //! - Every failure is typed and names where it is.
@@ -654,7 +656,8 @@ fn every_shipped_splash_weapon_with_a_block_names_a_splash_effect_bound_to_its_e
     let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
     let catalog = EffectCatalog::load(&root.as_path().join(EFFECTS_CATALOG_PATH), root.as_path())
         .expect("the shipped vocabulary loads");
-    let units = sim_fixtures::shipped_catalogs().units;
+    // The shipped blocks plus the lab-only ones (Amendment 1): the rule holds for both.
+    let units = effect_subjects::lab_units();
     let mut covered = Vec::new();
     let mut defaulted = Vec::new();
     for archetype in units.archetypes() {
@@ -721,6 +724,52 @@ fn every_shipped_splash_weapon_with_a_block_names_a_splash_effect_bound_to_its_e
         defaulted.len(),
         defaulted.join("\n  ")
     );
+}
+
+/// The effects the review gate rejected (plan Amendment 1, Q0080) stay in the vocabulary and
+/// under the GPU tests through the lab-only blocks, but no shipped unit or structure names
+/// them, and the lab-only blocks resolve against the shipped vocabulary.
+#[test]
+fn lab_only_effects_are_defined_and_named_by_no_shipped_unit() {
+    let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+    let catalog = EffectCatalog::load(&root.as_path().join(EFFECTS_CATALOG_PATH), root.as_path())
+        .expect("the shipped vocabulary loads");
+    let lab_only: std::collections::BTreeSet<String> = effect_subjects::lab_blocks()
+        .values()
+        .flat_map(|block| block.weapons.iter())
+        .filter_map(|entry| entry.splash.clone())
+        .collect();
+    assert!(!lab_only.is_empty(), "the fixture names lab-only effects");
+    for name in &lab_only {
+        assert!(
+            catalog.effect_id(name).is_some(),
+            "{name} stays defined in the vocabulary"
+        );
+    }
+    let units = sim_fixtures::shipped_catalogs().units;
+    for archetype in units.archetypes() {
+        for entry in &archetype.effects.weapons {
+            for named in [&entry.launch, &entry.travel, &entry.impact, &entry.splash]
+                .into_iter()
+                .flatten()
+            {
+                assert!(
+                    !lab_only.contains(named),
+                    "{} names the lab-only effect {named}",
+                    archetype.slug
+                );
+            }
+        }
+    }
+    UnitEffectTables::build(&effect_subjects::lab_units(), &catalog)
+        .expect("every lab-only presentation block resolves");
+    let subjects: Vec<String> = effect_subjects::splash_subjects()
+        .into_iter()
+        .map(|subject| subject.effect)
+        .collect();
+    for name in &lab_only {
+        assert!(subjects.contains(name), "{name} is a GPU-test subject");
+    }
 }
 
 /// A fixture directory with the fixture set and the noise set; returns both manifests.

@@ -891,3 +891,45 @@ the unit clip does not change with a mode (WP13 or recorded).
   clips on black (already approved) and offline noise; generated stills replace Veo-derived ones element by element
   if the answer is yes. Recommendation: yes, because decals and single-frame elements are where a still model is
   strongest and cheapest.
+
+---
+
+## Amendment 1: review gate outcome, 2026-11-10
+
+**Verdicts.** The WP6c gate (§9, §7.3) ran two independent review rounds on the vertical slice:
+
+| Effect | Round 1 ([`independent_review.md`](../evidence/effects/review/independent_review.md)) | Round 2 ([`independent_review_round2.md`](../evidence/effects/review/independent_review_round2.md)) | Contact sheet |
+|---|---|---|---|
+| `shell_impact` (sieged Siege-Tank analogue splash) | reject | **accept** (with three optional improvements) | [`shell_impact_contact.png`](../evidence/effects/review/shell_impact_contact.png) |
+| `acid_burst` (Baneling analogue) | reject | **reject** (items 4 and 5: a flat single-value green stain with polka dots, a button-like pop) | [`acid_burst_contact.png`](../evidence/effects/review/acid_burst_contact.png) |
+| `spine_line` (Lurker analogue) | reject | **reject** (items 4 and 5: hook-shaped spines that read as glyphs, sparse clumps, hard clip edges, no focal point) | [`spine_line_contact.png`](../evidence/effects/review/spine_line_contact.png) |
+
+**Stop rule applied.** WP6c's exit says that two failed review rounds stop the effect work before any scale-out.
+`acid_burst` and `spine_line` failed both rounds, so the orchestrator stopped the effect work at the gate and landed
+only what passed (decision note, 2026-11-10).
+
+**What landed.**
+
+- The presentation contract and the leak fix: WP1 (`sim_types`), WP2 (`sim_core` writer, every golden replay and
+  matrix battle bit-identical), WP3 (`BattleFog`; B-106 fixed).
+- The framework and the pipeline: WP4 (`client::effects`: vocabulary, unit tables, runtime, budget and level of
+  detail, instanced renderer, effect lab), WP4a (`bevy_hanabi` no-go), WP5 (`asset_baker` effect-texture pipeline),
+  and the WP6c framework extensions (breakup noise, `Front` rings, radial glows, landing particles, upright clumps,
+  line clips) and decisions (D-11 HDR and bloom rejected, frame budget).
+- `shell_impact`, named by the sieged Siege-Tank analogue's presentation block, as accepted in round 2. The
+  reviewer's optional improvements are not applied now.
+
+**What ships unused.** `acid_burst`, its `acid_fleck` and `spine_line` stay in `assets/catalog/effects.ron` with
+their texture sets in `assets/effects/`, valid catalog data under the catalog tests. No shipped unit names them: the
+presentation blocks of `volatile_tick` and `burrow_scorpion` are removed, so both fall back to their pre-slice
+presentation (the default combat looks). The GPU tests of the framework (footprint, coverage, no pop, nothing
+lingers, golden stills) still render all three effects through the effect lab: the two rejected ones are bound to
+those units' weapons by lab-only presentation blocks in `crates/client/tests/data/effect_lab_blocks.ron`, a test
+fixture, and `effect_catalog_tests.rs` checks that no shipped unit names an effect only those blocks name. The
+goldens are unchanged. `burrow_scorpion`'s `is_burrowed: true` (WP2) stays: it is part of the contract and the leak
+fix, not of the rejected look.
+
+**Stopped.** Scale-out (WP7 to WP15) does not start until the owner answers
+[Q0080](../questions/open/0080-effect-review-outcome.md): a third round for the two rejected effects, a changed
+approach (for example owner-provided art direction or reference images), or leaving them out. Register entries
+B-107 (now only partly addressed), B-108, B-109, B-110 and B-111 stay open, scheduled behind that answer.
