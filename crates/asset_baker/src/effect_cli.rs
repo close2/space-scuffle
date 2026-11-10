@@ -3,12 +3,13 @@
 //!
 //! # Responsibility
 //! Parses and runs `effect-noise`, `effect-bake`, `effect-review`, `effect-prompt`,
-//! `effect-image` and `effect-image-preflight` over [`asset_baker::effects`].
+//! `effect-image`, `effect-image-preflight` and `effect-veo` over [`asset_baker::effects`].
 //!
 //! # How it fits
-//! `main.rs` flattens [`EffectCommand`] into its subcommands. The paid command, `effect-image`,
-//! follows the Veo workflow's order: the prompt, the model's price and the total budget are
-//! checked before any credential is read; every request is in the media ledger.
+//! `main.rs` flattens [`EffectCommand`] into its subcommands. The paid commands, `effect-image`
+//! and `effect-veo`, follow the Veo workflow's order: the prompt, the model's price and the
+//! total budget are checked before any credential is read; every request is in the media
+//! ledger.
 //!
 //! # Invariants
 //! - Nothing here reads `tmp/` or `.env` itself; credentials are resolved only by the shared
@@ -18,15 +19,19 @@
 use asset_baker::budget::{check_spend, BudgetConfig, SpendRequest, BUDGET_FILE};
 use asset_baker::effects::bake::{bake_noise, bake_recipe, BakeInputs, EffectBakeRecipe};
 use asset_baker::effects::image_client::{
-    run_image_job, ImageClient, ImageJob, DEFAULT_IMAGE_LOCATION, DEFAULT_IMAGE_SIZE,
+    run_image_edit, run_image_job, ImageClient, ImageJob, DEFAULT_IMAGE_LOCATION,
+    DEFAULT_IMAGE_SIZE,
 };
 use asset_baker::effects::noise::NoiseRecipe;
+use asset_baker::effects::prompt::effect_negative_prompt;
 use asset_baker::effects::prompt::{
     build_effect_prompt, on_white_edit_prompt, EffectElementRequest, EffectMedium, EffectView,
 };
 use asset_baker::effects::review::{default_swatches, review_set};
 use asset_baker::effects::texture_set::write_set;
+use asset_baker::effects::veo_clip::{run_effect_clip, EffectClipJob};
 use asset_baker::ledger::{new_run_id, read_ledger_numbered, Ledger, LedgerHistory};
+use asset_baker::veo_client::{VeoRequestSettings, DEFAULT_VEO_MODEL, VEO_REQUEST_FILE};
 use asset_baker::{BakerError, MediaStyle, VeoClient};
 use clap::{Args, Subcommand};
 use std::error::Error;
@@ -138,6 +143,11 @@ pub enum EffectCommand {
         /// Also request the same element on white, for a difference matte.
         #[arg(long)]
         pair: bool,
+        /// Request only the on-white edit of this picture on black, which an earlier request
+        /// generated for the same set and element (the ledger must record it): completes a
+        /// pair whose edit the service refused. One request.
+        #[arg(long, conflicts_with = "pair")]
+        edit_of: Option<PathBuf>,
         /// Image size: `1K`, `2K` or `4K`.
         #[arg(long, default_value = DEFAULT_IMAGE_SIZE)]
         image_size: String,
@@ -150,6 +160,36 @@ pub enum EffectCommand {
         /// Directory the images are written to (e.g. `~/scratch/effects/images`).
         #[arg(long)]
         out_dir: PathBuf,
+    },
+    /// Generates one Veo clip of an effect element on black (or resumes the element's
+    /// outstanding operation). Paid: refused unless the model is priced and the run fits the
+    /// total budget. Sends `media/veo_request.ron`'s parameters with the effect class's
+    /// negative terms.
+    #[command(name = "effect-veo")]
+    Veo {
+        #[command(flatten)]
+        element: ElementArgs,
+        /// Veo model id; it must have a price in `media/veo_budget.ron`.
+        #[arg(long, default_value = DEFAULT_VEO_MODEL)]
+        model: String,
+        /// A start picture (image to video), such as a generated keyframe on black.
+        #[arg(long)]
+        keyframe: Option<PathBuf>,
+        /// The most requests this run may start (1: one command generates one clip).
+        #[arg(long)]
+        max_generations: Option<u32>,
+        /// The media ledger.
+        #[arg(long)]
+        ledger: PathBuf,
+        /// Directory the clips are written to (e.g. `~/scratch/effects/sources/clips`).
+        #[arg(long)]
+        out_dir: PathBuf,
+        /// Directory whose `.env` or `tmp/api-key.txt` (or its parent's) holds the key.
+        #[arg(long)]
+        credentials_dir: Option<PathBuf>,
+        /// curl executable (tests point it at a loopback shim).
+        #[arg(long, hide = true)]
+        curl_path: Option<PathBuf>,
     },
     /// One free `:countTokens` POST on the image model: proves the key may call it without
     /// generating an image.
@@ -203,6 +243,7 @@ pub fn run(assets: Option<&Path>, command: EffectCommand) -> RunResult {
             element,
             model,
             pair,
+            edit_of,
             image_size,
             max_generations,
             ledger,
@@ -210,6 +251,7 @@ pub fn run(assets: Option<&Path>, command: EffectCommand) -> RunResult {
         } => {
             let paid = PaidImageRun {
                 pair,
+                edit_of: edit_of.as_deref(),
                 image_size: &image_size,
                 max_generations,
                 ledger: &ledger,
@@ -218,6 +260,30 @@ pub fn run(assets: Option<&Path>, command: EffectCommand) -> RunResult {
             run_image(assets, &element, &model, &paid)
         }
         EffectCommand::ImagePreflight { model } => run_preflight(&model),
+        EffectCommand::Veo {
+            element,
+            model,
+            keyframe,
+            max_generations,
+            ledger,
+            out_dir,
+            credentials_dir,
+            curl_path,
+        } => {
+            let connection = ImageModelArgs {
+                model,
+                location: DEFAULT_IMAGE_LOCATION.to_string(),
+                credentials_dir,
+                curl_path,
+            };
+            let paid = PaidClipRun {
+                keyframe: keyframe.as_deref(),
+                max_generations,
+                ledger: &ledger,
+                out_dir: &out_dir,
+            };
+            run_veo(assets, &element, &connection, &paid)
+        }
     }
 }
 
@@ -268,6 +334,7 @@ fn run_review(
 /// The paid run's own options.
 struct PaidImageRun<'a> {
     pair: bool,
+    edit_of: Option<&'a Path>,
     image_size: &'a str,
     max_generations: Option<u32>,
     ledger: &'a Path,
@@ -284,7 +351,7 @@ fn run_image(
     let root = asset_baker::resolve_assets_root(assets)?;
     let style = MediaStyle::load(&root)?;
     let prompt = build_effect_prompt(&style, &request(element, EffectMedium::Still))?;
-    let edit = if paid.pair {
+    let edit = if paid.pair || paid.edit_of.is_some() {
         Some(on_white_edit_prompt(&style)?)
     } else {
         None
@@ -311,7 +378,14 @@ fn run_image(
         edit_prompt: edit.as_ref(),
         out_dir: paid.out_dir,
     };
-    for saved in run_image_job(&client, &mut ledger, &job)? {
+    let saved = match paid.edit_of {
+        Some(black) => {
+            let records = read_ledger_numbered(paid.ledger)?;
+            vec![run_image_edit(&client, &mut ledger, &records, &job, black)?]
+        }
+        None => run_image_job(&client, &mut ledger, &job)?,
+    };
+    for saved in saved {
         println!(
             "{:?}: {} (SHA-256 {})",
             saved.role,
@@ -319,6 +393,80 @@ fn run_image(
             saved.sha256
         );
     }
+    Ok(())
+}
+
+/// The paid clip run's own options.
+struct PaidClipRun<'a> {
+    keyframe: Option<&'a Path>,
+    max_generations: Option<u32>,
+    ledger: &'a Path,
+    out_dir: &'a Path,
+}
+
+/// `effect-veo`: prompt, parameters, price and budget checks, then one generation (or the
+/// resumption of the element's outstanding operation).
+fn run_veo(
+    assets: Option<&Path>,
+    element: &ElementArgs,
+    connection: &ImageModelArgs,
+    paid: &PaidClipRun<'_>,
+) -> RunResult {
+    let root = asset_baker::resolve_assets_root(assets)?;
+    let style = MediaStyle::load(&root)?;
+    let prompt = build_effect_prompt(&style, &request(element, EffectMedium::Clip))?;
+    let mut parameters = VeoRequestSettings::load(&root.join(VEO_REQUEST_FILE))?.parameters();
+    parameters.negative_prompt = Some(effect_negative_prompt(
+        &style,
+        parameters.negative_prompt.as_deref(),
+    )?);
+    if let Some(keyframe) = paid.keyframe {
+        if !keyframe.is_file() {
+            return Err(format!("keyframe '{}' is not a file", keyframe.display()).into());
+        }
+    }
+    let budget = BudgetConfig::load(&root.join(BUDGET_FILE))?;
+    let price_cents = budget.price_cents(&connection.model)?;
+    let history = LedgerHistory::load(paid.ledger)?;
+    let spent_cents = budget.spent_cents(&history)?;
+    check_spend(
+        &budget,
+        SpendRequest {
+            needed: 1,
+            max_generations: paid.max_generations,
+            spent_cents,
+            price_cents,
+        },
+    )?;
+    println!("Budget: {}", budget.spend_line(spent_cents));
+    println!("Request parameters: {parameters}");
+    let client = transport(connection)?;
+    let mut ledger = Ledger::open(paid.ledger, new_run_id())?;
+    let job = EffectClipJob {
+        set: &element.set,
+        element: &element.element,
+        prompt: &prompt,
+        keyframe: paid.keyframe,
+        parameters: &parameters,
+        out_dir: paid.out_dir,
+    };
+    let result = run_effect_clip(&client, &mut ledger, &history, &job)?;
+    println!(
+        "{} {}: {} (SHA-256 {}); review it before baking",
+        if result.started {
+            "Generated"
+        } else {
+            "Resumed"
+        },
+        result.operation,
+        result.path.display(),
+        result.sha256
+    );
+    let after = LedgerHistory::load(paid.ledger)?;
+    println!(
+        "Budget after the run: {}",
+        budget.spend_line(budget.spent_cents(&after)?)
+    );
     Ok(())
 }
 

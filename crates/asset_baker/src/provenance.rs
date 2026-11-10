@@ -529,15 +529,16 @@ pub fn veo_origin_from_ledger(
 }
 
 /// The origin of a clip with SHA-256 `clip_sha256` that the ledger downloaded under any
-/// subject: the last `downloaded` line of these bytes and the request whose operation produced
-/// it. Effect clips (plan `2026-11-09-effect-visualization.md` §6.4) are found by their bytes
-/// alone. `None` if the ledger never downloaded these bytes.
+/// subject: the last `downloaded` or `effect_clip_downloaded` line of these bytes and the
+/// request whose operation produced it. Effect clips (plan
+/// `2026-11-09-effect-visualization.md` §6.4, written by `asset_baker effect-veo`) are found by
+/// their bytes alone. `None` if the ledger never downloaded these bytes.
 #[must_use]
 pub fn veo_origin_by_clip_sha256(
     ledger: &[NumberedRecord],
     clip_sha256: &str,
 ) -> Option<ClipOrigin> {
-    let (slug, state) = ledger
+    let found = ledger
         .iter()
         .rev()
         .find_map(|numbered| match &numbered.record.event {
@@ -546,13 +547,36 @@ pub fn veo_origin_by_clip_sha256(
                 state,
                 sha256,
                 ..
-            } if sha256 == clip_sha256 => Some((slug.clone(), *state)),
+            } if sha256 == clip_sha256 => Some(Err((slug.clone(), *state))),
+            LedgerEvent::EffectClipDownloaded {
+                sha256, operation, ..
+            } if sha256 == clip_sha256 => Some(Ok((numbered.line, operation.clone()))),
             _ => None,
         })?;
-    veo_origin_from_ledger(ledger, &slug, state, clip_sha256)
+    let (line, operation) = match found {
+        Ok(effect) => effect,
+        Err((slug, state)) => return veo_origin_from_ledger(ledger, &slug, state, clip_sha256),
+    };
+    match started_request(ledger, &operation)? {
+        LedgerEvent::EffectClipRequestStarted {
+            model,
+            prompt_sha256,
+            keyframe_sha256,
+            ..
+        } => Some(ClipOrigin::Veo {
+            model: model.clone(),
+            operation,
+            prompt_sha256: prompt_sha256.clone(),
+            keyframe_sha256: keyframe_sha256.clone(),
+            last_frame_sha256: None,
+            ledger_line: line,
+        }),
+        _ => None,
+    }
 }
 
-/// The `request_started` event of the request whose operation the ledger named `operation`.
+/// The `request_started` (or `effect_clip_request_started`) event of the request whose
+/// operation the ledger named `operation`.
 fn started_request<'a>(ledger: &'a [NumberedRecord], operation: &str) -> Option<&'a LedgerEvent> {
     let request_id = ledger
         .iter()
@@ -561,12 +585,22 @@ fn started_request<'a>(ledger: &'a [NumberedRecord], operation: &str) -> Option<
                 operation: named,
                 request_id,
                 ..
+            }
+            | LedgerEvent::EffectClipOperationNamed {
+                operation: named,
+                request_id,
+                ..
             } if named == operation => Some(request_id.as_str()),
             _ => None,
         })?;
-    ledger.iter().map(|numbered| &numbered.record.event).find(
-        |event| matches!(event, LedgerEvent::RequestStarted { request_id: started, .. } if started == request_id),
-    )
+    ledger
+        .iter()
+        .map(|numbered| &numbered.record.event)
+        .find(|event| {
+            matches!(event, LedgerEvent::RequestStarted { request_id: started, .. }
+            | LedgerEvent::EffectClipRequestStarted { request_id: started, .. }
+            if started == request_id)
+        })
 }
 
 // --- The required set ------------------------------------------------------------------------

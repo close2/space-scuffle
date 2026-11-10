@@ -45,6 +45,29 @@ pub struct SpanRecord {
     pub kept: Vec<u32>,
     /// Real play time of the span, in milliseconds (at least 1).
     pub duration_ms: u32,
+    /// The recipe's cut: frames before `from_ms` milliseconds were not used, if given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_ms: Option<u32>,
+    /// The recipe's cut: only the clip's first `until_ms` milliseconds were used, if given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until_ms: Option<u32>,
+    /// The recipe's framing, when it is not the centre crop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub framing: Option<crate::framing::BakeFraming>,
+}
+
+impl SpanRecord {
+    /// Moves a span chosen over a clip's frames from index `skipped` on back onto the whole
+    /// clip's frame indices, of which `decoded_frames` were decoded.
+    pub fn offset(&mut self, skipped: usize, decoded_frames: usize) {
+        let skipped = to_u32(skipped);
+        self.decoded_frames = to_u32(decoded_frames);
+        self.onset = self.onset.saturating_add(skipped);
+        self.dissipation = self.dissipation.saturating_add(skipped);
+        for index in &mut self.kept {
+            *index = index.saturating_add(skipped);
+        }
+    }
 }
 
 /// The activity of a frame: the sum over its pixels of how far each channel maximum rises
@@ -100,6 +123,9 @@ pub fn select_span(
         dissipation: to_u32(dissipation),
         kept,
         duration_ms: u32::try_from(duration_ms).unwrap_or(u32::MAX),
+        from_ms: None,
+        until_ms: None,
+        framing: None,
     })
 }
 
@@ -129,6 +155,17 @@ mod tests {
         assert_eq!(span.kept, vec![3, 5, 7]);
         assert_eq!(span.duration_ms, 500);
         assert_eq!(span.decoded_frames, 11);
+    }
+
+    #[test]
+    fn an_offset_span_names_whole_clip_frames() {
+        let levels = [0, 50, 200, 40, 0];
+        let frames: Vec<RgbaImage> = levels.iter().map(|l| frame(*l)).collect();
+        let mut span = select_span(&frames, 3, 10, "e").expect("lit");
+        span.offset(4, 9);
+        assert_eq!((span.onset, span.dissipation), (5, 7));
+        assert_eq!(span.kept, vec![5, 6, 7]);
+        assert_eq!(span.decoded_frames, 9);
     }
 
     #[test]

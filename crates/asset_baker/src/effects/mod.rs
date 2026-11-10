@@ -17,10 +17,12 @@
 //! - [`review`]: `asset_baker effect-review`, the texture contact sheets of §6.5.
 //! - [`prompt`]: the prompt class "effect element" of `media_style.ron`.
 //! - [`image_client`]: the Gemini image-model client on the Veo credential path.
+//! - [`veo_clip`]: `asset_baker effect-veo`, one paid Veo clip of an effect element, in the
+//!   ledger under its set and element.
 //!
 //! # How it fits
 //! Generated stills come from [`image_client`] (every request in the media ledger, priced by
-//! `media/veo_budget.ron`), Veo clips from the existing Veo pipeline, noise from [`noise`]. The
+//! `media/veo_budget.ron`), Veo clips from [`veo_clip`] on the Veo client, noise from [`noise`]. The
 //! baker writes sets under `assets/effects/`; `bake_integrity_tests.rs` verifies that every
 //! file there belongs to a set whose every element has a real origin.
 //!
@@ -39,6 +41,7 @@ pub mod packing;
 pub mod prompt;
 pub mod review;
 pub mod texture_set;
+pub mod veo_clip;
 
 use crate::error::BakerError;
 use std::path::PathBuf;

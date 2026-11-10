@@ -24,7 +24,7 @@
 //! `generate-veo` sends the parameters of `media/veo_request.ron`.
 //!
 //! The effect-texture commands (`effect-noise`, `effect-bake`, `effect-review`,
-//! `effect-prompt`, `effect-image`, `effect-image-preflight`; plan
+//! `effect-prompt`, `effect-image`, `effect-image-preflight`, `effect-veo`; plan
 //! `docs/plans/2026-11-09-effect-visualization.md` §6) live in `effect_cli`.
 //!
 //! # Invariants

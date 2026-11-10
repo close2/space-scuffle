@@ -423,3 +423,72 @@ fn the_preflight_command_prints_the_status_and_fails_when_the_model_is_not_calla
     common::cli::assert_no_key(&text, "the preflight output");
     assert!(server.requests()[0].path.ends_with(":countTokens"));
 }
+
+#[test]
+fn an_edit_only_request_completes_a_recorded_picture_and_refuses_an_unrecorded_one() {
+    let black = png(0);
+    let white = png(255);
+    let replies = [image_reply(&black), image_reply(&white)];
+    let server = FakeServer::start(move |_, index| Reply::json(&replies[index.min(1)]));
+    let shim = CurlShim::new(&server);
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    // The picture on black of an earlier run whose edit was refused.
+    let first = effect_image(
+        dir.path(),
+        &shim,
+        &["--model", MODEL, "--max-generations", "1"],
+    );
+    assert!(first.status.success(), "{}", common::cli::text(&first));
+    let lines = ledger_lines(dir.path());
+    let black_path = lines[1]["path"].as_str().expect("path").to_string();
+
+    let output = effect_image(
+        dir.path(),
+        &shim,
+        &[
+            "--edit-of",
+            &black_path,
+            "--model",
+            MODEL,
+            "--max-generations",
+            "1",
+        ],
+    );
+    let text = common::cli::text(&output);
+    assert!(output.status.success(), "{text}");
+    let lines = ledger_lines(dir.path());
+    assert_eq!(lines.len(), 4);
+    assert_eq!(lines[2]["event"], "image_request_started");
+    assert_eq!(lines[2]["kind"], "on_white_edit");
+    assert_eq!(lines[2]["source_sha256"], lines[1]["sha256"]);
+    assert_eq!(lines[3]["event"], "image_downloaded");
+    let edit = body(&server.requests()[1]);
+    assert_eq!(
+        edit["contents"][0]["parts"][0]["inlineData"]["data"],
+        BASE64_STANDARD.encode(&black)
+    );
+    let budget = BudgetConfig::load(&common::cli::shipped_assets().join(BUDGET_FILE))
+        .expect("shipped budget");
+    let history = LedgerHistory::load(&dir.path().join("ledger.jsonl")).expect("history");
+    assert_eq!(budget.spent_cents(&history).expect("priced"), 22);
+
+    // A picture the ledger never recorded for this element is refused before any request.
+    let stranger = dir.path().join("stranger.png");
+    std::fs::write(&stranger, png(10)).expect("png");
+    let refused = effect_image(
+        dir.path(),
+        &shim,
+        &[
+            "--edit-of",
+            stranger.to_str().expect("utf-8"),
+            "--model",
+            MODEL,
+            "--max-generations",
+            "1",
+        ],
+    );
+    assert!(!refused.status.success());
+    assert_eq!(server.requests().len(), 2);
+    assert_eq!(ledger_lines(dir.path()).len(), 4);
+}

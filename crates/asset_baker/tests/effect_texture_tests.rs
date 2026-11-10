@@ -24,7 +24,7 @@
 
 use asset_baker::effects::bake::{
     bake_noise, bake_recipe, BakeInputs, EffectBakeRecipe, ElementLook, ElementRecipe,
-    ElementSource,
+    ElementSource, PictureSource,
 };
 use asset_baker::effects::keying::{check_black, difference_matte, MATTE_RESIDUAL_LIMIT};
 use asset_baker::effects::noise::{
@@ -588,6 +588,7 @@ fn effect_frames() -> Vec<RgbaImage> {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn a_clip_flipbook_keeps_frames_over_its_effect_span() {
     let dir = tempfile::tempdir().expect("tempdir");
     let sources = dir.path().join("sources");
@@ -643,6 +644,9 @@ fn a_clip_flipbook_keeps_frames_over_its_effect_span() {
                 file: "glow.mkv".to_string(),
                 frames: 6,
                 decode_fps: common::loop_clip::CLIP_FPS,
+                from_ms: None,
+                until_ms: None,
+                framing: asset_baker::BakeFraming::CenterCrop,
             },
         }],
     };
@@ -748,4 +752,317 @@ fn the_cli_prints_a_checked_effect_prompt_and_writes_a_noise_set() {
         .expect("run");
     assert!(written.status.success(), "{}", common::cli::text(&written));
     assert_eq!(verify_set(&out, "fx_cli_noise", &[]), Vec::new());
+}
+
+/// A black sheet of `columns` x `rows` cells, each with a soft grey disc of `radius` (as a
+/// fraction of the cell side) at its centre.
+fn disc_sheet(cell: u32, columns: u32, rows: u32, radius: f64) -> RgbaImage {
+    RgbaImage::from_fn(cell * columns, cell * rows, |x, y| {
+        let (cx, cy) = (x % cell, y % cell);
+        let v = (known_alpha(cx, cy, cell, f64::from(cell) * radius) * 255.0).round() as u8;
+        Rgba([v, v, v, 255])
+    })
+}
+
+/// Bakes `elements` from pictures already in `<dir>/sources`, each recorded as a generated
+/// still of the named element.
+fn bake_generated(
+    dir: &Path,
+    files: &[(&str, &str)],
+    elements: Vec<ElementRecipe>,
+) -> Result<(EffectTextureSet, EffectSetProvenance, Vec<NumberedRecord>), EffectError> {
+    let sources = dir.join("sources");
+    let ledger_path = dir.join("ledger.jsonl");
+    let mut ledger = Ledger::open(&ledger_path, "run".to_string()).expect("ledger");
+    for (element, file) in files {
+        record_image(
+            &mut ledger,
+            element,
+            &sources.join(file),
+            ImageRequestKind::OnBlack,
+        );
+    }
+    let numbered = read_ledger_numbered(&ledger_path).expect("ledger");
+    let recipe = EffectBakeRecipe {
+        set: SET.to_string(),
+        cell_size: 256,
+        erosion: None,
+        elements,
+    };
+    recipe.check(Path::new("recipe"))?;
+    let baked = bake_recipe(
+        &recipe,
+        BakeInputs {
+            sources_dir: &sources,
+            ledger: &numbered,
+            ffmpeg: Path::new("/usr/bin/ffmpeg"),
+        },
+    )?;
+    let (manifest, provenance) =
+        asset_baker::effects::texture_set::write_set(&dir.join("effects"), baked)?;
+    Ok((manifest, provenance, numbered))
+}
+
+#[test]
+fn variants_and_grid_items_are_each_centred_into_their_own_layer() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let sources = dir.path().join("sources");
+    std::fs::create_dir_all(&sources).expect("sources");
+    soft_disc(200, 1.0)
+        .save(sources.join("puff_a.png"))
+        .expect("png");
+    soft_disc(300, 0.8)
+        .save(sources.join("puff_b.png"))
+        .expect("png");
+    disc_sheet(100, 2, 2, 0.3)
+        .save(sources.join("chunks.png"))
+        .expect("png");
+    let still = |file: &str| PictureSource::Still {
+        file: file.to_string(),
+    };
+    let (manifest, provenance, ledger) = bake_generated(
+        dir.path(),
+        &[
+            ("puff", "puff_a.png"),
+            ("puff", "puff_b.png"),
+            ("chunks", "chunks.png"),
+        ],
+        vec![
+            ElementRecipe {
+                name: "puff".to_string(),
+                look: ElementLook::Lit,
+                source: ElementSource::Variants {
+                    pictures: vec![still("puff_a.png"), still("puff_b.png")],
+                },
+            },
+            ElementRecipe {
+                name: "chunks".to_string(),
+                look: ElementLook::Lit,
+                source: ElementSource::Grid {
+                    picture: still("chunks.png"),
+                    columns: 2,
+                    rows: 2,
+                    margin_px: 0,
+                },
+            },
+        ],
+    )
+    .expect("bake");
+    assert_eq!(manifest.layers, 6);
+    assert_eq!(
+        (
+            manifest.elements[0].frames,
+            manifest.elements[0].duration_ms
+        ),
+        (2, None)
+    );
+    assert_eq!(
+        (
+            manifest.elements[1].first_layer,
+            manifest.elements[1].frames
+        ),
+        (2, 4)
+    );
+    let strip = image::open(dir.path().join("effects/fx_test.png"))
+        .expect("strip")
+        .to_rgba8();
+    for layer in 0..6 {
+        // Every picture fills its own cell: dense at the centre, empty in the padding, and
+        // the disc reaches near the padding on the horizontal axis.
+        let top = layer * 256;
+        assert!(strip.get_pixel(128, top + 128)[1] > 200, "layer {layer}");
+        assert_eq!(strip.get_pixel(1, top + 128)[1], 0, "layer {layer}");
+        assert!(strip.get_pixel(40, top + 128)[1] > 0, "layer {layer}");
+    }
+    assert_eq!(
+        provenance.elements["chunks"].keying.method,
+        KeyingMethod::LuminanceKey
+    );
+    match &provenance.elements["puff"].origin {
+        ElementOrigin::GeneratedImage { sources } => assert_eq!(sources.len(), 2),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(
+        verify_set(&dir.path().join("effects"), SET, &ledger),
+        Vec::new()
+    );
+}
+
+#[test]
+fn a_grid_item_cut_by_its_cell_border_fails_the_black_check() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let sources = dir.path().join("sources");
+    std::fs::create_dir_all(&sources).expect("sources");
+    // One disc in the middle of the sheet straddles the border between its two cells.
+    soft_disc(200, 1.0)
+        .save(sources.join("straddle.png"))
+        .expect("png");
+    let result = bake_generated(
+        dir.path(),
+        &[("chunks", "straddle.png")],
+        vec![ElementRecipe {
+            name: "chunks".to_string(),
+            look: ElementLook::Lit,
+            source: ElementSource::Grid {
+                picture: PictureSource::Still {
+                    file: "straddle.png".to_string(),
+                },
+                columns: 2,
+                rows: 1,
+                margin_px: 0,
+            },
+        }],
+    );
+    assert!(
+        matches!(result, Err(EffectError::BlackCheckFailed { .. })),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn recipes_refuse_mixed_variants_emissive_pairs_and_empty_grids() {
+    let still = PictureSource::Still {
+        file: "a.png".to_string(),
+    };
+    let pair = PictureSource::Pair {
+        black: "b.png".to_string(),
+        white: "w.png".to_string(),
+    };
+    let recipe = |look, source| EffectBakeRecipe {
+        set: SET.to_string(),
+        cell_size: 256,
+        erosion: None,
+        elements: vec![ElementRecipe {
+            name: "e".to_string(),
+            look,
+            source,
+        }],
+    };
+    for (look, source) in [
+        (
+            ElementLook::Lit,
+            ElementSource::Variants {
+                pictures: vec![still.clone(), pair.clone()],
+            },
+        ),
+        (
+            ElementLook::Lit,
+            ElementSource::Variants {
+                pictures: Vec::new(),
+            },
+        ),
+        (
+            ElementLook::Emissive,
+            ElementSource::Grid {
+                picture: pair,
+                columns: 2,
+                rows: 2,
+                margin_px: 0,
+            },
+        ),
+        (
+            ElementLook::Lit,
+            ElementSource::Grid {
+                picture: still,
+                columns: 0,
+                rows: 2,
+                margin_px: 0,
+            },
+        ),
+    ] {
+        assert!(
+            matches!(
+                recipe(look, source).check(Path::new("r")),
+                Err(EffectError::InvalidRecipe { .. })
+            ),
+            "{look:?}"
+        );
+    }
+}
+
+#[test]
+fn a_flipbook_from_an_effect_clip_ledger_line_verifies() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let sources = dir.path().join("sources");
+    std::fs::create_dir_all(&sources).expect("sources");
+    let clip = common::loop_clip::encode_clip(&sources, "glow.mkv", &effect_frames());
+    let ledger_path = dir.path().join("ledger.jsonl");
+    let mut ledger = Ledger::open(&ledger_path, "run".to_string()).expect("ledger");
+    for event in [
+        LedgerEvent::EffectClipRequestStarted {
+            request_id: "run/1".to_string(),
+            set: SET.to_string(),
+            element: "glow".to_string(),
+            model: "fixture-veo".to_string(),
+            mode: ApiMode::VertexExpress,
+            prompt_sha256: "b".repeat(64),
+            prompt: "p".to_string(),
+            keyframe_sha256: Some("d".repeat(64)),
+            parameters: VeoParameters::default(),
+        },
+        LedgerEvent::EffectClipOperationNamed {
+            request_id: "run/1".to_string(),
+            set: SET.to_string(),
+            element: "glow".to_string(),
+            model: "fixture-veo".to_string(),
+            operation: "operations/glow".to_string(),
+        },
+        LedgerEvent::EffectClipDownloaded {
+            set: SET.to_string(),
+            element: "glow".to_string(),
+            operation: "operations/glow".to_string(),
+            bytes: 1,
+            sha256: sha256_file(&clip).expect("sha"),
+            duration_seconds: 2.0,
+            frames: 30,
+            width: 96,
+            height: 96,
+            path: clip.display().to_string(),
+        },
+    ] {
+        ledger.append(event).expect("line");
+    }
+    let numbered = read_ledger_numbered(&ledger_path).expect("ledger");
+    let recipe = EffectBakeRecipe {
+        set: SET.to_string(),
+        cell_size: 256,
+        erosion: None,
+        elements: vec![ElementRecipe {
+            name: "glow".to_string(),
+            look: ElementLook::Emissive,
+            source: ElementSource::Clip {
+                file: "glow.mkv".to_string(),
+                frames: 6,
+                decode_fps: common::loop_clip::CLIP_FPS,
+                from_ms: Some(600),
+                until_ms: Some(1000),
+                framing: asset_baker::BakeFraming::Letterbox {
+                    feather_permille: 0,
+                },
+            },
+        }],
+    };
+    let baked = bake_recipe(
+        &recipe,
+        BakeInputs {
+            sources_dir: &sources,
+            ledger: &numbered,
+            ffmpeg: Path::new("/usr/bin/ffmpeg"),
+        },
+    )
+    .expect("bake");
+    let out = dir.path().join("effects");
+    let (_, provenance) = asset_baker::effects::texture_set::write_set(&out, baked).expect("write");
+    assert!(matches!(
+        &provenance.elements["glow"].origin,
+        ElementOrigin::Veo { ledger_line: 3, model, keyframe_sha256: Some(_), .. } if model == "fixture-veo"
+    ));
+    // The cuts keep 0.6 s to 1 s: the glow's last rise to its peak, in whole-clip frame numbers.
+    let span = provenance.elements["glow"].span.clone().expect("span");
+    assert_eq!((span.from_ms, span.until_ms), (Some(600), Some(1000)));
+    assert_eq!(span.decoded_frames, common::loop_clip::CLIP_FPS);
+    assert_eq!(span.onset, 9);
+    assert!(span.framing.is_some(), "a letterbox framing is recorded");
+    assert_eq!(span.dissipation + 1, common::loop_clip::CLIP_FPS);
+    assert_eq!(verify_set(&out, SET, &numbered), Vec::new());
 }

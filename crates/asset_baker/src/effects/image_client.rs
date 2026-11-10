@@ -17,6 +17,8 @@
 //! - [`run_image_job`]: one element's paid requests with their ledger lines
 //!   (`image_request_started`, then `image_downloaded`, `image_quota_refused` or
 //!   `image_request_failed`).
+//! - [`run_image_edit`]: only the on-white edit of a picture on black an earlier job saved, the
+//!   second half of a pair whose edit the service refused for quota.
 //!
 //! # How it fits
 //! The transport is the Veo client's ([`VeoClient`]): the same credential resolution, the key
@@ -35,7 +37,7 @@
 use super::texture_set::ImageRole;
 use super::{write_atomic, EffectError};
 use crate::error::BakerError;
-use crate::ledger::{sha256_hex, ApiMode, ImageRequestKind, Ledger, LedgerEvent};
+use crate::ledger::{sha256_hex, ApiMode, ImageRequestKind, Ledger, LedgerEvent, NumberedRecord};
 use crate::prompts::{ComposedPrompt, ImageFormat};
 use crate::veo_client::VeoClient;
 use base64::prelude::*;
@@ -375,6 +377,49 @@ pub fn run_image_job(
         saved.push(white);
     }
     Ok(saved)
+}
+
+/// Runs only the on-white edit of `black`, a picture on black that an earlier request
+/// generated for the job's set and element (the ledger's `image_downloaded` line of its bytes
+/// proves it): the second half of a pair whose edit the service refused. One paid request.
+///
+/// # Errors
+/// [`EffectError::InvalidRecipe`] when the job has no edit prompt,
+/// [`EffectError::OriginMissing`] when `ledger_records` never downloaded these bytes for this
+/// set and element (nothing is sent), [`EffectError::Io`], and the request's own failure after
+/// it was recorded.
+pub fn run_image_edit(
+    client: &ImageClient,
+    ledger: &mut Ledger,
+    ledger_records: &[NumberedRecord],
+    job: &ImageJob<'_>,
+    black: &Path,
+) -> Result<SavedImage, EffectError> {
+    let Some(edit) = job.edit_prompt else {
+        return Err(EffectError::InvalidRecipe {
+            path: black.to_path_buf(),
+            reason: "an edit-only request needs the on-white edit prompt".to_string(),
+        });
+    };
+    let source = std::fs::read(black).map_err(|source| EffectError::Io {
+        path: black.to_path_buf(),
+        source,
+    })?;
+    let sha256 = sha256_hex(&source);
+    let recorded = ledger_records.iter().any(|numbered| {
+        matches!(&numbered.record.event, LedgerEvent::ImageDownloaded {
+            set, element, sha256: s, ..
+        } if set == job.set && element == job.element && *s == sha256)
+    });
+    if !recorded {
+        return Err(EffectError::OriginMissing {
+            element: job.element.to_string(),
+            file: black.display().to_string(),
+            sha256,
+            wanted: "image_downloaded",
+        });
+    }
+    one_request(client, ledger, job, Some((edit, &source)))
 }
 
 /// One request and its ledger lines; `edit` is the edit prompt and the picture on black.

@@ -3,8 +3,9 @@
 //!
 //! # Responsibility
 //! - [`EffectBakeRecipe`] is a set's bake recipe: its cell size, erosion parameters and every
-//!   element with its look (emissive or lit) and source (a Veo clip, a generated still, or a
-//!   black/white pair). [`bake_recipe`] keys, centres, packs and mips them into a
+//!   element with its look (emissive or lit) and source (a Veo clip, a generated still, a
+//!   black/white pair, several such pictures as variants, or one picture of a grid of items
+//!   cut into one cell each). [`bake_recipe`] keys, centres, packs and mips them into a
 //!   [`BakedSet`] whose provenance cites the ledger line of every source.
 //! - [`bake_noise`] turns a [`NoiseRecipe`] into a set of authored sheets.
 //!
@@ -18,6 +19,11 @@
 //! # Invariants
 //! - Keying follows the source and look: a pair is always difference-matted; a single still or
 //!   clip is luminance-keyed, emissive or lit. A pair cannot be emissive.
+//! - A flipbook's frames share one centroid and scale (the element must not jump between
+//!   frames); variants and grid items are each centred and scaled into their own cell, and a
+//!   variant or item element has no duration (its layers are alternatives, not frames).
+//! - A grid item that touches its cell's border fails the black check, so an item cut in two
+//!   is never shipped.
 //! - Every picture on black passes the black check before it is keyed.
 //! - A clip is decoded once by the existing FFmpeg importer (centre crop at
 //!   `min(2 x cell_size, 720)` pixels), and its frames are chosen over the effect span.
@@ -25,7 +31,7 @@
 use super::flipbook::{select_span, SpanRecord};
 use super::keying::{
     check_black, difference_matte, luminance_emissive, luminance_key, measure_levels,
-    BlackCheckReport, KeyedElement,
+    BlackCheckReport, KeyedElement, MatteReport,
 };
 use super::noise::{generate_sheet, NoiseRecipe, EFFECT_NOISE_TOOL};
 use super::packing::{centre_into_cells, mip_chain, pack_cell, strip, ErosionParams, MipFilter};
@@ -39,7 +45,7 @@ use crate::ffmpeg_importer::{decode_framed_clip, FrameSpec};
 use crate::framing::BakeFraming;
 use crate::ledger::{sha256_hex, LedgerEvent, NumberedRecord};
 use crate::provenance::{ffmpeg_version, veo_origin_by_clip_sha256, ClipOrigin};
-use image::RgbaImage;
+use image::{GenericImageView, RgbaImage};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -60,6 +66,34 @@ pub enum ElementLook {
     Lit,
 }
 
+/// Most variants or grid items one element may have.
+pub const MAX_ELEMENT_PICTURES: u32 = 64;
+
+/// One generated picture of a variant or grid source.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PictureSource {
+    /// A still on black.
+    Still {
+        /// The image file.
+        file: String,
+    },
+    /// The same picture on black and, by an edit request, on white.
+    Pair {
+        /// The image on black.
+        black: String,
+        /// The image on white.
+        white: String,
+    },
+}
+
+impl PictureSource {
+    /// Whether this is a black/white pair.
+    #[must_use]
+    pub fn is_pair(&self) -> bool {
+        matches!(self, Self::Pair { .. })
+    }
+}
+
 /// Where an element's pictures come from. File names are bare names in the sources directory.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ElementSource {
@@ -72,6 +106,21 @@ pub enum ElementSource {
         frames: u32,
         /// Decode rate, frames per second.
         decode_fps: u32,
+        /// The clip's frames before `from_ms` milliseconds are not used, when given: it cuts
+        /// a head the element does not own (such as a flash that lights the whole frame,
+        /// which the effect draws as its own light layer). Recorded in the span.
+        #[serde(default)]
+        from_ms: Option<u32>,
+        /// Only the clip's first `until_ms` milliseconds are used, when given: it cuts a tail
+        /// in which the element leaves the frame instead of dissipating, so the flipbook ends
+        /// at its peak and the effect's erosion dissolves it. Recorded in the span.
+        #[serde(default)]
+        until_ms: Option<u32>,
+        /// How a frame is fitted into the square: the centre crop (default, at twice the cell
+        /// size) or the whole 16:9 frame letterboxed (at [`MAX_DECODE_SIZE`]), for an element
+        /// wider than the centre square. Recorded in the span.
+        #[serde(default)]
+        framing: BakeFraming,
     },
     /// One generated still on black.
     Still {
@@ -85,6 +134,40 @@ pub enum ElementSource {
         /// The image on white.
         white: String,
     },
+    /// Several generated pictures of one element, one layer each: its variants, which the
+    /// client chooses between per instance. All stills or all pairs.
+    Variants {
+        /// The pictures, in layer order.
+        pictures: Vec<PictureSource>,
+    },
+    /// One generated picture of `columns` x `rows` separate items on black (such as a sheet of
+    /// debris chunks), cut into equal cells, one layer per cell, row by row.
+    Grid {
+        /// The picture.
+        picture: PictureSource,
+        /// Cells across.
+        columns: u32,
+        /// Cells down.
+        rows: u32,
+        /// Pixels cut off every side of the sheet before it is divided (default 0): the
+        /// sheet's outer frame holds no item, and a generator's grain there is not part of
+        /// any cell. The borders between cells are black-checked as always.
+        #[serde(default)]
+        margin_px: u32,
+    },
+}
+
+impl ElementSource {
+    /// Whether the source has a picture on white (a pair), which only a lit element may use.
+    #[must_use]
+    pub fn has_pair(&self) -> bool {
+        match self {
+            Self::Pair { .. } => true,
+            Self::Variants { pictures } => pictures.iter().any(PictureSource::is_pair),
+            Self::Grid { picture, .. } => picture.is_pair(),
+            Self::Clip { .. } | Self::Still { .. } => false,
+        }
+    }
 }
 
 /// One element of a bake recipe.
@@ -150,16 +233,18 @@ impl EffectBakeRecipe {
             if !seen.insert(element.name.as_str()) {
                 return Err(invalid(format!("element '{}' appears twice", element.name)));
             }
-            if matches!(element.source, ElementSource::Pair { .. })
-                && element.look == ElementLook::Emissive
-            {
+            check_pictures(element).map_err(invalid)?;
+            if element.source.has_pair() && element.look == ElementLook::Emissive {
                 return Err(invalid(format!(
                     "element '{}': a black/white pair is for lit elements; an emissive element is keyed by luminance from its picture on black",
                     element.name
                 )));
             }
             if let ElementSource::Clip { frames: 0, .. }
-            | ElementSource::Clip { decode_fps: 0, .. } = element.source
+            | ElementSource::Clip { decode_fps: 0, .. }
+            | ElementSource::Clip {
+                until_ms: Some(0), ..
+            } = element.source
             {
                 return Err(invalid(format!(
                     "element '{}': a clip needs frames and decode_fps above 0",
@@ -168,6 +253,40 @@ impl EffectBakeRecipe {
             }
         }
         Ok(())
+    }
+}
+
+/// Checks the picture count and kinds of a variant or grid source.
+fn check_pictures(element: &ElementRecipe) -> Result<(), String> {
+    let name = &element.name;
+    match &element.source {
+        ElementSource::Variants { pictures } => {
+            let count = u32::try_from(pictures.len()).unwrap_or(u32::MAX);
+            if count == 0 || count > MAX_ELEMENT_PICTURES {
+                return Err(format!(
+                    "element '{name}': variants need 1 to {MAX_ELEMENT_PICTURES} pictures, not {count}"
+                ));
+            }
+            let pairs = pictures.iter().filter(|p| p.is_pair()).count();
+            if pairs != 0 && pairs != pictures.len() {
+                return Err(format!(
+                    "element '{name}': variants must be all stills or all pairs, so one keying method serves them all"
+                ));
+            }
+            Ok(())
+        }
+        ElementSource::Grid { columns, rows, .. } => {
+            let cells = columns.saturating_mul(*rows);
+            if *columns == 0 || *rows == 0 || cells > MAX_ELEMENT_PICTURES {
+                return Err(format!(
+                    "element '{name}': a grid needs 1 to {MAX_ELEMENT_PICTURES} cells, not {columns} x {rows}"
+                ));
+            }
+            Ok(())
+        }
+        ElementSource::Clip { .. } | ElementSource::Still { .. } | ElementSource::Pair { .. } => {
+            Ok(())
+        }
     }
 }
 
@@ -188,6 +307,15 @@ struct KeyedSource {
     provenance: ElementProvenance,
     blend: ElementBlend,
     duration_ms: Option<u32>,
+    /// Whether each picture is centred into its own cell (variants and grid items) rather than
+    /// all on one joint centroid (a flipbook).
+    centre_each: bool,
+}
+
+/// One generated picture loaded for keying: on black, and on white for a pair.
+struct LoadedPicture {
+    black: RgbaImage,
+    white: Option<RgbaImage>,
 }
 
 /// Bakes a recipe into a set: keys every element, centres it into cells, packs and mips them.
@@ -210,7 +338,19 @@ pub fn bake_recipe(
     for element in &recipe.elements {
         decoded_clip |= matches!(element.source, ElementSource::Clip { .. });
         let keyed = key_element(element, recipe.cell_size, inputs)?;
-        let centred = centre_into_cells(&keyed.pictures, recipe.cell_size, &element.name)?;
+        let centred = if keyed.centre_each {
+            let mut each = Vec::with_capacity(keyed.pictures.len());
+            for picture in &keyed.pictures {
+                each.extend(centre_into_cells(
+                    std::slice::from_ref(picture),
+                    recipe.cell_size,
+                    &element.name,
+                )?);
+            }
+            each
+        } else {
+            centre_into_cells(&keyed.pictures, recipe.cell_size, &element.name)?
+        };
         let half = recipe.cell_size / 2;
         elements.push(EffectElement {
             name: element.name.clone(),
@@ -293,9 +433,17 @@ fn key_element(
             file,
             frames,
             decode_fps,
+            from_ms,
+            until_ms,
+            framing,
         } => key_clip(
             element,
             (file, *frames, *decode_fps),
+            ClipWindow {
+                from_ms: *from_ms,
+                until_ms: *until_ms,
+                framing: *framing,
+            },
             cell_size,
             inputs,
             blend,
@@ -329,10 +477,180 @@ fn key_element(
                 },
                 blend,
                 duration_ms: None,
+                centre_each: false,
             })
         }
         ElementSource::Pair { black, white } => key_pair(element, (black, white), inputs, blend),
+        ElementSource::Variants { pictures } => {
+            let mut loaded = Vec::with_capacity(pictures.len());
+            let mut sources = Vec::new();
+            for picture in pictures {
+                loaded.push(load_picture(element, picture, inputs, &mut sources)?);
+            }
+            key_pictures(element, &loaded, sources, blend)
+        }
+        ElementSource::Grid {
+            picture,
+            columns,
+            rows,
+            margin_px,
+        } => {
+            let mut sources = Vec::new();
+            let sheet = load_picture(element, picture, inputs, &mut sources)?;
+            let cells = cut_grid(&sheet, (*columns, *rows), *margin_px);
+            key_pictures(element, &cells, sources, blend)
+        }
     }
+}
+
+/// Loads one generated picture and appends its ledger sources to `sources`.
+fn load_picture(
+    element: &ElementRecipe,
+    picture: &PictureSource,
+    inputs: BakeInputs<'_>,
+    sources: &mut Vec<GeneratedSource>,
+) -> Result<LoadedPicture, EffectError> {
+    match picture {
+        PictureSource::Still { file } => {
+            let path = inputs.sources_dir.join(file);
+            let black = open_rgba(&path)?;
+            sources.push(generated_source(
+                inputs.ledger,
+                element,
+                file,
+                &path,
+                ImageRole::OnBlack,
+            )?);
+            Ok(LoadedPicture { black, white: None })
+        }
+        PictureSource::Pair { black, white } => {
+            let black_path = inputs.sources_dir.join(black);
+            let white_path = inputs.sources_dir.join(white);
+            let on_black = open_rgba(&black_path)?;
+            let on_white = open_rgba(&white_path)?;
+            sources.push(generated_source(
+                inputs.ledger,
+                element,
+                black,
+                &black_path,
+                ImageRole::OnBlack,
+            )?);
+            sources.push(generated_source(
+                inputs.ledger,
+                element,
+                white,
+                &white_path,
+                ImageRole::OnWhite,
+            )?);
+            Ok(LoadedPicture {
+                black: on_black,
+                white: Some(on_white),
+            })
+        }
+    }
+}
+
+/// The bounds `[start, end)` of cell `index` of `count` equal cells across `extent` pixels.
+fn cell_bounds(extent: u32, count: u32, index: u32) -> (u32, u32) {
+    let at = |i: u32| u32::try_from(u64::from(extent) * u64::from(i) / u64::from(count.max(1)));
+    (at(index).unwrap_or(extent), at(index + 1).unwrap_or(extent))
+}
+
+/// Cuts a picture (and its partner on white), less `margin` pixels on every side, into
+/// `columns` x `rows` equal cells, row by row.
+fn cut_grid(sheet: &LoadedPicture, (columns, rows): (u32, u32), margin: u32) -> Vec<LoadedPicture> {
+    let (width, height) = sheet.black.dimensions();
+    let margin = margin.min(width / 2).min(height / 2);
+    let (inner_width, inner_height) = (width - 2 * margin, height - 2 * margin);
+    let mut cells = Vec::with_capacity((columns * rows) as usize);
+    for row in 0..rows {
+        let (y0, y1) = cell_bounds(inner_height, rows, row);
+        for column in 0..columns {
+            let (x0, x1) = cell_bounds(inner_width, columns, column);
+            let crop = |picture: &RgbaImage| {
+                picture
+                    .view(
+                        margin + x0,
+                        margin + y0,
+                        x1.saturating_sub(x0),
+                        y1.saturating_sub(y0),
+                    )
+                    .to_image()
+            };
+            cells.push(LoadedPicture {
+                black: crop(&sheet.black),
+                white: sheet.white.as_ref().map(crop),
+            });
+        }
+    }
+    cells
+}
+
+/// Black-checks and keys loaded pictures, each its own layer: pairs by the difference matte,
+/// stills by the luminance key with one shared set of levels.
+fn key_pictures(
+    element: &ElementRecipe,
+    pictures: &[LoadedPicture],
+    sources: Vec<GeneratedSource>,
+    blend: ElementBlend,
+) -> Result<KeyedSource, EffectError> {
+    let mut worst: Option<BlackCheckReport> = None;
+    for (index, picture) in pictures.iter().enumerate() {
+        let report = check_black(&picture.black, &element.name, Some(index))?;
+        worst = Some(worst.map_or(report, |w| w.worst(report)));
+    }
+    let mut keyed = Vec::with_capacity(pictures.len());
+    let keying = if pictures.iter().all(|p| p.white.is_some()) {
+        let mut total = MatteReport {
+            over_limit: 0,
+            pixels: 0,
+            max_residual: 0,
+        };
+        for picture in pictures {
+            let Some(white) = &picture.white else {
+                continue;
+            };
+            let (element_keyed, matte) = difference_matte(&picture.black, white, &element.name)?;
+            total.over_limit += matte.over_limit;
+            total.pixels += matte.pixels;
+            total.max_residual = total.max_residual.max(matte.max_residual);
+            keyed.push(element_keyed);
+        }
+        KeyingRecord {
+            method: KeyingMethod::DifferenceMatte,
+            levels: None,
+            black_check: worst,
+            matte: Some(total),
+        }
+    } else {
+        let blacks: Vec<&RgbaImage> = pictures.iter().map(|p| &p.black).collect();
+        let levels = measure_levels(&blacks, &element.name)?;
+        let method = match element.look {
+            ElementLook::Emissive => KeyingMethod::LuminanceEmissive,
+            ElementLook::Lit => KeyingMethod::LuminanceKey,
+        };
+        keyed.extend(blacks.iter().map(|picture| match element.look {
+            ElementLook::Emissive => luminance_emissive(picture, levels),
+            ElementLook::Lit => luminance_key(picture, levels),
+        }));
+        KeyingRecord {
+            method,
+            levels: Some(levels),
+            black_check: worst,
+            matte: None,
+        }
+    };
+    Ok(KeyedSource {
+        pictures: keyed,
+        provenance: ElementProvenance {
+            origin: ElementOrigin::GeneratedImage { sources },
+            keying,
+            span: None,
+        },
+        blend,
+        duration_ms: None,
+        centre_each: true,
+    })
 }
 
 /// Keys a black/white pair by the difference matte.
@@ -378,6 +696,7 @@ fn key_pair(
         },
         blend,
         duration_ms: None,
+        centre_each: false,
     })
 }
 
@@ -385,6 +704,11 @@ fn key_pair(
 fn key_clip(
     element: &ElementRecipe,
     (file, frames, decode_fps): (&String, u32, u32),
+    ClipWindow {
+        from_ms,
+        until_ms,
+        framing,
+    }: ClipWindow,
     cell_size: u32,
     inputs: BakeInputs<'_>,
     blend: ElementBlend,
@@ -417,13 +741,33 @@ fn key_clip(
             })
         }
     };
-    let spec = FrameSpec {
-        size: (2 * cell_size).min(MAX_DECODE_SIZE),
-        fps: decode_fps,
-        framing: BakeFraming::CenterCrop,
+    let size = match framing {
+        BakeFraming::CenterCrop => (2 * cell_size).min(MAX_DECODE_SIZE),
+        BakeFraming::Letterbox { .. } => MAX_DECODE_SIZE,
     };
-    let decoded = decode_framed_clip(inputs.ffmpeg, &path, spec, usize::MAX, &element.name)?;
-    let span = select_span(&decoded.frames, frames, decode_fps, &element.name)?;
+    let spec = FrameSpec {
+        size,
+        fps: decode_fps,
+        framing,
+    };
+    let mut decoded = decode_framed_clip(inputs.ffmpeg, &path, spec, usize::MAX, &element.name)?;
+    let frame_at = |ms: u32| {
+        usize::try_from(u64::from(ms) * u64::from(decode_fps) / 1000).unwrap_or(usize::MAX)
+    };
+    if let Some(until) = until_ms {
+        decoded.frames.truncate(frame_at(until));
+    }
+    let skipped = from_ms.map_or(0, frame_at).min(decoded.frames.len());
+    let mut span = select_span(
+        decoded.frames.get(skipped..).unwrap_or_default(),
+        frames,
+        decode_fps,
+        &element.name,
+    )?;
+    span.offset(skipped, decoded.frames.len());
+    span.from_ms = from_ms;
+    span.until_ms = until_ms;
+    span.framing = Some(framing).filter(|f| *f != BakeFraming::CenterCrop);
     let kept: Vec<&RgbaImage> = span
         .kept
         .iter()
@@ -439,7 +783,16 @@ fn key_clip(
         },
         blend,
         duration_ms: Some(span.duration_ms),
+        centre_each: false,
     })
+}
+
+/// The cuts and framing of a clip source.
+#[derive(Debug, Clone, Copy)]
+struct ClipWindow {
+    from_ms: Option<u32>,
+    until_ms: Option<u32>,
+    framing: BakeFraming,
 }
 
 /// Black-checks and keys the kept frames of a clip with one shared set of levels.

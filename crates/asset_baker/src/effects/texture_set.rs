@@ -507,11 +507,18 @@ fn verify_origin(
             ledger_line,
             ..
         } => match line(ledger, *ledger_line) {
-            Some(LedgerEvent::Downloaded {
-                sha256,
-                operation: op,
-                ..
-            }) if sha256 == clip_sha256 && op == operation => None,
+            Some(
+                LedgerEvent::Downloaded {
+                    sha256,
+                    operation: op,
+                    ..
+                }
+                | LedgerEvent::EffectClipDownloaded {
+                    sha256,
+                    operation: op,
+                    ..
+                },
+            ) if sha256 == clip_sha256 && op == operation => None,
             _ => unverified(format!(
                 "ledger line {ledger_line} is not the download of clip {clip_sha256}"
             )),
