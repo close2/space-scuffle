@@ -90,6 +90,23 @@ pub enum EffectCatalogError {
         /// Version this client reads.
         expected: u32,
     },
+    /// A ramp key has a colour or opacity channel outside 0 to 1. Effects are drawn without
+    /// tone mapping on a camera with no HDR target, so a value above 1.0 only clips (plan
+    /// D-11, decided in `WP6c`: no HDR and bloom; cores rely on additive layering and light).
+    #[error(
+        "'{path}': ramp '{ramp}' key {index} has a channel of {value}, outside 0 to 1 \
+         (effects are not tone-mapped and the battle camera has no HDR, plan D-11)"
+    )]
+    RampOutOfRange {
+        /// The file.
+        path: PathBuf,
+        /// Name of the ramp.
+        ramp: String,
+        /// Index of the key (0-based).
+        index: usize,
+        /// The offending value.
+        value: f32,
+    },
     /// A name does not resolve in its table.
     #[error("'{path}': {site} names unknown {kind} '{name}'")]
     UnknownName {

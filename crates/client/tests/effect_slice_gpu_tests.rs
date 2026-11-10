@@ -620,7 +620,15 @@ fn decal_margin(effect: &Effect, subject: &LabSubject, catalog: &EffectCatalog) 
             let grow = (0..=20)
                 .map(|step| catalog.sample(layer.size_curve, step as f32 / 20.0, 1.0))
                 .fold(0.0, f32::max);
-            resolve_value(&layer.size, &subject.bound) * (1.0 + layer.size_jitter) * grow
+            let offset = layer
+                .placements
+                .iter()
+                .map(|placement| match placement {
+                    PlacementDef::Disc { radius, .. } => resolve_value(radius, &subject.bound),
+                    _ => 0.0,
+                })
+                .fold(0.0, f32::max);
+            offset + resolve_value(&layer.size, &subject.bound) * (1.0 + layer.size_jitter) * grow
         })
         .fold(0.0, f32::max)
 }

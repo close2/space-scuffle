@@ -338,7 +338,18 @@ fn unordered_curve_and_ramp_keys_are_refused() {
     assert!(
         matches!(&error, EffectCatalogError::UnorderedKeys { .. }),
         "{error}"
+    ); // D-11 (WP6c): no HDR, so a ramp channel above 1.0 is refused, naming ramp and key.
+    let text = vocabulary(&manifest, "", "", "").replace(
+        r#""blue": [(0.0, (0.0, 0.0, 1.0, 1.0)), (1.0"#,
+        r#""blue": [(0.0, (0.0, 0.0, 1.5, 1.0)), (1.0"#,
     );
+    let error = load(dir.path(), &text).expect_err("ramp above 1.0");
+    match &error {
+        EffectCatalogError::RampOutOfRange {
+            ramp, index, value, ..
+        } => assert_eq!((ramp.as_str(), *index, *value), ("blue", 0, 1.5)),
+        other => panic!("expected RampOutOfRange, got {other}"),
+    }
 }
 
 #[test]

@@ -1,10 +1,14 @@
 Effect contact sheet of 'acid_burst' (plan 2026-11-09-effect-visualization §6.5), made by
 `battle_capture --effect-lab acid_burst` on the production effect plugin and shaders.
 Bindings: SplashFull=2.2, SplashMid=2.2, SplashReach=2.2. Lifetime: 6.000 s. Capture 1280x720, battle camera at 58° pitch.
+Camera: shipped camera (no HDR, no bloom).
 acid_burst_contact.png columns: ages 0 (0.000 s), 0.03 (0.180 s), 0.08 (0.480 s), 0.15 (0.900 s), 0.3 (1.800 s), 0.5 (3.000 s), 0.75 (4.500 s), 1 (6.000 s).
 Rows: bright ground default zoom, the same with the 1-unit grid and the bound radii (red full
 damage, yellow reach; for a line, the line and the full radius at each search point), bright
 close zoom, its reference, dark default, its reference, dark close, its reference.
-Default-zoom cells show the middle half of the frame, close-zoom cells its middle three quarters.
+Default-zoom cells show the middle half of the frame, close-zoom cells its middle three quarters
+(a line's close-zoom cells the whole frame).
 acid_burst_sequence.png: the first 3 s on the bright ground at the default zoom, one frame every
 40 ms, read left to right, top to bottom.
+Driver: lavapipe (Mesa software Vulkan, the CI reference), debug build, 2026-11-10; review round 1 of WP6c
+(docs/evidence/effects/review/slice_review.md). Round 0 (WP6b, radv) is in commit 1eaaf64.

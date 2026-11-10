@@ -109,12 +109,37 @@ struct Resolver<'a> {
 }
 
 impl Resolver<'_> {
-    /// Bakes every ramp.
+    /// Bakes every ramp after checking that every channel lies in 0 to 1 (D-11).
     fn ramps(&self, file: &EffectsFile) -> Result<Vec<Ramp>, EffectCatalogError> {
         file.ramps
             .iter()
-            .map(|(name, keys)| Ramp::bake(keys).map_err(|bad| self.unordered(name, bad.0)))
+            .map(|(name, keys)| {
+                self.ramp_in_range(name, keys)?;
+                Ramp::bake(keys).map_err(|bad| self.unordered(name, bad.0))
+            })
             .collect()
+    }
+
+    /// Fails on the first channel of `keys` outside 0 to 1.
+    fn ramp_in_range(
+        &self,
+        name: &str,
+        keys: &[super::schema::RampKey],
+    ) -> Result<(), EffectCatalogError> {
+        for (index, (_, (red, green, blue, opacity))) in keys.iter().enumerate() {
+            if let Some(value) = [*red, *green, *blue, *opacity]
+                .into_iter()
+                .find(|value| !(0.0..=1.0).contains(value))
+            {
+                return Err(EffectCatalogError::RampOutOfRange {
+                    path: self.path.to_path_buf(),
+                    ramp: name.to_owned(),
+                    index,
+                    value,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Builds every curve.

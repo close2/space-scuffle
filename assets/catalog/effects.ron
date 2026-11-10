@@ -19,31 +19,34 @@
         "effects/fx_ground.texture.ron",
         "effects/fx_noise.texture.ron",
     ],
-    // Colour ramps: (position 0..1, (r, g, b, opacity)); opacity 0 is additive. The position
+    // Colour ramps: (position 0..1, (r, g, b, opacity)); opacity 0 is additive. Every channel
+    // lies in 0..1: effects are not tone-mapped and the battle camera has no HDR or bloom (plan
+    // D-11, decided in WP6c, docs/evidence/effects/review/hdr_bloom_decision.md); hot cores
+    // reach display white through additive layering and the light block. The position
     // is the element's shading times the layer's `ramp_curve`, so a falling ramp curve cools
     // an element from its hot end towards its dark end.
     ramps: {
         // White-hot flash of a detonation (additive).
         "blast_flash": [
             (0.00, (0.00, 0.00, 0.00, 0.0)),
-            (0.25, (1.60, 0.80, 0.30, 0.0)),
-            (0.60, (4.00, 2.80, 1.40, 0.0)),
-            (1.00, (6.00, 5.40, 4.60, 0.0)),
+            (0.25, (1.00, 0.62, 0.22, 0.0)),
+            (0.60, (1.00, 0.86, 0.55, 0.0)),
+            (1.00, (1.00, 1.00, 0.92, 0.0)),
         ],
         // Fireball: dim parts are sooty and partly opaque, bright parts glow additively.
         "blast_fire": [
             (0.00, (0.00, 0.00, 0.00, 0.00)),
             (0.08, (0.020, 0.016, 0.012, 0.55)),
             (0.25, (0.30, 0.07, 0.02, 0.35)),
-            (0.50, (1.30, 0.42, 0.07, 0.05)),
-            (0.75, (2.60, 1.40, 0.38, 0.0)),
-            (1.00, (4.20, 3.20, 1.90, 0.0)),
+            (0.50, (0.85, 0.30, 0.05, 0.05)),
+            (0.75, (1.00, 0.62, 0.16, 0.0)),
+            (1.00, (1.00, 0.92, 0.60, 0.0)),
         ],
         // Shock front on the ground: dust, half opaque, hot where dense.
         "blast_ring": [
             (0.00, (0.00, 0.00, 0.00, 0.00)),
-            (0.50, (0.24, 0.15, 0.08, 0.35)),
-            (1.00, (0.90, 0.60, 0.30, 0.15)),
+            (0.50, (0.35, 0.22, 0.12, 0.45)),
+            (1.00, (1.00, 0.75, 0.40, 0.25)),
         ],
         // Smoke after the blast (alpha).
         "blast_smoke": [
@@ -55,7 +58,7 @@
         "ember": [
             (0.00, (0.00, 0.00, 0.00, 0.0)),
             (0.50, (0.55, 0.12, 0.02, 0.0)),
-            (1.00, (1.80, 0.70, 0.15, 0.0)),
+            (1.00, (1.00, 0.70, 0.15, 0.0)),
         ],
         // Burn mark (alpha).
         "scorch": [
@@ -73,15 +76,15 @@
         "sparks": [
             (0.00, (0.00, 0.00, 0.00, 0.0)),
             (0.40, (0.90, 0.25, 0.04, 0.0)),
-            (0.80, (2.40, 1.30, 0.40, 0.0)),
-            (1.00, (4.00, 3.00, 1.60, 0.0)),
+            (0.80, (1.00, 1.00, 0.40, 0.0)),
+            (1.00, (1.00, 1.00, 1.00, 0.0)),
         ],
         // Glowing acid (additive).
         "acid_glow": [
             (0.00, (0.00, 0.00, 0.00, 0.0)),
             (0.35, (0.05, 0.22, 0.01, 0.0)),
             (0.75, (0.25, 0.75, 0.08, 0.0)),
-            (1.00, (0.80, 1.60, 0.35, 0.0)),
+            (1.00, (0.80, 1.00, 0.35, 0.0)),
         ],
         // Acid front racing over the ground (half opaque, so it reads on bright and dark ground).
         "acid_front": [
@@ -94,14 +97,14 @@
             (0.00, (0.00, 0.00, 0.00, 0.00)),
             (0.25, (0.04, 0.16, 0.01, 0.60)),
             (0.60, (0.22, 0.70, 0.06, 0.35)),
-            (1.00, (0.90, 1.80, 0.40, 0.00)),
+            (1.00, (0.90, 1.00, 0.40, 0.00)),
         ],
         // Acid stain on the ground: bright and wet when fresh, dark as the ramp curve cools it.
         "acid_stain": [
-            (0.00, (0.008, 0.025, 0.003, 0.80)),
-            (0.45, (0.035, 0.13, 0.010, 0.85)),
-            (0.75, (0.10, 0.34, 0.03, 0.80)),
-            (1.00, (0.30, 0.75, 0.08, 0.60)),
+            (0.00, (0.006, 0.020, 0.002, 0.85)),
+            (0.45, (0.020, 0.085, 0.006, 0.88)),
+            (0.75, (0.08, 0.30, 0.02, 0.80)),
+            (1.00, (0.35, 0.85, 0.10, 0.55)),
         ],
         // Acid vapour (alpha, faint).
         "acid_vapour": [
@@ -111,7 +114,7 @@
         // Bone spines (alpha).
         "spine_bone": [
             (0.00, (0.010, 0.006, 0.004, 1.0)),
-            (0.50, (0.20, 0.11, 0.05, 1.0)),
+            (0.50, (0.12, 0.065, 0.03, 1.0)),
             (1.00, (0.78, 0.62, 0.40, 1.0)),
         ],
         // Ground cracks (alpha, dark).
@@ -170,15 +173,14 @@
         // Erosion: from the start, slowly at first.
         "erode_rise": [(0.00, 0.00, EaseInQuad), (1.00, 1.00, Linear)],
         // Erosion: a front already broken up, eaten away as it ends.
-        "front_break": [(0.00, 0.30, Linear), (0.40, 0.36, EaseInQuad), (1.00, 1.00, Linear)],
+        "front_break": [(0.00, 0.15, Linear), (0.40, 0.22, EaseInQuad), (1.00, 1.00, Linear)],
         // Erosion of a ground mark at the end of its life.
         "erode_tail": [(0.00, 0.00, Linear), (0.70, 0.00, EaseInQuad), (1.00, 1.00, Linear)],
         // Flipbook position: start at the first frame and hold it (a flash from the fireball).
         "first_frame": [(0.00, 0.00, Linear), (1.00, 0.10, Linear)],
-        // Flipbook position: the crown already half open at the event, open fully, hold.
-        "crown_open": [(0.00, 0.45, EaseOutQuad), (0.45, 1.00, Linear), (1.00, 1.00, Linear)],
-        // Flipbook position: spines erupt fast, hold, and retract by playing backwards.
-        "spine_erupt": [(0.00, 0.20, EaseOutCubic), (0.28, 1.00, Linear), (0.62, 1.00, EaseInQuad), (1.00, 0.05, Linear)],
+        // Flipbook position: spines erupt fast (full height 75 ms after their point's event,
+        // within two presentation frames), hold, and retract by playing backwards.
+        "spine_erupt": [(0.00, 0.35, EaseOutCubic), (0.10, 1.00, Linear), (0.62, 1.00, EaseInQuad), (1.00, 0.05, Linear)],
         // Particle opacity: full, then out at the end of life.
         "particle_fade": [(0.00, 1.00, Linear), (0.70, 1.00, EaseInQuad), (1.00, 0.00, Linear)],
         // Particle opacity: puff in, then out.
@@ -273,9 +275,10 @@
             ],
         ),
         // Baneling analogue: an acid burst. The acid front stops exactly at the reach
-        // (Critical); light, ground flash, crown, droplets, vapour and a drying stain carry the
-        // look. The fizz flipbook of §5.5 (`acid_bubbles`) is not shipped (WP6a); the stain's
-        // wet highlights take its place.
+        // (Critical); light, ground flash, droplets, vapour and a drying stain carry the look.
+        // The fizz flipbook of §5.5 (`acid_bubbles`) is not shipped (WP6a); the stain's wet
+        // highlights take its place. The `acid_crown` card was dropped in the WP6c review: seen
+        // from the battle camera its symmetric silhouette read as a flat glyph, not a splash.
         "acid_burst": (
             class: Major,
             event: Splash,
@@ -292,20 +295,20 @@
                 ),
                 (
                     block: Ring(texture: "smoke_puff", ramp: "acid_front", orient: Ground,
-                        thickness: 0.12, erosion: "front_break", mapping: Polar, height: 0.03),
+                        thickness: 0.18, erosion: "front_break", mapping: Polar, height: 0.03),
                     radius: (from: (bind: SplashFull, scale: 0.25), to: (bind: SplashReach, scale: 1.0),
                         curve: "front"),
                     duration: 0.40, curve: "hold", priority: Critical,
                 ),
-                (
-                    block: Sprite(texture: "acid_crown", ramp: "acid_glow", soft_depth: 0.3,
-                        rotation: Mirror, erosion: "erode_late", frame_curve: "crown_open", lift: 0.55),
-                    size: (bind: SplashReach, scale: 0.8), duration: 0.7, curve: "punch",
-                ),
                 (block: Particles(emitter: "acid_droplets"), size: (bind: SplashReach, scale: 0.3)),
                 (
+                    // Three overlapping splats a third of the reach off the centre: one splat's
+                    // body covers about three quarters of its texture and its variants are
+                    // lopsided, so a single one left part of the damaged disc bare (WP6c review);
+                    // three fill the disc to about the reach, with a ragged rim.
                     block: Decal(texture: "acid_splat", ramp: "acid_stain", erosion: "erode_tail", depth: 0.6),
-                    size: (bind: SplashReach, scale: 1.0), size_curve: "stain_spread",
+                    placement: Disc(count: 3, radius: (bind: SplashReach, scale: 0.3)),
+                    size: (bind: SplashReach, scale: 0.95), size_jitter: 0.1, size_curve: "stain_spread",
                     ramp_curve: "dry", duration: 6.0, curve: "stain_in",
                 ),
                 (
@@ -369,12 +372,17 @@
         ),
     },
     // Pool capacities (sized at load, never grown in a battle) and level of detail (§5.6).
+    // Sized in WP6c to the measured peak of the stress run (`frame_budget --effect-stress 200`:
+    // 200 splashes per second round-robin over the slice's effects, about 1 100 live effects
+    // with the 8 s scorch and 6 s stain): no effect refused and no Critical instance without a
+    // slot. The class caps stay low, so in such a crowd the Detail layers of the oldest Major
+    // effects retire (eroded out) and the Critical layers carry the picture.
     budget: (
         particles: 30000,
-        sprites: 2048,
-        decals: 512,
+        sprites: 4096,
+        decals: 2048,
         lights: 16,
-        effects: 480,
+        effects: 1536,
         classes: { Major: 96, Minor: 256, Ambient: 128 },
         min_screen_px: 6.0,
         full_particle_px: 96.0,
