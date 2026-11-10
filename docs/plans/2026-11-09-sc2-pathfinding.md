@@ -760,3 +760,22 @@ checksum are re-recorded with their traced causes.
 **Register IDs.** The orchestrator's numbering replaces §D-9's: B-99 (corner rewrite and empty-leg handoff), B-100
 (a body parked on a corner), B-101 (tier radius at corners, WP4), B-102 (grid corridor in place of the triangle mesh,
 Part B).
+
+## Amendment 2 (Part B switch, 2026-11-10): orchestrator decisions
+
+Short note under charter §6, recorded before WP9 on the Part B report (evidence, "Part B, WP5 to WP8").
+
+1. **Turn emission before the switch.** WP8 found mesh polylines longer than the grid's by more than 1 % on 12 of
+   790 (radius 0.375) and 49 of 793 (radius 0.5) canyon pairs, worst 3.08 (a portal-midpoint fallback). Before WP9
+   the cause is confirmed on the worst pairs and the turns are emitted more tightly, exact and deterministic, with
+   the oracle agreement kept (every route within 1 % of the exact disc oracle, worst at most 1.01 on the seeded
+   set). Acceptance: on the WP8 comparison at most 1 % of pairs longer than the grid by more than 1 %, none by more
+   than 5 %, and every fallback counted and explained. This replaces D-6's "two tangent points above 45 degrees, one
+   point on the bisector otherwise".
+2. **Local mesh repair is out of scope for this round.** The shipped maps are 64×64 and rebuild in under 0.9 ms;
+   a 256×256 map of tiled canyons rebuilds in about 14 ms (Part B evidence). R-3's local repair stays an open item
+   for maps above 64×64 and is not a condition of WP9.
+3. **The mesh's goal check is accepted.** The mesh refuses a goal where the unit's disc does not fit, where the grid
+   tested only the goal cell's clearance tier. This is StarCraft II-like (a unit cannot stand where its body does
+   not fit) and is accepted. A refused goal goes through the unreachable-move rule (Q0052 S-4, Q0006: the unit
+   walks to the nearest reachable point), and WP9 shows that such orders still end cleanly.
