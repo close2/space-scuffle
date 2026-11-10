@@ -42,10 +42,11 @@ mod arena;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use sim_map::{
-    CellFlags, CliffLevel, GameMap, LaneCut, LaneWord, MapFile, PathRequest, PathRequestWithVision,
-    Pathfinder,
+    CellFlags, CliffLevel, GameMap, LaneCut, LaneWord, MapError, MapFile, PathRequest,
+    PathRequestWithVision, PathResult, Pathfinder,
 };
 use sim_types::{SimScalar, SimVec2};
+use xxhash_rust::xxh64::Xxh64;
 
 /// Body radii of H-4: 0.375 and 0.5 world units.
 const RADII: [SimScalar; 2] = [SimScalar::from_raw(3 << 29), SimScalar::from_raw(1 << 31)];
@@ -53,7 +54,9 @@ const RADII: [SimScalar; 2] = [SimScalar::from_raw(3 << 29), SimScalar::from_raw
 const ROUTE_SEED: u64 = 0x1a7e_0000_0000_0001;
 /// Seed of the leg-splitting corpus.
 const SPLIT_SEED: u64 = 0x1a7e_0000_0000_0002;
-/// Route requests per map and radius in the H-3b corpus.
+/// Seed of the digest corpus.
+const DIGEST_SEED: u64 = 0x1a7e_0000_0000_0003;
+/// Route requests per map and radius in the H-3b and H-4 corpora.
 const ROUTES_PER_MAP: usize = 150;
 
 /// A point in whole and half cells: `(2x, 2y)` halves.
@@ -422,7 +425,7 @@ fn degenerate_legs_on_a_shipped_cut_follow_the_perturbation_rule() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// H-3b: routes and their channels.
+// H-3b and H-4: routes, channels and the restricted search on the shipped maps.
 // ---------------------------------------------------------------------------------------------
 
 #[test]
@@ -451,4 +454,193 @@ fn a_routes_word_equals_its_channels_midpoint_word() {
         }
         assert_eq!(crossing > 10, has_cuts, "routes crossing cuts: {crossing}");
     }
+}
+
+#[test]
+fn restricted_to_its_own_lane_the_search_returns_the_unrestricted_route() {
+    for map in [canyon(), arena_map(), nested_map()] {
+        let mut pathfinder = Pathfinder::new(&map);
+        let mut rng = ChaCha8Rng::seed_from_u64(ROUTE_SEED);
+        let mut compared = 0;
+        for radius in RADII {
+            for _ in 0..ROUTES_PER_MAP {
+                let (start, goal) = (standable(&map, &mut rng), standable(&map, &mut rng));
+                let request = request(start, goal, radius);
+                let free = pathfinder.find_path_with_vision(&map, &request);
+                let lane = free.as_ref().map_or_else(
+                    |_| LaneWord::empty(),
+                    |r| pathfinder.lane_word(&r.waypoints),
+                );
+                let restricted = pathfinder.find_path_in_lane(&map, &request, &lane);
+                if free.is_ok() {
+                    compared += 1;
+                    assert_eq!(restricted, free, "{start:?} -> {goal:?} radius {radius}");
+                } else if let Err(MapError::InvalidStart(_) | MapError::InvalidGoal(_)) = free {
+                    assert_eq!(restricted, free, "endpoint errors are the search's");
+                }
+            }
+        }
+        assert!(compared > 200, "{compared}");
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// H-5: the other side, and lanes that admit no route.
+// ---------------------------------------------------------------------------------------------
+
+fn legal(
+    pathfinder: &mut Pathfinder,
+    map: &GameMap,
+    request: &PathRequestWithVision<'_>,
+    route: &PathResult,
+) -> bool {
+    route
+        .waypoints
+        .windows(2)
+        .all(|pair| pathfinder.segment_is_passable(map, request, pair[0], pair[1]))
+}
+
+#[test]
+fn the_restricted_search_finds_the_other_side_of_an_island() {
+    let map = island_map(9);
+    let mut pathfinder = Pathfinder::new(&map);
+    let (start, goal) = (
+        half(ISLAND_START.0, ISLAND_START.1),
+        half(ISLAND_GOAL.0, ISLAND_GOAL.1),
+    );
+    let west = pathfinder.lane_word(&[start, half(8, 24), goal]);
+    let east = pathfinder.lane_word(&[start, half(40, 24), goal]);
+    for radius in RADII {
+        let request = request(start, goal, radius);
+        let free = pathfinder
+            .find_path_with_vision(&map, &request)
+            .expect("invariant: the island map is connected");
+        let own = pathfinder.lane_word(&free.waypoints);
+        let other = if own == west { &east } else { &west };
+        assert!(own == west || own == east, "{own:?}");
+        let routed = pathfinder
+            .find_path_in_lane(&map, &request, other)
+            .expect("invariant: both passages admit the disc");
+        assert_eq!(&pathfinder.lane_word(&routed.waypoints), other);
+        assert!(legal(&mut pathfinder, &map, &request, &routed));
+        assert!(routed.total_length >= free.total_length);
+    }
+}
+
+#[test]
+fn a_unit_too_big_for_the_lane_fails_cleanly() {
+    // The east passage is one cell wide: a disc of radius 0.5 fits it only exactly, 0.75 never.
+    let map = island_map(1);
+    let mut pathfinder = Pathfinder::new(&map);
+    let (start, goal) = (
+        half(ISLAND_START.0, ISLAND_START.1),
+        half(ISLAND_GOAL.0, ISLAND_GOAL.1),
+    );
+    let east = pathfinder.lane_word(&[start, half(31, 24), goal]);
+    let big = request(start, goal, SimScalar::from_raw(3 << 30));
+    assert_eq!(
+        pathfinder.find_path_in_lane(&map, &big, &east),
+        Err(MapError::NoPathFound { start, goal })
+    );
+    // The same unit still has its west route, and a small one has the east lane.
+    let free = pathfinder
+        .find_path_with_vision(&map, &big)
+        .expect("invariant: the west passage is wide");
+    assert_ne!(pathfinder.lane_word(&free.waypoints), east);
+    let small = request(start, goal, SimScalar::from_raw(1 << 30));
+    let narrow = pathfinder
+        .find_path_in_lane(&map, &small, &east)
+        .expect("invariant: a disc of radius 0.25 fits the one-cell passage");
+    assert_eq!(pathfinder.lane_word(&narrow.waypoints), east);
+}
+
+#[test]
+fn a_word_of_an_unreachable_or_unknown_obstacle_finds_no_route() {
+    let map = nested_map();
+    let mut pathfinder = Pathfinder::new(&map);
+    let (start, goal) = (half(4, 56), half(40, 56));
+    let request = request(start, goal, RADII[0]);
+    let unknown = LaneWord::from_letters(&[99]);
+    assert_eq!(
+        pathfinder.find_path_in_lane(&map, &request, &unknown),
+        Err(MapError::NoPathFound { start, goal })
+    );
+    // The island in the ring's pocket: its cut lies inside the closed pocket, so no route from
+    // outside the ring crosses it.
+    let pocket = pathfinder
+        .lane_cuts()
+        .cuts()
+        .iter()
+        .find(|c| (c.x, c.top) == (27, 25))
+        .map(|c| c.obstacle as i32 + 1)
+        .expect("invariant: the nested map has the pocket island");
+    assert_eq!(
+        pathfinder.find_path_in_lane(&map, &request, &LaneWord::from_letters(&[pocket])),
+        Err(MapError::NoPathFound { start, goal })
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// H-6: pinned digest of restricted routes.
+// ---------------------------------------------------------------------------------------------
+
+/// Digest of the restricted routes of [`digest_of_restricted_routes_is_pinned`]. It must be
+/// identical on every target, including `wasm32-wasip1`.
+const RESTRICTED_ROUTES_DIGEST: u64 = 0x971c_de38_d460_d2c2;
+
+fn eat_result(hasher: &mut Xxh64, result: &Result<PathResult, MapError>) {
+    match result {
+        Ok(route) => {
+            hasher.update(&[1]);
+            for point in &route.waypoints {
+                hasher.update(&point.x.raw().to_le_bytes());
+                hasher.update(&point.y.raw().to_le_bytes());
+            }
+            hasher.update(&route.total_length.raw().to_le_bytes());
+        }
+        Err(error) => {
+            hasher.update(&[0]);
+            hasher.update(format!("{error:?}").as_bytes());
+        }
+    }
+}
+
+#[test]
+fn digest_of_restricted_routes_is_pinned() {
+    let mut hasher = Xxh64::new(0);
+    let mut found = 0;
+    for map in [canyon(), arena_map()] {
+        let mut pathfinder = Pathfinder::new(&map);
+        let mut rng = ChaCha8Rng::seed_from_u64(DIGEST_SEED);
+        // The lanes of every cut's two sides: pass the cut's column just left or just right.
+        let mut lanes = vec![LaneWord::empty()];
+        for cut in pathfinder.lane_cuts().cuts() {
+            let letter = cut.obstacle as i32 + 1;
+            lanes.extend([
+                LaneWord::from_letters(&[letter]),
+                LaneWord::from_letters(&[-letter]),
+            ]);
+        }
+        for radius in RADII {
+            for _ in 0..60 {
+                let (start, goal) = (standable(&map, &mut rng), standable(&map, &mut rng));
+                let request = request(start, goal, radius);
+                for lane in &lanes {
+                    let result = pathfinder.find_path_in_lane(&map, &request, lane);
+                    if let Ok(route) = &result {
+                        found += 1;
+                        assert_eq!(&pathfinder.lane_word(&route.waypoints), lane);
+                    }
+                    eat_result(&mut hasher, &result);
+                }
+            }
+        }
+    }
+    assert!(found > 100, "{found}");
+    assert_eq!(
+        hasher.digest(),
+        RESTRICTED_ROUTES_DIGEST,
+        "digest {:#x}",
+        hasher.digest()
+    );
 }

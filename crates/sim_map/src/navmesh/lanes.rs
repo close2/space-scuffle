@@ -11,11 +11,14 @@
 //! in the same lane (the same homotopy class among the terrain obstacles) exactly when their
 //! words are equal.
 //!
+//! This module also owns the scratch state of the lane-restricted search (D-5): the trie that
+//! interns the words of search nodes, and the per-state visit lists keyed by word.
+//!
 //! # How it fits
 //! [`crate::Pathfinder`] builds [`LaneCuts`] once from the terrain and keeps them across structure
 //! rebuilds: structures are not obstacles for lanes, so the cuts are a pure function of the
-//! terrain. `Pathfinder::lane_word` reads them; nothing in the simulation calls it yet (WP1 is
-//! latent).
+//! terrain. `Pathfinder::lane_word` and `Pathfinder::find_path_in_lane` (`search.rs`) read them.
+//! Nothing in the simulation calls either yet (WP1 and WP2 are latent).
 //!
 //! # Invariants
 //! - **Symbolic perturbation.** A cut at lattice column `x` lies on the line `x + ε`, so a point
@@ -373,6 +376,144 @@ fn crosses_span(p: RawPoint, q: RawPoint, cut: &LaneCut) -> bool {
         && height_sign(p, q, column, level(cut.top)) <= 0
 }
 
+/// Root of the word trie: the empty word.
+pub(crate) const WORD_ROOT: u32 = 0;
+
+#[derive(Debug, Clone, Copy)]
+struct TrieNode {
+    parent: u32,
+    letter: i32,
+    depth: u32,
+    /// Length of the longest common prefix of this word and the target word.
+    matched: u32,
+    first_child: u32,
+    next_sibling: u32,
+}
+
+/// Scratch state of the lane-restricted search (D-5): the interned words of its nodes, and how
+/// often each `(triangle, entry edge, word)` state has been expanded.
+///
+/// Each reduced word is one trie node, so a word is a `u32` and two nodes have the same word
+/// exactly when their ids are equal. Appending a letter that cancels the last one returns the
+/// parent; the trie is therefore also the persistent word stack of the plan.
+#[derive(Debug, Default)]
+pub(crate) struct LaneScratch {
+    trie: Vec<TrieNode>,
+    target: Vec<i32>,
+    /// Head of each `(triangle, entry edge)` state's visit list, indexed like `MeshSearch::visits`.
+    visit_heads: Vec<u32>,
+    /// Visit lists: `(word, expansions, next entry)`.
+    visit_entries: Vec<(u32, u8, u32)>,
+}
+
+impl LaneScratch {
+    /// Starts a restricted search for `target`: empties the trie and interns the target's
+    /// prefixes; returns the target's id.
+    pub(crate) fn begin(&mut self, target: &LaneWord) -> u32 {
+        self.trie.clear();
+        self.trie.push(TrieNode {
+            parent: NONE,
+            letter: 0,
+            depth: 0,
+            matched: 0,
+            first_child: NONE,
+            next_sibling: NONE,
+        });
+        self.target.clear();
+        self.target.extend_from_slice(target.letters());
+        let mut id = WORD_ROOT;
+        for i in 0..self.target.len() {
+            id = self.push(id, self.target[i]);
+        }
+        id
+    }
+
+    /// Forgets every visit, for one TA* pass over a mesh of `triangles` triangles.
+    // PERFORMANCE RATIONALE:
+    // Why: The plan's visit cap is keyed by (triangle, entry edge, word). A dense array of
+    // 3 · triangles · words counters must be cleared or stamped per search and grows with the
+    // number of words, which K and the cut count bound only loosely.
+    // What: One head per (triangle, entry edge) state and a retained arena of (word, count, next)
+    // entries, appended as states are reached; a lookup scans the words seen at one state.
+    // Trade-off: A short list walk per expansion (one or two words at a state in practice)
+    // instead of one index, for memory linear in triangles plus expansions and no reallocation in
+    // steady state.
+    pub(crate) fn reset_visits(&mut self, triangles: usize) {
+        self.visit_heads.clear();
+        self.visit_heads.resize(3 * triangles, NONE);
+        self.visit_entries.clear();
+    }
+
+    /// The word `word` followed by `letter`, freely reduced.
+    pub(crate) fn push(&mut self, word: u32, letter: i32) -> u32 {
+        let node = self.trie[word as usize];
+        if word != WORD_ROOT && node.letter == -letter {
+            return node.parent;
+        }
+        let mut child = node.first_child;
+        while child != NONE {
+            let candidate = self.trie[child as usize];
+            if candidate.letter == letter {
+                return child;
+            }
+            child = candidate.next_sibling;
+        }
+        let on_target =
+            node.matched == node.depth && self.target.get(node.depth as usize) == Some(&letter);
+        let id = u32::try_from(self.trie.len()).unwrap_or(NONE);
+        self.trie.push(TrieNode {
+            parent: word,
+            letter,
+            depth: node.depth + 1,
+            matched: node.matched + u32::from(on_target),
+            first_child: NONE,
+            next_sibling: node.first_child,
+        });
+        self.trie[word as usize].first_child = id;
+        id
+    }
+
+    /// How many letters `word` has beyond its longest common prefix with the target (D-5's
+    /// pruning measure, `|word| − j`).
+    pub(crate) fn excess(&self, word: u32) -> u32 {
+        let node = self.trie[word as usize];
+        node.depth - node.matched
+    }
+
+    /// Counts one expansion of `word` in `state`; `false` when the state already had `cap`.
+    pub(crate) fn visit(&mut self, state: usize, word: u32, cap: u8) -> bool {
+        let mut entry = self.visit_heads[state];
+        while entry != NONE {
+            let (seen, count, next) = self.visit_entries[entry as usize];
+            if seen == word {
+                if count >= cap {
+                    return false;
+                }
+                self.visit_entries[entry as usize].1 = count + 1;
+                return true;
+            }
+            entry = next;
+        }
+        let id = u32::try_from(self.visit_entries.len()).unwrap_or(NONE);
+        self.visit_entries.push((word, 1, self.visit_heads[state]));
+        self.visit_heads[state] = id;
+        true
+    }
+
+    /// The letters of `word`, for diagnostics and tests.
+    #[cfg(test)]
+    fn letters(&self, mut word: u32) -> Vec<i32> {
+        let mut letters = Vec::new();
+        while word != WORD_ROOT {
+            let node = self.trie[word as usize];
+            letters.push(node.letter);
+            word = node.parent;
+        }
+        letters.reverse();
+        letters
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -532,5 +673,46 @@ mod tests {
             }]
         );
         Ok(())
+    }
+
+    #[test]
+    fn the_trie_interns_reduced_words_and_measures_the_excess() {
+        let mut scratch = LaneScratch::default();
+        let target = scratch.begin(&LaneWord::from_letters(&[1, -2]));
+        assert_eq!(scratch.letters(target), vec![1, -2]);
+        assert_eq!(scratch.excess(target), 0);
+        let one = scratch.push(WORD_ROOT, 1);
+        assert_eq!(
+            scratch.push(one, -2),
+            target,
+            "interned: the same word, the same id"
+        );
+        assert_eq!(
+            scratch.push(one, -1),
+            WORD_ROOT,
+            "cancellation returns the parent"
+        );
+        let stray = scratch.push(one, 3);
+        assert_eq!(scratch.excess(stray), 1);
+        let further = scratch.push(stray, 2);
+        assert_eq!(scratch.excess(further), 2);
+        let wrong_first = scratch.push(WORD_ROOT, -1);
+        assert_eq!(scratch.excess(wrong_first), 1);
+    }
+
+    #[test]
+    fn the_visit_cap_counts_per_state_and_word() {
+        let mut scratch = LaneScratch::default();
+        scratch.begin(&LaneWord::empty());
+        scratch.reset_visits(2);
+        let other = scratch.push(WORD_ROOT, 1);
+        assert!(scratch.visit(4, WORD_ROOT, 2));
+        assert!(scratch.visit(4, WORD_ROOT, 2));
+        assert!(!scratch.visit(4, WORD_ROOT, 2));
+        assert!(scratch.visit(4, other, 2), "another word has its own count");
+        assert!(
+            scratch.visit(5, WORD_ROOT, 2),
+            "another state has its own count"
+        );
     }
 }

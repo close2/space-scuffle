@@ -24,7 +24,7 @@
 use crate::error::{MapError, Result};
 use crate::grid::{CellFlags, GameMap};
 use crate::navmesh::lanes::{LaneCuts, LaneWord};
-use crate::navmesh::search::{MeshRoute, MeshSearch};
+use crate::navmesh::search::{LaneRestriction, MeshRoute, MeshSearch};
 use crate::navmesh::{self, NavMesh};
 use crate::vision::PlayerVisionMap;
 use sim_types::{SimScalar, SimVec2};
@@ -498,6 +498,49 @@ impl Pathfinder {
             waypoints: route.waypoints,
             total_length: route.total_length,
         })
+    }
+
+    /// Finds the route of [`Self::find_route_mesh`] restricted to the lane `lane` (plan
+    /// `2026-11-10-group-routing`, D-5): the shortest route the search finds whose lane word is
+    /// `lane`. With `lane` equal to the word of the unrestricted route, it returns that route.
+    ///
+    /// # Errors
+    /// As [`Self::find_path_with_vision`]; [`MapError::NoPathFound`] also when no route of that
+    /// lane admits the disc.
+    pub fn find_route_mesh_in_lane(
+        &mut self,
+        map: &GameMap,
+        request: &PathRequestWithVision<'_>,
+        lane: &LaneWord,
+    ) -> Result<MeshRoute> {
+        let mesh = self.navmesh.as_ref().ok_or(MapError::NoPathFound {
+            start: request.start,
+            goal: request.goal,
+        })?;
+        let restriction = LaneRestriction {
+            cuts: &self.lane_cuts,
+            bound: self.lane_edge_bound,
+            word: lane,
+        };
+        navmesh::search::find_route_in_lane(mesh, &mut self.mesh_search, map, request, &restriction)
+    }
+
+    /// Finds the route a unit walks, as [`Self::find_path_with_vision`] does, restricted to the
+    /// lane `lane` (plan `2026-11-10-group-routing`, D-5). See [`Self::find_route_mesh_in_lane`].
+    ///
+    /// # Errors
+    /// As [`Self::find_route_mesh_in_lane`].
+    pub fn find_path_in_lane(
+        &mut self,
+        map: &GameMap,
+        request: &PathRequestWithVision<'_>,
+        lane: &LaneWord,
+    ) -> Result<PathResult> {
+        self.find_route_mesh_in_lane(map, request, lane)
+            .map(|route| PathResult {
+                waypoints: route.waypoints,
+                total_length: route.total_length,
+            })
     }
 
     /// The segment predicate of routes and movement (plan D-7): whether a disc of
