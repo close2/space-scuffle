@@ -115,7 +115,7 @@ Status is `Working` (built, tested, in the shipped game), `Partial` (built but l
 | Tick and checksum | Working | The phase pipeline of §3; versioned checksum over persistent state and RNG | `crates/sim_core/tests/checksum_state_tests.rs` | none known |
 | Cross-platform determinism | Working | Golden replay on three native targets and wasm32 in CI; a second fixture pins vision before acquisition and route upkeep before arrival (`c271226`) | `crates/sim_core/tests/golden_replay_tests.rs` (`golden_replay_orders_reproduces_every_checkpoint`) | none known |
 | Combat | Working | Weapon timing with turn, damage point, cancelable backswing and cooldown; a hull-mounted weapon waits for its hull to face the target within the weapon's StarCraft II arc; turrets turning at their rates; shields and armour; splash; projectiles | `crates/sim_core/tests/stutter_step_tests.rs`, `crates/sim_core/tests/combat_correctness_tests.rs`, `crates/sim_core/tests/damage_and_shields_tests.rs` | Changed outcomes await the owner (Q0007); battle 33 investigated in [`docs/evidence/2026-11-03-battle-33-investigation.md`](docs/evidence/2026-11-03-battle-33-investigation.md), changes proposed in Q0035 to Q0041; how StarCraft II spaces melee attackers around a solid enemy is not researched: the contact rules of `d4109e2` stay for now; how StarCraft II spaces melee attackers is recorded bug B-50 in plan `2026-11-05-sc2-deviation-fixes` (WP16), follow-up F-1 of plan `2026-11-04-combat-sc2-alignment` (Q0035); Differences from StarCraft II are bugs, listed in the [bug register](#known-deviations-from-starcraft-ii-bugs) below |
-| Movement and pathfinding | Working | Grid clearance field, A* corridor and funnel, steering, push priority and Hold Position; hulls turn at StarCraft II's per-tick rates, at most once per tick, at a stationary rate on ticks the unit does not move, and units flagged `turn_before_move` turn in place before a step their hull does not face (Q0050); routes are never rewritten for bodies: a corner is passed by position and terrain view, and a unit steers past a body parked on its corner on the outside of the turn, and corner waypoints keep each unit's own radius plus 0.05 from the corner (B-99, B-100 and B-101 fixed, plan `2026-11-09-sc2-pathfinding` WP2 to WP4); a unit blocked by friends that will not yield waits instead of stepping into a gap it cannot pass, and an attacker walks round the crowd on a side it keeps; only idle, standing friends are pushed, at StarCraft II's push priorities; a burrowed body touches only burrowed bodies (B-104, B-105, B-48 and B-93 fixed, B-103 narrowed, plan `2026-11-09-friendly-blocking`) | `crates/sim_map/tests/funnel_tests.rs`, `crates/sim_map/tests/clearance_field_tests.rs`, `crates/sim_core/tests/push_priority_tests.rs`, `crates/sim_core/tests/second_line_tests.rs`, `crates/sim_core/tests/burrow_attack_tests.rs`, `crates/sim_core/tests/hull_turning_tests.rs`, `crates/sim_core/tests/route_following_tests.rs` | A move to an unreachable point walks to the nearest reachable one, by the owner's choice (Q0006); Differences from StarCraft II are bugs, listed in the [bug register](#known-deviations-from-starcraft-ii-bugs) below |
+| Movement and pathfinding | Working | Constrained Delaunay navigation mesh rebuilt on structure change, triangle A* with radius widths and the radius funnel (StarCraft II's reported design), each unit routed at its own radius (B-102 fixed, plan `2026-11-09-sc2-pathfinding` WP5 to WP10), steering, push priority and Hold Position; hulls turn at StarCraft II's per-tick rates, at most once per tick, at a stationary rate on ticks the unit does not move, and units flagged `turn_before_move` turn in place before a step their hull does not face (Q0050); routes are never rewritten for bodies: a corner is passed by position and terrain view, and a unit steers past a body parked on its corner on the outside of the turn, and corner waypoints keep each unit's own radius plus 0.05 from the corner (B-99, B-100 and B-101 fixed, plan `2026-11-09-sc2-pathfinding` WP2 to WP4); a unit blocked by friends that will not yield waits instead of stepping into a gap it cannot pass, and an attacker walks round the crowd on a side it keeps; only idle, standing friends are pushed, at StarCraft II's push priorities; a burrowed body touches only burrowed bodies (B-104, B-105, B-48 and B-93 fixed, B-103 narrowed, plan `2026-11-09-friendly-blocking`) | `crates/sim_map/tests/navmesh_tests.rs`, `crates/sim_map/tests/funnel_tests.rs`, `crates/sim_map/tests/clearance_field_tests.rs`, `crates/sim_core/tests/push_priority_tests.rs`, `crates/sim_core/tests/second_line_tests.rs`, `crates/sim_core/tests/burrow_attack_tests.rs`, `crates/sim_core/tests/hull_turning_tests.rs`, `crates/sim_core/tests/route_following_tests.rs` | A move to an unreachable point walks to the nearest reachable one, by the owner's choice (Q0006); Differences from StarCraft II are bugs, listed in the [bug register](#known-deviations-from-starcraft-ii-bugs) below |
 | Terrain, cliffs and ramps | Working | Cliff levels, ramps, the map format and its validation, and the client's terrain mesher; `MapDocument::encode` returns a typed error (`f53f73b`, tests `encode_rejects_*`); the terrain chunks cover the last dual column and row (`94130d5`, test `spawned_chunks_cover_every_dual_cell`); a ramp owns its footprint and the walls on its edges, so the upper floor ends where the ramp begins (`3baab60`, `ef26242`, plan `2026-11-09-ramp-geometry`) | `crates/sim_map/tests/ramp_traversal_tests.rs`, `crates/sim_map/tests/validation_tests.rs`, `crates/sim_map/tests/map_format_tests.rs`, `crates/client/tests/mesher_golden_tests.rs`, `crates/client/tests/terrain_tests.rs`, `crates/client/tests/ramp_geometry_tests.rs` | none known |
 | Simulation vision and watchtowers | Working | Per-player vision with high ground, air reveal and watchtowers | `crates/sim_map/tests/vision_tests.rs`, `crates/sim_core/tests/watchtower_tick_tests.rs` | none known |
 | Economy and gas | Working | Harvesting and income for minerals and gas; gas is enabled in the shipped game since its media was baked (Veo batch 1, `2c5ed5e`) | `crates/sim_core/tests/harvest_income_tests.rs`, `crates/client/tests/battle_card_path_tests.rs` (`gas_through_the_card_extractor_snap_harvest_and_income`) | none known |
@@ -207,31 +207,36 @@ detail differences of the plan's Amendment 2. Each work package removes its IDs 
 | B-96 | An order queued behind a switch into an anchoring mode stays at the front of the anchored unit's queue, and a `Move` there keeps it from acquiring targets; what the game does with such an order is not yet sourced | WP18 (research) |
 | B-97 | The Lurker analogue's burrow cannot be cancelled while it runs; the game's can (`Interruptible`, a Cancel button) | WP18 |
 | B-98 | Anchored units (sieged, burrowed) get no Stop or Hold Position on the card; the game's sieged tank has both | next client package |
-| B-102 | Routes come from a grid A* corridor with radius tiers, not a triangulated navigation mesh with each unit's own radius | [`2026-11-09-sc2-pathfinding`](docs/plans/2026-11-09-sc2-pathfinding.md) Part B |
 | B-103 | A blocked unit at the edge of a crowd still steps back and forth now and then (11 and 8 reversals per side in the showcase battle, 3 in the synthetic arc, where the game's stands), and a rear unit in a corridor that cannot reach range stands on 73 to 85 % of its ticks; the every-tick oscillation is fixed, and a walk at a crowd's edge no longer ends and restarts every other tick (narrowed, plan `2026-11-09-friendly-blocking` Amendments 4, 5 and 7) | [`2026-11-09-friendly-blocking`](docs/plans/2026-11-09-friendly-blocking.md), open |
+| B-113 | A unit that the crowd pushes inside its own radius of a route corner (0.30 from the vertex for a radius of 0.375) passes the corner's arc points by terrain view, its next leg cuts the corner and is refused, and it steps back and forth until the crowd frees it (one pulse bot, ticks 756 to 769 of the showcase battle; 454° of turning at the ramp E foot); the game's units slide round the corner | [`2026-11-09-sc2-pathfinding`](docs/plans/2026-11-09-sc2-pathfinding.md) Amendment 6, open |
 
 ---
 
 ## 5. Performance
 
 **Simulation throughput.** `cargo bench -p sim_core --bench throughput` runs each scenario of
-[`crates/sim_core/benches/throughput_scenarios.ron`](crates/sim_core/benches/throughput_scenarios.ron): a flat map,
+[`crates/sim_core/benches/throughput_scenarios.ron`](crates/sim_core/benches/throughput_scenarios.ron): on each map,
 two armies of the same unit in opposite corners attack-moving across it, 300 ticks per repeat, median of three
-repeats. Measured on 2026-11-03 on the development server (16 cores, shared, load average 7 to 11 during the
-runs), release build of `56f243f` plus Phase 9 WP13, which changes no simulation behaviour; each figure is the
-median of three runs of the benchmark:
+repeats. The flat maps measure steering and combat; `showcase_canyon` (64x64, cliffs, ramps and a central plateau)
+measures routing on the navigation mesh. Measured on 2026-11-10 on the development server (16 cores, shared, load
+average 5.5 to 6.5 during the runs), each run under the gate lock, release build of the tree that switched routes
+to the navigation mesh (plan `2026-11-09-sc2-pathfinding` WP10); each figure is the median of three runs of the
+benchmark, alternated with three runs of main `0157437` (grid corridor routes):
 
-| Map | Units | Ticks/s |
-|---|---:|---:|
-| 64x64 | 0 | 3395 |
-| 64x64 | 100 | 1187 |
-| 64x64 | 400 | 200 |
-| 128x128 | 400 | 225 |
-| 256x256 | 0 | 213 |
+| Map | Units | Ticks/s | Grid routes (`0157437`) |
+|---|---:|---:|---:|
+| 64x64 | 0 | 3392 | 3383 |
+| 64x64 | 100 | 1031 | 1031 |
+| 64x64 | 400 | 173 | 177 |
+| 128x128 | 400 | 203 | 209 |
+| 256x256 | 0 | 208 | 210 |
+| showcase_canyon | 400 | 127 | 145 |
 
-The slowest scenario runs at about eight times real time. CI's `throughput` job runs the benchmark with
-`--floor 25`, the tick rate: a scenario below real time fails the job, and every run's table is published in the
-job summary (charter §3.1).
+The flat rows are unchanged within noise; the canyon runs 12 % below grid routes (the plan's limit is 15 %,
+Amendment 5). The slowest scenario runs at about five times real time. The figures of 2026-11-03 at `56f243f`
+(3395, 1187, 200, 225 and 213 ticks/s on the flat rows) were measured on an older tree at load average 7 to 11. CI's
+`throughput` job runs the benchmark with `--floor 25`, the tick rate: a scenario below real time fails the job, and
+every run's table is published in the job summary (charter §3.1).
 
 The handover's higher figures (11,114 ticks/s on the empty map, 639 at 400 units) came from the owner's notebook
 and were never reproduced on this server at any commit. The 3 to 4 % residual at 400 units since `b263734` is code

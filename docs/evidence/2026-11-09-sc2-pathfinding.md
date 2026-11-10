@@ -441,3 +441,102 @@ for both players; ramp W's west-lane box better than the grid's west-lane box fo
 (at most 20 and 15), 0 give-ups, winner unchanged (player 0), matrix and battle 33 bit-identical, throughput. Not
 met: 10 of 10 in range at tick 900 (the battle has another shape: the armies meet, 6 of player 0's units survive, and
 at tick 900 they are between targets), and the ramp E maximum turn (454° against 287°). The switch stays held.
+
+## Amendment 6: landing the switch, WP10 and WP11 (2026-11-10)
+
+Plan Amendment 6 accepts the switch with the mirrored showcase targets. This section records the landing on the tree
+of main `0157437`, the switch, the mirrored targets, B-112 (registered above as B-106) and WP10. Tools: release builds
+of `route_trace` and `matchup_trace` per tree; outputs under `~/scratch/path-c/` (`trace/`, `m/`, `wp10/`; not
+committed).
+
+**Goldens, traced.** Three source copies were built and replayed tick by tick, dumping every entity's state after
+each tick (`Debug`) and the checksum: A, main `0157437` with the mirrored targets; B, A plus B-112; C, the branch
+head (the switch, the mirrored targets, B-112 and WP10). Every copy builds into its own target directory: cargo
+names workspace members by their path relative to the workspace, so copies sharing one directory reuse each other's
+artefacts.
+
+| Change | `golden_replay` | `golden_replay_orders` |
+|---|---|---|
+| Mirrored targets (A against main) | unchanged | unchanged |
+| B-112 (B against A) | first state difference on tick 200: pulse bot 1's movement memory restarts when its target dies, where it kept the chase's best distance (0.977 to `None`); reconverges; lasting from tick 500, when psi grey 26 ends a chase the same way (positions from tick 536); checkpoint 11 (ticks 501 to 550) on | unchanged |
+| The mesh (C against B) | from tick 5, the first tick "blue_infantry" walks: pulse bot 1's route rounds the corner near (30.3, 29.7) on two arc points of its own radius where the grid gave one corner waypoint; its first step differs by 0.0001; checkpoint 1 on | from tick 20, the column's first Move: pulse bot 9 rounds the corner near (33.6, 29.9) on two arc points where the grid's line ran straight; checkpoint 3 (ticks 21 to 30) on |
+
+With the mesh, `golden_replay_orders` lost its mid-route repath: the column no longer stalls at the foot of the ramp
+on its way to (32, 37), and the test's evidence check fails (0 repaths). Five goals for the column were tried, each
+also with route upkeep and the arrival decision of `MotionDraft::walk` swapped (the mutation the fixture exists to
+catch):
+
+| Column goal | Repaths | Swapped: repaths | Swap diverges at checkpoint |
+|---|---:|---:|---:|
+| (32, 37), as recorded | 0 | 0 | none |
+| (32, 35) | 2 | 4 | 34 |
+| (31, 34) | 5 | 2 | 17 |
+| **(32, 36)**, kept | 4 | 1 | 15 (ticks 141 to 150) |
+| (32, 39) | 4 | 3 | 14 |
+| (33, 38) | 1 | 3 | 20 |
+
+(32, 36) is the smallest change: one cell south, still just past the top of the ramp. Units 19 and 22 stall at the
+foot corner (34.0, 29.9) and are re-routed mid-order on ticks 140 and 172, unit 11 at the plateau corner on ticks 347
+and 496; the swap diverges within ten ticks of the first. Both fixtures are re-recorded (`d9d210a`) and pass in debug,
+release and on `wasm32-wasip1` (wasmtime). The sandbox checksum is unchanged: it hashes the spawned state only.
+
+**Showcase battle** on the head (`route_trace`, 1,800 ticks): identical to Amendment 5's "none" row: ramp W foot P0
+1.301 / 1.473, 157° / 301°; ramp E foot P0 1.198 / 1.300, 190° / 454° (6 units), P1 1.149 / 1.168, 81° / 152°;
+reversals 17 / 7; give-ups 0 / 0; player 0 wins at tick 1,693. Timeline (units leaving the trace): the first death on
+tick 333, the lane fight to tick 577 (player 0 loses two rhino beetles and two pulse bots, player 1 its ten
+attackers), player 1's workers on ticks 868 and 890, the hall on tick 1,693.
+
+**Matrix and battle 33** against a build of main `0157437`: the whole matrix (16 seeds) and battle 33 (68 seeds) are
+bit-identical; battle 33 blue 47, red 16, other 5 of 68. The fix-b movements recorded in Amendment 5 are already on
+main; B-112 and the switch move nothing.
+
+**Storyboard.** With the switch the armies meet in the west lane at about tick 310, during the old `units` and
+`smog` scenes, and the old `advance` (at 4x from tick 575, minimum 50 frames) would skip the lane fight. Restructured
+(`assets/captures/showcase.ron`):
+
+| Scene | Before | After | Render (frames, start tick) |
+|---|---|---|---|
+| title | paused, 125 | unchanged | 125, 0 |
+| terrain | 2x, 150 | paused, 150 | 150, 0 |
+| units | 1x, 150 | unchanged | 150, 1 |
+| smog | 1x, 125 | 1x, 100 | 100, 151 |
+| advance | 4x until combat, 50 to 500 | 1x until combat, 25 to 500 | 54, 251 |
+| clash | 1x, 300 | 1x, 270 | 270, 305 |
+| march (new) | | 4x until combat, 5 to 200, following one survivor; caption "Pathfinding" | 68, 578 |
+| assault (new) | | 2x, 200; caption "Assault" | 200, 848 |
+| closing | paused, 200 | unchanged | 200, 1,246 |
+
+`march` follows one survivor rather than the army: the army's centroid includes player 0's workers at home, so it lies
+on empty ground. The teaser loses the `advance` cut (its minimum is now 25 frames, below the old cut's 40) and gains a
+75-frame `assault` cut. Rendered on the RX 580 (`showcase render --driver radv`, one GPU lock per take), 1,317 frames,
+the site assembled within its budgets; `showcase_storyboard_tests` pass. Stills (640 wide) under
+`~/scratch/path-c/wp10/`: after, `show2/stills/f560.png` (advance: the column at the west lane, the enemy base and
+caption "Fog of war"), `f700.png` (clash in the lane), `f890.png` (march), `f950.png` and `f1100.png` (assault on the
+hall), `f1200.png` (closing card, before the result); before (the old storyboard rendered on the same tree, take
+only), `show-before/stills/f400.png` (the old `units` caption over the start of the lane fight, tick 426) and
+`f600.png` (the old `advance` at 4x over empty ground after the fight, tick 778). An intermediate
+render (`show1b`, advance at 4x with a 5-frame minimum and `march` following the army) showed the caption of
+`advance` for 8 frames and `march` over empty ground; both were changed.
+
+**WP10.** Removed from `crates/sim_map/src/pathfinding.rs` (1,780 to 499 lines): `find_path_grid`,
+`search_corridor`, `reconstruct_corridor`, `build_portals`, `add_orthogonal_portal`, `run_funnel`,
+`offset_corner_waypoint`, `smooth_connected_corridor`, `index_corridor`, `validate_endpoints`,
+`nearest_reachable_point_grid`, `grid_segment_is_passable`, their helpers, `PathfinderBuffers`, `PortalEdge`,
+`NO_HEAP_POS` and `UnitClearance`; `PathRequest` and `PathRequestWithVision` carry only the radius. The clearance
+field
+stays: `checksum.rs` hashes it. Placement does not read it (`grep`). `VALIDATION_PATH_CLEARANCE` becomes
+`VALIDATION_PATH_RADIUS` (0.625, the old Medium tier). `navmesh_measure` keeps the mesh size, build and route
+statistics; its grid-against-mesh columns are retired, and the WP8 table above is their last measurement. No
+behaviour change: every `sim_map` test, including the two recorded digests, passes unchanged.
+
+**Throughput** (`cargo bench -p sim_core --bench throughput`, release, each run under the gate lock, the head and
+main `0157437` alternated, six rounds; rounds 1 to 3 at load average 9 to 17 while other agents built, rounds 4 to 6
+at 5.5 to 6.5). Medians of rounds 4 to 6, head against main: 64x64 empty 3392 / 3383; 100 units 1031 / 1031; 400
+units 173 / 177; 128x128 400 units 203 / 209; 256x256 empty 208 / 210; `showcase_canyon` 400 units 127 / 145
+(−12 %, within Amendment 5's 15 %). Rounds 1 to 3 give the canyon 115 / 133 (one run at 83 under load). Every
+scenario is above 25 ticks/s. `DESIGN.md` §5 now carries the table of rounds 4 to 6.
+
+**Bookkeeping (WP11).** Register: B-102 closed (removed), B-113 added, open; B-112 was found and fixed within this
+plan and never registered open. The deviation-fix plan's Amendment 2 table marks B-102 fixed and its counts follow.
+The `DESIGN.md` Movement and pathfinding row names the mesh and lists `navmesh_tests.rs`. The plan's index row is
+Done.
