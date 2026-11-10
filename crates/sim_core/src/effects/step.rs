@@ -202,6 +202,7 @@ impl SimWorld {
             if let Ok(index) = self.effects.find_status(key.0, key.1) {
                 if SimScalar::from_num(elapsed) >= self.effects.statuses[index].expires_at {
                     self.effects.statuses.remove(index);
+                    self.refresh_status_modifiers(key.0);
                 }
             }
         }

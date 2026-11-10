@@ -251,7 +251,10 @@ impl SimWorld {
             _ => return Ok(None),
         };
 
-        if entity.is_loaded_in_transport() || entity.channeling_remaining_ticks > 0 {
+        if entity.is_loaded_in_transport()
+            || entity.channeling_remaining_ticks > 0
+            || entity.is_action_locked()
+        {
             return Ok(None);
         }
 
@@ -365,7 +368,9 @@ impl SimWorld {
             | AbilityEffectSpec::CloakToggle { .. }
             | AbilityEffectSpec::SwitchMode { .. } => {}
             AbilityEffectSpec::BlinkTeleport { max_range, .. } => {
-                let Some(dest) = target_pos else {
+                // A status may forbid Blink (plan `2026-11-10-spellcaster-mechanics` §6.3).
+                let Some(dest) = target_pos.filter(|_| !entity.status_modifiers().suppress_blink)
+                else {
                     return Ok(EffectAdmission::Refused);
                 };
                 if *max_range < SimScalar::ZERO {

@@ -609,6 +609,7 @@ impl SimWorld {
                 base.checked_mul(actor.speed_multiplier()?)
                     .ok_or(MovementMathError::Unrepresentable)
             })
+            .map(|speed| actor.status_modifiers().move_speed(speed))
             .map_err(|e| arithmetic(id, e))?;
         let step = accelerated_speed(speed, arch.acceleration, arch.max_speed, actor.velocity);
         let deceleration = (arch.deceleration < arch.max_speed).then_some(arch.deceleration);
@@ -673,7 +674,7 @@ impl SimWorld {
         ids.extend(
             self.entities
                 .values()
-                .filter(|e| e.is_alive() && !e.is_loaded_in_transport())
+                .filter(|e| e.takes_part_in_movement())
                 .map(|e| e.id),
         );
         self.movement.largest_radius = [SimScalar::ZERO; super::BODY_CLASSES];
@@ -683,7 +684,11 @@ impl SimWorld {
         for &id in &ids {
             match self.motion_entry(id) {
                 Ok(entry) => {
-                    if let Some(actor) = self.entities.get(&id).filter(|a| !a.is_mineral_walking) {
+                    // A body without collision (mining, or a status's suppression) is no
+                    // obstacle anyone steers around.
+                    if let Some(actor) = self.entities.get(&id).filter(|a| {
+                        !a.is_mineral_walking && !a.status_modifiers().suppress_collision
+                    }) {
                         let obstacle = self.obstacle_of(entry, actor);
                         let class = entry.policy.body_class();
                         self.movement.obstacles[class].push(obstacle);
@@ -862,6 +867,16 @@ impl SimWorld {
         mut proposal: MotionProposal,
     ) -> Result<ControlFlow<MotionAction, (MotionProposal, SimVec2)>, MovementInvariant> {
         let id = entry.id;
+        if actor.is_action_locked() {
+            // Stunned or locked after a cast (plan `2026-11-10-spellcaster-mechanics` D-7.4):
+            // the unit stands, keeping its orders for when the lock ends.
+            proposal.clear_route = false;
+            proposal.velocity = SimVec2::ZERO;
+            if proposal.anim == AnimState::Walk {
+                proposal.anim = AnimState::Idle;
+            }
+            return Ok(ControlFlow::Break(MotionAction::Commit(proposal)));
+        }
         if actor.is_on_hold() || actor.is_immobile || actor.channeling_remaining_ticks > 0 {
             // A cast queued behind an anchored unit's orders runs when it reaches the front
             // (plan `2026-11-09-client-mode-commands` D-6b): a sieged tank told to focus and
@@ -1087,6 +1102,7 @@ impl SimWorld {
         let max = weapon
             .max_range
             .checked_add(delta)
+            .map(|range| actor.status_modifiers().weapon_range(range, weapon.melee))
             .ok_or_else(|| arithmetic(id, MovementMathError::Unrepresentable))?;
         if max < SimScalar::ZERO || weapon.min_range < SimScalar::ZERO {
             return Err(arithmetic(id, MovementMathError::InvalidDistance));

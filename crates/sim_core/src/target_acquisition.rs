@@ -123,7 +123,7 @@ impl SimWorld {
         if !Self::is_damageable(target) {
             return false;
         }
-        !target.is_cloaked
+        !target.is_concealed()
             || Self::is_cloak_revealed(map, vision_maps, attacker_owner, target.position)
     }
 
@@ -304,7 +304,7 @@ impl SimWorld {
             .world_to_cell(attacker.position)
             .is_ok_and(|(cx, cy)| {
                 vision.visibility_at(cx, cy) == VisibilityState::Visible
-                    && (!attacker.is_cloaked || vision.is_detected(cx, cy))
+                    && (!attacker.is_concealed() || vision.is_detected(cx, cy))
             })
     }
 
@@ -417,6 +417,7 @@ impl SimWorld {
         );
         for (&id, entity) in &self.entities {
             if entity.channeling_remaining_ticks > 0
+                || entity.is_action_locked()
                 || entity.is_loaded_in_transport()
                 || !entity.is_completed
             {
@@ -524,7 +525,7 @@ impl SimWorld {
             return false;
         };
         let radii = arch.collision_radius + target_arch.collision_radius;
-        let reach = self.effective_weapon_range(weapon, &arch.slug, entity.owner) + radii;
+        let reach = self.entity_weapon_range(entity, weapon, &arch.slug) + radii;
         let distance = entity.position.distance(target.position);
         distance <= reach
             && (weapon.min_range <= SimScalar::ZERO || distance >= weapon.min_range + radii)
@@ -628,7 +629,7 @@ impl SimWorld {
         ]
         .into_iter()
         .flatten()
-        .map(|weapon| self.effective_weapon_range(weapon, &arch.slug, entity.owner))
+        .map(|weapon| self.entity_weapon_range(entity, weapon, &arch.slug))
         .fold(arch.scan_range, SimScalar::max)
     }
 
@@ -687,9 +688,9 @@ impl SimWorld {
                 continue;
             };
             let radii = arch.collision_radius + target_arch.collision_radius;
-            let scan_range =
-                arch.scan_range
-                    .max(self.effective_weapon_range(weapon, &arch.slug, entity.owner));
+            let scan_range = arch
+                .scan_range
+                .max(self.entity_weapon_range(entity, weapon, &arch.slug));
             if dist > scan_range + radii {
                 continue;
             }

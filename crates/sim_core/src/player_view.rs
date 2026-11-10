@@ -67,7 +67,7 @@ impl SimWorld {
                 .values()
                 .filter(|entity| {
                     entity.owner != viewer
-                        && entity.is_cloaked
+                        && entity.is_concealed()
                         && entity.is_alive()
                         && !entity.is_loaded_in_transport()
                         && Self::is_cloak_revealed(

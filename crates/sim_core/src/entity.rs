@@ -525,6 +525,10 @@ pub struct Entity {
     pub cast_lock_ticks: u16,
     /// The flight a `Displace` effect node gives the unit (D-8); `None` when not displaced.
     pub displacement: Option<crate::effects::Displacement>,
+    /// The combined modifiers of the statuses this unit carries: a cache of the fold of
+    /// `SimWorld::effects` for this entity, refreshed by the effect engine whenever one of its
+    /// statuses is inserted or removed, and so derived state, left out of the checksum.
+    pub(crate) status_modifiers: crate::effects::StatusModifiers,
     /// Hull rotation still allowed this tick, in binary angle units.
     ///
     /// Set to the archetype's `stationary_turn_rate` at the start of every movement phase
@@ -643,6 +647,7 @@ impl Entity {
             route_orders_issued: 0,
             cast_lock_ticks: 0,
             displacement: None,
+            status_modifiers: crate::effects::StatusModifiers::NEUTRAL,
             hull_turn_budget: archetype.turn_rate.raw(),
         }
     }
@@ -652,6 +657,36 @@ impl Entity {
     #[must_use]
     pub const fn transport_carrier(&self) -> Option<EntityId> {
         self.transport_carrier
+    }
+
+    /// The combined modifiers of the statuses this unit carries (plan
+    /// `2026-11-10-spellcaster-mechanics` D-3); neutral without statuses.
+    #[must_use]
+    pub const fn status_modifiers(&self) -> crate::effects::StatusModifiers {
+        self.status_modifiers
+    }
+
+    /// Whether the unit may not act of its own accord this tick: stunned by a status, locked
+    /// after a cast (`cast_lock_ticks`, D-7.4) or flown by a displacement (D-8). Such a unit
+    /// does not walk, attack, acquire or cast; its orders wait.
+    #[must_use]
+    pub const fn is_action_locked(&self) -> bool {
+        self.status_modifiers.stun || self.cast_lock_ticks > 0 || self.displacement.is_some()
+    }
+
+    /// Whether the unit is hidden by cloak or burrow now: cloaked and not revealed by a status
+    /// (plan D-11). A revealed unit is seen like any other unit wherever its owner's enemies
+    /// have vision.
+    #[must_use]
+    pub const fn is_concealed(&self) -> bool {
+        self.is_cloaked && !self.status_modifiers.reveal
+    }
+
+    /// Whether the unit takes part in the movement and collision phases: alive, in the world
+    /// and not flown by a displacement, whose position the effect engine drives (D-8).
+    #[must_use]
+    pub fn takes_part_in_movement(&self) -> bool {
+        self.is_alive() && !self.is_loaded_in_transport() && self.displacement.is_none()
     }
 
     /// Whether this actor is carried; derived solely from its authoritative carrier link.

@@ -364,6 +364,7 @@ fields!(Entity {
     displacement,
 } unhashed {
     hull_turn_budget,
+    status_modifiers,
 });
 wrapper!(EffectId, StatusId);
 fields!(AbilitySource { unit_type, ability });

@@ -347,6 +347,7 @@ SuiteCatalog(
             "sim_core/second_line_tests",
             "sim_core/snapshot_output_tests",
             "sim_core/spells_and_abilities_tests",
+            "sim_core/status_modifier_tests",
             "sim_core/stutter_step_tests",
             "sim_core/target_selection_tests",
             "sim_core/turret_tracking_tests",

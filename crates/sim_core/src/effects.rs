@@ -32,9 +32,11 @@
 mod actions;
 mod eval;
 mod filter;
+mod modifiers;
 pub mod state;
 mod step;
 
+pub use modifiers::StatusModifiers;
 pub use state::{
     ActiveMissile, ActivePersistent, ActiveStatus, Displacement, EffectWorld, PersistentAnchor,
 };
@@ -97,6 +99,16 @@ impl SimWorld {
     #[must_use]
     pub fn effect_node_visits(&self) -> u64 {
         self.effect_scratch.visits
+    }
+
+    /// Recomputes `id`'s [`StatusModifiers`] from its statuses. The engine calls it after every
+    /// insertion or removal of a status of `id`, which keeps the cache on the entity equal to
+    /// the fold of the status table.
+    pub(crate) fn refresh_status_modifiers(&mut self, id: EntityId) {
+        let folded = StatusModifiers::of(&self.effects, self.catalog.spells(), id);
+        if let Some(entity) = self.entities.get_mut(&id) {
+            entity.status_modifiers = folded;
+        }
     }
 
     /// Starts a walk of the spell catalog's node `root` with `context`, as a cast does.

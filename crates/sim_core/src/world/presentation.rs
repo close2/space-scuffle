@@ -184,7 +184,8 @@ pub(crate) fn weapon_source(
 /// burrowing cloak toggle (`CloakToggle { is_burrow: true }`); [`Concealment::Cloaked`] for any
 /// other concealment.
 pub(crate) fn concealment(entity: &Entity, arch: &UnitArchetype) -> Concealment {
-    if !entity.is_cloaked {
+    // A status's reveal shows the unit as seen (plan `2026-11-10-spellcaster-mechanics` D-11).
+    if !entity.is_concealed() {
         return Concealment::None;
     }
     let burrowed = match entity.active_mode.as_deref() {

@@ -174,8 +174,10 @@ impl SimWorld {
                 first.then(|| Frame::new(id, context, context.source_point))
             }
             EffectNode::RemoveStatus { status } => {
-                if let Ok(index) = self.effects.find_status(unit?, status) {
+                let unit = unit?;
+                if let Ok(index) = self.effects.find_status(unit, status) {
                     self.effects.statuses.remove(index);
+                    self.refresh_status_modifiers(unit);
                 }
                 None
             }
@@ -339,6 +341,7 @@ impl SimWorld {
                         context: context.retarget(EffectTarget::Unit(unit), context.source_point),
                     },
                 );
+                self.refresh_status_modifiers(unit);
                 Some(true)
             }
         }

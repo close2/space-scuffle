@@ -244,7 +244,8 @@ impl SimWorld {
             }
             .into());
         }
-        if passenger_busy(actor) {
+        // A status may forbid boarding (plan `2026-11-10-spellcaster-mechanics` §6.2, §6.3).
+        if passenger_busy(actor) || actor.status_modifiers().suppress_boarding {
             return Err(TransportAdmissionError::Busy(passenger));
         }
         let actor = self
