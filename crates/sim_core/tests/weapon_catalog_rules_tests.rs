@@ -1335,9 +1335,11 @@ const SC2_LINE_SPLASH: [LineRow; 3] = [
         sim_types::SplashLineOrigin::Attacker,
         sim_types::SplashLineAxis::Along,
         &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
-        // The spines' spacing is not applied yet (B-85).
-        0,
-        "LurkerMP and LurkerMPSearch, swarm EffectData:3010-3019, voidmulti EffectData:809, :821",
+        // 0.125 Normal s between spines (`PeriodicPeriodArray`, void EffectData:297-307) is
+        // 2.23 ticks; the owner's note on Q0064 allows 2 (B-85).
+        2,
+        "LurkerMP and LurkerMPSearch, swarm EffectData:3010-3019, voidmulti EffectData:809, :821; \
+         void EffectData:297-307",
     ),
     (
         "Hellion",
