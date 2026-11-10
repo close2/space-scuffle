@@ -938,3 +938,60 @@ presentation only.
 [Q0080](../questions/open/0080-effect-review-outcome.md): a third round for the two rejected effects, a changed
 approach (for example owner-provided art direction or reference images), or leaving them out. Register entries
 B-107 (now only partly addressed), B-108, B-109, B-110 and B-111 stay open, scheduled behind that answer.
+
+## Amendment 2: owner answers Q0075, Q0076, Q0078 and Q0080; review round 3, 2026-11-10
+
+**Decision note (charter §6, short note).** The owner answered the four questions this plan filed or depends on.
+This amendment records what changes and how it is tested; it changes no simulation state, golden replay or
+checksum (D-1 holds: every change below is in the client, the catalog's presentation data and the effect
+textures).
+
+| Question | Answer | What this plan does |
+|---|---|---|
+| [Q0080](../questions/open/0080-effect-review-outcome.md) | Option 1: continue the review loop for `acid_burst` and `spine_line`, **up to five rounds in all** before asking again; the WP7+ scale-out is unblocked | The WP6c stop rule of two failed rounds becomes **five**. Rounds 1 and 2 are spent; **round 3** works from the round-2 reviewer's ranked changes as the owner restated them (below). When round 3 accepts both effects, the scale-out re-enables them for `volatile_tick` and `burrow_scorpion` (presentation blocks back in `units.ron`); until then they stay unused (Amendment 1). |
+| [Q0076](../questions/open/0076-undetected-cloaked-enemies.md) | Option 1 plus StarCraft II's cues for burrowed units | D-5 is extended by rules R4 to R6 (below). |
+| [Q0078](../questions/open/0078-image-model-for-effect-textures.md) | Yes: target about **$25** for effect textures, cap **below $50**, within the $200 total; every call in the ledger | §6.6's image line becomes "target $25.25, cap < $50". Every request goes through `asset_baker effect-image`, which ledgers it. |
+| [Q0075](../questions/open/0075-veo-morph-and-mode-clips.md) | Option 2, up to $20 (target < $10) for morph and mode clips | WP13 is approved at that cap. **Not in round 3**: it runs in the scale-out. |
+
+**Round 3 changes (from [`independent_review_round2.md`](../evidence/effects/review/independent_review_round2.md)).**
+
+- `spine_line`: straight or gently tapering conical chitin spikes (new image-model stills), three to five per
+  clump splayed outward from a shared base, 0.6 to 0.9 units tall; a bright bone-ivory tip and rim light on the
+  newest clump for its first two to three frames, with a short light dust burst (the travelling focal point);
+  the churned earth and the fissure feathered over about 0.3 units at both ends (a per-layer `clip_feather` on
+  line-clipped decals); the leftover marks broken into one irregular scar (scattered, turned and varied crack
+  marks without the ring-shaped variant, churned earth stretched along the line so the patches merge); lighter,
+  shorter-lived churned earth for the crowd.
+- `acid_burst`: a liquid material for the stain (a `liquid` option on decals: value and thickness varied by
+  noise, a relief from the texture's thickness lit by an upper-left key light as a wet sheen that dries away,
+  darker pooling in the thick parts, a darker and more saturated wet rim); no evenly spaced dots; drying towards
+  olive from about 0.6 s; a ragged, noise-broken burst with larger dark-bodied globs instead of the bevelled pop;
+  a low vapour cloud rising at the centre; the stain kept (Critical) when the crowd budget retires Detail layers,
+  so no lone ring reads as a selection circle; no pale fringe.
+- `shell_impact` (accepted; must not regress): only the round-2 optional changes that are cheap and safe.
+
+**Concealment and visibility rules (D-5 extended, Q0076).**
+
+- **R4, cloaked:** an undetected cloaked enemy is drawn only as a faint refractive shimmer; it is not
+  selectable, targetable or inspectable and has no health bar (D-5 as before; tested again).
+- **R5, burrowed and moving:** an undetected burrowed enemy that is stationary and not attacking stays hidden.
+  A burrowed unit that moves underground leaves a ground-disturbance trail where the viewer sees the ground: a
+  new optional `moving` slot in a mode's presentation block (`modes: [(mode: "burrowed", moving:
+  Some("<effect>"))]`) names a `Mode` effect that the client lays at the unit's position at a fixed period while
+  its published velocity is not zero; the unit itself stays hidden and unpickable. No shipped burrowed mode can
+  move today, so no shipped unit names a trail yet; the rule is tested on a lab fixture.
+- **R6, burrowed attacker:** the attack effect of an undetected burrowed attacker (the spine line) is shown to
+  the viewer wherever the viewer sees it, from its origin, while the attacker stays hidden. The old rule (the
+  line spawned only if its first search point was in sight, because only point 0 spawned the effect) hid a line
+  whose first point was fogged but whose later points were in sight. Now every admitted search point of a line
+  contributes: the effect spawns once per line from any admitted point, anchored at the line's first point, and
+  each of its point-placed instances is drawn only at search points the viewer sees (a per-line visibility mask).
+
+**Tests.** Unit tests of the line grouping and the mask; `battle_fog_tests.rs` for R4 to R6; GPU tests through
+the harness where pixels matter (an undetected burrowed attacker's line draws pixels on visible ground and none
+on the attacker; a moving burrowed enemy draws its trail and no bubble); the slice's GPU tests with goldens
+re-recorded only for the effects whose look changed, each with its traced cause.
+
+**Gate.** After round 3's fixes the implementer writes the round-3 section of
+[`independent_review_packet.md`](../evidence/effects/review/independent_review_packet.md) (each round-2 finding
+mapped to what changed) and hands back; the orchestrator launches the independent round-3 review.
