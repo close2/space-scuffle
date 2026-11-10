@@ -284,6 +284,8 @@ SuiteCatalog(
             "client/lib",
             "client/battle_flipbook_tests",
             "client/editor_core_tests",
+            "client/effect_catalog_tests",
+            "client/effect_runtime_tests",
             "client/headless_tests",
             "client/round2_visual_tests",
             "client/skirmish_match_tests",
