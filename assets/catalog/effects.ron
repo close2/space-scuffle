@@ -3,18 +3,371 @@
 // missing texture element, unordered curve keys or a broken D-12 limit fails the load with an
 // error naming this file, the effect and the layer.
 //
-// The vertical slice's effects (WP6b) and texture sets (WP6a) are not authored yet, so the
-// sections are empty and the live battle draws nothing new.
+// Texture elements (assets/effects/*.texture.ron, PackedV1): R shading (the ramp's input),
+// G coverage, B erosion order. An element with several frames and no play time is a set of
+// variants: each drawn instance shows one, chosen by its hash.
+//
+// The vertical slice (WP6b): `shell_impact` (sieged Siege-Tank analogue splash), `acid_burst`
+// (Baneling analogue) and `spine_line` (Lurker analogue). Each marks its gameplay extent with
+// `Critical` layers bound to the simulation's radii or line; everything else is `Detail`.
 (
     format_version: 1,
     // Baked texture sets: paths of `<set>.texture.ron` manifests below the assets root.
-    textures: [],
-    // Colour ramps: (position 0..1, (r, g, b, opacity)); opacity 0 is additive.
-    ramps: {},
+    textures: [
+        "effects/fx_blast.texture.ron",
+        "effects/fx_acid.texture.ron",
+        "effects/fx_ground.texture.ron",
+        "effects/fx_noise.texture.ron",
+    ],
+    // Colour ramps: (position 0..1, (r, g, b, opacity)); opacity 0 is additive. The position
+    // is the element's shading times the layer's `ramp_curve`, so a falling ramp curve cools
+    // an element from its hot end towards its dark end.
+    ramps: {
+        // White-hot flash of a detonation (additive).
+        "blast_flash": [
+            (0.00, (0.00, 0.00, 0.00, 0.0)),
+            (0.25, (1.60, 0.80, 0.30, 0.0)),
+            (0.60, (4.00, 2.80, 1.40, 0.0)),
+            (1.00, (6.00, 5.40, 4.60, 0.0)),
+        ],
+        // Fireball: dim parts are sooty and partly opaque, bright parts glow additively.
+        "blast_fire": [
+            (0.00, (0.00, 0.00, 0.00, 0.00)),
+            (0.08, (0.020, 0.016, 0.012, 0.55)),
+            (0.25, (0.30, 0.07, 0.02, 0.35)),
+            (0.50, (1.30, 0.42, 0.07, 0.05)),
+            (0.75, (2.60, 1.40, 0.38, 0.0)),
+            (1.00, (4.20, 3.20, 1.90, 0.0)),
+        ],
+        // Shock front on the ground: dust, half opaque, hot where dense.
+        "blast_ring": [
+            (0.00, (0.00, 0.00, 0.00, 0.00)),
+            (0.50, (0.24, 0.15, 0.08, 0.35)),
+            (1.00, (0.90, 0.60, 0.30, 0.15)),
+        ],
+        // Smoke after the blast (alpha).
+        "blast_smoke": [
+            (0.00, (0.020, 0.019, 0.018, 0.55)),
+            (0.50, (0.10, 0.095, 0.09, 0.80)),
+            (1.00, (0.30, 0.28, 0.26, 0.85)),
+        ],
+        // Hot ground under the blast (additive embers).
+        "ember": [
+            (0.00, (0.00, 0.00, 0.00, 0.0)),
+            (0.50, (0.55, 0.12, 0.02, 0.0)),
+            (1.00, (1.80, 0.70, 0.15, 0.0)),
+        ],
+        // Burn mark (alpha).
+        "scorch": [
+            (0.00, (0.008, 0.007, 0.006, 0.80)),
+            (0.60, (0.030, 0.025, 0.020, 0.85)),
+            (1.00, (0.075, 0.060, 0.050, 0.85)),
+        ],
+        // Rock chunks, lit (alpha).
+        "debris": [
+            (0.00, (0.020, 0.018, 0.016, 1.0)),
+            (0.60, (0.16, 0.14, 0.12, 1.0)),
+            (1.00, (0.42, 0.37, 0.31, 1.0)),
+        ],
+        // Sparks, cooling over their life (additive).
+        "sparks": [
+            (0.00, (0.00, 0.00, 0.00, 0.0)),
+            (0.40, (0.90, 0.25, 0.04, 0.0)),
+            (0.80, (2.40, 1.30, 0.40, 0.0)),
+            (1.00, (4.00, 3.00, 1.60, 0.0)),
+        ],
+        // Glowing acid (additive).
+        "acid_glow": [
+            (0.00, (0.00, 0.00, 0.00, 0.0)),
+            (0.35, (0.05, 0.22, 0.01, 0.0)),
+            (0.75, (0.25, 0.75, 0.08, 0.0)),
+            (1.00, (0.80, 1.60, 0.35, 0.0)),
+        ],
+        // Acid front racing over the ground (half opaque, so it reads on bright and dark ground).
+        "acid_front": [
+            (0.00, (0.00, 0.00, 0.00, 0.00)),
+            (0.50, (0.04, 0.18, 0.01, 0.45)),
+            (1.00, (0.25, 0.80, 0.08, 0.30)),
+        ],
+        // Acid liquid: dark green body, glowing highlights.
+        "acid_liquid": [
+            (0.00, (0.00, 0.00, 0.00, 0.00)),
+            (0.25, (0.04, 0.16, 0.01, 0.60)),
+            (0.60, (0.22, 0.70, 0.06, 0.35)),
+            (1.00, (0.90, 1.80, 0.40, 0.00)),
+        ],
+        // Acid stain on the ground: bright and wet when fresh, dark as the ramp curve cools it.
+        "acid_stain": [
+            (0.00, (0.008, 0.025, 0.003, 0.80)),
+            (0.45, (0.035, 0.13, 0.010, 0.85)),
+            (0.75, (0.10, 0.34, 0.03, 0.80)),
+            (1.00, (0.30, 0.75, 0.08, 0.60)),
+        ],
+        // Acid vapour (alpha, faint).
+        "acid_vapour": [
+            (0.00, (0.010, 0.025, 0.006, 0.25)),
+            (1.00, (0.18, 0.40, 0.08, 0.40)),
+        ],
+        // Bone spines (alpha).
+        "spine_bone": [
+            (0.00, (0.010, 0.006, 0.004, 1.0)),
+            (0.50, (0.20, 0.11, 0.05, 1.0)),
+            (1.00, (0.78, 0.62, 0.40, 1.0)),
+        ],
+        // Ground cracks (alpha, dark).
+        "crack": [
+            (0.00, (0.004, 0.003, 0.002, 0.85)),
+            (1.00, (0.050, 0.035, 0.025, 0.90)),
+        ],
+        // Ground torn up along a line (alpha, dark earth).
+        "churn": [
+            (0.00, (0.020, 0.015, 0.010, 0.55)),
+            (1.00, (0.10, 0.075, 0.050, 0.65)),
+        ],
+        // Earth thrown open around an eruption (alpha, dense).
+        "burst_earth": [
+            (0.00, (0.010, 0.008, 0.005, 0.80)),
+            (1.00, (0.070, 0.050, 0.035, 0.88)),
+        ],
+        // Dust kicked up (alpha).
+        "dust": [
+            (0.00, (0.040, 0.034, 0.028, 0.35)),
+            (1.00, (0.30, 0.26, 0.21, 0.55)),
+        ],
+    },
     // Timing curves: (time 0..1, value, easing to the next key).
-    curves: {},
-    emitters: {},
-    effects: {},
+    curves: {
+        // Intensity: on at once, peak within 2 frames, eased fall-off.
+        "punch": [(0.00, 0.70, EaseOutCubic), (0.05, 1.00, Linear), (0.30, 0.90, EaseInQuad), (1.00, 0.00, Linear)],
+        // Intensity: a flash that starts at its peak.
+        "flash": [(0.00, 1.00, EaseOutQuad), (1.00, 0.00, Linear)],
+        // Intensity: on at once, held, fading only at the very end (erosion carries the exit).
+        "hold": [(0.00, 1.00, Linear), (0.85, 1.00, EaseInQuad), (1.00, 0.00, Linear)],
+        // Intensity: fades in over the first tenth, holds, fades at the end.
+        "swell": [(0.00, 0.00, EaseOutQuad), (0.12, 1.00, Linear), (0.80, 1.00, EaseInQuad), (1.00, 0.00, Linear)],
+        // Intensity of a front: full while it races out, then fading as it erodes.
+        "front_fade": [(0.00, 1.00, Linear), (0.40, 0.85, EaseInQuad), (1.00, 0.00, Linear)],
+        // Intensity of a splashed stain: there with the burst, long hold, out at the end.
+        "stain_in": [(0.00, 0.70, EaseOutQuad), (0.01, 1.00, Linear), (0.80, 1.00, EaseInQuad), (1.00, 0.00, Linear)],
+        // Intensity of a ground mark: in at once, long hold, out at the end.
+        "linger": [(0.00, 0.00, EaseOutQuad), (0.02, 1.00, Linear), (0.80, 1.00, EaseInQuad), (1.00, 0.00, Linear)],
+        // Size factor: a burst opening fast and still swelling.
+        "burst_grow": [(0.00, 0.62, EaseOutCubic), (0.30, 1.00, EaseOutQuad), (1.00, 1.15, Linear)],
+        // Size factor: a flash widening as it fades.
+        "flash_grow": [(0.00, 0.75, EaseOutCubic), (1.00, 1.25, Linear)],
+        // Size factor: smoke expanding.
+        "smoke_grow": [(0.00, 0.55, EaseOutQuad), (1.00, 1.40, Linear)],
+        // Size factor: a stain spreading to its size within a few frames.
+        "stain_spread": [(0.00, 0.80, EaseOutCubic), (0.012, 1.00, Linear), (1.00, 1.00, Linear)],
+        // Ring progress: a front racing out and stopping at its reach.
+        "front": [(0.00, 0.00, EaseOutCubic), (0.40, 1.00, Linear), (1.00, 1.00, Linear)],
+        // Ramp factor: cooling from hot to dark.
+        "cool": [(0.00, 1.00, EaseInOut), (0.15, 1.00, EaseInOut), (1.00, 0.45, Linear)],
+        // Ramp factor: a wet stain drying.
+        "dry": [(0.00, 1.00, EaseInOut), (0.08, 0.95, EaseInOut), (0.35, 0.68, Linear), (1.00, 0.60, Linear)],
+        // Erosion: nothing, then eating the element from its thin parts.
+        "erode_late": [(0.00, 0.00, Linear), (0.45, 0.00, EaseInQuad), (1.00, 1.00, Linear)],
+        // Erosion: from the start, slowly at first.
+        "erode_rise": [(0.00, 0.00, EaseInQuad), (1.00, 1.00, Linear)],
+        // Erosion: a front already broken up, eaten away as it ends.
+        "front_break": [(0.00, 0.30, Linear), (0.40, 0.36, EaseInQuad), (1.00, 1.00, Linear)],
+        // Erosion of a ground mark at the end of its life.
+        "erode_tail": [(0.00, 0.00, Linear), (0.70, 0.00, EaseInQuad), (1.00, 1.00, Linear)],
+        // Flipbook position: start at the first frame and hold it (a flash from the fireball).
+        "first_frame": [(0.00, 0.00, Linear), (1.00, 0.10, Linear)],
+        // Flipbook position: the crown already half open at the event, open fully, hold.
+        "crown_open": [(0.00, 0.45, EaseOutQuad), (0.45, 1.00, Linear), (1.00, 1.00, Linear)],
+        // Flipbook position: spines erupt fast, hold, and retract by playing backwards.
+        "spine_erupt": [(0.00, 0.20, EaseOutCubic), (0.28, 1.00, Linear), (0.62, 1.00, EaseInQuad), (1.00, 0.05, Linear)],
+        // Particle opacity: full, then out at the end of life.
+        "particle_fade": [(0.00, 1.00, Linear), (0.70, 1.00, EaseInQuad), (1.00, 0.00, Linear)],
+        // Particle opacity: puff in, then out.
+        "puff_fade": [(0.00, 0.00, EaseOutQuad), (0.20, 1.00, Linear), (0.60, 0.80, EaseInQuad), (1.00, 0.00, Linear)],
+    },
+    emitters: {
+        // Rock chunks thrown out of the crater, tumbling (one debris variant each).
+        "debris_chunks": (
+            spawn: Burst(count: (base: 10, per_unit_radius: 10.0, max: 28)), shape: Disc,
+            speed: (3.0, 6.5), cone_deg: 50.0, gravity: 16.0, drag: 1.0, lifetime: (0.55, 0.95),
+            size: (0.035, 0.085), texture: "debris_atlas", orient: Camera, rotation: Random,
+            ramp: "debris", curve: "particle_fade",
+        ),
+        // Hot sparks: the droplet's teardrop (drawn along +x) stretched along the velocity.
+        "blast_sparks": (
+            spawn: Burst(count: (base: 12, per_unit_radius: 0.0, max: 12)), shape: Point,
+            speed: (4.5, 9.5), cone_deg: 72.0, gravity: 9.0, drag: 2.5, lifetime: (0.18, 0.42),
+            size: (0.025, 0.045), texture: "droplet", orient: VelocityStretched(1.4),
+            roll_deg: 90.0, ramp: "sparks", curve: "particle_fade",
+        ),
+        // Acid droplets arcing out and falling inside the reach.
+        "acid_droplets": (
+            spawn: Burst(count: (base: 14, per_unit_radius: 8.0, max: 36)), shape: Disc,
+            speed: (2.2, 4.6), cone_deg: 62.0, gravity: 14.0, drag: 0.6, lifetime: (0.35, 0.65),
+            size: (0.05, 0.10), texture: "droplet", orient: VelocityStretched(1.1),
+            roll_deg: 90.0, ramp: "acid_liquid", curve: "particle_fade",
+        ),
+        // Dust puffing up where a spine breaks the ground (one smoke variant each).
+        "spine_dust": (
+            spawn: Burst(count: (base: 3, per_unit_radius: 0.0, max: 3)), shape: Disc,
+            speed: (0.3, 0.9), cone_deg: 70.0, gravity: -0.4, drag: 1.6, lifetime: (0.55, 0.95),
+            size: (0.16, 0.26), texture: "smoke_puff", orient: Camera, rotation: Random,
+            ramp: "dust", size_curve: "smoke_grow", curve: "puff_fade",
+        ),
+        // Chips of ground thrown up by a spine.
+        "spine_chips": (
+            spawn: Burst(count: (base: 3, per_unit_radius: 0.0, max: 3)), shape: Point,
+            speed: (1.6, 3.2), cone_deg: 35.0, gravity: 14.0, drag: 0.5, lifetime: (0.30, 0.55),
+            size: (0.025, 0.045), texture: "debris_atlas", orient: Camera, rotation: Random,
+            ramp: "debris", curve: "particle_fade",
+        ),
+    },
+    effects: {
+        // Siege-Tank analogue, sieged: a shell detonating. The shock front stops exactly at the
+        // reach (Critical); flash, light, fireball, sparks, debris, smoke and a scorch carry the
+        // look (§5.5). Zones of the sieged weapon: 0.47 / 0.78 / 1.25.
+        "shell_impact": (
+            class: Major,
+            event: Splash,
+            layers: [
+                (
+                    block: Light(color: (1.0, 0.55, 0.25), intensity: 90000.0, height: 0.9),
+                    size: (bind: SplashReach, scale: 4.0), duration: 0.30, curve: "flash",
+                ),
+                (
+                    block: Sprite(texture: "fireball_flipbook", ramp: "blast_flash",
+                        soft_depth: 0.4, rotation: Random, frame_curve: "first_frame", lift: 0.2),
+                    size: (bind: SplashReach, scale: 0.95), size_curve: "flash_grow",
+                    duration: 0.12, curve: "flash",
+                ),
+                (
+                    block: Sprite(texture: "fireball_flipbook", ramp: "blast_fire",
+                        soft_depth: 0.5, rotation: Random, erosion: "erode_late", lift: 0.25),
+                    size: (bind: SplashReach, scale: 1.15), size_curve: "burst_grow",
+                    ramp_curve: "cool", duration: 0.85, curve: "punch",
+                ),
+                (
+                    block: Ring(texture: "smoke_puff", ramp: "blast_ring", orient: Ground,
+                        thickness: 0.14, erosion: "erode_rise", mapping: Polar, height: 0.03),
+                    radius: (from: (bind: SplashFull, scale: 0.5), to: (bind: SplashReach, scale: 1.0),
+                        curve: "front"),
+                    duration: 0.32, curve: "front_fade", priority: Critical,
+                ),
+                (
+                    block: Decal(texture: "scorch", ramp: "ember", erosion: "erode_rise", depth: 0.6),
+                    size: (bind: SplashFull, scale: 1.5), start: 0.02, duration: 1.1, curve: "flash",
+                ),
+                (block: Particles(emitter: "blast_sparks"), size: (scale: 0.1)),
+                (block: Particles(emitter: "debris_chunks"), size: (bind: SplashFull, scale: 0.6), start: 0.02),
+                (
+                    block: Sprite(texture: "smoke_puff", ramp: "blast_smoke", soft_depth: 0.6,
+                        rotation: Random, erosion: "erode_rise", drift: (0.0, 0.45, 0.0), lift: 0.3),
+                    placement: Disc(count: 4, radius: (bind: SplashFull, scale: 1.0)),
+                    size: (bind: SplashReach, scale: 0.6), size_curve: "smoke_grow", size_jitter: 0.25,
+                    start: 0.10, duration: 1.9, curve: "puff_fade",
+                ),
+                (
+                    block: Decal(texture: "scorch", ramp: "scorch", erosion: "erode_tail", depth: 0.6),
+                    size: (bind: SplashReach, scale: 1.0), size_jitter: 0.08,
+                    start: 0.03, duration: 8.0, curve: "linger",
+                ),
+            ],
+        ),
+        // Baneling analogue: an acid burst. The acid front stops exactly at the reach
+        // (Critical); light, ground flash, crown, droplets, vapour and a drying stain carry the
+        // look. The fizz flipbook of §5.5 (`acid_bubbles`) is not shipped (WP6a); the stain's
+        // wet highlights take its place.
+        "acid_burst": (
+            class: Major,
+            event: Splash,
+            layers: [
+                (
+                    block: Light(color: (0.45, 1.0, 0.25), intensity: 60000.0, height: 1.0),
+                    size: (bind: SplashReach, scale: 3.0), duration: 0.30, curve: "flash",
+                ),
+                (
+                    block: Sprite(texture: "acid_splat", ramp: "acid_glow", orient: Ground,
+                        rotation: Random, lift: 0.02),
+                    size: (bind: SplashReach, scale: 1.0), size_curve: "flash_grow",
+                    duration: 0.16, curve: "flash",
+                ),
+                (
+                    block: Ring(texture: "smoke_puff", ramp: "acid_front", orient: Ground,
+                        thickness: 0.12, erosion: "front_break", mapping: Polar, height: 0.03),
+                    radius: (from: (bind: SplashFull, scale: 0.25), to: (bind: SplashReach, scale: 1.0),
+                        curve: "front"),
+                    duration: 0.40, curve: "hold", priority: Critical,
+                ),
+                (
+                    block: Sprite(texture: "acid_crown", ramp: "acid_glow", soft_depth: 0.3,
+                        rotation: Mirror, erosion: "erode_late", frame_curve: "crown_open", lift: 0.55),
+                    size: (bind: SplashReach, scale: 0.8), duration: 0.7, curve: "punch",
+                ),
+                (block: Particles(emitter: "acid_droplets"), size: (bind: SplashReach, scale: 0.3)),
+                (
+                    block: Decal(texture: "acid_splat", ramp: "acid_stain", erosion: "erode_tail", depth: 0.6),
+                    size: (bind: SplashReach, scale: 1.0), size_curve: "stain_spread",
+                    ramp_curve: "dry", duration: 6.0, curve: "stain_in",
+                ),
+                (
+                    block: Sprite(texture: "smoke_puff", ramp: "acid_vapour", soft_depth: 0.5,
+                        rotation: Random, erosion: "erode_rise", drift: (0.0, 0.35, 0.0), lift: 0.3),
+                    placement: Disc(count: 5, radius: (bind: SplashReach, scale: 0.6)),
+                    size: (bind: SplashReach, scale: 0.32), size_curve: "smoke_grow", size_jitter: 0.3,
+                    start: 0.15, duration: 1.6, curve: "puff_fade",
+                ),
+            ],
+        ),
+        // Lurker analogue: spines erupting along the line, one search point after another, and
+        // retracting; overlapping crack segments join the points and are cut off exactly at the
+        // line's ends. Anchored at the first search point with no layer
+        // at the source, so an undetected attacker's spines show and it does not (D-5, R3).
+        // Travel: one spine every 0.125 Normal s = 0.089 s at Faster (B-85), 1 unit apart.
+        "spine_line": (
+            class: Major,
+            event: Line,
+            layers: [
+                (
+                    block: Sprite(texture: "spine_erupt", ramp: "spine_bone", orient: VerticalAlongLine,
+                        soft_depth: 0.05, rotation: Mirror, erosion: "erode_tail",
+                        frame_curve: "spine_erupt", lift: 0.3),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 1.0), travel: 11.2),
+                    size: (bind: LineSpacing, scale: 1.1), size_jitter: 0.08,
+                    duration: 0.75, curve: "hold", priority: Critical,
+                ),
+                (
+                    block: Decal(texture: "ground_crack", ramp: "crack", erosion: "erode_tail",
+                        depth: 0.6, yaw: AlongLine, width: 0.55, clip_to_line: true),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 1.0), travel: 11.2, between: true),
+                    size: (bind: LineSpacing, scale: 0.85),
+                    duration: 2.5, curve: "linger", priority: Critical,
+                ),
+                (
+                    block: Decal(texture: "scorch", ramp: "churn", erosion: "erode_tail",
+                        depth: 0.6, yaw: AlongLine, width: 0.4, clip_to_line: true),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 1.0), travel: 11.2, between: true),
+                    size: (bind: LineSpacing, scale: 0.75),
+                    duration: 2.5, curve: "linger",
+                ),
+                (
+                    // The ground bursting open around each spine, over its search point's disc.
+                    block: Decal(texture: "scorch", ramp: "burst_earth", erosion: "erode_rise", depth: 0.6),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 1.0), travel: 11.2),
+                    size: (bind: SplashFull, scale: 1.35), size_curve: "burst_grow",
+                    duration: 0.8, curve: "punch",
+                ),
+                (
+                    block: Particles(emitter: "spine_dust"),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 1.0), travel: 11.2),
+                    size: (bind: LineSpacing, scale: 0.3), start: 0.02,
+                ),
+                (
+                    block: Particles(emitter: "spine_chips"),
+                    placement: Line(spacing: (bind: LineSpacing, scale: 1.0), travel: 11.2),
+                    size: (bind: LineSpacing, scale: 0.1),
+                ),
+            ],
+        ),
+    },
     // Pool capacities (sized at load, never grown in a battle) and level of detail (§5.6).
     budget: (
         particles: 30000,
@@ -27,6 +380,6 @@
         full_particle_px: 96.0,
         crowd_threshold: 24,
     ),
-    // Effects used where a unit's presentation block names none; none yet.
+    // Effects used where a unit's presentation block names none; none yet (WP11).
     defaults: (),
 )

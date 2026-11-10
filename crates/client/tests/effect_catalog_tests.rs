@@ -5,7 +5,10 @@
 //! One broken fixture per [`EffectCatalogError`] variant, each checking the variant and that
 //! it names the file, effect and layer; the shipped vocabulary and every shipped unit's
 //! presentation block resolve from the runtime path; and a copy of `effects.ron` edited in a
-//! temporary directory loads a different effect with no rebuild (charter C6).
+//! temporary directory loads a different effect with no rebuild (charter C6); and the
+//! coverage rule of §5.3: every shipped splash weapon of a unit with a presentation block names
+//! a splash effect whose `Critical` layers bind the reach or the line (the units without a
+//! block, which fall back to the defaults, are reported).
 //!
 //! # Invariants verified
 //! - Every failure is typed and names where it is.
@@ -15,6 +18,13 @@
 
 #[path = "support/effect_fixtures.rs"]
 mod effect_fixtures;
+
+#[allow(
+    dead_code,
+    reason = "shared with the effect GPU tests, which use all of it"
+)]
+#[path = "support/effect_subjects.rs"]
+mod effect_subjects;
 
 use client::effects::catalog::schema::{Binding, EventKind};
 use client::effects::catalog::{
@@ -439,16 +449,21 @@ fn the_shipped_vocabulary_and_presentation_blocks_resolve_from_the_runtime_path(
     assert!(catalog.budget.effects > 0 && catalog.budget.sprites > 0);
 }
 
-/// The shipped unit catalog with the first archetype's presentation block replaced.
+/// The shipped unit catalog with the first archetype's presentation block replaced and every
+/// other block emptied.
 fn units_with_block(
     block: ArchetypeEffects,
 ) -> (sim_core::catalog::UnitCatalog, sim_types::UnitTypeId) {
     let mut units = sim_fixtures::shipped_catalogs().units;
-    let id = units
+    let ids: Vec<_> = units
         .archetypes()
-        .next()
-        .expect("the shipped catalog has an archetype")
-        .unit_type_id;
+        .map(|archetype| archetype.unit_type_id)
+        .collect();
+    let id = *ids.first().expect("the shipped catalog has an archetype");
+    // Every other block names shipped effects the fixture vocabulary does not define.
+    for other in &ids {
+        units.get_mut(*other).expect("the archetype exists").effects = ArchetypeEffects::default();
+    }
     units.get_mut(id).expect("the archetype exists").effects = block;
     (units, id)
 }
@@ -533,23 +548,33 @@ fn an_edited_copy_of_the_shipped_vocabulary_loads_a_different_effect_without_a_r
     let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
     let shipped = std::fs::read_to_string(root.as_path().join(EFFECTS_CATALOG_PATH))
         .expect("the shipped vocabulary is readable");
-    let (dir, manifest) = fixture();
+    let dir = tempfile::tempdir().expect("a temporary directory");
     let copy = dir.path().join("effects.ron");
     std::fs::write(&copy, &shipped).expect("the copy is written");
     let before = EffectCatalog::load(&copy, root.as_path()).expect("the copy loads");
     assert!(before.effect_id("boom").is_none());
+    let element = before
+        .atlas
+        .elements
+        .iter()
+        .find(|(_, element)| element.drawable)
+        .map(|(name, _)| name.clone())
+        .expect("the shipped sets have a drawable element");
 
     let edited = shipped
-        .replace("textures: [],", &format!("textures: [{manifest:?}],"))
-        .replace(
-            "ramps: {},",
-            r#"ramps: { "white": [(0.0, (1.0, 1.0, 1.0, 1.0)), (1.0, (1.0, 1.0, 1.0, 1.0))] },"#,
+        .replacen(
+            "ramps: {",
+            r#"ramps: { "white": [(0.0, (1.0, 1.0, 1.0, 1.0)), (1.0, (1.0, 1.0, 1.0, 1.0))],"#,
+            1,
         )
-        .replace(
-            "effects: {},",
-            r#"effects: { "boom": (class: Major, event: Splash, layers: [
-                (block: Sprite(texture: "soft_disc", ramp: "white"),
-                 size: (bind: SplashReach, scale: 2.5), duration: 0.75, priority: Critical) ]) },"#,
+        .replacen(
+            "effects: {",
+            &format!(
+                r#"effects: {{ "boom": (class: Major, event: Splash, layers: [
+                (block: Sprite(texture: "{element}", ramp: "white"),
+                 size: (bind: SplashReach, scale: 2.5), duration: 0.75, priority: Critical) ]),"#
+            ),
+            1,
         );
     assert_ne!(edited, shipped, "the edit applies to the shipped text");
     std::fs::write(&copy, &edited).expect("the edit is written");
@@ -559,4 +584,130 @@ fn an_edited_copy_of_the_shipped_vocabulary_loads_a_different_effect_without_a_r
         .expect("it resolves");
     assert!((boom.layers[0].size.scale - 2.5).abs() < 1e-6);
     assert!((boom.lifetime - 0.75).abs() < 1e-6);
+}
+
+/// The splash weapons of `archetype`: slot, mode and spec, the mode overrides under the slot
+/// the simulation tags them with.
+fn splash_weapons(
+    archetype: &sim_core::catalog::UnitArchetype,
+) -> Vec<(WeaponSlot, Option<String>)> {
+    let ground_slot = if archetype.ground_weapon == archetype.weapon {
+        WeaponSlot::Primary
+    } else {
+        WeaponSlot::Ground
+    };
+    let mut weapons = Vec::new();
+    let has_splash = |weapon: Option<&sim_types::WeaponSpec>| {
+        weapon.is_some_and(|weapon| weapon.splash.is_some())
+    };
+    if has_splash(archetype.weapon.as_ref()) {
+        weapons.push((WeaponSlot::Primary, None));
+    }
+    if ground_slot == WeaponSlot::Ground && has_splash(archetype.ground_weapon.as_ref()) {
+        weapons.push((WeaponSlot::Ground, None));
+    }
+    if has_splash(archetype.air_weapon.as_ref()) {
+        weapons.push((WeaponSlot::Air, None));
+    }
+    for mode in &archetype.modes {
+        if has_splash(
+            mode.ground_weapon_override
+                .as_ref()
+                .and_then(Option::as_ref),
+        ) {
+            weapons.push((ground_slot, Some(mode.mode_name.clone())));
+        }
+    }
+    weapons
+}
+
+/// Whether `layer` binds the reach of its splash or its line.
+fn binds_extent(layer: &client::effects::catalog::Layer) -> bool {
+    let extent = |binding: Binding| {
+        matches!(
+            binding,
+            Binding::SplashReach | Binding::LineLength | Binding::LineSpacing
+        )
+    };
+    let placed = layer.placements.iter().any(|placement| match placement {
+        client::effects::catalog::schema::PlacementDef::Line { spacing, .. } => {
+            extent(spacing.bind)
+        }
+        _ => false,
+    });
+    extent(layer.size.bind) || layer.radius.is_some_and(|radius| extent(radius.to.bind)) || placed
+}
+
+#[test]
+fn every_shipped_splash_weapon_with_a_block_names_a_splash_effect_bound_to_its_extent() {
+    let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+    let catalog = EffectCatalog::load(&root.as_path().join(EFFECTS_CATALOG_PATH), root.as_path())
+        .expect("the shipped vocabulary loads");
+    let units = sim_fixtures::shipped_catalogs().units;
+    let mut covered = Vec::new();
+    let mut defaulted = Vec::new();
+    for archetype in units.archetypes() {
+        for (slot, mode) in splash_weapons(archetype) {
+            let label = format!("{} {slot:?} {mode:?}", archetype.slug);
+            if archetype.effects.is_empty() {
+                defaulted.push(label);
+                continue;
+            }
+            let entry = archetype
+                .effects
+                .weapons
+                .iter()
+                .find(|entry| entry.weapon == slot && entry.mode == mode);
+            let name = entry
+                .and_then(|entry| entry.splash.as_ref())
+                .unwrap_or_else(|| panic!("{label}: the block names no splash effect"));
+            let effect = catalog
+                .effect_id(name)
+                .and_then(|id| catalog.effect(id))
+                .unwrap_or_else(|| panic!("{label}: {name} does not resolve"));
+            assert!(
+                matches!(effect.event, EventKind::Splash | EventKind::Line),
+                "{label}: {name} is not a splash effect"
+            );
+            let critical: Vec<_> = effect
+                .layers
+                .iter()
+                .filter(|layer| {
+                    layer.priority == client::effects::catalog::schema::Priority::Critical
+                })
+                .collect();
+            assert!(
+                !critical.is_empty(),
+                "{label}: {name} has no Critical layer"
+            );
+            for layer in critical {
+                assert!(
+                    binds_extent(layer),
+                    "{label}: a Critical layer of {name} binds no extent"
+                );
+            }
+            covered.push(format!("{label} -> {name}"));
+        }
+    }
+    assert!(
+        !covered.is_empty(),
+        "the slice's units name their splash effects"
+    );
+    let subjects = effect_subjects::splash_subjects();
+    assert_eq!(
+        subjects.len(),
+        covered
+            .iter()
+            .map(|line| line.rsplit(" -> ").next().unwrap_or_default())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        "every named splash effect is a GPU-test subject"
+    );
+    eprintln!(
+        "splash coverage: {} named\n  {}\nsplash weapons on the defaults (no presentation block): {}\n  {}",
+        covered.len(),
+        covered.join("\n  "),
+        defaulted.len(),
+        defaulted.join("\n  ")
+    );
 }
