@@ -6,7 +6,8 @@
 //! (D-2, `cdt.rs`), its triangle labels and per-request passability (knowledge rules of
 //! `find_path_with_vision`), point location through a per-cell triangle index (D-5), and the
 //! radius-independent triangle widths of Demyen and Buro (D-4). The search (`search.rs`), the
-//! radius funnel (`funnel.rs`) and the segment predicate (`segment.rs`) read it.
+//! radius funnel (`funnel.rs`) and the segment predicate (`segment.rs`) read it; the terrain lane
+//! cuts and words (`lanes.rs`, plan `2026-11-10-group-routing` D-2) read its wall classification.
 //!
 //! # How it fits
 //! [`crate::Pathfinder`] builds a [`NavMesh`] with its clearance fields and rebuilds it on every
@@ -32,6 +33,7 @@
 
 pub mod cdt;
 pub mod funnel;
+pub mod lanes;
 pub mod predicates;
 pub mod search;
 pub mod segment;

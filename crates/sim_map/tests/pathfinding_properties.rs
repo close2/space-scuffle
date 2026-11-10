@@ -517,3 +517,67 @@ fn mesh_route_lengths_are_within_one_percent_of_the_oracle() {
     assert!(worst <= MESH_RATIO_BOUND, "worst ratio {worst}");
     assert!(share >= 0.95, "only {within}/{total} within 1 %");
 }
+
+/// The legality law of `funnel_paths_are_legal_and_no_shorter_than_a_straight_line`, for one
+/// route: legs from a wedged start are held to the predicate for the centre only (D-3).
+fn route_is_legal(
+    pathfinder: &mut Pathfinder,
+    map: &GameMap,
+    request: &PathRequestWithVision<'_>,
+    waypoints: &[SimVec2],
+) -> bool {
+    let centre_only = PathRequestWithVision {
+        radius: SimScalar::ZERO,
+        ..*request
+    };
+    let mut wedged = true;
+    waypoints.windows(2).all(|pair| {
+        wedged = wedged && !pathfinder.segment_is_passable(map, request, pair[0], pair[0]);
+        let leg_request = if wedged { &centre_only } else { request };
+        pathfinder.segment_is_passable(map, leg_request, pair[0], pair[1])
+    })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+
+    /// The lane-restricted search (group-routing WP2): asked for the unrestricted route's own
+    /// lane it returns exactly that route (H-4); asked for the lane of a detour through a third
+    /// point, any route it returns carries that lane's word and is legal (or a counted fallback).
+    #[test]
+    fn restricted_routes_are_legal_and_carry_their_target_word(
+        blocked in obstacle_mask(7),
+        start in (0..SIDE, 0..SIDE),
+        via in (0..SIDE, 0..SIDE),
+        goal in (0..SIDE, 0..SIDE),
+        tier_index in 0_u8..2,
+    ) {
+        let map = build_map(&blocked)?;
+        let mut pathfinder = Pathfinder::new(&map);
+        let radius = tier(tier_index);
+        let (start, via, goal) = (centre(start.0, start.1), centre(via.0, via.1), centre(goal.0, goal.1));
+        let request = mesh_request(start, goal, radius);
+        let Ok(free) = pathfinder.find_path_with_vision(&map, &request) else {
+            return Ok(());
+        };
+        let own = pathfinder.lane_word(&free.waypoints);
+        prop_assert_eq!(pathfinder.find_path_in_lane(&map, &request, &own), Ok(free));
+        let (Ok(first), Ok(second)) = (
+            pathfinder.find_path_with_vision(&map, &mesh_request(start, via, radius)),
+            pathfinder.find_path_with_vision(&map, &mesh_request(via, goal, radius)),
+        ) else {
+            return Ok(());
+        };
+        let mut detour = first.waypoints;
+        detour.extend_from_slice(&second.waypoints[1..]);
+        let lane = pathfinder.lane_word(&detour);
+        let fallbacks = pathfinder.mesh_funnel_fallbacks();
+        if let Ok(routed) = pathfinder.find_path_in_lane(&map, &request, &lane) {
+            let fell_back = pathfinder.mesh_funnel_fallbacks() != fallbacks;
+            prop_assert_eq!(pathfinder.lane_word(&routed.waypoints), lane);
+            prop_assert_eq!(routed.waypoints.first(), Some(&start));
+            prop_assert_eq!(routed.waypoints.last(), Some(&goal));
+            prop_assert!(fell_back || route_is_legal(&mut pathfinder, &map, &request, &routed.waypoints));
+        }
+    }
+}
