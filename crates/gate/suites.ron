@@ -128,6 +128,11 @@ SuiteCatalog(
         "client/sync_allocation_count_tests": (class: Valgrind, triggers: [
             "crates/client/src/{battle_pipeline/**,presentation.rs,runtime_battle/**,player_presentation/**,effects/**}",
         ]),
+        // Valgrind: counts the effect engine's steady-state allocations (plan
+        // 2026-11-10-spellcaster-mechanics D-18).
+        "sim_core/effect_tree_allocation_tests": (class: Valgrind, triggers: [
+            "crates/sim_core/src/{effects.rs,effects/**,world/snapshot.rs,world/presentation.rs}",
+        ]),
     },
 
     // Path rules (blueprint section 4.2). The "test support" rule of the blueprint needs no
@@ -317,6 +322,7 @@ SuiteCatalog(
             "sim_core/damage_and_shields_tests",
             "sim_core/determinism_lockstep_tests",
             "sim_core/effect_snapshot_tests",
+            "sim_core/effect_tree_allocation_tests",
             "sim_core/effect_tree_properties",
             "sim_core/effect_tree_tests",
             "sim_core/fixed_body_transactions_tests",
