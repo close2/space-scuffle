@@ -19,15 +19,22 @@
 mod effect_fixtures;
 
 use bevy::math::Vec3;
+use client::battle_pipeline::commands::SessionGeneration;
+use client::battle_pipeline::fog::{BattleFog, Presence};
+use client::effects::catalog::error::EffectCatalogError;
 use client::effects::catalog::{EffectCatalog, UnitEffectTables};
 use client::effects::instances::{ORIENT_GROUND, ORIENT_VERTICAL};
 use client::effects::runtime::{CameraView, EffectRuntime};
-use client::effects::systems::spawn_request;
+use client::effects::systems::trail_request;
+use client::effects::systems::{spawn_request, LineAssembly};
 use client::ResolvedAssetsRoot;
 use effect_fixtures::{vocabulary, write_fixture_set};
-use sim_core::catalog::{ArchetypeEffects, WeaponEffects};
+use sim_core::catalog::{ArchetypeEffects, ModeEffects, WeaponEffects};
 use sim_types::snapshot::CombatEventVisual;
-use sim_types::{EffectSource, LineView, PlayerId, UnitTypeId, WeaponKey, WeaponSlot};
+use sim_types::{
+    BubbleRenderInstance, Concealment, EffectSource, LineView, PlayerId, PlayerView, UnitTypeId,
+    WeaponKey, WeaponSlot,
+};
 
 /// The effects of the test vocabulary.
 const EFFECTS: &str = r#"
@@ -52,6 +59,14 @@ const EFFECTS: &str = r#"
         (block: Sprite(texture: "flip", ramp: "red_add", orient: VerticalAlongLine),
          size: (scale: 0.4), duration: 1.0, priority: Critical,
          placement: Line(spacing: (bind: LineSpacing, scale: 1.0), travel: 10.0)),
+    ]),
+    "trail": (class: Minor, event: Mode, repeat: Some(0.2), layers: [
+        (block: Decal(texture: "solid", ramp: "blue"), size: (bind: UnitRadius, scale: 1.0),
+         duration: 1.0, priority: Detail),
+    ]),
+    "trail_once": (class: Minor, event: Mode, layers: [
+        (block: Decal(texture: "solid", ramp: "blue"), size: (bind: UnitRadius, scale: 1.0),
+         duration: 1.0, priority: Detail),
     ])
 "#;
 
@@ -248,6 +263,7 @@ fn a_line_effect_spawns_once_per_line_and_places_along_it() {
         count: 9,
     };
     let mut spawned = 0;
+    let mut lines = LineAssembly::default();
     for index in 0..9 {
         let event = splash(
             unit,
@@ -256,12 +272,19 @@ fn a_line_effect_spawns_once_per_line_and_places_along_it() {
             [0.3, 0.3, 0.3],
             Some(line(index)),
         );
-        spawned += u32::from(spawn(&mut runtime, &catalog, &tables, &event, 0.0));
+        let request = spawn_request(&event, &tables, &catalog).expect("the spines are named");
+        if let Some(ready) = lines.push(request) {
+            spawned += u32::from(runtime.spawn(&catalog, &ready, 0.0).is_some());
+        }
     }
+    let whole = lines.finish().expect("the line is still being merged");
     assert_eq!(
-        spawned, 1,
-        "only the first search point spawns the line's effect"
+        whole.line.map(|line| line.seen & 0x1FF),
+        Some(0x1FF),
+        "every point seen"
     );
+    spawned += u32::from(runtime.spawn(&catalog, &whole, 0.0).is_some());
+    assert_eq!(spawned, 1, "the line's points spawn its effect once");
     runtime.build_frame(&catalog, 0.95, Some(&camera()));
     let cards = &runtime.frame.sorted;
     assert_eq!(
@@ -287,6 +310,91 @@ fn a_line_effect_spawns_once_per_line_and_places_along_it() {
         early < 9,
         "travel delays the far spines: {early} drawn at 0.05 s"
     );
+}
+
+/// Plan Amendment 2, R6: the fog admits a line point by point. A line whose first three
+/// points are fogged (only points 3 to 8 arrive) still spawns, anchored at its true first
+/// point, and draws only at the points that arrived.
+#[test]
+fn a_line_whose_first_points_are_fogged_shows_where_it_is_seen() {
+    let (_dir, catalog) = catalog_with(|text| text);
+    let (tables, unit) = tables_for(&catalog, "spines");
+    let mut runtime = EffectRuntime::new(&catalog);
+    let mut lines = LineAssembly::default();
+    let mut ready = Vec::new();
+    for index in 3..9_u8 {
+        let event = splash(
+            unit,
+            1.0 + f32::from(index),
+            0.0,
+            [0.3, 0.3, 0.3],
+            Some(LineView {
+                from: [0.0, 0.0, 0.0],
+                to: [9.0, 0.0, 0.0],
+                spacing: 1.0,
+                index,
+                count: 9,
+            }),
+        );
+        let request = spawn_request(&event, &tables, &catalog).expect("the spines are named");
+        ready.extend(lines.push(request));
+    }
+    ready.extend(lines.finish());
+    assert_eq!(ready.len(), 1, "one spawn for the line");
+    let request = ready[0];
+    assert!(
+        (request.anchor - Vec3::new(1.0, 0.0, 0.0)).length() < 1e-4,
+        "anchored at the first search point: {:?}",
+        request.anchor
+    );
+    let line = request.line.expect("a line");
+    assert_eq!(line.seen & 0x1FF, 0x1F8, "points 3 to 8 seen");
+    assert!(runtime.spawn(&catalog, &request, 0.0).is_some());
+    runtime.build_frame(&catalog, 0.95, Some(&camera()));
+    let xs: Vec<f32> = runtime
+        .frame
+        .sorted
+        .iter()
+        .map(|card| card.center[0])
+        .collect();
+    assert_eq!(xs.len(), 6, "six seen points: {xs:?}");
+    assert!(
+        xs.iter().all(|x| *x >= 4.0 - 1e-4),
+        "nothing at the fogged points 1 to 3: {xs:?}"
+    );
+}
+
+/// Two lines in one frame stay two spawns, and a splash between them passes straight through.
+#[test]
+fn the_line_assembly_keeps_lines_apart() {
+    let (_dir, catalog) = catalog_with(|text| text);
+    let (tables, unit) = tables_for(&catalog, "spines");
+    let point = |to: f32, index: u8| {
+        let event = splash(
+            unit,
+            1.0 + f32::from(index),
+            0.0,
+            [0.3, 0.3, 0.3],
+            Some(LineView {
+                from: [0.0, 0.0, 0.0],
+                to: [to, 0.0, 0.0],
+                spacing: 1.0,
+                index,
+                count: 3,
+            }),
+        );
+        spawn_request(&event, &tables, &catalog).expect("the spines are named")
+    };
+    let mut lines = LineAssembly::default();
+    assert!(lines.push(point(3.0, 0)).is_none());
+    assert!(lines.push(point(3.0, 1)).is_none());
+    let first = lines
+        .push(point(5.0, 0))
+        .expect("a new line flushes the first");
+    assert_eq!(first.line.map(|line| line.seen), Some(0b11));
+    let second = lines.finish().expect("the second line");
+    assert_eq!(second.line.map(|line| line.seen), Some(0b1));
+    assert!(lines.finish().is_none());
 }
 
 #[test]
@@ -568,10 +676,7 @@ fn line_clipped_cards_and_particles_carry_the_line_window() {
     use client::effects::runtime::SpawnRequest;
     let (_dir, catalog) = landing_catalog();
     let mut runtime = EffectRuntime::new(&catalog);
-    let line = WorldLine {
-        from: Vec3::new(1.0, 0.0, 2.0),
-        to: Vec3::new(1.0, 0.0, 6.0),
-    };
+    let line = WorldLine::whole(Vec3::new(1.0, 0.0, 2.0), Vec3::new(1.0, 0.0, 6.0));
     let request = SpawnRequest {
         effect: catalog.effect_id("clipped").expect("clipped"),
         anchor: line.from,
@@ -599,4 +704,246 @@ fn line_clipped_cards_and_particles_carry_the_line_window() {
         .filter(|card| card.orient == client::effects::instances::ORIENT_UPRIGHT)
         .count();
     assert_eq!(upright, 10, "every spine card stands upright");
+}
+
+/// The shipped units with the first archetype that has modes laying `trail` while it moves in
+/// its first mode, and no other presentation block; its id and that mode's index.
+fn tables_with_trail(
+    catalog: &EffectCatalog,
+    trail: &str,
+) -> Result<(UnitEffectTables, UnitTypeId, u8), EffectCatalogError> {
+    let mut units = sim_fixtures::shipped_catalogs().units;
+    let ids: Vec<UnitTypeId> = units
+        .archetypes()
+        .map(|archetype| archetype.unit_type_id)
+        .collect();
+    for other in &ids {
+        units.get_mut(*other).expect("it exists").effects = ArchetypeEffects::default();
+    }
+    let (id, mode) = units
+        .archetypes()
+        .find_map(|archetype| {
+            archetype
+                .modes
+                .first()
+                .map(|mode| (archetype.unit_type_id, mode.mode_name.clone()))
+        })
+        .expect("a shipped archetype with a mode");
+    units.get_mut(id).expect("it exists").effects = ArchetypeEffects {
+        modes: vec![ModeEffects {
+            mode,
+            enter: None,
+            leave: None,
+            transition: None,
+            stance: None,
+            moving: Some(trail.to_owned()),
+        }],
+        ..ArchetypeEffects::default()
+    };
+    Ok((UnitEffectTables::build(&units, catalog)?, id, 0))
+}
+
+/// A fog for `viewer` on a 4 by 1 map whose cells 0 and 1 are in sight.
+fn fog_for(viewer: PlayerId) -> BattleFog {
+    use sim_types::VisibilityState::{Fogged, Visible};
+    let view = PlayerView {
+        viewer,
+        map_width: 4,
+        map_height: 1,
+        visibility: vec![Visible, Visible, Fogged, Fogged],
+        ..PlayerView::default()
+    };
+    let mut fog = BattleFog::default();
+    fog.refill(SessionGeneration::FIRST, &view, std::iter::empty());
+    fog
+}
+
+/// A burrowed unit of `owner` of type `unit` in mode `mode` at map `(x, 0.5)`, moving at
+/// `speed` world units per second.
+fn burrowed(
+    owner: PlayerId,
+    unit: UnitTypeId,
+    mode: u8,
+    x: f32,
+    speed: f32,
+) -> BubbleRenderInstance {
+    use sim_types::{AnimState, EntityId, ShapeKind, SilhouetteClass, WeaponVisualKind};
+    let mut bubble = BubbleRenderInstance {
+        entity_id: EntityId(7),
+        shape: ShapeKind::UnitSphere,
+        silhouette: SilhouetteClass::HeavyHex,
+        unit_type: unit,
+        owner,
+        world_pos: [x, 0.5, 0.0],
+        ground_z: 0.0,
+        radius: 0.5,
+        velocity: [speed, 0.0],
+        heading_angle_rad: 0.0,
+        aim_angle_rad: 0.0,
+        is_attacking: false,
+        weapon_visual: WeaponVisualKind::Hitscan,
+        attack_target_pos: None,
+        anim_state: AnimState::Idle,
+        attack_swing: None,
+        hp_ratio: 1.0,
+        shield_ratio: 1.0,
+        shield_hit_flash: 0.0,
+        hull_hit_angle_rad: 0.0,
+        hull_hit_flash: 0.0,
+        build_or_queue_progress: None,
+        selected: false,
+        concealment: Concealment::Burrowed,
+        speed_boosted: false,
+        stance: sim_types::StanceView::default(),
+        status: sim_types::StatusFlags::default(),
+        barrier_ratio: 0.0,
+    };
+    bubble.stance.mode = Some(mode);
+    bubble
+}
+
+/// The frames of `seconds`, each 1/50 s long, as `(now, delta)`.
+fn frames(seconds: u32) -> impl Iterator<Item = (f64, f64)> {
+    (1..=seconds * 50).map(|frame| (f64::from(frame) * 0.02, 0.02))
+}
+
+/// How many trails `bubble` lays over `seconds` of 1/50 s frames.
+fn trails_over(
+    bubble: &BubbleRenderInstance,
+    fog: Option<&BattleFog>,
+    tables: &UnitEffectTables,
+    catalog: &EffectCatalog,
+    seconds: u32,
+) -> usize {
+    frames(seconds)
+        .filter(|(now, delta)| trail_request(bubble, fog, tables, catalog, *now, *delta).is_some())
+        .count()
+}
+
+/// Plan Amendment 2, R5: a burrowed enemy moving underground leaves a trail where the viewer
+/// sees the ground, at its effect's period; standing still, or under fog, it leaves nothing.
+/// The viewer's own burrowed unit leaves its trail anywhere.
+#[test]
+fn a_burrowed_unit_moving_underground_leaves_a_trail_where_the_ground_is_seen() {
+    let (_dir, catalog) = catalog_with(|text| text);
+    let (tables, unit, mode) = tables_with_trail(&catalog, "trail").expect("the trail resolves");
+    assert!(tables.has_trails());
+    let me = PlayerId(0);
+    let them = PlayerId(1);
+    let fog = fog_for(me);
+    let moving = burrowed(them, unit, mode, 0.5, 2.0);
+    assert_eq!(
+        trails_over(&moving, Some(&fog), &tables, &catalog, 1),
+        5,
+        "one trail every 0.2 s while it moves in sight"
+    );
+    let request = frames(1)
+        .find_map(|(now, delta)| trail_request(&moving, Some(&fog), &tables, &catalog, now, delta))
+        .expect("a trail");
+    assert!(
+        (request.anchor - Vec3::new(0.5, 0.0, 0.5)).length() < 1e-5,
+        "laid where the unit is, on the ground: {:?}",
+        request.anchor
+    );
+    let still = burrowed(them, unit, mode, 0.5, 0.0);
+    assert_eq!(
+        trails_over(&still, Some(&fog), &tables, &catalog, 1),
+        0,
+        "a stationary burrowed enemy stays hidden"
+    );
+    let fogged = burrowed(them, unit, mode, 2.5, 2.0);
+    assert_eq!(
+        trails_over(&fogged, Some(&fog), &tables, &catalog, 1),
+        0,
+        "no trail on ground the viewer does not see"
+    );
+    let own = burrowed(me, unit, mode, 2.5, 2.0);
+    assert_eq!(trails_over(&own, Some(&fog), &tables, &catalog, 1), 5);
+    assert_eq!(
+        trails_over(&fogged, None, &tables, &catalog, 1),
+        5,
+        "no fog"
+    );
+    let mut no_mode = moving.clone();
+    no_mode.stance.mode = None;
+    assert_eq!(
+        trails_over(&no_mode, Some(&fog), &tables, &catalog, 1),
+        0,
+        "only in the mode that names the trail"
+    );
+    assert_eq!(
+        fog.presence(&moving),
+        Presence::Hidden,
+        "the unit itself stays hidden while its trail shows"
+    );
+}
+
+/// A `moving` slot needs an effect that states its period.
+#[test]
+fn a_trail_without_a_repeat_period_is_refused() {
+    let (_dir, catalog) = catalog_with(|text| text);
+    let Err(error) = tables_with_trail(&catalog, "trail_once") else {
+        panic!("a trail with no period resolved");
+    };
+    assert!(
+        error.to_string().contains("trail_once") && error.to_string().contains("repeat"),
+        "{error}"
+    );
+}
+
+/// Plan Amendment 2, R6: the fog admits an undetected burrowed attacker's line point by point,
+/// so a line running out of the fog into sight draws exactly at the points in sight.
+#[test]
+fn the_fog_admits_a_line_point_by_point() {
+    let (_dir, catalog) = catalog_with(|text| text);
+    let (tables, unit) = tables_for(&catalog, "spines");
+    // The viewer sees cells 0 and 1; the line runs from x 3.6 (fogged) towards x 0.6.
+    let fog = fog_for(PlayerId(0));
+    let mut lines = LineAssembly::default();
+    let mut ready = Vec::new();
+    for index in 0..4_u8 {
+        let event = CombatEventVisual::SplashVisual {
+            center: [3.6 - f32::from(index), 0.5, 0.0],
+            zones: [0.3; 3],
+            line: Some(LineView {
+                from: [4.6, 0.5, 0.0],
+                to: [0.6, 0.5, 0.0],
+                spacing: 1.0,
+                index,
+                count: 4,
+            }),
+            source: EffectSource {
+                unit_type: unit,
+                weapon: WeaponKey::default(),
+            },
+            owner: PlayerId(1),
+        };
+        if fog.reveals(&event) {
+            let request = spawn_request(&event, &tables, &catalog).expect("the spines are named");
+            ready.extend(lines.push(request));
+        }
+    }
+    ready.extend(lines.finish());
+    assert_eq!(
+        ready.len(),
+        1,
+        "one spawn although the first point is fogged"
+    );
+    let line = ready[0].line.expect("a line");
+    assert_eq!(
+        line.seen & 0xF,
+        0b1100,
+        "points 2 and 3 (x 1.6 and 0.6) are in sight"
+    );
+    let mut runtime = EffectRuntime::new(&catalog);
+    assert!(runtime.spawn(&catalog, &ready[0], 0.0).is_some());
+    runtime.build_frame(&catalog, 0.95, Some(&camera()));
+    let xs: Vec<f32> = runtime
+        .frame
+        .sorted
+        .iter()
+        .map(|card| card.center[0])
+        .collect();
+    assert_eq!(xs.len(), 2, "drawn at the two seen points only: {xs:?}");
+    assert!(xs.iter().all(|x| *x < 2.0), "nothing in the fog: {xs:?}");
 }

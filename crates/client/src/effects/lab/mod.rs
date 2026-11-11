@@ -75,7 +75,11 @@ fn setup_stage(
     mut materials: ResMut<'_, Assets<StandardMaterial>>,
     root: Res<'_, ResolvedAssetsRoot>,
     mut driver: ResMut<'_, LabDriver>,
+    program: Res<'_, LabProgram>,
 ) {
+    if let Some(below_x) = program.subject.fog_below_x {
+        scene::spawn_fog_veil(&mut commands, &mut meshes, &mut materials, below_x);
+    }
     match scene::spawn_scene(&mut commands, &server, &mut meshes, &mut materials, &root) {
         Ok(stage) => {
             commands.insert_resource(stage);

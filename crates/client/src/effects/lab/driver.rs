@@ -364,8 +364,8 @@ fn spawn_subject(
     })?;
     let anchor = Vec3::new(subject.anchor.x, 0.0, subject.anchor.z);
     let line = subject.line_to.map(|to| WorldLine {
-        from: anchor,
-        to: Vec3::new(to.x, 0.0, to.z),
+        seen: subject.line_seen,
+        ..WorldLine::whole(anchor, Vec3::new(to.x, 0.0, to.z))
     });
     let request = SpawnRequest {
         effect,

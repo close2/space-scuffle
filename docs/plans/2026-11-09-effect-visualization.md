@@ -67,9 +67,9 @@ so that **no battle outcome, golden replay or checksum moves** (D-1); a work pac
 | [Q0069](../questions/open/0069-lurker-burrow-sections.md) when a burrowing Lurker becomes burrowed | Answered (option 2: `Stats` at 33 ticks, `Actor` animation to 45) but not yet implemented | D-6 |
 | [Q0070](../questions/open/0070-lurker-without-burrow-button.md) no Burrow button in the skirmish | Open, default option 1; plan `2026-11-09-client-mode-commands` adds the button | §2.4, WP12 |
 | [Q0075](../questions/open/0075-veo-morph-and-mode-clips.md) (filed) Veo spend for morph and mode unit clips | Filed by WP0 (2026-11-09), default "no spend; the effect system carries burrow and siege" | D-4, WP13 |
-| [Q0076](../questions/open/0076-undetected-cloaked-enemies.md) (filed) what an enemy sees of an undetected cloaked unit | Filed by WP0 (2026-11-09), default "shimmer, as StarCraft II" | D-5 |
+| [Q0076](../questions/closed/0076-undetected-cloaked-enemies.md) (filed) what an enemy sees of an undetected cloaked unit | Filed by WP0 (2026-11-09), default "shimmer, as StarCraft II" | D-5 |
 | [Q0077](../questions/closed/0077-caster-spells.md) (filed) the missing caster spells (Abduct, Psionic Storm, Blinding Cloud, …) | Filed by WP0 (2026-11-09), default "presentation contract only here; mechanics in a later plan" | D-8, §12 |
-| [Q0078](../questions/open/0078-image-model-for-effect-textures.md) a Google image model for effect textures (new paid model) | Filed by WP0, **Blocking: no**; default changed by the orchestrator to **"yes, within $25.25 of the $200 total"**, because the owner proposed generated images in chat (2026-11-09) | §6, D-4 |
+| [Q0078](../questions/closed/0078-image-model-for-effect-textures.md) a Google image model for effect textures (new paid model) | Filed by WP0, **Blocking: no**; default changed by the orchestrator to **"yes, within $25.25 of the $200 total"**, because the owner proposed generated images in chat (2026-11-09) | §6, D-4 |
 
 Question numbers: `open/` and `closed/` on `main` end at Q0071; Q0072 to Q0074 are taken on the `friendly-blocking`
 branches; Q0075 to Q0077 were reserved by the first version of this plan and are still unfiled; Q0078 is the next
@@ -919,14 +919,10 @@ only what passed (decision note, 2026-11-10).
 - `shell_impact`, named by the sieged Siege-Tank analogue's presentation block, as accepted in round 2. The
   reviewer's optional improvements are not applied now.
 
-**What ships unused.** `acid_burst`, its `acid_fleck` and `spine_line` stay in `assets/catalog/effects.ron` with
-their texture sets in `assets/effects/`, valid catalog data under the catalog tests. No shipped unit names them: the
-presentation blocks of `volatile_tick` and `burrow_scorpion` are removed, so both fall back to their pre-slice
-presentation (the default combat looks). The GPU tests of the framework (footprint, coverage, no pop, nothing
-lingers, golden stills) still render all three effects through the effect lab: the two rejected ones are bound to
-those units' weapons by lab-only presentation blocks in `crates/client/tests/data/effect_lab_blocks.ron`, a test
-fixture, and `effect_catalog_tests.rs` checks that no shipped unit names an effect only those blocks name. The
-goldens are unchanged.
+**What shipped unused (until Amendment 3).** `acid_burst`, its `acid_fleck` and `spine_line` stayed in
+`assets/catalog/effects.ron` with their texture sets in `assets/effects/`, valid catalog data under the catalog
+tests, named by no shipped unit and bound to `volatile_tick` and `burrow_scorpion` only by lab-only test blocks,
+until review round 5 accepted them and Amendment 3 put their presentation blocks back in `units.ron`.
 
 **One burrow flag.** Plan `2026-11-09-friendly-blocking` (R6, B-93) landed `UnitModeSpec::burrowed` on `main` first,
 for the burrowed body's collision. As §2.4 and §11 provide (the first to land adds the field, the other reuses it),
@@ -935,6 +931,198 @@ burrowed mode carries `burrowed: true` once. The presentation is the same, and t
 presentation only.
 
 **Stopped.** Scale-out (WP7 to WP15) does not start until the owner answers
-[Q0080](../questions/open/0080-effect-review-outcome.md): a third round for the two rejected effects, a changed
+[Q0080](../questions/closed/0080-effect-review-outcome.md): a third round for the two rejected effects, a changed
 approach (for example owner-provided art direction or reference images), or leaving them out. Register entries
 B-107 (now only partly addressed), B-108, B-109, B-110 and B-111 stay open, scheduled behind that answer.
+
+## Amendment 2: owner answers Q0075, Q0076, Q0078 and Q0080; review round 3, 2026-11-10
+
+**Decision note (charter §6, short note).** The owner answered the four questions this plan filed or depends on.
+This amendment records what changes and how it is tested; it changes no simulation state, golden replay or
+checksum (D-1 holds: every change below is in the client, the catalog's presentation data and the effect
+textures).
+
+| Question | Answer | What this plan does |
+|---|---|---|
+| [Q0080](../questions/closed/0080-effect-review-outcome.md) | Option 1: continue the review loop for `acid_burst` and `spine_line`, **up to five rounds in all** before asking again; the WP7+ scale-out is unblocked | The WP6c stop rule of two failed rounds becomes **five**. Rounds 1 and 2 are spent; **round 3** works from the round-2 reviewer's ranked changes as the owner restated them (below). When round 3 accepts both effects, the scale-out re-enables them for `volatile_tick` and `burrow_scorpion` (presentation blocks back in `units.ron`); until then they stay unused (Amendment 1). |
+| [Q0076](../questions/closed/0076-undetected-cloaked-enemies.md) | Option 1 plus StarCraft II's cues for burrowed units | D-5 is extended by rules R4 to R6 (below). |
+| [Q0078](../questions/closed/0078-image-model-for-effect-textures.md) | Yes: target about **$25** for effect textures, cap **below $50**, within the $200 total; every call in the ledger | §6.6's image line becomes "target $25.25, cap < $50". Every request goes through `asset_baker effect-image`, which ledgers it. |
+| [Q0075](../questions/open/0075-veo-morph-and-mode-clips.md) | Option 2, up to $20 (target < $10) for morph and mode clips | WP13 is approved at that cap. **Not in round 3**: it runs in the scale-out. |
+
+**Round 3 changes (from [`independent_review_round2.md`](../evidence/effects/review/independent_review_round2.md)).**
+
+- `spine_line`: straight or gently tapering conical chitin spikes (new image-model stills), three to five per
+  clump splayed outward from a shared base, 0.6 to 0.9 units tall; a bright bone-ivory tip and rim light on the
+  newest clump for its first two to three frames, with a short light dust burst (the travelling focal point);
+  the churned earth and the fissure feathered over about 0.3 units at both ends (a per-layer `clip_feather` on
+  line-clipped decals); the leftover marks broken into one irregular scar (scattered, turned and varied crack
+  marks without the ring-shaped variant, churned earth stretched along the line so the patches merge); lighter,
+  shorter-lived churned earth for the crowd.
+- `acid_burst`: a liquid material for the stain (a `liquid` option on decals: value and thickness varied by
+  noise, a relief from the texture's thickness lit by an upper-left key light as a wet sheen that dries away,
+  darker pooling in the thick parts, a darker and more saturated wet rim); no evenly spaced dots; drying towards
+  olive from about 0.6 s; a ragged, noise-broken burst with larger dark-bodied globs instead of the bevelled pop;
+  a low vapour cloud rising at the centre; the stain kept (Critical) when the crowd budget retires Detail layers,
+  so no lone ring reads as a selection circle; no pale fringe.
+- `shell_impact` (accepted; must not regress): only the round-2 optional changes that are cheap and safe.
+
+**Concealment and visibility rules (D-5 extended, Q0076).**
+
+- **R4, cloaked:** an undetected cloaked enemy is drawn only as a faint refractive shimmer; it is not
+  selectable, targetable or inspectable and has no health bar (D-5 as before; tested again).
+- **R5, burrowed and moving:** an undetected burrowed enemy that is stationary and not attacking stays hidden.
+  A burrowed unit that moves underground leaves a ground-disturbance trail where the viewer sees the ground: a
+  new optional `moving` slot in a mode's presentation block (`modes: [(mode: "burrowed", moving:
+  Some("<effect>"))]`) names a `Mode` effect that the client lays at the unit's position at a fixed period while
+  its published velocity is not zero; the unit itself stays hidden and unpickable. No shipped burrowed mode can
+  move today, so no shipped unit names a trail yet; the rule is tested on a lab fixture.
+- **R6, burrowed attacker:** the attack effect of an undetected burrowed attacker (the spine line) is shown to
+  the viewer wherever the viewer sees it, from its origin, while the attacker stays hidden. The old rule (the
+  line spawned only if its first search point was in sight, because only point 0 spawned the effect) hid a line
+  whose first point was fogged but whose later points were in sight. Now every admitted search point of a line
+  contributes: the effect spawns once per line from any admitted point, anchored at the line's first point, and
+  each of its point-placed instances is drawn only at search points the viewer sees (a per-line visibility mask).
+
+**Tests.** Unit tests of the line grouping and the mask; `battle_fog_tests.rs` for R4 to R6; GPU tests through
+the harness where pixels matter (an undetected burrowed attacker's line draws pixels on visible ground and none
+on the attacker; a moving burrowed enemy draws its trail and no bubble); the slice's GPU tests with goldens
+re-recorded only for the effects whose look changed, each with its traced cause.
+
+**Gate.** After round 3's fixes the implementer writes the round-3 section of
+[`independent_review_packet.md`](../evidence/effects/review/independent_review_packet.md) (each round-2 finding
+mapped to what changed) and hands back; the orchestrator launches the independent round-3 review.
+
+**Round-3 implementation (2026-11-10, commits `ca082cd` to `a69acdb`).** Done as above, with these decisions
+(recorded under Q0002, reversible):
+
+- `shell_impact`: only the darker char core is applied; the shock ring's width variation and a less regular
+  streak fringe are deferred to the scale-out, because they change the accepted Critical layer and need a new
+  blast-mark texture.
+- `acid_burst`: the landing flecks are removed (inside the stain they read as the round-2 "polka dots"), and the
+  `acid_fleck` effect with them; the stain is sized to the reach (scale 1.0) so its Critical footprint stays
+  inside it.
+- `spine_line`: a short heave of churned soil over each point's full-damage disc (gone within 0.7 s) keeps the
+  slice's coverage test (at least 60 % of the full-damage disc at peak) while the lasting mark is one continuous
+  scar.
+- The decal end feather lies 60 % beyond the line's end, so a mark is about two thirds strong at the end; the
+  faint tip reaches at most 0.18 before the first search point (0.82 from the attacker's centre, inside its
+  hidden body, which the owner's R6 allows: the attack shows from its origin).
+- The round-3 crowd capture ran on lavapipe (debug, Xvfb) through a scratch copy of `assets/` that names the
+  two effects for their units, because no shipped unit names them and the server's disk was saturated.
+
+Evidence: [`slice_review.md`](../evidence/effects/review/slice_review.md) ("Round 3"),
+[`texture_review.md`](../evidence/effects/review/texture_review.md) ("Review round 3"), the packet's "Round 3"
+section. The independent round-3 review is next.
+
+**Round 4 (2026-11-10, short note, charter §6).** The independent round-3 review
+([`independent_review_round3.md`](../evidence/effects/review/independent_review_round3.md)) accepted
+`shell_impact` again and rejected `acid_burst` and `spine_line` (narrowly); it asked for a fog capture. Round 4
+applies its ranked changes in the client, the catalog's presentation data, the effect shaders and one texture
+(no simulation state, golden replay or checksum changes; D-1 holds). Decisions (Q0002, reversible):
+
+- `spine_line`: the single leaning spikes are **dropped** rather than re-timed, because the new massive clumps
+  already carry three to five spikes each and every single spike read as a lone stroke; the ruptures use the
+  torn-earth texture along the line (`spine_crack` and `chitin_spine` stay baked but unused); the scar decal's
+  box may be wider than long (a decal's `width` now ranges over (0, 4]).
+- `acid_burst`: the radial ground flash is dropped (it read as a glowing gel oval at frame 0); the stain itself is
+  there, thick and at 0.85 of its size, from frame 0. The wet rim is drawn by the liquid material along every edge
+  instead of by the ramp's top, which the drying ramp curve had turned into the brightest emerald. The stain
+  stays inside the reach (0.98 of it): a larger stain (1.14) failed the Critical footprint test by up to 11 px,
+  and a Critical layer must not mark ground beyond the damage area, so the stain was fixed rather than the test.
+  The footprint test also holds the lasting Critical marks to the reach once every non-decal layer has ended, and
+  the lingering check measures a decal to its box's corner.
+- `shell_impact` (accepted): only the shock front's width variation (a shader change shared with the acid front)
+  and the dust starting after the front; the streak fringe stays recorded for the scale-out.
+- Fog (R6): a partly seen line's ground-hugging layers are clipped to the run of seen points around each
+  instance, half a spacing beyond the outermost seen point (the cell edge); a standing clump is drawn whole when
+  its point is seen, so it is never cut in half at the fog's edge; the effect lab can draw the viewer's fog as the
+  battle terrain does, for the review's fog capture.
+
+Evidence: [`slice_review.md`](../evidence/effects/review/slice_review.md) ("Round 4"),
+[`texture_review.md`](../evidence/effects/review/texture_review.md) ("Review round 4"), the packet's "Round 4"
+section. The independent round-4 review is next.
+
+**Round 5 (2026-11-11, short note, charter §6; the last of Q0080's five rounds).** The independent round-4
+review ([`independent_review_round4.md`](../evidence/effects/review/independent_review_round4.md)) accepted
+`shell_impact` and `spine_line` and rejected `acid_burst` narrowly: its stain's visible edge lay at 0.87 of the
+reach (the texture's ragged outline and deep noise bites inside a box of 0.98), and a pale, see-through band lay
+between the stain and the front's lip. Round 5 changes the client, the catalog's presentation data, the decal
+shader and one texture element (no simulation state, golden replay or checksum change; D-1 holds). Decisions
+(Q0002, reversible):
+
+- `acid_burst`: a decal may have a **disc outline** (`outline: (edge_noise, fill)`): its visible edge is a disc
+  of the box's half length whose shallow noise edge wavers by `edge_noise` (±2 % of the radius for the stain),
+  and the texture is read from its middle inside it, so its own outline lies outside. The stain is sized so its
+  mean edge lies on the reach and holds it without erosion until about 1.8 s; the drying erosion's deep bites
+  come after. The footprint test now measures the held stain's visible edge against the reach (±2 px on most
+  rays), not only that it stays inside. The front's lip is thickened (intensity above 1) and its inner side is
+  the stain's wet emerald. Globs get their own element of three variants (three image-model stills, $0.33),
+  the fumes are thinner and yellow-green, the crown is larger.
+- `spine_line` (accepted; polish only): a standing card clipped to its line is made smaller and moved inward
+  at the line's ends instead of being cut (the first clump no longer reads as a lone spike); the clumps fade
+  over their last 15 % as they sink; the scar's ramp darkens any ground (colours below its opacity times the
+  teal ground's darkest channel).
+- `shell_impact` (accepted; optional): the blast mark comes in once the shock ring has passed the reach
+  (0.12 s), ending as before.
+
+Evidence: [`slice_review.md`](../evidence/effects/review/slice_review.md) ("Round 5"),
+[`texture_review.md`](../evidence/effects/review/texture_review.md) ("Review round 5"), the packet's "Round 5"
+section. The independent round-5 review is next.
+
+## Amendment 3: review gate passed (round 5, 2026-11-11)
+
+**Decision note (charter §6, short note: catalog data, a test fixture and documentation).** The independent round-5
+review ([`independent_review_round5.md`](../evidence/effects/review/independent_review_round5.md)) accepts all three
+effects of the vertical slice, so the WP6c gate has passed within Q0080's five rounds. This amendment ships them; it
+changes no simulation state, golden replay or checksum (D-1 holds: presentation blocks are read by the client only),
+and no effect definition, texture or GPU golden (the effect lab already rendered these blocks with the shipped
+units' weapons).
+
+**Verdicts per round.**
+
+| Round | Review | `shell_impact` | `acid_burst` | `spine_line` |
+|---|---|---|---|---|
+| 1 | [`independent_review.md`](../evidence/effects/review/independent_review.md) | reject | reject | reject |
+| 2 | [`independent_review_round2.md`](../evidence/effects/review/independent_review_round2.md) | **accept** | reject | reject |
+| 3 | [`independent_review_round3.md`](../evidence/effects/review/independent_review_round3.md) | accept | reject (narrowly) | reject (narrowly) |
+| 4 | [`independent_review_round4.md`](../evidence/effects/review/independent_review_round4.md) | accept | reject (narrowly) | **accept** |
+| 5 | [`independent_review_round5.md`](../evidence/effects/review/independent_review_round5.md) | accept | **accept** | accept |
+
+Round 5 also passes the cross-effect consistency, the crowd frame and the fog edge of the burrowed attacker's line.
+
+**What ships.**
+
+- `acid_burst` is named again by the Baneling analogue `volatile_tick` (`weapons: [(weapon: Primary, splash:
+  Some("acid_burst"))]`), and `spine_line` by the Lurker analogue `burrow_scorpion`'s burrowed weapon
+  (`weapons: [(weapon: Primary, mode: Some("burrowed"), splash: Some("spine_line"))]`), in
+  `assets/catalog/units.ron`, beside the sieged Siege-Tank analogue's `shell_impact`. The blocks are those the
+  effect lab and the GPU tests rendered in every round.
+- `burrow_trail` (Amendment 2, R5) stays defined and named by no shipped unit, because no shipped burrowed mode can
+  move. `crates/client/tests/data/effect_lab_blocks.ron` keeps only its entry, which the tests add to
+  `burrow_scorpion`'s shipped block (an entry repeating a shipped one fails the fixture).
+- `effect_catalog_tests.rs`: `accepted_slice_effects_are_named_by_their_shipped_units` checks that each accepted
+  effect is named by its shipped unit's block, resolves, and is the GPU-test subject bound to that unit's weapon;
+  `lab_only_effects_are_defined_and_named_by_no_shipped_unit` now covers every slot of the lab-only entries.
+- B-107 is narrowed: splash weapons beyond the slice's three still have no area drawn (WP7, WP11).
+
+**Scale-out polish items.** The reviewer's ranked remaining improvements, none blocking. They are recorded here
+under Q0002 and taken up in the scale-out (WP7 onwards), each with its own review like any other effect change:
+
+- `acid_burst`, in the reviewer's order:
+  1. Edge material inside the disc outline: a dark wet meniscus band about 0.05 to 0.1 of the radius wide with a
+     broken specular highlight on the upper-left side and, while drying, a slightly lighter cracked crust ring. The
+     outline stays on the reach; only the inner band changes.
+  2. Remove the pale double streak inside the upper-left edge (the stain texture's own inner rims, now cut inside
+     the outline), by masking those rims or reading a region without them.
+  3. Landed globs must not read as letters at close zoom ("J", "S", "13"): splat them into short blots or fade them
+     on landing, and avoid the edge-on neck variant at small sizes.
+  4. Crowd: vary each stain's interior (rotation, pooling offset, drying phase) and soften overlaps, so a field reads
+     as one liquid and not as stacked discs; recheck the green share (7.0 % of the crowd frame, 5.5 % in round 4).
+  5. More dried-crust texture after 1.8 s (cracks, pooling), so the dried oval is not a nearly flat fill.
+  6. Frame 0: drop the concentric inner ring and the sparkle dots.
+- `spine_line`: torn clods in the scar and less periodic blotches (they repeat at about the point spacing), so it
+  reads as torn earth and not as a smudge at close zoom.
+- `shell_impact`: an irregular streak fringe from a new blast-mark texture (the fringe is still a regular sunburst
+  at close zoom), and about 2x width variation in the shock ring with one or two breaks.
+
+**Next.** The WP7 to WP15 scale-out (§9), unblocked by Q0080 (Amendment 2), with B-107 to B-111 open behind it.

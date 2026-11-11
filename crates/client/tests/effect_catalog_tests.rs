@@ -9,7 +9,8 @@
 //! coverage rule of §5.3: every shipped splash weapon of a unit with a presentation block names
 //! a splash effect whose `Critical` layers bind the reach or the line (the units without a
 //! block, which fall back to the defaults, are reported), checked over the shipped blocks and
-//! the lab-only blocks of plan Amendment 1; the effects only those blocks name stay defined but
+//! the lab-only entries; the slice's effects the review gate accepted (plan Amendment 3) are
+//! named by their shipped units, and the effects only the lab-only entries name stay defined but
 //! are named by no shipped unit.
 //!
 //! # Invariants verified
@@ -416,6 +417,81 @@ fn the_d12_limits_are_load_time_errors() {
     );
 }
 
+/// Plan Amendment 2: a liquid decal's material, a decal's clip feather and an effect's repeat
+/// period are range-checked at load, naming the field.
+#[test]
+fn liquid_feather_and_repeat_values_are_range_checked() {
+    let (dir, manifest) = fixture();
+    let decal = |extra: &str| {
+        format!(
+            r#"(block: Decal(texture: "solid", ramp: "blue"{extra}), size: (scale: 1.0), duration: 1.0)"#
+        )
+    };
+    let liquid = |relief: f32, sheen: f32, gloss: f32, noise: f32, dry: f32| {
+        decal(&format!(
+            ", liquid: (relief: {relief}, sheen: {sheen}, gloss: {gloss}, value_noise: {noise}, dry_below: {dry})"
+        ))
+    };
+    let good = liquid(0.05, 1.0, 20.0, 0.5, 0.5);
+    load(
+        dir.path(),
+        &vocabulary(&manifest, "", &splash_effect(&good), ""),
+    )
+    .expect("a valid liquid decal loads");
+    load(
+        dir.path(),
+        &vocabulary(&manifest, "", &splash_effect(&decal(", width: 4.0")), ""),
+    )
+    .expect("a decal four times as wide as long loads (review round 4)");
+    let outline =
+        |noise: f32, fill: f32| decal(&format!(", outline: (edge_noise: {noise}, fill: {fill})"));
+    load(
+        dir.path(),
+        &vocabulary(&manifest, "", &splash_effect(&outline(0.02, 0.76)), ""),
+    )
+    .expect("a decal with a disc outline loads (review round 5)");
+    for (layer, field) in [
+        (outline(-0.01, 0.76), "outline.edge_noise"),
+        (outline(0.3, 0.76), "outline.edge_noise"),
+        (outline(0.02, 0.2), "outline.fill"),
+        (outline(0.02, 1.1), "outline.fill"),
+        (liquid(0.0, 1.0, 20.0, 0.5, 0.5), "liquid.relief"),
+        (liquid(0.05, 5.0, 20.0, 0.5, 0.5), "liquid.sheen"),
+        (liquid(0.05, 1.0, 0.5, 0.5, 0.5), "liquid.gloss"),
+        (liquid(0.05, 1.0, 20.0, 1.5, 0.5), "liquid.value_noise"),
+        (liquid(0.05, 1.0, 20.0, 0.5, 1.0), "liquid.dry_below"),
+        (decal(", clip_feather: 0.0"), "clip_feather"),
+        (decal(", width: 0.0"), "width"),
+        (decal(", width: 4.5"), "width"),
+    ] {
+        let error = load(
+            dir.path(),
+            &vocabulary(&manifest, "", &splash_effect(&layer), ""),
+        )
+        .expect_err(field);
+        assert!(
+            matches!(&error, EffectCatalogError::InvalidValue { field: found, .. } if *found == field),
+            "{field}: {error}"
+        );
+    }
+    let repeating = format!(
+        r#""boom": (class: Minor, event: Mode, repeat: Some(-1.0), layers: [ {} ])"#,
+        decal("")
+    );
+    let error = load(dir.path(), &vocabulary(&manifest, "", &repeating, ""))
+        .expect_err("a negative repeat period");
+    assert!(
+        matches!(
+            &error,
+            EffectCatalogError::InvalidValue {
+                field: "repeat",
+                ..
+            }
+        ),
+        "{error}"
+    );
+}
+
 #[test]
 fn out_of_range_values_and_empty_pools_are_refused() {
     let (dir, manifest) = fixture();
@@ -656,7 +732,7 @@ fn every_shipped_splash_weapon_with_a_block_names_a_splash_effect_bound_to_its_e
     let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
     let catalog = EffectCatalog::load(&root.as_path().join(EFFECTS_CATALOG_PATH), root.as_path())
         .expect("the shipped vocabulary loads");
-    // The shipped blocks plus the lab-only ones (Amendment 1): the rule holds for both.
+    // The shipped blocks plus the lab-only entries: the rule holds for both.
     let units = effect_subjects::lab_units();
     let mut covered = Vec::new();
     let mut defaulted = Vec::new();
@@ -726,9 +802,52 @@ fn every_shipped_splash_weapon_with_a_block_names_a_splash_effect_bound_to_its_e
     );
 }
 
-/// The effects the review gate rejected (plan Amendment 1, Q0080) stay in the vocabulary and
-/// under the GPU tests through the lab-only blocks, but no shipped unit or structure names
-/// them, and the lab-only blocks resolve against the shipped vocabulary.
+/// The slice's splash effects the review gate accepted in round 5 (plan Amendment 3): the unit
+/// that names each, the mode whose weapon override carries it (`None` for the default stance)
+/// and the effect. Test data restating the shipped catalog, so a block dropped from
+/// `units.ron` fails here.
+const ACCEPTED_SLICE: [(&str, Option<&str>, &str); 3] = [
+    ("railgun_crawler", Some("siege_mode"), "shell_impact"),
+    ("volatile_tick", None, "acid_burst"),
+    ("burrow_scorpion", Some("burrowed"), "spine_line"),
+];
+
+/// Every effect the review gate accepted is named by its shipped unit's presentation block
+/// (not by a lab-only entry), resolves, and is a GPU-test subject bound to that unit.
+#[test]
+fn accepted_slice_effects_are_named_by_their_shipped_units() {
+    let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+    let catalog = EffectCatalog::load(&root.as_path().join(EFFECTS_CATALOG_PATH), root.as_path())
+        .expect("the shipped vocabulary loads");
+    let units = sim_fixtures::shipped_catalogs().units;
+    UnitEffectTables::build(&units, &catalog).expect("every shipped presentation block resolves");
+    let subjects = effect_subjects::splash_subjects();
+    for (slug, mode, effect) in ACCEPTED_SLICE {
+        let archetype = units
+            .id_by_slug(slug)
+            .and_then(|id| units.get(id).ok())
+            .unwrap_or_else(|| panic!("{slug} is a shipped unit"));
+        let named = archetype.effects.weapons.iter().any(|entry| {
+            entry.weapon == WeaponSlot::Primary
+                && entry.mode.as_deref() == mode
+                && entry.splash.as_deref() == Some(effect)
+        });
+        assert!(named, "{slug} {mode:?} names {effect} in units.ron");
+        assert!(
+            catalog.effect_id(effect).is_some(),
+            "{effect} is defined in the vocabulary"
+        );
+        let subject = subjects
+            .iter()
+            .find(|subject| subject.effect == effect)
+            .unwrap_or_else(|| panic!("{effect} is a GPU-test subject"));
+        assert_eq!(subject.unit, slug, "{effect} is bound to {slug}'s weapon");
+    }
+}
+
+/// The effects only the lab-only entries name (a trail no shipped burrowed mode can use yet,
+/// plan Amendment 2 R5) stay in the vocabulary and under test through those entries, but no
+/// shipped unit names them, and the lab-only entries resolve against the shipped vocabulary.
 #[test]
 fn lab_only_effects_are_defined_and_named_by_no_shipped_unit() {
     let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
@@ -736,8 +855,7 @@ fn lab_only_effects_are_defined_and_named_by_no_shipped_unit() {
         .expect("the shipped vocabulary loads");
     let lab_only: std::collections::BTreeSet<String> = effect_subjects::lab_blocks()
         .values()
-        .flat_map(|block| block.weapons.iter())
-        .filter_map(|entry| entry.splash.clone())
+        .flat_map(named_effects)
         .collect();
     assert!(!lab_only.is_empty(), "the fixture names lab-only effects");
     for name in &lab_only {
@@ -748,28 +866,43 @@ fn lab_only_effects_are_defined_and_named_by_no_shipped_unit() {
     }
     let units = sim_fixtures::shipped_catalogs().units;
     for archetype in units.archetypes() {
-        for entry in &archetype.effects.weapons {
-            for named in [&entry.launch, &entry.travel, &entry.impact, &entry.splash]
-                .into_iter()
-                .flatten()
-            {
-                assert!(
-                    !lab_only.contains(named),
-                    "{} names the lab-only effect {named}",
-                    archetype.slug
-                );
-            }
+        for named in named_effects(&archetype.effects) {
+            assert!(
+                !lab_only.contains(&named),
+                "{} names the lab-only effect {named}",
+                archetype.slug
+            );
         }
     }
     UnitEffectTables::build(&effect_subjects::lab_units(), &catalog)
-        .expect("every lab-only presentation block resolves");
-    let subjects: Vec<String> = effect_subjects::splash_subjects()
+        .expect("every lab-only presentation entry resolves");
+}
+
+/// Every effect name a presentation block names, in any slot.
+fn named_effects(block: &ArchetypeEffects) -> Vec<String> {
+    let weapons = block.weapons.iter().flat_map(|entry| {
+        [&entry.launch, &entry.travel, &entry.impact, &entry.splash]
+            .into_iter()
+            .flatten()
+    });
+    let modes = block.modes.iter().flat_map(|entry| {
+        [
+            &entry.enter,
+            &entry.leave,
+            &entry.transition,
+            &entry.stance,
+            &entry.moving,
+        ]
         .into_iter()
-        .map(|subject| subject.effect)
-        .collect();
-    for name in &lab_only {
-        assert!(subjects.contains(name), "{name} is a GPU-test subject");
-    }
+        .flatten()
+    });
+    weapons
+        .chain(modes)
+        .chain(block.status.values())
+        .chain(block.abilities.values())
+        .chain(block.death.iter())
+        .cloned()
+        .collect()
 }
 
 /// A fixture directory with the fixture set and the noise set; returns both manifests.

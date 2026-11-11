@@ -1,0 +1,15 @@
+Effect contact sheet of 'spine_line' (plan 2026-11-09-effect-visualization §6.5), made by
+`battle_capture --effect-lab spine_line` on the production effect plugin and shaders.
+Bindings: SplashFull=0.5, SplashMid=0.5, SplashReach=0.5, LineLength=8, LineSpacing=1. Lifetime: 3.244 s. Capture 1280x720, battle camera at 58° pitch.
+Camera: shipped camera; the line's first search points and the attacker behind them lie in the viewer's fog (`--fog-seen-from`), the fogged ground darkened to a quarter with a hard edge as the battle terrain draws it, and only the seen points admitted (plan Amendment 2, R6).
+spine_line_fog_contact.png columns: ages 0 (0.000 s), 0.03 (0.097 s), 0.08 (0.260 s), 0.15 (0.487 s), 0.3 (0.973 s), 0.5 (1.622 s), 0.75 (2.433 s), 1 (3.244 s).
+Rows: bright ground default zoom, the same with the 1-unit grid and the bound radii (red full
+damage, yellow reach; for a line, the line and the full radius at each search point), bright
+close zoom, its reference, dark default, its reference, dark close, its reference.
+Default-zoom cells show the middle half of the frame, close-zoom cells its middle three quarters
+(a line's close-zoom cells the whole frame).
+spine_line_fog_sequence.png: the first 3 s on the bright ground at the default zoom, one frame every
+40 ms, read left to right, top to bottom.
+Driver: lavapipe (Mesa software Vulkan, the CI reference), debug build, 2026-11-11; review round 5
+(docs/evidence/effects/review/slice_review.md, "Round 5"). Round 4 is in commit b72b693, round 3 in fd24c31, round 2 in
+d03ed19, round 1 in bb5a61c, round 0 (WP6b, radv) in 1eaaf64.

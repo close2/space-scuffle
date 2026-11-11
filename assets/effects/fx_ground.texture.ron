@@ -4,7 +4,7 @@
     cell_size: 256,
     padding_px: 2,
     channels: PackedV1,
-    layers: 9,
+    layers: 11,
     mip_files: [
         "fx_ground.png",
         "fx_ground.mip1.png",
@@ -14,9 +14,18 @@
     ],
     elements: [
         (
-            name: "chitin_spine",
+            name: "chitin_clump",
             first_layer: 0,
-            frames: 4,
+            frames: 3,
+            duration_ms: None,
+            pivot_px: (128, 128),
+            blend: Premultiplied,
+            channel_labels: None,
+        ),
+        (
+            name: "chitin_spine",
+            first_layer: 3,
+            frames: 2,
             duration_ms: None,
             pivot_px: (128, 128),
             blend: Premultiplied,
@@ -24,8 +33,8 @@
         ),
         (
             name: "spine_crack",
-            first_layer: 4,
-            frames: 3,
+            first_layer: 5,
+            frames: 2,
             duration_ms: None,
             pivot_px: (128, 128),
             blend: Premultiplied,
@@ -34,6 +43,15 @@
         (
             name: "ground_crack",
             first_layer: 7,
+            frames: 2,
+            duration_ms: None,
+            pivot_px: (128, 128),
+            blend: Premultiplied,
+            channel_labels: None,
+        ),
+        (
+            name: "earth_scar",
+            first_layer: 9,
             frames: 2,
             duration_ms: None,
             pivot_px: (128, 128),

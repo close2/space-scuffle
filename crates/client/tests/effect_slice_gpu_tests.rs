@@ -2,7 +2,7 @@
 //! package 6b, §7.2, §10.2).
 //!
 //! # Responsibility
-//! For each splash effect the shipped units or the lab-only blocks (Amendment 1) name
+//! For each splash effect the shipped units or the lab-only entries (Amendment 3) name
 //! (`support/effect_subjects.rs`, sorted by name; one parent test per index, no effect named
 //! in Rust), three children of this binary run
 //! the production effect lab (`client::effects::lab`) through `support/gpu_run.rs` (radv with
@@ -10,8 +10,11 @@
 //! zoom on the bright ground, with the shipped vocabulary and the bindings the unit's weapon
 //! publishes. The parent measures the PNGs:
 //! - **footprint**: the `Critical` layers alone. A splash's front ends at the projected reach,
-//!   within ±2 px on most rays and never beyond it; a line's marks start and end at the line's
-//!   projected ends within ±2 px;
+//!   within ±2 px on most rays and never beyond it, and once every non-decal layer has ended
+//!   the visible edge of its lasting `Critical` marks (the acid stain, held at full size)
+//!   lies on the reach, within ±2 px on most rays and never more than 2 px beyond it (review
+//!   round 5; round 4 checked only that it stayed inside); a line's marks start and end at
+//!   the line's projected ends within ±2 px;
 //! - **coverage**: within 80 ms of the event (of each search point, for a line), at least 60 %
 //!   of the projected full-damage disc is changed by the effect;
 //! - **no pop**: at the 40 ms step, the mean luminance of the effect's region changes by at
@@ -21,7 +24,9 @@
 //! - **golden stills** at 0.08, 0.3 and 0.75 of the effect's lifetime, per driver, in
 //!   `tests/data/effects/<driver>/`: pass when ≥ 99 % of the region's pixels are within 8/255
 //!   and the mean absolute difference is ≤ 1.5/255. `SPACE_SCUFFLE_EFFECT_GOLDEN_UPDATE=1`
-//!   writes them (re-baselining needs the contact sheet in the same commit).
+//!   writes them (re-baselining needs the contact sheet in the same commit);
+//! - **a line out of the fog** (plan Amendment 2, R6): the line subject seen only from its
+//!   fifth search point on draws no pixel at the points before it and its look after it.
 //!
 //! # Invariants verified
 //! As listed; every statistic is printed for the driver comparison.
@@ -166,6 +171,8 @@ fn lab_subject(subject: &SplashSubject) -> LabSubject {
         bound: subject.bound,
         anchor,
         line_to,
+        line_seen: u64::MAX,
+        fog_below_x: None,
     }
 }
 
@@ -287,7 +294,10 @@ fn program(index: usize, part: u32, out: PathBuf) -> LabProgram {
             true,
             Some(Priority::Critical),
             SEQUENCE_STEP,
-            &[("critical", timing.footprint_age)],
+            &[
+                ("critical", timing.footprint_age),
+                ("critical_late", timing.non_decal_end),
+            ],
         ));
         let mut stills: Vec<(String, f32)> = GOLDEN_AGES
             .iter()
@@ -415,11 +425,10 @@ impl Ground {
     }
 }
 
-/// Splash footprint: the front's outermost lit pixel per ray against the projected reach.
-fn check_front(view: &View, ground: &Ground, critical: &RgbImage, bg: &RgbImage) -> String {
+/// Signed distance, in pixels, of the outermost lit pixel from the projected reach on each of
+/// 72 rays from the anchor (NaN where a ray has no lit pixel).
+fn reach_errors(view: &View, ground: &Ground, critical: &RgbImage, bg: &RgbImage) -> Vec<f32> {
     let rays = 72;
-    let mut within = 0;
-    let mut worst_beyond = f32::MIN;
     let mut errors = Vec::with_capacity(rays);
     for ray in 0..rays {
         let angle = ray as f32 / rays as f32 * std::f32::consts::TAU;
@@ -440,13 +449,54 @@ fn check_front(view: &View, ground: &Ground, critical: &RgbImage, bg: &RgbImage)
             continue;
         };
         let centre = view.project(ground.anchor);
-        let signed = outer.distance(centre) - edge.distance(centre);
-        worst_beyond = worst_beyond.max(signed);
-        if signed.abs() <= TOLERANCE_PX {
-            within += 1;
-        }
-        errors.push(signed);
+        errors.push(outer.distance(centre) - edge.distance(centre));
     }
+    errors
+}
+
+/// Splash footprint: the front's outermost lit pixel per ray against the projected reach, and
+/// the lasting marks (`late`, once every non-decal layer has ended) never beyond it.
+fn check_front(
+    view: &View,
+    ground: &Ground,
+    critical: &RgbImage,
+    late: &RgbImage,
+    bg: &RgbImage,
+) -> String {
+    let errors = reach_errors(view, ground, critical, bg);
+    let rays = errors.len();
+    let within = errors
+        .iter()
+        .filter(|error| error.abs() <= TOLERANCE_PX)
+        .count();
+    let worst_beyond = errors
+        .iter()
+        .copied()
+        .filter(|error| error.is_finite())
+        .fold(f32::MIN, f32::max);
+    let late_errors = reach_errors(view, ground, late, bg);
+    let late_beyond = late_errors
+        .iter()
+        .copied()
+        .filter(|error| error.is_finite())
+        .reduce(f32::max);
+    // Review round 5: a lasting mark's visible edge lies on the reach, not only inside it.
+    let late_within = late_errors
+        .iter()
+        .filter(|error| error.abs() <= TOLERANCE_PX)
+        .count() as f32
+        / rays as f32;
+    let late_finite: Vec<f32> = late_errors
+        .iter()
+        .copied()
+        .filter(|error| error.is_finite())
+        .collect();
+    let late_mean = late_finite.iter().sum::<f32>() / late_finite.len().max(1) as f32;
+    assert!(
+        late_finite.is_empty() || late_within >= FRONT_RAYS_WITHIN,
+        "only {:.0} % of rays of the lasting critical marks end within {TOLERANCE_PX} px of the reach (errors {late_errors:?})",
+        late_within * 100.0
+    );
     let share = within as f32 / rays as f32;
     let finite: Vec<f32> = errors
         .iter()
@@ -459,13 +509,24 @@ fn check_front(view: &View, ground: &Ground, critical: &RgbImage, bg: &RgbImage)
         "the front reaches {worst_beyond:.2} px beyond the reach"
     );
     assert!(
+        late_beyond.is_none_or(|beyond| beyond <= TOLERANCE_PX),
+        "the lasting critical marks reach {late_beyond:?} px beyond the reach"
+    );
+    assert!(
         share >= FRONT_RAYS_WITHIN,
         "only {:.0} % of rays end within {TOLERANCE_PX} px of the reach (errors {errors:?})",
         share * 100.0
     );
     format!(
-        "footprint: {:.0} % of {rays} rays within ±{TOLERANCE_PX} px of the reach, mean error {mean:+.2} px, largest overshoot {worst_beyond:+.2} px",
-        share * 100.0
+        "footprint: {:.0} % of {rays} rays within ±{TOLERANCE_PX} px of the reach, mean error {mean:+.2} px, largest overshoot {worst_beyond:+.2} px; lasting marks' visible edge {}",
+        share * 100.0,
+        late_beyond.map_or_else(
+            || "none (no lasting critical mark)".to_owned(),
+            |beyond| format!(
+                "{:.0} % of rays within ±{TOLERANCE_PX} px, mean error {late_mean:+.2} px, largest overshoot {beyond:+.2} px",
+                late_within * 100.0
+            )
+        )
     )
 }
 
@@ -611,13 +672,18 @@ fn check_pop(region: &[(u32, u32)], frames: &[RgbImage]) -> String {
     )
 }
 
-/// Largest extent of the effect's decals: their size times jitter, on a splash or a line.
+/// Largest extent of the effect's decals: their size times jitter, on a splash or a line, out
+/// to the corner of the projection box (half extents the size and the size times the width,
+/// turned to any yaw), since a decal's texture may reach into the box's corners.
 fn decal_margin(effect: &Effect, subject: &LabSubject, catalog: &EffectCatalog) -> f32 {
     effect
         .layers
         .iter()
-        .filter(|layer| matches!(layer.block, Block::Decal(_)))
-        .map(|layer| {
+        .filter_map(|layer| match &layer.block {
+            Block::Decal(look) => Some((layer, look.width)),
+            _ => None,
+        })
+        .map(|(layer, width)| {
             let grow = (0..=20)
                 .map(|step| catalog.sample(layer.size_curve, step as f32 / 20.0, 1.0))
                 .fold(0.0, f32::max);
@@ -629,7 +695,12 @@ fn decal_margin(effect: &Effect, subject: &LabSubject, catalog: &EffectCatalog) 
                     _ => 0.0,
                 })
                 .fold(0.0, f32::max);
-            offset + resolve_value(&layer.size, &subject.bound) * (1.0 + layer.size_jitter) * grow
+            let corner = (1.0 + width * width).sqrt();
+            offset
+                + resolve_value(&layer.size, &subject.bound)
+                    * (1.0 + layer.size_jitter)
+                    * grow
+                    * corner
         })
         .fold(0.0, f32::max)
 }
@@ -811,7 +882,8 @@ fn check_subject(index: usize) -> TestResult {
     let footprint = if lab.line_to.is_some() {
         check_line(&view, &ground, &critical, &bg)
     } else {
-        check_front(&view, &ground, &critical, &bg)
+        let late = capture(directory.path(), "critical_late");
+        check_front(&view, &ground, &critical, &late, &bg)
     };
     let frames: Vec<RgbImage> = (0..sequence_frames())
         .map(|frame| capture(directory.path(), &format!("seq_{frame:03}")))
@@ -868,4 +940,111 @@ fn slice_effect_1_renders_to_its_bindings() -> TestResult {
 #[test]
 fn slice_effect_2_renders_to_its_bindings() -> TestResult {
     check_subject(2)
+}
+
+// --- A line out of the fog (plan Amendment 2, R6) ---------------------------------------------
+
+/// The first search point of the masked line that the viewer sees.
+const FIRST_SEEN_POINT: u32 = 4;
+/// Age of the masked shot, seconds: every spine of the line is up.
+const MASKED_AGE: f32 = 1.0;
+/// How far, in world units along the line, a drawn instance at the first seen point may reach
+/// back towards the unseen points: ground marks and dust are clipped half a spacing before the
+/// first seen point (review round 4, their end feather reaching 0.18 beyond), and the clump
+/// standing on that point is kept whole, its splayed spikes reaching up to about 0.9 back.
+const MASKED_REACH_BACK: f32 = 1.0;
+/// Fewest lit pixels the seen part of the line must draw.
+const MASKED_MIN_LIT: usize = 200;
+/// The index of the line subject, if the subjects have one.
+fn line_subject() -> Option<usize> {
+    effect_subjects::splash_subjects()
+        .iter()
+        .position(|subject| subject.line)
+}
+
+/// The masked child: the line subject seen only from point [`FIRST_SEEN_POINT`] on, and the
+/// background.
+#[test]
+#[ignore = "launched by the slice effect tests on a virtual display"]
+fn effect_slice_masked_line_child() {
+    let out = PathBuf::from(std::env::var_os(OUT_VAR).expect("the parent names the directory"));
+    let subjects = effect_subjects::splash_subjects();
+    let subject = &subjects[line_subject().expect("a line subject")];
+    let mut lab = lab_subject(subject);
+    lab.line_seen = u64::MAX << FIRST_SEEN_POINT;
+    let program = LabProgram {
+        subject: lab,
+        takes: vec![
+            take(false, None, 0.25, &[("bg", 0.0)]),
+            take(true, None, SEQUENCE_STEP, &[("masked", MASKED_AGE)]),
+        ],
+        out,
+    };
+    let root = ResolvedAssetsRoot::resolve().expect("the assets root resolves");
+    let mut app = lab_app(root, program, None, SIZE).expect("the lab app builds");
+    assert!(client::render_compatibility::run_render_app(&mut app).is_success());
+}
+
+/// Plan Amendment 2, R6, in pixels: a line whose first search points the viewer does not see
+/// (an undetected burrowed attacker firing out of the fog) draws nothing at those points and
+/// its whole look from the first seen point on.
+#[test]
+fn a_line_seen_only_in_part_draws_only_where_it_is_seen() -> TestResult {
+    if gpu_run::gpu_tests_opted_out() {
+        return Ok(());
+    }
+    let Some(index) = line_subject() else {
+        return Ok(());
+    };
+    let subjects = effect_subjects::splash_subjects();
+    let subject = &subjects[index];
+    let directory = tempfile::tempdir()?;
+    let mut command = gpu_run::virtual_gpu_command(&std::env::current_exe()?);
+    command.args([
+        "--ignored",
+        "--exact",
+        "--nocapture",
+        "effect_slice_masked_line_child",
+    ]);
+    command.env(OUT_VAR, directory.path());
+    command.assert_passes_validation("slice masked line");
+    let lab = lab_subject(subject);
+    let view = View::new(lab.focus());
+    let ground = Ground::of(&lab);
+    let spacing = subject.bound.get(Binding::LineSpacing);
+    #[expect(clippy::cast_precision_loss, reason = "a small point index")]
+    let first_seen = FIRST_SEEN_POINT as f32 * spacing;
+    let bg = capture(directory.path(), "bg");
+    let masked = capture(directory.path(), "masked");
+    let (mut unseen_lit, mut seen_lit) = (0_usize, 0_usize);
+    for y in 0..SIZE.y {
+        for x in 0..SIZE.x {
+            if !lit(&masked, &bg, x, y) {
+                continue;
+            }
+            let Some(point) = view.ground(x, y) else {
+                continue;
+            };
+            let along = (point - ground.anchor).dot(ground.direction);
+            if along < first_seen - MASKED_REACH_BACK {
+                unseen_lit += 1;
+            } else if along >= first_seen {
+                seen_lit += 1;
+            }
+        }
+    }
+    eprintln!(
+        "masked line {}: {seen_lit} lit pixels from point {FIRST_SEEN_POINT} on, {unseen_lit} \
+         before it (more than {MASKED_REACH_BACK} back)",
+        subject.effect
+    );
+    assert_eq!(
+        unseen_lit, 0,
+        "nothing is drawn at the search points the viewer does not see"
+    );
+    assert!(
+        seen_lit >= MASKED_MIN_LIT,
+        "the seen part of the line is drawn: {seen_lit} lit pixels"
+    );
+    Ok(())
 }

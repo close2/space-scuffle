@@ -96,6 +96,11 @@ pub struct ModeEffects {
     /// Effect held while the unit is in the mode.
     #[serde(default)]
     pub stance: Option<String>,
+    /// Effect laid on the ground, at the period the effect states, while the unit moves in the
+    /// mode: the trail a unit leaves moving underground, seen even while the unit itself is
+    /// hidden (plan `2026-11-09-effect-visualization` Amendment 2, R5).
+    #[serde(default)]
+    pub moving: Option<String>,
 }
 
 #[cfg(test)]

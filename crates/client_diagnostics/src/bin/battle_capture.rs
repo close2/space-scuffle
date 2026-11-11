@@ -15,6 +15,7 @@ fn main() -> AppExit {
             out: options.out.clone(),
             sheet_dir: options.sheet_dir.clone(),
             hdr_bloom: options.hdr_bloom,
+            fog_seen_from: options.fog_seen_from,
         }),
         None => run_capture(options),
     };

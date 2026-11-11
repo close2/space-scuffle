@@ -46,8 +46,11 @@ impl Plugin for EffectsPlugin {
             .add_systems(Startup, systems::load_effect_catalog)
             .add_systems(
                 Update,
-                systems::spawn_effects_from_events
-                    .after(crate::battle_pipeline::driver::publish_combat_events)
+                (
+                    systems::spawn_effects_from_events
+                        .after(crate::battle_pipeline::driver::publish_combat_events),
+                    systems::spawn_mode_trails,
+                )
                     .in_set(crate::battle_pipeline::BattleSet::Present),
             )
             .add_systems(
