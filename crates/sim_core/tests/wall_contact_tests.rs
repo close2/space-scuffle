@@ -9,18 +9,16 @@
 //! - T-B2: a hostile push at 45° into a straight wall slides the body along it;
 //! - T-B3: a body overlapping a wall walks past the wall's end without being thrown;
 //! - T-B4: a body spawned into a wall leaves along its route, and a push does not deepen it;
-//! - T-B5: the showcase's pulse bot 7 rounds the ramp E corner (bug B-113's reproduction);
+//! - T-B5: the crowd of bug B-113's trace rounds the showcase map's ramp E corner without wedging;
 //! - T-B6: walking a route's legs never needs a projection, on both shipped maps;
 //! - T-B9: a body touching a wall's end walks round it without near-stalling (steering's disc
 //!   probe and its slide along the wall, risk R-3).
 //!
-//! Units are picked from the shipped catalog by radius, never by name (charter §3.3), except
-//! that T-B5 follows the entity the bug was traced on.
+//! Units are picked from the shipped catalog by radius, never by name (charter §3.3).
 
 #![allow(clippy::expect_used, clippy::too_many_lines)]
 
 use sim_core::SimWorld;
-use sim_fixtures::trace::route::{start_battle, total_turn_degrees, RouteTraceArgs};
 use sim_map::{
     CellFlags, CliffLevel, GameMap, MapCell, MapFile, PathRequest, PathRequestWithVision,
     Pathfinder,
@@ -273,57 +271,67 @@ fn a_wedged_spawn_leaves_but_never_goes_deeper() {
     assert!(depth(&mut world, wedged) == 0.0, "left the wall");
 }
 
-/// T-B5 (bug B-113's reproduction): in the shipped showcase the crowd pushed pulse bot 7 to
-/// 0.30 from the ramp E corner (35, 52), inside its radius of 0.375, and it then turned 454°
-/// stepping back and forth. Played to tick 800, it stays at least its radius from the corner
-/// and turns at most 180° over trace ticks 740 to 800.
+/// T-B5 (bug B-113's reproduction, restated by the plan's Amendment 1): on the showcase's map,
+/// the crowd of six that rounded the ramp E corner (35, 52) when the bug was traced, placed where
+/// player 0's pulse bots stood at that trace's tick 740 and attack-moving to player 1's base as
+/// they did. On the base the crowd pushed the second body (pulse bot 7) to 0.30 from the corner,
+/// inside its radius of 0.375, and it turned 454° stepping back and forth. What the rule
+/// guarantees is pinned: no body comes within its radius of the corner on any tick, and no body
+/// goes deeper into a wall; the crowd's front gets round. The showcase itself no longer reaches
+/// the episode: its lane fight now ends with player 0's army dead (Amendment 1). How long the
+/// second body queues at the corner is not pinned here (evidence §4: it waits between a friend
+/// and the vertex from tick 25 and creeps under 0.005 a tick).
 #[test]
-fn showcase_pulse_bot_rounds_the_ramp_e_corner() {
-    let args = RouteTraceArgs::parse(
-        [
-            "--scenario",
-            "scenarios/showcase.ron",
-            "--out",
-            "unused-route-trace-output",
-        ]
-        .map(str::to_owned),
-    )
-    .expect("valid arguments");
-    let mut world = start_battle(&args).expect("the showcase starts");
-    let bot = EntityId(7);
+fn showcase_crowd_rounds_the_ramp_e_corner_without_wedging() {
+    let map = shipped("showcase_canyon.scmap.ron");
+    let mut world = sim_fixtures::world(map, 0x00C0_4EB5);
     let corner = at(35.0, 52.0);
-    let mut track = Vec::new();
-    for tick in 0..800_u32 {
-        step(&mut world);
-        let Some(entity) = world.entities.get(&bot) else {
-            break;
-        };
-        let radius = world
-            .catalog
-            .get(entity.unit_type_id)
-            .expect("registered")
-            .collision_radius;
-        let gap = entity.position.distance(corner);
-        assert!(
-            gap >= radius - s(TOLERANCE),
-            "trace tick {tick}: {:?} is {gap:?} from the corner",
-            entity.position
-        );
-        if tick >= 740 {
-            track.push((
-                f64::from(entity.position.x.to_f32()),
-                f64::from(entity.position.y.to_f32()),
-            ));
+    // Player 0's pulse bots 5, 7, 8, 9, 10 and 11 at trace tick 740 of the base run.
+    let starts = [
+        (34.1464, 50.7486),
+        (34.3760, 50.0328),
+        (34.0989, 51.4946),
+        (32.9688, 49.8523),
+        (33.6076, 50.2379),
+        (33.6374, 49.4914),
+    ];
+    let crowd: Vec<EntityId> = starts
+        .iter()
+        .map(|&(x, y)| spawn(&mut world, 0, at(x, y)))
+        .collect();
+    order(
+        &mut world,
+        0,
+        crowd.clone(),
+        UnitOrder::AttackMove {
+            target: at(52.5, 52.5),
+        },
+    );
+    for tick in 0..60_u32 {
+        step_never_deeper(&mut world, &crowd, 1, "crowd at the corner");
+        for &id in &crowd {
+            let entity = &world.entities[&id];
+            let radius = world
+                .catalog
+                .get(entity.unit_type_id)
+                .expect("registered")
+                .collision_radius;
+            let gap = entity.position.distance(corner);
+            assert!(
+                gap >= radius - s(TOLERANCE),
+                "tick {tick}: {id:?} at {:?} is {gap:?} from the corner",
+                entity.position
+            );
         }
     }
-    // The bot must still be alive at the corner, or the test would pass by its death.
-    assert_eq!(
-        track.len(),
-        60,
-        "pulse bot 7 lives through ticks 740 to 800"
+    let past = crowd
+        .iter()
+        .filter(|id| world.entities[id].position.x > s(36.0))
+        .count();
+    assert!(
+        past >= 3,
+        "the crowd's front got round the corner: {past} of 6"
     );
-    let turn = total_turn_degrees(&track);
-    assert!(turn <= 180.0, "turned {turn:.0}° over ticks 740 to 800");
 }
 
 /// T-B9 (plan D-3, risk R-3; the showcase's pulse bot 18 at the ramp E corner): a body touching

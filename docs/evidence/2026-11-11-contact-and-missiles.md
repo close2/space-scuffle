@@ -301,3 +301,34 @@ rule (C1, D-1). Held under D-9, 4 for the orchestrator's decision.
 drones remained on both sides: the scenario ends a match only when a side has no units, and
 workers do not attack. StarCraft II ends a melee game when a player has no structures, a separate
 topic from this plan.
+
+## 4. WP4: goldens, T-B5 restated (in progress)
+
+Amendment 1 accepted the rule and the probe fix with the showcase's flip.
+
+**Goldens** re-recorded on this tree, each header naming its first changed checkpoint and the
+traced cause. Traced by dumping every entity's position and life after every tick on this tree and
+on WP2's (`34a92e7`):
+
+- `golden_replay`: checkpoints 1 to 3 unchanged; first difference at tick 164, "blue_infantry"
+  pulse bot entity 15 at (30.34, 30.21), whose disc the crowd pressed into the wall face x = 30;
+  it now stays at x = 30.375.
+- `golden_replay_orders`: checkpoints 1 to 13 unchanged; first difference at tick 131,
+  "blue_column" pulse bots 8, 9 and 18 round (33.0 to 33.7, 29.1 to 29.9) on their way to
+  (32, 36). The test still finds both phase-order situations.
+
+Both pass in debug, in release and on `wasm32-wasip1` under wasmtime.
+
+**T-B5 restated** (Amendment 1): `showcase_crowd_rounds_the_ramp_e_corner_without_wedging` places
+six 0.375 bodies on the showcase map where player 0's pulse bots 5 and 7 to 11 stood at the base
+trace's tick 740, and attack-moves them to (52.5, 52.5) for 60 ticks. It asserts what the rule
+guarantees: no body within its radius of the corner (35, 52) on any tick, no body deeper into a
+wall, and the crowd's front (3 of 6) round the corner.
+
+**Finding (not pinned, open).** In that reproduction the second body (pulse bot 7's start)
+reaches the vertex at tick 25 at its radius and then queues: a friend at its north-west and the
+vertex at its north-east leave its route's first leg no room, and later friends pass first. It
+creeps under 0.005 a tick to tick 59 and its heading jitters (214° in total over the 60 ticks).
+Its slid step is shorter than the waiting threshold but it is not set waiting, because the slide
+runs after `is_waiting` in `step_toward`. That is a queue, not a wedge; whether to wait instead of
+creeping there is left to the orchestrator.

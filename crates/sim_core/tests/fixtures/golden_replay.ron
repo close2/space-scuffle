@@ -280,6 +280,13 @@
 // schema 28 (5a79962): Debug dumps of every entity, projectile, player's resources, the effect state
 // and the render snapshot after every tick are byte-identical once the removed field's lines are
 // dropped, but for each snapshot's checksum.
+// Re-recorded for plan 2026-11-11-contact-and-missiles WP3 and WP4 (B-113; Amendment 1): a ground
+// body's disc no longer goes deeper into a wall, and steering's probes test the disc and slide a
+// step along the wall. Checkpoints 1 to 3 (ticks 1 to 150) are unchanged; from checkpoint 4 (ticks
+// 151 to 200) every checkpoint changed. Traced tick by tick against the tree before the rule
+// (34a92e7): the first difference is at tick 164, "blue_infantry" pulse bot entity 15 at
+// (30.34, 30.21), whose disc the crowd pressed into the wall face x = 30; it now stays at the
+// radius from it, x = 30.375, and its neighbours differ from tick 165.
 (
     checksum_schema: 29,
     seed: 0x5EED_0F_5CAFF1E,
@@ -310,22 +317,22 @@
         0x14190d65eff736c8,
         0xaedbd3380b9aec1b,
         0x4e75572844f7482e,
-        0x09fc5c5d19c3852f,
-        0xa40d593d5ee4c92d,
-        0xa930abf4b044d9f4,
-        0x9c20b5cd583d4e3a,
-        0x031d68f1e9d46bd0,
-        0xc8c9c96e3afafc4c,
-        0x97ca1d35a9548794,
-        0xcf682aece095af65,
-        0x115d41782f2d2531,
-        0xa0562bb7f03e6335,
-        0xec7fb6f1e8ade744,
-        0x70a3099423b9859b,
-        0x7333cdaf842a3474,
-        0xe1688510c39c7d62,
-        0x332ef5b01d5e4bb0,
-        0xd7478144274ba66e,
-        0xe3f72e9d957a9b39,
+        0x6a74f517d468e04c,
+        0xfb4faeff0f122688,
+        0xd97e8b7d8b5ad08f,
+        0xb7dbf5190b1cd588,
+        0xcb60aa9a6dffd901,
+        0x5968ec79b9db866e,
+        0x748226eb7a903b53,
+        0x5fac17aaffabd17d,
+        0x356b2e2429197e93,
+        0x9715b820e4f0b85d,
+        0xb1e75597f4df6505,
+        0x8c138611b1e72164,
+        0x69f83ede3d3f90b0,
+        0x6fec97ac37a1531a,
+        0xd4c801402da24a77,
+        0xd72c1b7e0729cf03,
+        0xff413175addedf36,
     ],
 )
