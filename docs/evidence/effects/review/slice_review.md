@@ -461,8 +461,15 @@ The crowd frame is re-taken with the round-5 data (figures in [`stress_capture.t
 round-5 paragraph): `spine_line` and `shell_impact` read as in round 4 (rows of spike clumps over a darker scar;
 small sparks), and no effect hides a unit.
 
-Other tests (2026-11-11, unlocked at `-j 4` under `nice -n 10`; no `cargo gate`, Q0061): see the hand-back of
-this round for the full list and results.
+Other tests (2026-11-11, unlocked at `-j 4` under `nice -n 10`; no `cargo gate`, Q0061): client lib `effects`
+45 passed (with `a_standing_card_at_a_line_end_is_fitted_whole_inside_the_line` and the 144-byte decal record);
+`effect_catalog_tests` 22 (outline range checks), `effect_runtime_tests` 15, `battle_fog_tests` 23;
+`client_diagnostics` lib `effect_lab` 3; `gpu_validation_tests` effect shaders (both MSAA variants) 1;
+`effect_slice_gpu_tests` 4 on lavapipe and on radv (radv's shell and spine children timed out once under a load
+average above 100 and passed on a rerun); `concealment_gpu_tests` 1 (harness); `sync_steady_state_tests` 8;
+`sync_allocation_count_tests` (valgrind) 10, run alone; `smog_golden_tests` 17; `dependency_direction_tests` 2;
+`workspace_checks` 74 unit and 23 charter; `gate` `suite_catalog_tests` 7; `cargo clippy --workspace
+--all-targets -- -D warnings` clean; `cargo fmt --all --check` clean.
 
 **Round 5 result (implementer):** accepted, every item for every effect, with the watch points above. The
 independent round-5 review follows on [`independent_review_packet.md`](independent_review_packet.md).
